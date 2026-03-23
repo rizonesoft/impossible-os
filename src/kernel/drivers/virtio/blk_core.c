@@ -1,4 +1,4 @@
-/* blk_core.c — Driver globals, TSC, IRQ handlers, config change, feature helpers */
+/* blk_core.c -- Driver globals, TSC, IRQ handlers, config change, feature helpers */
 
 #define BLK_DEFINE_GLOBALS
 #include "kernel/drivers/virtio/blk_internal.h"
@@ -19,7 +19,7 @@ void calibrate_tsc(void)
 
 /* ---- MSI-X IRQ handlers ---- */
 
-/* Queue completion interrupt — device placed buffers in the used ring.
+/* Queue completion interrupt -- device placed buffers in the used ring.
  * The ctx pointer carries the queue index. */
 void virtio_blk_queue_irq(uint8_t vector, void *ctx)
 {
@@ -45,7 +45,7 @@ void virtio_blk_queue_irq(uint8_t vector, void *ctx)
     }
 }
 
-/* Config change interrupt — device resized, topology changed, etc.
+/* Config change interrupt -- device resized, topology changed, etc.
  * VirtIO 1.2 §4.1.4.5: ISR bit 1 indicates device config has changed. */
 void virtio_blk_config_irq(uint8_t vector, void *ctx)
 {
@@ -58,10 +58,10 @@ void virtio_blk_config_irq(uint8_t vector, void *ctx)
         isr = virtio_read_isr(&blk_dev);
     }
 
-    /* Check DEVICE_NEEDS_RESET (status bit 6) — fatal condition */
+    /* Check DEVICE_NEEDS_RESET (status bit 6) -- fatal condition */
     uint8_t st = virtio_get_status(&blk_dev);
     if (st & VIRTIO_STATUS_DEVICE_NEEDS_RESET) {
-        klog(LOG_DEBUG, "virtio", "Config ISR: DEVICE_NEEDS_RESET — reset required");
+        klog(LOG_DEBUG, "virtio", "Config ISR: DEVICE_NEEDS_RESET -- reset required");
         return;
     }
 
@@ -75,7 +75,7 @@ void virtio_blk_config_irq(uint8_t vector, void *ctx)
 
 /* Atomically re-read device configuration using config_generation loop.
  * Detects changes to capacity, topology, and writeback mode.
- * Called from config change ISR — keep fast and non-blocking. */
+ * Called from config change ISR -- keep fast and non-blocking. */
 void virtio_blk_handle_config_change(void)
 {
     if (!blk_initialized || !blk_dev.device_cfg)
@@ -103,13 +103,13 @@ void virtio_blk_handle_config_change(void)
         disk_capacity = new_capacity;
 
         if (new_capacity > old_capacity) {
-            /* Disk grew — safe, notify block device layer */
+            /* Disk grew -- safe, notify block device layer */
             klog(LOG_DEBUG, "virtio",
                    "Config change: capacity increased %u -> %u sectors (hot-resize)",
                    old_capacity, new_capacity);
             blkdev_update_capacity("virtio0", new_capacity);
         } else {
-            /* Disk shrunk — dangerous! Data beyond new boundary is lost.
+            /* Disk shrunk -- dangerous! Data beyond new boundary is lost.
              * Log critical warning but still update to prevent OOB I/O. */
             klog(LOG_DEBUG, "virtio",
                    "Config change: WARNING capacity decreased %u -> %u sectors",
@@ -148,7 +148,7 @@ void virtio_blk_handle_config_change(void)
         volatile uint8_t *wb = (volatile uint8_t *)
             (blk_dev.device_cfg + VIRTIO_BLK_CFG_WRITEBACK);
         uint8_t new_wb = mmio_read8(wb);
-        /* We don't cache writeback state currently — just log the change */
+        /* We don't cache writeback state currently -- just log the change */
         klog(LOG_DEBUG, "virtio", "Config change: writeback=%u", (uint64_t)new_wb);
     }
 }

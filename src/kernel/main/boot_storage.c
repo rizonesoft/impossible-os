@@ -77,7 +77,7 @@ void boot_storage_init(uint64_t magic)
     klog(LOG_DEBUG, "", "--- System Summary ---------------------------------------------------------");
 
     /* Hardware summary */
-    klog(LOG_INFO, "boot", "Multiboot2 magic verified: %x", magic);
+    klog(LOG_INFO, "boot", "Multiboot2 magic verified: 0x%x", magic);
     klog(LOG_INFO, "boot", "Running in 64-bit Long Mode");
 
     if (g_boot_info.fb_available) {

@@ -81,7 +81,26 @@ void printk(const char *fmt, ...)
         }
 
         fmt++; /* skip '%' */
+        if (*fmt == '\0') break;
+        if (*fmt == '%') { printk_putchar('%'); fmt++; continue; }
 
+        /* Parse zero-pad flag */
+        int zero_pad = 0;
+        if (*fmt == '0') { zero_pad = 1; fmt++; }
+
+        /* Parse width */
+        uint32_t width = 0;
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (uint32_t)(*fmt - '0');
+            fmt++;
+        }
+
+        /* Parse length modifier: skip l, ll, h, hh */
+        while (*fmt == 'l' || *fmt == 'h') fmt++;
+
+        (void)zero_pad; /* width already handled by min_digits */
+
+        /* Specifier */
         switch (*fmt) {
         case 'd':
         case 'i':
@@ -89,12 +108,15 @@ void printk(const char *fmt, ...)
             break;
 
         case 'u':
-            print_uint(va_arg(ap, uint64_t), 10, 0);
+            print_uint(va_arg(ap, uint64_t), 10, width);
             break;
 
         case 'x':
-            printk_write("0x");
-            print_uint(va_arg(ap, uint64_t), 16, 0);
+            print_uint(va_arg(ap, uint64_t), 16, width);
+            break;
+
+        case 'X':
+            print_uint(va_arg(ap, uint64_t), 16, width);
             break;
 
         case 'p':
@@ -110,10 +132,6 @@ void printk(const char *fmt, ...)
 
         case 'c':
             printk_putchar((char)va_arg(ap, int));
-            break;
-
-        case '%':
-            printk_putchar('%');
             break;
 
         case '\0':

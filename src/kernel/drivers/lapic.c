@@ -1,5 +1,5 @@
 /* ============================================================================
- * lapic.c — Local APIC driver
+ * lapic.c -- Local APIC driver
  *
  * Initializes the BSP's (and later AP's) Local APIC for interrupt delivery.
  * Replaces the legacy 8259 PIC for EOI and adds IPI support for SMP.
@@ -73,12 +73,12 @@ void lapic_init(void)
 
     base_addr = acpi_get_lapic_base();
     if (base_addr == 0) {
-        klog(LOG_WARN, "lapic", "No LAPIC base — staying with PIC");
+        klog(LOG_WARN, "lapic", "No LAPIC base -- staying with PIC");
         return;
     }
 
     lapic_base = (volatile uint32_t *)(uintptr_t)base_addr;
-    klog(LOG_DEBUG, "lapic", "init: base=%x", (uint64_t)base_addr);
+    klog(LOG_DEBUG, "lapic", "init: base=0x%x", (uint64_t)base_addr);
 
     /* Enable the APIC via the IA32_APIC_BASE MSR (set bit 11 = global enable)
      * This is required on some hardware before MMIO access works. */
@@ -95,7 +95,7 @@ void lapic_init(void)
     lapic_write(LAPIC_REG_SVR,
                 LAPIC_SVR_ENABLE | LAPIC_SPURIOUS_VECTOR);
 
-    /* Set Task Priority to 0 — accept all interrupt priorities */
+    /* Set Task Priority to 0 -- accept all interrupt priorities */
     lapic_write(LAPIC_REG_TPR, 0);
 
     /* Clear Error Status Register (write twice per Intel manual) */
@@ -112,10 +112,10 @@ void lapic_init(void)
     /* Mask Timer */
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
 
-    /* Mask LINT0 — NO ExtINT, just masked. Prevents PIC interference. */
+    /* Mask LINT0 -- NO ExtINT, just masked. Prevents PIC interference. */
     lapic_write(LAPIC_REG_LVT_LINT0, LVT_MASKED);
 
-    /* Mask LINT1 — NMI can be problematic; mask during transition */
+    /* Mask LINT1 -- NMI can be problematic; mask during transition */
     lapic_write(LAPIC_REG_LVT_LINT1, LVT_MASKED);
 
     /* Mask Error */
@@ -142,7 +142,7 @@ void lapic_init(void)
 
     /* Send Init Level De-Assert to synchronize arbitration IDs (xv6).
      * Under WHPX, the delivery status bit may never clear for broadcast
-     * IPIs — add a timeout to prevent infinite hang.
+     * IPIs -- add a timeout to prevent infinite hang.
      * On modern CPUs (P6+), this IPI is actually a no-op anyway. Skip it
      * entirely on single-CPU systems where it serves no purpose. */
     if (acpi_get_cpu_count() > 1) {
@@ -161,7 +161,7 @@ void lapic_init(void)
         }
     } else {
         klog(LOG_DEBUG, "lapic",
-             "init: single CPU — skipping Init Level De-Assert");
+             "init: single CPU -- skipping Init Level De-Assert");
     }
 
     /* Final EOI */
@@ -170,7 +170,7 @@ void lapic_init(void)
     lapic_ready = 1;
 
     klog(LOG_INFO, "lapic",
-         "LAPIC enabled: base=%x, ID=%u, ver=%x, maxLVT=%u",
+         "LAPIC enabled: base=0x%x, ID=%u, ver=0x%x, maxLVT=%u",
          (uint64_t)base_addr,
          (uint64_t)((lapic_read(LAPIC_REG_ID) >> 24) & 0xFF),
          (uint64_t)(ver & 0xFF),
@@ -323,7 +323,7 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page)
 /* Calibrated ticks per millisecond (0 = uncalibrated / fallback) */
 static uint32_t cal_ticks_per_ms = 0;
 
-/* Calibration window in milliseconds — shared by all tiers */
+/* Calibration window in milliseconds -- shared by all tiers */
 #define CAL_MS  10
 
 /* ---- MSR / CPUID helpers for calibration ---- */
@@ -349,7 +349,7 @@ static inline void cal_cpuid(uint32_t leaf,
 #include "kernel/cpuid_platform.h"
 
 /* Hyper-V: MSR 0x40000023 (HV_X64_MSR_APIC_FREQUENCY)
- * Returns exact LAPIC frequency in Hz — 0ns latency, no hardware probing. */
+ * Returns exact LAPIC frequency in Hz -- 0ns latency, no hardware probing. */
 #define HV_MSR_APIC_FREQUENCY  0x40000023
 
 static int cal_try_hyperv_msr(void)
@@ -372,7 +372,7 @@ static int cal_try_hyperv_msr(void)
 }
 
 /* VMware / KVM: CPUID leaf 0x40000010
- * EBX = virtual APIC bus frequency in kHz — already ticks/ms! */
+ * EBX = virtual APIC bus frequency in kHz -- already ticks/ms! */
 static int cal_try_vmware_cpuid(void)
 {
     uint32_t eax, ebx, ecx, edx;
@@ -420,7 +420,7 @@ static int cal_try_cpuid_15h(void)
 
     crystal_hz = ecx;
 
-    /* ECX == 0 on some CPUs — use known crystal frequencies.
+    /* ECX == 0 on some CPUs -- use known crystal frequencies.
      * Check CPUID.01H model/family for identification. */
     if (crystal_hz == 0) {
         uint32_t eax1, ebx1, ecx1, edx1;
@@ -439,12 +439,12 @@ static int cal_try_cpuid_15h(void)
         if (model == 0x55 || model == 0x4E || model == 0x5E ||
             model == 0x8E || model == 0x9E || model == 0xA5 ||
             model == 0xA6 || model == 0xA7) {
-            crystal_hz = 24000000;   /* 24 MHz — Skylake+ */
+            crystal_hz = 24000000;   /* 24 MHz -- Skylake+ */
         } else if (model == 0x5C || model == 0x5F || model == 0x7A ||
                    model == 0x86) {
-            crystal_hz = 19200000;   /* 19.2 MHz — Atom */
+            crystal_hz = 19200000;   /* 19.2 MHz -- Atom */
         } else {
-            return 0;  /* Unknown model — can't determine crystal */
+            return 0;  /* Unknown model -- can't determine crystal */
         }
     }
 
@@ -466,7 +466,7 @@ static int cal_try_cpuid_15h(void)
 #include "kernel/acpi.h"
 
 /* HPET register offsets (MMIO) */
-#define HPET_CAP_REG    0x000   /* General Capabilities — bits 32-63: period (fs) */
+#define HPET_CAP_REG    0x000   /* General Capabilities -- bits 32-63: period (fs) */
 #define HPET_CFG_REG    0x010   /* General Configuration */
 #define HPET_COUNTER    0x0F0   /* Main Counter Value (64-bit) */
 
@@ -506,7 +506,7 @@ static int cal_try_hpet(void)
     if (hpet_base == 0)
         return 0;
 
-    /* Read HPET capabilities — upper 32 bits = period in femtoseconds */
+    /* Read HPET capabilities -- upper 32 bits = period in femtoseconds */
     cap = hpet_read64(hpet_base, HPET_CAP_REG);
     period_fs = (uint32_t)(cap >> 32);
     if (period_fs == 0 || period_fs > 100000000) {
@@ -540,7 +540,7 @@ static int cal_try_hpet(void)
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
 
     if (lapic_elapsed < 1000)
-        return 0;  /* Too few ticks — unreliable */
+        return 0;  /* Too few ticks -- unreliable */
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
     klog(LOG_INFO, "lapic",
@@ -566,7 +566,7 @@ static inline uint32_t pmtimer_read(uint16_t port)
 }
 
 /* PM Timer-based calibration: pace a 10ms LAPIC window via the ACPI PM Timer.
- * The PM Timer is an I/O port, NOT PIT hardware — it works even when
+ * The PM Timer is an I/O port, NOT PIT hardware -- it works even when
  * the 8254 PIT is absent (Hyper-V Gen 2, HW-reduced ACPI). */
 static int cal_try_pmtimer(void)
 {
@@ -601,11 +601,11 @@ static int cal_try_pmtimer(void)
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
 
     if (lapic_elapsed < 1000)
-        return 0;  /* Too few ticks — unreliable */
+        return 0;  /* Too few ticks -- unreliable */
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
     klog(LOG_INFO, "lapic",
-         "Tier 2: PM Timer calibration → %u ticks/ms (%u MHz bus, port=%x %s)",
+         "Tier 2: PM Timer calibration → %u ticks/ms (%u MHz bus, port=0x%x %s)",
          (uint64_t)cal_ticks_per_ms,
          (uint64_t)(cal_ticks_per_ms / 1000),
          (uint64_t)port,
@@ -613,7 +613,7 @@ static int cal_try_pmtimer(void)
     return 1;
 }
 
-/* Forward declaration — defined below after PIT I/O helpers */
+/* Forward declaration -- defined below after PIT I/O helpers */
 static int cal_try_pit(void);
 
 /* ---- Calibration Waterfall ----
@@ -631,32 +631,32 @@ void lapic_timer_calibrate(void)
     /* Tier 1: Instant frequency from MSR/CPUID */
     if (cal_try_hyperv_msr() || cal_try_vmware_cpuid() || cal_try_cpuid_15h()) {
         klog(LOG_INFO, "lapic",
-             "Calibration: Tier 1 succeeded — no PIT/HPET needed");
+             "Calibration: Tier 1 succeeded -- no PIT/HPET needed");
         return;
     }
 
     /* Tier 2: Modern hardware timers (HPET → PM Timer) */
     if (cal_try_hpet() || cal_try_pmtimer()) {
         klog(LOG_INFO, "lapic",
-             "Calibration: Tier 2 succeeded — no PIT needed");
+             "Calibration: Tier 2 succeeded -- no PIT needed");
         return;
     }
 
     /* Tier 3: Legacy PIT (only if PCAT_COMPAT=1 && !HW_REDUCED) */
     if (cal_try_pit()) {
         klog(LOG_INFO, "lapic",
-             "Calibration: Tier 3 succeeded — PIT channel 2");
+             "Calibration: Tier 3 succeeded -- PIT channel 2");
         return;
     }
 
-    /* All tiers failed — use conservative hardcoded estimate */
+    /* All tiers failed -- use conservative hardcoded estimate */
     cal_ticks_per_ms = 100;
     klog(LOG_WARN, "lapic",
-         "All calibration tiers failed — using hardcoded %u ticks/ms",
+         "All calibration tiers failed -- using hardcoded %u ticks/ms",
          (uint64_t)cal_ticks_per_ms);
 }
 
-/* PIT base frequency (Hz) — the 8254 oscillator runs at this exact rate */
+/* PIT base frequency (Hz) -- the 8254 oscillator runs at this exact rate */
 #define PIT_OSC_FREQ  1193182
 #define CAL_PIT_COUNT (PIT_OSC_FREQ * CAL_MS / 1000)  /* ~11932 */
 
@@ -739,7 +739,7 @@ static int cal_try_pit(void)
 
     /* ---- 5. Calculate ticks per ms ---- */
     if (timeout == 0 || lapic_elapsed < 1000) {
-        /* Calibration failed — timeout or too few ticks */
+        /* Calibration failed -- timeout or too few ticks */
         klog(LOG_WARN, "lapic",
              "Tier 3: PIT calibration timeout or too few ticks");
         return 0;

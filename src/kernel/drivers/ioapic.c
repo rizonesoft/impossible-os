@@ -1,5 +1,5 @@
 /* ============================================================================
- * ioapic.c — I/O APIC driver
+ * ioapic.c -- I/O APIC driver
  *
  * Routes hardware interrupts through the I/O APIC instead of the legacy PIC.
  * The I/O APIC provides per-IRQ routing to any Local APIC (CPU) with
@@ -87,7 +87,7 @@ uint32_t ioapic_isa_to_gsi(uint8_t isa_irq)
             return ovr->gsi;
     }
 
-    /* No override — GSI = ISA IRQ number (identity mapping) */
+    /* No override -- GSI = ISA IRQ number (identity mapping) */
     return (uint32_t)isa_irq;
 }
 
@@ -100,7 +100,7 @@ void ioapic_init(void)
 
     base_addr = acpi_get_ioapic_base();
     if (base_addr == 0) {
-        klog(LOG_WARN, "ioapic", "No I/O APIC found — staying with PIC");
+        klog(LOG_WARN, "ioapic", "No I/O APIC found -- staying with PIC");
         return;
     }
 
@@ -122,7 +122,7 @@ void ioapic_init(void)
     /* Route standard ISA IRQs to BSP with vectors 32-47.
      * Apply MADT interrupt source overrides for correct pin mapping.
      *
-     * CRITICAL: Skip IRQ 2 (8259 cascade) — it doesn't exist on APIC
+     * CRITICAL: Skip IRQ 2 (8259 cascade) -- it doesn't exist on APIC
      * systems. With the standard IRQ 0→GSI 2 override, IRQ 2 would also
      * map to GSI 2 and overwrite the PIT routing, killing the timer. */
     {
@@ -135,7 +135,7 @@ void ioapic_init(void)
             uint16_t flags = 0;
             uint32_t j;
 
-            /* Skip cascade IRQ — doesn't exist on APIC */
+            /* Skip cascade IRQ -- doesn't exist on APIC */
             if (i == 2)
                 continue;
 
@@ -170,7 +170,7 @@ void ioapic_init(void)
     ioapic_ready = 1;
 
     klog(LOG_INFO, "ioapic",
-         "I/O APIC at %x: %u entries, ISA IRQs routed to BSP (LAPIC %u)",
+         "I/O APIC at 0x%x: %u entries, ISA IRQs routed to BSP (LAPIC %u)",
          (uint64_t)base_addr, (uint64_t)max_redir_entries,
          (uint64_t)bsp_lapic_id);
 }
@@ -186,7 +186,7 @@ void ioapic_route_irq(uint8_t irq, uint8_t vector,
     /* Vector (bits 0-7) */
     entry = (uint64_t)vector;
 
-    /* Delivery mode: fixed (000) — bits 8-10 */
+    /* Delivery mode: fixed (000) -- bits 8-10 */
     /* entry |= 0; */
 
     /* Polarity (bit 13): from MADT flags bits 0-1

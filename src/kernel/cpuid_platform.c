@@ -115,7 +115,7 @@ platform_id_t platform_detect(void)
     /* Unknown hypervisor — log the raw bytes for debugging */
     cached_platform = PLATFORM_UNKNOWN_HV;
     klog(LOG_WARN, "platform",
-         "Unknown hypervisor: CPUID 0x40000000 = %x-%x-%x",
+         "Unknown hypervisor: CPUID 0x40000000 = 0x%x-%x-%x",
          (uint64_t)ebx, (uint64_t)ecx, (uint64_t)edx);
     return cached_platform;
 }

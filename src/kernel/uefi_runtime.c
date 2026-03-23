@@ -1,5 +1,5 @@
 /* ============================================================================
- * uefi_runtime.c — UEFI Runtime Services initialization and wrappers
+ * uefi_runtime.c -- UEFI Runtime Services initialization and wrappers
  *
  * Calls SetVirtualAddressMap() to remap firmware runtime memory into the
  * kernel's virtual address space (identity-mapped: virt = phys), then
@@ -69,7 +69,7 @@ typedef efi_status_t (UEFI_EFIAPI *efi_query_capsule_caps_t)(
 typedef efi_status_t (UEFI_EFIAPI *efi_query_variable_info_t)(
     uint32_t attrs, uint64_t *max_storage, uint64_t *remaining, uint64_t *max_var);
 
-/* Kernel-side EFI_RUNTIME_SERVICES — must match UEFI spec layout exactly */
+/* Kernel-side EFI_RUNTIME_SERVICES -- must match UEFI spec layout exactly */
 struct efi_runtime_services {
     struct efi_table_header         hdr;
     efi_get_time_t                  get_time;
@@ -97,7 +97,7 @@ static uint32_t s_supported;                 /* EFI_RT_SUPPORTED_* bitmask */
 /* ---- Internal helpers ---- */
 
 /* Build virtual address map with identity mapping (virt = phys) and call
- * SetVirtualAddressMap().  Can only be called ONCE — irreversible. */
+ * SetVirtualAddressMap().  Can only be called ONCE -- irreversible. */
 static void call_set_virtual_address_map(void)
 {
     uint32_t count = g_boot_info.rt_mmap_count;
@@ -105,7 +105,7 @@ static void call_set_virtual_address_map(void)
     uint32_t desc_version = g_boot_info.uefi_mmap_desc_version;
 
     if (count == 0) {
-        klog(LOG_WARN, "UEFI", "No runtime memory regions — skipping SVAM");
+        klog(LOG_WARN, "UEFI", "No runtime memory regions -- skipping SVAM");
         return;
     }
 
@@ -115,7 +115,7 @@ static void call_set_virtual_address_map(void)
         desc_size = (uint32_t)sizeof(struct efi_memory_descriptor);
 
     /* Build the virtual map in a stack-local array.
-     * 64 entries × 40 bytes = 2560 bytes — fits on the kernel stack. */
+     * 64 entries × 40 bytes = 2560 bytes -- fits on the kernel stack. */
     struct efi_memory_descriptor vmap[BOOT_RT_MMAP_MAX];
 
     uint32_t i;
@@ -154,7 +154,7 @@ static void read_rt_properties(void)
     uintptr_t table_addr = uefi_find_config_table(&rt_props_guid);
 
     if (table_addr == 0) {
-        /* Table absent — assume all services supported (UEFI < 2.10) */
+        /* Table absent -- assume all services supported (UEFI < 2.10) */
         s_supported = 0xFFFFFFFF;
         return;
     }
@@ -189,7 +189,7 @@ void uefi_runtime_init(void)
     /* Read supported services mask before SVAM (config table is still valid) */
     read_rt_properties();
 
-    /* Call SetVirtualAddressMap — identity mapping, ONE TIME ONLY */
+    /* Call SetVirtualAddressMap -- identity mapping, ONE TIME ONLY */
     call_set_virtual_address_map();
 
     /* Mark available if SVAM succeeded (s_available wasn't cleared) */
@@ -285,7 +285,7 @@ uint32_t uefi_enumerate_variables(void)
     if (!(s_supported & EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME))
         return 0;
 
-    /* Buffer for variable name — UEFI spec says max 1024 bytes */
+    /* Buffer for variable name -- UEFI spec says max 1024 bytes */
     uint16_t name_buf[512];  /* 512 × 2 = 1024 bytes */
     struct boot_uefi_guid guid;
     uint64_t name_size;
@@ -414,7 +414,7 @@ void uefi_reset(uint32_t reset_type)
         s_rt->reset_system(reset_type, UEFI_SUCCESS, 0, (void *)0);
         spin_unlock(&s_rt_lock);
         /* If we get here, it failed */
-        klog(LOG_ERROR, "UEFI", "ResetSystem() returned — falling back");
+        klog(LOG_ERROR, "UEFI", "ResetSystem() returned -- falling back");
     }
 
     /* Fallback: keyboard controller reset (0x64/0xFE) */
@@ -478,11 +478,11 @@ void uefi_time_init(void)
 
     efi_status_t status = uefi_get_time(&t, &caps);
     if (status != UEFI_SUCCESS) {
-        klog(LOG_WARN, "UEFI", "GetTime failed — wall clock not seeded");
+        klog(LOG_WARN, "UEFI", "GetTime failed -- wall clock not seeded");
         return;
     }
 
-    /* Format: "YYYY-MM-DD HH:MM:SS" — manual zero-padding (no %02u in klog) */
+    /* Format: "YYYY-MM-DD HH:MM:SS" -- manual zero-padding (no %02u in klog) */
     char ts[20];
     uint16_t y = t.year;
     ts[0]  = '0' + (char)(y / 1000);
@@ -708,7 +708,7 @@ static void read_security_db(const uint16_t *name,
     if (status != UEFI_BUFFER_TOO_SMALL || sz == 0)
         return;  /* Variable doesn't exist or is empty */
 
-    /* Use a static buffer — security DBs are typically 1-4 KB in OVMF,
+    /* Use a static buffer -- security DBs are typically 1-4 KB in OVMF,
      * up to ~32 KB on real hardware with many entries.
      * We cap at 8 KB to avoid stack overflow. */
     if (sz > 8192) sz = 8192;
@@ -772,16 +772,16 @@ const struct secureboot_db_info *secureboot_get_db_info(void)
 }
 
 /* ============================================================================
- * Crypto Agility (§5.3 — UEFI 2.10)
+ * Crypto Agility (§5.3 -- UEFI 2.10)
  *
  * Reads the CryptoIndication variables to determine firmware algorithm
  * capabilities and active negotiated set.  These variables enable OS-driven
  * algorithm upgrades (e.g., SHA-256 → SHA-384) without firmware reflash.
  *
  * Variable names (all under EFI_GLOBAL_VARIABLE GUID):
- *   "CryptoIndicationsSupported" — firmware lists everything it can do
- *   "CryptoIndications"          — OS writes what it wants for next boot
- *   "CryptoIndicationsActivated" — firmware confirms what's active now
+ *   "CryptoIndicationsSupported" -- firmware lists everything it can do
+ *   "CryptoIndications"          -- OS writes what it wants for next boot
+ *   "CryptoIndicationsActivated" -- firmware confirms what's active now
  *
  * OVMF/EDK2 does not currently implement these (UEFI 2.10 is new), so
  * this will gracefully report "not available" on most test platforms.
@@ -841,13 +841,13 @@ void uefi_crypto_agility_init(void)
 
     s_crypto_info.available = 1;
 
-    /* Read CryptoIndications (OS-owned — what we previously requested) */
+    /* Read CryptoIndications (OS-owned -- what we previously requested) */
     static const uint16_t name_req[] = {
         'C','r','y','p','t','o','I','n','d','i','c','a','t','i','o','n','s',
         0 };
     s_crypto_info.requested = read_crypto_var(name_req);
 
-    /* Read CryptoIndicationsActivated (firmware-owned — what's active now) */
+    /* Read CryptoIndicationsActivated (firmware-owned -- what's active now) */
     static const uint16_t name_act[] = {
         'C','r','y','p','t','o','I','n','d','i','c','a','t','i','o','n','s',
         'A','c','t','i','v','a','t','e','d', 0 };
@@ -908,11 +908,11 @@ const struct crypto_agility_info *uefi_crypto_agility_info(void)
  * Capsule Firmware Update (§6.1)
  *
  * ╔══════════════════════════════════════════════════════════════════════╗
- * ║  ⚠️  DANGER — READ EVERY WORD BEFORE MODIFYING THIS SECTION  ⚠️     ║
+ * ║  ⚠️  DANGER -- READ EVERY WORD BEFORE MODIFYING THIS SECTION  ⚠️     ║
  * ╠══════════════════════════════════════════════════════════════════════╣
  * ║                                                                    ║
  * ║  UpdateCapsule() writes to SPI flash.  A bad capsule BRICKS the   ║
- * ║  motherboard.  There is NO software recovery — you need a $5      ║
+ * ║  motherboard.  There is NO software recovery -- you need a $5      ║
  * ║  CH341A SPI programmer and steady hands to solder an SOIC clip.   ║
  * ║                                                                    ║
  * ║  Real-world bricking scenarios:                                    ║
@@ -954,7 +954,7 @@ void uefi_capsule_init(void)
     /* Check if firmware advertises capsule support via the
      * EFI_RT_PROPERTIES_TABLE supported bitmask.
      *
-     * This is the SAFE way to probe — it only reads a previously-cached
+     * This is the SAFE way to probe -- it only reads a previously-cached
      * bitmask (s_supported), no firmware calls are made.
      *
      * We deliberately do NOT call QueryCapsuleCapabilities() here because:
@@ -974,12 +974,12 @@ void uefi_capsule_init(void)
 
         /* TODO: When we have ESRT parsing + crypto stack, implement:
          *
-         * Phase 1 — Query (SAFE, read-only):
+         * Phase 1 -- Query (SAFE, read-only):
          *   For each ESRT entry, build a minimal EFI_CAPSULE_HEADER with
          *   the FwClass GUID and call QueryCapsuleCapabilities() to get
          *   max_capsule_size and reset_type for that firmware component.
          *
-         * Phase 2 — Validate (SAFE, no flash writes):
+         * Phase 2 -- Validate (SAFE, no flash writes):
          *   Given a capsule file:
          *   a. Parse the capsule header (CapsuleGuid, size, flags)
          *   b. Verify CapsuleGuid matches an ESRT FwClass entry
@@ -988,11 +988,11 @@ void uefi_capsule_init(void)
          *   e. Check capsule version >= ESRT LowestSupportedFwVersion
          *   f. Check AC power via ACPI
          *
-         * Phase 3 — Apply (DANGEROUS, writes firmware flash):
+         * Phase 3 -- Apply (DANGEROUS, writes firmware flash):
          *   a. Display user confirmation with 10-second countdown
          *   b. Allocate capsule in EfiRuntimeServicesData memory
          *   c. Set CAPSULE_FLAGS_PERSIST_ACROSS_RESET
-         *   d. Call UpdateCapsule() — firmware stages for next reboot
+         *   d. Call UpdateCapsule() -- firmware stages for next reboot
          *   e. Call ResetSystem(EfiResetCold) to trigger firmware update
          *   f. On next boot, read CapsuleResultVariable for status
          *

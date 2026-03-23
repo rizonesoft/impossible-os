@@ -1,5 +1,5 @@
 /* ============================================================================
- * smbios.c — SMBIOS System Information Parser
+ * smbios.c -- SMBIOS System Information Parser
  *
  * Walks SMBIOS structures found via UEFI Configuration Table.
  * Extracts BIOS, System, Baseboard, Processor, and Memory info.
@@ -178,7 +178,7 @@ static void parse_type17(const struct smbios_header *hdr)
     s_info.ram_total_mb += size_mb;
     s_info.ram_dimm_count++;
 
-    /* Speed at offset 0x15 (uint16_t LE, MHz) — SMBIOS 2.3+ */
+    /* Speed at offset 0x15 (uint16_t LE, MHz) -- SMBIOS 2.3+ */
     if (hdr->length >= 0x17 && s_info.ram_speed_mhz == 0) {
         s_info.ram_speed_mhz = (uint16_t)(d[0x15] | ((uint16_t)d[0x16] << 8));
     }
@@ -280,7 +280,7 @@ void smbios_init(void)
         return;
     }
 
-    klog(LOG_INFO, "SMBIOS", "v%u.%u — %s %s",
+    klog(LOG_INFO, "SMBIOS", "v%u.%u -- %s %s",
          (uint32_t)s_info.smbios_major, (uint32_t)s_info.smbios_minor,
          s_info.sys_manufacturer[0] ? s_info.sys_manufacturer : "Unknown",
          s_info.sys_product[0] ? s_info.sys_product : "Unknown");

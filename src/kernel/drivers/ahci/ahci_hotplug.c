@@ -1,5 +1,5 @@
 /* ============================================================================
- * ahci_hotplug.c — AHCI Hot-Plug Detection and Management
+ * ahci_hotplug.c -- AHCI Hot-Plug Detection and Management
  *
  * Handles PxIS.PCS (Port Connect Change) and PxIS.PRCS (PhyRdy Change)
  * interrupts for native SATA hot-plug support.
@@ -188,7 +188,7 @@ void ahci_hotplug_remove(int port_idx)
 
     if (!p->active) {
         klog(LOG_DEBUG, "ahci",
-               "Port %u: removal on inactive port — ignoring",
+               "Port %u: removal on inactive port -- ignoring",
                (uint64_t)p->port_num);
         return;
     }
@@ -196,12 +196,12 @@ void ahci_hotplug_remove(int port_idx)
     /* Step 1: Stop command engine */
     port_stop_cmd(pregs);
 
-    /* Step 2: Flush dirty buffers — skip if device is already gone.
+    /* Step 2: Flush dirty buffers -- skip if device is already gone.
      * Check PxSSTS.DET first; if 0, the device is physically absent. */
     {
         uint32_t ssts = port_read(pregs, AHCI_PxSSTS);
         if ((ssts & AHCI_SSTS_DET_MASK) == AHCI_SSTS_DET_OK) {
-            /* Device still partially present — try to flush */
+            /* Device still partially present -- try to flush */
             klog(LOG_DEBUG, "ahci",
                    "Port %u: attempting cache flush before removal",
                    (uint64_t)p->port_num);
@@ -275,7 +275,7 @@ void ahci_hotplug_remove(int port_idx)
     }
 
     klog(LOG_INFO, "ahci",
-           "Port %u: removal complete — resources released",
+           "Port %u: removal complete -- resources released",
            (uint64_t)p->port_num);
 }
 

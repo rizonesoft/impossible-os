@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_efs.c — Encrypting File System (EFS) Support (§9.3)
+ * ntfs_efs.c -- Encrypting File System (EFS) Support (S9.3)
  *
  * Implements:
  *   - $EFS attribute parser (type 0x100, $LOGGED_UTILITY_STREAM named "$EFS")
@@ -18,7 +18,7 @@
  *   - File data is AES-256 encrypted with the FEK
  *   - Mutual exclusion: compressed + encrypted is FORBIDDEN by NTFS
  *
- * → XREF: TODO-305-CNG-Crypto §3.1 — EFS integration glue (cng_efs_*)
+ * -> XREF: TODO-305-CNG-Crypto S3.1 -- EFS integration glue (cng_efs_*)
  * ============================================================================ */
 
 #include "kernel/fs/ntfs.h"
@@ -27,13 +27,13 @@
 #include "kernel/klog.h"
 
 /* ============================================================================
- * FEK Cache — per-volume LRU cache for decrypted File Encryption Keys
+ * FEK Cache -- per-volume LRU cache for decrypted File Encryption Keys
  *
  * Avoids repeated RSA unwrap for the same file. Limited to 16 entries;
  * LRU eviction when full. Access counter used for eviction ordering.
  * ============================================================================ */
 
-/* Static FEK cache (one per volume — single volume for now) */
+/* Static FEK cache (one per volume -- single volume for now) */
 static struct ntfs_efs_fek_entry efs_fek_cache[NTFS_EFS_FEK_CACHE_SIZE];
 static uint64_t efs_cache_access_counter = 0;
 
@@ -158,7 +158,7 @@ int ntfs_efs_parse(const uint8_t *record, const struct ntfs_mft_header *hdr,
                                 NTFS_ATTR_LOGGED_UTILITY_STREAM,
                                 "$EFS", &ah);
     if (!attr) {
-        /* No $EFS attribute — file is not EFS-encrypted */
+        /* No $EFS attribute -- file is not EFS-encrypted */
         return NTFS_ERR_NOT_FOUND;
     }
 
@@ -229,7 +229,7 @@ int ntfs_efs_parse(const uint8_t *record, const struct ntfs_mft_header *hdr,
         out->ddfs[i].sid_offset = ddf_base + sid_off;
         out->ddfs[i].sid_length = sid_len;
 
-        /* Store thumbprint — copy up to 20 bytes (SHA-1) */
+        /* Store thumbprint -- copy up to 20 bytes (SHA-1) */
         if (thumb_off + thumb_len <= entry_len &&
             thumb_len <= NTFS_EFS_THUMB_LEN) {
             ntfs_memcpy(out->ddfs[i].cert_thumbprint,
@@ -279,9 +279,9 @@ int ntfs_efs_find_ddf(const struct ntfs_efs_info *info,
  * primitives are implemented (AES-256, RSA-2048, cert store), these stubs
  * will be replaced with real crypto calls:
  *
- *   ntfs_efs_unwrap_fek  → cng_efs_get_fek()    (RSA OAEP decrypt)
- *   ntfs_efs_decrypt_data → cng_efs_decrypt_data() (AES-256 decrypt)
- *   ntfs_efs_encrypt_data → cng_efs_encrypt_data() (AES-256 encrypt)
+ *   ntfs_efs_unwrap_fek  -> cng_efs_get_fek()    (RSA OAEP decrypt)
+ *   ntfs_efs_decrypt_data -> cng_efs_decrypt_data() (AES-256 decrypt)
+ *   ntfs_efs_encrypt_data -> cng_efs_encrypt_data() (AES-256 encrypt)
  * ============================================================================ */
 
 int ntfs_efs_unwrap_fek(const struct ntfs_efs_ddf *ddf,
@@ -301,8 +301,8 @@ int ntfs_efs_unwrap_fek(const struct ntfs_efs_ddf *ddf,
     (void)fek_out;
 
     klog(LOG_WARN, "ntfs",
-         "EFS: cannot unwrap FEK — CNG key store not initialized "
-         "(→ TODO-305-CNG-Crypto §1.3)");
+         "EFS: cannot unwrap FEK -- CNG key store not initialized "
+         "(-> TODO-305-CNG-Crypto S1.3)");
     return NTFS_ERR_NOT_READY;
 }
 
@@ -320,8 +320,8 @@ int ntfs_efs_decrypt_data(const uint8_t *fek, void *buf, uint64_t len)
     (void)len;
 
     klog(LOG_WARN, "ntfs",
-         "EFS: cannot decrypt — CNG not initialized "
-         "(→ TODO-305-CNG-Crypto §1.1)");
+         "EFS: cannot decrypt -- CNG not initialized "
+         "(-> TODO-305-CNG-Crypto S1.1)");
     return NTFS_ERR_NOT_READY;
 }
 
@@ -339,13 +339,13 @@ int ntfs_efs_encrypt_data(const uint8_t *fek, void *buf, uint64_t len)
     (void)len;
 
     klog(LOG_WARN, "ntfs",
-         "EFS: cannot encrypt — CNG not initialized "
-         "(→ TODO-305-CNG-Crypto §1.1)");
+         "EFS: cannot encrypt -- CNG not initialized "
+         "(-> TODO-305-CNG-Crypto S1.1)");
     return NTFS_ERR_NOT_READY;
 }
 
 /* ============================================================================
- * ntfs_efs_add_user — Add authorized user to $EFS DDF list
+ * ntfs_efs_add_user -- Add authorized user to $EFS DDF list
  * ============================================================================ */
 
 int ntfs_efs_add_user(struct ntfs_volume *vol, uint64_t inode,
@@ -366,8 +366,8 @@ int ntfs_efs_add_user(struct ntfs_volume *vol, uint64_t inode,
     (void)cert_thumbprint;
 
     klog(LOG_WARN, "ntfs",
-         "EFS: cannot add user — CNG not initialized "
-         "(→ TODO-305-CNG-Crypto §1.2)");
+         "EFS: cannot add user -- CNG not initialized "
+         "(-> TODO-305-CNG-Crypto S1.2)");
     return NTFS_ERR_NOT_READY;
 }
 
@@ -421,13 +421,13 @@ int64_t ntfs_read_encrypted_data(struct ntfs_volume *vol,
         /* Try to unwrap FEK from the first DDF entry.
          * (Real implementation would match user's cert thumbprint) */
         if (efs_info.ddf_count == 0) {
-            klog(LOG_WARN, "ntfs", "EFS: no DDF entries — no authorized users");
+            klog(LOG_WARN, "ntfs", "EFS: no DDF entries -- no authorized users");
             return -1;
         }
 
         rc = ntfs_efs_unwrap_fek(&efs_info.ddfs[0], efs_info.raw_data, fek);
         if (rc == NTFS_ERR_NOT_READY) {
-            /* CNG not available — return raw encrypted data with warning */
+            /* CNG not available -- return raw encrypted data with warning */
             klog(LOG_WARN, "ntfs",
                  "EFS: returning raw encrypted data (CNG not ready)");
             return -1;

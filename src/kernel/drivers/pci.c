@@ -147,7 +147,7 @@ void pci_scan(void)
                 cls = pci_read8(bus, dev, func, PCI_CLASS);
                 sub = pci_read8(bus, dev, func, PCI_SUBCLASS);
 
-                klog(LOG_DEBUG, "pci", "%u:%u.%u  %x:%x  %s",
+                klog(LOG_DEBUG, "pci", "%u:%u.%u  0x%x:%x  %s",
                        (uint64_t)bus, (uint64_t)dev, (uint64_t)func,
                        (uint64_t)vendor, (uint64_t)device,
                        pci_class_name(cls, sub));

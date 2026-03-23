@@ -1,15 +1,15 @@
 /* ============================================================================
- * ntfs_recovery.c — $LogFile Recovery Replay (§13.2)
+ * ntfs_recovery.c -- $LogFile Recovery Replay (§13.2)
  *
  * When an NTFS volume is mounted with the dirty flag set in $Volume (inode 3),
  * this module replays the $LogFile to restore consistency. The ARIES-style
  * recovery protocol has three phases:
  *
- *   1. Analysis pass — scan forward from checkpoint LSN, build transaction
+ *   1. Analysis pass -- scan forward from checkpoint LSN, build transaction
  *      table (active vs committed) and dirty page table.
- *   2. Redo pass — replay committed operations that may not have been
- *      flushed to disk (idempotent — safe to reapply).
- *   3. Undo pass — roll back incomplete (uncommitted) transactions by
+ *   2. Redo pass -- replay committed operations that may not have been
+ *      flushed to disk (idempotent -- safe to reapply).
+ *   3. Undo pass -- roll back incomplete (uncommitted) transactions by
  *      applying their undo operations in reverse LSN order.
  *
  * After successful recovery, the dirty flag is cleared in $Volume and
@@ -77,7 +77,7 @@
 #define RECOVERY_MAX_RECORDS  65536
 
 /* ============================================================================
- * Transaction table entry — built during the analysis pass
+ * Transaction table entry -- built during the analysis pass
  * ============================================================================ */
 
 #define TXN_STATE_ACTIVE     0   /* Started but no commit/abort record seen */
@@ -94,7 +94,7 @@ struct recovery_txn {
 };
 
 /* ============================================================================
- * Log record entry — cached for redo/undo passes
+ * Log record entry -- cached for redo/undo passes
  * ============================================================================ */
 
 struct log_record {
@@ -220,7 +220,7 @@ static int analysis_pass(struct ntfs_volume *vol,
 
         magic = ntfs_le32(page_buf + 0x00);
         if (magic != RCRD_MAGIC) {
-            /* Not a valid record page — skip */
+            /* Not a valid record page -- skip */
             scan_pos += vol->log_page_size;
             scanned_bytes += vol->log_page_size;
             continue;
@@ -336,7 +336,7 @@ static int analysis_pass(struct ntfs_volume *vol,
     }
 
     klog(LOG_INFO, "ntfs",
-         "recovery: analysis complete — %d records, %d transactions",
+         "recovery: analysis complete -- %d records, %d transactions",
          (uint64_t)total_records, (uint64_t)*txn_count);
 
     return total_records;
@@ -349,7 +349,7 @@ static int analysis_pass(struct ntfs_volume *vol,
  * a committed transaction, apply the redo operation to restore the
  * on-disk state.
  *
- * Operations are idempotent — safe to reapply even if they were already
+ * Operations are idempotent -- safe to reapply even if they were already
  * flushed to disk. The redo data contains the exact bytes to write.
  *
  * Supported redo operations:
@@ -409,7 +409,7 @@ static int redo_pass(struct ntfs_volume *vol,
 
         switch (lr->redo_op) {
         case NTFS_LOG_OP_INIT_FRS:
-            /* Full MFT record initialization — the redo data contains
+            /* Full MFT record initialization -- the redo data contains
              * the complete MFT record content to write. */
             if (lr->redo_len > 0 && lr->target_lcn > 0) {
                 uint8_t *redo_data;
@@ -437,7 +437,7 @@ static int redo_pass(struct ntfs_volume *vol,
 
         case NTFS_LOG_OP_UPDATE_RESIDENT:
         case NTFS_LOG_OP_UPDATE_NONRES:
-            /* Partial update — read target record, patch bytes, write back */
+            /* Partial update -- read target record, patch bytes, write back */
             if (lr->redo_len > 0 && lr->target_lcn > 0) {
                 uint8_t *rec_buf;
                 uint8_t *redo_data;
@@ -505,7 +505,7 @@ static int redo_pass(struct ntfs_volume *vol,
     }
 
     klog(LOG_INFO, "ntfs",
-         "recovery: redo pass complete — %d replayed, %d skipped",
+         "recovery: redo pass complete -- %d replayed, %d skipped",
          (uint64_t)replayed, (uint64_t)skipped);
 
     return replayed;
@@ -555,11 +555,11 @@ static int undo_pass(struct ntfs_volume *vol,
             lr->undo_op == NTFS_LOG_OP_COMPENSATION)
             continue;
 
-        /* Apply undo operation — same logic as redo but using undo data */
+        /* Apply undo operation -- same logic as redo but using undo data */
         switch (lr->undo_op) {
         case NTFS_LOG_OP_INIT_FRS:
         case NTFS_LOG_OP_DEALLOC_FRS:
-            /* MFT record deallocation — write the undo (original) data
+            /* MFT record deallocation -- write the undo (original) data
              * back to restore the previous MFT record content. */
             if (lr->undo_len > 0 && lr->target_lcn > 0) {
                 uint8_t *undo_data;
@@ -586,7 +586,7 @@ static int undo_pass(struct ntfs_volume *vol,
 
         case NTFS_LOG_OP_UPDATE_RESIDENT:
         case NTFS_LOG_OP_UPDATE_NONRES:
-            /* Partial update undo — restore original bytes */
+            /* Partial update undo -- restore original bytes */
             if (lr->undo_len > 0 && lr->target_lcn > 0) {
                 uint8_t *rec_buf;
                 uint8_t *undo_data;
@@ -632,7 +632,7 @@ static int undo_pass(struct ntfs_volume *vol,
     }
 
     klog(LOG_INFO, "ntfs",
-         "recovery: undo pass complete — %d operations rolled back",
+         "recovery: undo pass complete -- %d operations rolled back",
          (uint64_t)rolled_back);
 
     return rolled_back;
@@ -799,13 +799,13 @@ static int reset_logfile(struct ntfs_volume *vol)
 }
 
 /* ============================================================================
- * ntfs_recovery_replay — Main entry point
+ * ntfs_recovery_replay -- Main entry point
  *
  * Called during mount when vol->volume_dirty is set.
  * Orchestrates the three-phase ARIES recovery:
- *   1. Analysis — build transaction and dirty page tables
- *   2. Redo — replay committed ops
- *   3. Undo — roll back uncommitted ops
+ *   1. Analysis -- build transaction and dirty page tables
+ *   2. Redo -- replay committed ops
+ *   3. Undo -- roll back uncommitted ops
  *
  * After recovery, clears the dirty flag and resets $LogFile.
  * ============================================================================ */
@@ -830,25 +830,25 @@ int ntfs_recovery_replay(struct ntfs_volume *vol)
 
     if (!vol->volume_dirty) {
         klog(LOG_DEBUG, "ntfs",
-             "recovery: volume is clean — no recovery needed");
+             "recovery: volume is clean -- no recovery needed");
         return NTFS_OK;
     }
 
     if (!vol->journal_loaded) {
         klog(LOG_ERROR, "ntfs",
-             "recovery: journal not loaded — cannot replay");
+             "recovery: journal not loaded -- cannot replay");
         return NTFS_ERR_IO;
     }
 
     klog(LOG_WARN, "ntfs",
-         "=== NTFS Recovery: volume dirty flag set — starting replay ===");
+         "=== NTFS Recovery: volume dirty flag set -- starting replay ===");
 
     /* Get checkpoint LSN from restart area */
     checkpoint_lsn = 0; /* Start from beginning if no checkpoint */
     /* TODO: Read client's oldest_lsn from restart area for proper checkpoint.
      * For now, scanning from LSN 0 catches all records. */
 
-    /* Allocate tables — use kmalloc since these are transient */
+    /* Allocate tables -- use kmalloc since these are transient */
     txn_table = (struct recovery_txn *)kmalloc(
         RECOVERY_MAX_TXNS * sizeof(struct recovery_txn));
     records = (struct log_record *)kmalloc(

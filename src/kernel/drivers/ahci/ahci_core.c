@@ -1,5 +1,5 @@
 /* ============================================================================
- * ahci_core.c — AHCI driver core: state, MMIO, port management, ISR, init
+ * ahci_core.c -- AHCI driver core: state, MMIO, port management, ISR, init
  * ============================================================================ */
 
 #include "kernel/drivers/ahci_internal.h"
@@ -167,7 +167,7 @@ static int port_init(struct ahci_port *p, int port_num)
      *   ATAPI: LBAMid=0x14, LBAHi=0xEB → PxSIG=0xEB140101
      *   SEMB:  LBAMid=0x3C, LBAHi=0xC3 → PxSIG=0xC33C0101
      *   PM:    LBAMid=0x69, LBAHi=0x96 → PxSIG=0x96690101
-     * Never use the Status register alone — it fails on modern hardware. */
+     * Never use the Status register alone -- it fails on modern hardware. */
     p->sig = port_read(pregs, AHCI_PxSIG);
 
     switch (p->sig) {
@@ -189,14 +189,14 @@ static int port_init(struct ahci_port *p, int port_num)
     case AHCI_SIG_SEMB:
         p->device_type = AHCI_DEV_SEMB;
         klog(LOG_DEBUG, "ahci",
-             "Port %u: SEMB (enclosure management bridge) — skipped",
+             "Port %u: SEMB (enclosure management bridge) -- skipped",
              (uint64_t)port_num);
         return -1;
 
     case AHCI_SIG_PM:
         p->device_type = AHCI_DEV_PM;
         klog(LOG_DEBUG, "ahci",
-             "Port %u: port multiplier detected — not yet supported",
+             "Port %u: port multiplier detected -- not yet supported",
              (uint64_t)port_num);
         return -1;
 
@@ -205,7 +205,7 @@ static int port_init(struct ahci_port *p, int port_num)
         p->device_type = AHCI_DEV_NULL;
         if (p->sig != 0xFFFFFFFF && p->sig != 0x00000000) {
             klog(LOG_DEBUG, "ahci",
-                 "Port %u: unknown signature 0x%x — skipped",
+                 "Port %u: unknown signature 0x%x -- skipped",
                  (uint64_t)port_num, (uint64_t)p->sig);
         }
         return -1;
@@ -373,7 +373,7 @@ int port_clo_reset(struct ahci_port *p)
     volatile uint8_t *pregs = p->regs;
     uint32_t cmd, wait;
 
-    klog(LOG_WARN, "ahci", "Port %u: CLO recovery — BSY/DRQ stuck, link reset",
+    klog(LOG_WARN, "ahci", "Port %u: CLO recovery -- BSY/DRQ stuck, link reset",
            (uint64_t)p->port_num);
 
     port_stop_cmd(pregs);
@@ -591,7 +591,7 @@ int ahci_init(void)
     abar_addr = (uint64_t)(bar5 & 0xFFFFF000);
 
     if (abar_addr == 0) {
-        klog(LOG_DEBUG, "ahci", "BAR5 is zero — no ABAR");
+        klog(LOG_DEBUG, "ahci", "BAR5 is zero -- no ABAR");
         return -1;
     }
 
@@ -635,7 +635,7 @@ int ahci_init(void)
 
             klog(LOG_INFO, "ahci", "BIOS/OS handoff complete");
         } else {
-            klog(LOG_DEBUG, "ahci", "BOHC not supported — skipping handoff");
+            klog(LOG_DEBUG, "ahci", "BOHC not supported -- skipping handoff");
         }
     }
 
@@ -804,7 +804,7 @@ void ahci_setup_interrupts(void)
                                     ahci_pci_func, cap_off + 2,
                                     msi_ctrl);
 
-                        /* Disable legacy INTx — MSI takes over */
+                        /* Disable legacy INTx -- MSI takes over */
                         {
                             uint16_t cmd = pci_read16(ahci_pci_bus,
                                                       ahci_pci_slot,
@@ -858,7 +858,7 @@ void ahci_setup_interrupts(void)
                 ghc |= AHCI_GHC_IE;
                 ahci_write32(abar, AHCI_GHC, ghc);
 
-                /* NOTE: use_events stays 0 — same as MSI path */
+                /* NOTE: use_events stays 0 -- same as MSI path */
                 irq_ok = 1;
                 klog(LOG_INFO, "ahci",
                        "AHCI: INTx IRQ %u -> vector 0x%x (legacy)",

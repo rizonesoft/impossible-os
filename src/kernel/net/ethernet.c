@@ -35,7 +35,7 @@ void net_init(void)
 
     arp_init();
 
-    klog(LOG_DEBUG, "net", "Stack initialized, MAC: %x:%x:%x:%x:%x:%x",
+    klog(LOG_DEBUG, "net", "Stack initialized, MAC: %02X:%02X:%02X:%02X:%02X:%02X",
            (uint64_t)net_cfg.mac[0], (uint64_t)net_cfg.mac[1],
            (uint64_t)net_cfg.mac[2], (uint64_t)net_cfg.mac[3],
            (uint64_t)net_cfg.mac[4], (uint64_t)net_cfg.mac[5]);

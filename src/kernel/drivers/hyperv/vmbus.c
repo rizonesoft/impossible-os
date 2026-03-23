@@ -1,15 +1,15 @@
 /* ============================================================================
- * vmbus.c — Hyper-V VMBus paravirtualization core
+ * vmbus.c -- Hyper-V VMBus paravirtualization core
  *
  * Clean-room implementation from the public Hyper-V Top-Level Functional
  * Specification (TLFS). NO code derived from Linux hv_vmbus.c (GPL).
  *
  * Boot sequence:
- *   1. hv_detect()         — CPUID check for Hyper-V signature
- *   2. hv_setup_hypercall() — guest OS ID + hypercall page via MSRs
- *   3. hv_setup_synic()     — SIM/SIEF pages + SINT2 for VMBus
- *   4. vmbus_connect()      — negotiate protocol version with host
- *   5. vmbus_enumerate()    — request + receive channel offers
+ *   1. hv_detect()         -- CPUID check for Hyper-V signature
+ *   2. hv_setup_hypercall() -- guest OS ID + hypercall page via MSRs
+ *   3. hv_setup_synic()     -- SIM/SIEF pages + SINT2 for VMBus
+ *   4. vmbus_connect()      -- negotiate protocol version with host
+ *   5. vmbus_enumerate()    -- request + receive channel offers
  *
  * Reference: https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs
  * ============================================================================ */
@@ -149,7 +149,7 @@ int hv_detect(void)
     if ((privs & required_privs) != required_privs) {
         klog(LOG_INFO, "hyperv",
              "Hyper-V signature found but missing privileges "
-             "(have=0x%x, need=0x%x) — not a full Hyper-V host",
+             "(have=0x%x, need=0x%x) -- not a full Hyper-V host",
              (uint64_t)privs, (uint64_t)required_privs);
         hv_detected = 0;
         return 0;
@@ -169,7 +169,7 @@ int hv_detect(void)
 #define HV_STATUS_INVALID_HYPERCALL_CODE    0x0002
 #define HV_STATUS_INVALID_PARAMETER         0x0005
 
-/* Raw hypercall — returns status code (lower 16 bits of RAX).
+/* Raw hypercall -- returns status code (lower 16 bits of RAX).
  * Used for smoke test before full VMBus init. */
 static uint16_t hv_do_hypercall_raw(uint64_t control, uint64_t input_gpa)
 {
@@ -209,7 +209,7 @@ static int hv_setup_hypercall(void)
     vmbus_memset(hypercall_page, 0, 4096);
     page_gpa = (uint64_t)(uintptr_t)hypercall_page;
 
-    /* Step 3: Enable hypercall page — write GPA with enable bit */
+    /* Step 3: Enable hypercall page -- write GPA with enable bit */
     msr_val = (page_gpa & ~0xFFFULL) | HV_HYPERCALL_ENABLE;
     wrmsr(HV_X64_MSR_HYPERCALL, msr_val);
 
@@ -224,7 +224,7 @@ static int hv_setup_hypercall(void)
     klog(LOG_INFO, "hyperv", "Hypercall page at 0x%x (enabled)",
          (uint64_t)page_gpa);
 
-    /* Step 5: Smoke test — try HvCallPostMessage (0x005C) with a
+    /* Step 5: Smoke test -- try HvCallPostMessage (0x005C) with a
      * minimal (intentionally invalid) input to verify the hypercall
      * number is recognized. On real Hyper-V: returns 0x0005
      * (HV_STATUS_INVALID_PARAMETER). On WHPX/KVM: returns 0x0002
@@ -248,7 +248,7 @@ static int hv_setup_hypercall(void)
     if (smoke_status == HV_STATUS_INVALID_HYPERCALL_CODE) {
         klog(LOG_INFO, "hyperv",
              "HvCallPostMessage not supported (status=0x%x) "
-             "— WHPX/KVM backend, skipping VMBus",
+             "-- WHPX/KVM backend, skipping VMBus",
              (uint64_t)smoke_status);
         /* Clean up: disable hypercall page */
         wrmsr(HV_X64_MSR_HYPERCALL, 0);
@@ -296,7 +296,7 @@ static int hv_setup_synic(void)
      * - Unmask (clear bit 16)
      * - AutoEOI (set bit 17) */
     sint_val = (uint64_t)VMBUS_INTERRUPT_VECTOR | HV_SINT_AUTO_EOI;
-    /* Note: NOT setting HV_SINT_MASKED — we want it unmasked */
+    /* Note: NOT setting HV_SINT_MASKED -- we want it unmasked */
     wrmsr(HV_X64_MSR_SINT_VMBUS, sint_val);
 
     /* Enable SynIC globally */
@@ -382,7 +382,7 @@ static struct hv_message *vmbus_wait_message(uint32_t timeout_ms)
     volatile uint32_t *msg_type = (volatile uint32_t *)((uintptr_t)&msg->header);
     uint32_t i;
 
-    /* Simple spin-wait — each iteration is ~1 µs on modern CPUs */
+    /* Simple spin-wait -- each iteration is ~1 µs on modern CPUs */
     for (i = 0; i < timeout_ms * 1000; i++) {
         __asm__ volatile("pause" ::: "memory");
         if (*msg_type != HV_MESSAGE_TYPE_NONE)
@@ -400,7 +400,7 @@ static void vmbus_ack_message(struct hv_message *msg)
     /* Clear the message slot */
     msg->header.message_type = HV_MESSAGE_TYPE_NONE;
 
-    /* Memory barrier — ensure message is cleared before EOM */
+    /* Memory barrier -- ensure message is cleared before EOM */
     __asm__ volatile("mfence" ::: "memory");
 
     /* If more messages are pending, write EOM to drain the queue */
@@ -675,7 +675,7 @@ static int vmbus_create_gpadl(struct vmbus_channel *ch, void *buffer,
     return 0;
 }
 
-/* Public wrapper — allows drivers (e.g. storvsc) to create GPADLs for
+/* Public wrapper -- allows drivers (e.g. storvsc) to create GPADLs for
  * their own data buffers that need to be visible to the host. */
 int vmbus_create_gpadl_external(struct vmbus_channel *ch, void *buffer,
                                 uint32_t page_count, uint32_t *out_handle)
@@ -781,7 +781,7 @@ int vmbus_open_channel(struct vmbus_channel *ch, uint32_t ring_page_count)
 /* Transaction ID counter (monotonic, never 0) */
 static uint64_t next_trans_id = 1;
 
-/* ---- Raw ring buffer write (no framing — caller provides full bytes) ---- */
+/* ---- Raw ring buffer write (no framing -- caller provides full bytes) ---- */
 
 int vmbus_ring_write(struct vmbus_channel *ch,
                      const void *data, uint32_t len)
@@ -1061,7 +1061,7 @@ void vmbus_signal_channel(struct vmbus_channel *ch)
         : "rax", "rcx", "rdx", "r8", "memory"
     );
 
-    /* Ignore status — signaling is best-effort */
+    /* Ignore status -- signaling is best-effort */
     (void)status;
 }
 
@@ -1077,7 +1077,7 @@ static void vmbus_irq_handler(uint8_t vector, void *ctx)
     if (sim_page) {
         struct hv_message *msg = &sim_page->messages[VMBUS_MESSAGE_SINT];
         if (msg->header.message_type != HV_MESSAGE_TYPE_NONE) {
-            /* Message pending — pollers (vmbus_wait_message) will pick it up.
+            /* Message pending -- pollers (vmbus_wait_message) will pick it up.
              * Future: wake blocked tasks here. */
         }
     }
@@ -1136,7 +1136,7 @@ int vmbus_init(void)
 {
     if (!hv_detect()) {
         klog(LOG_INFO, "hyperv",
-             "Not running on Hyper-V — skipping VMBus");
+             "Not running on Hyper-V -- skipping VMBus");
         return -1;
     }
 
@@ -1156,7 +1156,7 @@ int vmbus_init(void)
     if (irq_register(VMBUS_INTERRUPT_VECTOR, vmbus_irq_handler,
                      NULL, "vmbus") != IRQ_OK) {
         klog(LOG_WARN, "hyperv",
-             "Failed to register ISR at vec 0x%x — using catch-all stub",
+             "Failed to register ISR at vec 0x%x -- using catch-all stub",
              (uint64_t)VMBUS_INTERRUPT_VECTOR);
         /* Non-fatal: polling still works, ISR is an optimization */
     }

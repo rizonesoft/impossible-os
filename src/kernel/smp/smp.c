@@ -1,5 +1,5 @@
 /* ============================================================================
- * smp.c — SMP bringup (AP startup via INIT/SIPI IPI sequence)
+ * smp.c -- SMP bringup (AP startup via INIT/SIPI IPI sequence)
  *
  * Copies the AP trampoline to physical 0x8000, then for each AP discovered
  * in the ACPI MADT, writes shared data to 0x8E00 and sends INIT → SIPI.
@@ -57,7 +57,7 @@ static inline __attribute__((unused)) uint64_t rdmsr(uint32_t msr)
     return ((uint64_t)hi << 32) | lo;
 }
 
-/* IA32_GS_BASE MSR — used for per-CPU data pointer */
+/* IA32_GS_BASE MSR -- used for per-CPU data pointer */
 #define MSR_GS_BASE  0xC0000101
 
 /* Read CR3 (BSP's page table base) */
@@ -116,7 +116,7 @@ void ap_entry(uint32_t cpu_index)
     klog(LOG_INFO, "smp", "AP %u online (LAPIC ID=%u)",
          (uint64_t)cpu_index, (uint64_t)pcpu->lapic_id);
 
-    /* AP is parked — enable interrupts and halt.
+    /* AP is parked -- enable interrupts and halt.
      * The LAPIC timer or IPI will wake it when the scheduler is ready. */
     __asm__ volatile("sti");
     for (;;)
@@ -139,7 +139,7 @@ void smp_init(void)
 
     cpu_count = acpi_get_cpu_count();
     if (cpu_count <= 1) {
-        klog(LOG_INFO, "smp", "Single CPU — skipping AP bringup");
+        klog(LOG_INFO, "smp", "Single CPU -- skipping AP bringup");
         /* Initialize BSP per-CPU data (no LAPIC init needed on single-core) */
         cpu_data[0].self         = &cpu_data[0];
         cpu_data[0].cpu_id       = 0;
@@ -180,7 +180,7 @@ void smp_init(void)
         trampoline_dest[i] = ap_trampoline_start[i];
 
     klog(LOG_INFO, "smp",
-         "Trampoline: %u bytes copied to %x",
+         "Trampoline: %u bytes copied to 0x%x",
          (uint64_t)trampoline_size, (uint64_t)AP_TRAMPOLINE_ADDR);
 
     /* Get BSP's CR3, GDT, and IDT for AP use */

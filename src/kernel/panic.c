@@ -402,7 +402,7 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
         printk("    R14=%p  R15=%p  RBP=%p\n", frame->r14, frame->r15, frame->rbp);
         printk("    RSP=%p  RFLAGS=%p\n", frame->rsp, frame->rflags);
         printk("    CR2=%p  CR3=%p\n", cr2_val, cr3_val);
-        printk("    CS=%x  SS=%x\n", frame->cs, frame->ss);
+        printk("    CS=0x%x  SS=0x%x\n", frame->cs, frame->ss);
     }
 
     printk("\n");

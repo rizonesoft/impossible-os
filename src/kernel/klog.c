@@ -1,5 +1,5 @@
 /* ============================================================================
- * klog.c — Unified kernel logging
+ * klog.c -- Unified kernel logging
  *
  * Outputs formatted messages with level prefix and subsystem tag.
  * LOG_DEBUG goes to serial only; LOG_INFO and above go to both
@@ -108,7 +108,25 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
             BUF_PUT(*fmt++);
             continue;
         }
-        fmt++;
+        fmt++; /* skip '%' */
+        if (*fmt == '\0') break;
+        if (*fmt == '%') { BUF_PUT('%'); fmt++; continue; }
+
+        /* Parse zero-pad flag */
+        int zero_pad = 0;
+        if (*fmt == '0') { zero_pad = 1; fmt++; }
+
+        /* Parse width */
+        int width = 0;
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (*fmt - '0');
+            fmt++;
+        }
+
+        /* Parse length modifier: skip l, ll, h, hh */
+        while (*fmt == 'l' || *fmt == 'h') fmt++;
+
+        /* Specifier */
         switch (*fmt) {
         case 'd': case 'i': {
             int64_t v = va_arg(ap, int64_t);
@@ -116,6 +134,7 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
             if (v < 0) { BUF_PUT('-'); v = -v; }
             if (v == 0) { tmp[n++] = '0'; }
             else { while (v > 0) { tmp[n++] = '0' + (char)(v % 10); v /= 10; } }
+            while (n < width) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
             while (n > 0) BUF_PUT(tmp[--n]);
             break;
         }
@@ -124,21 +143,23 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
             char tmp[20]; int n = 0;
             if (v == 0) { tmp[n++] = '0'; }
             else { while (v > 0) { tmp[n++] = '0' + (char)(v % 10); v /= 10; } }
+            while (n < width) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
             while (n > 0) BUF_PUT(tmp[--n]);
             break;
         }
-        case 'x': {
-            const char hex[] = "0123456789ABCDEF";
+        case 'x': case 'X': {
+            const char *hex = (*fmt == 'X') ? "0123456789ABCDEF"
+                                            : "0123456789abcdef";
             uint64_t v = va_arg(ap, uint64_t);
-            BUF_PUT('0'); BUF_PUT('x');
             char tmp[16]; int n = 0;
             if (v == 0) { tmp[n++] = '0'; }
             else { while (v > 0) { tmp[n++] = hex[v & 0xF]; v >>= 4; } }
+            while (n < width) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
             while (n > 0) BUF_PUT(tmp[--n]);
             break;
         }
         case 'p': {
-            const char hex[] = "0123456789ABCDEF";
+            const char hex[] = "0123456789abcdef";
             uint64_t v = va_arg(ap, uint64_t);
             BUF_PUT('0'); BUF_PUT('x');
             for (int sh = 60; sh >= 0; sh -= 4)
@@ -153,9 +174,6 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
         }
         case 'c':
             BUF_PUT((char)va_arg(ap, int));
-            break;
-        case '%':
-            BUF_PUT('%');
             break;
         case '\0':
             goto done;
@@ -181,17 +199,39 @@ static void vformat_emit(void (*put)(char), void (*putstr)(const char *),
             put(*fmt++);
             continue;
         }
-        fmt++;
+        fmt++; /* skip '%' */
+        if (*fmt == '\0') return;
+        if (*fmt == '%') { put('%'); fmt++; continue; }
+
+        /* Parse zero-pad flag */
+        int zero_pad = 0;
+        if (*fmt == '0') { zero_pad = 1; fmt++; }
+
+        /* Parse width */
+        uint32_t width = 0;
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (uint32_t)(*fmt - '0');
+            fmt++;
+        }
+
+        /* Parse length modifier: skip l, ll, h, hh */
+        while (*fmt == 'l' || *fmt == 'h') fmt++;
+
+        (void)zero_pad; /* width already handled by min_digits */
+
+        /* Specifier */
         switch (*fmt) {
         case 'd': case 'i':
             emit_int(put, va_arg(ap, int64_t));
             break;
         case 'u':
-            emit_uint(put, va_arg(ap, uint64_t), 10, 0);
+            emit_uint(put, va_arg(ap, uint64_t), 10, width);
             break;
         case 'x':
-            putstr("0x");
-            emit_uint(put, va_arg(ap, uint64_t), 16, 0);
+            emit_uint(put, va_arg(ap, uint64_t), 16, width);
+            break;
+        case 'X':
+            emit_uint(put, va_arg(ap, uint64_t), 16, width);
             break;
         case 'p':
             putstr("0x");
@@ -204,9 +244,6 @@ static void vformat_emit(void (*put)(char), void (*putstr)(const char *),
         }
         case 'c':
             put((char)va_arg(ap, int));
-            break;
-        case '%':
-            put('%');
             break;
         case '\0':
             return;
@@ -230,7 +267,7 @@ static const char *level_prefix[] = {
 };
 
 static const uint32_t level_color[] = {
-    FB_COLOR_FG_DEFAULT,  /* LOG_DEBUG — shouldn't reach FB */
+    FB_COLOR_FG_DEFAULT,  /* LOG_DEBUG -- shouldn't reach FB */
     FB_COLOR_GREEN,       /* LOG_INFO  */
     FB_COLOR_YELLOW,      /* LOG_WARN  */
     FB_COLOR_RED,         /* LOG_ERROR */
@@ -319,7 +356,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
             fb_str(": ");
         }
 
-        /* Formatted message (framebuffer only — serial was done above) */
+        /* Formatted message (framebuffer only -- serial was done above) */
         va_start(ap, fmt);
         vformat_emit(fb_char, fb_str, fmt, ap);
         va_end(ap);
@@ -336,7 +373,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 
     /* ---- FATAL: halt ---- */
     if (level == LOG_FATAL) {
-        serial_str("[**] FATAL — system halted\r\n");
+        serial_str("[**] FATAL -- system halted\r\n");
         for (;;)
             __asm__ volatile ("hlt");
     }

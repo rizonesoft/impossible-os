@@ -2226,7 +2226,7 @@ int hive_load(const char *filepath, reg_key_t *root)
 
     /* Validate magic */
     if (hdr->magic != HIVE_MAGIC) {
-        klog(LOG_WARN, "hive", "Bad magic in '%s': %x (expected REGH)", filepath,
+        klog(LOG_WARN, "hive", "Bad magic in '%s': 0x%x (expected REGH)", filepath,
              (uint64_t)hdr->magic);
         vfs_close(f);
         return -1;
@@ -2245,7 +2245,7 @@ int hive_load(const char *filepath, reg_key_t *root)
     hdr->checksum = 0;
     computed_crc = hive_crc32((const uint8_t *)hdr, HIVE_HEADER_SIZE);
     if (computed_crc != saved_crc) {
-        klog(LOG_WARN, "hive", "CRC32 mismatch in '%s': file=%x computed=%x",
+        klog(LOG_WARN, "hive", "CRC32 mismatch in '%s': file=0x%x computed=0x%x",
              filepath, (uint64_t)saved_crc, (uint64_t)computed_crc);
         vfs_close(f);
         return -1;

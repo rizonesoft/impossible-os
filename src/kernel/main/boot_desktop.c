@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_desktop.c — Desktop environment initialization
+ * boot_desktop.c -- Desktop environment initialization
  *
  * TrueType font manager, icon store, cursor manager, window manager,
  * desktop (wallpaper + taskbar), boot splash finish, demo window,
@@ -93,7 +93,7 @@ void boot_desktop_init(void)
                (h_total + 1023) / 1024,
                pct);
         if (pct > 75) {
-            printk("[!!] Heap pressure: %u%% used — risk of silent exhaustion\n",
+            printk("[!!] Heap pressure: %u%% used -- risk of silent exhaustion\n",
                    pct);
         }
     }

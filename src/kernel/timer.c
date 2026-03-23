@@ -1,5 +1,5 @@
 /* ============================================================================
- * timer.c — Unified Timer Subsystem (UTS) Implementation
+ * timer.c -- Unified Timer Subsystem (UTS) Implementation
  *
  * All kernel timekeeping routes through g_system_timer.  This file provides
  * the hardware-agnostic wrappers that delegate to whichever backend
@@ -13,7 +13,7 @@
 
 #include "kernel/timer.h"
 
-/* THE single source of truth — set once by timer_hal_init() (§6.4) */
+/* THE single source of truth -- set once by timer_hal_init() (§6.4) */
 timer_driver_t *g_system_timer = (timer_driver_t *)0;
 
 void sleep_ms(uint32_t ms)
@@ -92,7 +92,7 @@ void timer_hal_init(void)
         pit_init();
         g_system_timer = &pit_driver;
         klog(LOG_INFO, "timer",
-             "UTS: %s selected (QEMU TCG — PIT is wall-clock accurate)",
+             "UTS: %s selected (QEMU TCG -- PIT is wall-clock accurate)",
              g_system_timer->name);
     } else {
         /* Real HW, Hyper-V, VMware, VBox, KVM: LAPIC is the best timer.
@@ -101,7 +101,7 @@ void timer_hal_init(void)
         lapic_timer_init(100);     /* 100 Hz periodic mode */
         g_system_timer = &lapic_driver;
 
-        /* Suppress PIT — never program it on non-TCG platforms.
+        /* Suppress PIT -- never program it on non-TCG platforms.
          * Mask PIT IRQ0 to prevent ghost ticks from stale PIT state. */
         if (ioapic_available())
             ioapic_mask_irq(0);

@@ -1,5 +1,5 @@
 /* ============================================================================
- * swap.c — Swap / Page File Support
+ * swap.c -- Swap / Page File Support
  *
  * Disk-backed swap with Clock (second-chance) page replacement.
  * Uses pagefile.sys on the IXFS partition as the backing store.
@@ -73,7 +73,7 @@ static uint64_t swap_read_pte(uintptr_t virt)
 
     uint64_t *pd = (uint64_t *)(pdpt[pdpt_idx] & ~0xFFFULL);
     if (!(pd[pd_idx] & 1)) {
-        /* PD entry not present — but it might have swap bits.
+        /* PD entry not present -- but it might have swap bits.
          * However, swap is stored at PT level, so check if PD points to a PT. */
         return 0;
     }
@@ -158,14 +158,14 @@ void swap_init(uint32_t num_slots)
 
     /* Create the pagefile on disk */
     if (!vfs_is_mounted('C')) {
-        klog(LOG_DEBUG, "swap", "C: drive not mounted — swap disabled");
+        klog(LOG_DEBUG, "swap", "C: drive not mounted -- swap disabled");
         return;
     }
 
     vfs_create(PAGEFILE_PATH, VFS_FILE);
     pagefile = vfs_open(PAGEFILE_PATH, VFS_O_READ | VFS_O_WRITE);
     if (!pagefile) {
-        klog(LOG_WARN, "swap", "Failed to open pagefile — swap disabled");
+        klog(LOG_WARN, "swap", "Failed to open pagefile -- swap disabled");
         return;
     }
 
@@ -194,7 +194,7 @@ void swap_init(uint32_t num_slots)
     clock_count = 0;
     swap_inited = 1;
 
-    klog(LOG_INFO, "swap", "Initialized: %u slots (%u KiB) — pagefile.sys",
+    klog(LOG_INFO, "swap", "Initialized: %u slots (%u KiB) -- pagefile.sys",
            (uint64_t)num_slots, (uint64_t)(num_slots * 4));
 }
 
@@ -331,7 +331,7 @@ int swap_handle_fault(uintptr_t fault_addr, uint64_t error_code)
            fault_addr, (uint64_t)swap_id);
 
     if (swap_in(swap_id, fault_addr) == 0)
-        return 1;  /* handled — retry the faulting instruction */
+        return 1;  /* handled -- retry the faulting instruction */
 
     return 0;  /* swap_in failed */
 }

@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_threads.c — Test thread function bodies
+ * test_threads.c -- Test thread function bodies
  *
  * Thread entry points used by boot_tests.c for cooperative scheduling,
  * preemptive scheduling, mutex, semaphore, pipe, shared memory, user-mode,
@@ -195,7 +195,7 @@ void preempt_a_func(void)
     uint32_t i;
     for (i = 0; i < 3; i++) {
         pa_count++;
-        printk("  [PreemptA] Running (%u/3) — no yield!\n",
+        printk("  [PreemptA] Running (%u/3) -- no yield!\n",
                (uint64_t)pa_count);
         /* Busy-wait ~50ms (loop, not yield) to prove preemption */
         sleep_ms(100);
@@ -207,14 +207,14 @@ void preempt_b_func(void)
     uint32_t i;
     for (i = 0; i < 3; i++) {
         pb_count++;
-        printk("  [PreemptB] Running (%u/3) — no yield!\n",
+        printk("  [PreemptB] Running (%u/3) -- no yield!\n",
                (uint64_t)pb_count);
         sleep_ms(100);
     }
 }
 
 /* --- User-mode test function ---
- * This runs in ring 3 — NO kernel function calls allowed!
+ * This runs in ring 3 -- NO kernel function calls allowed!
  * All I/O goes through INT 0x80 syscalls. */
 void user_test_func(void)
 {

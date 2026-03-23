@@ -79,7 +79,26 @@ static void log_vprintf(const char *fmt, va_list ap)
         }
 
         fmt++;  /* skip '%' */
+        if (*fmt == '\0') return;
+        if (*fmt == '%') { log_putchar('%'); fmt++; continue; }
 
+        /* Parse zero-pad flag */
+        int zero_pad = 0;
+        if (*fmt == '0') { zero_pad = 1; fmt++; }
+
+        /* Parse width */
+        uint32_t width = 0;
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (uint32_t)(*fmt - '0');
+            fmt++;
+        }
+
+        /* Parse length modifier: skip l, ll, h, hh */
+        while (*fmt == 'l' || *fmt == 'h') fmt++;
+
+        (void)zero_pad; /* width already handled by min_digits */
+
+        /* Specifier */
         switch (*fmt) {
         case 'd':
         case 'i':
@@ -87,12 +106,15 @@ static void log_vprintf(const char *fmt, va_list ap)
             break;
 
         case 'u':
-            log_print_uint(va_arg(ap, uint64_t), 10, 0);
+            log_print_uint(va_arg(ap, uint64_t), 10, width);
             break;
 
         case 'x':
-            log_puts("0x");
-            log_print_uint(va_arg(ap, uint64_t), 16, 0);
+            log_print_uint(va_arg(ap, uint64_t), 16, width);
+            break;
+
+        case 'X':
+            log_print_uint(va_arg(ap, uint64_t), 16, width);
             break;
 
         case 'p':
@@ -108,10 +130,6 @@ static void log_vprintf(const char *fmt, va_list ap)
 
         case 'c':
             log_putchar((char)va_arg(ap, int));
-            break;
-
-        case '%':
-            log_putchar('%');
             break;
 
         case '\0':

@@ -1,5 +1,5 @@
 /* ============================================================================
- * framebuffer.c — Framebuffer graphics driver
+ * framebuffer.c -- Framebuffer graphics driver
  *
  * Renders text and graphics on the GOP framebuffer provided by GRUB via
  * Multiboot2.  Uses an embedded 8x16 bitmap font (basic ASCII, 32-126).
@@ -149,7 +149,7 @@ static uint8_t compositor_locked; /* when set, fb_putchar/draw_char are no-ops *
 
 static uint8_t  fb_ready;       /* 1 if framebuffer is initialized */
 
-/* VBE page flip state — two pages in VRAM for tear-free rendering */
+/* VBE page flip state -- two pages in VRAM for tear-free rendering */
 static uint8_t  page_flip_ok;   /* 1 if VBE page flipping is available */
 static uint8_t  page_current;   /* which page (0 or 1) is currently displayed */
 
@@ -201,7 +201,7 @@ void fb_init(void)
     bg_color  = FB_COLOR_BG_DEFAULT;
 
     /* Allocate the back buffer via PMM (contiguous physical frames).
-     * The kernel heap is only 2 MiB — far too small for a 1280×720×4 = 3.6 MiB
+     * The kernel heap is only 2 MiB -- far too small for a 1280×720×4 = 3.6 MiB
      * back buffer.  PMM has 2041 MiB available and supports large contiguous
      * allocations.  Identity mapping means phys addr == virt addr. */
     {
@@ -215,8 +215,8 @@ void fb_init(void)
                    (uint64_t)(bb_bytes / 1024), (uint64_t)bb_pages, bb_base);
         } else {
             /* Fallback: draw directly to HW framebuffer (no double buffering).
-             * This WILL flicker — the host display reads VRAM while we draw. */
-            printk("[WARN] Back buffer alloc failed (%u KiB) — no double buffering!\n",
+             * This WILL flicker -- the host display reads VRAM while we draw. */
+            printk("[WARN] Back buffer alloc failed (%u KiB) -- no double buffering!\n",
                    (uint64_t)(bb_bytes / 1024));
             back_buf = hw_addr;
             fb_stride = fb_pitch / (fb_bpp / 8);
@@ -241,7 +241,7 @@ void fb_init(void)
                           "Nd"((uint16_t)0x01CF));
 
         if ((vbe_id & 0xFFF0) == 0xB0C0) {
-            /* Valid Bochs VGA — set virtual height to 2× for page flipping */
+            /* Valid Bochs VGA -- set virtual height to 2× for page flipping */
             __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)0x07),
                               "Nd"((uint16_t)0x01CE));
             __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)(fb_height * 2)),
@@ -249,7 +249,7 @@ void fb_init(void)
 
             page_flip_ok = 1;
             page_current = 0;
-            klog(LOG_INFO, "gfx", "VBE page flip enabled (Bochs VGA %x, 2x%u virt height)",
+            klog(LOG_INFO, "gfx", "VBE page flip enabled (Bochs VGA 0x%x, 2x%u virt height)",
                    (uint64_t)vbe_id, (uint64_t)fb_height);
 
             /* Zero BOTH VRAM pages immediately after setting virtual height.
@@ -285,7 +285,7 @@ void fb_init(void)
 }
 
 /* ============================================================================
- * Double buffering — VBE page flip + direct copy fallback
+ * Double buffering -- VBE page flip + direct copy fallback
  *
  * All drawing goes to back_buf (in PMM memory, not VRAM).  fb_swap() copies
  * the finished frame to VRAM.  With VBE page flipping enabled:
@@ -538,7 +538,7 @@ void fb_draw_line(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
     }
 }
 
-/* Midpoint circle — plots 8 symmetric points per step */
+/* Midpoint circle -- plots 8 symmetric points per step */
 void fb_draw_circle(int32_t cx, int32_t cy, int32_t r, uint32_t color)
 {
     int32_t x, y, d;
@@ -571,7 +571,7 @@ void fb_draw_circle(int32_t cx, int32_t cy, int32_t r, uint32_t color)
     }
 }
 
-/* Filled circle — horizontal spans via midpoint algorithm */
+/* Filled circle -- horizontal spans via midpoint algorithm */
 void fb_fill_circle(int32_t cx, int32_t cy, int32_t r, uint32_t color)
 {
     int32_t x, y, d;

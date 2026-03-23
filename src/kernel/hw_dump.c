@@ -137,7 +137,7 @@ void hw_dump_to_log(void)
                         case 0x0C: type = (sub == 0x03) ? "USB" : "SerialBus"; break;
                         }
                         klog(LOG_DEBUG, "hwdump",
-                             "PCI %u:%u.%u %x:%x class=%x/%x BAR0=%x IRQ=%u %s",
+                             "PCI %u:%u.%u 0x%x:%x class=0x%x/%x BAR0=0x%x IRQ=%u %s",
                              (uint32_t)bus, (uint32_t)dev, (uint32_t)func,
                              (uint32_t)vendor, (uint32_t)device,
                              (uint32_t)cls, (uint32_t)sub,
@@ -161,7 +161,7 @@ void hw_dump_to_log(void)
         extern uint32_t acpi_get_cpu_count(void);
         extern uint32_t acpi_get_lapic_base(void);
 
-        klog(LOG_INFO, "hwdump", "ACPI: %u CPUs, LAPIC base %x",
+        klog(LOG_INFO, "hwdump", "ACPI: %u CPUs, LAPIC base 0x%x",
              acpi_get_cpu_count(), acpi_get_lapic_base());
     }
 
@@ -189,7 +189,7 @@ void hw_dump_to_log(void)
     {
         extern struct boot_info g_boot_info;
         if (g_boot_info.fb_available) {
-            klog(LOG_INFO, "hwdump", "Display: %ux%ux%u pitch=%u addr=%x",
+            klog(LOG_INFO, "hwdump", "Display: %ux%ux%u pitch=%u addr=0x%x",
                  g_boot_info.fb.width, g_boot_info.fb.height,
                  g_boot_info.fb.bpp, g_boot_info.fb.pitch,
                  (uint32_t)g_boot_info.fb.addr);

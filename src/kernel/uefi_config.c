@@ -1,5 +1,5 @@
 /* ============================================================================
- * uefi_config.c — UEFI Configuration Table Walker
+ * uefi_config.c -- UEFI Configuration Table Walker
  *
  * Walks the UEFI configuration table entries preserved in boot_info to find
  * platform data (ACPI, SMBIOS, Memory Attributes, etc.) by GUID.
@@ -107,7 +107,7 @@ void uefi_conformance_init(void)
     uintptr_t table_addr = uefi_find_config_table(&conform_guid);
 
     if (table_addr == 0) {
-        /* Table absent — pre-UEFI 2.10 or firmware that omits it.
+        /* Table absent -- pre-UEFI 2.10 or firmware that omits it.
          * Assume full UEFI conformance. */
         s_conformance_level = UEFI_CONFORM_FULL;
         klog(LOG_INFO, "UEFI", "Conformance: Full UEFI (table absent, assumed)");
@@ -137,7 +137,7 @@ void uefi_conformance_init(void)
              ct->profile_count);
     } else if (found_ebbr) {
         s_conformance_level = UEFI_CONFORM_EBBR;
-        klog(LOG_WARN, "UEFI", "Conformance: Reduced (EBBR) — "
+        klog(LOG_WARN, "UEFI", "Conformance: Reduced (EBBR) -- "
              "some services may be unavailable");
     } else {
         s_conformance_level = UEFI_CONFORM_UNKNOWN;
@@ -246,7 +246,7 @@ const struct esrt_entry *esrt_get_entry(uint32_t index)
  * Enforces W^X: no region may be simultaneously writable AND executable.
  * ============================================================================ */
 
-/* MAT memory descriptor — matches EFI_MEMORY_DESCRIPTOR layout */
+/* MAT memory descriptor -- matches EFI_MEMORY_DESCRIPTOR layout */
 struct mat_descriptor {
     uint32_t type;
     uint32_t pad;
@@ -322,10 +322,10 @@ void mat_init(void)
             data_regions++;
             data_pages += d->number_of_pages;
         } else if (!is_ro && !is_xp) {
-            /* Writable AND executable — W^X violation! */
+            /* Writable AND executable -- W^X violation! */
             wxn_violations++;
         } else {
-            /* Read-only + non-executable — unusual but safe (e.g. constants) */
+            /* Read-only + non-executable -- unusual but safe (e.g. constants) */
             data_regions++;
             data_pages += d->number_of_pages;
         }
@@ -334,17 +334,17 @@ void mat_init(void)
     s_wxn_ok = (wxn_violations == 0) ? 1 : 0;
 
     klog(LOG_INFO, "UEFI",
-         "MAT: %u descriptors — %u code (%u KB), %u data (%u KB), "
+         "MAT: %u descriptors -- %u code (%u KB), %u data (%u KB), "
          "%u guard",
          count, code_regions, (uint32_t)(code_pages * 4),
          data_regions, (uint32_t)(data_pages * 4),
          guard_regions);
 
     if (s_wxn_ok) {
-        klog(LOG_INFO, "UEFI", "MAT: W^X verified — "
+        klog(LOG_INFO, "UEFI", "MAT: W^X verified -- "
              "no writable+executable regions");
     } else {
-        klog(LOG_WARN, "UEFI", "MAT: W^X VIOLATION — "
+        klog(LOG_WARN, "UEFI", "MAT: W^X VIOLATION -- "
              "%u regions are writable+executable", wxn_violations);
     }
 }

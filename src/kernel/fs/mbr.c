@@ -1,5 +1,5 @@
 /* ============================================================================
- * mbr.c — MBR Partition Table Parser
+ * mbr.c -- MBR Partition Table Parser
  *
  * Decodes the complete 512-byte Master Boot Record:
  *
@@ -138,14 +138,14 @@ struct mbr_table mbr_parse(const void *sector0)
         if (type == MBR_TYPE_GPT) {
             tbl.has_gpt = 1;
             klog(LOG_DEBUG, "mbr",
-                 "Entry %d: GPT Protective (0xEE) — redirect to GPT parser",
+                 "Entry %d: GPT Protective (0xEE) -- redirect to GPT parser",
                  (uint64_t)i);
         }
 
-        /* Warn on Dynamic Disk — not supported */
+        /* Warn on Dynamic Disk -- not supported */
         if (type == MBR_TYPE_DYNAMIC) {
             klog(LOG_WARN, "mbr",
-                 "Entry %d: Dynamic Disk (0x42) — LDM volumes not supported",
+                 "Entry %d: Dynamic Disk (0x42) -- LDM volumes not supported",
                  (uint64_t)i);
         }
 
@@ -201,7 +201,7 @@ struct mbr_table mbr_parse(const void *sector0)
 
 /* ---- Partition type name lookup ----
  * Returns a human-readable string for known types.
- * Unknown types return "Unknown" — callers can use the hex code for detail. */
+ * Unknown types return "Unknown" -- callers can use the hex code for detail. */
 
 const char *mbr_type_name(uint8_t type)
 {
@@ -314,7 +314,7 @@ int mbr_walk_ebr(const struct blkdev *dev, uint32_t ext_start_lba,
         /* Bounds check: current EBR must be within disk */
         if ((uint64_t)current_ebr_lba >= disk_sectors) {
             klog(LOG_WARN, "mbr",
-                 "EBR at LBA %u beyond disk (%u sectors) — aborting",
+                 "EBR at LBA %u beyond disk (%u sectors) -- aborting",
                  (uint64_t)current_ebr_lba, disk_sectors);
             break;
         }
@@ -330,7 +330,7 @@ int mbr_walk_ebr(const struct blkdev *dev, uint32_t ext_start_lba,
         sig = read_le16(sect + MBR_SIG_OFFSET);
         if (sig != MBR_SIGNATURE) {
             klog(LOG_WARN, "mbr",
-                 "EBR at LBA %u: missing 0xAA55 signature — aborting chain",
+                 "EBR at LBA %u: missing 0xAA55 signature -- aborting chain",
                  (uint64_t)current_ebr_lba);
             break;
         }
@@ -393,7 +393,7 @@ int mbr_walk_ebr(const struct blkdev *dev, uint32_t ext_start_lba,
             /* Circular link detection */
             if (next_ebr_lba == current_ebr_lba) {
                 klog(LOG_WARN, "mbr",
-                     "EBR circular link at LBA %u — aborting",
+                     "EBR circular link at LBA %u -- aborting",
                      (uint64_t)current_ebr_lba);
                 break;
             }
@@ -401,7 +401,7 @@ int mbr_walk_ebr(const struct blkdev *dev, uint32_t ext_start_lba,
             /* Bounds check */
             if ((uint64_t)next_ebr_lba >= disk_sectors) {
                 klog(LOG_WARN, "mbr",
-                     "EBR next pointer LBA %u beyond disk — aborting",
+                     "EBR next pointer LBA %u beyond disk -- aborting",
                      (uint64_t)next_ebr_lba);
                 break;
             }

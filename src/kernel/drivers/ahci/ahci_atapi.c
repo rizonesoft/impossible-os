@@ -1,5 +1,5 @@
 /* ============================================================================
- * ahci_atapi.c — ATAPI (CD/DVD) device support
+ * ahci_atapi.c -- ATAPI (CD/DVD) device support
  *
  * Under AHCI, the Host Bus Adapter handles the 8-step PIO state machine in
  * hardware.  The driver builds a Command FIS (ATA_CMD_PACKET, 0xA0) and places
@@ -11,7 +11,7 @@
  *   5. DRQ wait + CDB transfer (from ACMD)
  *   6. Data phase (via PRDT, DMA or PIO)
  *   7. Status check
- * This approach is the correct AHCI implementation — never bitbang legacy
+ * This approach is the correct AHCI implementation -- never bitbang legacy
  * IDE task file registers when an AHCI controller is present.
  * ============================================================================ */
 
@@ -40,7 +40,7 @@ static int port_issue_cmd_atapi(struct ahci_port *p, int slot)
             result = -1;
         }
     } else {
-        /* Polling mode — optical drives need up to 30s for spin-up */
+        /* Polling mode -- optical drives need up to 30s for spin-up */
         uint32_t timeout = ATAPI_TIMEOUT_US;
         while (timeout--) {
             uint32_t ci = port_read(pregs, AHCI_PxCI);
@@ -54,7 +54,7 @@ static int port_issue_cmd_atapi(struct ahci_port *p, int slot)
         }
         if (timeout == 0 && result == 0) {
             klog(LOG_WARN, "ahci",
-                 "Port %u: ATAPI command timeout (poll, %u µs)",
+                 "Port %u: ATAPI command timeout (poll, %u us)",
                  (uint64_t)p->port_num, (uint64_t)ATAPI_TIMEOUT_US);
             result = -1;
         }
@@ -70,7 +70,7 @@ static int port_issue_cmd_atapi(struct ahci_port *p, int slot)
         result = -1;
     }
 
-    /* Attempt CLO reset on failure (no retry — ATAPI errors need REQUEST SENSE) */
+    /* Attempt CLO reset on failure (no retry -- ATAPI errors need REQUEST SENSE) */
     if (result != 0) {
         p->errors.cmd_failures++;
         tfd = port_read(pregs, AHCI_PxTFD);
@@ -122,7 +122,7 @@ static int atapi_build_prdt(struct ahci_cmd_tbl *tbl, void *buffer,
     }
 
     if (remaining > 0) {
-        /* Buffer too large for PRDT — should never happen with 8 entries × 64KB */
+        /* Buffer too large for PRDT -- should never happen with 8 entries x 64KB */
         klog(LOG_WARN, "ahci",
              "ATAPI PRDT overflow: %u bytes remain, %d entries used",
              (uint64_t)remaining, (uint64_t)entry);
@@ -149,12 +149,12 @@ static int atapi_build_prdt(struct ahci_cmd_tbl *tbl, void *buffer,
  *   - Uses a 30-second timeout for optical media spin-up
  *
  * Parameters:
- *   p         — port with ATAPI device
- *   cdb       — SCSI Command Descriptor Block
- *   cdb_len   — CDB length (6, 10, 12, or 16 bytes)
- *   buffer    — data buffer (NULL for no-data commands)
- *   buf_len   — buffer size in bytes
- *   direction — 0 = read (device→host), 1 = write (host→device)
+ *   p         -- port with ATAPI device
+ *   cdb       -- SCSI Command Descriptor Block
+ *   cdb_len   -- CDB length (6, 10, 12, or 16 bytes)
+ *   buffer    -- data buffer (NULL for no-data commands)
+ *   buf_len   -- buffer size in bytes
+ *   direction -- 0 = read (device->host), 1 = write (host->device)
  */
 static int atapi_packet_cmd(struct ahci_port *p, const uint8_t *cdb,
                             uint32_t cdb_len, void *buffer, uint32_t buf_len,
@@ -210,7 +210,7 @@ static int atapi_packet_cmd(struct ahci_port *p, const uint8_t *cdb,
     /* Command header flags:
      *   Bits 4:0 = CFIS length in DWORDs (5 for 20-byte FIS)
      *   Bit 5    = ATAPI (1 = ATAPI command, HBA reads ACMD)
-     *   Bit 6    = Write (1 = host→device, 0 = device→host) */
+     *   Bit 6    = Write (1 = host->device, 0 = device->host) */
     hdr->flags = ((sizeof(struct fis_reg_h2d) / 4) & 0x1F)
                | (1 << 5);                    /* ATAPI bit */
     if (direction)
@@ -240,11 +240,11 @@ int atapi_dma_command(struct ahci_port *p, const uint8_t *cdb,
     int rc;
 
     if (!buffer || buf_len == 0) {
-        /* No-data command — just use the regular path */
+        /* No-data command -- just use the regular path */
         return atapi_packet_cmd(p, cdb, cdb_len, (void *)0, 0, direction);
     }
 
-    /* For small transfers (≤ 4KB), use buffer directly — kmalloc memory
+    /* For small transfers (≤ 4KB), use buffer directly -- kmalloc memory
      * is from the kernel's identity-mapped heap, physically contiguous */
     if (buf_len <= 4096)
         return atapi_packet_cmd(p, cdb, cdb_len, buffer, buf_len, direction);
@@ -294,7 +294,7 @@ int atapi_dma_command(struct ahci_port *p, const uint8_t *cdb,
 }
 
 /* ============================================================================
- * REQUEST SENSE — SCSI error information retrieval
+ * REQUEST SENSE -- SCSI error information retrieval
  *
  * When any ATAPI command fails (ERR bit in Task File Data), the device caches
  * detailed error information internally.  The driver must issue REQUEST SENSE
@@ -330,18 +330,18 @@ static int atapi_classify_sense(uint8_t sense_key, uint8_t asc, uint8_t ascq)
         return ATAPI_OK;
 
     case SCSI_SK_RECOVERED:
-        /* Recovered error — data is valid, log warning */
+        /* Recovered error -- data is valid, log warning */
         return ATAPI_OK;
 
     case SCSI_SK_NOT_READY:
         if (asc == SCSI_ASC_NO_MEDIUM)
-            return ATAPI_ERR_NOMEDIUM;           /* 0x3A/xx — no disc */
+            return ATAPI_ERR_NOMEDIUM;           /* 0x3A/xx -- no disc */
         if (asc == SCSI_ASC_BECOMING_READY) {
             if (ascq == 0x01)
-                return ATAPI_ERR_BECOMING;        /* 0x04/01 — spinning up */
+                return ATAPI_ERR_BECOMING;        /* 0x04/01 -- spinning up */
             if (ascq == 0x02)
-                return ATAPI_ERR_BECOMING;        /* 0x04/02 — start unit needed */
-            return ATAPI_ERR_BECOMING;            /* 0x04/xx — not ready */
+                return ATAPI_ERR_BECOMING;        /* 0x04/02 -- start unit needed */
+            return ATAPI_ERR_BECOMING;            /* 0x04/xx -- not ready */
         }
         return ATAPI_ERR_NOMEDIUM;               /* Other not-ready */
 
@@ -353,18 +353,18 @@ static int atapi_classify_sense(uint8_t sense_key, uint8_t asc, uint8_t ascq)
 
     case SCSI_SK_ILLEGAL_REQUEST:
         if (asc == SCSI_ASC_INVALID_OPCODE)
-            return ATAPI_ERR_INVALID;            /* 0x20/00 — bad command */
+            return ATAPI_ERR_INVALID;            /* 0x20/00 -- bad command */
         if (asc == SCSI_ASC_INVALID_FIELD)
-            return ATAPI_ERR_INVALID;            /* 0x24/00 — bad field */
+            return ATAPI_ERR_INVALID;            /* 0x24/00 -- bad field */
         if (asc == 0x26)
-            return ATAPI_ERR_INVALID;            /* 0x26/00 — bad parameter */
+            return ATAPI_ERR_INVALID;            /* 0x26/00 -- bad parameter */
         return ATAPI_ERR_INVALID;
 
     case SCSI_SK_UNIT_ATTENTION:
         if (asc == SCSI_ASC_MEDIA_CHANGED)
-            return ATAPI_ERR_MEDIACHANGE;        /* 0x28/00 — disc changed */
+            return ATAPI_ERR_MEDIACHANGE;        /* 0x28/00 -- disc changed */
         if (asc == SCSI_ASC_POWER_ON)
-            return ATAPI_ERR_MEDIACHANGE;        /* 0x29/00 — power-on/reset */
+            return ATAPI_ERR_MEDIACHANGE;        /* 0x29/00 -- power-on/reset */
         return ATAPI_ERR_MEDIACHANGE;            /* Other unit attention */
 
     case SCSI_SK_DATA_PROTECT:
@@ -403,7 +403,7 @@ int atapi_request_sense(struct ahci_port *p)
         return ATAPI_ERR_SENSE_FAIL;
     }
 
-    /* Parse fixed-format sense data (SPC-4 §4.5.3) */
+    /* Parse fixed-format sense data (SPC-4 S4.5.3) */
     response_code = sense[0] & 0x7F;
     sense_key     = sense[2] & 0x0F;
     add_len       = sense[7];             /* Additional sense length */
@@ -433,7 +433,7 @@ int atapi_request_sense(struct ahci_port *p)
  * Reads the port's Alternate Status register to consume ~100ns per read. */
 static void atapi_delay_us(volatile uint8_t *pregs, uint32_t us)
 {
-    /* Each port_read takes ~100ns on modern hardware; 10 reads ≈ 1µs */
+    /* Each port_read takes ~100ns on modern hardware; 10 reads ≈ 1us */
     uint32_t loops = us * 10;
     while (loops--)
         port_read(pregs, AHCI_PxTFD);
@@ -441,14 +441,14 @@ static void atapi_delay_us(volatile uint8_t *pregs, uint32_t us)
 
 /* ---- ATAPI: TEST UNIT READY ----
  *
- * CDB 0x00 — no data transfer. Checks if the device has media loaded and
+ * CDB 0x00 -- no data transfer. Checks if the device has media loaded and
  * is ready to accept commands. Must be retried during optical spin-up.
  *
  * Returns:
- *   ATAPI_OK          — device ready
- *   ATAPI_ERR_NOMEDIUM — no disc in drive
- *   ATAPI_ERR_BECOMING — still spinning up (caller should retry)
- *   Other ATAPI_ERR_*  — sense-classified error
+ *   ATAPI_OK          -- device ready
+ *   ATAPI_ERR_NOMEDIUM -- no disc in drive
+ *   ATAPI_ERR_BECOMING -- still spinning up (caller should retry)
+ *   Other ATAPI_ERR_*  -- sense-classified error
  */
 int atapi_test_unit_ready(struct ahci_port *p)
 {
@@ -464,22 +464,22 @@ int atapi_test_unit_ready(struct ahci_port *p)
         if (rc == 0)
             return ATAPI_OK;    /* Device is ready */
 
-        /* Command failed — get sense data for error classification */
+        /* Command failed -- get sense data for error classification */
         sense_rc = atapi_request_sense(p);
 
         if (sense_rc == ATAPI_ERR_BECOMING) {
-            /* Drive is spinning up — wait 500ms and retry */
+            /* Drive is spinning up -- wait 500ms and retry */
             retries--;
             if (retries > 0) {
                 klog(LOG_DEBUG, "ahci",
-                     "Port %u: TUR — becoming ready, %d retries left",
+                     "Port %u: TUR -- becoming ready, %d retries left",
                      (uint64_t)p->port_num, (uint64_t)retries);
                 atapi_delay_us(p->regs, 500000);  /* 500ms */
             }
             continue;
         }
 
-        /* Non-transient error — return immediately */
+        /* Non-transient error -- return immediately */
         return sense_rc;
     }
 
@@ -490,7 +490,7 @@ int atapi_test_unit_ready(struct ahci_port *p)
 
 /* ---- ATAPI: INQUIRY ----
  *
- * CDB 0x12 — retrieves 36 bytes of device identification:
+ * CDB 0x12 -- retrieves 36 bytes of device identification:
  *   Byte 0  bits 4-0: peripheral device type (0x05 = CD/DVD)
  *   Byte 0  bits 7-5: peripheral qualifier (0 = connected)
  *   Bytes 8-15:  vendor identification (8 bytes, ASCII, space-padded)
@@ -627,7 +627,7 @@ static uint32_t atapi_profile_to_cap(uint16_t profile)
 
 /* ---- ATAPI: GET CONFIGURATION ----
  *
- * CDB 0x46 — retrieves the drive's MMC profile list and active features.
+ * CDB 0x46 -- retrieves the drive's MMC profile list and active features.
  * The profile list indicates what disc types the drive supports (CD, DVD, BD)
  * and the current profile indicates what type of media is currently inserted.
  *
@@ -657,7 +657,7 @@ int atapi_get_configuration(struct ahci_port *p)
     uint16_t current_profile;
     const char *drive_desc;
 
-    /* Allocate response buffer — 512 bytes is sufficient for profile list */
+    /* Allocate response buffer -- 512 bytes is sufficient for profile list */
     resp = (uint8_t *)kmalloc(512);
     if (!resp) return -1;
     ahci_memset(resp, 0, 512);
@@ -703,7 +703,7 @@ int atapi_get_configuration(struct ahci_port *p)
         add_len   = resp[offset + 3];
 
         if (feat_code == 0x0000) {
-            /* Profile List feature — parse profile descriptors */
+            /* Profile List feature -- parse profile descriptors */
             uint32_t prof_offset = offset + 4;
             uint32_t prof_end    = prof_offset + add_len;
             if (prof_end > data_len + 4)
@@ -797,14 +797,14 @@ int atapi_do_identify(struct ahci_port *p)
         /* Bits 15-14: protocol type (10b = ATAPI) */
         if (((w0 >> 14) & 0x3) != 0x2) {
             klog(LOG_WARN, "ahci",
-                 "Port %u: IDENTIFY PACKET w0=0x%x — not ATAPI protocol",
+                 "Port %u: IDENTIFY PACKET w0=0x%x -- not ATAPI protocol",
                  (uint64_t)p->port_num, (uint64_t)w0);
         }
 
         /* Bits 12-8: SCSI peripheral device type */
         p->atapi_scsi_type = (uint8_t)((w0 >> 8) & 0x1F);
 
-        /* Bits 6-5: DRQ timing (00=slow 3ms, 01=IRQ within 50µs, 10=accelerated 50µs) */
+        /* Bits 6-5: DRQ timing (00=slow 3ms, 01=IRQ within 50us, 10=accelerated 50us) */
         p->atapi_drq_type = (uint8_t)((w0 >> 5) & 0x3);
 
         /* Bits 1-0: command packet size (00=12 bytes, 01=16 bytes) */
@@ -865,7 +865,7 @@ int atapi_do_identify(struct ahci_port *p)
 
         p->atapi_udma_mode = 0xFF;  /* None */
         if (supported) {
-            /* Find highest set bit (mode 6 → UDMA/133, down to 0 → UDMA/16) */
+            /* Find highest set bit (mode 6 -> UDMA/133, down to 0 -> UDMA/16) */
             int m;
             for (m = 6; m >= 0; m--) {
                 if (supported & (1U << m)) {
@@ -935,12 +935,12 @@ int atapi_read_capacity(struct ahci_port *p)
     cdb[0] = SCSI_READ_CAPACITY;
 
     if (atapi_packet_cmd(p, cdb, 10, resp, 8, 0) != 0) {
-        /* Command failed — issue REQUEST SENSE for details */
+        /* Command failed -- issue REQUEST SENSE for details */
         int sense_err = atapi_request_sense(p);
         kfree(resp);
         if (sense_err == ATAPI_ERR_NOMEDIUM)
             klog(LOG_DEBUG, "ahci",
-                 "Port %u: READ CAPACITY — no medium", (uint64_t)p->port_num);
+                 "Port %u: READ CAPACITY -- no medium", (uint64_t)p->port_num);
         return sense_err < 0 ? sense_err : -1;
     }
 
@@ -1011,7 +1011,7 @@ int atapi_do_read(struct ahci_port *p, uint64_t lba, uint32_t count,
 
     rc = atapi_packet_cmd(p, cdb, 10, buffer, byte_count, 0);
     if (rc != 0) {
-        /* Command failed — issue REQUEST SENSE for error classification */
+        /* Command failed -- issue REQUEST SENSE for error classification */
         return atapi_request_sense(p);
     }
 

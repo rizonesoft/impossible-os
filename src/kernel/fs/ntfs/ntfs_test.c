@@ -1,4 +1,4 @@
-/* ntfs_test.c — NTFS Filesystem Self-Test Suite (§8.1)
+/* ntfs_test.c -- NTFS Filesystem Self-Test Suite (§8.1)
  *
  * When an NTFS volume with label "NTFS_TEST" is mounted, this module runs
  * a comprehensive read-only test suite after all subsystems are initialized.
@@ -103,7 +103,7 @@ static void test_fail(const char *name, const char *reason)
 {
     tests_run++;
     tests_failed++;
-    klog(LOG_ERROR, "ntfs-test", "[FAIL] %s — %s",
+    klog(LOG_ERROR, "ntfs-test", "[FAIL] %s -- %s",
          (uint64_t)(uintptr_t)name, (uint64_t)(uintptr_t)reason);
 }
 
@@ -268,7 +268,7 @@ static void test_empty_file(struct vfs_node *root)
         return;
     }
 
-    /* Try reading — should return 0 bytes */
+    /* Try reading -- should return 0 bytes */
     if (node->ops && node->ops->read) {
         int rc = node->ops->read(node, 0, 1, buf);
         (void)rc;  /* 0 or -1 are both acceptable for empty files */
@@ -539,7 +539,7 @@ static void test_dirty_flag(struct ntfs_volume *vol)
 {
     /* The test image is created cleanly, so dirty flag should be 0.
      * We also verify that the $VOLUME_INFORMATION attribute on inode 3
-     * has the expected flags — this validates the full parsing chain. */
+     * has the expected flags -- this validates the full parsing chain. */
     uintptr_t rec_phys;
     uint8_t *rec_buf;
     struct ntfs_mft_header hdr;
@@ -727,7 +727,7 @@ static struct vfs_node *find_compressed_dir(struct vfs_node *root)
     return root->ops->finddir(root, "compressed");
 }
 
-/* Test 11: Known-content compressed file — transparent LZNT1 decompression */
+/* Test 11: Known-content compressed file -- transparent LZNT1 decompression */
 static void test_lznt1_known(struct vfs_node *root)
 {
     uint8_t *buf;
@@ -783,7 +783,7 @@ static void test_lznt1_known(struct vfs_node *root)
     pmm_free_frame(buf_phys + 4096);
 }
 
-/* Test 12: Sparse zero file — all-zero CU should be zero-filled */
+/* Test 12: Sparse zero file -- all-zero CU should be zero-filled */
 static void test_lznt1_sparse(struct vfs_node *root)
 {
     struct vfs_node *node;
@@ -857,7 +857,7 @@ static void test_lznt1_sparse(struct vfs_node *root)
     pmm_free_frame(buf_phys);
 }
 
-/* Test 13: Incompressible file — random data stored uncompressed */
+/* Test 13: Incompressible file -- random data stored uncompressed */
 static void test_lznt1_uncompressed(struct vfs_node *root)
 {
     struct vfs_node *node;
@@ -923,7 +923,7 @@ static void test_lznt1_uncompressed(struct vfs_node *root)
     pmm_free_frame(buf_phys + 4096);
 }
 
-/* Test 14: Mixed CU file — compressible + random + compressible */
+/* Test 14: Mixed CU file -- compressible + random + compressible */
 static void test_lznt1_mixed(struct vfs_node *root)
 {
     struct vfs_node *node;
@@ -1032,9 +1032,9 @@ static void test_lznt1_mixed(struct vfs_node *root)
 }
 
 /* ============================================================================
- * Test 16 + 17: LZNT1 round-trip — compress then decompress
+ * Test 16 + 17: LZNT1 round-trip -- compress then decompress
  *
- * These are pure algorithm tests — no VFS, no disk, no volume needed.
+ * These are pure algorithm tests -- no VFS, no disk, no volume needed.
  * They verify that ntfs_lznt1_compress() produces a stream that
  * ntfs_lznt1_decompress() decodes byte-exactly.
  * ============================================================================ */
@@ -1120,7 +1120,7 @@ static int lznt1_roundtrip(const char *name, const uint8_t *src,
 
 static void test_lznt1_roundtrip_repeating(void)
 {
-    /* 4096 bytes of 'A' — highly compressible */
+    /* 4096 bytes of 'A' -- highly compressible */
     uint8_t *src = (uint8_t *)kmalloc(4096);
     if (!src) {
         test_fail("lznt1_roundtrip_repeat", "kmalloc failed");
@@ -1156,7 +1156,7 @@ static void test_lznt1_roundtrip_mixed(void)
 
 /* ---- Tests 18-22: MFT Record Cache Verification (§10.1) ---- */
 
-/* Test 18: Cache hit rate — repeated access to same inode */
+/* Test 18: Cache hit rate -- repeated access to same inode */
 static void test_cache_hit_rate(struct ntfs_volume *vol)
 {
     uintptr_t buf_phys;
@@ -1245,7 +1245,7 @@ static void test_cache_pinned(struct ntfs_volume *vol)
      * several more to fill cache. */
     for (i = 1; i <= 40; i++) {
         ntfs_read_mft_record(vol, (uint64_t)i, buf, &hdr);
-        /* Ignore errors — some inodes may be free/invalid */
+        /* Ignore errors -- some inodes may be free/invalid */
     }
 
     /* Now verify that inodes 0 and 5 are still cache hits */
@@ -1275,7 +1275,7 @@ static void test_cache_pinned(struct ntfs_volume *vol)
     pmm_free_frame(buf_phys);
 }
 
-/* Test 20: LRU eviction — access 65+ unique inodes (cache=64) */
+/* Test 20: LRU eviction -- access 65+ unique inodes (cache=64) */
 static void test_cache_eviction(struct ntfs_volume *vol)
 {
     uintptr_t buf_phys;
@@ -1298,7 +1298,7 @@ static void test_cache_eviction(struct ntfs_volume *vol)
 
     evictions_before = vol->mft_cache_evictions;
 
-    /* Read 70 unique inodes — exceeds 64-entry cache.
+    /* Read 70 unique inodes -- exceeds 64-entry cache.
      * Some inodes may be invalid/free (rc != OK); that's fine,
      * they won't be cached. But enough valid ones exist
      * (system metafiles 0-11 + test files) to trigger eviction. */
@@ -1322,7 +1322,7 @@ static void test_cache_eviction(struct ntfs_volume *vol)
              "cache_eviction: no evictions occurred (test disk may have "
              "< %u valid inodes)",
              (uint64_t)vol->mft_cache_size);
-        /* Pass with note — test volume is too small for eviction pressure */
+        /* Pass with note -- test volume is too small for eviction pressure */
         test_pass("cache_eviction");
     }
 
@@ -1379,7 +1379,7 @@ static void test_cache_invalidate(struct ntfs_volume *vol)
     pmm_free_frame(buf_phys);
 }
 
-/* Test 22: Telemetry counters — verify non-zero after test activity */
+/* Test 22: Telemetry counters -- verify non-zero after test activity */
 static void test_cache_telemetry(struct ntfs_volume *vol)
 {
     uint64_t total;
@@ -2025,7 +2025,7 @@ static void btree_make_name(char *buf, int idx)
     buf[7] = '\0';
 }
 
-/* Test 46: Insert entry into empty root — verify it appears in $INDEX_ROOT */
+/* Test 46: Insert entry into empty root -- verify it appears in $INDEX_ROOT */
 static void test_btree_insert_empty(struct ntfs_volume *vol)
 {
     int rc;
@@ -2067,7 +2067,7 @@ static void test_btree_insert_empty(struct ntfs_volume *vol)
     test_pass("btree_insert_empty");
 }
 
-/* Test 47: Insert entries until root overflows — verify INDX buffer allocated */
+/* Test 47: Insert entries until root overflows -- verify INDX buffer allocated */
 static void test_btree_overflow(struct ntfs_volume *vol)
 {
     /* $INDEX_ROOT in a 1024-byte MFT record can hold roughly 8-12 entries
@@ -2090,7 +2090,7 @@ static void test_btree_overflow(struct ntfs_volume *vol)
         test_fail("btree_overflow", "lookup dir"); return;
     }
 
-    /* Insert 15 entries — enough to overflow $INDEX_ROOT into INDX */
+    /* Insert 15 entries -- enough to overflow $INDEX_ROOT into INDX */
     for (i = 0; i < 15; i++) {
         btree_make_name(name, i);
         rc = ntfs_create_file(vol, dir_inode, name, 0);
@@ -2131,7 +2131,7 @@ static void test_btree_overflow(struct ntfs_volume *vol)
         test_fail("btree_overflow", "not all 15 created");
 }
 
-/* Test 48: Insert 200+ entries — verify multi-level B+ tree with correct ordering */
+/* Test 48: Insert 200+ entries -- verify multi-level B+ tree with correct ordering */
 static void test_btree_multi_level(struct ntfs_volume *vol)
 {
     /* 200 entries should construct at least a 2-level B+ tree.
@@ -2199,7 +2199,7 @@ static void test_btree_multi_level(struct ntfs_volume *vol)
         test_fail("btree_multi_level", "too few created");
 }
 
-/* Test 49: Delete entry from leaf — verify entry removed, others valid */
+/* Test 49: Delete entry from leaf -- verify entry removed, others valid */
 static void test_btree_delete_leaf(struct ntfs_volume *vol)
 {
     int rc, i;
@@ -2262,7 +2262,7 @@ cleanup_del:
     ntfs_delete_file(vol, NTFS_ROOT_INODE, "_bt_del");
 }
 
-/* Test 50: Delete causing underflow — verify merge/redistribution
+/* Test 50: Delete causing underflow -- verify merge/redistribution
  * Insert 20 entries (forces INDX), delete 15 → should trigger node merging */
 static void test_btree_underflow(struct ntfs_volume *vol)
 {
@@ -2301,7 +2301,7 @@ static void test_btree_underflow(struct ntfs_volume *vol)
         test_fail("btree_underflow", "not all 20 created"); return;
     }
 
-    /* Delete entries 0..14 — should trigger underflow and merge */
+    /* Delete entries 0..14 -- should trigger underflow and merge */
     for (i = 0; i < 15; i++) {
         btree_make_name(name, i);
         rc = ntfs_delete_file(vol, dir_inode, name);
@@ -2337,7 +2337,7 @@ static void test_btree_underflow(struct ntfs_volume *vol)
     ntfs_delete_file(vol, NTFS_ROOT_INODE, "_bt_undr");
 }
 
-/* Test 51: Delete all entries — verify tree collapses back to empty root */
+/* Test 51: Delete all entries -- verify tree collapses back to empty root */
 static void test_btree_collapse(struct ntfs_volume *vol)
 {
     int rc, i;
@@ -2371,7 +2371,7 @@ static void test_btree_collapse(struct ntfs_volume *vol)
         ntfs_delete_file(vol, dir_inode, name);
     }
 
-    /* Verify all entries are gone — lookup should return NOT_FOUND */
+    /* Verify all entries are gone -- lookup should return NOT_FOUND */
     {
         int ghosts = 0;
         for (i = 0; i < created; i++) {
@@ -2390,7 +2390,7 @@ static void test_btree_collapse(struct ntfs_volume *vol)
     ntfs_delete_file(vol, NTFS_ROOT_INODE, "_bt_col");
 }
 
-/* Test 52: Case-insensitive ordering — inserts respect $UpCase collation */
+/* Test 52: Case-insensitive ordering -- inserts respect $UpCase collation */
 static void test_btree_case_order(struct ntfs_volume *vol)
 {
     int rc;
@@ -2561,7 +2561,7 @@ static void test_fwe_small_resident(struct ntfs_volume *vol)
     if (nr == 0)
         test_pass("fwe_small_res");
     else if (nr == 1) {
-        /* Some implementations may convert early — acceptable */
+        /* Some implementations may convert early -- acceptable */
         klog(LOG_DEBUG, "ntfs-test",
              "fwe_small_res: 500B became non-resident (acceptable)");
         test_pass("fwe_small_res");
@@ -2758,7 +2758,7 @@ static void test_fwe_overwrite(struct ntfs_volume *vol)
     test_pass("fwe_overwrite");
 }
 
-/* Test 59: Truncate file — freed clusters returned to bitmap */
+/* Test 59: Truncate file -- freed clusters returned to bitmap */
 static void test_fwe_truncate(struct ntfs_volume *vol)
 {
     int rc;
@@ -2810,7 +2810,7 @@ static void test_fwe_truncate(struct ntfs_volume *vol)
     else test_fail("fwe_truncate", "data after truncate wrong");
 }
 
-/* Test 60: Truncate to zero — file reverts to resident */
+/* Test 60: Truncate to zero -- file reverts to resident */
 static void test_fwe_truncate_zero(struct ntfs_volume *vol)
 {
     int rc;
@@ -2858,7 +2858,7 @@ static void test_fwe_truncate_zero(struct ntfs_volume *vol)
 
     if (nr == 0) test_pass("fwe_trunc_zero");
     else if (nr == 1) {
-        /* Some impls keep non-resident with 0 allocation — acceptable */
+        /* Some impls keep non-resident with 0 allocation -- acceptable */
         klog(LOG_DEBUG, "ntfs-test",
              "fwe_trunc_zero: still non-resident (acceptable)");
         test_pass("fwe_trunc_zero");
@@ -3011,7 +3011,7 @@ static void test_ads_enumerate(struct ntfs_volume *vol)
     else test_fail("ads_enumerate", "no primary $DATA found");
 }
 
-/* Test 64: Read ADS content — try to read a named $DATA attribute.
+/* Test 64: Read ADS content -- try to read a named $DATA attribute.
  * If no named streams exist on the test volume, pass gracefully. */
 static void test_ads_read(struct ntfs_volume *vol)
 {
@@ -3064,7 +3064,7 @@ static void test_ads_read(struct ntfs_volume *vol)
     }
 }
 
-/* Test 65: File with no ADS — verify only primary stream returned */
+/* Test 65: File with no ADS -- verify only primary stream returned */
 static void test_ads_none(struct ntfs_volume *vol)
 {
     uintptr_t rec_phys;
@@ -3107,7 +3107,7 @@ static void test_ads_none(struct ntfs_volume *vol)
 /* Test 66: Path exceeding 260 characters via deep directory tree */
 static void test_long_path(struct ntfs_volume *vol)
 {
-    /* The test disk has A/B/C/D/E/file.txt — resolve path to verify.
+    /* The test disk has A/B/C/D/E/file.txt -- resolve path to verify.
      * Build a long path by chaining through existing deep dirs. */
     uint64_t inode;
     int rc;
@@ -3128,7 +3128,7 @@ static void test_long_path(struct ntfs_volume *vol)
     }
 }
 
-/* Test 67: Filename at maximum length — verify long name found in dir.
+/* Test 67: Filename at maximum length -- verify long name found in dir.
  * The test disk has a file with ~200+ character name. */
 static void test_max_filename(struct ntfs_volume *vol, struct vfs_node *root)
 {
@@ -3169,7 +3169,7 @@ static void test_max_filename(struct ntfs_volume *vol, struct vfs_node *root)
  * Tests 68-69: Volume Health & Recovery (§11.1–§11.2)
  * ============================================================================ */
 
-/* Test 68: Health dashboard — verify volume stats are populated */
+/* Test 68: Health dashboard -- verify volume stats are populated */
 static void test_health_dashboard(struct ntfs_volume *vol)
 {
     int checks = 0;
@@ -3201,7 +3201,7 @@ static void test_health_dashboard(struct ntfs_volume *vol)
     else test_fail("health_dashboard", "missing volume stats");
 }
 
-/* Test 69: Deleted file recovery — allocate + free MFT record, verify
+/* Test 69: Deleted file recovery -- allocate + free MFT record, verify
  * the freed record still has data (not zeroed) and is recoverable. */
 static void test_deleted_recovery(struct ntfs_volume *vol)
 {
@@ -3226,7 +3226,7 @@ static void test_deleted_recovery(struct ntfs_volume *vol)
         test_fail("deleted_recovery", "free failed"); return;
     }
 
-    /* Read the freed record — it should still have FILE magic */
+    /* Read the freed record -- it should still have FILE magic */
     buf_phys = pmm_alloc_contiguous(1);
     if (!buf_phys) {
         test_fail("deleted_recovery", "PMM"); return;
@@ -3236,7 +3236,7 @@ static void test_deleted_recovery(struct ntfs_volume *vol)
     rc = ntfs_read_mft_record_raw(vol, inode, rec, &hdr);
     if (rc != NTFS_OK) {
         pmm_free_frame(buf_phys);
-        /* May fail if raw read rejects freed records — acceptable */
+        /* May fail if raw read rejects freed records -- acceptable */
         klog(LOG_DEBUG, "ntfs-test",
              "deleted_recovery: raw read failed (acceptable)");
         test_pass("deleted_recovery"); return;

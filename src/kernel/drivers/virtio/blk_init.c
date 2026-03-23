@@ -1,10 +1,10 @@
-/* blk_init.c — Init, reset, shutdown, hot-plug/unplug */
+/* blk_init.c -- Init, reset, shutdown, hot-plug/unplug */
 
 #include "kernel/drivers/virtio/blk_internal.h"
 
 /* ---- Initialization ---- */
 
-/* Forward declaration — virtio_blk_init is also called by reset */
+/* Forward declaration -- virtio_blk_init is also called by reset */
 int virtio_blk_init(void);
 
 /* Reset device and re-initialize.
@@ -28,10 +28,10 @@ int virtio_blk_reset(void)
             return 0;
         }
         klog(LOG_DEBUG, "virtio",
-               "Per-queue reset failed — falling back to full device reset");
+               "Per-queue reset failed -- falling back to full device reset");
     }
 
-    klog(LOG_DEBUG, "virtio", "Full device reset — reinitializing");
+    klog(LOG_DEBUG, "virtio", "Full device reset -- reinitializing");
     error_stats.resets++;
 
     /* VirtIO §2.1.2: driver writes 0 to device_status to reset */
@@ -47,7 +47,7 @@ int virtio_blk_reset(void)
         __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
     }
     if (wait == 0) {
-        klog(LOG_DEBUG, "virtio", "Device did not reset — aborting");
+        klog(LOG_DEBUG, "virtio", "Device did not reset -- aborting");
         return -1;
     }
 
@@ -100,7 +100,7 @@ int virtio_blk_init(void)
     uint32_t driver_feat_lo;
     uint8_t status;
 
-    /* Default topology — 512-byte sectors, no limits */
+    /* Default topology -- 512-byte sectors, no limits */
     topo.blk_size = 512;
     topo.physical_block_exp = 0;
     topo.alignment_offset = 0;
@@ -148,7 +148,7 @@ int virtio_blk_init(void)
         return -1;
     }
 
-    klog(LOG_DEBUG, "virtio", "Found at PCI %u:%u.%u (devID=%x)",
+    klog(LOG_DEBUG, "virtio", "Found at PCI %u:%u.%u (devID=0x%x)",
            (uint64_t)dev.bus, (uint64_t)dev.dev, (uint64_t)dev.func,
            (uint64_t)dev.device_id);
 
@@ -183,9 +183,9 @@ int virtio_blk_init(void)
 
     /* Step 4: Read and negotiate features */
     feat_lo = read_device_features(0);
-    klog(LOG_DEBUG, "virtio", "Device features[0]: %x", (uint64_t)feat_lo);
+    klog(LOG_DEBUG, "virtio", "Device features[0]: 0x%x", (uint64_t)feat_lo);
 
-    /* Build driver feature set — accept features we support */
+    /* Build driver feature set -- accept features we support */
     driver_feat_lo = 0;
 
     /* Negotiate F_FLUSH (bit 6): cache flush for write barriers */
@@ -230,7 +230,7 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_SEG_MAX");
     }
 
-    /* Check F_RO (bit 4): read-only device — accept the bit to acknowledge */
+    /* Check F_RO (bit 4): read-only device -- accept the bit to acknowledge */
     if (feat_lo & (1u << VIRTIO_BLK_F_RO)) {
         driver_feat_lo |= (1u << VIRTIO_BLK_F_RO);
         is_read_only = 1;
@@ -326,7 +326,7 @@ int virtio_blk_init(void)
         /* F_IN_ORDER is bit 35 = page 1 bit 3.
          * When negotiated, the device guarantees it processes and returns
          * descriptors in strict submission order.  This eliminates the
-         * need to match used_elem.id — the driver can reclaim buffers
+         * need to match used_elem.id -- the driver can reclaim buffers
          * sequentially (FIFO), reducing cache and TLB pressure. */
         if (feat_hi & (1u << (VIRTIO_F_IN_ORDER - 32))) {
             driver_feat_hi |= (1u << (VIRTIO_F_IN_ORDER - 32));
@@ -402,7 +402,7 @@ int virtio_blk_init(void)
             /* Set notify_data flag on each queue */
             blk_vqs[qi].notify_data = has_notify_data ? 1 : 0;
             if (has_event_idx) {
-                /* Clear NO_INTERRUPT flag — event_idx supersedes it */
+                /* Clear NO_INTERRUPT flag -- event_idx supersedes it */
                 blk_vqs[qi].avail->flags = 0;
                 /* Set initial used_event to current last_used */
                 virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
@@ -410,12 +410,12 @@ int virtio_blk_init(void)
         }
     }
 
-    /* Step 7: DRIVER_OK — device is live */
+    /* Step 7: DRIVER_OK -- device is live */
     status |= VIRTIO_STATUS_DRIVER_OK;
     virtio_set_status(&blk_dev, status);
 
     /* Read disk capacity from device-specific config MMIO.
-     * Use config_generation counter for atomic read — a live-resize
+     * Use config_generation counter for atomic read -- a live-resize
      * event between the two 32-bit MMIO reads would corrupt the
      * 64-bit value.  Retry if generation changed. */
     if (blk_dev.device_cfg) {
@@ -511,11 +511,11 @@ int virtio_blk_init(void)
                (uint64_t)topo.wz_may_unmap);
     }
 
-    /* Check for DEVICE_NEEDS_RESET — abort if device signalled failure */
+    /* Check for DEVICE_NEEDS_RESET -- abort if device signalled failure */
     {
         uint8_t cur = virtio_get_status(&blk_dev);
         if (cur & VIRTIO_STATUS_DEVICE_NEEDS_RESET) {
-            klog(LOG_DEBUG, "virtio", "Device needs reset after init — aborting");
+            klog(LOG_DEBUG, "virtio", "Device needs reset after init -- aborting");
             virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
             return -1;
         }
@@ -539,14 +539,14 @@ int virtio_blk_init(void)
                                         num_queues, msix_vec_queues,
                                         &msix_vec_config) != 0) {
             klog(LOG_DEBUG, "virtio",
-                   "MSI-X multi setup failed — falling back to single queue");
+                   "MSI-X multi setup failed -- falling back to single queue");
             /* Fall back to single queue + single MSI-X */
             num_queues = 1;
             topo.num_queues = 1;
             if (virtio_pci_setup_msix(&blk_dev, dev.bus, dev.dev, dev.func,
                                       &msix_vec_queues[0],
                                       &msix_vec_config) != 0) {
-                klog(LOG_DEBUG, "virtio", "MSI-X setup failed — polling only");
+                klog(LOG_DEBUG, "virtio", "MSI-X setup failed -- polling only");
             } else {
                 irq_register(msix_vec_queues[0], virtio_blk_queue_irq,
                              (void *)(uintptr_t)0, "virtio-blk-q0");
@@ -579,7 +579,7 @@ int virtio_blk_init(void)
         if (virtio_pci_setup_msix(&blk_dev, dev.bus, dev.dev, dev.func,
                                   &msix_vec_queues[0],
                                   &msix_vec_config) != 0) {
-            klog(LOG_DEBUG, "virtio", "MSI-X setup failed — polling only");
+            klog(LOG_DEBUG, "virtio", "MSI-X setup failed -- polling only");
         } else {
             irq_register(msix_vec_queues[0], virtio_blk_queue_irq,
                          (void *)(uintptr_t)0, "virtio-blk-q0");
@@ -604,7 +604,7 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Device ID: \"%s\"", device_serial);
     } else {
         device_serial[0] = '\0';
-        klog(LOG_DEBUG, "virtio", "GET_ID failed — no device serial");
+        klog(LOG_DEBUG, "virtio", "GET_ID failed -- no device serial");
     }
 
     /* Retrieve device lifetime metrics via GET_LIFETIME */
@@ -740,7 +740,7 @@ int virtio_blk_init(void)
     if (has_mq && num_queues >= IO_QUEUE_TIERS) {
         priority_queues_active = 1;
         klog(LOG_DEBUG, "virtio",
-               "I/O priority queues: ACTIVE (%u queues) — "
+               "I/O priority queues: ACTIVE (%u queues) -- "
                "Q0=Critical/High, Q1=Normal, Q2=Low/VeryLow",
                (uint64_t)num_queues);
 
@@ -936,7 +936,7 @@ int virtio_blk_init(void)
     if (has_packed) {
         if (packed_vq_init(&blk_dev, 0) == 0) {
             klog(LOG_DEBUG, "virtio",
-                   "PackedVQ: active — using unified ring for queue 0");
+                   "PackedVQ: active -- using unified ring for queue 0");
         } else {
             has_packed = 0;  /* Fall back to split VQ */
             klog(LOG_DEBUG, "virtio",
@@ -960,7 +960,7 @@ int virtio_blk_is_surprise_removed(void)
     if (!blk_initialized)
         return 1;  /* Not blk_initialized = effectively gone */
 
-    /* Read PCI vendor ID — if device is surprise-removed, returns 0xFFFF */
+    /* Read PCI vendor ID -- if device is surprise-removed, returns 0xFFFF */
     vid = pci_read16(saved_pci_bus, saved_pci_dev, saved_pci_func, 0x00);
     return (vid == 0xFFFF) ? 1 : 0;
 }
@@ -1007,7 +1007,7 @@ void virtio_blk_shutdown(void)
         }
     } else {
         klog(LOG_DEBUG, "virtio",
-               "Surprise removal — skipping device I/O during teardown");
+               "Surprise removal -- skipping device I/O during teardown");
     }
 
     /* 3. Free all virtqueue ring memory */
@@ -1128,7 +1128,7 @@ int virtio_blk_hotplug(uint8_t bus, uint8_t dev, uint8_t func)
     }
 
     klog(LOG_DEBUG, "virtio",
-           "Block: hot-plug complete — %u MiB",
+           "Block: hot-plug complete -- %u MiB",
            (uint64_t)(disk_capacity / 2048));
 
     return 0;

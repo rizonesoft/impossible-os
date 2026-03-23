@@ -1,5 +1,5 @@
 /* ============================================================================
- * mutex.c — Kernel mutex synchronization
+ * mutex.c -- Kernel mutex synchronization
  *
  * Blocking mutexes with owner tracking, wait queue, and optional
  * lock-ordering deadlock detection.
@@ -7,7 +7,7 @@
  * When a thread calls mutex_lock() on an already-held mutex:
  *   1. The thread is added to the mutex's wait queue
  *   2. The thread's state is set to THREAD_BLOCKED
- *   3. yield() is called — scheduler skips blocked threads
+ *   3. yield() is called -- scheduler skips blocked threads
  *   4. When mutex_unlock() fires, the first waiter is woken
  *   5. The woken thread re-checks the lock and acquires it
  *
@@ -53,17 +53,17 @@ void mutex_lock(mutex_t *m)
         printk("[DEADLOCK] mutex \"%s\": thread %u (task %u) already holds this lock!\n",
                m->name ? m->name : "?",
                (uint64_t)my_thread, (uint64_t)my_task);
-        return;  /* avoid actual deadlock — just warn and return */
+        return;  /* avoid actual deadlock -- just warn and return */
     }
 
     /* --- Lock ordering check --- */
     if (m->lock_order > 0 && current_max_lock_order >= m->lock_order) {
-        printk("[DEADLOCK] mutex \"%s\" (order %u): acquired after order %u — "
+        printk("[DEADLOCK] mutex \"%s\" (order %u): acquired after order %u -- "
                "potential deadlock!\n",
                m->name ? m->name : "?",
                (uint64_t)m->lock_order,
                (uint64_t)current_max_lock_order);
-        /* Continue anyway — it's a warning, not a hard stop */
+        /* Continue anyway -- it's a warning, not a hard stop */
     }
 
     /* --- Spin-then-sleep acquisition with priority inheritance --- */
@@ -150,7 +150,7 @@ void mutex_unlock(mutex_t *m)
     m->owner_task   = 0;
     m->owner_thread = 0;
 
-    /* Reset lock ordering (simplified — only tracks one level) */
+    /* Reset lock ordering (simplified -- only tracks one level) */
     if (m->lock_order > 0 && current_max_lock_order == m->lock_order)
         current_max_lock_order = 0;
 
@@ -200,7 +200,7 @@ int mutex_trylock(mutex_t *m)
 
     /* Attempt CAS: if locked == 0, set to 1 and return success. */
     if (atomic_cmpxchg(&m->locked, 0, 1) != 0)
-        return 0;  /* already locked — CAS returned non-zero (current value) */
+        return 0;  /* already locked -- CAS returned non-zero (current value) */
 
     cur_task   = task_current();
     cur_thread = thread_current();

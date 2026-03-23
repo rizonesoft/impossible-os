@@ -265,7 +265,7 @@ int rtl8139_init(void)
     for (i = 0; i < 6; i++)
         mac_addr[i] = inb_nic(io_base + REG_MAC0 + i);
 
-    klog(LOG_DEBUG, "net", "MAC: %x:%x:%x:%x:%x:%x",
+    klog(LOG_DEBUG, "net", "MAC: %02X:%02X:%02X:%02X:%02X:%02X",
            (uint64_t)mac_addr[0], (uint64_t)mac_addr[1],
            (uint64_t)mac_addr[2], (uint64_t)mac_addr[3],
            (uint64_t)mac_addr[4], (uint64_t)mac_addr[5]);

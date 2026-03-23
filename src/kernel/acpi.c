@@ -1,5 +1,5 @@
 /* ============================================================================
- * acpi.c — ACPI table parsing and power management
+ * acpi.c -- ACPI table parsing and power management
  *
  * Walks the RSDP → RSDT/XSDT → FADT chain to discover the PM1a control
  * block port, which is used to initiate an S5 (soft-off) shutdown.
@@ -68,7 +68,7 @@ static uint32_t               override_count = 0;
 
 /* ---- Helpers ---- */
 
-/* Validate ACPI table checksum — all bytes must sum to 0 */
+/* Validate ACPI table checksum -- all bytes must sum to 0 */
 static int acpi_checksum(const void *ptr, uint32_t length)
 {
     const uint8_t *bytes = (const uint8_t *)ptr;
@@ -198,7 +198,7 @@ static uint16_t parse_s5_from_dsdt(const struct acpi_sdt_header *dsdt)
                 continue;
 
             if (data[i] == 0x0A) {
-                /* BytePrefix — next byte is the value */
+                /* BytePrefix -- next byte is the value */
                 i++;
                 if (i >= length) continue;
                 return (uint16_t)data[i];
@@ -240,7 +240,7 @@ static void parse_madt(const struct acpi_madt *madt)
     klog(LOG_INFO, "acpi",
          "MADT PCAT_COMPAT=%u%s",
          (uint64_t)pcat_compat,
-         pcat_compat ? "" : " — PIC absent, APIC-only mode");
+         pcat_compat ? "" : " -- PIC absent, APIC-only mode");
 
     /* Get BSP LAPIC ID so we can mark it */
     bsp_lapic_id = read_bsp_lapic_id();
@@ -261,7 +261,7 @@ static void parse_madt(const struct acpi_madt *madt)
                 (const struct madt_lapic *)entry;
 
             klog(LOG_DEBUG, "acpi",
-                 "  MADT[%u]: LAPIC acpi_id=%u apic_id=%u flags=%x",
+                 "  MADT[%u]: LAPIC acpi_id=%u apic_id=%u flags=0x%x",
                  (uint64_t)offset, (uint64_t)lapic->acpi_processor_id,
                  (uint64_t)lapic->apic_id, (uint64_t)lapic->flags);
 
@@ -289,7 +289,7 @@ static void parse_madt(const struct acpi_madt *madt)
             uint32_t x2_id    = *(const uint32_t *)(e + 12);
 
             klog(LOG_DEBUG, "acpi",
-                 "  MADT[%u]: x2APIC uid=%u id=%u flags=%x",
+                 "  MADT[%u]: x2APIC uid=%u id=%u flags=0x%x",
                  (uint64_t)offset, (uint64_t)x2_uid,
                  (uint64_t)x2_id, (uint64_t)x2_flags);
 
@@ -332,7 +332,7 @@ static void parse_madt(const struct acpi_madt *madt)
         }
 
         case MADT_TYPE_LAPIC_OVERRIDE: {
-            /* 64-bit LAPIC address override — update base */
+            /* 64-bit LAPIC address override -- update base */
             const uint64_t *addr64 =
                 (const uint64_t *)(data + offset + 4);
             lapic_base_addr = (uint32_t)(*addr64);
@@ -396,7 +396,7 @@ int acpi_init(void)
 
     acpi_ready = 1;
 
-    klog(LOG_INFO, "acpi", "ACPI: FADT at %p, PM1a_CNT=%x, SLP_TYPa=%u",
+    klog(LOG_INFO, "acpi", "ACPI: FADT at %p, PM1a_CNT=0x%x, SLP_TYPa=%u",
            (uint64_t)(uintptr_t)fadt, (uint64_t)pm1a_cnt_port,
            (uint64_t)slp_typa);
 
@@ -408,18 +408,18 @@ int acpi_init(void)
         parse_madt((const struct acpi_madt *)madt_hdr);
 
         klog(LOG_INFO, "acpi",
-             "MADT: %u CPUs, LAPIC=%x, IOAPIC=%x, %u overrides",
+             "MADT: %u CPUs, LAPIC=0x%x, IOAPIC=0x%x, %u overrides",
              (uint64_t)cpu_count, (uint64_t)lapic_base_addr,
              (uint64_t)ioapic_base_addr, (uint64_t)override_count);
     } else {
-        /* No MADT — single CPU, no APIC routing */
+        /* No MADT -- single CPU, no APIC routing */
         cpu_count = 1;
         cpus[0].apic_id = 0;
         cpus[0].acpi_id = 0;
         cpus[0].is_bsp  = 1;
         cpus[0].enabled  = 1;
 
-        klog(LOG_WARN, "acpi", "No MADT found — single-core mode");
+        klog(LOG_WARN, "acpi", "No MADT found -- single-core mode");
     }
 
     return 0;
@@ -429,7 +429,7 @@ void acpi_shutdown(void)
 {
     printk("[ACPI] Initiating shutdown...\n");
 
-    /* Disable interrupts — we're going down */
+    /* Disable interrupts -- we're going down */
     __asm__ volatile("cli");
 
     if (acpi_ready && pm1a_cnt_port) {
@@ -450,7 +450,7 @@ void acpi_shutdown(void)
     outw_acpi(0xB004, 0x2000);
 
     /* If we're still here, halt */
-    printk("[ACPI] Shutdown failed — halting\n");
+    printk("[ACPI] Shutdown failed -- halting\n");
     for (;;)
         __asm__ volatile("hlt");
 }
@@ -566,7 +566,7 @@ uint8_t acpi_pcat_compat(void)
 /* HPET table structure (ACPI spec: Table 5-37)
  * Offset 0:  standard header (36 bytes)
  * Offset 36: event_timer_block_id (uint32_t)
- * Offset 40: base_address (GAS — 12 bytes: space=0, width=64, offset=0, size=0, addr)
+ * Offset 40: base_address (GAS -- 12 bytes: space=0, width=64, offset=0, size=0, addr)
  * The MMIO base is at GAS.address (offset 44 in the table). */
 
 uint64_t acpi_get_hpet_base(void)
@@ -605,7 +605,7 @@ int acpi_pmtimer_is_32bit(void)
 {
     if (!fadt_ptr)
         return 0;
-    /* FADT flags bit 8: TMR_VAL_EXT — 1 = 32-bit PM Timer */
+    /* FADT flags bit 8: TMR_VAL_EXT -- 1 = 32-bit PM Timer */
     return (fadt_ptr->flags & (1u << 8)) ? 1 : 0;
 }
 
@@ -613,6 +613,6 @@ int acpi_hw_reduced(void)
 {
     if (!fadt_ptr)
         return 0;
-    /* FADT flags bit 20: HW_REDUCED_ACPI — legacy devices absent */
+    /* FADT flags bit 20: HW_REDUCED_ACPI -- legacy devices absent */
     return (fadt_ptr->flags & (1u << 20)) ? 1 : 0;
 }

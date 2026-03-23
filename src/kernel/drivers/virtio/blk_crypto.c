@@ -1,10 +1,10 @@
 /* ============================================================================
- * blk_crypto.c — Inline Encryption Support
+ * blk_crypto.c -- Inline Encryption Support
  *
- * §21.1 — 🚀 Impossible OS Exclusive
+ * §21.1 -- 🚀 Impossible OS Exclusive
  *
  * Neither Windows viostor nor Linux virtio-blk implement VirtIO-level inline
- * encryption — Windows uses BitLocker (software), Linux uses blk-crypto
+ * encryption -- Windows uses BitLocker (software), Linux uses blk-crypto
  * (above the driver). This module provides transparent block-level encryption
  * directly in the VirtIO block driver.
  *
@@ -109,7 +109,7 @@ int crypto_set_key(uint32_t slot, const uint8_t *key,
 
     if (!cs.supported) {
         klog(LOG_DEBUG, "virtio",
-               "Crypto: set_key failed — device does not support inline crypto");
+               "Crypto: set_key failed -- device does not support inline crypto");
         return -1;
     }
 

@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_journal.c — $LogFile Journal Engine (§13.1)
+ * ntfs_journal.c -- $LogFile Journal Engine (§13.1)
  *
  * Implements write-ahead transaction logging via NTFS's $LogFile (inode 2).
  * Every metadata modification (MFT record, bitmap, index) is wrapped in a
@@ -34,8 +34,8 @@
  * ============================================================================ */
 
 /* Page magic signatures */
-#define RSTR_MAGIC  0x52545352   /* "RSTR" — Restart page */
-#define RCRD_MAGIC  0x44524352   /* "RCRD" — Record page */
+#define RSTR_MAGIC  0x52545352   /* "RSTR" -- Restart page */
+#define RCRD_MAGIC  0x44524352   /* "RCRD" -- Record page */
 
 /* Default log page size (matches system page size in most NTFS volumes) */
 #define LOG_DEFAULT_PAGE_SIZE  4096
@@ -99,7 +99,7 @@
 #define LOG_RECORD_TYPE_NORMAL      0x01
 #define LOG_RECORD_TYPE_CHECKPOINT  0x02
 
-/* Max redo/undo data per record — keeps records within one page */
+/* Max redo/undo data per record -- keeps records within one page */
 #define LOG_MAX_DATA_SIZE  3900
 
 /* Max open transactions */
@@ -193,7 +193,7 @@ static uint64_t log_circular_offset(struct ntfs_volume *vol, uint64_t pos)
 }
 
 /* ============================================================================
- * ntfs_journal_init — Read and parse $LogFile at mount time
+ * ntfs_journal_init -- Read and parse $LogFile at mount time
  *
  * 1. Read $LogFile (inode 2) data runs
  * 2. Read first restart page (RSTR at offset 0)
@@ -246,7 +246,7 @@ int ntfs_journal_init(struct ntfs_volume *vol)
         return NTFS_ERR_BAD_MAGIC;
     }
 
-    /* Decode data runs — allocate via kmalloc for the run array */
+    /* Decode data runs -- allocate via kmalloc for the run array */
     {
         struct ntfs_data_run temp_runs[128];
         int run_count;
@@ -299,7 +299,7 @@ int ntfs_journal_init(struct ntfs_volume *vol)
         if (log_read(vol, 0x1000, LOG_DEFAULT_PAGE_SIZE, page) < 0 ||
             ntfs_le32(page + 0x00) != RSTR_MAGIC) {
             klog(LOG_WARN, "ntfs",
-                 "journal: no valid RSTR page — $LogFile may be empty");
+                 "journal: no valid RSTR page -- $LogFile may be empty");
             /* Initialize defaults for a fresh volume */
             vol->log_page_size = LOG_DEFAULT_PAGE_SIZE;
             vol->log_current_lsn = 0;
@@ -325,7 +325,7 @@ int ntfs_journal_init(struct ntfs_volume *vol)
     if (vol->log_page_size == 0)
         vol->log_page_size = LOG_DEFAULT_PAGE_SIZE;
 
-    /* RestartOffset — where the LFS_RESTART_AREA starts within the page */
+    /* RestartOffset -- where the LFS_RESTART_AREA starts within the page */
     restart_offset = ntfs_le16(page + 0x10);  /* RestartOffset at 0x10 */
     if (restart_offset < 0x1E || restart_offset >= LOG_DEFAULT_PAGE_SIZE) {
         klog(LOG_WARN, "ntfs", "journal: invalid restart offset %u",
@@ -427,7 +427,7 @@ struct ntfs_txn *ntfs_txn_begin(struct ntfs_volume *vol)
 }
 
 /* Write a log record to $LogFile.
- * This is the core WAL primitive — records are written to the circular
+ * This is the core WAL primitive -- records are written to the circular
  * $LogFile buffer BEFORE metadata is modified on disk.
  *
  * Parameters:
@@ -479,7 +479,7 @@ uint64_t ntfs_txn_log(struct ntfs_txn *txn,
     /* Previous client LSN (for undo chain walking) */
     ntfs_le64_write(record + LOG_REC_PREV_LSN_OFF, txn->last_lsn);
 
-    /* Undo-next LSN (for CLR — same as previous for normal records) */
+    /* Undo-next LSN (for CLR -- same as previous for normal records) */
     ntfs_le64_write(record + LOG_REC_UNDO_NEXT_OFF, txn->last_lsn);
 
     /* Client data length (everything from redo_op onward) */
@@ -487,7 +487,7 @@ uint64_t ntfs_txn_log(struct ntfs_txn *txn,
     total_data_len = (LOG_REC_HEADER_SIZE - data_off) + redo_len + undo_len;
     ntfs_le32_write(record + LOG_REC_DATA_LEN_OFF, total_data_len);
 
-    /* Client ID (always 0 for NTFS — single client) */
+    /* Client ID (always 0 for NTFS -- single client) */
     ntfs_le16_write(record + LOG_REC_CLIENT_ID_OFF, 0);
 
     /* Record type */
@@ -569,11 +569,11 @@ uint64_t ntfs_txn_log(struct ntfs_txn *txn,
 }
 
 /* ============================================================================
- * ntfs_txn_commit — Commit a transaction
+ * ntfs_txn_commit -- Commit a transaction
  *
  * 1. Write a commit record (ForgetTransaction) to $LogFile
  * 2. Update restart area with new CurrentLsn
- * 3. Transaction is now durable — metadata writes can proceed
+ * 3. Transaction is now durable -- metadata writes can proceed
  * ============================================================================ */
 
 int ntfs_txn_commit(struct ntfs_txn *txn)
@@ -589,7 +589,7 @@ int ntfs_txn_commit(struct ntfs_txn *txn)
 
     vol = txn->vol;
 
-    /* Write a commit record — ForgetTransaction (redo=Noop, undo=Noop) */
+    /* Write a commit record -- ForgetTransaction (redo=Noop, undo=Noop) */
     commit_lsn = ntfs_txn_log(txn,
                                NTFS_LOG_OP_NOOP, NULL, 0,
                                NTFS_LOG_OP_NOOP, NULL, 0,
@@ -658,7 +658,7 @@ int ntfs_txn_commit(struct ntfs_txn *txn)
 }
 
 /* ============================================================================
- * ntfs_txn_abort — Abort a transaction (rollback)
+ * ntfs_txn_abort -- Abort a transaction (rollback)
  *
  * Walk the undo chain backward (via PreviousClientLsn), apply each
  * undo operation, and write an abort record.
@@ -703,7 +703,7 @@ int ntfs_txn_abort(struct ntfs_txn *txn)
 }
 
 /* ============================================================================
- * ntfs_txn_free — Free a transaction context
+ * ntfs_txn_free -- Free a transaction context
  * ============================================================================ */
 
 void ntfs_txn_free(struct ntfs_txn *txn)
@@ -713,7 +713,7 @@ void ntfs_txn_free(struct ntfs_txn *txn)
 }
 
 /* ============================================================================
- * ntfs_journal_shutdown — Clean shutdown of the journal
+ * ntfs_journal_shutdown -- Clean shutdown of the journal
  *
  * Updates the restart area with the final LSN and marks the volume clean.
  * Called during unmount or clean shutdown.

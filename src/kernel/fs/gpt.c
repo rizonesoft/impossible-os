@@ -598,7 +598,7 @@ static int parse_header(const uint8_t *buf, struct gpt_header *hdr,
     computed_crc = gpt_crc32(tmp, hdr->header_size);
 
     if (computed_crc != stored_crc) {
-        klog(LOG_DEBUG, "blk", "Header CRC32 mismatch: stored=%x computed=%x",
+        klog(LOG_DEBUG, "blk", "Header CRC32 mismatch: stored=0x%x computed=0x%x",
                (uint64_t)stored_crc, (uint64_t)computed_crc);
         return -1;
     }
@@ -884,7 +884,7 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     }
 
     if (entry_crc != hdr.part_entry_crc32) {
-        klog(LOG_DEBUG, "blk", "Entry array CRC32 mismatch: stored=%x computed=%x",
+        klog(LOG_DEBUG, "blk", "Entry array CRC32 mismatch: stored=0x%x computed=0x%x",
                (uint64_t)hdr.part_entry_crc32, (uint64_t)entry_crc);
         goto out_free;
     }

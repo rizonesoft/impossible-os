@@ -1,5 +1,5 @@
 /* ============================================================================
- * bootx64.c — Custom UEFI Boot Application for Impossible OS
+ * bootx64.c -- Custom UEFI Boot Application for Impossible OS
  *
  * Entry point: efi_main(EFI_HANDLE, EFI_SYSTEM_TABLE*)
  * Compiled as a PE/COFF binary, placed at \EFI\BOOT\BOOTX64.EFI
@@ -222,7 +222,7 @@ static EFI_SYSTEM_TABLE    *gST;
 static EFI_BOOT_SERVICES   *gBS;
 static EFI_HANDLE           gImageHandle;
 
-/* Boot info — placed at a known physical address (64 KiB) */
+/* Boot info -- placed at a known physical address (64 KiB) */
 #define BOOT_INFO_PHYS_ADDR  0x10000
 static struct boot_info    *g_boot_info_ptr;
 
@@ -262,7 +262,7 @@ static BOOLEAN guid_equal(const EFI_GUID *a, const EFI_GUID *b)
 }
 
 /* --- Helper: early serial output to COM1 (0x3F8) ---
- * Works before ExitBootServices — provides diagnostics even when
+ * Works before ExitBootServices -- provides diagnostics even when
  * UEFI video console doesn't work (e.g. Hyper-V Gen 2).
  * The 16550 UART is emulated by all major hypervisors. */
 #define SERIAL_COM1 0x3F8
@@ -339,7 +339,7 @@ static void efi_print_hex(UINT64 val)
  *   B. No EDID (QEMU, VirtualBox, most emulators):
  *      If the current mode is already 32bpp with FrameBufferBase != 0,
  *      USE IT AS-IS with no SetMode call.
- *      This honors -device VGA,xres=N,yres=M — the whole point of the
+ *      This honors -device VGA,xres=N,yres=M -- the whole point of the
  *      HiDPI test targets is that OVMF already set the right mode.
  *
  *   C. Current mode unusable (FrameBufferBase==0 or non-32bpp):
@@ -424,17 +424,17 @@ static EFI_STATUS init_gop(void)
                     efi_print(u"[GOP] EDID native mode set\r\n");
                     goto store_fb;
                 }
-                break;  /* SetMode failed or bad FB — fall through */
+                break;  /* SetMode failed or bad FB -- fall through */
             }
         }
-        efi_print(u"[GOP] EDID match failed — using firmware mode\r\n");
+        efi_print(u"[GOP] EDID match failed -- using firmware mode\r\n");
     }
 
     /* ── B. No EDID: keep OVMF's current mode ───────────────────────────
      * OVMF initialises the display at the resolution given by xres/yres on
      * the QEMU device (-device VGA,xres=N,yres=M or bochs-display,xres=N).
      * By the time our bootloader runs, gop->Mode already reflects that
-     * resolution.  We just honour it — no SetMode needed.
+     * resolution.  We just honour it -- no SetMode needed.
      *
      * Fallback: current mode is genuinely unusable (FrameBufferBase=0 or
      * non-32bpp format).  In that case try mode 0 (always valid on OVMF). */
@@ -444,7 +444,7 @@ static EFI_STATUS init_gop(void)
     }
 
     /* cur_ok=false → last resort: SetMode(0) */
-    efi_print(u"[GOP] Current mode unusable — SetMode(0)\r\n");
+    efi_print(u"[GOP] Current mode unusable -- SetMode(0)\r\n");
     gop->SetMode(gop, 0);
 
 
@@ -482,10 +482,10 @@ store_fb:
 }
 
 /* ============================================================================
- * Step 1b: Parse boot.conf — key=value ini file from EFI partition
+ * Step 1b: Parse boot.conf -- key=value ini file from EFI partition
  *
  * Format: key=value, # comments, blank lines ignored.
- * Runs BEFORE load_kernel() — UEFI Boot Services are still available.
+ * Runs BEFORE load_kernel() -- UEFI Boot Services are still available.
  * ============================================================================ */
 
 /* ASCII string compare (no strcmp in freestanding UEFI) */
@@ -556,7 +556,7 @@ static void parse_conf_kv(struct boot_config *cfg,
             cfg->cmdline[i] = val[i];
         cfg->cmdline[i] = '\0';
     }
-    /* Unknown keys are silently ignored — forward compatibility */
+    /* Unknown keys are silently ignored -- forward compatibility */
 }
 
 /* Read and parse \EFI\ImpossibleOS\boot.conf */
@@ -638,7 +638,7 @@ static void parse_boot_conf(void)
         key[ki] = '\0';
 
         if (*pos != '=') {
-            /* No '=' found — skip line */
+            /* No '=' found -- skip line */
             while (*pos && *pos != '\n') pos++;
             if (*pos == '\n') pos++;
             continue;
@@ -966,7 +966,7 @@ static void retrieve_tpm_event_log(void)
     /* Try to locate the TCG2 protocol */
     status = gBS->LocateProtocol(&tcg2_guid, (VOID *)0, (VOID **)&tcg2);
     if (EFI_ERROR(status) || !tcg2) {
-        /* No TPM — not an error, just unavailable */
+        /* No TPM -- not an error, just unavailable */
         serial_early_print("BOOT: TPM: not available\n");
         g_boot_info_ptr->tpm_available = 0;
         return;
@@ -1044,7 +1044,7 @@ static void retrieve_tpm_event_log(void)
     /* Count events by walking the TCG_PCR_EVENT header (first entry is
      * always a SHA-1 spec ID event in the TCG 1.2 format, even for
      * crypto-agile logs).  For a simple count, scan for 4-byte aligned
-     * entries.  This is approximate — the kernel will do full parsing. */
+     * entries.  This is approximate -- the kernel will do full parsing. */
     UINT16 event_count = 0;
     UINTN offset = 0;
     while (offset + 32 < (UINTN)log_size) {
@@ -1056,7 +1056,7 @@ static void retrieve_tpm_event_log(void)
             break;
         event_count++;
         if (event_count == 1 && tpm_ver == 2) {
-            /* First entry is spec ID event — remaining entries use
+            /* First entry is spec ID event -- remaining entries use
              * TCG_PCR_EVENT2 format. We can't easily count those without
              * knowing the hash sizes, so break after the first. The kernel
              * will do proper parsing. */
@@ -1089,7 +1089,7 @@ static void retrieve_tpm_event_log(void)
 #define FPDT_RECORD_TYPE_FIRMWARE_BASIC_BOOT  0x0000
 #define FPDT_RECORD_TYPE_S3_PERF              0x0001
 
-/* FPDT header — at the config table address */
+/* FPDT header -- at the config table address */
 struct fpdt_header {
     UINT32 signature;       /* 'FPDT' */
     UINT32 length;
@@ -1253,7 +1253,7 @@ static void copy_config_tables(void)
  * Step 6: Set up page tables (identity map first 4 GiB with 2 MiB pages)
  * ============================================================================ */
 
-/* Page table physical addresses — allocate 6 pages at 0x70000 */
+/* Page table physical addresses -- allocate 6 pages at 0x70000 */
 #define PT_PML4  0x70000
 #define PT_PDPT  0x71000
 #define PT_PD0   0x72000  /* 4 PDs: 0x72000, 0x73000, 0x74000, 0x75000 */
@@ -1286,7 +1286,7 @@ static void setup_page_tables(void)
 }
 
 /* ============================================================================
- * Step 7: Jump to kernel — switch to our page tables and call entry
+ * Step 7: Jump to kernel -- switch to our page tables and call entry
  * ============================================================================ */
 
 /* Defined in entry64.asm */
@@ -1304,7 +1304,7 @@ static void jump_to_kernel(UINT64 entry_point)
         : "memory"
     );
 
-    /* Call kernel — pass Multiboot2 magic + boot_info address.
+    /* Call kernel -- pass Multiboot2 magic + boot_info address.
      * We pass the UEFI-specific magic 0x55454649 ("UEFI") so the kernel
      * can detect which bootloader was used. */
     entry(0x55454649ULL, (UINT64)(UINTN)g_boot_info_ptr);

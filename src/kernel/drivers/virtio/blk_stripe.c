@@ -1,10 +1,10 @@
 /* ============================================================================
- * blk_stripe.c — Multi-Device RAID-0 Striping
+ * blk_stripe.c -- Multi-Device RAID-0 Striping
  *
- * §19.1 — 🚀 Impossible OS Exclusive
+ * S19.1 -- 🚀 Impossible OS Exclusive
  *
  * Neither Windows viostor nor Linux virtio-blk implement driver-level striping
- * — both rely on software RAID layers above (Storage Spaces, md/dm).
+ * -- both rely on software RAID layers above (Storage Spaces, md/dm).
  *
  * When 2+ VirtIO block devices of equal capacity are detected and striping
  * is enabled, this module assembles them into a RAID-0 stripe set exposed
@@ -23,7 +23,7 @@
 
 /* ---- Stripe configuration ---- */
 #define STRIPE_MAX_DEVICES      8      /* Max devices in a stripe set */
-#define STRIPE_DEFAULT_SECTORS  128    /* Default stripe width: 64 KB = 128×512 */
+#define STRIPE_DEFAULT_SECTORS  128    /* Default stripe width: 64 KB = 128x512 */
 
 /* ---- Per-member device state ---- */
 struct stripe_member {
@@ -157,7 +157,7 @@ static void stripe_map(uint64_t virt_lba, uint32_t *dev_idx,
                + offset_in_stripe;
 }
 
-/* Read from stripe set — split requests at stripe boundaries */
+/* Read from stripe set -- split requests at stripe boundaries */
 static int stripe_read(uint64_t lba, uint32_t count, void *buf,
                        void *driver_data)
 {
@@ -327,7 +327,7 @@ static int stripe_discard(uint64_t sector, uint32_t num_sectors,
     (void)driver_data;
     (void)sector;
     (void)num_sectors;
-    /* Discard across stripe is complex — defer to per-device discard via
+    /* Discard across stripe is complex -- defer to per-device discard via
      * the same stripe_map logic. For now, no-op (safe: data is just not trimmed). */
     return 0;
 }
@@ -358,7 +358,7 @@ void stripe_init(void)
     for (i = 0; i < STRIPE_MAX_DEVICES; i++)
         stripe.members[i].active = 0;
 
-    /* Check if stripe is enabled in Registry (default: false — opt-in) */
+    /* Check if stripe is enabled in Registry (default: false -- opt-in) */
     {
         HKEY hKey = (HKEY)0;
         uint32_t val = 0;
@@ -518,7 +518,7 @@ void stripe_init(void)
         for (i = 1; i < stripe.num_devices; i++) {
             if (stripe.members[i].capacity != primary_cap) {
                 klog(LOG_DEBUG, "virtio",
-                       "Stripe: member %u capacity %u != primary %u — skipping",
+                       "Stripe: member %u capacity %u != primary %u -- skipping",
                        (uint64_t)i,
                        (uint64_t)(stripe.members[i].capacity / 2048),
                        (uint64_t)(primary_cap / 2048));
@@ -528,7 +528,7 @@ void stripe_init(void)
 
         if (!matching) {
             klog(LOG_DEBUG, "virtio",
-                   "Stripe: capacity mismatch — stripe not assembled");
+                   "Stripe: capacity mismatch -- stripe not assembled");
             return;
         }
     }
@@ -538,7 +538,7 @@ void stripe_init(void)
     stripe.active = 1;
 
     klog(LOG_DEBUG, "virtio",
-           "Stripe: RAID-0 assembled — %u devices × %u MiB = %u MiB total"
+           "Stripe: RAID-0 assembled -- %u devices x %u MiB = %u MiB total"
            " (stripe=%u sectors)",
            (uint64_t)stripe.num_devices,
            (uint64_t)(stripe.members[0].capacity / 2048),

@@ -1,5 +1,5 @@
 /* ============================================================================
- * storvsc.c — Hyper-V Synthetic SCSI Storage Driver (StorVSC)
+ * storvsc.c -- Hyper-V Synthetic SCSI Storage Driver (StorVSC)
  *
  * Clean-room implementation from the public Hyper-V Top-Level Functional
  * Specification (TLFS). NO code derived from Linux hv_storvsc.c (GPL).
@@ -46,7 +46,7 @@ static struct vmbus_channel *stor_channel;
 static struct storvsc_disk_info disk_info;
 static int storvsc_initialized;
 
-/* Data buffer for SCSI read/write — allocated from PMM (identity-mapped)
+/* Data buffer for SCSI read/write -- allocated from PMM (identity-mapped)
  * and shared with the host via a separate GPADL. The VMBus ring buffer
  * carries only the VSTOR_PACKET metadata; actual disk data goes through
  * this GPADL-shared transfer buffer. */
@@ -87,7 +87,7 @@ static int storvsc_send_packet(struct vstor_packet *pkt)
     /* Signal the host */
     vmbus_signal_channel(stor_channel);
 
-    /* Poll for response (NO PAUSE — avoids Hyper-V PLE slowdown) */
+    /* Poll for response (NO PAUSE -- avoids Hyper-V PLE slowdown) */
     for (attempts = 0; attempts < 5000000; attempts++) {
         __asm__ volatile("" ::: "memory");  /* compiler barrier only */
 
@@ -214,7 +214,7 @@ static int storvsc_scsi_cmd(uint8_t *cdb, uint8_t cdb_len,
     storvsc_memcpy(pkt.srb.cdb, cdb, cdb_len);
 
     if (xfer_len > 0 && xfer_buffer) {
-        /* Send as transfer-page packet — references xfer_buffer GPADL */
+        /* Send as transfer-page packet -- references xfer_buffer GPADL */
         struct vmbus_transfer_page_range range;
         range.byte_count  = xfer_len;
         range.byte_offset = 0;
@@ -228,7 +228,7 @@ static int storvsc_scsi_cmd(uint8_t *cdb, uint8_t cdb_len,
             return -1;
         }
     } else {
-        /* No data — send in-band */
+        /* No data -- send in-band */
         if (vmbus_sendpacket(
                 stor_channel, &pkt, (uint32_t)sizeof(pkt),
                 tid, VMBUS_PACKET_TYPE_DATA_INBAND,
@@ -242,7 +242,7 @@ static int storvsc_scsi_cmd(uint8_t *cdb, uint8_t cdb_len,
     /* Signal the host */
     vmbus_signal_channel(stor_channel);
 
-    /* Poll for response (NO PAUSE — avoids Hyper-V PLE slowdown) */
+    /* Poll for response (NO PAUSE -- avoids Hyper-V PLE slowdown) */
     for (attempts = 0; attempts < 5000000; attempts++) {
         __asm__ volatile("" ::: "memory");  /* compiler barrier only */
 
@@ -286,7 +286,7 @@ static int storvsc_inquiry(void)
         return -1;
     }
 
-    klog(LOG_INFO, "storvsc", "INQUIRY successful — disk present");
+    klog(LOG_INFO, "storvsc", "INQUIRY successful -- disk present");
     return 0;
 }
 
@@ -489,7 +489,7 @@ int storvsc_init(void)
 
     /* Only runs on Hyper-V after VMBus is initialized */
     if (vmbus_get_channel_count() <= 0) {
-        klog(LOG_DEBUG, "storvsc", "No VMBus channels — skipping StorVSC");
+        klog(LOG_DEBUG, "storvsc", "No VMBus channels -- skipping StorVSC");
         return -1;
     }
 
@@ -510,7 +510,7 @@ int storvsc_init(void)
         return -1;
     }
 
-    /* Allocate transfer buffer (PMM — identity-mapped) */
+    /* Allocate transfer buffer (PMM -- identity-mapped) */
     xfer_buffer = (void *)(uintptr_t)pmm_alloc_contiguous(STORVSC_XFER_PAGES);
     if (!xfer_buffer) {
         klog(LOG_ERROR, "storvsc",
@@ -520,7 +520,7 @@ int storvsc_init(void)
     }
     storvsc_memset(xfer_buffer, 0, STORVSC_XFER_PAGES * 4096);
 
-    /* Create GPADL for the transfer buffer — makes it visible to the host
+    /* Create GPADL for the transfer buffer -- makes it visible to the host
      * for DMA-based SCSI data transfers. Without this, the host cannot
      * read/write the data buffer, causing silent I/O failures. */
     if (vmbus_create_gpadl_external(stor_channel, xfer_buffer,
@@ -539,9 +539,9 @@ int storvsc_init(void)
         return -1;
     }
 
-    /* SCSI INQUIRY — identify disk */
+    /* SCSI INQUIRY -- identify disk */
     if (storvsc_inquiry() < 0) {
-        klog(LOG_WARN, "storvsc", "INQUIRY failed — continuing anyway");
+        klog(LOG_WARN, "storvsc", "INQUIRY failed -- continuing anyway");
     }
 
     /* Read disk capacity */

@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_file_ops.c — File Lifecycle Operations (§12.5)
+ * ntfs_file_ops.c -- File Lifecycle Operations (§12.5)
  *
  * Core CRUD operations for NTFS: create, delete, rename files and
  * directories.  Builds on the write infrastructure from §12.1–12.4:
@@ -9,8 +9,8 @@
  *   - ntfs_regenerate_fixup()  (§12.2)
  *
  * Directory index insert/delete delegate to:
- *   - ntfs_index_insert()  (ntfs_index_insert.c — §14.1)
- *   - ntfs_index_delete()  (ntfs_index_delete.c — §14.1)
+ *   - ntfs_index_insert()  (ntfs_index_insert.c -- §14.1)
+ *   - ntfs_index_delete()  (ntfs_index_delete.c -- §14.1)
  * ============================================================================ */
 
 #include "kernel/fs/ntfs.h"
@@ -24,7 +24,7 @@
 /* Windows FILETIME units: 100-nanosecond intervals. */
 #define NTFS_FILETIME_HZ          10000000ULL
 
-/* Base FILETIME for 2026-01-01T00:00:00Z — used when no RTC is available.
+/* Base FILETIME for 2026-01-01T00:00:00Z -- used when no RTC is available.
  * = 1601→2026 seconds * 10^7 */
 #define NTFS_FILETIME_BASE_2026   134378784000000000ULL
 
@@ -82,7 +82,7 @@ static void build_std_info(uint8_t *buf, uint64_t now, uint32_t dos_attrs)
     /* DOS permissions */
     ntfs_le32_write(buf + 0x20, dos_attrs);
 
-    /* NTFS 3.0+ extended fields (0x24–0x47) — leave zeroed */
+    /* NTFS 3.0+ extended fields (0x24–0x47) -- leave zeroed */
 }
 
 /* Build the raw on-disk $FILE_NAME content.
@@ -162,9 +162,9 @@ static uint32_t build_empty_index_root(uint8_t *buf)
 }
 
 /* ============================================================================
- * ntfs_write_mft_record — Write an in-memory MFT record back to disk
+ * ntfs_write_mft_record -- Write an in-memory MFT record back to disk
  *
- * 1. Apply USA regeneration (§12.2) — stamps sector last-2-bytes
+ * 1. Apply USA regeneration (§12.2) -- stamps sector last-2-bytes
  * 2. Map inode → LBA via $MFT data runs
  * 3. Write record to disk via blkdev_write()
  * 4. Invalidate the MFT cache entry
@@ -211,7 +211,7 @@ int ntfs_write_mft_record(struct ntfs_volume *vol, uint64_t inode,
 }
 
 /* ============================================================================
- * ntfs_dir_insert_entry — Insert a directory entry into $INDEX_ROOT
+ * ntfs_dir_insert_entry -- Insert a directory entry into $INDEX_ROOT
  *
  * Reads the directory's MFT record, finds $INDEX_ROOT, inserts the
  * new entry at the correct sorted position, updates the node header,
@@ -232,7 +232,7 @@ int ntfs_dir_insert_entry(struct ntfs_volume *vol, uint64_t dir_inode,
 }
 
 /* ============================================================================
- * ntfs_dir_remove_entry — Remove a directory entry by filename (§14.1)
+ * ntfs_dir_remove_entry -- Remove a directory entry by filename (§14.1)
  * ============================================================================ */
 
 int ntfs_dir_remove_entry(struct ntfs_volume *vol, uint64_t dir_inode,
@@ -244,12 +244,12 @@ int ntfs_dir_remove_entry(struct ntfs_volume *vol, uint64_t dir_inode,
 
 
 /* ============================================================================
- * ntfs_create_file — Create a new file in an NTFS directory
+ * ntfs_create_file -- Create a new file in an NTFS directory
  *
  * 1. Allocate new MFT record (§12.3)
  * 2. Add $STANDARD_INFORMATION (type 0x10) with current timestamps
  * 3. Add $FILE_NAME (type 0x30) with parent ref, Win32/DOS namespace
- * 4. Add empty $DATA (type 0x80) — resident, zero length
+ * 4. Add empty $DATA (type 0x80) -- resident, zero length
  * 5. Set hard link count to 1
  * 6. Insert directory entry into parent's $INDEX_ROOT
  * 7. Update parent's $STANDARD_INFORMATION modification timestamp
@@ -410,7 +410,7 @@ int ntfs_create_file(struct ntfs_volume *vol, uint64_t parent_inode,
 }
 
 /* ============================================================================
- * ntfs_create_directory — Create a new directory
+ * ntfs_create_directory -- Create a new directory
  *
  * Same as ntfs_create_file but:
  *   - Sets directory flag in MFT record (bit 1)
@@ -569,7 +569,7 @@ int ntfs_create_directory(struct ntfs_volume *vol, uint64_t parent_inode,
 }
 
 /* ============================================================================
- * ntfs_delete_file — Delete a file from an NTFS directory
+ * ntfs_delete_file -- Delete a file from an NTFS directory
  *
  * 1. Look up file in parent directory → get inode
  * 2. Read the file's MFT record
@@ -692,7 +692,7 @@ int ntfs_delete_file(struct ntfs_volume *vol, uint64_t parent_inode,
 }
 
 /* ============================================================================
- * ntfs_rename_file — Rename/move a file between NTFS directories
+ * ntfs_rename_file -- Rename/move a file between NTFS directories
  *
  * 1. Verify target doesn't already exist (unless replacing)
  * 2. Look up the file in the old directory → get inode
@@ -729,7 +729,7 @@ int ntfs_rename_file(struct ntfs_volume *vol,
     /* Step 1: Verify target doesn't already exist */
     rc = ntfs_lookup(vol, new_parent, new_name, &existing_inode);
     if (rc == NTFS_OK) {
-        /* Target exists — for now, return error.
+        /* Target exists -- for now, return error.
          * Replace-on-rename can be added later. */
         klog(LOG_WARN, "ntfs",
              "rename: target '%s' already exists (inode %llu)",
@@ -814,7 +814,7 @@ int ntfs_rename_file(struct ntfs_volume *vol,
                                 fn_data, fn_len);
     if (rc != NTFS_OK) {
         klog(LOG_ERROR, "ntfs",
-             "rename: failed to insert into new parent — file is orphaned!");
+             "rename: failed to insert into new parent -- file is orphaned!");
         return rc;
     }
 

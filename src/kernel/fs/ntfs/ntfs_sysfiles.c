@@ -1,11 +1,11 @@
 /* ============================================================================
- * ntfs_sysfiles.c — System Metafile Readers (§7.1)
+ * ntfs_sysfiles.c -- System Metafile Readers (§7.1)
  *
  * Reads key NTFS system files needed for full operation:
- *   $Volume   (inode 3)  — Volume label, NTFS version, dirty flag
- *   $Bitmap   (inode 6)  — Cluster allocation bitmap, free space counting
- *   $UpCase   (inode 10) — Unicode uppercase mapping for case-insensitive ops
- *   $MFTMirr  (inode 1)  — Mirror of first 4 MFT records for integrity check
+ *   $Volume   (inode 3)  -- Volume label, NTFS version, dirty flag
+ *   $Bitmap   (inode 6)  -- Cluster allocation bitmap, free space counting
+ *   $UpCase   (inode 10) -- Unicode uppercase mapping for case-insensitive ops
+ *   $MFTMirr  (inode 1)  -- Mirror of first 4 MFT records for integrity check
  * ============================================================================ */
 
 #include "kernel/fs/ntfs.h"
@@ -120,7 +120,7 @@ static int read_volume_info(struct ntfs_volume *vol)
  * The bitmap data is a non-resident $DATA attribute of $Bitmap (inode 6).
  *
  * This reader counts free clusters. The bitmap data runs are already loaded
- * by ntfs_bitmap_load() (§12.1) — this just does the free space counting.
+ * by ntfs_bitmap_load() (§12.1) -- this just does the free space counting.
  * ============================================================================ */
 
 static int read_bitmap_free_space(struct ntfs_volume *vol)
@@ -133,7 +133,7 @@ static int read_bitmap_free_space(struct ntfs_volume *vol)
     if (!vol->bitmap_loaded || !vol->bitmap_runs ||
         vol->bitmap_run_count <= 0) {
         klog(LOG_WARN, "ntfs",
-             "Bitmap not loaded — cannot count free clusters");
+             "Bitmap not loaded -- cannot count free clusters");
         return NTFS_ERR_IO;
     }
 
@@ -150,7 +150,7 @@ static int read_bitmap_free_space(struct ntfs_volume *vol)
         uint8_t sector_buf[512];
 
         if (vol->bitmap_runs[ri].lcn == NTFS_LCN_SPARSE) {
-            /* Sparse run — all zeros means all free */
+            /* Sparse run -- all zeros means all free */
             uint64_t bits = vol->bitmap_runs[ri].length *
                             vol->cluster_size * 8;
             free_count += bits;
@@ -232,7 +232,7 @@ static int read_upcase_table(struct ntfs_volume *vol)
     if (rc != NTFS_OK) {
         pmm_free_frame(rec_phys);
         klog(LOG_WARN, "ntfs",
-             "$UpCase read failed — using ASCII fallback");
+             "$UpCase read failed -- using ASCII fallback");
         return rc;
     }
 
@@ -245,7 +245,7 @@ static int read_upcase_table(struct ntfs_volume *vol)
     }
 
     if (ah.non_resident == 0) {
-        /* Resident $UpCase — very unlikely but handle it */
+        /* Resident $UpCase -- very unlikely but handle it */
         if (ah.content_length < NTFS_UPCASE_TABLE_SIZE) {
             pmm_free_frame(rec_phys);
             klog(LOG_WARN, "ntfs", "$UpCase too small: %u bytes",
@@ -266,7 +266,7 @@ static int read_upcase_table(struct ntfs_volume *vol)
             vol->upcase_table = (uint16_t *)(uintptr_t)table_phys;
         }
     } else {
-        /* Non-resident $UpCase — typical case (128 KB on disk) */
+        /* Non-resident $UpCase -- typical case (128 KB on disk) */
         struct ntfs_data_run runs[32];
         struct ntfs_nonres_header nrhdr;
         int run_count;
@@ -317,7 +317,7 @@ static int read_upcase_table(struct ntfs_volume *vol)
  *
  * $MFTMirr is a backup of the first 4 MFT records ($MFT, $MFTMirr, $LogFile,
  * $Volume). On mount, compare these against the real $MFT records to detect
- * corruption. If they differ, log a warning — the user should run chkdsk.
+ * corruption. If they differ, log a warning -- the user should run chkdsk.
  * ============================================================================ */
 
 #define NTFS_MFTMIRR_COUNT  4  /* Number of mirrored records */
@@ -393,14 +393,14 @@ static int read_mftmirr_check(struct ntfs_volume *vol)
                 continue;
             }
 
-            /* Read original $MFT record (raw — compare pre-fixup bytes) */
+            /* Read original $MFT record (raw -- compare pre-fixup bytes) */
             rc = ntfs_read_mft_record_raw(vol, (uint64_t)i, rec_buf, &mirr_hdr);
             if (rc != NTFS_OK) {
                 mismatches++;
                 continue;
             }
 
-            /* Compare raw bytes (before fixup — both should have same USA) */
+            /* Compare raw bytes (before fixup -- both should have same USA) */
             if (ntfs_memcmp(rec_buf, mirr_buf, vol->frs_size) != 0) {
                 klog(LOG_WARN, "ntfs",
                      "$MFTMirr mismatch: inode %d differs from mirror",
@@ -415,7 +415,7 @@ static int read_mftmirr_check(struct ntfs_volume *vol)
 
     if (mismatches > 0) {
         klog(LOG_WARN, "ntfs",
-             "$MFTMirr: %d of %d records differ — volume may need chkdsk",
+             "$MFTMirr: %d of %d records differ -- volume may need chkdsk",
              (uint64_t)mismatches, (uint64_t)NTFS_MFTMIRR_COUNT, 0);
     } else {
         klog(LOG_INFO, "ntfs",
@@ -427,7 +427,7 @@ static int read_mftmirr_check(struct ntfs_volume *vol)
 }
 
 /* ============================================================================
- * ntfs_upcase_char — Case-insensitive character comparison helper
+ * ntfs_upcase_char -- Case-insensitive character comparison helper
  *
  * Uses the loaded $UpCase table if available, falls back to ASCII.
  * ============================================================================ */
@@ -464,7 +464,7 @@ int ntfs_load_sysfiles(struct ntfs_volume *vol)
 
     klog(LOG_INFO, "ntfs", "Loading system metafiles...");
 
-    /* $Volume — volume label, version, dirty flag */
+    /* $Volume -- volume label, version, dirty flag */
     rc = read_volume_info(vol);
     if (rc != NTFS_OK) {
         klog(LOG_WARN, "ntfs", "$Volume read failed (rc=%d)",
@@ -472,7 +472,7 @@ int ntfs_load_sysfiles(struct ntfs_volume *vol)
         errors++;
     }
 
-    /* $Bitmap — free space counting (requires bitmap_loaded from §12.1) */
+    /* $Bitmap -- free space counting (requires bitmap_loaded from §12.1) */
     if (vol->bitmap_loaded) {
         rc = read_bitmap_free_space(vol);
         if (rc != NTFS_OK) {
@@ -482,17 +482,17 @@ int ntfs_load_sysfiles(struct ntfs_volume *vol)
         }
     }
 
-    /* $UpCase — Unicode uppercase table */
+    /* $UpCase -- Unicode uppercase table */
     rc = read_upcase_table(vol);
     if (rc != NTFS_OK) {
         klog(LOG_WARN, "ntfs",
-             "$UpCase load failed — using ASCII fallback (rc=%d)",
+             "$UpCase load failed -- using ASCII fallback (rc=%d)",
              (uint64_t)rc, 0, 0);
         vol->upcase_table = NULL;
         errors++;
     }
 
-    /* $MFTMirr — consistency check (non-fatal) */
+    /* $MFTMirr -- consistency check (non-fatal) */
     rc = read_mftmirr_check(vol);
     if (rc != NTFS_OK) {
         /* Warning already logged by read_mftmirr_check */
@@ -509,5 +509,5 @@ int ntfs_load_sysfiles(struct ntfs_volume *vol)
         klog(LOG_INFO, "ntfs", "All system metafiles loaded successfully");
     }
 
-    return NTFS_OK;  /* Non-fatal — mount proceeds */
+    return NTFS_OK;  /* Non-fatal -- mount proceeds */
 }
