@@ -1,5 +1,4 @@
-/* ============================================================================
- * ntfs_test.c — NTFS Filesystem Self-Test Suite (§8.1)
+/* ntfs_test.c — NTFS Filesystem Self-Test Suite (§8.1)
  *
  * When an NTFS volume with label "NTFS_TEST" is mounted, this module runs
  * a comprehensive read-only test suite after all subsystems are initialized.
@@ -20,9 +19,12 @@
  *  13. LZNT1 sparse zero file (all-zero CU → zero-fill)
  *  14. LZNT1 uncompressed file (random data stored raw)
  *  15. LZNT1 mixed CU file (compress + random + compress)
+ *  16. LZNT1 round-trip compress→decompress (byte-exact, repeating data)
+ *  17. LZNT1 round-trip compress→decompress (byte-exact, mixed content)
  *
  * Output: [NTFS-TEST] PASS/FAIL per test case to serial (klog)
  * ============================================================================ */
+
 
 #include "kernel/fs/ntfs.h"
 #include "kernel/fs/ntfs_internal.h"
@@ -1001,6 +1003,129 @@ static void test_lznt1_mixed(struct vfs_node *root)
     pmm_free_frame(buf_phys);
 }
 
+/* ============================================================================
+ * Test 16 + 17: LZNT1 round-trip — compress then decompress
+ *
+ * These are pure algorithm tests — no VFS, no disk, no volume needed.
+ * They verify that ntfs_lznt1_compress() produces a stream that
+ * ntfs_lznt1_decompress() decodes byte-exactly.
+ * ============================================================================ */
+
+/* Round-trip test on a 4096-byte buffer.
+ * fill_fn(buf, size): populates the source buffer.
+ * Returns 1 on pass, 0 on fail. */
+static int lznt1_roundtrip(const char *name, const uint8_t *src,
+                            uint32_t src_len)
+{
+    /* Compressed stream: worst case src + 2 bytes per 4096-byte block + 2 header */
+    uint32_t comp_max = src_len + ((src_len / 4096) + 1) * 4 + 4;
+    uint8_t *comp_buf = (uint8_t *)kmalloc(comp_max);
+    uint8_t *decomp_buf;
+    int comp_len;
+    int decomp_len;
+    int ok = 1;
+    uint32_t i;
+
+    if (!comp_buf) {
+        test_fail(name, "kmalloc comp_buf failed");
+        return 0;
+    }
+
+    decomp_buf = (uint8_t *)kmalloc(src_len + 16);
+    if (!decomp_buf) {
+        kfree(comp_buf);
+        test_fail(name, "kmalloc decomp_buf failed");
+        return 0;
+    }
+
+    comp_len = ntfs_lznt1_compress(src, src_len, comp_buf, comp_max);
+    if (comp_len <= 0) {
+        klog(LOG_ERROR, "ntfs-test",
+             "%s: compress returned %d",
+             (uint64_t)(uintptr_t)name, (uint64_t)(int64_t)comp_len);
+        kfree(comp_buf);
+        kfree(decomp_buf);
+        test_fail(name, "ntfs_lznt1_compress failed");
+        return 0;
+    }
+
+    klog(LOG_DEBUG, "ntfs-test",
+         "%s: %u bytes → %d compressed (%d%%)",
+         (uint64_t)(uintptr_t)name,
+         (uint64_t)src_len, (uint64_t)(int64_t)comp_len,
+         (uint64_t)(uint32_t)(100u * (uint32_t)comp_len / src_len));
+
+    decomp_len = ntfs_lznt1_decompress(comp_buf, (uint32_t)comp_len,
+                                        decomp_buf, src_len + 16);
+    kfree(comp_buf);
+
+    if (decomp_len != (int)src_len) {
+        klog(LOG_ERROR, "ntfs-test",
+             "%s: decompress returned %d, expected %u",
+             (uint64_t)(uintptr_t)name,
+             (uint64_t)(int64_t)decomp_len,
+             (uint64_t)src_len);
+        kfree(decomp_buf);
+        test_fail(name, "decomp length mismatch");
+        return 0;
+    }
+
+    for (i = 0; i < src_len; i++) {
+        if (decomp_buf[i] != src[i]) {
+            klog(LOG_ERROR, "ntfs-test",
+                 "%s: byte mismatch at %u: got 0x%02x expected 0x%02x",
+                 (uint64_t)(uintptr_t)name, (uint64_t)i,
+                 (uint64_t)decomp_buf[i], (uint64_t)src[i]);
+            ok = 0;
+            break;
+        }
+    }
+
+    kfree(decomp_buf);
+
+    if (ok)
+        test_pass(name);
+    else
+        test_fail(name, "byte mismatch after round-trip");
+    return ok;
+}
+
+static void test_lznt1_roundtrip_repeating(void)
+{
+    /* 4096 bytes of 'A' — highly compressible */
+    uint8_t *src = (uint8_t *)kmalloc(4096);
+    if (!src) {
+        test_fail("lznt1_roundtrip_repeat", "kmalloc failed");
+        return;
+    }
+    {
+        uint32_t i;
+        for (i = 0; i < 4096; i++) src[i] = 'A';
+    }
+    lznt1_roundtrip("lznt1_roundtrip_repeat", src, 4096);
+    kfree(src);
+}
+
+static void test_lznt1_roundtrip_mixed(void)
+{
+    /* 8192 bytes: first 4 KB repeating 0x55/0xAA, second 4 KB 'Hello World' */
+    uint8_t *src = (uint8_t *)kmalloc(8192);
+    if (!src) {
+        test_fail("lznt1_roundtrip_mixed", "kmalloc failed");
+        return;
+    }
+    {
+        uint32_t i;
+        const char *msg = "Hello World! This is a test of the LZNT1 compressor. ";
+        int mlen;
+        for (mlen = 0; msg[mlen]; mlen++) {}
+        for (i = 0; i < 4096; i++) src[i] = (uint8_t)((i % 2) ? 0xAA : 0x55);
+        for (i = 0; i < 4096; i++) src[4096 + i] = (uint8_t)msg[i % (uint32_t)mlen];
+    }
+    lznt1_roundtrip("lznt1_roundtrip_mixed", src, 8192);
+    kfree(src);
+}
+
 /* ---- Public API ---- */
 
 void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
@@ -1055,24 +1180,30 @@ void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
     test_long_filename(root);
 
     /* LZNT1 compression tests (§9.1) */
-    klog(LOG_INFO, "ntfs-test", "Test 11/15: LZNT1 decompressor...");
+    klog(LOG_INFO, "ntfs-test", "Test 11/17: LZNT1 decompressor...");
     test_lznt1_decompress();
 
     /* VFS-level compression tests — require FUSE + setfattr */
     comp_dir = find_compressed_dir(root);
     if (comp_dir) {
-        klog(LOG_INFO, "ntfs-test", "Test 12/15: LZNT1 known content...");
+        klog(LOG_INFO, "ntfs-test", "Test 12/17: LZNT1 known content...");
         test_lznt1_known(root);
-        klog(LOG_INFO, "ntfs-test", "Test 13/15: LZNT1 sparse zeros...");
+        klog(LOG_INFO, "ntfs-test", "Test 13/17: LZNT1 sparse zeros...");
         test_lznt1_sparse(root);
-        klog(LOG_INFO, "ntfs-test", "Test 14/15: LZNT1 uncompressed...");
+        klog(LOG_INFO, "ntfs-test", "Test 14/17: LZNT1 uncompressed...");
         test_lznt1_uncompressed(root);
-        klog(LOG_INFO, "ntfs-test", "Test 15/15: LZNT1 mixed CUs...");
+        klog(LOG_INFO, "ntfs-test", "Test 15/17: LZNT1 mixed CUs...");
         test_lznt1_mixed(root);
     } else {
         klog(LOG_WARN, "ntfs-test",
              "LZNT1 VFS tests skipped (compressed/ dir not found)");
     }
+
+    /* LZNT1 round-trip tests (§9.2) — pure algorithm, no VFS needed */
+    klog(LOG_INFO, "ntfs-test", "Test 16/17: LZNT1 round-trip (repeating data)...");
+    test_lznt1_roundtrip_repeating();
+    klog(LOG_INFO, "ntfs-test", "Test 17/17: LZNT1 round-trip (mixed content)...");
+    test_lznt1_roundtrip_mixed();
 
     /* Summary */
     klog(LOG_INFO, "ntfs-test",

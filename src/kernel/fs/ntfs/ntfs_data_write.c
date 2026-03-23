@@ -297,6 +297,14 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
             return NTFS_ERR_BAD_MAGIC;
         }
 
+        /* ---- Compressed attribute: delegate to compression-aware writer ---- */
+        if ((ah.flags & NTFS_ATTR_FLAG_COMPRESSED) && nrhdr.compression_unit != 0) {
+            ntfs_txn_abort(txn);
+            ntfs_txn_free(txn);
+            kfree(rec);
+            return ntfs_write_compressed_data(vol, inode, offset, length, buffer);
+        }
+
         /* Extend allocation if needed */
         if (needed > nrhdr.alloc_size) {
             uint64_t cs = vol->cluster_size;

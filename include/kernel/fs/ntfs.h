@@ -771,7 +771,7 @@ int64_t ntfs_read_file_data(const uint8_t *record,
                             uint64_t file_offset, uint64_t length,
                             void *buffer);
 
-/* ---- LZNT1 Decompression (§10.1) ---- */
+/* ---- LZNT1 Decompression (§9.1) ---- */
 
 /* Decompress LZNT1-compressed data.
  * LZNT1 is the compression algorithm used by NTFS transparent compression.
@@ -797,6 +797,40 @@ int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
                                   uint64_t file_offset,
                                   uint64_t length,
                                   void *buffer);
+
+/* ---- LZNT1 Compression (§9.2) ---- */
+
+/* Compress data using LZNT1.
+ * Produces a byte stream compatible with ntfs_lznt1_decompress().
+ * src:     input buffer.
+ * src_len: number of bytes to compress.
+ * dst:     output buffer. Must be at least src_len + 2 * ceil(src_len/4096)
+ *          to guarantee space for the worst case (all uncompressed sub-blocks
+ *          plus 2 bytes null terminator).
+ * dst_len: capacity of dst.
+ * Returns the total compressed stream size (including per-block headers and
+ * the 2-byte null terminator), or -1 if dst_len is too small. */
+int ntfs_lznt1_compress(const uint8_t *src, uint32_t src_len,
+                         uint8_t *dst, uint32_t dst_len);
+
+/* Write data to a compressed NTFS file (CU-aware, journaled).
+ * vol:    NTFS volume context.
+ * inode:  MFT inode of the file to write.
+ * offset: byte offset within the file to start writing.
+ * length: number of bytes to write.
+ * buffer: source data.
+ *
+ * Internally compresses each touched compression unit via ntfs_lznt1_compress(),
+ * allocates the minimum number of clusters needed, writes compressed data,
+ * updates the data runs in $DATA, and journals the changes via $LogFile.
+ * Partial-CU writes read-decompress-modify-recompress the existing unit first.
+ * All-zero CUs are stored as sparse runs (no disk allocation).
+ *
+ * Requires: $DATA non_resident == 1 AND compression_unit != 0.
+ * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
+int ntfs_write_compressed_data(struct ntfs_volume *vol, uint64_t inode,
+                                uint64_t offset, uint64_t length,
+                                const void *buffer);
 
 /* ---- $INDEX_ROOT Parser (§5.1, attribute type 0x90) ---- */
 

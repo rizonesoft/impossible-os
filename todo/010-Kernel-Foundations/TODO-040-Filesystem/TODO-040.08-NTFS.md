@@ -161,8 +161,8 @@ graph TD
 | 💎 | P6    | `040.08-NTFS.md`      | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | P4 (§5.3)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
-| 💎 | P9    | `040.08-NTFS.md`      | §9.2 LZNT1 Compression         | Write compressed files to NTFS volumes                           | P6 (§9.1) + P8 (§16.1)              |   ⬜   |
-|    | P10   | `040.08-NTFS.md`      | §9.3 EFS Encryption            | Read/write Windows-encrypted files (`cipher /e` interop)         | §9.2 + `TODO-305-CNG-Crypto` §2     |   ⬜   |
+| 💎 | P9    | `040.08-NTFS.md`      | §9.2 LZNT1 Compression         | Write compressed files to NTFS volumes                           | P6 (§9.1) + P8 (§16.1)               |   ⬜   |
+| 💎 | P10   | `040.08-NTFS.md`      | §9.3 EFS Encryption            | Read/write Windows-encrypted files (`cipher /e` interop)         | §9.2 + `TODO-305-CNG-Crypto` §2      |   ⬜   |
 | 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ✅   |
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ✅   |
 | ⭐ | P7    | `041.02-Disk-Health`  | §11.1 Health Dashboard         | **Moved → TODO-041.02 §3** — cross-FS health tool                | P6 (§7.1)                            |   ↗️   |
@@ -1000,39 +1000,46 @@ graph TD
 - [x] Test: read a compressed file from a Windows NTFS volume, verify contents match
 - [x] Commit: `"ntfs: LZNT1 decompression for compressed files"`
 
-### 9.2 LZNT1 Compression Engine
+### 9.2 LZNT1 Compression Engine ✅
 
-**Prompt:** Implement `ntfs_lznt1_compress()` — the write-side counterpart to the existing decompressor. This enables writing compressed files to NTFS volumes. The compressor must produce streams that the existing `ntfs_lznt1_decompress()` can round-trip. Add `ntfs_write_compressed_data()` for compression-unit-aware writes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: LZNT1 compression engine"`. Add notes directly in this section.
+**Verification:** `ntfs_lznt1_compress()` and `ntfs_write_compressed_data()` implemented
+in `src/kernel/fs/ntfs/ntfs_compress.c`. Hash-chain (256-bucket, depth 16) match finder,
+sub-block fallback to raw when compression doesn't help, CU-based write with sparse/
+compressed/uncompressed paths, partial-CU read-modify-write, journaled via `$LogFile`.
+Round-trip unit tests 16 (repeating data) and 17 (mixed content) added to `ntfs_test.c`.
+Compressed-flag routing in `ntfs_write_data()`. Build: `=== BUILD OK ===`.
+Commit: `"ntfs: LZNT1 compression engine"`.
 
 > [!IMPORTANT]
 > → XREF: `TODO-040.08 §9.1` — decompression engine (must remain compatible)
 > → XREF: `TODO-040.08 §16.1` — file write engine (compression integrates with `ntfs_write_file_data`)
 
-- [ ] Implement `ntfs_lznt1_compress(src, src_len, dst, dst_len)` in `ntfs_compress.c`:
-  - [ ] Process input in 4096-byte sub-blocks
-  - [ ] For each sub-block, attempt LZ77 compression:
-    - [ ] Hash-chain or sliding-window match finder (minimum match = 3 bytes)
-    - [ ] Encode matches as back-references: `(displacement-1) << len_bits | (length-3)`
-    - [ ] Encode non-matching bytes as literals
-    - [ ] Build flag bytes (8 tokens per flag: bit=0 literal, bit=1 back-ref)
-  - [ ] If compressed sub-block ≥ uncompressed size → store uncompressed (header bit 15 = 0)
-  - [ ] Write 2-byte sub-block header: `(data_size - 1) | (0x3 << 12) | compressed_flag`
-  - [ ] Return total compressed stream size
-- [ ] Implement `ntfs_write_compressed_data(vol, inode, offset, length, buffer)`:
-  - [ ] Read compression unit size from `$DATA` attribute (`compression_unit_shift`)
-  - [ ] For each CU-aligned chunk of input:
-    - [ ] If data is all zeros → encode as sparse run (VCN with no LCN)
-    - [ ] Compress via `ntfs_lznt1_compress()`, measure output size
-    - [ ] If compressed size < CU size → allocate fewer clusters, write compressed data
-    - [ ] If compressed size ≥ CU size → store uncompressed (allocate full CU clusters)
-  - [ ] Update data runs in `$DATA` attribute to reflect cluster allocation
-  - [ ] Journal all cluster allocations via `$LogFile` (§13.1)
-- [ ] Integrate with `ntfs_write_file_data()`:
-  - [ ] Detect compressed flag → route writes through `ntfs_write_compressed_data()`
-  - [ ] Handle partial CU writes (read-modify-write: decompress CU, modify, recompress)
-- [ ] Round-trip test: compress known data → decompress → verify byte-exact match
-- [ ] Test: write compressed file, read back via `ntfs_read_compressed_data()`, compare
-- [ ] Commit: `"ntfs: LZNT1 compression engine"`
+- [x] Implement `ntfs_lznt1_compress(src, src_len, dst, dst_len)` in `ntfs_compress.c`:
+  - [x] Process input in 4096-byte sub-blocks
+  - [x] For each sub-block, attempt LZ77 compression:
+    - [x] Hash-chain or sliding-window match finder (minimum match = 3 bytes)
+    - [x] Encode matches as back-references: `(displacement-1) << len_bits | (length-3)`
+    - [x] Encode non-matching bytes as literals
+    - [x] Build flag bytes (8 tokens per flag: bit=0 literal, bit=1 back-ref)
+  - [x] If compressed sub-block ≥ uncompressed size → store uncompressed (header bit 15 = 0)
+  - [x] Write 2-byte sub-block header: `(data_size - 1) | (0x3 << 12) | compressed_flag`
+  - [x] Return total compressed stream size
+- [x] Implement `ntfs_write_compressed_data(vol, inode, offset, length, buffer)`:
+  - [x] Read compression unit size from `$DATA` attribute (`compression_unit_shift`)
+  - [x] For each CU-aligned chunk of input:
+    - [x] If data is all zeros → encode as sparse run (VCN with no LCN)
+    - [x] Compress via `ntfs_lznt1_compress()`, measure output size
+    - [x] If compressed size < CU size → allocate fewer clusters, write compressed data
+    - [x] If compressed size ≥ CU size → store uncompressed (allocate full CU clusters)
+  - [x] Update data runs in `$DATA` attribute to reflect cluster allocation
+  - [x] Journal all cluster allocations via `$LogFile` (§13.1)
+- [x] Integrate with `ntfs_write_file_data()`:
+  - [x] Detect compressed flag → route writes through `ntfs_write_compressed_data()`
+  - [x] Handle partial CU writes (read-modify-write: decompress CU, modify, recompress)
+- [x] Round-trip test: compress known data → decompress → verify byte-exact match
+- [x] Test: write compressed file, read back via `ntfs_read_compressed_data()`, compare
+- [x] Commit: `"ntfs: LZNT1 compression engine"`
+
 
 ### 9.3 EFS — Encrypting File System
 
