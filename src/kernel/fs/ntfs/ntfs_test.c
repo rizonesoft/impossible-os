@@ -19,6 +19,7 @@
  * ============================================================================ */
 
 #include "kernel/fs/ntfs.h"
+#include "kernel/fs/ntfs_internal.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
@@ -501,20 +502,96 @@ static void test_long_filename(struct vfs_node *root)
 static void test_dirty_flag(struct ntfs_volume *vol)
 {
     /* The test image is created cleanly, so dirty flag should be 0.
-     * We still verify the flag was read correctly. */
-    if (vol->sysfiles_loaded) {
-        klog(LOG_DEBUG, "ntfs-test",
-             "Volume dirty flag: %u", (uint64_t)vol->volume_dirty);
-        /* Clean volume should have dirty == 0 */
-        if (vol->volume_dirty == 0)
-            test_pass("dirty_flag_clean");
-        else
-            test_fail("dirty_flag_clean",
-                      "expected clean volume but dirty flag set");
-    } else {
-        test_fail("dirty_flag_clean", "sysfiles not loaded");
+     * We also verify that the $VOLUME_INFORMATION attribute on inode 3
+     * has the expected flags — this validates the full parsing chain. */
+    uintptr_t rec_phys;
+    uint8_t *rec_buf;
+    struct ntfs_mft_header hdr;
+    struct ntfs_attr_header ah;
+    const uint8_t *attr;
+    int rc;
+
+    if (!vol->sysfiles_loaded) {
+        test_fail("dirty_flag", "sysfiles not loaded");
+        return;
     }
+
+    /* Part 1: Verify cached dirty flag is clean (0) */
+    if (vol->volume_dirty != 0) {
+        test_fail("dirty_flag_clean",
+                  "expected clean volume but dirty flag set");
+        return;
+    }
+
+    /* Part 2: Read inode 3 ($Volume) and verify $VOLUME_INFORMATION raw flags */
+    rec_phys = pmm_alloc_contiguous(1);
+    if (!rec_phys) {
+        test_fail("dirty_flag_raw", "PMM alloc failed");
+        return;
+    }
+    rec_buf = (uint8_t *)(uintptr_t)rec_phys;
+
+    rc = ntfs_read_mft_record(vol, 3, rec_buf, &hdr);
+    if (rc != NTFS_OK) {
+        test_fail("dirty_flag_raw", "cannot read inode 3 ($Volume)");
+        pmm_free_frame(rec_phys);
+        return;
+    }
+
+    /* Find $VOLUME_INFORMATION (type 0x70) */
+    attr = ntfs_attr_find(rec_buf, &hdr, 0x70, &ah);
+    if (!attr || ah.non_resident != 0 || ah.content_length < 12) {
+        test_fail("dirty_flag_raw",
+                  "$VOLUME_INFORMATION not found or too small");
+        pmm_free_frame(rec_phys);
+        return;
+    }
+
+    {
+        const uint8_t *vi = attr + ah.content_offset;
+        /* Layout: [reserved:8][major:1][minor:1][flags:2] */
+        uint8_t  major  = vi[8];
+        uint8_t  minor  = vi[9];
+        uint16_t vflags = ntfs_le16(vi + 10);
+        uint8_t  raw_dirty = (vflags & 0x0001) ? 1 : 0;
+
+        klog(LOG_DEBUG, "ntfs-test",
+             "dirty_flag_raw: version=%u.%u flags=0x%04x dirty_bit=%u",
+             (uint64_t)major, (uint64_t)minor,
+             (uint64_t)vflags, (uint64_t)raw_dirty);
+
+        /* Verify the raw dirty bit matches what vol->volume_dirty says */
+        if (raw_dirty != vol->volume_dirty) {
+            klog(LOG_ERROR, "ntfs-test",
+                 "dirty_flag mismatch: raw=%u cached=%u",
+                 (uint64_t)raw_dirty, (uint64_t)vol->volume_dirty);
+            test_fail("dirty_flag_raw", "raw vs cached mismatch");
+            pmm_free_frame(rec_phys);
+            return;
+        }
+
+        /* Verify NTFS version is sensible (3.x) */
+        if (major != 3 || minor > 1) {
+            klog(LOG_ERROR, "ntfs-test",
+                 "unexpected NTFS version: %u.%u",
+                 (uint64_t)major, (uint64_t)minor);
+            test_fail("dirty_flag_raw", "unexpected NTFS version");
+            pmm_free_frame(rec_phys);
+            return;
+        }
+
+        /* Clean volume: raw dirty bit should be 0 */
+        if (raw_dirty != 0) {
+            test_fail("dirty_flag_raw", "clean image has dirty bit set");
+            pmm_free_frame(rec_phys);
+            return;
+        }
+    }
+
+    pmm_free_frame(rec_phys);
+    test_pass("dirty_flag");
 }
+
 
 /* ---- Public API ---- */
 
