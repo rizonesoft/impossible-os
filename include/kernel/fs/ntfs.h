@@ -85,6 +85,19 @@ struct ntfs_volume {
     uint64_t mft_cache_misses;             /* Telemetry: cache misses */
     uint64_t mft_cache_evictions;          /* Telemetry: LRU evictions */
     uint8_t  mft_cache_loaded;             /* 1 if cache is initialized */
+
+    /* ---- $LogFile Journal (§13.1) ---- */
+    struct ntfs_data_run *log_runs;        /* $LogFile data runs */
+    int      log_run_count;                /* Number of $LogFile data runs */
+    uint64_t log_size;                     /* $LogFile real size in bytes */
+    uint64_t log_page_size;                /* Log page size (typically 4096) */
+    uint64_t log_current_lsn;              /* Last committed LSN */
+    uint64_t log_write_pos;                /* Current write offset (circular) */
+    uint64_t log_data_start;               /* Byte offset where data pages begin */
+    uint64_t log_seq_bits;                 /* Sequence number bits in LSN */
+    uint32_t log_next_txn_id;              /* Next transaction ID */
+    spinlock_t log_lock;                   /* Serializes journal writes */
+    uint8_t  journal_loaded;               /* 1 if journal is initialized */
 };
 
 /* Well-known NTFS system inode numbers */
@@ -1020,3 +1033,79 @@ int ntfs_rename_file(struct ntfs_volume *vol,
                      uint64_t old_parent, const char *old_name,
                      uint64_t new_parent, const char *new_name);
 
+/* ---- $LogFile Log Operation Codes (§13.1) ---- */
+
+#define NTFS_LOG_OP_NOOP                 0x00
+#define NTFS_LOG_OP_COMPENSATION         0x01
+#define NTFS_LOG_OP_INIT_FRS             0x02  /* InitializeFileRecordSegment */
+#define NTFS_LOG_OP_DEALLOC_FRS          0x03  /* DeallocateFileRecordSegment */
+#define NTFS_LOG_OP_WRITE_END_FRS        0x04  /* WriteEndOfFileRecordSegment */
+#define NTFS_LOG_OP_CREATE_ATTR          0x05  /* CreateAttribute */
+#define NTFS_LOG_OP_DELETE_ATTR          0x06  /* DeleteAttribute */
+#define NTFS_LOG_OP_UPDATE_RESIDENT      0x07  /* UpdateResidentValue */
+#define NTFS_LOG_OP_UPDATE_NONRES        0x08  /* UpdateNonResidentValue */
+#define NTFS_LOG_OP_UPDATE_MAPPING       0x09  /* UpdateMappingPairs */
+#define NTFS_LOG_OP_DELETE_DIRTY_CLUS    0x0A  /* DeleteDirtyClusters */
+#define NTFS_LOG_OP_SET_ATTR_SIZES       0x0B  /* SetNewAttributeSizes */
+#define NTFS_LOG_OP_ADD_IDX_ROOT         0x0C  /* AddIndexEntryRoot */
+#define NTFS_LOG_OP_DEL_IDX_ROOT         0x0D  /* DeleteIndexEntryRoot */
+#define NTFS_LOG_OP_ADD_IDX_ALLOC        0x0E  /* AddIndexEntryAllocation */
+#define NTFS_LOG_OP_DEL_IDX_ALLOC        0x0F  /* DeleteIndexEntryAllocation */
+#define NTFS_LOG_OP_SET_IDX_VCN          0x10  /* SetIndexEntryVcnAllocation */
+#define NTFS_LOG_OP_UPDATE_FN_ROOT       0x11  /* UpdateFileNameRoot */
+#define NTFS_LOG_OP_UPDATE_FN_ALLOC      0x12  /* UpdateFileNameAllocation */
+#define NTFS_LOG_OP_SET_BITS_BITMAP      0x13  /* SetBitsInNonResidentBitMap */
+#define NTFS_LOG_OP_CLEAR_BITS_BITMAP    0x14  /* ClearBitsInNonResidentBitMap */
+#define NTFS_LOG_OP_DIRTY_PAGE_DUMP      0x19  /* DirtyPageTableDump */
+#define NTFS_LOG_OP_TXN_TABLE_DUMP       0x1A  /* TransactionTableDump */
+#define NTFS_LOG_OP_ATTR_NAMES_DUMP      0x1B  /* AttributeNamesDump */
+
+/* ---- Transaction Context (§13.1) ---- */
+
+struct ntfs_txn {
+    struct ntfs_volume *vol;     /* Volume this transaction belongs to */
+    uint64_t start_lsn;         /* LSN at transaction start */
+    uint64_t last_lsn;          /* LSN of last logged record */
+    uint32_t txn_id;            /* Transaction ID */
+    uint32_t record_count;      /* Number of logged records */
+    uint8_t  committed;         /* 1 if committed */
+    uint8_t  aborted;           /* 1 if aborted */
+};
+
+/* ---- Journal API (§13.1) ---- */
+
+/* Initialize the journal engine from $LogFile (inode 2).
+ * Parses restart area, caches CurrentLsn and write position.
+ * Called during NTFS volume mount. */
+int ntfs_journal_init(struct ntfs_volume *vol);
+
+/* Begin a new transaction.
+ * Returns a transaction context, or NULL on failure. */
+struct ntfs_txn *ntfs_txn_begin(struct ntfs_volume *vol);
+
+/* Log a redo/undo record pair to $LogFile.
+ * Must be called BEFORE the actual metadata write (WAL protocol).
+ * Returns the new LSN, or 0 on failure. */
+uint64_t ntfs_txn_log(struct ntfs_txn *txn,
+                      uint16_t redo_op, const void *redo_data,
+                      uint16_t redo_len,
+                      uint16_t undo_op, const void *undo_data,
+                      uint16_t undo_len,
+                      uint64_t target_mft, uint16_t target_attr_off);
+
+/* Commit a transaction.
+ * Writes commit record, updates restart area CurrentLsn.
+ * After commit, metadata writes are safe to persist. */
+int ntfs_txn_commit(struct ntfs_txn *txn);
+
+/* Abort a transaction (rollback).
+ * Writes a CompensationLogRecord and marks the txn as aborted.
+ * Actual undo application requires the recovery engine (§13.2). */
+int ntfs_txn_abort(struct ntfs_txn *txn);
+
+/* Free a transaction context (must be committed or aborted first). */
+void ntfs_txn_free(struct ntfs_txn *txn);
+
+/* Clean shutdown of the journal.
+ * Updates restart area with final LSN. Called during unmount. */
+void ntfs_journal_shutdown(struct ntfs_volume *vol);
