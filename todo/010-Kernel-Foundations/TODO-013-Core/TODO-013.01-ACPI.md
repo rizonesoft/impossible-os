@@ -1,4 +1,4 @@
-# 042-ACPI — Advanced Configuration & Power Interface Subsystem
+# TODO-013.01-ACPI — Advanced Configuration & Power Interface Subsystem
 
 > **Goal:** Evolve from the current minimal ACPI stub (RSDP/XSDT/MADT parsing in
 > `acpi.c`) into a full ACPI subsystem with an AML interpreter, namespace

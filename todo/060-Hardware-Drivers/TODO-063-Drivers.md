@@ -179,7 +179,7 @@
 > [!NOTE]
 > → **XREF:** Full APIC enhancement roadmap (x2APIC, timer calibration, TLB shootdown,
 > MSI/MSI-X, NMI watchdog, interrupt profiler) is in
-> [`TODO-063.09-APIC-Architecture.md`](TODO-063-Drivers/TODO-063.09-APIC-Architecture.md).
+> [`TODO-013.09-APIC-Architecture.md`](../../010-Kernel-Foundations/TODO-013-Core/TODO-013.09-APIC-Architecture.md).
 
 The core APIC subsystem is implemented across `lapic.c`, `ioapic.c`, `acpi.c`, and `pic.c`:
 
@@ -193,16 +193,11 @@ The core APIC subsystem is implemented across `lapic.c`, `ioapic.c`, `acpi.c`, a
 
 ### 2.3 HPET Timer (Built-in)
 
-**Prompt:** The HPET (High Precision Event Timer) provides nanosecond-resolution timing, replacing the PIT for precise measurements. Find HPET via ACPI table (signature "HPET"). Map the MMIO registers. Read the period from the General Capabilities register, enable the main counter. Use comparator 0 for periodic timer interrupts (can replace PIT for scheduler). Provide `hpet_read_ns()` for high-resolution timestamps. This is optional but valuable for accurate profiling and timer precision. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: HPET high-precision timer"`. Add notes, gotchas, and design decisions directly in this TODO section covering the HPET initialization, nanosecond timestamps, and ACPI table parsing.
-
-- [ ] Create `src/kernel/hpet.c` and `include/kernel/hpet.h`
-- [ ] Parse ACPI HPET table for base address
-- [ ] Map MMIO registers
-- [ ] Read main counter period from capabilities register
-- [ ] Enable main counter
-- [ ] Implement `hpet_read_ns()` — current time in nanoseconds
-- [ ] *(Stretch)* Configure comparator 0 for periodic interrupts
-- [ ] Commit: `"kernel: HPET high-precision timer"`
+> [!NOTE]
+> → **XREF:** HPET implementation is tracked in
+> [`TODO-013-Core.md §3`](../../010-Kernel-Foundations/TODO-013-Core.md).
+> It was moved there because HPET belongs with the core built-in hardware drivers
+> and placement before LAPIC calibration is critical.
 
 ---
 

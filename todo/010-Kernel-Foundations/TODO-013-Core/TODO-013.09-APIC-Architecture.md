@@ -1,13 +1,14 @@
-# TODO-063.09 — APIC Architecture
+# TODO-013.09-APIC-Architecture — APIC Architecture
 
 > **Goal:** Implement a complete, production-quality APIC subsystem that replaces the
 > legacy 8259 PIC, enabling multi-core interrupt routing, per-core timers, and
 > Inter-Processor Interrupts (IPIs). Support both xAPIC (MMIO) and x2APIC (MSR) modes.
 
 > [!IMPORTANT]
-> **Spec Reference:** [`docs/specs/drivers/APIC-Architecture.md`](../../../docs/specs/drivers/APIC-Architecture.md)
+> **Spec Reference:** [`docs/specs/drivers/APIC-Architecture.md`](../../../../docs/specs/drivers/APIC-Architecture.md)
 > — Contains full register layouts, MADT parsing details, calibration procedure,
 > and the end-to-end initialization sequence.
+> **XREF:** [TODO-013-Core.md](../TODO-013-Core.md) — master built-in driver overview
 
 > [!CAUTION]
 > **Memory Rule:** LAPIC and IOAPIC MMIO regions must be mapped with **Strong Uncacheable (UC)**
