@@ -959,3 +959,64 @@ typedef int (*ntfs_readdir_cb)(const struct ntfs_dir_entry *entry,
  * Returns NTFS_OK, or error code. */
 int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
                  ntfs_readdir_cb callback, void *user_data);
+
+/* ---- File Lifecycle Operations (§12.5) ---- */
+
+/* Write an in-memory MFT record back to disk.
+ * Applies USA regeneration (§12.2) before writing.
+ * Invalidates the MFT cache entry for this inode.
+ * rec must be in "after fixup removal" state (editable).
+ * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
+int ntfs_write_mft_record(struct ntfs_volume *vol, uint64_t inode,
+                          uint8_t *rec);
+
+/* Map an MFT inode number to the disk LBA of its record.
+ * Uses $MFT's $DATA runs (handles fragmented MFTs).
+ * Returns 0 on success, -1 if inode is beyond MFT extent. */
+int ntfs_mft_inode_to_lba(struct ntfs_volume *vol, uint64_t inode,
+                          uint64_t *out_lba);
+
+/* Insert a directory entry into a directory's $INDEX_ROOT.
+ * child_inode: MFT inode of the file/dir being added.
+ * child_seq: sequence number of the child MFT record.
+ * fn_data: raw $FILE_NAME attribute content (0x42 + name_len*2 bytes).
+ * fn_data_len: length of fn_data.
+ * NOTE: Only handles root-node insertion (no INDX splits — §14.1).
+ * Returns NTFS_OK on success, NTFS_ERR_IO if root is full. */
+int ntfs_dir_insert_entry(struct ntfs_volume *vol, uint64_t dir_inode,
+                          uint64_t child_inode, uint16_t child_seq,
+                          const uint8_t *fn_data, uint32_t fn_data_len);
+
+/* Remove a directory entry by filename from a directory's $INDEX_ROOT.
+ * NOTE: Only searches $INDEX_ROOT (not INDX buffers — §14.1).
+ * Returns NTFS_OK on success, NTFS_ERR_NOT_FOUND if name absent. */
+int ntfs_dir_remove_entry(struct ntfs_volume *vol, uint64_t dir_inode,
+                          const char *name);
+
+/* Create a new file in an NTFS directory.
+ * Allocates MFT record, adds $STANDARD_INFORMATION + $FILE_NAME + $DATA,
+ * inserts directory entry into parent, updates parent timestamps.
+ * attrs: DOS file attribute flags (NTFS_FILE_ATTR_*).
+ * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
+int ntfs_create_file(struct ntfs_volume *vol, uint64_t parent_inode,
+                     const char *name, uint32_t attrs);
+
+/* Create a new directory in an NTFS directory.
+ * Like ntfs_create_file but sets directory flag and adds empty $INDEX_ROOT.
+ * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
+int ntfs_create_directory(struct ntfs_volume *vol, uint64_t parent_inode,
+                          const char *name);
+
+/* Delete a file from an NTFS directory.
+ * Removes directory entry, frees data clusters and MFT record if last link.
+ * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
+int ntfs_delete_file(struct ntfs_volume *vol, uint64_t parent_inode,
+                     const char *name);
+
+/* Rename/move a file between NTFS directories.
+ * Removes from old parent, updates $FILE_NAME, inserts into new parent.
+ * Returns NTFS_OK, NTFS_ERR_NOT_FOUND, or NTFS_ERR_IO if target exists. */
+int ntfs_rename_file(struct ntfs_volume *vol,
+                     uint64_t old_parent, const char *old_name,
+                     uint64_t new_parent, const char *new_name);
+

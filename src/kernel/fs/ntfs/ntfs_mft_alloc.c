@@ -104,8 +104,9 @@ static int mft_bitmap_write_byte(struct ntfs_volume *vol,
 }
 
 /* Map an MFT inode number to a disk LBA using $MFT's $DATA runs.
- * This handles fragmented MFTs where records span multiple extents. */
-static int mft_inode_to_lba(struct ntfs_volume *vol, uint64_t inode,
+ * This handles fragmented MFTs where records span multiple extents.
+ * Exposed for ntfs_file_ops.c (ntfs_write_mft_record). */
+int ntfs_mft_inode_to_lba(struct ntfs_volume *vol, uint64_t inode,
                              uint64_t *out_lba)
 {
     uint64_t byte_offset = inode * (uint64_t)vol->frs_size;
@@ -351,7 +352,7 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
         return 0;
 
     /* Read the MFT record from disk via $MFT data runs */
-    if (mft_inode_to_lba(vol, inode, &lba) < 0) {
+    if (ntfs_mft_inode_to_lba(vol, inode, &lba) < 0) {
         kfree(rec);
         return 0;
     }
@@ -498,7 +499,7 @@ int ntfs_free_mft_record(struct ntfs_volume *vol, uint64_t inode)
     if (!rec)
         return NTFS_ERR_IO;
 
-    if (mft_inode_to_lba(vol, inode, &lba) < 0) {
+    if (ntfs_mft_inode_to_lba(vol, inode, &lba) < 0) {
         kfree(rec);
         return NTFS_ERR_IO;
     }
