@@ -287,6 +287,14 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
     /* Step 1: Scan MFT bitmap for first free bit (skip system inodes 0–23) */
     total_bytes = vol->mft_bitmap_size;
 
+    /* Cap scan to actual MFT records — the bitmap file may be larger than
+     * what $MFT's $DATA runs can hold (padding for future growth). */
+    {
+        uint64_t needed_bytes = (vol->mft_total_records + 7) / 8;
+        if (total_bytes > needed_bytes)
+            total_bytes = needed_bytes;
+    }
+
     /* Start scanning from NTFS_FIRST_USER_INODE */
     for (byte_off = NTFS_FIRST_USER_INODE / 8;
          byte_off < total_bytes && !found; byte_off++) {
