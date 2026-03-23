@@ -77,7 +77,17 @@ enum cpu_feature {
     /* CPUID Leaf 0x80000007 EDX */
     CPU_FEATURE_TSC_INV   = 43,   /* Invariant TSC */
 
-    CPU_FEATURE_COUNT     = 44    /* total features tracked */
+    /* CPUID Leaf 0x80000001 ECX (AMD extended) */
+    CPU_FEATURE_SVM       = 44,   /* Secure Virtual Machine (AMD-V) */
+    CPU_FEATURE_OSVW      = 45,   /* OS Visible Workarounds */
+    CPU_FEATURE_IBS       = 46,   /* Instruction Based Sampling */
+    CPU_FEATURE_TOPO_EXT  = 47,   /* TopologyExtensions (enables leaf 0x8000001E) */
+
+    /* CPUID Leaf 0x80000001 EDX (AMD extended) */
+    CPU_FEATURE_PAGE1GB   = 48,   /* 1-Gigabyte huge pages */
+    CPU_FEATURE_RDTSCP    = 49,   /* RDTSCP instruction */
+
+    CPU_FEATURE_COUNT     = 50    /* total features tracked */
 };
 
 /* --- Global CPU feature structure --- */
@@ -99,6 +109,18 @@ struct cpu_features {
 
     /* Feature flags — one bit per CPU_FEATURE_* */
     uint64_t flags;
+
+    /* Address sizes (from leaf 0x80000008) */
+    uint8_t  phys_addr_bits;      /* physical address width (typically 48) */
+    uint8_t  linear_addr_bits;    /* linear address width (48, or 57 if LA57) */
+    uint8_t  num_cores;           /* number of physical cores */
+    uint8_t  _pad0;               /* alignment padding */
+
+    /* Zen topology (from leaf 0x8000001E, AMD only) */
+    uint32_t ext_apic_id;         /* extended APIC ID */
+    uint8_t  compute_unit_id;     /* physical core within CCD */
+    uint8_t  node_id;             /* NUMA domain identifier */
+    uint8_t  _pad1[2];            /* alignment padding */
 };
 
 /* --- API --- */

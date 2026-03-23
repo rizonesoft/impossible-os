@@ -179,9 +179,19 @@ void cpuid_init(void)
     /* Leaf 0x80000001: AMD extended features */
     if (g_cpu.max_ext_leaf >= 0x80000001) {
         cpuid_raw(0x80000001, 0, &eax, &ebx, &ecx, &edx);
+
+        /* EDX — common extended features */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_NX,      edx, 20);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_PAGE1GB,  edx, 26);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_RDTSCP,   edx, 27);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_LM,      edx, 29);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SYSCALL,  edx, 11);
+
+        /* ECX — AMD extended features */
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_SVM,      ecx,  2);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_OSVW,     ecx,  9);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_IBS,      ecx, 10);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_TOPO_EXT, ecx, 22);
     }
 
     /* Leaf 0x80000002–4: Brand string */
@@ -201,6 +211,23 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_TSC_INV, edx, 8);
     }
 
+    /* ---- Leaf 0x80000008: Address sizes and core count ---- */
+    if (g_cpu.max_ext_leaf >= 0x80000008) {
+        cpuid_raw(0x80000008, 0, &eax, &ebx, &ecx, &edx);
+        g_cpu.phys_addr_bits   = (uint8_t)(eax & 0xFF);        /* EAX[7:0] */
+        g_cpu.linear_addr_bits = (uint8_t)((eax >> 8) & 0xFF); /* EAX[15:8] */
+        g_cpu.num_cores        = (uint8_t)((ecx & 0xFF) + 1);  /* ECX[7:0] + 1 */
+    }
+
+    /* ---- Leaf 0x8000001E: Zen chiplet topology (AMD only) ---- */
+    if (cpu_has(CPU_FEATURE_TOPO_EXT) &&
+        g_cpu.max_ext_leaf >= 0x8000001E) {
+        cpuid_raw(0x8000001E, 0, &eax, &ebx, &ecx, &edx);
+        g_cpu.ext_apic_id     = eax;                           /* EAX[31:0] */
+        g_cpu.compute_unit_id = (uint8_t)(ebx & 0xFF);         /* EBX[7:0] */
+        g_cpu.node_id         = (uint8_t)(ecx & 0xFF);         /* ECX[7:0] */
+    }
+
     /* ---- Log results ---- */
     {
         /* Skip leading spaces in brand string */
@@ -213,7 +240,7 @@ void cpuid_init(void)
              (uint64_t)g_cpu.stepping);
 
         /* Log feature summary — build a compact feature string */
-        klog(LOG_INFO, "cpu", "Features: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+        klog(LOG_INFO, "cpu", "Features: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
              cpu_has(CPU_FEATURE_SSE2)    ? "SSE2 "    : "",
              cpu_has(CPU_FEATURE_SSE4_2)  ? "SSE4.2 "  : "",
              cpu_has(CPU_FEATURE_AES)     ? "AES "     : "",
@@ -228,12 +255,26 @@ void cpuid_init(void)
              cpu_has(CPU_FEATURE_RDRAND)  ? "RDRAND "  : "",
              cpu_has(CPU_FEATURE_TSC_INV) ? "InvTSC "  : "",
              cpu_has(CPU_FEATURE_NX)      ? "NX "      : "",
+             cpu_has(CPU_FEATURE_SVM)     ? "SVM "     : "",
+             cpu_has(CPU_FEATURE_IBS)     ? "IBS "     : "",
+             cpu_has(CPU_FEATURE_OSVW)    ? "OSVW "    : "",
+             cpu_has(CPU_FEATURE_PAGE1GB) ? "Page1GB " : "",
+             cpu_has(CPU_FEATURE_RDTSCP)  ? "RDTSCP "  : "",
+             cpu_has(CPU_FEATURE_TOPO_EXT)? "TopoExt " : "",
              "");
 
-        if (g_cpu.xsave_size > 0) {
-            klog(LOG_DEBUG, "cpu", "XSAVE area: %u bytes (max %u)",
-                 (uint64_t)g_cpu.xsave_size,
-                 (uint64_t)g_cpu.xsave_size_max);
+        if (g_cpu.phys_addr_bits > 0) {
+            klog(LOG_INFO, "cpu", "Address bits: phys=%u linear=%u, cores=%u",
+                 (uint64_t)g_cpu.phys_addr_bits,
+                 (uint64_t)g_cpu.linear_addr_bits,
+                 (uint64_t)g_cpu.num_cores);
+        }
+
+        if (cpu_has(CPU_FEATURE_TOPO_EXT)) {
+            klog(LOG_INFO, "cpu", "Zen topology: extAPIC=%u CU=%u node=%u",
+                 (uint64_t)g_cpu.ext_apic_id,
+                 (uint64_t)g_cpu.compute_unit_id,
+                 (uint64_t)g_cpu.node_id);
         }
     }
 
