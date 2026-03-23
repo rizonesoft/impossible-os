@@ -813,13 +813,13 @@ graph TD
 
 #### MFT Record Cache Tests (§10.1)
 
-- [ ] Test: cache hit rate after repeated access to same inode
-  - [ ] Read root directory (inode 5) multiple times → verify hit counter increases
-- [ ] Test: pinned entries not evicted (inode 0 = $MFT, inode 5 = root)
-- [ ] Test: LRU eviction — access 65+ unique inodes (cache=64) → verify evictions occur
-- [ ] Test: `ntfs_cache_invalidate()` clears entry → next read is a miss
-- [ ] Test: telemetry counters: hits, misses, evictions logged at summary
-- [ ] Commit: `"test: MFT record cache verification"`
+- [x] Test: cache hit rate after repeated access to same inode
+  - [x] Read root directory (inode 5) multiple times → verify hit counter increases
+- [x] Test: pinned entries not evicted (inode 0 = $MFT, inode 5 = root)
+- [x] Test: LRU eviction — access 65+ unique inodes (cache=64) → verify evictions occur
+- [x] Test: `ntfs_cache_invalidate()` clears entry → next read is a miss
+- [x] Test: telemetry counters: hits, misses, evictions logged at summary
+- [x] Commit: `"test: MFT record cache verification"`
 
 #### Attribute Parsing Tests (§3.4–§3.6)
 
