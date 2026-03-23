@@ -31,17 +31,17 @@
 | 💎 | Serial (UART)           | `serial.c`         | ✅ Done       | —                                                                                 |
 | 💎 | PCI bus                 | `pci.c`            | ✅ Done       | —                                                                                 |
 | 💎 | Framebuffer (VBE)       | `framebuffer.c`    | ✅ Done       | —                                                                                 |
-| 💎 | LAPIC / IOAPIC          | `lapic.c` `ioapic.c` | ✅ Done (base) | [013.09](TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md) — x2APIC, MSI, etc. |
+| 💎 | LAPIC / IOAPIC          | `lapic.c` `ioapic.c` | ✅ Done (base) | [013.09](TODO-013.09-APIC-Architecture.md) — x2APIC, MSI, etc. |
 | 💎 | SMP boot (SIPI)         | `smp.c`            | ✅ Done       | —                                                                                 |
-| 💎 | ACPI tables + power     | `acpi.c`           | ✅ Done (basic) | [013.01](TODO-013-Core-Drivers/TODO-013.01-ACPI.md) — AML, OSPM, thermal, P/C-states |
+| 💎 | ACPI tables + power     | `acpi.c`           | ✅ Done (basic) | [013.01](TODO-013.01-ACPI.md) — AML, OSPM, thermal, P/C-states |
 | 💎 | PS/2 keyboard           | `keyboard.c`       | ✅ Done       | —                                                                                 |
 | 💎 | PS/2 mouse              | `mouse.c`          | ✅ Done       | —                                                                                 |
 | 💎 | AHCI (SATA)             | `ahci.c`           | ✅ Done       | —                                                                                 |
 | 💎 | ATA/IDE                 | `ata.c`            | ✅ Done       | —                                                                                 |
 | 💎 | VirtIO-blk              | `virtio_blk.c`     | ✅ Done       | —                                                                                 |
-| 💎 | NVMe                    | `nvme.c`           | ⬜ §2 P1     | [013.02](TODO-013-Core-Drivers/TODO-013.02-NVMe.md)                                      |
-| 💎 | PCI enhancements        | `pci.c`            | ⬜ P2        | [013.03](TODO-013-Core-Drivers/TODO-013.03-PCI.md)                                       |
-| 💎 | PCIe (ECAM, AER, HP)   | `pcie.c`           | ⬜ P2        | [013.04](TODO-013-Core-Drivers/TODO-013.04-PCIe.md)                                      |
+| 💎 | NVMe                    | `nvme.c`           | ⬜ §2 P1     | [013.02](TODO-013.02-NVMe.md)                                      |
+| 💎 | PCI enhancements        | `pci.c`            | ⬜ P2        | [013.03](TODO-013.03-PCI.md)                                       |
+| 💎 | PCIe (ECAM, AER, HP)   | `pcie.c`           | ⬜ P2        | [013.04](TODO-013.04-PCIe.md)                                      |
 
 ---
 
