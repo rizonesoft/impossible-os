@@ -214,7 +214,7 @@ int ntfs_mft_alloc_load(struct ntfs_volume *vol)
         vol->mft_bitmap_size = bm_size;
 
         klog(LOG_INFO, "ntfs",
-             "$MFT bitmap: resident, %u bytes, %llu records",
+             "$MFT bitmap: resident, %u bytes, %u records",
              (uint64_t)bm_size, vol->mft_total_records);
         (void)data;  /* Resident path handled by direct record access */
     } else {
@@ -245,10 +245,12 @@ int ntfs_mft_alloc_load(struct ntfs_volume *vol)
     vol->mft_alloc_loaded = 1;
 
     klog(LOG_INFO, "ntfs",
-         "MFT allocator loaded: %llu records, bitmap %llu bytes, "
-         "%d data runs, %d bitmap runs",
-         vol->mft_total_records, vol->mft_bitmap_size,
-         vol->mft_data_run_count, vol->mft_bitmap_run_count);
+         "MFT allocator loaded: %u records, bitmap %u bytes",
+         vol->mft_total_records, vol->mft_bitmap_size);
+    klog(LOG_INFO, "ntfs",
+         "  %d data runs, %d bitmap runs",
+         (uint64_t)vol->mft_data_run_count,
+         (uint64_t)vol->mft_bitmap_run_count);
 
     return NTFS_OK;
 }
@@ -294,6 +296,9 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
         if (total_bytes > needed_bytes)
             total_bytes = needed_bytes;
     }
+
+    klog(LOG_DEBUG, "ntfs", "mft_alloc: scanning %u bytes for free record",
+         total_bytes);
 
     /* Start scanning from NTFS_FIRST_USER_INODE */
     for (byte_off = NTFS_FIRST_USER_INODE / 8;
@@ -354,6 +359,8 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
 
     spin_unlock_irqrestore(&vol->mft_alloc_lock, flags);
 
+    klog(LOG_DEBUG, "ntfs", "mft_alloc: found inode %u, reading record", inode);
+
     /* Step 3: Read existing record (may contain old deleted data) */
     rec = (uint8_t *)kmalloc(vol->frs_size);
     if (!rec)
@@ -361,6 +368,7 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
 
     /* Read the MFT record from disk via $MFT data runs */
     if (ntfs_mft_inode_to_lba(vol, inode, &lba) < 0) {
+        klog(LOG_ERROR, "ntfs", "mft_alloc: inode_to_lba failed for %u", inode);
         kfree(rec);
         return 0;
     }
@@ -368,6 +376,18 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
     sector_count = vol->frs_size / vol->bytes_per_sector;
     if (sector_count == 0)
         sector_count = 1;
+
+    /* Bounds check: don't read beyond the disk */
+    if (lba + sector_count > vol->total_sectors) {
+        klog(LOG_ERROR, "ntfs",
+             "mft_alloc: LBA %u + %u > disk %u sectors",
+             lba, (uint64_t)sector_count, vol->total_sectors);
+        kfree(rec);
+        return 0;
+    }
+
+    klog(LOG_DEBUG, "ntfs", "mft_alloc: reading LBA %u (%u sectors)",
+         lba, (uint64_t)sector_count);
 
     if (blkdev_read(vol->dev, lba, sector_count, rec) != 0) {
         kfree(rec);
@@ -454,6 +474,17 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
     }
 
     /* Step 7: Write initialized record back to disk */
+    klog(LOG_DEBUG, "ntfs", "mft_alloc: writing inode %u at LBA %u",
+         inode, lba);
+
+    /* Bounds check before write */
+    if (lba + sector_count > vol->total_sectors) {
+        klog(LOG_ERROR, "ntfs",
+             "mft_alloc: write LBA %u out of bounds", lba);
+        kfree(rec);
+        return 0;
+    }
+
     if (blkdev_write(vol->dev, lba, sector_count, rec) != 0) {
         kfree(rec);
         klog(LOG_ERROR, "ntfs",
