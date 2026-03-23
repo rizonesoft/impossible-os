@@ -1530,31 +1530,6 @@ graph TD
 
 ---
 
-## 18. NTFS-to-IXFS Live Migration (🚀 Impossible OS Feature)
-
-### 18.1 Volume Migration Engine
-
-**Prompt:** Implement a one-click migration tool that copies the entire contents of an NTFS volume to an IXFS volume, preserving all metadata (timestamps, permissions, directory structure). This enables users to convert their Windows partitions to IXFS for better Impossible OS integration without booting Windows. The migration runs from within Impossible OS and requires both the NTFS read-only driver and IXFS write support. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: NTFS-to-IXFS migration engine"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-> [!TIP]
-> **Competitive Edge:** Neither Windows nor Linux provides a built-in GUI tool for
-> migrating between NTFS and their native filesystem. Users must use third-party
-> cloning tools (Clonezilla, Macrium) or manual copy. Impossible OS does it natively.
-
-- [ ] Implement `ntfs_migrate_to_ixfs(vol, target_drive)`:
-  - [ ] Walk entire NTFS directory tree (recursive MFT + B+ tree traversal)
-  - [ ] For each directory: `vfs_create()` on target IXFS volume
-  - [ ] For each file: read via NTFS `$DATA` → write to IXFS file
-  - [ ] Preserve timestamps: map FILETIME → IXFS timestamps
-  - [ ] Preserve file attributes: map DOS flags → IXFS attributes
-  - [ ] Skip system metafiles ($MFT, $Volume, etc.) — IXFS has its own
-  - [ ] Handle symlinks/junctions: create equivalent IXFS links if supported
-- [ ] Progress UI: file count, bytes copied, ETA, current file path
-- [ ] Resume on failure: checkpoint last-copied inode, skip completed files
-- [ ] Verification pass: compare file sizes and checksums after migration
-- [ ] Wire to Disk Manager: "Migrate to IXFS" button on NTFS volumes
-- [ ] Commit: `"ntfs: NTFS-to-IXFS migration engine"`
-
 ## Priority Order
 
 | ⭐  | Priority   | Section                        | Description                                                      |
@@ -1594,7 +1569,6 @@ graph TD
 | ⭐  | 🟣 P4      | 15.1 Boot-Time Init            | **NTFS as `C:\`** — boot from NTFS instead of IXFS              |
 | ⭐  | 🟣 P4      | 15.2 System File Layout        | **NTFS as `C:\`** — directory hierarchy + Registry on NTFS      |
 | ⭐  | 🟣 P4      | 15.3 NTFS Volume Formatter     | **NTFS as `C:\`** — format tool for boot volume creation        |
-| ⭐  | 🔵 Future   | 18.1 NTFS-to-IXFS Migration   | **One-click volume migration** — no OS does this natively       |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -1642,7 +1616,6 @@ graph TD
 | ⭐ | **MFT fragmentation heatmap**        | ❌ Hidden in `defrag /a` output     | ❌ Not available                     | ⬜ **§11.1 — visual MFT density map**                 |
 | ⭐ | **Smart file search (MFT scan)**     | ⚠️ Windows Search (requires index)  | ❌ `find` / `locate` (CLI only)      | ⬜ **Direct MFT walk + metadata filter**              |
 | ⭐ | **ADS explorer (GUI)**               | ❌ CLI only (`dir /r`)              | ❌ `getfattr` (CLI only)             | ⬜ **→ TODO-041.04 — cross-FS stream explorer**       |
-| ⭐ | **NTFS-to-IXFS migration**           | ❌ Not available                    | ❌ Not available                     | ⬜ **§18.1 Future — one-click migration**             |
 | ⭐ | **NTFS as `C:\` boot volume**        | ✅ Native (default)                 | ❌ Not supported                     | ⬜ **§15 P4 — boot-time init + layout**               |
 | ⭐ | **Anti-aliased TTF in Disk Manager** | ⚠️ Basic system font                | ❌ CLI only                          | ✅ **Done — Selawik Semibold, atlas pre-baked**        |
 
