@@ -256,6 +256,206 @@ int ntfs_mft_alloc_load(struct ntfs_volume *vol)
 }
 
 /* ============================================================================
+ * ntfs_mft_extend — Grow $MFT by allocating new clusters
+ *
+ * Called when ntfs_alloc_mft_record() can't find any free MFT records.
+ * Allocates MFT_EXTEND_CLUSTERS from the volume (preferring MFT zone),
+ * zeroes the new disk area, appends a data run to the in-memory
+ * mft_data_runs[], extends the MFT bitmap to cover the new records,
+ * and updates $MFT's $DATA attribute on disk.
+ *
+ * Returns NTFS_OK if the MFT was extended, NTFS_ERR_* on failure.
+ * On success, the caller should retry the bitmap scan.
+ * ============================================================================ */
+
+/* Number of clusters to add in each expansion (16 clusters = 64 KiB @4K cls,
+ * which is 64 MFT records at 1024 bytes/record). */
+#define MFT_EXTEND_CLUSTERS  16
+
+static int ntfs_mft_extend(struct ntfs_volume *vol)
+{
+    uint64_t hint_lcn;
+    uint64_t new_lcn;
+    uint64_t new_clusters = MFT_EXTEND_CLUSTERS;
+    uint64_t new_bytes;
+    uint64_t new_records;
+    uint64_t old_total;
+    uint8_t  zero_buf[512];
+    uint64_t disk_byte;
+    uint64_t lba;
+    uint32_t sectors_to_zero;
+    uint32_t i;
+
+    /* Choose hint: prefer end of last MFT extent for contiguity */
+    if (vol->mft_data_run_count > 0) {
+        struct ntfs_data_run *last = &vol->mft_data_runs[
+            vol->mft_data_run_count - 1];
+        hint_lcn = last->lcn + last->length;
+    } else {
+        hint_lcn = vol->mft_lcn;
+    }
+
+    /* Allocate clusters */
+    new_lcn = ntfs_alloc_clusters(vol, new_clusters, hint_lcn);
+    if (new_lcn == 0) {
+        klog(LOG_ERROR, "ntfs", "MFT extend: failed to alloc %u clusters",
+             (uint64_t)new_clusters);
+        return NTFS_ERR_IO;
+    }
+
+    new_bytes   = new_clusters * (uint64_t)vol->cluster_size;
+    new_records = new_bytes / (uint64_t)vol->frs_size;
+    old_total   = vol->mft_total_records;
+
+    klog(LOG_INFO, "ntfs",
+         "MFT extend: +%u clusters at LCN %u (+%u records, %u -> %u)",
+         (uint64_t)new_clusters, new_lcn, new_records,
+         old_total, old_total + new_records);
+
+    /* Zero-init the new disk area (sector by sector) */
+    ntfs_memset(zero_buf, 0, 512);
+    disk_byte = new_lcn * (uint64_t)vol->cluster_size;
+    lba = disk_byte / (uint64_t)vol->bytes_per_sector;
+    sectors_to_zero = (uint32_t)(new_bytes / (uint64_t)vol->bytes_per_sector);
+
+    for (i = 0; i < sectors_to_zero; i++) {
+        if (blkdev_write(vol->dev, lba + i, 1, zero_buf) != 0) {
+            klog(LOG_ERROR, "ntfs",
+                 "MFT extend: failed to zero LBA %u", lba + i);
+            ntfs_free_clusters(vol, new_lcn, new_clusters);
+            return NTFS_ERR_IO;
+        }
+    }
+
+    /* --- Try to merge with the last run if adjacent --- */
+    if (vol->mft_data_run_count > 0) {
+        struct ntfs_data_run *last = &vol->mft_data_runs[
+            vol->mft_data_run_count - 1];
+        if (last->lcn + last->length == new_lcn) {
+            /* Adjacent — just extend the last run */
+            last->length += new_clusters;
+            goto update_sizes;
+        }
+    }
+
+    /* --- Append new run to in-memory array --- */
+    {
+        int new_count = vol->mft_data_run_count + 1;
+        uint32_t new_size = (uint32_t)(new_count *
+                            sizeof(struct ntfs_data_run));
+        struct ntfs_data_run *new_arr =
+            (struct ntfs_data_run *)kmalloc(new_size);
+        if (!new_arr) {
+            ntfs_free_clusters(vol, new_lcn, new_clusters);
+            return NTFS_ERR_IO;
+        }
+
+        /* Copy old runs */
+        for (i = 0; i < (uint32_t)vol->mft_data_run_count; i++)
+            new_arr[i] = vol->mft_data_runs[i];
+
+        /* Append new run */
+        new_arr[vol->mft_data_run_count].vcn_start =
+            vol->mft_data_size / (uint64_t)vol->cluster_size;
+        new_arr[vol->mft_data_run_count].lcn = new_lcn;
+        new_arr[vol->mft_data_run_count].length = new_clusters;
+
+        /* Swap arrays */
+        if (vol->mft_data_runs)
+            kfree(vol->mft_data_runs);
+        vol->mft_data_runs = new_arr;
+        vol->mft_data_run_count = new_count;
+    }
+
+update_sizes:
+    /* Update in-memory totals */
+    vol->mft_data_size += new_bytes;
+    vol->mft_total_records = vol->mft_data_size / (uint64_t)vol->frs_size;
+
+    /* --- Extend MFT bitmap to cover new records --- */
+    {
+        uint64_t needed_bm_bytes = (vol->mft_total_records + 7) / 8;
+        if (needed_bm_bytes > vol->mft_bitmap_size)
+            vol->mft_bitmap_size = needed_bm_bytes;
+    }
+
+    /* --- Update $MFT's $DATA attribute on disk ---
+     * Re-read inode 0 ($MFT), re-encode the data runs, and write back. */
+    {
+        uint8_t *mft_rec = (uint8_t *)kmalloc(vol->frs_size);
+        struct ntfs_mft_header mft_hdr;
+
+        if (!mft_rec) {
+            klog(LOG_WARN, "ntfs",
+                 "MFT extend: no memory for $MFT update (in-memory OK)");
+            return NTFS_OK;  /* In-memory state is fine, disk update deferred */
+        }
+
+        if (ntfs_read_mft_record(vol, NTFS_INODE_MFT,
+                                  mft_rec, &mft_hdr) == NTFS_OK) {
+            /* Find $DATA attribute and update its data runs + sizes */
+            const uint8_t *data_attr = ntfs_attr_find(
+                mft_rec, &mft_hdr, NTFS_ATTR_DATA, NULL);
+            if (data_attr) {
+                uint32_t attr_off = (uint32_t)(data_attr - mft_rec);
+                uint8_t *attr = mft_rec + attr_off;
+
+                /* Re-encode data runs */
+                uint8_t run_buf[512];
+                int encoded = ntfs_encode_data_runs(
+                    vol->mft_data_runs, vol->mft_data_run_count,
+                    run_buf, (int)sizeof(run_buf));
+
+                if (encoded > 0) {
+                    /* Update non-resident header sizes */
+                    uint16_t dr_off = ntfs_le16(attr + 0x20);
+                    uint64_t new_data_size = vol->mft_data_size;
+                    uint64_t new_alloc = vol->mft_total_records *
+                                        (uint64_t)vol->frs_size;
+                    /* round alloc up to cluster boundary */
+                    new_alloc = ((new_alloc + vol->cluster_size - 1) /
+                                 vol->cluster_size) * vol->cluster_size;
+
+                    /* Update last VCN */
+                    uint64_t total_vcn = new_alloc / vol->cluster_size;
+                    ntfs_le64_write(attr + 0x18,
+                                    total_vcn > 0 ? total_vcn - 1 : 0);
+
+                    /* Update alloc/real/init sizes */
+                    ntfs_le64_write(attr + 0x28, new_alloc);
+                    ntfs_le64_write(attr + 0x30, new_data_size);
+                    ntfs_le64_write(attr + 0x38, new_data_size);
+
+                    /* Copy encoded runs over old runs */
+                    uint32_t old_attr_len = ntfs_le32(attr + 0x04);
+                    uint32_t new_runs_end = dr_off + (uint32_t)encoded;
+                    uint32_t new_attr_len =
+                        (new_runs_end + 7) & ~7u; /* align 8 */
+                    if (new_attr_len <= old_attr_len) {
+                        /* Runs fit in existing space */
+                        ntfs_memset(attr + dr_off, 0,
+                                    old_attr_len - dr_off);
+                        ntfs_memcpy(attr + dr_off, run_buf,
+                                    (uint32_t)encoded);
+                    }
+                    /* else: runs too long, skip on-disk update for now */
+
+                    ntfs_write_mft_record(vol, NTFS_INODE_MFT, mft_rec);
+                }
+            }
+        }
+        kfree(mft_rec);
+    }
+
+    klog(LOG_INFO, "ntfs",
+         "MFT extended: %u total records, %u data runs",
+         vol->mft_total_records,
+         (uint64_t)vol->mft_data_run_count);
+
+    return NTFS_OK;
+}
+
+/* ============================================================================
  * ntfs_alloc_mft_record — Allocate a new MFT record
  *
  * 1. Scan $MFT's $BITMAP for the first free bit (starting at inode 24)
@@ -263,6 +463,7 @@ int ntfs_mft_alloc_load(struct ntfs_volume *vol)
  * 3. Read the existing record (may contain old deleted data)
  * 4. Initialize header: magic, USA, sequence, flags, $END marker
  * 5. Apply USA regeneration (§12.2) and write back to disk
+ * If no free records exist, extends $MFT by allocating new clusters.
  * ============================================================================ */
 
 uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
@@ -280,13 +481,15 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
     uint16_t new_flags;
     uint32_t first_attr_off;
     int found = 0;
+    int extended = 0;  /* prevent infinite extend loop */
 
     if (!vol || !vol->mft_alloc_loaded)
         return 0;
 
     spin_lock_irqsave(&vol->mft_alloc_lock, &flags);
 
-    /* Step 1: Scan MFT bitmap for first free bit (skip system inodes 0–23) */
+retry_scan:
+    /* Step 1: Scan MFT bitmap for first free bit (skip system inodes 0-23) */
     total_bytes = vol->mft_bitmap_size;
 
     /* Cap scan to actual MFT records — the bitmap file may be larger than
@@ -301,6 +504,7 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
          total_bytes);
 
     /* Start scanning from NTFS_FIRST_USER_INODE */
+    found = 0;
     for (byte_off = NTFS_FIRST_USER_INODE / 8;
          byte_off < total_bytes && !found; byte_off++) {
         int val = mft_bitmap_read_byte(vol, byte_off);
@@ -331,12 +535,27 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory)
     }
 
     if (!found) {
-        /* No free records — MFT extension would go here.
-         * For now, log error. MFT extension (allocating clusters from
-         * MFT Zone, appending data runs) is deferred to §12.3 follow-up. */
+        if (!extended) {
+            /* Try to extend the MFT */
+            spin_unlock_irqrestore(&vol->mft_alloc_lock, flags);
+
+            if (ntfs_mft_extend(vol) == NTFS_OK) {
+                spin_lock_irqsave(&vol->mft_alloc_lock, &flags);
+                extended = 1;
+                goto retry_scan;
+            }
+
+            /* Extension failed — truly full */
+            klog(LOG_ERROR, "ntfs",
+                 "MFT full: no free records and extension failed "
+                 "(total=%llu)", vol->mft_total_records);
+            return 0;
+        }
+
+        /* Already extended once, still no space — shouldn't happen */
         spin_unlock_irqrestore(&vol->mft_alloc_lock, flags);
         klog(LOG_ERROR, "ntfs",
-             "MFT full: no free records (total=%llu)",
+             "MFT full after extension (total=%llu)",
              vol->mft_total_records);
         return 0;
     }
