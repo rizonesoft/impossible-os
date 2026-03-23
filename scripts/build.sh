@@ -68,7 +68,7 @@ elapsed() {
     local start=$1
     local now
     now=$(date +%s.%N)
-    awk "BEGIN { printf \"%.1f\", $now - $start }"
+    awk "BEGIN { t = $now - $start; if (t < 0) t = 0; printf \"%.1f\", t }"
 }
 
 # Count source files that make will compile (for progress bar)

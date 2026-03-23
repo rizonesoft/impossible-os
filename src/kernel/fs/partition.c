@@ -450,6 +450,18 @@ void partition_mount_filesystems(void)
              * Non-fatal: mount continues without caching if this fails. */
             ntfs_cache_init(ntfs_vol, 0);
 
+            /* Load $Bitmap cluster allocation data (§12.1).
+             * Required before ntfs_load_sysfiles() for free space counting,
+             * and before any cluster allocation (write, create, etc.).
+             * Non-fatal: mount continues read-only without bitmap. */
+            ntfs_bitmap_load(ntfs_vol);
+
+            /* Load MFT record allocator (§12.3).
+             * Enables ntfs_alloc_mft_record() / ntfs_free_mft_record().
+             * Requires bitmap to be loaded first.
+             * Non-fatal: write operations will fail gracefully. */
+            ntfs_mft_alloc_load(ntfs_vol);
+
             /* Load system metafiles ($Volume label, $Bitmap, $UpCase, $MFTMirr).
              * Non-fatal: individual failures are logged but mount continues. */
             ntfs_load_sysfiles(ntfs_vol);
