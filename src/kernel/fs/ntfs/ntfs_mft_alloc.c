@@ -280,10 +280,8 @@ static int ntfs_mft_extend(struct ntfs_volume *vol)
     uint64_t new_bytes;
     uint64_t new_records;
     uint64_t old_total;
-    uint8_t  zero_buf[512];
     uint64_t disk_byte;
     uint64_t lba;
-    uint32_t sectors_to_zero;
     uint32_t i;
 
     /* Choose hint: prefer end of last MFT extent for contiguity */
@@ -312,19 +310,86 @@ static int ntfs_mft_extend(struct ntfs_volume *vol)
          (uint64_t)new_clusters, new_lcn, new_records,
          old_total, old_total + new_records);
 
-    /* Zero-init the new disk area (sector by sector) */
-    ntfs_memset(zero_buf, 0, 512);
-    disk_byte = new_lcn * (uint64_t)vol->cluster_size;
-    lba = disk_byte / (uint64_t)vol->bytes_per_sector;
-    sectors_to_zero = (uint32_t)(new_bytes / (uint64_t)vol->bytes_per_sector);
-
-    for (i = 0; i < sectors_to_zero; i++) {
-        if (blkdev_write(vol->dev, lba + i, 1, zero_buf) != 0) {
-            klog(LOG_ERROR, "ntfs",
-                 "MFT extend: failed to zero LBA %u", lba + i);
+    /* Format each new MFT record with a valid header (FILE magic, USA,
+     * sequence=1, flags=0 free).  Without this, ntfs_alloc_mft_record()
+     * would reject the record because it reads 0x00000000 instead of
+     * the "FILE" signature. */
+    {
+        uint8_t *rec = (uint8_t *)kmalloc(vol->frs_size);
+        if (!rec) {
             ntfs_free_clusters(vol, new_lcn, new_clusters);
             return NTFS_ERR_IO;
         }
+
+        uint32_t spc = vol->frs_size / vol->bytes_per_sector;
+        if (spc == 0) spc = 1;
+        uint16_t usa_off = 0x30;
+        uint16_t usa_words = (uint16_t)(1 + vol->frs_size /
+                              vol->bytes_per_sector);
+        uint32_t first_attr = ((uint32_t)usa_off + (uint32_t)usa_words * 2
+                               + 7) & ~7u;
+        uint32_t used = first_attr + 4;  /* header + $END marker */
+
+        disk_byte = new_lcn * (uint64_t)vol->cluster_size;
+
+        for (i = 0; i < (uint32_t)new_records; i++) {
+            ntfs_memset(rec, 0, vol->frs_size);
+
+            /* 0x00: Magic "FILE" */
+            rec[0] = 'F'; rec[1] = 'I'; rec[2] = 'L'; rec[3] = 'E';
+
+            /* 0x04: USA offset */
+            ntfs_le16_write(rec + 0x04, usa_off);
+            /* 0x06: USA size in words */
+            ntfs_le16_write(rec + 0x06, usa_words);
+
+            /* 0x10: Sequence number = 1 */
+            ntfs_le16_write(rec + 0x10, 1);
+
+            /* 0x14: First attribute offset */
+            ntfs_le16_write(rec + 0x14, (uint16_t)first_attr);
+
+            /* 0x16: Flags = 0 (not in use) */
+            ntfs_le16_write(rec + 0x16, 0);
+
+            /* 0x18: Used size (32-bit LE) */
+            ntfs_le16_write(rec + 0x18, (uint16_t)(used & 0xFFFF));
+            ntfs_le16_write(rec + 0x1A, (uint16_t)(used >> 16));
+
+            /* 0x1C: Allocated size (32-bit LE) */
+            ntfs_le16_write(rec + 0x1C,
+                            (uint16_t)(vol->frs_size & 0xFFFF));
+            ntfs_le16_write(rec + 0x1E,
+                            (uint16_t)(vol->frs_size >> 16));
+
+            /* $END terminator at first attribute offset */
+            rec[first_attr + 0] = 0xFF;
+            rec[first_attr + 1] = 0xFF;
+            rec[first_attr + 2] = 0xFF;
+            rec[first_attr + 3] = 0xFF;
+
+            /* Initialize USN in USA */
+            ntfs_le16_write(rec + usa_off, 1);
+
+            /* Apply USA regeneration */
+            ntfs_regenerate_fixup(rec, vol->frs_size,
+                                   vol->bytes_per_sector);
+
+            /* Write this record to disk */
+            lba = (disk_byte + (uint64_t)i * (uint64_t)vol->frs_size) /
+                  (uint64_t)vol->bytes_per_sector;
+
+            if (blkdev_write(vol->dev, lba, spc, rec) != 0) {
+                klog(LOG_ERROR, "ntfs",
+                     "MFT extend: failed to write record %u at LBA %u",
+                     (uint64_t)(old_total + i), lba);
+                kfree(rec);
+                ntfs_free_clusters(vol, new_lcn, new_clusters);
+                return NTFS_ERR_IO;
+            }
+        }
+
+        kfree(rec);
     }
 
     /* --- Try to merge with the last run if adjacent --- */
