@@ -152,6 +152,55 @@ if $HAVE_NTFS3G; then
             echo -n "File number $i in large directory." > "$MNT/manyfiles/file_$i.txt"
         done
 
+        # ---- LZNT1 Compression Test Files (§9.1) ----
+        # ntfs-3g compresses files when the directory has the compressed flag
+        COMPRESS_OK=false
+        mkdir -p "$MNT/compressed" 2>/dev/null
+
+        # Try to set compressed attribute on the directory via chattr or setfattr
+        if command -v setfattr &>/dev/null; then
+            # Set NTFS compressed attribute flag (FILE_ATTRIBUTE_COMPRESSED = 0x800)
+            # system.ntfs_attrib_be is big-endian, so 0x800 → 00 00 08 00
+            setfattr -n system.ntfs_attrib_be -v 0x00000810 "$MNT/compressed" 2>/dev/null && COMPRESS_OK=true
+        fi
+
+        if $COMPRESS_OK; then
+            log "Creating LZNT1 compressed test files..."
+
+            # 1. Known-content file (highly compressible — repeating pattern)
+            # 8192 bytes of repeating "COMPRESS_TEST_" (14 chars × 585 + padding)
+            {
+                for _ in $(seq 1 585); do
+                    printf "COMPRESS_TEST_"
+                done
+            } | head -c 8192 > "$MNT/compressed/known.txt"
+
+            # 2. Sparse/zero file (all zeros — should become sparse CU)
+            dd if=/dev/zero of="$MNT/compressed/zeros.bin" bs=1K count=64 2>/dev/null
+
+            # 3. Incompressible file (random data — stored uncompressed)
+            dd if=/dev/urandom of="$MNT/compressed/random.bin" bs=1K count=8 2>/dev/null
+
+            # 4. Mixed file: compressible header + random middle + compressible tail
+            # Total: 128 KB (2 compression units at 64 KB each)
+            {
+                # First 32 KB: highly compressible (repeating 'A')
+                dd if=/dev/zero bs=1K count=32 2>/dev/null | tr '\0' 'A'
+                # Middle 64 KB: random (incompressible)
+                dd if=/dev/urandom bs=1K count=64 2>/dev/null
+                # Last 32 KB: compressible (repeating 'Z')
+                dd if=/dev/zero bs=1K count=32 2>/dev/null | tr '\0' 'Z'
+            } > "$MNT/compressed/mixed.bin"
+
+            log "  ✓ compressed/known.txt    — 8 KB compressible pattern"
+            log "  ✓ compressed/zeros.bin    — 64 KB all-zeros (sparse)"
+            log "  ✓ compressed/random.bin   — 8 KB random (incompressible)"
+            log "  ✓ compressed/mixed.bin    — 128 KB mixed (compress+random+compress)"
+        else
+            warn "Cannot set compressed attribute (setfattr unavailable or failed)"
+            warn "LZNT1 tests will be skipped at runtime"
+        fi
+
         # Sync and unmount
         sync
         sudo -n umount "$MNT" 2>/dev/null || \

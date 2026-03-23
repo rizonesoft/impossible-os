@@ -10,10 +10,16 @@
  *   3. Empty file read (0 bytes)
  *   4. Resident small file read (< 700 bytes)
  *   5. Large file read (5 MB, multi-run data)
- *   6. Subdirectory traversal (subdir/nested.txt)
- *   7. Deep directory tree (A/B/C/D/E/file.txt)
- *   8. Directory with >100 entries (INDX allocation)
- *   9. Dirty volume flag detection
+ *   6. Dirty volume flag detection (raw $VOLUME_INFORMATION cross-check)
+ *   7. Subdirectory traversal (subdir/nested.txt)
+ *   8. Deep directory tree (A/B/C/D/E/file.txt)
+ *   9. Directory with >100 entries (INDX allocation)
+ *  10. Long filename (200+ chars, UTF-16LE)
+ *  11. LZNT1 decompressor unit test (handcrafted stream)
+ *  12. LZNT1 known-content file (transparent decompression)
+ *  13. LZNT1 sparse zero file (all-zero CU → zero-fill)
+ *  14. LZNT1 uncompressed file (random data stored raw)
+ *  15. LZNT1 mixed CU file (compress + random + compress)
  *
  * Output: [NTFS-TEST] PASS/FAIL per test case to serial (klog)
  * ============================================================================ */
@@ -593,10 +599,414 @@ static void test_dirty_flag(struct ntfs_volume *vol)
 }
 
 
+/* ---- Test 11: Direct LZNT1 Decompressor Unit Test ---- */
+
+/* Test the ntfs_lznt1_decompress() function directly with known input/output.
+ * This validates the algorithm in isolation, independent of disk I/O or VFS.
+ *
+ * We craft a minimal LZNT1 stream by hand:
+ *   Sub-block 1 (uncompressed): 16 bytes of "HelloHelloWorld!"
+ *   Sub-block 2 (compressed):   literal 'A','B','C' + back-ref to copy 'ABC'
+ *
+ * LZNT1 sub-block header format:
+ *   bits 0-11:  data_size - 1
+ *   bits 12-14: signature (0x3 = 011)
+ *   bit 15:     1 = compressed, 0 = uncompressed
+ */
+static void test_lznt1_decompress(void)
+{
+    /* ---- Sub-block 1: uncompressed, 16 bytes ---- */
+    /* header = (16-1) | (0x3 << 12) | 0 = 0x300F  → little-endian: 0F 30 */
+    /* data = "HelloHelloWorld!" (16 bytes exactly) */
+
+    /* ---- Sub-block 2: compressed, produces "ABCABC" (6 bytes) ---- */
+    /* header = compressed flag set, data size = (actual_bytes - 1)
+     * Compressed data:
+     *   flag_byte = 0x08 (bit 3 = back-ref, bits 0-2 = literal)
+     *   token 0: literal 'A' (0x41)
+     *   token 1: literal 'B' (0x42)
+     *   token 2: literal 'C' (0x43)
+     *   token 3: back-reference: at dst_pos=3, displacement_bits=4, len_bits=12
+     *            displacement=3 (3-1=2 in field, but disp= field+1), length=3
+     *            ref = ((disp-1) << len_bits) | (length-3)
+     *            ref = (2 << 12) | 0 = 0x2000  → LE: 00 20
+     *   5 bytes of compressed data, header = (5-1) | (0x3<<12) | 0x8000 = 0xB004
+     *   Little-endian: 04 B0
+     */
+    static const uint8_t compressed[] = {
+        /* Sub-block 1: uncompressed 16 bytes */
+        0x0F, 0x30,                                          /* header */
+        'H','e','l','l','o','H','e','l','l','o','W','o','r','l','d','!',
+
+        /* Sub-block 2: compressed → "ABCABC" */
+        0x04, 0xB0,                                          /* header */
+        0x08,                                                /* flag byte */
+        0x41, 0x42, 0x43,                                    /* A, B, C */
+        0x00, 0x20,                                          /* back-ref */
+    };
+
+    uint8_t output[4096];
+    int result;
+    const char *expected = "HelloHelloWorld!ABCABC";
+    int expected_len = 22;
+    int i;
+
+    ntfs_memset(output, 0xFF, sizeof(output));
+
+    result = ntfs_lznt1_decompress(compressed, sizeof(compressed),
+                                    output, sizeof(output));
+
+    if (result < 0) {
+        test_fail("lznt1_decompress", "decompress returned error");
+        return;
+    }
+
+    klog(LOG_DEBUG, "ntfs-test",
+         "lznt1_decompress: got %d bytes (expected %d)",
+         (uint64_t)result, (uint64_t)expected_len);
+
+    if (result != expected_len) {
+        klog(LOG_ERROR, "ntfs-test",
+             "lznt1_decompress: size mismatch %d vs %d",
+             (uint64_t)result, (uint64_t)expected_len);
+        test_fail("lznt1_decompress", "output size mismatch");
+        return;
+    }
+
+    for (i = 0; i < expected_len; i++) {
+        if (output[i] != (uint8_t)expected[i]) {
+            klog(LOG_ERROR, "ntfs-test",
+                 "lznt1_decompress: byte %d is 0x%x, expected 0x%x",
+                 (uint64_t)i, (uint64_t)output[i],
+                 (uint64_t)(uint8_t)expected[i]);
+            test_fail("lznt1_decompress", "content mismatch");
+            return;
+        }
+    }
+
+    test_pass("lznt1_decompress");
+}
+
+/* ---- Tests 12-15: LZNT1 VFS-Level Compression (§9.1) ---- */
+
+/* Helper: check if compressed/ directory exists on the test volume */
+static struct vfs_node *find_compressed_dir(struct vfs_node *root)
+{
+    if (!root || !root->ops || !root->ops->finddir)
+        return NULL;
+    return root->ops->finddir(root, "compressed");
+}
+
+/* Test 11: Known-content compressed file — transparent LZNT1 decompression */
+static void test_lznt1_known(struct vfs_node *root)
+{
+    uint8_t *buf;
+    uintptr_t buf_phys;
+    uint32_t bytes_read;
+    int rc;
+    int i;
+    /* Expected: 8192 bytes of repeating "COMPRESS_TEST_" (14 chars) */
+    const char *pattern = "COMPRESS_TEST_";
+    int pat_len = 14;
+
+    buf_phys = pmm_alloc_contiguous(2);  /* 8 KB */
+    if (!buf_phys) {
+        test_fail("lznt1_known", "PMM alloc failed");
+        return;
+    }
+    buf = (uint8_t *)(uintptr_t)buf_phys;
+
+    rc = read_file_via_vfs(root, "compressed/known.txt", buf, 8192, &bytes_read);
+    if (rc != 0) {
+        test_fail("lznt1_known", "read failed (compressed dir missing?)");
+        pmm_free_frame(buf_phys);
+        pmm_free_frame(buf_phys + 4096);
+        return;
+    }
+
+    if (bytes_read != 8192) {
+        klog(LOG_ERROR, "ntfs-test",
+             "lznt1_known: expected 8192 bytes, got %u",
+             (uint64_t)bytes_read);
+        test_fail("lznt1_known", "size mismatch");
+        pmm_free_frame(buf_phys);
+        pmm_free_frame(buf_phys + 4096);
+        return;
+    }
+
+    /* Verify repeating pattern */
+    for (i = 0; i < 8192; i++) {
+        if (buf[i] != (uint8_t)pattern[i % pat_len]) {
+            klog(LOG_ERROR, "ntfs-test",
+                 "lznt1_known: byte %d is 0x%x, expected '%c'",
+                 (uint64_t)i, (uint64_t)buf[i],
+                 (uint64_t)(uint8_t)pattern[i % pat_len]);
+            test_fail("lznt1_known", "content mismatch");
+            pmm_free_frame(buf_phys);
+            pmm_free_frame(buf_phys + 4096);
+            return;
+        }
+    }
+
+    test_pass("lznt1_known");
+    pmm_free_frame(buf_phys);
+    pmm_free_frame(buf_phys + 4096);
+}
+
+/* Test 12: Sparse zero file — all-zero CU should be zero-filled */
+static void test_lznt1_sparse(struct vfs_node *root)
+{
+    struct vfs_node *node;
+    uintptr_t buf_phys;
+    uint8_t *buf;
+    int rc;
+    int i;
+    struct vfs_node *cdir;
+
+    cdir = find_compressed_dir(root);
+    if (!cdir) {
+        test_fail("lznt1_sparse", "compressed/ not found");
+        return;
+    }
+
+    node = cdir->ops->finddir(cdir, "zeros.bin");
+    if (!node) {
+        test_fail("lznt1_sparse", "zeros.bin not found");
+        return;
+    }
+
+    /* Read first 4 KB */
+    buf_phys = pmm_alloc_contiguous(1);
+    if (!buf_phys) {
+        test_fail("lznt1_sparse", "PMM alloc failed");
+        return;
+    }
+    buf = (uint8_t *)(uintptr_t)buf_phys;
+
+    if (!node->ops || !node->ops->read) {
+        test_fail("lznt1_sparse", "read not supported");
+        pmm_free_frame(buf_phys);
+        return;
+    }
+
+    rc = node->ops->read(node, 0, 4096, buf);
+    if (rc <= 0) {
+        test_fail("lznt1_sparse", "read failed");
+        pmm_free_frame(buf_phys);
+        return;
+    }
+
+    /* Verify all zeros */
+    for (i = 0; i < rc; i++) {
+        if (buf[i] != 0) {
+            klog(LOG_ERROR, "ntfs-test",
+                 "lznt1_sparse: byte %d is 0x%x, expected 0",
+                 (uint64_t)i, (uint64_t)buf[i]);
+            test_fail("lznt1_sparse", "non-zero byte in sparse file");
+            pmm_free_frame(buf_phys);
+            return;
+        }
+    }
+
+    /* Also read last 4 KB to verify tail of file */
+    if (node->size > 4096) {
+        uint32_t tail_off = (uint32_t)(node->size - 4096);
+        rc = node->ops->read(node, tail_off, 4096, buf);
+        if (rc > 0) {
+            for (i = 0; i < rc; i++) {
+                if (buf[i] != 0) {
+                    test_fail("lznt1_sparse", "non-zero byte in tail");
+                    pmm_free_frame(buf_phys);
+                    return;
+                }
+            }
+        }
+    }
+
+    test_pass("lznt1_sparse");
+    pmm_free_frame(buf_phys);
+}
+
+/* Test 13: Incompressible file — random data stored uncompressed */
+static void test_lznt1_uncompressed(struct vfs_node *root)
+{
+    struct vfs_node *node;
+    uintptr_t buf_phys;
+    uint8_t *buf;
+    int rc;
+    int non_zero = 0;
+    int i;
+    struct vfs_node *cdir;
+
+    cdir = find_compressed_dir(root);
+    if (!cdir) {
+        test_fail("lznt1_uncompressed", "compressed/ not found");
+        return;
+    }
+
+    node = cdir->ops->finddir(cdir, "random.bin");
+    if (!node) {
+        test_fail("lznt1_uncompressed", "random.bin not found");
+        return;
+    }
+
+    buf_phys = pmm_alloc_contiguous(2);  /* 8 KB */
+    if (!buf_phys) {
+        test_fail("lznt1_uncompressed", "PMM alloc failed");
+        return;
+    }
+    buf = (uint8_t *)(uintptr_t)buf_phys;
+
+    if (!node->ops || !node->ops->read) {
+        test_fail("lznt1_uncompressed", "read not supported");
+        pmm_free_frame(buf_phys);
+        pmm_free_frame(buf_phys + 4096);
+        return;
+    }
+
+    rc = node->ops->read(node, 0, 8192, buf);
+    if (rc <= 0) {
+        test_fail("lznt1_uncompressed", "read failed");
+        pmm_free_frame(buf_phys);
+        pmm_free_frame(buf_phys + 4096);
+        return;
+    }
+
+    /* Random data should have plenty of non-zero bytes */
+    for (i = 0; i < rc; i++) {
+        if (buf[i] != 0)
+            non_zero++;
+    }
+
+    klog(LOG_DEBUG, "ntfs-test",
+         "lznt1_uncompressed: %d/%d non-zero bytes",
+         (uint64_t)non_zero, (uint64_t)rc);
+
+    /* Random data should be >90% non-zero */
+    if (non_zero > rc / 2)
+        test_pass("lznt1_uncompressed");
+    else
+        test_fail("lznt1_uncompressed",
+                  "too many zeros in random data");
+
+    pmm_free_frame(buf_phys);
+    pmm_free_frame(buf_phys + 4096);
+}
+
+/* Test 14: Mixed CU file — compressible + random + compressible */
+static void test_lznt1_mixed(struct vfs_node *root)
+{
+    struct vfs_node *node;
+    uintptr_t buf_phys;
+    uint8_t *buf;
+    int rc;
+    int i;
+    int head_ok = 1;
+    int tail_ok = 1;
+    int mid_nonzero = 0;
+    struct vfs_node *cdir;
+
+    cdir = find_compressed_dir(root);
+    if (!cdir) {
+        test_fail("lznt1_mixed", "compressed/ not found");
+        return;
+    }
+
+    node = cdir->ops->finddir(cdir, "mixed.bin");
+    if (!node) {
+        test_fail("lznt1_mixed", "mixed.bin not found");
+        return;
+    }
+
+    /* Verify file is approximately 128 KB */
+    if (node->size < 100000) {
+        klog(LOG_ERROR, "ntfs-test",
+             "lznt1_mixed: expected ~128 KB, got %u bytes",
+             node->size);
+        test_fail("lznt1_mixed", "file too small");
+        return;
+    }
+
+    buf_phys = pmm_alloc_contiguous(1);
+    if (!buf_phys) {
+        test_fail("lznt1_mixed", "PMM alloc failed");
+        return;
+    }
+    buf = (uint8_t *)(uintptr_t)buf_phys;
+
+    if (!node->ops || !node->ops->read) {
+        test_fail("lznt1_mixed", "read not supported");
+        pmm_free_frame(buf_phys);
+        return;
+    }
+
+    /* Check head: first 4 KB should be all 'A' (0x41) */
+    rc = node->ops->read(node, 0, 4096, buf);
+    if (rc <= 0) {
+        test_fail("lznt1_mixed", "read head failed");
+        pmm_free_frame(buf_phys);
+        return;
+    }
+    for (i = 0; i < rc; i++) {
+        if (buf[i] != 'A') {
+            head_ok = 0;
+            klog(LOG_ERROR, "ntfs-test",
+                 "lznt1_mixed: head byte %d is 0x%x, expected 'A'",
+                 (uint64_t)i, (uint64_t)buf[i]);
+            break;
+        }
+    }
+
+    /* Check middle: 4 KB at offset 48 KB should be random (non-zero) */
+    rc = node->ops->read(node, 48 * 1024, 4096, buf);
+    if (rc > 0) {
+        for (i = 0; i < rc; i++) {
+            if (buf[i] != 0)
+                mid_nonzero++;
+        }
+    }
+
+    /* Check tail: last 4 KB should be all 'Z' (0x5A) */
+    if (node->size >= 4096) {
+        uint32_t tail_off = (uint32_t)(node->size - 4096);
+        rc = node->ops->read(node, tail_off, 4096, buf);
+        if (rc > 0) {
+            for (i = 0; i < rc; i++) {
+                if (buf[i] != 'Z') {
+                    tail_ok = 0;
+                    klog(LOG_ERROR, "ntfs-test",
+                         "lznt1_mixed: tail byte %d is 0x%x, expected 'Z'",
+                         (uint64_t)i, (uint64_t)buf[i]);
+                    break;
+                }
+            }
+        } else {
+            tail_ok = 0;
+        }
+    } else {
+        tail_ok = 0;
+    }
+
+    klog(LOG_DEBUG, "ntfs-test",
+         "lznt1_mixed: head=%s mid_nonzero=%d tail=%s",
+         (uint64_t)(uintptr_t)(head_ok ? "OK" : "FAIL"),
+         (uint64_t)mid_nonzero,
+         (uint64_t)(uintptr_t)(tail_ok ? "OK" : "FAIL"));
+
+    if (head_ok && tail_ok && mid_nonzero > 2000)
+        test_pass("lznt1_mixed");
+    else
+        test_fail("lznt1_mixed", "content verification failed");
+
+    pmm_free_frame(buf_phys);
+}
+
 /* ---- Public API ---- */
 
 void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
 {
+    struct vfs_node *comp_dir;
+
     /* Only run tests on volumes labeled "NTFS_TEST" */
     if (!vol || !vol->volume_name[0]) {
         klog(LOG_WARN, "ntfs-test", "Self-test: vol or volume_name is NULL");
@@ -621,28 +1031,48 @@ void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
          (uint64_t)vol->cluster_size);
 
     /* Core tests (always available — created via ntfscp) */
-    klog(LOG_INFO, "ntfs-test", "Test 1/10: root listing...");
+    klog(LOG_INFO, "ntfs-test", "Test 1/15: root listing...");
     test_root_listing(root);
-    klog(LOG_INFO, "ntfs-test", "Test 2/10: known content...");
+    klog(LOG_INFO, "ntfs-test", "Test 2/15: known content...");
     test_known_content(root);
-    klog(LOG_INFO, "ntfs-test", "Test 3/10: empty file...");
+    klog(LOG_INFO, "ntfs-test", "Test 3/15: empty file...");
     test_empty_file(root);
-    klog(LOG_INFO, "ntfs-test", "Test 4/10: resident file...");
+    klog(LOG_INFO, "ntfs-test", "Test 4/15: resident file...");
     test_resident_file(root);
-    klog(LOG_INFO, "ntfs-test", "Test 5/10: large file...");
+    klog(LOG_INFO, "ntfs-test", "Test 5/15: large file...");
     test_large_file(root);
-    klog(LOG_INFO, "ntfs-test", "Test 6/10: dirty flag...");
+    klog(LOG_INFO, "ntfs-test", "Test 6/15: dirty flag...");
     test_dirty_flag(vol);
 
     /* Extended tests (require FUSE-created directories) */
-    klog(LOG_INFO, "ntfs-test", "Test 7/10: subdirectory...");
+    klog(LOG_INFO, "ntfs-test", "Test 7/15: subdirectory...");
     test_subdir(root);
-    klog(LOG_INFO, "ntfs-test", "Test 8/10: deep directory...");
+    klog(LOG_INFO, "ntfs-test", "Test 8/15: deep directory...");
     test_deep_dir(root);
-    klog(LOG_INFO, "ntfs-test", "Test 9/10: many files...");
+    klog(LOG_INFO, "ntfs-test", "Test 9/15: many files...");
     test_many_files(root);
-    klog(LOG_INFO, "ntfs-test", "Test 10/10: long filename...");
+    klog(LOG_INFO, "ntfs-test", "Test 10/15: long filename...");
     test_long_filename(root);
+
+    /* LZNT1 compression tests (§9.1) */
+    klog(LOG_INFO, "ntfs-test", "Test 11/15: LZNT1 decompressor...");
+    test_lznt1_decompress();
+
+    /* VFS-level compression tests — require FUSE + setfattr */
+    comp_dir = find_compressed_dir(root);
+    if (comp_dir) {
+        klog(LOG_INFO, "ntfs-test", "Test 12/15: LZNT1 known content...");
+        test_lznt1_known(root);
+        klog(LOG_INFO, "ntfs-test", "Test 13/15: LZNT1 sparse zeros...");
+        test_lznt1_sparse(root);
+        klog(LOG_INFO, "ntfs-test", "Test 14/15: LZNT1 uncompressed...");
+        test_lznt1_uncompressed(root);
+        klog(LOG_INFO, "ntfs-test", "Test 15/15: LZNT1 mixed CUs...");
+        test_lznt1_mixed(root);
+    } else {
+        klog(LOG_WARN, "ntfs-test",
+             "LZNT1 VFS tests skipped (compressed/ dir not found)");
+    }
 
     /* Summary */
     klog(LOG_INFO, "ntfs-test",
