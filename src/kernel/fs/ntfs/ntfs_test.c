@@ -486,41 +486,53 @@ static void test_dirty_flag(struct ntfs_volume *vol)
 void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
 {
     /* Only run tests on volumes labeled "NTFS_TEST" */
-    if (test_strcmp(vol->volume_name, "NTFS_TEST") != 0)
+    if (!vol || !vol->volume_name[0]) {
+        klog(LOG_WARN, "ntfs-test", "Self-test: vol or volume_name is NULL");
         return;
+    }
+
+    if (test_strcmp(vol->volume_name, "NTFS_TEST") != 0) {
+        klog(LOG_INFO, "ntfs-test",
+             "Self-test: skipped (label mismatch)");
+        return;
+    }
+
+    klog(LOG_INFO, "ntfs-test", "--- NTFS Self-Test: STARTING ---");
 
     tests_run = 0;
     tests_passed = 0;
     tests_failed = 0;
 
     klog(LOG_INFO, "ntfs-test",
-         "════════════════════════════════════════════════");
-    klog(LOG_INFO, "ntfs-test",
-         "NTFS Filesystem Self-Test Suite");
-    klog(LOG_INFO, "ntfs-test",
-         "Volume: \"%s\", FRS=%u, cluster=%u",
-         (uint64_t)(uintptr_t)vol->volume_name,
+         "Volume: FRS=%u, cluster=%u",
          (uint64_t)vol->frs_size,
          (uint64_t)vol->cluster_size);
-    klog(LOG_INFO, "ntfs-test",
-         "════════════════════════════════════════════════");
 
     /* Core tests (always available — created via ntfscp) */
+    klog(LOG_INFO, "ntfs-test", "Test 1/9: root listing...");
     test_root_listing(root);
+    klog(LOG_INFO, "ntfs-test", "Test 2/9: known content...");
     test_known_content(root);
+    klog(LOG_INFO, "ntfs-test", "Test 3/9: empty file...");
     test_empty_file(root);
+    klog(LOG_INFO, "ntfs-test", "Test 4/9: resident file...");
     test_resident_file(root);
+    klog(LOG_INFO, "ntfs-test", "Test 5/9: large file...");
     test_large_file(root);
+    klog(LOG_INFO, "ntfs-test", "Test 6/9: dirty flag...");
     test_dirty_flag(vol);
 
     /* Extended tests (require FUSE-created directories) */
+    klog(LOG_INFO, "ntfs-test", "Test 7/9: subdirectory...");
     test_subdir(root);
+    klog(LOG_INFO, "ntfs-test", "Test 8/9: deep directory...");
     test_deep_dir(root);
+    klog(LOG_INFO, "ntfs-test", "Test 9/9: many files...");
     test_many_files(root);
 
     /* Summary */
     klog(LOG_INFO, "ntfs-test",
-         "════════════════════════════════════════════════");
+         "--- NTFS Self-Test: RESULTS ---");
     if (tests_failed == 0) {
         klog(LOG_INFO, "ntfs-test",
              "NTFS TEST SUITE PASSED: %u/%u tests OK",
@@ -532,5 +544,5 @@ void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
              (uint64_t)tests_run);
     }
     klog(LOG_INFO, "ntfs-test",
-         "════════════════════════════════════════════════");
+         "--- NTFS Self-Test: DONE ---");
 }
