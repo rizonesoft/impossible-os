@@ -719,18 +719,19 @@ graph TD
 
 ### 8.1 NTFS Test Suite
 
-**Prompt:** *(Verification)* — All §8.1 items implemented. Verify: `bash scripts/build.sh clean` → `BUILD OK`. Run `make run-test DISK=ntfs` (or `scripts/vm/fs/run-ntfs-test.bat` on Windows). Check serial output for `[PASS]`/`[FAIL]` test results. All 9 tests should pass for root-level files; FUSE-dependent tests (subdir, deep dir, many files) pass when `ntfs-3g` was available during disk generation.
+**Prompt:** *(Verification)* — All §8.1 items implemented. Verify: `bash scripts/build.sh clean` → `BUILD OK`. Run `scripts/vm/fs/run-ntfs-test.bat` on Windows (or `bash scripts/build.sh run` on Linux with test disk attached). Check serial output for `[PASS]`/`[FAIL]` test results. All read-path tests should pass; write-path tests require §12–§16 completion first.
 
 > [!NOTE]
 > **Implementation Notes (§8.1)**
-> - **Host-side script:** `scripts/make-ntfs-test.sh` — creates 32 MiB NTFS image with mkntfs + ntfscp (root files) + ntfs-3g FUSE mount (directories)
-> - **Kernel-side test runner:** `src/kernel/fs/ntfs/ntfs_test.c` — 9 tests triggered by volume label "NTFS_TEST"
+> - **Host-side script:** `scripts/make-ntfs-test.sh` — creates 32 MiB NTFS image with mkntfs + ntfscp (root files) + `sudo -n ntfs-3g` FUSE mount (directories)
+> - **Kernel-side test runner:** `src/kernel/fs/ntfs/ntfs_test.c` — triggered by volume label "NTFS_TEST"
 > - **Integration:** `ntfs_run_self_test()` called from `partition_mount_filesystems()` after NTFS mount
 > - **Windows automation:** `scripts/vm/fs/run-fs-test.ps1` + BAT wrappers for double-click testing
-> - **Test cases:** root listing, known content (byte-exact), empty file, resident file (500 bytes 'R'), large file (5 MB, multi-run), dirty flag, subdir traversal, deep directory (5 levels), 120+ files (INDX allocation)
-> - **Gotcha:** ntfs-3g has no `ntfsmkdir` tool; directories require FUSE mount (`ntfs-3g $IMG $MNT`)
+> - **Gotcha:** ntfs-3g requires `sudo` for loop-device mounts — see `/etc/sudoers.d/ntfs-test`
+> - **Gotcha:** All `klog %s` arguments MUST be cast to `(uint64_t)(uintptr_t)` — freestanding ABI
 > - **Gotcha:** `-Werror,-Wunused-but-set-variable` — must suppress or use all local variables
-> - `tools/make-test-disks.sh` NTFS section now calls `scripts/make-ntfs-test.sh`
+
+#### Read Path Tests (§1–§7) ✅
 
 - [x] Test image: small NTFS volume with files in root directory
   - [x] Verify: BPB parsing, MFT location, root directory listing
@@ -746,12 +747,183 @@ graph TD
   - [x] Verify: resident data read (no data runs)
 - [x] Test image: long filename (200+ characters)
   - [x] Verify: UTF-16LE decoding, correct length handling
-- [x] Test image: Windows system files (`C:\Windows\System32\kernel32.dll`)
-  - [x] Verify: real-world NTFS volume reading (deferred — requires Windows image)
 - [x] Test: dirty volume flag detection (unmount without clean shutdown)
   - [x] Verify: warning logged, no write attempted
+- [x] Test image: Windows system files (`C:\Windows\System32\kernel32.dll`)
+  - [x] Verify: real-world NTFS volume reading (deferred — requires Windows image)
 - [x] QEMU flags: `-drive file=ntfs_test.img,format=raw,if=none,id=t0 -device ide-hd,drive=t0,bus=ahci0.1`
 - [x] Commit: `"test: NTFS filesystem test suite"`
+
+#### LZNT1 Compression Tests (§9.1)
+
+- [ ] Test image: LZNT1-compressed file with known content
+  - [ ] Create compressed file on host (Windows `compact /c` or pre-built image)
+  - [ ] Verify: transparent decompression, byte-exact content match
+- [ ] Test: sparse compression unit (all zeros → zero-fill, no disk read)
+- [ ] Test: uncompressed compression unit (16 clusters physical = 16 logical)
+- [ ] Test: mixed compression units (some compressed, some uncompressed, some sparse)
+- [ ] Test: round-trip verification — decompress and compare against known plaintext
+- [ ] Commit: `"test: LZNT1 compressed file reading"`
+
+#### MFT Record Cache Tests (§10.1)
+
+- [ ] Test: cache hit rate after repeated access to same inode
+  - [ ] Read root directory (inode 5) multiple times → verify hit counter increases
+- [ ] Test: pinned entries not evicted (inode 0 = $MFT, inode 5 = root)
+- [ ] Test: LRU eviction — access 65+ unique inodes (cache=64) → verify evictions occur
+- [ ] Test: `ntfs_cache_invalidate()` clears entry → next read is a miss
+- [ ] Test: telemetry counters: hits, misses, evictions logged at summary
+- [ ] Commit: `"test: MFT record cache verification"`
+
+#### Attribute Parsing Tests (§3.4–§3.6)
+
+- [ ] Test: `$ATTRIBUTE_LIST` — file with attributes spanning multiple MFT records
+  - [ ] Create large file with many named streams → attributes overflow to extension record
+  - [ ] Verify: all attributes accessible via attribute list indirection
+- [ ] Test: `$REPARSE_POINT` — NTFS symlink / junction point
+  - [ ] Create symlink on host NTFS image
+  - [ ] Verify: reparse tag read, target path extracted
+- [ ] Test: `$SECURITY_DESCRIPTOR` — read ACL from file
+  - [ ] Verify: owner SID, DACL presence, basic permission bits
+- [ ] Test: file with both Win32 and DOS filename namespaces
+  - [ ] Verify: Win32 name preferred, DOS 8.3 name available
+- [ ] Commit: `"test: advanced attribute parsing"`
+
+#### System Metafile Tests (§7.1)
+
+- [ ] Test: `$UpCase` table loaded — case-insensitive lookup works
+  - [ ] Look up `TEST.TXT` when file is named `test.txt` → should find it
+  - [ ] Look up `TeSt.TxT` → should find it
+- [ ] Test: `$MFTMirr` consistency — verify first 4 records match
+- [ ] Test: `$Volume` — version 3.1 detected, volume label correct
+- [ ] Test: `$Bitmap` — free cluster count > 0 and plausible
+- [ ] Commit: `"test: system metafile verification"`
+
+#### Write Foundation Tests (§12.1–§12.4)
+
+- [ ] Test: cluster allocator — allocate N clusters, verify bitmap bits set
+  - [ ] Allocate 10 clusters near hint LCN → verify contiguous
+  - [ ] Free 10 clusters → verify bitmap bits cleared
+  - [ ] MFT zone avoidance: allocate near MFT → verify skipped zone
+- [ ] Test: USA regeneration — regenerate fixup on a FILE record
+  - [ ] Modify a record's content → regenerate → verify USN stamped in sector-end bytes
+  - [ ] Verify: USN wraps 0 → 1 (never leaves USN=0)
+- [ ] Test: MFT record allocator — allocate new inode
+  - [ ] `ntfs_alloc_mft_record()` → returns inode >= 24
+  - [ ] Verify: bitmap bit set, record initialized with "FILE" magic
+  - [ ] `ntfs_free_mft_record()` → verify bitmap cleared, sequence incremented
+  - [ ] Verify: system inodes (< 24) cannot be freed
+- [ ] Test: attribute writer — add/update/remove attributes
+  - [ ] `ntfs_attr_add()`: add a resident attribute → verify sorted position
+  - [ ] `ntfs_attr_update()`: update resident content → verify new data in record
+  - [ ] `ntfs_attr_remove()`: remove attribute → verify gap closed
+  - [ ] `ntfs_encode_data_runs()`: encode run array → decode and compare (round-trip)
+- [ ] Commit: `"test: write foundation verification"`
+
+#### File Lifecycle Tests (§12.5)
+
+- [ ] Test: create empty file in root directory
+  - [ ] `ntfs_create_file()` → verify: MFT record allocated, `$STANDARD_INFORMATION` present, `$FILE_NAME` with correct parent ref, empty `$DATA`, directory entry in root B+ tree
+- [ ] Test: create directory in root
+  - [ ] `ntfs_create_directory()` → verify: directory flag set, `$INDEX_ROOT` present
+- [ ] Test: create file in subdirectory → verify parent directory's B+ tree updated
+- [ ] Test: delete file → verify: clusters freed, MFT record freed, directory entry removed
+- [ ] Test: delete directory → verify: only succeeds when empty
+- [ ] Test: rename file (same directory) → verify: old entry gone, new entry present
+- [ ] Test: move file (cross-directory) → verify: removed from old, inserted in new
+- [ ] Test: rename to existing name → verify: error or overwrite behavior
+- [ ] Test: hard link count tracking — create file, add second link, delete one, verify count
+- [ ] Commit: `"test: file create/delete/rename"`
+
+#### Journal Tests (§13.1–§13.2)
+
+- [ ] Test: `$LogFile` restart area parsed — checkpoint LSN readable
+- [ ] Test: transaction begin/log/commit cycle → verify log records written to `$LogFile`
+- [ ] Test: transaction abort → verify undo records applied
+- [ ] Test: dirty mount recovery — simulate power failure:
+  - [ ] Write partial transaction (no commit record)
+  - [ ] Re-mount → verify: undo pass rolls back incomplete transaction
+  - [ ] Write committed transaction, don't flush metadata
+  - [ ] Re-mount → verify: redo pass applies committed changes
+- [ ] Test: dirty flag cleared after successful recovery
+- [ ] Commit: `"test: journal engine and recovery"`
+
+#### B+ Tree Mutation Tests (§14.1)
+
+- [ ] Test: insert entry into empty root → verify: entry in `$INDEX_ROOT`
+- [ ] Test: insert entries until root overflows → verify: INDX buffer allocated, root splits
+- [ ] Test: insert 200+ entries → verify: multi-level B+ tree with correct ordering
+- [ ] Test: delete entry from leaf → verify: entry removed, remaining entries valid
+- [ ] Test: delete causing underflow → verify: merge with sibling or redistribution
+- [ ] Test: delete all entries → verify: tree collapses back to empty root
+- [ ] Test: case-insensitive ordering — inserts respect `$UpCase` collation
+- [ ] Commit: `"test: B+ tree mutation"`
+
+#### File Write Engine Tests (§16.1)
+
+- [ ] Test: write data to empty file → verify: data readable back
+- [ ] Test: write small data (< 700 bytes) → verify: stays resident in MFT
+- [ ] Test: write large data (> cluster) → verify: non-resident with correct data runs
+- [ ] Test: resident → non-resident conversion when data grows past threshold
+- [ ] Test: append to existing file → verify: allocation extended or new run added
+- [ ] Test: overwrite partial data within existing file → verify: only changed bytes differ
+- [ ] Test: truncate file → verify: freed clusters returned to bitmap
+- [ ] Test: truncate to zero → verify: file reverts to resident
+- [ ] Test: set file timestamps → verify: `$STANDARD_INFORMATION` updated
+- [ ] Test: set file attributes (read-only, hidden) → verify: DOS flags updated
+- [ ] Commit: `"test: file write engine"`
+
+#### Boot Volume Tests (§15.1–§15.2)
+
+- [ ] Test: NTFS recognized as bootable root filesystem
+  - [ ] GPT partition with NTFS → verify: mounted as `C:\` when configured
+- [ ] Test: system directory hierarchy created on format → verify all paths exist:
+  - [ ] `C:\Impossible\System32\`, `C:\Impossible\Fonts\`, `C:\Users\`
+- [ ] Test: Registry hives readable from NTFS `C:\` → verify: hive load succeeds
+- [ ] Test: kernel and driver files readable from NTFS boot partition
+- [ ] Commit: `"test: NTFS boot volume"`
+
+#### NTFS Volume Formatter Tests (§15.3)
+
+- [ ] Test: format empty partition as NTFS → verify: valid BPB, MFT readable
+- [ ] Test: system inodes 0–10 created → verify: $MFT, $MFTMirr, $LogFile, $Volume, root, $Bitmap, $UpCase all present
+- [ ] Test: root directory empty and navigable → verify: readdir returns 0 entries (plus `.`)
+- [ ] Test: volume label matches requested label
+- [ ] Test: formatted volume mounts successfully with full NTFS driver
+- [ ] Commit: `"test: NTFS volume formatter"`
+
+#### Alternate Data Streams Tests (§17.1)
+
+- [ ] Test: enumerate ADS on file with named `$DATA` attributes
+  - [ ] Create file with ADS on host: `echo data > file.txt:stream1`
+  - [ ] `ntfs_enum_streams()` → verify: primary stream + named stream listed
+- [ ] Test: read ADS content → verify byte-exact match
+- [ ] Test: file with no ADS → verify: only primary stream returned
+- [ ] Commit: `"test: ADS enumeration"`
+
+#### Long Path Tests
+
+- [ ] Test: path exceeding 255 characters (but individual filenames < 255)
+  - [ ] Create deep directory tree with long names: total path > 260 chars
+  - [ ] Verify: path resolution succeeds via component-by-component lookup
+- [ ] Test: filename at maximum NTFS length (255 UTF-16LE characters)
+  - [ ] Verify: full name preserved in VFS dirent
+- [ ] Commit: `"test: long path handling"`
+
+#### Volume Health & Recovery Tests (§11.1–§11.2)
+
+- [ ] Test: health dashboard aggregates volume stats
+  - [ ] Verify: MFT fragmentation reported, free space %, cluster size, dirty flag
+- [ ] Test: deleted file recovery — allocate + free MFT record
+  - [ ] Verify: freed record still has data (not zeroed), recoverable by scanning
+- [ ] Commit: `"test: volume health dashboard"`
+
+#### NTFS-to-IXFS Migration Tests (§18.1)
+
+- [ ] Test: migrate small NTFS volume files to IXFS
+  - [ ] Verify: file contents match, timestamps preserved, directories recreated
+- [ ] Test: progress reporting — verify callback fires with file count/bytes
+- [ ] Commit: `"test: NTFS-to-IXFS migration"`
 
 ---
 
