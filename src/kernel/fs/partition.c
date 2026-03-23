@@ -150,11 +150,14 @@ static int probe_filesystem(const struct blkdev *sub_dev)
     if (probe_ixfs(sect))
         return PART_FS_IXFS;
 
-    if (probe_fat32(sect))
-        return PART_FS_FAT32;
-
+    /* NTFS must be probed before FAT32: the FAT32 fallback heuristic
+     * (0x55AA + bps=512 + sectors_per_fat_16=0 + spc!=0) also matches
+     * NTFS boot sectors.  The NTFS OEM ID check is more specific. */
     if (ntfs_probe(sect))
         return PART_FS_NTFS;
+
+    if (probe_fat32(sect))
+        return PART_FS_FAT32;
 
     /* For ext2, need to read sector 2 (byte 1024) */
     if (blkdev_read(sub_dev, 2, 1, sect) == 0) {
