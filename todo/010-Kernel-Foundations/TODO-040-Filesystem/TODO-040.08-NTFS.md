@@ -1323,7 +1323,7 @@ graph TD
 
 ### 14.1 B+ Tree Insert / Delete
 
-**Prompt:** ~~Implement inserting and removing entries in NTFS directory B+ trees.~~ **VERIFIED** — `ntfs_index_insert()` and `ntfs_index_delete()` are implemented across three new files (`ntfs_index_helpers.c`, `ntfs_index_insert.c`, `ntfs_index_delete.c`). `ntfs_dir_insert_entry()` and `ntfs_dir_remove_entry()` in `ntfs_file_ops.c` are now thin delegation wrappers. Run `bash scripts/build.sh clean` to verify compilation.
+**Prompt:** Verify that B+ tree insert/delete is correctly implemented: (1) `ntfs_index_insert()` in `ntfs_index_insert.c` handles root insert, root overflow (move entries to new INDX buffer), and INDX overflow (split at midpoint, promote median, recurse). (2) `ntfs_index_delete()` in `ntfs_index_delete.c` handles leaf removal (compact), internal removal (replace with rightmost leaf predecessor), and empty node cleanup (free $BITMAP bit + clusters). (3) `ntfs_index_helpers.c` has `ntfs_write_indx()` (USA regen + disk write), `ntfs_index_compare()` (case-insensitive via $UpCase), `ntfs_index_find_pos()` (scan for insert/delete point). (4) `ntfs_file_ops.c` delegates `ntfs_dir_insert_entry()` and `ntfs_dir_remove_entry()` to the new functions. (5) All INDX modifications journaled via `ntfs_txn_log()`. (6) Build passes: `=== BUILD OK ===`.
 
 > [!NOTE]
 > **Implementation Notes (commit 5e2f83c — "ntfs: B+ tree insert/delete"):**
@@ -1475,7 +1475,7 @@ graph TD
 
 ### 16.1 File Write Engine ✅
 
-**Prompt:** ~~Implement writing data to NTFS files.~~ **VERIFIED** — `ntfs_write_data()`, `ntfs_truncate()`, `ntfs_set_file_attributes()`, and `ntfs_set_file_time()` are implemented in `ntfs_data_write.c`. Run `bash scripts/build.sh clean` to verify compilation.
+**Prompt:** Verify that the file write engine is correctly implemented: (1) `ntfs_data_write.c` has `ntfs_write_data()` (resident in-place via `ntfs_attr_update()` with automatic resident→non-resident conversion; non-resident via read-modify-write bounce buffers with cluster extension). (2) `ntfs_truncate()` handles truncate-to-zero (free all clusters, convert to empty resident), shrink (free tail clusters, compact run array), and grow (allocate + extend/append runs). (3) `ntfs_set_file_attributes()` patches DOS flags at `$STANDARD_INFORMATION +0x20`. (4) `ntfs_set_file_time()` converts Unix→FILETIME (`unix_secs * 10^7 + 116444736000000000`) and patches `$STANDARD_INFORMATION` timestamps. (5) All functions: txn_begin → txn_log → txn_commit → write_mft_record. (6) `ntfs.h` declares all four functions in §16.1 section. (7) Build passes: `=== BUILD OK ===`.
 
 > [!NOTE]
 > **Implementation Notes (commit `dfc1fbd` — "ntfs: file write engine"):**
