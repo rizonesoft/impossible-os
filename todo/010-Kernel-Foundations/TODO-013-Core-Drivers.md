@@ -14,6 +14,8 @@
 > **Sub-files** — topics with dedicated implementation detail files:
 > - [TODO-013.01-ACPI.md](TODO-013-Core-Drivers/TODO-013.01-ACPI.md) — Full ACPI subsystem roadmap
 > - [TODO-013.02-NVMe.md](TODO-013-Core-Drivers/TODO-013.02-NVMe.md) — NVMe storage driver
+> - [TODO-013.03-PCI.md](TODO-013-Core-Drivers/TODO-013.03-PCI.md) — PCI Local Bus 3.0 enhancements
+> - [TODO-013.04-PCIe.md](TODO-013-Core-Drivers/TODO-013.04-PCIe.md) — PCIe ECAM, AER, hot-plug, SR-IOV
 > - [TODO-013.09-APIC-Architecture.md](TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md) — APIC deep-dive (x2APIC, MSI/MSI-X, NMI watchdog)
 
 ---
@@ -38,6 +40,8 @@
 | 💎 | ATA/IDE                 | `ata.c`            | ✅ Done       | —                                                                                 |
 | 💎 | VirtIO-blk              | `virtio_blk.c`     | ✅ Done       | —                                                                                 |
 | 💎 | NVMe                    | `nvme.c`           | ⬜ §2 P1     | [013.02](TODO-013-Core-Drivers/TODO-013.02-NVMe.md)                                      |
+| 💎 | PCI enhancements        | `pci.c`            | ⬜ P2        | [013.03](TODO-013-Core-Drivers/TODO-013.03-PCI.md)                                       |
+| 💎 | PCIe (ECAM, AER, HP)   | `pcie.c`           | ⬜ P2        | [013.04](TODO-013-Core-Drivers/TODO-013.04-PCIe.md)                                      |
 
 ---
 

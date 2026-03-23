@@ -30,6 +30,8 @@
 | 013 | [Core Built-in Drivers](010-Kernel-Foundations/TODO-013-Core-Drivers.md)                                        |                |
 | 013.01 | [ACPI — Tables, Power, Interrupts](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.01-ACPI.md)       |                |
 | 013.02 | [NVMe Storage Driver (built-in)](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.02-NVMe.md)         |                |
+| 013.03 | [PCI Local Bus 3.0 enhancements](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.03-PCI.md)          |                |
+| 013.04 | [PCIe — ECAM, AER, hot-plug, SR-IOV](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.04-PCIe.md)    |                |
 | 013.09 | [APIC Architecture](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md)         |                |
 | 020 | [Threading, Scheduling & IPC](010-Kernel-Foundations/TODO-020-Threading.md)                             | 🔄 In progress |
 | 020.01 | [Threading & Synchronization](010-Kernel-Foundations/TODO-020-Threading/TODO-020.01-Synchronization.md) | 🔄 In progress |
@@ -61,8 +63,7 @@
 
 | #   | TODO                                                                              | Status |
 |-----|-----------------------------------------------------------------------------------|--------|
-| 060 | [PCI/PCIe Bus Enumeration](060-Hardware-Drivers/TODO-060-PCI.md)                  |        |
-| 060.02 | [PCIe Extended Bus Infrastructure](060-Hardware-Drivers/TODO-060-PCI/TODO-060.02-PCIe.md) |        |
+| 060 | [PCI/PCIe Bus](060-Hardware-Drivers/TODO-060-PCI.md) *(→ moved to 013.03/013.04)*        | *(stub)*       |
 | 061 | [Keyboard](060-Hardware-Drivers/TODO-061-Keyboard.md)                             |        |
 | 062 | [Mouse](060-Hardware-Drivers/TODO-062-Mouse.md)                                   |        |
 | 063 | [Drivers](060-Hardware-Drivers/TODO-063-Drivers.md)                               |        |

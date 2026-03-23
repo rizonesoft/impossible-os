@@ -1,4 +1,4 @@
-# 060.02-PCIe — PCI Express Extended Bus Infrastructure
+# TODO-013.04-PCIe 2014 PCI Express Extended Bus Infrastructure
 
 > **Goal:** Extend the existing PCI bus driver (`src/kernel/drivers/pci.c`) with full PCIe
 > support: ECAM-based memory-mapped configuration access (4 KiB per function), extended

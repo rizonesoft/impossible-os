@@ -1,4 +1,4 @@
-# 060.01-PCI — PCI Local Bus 3.0 Driver Implementation
+# TODO-013.03-PCI 2014 PCI Local Bus 3.0 Driver Implementation
 
 > **Goal:** Implement a complete PCI Local Bus 3.0 subsystem for Impossible OS, evolving from
 > the current minimal stub (`pci.c` ~220 lines: flat bus scan, I/O port config access,
