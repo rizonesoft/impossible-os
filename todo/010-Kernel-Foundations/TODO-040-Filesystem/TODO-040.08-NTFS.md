@@ -792,14 +792,14 @@ graph TD
 
 #### LZNT1 Compression Tests (§9.1)
 
-- [ ] Test image: LZNT1-compressed file with known content
-  - [ ] Create compressed file on host (Windows `compact /c` or pre-built image)
-  - [ ] Verify: transparent decompression, byte-exact content match
-- [ ] Test: sparse compression unit (all zeros → zero-fill, no disk read)
-- [ ] Test: uncompressed compression unit (16 clusters physical = 16 logical)
-- [ ] Test: mixed compression units (some compressed, some uncompressed, some sparse)
-- [ ] Test: round-trip verification — decompress and compare against known plaintext
-- [ ] Commit: `"test: LZNT1 compressed file reading"`
+- [x] Test image: LZNT1-compressed file with known content
+  - [x] Create compressed file on host (Windows `compact /c` or pre-built image)
+  - [x] Verify: transparent decompression, byte-exact content match
+- [x] Test: sparse compression unit (all zeros → zero-fill, no disk read)
+- [x] Test: uncompressed compression unit (16 clusters physical = 16 logical)
+- [x] Test: mixed compression units (some compressed, some uncompressed, some sparse)
+- [x] Test: round-trip verification — decompress and compare against known plaintext
+- [x] Commit: `"test: LZNT1 compressed file reading"`
 
 #### MFT Record Cache Tests (§10.1)
 
@@ -953,13 +953,6 @@ graph TD
 - [ ] Test: deleted file recovery — allocate + free MFT record
   - [ ] Verify: freed record still has data (not zeroed), recoverable by scanning
 - [ ] Commit: `"test: volume health dashboard"`
-
-#### NTFS-to-IXFS Migration Tests (§18.1)
-
-- [ ] Test: migrate small NTFS volume files to IXFS
-  - [ ] Verify: file contents match, timestamps preserved, directories recreated
-- [ ] Test: progress reporting — verify callback fires with file count/bytes
-- [ ] Commit: `"test: NTFS-to-IXFS migration"`
 
 ---
 
