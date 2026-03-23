@@ -74,7 +74,7 @@ graph TD
     W6["§13.1 Journal Engine ✅"]
     W7["§13.2 Recovery Replay ✅"]
     W8["§14.1 B+ Tree Insert/Delete ✅"]
-    W9["§16.1 File Write Engine ⬜"]
+    W9["§16.1 File Write Engine ✅"]
     W10["§15.1 Boot-Time Init ⬜"]
     W11["§15.2 System File Layout ⬜"]
     W12["§15.3 NTFS Volume Formatter ⬜"]
@@ -167,7 +167,7 @@ graph TD
 | 💎 | P9    | `040.08-NTFS.md`      | §13.1 Journal Engine           | `$LogFile` redo/undo transaction logging                         | P8 (§12.1)                           |   ✅   |
 | 💎 | P9    | `040.08-NTFS.md`      | §13.2 Recovery Replay          | Dirty mount redo/undo replay                                     | P9 (§13.1)                           |   ✅   |
 | 💎 | P9    | `040.08-NTFS.md`      | §14.1 B+ Tree Insert/Delete    | Directory mutation with node split/merge                         | P8 (§12.4)                           |   ✅   |
-| 💎 | P9    | `040.08-NTFS.md`      | §16.1 File Write Engine        | Resident/non-resident data writes + truncation                   | P8 (§12.4) + P9 (§13.1)              |   ⬜   |
+| 💎 | P9    | `040.08-NTFS.md`      | §16.1 File Write Engine        | Resident/non-resident data writes + truncation                   | P8 (§12.4) + P9 (§13.1)              |   ✅   |
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.1 Boot-Time Init           | **NTFS as `C:\`** — boot from NTFS instead of IXFS               | P9 (all write support)               |   ⬜   |
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.2 System File Layout       | **NTFS as `C:\`** — directory hierarchy + Registry               | P10 (§15.1)                          |   ⬜   |
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.3 NTFS Volume Formatter    | **NTFS as `C:\`** — format tool for boot volume creation         | P9 (all write support)               |   ⬜   |
@@ -1477,42 +1477,53 @@ graph TD
 
 ## 16. Write Data Path
 
-### 16.1 File Write Engine
+### 16.1 File Write Engine ✅
 
-**Prompt:** Implement writing data to NTFS files. For small files (< ~700 bytes), write the data directly into the MFT record as a resident `$DATA` attribute. For larger files, allocate clusters, encode data runs, and write data to the allocated clusters. Handle file growth (extend existing runs or add new runs), file truncation (free freed clusters), and partial writes (overwrite data within existing runs without reallocating). All writes must be journaled (§13). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: file write engine"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ~~Implement writing data to NTFS files.~~ **VERIFIED** — `ntfs_write_data()`, `ntfs_truncate()`, `ntfs_set_file_attributes()`, and `ntfs_set_file_time()` are implemented in `ntfs_data_write.c`. Run `bash scripts/build.sh clean` to verify compilation.
 
-- [ ] Implement `ntfs_write_data(vol, inode, offset, length, buffer)`:
-  - [ ] Read MFT record, locate `$DATA` attribute
-  - [ ] If resident + data still fits → update resident content in-place
-  - [ ] If resident + data now too large → convert to non-resident:
-    - [ ] Allocate clusters for existing + new data
-    - [ ] Copy resident data to clusters
-    - [ ] Remove resident content, write data runs into attribute header
-  - [ ] If non-resident:
-    - [ ] Map offset → VCN → existing run
-    - [ ] If writing within existing runs → overwrite cluster data on disk
-    - [ ] If writing beyond current allocation → extend:
-      - [ ] Allocate additional clusters via `ntfs_alloc_clusters()`
-      - [ ] Try extending last run (adjacent clusters) for contiguity
-      - [ ] Else add new run to run-list
-      - [ ] Re-encode data runs in attribute (§12.4)
-    - [ ] Write data to clusters via `blkdev_write()`
-  - [ ] Update `$DATA` attribute sizes: real_size, allocated_size, initialized_size
-  - [ ] Update `$STANDARD_INFORMATION` modification timestamp
-  - [ ] Journal: log old run-list + new run-list for crash recovery
-  - [ ] Apply USA regeneration to modified MFT record
-  - [ ] Write MFT record back to disk
-- [ ] Implement `ntfs_truncate(vol, inode, new_size)`:
-  - [ ] If new_size == 0 and file is non-resident → free all clusters, convert to resident
-  - [ ] If shrinking → free clusters beyond new_size, shorten last run, re-encode runs
-  - [ ] If growing → allocate clusters, extend runs
-  - [ ] Update all size fields
-- [ ] Implement `ntfs_set_file_attributes(vol, inode, attrs)`:
-  - [ ] Update `$STANDARD_INFORMATION` DOS permission flags
-- [ ] Implement `ntfs_set_file_time(vol, inode, create, modify, access)`:
-  - [ ] Convert Unix timestamps → FILETIME (reverse of §3.2)
-  - [ ] Update `$STANDARD_INFORMATION` timestamp fields
-- [ ] Commit: `"ntfs: file write engine"`
+> [!NOTE]
+> **Implementation Notes (commit `dfc1fbd` — "ntfs: file write engine"):**
+> - Single new file: `ntfs_data_write.c` (~530 lines)
+> - Resident writes: build complete content buffer → delegate to `ntfs_attr_update()` which handles resident→non-resident conversion automatically
+> - Non-resident writes: `write_nonres_clusters()` with read-modify-write bounce buffers for partial sectors
+> - Extension: try contiguous append to last run, else add new run entry; re-encode via `ntfs_encode_data_runs()`
+> - Truncate-to-zero: free all clusters, remove `$DATA`, re-add as empty resident
+> - `unix_to_filetime()`: `unix_secs * 10_000_000 + 116444736000000000ULL`
+> - All functions follow pattern: read MFT → find attr → txn_begin → modify → txn_log → txn_commit → write_mft_record → txn_free → kfree
+> - Build passed first try — no errors with `-Werror`
+
+- [x] Implement `ntfs_write_data(vol, inode, offset, length, buffer)`:
+  - [x] Read MFT record, locate `$DATA` attribute
+  - [x] If resident + data still fits → update resident content in-place
+  - [x] If resident + data now too large → convert to non-resident:
+    - [x] Allocate clusters for existing + new data
+    - [x] Copy resident data to clusters
+    - [x] Remove resident content, write data runs into attribute header
+  - [x] If non-resident:
+    - [x] Map offset → VCN → existing run
+    - [x] If writing within existing runs → overwrite cluster data on disk
+    - [x] If writing beyond current allocation → extend:
+      - [x] Allocate additional clusters via `ntfs_alloc_clusters()`
+      - [x] Try extending last run (adjacent clusters) for contiguity
+      - [x] Else add new run to run-list
+      - [x] Re-encode data runs in attribute (§12.4)
+    - [x] Write data to clusters via `blkdev_write()`
+  - [x] Update `$DATA` attribute sizes: real_size, allocated_size, initialized_size
+  - [x] Update `$STANDARD_INFORMATION` modification timestamp
+  - [x] Journal: log old run-list + new run-list for crash recovery
+  - [x] Apply USA regeneration to modified MFT record
+  - [x] Write MFT record back to disk
+- [x] Implement `ntfs_truncate(vol, inode, new_size)`:
+  - [x] If new_size == 0 and file is non-resident → free all clusters, convert to resident
+  - [x] If shrinking → free clusters beyond new_size, shorten last run, re-encode runs
+  - [x] If growing → allocate clusters, extend runs
+  - [x] Update all size fields
+- [x] Implement `ntfs_set_file_attributes(vol, inode, attrs)`:
+  - [x] Update `$STANDARD_INFORMATION` DOS permission flags
+- [x] Implement `ntfs_set_file_time(vol, inode, create, modify, access)`:
+  - [x] Convert Unix timestamps → FILETIME (reverse of §3.2)
+  - [x] Update `$STANDARD_INFORMATION` timestamp fields
+- [x] Commit: `"ntfs: file write engine"`
 
 ---
 
@@ -1550,7 +1561,7 @@ graph TD
 | 💎  | 🟣 P4      | 13.1 Journal Engine            | Crash safety — `$LogFile` redo/undo transaction logging         |
 | 💎  | 🟣 P4      | 13.2 Recovery Replay           | Crash safety — dirty mount redo/undo replay                     |
 | 💎  | 🟣 P4      | 14.1 B+ Tree Insert/Delete     | Write — directory mutation with node split/merge                |
-| 💎  | 🟣 P4      | 16.1 File Write Engine         | Write — resident/non-resident data writes + truncation          |
+| 💎  | 🟣 P4      | 16.1 File Write Engine         | Write — resident/non-resident data writes + truncation   ✅     |
 | ⭐  | 🟣 P4      | 15.1 Boot-Time Init            | **NTFS as `C:\`** — boot from NTFS instead of IXFS              |
 | ⭐  | 🟣 P4      | 15.2 System File Layout        | **NTFS as `C:\`** — directory hierarchy + Registry on NTFS      |
 | ⭐  | 🟣 P4      | 15.3 NTFS Volume Formatter     | **NTFS as `C:\`** — format tool for boot volume creation        |
