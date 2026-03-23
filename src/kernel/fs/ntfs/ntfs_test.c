@@ -59,14 +59,15 @@ static void test_pass(const char *name)
 {
     tests_run++;
     tests_passed++;
-    klog(LOG_INFO, "ntfs-test", "[PASS] %s", name);
+    klog(LOG_INFO, "ntfs-test", "[PASS] %s", (uint64_t)(uintptr_t)name);
 }
 
 static void test_fail(const char *name, const char *reason)
 {
     tests_run++;
     tests_failed++;
-    klog(LOG_ERROR, "ntfs-test", "[FAIL] %s — %s", name, reason);
+    klog(LOG_ERROR, "ntfs-test", "[FAIL] %s — %s",
+         (uint64_t)(uintptr_t)name, (uint64_t)(uintptr_t)reason);
 }
 
 /* ---- Helper: read entire file via VFS ---- */
@@ -498,7 +499,7 @@ void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
          "NTFS Filesystem Self-Test Suite");
     klog(LOG_INFO, "ntfs-test",
          "Volume: \"%s\", FRS=%u, cluster=%u",
-         vol->volume_name,
+         (uint64_t)(uintptr_t)vol->volume_name,
          (uint64_t)vol->frs_size,
          (uint64_t)vol->cluster_size);
     klog(LOG_INFO, "ntfs-test",
