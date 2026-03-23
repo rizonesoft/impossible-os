@@ -1,4 +1,4 @@
-# P0111 — Memory Guardrails & Audit
+# TODO-023.02-Guardrails — Memory Guardrails & Audit
 
 > **Goal:** Audit all existing `kmalloc` usage across the kernel, migrate violations
 > to `pmm_alloc_contiguous()`, update documentation, add a build-time lint check,

@@ -35,14 +35,15 @@
 | 020.01 | [Threading & Synchronization](010-Kernel-Foundations/TODO-020-Threading/TODO-020.01-Synchronization.md) | 🔄 In progress |
 | 020.02 | [Kernel Scheduler — CFS, RT, priorities](010-Kernel-Foundations/TODO-020-Threading/TODO-020.02-Scheduler.md) | |
 | 020.03 | [IPC — Pipes, Signals, Shared Memory](010-Kernel-Foundations/TODO-020-Threading/TODO-020.03-IPC.md) | ✅ All done |
-| 023 | [Virtual Memory — Swap & mmap](010-Kernel-Foundations/TODO-023-Virtual-Memory.md)                       | 🔄 In progress |
+| 023 | [Memory Management](010-Kernel-Foundations/TODO-023-Memory.md)                                          | 🔄 In progress |
+| 023.01 | [Virtual Memory — Swap & mmap](010-Kernel-Foundations/TODO-023-Memory/TODO-023.01-Virtual-Memory.md) | 🔄 In progress |
+| 023.02 | [Memory Guardrails & Audit](010-Kernel-Foundations/TODO-023-Memory/TODO-023.02-Guardrails.md)          | |
+| 023.03 | [Advanced Memory Management](010-Kernel-Foundations/TODO-023-Memory/TODO-023.03-Advanced.md)          | |
 | 024 | [System Logging — klog, ring buffer, disk](010-Kernel-Foundations/TODO-024-System-Logging.md)           | 🔄 In progress |
 | 025 | [Environment Variables — env_get/set, PATH](010-Kernel-Foundations/TODO-025-Environment-Variables.md)   |                |
 | 026 | [ELF Dynamic Linker & Kernel Modules](010-Kernel-Foundations/TODO-026-ELF-Shared-Libraries.md)          |                |
 | 027 | [Kernel Libraries — miniz, monocypher, cJSON](010-Kernel-Foundations/TODO-027-Kernel-Libraries.md)      |                |
 | 028 | [Process Model — FD table, CWD, timers](010-Kernel-Foundations/TODO-028-Process-Model.md)               |                |
-| 029 | [Memory Guardrails & Audit](010-Kernel-Foundations/TODO-029-Memory-Guardrails.md)                       |                |
-| 030 | [Memory Advanced](010-Kernel-Foundations/TODO-030-Memory-Advanced.md)                                   |                |
 | 040 | [Filesystem](010-Kernel-Foundations/TODO-040-Filesystem.md)                                             |                |
 | 040.18 | [ISO 9660 / ECMA-119](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.18-ISO9660.md)          |                |
 | 040.19 | [Joliet / UDF](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.19-Joliet-UDF.md)             |                |

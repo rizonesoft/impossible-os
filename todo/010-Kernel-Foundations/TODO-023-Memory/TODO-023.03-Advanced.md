@@ -1,4 +1,4 @@
-# P0012 — Advanced Memory Management
+# TODO-023.03-Advanced — Advanced Memory Management
 
 > **Goal:** Modernize the kernel allocator to eliminate the fixed 2 MiB heap ceiling:
 > SLAB allocator for kernel objects, vmalloc for large kernel buffers, growable heap.
