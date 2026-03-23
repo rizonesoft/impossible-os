@@ -156,7 +156,7 @@ graph TD
 | 💎 | P6    | `040.08-NTFS.md`      | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | P4 (§5.3)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
-|    | P9    | `040.08-NTFS.md`      | §9.2 LZNT1 Compression         | Write compressed files to NTFS volumes                           | P6 (§9.1) + P8 (§16.1)              |   ⬜   |
+| 💎 | P9    | `040.08-NTFS.md`      | §9.2 LZNT1 Compression         | Write compressed files to NTFS volumes                           | P6 (§9.1) + P8 (§16.1)              |   ⬜   |
 | 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ✅   |
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ✅   |
 | ⭐ | P7    | `041.02-Disk-Health`  | §11.1 Health Dashboard         | **Moved → TODO-041.02 §3** — cross-FS health tool                | P6 (§7.1)                            |   ↗️   |
