@@ -78,7 +78,6 @@ graph TD
     W10["§15.1 Boot-Time Init ⬜"]
     W11["§15.2 System File Layout ⬜"]
     W12["§15.3 NTFS Volume Formatter ⬜"]
-    W13["§18.1 NTFS-to-IXFS Migration ⬜"]
 
     %% Read-side dependencies
     SPEC --> A
@@ -128,7 +127,6 @@ graph TD
     W9 --> W10
     W10 --> W11
     W10 --> W12
-    L --> W13
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -171,7 +169,6 @@ graph TD
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.1 Boot-Time Init           | **NTFS as `C:\`** — boot from NTFS instead of IXFS               | P9 (all write support)               |   ⬜   |
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.2 System File Layout       | **NTFS as `C:\`** — directory hierarchy + Registry               | P10 (§15.1)                          |   ⬜   |
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.3 NTFS Volume Formatter    | **NTFS as `C:\`** — format tool for boot volume creation         | P9 (all write support)               |   ⬜   |
-| ⭐ | P11   | `040.08-NTFS.md`      | §18.1 NTFS-to-IXFS Migration   | **One-click volume migration** — no OS does this natively        | P5 (§6.1) + IXFS write               |   ⬜   |
 
 > [!IMPORTANT]
 > **NTFS is the root filesystem (C: drive).** NTFS replaces IXFS as the primary
@@ -192,7 +189,6 @@ graph TD
 > **Phase 9** adds journaling (§13.1–§13.2), B+ tree mutation (§14.1), file writes (§16.1),
 > and file create/delete (§12.5). This completes full R/W NTFS support.
 > **Phase 10** makes NTFS the boot volume (C:\) — boot-time init, system file layout, formatter.
-> **Phase 11** adds the exclusive NTFS-to-IXFS migration tool.
 
 > [!TIP]
 > **Quick wins after Phase 2:**
