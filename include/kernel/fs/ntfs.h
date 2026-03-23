@@ -1038,6 +1038,43 @@ int ntfs_write_indx(struct ntfs_volume *vol,
                     uint64_t vcn, uint32_t index_record_size,
                     uint8_t *buffer);
 
+/* ---- File Write Engine (§16.1) ---- */
+
+/* Write bytes to a file's unnamed $DATA attribute.
+ * For resident files: updates content in-place, converting to non-resident
+ * if the data grows beyond the MFT record capacity (via ntfs_attr_update).
+ * For non-resident files: maps offset to clusters, writes data, extends
+ * allocation if offset+length exceeds current alloc_size.
+ * All modifications are journaled (§13) and USA-regenerated before writing.
+ * Returns NTFS_OK, NTFS_ERR_FULL (disk full), or NTFS_ERR_*. */
+int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
+                    uint64_t offset, uint64_t length, const void *buffer);
+
+/* Truncate or extend a file to exactly new_size bytes.
+ * Shrink: frees tail clusters, shortens the last run, re-encodes runs.
+ * Grow: allocates additional clusters, extends or appends runs.
+ * Truncate to 0: frees all clusters and converts $DATA back to resident.
+ * Journaled and USA-regenerated before writing.
+ * Returns NTFS_OK, NTFS_ERR_FULL, or NTFS_ERR_*. */
+int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size);
+
+/* Update the DOS file attribute flags stored in $STANDARD_INFORMATION.
+ * attrs: bitmask of NTFS_FILE_ATTR_* flags.
+ * Journaled (UPDATE_RESIDENT) and USA-regenerated before writing.
+ * Returns NTFS_OK or NTFS_ERR_*. */
+int ntfs_set_file_attributes(struct ntfs_volume *vol, uint64_t inode,
+                              uint32_t attrs);
+
+/* Set file timestamps from Unix time (seconds since 1970-01-01).
+ * Converts Unix → FILETIME (100-ns since 1601-01-01) and
+ * writes creation, modification, and access times into $STANDARD_INFORMATION.
+ * mft_change_time is set equal to modify_unix.
+ * Journaled (UPDATE_RESIDENT) and USA-regenerated before writing.
+ * Returns NTFS_OK or NTFS_ERR_*. */
+int ntfs_set_file_time(struct ntfs_volume *vol, uint64_t inode,
+                       uint64_t create_unix, uint64_t modify_unix,
+                       uint64_t access_unix);
+
 /* Create a new file in an NTFS directory.
  * Allocates MFT record, adds $STANDARD_INFORMATION + $FILE_NAME + $DATA,
  * inserts directory entry into parent, updates parent timestamps.
