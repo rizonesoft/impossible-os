@@ -632,8 +632,8 @@ static void test_lznt1_decompress(void)
      *            displacement=3 (3-1=2 in field, but disp= field+1), length=3
      *            ref = ((disp-1) << len_bits) | (length-3)
      *            ref = (2 << 12) | 0 = 0x2000  → LE: 00 20
-     *   5 bytes of compressed data, header = (5-1) | (0x3<<12) | 0x8000 = 0xB004
-     *   Little-endian: 04 B0
+     *   6 bytes of compressed data, header = (6-1) | (0x3<<12) | 0x8000 = 0xB005
+     *   Little-endian: 05 B0
      */
     static const uint8_t compressed[] = {
         /* Sub-block 1: uncompressed 16 bytes */
@@ -641,7 +641,7 @@ static void test_lznt1_decompress(void)
         'H','e','l','l','o','H','e','l','l','o','W','o','r','l','d','!',
 
         /* Sub-block 2: compressed → "ABCABC" */
-        0x04, 0xB0,                                          /* header */
+        0x05, 0xB0,                                          /* header: (6-1) | 0xB000 */
         0x08,                                                /* flag byte */
         0x41, 0x42, 0x43,                                    /* A, B, C */
         0x00, 0x20,                                          /* back-ref */

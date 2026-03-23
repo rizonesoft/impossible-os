@@ -157,11 +157,17 @@ if $HAVE_NTFS3G; then
         COMPRESS_OK=false
         mkdir -p "$MNT/compressed" 2>/dev/null
 
-        # Try to set compressed attribute on the directory via chattr or setfattr
+        # Try to set compressed attribute on the directory via setfattr or chattr
         if command -v setfattr &>/dev/null; then
             # Set NTFS compressed attribute flag (FILE_ATTRIBUTE_COMPRESSED = 0x800)
             # system.ntfs_attrib_be is big-endian, so 0x800 → 00 00 08 00
+            # Also include DIRECTORY flag (0x10), so: 0x810 → 00 00 08 10
             setfattr -n system.ntfs_attrib_be -v 0x00000810 "$MNT/compressed" 2>/dev/null && COMPRESS_OK=true
+        fi
+
+        # Fallback: try chattr +c (works on some ntfs-3g builds)
+        if ! $COMPRESS_OK && command -v chattr &>/dev/null; then
+            chattr +c "$MNT/compressed" 2>/dev/null && COMPRESS_OK=true
         fi
 
         if $COMPRESS_OK; then
