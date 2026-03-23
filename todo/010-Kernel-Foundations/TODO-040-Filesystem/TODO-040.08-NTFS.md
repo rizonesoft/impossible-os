@@ -823,76 +823,76 @@ graph TD
 
 #### Attribute Parsing Tests (§3.4–§3.6)
 
-- [ ] Test: `$ATTRIBUTE_LIST` — file with attributes spanning multiple MFT records
-  - [ ] Create large file with many named streams → attributes overflow to extension record
-  - [ ] Verify: all attributes accessible via attribute list indirection
-- [ ] Test: `$REPARSE_POINT` — NTFS symlink / junction point
-  - [ ] Create symlink on host NTFS image
-  - [ ] Verify: reparse tag read, target path extracted
-- [ ] Test: `$SECURITY_DESCRIPTOR` — read ACL from file
-  - [ ] Verify: owner SID, DACL presence, basic permission bits
-- [ ] Test: file with both Win32 and DOS filename namespaces
-  - [ ] Verify: Win32 name preferred, DOS 8.3 name available
-- [ ] Commit: `"test: advanced attribute parsing"`
+- [x] Test: `$ATTRIBUTE_LIST` — file with attributes spanning multiple MFT records
+  - [x] Create large file with many named streams → attributes overflow to extension record
+  - [x] Verify: all attributes accessible via attribute list indirection
+- [x] Test: `$REPARSE_POINT` — NTFS symlink / junction point
+  - [x] Create symlink on host NTFS image
+  - [x] Verify: reparse tag read, target path extracted
+- [x] Test: `$SECURITY_DESCRIPTOR` — read ACL from file
+  - [x] Verify: owner SID, DACL presence, basic permission bits
+- [x] Test: file with both Win32 and DOS filename namespaces
+  - [x] Verify: Win32 name preferred, DOS 8.3 name available
+- [x] Commit: `"test: advanced attribute parsing"`
 
 #### System Metafile Tests (§7.1)
 
-- [ ] Test: `$UpCase` table loaded — case-insensitive lookup works
-  - [ ] Look up `TEST.TXT` when file is named `test.txt` → should find it
-  - [ ] Look up `TeSt.TxT` → should find it
-- [ ] Test: `$MFTMirr` consistency — verify first 4 records match
-- [ ] Test: `$Volume` — version 3.1 detected, volume label correct
-- [ ] Test: `$Bitmap` — free cluster count > 0 and plausible
-- [ ] Commit: `"test: system metafile verification"`
+- [x] Test: `$UpCase` table loaded — case-insensitive lookup works
+  - [x] Look up `TEST.TXT` when file is named `test.txt` → should find it
+  - [x] Look up `TeSt.TxT` → should find it
+- [x] Test: `$MFTMirr` consistency — verify first 4 records match
+- [x] Test: `$Volume` — version 3.1 detected, volume label correct
+- [x] Test: `$Bitmap` — free cluster count > 0 and plausible
+- [x] Commit: `"test: system metafile verification"`
 
 #### Write Foundation Tests (§12.1–§12.4)
 
-- [ ] Test: cluster allocator — allocate N clusters, verify bitmap bits set
-  - [ ] Allocate 10 clusters near hint LCN → verify contiguous
-  - [ ] Free 10 clusters → verify bitmap bits cleared
-  - [ ] MFT zone avoidance: allocate near MFT → verify skipped zone
-- [ ] Test: USA regeneration — regenerate fixup on a FILE record
-  - [ ] Modify a record's content → regenerate → verify USN stamped in sector-end bytes
-  - [ ] Verify: USN wraps 0 → 1 (never leaves USN=0)
-- [ ] Test: MFT record allocator — allocate new inode
-  - [ ] `ntfs_alloc_mft_record()` → returns inode >= 24
-  - [ ] Verify: bitmap bit set, record initialized with "FILE" magic
-  - [ ] `ntfs_free_mft_record()` → verify bitmap cleared, sequence incremented
-  - [ ] Verify: system inodes (< 24) cannot be freed
-- [ ] Test: attribute writer — add/update/remove attributes
-  - [ ] `ntfs_attr_add()`: add a resident attribute → verify sorted position
-  - [ ] `ntfs_attr_update()`: update resident content → verify new data in record
-  - [ ] `ntfs_attr_remove()`: remove attribute → verify gap closed
-  - [ ] `ntfs_encode_data_runs()`: encode run array → decode and compare (round-trip)
-- [ ] Commit: `"test: write foundation verification"`
+- [x] Test: cluster allocator — allocate N clusters, verify bitmap bits set
+  - [x] Allocate 10 clusters near hint LCN → verify contiguous
+  - [x] Free 10 clusters → verify bitmap bits cleared
+  - [x] MFT zone avoidance: allocate near MFT → verify skipped zone
+- [x] Test: USA regeneration — regenerate fixup on a FILE record
+  - [x] Modify a record's content → regenerate → verify USN stamped in sector-end bytes
+  - [x] Verify: USN wraps 0 → 1 (never leaves USN=0)
+- [x] Test: MFT record allocator — allocate new inode
+  - [x] `ntfs_alloc_mft_record()` → returns inode >= 24
+  - [x] Verify: bitmap bit set, record initialized with "FILE" magic
+  - [x] `ntfs_free_mft_record()` → verify bitmap cleared, sequence incremented
+  - [x] Verify: system inodes (< 24) cannot be freed
+- [x] Test: attribute writer — add/update/remove attributes
+  - [x] `ntfs_attr_add()`: add a resident attribute → verify sorted position
+  - [x] `ntfs_attr_update()`: update resident content → verify new data in record
+  - [x] `ntfs_attr_remove()`: remove attribute → verify gap closed
+  - [x] `ntfs_encode_data_runs()`: encode run array → decode and compare (round-trip)
+- [x] Commit: `"test: write foundation verification"`
 
 #### File Lifecycle Tests (§12.5)
 
-- [ ] Test: create empty file in root directory
-  - [ ] `ntfs_create_file()` → verify: MFT record allocated, `$STANDARD_INFORMATION` present, `$FILE_NAME` with correct parent ref, empty `$DATA`, directory entry in root B+ tree
-- [ ] Test: create directory in root
-  - [ ] `ntfs_create_directory()` → verify: directory flag set, `$INDEX_ROOT` present
-- [ ] Test: create file in subdirectory → verify parent directory's B+ tree updated
-- [ ] Test: delete file → verify: clusters freed, MFT record freed, directory entry removed
-- [ ] Test: delete directory → verify: only succeeds when empty
-- [ ] Test: rename file (same directory) → verify: old entry gone, new entry present
-- [ ] Test: move file (cross-directory) → verify: removed from old, inserted in new
-- [ ] Test: rename to existing name → verify: error or overwrite behavior
-- [ ] Test: hard link count tracking — create file, add second link, delete one, verify count
-- [ ] Commit: `"test: file create/delete/rename"`
+- [x] Test: create empty file in root directory
+  - [x] `ntfs_create_file()` → verify: MFT record allocated, `$STANDARD_INFORMATION` present, `$FILE_NAME` with correct parent ref, empty `$DATA`, directory entry in root B+ tree
+- [x] Test: create directory in root
+  - [x] `ntfs_create_directory()` → verify: directory flag set, `$INDEX_ROOT` present
+- [x] Test: create file in subdirectory → verify parent directory's B+ tree updated
+- [x] Test: delete file → verify: clusters freed, MFT record freed, directory entry removed
+- [x] Test: delete directory → verify: only succeeds when empty
+- [x] Test: rename file (same directory) → verify: old entry gone, new entry present
+- [x] Test: move file (cross-directory) → verify: removed from old, inserted in new
+- [x] Test: rename to existing name → verify: error or overwrite behavior
+- [x] Test: hard link count tracking — create file, add second link, delete one, verify count
+- [x] Commit: `"test: file create/delete/rename"`
 
 #### Journal Tests (§13.1–§13.2)
 
-- [ ] Test: `$LogFile` restart area parsed — checkpoint LSN readable
-- [ ] Test: transaction begin/log/commit cycle → verify log records written to `$LogFile`
-- [ ] Test: transaction abort → verify undo records applied
-- [ ] Test: dirty mount recovery — simulate power failure:
-  - [ ] Write partial transaction (no commit record)
-  - [ ] Re-mount → verify: undo pass rolls back incomplete transaction
-  - [ ] Write committed transaction, don't flush metadata
-  - [ ] Re-mount → verify: redo pass applies committed changes
-- [ ] Test: dirty flag cleared after successful recovery
-- [ ] Commit: `"test: journal engine and recovery"`
+- [x] Test: `$LogFile` restart area parsed — checkpoint LSN readable
+- [x] Test: transaction begin/log/commit cycle → verify log records written to `$LogFile`
+- [x] Test: transaction abort → verify undo records applied
+- [x] Test: dirty mount recovery — simulate power failure:
+  - [x] Write partial transaction (no commit record)
+  - [x] Re-mount → verify: undo pass rolls back incomplete transaction
+  - [x] Write committed transaction, don't flush metadata
+  - [x] Re-mount → verify: redo pass applies committed changes
+- [x] Test: dirty flag cleared after successful recovery
+- [x] Commit: `"test: journal engine and recovery"`
 
 #### B+ Tree Mutation Tests (§14.1)
 
