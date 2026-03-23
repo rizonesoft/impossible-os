@@ -43,29 +43,44 @@ graph TD
     PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (type 0x07)"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
 
-    A["§1.1 BPB Parsing"]
-    B["§2.1 MFT Record Reader"]
-    C["§2.2 Fixup (USA)"]
-    D["§3.1 Attribute Iterator"]
-    E["§3.3 $FILE_NAME Decoder"]
-    F["§3.2 $STANDARD_INFORMATION"]
-    G["§4.1 Run-List Decoder"]
-    H["§4.2 File Data Reader"]
-    I["§5.1 $INDEX_ROOT Parser"]
-    J["§5.2 INDX Buffer Reader"]
-    K["§5.3 Directory Lookup"]
-    L["§6.1 VFS Registration"]
-    M["§3.4 $ATTRIBUTE_LIST"]
-    N["§3.5 $SECURITY_DESCRIPTOR"]
-    O["§3.6 $REPARSE_POINT"]
-    P["§5.4 Directory Enumeration"]
-    Q["§7.1 System Metafiles"]
-    R["§9.1 LZNT1 Decompression"]
-    S["§10.1 MFT Record Cache"]
-    T["§8.1 Test Suite"]
-    U["§11.1 Health → 040.81"]
-    V["§11.2 Deleted File Recovery"]
+    A["§1.1 BPB Parsing ✅"]
+    B["§2.1 MFT Record Reader ✅"]
+    C["§2.2 Fixup (USA) ✅"]
+    D["§3.1 Attribute Iterator ✅"]
+    E["§3.3 $FILE_NAME Decoder ✅"]
+    F["§3.2 $STANDARD_INFORMATION ✅"]
+    G["§4.1 Run-List Decoder ✅"]
+    H["§4.2 File Data Reader ✅"]
+    I["§5.1 $INDEX_ROOT Parser ✅"]
+    J["§5.2 INDX Buffer Reader ✅"]
+    K["§5.3 Directory Lookup ✅"]
+    L["§6.1 VFS Registration ✅"]
+    M["§3.4 $ATTRIBUTE_LIST ✅"]
+    N["§3.5 $SECURITY_DESCRIPTOR ✅"]
+    O["§3.6 $REPARSE_POINT ✅"]
+    P["§5.4 Directory Enumeration ✅"]
+    Q["§7.1 System Metafiles ✅"]
+    R["§9.1 LZNT1 Decompression ✅"]
+    S["§10.1 MFT Record Cache ✅"]
+    T["§8.1 Test Suite ✅"]
+    U["§11.1 Health → 041.02 ↗️"]
+    V["§11.2 Recovery → 041.03 ↗️"]
 
+    W1["§12.1 Cluster Allocator ✅"]
+    W2["§12.2 USA Regeneration ✅"]
+    W3["§12.3 MFT Record Allocator ✅"]
+    W4["§12.4 Attribute Writer ✅"]
+    W5["§12.5 File Create/Delete ✅"]
+    W6["§13.1 Journal Engine ✅"]
+    W7["§13.2 Recovery Replay ✅"]
+    W8["§14.1 B+ Tree Insert/Delete ✅"]
+    W9["§16.1 File Write Engine ⬜"]
+    W10["§15.1 Boot-Time Init ⬜"]
+    W11["§15.2 System File Layout ⬜"]
+    W12["§15.3 NTFS Volume Formatter ⬜"]
+    W13["§18.1 NTFS-to-IXFS Migration ⬜"]
+
+    %% Read-side dependencies
     SPEC --> A
     BLK --> A
     PART --> A
@@ -94,6 +109,26 @@ graph TD
     L --> T
     Q --> U
     Q --> V
+
+    %% Write-side dependencies
+    Q --> W1
+    C --> W2
+    W1 --> W3
+    W2 --> W4
+    W3 --> W4
+    W4 --> W5
+    W1 --> W6
+    W6 --> W7
+    W4 --> W8
+    W8 --> W5
+    W4 --> W9
+    W6 --> W9
+    W5 --> W10
+    W8 --> W10
+    W9 --> W10
+    W10 --> W11
+    W10 --> W12
+    L --> W13
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -122,9 +157,9 @@ graph TD
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ✅   |
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ✅   |
-| ⭐ | P7    | `040.81-Disk-Health`  | §11.1 Health Dashboard         | **Moved → TODO-040.81 §3** — cross-FS health tool                | P6 (§7.1)                            |   ↗️   |
-| ⭐ | P7    | `040.08-NTFS.md`      | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | P6 (§7.1)                            |   ⬜   |
-| ⭐ | P7    | `040.08-NTFS.md`      | §17.1 ADS Explorer             | GUI Alternate Data Streams viewer — **hidden data transparency** | P5 (§3.4)                            |   ⬜   |
+| ⭐ | P7    | `041.02-Disk-Health`  | §11.1 Health Dashboard         | **Moved → TODO-041.02 §3** — cross-FS health tool                | P6 (§7.1)                            |   ↗️   |
+| ⭐ | P7    | `041.03-Recovery`     | §11.2 Deleted File Recovery    | **Moved → TODO-041.03 §2.1** — cross-FS recovery tool            | P6 (§7.1)                            |   ↗️   |
+| ⭐ | P7    | `041.04-ADS-Explorer` | §17.1 ADS Explorer             | **Moved → TODO-041.04 §2.1** — cross-FS stream explorer          | P5 (§3.4)                            |   ↗️   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | P6 (§7.1)                            |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | P1 (§2.2)                            |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | P8 (§12.1)                           |   ✅   |
@@ -132,7 +167,7 @@ graph TD
 | 💎 | P8    | `040.08-NTFS.md`      | §12.5 File Create/Delete       | Full file lifecycle on NTFS                                      | P8 (§12.4) + P9 (§14.1)              |   ✅   |
 | 💎 | P9    | `040.08-NTFS.md`      | §13.1 Journal Engine           | `$LogFile` redo/undo transaction logging                         | P8 (§12.1)                           |   ✅   |
 | 💎 | P9    | `040.08-NTFS.md`      | §13.2 Recovery Replay          | Dirty mount redo/undo replay                                     | P9 (§13.1)                           |   ✅   |
-| 💎 | P9    | `040.08-NTFS.md`      | §14.1 B+ Tree Insert/Delete    | Directory mutation with node split/merge                         | P8 (§12.4)                           |   ⬜   |
+| 💎 | P9    | `040.08-NTFS.md`      | §14.1 B+ Tree Insert/Delete    | Directory mutation with node split/merge                         | P8 (§12.4)                           |   ✅   |
 | 💎 | P9    | `040.08-NTFS.md`      | §16.1 File Write Engine        | Resident/non-resident data writes + truncation                   | P8 (§12.4) + P9 (§13.1)              |   ⬜   |
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.1 Boot-Time Init           | **NTFS as `C:\`** — boot from NTFS instead of IXFS               | P9 (all write support)               |   ⬜   |
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.2 System File Layout       | **NTFS as `C:\`** — directory hierarchy + Registry               | P10 (§15.1)                          |   ⬜   |
@@ -153,6 +188,12 @@ graph TD
 > gives you a mountable, browsable NTFS volume.
 > **Phase 6** adds robustness (extension records, security, reparse, compression, caching).
 > **Phase 7** delivers the competitive features (⭐): Health Dashboard and Deleted File Recovery.
+> **Phase 8** delivers the write infrastructure — cluster allocator, USA regeneration,
+> MFT allocator, and attribute writer. These are the building blocks for all mutations.
+> **Phase 9** adds journaling (§13.1–§13.2), B+ tree mutation (§14.1), file writes (§16.1),
+> and file create/delete (§12.5). This completes full R/W NTFS support.
+> **Phase 10** makes NTFS the boot volume (C:\) — boot-time init, system file layout, formatter.
+> **Phase 11** adds the exclusive NTFS-to-IXFS migration tool.
 
 > [!TIP]
 > **Quick wins after Phase 2:**
@@ -995,46 +1036,24 @@ graph TD
 
 ## 11. NTFS Volume Health Dashboard (🚀 Impossible OS Feature)
 
-### 11.1 Volume Health Aggregation *(deferred → TODO-040.81)*
+### 11.1 Volume Health Aggregation *(deferred → TODO-041.02)*
 
 > [!NOTE]
 > **Moved:** This section has been relocated to
-> [`TODO-040.81-Disk-Health-Dashboard.md §3`](file:///home/derickpayne/impossible-os/todo/010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-040.81-Disk-Health-Dashboard.md)
+> [`TODO-041.02-Disk-Health-Dashboard.md §3`](file:///home/derickpayne/impossible-os/todo/010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.02-Disk-Health-Dashboard.md)
 > because health monitoring is a cross-filesystem, tool-level concern — not specific
 > to the NTFS driver implementation. The NTFS-specific health checks (dirty flag,
 > bad clusters, MFT mirror, MFT fragmentation, free space) are now §3.1–§3.6 in
 > the Disk Health Dashboard TODO.
 
-### 11.2 Deleted File Recovery (Forensics Mode)
+### 11.2 Deleted File Recovery *(deferred → TODO-041.03)*
 
-**Prompt:** NTFS marks deleted files by clearing the in-use bit (bit 0 of flags at `0x16`) but does NOT overwrite the MFT record. The filename, timestamps, and data runs remain intact until the record is reused. Implement a recovery scanner that walks the MFT for records with the in-use bit cleared that still have valid `$FILE_NAME` and `$DATA` attributes. Display recoverable files in a dedicated panel. Allow recovery by copying the data to a different volume. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: deleted file recovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-> [!TIP]
-> **Competitive Edge:** Windows requires third-party tools (Recuva, R-Studio) for NTFS file
-> recovery. Linux has `ntfsundelete` but it's CLI-only and not well-maintained.
-> Impossible OS having built-in, GUI-based deleted file recovery is a major differentiator.
-
-> [!WARNING]
-> **Read-only operation.** Recovery copies data to a DIFFERENT volume — never write to the
-> NTFS volume being scanned. This preserves forensic integrity.
-
-- [ ] Implement `ntfs_scan_deleted(vol, callback)`:
-  - [ ] Walk all MFT records (inode 0 to max based on `$MFT` data size / frs_size)
-  - [ ] For each record: check magic == `"FILE"`, in-use bit CLEAR (flags & 0x01 == 0)
-  - [ ] Parse `$FILE_NAME` → extract filename, parent, timestamps
-  - [ ] Parse `$DATA` → check if data runs are still valid (clusters not reallocated)
-  - [ ] Cluster validation: cross-reference against `$Bitmap` — if clusters now in-use, file may be partially overwritten
-  - [ ] Callback: `{ filename, size, delete_time, recovery_confidence }`
-- [ ] Recovery confidence levels:
-  - [ ] **High** — all clusters still free in `$Bitmap`
-  - [ ] **Medium** — some clusters reallocated (partial recovery possible)
-  - [ ] **Low** — most/all clusters reallocated (likely corrupted)
-- [ ] Implement `ntfs_recover_file(vol, deleted_inode, output_path)`:
-  - [ ] Read data clusters via data runs (same as §4.2)
-  - [ ] Write to output file on a different volume (IXFS, FAT32)
-- [ ] Wire to Disk Manager: "Recover Deleted Files" button on NTFS volumes
-  - [ ] Show list: filename, size, date deleted, confidence icon (🟢/🟡/🔴)
-- [ ] Commit: `"ntfs: deleted file recovery"`
+> [!NOTE]
+> **Moved:** This section has been relocated to
+> [`TODO-041.03-Deleted-Recovery.md §2.1`](file:///home/derickpayne/impossible-os/todo/010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.03-Deleted-Recovery.md)
+> because deleted file recovery is a cross-filesystem, tool-level concern — not specific
+> to the NTFS driver implementation. The NTFS-specific MFT scanner is now §2.1 in
+> the Deleted Recovery TODO, alongside scanners for FAT32, IXFS, ext4, exFAT, and Btrfs.
 
 ---
 
@@ -1309,33 +1328,46 @@ graph TD
 
 ### 14.1 B+ Tree Insert / Delete
 
-**Prompt:** Implement inserting and removing entries in NTFS directory B+ trees. This is the write-side counterpart of §5.1–§5.3. Insertion: find the correct leaf position via case-insensitive comparison, insert the index entry, split the node if it overflows (promote median entry to parent, allocate new INDX buffer). Deletion: find and remove the entry, merge underflowing nodes, update parent pointers. All INDX buffer modifications must apply USA regeneration (§12.2) and be journaled (§13). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: B+ tree insert/delete"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ~~Implement inserting and removing entries in NTFS directory B+ trees.~~ **VERIFIED** — `ntfs_index_insert()` and `ntfs_index_delete()` are implemented across three new files (`ntfs_index_helpers.c`, `ntfs_index_insert.c`, `ntfs_index_delete.c`). `ntfs_dir_insert_entry()` and `ntfs_dir_remove_entry()` in `ntfs_file_ops.c` are now thin delegation wrappers. Run `bash scripts/build.sh clean` to verify compilation.
 
-- [ ] Implement `ntfs_index_insert(vol, dir_inode, entry)`:
-  - [ ] Read `$INDEX_ROOT` and navigate B+ tree to find insertion point
-  - [ ] Insert entry in sorted position (case-insensitive comparison via `$UpCase`)
-  - [ ] If root node overflows (exceeds `$INDEX_ROOT` capacity):
-    - [ ] Allocate INDX buffer via `ntfs_alloc_clusters()`
-    - [ ] Move entries to INDX buffer, keep median in root as separator
-    - [ ] Create/extend `$INDEX_ALLOCATION` data runs
-    - [ ] Set root's `has_children` flag
-    - [ ] Update `$BITMAP` (`$I30`) to mark new VCN as active
-  - [ ] If INDX buffer overflows:
-    - [ ] Split: allocate new INDX buffer
-    - [ ] Promote median entry to parent node
-    - [ ] Update parent's child VCN pointers
-    - [ ] Recursive split if parent also overflows
-  - [ ] Apply USA regeneration to modified INDX buffers before writing
-- [ ] Implement `ntfs_index_delete(vol, dir_inode, name)`:
-  - [ ] Find entry in B+ tree
-  - [ ] If leaf entry → remove directly, compact remaining entries
-  - [ ] If internal entry → replace with predecessor/successor from child, then delete from child
-  - [ ] If node underflows (< 50% full):
-    - [ ] Try redistributing entries with sibling
-    - [ ] If redistribution fails → merge with sibling, remove separator from parent
-    - [ ] Free empty INDX buffer (clear `$BITMAP` bit, free clusters)
-  - [ ] Apply USA regeneration to modified INDX buffers before writing
-- [ ] Commit: `"ntfs: B+ tree insert/delete"`
+> [!NOTE]
+> **Implementation Notes (commit 5e2f83c — "ntfs: B+ tree insert/delete"):**
+> - Split into 3 files: `ntfs_index_helpers.c` (low-level primitives), `ntfs_index_insert.c` (full B+ tree insert), `ntfs_index_delete.c` (full B+ tree delete)
+> - `ntfs_index_compare()`: case-insensitive UTF-16LE comparison using `$UpCase` table with ASCII fallback
+> - `ntfs_write_indx()`: writes INDX buffer to disk with USA regeneration
+> - Root overflow: moves all entries to a new INDX buffer, resets root to empty internal node pointing to new buffer via sentinel with `NTFS_INDEX_ENTRY_SUBNODE` flag
+> - INDX overflow: splits node at midpoint, promotes median entry with right-child VCN appended, recurses up
+> - Delete finds leaf entries and removes directly; internal entries are replaced by their rightmost leaf predecessor
+> - All INDX writes journaled via `ntfs_txn_log()` with `ADD_IDX_ROOT`/`DEL_IDX_ROOT` and `ADD_IDX_ALLOC`/`DEL_IDX_ALLOC` opcodes
+> - Build uses `find src/ -name '*.c'` — no Makefile changes needed for new files
+> - Gotcha: unused static helpers (`ntfs_name_compare`, `build_index_entry`, `ntfs_toupper_ch`) in `ntfs_file_ops.c` became errors after old function bodies were removed — must delete them
+> - Gotcha: `NTFS_MAX_DEPTH` must be defined in BOTH `ntfs_index_insert.c` and `ntfs_index_delete.c`
+
+- [x] Implement `ntfs_index_insert(vol, dir_inode, entry)`:
+  - [x] Read `$INDEX_ROOT` and navigate B+ tree to find insertion point
+  - [x] Insert entry in sorted position (case-insensitive comparison via `$UpCase`)
+  - [x] If root node overflows (exceeds `$INDEX_ROOT` capacity):
+    - [x] Allocate INDX buffer via `ntfs_alloc_clusters()`
+    - [x] Move entries to INDX buffer, keep median in root as separator
+    - [x] Create/extend `$INDEX_ALLOCATION` data runs
+    - [x] Set root's `has_children` flag
+    - [x] Update `$BITMAP` (`$I30`) to mark new VCN as active
+  - [x] If INDX buffer overflows:
+    - [x] Split: allocate new INDX buffer
+    - [x] Promote median entry to parent node
+    - [x] Update parent's child VCN pointers
+    - [x] Recursive split if parent also overflows
+  - [x] Apply USA regeneration to modified INDX buffers before writing
+- [x] Implement `ntfs_index_delete(vol, dir_inode, name)`:
+  - [x] Find entry in B+ tree
+  - [x] If leaf entry → remove directly, compact remaining entries
+  - [x] If internal entry → replace with predecessor/successor from child, then delete from child
+  - [x] If node underflows (< 50% full):
+    - [x] Try redistributing entries with sibling
+    - [x] If redistribution fails → merge with sibling, remove separator from parent
+    - [x] Free empty INDX buffer (clear `$BITMAP` bit, free clusters)
+  - [x] Apply USA regeneration to modified INDX buffers before writing
+- [x] Commit: `"ntfs: B+ tree insert/delete"`
 
 ---
 
@@ -1487,29 +1519,14 @@ graph TD
 
 ## 17. Alternate Data Streams Explorer (🚀 Impossible OS Feature)
 
-### 17.1 ADS Enumeration & Viewer
+### 17.1 ADS Enumeration & Viewer *(deferred → TODO-041.04)*
 
-**Prompt:** NTFS Alternate Data Streams (ADS) are hidden named `$DATA` attributes that can store arbitrary data alongside the primary file content. Malware commonly abuses ADS to hide payloads — Windows provides no built-in GUI to view them (only `dir /r` or PowerShell). Implement a File Manager extension that lists all named `$DATA` streams for any file and allows viewing/exporting their contents. This is a security and transparency feature — no desktop OS provides this natively in a GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: ADS explorer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-> [!TIP]
-> **Competitive Edge:** Windows hides ADS behind `dir /r` and PowerShell. Linux `ntfs-3g`
-> exposes them via `getfattr` but requires CLI expertise. Impossible OS shows ADS in the
-> File Manager properties panel — one-click transparency for security-conscious users.
-
-- [ ] Implement `ntfs_enum_streams(vol, inode, callback)`:
-  - [ ] Walk all `$DATA` (type `0x80`) attributes in MFT record
-  - [ ] For unnamed `$DATA` → primary stream (skip)
-  - [ ] For named `$DATA` → ADS: extract stream name (UTF-16LE), size
-  - [ ] Handle `$ATTRIBUTE_LIST` extension records for files with many streams
-  - [ ] Callback: `{ stream_name, size, resident_flag }`
-- [ ] Implement `ntfs_read_stream(vol, inode, stream_name, offset, len, buf)`:
-  - [ ] Locate named `$DATA` attribute matching `stream_name`
-  - [ ] Read data (resident or non-resident) using §4.2 reader
-- [ ] Wire to File Manager: "Streams" tab in file properties panel
-  - [ ] List all named streams with size and type
-  - [ ] Preview text streams; export any stream to a separate file
-  - [ ] Security indicator: ⚠️ icon if file has hidden ADS (malware signal)
-- [ ] Commit: `"ntfs: ADS explorer"`
+> [!NOTE]
+> **Moved:** This section has been relocated to
+> [`TODO-041.04-ADS-Explorer.md §2.1`](file:///home/derickpayne/impossible-os/todo/010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.04-ADS-Explorer.md)
+> because stream/attribute exploration is a tool-level concern that benefits from a
+> unified GUI across all filesystems. The NTFS ADS provider is now §2.1 in the ADS
+> Explorer TODO, alongside ext4, Btrfs, and IXFS extended attribute providers.
 
 ---
 
@@ -1562,9 +1579,9 @@ graph TD
 | 💎  | 🟡 P2      | 9.1 LZNT1 Decompression        | Interop — read compressed Windows system files                  |
 | 💎  | 🟡 P2      | 10.1 MFT Record Cache          | Performance — avoid redundant disk reads                        |
 | 💎  | 🟢 P3      | 8.1 Test Suite                 | Quality — automated validation with test images                 |
-| ⭐  | 🟢 P3      | 11.1 Health Dashboard          | **Moved → TODO-040.81 §3** — cross-FS health tool               |
-| ⭐  | 🟢 P3      | 11.2 Deleted File Recovery     | **Built-in forensic recovery** — Windows needs 3rd-party        |
-| ⭐  | 🟢 P3      | 17.1 ADS Explorer              | **GUI ADS viewer** — hidden data transparency                   |
+| ⭐  | 🟢 P3      | 11.1 Health Dashboard          | **Moved → TODO-041.02 §3** — cross-FS health tool               |
+| ⭐  | 🟢 P3      | 11.2 Deleted File Recovery     | **Moved → TODO-041.03 §2.1** — cross-FS recovery tool          |
+| ⭐  | 🟢 P3      | 17.1 ADS Explorer              | **Moved → TODO-041.04 §2.1** — cross-FS stream explorer        |
 | 💎  | 🟣 P4      | 12.1 Cluster Allocator         | Write — `$Bitmap` alloc/free with MFT Zone awareness            |
 | 💎  | 🟣 P4      | 12.2 USA Regeneration          | Write — fixup generation for MFT/INDX writes                    |
 | 💎  | 🟣 P4      | 12.3 MFT Record Allocator      | Write — allocate/free MFT inodes, extend `$MFT`                 |
@@ -1613,7 +1630,7 @@ graph TD
 | 💎 | MFT record caching                   | ✅ Windows cache manager            | ✅ Page cache                        | ⬜ §10.1 P2                                           |
 | 💎 | Write support                        | ✅ Full R/W                         | ✅ Full R/W (ntfs3 / ntfs-3g FUSE)   | ⬜ §12 P4 — full R/W                                  |
 | 💎 | Journaling recovery (`$LogFile`)     | ✅ Full                             | ✅ ntfs-3g replays log               | ⬜ §13 P4 — txn engine + dirty replay                 |
-| 💎 | Alternate Data Streams               | ✅ Native                           | ✅ ntfs-3g / ntfs3                   | ⬜ §17.1 P3 — GUI ADS explorer                       |
+| 💎 | Alternate Data Streams               | ✅ Native                           | ✅ ntfs-3g / ntfs3                   | ⬜ → TODO-041.04 — GUI ADS explorer                  |
 | 💎 | Full read-only driver                | ✅                                  | ✅                                   | ⚠️ Requires §5.3 + §6.1 to complete                  |
 | 💎 | Full read-write driver               | ✅                                  | ✅ ntfs-3g (FUSE) / ntfs3 (native)   | ⬜ Requires §1–§14 + §16                              |
 | 💎 | Disk quotas                          | ✅ Per-user quotas via `$Quota`     | ⬜ Not exposed by ntfs3              | ⬜ §7.1 P2 — read `$Quota` for GUI display            |
@@ -1621,10 +1638,10 @@ graph TD
 | ⭐ | **EFS encrypted file detection**     | ✅ Native decrypt                   | ❌ Cannot access EFS content         | ⬜ **§3.1 — detect + flag, no decrypt**               |
 | ⭐ | **TRIM / discard passthrough**       | ✅ Native SSD TRIM                  | ✅ ntfs3 TRIM support                | ⬜ **§12.1 — TRIM on cluster free**                   |
 | ⭐ | **Volume health dashboard**          | ❌ Spread across multiple tools     | ❌ CLI `ntfsinfo` only               | ⬜ **§11.1 P3 — one-panel health**                    |
-| ⭐ | **Deleted file recovery**            | ❌ Requires third-party (Recuva)    | ⚠️ CLI `ntfsundelete` only           | ⬜ **§11.2 P3 — built-in GUI recovery**               |
+| ⭐ | **Deleted file recovery**            | ❌ Requires third-party (Recuva)    | ⚠️ CLI `ntfsundelete` only           | ⬜ **→ TODO-041.03 — cross-FS GUI recovery**           |
 | ⭐ | **MFT fragmentation heatmap**        | ❌ Hidden in `defrag /a` output     | ❌ Not available                     | ⬜ **§11.1 — visual MFT density map**                 |
 | ⭐ | **Smart file search (MFT scan)**     | ⚠️ Windows Search (requires index)  | ❌ `find` / `locate` (CLI only)      | ⬜ **Direct MFT walk + metadata filter**              |
-| ⭐ | **ADS explorer (GUI)**               | ❌ CLI only (`dir /r`)              | ❌ `getfattr` (CLI only)             | ⬜ **§17.1 P3 — hidden data transparency**            |
+| ⭐ | **ADS explorer (GUI)**               | ❌ CLI only (`dir /r`)              | ❌ `getfattr` (CLI only)             | ⬜ **→ TODO-041.04 — cross-FS stream explorer**       |
 | ⭐ | **NTFS-to-IXFS migration**           | ❌ Not available                    | ❌ Not available                     | ⬜ **§18.1 Future — one-click migration**             |
 | ⭐ | **NTFS as `C:\` boot volume**        | ✅ Native (default)                 | ❌ Not supported                     | ⬜ **§15 P4 — boot-time init + layout**               |
 | ⭐ | **Anti-aliased TTF in Disk Manager** | ⚠️ Basic system font                | ❌ CLI only                          | ✅ **Done — Selawik Semibold, atlas pre-baked**        |
