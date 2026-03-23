@@ -113,14 +113,23 @@ if $HAVE_NTFSCP; then
 fi
 
 # ---- Populate via FUSE mount (directories and advanced cases) ----
+# ntfs-3g requires root for loop-device mounts.
+# We try sudo — if passwordless sudo is available, it works automatically.
+# If not, fall back to ntfscp-only (root-level files).
+
 if $HAVE_NTFS3G; then
     MNT=$(mktemp -d)
-    log "Mounting NTFS image via ntfs-3g FUSE..."
+    log "Mounting NTFS image via ntfs-3g (sudo)..."
 
-    # Try user-space FUSE mount (no root needed if /dev/fuse accessible)
-    if ntfs-3g "$IMG" "$MNT" -o rw,no_def_opts,allow_other 2>/dev/null ||
-       ntfs-3g "$IMG" "$MNT" -o rw 2>/dev/null; then
+    MOUNT_OK=false
 
+    if sudo -n ntfs-3g "$IMG" "$MNT" -o rw 2>/dev/null; then
+        MOUNT_OK=true
+    elif ntfs-3g "$IMG" "$MNT" -o rw 2>/dev/null; then
+        MOUNT_OK=true
+    fi
+
+    if $MOUNT_OK; then
         log "FUSE mount successful, creating directories and advanced test cases..."
 
         # Deep directory tree
@@ -145,10 +154,14 @@ if $HAVE_NTFS3G; then
 
         # Sync and unmount
         sync
-        fusermount3 -u "$MNT" 2>/dev/null || fusermount -u "$MNT" 2>/dev/null || umount "$MNT" 2>/dev/null || true
+        sudo -n umount "$MNT" 2>/dev/null || \
+            fusermount3 -u "$MNT" 2>/dev/null || \
+            fusermount -u "$MNT" 2>/dev/null || \
+            umount "$MNT" 2>/dev/null || true
         log "FUSE unmount complete"
     else
-        warn "ntfs-3g FUSE mount failed — directories will be missing from test image"
+        warn "ntfs-3g mount failed (needs sudo)"
+        warn "Fix: echo '$USER ALL=(root) NOPASSWD: /usr/bin/ntfs-3g, /usr/bin/umount' | sudo tee /etc/sudoers.d/ntfs-test"
         warn "Root-level files (ntfscp) are still present for basic testing"
     fi
     rmdir "$MNT" 2>/dev/null || true
