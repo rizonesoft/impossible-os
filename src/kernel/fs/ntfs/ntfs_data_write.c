@@ -305,6 +305,14 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
             return ntfs_write_compressed_data(vol, inode, offset, length, buffer);
         }
 
+        /* ---- Encrypted attribute: delegate to encryption-aware writer ---- */
+        if (ah.flags & NTFS_ATTR_FLAG_ENCRYPTED) {
+            ntfs_txn_abort(txn);
+            ntfs_txn_free(txn);
+            kfree(rec);
+            return ntfs_write_encrypted_data(vol, inode, offset, length, buffer);
+        }
+
         /* Extend allocation if needed */
         if (needed > nrhdr.alloc_size) {
             uint64_t cs = vol->cluster_size;

@@ -156,8 +156,10 @@ uint16_t ntfs_upcase_char(const struct ntfs_volume *vol, uint16_t ch);
 #define NTFS_ERR_FREE       -4  /* Record is not in-use (deleted) */
 #define NTFS_ERR_FIXUP      -5  /* USA fixup failed — sector tear */
 #define NTFS_ERR_NOT_FOUND  -6  /* File not found in directory */
-#define NTFS_ERR_READ_ONLY -7  /* Write operation on read-only driver */
-#define NTFS_ERR_FULL      -8  /* Disk full — no free clusters or MFT records */
+#define NTFS_ERR_READ_ONLY     -7  /* Write operation on read-only driver */
+#define NTFS_ERR_FULL          -8  /* Disk full — no free clusters or MFT records */
+#define NTFS_ERR_ACCESS_DENIED -9  /* EFS: user's cert not in $EFS DDF list */
+#define NTFS_ERR_NOT_READY    -10  /* EFS: CNG key store not initialized */
 
 /* Parsed MFT record header — matches on-disk layout at documented offsets */
 struct ntfs_mft_header {
@@ -1222,3 +1224,127 @@ void ntfs_journal_shutdown(struct ntfs_volume *vol);
  *   3. Undo — roll back uncommitted operations
  * Clears the dirty flag and resets $LogFile after recovery. */
 int ntfs_recovery_replay(struct ntfs_volume *vol);
+
+/* ---- EFS — Encrypting File System (§9.3) ---- */
+
+/* EFS uses the $LOGGED_UTILITY_STREAM attribute (type 0x100) named "$EFS".
+ * The attribute contains Data Decryption Fields (DDFs), each holding an
+ * RSA-wrapped copy of the File Encryption Key (FEK) for one authorized user.
+ * File data in $DATA is encrypted with AES-256 using the FEK.
+ *
+ * NTFS mutual exclusion: a file CANNOT be both compressed AND encrypted.
+ * If NTFS_ATTR_FLAG_ENCRYPTED is set, compression_unit must be 0. */
+
+/* Maximum DDF entries we parse per $EFS attribute */
+#define NTFS_EFS_MAX_DDF  8
+
+/* FEK cache size (per volume) */
+#define NTFS_EFS_FEK_CACHE_SIZE  16
+
+/* FEK length in bytes (AES-256 key) */
+#define NTFS_EFS_FEK_LEN  32
+
+/* Certificate thumbprint length (SHA-1 = 20 bytes) */
+#define NTFS_EFS_THUMB_LEN  20
+
+/* Parsed Data Decryption Field (one per authorized user) */
+struct ntfs_efs_ddf {
+    uint8_t  cert_thumbprint[NTFS_EFS_THUMB_LEN]; /* User cert SHA-1 */
+    uint32_t encrypted_fek_offset;  /* Offset to RSA-wrapped FEK blob */
+    uint32_t encrypted_fek_length;  /* Length of RSA-wrapped FEK blob */
+    uint32_t sid_offset;            /* Offset to user SID */
+    uint32_t sid_length;            /* Length of user SID */
+};
+
+/* Parsed EFS attribute header */
+struct ntfs_efs_info {
+    uint32_t version;              /* EFS version (2 or 3) */
+    uint32_t ddf_count;            /* Number of DDF entries */
+    struct ntfs_efs_ddf ddfs[NTFS_EFS_MAX_DDF]; /* Parsed DDF array */
+    const uint8_t *raw_data;       /* Pointer to raw $EFS content */
+    uint32_t raw_length;           /* Length of raw $EFS content */
+};
+
+/* FEK cache entry */
+struct ntfs_efs_fek_entry {
+    uint64_t inode;                /* MFT inode this FEK belongs to */
+    uint8_t  fek[NTFS_EFS_FEK_LEN]; /* Plaintext AES-256 FEK */
+    uint8_t  valid;                /* 1 if entry is populated */
+    uint64_t last_access;          /* Simple counter for LRU eviction */
+};
+
+/* Parse the $EFS attribute from an MFT record.
+ * Locates the $LOGGED_UTILITY_STREAM (type 0x100) named "$EFS",
+ * decodes the EFS header and DDF entries.
+ * record: raw MFT record buffer (after fixup).
+ * hdr: parsed MFT record header.
+ * out: filled with parsed EFS info.
+ * Returns NTFS_OK if $EFS found and parsed, NTFS_ERR_NOT_FOUND if absent. */
+int ntfs_efs_parse(const uint8_t *record, const struct ntfs_mft_header *hdr,
+                   struct ntfs_efs_info *out);
+
+/* Find the DDF entry matching a certificate thumbprint.
+ * info: parsed EFS info from ntfs_efs_parse().
+ * thumbprint: 20-byte SHA-1 certificate thumbprint to match.
+ * out_ddf: filled with the matching DDF entry.
+ * Returns NTFS_OK on match, NTFS_ERR_ACCESS_DENIED if no match. */
+int ntfs_efs_find_ddf(const struct ntfs_efs_info *info,
+                      const uint8_t *thumbprint,
+                      struct ntfs_efs_ddf *out_ddf);
+
+/* Unwrap the FEK using CNG RSA private key.
+ * ddf: DDF entry containing the RSA-wrapped FEK blob.
+ * efs_raw: raw $EFS attribute content (for blob access).
+ * fek_out: 32-byte buffer for the plaintext AES-256 FEK.
+ * Returns NTFS_OK on success, NTFS_ERR_NOT_READY if CNG not initialized. */
+int ntfs_efs_unwrap_fek(const struct ntfs_efs_ddf *ddf,
+                        const uint8_t *efs_raw,
+                        uint8_t *fek_out);
+
+/* Decrypt file data in-place using the FEK.
+ * fek: 32-byte AES-256 key.
+ * buf: buffer to decrypt (modified in-place).
+ * len: number of bytes to decrypt.
+ * Returns NTFS_OK on success, NTFS_ERR_NOT_READY if CNG not initialized. */
+int ntfs_efs_decrypt_data(const uint8_t *fek, void *buf, uint64_t len);
+
+/* Encrypt file data in-place using the FEK.
+ * fek: 32-byte AES-256 key.
+ * buf: buffer to encrypt (modified in-place).
+ * len: number of bytes to encrypt.
+ * Returns NTFS_OK on success, NTFS_ERR_NOT_READY if CNG not initialized. */
+int ntfs_efs_encrypt_data(const uint8_t *fek, void *buf, uint64_t len);
+
+/* Cache operations for FEK per-inode caching. */
+int ntfs_efs_cache_lookup(struct ntfs_volume *vol, uint64_t inode,
+                          uint8_t *fek_out);
+void ntfs_efs_cache_store(struct ntfs_volume *vol, uint64_t inode,
+                          const uint8_t *fek);
+void ntfs_efs_cache_evict(struct ntfs_volume *vol, uint64_t inode);
+
+/* Add an authorized user to a file's $EFS DDF list.
+ * inode: MFT inode of the encrypted file.
+ * cert_thumbprint: 20-byte SHA-1 of the user's certificate.
+ * Returns NTFS_OK, NTFS_ERR_NOT_FOUND, or NTFS_ERR_NOT_READY. */
+int ntfs_efs_add_user(struct ntfs_volume *vol, uint64_t inode,
+                      const uint8_t *cert_thumbprint);
+
+/* Read data from an encrypted non-resident attribute.
+ * Reads raw data from disk, then decrypts via FEK.
+ * Returns bytes read on success, -1 on error. */
+int64_t ntfs_read_encrypted_data(struct ntfs_volume *vol,
+                                  const uint8_t *record,
+                                  const struct ntfs_mft_header *hdr,
+                                  const struct ntfs_data_run *runs,
+                                  int run_count,
+                                  uint64_t real_size,
+                                  uint64_t file_offset,
+                                  uint64_t length,
+                                  void *buffer);
+
+/* Write data to an encrypted file.
+ * Encrypts data with FEK before writing to disk.
+ * Returns NTFS_OK, NTFS_ERR_NOT_READY, or NTFS_ERR_*. */
+int ntfs_write_encrypted_data(struct ntfs_volume *vol, uint64_t inode,
+                               uint64_t offset, uint64_t length,
+                               const void *buffer);

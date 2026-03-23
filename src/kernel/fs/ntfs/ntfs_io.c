@@ -250,6 +250,17 @@ int64_t ntfs_read_file_data(const uint8_t *record,
                                               file_offset, length, buffer);
         }
 
+        /* Check for encrypted attribute (flag 0x4000) — EFS §9.3 */
+        if (ah.flags & NTFS_ATTR_FLAG_ENCRYPTED) {
+            /* Mutual exclusion: cannot be both compressed and encrypted */
+            if (ah.flags & NTFS_ATTR_FLAG_COMPRESSED)
+                return -1;
+            return ntfs_read_encrypted_data(vol, record, hdr,
+                                             runs, run_count,
+                                             nrhdr.real_size,
+                                             file_offset, length, buffer);
+        }
+
         return ntfs_read_data(vol, runs, run_count, nrhdr.real_size,
                               file_offset, length, buffer);
     }

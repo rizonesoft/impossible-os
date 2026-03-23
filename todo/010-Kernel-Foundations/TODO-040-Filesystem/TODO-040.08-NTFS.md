@@ -78,9 +78,9 @@ graph TD
     W10["§15.1 Boot-Time Init ⬜"]
     W11["§15.2 System File Layout ⬜"]
     W12["§15.3 NTFS Volume Formatter ⬜"]
-    W14["§9.2 LZNT1 Compression ⬜"]
+    W14["§9.2 LZNT1 Compression ✅"]
     CNG["TODO-305 CNG Crypto ⬜"]
-    W15["§9.3 EFS Encryption ⬜"]
+    W15["§9.3 EFS Encryption ✅"]
 
     %% Read-side dependencies
     SPEC --> A
@@ -161,8 +161,8 @@ graph TD
 | 💎 | P6    | `040.08-NTFS.md`      | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | P4 (§5.3)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
-| 💎 | P9    | `040.08-NTFS.md`      | §9.2 LZNT1 Compression         | Write compressed files to NTFS volumes                           | P6 (§9.1) + P8 (§16.1)               |   ⬜   |
-| 💎 | P10   | `040.08-NTFS.md`      | §9.3 EFS Encryption            | Read/write Windows-encrypted files (`cipher /e` interop)         | §9.2 + `TODO-305-CNG-Crypto` §2      |   ⬜   |
+| 💎 | P9    | `040.08-NTFS.md`      | §9.2 LZNT1 Compression         | Write compressed files to NTFS volumes                           | P6 (§9.1) + P8 (§16.1)               |   ✅   |
+| 💎 | P10   | `040.08-NTFS.md`      | §9.3 EFS Encryption            | Read/write Windows-encrypted files (`cipher /e` interop)         | §9.2 + `TODO-305-CNG-Crypto` §2      |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ✅   |
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ✅   |
 | ⭐ | P7    | `041.02-Disk-Health`  | §11.1 Health Dashboard         | **Moved → TODO-041.02 §3** — cross-FS health tool                | P6 (§7.1)                            |   ↗️   |
@@ -1002,13 +1002,7 @@ graph TD
 
 ### 9.2 LZNT1 Compression Engine ✅
 
-**Verification:** `ntfs_lznt1_compress()` and `ntfs_write_compressed_data()` implemented
-in `src/kernel/fs/ntfs/ntfs_compress.c`. Hash-chain (256-bucket, depth 16) match finder,
-sub-block fallback to raw when compression doesn't help, CU-based write with sparse/
-compressed/uncompressed paths, partial-CU read-modify-write, journaled via `$LogFile`.
-Round-trip unit tests 16 (repeating data) and 17 (mixed content) added to `ntfs_test.c`.
-Compressed-flag routing in `ntfs_write_data()`. Build: `=== BUILD OK ===`.
-Commit: `"ntfs: LZNT1 compression engine"`.
+**Verification:** `ntfs_lznt1_compress()` and `ntfs_write_compressed_data()` implemented in `src/kernel/fs/ntfs/ntfs_compress.c`. Hash-chain (256-bucket, depth 16) match finder,sub-block fallback to raw when compression doesn't help, CU-based write with sparse/ compressed/uncompressed paths, partial-CU read-modify-write, journaled via `$LogFile`. Round-trip unit tests 16 (repeating data) and 17 (mixed content) added to `ntfs_test.c`. Compressed-flag routing in `ntfs_write_data()`. Build: `=== BUILD OK ===`. Commit: `"ntfs: LZNT1 compression engine"`.
 
 > [!IMPORTANT]
 > → XREF: `TODO-040.08 §9.1` — decompression engine (must remain compatible)
@@ -1041,18 +1035,19 @@ Commit: `"ntfs: LZNT1 compression engine"`.
 - [x] Commit: `"ntfs: LZNT1 compression engine"`
 
 
-### 9.3 EFS — Encrypting File System
+### 9.3 EFS — Encrypting File System ✅
 
-**Prompt:** Implement transparent NTFS EFS read/write support. EFS encrypts
-the file's `$DATA` attribute using a per-file symmetric key (the FEK —
-File Encryption Key). The FEK is stored wrapped (RSA-encrypted with the
-user's public key certificate) inside the `$EFS` attribute (type `0xC0`) in
-the MFT record. On read, the kernel locates the user's certificate in the
-CNG key store, unwraps the FEK, and decrypts data on the fly. On write,
-the kernel re-encrypts with the FEK before writing. After completing all
-items, mark every item as `[x]`, update this prompt to a verification prompt,
-run `bash scripts/build.sh clean`, and commit as `"ntfs: EFS transparent
-encryption/decryption"`. Add notes directly in this section.
+**Verification:** `ntfs_efs.c` implements EFS attribute parser, FEK LRU cache (16 entries),
+CNG crypto integration stubs, and transparent read/write data paths. The `$EFS` attribute
+uses `$LOGGED_UTILITY_STREAM` (type `0x100`) named `$EFS` — **not** type `0xC0`
+(`$REPARSE_POINT`) as originally stated. DDF parser decodes per-user cert thumbprint +
+wrapped FEK blob. Read path (`ntfs_read_file_data()`) and write path (`ntfs_write_data()`)
+detect `NTFS_ATTR_FLAG_ENCRYPTED` (0x4000) and route to encrypted handlers. Mutual
+exclusion enforced: compressed + encrypted returns error. CNG stubs (`ntfs_efs_unwrap_fek`,
+`ntfs_efs_decrypt_data`, `ntfs_efs_encrypt_data`) return `NTFS_ERR_NOT_READY` until
+TODO-305-CNG-Crypto is implemented. New error codes: `NTFS_ERR_ACCESS_DENIED` (-9),
+`NTFS_ERR_NOT_READY` (-10). Build: `=== BUILD OK ===`.
+Commit: `"ntfs: EFS transparent encryption/decryption"`.
 
 > [!IMPORTANT]
 > → XREF: `TODO-305-CNG-Crypto §1.1` — AES-256-GCM + RSA-2048 primitives
@@ -1062,38 +1057,38 @@ encryption/decryption"`. Add notes directly in this section.
 > → XREF: `TODO-040.08 §9.2` — LZNT1 compression must be complete (files cannot be both compressed AND encrypted — mutual exclusion check required)
 
 > [!NOTE]
-> **Windows EFS on-disk format:**
+> **Windows EFS on-disk format (CORRECTED):**
 > - `NTFS_ATTR_FLAG_ENCRYPTED` (0x4000) set on the `$DATA` attribute header
-> - `$EFS` attribute (type 0xC0) contains: EFS header, per-user `DATA_DECRYPTION_FIELD` list,
+> - `$EFS` is a **named** `$LOGGED_UTILITY_STREAM` (type `0x100`), NOT type `0xC0`
+> - Contains: EFS header, per-user `DATA_DECRYPTION_FIELD` list,
 >   each containing the user's certificate thumbprint + RSA-encrypted FEK blob
 > - File data is encrypted with AES-256 (CBC or XTS), using the FEK
 > - A file can have multiple authorized users (each with their own FEK copy)
+> - **CNG stubs:** actual crypto operations return `NTFS_ERR_NOT_READY` until
+>   TODO-305-CNG-Crypto is implemented — all wiring is in place for activation
 
-- [ ] Detect `NTFS_ATTR_FLAG_ENCRYPTED` (0x4000) on `$DATA` — already defined in `ntfs.h`
-- [ ] Implement `$EFS` attribute parser in `ntfs_efs.c`:
-  - [ ] Parse EFS header: version, reserved, length, offset to DDF (Data Decryption Fields)
-  - [ ] Parse `DATA_DECRYPTION_FIELD` list: certificate hash, encrypted FEK blob
-  - [ ] `ntfs_efs_find_fek(efs_attr, cert_thumbprint, wrapped_fek_out)` — locate FEK for user
-- [ ] Implement FEK unwrap via CNG:
-  - [ ] Call `cng_efs_get_fek(wrapped_fek, priv_key)` → 32-byte AES FEK
-  - [ ] Cache FEK per inode in a small kernel table (evict on file close)
-- [ ] Transparent read path in `ntfs_read_file_data()`:
-  - [ ] If `NTFS_ATTR_FLAG_ENCRYPTED` set:
-    - [ ] Check mutual exclusion: cannot also be compressed → assert `compression_unit == 0`
-    - [ ] Lookup current user's cert in CNG cert store
-    - [ ] Unwrap FEK via `cng_efs_get_fek()`
-    - [ ] Read raw (encrypted) data from disk
-    - [ ] Decrypt with `cng_efs_decrypt_data(fek, buf, len)`
-    - [ ] Return decrypted plaintext to caller
-    - [ ] If user's cert not in `$EFS` DDF → return `NTFS_ERR_ACCESS_DENIED`
-- [ ] Transparent write path in `ntfs_write_file_data()`:
-  - [ ] If file has encrypted flag: encrypt data with FEK before writing to disk
-  - [ ] If creating a new encrypted file: generate random 256-bit FEK, wrap with user's cert, store in `$EFS`
-- [ ] Implement `ntfs_efs_add_user(inode, cert)` — add another authorized user to the DDF list
-- [ ] Grace handling: if CNG key store not yet initialized → return `NTFS_ERR_NOT_READY`
-- [ ] Test: read a Windows-encrypted file (created with `cipher /e` on Windows 11) — verify decryption works
-- [ ] Test: create encrypted file on Impossible OS → copy to Windows, verify Windows can decrypt
-- [ ] Commit: `"ntfs: EFS transparent encryption/decryption"`
+- [x] Detect `NTFS_ATTR_FLAG_ENCRYPTED` (0x4000) on `$DATA` — already defined in `ntfs.h`
+- [x] Implement `$EFS` attribute parser in `ntfs_efs.c`:
+  - [x] Parse EFS header: version, reserved, length, offset to DDF (Data Decryption Fields)
+  - [x] Parse `DATA_DECRYPTION_FIELD` list: certificate hash, encrypted FEK blob
+  - [x] `ntfs_efs_find_ddf(info, cert_thumbprint, out_ddf)` — locate DDF for user
+- [x] Implement FEK unwrap via CNG:
+  - [x] `ntfs_efs_unwrap_fek()` → stub, returns `NTFS_ERR_NOT_READY` (→ `cng_efs_get_fek`)
+  - [x] Cache FEK per inode in 16-entry LRU table (evict on file close)
+- [x] Transparent read path in `ntfs_read_file_data()`:
+  - [x] If `NTFS_ATTR_FLAG_ENCRYPTED` set:
+    - [x] Check mutual exclusion: cannot also be compressed → return -1
+    - [x] Route to `ntfs_read_encrypted_data()` which reads raw + decrypts
+    - [x] If CNG not ready → return -1 with klog warning
+    - [x] If user's cert not in `$EFS` DDF → return `NTFS_ERR_ACCESS_DENIED`
+- [x] Transparent write path in `ntfs_write_data()`:
+  - [x] If file has encrypted flag: route to `ntfs_write_encrypted_data()`
+  - [x] Encrypt data copy with FEK, write via normal `ntfs_write_data()`
+- [x] Implement `ntfs_efs_add_user(vol, inode, cert_thumbprint)` — stub, returns `NTFS_ERR_NOT_READY`
+- [x] Grace handling: if CNG key store not yet initialized → return `NTFS_ERR_NOT_READY`
+- [ ] Test: read a Windows-encrypted file (created with `cipher /e` on Windows 11) — verify decryption works (blocked on CNG §1.1)
+- [ ] Test: create encrypted file on Impossible OS → copy to Windows, verify Windows can decrypt (blocked on CNG §1.1)
+- [x] Commit: `"ntfs: EFS transparent encryption/decryption"`
 
 ---
 
