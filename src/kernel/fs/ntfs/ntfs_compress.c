@@ -14,7 +14,7 @@
  *   - 2-byte header: bit 15 = compressed flag, bits 0-11 = data size - 1
  *   - If compressed: token stream of literal bytes + back-references
  *   - If not compressed: raw 4096 bytes
- *   - Token: bit 7 = 1 → back-reference (offset,length), 0 → literal byte
+ *   - Token: bit 7 = 1 -> back-reference (offset,length), 0 -> literal byte
  *   - Back-reference displacement bits vary with current output position
  * ============================================================================ */
 
@@ -640,9 +640,9 @@ int ntfs_lznt1_compress(const uint8_t *src, uint32_t src_len,
  *
  * Writes data to a compressed NTFS file by compression unit (CU), typically
  * 16 clusters = 64 KB.  For each CU:
- *   - All-zero input → sparse run (no disk allocation)
- *   - Compresses well → allocate fewer clusters, write compressed data
- *   - Doesn't compress → allocate full CU, write raw data
+ *   - All-zero input -> sparse run (no disk allocation)
+ *   - Compresses well -> allocate fewer clusters, write compressed data
+ *   - Doesn't compress -> allocate full CU, write raw data
  *
  * Partial CU writes use read-modify-write: decompress existing CU data,
  * apply the modification, recompress, write back.
@@ -720,7 +720,7 @@ static int write_one_compressed_cu(struct ntfs_volume *vol,
         runs[*run_count].lcn       = NTFS_LCN_SPARSE;
         runs[*run_count].length    = cu_clusters;
         (*run_count)++;
-        klog(LOG_DEBUG, "ntfs", "compress: CU@%llu → sparse", cu_start_vcn);
+        klog(LOG_DEBUG, "ntfs", "compress: CU@%llu -> sparse", cu_start_vcn);
         return NTFS_OK;
     }
 
@@ -808,7 +808,7 @@ static int write_one_compressed_cu(struct ntfs_volume *vol,
         (*run_count)++;
 
         klog(LOG_DEBUG, "ntfs",
-             "compress: CU@%llu → %llu/%llu clusters (%d bytes)",
+             "compress: CU@%llu -> %llu/%llu clusters (%d bytes)",
              cu_start_vcn, comp_clusters, cu_clusters, comp_len);
         return NTFS_OK;
     }
@@ -846,7 +846,7 @@ store_uncompressed:
         (*run_count)++;
 
         klog(LOG_DEBUG, "ntfs",
-             "compress: CU@%llu → uncompressed (%llu clusters)",
+             "compress: CU@%llu -> uncompressed (%llu clusters)",
              cu_start_vcn, cu_clusters);
         return NTFS_OK;
     }

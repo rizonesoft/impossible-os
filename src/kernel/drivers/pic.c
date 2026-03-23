@@ -2,8 +2,8 @@
  * pic.c — 8259 Programmable Interrupt Controller driver
  *
  * Initializes the PIC in cascade mode and remaps IRQs:
- *   Master (PIC1): IRQ 0-7  → interrupt vectors 32-39
- *   Slave  (PIC2): IRQ 8-15 → interrupt vectors 40-47
+ *   Master (PIC1): IRQ 0-7  -> interrupt vectors 32-39
+ *   Slave  (PIC2): IRQ 8-15 -> interrupt vectors 40-47
  *
  * This avoids conflicts with CPU exceptions (0-31).
  * ============================================================================ */
@@ -61,9 +61,9 @@ void pic_init(void)
     io_wait();
 
     /* ICW2: Set interrupt vector offsets */
-    outb(PIC1_DATA, PIC1_OFFSET);   /* Master: IRQ 0-7  → INT 32-39 */
+    outb(PIC1_DATA, PIC1_OFFSET);   /* Master: IRQ 0-7  -> INT 32-39 */
     io_wait();
-    outb(PIC2_DATA, PIC2_OFFSET);   /* Slave:  IRQ 8-15 → INT 40-47 */
+    outb(PIC2_DATA, PIC2_OFFSET);   /* Slave:  IRQ 8-15 -> INT 40-47 */
     io_wait();
 
     /* ICW3: Configure cascade wiring */
@@ -87,7 +87,7 @@ void pic_init(void)
 
     pic_ready = 1;
 
-    klog(LOG_INFO, "irq", "PIC remapped (IRQ 0-7 → INT 32-39, IRQ 8-15 → INT 40-47)");
+    klog(LOG_INFO, "irq", "PIC remapped (IRQ 0-7 -> INT 32-39, IRQ 8-15 -> INT 40-47)");
 
     (void)mask1;
     (void)mask2;

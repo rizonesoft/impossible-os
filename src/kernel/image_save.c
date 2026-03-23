@@ -76,7 +76,7 @@ static void vfs_write_callback(void *context, void *data, int size)
     ctx->len = new_len;
 }
 
-/* ---- Channel swap: BGRA → RGBA ----------------------------------------- */
+/* ---- Channel swap: BGRA -> RGBA ----------------------------------------- */
 
 /* stb_image_write expects RGBA channel order (R at byte offset 0).
  * Our framebuffer/image_t uses BGRA (0xAARRGGBB = B at byte offset 0).
@@ -164,10 +164,10 @@ int image_save_bmp(const image_t *img, const char *path)
 
     byte_count = img->width * img->height * 4;
 
-    /* Convert BGRA → RGBA for stb_image_write */
+    /* Convert BGRA -> RGBA for stb_image_write */
     rgba = bgra_to_rgba_copy(img);
     if (!rgba) {
-        printk("image_save: BGRA→RGBA alloc failed\n");
+        printk("image_save: BGRA->RGBA alloc failed\n");
         return -1;
     }
 
@@ -215,10 +215,10 @@ int image_save_png(const image_t *img, const char *path)
 
     byte_count = img->width * img->height * 4;
 
-    /* Convert BGRA → RGBA for stb_image_write */
+    /* Convert BGRA -> RGBA for stb_image_write */
     rgba = bgra_to_rgba_copy(img);
     if (!rgba) {
-        printk("image_save: BGRA→RGBA alloc failed\n");
+        printk("image_save: BGRA->RGBA alloc failed\n");
         return -1;
     }
 

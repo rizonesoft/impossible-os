@@ -3,7 +3,7 @@
  *
  * Scaling strategy:
  *   - Upscale or downscale ≤2x: bilinear interpolation (smooth)
- *   - Downscale >2x: box filter (averages source pixels → sharper results)
+ *   - Downscale >2x: box filter (averages source pixels -> sharper results)
  *
  * Fit modes:
  *   STRETCH — distort to fill exact target dimensions
@@ -116,7 +116,7 @@ static void scale_bilinear(image_t *dst, const image_t *src,
             uint32_t fx = sx_fp & (FP_ONE - 1);
 
             /* Fast path: exact pixel boundary (no interpolation needed).
-             * Also avoids uint32_t overflow: (65536 * 65536) = 2^32 → 0. */
+             * Also avoids uint32_t overflow: (65536 * 65536) = 2^32 -> 0. */
             if (fx == 0 && fy == 0) {
                 dst->pixels[dy * dst->width + dx] = img_pixel(src, sx, sy);
                 continue;
@@ -403,7 +403,7 @@ int image_scale(image_t *dst, const image_t *src,
     }
 
     if (result == 0) {
-        printk("[IMG] Scaled %ux%u → %ux%u (mode %d, %s)\n",
+        printk("[IMG] Scaled %ux%u -> %ux%u (mode %d, %s)\n",
                src->width, src->height, dst->width, dst->height,
                (int)mode, dst->from_pmm ? "PMM" : "heap");
     }

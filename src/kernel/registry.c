@@ -1890,7 +1890,7 @@ static void hive_str_append(char *dst, uint32_t cap,
     dst[i] = '\0';
 }
 
-/* ---- File copy helper (for .hive → .hive.bak backup) ---- */
+/* ---- File copy helper (for .hive -> .hive.bak backup) ---- */
 
 static int hive_copy_file(const char *src_path, const char *dst_path)
 {
@@ -2024,12 +2024,12 @@ int hive_save(reg_key_t *root, const char *filepath)
         }
     }
 
-    /* === STEP 2: Backup old .hive → .hive.bak === */
+    /* === STEP 2: Backup old .hive -> .hive.bak === */
     hive_copy_file(filepath, bak_path);
 
-    /* === STEP 3: Atomic rename .hive.log → .hive === */
+    /* === STEP 3: Atomic rename .hive.log -> .hive === */
     if (vfs_rename(log_path, filepath) != 0) {
-        klog(LOG_ERROR, "hive", "Rename '%s' → '%s' failed, falling back to copy",
+        klog(LOG_ERROR, "hive", "Rename '%s' -> '%s' failed, falling back to copy",
              log_path, filepath);
         /* Fallback: overwrite .hive with new data (pre-vfs_rename behaviour) */
         vfs_create(filepath, 1);
@@ -2100,7 +2100,7 @@ static int hive_validate_file(const char *path)
 }
 
 /* Try to recover from a journal or backup file.
- * Priority: .hive.log (crash during write) → .hive → .hive.bak
+ * Priority: .hive.log (crash during write) -> .hive -> .hive.bak
  * Returns the best path to load from, or NULL if none are valid. */
 static const char *hive_best_source(const char *filepath,
                                      char *log_path, char *bak_path)

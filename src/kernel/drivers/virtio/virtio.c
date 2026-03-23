@@ -715,7 +715,7 @@ int virtio_pci_setup_msix(struct virtio_pci_dev *dev,
     *config_vector = vec_config;
 
     klog(LOG_DEBUG, "virtio",
-           "MSI-X enabled: %u entries, queue→vec 0x%x, config→vec 0x%x",
+           "MSI-X enabled: %u entries, queue->vec 0x%x, config->vec 0x%x",
            (uint64_t)table_size, (uint64_t)vec_queue, (uint64_t)vec_config);
 
     return 0;

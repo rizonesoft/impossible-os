@@ -104,7 +104,7 @@ void lapic_init(void)
     klog(LOG_DEBUG, "lapic", "init: SVR/TPR/ESR done");
 
     /* ---- Mask ALL LVT entries (xv6 pattern) ----
-     * This prevents any stray interrupts during the PIC→APIC transition.
+     * This prevents any stray interrupts during the PIC->APIC transition.
      * Timer will be unmasked later by lapic_timer_init().
      * LINT0/LINT1/PCINT/Thermal must stay masked when using IOAPIC. */
 
@@ -365,7 +365,7 @@ static int cal_try_hyperv_msr(void)
 
     cal_ticks_per_ms = (uint32_t)(freq / 1000);
     klog(LOG_INFO, "lapic",
-         "Tier 1: Hyper-V MSR 0x40000023 → %u ticks/ms (%u MHz bus)",
+         "Tier 1: Hyper-V MSR 0x40000023 -> %u ticks/ms (%u MHz bus)",
          (uint64_t)cal_ticks_per_ms,
          (uint64_t)(cal_ticks_per_ms / 1000));
     return 1;
@@ -387,7 +387,7 @@ static int cal_try_vmware_cpuid(void)
 
     cal_ticks_per_ms = ebx;  /* kHz = ticks per ms */
     klog(LOG_INFO, "lapic",
-         "Tier 1: %s CPUID 0x40000010 → %u ticks/ms (%u MHz bus)",
+         "Tier 1: %s CPUID 0x40000010 -> %u ticks/ms (%u MHz bus)",
          platform_name(),
          (uint64_t)cal_ticks_per_ms,
          (uint64_t)(cal_ticks_per_ms / 1000));
@@ -397,7 +397,7 @@ static int cal_try_vmware_cpuid(void)
 /* Intel CPUID leaf 0x15: Time Stamp Counter / Core Crystal Clock
  *   EAX = denominator (TSC / crystal ratio)
  *   EBX = numerator   (TSC / crystal ratio)
- *   ECX = crystal frequency in Hz (0 on some CPUs → use lookup table)
+ *   ECX = crystal frequency in Hz (0 on some CPUs -> use lookup table)
  *
  * TSC freq = ECX * EBX / EAX.
  * On most Intel CPUs, LAPIC bus freq ≈ TSC freq (the LAPIC timer is
@@ -454,7 +454,7 @@ static int cal_try_cpuid_15h(void)
 
     cal_ticks_per_ms = (uint32_t)(tsc_freq / 1000);
     klog(LOG_INFO, "lapic",
-         "Tier 1: CPUID 0x15 → %u ticks/ms (crystal=%u Hz, ratio=%u/%u)",
+         "Tier 1: CPUID 0x15 -> %u ticks/ms (crystal=%u Hz, ratio=%u/%u)",
          (uint64_t)cal_ticks_per_ms,
          crystal_hz,
          (uint64_t)ebx, (uint64_t)eax);
@@ -544,7 +544,7 @@ static int cal_try_hpet(void)
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
     klog(LOG_INFO, "lapic",
-         "Tier 2: HPET calibration → %u ticks/ms (%u MHz bus, HPET %u MHz)",
+         "Tier 2: HPET calibration -> %u ticks/ms (%u MHz bus, HPET %u MHz)",
          (uint64_t)cal_ticks_per_ms,
          (uint64_t)(cal_ticks_per_ms / 1000),
          (uint64_t)(hpet_freq / 1000000));
@@ -605,7 +605,7 @@ static int cal_try_pmtimer(void)
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
     klog(LOG_INFO, "lapic",
-         "Tier 2: PM Timer calibration → %u ticks/ms (%u MHz bus, port=0x%x %s)",
+         "Tier 2: PM Timer calibration -> %u ticks/ms (%u MHz bus, port=0x%x %s)",
          (uint64_t)cal_ticks_per_ms,
          (uint64_t)(cal_ticks_per_ms / 1000),
          (uint64_t)port,
@@ -635,7 +635,7 @@ void lapic_timer_calibrate(void)
         return;
     }
 
-    /* Tier 2: Modern hardware timers (HPET → PM Timer) */
+    /* Tier 2: Modern hardware timers (HPET -> PM Timer) */
     if (cal_try_hpet() || cal_try_pmtimer()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 2 succeeded -- no PIT needed");
@@ -682,7 +682,7 @@ static inline uint8_t cal_inb(uint16_t port)
  *   1. Program PIT channel 2 in one-shot mode for CAL_MS milliseconds.
  *   2. Start the LAPIC timer counting down from 0xFFFFFFFF.
  *   3. Busy-wait for PIT output bit (port 0x61, bit 5) to go high.
- *   4. Read remaining LAPIC count → elapsed = 0xFFFFFFFF - remaining.
+ *   4. Read remaining LAPIC count -> elapsed = 0xFFFFFFFF - remaining.
  *   5. ticks_per_ms = elapsed / CAL_MS.
  *
  * If PIT polling hangs (VBox NEM, some Hyper-V configs), a spin-counter
@@ -715,7 +715,7 @@ static int cal_try_pit(void)
     /* Re-arm gate: OFF then ON starts the countdown */
     gate = cal_inb(0x61);
     cal_outb(0x61, gate & ~0x01);  /* gate OFF */
-    cal_outb(0x61, gate | 0x01);   /* gate ON → PIT starts counting */
+    cal_outb(0x61, gate | 0x01);   /* gate ON -> PIT starts counting */
 
     /* ---- 2. Start LAPIC timer from max value (one-shot, masked) ---- */
     lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
@@ -747,7 +747,7 @@ static int cal_try_pit(void)
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
     klog(LOG_INFO, "lapic",
-         "Tier 3: PIT ch2 calibration → %u ticks/ms (%u MHz bus)",
+         "Tier 3: PIT ch2 calibration -> %u ticks/ms (%u MHz bus)",
          (uint64_t)cal_ticks_per_ms,
          (uint64_t)(cal_ticks_per_ms / 1000));
     return 1;

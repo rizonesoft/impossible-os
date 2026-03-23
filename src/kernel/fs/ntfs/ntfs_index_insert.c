@@ -116,7 +116,7 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
     lcn = ntfs_alloc_clusters(vol, clusters_per_indx, 0);
     if (lcn == 0) { kfree(rec); return NTFS_ERR_FULL; }
 
-    klog(LOG_DEBUG, "ntfs", "alloc_indx_vcn: VCN %llu → LCN %llu", new_vcn, lcn);
+    klog(LOG_DEBUG, "ntfs", "alloc_indx_vcn: VCN %llu -> LCN %llu", new_vcn, lcn);
 
     /* Extend or create $INDEX_ALLOCATION attribute to include new run.
      * For simplicity: remove old IA attr, rebuild with extended run list.

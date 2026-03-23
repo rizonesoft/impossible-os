@@ -16,15 +16,15 @@
  *  10. Long filename (200+ chars, UTF-16LE)
  *  11. LZNT1 decompressor unit test (handcrafted stream)
  *  12. LZNT1 known-content file (transparent decompression)
- *  13. LZNT1 sparse zero file (all-zero CU → zero-fill)
+ *  13. LZNT1 sparse zero file (all-zero CU -> zero-fill)
  *  14. LZNT1 uncompressed file (random data stored raw)
  *  15. LZNT1 mixed CU file (compress + random + compress)
- *  16. LZNT1 round-trip compress→decompress (byte-exact, repeating data)
- *  17. LZNT1 round-trip compress→decompress (byte-exact, mixed content)
+ *  16. LZNT1 round-trip compress->decompress (byte-exact, repeating data)
+ *  17. LZNT1 round-trip compress->decompress (byte-exact, mixed content)
  *  18. MFT cache hit rate (repeated inode 5 access)
  *  19. MFT cache pinned entries (inodes 0/5 survive eviction)
  *  20. MFT cache LRU eviction (65+ unique inodes)
- *  21. MFT cache invalidation (ntfs_cache_invalidate → miss)
+ *  21. MFT cache invalidation (ntfs_cache_invalidate -> miss)
  *  22. MFT cache telemetry (hits/misses/evictions counters)
  *  23. $SECURITY_DESCRIPTOR parsing (owner SID, DACL)
  *  24. $REPARSE_POINT detection and decoding
@@ -504,7 +504,7 @@ static void test_long_filename(struct vfs_node *root)
 {
     /* The test image has a file with a 200+ character name.
      * Search root for any entry with name length > 100 characters.
-     * This verifies UTF-16LE → ASCII decoding and length handling. */
+     * This verifies UTF-16LE -> ASCII decoding and length handling. */
     struct vfs_dirent *de;
     uint32_t idx = 0;
     int found = 0;
@@ -646,7 +646,7 @@ static void test_dirty_flag(struct ntfs_volume *vol)
 static void test_lznt1_decompress(void)
 {
     /* ---- Sub-block 1: uncompressed, 16 bytes ---- */
-    /* header = (16-1) | (0x3 << 12) | 0 = 0x300F  → little-endian: 0F 30 */
+    /* header = (16-1) | (0x3 << 12) | 0 = 0x300F  -> little-endian: 0F 30 */
     /* data = "HelloHelloWorld!" (16 bytes exactly) */
 
     /* ---- Sub-block 2: compressed, produces "ABCABC" (6 bytes) ---- */
@@ -659,7 +659,7 @@ static void test_lznt1_decompress(void)
      *   token 3: back-reference: at dst_pos=3, displacement_bits=4, len_bits=12
      *            displacement=3 (3-1=2 in field, but disp= field+1), length=3
      *            ref = ((disp-1) << len_bits) | (length-3)
-     *            ref = (2 << 12) | 0 = 0x2000  → LE: 00 20
+     *            ref = (2 << 12) | 0 = 0x2000  -> LE: 00 20
      *   6 bytes of compressed data, header = (6-1) | (0x3<<12) | 0x8000 = 0xB005
      *   Little-endian: 05 B0
      */
@@ -668,7 +668,7 @@ static void test_lznt1_decompress(void)
         0x0F, 0x30,                                          /* header */
         'H','e','l','l','o','H','e','l','l','o','W','o','r','l','d','!',
 
-        /* Sub-block 2: compressed → "ABCABC" */
+        /* Sub-block 2: compressed -> "ABCABC" */
         0x05, 0xB0,                                          /* header: (6-1) | 0xB000 */
         0x08,                                                /* flag byte */
         0x41, 0x42, 0x43,                                    /* A, B, C */
@@ -1078,7 +1078,7 @@ static int lznt1_roundtrip(const char *name, const uint8_t *src,
     }
 
     klog(LOG_DEBUG, "ntfs-test",
-         "%s: %u bytes → %d compressed (%d%%)",
+         "%s: %u bytes -> %d compressed (%d%%)",
          (uint64_t)(uintptr_t)name,
          (uint64_t)src_len, (uint64_t)(int64_t)comp_len,
          (uint64_t)(uint32_t)(100u * (uint32_t)comp_len / src_len));
@@ -1329,7 +1329,7 @@ static void test_cache_eviction(struct ntfs_volume *vol)
     pmm_free_frame(buf_phys);
 }
 
-/* Test 21: ntfs_cache_invalidate() clears entry → next read is a miss */
+/* Test 21: ntfs_cache_invalidate() clears entry -> next read is a miss */
 static void test_cache_invalidate(struct ntfs_volume *vol)
 {
     uintptr_t buf_phys;
@@ -2263,7 +2263,7 @@ cleanup_del:
 }
 
 /* Test 50: Delete causing underflow -- verify merge/redistribution
- * Insert 20 entries (forces INDX), delete 15 → should trigger node merging */
+ * Insert 20 entries (forces INDX), delete 15 -> should trigger node merging */
 static void test_btree_underflow(struct ntfs_volume *vol)
 {
     int rc, i;
@@ -2614,7 +2614,7 @@ static void test_fwe_large_nonres(struct ntfs_volume *vol)
     else test_fail("fwe_large_nonres", "still resident after 8KB write");
 }
 
-/* Test 56: Resident→non-resident conversion when data grows */
+/* Test 56: Resident->non-resident conversion when data grows */
 static void test_fwe_res_to_nonres(struct ntfs_volume *vol)
 {
     int rc;

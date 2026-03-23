@@ -25,7 +25,7 @@
 #define NTFS_FILETIME_HZ          10000000ULL
 
 /* Base FILETIME for 2026-01-01T00:00:00Z -- used when no RTC is available.
- * = 1601→2026 seconds * 10^7 */
+ * = 1601->2026 seconds * 10^7 */
 #define NTFS_FILETIME_BASE_2026   134378784000000000ULL
 
 /* $FILE_NAME on-disk content size without the variable-length name.
@@ -165,7 +165,7 @@ static uint32_t build_empty_index_root(uint8_t *buf)
  * ntfs_write_mft_record -- Write an in-memory MFT record back to disk
  *
  * 1. Apply USA regeneration (§12.2) -- stamps sector last-2-bytes
- * 2. Map inode → LBA via $MFT data runs
+ * 2. Map inode -> LBA via $MFT data runs
  * 3. Write record to disk via blkdev_write()
  * 4. Invalidate the MFT cache entry
  * ============================================================================ */
@@ -571,7 +571,7 @@ int ntfs_create_directory(struct ntfs_volume *vol, uint64_t parent_inode,
 /* ============================================================================
  * ntfs_delete_file -- Delete a file from an NTFS directory
  *
- * 1. Look up file in parent directory → get inode
+ * 1. Look up file in parent directory -> get inode
  * 2. Read the file's MFT record
  * 3. Remove directory entry from parent
  * 4. Decrement hard link count
@@ -695,7 +695,7 @@ int ntfs_delete_file(struct ntfs_volume *vol, uint64_t parent_inode,
  * ntfs_rename_file -- Rename/move a file between NTFS directories
  *
  * 1. Verify target doesn't already exist (unless replacing)
- * 2. Look up the file in the old directory → get inode
+ * 2. Look up the file in the old directory -> get inode
  * 3. Remove entry from old parent's directory index
  * 4. Update $FILE_NAME attribute in the file's MFT record
  * 5. Insert entry into new parent's directory index
@@ -852,7 +852,7 @@ int ntfs_rename_file(struct ntfs_volume *vol,
     }
 
     klog(LOG_INFO, "ntfs",
-         "Renamed inode %llu: '%s' (dir %llu) → '%s' (dir %llu)",
+         "Renamed inode %llu: '%s' (dir %llu) -> '%s' (dir %llu)",
          file_inode, old_name, old_parent, new_name, new_parent);
 
     return NTFS_OK;
