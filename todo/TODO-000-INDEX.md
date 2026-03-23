@@ -44,8 +44,12 @@
 | 040.19 | [Joliet / UDF](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.19-Joliet-UDF.md)             |                |
 | 040.20 | [USB Mass Storage Class](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.20-USB-MSC.md)       |                |
 | 041 | [Filesystem Tools](010-Kernel-Foundations/TODO-041-Filesystem-Tools.md)                                  |                |
-| 040.80 | [Disk Manager](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-040.80-Disk-Manager.md)       |                |
-| 040.81 | [Disk Health Dashboard](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-040.81-Disk-Health-Dashboard.md) |                |
+| 041.01 | [Disk Manager](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.01-Disk-Manager.md)       |                |
+| 041.02 | [Disk Health Dashboard](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.02-Disk-Health-Dashboard.md) |                |
+| 041.03 | [Deleted Recovery](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.03-Deleted-Recovery.md)           |                |
+| 041.04 | [ADS Explorer](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.04-ADS-Explorer.md)                   |                |
+| 041.50 | [CMD Diskpart](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.50-CMD-Diskpart.md)                   |                |
+| 042 | [Binary System (ELF + PE32+ + EIF)](010-Kernel-Foundations/TODO-042-Binary-System.md)                        |                |
 | 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                 |                |
 | 050.01 | [Registry Engine](010-Kernel-Foundations/TODO-050-Registry/TODO-050.01-Registry-Engine.md)         |                |
 | 050.02 | [Win32 Registry API](010-Kernel-Foundations/TODO-050-Registry/TODO-050.02-Win32-Reg-API.md)        |                |
@@ -106,6 +110,7 @@
 | 280 | [ZIP](230-Core-Services/TODO-280-ZIP.md)                                      |        |
 | 290 | [Scheduler](230-Core-Services/TODO-290-Scheduler.md)                          |        |
 | 300 | [Security & Accounts](230-Core-Services/TODO-300-Security-Accounts.md)        |        |
+| 305 | [CNG Crypto — Certs, Keys, BCrypt/NCrypt, EFS](230-Core-Services/TODO-305-CNG-Crypto.md) |        |
 
 ---
 
