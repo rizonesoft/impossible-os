@@ -1,4 +1,4 @@
-# P0103 — Kernel Thread Scheduler
+# TODO-020.02-Scheduler — Kernel Thread Scheduler
 
 > **Goal:** Evolve the current simple round-robin dispatcher into a fair,
 > priority-aware, real-time-capable scheduler that prevents CPU-hungry threads
@@ -14,7 +14,7 @@
 > heap silently. See `rules.md` Known Gotchas.
 
 > [!IMPORTANT]
-> → XREF: `TODO-020-Threading-Synchronization.md §14` — The current scheduler tick
+> → XREF: `../TODO-020-Threading.md §14` — The current scheduler tick
 > source is the LAPIC timer with hardcoded ICR=10,000,000. On Hyper-V Gen 2, the
 > actual bus frequency may differ, making schedule quanta unpredictable (too fast
 > or too slow). When the Hyper-V synthetic timer enhancement (§14 Phase 2 in

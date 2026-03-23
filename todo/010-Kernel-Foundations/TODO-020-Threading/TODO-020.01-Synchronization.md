@@ -1,4 +1,4 @@
-# P0102 — Threading & Synchronization
+# TODO-020.01-Synchronization — Threading & Synchronization
 
 > **Goal:** Kernel thread infrastructure, mutual exclusion, counting semaphores,
 > read-write locks, and condition variables — the foundation for concurrent kernel

@@ -31,9 +31,10 @@
 | 013.01 | [ACPI — Tables, Power, Interrupts](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.01-ACPI.md)       |                |
 | 013.02 | [NVMe Storage Driver (built-in)](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.02-NVMe.md)         |                |
 | 013.09 | [APIC Architecture](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md)         |                |
-| 020 | [Threading & Synchronization](010-Kernel-Foundations/TODO-020-Threading-Synchronization.md)             | 🔄 In progress |
-| 021 | [Kernel Scheduler — CFS, RT, priorities](010-Kernel-Foundations/TODO-021-Scheduler.md)                  |                |
-| 022 | [IPC — Pipes, Signals, Shared Memory](010-Kernel-Foundations/TODO-022-IPC.md)                           | ✅ All done    |
+| 020 | [Threading, Scheduling & IPC](010-Kernel-Foundations/TODO-020-Threading.md)                             | 🔄 In progress |
+| 020.01 | [Threading & Synchronization](010-Kernel-Foundations/TODO-020-Threading/TODO-020.01-Synchronization.md) | 🔄 In progress |
+| 020.02 | [Kernel Scheduler — CFS, RT, priorities](010-Kernel-Foundations/TODO-020-Threading/TODO-020.02-Scheduler.md) | |
+| 020.03 | [IPC — Pipes, Signals, Shared Memory](010-Kernel-Foundations/TODO-020-Threading/TODO-020.03-IPC.md) | ✅ All done |
 | 023 | [Virtual Memory — Swap & mmap](010-Kernel-Foundations/TODO-023-Virtual-Memory.md)                       | 🔄 In progress |
 | 024 | [System Logging — klog, ring buffer, disk](010-Kernel-Foundations/TODO-024-System-Logging.md)           | 🔄 In progress |
 | 025 | [Environment Variables — env_get/set, PATH](010-Kernel-Foundations/TODO-025-Environment-Variables.md)   |                |
