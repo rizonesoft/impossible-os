@@ -445,6 +445,14 @@ void partition_mount_filesystems(void)
                 klog(LOG_WARN, "blk", "NTFS: failed to init %s", name);
                 continue;
             }
+
+            /* Initialize MFT cache (must be before sysfiles, which reads MFT).
+             * Non-fatal: mount continues without caching if this fails. */
+            ntfs_cache_init(ntfs_vol, 0);
+
+            /* Load system metafiles ($Volume label, $Bitmap, $UpCase, $MFTMirr).
+             * Non-fatal: individual failures are logged but mount continues. */
+            ntfs_load_sysfiles(ntfs_vol);
             if (next_fat32_letter <= 'Z') {
                 struct vfs_node *ntfs_root = ntfs_get_root(ntfs_vol);
                 if (ntfs_root) {
