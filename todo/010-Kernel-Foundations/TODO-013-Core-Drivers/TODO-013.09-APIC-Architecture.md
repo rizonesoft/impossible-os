@@ -8,7 +8,7 @@
 > **Spec Reference:** [`docs/specs/drivers/APIC-Architecture.md`](../../../../docs/specs/drivers/APIC-Architecture.md)
 > — Contains full register layouts, MADT parsing details, calibration procedure,
 > and the end-to-end initialization sequence.
-> **XREF:** [TODO-013-Core.md](../TODO-013-Core.md) — master built-in driver overview
+> **XREF:** [TODO-013-Core-Drivers.md](../TODO-013-Core-Drivers.md) — master built-in driver overview
 
 > [!CAUTION]
 > **Memory Rule:** LAPIC and IOAPIC MMIO regions must be mapped with **Strong Uncacheable (UC)**

@@ -12,9 +12,9 @@
 > audio, USB) live in [TODO-063-Drivers.md](../../060-Hardware-Drivers/TODO-063-Drivers.md).
 >
 > **Sub-files** — topics with dedicated implementation detail files:
-> - [TODO-013.01-ACPI.md](TODO-013-Core/TODO-013.01-ACPI.md) — Full ACPI subsystem roadmap
-> - [TODO-013.02-NVMe.md](TODO-013-Core/TODO-013.02-NVMe.md) — NVMe storage driver
-> - [TODO-013.09-APIC-Architecture.md](TODO-013-Core/TODO-013.09-APIC-Architecture.md) — APIC deep-dive (x2APIC, MSI/MSI-X, NMI watchdog)
+> - [TODO-013.01-ACPI.md](TODO-013-Core-Drivers/TODO-013.01-ACPI.md) — Full ACPI subsystem roadmap
+> - [TODO-013.02-NVMe.md](TODO-013-Core-Drivers/TODO-013.02-NVMe.md) — NVMe storage driver
+> - [TODO-013.09-APIC-Architecture.md](TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md) — APIC deep-dive (x2APIC, MSI/MSI-X, NMI watchdog)
 
 ---
 
@@ -29,15 +29,15 @@
 | 💎 | Serial (UART)           | `serial.c`         | ✅ Done       | —                                                                                 |
 | 💎 | PCI bus                 | `pci.c`            | ✅ Done       | —                                                                                 |
 | 💎 | Framebuffer (VBE)       | `framebuffer.c`    | ✅ Done       | —                                                                                 |
-| 💎 | LAPIC / IOAPIC          | `lapic.c` `ioapic.c` | ✅ Done (base) | [013.09](TODO-013-Core/TODO-013.09-APIC-Architecture.md) — x2APIC, MSI, etc. |
+| 💎 | LAPIC / IOAPIC          | `lapic.c` `ioapic.c` | ✅ Done (base) | [013.09](TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md) — x2APIC, MSI, etc. |
 | 💎 | SMP boot (SIPI)         | `smp.c`            | ✅ Done       | —                                                                                 |
-| 💎 | ACPI tables + power     | `acpi.c`           | ✅ Done (basic) | [013.01](TODO-013-Core/TODO-013.01-ACPI.md) — AML, OSPM, thermal, P/C-states |
+| 💎 | ACPI tables + power     | `acpi.c`           | ✅ Done (basic) | [013.01](TODO-013-Core-Drivers/TODO-013.01-ACPI.md) — AML, OSPM, thermal, P/C-states |
 | 💎 | PS/2 keyboard           | `keyboard.c`       | ✅ Done       | —                                                                                 |
 | 💎 | PS/2 mouse              | `mouse.c`          | ✅ Done       | —                                                                                 |
 | 💎 | AHCI (SATA)             | `ahci.c`           | ✅ Done       | —                                                                                 |
 | 💎 | ATA/IDE                 | `ata.c`            | ✅ Done       | —                                                                                 |
 | 💎 | VirtIO-blk              | `virtio_blk.c`     | ✅ Done       | —                                                                                 |
-| 💎 | NVMe                    | `nvme.c`           | ⬜ §2 P1     | [013.02](TODO-013-Core/TODO-013.02-NVMe.md)                                      |
+| 💎 | NVMe                    | `nvme.c`           | ⬜ §2 P1     | [013.02](TODO-013-Core-Drivers/TODO-013.02-NVMe.md)                                      |
 
 ---
 
@@ -107,10 +107,10 @@ graph TD
 > so the APIC calibration in 013.09 §2 can use HPET as the reference.
 >
 > **Phase 3 (APIC enhancements)** includes x2APIC, LAPIC timer calibration, MSI/MSI-X,
-> TLB shootdown, and the NMI watchdog. Full detail in [013.09](TODO-013-Core/TODO-013.09-APIC-Architecture.md).
+> TLB shootdown, and the NMI watchdog. Full detail in [013.09](TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md).
 >
 > **Phase 4 (ACPI)** adds AML interpreter (ACPICA), thermal management, sleep states,
-> P/C-states. Full detail in [013.01](TODO-013-Core/TODO-013.01-ACPI.md).
+> P/C-states. Full detail in [013.01](TODO-013-Core-Drivers/TODO-013.01-ACPI.md).
 
 > [!TIP]
 > **HPET → APIC calibration chain:** The LAPIC timer calibration in 013.09 §2 currently
@@ -135,7 +135,7 @@ LAPIC takes over. LAPIC and IOAPIC route all hardware interrupts in SMP mode.
 - [x] PCAT\_COMPAT check: PIC skipped when flag=0 (Hyper-V)
 - [x] SMP: INIT-SIPI-SIPI sequence boots all Application Processors — `smp.c`
 
-> **Enhancement roadmap →** [TODO-013.09-APIC-Architecture.md](TODO-013-Core/TODO-013.09-APIC-Architecture.md)
+> **Enhancement roadmap →** [TODO-013.09-APIC-Architecture.md](TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md)
 > covers x2APIC, calibration, MSI/MSI-X, TLB shootdown, NMI watchdog, IRQ affinity.
 
 ### 1.2 Timers (PIT + RTC)
@@ -179,14 +179,14 @@ IDs and IOAPIC base, power-off uses PM1a CNT SLP\_TYP S5 value.
 - [x] MADT parsing: LAPIC IDs, IOAPIC base, ISOs, LAPIC NMI — `acpi.c`
 - [x] ACPI shutdown / reboot — `acpi.c`
 
-> **Enhancement roadmap →** [TODO-013.01-ACPI.md](TODO-013-Core/TODO-013.01-ACPI.md)
+> **Enhancement roadmap →** [TODO-013.01-ACPI.md](TODO-013-Core-Drivers/TODO-013.01-ACPI.md)
 > covers full ACPICA integration, AML interpreter, thermal zones, P/C-states.
 
 ---
 
 ## 2. NVMe Storage Driver (Built-in) 🟠 P1
 
-> Full implementation detail: **[TODO-013.02-NVMe.md](TODO-013-Core/TODO-013.02-NVMe.md)**
+> Full implementation detail: **[TODO-013.02-NVMe.md](TODO-013-Core-Drivers/TODO-013.02-NVMe.md)**
 
 NVMe is the primary storage interface for modern solid-state drives. The driver must be
 **built-in** (not a loadable module) because the system boot partition may reside on an
@@ -212,7 +212,7 @@ The HPET (High Precision Event Timer) provides nanosecond-resolution timestamps,
 replacing the PIT as the precision timing reference. HPET is discovered via the ACPI
 HPET table (signature `"HPET"`) — available earlier than full ACPICA, just requires
 raw table lookup. Place HPET **before** LAPIC calibration so it can serve as the
-reference clock in [TODO-013.09 §2](TODO-013-Core/TODO-013.09-APIC-Architecture.md).
+reference clock in [TODO-013.09 §2](TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md).
 
 > [!TIP]
 > **Why HPET before LAPIC calibration?** The PIT's 1.193 MHz clock gives ≈840 ns
@@ -253,7 +253,7 @@ verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ---
 
-## 4. LAPIC / IOAPIC Enhancements → [TODO-013.09](TODO-013-Core/TODO-013.09-APIC-Architecture.md)
+## 4. LAPIC / IOAPIC Enhancements → [TODO-013.09](TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md)
 
 The base LAPIC/IOAPIC is ✅ Done. The following enhancements are tracked in the sub-file:
 
@@ -273,7 +273,7 @@ The base LAPIC/IOAPIC is ✅ Done. The following enhancements are tracked in the
 
 ---
 
-## 5. Full ACPI Subsystem → [TODO-013.01](TODO-013-Core/TODO-013.01-ACPI.md)
+## 5. Full ACPI Subsystem → [TODO-013.01](TODO-013-Core-Drivers/TODO-013.01-ACPI.md)
 
 Basic ACPI (table parsing, power-off) is ✅ Done. The full subsystem adds:
 

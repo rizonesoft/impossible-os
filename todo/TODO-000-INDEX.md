@@ -27,10 +27,10 @@
 |-----|---------------------------------------------------------------------------------------------------------|----------------|
 | 010 | [Bootloader](010-Kernel-Foundations/TODO-010-Bootloader.md)                                             | 🔄 In progress |
 | 011 | [x86-64 Architecture (Intel & AMD)](010-Kernel-Foundations/TODO-011-x86-64.md)                          | 🔄 In progress |
-| 013 | [Core Built-in Drivers](010-Kernel-Foundations/TODO-013-Core.md)                                        |                |
-| 013.01 | [ACPI — Tables, Power, Interrupts](010-Kernel-Foundations/TODO-013-Core/TODO-013.01-ACPI.md)       |                |
-| 013.02 | [NVMe Storage Driver (built-in)](010-Kernel-Foundations/TODO-013-Core/TODO-013.02-NVMe.md)         |                |
-| 013.09 | [APIC Architecture](010-Kernel-Foundations/TODO-013-Core/TODO-013.09-APIC-Architecture.md)         |                |
+| 013 | [Core Built-in Drivers](010-Kernel-Foundations/TODO-013-Core-Drivers.md)                                        |                |
+| 013.01 | [ACPI — Tables, Power, Interrupts](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.01-ACPI.md)       |                |
+| 013.02 | [NVMe Storage Driver (built-in)](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.02-NVMe.md)         |                |
+| 013.09 | [APIC Architecture](010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md)         |                |
 | 020 | [Threading & Synchronization](010-Kernel-Foundations/TODO-020-Threading-Synchronization.md)             | 🔄 In progress |
 | 021 | [Kernel Scheduler — CFS, RT, priorities](010-Kernel-Foundations/TODO-021-Scheduler.md)                  |                |
 | 022 | [IPC — Pipes, Signals, Shared Memory](010-Kernel-Foundations/TODO-022-IPC.md)                           | ✅ All done    |

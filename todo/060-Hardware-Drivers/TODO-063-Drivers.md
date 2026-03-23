@@ -179,7 +179,7 @@
 > [!NOTE]
 > → **XREF:** Full APIC enhancement roadmap (x2APIC, timer calibration, TLB shootdown,
 > MSI/MSI-X, NMI watchdog, interrupt profiler) is in
-> [`TODO-013.09-APIC-Architecture.md`](../../010-Kernel-Foundations/TODO-013-Core/TODO-013.09-APIC-Architecture.md).
+> [`TODO-013.09-APIC-Architecture.md`](../../010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.09-APIC-Architecture.md).
 
 The core APIC subsystem is implemented across `lapic.c`, `ioapic.c`, `acpi.c`, and `pic.c`:
 
@@ -195,7 +195,7 @@ The core APIC subsystem is implemented across `lapic.c`, `ioapic.c`, `acpi.c`, a
 
 > [!NOTE]
 > → **XREF:** HPET implementation is tracked in
-> [`TODO-013-Core.md §3`](../../010-Kernel-Foundations/TODO-013-Core.md).
+> [`TODO-013-Core-Drivers.md §3`](../../010-Kernel-Foundations/TODO-013-Core-Drivers.md).
 > It was moved there because HPET belongs with the core built-in hardware drivers
 > and placement before LAPIC calibration is critical.
 
