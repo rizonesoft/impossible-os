@@ -63,7 +63,7 @@ graph TD
     R["§9.1 LZNT1 Decompression"]
     S["§10.1 MFT Record Cache"]
     T["§8.1 Test Suite"]
-    U["§11.1 Health Dashboard"]
+    U["§11.1 Health → 040.81"]
     V["§11.2 Deleted File Recovery"]
 
     SPEC --> A
@@ -122,7 +122,7 @@ graph TD
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ✅   |
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ✅   |
-| ⭐ | P7    | `040.08-NTFS.md`      | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**             | P6 (§7.1)                            |   ⬜   |
+| ⭐ | P7    | `040.81-Disk-Health`  | §11.1 Health Dashboard         | **Moved → TODO-040.81 §3** — cross-FS health tool                | P6 (§7.1)                            |   ↗️   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | P6 (§7.1)                            |   ⬜   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §17.1 ADS Explorer             | GUI Alternate Data Streams viewer — **hidden data transparency** | P5 (§3.4)                            |   ⬜   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | P6 (§7.1)                            |   ✅   |
@@ -131,7 +131,7 @@ graph TD
 | 💎 | P8    | `040.08-NTFS.md`      | §12.4 Attribute Writer         | Add/update/remove attributes, encode data runs                   | P8 (§12.2, §12.3)                    |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.5 File Create/Delete       | Full file lifecycle on NTFS                                      | P8 (§12.4) + P9 (§14.1)              |   ✅   |
 | 💎 | P9    | `040.08-NTFS.md`      | §13.1 Journal Engine           | `$LogFile` redo/undo transaction logging                         | P8 (§12.1)                           |   ✅   |
-| 💎 | P9    | `040.08-NTFS.md`      | §13.2 Recovery Replay          | Dirty mount redo/undo replay                                     | P9 (§13.1)                           |   ⬜   |
+| 💎 | P9    | `040.08-NTFS.md`      | §13.2 Recovery Replay          | Dirty mount redo/undo replay                                     | P9 (§13.1)                           |   ✅   |
 | 💎 | P9    | `040.08-NTFS.md`      | §14.1 B+ Tree Insert/Delete    | Directory mutation with node split/merge                         | P8 (§12.4)                           |   ⬜   |
 | 💎 | P9    | `040.08-NTFS.md`      | §16.1 File Write Engine        | Resident/non-resident data writes + truncation                   | P8 (§12.4) + P9 (§13.1)              |   ⬜   |
 | ⭐ | P10   | `040.08-NTFS.md`      | §15.1 Boot-Time Init           | **NTFS as `C:\`** — boot from NTFS instead of IXFS               | P9 (all write support)               |   ⬜   |
@@ -995,27 +995,15 @@ graph TD
 
 ## 11. NTFS Volume Health Dashboard (🚀 Impossible OS Feature)
 
-### 11.1 Volume Health Aggregation
+### 11.1 Volume Health Aggregation *(deferred → TODO-040.81)*
 
-**Prompt:** Aggregate NTFS volume health metrics into a single dashboard view in Disk Manager. Read: dirty flag from `$Volume`, bad cluster count from `$BadClus`, MFT Mirror consistency (`$MFTMirr` vs `$MFT` first 4 records), MFT fragmentation (number of data runs in `$MFT`'s own `$DATA` attribute — ideally 1 run = contiguous MFT), and free space from `$Bitmap`. Display a health score and per-metric status (✅/⚠️/❌). No OS provides this at-a-glance view. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: volume health dashboard"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-> [!TIP]
-> **Competitive Edge:** Windows shows NTFS volume info spread across Properties → Tools → chkdsk.
-> Linux has `ntfsinfo` but it's CLI-only and doesn't aggregate health. Impossible OS shows
-> everything in one GUI panel: dirty flag, bad clusters, MFT fragmentation, mirror consistency,
-> all with a computed health score. One-click "Check Disk" runs chkdsk-equivalent.
-
-- [ ] Read dirty flag from `$Volume` (inode 3) → `$VOLUME_INFORMATION` flags
-- [ ] Read `$BadClus` (inode 8) → count bad cluster entries in `$Bad` data attribute
-- [ ] Compare `$MFTMirr` (inode 1) first 4 records against `$MFT` (inode 0)
-  - [ ] Byte-exact comparison of records 0–3
-  - [ ] Mismatch → `mirror_status = WARNING`
-- [ ] Count `$MFT` data runs → run count > 1 means MFT is fragmented
-  - [ ] 1 run = perfect ✅, 2–5 = normal ⚠️, 6+ = fragmented ❌
-- [ ] Compute free space percentage from `$Bitmap` cluster bitmap
-- [ ] Aggregate health score: all green = "Healthy", any warning = "Needs Attention", any red = "Unhealthy"
-- [ ] Wire to Disk Manager: NTFS volume properties panel
-- [ ] Commit: `"ntfs: volume health dashboard"`
+> [!NOTE]
+> **Moved:** This section has been relocated to
+> [`TODO-040.81-Disk-Health-Dashboard.md §3`](file:///home/derickpayne/impossible-os/todo/010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-040.81-Disk-Health-Dashboard.md)
+> because health monitoring is a cross-filesystem, tool-level concern — not specific
+> to the NTFS driver implementation. The NTFS-specific health checks (dirty flag,
+> bad clusters, MFT mirror, MFT fragmentation, free space) are now §3.1–§3.6 in
+> the Disk Health Dashboard TODO.
 
 ### 11.2 Deleted File Recovery (Forensics Mode)
 
@@ -1292,19 +1280,28 @@ graph TD
 
 ### 13.2 Recovery Replay (Dirty Mount)
 
-**Prompt:** When an NTFS volume is mounted with the dirty flag set (§7.1), replay the `$LogFile` to restore consistency. Walk the log forward from the checkpoint LSN: for each committed transaction, apply redo operations (in case they weren't flushed to disk). For incomplete transactions (no commit record), apply undo operations to roll back. Clear the dirty flag after successful recovery. This makes NTFS boot-safe — a power failure never corrupts the volume beyond repair. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: journal recovery replay"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ~~When an NTFS volume is mounted with the dirty flag set (§7.1), replay the `$LogFile` to restore consistency.~~ **VERIFIED** — `ntfs_recovery.c` implements three-phase ARIES recovery. Run `bash scripts/build.sh clean` to verify compilation.
 
-- [ ] On mount: check dirty flag in `$Volume` → if set, enter recovery mode
-- [ ] Read `$LogFile` restart area → get checkpoint LSN
-- [ ] Scan forward from checkpoint:
-  - [ ] Build transaction table: txn ID → { start LSN, state (active/committed) }
-  - [ ] Build dirty page table: (target file, offset) → LSN of last modification
-- [ ] Redo pass: replay all committed operations whose target pages may be stale
-- [ ] Undo pass: roll back all active (uncommitted) transactions in reverse LSN order
-- [ ] Clear dirty flag in `$Volume`
-- [ ] Clear `$LogFile` (reset restart area for fresh writes)
-- [ ] Log: `[NTFS] Recovery complete: %u transactions replayed, %u rolled back`
-- [ ] Commit: `"ntfs: journal recovery replay"`
+> [!NOTE]
+> **Implementation notes:**
+> - Analysis pass scans all RCRD pages, builds transaction table (max 256 txns, 65536 records)
+> - Commit detection: redo=Noop + undo=Noop + type=Normal → committed; redo=Compensation → aborted
+> - Redo pass: INIT_FRS writes full MFT records; UPDATE_RESIDENT/NONRES patches bytes at target offset
+> - Undo pass walks records in reverse; same byte-level patching using undo data
+> - Dirty flag cleared by patching $VOLUME_INFORMATION flags word at offset 10 in $Volume (inode 3)
+> - $LogFile restart area reset: both redundant pages updated, client oldest/restart LSN set to current
+
+- [x] On mount: check dirty flag in `$Volume` → if set, enter recovery mode
+- [x] Read `$LogFile` restart area → get checkpoint LSN
+- [x] Scan forward from checkpoint:
+  - [x] Build transaction table: txn ID → { start LSN, state (active/committed) }
+  - [x] Build dirty page table: (target file, offset) → LSN of last modification
+- [x] Redo pass: replay all committed operations whose target pages may be stale
+- [x] Undo pass: roll back all active (uncommitted) transactions in reverse LSN order
+- [x] Clear dirty flag in `$Volume`
+- [x] Clear `$LogFile` (reset restart area for fresh writes)
+- [x] Log: `[NTFS] Recovery complete: %u transactions replayed, %u rolled back`
+- [x] Commit: `"ntfs: journal recovery replay"`
 
 ---
 
@@ -1565,7 +1562,7 @@ graph TD
 | 💎  | 🟡 P2      | 9.1 LZNT1 Decompression        | Interop — read compressed Windows system files                  |
 | 💎  | 🟡 P2      | 10.1 MFT Record Cache          | Performance — avoid redundant disk reads                        |
 | 💎  | 🟢 P3      | 8.1 Test Suite                 | Quality — automated validation with test images                 |
-| ⭐  | 🟢 P3      | 11.1 Health Dashboard          | **At-a-glance NTFS health** — no OS does this                   |
+| ⭐  | 🟢 P3      | 11.1 Health Dashboard          | **Moved → TODO-040.81 §3** — cross-FS health tool               |
 | ⭐  | 🟢 P3      | 11.2 Deleted File Recovery     | **Built-in forensic recovery** — Windows needs 3rd-party        |
 | ⭐  | 🟢 P3      | 17.1 ADS Explorer              | **GUI ADS viewer** — hidden data transparency                   |
 | 💎  | 🟣 P4      | 12.1 Cluster Allocator         | Write — `$Bitmap` alloc/free with MFT Zone awareness            |

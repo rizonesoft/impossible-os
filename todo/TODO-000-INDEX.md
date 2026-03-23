@@ -43,6 +43,9 @@
 | 040.18 | [ISO 9660 / ECMA-119](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.18-ISO9660.md)          |                |
 | 040.19 | [Joliet / UDF](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.19-Joliet-UDF.md)             |                |
 | 040.20 | [USB Mass Storage Class](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.20-USB-MSC.md)       |                |
+| 041 | [Filesystem Tools](010-Kernel-Foundations/TODO-041-Filesystem-Tools.md)                                  |                |
+| 040.80 | [Disk Manager](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-040.80-Disk-Manager.md)       |                |
+| 040.81 | [Disk Health Dashboard](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-040.81-Disk-Health-Dashboard.md) |                |
 | 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                 |                |
 | 050.01 | [Registry Engine](010-Kernel-Foundations/TODO-050-Registry/TODO-050.01-Registry-Engine.md)         |                |
 | 050.02 | [Win32 Registry API](010-Kernel-Foundations/TODO-050-Registry/TODO-050.02-Win32-Reg-API.md)        |                |
