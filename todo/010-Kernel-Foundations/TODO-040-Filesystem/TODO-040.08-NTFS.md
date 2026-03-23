@@ -159,7 +159,6 @@ graph TD
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ✅   |
 | ⭐ | P7    | `041.02-Disk-Health`  | §11.1 Health Dashboard         | **Moved → TODO-041.02 §3** — cross-FS health tool                | P6 (§7.1)                            |   ↗️   |
 | ⭐ | P7    | `041.03-Recovery`     | §11.2 Deleted File Recovery    | **Moved → TODO-041.03 §2.1** — cross-FS recovery tool            | P6 (§7.1)                            |   ↗️   |
-| ⭐ | P7    | `041.04-ADS-Explorer` | §17.1 ADS Explorer             | **Moved → TODO-041.04 §2.1** — cross-FS stream explorer          | P5 (§3.4)                            |   ↗️   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | P6 (§7.1)                            |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | P1 (§2.2)                            |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | P8 (§12.1)                           |   ✅   |
@@ -1517,19 +1516,6 @@ graph TD
 
 ---
 
-## 17. Alternate Data Streams Explorer (🚀 Impossible OS Feature)
-
-### 17.1 ADS Enumeration & Viewer *(deferred → TODO-041.04)*
-
-> [!NOTE]
-> **Moved:** This section has been relocated to
-> [`TODO-041.04-ADS-Explorer.md §2.1`](file:///home/derickpayne/impossible-os/todo/010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.04-ADS-Explorer.md)
-> because stream/attribute exploration is a tool-level concern that benefits from a
-> unified GUI across all filesystems. The NTFS ADS provider is now §2.1 in the ADS
-> Explorer TODO, alongside ext4, Btrfs, and IXFS extended attribute providers.
-
----
-
 ## Priority Order
 
 | ⭐  | Priority   | Section                        | Description                                                      |
@@ -1556,7 +1542,6 @@ graph TD
 | 💎  | 🟢 P3      | 8.1 Test Suite                 | Quality — automated validation with test images                 |
 | ⭐  | 🟢 P3      | 11.1 Health Dashboard          | **Moved → TODO-041.02 §3** — cross-FS health tool               |
 | ⭐  | 🟢 P3      | 11.2 Deleted File Recovery     | **Moved → TODO-041.03 §2.1** — cross-FS recovery tool          |
-| ⭐  | 🟢 P3      | 17.1 ADS Explorer              | **Moved → TODO-041.04 §2.1** — cross-FS stream explorer        |
 | 💎  | 🟣 P4      | 12.1 Cluster Allocator         | Write — `$Bitmap` alloc/free with MFT Zone awareness            |
 | 💎  | 🟣 P4      | 12.2 USA Regeneration          | Write — fixup generation for MFT/INDX writes                    |
 | 💎  | 🟣 P4      | 12.3 MFT Record Allocator      | Write — allocate/free MFT inodes, extend `$MFT`                 |
@@ -1604,7 +1589,6 @@ graph TD
 | 💎 | MFT record caching                   | ✅ Windows cache manager            | ✅ Page cache                        | ⬜ §10.1 P2                                           |
 | 💎 | Write support                        | ✅ Full R/W                         | ✅ Full R/W (ntfs3 / ntfs-3g FUSE)   | ⬜ §12 P4 — full R/W                                  |
 | 💎 | Journaling recovery (`$LogFile`)     | ✅ Full                             | ✅ ntfs-3g replays log               | ⬜ §13 P4 — txn engine + dirty replay                 |
-| 💎 | Alternate Data Streams               | ✅ Native                           | ✅ ntfs-3g / ntfs3                   | ⬜ → TODO-041.04 — GUI ADS explorer                  |
 | 💎 | Full read-only driver                | ✅                                  | ✅                                   | ⚠️ Requires §5.3 + §6.1 to complete                  |
 | 💎 | Full read-write driver               | ✅                                  | ✅ ntfs-3g (FUSE) / ntfs3 (native)   | ⬜ Requires §1–§14 + §16                              |
 | 💎 | Disk quotas                          | ✅ Per-user quotas via `$Quota`     | ⬜ Not exposed by ntfs3              | ⬜ §7.1 P2 — read `$Quota` for GUI display            |
@@ -1615,7 +1599,6 @@ graph TD
 | ⭐ | **Deleted file recovery**            | ❌ Requires third-party (Recuva)    | ⚠️ CLI `ntfsundelete` only           | ⬜ **→ TODO-041.03 — cross-FS GUI recovery**           |
 | ⭐ | **MFT fragmentation heatmap**        | ❌ Hidden in `defrag /a` output     | ❌ Not available                     | ⬜ **§11.1 — visual MFT density map**                 |
 | ⭐ | **Smart file search (MFT scan)**     | ⚠️ Windows Search (requires index)  | ❌ `find` / `locate` (CLI only)      | ⬜ **Direct MFT walk + metadata filter**              |
-| ⭐ | **ADS explorer (GUI)**               | ❌ CLI only (`dir /r`)              | ❌ `getfattr` (CLI only)             | ⬜ **→ TODO-041.04 — cross-FS stream explorer**       |
 | ⭐ | **NTFS as `C:\` boot volume**        | ✅ Native (default)                 | ❌ Not supported                     | ⬜ **§15 P4 — boot-time init + layout**               |
 | ⭐ | **Anti-aliased TTF in Disk Manager** | ⚠️ Basic system font                | ❌ CLI only                          | ✅ **Done — Selawik Semibold, atlas pre-baked**        |
 
