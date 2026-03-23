@@ -196,7 +196,7 @@ graph TD
 | **4**  | `040.08-NTFS.md`         | §10.1 MFT Cache                    | 64-entry LRU cache with pinned system inodes                | Phase 3 (§2)            | ✅      |
 | **4**  | `040.08-NTFS.md`         | §12.1–12.4 Write Foundations       | Cluster allocator, USA regen, MFT allocator, attr writer    | NTFS read (Phase 3)     | ✅      |
 | **4**  | `040.08-NTFS.md`         | §12.5 File CRUD                    | CreateFile/DeleteFile/Rename on NTFS                        | Phase 4 (§12.1–14)      | ✅      |
-| **4**  | `040.08-NTFS.md`         | §13 $LogFile Journal               | Transaction engine + dirty-mount recovery replay            | Phase 4 (§12)           | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §13 $LogFile Journal               | Transaction engine + dirty-mount recovery replay            | Phase 4 (§12)           | ✅      |
 | **4**  | `040.08-NTFS.md`         | §14 B+ Tree Mutation               | Directory insert/delete/split/merge                         | Phase 4 (§12)           | ⬜      |
 | **4**  | `040.08-NTFS.md`         | §16 Write Data Path                | File write engine (extend/truncate/overwrite)               | Phase 4 (§12–14)        | ⬜      |
 | **5**  | `040.08-NTFS.md`         | §15 NTFS Boot Volume              | Boot-time NTFS init, system file layout, NTFS formatter      | Phase 4 (NTFS R/W)      | ⬜      |

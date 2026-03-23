@@ -1109,3 +1109,13 @@ void ntfs_txn_free(struct ntfs_txn *txn);
 /* Clean shutdown of the journal.
  * Updates restart area with final LSN. Called during unmount. */
 void ntfs_journal_shutdown(struct ntfs_volume *vol);
+
+/* ---- Recovery Replay (§13.2) ---- */
+
+/* Replay the $LogFile to restore consistency on a dirty mount.
+ * Three-phase ARIES recovery:
+ *   1. Analysis — scan log, build transaction table
+ *   2. Redo — replay committed operations
+ *   3. Undo — roll back uncommitted operations
+ * Clears the dirty flag and resets $LogFile after recovery. */
+int ntfs_recovery_replay(struct ntfs_volume *vol);
