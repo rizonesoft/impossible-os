@@ -1643,15 +1643,40 @@ graph TD
 
 ### Common Failure Modes When Mounting NTFS from Impossible OS
 
-| #   | Failure Mode                    | Symptom                                        | Root Cause                                                              | Fix                                                                    |
-| --- | ------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| 1   | **No NTFS driver loaded**       | Windows partition seen as RAW/unknown          | `ntfs_detect()` not registered before `partition_scan()`                | Register NTFS filesystem type BEFORE partition scan in `boot_storage.c` |
-| 2   | **Partition type not recognized** | NTFS partition skipped entirely              | `partition.c` has no `probe_ntfs()` — see Key Files warning             | Add `PART_FS_NTFS` and `probe_ntfs()` to `partition.c`                 |
-| 3   | **Storage controller not ready** | Block device unavailable for NTFS disk reads  | On Hyper-V Gen 2: VMBus/StorVSC not ready before NTFS mount             | Ensure VMBus → StorVSC → re-scan sequence (commit `cd6f749`)           |
-| 4   | **Dirty volume rejection**      | NTFS mounts but operations fail unpredictably  | Windows didn't cleanly unmount (dirty flag set in `$Volume`)            | §7.1: check dirty flag on mount, log warning, mount read-only          |
-| 5   | **Cluster size mismatch**       | BPB values parsed but data reads return garbage | NTFS formatted with 4096-byte clusters but driver assumes 512          | Use `bytes_per_sector` from BPB, not hardcoded 512                     |
-| 6   | **4K-native sector disks**      | Fixup fails — USA expects 512-byte sectors     | Advanced Format disks (AF 4Kn) have 4096-byte physical sectors         | Use BPB `bytes_per_sector` field for USA stride, not hardcoded 512     |
-| 7   | **Hibernated Windows volumes**  | NTFS metadata silently stale                   | Windows Fast Startup leaves NTFS in hibernated state (`$Volume` flag)  | Detect `VOLUME_IS_HIBERNATED` flag → mount read-only with warning      |
+1. **No NTFS driver loaded**
+   - *Symptom:* Windows partition seen as RAW/unknown
+   - *Cause:* `ntfs_detect()` not registered before `partition_scan()`
+   - *Fix:* Register NTFS filesystem type BEFORE partition scan in `boot_storage.c`
+
+2. **Partition type not recognized**
+   - *Symptom:* NTFS partition skipped entirely
+   - *Cause:* `partition.c` has no `probe_ntfs()` — see Key Files warning
+   - *Fix:* Add `PART_FS_NTFS` and `probe_ntfs()` to `partition.c`
+
+3. **Storage controller not ready**
+   - *Symptom:* Block device unavailable for NTFS disk reads
+   - *Cause:* On Hyper-V Gen 2: VMBus/StorVSC not ready before NTFS mount
+   - *Fix:* Ensure VMBus → StorVSC → re-scan sequence (commit `cd6f749`)
+
+4. **Dirty volume rejection**
+   - *Symptom:* NTFS mounts but operations fail unpredictably
+   - *Cause:* Windows didn't cleanly unmount (dirty flag set in `$Volume`)
+   - *Fix:* §7.1: check dirty flag on mount, log warning, mount read-only
+
+5. **Cluster size mismatch**
+   - *Symptom:* BPB values parsed but data reads return garbage
+   - *Cause:* NTFS formatted with 4096-byte clusters but driver assumes 512
+   - *Fix:* Use `bytes_per_sector` from BPB, not hardcoded 512
+
+6. **4K-native sector disks**
+   - *Symptom:* Fixup fails — USA expects 512-byte sectors
+   - *Cause:* Advanced Format disks (AF 4Kn) have 4096-byte physical sectors
+   - *Fix:* Use BPB `bytes_per_sector` field for USA stride, not hardcoded 512
+
+7. **Hibernated Windows volumes**
+   - *Symptom:* NTFS metadata silently stale
+   - *Cause:* Windows Fast Startup leaves NTFS in hibernated state (`$Volume` flag)
+   - *Fix:* Detect `VOLUME_IS_HIBERNATED` flag → mount read-only with warning
 
 ### Hyper-V Gen 2 Dependency Chain for NTFS Access
 
