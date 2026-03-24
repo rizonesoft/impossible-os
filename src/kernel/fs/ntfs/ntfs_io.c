@@ -707,16 +707,27 @@ int ntfs_lookup(struct ntfs_volume *vol, uint64_t dir_inode,
         return NTFS_ERR_NOT_FOUND;
     }
 
-    /* Need to descend into INDX buffers — get $INDEX_ALLOCATION data runs */
-    ia_attr = ntfs_attr_find_named(rec_buf, &hdr,
-                                    NTFS_ATTR_INDEX_ALLOCATION, "$I30", &ia_ah);
-    if (!ia_attr || ia_ah.non_resident != 1) {
-        pmm_free_frame(rec_phys);
-        return NTFS_ERR_NOT_FOUND;
+    /* Need to descend into INDX buffers — get $INDEX_ALLOCATION data runs.
+     * Use _ext variant to follow $ATTRIBUTE_LIST when the IA attribute
+     * has been pushed to an extension MFT record (common for large dirs). */
+    {
+        uintptr_t ia_ext_phys = 0;
+        ia_attr = ntfs_attr_find_named_ext(vol, rec_buf, &hdr,
+                                           NTFS_ATTR_INDEX_ALLOCATION,
+                                           "$I30", &ia_ah,
+                                           &ia_ext_phys, NULL);
+        if (!ia_attr || ia_ah.non_resident != 1) {
+            if (ia_ext_phys) pmm_free_frame(ia_ext_phys);
+            pmm_free_frame(rec_phys);
+            return NTFS_ERR_NOT_FOUND;
+        }
+        /* ia_attr points into ia_ext_phys buffer (or rec_buf if base record).
+         * Decode data runs NOW before freeing the extension record. */
+        ia_run_count = ntfs_decode_data_runs(ia_attr, ia_runs,
+                                              NTFS_MAX_INDEX_RUNS, NULL);
+        if (ia_ext_phys) pmm_free_frame(ia_ext_phys);
     }
 
-    ia_run_count = ntfs_decode_data_runs(ia_attr, ia_runs,
-                                          NTFS_MAX_INDEX_RUNS, NULL);
     if (ia_run_count <= 0) {
         pmm_free_frame(rec_phys);
         return NTFS_ERR_NOT_FOUND;
@@ -853,19 +864,8 @@ static int walk_node_entries(const uint8_t *entries_base,
 
     entry = ntfs_index_entry_first(entries_base, nh, &ie);
     while (entry) {
-        if (ie.flags & NTFS_INDEX_ENTRY_LAST) {
-            klog(LOG_DEBUG, "ntfs",
-                 "readdir_walk: LAST entry flags=0x%x",
-                 (uint64_t)ie.flags);
+        if (ie.flags & NTFS_INDEX_ENTRY_LAST)
             break;  /* Sentinel — no filename */
-        }
-
-        klog(LOG_DEBUG, "ntfs",
-             "readdir_walk: ns=%u name='%s' inode=%u len=%u",
-             (uint64_t)ie.fn.name_space,
-             ie.fn.name,
-             (uint64_t)ie.mft_inode,
-             (uint64_t)ie.entry_length);
 
         /* Skip DOS-only namespace (0x02) */
         if (ie.fn.name_space != 0x02) {
@@ -922,11 +922,6 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
     }
 
     /* Walk entries in $INDEX_ROOT */
-    klog(LOG_DEBUG, "ntfs",
-         "readdir: INDEX_ROOT eo=%u ts=%u flags=0x%x",
-         (uint64_t)node_hdr.entries_offset,
-         (uint64_t)node_hdr.total_size,
-         (uint64_t)node_hdr.flags);
     rc = walk_node_entries(entries_base, &node_hdr, callback, user_data);
     if (rc != NTFS_OK && rc != NTFS_ERR_NOT_FOUND) {
         /* Callback signalled stop (positive rc) — not an error */
@@ -934,21 +929,32 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
         return NTFS_OK;
     }
 
-    /* If index root has children, walk INDX buffers */
+    /* If index root has children, walk INDX buffers.
+     * Use _ext variants to follow $ATTRIBUTE_LIST — large directories
+     * push $INDEX_ALLOCATION and $BITMAP to extension MFT records. */
     if (node_hdr.flags & 0x01) {
         struct ntfs_attr_header ia_ah;
         const uint8_t *ia_attr;
+        uintptr_t ia_ext_phys = 0;
 
-        ia_attr = ntfs_attr_find_named(rec_buf, &hdr,
-                                        NTFS_ATTR_INDEX_ALLOCATION,
-                                        "$I30", &ia_ah);
+        ia_attr = ntfs_attr_find_named_ext(vol, rec_buf, &hdr,
+                                            NTFS_ATTR_INDEX_ALLOCATION,
+                                            "$I30", &ia_ah,
+                                            &ia_ext_phys, NULL);
         if (ia_attr && ia_ah.non_resident == 1) {
             struct ntfs_data_run ia_runs[64];
             struct ntfs_nonres_header ia_nrhdr;
             int ia_run_count;
 
+            /* Decode data runs from the IA attribute (may be in ext record).
+             * After this, ia_runs[] is self-contained — free ext record. */
             ia_run_count = ntfs_decode_data_runs(ia_attr, ia_runs, 64,
                                                   &ia_nrhdr);
+            if (ia_ext_phys) {
+                pmm_free_frame(ia_ext_phys);
+                ia_ext_phys = 0;
+            }
+
             if (ia_run_count > 0) {
                 uint32_t indx_size = root_hdr.index_record_size;
                 uintptr_t indx_phys;
@@ -960,13 +966,15 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
                 const uint8_t *bitmap = NULL;
                 uint32_t bitmap_len = 0;
                 uintptr_t bm_phys = 0;
+                uintptr_t bm_ext_phys = 0;
 
                 if (indx_size == 0)
                     indx_size = 4096;
 
-                bm_attr = ntfs_attr_find_named(rec_buf, &hdr,
-                                                NTFS_ATTR_BITMAP,
-                                                "$I30", &bm_ah);
+                bm_attr = ntfs_attr_find_named_ext(vol, rec_buf, &hdr,
+                                                    NTFS_ATTR_BITMAP,
+                                                    "$I30", &bm_ah,
+                                                    &bm_ext_phys, NULL);
                 if (bm_attr) {
                     if (bm_ah.non_resident == 0) {
                         /* Resident bitmap — inline data */
@@ -1108,8 +1116,12 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
 
                 if (bm_phys)
                     pmm_free_frame(bm_phys);
+                if (bm_ext_phys)
+                    pmm_free_frame(bm_ext_phys);
             }
         }
+        if (ia_ext_phys)
+            pmm_free_frame(ia_ext_phys);
     }
 
     pmm_free_frame(rec_phys);
