@@ -534,24 +534,16 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                                         entries_off + total_sz + cur_len);
 
                         /* If this insert was a promoted separator from a child
-                         * split, update the LAST sentinel's child_vcn to point
-                         * to the right sibling (the new INDX node). The LAST
-                         * sentinel previously pointed to cur_vcn (the pre-split
-                         * node, now the left sibling). */
+                         * split, update the NEXT entry's child_vcn to point to
+                         * the right sibling.  The next entry (at ins_off + cur_len)
+                         * is the entry whose subtree was split — its child
+                         * pointer used to point to the pre-split node, and now
+                         * must point to the new right sibling. */
                         if (promote_right_vcn != VCN_NONE) {
-                            uint32_t new_total_ent = total_sz + cur_len;
-                            uint32_t spos = 0;
-                            uint8_t *sentw = new_eb;
-                            while (spos < new_total_ent) {
-                                uint16_t sl = ntfs_le16(sentw + spos + 0x08);
-                                if (sl < 0x10) break;
-                                if (sentw[spos + 0x0C] & NTFS_INDEX_ENTRY_LAST) {
-                                    if (sentw[spos + 0x0C] & NTFS_INDEX_ENTRY_SUBNODE)
-                                        ntfs_le64_write(sentw + spos + sl - 8, promote_right_vcn);
-                                    break;
-                                }
-                                spos += sl;
-                            }
+                            uint8_t *next_e = new_eb + ins_off + cur_len;
+                            uint16_t ne_len = ntfs_le16(next_e + 0x08);
+                            if (ne_len >= 0x18 && (next_e[0x0C] & NTFS_INDEX_ENTRY_SUBNODE))
+                                ntfs_le64_write(next_e + ne_len - 8, promote_right_vcn);
                             promote_right_vcn = VCN_NONE;
                         }
 
@@ -769,21 +761,15 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     ntfs_le32_write(inode_hdr + 0x04, i_entries_off + i_total);
                     ntfs_le32_write(inode_hdr + 0x08, i_entries_off + i_total);
 
-                    /* If this entry was promoted from a child split, the
-                     * LAST sentinel's child_vcn needs updating to the right
-                     * sibling VCN (it currently points to the pre-split node). */
+                    /* If this entry was promoted from a child split, update
+                     * the NEXT entry's child_vcn to the right sibling VCN.
+                     * The next entry (at ins_off + cur_len) is the one whose
+                     * subtree was split — it must now point to the right half. */
                     if (promote_right_vcn != VCN_NONE) {
-                        uint32_t spos = 0;
-                        while (spos < i_total) {
-                            uint16_t sl = ntfs_le16(ieb + spos + 0x08);
-                            if (sl < 0x10) break;
-                            if (ieb[spos + 0x0C] & NTFS_INDEX_ENTRY_LAST) {
-                                if (ieb[spos + 0x0C] & NTFS_INDEX_ENTRY_SUBNODE)
-                                    ntfs_le64_write(ieb + spos + sl - 8, promote_right_vcn);
-                                break;
-                            }
-                            spos += sl;
-                        }
+                        uint8_t *next_e = ieb + ins_off + cur_len;
+                        uint16_t ne_len = ntfs_le16(next_e + 0x08);
+                        if (ne_len >= 0x18 && (next_e[0x0C] & NTFS_INDEX_ENTRY_SUBNODE))
+                            ntfs_le64_write(next_e + ne_len - 8, promote_right_vcn);
                         promote_right_vcn = VCN_NONE;
                     }
 
