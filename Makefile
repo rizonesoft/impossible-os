@@ -405,6 +405,50 @@ run: all
 		-no-reboot
 
 ## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
+## test-usb-img: Create a 64 MiB FAT32 test USB disk image
+USB_TEST_IMG := $(BUILD_DIR)/test-usb.img
+test-usb-img: $(USB_TEST_IMG)
+$(USB_TEST_IMG):
+	@echo "[USB] Creating 64 MiB FAT32 test USB disk..."
+	@mkdir -p $(BUILD_DIR)
+	dd if=/dev/zero of=$@ bs=1M count=64 status=none
+	mkfs.fat -F 32 -n "USB_TEST" $@
+	@echo "Hello from USB!" > /tmp/usb_test.txt
+	mcopy -i $@ /tmp/usb_test.txt ::
+	@rm -f /tmp/usb_test.txt
+	@echo "[USB] $@ ready (64 MiB FAT32)"
+
+## run-usb: Launch QEMU with xHCI controller + 64 MiB USB mass storage device
+## Use this to develop and test the xHCI + USB MSC driver (TODO-040.20)
+run-usb: all $(USB_TEST_IMG)
+	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@echo "[TEST] Launching QEMU with xHCI + USB storage device"
+	$(QEMU) \
+		-cpu Haswell \
+		-smp 2 \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ich9-ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
+		-device qemu-xhci,id=xhci0 \
+		-drive id=usbdisk0,file=$(USB_TEST_IMG),format=raw,if=none \
+		-device usb-storage,bus=xhci0.0,drive=usbdisk0 \
+		-m 2G \
+		-serial stdio \
+		-vga none \
+		-device VGA,xres=1280,yres=720 \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot
+
+## clean-usb: Remove test USB disk image
+clean-usb:
+	rm -f $(USB_TEST_IMG)
+
+## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
 ## Serial output: [SPLASH] 1920x1080  scale=1x  font=16px
 run-1080p: all
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)

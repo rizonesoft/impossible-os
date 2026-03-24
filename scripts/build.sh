@@ -5,6 +5,7 @@
 #   bash scripts/build.sh              Incremental build (only changed files)
 #   bash scripts/build.sh clean        Full clean build (rm build/ + rebuild)
 #   bash scripts/build.sh run          Incremental build + launch QEMU
+#   bash scripts/build.sh run-usb      Build + launch QEMU with xHCI USB disk
 #   bash scripts/build.sh clean run    Full clean build + launch QEMU
 #   bash scripts/build.sh --jobs=4     Build with 4 parallel jobs (default: nproc)
 #
@@ -23,6 +24,7 @@ mkdir -p build
 # ── Parse arguments ─────────────────────────────────────────────────────────
 DO_CLEAN=false
 DO_RUN=false
+DO_RUN_USB=false
 JOBS=$(nproc 2>/dev/null || echo 4)
 
 if [[ $# -eq 0 ]]; then
@@ -31,9 +33,10 @@ else
     for arg in "$@"; do
         case "$arg" in
             clean) DO_CLEAN=true ;;
-            run)   DO_RUN=true ;;
+            run)     DO_RUN=true ;;
+            run-usb) DO_RUN_USB=true ;;
             --jobs=*) JOBS="${arg#--jobs=}" ;;
-            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run] [--jobs=N]"; exit 1 ;;
+            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run|run-usb] [--jobs=N]"; exit 1 ;;
         esac
     done
 fi
@@ -305,4 +308,12 @@ if $DO_RUN; then
     printf ' %b▶ Launching QEMU%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
     divider | tee -a "$LOG"
     make $MAKE_FLAGS run 2>&1
+fi
+
+# Run QEMU with USB (optional)
+if $DO_RUN_USB; then
+    divider | tee -a "$LOG"
+    printf ' %b▶ Launching QEMU with xHCI + USB storage%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
+    divider | tee -a "$LOG"
+    make $MAKE_FLAGS run-usb 2>&1
 fi
