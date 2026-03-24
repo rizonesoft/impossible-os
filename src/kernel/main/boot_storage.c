@@ -20,9 +20,6 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/smp.h"
-#include "kernel/drivers/hyperv/vmbus.h"
-#include "kernel/drivers/hyperv/storvsc.h"
-#include "kernel/drivers/hyperv/hv_input.h"
 #include "kernel/boot_splash.h"
 #include "registry.h"
 #include "kernel/symtab.h"
@@ -106,27 +103,6 @@ void boot_storage_init(uint64_t magic)
         smp_init();
     }
 
-    /* Hyper-V VMBus — discover and connect if running on Hyper-V.
-     * Must be after LAPIC init (SynIC depends on LAPIC).
-     * On non-Hyper-V platforms, this returns immediately. */
-    boot_splash_status("Probing Hyper-V VMBus...");
-    if (vmbus_init() == 0) {
-        /* VMBus connected — initialize synthetic devices */
-        boot_splash_status("Initializing Hyper-V storage...");
-        if (storvsc_init() == 0) {
-            /* StorVSC registered "hyperv0" as a new block device.
-             * Re-scan partitions and mount filesystems — this is needed
-             * on Hyper-V Gen 2 where there is no AHCI, only StorVSC. */
-            boot_splash_status("Scanning Hyper-V partitions...");
-            partition_scan_all();
-            boot_splash_status("Mounting Hyper-V filesystems...");
-            partition_mount_filesystems();
-        }
-
-        boot_splash_status("Initializing Hyper-V input...");
-        hv_kbd_init();
-        hv_mouse_init();
-    }
 
     /* Dump hardware info (only when live debug is active) */
     if (klog_disk_live_active()) {
