@@ -117,11 +117,7 @@ graph TD
 
 > **XREF:** [TODO-008-Hyper-V-Runner.md §3](../TODO-008-Hyper-V-Runner.md) — VMBus Core Protocol
 
-**Prompt:** ~~Implement~~ **Verify** hypervisor detection. Confirm `cpuid_platform.c` reads
-CPUID leaf `0x40000000` for vendor string `"Microsoft Hv"` and leaf `0x40000001` for
-interface signature `"Hv#1"`. Verify feature MSRs are read via leaves `0x40000003`–`0x40000004`
-to determine available hypercalls, SynIC support, and VMBus capabilities. Run
-`bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
+**Prompt:** ~~Implement~~ **Verify** hypervisor detection. Confirm `cpuid_platform.c` reads CPUID leaf `0x40000000` for vendor string `"Microsoft Hv"` and leaf `0x40000001` for interface signature `"Hv#1"`. Verify feature MSRs are read via leaves `0x40000003`–`0x40000004` to determine available hypercalls, SynIC support, and VMBus capabilities. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
 > [!NOTE]
 > **Implementation Notes:**
@@ -142,12 +138,7 @@ to determine available hypercalls, SynIC support, and VMBus capabilities. Run
 
 ## 2. Guest OS Identity and Hypercall Page
 
-**Prompt:** ~~Implement~~ **Verify** guest OS identity registration and hypercall page setup.
-Confirm `vmbus.c` writes the guest OS ID to `HV_X64_MSR_GUEST_OS_ID` (`0x40000000`) and
-allocates a PMM-backed 4 KiB page for the hypercall code, placing its physical address into
-`HV_X64_MSR_HYPERCALL` (`0x40000001`). Verify the hypervisor populates the page with
-executable hypercall trampoline code. Run `bash scripts/build.sh clean` and confirm
-`=== BUILD OK ===`.
+**Prompt:** ~~Implement~~ **Verify** guest OS identity registration and hypercall page setup. Confirm `vmbus.c` writes the guest OS ID to `HV_X64_MSR_GUEST_OS_ID` (`0x40000000`) and allocates a PMM-backed 4 KiB page for the hypercall code, placing its physical address into `HV_X64_MSR_HYPERCALL` (`0x40000001`). Verify the hypervisor populates the page with executable hypercall trampoline code. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
 > [!NOTE]
 > **Implementation Notes:**
@@ -322,11 +313,7 @@ channel's send and receive rings, structures the 4 KiB header + data layout, and
 
 > **XREF:** [vmbus-core-protocol.md §5](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Memory Management and GPADL Mechanics
 
-**Prompt:** ~~Implement~~ **Verify** Guest Physical Address Descriptor List (GPADL) creation.
-Confirm `vmbus.c` packages ring buffer physical page frame numbers (PFNs) into
-`CHANNELMSG_GPADL_HEADER` (and `CHANNELMSG_GPADL_BODY` if fragmented), sends them via
-`HvPostMessage`, and waits for `CHANNELMSG_GPADL_CREATED` confirmation. Run
-`bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
+**Prompt:** ~~Implement~~ **Verify** Guest Physical Address Descriptor List (GPADL) creation. Confirm `vmbus.c` packages ring buffer physical page frame numbers (PFNs) into `CHANNELMSG_GPADL_HEADER` (and `CHANNELMSG_GPADL_BODY` if fragmented), sends them via `HvPostMessage`, and waits for `CHANNELMSG_GPADL_CREATED` confirmation. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
 > [!NOTE]
 > **Implementation Notes:**
@@ -437,12 +424,7 @@ through the hypercall page. The input is the channel's `child_relid`. Run
 
 ## 11. VMBus Message Dispatch
 
-**Prompt:** ~~Implement~~ **Verify** the SynIC interrupt handler for VMBus message dispatch.
-Confirm the IDT handler at vector `0xF0` reads pending messages from the SIM page, dispatches
-them by `msg_type` to the appropriate handler (version response, channel offer, GPADL created,
-open result, etc.), and writes `HV_MESSAGE_TYPE_NONE` to acknowledge. Verify `EOM` MSR is
-written if more messages are pending. Run `bash scripts/build.sh clean` and confirm
-`=== BUILD OK ===`.
+**Prompt:** ~~Implement~~ **Verify** the SynIC interrupt handler for VMBus message dispatch. Confirm the IDT handler at vector `0xF0` reads pending messages from the SIM page, dispatches them by `msg_type` to the appropriate handler (version response, channel offer, GPADL created, open result, etc.), and writes `HV_MESSAGE_TYPE_NONE` to acknowledge. Verify `EOM` MSR is written if more messages are pending. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
 > [!NOTE]
 > **Implementation Notes:**
@@ -470,13 +452,7 @@ written if more messages are pending. Run `bash scripts/build.sh clean` and conf
 
 > **XREF:** [vmbus-core-protocol.md §9](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Security Paradigms
 
-**Prompt:** ~~Audit~~ **Verify** TOC-TOU mitigations in VMBus ring buffer read paths.
-Confirm `vmbus.c` defines `READ_ONCE()`/`WRITE_ONCE()` macros using `volatile` casts,
-that `vmbus_ring_read()` uses `READ_ONCE()` for shared index reads and bounds-checks both
-`read_index` and `write_index` against `data_size`, and that `vmbus_recvpacket()` validates
-`offset8`/`len8` from the private stack copy with security logging. Verify StorVSC and HID
-input paths copy data to stack before validation. Run `bash scripts/build.sh clean` and
-confirm `=== BUILD OK ===`.
+**Prompt:** ~~Audit~~ **Verify** TOC-TOU mitigations in VMBus ring buffer read paths. Confirm `vmbus.c` defines `READ_ONCE()`/`WRITE_ONCE()` macros using `volatile` casts, that `vmbus_ring_read()` uses `READ_ONCE()` for shared index reads and bounds-checks both `read_index` and `write_index` against `data_size`, and that `vmbus_recvpacket()` validates `offset8`/`len8` from the private stack copy with security logging. Verify StorVSC and HID input paths copy data to stack before validation. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
 > [!WARNING]
 > **Attack vector:** A compromised host could modify ring buffer packet fields (e.g., `len8`)
@@ -570,12 +546,7 @@ and confirm `=== BUILD OK ===`.
 
 > **XREF:** [vmbus-core-protocol.md §3.2](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Triple-Mapping
 
-**Prompt:** Implement the triple-mapping optimization for ring buffer virtual addresses.
-Map ring data pages three times in contiguous virtual space: (1) header page,
-(2) data payload, (3) duplicate mapping of same physical data. This eliminates split-copy
-overhead when `memcpy()` crosses the ring boundary. After completing all items, mark every
-item as `[x]`, run `bash scripts/build.sh clean`, and commit as
-`"hyperv: VMBus ring buffer triple-mapping"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ~~Implement~~ **Verify** ring buffer triple-mapping. Confirm `vmbus_try_triple_map()` allocates VA per-ring at `vmbus_open_channel()` from `VMBUS_TRIPLE_MAP_VA_BASE`, maps header + data + mirror pages via `vmm_map_page()`, redirects `send_data`/`recv_data` into the mapped VA, and that `vmbus_ring_write()`/`vmbus_ring_read()` use a single `vmbus_memcpy()` when `triple_send_base`/`triple_recv_base` is non-NULL. Confirm the two-chunk fallback activates when the cap (`VMBUS_MAX_TRIPLE_MAP_CHANNELS = 8`) is reached or mapping fails.
 
 > [!WARNING]
 > **Requires virtual memory management.** Triple-mapping requires the ability to map
