@@ -149,8 +149,12 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
          * $INDEX_ALLOCATION MUST be non-resident — it contains INDX
          * buffers on disk, referenced by the run list.  ntfs_attr_add()
          * would create a resident attribute for small data, which is
-         * invalid for type 0xA0. */
-        ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
+         * invalid for type 0xA0.
+         *
+         * Pass NULL for vol to SKIP freeing the old attribute's clusters —
+         * those clusters are still in use and will be re-injected into the
+         * rebuilt attribute via old_runs[]. */
+        ntfs_attr_remove(NULL, rec, &hdr, vol->frs_size,
                           NTFS_ATTR_INDEX_ALLOCATION, "$I30");
 
         /* Calculate total allocation size across all runs */
@@ -370,7 +374,10 @@ int ntfs_index_insert(struct ntfs_volume *vol,
             uint32_t insert_off;
             int match;
 
-            ntfs_index_find_pos(vol, entries_base, total_entries_size,
+            /* Convert IndexLength to entries-only size for search */
+            uint32_t entries_size = (total_entries_size >= entries_off)
+                                     ? total_entries_size - entries_off : 0;
+            ntfs_index_find_pos(vol, entries_base, entries_size,
                                  search_name_utf16, search_name_len,
                                  &insert_off, &match, &child_vcn);
 
@@ -409,7 +416,10 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                 rc = ntfs_parse_indx_entries(indx_buf, &nh, &eb);
                 if (rc != NTFS_OK) break;
 
-                ntfs_index_find_pos(vol, eb, nh.total_size,
+                /* Convert IndexLength to entries-only */
+                uint32_t nh_entries_size = (nh.total_size >= nh.entries_offset)
+                                            ? nh.total_size - nh.entries_offset : 0;
+                ntfs_index_find_pos(vol, eb, nh_entries_size,
                                      search_name_utf16, search_name_len,
                                      &ins_off, &match, &next_vcn);
                 path_vcn[depth] = child_vcn;
@@ -464,8 +474,13 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     const uint8_t *root_content = root_attr + root_ah.content_offset;
                     uint8_t *node = (uint8_t *)root_content + 0x10;
                     uint32_t entries_off = ntfs_le32(node + 0x00);
-                    uint32_t total_sz    = ntfs_le32(node + 0x04);
-                    uint32_t alloc_sz   = ntfs_le32(node + 0x08);
+                    uint32_t total_sz_raw = ntfs_le32(node + 0x04);
+                    uint32_t alloc_sz_raw = ntfs_le32(node + 0x08);
+                    /* Convert to entries-only sizes */
+                    uint32_t total_sz = (total_sz_raw >= entries_off)
+                                         ? total_sz_raw - entries_off : 0;
+                    uint32_t alloc_sz = (alloc_sz_raw >= entries_off)
+                                         ? alloc_sz_raw - entries_off : 0;
                     uint8_t *eb = node + entries_off;
 
                     /* Check fit */
@@ -476,10 +491,8 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     if (fits) {
                         /* Insert directly into root node */
                         /* Build new root content (old + cur_len bytes) */
-                        uint32_t new_total = total_sz + cur_len;
                         uint32_t old_cs = root_ah.content_length;
                         uint32_t new_cs = old_cs + cur_len;
-                        (void)new_total;
                         uint8_t *new_root = (uint8_t *)kmalloc(new_cs);
                         if (!new_root) { rc = NTFS_ERR_IO; kfree(rec); break; }
 
@@ -487,15 +500,15 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                         /* Shift entries from ins_off */
                         uint8_t *new_node = new_root + 0x10;
                         uint8_t *new_eb   = new_node + entries_off;
-                        uint32_t move_len = total_sz - ins_off;
-                        uint8_t *dst = new_eb + ins_off + cur_len;
-                        uint8_t *src = new_eb + ins_off;
-                        uint32_t mi;
-                        for (mi = move_len; mi > 0; mi--) dst[mi-1] = src[mi-1];
+                        ntfs_memmove(new_eb + ins_off + cur_len,
+                                     new_eb + ins_off,
+                                     total_sz - ins_off);
                         ntfs_memcpy(new_eb + ins_off, cur_entry, cur_len);
                         /* Update node header total_size and alloc_size */
-                        ntfs_le32_write(new_node + 0x04, new_total);
-                        ntfs_le32_write(new_node + 0x08, new_total);
+                        ntfs_le32_write(new_node + 0x04,
+                                        entries_off + total_sz + cur_len);
+                        ntfs_le32_write(new_node + 0x08,
+                                        entries_off + total_sz + cur_len);
 
                         /* Update root attr */
                         ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
@@ -546,6 +559,11 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                         node = (uint8_t *)root_content + 0x10;
                         entries_off = ntfs_le32(node + 0x00);
                         total_sz    = ntfs_le32(node + 0x04);
+                        /* Convert to entries-only size */
+                        if (total_sz >= entries_off)
+                            total_sz -= entries_off;
+                        else
+                            total_sz = 0;
                         eb = node + entries_off;
 
                         /* Build new INDX buffer with all old root entries + new entry inserted */
@@ -557,8 +575,9 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                             uint8_t *inode_hdr = indx_buf + INDX_NODE_HDR_OFF;
                             uint32_t i_entries_off = ntfs_le32(inode_hdr + 0x00);
                             uint8_t *ieb = inode_hdr + i_entries_off;
-                            uint32_t i_total = ntfs_le32(inode_hdr + 0x04);
-                            uint32_t i_alloc = ntfs_le32(inode_hdr + 0x08);
+                            uint32_t i_alloc_raw = ntfs_le32(inode_hdr + 0x08);
+                            uint32_t i_alloc = (i_alloc_raw >= i_entries_off)
+                                                ? i_alloc_raw - i_entries_off : 0;
 
                             /* Copy existing root entries into INDX */
                             uint32_t ins_total = total_sz + cur_len;
@@ -569,15 +588,16 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                                 ntfs_memcpy(ieb + ins_off + cur_len,
                                              eb + ins_off,
                                              total_sz - ins_off);
-                                i_total = ins_total;
-                                ntfs_le32_write(inode_hdr + 0x04, i_total);
-                                ntfs_le32_write(inode_hdr + 0x08, i_total);
+                                ntfs_le32_write(inode_hdr + 0x04,
+                                                i_entries_off + ins_total);
+                                ntfs_le32_write(inode_hdr + 0x08,
+                                                i_entries_off + ins_total);
                             }
 
                             /* Write new INDX buffer */
                             if (txn)
                                 ntfs_txn_log(txn,
-                                             NTFS_LOG_OP_ADD_IDX_ALLOC, ieb, (uint16_t)i_total,
+                                             NTFS_LOG_OP_ADD_IDX_ALLOC, ieb, (uint16_t)ins_total,
                                              NTFS_LOG_OP_DEL_IDX_ALLOC, NULL, 0,
                                              dir_inode, 0);
                             ntfs_write_indx(vol, ia_runs, ia_run_count,
@@ -628,21 +648,43 @@ int ntfs_index_insert(struct ntfs_volume *vol,
 
                 uint8_t *inode_hdr    = indx_buf + INDX_NODE_HDR_OFF;
                 uint32_t i_entries_off = ntfs_le32(inode_hdr + 0x00);
-                uint32_t i_total      = ntfs_le32(inode_hdr + 0x04);
-                uint32_t i_alloc      = ntfs_le32(inode_hdr + 0x08);
+                uint32_t i_total_raw  = ntfs_le32(inode_hdr + 0x04);
+                uint32_t i_alloc_raw  = ntfs_le32(inode_hdr + 0x08);
+                /* Convert from IndexLength (from node header start) to
+                 * entries-only size (from entries_base start).  All entry
+                 * offsets returned by ntfs_index_find_pos are relative to
+                 * entries_base, so all arithmetic must use entries-only. */
+                uint32_t i_total = (i_total_raw >= i_entries_off)
+                                    ? i_total_raw - i_entries_off : 0;
+                uint32_t i_alloc = (i_alloc_raw >= i_entries_off)
+                                    ? i_alloc_raw - i_entries_off : 0;
                 uint8_t *ieb          = inode_hdr + i_entries_off;
+
+                /* Re-compute insert position from the CURRENT buffer state.
+                 * The path_pos[] from the search phase may be stale if a
+                 * child-level B-tree split modified this node in a prior
+                 * loop iteration.  Use the CURRENT entry's embedded name
+                 * (it may be a promoted separator, not the original file). */
+                {
+                    int re_match = 0;
+                    uint64_t re_child = VCN_NONE;
+                    const uint8_t *re_fn = cur_entry + 0x10;
+                    int re_nlen = (int)(uint8_t)re_fn[0x40];
+                    const uint8_t *re_name = re_fn + 0x42;
+                    ntfs_index_find_pos(vol, ieb, i_total,
+                                         re_name, re_nlen,
+                                         &ins_off, &re_match, &re_child);
+                }
 
                 if (i_total + cur_len <= i_alloc) {
                     /* Fits — simple insert */
-                    uint32_t move_len = i_total - ins_off;
-                    uint8_t *dst = ieb + ins_off + cur_len;
-                    uint8_t *src = ieb + ins_off;
-                    uint32_t mi;
-                    for (mi = move_len; mi > 0; mi--) dst[mi-1] = src[mi-1];
+                    ntfs_memmove(ieb + ins_off + cur_len,
+                                 ieb + ins_off,
+                                 i_total - ins_off);
                     ntfs_memcpy(ieb + ins_off, cur_entry, cur_len);
                     i_total += cur_len;
-                    ntfs_le32_write(inode_hdr + 0x04, i_total);
-                    ntfs_le32_write(inode_hdr + 0x08, i_total);
+                    ntfs_le32_write(inode_hdr + 0x04, i_entries_off + i_total);
+                    ntfs_le32_write(inode_hdr + 0x08, i_entries_off + i_total);
 
                     if (txn)
                         ntfs_txn_log(txn,
@@ -708,7 +750,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                 /* Left node: entries [0, median_off) */
                 ntfs_memset(ieb, 0, i_alloc);
                 ntfs_memcpy(ieb, combined, median_off);
-                ntfs_le32_write(inode_hdr + 0x04, median_off);
+                ntfs_le32_write(inode_hdr + 0x04, i_entries_off + median_off);
                 ntfs_write_indx(vol, ia_runs, ia_run_count, cur_vcn,
                                  indx_size, indx_buf);
 
@@ -722,10 +764,11 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     uint32_t r_eo  = ntfs_le32(r_nh + 0x00);
                     uint8_t *r_eb  = r_nh + r_eo;
                     uint32_t r_al  = ntfs_le32(r_nh + 0x08);
+                    uint32_t r_al_entries = (r_al >= r_eo) ? r_al - r_eo : 0;
                     uint32_t right_sz = total_with_new - median_off - med_len;
-                    if (right_sz <= r_al) {
+                    if (right_sz <= r_al_entries) {
                         ntfs_memcpy(r_eb, combined + median_off + med_len, right_sz);
-                        ntfs_le32_write(r_nh + 0x04, right_sz);
+                        ntfs_le32_write(r_nh + 0x04, r_eo + right_sz);
                     }
                     ntfs_write_indx(vol, ia_runs, ia_run_count, right_vcn,
                                      indx_size, rbuf);

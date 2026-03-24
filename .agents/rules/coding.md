@@ -80,6 +80,33 @@ void *ptr = kmalloc(small_size);  /* MUST be ≤ 4 KB */
 
 - **CalVer versioning.** Version is auto-generated from build date: `YY.M.D` (e.g., `26.3.21`). Build number auto-increments from `.build_number`.
 
+- **NTFS IndexLength includes `entries_offset`.** The `IndexLength` field at `NODE_HEADER + 0x04` measures from the **start of the node header** (includes `entries_offset`, typically `0x28 = 40` bytes). All entry-level operations (search, insert, split) work with offsets from `entries_base`. When **reading** IndexLength from disk, subtract `entries_offset` to get entries-only size. When **writing** back, add `entries_offset`. Mixing conventions causes `uint32_t` underflow → PAGE_FAULT. *(Learned from B-tree crash `671468c6`)*
+
+- **Compiler-optimized backward byte loops cause 33-bit addresses.** Manual `for (i = len; i > 0; i--) dst[i-1] = src[i-1]` loops are miscompiled by `-O2` into unrolled sequences that produce addresses exceeding 32 bits. Use the `noinline` helper `ntfs_memmove()` in `ntfs_internal.h` for overlapping backward copies. *(Learned from B-tree PAGE_FAULT at `base + 0x100000000`)*
+
+## Debugging PAGE_FAULTs
+
+When the kernel crashes with `Stop code: PAGE_FAULT`:
+
+1. **Get crash info** from serial log: `RIP` (instruction pointer), `CR2` (faulting address), register dump
+2. **Map RIP to source:**
+   ```bash
+   llvm-addr2line-19 -e build/kernel.exe -f <RIP_hex>
+   ```
+3. **Disassemble crash site:**
+   ```bash
+   llvm-objdump-19 -d --start-address=0x<RIP-0x30> --stop-address=0x<RIP+0x40> build/kernel.exe
+   ```
+4. **Trace register corruption** backwards through the disassembly to find the source
+5. **Recognize common patterns:**
+   - `CR2 = valid_base + 0x100000000` → size/offset corruption, not base pointer — focus on arithmetic
+   - Register value `0xFFFFFF__` → `uint32_t` underflow (e.g., `0xFFFFFF70 = 0 - 0x90`)
+   - Crash in inlined function → RIP maps to header file; check generated assembly for `-O2` artifacts
+6. **Verify symbols exist:** `llvm-nm-19 build/kernel.exe | head -5` (must show symbols, not "no symbols")
+
+> [!IMPORTANT]
+> Build must **NOT strip symbols** for debugging to work. Ensure `-g` is in CFLAGS and no `--strip-debug` or `llvm-strip` step runs on `build/kernel.exe`.
+
 ## Hardware Constraints
 
 - **APIC-only interrupts.** Route all hardware interrupts via LAPIC/IOAPIC. Do NOT write new 8259 PIC routing code. The PIC is masked at boot. *(Legacy PIC masking code in `pic.c` is kept for boot-time disable only.)*
@@ -99,3 +126,4 @@ The build script (`scripts/build.sh`) automatically checks this after linking th
 | Commit | Bug | Root Cause |
 |--------|-----|------------|
 | `f38670f` | GPF in `RegSetValueEx` after desktop loaded | NCQ struct expansion pushed BSS past `0x400000`; shell.exe overwrote `reg_value_pool` |
+| `671468c6` | PAGE_FAULT in B-tree insert (CR2 = base + 4 GiB) | NTFS IndexLength mixed entries-only vs spec-format sizes → `uint32_t` underflow in memmove |

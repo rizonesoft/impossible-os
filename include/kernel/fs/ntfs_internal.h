@@ -79,6 +79,29 @@ static inline void ntfs_memcpy(void *dst, const void *src, uint64_t n)
         d[i] = s[i];
 }
 
+/* Overlapping-safe move: copies backward when dst > src.
+ * Marked __attribute__((noinline)) to prevent the compiler from unrolling
+ * the backward loop into a pattern that produces 33-bit addresses at -O2. */
+static void __attribute__((noinline, unused))
+ntfs_memmove(void *dst, const void *src, uint64_t n)
+{
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+    if (d <= s || d >= s + n) {
+        /* No overlap, forward copy */
+        uint64_t i;
+        for (i = 0; i < n; i++)
+            d[i] = s[i];
+    } else {
+        /* Overlapping, backward copy */
+        uint64_t i = n;
+        while (i > 0) {
+            i--;
+            d[i] = s[i];
+        }
+    }
+}
+
 /* ---- Attribute manipulation helpers (ntfs_attr_write.c) ---- */
 
 struct ntfs_mft_header;

@@ -61,71 +61,107 @@ static int bitmap_offset_to_lba(struct ntfs_volume *vol,
 }
 
 /* Read one byte from the $Bitmap at the given byte offset.
- * Returns the byte value, or -1 on error. */
+ * Returns the byte directly from the in-memory bitmap buffer.
+ * Returns -1 if the offset is out of range or bitmap not loaded. */
 static int bitmap_read_byte(struct ntfs_volume *vol, uint64_t byte_offset)
 {
-    uint64_t lba;
-    uint32_t sector_off;
-    uint8_t  sector_buf[512];
-
-    if (bitmap_offset_to_lba(vol, byte_offset, &lba, &sector_off) < 0)
+    if (!vol->bitmap_data || byte_offset >= vol->bitmap_size)
         return -1;
-
-    if (blkdev_read(vol->dev, lba, 1, sector_buf) != 0)
-        return -1;
-
-    return sector_buf[sector_off];
-}
-
-/* Write one byte to the $Bitmap at the given byte offset.
- * Reads the sector, modifies the byte, writes it back. */
-static int bitmap_write_byte(struct ntfs_volume *vol, uint64_t byte_offset,
-                              uint8_t value)
-{
-    uint64_t lba;
-    uint32_t sector_off;
-    uint8_t  sector_buf[512];
-
-    if (bitmap_offset_to_lba(vol, byte_offset, &lba, &sector_off) < 0)
-        return -1;
-
-    /* Read-modify-write */
-    if (blkdev_read(vol->dev, lba, 1, sector_buf) != 0)
-        return -1;
-
-    sector_buf[sector_off] = value;
-
-    if (blkdev_write(vol->dev, lba, 1, sector_buf) != 0)
-        return -1;
-
-    return 0;
+    return vol->bitmap_data[byte_offset];
 }
 
 /* Set or clear a range of bits in the bitmap.
- * set=1: mark clusters as allocated.  set=0: mark as free. */
+ * set=1: mark clusters as allocated.  set=0: mark as free.
+ *
+ * Modifies the in-memory bitmap_data buffer directly (authoritative copy),
+ * then writes changed sectors back to disk (write-through).
+ * Since reads always come from bitmap_data, there is no stale-read issue. */
 static int bitmap_set_range(struct ntfs_volume *vol,
                              uint64_t lcn, uint64_t count, int set)
 {
+    uint64_t cur_lba = (uint64_t)-1;
+    int      need_flush = 0;
     uint64_t i;
 
+    if (!vol->bitmap_data)
+        return NTFS_ERR_IO;
+
     for (i = 0; i < count; i++) {
-        uint64_t cluster = lcn + i;
+        uint64_t cluster  = lcn + i;
         uint64_t byte_off = cluster / 8;
         uint8_t  bit_mask = (uint8_t)(1u << (cluster % 8));
-        int val;
+        uint64_t lba;
+        uint32_t sector_off;
 
-        val = bitmap_read_byte(vol, byte_off);
-        if (val < 0)
+        if (byte_off >= vol->bitmap_size)
             return NTFS_ERR_IO;
 
+        /* Modify the in-memory bitmap (always authoritative) */
         if (set)
-            val |= bit_mask;
+            vol->bitmap_data[byte_off] |= bit_mask;
         else
-            val &= ~bit_mask;
+            vol->bitmap_data[byte_off] &= ~bit_mask;
 
-        if (bitmap_write_byte(vol, byte_off, (uint8_t)val) < 0)
+        /* Track which disk sector needs flushing */
+        if (bitmap_offset_to_lba(vol, byte_off, &lba, &sector_off) < 0)
+            return NTFS_ERR_IO;
+
+        /* When we cross to a new sector, flush the previous one */
+        if (lba != cur_lba) {
+            if (need_flush) {
+                /* Build sector from in-memory bitmap and write to disk */
+                uint8_t sector_buf[512];
+                uint64_t sec_byte_start;
+                uint32_t dummy_off;
+
+                /* Determine which bitmap byte starts this sector */
+                bitmap_offset_to_lba(vol, (cluster - 1) / 8,
+                                     &cur_lba, &dummy_off);
+                sec_byte_start = ((cluster - 1) / 8) - dummy_off;
+
+                /* Copy from in-memory bitmap into sector buffer */
+                {
+                    uint32_t ci;
+                    for (ci = 0; ci < 512; ci++) {
+                        uint64_t boff = sec_byte_start + ci;
+                        sector_buf[ci] = (boff < vol->bitmap_size) ?
+                                         vol->bitmap_data[boff] : 0;
+                    }
+                }
+
+                if (blkdev_write(vol->dev, cur_lba, 1, sector_buf) != 0)
+                    return NTFS_ERR_IO;
+            }
+            cur_lba = lba;
+            need_flush = 1;
+        }
+    }
+
+    /* Flush the last sector */
+    if (need_flush && cur_lba != (uint64_t)-1) {
+        uint8_t sector_buf[512];
+        uint64_t last_byte_off = (lcn + count - 1) / 8;
+        uint32_t sector_off_last;
+        uint64_t dummy_lba;
+
+        if (bitmap_offset_to_lba(vol, last_byte_off,
+                                 &dummy_lba, &sector_off_last) < 0)
+            return NTFS_ERR_IO;
+
+        uint64_t sec_byte_start = last_byte_off - sector_off_last;
+        {
+            uint32_t ci;
+            for (ci = 0; ci < 512; ci++) {
+                uint64_t boff = sec_byte_start + ci;
+                sector_buf[ci] = (boff < vol->bitmap_size) ?
+                                 vol->bitmap_data[boff] : 0;
+            }
+        }
+
+        if (blkdev_write(vol->dev, cur_lba, 1, sector_buf) != 0)
             return NTFS_ERR_IO;
     }
+
     return NTFS_OK;
 }
 
@@ -244,6 +280,80 @@ int ntfs_bitmap_load(struct ntfs_volume *vol)
         vol->bitmap_runs[i] = temp_runs[i];
     vol->bitmap_run_count = run_count;
     vol->bitmap_size = nrhdr.real_size;
+
+    /* ---- Load entire $Bitmap into memory ----
+     * This eliminates the VirtIO write-back cache coherency issue:
+     * all bitmap reads come from this authoritative in-memory copy,
+     * and writes update both the buffer and the disk (write-through). */
+    {
+        uint32_t bm_pages = (uint32_t)((vol->bitmap_size + 4095) / 4096);
+        uintptr_t bm_phys = pmm_alloc_contiguous(bm_pages);
+        vol->bitmap_data_pages = bm_pages;
+
+        if (!bm_phys) {
+            klog(LOG_ERROR, "ntfs",
+                 "$Bitmap: failed to allocate %u pages", (uint64_t)bm_pages);
+            kfree(vol->bitmap_runs);
+            vol->bitmap_runs = NULL;
+            return NTFS_ERR_IO;
+        }
+        vol->bitmap_data = (uint8_t *)bm_phys;
+
+        /* Zero the buffer first (handles partial last page) */
+        {
+            uint64_t zi;
+            for (zi = 0; zi < (uint64_t)bm_pages * 4096; zi++)
+                vol->bitmap_data[zi] = 0;
+        }
+
+        /* Read bitmap data from disk using the data runs */
+        {
+            uint64_t file_offset = 0;
+            int ri;
+            for (ri = 0; ri < run_count && file_offset < vol->bitmap_size; ri++) {
+                uint64_t lcn = vol->bitmap_runs[ri].lcn;
+                uint64_t len = vol->bitmap_runs[ri].length;
+                uint64_t ci;
+
+                if (lcn == NTFS_LCN_SPARSE) {
+                    /* Sparse run: leave as zeros */
+                    file_offset += len * vol->cluster_size;
+                    continue;
+                }
+
+                for (ci = 0; ci < len && file_offset < vol->bitmap_size; ci++) {
+                    uint64_t disk_lba = (lcn + ci) *
+                                        (uint64_t)vol->sectors_per_cluster;
+                    uint32_t sectors = vol->sectors_per_cluster;
+                    uint64_t bytes_left = vol->bitmap_size - file_offset;
+                    uint64_t bytes_this = (uint64_t)sectors * vol->bytes_per_sector;
+                    if (bytes_this > bytes_left)
+                        bytes_this = bytes_left;
+
+                    /* Read directly into bitmap_data buffer */
+                    if (blkdev_read(vol->dev, disk_lba, sectors,
+                                   vol->bitmap_data + file_offset) != 0) {
+                        klog(LOG_ERROR, "ntfs",
+                             "$Bitmap: failed to read LCN %llu", lcn + ci);
+                        {
+                            uint32_t pi;
+                            for (pi = 0; pi < bm_pages; pi++)
+                                pmm_free_frame(bm_phys + pi * 4096);
+                        }
+                        vol->bitmap_data = NULL;
+                        kfree(vol->bitmap_runs);
+                        vol->bitmap_runs = NULL;
+                        return NTFS_ERR_IO;
+                    }
+                    file_offset += bytes_this;
+                }
+            }
+        }
+
+        klog(LOG_DEBUG, "ntfs",
+             "$Bitmap loaded: %llu bytes (%u pages) in memory",
+             vol->bitmap_size, (uint64_t)bm_pages);
+    }
 
     /* Calculate total clusters */
     vol->total_clusters = vol->total_sectors /

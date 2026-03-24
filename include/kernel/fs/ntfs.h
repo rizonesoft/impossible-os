@@ -49,6 +49,8 @@ struct ntfs_volume {
     struct ntfs_data_run *bitmap_runs; /* PMM-allocated array of bitmap data runs */
     int      bitmap_run_count;     /* Number of valid bitmap data runs */
     uint64_t bitmap_size;          /* $Bitmap real size in bytes */
+    uint8_t *bitmap_data;          /* PMM-allocated in-memory copy of entire $Bitmap */
+    uint32_t bitmap_data_pages;    /* Number of PMM pages allocated for bitmap_data */
 
     /* MFT Zone — reserved for MFT growth (first 12.5% of volume) */
     uint64_t mft_zone_start;       /* First LCN of MFT zone */
