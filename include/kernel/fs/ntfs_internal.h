@@ -78,3 +78,34 @@ static inline void ntfs_memcpy(void *dst, const void *src, uint64_t n)
     for (i = 0; i < n; i++)
         d[i] = s[i];
 }
+
+/* ---- Attribute manipulation helpers (ntfs_attr_write.c) ---- */
+
+struct ntfs_mft_header;
+struct ntfs_data_run;
+
+/* Re-parse MFT record header from raw bytes */
+void reparse_header(const uint8_t *rec, struct ntfs_mft_header *hdr);
+
+/* Find sorted insertion point for a new attribute by type */
+uint32_t find_insert_point(const uint8_t *rec,
+                            const struct ntfs_mft_header *hdr,
+                            uint32_t new_type);
+
+/* Shift attributes in a record to open/close a gap */
+uint32_t shift_attrs(uint8_t *rec, uint32_t frs_size,
+                      uint32_t from_off, uint32_t old_used,
+                      int32_t delta);
+
+/* Get the next unused attribute instance ID */
+uint16_t next_attr_id(const uint8_t *rec,
+                       const struct ntfs_mft_header *hdr);
+
+/* Build a non-resident attribute header with encoded data runs */
+uint32_t build_nonresident_attr(uint8_t *out, uint32_t type,
+                                 const char *name, uint8_t name_len,
+                                 uint16_t attr_id,
+                                 const struct ntfs_data_run *runs,
+                                 int run_count,
+                                 uint64_t alloc_size,
+                                 uint64_t real_size);

@@ -130,8 +130,6 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
                                       NTFS_ATTR_INDEX_ALLOCATION, "$I30", &ia_ah);
         struct ntfs_data_run new_runs[NTFS_INDEX_MAX_RUNS + 1];
         int new_count;
-        uint8_t encoded[512];
-        int enc_len;
 
         if (ia_attr && ia_ah.non_resident) {
             old_count = ntfs_decode_data_runs(ia_attr, old_runs,
@@ -147,26 +145,69 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
         new_runs[old_count].length    = clusters_per_indx;
         new_count = old_count + 1;
 
-        enc_len = ntfs_encode_data_runs(new_runs, new_count, encoded, 512);
-        if (enc_len <= 0) {
-            ntfs_free_clusters(vol, lcn, clusters_per_indx);
-            kfree(rec);
-            return NTFS_ERR_IO;
-        }
-
-        /* Remove old IA + bitmap, re-add */
+        /* Remove old IA, rebuild as proper non-resident attribute.
+         * $INDEX_ALLOCATION MUST be non-resident — it contains INDX
+         * buffers on disk, referenced by the run list.  ntfs_attr_add()
+         * would create a resident attribute for small data, which is
+         * invalid for type 0xA0. */
         ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
                           NTFS_ATTR_INDEX_ALLOCATION, "$I30");
 
-        /* Re-add as non-resident (ntfs_attr_add will handle large data as non-res) */
-        rc = ntfs_attr_add(vol, rec, &hdr, vol->frs_size,
-                            NTFS_ATTR_INDEX_ALLOCATION, "$I30",
-                            encoded, (uint32_t)enc_len);
-        if (rc != NTFS_OK) {
-            ntfs_free_clusters(vol, lcn, clusters_per_indx);
-            kfree(rec);
-            return rc;
+        /* Calculate total allocation size across all runs */
+        {
+            uint64_t total_vcn = 0;
+            int ri;
+            for (ri = 0; ri < new_count; ri++)
+                total_vcn += new_runs[ri].length;
+
+            uint64_t alloc_sz = total_vcn * (uint64_t)vol->cluster_size;
+            uint64_t real_sz  = alloc_sz;
+
+            /* Build non-resident attribute header with embedded run list */
+            uint8_t attr_buf[1024];
+            uint32_t attr_len = build_nonresident_attr(
+                attr_buf, NTFS_ATTR_INDEX_ALLOCATION,
+                "$I30", 4,  /* name = "$I30", name_len = 4 */
+                next_attr_id(rec, &hdr),
+                new_runs, new_count,
+                alloc_sz, real_sz);
+
+            if (attr_len == 0) {
+                ntfs_free_clusters(vol, lcn, clusters_per_indx);
+                kfree(rec);
+                return NTFS_ERR_IO;
+            }
+
+            /* Find insertion point (sorted by type) */
+            uint32_t insert_off = find_insert_point(rec, &hdr,
+                                                     NTFS_ATTR_INDEX_ALLOCATION);
+
+            /* Check that it fits in the MFT record */
+            uint32_t free_space = hdr.alloc_size - hdr.used_size;
+            if (attr_len > free_space) {
+                ntfs_free_clusters(vol, lcn, clusters_per_indx);
+                kfree(rec);
+                klog(LOG_ERROR, "ntfs",
+                     "alloc_indx_vcn: IA attr %u bytes > free %u",
+                     (uint64_t)attr_len, (uint64_t)free_space);
+                return NTFS_ERR_FULL;
+            }
+
+            /* Open gap and insert */
+            uint32_t new_used = shift_attrs(rec, vol->frs_size,
+                                             insert_off, hdr.used_size,
+                                             (int32_t)attr_len);
+            if (new_used == 0) {
+                ntfs_free_clusters(vol, lcn, clusters_per_indx);
+                kfree(rec);
+                return NTFS_ERR_IO;
+            }
+
+            ntfs_memcpy(rec + insert_off, attr_buf, attr_len);
+            reparse_header(rec, &hdr);
         }
+
+        rc = NTFS_OK;
     }
 
     /* Update $BITMAP to mark new_vcn as active */

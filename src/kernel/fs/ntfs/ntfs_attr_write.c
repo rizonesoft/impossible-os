@@ -133,7 +133,7 @@ int ntfs_encode_data_runs(const struct ntfs_data_run *runs, int count,
  * ============================================================================ */
 
 /* Re-parse MFT record header from raw bytes (for in-memory record after edits) */
-static void reparse_header(const uint8_t *rec, struct ntfs_mft_header *hdr)
+void reparse_header(const uint8_t *rec, struct ntfs_mft_header *hdr)
 {
     hdr->magic         = ntfs_le32(rec + 0x00);
     hdr->usa_offset    = ntfs_le16(rec + 0x04);
@@ -152,7 +152,7 @@ static void reparse_header(const uint8_t *rec, struct ntfs_mft_header *hdr)
  * by type ID. Returns the offset within the record where the new attribute
  * should be inserted (before the first attribute with type > new_type,
  * or before $END if none). */
-static uint32_t find_insert_point(const uint8_t *rec,
+uint32_t find_insert_point(const uint8_t *rec,
                                    const struct ntfs_mft_header *hdr,
                                    uint32_t new_type)
 {
@@ -180,7 +180,7 @@ static uint32_t find_insert_point(const uint8_t *rec,
 /* Move bytes within the record buffer to open/close a gap.
  * Positive delta = open gap (shift right), negative = close gap (shift left).
  * Returns new used_size after the move. */
-static uint32_t shift_attrs(uint8_t *rec, uint32_t frs_size,
+uint32_t shift_attrs(uint8_t *rec, uint32_t frs_size,
                              uint32_t from_off, uint32_t old_used,
                              int32_t delta)
 {
@@ -212,7 +212,7 @@ static uint32_t shift_attrs(uint8_t *rec, uint32_t frs_size,
 
 /* Find the next unused attribute instance ID in a record.
  * Scans all attributes and returns max_id + 1. */
-static uint16_t next_attr_id(const uint8_t *rec,
+uint16_t next_attr_id(const uint8_t *rec,
                               const struct ntfs_mft_header *hdr)
 {
     const uint8_t *attr;
@@ -295,7 +295,7 @@ static uint32_t build_resident_attr(uint8_t *out, uint32_t type,
 
 /* Build a non-resident attribute header with encoded data runs.
  * Returns the total attribute length (aligned to 8 bytes). */
-static uint32_t build_nonresident_attr(uint8_t *out, uint32_t type,
+uint32_t build_nonresident_attr(uint8_t *out, uint32_t type,
                                         const char *name, uint8_t name_len,
                                         uint16_t attr_id,
                                         const struct ntfs_data_run *runs,
