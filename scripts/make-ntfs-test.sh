@@ -102,12 +102,15 @@ mkntfs -Q -F -L "NTFS_TEST" "$IMG" >/dev/null 2>&1
 if $HAVE_NTFSCP; then
     log "Copying root-level files via ntfscp..."
 
-    # Basic files
-    ntfscp "$IMG" "$SAMPLE_DIR/test.txt" test.txt 2>/dev/null
-    ntfscp "$IMG" "$SAMPLE_DIR/verify.txt" verify.txt 2>/dev/null
-    ntfscp "$IMG" "$SAMPLE_DIR/empty.txt" empty.txt 2>/dev/null
-    ntfscp "$IMG" "$SAMPLE_DIR/resident.txt" resident.txt 2>/dev/null
-    ntfscp "$IMG" "$SAMPLE_DIR/large.bin" large.bin 2>/dev/null
+    # Use -f (force) to bypass the exclusive-open volume lock check.
+    # This is safe: we just created the image and nothing else has it mounted.
+    # Without -f, ntfscp fails on some systems (WSL2, certain ntfs-3g builds)
+    # with "Access denied because the NTFS volume is already exclusively opened".
+    ntfscp -f "$IMG" "$SAMPLE_DIR/test.txt" test.txt
+    ntfscp -f "$IMG" "$SAMPLE_DIR/verify.txt" verify.txt
+    ntfscp -f "$IMG" "$SAMPLE_DIR/empty.txt" empty.txt
+    ntfscp -f "$IMG" "$SAMPLE_DIR/resident.txt" resident.txt
+    ntfscp -f "$IMG" "$SAMPLE_DIR/large.bin" large.bin
 
     log "Root files copied: test.txt, verify.txt, empty.txt, resident.txt, large.bin"
 fi
