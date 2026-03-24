@@ -78,79 +78,63 @@ if ($vm) {
 Write-Status "Converting system-disk.img to VHDX..."
 if (Test-Path $DISK_VHDX) { Remove-Item $DISK_VHDX -Force }
 
-# Copy raw image to Windows filesystem first (WSL 9P -> NTFS)
+# Copy raw image to Windows filesystem first (WSL 9P -> Windows NTFS host)
 $DISK_TEMP = Join-Path $VHD_DIR "system-disk.img"
 Write-Status "Copying raw image to Windows filesystem..."
 Copy-Item -Path $DISK_RAW -Destination $DISK_TEMP -Force
 
-# Try qemu-img first (correct GPT preservation), fall back to manual method
-$qemuImg = Get-Command qemu-img -ErrorAction SilentlyContinue
-if (-not $qemuImg) {
-    # QEMU for Windows often installs to Program Files without adding to PATH
-    $qemuCandidates = @(
-        "$env:ProgramFiles\qemu\qemu-img.exe",
-        "${env:ProgramFiles(x86)}\qemu\qemu-img.exe",
-        "C:\qemu\qemu-img.exe"
-    )
-    foreach ($candidate in $qemuCandidates) {
-        if (Test-Path $candidate) {
-            $qemuImg = $candidate
-            Write-Status "Found qemu-img at: $candidate"
-            break
-        }
+# ---- VHDX conversion strategy ----
+# We use New-VHD -Fixed + raw sector copy as the PRIMARY method.
+#
+# WHY NOT qemu-img:
+#   qemu-img has a known bug (QEMU 7.x+) where it sets the NTFS sparse
+#   attribute on the output .vhdx file on Windows even when using
+#   -o subformat=fixed. Hyper-V checks the host-side NTFS file attributes
+#   (not the VHDX internal format) and refuses 0xC03A001A if sparse is set.
+#   New-VHD -Fixed is Hyper-V's own cmdlet; it ALWAYS creates a fully-
+#   allocated, non-sparse file and never has this problem.
+#
+# WHY NOT Convert-VHD:
+#   Convert-VHD requires a source VHD/VHDX — it cannot convert raw .img files.
+#
+$rawSize    = (Get-Item $DISK_TEMP).Length
+$alignedSize = [math]::Ceiling($rawSize / 1MB) * 1MB
+
+Write-Status "Creating fixed VHDX ($([math]::Round($alignedSize/1MB)) MB)..."
+New-VHD -Path $DISK_VHDX -Fixed -SizeBytes $alignedSize | Out-Null
+
+Write-Status "Writing disk image into VHDX (raw sector copy)..."
+$vhd = Mount-VHD -Path $DISK_VHDX -Passthru
+$diskNumber = $vhd.DiskNumber
+$devicePath = "\\.\PhysicalDrive$diskNumber"
+try {
+    $source = [System.IO.File]::OpenRead($DISK_TEMP)
+    $dest   = [System.IO.FileStream]::new(
+                  $devicePath,
+                  [System.IO.FileMode]::Open,
+                  [System.IO.FileAccess]::Write,
+                  [System.IO.FileShare]::ReadWrite)
+    $buffer = New-Object byte[] (4MB)
+    while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        $dest.Write($buffer, 0, $read)
     }
-}
-if ($qemuImg) {
-    $qemuImgPath = if ($qemuImg -is [string]) { $qemuImg } else { $qemuImg.Source }
-    # -o subformat=fixed: fully-allocated VHDX (Hyper-V rejects sparse/dynamic VHDXs)
-    & $qemuImgPath convert -f raw -O vhdx -o subformat=fixed $DISK_TEMP $DISK_VHDX
-    if ($LASTEXITCODE -ne 0) {
-        Write-Fail "qemu-img convert failed"
-        exit 1
-    }
-} else {
-    # Fallback: use Hyper-V's Convert-VHD if available, else raw write
-    Write-Warn "qemu-img not found -- install QEMU for Windows for reliable VHDX conversion"
-    Write-Warn "Download: https://qemu.weilnetz.de/w64/"
-    
-    $rawSize = (Get-Item $DISK_TEMP).Length
-    $alignedSize = [math]::Ceiling($rawSize / 1MB) * 1MB
-    
-    New-VHD -Path $DISK_VHDX -Fixed -SizeBytes $alignedSize | Out-Null
-    $vhd = Mount-VHD -Path $DISK_VHDX -Passthru
-    $diskNumber = $vhd.DiskNumber
-    $devicePath = "\\.\PhysicalDrive$diskNumber"
-    try {
-        $source = [System.IO.File]::OpenRead($DISK_TEMP)
-        $dest = [System.IO.FileStream]::new($devicePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
-        $buffer = New-Object byte[] (1MB)
-        while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
-            $dest.Write($buffer, 0, $read)
-        }
-        $dest.Flush()
-        $dest.Close()
-        $source.Close()
-    } finally {
-        Dismount-VHD -Path $DISK_VHDX
-    }
+    $dest.Flush()
+    $dest.Close()
+    $source.Close()
+} finally {
+    Dismount-VHD -Path $DISK_VHDX
 }
 
-# ---- Strip NTFS sparse/compressed attributes (Hyper-V 0xC03A001A) ----
-# NOTE: This operates on the .vhdx container file as stored on the Windows
-# host (NTFS). It has no effect on the partitions inside the image
-# (EFI FAT32 + Logs FAT32 + IXFS). Hyper-V checks the host-side NTFS file
-# attributes on the .vhdx before mounting it and refuses if sparse or
-# compressed — even when qemu-img already used subformat=fixed internally.
-Write-Status "Clearing NTFS sparse/compression attributes on VHDX..."
+# Belt-and-suspenders: clear any sparse/compression attributes in case the
+# filesystem set them. New-VHD -Fixed should never be sparse, but being
+# explicit avoids 0xC03A001A if user's folder has compression/sparse inherit.
 $fsutil = "$env:SystemRoot\System32\fsutil.exe"
 & $fsutil sparse setflag $DISK_VHDX 0 2>&1 | Out-Null
 & compact.exe /u $DISK_VHDX 2>&1 | Out-Null
-Write-Status "NTFS attributes cleared"
 
 Remove-Item $DISK_TEMP -Force -ErrorAction SilentlyContinue
 $vhdxSizeMB = [math]::Round((Get-Item $DISK_VHDX).Length / 1MB)
-$vhdxMsg = "VHDX: " + $DISK_VHDX + " (" + $vhdxSizeMB + " MB)"
-Write-Ok $vhdxMsg
+Write-Ok "VHDX: $DISK_VHDX ($vhdxSizeMB MB)"
 
 # ---- Create fresh VM ----
 $MemoryBytes = [int64]$MemoryMB * 1MB
