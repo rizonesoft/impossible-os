@@ -357,6 +357,156 @@ int ntfs_index_delete(struct ntfs_volume *vol,
             return rc;
         }
 
+        if (found && is_internal && ia_run_count > 0) {
+            /* Internal entry in root: replace with rightmost leaf predecessor */
+            uint32_t indx_pages = (indx_size + 4095) / 4096;
+            uintptr_t indx_phys = pmm_alloc_contiguous(indx_pages);
+            if (!indx_phys) {
+                kfree(rec);
+                if (txn) ntfs_txn_abort(txn); if (txn) ntfs_txn_free(txn);
+                return NTFS_ERR_IO;
+            }
+            uint8_t *indx_buf = (uint8_t *)(uintptr_t)indx_phys;
+
+            uint8_t pred_entry[640];
+            uint32_t pred_len = 0;
+            uint64_t leaf_vcn = VCN_NONE;
+
+            int r2 = get_rightmost_leaf_entry(vol, ia_runs, ia_run_count,
+                                               child_vcn, indx_size, indx_buf,
+                                               pred_entry, &pred_len, &leaf_vcn);
+            if (r2 != NTFS_OK) {
+                pmm_free_frame(indx_phys);
+                kfree(rec);
+                if (txn) ntfs_txn_abort(txn); if (txn) ntfs_txn_free(txn);
+                return r2;
+            }
+
+            /* Re-read MFT record (indx_buf clobbered state) */
+            rc = ntfs_read_mft_record(vol, dir_inode, rec, &hdr);
+            if (rc != NTFS_OK) {
+                pmm_free_frame(indx_phys);
+                kfree(rec);
+                if (txn) ntfs_txn_abort(txn); if (txn) ntfs_txn_free(txn);
+                return rc;
+            }
+
+            /* Rebuild root with predecessor replacing the internal entry.
+             * Keep the original entry's child VCN (SUBNODE pointer) intact. */
+            {
+                struct ntfs_attr_header root_ah2;
+                const uint8_t *root_attr2 = ntfs_attr_find_named(rec, &hdr,
+                                                NTFS_ATTR_INDEX_ROOT, "$I30", &root_ah2);
+                const uint8_t *root_content2 = root_attr2 + root_ah2.content_offset;
+                uint32_t old_cs2 = root_ah2.content_length;
+                uint8_t *node2 = (uint8_t *)root_content2 + 0x10;
+                uint32_t entries_off2 = ntfs_le32(node2 + 0x00);
+                uint32_t total_sz_raw2 = ntfs_le32(node2 + 0x04);
+                uint32_t total_sz2 = (total_sz_raw2 >= entries_off2)
+                                      ? total_sz_raw2 - entries_off2 : 0;
+                uint8_t *eb2 = node2 + entries_off2;
+
+                /* Re-find the internal entry (offsets may have shifted) */
+                uint32_t fo2;
+                uint16_t fl2;
+                uint64_t cv2;
+                int ii2;
+                int f2 = find_entry_in_entries_bytes(vol, eb2, total_sz2,
+                                                      name, name_len,
+                                                      &fo2, &fl2, &cv2, &ii2);
+                if (f2) {
+                    /* Build replacement entry = pred data + original's child VCN */
+                    uint8_t repl[640];
+                    uint32_t repl_len;
+                    /* The predecessor is a leaf entry (no SUBNODE). We need to
+                     * give it the SUBNODE flag and the original entry's child VCN. */
+                    uint16_t pred_raw_len = ntfs_le16(pred_entry + 0x08);
+                    /* Align to 8 bytes, add 8 for VCN */
+                    repl_len = ((uint32_t)pred_raw_len + 8 + 7) & ~7u;
+                    if (repl_len > sizeof(repl)) repl_len = sizeof(repl);
+                    ntfs_memcpy(repl, pred_entry, pred_raw_len);
+                    ntfs_memset(repl + pred_raw_len, 0, repl_len - pred_raw_len);
+                    ntfs_le16_write(repl + 0x08, (uint16_t)repl_len);
+                    repl[0x0C] |= NTFS_INDEX_ENTRY_SUBNODE;
+                    ntfs_le64_write(repl + repl_len - 8, cv2);
+
+                    /* Replace: remove old, insert replacement */
+                    int32_t delta = (int32_t)repl_len - (int32_t)fl2;
+                    uint32_t new_cs2 = (uint32_t)((int32_t)old_cs2 + delta);
+                    uint8_t *new_root2 = (uint8_t *)kmalloc(new_cs2);
+                    if (new_root2) {
+                        ntfs_memcpy(new_root2, root_content2, old_cs2);
+                        uint8_t *nr_node2 = new_root2 + 0x10;
+                        uint8_t *nr_eb2 = nr_node2 + entries_off2;
+                        /* Shift tail to accommodate size change */
+                        uint32_t tail_start = fo2 + fl2;
+                        uint32_t tail_len = total_sz2 - tail_start;
+                        ntfs_memmove(nr_eb2 + fo2 + repl_len,
+                                     nr_eb2 + tail_start, tail_len);
+                        ntfs_memcpy(nr_eb2 + fo2, repl, repl_len);
+                        uint32_t new_total2 = (uint32_t)((int32_t)total_sz2 + delta);
+                        ntfs_le32_write(nr_node2 + 0x04, entries_off2 + new_total2);
+                        ntfs_le32_write(nr_node2 + 0x08, entries_off2 + new_total2);
+
+                        ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
+                                          NTFS_ATTR_INDEX_ROOT, "$I30");
+                        rc = ntfs_attr_add(vol, rec, &hdr, vol->frs_size,
+                                            NTFS_ATTR_INDEX_ROOT, "$I30",
+                                            new_root2, new_cs2);
+                        kfree(new_root2);
+                        if (rc == NTFS_OK)
+                            rc = ntfs_write_mft_record(vol, dir_inode, rec);
+                    } else {
+                        rc = NTFS_ERR_IO;
+                    }
+                }
+            }
+
+            /* Delete the predecessor from its leaf */
+            if (rc == NTFS_OK && leaf_vcn != VCN_NONE) {
+                int r3 = ntfs_read_indx(vol, ia_runs, ia_run_count, leaf_vcn,
+                                         indx_size, indx_buf);
+                if (r3 == NTFS_OK) {
+                    struct ntfs_index_node_header nh2;
+                    const uint8_t *eb3;
+                    if (ntfs_parse_indx_entries(indx_buf, &nh2, &eb3) == NTFS_OK) {
+                        uint8_t *mut_eb3 = (uint8_t *)eb3;
+                        uint32_t ts3 = nh2.total_size;
+                        const uint8_t *pred_fn = pred_entry + 0x10;
+                        int pred_nlen = (int)(uint8_t)pred_fn[0x40];
+                        const uint8_t *pred_name = pred_fn + 0x42;
+                        char pred_ascii[256];
+                        int pi;
+                        for (pi = 0; pi < pred_nlen && pi < 255; pi++)
+                            pred_ascii[pi] = (char)ntfs_le16(pred_name + pi * 2);
+                        pred_ascii[pred_nlen] = '\0';
+
+                        uint32_t d_off;
+                        uint16_t d_len;
+                        uint64_t d_vcn;
+                        int d_int;
+                        if (find_entry_in_entries_bytes(vol, eb3, ts3,
+                                                        pred_ascii, pred_nlen,
+                                                        &d_off, &d_len, &d_vcn, &d_int)) {
+                            remove_entry_bytes(mut_eb3, &ts3, d_off, d_len);
+                            uint8_t *inh = indx_buf + INDX_NODE_HDR_OFF;
+                            ntfs_le32_write(inh + 0x04, ts3);
+                            ntfs_write_indx(vol, ia_runs, ia_run_count, leaf_vcn,
+                                             indx_size, indx_buf);
+                        }
+                    }
+                }
+            }
+
+            pmm_free_frame(indx_phys);
+            kfree(rec);
+            if (txn) {
+                if (rc == NTFS_OK) ntfs_txn_commit(txn); else ntfs_txn_abort(txn);
+                ntfs_txn_free(txn);
+            }
+            return rc;
+        }
+
         /* If found internally in root or not in root → search INDX buffers */
         if (!found && child_vcn == VCN_NONE) {
             /* Definitely not here */
