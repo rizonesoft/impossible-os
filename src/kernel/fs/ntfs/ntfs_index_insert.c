@@ -537,18 +537,81 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     }
 
                     /* Root overflows — need to push root contents to a new INDX,
-                     * then make root a single-separator internal node. */
+                     * then make root a single-separator internal node.
+                     *
+                     * KEY: We must shrink $INDEX_ROOT BEFORE calling
+                     * allocate_indx_vcn(), because $INDEX_ROOT is bloated
+                     * with ~700 bytes of entries and there's no room in the
+                     * MFT record for the new $INDEX_ALLOCATION attribute.
+                     *
+                     * Strategy:
+                     *   1. Save old root entries + new entry into temp buffer
+                     *   2. Shrink $INDEX_ROOT to an empty stub (frees ~700 bytes)
+                     *   3. Write MFT to persist the shrunk root
+                     *   4. Call allocate_indx_vcn() — now has room for IA+bitmap
+                     *   5. Build INDX buffer from saved entries, write it
+                     *   6. Update $INDEX_ROOT with child VCN pointer
+                     */
                     {
                         uint64_t new_vcn = 0;
-                        kfree(rec); /* Release — re-read after alloc */
+
+                        /* --- Save root entries + new entry into a single buffer --- */
+                        uint32_t saved_total = total_sz + cur_len;
+                        uint8_t *saved_entries = (uint8_t *)kmalloc(saved_total);
+                        if (!saved_entries) { rc = NTFS_ERR_IO; kfree(rec); break; }
+
+                        ntfs_memcpy(saved_entries, eb, ins_off);
+                        ntfs_memcpy(saved_entries + ins_off, cur_entry, cur_len);
+                        ntfs_memcpy(saved_entries + ins_off + cur_len,
+                                     eb + ins_off,
+                                     total_sz - ins_off);
+
+                        /* Remember the root header (first 0x10 bytes of root content) */
+                        uint8_t saved_root_hdr[0x10];
+                        ntfs_memcpy(saved_root_hdr, root_content, 0x10);
+
+                        /* --- Shrink $INDEX_ROOT to empty stub --- */
+                        {
+                            uint32_t sentinel_len = 0x10 + 8; /* LAST + SUBNODE = 24 bytes */
+                            uint32_t stub_size = 0x10 + entries_off + sentinel_len;
+                            uint8_t *stub = (uint8_t *)kmalloc(stub_size);
+                            if (!stub) { kfree(saved_entries); rc = NTFS_ERR_IO; kfree(rec); break; }
+
+                            ntfs_memcpy(stub, saved_root_hdr, 0x10);
+                            uint8_t *stub_nh = stub + 0x10;
+                            ntfs_le32_write(stub_nh + 0x00, entries_off);
+                            ntfs_le32_write(stub_nh + 0x04, entries_off + sentinel_len);
+                            ntfs_le32_write(stub_nh + 0x08, entries_off + sentinel_len);
+                            stub_nh[0x0C] = 0x01; /* has_children */
+                            uint8_t *sent = stub_nh + entries_off;
+                            ntfs_memset(sent, 0, sentinel_len);
+                            ntfs_le16_write(sent + 0x08, (uint16_t)sentinel_len);
+                            sent[0x0C] = NTFS_INDEX_ENTRY_LAST | NTFS_INDEX_ENTRY_SUBNODE;
+                            /* VCN will be patched after allocate_indx_vcn */
+                            ntfs_le64_write(sent + sentinel_len - 8, 0);
+
+                            ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
+                                              NTFS_ATTR_INDEX_ROOT, "$I30");
+                            ntfs_attr_add(vol, rec, &hdr, vol->frs_size,
+                                           NTFS_ATTR_INDEX_ROOT, "$I30",
+                                           stub, stub_size);
+                            kfree(stub);
+                        }
+
+                        /* Write the shrunk MFT record so allocate_indx_vcn
+                         * reads a record with plenty of free space. */
+                        ntfs_write_mft_record(vol, dir_inode, rec);
+                        kfree(rec);
+
+                        /* --- Now allocate the INDX VCN (plenty of MFT space) --- */
                         rc = allocate_indx_vcn(vol, dir_inode, &new_vcn);
-                        if (rc != NTFS_OK) break;
+                        if (rc != NTFS_OK) { kfree(saved_entries); break; }
 
                         /* Re-read updated MFT (allocation modified it) */
                         rec = (uint8_t *)kmalloc(vol->frs_size);
-                        if (!rec) { rc = NTFS_ERR_IO; break; }
+                        if (!rec) { kfree(saved_entries); rc = NTFS_ERR_IO; break; }
                         rc = ntfs_read_mft_record(vol, dir_inode, rec, &hdr);
-                        if (rc != NTFS_OK) { kfree(rec); break; }
+                        if (rc != NTFS_OK) { kfree(saved_entries); kfree(rec); break; }
 
                         /* Reload ia_runs after alloc */
                         ia_attr = ntfs_attr_find_named(rec, &hdr,
@@ -557,26 +620,11 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                             ia_run_count = ntfs_decode_data_runs(ia_attr, ia_runs,
                                                                   NTFS_INDEX_MAX_RUNS, NULL);
 
-                        /* Reload root content */
-                        root_attr = ntfs_attr_find_named(rec, &hdr,
-                                        NTFS_ATTR_INDEX_ROOT, "$I30", &root_ah);
-                        root_content = root_attr + root_ah.content_offset;
-                        node = (uint8_t *)root_content + 0x10;
-                        entries_off = ntfs_le32(node + 0x00);
-                        total_sz    = ntfs_le32(node + 0x04);
-                        /* Convert to entries-only size */
-                        if (total_sz >= entries_off)
-                            total_sz -= entries_off;
-                        else
-                            total_sz = 0;
-                        eb = node + entries_off;
-
-                        /* Build new INDX buffer with all old root entries + new entry inserted */
+                        /* --- Build INDX buffer from saved entries --- */
                         if (indx_buf) {
                             ntfs_build_indx_buf(indx_buf, indx_size,
                                                  vol->bytes_per_sector, new_vcn);
 
-                            /* Build node in indx_buf: node hdr at INDX_NODE_HDR_OFF */
                             uint8_t *inode_hdr = indx_buf + INDX_NODE_HDR_OFF;
                             uint32_t i_entries_off = ntfs_le32(inode_hdr + 0x00);
                             uint8_t *ieb = inode_hdr + i_entries_off;
@@ -584,63 +632,52 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                             uint32_t i_alloc = (i_alloc_raw >= i_entries_off)
                                                 ? i_alloc_raw - i_entries_off : 0;
 
-                            /* Copy existing root entries into INDX */
-                            uint32_t ins_total = total_sz + cur_len;
-                            if (ins_total <= i_alloc) {
-                                /* Insert at correct position */
-                                ntfs_memcpy(ieb, eb, ins_off);
-                                ntfs_memcpy(ieb + ins_off, cur_entry, cur_len);
-                                ntfs_memcpy(ieb + ins_off + cur_len,
-                                             eb + ins_off,
-                                             total_sz - ins_off);
+                            if (saved_total <= i_alloc) {
+                                ntfs_memcpy(ieb, saved_entries, saved_total);
                                 ntfs_le32_write(inode_hdr + 0x04,
-                                                i_entries_off + ins_total);
+                                                i_entries_off + saved_total);
                                 ntfs_le32_write(inode_hdr + 0x08,
-                                                i_entries_off + ins_total);
+                                                i_entries_off + saved_total);
                             }
 
-                            /* Write new INDX buffer */
                             if (txn)
                                 ntfs_txn_log(txn,
-                                             NTFS_LOG_OP_ADD_IDX_ALLOC, ieb, (uint16_t)ins_total,
+                                             NTFS_LOG_OP_ADD_IDX_ALLOC, ieb, (uint16_t)saved_total,
                                              NTFS_LOG_OP_DEL_IDX_ALLOC, NULL, 0,
                                              dir_inode, 0);
                             ntfs_write_indx(vol, ia_runs, ia_run_count,
                                              new_vcn, indx_size, indx_buf);
-
-                            /* Reset root to empty internal node pointing to new_vcn */
-                            {
-                                uint32_t sentinel_len = 0x10 + 8; /* LAST + SUBNODE = 24 bytes */
-                                uint32_t new_root_size = 0x10 + entries_off + sentinel_len;
-                                uint8_t *new_root_buf = (uint8_t *)kmalloc(new_root_size);
-                                if (new_root_buf) {
-                                    /* root header (0x10 bytes) */
-                                    ntfs_memcpy(new_root_buf, root_content, 0x10);
-                                    /* node header */
-                                    uint8_t *nh2 = new_root_buf + 0x10;
-                                    ntfs_le32_write(nh2 + 0x00, entries_off);
-                                    ntfs_le32_write(nh2 + 0x04, entries_off + sentinel_len);
-                                    ntfs_le32_write(nh2 + 0x08, entries_off + sentinel_len);
-                                    nh2[0x0C] = 0x01; /* has_children */
-                                    /* Sentinel with child VCN */
-                                    uint8_t *sent = nh2 + entries_off;
-                                    ntfs_memset(sent, 0, sentinel_len);
-                                    ntfs_le16_write(sent + 0x08, (uint16_t)sentinel_len);
-                                    sent[0x0C] = NTFS_INDEX_ENTRY_LAST | NTFS_INDEX_ENTRY_SUBNODE;
-                                    ntfs_le64_write(sent + sentinel_len - 8, new_vcn);
-
-                                    ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
-                                                      NTFS_ATTR_INDEX_ROOT, "$I30");
-                                    ntfs_attr_add(vol, rec, &hdr, vol->frs_size,
-                                                   NTFS_ATTR_INDEX_ROOT, "$I30",
-                                                   new_root_buf, new_root_size);
-                                    kfree(new_root_buf);
-                                }
-                            }
-
-                            rc = ntfs_write_mft_record(vol, dir_inode, rec);
-                            need_promote = 0;
                         }
+                        kfree(saved_entries);
+
+                        /* --- Patch $INDEX_ROOT sentinel VCN to point to new_vcn --- */
+                        {
+                            struct ntfs_attr_header root_ah2;
+                            const uint8_t *ra2 = ntfs_attr_find_named(rec, &hdr,
+                                                     NTFS_ATTR_INDEX_ROOT, "$I30", &root_ah2);
+                            if (ra2) {
+                                uint8_t *rc2 = (uint8_t *)ra2 + root_ah2.content_offset;
+                                uint8_t *nh2 = rc2 + 0x10;
+                                uint32_t eo2 = ntfs_le32(nh2 + 0x00);
+                                uint32_t il2 = ntfs_le32(nh2 + 0x04);
+                                /* Sentinel is the last entry in the node */
+                                uint8_t *sent2 = nh2 + eo2;
+                                /* Walk to LAST entry */
+                                while (sent2 < nh2 + il2) {
+                                    uint16_t elen = ntfs_le16(sent2 + 0x08);
+                                    if (elen == 0) break;
+                                    if (sent2[0x0C] & NTFS_INDEX_ENTRY_LAST) break;
+                                    sent2 += elen;
+                                }
+                                /* Write VCN at end of sentinel */
+                                uint16_t s_len = ntfs_le16(sent2 + 0x08);
+                                if (s_len >= 24)
+                                    ntfs_le64_write(sent2 + s_len - 8, new_vcn);
+                            }
+                        }
+
+                        rc = ntfs_write_mft_record(vol, dir_inode, rec);
+                        need_promote = 0;
                         kfree(rec);
                         break;
                     }
