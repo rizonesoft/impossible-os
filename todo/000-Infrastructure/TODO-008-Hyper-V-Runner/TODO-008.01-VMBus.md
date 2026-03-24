@@ -113,7 +113,7 @@ graph TD
 
 ---
 
-## 1. Hypervisor Detection and Discovery ✅ *(agent)*
+## 1. Hypervisor Detection and Discovery
 
 > **XREF:** [TODO-008-Hyper-V-Runner.md §3](../TODO-008-Hyper-V-Runner.md) — VMBus Core Protocol
 
@@ -140,7 +140,7 @@ to determine available hypercalls, SynIC support, and VMBus capabilities. Run
 
 ---
 
-## 2. Guest OS Identity and Hypercall Page ✅ *(agent)*
+## 2. Guest OS Identity and Hypercall Page
 
 **Prompt:** ~~Implement~~ **Verify** guest OS identity registration and hypercall page setup.
 Confirm `vmbus.c` writes the guest OS ID to `HV_X64_MSR_GUEST_OS_ID` (`0x40000000`) and
@@ -166,7 +166,7 @@ executable hypercall trampoline code. Run `bash scripts/build.sh clean` and conf
 
 ---
 
-## 3. SynIC Initialization ✅ *(agent)*
+## 3. SynIC Initialization
 
 **Prompt:** ~~Implement~~ **Verify** Synthetic Interrupt Controller (SynIC) setup. Confirm
 `vmbus.c` allocates SIM (Synthetic Interrupt Message) and SIEF (Synthetic Interrupt Event
@@ -205,7 +205,7 @@ SINT2 with vector `0xF0` and AutoEOI, and enables SynIC via `HV_X64_MSR_SCONTROL
 
 ---
 
-## 4. Protocol Version Negotiation ✅ *(agent)*
+## 4. Protocol Version Negotiation
 
 **Prompt:** ~~Implement~~ **Verify** VMBus protocol version negotiation. Confirm `vmbus.c`
 sends `CHANNELMSG_INITIATE_CONTACT` with the highest supported version, waits for
@@ -239,7 +239,7 @@ rejection. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
 ---
 
-## 5. Channel Enumeration and Offer Processing ✅ *(agent)*
+## 5. Channel Enumeration and Offer Processing
 
 **Prompt:** ~~Implement~~ **Verify** VMBus channel enumeration. Confirm `vmbus.c` sends
 `CHANNELMSG_REQUESTOFFERS` after version negotiation, processes incoming
@@ -278,7 +278,7 @@ enumeration completion. Run `bash scripts/build.sh clean` and confirm `=== BUILD
 
 ---
 
-## 6. Ring Buffer Architecture ✅ *(agent)*
+## 6. Ring Buffer Architecture
 
 > **XREF:** [vmbus-core-protocol.md §3](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Ring Buffer Fundamentals
 
@@ -318,7 +318,7 @@ channel's send and receive rings, structures the 4 KiB header + data layout, and
 
 ---
 
-## 7. GPADL Establishment ✅ *(agent)*
+## 7. GPADL Establishment
 
 > **XREF:** [vmbus-core-protocol.md §5](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Memory Management and GPADL Mechanics
 
@@ -349,7 +349,7 @@ Confirm `vmbus.c` packages ring buffer physical page frame numbers (PFNs) into
 
 ---
 
-## 8. Channel Open and Activation ✅ *(agent)*
+## 8. Channel Open and Activation
 
 **Prompt:** ~~Implement~~ **Verify** channel opening. Confirm `vmbus.c` sends
 `CHANNELMSG_OPENCHANNEL` with the ring buffer GPADL handle, byte offset splitting send/recv
@@ -375,7 +375,7 @@ and confirm `=== BUILD OK ===`.
 
 ---
 
-## 9. Packet Send and Receive ✅ *(agent)*
+## 9. Packet Send and Receive
 
 > **XREF:** [vmbus-core-protocol.md §4](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — VMBus Message Types and Packet Anatomy
 
@@ -412,7 +412,7 @@ strips the `vmpacket_descriptor` header and returns payload only. Run
 
 ---
 
-## 10. Channel Signaling ✅ *(agent)*
+## 10. Channel Signaling
 
 > **XREF:** [vmbus-core-protocol.md §7](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Interrupt Signaling
 
@@ -435,7 +435,7 @@ through the hypercall page. The input is the channel's `child_relid`. Run
 
 ---
 
-## 11. VMBus Message Dispatch ✅ *(agent)*
+## 11. VMBus Message Dispatch
 
 **Prompt:** ~~Implement~~ **Verify** the SynIC interrupt handler for VMBus message dispatch.
 Confirm the IDT handler at vector `0xF0` reads pending messages from the SIM page, dispatches
@@ -466,7 +466,7 @@ written if more messages are pending. Run `bash scripts/build.sh clean` and conf
 
 ---
 
-## 12. TOC-TOU Security Mitigations ✅ *(agent)*
+## 12. TOC-TOU Security Mitigations
 
 > **XREF:** [vmbus-core-protocol.md §9](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Security Paradigms
 
@@ -492,19 +492,19 @@ confirm `=== BUILD OK ===`.
 > - StorVSC: `vmbus_recvpacket()` → stack-local `response` struct — safe
 > - HID input: `vmbus_ring_read()` → stack-local `buf[256]` — safe
 
-- [x] Audit `vmbus_recvpacket()` — payload copied to `pkt_buf[512]` (stack) before validation ✅
-- [x] Audit `vmbus_ring_read()` — indices now read via `READ_ONCE()` ✅
-- [x] Implement `READ_ONCE(x)` macro: `(*(volatile __typeof__(x) *)&(x))` ✅
-- [x] Verify `vmpacket_descriptor` fields validated from private copy, not ring buffer ✅
-- [x] Verify `offset8` and `len8` bounds-checked against `bytes_read` ✅
-- [x] Audit StorVSC: `VSTOR_PACKET` received via `vmbus_recvpacket()` → stack-local ✅
-- [x] Audit HID input: `INPUT_REPORT` received via `vmbus_ring_read()` → stack `buf[256]` ✅
-- [x] Log security-relevant events: `[VMBus] WARN: malformed packet` + `ring index out of bounds` ✅
+- [x] Audit `vmbus_recvpacket()` — payload copied to `pkt_buf[512]` (stack) before validation
+- [x] Audit `vmbus_ring_read()` — indices now read via `READ_ONCE()`
+- [x] Implement `READ_ONCE(x)` macro: `(*(volatile __typeof__(x) *)&(x))`
+- [x] Verify `vmpacket_descriptor` fields validated from private copy, not ring buffer
+- [x] Verify `offset8` and `len8` bounds-checked against `bytes_read`
+- [x] Audit StorVSC: `VSTOR_PACKET` received via `vmbus_recvpacket()` → stack-local
+- [x] Audit HID input: `INPUT_REPORT` received via `vmbus_ring_read()` → stack `buf[256]`
+- [x] Log security-relevant events: `[VMBus] WARN: malformed packet` + `ring index out of bounds`
 - [x] Commit: `"hyperv: VMBus TOC-TOU security audit"`
 
 ---
 
-## 13. Monitor Page Optimization ✅ *(agent)*
+## 13. Monitor Page Optimization
 
 > **XREF:** [vmbus-core-protocol.md §7.2](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Monitor Page
 
@@ -525,18 +525,18 @@ using the monitor page for channels with `monitor_allocated` and falling back to
 > - Active path: `HvCallSignalEvent` (0x005D) for non-monitor channels
 > - Benchmark requires Hyper-V hardware (not measurable in QEMU)
 
-- [x] Allocate guest-to-host monitor page via `pmm_alloc_contiguous(1)` — already done in `vmbus_connect()` ✅
-- [x] Pass monitor page GPA in `CHANNELMSG_INITIATE_CONTACT` — already done ✅
-- [x] For channels with `monitor_allocated == true`: use monitor page instead of hypercall ✅
-- [x] Implement `sync_set_bit()` — `LOCK BTS` on monitor page trigger group ✅
-- [x] Map channel `monitorid` to `trigger_group[group].pending` bit `(monitorid & 0x1F)` ✅
-- [x] Fallback: use `HvCallSignalEvent` for channels without monitor allocation ✅
-- [x] Benchmark: deferred to Hyper-V hardware testing (not measurable in QEMU) ✅
+- [x] Allocate guest-to-host monitor page via `pmm_alloc_contiguous(1)` — already done in `vmbus_connect()`
+- [x] Pass monitor page GPA in `CHANNELMSG_INITIATE_CONTACT` — already done
+- [x] For channels with `monitor_allocated == true`: use monitor page instead of hypercall
+- [x] Implement `sync_set_bit()` — `LOCK BTS` on monitor page trigger group
+- [x] Map channel `monitorid` to `trigger_group[group].pending` bit `(monitorid & 0x1F)`
+- [x] Fallback: use `HvCallSignalEvent` for channels without monitor allocation
+- [x] Benchmark: deferred to Hyper-V hardware testing (not measurable in QEMU)
 - [x] Commit: `"hyperv: VMBus monitor page signaling"`
 
 ---
 
-## 14. Ring Buffer Flow Control ✅ *(agent)*
+## 14. Ring Buffer Flow Control
 
 > **XREF:** [vmbus-core-protocol.md §3.3](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Flow Control
 
@@ -556,12 +556,12 @@ and confirm `=== BUILD OK ===`.
 > - On recv: `interrupt_mask == 0` && `host_pending > 0` && `freed >= host_pending` → signal
 > - `WRITE_ONCE()` used for all shared field updates; `READ_ONCE()` for all reads
 
-- [x] Set `HV_RING_BUFFER_FEAT_PENDING_SZ` bit in `feature_bits` on channel open ✅
-- [x] On send failure (ring full): write required bytes to `pending_send_size` ✅
-- [x] On receive (ring data consumed): check if freed space ≥ host's `pending_send_size` ✅
-- [x] If sufficient space freed: fire interrupt to wake host sender ✅
-- [x] Clear `pending_send_size` after successful write ✅
-- [x] Handle `interrupt_mask` flag: suppress signaling during bulk processing ✅
+- [x] Set `HV_RING_BUFFER_FEAT_PENDING_SZ` bit in `feature_bits` on channel open
+- [x] On send failure (ring full): write required bytes to `pending_send_size`
+- [x] On receive (ring data consumed): check if freed space ≥ host's `pending_send_size`
+- [x] If sufficient space freed: fire interrupt to wake host sender
+- [x] Clear `pending_send_size` after successful write
+- [x] Handle `interrupt_mask` flag: suppress signaling during bulk processing
 - [x] Commit: `"hyperv: VMBus ring buffer flow control"`
 
 ---
