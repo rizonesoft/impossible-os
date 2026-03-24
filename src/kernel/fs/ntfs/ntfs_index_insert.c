@@ -157,6 +157,9 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
         ntfs_attr_remove(NULL, rec, &hdr, vol->frs_size,
                           NTFS_ATTR_INDEX_ALLOCATION, "$I30");
 
+        /* Re-read MFT header — ntfs_attr_remove updated used_size in rec */
+        hdr.used_size  = ntfs_le32(rec + 0x18);
+
         /* Calculate total allocation size across all runs */
         {
             uint64_t total_vcn = 0;

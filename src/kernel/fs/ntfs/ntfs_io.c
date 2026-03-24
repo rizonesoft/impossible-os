@@ -1023,6 +1023,15 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
                     if (clusters_per_indx == 0)
                         clusters_per_indx = 1;
 
+                    klog(LOG_DEBUG, "ntfs",
+                         "readdir: IA alloc=%u indx_sz=%u cpi=%u runs=%d bm=%u",
+                         (uint64_t)total_bytes,
+                         (uint64_t)indx_size,
+                         (uint64_t)clusters_per_indx,
+                         (uint64_t)ia_run_count,
+                         (uint64_t)bitmap_len);
+
+
                     for (vcn = 0; vcn * vol->cluster_size < total_bytes;
                          vcn += clusters_per_indx) {
                         struct ntfs_index_node_header indx_nh;
@@ -1037,6 +1046,9 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
                             if (byte_idx < bitmap_len &&
                                 !(bitmap[byte_idx] & bit_mask)) {
                                 /* This INDX VCN is not in-use — skip */
+                                klog(LOG_DEBUG, "ntfs",
+                                     "readdir: VCN %u skipped (bitmap)",
+                                     (uint64_t)vcn);
                                 indx_index++;
                                 continue;
                             }
@@ -1045,6 +1057,9 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
                         rc = ntfs_read_indx(vol, ia_runs, ia_run_count,
                                              vcn, indx_size, indx_buf);
                         if (rc != NTFS_OK) {
+                            klog(LOG_DEBUG, "ntfs",
+                                 "readdir: VCN %u read_indx err %d",
+                                 (uint64_t)vcn, (uint64_t)rc);
                             indx_index++;
                             continue;
                         }
@@ -1055,6 +1070,12 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
                             indx_index++;
                             continue;
                         }
+
+                        klog(LOG_DEBUG, "ntfs",
+                             "readdir: VCN %u OK, entries_off=%u IL=%u",
+                             (uint64_t)vcn,
+                             (uint64_t)indx_nh.entries_offset,
+                             (uint64_t)indx_nh.total_size);
 
                         rc = walk_node_entries(indx_entries, &indx_nh,
                                                callback, user_data);
