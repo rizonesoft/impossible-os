@@ -4,12 +4,12 @@
 > polling read/write up to production-grade quality. Implement multi-LUN
 > enumeration, NCQ-style multi-command queuing, sub-channel parallelism,
 > TRIM/UNMAP passthrough, error recovery (LUN/adapter/bus reset), hot-add/remove,
-> 4K sector alignment, and I/O statistics — all per the VSCSI protocol
-> over VMBus as documented in the
-> [StorVSC spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/storvsc-synthetic-scsi.md)
-> and the [VMBus Core Protocol spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md).
-> The current driver (`src/kernel/drivers/hyperv/storvsc.c`, ~510 lines)
-> handles channel opening, VSTOR protocol negotiation, SCSI INQUIRY,
+> 4K sector alignment, I/O statistics, and adaptive queue-depth optimization —
+> all per the VSCSI protocol over VMBus as documented in the
+> [StorVSC spec](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/storvsc-synthetic-scsi.md)
+> and the [VMBus Core Protocol spec](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md).
+> The current driver (`src/kernel/drivers/hyperv/storvsc.c`, ~665 lines)
+> handles multi-LUN enumeration, channel opening, VSTOR protocol negotiation, SCSI INQUIRY,
 > READ_CAPACITY(16), and single-threaded READ/WRITE(16) via a 64 KiB
 > transfer buffer — all via polling.
 
@@ -18,11 +18,39 @@
 
 > [!IMPORTANT]
 > **Spec References:**
-> - [StorVSC Synthetic SCSI spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/storvsc-synthetic-scsi.md) — VSCSI protocol, packet structures, initialization sequence, scalability limits
-> - [VMBus Core Protocol spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Ring buffer architecture, GPADL mechanics, packet framing, signaling
+> - [StorVSC Synthetic SCSI spec](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/storvsc-synthetic-scsi.md) — VSCSI protocol, packet structures, initialization sequence, scalability limits
+> - [VMBus Core Protocol spec](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Ring buffer architecture, GPADL mechanics, packet framing, signaling
 > - [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs) — Public hypervisor specification
 >
 > **Legal:** Clean-room implement from public specs. Do NOT reference Linux `hv_storvsc.ko` (GPL contamination risk).
+
+---
+
+## Dependency Graph
+
+```mermaid
+graph TD
+    A["§1.1 Multi-LUN Enum ✅"] --> B["§1.2 Multi-Controller"]
+    A --> C["§2.1 Multi-Cmd Queuing"]
+    A --> D["§3.1 TRIM/UNMAP"]
+    A --> E["§4.1 Sense Data Parsing"]
+    C --> F["§2.2 Interrupt-Driven IO"]
+    C --> G["§2.3 Sub-Channel Parallelism"]
+    C --> H["§9 Adaptive Queue Depth"]
+    E --> I["§4.2 LUN Reset"]
+    E --> J["§4.4 Retry Logic"]
+    I --> K["§4.3 Adapter/Bus Reset"]
+    B --> G
+    A --> L["§5.1 Hot-Add"]
+    A --> M["§5.2 Hot-Remove"]
+    C --> N["§6.1 Large Transfer Buffer"]
+    N --> O["§6.2 Zero-Copy IO"]
+    F --> P["§7.1 IO Stats"]
+    P --> Q["§10 IO Latency Dashboard"]
+    A --> R["§3.2 4K Alignment"]
+    A --> S["§3.3 DMA Alignment"]
+    A --> T["§8.1 Persistent Reservations"]
+```
 
 ---
 
@@ -77,7 +105,8 @@
 **Prompt:** The current driver issues one SCSI command at a time and busy-waits for completion — this serializes all disk I/O. The StorVSP supports up to 255 concurrent outstanding requests per LUN (Storport queue depth limit). Implement a multi-command queue: assign unique `trans_id` values to each request, submit multiple requests before waiting for completions, and match completions to outstanding requests via `trans_id`. Use a per-controller pending request table indexed by `trans_id`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: multi-command queuing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
-> → XREF: `TODO-008-Hyper-V-Runner.md §3` — VMBus ring buffer architecture
+> → XREF: `TODO-008.01-VMBus.md §14` — VMBus ring buffer flow control (§14 done)
+> → XREF: `TODO-008.01-VMBus.md §11` — VMBus message dispatch (SynIC interrupt handler)
 
 - [ ] Replace single `trans_id` counter with per-controller atomic ID generator
 - [ ] Create pending request table: `storvsc_request pending[MAX_OUTSTANDING]` per controller
@@ -95,7 +124,7 @@
 **Prompt:** Replace polling-based completion with SynIC interrupt-driven completion. The VMBus recv ring triggers a SINT2 interrupt when the host enqueues a completion packet. The ISR should drain the recv ring, match `trans_id` to pending requests, and wake blocked threads. This eliminates CPU-wasting polling and enables true asynchronous I/O. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: interrupt-driven I/O completion"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
-> → XREF: `TODO-008-Hyper-V-Runner.md §3` — VMBus SynIC interrupt handler (SINT2)
+> → XREF: `TODO-008.01-VMBus.md §11` — VMBus SynIC interrupt handler (SINT2)
 
 - [ ] Register per-channel completion callback with VMBus SINT2 dispatcher
 - [ ] ISR: read recv ring → parse `vmpacket_descriptor` → extract `trans_id`
@@ -133,7 +162,7 @@
 **Prompt:** When the guest filesystem deletes files, it should notify the host that the underlying blocks are no longer in use. On Hyper-V Gen 2 with VHDX backing, this shrinks the VHDX file and frees physical storage on the SAN. StorVSC passes SCSI UNMAP (opcode `0x42`) commands through VMBus to the host StorVSP, which applies them to the VHDX layer. Requires VSTOR protocol version ≥ WIN8 (5.1). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: SCSI UNMAP / TRIM passthrough"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
-> → XREF: `TODO-040.02-AHCI.md §5.1` — AHCI TRIM/discard (same block layer API)
+> → XREF: `TODO-008.02-SCSI-Storage-Driver.md §3.2` — 4K sector alignment prerequisite
 
 - [ ] Check negotiated protocol version ≥ `VMSTOR_PROTO_VERSION_WIN8` (5.1)
 - [ ] Implement `storvsc_unmap(ctrl, target, lun, lba, count)` — sends SCSI UNMAP command
@@ -170,7 +199,6 @@
 
 > [!IMPORTANT]
 > → XREF: `TODO-008.06-Page-Table-MMIO.md §2` — PRESENT bit shield (CoCo MMIO safety)
-> → XREF: `TODO-008-Hyper-V-Runner.md §9` — Page Table MMIO Safety (UC mapping for MMIO regions)
 
 - [x] Audit all `pmm_alloc_contiguous()` callers in StorVSC: verify returned addresses are page-aligned
 - [x] Audit GPADL PFN list construction in `vmbus_create_gpadl()`: verify all PFNs reference full page boundaries
@@ -333,7 +361,7 @@
 **Prompt:** Implement comprehensive per-device I/O statistics for performance monitoring. Track: read/write IOPS, throughput (bytes/sec), average latency, queue depth, and error counts. Expose via Registry. The System Monitor app (Task Manager equivalent) can display real-time disk activity graphs for Hyper-V virtual disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: I/O statistics and telemetry"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
-> → XREF: `TODO-040.02-AHCI.md §12.1` — AHCI I/O statistics (same API surface)
+> → XREF: `TODO-008.02-SCSI-Storage-Driver.md §2.2` — Interrupt-driven completion (latency timestamps)
 
 - [ ] Track per-device counters (atomic increments, no locks):
   - [ ] `reads_completed`, `writes_completed` (cumulative IOPS)
@@ -370,28 +398,57 @@
 
 ---
 
+## Phase-by-Phase Implementation Order
+
+| Phase  | Sections                                          | Depends On        | Status |
+| :----: | ------------------------------------------------- | ----------------- | :----: |
+| **P0** | §1.1 Multi-LUN Enumeration                        | —                 |   ✅   |
+| **P0** | §4.1 Sense Data Parsing, §4.4 Retry Logic         | §1.1              |   ⬜   |
+| **P1** | §2.1 Multi-Command Queuing                        | §1.1              |   ⬜   |
+| **P1** | §2.2 Interrupt-Driven Completion                  | §2.1              |   ⬜   |
+| **P1** | §4.2 LUN Reset, §4.3 Adapter/Bus Reset            | §4.1              |   ⬜   |
+| **P1** | §3.1 SCSI UNMAP (TRIM)                            | §1.1              |   ⬜   |
+| **P2** | §1.2 Multi-Controller Support                     | §1.1              |   ⬜   |
+| **P2** | §3.2 4K Sector Alignment, §3.3 DMA Alignment      | §1.1              |   ⬜   |
+| **P2** | §5.1 Hot-Add, §5.2 Hot-Remove                     | §4.1              |   ⬜   |
+| **P2** | §7.1 Per-Device I/O Counters                      | §2.2              |   ⬜   |
+| **P3** | §6.1 Large Transfer Buffer                        | §1.1              |   ⬜   |
+| **P3** | §2.3 Sub-Channel Parallelism                      | §2.1              |   ⬜   |
+| **P3** | §6.2 Zero-Copy I/O                                | §6.1              |   ⬜   |
+| **P3** | §9.1 Adaptive Queue Depth ⭐                       | §2.1, §7.1        |   ⬜   |
+| **P3** | §10.1 I/O Latency Histogram ⭐                     | §7.1, §2.2        |   ⬜   |
+| **P4** | §8.1 Persistent Reservations                      | §2.1              |   ⬜   |
+
+> [!NOTE]
+> **P0** completes basic production quality. **P1** achieves near-native performance.
+> **P2** matches Windows Server features. **P3** ⭐ exclusive features put Impossible OS ahead.
+
+---
+
 ## Priority Order
 
-| ⭐ | Priority | Section                                | Description                                            |
-| -- |----------|----------------------------------------|--------------------------------------------------------|
-| 💎 | 🔴 P0    | 1.1 Multi-LUN Enumeration             | Multiple disks per controller — basic gen 2 need       |
-| 💎 | 🔴 P0    | 4.1 Sense Data Parsing                | Required for any error diagnosis                       |
-| 💎 | 🔴 P0    | 4.4 Command Retry Logic               | Transient errors must be retried, not hard-failed      |
-| 💎 | 🟠 P1    | 2.1 Multi-Command Queuing             | Major throughput gain — parallelizes I/O               |
-| 💎 | 🟠 P1    | 2.2 Interrupt-Driven Completion       | Eliminates CPU-wasting polling                         |
-| 💎 | 🟠 P1    | 4.2 LUN Reset                         | Required for production error recovery                 |
-| 💎 | 🟠 P1    | 4.3 Adapter/Bus Reset                 | Escalation when LUN reset fails                        |
-| 💎 | 🟠 P1    | 3.1 SCSI UNMAP (TRIM)                 | VHDX space reclamation — critical for SSDs             |
-| 💎 | 🟡 P2    | 1.2 Multi-Controller Support          | Up to 4 controllers × 64 devices                       |
-| 💎 | 🟡 P2    | 3.2 4K Sector Alignment               | Avoids 2–4× IOPS penalty on 4K-native disks           |
-| 💎 | 🟡 P2    | 3.3 DMA Page Alignment                | IOMMU-safe buffers — silent I/O failure without it     |
-| 💎 | 🟡 P2    | 5.1 Hot-Add Detection                 | Dynamic disk management                                |
-| 💎 | 🟡 P2    | 5.2 Hot-Remove Handling               | Graceful removal without data loss                     |
-| ⭐ | 🟡 P2    | 7.1 I/O Statistics                    | **Per-device latency tracking** — beyond Windows       |
-| 💎 | 🟢 P3    | 6.1 Large Transfer Buffer             | Throughput optimization for sequential I/O             |
-| ⭐ | 🟢 P3    | 2.3 Sub-Channel Parallelism           | **Linear I/O scaling with vCPUs** — advanced           |
-| ⭐ | 🟢 P3    | 6.2 Zero-Copy I/O                     | **Eliminate memcpy** — true zero-copy data path        |
-| 💎 | 🔵 P4    | 8.1 Persistent Reservations           | Guest clustering — enterprise feature                  |
+| ⭐ | Priority | Section                                    | Description                                                       |
+| -- | -------- | ------------------------------------------ | ----------------------------------------------------------------- |
+| 💎 | 🔴 P0    | §1.1 Multi-LUN Enumeration                 | Multiple disks per controller — basic gen 2 need ✅               |
+| 💎 | 🔴 P0    | §4.1 Sense Data Parsing                    | Required for any error diagnosis                                  |
+| 💎 | 🔴 P0    | §4.4 Command Retry Logic                   | Transient errors must be retried, not hard-failed                 |
+| 💎 | 🟠 P1    | §2.1 Multi-Command Queuing                 | Major throughput gain — parallelizes I/O                          |
+| 💎 | 🟠 P1    | §2.2 Interrupt-Driven Completion           | Eliminates CPU-wasting polling                                    |
+| 💎 | 🟠 P1    | §4.2 LUN Reset                             | Required for production error recovery                            |
+| 💎 | 🟠 P1    | §4.3 Adapter/Bus Reset                     | Escalation when LUN reset fails                                   |
+| 💎 | 🟠 P1    | §3.1 SCSI UNMAP (TRIM)                     | VHDX space reclamation — critical for SSDs                        |
+| 💎 | 🟡 P2    | §1.2 Multi-Controller Support              | Up to 4 controllers × 64 devices                                  |
+| 💎 | 🟡 P2    | §3.2 4K Sector Alignment                   | Avoids 2–4× IOPS penalty on 4K-native disks                      |
+| 💎 | 🟡 P2    | §3.3 DMA Page Alignment                    | IOMMU-safe buffers — silent I/O failure without it                |
+| 💎 | 🟡 P2    | §5.1 Hot-Add Detection                     | Dynamic disk management                                           |
+| 💎 | 🟡 P2    | §5.2 Hot-Remove Handling                   | Graceful removal without data loss                                |
+| ⭐ | 🟡 P2    | §7.1 Per-Device I/O Statistics             | **Per-device latency tracking** — beyond Windows                  |
+| 💎 | 🟢 P3    | §6.1 Large Transfer Buffer                 | Throughput optimization for sequential I/O                        |
+| ⭐ | 🟢 P3    | §2.3 Sub-Channel Parallelism               | **Linear I/O scaling with vCPUs** — advanced                      |
+| ⭐ | 🟢 P3    | §6.2 Zero-Copy I/O                         | **Eliminate memcpy** — true zero-copy data path                   |
+| ⭐ | 🟢 P3    | §9.1 Adaptive Queue Depth                  | **Self-tuning queue depth** — neither Windows nor Linux does this  |
+| ⭐ | 🟢 P3    | §10.1 I/O Latency Histogram                | **Per-LUN P99 tail latency** — always-on, no tracing required     |
+| 💎 | 🔵 P4    | §8.1 Persistent Reservations               | Guest clustering — enterprise feature                             |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -400,29 +457,32 @@
 
 ## OS Comparison
 
-| ⭐ | Feature                           | 🪟 Windows 11 (storvsc.sys)            | 🐧 Linux (storvsc_drv.c)                | 🚀 Impossible OS                                   |
-| -- | --------------------------------- | --------------------------------------- | ---------------------------------------- | --------------------------------------------------- |
-| 💎 | Basic storvsc (read/write)        | ✅ Native                               | ✅ Native                                | ✅ Done (single LUN, polling)                       |
-| 💎 | Multi-LUN enumeration             | ✅ Full (64 LUNs × 4 ctrl)             | ✅ Full SCSI host scan                   | ✅ Done §1.1 — 64 LUNs per controller                |
-| 💎 | Multi-controller                  | ✅ 4 controllers                        | ✅ 4 controllers                         | ⬜ §1.2 P2 — first controller only                  |
-| 💎 | Multi-command queuing             | ✅ 255 per LUN                          | ✅ blk-mq integration                    | ⬜ §2.1 P1 — sequential only                        |
-| 💎 | Interrupt-driven completion       | ✅ SynIC ISR                            | ✅ SynIC ISR + tasklet                   | ⬜ §2.2 P1 — polling                                |
-| ⭐ | **Sub-channel parallelism**       | ✅ VMMQ automatic                       | ✅ `storvsc_max_hw_queues`               | ⬜ §2.3 P3 — single channel                         |
-| 💎 | TRIM/UNMAP passthrough            | ✅ Automatic via NTFS                   | ✅ `fstrim` / auto-discard               | ⬜ §3.1 P1                                          |
-| 💎 | 4K sector alignment               | ✅ VHDX-aware                           | ✅ Auto-detect                           | ⬜ §3.2 P2 — assumes 512-byte                       |
-| 💎 | DMA page alignment (IOMMU)        | ✅ Automatic                            | ✅ IOMMU/SWIOTLB                         | ⬜ §3.3 P2 — audit needed                            |
-| 💎 | Sense data parsing                | ✅ Full SCSI sense                      | ✅ Full (libata-scsi)                    | ⬜ §4.1 P0 — no sense parsing                       |
-| 💎 | LUN reset recovery                | ✅ Storport EH                          | ✅ SCSI EH                               | ⬜ §4.2 P1                                          |
-| 💎 | Adapter/bus reset                 | ✅ Storport escalation                  | ✅ SCSI host reset                       | ⬜ §4.3 P1                                          |
-| 💎 | Command retry logic               | ✅ Automatic (Storport)                 | ✅ SCSI mid-layer retries                | ⬜ §4.4 P0 — no retries                             |
-| 💎 | Hot-add virtual disk              | ✅ Automatic                            | ✅ Automatic                             | ⬜ §5.1 P2                                          |
-| 💎 | Hot-remove virtual disk           | ✅ Automatic                            | ✅ Automatic                             | ⬜ §5.2 P2                                          |
-| 💎 | Configurable transfer buffer      | ✅ Tunable                              | ✅ `storvsc_ringbuffer_size`             | ⬜ §6.1 P3 — 64 KiB fixed                           |
-| ⭐ | **Zero-copy I/O**                 | ⚠️ Limited to Storport DMA              | ⚠️ Bounce buffer for high pages          | ⬜ §6.2 P3 — double-copy today                      |
-| ⭐ | **Per-device I/O stats**          | ⚠️ PerfMon (aggregate)                  | ⚠️ `/proc/diskstats` (aggregate)         | ⬜ §7.1 P2 — per-device latency tracking             |
-| 💎 | SCSI-3 persistent reservations    | ✅ Shared VHDX clustering              | ✅ PR passthrough                        | ⬜ §8.1 P4                                          |
+| ⭐ | Feature                              | 🪟 Windows 11 (storvsc.sys)               | 🐧 Linux (storvsc_drv.c)                | 🚀 Impossible OS                                          |
+| -- | ------------------------------------ | ------------------------------------------ | ---------------------------------------- | ---------------------------------------------------------- |
+| 💎 | Basic storvsc (read/write)           | ✅ Native                                  | ✅ Native                                | ✅ Done (polling, 64 KiB xfer)                             |
+| 💎 | Multi-LUN enumeration                | ✅ Full (64 LUNs × 4 ctrl)                | ✅ Full SCSI host scan                   | ✅ Done §1.1 — 64 LUNs per controller                      |
+| 💎 | Multi-controller                     | ✅ 4 controllers                           | ✅ 4 controllers                         | ⬜ §1.2 P2 — first controller only                         |
+| 💎 | Multi-command queuing                | ✅ 255 per LUN                             | ✅ blk-mq integration                    | ⬜ §2.1 P1 — sequential only                               |
+| 💎 | Interrupt-driven completion          | ✅ SynIC ISR                               | ✅ SynIC ISR + tasklet                   | ⬜ §2.2 P1 — polling                                       |
+| ⭐ | **Sub-channel parallelism**          | ✅ VMMQ automatic                          | ✅ `storvsc_max_hw_queues`               | ⬜ §2.3 P3 — single channel                                |
+| 💎 | TRIM/UNMAP passthrough               | ✅ Automatic via NTFS                      | ✅ `fstrim` / auto-discard               | ⬜ §3.1 P1                                                 |
+| 💎 | 4K sector alignment                  | ✅ VHDX-aware                              | ✅ Auto-detect                           | ⬜ §3.2 P2 — assumes 512-byte                              |
+| 💎 | DMA page alignment (IOMMU)           | ✅ Automatic                               | ✅ IOMMU/SWIOTLB                         | ⬜ §3.3 P2 — audit needed                                  |
+| 💎 | Sense data parsing                   | ✅ Full SCSI sense                         | ✅ Full (libata-scsi)                    | ⬜ §4.1 P0 — no sense parsing                              |
+| 💎 | LUN reset recovery                   | ✅ Storport EH                             | ✅ SCSI EH                               | ⬜ §4.2 P1                                                 |
+| 💎 | Adapter/bus reset                    | ✅ Storport escalation                     | ✅ SCSI host reset                       | ⬜ §4.3 P1                                                 |
+| 💎 | Command retry logic                  | ✅ Automatic (Storport)                    | ✅ SCSI mid-layer retries                | ⬜ §4.4 P0 — no retries                                    |
+| 💎 | Hot-add virtual disk                 | ✅ Automatic                               | ✅ Automatic                             | ⬜ §5.1 P2                                                 |
+| 💎 | Hot-remove virtual disk              | ✅ Automatic                               | ✅ Automatic                             | ⬜ §5.2 P2                                                 |
+| 💎 | Configurable transfer buffer         | ✅ Tunable                                 | ✅ `storvsc_ringbuffer_size`             | ⬜ §6.1 P3 — 64 KiB fixed                                  |
+| ⭐ | **Zero-copy I/O**                    | ⚠️ Limited to Storport DMA                 | ⚠️ Bounce buffer for high pages          | ⬜ §6.2 P3 — double-copy today                             |
+| ⭐ | **Per-device I/O stats**             | ⚠️ PerfMon (aggregate)                     | ⚠️ `/proc/diskstats` (aggregate)         | ⬜ §7.1 P2 — per-device latency tracking 🚀               |
+| 💎 | SCSI-3 persistent reservations       | ✅ Shared VHDX clustering                  | ✅ PR passthrough                        | ⬜ §8.1 P4                                                 |
+| ⭐ | **Adaptive queue depth**             | ❌ Fixed Storport queue depth              | ❌ Static `nr_requests`                  | ⬜ §9.1 P3 — **self-tuning runtime** 🚀                    |
+| ⭐ | **Per-LUN latency histograms**       | ❌ Aggregate PerfMon only                  | ❌ Requires `blktrace` tracing tool      | ⬜ §10.1 P3 — **always-on P99** 🚀                         |
 
-> **After §1+§4 (P0):** Impossible OS handles multi-disk Hyper-V VMs with proper error handling.
-> **After §2+§3 (P1):** Near-native throughput with parallel I/O, TRIM, and interrupt-driven completions.
-> **After §5-§7 (P2-P3):** Full production-grade StorVSC matching Linux's `storvsc_drv.c` feature set.
-> **After §8 (P4):** Enterprise clustering support — matches Windows Server.
+> **After P0 items (§4.1, §4.4):** Impossible OS handles multi-disk Hyper-V VMs with proper error handling.
+> **After P1 items (§2.1, §2.2, §3.1, §4.2–4.3):** Near-native throughput with parallel I/O, TRIM, and interrupt-driven completions.
+> **After P2 items:** Full production-grade StorVSC matching Linux's `storvsc_drv.c` feature set.
+> **After P3 ⭐ items (§9.1, §10.1):** Exceeds both Windows and Linux — adaptive queue depth + always-on P99 latency histograms.
+> **After P4 items:** Enterprise clustering support — matches Windows Server.
