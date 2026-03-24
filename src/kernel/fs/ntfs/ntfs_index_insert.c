@@ -456,6 +456,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
         uint8_t promote_entry[640];
         uint32_t promote_len = 0;
         int need_promote = 0;
+        uint64_t promote_right_vcn = VCN_NONE; /* right sibling VCN to patch into parent's LAST */
 
         /* Allocate INDX buffer for operations */
         uintptr_t indx_phys = 0;
@@ -528,6 +529,28 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                                         entries_off + total_sz + cur_len);
                         ntfs_le32_write(new_node + 0x08,
                                         entries_off + total_sz + cur_len);
+
+                        /* If this insert was a promoted separator from a child
+                         * split, update the LAST sentinel's child_vcn to point
+                         * to the right sibling (the new INDX node). The LAST
+                         * sentinel previously pointed to cur_vcn (the pre-split
+                         * node, now the left sibling). */
+                        if (promote_right_vcn != VCN_NONE) {
+                            uint32_t new_total_ent = total_sz + cur_len;
+                            uint32_t spos = 0;
+                            uint8_t *sentw = new_eb;
+                            while (spos < new_total_ent) {
+                                uint16_t sl = ntfs_le16(sentw + spos + 0x08);
+                                if (sl < 0x10) break;
+                                if (sentw[spos + 0x0C] & NTFS_INDEX_ENTRY_LAST) {
+                                    if (sentw[spos + 0x0C] & NTFS_INDEX_ENTRY_SUBNODE)
+                                        ntfs_le64_write(sentw + spos + sl - 8, promote_right_vcn);
+                                    break;
+                                }
+                                spos += sl;
+                            }
+                            promote_right_vcn = VCN_NONE;
+                        }
 
 
                         /* Update root attr */
@@ -743,6 +766,24 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     ntfs_le32_write(inode_hdr + 0x04, i_entries_off + i_total);
                     ntfs_le32_write(inode_hdr + 0x08, i_entries_off + i_total);
 
+                    /* If this entry was promoted from a child split, the
+                     * LAST sentinel's child_vcn needs updating to the right
+                     * sibling VCN (it currently points to the pre-split node). */
+                    if (promote_right_vcn != VCN_NONE) {
+                        uint32_t spos = 0;
+                        while (spos < i_total) {
+                            uint16_t sl = ntfs_le16(ieb + spos + 0x08);
+                            if (sl < 0x10) break;
+                            if (ieb[spos + 0x0C] & NTFS_INDEX_ENTRY_LAST) {
+                                if (ieb[spos + 0x0C] & NTFS_INDEX_ENTRY_SUBNODE)
+                                    ntfs_le64_write(ieb + spos + sl - 8, promote_right_vcn);
+                                break;
+                            }
+                            spos += sl;
+                        }
+                        promote_right_vcn = VCN_NONE;
+                    }
+
                     if (txn)
                         ntfs_txn_log(txn,
                                      NTFS_LOG_OP_ADD_IDX_ALLOC, cur_entry, (uint16_t)cur_len,
@@ -844,7 +885,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     ntfs_memset(tmp + old_len, 0, new_len2 - old_len);
                     ntfs_le16_write(tmp + 0x08, (uint16_t)new_len2);
                     tmp[0x0C] |= NTFS_INDEX_ENTRY_SUBNODE;
-                    ntfs_le64_write(tmp + new_len2 - 8, right_vcn);
+                    ntfs_le64_write(tmp + new_len2 - 8, cur_vcn);
                     ntfs_memcpy(promote_entry, tmp, new_len2);
                     promote_len = new_len2;
                 }
@@ -852,6 +893,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                 cur_entry   = promote_entry;
                 cur_len     = promote_len;
                 need_promote = 1;
+                promote_right_vcn = right_vcn;
                 level--;
                 continue;
             } else {
