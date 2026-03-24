@@ -54,6 +54,34 @@ graph TD
 
 ---
 
+## Phase-by-Phase Implementation Order
+
+| Phase  | Sections                                          | Depends On        | Status |
+| :----: | ------------------------------------------------- | ----------------- | :----: |
+| **P0** | §1.1 Multi-LUN Enumeration                        | —                 |   ✅   |
+| **P0** | §4.1 Sense Data Parsing, §4.4 Retry Logic         | §1.1              |   ⬜   |
+| **P1** | §2.1 Multi-Command Queuing                        | §1.1              |   ⬜   |
+| **P1** | §2.2 Interrupt-Driven Completion                  | §2.1              |   ⬜   |
+| **P1** | §4.2 LUN Reset, §4.3 Adapter/Bus Reset            | §4.1              |   ⬜   |
+| **P1** | §3.1 SCSI UNMAP (TRIM)                            | §1.1              |   ⬜   |
+| **P1** | §3.4 Protocol Correctness Hardening               | §1.1              |   ⬜   |
+| **P2** | §1.2 Multi-Controller Support                     | §1.1              |   ⬜   |
+| **P2** | §3.2 4K Sector Alignment, §3.3 DMA Alignment      | §1.1              |   ⬜   |
+| **P2** | §5.1 Hot-Add, §5.2 Hot-Remove                     | §4.1              |   ⬜   |
+| **P2** | §7.1 Per-Device I/O Counters                      | §2.2              |   ⬜   |
+| **P3** | §6.1 Large Transfer Buffer                        | §1.1              |   ⬜   |
+| **P3** | §2.3 Sub-Channel Parallelism                      | §2.1              |   ⬜   |
+| **P3** | §6.2 Zero-Copy I/O                                | §6.1              |   ⬜   |
+| **P3** | §9.1 Adaptive Queue Depth ⭐                       | §2.1, §7.1        |   ⬜   |
+| **P3** | §10.1 I/O Latency Histogram ⭐                     | §7.1, §2.2        |   ⬜   |
+| **P4** | §8.1 Persistent Reservations                      | §2.1              |   ⬜   |
+
+> [!NOTE]
+> **P0** completes basic production quality. **P1** achieves near-native performance.
+> **P2** matches Windows Server features. **P3** ⭐ exclusive features put Impossible OS ahead.
+
+---
+
 ## 1. Multi-LUN and Multi-Target Enumeration
 
 ### 1.1 SCSI Target/LUN Discovery
@@ -418,35 +446,7 @@ graph TD
 - [ ] Log: `[StorVSC] PR: action=%s type=%s key=0x%016llX → %s`
 - [ ] Commit: `"storvsc: SCSI-3 persistent reservations"`
 
----
 
-## Phase-by-Phase Implementation Order
-
-| Phase  | Sections                                          | Depends On        | Status |
-| :----: | ------------------------------------------------- | ----------------- | :----: |
-| **P0** | §1.1 Multi-LUN Enumeration                        | —                 |   ✅   |
-| **P0** | §4.1 Sense Data Parsing, §4.4 Retry Logic         | §1.1              |   ⬜   |
-| **P1** | §2.1 Multi-Command Queuing                        | §1.1              |   ⬜   |
-| **P1** | §2.2 Interrupt-Driven Completion                  | §2.1              |   ⬜   |
-| **P1** | §4.2 LUN Reset, §4.3 Adapter/Bus Reset            | §4.1              |   ⬜   |
-| **P1** | §3.1 SCSI UNMAP (TRIM)                            | §1.1              |   ⬜   |
-| **P2** | §1.2 Multi-Controller Support                     | §1.1              |   ⬜   |
-| **P2** | §3.2 4K Sector Alignment, §3.3 DMA Alignment      | §1.1              |   ⬜   |
-| **P2** | §3.4 Protocol Correctness Hardening               | §1.1              |   ⬜   |
-| **P2** | §5.1 Hot-Add, §5.2 Hot-Remove                     | §4.1              |   ⬜   |
-| **P2** | §7.1 Per-Device I/O Counters                      | §2.2              |   ⬜   |
-| **P3** | §6.1 Large Transfer Buffer                        | §1.1              |   ⬜   |
-| **P3** | §2.3 Sub-Channel Parallelism                      | §2.1              |   ⬜   |
-| **P3** | §6.2 Zero-Copy I/O                                | §6.1              |   ⬜   |
-| **P3** | §9.1 Adaptive Queue Depth ⭐                       | §2.1, §7.1        |   ⬜   |
-| **P3** | §10.1 I/O Latency Histogram ⭐                     | §7.1, §2.2        |   ⬜   |
-| **P4** | §8.1 Persistent Reservations                      | §2.1              |   ⬜   |
-
-> [!NOTE]
-> **P0** completes basic production quality. **P1** achieves near-native performance.
-> **P2** matches Windows Server features. **P3** ⭐ exclusive features put Impossible OS ahead.
-
----
 
 ## Priority Order
 
