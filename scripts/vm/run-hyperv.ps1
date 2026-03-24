@@ -85,8 +85,24 @@ Copy-Item -Path $DISK_RAW -Destination $DISK_TEMP -Force
 
 # Try qemu-img first (correct GPT preservation), fall back to manual method
 $qemuImg = Get-Command qemu-img -ErrorAction SilentlyContinue
+if (-not $qemuImg) {
+    # QEMU for Windows often installs to Program Files without adding to PATH
+    $qemuCandidates = @(
+        "$env:ProgramFiles\qemu\qemu-img.exe",
+        "${env:ProgramFiles(x86)}\qemu\qemu-img.exe",
+        "C:\qemu\qemu-img.exe"
+    )
+    foreach ($candidate in $qemuCandidates) {
+        if (Test-Path $candidate) {
+            $qemuImg = $candidate
+            Write-Status "Found qemu-img at: $candidate"
+            break
+        }
+    }
+}
 if ($qemuImg) {
-    & qemu-img convert -f raw -O vhdx $DISK_TEMP $DISK_VHDX
+    $qemuImgPath = if ($qemuImg -is [string]) { $qemuImg } else { $qemuImg.Source }
+    & $qemuImgPath convert -f raw -O vhdx $DISK_TEMP $DISK_VHDX
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "qemu-img convert failed"
         exit 1
