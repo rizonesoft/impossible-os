@@ -853,8 +853,19 @@ static int walk_node_entries(const uint8_t *entries_base,
 
     entry = ntfs_index_entry_first(entries_base, nh, &ie);
     while (entry) {
-        if (ie.flags & NTFS_INDEX_ENTRY_LAST)
+        if (ie.flags & NTFS_INDEX_ENTRY_LAST) {
+            klog(LOG_DEBUG, "ntfs",
+                 "readdir_walk: LAST entry flags=0x%x",
+                 (uint64_t)ie.flags);
             break;  /* Sentinel — no filename */
+        }
+
+        klog(LOG_DEBUG, "ntfs",
+             "readdir_walk: ns=%u name='%s' inode=%u len=%u",
+             (uint64_t)ie.fn.name_space,
+             ie.fn.name,
+             (uint64_t)ie.mft_inode,
+             (uint64_t)ie.entry_length);
 
         /* Skip DOS-only namespace (0x02) */
         if (ie.fn.name_space != 0x02) {
@@ -911,6 +922,11 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
     }
 
     /* Walk entries in $INDEX_ROOT */
+    klog(LOG_DEBUG, "ntfs",
+         "readdir: INDEX_ROOT eo=%u ts=%u flags=0x%x",
+         (uint64_t)node_hdr.entries_offset,
+         (uint64_t)node_hdr.total_size,
+         (uint64_t)node_hdr.flags);
     rc = walk_node_entries(entries_base, &node_hdr, callback, user_data);
     if (rc != NTFS_OK && rc != NTFS_ERR_NOT_FOUND) {
         /* Callback signalled stop (positive rc) — not an error */
