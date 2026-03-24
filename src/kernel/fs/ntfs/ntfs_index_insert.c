@@ -848,14 +848,47 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     if (rec2) kfree(rec2);
                 }
 
-                /* Left node: entries [0, median_off) */
+                /* --- Compute actual data sizes, excluding the original LAST sentinel
+                 * from the combined array.  The LAST sentinel will be re-created
+                 * for both left and right nodes independently. --- */
+                uint32_t data_end = total_with_new; /* default: everything is data */
+                {
+                    /* Walk combined entries to find the LAST sentinel */
+                    uint32_t walk = 0;
+                    while (walk < total_with_new) {
+                        uint16_t wl = ntfs_le16(combined + walk + 0x08);
+                        if (wl < 0x10) break;
+                        if (combined[walk + 0x0C] & NTFS_INDEX_ENTRY_LAST) {
+                            data_end = walk; /* exclude LAST sentinel and beyond */
+                            break;
+                        }
+                        walk += wl;
+                    }
+                }
+
+                /* Left data: entries [0, median_off) — only real entries */
+                uint32_t left_data_sz = (median_off <= data_end) ? median_off : data_end;
+                /* Right data: entries [median_off + med_len, data_end) */
+                uint32_t right_data_start = median_off + med_len;
+                uint32_t right_data_sz = (right_data_start < data_end)
+                                          ? data_end - right_data_start : 0;
+
+                /* Build LAST sentinel for leaf nodes (no children) */
+                uint8_t last_sentinel[24];
+                ntfs_memset(last_sentinel, 0, sizeof(last_sentinel));
+                ntfs_le16_write(last_sentinel + 0x08, 0x10); /* length = 16 */
+                last_sentinel[0x0C] = NTFS_INDEX_ENTRY_LAST;
+
+                /* Left node: entries [0, median_off) + LAST sentinel */
                 ntfs_memset(ieb, 0, i_alloc);
-                ntfs_memcpy(ieb, combined, median_off);
-                ntfs_le32_write(inode_hdr + 0x04, i_entries_off + median_off);
+                ntfs_memcpy(ieb, combined, left_data_sz);
+                ntfs_memcpy(ieb + left_data_sz, last_sentinel, 0x10);
+                uint32_t left_total = left_data_sz + 0x10; /* data + LAST */
+                ntfs_le32_write(inode_hdr + 0x04, i_entries_off + left_total);
                 ntfs_write_indx(vol, ia_runs, ia_run_count, cur_vcn,
                                  indx_size, indx_buf);
 
-                /* Right node: entries [median_off + med_len, end) */
+                /* Right node: entries [median_off + med_len, data_end) + LAST sentinel */
                 uintptr_t right_phys = pmm_alloc_contiguous((indx_size + 4095) / 4096);
                 if (right_phys) {
                     uint8_t *rbuf = (uint8_t *)(uintptr_t)right_phys;
@@ -866,10 +899,12 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     uint8_t *r_eb  = r_nh + r_eo;
                     uint32_t r_al  = ntfs_le32(r_nh + 0x08);
                     uint32_t r_al_entries = (r_al >= r_eo) ? r_al - r_eo : 0;
-                    uint32_t right_sz = total_with_new - median_off - med_len;
-                    if (right_sz <= r_al_entries) {
-                        ntfs_memcpy(r_eb, combined + median_off + med_len, right_sz);
-                        ntfs_le32_write(r_nh + 0x04, r_eo + right_sz);
+                    uint32_t right_total = right_data_sz + 0x10; /* data + LAST */
+                    if (right_total <= r_al_entries) {
+                        if (right_data_sz > 0)
+                            ntfs_memcpy(r_eb, combined + right_data_start, right_data_sz);
+                        ntfs_memcpy(r_eb + right_data_sz, last_sentinel, 0x10);
+                        ntfs_le32_write(r_nh + 0x04, r_eo + right_total);
                     }
                     ntfs_write_indx(vol, ia_runs, ia_run_count, right_vcn,
                                      indx_size, rbuf);
