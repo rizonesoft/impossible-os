@@ -201,6 +201,9 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 3. VMBus Core Protocol ✅ *(agent)*
 
+> **Detailed in:** [TODO-008.01-VMBus.md](TODO-008-Hyper-V-Runner/TODO-008.01-VMBus.md)
+> — Hypercall page, SynIC, version negotiation, channel enumeration, ring buffers.
+>
 > **XREF:** [TODO-063-Drivers.md §10.1](../060-Hardware-Drivers/TODO-063-Drivers.md) — VMBus Core Protocol
 
 **Prompt:** ~~Implement~~ **Verify** VMBus core protocol. Confirm `vmbus.c` detects Hyper-V via CPUID, sets up the hypercall page, initializes SynIC (SIM/SIEF pages + SINT2), negotiates VMBus protocol version with 3-level fallback, and enumerates offered channels. Verify `boot_storage.c` calls `vmbus_init()` after ACPI/LAPIC init. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`. Test in QEMU (should skip VMBus gracefully) and Hyper-V Gen 2 (should connect and enumerate channels).
@@ -231,6 +234,9 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 4. Synthetic SCSI Storage Driver (storvsc) ✅ *(agent)*
 
+> **Detailed in:** [TODO-008.02-SCSI-Storage-Driver.md](TODO-008-Hyper-V-Runner/TODO-008.02-SCSI-Storage-Driver.md)
+> — VSTOR protocol, SCSI INQUIRY/READ/WRITE(16), transfer buffer, DMA alignment.
+>
 > **XREF:** [TODO-063-Drivers.md §10.2](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic SCSI
 
 **Prompt:** ~~Implement~~ **Verify** `storvsc.c` opens the Storage VSP VMBus channel, negotiates the VSTOR protocol, issues SCSI INQUIRY + READ_CAPACITY(16), registers as blkdev `"hyperv0"`, and supports READ(16)/WRITE(16) via a 64 KiB PMM transfer buffer. Verify `boot_storage.c` calls `partition_scan_all()` + `partition_mount_filesystems()` AFTER `storvsc_init()` succeeds to fix the boot-order issue. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
@@ -283,6 +289,9 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 5. Synthetic HID Input Driver ✅ *(agent)*
 
+> **Detailed in:** [TODO-008.03-Synthetic-HID.md](TODO-008-Hyper-V-Runner/TODO-008.03-Synthetic-HID.md)
+> — Keyboard VSP, Mouse VSP, HID protocol, scancode/mouse injection.
+>
 > **XREF:** [TODO-063-Drivers.md §10.3](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic HID
 > **XREF:** [TODO-064-Guest-Additions.md §6.2](../060-Hardware-Drivers/TODO-064-Guest-Additions.md) — Hyper-V Synthetic Mouse & Video
 
@@ -310,35 +319,24 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 6. Synthetic Video Driver (hvfb)
 
+> **Detailed in:** [TODO-008.04-Synthetic-Video-Driver.md](TODO-008-Hyper-V-Runner/TODO-008.04-Synthetic-Video-Driver.md)
+> — Video VSP protocol, resolution negotiation, framebuffer integration, Enhanced Session Mode.
+>
 > **XREF:** [TODO-063-Drivers.md §10.4](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic Video
 
-**Prompt:** After `ExitBootServices()` in Hyper-V, the firmware-managed GOP framebuffer may freeze or become invalid if the synthetic video device is not properly acknowledged. The Hyper-V Synthetic Video driver communicates over VMBus (Video VSP GUID) to negotiate resolution and receive framebuffer updates. Note: the GOP framebuffer address from the bootloader typically remains accessible for basic pixel writes (boot splash works), but proper VMBus video integration enables runtime resolution changes and avoids display freezes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic video (hvfb)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-- [ ] Create `src/kernel/drivers/hyperv/hvfb.c` and `include/kernel/drivers/hyperv/hvfb.h`
-- [ ] Open VMBus channel for Video VSP GUID `DA0A7802-E377-4AAC-8E77-0558EB1073F8`
-- [ ] Negotiate resolution (query supported modes)
-- [ ] Set up framebuffer via synthetic video protocol
-- [ ] Integrate with existing `fb_init()` / `fb_swap()` compositor
-- [ ] Support runtime resolution change (via VMBus renegotiation)
-- [ ] Handle vmconnect.exe "Enhanced Session Mode" resolution changes
+- [ ] See [TODO-008.04](TODO-008-Hyper-V-Runner/TODO-008.04-Synthetic-Video-Driver.md) for full implementation checklist
 - [ ] Commit: `"drivers: Hyper-V synthetic video (hvfb)"`
 
 ---
 
 ## 7. Synthetic Network Driver (netvsc)
 
+> **Detailed in:** [TODO-008.05-Synthetic-Network-Driver.md](TODO-008-Hyper-V-Runner/TODO-008.05-Synthetic-Network-Driver.md)
+> — Network VSP, RNDIS protocol, send/receive paths, MAC address, Ethernet integration.
+>
 > **XREF:** [TODO-063-Drivers.md §10.5](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic NIC (if exists, else §10)
 
-**Prompt:** On Hyper-V Gen 2, the emulated E1000 NIC is replaced by a Synthetic Network adapter (netvsc). The netvsc driver communicates over VMBus (Network VSP GUID) using RNDIS (Remote Network Driver Interface Specification) protocol to send/receive Ethernet frames. This is the only way to get networking on Hyper-V Gen 2. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic NIC (netvsc)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-- [ ] Create `src/kernel/drivers/hyperv/netvsc.c` and `include/kernel/drivers/hyperv/netvsc.h`
-- [ ] Open VMBus channel for Network VSP GUID `F8615163-DF3E-46C5-913F-F2D2F965ED0E`
-- [ ] Negotiate RNDIS protocol version
-- [ ] Implement `netvsc_send(packet, len)` — encapsulate in RNDIS message
-- [ ] Implement netvsc receive handler → extract Ethernet frame → `ethernet_receive()`
-- [ ] Read MAC address via RNDIS query
-- [ ] Register with Ethernet layer as NIC (like RTL8139 / virtio-net)
-- [ ] Test: DHCP + ping over netvsc in Hyper-V Gen 2
+- [ ] See [TODO-008.05](TODO-008-Hyper-V-Runner/TODO-008.05-Synthetic-Network-Driver.md) for full implementation checklist
 - [ ] Commit: `"drivers: Hyper-V synthetic NIC (netvsc)"`
 
 ---
@@ -346,6 +344,9 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 ## 8. Hyper-V Synthetic Timer
 
 > **XREF:** [TODO-020-Threading.md §Enhancement](../010-Kernel-Foundations/TODO-020-Threading.md) — Hyper-V Synthetic Timer
+
+- [ ] See §8 implementation details below for checklist
+- [ ] Commit: `"smp: Hyper-V synthetic timer as optional clock source"`
 
 **Prompt:** On Hyper-V, the LAPIC timer frequency varies by platform and virtualization. The Hyper-V synthetic timer (`HV_X64_MSR_STIMER0_*`) is a per-vCPU microsecond-granularity timer that fires an interrupt at a configurable interval. It is the recommended clock source on Hyper-V because it bypasses LAPIC calibration issues and provides consistent timing regardless of host CPU model. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"smp: Hyper-V synthetic timer as optional clock source"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
@@ -361,42 +362,36 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 9. Page Table MMIO Safety
 
+> **Detailed in:** [TODO-008.06-Page-Table-MMIO.md](TODO-008-Hyper-V-Runner/TODO-008.06-Page-Table-MMIO.md)
+> — UEFI memory map parsing, UC page attributes for MMIO regions, MCE prevention.
+>
 > **XREF:** [TODO-010-Bootloader.md §1.5](../010-Kernel-Foundations/TODO-010-Bootloader.md) — Page Tables Enhancement
 
-**Prompt:** The current `setup_page_tables()` maps all 4 GiB with write-back caching (PTE flags `0x87`). On Hyper-V Gen 2, this maps VMBus MMIO regions with write-back caching, which can cause Machine Check Exceptions (MCE) or silent data corruption. MMIO regions must be mapped with uncacheable (UC) or write-combining (WC) attributes. Parse the UEFI memory map (passed from bootloader) and set PTE cache flags based on `EfiMemoryMappedIO` entries. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: MMIO-safe page table caching"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-- [ ] Bootloader: pass full UEFI memory map to kernel via boot params
-- [ ] Kernel: parse memory map entries for `EfiMemoryMappedIO` type
-- [ ] Set MMIO regions to PCD+PWT (uncacheable) in page table entries
-- [ ] Keep RAM regions as write-back (current behavior)
-- [ ] Log: `[MM] MMIO region 0xFEC00000-0xFEC01000 mapped UC`
-- [ ] Test: boot in QEMU (no change) AND Hyper-V Gen 2 (no MCE)
+- [ ] See [TODO-008.06](TODO-008-Hyper-V-Runner/TODO-008.06-Page-Table-MMIO.md) for full implementation checklist
 - [ ] Commit: `"boot: MMIO-safe page table caching"`
 
 ---
 
 ## 10. Hyper-V Power Management
 
+> **Detailed in:** [TODO-008.07-Power-Management.md](TODO-008-Hyper-V-Runner/TODO-008.07-Power-Management.md)
+> — 9 sections: CPUID privileges, enlightened idle, IC parser, version negotiation,
+> shutdown/timesync/heartbeat services, drift detection, ACPI S4/S5.
+>
+> **XREF:** [TODO-063-Drivers.md §10.1](../060-Hardware-Drivers/TODO-063-Drivers.md) — (via VMBus)
 > **XREF:** [TODO-065-Power-Management.md §9](../060-Hardware-Drivers/TODO-065-Power-Management.md) — Hyper-V Power Validation
-> **XREF:** [TODO-008.07-Power-Management.md](TODO-008-Hyper-V-Runner/TODO-008.07-Power-Management.md) — **Detailed sub-file** (9 sections: CPUID privileges, enlightened idle, IC parser, version negotiation, shutdown/timesync/heartbeat services, drift detection, ACPI S4/S5)
 
-**Prompt:** Validate power management operations (shutdown, reboot, sleep) on Hyper-V Gen 2. The standard ACPI shutdown (port `0xCF9`, `PM1a_CNT` SLP_TYP) may behave differently under the hypervisor. Hyper-V provides a hypercall-based shutdown mechanism via the Shutdown VSP channel. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"power: Hyper-V power management validation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-- [ ] Test ACPI shutdown via `PM1a_CNT` on Hyper-V Gen 2
-- [ ] Test reboot via port `0xCF9` on Hyper-V Gen 2
-- [ ] Implement Hyper-V Shutdown VSP channel (GUID `0E0B6031-5213-4934-818B-38D90CED39DB`)
-- [ ] Handle host-initiated shutdown requests (Integration Services graceful shutdown)
-- [ ] Test S3 suspend/resume on Hyper-V Gen 2 (may not be supported)
-- [ ] Document any Hyper-V-specific ACPI issues
+- [ ] See [TODO-008.07](TODO-008-Hyper-V-Runner/TODO-008.07-Power-Management.md) for full implementation checklist
 - [ ] Commit: `"power: Hyper-V power management validation"`
 
 ---
 
 ## 11. Hyper-V Guest Additions Integration
 
+> **Detailed in:** [TODO-008.08-Guest-Additions.md](TODO-008-Hyper-V-Runner/TODO-008.08-Guest-Additions.md)
+> — Hypervisor detector extension, VMBus auto-init, driver registration, fallback logic.
+>
 > **XREF:** [TODO-064-Guest-Additions.md §6](../060-Hardware-Drivers/TODO-064-Guest-Additions.md) — VMBus Integration
-
-**Prompt:** Once the core VMBus stack (§3) and synthetic drivers (§4-7) are functional, integrate them into the guest additions framework so the hypervisor detector (`detect.c`) automatically activates the Hyper-V backend when running on Hyper-V. The detection chain: CPUID `0x40000000` returns `"Microsoft Hv"` → activate VMBus backend → register synthetic drivers. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: guest additions integration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Existing Infrastructure:** `cpuid_platform.c` already detects Hyper-V via CPUID
@@ -405,11 +400,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 > calibration via Hyper-V MSR). Guest additions integration just needs to wire
 > the synthetic driver init into this existing detection path.
 
-- [ ] Extend hypervisor detector in `cpuid_platform.c` to trigger VMBus auto-init
-- [ ] Auto-activate VMBus backend in guest additions framework
-- [ ] Register synthetic drivers: storvsc, hv_kbd, hv_mouse, hvfb, netvsc
-- [ ] Log: `"[OK] Hypervisor: Hyper-V"` at boot
-- [ ] Ensure fallback: if not on Hyper-V, use legacy/VirtIO drivers as before
+- [ ] See [TODO-008.08](TODO-008-Hyper-V-Runner/TODO-008.08-Guest-Additions.md) for full implementation checklist
 - [ ] Commit: `"hyperv: guest additions integration"`
 
 ---
