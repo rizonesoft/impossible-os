@@ -235,40 +235,22 @@ graph TD
 
 ### 1.1 xHCI PCI Discovery & BAR Mapping
 
-**Prompt:** Detect xHCI controllers during PCI enumeration by matching class code `0x0C`
-(Serial Bus), subclass `0x03` (USB), programming interface `0x30` (xHCI). Read BAR0/BAR1
-as a 64-bit memory BAR per USB MSC spec §"PCI Configuration Space Fingerprint". Mask lower
-4 bits of BAR0, combine with BAR1 for the full 64-bit physical address. Map the MMIO region
-(minimum 64 KiB) into kernel virtual address space with uncacheable flags. Enable Bus Master
-(bit 2) and Memory Space (bit 1) in PCI Command Register. Disable legacy INTx (bit 10).
-Create `src/kernel/drivers/xhci.c` and `include/kernel/drivers/xhci.h`. After completing
-all items, mark every item as `[x]`, update this prompt to a verification prompt, run
-`bash scripts/build.sh clean`, and commit as `"usb: xHCI PCI discovery and BAR mapping"`.
-After implementation, save gotchas to MCP memory.
+**Prompt:** Detect xHCI controllers during PCI enumeration by matching class code `0x0C` (Serial Bus), subclass `0x03` (USB), programming interface `0x30` (xHCI). Read BAR0/BAR1 as a 64-bit memory BAR per USB MSC spec §"PCI Configuration Space Fingerprint". Mask lower 4 bits of BAR0, combine with BAR1 for the full 64-bit physical address. Map the MMIO region (minimum 64 KiB) into kernel virtual address space with uncacheable flags. Enable Bus Master (bit 2) and Memory Space (bit 1) in PCI Command Register. Disable legacy INTx (bit 10). Create `src/kernel/drivers/xhci.c` and `include/kernel/drivers/xhci.h`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: xHCI PCI discovery and BAR mapping"`. After implementation, save gotchas to MCP memory.
 
-- [ ] Create `src/kernel/drivers/xhci.c` and `include/kernel/drivers/xhci.h`
-- [ ] Detect xHCI device: class=`0x0C`, subclass=`0x03`, prog_if=`0x30`
-- [ ] Read BAR0 (offset `0x10`) and BAR1 (offset `0x14`) as 64-bit memory BAR
-- [ ] Reconstruct MMIO base: `(bar0 & 0xFFFFFFF0) | ((uint64_t)bar1 << 32)`
-- [ ] Verify BAR type is memory (bit 0 = 0) and 64-bit (bits 2:1 = `10b`)
-- [ ] Map MMIO region into kernel address space (uncacheable, minimum 64 KiB)
-- [ ] Enable PCI Command Register: Bus Master (bit 2), Memory Space (bit 1)
-- [ ] Disable legacy INTx: set PCI Command Register bit 10
-- [ ] Log: `[xHCI] Found controller at PCI %02x:%02x.%x, MMIO @ 0x%lx`
-- [ ] Commit: `"usb: xHCI PCI discovery and BAR mapping"`
+- [x] Create `src/kernel/drivers/xhci.c` and `include/kernel/drivers/xhci.h`
+- [x] Detect xHCI device: class=`0x0C`, subclass=`0x03`, prog_if=`0x30`
+- [x] Read BAR0 (offset `0x10`) and BAR1 (offset `0x14`) as 64-bit memory BAR
+- [x] Reconstruct MMIO base: `(bar0 & 0xFFFFFFF0) | ((uint64_t)bar1 << 32)`
+- [x] Verify BAR type is memory (bit 0 = 0) and 64-bit (bits 2:1 = `10b`)
+- [x] Map MMIO region into kernel address space (uncacheable, minimum 64 KiB)
+- [x] Enable PCI Command Register: Bus Master (bit 2), Memory Space (bit 1)
+- [x] Disable legacy INTx: set PCI Command Register bit 10
+- [x] Log: `[xHCI] Found controller at PCI %02x:%02x.%x, MMIO @ 0x%lx`
+- [x] Commit: `"usb: xHCI PCI discovery and BAR mapping"`
 
 ### 1.2 xHCI Controller Initialization
 
-**Prompt:** Follow the xHCI initialization sequence per USB MSC spec §"xHCI Controller
-Initialization Sequence" (steps 1–12). Read Capability Registers: CAPLENGTH (offset `0x00`),
-HCIVERSION (`0x02`), HCSPARAMS1 (`0x04` — max slots, interrupters, ports), HCSPARAMS2
-(`0x08` — scratchpad count), HCCPARAMS1 (`0x10` — 64-bit support, context size). Calculate
-Operational Register base = BAR + CAPLENGTH. Halt controller (USBCMD.RS=0, wait USBSTS.HCH=1).
-Reset controller (USBCMD.HCRST=1, wait HCRST=0 AND USBSTS.CNR=0). Configure MaxSlotsEn.
-Allocate DCBAA (64-byte aligned, (MaxSlots+1) entries). Allocate scratchpad buffers if needed.
-Write DCBAAP. After completing all items, mark every item as `[x]`, update this prompt to a
-verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: xHCI controller initialization"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Follow the xHCI initialization sequence per USB MSC spec §"xHCI Controller Initialization Sequence" (steps 1–12). Read Capability Registers: CAPLENGTH (offset `0x00`), HCIVERSION (`0x02`), HCSPARAMS1 (`0x04` — max slots, interrupters, ports), HCSPARAMS2 (`0x08` — scratchpad count), HCCPARAMS1 (`0x10` — 64-bit support, context size). Calculate Operational Register base = BAR + CAPLENGTH. Halt controller (USBCMD.RS=0, wait USBSTS.HCH=1). Reset controller (USBCMD.HCRST=1, wait HCRST=0 AND USBSTS.CNR=0). Configure MaxSlotsEn. Allocate DCBAA (64-byte aligned, (MaxSlots+1) entries). Allocate scratchpad buffers if needed. Write DCBAAP. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: xHCI controller initialization"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Read Capability Registers (offset `0x00` from BAR base):
   - [ ] CAPLENGTH (offset `0x00`, 1B) — length of capability space
@@ -291,15 +273,7 @@ verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ### 1.3 TRB Ring Architecture
 
-**Prompt:** Allocate and initialize the three TRB ring types per USB MSC spec §"Transfer
-Request Block (TRB) Architecture". Command Ring: 64-byte aligned, 256 TRBs, ends with Link
-TRB pointing back to start. Event Ring: 64-byte aligned, 256 TRBs, set up via ERST (Event
-Ring Segment Table). Transfer Rings: 16-byte aligned per endpoint, 256 TRBs each. Each TRB
-is 16 bytes: `{parameter(8B), status(4B), control(4B)}`. The cycle bit (control bit 0) is
-the ownership toggle. Write CRCR (Command Ring), configure ERSTSZ/ERSTBA/ERDP for Event Ring.
-After completing all items, mark every item as `[x]`, update this prompt to a verification
-prompt, run `bash scripts/build.sh clean`, and commit as `"usb: TRB ring architecture"`.
-After implementation, save gotchas to MCP memory.
+**Prompt:** Allocate and initialize the three TRB ring types per USB MSC spec §"Transfer Request Block (TRB) Architecture". Command Ring: 64-byte aligned, 256 TRBs, ends with Link TRB pointing back to start. Event Ring: 64-byte aligned, 256 TRBs, set up via ERST (Event Ring Segment Table). Transfer Rings: 16-byte aligned per endpoint, 256 TRBs each. Each TRB is 16 bytes: `{parameter(8B), status(4B), control(4B)}`. The cycle bit (control bit 0) is the ownership toggle. Write CRCR (Command Ring), configure ERSTSZ/ERSTBA/ERDP for Event Ring. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: TRB ring architecture"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Define `struct xhci_trb { uint64_t parameter; uint32_t status; uint32_t control; }`
 - [ ] Allocate Command Ring: `pmm_alloc_contiguous()`, 64B aligned, 256 × 16B, zero-fill
@@ -324,18 +298,7 @@ After implementation, save gotchas to MCP memory.
 
 ### 2.1 USB Device Enumeration
 
-**Prompt:** Implement the USB enumeration sequence per USB MSC spec §"Enumeration Sequence".
-On Port Status Change Event: read PORTSC to confirm connection, determine port speed. Reset
-port (PORTSC.PR=1, wait for Reset Change). Submit Enable Slot Command TRB (type 9) on
-Command Ring, wait for Command Completion Event to get assigned slot ID. Build Input Context
-with Slot Context (speed, route string, root hub port) and Endpoint 0 Context (max packet
-size from port speed: 8 for LS, 64 for FS/HS, 512 for SS). Submit Address Device Command
-TRB (type 11). Issue GET_DESCRIPTOR (Device, 18 bytes) via control transfer on EP0. Issue
-GET_DESCRIPTOR (Configuration) in two stages: 9-byte header then full wTotalLength. Issue
-SET_CONFIGURATION. Submit Configure Endpoint Command TRB (type 12) with all discovered
-endpoints. After completing all items, mark every item as `[x]`, update this prompt to a
-verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: device enumeration"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Implement the USB enumeration sequence per USB MSC spec §"Enumeration Sequence". On Port Status Change Event: read PORTSC to confirm connection, determine port speed. Reset port (PORTSC.PR=1, wait for Reset Change). Submit Enable Slot Command TRB (type 9) on Command Ring, wait for Command Completion Event to get assigned slot ID. Build Input Context with Slot Context (speed, route string, root hub port) and Endpoint 0 Context (max packet size from port speed: 8 for LS, 64 for FS/HS, 512 for SS). Submit Address Device Command TRB (type 11). Issue GET_DESCRIPTOR (Device, 18 bytes) via control transfer on EP0. Issue GET_DESCRIPTOR (Configuration) in two stages: 9-byte header then full wTotalLength. Issue SET_CONFIGURATION. Submit Configure Endpoint Command TRB (type 12) with all discovered endpoints. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: device enumeration"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Detect Port Status Change Event TRB (type 34) from Event Ring
 - [ ] Read PORTSC (Operational + `0x400` + port × `0x10`): confirm CCS (bit 0), read speed (13:10)
@@ -360,14 +323,7 @@ verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ### 2.2 MSC Identification & Endpoint Configuration
 
-**Prompt:** Walk the configuration descriptor tree to find an Interface Descriptor matching
-the MSC BOT triple: `bInterfaceClass=0x08`, `bInterfaceSubClass=0x06`,
-`bInterfaceProtocol=0x50` per USB MSC spec §"Mass Storage Class Identification". Extract
-Bulk-IN and Bulk-OUT endpoint addresses from the Endpoint Descriptors following the interface.
-Ignore any interrupt endpoints (BOT uses bulk only). Allocate Transfer Rings for Bulk-IN and
-Bulk-OUT endpoints. After completing all items, mark every item as `[x]`, update this prompt
-to a verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: MSC identification and endpoint config"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Walk the configuration descriptor tree to find an Interface Descriptor matching the MSC BOT triple: `bInterfaceClass=0x08`, `bInterfaceSubClass=0x06`, `bInterfaceProtocol=0x50` per USB MSC spec §"Mass Storage Class Identification". Extract Bulk-IN and Bulk-OUT endpoint addresses from the Endpoint Descriptors following the interface. Ignore any interrupt endpoints (BOT uses bulk only). Allocate Transfer Rings for Bulk-IN and Bulk-OUT endpoints. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: MSC identification and endpoint config"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Walk config descriptor buffer (linear parse by bLength/bDescriptorType)
 - [ ] Match Interface Descriptor (type `0x04`):
@@ -388,15 +344,7 @@ to a verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ### 2.3 MSI/MSI-X Interrupt Handling
 
-**Prompt:** Scan PCI Capability List for MSI-X (cap ID `0x11`) or MSI (cap ID `0x05`) per
-USB MSC spec §"MSI/MSI-X Configuration". If MSI-X: map MSI-X Table BAR, allocate IDT
-vector, program table entry (msg_addr=`0xFEE00000`, msg_data=vector), enable in Message
-Control. Set USBCMD.INTE=1 and IMAN.IE=1. Implement top-half ISR: read Event Ring, advance
-ERDP, clear IMAN.IP, queue bottom-half for BOT state machine processing. If no MSI-X,
-fall back to single MSI or legacy INTx polling. After completing all items, mark every item
-as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
-and commit as `"usb: MSI/MSI-X interrupt handling"`. After implementation, save gotchas to
-MCP memory.
+**Prompt:** Scan PCI Capability List for MSI-X (cap ID `0x11`) or MSI (cap ID `0x05`) per USB MSC spec §"MSI/MSI-X Configuration". If MSI-X: map MSI-X Table BAR, allocate IDT vector, program table entry (msg_addr=`0xFEE00000`, msg_data=vector), enable in Message Control. Set USBCMD.INTE=1 and IMAN.IE=1. Implement top-half ISR: read Event Ring, advance ERDP, clear IMAN.IP, queue bottom-half for BOT state machine processing. If no MSI-X, fall back to single MSI or legacy INTx polling. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: MSI/MSI-X interrupt handling"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Walk PCI capability list for MSI-X (cap ID `0x11`) or MSI (cap ID `0x05`)
 - [ ] If MSI-X:
@@ -422,16 +370,7 @@ MCP memory.
 
 ### 3.1 BOT: CBW/CSW Transport
 
-**Prompt:** Implement the Bulk-Only Transport protocol per USB MSC spec §"Bulk-Only
-Transport (BOT) Protocol". Each transaction: (1) send 31-byte CBW on Bulk-OUT, (2) optional
-data phase on Bulk-IN or Bulk-OUT, (3) receive 13-byte CSW on Bulk-IN. Define CBW struct
-(`dCBWSignature=0x43425355`, dCBWTag, dCBWDataTransferLength, bmCBWFlags, bCBWLUN,
-bCBWCBLength, CBWCB[16]`). Define CSW struct (`dCSWSignature=0x53425355`, dCSWTag,
-dCSWDataResidue, bCSWStatus`). Validate CSW: signature match, tag match, exactly 13 bytes.
-Implement the 13-case host/device expectation matrix for handling short transfers and phase
-errors. After completing all items, mark every item as `[x]`, update this prompt to a
-verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: BOT CBW/CSW transport"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Implement the Bulk-Only Transport protocol per USB MSC spec §"Bulk-Only Transport (BOT) Protocol". Each transaction: (1) send 31-byte CBW on Bulk-OUT, (2) optional data phase on Bulk-IN or Bulk-OUT, (3) receive 13-byte CSW on Bulk-IN. Define CBW struct (`dCBWSignature=0x43425355`, dCBWTag, dCBWDataTransferLength, bmCBWFlags, bCBWLUN, bCBWCBLength, CBWCB[16]`). Define CSW struct (`dCSWSignature=0x53425355`, dCSWTag, dCSWDataResidue, bCSWStatus`). Validate CSW: signature match, tag match, exactly 13 bytes. Implement the 13-case host/device expectation matrix for handling short transfers and phase errors. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: BOT CBW/CSW transport"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Define `struct usb_msc_cbw` (31 bytes):
   - [ ] `dCBWSignature` = `0x43425355` ("USBC")
@@ -462,15 +401,7 @@ verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ### 3.2 SCSI: INQUIRY + TEST UNIT READY
 
-**Prompt:** Implement SCSI INQUIRY (`0x12`) and TEST UNIT READY (`0x00`) commands per USB
-MSC spec §"Mandatory SCSI Commands". INQUIRY: 6-byte CDB, Data-In 36 bytes, parse device
-type (byte 0, bits 4:0 = `0x00` for block device), RMB (byte 1, bit 7 = removable), vendor
-(bytes 8–15), product (bytes 16–31). Note: SCSI CDBs are big-endian. TEST UNIT READY: 6-byte
-CDB, no data phase, check CSW status. If failed, issue REQUEST SENSE to determine reason
-(medium not present, device spinning up). After completing all items, mark every item as
-`[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and
-commit as `"usb: SCSI INQUIRY and TEST UNIT READY"`. After implementation, save gotchas to
-MCP memory.
+**Prompt:** Implement SCSI INQUIRY (`0x12`) and TEST UNIT READY (`0x00`) commands per USB MSC spec §"Mandatory SCSI Commands". INQUIRY: 6-byte CDB, Data-In 36 bytes, parse device type (byte 0, bits 4:0 = `0x00` for block device), RMB (byte 1, bit 7 = removable), vendor (bytes 8–15), product (bytes 16–31). Note: SCSI CDBs are big-endian. TEST UNIT READY: 6-byte CDB, no data phase, check CSW status. If failed, issue REQUEST SENSE to determine reason (medium not present, device spinning up). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: SCSI INQUIRY and TEST UNIT READY"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Build INQUIRY CDB (6 bytes): opcode=`0x12`, allocation_len=36 (big-endian)
 - [ ] Send via `bot_transaction()`: direction=IN, data_len=36, lun=target
@@ -490,14 +421,7 @@ MCP memory.
 
 ### 3.3 SCSI: READ CAPACITY + READ(10)
 
-**Prompt:** Implement READ CAPACITY(10) (`0x25`) and READ(10) (`0x28`) per USB MSC spec
-§"Mandatory SCSI Commands". READ CAPACITY: 10-byte CDB, Data-In 8 bytes (big-endian last
-LBA + block length). Total capacity = (last_LBA + 1) × block_length. Never hardcode 512.
-READ(10): 10-byte CDB, LBA at bytes 2–5 (big-endian), transfer length at bytes 7–8
-(big-endian). Data-In = transfer_length × block_size. After completing all items, mark every
-item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
-and commit as `"usb: SCSI READ CAPACITY and READ(10)"`. After implementation, save gotchas
-to MCP memory.
+**Prompt:** Implement READ CAPACITY(10) (`0x25`) and READ(10) (`0x28`) per USB MSC spec §"Mandatory SCSI Commands". READ CAPACITY: 10-byte CDB, Data-In 8 bytes (big-endian last LBA + block length). Total capacity = (last_LBA + 1) × block_length. Never hardcode 512. READ(10): 10-byte CDB, LBA at bytes 2–5 (big-endian), transfer length at bytes 7–8 (big-endian). Data-In = transfer_length × block_size. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: SCSI READ CAPACITY and READ(10)"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Build READ CAPACITY(10) CDB (10 bytes): opcode=`0x25`, LBA=0, PMI=0
 - [ ] Send via `bot_transaction()`: direction=IN, data_len=8
@@ -516,12 +440,7 @@ to MCP memory.
 
 ### 3.4 SCSI: WRITE(10)
 
-**Prompt:** Implement WRITE(10) (`0x2A`) per USB MSC spec §"Mandatory SCSI Commands".
-10-byte CDB: opcode=`0x2A`, LBA at bytes 2–5 (big-endian), transfer length at bytes 7–8
-(big-endian). Data-Out = transfer_length × block_size. Check for write-protect via REQUEST
-SENSE (sense key `0x07`, ASC `0x27`, ASCQ `0x00`). After completing all items, mark every
-item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
-and commit as `"usb: SCSI WRITE(10)"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Implement WRITE(10) (`0x2A`) per USB MSC spec §"Mandatory SCSI Commands". 10-byte CDB: opcode=`0x2A`, LBA at bytes 2–5 (big-endian), transfer length at bytes 7–8 (big-endian). Data-Out = transfer_length × block_size. Check for write-protect via REQUEST SENSE (sense key `0x07`, ASC `0x27`, ASCQ `0x00`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: SCSI WRITE(10)"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Build WRITE(10) CDB (10 bytes):
   - [ ] Opcode=`0x2A`, LBA at bytes 2–5 (big-endian), transfer_length at bytes 7–8 (big-endian)
@@ -533,13 +452,7 @@ and commit as `"usb: SCSI WRITE(10)"`. After implementation, save gotchas to MCP
 
 ### 3.5 Block Device Registration
 
-**Prompt:** Register USB MSC devices as `blkdev` entries so partition scanning and filesystem
-mounting work automatically. Set sector_size from READ CAPACITY, sector_count from last_lba+1.
-Wire read/write callbacks to `usb_msc_read`/`usb_msc_write`. Device name: `usb0` (or `usb0lN`
-for LUN N on multi-LUN devices). After registration, `partition_scan()` will detect GPT/MBR
-and mount filesystems. After completing all items, mark every item as `[x]`, update this prompt
-to a verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: block device registration"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Register USB MSC devices as `blkdev` entries so partition scanning and filesystem mounting work automatically. Set sector_size from READ CAPACITY, sector_count from last_lba+1. Wire read/write callbacks to `usb_msc_read`/`usb_msc_write`. Device name: `usb0` (or `usb0lN` for LUN N on multi-LUN devices). After registration, `partition_scan()` will detect GPT/MBR and mount filesystems. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: block device registration"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Create `blkdev` struct for each USB MSC LUN:
   - [ ] `name`: `"usb0"` or `"usb0lN"` for LUN N
@@ -559,13 +472,7 @@ to a verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ### 4.1 REQUEST SENSE Error Decoding
 
-**Prompt:** Implement REQUEST SENSE (`0x03`) per USB MSC spec §"REQUEST SENSE". 6-byte CDB,
-Data-In 18 bytes (fixed format). Parse sense key (byte 2, bits 3:0), ASC (byte 12), ASCQ
-(byte 13). Decode common combinations: `0x02/0x3A/0x00` = medium not present, `0x06/0x28/0x00`
-= not ready to ready transition, `0x07/0x27/0x00` = write protected, `0x03/0x11/0x00` =
-unrecovered read error. After completing all items, mark every item as `[x]`, update this
-prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: REQUEST SENSE error decoding"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Implement REQUEST SENSE (`0x03`) per USB MSC spec §"REQUEST SENSE". 6-byte CDB, Data-In 18 bytes (fixed format). Parse sense key (byte 2, bits 3:0), ASC (byte 12), ASCQ (byte 13). Decode common combinations: `0x02/0x3A/0x00` = medium not present, `0x06/0x28/0x00` = not ready to ready transition, `0x07/0x27/0x00` = write protected, `0x03/0x11/0x00` = unrecovered read error. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: REQUEST SENSE error decoding"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Build REQUEST SENSE CDB (6 bytes): opcode=`0x03`, allocation_len=18
 - [ ] Send via `bot_transaction()`: direction=IN, data_len=18
@@ -588,14 +495,7 @@ prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit a
 
 ### 4.2 Reset Recovery (3-Step)
 
-**Prompt:** Implement the BOT Reset Recovery sequence per USB MSC spec §"Reset Recovery
-Sequence". When CSW status = 0x02 (Phase Error), CSW validation fails, or endpoints are
-persistently stalled, execute this exact three-step sequence: (1) Bulk-Only Mass Storage
-Reset (control EP0, bRequest=0xFF), (2) ClearFeature(ENDPOINT_HALT) on Bulk-IN, (3)
-ClearFeature(ENDPOINT_HALT) on Bulk-OUT. These three steps MUST be in this exact order.
-After completing all items, mark every item as `[x]`, update this prompt to a verification
-prompt, run `bash scripts/build.sh clean`, and commit as `"usb: BOT reset recovery"`.
-After implementation, save gotchas to MCP memory.
+**Prompt:** Implement the BOT Reset Recovery sequence per USB MSC spec §"Reset Recovery Sequence". When CSW status = 0x02 (Phase Error), CSW validation fails, or endpoints are persistently stalled, execute this exact three-step sequence: (1) Bulk-Only Mass Storage Reset (control EP0, bRequest=0xFF), (2) ClearFeature(ENDPOINT_HALT) on Bulk-IN, (3) ClearFeature(ENDPOINT_HALT) on Bulk-OUT. These three steps MUST be in this exact order. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: BOT reset recovery"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Implement `bot_reset_recovery(dev)`:
   - [ ] Step 1: Bulk-Only Mass Storage Reset
@@ -612,14 +512,7 @@ After implementation, save gotchas to MCP memory.
 
 ### 4.3 Retry Policy & Timeout Handling
 
-**Prompt:** Implement retry and timeout policies per USB MSC spec §"Retry Policy". Endpoint
-STALL: retry up to 3× with ClearFeature(ENDPOINT_HALT) between attempts. CSW tag/signature
-mismatch: immediate Reset Recovery (0 retries). Phase Error: immediate Reset Recovery.
-Command Failed (sense): retry up to 3× then report to VFS. Transfer timeout: 5-second
-default, reset recovery after 2 failed attempts. After completing all items, mark every
-item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
-and commit as `"usb: retry policy and timeout handling"`. After implementation, save
-gotchas to MCP memory.
+**Prompt:** Implement retry and timeout policies per USB MSC spec §"Retry Policy". Endpoint STALL: retry up to 3× with ClearFeature(ENDPOINT_HALT) between attempts. CSW tag/signature mismatch: immediate Reset Recovery (0 retries). Phase Error: immediate Reset Recovery. Command Failed (sense): retry up to 3× then report to VFS. Transfer timeout: 5-second default, reset recovery after 2 failed attempts. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: retry policy and timeout handling"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Retry table:
   - [ ] Endpoint STALL: max 3 retries, ClearFeature between each
@@ -640,15 +533,7 @@ gotchas to MCP memory.
 
 ### 5.1 Hot-Plug Detection
 
-**Prompt:** Handle USB device connection events per USB MSC spec §"Device Connection". xHCI
-generates Port Status Change Event TRB (type 34) when a device is plugged in. Read PORTSC
-to confirm CCS (Current Connect Status). Begin full enumeration sequence: reset port, enable
-slot, address device, parse descriptors, identify MSC, probe LUNs, read capacity. Register
-block device with VFS, trigger partition scanning and filesystem mounting. Show desktop
-notification toast: "USB drive detected — Drive E: (FAT32, 16 GB)". After completing all
-items, mark every item as `[x]`, update this prompt to a verification prompt, run
-`bash scripts/build.sh clean`, and commit as `"usb: hot-plug detection"`. After implementation,
-save gotchas to MCP memory.
+**Prompt:** Handle USB device connection events per USB MSC spec §"Device Connection". xHCI generates Port Status Change Event TRB (type 34) when a device is plugged in. Read PORTSC to confirm CCS (Current Connect Status). Begin full enumeration sequence: reset port, enable slot, address device, parse descriptors, identify MSC, probe LUNs, read capacity. Register block device with VFS, trigger partition scanning and filesystem mounting. Show desktop notification toast: "USB drive detected — Drive E: (FAT32, 16 GB)". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: hot-plug detection"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Monitor Event Ring for Port Status Change Event TRBs (type 34)
 - [ ] Read PORTSC: confirm CCS (bit 0) = 1 (device connected)
@@ -663,15 +548,7 @@ save gotchas to MCP memory.
 
 ### 5.2 Surprise Removal & Safe Eject
 
-**Prompt:** Handle device disconnection per USB MSC spec §"Surprise Removal Teardown
-Sequence". On disconnect event: (1) quarantine — mark device offline, reject all pending
-I/O with ENODEV, (2) abort transfers — walk Transfer Rings, abort pending TRBs, (3) halt
-endpoints — issue Stop Endpoint Commands, (4) free slot — issue Disable Slot Command, (5)
-notify VFS — trigger filesystem unmount, (6) deallocate — free all DMA buffers and device
-tracking structures once refcount → 0. After completing all items, mark every item as
-`[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and
-commit as `"usb: surprise removal and safe eject"`. After implementation, save gotchas to
-MCP memory.
+**Prompt:** Handle device disconnection per USB MSC spec §"Surprise Removal Teardown Sequence". On disconnect event: (1) quarantine — mark device offline, reject all pending I/O with ENODEV, (2) abort transfers — walk Transfer Rings, abort pending TRBs, (3) halt endpoints — issue Stop Endpoint Commands, (4) free slot — issue Disable Slot Command, (5) notify VFS — trigger filesystem unmount, (6) deallocate — free all DMA buffers and device tracking structures once refcount → 0. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: surprise removal and safe eject"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Detect disconnect: Port Status Change Event with CCS = 0
 - [ ] Step 1 — Quarantine: set `dev->online = false`, reject new I/O with `ENODEV`
@@ -691,13 +568,7 @@ MCP memory.
 
 ### 6.1 Multi-LUN Support
 
-**Prompt:** Implement Get Max LUN per USB MSC spec §"Get Max LUN". Control transfer:
-bmRequestType=`0xA1`, bRequest=`0xFE`, wValue=0, wIndex=interface, wLength=1. Response is
-a single byte: max LUN index (0x00–0x0F). For each LUN: issue INQUIRY, TEST UNIT READY,
-READ CAPACITY, and register a separate `blkdev` (e.g., `usb0l0`, `usb0l1`). If device
-STALLs the request, assume Max LUN = 0. After completing all items, mark every item as
-`[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and
-commit as `"usb: multi-LUN support"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Implement Get Max LUN per USB MSC spec §"Get Max LUN". Control transfer: bmRequestType=`0xA1`, bRequest=`0xFE`, wValue=0, wIndex=interface, wLength=1. Response is a single byte: max LUN index (0x00–0x0F). For each LUN: issue INQUIRY, TEST UNIT READY, READ CAPACITY, and register a separate `blkdev` (e.g., `usb0l0`, `usb0l1`). If device STALLs the request, assume Max LUN = 0. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: multi-LUN support"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Issue Get Max LUN: bmRequestType=`0xA1`, bRequest=`0xFE`, wIndex=interface, wLength=1
 - [ ] Parse response: single byte = max LUN index (0x00–0x0F, value 0x03 = 4 LUNs)
@@ -713,13 +584,7 @@ commit as `"usb: multi-LUN support"`. After implementation, save gotchas to MCP 
 
 ### 6.2 Scatter-Gather for Large I/O (64 KiB TRB Split)
 
-**Prompt:** Handle large transfers per USB MSC spec §"Scatter-Gather for Large Transfers".
-A single TRB's data buffer MUST NOT cross a 64 KiB physical address boundary. Split large
-buffers into fragments ≤ 64 KiB that each stay within a single 64 KiB-aligned region. Chain
-TRBs with the Chain bit (control bit 4). Set IOC only on the final TRB. After completing
-all items, mark every item as `[x]`, update this prompt to a verification prompt, run
-`bash scripts/build.sh clean`, and commit as `"usb: scatter-gather 64 KiB TRB split"`.
-After implementation, save gotchas to MCP memory.
+**Prompt:** Handle large transfers per USB MSC spec §"Scatter-Gather for Large Transfers". A single TRB's data buffer MUST NOT cross a 64 KiB physical address boundary. Split large buffers into fragments ≤ 64 KiB that each stay within a single 64 KiB-aligned region. Chain TRBs with the Chain bit (control bit 4). Set IOC only on the final TRB. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: scatter-gather 64 KiB TRB split"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Detect when transfer buffer crosses 64 KiB boundary
 - [ ] Split into fragments: each ≤ 64 KiB, within single 64 KiB-aligned region
@@ -732,14 +597,7 @@ After implementation, save gotchas to MCP memory.
 
 ### 6.3 Defensive Descriptor Validation
 
-**Prompt:** Implement security checks per USB MSC spec §"Security: Defensive Descriptor
-Parsing". Never trust device-reported lengths. Enforce mandatory bounds checks: Device
-Descriptor bLength==18, Config Descriptor bLength==9, wTotalLength ≤ 4096, Interface
-Descriptor bLength==9, Endpoint Descriptor bLength==7. Use two-stage Configuration
-Descriptor read. Cap all string descriptor fetches. After completing all items, mark every
-item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
-and commit as `"usb: defensive descriptor validation"`. After implementation, save gotchas to
-MCP memory.
+**Prompt:** Implement security checks per USB MSC spec §"Security: Defensive Descriptor Parsing". Never trust device-reported lengths. Enforce mandatory bounds checks: Device Descriptor bLength==18, Config Descriptor bLength==9, wTotalLength ≤ 4096, Interface Descriptor bLength==9, Endpoint Descriptor bLength==7. Use two-stage Configuration Descriptor read. Cap all string descriptor fetches. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: defensive descriptor validation"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Validate Device Descriptor: `bLength == 18`, `bDescriptorType == 0x01`
 - [ ] Validate Config Descriptor header: `bLength == 9`, `wTotalLength ≤ 4096`
@@ -758,12 +616,7 @@ MCP memory.
 
 ### 7.1 Safe Eject (START STOP UNIT)
 
-**Prompt:** Implement SCSI START STOP UNIT (`0x1B`) for safe device ejection per USB MSC
-spec §"START STOP UNIT". 6-byte CDB: opcode=`0x1B`, byte 4 bits 1:0 = LoEj/Start
-(`0x02` = eject). Before ejecting: flush all dirty buffers, unmount filesystems, unregister
-blkdev. After completing all items, mark every item as `[x]`, update this prompt to a
-verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: safe eject START STOP UNIT"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Implement SCSI START STOP UNIT (`0x1B`) for safe device ejection per USB MSC spec §"START STOP UNIT". 6-byte CDB: opcode=`0x1B`, byte 4 bits 1:0 = LoEj/Start (`0x02` = eject). Before ejecting: flush all dirty buffers, unmount filesystems, unregister blkdev. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: safe eject START STOP UNIT"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Implement `usb_msc_eject(dev)`:
   - [ ] Flush all dirty buffers (cache_flush if disk cache exists)
@@ -777,13 +630,7 @@ verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ### 7.2 USB Hub Traversal
 
-**Prompt:** Support USB devices connected through USB hubs. Hubs appear as a separate USB
-device class (bDeviceClass=`0x09`). Parse hub descriptors to discover downstream ports.
-Handle port power-on, reset, and enumeration for each downstream port. Track route strings
-for xHCI Slot Context. Support up to 5 tiers of hub nesting (USB spec limit). After
-completing all items, mark every item as `[x]`, update this prompt to a verification prompt,
-run `bash scripts/build.sh clean`, and commit as `"usb: hub traversal"`. After implementation,
-save gotchas to MCP memory.
+**Prompt:** Support USB devices connected through USB hubs. Hubs appear as a separate USB device class (bDeviceClass=`0x09`). Parse hub descriptors to discover downstream ports. Handle port power-on, reset, and enumeration for each downstream port. Track route strings for xHCI Slot Context. Support up to 5 tiers of hub nesting (USB spec limit). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: hub traversal"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Detect hub devices: `bDeviceClass == 0x09`
 - [ ] Parse Hub Descriptor: number of downstream ports, power characteristics
@@ -801,14 +648,7 @@ save gotchas to MCP memory.
 
 ### 8.1 Adaptive I/O Coalescing (🚀 Exclusive)
 
-**Prompt:** Neither Windows Usbstor.sys nor Linux usb-storage batch multiple small I/O
-requests into fewer BOT transactions. Implement adaptive I/O coalescing: queue incoming
-read/write requests, detect sequential LBA patterns, merge adjacent requests into single
-larger BOT transactions (up to device max transfer size). Track a rolling 100ms IOPS window.
-At low IOPS (<100), submit immediately for latency. At high IOPS (>100), batch for 1ms
-before sending merged request. After completing all items, mark every item as `[x]`, update
-this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: adaptive I/O coalescing"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Neither Windows Usbstor.sys nor Linux usb-storage batch multiple small I/O requests into fewer BOT transactions. Implement adaptive I/O coalescing: queue incoming read/write requests, detect sequential LBA patterns, merge adjacent requests into single larger BOT transactions (up to device max transfer size). Track a rolling 100ms IOPS window. At low IOPS (<100), submit immediately for latency. At high IOPS (>100), batch for 1ms before sending merged request. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: adaptive I/O coalescing"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Implement I/O request queue per USB MSC device
 - [ ] Detect sequential LBA patterns (consecutive sector ranges)
@@ -824,13 +664,7 @@ this prompt to a verification prompt, run `bash scripts/build.sh clean`, and com
 
 ### 8.2 USB Telemetry Dashboard (🚀 Exclusive)
 
-**Prompt:** Neither Windows nor Linux expose per-device USB I/O telemetry in a built-in GUI.
-Track ns-resolution per-request latency using `rdtsc`, build histogram (buckets: <100µs,
-100µs–1ms, 1–10ms, 10–100ms, >100ms). Track throughput (MB/s rolling average), IOPS,
-error rates, and BOT reset count. Expose via Registry for Disk Manager GUI integration.
-After completing all items, mark every item as `[x]`, update this prompt to a verification
-prompt, run `bash scripts/build.sh clean`, and commit as `"usb: telemetry dashboard"`.
-After implementation, save gotchas to MCP memory.
+**Prompt:** Neither Windows nor Linux expose per-device USB I/O telemetry in a built-in GUI. Track ns-resolution per-request latency using `rdtsc`, build histogram (buckets: <100µs, 100µs–1ms, 1–10ms, 10–100ms, >100ms). Track throughput (MB/s rolling average), IOPS, error rates, and BOT reset count. Expose via Registry for Disk Manager GUI integration. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: telemetry dashboard"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Record `rdtsc` at BOT transaction submit and completion
 - [ ] Compute per-request latency in nanoseconds
@@ -844,13 +678,7 @@ After implementation, save gotchas to MCP memory.
 
 ### 8.3 Predictive Prefetch (🚀 Exclusive)
 
-**Prompt:** Neither Windows Usbstor.sys nor Linux usb-storage implement driver-level
-predictive prefetch for USB storage. Track last N read LBAs per device. If sequential
-access pattern detected, issue background READ(10) for next M blocks. Store in small LRU
-cache (default 256 KiB). On cache hit, return data without BOT transaction. Invalidate on
-write to overlapping LBA range. After completing all items, mark every item as `[x]`, update
-this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: predictive prefetch"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Neither Windows Usbstor.sys nor Linux usb-storage implement driver-level predictive prefetch for USB storage. Track last N read LBAs per device. If sequential access pattern detected, issue background READ(10) for next M blocks. Store in small LRU cache (default 256 KiB). On cache hit, return data without BOT transaction. Invalidate on write to overlapping LBA range. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: predictive prefetch"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Track last 8 read LBAs per device in circular buffer
 - [ ] Detect sequential access pattern (consecutive LBA ranges, stride ≤ 1)
@@ -864,13 +692,7 @@ this prompt to a verification prompt, run `bash scripts/build.sh clean`, and com
 
 ### 8.4 Safe Eject UX (🚀 Exclusive)
 
-**Prompt:** Neither Windows nor Linux provide a polished safe eject experience. Windows
-shows a tiny tray icon; Linux requires `udisksctl`. Impossible OS integrates safe eject
-into the desktop: system tray icon shows connected USB devices, right-click for "Safely
-Remove", progress indicator while flushing, confirmation toast, and warning dialog if files
-are still open. After completing all items, mark every item as `[x]`, update this prompt to
-a verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"usb: safe eject UX"`. After implementation, save gotchas to MCP memory.
+**Prompt:** Neither Windows nor Linux provide a polished safe eject experience. Windows shows a tiny tray icon; Linux requires `udisksctl`. Impossible OS integrates safe eject into the desktop: system tray icon shows connected USB devices, right-click for "Safely Remove", progress indicator while flushing, confirmation toast, and warning dialog if files are still open. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: safe eject UX"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Desktop system tray: USB icon appears when USB storage is connected
 - [ ] Right-click menu: list connected USB drives with name and drive letter
@@ -889,13 +711,7 @@ a verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ### 9.1 IOMMU DMA Isolation
 
-**Prompt:** If the platform supports an IOMMU (Intel VT-d, AMD-Vi), configure DMA remapping
-to restrict the xHCI controller's DMA access to only allocated TRB rings and data buffers
-per USB MSC spec §"IOMMU Integration". This prevents a compromised controller or malicious
-USB device from reading/writing arbitrary kernel memory. After completing all items, mark
-every item as `[x]`, update this prompt to a verification prompt, run
-`bash scripts/build.sh clean`, and commit as `"usb: IOMMU DMA isolation"`. After
-implementation, save gotchas to MCP memory.
+**Prompt:** If the platform supports an IOMMU (Intel VT-d, AMD-Vi), configure DMA remapping to restrict the xHCI controller's DMA access to only allocated TRB rings and data buffers per USB MSC spec §"IOMMU Integration". This prevents a compromised controller or malicious USB device from reading/writing arbitrary kernel memory. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: IOMMU DMA isolation"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Detect IOMMU: scan ACPI DMAR table (Intel VT-d) or IVRS table (AMD-Vi)
 - [ ] Build I/O page tables mapping only xHCI allocated pages
@@ -906,14 +722,7 @@ implementation, save gotchas to MCP memory.
 
 ### 9.2 UASP (USB Attached SCSI Protocol)
 
-**Prompt:** UASP provides up to 70% faster read speeds and 40% faster write speeds over BOT
-by using USB 3.0 bulk streams and command queuing. Detect UASP support via Interface
-Descriptor: `bInterfaceClass=0x08`, `bInterfaceSubClass=0x06`, `bInterfaceProtocol=0x62`.
-UASP uses 4 pipe endpoints (Command, Status, Data-In, Data-Out) instead of BOT's 2.
-Implement stream-based transfers for SuperSpeed devices. Fall back to BOT for non-UASP
-devices. After completing all items, mark every item as `[x]`, update this prompt to a
-verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: UASP support"`.
-After implementation, save gotchas to MCP memory.
+**Prompt:** UASP provides up to 70% faster read speeds and 40% faster write speeds over BOT by using USB 3.0 bulk streams and command queuing. Detect UASP support via Interface Descriptor: `bInterfaceClass=0x08`, `bInterfaceSubClass=0x06`, `bInterfaceProtocol=0x62`. UASP uses 4 pipe endpoints (Command, Status, Data-In, Data-Out) instead of BOT's 2. Implement stream-based transfers for SuperSpeed devices. Fall back to BOT for non-UASP devices. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: UASP support"`. After implementation, save gotchas to MCP memory.
 
 - [ ] Detect UASP interface: bInterfaceProtocol=`0x62`
 - [ ] Parse 4 UASP pipe endpoints: Command, Status, Data-In, Data-Out

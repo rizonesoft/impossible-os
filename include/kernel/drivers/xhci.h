@@ -35,6 +35,12 @@
 #define XHCI_HCS1_MAX_PORTS_MASK   0xFF000000  /* bits 31:24 */
 #define XHCI_HCS1_MAX_PORTS_SHIFT  24
 
+/* HCSPARAMS2 field masks (scratchpad buffer count) */
+#define XHCI_HCS2_SPB_HI_MASK     0xF8000000  /* bits 31:27 — high 5 bits */
+#define XHCI_HCS2_SPB_HI_SHIFT    27
+#define XHCI_HCS2_SPB_LO_MASK     0x03E00000  /* bits 25:21 — low 5 bits  */
+#define XHCI_HCS2_SPB_LO_SHIFT    21
+
 /* HCCPARAMS1 field masks */
 #define XHCI_HCC1_AC64     (1 << 0)    /* 64-bit Addressing Capability */
 #define XHCI_HCC1_CSZ      (1 << 2)    /* Context Size (1=64B, 0=32B) */
@@ -56,6 +62,15 @@
 /* USBSTS bits */
 #define XHCI_STS_HCH        (1 << 0)    /* HC Halted */
 #define XHCI_STS_CNR        (1 << 11)   /* Controller Not Ready */
+
+/* ---- xHCI Port Registers ------------------------------------------------- */
+#define XHCI_PORTSC_BASE    0x400   /* Port Status & Control base (from Operational) */
+#define XHCI_PORTSC_STRIDE  0x10    /* Each port occupies 16 bytes */
+
+/* ---- Timeout constants --------------------------------------------------- */
+#define XHCI_HALT_TIMEOUT_US   16000   /* 16 ms — max time to halt */
+#define XHCI_RESET_TIMEOUT_US  100000  /* 100 ms — max time to reset */
+#define XHCI_POLL_INTERVAL_US  100     /* Poll interval during waits */
 
 /* ---- Controller state ---------------------------------------------------- */
 
@@ -83,9 +98,20 @@ struct xhci_controller {
     uint32_t rts_offset;            /* Runtime Register Space offset */
     uint8_t  ac64;                  /* 64-bit addressing capable */
     uint8_t  csz;                   /* Context size (0=32B, 1=64B) */
+    uint32_t max_scratchpads;       /* Number of scratchpad buffers */
 
-    /* Operational register base (mmio_base + cap_length) */
-    volatile uint8_t *op_base;
+    /* Register base pointers (mmio_base + offset) */
+    volatile uint8_t *op_base;      /* Operational registers */
+    volatile uint8_t *rt_base;      /* Runtime registers */
+    volatile uint8_t *db_base;      /* Doorbell array */
+
+    /* DCBAA — Device Context Base Address Array */
+    uint64_t *dcbaa;                /* Virtual address of DCBAA */
+    uint64_t  dcbaa_phys;           /* Physical address of DCBAA */
+
+    /* Scratchpad buffers (if max_scratchpads > 0) */
+    uint64_t *scratchpad_array;     /* Array of scratchpad buffer phys addrs */
+    uint64_t  scratchpad_array_phys;/* Physical address of array */
 
     uint8_t  active;                /* 1 if initialized successfully */
 };

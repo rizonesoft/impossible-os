@@ -1,8 +1,8 @@
 /* ============================================================================
- * xhci.c — xHCI (USB 3.x) Host Controller PCI discovery and MMIO mapping
+ * xhci.c — xHCI (USB 3.x) Host Controller driver
  *
- * Scans PCI for xHCI controllers (class 0x0C:03:30), maps the MMIO BAR,
- * enables Bus Master + Memory Space, and reads capability registers.
+ * PCI discovery, MMIO BAR mapping, controller halt/reset, DCBAA and
+ * scratchpad buffer allocation, and controller start.
  *
  * Reference: xHCI specification 1.2, §4.2 (Host Controller Initialization)
  * ============================================================================ */
@@ -10,6 +10,7 @@
 #include "kernel/drivers/xhci.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/mm/vmm.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 
 /* ---- Static state -------------------------------------------------------- */
@@ -32,6 +33,38 @@ static inline uint16_t xhci_read16(volatile uint8_t *base, uint32_t offset)
 static inline uint8_t xhci_read8(volatile uint8_t *base, uint32_t offset)
 {
     return *(volatile uint8_t *)(base + offset);
+}
+
+static inline void xhci_write32(volatile uint8_t *base, uint32_t offset,
+                                uint32_t value)
+{
+    *(volatile uint32_t *)(base + offset) = value;
+}
+
+static inline void xhci_write64(volatile uint8_t *base, uint32_t offset,
+                                uint64_t value)
+{
+    /* Write as two 32-bit halves — some xHCI controllers don't support
+     * 64-bit MMIO writes.  Low word first per xHCI spec §5.4.6. */
+    *(volatile uint32_t *)(base + offset)     = (uint32_t)(value & 0xFFFFFFFF);
+    *(volatile uint32_t *)(base + offset + 4) = (uint32_t)(value >> 32);
+}
+
+static void xhci_zero(void *dst, uint64_t bytes)
+{
+    uint8_t *p = (uint8_t *)dst;
+    uint64_t i;
+    for (i = 0; i < bytes; i++)
+        p[i] = 0;
+}
+
+/* Simple microsecond-granularity busy wait (PIT-based, ~1 µs accuracy) */
+static void xhci_delay_us(uint32_t us)
+{
+    /* Port 0x80 write takes ~1 µs on x86 */
+    uint32_t i;
+    for (i = 0; i < us; i++)
+        __asm__ volatile("outb %%al, $0x80" ::: "memory");
 }
 
 /* Map MMIO region with uncacheable flags (PCD=1, PWT=1) */
@@ -133,23 +166,151 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     hc->pci_dev  = dev;
     hc->pci_func = func;
 
-    hc->active = 1;
-    num_controllers++;
-
-    /* ---- Log discovery ---- */
+    /* ---- Log PCI discovery ---- */
     klog(LOG_INFO, "xhci",
          "Found controller at PCI %02x:%02x.%x, MMIO @ 0x%x",
          (uint64_t)bus, (uint64_t)dev, (uint64_t)func, mmio_phys);
+
+    /* ---- §1.2: Controller initialization sequence ---- */
+
+    /* Step 1: Read HCSPARAMS2 for scratchpad buffer count */
+    {
+        uint32_t hcsparams2 = xhci_read32(hc->mmio_base, XHCI_CAP_HCSPARAMS2);
+        uint32_t spb_hi = (hcsparams2 & XHCI_HCS2_SPB_HI_MASK) >> XHCI_HCS2_SPB_HI_SHIFT;
+        uint32_t spb_lo = (hcsparams2 & XHCI_HCS2_SPB_LO_MASK) >> XHCI_HCS2_SPB_LO_SHIFT;
+        hc->max_scratchpads = (spb_hi << 5) | spb_lo;
+    }
+
+    /* Step 2: Set up register base pointers */
+    hc->rt_base = hc->mmio_base + hc->rts_offset;
+    hc->db_base = hc->mmio_base + hc->db_offset;
+
+    /* Step 3: Halt controller (USBCMD.RS = 0, wait USBSTS.HCH = 1) */
+    {
+        uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
+        cmd &= ~XHCI_CMD_RUN;
+        xhci_write32(hc->op_base, XHCI_OP_USBCMD, cmd);
+
+        uint32_t timeout = XHCI_HALT_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
+        while (!(xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH)) {
+            if (--timeout == 0) {
+                klog(LOG_ERROR, "xhci", "Controller failed to halt");
+                return -1;
+            }
+            xhci_delay_us(XHCI_POLL_INTERVAL_US);
+        }
+    }
+    klog(LOG_DEBUG, "xhci", "Controller halted");
+
+    /* Step 4: Reset controller (USBCMD.HCRST = 1, wait HCRST=0 AND CNR=0) */
+    {
+        xhci_write32(hc->op_base, XHCI_OP_USBCMD, XHCI_CMD_HCRST);
+
+        uint32_t timeout = XHCI_RESET_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
+        while (1) {
+            uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
+            uint32_t sts = xhci_read32(hc->op_base, XHCI_OP_USBSTS);
+            if (!(cmd & XHCI_CMD_HCRST) && !(sts & XHCI_STS_CNR))
+                break;
+            if (--timeout == 0) {
+                klog(LOG_ERROR, "xhci", "Controller failed to reset");
+                return -1;
+            }
+            xhci_delay_us(XHCI_POLL_INTERVAL_US);
+        }
+    }
+    klog(LOG_DEBUG, "xhci", "Controller reset complete");
+
+    /* Step 5: Configure MaxSlotsEn */
+    xhci_write32(hc->op_base, XHCI_OP_CONFIG, hc->max_slots);
+
+    /* Step 6: Allocate DCBAA — (MaxSlots + 1) × 8 bytes, 64-byte aligned.
+     * pmm_alloc_contiguous returns page-aligned memory (4 KiB), which
+     * exceeds the 64-byte alignment requirement. */
+    {
+        uint32_t dcbaa_entries = hc->max_slots + 1;
+        /* Always fits in one page (65 entries × 8B = 520B max) */
+        uintptr_t dcbaa_phys = pmm_alloc_contiguous(1);
+        if (dcbaa_phys == 0) {
+            klog(LOG_ERROR, "xhci", "Failed to allocate DCBAA");
+            return -1;
+        }
+        /* Identity-map the DCBAA page */
+        xhci_map_mmio(dcbaa_phys, 0x1000);
+        hc->dcbaa      = (uint64_t *)dcbaa_phys;
+        hc->dcbaa_phys = dcbaa_phys;
+        xhci_zero(hc->dcbaa, dcbaa_entries * sizeof(uint64_t));
+    }
+
+    /* Step 7: Allocate scratchpad buffers if requested */
+    if (hc->max_scratchpads > 0) {
+        uint32_t i;
+        uint32_t array_pages;
+        uintptr_t array_phys;
+
+        klog(LOG_DEBUG, "xhci", "Allocating %u scratchpad buffers",
+             (uint64_t)hc->max_scratchpads);
+
+        /* Scratchpad buffer array: max_scratchpads × 8 bytes */
+        array_pages = ((hc->max_scratchpads * 8) + 0xFFF) / 0x1000;
+        array_phys = pmm_alloc_contiguous(array_pages);
+        if (array_phys == 0) {
+            klog(LOG_ERROR, "xhci", "Failed to allocate scratchpad array");
+            return -1;
+        }
+        xhci_map_mmio(array_phys, array_pages * 0x1000);
+        hc->scratchpad_array      = (uint64_t *)array_phys;
+        hc->scratchpad_array_phys = array_phys;
+        xhci_zero(hc->scratchpad_array, hc->max_scratchpads * sizeof(uint64_t));
+
+        /* Allocate individual scratchpad pages */
+        for (i = 0; i < hc->max_scratchpads; i++) {
+            uintptr_t sp_phys = pmm_alloc_contiguous(1);
+            if (sp_phys == 0) {
+                klog(LOG_ERROR, "xhci", "Failed to allocate scratchpad %u",
+                     (uint64_t)i);
+                return -1;
+            }
+            xhci_map_mmio(sp_phys, 0x1000);
+            xhci_zero((void *)sp_phys, 0x1000);
+            hc->scratchpad_array[i] = sp_phys;
+        }
+
+        /* Store scratchpad array pointer at DCBAA[0] */
+        hc->dcbaa[0] = hc->scratchpad_array_phys;
+    }
+
+    /* Step 8: Write DCBAAP (64-bit physical address of DCBAA) */
+    xhci_write64(hc->op_base, XHCI_OP_DCBAAP, hc->dcbaa_phys);
+
+    /* Step 9: Start controller (USBCMD.RS = 1, wait USBSTS.HCH = 0) */
+    {
+        uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
+        cmd |= XHCI_CMD_RUN;
+        xhci_write32(hc->op_base, XHCI_OP_USBCMD, cmd);
+
+        uint32_t timeout = XHCI_HALT_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
+        while (xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH) {
+            if (--timeout == 0) {
+                klog(LOG_ERROR, "xhci", "Controller failed to start");
+                return -1;
+            }
+            xhci_delay_us(XHCI_POLL_INTERVAL_US);
+        }
+    }
+
+    hc->active = 1;
+    num_controllers++;
+
+    /* ---- Log initialization complete ---- */
     klog(LOG_INFO, "xhci",
-         "xHCI v%u.%u (raw 0x%x), %u slots, %u ports, %u intrs, %s-bit, ctx=%uB",
+         "xHCI v%u.%u ready, %u slots, %u ports, %u intrs, %u scratchpads",
          (uint64_t)((hc->hci_version >> 8) & 0xFF),
          (uint64_t)(hc->hci_version & 0xFF),
-         (uint64_t)hc->hci_version,
          (uint64_t)hc->max_slots,
          (uint64_t)hc->max_ports,
          (uint64_t)hc->max_intrs,
-         hc->ac64 ? "64" : "32",
-         (uint64_t)(hc->csz ? 64 : 32));
+         (uint64_t)hc->max_scratchpads);
 
     return 0;
 }
