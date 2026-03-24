@@ -452,9 +452,48 @@ retry:
     if (use_events) {
         int signalled = event_wait_timeout(&p->completion, 5000);
         if (!signalled) {
-            klog(LOG_DEBUG, "ahci", "Port %u: command timeout (IRQ)",
+            /* Event-based I/O timed out — MSI likely not working
+             * (common on VirtualBox).  Fall back to polling permanently
+             * and retry this command in polling mode. */
+            klog(LOG_WARN, "ahci",
+                   "Port %u: event timeout — falling back to polling mode",
                    (uint64_t)p->port_num);
-            result = -1;
+            use_events = 0;
+
+            /* Check if the command actually completed despite no IRQ */
+            {
+                uint32_t ci = port_read(pregs, AHCI_PxCI);
+                if (!(ci & (1U << slot))) {
+                    /* Command completed, IRQ just wasn't delivered */
+                    tfd = port_read(pregs, AHCI_PxTFD);
+                    if (tfd & AHCI_PxTFD_ERR)
+                        result = -1;
+                    goto done;
+                }
+            }
+
+            /* Command still pending — poll for completion */
+            {
+                uint32_t poll_timeout = 5000000;
+                while (poll_timeout--) {
+                    uint32_t ci = port_read(pregs, AHCI_PxCI);
+                    if (!(ci & (1U << slot)))
+                        break;
+
+                    tfd = port_read(pregs, AHCI_PxTFD);
+                    if (tfd & AHCI_PxTFD_ERR) {
+                        result = -1;
+                        break;
+                    }
+                }
+                if (poll_timeout == 0 && result == 0) {
+                    klog(LOG_DEBUG, "ahci",
+                           "Port %u: command timeout (poll after event fallback)",
+                           (uint64_t)p->port_num);
+                    result = -1;
+                }
+                port_write(pregs, AHCI_PxIS, port_read(pregs, AHCI_PxIS));
+            }
         }
     } else {
         uint32_t timeout = 5000000;
@@ -480,6 +519,7 @@ retry:
         port_write(pregs, AHCI_PxIS, port_read(pregs, AHCI_PxIS));
     }
 
+done:
     tfd = port_read(pregs, AHCI_PxTFD);
     if (tfd & AHCI_PxTFD_ERR)
         result = -1;
@@ -879,8 +919,16 @@ void ahci_setup_interrupts(void)
 /* ---- Enable event-based I/O (called after scheduler init) ---- */
 void ahci_enable_events(void)
 {
-    if (!initialized || !ahci_irq_vector)
+    if (!initialized) {
+        klog(LOG_DEBUG, "ahci", "AHCI: not initialized, events skipped");
         return;
+    }
+    if (!ahci_irq_vector) {
+        klog(LOG_WARN, "ahci",
+               "AHCI: no IRQ vector — event I/O unavailable, using polling");
+        return;
+    }
     use_events = 1;
-    klog(LOG_DEBUG, "ahci", "AHCI: event-based I/O enabled");
+    klog(LOG_DEBUG, "ahci", "AHCI: event-based I/O enabled (vec=0x%x)",
+           (uint64_t)ahci_irq_vector);
 }

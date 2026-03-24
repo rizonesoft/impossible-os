@@ -364,6 +364,7 @@ void boot_tests_run(void)
     }
 
     /* Swap test */
+    boot_splash_status("Testing swap...");
     {
         uintptr_t test_phys = pmm_alloc_frame();
         uintptr_t test_virt = 0x800000;  /* 8 MiB */
@@ -372,7 +373,6 @@ void boot_tests_run(void)
         int slot_id;
 
         swap_init(64);
-        boot_splash_status("Swap test...");
 
         if (test_phys) {
             vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW);
@@ -415,6 +415,7 @@ void boot_tests_run(void)
     }
 
     /* mmap test */
+    boot_splash_status("Testing mmap...");
     if (vfs_is_mounted('C')) {
         struct vfs_node *mf = vfs_open("C:\\hello.txt", VFS_O_READ);
         if (mf) {
@@ -441,6 +442,7 @@ void boot_tests_run(void)
     }
 
     /* VirtIO-blk test */
+    boot_splash_status("Testing storage...");
     if (virtio_blk_present()) {
         uint8_t sect0[512];
         uint32_t vt;
@@ -459,6 +461,7 @@ void boot_tests_run(void)
     }
 
     /* AHCI sector 0 test */
+    boot_splash_status("Testing AHCI...");
     if (ahci_present()) {
         uint8_t asect0[512];
         uint32_t at;
