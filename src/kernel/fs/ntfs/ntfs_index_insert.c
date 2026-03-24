@@ -458,10 +458,13 @@ int ntfs_index_insert(struct ntfs_volume *vol,
         int need_promote = 0;
         uint64_t promote_right_vcn = VCN_NONE; /* right sibling VCN to patch into parent's LAST */
 
-        /* Allocate INDX buffer for operations */
+        /* Allocate INDX buffer for operations.
+         * Always allocate even if ia_run_count is 0: the root overflow path
+         * creates $INDEX_ALLOCATION on the fly and needs the buffer to write
+         * saved entries into the new INDX node. */
         uintptr_t indx_phys = 0;
         uint8_t *indx_buf   = NULL;
-        if (ia_run_count > 0) {
+        {
             uint32_t indx_pages = (indx_size + 4095) / 4096;
             indx_phys = pmm_alloc_contiguous(indx_pages);
             if (indx_phys)
