@@ -1,4 +1,4 @@
-# 008.07-Power-Management — Hyper-V Power Management & Integration Services
+# 008.08-Power-Management — Hyper-V Power Management & Integration Services
 
 > **Goal:** Implement cooperative power management for Impossible OS running
 > on Hyper-V. This includes enlightened virtual processor idle via

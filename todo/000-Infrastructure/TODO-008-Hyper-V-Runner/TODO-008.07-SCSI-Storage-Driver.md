@@ -1,4 +1,4 @@
-# 008.02-SCSI-Storage-Driver — Hyper-V Synthetic SCSI (StorVSC)
+# 008.07-SCSI-Storage-Driver — Hyper-V Synthetic SCSI (StorVSC)
 
 > **Goal:** Bring the existing StorVSC driver from basic single-command
 > polling read/write up to production-grade quality. Implement multi-LUN
@@ -190,7 +190,7 @@ graph TD
 **Prompt:** When the guest filesystem deletes files, it should notify the host that the underlying blocks are no longer in use. On Hyper-V Gen 2 with VHDX backing, this shrinks the VHDX file and frees physical storage on the SAN. StorVSC passes SCSI UNMAP (opcode `0x42`) commands through VMBus to the host StorVSP, which applies them to the VHDX layer. Requires VSTOR protocol version ≥ WIN8 (5.1). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: SCSI UNMAP / TRIM passthrough"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
-> → XREF: `TODO-008.02-SCSI-Storage-Driver.md §3.2` — 4K sector alignment prerequisite
+> → XREF: `TODO-008.07-SCSI-Storage-Driver.md §3.2` — 4K sector alignment prerequisite
 
 - [ ] Check negotiated protocol version ≥ `VMSTOR_PROTO_VERSION_WIN8` (5.1)
 - [ ] Implement `storvsc_unmap(ctrl, target, lun, lba, count)` — sends SCSI UNMAP command
@@ -226,7 +226,7 @@ graph TD
 > vanishes. The OS hangs waiting for a completion that never arrives.
 
 > [!IMPORTANT]
-> → XREF: `TODO-008.06-Page-Table-MMIO.md §2` — PRESENT bit shield (CoCo MMIO safety)
+> → XREF: `TODO-008.02-Page-Table-MMIO.md §2` — PRESENT bit shield (CoCo MMIO safety)
 
 - [x] Audit all `pmm_alloc_contiguous()` callers in StorVSC: verify returned addresses are page-aligned
 - [x] Audit GPADL PFN list construction in `vmbus_create_gpadl()`: verify all PFNs reference full page boundaries
@@ -250,8 +250,8 @@ graph TD
 > QEMU's Hyper-V emulation is forgiving; a real Gen2 Hyper-V host exposes all of them.
 
 > [!IMPORTANT]
-> → XREF: `TODO-008.02-SCSI-Storage-Driver.md §3.3` — DMA page alignment (related class of silent failure)
-> → XREF: `TODO-008.02-SCSI-Storage-Driver.md §2.1` — Multi-command queuing (permanent fix for concurrent collision)
+> → XREF: `TODO-008.07-SCSI-Storage-Driver.md §3.3` — DMA page alignment (related class of silent failure)
+> → XREF: `TODO-008.07-SCSI-Storage-Driver.md §2.1` — Multi-command queuing (permanent fix for concurrent collision)
 
 - [ ] **`QUERY_PROPERTIES` layout check:** after receiving the response, log raw bytes 4–7 of the properties union; verify `max_channel_count` reads a sane value (>0, ≤256) as a layout sanity check before reading `max_targets`/`max_luns`
 - [ ] **`vmbus_sendpacket_pagebuffer` audit:** read `vmbus_transfer_page_header` in `vmbus.c`; verify `pageset_id` matches `xfer_gpadl_handle`, byte offsets and `range_count` are set before descriptor fields; add a `kassert` that the on-wire size matches `sizeof(vmbus_transfer_page_header) + ranges_size`
@@ -411,7 +411,7 @@ graph TD
 **Prompt:** Implement comprehensive per-device I/O statistics for performance monitoring. Track: read/write IOPS, throughput (bytes/sec), average latency, queue depth, and error counts. Expose via Registry. The System Monitor app (Task Manager equivalent) can display real-time disk activity graphs for Hyper-V virtual disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: I/O statistics and telemetry"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
-> → XREF: `TODO-008.02-SCSI-Storage-Driver.md §2.2` — Interrupt-driven completion (latency timestamps)
+> → XREF: `TODO-008.07-SCSI-Storage-Driver.md §2.2` — Interrupt-driven completion (latency timestamps)
 
 - [ ] Track per-device counters (atomic increments, no locks):
   - [ ] `reads_completed`, `writes_completed` (cumulative IOPS)

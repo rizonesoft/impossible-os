@@ -1,4 +1,4 @@
-# 008.05-Synthetic-Network-Driver — Hyper-V Synthetic NIC (netvsc)
+# 008.06-Synthetic-Network-Driver — Hyper-V Synthetic NIC (netvsc)
 
 > **Goal:** Implement the Hyper-V Synthetic Network Driver (netvsc) to provide
 > Ethernet connectivity on Hyper-V Generation 2 virtual machines. The driver

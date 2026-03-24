@@ -1,4 +1,4 @@
-# 008.04 — Hyper-V Synthetic Video Driver (hvfb)
+# 008.05-Synthetic-Video-Driver — Hyper-V Synthetic Video Driver (hvfb)
 
 > **Goal:** Implement the Hyper-V Synthetic Video Driver for Impossible OS,
 > enabling proper VMBus-based framebuffer management on Hyper-V Gen 2 VMs.

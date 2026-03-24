@@ -1,4 +1,4 @@
-# TODO-008.08 — Hyper-V Guest Additions Integration
+# 008.09-Guest-Additions — Hyper-V Guest Additions Integration
 
 > **Goal:** Integrate all Hyper-V synthetic drivers (VMBus, StorVSC, HID, hvfb,
 > netvsc) into a unified Guest Additions framework that auto-activates when the

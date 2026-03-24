@@ -1,4 +1,4 @@
-# 008.06-Page-Table-MMIO — Hyper-V Page Table MMIO Safety
+# 008.02-Page-Table-MMIO — Hyper-V Page Table MMIO Safety
 
 > **Goal:** Implement MMIO Safety protocols for Impossible OS running under
 > Microsoft Hyper-V Confidential Computing (CoCo) and Virtualization-Based

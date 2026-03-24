@@ -1,4 +1,4 @@
-# 008.03-Synthetic-HID — Hyper-V Synthetic HID Input Driver
+# 008.04-Synthetic-HID — Hyper-V Synthetic HID Input Driver
 
 > **Goal:** Implement a production-grade Hyper-V Synthetic HID Input Driver for
 > Impossible OS. The driver replaces legacy PS/2 emulation with direct VMBus

@@ -667,7 +667,7 @@ and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in 
 **Prompt:** Implement Confidential Computing support for VMBus ring buffers. In Intel TDX or AMD SEV environments, guest memory is encrypted and the hypervisor cannot read ring buffer contents. The guest must use bounce buffers for all shared memory, explicitly accept/decrypt pages shared with the host, and use `HVCALL_MMIO_READ/WRITE` instead of direct MMIO. This aligns with Linux 6.18's Confidential VMBus support. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"hyperv: Confidential VMBus support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
-> **Depends on §8 (Channel Open) and TODO-008.06 (MMIO Safety).** Confidential VMBus
+> **Depends on §8 (Channel Open) and TODO-008.02 (MMIO Safety).** Confidential VMBus
 > requires both the page visibility transition infrastructure (PRESENT bit shield) and
 > the explicit MMIO hypercalls from the MMIO Safety TODO.
 

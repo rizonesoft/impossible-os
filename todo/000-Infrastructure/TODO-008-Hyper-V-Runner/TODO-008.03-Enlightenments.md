@@ -1,4 +1,4 @@
-# TODO-008.09 — Hyper-V Enlightenments (Competitive Advantage)
+# 008.03-Enlightenments — Hyper-V Enlightenments (Competitive Advantage)
 
 > **Goal:** Implement advanced Hyper-V enlightenments that go beyond basic VMBus
 > support to deliver competitive VM performance. These paravirtual optimizations
