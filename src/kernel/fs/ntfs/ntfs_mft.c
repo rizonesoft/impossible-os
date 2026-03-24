@@ -33,12 +33,27 @@ int ntfs_read_mft_record_raw(struct ntfs_volume *vol, uint64_t inode,
         return NTFS_ERR_IO;
     }
 
-    /* Calculate disk byte offset of this MFT record */
-    byte_offset = vol->mft_byte_offset + (inode * (uint64_t)vol->frs_size);
-
-    /* Convert byte offset to LBA */
-    lba = byte_offset / (uint64_t)vol->bytes_per_sector;
-
+    /* Calculate disk LBA for this MFT record.
+     *
+     * After ntfs_mft_alloc_load() runs, vol->mft_data_runs describes
+     * where the MFT's data extents live on disk.  A fragmented MFT
+     * (e.g. after extension) has multiple runs — we MUST walk them.
+     *
+     * Before mft_alloc_load (early boot: reading inode 0 itself),
+     * fall back to the simple linear calculation. */
+    if (vol->mft_data_run_count > 0) {
+        /* Data runs loaded — use run-aware translation */
+        if (ntfs_mft_inode_to_lba(vol, inode, &lba) < 0) {
+            klog(LOG_DEBUG, "ntfs",
+                 "MFT read failed: inode %llu beyond data runs",
+                 inode);
+            return NTFS_ERR_IO;
+        }
+    } else {
+        /* Early boot — linear fallback (single-run MFT) */
+        byte_offset = vol->mft_byte_offset + (inode * (uint64_t)vol->frs_size);
+        lba = byte_offset / (uint64_t)vol->bytes_per_sector;
+    }
     /* Number of sectors to read for one FRS */
     sector_count = vol->frs_size / vol->bytes_per_sector;
     if (sector_count == 0)
