@@ -10,6 +10,5 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-cd /d "%~dp0"
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0run-hyperv.ps1"
 pause
