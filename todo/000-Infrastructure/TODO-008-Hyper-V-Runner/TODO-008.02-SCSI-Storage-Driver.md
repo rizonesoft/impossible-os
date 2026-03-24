@@ -213,7 +213,29 @@ graph TD
 
 ---
 
+### 3.4 Protocol Correctness Hardening ⏳
+
+**Prompt:** Several silent-failure risks exist in the current implementation that could cause zero-error hangs or garbage data on real Hyper-V (not caught on QEMU, which is more forgiving). Fix all five: validate `QUERY_PROPERTIES` field layout at runtime, verify `vmbus_sendpacket_pagebuffer` transfer-page header framing, increase enumeration poll timeout for high-latency VMs, add a per-outstanding-command response guard to prevent concurrent `blk_read` calls from consuming each other's responses, and expand the SRB status success check to cover `0x11` (success-with-sense). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: protocol correctness hardening"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory.
+
+> [!CAUTION]
+> **All five risks cause silent failures** — no error code, no log, just a hang or wrong data.
+> QEMU's Hyper-V emulation is forgiving; a real Gen2 Hyper-V host exposes all of them.
+
+> [!IMPORTANT]
+> → XREF: `TODO-008.02-SCSI-Storage-Driver.md §3.3` — DMA page alignment (related class of silent failure)
+> → XREF: `TODO-008.02-SCSI-Storage-Driver.md §2.1` — Multi-command queuing (permanent fix for concurrent collision)
+
+- [ ] **`QUERY_PROPERTIES` layout check:** after receiving the response, log raw bytes 4–7 of the properties union; verify `max_channel_count` reads a sane value (>0, ≤256) as a layout sanity check before reading `max_targets`/`max_luns`
+- [ ] **`vmbus_sendpacket_pagebuffer` audit:** read `vmbus_transfer_page_header` in `vmbus.c`; verify `pageset_id` matches `xfer_gpadl_handle`, byte offsets and `range_count` are set before descriptor fields; add a `kassert` that the on-wire size matches `sizeof(vmbus_transfer_page_header) + ranges_size`
+- [ ] **Enumeration timeout:** replace the hardcoded `5000000` poll limit in `storvsc_scsi_cmd()` with a calibrated threshold based on TSC frequency (`tsc_khz * 500` = 500 ms); add per-attempt logging at 100 ms intervals so a slow Hyper-V host is diagnosable rather than silent
+- [ ] **Concurrent response collision guard:** add a `uint64_t expected_tid` field on the stack in `storvsc_scsi_cmd()`; in the poll loop, discard and re-queue any packet whose `transaction_id` ≠ `tid` (requires a small pending-packet stash), or return `-EAGAIN` until `§2.1` (multi-command queuing) is in place
+- [ ] **SRB status 0x11 (success-with-sense):** expand success check to accept `0x00`, `0x01`, and `0x11` (`SRB_STATUS_SUCCESS_WITH_SENSE`); when `srb_status == 0x11`, log the raw sense bytes at DEBUG level (full decode deferred to §4.1)
+- [ ] Commit: `"storvsc: protocol correctness hardening"`
+
+---
+
 ## 4. Error Recovery and Reset Handling
+
 
 ### 4.1 SCSI Sense Data Parsing ⏳
 
@@ -410,6 +432,7 @@ graph TD
 | **P1** | §3.1 SCSI UNMAP (TRIM)                            | §1.1              |   ⬜   |
 | **P2** | §1.2 Multi-Controller Support                     | §1.1              |   ⬜   |
 | **P2** | §3.2 4K Sector Alignment, §3.3 DMA Alignment      | §1.1              |   ⬜   |
+| **P2** | §3.4 Protocol Correctness Hardening               | §1.1              |   ⬜   |
 | **P2** | §5.1 Hot-Add, §5.2 Hot-Remove                     | §4.1              |   ⬜   |
 | **P2** | §7.1 Per-Device I/O Counters                      | §2.2              |   ⬜   |
 | **P3** | §6.1 Large Transfer Buffer                        | §1.1              |   ⬜   |
@@ -440,6 +463,7 @@ graph TD
 | 💎 | 🟡 P2    | §1.2 Multi-Controller Support              | Up to 4 controllers × 64 devices                                  |
 | 💎 | 🟡 P2    | §3.2 4K Sector Alignment                   | Avoids 2–4× IOPS penalty on 4K-native disks                      |
 | 💎 | 🟡 P2    | §3.3 DMA Page Alignment                    | IOMMU-safe buffers — silent I/O failure without it                |
+| 💎 | 🟠 P1    | §3.4 Protocol Correctness Hardening        | 5 silent-failure risks — must fix before real Hyper-V testing     |
 | 💎 | 🟡 P2    | §5.1 Hot-Add Detection                     | Dynamic disk management                                           |
 | 💎 | 🟡 P2    | §5.2 Hot-Remove Handling                   | Graceful removal without data loss                                |
 | ⭐ | 🟡 P2    | §7.1 Per-Device I/O Statistics             | **Per-device latency tracking** — beyond Windows                  |
