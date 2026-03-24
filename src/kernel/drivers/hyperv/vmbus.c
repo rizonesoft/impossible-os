@@ -72,6 +72,16 @@ static void vmbus_memcpy(void *dst, const void *src, uint64_t n)
         *d++ = *s++;
 }
 
+/* ---- TOC-TOU security: atomic read for shared-memory indices ----
+ *
+ * READ_ONCE() prevents the compiler from re-reading a shared-memory
+ * location.  Without this, a malicious host could change write_index
+ * between the guest's bounds check and memcpy, causing overflow.
+ * Equivalent to Linux READ_ONCE() / WRITE_ONCE().
+ */
+#define READ_ONCE(x)  (*(volatile __typeof__(x) *)&(x))
+#define WRITE_ONCE(x, val) (*(volatile __typeof__(x) *)&(x) = (val))
+
 /* ---- Internal state ---- */
 
 static int hv_detected = -1;  /* -1 = not yet checked, 0 = no, 1 = yes */
@@ -839,7 +849,7 @@ int vmbus_ring_write(struct vmbus_channel *ch,
     return 0;
 }
 
-/* ---- Raw ring buffer read ---- */
+/* ---- Raw ring buffer read (TOC-TOU hardened) ---- */
 
 uint32_t vmbus_ring_read(struct vmbus_channel *ch,
                          void *buf, uint32_t max_len)
@@ -853,14 +863,30 @@ uint32_t vmbus_ring_read(struct vmbus_channel *ch,
     if (!ch || !ch->is_open || !ch->recv_ring)
         return 0;
 
-    /* Memory barrier: ensure we read fresh indices */
+    /* Memory barrier: ensure we see the latest host writes before
+     * reading indices from the shared ring header. */
     __asm__ volatile("lfence" ::: "memory");
 
-    read_idx  = ch->recv_ring->read_index;
-    write_idx = ch->recv_ring->write_index;
+    /* TOC-TOU: read shared indices exactly ONCE via READ_ONCE().
+     * A compromised host can modify write_index at any time.
+     * Without READ_ONCE(), the compiler might re-read the value
+     * between our bounds check and the memcpy — causing overflow. */
+    read_idx  = READ_ONCE(ch->recv_ring->read_index);
+    write_idx = READ_ONCE(ch->recv_ring->write_index);
 
     if (read_idx == write_idx)
         return 0;  /* Ring is empty */
+
+    /* Bounds-check: indices must be within data_size.
+     * A malicious host could set write_index beyond the ring. */
+    if (read_idx >= ch->data_size || write_idx >= ch->data_size) {
+        klog(LOG_WARN, "hyperv",
+             "[VMBus] WARN: ring index out of bounds "
+             "(read=%u write=%u size=%u relid=%u)",
+             (uint64_t)read_idx, (uint64_t)write_idx,
+             (uint64_t)ch->data_size, (uint64_t)ch->child_relid);
+        return 0;
+    }
 
     /* Calculate available bytes */
     if (write_idx >= read_idx)
@@ -872,7 +898,8 @@ uint32_t vmbus_ring_read(struct vmbus_channel *ch,
     if (to_read > max_len)
         to_read = max_len;
 
-    /* Read with wrap-around */
+    /* Read with wrap-around — data copied to private buffer (dst),
+     * so all subsequent validation by callers is against the copy. */
     uint32_t rd_off = read_idx % ch->data_size;
     first_chunk = ch->data_size - rd_off;
     if (first_chunk > to_read)
@@ -885,9 +912,9 @@ uint32_t vmbus_ring_read(struct vmbus_channel *ch,
 
     read_idx += to_read;
 
-    /* Update read index */
+    /* Update read index — use WRITE_ONCE to prevent compiler tearing */
     __asm__ volatile("sfence" ::: "memory");
-    ch->recv_ring->read_index = read_idx % ch->data_size;
+    WRITE_ONCE(ch->recv_ring->read_index, read_idx % ch->data_size);
 
     return to_read;
 }
@@ -954,6 +981,9 @@ uint32_t vmbus_recvpacket(struct vmbus_channel *ch,
     uint32_t payload_len;
     uint32_t total_pkt_len;
 
+    /* Data is read into pkt_buf (stack-local, private memory).
+     * All validation below operates on this PRIVATE COPY —
+     * the shared ring buffer is never accessed directly for fields. */
     bytes_read = vmbus_ring_read(ch, pkt_buf, sizeof(pkt_buf));
     if (bytes_read < sizeof(struct vmpacket_descriptor))
         return 0;
@@ -962,8 +992,24 @@ uint32_t vmbus_recvpacket(struct vmbus_channel *ch,
     payload_offset = (uint32_t)desc->offset8 << 3;
     total_pkt_len  = (uint32_t)desc->len8 << 3;
 
-    if (payload_offset > bytes_read || total_pkt_len > bytes_read)
+    /* TOC-TOU safe: offset8 and len8 validated from private copy.
+     * Bounds-check against actual bytes read, not ring size. */
+    if (payload_offset > bytes_read || total_pkt_len > bytes_read) {
+        klog(LOG_WARN, "hyperv",
+             "[VMBus] WARN: malformed packet "
+             "(offset8=%u len8=%u bytes_read=%u)",
+             (uint64_t)desc->offset8, (uint64_t)desc->len8,
+             (uint64_t)bytes_read);
         return 0;
+    }
+
+    if (payload_offset > total_pkt_len) {
+        klog(LOG_WARN, "hyperv",
+             "[VMBus] WARN: payload offset exceeds packet length "
+             "(offset=%u total=%u)",
+             (uint64_t)payload_offset, (uint64_t)total_pkt_len);
+        return 0;
+    }
 
     payload_len = total_pkt_len - payload_offset;
     if (payload_len > max_len)
