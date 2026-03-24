@@ -94,7 +94,7 @@ graph TD
 | 💎 | P2   | §11 VMBus Message Dispatch               | SynIC interrupt handler, message processing                        | §3               |   ✅   |
 | 💎 | P3   | §12 TOC-TOU Security Mitigations         | Ring buffer read audit — prevent shared-memory exploits            | §9               |   ✅   |
 | 💎 | P4   | §13 Monitor Page Optimization            | Passive signaling — eliminates per-signal VM-exit                  | §10              |   ✅   |
-| 💎 | P4   | §14 Ring Buffer Flow Control             | `pending_send_sz` — eliminates polling on ring-full                | §9               |   ⬜   |
+| 💎 | P4   | §14 Ring Buffer Flow Control             | `pending_send_sz` — eliminates polling on ring-full                | §9               |   ✅   |
 | 💎 | P5   | §15 Triple-Mapping Optimization          | Eliminates split-copy at ring boundary                             | §6               |   ⬜   |
 | 💎 | P5   | §16 Channel Teardown & Unload            | Orderly shutdown of VMBus stack                                    | §8               |   ⬜   |
 | 💎 | P5   | §17 Channel Hot-Remove (Rescind)         | Dynamic device removal handling                                    | §16              |   ⬜   |
@@ -536,24 +536,33 @@ using the monitor page for channels with `monitor_allocated` and falling back to
 
 ---
 
-## 14. Ring Buffer Flow Control
+## 14. Ring Buffer Flow Control ✅ *(agent)*
 
 > **XREF:** [vmbus-core-protocol.md §3.3](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Flow Control
 
-**Prompt:** Implement interrupt-driven ring buffer flow control using the `feat_pending_send_sz`
-feature bit. When the guest cannot send because the ring is full, it writes the required
-byte count to `pending_send_sz` in the ring header. When the host consumes data and frees
-enough space, the guest fires a targeted interrupt to wake the host. This eliminates polling
-entirely. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`,
-and commit as `"hyperv: VMBus ring buffer flow control"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ~~Implement~~ **Verify** interrupt-driven ring buffer flow control. Confirm
+`vmbus.h` defines `HV_RING_BUFFER_FEAT_PENDING_SZ` (bit 2) and `feature_bits` in
+`vmbus_ring_buffer_header`. Confirm `vmbus_open_channel()` sets `feature_bits` after ring
+setup, `vmbus_ring_write()` writes `pending_send_size` on ring-full (with `mfence` re-check),
+and `vmbus_ring_read()` checks host `pending_send_size` and calls `vmbus_signal_channel()`
+when freed space ≥ required, gated by `interrupt_mask`. Run `bash scripts/build.sh clean`
+and confirm `=== BUILD OK ===`.
 
-- [ ] Set `feat_pending_send_sz` bit in guest-to-host ring header `feature_bits`
-- [ ] On send failure (ring full): write required bytes to `pending_send_sz`
-- [ ] On receive (ring data consumed): check if freed space ≥ host's `pending_send_sz`
-- [ ] If sufficient space freed: fire interrupt to wake host sender
-- [ ] Clear `pending_send_sz` after signaling
-- [ ] Handle `interrupt_mask` flag: suppress signaling during bulk processing
-- [ ] Commit: `"hyperv: VMBus ring buffer flow control"`
+> [!NOTE]
+> **Implementation Notes:**
+> - `HV_RING_BUFFER_FEAT_PENDING_SZ = (1u << 2)` — set in `feature_bits` on channel open
+> - On ring-full: `pending_send_size = len`, `mfence`, re-check avail — prevents lost wake
+> - On success: `pending_send_size = 0` cleared before write_index update
+> - On recv: `interrupt_mask == 0` && `host_pending > 0` && `freed >= host_pending` → signal
+> - `WRITE_ONCE()` used for all shared field updates; `READ_ONCE()` for all reads
+
+- [x] Set `HV_RING_BUFFER_FEAT_PENDING_SZ` bit in `feature_bits` on channel open ✅
+- [x] On send failure (ring full): write required bytes to `pending_send_size` ✅
+- [x] On receive (ring data consumed): check if freed space ≥ host's `pending_send_size` ✅
+- [x] If sufficient space freed: fire interrupt to wake host sender ✅
+- [x] Clear `pending_send_size` after successful write ✅
+- [x] Handle `interrupt_mask` flag: suppress signaling during bulk processing ✅
+- [x] Commit: `"hyperv: VMBus ring buffer flow control"`
 
 ---
 
@@ -712,7 +721,7 @@ and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in 
 | 💎 | ✅ Done  | §11 VMBus Message Dispatch               | SynIC interrupt handler, SIM page message processing             |
 | 💎 | ✅ Done  | §12 TOC-TOU Security Mitigations         | Ring buffer read audit — prevent shared-memory exploits          |
 | 💎 | ✅ Done  | §13 Monitor Page Optimization            | Passive signaling — eliminates per-signal VM-exit overhead       |
-| 💎 | 🟡 P2   | §14 Ring Buffer Flow Control             | `pending_send_sz` — eliminates polling on ring-full              |
+| 💎 | ✅ Done  | §14 Ring Buffer Flow Control             | `pending_send_sz` — eliminates polling on ring-full              |
 | ⭐ | 🟡 P2   | §18 VMBus Telemetry Dashboard            | Per-channel latency histograms, IOPS counters 🚀                 |
 | 💎 | 🟢 P3   | §15 Triple-Mapping Optimization          | Eliminates split-copy at ring boundary                           |
 | 💎 | 🟢 P3   | §16 Channel Teardown & Unload            | Orderly shutdown of VMBus stack                                  |
@@ -739,7 +748,7 @@ and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in 
 | 💎 | SynIC message dispatch               | ✅ Native                          | ✅ `vmbus_on_msg_dpc()`                | ✅ `vmbus_irq_handler()` — Done §11             |
 | 💎 | TOC-TOU mitigations                  | ✅ Private copy validation         | ✅ `READ_ONCE()` + copy validation     | ✅ `READ_ONCE()` + bounds-check — Done §12      |
 | 💎 | Monitor page signaling               | ✅ Passive + active                | ✅ `hv_signal_on_write()`              | ✅ `sync_set_bit()` + fallback — Done §13         |
-| 💎 | Ring buffer flow control             | ✅ `pending_send_sz`               | ✅ `hv_need_to_signal_on_read()`       | ⬜ §14 P2 — no flow control                     |
+| 💎 | Ring buffer flow control             | ✅ `pending_send_sz`               | ✅ `hv_need_to_signal_on_read()`       | ✅ `feat_pending_send_sz` + `interrupt_mask` — Done §14  |
 | 💎 | Triple-mapping rings                 | ✅ Native                          | ✅ `hv_ringbuffer_init()`              | ⬜ §15 P3 — two-chunk copy                      |
 | 💎 | Orderly teardown                     | ✅ Integration Services            | ✅ `vmbus_close()` + `vmbus_exit()`    | ⬜ §16 P3 — no teardown path                    |
 | 💎 | Channel rescind handling             | ✅ Native hot-remove               | ✅ `vmbus_onoffer_rescind()`           | ⬜ §17 P3 — not handled                         |

@@ -267,12 +267,17 @@ struct vmbus_channel_open_result {
 
 #define VMBUS_RING_BUFFER_SIZE      (16 * 4096)  /* 64 KiB per ring */
 
+/* Ring buffer feature bits (written into feature_bits of the ring header) */
+#define HV_RING_BUFFER_FEAT_PENDING_SZ  (1u << 2)   /* supports pending_send_sz flow control */
+
 struct vmbus_ring_buffer_header {
-    uint32_t write_index;
-    uint32_t read_index;
-    uint32_t interrupt_mask;
-    uint32_t pending_send_size;
-    uint32_t reserved[12];       /* pad to 64 bytes */
+    uint32_t write_index;       /* guest writes here (send) / host writes here (recv) */
+    uint32_t read_index;        /* host reads here (send)  / guest reads here (recv) */
+    uint32_t interrupt_mask;    /* 1 = suppress partner signals during bulk processing */
+    uint32_t pending_send_size; /* flow control: required bytes for a pending send */
+    uint32_t reserved[10];      /* pad */
+    uint32_t feature_bits;      /* capability flags (bit 2 = feat_pending_send_sz) */
+    uint32_t reserved2;         /* pad to 64 bytes */
 } __attribute__((packed));
 
 /* ---- VMBus packet descriptor (TLFS §11.10) ---- */

@@ -753,6 +753,12 @@ int vmbus_open_channel(struct vmbus_channel *ch, uint32_t ring_page_count)
                           sizeof(struct vmbus_ring_buffer_header);
     ch->data_size       = half_bytes - sizeof(struct vmbus_ring_buffer_header);
 
+    /* §14 Flow control: advertise feat_pending_send_sz capability.
+     * This tells the host we support interrupt-driven send-space notification.
+     * The host will set send_ring->pending_send_size when it's waiting for space. */
+    WRITE_ONCE(ch->send_ring->feature_bits,
+               ch->send_ring->feature_bits | HV_RING_BUFFER_FEAT_PENDING_SZ);
+
     /* Send OPENCHANNEL message */
     vmbus_memset(&open_msg, 0, sizeof(open_msg));
     open_msg.header.msg_type              = CHANNELMSG_OPENCHANNEL;
@@ -818,7 +824,7 @@ int vmbus_ring_write(struct vmbus_channel *ch,
         return -1;
 
     write_idx = ch->send_ring->write_index;
-    read_idx  = ch->send_ring->read_index;
+    read_idx  = READ_ONCE(ch->send_ring->read_index);  /* host updates this */
 
     /* Available space (leave 1 byte to distinguish full from empty) */
     if (write_idx >= read_idx)
@@ -826,8 +832,23 @@ int vmbus_ring_write(struct vmbus_channel *ch,
     else
         avail = (read_idx - write_idx) - 1;
 
-    if (avail < len)
-        return -1;
+    if (avail < len) {
+        /* §14 Flow control: ring is full — advertise required send size.
+         * The host reads pending_send_size and signals us via SynIC interrupt
+         * once it has consumed enough data to free the required space.
+         * We use WRITE_ONCE to prevent compiler from splitting the store. */
+        WRITE_ONCE(ch->send_ring->pending_send_size, len);
+        /* Barrier: ensure pending_send_size is visible before we re-check avail */
+        __asm__ volatile("mfence" ::: "memory");
+        /* Re-read in case host just freed space */
+        read_idx = READ_ONCE(ch->send_ring->read_index);
+        if (write_idx >= read_idx)
+            avail = ch->data_size - (write_idx - read_idx) - 1;
+        else
+            avail = (read_idx - write_idx) - 1;
+        if (avail < len)
+            return -1;  /* still full, caller must retry */
+    }
 
     /* Write with wrap-around */
     uint32_t wr_off = write_idx % ch->data_size;
@@ -842,9 +863,12 @@ int vmbus_ring_write(struct vmbus_channel *ch,
 
     write_idx += len;
 
+    /* Clear pending_send_size now that we've written successfully */
+    WRITE_ONCE(ch->send_ring->pending_send_size, 0);
+
     /* Memory barrier before updating write index */
     __asm__ volatile("sfence" ::: "memory");
-    ch->send_ring->write_index = write_idx % ch->data_size;
+    WRITE_ONCE(ch->send_ring->write_index, write_idx % ch->data_size);
 
     return 0;
 }
@@ -915,6 +939,29 @@ uint32_t vmbus_ring_read(struct vmbus_channel *ch,
     /* Update read index — use WRITE_ONCE to prevent compiler tearing */
     __asm__ volatile("sfence" ::: "memory");
     WRITE_ONCE(ch->recv_ring->read_index, read_idx % ch->data_size);
+
+    /* §14 Flow control: after consuming data, check if the host is waiting for
+     * ring space. If we freed >= host's pending_send_size, wake the host.
+     * Check interrupt_mask first — if set, host is in bulk mode and doesn't
+     * want per-packet interrupts. */
+    if (!READ_ONCE(ch->recv_ring->interrupt_mask)) {
+        uint32_t host_pending = READ_ONCE(ch->recv_ring->pending_send_size);
+        if (host_pending > 0) {
+            /* Calculate how much space is now available in the recv ring
+             * from the host's send perspective (host writes into our recv ring). */
+            uint32_t new_read = read_idx % ch->data_size;
+            uint32_t host_write = READ_ONCE(ch->recv_ring->write_index);
+            uint32_t freed;
+            if (new_read >= host_write)
+                freed = new_read - host_write;
+            else
+                freed = ch->data_size - (host_write - new_read);
+            if (freed >= host_pending) {
+                /* Signal host: there is now room for its pending send */
+                vmbus_signal_channel(ch);
+            }
+        }
+    }
 
     return to_read;
 }
