@@ -151,6 +151,30 @@
 - [ ] Log: `[StorVSC] Device %u: %u-byte logical, %u-byte physical sectors`
 - [ ] Commit: `"storvsc: 4K sector alignment"`
 
+### 3.3 DMA Buffer Page Alignment (IOMMU Enforcement) ⏳
+
+**Prompt:** Hyper-V enforces strict IOMMU page boundary rules on DMA transfers. QEMU is forgiving about unaligned memory, but on a real Hyper-V host, if a Physical Region Descriptor Table (PRDT) entry or VMBus GPADL transfer buffer has addresses crossing 4 KB page boundaries incorrectly, or if unaligned memory is passed to the virtual SCSI controller, Hyper-V silently drops the I/O — the guest hangs forever waiting for a disk interrupt that never arrives, or reads a buffer of zeroes. Audit all DMA-critical paths: GPADL PFN lists, StorVSC transfer buffers, storvsc read/write target buffers. Add alignment assertions and ensure PMM-backed buffers are always page-aligned. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: DMA buffer page alignment"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!CAUTION]
+> **Silent failure.** Unlike most hardware errors, IOMMU page boundary violations
+> produce NO error status, NO interrupt, and NO log entry. The I/O request simply
+> vanishes. The OS hangs waiting for a completion that never arrives.
+
+> [!IMPORTANT]
+> → XREF: `TODO-008.06-Page-Table-MMIO.md §2` — PRESENT bit shield (CoCo MMIO safety)
+> → XREF: `TODO-008-Hyper-V-Runner.md §9` — Page Table MMIO Safety (UC mapping for MMIO regions)
+
+- [ ] Audit all `pmm_alloc_contiguous()` callers in StorVSC: verify returned addresses are page-aligned
+- [ ] Audit GPADL PFN list construction in `vmbus_create_gpadl()`: verify all PFNs reference full page boundaries
+- [ ] Audit StorVSC 64 KiB transfer buffer: verify it starts on a 4 KiB page boundary
+- [ ] Add `kassert(!(addr & 0xFFF))` guards on all DMA-critical buffer addresses
+- [ ] Validate that `storvsc_blk_read()` / `storvsc_blk_write()` target buffers are page-aligned
+- [ ] If caller provides unaligned buffer: bounce through page-aligned intermediate buffer
+- [ ] Audit UEFI bootloader for page-alignment warnings (`addr is not page aligned` in serial log)
+- [ ] Test: intentionally pass unaligned buffer on QEMU (should work) vs Hyper-V (should hang without fix)
+- [ ] Log: `[StorVSC] WARN: DMA buffer at 0x%lx is not page-aligned — using bounce buffer`
+- [ ] Commit: `"storvsc: DMA buffer page alignment"`
+
 ---
 
 ## 4. Error Recovery and Reset Handling
@@ -352,6 +376,7 @@
 | 💎 | 🟠 P1    | 3.1 SCSI UNMAP (TRIM)                 | VHDX space reclamation — critical for SSDs             |
 | 💎 | 🟡 P2    | 1.2 Multi-Controller Support          | Up to 4 controllers × 64 devices                       |
 | 💎 | 🟡 P2    | 3.2 4K Sector Alignment               | Avoids 2–4× IOPS penalty on 4K-native disks           |
+| 💎 | 🟡 P2    | 3.3 DMA Page Alignment                | IOMMU-safe buffers — silent I/O failure without it     |
 | 💎 | 🟡 P2    | 5.1 Hot-Add Detection                 | Dynamic disk management                                |
 | 💎 | 🟡 P2    | 5.2 Hot-Remove Handling               | Graceful removal without data loss                     |
 | ⭐ | 🟡 P2    | 7.1 I/O Statistics                    | **Per-device latency tracking** — beyond Windows       |
@@ -377,6 +402,7 @@
 | ⭐ | **Sub-channel parallelism**       | ✅ VMMQ automatic                       | ✅ `storvsc_max_hw_queues`               | ⬜ §2.3 P3 — single channel                         |
 | 💎 | TRIM/UNMAP passthrough            | ✅ Automatic via NTFS                   | ✅ `fstrim` / auto-discard               | ⬜ §3.1 P1                                          |
 | 💎 | 4K sector alignment               | ✅ VHDX-aware                           | ✅ Auto-detect                           | ⬜ §3.2 P2 — assumes 512-byte                       |
+| 💎 | DMA page alignment (IOMMU)        | ✅ Automatic                            | ✅ IOMMU/SWIOTLB                         | ⬜ §3.3 P2 — audit needed                            |
 | 💎 | Sense data parsing                | ✅ Full SCSI sense                      | ✅ Full (libata-scsi)                    | ⬜ §4.1 P0 — no sense parsing                       |
 | 💎 | LUN reset recovery                | ✅ Storport EH                          | ✅ SCSI EH                               | ⬜ §4.2 P1                                          |
 | 💎 | Adapter/bus reset                 | ✅ Storport escalation                  | ✅ SCSI host reset                       | ⬜ §4.3 P1                                          |

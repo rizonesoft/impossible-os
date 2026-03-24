@@ -192,7 +192,9 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 - [x] If `PCAT_COMPAT=0` (Hyper-V Gen 2): skip `pic_disable()`, log APIC-only mode
 - [x] Log: `MADT PCAT_COMPAT=0 — PIC absent, APIC-only mode`
 - [x] Verify: IOAPIC redirection table entries are configured without PIC dependency
+- [ ] **Legacy PIC re-mask after APIC takeover:** When `PCAT_COMPAT=1` (QEMU), `pic_init()` masks all IRQs, but `pit_init()` later unmasks IRQ0 via `pic_unmask_irq(IRQ_TIMER)`. After the IOAPIC takes over, the PIC's IRQ0 remains unmasked → PIT timer fires 1000×/sec through both PIC AND IOAPIC → `vec=32 (0x20): N total hits` interrupt storm. Fix: call `pic_disable()` (or `pic_mask_irq(IRQ_TIMER)`) **after all driver inits** that call `pic_unmask_irq()`, once IOAPIC is confirmed active. This does NOT affect Hyper-V Gen 2 (`PCAT_COMPAT=0`) but can confuse the SynIC on Hyper-V if tested under QEMU-with-Hyper-V-CPUID.
 - [x] Test: boot in QEMU (PCAT_COMPAT=1 → PIC remapped) AND Hyper-V Gen 2 (PCAT_COMPAT=0 → PIC skipped)
+- [ ] Test: confirm `vec=32` unhandled interrupt count is 0 after PIC re-mask
 - [x] Commit: `"kernel: APIC-only mode for hardware-reduced ACPI"`
 
 ---
@@ -233,6 +235,17 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 **Prompt:** ~~Implement~~ **Verify** `storvsc.c` opens the Storage VSP VMBus channel, negotiates the VSTOR protocol, issues SCSI INQUIRY + READ_CAPACITY(16), registers as blkdev `"hyperv0"`, and supports READ(16)/WRITE(16) via a 64 KiB PMM transfer buffer. Verify `boot_storage.c` calls `partition_scan_all()` + `partition_mount_filesystems()` AFTER `storvsc_init()` succeeds to fix the boot-order issue. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
+> [!TIP]
+> **NVMe as alternative boot path:** If you want to test the OS on Hyper-V **today**
+> without full VMBus storvsc verification, attach the VHDX to an NVMe controller
+> instead of the SCSI controller. NVMe is a standard PCIe device — the same driver
+> works on QEMU, VMware, Hyper-V, and bare metal. See
+> [TODO-013.02-NVMe.md](../../010-Kernel-Foundations/TODO-013-Core-Drivers/TODO-013.02-NVMe.md)
+> for the NVMe driver TODO.
+>
+> **Hyper-V NVMe setup:** VM Settings → Remove SCSI Hard Drive → Add Hardware →
+> NVMe Controller → Attach VHDX to NVMe. Requires Hyper-V build ≥ 10.0.20348.
+
 > [!NOTE]
 > **Implementation Notes:**
 > - `include/kernel/drivers/hyperv/storvsc.h`: VSTOR_PACKET protocol (operations, flags, status), SCSI CDB opcodes (INQUIRY, READ_CAPACITY_16, READ_16, WRITE_16), vstor_srb struct, protocol versions (Win10/8.1/8)
@@ -247,6 +260,13 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 > block devices exist at initial scan time → C:\ never mounts. Fix: `boot_storage.c`
 > re-runs `partition_scan_all()` + `partition_mount_filesystems()` after `storvsc_init()`
 > succeeds. See `TODO-010.96-QEMU-Compatibility.md §6` for full root cause analysis.
+
+> [!WARNING]
+> **DMA page alignment (IOMMU):** Hyper-V enforces strict 4 KB page alignment on all
+> DMA transfers. The StorVSC transfer buffer and GPADL PFN lists must reference
+> page-aligned addresses. Unaligned buffers cause silent I/O failures (no interrupt,
+> no error — the request vanishes). See `TODO-008.02-SCSI-Storage-Driver.md §3.3`
+> for the full DMA alignment audit.
 
 - [x] Create `src/kernel/drivers/hyperv/storvsc.c` and `include/kernel/drivers/hyperv/storvsc.h`
 - [x] Open VMBus channel with Storage VSP GUID `BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`
