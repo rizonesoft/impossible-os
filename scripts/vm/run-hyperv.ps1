@@ -102,7 +102,8 @@ if (-not $qemuImg) {
 }
 if ($qemuImg) {
     $qemuImgPath = if ($qemuImg -is [string]) { $qemuImg } else { $qemuImg.Source }
-    & $qemuImgPath convert -f raw -O vhdx $DISK_TEMP $DISK_VHDX
+    # -o subformat=fixed: fully-allocated VHDX (Hyper-V rejects sparse/dynamic VHDXs)
+    & $qemuImgPath convert -f raw -O vhdx -o subformat=fixed $DISK_TEMP $DISK_VHDX
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "qemu-img convert failed"
         exit 1
