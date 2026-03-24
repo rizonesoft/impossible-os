@@ -123,20 +123,20 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| P    | Section                             | What It Delivers                                                   | Depends On              | Status |
-| :--: | ----------------------------------- | ------------------------------------------------------------------ | ----------------------- | :----: |
-| P1   | §1 Test Runner Script               | `run-hyperv.ps1` + `.bat` — one-click Hyper-V Gen 2 testing        | —                       |   ✅   |
-| P1   | §2 APIC-Only Interrupt Mode         | `PCAT_COMPAT` gate — PIC skipped on Gen 2                          | 010.99 §1–3             |   ✅   |
-| P2   | §9 Page Table MMIO Safety           | UC mapping for MMIO regions — prevents MCE on VMBus access         | 010 §1.5                |   ⬜   |
-| P2   | §3 VMBus Core Protocol              | Hypercall page, SynIC, version negotiation, channel enumeration    | P1 (§2) + P2 (§9)       |   ✅   |
-| P3   | §4 Synthetic SCSI (storvsc)         | Disk access via SCSI over VMBus — **#1 blocker for Gen 2 boot**    | P2 (§3)                 |   ✅   |
-| P3   | §5 Synthetic HID Input              | Keyboard + mouse via VMBus — desktop becomes interactive           | P2 (§3)                 |   ✅   |
-| P4   | §6 Synthetic Video (hvfb)           | Proper VMBus video — runtime resolution changes, no display freeze | P2 (§3)                 |   ⬜   |
-| P4   | §8 Hyper-V Synthetic Timer          | Per-vCPU µs-precision timer — consistent timing across hosts       | P2 (§3)                 |   ⬜   |
-| P5   | §7 Synthetic NIC (netvsc)           | RNDIS-based networking on Hyper-V                                  | P2 (§3)                 |   ⬜   |
-| P5   | §10 Power Management                | Shutdown / reboot validation + hypercall fallback                  | P3 (§4)                 |   ⬜   |
-| P6   | §11 Guest Additions Integration     | Auto-detect Hyper-V → activate all synthetic drivers               | P3–P5 (§4+§5+§6+§7)    |   ⬜   |
-| P7   | §12 Hyper-V Enlightenments          | HyperClear, VPCI, TSC page — competitive differentiator            | P6 (§11)                |   ⬜   |
+| ⭐ | P    | Section                             | What It Delivers                                                   | Depends On              | Status |
+| -- | :--: | ----------------------------------- | ------------------------------------------------------------------ | ----------------------- | :----: |
+| 💎 | P1   | §1 Test Runner Script               | `run-hyperv.ps1` + `.bat` — one-click Hyper-V Gen 2 testing        | —                       |   ✅   |
+| 💎 | P1   | §2 APIC-Only Interrupt Mode         | `PCAT_COMPAT` gate — PIC skipped on Gen 2                          | 010.99 §1–3             |   ✅   |
+| 💎 | P2   | §9 Page Table MMIO Safety           | UC mapping for MMIO regions — prevents MCE on VMBus access         | 010 §1.5                |   ⬜   |
+| 💎 | P2   | §3 VMBus Core Protocol              | Hypercall page, SynIC, version negotiation, channel enumeration    | P1 (§2) + P2 (§9)       |   ✅   |
+| 💎 | P3   | §4 Synthetic SCSI (storvsc)         | Disk access via SCSI over VMBus — **#1 blocker for Gen 2 boot**    | P2 (§3)                 |   ✅   |
+| 💎 | P3   | §5 Synthetic HID Input              | Keyboard + mouse via VMBus — desktop becomes interactive           | P2 (§3)                 |   ✅   |
+| 💎 | P4   | §6 Synthetic Video (hvfb)           | Proper VMBus video — runtime resolution changes, no display freeze | P2 (§3)                 |   ⬜   |
+| 💎 | P4   | §8 Hyper-V Synthetic Timer          | Per-vCPU µs-precision timer — consistent timing across hosts       | P2 (§3)                 |   ⬜   |
+| 💎 | P5   | §7 Synthetic NIC (netvsc)           | RNDIS-based networking on Hyper-V                                  | P2 (§3)                 |   ⬜   |
+| 💎 | P5   | §10 Power Management                | Shutdown / reboot validation + hypercall fallback                  | P3 (§4)                 |   ⬜   |
+| 💎 | P6   | §11 Guest Additions Integration     | Auto-detect Hyper-V → activate all synthetic drivers               | P3–P5 (§4+§5+§6+§7)     |   ⬜   |
+| ⭐ | P7   | §12 Hyper-V Enlightenments          | HyperClear, VPCI, TSC page — competitive differentiator            | P6 (§11)                |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–3** are the critical path: they deliver a bootable, interactive Hyper-V Gen 2

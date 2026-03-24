@@ -129,14 +129,15 @@ This table assigns every section to an implementation phase and tracks status.
 - Phase numbers must be logical (lower phases = prerequisites)
 
 > [!IMPORTANT]
-> The Phase table does **not** have a `⭐/💎` icon column. That column is only for
-> the OS Comparison table. If you find one in a Phase table, remove it.
+> The Phase table **has** a `⭐/💎` icon column, same as the Priority Order and
+> OS Comparison tables. ⭐ = feature where Impossible OS can be superior;
+> 💎 = spec-defined feature. Add the column if missing.
 
 **Format:**
 ```markdown
-| Phase  | TODO File           | Section(s)                         | What It Delivers                                              | Depends On               | Status |
-| :----: | -------------------- | ---------------------------------- | ------------------------------------------------------------- | ------------------------ | :----: |
-| **1**  | `040.01-VirtIO.md`  | §1 PCI Transport                   | Modern PCI capability discovery                               | —                        |   ⬜   |
+| ⭐ | Phase  | TODO File           | Section(s)                         | What It Delivers                                              | Depends On               | Status |
+| -- | :----: | -------------------- | ---------------------------------- | ------------------------------------------------------------- | ------------------------ | :----: |
+| 💎 | **1**  | `040.01-VirtIO.md`  | §1 PCI Transport                   | Modern PCI capability discovery                               | —                        |   ⬜   |
 ```
 
 ### 7. Fix the Priority Order table
