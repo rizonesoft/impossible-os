@@ -43,8 +43,13 @@ static void storvsc_memcpy(void *dst, const void *src, uint64_t n)
 /* ---- State ---- */
 
 static struct vmbus_channel *stor_channel;
-static struct storvsc_disk_info disk_info;
+static struct storvsc_disk_info disk_info[STORVSC_MAX_DEVICES];
+static int disk_count;             /* number of discovered devices */
 static int storvsc_initialized;
+
+/* Properties from QUERY_PROPERTIES */
+static uint8_t prop_max_targets;   /* max targets per path */
+static uint8_t prop_max_luns;      /* max LUNs per target */
 
 /* Data buffer for SCSI read/write -- allocated from PMM (identity-mapped)
  * and shared with the host via a separate GPADL. The VMBus ring buffer
@@ -59,6 +64,10 @@ static uint64_t storvsc_next_tid = 0x1000;
 
 /* Ring buffer page count: 32 pages = 16 send + 16 recv = 64 KiB each */
 #define STORVSC_RING_PAGES      32
+
+/* Forward declarations (defined after storvsc_enumerate) */
+static int storvsc_blk_read(uint64_t lba, uint32_t count, void *buf, void *driver_data);
+static int storvsc_blk_write(uint64_t lba, uint32_t count, const void *buf, void *driver_data);
 
 /* ---- Protocol helpers ---- */
 
@@ -170,7 +179,16 @@ static int storvsc_negotiate(void)
         return -1;
     }
 
-    klog(LOG_DEBUG, "storvsc", "QUERY_PROPERTIES OK");
+    /* Save max_targets / max_luns for enumeration.
+     * Hyper-V typically returns 0 for both (meaning "use protocol default = 1").
+     * Clamp to sane values: 0 → 1, cap at 64. */
+    prop_max_targets = pkt.properties.max_targets ? pkt.properties.max_targets : 1;
+    prop_max_luns    = pkt.properties.max_luns    ? pkt.properties.max_luns    : 1;
+    if (prop_max_targets > 64) prop_max_targets = 64;
+    if (prop_max_luns    > 64) prop_max_luns    = 64;
+
+    klog(LOG_INFO, "storvsc", "QUERY_PROPERTIES OK: max_targets=%u max_luns=%u",
+         (uint64_t)prop_max_targets, (uint64_t)prop_max_luns);
 
     /* Step 4: END_INITIALIZATION */
     storvsc_memset(&pkt, 0, sizeof(pkt));
@@ -188,9 +206,10 @@ static int storvsc_negotiate(void)
 
 /* ---- SCSI command helpers ---- */
 
-/* Send a SCSI command with data transfer via transfer pages (GPADL).
- * Uses vmbus_sendpacket_pagebuffer() for proper Hyper-V framing. */
-static int storvsc_scsi_cmd(uint8_t *cdb, uint8_t cdb_len,
+/* Send a SCSI command targeting a specific (target_id, lun) with data
+ * transfer via transfer pages (GPADL). */
+static int storvsc_scsi_cmd(uint8_t target, uint8_t lun,
+                             uint8_t *cdb, uint8_t cdb_len,
                              uint8_t data_in, uint32_t xfer_len)
 {
     struct vstor_packet pkt;
@@ -204,9 +223,9 @@ static int storvsc_scsi_cmd(uint8_t *cdb, uint8_t cdb_len,
     pkt.flags     = VSTOR_FLAG_REQUEST_COMPLETION;
 
     pkt.srb.length              = sizeof(struct vstor_srb);
-    pkt.srb.target_id           = 0;
+    pkt.srb.target_id           = target;
     pkt.srb.path_id             = 0;
-    pkt.srb.lun                 = 0;
+    pkt.srb.lun                 = lun;
     pkt.srb.cdb_length          = cdb_len;
     pkt.srb.data_transfer_length = xfer_len;
     pkt.srb.data_in             = data_in;
@@ -273,7 +292,11 @@ static int storvsc_scsi_cmd(uint8_t *cdb, uint8_t cdb_len,
     return 0;
 }
 
-static int storvsc_inquiry(void)
+/* ---- Per-LUN SCSI helpers ---- */
+
+/* Issue SCSI INQUIRY to a specific (target, lun).
+ * Returns peripheral qualifier (bits 7:5 of byte 0), or -1 on timeout. */
+static int storvsc_inquiry_lun(uint8_t target, uint8_t lun)
 {
     uint8_t cdb[16];
 
@@ -281,50 +304,46 @@ static int storvsc_inquiry(void)
     cdb[0] = SCSI_INQUIRY;
     cdb[4] = 36;  /* allocation length */
 
-    if (storvsc_scsi_cmd(cdb, 6, 1, 36) < 0) {
-        klog(LOG_ERROR, "storvsc", "INQUIRY failed");
-        return -1;
-    }
+    if (xfer_buffer)
+        storvsc_memset(xfer_buffer, 0, 36);
 
-    klog(LOG_INFO, "storvsc", "INQUIRY successful -- disk present");
-    return 0;
+    if (storvsc_scsi_cmd(target, lun, cdb, 6, 1, 36) < 0)
+        return -1;  /* no response / timeout */
+
+    /* Byte 0 of INQUIRY response: bits[7:5] = peripheral qualifier */
+    if (!xfer_buffer)
+        return SCSI_PQ_CONNECTED;  /* assume present if no buffer */
+
+    uint8_t byte0 = ((uint8_t *)xfer_buffer)[0];
+    return (byte0 >> 5) & 0x07;
 }
 
-static int storvsc_read_capacity(void)
+/* Issue READ_CAPACITY(16) to a specific (target, lun).
+ * Writes sector_count and sector_size into out params.
+ * Returns 0 on success, -1 on failure. */
+static int storvsc_capacity_lun(uint8_t target, uint8_t lun,
+                                uint64_t *out_sectors, uint32_t *out_size)
 {
     uint8_t cdb[16];
     uint8_t cap_data[32];
 
     storvsc_memset(cdb, 0, 16);
     cdb[0] = SCSI_READ_CAPACITY_16;
-    cdb[1] = SCSI_SAI_READ_CAPACITY_16;  /* service action */
-    /* Allocation length = 32 bytes (bytes 10-13, big-endian) */
-    cdb[10] = 0;
-    cdb[11] = 0;
-    cdb[12] = 0;
-    cdb[13] = 32;
+    cdb[1] = SCSI_SAI_READ_CAPACITY_16;
+    cdb[13] = 32;  /* allocation length */
 
-    /* The capacity data will be in the transfer buffer */
     if (xfer_buffer)
         storvsc_memset(xfer_buffer, 0, 32);
 
-    if (storvsc_scsi_cmd(cdb, 16, 1, 32) < 0) {
-        klog(LOG_ERROR, "storvsc", "READ_CAPACITY(16) failed");
+    if (storvsc_scsi_cmd(target, lun, cdb, 16, 1, 32) < 0)
         return -1;
-    }
 
-    /* Parse response from transfer buffer.
-     * READ CAPACITY(16) response format:
-     *   Bytes 0-7:   returned logical block address (last LBA, big-endian)
-     *   Bytes 8-11:  logical block length (sector size, big-endian) */
-    if (xfer_buffer) {
+    if (xfer_buffer)
         storvsc_memcpy(cap_data, xfer_buffer, 32);
-    } else {
-        /* Fallback: parse from SRB sense data area (limited) */
+    else
         storvsc_memset(cap_data, 0, 32);
-    }
 
-    /* Parse last LBA (big-endian 64-bit) */
+    /* Parse last LBA (big-endian 64-bit, bytes 0-7) */
     uint64_t last_lba = 0;
     last_lba |= ((uint64_t)cap_data[0]) << 56;
     last_lba |= ((uint64_t)cap_data[1]) << 48;
@@ -335,31 +354,121 @@ static int storvsc_read_capacity(void)
     last_lba |= ((uint64_t)cap_data[6]) << 8;
     last_lba |= ((uint64_t)cap_data[7]);
 
-    /* Parse sector size (big-endian 32-bit) */
+    /* Parse sector size (big-endian 32-bit, bytes 8-11) */
     uint32_t sector_size = 0;
-    sector_size |= ((uint32_t)cap_data[8]) << 24;
-    sector_size |= ((uint32_t)cap_data[9]) << 16;
+    sector_size |= ((uint32_t)cap_data[8])  << 24;
+    sector_size |= ((uint32_t)cap_data[9])  << 16;
     sector_size |= ((uint32_t)cap_data[10]) << 8;
     sector_size |= ((uint32_t)cap_data[11]);
 
-    /* Sanity check */
     if (sector_size == 0)
         sector_size = 512;
-    if (last_lba == 0) {
-        klog(LOG_WARN, "storvsc",
-             "READ_CAPACITY returned 0 sectors, assuming 128 MiB");
+    if (last_lba == 0)
         last_lba = (128ULL * 1024 * 1024 / sector_size) - 1;
+
+    *out_sectors = last_lba + 1;
+    *out_size    = sector_size;
+    return 0;
+}
+
+/* ---- Full LUN enumeration ---- */
+
+/* storvsc_enumerate() — discover all (target, lun) pairs.
+ * Uses max_targets / max_luns from QUERY_PROPERTIES (defaults to 1/1).
+ * For each responding LUN, issues READ_CAPACITY and registers a blkdev. */
+static int storvsc_enumerate(void)
+{
+    uint8_t max_targets = (prop_max_targets > 0) ? prop_max_targets : 1;
+    uint8_t max_luns    = (prop_max_luns    > 0) ? prop_max_luns    : 1;
+    uint8_t t, l;
+    int pq;
+
+    klog(LOG_INFO, "storvsc", "Enumerating %u targets × %u LUNs",
+         (uint64_t)max_targets, (uint64_t)max_luns);
+
+    for (t = 0; t < max_targets; t++) {
+        for (l = 0; l < max_luns; l++) {
+
+            if (disk_count >= STORVSC_MAX_DEVICES)
+                break;
+
+            pq = storvsc_inquiry_lun(t, l);
+
+            if (pq < 0) {
+                /* Timeout — target likely doesn't exist, stop scanning this target */
+                break;
+            }
+
+            if (pq == SCSI_PQ_NOT_SUPPORTED) {
+                /* LUN not reachable — skip */
+                continue;
+            }
+
+            if (pq == SCSI_PQ_DISCONNECTED) {
+                klog(LOG_INFO, "storvsc",
+                     "Target %u LUN %u: supported but not connected -- skipping",
+                     (uint64_t)t, (uint64_t)l);
+                continue;
+            }
+
+            /* pq == SCSI_PQ_CONNECTED (0): device present */
+            uint64_t sectors = 0;
+            uint32_t sector_sz = 512;
+
+            if (storvsc_capacity_lun(t, l, &sectors, &sector_sz) < 0) {
+                klog(LOG_WARN, "storvsc",
+                     "Target %u LUN %u: READ_CAPACITY failed -- skipping",
+                     (uint64_t)t, (uint64_t)l);
+                continue;
+            }
+
+            int idx = disk_count;
+            disk_info[idx].target_id    = t;
+            disk_info[idx].lun          = l;
+            disk_info[idx].sector_count = sectors;
+            disk_info[idx].sector_size  = sector_sz;
+            disk_info[idx].active       = 1;
+
+            klog(LOG_INFO, "storvsc",
+                 "Target %u LUN %u: %llu sectors, %u bytes/sector",
+                 (uint64_t)t, (uint64_t)l,
+                 sectors, (uint64_t)sector_sz);
+
+            /* Build blkdev name: "hyperv" + decimal index */
+            struct blkdev dev;
+            storvsc_memset(&dev, 0, sizeof(dev));
+            dev.name[0] = 'h'; dev.name[1] = 'y'; dev.name[2] = 'p';
+            dev.name[3] = 'e'; dev.name[4] = 'r'; dev.name[5] = 'v';
+            /* Simple index → ASCII digit(s) (supports 0-99) */
+            if (idx < 10) {
+                dev.name[6] = '0' + idx;
+                dev.name[7] = '\0';
+            } else {
+                dev.name[6] = '0' + (idx / 10);
+                dev.name[7] = '0' + (idx % 10);
+                dev.name[8] = '\0';
+            }
+
+            dev.sector_size  = sector_sz;
+            dev.sector_count = sectors;
+            dev.read         = storvsc_blk_read;
+            dev.write        = storvsc_blk_write;
+            dev.driver_data  = (void *)(uintptr_t)idx;
+            dev.active       = 1;
+
+            if (blkdev_register(&dev) < 0) {
+                klog(LOG_ERROR, "storvsc",
+                     "Failed to register blkdev hyperv%d", (uint64_t)idx);
+            } else {
+                printk("[OK] StorVSC: hyperv%d (T%u L%u, %u sectors, %u bytes/sector)\n",
+                       idx, (uint32_t)t, (uint32_t)l,
+                       (uint32_t)sectors, sector_sz);
+                disk_count++;
+            }
+        }
     }
 
-    disk_info.sector_count = last_lba + 1;
-    disk_info.sector_size  = sector_size;
-
-    klog(LOG_INFO, "storvsc", "Disk: %u sectors, %u bytes/sector (%u MiB)",
-         disk_info.sector_count,
-         (uint64_t)disk_info.sector_size,
-         disk_info.sector_count * disk_info.sector_size / (1024 * 1024));
-
-    return 0;
+    return disk_count > 0 ? 0 : -1;
 }
 
 /* ---- Block device callbacks ---- */
@@ -373,21 +482,22 @@ static int storvsc_blk_read(uint64_t lba, uint32_t count, void *buf,
     uint32_t remaining = count;
     uint64_t cur_lba = lba;
     uint8_t *dst = (uint8_t *)buf;
-
-    (void)driver_data;
+    int idx = (int)(uintptr_t)driver_data;
 
     if (!storvsc_initialized || !xfer_buffer)
         return -1;
+    if (idx < 0 || idx >= disk_count || !disk_info[idx].active)
+        return -1;
 
     /* Calculate how many sectors fit in our transfer buffer */
-    sectors_per_chunk = (STORVSC_XFER_PAGES * 4096) / disk_info.sector_size;
+    sectors_per_chunk = (STORVSC_XFER_PAGES * 4096) / disk_info[idx].sector_size;
 
     while (remaining > 0) {
         chunk = remaining;
         if (chunk > sectors_per_chunk)
             chunk = sectors_per_chunk;
 
-        uint32_t byte_count = chunk * disk_info.sector_size;
+        uint32_t byte_count = chunk * disk_info[idx].sector_size;
 
         /* Build SCSI READ(16) CDB */
         storvsc_memset(cdb, 0, 16);
@@ -409,7 +519,8 @@ static int storvsc_blk_read(uint64_t lba, uint32_t count, void *buf,
         cdb[12] = (uint8_t)(chunk >> 8);
         cdb[13] = (uint8_t)(chunk);
 
-        if (storvsc_scsi_cmd(cdb, 16, 1, byte_count) < 0)
+        if (storvsc_scsi_cmd(disk_info[idx].target_id, disk_info[idx].lun,
+                             cdb, 16, 1, byte_count) < 0)
             return -1;
 
         /* Copy from transfer buffer to caller's buffer */
@@ -432,20 +543,21 @@ static int storvsc_blk_write(uint64_t lba, uint32_t count, const void *buf,
     uint32_t remaining = count;
     uint64_t cur_lba = lba;
     const uint8_t *src = (const uint8_t *)buf;
-
-    (void)driver_data;
+    int idx = (int)(uintptr_t)driver_data;
 
     if (!storvsc_initialized || !xfer_buffer)
         return -1;
+    if (idx < 0 || idx >= disk_count || !disk_info[idx].active)
+        return -1;
 
-    sectors_per_chunk = (STORVSC_XFER_PAGES * 4096) / disk_info.sector_size;
+    sectors_per_chunk = (STORVSC_XFER_PAGES * 4096) / disk_info[idx].sector_size;
 
     while (remaining > 0) {
         chunk = remaining;
         if (chunk > sectors_per_chunk)
             chunk = sectors_per_chunk;
 
-        uint32_t byte_count = chunk * disk_info.sector_size;
+        uint32_t byte_count = chunk * disk_info[idx].sector_size;
 
         /* Copy caller's data into transfer buffer */
         storvsc_memcpy(xfer_buffer, src, byte_count);
@@ -470,7 +582,8 @@ static int storvsc_blk_write(uint64_t lba, uint32_t count, const void *buf,
         cdb[12] = (uint8_t)(chunk >> 8);
         cdb[13] = (uint8_t)(chunk);
 
-        if (storvsc_scsi_cmd(cdb, 16, 0, byte_count) < 0)
+        if (storvsc_scsi_cmd(disk_info[idx].target_id, disk_info[idx].lun,
+                             cdb, 16, 0, byte_count) < 0)
             return -1;
 
         src       += byte_count;
@@ -510,9 +623,7 @@ int storvsc_init(void)
         return -1;
     }
 
-    /* Allocate transfer buffer (PMM -- identity-mapped, page-aligned).
-     * Hyper-V IOMMU strictly requires 4 KiB page alignment for all GPADL
-     * buffers.  PMM guarantees this, but we assert it to catch regressions. */
+    /* Allocate transfer buffer (PMM -- identity-mapped, page-aligned). */
     xfer_buffer = (void *)(uintptr_t)pmm_alloc_contiguous(STORVSC_XFER_PAGES);
     if (!xfer_buffer) {
         klog(LOG_ERROR, "storvsc",
@@ -528,9 +639,7 @@ int storvsc_init(void)
     }
     storvsc_memset(xfer_buffer, 0, STORVSC_XFER_PAGES * 4096);
 
-    /* Create GPADL for the transfer buffer -- makes it visible to the host
-     * for DMA-based SCSI data transfers. Without this, the host cannot
-     * read/write the data buffer, causing silent I/O failures. */
+    /* Create GPADL for the transfer buffer */
     if (vmbus_create_gpadl_external(stor_channel, xfer_buffer,
                                      STORVSC_XFER_PAGES,
                                      &xfer_gpadl_handle) < 0) {
@@ -547,43 +656,13 @@ int storvsc_init(void)
         return -1;
     }
 
-    /* SCSI INQUIRY -- identify disk */
-    if (storvsc_inquiry() < 0) {
-        klog(LOG_WARN, "storvsc", "INQUIRY failed -- continuing anyway");
-    }
-
-    /* Read disk capacity */
-    if (storvsc_read_capacity() < 0) {
-        klog(LOG_ERROR, "storvsc", "Failed to read disk capacity");
-        return -1;
-    }
-
-    /* Register as block device */
-    struct blkdev dev;
-    storvsc_memset(&dev, 0, sizeof(dev));
-
-    /* Name: "hyperv0" */
-    dev.name[0] = 'h'; dev.name[1] = 'y'; dev.name[2] = 'p';
-    dev.name[3] = 'e'; dev.name[4] = 'r'; dev.name[5] = 'v';
-    dev.name[6] = '0'; dev.name[7] = '\0';
-
-    dev.sector_size  = disk_info.sector_size;
-    dev.sector_count = disk_info.sector_count;
-    dev.read         = storvsc_blk_read;
-    dev.write        = storvsc_blk_write;
-    dev.driver_data  = NULL;
-    dev.active       = 1;
-
-    if (blkdev_register(&dev) < 0) {
-        klog(LOG_ERROR, "storvsc", "Failed to register blkdev hyperv0");
+    /* Enumerate all LUNs and register block devices */
+    if (storvsc_enumerate() < 0) {
+        klog(LOG_ERROR, "storvsc", "No storage devices found");
         return -1;
     }
 
     storvsc_initialized = 1;
-
-    printk("[OK] StorVSC: hyperv0 (%u sectors, %u bytes/sector)\n",
-           (uint32_t)disk_info.sector_count,
-           disk_info.sector_size);
-
+    klog(LOG_INFO, "storvsc", "%d device(s) registered", (uint64_t)disk_count);
     return 0;
 }

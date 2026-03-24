@@ -63,6 +63,11 @@
 /* SCSI READ_CAPACITY_16 service action */
 #define SCSI_SAI_READ_CAPACITY_16               0x10
 
+/* SCSI INQUIRY peripheral qualifier (bits 7:5 of byte 0) */
+#define SCSI_PQ_CONNECTED           0   /* device connected and present */
+#define SCSI_PQ_DISCONNECTED        1   /* device supported but not connected */
+#define SCSI_PQ_NOT_SUPPORTED       3   /* target does not support LUN */
+
 /* ---- SCSI Request Block (SRB) ---- */
 
 /* Simplified SRB structure for the VMBus VSTOR protocol.
@@ -108,7 +113,8 @@ struct vstor_packet {
             uint16_t path_id;
             uint8_t  target_id;
             uint8_t  max_channel_count;
-            uint16_t reserved;
+            uint8_t  max_targets;       /* max target IDs per path (0 = use default 1) */
+            uint8_t  max_luns;          /* max LUNs per target (0 = use default 1) */
             uint16_t max_transfer_bytes_lo;
             uint32_t max_transfer_bytes_hi;
             uint32_t reserved2;
@@ -119,16 +125,21 @@ struct vstor_packet {
     };
 } __attribute__((packed));
 
-/* ---- StorVSC disk info (returned by storvsc_init) ---- */
+/* ---- StorVSC device table (supports up to 64 devices per controller) ---- */
+
+#define STORVSC_MAX_DEVICES     64
 
 struct storvsc_disk_info {
     uint64_t sector_count;
     uint32_t sector_size;
+    uint8_t  target_id;
+    uint8_t  lun;
+    int      active;            /* 1 = device present and registered */
 };
 
 /* ---- Public API ---- */
 
 /* Initialize the StorVSC driver: find storage channel, open it,
- * negotiate protocol, query disk capacity, and register as blkdev.
+ * negotiate protocol, enumerate all LUNs, and register each as a blkdev.
  * Returns 0 on success, -1 on failure (or if not on Hyper-V). */
 int storvsc_init(void);

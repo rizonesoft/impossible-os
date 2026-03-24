@@ -28,23 +28,31 @@
 
 ## 1. Multi-LUN and Multi-Target Enumeration
 
-### 1.1 SCSI Target/LUN Discovery ⏳
+### 1.1 SCSI Target/LUN Discovery
 
-**Prompt:** The current driver only probes target 0, LUN 0 — a single disk. Hyper-V supports up to 4 SCSI controllers with 64 devices per controller (256 total). Implement full target/LUN enumeration: iterate `target_id` 0–`max_targets` and `lun` 0–`max_luns` (values returned by `QUERY_PROPERTIES` during initialization). For each (target, lun) pair, issue SCSI INQUIRY. If the response has `peripheral_qualifier == 0` (device present), issue READ_CAPACITY(16) and register a separate block device (`hyperv0`, `hyperv1`, ...). Skip LUNs with `peripheral_qualifier == 3` (not reachable). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: multi-LUN enumeration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** **Verify** full target/LUN enumeration. Confirm `storvsc.h` defines `SCSI_PQ_CONNECTED/DISCONNECTED/NOT_SUPPORTED` and adds `max_targets`/`max_luns` to `vstor_packet.properties`. Confirm `storvsc_negotiate()` saves these into `prop_max_targets`/`prop_max_luns`. Confirm `storvsc_enumerate()` iterates all (target, lun) pairs, calls `storvsc_inquiry_lun()` to check peripheral qualifier, calls `storvsc_capacity_lun()` on connected LUNs, and registers each as `hypervN` with `driver_data=(void*)idx`. Confirm `storvsc_blk_read/write` use `driver_data` to index into `disk_info[]`. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
 > [!IMPORTANT]
 > → XREF: `TODO-008-Hyper-V-Runner.md §4` — Existing StorVSC basic implementation (done)
 > → XREF: `TODO-040-Filesystem.md §7` — VFS mount integration for multiple block devices
 
-- [ ] Read `max_targets` and `max_luns` from `QUERY_PROPERTIES` response during init
-- [ ] Iterate all (target_id, lun) combinations: send SCSI INQUIRY for each
-- [ ] Parse INQUIRY response: check `peripheral_qualifier` (bits 7:5) and `device_type` (bits 4:0)
-- [ ] For `peripheral_qualifier == 0` (connected): issue READ_CAPACITY(16) → get sector count/size
-- [ ] Register each discovered LUN as a separate block device (`hyperv0`, `hyperv1`, ...)
-- [ ] Track discovered devices in a `storvsc_device[]` array (max 64 per controller)
-- [ ] Log: `[StorVSC] Target %u LUN %u: %s (%llu sectors, %u bytes/sector)`
-- [ ] Handle `peripheral_qualifier == 1` (not connected but supported) — log and skip
-- [ ] Commit: `"storvsc: multi-LUN enumeration"`
+> [!NOTE]
+> **Implementation Notes:**
+> - `prop_max_targets`/`prop_max_luns` default to 1 if host returns 0 (Hyper-V Gen2 typical)
+> - `storvsc_inquiry_lun()` returns peripheral qualifier (-1 = timeout/no device)
+> - PQ timeout on a target breaks the inner LUN loop for that target (avoids long timeouts)
+> - Per-device `driver_data = (void*)(uintptr_t)idx` indexes into `disk_info[64]` array
+> - Forward declarations for `storvsc_blk_read/write` required (defined after `storvsc_enumerate`)
+
+- [x] Read `max_targets` and `max_luns` from `QUERY_PROPERTIES` response during init
+- [x] Iterate all (target_id, lun) combinations: send SCSI INQUIRY for each
+- [x] Parse INQUIRY response: check `peripheral_qualifier` (bits 7:5) and `device_type` (bits 4:0)
+- [x] For `peripheral_qualifier == 0` (connected): issue READ_CAPACITY(16) → get sector count/size
+- [x] Register each discovered LUN as a separate block device (`hyperv0`, `hyperv1`, ...)
+- [x] Track discovered devices in a `storvsc_device[]` array (max 64 per controller)
+- [x] Log: `[StorVSC] Target %u LUN %u: %s (%llu sectors, %u bytes/sector)`
+- [x] Handle `peripheral_qualifier == 1` (not connected but supported) — log and skip
+- [x] Commit: `"storvsc: multi-LUN enumeration"`
 
 ### 1.2 Multi-Controller Support ⏳
 
@@ -395,7 +403,7 @@
 | ⭐ | Feature                           | 🪟 Windows 11 (storvsc.sys)            | 🐧 Linux (storvsc_drv.c)                | 🚀 Impossible OS                                   |
 | -- | --------------------------------- | --------------------------------------- | ---------------------------------------- | --------------------------------------------------- |
 | 💎 | Basic storvsc (read/write)        | ✅ Native                               | ✅ Native                                | ✅ Done (single LUN, polling)                       |
-| 💎 | Multi-LUN enumeration             | ✅ Full (64 LUNs × 4 ctrl)             | ✅ Full SCSI host scan                   | ⬜ §1.1 P0 — single LUN only                       |
+| 💎 | Multi-LUN enumeration             | ✅ Full (64 LUNs × 4 ctrl)             | ✅ Full SCSI host scan                   | ✅ Done §1.1 — 64 LUNs per controller                |
 | 💎 | Multi-controller                  | ✅ 4 controllers                        | ✅ 4 controllers                         | ⬜ §1.2 P2 — first controller only                  |
 | 💎 | Multi-command queuing             | ✅ 255 per LUN                          | ✅ blk-mq integration                    | ⬜ §2.1 P1 — sequential only                        |
 | 💎 | Interrupt-driven completion       | ✅ SynIC ISR                            | ✅ SynIC ISR + tasklet                   | ⬜ §2.2 P1 — polling                                |
