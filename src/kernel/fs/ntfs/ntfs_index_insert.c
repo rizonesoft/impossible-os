@@ -90,6 +90,7 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
     if (rc != NTFS_OK) { kfree(rec); return rc; }
 
     /* Determine next free VCN from existing $INDEX_ALLOCATION size */
+    uint64_t alloc_hint = 0;  /* locality hint for cluster allocator */
     {
         struct ntfs_attr_header ia_ah;
         const uint8_t *ia_attr = ntfs_attr_find_named(rec, &hdr,
@@ -99,11 +100,14 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
             struct ntfs_data_run runs[NTFS_INDEX_MAX_RUNS];
             int rc2 = ntfs_decode_data_runs(ia_attr, runs, NTFS_INDEX_MAX_RUNS,
                                              &nrhdr);
-            if (rc2 > 0)
+            if (rc2 > 0) {
                 /* Next VCN = last_vcn+1 (each INDX = vol->index_size / cluster_size clusters) */
                 new_vcn = (nrhdr.real_size / vol->cluster_size);
-            else
+                /* Hint: allocate right after the last run for contiguity */
+                alloc_hint = runs[rc2 - 1].lcn + runs[rc2 - 1].length;
+            } else {
                 new_vcn = 0;
+            }
         } else {
             new_vcn = 0;
         }
@@ -113,7 +117,7 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
     uint64_t clusters_per_indx = vol->index_size / vol->cluster_size;
     if (clusters_per_indx == 0) clusters_per_indx = 1;
 
-    lcn = ntfs_alloc_clusters(vol, clusters_per_indx, 0);
+    lcn = ntfs_alloc_clusters(vol, clusters_per_indx, alloc_hint);
     if (lcn == 0) { kfree(rec); return NTFS_ERR_FULL; }
 
     klog(LOG_DEBUG, "ntfs", "alloc_indx_vcn: VCN %llu -> LCN %llu", new_vcn, lcn);
@@ -137,13 +141,24 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
             if (old_count < 0) old_count = 0;
         }
 
-        /* Append new run */
+        /* Append new run — or coalesce with last run if contiguous.
+         * Merging contiguous runs keeps the run list compact and prevents
+         * the non-resident header from growing beyond MFT capacity. */
         ntfs_memcpy(new_runs, old_runs,
                     (uint32_t)(old_count * (int)sizeof(struct ntfs_data_run)));
-        new_runs[old_count].vcn_start = new_vcn;
-        new_runs[old_count].lcn       = lcn;
-        new_runs[old_count].length    = clusters_per_indx;
-        new_count = old_count + 1;
+
+        if (old_count > 0 &&
+            new_runs[old_count - 1].lcn + new_runs[old_count - 1].length == lcn) {
+            /* Contiguous with last run — just extend it */
+            new_runs[old_count - 1].length += clusters_per_indx;
+            new_count = old_count;
+        } else {
+            /* Non-contiguous — append as a new run */
+            new_runs[old_count].vcn_start = new_vcn;
+            new_runs[old_count].lcn       = lcn;
+            new_runs[old_count].length    = clusters_per_indx;
+            new_count = old_count + 1;
+        }
 
         /* Remove old IA, rebuild as proper non-resident attribute.
          * $INDEX_ALLOCATION MUST be non-resident — it contains INDX
