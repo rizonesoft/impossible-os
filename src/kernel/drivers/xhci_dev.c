@@ -661,27 +661,210 @@ static int xhci_enumerate_device(struct xhci_controller *hc,
              (uint64_t)dev->config_value, (uint64_t)slot_id);
     }
 
-    /* ---- Step 9: Configure Endpoint Command (TRB type 12) ----
-     * Deferred to §2.2 (MSC Identification & Endpoint Configuration).
-     *
-     * Configure Endpoint adds non-default endpoints (Bulk-IN/OUT) that are
-     * discovered by walking the configuration descriptor.  For basic device
-     * enumeration (EP0 only), the device is already fully usable after
-     * SET_CONFIGURATION — the controller configured EP0 during Address Device.
-     *
-     * When §2.2 is implemented, it will:
-     *   1. Walk config descriptor to find Bulk-IN/OUT endpoints
-     *   2. Allocate Transfer Rings for each endpoint
-     *   3. Rebuild Input Context with the new Endpoint Contexts
-     *   4. Submit Configure Endpoint Command (TRB type 12)
-     */
+    /* ---- Step 9: MSC identification + Configure Endpoint ----
+     * Walk config descriptor to find MSC BOT interface, extract Bulk-IN/OUT
+     * endpoints, allocate Transfer Rings, and issue Configure Endpoint. */
+    xhci_msc_identify(hc, dev);
 
     /* ---- Enumeration complete ---- */
     dev->active = 1;
     klog(LOG_INFO, "usb",
-         "Device %04x:%04x enumerated on port %u (slot %u)",
+         "Device %04x:%04x enumerated on port %u (slot %u)%s",
          (uint64_t)dev->vendor_id, (uint64_t)dev->product_id,
-         (uint64_t)port, (uint64_t)slot_id);
+         (uint64_t)port, (uint64_t)slot_id,
+         dev->is_msc ? " [MSC]" : "");
+
+    return 0;
+}
+
+/* ---- MSC Identification & Endpoint Configuration (§2.2) ----------------- */
+
+int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
+{
+    const uint8_t *buf = dev->config_data;
+    uint16_t len = dev->config_len;
+    uint16_t offset = 0;
+    int found_msc = 0;
+    int found_bulk_in = 0;
+    int found_bulk_out = 0;
+    uint8_t current_iface_class = 0;
+    uint8_t current_iface_sub   = 0;
+    uint8_t current_iface_proto = 0;
+    uint8_t current_iface_num   = 0;
+
+    dev->is_msc = 0;
+
+    /* Walk the config descriptor tree linearly (bLength/bDescriptorType) */
+    while (offset + 2 <= len) {
+        uint8_t desc_len  = buf[offset];
+        uint8_t desc_type = buf[offset + 1];
+
+        /* Safety: descriptor length must be >= 2 to avoid infinite loop */
+        if (desc_len < 2)
+            break;
+        /* Don't read past end of buffer */
+        if (offset + desc_len > len)
+            break;
+
+        if (desc_type == USB_DESC_INTERFACE && desc_len >= 9) {
+            /* Parse Interface Descriptor */
+            const struct usb_interface_descriptor *iface =
+                (const struct usb_interface_descriptor *)(buf + offset);
+
+            current_iface_class = iface->bInterfaceClass;
+            current_iface_sub   = iface->bInterfaceSubClass;
+            current_iface_proto = iface->bInterfaceProtocol;
+            current_iface_num   = iface->bInterfaceNumber;
+
+            /* Check for MSC BOT triple */
+            if (current_iface_class == USB_CLASS_MASS_STORAGE &&
+                current_iface_sub   == USB_SUBCLASS_SCSI &&
+                current_iface_proto == USB_PROTO_BOT) {
+                found_msc = 1;
+                dev->msc_iface = current_iface_num;
+                /* Reset endpoint search for this interface */
+                found_bulk_in  = 0;
+                found_bulk_out = 0;
+            } else {
+                /* Not MSC — if we already found one, stop looking
+                 * (next interface descriptor means end of previous) */
+                if (found_msc && found_bulk_in && found_bulk_out)
+                    break;
+                if (found_msc) {
+                    /* MSC interface without both endpoints — bogus device */
+                    found_msc = 0;
+                }
+            }
+        } else if (desc_type == USB_DESC_ENDPOINT && desc_len >= 7 && found_msc) {
+            /* Parse Endpoint Descriptor (only if inside an MSC interface) */
+            const struct usb_endpoint_descriptor *ep =
+                (const struct usb_endpoint_descriptor *)(buf + offset);
+
+            uint8_t xfer_type = ep->bmAttributes & USB_EP_ATTR_TYPE_MASK;
+
+            /* Only care about Bulk endpoints for BOT */
+            if (xfer_type == USB_EP_ATTR_BULK) {
+                uint8_t ep_num = ep->bEndpointAddress & USB_EP_NUM_MASK;
+                uint8_t is_in  = (ep->bEndpointAddress & USB_EP_DIR_IN) ? 1 : 0;
+
+                if (is_in && !found_bulk_in) {
+                    dev->bulk_in_addr    = ep->bEndpointAddress;
+                    dev->bulk_in_ep      = ep_num;
+                    dev->bulk_in_max_pkt = ep->wMaxPacketSize;
+                    found_bulk_in = 1;
+                } else if (!is_in && !found_bulk_out) {
+                    dev->bulk_out_addr    = ep->bEndpointAddress;
+                    dev->bulk_out_ep      = ep_num;
+                    dev->bulk_out_max_pkt = ep->wMaxPacketSize;
+                    found_bulk_out = 1;
+                }
+            }
+            /* Ignore interrupt endpoints (xfer_type != BULK) — per BOT spec */
+        }
+
+        offset += desc_len;
+    }
+
+    /* Verify we found the MSC BOT triple with both required endpoints */
+    if (!found_msc || !found_bulk_in || !found_bulk_out) {
+        klog(LOG_DEBUG, "usb",
+             "Slot %u: no MSC BOT interface found (msc=%d, in=%d, out=%d)",
+             (uint64_t)dev->slot_id, (uint64_t)found_msc,
+             (uint64_t)found_bulk_in, (uint64_t)found_bulk_out);
+        return -1;
+    }
+
+    klog(LOG_INFO, "usb-msc",
+         "BOT interface %u: Bulk-IN EP%u (pkt=%u), Bulk-OUT EP%u (pkt=%u)",
+         (uint64_t)dev->msc_iface,
+         (uint64_t)dev->bulk_in_ep, (uint64_t)dev->bulk_in_max_pkt,
+         (uint64_t)dev->bulk_out_ep, (uint64_t)dev->bulk_out_max_pkt);
+
+    /* ---- Allocate Transfer Rings for Bulk endpoints ---- */
+    if (ep0_ring_init(&dev->bulk_in_ring) != 0) {
+        klog(LOG_ERROR, "usb-msc", "Failed to allocate Bulk-IN Transfer Ring");
+        return -1;
+    }
+    if (ep0_ring_init(&dev->bulk_out_ring) != 0) {
+        klog(LOG_ERROR, "usb-msc", "Failed to allocate Bulk-OUT Transfer Ring");
+        return -1;
+    }
+
+    /* ---- Rebuild Input Context with Bulk endpoints ---- */
+    {
+        uint32_t csz = ctx_size(hc);
+        uint8_t *input_ctx = (uint8_t *)dev->input_ctx_phys;
+        struct xhci_input_ctrl_ctx *ctrl;
+        struct xhci_slot_ctx *slot_ctx;
+        struct xhci_ep_ctx *ep_in_ctx;
+        struct xhci_ep_ctx *ep_out_ctx;
+        uint32_t dci_in  = XHCI_DCI(dev->bulk_in_ep, 1);   /* Bulk-IN DCI */
+        uint32_t dci_out = XHCI_DCI(dev->bulk_out_ep, 0);   /* Bulk-OUT DCI */
+        uint32_t max_dci = (dci_in > dci_out) ? dci_in : dci_out;
+        struct xhci_trb cmd;
+        uint8_t cc;
+
+        /* Zero the Input Context first */
+        dev_zero(input_ctx, 33 * csz);
+
+        /* Input Control Context: add Slot + Bulk-IN + Bulk-OUT */
+        ctrl = (struct xhci_input_ctrl_ctx *)input_ctx;
+        ctrl->add_flags = XHCI_INPUT_ADD_SLOT
+                        | (1u << dci_in)
+                        | (1u << dci_out);
+        ctrl->drop_flags = 0;
+
+        /* Slot Context: update Context Entries to include highest DCI */
+        slot_ctx = (struct xhci_slot_ctx *)(input_ctx + 1 * csz);
+        slot_ctx->field0 = XHCI_SCTX_ROUTE(0)
+                         | XHCI_SCTX_SPEED(dev->speed)
+                         | XHCI_SCTX_ENTRIES(max_dci);
+        slot_ctx->field1 = XHCI_SCTX_ROOT_PORT(dev->port);
+
+        /* Bulk-IN Endpoint Context */
+        ep_in_ctx = (struct xhci_ep_ctx *)(input_ctx + (dci_in + 1) * csz);
+        ep_in_ctx->field0 = 0;
+        ep_in_ctx->field1 = XHCI_EPCTX_CERR(3)
+                          | XHCI_EPCTX_TYPE(XHCI_EP_TYPE_BULK_IN)
+                          | XHCI_EPCTX_MAXPKT(dev->bulk_in_max_pkt);
+        ep_in_ctx->tr_dequeue = dev->bulk_in_ring.phys | 1; /* DCS = 1 */
+        ep_in_ctx->field4 = XHCI_EPCTX_AVG_TRB_LEN(1024);
+
+        /* Bulk-OUT Endpoint Context */
+        ep_out_ctx = (struct xhci_ep_ctx *)(input_ctx + (dci_out + 1) * csz);
+        ep_out_ctx->field0 = 0;
+        ep_out_ctx->field1 = XHCI_EPCTX_CERR(3)
+                           | XHCI_EPCTX_TYPE(XHCI_EP_TYPE_BULK_OUT)
+                           | XHCI_EPCTX_MAXPKT(dev->bulk_out_max_pkt);
+        ep_out_ctx->tr_dequeue = dev->bulk_out_ring.phys | 1; /* DCS = 1 */
+        ep_out_ctx->field4 = XHCI_EPCTX_AVG_TRB_LEN(1024);
+
+        /* Submit Configure Endpoint Command (TRB type 12) */
+        dev_zero(&cmd, sizeof(cmd));
+        cmd.parameter = dev->input_ctx_phys;
+        cmd.control   = (XHCI_TRB_CONFIG_EP << XHCI_TRB_TYPE_SHIFT)
+                      | ((uint32_t)dev->slot_id << XHCI_TRB_SLOT_SHIFT);
+
+        if (xhci_cmd_submit(hc, &cmd) != 0) {
+            klog(LOG_ERROR, "usb-msc",
+                 "Failed to submit Configure Endpoint command");
+            return -1;
+        }
+
+        cc = xhci_wait_command(hc, NULL);
+        if (cc != XHCI_TRB_CC_SUCCESS) {
+            klog(LOG_ERROR, "usb-msc",
+                 "Configure Endpoint failed (slot %u, cc=%u)",
+                 (uint64_t)dev->slot_id, (uint64_t)cc);
+            return -1;
+        }
+    }
+
+    dev->is_msc = 1;
+    klog(LOG_INFO, "usb-msc",
+         "BOT device ready: Bulk-IN EP%u, Bulk-OUT EP%u, MaxPkt=%u",
+         (uint64_t)dev->bulk_in_ep, (uint64_t)dev->bulk_out_ep,
+         (uint64_t)dev->bulk_in_max_pkt);
 
     return 0;
 }

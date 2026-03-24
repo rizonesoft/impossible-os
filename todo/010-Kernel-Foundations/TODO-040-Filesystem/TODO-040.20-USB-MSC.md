@@ -154,7 +154,7 @@ graph TD
 | 💎 | P1   | §1.2 xHCI Controller Initialization      | P1 (§1.1)               |   ✅   |
 | 💎 | P1   | §1.3 TRB Ring Architecture               | P1 (§1.2)               |   ✅   |
 | 💎 | P2   | §2.1 USB Device Enumeration              | P1 (§1.3)               |   ✅   |
-| 💎 | P2   | §2.2 MSC Identification & Endpoint Cfg   | P2 (§2.1)               |   ⬜   |
+| 💎 | P2   | §2.2 MSC Identification & Endpoint Cfg   | P2 (§2.1)               |   ✅   |
 | 💎 | P2   | §2.3 MSI/MSI-X Interrupt Handling        | P1 (§1.3)               |   ⬜   |
 | 💎 | P3   | §3.1 BOT: CBW/CSW Transport              | P2 (§2.2)               |   ⬜   |
 | 💎 | P3   | §3.2 SCSI: INQUIRY + TEST UNIT READY     | P3 (§3.1)               |   ⬜   |
@@ -323,24 +323,24 @@ graph TD
 
 ### 2.2 MSC Identification & Endpoint Configuration
 
-**Prompt:** Walk the configuration descriptor tree to find an Interface Descriptor matching the MSC BOT triple: `bInterfaceClass=0x08`, `bInterfaceSubClass=0x06`, `bInterfaceProtocol=0x50` per USB MSC spec §"Mass Storage Class Identification". Extract Bulk-IN and Bulk-OUT endpoint addresses from the Endpoint Descriptors following the interface. Ignore any interrupt endpoints (BOT uses bulk only). Allocate Transfer Rings for Bulk-IN and Bulk-OUT endpoints. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: MSC identification and endpoint config"`. After implementation, save gotchas to MCP memory.
+**✅ VERIFICATION —** MSC BOT identification implemented in `xhci_msc_identify()` in `src/kernel/drivers/xhci_dev.c`. Verify: `make run-usb-ci` shows `[usb-msc] BOT interface 0: Bulk-IN EP1 (pkt=1024), Bulk-OUT EP2 (pkt=1024)`, `BOT device ready`, and `Device ... enumerated ... [MSC]`. Config descriptor linear walk by bLength/bDescriptorType, MSC BOT triple match (0x08/0x06/0x50), Bulk-IN/OUT extraction, Transfer Ring allocation, Input Context rebuild with DCI indexing, Configure Endpoint command. Committed as `usb: MSC identification and endpoint config`.
 
-- [ ] Walk config descriptor buffer (linear parse by bLength/bDescriptorType)
-- [ ] Match Interface Descriptor (type `0x04`):
-  - [ ] `bInterfaceClass == 0x08` (Mass Storage)
-  - [ ] `bInterfaceSubClass == 0x06` (SCSI Transparent)
-  - [ ] `bInterfaceProtocol == 0x50` (Bulk-Only Transport)
-- [ ] Extract Endpoint Descriptors (type `0x05`) following the matched interface:
-  - [ ] Bulk-IN: `bmAttributes == 0x02` and `bEndpointAddress` bit 7 = 1
-  - [ ] Bulk-OUT: `bmAttributes == 0x02` and `bEndpointAddress` bit 7 = 0
-  - [ ] Record wMaxPacketSize for each endpoint
-- [ ] Ignore interrupt endpoints on BOT interfaces
-- [ ] Allocate Transfer Ring for Bulk-IN: `pmm_alloc_contiguous()`, 16B aligned, 256 TRBs
-- [ ] Allocate Transfer Ring for Bulk-OUT: `pmm_alloc_contiguous()`, 16B aligned, 256 TRBs
-- [ ] Update Input Context with Bulk-IN and Bulk-OUT Endpoint Contexts
-- [ ] Store MSC device info: slot_id, bulk_in_ep, bulk_out_ep, max_packet_size, interface_num
-- [ ] Log: `[USB-MSC] BOT device: Bulk-IN EP%u, Bulk-OUT EP%u, MaxPkt=%u`
-- [ ] Commit: `"usb: MSC identification and endpoint config"`
+- [x] Walk config descriptor buffer (linear parse by bLength/bDescriptorType)
+- [x] Match Interface Descriptor (type `0x04`):
+  - [x] `bInterfaceClass == 0x08` (Mass Storage)
+  - [x] `bInterfaceSubClass == 0x06` (SCSI Transparent)
+  - [x] `bInterfaceProtocol == 0x50` (Bulk-Only Transport)
+- [x] Extract Endpoint Descriptors (type `0x05`) following the matched interface:
+  - [x] Bulk-IN: `bmAttributes == 0x02` and `bEndpointAddress` bit 7 = 1
+  - [x] Bulk-OUT: `bmAttributes == 0x02` and `bEndpointAddress` bit 7 = 0
+  - [x] Record wMaxPacketSize for each endpoint
+- [x] Ignore interrupt endpoints on BOT interfaces
+- [x] Allocate Transfer Ring for Bulk-IN: `pmm_alloc_contiguous()`, 16B aligned, 256 TRBs
+- [x] Allocate Transfer Ring for Bulk-OUT: `pmm_alloc_contiguous()`, 16B aligned, 256 TRBs
+- [x] Update Input Context with Bulk-IN and Bulk-OUT Endpoint Contexts
+- [x] Store MSC device info: slot_id, bulk_in_ep, bulk_out_ep, max_packet_size, interface_num
+- [x] Log: `[USB-MSC] BOT device: Bulk-IN EP%u, Bulk-OUT EP%u, MaxPkt=%u`
+- [x] Commit: `"usb: MSC identification and endpoint config"`
 
 ### 2.3 MSI/MSI-X Interrupt Handling
 

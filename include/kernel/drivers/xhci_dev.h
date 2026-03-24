@@ -53,6 +53,23 @@ struct xhci_controller;
 #define USB_REQ_GET_DESCRIPTOR  0x06
 #define USB_REQ_SET_CONFIG      0x09
 
+/* ---- USB Mass Storage Class (MSC) constants ------------------------------ */
+
+#define USB_CLASS_MASS_STORAGE  0x08
+#define USB_SUBCLASS_SCSI       0x06  /* SCSI Transparent Command Set */
+#define USB_PROTO_BOT           0x50  /* Bulk-Only Transport */
+
+/* Endpoint address / attributes helpers */
+#define USB_EP_DIR_IN           0x80  /* bEndpointAddress bit 7 = IN */
+#define USB_EP_NUM_MASK         0x0F  /* bEndpointAddress bits 3:0 = EP number */
+#define USB_EP_ATTR_BULK        0x02  /* bmAttributes bits 1:0 = Bulk */
+#define USB_EP_ATTR_TYPE_MASK   0x03  /* bmAttributes transfer type mask */
+
+/* xHCI DCI (Device Context Index) for a given endpoint:
+ *   DCI = ep_num * 2 + direction  (direction: 0=OUT, 1=IN)
+ *   EP0 OUT = DCI 1, EP1 OUT = DCI 2, EP1 IN = DCI 3, etc. */
+#define XHCI_DCI(ep_num, dir_in)  ((uint32_t)(ep_num) * 2 + ((dir_in) ? 1 : 0))
+
 /* ---- USB Descriptor structures ------------------------------------------- */
 
 struct usb_device_descriptor {
@@ -195,6 +212,18 @@ struct xhci_device {
     uint64_t  input_ctx_phys;    /* Input Context physical address */
     struct xhci_ring ep0_ring;   /* EP0 (Default Control Pipe) Transfer Ring */
 
+    /* MSC BOT fields (populated by xhci_msc_identify) */
+    uint8_t   is_msc;            /* 1 if MSC BOT interface was found */
+    uint8_t   msc_iface;         /* bInterfaceNumber of the MSC interface */
+    uint8_t   bulk_in_addr;      /* Bulk-IN endpoint address (with dir bit) */
+    uint8_t   bulk_out_addr;     /* Bulk-OUT endpoint address */
+    uint8_t   bulk_in_ep;        /* Bulk-IN endpoint number (0-15) */
+    uint8_t   bulk_out_ep;       /* Bulk-OUT endpoint number (0-15) */
+    uint16_t  bulk_in_max_pkt;   /* Bulk-IN wMaxPacketSize */
+    uint16_t  bulk_out_max_pkt;  /* Bulk-OUT wMaxPacketSize */
+    struct xhci_ring bulk_in_ring;   /* Bulk-IN Transfer Ring */
+    struct xhci_ring bulk_out_ring;  /* Bulk-OUT Transfer Ring */
+
     /* Config descriptor inline storage (avoids separate allocation) */
     uint8_t   config_data[XHCI_CONFIG_BUF_MAX];
 };
@@ -205,3 +234,8 @@ struct xhci_device {
  * Called after controller initialization.
  * Returns number of devices successfully enumerated. */
 int xhci_enumerate_ports(struct xhci_controller *hc);
+
+/* Walk config descriptor to find MSC BOT interface, extract Bulk-IN/OUT
+ * endpoints, allocate Transfer Rings, and issue Configure Endpoint command.
+ * Returns 0 if MSC device identified and configured, -1 otherwise. */
+int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev);
