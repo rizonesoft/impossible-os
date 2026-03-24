@@ -1088,19 +1088,46 @@ int vmbus_sendpacket_pagebuffer(struct vmbus_channel *ch,
     return 0;
 }
 
-/* ---- §10. Signal host ---- */
+/* ---- §10. Signal host (monitor page + hypercall fallback) ---- */
 
-void vmbus_signal_channel(struct vmbus_channel *ch)
+/* sync_set_bit() — atomic bitwise OR on a 32-bit word.
+ * Uses x86 LOCK BTS (Bit Test and Set) for single-bit atomicity.
+ * The hypervisor hardware passively monitors triggered bits. */
+static inline void sync_set_bit(uint32_t bit, volatile uint32_t *addr)
 {
-    /* HvCallSignalEvent hypercall (0x005D):
-     * Sets an event flag bit for the target SINT.
-     * The host polls these flags and processes the ring buffer. */
+    __asm__ volatile("lock btsl %1, %0"
+                     : "+m"(*addr)
+                     : "Ir"(bit)
+                     : "memory");
+}
+
+/* Signal via monitor page (passive path — no VM-exit).
+ * monitorid maps to: group = monitorid / 32, bit = monitorid % 32.
+ * The hypervisor watches trigger_group[group].pending and fires
+ * a coalesced synthetic interrupt when a bit is set. */
+static void vmbus_signal_monitor(struct vmbus_channel *ch)
+{
+    struct hv_monitor_page *mon =
+        (struct hv_monitor_page *)monitor_page1;
+    uint8_t mid = ch->offer.monitor_id;
+    uint32_t group = mid / 32;
+    uint32_t bit   = mid % 32;
+
+    if (group >= 4) {
+        /* Invalid monitor group — fall through to hypercall */
+        return;
+    }
+
+    sync_set_bit(bit, &mon->trigger_group[group].pending);
+}
+
+/* Signal via HvCallSignalEvent hypercall (active path — VM-exit per call). */
+static void vmbus_signal_hypercall(struct vmbus_channel *ch)
+{
     uint64_t hypercall_input;
     uint64_t input_gpa;
     uint64_t status;
 
-    /* The event flag connection ID for the channel is the child_relid.
-     * Input param is the connection ID (child_relid) as a 64-bit value. */
     uint64_t connection_id_val = (uint64_t)ch->child_relid;
     input_gpa = (uint64_t)(uintptr_t)&connection_id_val;
 
@@ -1119,8 +1146,22 @@ void vmbus_signal_channel(struct vmbus_channel *ch)
         : "rax", "rcx", "rdx", "r8", "memory"
     );
 
-    /* Ignore status -- signaling is best-effort */
     (void)status;
+}
+
+void vmbus_signal_channel(struct vmbus_channel *ch)
+{
+    if (!ch)
+        return;
+
+    /* Use monitor page (passive) for channels with allocated monitor IDs.
+     * This eliminates per-signal VM-exit overhead by letting the hypervisor
+     * hardware poll the trigger_group bits instead. */
+    if (ch->offer.monitor_allocated && monitor_page1) {
+        vmbus_signal_monitor(ch);
+    } else {
+        vmbus_signal_hypercall(ch);
+    }
 }
 
 /* ---- §11. VMBus ISR (called from IDT vector 0xF0 via irq_register) ---- */

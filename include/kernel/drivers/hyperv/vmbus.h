@@ -109,6 +109,31 @@ struct hv_synic_event_flags_page {
     struct hv_synic_event_flags sint[HV_SYNIC_SINT_COUNT];
 } __attribute__((packed));
 
+/* ---- Monitor page (TLFS §7.2) ---- */
+
+/* Each trigger group has a 32-bit pending field.
+ * Channel monitorid maps to: group = monitorid / 32, bit = monitorid % 32. */
+struct hv_monitor_trigger_group {
+    uint32_t pending;       /* bitmask of pending channel signals */
+} __attribute__((packed));
+
+/* hv_monitor_page — 4 KiB shared structure for passive signaling.
+ * The hypervisor hardware monitors trigger_group[].pending bits and
+ * fires coalesced synthetic interrupts, avoiding per-signal VM-exits. */
+struct hv_monitor_page {
+    uint32_t trigger_state;                      /* 0x000: aggregate trigger status  */
+    uint32_t rsvdz1;                             /* 0x004                            */
+    struct hv_monitor_trigger_group trigger_group[4]; /* 0x008: 4 groups × 32 bits    */
+    uint8_t  rsvdz2[3];                          /* 0x018: padding                   */
+    uint8_t  rsvdz3[1];                          /* 0x01B                            */
+    uint32_t rsvdz4[3];                          /* 0x01C                            */
+    uint8_t  rsvdz5[4];                          /* 0x028                            */
+    uint8_t  rsvdz6[4];                          /* 0x02C                            */
+    int32_t  next_checktime[4][32];               /* 0x030: timing (100ns units)      */
+    uint16_t latency[4][32];                      /* 0x230: latency hints             */
+    uint64_t parameter[4][32];                    /* 0x430: connection ID + flag      */
+} __attribute__((packed));
+
 /* ---- VMBus protocol versions ---- */
 
 #define VMBUS_VERSION_WIN10_V5_2        0x00060000  /* Windows 10 RS5+ */
@@ -392,7 +417,8 @@ int vmbus_create_gpadl_external(struct vmbus_channel *ch, void *buffer,
                                 uint32_t page_count, uint32_t *out_handle);
 
 /* Signal the host that data is available on the send ring.
- * Uses the hypercall page to send an event. */
+ * Uses monitor page (passive) for channels with monitor_allocated,
+ * falls back to HvCallSignalEvent hypercall otherwise. */
 void vmbus_signal_channel(struct vmbus_channel *ch);
 
 /* Register a per-channel callback, fired by VMBus ISR when the host
