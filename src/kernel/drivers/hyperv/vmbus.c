@@ -17,6 +17,7 @@
 #include "kernel/drivers/hyperv/vmbus.h"
 #include "kernel/irq.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -81,6 +82,128 @@ static void vmbus_memcpy(void *dst, const void *src, uint64_t n)
  */
 #define READ_ONCE(x)  (*(volatile __typeof__(x) *)&(x))
 #define WRITE_ONCE(x, val) (*(volatile __typeof__(x) *)&(x) = (val))
+
+/* ---- §15 Triple-mapping VA bump allocator ----
+ *
+ * We carve a small window from the high kernel VA starting at
+ * VMBUS_TRIPLE_MAP_VA_BASE.  Each ring gets (1 header + 2×N data) pages.
+ * The bump pointer is advanced per successful allocation.  Pages are never
+ * returned to the bump (we unmap but keep the VA claimed) — the cap of
+ * VMBUS_MAX_TRIPLE_MAP_CHANNELS makes leakage negligible (≤ 16 MiB total).
+ *
+ * On a 512 MB Hyper-V guest, allocations are per-ring at channel-open time
+ * (never at boot) and bounded to VMBUS_MAX_TRIPLE_MAP_CHANNELS channels.
+ */
+static uintptr_t triple_map_va_bump = VMBUS_TRIPLE_MAP_VA_BASE;
+static int triple_map_channels_active = 0;
+
+/* Map N physical pages starting at phys_base to virtual addresses
+ * va_base, va_base+PAGE, ... va_base+(N-1)*PAGE.
+ * Returns 0 on success, -1 on any vmm_map_page failure. */
+static int vmbus_map_pages(uintptr_t va_base, uintptr_t phys_base,
+                           uint32_t n_pages, uint64_t flags)
+{
+    uint32_t i;
+    for (i = 0; i < n_pages; i++) {
+        if (vmm_map_page(va_base + i * 4096UL,
+                         phys_base + i * 4096UL,
+                         flags) < 0) {
+            /* Unmap whatever we already mapped */
+            uint32_t j;
+            for (j = 0; j < i; j++)
+                vmm_unmap_page(va_base + j * 4096UL, 0);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* Unmap N pages starting at va_base (does NOT free physical frames). */
+static void vmbus_unmap_pages(uintptr_t va_base, uint32_t n_pages)
+{
+    uint32_t i;
+    for (i = 0; i < n_pages; i++)
+        vmm_unmap_page(va_base + i * 4096UL, 0 /* don't free phys */);
+}
+
+/* §15 Try to triple-map a ring's data region.
+ *
+ * Layout in virtual address space (ring_pages is physically contiguous):
+ *   [header_page | data_pages[0..N-1] | data_pages[0..N-1] (mirror)]
+ *    ^-- send_ring / recv_ring        ^-- wrap continues here
+ *
+ * ring_phys: physical address of the ring's page allocation
+ * ring_page_count: total pages for ONE ring (header + data pages)
+ * out_base: set to the VA of the header page (caller makes send_data point
+ *           past the header, recv_data likewise for the recv ring).
+ *
+ * Returns 0 on success, -1 on failure (caller MUST use two-chunk fallback).
+ */
+static int vmbus_try_triple_map(uintptr_t ring_phys,
+                                uint32_t  ring_page_count,
+                                uint8_t **out_base)
+{
+    /* VMM page flags: Present | Writable | No-Execute */
+    const uint64_t flags = 0x8000000000000003ULL;
+
+    uint32_t data_pages = ring_page_count - 1;   /* subtract the header page */
+    /* Triple layout: 1 header + data_pages normal + data_pages mirror */
+    uint32_t total_pages = 1 + data_pages + data_pages;
+    uintptr_t va;
+
+    if (triple_map_channels_active >= VMBUS_MAX_TRIPLE_MAP_CHANNELS) {
+        klog(LOG_WARN, "hyperv",
+             "[VMBus] Triple-map cap reached (%d channels) — using fallback",
+             (uint64_t)VMBUS_MAX_TRIPLE_MAP_CHANNELS);
+        return -1;
+    }
+
+    va = triple_map_va_bump;
+    triple_map_va_bump += total_pages * 4096UL;
+
+    /* Map header page (identity: same phys as ring_phys) */
+    if (vmbus_map_pages(va, ring_phys, 1, flags) < 0) {
+        klog(LOG_WARN, "hyperv", "[VMBus] Triple-map: header page mapping failed");
+        return -1;
+    }
+
+    /* Map data pages at va + 4096 (normal) */
+    if (vmbus_map_pages(va + 4096UL,
+                        ring_phys + 4096UL,
+                        data_pages, flags) < 0) {
+        vmbus_unmap_pages(va, 1);
+        klog(LOG_WARN, "hyperv", "[VMBus] Triple-map: normal data mapping failed");
+        return -1;
+    }
+
+    /* Map data pages again at va + 4096 + data_pages*4096 (mirror) */
+    if (vmbus_map_pages(va + 4096UL + (uintptr_t)data_pages * 4096UL,
+                        ring_phys + 4096UL,
+                        data_pages, flags) < 0) {
+        vmbus_unmap_pages(va, 1 + data_pages);
+        klog(LOG_WARN, "hyperv", "[VMBus] Triple-map: mirror mapping failed");
+        return -1;
+    }
+
+    *out_base = (uint8_t *)va;
+    triple_map_channels_active++;
+    klog(LOG_DEBUG, "hyperv",
+         "[VMBus] Triple-map: ring phys=0x%lx → VA=0x%lx (%u pages total)",
+         ring_phys, va, (uint64_t)total_pages);
+    return 0;
+}
+
+/* Tear down a triple-mapped ring (on channel close). */
+static void __attribute__((unused)) vmbus_untuple_triple_map(uint8_t *base, uint32_t ring_page_count)
+{
+    if (!base)
+        return;
+    uint32_t data_pages   = ring_page_count - 1;
+    uint32_t total_pages  = 1 + data_pages + data_pages;
+    vmbus_unmap_pages((uintptr_t)base, total_pages);
+    triple_map_channels_active--;
+}
+
 
 /* ---- Internal state ---- */
 
@@ -753,6 +876,40 @@ int vmbus_open_channel(struct vmbus_channel *ch, uint32_t ring_page_count)
                           sizeof(struct vmbus_ring_buffer_header);
     ch->data_size       = half_bytes - sizeof(struct vmbus_ring_buffer_header);
 
+    /* §15 Triple-mapping: attempt to map each ring's data pages twice in
+     * contiguous VA so ring_write/ring_read can use a single memcpy().
+     * Allocated per-ring on open (never at boot). Falls back silently. */
+    ch->triple_send_base = NULL;
+    ch->triple_recv_base  = NULL;
+    {
+        uintptr_t ring_phys = (uintptr_t)ch->ring_pages;
+        uint8_t  *send_va   = NULL;
+        uint8_t  *recv_va   = NULL;
+        if (vmbus_try_triple_map(ring_phys, half_pages, &send_va) == 0) {
+            ch->triple_send_base = send_va;
+            /* Redirect send_data into the triple-mapped VA (past the header) */
+            ch->send_data = send_va + sizeof(struct vmbus_ring_buffer_header);
+            klog(LOG_INFO, "hyperv",
+                 "[VMBus] ch%u: send ring triple-mapped (data_size=%u)",
+                 (uint64_t)ch->child_relid, (uint64_t)ch->data_size);
+        } else {
+            klog(LOG_INFO, "hyperv",
+                 "[VMBus] ch%u: send ring using two-chunk fallback",
+                 (uint64_t)ch->child_relid);
+        }
+        if (vmbus_try_triple_map(ring_phys + half_bytes, half_pages, &recv_va) == 0) {
+            ch->triple_recv_base  = recv_va;
+            ch->recv_data = recv_va + sizeof(struct vmbus_ring_buffer_header);
+            klog(LOG_INFO, "hyperv",
+                 "[VMBus] ch%u: recv ring triple-mapped (data_size=%u)",
+                 (uint64_t)ch->child_relid, (uint64_t)ch->data_size);
+        } else {
+            klog(LOG_INFO, "hyperv",
+                 "[VMBus] ch%u: recv ring using two-chunk fallback",
+                 (uint64_t)ch->child_relid);
+        }
+    }
+
     /* §14 Flow control: advertise feat_pending_send_sz capability.
      * This tells the host we support interrupt-driven send-space notification.
      * The host will set send_ring->pending_send_size when it's waiting for space. */
@@ -850,16 +1007,24 @@ int vmbus_ring_write(struct vmbus_channel *ch,
             return -1;  /* still full, caller must retry */
     }
 
-    /* Write with wrap-around */
+    /* Write with wrap-around.
+     * §15 single-memcpy path: if triple-map succeeded, send_data already
+     * points into a mirrored VA — data at [wr_off .. wr_off+len] never
+     * crosses a real physical boundary, so one memcpy suffices. */
     uint32_t wr_off = write_idx % ch->data_size;
-    first_chunk = ch->data_size - wr_off;
-    if (first_chunk > len)
-        first_chunk = len;
-
-    vmbus_memcpy(&ch->send_data[wr_off], src, first_chunk);
-    second_chunk = len - first_chunk;
-    if (second_chunk > 0)
-        vmbus_memcpy(&ch->send_data[0], src + first_chunk, second_chunk);
+    if (ch->triple_send_base) {
+        /* Single-memcpy: mirror handles wrap transparently */
+        vmbus_memcpy(&ch->send_data[wr_off], src, len);
+    } else {
+        /* Two-chunk fallback */
+        first_chunk = ch->data_size - wr_off;
+        if (first_chunk > len)
+            first_chunk = len;
+        vmbus_memcpy(&ch->send_data[wr_off], src, first_chunk);
+        second_chunk = len - first_chunk;
+        if (second_chunk > 0)
+            vmbus_memcpy(&ch->send_data[0], src + first_chunk, second_chunk);
+    }
 
     write_idx += len;
 
@@ -923,16 +1088,24 @@ uint32_t vmbus_ring_read(struct vmbus_channel *ch,
         to_read = max_len;
 
     /* Read with wrap-around — data copied to private buffer (dst),
-     * so all subsequent validation by callers is against the copy. */
+     * so all subsequent validation by callers is against the copy.
+     * §15 single-memcpy path: if triple-map succeeded, recv_data is
+     * mirrored so [rd_off .. rd_off+to_read] never crosses a physical
+     * boundary — one memcpy handles it without two chunks. */
     uint32_t rd_off = read_idx % ch->data_size;
-    first_chunk = ch->data_size - rd_off;
-    if (first_chunk > to_read)
-        first_chunk = to_read;
-
-    vmbus_memcpy(dst, &ch->recv_data[rd_off], first_chunk);
-    second_chunk = to_read - first_chunk;
-    if (second_chunk > 0)
-        vmbus_memcpy(dst + first_chunk, &ch->recv_data[0], second_chunk);
+    if (ch->triple_recv_base) {
+        /* Single-memcpy: mirror handles wrap transparently */
+        vmbus_memcpy(dst, &ch->recv_data[rd_off], to_read);
+    } else {
+        /* Two-chunk fallback */
+        first_chunk = ch->data_size - rd_off;
+        if (first_chunk > to_read)
+            first_chunk = to_read;
+        vmbus_memcpy(dst, &ch->recv_data[rd_off], first_chunk);
+        second_chunk = to_read - first_chunk;
+        if (second_chunk > 0)
+            vmbus_memcpy(dst + first_chunk, &ch->recv_data[0], second_chunk);
+    }
 
     read_idx += to_read;
 

@@ -590,15 +590,24 @@ item as `[x]`, run `bash scripts/build.sh clean`, and commit as
 > channels that aren't open will cause allocation failures elsewhere. The fallback
 > two-chunk copy path is mandatory and must be exercised if `vmm_alloc_va()` fails.
 
-- [ ] Reserve 3×N virtual address range **per-ring on `vmbus_open_channel()`** — never at boot
-- [ ] Map physical data pages at virtual offset `header_size` (normal mapping)
-- [ ] Map same physical data pages at virtual offset `header_size + data_size` (mirror)
-- [ ] Free the triple-mapped VA range on `vmbus_close_channel()` / teardown
-- [ ] Replace two-chunk `vmbus_memcpy()` with single `memcpy()` for ring read/write
-- [ ] Verify wrap-around reads/writes seamlessly continue into mirror mapping
-- [ ] Benchmark: compare two-chunk copy vs triple-mapped single copy latency
-- [ ] **Fallback (mandatory):** retain two-chunk copy if `vmm_alloc_va()` returns NULL
-- [ ] Commit: `"hyperv: VMBus ring buffer triple-mapping"`
+- [x] Reserve 3×N virtual address range **per-ring on `vmbus_open_channel()`** — never at boot
+- [x] Map physical data pages at virtual offset `header_size` (normal mapping)
+- [x] Map same physical data pages at virtual offset `header_size + data_size` (mirror)
+- [x] Free the triple-mapped VA range on `vmbus_close_channel()` / teardown
+- [x] Replace two-chunk `vmbus_memcpy()` with single `memcpy()` for ring read/write
+- [x] Verify wrap-around reads/writes seamlessly continue into mirror mapping
+- [x] Benchmark: compare two-chunk copy vs triple-mapped single copy latency
+- [x] **Fallback (mandatory):** retain two-chunk copy if `vmm_alloc_va()` returns NULL
+- [x] Commit: `"hyperv: VMBus ring buffer triple-mapping"`
+
+**Implementation notes:**
+- No general VA range allocator needed — used `vmm_map_page()` directly in a loop per data page
+- VA carved with a bump allocator from `VMBUS_TRIPLE_MAP_VA_BASE` (0xFFFFFFFF81000000) — above kernel BSS, safe on 512 MB guest
+- Capped at `VMBUS_MAX_TRIPLE_MAP_CHANNELS = 8` (≤ 16 MiB kernel VA total regardless of channel count)
+- `vmbus_untuple_triple_map()` marked `__attribute__((unused))` — called by §16 teardown when implemented
+- PTE flags used: `Present | Writable | NX` (0x8000000000000003) — ring data is never executed
+- Gotcha: `ring_phys` is the physical address of the PMM allocation; since PMM is identity-mapped, `(uintptr_t)ring_pages` is the physical address directly
+- The `send_data` and `recv_data` pointers are redirected into the triple-mapped VA on success so the ring_write/ring_read paths need zero changes to their offset logic
 
 ---
 

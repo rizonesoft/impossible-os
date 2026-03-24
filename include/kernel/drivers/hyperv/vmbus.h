@@ -325,6 +325,13 @@ typedef void (*vmbus_channel_callback_t)(struct vmbus_channel *ch, void *ctx);
 
 #define VMBUS_MAX_CHANNELS          256
 
+/* §15 Triple-mapping: kernel VA region reserved for ring buffer mirrors.
+ * 2 MiB per channel × 8 channels max = 16 MiB carved from high kernel VA.
+ * On a 512 MB guest this is safe — carved from above 0xFFFFFFFF80000000.
+ * VMBUS_MAX_TRIPLE_MAP_CHANNELS caps the total VA consumption. */
+#define VMBUS_TRIPLE_MAP_VA_BASE    ((uintptr_t)0xFFFFFFFF81000000ULL)
+#define VMBUS_MAX_TRIPLE_MAP_CHANNELS   8    /* max channels that get mirror mapping */
+
 struct vmbus_channel {
     struct vmbus_channel_offer_channel offer;
     uint16_t                           child_relid;
@@ -341,6 +348,13 @@ struct vmbus_channel {
     uint8_t                           *send_data;    /* points past send_ring header */
     uint8_t                           *recv_data;    /* points past recv_ring header */
     uint32_t                           data_size;    /* ring_size - sizeof(header) */
+
+    /* §15 Triple-mapping optimization: mirror the data pages in contiguous VA.
+     * When non-NULL, send_data / recv_data point INTO these triple-mapped regions
+     * so a single memcpy() handles wrap-around without two chunks.
+     * NULL when the mapping failed or was not attempted (fallback path active). */
+    uint8_t                           *triple_send_base;  /* mapped VA for send data+mirror */
+    uint8_t                           *triple_recv_base;  /* mapped VA for recv data+mirror */
 
     /* Per-channel callback (fired by VMBus ISR on SIEF event) */
     vmbus_channel_callback_t           callback;
