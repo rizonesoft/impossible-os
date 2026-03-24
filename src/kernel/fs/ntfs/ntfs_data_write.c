@@ -226,10 +226,7 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
     }
 
     txn = ntfs_txn_begin(vol);
-    if (!txn) {
-        kfree(rec);
-        return NTFS_ERR_IO;
-    }
+    /* txn may be NULL if journal not loaded — continue without journaling */
 
     now_ft = unix_to_filetime(0); /* 0 → uses FILETIME_BASE_2026 equivalent */
 
@@ -243,8 +240,7 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
         /* Build the new content into a temp buffer. */
         uint8_t *new_data = (uint8_t *)kmalloc(new_len);
         if (!new_data) {
-            ntfs_txn_abort(txn);
-            ntfs_txn_free(txn);
+            if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
             kfree(rec);
             return NTFS_ERR_IO;
         }
@@ -258,10 +254,11 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
         ntfs_memcpy(new_data + offset, buffer, length);
 
         /* Journal before modifying */
-        ntfs_txn_log(txn,
-                     NTFS_LOG_OP_UPDATE_RESIDENT, new_data, (uint16_t)new_len,
-                     NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
-                     inode, ah.content_offset);
+        if (txn)
+            ntfs_txn_log(txn,
+                         NTFS_LOG_OP_UPDATE_RESIDENT, new_data, (uint16_t)new_len,
+                         NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
+                         inode, ah.content_offset);
 
         /* ntfs_attr_update handles resize and resident→non-resident conversion */
         rc = ntfs_attr_update(vol, rec, &hdr, vol->frs_size,
@@ -270,12 +267,12 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
 
         if (rc == NTFS_OK) {
             update_std_info_times(rec, &hdr, now_ft);
-            ntfs_txn_commit(txn);
+            if (txn) ntfs_txn_commit(txn);
             rc = ntfs_write_mft_record(vol, inode, rec);
         } else {
-            ntfs_txn_abort(txn);
+            if (txn) ntfs_txn_abort(txn);
         }
-        ntfs_txn_free(txn);
+        if (txn) ntfs_txn_free(txn);
         kfree(rec);
         return rc;
     }
@@ -291,24 +288,21 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
         run_count = ntfs_decode_data_runs(data_attr, runs,
                                            NTFS_MAX_WRITE_RUNS, &nrhdr);
         if (run_count < 0) {
-            ntfs_txn_abort(txn);
-            ntfs_txn_free(txn);
+            if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
             kfree(rec);
             return NTFS_ERR_BAD_MAGIC;
         }
 
         /* ---- Compressed attribute: delegate to compression-aware writer ---- */
         if ((ah.flags & NTFS_ATTR_FLAG_COMPRESSED) && nrhdr.compression_unit != 0) {
-            ntfs_txn_abort(txn);
-            ntfs_txn_free(txn);
+            if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
             kfree(rec);
             return ntfs_write_compressed_data(vol, inode, offset, length, buffer);
         }
 
         /* ---- Encrypted attribute: delegate to encryption-aware writer ---- */
         if (ah.flags & NTFS_ATTR_FLAG_ENCRYPTED) {
-            ntfs_txn_abort(txn);
-            ntfs_txn_free(txn);
+            if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
             kfree(rec);
             return ntfs_write_encrypted_data(vol, inode, offset, length, buffer);
         }
@@ -326,8 +320,7 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
                               : vol->mft_lcn;
             uint64_t new_lcn = ntfs_alloc_clusters(vol, extra, hint);
             if (new_lcn == 0) {
-                ntfs_txn_abort(txn);
-                ntfs_txn_free(txn);
+                if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
                 kfree(rec);
                 return NTFS_ERR_FULL;
             }
@@ -341,8 +334,7 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
             } else {
                 if (run_count >= NTFS_MAX_WRITE_RUNS) {
                     ntfs_free_clusters(vol, new_lcn, extra);
-                    ntfs_txn_abort(txn);
-                    ntfs_txn_free(txn);
+                    if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
                     kfree(rec);
                     return NTFS_ERR_IO;
                 }
@@ -355,17 +347,17 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
             nrhdr.alloc_size = new_clusters * cs;
 
             /* Journal the run-list change */
-            ntfs_txn_log(txn,
-                         NTFS_LOG_OP_UPDATE_MAPPING, runs,
-                         (uint16_t)(run_count * sizeof(struct ntfs_data_run)),
-                         NTFS_LOG_OP_UPDATE_MAPPING, NULL, 0,
-                         inode, (uint16_t)attr_off);
+            if (txn)
+                ntfs_txn_log(txn,
+                             NTFS_LOG_OP_UPDATE_MAPPING, runs,
+                             (uint16_t)(run_count * sizeof(struct ntfs_data_run)),
+                             NTFS_LOG_OP_UPDATE_MAPPING, NULL, 0,
+                             inode, (uint16_t)attr_off);
 
             rc = rewrite_nonres_attr(rec, attr_off, runs, run_count,
                                       nrhdr.alloc_size, nrhdr.real_size);
             if (rc != NTFS_OK) {
-                ntfs_txn_abort(txn);
-                ntfs_txn_free(txn);
+                if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
                 kfree(rec);
                 return rc;
             }
@@ -376,8 +368,7 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
                                     offset, length,
                                     (const uint8_t *)buffer);
         if (rc != NTFS_OK) {
-            ntfs_txn_abort(txn);
-            ntfs_txn_free(txn);
+            if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
             kfree(rec);
             return rc;
         }
@@ -390,16 +381,17 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
         }
 
         /* Journal size change */
-        ntfs_txn_log(txn,
-                     NTFS_LOG_OP_SET_ATTR_SIZES, &nrhdr.real_size,
-                     sizeof(uint64_t),
-                     NTFS_LOG_OP_SET_ATTR_SIZES, NULL, 0,
-                     inode, (uint16_t)attr_off);
+        if (txn)
+            ntfs_txn_log(txn,
+                         NTFS_LOG_OP_SET_ATTR_SIZES, &nrhdr.real_size,
+                         sizeof(uint64_t),
+                         NTFS_LOG_OP_SET_ATTR_SIZES, NULL, 0,
+                         inode, (uint16_t)attr_off);
 
         update_std_info_times(rec, &hdr, now_ft);
-        ntfs_txn_commit(txn);
+        if (txn) ntfs_txn_commit(txn);
         rc = ntfs_write_mft_record(vol, inode, rec);
-        ntfs_txn_free(txn);
+        if (txn) ntfs_txn_free(txn);
         kfree(rec);
         return rc;
     }
@@ -439,10 +431,7 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
     }
 
     txn = ntfs_txn_begin(vol);
-    if (!txn) {
-        kfree(rec);
-        return NTFS_ERR_IO;
-    }
+    /* txn may be NULL if journal not loaded — continue without journaling */
 
     now_ft = unix_to_filetime(0);
 
@@ -452,16 +441,14 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
         uint8_t *new_data;
 
         if (new_size == (uint64_t)old_len) {
-            ntfs_txn_abort(txn);
-            ntfs_txn_free(txn);
+            if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
             kfree(rec);
             return NTFS_OK;
         }
 
         new_data = (uint8_t *)kmalloc((uint32_t)(new_size > 0 ? new_size : 1));
         if (!new_data) {
-            ntfs_txn_abort(txn);
-            ntfs_txn_free(txn);
+            if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
             kfree(rec);
             return NTFS_ERR_IO;
         }
@@ -473,11 +460,12 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
                         copy);
         }
 
-        ntfs_txn_log(txn,
-                     NTFS_LOG_OP_UPDATE_RESIDENT, new_data,
-                     (uint16_t)(new_size > 0 ? new_size : 0),
-                     NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
-                     inode, ah.content_offset);
+        if (txn)
+            ntfs_txn_log(txn,
+                         NTFS_LOG_OP_UPDATE_RESIDENT, new_data,
+                         (uint16_t)(new_size > 0 ? new_size : 0),
+                         NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
+                         inode, ah.content_offset);
 
         rc = ntfs_attr_update(vol, rec, &hdr, vol->frs_size,
                                NTFS_ATTR_DATA, NULL,
@@ -487,12 +475,12 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
 
         if (rc == NTFS_OK) {
             update_std_info_times(rec, &hdr, now_ft);
-            ntfs_txn_commit(txn);
+            if (txn) ntfs_txn_commit(txn);
             rc = ntfs_write_mft_record(vol, inode, rec);
         } else {
-            ntfs_txn_abort(txn);
+            if (txn) ntfs_txn_abort(txn);
         }
-        ntfs_txn_free(txn);
+        if (txn) ntfs_txn_free(txn);
         kfree(rec);
         return rc;
     }
@@ -508,8 +496,7 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
         run_count = ntfs_decode_data_runs(data_attr, runs,
                                            NTFS_MAX_WRITE_RUNS, &nrhdr);
         if (run_count < 0) {
-            ntfs_txn_abort(txn);
-            ntfs_txn_free(txn);
+            if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
             kfree(rec);
             return NTFS_ERR_BAD_MAGIC;
         }
@@ -522,10 +509,11 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
                     ntfs_free_clusters(vol, runs[i].lcn, runs[i].length);
             }
 
-            ntfs_txn_log(txn,
-                         NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
-                         NTFS_LOG_OP_UPDATE_MAPPING, NULL, 0,
-                         inode, (uint16_t)attr_off);
+            if (txn)
+                ntfs_txn_log(txn,
+                             NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
+                             NTFS_LOG_OP_UPDATE_MAPPING, NULL, 0,
+                             inode, (uint16_t)attr_off);
 
             rc = ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
                                    NTFS_ATTR_DATA, NULL);
@@ -569,11 +557,12 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
             nrhdr.alloc_size = new_clusters * cs;
             nrhdr.real_size  = new_size;
 
-            ntfs_txn_log(txn,
-                         NTFS_LOG_OP_UPDATE_MAPPING, runs,
-                         (uint16_t)(run_count * sizeof(struct ntfs_data_run)),
-                         NTFS_LOG_OP_UPDATE_MAPPING, NULL, 0,
-                         inode, (uint16_t)attr_off);
+            if (txn)
+                ntfs_txn_log(txn,
+                             NTFS_LOG_OP_UPDATE_MAPPING, runs,
+                             (uint16_t)(run_count * sizeof(struct ntfs_data_run)),
+                             NTFS_LOG_OP_UPDATE_MAPPING, NULL, 0,
+                             inode, (uint16_t)attr_off);
 
             rc = rewrite_nonres_attr(rec, attr_off, runs, run_count,
                                       nrhdr.alloc_size, nrhdr.real_size);
@@ -589,8 +578,7 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
                             : vol->mft_lcn;
             uint64_t new_lcn = ntfs_alloc_clusters(vol, extra, hint);
             if (new_lcn == 0) {
-                ntfs_txn_abort(txn);
-                ntfs_txn_free(txn);
+                if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
                 kfree(rec);
                 return NTFS_ERR_FULL;
             }
@@ -603,8 +591,7 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
             } else {
                 if (run_count >= NTFS_MAX_WRITE_RUNS) {
                     ntfs_free_clusters(vol, new_lcn, extra);
-                    ntfs_txn_abort(txn);
-                    ntfs_txn_free(txn);
+                    if (txn) { ntfs_txn_abort(txn); ntfs_txn_free(txn); }
                     kfree(rec);
                     return NTFS_ERR_IO;
                 }
@@ -617,11 +604,12 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
             nrhdr.alloc_size = new_clusters * cs;
             nrhdr.real_size  = new_size;
 
-            ntfs_txn_log(txn,
-                         NTFS_LOG_OP_UPDATE_MAPPING, runs,
-                         (uint16_t)(run_count * sizeof(struct ntfs_data_run)),
-                         NTFS_LOG_OP_UPDATE_MAPPING, NULL, 0,
-                         inode, (uint16_t)attr_off);
+            if (txn)
+                ntfs_txn_log(txn,
+                             NTFS_LOG_OP_UPDATE_MAPPING, runs,
+                             (uint16_t)(run_count * sizeof(struct ntfs_data_run)),
+                             NTFS_LOG_OP_UPDATE_MAPPING, NULL, 0,
+                             inode, (uint16_t)attr_off);
 
             rc = rewrite_nonres_attr(rec, attr_off, runs, run_count,
                                       nrhdr.alloc_size, nrhdr.real_size);
@@ -629,12 +617,12 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
 
         if (rc == NTFS_OK) {
             update_std_info_times(rec, &hdr, now_ft);
-            ntfs_txn_commit(txn);
+            if (txn) ntfs_txn_commit(txn);
             rc = ntfs_write_mft_record(vol, inode, rec);
         } else {
-            ntfs_txn_abort(txn);
+            if (txn) ntfs_txn_abort(txn);
         }
-        ntfs_txn_free(txn);
+        if (txn) ntfs_txn_free(txn);
         kfree(rec);
         return rc;
     }
@@ -676,26 +664,24 @@ int ntfs_set_file_attributes(struct ntfs_volume *vol, uint64_t inode,
     }
 
     txn = ntfs_txn_begin(vol);
-    if (!txn) {
-        kfree(rec);
-        return NTFS_ERR_IO;
-    }
+    /* txn may be NULL if journal not loaded — continue without journaling */
 
     attr_off    = (uint32_t)(si_attr - rec);
     content_off = attr_off + ah.content_offset;
 
     /* Journal the attribute update */
-    ntfs_txn_log(txn,
-                 NTFS_LOG_OP_UPDATE_RESIDENT, &attrs, sizeof(uint32_t),
-                 NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
-                 inode, (uint16_t)(content_off + 0x20));
+    if (txn)
+        ntfs_txn_log(txn,
+                     NTFS_LOG_OP_UPDATE_RESIDENT, &attrs, sizeof(uint32_t),
+                     NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
+                     inode, (uint16_t)(content_off + 0x20));
 
     /* Patch DOS attrs at $STANDARD_INFORMATION +0x20 */
     ntfs_le32_write(rec + content_off + 0x20, attrs);
 
-    ntfs_txn_commit(txn);
+    if (txn) ntfs_txn_commit(txn);
     rc = ntfs_write_mft_record(vol, inode, rec);
-    ntfs_txn_free(txn);
+    if (txn) ntfs_txn_free(txn);
     kfree(rec);
 
     klog(LOG_DEBUG, "ntfs", "set_file_attrs: inode %llu attrs 0x%x",
@@ -742,10 +728,7 @@ int ntfs_set_file_time(struct ntfs_volume *vol, uint64_t inode,
     }
 
     txn = ntfs_txn_begin(vol);
-    if (!txn) {
-        kfree(rec);
-        return NTFS_ERR_IO;
-    }
+    /* txn may be NULL if journal not loaded — continue without journaling */
 
     attr_off    = (uint32_t)(si_attr - rec);
     content_off = attr_off + ah.content_offset;
@@ -754,10 +737,11 @@ int ntfs_set_file_time(struct ntfs_volume *vol, uint64_t inode,
     modify_ft = unix_to_filetime(modify_unix);
     access_ft = unix_to_filetime(access_unix);
 
-    ntfs_txn_log(txn,
-                 NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
-                 NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
-                 inode, (uint16_t)content_off);
+    if (txn)
+        ntfs_txn_log(txn,
+                     NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
+                     NTFS_LOG_OP_UPDATE_RESIDENT, NULL, 0,
+                     inode, (uint16_t)content_off);
 
     /* $STANDARD_INFORMATION timestamp layout:
      *   +0x00 creation_time
@@ -769,9 +753,9 @@ int ntfs_set_file_time(struct ntfs_volume *vol, uint64_t inode,
     ntfs_le64_write(rec + content_off + 0x10, modify_ft);  /* MFT-change = modify */
     ntfs_le64_write(rec + content_off + 0x18, access_ft);
 
-    ntfs_txn_commit(txn);
+    if (txn) ntfs_txn_commit(txn);
     rc = ntfs_write_mft_record(vol, inode, rec);
-    ntfs_txn_free(txn);
+    if (txn) ntfs_txn_free(txn);
     kfree(rec);
 
     klog(LOG_DEBUG, "ntfs",

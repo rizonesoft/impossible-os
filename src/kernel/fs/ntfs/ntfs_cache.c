@@ -20,6 +20,7 @@
 #include "kernel/fs/ntfs.h"
 #include "kernel/fs/ntfs_internal.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/heap.h"
 #include "kernel/klog.h"
 
 /* ---- Cache Entry Structure ---- */
@@ -51,8 +52,6 @@ int ntfs_cache_init(struct ntfs_volume *vol, uint32_t cache_size)
 {
     uint32_t i;
     uint32_t entry_array_bytes;
-    uint32_t entry_array_pages;
-    uintptr_t array_phys;
 
     if (!vol)
         return NTFS_ERR_IO;
@@ -63,19 +62,15 @@ int ntfs_cache_init(struct ntfs_volume *vol, uint32_t cache_size)
     if (cache_size == 0)
         cache_size = NTFS_MFT_CACHE_DEFAULT_SIZE;
 
-    /* Allocate the entry array */
+    /* Allocate the entry array via kmalloc (avoids PMM MMIO-hole pages) */
     entry_array_bytes = cache_size *
                         (uint32_t)sizeof(struct ntfs_mft_cache_entry);
-    entry_array_pages = (entry_array_bytes + 4095) / 4096;
-
-    array_phys = pmm_alloc_contiguous(entry_array_pages);
-    if (!array_phys) {
+    vol->mft_cache = (struct ntfs_mft_cache_entry *)kmalloc(entry_array_bytes);
+    if (!vol->mft_cache) {
         klog(LOG_WARN, "ntfs", "MFT cache: cannot allocate %u entry array",
              (uint64_t)cache_size, 0, 0);
         return NTFS_ERR_IO;
     }
-
-    vol->mft_cache = (struct ntfs_mft_cache_entry *)(uintptr_t)array_phys;
     vol->mft_cache_size = cache_size;
 
     /* Initialize all entries as empty */
@@ -85,25 +80,23 @@ int ntfs_cache_init(struct ntfs_volume *vol, uint32_t cache_size)
         vol->mft_cache[i].valid = 0;
         vol->mft_cache[i].pinned = 0;
 
-        /* Allocate per-entry record buffer (1 page for typical 1024-byte FRS) */
+        /* Allocate per-entry record buffer via kmalloc (avoids MMIO-hole) */
         {
-            uintptr_t buf_phys = pmm_alloc_contiguous(1);
-            if (!buf_phys) {
+            vol->mft_cache[i].record_buf = (uint8_t *)kmalloc(vol->frs_size);
+            if (!vol->mft_cache[i].record_buf) {
                 /* Failed — free everything allocated so far */
                 uint32_t j;
                 for (j = 0; j < i; j++) {
                     if (vol->mft_cache[j].record_buf)
-                        pmm_free_frame(
-                            (uintptr_t)vol->mft_cache[j].record_buf);
+                        kfree(vol->mft_cache[j].record_buf);
                 }
-                pmm_free_frame(array_phys);
+                kfree(vol->mft_cache);
                 vol->mft_cache = NULL;
                 klog(LOG_WARN, "ntfs",
                      "MFT cache: OOM at entry %u/%u",
                      (uint64_t)i, (uint64_t)cache_size, 0);
                 return NTFS_ERR_IO;
             }
-            vol->mft_cache[i].record_buf = (uint8_t *)(uintptr_t)buf_phys;
         }
     }
 

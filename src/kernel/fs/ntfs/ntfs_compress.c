@@ -360,11 +360,14 @@ int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
                 return -1;
             }
 
-            /* Copy requested range from decompressed buffer */
+            /* Copy requested range from decompressed buffer.
+             * Use cu_bytes (not decomp_result) as the available size because
+             * the buffer was pre-zeroed to cu_bytes — any bytes beyond
+             * decomp_result are valid zeros (sub-block padding). */
             {
                 uint32_t to_copy = (uint32_t)chunk;
-                if (offset_in_cu + to_copy > (uint32_t)decomp_result)
-                    to_copy = (uint32_t)decomp_result -
+                if (offset_in_cu + to_copy > (uint32_t)cu_bytes)
+                    to_copy = (uint32_t)cu_bytes -
                               (uint32_t)offset_in_cu;
                 ntfs_memcpy(buf + bytes_read,
                             decomp_buf + offset_in_cu, to_copy);

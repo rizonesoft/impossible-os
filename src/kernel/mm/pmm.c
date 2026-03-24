@@ -88,12 +88,27 @@ void pmm_init(void)
     uintptr_t kernel_end_phys;
     uintptr_t bitmap_end;
 
-    /* Step 1: Find the highest usable physical address */
+    /* Step 1: Find the highest usable physical address.
+     *
+     * Only consider memory types that represent actual RAM (conventional,
+     * loader, boot-services).  MMIO and runtime-services regions can have
+     * addresses well above physical RAM (e.g. 0xFED40000) — including
+     * them would make the bitmap cover the MMIO hole and pmm_alloc would
+     * hand out non-existent pages.
+     */
     for (i = 0; i < g_boot_info.mmap_count; i++) {
-        uint64_t region_end;
-        region_end = g_boot_info.mmap[i].base_addr + g_boot_info.mmap[i].length;
-        if (region_end > highest_addr)
-            highest_addr = region_end;
+        uint32_t utype = g_boot_info.mmap[i].uefi_memory_type;
+        if (utype == UEFI_MMAP_CONVENTIONAL ||
+            utype == UEFI_MMAP_LOADER_CODE ||
+            utype == UEFI_MMAP_LOADER_DATA ||
+            utype == UEFI_MMAP_BOOT_SERVICES_CODE ||
+            utype == UEFI_MMAP_BOOT_SERVICES_DATA) {
+            uint64_t region_end;
+            region_end = g_boot_info.mmap[i].base_addr +
+                         g_boot_info.mmap[i].length;
+            if (region_end > highest_addr)
+                highest_addr = region_end;
+        }
     }
 
     /* Cap at 4 GiB for now (our identity map covers this range) */

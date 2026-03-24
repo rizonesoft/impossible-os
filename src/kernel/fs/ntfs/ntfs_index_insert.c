@@ -479,13 +479,13 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     /* Convert to entries-only sizes */
                     uint32_t total_sz = (total_sz_raw >= entries_off)
                                          ? total_sz_raw - entries_off : 0;
-                    uint32_t alloc_sz = (alloc_sz_raw >= entries_off)
-                                         ? alloc_sz_raw - entries_off : 0;
                     uint8_t *eb = node + entries_off;
+                    (void)alloc_sz_raw;
 
-                    /* Check fit */
-                    int fits = (total_sz + cur_len <= alloc_sz) &&
-                               ((uint32_t)(root_ah.total_length + cur_len) <=
+                    /* Check if MFT record can accommodate the grown root.
+                     * $INDEX_ROOT is resident and resizable — the node header's
+                     * alloc_sz is NOT the constraint; MFT free space is. */
+                    int fits = ((uint32_t)(root_ah.total_length + cur_len) <=
                                 hdr.alloc_size - hdr.used_size + root_ah.total_length);
 
                     if (fits) {
@@ -495,6 +495,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                         uint32_t new_cs = old_cs + cur_len;
                         uint8_t *new_root = (uint8_t *)kmalloc(new_cs);
                         if (!new_root) { rc = NTFS_ERR_IO; kfree(rec); break; }
+
 
                         ntfs_memcpy(new_root, root_content, old_cs);
                         /* Shift entries from ins_off */
@@ -509,6 +510,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                                         entries_off + total_sz + cur_len);
                         ntfs_le32_write(new_node + 0x08,
                                         entries_off + total_sz + cur_len);
+
 
                         /* Update root attr */
                         ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
@@ -614,8 +616,8 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                                     /* node header */
                                     uint8_t *nh2 = new_root_buf + 0x10;
                                     ntfs_le32_write(nh2 + 0x00, entries_off);
-                                    ntfs_le32_write(nh2 + 0x04, sentinel_len);
-                                    ntfs_le32_write(nh2 + 0x08, sentinel_len);
+                                    ntfs_le32_write(nh2 + 0x04, entries_off + sentinel_len);
+                                    ntfs_le32_write(nh2 + 0x08, entries_off + sentinel_len);
                                     nh2[0x0C] = 0x01; /* has_children */
                                     /* Sentinel with child VCN */
                                     uint8_t *sent = nh2 + entries_off;

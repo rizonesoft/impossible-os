@@ -303,7 +303,10 @@ int ntfs_index_delete(struct ntfs_volume *vol,
         const uint8_t *root_content = root_attr + root_ah.content_offset;
         uint8_t *node               = (uint8_t *)root_content + 0x10;
         uint32_t entries_off        = ntfs_le32(node + 0x00);
-        uint32_t total_sz           = ntfs_le32(node + 0x04);
+        uint32_t total_sz_raw       = ntfs_le32(node + 0x04);
+        /* Convert to entries-only size (IndexLength includes entries_off) */
+        uint32_t total_sz           = (total_sz_raw >= entries_off)
+                                       ? total_sz_raw - entries_off : 0;
         uint8_t *eb                 = node + entries_off;
 
         uint32_t found_off;
@@ -316,21 +319,24 @@ int ntfs_index_delete(struct ntfs_volume *vol,
                                                  &child_vcn, &is_internal);
         if (found && !is_internal) {
             /* Leaf match in root: remove directly */
-            uint32_t new_total = total_sz - found_len;
-            uint32_t new_root_size = root_ah.content_length - found_len;
-            uint8_t *new_root = (uint8_t *)kmalloc(new_root_size);
+            uint32_t old_cs = root_ah.content_length;
+            uint32_t new_root_size = old_cs - found_len;
+            /* Allocate at FULL old size to safely remove in-place */
+            uint8_t *new_root = (uint8_t *)kmalloc(old_cs);
             if (!new_root) {
                 kfree(rec);
                 if (txn) ntfs_txn_abort(txn); if (txn) ntfs_txn_free(txn);
                 return NTFS_ERR_IO;
             }
-            ntfs_memcpy(new_root, root_content, root_ah.content_length);
+            ntfs_memcpy(new_root, root_content, old_cs);
             /* Shift entries within new_root */
             uint8_t *nr_node = new_root + 0x10;
             uint8_t *nr_eb   = nr_node + entries_off;
+            uint32_t new_total = total_sz;
             remove_entry_bytes(nr_eb, &new_total, found_off, found_len);
-            ntfs_le32_write(nr_node + 0x04, new_total);
-            ntfs_le32_write(nr_node + 0x08, new_total);
+            /* Write back entries-only size + entries_off for on-disk format */
+            ntfs_le32_write(nr_node + 0x04, entries_off + new_total);
+            ntfs_le32_write(nr_node + 0x08, entries_off + new_total);
 
             ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
                               NTFS_ATTR_INDEX_ROOT, "$I30");
