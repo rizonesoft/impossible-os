@@ -582,13 +582,22 @@ item as `[x]`, run `bash scripts/build.sh clean`, and commit as
 > the same physical pages at multiple virtual addresses. This depends on the page table
 > management infrastructure (TODO-023-Virtual-Memory.md).
 
-- [ ] Reserve 3×N virtual address range for each ring buffer (header + data + data mirror)
+> [!IMPORTANT]
+> **512 MB memory budget — all VA allocations must be dynamic and per-ring.**
+> Do NOT reserve a large static virtual address pool at boot. Allocate the 3×N VA
+> range on demand when a channel is opened and release it when the channel closes.
+> On a 512 MB Hyper-V guest the kernel VA space is tight; wasting contiguous VA on
+> channels that aren't open will cause allocation failures elsewhere. The fallback
+> two-chunk copy path is mandatory and must be exercised if `vmm_alloc_va()` fails.
+
+- [ ] Reserve 3×N virtual address range **per-ring on `vmbus_open_channel()`** — never at boot
 - [ ] Map physical data pages at virtual offset `header_size` (normal mapping)
 - [ ] Map same physical data pages at virtual offset `header_size + data_size` (mirror)
+- [ ] Free the triple-mapped VA range on `vmbus_close_channel()` / teardown
 - [ ] Replace two-chunk `vmbus_memcpy()` with single `memcpy()` for ring read/write
 - [ ] Verify wrap-around reads/writes seamlessly continue into mirror mapping
 - [ ] Benchmark: compare two-chunk copy vs triple-mapped single copy latency
-- [ ] Fallback: retain two-chunk copy if virtual memory mapping unavailable
+- [ ] **Fallback (mandatory):** retain two-chunk copy if `vmm_alloc_va()` returns NULL
 - [ ] Commit: `"hyperv: VMBus ring buffer triple-mapping"`
 
 ---
