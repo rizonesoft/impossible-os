@@ -18,7 +18,7 @@
 #   2. Build in WSL2: bash scripts/build.sh
 Param(
     [ValidateSet('auto','whpx','tcg')]
-    [string]$Accel = 'auto',
+    [string]$Accel = 'tcg'   # TCG default: WHPX hangs with xHCI device,
     [switch]$Build = $false
 )
 

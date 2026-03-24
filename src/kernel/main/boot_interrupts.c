@@ -31,6 +31,7 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/partition.h"
 #include "kernel/drivers/ahci.h"
+#include "kernel/drivers/xhci.h"
 #include "main/main_internal.h"
 
 void boot_interrupts_init(void)
@@ -197,6 +198,7 @@ void boot_interrupts_init(void)
     boot_splash_status("Detecting hardware...");
     boot_splash_status("Scanning PCI bus...");
     pci_scan();
+    xhci_init();
     boot_splash_status("Initializing network...");
     rtl8139_init();
     net_init();
