@@ -198,8 +198,7 @@ SINT2 with vector `0xF0` and AutoEOI, and enables SynIC via `HV_X64_MSR_SCONTROL
 
 ## 4. Protocol Version Negotiation
 
-**Prompt:** ~~Implement~~ **Verify** VMBus protocol version negotiation. Confirm `vmbus.c`
-sends `CHANNELMSG_INITIATE_CONTACT` with the highest supported version, waits for
+**Prompt:** ~~Implement~~ **Verify** VMBus protocol version negotiation. Confirm `vmbus.c` sends `CHANNELMSG_INITIATE_CONTACT` with the highest supported version, waits for
 `CHANNELMSG_VERSION_RESPONSE`, and falls back through progressively older versions on
 rejection. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`.
 
@@ -584,13 +583,7 @@ and confirm `=== BUILD OK ===`.
 
 ## 16. Channel Teardown and VMBus Unload
 
-**Prompt:** Implement orderly channel teardown and full VMBus stack unload. For individual
-channels: send `CHANNELMSG_CLOSECHANNEL`, tear down GPADLs via `GPADL_TEARDOWN` →
-`GPADL_TORNDOWN`, free ring buffer memory. For full VMBus unload: send
-`CHANNELMSG_UNLOAD`, wait for `CHANNELMSG_UNLOAD_RESPONSE`, disable SynIC, free all pages.
-After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`,
-and commit as `"hyperv: VMBus channel teardown and unload"`. Add notes directly in this
-TODO section.
+**Prompt:** Implement orderly channel teardown and full VMBus stack unload. For individual channels: send `CHANNELMSG_CLOSECHANNEL`, tear down GPADLs via `GPADL_TEARDOWN` → `GPADL_TORNDOWN`, free ring buffer memory. For full VMBus unload: send `CHANNELMSG_UNLOAD`, wait for `CHANNELMSG_UNLOAD_RESPONSE`, disable SynIC, free all pages. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: VMBus channel teardown and unload"`. Add notes directly in this TODO section.
 
 - [ ] Implement `vmbus_close_channel(channel)`:
   - [ ] Send `CHANNELMSG_CLOSECHANNEL` with `child_relid`
@@ -612,11 +605,7 @@ TODO section.
 
 ## 17. Channel Hot-Remove (Rescind)
 
-**Prompt:** Implement handling for `CHANNELMSG_RESCIND_CHANNELOFFER` — the host's mechanism
-for hot-removing synthetic devices at runtime. When a rescind message arrives, the driver
-must quiesce the affected VSC, close the channel, tear down GPADLs, and notify the device
-layer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`,
-and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Implement handling for `CHANNELMSG_RESCIND_CHANNELOFFER` — the host's mechanism for hot-removing synthetic devices at runtime. When a rescind message arrives, the driver must quiesce the affected VSC, close the channel, tear down GPADLs, and notify the device layer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Handle `CHANNELMSG_RESCIND_CHANNELOFFER` in message dispatch
 - [ ] Look up channel by `child_relid` from rescind message
