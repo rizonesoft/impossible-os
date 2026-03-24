@@ -136,9 +136,11 @@ if ($qemuImg) {
 }
 
 # ---- Strip NTFS sparse/compressed attributes (Hyper-V 0xC03A001A) ----
-# qemu-img may create the VHDX with the NTFS sparse flag set even when
-# -o subformat=fixed is used. Hyper-V checks the NTFS file attributes,
-# not the VHDX internal format, and refuses to start if sparse/compressed.
+# NOTE: This operates on the .vhdx container file as stored on the Windows
+# host (NTFS). It has no effect on the partitions inside the image
+# (EFI FAT32 + Logs FAT32 + IXFS). Hyper-V checks the host-side NTFS file
+# attributes on the .vhdx before mounting it and refuses if sparse or
+# compressed — even when qemu-img already used subformat=fixed internally.
 Write-Status "Clearing NTFS sparse/compression attributes on VHDX..."
 $fsutil = "$env:SystemRoot\System32\fsutil.exe"
 & $fsutil sparse setflag $DISK_VHDX 0 2>&1 | Out-Null
