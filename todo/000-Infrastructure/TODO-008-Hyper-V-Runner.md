@@ -59,6 +59,19 @@ UEFI Firmware (Hyper-V)
 > `TODO-010-Bootloader.md §1.5` (MMIO page tables), and
 > `TODO-010.96-QEMU-Compatibility.md` (AHCI interrupt fixes).
 
+> | File                                    | Scope                                                           |
+> | --------------------------------------- | --------------------------------------------------------------- |
+> | `TODO-008-Hyper-V-Runner.md`            | Master file — sections, priorities, OS comparison               |
+> | `TODO-008.01-VMBus.md`                  | VMBus core: hypercall page, SynIC, version negotiation, rings   |
+> | `TODO-008.02-SCSI-Storage-Driver.md`    | Synthetic SCSI (storvsc): VSTOR protocol, DMA alignment         |
+> | `TODO-008.03-Synthetic-HID.md`          | Synthetic HID: keyboard + mouse via VMBus                       |
+> | `TODO-008.04-Synthetic-Video-Driver.md` | Synthetic video (hvfb): resolution, Enhanced Session Mode       |
+> | `TODO-008.05-Synthetic-Network-Driver.md` | Synthetic NIC (netvsc): RNDIS protocol, Ethernet integration  |
+> | `TODO-008.06-Page-Table-MMIO.md`        | MMIO safety: UEFI memory map, UC page attributes, MCE guard     |
+> | `TODO-008.07-Power-Management.md`       | Power: IC services, shutdown/timesync/heartbeat, ACPI S4/S5     |
+> | `TODO-008.08-Guest-Additions.md`        | Guest additions: auto-detect, VMBus auto-init, driver probe     |
+> | `TODO-008.09-Enlightenments.md`         | Enlightenments: TSC page, HyperClear, spinlock, VPCI            |
+
 ### Dependency Graph
 
 ```mermaid
@@ -84,18 +97,21 @@ graph TD
     %% Core chain: infrastructure → VMBus → drivers
     S1 --> S2
     S2 --> S3
-    S9 --> S3
     S3 --> S4
     S3 --> S5
     S3 --> S6
     S3 --> S7
-    S4 --> S8
+    S3 --> S8
 
-    %% Integration comes last
+    %% MMIO safety is a parallel prereq (VMBus works without it but needs it for production)
+    S2 --> S9
+
+    %% Integration comes last — needs all synthetic drivers
     S4 --> S10
-    S5 --> S11
     S4 --> S11
+    S5 --> S11
     S6 --> S11
+    S7 --> S11
     S8 --> S12
     S11 --> S12
 
@@ -112,14 +128,14 @@ graph TD
 | P1   | §1 Test Runner Script               | `run-hyperv.ps1` + `.bat` — one-click Hyper-V Gen 2 testing        | —                       |   ✅   |
 | P1   | §2 APIC-Only Interrupt Mode         | `PCAT_COMPAT` gate — PIC skipped on Gen 2                          | 010.99 §1–3             |   ✅   |
 | P2   | §9 Page Table MMIO Safety           | UC mapping for MMIO regions — prevents MCE on VMBus access         | 010 §1.5                |   ⬜   |
-| P2   | §3 VMBus Core Protocol              | Hypercall page, SynIC, version negotiation, channel enumeration    | P1 (§2) + P2 (§9)      |   ✅   |
+| P2   | §3 VMBus Core Protocol              | Hypercall page, SynIC, version negotiation, channel enumeration    | P1 (§2) + P2 (§9)       |   ✅   |
 | P3   | §4 Synthetic SCSI (storvsc)         | Disk access via SCSI over VMBus — **#1 blocker for Gen 2 boot**    | P2 (§3)                 |   ✅   |
 | P3   | §5 Synthetic HID Input              | Keyboard + mouse via VMBus — desktop becomes interactive           | P2 (§3)                 |   ✅   |
 | P4   | §6 Synthetic Video (hvfb)           | Proper VMBus video — runtime resolution changes, no display freeze | P2 (§3)                 |   ⬜   |
-| P4   | §8 Hyper-V Synthetic Timer          | Per-vCPU µs-precision timer — consistent timing across hosts       | P3 (§4)                 |   ⬜   |
+| P4   | §8 Hyper-V Synthetic Timer          | Per-vCPU µs-precision timer — consistent timing across hosts       | P2 (§3)                 |   ⬜   |
 | P5   | §7 Synthetic NIC (netvsc)           | RNDIS-based networking on Hyper-V                                  | P2 (§3)                 |   ⬜   |
 | P5   | §10 Power Management                | Shutdown / reboot validation + hypercall fallback                  | P3 (§4)                 |   ⬜   |
-| P6   | §11 Guest Additions Integration     | Auto-detect Hyper-V → activate all synthetic drivers               | P3–P4 (§4+§5+§6)       |   ⬜   |
+| P6   | §11 Guest Additions Integration     | Auto-detect Hyper-V → activate all synthetic drivers               | P3–P5 (§4+§5+§6+§7)    |   ⬜   |
 | P7   | §12 Hyper-V Enlightenments          | HyperClear, VPCI, TSC page — competitive differentiator            | P6 (§11)                |   ⬜   |
 
 > [!NOTE]
@@ -519,11 +535,10 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 | ⭐ | **Spinlock enlightenment**           | ✅ Native                         | ✅ `hv_spinlock.c`                        | ⬜ §12.4 P3 — **hypervisor-aware spin waits** 🚀        |
 | 💎 | Gen 2 Hyper-V boot (full)            | ✅ Native                         | ✅ With hv_* drivers                      | ⬜ **§1-§11 required (§1-§5 done)**                     |
 
-> **After P0+P1 items (§1-§5 done):** Impossible OS has the basic Hyper-V Gen 2 boot stack —
-> disk access, keyboard/mouse input, and GOP framebuffer all working.
-> **After P2–P3 items (§6-§9):** Fully interactive with proper synthetic video, networking,
-> MMIO safety, and consistent timing — matches Linux feature-for-feature.
-> **After P3 exclusive features (§12):** Exceeds both Windows guests and Linux —
-> zero-VM-exit clock reads, paravirt TLB flush, hypervisor-aware spinlocks.
-> **After P4 items (§10-§11):** Full integration with guest additions framework
-> and power management — production-ready Hyper-V guest.
+> **After Done+P0 items (§1–§5, §9):** Impossible OS has the Hyper-V Gen 2 boot stack —
+> disk access, keyboard/mouse input, GOP framebuffer, and MMIO-safe page tables.
+> **After P1–P2 items (§6–§8):** Fully interactive with proper synthetic video, networking,
+> and consistent timing — matches Linux feature-for-feature.
+> **After P3 items (§10–§12):** Full integration with guest additions framework,
+> power management, and enlightenments (TSC page, HyperClear, spinlock) — exceeds
+> both Windows guests and Linux in VM performance.
