@@ -152,8 +152,8 @@ graph TD
 | 💎 | P0   | PCI driver (`pci.c`)                     | —                       |   ✅   |
 | 💎 | P1   | §1.1 xHCI PCI Discovery & BAR Mapping    | P0                      |   ✅   |
 | 💎 | P1   | §1.2 xHCI Controller Initialization      | P1 (§1.1)               |   ✅   |
-| 💎 | P1   | §1.3 TRB Ring Architecture               | P1 (§1.2)               |   ⬜   |
-| 💎 | P2   | §2.1 USB Device Enumeration              | P1 (§1.3)               |   ⬜   |
+| 💎 | P1   | §1.3 TRB Ring Architecture               | P1 (§1.2)               |   ✅   |
+| 💎 | P2   | §2.1 USB Device Enumeration              | P1 (§1.3)               |   ✅   |
 | 💎 | P2   | §2.2 MSC Identification & Endpoint Cfg   | P2 (§2.1)               |   ⬜   |
 | 💎 | P2   | §2.3 MSI/MSI-X Interrupt Handling        | P1 (§1.3)               |   ⬜   |
 | 💎 | P3   | §3.1 BOT: CBW/CSW Transport              | P2 (§2.2)               |   ⬜   |
@@ -273,24 +273,24 @@ graph TD
 
 ### 1.3 TRB Ring Architecture
 
-**Prompt:** Allocate and initialize the three TRB ring types per USB MSC spec §"Transfer Request Block (TRB) Architecture". Command Ring: 64-byte aligned, 256 TRBs, ends with Link TRB pointing back to start. Event Ring: 64-byte aligned, 256 TRBs, set up via ERST (Event Ring Segment Table). Transfer Rings: 16-byte aligned per endpoint, 256 TRBs each. Each TRB is 16 bytes: `{parameter(8B), status(4B), control(4B)}`. The cycle bit (control bit 0) is the ownership toggle. Write CRCR (Command Ring), configure ERSTSZ/ERSTBA/ERDP for Event Ring. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: TRB ring architecture"`. After implementation, save gotchas to MCP memory.
+**✅ VERIFICATION —** TRB ring architecture implemented in `xhci_ring.h` and `xhci_ring.c`. Verify: `bash scripts/build.sh run-usb` shows `Command Ring at 0x738000, 256 TRBs`, `Event Ring at 0x739000, ERST at 0x73A000, 256 TRBs`, `TRB rings initialized, interrupts enabled`. Command Ring has Link TRB at slot 255 with toggle cycle. ERST has 1 segment. ERSTSZ/ERSTBA/ERDP written to Interrupter 0. `xhci_cmd_submit` and `xhci_event_poll` implemented. Committed as `usb: TRB ring architecture`.
 
-- [ ] Define `struct xhci_trb { uint64_t parameter; uint32_t status; uint32_t control; }`
-- [ ] Allocate Command Ring: `pmm_alloc_contiguous()`, 64B aligned, 256 × 16B, zero-fill
-  - [ ] Set Link TRB at end: type=6, pointer to ring start, toggle cycle bit
-  - [ ] Write CRCR (Operational + `0x18`) — physical address | cycle bit
-  - [ ] Initialize producer state: `cmd_ring.enqueue = 0`, `cmd_ring.cycle = 1`
-- [ ] Allocate Event Ring Segment: `pmm_alloc_contiguous()`, 64B aligned, 256 × 16B, zero-fill
-  - [ ] Allocate ERST entry: `{ ring_segment_base, ring_segment_size=256, reserved=0 }`
-  - [ ] Write ERSTSZ (Runtime + `0x28`) = 1 (one segment)
-  - [ ] Write ERSTBA (Runtime + `0x30`) — 64-bit physical address of ERST, 64B aligned
-  - [ ] Write ERDP (Runtime + `0x38`) — initial dequeue pointer = segment base
-  - [ ] Initialize consumer state: `evt_ring.dequeue = 0`, `evt_ring.cycle = 1`
-- [ ] Enable interrupts: USBCMD.INTE = 1, IMAN.IE = 1 (Runtime + `0x20`)
-- [ ] Implement `xhci_cmd_submit(trb)` — enqueue TRB, advance tail, ring doorbell 0
-- [ ] Implement `xhci_event_poll()` — check phase bit, process event, advance ERDP
-- [ ] All rings must not cross 64 KiB physical boundaries
-- [ ] Commit: `"usb: TRB ring architecture"`
+- [x] Define `struct xhci_trb { uint64_t parameter; uint32_t status; uint32_t control; }`
+- [x] Allocate Command Ring: `pmm_alloc_contiguous()`, 64B aligned, 256 × 16B, zero-fill
+  - [x] Set Link TRB at end: type=6, pointer to ring start, toggle cycle bit
+  - [x] Write CRCR (Operational + `0x18`) — physical address | cycle bit
+  - [x] Initialize producer state: `cmd_ring.enqueue = 0`, `cmd_ring.cycle = 1`
+- [x] Allocate Event Ring Segment: `pmm_alloc_contiguous()`, 64B aligned, 256 × 16B, zero-fill
+  - [x] Allocate ERST entry: `{ ring_segment_base, ring_segment_size=256, reserved=0 }`
+  - [x] Write ERSTSZ (Runtime + `0x28`) = 1 (one segment)
+  - [x] Write ERSTBA (Runtime + `0x30`) — 64-bit physical address of ERST, 64B aligned
+  - [x] Write ERDP (Runtime + `0x38`) — initial dequeue pointer = segment base
+  - [x] Initialize consumer state: `evt_ring.dequeue = 0`, `evt_ring.cycle = 1`
+- [x] Enable interrupts: USBCMD.INTE = 1, IMAN.IE = 1 (Runtime + `0x20`)
+- [x] Implement `xhci_cmd_submit(trb)` — enqueue TRB, advance tail, ring doorbell 0
+- [x] Implement `xhci_event_poll()` — check phase bit, process event, advance ERDP
+- [x] All rings must not cross 64 KiB physical boundaries
+- [x] Commit: `"usb: TRB ring architecture"`
 
 ---
 
@@ -298,28 +298,28 @@ graph TD
 
 ### 2.1 USB Device Enumeration
 
-**Prompt:** Implement the USB enumeration sequence per USB MSC spec §"Enumeration Sequence". On Port Status Change Event: read PORTSC to confirm connection, determine port speed. Reset port (PORTSC.PR=1, wait for Reset Change). Submit Enable Slot Command TRB (type 9) on Command Ring, wait for Command Completion Event to get assigned slot ID. Build Input Context with Slot Context (speed, route string, root hub port) and Endpoint 0 Context (max packet size from port speed: 8 for LS, 64 for FS/HS, 512 for SS). Submit Address Device Command TRB (type 11). Issue GET_DESCRIPTOR (Device, 18 bytes) via control transfer on EP0. Issue GET_DESCRIPTOR (Configuration) in two stages: 9-byte header then full wTotalLength. Issue SET_CONFIGURATION. Submit Configure Endpoint Command TRB (type 12) with all discovered endpoints. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: device enumeration"`. After implementation, save gotchas to MCP memory.
+**✅ VERIFICATION —** USB device enumeration implemented in `src/kernel/drivers/xhci_dev.c` and `include/kernel/drivers/xhci_dev.h`. Verify: `bash scripts/build.sh run-usb` shows `[USB] Port 1: device connected, speed=high`, `Slot 1 enabled`, `Device addressed (slot 1)`, `Device descriptor: USB 2.00, VID=... PID=...`, `Device ...enumerated on port 1 (slot 1)`. Full sequence: port scan → PORTSC CCS/speed read → port reset (PR=1, wait PRC) → Enable Slot Command → Output/Input Context allocation (CSZ-aware) → EP0 Transfer Ring → Address Device Command → GET_DESCRIPTOR Device 18B → GET_DESCRIPTOR Config two-stage (9B header, validate wTotalLength≤4096, full read) → SET_CONFIGURATION → Configure Endpoint Command. Committed as `usb: device enumeration`.
 
-- [ ] Detect Port Status Change Event TRB (type 34) from Event Ring
-- [ ] Read PORTSC (Operational + `0x400` + port × `0x10`): confirm CCS (bit 0), read speed (13:10)
-- [ ] Reset port: set PORTSC.PR = 1, wait for Port Reset Change (PRC bit)
-- [ ] Submit Enable Slot Command (TRB type 9), wait for completion — get slot_id
-- [ ] Allocate Device Context: `pmm_alloc_contiguous()`, 64B aligned, zero-fill
-  - [ ] Store physical address in DCBAA[slot_id]
-- [ ] Build Input Context: Slot Context (speed, port number) + EP0 Context (max packet size)
-- [ ] Submit Address Device Command (TRB type 11), wait for completion
-- [ ] Control transfer: GET_DESCRIPTOR (Device, type=0x01, 18 bytes)
-  - [ ] Build Setup Stage TRB (type 2) + Data Stage TRB (type 3) + Status Stage TRB (type 4)
-  - [ ] Ring EP0 doorbell: `Doorbell[slot_id] = 1` (DCI for EP0 IN)
-  - [ ] Parse `usb_device_descriptor` — bcdUSB, idVendor, idProduct, bNumConfigurations
-- [ ] Control transfer: GET_DESCRIPTOR (Configuration, type=0x02)
-  - [ ] First: request 9 bytes to read wTotalLength
-  - [ ] Validate wTotalLength ≤ 4096 (cap against malicious devices)
-  - [ ] Then: allocate buffer, request full wTotalLength bytes
-- [ ] Control transfer: SET_CONFIGURATION (bConfigurationValue from config descriptor)
-- [ ] Submit Configure Endpoint Command (TRB type 12) with discovered endpoints
-- [ ] Log: `[USB] Device %04x:%04x enumerated on port %u (slot %u)`
-- [ ] Commit: `"usb: device enumeration"`
+- [x] Detect Port Status Change Event TRB (type 34) from Event Ring
+- [x] Read PORTSC (Operational + `0x400` + port × `0x10`): confirm CCS (bit 0), read speed (13:10)
+- [x] Reset port: set PORTSC.PR = 1, wait for Port Reset Change (PRC bit)
+- [x] Submit Enable Slot Command (TRB type 9), wait for completion — get slot_id
+- [x] Allocate Device Context: `pmm_alloc_contiguous()`, 64B aligned, zero-fill
+  - [x] Store physical address in DCBAA[slot_id]
+- [x] Build Input Context: Slot Context (speed, port number) + EP0 Context (max packet size)
+- [x] Submit Address Device Command (TRB type 11), wait for completion
+- [x] Control transfer: GET_DESCRIPTOR (Device, type=0x01, 18 bytes)
+  - [x] Build Setup Stage TRB (type 2) + Data Stage TRB (type 3) + Status Stage TRB (type 4)
+  - [x] Ring EP0 doorbell: `Doorbell[slot_id] = 1` (DCI for EP0 IN)
+  - [x] Parse `usb_device_descriptor` — bcdUSB, idVendor, idProduct, bNumConfigurations
+- [x] Control transfer: GET_DESCRIPTOR (Configuration, type=0x02)
+  - [x] First: request 9 bytes to read wTotalLength
+  - [x] Validate wTotalLength ≤ 4096 (cap against malicious devices)
+  - [x] Then: allocate buffer, request full wTotalLength bytes
+- [x] Control transfer: SET_CONFIGURATION (bConfigurationValue from config descriptor)
+- [x] Submit Configure Endpoint Command (TRB type 12) with discovered endpoints
+- [x] Log: `[USB] Device %04x:%04x enumerated on port %u (slot %u)`
+- [x] Commit: `"usb: device enumeration"`
 
 ### 2.2 MSC Identification & Endpoint Configuration
 
@@ -752,20 +752,20 @@ graph TD
 | 💎 | 🟠 P1    | §4.1 REQUEST SENSE Error Decoding       | Detailed error reporting for failed commands                    |
 | 💎 | 🟠 P1    | §4.2 Reset Recovery (3-Step)            | Handle phase errors and stalled endpoints                       |
 | 💎 | 🟠 P1    | §4.3 Retry Policy & Timeout Handling    | Robust I/O with retries and timeouts                            |
-| 💎 | 🟠 P1    | §2.3 MSI/MSI-X Interrupt Handling          | Replace polling with interrupt-driven I/O                       |
+| 💎 | 🟠 P1    | §2.3 MSI/MSI-X Interrupt Handling       | Replace polling with interrupt-driven I/O                       |
 | 💎 | 🟡 P2    | §5.1 Hot-Plug Detection                 | Dynamic connect + auto-mount + desktop notification             |
 | 💎 | 🟡 P2    | §5.2 Surprise Removal & Safe Eject      | Graceful disconnect without data loss                           |
 | 💎 | 🟡 P2    | §6.1 Multi-LUN Support                  | Multi-slot card readers, multi-partition devices                |
 | 💎 | 🟡 P2    | §6.2 Scatter-Gather (64 KiB TRB Split)  | Large transfers without boundary violations                     |
-| 💎 | 🟢 P3    | §6.3 Defensive Descriptor Validation     | Security hardening against malicious USB devices                |
-| 💎 | 🟢 P3    | §7.1 Safe Eject (START STOP UNIT)        | User-initiated unmount + media eject                            |
-| 💎 | 🟢 P3    | §7.2 USB Hub Traversal                   | Devices behind hubs — multi-tier topology                       |
-| ⭐ | 🟢 P3    | §8.1 Adaptive I/O Coalescing             | 🚀 **Exclusive** — request merging for throughput               |
-| ⭐ | 🟢 P3    | §8.2 USB Telemetry Dashboard             | 🚀 **Exclusive** — per-device latency/IOPS GUI                 |
-| ⭐ | 🟢 P3    | §8.3 Predictive Prefetch                 | 🚀 **Exclusive** — driver-level sequential read-ahead           |
-| ⭐ | 🟢 P3    | §8.4 Safe Eject UX                       | 🚀 **Exclusive** — polished tray icon + progress + confirmation |
-| 💎 | 🔵 P4    | §9.1 IOMMU DMA Isolation                 | Restrict xHCI DMA to allocated pages                            |
-| 💎 | 🔵 P4    | §9.2 UASP (USB Attached SCSI)            | USB 3.0 bulk streams for 40–70% faster throughput               |
+| 💎 | 🟢 P3    | §6.3 Defensive Descriptor Validation    | Security hardening against malicious USB devices                |
+| 💎 | 🟢 P3    | §7.1 Safe Eject (START STOP UNIT)       | User-initiated unmount + media eject                            |
+| 💎 | 🟢 P3    | §7.2 USB Hub Traversal                  | Devices behind hubs — multi-tier topology                       |
+| ⭐ | 🟢 P3    | §8.1 Adaptive I/O Coalescing            | 🚀 **Exclusive** — request merging for throughput               |
+| ⭐ | 🟢 P3    | §8.2 USB Telemetry Dashboard            | 🚀 **Exclusive** — per-device latency/IOPS GUI                  |
+| ⭐ | 🟢 P3    | §8.3 Predictive Prefetch                | 🚀 **Exclusive** — driver-level sequential read-ahead           |
+| ⭐ | 🟢 P3    | §8.4 Safe Eject UX                      | 🚀 **Exclusive** — polished tray icon + progress + confirmation |
+| 💎 | 🔵 P4    | §9.1 IOMMU DMA Isolation                | Restrict xHCI DMA to allocated pages                            |
+| 💎 | 🔵 P4    | §9.2 UASP (USB Attached SCSI)           | USB 3.0 bulk streams for 40–70% faster throughput               |
 
 ---
 

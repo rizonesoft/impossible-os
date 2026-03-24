@@ -9,6 +9,7 @@
 
 #include "kernel/drivers/xhci.h"
 #include "kernel/drivers/xhci_ring.h"
+#include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/pmm.h"
@@ -318,6 +319,9 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
          (uint64_t)hc->max_intrs,
          (uint64_t)hc->max_scratchpads);
 
+    /* Step 11: Enumerate any already-connected devices */
+    xhci_enumerate_ports(hc);
+
     return 0;
 }
 
@@ -361,6 +365,13 @@ const struct xhci_controller *xhci_get_controller(int index)
 {
     if (index < 0 || index >= num_controllers)
         return (const struct xhci_controller *)0;
+    return &controllers[index];
+}
+
+struct xhci_controller *xhci_get_controller_mut(int index)
+{
+    if (index < 0 || index >= num_controllers)
+        return (struct xhci_controller *)0;
     return &controllers[index];
 }
 

@@ -27,8 +27,14 @@ struct xhci_trb {
 #define XHCI_TRB_TOGGLE_CYCLE   (1 << 1)    /* Toggle Cycle (Link TRB only) */
 #define XHCI_TRB_CHAIN          (1 << 4)    /* Chain bit */
 #define XHCI_TRB_IOC            (1 << 5)    /* Interrupt On Completion */
+#define XHCI_TRB_IDT            (1 << 6)    /* Immediate Data (Setup Stage) */
 #define XHCI_TRB_TYPE_SHIFT     10
 #define XHCI_TRB_TYPE_MASK      (0x3F << 10) /* bits 15:10 */
+#define XHCI_TRB_DIR_IN         (1 << 16)   /* Data Stage: direction IN */
+/* Transfer Type field (Setup Stage TRB control bits 17:16) */
+#define XHCI_TRB_TRT_NO_DATA    (0 << 16)   /* No Data Stage */
+#define XHCI_TRB_TRT_OUT        (2 << 16)   /* OUT Data Stage */
+#define XHCI_TRB_TRT_IN         (3 << 16)   /* IN Data Stage */
 
 /* TRB types */
 #define XHCI_TRB_NORMAL         1   /* Normal Transfer */
@@ -51,6 +57,10 @@ struct xhci_trb {
 #define XHCI_TRB_CC_SHIFT       24
 #define XHCI_TRB_CC_SUCCESS     1
 #define XHCI_TRB_CC_SHORT_PKT   13
+
+/* Command Completion Event: slot ID (control field bits 31:24) */
+#define XHCI_TRB_SLOT_SHIFT     24
+#define XHCI_TRB_SLOT_MASK      (0xFFu << 24)
 
 /* ---- Ring state ---------------------------------------------------------- */
 

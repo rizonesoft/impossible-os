@@ -129,8 +129,12 @@ struct xhci_controller {
  * Returns number of controllers found (0 if none). */
 int xhci_init(void);
 
-/* Get a controller by index. Returns NULL if index out of range. */
+/* Get a controller by index (read-only). Returns NULL if index out of range. */
 const struct xhci_controller *xhci_get_controller(int index);
+
+/* Get a controller by index (mutable — for enumeration/device management).
+ * Returns NULL if index out of range. */
+struct xhci_controller *xhci_get_controller_mut(int index);
 
 /* Get number of active xHCI controllers. */
 int xhci_controller_count(void);
