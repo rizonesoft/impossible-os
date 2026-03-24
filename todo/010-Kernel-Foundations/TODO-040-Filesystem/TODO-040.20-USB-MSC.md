@@ -150,16 +150,16 @@ graph TD
 | -- | :--: | ---------------------------------------- | ----------------------- | :----: |
 | 💎 | P0   | USB MSC spec (`usb-msc.md`)              | —                       |   ✅   |
 | 💎 | P0   | PCI driver (`pci.c`)                     | —                       |   ✅   |
-| 💎 | P1   | §1.1 xHCI PCI Discovery & BAR Mapping   | P0                      |   ✅   |
-| 💎 | P1   | §1.2 xHCI Controller Initialization     | P1 (§1.1)               |   ✅   |
-| 💎 | P1   | §1.3 TRB Ring Architecture              | P1 (§1.2)               |   ⬜   |
-| 💎 | P2   | §2.1 USB Device Enumeration             | P1 (§1.3)               |   ⬜   |
-| 💎 | P2   | §2.2 MSC Identification & Endpoint Cfg  | P2 (§2.1)               |   ⬜   |
-| 💎 | P2   | §2.3 MSI/MSI-X Interrupt Handling       | P1 (§1.3)               |   ⬜   |
-| 💎 | P3   | §3.1 BOT: CBW/CSW Transport             | P2 (§2.2)               |   ⬜   |
-| 💎 | P3   | §3.2 SCSI: INQUIRY + TEST UNIT READY    | P3 (§3.1)               |   ⬜   |
-| 💎 | P3   | §3.3 SCSI: READ CAPACITY + READ(10)     | P3 (§3.2)               |   ⬜   |
-| 💎 | P3   | §3.4 SCSI: WRITE(10)                    | P3 (§3.3)               |   ⬜   |
+| 💎 | P1   | §1.1 xHCI PCI Discovery & BAR Mapping    | P0                      |   ✅   |
+| 💎 | P1   | §1.2 xHCI Controller Initialization      | P1 (§1.1)               |   ✅   |
+| 💎 | P1   | §1.3 TRB Ring Architecture               | P1 (§1.2)               |   ⬜   |
+| 💎 | P2   | §2.1 USB Device Enumeration              | P1 (§1.3)               |   ⬜   |
+| 💎 | P2   | §2.2 MSC Identification & Endpoint Cfg   | P2 (§2.1)               |   ⬜   |
+| 💎 | P2   | §2.3 MSI/MSI-X Interrupt Handling        | P1 (§1.3)               |   ⬜   |
+| 💎 | P3   | §3.1 BOT: CBW/CSW Transport              | P2 (§2.2)               |   ⬜   |
+| 💎 | P3   | §3.2 SCSI: INQUIRY + TEST UNIT READY     | P3 (§3.1)               |   ⬜   |
+| 💎 | P3   | §3.3 SCSI: READ CAPACITY + READ(10)      | P3 (§3.2)               |   ⬜   |
+| 💎 | P3   | §3.4 SCSI: WRITE(10)                     | P3 (§3.3)               |   ⬜   |
 | 💎 | P3   | §3.5 Block Device Registration           | P3 (§3.4)               |   ⬜   |
 | 💎 | P4   | §4.1 REQUEST SENSE Error Decoding        | P3 (§3.1)               |   ⬜   |
 | 💎 | P4   | §4.2 Reset Recovery (3-Step)             | P3 (§3.1)               |   ⬜   |
@@ -167,7 +167,7 @@ graph TD
 | 💎 | P5   | §5.1 Hot-Plug Detection                  | P2 (§2.1), P3           |   ⬜   |
 | 💎 | P5   | §5.2 Surprise Removal & Safe Eject       | P3 (§3.5)               |   ⬜   |
 | 💎 | P6   | §6.1 Multi-LUN Support                   | P2 (§2.2)               |   ⬜   |
-| 💎 | P6   | §6.2 Scatter-Gather (64 KiB TRB Split)  | P3 (§3.5)               |   ⬜   |
+| 💎 | P6   | §6.2 Scatter-Gather (64 KiB TRB Split)   | P3 (§3.5)               |   ⬜   |
 | 💎 | P6   | §6.3 Defensive Descriptor Validation     | P2 (§2.1)               |   ⬜   |
 | 💎 | P7   | §7.1 Safe Eject (START STOP UNIT)        | P5 (§5.2)               |   ⬜   |
 | 💎 | P7   | §7.2 USB Hub Traversal                   | P2 (§2.1)               |   ⬜   |
@@ -748,14 +748,14 @@ graph TD
 | 💎 | 🔴 P0    | §3.2 SCSI: INQUIRY + TEST UNIT READY    | Device identification and readiness check                       |
 | 💎 | 🔴 P0    | §3.3 SCSI: READ CAPACITY + READ(10)     | Read disk geometry and sectors — read-only USB storage works    |
 | 💎 | 🟠 P1    | §3.4 SCSI: WRITE(10)                    | Write support for USB storage                                   |
-| 💎 | 🟠 P1    | §3.5 Block Device Registration           | Expose as `blkdev`, auto-mount with drive letter                |
-| 💎 | 🟠 P1    | §4.1 REQUEST SENSE Error Decoding        | Detailed error reporting for failed commands                    |
-| 💎 | 🟠 P1    | §4.2 Reset Recovery (3-Step)             | Handle phase errors and stalled endpoints                       |
-| 💎 | 🟠 P1    | §4.3 Retry Policy & Timeout Handling     | Robust I/O with retries and timeouts                            |
-| 💎 | �� P1    | §2.3 MSI/MSI-X Interrupt Handling        | Replace polling with interrupt-driven I/O                       |
-| 💎 | 🟡 P2    | §5.1 Hot-Plug Detection                  | Dynamic connect + auto-mount + desktop notification             |
-| 💎 | 🟡 P2    | §5.2 Surprise Removal & Safe Eject       | Graceful disconnect without data loss                           |
-| 💎 | 🟡 P2    | §6.1 Multi-LUN Support                   | Multi-slot card readers, multi-partition devices                |
+| 💎 | 🟠 P1    | §3.5 Block Device Registration          | Expose as `blkdev`, auto-mount with drive letter                |
+| 💎 | 🟠 P1    | §4.1 REQUEST SENSE Error Decoding       | Detailed error reporting for failed commands                    |
+| 💎 | 🟠 P1    | §4.2 Reset Recovery (3-Step)            | Handle phase errors and stalled endpoints                       |
+| 💎 | 🟠 P1    | §4.3 Retry Policy & Timeout Handling    | Robust I/O with retries and timeouts                            |
+| 💎 | 🟠 P1    | §2.3 MSI/MSI-X Interrupt Handling          | Replace polling with interrupt-driven I/O                       |
+| 💎 | 🟡 P2    | §5.1 Hot-Plug Detection                 | Dynamic connect + auto-mount + desktop notification             |
+| 💎 | 🟡 P2    | §5.2 Surprise Removal & Safe Eject      | Graceful disconnect without data loss                           |
+| 💎 | 🟡 P2    | §6.1 Multi-LUN Support                  | Multi-slot card readers, multi-partition devices                |
 | 💎 | 🟡 P2    | §6.2 Scatter-Gather (64 KiB TRB Split)  | Large transfers without boundary violations                     |
 | 💎 | 🟢 P3    | §6.3 Defensive Descriptor Validation     | Security hardening against malicious USB devices                |
 | 💎 | 🟢 P3    | §7.1 Safe Eject (START STOP UNIT)        | User-initiated unmount + media eject                            |
@@ -773,26 +773,26 @@ graph TD
 
 | ⭐ | Feature                          | 🪟 Windows 11                        | 🐧 Linux                              | 🚀 Impossible OS                                   |
 | -- | -------------------------------- | ------------------------------------ | -------------------------------------- | -------------------------------------------------- |
-| 💎 | xHCI host controller             | ✅ Native (usbxhci.sys)              | ✅ Native (xhci_hcd)                   | ⚠️ §1.1–1.2 P0 — PCI + init done, rings pending    |
-| 💎 | USB device enumeration           | ✅ Native (usbhub3.sys)              | ✅ Native (usb-core)                   | ⬜ §2.1 P0 — port detect + desc parsing            |
-| 💎 | BOT mass storage                 | ✅ Native (Usbstor.sys)              | ✅ Native (usb-storage)                | ⬜ §3.1 P0 — CBW/CSW transport                     |
-| 💎 | SCSI command set                 | ✅ Native (disk.sys)                  | ✅ Native (sd_mod)                     | ⬜ §3.2–3.4 P0/P1 — INQUIRY/READ/WRITE             |
-| 💎 | Block device registration        | ✅ Auto (PnP manager)                | ✅ Auto (block layer)                  | ⬜ §3.5 P1 — blkdev → partition scan → mount       |
-| 💎 | Error recovery (Reset Recovery)  | ✅ Built-in                           | ✅ Built-in                            | ⬜ §4.1–4.3 P1 — 3-step reset + retry              |
-| 💎 | MSI/MSI-X interrupts             | ✅ Native                             | ✅ Native                              | ⬜ §2.3 P1 — interrupt-driven I/O                   |
-| 💎 | Hot-plug detection               | ✅ PnP + tray icon                   | ✅ udevd + automount                   | ⬜ §5.1 P2 — desktop toast + auto-mount             |
-| 💎 | Surprise removal                 | ✅ Safe removal wizard                | ✅ umount + udisksctl                  | ⬜ §5.2 P2 — quarantine + teardown                  |
-| 💎 | Multi-LUN support                | ✅ Native                             | ✅ Native                              | ⬜ §6.1 P2 — Get Max LUN + per-LUN blkdev          |
-| 💎 | Scatter-gather I/O               | ✅ URB sg lists                       | ✅ sg lists                            | ⬜ §6.2 P2 — 64 KiB TRB boundary handling          |
-| 💎 | Defensive descriptor parsing     | ⚠️ Basic validation                   | ⚠️ Quirk table for bad devices         | ⬜ §6.3 P3 — strict bounds + cap + two-stage        |
-| 💎 | Safe eject (media eject)         | ✅ START STOP UNIT                    | ✅ eject command                       | ⬜ §7.1 P3 — flush + unmount + SCSI eject           |
-| 💎 | USB hub support                  | ✅ Full (up to 7 tiers)               | ✅ Full (up to 7 tiers)                | ⬜ §7.2 P3 — route string + hub enumeration         |
-| 💎 | UASP (USB 3.0 streams)          | ✅ Uaspstor.sys                       | ✅ uas driver                          | ⬜ §9.2 P4 — bulk streams + command queuing         |
-| 💎 | IOMMU DMA isolation              | ✅ Hyper-V / VBS                      | ✅ iommu=strict                        | ⬜ §9.1 P4 — VT-d/AMD-Vi page tables               |
-| ⭐ | **Adaptive I/O coalescing**      | ❌ Not implemented                    | ❌ Not implemented                     | ⬜ §8.1 P3 — **request merging — first to ship** 🚀 |
-| ⭐ | **USB telemetry dashboard**      | ❌ No built-in GUI                    | ❌ No built-in GUI                     | ⬜ §8.2 P3 — **latency/IOPS GUI — first** 🚀       |
-| ⭐ | **Predictive prefetch**          | ❌ No driver-level prefetch           | ❌ No driver-level prefetch            | ⬜ §8.3 P3 — **sequential read-ahead** 🚀          |
-| ⭐ | **Safe eject UX**                | ⚠️ Tiny tray icon (poor UX)           | ❌ CLI only (udisksctl)                | ⬜ §8.4 P3 — **tray + progress + warning** 🚀      |
+| 💎 | xHCI host controller             | ✅ Native (usbxhci.sys)              | ✅ Native (xhci_hcd)                  | ⚠️ §1.1–1.2 P0 — PCI + init done, rings pending    |
+| 💎 | USB device enumeration           | ✅ Native (usbhub3.sys)              | ✅ Native (usb-core)                  | ⬜ §2.1 P0 — port detect + desc parsing            |
+| 💎 | BOT mass storage                 | ✅ Native (Usbstor.sys)              | ✅ Native (usb-storage)               | ⬜ §3.1 P0 — CBW/CSW transport                     |
+| 💎 | SCSI command set                 | ✅ Native (disk.sys)                 | ✅ Native (sd_mod)                    | ⬜ §3.2–3.4 P0/P1 — INQUIRY/READ/WRITE             |
+| 💎 | Block device registration        | ✅ Auto (PnP manager)                | ✅ Auto (block layer)                 | ⬜ §3.5 P1 — blkdev → partition scan → mount       |
+| 💎 | Error recovery (Reset Recovery)  | ✅ Built-in                          | ✅ Built-in                           | ⬜ §4.1–4.3 P1 — 3-step reset + retry              |
+| 💎 | MSI/MSI-X interrupts             | ✅ Native                            | ✅ Native                             | ⬜ §2.3 P1 — interrupt-driven I/O                  |
+| 💎 | Hot-plug detection               | ✅ PnP + tray icon                   | ✅ udevd + automount                  | ⬜ §5.1 P2 — desktop toast + auto-mount            |
+| 💎 | Surprise removal                 | ✅ Safe removal wizard               | ✅ umount + udisksctl                 | ⬜ §5.2 P2 — quarantine + teardown                 |
+| 💎 | Multi-LUN support                | ✅ Native                            | ✅ Native                             | ⬜ §6.1 P2 — Get Max LUN + per-LUN blkdev          |
+| 💎 | Scatter-gather I/O               | ✅ URB sg lists                      | ✅ sg lists                           | ⬜ §6.2 P2 — 64 KiB TRB boundary handling          |
+| 💎 | Defensive descriptor parsing     | ⚠️ Basic validation                  | ⚠️ Quirk table for bad devices        | ⬜ §6.3 P3 — strict bounds + cap + two-stage       |
+| 💎 | Safe eject (media eject)         | ✅ START STOP UNIT                   | ✅ eject command                      | ⬜ §7.1 P3 — flush + unmount + SCSI eject          |
+| 💎 | USB hub support                  | ✅ Full (up to 7 tiers)              | ✅ Full (up to 7 tiers)               | ⬜ §7.2 P3 — route string + hub enumeration        |
+| 💎 | UASP (USB 3.0 streams)           | ✅ Uaspstor.sys                      | ✅ uas driver                         | ⬜ §9.2 P4 — bulk streams + command queuing        |
+| 💎 | IOMMU DMA isolation              | ✅ Hyper-V / VBS                     | ✅ iommu=strict                       | ⬜ §9.1 P4 — VT-d/AMD-Vi page tables               |
+| ⭐ | **Adaptive I/O coalescing**      | ❌ Not implemented                   | ❌ Not implemented                    | ⬜ §8.1 P3 — **request merging — first to ship**   |
+| ⭐ | **USB telemetry dashboard**      | ❌ No built-in GUI                   | ❌ No built-in GUI                    | ⬜ §8.2 P3 — **latency/IOPS GUI — first**          |
+| ⭐ | **Predictive prefetch**          | ❌ No driver-level prefetch          | ❌ No driver-level prefetch           | ⬜ §8.3 P3 — **sequential read-ahead**             |
+| ⭐ | **Safe eject UX**                | ⚠️ Tiny tray icon (poor UX)          | ❌ CLI only (udisksctl)               | ⬜ §8.4 P3 — **tray + progress + warning**         |
 
 > **After P0+P1 items:** Impossible OS reads and writes USB flash drives — matches Windows/Linux core functionality.
 > **After P2 items:** Full hot-plug, surprise removal, multi-LUN, scatter-gather — production-quality USB storage.

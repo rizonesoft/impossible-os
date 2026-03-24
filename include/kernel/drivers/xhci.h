@@ -11,6 +11,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/drivers/xhci_ring.h"
 
 /* ---- PCI identification -------------------------------------------------- */
 #define XHCI_PCI_CLASS      0x0C    /* Serial Bus Controller */
@@ -112,6 +113,12 @@ struct xhci_controller {
     /* Scratchpad buffers (if max_scratchpads > 0) */
     uint64_t *scratchpad_array;     /* Array of scratchpad buffer phys addrs */
     uint64_t  scratchpad_array_phys;/* Physical address of array */
+
+    /* TRB rings (initialized by xhci_rings_init) */
+    struct xhci_ring cmd_ring;      /* Command Ring */
+    struct xhci_ring evt_ring;      /* Event Ring */
+    struct xhci_erst_entry *erst;   /* Event Ring Segment Table */
+    uint64_t erst_phys;             /* Physical address of ERST */
 
     uint8_t  active;                /* 1 if initialized successfully */
 };

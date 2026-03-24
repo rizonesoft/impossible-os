@@ -1,13 +1,14 @@
 /* ============================================================================
  * xhci.c — xHCI (USB 3.x) Host Controller driver
  *
- * PCI discovery, MMIO BAR mapping, controller halt/reset, DCBAA and
- * scratchpad buffer allocation, and controller start.
+ * PCI discovery, MMIO BAR mapping, controller halt/reset, DCBAA,
+ * scratchpad buffer allocation, TRB ring setup, and controller start.
  *
  * Reference: xHCI specification 1.2, §4.2 (Host Controller Initialization)
  * ============================================================================ */
 
 #include "kernel/drivers/xhci.h"
+#include "kernel/drivers/xhci_ring.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/pmm.h"
@@ -283,7 +284,12 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     /* Step 8: Write DCBAAP (64-bit physical address of DCBAA) */
     xhci_write64(hc->op_base, XHCI_OP_DCBAAP, hc->dcbaa_phys);
 
-    /* Step 9: Start controller (USBCMD.RS = 1, wait USBSTS.HCH = 0) */
+    /* Step 9: Initialize TRB rings (Command Ring, Event Ring, ERST)
+     * Must be done before USBCMD.RS=1 per xHCI spec §4.2 step 6-7 */
+    if (xhci_rings_init(hc) != 0)
+        return -1;
+
+    /* Step 10: Start controller (USBCMD.RS = 1, wait USBSTS.HCH = 0) */
     {
         uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
         cmd |= XHCI_CMD_RUN;
