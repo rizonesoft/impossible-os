@@ -25,6 +25,7 @@ mkdir -p build
 DO_CLEAN=false
 DO_RUN=false
 DO_RUN_USB=false
+DO_RUN_USB_CI=false
 JOBS=$(nproc 2>/dev/null || echo 4)
 
 if [[ $# -eq 0 ]]; then
@@ -35,8 +36,9 @@ else
             clean) DO_CLEAN=true ;;
             run)     DO_RUN=true ;;
             run-usb) DO_RUN_USB=true ;;
+            run-usb-ci) DO_RUN_USB_CI=true ;;
             --jobs=*) JOBS="${arg#--jobs=}" ;;
-            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run|run-usb] [--jobs=N]"; exit 1 ;;
+            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run|run-usb|run-usb-ci] [--jobs=N]"; exit 1 ;;
         esac
     done
 fi
@@ -316,4 +318,12 @@ if $DO_RUN_USB; then
     printf ' %b▶ Launching QEMU with xHCI + USB storage%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
     divider | tee -a "$LOG"
     make $MAKE_FLAGS run-usb 2>&1
+fi
+
+# Run QEMU headless USB test (optional)
+if $DO_RUN_USB_CI; then
+    divider | tee -a "$LOG"
+    printf ' %b▶ Launching headless QEMU (xHCI + USB, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
+    divider | tee -a "$LOG"
+    make $MAKE_FLAGS run-usb-ci 2>&1
 fi

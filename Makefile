@@ -106,7 +106,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build assets kernel userland uefi-boot system-disk
@@ -443,6 +443,37 @@ run-usb: all $(USB_TEST_IMG)
 		-device virtio-tablet-pci \
 		-rtc base=localtime \
 		-no-reboot
+
+## run-usb-ci: Headless USB test — no display, serial to file, auto-timeout
+##   Usage: make run-usb-ci [TIMEOUT=20]
+##   Output: build/serial.log (filtered USB lines printed on exit)
+QEMU_TIMEOUT ?= 30
+run-usb-ci: all $(USB_TEST_IMG)
+	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@echo "[TEST] Launching headless QEMU with xHCI + USB storage ($(QEMU_TIMEOUT)s timeout)"
+	@timeout $(QEMU_TIMEOUT) $(QEMU) \
+		-cpu Haswell \
+		-smp 2 \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ich9-ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
+		-device qemu-xhci,id=xhci0 \
+		-drive id=usbdisk0,file=$(USB_TEST_IMG),format=raw,if=none \
+		-device usb-storage,bus=xhci0.0,drive=usbdisk0 \
+		-m 2G \
+		-serial file:build/serial.log \
+		-display none \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot 2>/dev/null; true
+	@echo ""
+	@echo "───── Serial output (USB) ─────"
+	@grep -E 'xhci|usb' build/serial.log 2>/dev/null || echo "(no USB output found)"
+	@echo "────────────────────────────────"
 
 ## clean-usb: Remove test USB disk image
 clean-usb:
