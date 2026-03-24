@@ -24,8 +24,8 @@
 > [!IMPORTANT]
 > **Spec Reference:** All data structures, hypercall IDs, register conventions,
 > and security protocols reference the
-> [Page Table MMIO Safety Specification](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/page-table-mmio-safety.md)
-> in the repo at `docs/specs/hyper-v/page-table-mmio-safety.md`.
+> [Page Table MMIO Safety Specification](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/page-table-mmio-safety.md)
+> in the repo at `specs/hypervisors/hyper-v/page-table-mmio-safety.md`.
 
 ---
 
@@ -69,16 +69,16 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| Phase  | Section                                    | What It Delivers                                                        | Depends On                    | Status |
-| :----: | ------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------- | :----: |
-| **0**  | `docs/specs/hyper-v/page-table-mmio-safety.md`  | Wire formats, hypercall ABI, security protocols — **read before coding** | —                             |   ✅   |
-| **0**  | `TODO-008 §3 VMBus Core`                   | Hypercall page, SynIC, version negotiation — prerequisite                | —                             |   ✅   |
-| **1**  | §1 Hypercall Interface                     | Hypervisor detection, hypercall page provisioning, calling convention    | Phase 0 (VMBus core)          |   ⬜   |
-| **2**  | §2 Memory Visibility Transitions           | PRESENT bit shield, safe encrypted↔decrypted page flipping              | Phase 1 (§1)                  |   ⬜   |
-| **2**  | §3 Explicit MMIO Hypercalls                | `hv_mmio_read()` / `hv_mmio_write()` via `HVCALL_MMIO_READ/WRITE`      | Phase 1 (§1) + Phase 2 (§2)  |   ⬜   |
-| **3**  | §4 VMBus & vPCI Memory Safety              | Ring buffer decryption marking, vPCI frontend config routing            | Phase 2 (§2, §3)             |   ⬜   |
-| **4**  | §5 MMIO Guard Architecture                 | Per-page enrollment, bounce buffers, stage-2 enforcement                | Phase 2 (§3) + Phase 3 (§4)  |   ⬜   |
-| **5**  | §6 VBS/VTL Isolation                       | Cross-VTL MMIO validation, payload size enforcement                     | Phase 4 (§5)                  |   ⬜   |
+| ⭐  | P  | Section                                                      | What It Delivers                                                        | Depends On        | Status |
+| --- | -- | ------------------------------------------------------------ | ----------------------------------------------------------------------- | ----------------- | :----: |
+| 💎  | P0 | `specs/hypervisors/hyper-v/page-table-mmio-safety.md`        | Wire formats, hypercall ABI, security protocols — **read before coding** | —                 |   ✅   |
+| 💎  | P0 | `TODO-008 §3 VMBus Core`                                    | Hypercall page, SynIC, version negotiation — prerequisite               | —                 |   ✅   |
+| 💎  | P1 | §1 Hypercall Interface                                       | Hypervisor detection, hypercall page provisioning, calling convention    | P0 (VMBus core)   |   ⬜   |
+| 💎  | P2 | §2 Memory Visibility Transitions                             | PRESENT bit shield, safe encrypted↔decrypted page flipping              | P1 (§1)           |   ⬜   |
+| 💎  | P2 | §3 Explicit MMIO Hypercalls                                  | `hv_mmio_read()` / `hv_mmio_write()` via `HVCALL_MMIO_READ/WRITE`      | P1 (§1), P2 (§2)  |   ⬜   |
+| 💎  | P3 | §4 VMBus & vPCI Memory Safety                               | Ring buffer decryption marking, vPCI frontend config routing            | P2 (§2, §3)       |   ⬜   |
+| 💎  | P4 | §5 MMIO Guard Architecture                                  | Per-page enrollment, bounce buffers, stage-2 enforcement                | P2 (§3), P3 (§4)  |   ⬜   |
+| ⭐  | P5 | §6 VBS/VTL Isolation                                        | Cross-VTL MMIO validation, payload size enforcement                     | P4 (§5)           |   ⬜   |
 
 > [!NOTE]
 > **Phase 1** establishes the hypercall interface — this is the foundation for ALL MMIO
