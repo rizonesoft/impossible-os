@@ -13,7 +13,7 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
-> [VMBus Core Protocol Spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md)
+> [VMBus Core Protocol Spec](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md)
 > and the [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs)
 > (public spec). Do NOT reference Linux `hv_vmbus.c` (GPL contamination risk).
 
@@ -21,6 +21,95 @@
 > **VMBus is the single point of failure for Hyper-V Gen 2.** If VMBus init fails,
 > there is zero I/O capability — no storage, no input, no video, no networking.
 > Every synthetic driver depends on a functioning VMBus stack.
+
+---
+
+## TODO Completion Roadmap
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    S1["§1 Hypervisor Detection ✅"]
+    S2["§2 Guest OS ID & Hypercall Page ✅"]
+    S3["§3 SynIC Initialization ✅"]
+    S4["§4 Protocol Version Negotiation ✅"]
+    S5["§5 Channel Enumeration ✅"]
+    S6["§6 Ring Buffer Architecture ✅"]
+    S7["§7 GPADL Establishment ✅"]
+    S8["§8 Channel Open & Activation ✅"]
+    S9["§9 Packet Send & Receive ✅"]
+    S10["§10 Channel Signaling ✅"]
+    S11["§11 VMBus Message Dispatch ✅"]
+    S12["§12 TOC-TOU Security"]
+    S13["§13 Monitor Page Optimization"]
+    S14["§14 Ring Buffer Flow Control"]
+    S15["§15 Triple-Mapping Optimization"]
+    S16["§16 Channel Teardown & Unload"]
+    S17["§17 Channel Hot-Remove (Rescind)"]
+    S18["§18 VMBus Telemetry Dashboard 🚀"]
+    S19["§19 Confidential VMBus (CoCo)"]
+    S20["§20 Multi-Queue Channel Affinity 🚀"]
+
+    %% Core init chain
+    S1 --> S2
+    S2 --> S3
+    S3 --> S4
+    S4 --> S5
+    S5 --> S6
+    S6 --> S7
+    S7 --> S8
+    S8 --> S9
+    S8 --> S10
+    S3 --> S11
+
+    %% Hardening & optimization
+    S9 --> S12
+    S10 --> S13
+    S9 --> S14
+    S6 --> S15
+    S8 --> S16
+    S16 --> S17
+
+    %% Exclusive features
+    S9 --> S18
+    S8 --> S19
+    S8 --> S20
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | P    | Section                                  | What It Delivers                                                   | Depends On       | Status |
+| -- | :--: | ---------------------------------------- | ------------------------------------------------------------------ | ---------------- | :----: |
+| 💎 | P1   | §1 Hypervisor Detection                  | CPUID detection, `PLATFORM_HYPERV` flag                            | —                |   ✅   |
+| 💎 | P1   | §2 Guest OS ID & Hypercall Page          | Guest identity, hypercall trampoline                               | §1               |   ✅   |
+| 💎 | P1   | §3 SynIC Initialization                  | SIM/SIEF pages, SINT2 vector 0xF0                                  | §2               |   ✅   |
+| 💎 | P1   | §4 Protocol Version Negotiation          | 3-level version fallback handshake                                 | §3               |   ✅   |
+| 💎 | P1   | §5 Channel Enumeration                   | Device discovery via OFFERCHANNEL                                  | §4               |   ✅   |
+| 💎 | P2   | §6 Ring Buffer Architecture              | Shared-memory circular send/recv rings                             | §5               |   ✅   |
+| 💎 | P2   | §7 GPADL Establishment                   | Guest→host physical memory sharing                                 | §6               |   ✅   |
+| 💎 | P2   | §8 Channel Open & Activation             | Bidirectional data transfer                                        | §7               |   ✅   |
+| 💎 | P2   | §9 Packet Send & Receive                 | vmpacket_descriptor framing, in-band + page buffer                 | §8               |   ✅   |
+| 💎 | P2   | §10 Channel Signaling                    | HvCallSignalEvent for host notification                            | §8               |   ✅   |
+| 💎 | P2   | §11 VMBus Message Dispatch               | SynIC interrupt handler, message processing                        | §3               |   ✅   |
+| 💎 | P3   | §12 TOC-TOU Security Mitigations         | Ring buffer read audit — prevent shared-memory exploits            | §9               |   ⬜   |
+| 💎 | P4   | §13 Monitor Page Optimization            | Passive signaling — eliminates per-signal VM-exit                  | §10              |   ⬜   |
+| 💎 | P4   | §14 Ring Buffer Flow Control             | `pending_send_sz` — eliminates polling on ring-full                | §9               |   ⬜   |
+| 💎 | P5   | §15 Triple-Mapping Optimization          | Eliminates split-copy at ring boundary                             | §6               |   ⬜   |
+| 💎 | P5   | §16 Channel Teardown & Unload            | Orderly shutdown of VMBus stack                                    | §8               |   ⬜   |
+| 💎 | P5   | §17 Channel Hot-Remove (Rescind)         | Dynamic device removal handling                                    | §16              |   ⬜   |
+| ⭐ | P4   | §18 VMBus Telemetry Dashboard            | Per-channel latency histograms, IOPS counters                      | §9               |   ⬜   |
+| 💎 | P6   | §19 Confidential VMBus (CoCo)            | Encrypted ring buffers for TDX/SEV guests                          | §8               |   ⬜   |
+| ⭐ | P5   | §20 Multi-Queue Channel Affinity         | Per-vCPU channel distribution for high throughput                  | §8               |   ⬜   |
+
+> [!NOTE]
+> **Phases 1–2** are the complete VMBus init path — all done. **Phase 3** is security hardening.
+> **Phase 4** adds performance optimizations. **Phase 5** adds teardown and advanced features.
+> **Phase 6** is Confidential Computing support.
+
+> [!TIP]
+> **§12 TOC-TOU is the highest-priority unfinished item.** Without private-copy validation,
+> a compromised host could exploit ring buffer reads to cause kernel buffer overflows.
 
 ---
 
@@ -191,7 +280,7 @@ enumeration completion. Run `bash scripts/build.sh clean` and confirm `=== BUILD
 
 ## 6. Ring Buffer Architecture ✅ *(agent)*
 
-> **XREF:** [vmbus-core-protocol.md §3](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Ring Buffer Fundamentals
+> **XREF:** [vmbus-core-protocol.md §3](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Ring Buffer Fundamentals
 
 **Prompt:** ~~Implement~~ **Verify** ring buffer allocation and management. Confirm
 `vmbus.c` allocates contiguous physical memory via `pmm_alloc_contiguous()` for each
@@ -231,7 +320,7 @@ channel's send and receive rings, structures the 4 KiB header + data layout, and
 
 ## 7. GPADL Establishment ✅ *(agent)*
 
-> **XREF:** [vmbus-core-protocol.md §5](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Memory Management and GPADL Mechanics
+> **XREF:** [vmbus-core-protocol.md §5](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Memory Management and GPADL Mechanics
 
 **Prompt:** ~~Implement~~ **Verify** Guest Physical Address Descriptor List (GPADL) creation.
 Confirm `vmbus.c` packages ring buffer physical page frame numbers (PFNs) into
@@ -288,7 +377,7 @@ and confirm `=== BUILD OK ===`.
 
 ## 9. Packet Send and Receive ✅ *(agent)*
 
-> **XREF:** [vmbus-core-protocol.md §4](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — VMBus Message Types and Packet Anatomy
+> **XREF:** [vmbus-core-protocol.md §4](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — VMBus Message Types and Packet Anatomy
 
 **Prompt:** ~~Implement~~ **Verify** packet send/receive over open channels. Confirm
 `vmbus.c` implements `vmbus_sendpacket()` for in-band data and
@@ -325,7 +414,7 @@ strips the `vmpacket_descriptor` header and returns payload only. Run
 
 ## 10. Channel Signaling ✅ *(agent)*
 
-> **XREF:** [vmbus-core-protocol.md §7](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Interrupt Signaling
+> **XREF:** [vmbus-core-protocol.md §7](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Interrupt Signaling
 
 **Prompt:** ~~Implement~~ **Verify** channel signaling. Confirm `vmbus.c` implements
 `vmbus_signal_channel()` using the `HvCallSignalEvent` hypercall (call code `0x005D`)
@@ -379,7 +468,7 @@ written if more messages are pending. Run `bash scripts/build.sh clean` and conf
 
 ## 12. TOC-TOU Security Mitigations
 
-> **XREF:** [vmbus-core-protocol.md §9](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Security Paradigms
+> **XREF:** [vmbus-core-protocol.md §9](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Security Paradigms
 
 **Prompt:** Audit all VMBus ring buffer read paths for Time-of-Check to Time-of-Use
 (TOC-TOU) vulnerabilities. Ensure all messages from the "in" ring buffer are first copied
@@ -407,7 +496,7 @@ and commit as `"hyperv: VMBus TOC-TOU security audit"`. Add notes directly in th
 
 ## 13. Monitor Page Optimization
 
-> **XREF:** [vmbus-core-protocol.md §7.2](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Monitor Page
+> **XREF:** [vmbus-core-protocol.md §7.2](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Monitor Page
 
 **Prompt:** Implement monitor page signaling as an optimization over the `HvCallSignalEvent`
 hypercall. Instead of executing a hypercall per signal, the guest modifies specific bits
@@ -429,7 +518,7 @@ and commit as `"hyperv: VMBus monitor page signaling"`. Add notes directly in th
 
 ## 14. Ring Buffer Flow Control
 
-> **XREF:** [vmbus-core-protocol.md §3.3](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Flow Control
+> **XREF:** [vmbus-core-protocol.md §3.3](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Flow Control
 
 **Prompt:** Implement interrupt-driven ring buffer flow control using the `feat_pending_send_sz`
 feature bit. When the guest cannot send because the ring is full, it writes the required
@@ -450,7 +539,7 @@ and commit as `"hyperv: VMBus ring buffer flow control"`. Add notes directly in 
 
 ## 15. Triple-Mapping Virtual Address Optimization
 
-> **XREF:** [vmbus-core-protocol.md §3.2](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Triple-Mapping
+> **XREF:** [vmbus-core-protocol.md §3.2](file:///home/derickpayne/impossible-os/specs/hypervisors/hyper-v/vmbus-core-protocol.md) — Triple-Mapping
 
 **Prompt:** Implement the triple-mapping optimization for ring buffer virtual addresses.
 Map ring data pages three times in contiguous virtual space: (1) header page,
@@ -522,50 +611,128 @@ and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in 
 
 ---
 
+## 18. VMBus Telemetry Dashboard 🚀
+
+**Prompt:** Implement per-channel VMBus performance telemetry: nanosecond-resolution latency histograms (send, receive, signal), IOPS counters, ring buffer utilization percentage, and packet error rates. Expose metrics via a kernel API queryable from user-mode (e.g., `vmbus_get_channel_stats(relid)` syscall). Neither Windows nor Linux exposes per-channel VMBus telemetry at this granularity — this is an Impossible OS exclusive. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"hyperv: VMBus telemetry dashboard"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Neither Windows nor Linux** exposes per-channel VMBus latency histograms or IOPS
+> counters to user-mode. Windows has `Get-VMBusChannel` in PowerShell but it only shows
+> basic state. Linux has `/sys/bus/vmbus/devices/*/channel_vp_mapping` but nothing for
+> latency or throughput. This is a genuine competitive advantage.
+
+- [ ] Add `vmbus_channel_stats` struct: `tx_packets`, `rx_packets`, `tx_bytes`, `rx_bytes`, `signal_count`, `avg_latency_ns`, `max_latency_ns`, `ring_util_pct`
+- [ ] Instrument `vmbus_sendpacket()` — increment `tx_packets`/`tx_bytes`, record send latency
+- [ ] Instrument `vmbus_recvpacket()` — increment `rx_packets`/`rx_bytes`
+- [ ] Instrument `vmbus_signal_channel()` — increment `signal_count`
+- [ ] Calculate ring buffer utilization: `(write_idx - read_idx) / ring_size × 100`
+- [ ] Add `vmbus_get_channel_stats(relid)` kernel API
+- [ ] Expose via registry: `HKLM\SYSTEM\Drivers\VMBus\Channels\<relid>\Stats`
+- [ ] Log summary on shutdown: `[VMBus] Channel %u: %u packets, avg %u ns latency`
+- [ ] Commit: `"hyperv: VMBus telemetry dashboard"`
+
+---
+
+## 19. Confidential VMBus (CoCo / TDX / SEV)
+
+**Prompt:** Implement Confidential Computing support for VMBus ring buffers. In Intel TDX or AMD SEV environments, guest memory is encrypted and the hypervisor cannot read ring buffer contents. The guest must use bounce buffers for all shared memory, explicitly accept/decrypt pages shared with the host, and use `HVCALL_MMIO_READ/WRITE` instead of direct MMIO. This aligns with Linux 6.18's Confidential VMBus support. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"hyperv: Confidential VMBus support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!WARNING]
+> **Depends on §8 (Channel Open) and TODO-008.06 (MMIO Safety).** Confidential VMBus
+> requires both the page visibility transition infrastructure (PRESENT bit shield) and
+> the explicit MMIO hypercalls from the MMIO Safety TODO.
+
+- [ ] Detect Confidential Computing mode via CPUID leaf `0x40000006` (isolation config)
+- [ ] If CoCo: allocate ring buffers as "shared" pages (explicit guest→host visibility)
+- [ ] Implement page visibility transition: `hv_set_page_visibility(gpa, shared|private)`
+- [ ] Use bounce buffers for all DMA: copy private→shared before send, shared→private after recv
+- [ ] Validate ring buffer integrity after each receive (CoCo host could tamper with shared memory)
+- [ ] Wire into §12 TOC-TOU mitigations — CoCo strengthens the security requirement
+- [ ] Log: `[VMBus] Confidential Computing mode — encrypted ring buffers active`
+- [ ] Commit: `"hyperv: Confidential VMBus support"`
+
+---
+
+## 20. Multi-Queue Channel Affinity 🚀
+
+**Prompt:** Implement per-vCPU VMBus channel affinity for high-throughput synthetic drivers. StorVSC and NetVSC on modern Hyper-V hosts support multiple sub-channels — one per vCPU — to achieve line-rate I/O without cross-CPU contention. The VMBus layer should negotiate sub-channels via `CHANNELMSG_OPEN_CHANNEL_REQUESTMULTISUBCHANNELS`, pin each sub-channel to a specific vCPU's SynIC SINT, and expose channel selection to VSC drivers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"hyperv: VMBus multi-queue channel affinity"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Why this matters:** On a 4-vCPU VM, single-queue VMBus channels serialize all I/O
+> through one CPU. With multi-queue, each vCPU has its own ring buffer — achieving near-linear
+> throughput scaling. Windows uses this natively, Linux uses RSS. Impossible OS will support
+> both automatic (round-robin) and manual (pinned) sub-channel distribution.
+
+- [ ] Detect host multi-channel capability in `CHANNELMSG_OFFERCHANNEL` flags
+- [ ] Send `CHANNELMSG_OPEN_CHANNEL_REQUESTMULTISUBCHANNELS` with requested count = `cpu_count`
+- [ ] Process sub-channel offers — each gets its own ring buffer pair and GPADL
+- [ ] Pin each sub-channel to a vCPU: set `target_vcpu` in `OPENCHANNEL`
+- [ ] Implement `vmbus_select_subchannel(channel, cpu_id)` for VSC drivers
+- [ ] Automatic mode: round-robin sub-channel selection based on current CPU
+- [ ] Expose configuration via registry: `HKLM\SYSTEM\Drivers\VMBus\MultiQueue\Enabled`
+- [ ] Benchmark: compare single-queue vs multi-queue StorVSC IOPS at 2/4/8 vCPUs
+- [ ] Commit: `"hyperv: VMBus multi-queue channel affinity"`
+
+---
+
 ## Priority Order
 
-| Priority | Section                               | Description                                                    |
-|----------|---------------------------------------|----------------------------------------------------------------|
-| ✅ Done  | §1 Hypervisor Detection               | CPUID detection — already in `cpuid_platform.c` + `vmbus.c`   |
-| ✅ Done  | §2 Guest OS ID & Hypercall Page       | MSR writes + PMM-backed hypercall trampoline                   |
-| ✅ Done  | §3 SynIC Initialization               | SIM/SIEF pages, SINT2 vector 0xF0, SynIC enable               |
-| ✅ Done  | §4 Protocol Version Negotiation       | 3-level fallback: V5.2 → V5.0 → V4.0                          |
-| ✅ Done  | §5 Channel Enumeration                | REQUESTOFFERS → OFFERCHANNEL → ALLOFFERS_DELIVERED             |
-| ✅ Done  | §6 Ring Buffer Architecture           | PMM-backed ring buffers with wrap-around read/write            |
-| ✅ Done  | §7 GPADL Establishment                | Guest→host memory sharing for ring buffers + transfer buffers  |
-| ✅ Done  | §8 Channel Open and Activation        | OPENCHANNEL → OPENCHANNEL_RESULT → active data transfer        |
-| ✅ Done  | §9 Packet Send and Receive            | vmpacket_descriptor framing, in-band + transfer page packets   |
-| ✅ Done  | §10 Channel Signaling                 | HvCallSignalEvent hypercall for channel notifications          |
-| ✅ Done  | §11 VMBus Message Dispatch            | SynIC interrupt handler, SIM page message processing           |
-| 🔴 P0    | §12 TOC-TOU Security Mitigations      | Ring buffer read audit — prevent shared-memory exploits        |
-| 🟡 P2    | §13 Monitor Page Optimization         | Passive signaling eliminates per-signal VM-exit overhead       |
-| 🟡 P2    | §14 Ring Buffer Flow Control           | `pending_send_sz` eliminates polling on ring-full              |
-| 🟢 P3    | §15 Triple-Mapping Optimization       | Eliminates split-copy overhead at ring boundary                |
-| 🟢 P3    | §16 Channel Teardown & Unload         | Orderly shutdown of VMBus stack                                |
-| 🟢 P3    | §17 Channel Hot-Remove (Rescind)      | Dynamic device removal via CHANNELMSG_RESCIND                  |
+| ⭐ | Priority | Section                                  | Description                                                      |
+| -- | :------: | ---------------------------------------- | ---------------------------------------------------------------- |
+| 💎 | ✅ Done  | §1 Hypervisor Detection                  | CPUID detection — `cpuid_platform.c` + `vmbus.c`                |
+| 💎 | ✅ Done  | §2 Guest OS ID & Hypercall Page          | MSR writes + PMM-backed hypercall trampoline                     |
+| 💎 | ✅ Done  | §3 SynIC Initialization                  | SIM/SIEF pages, SINT2 vector 0xF0, SynIC enable                 |
+| 💎 | ✅ Done  | §4 Protocol Version Negotiation          | 3-level fallback: V5.2 → V5.0 → V4.0                            |
+| 💎 | ✅ Done  | §5 Channel Enumeration                   | REQUESTOFFERS → OFFERCHANNEL → ALLOFFERS_DELIVERED               |
+| 💎 | ✅ Done  | §6 Ring Buffer Architecture              | PMM-backed ring buffers with wrap-around read/write              |
+| 💎 | ✅ Done  | §7 GPADL Establishment                   | Guest→host memory sharing for ring buffers + transfer buffers    |
+| 💎 | ✅ Done  | §8 Channel Open & Activation             | OPENCHANNEL → OPENCHANNEL_RESULT → active data transfer          |
+| 💎 | ✅ Done  | §9 Packet Send & Receive                 | vmpacket_descriptor framing, in-band + transfer page packets     |
+| 💎 | ✅ Done  | §10 Channel Signaling                    | HvCallSignalEvent hypercall for channel notifications            |
+| 💎 | ✅ Done  | §11 VMBus Message Dispatch               | SynIC interrupt handler, SIM page message processing             |
+| 💎 | 🔴 P0   | §12 TOC-TOU Security Mitigations         | Ring buffer read audit — prevent shared-memory exploits          |
+| 💎 | 🟡 P2   | §13 Monitor Page Optimization            | Passive signaling — eliminates per-signal VM-exit overhead       |
+| 💎 | 🟡 P2   | §14 Ring Buffer Flow Control             | `pending_send_sz` — eliminates polling on ring-full              |
+| ⭐ | 🟡 P2   | §18 VMBus Telemetry Dashboard            | Per-channel latency histograms, IOPS counters 🚀                 |
+| 💎 | 🟢 P3   | §15 Triple-Mapping Optimization          | Eliminates split-copy at ring boundary                           |
+| 💎 | 🟢 P3   | §16 Channel Teardown & Unload            | Orderly shutdown of VMBus stack                                  |
+| 💎 | 🟢 P3   | §17 Channel Hot-Remove (Rescind)         | Dynamic device removal via CHANNELMSG_RESCIND                    |
+| ⭐ | 🟢 P3   | §20 Multi-Queue Channel Affinity         | Per-vCPU channel distribution for high throughput 🚀              |
+| 💎 | 🔵 P4   | §19 Confidential VMBus (CoCo)            | Encrypted ring buffers for TDX/SEV guests                        |
 
 ---
 
 ## OS Comparison
 
-| Feature                           | 🪟 Windows 11 (Native)           | 🐧 Linux (`hv_vmbus.ko`)             | 🚀 Impossible OS                              |
-| --------------------------------- | --------------------------------- | -------------------------------------- | ---------------------------------------------- |
-| CPUID detection                   | ✅ Native (built-in)              | ✅ `ms_hyperv_init_platform()`        | ✅ `cpuid_platform.c` — Done §1               |
-| Hypercall page setup              | ✅ Native                         | ✅ `hv_init()`                        | ✅ `vmbus.c` — Done §2                         |
-| SynIC initialization              | ✅ Native                         | ✅ `hv_synic_init()`                  | ✅ `vmbus.c` — Done §3                         |
-| Version negotiation               | ✅ Native                         | ✅ `vmbus_negotiate_version()`        | ✅ `vmbus_connect()` — Done §4                 |
-| Channel enumeration               | ✅ Native                         | ✅ `vmbus_process_offer()`            | ✅ `vmbus_enumerate()` — Done §5               |
-| Ring buffer I/O                   | ✅ Native                         | ✅ `hv_ringbuffer_write/read()`       | ✅ `vmbus_ring_write/read()` — Done §6         |
-| GPADL management                  | ✅ Native                         | ✅ `vmbus_establish_gpadl()`          | ✅ `vmbus_create_gpadl()` — Done §7            |
-| Channel open/close                | ✅ Native                         | ✅ `vmbus_open()`                     | ✅ `vmbus_open_channel()` — Done §8            |
-| Packet send/receive               | ✅ Native                         | ✅ `vmbus_sendpacket()`               | ✅ `vmbus_sendpacket()` — Done §9              |
-| Channel signaling                 | ✅ HvCallSignalEvent + monitor    | ✅ Both paths                         | ✅ HvCallSignalEvent only — Done §10           |
-| TOC-TOU mitigations               | ✅ Private copy validation        | ✅ `READ_ONCE()` + copy validation    | ⬜ §12 P0 — audit needed                      |
-| Monitor page signaling            | ✅ Passive + active               | ✅ `hv_signal_on_write()`             | ⬜ §13 P2 — hypercall only                    |
-| Ring buffer flow control           | ✅ `pending_send_sz`              | ✅ `hv_need_to_signal_on_read()`      | ⬜ §14 P2 — no flow control                   |
-| Triple-mapping rings              | ✅ Native                         | ✅ `hv_ringbuffer_init()`             | ⬜ §15 P3 — two-chunk copy                    |
-| Orderly teardown                  | ✅ Integration Services           | ✅ `vmbus_close()` + `vmbus_exit()`   | ⬜ §16 P3 — no teardown path                  |
-| Channel rescind handling          | ✅ Native hot-remove              | ✅ `vmbus_onoffer_rescind()`          | ⬜ §17 P3 — not handled                       |
+| ⭐ | Feature                              | 🪟 Windows 11 (Native)            | 🐧 Linux (`hv_vmbus.ko`)              | 🚀 Impossible OS                                |
+| -- | ------------------------------------ | ---------------------------------- | --------------------------------------- | ------------------------------------------------ |
+| 💎 | CPUID detection                      | ✅ Native (built-in)               | ✅ `ms_hyperv_init_platform()`         | ✅ `cpuid_platform.c` — Done §1                 |
+| 💎 | Hypercall page setup                 | ✅ Native                          | ✅ `hv_init()`                         | ✅ `vmbus.c` — Done §2                           |
+| 💎 | SynIC initialization                 | ✅ Native                          | ✅ `hv_synic_init()`                   | ✅ `vmbus.c` — Done §3                           |
+| 💎 | Version negotiation                  | ✅ Native                          | ✅ `vmbus_negotiate_version()`         | ✅ `vmbus_connect()` — Done §4                   |
+| 💎 | Channel enumeration                  | ✅ Native                          | ✅ `vmbus_process_offer()`             | ✅ `vmbus_enumerate()` — Done §5                 |
+| 💎 | Ring buffer I/O                      | ✅ Native                          | ✅ `hv_ringbuffer_write/read()`        | ✅ `vmbus_ring_write/read()` — Done §6           |
+| 💎 | GPADL management                     | ✅ Native                          | ✅ `vmbus_establish_gpadl()`           | ✅ `vmbus_create_gpadl()` — Done §7              |
+| 💎 | Channel open/close                   | ✅ Native                          | ✅ `vmbus_open()`                      | ✅ `vmbus_open_channel()` — Done §8              |
+| 💎 | Packet send/receive                  | ✅ Native                          | ✅ `vmbus_sendpacket()`                | ✅ `vmbus_sendpacket()` — Done §9                |
+| 💎 | Channel signaling                    | ✅ HvCallSignalEvent + monitor     | ✅ Both paths                          | ✅ HvCallSignalEvent only — Done §10             |
+| 💎 | SynIC message dispatch               | ✅ Native                          | ✅ `vmbus_on_msg_dpc()`                | ✅ `vmbus_irq_handler()` — Done §11              |
+| 💎 | TOC-TOU mitigations                  | ✅ Private copy validation         | ✅ `READ_ONCE()` + copy validation     | ⬜ §12 P0 — audit needed                        |
+| 💎 | Monitor page signaling               | ✅ Passive + active                | ✅ `hv_signal_on_write()`              | ⬜ §13 P2 — hypercall only                      |
+| 💎 | Ring buffer flow control             | ✅ `pending_send_sz`               | ✅ `hv_need_to_signal_on_read()`       | ⬜ §14 P2 — no flow control                     |
+| 💎 | Triple-mapping rings                 | ✅ Native                          | ✅ `hv_ringbuffer_init()`              | ⬜ §15 P3 — two-chunk copy                      |
+| 💎 | Orderly teardown                     | ✅ Integration Services            | ✅ `vmbus_close()` + `vmbus_exit()`    | ⬜ §16 P3 — no teardown path                    |
+| 💎 | Channel rescind handling             | ✅ Native hot-remove               | ✅ `vmbus_onoffer_rescind()`           | ⬜ §17 P3 — not handled                         |
+| ⭐ | **Per-channel telemetry**            | ❌ PowerShell basic state only     | ❌ sysfs mapping only                  | ⬜ §18 P2 — **ns-latency histograms, IOPS** 🚀  |
+| 💎 | Confidential VMBus (CoCo)            | ✅ Native (TDX/SEV)               | ✅ Linux 6.18+ `hv_coco.c`            | ⬜ §19 P4 — not yet implemented                 |
+| ⭐ | **Multi-queue channel affinity**     | ✅ Native (multi-subchannel)       | ✅ RSS-based distribution              | ⬜ §20 P3 — **auto + manual pinning** 🚀         |
+
+> **After Done items (§1–§11):** Impossible OS has a complete, functional VMBus stack —
+> all synthetic drivers can communicate with the host.
+> **After P0 (§12):** Security-hardened ring buffer reads prevent shared-memory exploits.
+> **After P2–P3 items (§13–§18, §20):** Exceeds both Windows and Linux in VMBus
+> performance — monitor page signaling, flow control, telemetry, and multi-queue.
+> **After P4 (§19):** Confidential Computing support for TDX/SEV environments.
 
 ---
 
@@ -577,3 +744,5 @@ and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in 
 | `include/kernel/drivers/hyperv/vmbus.h`             | ✅ Done | VMBus protocol types, MSRs, GUIDs, public API  |
 | `src/kernel/cpuid_platform.c`                       | ✅ Done | Hyper-V detection via CPUID                    |
 | `src/kernel/main/boot_storage.c`                    | ✅ Done | VMBus init integration into boot sequence      |
+| `src/kernel/drivers/hyperv/vmbus_telemetry.c`       | NEW     | Per-channel telemetry and statistics            |
+| `src/kernel/drivers/hyperv/vmbus_coco.c`            | NEW     | Confidential VMBus bounce buffers              |
