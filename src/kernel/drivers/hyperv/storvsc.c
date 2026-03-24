@@ -510,12 +510,20 @@ int storvsc_init(void)
         return -1;
     }
 
-    /* Allocate transfer buffer (PMM -- identity-mapped) */
+    /* Allocate transfer buffer (PMM -- identity-mapped, page-aligned).
+     * Hyper-V IOMMU strictly requires 4 KiB page alignment for all GPADL
+     * buffers.  PMM guarantees this, but we assert it to catch regressions. */
     xfer_buffer = (void *)(uintptr_t)pmm_alloc_contiguous(STORVSC_XFER_PAGES);
     if (!xfer_buffer) {
         klog(LOG_ERROR, "storvsc",
              "Failed to allocate transfer buffer (%u pages)",
              (uint64_t)STORVSC_XFER_PAGES);
+        return -1;
+    }
+    if ((uintptr_t)xfer_buffer & 0xFFF) {
+        klog(LOG_ERROR, "storvsc",
+             "Transfer buffer at 0x%x is NOT page-aligned",
+             (uint64_t)(uintptr_t)xfer_buffer);
         return -1;
     }
     storvsc_memset(xfer_buffer, 0, STORVSC_XFER_PAGES * 4096);

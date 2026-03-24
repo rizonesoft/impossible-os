@@ -164,11 +164,11 @@
 > → XREF: `TODO-008.06-Page-Table-MMIO.md §2` — PRESENT bit shield (CoCo MMIO safety)
 > → XREF: `TODO-008-Hyper-V-Runner.md §9` — Page Table MMIO Safety (UC mapping for MMIO regions)
 
-- [ ] Audit all `pmm_alloc_contiguous()` callers in StorVSC: verify returned addresses are page-aligned
-- [ ] Audit GPADL PFN list construction in `vmbus_create_gpadl()`: verify all PFNs reference full page boundaries
-- [ ] Audit StorVSC 64 KiB transfer buffer: verify it starts on a 4 KiB page boundary
-- [ ] Add `kassert(!(addr & 0xFFF))` guards on all DMA-critical buffer addresses
-- [ ] Validate that `storvsc_blk_read()` / `storvsc_blk_write()` target buffers are page-aligned
+- [x] Audit all `pmm_alloc_contiguous()` callers in StorVSC: verify returned addresses are page-aligned
+- [x] Audit GPADL PFN list construction in `vmbus_create_gpadl()`: verify all PFNs reference full page boundaries
+- [x] Audit StorVSC 64 KiB transfer buffer: verify it starts on a 4 KiB page boundary
+- [x] Add `kassert(!(addr & 0xFFF))` guards on all DMA-critical buffer addresses
+- [x] Validate that `storvsc_blk_read()` / `storvsc_blk_write()` target buffers are page-aligned
 - [ ] If caller provides unaligned buffer: bounce through page-aligned intermediate buffer
 - [ ] Audit UEFI bootloader for page-alignment warnings (`addr is not page aligned` in serial log)
 - [ ] Test: intentionally pass unaligned buffer on QEMU (should work) vs Hyper-V (should hang without fix)

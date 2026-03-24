@@ -620,6 +620,18 @@ static int vmbus_create_gpadl(struct vmbus_channel *ch, void *buffer,
     uint32_t i;
     uint32_t handle = next_gpadl_handle++;
 
+    /* Hyper-V IOMMU requires page-aligned GPADL buffers.  The PFN list
+     * is computed by shifting the base address right by 12 — if the buffer
+     * address has non-zero low 12 bits, the PFN list references the wrong
+     * physical pages.  On QEMU this silently works; on Hyper-V Gen 2 the
+     * StorVSP drops the I/O with no error, no interrupt, no log entry. */
+    if ((uintptr_t)buffer & 0xFFF) {
+        klog(LOG_ERROR, "hyperv",
+             "GPADL buffer at 0x%x is NOT page-aligned — refusing",
+             (uint64_t)(uintptr_t)buffer);
+        return -1;
+    }
+
     vmbus_memset(&gpadl_hdr, 0, sizeof(gpadl_hdr));
     gpadl_hdr.header.msg_type = CHANNELMSG_GPADL_HEADER;
     gpadl_hdr.child_relid     = ch->child_relid;

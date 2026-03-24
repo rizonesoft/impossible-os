@@ -192,9 +192,9 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 - [x] If `PCAT_COMPAT=0` (Hyper-V Gen 2): skip `pic_disable()`, log APIC-only mode
 - [x] Log: `MADT PCAT_COMPAT=0 — PIC absent, APIC-only mode`
 - [x] Verify: IOAPIC redirection table entries are configured without PIC dependency
-- [ ] **Legacy PIC re-mask after APIC takeover:** When `PCAT_COMPAT=1` (QEMU), `pic_init()` masks all IRQs, but `pit_init()` later unmasks IRQ0 via `pic_unmask_irq(IRQ_TIMER)`. After the IOAPIC takes over, the PIC's IRQ0 remains unmasked → PIT timer fires 1000×/sec through both PIC AND IOAPIC → `vec=32 (0x20): N total hits` interrupt storm. Fix: call `pic_disable()` (or `pic_mask_irq(IRQ_TIMER)`) **after all driver inits** that call `pic_unmask_irq()`, once IOAPIC is confirmed active. This does NOT affect Hyper-V Gen 2 (`PCAT_COMPAT=0`) but can confuse the SynIC on Hyper-V if tested under QEMU-with-Hyper-V-CPUID.
+- [x] **Legacy PIC re-mask after APIC takeover:** `pic_disable()` sets `pic_ready=0`, which guards all subsequent `pic_unmask_irq()` calls (PIT, keyboard, mouse) as no-ops. Additionally, `timer_hal_init()` explicitly calls `ioapic_mask_irq(0)` on non-TCG platforms to suppress stale PIT ticks via IOAPIC. No interrupt storm possible.
 - [x] Test: boot in QEMU (PCAT_COMPAT=1 → PIC remapped) AND Hyper-V Gen 2 (PCAT_COMPAT=0 → PIC skipped)
-- [ ] Test: confirm `vec=32` unhandled interrupt count is 0 after PIC re-mask
+- [x] Test: confirm `vec=32` unhandled interrupt count is 0 after PIC re-mask
 - [x] Commit: `"kernel: APIC-only mode for hardware-reduced ACPI"`
 
 ---
