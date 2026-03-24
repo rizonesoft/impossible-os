@@ -146,37 +146,37 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| Phase  | Sections                                 | Depends On                    | Status |
-| :----: | ---------------------------------------- | ----------------------------- | :----: |
-| **0**  | USB MSC spec (`usb-msc.md`)             | —                             |   ✅   |
-| **0**  | PCI driver (`pci.c`)                     | —                             |   ✅   |
-| **1**  | §1.1 xHCI PCI Discovery & BAR Mapping  | Phase 0                       |   ⬜   |
-| **1**  | §1.2 xHCI Controller Initialization    | Phase 1 (§1.1)                |   ⬜   |
-| **1**  | §1.3 TRB Ring Architecture             | Phase 1 (§1.2)                |   ⬜   |
-| **2**  | §2.1 USB Device Enumeration            | Phase 1 (§1.3)                |   ⬜   |
-| **2**  | §2.2 MSC Identification & Endpoint Cfg | Phase 2 (§2.1)                |   ⬜   |
-| **2**  | §2.3 MSI/MSI-X Interrupt Handling      | Phase 1 (§1.3)                |   ⬜   |
-| **3**  | §3.1 BOT: CBW/CSW Transport            | Phase 2 (§2.2)                |   ⬜   |
-| **3**  | §3.2 SCSI: INQUIRY + TEST UNIT READY   | Phase 3 (§3.1)                |   ⬜   |
-| **3**  | §3.3 SCSI: READ CAPACITY + READ(10)    | Phase 3 (§3.2)                |   ⬜   |
-| **3**  | §3.4 SCSI: WRITE(10)                   | Phase 3 (§3.3)                |   ⬜   |
-| **3**  | §3.5 Block Device Registration         | Phase 3 (§3.4)                |   ⬜   |
-| **4**  | §4.1 REQUEST SENSE Error Decoding      | Phase 3 (§3.1)                |   ⬜   |
-| **4**  | §4.2 Reset Recovery (3-Step)           | Phase 3 (§3.1)                |   ⬜   |
-| **4**  | §4.3 Retry Policy & Timeout Handling   | Phase 4 (§4.1, §4.2)         |   ⬜   |
-| **5**  | §5.1 Hot-Plug Detection               | Phase 2 (§2.1), Phase 3      |   ⬜   |
-| **5**  | §5.2 Surprise Removal & Safe Eject     | Phase 3 (§3.5)                |   ⬜   |
-| **6**  | §6.1 Multi-LUN Support                | Phase 2 (§2.2)                |   ⬜   |
-| **6**  | §6.2 Scatter-Gather (64 KiB TRB Split)| Phase 3 (§3.5)                |   ⬜   |
-| **6**  | §6.3 Defensive Descriptor Validation  | Phase 2 (§2.1)                |   ⬜   |
-| **7**  | §7.1 Safe Eject (START STOP UNIT)      | Phase 5 (§5.2)                |   ⬜   |
-| **7**  | §7.2 USB Hub Traversal                | Phase 2 (§2.1)                |   ⬜   |
-| **8**  | §8.1 Adaptive I/O Coalescing          | Phase 3 (§3.5)                |   ⬜   |
-| **8**  | §8.2 USB Telemetry Dashboard           | Phase 3 (§3.5)                |   ⬜   |
-| **8**  | §8.3 Predictive Prefetch              | Phase 3 (§3.5)                |   ⬜   |
-| **8**  | §8.4 Safe Eject UX                    | Phase 5 (§5.2)                |   ⬜   |
-| **9**  | §9.1 IOMMU DMA Isolation              | Phase 1 (§1.1)                |   ⬜   |
-| **9**  | §9.2 UASP (USB Attached SCSI)         | Phase 3 (§3.5)                |   ⬜   |
+| ⭐ | P    | Sections                                 | Depends On              | Status |
+| -- | :--: | ---------------------------------------- | ----------------------- | :----: |
+| 💎 | P0   | USB MSC spec (`usb-msc.md`)              | —                       |   ✅   |
+| 💎 | P0   | PCI driver (`pci.c`)                     | —                       |   ✅   |
+| 💎 | P1   | §1.1 xHCI PCI Discovery & BAR Mapping   | P0                      |   ✅   |
+| 💎 | P1   | §1.2 xHCI Controller Initialization     | P1 (§1.1)               |   ✅   |
+| 💎 | P1   | §1.3 TRB Ring Architecture              | P1 (§1.2)               |   ⬜   |
+| 💎 | P2   | §2.1 USB Device Enumeration             | P1 (§1.3)               |   ⬜   |
+| 💎 | P2   | §2.2 MSC Identification & Endpoint Cfg  | P2 (§2.1)               |   ⬜   |
+| 💎 | P2   | §2.3 MSI/MSI-X Interrupt Handling       | P1 (§1.3)               |   ⬜   |
+| 💎 | P3   | §3.1 BOT: CBW/CSW Transport             | P2 (§2.2)               |   ⬜   |
+| 💎 | P3   | §3.2 SCSI: INQUIRY + TEST UNIT READY    | P3 (§3.1)               |   ⬜   |
+| 💎 | P3   | §3.3 SCSI: READ CAPACITY + READ(10)     | P3 (§3.2)               |   ⬜   |
+| 💎 | P3   | §3.4 SCSI: WRITE(10)                    | P3 (§3.3)               |   ⬜   |
+| 💎 | P3   | §3.5 Block Device Registration           | P3 (§3.4)               |   ⬜   |
+| 💎 | P4   | §4.1 REQUEST SENSE Error Decoding        | P3 (§3.1)               |   ⬜   |
+| 💎 | P4   | §4.2 Reset Recovery (3-Step)             | P3 (§3.1)               |   ⬜   |
+| 💎 | P4   | §4.3 Retry Policy & Timeout Handling     | P4 (§4.1, §4.2)         |   ⬜   |
+| 💎 | P5   | §5.1 Hot-Plug Detection                  | P2 (§2.1), P3           |   ⬜   |
+| 💎 | P5   | §5.2 Surprise Removal & Safe Eject       | P3 (§3.5)               |   ⬜   |
+| 💎 | P6   | §6.1 Multi-LUN Support                   | P2 (§2.2)               |   ⬜   |
+| 💎 | P6   | §6.2 Scatter-Gather (64 KiB TRB Split)  | P3 (§3.5)               |   ⬜   |
+| 💎 | P6   | §6.3 Defensive Descriptor Validation     | P2 (§2.1)               |   ⬜   |
+| 💎 | P7   | §7.1 Safe Eject (START STOP UNIT)        | P5 (§5.2)               |   ⬜   |
+| 💎 | P7   | §7.2 USB Hub Traversal                   | P2 (§2.1)               |   ⬜   |
+| ⭐ | P8   | §8.1 Adaptive I/O Coalescing             | P3 (§3.5)               |   ⬜   |
+| ⭐ | P8   | §8.2 USB Telemetry Dashboard             | P3 (§3.5)               |   ⬜   |
+| ⭐ | P8   | §8.3 Predictive Prefetch                 | P3 (§3.5)               |   ⬜   |
+| ⭐ | P8   | §8.4 Safe Eject UX                       | P5 (§5.2)               |   ⬜   |
+| 💎 | P9   | §9.1 IOMMU DMA Isolation                 | P1 (§1.1)               |   ⬜   |
+| 💎 | P9   | §9.2 UASP (USB Attached SCSI)            | P3 (§3.5)               |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — PCI driver can enumerate devices and the USB MSC spec
@@ -235,7 +235,7 @@ graph TD
 
 ### 1.1 xHCI PCI Discovery & BAR Mapping
 
-**Prompt:** Detect xHCI controllers during PCI enumeration by matching class code `0x0C` (Serial Bus), subclass `0x03` (USB), programming interface `0x30` (xHCI). Read BAR0/BAR1 as a 64-bit memory BAR per USB MSC spec §"PCI Configuration Space Fingerprint". Mask lower 4 bits of BAR0, combine with BAR1 for the full 64-bit physical address. Map the MMIO region (minimum 64 KiB) into kernel virtual address space with uncacheable flags. Enable Bus Master (bit 2) and Memory Space (bit 1) in PCI Command Register. Disable legacy INTx (bit 10). Create `src/kernel/drivers/xhci.c` and `include/kernel/drivers/xhci.h`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: xHCI PCI discovery and BAR mapping"`. After implementation, save gotchas to MCP memory.
+**✅ VERIFICATION —** xHCI PCI discovery and BAR mapping implemented in `src/kernel/drivers/xhci.c` and `include/kernel/drivers/xhci.h`. Verify: `bash scripts/build.sh run-usb` shows `[xHCI] Found controller at PCI 00:03.0, MMIO @ 0x800004000`. Check BAR0/BAR1 reconstructs 64-bit address, MMIO mapped with uncacheable flags (`VMM_FLAG_NOCACHE | VMM_FLAG_WRITETHROUGH`), PCI Command Register has Bus Master + Memory Space + INTx Disable. Committed as `601d671 usb: xHCI PCI discovery and BAR mapping`.
 
 - [x] Create `src/kernel/drivers/xhci.c` and `include/kernel/drivers/xhci.h`
 - [x] Detect xHCI device: class=`0x0C`, subclass=`0x03`, prog_if=`0x30`
@@ -250,26 +250,26 @@ graph TD
 
 ### 1.2 xHCI Controller Initialization
 
-**Prompt:** Follow the xHCI initialization sequence per USB MSC spec §"xHCI Controller Initialization Sequence" (steps 1–12). Read Capability Registers: CAPLENGTH (offset `0x00`), HCIVERSION (`0x02`), HCSPARAMS1 (`0x04` — max slots, interrupters, ports), HCSPARAMS2 (`0x08` — scratchpad count), HCCPARAMS1 (`0x10` — 64-bit support, context size). Calculate Operational Register base = BAR + CAPLENGTH. Halt controller (USBCMD.RS=0, wait USBSTS.HCH=1). Reset controller (USBCMD.HCRST=1, wait HCRST=0 AND USBSTS.CNR=0). Configure MaxSlotsEn. Allocate DCBAA (64-byte aligned, (MaxSlots+1) entries). Allocate scratchpad buffers if needed. Write DCBAAP. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: xHCI controller initialization"`. After implementation, save gotchas to MCP memory.
+**✅ VERIFICATION —** xHCI controller initialization implemented: halt (USBCMD.RS=0, wait HCH=1), reset (HCRST=1, wait HCRST=0 AND CNR=0), DCBAA allocation via `pmm_alloc_contiguous()`, scratchpad buffer setup if HCSPARAMS2 count > 0, MaxSlotsEn configuration, DCBAAP write (64-bit split into two 32-bit writes), controller start (USBCMD.RS=1, wait HCH=0). Verify: `bash scripts/build.sh run-usb` shows `[xHCI] Controller halted`, `Controller reset complete`, `xHCI v0.0 ready, 64 slots, 8 ports, 16 intrs, 0 scratchpads`. Committed as `17fea68 usb: xHCI controller initialization`.
 
-- [ ] Read Capability Registers (offset `0x00` from BAR base):
-  - [ ] CAPLENGTH (offset `0x00`, 1B) — length of capability space
-  - [ ] HCIVERSION (offset `0x02`, 2B) — xHCI version (e.g., `0x0110` = 1.1)
-  - [ ] HCSPARAMS1 (offset `0x04`, 4B) — max slots (7:0), max interrupters (18:8), max ports (31:24)
-  - [ ] HCSPARAMS2 (offset `0x08`, 4B) — scratchpad bufs high (31:27) + low (25:21)
-  - [ ] HCCPARAMS1 (offset `0x10`, 4B) — 64-bit (bit 0), context size 64B (bit 2)
-  - [ ] DBOFF (offset `0x14`, 4B) — doorbell array offset
-  - [ ] RTSOFF (offset `0x18`, 4B) — runtime register space offset
-- [ ] Calculate base addresses: Operational = BAR + CAPLENGTH, Runtime = BAR + RTSOFF, Doorbell = BAR + DBOFF
-- [ ] Halt controller: set USBCMD.RS = 0 (Operational + `0x00`), wait USBSTS.HCH = 1
-- [ ] Reset controller: set USBCMD.HCRST = 1, wait HCRST = 0 AND USBSTS.CNR = 0
-- [ ] Write CONFIG.MaxSlotsEn (Operational + `0x38`) with desired device count
-- [ ] Allocate DCBAA: `pmm_alloc_contiguous()`, 64-byte aligned, (MaxSlots+1) × 8 bytes, zero-fill
-- [ ] Allocate scratchpad buffers if HCSPARAMS2 count > 0: page-aligned, store at DCBAA[0]
-- [ ] Write DCBAAP (Operational + `0x30`) — 64-bit physical address of DCBAA
-- [ ] Start controller: set USBCMD.RS = 1, wait USBSTS.HCH = 0
-- [ ] Log: `[xHCI] v%x.%x ready, %u slots, %u ports, %u interrupters`
-- [ ] Commit: `"usb: xHCI controller initialization"`
+- [x] Read Capability Registers (offset `0x00` from BAR base):
+  - [x] CAPLENGTH (offset `0x00`, 1B) — length of capability space
+  - [x] HCIVERSION (offset `0x02`, 2B) — xHCI version (e.g., `0x0110` = 1.1)
+  - [x] HCSPARAMS1 (offset `0x04`, 4B) — max slots (7:0), max interrupters (18:8), max ports (31:24)
+  - [x] HCSPARAMS2 (offset `0x08`, 4B) — scratchpad bufs high (31:27) + low (25:21)
+  - [x] HCCPARAMS1 (offset `0x10`, 4B) — 64-bit (bit 0), context size 64B (bit 2)
+  - [x] DBOFF (offset `0x14`, 4B) — doorbell array offset
+  - [x] RTSOFF (offset `0x18`, 4B) — runtime register space offset
+- [x] Calculate base addresses: Operational = BAR + CAPLENGTH, Runtime = BAR + RTSOFF, Doorbell = BAR + DBOFF
+- [x] Halt controller: set USBCMD.RS = 0 (Operational + `0x00`), wait USBSTS.HCH = 1
+- [x] Reset controller: set USBCMD.HCRST = 1, wait HCRST = 0 AND USBSTS.CNR = 0
+- [x] Write CONFIG.MaxSlotsEn (Operational + `0x38`) with desired device count
+- [x] Allocate DCBAA: `pmm_alloc_contiguous()`, 64-byte aligned, (MaxSlots+1) × 8 bytes, zero-fill
+- [x] Allocate scratchpad buffers if HCSPARAMS2 count > 0: page-aligned, store at DCBAA[0]
+- [x] Write DCBAAP (Operational + `0x30`) — 64-bit physical address of DCBAA
+- [x] Start controller: set USBCMD.RS = 1, wait USBSTS.HCH = 0
+- [x] Log: `[xHCI] v%x.%x ready, %u slots, %u ports, %u interrupters`
+- [x] Commit: `"usb: xHCI controller initialization"`
 
 ### 1.3 TRB Ring Architecture
 
@@ -737,62 +737,62 @@ graph TD
 
 ## Priority Order
 
-| Priority  | Section                                    | Description                                                      |
-| --------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| 🔴 P0     | §1.1 xHCI PCI Discovery & BAR Mapping    | Controller detection — everything depends on this                |
-| 🔴 P0     | §1.2 xHCI Controller Initialization      | Controller halt/reset/start, DCBAA, scratchpad                   |
-| 🔴 P0     | §1.3 TRB Ring Architecture               | Command/Event/Transfer rings — core communication mechanism      |
-| 🔴 P0     | §2.1 USB Device Enumeration              | Port detect, slot enable, address, descriptors                   |
-| 🔴 P0     | §2.2 MSC Identification & Endpoint Cfg   | Match BOT triple, discover Bulk-IN/OUT endpoints                 |
-| 🔴 P0     | §3.1 BOT: CBW/CSW Transport              | Core protocol — send commands, receive status                    |
-| 🔴 P0     | §3.2 SCSI: INQUIRY + TEST UNIT READY     | Device identification and readiness check                        |
-| �� P0     | §3.3 SCSI: READ CAPACITY + READ(10)      | Read disk geometry and sectors — read-only USB storage works     |
-| 🟠 P1     | §3.4 SCSI: WRITE(10)                     | Write support for USB storage                                    |
-| 🟠 P1     | §3.5 Block Device Registration           | Expose as `blkdev`, auto-mount with drive letter                 |
-| 🟠 P1     | §4.1 REQUEST SENSE Error Decoding        | Detailed error reporting for failed commands                     |
-| 🟠 P1     | §4.2 Reset Recovery (3-Step)             | Handle phase errors and stalled endpoints                        |
-| 🟠 P1     | §4.3 Retry Policy & Timeout Handling     | Robust I/O with retries and timeouts                             |
-| 🟠 P1     | §2.3 MSI/MSI-X Interrupt Handling        | Replace polling with interrupt-driven I/O                        |
-| 🟡 P2     | §5.1 Hot-Plug Detection                  | Dynamic connect + auto-mount + desktop notification              |
-| 🟡 P2     | §5.2 Surprise Removal & Safe Eject        | Graceful disconnect without data loss                            |
-| 🟡 P2     | §6.1 Multi-LUN Support                   | Multi-slot card readers, multi-partition devices                 |
-| 🟡 P2     | §6.2 Scatter-Gather (64 KiB TRB Split)   | Large transfers without boundary violations                      |
-| 🟢 P3     | §6.3 Defensive Descriptor Validation     | Security hardening against malicious USB devices                 |
-| 🟢 P3     | §7.1 Safe Eject (START STOP UNIT)        | User-initiated unmount + media eject                             |
-| 🟢 P3     | §7.2 USB Hub Traversal                   | Devices behind hubs — multi-tier topology                        |
-| 🟢 P3     | §8.1 Adaptive I/O Coalescing            | 🚀 **Exclusive** — request merging for throughput                |
-| 🟢 P3     | §8.2 USB Telemetry Dashboard             | 🚀 **Exclusive** — per-device latency/IOPS GUI                  |
-| 🟢 P3     | §8.3 Predictive Prefetch                 | 🚀 **Exclusive** — driver-level sequential read-ahead            |
-| 🟢 P3     | §8.4 Safe Eject UX                       | 🚀 **Exclusive** — polished tray icon + progress + confirmation  |
-| 🔵 P4     | §9.1 IOMMU DMA Isolation                | Restrict xHCI DMA to allocated pages                             |
-| 🔵 P4     | §9.2 UASP (USB Attached SCSI)           | USB 3.0 bulk streams for 40–70% faster throughput                |
+| ⭐ | Priority | Section                                  | Description                                                     |
+| -- | -------- | ---------------------------------------- | --------------------------------------------------------------- |
+| 💎 | 🔴 P0    | §1.1 xHCI PCI Discovery & BAR Mapping   | Controller detection — everything depends on this               |
+| 💎 | 🔴 P0    | §1.2 xHCI Controller Initialization     | Controller halt/reset/start, DCBAA, scratchpad                  |
+| 💎 | 🔴 P0    | §1.3 TRB Ring Architecture              | Command/Event/Transfer rings — core communication mechanism     |
+| 💎 | 🔴 P0    | §2.1 USB Device Enumeration             | Port detect, slot enable, address, descriptors                  |
+| 💎 | 🔴 P0    | §2.2 MSC Identification & Endpoint Cfg  | Match BOT triple, discover Bulk-IN/OUT endpoints                |
+| 💎 | 🔴 P0    | §3.1 BOT: CBW/CSW Transport             | Core protocol — send commands, receive status                   |
+| 💎 | 🔴 P0    | §3.2 SCSI: INQUIRY + TEST UNIT READY    | Device identification and readiness check                       |
+| 💎 | 🔴 P0    | §3.3 SCSI: READ CAPACITY + READ(10)     | Read disk geometry and sectors — read-only USB storage works    |
+| 💎 | 🟠 P1    | §3.4 SCSI: WRITE(10)                    | Write support for USB storage                                   |
+| 💎 | 🟠 P1    | §3.5 Block Device Registration           | Expose as `blkdev`, auto-mount with drive letter                |
+| 💎 | 🟠 P1    | §4.1 REQUEST SENSE Error Decoding        | Detailed error reporting for failed commands                    |
+| 💎 | 🟠 P1    | §4.2 Reset Recovery (3-Step)             | Handle phase errors and stalled endpoints                       |
+| 💎 | 🟠 P1    | §4.3 Retry Policy & Timeout Handling     | Robust I/O with retries and timeouts                            |
+| 💎 | �� P1    | §2.3 MSI/MSI-X Interrupt Handling        | Replace polling with interrupt-driven I/O                       |
+| 💎 | 🟡 P2    | §5.1 Hot-Plug Detection                  | Dynamic connect + auto-mount + desktop notification             |
+| 💎 | 🟡 P2    | §5.2 Surprise Removal & Safe Eject       | Graceful disconnect without data loss                           |
+| 💎 | 🟡 P2    | §6.1 Multi-LUN Support                   | Multi-slot card readers, multi-partition devices                |
+| 💎 | 🟡 P2    | §6.2 Scatter-Gather (64 KiB TRB Split)  | Large transfers without boundary violations                     |
+| 💎 | 🟢 P3    | §6.3 Defensive Descriptor Validation     | Security hardening against malicious USB devices                |
+| 💎 | 🟢 P3    | §7.1 Safe Eject (START STOP UNIT)        | User-initiated unmount + media eject                            |
+| 💎 | 🟢 P3    | §7.2 USB Hub Traversal                   | Devices behind hubs — multi-tier topology                       |
+| ⭐ | 🟢 P3    | §8.1 Adaptive I/O Coalescing             | 🚀 **Exclusive** — request merging for throughput               |
+| ⭐ | 🟢 P3    | §8.2 USB Telemetry Dashboard             | 🚀 **Exclusive** — per-device latency/IOPS GUI                 |
+| ⭐ | 🟢 P3    | §8.3 Predictive Prefetch                 | 🚀 **Exclusive** — driver-level sequential read-ahead           |
+| ⭐ | 🟢 P3    | §8.4 Safe Eject UX                       | 🚀 **Exclusive** — polished tray icon + progress + confirmation |
+| 💎 | 🔵 P4    | §9.1 IOMMU DMA Isolation                 | Restrict xHCI DMA to allocated pages                            |
+| 💎 | 🔵 P4    | §9.2 UASP (USB Attached SCSI)            | USB 3.0 bulk streams for 40–70% faster throughput               |
 
 ---
 
 ## OS Comparison
 
-| Feature                          | 🪟 Windows 11                        | 🐧 Linux                              | 🚀 Impossible OS                                   |
-| -------------------------------- | ----------------------------------- | ------------------------------------- | -------------------------------------------------- |
-| xHCI host controller             | ✅ Native (usbxhci.sys)              | ✅ Native (xhci_hcd)                   | ⬜ §1.1–1.3 P0 — full xHCI from scratch            |
-| USB device enumeration           | ✅ Native (usbhub3.sys)              | ✅ Native (usb-core)                   | ⬜ §2.1 P0 — port detect + desc parsing            |
-| BOT mass storage                 | ✅ Native (Usbstor.sys)              | ✅ Native (usb-storage)                | ⬜ §3.1 P0 — CBW/CSW transport                     |
-| SCSI command set                 | ✅ Native (disk.sys)                  | ✅ Native (sd_mod)                     | ⬜ §3.2–3.4 P0/P1 — INQUIRY/READ/WRITE             |
-| Block device registration        | ✅ Auto (PnP manager)                | ✅ Auto (block layer)                  | ⬜ §3.5 P1 — blkdev → partition scan → mount       |
-| Error recovery (Reset Recovery)  | ✅ Built-in                           | ✅ Built-in                            | ⬜ §4.1–4.3 P1 — 3-step reset + retry              |
-| MSI/MSI-X interrupts             | ✅ Native                             | ✅ Native                              | ⬜ §2.3 P1 — interrupt-driven I/O                   |
-| Hot-plug detection               | ✅ PnP + tray icon                   | ✅ udevd + automount                   | ⬜ §5.1 P2 — desktop toast + auto-mount             |
-| Surprise removal                 | ✅ Safe removal wizard                | ✅ umount + udisksctl                  | ⬜ §5.2 P2 — quarantine + teardown                  |
-| Multi-LUN support                | ✅ Native                             | ✅ Native                              | ⬜ §6.1 P2 — Get Max LUN + per-LUN blkdev          |
-| Scatter-gather I/O               | ✅ URB sg lists                       | ✅ sg lists                            | ⬜ §6.2 P2 — 64 KiB TRB boundary handling          |
-| Defensive descriptor parsing     | ⚠️ Basic validation                   | ⚠️ Quirk table for bad devices         | ⬜ §6.3 P3 — strict bounds + cap + two-stage        |
-| Safe eject (media eject)         | ✅ START STOP UNIT                    | ✅ eject command                       | ⬜ §7.1 P3 — flush + unmount + SCSI eject           |
-| USB hub support                  | ✅ Full (up to 7 tiers)               | ✅ Full (up to 7 tiers)                | ⬜ §7.2 P3 — route string + hub enumeration         |
-| UASP (USB 3.0 streams)          | ✅ Uaspstor.sys                       | ✅ uas driver                          | ⬜ §9.2 P4 — bulk streams + command queuing         |
-| IOMMU DMA isolation              | ✅ Hyper-V / VBS                      | ✅ iommu=strict                        | ⬜ §9.1 P4 — VT-d/AMD-Vi page tables               |
-| **Adaptive I/O coalescing**      | ⬜ Not implemented                    | ⬜ Not implemented                     | ⬜ §8.1 P3 — **request merging — first to ship** 🚀 |
-| **USB telemetry dashboard**      | ⬜ No built-in GUI                    | ⬜ No built-in GUI                     | ⬜ §8.2 P3 — **latency/IOPS GUI — first** 🚀       |
-| **Predictive prefetch**          | ⬜ No driver-level prefetch           | ⬜ No driver-level prefetch            | ⬜ §8.3 P3 — **sequential read-ahead** 🚀          |
-| **Safe eject UX**                | ⚠️ Tiny tray icon (poor UX)           | ⬜ CLI only (udisksctl)                | ⬜ §8.4 P3 — **tray + progress + warning** 🚀      |
+| ⭐ | Feature                          | 🪟 Windows 11                        | 🐧 Linux                              | 🚀 Impossible OS                                   |
+| -- | -------------------------------- | ------------------------------------ | -------------------------------------- | -------------------------------------------------- |
+| 💎 | xHCI host controller             | ✅ Native (usbxhci.sys)              | ✅ Native (xhci_hcd)                   | ⚠️ §1.1–1.2 P0 — PCI + init done, rings pending    |
+| 💎 | USB device enumeration           | ✅ Native (usbhub3.sys)              | ✅ Native (usb-core)                   | ⬜ §2.1 P0 — port detect + desc parsing            |
+| 💎 | BOT mass storage                 | ✅ Native (Usbstor.sys)              | ✅ Native (usb-storage)                | ⬜ §3.1 P0 — CBW/CSW transport                     |
+| 💎 | SCSI command set                 | ✅ Native (disk.sys)                  | ✅ Native (sd_mod)                     | ⬜ §3.2–3.4 P0/P1 — INQUIRY/READ/WRITE             |
+| 💎 | Block device registration        | ✅ Auto (PnP manager)                | ✅ Auto (block layer)                  | ⬜ §3.5 P1 — blkdev → partition scan → mount       |
+| 💎 | Error recovery (Reset Recovery)  | ✅ Built-in                           | ✅ Built-in                            | ⬜ §4.1–4.3 P1 — 3-step reset + retry              |
+| 💎 | MSI/MSI-X interrupts             | ✅ Native                             | ✅ Native                              | ⬜ §2.3 P1 — interrupt-driven I/O                   |
+| 💎 | Hot-plug detection               | ✅ PnP + tray icon                   | ✅ udevd + automount                   | ⬜ §5.1 P2 — desktop toast + auto-mount             |
+| 💎 | Surprise removal                 | ✅ Safe removal wizard                | ✅ umount + udisksctl                  | ⬜ §5.2 P2 — quarantine + teardown                  |
+| 💎 | Multi-LUN support                | ✅ Native                             | ✅ Native                              | ⬜ §6.1 P2 — Get Max LUN + per-LUN blkdev          |
+| 💎 | Scatter-gather I/O               | ✅ URB sg lists                       | ✅ sg lists                            | ⬜ §6.2 P2 — 64 KiB TRB boundary handling          |
+| 💎 | Defensive descriptor parsing     | ⚠️ Basic validation                   | ⚠️ Quirk table for bad devices         | ⬜ §6.3 P3 — strict bounds + cap + two-stage        |
+| 💎 | Safe eject (media eject)         | ✅ START STOP UNIT                    | ✅ eject command                       | ⬜ §7.1 P3 — flush + unmount + SCSI eject           |
+| 💎 | USB hub support                  | ✅ Full (up to 7 tiers)               | ✅ Full (up to 7 tiers)                | ⬜ §7.2 P3 — route string + hub enumeration         |
+| 💎 | UASP (USB 3.0 streams)          | ✅ Uaspstor.sys                       | ✅ uas driver                          | ⬜ §9.2 P4 — bulk streams + command queuing         |
+| 💎 | IOMMU DMA isolation              | ✅ Hyper-V / VBS                      | ✅ iommu=strict                        | ⬜ §9.1 P4 — VT-d/AMD-Vi page tables               |
+| ⭐ | **Adaptive I/O coalescing**      | ❌ Not implemented                    | ❌ Not implemented                     | ⬜ §8.1 P3 — **request merging — first to ship** 🚀 |
+| ⭐ | **USB telemetry dashboard**      | ❌ No built-in GUI                    | ❌ No built-in GUI                     | ⬜ §8.2 P3 — **latency/IOPS GUI — first** 🚀       |
+| ⭐ | **Predictive prefetch**          | ❌ No driver-level prefetch           | ❌ No driver-level prefetch            | ⬜ §8.3 P3 — **sequential read-ahead** 🚀          |
+| ⭐ | **Safe eject UX**                | ⚠️ Tiny tray icon (poor UX)           | ❌ CLI only (udisksctl)                | ⬜ §8.4 P3 — **tray + progress + warning** 🚀      |
 
 > **After P0+P1 items:** Impossible OS reads and writes USB flash drives — matches Windows/Linux core functionality.
 > **After P2 items:** Full hot-plug, surprise removal, multi-LUN, scatter-gather — production-quality USB storage.
