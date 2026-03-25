@@ -24,6 +24,9 @@ uintptr_t pmm_alloc_contiguous(uint64_t count);
 /* Free a previously allocated frame */
 void pmm_free_frame(uintptr_t addr);
 
+/* Mark a physical address range as used (e.g. for ELF segment reservations) */
+void pmm_mark_region_used(uintptr_t base, uint64_t length);
+
 /* Get memory statistics */
 uint64_t pmm_get_total_frames(void);
 uint64_t pmm_get_used_frames(void);

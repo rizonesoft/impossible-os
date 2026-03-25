@@ -160,11 +160,23 @@ int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
     uint64_t timeout = freq ? ((uint64_t)timeout_ms * freq) / 1000 : 0;
 
     while (!atomic_read(&ev->state)) {
-        /* Check deadline before blocking */
+        /* Check deadline BEFORE yielding */
         if ((system_get_ticks() - start) >= timeout)
             return 0;  /* timed out */
 
-        enqueue_and_block(ev);
+        /* Cooperative yield: DON'T use enqueue_and_block() here.
+         *
+         * enqueue_and_block() sets THREAD_BLOCKED + yield(), which means
+         * the thread is NEVER rescheduled unless event_set() fires from
+         * an IRQ handler.  If the IRQ never fires (e.g. VirtualBox AHCI
+         * MSI not delivered), the thread stays blocked forever and the
+         * timeout check above never runs — a permanent hang.
+         *
+         * Instead, use plain yield() which keeps the thread READY.
+         * The scheduler will reschedule us, and we'll re-check the
+         * event state and deadline.  This burns some CPU but guarantees
+         * the timeout actually fires. */
+        yield();
     }
 
     /* Consume signal for AUTO_RESET */

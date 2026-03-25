@@ -9,6 +9,7 @@
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 
 /* Simple memcpy for loading segments */
 static void elf_memcpy(uint8_t *dst, const uint8_t *src, uint64_t n)
@@ -120,6 +121,11 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
             load_base = phdr->p_vaddr;
         if (phdr->p_vaddr + phdr->p_memsz > load_end)
             load_end = phdr->p_vaddr + phdr->p_memsz;
+
+        /* Reserve these physical pages in the PMM so no later allocation
+         * (wallpaper, framebuffer, fonts) can overwrite the loaded code.
+         * Since we use identity mapping, vaddr == paddr. */
+        pmm_mark_region_used((uintptr_t)phdr->p_vaddr, phdr->p_memsz);
 
         klog(LOG_DEBUG, "elf", "Loaded segment: vaddr=%p filesz=%u memsz=%u",
                phdr->p_vaddr, phdr->p_filesz, phdr->p_memsz);

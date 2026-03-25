@@ -450,7 +450,29 @@ retry:
     port_write(pregs, AHCI_PxCI, 1U << slot);
 
     if (use_events) {
-        int signalled = event_wait_timeout(&p->completion, 5000);
+        int signalled;
+
+        /* Clear any stale event signal from a previous command.
+         * Without this, a leftover signal causes event_wait_timeout()
+         * to return immediately for the WRONG command, then the NEXT
+         * command blocks forever waiting for an event that already fired.
+         * This race manifests as intermittent hangs on VirtualBox. */
+        if (event_is_set(&p->completion))
+            event_wait(&p->completion);  /* consume stale signal */
+
+        /* Brief busy-poll: if the command completes before we block,
+         * the IRQ fires but nobody is waiting → signal gets set.
+         * Check CI directly first to avoid unnecessary blocking. */
+        {
+            uint32_t quick = 100000;
+            while (quick--) {
+                uint32_t ci = port_read(pregs, AHCI_PxCI);
+                if (!(ci & (1U << slot)))
+                    goto done;  /* completed without needing to block */
+            }
+        }
+
+        signalled = event_wait_timeout(&p->completion, 5000);
         if (!signalled) {
             /* Event-based I/O timed out — MSI likely not working
              * (common on VirtualBox).  Fall back to polling permanently

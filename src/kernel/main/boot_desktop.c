@@ -23,6 +23,8 @@
 #include "desktop/desktop.h"
 #include "desktop/terminal.h"
 #include "desktop/gallery.h"
+#include "kernel/fs/vfs.h"
+#include "kernel/elf.h"
 #include "main/main_internal.h"
 
 void boot_desktop_init(void)
@@ -47,8 +49,6 @@ void boot_desktop_init(void)
     }
 #endif
 
-    /* Shell loader is declared in test_threads.c */
-    extern void shell_loader_func(void);
 
     boot_splash_tick();
     boot_splash_status("Loading fonts...");
@@ -168,6 +168,37 @@ void boot_desktop_init(void)
 
     terminal_open();
     gallery_open();
-    task_create(shell_loader_func, "ShellLoader");
+
+    /* Load cmd.exe synchronously during boot — before the compositor
+     * starts and takes over PID 0.  This avoids depending on the
+     * preemptive scheduler to run ShellLoader (which doesn't work
+     * reliably because compositor's scheduler_disable/enable cycle
+     * prevents quantum accumulation). */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *file = vfs_open("C:\\cmd.exe", VFS_O_READ);
+        if (file) {
+            uint8_t *buf = (uint8_t *)kmalloc(file->size);
+            if (buf) {
+                struct elf_load_result elf;
+                vfs_read(file, 0, (uint32_t)file->size, buf);
+                vfs_close(file);
+                elf = elf_load(buf, file->size);
+                kfree(buf);
+                if (elf.success) {
+                    task_create_user((task_entry_t)elf.entry, "cmd.exe");
+                    klog(LOG_DEBUG, "boot",
+                         "cmd.exe loaded: entry %p", elf.entry);
+                } else {
+                    klog(LOG_WARN, "boot", "cmd.exe ELF load failed");
+                }
+            } else {
+                vfs_close(file);
+                klog(LOG_ERROR, "boot", "Cannot allocate buffer for cmd.exe");
+            }
+        } else {
+            klog(LOG_WARN, "boot", "cmd.exe not found on C:\\");
+        }
+    }
+
     scheduler_enable();
 }

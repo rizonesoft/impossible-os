@@ -46,7 +46,7 @@ static inline uint8_t bitmap_test(uint64_t frame)
 }
 
 /* Mark a range of frames as used */
-static void pmm_mark_region_used(uintptr_t base, uint64_t length)
+void pmm_mark_region_used(uintptr_t base, uint64_t length)
 {
     uint64_t frame_start = base / PMM_FRAME_SIZE;
     uint64_t frame_end = (base + length + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
@@ -173,6 +173,14 @@ void pmm_init(void)
 
     /* Bitmap itself */
     pmm_mark_region_used(kernel_end_phys, bitmap_end - kernel_end_phys);
+
+    /* User-mode ELF load area (0x800000 – 0x900000).
+     * User programs are loaded at fixed virtual addresses starting at
+     * 0x800000 (defined in user/user.ld).  Since the kernel uses identity
+     * mapping (no per-process page tables), this physical region must be
+     * reserved at init so pmm_alloc_contiguous never hands it out to
+     * wallpaper, framebuffer, or font allocations. */
+    pmm_mark_region_used(0x800000, 0x100000);
 
     /* Log UEFI memory map summary */
     klog(LOG_INFO, "UEFI", "Memory map: %u MB RAM, %u descriptors",
