@@ -25,7 +25,10 @@ This domain holds kernel work that is foundational but is not primarily memory m
 
 ## Active TODOs
 
-- None yet.
+- [TODO-01 Kernel Init Sequencing](./TODO-01-kernel-init-sequencing.md) — Formal phase model, readiness oracle, dependency gates, and failure policy replacing the current ad-hoc boot sequence.
+- [TODO-02 System Logging](./TODO-02-system-logging.md) — Per-subsystem log splitting, rotation, structured JSON events, rate limiting, and remote syslog forwarding. Core klog infrastructure is complete.
+- [TODO-03 Object Manager](./TODO-03-object-manager.md) — OBJECT_HEADER/OBJECT_TYPE infrastructure, reference counting, per-process handle table, named object namespace, security descriptors, and Win32 handle APIs. Greenfield — no ObXxx layer exists yet.
+- [TODO-04 PEB / TEB & User-Mode ABI](./TODO-04-peb-teb-user-abi.md) — PEB, TEB, swapgs, KERNEL_GS_BASE, RTL_USER_PROCESS_PARAMETERS, Ldr module list, TLS slots, and initial stack frame. Greenfield — task_exec currently enters ring 3 with all-zero registers and no PEB/TEB.
 
 ## Completed / Doc-converted
 

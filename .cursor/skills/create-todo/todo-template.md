@@ -18,10 +18,14 @@ Use this as the default starting point for a new leaf TODO.
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable      | Depends On | Status |
-| -- | :---: | ---------------- | ---------- | :----: |
-| 💎 |   1   | Foundation work  | —          |  [ ]   |
-| ⭐ |   2   | Exclusive follow-up | 1       |  [ ]   |
+| ⭐  | Order | Deliverable             | Depends On | Status |
+| --- | :---: | ----------------------- | ---------- | :----: |
+| 💎  |   1   | Foundation / parity     | —          |  [ ]   |
+| 💎  |   2   | More parity work        | 1          |  [ ]   |
+| ⭐  |   3   | Exclusive differentiator | 1, 2      |  [ ]   |
+
+> 💎 = parity work — matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work — Impossible OS is superior or first.
 
 ## 1. Workstream
 
@@ -30,6 +34,16 @@ Use this as the default starting point for a new leaf TODO.
 - [ ] Implement the scoped change.
 - [ ] Verify the scoped change.
 - [ ] Commit: `"scope: short description"`
+
+## OS Comparison
+
+| ⭐  | Feature          | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS                  |
+| --- | ---------------- | ------------- | -------- | --------------------------------- |
+| 💎  | Core feature     | ✅            | ✅       | ⬜ Planned — §1.1                 |
+| ⭐  | Exclusive feature | ❌           | ❌       | ⬜ **Planned — world-first** 🚀   |
+
+> After completing parity items Impossible OS matches Windows and Linux.
+> Exclusive items make Impossible OS superior.
 
 ## Verification
 
@@ -41,4 +55,6 @@ Use this as the default starting point for a new leaf TODO.
 
 - Default to a leaf TODO.
 - Add child-TODO sections only when the topic truly needs multiple files or shared verification.
-- Keep prose lean and keep tables compact enough to remain readable in wrapped editors.
+- Keep tables compact. The `💎`/`⭐` column must always be present in both the Implementation Order table and the OS Comparison table.
+- The OS Comparison table is **mandatory** in every TODO — it is what makes Impossible OS's competitive position visible.
+- Use ✅ = done, ⚠️ = partial, ⬜ = planned, ❌ = not available/not applicable.

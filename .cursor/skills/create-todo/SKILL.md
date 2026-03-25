@@ -27,8 +27,15 @@ description: Create lean project TODO files under todo/, choose the correct doma
    - Create a parent TODO only when the topic truly needs multiple child files or shared verification.
 5. Set up execution order at creation time.
    - Use `Implementation Order`, not `Phase-by-Phase`.
+   - Mark every row with `💎` (parity — matches Windows/Linux) or `⭐` (exclusive — Impossible OS superior).
    - Add dependencies, overlap notes, handoffs, and `→ XREF:` links while creating the file.
-6. Update indexes in the same task.
+6. Add an OS Comparison table.
+   - Every TODO must include an `## OS Comparison` section before Verification.
+   - Columns: `⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS`
+   - Mark each row `💎` (parity) or `⭐` (exclusive/superior).
+   - Show current Impossible OS state: ✅ Done, ⚠️ Partial, ⬜ Planned, ❌ Not applicable.
+   - Add a short summary note after the table on what makes Impossible OS superior.
+7. Update indexes in the same task.
    - Update the domain `INDEX.md`.
    - Update `todo/TODO-00-INDEX.md` only when the new TODO changes root-visible scope.
 
