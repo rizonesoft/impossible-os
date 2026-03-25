@@ -219,7 +219,7 @@ Replace the original TODO file content (do NOT delete the file) with:
 
 ### 6. Update the TODO index
 
-Open `todo/TODO-000-INDEX.md` and mark the converted TODO entry with ✅ and a link to the docs:
+Open `todo/TODO-00-INDEX.md` and mark the converted TODO entry with ✅ and a link to the docs:
 
 ```markdown
 - [x] TODO-040.02 — AHCI Driver → [docs](docs/storage/controllers/ahci.md) ✅

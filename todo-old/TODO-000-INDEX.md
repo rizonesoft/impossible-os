@@ -11,12 +11,8 @@
 
 ## Infrastructure  `000-Infrastructure/`
 
-| #   | TODO                                                                    | Status       |
-|-----|-------------------------------------------------------------------------|--------------|
-| 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)       | ✅ Done → [docs](../docs/infrastructure/development-tooling.md) |
-| 007 | [VMware Workstation Pro](000-Infrastructure/TODO-007-VMWare.md)         |              |
-| 005 | [Debug & Logging System](000-Infrastructure/TODO-005-Debug.md)          |              |
-| 006 | [Real Hardware Boot](000-Infrastructure/TODO-006-Real-Hardware.md)      |              |
+Legacy infrastructure TODO files were retired during the TODO reset.
+See [development-tooling.md](../docs/infrastructure/development-tooling.md) and the new `todo/00-infrastructure/` roadmap for current infrastructure planning.
 
 ---
 

@@ -120,7 +120,7 @@ done
 
 ### 5. Validate TODO index consistency
 
-Check `todo/TODO-000-INDEX.md`:
+Check `todo/TODO-00-INDEX.md`:
 - Every TODO file in `todo/` subdirectories should have an entry in the index
 - Every index entry should point to an existing file
 - Converted TODOs should have `✅ Done → [docs](...)` with a valid link
@@ -129,7 +129,7 @@ Check `todo/TODO-000-INDEX.md`:
 # Find TODO files not in the index
 for f in todo/*/TODO-*.md; do
   base=$(basename "$f" .md | sed 's/TODO-//')
-  grep -q "$base" todo/TODO-000-INDEX.md || echo "MISSING FROM INDEX: $f"
+  grep -q "$base" todo/TODO-00-INDEX.md || echo "MISSING FROM INDEX: $f"
 done
 ```
 

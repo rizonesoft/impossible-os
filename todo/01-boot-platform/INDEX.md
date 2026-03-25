@@ -1,0 +1,37 @@
+# 01 Boot Platform
+
+This domain covers the path from firmware entry through kernel handoff and early boot platform setup.
+
+## Belongs Here
+
+- UEFI bootloader work, boot contracts, memory map handoff, and GOP setup.
+- Early platform initialization that must exist before normal kernel subsystems can run.
+- Boot diagnostics, boot timing, and other first-stage bring-up tasks.
+
+## Does Not Belong Here
+
+- General kernel facilities after bring-up. Put that in [02 Kernel Core](../02-kernel-core/INDEX.md) or [03 Memory Concurrency](../03-memory-concurrency/INDEX.md).
+- Long-lived device driver work. Put that in [04 Drivers Hardware](../04-drivers-hardware/INDEX.md).
+
+## Likely Source Areas
+
+- [src/boot](../src/boot/)
+- [src/kernel/main](../src/kernel/main/)
+- [docs](../docs/)
+
+## Epics
+
+- None yet.
+
+## Active TODOs
+
+- None yet.
+
+## Completed / Doc-converted
+
+- None yet.
+
+## Local Naming
+
+- Use `TODO-01-uefi-handoff.md` as the filename style for new leaf TODOs in this folder.
+- Create a parent TODO only when one topic needs multiple leaf files or shared verification.

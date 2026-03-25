@@ -1,0 +1,35 @@
+---
+description: Safety boundaries, build workflow, and command discipline
+globs:
+  - "**/*.c"
+  - "**/*.h"
+  - "**/*.asm"
+  - "scripts/**/*.sh"
+  - "scripts/**/*.ps1"
+  - "scripts/**/*.bat"
+  - ".github/workflows/*.yml"
+  - "AGENTS.md"
+  - "CONTRIBUTING.md"
+  - "README.md"
+  - "todo/**/*.md"
+alwaysApply: false
+---
+
+# Safety And Build
+
+- Stay inside the repository workspace. Do not access `/mnt/c/`, modify host Windows settings, or work outside the repo unless the user explicitly asks.
+- Never run raw `make`; use `bash scripts/build.sh`, `bash scripts/build.sh clean`, `bash scripts/build.sh run`, or `bash scripts/build.sh clean run`.
+- Treat `tail -1 build/build.log` as the authoritative build result. `command_status` can lie on builds.
+- Do not treat silent Git output as a hang. Check exit status before retrying or terminating a Git command.
+- Never run real-device disk commands such as `dd`, `mkfs`, or writes to `/dev/sd*` or `/dev/nvme*` without explicit user approval.
+- Do not install system-wide packages or make external network requests unless the user explicitly asks.
+- Never store, log, or auto-type passwords, tokens, or other credentials. If `sudo` or other authentication is required, pause and let the user enter it manually.
+- If repo `.githooks/` are installed, expect pre-commit staged C or H linting and post-commit `COUNT.md` regeneration or amend behavior.
+- Headless QEMU with serial output is a supported automation and debugging path. Terminal-visible serial and captured serial logs both count as valid evidence.
+
+## Example
+
+```bash
+bash scripts/build.sh
+tail -1 build/build.log
+```

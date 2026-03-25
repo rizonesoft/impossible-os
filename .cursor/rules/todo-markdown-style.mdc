@@ -1,0 +1,31 @@
+---
+description: Keep TODO markdown lean and avoid unnecessary hard wraps
+globs: todo/**/*.md
+alwaysApply: false
+---
+
+# TODO Markdown Style
+
+- Do not hard-wrap normal TODO prose just to satisfy an arbitrary column width.
+- Keep paragraphs, checklist items, and simple bullets on single logical lines when practical.
+- Use extra line breaks only where structure benefits from them, such as headings, admonitions, tables, code fences, and separate list items.
+- If a TODO line becomes awkwardly long, shorten or rewrite it instead of inserting arbitrary wraps.
+- Use Markdown tables only for compact data with short cells.
+- If a table would become wide or require sentence-length cells, replace it with bullets or short subsections instead.
+- When a compact table is appropriate, keep columns vertically aligned and re-align the full table whenever rows are added or edited.
+- Prefer lean, execution-focused wording over large narrative prompt blocks.
+
+## Example
+
+```markdown
+> **Goal:** Keep this paragraph as one logical line unless structure truly needs a break.
+
+| Column A | Column B |
+| -------- | -------- |
+| Value    | Value    |
+
+- [ ] Keep this checklist item on one line when practical.
+- `.cursor/rules/example.mdc`
+  Scope: always-on.
+  Covers: use a bullet block instead of a wide planning table.
+```

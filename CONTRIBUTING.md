@@ -161,7 +161,7 @@ docs: professional README with feature table
 
 All development is tracked in the TODO system:
 
-- **Start here:** [`todo/TODO-000-INDEX.md`](todo/TODO-000-INDEX.md) — master index of all work
+- **Start here:** [`todo/TODO-00-INDEX.md`](todo/TODO-00-INDEX.md) — master index of all work
 - **Each TODO file** contains detailed sections with implementation prompts
 - **Status markers:** `[ ]` uncompleted, `[/]` in progress, `[x]` completed
 - **Look for** sections marked with priority: 🔴 P0, 🟠 P1, 🟡 P2, 🟢 P3

@@ -7,7 +7,7 @@ description: Analyze a TODO master file and all TODO files in its sub-directory,
 Analyze a TODO master file (e.g., `TODO-040-Filesystem.md`) alongside every TODO file
 in its corresponding sub-directory (e.g., `TODO-040-Filesystem/`). Fix implementation
 order, section numbering, and cross-file inconsistencies. Optionally update the
-global index (`TODO-000-INDEX.md`).
+global index (`TODO-00-INDEX.md`).
 
 ## When to Run
 
@@ -33,7 +33,7 @@ The workflow automatically discovers the sub-directory from the master's base nu
    - Title (H1 heading)
    - Goal blockquote
    - Completion status (scan for `[x]` vs `[ ]` ratios)
-4. Read the **global index** (`TODO-000-INDEX.md`).
+4. Read the **global index** (`TODO-00-INDEX.md`).
 
 ### 2. Build an inventory table
 
@@ -188,7 +188,7 @@ For each XREF:
 
 ### 10. Update the global index
 
-Check `TODO-000-INDEX.md`:
+Check `TODO-00-INDEX.md`:
 
 1. Every master TODO file should have an entry in the appropriate layer table
 2. Sub-files that have their own index entries (e.g., `TODO-060.02-PCIe.md`) should be listed

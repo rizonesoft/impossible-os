@@ -1,0 +1,28 @@
+---
+description: Keep tracked project guidance in sync with code and workflow changes
+globs:
+  - "**/*.c"
+  - "**/*.h"
+  - "**/*.asm"
+  - "scripts/**/*.sh"
+  - "scripts/**/*.ps1"
+  - "scripts/**/*.bat"
+  - "docs/**/*.md"
+  - "todo/**/*.md"
+  - "AGENTS.md"
+  - "README.md"
+  - "CONTRIBUTING.md"
+alwaysApply: false
+---
+
+# Documentation Sync Discipline
+
+- When code, conventions, build flow, API names, paths, or tooling assumptions change, update the affected tracked guidance in the same task.
+- Primary sync targets are `AGENTS.md`, `.cursor/rules/`, future `.cursor/skills/`, compatibility notes, and any docs or TODOs that would otherwise become stale.
+- Common triggers include allocator pattern changes, boot-sequence changes, renamed APIs, path or naming shifts, workflow changes, and build or MCP policy changes.
+- Do not leave a known contradiction between code and tracked guidance for "later" if the current task already proved the doc is stale.
+- Keep rules concise and enforceable. Put long human-facing context in `AGENTS.md` or docs instead of copying it into every rule.
+
+## Example
+
+- If a task changes the canonical build verification flow, update `AGENTS.md`, the relevant Cursor rule, and any affected TODO or compatibility doc in the same task.

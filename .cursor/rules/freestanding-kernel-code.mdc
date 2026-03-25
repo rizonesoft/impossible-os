@@ -1,0 +1,27 @@
+---
+description: Freestanding C rules for kernel code, allocator discipline, and crash debugging
+globs:
+  - "src/kernel/**/*.c"
+  - "include/kernel/**/*.h"
+alwaysApply: false
+---
+
+# Freestanding Kernel Code
+
+- Do not use standard-library or angle-bracket headers in kernel code. Use project-local headers and `#include "kernel/types.h"` for integer types, `size_t`, and `NULL`.
+- Do not use `malloc()` or `printf()` in kernel code. Use `kmalloc()`, `pmm_alloc_contiguous()`, `printk()`, and `klog()` instead.
+- Use `kmalloc()` only for small kernel allocations (at or below 4 KB). Use `pmm_alloc_contiguous()` for larger buffers, DMA buffers, font or image data, file buffers, framebuffers, or anything likely to outgrow the heap.
+- Cast PMM returns explicitly: `(void *)(uintptr_t)pmm_alloc_contiguous(n)`.
+- Keep the highest-value gotchas visible: `-nostdinc` removes `<stdint.h>` and similar headers, large static arrays can grow kernel BSS into user-mode load space, and special build handling is required for modules that need SSE2 overrides.
+- New low-level hardware work should follow the current platform model: APIC or IOAPIC interrupts, DMA-first storage paths, and UEFI GOP framebuffer assumptions rather than new PIC, IDE PIO, or VGA text-mode paths.
+- For BSOD, panic, PAGE_FAULT, or RIP-based crash analysis, use `llvm-addr2line-19` and `llvm-objdump-19` before speculating about the fault site. Keep `build/kernel.exe` symbolized.
+- Fix root causes and allocator misuse directly instead of normalizing temporary workarounds.
+
+## Example
+
+```c
+#include "kernel/types.h"
+
+uint64_t phys = pmm_alloc_contiguous(pages);
+uint8_t *buf = (uint8_t *)(uintptr_t)phys;
+```

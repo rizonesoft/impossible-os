@@ -103,7 +103,7 @@ verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ## Prerequisites
 
-- Identify the correct category folder under `todo/` (check `TODO-000-INDEX.md`)
+- Identify the correct category folder under `todo/` (check `TODO-00-INDEX.md`)
 - Determine the numbering: check existing TODO files in the target folder for the next available number
 - Have the relevant spec document available (if applicable)
 - Understand the existing codebase state for this component (via Srclight)
@@ -367,7 +367,7 @@ Linux do for this component, then identify gaps where Impossible OS can do bette
 
 ### 10. Update the TODO index
 
-Add the new TODO to `todo/TODO-000-INDEX.md` in the correct category section:
+Add the new TODO to `todo/TODO-00-INDEX.md` in the correct category section:
 
 ```markdown
 - [ ] TODO-NNN.NN — Short Title

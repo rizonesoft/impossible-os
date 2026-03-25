@@ -3,10 +3,23 @@
 > A 64-bit operating system built from scratch for modern x86-64 hardware.
 > No Linux kernel, no borrowed foundations — custom UEFI bootloader, kernel, graphical desktop, and everything in between.
 
-> **Agent Rules:** Scoped rule files live in `.agents/rules/`:
-> - [`safety.md`](.agents/rules/safety.md) — `always_on` — workspace boundaries, build script, `command_status` workaround
-> - [`coding.md`](.agents/rules/coding.md) — `globs: *.c, *.h, *.asm` — freestanding C, memory gotchas, hardware constraints
-> - [`intelligence.md`](.agents/rules/intelligence.md) — model decision — API surface (Win32), Srclight, Memory MCP
+> **Cursor Project Rules:** Active project rules live in `.cursor/rules/`:
+> - [`safety-build.mdc`](.cursor/rules/safety-build.mdc) — workspace boundaries, build script, Git behavior, and command safety
+> - [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc) — freestanding kernel C, allocator rules, and crash-debugging discipline
+> - [`bare-metal-assembly.mdc`](.cursor/rules/bare-metal-assembly.mdc) — NASM, UEFI-era assembly constraints, and hardware assumptions
+> - [`api-surface-direction.mdc`](.cursor/rules/api-surface-direction.mdc) — Win32 direction, Windows paths, and product-facing conventions
+> - [`doc-sync-discipline.mdc`](.cursor/rules/doc-sync-discipline.mdc) — same-task updates to tracked project guidance when conventions change
+> - [`mcp-usage-discipline.mdc`](.cursor/rules/mcp-usage-discipline.mdc) — Srclight-only MCP usage and repo-truth boundaries
+> - [`todo-markdown-style.mdc`](.cursor/rules/todo-markdown-style.mdc) — lean TODO markdown and compact-table guidance
+>
+> **Cursor Project Skills:** Active shared skills live in `.cursor/skills/`:
+> - [`create-todo`](.cursor/skills/create-todo/SKILL.md) — create lean TODO files, choose the correct domain, and update indexes
+> - [`implement-todo-section`](.cursor/skills/implement-todo-section/SKILL.md) — execute one scoped TODO section with supported build and test evidence
+> - [`validate-todo-file`](.cursor/skills/validate-todo-file/SKILL.md) — validate TODO structure, execution order, XREFs, and gap-free continuity
+> - [`sync-ai-system`](.cursor/skills/sync-ai-system/SKILL.md) — keep repo-owned AI guidance aligned when shared conventions change
+> - [`verify-todo-section`](.cursor/skills/verify-todo-section/SKILL.md) — reconcile section status against code, build, and runtime evidence
+>
+> Legacy migration sources remain under `.agents/rules/` and `.agents/workflows/` while the Cursor-primary rollout completes.
 
 ---
 
@@ -136,7 +149,7 @@ Executables and system components follow **Windows 10/11 naming** for consistenc
 Verify success: `tail -1 build/build.log` → must show `=== BUILD OK ===`
 
 > [!WARNING]
-> **`command_status` gets stuck on builds.** Do NOT poll `command_status` — it falsely reports `RUNNING`. Wait ~30s (incremental) or ~90s (clean), then check with `tail -1 build/build.log`. See [`safety.md`](.agents/rules/safety.md) for the full workaround pattern.
+> **`command_status` gets stuck on builds.** Do NOT poll `command_status` — it falsely reports `RUNNING`. Wait ~30s (incremental) or ~90s (clean), then check with `tail -1 build/build.log`. See [`safety-build.mdc`](.cursor/rules/safety-build.mdc) for the active rule version.
 
 ### Output
 
@@ -192,7 +205,7 @@ PMM (physical pages) → VMM (page tables) → kmalloc (2 MiB heap)
 ```
 
 > [!IMPORTANT]
-> Kernel BSS must stay below `0x800000` (user-mode ELF base in `user/user.ld`). The build script checks this automatically. See [`coding.md`](.agents/rules/coding.md) § BSS Growth.
+> Kernel BSS must stay below `0x800000` (user-mode ELF base in `user/user.ld`). The build script checks this automatically. See [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc) for the active freestanding rule summary.
 
 ### Storage Stack
 
@@ -264,7 +277,7 @@ Headers mirror the source tree under `include/`. The Makefile uses `-Iinclude` a
 ### Include Style
 
 - **Always use subdirectory paths**: `#include "kernel/drivers/serial.h"` (not `#include "serial.h"`)
-- **NEVER use angle-bracket includes** — `-nostdinc` strips the compiler's include path. See [`coding.md`](.agents/rules/coding.md) for full freestanding C rules.
+- **NEVER use angle-bracket includes** — `-nostdinc` strips the compiler's include path. See [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc) for the active freestanding rule summary.
 - **Use `#pragma once`** for include guards
 - **No circular includes** — use forward declarations when needed
 
@@ -308,11 +321,14 @@ Common scopes: `kernel`, `boot`, `desktop`, `drivers`, `gfx`, `fs`, `net`, `buil
 
 ## Critical Rules
 
-> Coding constraints, memory allocation rules, hardware constraints, and API surface are defined in the scoped rule files. These are injected automatically when editing relevant files.
+> Coding constraints, memory allocation rules, hardware constraints, API direction, doc-sync behavior, and MCP usage are defined in the active Cursor project rule files under `.cursor/rules/`.
 >
-> - **Coding rules** (freestanding C, memory allocation, hardware): [`coding.md`](.agents/rules/coding.md)
-> - **API surface & design** (Win32, Srclight, Memory MCP): [`intelligence.md`](.agents/rules/intelligence.md)
-> - **Safety & build** (workspace boundaries, build script): [`safety.md`](.agents/rules/safety.md)
+> - **Safety & build**: [`safety-build.mdc`](.cursor/rules/safety-build.mdc)
+> - **Freestanding kernel code**: [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc)
+> - **Bare-metal assembly**: [`bare-metal-assembly.mdc`](.cursor/rules/bare-metal-assembly.mdc)
+> - **API surface & design**: [`api-surface-direction.mdc`](.cursor/rules/api-surface-direction.mdc)
+> - **Documentation sync**: [`doc-sync-discipline.mdc`](.cursor/rules/doc-sync-discipline.mdc)
+> - **Srclight MCP usage**: [`mcp-usage-discipline.mdc`](.cursor/rules/mcp-usage-discipline.mdc)
 
 ---
 
@@ -337,7 +353,7 @@ Serial output (`-serial stdio`) is the primary debug channel. Check `build/seria
 
 ## Development Roadmap
 
-All work is tracked in the TODO system under `todo/`. Start at [`todo/TODO-000-INDEX.md`](todo/TODO-000-INDEX.md) for the master index.
+All work is tracked in the TODO system under `todo/`. Start at [`todo/TODO-00-INDEX.md`](todo/TODO-00-INDEX.md) for the master index.
 
 Status markers: `[ ]` uncompleted, `[/]` in progress, `[x]` completed
 Priority levels: 🔴 P0, 🟠 P1, 🟡 P2, 🟢 P3
@@ -386,8 +402,8 @@ Priority levels: 🔴 P0, 🟠 P1, 🟡 P2, 🟢 P3
 
 ## Known Gotchas & Code Intelligence
 
-> Full gotchas (memory allocation bugs, freestanding C pitfalls, SSE2 rules, CalVer) are in [`coding.md`](.agents/rules/coding.md).
-> Srclight and Memory MCP guidance is in [`intelligence.md`](.agents/rules/intelligence.md).
+> Full freestanding gotchas and allocator discipline are summarized in [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc). Legacy migration source material remains in [`coding.md`](.agents/rules/coding.md).
+> Srclight usage and MCP boundaries are summarized in [`mcp-usage-discipline.mdc`](.cursor/rules/mcp-usage-discipline.mdc). Legacy migration source material remains in [`intelligence.md`](.agents/rules/intelligence.md).
 
 ---
 

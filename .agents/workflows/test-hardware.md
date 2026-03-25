@@ -21,8 +21,8 @@ description: How to test Impossible OS on real hardware via USB boot
 2. **Write USB** *(manual — user does this)*
    Prompt the user:
    > Please write `build/system-disk.img` to USB using:
-   > - **Windows:** `scripts/write-usb.ps1`
-   > - **Linux:** `sudo dd if=build/system-disk.img of=/dev/sdX bs=4M status=progress`
+   > - **Windows:** `scripts/deploy/write-usb.ps1`
+   > - **Linux:** `scripts/deploy/write-usb.sh`
    
    Wait for user confirmation before continuing.
 
@@ -47,8 +47,8 @@ description: How to test Impossible OS on real hardware via USB boot
    - `HARDWARE.TXT` — if present, read for hardware detection results
 
 6. **Update the hardware compatibility log:**
-   - Open `TODO-006-Real-Hardware.md` → Test Machines table
-   - Add/update a row with: machine name, CPU, RAM, GPU, result (PASS/FAIL), date, notes
+   - Record the tested machine and result in the current task notes or other active tracking document
+   - Include: machine name, CPU, RAM, GPU, result (PASS/FAIL), date, and notes
 
 ## Output
 
@@ -56,4 +56,4 @@ Report to the user:
 - ✅ PASS or ❌ FAIL
 - Boot log summary (key messages)
 - Issues found with line references
-- Updated entry in `TODO-006-Real-Hardware.md`
+- Updated real-hardware test notes

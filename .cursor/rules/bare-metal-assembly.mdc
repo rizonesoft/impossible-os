@@ -1,0 +1,21 @@
+---
+description: Bare-metal x86-64 assembly constraints for boot and kernel assembly files
+globs:
+  - "**/*.asm"
+alwaysApply: false
+---
+
+# Bare-Metal Assembly
+
+- Write NASM-style x86-64 assembly and assume a UEFI-era, long-mode, APIC-oriented environment unless the file explicitly documents an earlier boot phase.
+- Do not introduce BIOS interrupt assumptions, VGA text-mode assumptions, or new PIC-routing paths.
+- Comment non-obvious register contracts, MMIO access patterns, interrupt setup, page-table manipulation, and hand-off conventions so later debugging does not depend on guesswork.
+- Keep assembly minimal and explicit. Move policy and higher-level flow into C when possible.
+- Match the existing bootloader and kernel calling conventions, structure layouts, and memory assumptions exactly.
+
+## Example
+
+```asm
+; Do not rely on BIOS int 10h or VGA text mode here.
+; Use the UEFI-provided framebuffer and APIC-era interrupt model instead.
+```

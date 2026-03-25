@@ -102,7 +102,7 @@ jobs:
           echo "✅ system-disk.img: $(( SIZE / 1024 / 1024 )) MiB"
 
       # ── Smoke test (when test-smoke.sh exists) ──────────────────────────────
-      # TODO: Uncomment after TODO-002-Development §5.3 is implemented
+      # TODO: Uncomment when the QEMU smoke test is considered stable for CI
       # - name: Smoke test (QEMU boot)
       #   run: bash scripts/test-smoke.sh
 

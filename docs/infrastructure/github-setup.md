@@ -79,7 +79,7 @@ Contributor guidelines (160+ lines):
 | Code Style        | snake_case, UPPER_CASE macros, `#pragma once`, ≤120 chars, <50 LOC |
 | Commit Format     | `"scope: description"` — 10+ scopes with examples                  |
 | PR Process        | Fork → branch → implement → test → PR (6-step checklist)           |
-| Finding Work      | `todo/TODO-000-INDEX.md` + "Good First Issues" suggestions         |
+| Finding Work      | `todo/TODO-00-INDEX.md` + "Good First Issues" suggestions         |
 | Memory Allocation | kmalloc ≤4 KB vs PMM table + CAUTION callout                       |
 | Release Tags      | CalVer format table                                                |
 | Branch Naming     | `feature/*`, `fix/*`, `docs/*`, `refactor/*`                       |

@@ -1,0 +1,26 @@
+---
+description: Use Srclight as the supported MCP path without treating MCP state as project truth
+globs:
+  - "**/*.c"
+  - "**/*.h"
+  - "**/*.asm"
+  - "docs/**/*.md"
+  - "todo/**/*.md"
+  - "AGENTS.md"
+  - "README.md"
+alwaysApply: false
+---
+
+# MCP Usage Discipline
+
+- Srclight is the only supported MCP integration in the first pass.
+- Use Srclight to orient quickly when it helps. Prefer `hybrid_search()` for most lookups, and use `codebase_map()` when you need session-level codebase orientation.
+- `clangd` is LSP-only and must not be configured as an MCP server.
+- Do not rely on Memory MCP or filesystem MCP as part of the supported baseline. If local configs still expose them, treat them as deprecated local-only extras rather than canonical workflow.
+- Treat `.srclight/` and other MCP state as disposable local acceleration, not project truth.
+- If Srclight results conflict with tracked files, trust the repo. Fall back to `rg`, direct file reads, and other repo-grounded evidence.
+- When repeated mismatches suggest stale indexing, refresh or rebuild the local Srclight index and re-check before using it as evidence.
+
+## Example
+
+- Use Srclight `hybrid_search()` to find the likely implementation first, then confirm the result against tracked files before updating code, TODOs, or docs.

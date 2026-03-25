@@ -196,7 +196,7 @@ No. We just have a severe, incurable allergy to people telling us something is "
 
 ## 🗺️ Roadmap
 
-Development is tracked in [`todo/TODO-000-INDEX.md`](todo/TODO-000-INDEX.md) — a comprehensive 10-layer roadmap covering everything from kernel foundations to a full application suite.
+Development is tracked in [`todo/TODO-00-INDEX.md`](todo/TODO-00-INDEX.md) — a comprehensive 10-layer roadmap covering everything from kernel foundations to a full application suite.
 
 | Layer | Status |
 |-------|--------|
