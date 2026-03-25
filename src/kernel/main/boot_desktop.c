@@ -201,4 +201,17 @@ void boot_desktop_init(void)
     }
 
     scheduler_enable();
+
+    /* Yield repeatedly to give cmd.exe (PID 6) CPU time to print its
+     * banner and reach its readline() blocking point.  This runs once
+     * during boot — before compositor_run() starts its tight event loop
+     * which prevents the preemptive scheduler from ever switching to
+     * PID 6 on fast systems like QEMU.  On each yield, PID 6 runs
+     * until it blocks (AHCI I/O, SYS_READ), then control returns here.
+     * Once PID 6 blocks on keyboard input, further yields are no-ops. */
+    {
+        int i;
+        for (i = 0; i < 200; i++)
+            yield();
+    }
 }
