@@ -37,15 +37,17 @@
 
 Define the durable operating model before moving files around.
 
-- [ ] Decide the exact checked-in layout for Cursor rules, Cursor skills, and AI tooling documentation.
-- [ ] Define a source-of-truth table covering repo docs, project rules, project skills, optional team or dashboard features, local MCP state, and Antigravity local config.
-- [ ] Add a boundary model that separates canonical git-tracked guidance, local developer-machine state, and optional cloud or team-managed surfaces.
-- [ ] Record that repo-tracked files such as `AGENTS.md`, `.cursor/rules/`, `.cursor/skills/`, relevant docs, and the `todo/` tree are the only canonical project truth.
-- [ ] Record that local state such as user rules, user skills, local MCP auth, machine settings, debug artifacts, and gitignored caches may accelerate work but must never become the only source of project guidance.
-- [ ] Decide how cloud agents, Team Rules, Bugbot, and other dashboard-managed features fit the system without letting them become the primary owner of repo truth.
-- [ ] Define what information must always be written back to tracked repo files and what may remain machine-local.
-- [ ] Define the update path for architecture changes so rules, skills, docs, and compatibility notes stay in sync.
-- [ ] Record the decision that Cursor is primary and Antigravity is a documented consumer of repo truth.
+- [x] Decide the exact checked-in layout for Cursor rules, Cursor skills, and AI tooling documentation.
+- [x] Define a source-of-truth table covering repo docs, project rules, project skills, optional team or dashboard features, local MCP state, and Antigravity local config.
+- [x] Add a boundary model that separates canonical git-tracked guidance, local developer-machine state, and optional cloud or team-managed surfaces.
+- [x] Record that repo-tracked files such as `AGENTS.md`, `.cursor/rules/`, `.cursor/skills/`, relevant docs, and the `todo/` tree are the only canonical project truth.
+- [x] Record that local state such as user rules, user skills, local MCP auth, machine settings, debug artifacts, and gitignored caches may accelerate work but must never become the only source of project guidance.
+- [x] Decide how cloud agents, Team Rules, Bugbot, and other dashboard-managed features fit the system without letting them become the primary owner of repo truth.
+- [x] Define what information must always be written back to tracked repo files and what may remain machine-local.
+- [x] Define the update path for architecture changes so rules, skills, docs, and compatibility notes stay in sync.
+- [x] Record the decision that Cursor is primary and Antigravity is a documented consumer of repo truth.
+
+> All §1 decisions recorded in [`docs/infrastructure/ai-system-layout.md`](../../docs/infrastructure/ai-system-layout.md).
 
 ## 2. Cursor Project Rules
 

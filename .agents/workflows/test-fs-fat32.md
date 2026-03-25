@@ -2,6 +2,9 @@
 description: Complete FAT32 filesystem test workflow using test disk images
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This file is kept as a supplementary reference for the FAT32 filesystem test workflow specifically.
+
 # FAT32 Test Workflow
 
 // turbo-all

@@ -21,6 +21,21 @@
 - [`src/kernel/main/boot_tests.c`](../../src/kernel/main/boot_tests.c)
 - [`src/kernel/panic.c`](../../src/kernel/panic.c)
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
+- → XREF: `TODO-02-system-logging.md` — `klog_disk_init()` is a Phase 2 gate; must follow VFS ready
+- → XREF: `TODO-03-object-manager.md` — Object Manager init slot is Phase 2, after heap, before registry
+- → XREF: `TODO-04-drivers-hardware` domain — all driver `_init()` functions must accept and return `boot_result_t`
+- → XREF: `TODO-00-infrastructure/TODO-02-developer-tooling-stack.md` — headless QEMU serial log is the verification path
+- → XREF: future `TODO-XX-irql-dpc-model.md` — DPC subsystem init belongs in Phase 1, after timer
+
+## Outcome
+
+- `main.c` is reduced to four sequential phase calls: `boot_phase0()` → `boot_phase1()` → `boot_phase2()` → `boot_phase3()` → halt.
+- Every subsystem init function returns `boot_result_t`; none return `void`.
+- `kernel_subsystem_ready(SUBSYS_X)` correctly reports the live state of every registered subsystem.
+- Serial log shows `[PHASE0]` … `[PHASE3]` markers with POST codes and timestamps.
+- No `HV_BAR` pixel-write calls anywhere in the boot path.
+- Boot tests run only when `debug=1`; release boots are silent on that path.
+- A forced VFS failure produces a degraded-boot screen, not a BSOD or hang.
 
 ## Implementation Order
 
@@ -242,10 +257,3 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [ ] `boot_tests_run()` does appear in serial log when `debug=1`
 - [ ] `commit: "kernel: formal init sequencing — phases, readiness oracle, dependency gates"`
 
-## XREFs
-
-- → `TODO-02-kernel-core/TODO-02-system-logging.md` — `klog_disk_init()` is a Phase 2 gate; must follow VFS ready
-- → `TODO-02-kernel-core/TODO-09-object-manager.md` — Object Manager init slot is Phase 2, after heap, before registry
-- → `TODO-02-kernel-core/TODO-18-irql-dpc-model.md` — DPC subsystem init is Phase 1, after timer
-- → `TODO-04-drivers-hardware` — all driver `_init()` functions must accept and return `boot_result_t`
-- → `TODO-00-infrastructure/TODO-02-developer-tooling-stack.md` — headless QEMU serial log is the verification path

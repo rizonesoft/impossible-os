@@ -2,6 +2,10 @@
 description: Build the OS from source and test in QEMU
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This file is kept as a supplementary reference for the build workflow specifically.
+> For build discipline rules, see [`.cursor/rules/safety-build.mdc`](../../.cursor/rules/safety-build.mdc).
+
 # Build Workflow
 
 // turbo-all

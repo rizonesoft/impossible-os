@@ -2,6 +2,9 @@
 description: Tag a release, update changelog, build and publish the ISO
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This file is kept as a supplementary reference for the release process specifically.
+
 # Release Workflow
 
 ## Versioning Scheme

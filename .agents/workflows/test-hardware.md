@@ -2,6 +2,10 @@
 description: How to test Impossible OS on real hardware via USB boot
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This file is kept as a supplementary reference for real-hardware testing specifically.
+> For build and safety rules, see [`.cursor/rules/safety-build.mdc`](../../.cursor/rules/safety-build.mdc).
+
 # Test on Real Hardware
 
 ## Prerequisites

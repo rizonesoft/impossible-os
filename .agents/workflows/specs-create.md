@@ -2,6 +2,9 @@
 description: Create a new spec document from research and fact-check it against authoritative sources
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This workflow is not yet migrated to a Cursor skill. It is kept here as a reference until a `specs-create` skill is created.
+
 # Create a Spec Document
 
 Research, write, and fact-check a technical specification document for a hardware component,

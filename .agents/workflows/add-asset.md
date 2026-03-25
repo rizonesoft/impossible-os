@@ -2,6 +2,9 @@
 description: Checklist for loading any asset (font, image, sound, cursor) from disk into kernel memory
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This workflow is not yet migrated to a Cursor skill. It is kept here as a reference until an `add-asset` skill is created.
+
 # Add Asset Workflow
 
 Follow this checklist **every time** you load data from disk (fonts, images, icons, sounds, cursors, config files, or any file buffer).

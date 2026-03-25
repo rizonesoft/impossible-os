@@ -2,6 +2,9 @@
 description: Convert a fully completed TODO file into documentation and a stub
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This workflow is not yet migrated to a Cursor skill. It is kept here as a reference until a `docs-convert-todo` skill is created.
+
 # Convert TODO to Documentation
 
 When **all items** in a TODO file are `[x]` completed, convert it to a proper documentation file and leave a stub in place.

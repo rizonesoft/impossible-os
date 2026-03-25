@@ -2,6 +2,9 @@
 description: Fact-check a specs document, align table columns, and fix issues
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This workflow is not yet migrated to a Cursor skill. It is kept here as a reference until a `specs-fact-check` skill is created.
+
 # Fact-Check Specs Document
 
 Verify a specification document against authoritative external sources and internal consistency. Fix errors, align tables, and ensure the document is accurate and well-formatted.

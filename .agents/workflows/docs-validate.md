@@ -2,6 +2,9 @@
 description: Validate documentation structure, check references, and fix violations
 ---
 
+> **Reference document.** `.cursor/rules/` and `.cursor/skills/` are the single source of truth for AI guidance.
+> This file is kept as a supplementary reference for documentation validation specifically.
+
 # Validate Documentation
 
 Run this workflow after any structural change to `docs/` — file moves, renames, new docs, or TODO conversions. It checks for broken links, stale references, orphaned files, and structural violations.
