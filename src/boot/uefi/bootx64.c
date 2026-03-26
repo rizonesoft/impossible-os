@@ -75,6 +75,23 @@ struct boot_rt_mem_entry {
     UINT32 reserved;
 };
 
+/* UEFI Runtime Service function pointers — must match kernel/boot_info.h */
+struct boot_uefi_runtime {
+    UINT64 get_time;
+    UINT64 set_time;
+    UINT64 get_variable;
+    UINT64 set_variable;
+    UINT64 get_next_variable_name;
+    UINT64 reset_system;
+    UINT64 update_capsule;
+    UINT64 query_capsule_capabilities;
+    UINT64 query_variable_info;
+    UINT64 get_wakeup_time;
+    UINT64 set_wakeup_time;
+    UINT8  svam_called;
+    UINT8  pad[7];
+};
+
 struct boot_uefi_guid {
     UINT32  data1;
     UINT16  data2;
@@ -115,6 +132,7 @@ struct boot_info {
     UINT32  rt_mmap_count;
     UINT32  uefi_mmap_desc_size;
     UINT32  uefi_mmap_desc_version;
+    struct boot_uefi_runtime uefi_runtime;
     /* TPM Measured Boot */
     UINT64  tpm_event_log;
     UINT32  tpm_event_log_size;
@@ -1439,6 +1457,54 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     g_boot_info_ptr->uefi_rt_available     = (gST->RuntimeServices != (void *)0) ? 1 : 0;
     g_boot_info_ptr->uefi_mmap_desc_size    = (UINT32)desc_size;
     g_boot_info_ptr->uefi_mmap_desc_version = desc_version;
+
+    /* Step 5c: Call SetVirtualAddressMap + copy RT function pointers */
+    {
+        EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
+        UINT32 rt_count = g_boot_info_ptr->rt_mmap_count;
+
+        /* Build virtual address map (identity: virt = phys) */
+        if (rt != (void *)0 && rt_count > 0) {
+            EFI_MEMORY_DESCRIPTOR vmap[BOOT_RT_MMAP_MAX];
+            UINT32 ri;
+            for (ri = 0; ri < rt_count; ri++) {
+                vmap[ri].Type          = g_boot_info_ptr->rt_mmap[ri].type;
+                vmap[ri].PhysicalStart = g_boot_info_ptr->rt_mmap[ri].phys_addr;
+                vmap[ri].VirtualStart  = g_boot_info_ptr->rt_mmap[ri].phys_addr;
+                vmap[ri].NumberOfPages = g_boot_info_ptr->rt_mmap[ri].num_pages;
+                vmap[ri].Attribute     = EFI_MEMORY_RUNTIME;
+            }
+
+            UINTN svam_map_size = (UINTN)rt_count * desc_size;
+            EFI_STATUS svam_st = rt->SetVirtualAddressMap(
+                svam_map_size, desc_size, desc_version, vmap);
+
+            if (!EFI_ERROR(svam_st)) {
+                serial_early_print("BOOT: SetVirtualAddressMap OK\n");
+                g_boot_info_ptr->uefi_runtime.svam_called = 1;
+            } else {
+                serial_early_print("BOOT: SetVirtualAddressMap FAILED\n");
+                g_boot_info_ptr->uefi_runtime.svam_called = 0;
+            }
+        } else {
+            g_boot_info_ptr->uefi_runtime.svam_called = 0;
+        }
+
+        /* Copy individual function pointers into boot_info */
+        if (rt != (void *)0) {
+            g_boot_info_ptr->uefi_runtime.get_time                  = (UINT64)(UINTN)rt->GetTime;
+            g_boot_info_ptr->uefi_runtime.set_time                  = (UINT64)(UINTN)rt->SetTime;
+            g_boot_info_ptr->uefi_runtime.get_variable              = (UINT64)(UINTN)rt->GetVariable;
+            g_boot_info_ptr->uefi_runtime.set_variable              = (UINT64)(UINTN)rt->SetVariable;
+            g_boot_info_ptr->uefi_runtime.get_next_variable_name    = (UINT64)(UINTN)rt->GetNextVariableName;
+            g_boot_info_ptr->uefi_runtime.reset_system              = (UINT64)(UINTN)rt->ResetSystem;
+            g_boot_info_ptr->uefi_runtime.update_capsule            = (UINT64)(UINTN)rt->UpdateCapsule;
+            g_boot_info_ptr->uefi_runtime.query_capsule_capabilities = (UINT64)(UINTN)rt->QueryCapsuleCapabilities;
+            g_boot_info_ptr->uefi_runtime.query_variable_info       = (UINT64)(UINTN)rt->QueryVariableInfo;
+            g_boot_info_ptr->uefi_runtime.get_wakeup_time           = (UINT64)(UINTN)rt->GetWakeupTime;
+            g_boot_info_ptr->uefi_runtime.set_wakeup_time           = (UINT64)(UINTN)rt->SetWakeupTime;
+        }
+    }
     serial_early_print("BOOT: runtime services preserved\n");
 
     /* Step 6: ExitBootServices */

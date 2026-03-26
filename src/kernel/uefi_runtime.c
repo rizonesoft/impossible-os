@@ -11,6 +11,7 @@
 
 #include "kernel/uefi_runtime.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
 #include "kernel/uefi_config.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
@@ -169,30 +170,50 @@ static void read_rt_properties(void)
 
 /* ---- Public API ---- */
 
-void uefi_runtime_init(void)
+boot_result_t uefi_runtime_init(void)
 {
     (void)s_rt_lock;  /* initialized statically via SPINLOCK_INIT */
     s_available = 0;
     s_supported = 0;
 
     if (!g_boot_info.uefi_rt_available) {
-        klog(LOG_WARN, "UEFI", "Runtime services not preserved by bootloader");
-        return;
+        klog(LOG_WARN, "UEFI", "Runtime services: UNAVAILABLE (firmware limitation)");
+        return BOOT_DEGRADED;
     }
 
     s_rt = (struct efi_runtime_services *)g_boot_info.uefi_runtime_services;
     if (!s_rt) {
         klog(LOG_ERROR, "UEFI", "Runtime services pointer is NULL");
-        return;
+        return BOOT_DEGRADED;
     }
 
     /* Read supported services mask before SVAM (config table is still valid) */
     read_rt_properties();
 
-    /* Call SetVirtualAddressMap -- identity mapping, ONE TIME ONLY */
-    call_set_virtual_address_map();
+    /* Call SetVirtualAddressMap -- only if bootloader did NOT already do it */
+    if (g_boot_info.uefi_runtime.svam_called) {
+        klog(LOG_INFO, "UEFI", "SetVirtualAddressMap already called by bootloader");
+    } else {
+        call_set_virtual_address_map();
+    }
 
-    /* Mark available if SVAM succeeded (s_available wasn't cleared) */
+    /* Validate critical function pointers */
+    int missing = 0;
+
+    if (!s_rt->get_time)     { klog(LOG_WARN, "UEFI", "RT GetTime: NULL");     missing++; }
+    if (!s_rt->set_time)     { klog(LOG_WARN, "UEFI", "RT SetTime: NULL");     missing++; }
+    if (!s_rt->get_variable) { klog(LOG_WARN, "UEFI", "RT GetVariable: NULL"); missing++; }
+    if (!s_rt->set_variable) { klog(LOG_WARN, "UEFI", "RT SetVariable: NULL"); missing++; }
+    if (!s_rt->reset_system) { klog(LOG_WARN, "UEFI", "RT ResetSystem: NULL"); missing++; }
+
+    if (missing > 0) {
+        klog(LOG_WARN, "UEFI", "Runtime services: UNAVAILABLE "
+             "(firmware limitation, %d/%d pointers NULL)", missing, 5);
+        s_available = 0;
+        return BOOT_DEGRADED;
+    }
+
+    /* Mark available -- all critical pointers validated */
     s_available = 1;
 
     /* Build human-readable service list for log */
@@ -225,7 +246,10 @@ void uefi_runtime_init(void)
     }
     services[pos] = '\0';
 
+    klog(LOG_INFO, "UEFI", "Runtime services: OK");
     klog(LOG_INFO, "UEFI", "Runtime services active: %s", services);
+
+    return BOOT_OK;
 }
 
 int uefi_rt_available(void)

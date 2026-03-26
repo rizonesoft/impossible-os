@@ -51,8 +51,10 @@ struct uefi_rt_properties_table {
 /* Initialize UEFI runtime services.
  * Calls SetVirtualAddressMap() (identity mapping: virt = phys) and reads
  * EFI_RT_PROPERTIES_TABLE to determine supported services.
- * Must be called ONCE, early in kernel init, after uefi_config_init(). */
-void uefi_runtime_init(void);
+ * Must be called ONCE, early in kernel init, after uefi_config_init().
+ * Returns BOOT_OK on success or BOOT_DEGRADED if runtime unavailable. */
+#include "kernel/boot_init.h"
+boot_result_t uefi_runtime_init(void);
 
 /* Returns 1 if runtime services are usable. */
 int uefi_rt_available(void);

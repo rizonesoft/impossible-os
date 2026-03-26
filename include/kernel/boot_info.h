@@ -97,6 +97,26 @@ struct boot_rt_mem_entry {
     uint32_t reserved;    /* alignment padding */
 };
 
+/* UEFI Runtime Service function pointers — copied individually from
+ * EFI_RUNTIME_SERVICES before ExitBootServices.  Stored as uintptr_t
+ * because the bootloader (PE/COFF ms_abi) and kernel (ELF sysv) use
+ * different calling conventions; the kernel casts at use time. */
+struct boot_uefi_runtime {
+    uintptr_t get_time;                   /* EFI_GET_TIME */
+    uintptr_t set_time;                   /* EFI_SET_TIME */
+    uintptr_t get_variable;               /* EFI_GET_VARIABLE */
+    uintptr_t set_variable;               /* EFI_SET_VARIABLE */
+    uintptr_t get_next_variable_name;     /* EFI_GET_NEXT_VARIABLE_NAME */
+    uintptr_t reset_system;               /* EFI_RESET_SYSTEM */
+    uintptr_t update_capsule;             /* EFI_UPDATE_CAPSULE */
+    uintptr_t query_capsule_capabilities; /* EFI_QUERY_CAPSULE_CAPABILITIES */
+    uintptr_t query_variable_info;        /* EFI_QUERY_VARIABLE_INFO */
+    uintptr_t get_wakeup_time;            /* EFI_GET_WAKEUP_TIME */
+    uintptr_t set_wakeup_time;            /* EFI_SET_WAKEUP_TIME */
+    uint8_t   svam_called;                /* 1 if bootloader called SetVirtualAddressMap */
+    uint8_t   pad[7];
+};
+
 /* GOP pixel format constants */
 #define GOP_PIXEL_RGBX   0   /* PixelRedGreenBlueReserved8BitPerColor */
 #define GOP_PIXEL_BGRX   1   /* PixelBlueGreenRedReserved8BitPerColor */
@@ -187,6 +207,7 @@ struct boot_info {
     uint32_t rt_mmap_count;           /* number of runtime regions */
     uint32_t uefi_mmap_desc_size;     /* UEFI descriptor size (for SVAM) */
     uint32_t uefi_mmap_desc_version;  /* UEFI descriptor version (for SVAM) */
+    struct boot_uefi_runtime uefi_runtime; /* individual RT function pointers */
 
     /* TPM Measured Boot (event log from EFI_TCG2_PROTOCOL) */
     uintptr_t tpm_event_log;          /* phys addr of copied event log buffer */
