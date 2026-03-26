@@ -37,8 +37,8 @@
 - `include/kernel/symtab.h` — `symtab_resolve(addr, offset)`
 - `src/kernel/mm/pmm.c` — `pmm_used_page_count()`, `pmm_for_each_used_page()`
   needed for Full dump page walk
-- → XREF: `TODO-02 §2` — structured crash event written to system log at
-  panic time; `dmpanalyze.exe` (§9) reads these log entries too
+- → XREF: `TODO-02 §2` — structured crash event written to system log at panic time; `dmpanalyze.exe` (§9) reads these log entries too
+- → XREF: `TODO-02 §6` — physical page `0x80000` is reserved for cross-boot panic forensic evidence; the raw-partition dump workspace (§7) **must not** use `0x80000` — choose a different address or probe PMM for a contiguous free region
 - → XREF: `TODO-08 §1` — ELF/PE loader registers modules in the module list
   (§3); `LOADED_MODULE.image_base` comes from the loader
 - → XREF: `TODO-10 §1` — `EXCEPTION_RECORD` and `CONTEXT` types defined

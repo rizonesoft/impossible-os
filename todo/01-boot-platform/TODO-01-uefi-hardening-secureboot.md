@@ -15,8 +15,8 @@
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
 - → XREF: `TODO-02-boot-diagnostics.md` — `boot_progress()` API consumed by §7
 - → XREF: `TODO-03-interrupt-timer-arch.md` — timer calibration affects boot profiling in §7
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md §9` — `GetFirmwareEnvironmentVariableA/W` Win32 wiring
-- → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §1` — `UEFI GetTime` → FILETIME seeding
+- → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — `GetFirmwareEnvironmentVariableA/W` Win32 wiring (no dedicated section yet; add to TODO-05 when Win32 firmware-variable API surface is scoped)
+- → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` — `UEFI GetTime` → FILETIME seeding (wall clock init)
 - → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md` — SRM verifies `kernel.exe` signature in §5
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\HARDWARE\*` and `HKLM\SYSTEM\SecureBoot` storage
 
@@ -37,7 +37,7 @@
 
 | ⭐  | Order | Deliverable                        | Depends On       | Status |
 | --- | :---: | ---------------------------------- | ---------------- | :----: |
-| 💎  |   1   | UEFI runtime services preservation | —                |  [ ]   |
+| 💎  |   1   | UEFI runtime services preservation | —                |  [x]   |
 | 💎  |   2   | UEFI variable services             | 1                |  [ ]   |
 | 💎  |   3   | GOP resolution auto-detection      | 1                |  [ ]   |
 | 💎  |   4   | SMBIOS table parsing               | 1                |  [ ]   |
@@ -60,12 +60,12 @@ Before `ExitBootServices()`, save UEFI runtime function pointers into `boot_info
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `include/kernel/uefi_runtime.h`, `src/kernel/uefi_runtime.c`
 
-- [ ] Call `gRT->SetVirtualAddressMap(map_size, descriptor_size, descriptor_version, memory_map)` immediately before `ExitBootServices()` to relocate all `EFI_MEMORY_RUNTIME`-flagged pages to their kernel virtual addresses
-- [ ] Extend `boot_info` with `uefi_runtime` struct: `GetVariable`, `SetVariable`, `GetTime`, `SetTime`, `ResetSystem`, `UpdateCapsule`, `QueryCapsuleCapabilities` function pointers
-- [ ] In bootloader: copy `gRT->*` pointers into `boot_info.uefi_runtime` after `SetVirtualAddressMap()` call
-- [ ] In kernel `uefi_runtime_init()`: validate each pointer non-NULL, log `[UEFI] Runtime services: OK` or `[UEFI] Runtime services: UNAVAILABLE (firmware limitation)` and return `BOOT_DEGRADED`
-- [ ] Add `BOOT_DEGRADED` path: mark `uefi_runtime_available = 0`; all callers of `uefi_var_get/set` must check this flag before calling
-- [ ] Write boot-time serial log: `[UEFI] SetVirtualAddressMap OK` with count of runtime-mapped regions
+- [x] Call `uefi_runtime_init()` → `call_set_virtual_address_map()` in kernel, after `ExitBootServices()`, to relocate all `EFI_MEMORY_RUNTIME`-flagged pages to their kernel virtual addresses (UEFI spec §7.4.2 requires post-EBS; bootloader must NOT call SVAM)
+- [x] Extend `boot_info` with `uefi_runtime` struct: `GetVariable`, `SetVariable`, `GetTime`, `SetTime`, `ResetSystem`, `UpdateCapsule`, `QueryCapsuleCapabilities` function pointers
+- [x] In bootloader: copy `gRT->*` pointers into `boot_info.uefi_runtime` before `ExitBootServices()`; `svam_called` stays `0` (SVAM is kernel-owned per spec)
+- [x] In kernel `uefi_runtime_init()`: validate each pointer non-NULL, log `[UEFI] Runtime services: OK` or `[UEFI] Runtime services: UNAVAILABLE (firmware limitation)` and return `BOOT_DEGRADED`
+- [x] `BOOT_DEGRADED` path: `s_available = 0`; callers guard with `uefi_rt_available()` before any `uefi_get_variable` / `uefi_set_variable` call
+- [x] Boot-time serial log: `[UEFI] SetVirtualAddressMap OK` with count of runtime-mapped regions (`call_set_virtual_address_map()` logs region count + status via `klog`)
 - [ ] Commit: `"boot: preserve UEFI runtime service pointers across ExitBootServices"`
 
 ## 2. UEFI Variable Services `[Sonnet]`
@@ -78,7 +78,7 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation, 
 - [ ] Define `uefi_var_set(const char16_t *name, const efi_guid_t *guid, const void *buf, size_t size, uint32_t attrs)` → `NTSTATUS`; attrs: `EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`
 - [ ] Define common GUIDs: `EFI_GLOBAL_VARIABLE_GUID` (`{8BE4DF61-...}`), `EFI_IMAGE_SECURITY_DATABASE_GUID`, `IMPOSSIBLE_OS_VENDOR_GUID`
 - [ ] Implement `uefi_var_get_u32(name, guid, out)` / `uefi_var_set_u32(name, guid, val)` convenience wrappers
-- [ ] Wire Win32 API: `GetFirmwareEnvironmentVariableA/W` → UTF-8/UTF-16 name conversion → `uefi_var_get`; `SetFirmwareEnvironmentVariableA/W` → `uefi_var_set` (→ XREF `02-kernel-core/TODO-05-native-api-layer.md §9`)
+- [ ] Wire Win32 API: `GetFirmwareEnvironmentVariableA/W` → UTF-8/UTF-16 name conversion → `uefi_var_get`; `SetFirmwareEnvironmentVariableA/W` → `uefi_var_set` (→ XREF `02-kernel-core/TODO-05-native-api-layer.md` — section to be scoped when Win32 firmware-variable surface is defined)
 - [ ] Add `uefi_var_enumerate(callback)` for iterating all variables (used by §10 ESRT)
 - [ ] Commit: `"kernel: UEFI variable get/set wrappers + Win32 GetFirmwareEnvironmentVariable wiring"`
 
@@ -218,7 +218,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 | --- | ----------------------------------- | ------------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------- |
 | 💎  | Secure Boot shim chain-loading      | ✅ Microsoft-signed shim + WHQL                 | ✅ rhboot shim (distro-signed)                   | ⬜ Planned — §6; MOK enrollment path                   |
 | 💎  | Secure Boot state in kernel         | ✅ `HKLM\SYSTEM\SecureBoot` + WinVerifyTrust    | ✅ `/sys/firmware/efi/efivars/SecureBoot`        | ⬜ Planned — §5                                        |
-| 💎  | UEFI runtime services after boot    | ✅ Full EFI runtime preserved                   | ✅ `efi_call_*` wrappers post-ExitBootServices   | ⬜ Planned — §1                                        |
+| 💎  | UEFI runtime services after boot    | ✅ Full EFI runtime preserved                   | ✅ `efi_call_*` wrappers post-ExitBootServices   | ✅ Done — §1; RT pointers copied pre-EBS, SVAM called in `uefi_runtime_init()` post-EBS  |
 | 💎  | UEFI variable read/write            | ✅ `GetFirmwareEnvironmentVariable` Win32 API   | ✅ `efivarfs` + `efivar` library                 | ⬜ Planned — §2                                        |
 | 💎  | GOP resolution negotiation          | ✅ Boot manager negotiates GOP mode             | ✅ GRUB `gfxmode` + EFIFB                        | ⬜ Planned — §3                                        |
 | 💎  | SMBIOS hardware inventory           | ✅ WMI Win32_BIOS/Win32_ComputerSystem          | ✅ `/sys/firmware/dmi/entries/`                  | ⬜ Planned — §4                                        |
@@ -234,7 +234,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] Serial log shows `[UEFI] SetVirtualAddressMap OK` and `[UEFI] Runtime services: OK`
+- [x] Serial log shows `[UEFI] SetVirtualAddressMap OK` and `[UEFI] Runtime services: OK`
 - [ ] `uefi_var_get(L"SecureBoot", ...)` returns 0 (disabled) in QEMU; returns 1 on Secure Boot–enabled hardware
 - [ ] GOP negotiation log shows `[Boot] GOP: {W}x{H} 32bpp (mode N)` matching QEMU display resolution
 - [ ] SMBIOS data appears in Registry under `HKLM\HARDWARE\BIOS\*` and `HKLM\HARDWARE\System\*`

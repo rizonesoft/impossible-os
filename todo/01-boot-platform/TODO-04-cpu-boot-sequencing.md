@@ -27,11 +27,11 @@
 - `include/kernel/boot_init.h` — `BOOT_STEP`, `BOOT_REQUIRE`, `POSTCODE_*`; add CPU postcodes
 - `src/kernel/smp/ap_trampoline.asm` + `src/kernel/smp/smp.c` — AP startup path; add `ap_cpu_harden()` call
 - `include/kernel/cpuid.h` — `cpuid_init()`, `cpu_has()`; already called in Phase 0
-- `src/kernel/smp/smp.c` — `wrmsr`/`rdmsr` inline helpers; input to MSR layer (→ TODO-19 §4)
+- `src/kernel/smp/smp.c` — `wrmsr`/`rdmsr` inline helpers; input to MSR layer (→ TODO-19 §3)
 - `src/kernel/mm/vmm.c` — VMM init; EFER.NXE must be set before first page table write with NX bit
 - → XREF: `02-kernel-core/TODO-01 §2` — `boot_phase0` sequence; CPU hardening steps slot in here
 - → XREF: `02-kernel-core/TODO-17 §1–§7` — NX, SMEP, SMAP, PCID, Spectre, CET (implementation details)
-- → XREF: `02-kernel-core/TODO-19 §1, §4–§7, §9–§10` — XSAVE, MSR layer, UMIP, 1 GiB pages, errata, VM detection
+- → XREF: `02-kernel-core/TODO-19 §1, §3–§7, §9, §11` — XSAVE, MSR layer, UMIP, 1 GiB pages, errata, VM detection
 - → XREF: `01-boot-platform/TODO-03 §6` — UTS timer driver selection; hypervisor detection (§3 here) feeds it
 
 ---
@@ -42,20 +42,22 @@
 - Every AP runs `ap_cpu_harden()` at startup — no AP boots with SMEP/SMAP/EFER absent while BSP has them.
 - Hypervisor vendor is detected and stored in `boot_info` before the UTS probes its timer drivers, enabling correct Hyper-V TSC and TLB enlightenments from the start.
 - XSAVE and PCID are activated only after VMM is ready, in the correct Phase 1 window.
-- A boot log line documents every CPU feature activation with its phase and postcode:
-  `[Phase0] EFER.NXE enabled (POSTCODE 0x22)`
+- A boot log line documents every CPU feature activation with its phase and postcode: `[Phase0] EFER.NXE enabled (POSTCODE 0x22)`
 
 ---
 
 ## Implementation Order
 
-| # | Deliverable | Deps | XREF | 💎/⭐ | Status |
-|---|---|---|---|---|---|
-| 1 | CPUID detection & per-CPU capability capture | Phase 0 entry | TODO-19 §1 | 💎 | [ ] |
-| 2 | Phase 0 CPU security activation order | §1 | TODO-17 §1–3, TODO-19 §4 | 💎 | [ ] |
-| 3 | Hypervisor detection before timer selection | §1 | TODO-03 §6, TODO-19 §10 | ⭐ | [ ] |
-| 4 | AP CPU hardening (`ap_cpu_harden()`) | §2, SMP bringup | TODO-17 §1–7 | 💎 | [ ] |
-| 5 | Phase 1 XSAVE & PCID activation window | §2, VMM ready | TODO-17 §4, TODO-19 §1 | 💎 | [ ] |
+| ⭐  | Order | Deliverable                                      | Depends On                            | Status |
+| --- | :---: | ------------------------------------------------ | ------------------------------------- | :----: |
+| 💎  |   1   | CPUID detection & per-CPU capability capture     | Phase 0, TODO-19 §1                   |  [ ]   |
+| 💎  |   2   | Phase 0 CPU security activation order            | §1, TODO-17 §1–3, TODO-19 §3          |  [ ]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, TODO-03 §6, TODO-19 §11           |  [ ]   |
+| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, SMP bringup, TODO-17 §1–7         |  [ ]   |
+| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, VMM ready, TODO-17 §4, TODO-19 §1 |  [ ]   |
+
+> 💎 = parity — Windows and Linux both enforce EFER/CR4 ordering, AP parity, and deferred XSAVE/PCID relative to paging; Impossible OS must match that contract.
+> ⭐ = exclusive — hypervisor pre-detection before timer HAL selection and postcode-per-activation boot audit lines are not surfaced the same way on Windows or Linux.
 
 ---
 
@@ -77,11 +79,11 @@
 
 ## 2. Phase 0 CPU Security Activation Order `[Opus]`
 
-**Prompt:** Document and enforce the required activation sequence in `boot_phase0()`: (1) `msr_init()` (centralized MSR layer, TODO-19 §4) must run before any MSR write; (2) `cpu_efer_harden()` sets `EFER.NXE=1`, `EFER.SCE=1`, `EFER.FFXSR` if supported — **this must complete before VMM init** because VMM will write PTE bit 63 (NX) on the first `vmm_map_page()` call; (3) `cpu_cr4_harden()` sets `CR4.SMEP`, `CR4.SMAP`, `CR4.UMIP` if detected — must run before any user-mode-visible mapping; emit a `POSTCODE_CPU_HARDEN_DONE` after the last CR4 write. Add `BOOT_REQUIRE(SUBSYS_MSR)` guards to EFER/CR4 steps so wrong-order calls panic with a clear message. Log: `[Phase0] EFER=0x{val} CR4=0x{val}`.
+**Prompt:** Document and enforce the required activation sequence in `boot_phase0()`: (1) `msr_init()` (centralized MSR layer, TODO-19 §3) must run before any MSR write; (2) `cpu_efer_harden()` sets `EFER.NXE=1`, `EFER.SCE=1`, `EFER.FFXSR` if supported — **this must complete before VMM init** because VMM will write PTE bit 63 (NX) on the first `vmm_map_page()` call; (3) `cpu_cr4_harden()` sets `CR4.SMEP`, `CR4.SMAP`, `CR4.UMIP` if detected — must run before any user-mode-visible mapping; emit a `POSTCODE_CPU_HARDEN_DONE` after the last CR4 write. Add `BOOT_REQUIRE(SUBSYS_MSR)` guards to EFER/CR4 steps so wrong-order calls panic with a clear message. Log: `[Phase0] EFER=0x{val} CR4=0x{val}`.
 
 > [!IMPORTANT]
 > → XREF: `02-kernel-core/TODO-17 §1–3` — `cpu_efer_harden()` and `cpu_cr4_harden()` implementations live there.
-> → XREF: `02-kernel-core/TODO-19 §4` — `msr_init()` implementation lives there.
+> → XREF: `02-kernel-core/TODO-19 §3` — `msr_init()` implementation lives there (MSR Management Infrastructure).
 > → XREF: `02-kernel-core/TODO-01 §2` — Phase 0 boot sequence; this step slots between serial init and PMM.
 
 - [ ] Add `POSTCODE_MSR_INIT`, `POSTCODE_CPU_EFER`, `POSTCODE_CPU_CR4`, `POSTCODE_CPU_HARDEN_DONE` to `boot_init.h`
@@ -100,7 +102,7 @@
 
 > [!IMPORTANT]
 > → XREF: `01-boot-platform/TODO-03 §6` — UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
-> → XREF: `02-kernel-core/TODO-19 §10` — full Hyper-V enlightenment MSR writes live there; this step only detects and sets flags.
+> → XREF: `02-kernel-core/TODO-19 §11` — full Hyper-V enlightenment MSR writes live there (Virtualization Detection); this step only detects and sets flags.
 
 - [ ] Add `hv_vendor[16]` and `hv_flags` fields to `boot_info_t`
 - [ ] Define `HV_TSC_ENLIGHTENMENT`, `HV_TLBFLUSH_HYPERCALL`, `HV_KVM_STEAL_TIME` flag bits in `boot_init.h`
@@ -147,17 +149,17 @@
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|---|---|---|---|---|
-| 💎 | EFER.NXE set before first NX page mapped | ✅ | ✅ | ⬜ Planned |
-| 💎 | SMEP/SMAP/UMIP enabled in BSP Phase 0 | ✅ | ✅ | ⬜ Planned |
-| 💎 | AP startup applies same CPU hardening as BSP | ✅ | ✅ | ⬜ Planned |
-| 💎 | XSAVE activation deferred until after VMM ready | ✅ | ✅ | ⬜ Planned |
-| 💎 | PCID enabled after page tables established | ✅ | ✅ | ⬜ Planned |
-| ⭐ | Hypervisor vendor detected before timer driver selection | ✅ | ⚠️ Partial (`hv_clock` late) | ⬜ Planned |
-| ⭐ | `boot_progress()` postcode emitted at each CPU activation step | ❌ | ❌ | ⬜ Planned |
+| ⭐  | Feature                                                  | 🪟 Windows NT / 11                           | 🐧 Linux                                          | 🚀 Impossible OS                                    |
+| --- | -------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
+| 💎  | EFER.NXE set before first NX page mapped                 | ✅ EFER.NXE set in `HalInitializeProcessor`  | ✅ Set in `cpu_init()` before paging              | ⬜ Planned — §2; enforced before VMM init           |
+| 💎  | SMEP/SMAP/UMIP enabled in BSP Phase 0                    | ✅ CR4 hardening in `HalInitSystem()` P0     | ✅ `setup_cr4()` during early CPU init            | ⬜ Planned — §2; `cpu_cr4_harden()`                 |
+| 💎  | AP startup applies same CPU hardening as BSP             | ✅ APs run `HalInitializeProcessor()`        | ✅ `cpu_init()` called on every secondary CPU     | ⬜ Planned — §4; `ap_cpu_harden()`                  |
+| 💎  | XSAVE activation deferred until after VMM ready          | ✅ `CR4.OSXSAVE` set post-paging in Phase 1  | ✅ `fpu__init_cpu()` deferred until paging        | ⬜ Planned — §5; `cpu_xsave_enable()`               |
+| 💎  | PCID enabled after page tables established               | ✅ `CR4.PCIDE` set after PML4 established    | ✅ `cr4_set_bits(X86_CR4_PCIDE)` post-paging      | ⬜ Planned — §5; `cpu_pcid_enable()`                |
+| ⭐  | Hypervisor vendor detected before timer driver selection | ✅ Hypervisor present before HAL timer init  | ⚠️ `detect_hypervisor_vendor()` may lag clocksrc  | ⬜ Planned — §3; `hypervisor_detect()`              |
+| ⭐  | `boot_progress()` postcode at each CPU activation step   | ❌ No per-step postcodes beyond BIOS POST    | ❌ No postcodes; `dmesg` only after console ready | ⬜ **Planned — §1–§5; `POSTCODE_*` per activation** |
 
-Impossible OS adds explicit hypervisor pre-detection before the UTS probe, eliminating the clock source fallback churn seen on Linux under Hyper-V. The postcode-per-activation pattern provides a level of boot-time CPU hardening auditability that neither Windows nor Linux surfaces to operators.
+> **After parity items:** Impossible OS matches Windows and Linux on NX-before-map, CR4 hardening, AP parity with BSP, and deferring XSAVE/PCID until paging is established. The exclusive rows add early hypervisor detection before timer HAL clock selection and postcode-per-step boot audit lines that neither OS surfaces in the same operator-visible form.
 
 ---
 

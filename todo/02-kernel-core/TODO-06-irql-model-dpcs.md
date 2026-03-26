@@ -15,6 +15,8 @@
 - [`src/kernel/drivers/lapic.c`](../../src/kernel/drivers/lapic.c)
 - [`src/kernel/sched/spinlock.c`](../../src/kernel/sched/spinlock.c)
 - → XREF: `TODO-01-kernel-init-sequencing.md` — DPC init belongs in Phase 1 after timer/interrupt controller readiness.
+- → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §5` — `irq_request()` dynamic IRQ API must exist before IRQL levels are mapped to IOAPIC vectors; LAPIC timer (§7 of that TODO) must be calibrated before DPC dispatch at `DISPATCH_LEVEL` is wired.
+- → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §7` — LAPIC timer calibration is the prerequisite for the timer/APIC scheduling path for DPC dispatch (§6 of this TODO).
 - → XREF: `TODO-04-drivers-hardware/INDEX.md` — ISR drivers (NIC/storage/input) must migrate from ad-hoc workqueue usage to DPC top-half/bottom-half contracts.
 - → XREF: `TODO-05-native-api-layer.md` — synchronization and wait semantics at `DISPATCH_LEVEL` must align with native API behavior.
 

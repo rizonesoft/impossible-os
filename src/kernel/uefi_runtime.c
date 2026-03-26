@@ -190,9 +190,12 @@ boot_result_t uefi_runtime_init(void)
     /* Read supported services mask before SVAM (config table is still valid) */
     read_rt_properties();
 
-    /* Call SetVirtualAddressMap -- only if bootloader did NOT already do it */
+    /* Call SetVirtualAddressMap.  Per UEFI spec §7.4.2 this must happen after
+     * ExitBootServices().  The bootloader preserves pointers only; SVAM is
+     * always the kernel's responsibility.  svam_called is kept as a safety
+     * guard in case a future loader calls SVAM before handoff. */
     if (g_boot_info.uefi_runtime.svam_called) {
-        klog(LOG_INFO, "UEFI", "SetVirtualAddressMap already called by bootloader");
+        klog(LOG_INFO, "UEFI", "SetVirtualAddressMap already called by loader");
     } else {
         call_set_virtual_address_map();
     }

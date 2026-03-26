@@ -18,9 +18,9 @@
 - [`include/kernel/drivers/pit.h`](../../include/kernel/drivers/pit.h)
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §3` — Phase 1 calls every init function listed here in the correct order; this TODO defines what correct order means
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §1` — DPC queue init requires LAPIC timer ready (§7); IRQL model depends on the correct interrupt priority assignment established in §2
-- → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §1` — `uptime_ns()` from the UTS (§6) is the clock source for FILETIME and `QueryPerformanceCounter`
+- → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §2` — `uptime_ns()` from the UTS (§6) is the clock source for the monotonic nanosecond clock used by FILETIME and `QueryPerformanceCounter`
 - → XREF: `TODO-02-boot-diagnostics.md §2` — boot time visualization (§9) reads `boot_stage_history[]` built by the boot progress API
-- → XREF: `01-boot-platform/TODO-05-advanced-cpu-platform.md §10` — Intel HWP / AMD CPPC frequency changes require LAPIC timer recalibration (§7 `lapic_calibrate()`)
+- → XREF: `02-kernel-core/TODO-15-power-management.md` — Intel HWP / AMD CPPC frequency changes require LAPIC timer recalibration (§7 `lapic_calibrate()`); no dedicated HWP/CPPC section in TODO-15 yet — add when frequency scaling is scoped there
 - → XREF: `04-drivers-hardware/` — all device drivers call `irq_request(gsi, handler, name, flags)` (§5); this API replaces hardcoded IRQ-to-vector assignments throughout that domain
 
 ## Outcome
@@ -36,18 +36,18 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                          | Depends On | Status |
-| --- | :---: | ------------------------------------ | ---------- | :----: |
-| 💎  |   1   | ACPI MADT parsing                    | —          |  [ ]   |
-| 💎  |   2   | LAPIC / IOAPIC init before PIT       | 1          |  [ ]   |
-| 💎  |   3   | Conditional PIC disable              | 1, 2       |  [ ]   |
-| 💎  |   4   | Full IDT coverage                    | 2, 3       |  [ ]   |
-| 💎  |   5   | Dynamic IRQ registration API         | 2, 4       |  [ ]   |
-| 💎  |   6   | Unified timer subsystem (UTS)        | 5          |  [ ]   |
-| 💎  |   7   | LAPIC timer calibration              | 6          |  [ ]   |
-| 💎  |   8   | Migrate boot splash spinner off PIT  | 6, 7       |  [ ]   |
+| ⭐  | Order | Deliverable                          | Depends On    | Status |
+| --- | :---: | ------------------------------------ | ------------- | :----: |
+| 💎  |   1   | ACPI MADT parsing                    | —             |  [ ]   |
+| 💎  |   2   | LAPIC / IOAPIC init before PIT       | 1             |  [ ]   |
+| 💎  |   3   | Conditional PIC disable              | 1, 2          |  [ ]   |
+| 💎  |   4   | Full IDT coverage                    | 2, 3          |  [ ]   |
+| 💎  |   5   | Dynamic IRQ registration API         | 2, 4          |  [ ]   |
+| 💎  |   6   | Unified timer subsystem (UTS)        | 5             |  [ ]   |
+| 💎  |   7   | LAPIC timer calibration              | 6             |  [ ]   |
+| 💎  |   8   | Migrate boot splash spinner off PIT  | 6, 7          |  [ ]   |
 | ⭐  |   9   | Boot time visualization              | 7, TODO-02 §2 |  [ ]   |
-| 💎  |  10   | Remove Hyper-V debug workarounds     | 1–7        |  [ ]   |
+| 💎  |  10   | Remove Hyper-V debug workarounds     | 1–7           |  [ ]   |
 
 > 💎 = parity — Windows NT HAL and Linux interrupt subsystem both follow this init order and have equivalent abstractions.
 > ⭐ = exclusive — the post-boot animated timeline bar chart showing per-stage boot duration is not present in either competitor.
@@ -115,7 +115,10 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 
 **Files:** `include/kernel/irq.h`, `src/kernel/irq.c`
 
-- [ ] Define `irq_handler_t` as `void (*)(uint32_t gsi, void *ctx)`
+> [!IMPORTANT]
+> `include/kernel/irq.h` already defines `irq_handler_t` as `void (*)(uint8_t vector, void *ctx)` for the existing `irq_register(vector, handler, ctx, name)` API. This section either renames that typedef or introduces a separate `gsi_handler_t` — resolve the naming before implementing §5 to avoid breaking all current `irq_register()` call sites.
+
+- [ ] Define `irq_handler_t` as `void (*)(uint32_t gsi, void *ctx)` (or introduce `gsi_handler_t` if the old signature must coexist during transition)
 - [ ] `irq_request(uint32_t gsi, irq_handler_t handler, const char *name, uint32_t flags)` → allocates next free IDT vector from `[64, 239]`, writes IOAPIC redirection entry (GSI → vector, polarity + trigger mode from MADT override, delivery mode = Fixed, destination = BSP APIC ID, mask = 0); returns allocated vector or -1 on failure
 - [ ] `irq_free(uint32_t gsi)` → mask IOAPIC redirection entry, release vector back to the free pool
 - [ ] `irq_set_affinity(uint32_t gsi, uint64_t cpu_mask)` → update IOAPIC redirection entry destination field
@@ -149,7 +152,7 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 - [ ] `lapic_calibrate()`: set LAPIC timer divide config = 16; write initial count = `0xFFFFFFFF`; wait exactly 10 ms using HPET `read_ns()` or PIT busy-wait; read LAPIC current count; `lapic_hz = (0xFFFFFFFF - current_count) × 100 × 16` (ticks per second); store in per-CPU `struct cpu_data.lapic_hz`
 - [ ] Run `lapic_calibrate()` on BSP during `timer_hal_init()`; run again on each AP during SMP AP bringup
 - [ ] Scheduler integration: replace `pit_set_periodic(HZ, sched_tick)` with `timer_set_periodic_ns(1000000000/HZ, sched_tick)` via UTS; UTS routes to LAPIC timer on each CPU for true per-CPU scheduling tick
-- [ ] Recalibrate hook: `lapic_recalibrate_on_freq_change()` called by Intel HWP / AMD CPPC driver when CPU frequency changes (→ XREF `01-boot-platform/TODO-05-advanced-cpu-platform.md §10`)
+- [ ] Recalibrate hook: `lapic_recalibrate_on_freq_change()` called by Intel HWP / AMD CPPC driver when CPU frequency changes (→ XREF `02-kernel-core/TODO-15-power-management.md` — section to be scoped when HWP/CPPC frequency scaling is added to TODO-15)
 - [ ] Serial log: `[LAPIC] CPU{N} timer: {freq}MHz (calibrated against {HPET|PIT})`
 - [ ] Commit: `"drivers: LAPIC timer calibration per CPU, scheduler migrated to LAPIC tick"`
 
@@ -182,7 +185,7 @@ An opt-in post-boot overlay bar chart showing per-stage boot duration, plus a JS
 
 Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPIC init order is in place.
 
-**Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/drivers/lapic.c`, `src/kernel/smp.c`
+**Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/drivers/lapic.c`, `src/kernel/smp/smp.c`
 
 - [ ] Audit all `#ifdef HYPERV_WORKAROUND`, `#ifdef HV_QUIRK`, and equivalent conditional blocks across the kernel; list them in the commit message with an explanation of why each is no longer needed
 - [ ] Remove each block (keep the non-workaround path); verify QEMU Gen2 / Hyper-V Gen2 still boots after removal
@@ -194,14 +197,14 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Windows NT / 11                               | 🐧 Linux                                          | 🚀 Impossible OS                                          |
-| --- | ------------------------------------- | ------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
+| ⭐  | Feature                               | 🪟 Windows NT / 11                                | 🐧 Linux                                           | 🚀 Impossible OS                                           |
+| --- | ------------------------------------- | -------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------- |
 | 💎  | MADT-driven interrupt topology        | ✅ HAL reads MADT before any interrupt init       | ✅ `acpi_boot_init()` parses MADT first            | ⬜ Planned — §1; MADT parse moved before interrupt init    |
 | 💎  | LAPIC/IOAPIC init before PIT          | ✅ HAL always inits APIC before legacy PIT        | ✅ `apic_intr_init()` before `init_IRQ()`          | ⬜ Planned — §2; init order restructured                   |
 | 💎  | Conditional PIC disable               | ✅ HAL checks PCAT_COMPAT flag                    | ✅ `disable_8259A()` gated on MADT flag            | ⬜ Planned — §3                                            |
 | 💎  | Full IDT coverage (all 256 vectors)   | ✅ KiUnexpectedInterrupt fills unused vectors     | ✅ `spurious_interrupt()` for unregistered vectors | ⬜ Planned — §4                                            |
-| 💎  | Dynamic IRQ registration              | ✅ `IoConnectInterrupt` / `IoConnectInterruptEx`  | ✅ `request_irq()` / `devm_request_irq()`          | ⬜ Planned — §5; `irq_request(gsi, handler, name, flags)` |
-| 💎  | Unified timer HAL (HPET→LAPIC→PIT)   | ✅ `HalQueryPerformanceCounter` backend selection | ✅ `clocksource` + `clockevent` framework          | ⬜ Planned — §6; `timer_driver_t` + `uptime_ns()`          |
+| 💎  | Dynamic IRQ registration              | ✅ `IoConnectInterrupt` / `IoConnectInterruptEx`  | ✅ `request_irq()` / `devm_request_irq()`          | ⬜ Planned — §5; `irq_request(gsi, handler, name, flags)`  |
+| 💎  | Unified timer HAL (HPET→LAPIC→PIT)    | ✅ `HalQueryPerformanceCounter` backend selection | ✅ `clocksource` + `clockevent` framework          | ⬜ Planned — §6; `timer_driver_t` + `uptime_ns()`          |
 | 💎  | Per-CPU LAPIC timer calibration       | ✅ HAL calibrates LAPIC per logical processor     | ✅ `calibrate_delay_direct()` per CPU              | ⬜ Planned — §7                                            |
 | ⭐  | Post-boot animated timeline bar chart | ❌ WPA boot trace (offline, binary format)        | ❌ `systemd-analyze plot` (SVG, post-boot only)    | ⬜ **Planned — §9; inline overlay chart + ASCII CLI diff** |
 

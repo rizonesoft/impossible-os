@@ -77,6 +77,7 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 - [ ] `boot_get_elapsed_ms()`: returns ms since the `BOOT_STAGE_KERNEL_ENTRY` timestamp using `boot_timing_tsc_freq()`
 - [ ] Serial log format: `[+NNNms] BOOT_PMM: <msg>` where NNN = `boot_get_elapsed_ms()` at call time
 - [ ] `boot_stage_history_get(out_entries, out_count)` accessor for §6 panic forensics
+- [ ] `boot_progress_poll()`: lightweight refresh called from timer callbacks (e.g. `spinner_tick_callback` in TODO-03 §8) when no new stage is reported but the splash progress bar needs a visual update; reads current `boot_stage_history[]` tail and re-calls `boot_splash_status()` with the last stage message
 - [ ] Commit: `"kernel: boot progress named-stage API with ring buffer and elapsed-ms tracking"`
 
 ## 3. POST-Style Hex Code Display `[Sonnet]`

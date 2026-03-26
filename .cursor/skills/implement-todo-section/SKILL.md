@@ -24,7 +24,16 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 6. Update the TODO section before finishing.
    - Correct stale checklist state, notes, and verification wording when evidence contradicts the current text.
    - Keep TODO edits scoped to the section you actually executed.
-7. If a commit is requested, use the section's commit line and account for repo `.githooks/` if installed.
+7. Update the Implementation Order table.
+   - Find the row(s) whose `Deliverable` maps to the section you just implemented.
+   - Change the `Status` cell to `[x]` (fully done) or `[/]` (in progress) to match the evidence.
+   - Do not change `Order`, `Deliverable`, or `Depends On` cells unless the implementation revealed they were wrong.
+8. Update the OS Comparison table.
+   - Find the row(s) whose `Feature` maps to what the section delivers.
+   - Replace the placeholder text in the `🚀 Impossible OS` cell with a concrete description of what was implemented and the section reference, e.g. `✅ Done — §N; brief description`.
+   - If a row was `⬜ Planned` and is now fully working, change `⬜` to `✅`; if partial, use `🔄`.
+   - Do not change the Windows or Linux cells.
+9. If a commit is requested, use the section's commit line and account for repo `.githooks/` if installed.
 
 ## Guardrails
 
