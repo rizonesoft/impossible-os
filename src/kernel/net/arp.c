@@ -6,8 +6,6 @@
 
 #include "kernel/net/net.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* --- Memory helpers --- */
 static void arp_memcpy(void *dst, const void *src, uint64_t n)
 {

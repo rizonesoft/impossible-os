@@ -16,8 +16,6 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* ---- Port I/O ---- */
 
 #define PS2_DATA_PORT    0x60

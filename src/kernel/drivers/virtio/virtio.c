@@ -17,7 +17,6 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/irq.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/mm/vmm.h"
 
 /* MMIO helpers are now in virtio.h as static inline */

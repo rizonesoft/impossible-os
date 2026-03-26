@@ -9,8 +9,6 @@
 
 #include "kernel/drivers/blkdev.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* ---- Device registry ---- */
 static struct blkdev devices[BLKDEV_MAX];
 static int           num_devices;

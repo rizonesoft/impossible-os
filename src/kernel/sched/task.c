@@ -14,7 +14,6 @@
 #include "kernel/gdt.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/elf.h"
 #include "kernel/ipc/signal.h"
 

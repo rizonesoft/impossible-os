@@ -14,7 +14,6 @@
 #include "kernel/idt.h"
 #include "kernel/gdt.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/panic.h"

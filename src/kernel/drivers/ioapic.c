@@ -23,8 +23,6 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* ---- State ---- */
 
 static volatile uint32_t *ioapic_base = (volatile uint32_t *)0;

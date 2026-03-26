@@ -8,8 +8,6 @@
 #include "kernel/ipc/shmem.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* Global shared memory table */
 static shmem_region_t regions[SHMEM_MAX];
 static uint32_t shmem_inited = 0;

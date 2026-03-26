@@ -18,7 +18,6 @@
 #include "kernel/mm/heap.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
 
 /* mmap virtual address allocation range (above identity-mapped 4 GiB) */

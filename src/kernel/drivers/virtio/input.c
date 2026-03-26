@@ -23,7 +23,6 @@
 #include "kernel/idt.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/mm/heap.h"
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/framebuffer.h"

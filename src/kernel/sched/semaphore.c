@@ -14,8 +14,6 @@
 
 #include "kernel/sched/semaphore.h"
 #include "kernel/sched/task.h"
-#include "kernel/printk.h"
-
 void sem_init(semaphore_t *s, const char *name, int32_t initial_count)
 {
     s->count = initial_count;

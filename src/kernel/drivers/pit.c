@@ -11,7 +11,6 @@
 #include "kernel/timer.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
 

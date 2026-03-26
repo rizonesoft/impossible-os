@@ -12,7 +12,6 @@
 #include "kernel/drivers/pci.h"
 #include "kernel/irq.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "registry.h"
 #include "kernel/barrier.h"
 #include "kernel/drivers/blkdev.h"

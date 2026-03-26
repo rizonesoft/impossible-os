@@ -13,8 +13,6 @@
 #include "kernel/sched/event.h"
 #include "kernel/sched/task.h"
 #include "kernel/timer.h"         /* system_get_ticks(), system_get_freq() */
-#include "kernel/printk.h"
-
 /* ---------------------------------------------------------------------------
  * Internal: wake all threads in the wait queue.
  * ------------------------------------------------------------------------- */

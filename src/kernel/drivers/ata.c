@@ -18,8 +18,6 @@
 
 #include "kernel/drivers/ata.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* Primary ATA bus ports */
 #define ATA_DATA       0x1F0
 #define ATA_ERROR      0x1F1

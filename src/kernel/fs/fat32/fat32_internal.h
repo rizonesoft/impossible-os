@@ -12,7 +12,6 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/sched/spinlock.h"
 
 /* FAT32 special cluster values */

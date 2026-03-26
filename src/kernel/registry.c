@@ -19,7 +19,6 @@
 #include "registry.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/smbios.h"
 
 /* ---- String helpers ---- */

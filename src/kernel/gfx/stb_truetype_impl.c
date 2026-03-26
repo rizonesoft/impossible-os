@@ -84,7 +84,6 @@ void *memmove(void *dst, const void *src, stb_size_t n)
 #define STBTT_memset(d, v, n)  memset(d, v, n)
 
 /* --- Redirect assert --- */
-#include "kernel/printk.h"
 #define STBTT_assert(x)  ((void)0)  /* disable asserts in production kernel */
 
 /* --- Include the actual implementation --- */

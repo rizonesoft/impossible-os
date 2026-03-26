@@ -21,8 +21,6 @@
 #include "kernel/ipc/pipe.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* Global pipe table */
 static pipe_t pipes[PIPE_MAX];
 static uint32_t pipe_inited = 0;

@@ -14,7 +14,6 @@
 #include "kernel/idt.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/mm/heap.h"
 #include "kernel/net/net.h"
 #include "kernel/sched/spinlock.h"

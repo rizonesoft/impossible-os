@@ -20,7 +20,6 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
 
 /* ---- External libc-like functions (freestanding kernel) ---- */

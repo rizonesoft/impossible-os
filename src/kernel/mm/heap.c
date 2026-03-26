@@ -17,8 +17,6 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* Heap size constants */
 #define HEAP_INITIAL_PAGES  512      /* 512 pages = 2 MiB */
 #define HEAP_PAGE_SIZE      4096

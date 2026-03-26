@@ -12,8 +12,6 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* PIC state — set by pic_init(), cleared by pic_disable() */
 static int pic_ready = 0;
 

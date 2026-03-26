@@ -9,8 +9,6 @@
 #include "kernel/irq.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/sched/event.h"
-#include "kernel/printk.h"
-
 /* ---- Driver state ---- */
 volatile uint8_t *abar;
 struct ahci_port  ports[AHCI_MAX_PORTS];

@@ -12,7 +12,6 @@
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/sched/spinlock.h"
 #include "desktop/terminal.h"

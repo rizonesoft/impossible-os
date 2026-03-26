@@ -15,8 +15,6 @@
 
 #include "kernel/drivers/rtc.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
-
 /* ---- I/O port helpers ---- */
 
 static inline void outb(uint16_t port, uint8_t val)

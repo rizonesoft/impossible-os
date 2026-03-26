@@ -11,7 +11,6 @@
 
 #include "gfx.h"
 #include "kernel/mm/heap.h"
-#include "kernel/printk.h"
 #include "kernel/types.h"
 
 /* ---- Helpers ---- */

@@ -19,7 +19,6 @@
 #include "kernel/drivers/blkdev.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/mm/heap.h"
 
 /* ---- Well-known GUIDs ---- */

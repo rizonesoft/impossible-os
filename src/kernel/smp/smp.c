@@ -16,7 +16,6 @@
 #include "kernel/acpi.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/barrier.h"
 #include "kernel/atomic.h"
 

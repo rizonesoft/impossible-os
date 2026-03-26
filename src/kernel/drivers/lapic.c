@@ -25,7 +25,6 @@
 #include "kernel/sched/task.h"
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 #include "kernel/barrier.h"
 
 /* ---- State ---- */
