@@ -427,7 +427,7 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
         EFI_STATUS s = gop->SetMode(gop, best_idx);
         if (EFI_ERROR(s) || gop->Mode->FrameBufferBase == 0) {
             /* SetMode failed — keep current firmware mode */
-            serial_early_print("[Boot] GOP: using firmware default ");
+            serial_early_print("BOOT: GOP: using firmware default ");
             serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
             serial_early_print("x");
             serial_early_print_uint(gop->Mode->Info->VerticalResolution);
@@ -442,8 +442,8 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
     g_boot_info_ptr->hidpi =
         (gop->Mode->Info->HorizontalResolution >= 2560) ? 1 : 0;
 
-    /* Serial log: [Boot] GOP: {W}x{H} 32bpp (mode {idx} of {max}) */
-    serial_early_print("[Boot] GOP: ");
+    /* Serial log: BOOT: GOP: {W}x{H} 32bpp (mode {idx} of {max}) */
+    serial_early_print("BOOT: GOP: ");
     serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
     serial_early_print("x");
     serial_early_print_uint(gop->Mode->Info->VerticalResolution);

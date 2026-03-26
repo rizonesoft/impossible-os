@@ -93,8 +93,8 @@ Negotiate the best framebuffer resolution before `ExitBootServices()`, respectin
 - [x] Set `boot_info.hidpi = 1` if negotiated `width >= 2560`; caller (boot splash) scales logo and font by 2×
 - [x] If `boot.conf` `Resolution=` is absent or `auto`, pick highest native resolution
 - [x] Call `gop->SetMode(best_mode)` before reading framebuffer base address into `boot_info.fb.*`
-- [x] Serial log: `[Boot] GOP: {width}x{height} 32bpp (mode {idx})` after negotiation
-- [x] Fallback: if `SetMode` fails for best mode, retry with current mode; log `[Boot] GOP: using firmware default {W}x{H}`
+- [x] Serial log: `BOOT: GOP: {width}x{height} 32bpp (mode {idx})` after negotiation
+- [x] Fallback: if `SetMode` fails for best mode, retry with current mode; log `BOOT: GOP: using firmware default {W}x{H}`
 - [x] Commit: `"boot: GOP resolution auto-detection with HiDPI flag and boot.conf override"`
 
 ## 4. SMBIOS Table Parsing `[Sonnet]`
