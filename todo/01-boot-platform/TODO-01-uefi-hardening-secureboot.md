@@ -42,7 +42,7 @@
 | 💎  |   3   | GOP resolution auto-detection      | 1                |  [x]   |
 | 💎  |   4   | SMBIOS table parsing               | 1                |  [x]   |
 | 💎  |   5   | Secure Boot state detection        | 2                |  [/]   |
-| 💎  |   6   | Secure Boot shim chain-loading     | 5                |  [ ]   |
+| 💎  |   6   | Secure Boot shim chain-loading     | 5                |  [x]   |
 | 💎  |   7   | Boot UX polish                     | 3, 5, TODO-02 §2 |  [ ]   |
 | 💎  |   8   | A/B dual-slot boot                 | 2                |  [ ]   |
 | ⭐  |   9   | Multi-OS detection & boot menu     | 1                |  [ ]   |
@@ -133,14 +133,14 @@ Set up the MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build f
 
 **Files:** `scripts/build.sh`, `scripts/sign-efi.sh`, `src/boot/uefi/`, `.gitignore`
 
-- [ ] Add `.gitignore` entries: `MOK.key`, `MOK.pem`, `*.signed.EFI`, `keys/` — private key MUST NEVER be committed
-- [ ] Document key generation in `docs/guides/secure-boot-keys.md`: `openssl genrsa -out MOK.key 2048` + `openssl req -new -x509 -key MOK.key -out MOK.crt -days 3650 -subj "/CN=Impossible OS MOK/"`
-- [ ] Update `scripts/sign-efi.sh`: if `keys/MOK.key` and `keys/MOK.crt` exist, run `sbsign --key keys/MOK.key --cert keys/MOK.crt --output build/BOOTX64.signed.EFI build/BOOTX64.EFI`; skip silently if keys absent (dev builds)
-- [ ] Bundle pre-compiled `shim.efi` (from rhboot release, or build from source with our vendor cert embedded): place at `resources/boot/shim.efi`; installed to ESP as `EFI\BOOT\BOOTX64.EFI`; our signed `BOOTX64.EFI` installed as `EFI\BOOT\grub.efi` (shim default fallback name)
-- [ ] Shim validates our `BOOTX64.EFI` via MOK; on first boot without enrolled MOK: shim shows blue MOK Manager screen → user selects Enroll MOK → reboots → Impossible OS boots
-- [ ] Add `sign-efi` Makefile target: `make sign-efi` invokes `scripts/sign-efi.sh`; CI sets `MOK_KEY` + `MOK_CRT` env vars from secrets vault
-- [ ] Long-term tracker (no code): open issue to submit shim to [rhboot/shim-review](https://github.com/rhboot/shim-review) once first release candidate is tagged
-- [ ] Commit: `"boot: Secure Boot shim chain-loading, MOK key signing pipeline, .gitignore"`
+- [x] Add `.gitignore` entries: `MOK.key`, `*.signed.EFI` — private key MUST NEVER be committed (`keys/` is tracked for `MOK.cer`/`MOK.der`; `MOK.pem` unused — we use `.cer`/`.der`)
+- [x] Document key generation in `docs/guides/secure-boot-keys.md` (`keys/README.md` covers same content; dedicated guide created at `docs/guides/secure-boot-keys.md`)
+- [x] `scripts/sign-efi.sh` created (thin wrapper + CI entry point); `sign-efi` Makefile target (lines 138–151) is the primary build path — signs in-place, skips silently if `keys/MOK.key` absent
+- [x] Bundle pre-compiled `shim.efi`: `shim/shimx64.efi` + `shim/mmx64.efi` committed (SHA256 verified); built via `scripts/secure-boot/build-shim.sh` with `VENDOR_CERT_FILE=keys/MOK.cer`; Makefile installs to `EFI/BOOT/BOOTX64.EFI`; signed bootloader installed as `EFI/BOOT/grubx64.efi`
+- [x] Shim validates `grubx64.efi` via embedded `MOK.cer` (`VENDOR_CERT_FILE`); first-boot without enrolled MOK: `mmx64.efi` (MokManager) shows enrollment UI; pipeline verified by `scripts/secure-boot/build-sb-test-disk.sh`
+- [x] `sign-efi` Makefile target exists (`make sign-efi`); CI env var overrides `MOK_KEY`/`MOK_CRT` supported via `scripts/sign-efi.sh`
+- [x] Long-term tracker (no code): submit shim to [rhboot/shim-review](https://github.com/rhboot/shim-review) once first release candidate is tagged — tracked in `shim/README.md`
+- [x] Commit: `"boot: Secure Boot shim chain-loading, MOK key signing pipeline, .gitignore"`
 
 ## 7. Boot UX Polish `[Sonnet]`
 
@@ -259,7 +259,7 @@ Standard line format used everywhere:
 
 | ⭐  | Feature                             | 🪟 Windows 11                                   | 🐧 Linux (GRUB/systemd-boot)                     | 🚀 Impossible OS                                       |
 | --- | ----------------------------------- | ------------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------- |
-| 💎  | Secure Boot shim chain-loading      | ✅ Microsoft-signed shim + WHQL                 | ✅ rhboot shim (distro-signed)                   | ⬜ Planned — §6; MOK enrollment path                   |
+| 💎  | Secure Boot shim chain-loading      | ✅ Microsoft-signed shim + WHQL                 | ✅ rhboot shim (distro-signed)                   | ✅ Done — §6; `shim/shimx64.efi` built with `VENDOR_CERT_FILE=MOK.cer`; `sign-efi` Makefile target; `mmx64.efi` for first-boot enrollment; QEMU SB test via `run-qemu-kvm-secureboot.bat` + `build-sb-test-disk.sh` (snakeoil chain) |
 | 💎  | Secure Boot state in kernel         | ✅ `HKLM\SYSTEM\SecureBoot` + WinVerifyTrust    | ✅ `/sys/firmware/efi/efivars/SecureBoot`        | 🔄 In progress — §5; `uefi_secureboot_init()` reads SecureBoot/SetupMode/PK/KEK NVRAM vars, sets `boot_info.secure_boot_enabled` + `g_system_state.secure_boot`; registry key + SRM signature check deferred to TODO-13/TODO-11  |
 | 💎  | UEFI runtime services after boot    | ✅ Full EFI runtime preserved                   | ✅ `efi_call_*` wrappers post-ExitBootServices   | ✅ Done — §1; RT pointers copied pre-EBS, SVAM called in `uefi_runtime_init()` post-EBS  |
 | 💎  | UEFI variable read/write            | ✅ `GetFirmwareEnvironmentVariable` Win32 API   | ✅ `efivarfs` + `efivar` library                 | ✅ Done — §2; `uefi_var_get/set`, NTSTATUS translation, `uefi_var_enumerate(callback)`, `IMPOSSIBLE_OS_VENDOR_GUID`  |

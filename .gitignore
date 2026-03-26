@@ -38,6 +38,7 @@ resources/icons/color/**/*.png
 
 # Secure Boot keys — private key must NEVER be committed
 keys/MOK.key
+*.signed.EFI
 
 # Auto-generated build metadata header
 include/build_info.h
