@@ -16,9 +16,10 @@
 #   correctly.  The shim is still needed for REAL hardware (where we cannot
 #   pre-enroll our key into the firmware) but is not required for QEMU testing.
 #
-# IMPORTANT: OVMF SB firmware requires Q35 + SMM:
-#   Use -machine q35,smm=on in QEMU.  The default pc-i440fx machine causes the
-#   SB firmware to hang before initializing the display.
+# IMPORTANT: OVMF SB firmware requires Q35 (-machine q35).
+#   The default pc-i440fx machine hangs before initialising the display.
+#   smm=on is NOT required -- it adds runtime VARS protection but is
+#   unsupported by WHPX; boot-time SB enforcement works without it.
 #
 # IMPORTANT: CODE and VARS must be the matched snakeoil pair.
 #   OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd is a MISMATCHED pair.
@@ -119,6 +120,6 @@ echo "[SB-TEST] OVMF firmware: $BUILD/OVMF_CODE_4M.snakeoil.fd"
 echo "[SB-TEST] OVMF VARS:     $BUILD/OVMF_VARS_4M.snakeoil.fd (snakeoil PK/KEK/db enrolled)"
 echo ""
 echo "[SB-TEST] Boot chain:"
-echo "  OVMF (snakeoil CODE + snakeoil VARS -- matched pair, q35+SMM)"
+echo "  OVMF (snakeoil CODE + snakeoil VARS -- matched pair, q35)"
 echo "    -> EFI/BOOT/BOOTX64.EFI  [our bootloader, snakeoil-signed]"
 echo "    -> kernel"

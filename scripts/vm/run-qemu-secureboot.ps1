@@ -10,8 +10,11 @@
 # We sign BOOTX64.EFI directly for QEMU testing.  The shim chain is still used
 # on real hardware (see docs/guides/secure-boot-keys.md).
 #
-# IMPORTANT: OVMF SB firmware requires Q35 + SMM (-machine q35,smm=on).
+# IMPORTANT: OVMF SB firmware requires Q35 (-machine q35).
 # The default pc-i440fx machine hangs before initializing the display.
+# smm=on is NOT used -- it adds runtime VARS protection but is unsupported
+# by WHPX (Windows Hypervisor Platform).  Boot-time SB enforcement works
+# without it.
 #
 # The build-sb-test-disk.sh helper signs BOOTX64.EFI with the snakeoil key on
 # every run, so no manual BIOS key enrollment is needed.
@@ -122,8 +125,7 @@ switch ($Accel) {
 }
 
 $QemuArgs += @(
-    '-machine', 'q35,smm=on',
-    '-global',  'driver=cfi.pflash01,property=secure,value=on',
+    '-machine', 'q35',
     '-cpu',    $CpuModel,
     '-drive',  "if=pflash,format=raw,readonly=on,file=$OVMF_CODE",
     '-drive',  "if=pflash,format=raw,file=$VARS_DEST",
