@@ -191,6 +191,10 @@ void uefi_time_init(void);
  * Must be called after uefi_runtime_init() + uefi_vars_init(). */
 void uefi_secureboot_init(void);
 
+/* Write HKLM\SYSTEM\SecureBoot\State to the registry.
+ * Called from registry_populate_defaults() after registry_init(). */
+void uefi_secureboot_populate_registry(void);
+
 /* Returns 1 if Secure Boot is enabled by firmware. */
 int uefi_secureboot_enabled(void);
 

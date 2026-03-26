@@ -20,6 +20,7 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
 #include "kernel/smbios.h"
+#include "kernel/uefi_runtime.h"
 
 /* ---- String helpers ---- */
 
@@ -1712,6 +1713,9 @@ void registry_populate_defaults(void)
 
     /* Populate SMBIOS hardware keys now that the registry tree is ready */
     smbios_populate_registry();
+
+    /* Populate Secure Boot state key (HKLM\SYSTEM\SecureBoot\State) */
+    uefi_secureboot_populate_registry();
 }
 
 /* ============================================================================

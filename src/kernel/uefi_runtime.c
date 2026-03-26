@@ -16,6 +16,7 @@
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/system_state.h"
+#include "registry.h"
 
 /* ---- Kernel-side EFI_RUNTIME_SERVICES struct ----
  * Re-declared with kernel types + UEFI_EFIAPI calling convention.
@@ -670,6 +671,20 @@ void uefi_secureboot_init(void)
         klog(LOG_INFO, "SecureBoot", "state=ENABLED");
     } else {
         klog(LOG_INFO, "SecureBoot", "state=DISABLED (firmware or user override)");
+    }
+}
+
+/* Called from registry_populate_defaults() after registry_init() — writes
+ * HKLM\SYSTEM\SecureBoot\State once the registry tree is ready. */
+void uefi_secureboot_populate_registry(void)
+{
+    HKEY hKey;
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\SecureBoot", 0,
+                       NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+        RegSetDword(hKey, "State", (uint32_t)s_sb_enabled);
+        RegCloseKey(hKey);
+        klog(LOG_DEBUG, "SecureBoot", "HKLM\\SYSTEM\\SecureBoot\\State=%u written",
+             (uint64_t)s_sb_enabled);
     }
 }
 

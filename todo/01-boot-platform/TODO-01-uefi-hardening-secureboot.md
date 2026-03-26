@@ -121,7 +121,7 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel and user 
 **Files:** `src/kernel/uefi_runtime.c`, `include/kernel/uefi_runtime.h`, `src/kernel/main/boot_hw.c`
 
 - [x] Call `uefi_var_get_u32(L"SecureBoot", &EFI_GLOBAL_VARIABLE_GUID, &val)` in `uefi_secureboot_init()`; set `boot_info.secure_boot_enabled = (val == 1)`
-- [ ] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1 after registry is up (→ XREF `02-kernel-core/TODO-13-registry-completion.md`) *(deferred — no registry write API yet)*
+- [x] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1 after registry is up (→ XREF `02-kernel-core/TODO-13-registry-completion.md`)
 - [ ] If `secure_boot_enabled`: call `srm_verify_kernel_signature("C:\\boot\\kernel.exe")` (→ XREF `02-kernel-core/TODO-11-security-reference-monitor.md`); on failure: log `[SecureBoot] kernel.exe signature INVALID` + `BOOT_FATAL` *(deferred — `srm_verify_kernel_signature` has no section in TODO-11 yet)*
 - [x] Display padlock icon (🔒) in system tray status bar when Secure Boot is active (desktop integration hook — set flag in `g_system_state.secure_boot` readable by tray renderer)
 - [x] Serial log: `[SecureBoot] state=ENABLED` or `[SecureBoot] state=DISABLED (firmware or user override)`
