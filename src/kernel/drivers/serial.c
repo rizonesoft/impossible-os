@@ -5,8 +5,12 @@
  * ============================================================================ */
 
 #include "kernel/drivers/serial.h"
+#include "kernel/sched/spinlock.h"
 
 #define SERIAL_PORT 0x3F8
+
+/* Protects UART register access from concurrent threads and IRQ handlers */
+static spinlock_t g_serial_lock = SPINLOCK_INIT;
 
 /* Inline port I/O helpers */
 static inline void outb(uint16_t port, uint8_t val)
@@ -34,9 +38,12 @@ void serial_init(void)
 
 void serial_putchar(char c)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&g_serial_lock, &flags);
     while ((inb(SERIAL_PORT + 5) & 0x20) == 0)
         ;
     outb(SERIAL_PORT, (uint8_t)c);
+    spin_unlock_irqrestore(&g_serial_lock, flags);
 }
 
 void serial_write(const char *str)
