@@ -4,14 +4,24 @@
 # Produces: build/system-disk-secureboot.img
 #
 # Boot chain verified by this disk:
-#   OVMF (OVMF_CODE_4M.snakeoil.fd + OVMF_VARS_4M.snakeoil.fd)
-#     -> shimx64.efi  (signed with OVMF snakeoil key  -> OVMF trusts it)
-#         -> grubx64.efi (signed with MOK.key -> shim trusts via VENDOR_CERT_FILE=MOK.cer)
-#             -> kernel
+#   OVMF (OVMF_CODE_4M.snakeoil.fd + OVMF_VARS_4M.snakeoil.fd, q35+SMM)
+#     -> BOOTX64.EFI (our bootloader, snakeoil-signed -> OVMF trusts it)
+#         -> kernel
+#
+# Why we sign BOOTX64.EFI directly instead of going through the shim:
+#   The shim binary (shim/shimx64.efi) has PE/COFF section gaps that cause
+#   OVMF's Authenticode hash to differ from the hash sbsign computed, so OVMF
+#   always rejects it with "Security Violation (0x1A)" even though sbverify
+#   reports OK.  Signing our own bootloader (which has no such gaps) works
+#   correctly.  The shim is still needed for REAL hardware (where we cannot
+#   pre-enroll our key into the firmware) but is not required for QEMU testing.
+#
+# IMPORTANT: OVMF SB firmware requires Q35 + SMM:
+#   Use -machine q35,smm=on in QEMU.  The default pc-i440fx machine causes the
+#   SB firmware to hang before initializing the display.
 #
 # IMPORTANT: CODE and VARS must be the matched snakeoil pair.
-# OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd is a MISMATCHED pair
-# that causes the firmware to hang before initializing the display.
+#   OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd is a MISMATCHED pair.
 #
 # The snakeoil key is the OVMF test key at /usr/share/ovmf/PkKek-1-snakeoil.key
 # (passphrase: snakeoil). The snakeoil cert is pre-enrolled in OVMF_VARS_4M.snakeoil.fd
@@ -19,8 +29,7 @@
 #
 # Prerequisites:
 #   apt install ovmf sbsigntool mtools
-#   bash scripts/build.sh        (produces system-disk.img + signed grubx64.efi)
-#   keys/MOK.key must exist
+#   bash scripts/build.sh   (produces system-disk.img and build/tools/BOOTX64.EFI)
 
 set -euo pipefail
 
@@ -28,8 +37,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD="$REPO_ROOT/build"
 SRC_DISK="$BUILD/system-disk.img"
 DST_DISK="$BUILD/system-disk-secureboot.img"
-SHIM_SRC="$REPO_ROOT/shim/shimx64.efi"
-SIGNED_SHIM="$BUILD/shimx64-sb-test.efi"
+BOOTX64_SRC="$BUILD/tools/BOOTX64.EFI"
+SIGNED_BOOTX64="$BUILD/bootx64-sb-test.efi"
 SNAKEOIL_KEY="/usr/share/ovmf/PkKek-1-snakeoil.key"
 SNAKEOIL_CER="/usr/share/ovmf/PkKek-1-snakeoil.pem"
 # ESP starts at sector 2048 (GPT layout from make-system-disk); offset = 2048 * 512
@@ -38,7 +47,7 @@ ESP_OFFSET=1048576
 echo "[SB-TEST] Building Secure Boot test disk..."
 
 # --- Prerequisite checks ---
-for f in "$SRC_DISK" "$SHIM_SRC"; do
+for f in "$SRC_DISK" "$BOOTX64_SRC"; do
     if [ ! -f "$f" ]; then
         echo "[ERROR] Not found: $f"
         echo "        Run: bash scripts/build.sh"
@@ -65,27 +74,31 @@ openssl rsa \
     -passin pass:snakeoil \
     -out "$SNAKEOIL_KEY_NOPASS" 2>/dev/null
 
-# --- Sign shimx64.efi with snakeoil key ---
-echo "[SB-TEST] Signing shimx64.efi with OVMF snakeoil key..."
+# --- Sign BOOTX64.EFI with snakeoil key ---
+# BOOTX64.EFI may already carry a MOK signature from 'make sign-efi'; sbsign
+# appends the snakeoil signature alongside it.  OVMF accepts the binary when
+# ANY embedded signing cert matches an enrolled db entry.
+echo "[SB-TEST] Signing BOOTX64.EFI with OVMF snakeoil key..."
+cp "$BOOTX64_SRC" "$SIGNED_BOOTX64"
 sbsign \
     --key "$SNAKEOIL_KEY_NOPASS" \
     --cert "$SNAKEOIL_CER" \
-    --output "$SIGNED_SHIM" \
-    "$SHIM_SRC" 2>/dev/null
-sbverify --cert "$SNAKEOIL_CER" "$SIGNED_SHIM" \
-    && echo "[SB-TEST] shim signature OK (snakeoil)"
+    --output "$SIGNED_BOOTX64" \
+    "$SIGNED_BOOTX64" 2>/dev/null
+sbverify --cert "$SNAKEOIL_CER" "$SIGNED_BOOTX64" \
+    && echo "[SB-TEST] BOOTX64.EFI signature OK (snakeoil)"
 
 # --- Copy system disk ---
 echo "[SB-TEST] Copying $SRC_DISK -> $DST_DISK ..."
 cp "$SRC_DISK" "$DST_DISK"
 
-# --- Inject snakeoil-signed shim into ESP using mtools ---
+# --- Inject snakeoil-signed BOOTX64.EFI into ESP using mtools ---
 # Drive letter 's:' with offset to the FAT32 EFI System Partition
 MTOOLSRC_FILE="$BUILD/mtoolsrc-sb-test"
 printf 'drive s: file="%s" offset=%d\n' "$DST_DISK" "$ESP_OFFSET" > "$MTOOLSRC_FILE"
 
-echo "[SB-TEST] Injecting signed shim into ESP..."
-MTOOLSRC="$MTOOLSRC_FILE" mcopy -o "$SIGNED_SHIM" "s:EFI/BOOT/BOOTX64.EFI"
+echo "[SB-TEST] Injecting signed BOOTX64.EFI into ESP..."
+MTOOLSRC="$MTOOLSRC_FILE" mcopy -o "$SIGNED_BOOTX64" "s:EFI/BOOT/BOOTX64.EFI"
 
 echo "[SB-TEST] ESP contents after injection:"
 MTOOLSRC="$MTOOLSRC_FILE" mdir "s:EFI/BOOT/"
@@ -106,7 +119,6 @@ echo "[SB-TEST] OVMF firmware: $BUILD/OVMF_CODE_4M.snakeoil.fd"
 echo "[SB-TEST] OVMF VARS:     $BUILD/OVMF_VARS_4M.snakeoil.fd (snakeoil PK/KEK/db enrolled)"
 echo ""
 echo "[SB-TEST] Boot chain:"
-echo "  OVMF (snakeoil CODE + snakeoil VARS -- matched pair)"
-echo "    -> EFI/BOOT/BOOTX64.EFI  [shimx64.efi, snakeoil-signed]"
-echo "    -> EFI/BOOT/grubx64.efi  [our bootloader, MOK-signed, trusted via VENDOR_CERT_FILE]"
+echo "  OVMF (snakeoil CODE + snakeoil VARS -- matched pair, q35+SMM)"
+echo "    -> EFI/BOOT/BOOTX64.EFI  [our bootloader, snakeoil-signed]"
 echo "    -> kernel"

@@ -1,13 +1,19 @@
 # run-qemu-secureboot.ps1 -- Launch Impossible OS with UEFI Secure Boot enforcement
 #
 # Boot chain:
-#   OVMF_CODE_4M.snakeoil.fd (matched snakeoil firmware -- Secure Boot enforcing)
-#   OVMF_VARS_4M.snakeoil.fd (snakeoil PK/KEK/db pre-enrolled; OVMF trusts snakeoil-signed shim)
-#     -> EFI/BOOT/BOOTX64.EFI  (shimx64.efi, re-signed with OVMF snakeoil key)
-#         -> EFI/BOOT/grubx64.efi (our bootloader, signed with MOK.key, trusted via VENDOR_CERT_FILE)
-#             -> kernel
+#   OVMF_CODE_4M.snakeoil.fd + OVMF_VARS_4M.snakeoil.fd (matched pair, snakeoil db enrolled)
+#     -> EFI/BOOT/BOOTX64.EFI  (our bootloader, signed with OVMF snakeoil key)
+#         -> kernel
 #
-# The build-sb-test-disk.sh helper re-signs the shim with the snakeoil key on
+# Why no shim: the shim binary has PE/COFF section gaps that cause OVMF's
+# Authenticode hash to differ from sbsign's hash, so OVMF always rejects it.
+# We sign BOOTX64.EFI directly for QEMU testing.  The shim chain is still used
+# on real hardware (see docs/guides/secure-boot-keys.md).
+#
+# IMPORTANT: OVMF SB firmware requires Q35 + SMM (-machine q35,smm=on).
+# The default pc-i440fx machine hangs before initializing the display.
+#
+# The build-sb-test-disk.sh helper signs BOOTX64.EFI with the snakeoil key on
 # every run, so no manual BIOS key enrollment is needed.
 #
 # Parameters:
@@ -38,13 +44,13 @@ Write-Host ""
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host "  Impossible OS -- Secure Boot Test" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "  OVMF: secboot.fd + snakeoil VARS" -ForegroundColor DarkGray
-Write-Host "  Chain: snakeoil-signed shim -> MOK-signed loader -> kernel" -ForegroundColor DarkGray
+Write-Host "  OVMF: snakeoil CODE + snakeoil VARS (q35+SMM)" -ForegroundColor DarkGray
+Write-Host "  Chain: snakeoil-signed BOOTX64.EFI -> kernel" -ForegroundColor DarkGray
 Write-Host ""
 
 # --- Step 1: Build the Secure Boot test disk ---
 if (-not $NoRebuild) {
-    Write-Host "Building Secure Boot test disk (sign shim with OVMF snakeoil key)..." -ForegroundColor Yellow
+    Write-Host "Building Secure Boot test disk (sign BOOTX64.EFI with OVMF snakeoil key)..." -ForegroundColor Yellow
     & wsl.exe bash ~/impossible-os/scripts/secure-boot/build-sb-test-disk.sh
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Secure Boot disk build failed." -ForegroundColor Red
@@ -116,6 +122,8 @@ switch ($Accel) {
 }
 
 $QemuArgs += @(
+    '-machine', 'q35,smm=on',
+    '-global',  'driver=cfi.pflash01,property=secure,value=on',
     '-cpu',    $CpuModel,
     '-drive',  "if=pflash,format=raw,readonly=on,file=$OVMF_CODE",
     '-drive',  "if=pflash,format=raw,file=$VARS_DEST",
