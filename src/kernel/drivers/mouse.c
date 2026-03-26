@@ -14,6 +14,7 @@
 #include "kernel/drivers/mouse.h"
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
+#include "kernel/drivers/ioapic.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/klog.h"
 /* ---- Port I/O ---- */
@@ -214,7 +215,13 @@ void mouse_init(void)
 
     /* Register IRQ 12 (vector 44) via dynamic IRQ API */
     irq_register(44, mouse_irq_callback, (void *)0, "ps2_mouse");
+
+    /* Unmask IRQ 12: PIC path (no-op when PIC disabled) + IOAPIC path.
+     * Done after handler registration AND after flush so no queued ACK
+     * byte fires into the IDT before the handler is ready. */
     pic_unmask_irq(IRQ_MOUSE);
+    if (ioapic_available())
+        ioapic_unmask_irq((uint8_t)ioapic_isa_to_gsi(IRQ_MOUSE));
 
     klog(LOG_DEBUG, "input", "PS/2 mouse initialized (IRQ 12)");
 }

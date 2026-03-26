@@ -8,6 +8,7 @@
 
 #include "kernel/drivers/pit.h"
 #include "kernel/drivers/pic.h"
+#include "kernel/drivers/ioapic.h"
 #include "kernel/timer.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
@@ -115,8 +116,12 @@ void pit_init(void)
     /* Register our IRQ 0 handler (interrupt vector 32 after PIC remap) */
     idt_register_handler(32, pit_irq_handler);
 
-    /* Unmask IRQ 0 on the PIC */
+    /* Unmask IRQ 0: PIC path (no-op when PIC disabled) + IOAPIC path.
+     * IOAPIC routes IRQs masked by default; unmask only after handler exists
+     * so the PIT never fires into an unregistered IDT slot. */
     pic_unmask_irq(IRQ_TIMER);
+    if (ioapic_available())
+        ioapic_unmask_irq((uint8_t)ioapic_isa_to_gsi(IRQ_TIMER));
 
     klog(LOG_INFO, "timer", "PIT timer: %u Hz (divisor %u)",
            (uint64_t)pit_actual_freq, (uint64_t)pit_divisor);

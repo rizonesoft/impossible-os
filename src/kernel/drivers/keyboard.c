@@ -11,6 +11,7 @@
 #include "kernel/drivers/keyboard.h"
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
+#include "kernel/drivers/ioapic.h"
 #include "kernel/klog.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/sched/spinlock.h"
@@ -245,8 +246,10 @@ void keyboard_init(void)
     /* Register IRQ 1 handler (interrupt vector 33) via dynamic IRQ API */
     irq_register(33, keyboard_irq_callback, (void *)0, "ps2_kbd");
 
-    /* Unmask IRQ 1 on the PIC */
+    /* Unmask IRQ 1: PIC path (no-op when PIC disabled) + IOAPIC path */
     pic_unmask_irq(IRQ_KEYBOARD);
+    if (ioapic_available())
+        ioapic_unmask_irq((uint8_t)ioapic_isa_to_gsi(IRQ_KEYBOARD));
 
     klog(LOG_DEBUG, "input", "PS/2 keyboard initialized (US QWERTY)");
 }

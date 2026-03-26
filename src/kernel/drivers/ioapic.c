@@ -111,7 +111,8 @@ void ioapic_init(void)
     /* Get BSP LAPIC ID for routing */
     bsp_lapic_id = lapic_id();
 
-    /* Mask ALL entries first (safe default) */
+    /* Mask ALL entries first (safe default).
+     * ioapic_route_irq() also routes masked; each driver unmasks after init. */
     for (i = 0; i < max_redir_entries; i++) {
         /* Set mask bit (bit 16), vector 0, destination 0 */
         ioapic_set_entry((uint8_t)i, (uint64_t)1 << 16);
@@ -206,7 +207,10 @@ void ioapic_route_irq(uint8_t irq, uint8_t vector,
     /* Destination LAPIC ID (bits 56-59 in the high dword) */
     entry |= ((uint64_t)dest_lapic << 56);
 
-    /* NOT masked (bit 16 = 0) */
+    /* Start MASKED (bit 16 = 1).
+     * Each driver must call ioapic_unmask_irq() after registering its
+     * handler so that no IRQ fires into the IDT before a handler exists. */
+    entry |= (1ULL << 16);
 
     ioapic_set_entry(irq, entry);
 }
