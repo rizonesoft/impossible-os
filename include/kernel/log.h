@@ -1,19 +1,9 @@
 /* ============================================================================
- * log.h — Kernel logging subsystem
+ * log.h — Kernel logging subsystem (DEPRECATED)
  *
- * Structured logging with severity levels.  All output goes to the serial
- * port (COM1, 0x3F8) for host-side capture — no framebuffer output, so logs
- * do not pollute the graphical desktop.
- *
- * Each message is prefixed with a severity tag and optional subsystem name:
- *   [INFO ][NET] DHCP lease obtained: 10.0.2.15
- *   [WARN ][FS]  Inode 42 has invalid block pointer
- *   [ERROR][MM]  Out of physical memory!
- *
- * Usage:
- *   log_info("NET", "DHCP lease obtained: %s", ip_str);
- *   log_warn("FS",  "Inode %u has invalid block pointer", inode);
- *   log_error("MM", "Out of physical memory!");
+ * This API has been superseded by klog() in "kernel/klog.h".
+ * Use klog(LOG_INFO/WARN/ERROR, subsystem, fmt, ...) instead.
+ * This file is retained for reference only; no active callers remain.
  * ============================================================================ */
 
 #pragma once

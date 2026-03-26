@@ -427,7 +427,7 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
         EFI_STATUS s = gop->SetMode(gop, best_idx);
         if (EFI_ERROR(s) || gop->Mode->FrameBufferBase == 0) {
             /* SetMode failed — keep current firmware mode */
-            serial_early_print("BOOT: GOP: using firmware default ");
+            serial_early_print("[BOOT] GOP: using firmware default ");
             serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
             serial_early_print("x");
             serial_early_print_uint(gop->Mode->Info->VerticalResolution);
@@ -442,8 +442,8 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
     g_boot_info_ptr->hidpi =
         (gop->Mode->Info->HorizontalResolution >= 2560) ? 1 : 0;
 
-    /* Serial log: BOOT: GOP: {W}x{H} 32bpp (mode {idx} of {max}) */
-    serial_early_print("BOOT: GOP: ");
+    /* Serial log: [BOOT] GOP: {W}x{H} 32bpp (mode {idx} of {max}) */
+    serial_early_print("[BOOT] GOP: ");
     serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
     serial_early_print("x");
     serial_early_print_uint(gop->Mode->Info->VerticalResolution);
@@ -636,18 +636,18 @@ static void parse_boot_conf(void)
     /* Always start with defaults */
     boot_config_defaults(cfg);
 
-    serial_early_print("BOOT: parse_boot_conf...\n");
+    serial_early_print("[BOOT] parse_boot_conf...\n");
 
     /* Open filesystem */
     status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
     if (EFI_ERROR(status)) {
-        serial_early_print("BOOT: boot.conf - no filesystem\n");
+        serial_early_print("[BOOT] boot.conf - no filesystem\n");
         return;
     }
 
     status = fs->OpenVolume(fs, &root_dir);
     if (EFI_ERROR(status)) {
-        serial_early_print("BOOT: boot.conf - cannot open volume\n");
+        serial_early_print("[BOOT] boot.conf - cannot open volume\n");
         return;
     }
 
@@ -658,7 +658,7 @@ static void parse_boot_conf(void)
         EFI_FILE_MODE_READ, 0
     );
     if (EFI_ERROR(status)) {
-        serial_early_print("BOOT: boot.conf not found - using defaults\n");
+        serial_early_print("[BOOT] boot.conf not found - using defaults\n");
         root_dir->Close(root_dir);
         return;
     }
@@ -671,12 +671,12 @@ static void parse_boot_conf(void)
     root_dir->Close(root_dir);
 
     if (EFI_ERROR(status) || buf_size == 0) {
-        serial_early_print("BOOT: boot.conf read error - using defaults\n");
+        serial_early_print("[BOOT] boot.conf read error - using defaults\n");
         return;
     }
     buf[buf_size] = '\0';
 
-    serial_early_print("BOOT: boot.conf loaded\n");
+    serial_early_print("[BOOT] boot.conf loaded\n");
 
     /* Parse line by line */
     char *pos = buf;
@@ -1032,7 +1032,7 @@ static void retrieve_tpm_event_log(void)
     status = gBS->LocateProtocol(&tcg2_guid, (VOID *)0, (VOID **)&tcg2);
     if (EFI_ERROR(status) || !tcg2) {
         /* No TPM -- not an error, just unavailable */
-        serial_early_print("BOOT: TPM: not available\n");
+        serial_early_print("[BOOT] TPM: not available\n");
         g_boot_info_ptr->tpm_available = 0;
         return;
     }
@@ -1043,13 +1043,13 @@ static void retrieve_tpm_event_log(void)
 
     status = tcg2->GetCapability(tcg2, &caps);
     if (EFI_ERROR(status)) {
-        serial_early_print("BOOT: TPM: GetCapability failed\n");
+        serial_early_print("[BOOT] TPM: GetCapability failed\n");
         g_boot_info_ptr->tpm_available = 0;
         return;
     }
 
     if (!caps.TPMPresentFlag) {
-        serial_early_print("BOOT: TPM: device not present\n");
+        serial_early_print("[BOOT] TPM: device not present\n");
         g_boot_info_ptr->tpm_available = 0;
         return;
     }
@@ -1071,7 +1071,7 @@ static void retrieve_tpm_event_log(void)
                                 &log_location, &log_last_entry,
                                 &log_truncated);
     if (EFI_ERROR(status) || log_location == 0) {
-        serial_early_print("BOOT: TPM: GetEventLog failed\n");
+        serial_early_print("[BOOT] TPM: GetEventLog failed\n");
         g_boot_info_ptr->tpm_available = 0;
         return;
     }
@@ -1094,7 +1094,7 @@ static void retrieve_tpm_event_log(void)
     VOID *log_copy = (VOID *)0;
     status = gBS->AllocatePool(EfiLoaderData, (UINTN)log_size, &log_copy);
     if (EFI_ERROR(status) || !log_copy) {
-        serial_early_print("BOOT: TPM: failed to allocate log buffer\n");
+        serial_early_print("[BOOT] TPM: failed to allocate log buffer\n");
         g_boot_info_ptr->tpm_available = 0;
         return;
     }
@@ -1137,7 +1137,7 @@ static void retrieve_tpm_event_log(void)
     g_boot_info_ptr->tpm_version        = tpm_ver;
     g_boot_info_ptr->tpm_event_count    = event_count;
 
-    serial_early_print("BOOT: TPM: event log retrieved\n");
+    serial_early_print("[BOOT] TPM: event log retrieved\n");
 }
 
 /* ============================================================================
@@ -1219,7 +1219,7 @@ static void parse_fpdt(void)
     }
 
     if (fpdt_addr == 0) {
-        serial_early_print("BOOT: FPDT: not found\n");
+        serial_early_print("[BOOT] FPDT: not found\n");
         return;
     }
 
@@ -1254,7 +1254,7 @@ static void parse_fpdt(void)
                 g_boot_info_ptr->timing.exit_bs_entry = boot_rec->exit_bs_entry;
                 g_boot_info_ptr->timing.exit_bs_exit = boot_rec->exit_bs_exit;
                 g_boot_info_ptr->timing.fpdt_available = 1;
-                serial_early_print("BOOT: FPDT: firmware boot record found\n");
+                serial_early_print("[BOOT] FPDT: firmware boot record found\n");
                 return;
             }
         }
@@ -1263,7 +1263,7 @@ static void parse_fpdt(void)
         offset += rec->length;
     }
 
-    serial_early_print("BOOT: FPDT: no basic boot record\n");
+    serial_early_print("[BOOT] FPDT: no basic boot record\n");
 }
 
 /* ============================================================================
@@ -1397,7 +1397,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Initialize early serial for diagnostics (before anything else) */
     serial_early_init();
-    serial_early_print("BOOT: efi_main entered\n");
+    serial_early_print("[BOOT] efi_main entered\n");
 
     /* Disable watchdog timer (UEFI default: 5 min timeout) */
     gBS->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
@@ -1415,15 +1415,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     g_boot_info_ptr->timing.conf_end = boot_rdtsc();
 
     /* Step 1: Initialize graphics (uses g_conf_res_width/height from boot.conf) */
-    serial_early_print("BOOT: init_gop...\n");
+    serial_early_print("[BOOT] init_gop...\n");
     g_boot_info_ptr->timing.gop_start = boot_rdtsc();
     status = init_gop();
     if (EFI_ERROR(status)) {
-        serial_early_print("BOOT: FAIL init_gop\n");
+        serial_early_print("[FAIL] init_gop\n");
         efi_print(u"[FAIL] Graphics initialization failed\r\n");
         return status;
     }
-    serial_early_print("BOOT: init_gop OK\n");
+    serial_early_print("[BOOT] init_gop OK\n");
     g_boot_info_ptr->timing.gop_end = boot_rdtsc();
 
     /* Clear screen to black before loading the kernel. */
@@ -1453,22 +1453,22 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     DRAW_BAR(0, 0x00FF0000);  /* RED = GOP OK */
 
     /* Load kernel ELF */
-    serial_early_print("BOOT: load_kernel...\n");
+    serial_early_print("[BOOT] load_kernel...\n");
     g_boot_info_ptr->timing.kernel_load_start = boot_rdtsc();
     status = load_kernel(&kernel_entry);
     g_boot_info_ptr->timing.kernel_load_end = boot_rdtsc();
     if (EFI_ERROR(status)) {
-        serial_early_print("BOOT: FAIL load_kernel\n");
+        serial_early_print("[FAIL] load_kernel\n");
         efi_print(u"[FAIL] Kernel load failed\r\n");
         /* Draw orange bar to indicate kernel load failure */
         DRAW_BAR(12, 0x00FF8000);
         for (;;) __asm__ volatile("hlt");
     }
-    serial_early_print("BOOT: load_kernel OK\n");
+    serial_early_print("[BOOT] load_kernel OK\n");
     DRAW_BAR(12, 0x0000FF00);  /* GREEN = kernel loaded */
 
     /* Step 4: Copy UEFI Configuration Table + find ACPI RSDP */
-    serial_early_print("BOOT: copy_config_tables...\n");
+    serial_early_print("[BOOT] copy_config_tables...\n");
     copy_config_tables();
 
     /* Step 4c: Retrieve TPM event log (if available) */
@@ -1486,11 +1486,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
 
     /* Step 5: Get UEFI memory map */
-    serial_early_print("BOOT: get_memory_map...\n");
+    serial_early_print("[BOOT] get_memory_map...\n");
     status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
                             &desc_version);
     if (EFI_ERROR(status)) {
-        serial_early_print("BOOT: FAIL get_memory_map\n");
+        serial_early_print("[FAIL] get_memory_map\n");
         efi_print(u"[FAIL] GetMemoryMap failed\r\n");
         DRAW_BAR(24, 0x00FF8000);
         for (;;) __asm__ volatile("hlt");
@@ -1525,10 +1525,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             g_boot_info_ptr->uefi_runtime.set_wakeup_time            = (UINT64)(UINTN)rt->SetWakeupTime;
         }
     }
-    serial_early_print("BOOT: runtime services preserved\n");
+    serial_early_print("[BOOT] runtime services preserved\n");
 
     /* Step 6: ExitBootServices */
-    serial_early_print("BOOT: ExitBootServices...\n");
+    serial_early_print("[BOOT] ExitBootServices...\n");
     g_boot_info_ptr->timing.exit_bs = boot_rdtsc();
     status = gBS->ExitBootServices(gImageHandle, map_key);
     if (EFI_ERROR(status)) {
@@ -1540,23 +1540,23 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             status = gBS->ExitBootServices(gImageHandle, map_key);
         }
         if (EFI_ERROR(status)) {
-            serial_early_print("BOOT: FATAL ExitBootServices failed\n");
+            serial_early_print("[CRIT] ExitBootServices failed\n");
             DRAW_BAR(24, 0x00FF8000);
             for (;;) __asm__ volatile("hlt");
         }
     }
-    serial_early_print("BOOT: ExitBootServices OK\n");
+    serial_early_print("[BOOT] ExitBootServices OK\n");
     DRAW_BAR(24, 0x000000FF);  /* BLUE = ExitBootServices OK */
 
     /* === NO MORE UEFI CALLS FROM HERE === */
 
     /* Step 7: Set up page tables */
-    serial_early_print("BOOT: setup_page_tables...\n");
+    serial_early_print("[BOOT] setup_page_tables...\n");
     setup_page_tables();
     DRAW_BAR(36, 0x00FFFF00);  /* YELLOW = page tables OK */
 
     /* Step 8: Jump to kernel! */
-    serial_early_print("BOOT: jumping to kernel_main\n");
+    serial_early_print("[BOOT] jumping to kernel_main\n");
     DRAW_BAR(48, 0x00FFFFFF);  /* WHITE = about to jump */
     g_boot_info_ptr->timing.kernel_jump = boot_rdtsc();
     jump_to_kernel(kernel_entry);

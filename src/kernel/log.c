@@ -1,11 +1,9 @@
 /* ============================================================================
- * log.c — Kernel logging subsystem
+ * log.c — Kernel logging subsystem (DEPRECATED)
  *
- * Outputs structured log messages to the serial port (COM1) only.
- * Each message includes:  [LEVEL][SUBSYS] formatted message\n
- *
- * This module does NOT use printk() — it writes directly to serial to avoid
- * polluting the framebuffer when the desktop compositor is active.
+ * This module has been superseded by klog() in klog.c.
+ * All active callers have been migrated to klog(). This file is retained
+ * only because it is still compiled; it can be removed in a future cleanup.
  * ============================================================================ */
 
 #include "kernel/log.h"

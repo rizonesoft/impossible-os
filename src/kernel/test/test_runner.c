@@ -8,7 +8,7 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
-#include "kernel/log.h"
+#include "kernel/klog.h"
 
 /* ---- Global test state ---- */
 test_state_t g_test_state = {
@@ -22,7 +22,7 @@ test_state_t g_test_state = {
 void test_suite_register(const char *name, test_fn_t fn)
 {
     if (g_test_state.suite_count >= TEST_MAX_SUITES) {
-        log_error("TEST", "Max test suites reached (%d)", TEST_MAX_SUITES);
+        klog(LOG_ERROR, "TEST", "Max test suites reached (%d)", TEST_MAX_SUITES);
         return;
     }
     test_suite_t *s = &g_test_state.suites[g_test_state.suite_count++];
@@ -35,10 +35,10 @@ void _test_assert(int condition, const char *msg, const char *file, int line)
 {
     if (condition) {
         g_test_state.passed++;
-        log_info("TEST", "[PASS] %s :: %s", g_test_state.current_suite, msg);
+        klog(LOG_INFO, "TEST", "[ OK ] %s :: %s", g_test_state.current_suite, msg);
     } else {
         g_test_state.failed++;
-        log_error("TEST", "[FAIL] %s :: %s  (%s:%d)",
+        klog(LOG_ERROR, "TEST", "[FAIL] %s :: %s  (%s:%d)",
                   g_test_state.current_suite, msg, file, line);
     }
 }
@@ -52,8 +52,8 @@ extern void test_register_registry(void);
 
 void test_runner_init(void)
 {
-    log_info("TEST", "=== Kernel Test Framework ===");
-    log_info("TEST", "Registering test suites...");
+    klog(LOG_INFO, "TEST", "=== Kernel Test Framework ===");
+    klog(LOG_INFO, "TEST", "Registering test suites...");
 
     test_register_pmm();
     test_register_heap();
@@ -61,27 +61,27 @@ void test_runner_init(void)
     test_register_sched();
     test_register_registry();
 
-    log_info("TEST", "%u suite(s) registered", g_test_state.suite_count);
+    klog(LOG_INFO, "TEST", "%u suite(s) registered", g_test_state.suite_count);
 }
 
 /* ---- Run all registered suites ---- */
 void test_runner_run(void)
 {
-    log_info("TEST", "=== Running %u test suite(s) ===", g_test_state.suite_count);
+    klog(LOG_INFO, "TEST", "=== Running %u test suite(s) ===", g_test_state.suite_count);
 
     for (uint32_t i = 0; i < g_test_state.suite_count; i++) {
         test_suite_t *s = &g_test_state.suites[i];
         g_test_state.current_suite = s->name;
-        log_info("TEST", "--- Suite: %s ---", s->name);
+        klog(LOG_INFO, "TEST", "--- Suite: %s ---", s->name);
         s->fn();
     }
 
     /* ---- Summary ---- */
     uint32_t total = g_test_state.passed + g_test_state.failed;
     if (g_test_state.failed == 0) {
-        log_info("TEST", "=== %u tests passed, 0 failed ===", total);
+        klog(LOG_INFO, "TEST", "=== %u tests passed, 0 failed ===", total);
     } else {
-        log_error("TEST", "=== %u passed, %u FAILED (of %u) ===",
+        klog(LOG_ERROR, "TEST", "=== %u passed, %u FAILED (of %u) ===",
                   g_test_state.passed, g_test_state.failed, total);
     }
 }

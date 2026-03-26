@@ -12,7 +12,7 @@
 #include "kernel/symtab.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/pmm.h"
-#include "kernel/log.h"
+#include "kernel/klog.h"
 #include "kernel/types.h"
 
 #define SYMTAB_MAGIC     0x4D59534B  /* "KSYM" in little-endian */
@@ -46,27 +46,27 @@ void symtab_init(void)
 
     f = vfs_open(SYMTAB_PATH, 0);
     if (!f) {
-        log_warn("SYMTAB", "kernel.sym not found at %s", SYMTAB_PATH);
+        klog(LOG_WARN, "SYMTAB", "kernel.sym not found at %s", SYMTAB_PATH);
         return;
     }
 
     /* Read header */
     rc = vfs_read(f, 0, sizeof(hdr), (uint8_t *)&hdr);
     if (rc < (int)sizeof(hdr)) {
-        log_error("SYMTAB", "Failed to read header (%d bytes)", rc);
+        klog(LOG_ERROR, "SYMTAB", "Failed to read header (%d bytes)", rc);
         vfs_close(f);
         return;
     }
 
     if (hdr.magic != SYMTAB_MAGIC) {
-        log_error("SYMTAB", "Bad magic: 0x%08X (expected 0x%08X)",
+        klog(LOG_ERROR, "SYMTAB", "Bad magic: 0x%08X (expected 0x%08X)",
                   hdr.magic, SYMTAB_MAGIC);
         vfs_close(f);
         return;
     }
 
     if (hdr.count == 0 || hdr.count > 100000) {
-        log_error("SYMTAB", "Invalid symbol count: %u", hdr.count);
+        klog(LOG_ERROR, "SYMTAB", "Invalid symbol count: %u", hdr.count);
         vfs_close(f);
         return;
     }
@@ -76,7 +76,7 @@ void symtab_init(void)
     pages = (data_size + 4095) / 4096;
     g_entries = (symtab_entry_t *)pmm_alloc_contiguous(pages);
     if (!g_entries) {
-        log_error("SYMTAB", "Failed to allocate %u pages for %u symbols",
+        klog(LOG_ERROR, "SYMTAB", "Failed to allocate %u pages for %u symbols",
                   pages, hdr.count);
         vfs_close(f);
         return;
@@ -87,7 +87,7 @@ void symtab_init(void)
     vfs_close(f);
 
     if (rc < (int)data_size) {
-        log_error("SYMTAB", "Short read: got %d, expected %u", rc, data_size);
+        klog(LOG_ERROR, "SYMTAB", "Short read: got %d, expected %u", rc, data_size);
         /* Free PMM pages */
         for (uint32_t i = 0; i < pages; i++) {
             pmm_free_frame((uintptr_t)g_entries + i * 4096);
@@ -98,7 +98,7 @@ void symtab_init(void)
 
     g_count  = hdr.count;
     g_loaded = 1;
-    log_info("SYMTAB", "Symbol map loaded: %u symbols (%u KB)",
+    klog(LOG_INFO, "SYMTAB", "Symbol map loaded: %u symbols (%u KB)",
              g_count, data_size / 1024);
 }
 

@@ -2,11 +2,11 @@
  * klog.h — Unified kernel logging
  *
  * Levels:
- *   LOG_DEBUG  [??] — serial only (suppressed from framebuffer)
- *   LOG_INFO   [OK] — serial + framebuffer (green prefix)
- *   LOG_WARN   [--] — serial + framebuffer (yellow prefix)
- *   LOG_ERROR  [!!] — serial + framebuffer (red prefix)
- *   LOG_FATAL  [**] — serial + framebuffer (red prefix), then halt
+ *   LOG_DEBUG  [INFO] — serial only (suppressed from framebuffer)
+ *   LOG_INFO   [ OK ] — serial + framebuffer (green prefix)
+ *   LOG_WARN   [WARN] — serial + framebuffer (yellow prefix)
+ *   LOG_ERROR  [FAIL] — serial + framebuffer (red prefix)
+ *   LOG_FATAL  [CRIT] — serial + framebuffer (red prefix), then halt
  *
  * Usage:
  *   klog(LOG_INFO, "drv", "PS/2 mouse initialized (IRQ %u)", 12);
@@ -18,11 +18,11 @@
 #include "kernel/types.h"
 
 typedef enum {
-    LOG_DEBUG = 0,   /* [??] serial only */
-    LOG_INFO  = 1,   /* [OK] serial + framebuffer */
-    LOG_WARN  = 2,   /* [--] serial + framebuffer */
-    LOG_ERROR = 3,   /* [!!] serial + framebuffer */
-    LOG_FATAL = 4,   /* [**] serial + framebuffer, then halt */
+    LOG_DEBUG = 0,   /* [INFO] serial only */
+    LOG_INFO  = 1,   /* [ OK ] serial + framebuffer */
+    LOG_WARN  = 2,   /* [WARN] serial + framebuffer */
+    LOG_ERROR = 3,   /* [FAIL] serial + framebuffer */
+    LOG_FATAL = 4,   /* [CRIT] serial + framebuffer, then halt */
 } log_level_t;
 
 /* Log a message with level and subsystem tag.

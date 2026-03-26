@@ -259,11 +259,11 @@ static void vformat_emit(void (*put)(char), void (*putstr)(const char *),
 /* ---- Level prefixes and colors ---- */
 
 static const char *level_prefix[] = {
-    "[..] ",   /* LOG_DEBUG */
-    "[OK] ",   /* LOG_INFO  */
-    "[--] ",   /* LOG_WARN  */
-    "[!!] ",   /* LOG_ERROR */
-    "[**] ",   /* LOG_FATAL */
+    "[INFO] ",   /* LOG_DEBUG */
+    "[ OK ] ",   /* LOG_INFO  */
+    "[WARN] ",   /* LOG_WARN  */
+    "[FAIL] ",   /* LOG_ERROR */
+    "[CRIT] ",   /* LOG_FATAL */
 };
 
 static const uint32_t level_color[] = {
