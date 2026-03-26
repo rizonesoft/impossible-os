@@ -272,7 +272,6 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         LS(e->message);
         if (level_full_line[level]) LS(ANSI_RESET);
         LP('\n');
-        LP('\n');
         line[pos] = '\0';
 
         #undef LP
