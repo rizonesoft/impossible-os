@@ -15,6 +15,51 @@
 
 static uint64_t s_tsc_freq;
 
+/* Forward declaration — defined after boot_timing_init below. */
+static uint32_t tsc_to_ms(uint64_t ticks);
+
+/* ---- Boot step timeline -------------------------------------------------- */
+
+static struct {
+    uint64_t    tsc;
+    const char *step;
+    uint8_t     phase;
+    uint8_t     postcode;
+} s_steps[BOOT_TIMING_MAX_STEPS];
+
+static uint32_t s_step_count;
+
+static inline uint64_t rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+void boot_timing_record_step(uint8_t phase, const char *step, uint8_t postcode)
+{
+    if (s_step_count >= BOOT_TIMING_MAX_STEPS) return;
+    uint32_t idx          = s_step_count++;
+    s_steps[idx].tsc      = rdtsc();
+    s_steps[idx].phase    = phase;
+    s_steps[idx].postcode = postcode;
+    s_steps[idx].step     = step;
+}
+
+void boot_timing_print_steps(void)
+{
+    if (s_tsc_freq == 0 || s_step_count == 0) return;
+    klog(LOG_INFO, "BOOT", "--- Boot step timing (%u steps, base=step0) ---",
+         s_step_count);
+    uint64_t base = s_steps[0].tsc;
+    for (uint32_t i = 0; i < s_step_count; i++) {
+        uint32_t ms = tsc_to_ms(s_steps[i].tsc - base);
+        klog(LOG_INFO, "BOOT", "  [PHASE%u] +%ums 0x%02x %s",
+             (uint32_t)s_steps[i].phase, ms,
+             (uint32_t)s_steps[i].postcode, s_steps[i].step);
+    }
+}
+
 /* Convert TSC tick delta to milliseconds */
 static uint32_t tsc_to_ms(uint64_t ticks)
 {

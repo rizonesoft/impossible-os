@@ -27,9 +27,55 @@ alwaysApply: false
 - If repo `.githooks/` are installed, expect pre-commit staged C or H linting and post-commit `COUNT.md` regeneration or amend behavior.
 - Headless QEMU with serial output is a supported automation and debugging path. Terminal-visible serial and captured serial logs both count as valid evidence.
 
-## Example
+## Mandatory Human-Review Triggers
+
+Stop and get explicit user approval before proceeding with any of the following:
+
+- Security-sensitive changes: authentication, encryption, key handling, Secure Boot, TPM, or access control logic.
+- Destructive operations: deleting files, wiping partitions, overwriting disk images, or resetting registry hives.
+- Public API or ABI changes: modifying syscall numbers, changing struct layouts visible to user-mode, or altering the ELF/PE load contract.
+- Dependency additions: new compiler flags, new external libraries, new toolchain components, or new MCP servers.
+- Build or release tooling changes: Makefile, linker scripts, `scripts/build.sh`, GitHub Actions workflows, or disk image layout.
+- Large refactors: renaming subsystems, moving source trees, or changing conventions that affect more than one domain.
+
+## Stop / Ask / Escalate Behavior
+
+Stop work and ask the user when:
+
+- Requirements are ambiguous and proceeding in either direction has irreversible consequences.
+- Two tracked docs directly contradict each other and the correct answer is not obvious.
+- The repo is in unexpected state (unexpected stash, detached HEAD, unexpected staged changes) before a write operation.
+- A risky or destructive operation has not been explicitly approved in the current session.
+- Verification fails, produces contradictory evidence, or cannot be reproduced — do not claim success; report the failure clearly.
+- A code path or change is outside declared scope and would affect other subsystems not yet reviewed.
+
+Do not silently skip, paper over, or assume it is fine to proceed. When in doubt, stop and surface the concern.
+
+## Build Execution Pattern
+
+Always run builds in background and poll for progress — never block on a single long sleep. The build script renders a progress bar to stderr via `\r` that does not survive capture; use the logged step banners and the terminal output file instead.
+
+**Incremental build (~5–30s):**
 
 ```bash
-bash scripts/build.sh
-tail -1 build/build.log
+# 1. Background the build
+bash scripts/build.sh 2>&1   # block_until_ms: 0
+
+# 2. Single poll after ~10s
+sleep 10 && tail -30 /home/derickpayne/.cursor/projects/home-derickpayne-impossible-os/terminals/<ID>.txt
 ```
+
+**Clean build (~60–120s):**
+
+```bash
+# 1. Background the build
+bash scripts/build.sh clean 2>&1   # block_until_ms: 0
+
+# 2. Poll every ~20s until BUILD OK / BUILD FAILED appears
+sleep 20 && tail -30 /home/derickpayne/.cursor/projects/home-derickpayne-impossible-os/terminals/<ID>.txt
+# repeat if not finished
+```
+
+- Each poll shows the step banners (`[1/6] Clean`, `[2/6] Kernel (N source files)`, etc.) as they land.
+- Stop polling once `BUILD OK` or `BUILD FAILED` appears in the output.
+- `tail -1 build/build.log` remains the authoritative final result check.

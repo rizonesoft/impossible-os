@@ -22,9 +22,10 @@
 - [`src/kernel/sched/mutex.c`](../../src/kernel/sched/mutex.c)
 - [`src/kernel/sched/semaphore.c`](../../src/kernel/sched/semaphore.c)
 - [`src/kernel/ipc/`](../../src/kernel/ipc/) — pipes, shared memory
-- → XREF: `TODO-02-kernel-core/TODO-01-kernel-init-sequencing.md` §2 — ObInit must be a Phase 1 gate
-- → XREF: `TODO-02-kernel-core/TODO-04-peb-teb-native-api.md` — NtCreateFile / NtOpenFile built on top of ObXxx
-- → XREF: `TODO-02-kernel-core/TODO-06-security-reference-monitor.md` — SRM enforces DACLs registered here
+- → XREF: `TODO-01-kernel-init-sequencing.md` §4 — ObInit (`object_manager_init()`) is a Phase 2 gate, before registry
+- → XREF: `TODO-04-peb-teb-user-abi.md` — TODO-04 §10 exposes PEB/TEB in the Ob namespace (depends on §4 Object Namespace and §11 Namespace Browser)
+- → XREF: `TODO-05-native-api-layer.md` — NtCreateFile / NtOpenFile / NtClose and sync Nt syscalls are all Ob-routed; SSDT entries depend on §3, §5, §6
+- → XREF: `TODO-11-security-reference-monitor.md` — SRM enforces DACLs registered here
 
 ## Outcome
 
@@ -46,7 +47,7 @@
 | 💎  |   5   | File, Process, Thread object types                            | 3, 4       |  [ ]   |
 | 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | 3, 4 | [ ] |
 | 💎  |   7   | Section (shared memory) object type                           | 3, 4       |  [ ]   |
-| 💎  |   8   | Security descriptor integration                               | 1, TODO-06 |  [ ]   |
+| 💎  |   8   | Security descriptor integration                               | 1, TODO-11 |  [ ]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | 3          |  [ ]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | 3, 5       |  [ ]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | 4          |  [ ]   |
@@ -57,7 +58,7 @@
 
 ---
 
-## 1. OBJECT_HEADER and OBJECT_TYPE Infrastructure
+## 1. OBJECT_HEADER and OBJECT_TYPE Infrastructure `[Opus]`
 
 Every kernel object body is preceded in memory by an `OBJECT_HEADER`. Types are described
 by an `OBJECT_TYPE` singleton registered at boot.
@@ -85,7 +86,7 @@ by an `OBJECT_TYPE` singleton registered at boot.
       `ObpSectionType`, `ObpTimerType`
 - [ ] Commit: `"kernel: ob — OBJECT_HEADER and OBJECT_TYPE infrastructure"`
 
-## 2. Reference Counting and Object Lifetime
+## 2. Reference Counting and Object Lifetime `[Opus]`
 
 - [ ] Implement `ObReferenceObject(void *body)` — atomic increment of `header->ref_count`
 - [ ] Implement `ObDereferenceObject(void *body)` — atomic decrement; when count reaches 0,
@@ -97,7 +98,7 @@ by an `OBJECT_TYPE` singleton registered at boot.
       pairs — track this as a follow-up checklist in §5
 - [ ] Commit: `"kernel: ob — reference counting and object lifetime"`
 
-## 3. Per-Process Handle Table
+## 3. Per-Process Handle Table `[Sonnet]`
 
 The handle table maps opaque `HANDLE` integer values to (object pointer + granted access + flags) within a
 single process. `HANDLE` values are always multiples of 4 (low bits reserved for inheritance flags).
@@ -120,7 +121,7 @@ single process. `HANDLE` values are always multiples of 4 (low bits reserved for
       `CURRENT_THREAD (-3)` — resolve in `ObpLookupHandle` without a table entry
 - [ ] Commit: `"kernel: ob — per-process handle table"`
 
-## 4. Object Namespace
+## 4. Object Namespace `[Opus]`
 
 A hierarchical in-memory namespace rooted at `\`. Directories hold named object entries.
 Symbolic links redirect name lookups.
@@ -139,14 +140,14 @@ Symbolic links redirect name lookups.
 - [ ] `C:` → `\Device\HardDisk0\Partition0` via symlink in `\DosDevices`
 - [ ] Commit: `"kernel: ob — object namespace directory and symlinks"`
 
-## 5. File, Process, and Thread Object Types
+## 5. File, Process, and Thread Object Types `[Sonnet]`
 
 Register VFS nodes, tasks, and threads as first-class Ob-managed objects.
 
 - [ ] Register `ObpFileType` — body wraps a `vfs_node *`; `on_close` calls `vfs_close`; `on_delete` frees
       the VFS node wrapper; `on_parse` defers remaining path to VFS
 - [ ] Replace all direct `vfs_open` / `vfs_close` call sites in syscall.c with ObRef/ObDeref wrappers
-      routed through `NtCreateFile` / `NtOpenFile` stubs (→ XREF: TODO-04 §1)
+      routed through `NtCreateFile` / `NtOpenFile` stubs (→ XREF: TODO-05 §6)
 - [ ] Register `ObpProcessType` — body is `task_t *`; permanent while process is alive; `on_delete`
       releases task memory; inserted into `\KernelObjects\Process<PID>` at creation
 - [ ] Register `ObpThreadType` — body is `thread_t *` (or task sub-struct); same lifetime semantics
@@ -154,7 +155,7 @@ Register VFS nodes, tasks, and threads as first-class Ob-managed objects.
       replace with handle-table lookups or `ObReferenceObjectByPointer` calls
 - [ ] Commit: `"kernel: ob — file, process, thread object types"`
 
-## 6. Synchronisation Object Types
+## 6. Synchronisation Object Types `[Sonnet]`
 
 Re-register the existing event, mutex, semaphore, and timer primitives as Ob-managed objects
 so they can be named in `\BaseNamedObjects`, duplicated, and inherited.
@@ -167,12 +168,12 @@ so they can be named in `\BaseNamedObjects`, duplicated, and inherited.
 - [ ] Named variants: inserting into `\BaseNamedObjects\<name>` makes the object findable by name
 - [ ] `NtCreateEvent`, `NtOpenEvent`, `NtCreateMutex`, `NtOpenMutex`, `NtCreateSemaphore`,
       `NtCreateTimer` stubs — resolve name via Ob namespace, allocate or open, return HANDLE
-      (→ XREF: TODO-04 Native API)
+      (→ XREF: TODO-05 §8)
 - [ ] Update `SYS_PIPE` to wrap the pipe read/write ends as two File objects in the handle table
       so pipes are closeable with `NtClose` like any other handle
 - [ ] Commit: `"kernel: ob — event, mutex, semaphore, timer object types"`
 
-## 7. Section (Shared Memory) Object Type
+## 7. Section (Shared Memory) Object Type `[Sonnet]`
 
 Sections represent mappable memory objects; the foundation for `MapViewOfFile` and shared memory.
 
@@ -186,10 +187,10 @@ Sections represent mappable memory objects; the foundation for `MapViewOfFile` a
 - [ ] Re-implement `SYS_SHMEM_CREATE` / `SYS_SHMEM_MAP` as thin wrappers over the Ob section API
 - [ ] Commit: `"kernel: ob — section object type and view mapping"`
 
-## 8. Security Descriptor Integration
+## 8. Security Descriptor Integration `[Opus]`
 
 Attach DACL/SACL/Owner/Group to named objects so the Security Reference Monitor can enforce
-access rights at open time. Depends on TODO-06 (SRM) for full enforcement; this section
+access rights at open time. Depends on TODO-11 (SRM) for full enforcement; this section
 wires the storage and basic check hook.
 
 - [ ] Define minimal `SECURITY_DESCRIPTOR` in `include/kernel/ob/security.h`:
@@ -202,7 +203,7 @@ wires the storage and basic check hook.
 - [ ] Default SD for user-created named objects: DACL granting `GENERIC_ALL` to creator SID
 - [ ] Commit: `"kernel: ob — security descriptor storage and access check hook"`
 
-## 9. NtClose / NtDuplicateObject / NtQueryObject
+## 9. NtClose / NtDuplicateObject / NtQueryObject `[Sonnet]`
 
 Core Win32 handle management syscalls routed through the Ob layer.
 
@@ -219,7 +220,7 @@ Core Win32 handle management syscalls routed through the Ob layer.
 - [ ] Expose `NtClose` via `SYS_CLOSE` (add to `syscall.h`) replacing per-resource close syscalls
 - [ ] Commit: `"kernel: ob — NtClose, NtDuplicateObject, NtQueryObject"`
 
-## 10. Handle Inheritance Across CreateProcess
+## 10. Handle Inheritance Across CreateProcess `[Sonnet]`
 
 Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles into the child.
 
@@ -231,7 +232,7 @@ Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles int
 - [ ] On child `NtClose`, child's references are released independently of the parent's
 - [ ] Commit: `"kernel: ob — handle inheritance across CreateProcess"`
 
-## 11. Unified Kernel–User Namespace Browser API
+## 11. Unified Kernel–User Namespace Browser API `[Opus]`
 
 Expose the Ob namespace as a queryable tree to user-mode via a dedicate syscall.
 Neither Windows nor Linux expose this publicly — Windows `NtQueryDirectoryObject` is

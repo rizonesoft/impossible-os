@@ -8,8 +8,24 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
 
-/* ---- Boot phase entry points (called from kernel_main) ---- */
+/* ---- Formal boot phase entry points ------------------------------------- */
+/* These replace the legacy boot_*_init() functions once §§2–5 are complete. */
+
+/* boot_init.c — Critical init: serial, memory, klog, CPUID */
+void boot_phase0(uint64_t magic, uint64_t mbi);
+
+/* boot_interrupts.c — Platform services: GDT/IDT, APIC, timer, display */
+void boot_phase1(void);
+
+/* boot_storage.c — System services: PCI, storage, VFS, registry, network */
+void boot_phase2(void);
+
+/* boot_desktop.c — User platform: scheduler, IPC, exec loader, desktop */
+void boot_phase3(void);
+
+/* ---- Legacy boot phase entry points (active until §§2–5 land) ---------- */
 
 /* boot_hw.c — Memory managers, CPUID, SIMD, disk drivers, block devices */
 void boot_hw_init(uint64_t magic, uint64_t mbi);

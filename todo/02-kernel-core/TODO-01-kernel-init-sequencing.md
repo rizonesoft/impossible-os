@@ -21,11 +21,11 @@
 - [`src/kernel/main/boot_tests.c`](../../src/kernel/main/boot_tests.c)
 - [`src/kernel/panic.c`](../../src/kernel/panic.c)
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
-- → XREF: `TODO-02-system-logging.md` — `klog_disk_init()` is a Phase 2 gate; must follow VFS ready
-- → XREF: `TODO-03-object-manager.md` — Object Manager init slot is Phase 2, after heap, before registry
+- → XREF: `TODO-02-system-logging.md` — `klog_disk_enable()` is a Phase 2 gate; must follow VFS ready
+- → XREF: `TODO-03-object-manager.md` — Object Manager init slot is Phase 2, after heap, before registry (TODO-03 §1 provides the `ob_init()` implementation)
 - → XREF: `TODO-04-drivers-hardware` domain — all driver `_init()` functions must accept and return `boot_result_t`
 - → XREF: `TODO-00-infrastructure/TODO-02-developer-tooling-stack.md` — headless QEMU serial log is the verification path
-- → XREF: future `TODO-XX-irql-dpc-model.md` — DPC subsystem init belongs in Phase 1, after timer
+- → XREF: `TODO-06-irql-model-dpcs.md` — DPC subsystem init belongs in Phase 1, after timer
 
 ## Outcome
 
@@ -41,7 +41,7 @@
 
 | ⭐  | Order | Deliverable                   | Depends On | Status |
 | --- | :---: | ----------------------------- | ---------- | :----: |
-| 💎  |   1   | Boot init infrastructure      | —          |  [ ]   |
+| 💎  |   1   | Boot init infrastructure      | —          |  [x]   |
 | 💎  |   2   | Phase 0 — critical init       | 1          |  [ ]   |
 | 💎  |   3   | Phase 1 — platform services   | 2          |  [ ]   |
 | 💎  |   4   | Phase 2 — system services     | 3          |  [ ]   |
@@ -55,31 +55,31 @@
 > 💎 = parity — Windows NT and Linux both have formal init phase models; Impossible OS must match them.
 > ⭐ = exclusive — degraded-boot recovery UI and UEFI NVRAM POST log are not present in either competitor.
 
-## 1. Boot Init Infrastructure
+## 1. Boot Init Infrastructure `[Sonnet]`
 
 New header and source file providing the result type, readiness oracle, and progress
 tracker used by every phase.
 
 **Files:** `include/kernel/boot_init.h`, `src/kernel/main/boot_init.c`
 
-- [ ] Define `boot_result_t`: `BOOT_OK = 0`, `BOOT_DEGRADED = 1`, `BOOT_FATAL = 2`
-- [ ] Define `kernel_subsys_t` enum — one entry per subsystem that others can depend on:
+- [x] Define `boot_result_t`: `BOOT_OK = 0`, `BOOT_DEGRADED = 1`, `BOOT_FATAL = 2`
+- [x] Define `kernel_subsys_t` enum — one entry per subsystem that others can depend on:
   `SUBSYS_SERIAL`, `SUBSYS_PMM`, `SUBSYS_VMM`, `SUBSYS_HEAP`, `SUBSYS_KLOG`,
   `SUBSYS_GDT`, `SUBSYS_IDT`, `SUBSYS_ACPI`, `SUBSYS_LAPIC`, `SUBSYS_IOAPIC`,
   `SUBSYS_TIMER`, `SUBSYS_RTC`, `SUBSYS_FB`, `SUBSYS_VFS`, `SUBSYS_REGISTRY`,
   `SUBSYS_SCHED`, `SUBSYS_IPC`, `SUBSYS_SMP`, `SUBSYS_EXEC`, `SUBSYS_DESKTOP`,
   `SUBSYS_COUNT`
-- [ ] Implement static `bool g_subsys_ready[SUBSYS_COUNT]` table in `boot_init.c`
-- [ ] Implement `bool kernel_subsystem_ready(kernel_subsys_t subsys)`
-- [ ] Implement `void kernel_subsystem_set_ready(kernel_subsys_t subsys, bool ok)`
-- [ ] Implement `void kernel_subsystem_dump(void)` — prints all subsystem states via `klog`
-- [ ] Define POST code constants for every major init step (`POSTCODE_PMM_INIT = 0x20`, etc.)
-- [ ] Implement `void boot_progress(uint8_t phase, const char *step, uint8_t postcode)` — writes `[PHASEn] step` to serial and records timestamp in `boot_timing.c`
-- [ ] Define `BOOT_REQUIRE(subsys)` macro — if `!kernel_subsystem_ready(subsys)`, logs the missing prerequisite and returns `BOOT_FATAL`
-- [ ] Define `BOOT_STEP(subsys, fn)` macro — calls `fn()`, sets readiness from result, calls `boot_progress()`
-- [ ] Expose `boot_phase0()`, `boot_phase1()`, `boot_phase2()`, `boot_phase3()` in `main_internal.h`
+- [x] Implement static `bool g_subsys_ready[SUBSYS_COUNT]` table in `boot_init.c`
+- [x] Implement `bool kernel_subsystem_ready(kernel_subsys_t subsys)`
+- [x] Implement `void kernel_subsystem_set_ready(kernel_subsys_t subsys, bool ok)`
+- [x] Implement `void kernel_subsystem_dump(void)` — prints all subsystem states via `klog`
+- [x] Define POST code constants for every major init step (`POSTCODE_PMM_INIT = 0x20`, etc.)
+- [x] Implement `void boot_progress(uint8_t phase, const char *step, uint8_t postcode)` — writes `[PHASEn] step` to serial and records timestamp in `boot_timing.c`
+- [x] Define `BOOT_REQUIRE(subsys)` macro — if `!kernel_subsystem_ready(subsys)`, logs the missing prerequisite and returns `BOOT_FATAL`
+- [x] Define `BOOT_STEP(subsys, fn)` macro — calls `fn()`, sets readiness from result, calls `boot_progress()`
+- [x] Expose `boot_phase0()`, `boot_phase1()`, `boot_phase2()`, `boot_phase3()` in `main_internal.h`
 
-## 2. Phase 0 — Critical Init (Interrupts Disabled)
+## 2. Phase 0 — Critical Init (Interrupts Disabled) `[Opus]`
 
 Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or network.
 Any failure in Phase 0 calls `boot_halt()` on serial — framebuffer is not yet available.
@@ -106,7 +106,7 @@ Any failure in Phase 0 calls `boot_halt()` on serial — framebuffer is not yet 
 - [ ] Remove all `HV_BAR` macro definitions and usages (12 sites in `boot_hw.c`)
 - [ ] Replace every `HV_BAR` site with `boot_progress(0, "step-name", postcode)`
 
-## 3. Phase 1 — Platform Services (Interrupts Enabled at End)
+## 3. Phase 1 — Platform Services (Interrupts Enabled at End) `[Opus]`
 
 Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 BOOT_FATAL halts; BOOT_DEGRADED logs and continues.
@@ -122,6 +122,7 @@ Interrupts enabled with `sti` only after LAPIC/timer are ready.
 - [ ] `pic_disable_or_init()` — disable if IOAPIC took over; init if PIC is the only controller
 - [ ] `ahci_setup_interrupts()` — MSI routing only; BOOT_DEGRADED if fails; BOOT_REQUIRE(SUBSYS_LAPIC)
 - [ ] `timer_hal_init()` — select LAPIC or PIT backend, calibrate; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
+- [ ] `dpc_init()` — per-CPU DPC queue and drain loop; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_TIMER) — see TODO-06
 - [ ] `rtc_init()` — BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_IDT)
 - [ ] `keyboard_init()` + `mouse_init()` — BOOT_DEGRADED if unavailable
 - [ ] `smbios_init()` — POST code 0x40; BOOT_DEGRADED if unavailable; move here from Phase 0
@@ -137,7 +138,7 @@ Interrupts enabled with `sti` only after LAPIC/timer are ready.
 - [ ] Remove all `HV_BAR` macro definitions and usages (14 sites in `boot_interrupts.c`)
 - [ ] Replace every `HV_BAR` site with `boot_progress(1, "step-name", postcode)`
 
-## 4. Phase 2 — System Services
+## 4. Phase 2 — System Services `[Sonnet]`
 
 Storage, VFS, filesystem mount, registry, network, and AP bringup.
 BOOT_FATAL only if VFS or registry are completely broken; everything else degrades.
@@ -145,12 +146,13 @@ BOOT_FATAL only if VFS or registry are completely broken; everything else degrad
 **File:** `src/kernel/main/boot_storage.c` (restructured as `boot_phase2`)
 
 - [ ] `pci_scan()` — enumerate PCI/PCIe bus; BOOT_DEGRADED if no devices found; moved from Phase 1
+- [ ] `object_manager_init()` — ObInit: bootstrap object type singletons and root namespace; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_HEAP) — see TODO-03
 - [ ] `xhci_init()` — USB host controller; BOOT_DEGRADED; moved from Phase 1
 - [ ] `ata_init()` + `virtio_blk_init()` + `ahci_init()` — storage drivers; BOOT_DEGRADED if all fail; moved from Phase 0
 - [ ] `blkdev_register_all()` — register block devices into the blkdev layer
 - [ ] `vfs_init()` — BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_HEAP)
 - [ ] `partition_scan_all()` + `partition_mount_filesystems()` — BOOT_FATAL if no root partition mounts
-- [ ] `klog_disk_init()` — open `C:\Impossible\System\Logs\kernel.log`; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
+- [ ] `klog_disk_enable()` — open `C:\Impossible\System\Logs\kernel.log`; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
 - [ ] `registry_init()` — BOOT_FATAL if fails after VFS is up; BOOT_REQUIRE(SUBSYS_VFS)
 - [ ] `symtab_init()` — load symbol table from disk; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
 - [ ] `mmap_init()` — user-mode memory map subsystem; BOOT_REQUIRE(SUBSYS_VMM)
@@ -163,7 +165,7 @@ BOOT_FATAL only if VFS or registry are completely broken; everything else degrad
 - [ ] Remove `HV_BAR` macro from `boot_storage.c` if present
 - [ ] Add `boot_progress(2, "step-name", postcode)` at each step
 
-## 5. Phase 3 — User Platform
+## 5. Phase 3 — User Platform `[Sonnet]`
 
 Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before this
 phase; failures here fall back to a text console, not BSOD.
@@ -181,18 +183,18 @@ phase; failures here fall back to a text console, not BSOD.
 - [ ] On any BOOT_FATAL in Phase 3: do NOT BSOD — log via `klog(FATAL)` and drop to serial console loop
 - [ ] Add `boot_progress(3, "step-name", postcode)` at each step
 
-## 6. Dependency Gates
+## 6. Dependency Gates `[Sonnet]`
 
 - [ ] Add `BOOT_REQUIRE(subsys)` call at the top of every init function listed in phases 0–3 above
 - [ ] Specifically verify these critical chains compile and enforce correctly at runtime:
   - `pmm_init` requires nothing; `vmm_init` requires PMM; `heap_init` requires VMM
   - `klog_init` requires HEAP; all later subsystems require KLOG for safe logging
   - `lapic_init` requires ACPI; `timer_hal_init` requires IDT + (LAPIC when APIC timer)
-  - `vfs_init` requires HEAP; `registry_init` requires VFS; `klog_disk_init` requires VFS
+  - `vfs_init` requires HEAP; `registry_init` requires VFS; `klog_disk_enable` requires VFS
   - `sched_init` requires HEAP + TIMER; `ipc_init` requires SCHED
 - [ ] Call `kernel_subsystem_dump()` on every BOOT_FATAL before halting so the serial log captures full state
 
-## 7. Failure Policy
+## 7. Failure Policy `[Sonnet]`
 
 | Phase | Failure       | Action                                  |
 | ----- | ------------- | --------------------------------------- |
@@ -209,7 +211,7 @@ phase; failures here fall back to a text console, not BSOD.
 - [ ] Add `kernel_subsystem_dump()` call inside `boot_halt()` and `panic()`
 - [ ] Define and document which BOOT_FATAL events trigger auto-restart vs permanent halt based on `boot.conf` restart policy
 
-## 8. Code Cleanup
+## 8. Code Cleanup `[Sonnet]`
 
 These are bugs and structural violations that must be fixed as part of this TODO:
 

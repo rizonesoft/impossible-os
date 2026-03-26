@@ -50,6 +50,3 @@ compile_commands.json
 
 # Srclight code intelligence index
 .srclight/
-
-# MCP server-memory knowledge graph
-.memory/

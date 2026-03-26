@@ -141,39 +141,52 @@ Replace prompt-heavy TODO procedure with a specific first-pass skill pack under 
 
 Define a new TODO format that stays readable as the backlog grows.
 
-- [ ] Design a lean TODO template for the new `todo/` tree.
-- [ ] Treat leaf TODOs as the default. Only introduce a parent or aggregate TODO when one topic truly needs multiple leaf files or shared verification.
-- [ ] Remove the old requirement that every TODO section carry a long mutable prompt.
-- [ ] Define the minimum required parts of a TODO file: goal, `Implementation Order`, dependencies, checklist, references, overlap XREFs, verification or exit criteria, and any needed handoff notes.
-- [ ] Require every TODO file to be complete within its declared scope so that following it produces a gap-free subsystem slice: no missing implementation steps, no missing dependency links, and no unaccounted gap between this TODO file and the next related TODO file.
-- [ ] Require correct implementation order and explicit cross references wherever TODO sections overlap or depend on work defined elsewhere.
-- [ ] Define a minimal per-change definition-of-done pattern that records what changed, what was verified, and any known remaining limit or follow-up.
-- [ ] Require supposedly complete TODO sections to call out unresolved limitations or deferred work explicitly instead of leaving silent ambiguity.
-- [ ] Update TODO creation guidance so it matches the new `00/01/02` domain numbering and local file naming.
-- [ ] Ensure future TODOs call out the relevant Cursor skill or workflow pattern instead of embedding all procedure inline.
+- [x] Design a lean TODO template for the new `todo/` tree.
+- [x] Treat leaf TODOs as the default. Only introduce a parent or aggregate TODO when one topic truly needs multiple leaf files or shared verification.
+- [x] Remove the old requirement that every TODO section carry a long mutable prompt.
+- [x] Define the minimum required parts of a TODO file: goal, `Implementation Order`, dependencies, checklist, references, overlap XREFs, verification or exit criteria, and any needed handoff notes.
+- [x] Require every TODO file to be complete within its declared scope so that following it produces a gap-free subsystem slice: no missing implementation steps, no missing dependency links, and no unaccounted gap between this TODO file and the next related TODO file.
+- [x] Require correct implementation order and explicit cross references wherever TODO sections overlap or depend on work defined elsewhere.
+- [x] Define a minimal per-change definition-of-done pattern that records what changed, what was verified, and any known remaining limit or follow-up.
+- [x] Require supposedly complete TODO sections to call out unresolved limitations or deferred work explicitly instead of leaving silent ambiguity.
+- [x] Update TODO creation guidance so it matches the new `00/01/02` domain numbering and local file naming.
+- [x] Ensure future TODOs call out the relevant Cursor skill or workflow pattern instead of embedding all procedure inline.
+
+> Lean TODO standard implemented via `.cursor/skills/create-todo/` (template, implementation-order rules, SKILL.md)
+> and `.cursor/skills/validate-todo-file/` (validation checklist). Live TODOs in `todo/02-kernel-core/` demonstrate the format.
 
 ## 5. Verification And Safety Coverage
 
 Make AI-generated work reviewable, safe, and reproducible.
 
-- [ ] Define a no-secrets rule for prompts, tracked docs, examples, commit messages, MCP config or logs, and agent-generated notes; credentials, tokens, and sensitive local values must never be copied into durable project guidance.
-- [ ] Define mandatory human-review triggers for security-sensitive changes, destructive operations, public API or ABI changes, dependency additions, build or release tooling changes, and large refactors.
-- [ ] Define stop/ask/escalate behavior for ambiguous requirements, conflicting docs, unexpected repo state, risky operations without approval, or verification that fails or produces contradictory evidence.
-- [ ] Define a repeatable verification expectation beyond a single claimed local run whenever feasible, such as build-log proof, scripted test commands, smoke steps, QEMU reproduction notes, or equivalent evidence that another contributor can follow.
-- [ ] Define what evidence must accompany a completed task or TODO section, including what changed, what was run, what passed or failed, and any known limitation, remaining risk, or next follow-up.
+- [x] Define a no-secrets rule for prompts, tracked docs, examples, commit messages, MCP config or logs, and agent-generated notes; credentials, tokens, and sensitive local values must never be copied into durable project guidance.
+- [x] Define mandatory human-review triggers for security-sensitive changes, destructive operations, public API or ABI changes, dependency additions, build or release tooling changes, and large refactors.
+- [x] Define stop/ask/escalate behavior for ambiguous requirements, conflicting docs, unexpected repo state, risky operations without approval, or verification that fails or produces contradictory evidence.
+- [x] Define a repeatable verification expectation beyond a single claimed local run whenever feasible, such as build-log proof, scripted test commands, smoke steps, QEMU reproduction notes, or equivalent evidence that another contributor can follow.
+- [x] Define what evidence must accompany a completed task or TODO section, including what changed, what was run, what passed or failed, and any known limitation, remaining risk, or next follow-up.
+
+> No-secrets rule, human-review triggers, and stop/ask/escalate are in `.cursor/rules/safety-build.mdc`.
+> Repeatable verification and evidence rules are in `.cursor/skills/implement-todo-section/build-verification.md`
+> and `.cursor/skills/verify-todo-section/status-evidence.md`.
 
 ## 6. Collaboration And Automation Boundaries
 
 Keep advanced Cursor features explicit instead of accidental.
 
-- [ ] Decide whether the first-pass repo contract includes Cursor commands for lightweight explicit workflows, or whether commands remain deferred until the core skill pack settles.
+- [x] Decide whether the first-pass repo contract includes Cursor commands for lightweight explicit workflows, or whether commands remain deferred until the core skill pack settles.
+      — **Decision:** Commands deferred. The 5-skill pack covers all multi-step workflows. No concrete single-step gap has emerged that needs `.cursor/commands/`. Revisit when a specific skill gap is identified.
 - [x] `.cursor/hooks.json` deferred; hooks may exist only as advisory local optimization; repo workflow must remain correct without them
 - [x] Repo `.githooks/` are optional but supported; they remain the commit-time enforcement surface when installed; Cursor hooks stay advisory-only
-- [ ] Decide whether the current `post-commit` auto-regeneration of `COUNT.md` with an automatic amend remains acceptable, or whether it should move to a safer explicit command or CI-style workflow.
-- [ ] Decide whether worktrees and parallel agents need a repo policy for isolation, build setup, shared state, and conflicting TODO edits.
-- [ ] Decide whether Bugbot or PR review automation is part of the supported workflow, and if so how repo-owned review guidance will be tracked.
-- [ ] Decide whether cloud agents and automations are part of the supported operating model or intentionally deferred.
-- [ ] Record that any adopted commands, hooks, review bots, or cloud and dashboard features remain downstream of tracked repo guidance.
+- [x] Decide whether the current `post-commit` auto-regeneration of `COUNT.md` with an automatic amend remains acceptable, or whether it should move to a safer explicit command or CI-style workflow.
+      — **Decision:** Keep as-is. Behaviour is working and documented in `safety-build.mdc`. Revisit if the repo gains multiple concurrent contributors.
+- [x] Decide whether worktrees and parallel agents need a repo policy for isolation, build setup, shared state, and conflicting TODO edits.
+      — **Decision:** Deferred. No worktrees in use; no concurrent agent scenario has arisen. Add a policy when the first parallel-agent use case is needed.
+- [x] Decide whether Bugbot or PR review automation is part of the supported workflow, and if so how repo-owned review guidance will be tracked.
+      — **Decision:** Deferred. Not set up, not blocking anything. If adopted, review guidance must be tracked in repo docs.
+- [x] Decide whether cloud agents and automations are part of the supported operating model or intentionally deferred.
+      — **Decision:** Intentionally deferred. Downstream of tracked guidance if ever adopted.
+- [x] Record that any adopted commands, hooks, review bots, or cloud and dashboard features remain downstream of tracked repo guidance.
+      — Recorded in `docs/infrastructure/ai-system-layout.md` boundary model section.
 
 ### Cursor Hooks Policy (Locked)
 
@@ -191,26 +204,32 @@ Keep MCP powerful, but subordinate it to tracked project truth.
 > **Current Antigravity MCP baseline:**
 > - `srclight` enabled via `srclight serve --transport stdio --workspace dev-workspace`
 >
-> Supported first-pass MCP model: Srclight only. Drop `memory` and `filesystem` from the intended baseline unless a later TODO explicitly reintroduces them with a strong justification.
+> Supported first-pass MCP model: Srclight only. `memory` and `filesystem` MCP are out of scope for Cursor and Antigravity; do not use a repo-local `.memory/` directory. Reintroduction would require an explicit project decision and doc updates.
 > Treat this as the current-state compatibility baseline and validation target, not as the canonical source of project truth.
 
 - [x] Srclight is the preferred code intelligence path; fall back to `rg`, direct file reads, and repo-grounded tools when unavailable or stale
 - [x] First-pass supported MCP set is Srclight only; Memory and filesystem MCP are out of scope unless re-approved
-- [ ] Decide how project-level MCP config, user-level Cursor MCP config, and team or cloud-managed MCP setup relate
+- [x] Decide how project-level MCP config, user-level Cursor MCP config, and team or cloud-managed MCP setup relate.
+      — **Decision:** No project-level `.cursor/mcp.json` checked in — the Srclight workspace name is machine-local and cannot be made portable without breaking other setups. User-level config stays personal and machine-local. Team/cloud MCP is deferred, downstream of tracked guidance. The canonical setup reference is `docs/infrastructure/ai-system-layout.md`.
 - [x] Srclight-only baseline captured in portable documented form; no machine-specific absolute paths made normative
 - [x] Stale Memory and filesystem MCP references removed from intended model; documented as deprecated local config only
 - [x] `clangd` is LSP-only and must not be configured as an MCP server
-- [ ] Add a validation checklist for local MCP setup so Cursor and Antigravity can be verified against the intended model
+- [x] Add a validation checklist for local MCP setup so Cursor and Antigravity can be verified against the intended model.
+      — Covered in `docs/infrastructure/ai-system-layout.md` §Srclight Index Lifecycle: health check, stale-index symptoms, and recovery path.
 
 ### Srclight Index Lifecycle
 
-- [ ] Document that `.srclight/` is a disposable local index and cache, not canonical project data, and must never become the only source of truth for architecture, workflow, or completion decisions.
-- [ ] Define when the local Srclight index should be refreshed or rebuilt, such as after large renames, branch or worktree switches, tooling or dependency changes, or repeated evidence that search results no longer match tracked files.
-- [ ] Define a lightweight validation checklist for a healthy Srclight index, such as confirming that known symbols, current file paths, and recently changed code can be found accurately from Cursor and Antigravity.
-- [ ] Document stale-index symptoms, including missing files, outdated paths, deleted symbols still appearing, incorrect implementations being returned, or repeated disagreement between Srclight results and `rg` or direct file reads.
-- [ ] Define the recovery path when the index appears stale: stop trusting the bad result, fall back to repo-grounded tools, refresh or rebuild the local index, restart the MCP session if needed, and rerun the validation checklist.
-- [ ] Decide whether any repo-facing command or documented local script should exist to standardize Srclight refresh or health checks without making the generated index itself a tracked artifact.
-- [ ] Require agents to treat Srclight as a performance aid rather than an authority: when results conflict with tracked files, trust the repo, and if recurring gaps are found update the AI-system guidance instead of normalizing stale-index behavior.
+- [x] Document that `.srclight/` is a disposable local index and cache, not canonical project data, and must never become the only source of truth for architecture, workflow, or completion decisions.
+- [x] Define when the local Srclight index should be refreshed or rebuilt, such as after large renames, branch or worktree switches, tooling or dependency changes, or repeated evidence that search results no longer match tracked files.
+- [x] Define a lightweight validation checklist for a healthy Srclight index, such as confirming that known symbols, current file paths, and recently changed code can be found accurately from Cursor and Antigravity.
+- [x] Document stale-index symptoms, including missing files, outdated paths, deleted symbols still appearing, incorrect implementations being returned, or repeated disagreement between Srclight results and `rg` or direct file reads.
+- [x] Define the recovery path when the index appears stale: stop trusting the bad result, fall back to repo-grounded tools, refresh or rebuild the local index, restart the MCP session if needed, and rerun the validation checklist.
+- [x] Decide whether any repo-facing command or documented local script should exist to standardize Srclight refresh or health checks without making the generated index itself a tracked artifact.
+      — **Decision:** No script needed. The documented steps in `ai-system-layout.md` are sufficient; a script adds maintenance overhead for no current gain.
+- [x] Require agents to treat Srclight as a performance aid rather than an authority: when results conflict with tracked files, trust the repo, and if recurring gaps are found update the AI-system guidance instead of normalizing stale-index behavior.
+
+> All Srclight lifecycle items covered in `docs/infrastructure/ai-system-layout.md` §Srclight Index Lifecycle.
+> Authority rule covered in `.cursor/rules/mcp-usage-discipline.mdc`.
 
 ## 8. Antigravity Compatibility
 
@@ -219,45 +238,55 @@ Keep Antigravity usable without letting it drift into a second truth system.
 > [!IMPORTANT]
 > Antigravity should be judged by functional compatibility with the Cursor-primary model, not by byte-for-byte config mirroring. Local JSON examples may contain machine-specific paths and must remain reference material rather than canonical repo truth.
 
-- [ ] Audit the existing Antigravity local setup against the new Cursor-primary model.
-- [ ] Treat the current Antigravity MCP JSON as the baseline example and validation target, not as the authoritative system definition.
-- [ ] Define the minimum Antigravity MCP and settings configuration required for practical parity: `srclight` on, with `memory` and `filesystem` removed from the intended baseline unless a later decision explicitly restores them.
-- [ ] Document manual compatibility steps without making Antigravity the canonical owner of rules or workflows.
-- [ ] Ensure Antigravity guidance points back to tracked repo docs for project truth.
-- [ ] Remove or rewrite stale Antigravity-specific guidance that conflicts with the new model.
+- [x] Audit the existing Antigravity local setup against the new Cursor-primary model.
+- [x] Treat the current Antigravity MCP JSON as the baseline example and validation target, not as the authoritative system definition.
+- [x] Define the minimum Antigravity MCP and settings configuration required for practical parity: `srclight` on, with `memory` and `filesystem` removed from the intended baseline unless a later decision explicitly restores them.
+- [x] Document manual compatibility steps without making Antigravity the canonical owner of rules or workflows.
+- [x] Ensure Antigravity guidance points back to tracked repo docs for project truth.
+- [x] Remove or rewrite stale Antigravity-specific guidance that conflicts with the new model.
+
+> Minimum config, compatibility steps, and authority model documented in `docs/infrastructure/ai-system-layout.md` §Antigravity.
+> All `.agents/rules/` replaced with redirect stubs pointing to `.cursor/rules/`. Migrated workflows redirect to `.cursor/skills/`.
 
 ## 9. Legacy Cleanup And Sync Discipline
 
 Reduce duplication and make future updates obvious.
 
-- [ ] Audit the existing `.agents/rules/` and `.agents/workflows/` material.
-- [ ] Decide what migrates into Cursor, what remains as plain documentation, what should be retired, and what should be absorbed into another skill instead of remaining a standalone workflow.
-- [ ] Update repo docs that currently describe superseded AI setup, outdated TODO procedure, the old phase-based formatting pass, or a baseline master/sub-file TODO model that no longer applies.
-- [ ] Define a simple sync checklist to use whenever architecture, naming, build flow, or AI tooling conventions change.
-- [ ] Ensure there is one obvious maintenance path instead of multiple competing update surfaces.
+- [x] Audit the existing `.agents/rules/` and `.agents/workflows/` material.
+- [x] Decide what migrates into Cursor, what remains as plain documentation, what should be retired, and what should be absorbed into another skill instead of remaining a standalone workflow.
+- [x] Update repo docs that currently describe superseded AI setup, outdated TODO procedure, the old phase-based formatting pass, or a baseline master/sub-file TODO model that no longer applies.
+- [x] Define a simple sync checklist to use whenever architecture, naming, build flow, or AI tooling conventions change.
+- [x] Ensure there is one obvious maintenance path instead of multiple competing update surfaces.
+
+> **Audit / migration:** `.agents/rules/` → redirect stubs to `.cursor/rules/`. Seven workflows → redirect stubs to `.cursor/skills/`; nine workflows → reference header + retained body. Migration decisions remain in §3 Legacy Workflow Migration table.
+> **Docs:** `AGENTS.md` points at `.cursor/rules/` and `.cursor/skills/` as canonical; `docs/infrastructure/ai-system-layout.md` is the layout and boundary reference.
+> **Sync checklist:** `.cursor/skills/sync-ai-system/SKILL.md` and `ai-sync-checklist.md`; rule-level discipline in `.cursor/rules/doc-sync-discipline.mdc`.
+> **Single maintenance path:** change canonical guidance in `.cursor/rules/`, `.cursor/skills/`, `AGENTS.md`, `docs/infrastructure/ai-system-layout.md`, and `todo/` — not in `.agents/` except redirects.
 
 ## 10. Final Verification
 
 Verify that the system works as a real development environment instead of a paper design.
 
 - [x] Cursor has a project-native rules and skills layer in the repo
-- [ ] Boundary model clearly distinguishes canonical repo truth from local, cloud, and dashboard-managed state
+- [x] Boundary model clearly distinguishes canonical repo truth from local, cloud, and dashboard-managed state
 - [x] Mode guidance exists for Plan, Ask, Agent, and Debug
-- [ ] Secrets and sensitive-data handling are explicit and compatible with MCP, local tooling, and tracked docs
-- [ ] High-risk AI-assisted work has mandatory human-review gates and stop-or-escalate behavior
-- [ ] New TODO format is usable without giant prompt sections or a separate formatting-only cleanup pass
+- [x] Secrets and sensitive-data handling are explicit and compatible with MCP, local tooling, and tracked docs
+- [x] High-risk AI-assisted work has mandatory human-review gates and stop-or-escalate behavior
+- [x] New TODO format is usable without giant prompt sections or a separate formatting-only cleanup pass
 - [x] No first-pass skill assumes a baseline master/sub-file TODO architecture
 - [x] `validate-todo-file` owns cross-file continuity and handoff checks
 - [x] `implement-todo-section` and `verify-todo-section` both correct section checklist state when evidence conflicts
-- [ ] New TODO format captures exact implementation order, dependencies, and gap-free handoffs across related files
+- [x] New TODO format captures exact implementation order, dependencies, and gap-free handoffs across related files
 - [x] Repo `.githooks/` behavior is explicitly supported and documented as optional
 - [x] Supported commit workflow accounts for staged-file lint failures and `COUNT.md` auto-generation or amend
-- [ ] Advanced Cursor features (commands, hooks, worktrees, Bugbot, cloud agents) are either explicitly deferred or covered by repo-owned guidance
+- [x] Advanced Cursor features (commands, hooks, worktrees, Bugbot, cloud agents) are either explicitly deferred or covered by repo-owned guidance
 - [x] Adopted Cursor hooks policy improves safety or speed without making hidden local automation canonical
-- [ ] Repo docs and local configs do not contradict each other
-- [ ] Antigravity can operate from the documented compatibility path
-- [ ] Srclight lifecycle guidance covers refresh, validation, stale-index symptoms, and recovery
-- [ ] No important project truth exists only in ignored local state
+- [x] Repo docs and local configs do not contradict each other
+- [x] Antigravity can operate from the documented compatibility path
+- [x] Srclight lifecycle guidance covers refresh, validation, stale-index symptoms, and recovery
+- [x] No important project truth exists only in ignored local state
+
+> **Evidence map:** boundary + truth layers → `docs/infrastructure/ai-system-layout.md` (source-of-truth table, diagram, write-back rules). Secrets + human-review + stop/escalate → `.cursor/rules/safety-build.mdc`. TODO format + ordering + handoffs → §4–§5 above, `create-todo` / `validate-todo-file` skills, live `todo/02-kernel-core/` files. Advanced features → §6 decisions + hooks policy subsection. Antigravity → §8 + `ai-system-layout.md` §Antigravity. Srclight → §7 + `ai-system-layout.md` §Srclight. Doc alignment → `AGENTS.md` Critical Rules block + `.agents/` redirects. Local-only Antigravity paths in §Inputs are explicitly non-authoritative per §8 note.
 
 ## Notes For Refinement
 

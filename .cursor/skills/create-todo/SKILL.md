@@ -29,13 +29,18 @@ description: Create lean project TODO files under todo/, choose the correct doma
    - Use `Implementation Order`, not `Phase-by-Phase`.
    - Mark every row with `💎` (parity — matches Windows/Linux) or `⭐` (exclusive — Impossible OS superior).
    - Add dependencies, overlap notes, handoffs, and `→ XREF:` links while creating the file.
-6. Add an OS Comparison table.
+6. Assign a model tag to every section heading.
+   - Append `` `[Sonnet]` `` or `` `[Opus]` `` directly to each `## N. Title` heading.
+   - Format: `## 1. Section Title \`[Sonnet]\`` — no column, no table, inline only.
+   - Use **`[Sonnet]`** for: well-scoped type/struct definitions, straightforward API wiring, data migration and porting tasks, log/error handling plumbing, and any section with a clear Windows reference spec.
+   - Use **`[Opus]`** for: novel architectural design (no prior Impossible OS precedent), security-critical code (ring transitions, privilege, code signing, capabilities), subtle concurrency (per-CPU state, lock-free queues, spinlock transitions), hardware-interface primitives (MSR writes, `swapgs`, interrupt entry/exit, calibration), and complex algorithm design (ASLR entropy, DPC fairness, clock drift correction).
+7. Add an OS Comparison table.
    - Every TODO must include an `## OS Comparison` section before Verification.
    - Columns: `⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS`
    - Mark each row `💎` (parity) or `⭐` (exclusive/superior).
    - Show current Impossible OS state: ✅ Done, ⚠️ Partial, ⬜ Planned, ❌ Not applicable.
    - Add a short summary note after the table on what makes Impossible OS superior.
-7. Update indexes in the same task.
+8. Update indexes in the same task.
    - Update the domain `INDEX.md`.
    - Update `todo/TODO-00-INDEX.md` only when the new TODO changes root-visible scope.
 

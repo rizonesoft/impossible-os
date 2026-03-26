@@ -19,8 +19,8 @@
 - [`include/kernel/klog.h`](../../include/kernel/klog.h)
 - [`src/kernel/log.c`](../../src/kernel/log.c) — legacy serial-only logger (reference)
 - [`todo/02-kernel-core/TODO-01-kernel-init-sequencing.md`](./TODO-01-kernel-init-sequencing.md)
-- → XREF: `TODO-02-kernel-core/TODO-03-kernel-libraries.md` §4 — cJSON required by §4 (structured logging)
-- → XREF: `TODO-06-networking` — UDP stack required by §5 (remote syslog)
+- → XREF: `TODO-20-kernel-libraries.md` §6 — cJSON DOM parser required by §6 (structured JSON events)
+- → XREF: `TODO-06-networking` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
 
 ## Outcome
 
@@ -39,8 +39,8 @@
 | 💎  |   3   | Per-subsystem verbosity control     | 2          |  [ ]   |
 | 💎  |   4   | Log rotation                        | 2          |  [ ]   |
 | 💎  |   5   | Rate limiting                       | 2          |  [ ]   |
-| ⭐  |   6   | Structured JSON log events          | 4, cJSON   |  [ ]   |
-| 💎  |   7   | Remote syslog forwarding (RFC 5424) | UDP stack  |  [ ]   |
+| ⭐  |   6   | Structured JSON log events          | 4, TODO-20 §6 |  [ ]   |
+| 💎  |   7   | Remote syslog forwarding (RFC 5424) | UDP (exists)  |  [ ]   |
 
 > 💎 = parity — Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive — JSON Lines events.jsonl is human-readable by any editor; beats Windows XML and Linux binary journal.
@@ -75,7 +75,7 @@ These items are implemented and verified. Kept here for future correctness check
 
 ---
 
-## 1. Boot-Phase Aware klog Init
+## 1. Boot-Phase Aware klog Init `[Sonnet]`
 
 The current `klog_disk.c` assumes VFS is available when it initialises. After TODO-01,
 the kernel has explicit Phase 0 (no VFS) and Phase 2 (VFS ready) gates.
@@ -88,7 +88,7 @@ the kernel has explicit Phase 0 (no VFS) and Phase 2 (VFS ready) gates.
 - [ ] Update `main.c`/`boot_storage.c` call sites to use the split init
 - [ ] Commit: `"kernel: split klog early-init from disk-enable"`
 
-## 2. Per-Subsystem Log Splitting
+## 2. Per-Subsystem Log Splitting `[Sonnet]`
 
 Route log entries to dedicated per-subsystem log files based on the subsystem tag.
 Entries with no matching tag continue to go to `kernel.log`.
@@ -107,7 +107,7 @@ Entries with no matching tag continue to go to `kernel.log`.
 - [ ] Also write boot-session numbered logs (`BOOT_NNN.LOG`) for all subsystems combined
 - [ ] Commit: `"kernel: per-subsystem log files"`
 
-## 3. Per-Subsystem Verbosity Control
+## 3. Per-Subsystem Verbosity Control `[Sonnet]`
 
 Allow silencing verbose subsystems in release builds without recompiling.
 
@@ -119,7 +119,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 - [ ] Default: all subsystems at `LOG_DEBUG` in debug builds, `LOG_INFO` in release
 - [ ] Commit: `"kernel: per-subsystem log verbosity control"`
 
-## 4. Log Rotation
+## 4. Log Rotation `[Sonnet]`
 
 Prevent log files growing unbounded on long-running or repeatedly booted systems.
 
@@ -132,7 +132,7 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 - [ ] Rotation check is O(1) — size is tracked in the open-file state, not re-stat'd every call
 - [ ] Commit: `"kernel: log rotation"`
 
-## 5. Rate Limiting
+## 5. Rate Limiting `[Sonnet]`
 
 Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 
@@ -143,10 +143,10 @@ Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 - [ ] Dropped entry counts are included in the `events.jsonl` structured record (§6)
 - [ ] Commit: `"kernel: log rate limiting"`
 
-## 6. Structured JSON Log Events
+## 6. Structured JSON Log Events `[Sonnet]`
 
 Emit machine-parseable events alongside plain-text logs.
-Requires cJSON from `TODO-02-kernel-core/TODO-03-kernel-libraries.md` §4.
+Requires cJSON from `TODO-20-kernel-libraries.md` §6.
 
 - [ ] Define JSON event format: `{"ts":<ms>,"lvl":"WARN","sub":"net","msg":"DHCP timeout","dropped":0}`
 - [ ] Add `klog_json_flush()` — serialise ring buffer entries to `C:\Impossible\System\Logs\events.jsonl`
@@ -157,10 +157,10 @@ Requires cJSON from `TODO-02-kernel-core/TODO-03-kernel-libraries.md` §4.
 - [ ] Task Manager log viewer panel reads `events.jsonl` for colour-coded filtering by level and subsystem
 - [ ] Commit: `"kernel: structured JSON log events"`
 
-## 7. Remote Syslog Forwarding (RFC 5424)
+## 7. Remote Syslog Forwarding (RFC 5424) `[Sonnet]`
 
 Forward log entries to a remote syslog server for enterprise and headless debug use.
-Requires UDP send from `TODO-06-networking`.
+`src/kernel/net/udp.c` already exists — this section wires syslog packet sending on top of it.
 
 - [ ] Read syslog server IP from `HKLM\SYSTEM\Logs\SyslogServer` at `klog_disk_enable()`; skip if not set
 - [ ] Map klog levels to RFC 5424 severity: `DEBUG→7`, `INFO→6`, `WARN→4`, `ERROR→3`, `FATAL→2`

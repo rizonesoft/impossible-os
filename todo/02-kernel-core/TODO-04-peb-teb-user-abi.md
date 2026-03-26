@@ -62,7 +62,7 @@
 
 ---
 
-## 1. TEB Struct and GS Self-Pointer
+## 1. TEB Struct and GS Self-Pointer `[Sonnet]`
 
 Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macros
 (`NtCurrentTeb()` = `mov rax, gs:[0x30]`) work without patching.
@@ -84,7 +84,7 @@ Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macro
 - [ ] Annotate each field with its Windows offset as a comment — future correctness check
 - [ ] Commit: `"kernel: peb — TEB struct with correct Windows x64 offsets"`
 
-## 2. PEB Struct and RTL_USER_PROCESS_PARAMETERS
+## 2. PEB Struct and RTL_USER_PROCESS_PARAMETERS `[Sonnet]`
 
 Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk it
 without any patching.
@@ -118,7 +118,7 @@ without any patching.
 - [ ] Add `PEB_LDR_DATA` stub for §8
 - [ ] Commit: `"kernel: peb — PEB and RTL_USER_PROCESS_PARAMETERS structs"`
 
-## 3. swapgs on INT 0x80 Entry and Exit
+## 3. swapgs on INT 0x80 Entry and Exit `[Opus]`
 
 Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) holds the
 TEB address. `swapgs` exchanges the two MSRs — must fire on every ring-3→ring-0 transition
@@ -136,7 +136,7 @@ and be reversed on every ring-0→ring-3 return.
 - [ ] Verify with QEMU: after ring-3 task runs, GS in ring 0 still points to per-CPU data
 - [ ] Commit: `"kernel: abi — swapgs on INT 0x80 ring-3 entry and exit"`
 
-## 4. KERNEL_GS_BASE Written at task_exec and Fork
+## 4. KERNEL_GS_BASE Written at task_exec and Fork `[Opus]`
 
 `IA32_KERNEL_GS_BASE` (MSR 0xC0000102) must hold the TEB address before the first
 ring-3 instruction runs. `swapgs` (§3) exchanges GS_BASE ↔ KERNEL_GS_BASE, so after
@@ -153,7 +153,7 @@ ring-3 instruction runs. `swapgs` (§3) exchanges GS_BASE ↔ KERNEL_GS_BASE, so
       task if SMP or if multiple user tasks share the same CPU
 - [ ] Commit: `"kernel: abi — write KERNEL_GS_BASE at task_exec and fork"`
 
-## 5. PEB Allocation and Population at task_exec
+## 5. PEB Allocation and Population at task_exec `[Sonnet]`
 
 Allocate the PEB in the user address space and fill it before the first instruction runs.
 
@@ -176,7 +176,7 @@ Allocate the PEB in the user address space and fill it before the first instruct
 - [ ] Store PEB pointer in `task_t` struct for kernel reference: `tasks[pid].peb`
 - [ ] Commit: `"kernel: peb — PEB allocation and population at exec"`
 
-## 6. TEB Allocation and Population at Thread Create
+## 6. TEB Allocation and Population at Thread Create `[Sonnet]`
 
 One TEB per thread. Allocated in the user address space near the thread stack.
 
@@ -195,7 +195,7 @@ One TEB per thread. Allocated in the user address space near the thread stack.
 - [ ] Store TEB pointer in the task struct: `tasks[pid].teb`
 - [ ] Commit: `"kernel: peb — TEB allocation and population at thread create"`
 
-## 7. Initial User Stack Frame
+## 7. Initial User Stack Frame `[Opus]`
 
 The user stack must have a valid calling frame waiting for the first instruction.
 Win32 convention: `ntdll!_LdrpInitialize` reads `PEB->ProcessParameters`; it does not
@@ -215,7 +215,7 @@ the compatibility path) needs the Linux-style stack layout.
 - [ ] Confirm `_start` in `user/hello.c` still executes correctly with the new stack
 - [ ] Commit: `"kernel: abi — initial user stack frame with argv, envp, auxv"`
 
-## 8. PEB Ldr (Module List) Basic Population
+## 8. PEB Ldr (Module List) Basic Population `[Sonnet]`
 
 `ntdll!LdrInitializeThunk` walks `PEB->Ldr->InLoadOrderModuleList` to find already-loaded
 modules. Even a stub Ldr with just the main module prevents ntdll from faulting on an
@@ -235,7 +235,7 @@ empty list.
 - [ ] Full module list management (LoadLibrary / FreeLibrary) is in TODO-05 §3 (DLL loader)
 - [ ] Commit: `"kernel: peb — minimal PEB Ldr with main module entry"`
 
-## 9. TLS Slot Allocation (64 Static Slots)
+## 9. TLS Slot Allocation (64 Static Slots) `[Sonnet]`
 
 TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(thread)` and
 `TlsAlloc`. A minimal allocator is needed for Win32 DLLs that use TLS before the full
@@ -253,7 +253,7 @@ heap is available.
       `teb->TlsExpansionSlots` pointer — stub the expansion path (return error for index ≥ 64)
 - [ ] Commit: `"kernel: peb — TLS slot allocation (64 static slots)"`
 
-## 10. PEB / TEB Exposed in Ob Namespace
+## 10. PEB / TEB Exposed in Ob Namespace `[Sonnet]`
 
 Make the PEB and TEB for any process queryable by name through the Object Manager
 namespace (→ XREF: TODO-03 §4 and §11). Enables debuggers and introspection tools

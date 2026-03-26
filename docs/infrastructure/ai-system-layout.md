@@ -165,7 +165,7 @@ machine-local configuration; it is not tracked and not authoritative.
 
 **Minimum compatible Antigravity setup:**
 - Srclight MCP enabled: `srclight serve --transport stdio --workspace dev-workspace`
-- Memory MCP: disabled (not in the supported baseline)
+- Memory MCP: **off** — not used in Cursor or Antigravity; do not enable `@modelcontextprotocol/server-memory` or a repo-local `.memory/` store. Gotchas belong in tracked docs or TODOs, not in MCP memory.
 - Filesystem MCP: disabled (not in the supported baseline)
 - Project context: read from `AGENTS.md`, `.cursor/rules/`, `docs/`, and `todo/`
 
