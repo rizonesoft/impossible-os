@@ -41,13 +41,14 @@
 | 💎  |   2   | UEFI variable services             | 1                |  [x]   |
 | 💎  |   3   | GOP resolution auto-detection      | 1                |  [x]   |
 | 💎  |   4   | SMBIOS table parsing               | 1                |  [x]   |
-| 💎  |   5   | Secure Boot state detection        | 2                |  [ ]   |
+| 💎  |   5   | Secure Boot state detection        | 2                |  [/]   |
 | 💎  |   6   | Secure Boot shim chain-loading     | 5                |  [ ]   |
 | 💎  |   7   | Boot UX polish                     | 3, 5, TODO-02 §2 |  [ ]   |
 | 💎  |   8   | A/B dual-slot boot                 | 2                |  [ ]   |
 | ⭐  |   9   | Multi-OS detection & boot menu     | 1                |  [ ]   |
 | 💎  |  10   | UEFI capsule update & ESRT         | 2, 8             |  [ ]   |
 | 💎  |  11   | UEFI memory attributes (W^X)       | 1                |  [ ]   |
+| ⭐  |  12   | Serial log standardization         | —                |  [x]   |
 
 > 💎 = parity — Windows Boot Manager and GRUB implement these features; Impossible OS must match them.
 > ⭐ = exclusive — the in-bootloader multi-OS detection with graphical countdown timer is not present in competitors.
@@ -119,11 +120,11 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel and user 
 
 **Files:** `src/kernel/uefi_runtime.c`, `include/kernel/uefi_runtime.h`, `src/kernel/main/boot_hw.c`
 
-- [ ] Call `uefi_var_get_u32(L"SecureBoot", &EFI_GLOBAL_VARIABLE_GUID, &val)` in `uefi_secureboot_init()`; set `boot_info.secure_boot_enabled = (val == 1)`
-- [ ] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1 after registry is up (→ XREF `02-kernel-core/TODO-13-registry-completion.md`)
-- [ ] If `secure_boot_enabled`: call `srm_verify_kernel_signature("C:\\boot\\kernel.exe")` (→ XREF `02-kernel-core/TODO-11-security-reference-monitor.md`); on failure: log `[SecureBoot] kernel.exe signature INVALID` + `BOOT_FATAL`
-- [ ] Display padlock icon (🔒) in system tray status bar when Secure Boot is active (desktop integration hook — set flag in `g_system_state.secure_boot` readable by tray renderer)
-- [ ] Serial log: `[SecureBoot] state=ENABLED` or `[SecureBoot] state=DISABLED (firmware or user override)`
+- [x] Call `uefi_var_get_u32(L"SecureBoot", &EFI_GLOBAL_VARIABLE_GUID, &val)` in `uefi_secureboot_init()`; set `boot_info.secure_boot_enabled = (val == 1)`
+- [ ] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1 after registry is up (→ XREF `02-kernel-core/TODO-13-registry-completion.md`) *(deferred — no registry write API yet)*
+- [ ] If `secure_boot_enabled`: call `srm_verify_kernel_signature("C:\\boot\\kernel.exe")` (→ XREF `02-kernel-core/TODO-11-security-reference-monitor.md`); on failure: log `[SecureBoot] kernel.exe signature INVALID` + `BOOT_FATAL` *(deferred — `srm_verify_kernel_signature` has no section in TODO-11 yet)*
+- [x] Display padlock icon (🔒) in system tray status bar when Secure Boot is active (desktop integration hook — set flag in `g_system_state.secure_boot` readable by tray renderer)
+- [x] Serial log: `[SecureBoot] state=ENABLED` or `[SecureBoot] state=DISABLED (firmware or user override)`
 - [ ] Commit: `"kernel: Secure Boot state detection, registry key, and kernel.exe signature check"`
 
 ## 6. Secure Boot Shim Chain-Loading `[Opus]`
@@ -259,7 +260,7 @@ Standard line format used everywhere:
 | ⭐  | Feature                             | 🪟 Windows 11                                   | 🐧 Linux (GRUB/systemd-boot)                     | 🚀 Impossible OS                                       |
 | --- | ----------------------------------- | ------------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------- |
 | 💎  | Secure Boot shim chain-loading      | ✅ Microsoft-signed shim + WHQL                 | ✅ rhboot shim (distro-signed)                   | ⬜ Planned — §6; MOK enrollment path                   |
-| 💎  | Secure Boot state in kernel         | ✅ `HKLM\SYSTEM\SecureBoot` + WinVerifyTrust    | ✅ `/sys/firmware/efi/efivars/SecureBoot`        | ⬜ Planned — §5                                        |
+| 💎  | Secure Boot state in kernel         | ✅ `HKLM\SYSTEM\SecureBoot` + WinVerifyTrust    | ✅ `/sys/firmware/efi/efivars/SecureBoot`        | 🔄 In progress — §5; `uefi_secureboot_init()` reads SecureBoot/SetupMode/PK/KEK NVRAM vars, sets `boot_info.secure_boot_enabled` + `g_system_state.secure_boot`; registry key + SRM signature check deferred to TODO-13/TODO-11  |
 | 💎  | UEFI runtime services after boot    | ✅ Full EFI runtime preserved                   | ✅ `efi_call_*` wrappers post-ExitBootServices   | ✅ Done — §1; RT pointers copied pre-EBS, SVAM called in `uefi_runtime_init()` post-EBS  |
 | 💎  | UEFI variable read/write            | ✅ `GetFirmwareEnvironmentVariable` Win32 API   | ✅ `efivarfs` + `efivar` library                 | ✅ Done — §2; `uefi_var_get/set`, NTSTATUS translation, `uefi_var_enumerate(callback)`, `IMPOSSIBLE_OS_VENDOR_GUID`  |
 | 💎  | GOP resolution negotiation          | ✅ Boot manager negotiates GOP mode             | ✅ GRUB `gfxmode` + EFIFB                        | ✅ Done — §3; scoring-based `gop_negotiate_mode()`, `Resolution=WxH` boot.conf, HiDPI flag, fallback log  |

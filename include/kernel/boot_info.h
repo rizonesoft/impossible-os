@@ -241,6 +241,10 @@ struct boot_info {
         uint64_t kernel_jump;             /* just before jumping to kernel */
         uint64_t tsc_freq;                /* TSC frequency in Hz (0 = unknown) */
     } timing;
+
+    /* Kernel-populated fields (set after boot; never written by the bootloader) */
+    uint8_t  secure_boot_enabled;   /* 1 if Secure Boot is active (uefi_secureboot_init) */
+    uint8_t  _kp_pad[7];            /* alignment */
 };
 
 /* Global boot info — populated by multiboot2_parse() or UEFI bootloader */

@@ -15,6 +15,7 @@
 #include "kernel/uefi_config.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/system_state.h"
 
 /* ---- Kernel-side EFI_RUNTIME_SERVICES struct ----
  * Re-declared with kernel types + UEFI_EFIAPI calling convention.
@@ -659,6 +660,17 @@ void uefi_secureboot_init(void)
     klog(LOG_INFO, "UEFI", "Secure Boot keys: PK=%s, KEK=%s",
          s_sb_pk_present ? "enrolled" : "absent",
          s_sb_kek_present ? "enrolled" : "absent");
+
+    /* Publish state to boot_info and global system state for desktop/tray */
+    g_boot_info.secure_boot_enabled = (uint8_t)s_sb_enabled;
+    g_system_state.secure_boot       = (uint8_t)s_sb_enabled;
+
+    /* Canonical one-line summary consumed by monitoring tools */
+    if (s_sb_enabled) {
+        klog(LOG_INFO, "SecureBoot", "state=ENABLED");
+    } else {
+        klog(LOG_INFO, "SecureBoot", "state=DISABLED (firmware or user override)");
+    }
 }
 
 int uefi_secureboot_enabled(void)  { return s_sb_enabled; }
