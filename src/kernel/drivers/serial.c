@@ -25,6 +25,14 @@ static inline uint8_t inb(uint16_t port)
     return ret;
 }
 
+/* Raw unlocked UART write — caller must hold g_serial_lock */
+static inline void serial_putchar_raw(char c)
+{
+    while ((inb(SERIAL_PORT + 5) & 0x20) == 0)
+        ;
+    outb(SERIAL_PORT, (uint8_t)c);
+}
+
 void serial_init(void)
 {
     outb(SERIAL_PORT + 1, 0x00);    /* Disable interrupts */
@@ -40,19 +48,21 @@ void serial_putchar(char c)
 {
     uint64_t flags;
     spin_lock_irqsave(&g_serial_lock, &flags);
-    while ((inb(SERIAL_PORT + 5) & 0x20) == 0)
-        ;
-    outb(SERIAL_PORT, (uint8_t)c);
+    serial_putchar_raw(c);
     spin_unlock_irqrestore(&g_serial_lock, flags);
 }
 
+/* Hold the lock for the entire string so no other caller can interleave */
 void serial_write(const char *str)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&g_serial_lock, &flags);
     while (*str) {
         if (*str == '\n')
-            serial_putchar('\r');
-        serial_putchar(*str++);
+            serial_putchar_raw('\r');
+        serial_putchar_raw(*str++);
     }
+    spin_unlock_irqrestore(&g_serial_lock, flags);
 }
 
 char serial_trygetchar(void)
