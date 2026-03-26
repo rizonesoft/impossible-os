@@ -7,7 +7,6 @@
  * ============================================================================ */
 
 #include "kernel/types.h"
-#include "kernel/printk.h"
 #include "kernel/klog.h"
 #include "kernel/mm/heap.h"
 #include "kernel/timer.h"
@@ -88,12 +87,12 @@ void boot_desktop_init(void)
         uint64_t h_used  = heap_get_used();
         uint64_t h_total = heap_get_total();
         uint64_t pct     = h_total ? (h_used * 100) / h_total : 0;
-        printk("[OK] Heap: %u KB used / %u KB total (%u%%)\n",
+        klog(LOG_INFO, "heap", "Heap: %u KB used / %u KB total (%u%%)",
                (h_used + 1023) / 1024,
                (h_total + 1023) / 1024,
                pct);
         if (pct > 75) {
-            printk("[!!] Heap pressure: %u%% used -- risk of silent exhaustion\n",
+            klog(LOG_WARN, "heap", "Heap pressure: %u%% used -- risk of silent exhaustion",
                    pct);
         }
     }

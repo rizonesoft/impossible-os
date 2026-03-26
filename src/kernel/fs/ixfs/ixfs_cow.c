@@ -320,10 +320,10 @@ int ixfs_snapshot_list(void)
 
     if (!vol) return -1;
 
-    printk("  IXFS Snapshots:\n");
+    klog(LOG_INFO, "ixfs", "Snapshots:");
     for (i = 0; i < IXFS_MAX_SNAPSHOTS; i++) {
         if (vol->snapshots[i].se_flags != 0) {
-            printk("    [%u] \"%s\" (time=%u, block=%u)\n",
+            klog(LOG_INFO, "ixfs", "  [%u] \"%s\" (time=%u, block=%u)",
                    (uint64_t)i,
                    vol->snapshots[i].se_name,
                    (uint64_t)vol->snapshots[i].se_timestamp,
@@ -332,7 +332,7 @@ int ixfs_snapshot_list(void)
         }
     }
     if (count == 0)
-        printk("    (none)\n");
+        klog(LOG_INFO, "ixfs", "  (none)");
     return (int)count;
 }
 

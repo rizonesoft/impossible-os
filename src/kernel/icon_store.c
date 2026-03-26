@@ -23,7 +23,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/fs/vfs.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 #include "kernel/types.h"
 
 /* Forward-declare string functions */
@@ -603,11 +603,11 @@ void icon_store_init(void)
     for (i = 0; i < ICON_FONT_COUNT; i++) {
         int err = load_icon_font(i, icon_font_filenames[i]);
         if (err == 0) {
-            printk("[OK] Icon font loaded: %s\n",
+            klog(LOG_INFO, "ICON", "Icon font loaded: %s",
                    (uint64_t)(uintptr_t)icon_font_filenames[i]);
             loaded++;
         } else {
-            printk("[--] Icon font failed (%d): %s\n",
+            klog(LOG_WARN, "ICON", "Icon font failed (%d): %s",
                    (uint64_t)err,
                    (uint64_t)(uintptr_t)icon_font_filenames[i]);
         }
@@ -619,19 +619,19 @@ void icon_store_init(void)
     {
         int ires_result = ires_load("C:\\Impossible\\Icons\\icons.ires");
         if (ires_result > 0) {
-            printk("[OK] IRES loaded: icons.ires (%d icons, %d sizes)\n",
+            klog(LOG_INFO, "ICON", "IRES loaded: icons.ires (%d icons, %d sizes)",
                    (uint64_t)ires_result, (uint64_t)ires_size_count);
         } else if (ires_result == -1) {
-            printk("[--] IRES not found: icons.ires\n");
+            klog(LOG_WARN, "ICON", "IRES not found: icons.ires");
         } else {
-            printk("[--] IRES load failed (%d): icons.ires\n",
+            klog(LOG_ERROR, "ICON", "IRES load failed (%d): icons.ires",
                    (uint64_t)ires_result);
         }
     }
 
     icon_store_ready = 1;
 
-    printk("[OK] Icon store initialized (%d/%d fonts, cache=%d, color=%s)\n",
+    klog(LOG_INFO, "ICON", "Icon store initialized (%d/%d fonts, cache=%d, color=%s)",
            (uint64_t)loaded, (uint64_t)ICON_FONT_COUNT,
            (uint64_t)ICON_CACHE_MAX,
            (uint64_t)(uintptr_t)(ires_loaded ? "yes" : "no"));

@@ -13,7 +13,7 @@
 #include "desktop/terminal.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 
 /* ---- Internal state ---- */
 
@@ -86,7 +86,7 @@ int terminal_open(void)
                                    TERM_PX_WIDTH, TERM_PX_HEIGHT,
                                    WM_DEFAULT_FLAGS);
     if (term_handle < 0) {
-        printk("[TERM] Failed to create window\n");
+        klog(LOG_ERROR, "TERM", "Failed to create window");
         return -1;
     }
 
@@ -107,7 +107,7 @@ int terminal_open(void)
     wm_raise_window(term_handle);
     wm_focus_window(term_handle);
 
-    printk("[OK] Command Prompt window opened (%ux%u chars)\n",
+    klog(LOG_INFO, "TERM", "Command Prompt window opened (%ux%u chars)",
            (uint64_t)TERM_COLS, (uint64_t)TERM_ROWS);
     return 0;
 }

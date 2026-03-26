@@ -38,7 +38,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/fs/vfs.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 /* Forward-declare string functions (provided by stb_truetype_impl.c weak symbols) */
 typedef unsigned long gfx_size_t;
 extern void *memset(void *s, int c, gfx_size_t n);
@@ -203,7 +203,7 @@ static void cache_rasterize_slot_size(int slot, int size_idx)
     /* Allocate atlas bitmap via PMM (256×256 = 64 KB, single channel) */
     atlas_phys = pmm_alloc_contiguous(GLYPH_ATLAS_PAGES);
     if (!atlas_phys) {
-        printk("[!!] Atlas PMM alloc failed for slot %d size %dpx\n",
+        klog(LOG_ERROR, "GFX", "Atlas PMM alloc failed for slot %d size %dpx",
                (uint64_t)slot, (uint64_t)px);
         return;
     }
@@ -222,7 +222,7 @@ static void cache_rasterize_slot_size(int slot, int size_idx)
         chardata);
 
     if (bake_result <= 0) {
-        printk("[!!] BakeFontBitmap failed for slot %d size %dpx (result=%d)\n",
+        klog(LOG_ERROR, "GFX", "BakeFontBitmap failed for slot %d size %dpx (result=%d)",
                (uint64_t)slot, (uint64_t)px, (uint64_t)bake_result);
     }
 
@@ -271,7 +271,7 @@ static int load_ttf_file(const char *path, uint8_t **out_data, uint32_t *out_siz
     pages = (size + 4095) / 4096;
     phys = pmm_alloc_contiguous(pages);
     if (!phys) {
-        printk("[!!] PMM alloc failed for font %s (%u bytes, %u pages)\n",
+        klog(LOG_ERROR, "GFX", "PMM alloc failed for font %s (%u bytes, %u pages)",
                path, size, pages);
         vfs_close(f);
         return -1;
@@ -376,12 +376,12 @@ void ttf_mgr_init(void)
             lru_cache = (lru_glyph_t *)lru_phys;
             memset(lru_cache, 0, lru_bytes);
             lru_next = 0;
-            printk("[OK] LRU glyph cache: %u entries (%u KB, %u pages)\n",
+            klog(LOG_INFO, "GFX", "LRU glyph cache: %u entries (%u KB, %u pages)",
                    (uint64_t)LRU_SIZE,
                    (uint64_t)(lru_bytes / 1024),
                    (uint64_t)lru_pages);
         } else {
-            printk("[!!] Failed to allocate LRU glyph cache\n");
+            klog(LOG_ERROR, "GFX", "Failed to allocate LRU glyph cache");
             lru_cache = (void *)0;
         }
     }
@@ -392,7 +392,7 @@ void ttf_mgr_init(void)
 
         /* Try primary filename */
         if (load_ttf_slot(slot, ttf_filenames[slot]) == 0) {
-            printk("[OK] TTF slot %d loaded: %s\n",
+            klog(LOG_INFO, "GFX", "TTF slot %d loaded: %s",
                    (uint64_t)slot, (uint64_t)(uintptr_t)ttf_filenames[slot]);
             loaded++;
             continue;
@@ -401,13 +401,13 @@ void ttf_mgr_init(void)
         /* Try fallback */
         if (ttf_fallbacks[slot] &&
             load_ttf_slot(slot, ttf_fallbacks[slot]) == 0) {
-            printk("[OK] TTF slot %d loaded: %s (fallback)\n",
+            klog(LOG_INFO, "GFX", "TTF slot %d loaded: %s (fallback)",
                    (uint64_t)slot, (uint64_t)(uintptr_t)ttf_fallbacks[slot]);
             loaded++;
             continue;
         }
 
-        printk("[--] TTF slot %d: no font found\n", (uint64_t)slot);
+        klog(LOG_WARN, "GFX", "TTF slot %d: no font found", (uint64_t)slot);
     }
 
     /* Build glyph cache for all loaded slots at all cached sizes */
@@ -432,9 +432,9 @@ void ttf_mgr_init(void)
     ttf_mgr_ready = 1;
     simd_restore_state(&fpu_state);
 
-    printk("[OK] TTF font manager initialized (%d/%d slots loaded)\n",
+    klog(LOG_INFO, "GFX", "TTF font manager initialized (%d/%d slots loaded)",
            (uint64_t)loaded, (uint64_t)FONT_MAX_SLOTS);
-    printk("[OK] Glyph cache: %d glyphs, %d KB bitmap data\n",
+    klog(LOG_INFO, "GFX", "Glyph cache: %d glyphs, %d KB bitmap data",
            (uint64_t)cached_glyphs, (uint64_t)((cache_bytes + 1023) / 1024));
 }
 
@@ -951,7 +951,7 @@ int boot_font_init(int pixel_size)
         atlas_phys = pmm_alloc_contiguous(BOOT_ATLAS_PAGES);
         if (!atlas_phys) {
             simd_restore_state(&fpu_state);
-            printk("[!!] boot_font_init: PMM atlas alloc failed\n");
+            klog(LOG_ERROR, "GFX", "boot_font_init: PMM atlas alloc failed");
             return -1;
         }
         boot_atlas = (uint8_t *)atlas_phys;
@@ -970,13 +970,13 @@ int boot_font_init(int pixel_size)
     simd_restore_state(&fpu_state);
 
     if (bake_result <= 0) {
-        printk("[!!] boot_font BakeFontBitmap: %d chars fit (result=%d)\n",
+        klog(LOG_WARN, "GFX", "boot_font BakeFontBitmap: %d chars fit (result=%d)",
                (uint64_t)-bake_result, (uint64_t)bake_result);
         /* Negative means some glyphs didn't fit — still usable */
     }
 
     boot_font_ready = 1;
-    printk("[OK] boot_font: %dpx atlas baked (%d chars, %d KB)\n",
+    klog(LOG_INFO, "GFX", "boot_font: %dpx atlas baked (%d chars, %d KB)",
            (uint64_t)pixel_size, (uint64_t)BOOT_GLYPH_COUNT,
            (uint64_t)(BOOT_ATLAS_BYTES / 1024));
     return 0;

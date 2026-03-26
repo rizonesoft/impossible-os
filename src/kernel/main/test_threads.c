@@ -7,7 +7,6 @@
  * ============================================================================ */
 
 #include "kernel/types.h"
-#include "kernel/printk.h"
 #include "kernel/klog.h"
 #include "kernel/sched/task.h"
 #include "kernel/mm/heap.h"
@@ -22,20 +21,20 @@
 
 void thread_a_func(void)
 {
-    printk("  [ThreadA] Hello from thread A (1/3)\n");
+    klog(LOG_DEBUG, "TEST", "[ThreadA] Hello from thread A (1/3)");
     yield();
-    printk("  [ThreadA] Back in thread A (2/3)\n");
+    klog(LOG_DEBUG, "TEST", "[ThreadA] Back in thread A (2/3)");
     yield();
-    printk("  [ThreadA] Thread A finishing (3/3)\n");
+    klog(LOG_DEBUG, "TEST", "[ThreadA] Thread A finishing (3/3)");
 }
 
 void thread_b_func(void)
 {
-    printk("  [ThreadB] Hello from thread B (1/3)\n");
+    klog(LOG_DEBUG, "TEST", "[ThreadB] Hello from thread B (1/3)");
     yield();
-    printk("  [ThreadB] Back in thread B (2/3)\n");
+    klog(LOG_DEBUG, "TEST", "[ThreadB] Back in thread B (2/3)");
     yield();
-    printk("  [ThreadB] Thread B finishing (3/3)\n");
+    klog(LOG_DEBUG, "TEST", "[ThreadB] Thread B finishing (3/3)");
 }
 
 /* --- Kernel thread test --- */
@@ -48,7 +47,7 @@ void thread_inc_func(void *arg)
     const char *label = (const char *)arg;
     for (i = 0; i < 5; i++) {
         thread_shared_counter++;
-        printk("    [%s] shared_counter = %u\n", label,
+        klog(LOG_DEBUG, "TEST", "[%s] shared_counter = %u", label,
                (uint64_t)thread_shared_counter);
         thread_yield();
     }
@@ -68,7 +67,7 @@ void mutex_inc_func(void *arg)
         mutex_shared_counter++;
         mutex_unlock(&test_mutex);
     }
-    printk("    [%s] done (100 increments)\n", label);
+    klog(LOG_DEBUG, "TEST", "[%s] done (100 increments)", label);
 }
 
 /* --- Semaphore test --- */
@@ -83,7 +82,7 @@ void sem_producer_func(void *arg)
     (void)arg;
     for (i = 0; i < 5; i++) {
         sem_produced++;
-        printk("    [Producer] produced item %u\n", (uint64_t)sem_produced);
+        klog(LOG_DEBUG, "TEST", "[Producer] produced item %u", (uint64_t)sem_produced);
         sem_signal(&test_sem);
         thread_yield();
     }
@@ -96,7 +95,7 @@ void sem_consumer_func(void *arg)
     for (i = 0; i < 5; i++) {
         sem_wait(&test_sem);
         sem_consumed++;
-        printk("    [Consumer] consumed item %u\n", (uint64_t)sem_consumed);
+        klog(LOG_DEBUG, "TEST", "[Consumer] consumed item %u", (uint64_t)sem_consumed);
     }
 }
 
@@ -131,7 +130,7 @@ void pipe_reader_func(void *arg)
         }
         if (match) pipe_test_ok = 1;
     }
-    printk("    [Reader] got %d bytes: \"%s\"\n", (uint64_t)(uint32_t)n, buf);
+    klog(LOG_DEBUG, "TEST", "[Reader] got %d bytes: \"%s\"", (uint64_t)(uint32_t)n, buf);
     pipe_close(pipe_test_id, PIPE_READ);
 }
 
@@ -155,7 +154,7 @@ void shmem_writer_func(void *arg)
     for (i = 0; i < 100; i++)
         (*counter)++;
 
-    printk("    [ShmWriter] done (100 increments, counter=%u)\n",
+    klog(LOG_DEBUG, "TEST", "[ShmWriter] done (100 increments, counter=%u)",
            (uint64_t)*counter);
     shmem_unmap(id);
 }
@@ -176,7 +175,7 @@ void shmem_reader_func(void *arg)
     for (i = 0; i < 100; i++)
         (*counter)++;
 
-    printk("    [ShmReader] done (100 increments, counter=%u)\n",
+    klog(LOG_DEBUG, "TEST", "[ShmReader] done (100 increments, counter=%u)",
            (uint64_t)*counter);
 
     if (*counter == 200)
@@ -195,7 +194,7 @@ void preempt_a_func(void)
     uint32_t i;
     for (i = 0; i < 3; i++) {
         pa_count++;
-        printk("  [PreemptA] Running (%u/3) -- no yield!\n",
+        klog(LOG_DEBUG, "TEST", "[PreemptA] Running (%u/3) -- no yield!",
                (uint64_t)pa_count);
         /* Busy-wait ~50ms (loop, not yield) to prove preemption */
         sleep_ms(100);
@@ -207,7 +206,7 @@ void preempt_b_func(void)
     uint32_t i;
     for (i = 0; i < 3; i++) {
         pb_count++;
-        printk("  [PreemptB] Running (%u/3) -- no yield!\n",
+        klog(LOG_DEBUG, "TEST", "[PreemptB] Running (%u/3) -- no yield!",
                (uint64_t)pb_count);
         sleep_ms(100);
     }
@@ -266,19 +265,19 @@ void exec_loader_func(void)
     uint8_t *buf;
 
     if (!vfs_is_mounted('C')) {
-        printk("  [ExecLoader] C:\\ not mounted\n");
+        klog(LOG_WARN, "TEST", "[ExecLoader] C:\\ not mounted");
         return;
     }
 
     file = vfs_open("C:\\hello.exe", VFS_O_READ);
     if (!file) {
-        printk("  [ExecLoader] hello.exe not found on C:\\\n");
+        klog(LOG_WARN, "TEST", "[ExecLoader] hello.exe not found on C:\\");
         return;
     }
 
     buf = (uint8_t *)kmalloc(file->size);
     if (!buf) {
-        printk("  [ExecLoader] cannot allocate buffer\n");
+        klog(LOG_WARN, "TEST", "[ExecLoader] cannot allocate buffer");
         vfs_close(file);
         return;
     }
@@ -287,7 +286,7 @@ void exec_loader_func(void)
     vfs_close(file);
 
     if (task_exec(buf, file->size) < 0) {
-        printk("  [ExecLoader] exec failed\n");
+        klog(LOG_WARN, "TEST", "[ExecLoader] exec failed");
         kfree(buf);
         return;
     }

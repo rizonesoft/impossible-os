@@ -18,7 +18,7 @@
 #include "desktop/wm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 #include "kernel/sched/task.h"
 #include "kernel/acpi.h"
 #include "desktop/terminal.h"
@@ -191,7 +191,7 @@ static void load_wallpaper(void)
 
     /* Decode the image file (JPEG, PNG, BMP, GIF, TGA) */
     if (image_load(&decoded, wp_path) < 0) {
-        printk("[DESKTOP] wallpaper: failed to decode '%s'\n", wp_path);
+        klog(LOG_ERROR, "DESKTOP", "wallpaper: failed to decode '%s'", wp_path);
         return;
     }
 
@@ -203,7 +203,7 @@ static void load_wallpaper(void)
     } else {
         if (image_scale(&wallpaper_img, &decoded,
                         screen_w, screen_h, fit_mode) < 0) {
-            printk("[DESKTOP] wallpaper: scale failed\n");
+            klog(LOG_ERROR, "DESKTOP", "wallpaper: scale failed");
             image_free(&decoded);
             return;
         }
@@ -211,7 +211,7 @@ static void load_wallpaper(void)
     }
 
     wallpaper_loaded = 1;
-    printk("[OK] Desktop wallpaper loaded (%ux%u, %u bytes)\n",
+    klog(LOG_INFO, "DESKTOP", "wallpaper loaded (%ux%u, %u bytes)",
            (uint64_t)wallpaper_img.width, (uint64_t)wallpaper_img.height,
            (uint64_t)wallpaper_img.alloc_size);
 }

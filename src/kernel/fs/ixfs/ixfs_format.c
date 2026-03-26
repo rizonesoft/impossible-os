@@ -262,7 +262,7 @@ int ixfs_init(const struct blkdev *dev)
     if (vol->sb.s_version == 1) {
         /* v1 volume: mount read-only for backward compatibility */
         vol->read_only = 1;
-        printk("[WARN] IXFS: v1 volume mounted read-only\n");
+        klog(LOG_WARN, "ixfs", "v1 volume mounted read-only");
     } else if (vol->sb.s_version != IXFS_VERSION) {
         klog(LOG_ERROR, "ixfs", "IXFS: unsupported version %u",
                (uint64_t)vol->sb.s_version);
@@ -326,8 +326,7 @@ int ixfs_init(const struct blkdev *dev)
         computed = ixfs_crc32c(&vol->sb, 112);
         vol->sb.s_checksum = saved;
         if (saved != 0 && computed != saved) {
-            printk("[WARN] IXFS: superblock checksum mismatch "
-                   "(stored=0x%x, computed=0x%x)\n",
+            klog(LOG_WARN, "ixfs", "superblock checksum mismatch (stored=0x%x, computed=0x%x)",
                    (uint64_t)saved, (uint64_t)computed);
         }
     }
@@ -421,7 +420,7 @@ int ixfs_scrub(void)
     uint8_t *buf;
 
     if (!vol || !vol->checksum_table) {
-        printk("[SKIP] IXFS scrub: no checksum table\n");
+        klog(LOG_INFO, "ixfs", "scrub: no checksum table");
         return -1;
     }
 
@@ -450,8 +449,7 @@ int ixfs_scrub(void)
 
         computed = ixfs_crc32c(buf, IXFS_BLOCK_SIZE);
         if (computed != stored) {
-            printk("[WARN] IXFS scrub: block %u corrupted "
-                   "(stored=0x%x, computed=0x%x)\n",
+            klog(LOG_WARN, "ixfs", "scrub: block %u corrupted (stored=0x%x, computed=0x%x)",
                    (uint64_t)i, (uint64_t)stored, (uint64_t)computed);
             corrupted++;
         }
@@ -459,7 +457,7 @@ int ixfs_scrub(void)
     }
 
     kfree(buf);
-    printk("[IXFS] scrub: %u blocks checked, %u corrupted\n",
+    klog(LOG_INFO, "ixfs", "scrub: %u blocks checked, %u corrupted",
            (uint64_t)checked, (uint64_t)corrupted);
     return (int)corrupted;
 }

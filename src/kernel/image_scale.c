@@ -19,7 +19,7 @@
 #include "kernel/image.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 #include "kernel/types.h"
 
 /* ---- Fixed-point 16.16 helpers ---------------------------------------- */
@@ -66,7 +66,7 @@ static int alloc_image(image_t *img, uint32_t w, uint32_t h)
         uint64_t frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
         uintptr_t phys = pmm_alloc_contiguous(frames);
         if (phys == 0) {
-            printk("image_scale: PMM alloc failed for %u bytes\n", size);
+            klog(LOG_ERROR, "IMG", "scale: PMM alloc failed for %u bytes", size);
             return -1;
         }
         img->pixels = (uint32_t *)phys;
@@ -74,7 +74,7 @@ static int alloc_image(image_t *img, uint32_t w, uint32_t h)
     } else {
         img->pixels = (uint32_t *)kmalloc(size);
         if (!img->pixels) {
-            printk("image_scale: kmalloc failed for %u bytes\n", size);
+            klog(LOG_ERROR, "IMG", "scale: kmalloc failed for %u bytes", size);
             return -1;
         }
         img->from_pmm = 0;
@@ -398,12 +398,12 @@ int image_scale(image_t *dst, const image_t *src,
     case IMAGE_FIT_CENTER:  result = fit_center(dst, src, target_w, target_h);  break;
     case IMAGE_FIT_TILE:    result = fit_tile(dst, src, target_w, target_h);    break;
     default:
-        printk("image_scale: unknown fit mode %d\n", (int)mode);
+        klog(LOG_ERROR, "IMG", "scale: unknown fit mode %d", (int)mode);
         return -1;
     }
 
     if (result == 0) {
-        printk("[IMG] Scaled %ux%u -> %ux%u (mode %d, %s)\n",
+        klog(LOG_INFO, "IMG", "Scaled %ux%u -> %ux%u (mode %d, %s)",
                src->width, src->height, dst->width, dst->height,
                (int)mode, dst->from_pmm ? "PMM" : "heap");
     }

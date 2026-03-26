@@ -7,7 +7,6 @@
 
 #include "kernel/version.h"
 #include "kernel/klog.h"
-#include "kernel/printk.h"
 
 /* Static version strings — computed at compile time from macros */
 static const char ver_full[]    = KERNEL_VERSION_STRING;
@@ -48,6 +47,6 @@ uint32_t version_build_number(void)
 
 void version_print(void)
 {
-    printk("  Impossible OS v%s (build %u, %s@%s, %s)\n",
-           ver_short, (uint64_t)VERSION_BUILD, ver_branch, ver_git, ver_time);
+    klog(LOG_INFO, "kernel", "Impossible OS v%s (build %u, %s@%s, %s)",
+         ver_short, (uint64_t)VERSION_BUILD, ver_branch, ver_git, ver_time);
 }

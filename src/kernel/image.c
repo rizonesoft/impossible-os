@@ -17,7 +17,7 @@
 #include "kernel/image.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/types.h"
 
@@ -58,7 +58,7 @@ static void pmm_track_add(void *ptr, uint32_t size)
         }
     }
     /* Table full — this is a bug, log it */
-    printk("image: PMM track table full! (%u slots)\n", (uint32_t)PMM_TRACK_MAX);
+    klog(LOG_ERROR, "IMG", "PMM track table full! (%u slots)", (uint32_t)PMM_TRACK_MAX);
 }
 
 static uint32_t pmm_track_remove(void *ptr)
@@ -103,7 +103,7 @@ static void *stbi_malloc_wrapper(uint32_t size)
         uint64_t frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
         uintptr_t phys = pmm_alloc_contiguous(frames);
         if (phys == 0) {
-            printk("image: PMM alloc failed for %u bytes (%llu frames)\n",
+            klog(LOG_ERROR, "IMG", "PMM alloc failed for %u bytes (%llu frames)",
                    size, (unsigned long long)frames);
             return (void *)0;
         }
@@ -281,7 +281,7 @@ int image_load_mem(image_t *img, const void *data, uint32_t size)
     );
 
     if (!decoded) {
-        printk("image: decode failed\n");
+        klog(LOG_ERROR, "IMG", "decode failed");
         return -1;
     }
 
@@ -312,13 +312,13 @@ int image_load(image_t *img, const char *path)
     /* Open file via VFS */
     f = vfs_open(path, VFS_O_READ);
     if (!f) {
-        printk("image: cannot open '%s'\n", path);
+        klog(LOG_ERROR, "IMG", "cannot open '%s'", path);
         return -1;
     }
 
     file_size = f->size;
     if (file_size == 0 || file_size > 32 * 1024 * 1024) {  /* Max 32 MB */
-        printk("image: invalid size %u for '%s'\n", file_size, path);
+        klog(LOG_ERROR, "IMG", "invalid size %u for '%s'", file_size, path);
         vfs_close(f);
         return -1;
     }
@@ -329,7 +329,7 @@ int image_load(image_t *img, const char *path)
         uint64_t frames = (file_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
         uintptr_t phys = pmm_alloc_contiguous(frames);
         if (phys == 0) {
-            printk("image: PMM alloc failed for file buf %u bytes\n", file_size);
+            klog(LOG_ERROR, "IMG", "PMM alloc failed for file buf %u bytes", file_size);
             vfs_close(f);
             return -1;
         }
@@ -338,7 +338,7 @@ int image_load(image_t *img, const char *path)
     } else {
         file_buf = (uint8_t *)kmalloc(file_size);
         if (!file_buf) {
-            printk("image: cannot alloc %u bytes for '%s'\n", file_size, path);
+            klog(LOG_ERROR, "IMG", "cannot alloc %u bytes for '%s'", file_size, path);
             vfs_close(f);
             return -1;
         }
@@ -348,7 +348,7 @@ int image_load(image_t *img, const char *path)
     vfs_close(f);
 
     if (bytes_read <= 0) {
-        printk("image: read error on '%s' (got %d)\n", path, bytes_read);
+        klog(LOG_ERROR, "IMG", "read error on '%s' (got %d)", path, bytes_read);
         if (buf_is_pmm) {
             uint64_t frames = (file_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
             uint64_t fi;
@@ -374,7 +374,7 @@ int image_load(image_t *img, const char *path)
     }
 
     if (result == 0) {
-        printk("[IMG] Decoded '%s': %ux%u %s\n",
+        klog(LOG_INFO, "IMG", "Decoded '%s': %ux%u %s",
                path, img->width, img->height,
                img->from_pmm ? "(PMM)" : "(heap)");
     }

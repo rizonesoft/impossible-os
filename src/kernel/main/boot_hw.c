@@ -11,7 +11,6 @@
 #include "kernel/boot_info.h"
 #include "gfx_simd.h"
 #include "kernel/drivers/serial.h"
-#include "kernel/printk.h"
 #include "kernel/klog.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
@@ -72,17 +71,17 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
         const uint8_t *s = (const uint8_t *)src;
         for (i = 0; i < sizeof(struct boot_info); i++)
             d[i] = s[i];
-        serial_write("[UEFI] Boot info received from Impossible OS bootloader\n");
+        klog(LOG_INFO, "UEFI", "Boot info received from Impossible OS bootloader");
     } else if (magic == MULTIBOOT2_BOOTLOADER_MAGIC) {
         multiboot2_parse((uintptr_t)mbi);
     } else {
-        serial_write("[FAIL] Unknown bootloader magic!\n");
+        klog(LOG_FATAL, "boot", "Unknown bootloader magic!");
         for (;;) __asm__ volatile ("hlt");
     }
     HV_BAR(84, 0x0000FFFF);   /* Row 84: CYAN = boot info parsed */
 
     /* Log boot.conf values */
-    printk("[CONF] boot.conf: debug=%d verbose=%d serial=%d mode=%d splash=%ds heartbeat=%d postcode=%d%s\n",
+    klog(LOG_INFO, "CONF", "boot.conf: debug=%d verbose=%d serial=%d mode=%d splash=%ds heartbeat=%d postcode=%d%s",
            g_boot_info.config.debug, g_boot_info.config.verbose,
            g_boot_info.config.serial_debug, g_boot_info.config.boot_mode,
            g_boot_info.config.splash_timeout, g_boot_info.config.heartbeat,

@@ -15,7 +15,7 @@
 #include "desktop/wm.h"
 #include "font_mgr.h"
 #include "gfx.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 
 /* ---- Gallery state ---- */
 
@@ -108,7 +108,7 @@ void gallery_open(void)
     h = wm_create_window("Control Gallery", 50, 40, 420, 360,
                           WM_DIALOG_FLAGS);
     if (h < 0) {
-        printk("[GALLERY] Failed to create window\n");
+        klog(LOG_ERROR, "GALLERY", "Failed to create window");
         return;
     }
 
@@ -154,7 +154,7 @@ void gallery_open(void)
     gallery_created = 1;
     wm_mark_dirty();
 
-    printk("[OK] Control Gallery opened\n");
+    klog(LOG_INFO, "GALLERY", "Control Gallery opened");
 }
 
 void gallery_render(void)
