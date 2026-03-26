@@ -39,6 +39,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
    - Stage all changed source files, headers, and the updated TODO file together.
    - Account for repo `.githooks/` if installed (pre-commit lint must pass).
    - Always push to `origin/main` immediately after a successful commit (`git push`).
+   - After a successful push, mark the section's `- [ ] Commit: "..."` checklist item `[x]` in the TODO file and stage + amend the commit so the final state of the TODO reflects a completed commit line. If amend is not safe (commit already pushed), make a follow-up fixup commit instead.
 
 ## Guardrails
 

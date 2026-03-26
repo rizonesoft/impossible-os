@@ -125,7 +125,7 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel and user 
 - [ ] If `secure_boot_enabled`: call `srm_verify_kernel_signature("C:\\boot\\kernel.exe")` (→ XREF `02-kernel-core/TODO-11-security-reference-monitor.md`); on failure: log `[SecureBoot] kernel.exe signature INVALID` + `BOOT_FATAL` *(deferred — `srm_verify_kernel_signature` has no section in TODO-11 yet)*
 - [x] Display padlock icon (🔒) in system tray status bar when Secure Boot is active (desktop integration hook — set flag in `g_system_state.secure_boot` readable by tray renderer)
 - [x] Serial log: `[SecureBoot] state=ENABLED` or `[SecureBoot] state=DISABLED (firmware or user override)`
-- [ ] Commit: `"kernel: Secure Boot state detection, registry key, and kernel.exe signature check"`
+- [x] Commit: `"kernel: Secure Boot state detection, registry key, and kernel.exe signature check"`
 
 ## 6. Secure Boot Shim Chain-Loading `[Opus]`
 
