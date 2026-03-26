@@ -1,18 +1,9 @@
 # TODO-04 — PEB / TEB & User-Mode ABI
 
-> **Goal:** Implement the Process Environment Block, Thread Environment Block, and the
-> complete x86-64 user-mode ABI handoff so that `ntdll.dll` and all Win32 DLLs can
-> initialise and user programs run correctly. Without this, no Win32 binary can call
-> `GetLastError`, locate loaded modules, parse command-line arguments, or access TLS.
-> This is the first item every Win32 user-mode DLL depends on, and blocks everything
-> downstream in the Win32 subsystem.
+> **Goal:** Implement the Process Environment Block, Thread Environment Block, and the complete x86-64 user-mode ABI handoff so that `ntdll.dll` and all Win32 DLLs can initialise and user programs run correctly. Without this, no Win32 binary can call `GetLastError`, locate loaded modules, parse command-line arguments, or access TLS. This is the first item every Win32 user-mode DLL depends on, and blocks everything downstream in the Win32 subsystem.
 
 > [!IMPORTANT]
-> **Current state:** `task_exec` (task.c line 627) drops into ring 3 via `iretq` with
-> registers all-zero and a bare aligned stack pointer. No argc/argv/envp are pushed,
-> no PEB/TEB structs exist, `IA32_KERNEL_GS_BASE` (0xC0000102) is never written, and
-> INT 0x80 entry/exit has no `swapgs`. GS currently points to kernel per-CPU data
-> (IA32_GS_BASE 0xC0000101) and is never switched on ring-3 transitions.
+> **Current state:** `task_exec` (task.c line 627) drops into ring 3 via `iretq` with registers all-zero and a bare aligned stack pointer. No argc/argv/envp are pushed, no PEB/TEB structs exist, `IA32_KERNEL_GS_BASE` (0xC0000102) is never written, and INT 0x80 entry/exit has no `swapgs`. GS currently points to kernel per-CPU data (IA32_GS_BASE 0xC0000101) and is never switched on ring-3 transitions.
 
 ## Inputs
 
@@ -21,23 +12,16 @@
 - [`src/kernel/smp/smp.c`](../../src/kernel/smp/smp.c) — `IA32_GS_BASE` MSR setup
 - [`src/kernel/elf.c`](../../src/kernel/elf.c) — ELF loader (`elf_load`, `elf_load_result`)
 - [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h) — syscall table
-- → XREF: `TODO-02-kernel-core/TODO-03-object-manager.md` — handle table needed for
-          `PEB->ProcessParameters` stdin/stdout/stderr HANDLE fields
-- → XREF: `TODO-02-kernel-core/TODO-01-kernel-init-sequencing.md` — PEB/TEB init belongs
-          in Phase 3 (user platform); requires VMM and scheduler (Phase 2)
-- → XREF: `TODO-02-kernel-core/TODO-05-native-api.md` — `NtCreateProcess` populates PEB;
-          `LdrInitializeThunk` (ntdll entry) reads PEB->Ldr
+- → XREF: `TODO-03-object-manager.md` — handle table needed for `PEB->ProcessParameters` stdin/stdout/stderr HANDLE fields
+- → XREF: `TODO-01-kernel-init-sequencing.md` — PEB/TEB init belongs in Phase 3 (user platform); requires VMM and scheduler (Phase 2)
+- → XREF: `TODO-05-native-api-layer.md` — `NtCreateProcess` populates PEB; `LdrInitializeThunk` (ntdll entry) reads PEB->Ldr
 
 ## Outcome
 
-- Every process has a PEB at a well-known user-mode address populated with image base,
-  process parameters (command line, image path, env block, std handles), and Ldr data.
-- Every thread has a TEB with GS self-pointer, stack limits, process ID, thread ID,
-  last-error slot, and 64 TLS slots.
-- `swapgs` gates every kernel-entry and kernel-exit path so GS always points to the
-  correct structure: kernel per-CPU data in ring 0, TEB in ring 3.
-- `task_exec` pushes a complete Win32-compatible initial stack frame (argc, argv, envp
-  plus RTL_USER_PROCESS_PARAMETERS) before `iretq` to ring 3.
+- Every process has a PEB at a well-known user-mode address populated with image base, process parameters (command line, image path, env block, std handles), and Ldr data.
+- Every thread has a TEB with GS self-pointer, stack limits, process ID, thread ID, last-error slot, and 64 TLS slots.
+- `swapgs` gates every kernel-entry and kernel-exit path so GS always points to the correct structure: kernel per-CPU data in ring 0, TEB in ring 3.
+- `task_exec` pushes a complete Win32-compatible initial stack frame (argc, argv, envp plus RTL_USER_PROCESS_PARAMETERS) before `iretq` to ring 3.
 - Win32's `GetLastError` / `SetLastError`, `NtCurrentTeb()`, `NtCurrentPeb()` macros work.
 
 ## Implementation Order
@@ -56,20 +40,16 @@
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace              | 5, 6, TODO-03 §4 | [ ] |
 
 > 💎 = parity — Windows NT / 11 and ntdll both require and implement all of these.
-> ⭐ = exclusive — exposing PEB and TEB as queryable named Ob objects enables user-mode
->     introspection tools and debuggers without any kernel patching; Windows hides these
->     as private loader internals.
+> ⭐ = exclusive — exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
 
 ---
 
 ## 1. TEB Struct and GS Self-Pointer `[Sonnet]`
 
-Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macros
-(`NtCurrentTeb()` = `mov rax, gs:[0x30]`) work without patching.
+Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macros (`NtCurrentTeb()` = `mov rax, gs:[0x30]`) work without patching.
 
 - [ ] Create `include/kernel/ob/teb.h` with `TEB` struct at exact Windows x64 offsets:
-  - `NT_TIB NtTib` at offset `0x00` — ExceptionList, StackBase, StackLimit, SubSystemTib,
-    FiberData/Version, ArbitraryUserPointer, **Self** (pointer to the TEB itself)
+  - `NT_TIB NtTib` at offset `0x00` — ExceptionList, StackBase, StackLimit, SubSystemTib, FiberData/Version, ArbitraryUserPointer, **Self** (pointer to the TEB itself)
   - `void *EnvironmentPointer` at `0x38`
   - `CLIENT_ID ClientId` at `0x40` — UniqueProcess (PID), UniqueThread (TID)
   - `void *ActiveRpcHandle` at `0x50`
@@ -86,8 +66,7 @@ Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macro
 
 ## 2. PEB Struct and RTL_USER_PROCESS_PARAMETERS `[Sonnet]`
 
-Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk it
-without any patching.
+Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk it without any patching.
 
 - [ ] Create `include/kernel/ob/peb.h` with `PEB` struct:
   - `uint8_t InheritedAddressSpace` at `0x00`
@@ -120,45 +99,32 @@ without any patching.
 
 ## 3. swapgs on INT 0x80 Entry and Exit `[Opus]`
 
-Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) holds the
-TEB address. `swapgs` exchanges the two MSRs — must fire on every ring-3→ring-0 transition
-and be reversed on every ring-0→ring-3 return.
+Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) holds the TEB address. `swapgs` exchanges the two MSRs — must fire on every ring-3→ring-0 transition and be reversed on every ring-0→ring-3 return.
 
-- [ ] In the INT 0x80 ISR stub (`idt.asm` or equivalent): add `swapgs` as the **first**
-      instruction before any register save when `CS & 3 == 3` (came from ring 3)
-  - Check CPL using `testb $3, 8(%rsp)` (CS is 8 bytes past `rsp` on exception entry) —
-    execute `swapgs` only if non-zero, to be safe on nested kernel faults
-- [ ] On INT 0x80 exit path (before `iretq` back to ring 3): add matching `swapgs` to
-      restore TEB address to GS before `iretq`
+- [ ] In the INT 0x80 ISR stub (`idt.asm` or equivalent): add `swapgs` as the **first** instruction before any register save when `CS & 3 == 3` (came from ring 3)
+  - Check CPL using `testb $3, 8(%rsp)` (CS is 8 bytes past `rsp` on exception entry) — execute `swapgs` only if non-zero, to be safe on nested kernel faults
+- [ ] On INT 0x80 exit path (before `iretq` back to ring 3): add matching `swapgs` to restore TEB address to GS before `iretq`
 - [ ] On `iretq` to ring 0 (kernel→kernel): do NOT call `swapgs`
-- [ ] Add regression comment block at the swapgs site explaining the symmetry requirement —
-      a missing or double swapgs causes immediate GS corruption and is hard to debug
+- [ ] Add regression comment block at the swapgs site explaining the symmetry requirement — a missing or double swapgs causes immediate GS corruption and is hard to debug
 - [ ] Verify with QEMU: after ring-3 task runs, GS in ring 0 still points to per-CPU data
 - [ ] Commit: `"kernel: abi — swapgs on INT 0x80 ring-3 entry and exit"`
 
 ## 4. KERNEL_GS_BASE Written at task_exec and Fork `[Opus]`
 
-`IA32_KERNEL_GS_BASE` (MSR 0xC0000102) must hold the TEB address before the first
-ring-3 instruction runs. `swapgs` (§3) exchanges GS_BASE ↔ KERNEL_GS_BASE, so after
-`swapgs` in the ISR entry the kernel sees per-CPU GS and user-mode sees TEB via GS.
+`IA32_KERNEL_GS_BASE` (MSR 0xC0000102) must hold the TEB address before the first ring-3 instruction runs. `swapgs` (§3) exchanges GS_BASE ↔ KERNEL_GS_BASE, so after `swapgs` in the ISR entry the kernel sees per-CPU GS and user-mode sees TEB via GS.
 
 - [ ] Define `MSR_KERNEL_GS_BASE 0xC0000102` in `include/kernel/smp/msr.h` (or smp.c)
-- [ ] In `task_exec`: after allocating TEB (§6), `wrmsr(MSR_KERNEL_GS_BASE, teb_addr)` before
-      the scheduler runs the task
-- [ ] In `task_fork`: duplicate TEB for the child; write child's TEB address to
-      `IA32_KERNEL_GS_BASE` when the child is first scheduled
-- [ ] In `task_create` for kernel tasks: write `0` to `IA32_KERNEL_GS_BASE` — kernel tasks
-      never execute `swapgs` back to a TEB
-- [ ] On context switch (`switch_context.asm`): save and restore `IA32_KERNEL_GS_BASE` per
-      task if SMP or if multiple user tasks share the same CPU
+- [ ] In `task_exec`: after allocating TEB (§6), `wrmsr(MSR_KERNEL_GS_BASE, teb_addr)` before the scheduler runs the task
+- [ ] In `task_fork`: duplicate TEB for the child; write child's TEB address to `IA32_KERNEL_GS_BASE` when the child is first scheduled
+- [ ] In `task_create` for kernel tasks: write `0` to `IA32_KERNEL_GS_BASE` — kernel tasks never execute `swapgs` back to a TEB
+- [ ] On context switch (`switch_context.asm`): save and restore `IA32_KERNEL_GS_BASE` per task if SMP or if multiple user tasks share the same CPU
 - [ ] Commit: `"kernel: abi — write KERNEL_GS_BASE at task_exec and fork"`
 
 ## 5. PEB Allocation and Population at task_exec `[Sonnet]`
 
 Allocate the PEB in the user address space and fill it before the first instruction runs.
 
-- [ ] Reserve a fixed user-mode address for PEB: `0x7FFDE000` (matches Windows default for
-      64-bit processes on low addresses); map a VMM page there (writable, user-accessible)
+- [ ] Reserve a fixed user-mode address for PEB: `0x7FFDE000` (matches Windows default for 64-bit processes on low addresses); map a VMM page there (writable, user-accessible)
 - [ ] Zero the entire PEB page
 - [ ] Populate mandatory fields:
   - `ImageBaseAddress` ← ELF load base from `elf_load_result`
@@ -169,10 +135,8 @@ Allocate the PEB in the user address space and fill it before the first instruct
 - [ ] Build `RTL_USER_PROCESS_PARAMETERS` in user address space:
   - Convert `task->name` to a `UNICODE_STRING` ImagePathName (ASCII → UTF-16 inline)
   - Build `CommandLine` from task argv array
-  - Set `StandardInput = INVALID_HANDLE_VALUE`, `StandardOutput`, `StandardError` ←
-    handles from the process handle table once TODO-03 §3 is done; for now write sentinel
-  - Build environment block: null-terminated UTF-16 `name=value\0name=value\0\0` pairs
-    starting with `PATH=C:\Impossible\System32\`
+  - Set `StandardInput = INVALID_HANDLE_VALUE`, `StandardOutput`, `StandardError` ← handles from the process handle table once TODO-03 §3 is done; for now write sentinel
+  - Build environment block: null-terminated UTF-16 `name=value\0name=value\0\0` pairs starting with `PATH=C:\Impossible\System32\`
 - [ ] Store PEB pointer in `task_t` struct for kernel reference: `tasks[pid].peb`
 - [ ] Commit: `"kernel: peb — PEB allocation and population at exec"`
 
@@ -180,8 +144,7 @@ Allocate the PEB in the user address space and fill it before the first instruct
 
 One TEB per thread. Allocated in the user address space near the thread stack.
 
-- [ ] Allocate one page for the TEB at user address `0x7FFDC000` for the initial thread;
-      subsequent threads increment by page (or use VMM range allocation)
+- [ ] Allocate one page for the TEB at user address `0x7FFDC000` for the initial thread; subsequent threads increment by page (or use VMM range allocation)
 - [ ] Zero the TEB page
 - [ ] Populate mandatory fields:
   - `NtTib.Self` ← TEB address (the GS self-pointer; `gs:[0x30]` must return the TEB address)
@@ -197,29 +160,20 @@ One TEB per thread. Allocated in the user address space near the thread stack.
 
 ## 7. Initial User Stack Frame `[Opus]`
 
-The user stack must have a valid calling frame waiting for the first instruction.
-Win32 convention: `ntdll!_LdrpInitialize` reads `PEB->ProcessParameters`; it does not
-expect argc/argv on the stack itself. However, the ELF ABI (for ELF-based binaries in
-the compatibility path) needs the Linux-style stack layout.
+The user stack must have a valid calling frame waiting for the first instruction. Win32 convention: `ntdll!_LdrpInitialize` reads `PEB->ProcessParameters`; it does not expect argc/argv on the stack itself. However, the ELF ABI (for ELF-based binaries in the compatibility path) needs the Linux-style stack layout.
 
 - [ ] For **ELF executables** (current path): push the Linux x86-64 initial stack layout:
-  - `argc` (uint64_t), then `argv[0]…argv[argc-1]`, NULL, then `envp[0]…`, NULL, then
-    `AT_NULL` auxv entry — RSP on entry to `_start` points to `argc`
-  - `AT_ENTRY`, `AT_PHDR`, `AT_PHENT`, `AT_PHNUM`, `AT_BASE`, `AT_FLAGS`, `AT_PAGESZ`
-    auxv entries populated from ELF load result
+  - `argc` (uint64_t), then `argv[0]…argv[argc-1]`, NULL, then `envp[0]…`, NULL, then `AT_NULL` auxv entry — RSP on entry to `_start` points to `argc`
+  - `AT_ENTRY`, `AT_PHDR`, `AT_PHENT`, `AT_PHNUM`, `AT_BASE`, `AT_FLAGS`, `AT_PAGESZ` auxv entries populated from ELF load result
   - `AT_NULL` terminator
-- [ ] For **PE32+ executables** (future): push a single null pointer as the return address
-      and pass PEB address in RCX (Win64 calling convention first arg); ntdll will parse
-      ProcessParameters for argv
+- [ ] For **PE32+ executables** (future): push a single null pointer as the return address and pass PEB address in RCX (Win64 calling convention first arg); ntdll will parse ProcessParameters for argv
 - [ ] Replace the current all-zero stack top in `task_exec` with the correct layout above
 - [ ] Confirm `_start` in `user/hello.c` still executes correctly with the new stack
 - [ ] Commit: `"kernel: abi — initial user stack frame with argv, envp, auxv"`
 
 ## 8. PEB Ldr (Module List) Basic Population `[Sonnet]`
 
-`ntdll!LdrInitializeThunk` walks `PEB->Ldr->InLoadOrderModuleList` to find already-loaded
-modules. Even a stub Ldr with just the main module prevents ntdll from faulting on an
-empty list.
+`ntdll!LdrInitializeThunk` walks `PEB->Ldr->InLoadOrderModuleList` to find already-loaded modules. Even a stub Ldr with just the main module prevents ntdll from faulting on an empty list.
 
 - [ ] Define `PEB_LDR_DATA` struct:
   - `uint32_t Length`, `uint8_t Initialized`
@@ -227,44 +181,32 @@ empty list.
   - `LIST_ENTRY InLoadOrderModuleList`
   - `LIST_ENTRY InMemoryOrderModuleList`
   - `LIST_ENTRY InInitializationOrderModuleList`
-- [ ] Define `LDR_DATA_TABLE_ENTRY` with DllBase, EntryPoint, SizeOfImage, FullDllName
-      (UNICODE_STRING), BaseDllName (UNICODE_STRING), Flags, LoadCount
+- [ ] Define `LDR_DATA_TABLE_ENTRY` with DllBase, EntryPoint, SizeOfImage, FullDllName (UNICODE_STRING), BaseDllName (UNICODE_STRING), Flags, LoadCount
 - [ ] Allocate `PEB_LDR_DATA` in user space; set `Initialized = 1`
 - [ ] Insert main executable as the first and only `LDR_DATA_TABLE_ENTRY` in all three lists
 - [ ] Wire `PEB->Ldr` to the allocated `PEB_LDR_DATA`
-- [ ] Full module list management (LoadLibrary / FreeLibrary) is in TODO-05 §3 (DLL loader)
+- [ ] Full module list management (LoadLibrary / FreeLibrary) is out of scope here — see `TODO-08-binary-system.md` §7 (PE32+ import resolver) and §10 (ELF dynamic linker)
 - [ ] Commit: `"kernel: peb — minimal PEB Ldr with main module entry"`
 
 ## 9. TLS Slot Allocation (64 Static Slots) `[Sonnet]`
 
-TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(thread)` and
-`TlsAlloc`. A minimal allocator is needed for Win32 DLLs that use TLS before the full
-heap is available.
+TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(thread)` and `TlsAlloc`. A minimal allocator is needed for Win32 DLLs that use TLS before the full heap is available.
 
-- [ ] Add a per-process static TLS bitmap: 64-bit `uint64_t tls_bitmap` in `task_t` (one bit
-      per slot; bit=0 means free)
-- [ ] Implement `TlsAlloc()` kernel helper: scan bitmap for first free bit, set it, return
-      slot index (0–63)
-- [ ] Implement `TlsFree(index)`: clear the bit; zero the TLS slot in all threads of the
-      process
-- [ ] `TlsGetValue(index)` / `TlsSetValue(index, value)`: read/write `teb->TlsSlots[index]`
-      directly (inline via GS offset for performance)
-- [ ] Slots 0–63 map to `gs:[0x1480 + index * 8]`; expansion slots (index ≥ 64) go through
-      `teb->TlsExpansionSlots` pointer — stub the expansion path (return error for index ≥ 64)
+- [ ] Add a per-process static TLS bitmap: 64-bit `uint64_t tls_bitmap` in `task_t` (one bit per slot; bit=0 means free)
+- [ ] Implement `TlsAlloc()` kernel helper: scan bitmap for first free bit, set it, return slot index (0–63)
+- [ ] Implement `TlsFree(index)`: clear the bit; zero the TLS slot in all threads of the process
+- [ ] `TlsGetValue(index)` / `TlsSetValue(index, value)`: read/write `teb->TlsSlots[index]` directly (inline via GS offset for performance)
+- [ ] Slots 0–63 map to `gs:[0x1480 + index * 8]`; expansion slots (index ≥ 64) go through `teb->TlsExpansionSlots` pointer — stub the expansion path (return error for index ≥ 64)
 - [ ] Commit: `"kernel: peb — TLS slot allocation (64 static slots)"`
 
 ## 10. PEB / TEB Exposed in Ob Namespace `[Sonnet]`
 
-Make the PEB and TEB for any process queryable by name through the Object Manager
-namespace (→ XREF: TODO-03 §4 and §11). Enables debuggers and introspection tools
-without kernel patching — not possible on Windows or Linux without a private API.
+Make the PEB and TEB for any process queryable by name through the Object Manager namespace (→ XREF: TODO-03 §4 and §11). Enables debuggers and introspection tools without kernel patching — not possible on Windows or Linux without a private API.
 
-- [ ] Insert each process PEB as a named object in `\KernelObjects\Process<PID>\Peb`
-      using `ObInsertObject` (TODO-03 §4)
+- [ ] Insert each process PEB as a named object in `\KernelObjects\Process<PID>\Peb` using `ObInsertObject` (TODO-03 §4)
 - [ ] Insert each thread TEB as `\KernelObjects\Process<PID>\Thread<TID>\Teb`
 - [ ] Implement `ObpPebType` and `ObpTebType` — on_delete frees the user-space pages
-- [ ] User-mode can call `NtOpenDirectoryObject` + `NtQueryDirectoryObject` (TODO-03 §11)
-      to enumerate all live processes and inspect their PEB/TEB fields
+- [ ] User-mode can call `NtOpenDirectoryObject` + `NtQueryDirectoryObject` (TODO-03 §11) to enumerate all live processes and inspect their PEB/TEB fields
 - [ ] Document this as a public Impossible OS introspection API
 - [ ] Commit: `"kernel: peb — PEB and TEB registered in Ob namespace"`
 
@@ -285,12 +227,8 @@ without kernel patching — not possible on Windows or Linux without a private A
 | ⭐  | PEB/TEB as named Ob namespace objects | ❌ Private, not in Ob namespace                     | ❌ Not exposed                               | ⬜ **Planned — §10 — public introspection**    |
 | ⭐  | Win11 OS version fields in PEB        | ✅ Internal only                                    | ❌ N/A                                       | ⬜ **Planned — §5 — full Win11 compat fields** |
 
-> **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract.
-> `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work
-> at correct GS offsets — ntdll and Win32 DLLs can initialise without patching.
-> **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects
-> in the Ob namespace, enabling any user-mode tool to introspect any process without a
-> private API or kernel debugger.
+> **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets — ntdll and Win32 DLLs can initialise without patching.
+> **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace, enabling any user-mode tool to introspect any process without a private API or kernel debugger.
 
 ## Verification
 

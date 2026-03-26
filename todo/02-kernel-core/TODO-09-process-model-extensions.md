@@ -11,11 +11,11 @@
 - [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) — `task_create`, `task_fork`, `task_exec`, `task_exit`, scheduler loop
 - [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) — `vfs_open`, relative path lookup entry point
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) — `vmm_map_pages` for program-break page allocation
-- → XREF: `TODO-03-object-manager.md` §3 — `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 provides `NtClose` / `NtDuplicateObject`
-- → XREF: `TODO-04-peb-teb-user-abi.md` §5 — `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
-- → XREF: `TODO-05-native-api-layer.md` §9 — `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
-- → XREF: `TODO-07-time-filetime-management.md` §6 — `KeDelayExecutionThread` is the sleep implementation; `NtDelayExecution` syscall wiring belongs there
-- → XREF: `TODO-08-binary-system.md` §1 — `exec_load()` dispatcher sets `brk` to end of BSS at load time
+- → XREF: `TODO-03-object-manager.md §3` — `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
+- → XREF: `TODO-04-peb-teb-user-abi.md §5` — `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
+- → XREF: `TODO-05-native-api-layer.md §9` — `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
+- → XREF: `TODO-07-time-filetime-management.md §6` — `KeDelayExecutionThread` is the sleep implementation; `NtDelayExecution` syscall wiring belongs there
+- → XREF: `TODO-08-binary-system.md §1` — `exec_load()` dispatcher sets `brk` to end of BSS at load time
 
 ## Outcome
 
@@ -48,7 +48,7 @@
 
 `struct task` has no `cwd` field. All VFS paths are currently treated as absolute. Relative path resolution must be added before any shell navigation or portable app path handling works.
 
-- [ ] Add `char cwd[512]` to `struct task`; initialize to `"C:\\"` at `task_init()` and `task_create()`
+- [ ] Add `char cwd[MAX_PATH]` to `struct task`; initialize to `"C:\\"` at `task_init()` and `task_create()`
 - [ ] Inherit CWD from parent at `task_fork()` — copy the string
 - [ ] In `task_exec()` / `exec_load()`: preserve CWD from the calling process (do not reset on exec)
 - [ ] Add VFS relative-path resolver: if the path does not begin with a drive letter (`X:\`), prepend `task->cwd` before passing to VFS lookup
@@ -98,6 +98,7 @@ Thread priority already exists. This section adds the Win32 `PROCESS_PRIORITY_CL
 - [ ] `NtQueryInformationProcess(ProcessHandle, ProcessPriorityClass, ...)`: return current class
 - [ ] Changing `priority_class` adjusts all thread `base_priority` values but does not override active PI boosts
 - [ ] Compositor and audio: spawned at `PROCESS_PRIORITY_HIGH`; background tasks at `PROCESS_PRIORITY_IDLE`
+- [ ] Register `NtSetInformationProcess` and `NtQueryInformationProcess` in SSDT (→ XREF `TODO-05 §4`)
 - [ ] Commit: `"kernel: task — process priority class and NtSetInformationProcess"`
 
 ## 5. Per-Task Scheduling Policy `[Sonnet]`
@@ -111,6 +112,7 @@ Add a per-task `sched_policy` field for tasks that need non-time-sliced executio
 - [ ] Update `schedule()` in `task.c`: skip `SCHED_POLICY_FIFO` tasks for quantum-based preemption; skip `SCHED_POLICY_IDLE` tasks when higher-policy tasks are runnable
 - [ ] `NtSetInformationProcess(ProcessHandle, ProcessSchedulingPolicy, ...)`: validate `CAP_SCHED_FIFO` for FIFO; update field
 - [ ] Kernel-internal convenience: `task_set_sched_policy(pid, SCHED_POLICY_FIFO)` callable from boot paths
+- [ ] `NtSetInformationProcess(ProcessSchedulingPolicy)` registered in SSDT shares the entry with §4 (→ XREF `TODO-05 §4`)
 - [ ] Commit: `"kernel: sched — per-task scheduling policy (FIFO, IDLE)"`
 
 ## 6. Process Capabilities and Privilege Bitmask `[Opus]`
@@ -138,8 +140,8 @@ Every process carries a `capabilities` bitmask. Privileged syscalls check it bef
 Capabilities can be inherited across `fork` / `exec` but can only be dropped, never gained. This makes privilege de-escalation auditable and prevents accidental escalation.
 
 - [ ] At `task_fork()`: child inherits parent `capabilities` exactly
-- [ ] At `task_exec()` via `exec_load()`: apply EIF capability mask from EIF header flags (§4.1 SIGNED + capabilities field); strip any bits not in the parent's set; never add new capabilities on exec
-- [ ] `NtDropCapability(cap_mask)`: clear one or more capability bits from the calling process; irreversible for the lifetime of the process
+- [ ] At `task_exec()` via `exec_load()`: on EIF binaries, apply capability mask from EIF header flags; strip any bits not in the parent's set; never add new capabilities on exec (→ XREF `TODO-08 §3` — EIF capabilities field is not yet defined in the spec; extend `eif_header_t` there before implementing here)
+- [ ] `NtDropCapability(cap_mask)`: clear one or more capability bits from the calling process; irreversible for the lifetime of the process; register in SSDT (→ XREF `TODO-05 §4`)
 - [ ] No syscall or path grants new capabilities — escalation requires a restart or a privileged parent spawning with a specific mask
 - [ ] Document the invariant: `child->capabilities ⊆ parent->capabilities` is enforced at fork and exec
 - [ ] Commit: `"kernel: security — capability inheritance and drop-only policy"`

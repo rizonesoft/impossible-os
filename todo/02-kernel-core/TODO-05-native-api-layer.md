@@ -1,17 +1,9 @@
 # TODO-05 — Native API Layer (Nt/Zw)
 
-> **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a
-> proper NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a
-> `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT), and
-> the `NtCurrentTeb()` and `NtCurrentPeb()` inline contract. This is the exact interface
-> that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel.
-> Without it, the Win32 subsystem layer cannot be built correctly.
+> **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a proper NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT), and the `NtCurrentTeb()` and `NtCurrentPeb()` inline contract. This is the exact interface that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel. Without it, the Win32 subsystem layer cannot be built correctly.
 
 > [!IMPORTANT]
-> **Current state:** `syscall.c` dispatches via `INT 0x80` with Linux-style `SYS_WRITE=1`,
-> `SYS_READ=2`, … `SYS_MUNMAP=38`. Return value is a plain `int64_t`. No `NTSTATUS`,
-> no `NtXxx`/`ZwXxx` entry points, no `SYSCALL`/`SYSRET` MSR setup, no SSDT.
-> The existing 22 syscalls are the migration starting point; none are deleted here.
+> **Current state:** `syscall.c` dispatches via `INT 0x80` with Linux-style `SYS_WRITE=1`, `SYS_READ=2`, … `SYS_MUNMAP=38`. Return value is a plain `int64_t`. No `NTSTATUS`, no `NtXxx`/`ZwXxx` entry points, no `SYSCALL`/`SYSRET` MSR setup, no SSDT. The existing 22 syscalls are the migration starting point; none are deleted here.
 
 ## Inputs
 
@@ -22,6 +14,8 @@
 - → XREF: `TODO-03-object-manager.md` — `NtCreateFile`, `NtOpenFile`, `NtClose` are Ob-routed; SSDT entries 0x0025–0x002C depend on TODO-03
 - → XREF: `TODO-04-peb-teb-user-abi.md` — `swapgs` in syscall entry/exit uses the TEB GS contract from TODO-04 §3–§4
 - → XREF: `TODO-01-kernel-init-sequencing.md` — syscall fast path init belongs in Phase 1 (after GDT/IDT, before scheduler)
+- → XREF: `TODO-07-time-filetime-management.md §7` — `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`, `NtQueryTimerResolution` are registered in this SSDT; service numbers must be reserved before TODO-07 §7 is implemented
+- → XREF: `TODO-10-exception-dispatch-seh.md §4` — `NtRaiseException` and `NtContinue` are registered in this SSDT; SSDT indices must be reserved before TODO-10 §4 is implemented
 - → XREF: `TODO-11-security-reference-monitor.md` — `ZwXxx` kernel-mode calls bypass SRM access checks; must be documented
 
 ## Outcome
@@ -51,8 +45,7 @@
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion     | 4, 5           |  [ ]   |
 
 > 💎 = parity — Windows NT and Linux (syscall fast path, typed return, SSDT equivalent) both have these.
-> ⭐ = exclusive — the `ZwXxx` privilege assertion check and the IOSB/LastError unified path are more
->     explicit than anything in the Linux syscall model, exposing correctness invariants at the API boundary.
+> ⭐ = exclusive — the `ZwXxx` privilege assertion check and the IOSB/LastError unified path are more explicit than anything in the Linux syscall model, exposing correctness invariants at the API boundary.
 
 ---
 
@@ -143,7 +136,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
     - `0x0029` `NtCreateProcess`, `0x004B` `NtCreateThread`
     - `0x0055` `NtCreateEvent`, `0x0090` `NtCreateMutant`, `0x00C0` `NtCreateSemaphore`
     - `0x0018` `NtCreateFile`, `0x0030` `NtOpenFile`
-    - `0x0015` `NtClose`, `0x0040` `NtDuplicateObject`
+    - `0x0040` `NtDuplicateObject`
     - `0x0004` `NtAllocateVirtualMemory`, `0x001B` `NtFreeVirtualMemory`
     - `0x0036` `NtQuerySystemInformation`
 - [ ] Implement `syscall_dispatch`: index RAX into the active SSDT; call handler; return `NTSTATUS` in RAX
@@ -291,11 +284,8 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 | ⭐  | ZwXxx CPL-gated kernel alias layer    | ✅ Internal convention; not documented/public         | ❌ No equivalent; drivers use same syscall path  | ⬜ **Planned — §12 — explicit, documented**         |
 | ⭐  | Unified Nt/Zw contract as public API  | ⚠️ NT native API is undocumented / unofficial         | ❌ No stable native API; syscall numbers change  | ⬜ **Planned — §4/§12 — stable, numbered, public**  |
 
-> **After §1–§11:** Impossible OS matches Windows NT exactly on the native API calling convention,
-> service numbers, IOSB semantics, NTSTATUS codes, and LastError propagation. Real `ntdll.dll`
-> stubs can call into the kernel without patching.
-> **§12** makes the `ZwXxx` layer an explicit, documented public contract — Windows keeps it
-> internal/undocumented and Linux has no equivalent at all.
+> **After §1–§11:** Impossible OS matches Windows NT exactly on the native API calling convention, service numbers, IOSB semantics, NTSTATUS codes, and LastError propagation. Real `ntdll.dll` stubs can call into the kernel without patching.
+> **§12** makes the `ZwXxx` layer an explicit, documented public contract — Windows keeps it internal/undocumented and Linux has no equivalent at all.
 
 ## Verification
 

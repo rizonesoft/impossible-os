@@ -1,15 +1,9 @@
 # TODO-01 — Kernel Init Sequencing
 
-> **Goal:** Replace the ad-hoc 5-phase boot sequence with a formal, dependency-gated
-> init model. Every subsystem declares prerequisites, returns a typed result, and the
-> kernel halts or degrades gracefully on failure. Phase boundaries are explicit,
-> testable, and match the hardware bring-up contract expected by a production OS.
+> **Goal:** Replace the ad-hoc 5-phase boot sequence with a formal, dependency-gated init model. Every subsystem declares prerequisites, returns a typed result, and the kernel halts or degrades gracefully on failure. Phase boundaries are explicit, testable, and match the hardware bring-up contract expected by a production OS.
 
 > [!IMPORTANT]
-> **Current state:** `kernel_main()` calls five sequential functions with no error
-> returns, no dependency checks, and `HV_BAR` pixel-write debug cruft in every file.
-> ACPI/SMP are split across `boot_interrupts.c` and `boot_storage.c`. VFS headers
-> are included inside the interrupts phase. Tests run unconditionally in the boot path.
+> **Current state:** `kernel_main()` calls five sequential functions with no error returns, no dependency checks, and `HV_BAR` pixel-write debug cruft in every file. ACPI/SMP are split across `boot_interrupts.c` and `boot_storage.c`. VFS headers are included inside the interrupts phase. Tests run unconditionally in the boot path.
 
 ## Inputs
 
@@ -22,10 +16,10 @@
 - [`src/kernel/panic.c`](../../src/kernel/panic.c)
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
 - → XREF: `TODO-02-system-logging.md` — `klog_disk_enable()` is a Phase 2 gate; must follow VFS ready
-- → XREF: `TODO-03-object-manager.md` — Object Manager init slot is Phase 2, after heap, before registry (TODO-03 §1 provides the `ob_init()` implementation)
-- → XREF: `TODO-04-drivers-hardware` domain — all driver `_init()` functions must accept and return `boot_result_t`
-- → XREF: `TODO-00-infrastructure/TODO-02-developer-tooling-stack.md` — headless QEMU serial log is the verification path
-- → XREF: `TODO-06-irql-model-dpcs.md` — DPC subsystem init belongs in Phase 1, after timer
+- → XREF: `TODO-03-object-manager.md §1` — Object Manager init slot is Phase 2, after heap, before registry; §1 provides the `ob_init()` implementation
+- → XREF: `04-drivers-hardware/INDEX.md` — all driver `_init()` functions must accept and return `boot_result_t`
+- → XREF: `00-infrastructure/TODO-02-developer-tooling-stack.md` — headless QEMU serial log is the verification path
+- → XREF: `TODO-06-irql-model-dpcs.md §4` — DPC subsystem init belongs in Phase 1, after timer; §4 is the DPC Object Type and Per-CPU Queue init
 
 ## Outcome
 
@@ -57,18 +51,12 @@
 
 ## 1. Boot Init Infrastructure `[Sonnet]`
 
-New header and source file providing the result type, readiness oracle, and progress
-tracker used by every phase.
+New header and source file providing the result type, readiness oracle, and progress tracker used by every phase.
 
 **Files:** `include/kernel/boot_init.h`, `src/kernel/main/boot_init.c`
 
 - [x] Define `boot_result_t`: `BOOT_OK = 0`, `BOOT_DEGRADED = 1`, `BOOT_FATAL = 2`
-- [x] Define `kernel_subsys_t` enum — one entry per subsystem that others can depend on:
-  `SUBSYS_SERIAL`, `SUBSYS_PMM`, `SUBSYS_VMM`, `SUBSYS_HEAP`, `SUBSYS_KLOG`,
-  `SUBSYS_GDT`, `SUBSYS_IDT`, `SUBSYS_ACPI`, `SUBSYS_LAPIC`, `SUBSYS_IOAPIC`,
-  `SUBSYS_TIMER`, `SUBSYS_RTC`, `SUBSYS_FB`, `SUBSYS_VFS`, `SUBSYS_REGISTRY`,
-  `SUBSYS_SCHED`, `SUBSYS_IPC`, `SUBSYS_SMP`, `SUBSYS_EXEC`, `SUBSYS_DESKTOP`,
-  `SUBSYS_COUNT`
+- [x] Define `kernel_subsys_t` enum — one entry per subsystem that others can depend on: `SUBSYS_SERIAL`, `SUBSYS_PMM`, `SUBSYS_VMM`, `SUBSYS_HEAP`, `SUBSYS_KLOG`, `SUBSYS_GDT`, `SUBSYS_IDT`, `SUBSYS_ACPI`, `SUBSYS_LAPIC`, `SUBSYS_IOAPIC`, `SUBSYS_TIMER`, `SUBSYS_RTC`, `SUBSYS_FB`, `SUBSYS_VFS`, `SUBSYS_REGISTRY`, `SUBSYS_SCHED`, `SUBSYS_IPC`, `SUBSYS_SMP`, `SUBSYS_EXEC`, `SUBSYS_DESKTOP`, `SUBSYS_COUNT`
 - [x] Implement static `bool g_subsys_ready[SUBSYS_COUNT]` table in `boot_init.c`
 - [x] Implement `bool kernel_subsystem_ready(kernel_subsys_t subsys)`
 - [x] Implement `void kernel_subsystem_set_ready(kernel_subsys_t subsys, bool ok)`
@@ -81,8 +69,7 @@ tracker used by every phase.
 
 ## 2. Phase 0 — Critical Init (Interrupts Disabled) `[Opus]`
 
-Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or network.
-Any failure in Phase 0 calls `boot_halt()` on serial — framebuffer is not yet available.
+Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or network. Any failure in Phase 0 calls `boot_halt()` on serial — framebuffer is not yet available.
 
 **File:** `src/kernel/main/boot_hw.c` (restructured as `boot_phase0`)
 
@@ -108,9 +95,7 @@ Any failure in Phase 0 calls `boot_halt()` on serial — framebuffer is not yet 
 
 ## 3. Phase 1 — Platform Services (Interrupts Enabled at End) `[Opus]`
 
-Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
-BOOT_FATAL halts; BOOT_DEGRADED logs and continues.
-Interrupts enabled with `sti` only after LAPIC/timer are ready.
+Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display. BOOT_FATAL halts; BOOT_DEGRADED logs and continues. Interrupts enabled with `sti` only after LAPIC/timer are ready.
 
 **File:** `src/kernel/main/boot_interrupts.c` (restructured as `boot_phase1`)
 
@@ -140,8 +125,7 @@ Interrupts enabled with `sti` only after LAPIC/timer are ready.
 
 ## 4. Phase 2 — System Services `[Sonnet]`
 
-Storage, VFS, filesystem mount, registry, network, and AP bringup.
-BOOT_FATAL only if VFS or registry are completely broken; everything else degrades.
+Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL only if VFS or registry are completely broken; everything else degrades.
 
 **File:** `src/kernel/main/boot_storage.c` (restructured as `boot_phase2`)
 
@@ -167,8 +151,7 @@ BOOT_FATAL only if VFS or registry are completely broken; everything else degrad
 
 ## 5. Phase 3 — User Platform `[Sonnet]`
 
-Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before this
-phase; failures here fall back to a text console, not BSOD.
+Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before this phase; failures here fall back to a text console, not BSOD.
 
 **File:** `src/kernel/main/boot_desktop.c` (restructured as `boot_phase3`)
 
@@ -257,5 +240,5 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [ ] Forcing VFS failure causes degraded-boot screen — kernel stays up, no BSOD
 - [ ] `boot_tests_run()` does not appear in serial log when `debug=0`
 - [ ] `boot_tests_run()` does appear in serial log when `debug=1`
-- [ ] `commit: "kernel: formal init sequencing — phases, readiness oracle, dependency gates"`
+- [ ] Commit: `"kernel: init-sequencing verified — phases, readiness oracle, dependency gates"`
 

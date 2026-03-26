@@ -20,8 +20,10 @@
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §1` — DPC queue init requires LAPIC timer ready (§7); IRQL model depends on the correct interrupt priority assignment established in §2
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §2` — `uptime_ns()` from the UTS (§6) is the clock source for the monotonic nanosecond clock used by FILETIME and `QueryPerformanceCounter`
 - → XREF: `TODO-02-boot-diagnostics.md §2` — boot time visualization (§9) reads `boot_stage_history[]` built by the boot progress API
+- → XREF: `TODO-02-boot-diagnostics.md §5` — §9 boot time visualization bar chart uses the stage color table defined there (`DebugBar=1` feature)
+- → XREF: `TODO-04-cpu-boot-sequencing.md §3` — hypervisor detection runs in Phase 0 before §6 UTS probe; `boot_info.hv_flags` set there must be read by `timer_hal_init()` to select the correct clock source
 - → XREF: `02-kernel-core/TODO-15-power-management.md` — Intel HWP / AMD CPPC frequency changes require LAPIC timer recalibration (§7 `lapic_calibrate()`); no dedicated HWP/CPPC section in TODO-15 yet — add when frequency scaling is scoped there
-- → XREF: `04-drivers-hardware/` — all device drivers call `irq_request(gsi, handler, name, flags)` (§5); this API replaces hardcoded IRQ-to-vector assignments throughout that domain
+- → XREF: `04-drivers-hardware/INDEX.md` — all device drivers call `irq_request(gsi, handler, name, flags)` (§5); this API replaces hardcoded IRQ-to-vector assignments throughout that domain
 
 ## Outcome
 
@@ -43,10 +45,10 @@
 | 💎  |   3   | Conditional PIC disable              | 1, 2          |  [ ]   |
 | 💎  |   4   | Full IDT coverage                    | 2, 3          |  [ ]   |
 | 💎  |   5   | Dynamic IRQ registration API         | 2, 4          |  [ ]   |
-| 💎  |   6   | Unified timer subsystem (UTS)        | 5             |  [ ]   |
+| 💎  |   6   | Unified timer subsystem (UTS)        | 5, TODO-04 §3 |  [ ]   |
 | 💎  |   7   | LAPIC timer calibration              | 6             |  [ ]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT  | 6, 7          |  [ ]   |
-| ⭐  |   9   | Boot time visualization              | 7, TODO-02 §2 |  [ ]   |
+| ⭐  |   9   | Boot time visualization              | 7, TODO-02 §2, §5 |  [ ]   |
 | 💎  |  10   | Remove Hyper-V debug workarounds     | 1–7           |  [ ]   |
 
 > 💎 = parity — Windows NT HAL and Linux interrupt subsystem both follow this init order and have equivalent abstractions.
@@ -138,7 +140,7 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 - [ ] Implement `timer_pit.c` driver: 8254 PIT divisor programming, `read_ns()` via tick counter × period, `set_periodic_ns()` sets PIT mode 2; always probes successfully (guaranteed fallback)
 - [ ] Implement `timer_hpet.c` driver: locate HPET ACPI table, map MMIO, read `GCAP_ID` for tick period (femtoseconds), enable HPET (`GEN_CONF` bit 0), `read_ns()` = `main_counter × period / 1e6`; probe returns 0 if no ACPI HPET table
 - [ ] Implement `timer_lapic.c` driver: per-CPU LAPIC timer; requires calibration against HPET or PIT before `read_ns()` is valid; `set_oneshot_ns()` programs LVT timer + initial count; `set_periodic_ns()` uses LAPIC mode 2
-- [ ] Selection waterfall in `timer_hal_init()`: probe HPET → if found, select HPET as global wall clock; probe LAPIC → calibrate against HPET (§7) → use LAPIC for per-CPU scheduler tick; if no HPET, calibrate LAPIC against PIT, use PIT as wall-clock fallback
+- [ ] Selection waterfall in `timer_hal_init()`: first read `boot_info.hv_flags` (→ XREF `TODO-04-cpu-boot-sequencing.md §3`); if `HV_TSC_ENLIGHTENMENT` set, register a `timer_hyperv.c` driver using `HV_X64_MSR_TIME_REF_COUNT` as the high-resolution wall clock and probe it first; otherwise probe HPET → if found, select HPET as global wall clock; probe LAPIC → calibrate against HPET (§7) → use LAPIC for per-CPU scheduler tick; if no HPET, calibrate LAPIC against PIT, use PIT as wall-clock fallback
 - [ ] `uptime_ns()`: calls `g_wall_clock_driver->read_ns()` — single function replaces all scattered `timer_ticks`, `pit_ms` variables throughout the codebase
 - [ ] Serial log: `[TIMER] Wall clock: {HPET|PIT}, per-CPU: LAPIC @ {freq}MHz`
 - [ ] Commit: `"kernel: unified timer subsystem — HPET/LAPIC/PIT HAL, single uptime_ns()"`
@@ -224,4 +226,4 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 - [ ] `BootTimeline=1` → bar chart visible at bottom of screen for 2 s after desktop loads
 - [ ] `boot-timeline` shell command prints per-stage ASCII chart
 - [ ] QEMU `-smp 4`: serial log shows `[SMP] AP1 online`, `[SMP] AP2 online`, `[SMP] AP3 online`; no Hyper-V workaround blocks compile
-- [ ] `commit: "kernel: interrupt architecture — MADT, LAPIC/IOAPIC order, IDT, dynamic IRQ, UTS, LAPIC calibration"`
+- [ ] Commit: `"kernel: irq-timer-arch verified — MADT APIC, IDT, UTS, LAPIC calibration"`

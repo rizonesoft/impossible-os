@@ -16,9 +16,10 @@
 - [`include/kernel/cpuid.h`](../../include/kernel/cpuid.h) — `CPU_FEATURE_RDTSCP`, invariant TSC detection
 - [`src/kernel/fs/fat32/fat32_ops.c`](../../src/kernel/fs/fat32/fat32_ops.c) — current FAT32 timestamp callsites
 - [`src/kernel/fs/ntfs/ntfs_metadata.c`](../../src/kernel/fs/ntfs/ntfs_metadata.c) — NTFS timestamp callsites
-- → XREF: `TODO-01-kernel-init-sequencing.md` — time service init belongs in Phase 2 after UEFI runtime; wall clock NTP adjustment in Phase 3
-- → XREF: `TODO-05-native-api-layer.md` — `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter` must be registered in SSDT
-- → XREF: `TODO-06-irql-model-dpcs.md` — the periodic clock interrupt at `DISPATCH_LEVEL` drives monotonic tick accumulation
+- [`src/kernel/fs/ntfs/ntfs_data_write.c`](../../src/kernel/fs/ntfs/ntfs_data_write.c) — NTFS data write timestamp callsites
+- → XREF: `TODO-01-kernel-init-sequencing.md §4` — time service init (`wall_clock_init()`) belongs in Phase 2 (§4) after UEFI runtime; NTP wall clock adjustment belongs in Phase 3 (§5); `wall_clock_init()` is not yet listed in §4's checklist — add before implementing
+- → XREF: `TODO-05-native-api-layer.md §4` — SSDT registration; time syscalls (`NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`, `NtQueryTimerResolution`) are added to the SSDT table in §7 of this TODO
+- → XREF: `TODO-06-irql-model-dpcs.md §6` — Timer/APIC scheduling path (§6) drives monotonic tick accumulation via `KiDispatchDpc()`; `DISPATCH_LEVEL` clock interrupt is the tick source
 
 ## Outcome
 
@@ -142,7 +143,7 @@ Provide the stable kernel-level time API used by everything above PASSIVE_LEVEL:
 - [ ] Expose `time_service_ready()` predicate for use by `BOOT_REQUIRE` gates
 - [ ] Commit: `"kernel: time — kernel time service API"`
 
-## 7. `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter` `[Sonnet]`
+## 7. `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`, `NtQueryTimerResolution` `[Sonnet]`
 
 Register Win32-named syscalls in the SSDT (→ XREF TODO-05 §4).
 

@@ -12,9 +12,9 @@
 - [`user/user.ld`](../../user/user.ld) — user-mode linker script (base `0x800000`)
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) — `vmm_map_pages()` for user-space page allocation
 - [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) — `vfs_read()` for file I/O in loaders
-- → XREF: `TODO-04-peb-teb-user-abi.md` §6 — initial TEB/stack frame set up after `exec_load()` enters ring 3
-- → XREF: `TODO-05-native-api-layer.md` §5 — `NtXxx` entry points are the PE32+ import targets; SSDT must exist before §7 (import resolver) works
-- → XREF: `TODO-03-object-manager.md` §5 — process object registered in Ob namespace at `exec_load()` time
+- → XREF: `TODO-04-peb-teb-user-abi.md §6–§7` — TEB allocation (§6) and initial user stack frame (§7) are populated after `exec_load()` hands control to ring 3
+- → XREF: `TODO-05-native-api-layer.md §5` — `NtXxx` SSDT entries must exist before §7 (import resolver) maps DLL function names to SSDT indices
+- → XREF: `TODO-03-object-manager.md §5` — process object registered in Ob namespace at `exec_load()` time
 - → XREF: `11-user-platform-sdk/INDEX.md` — EIF spec doc lives there; `elf2eif` tool and SDK integration wire back to §9
 
 ## Outcome
@@ -178,7 +178,7 @@ Standard developer workflow: `clang-19 → ld.lld → elf2eif` — no custom com
 Shared library support for the Linux compatibility layer and future ELF apps.
 
 > [!NOTE]
-> Full shared library planning lives in `TODO-026-ELF-Shared-Libraries.md` (legacy). This section covers the minimum kernel-side pieces.
+> A dedicated ELF shared library TODO has not yet been filed. This section implements only the minimum kernel-side pieces needed for the Linux compatibility layer. File a new TODO under `02-kernel-core` if dynamic linking scope expands beyond the items listed here.
 
 - [ ] Parse `PT_DYNAMIC` segment for `DT_NEEDED`, `DT_STRTAB`, `DT_SYMTAB`, `DT_HASH`/`DT_GNU_HASH`
 - [ ] Load `.so` files from `C:\Impossible\System\lib\` via VFS
@@ -199,6 +199,9 @@ Shared library support for the Linux compatibility layer and future ELF apps.
 ## 12. EIF Code Signing `[Opus]`
 
 EIF binaries with the `SIGNED` flag must pass signature verification before any segment is mapped.
+
+> [!IMPORTANT]
+> → XREF: `TODO-20-kernel-libraries.md §5` — Monocypher provides `crypto_eddsa_check()` (Ed25519) and `crypto_blake2b()` (SHA-256 substitute); §5 must be integrated before this section can be implemented.
 
 - [ ] Read signature from `signature_offset` in EIF header
 - [ ] Compute SHA-256 over header + all segment data in file order

@@ -22,7 +22,7 @@
 - → XREF: `02-kernel-core/TODO-16-crash-dump-generation.md` — crash dumps complement §6 panic forensics; coordinate PMM page reservation at `0x80000` to avoid collision with minidump workspace
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\SYSTEM\Boot\DebugBar`, `AliveBlink`, `VitalSigns` registry keys
 - → XREF: `TODO-01-uefi-hardening-secureboot.md §7` — boot UX polish calls `boot_splash_status()` via the §2 API
-- → XREF: `08-desktop-shell/` — compositor integration for §8 multi-instance spinner tick loop
+- → XREF: `07-graphics-ui/TODO-06-window-manager.md §8` — compositor frame loop must call `spinner_tick()` on every active `g_active_spinners[]` entry per frame; §8 (Compositor Performance) is the natural owner for this per-frame integration
 
 ## Outcome
 
@@ -209,4 +209,4 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 - [ ] Force panic twice → second boot finds `last-panic.txt` in `C:\Impossible\System\CrashDumps\`
 - [ ] `VitalSigns=1` → bottom strip shows CPU/RAM/IRQ/uptime/FPS, updates every 500 ms
 - [ ] `spinner_create(SPINNER_MEDIUM, 0x0078D4)` in test harness → spinner renders in compositor frame
-- [ ] `commit: "kernel: boot diagnostics — POST codes, waterfall, panic forensics, QR code, vital signs, multi-instance spinner"`
+- [ ] Commit: `"kernel: boot-diagnostics verified — POST codes, waterfall, panic forensics, QR code, vital signs, multi-instance spinner"`

@@ -1,23 +1,13 @@
 # TODO-04 — CPU Boot Sequencing & AP Hardening
 
-> **Goal:** Establish the correct activation order for CPU security and
-> context features during boot phases 0 and 1, and replicate that
-> activation on every Application Processor (AP). The features themselves
-> are implemented in `02-kernel-core/TODO-17` (security hardening) and
-> `02-kernel-core/TODO-19` (x86-64 architecture); this TODO owns the
-> boot-sequencing contract between them — what activates, in what phase,
-> and who ensures APs match the BSP.
+> **Goal:** Establish the correct activation order for CPU security and context features during boot phases 0 and 1, and replicate that activation on every Application Processor (AP). The features themselves are implemented in `02-kernel-core/TODO-17` (security hardening) and `02-kernel-core/TODO-19` (x86-64 architecture); this TODO owns the boot-sequencing contract between them — what activates, in what phase, and who ensures APs match the BSP.
 
 > [!IMPORTANT]
-> **Scope boundary:** Do NOT implement CPU security features or CPU
-> architecture features here. That work lives in:
+> **Scope boundary:** Do NOT implement CPU security features or CPU architecture features here. That work lives in:
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, Spectre, CET → `02-kernel-core/TODO-17`
 > - XSAVE, MSR layer, UMIP, 1 GiB pages, topology, errata, VM detection → `02-kernel-core/TODO-19`
 > - TSC frequency calibration → `02-kernel-core/TODO-07`
->
-> This TODO owns: phase placement, activation order within phases,
-> AP-trampoline replication, and hypervisor pre-detection before
-> the timer subsystem selects its driver.
+> This TODO owns: phase placement, activation order within phases, AP-trampoline replication, and hypervisor pre-detection before the timer subsystem selects its driver.
 
 ---
 
@@ -52,7 +42,7 @@
 | --- | :---: | ------------------------------------------------ | ------------------------------------- | :----: |
 | 💎  |   1   | CPUID detection & per-CPU capability capture     | Phase 0, TODO-19 §1                   |  [ ]   |
 | 💎  |   2   | Phase 0 CPU security activation order            | §1, TODO-17 §1–3, TODO-19 §3          |  [ ]   |
-| ⭐  |   3   | Hypervisor detection before timer selection      | §1, TODO-03 §6, TODO-19 §11           |  [ ]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, TODO-19 §11                       |  [ ]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, SMP bringup, TODO-17 §1–7         |  [ ]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, VMM ready, TODO-17 §4, TODO-19 §1 |  [ ]   |
 
@@ -102,7 +92,7 @@
 
 > [!IMPORTANT]
 > → XREF: `01-boot-platform/TODO-03 §6` — UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
-> → XREF: `02-kernel-core/TODO-19 §11` — full Hyper-V enlightenment MSR writes live there (Virtualization Detection); this step only detects and sets flags.
+> → XREF: `02-kernel-core/TODO-19 §11` — AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §11 and needs to be added there.
 
 - [ ] Add `hv_vendor[16]` and `hv_flags` fields to `boot_info_t`
 - [ ] Define `HV_TSC_ENLIGHTENMENT`, `HV_TLBFLUSH_HYPERCALL`, `HV_KVM_STEAL_TIME` flag bits in `boot_init.h`
@@ -136,7 +126,7 @@
 > [!IMPORTANT]
 > → XREF: `02-kernel-core/TODO-19 §1` — `cpu_xsave_enable()` implementation (XSAVE area sizing, XCR0 bits).
 > → XREF: `02-kernel-core/TODO-17 §4` — `cpu_pcid_enable()` and CR3 load changes for KPTI (PCID implementation).
-> → XREF: `02-kernel-core/TODO-04 §3` — PEB/TEB layout; XSAVE area is allocated inside TEB.
+> → XREF: `02-kernel-core/TODO-04 §6` — TEB Allocation and Population at Thread Create; XSAVE area is allocated alongside the TEB at thread creation, which is why VMM must be ready before XSAVE is enabled.
 
 - [ ] Add `POSTCODE_XSAVE_ENABLED`, `POSTCODE_PCID_ENABLED` to `boot_init.h` Phase 1 constants
 - [ ] Insert `BOOT_STEP(SUBSYS_XSAVE, cpu_xsave_enable)` in `boot_phase1()` after VMM init
@@ -170,3 +160,4 @@
 - [ ] Serial log shows `[Phase0] Hypervisor: ...` **before** first `[UTS]` / `[Timer]` line
 - [ ] Serial log shows `[Phase1] XSAVE enabled` and `[Phase1] PCID enabled` **after** `[VMM] init complete`
 - [ ] Boot completes with `=== BUILD OK ===` and no regressions in QEMU + Hyper-V
+- [ ] Commit: `"boot: cpu-sequencing verified — EFER/CR4 order, AP hardening, hypervisor detection, XSAVE/PCID phasing"`

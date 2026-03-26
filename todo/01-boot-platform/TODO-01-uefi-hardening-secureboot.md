@@ -17,7 +17,7 @@
 - → XREF: `TODO-03-interrupt-timer-arch.md` — timer calibration affects boot profiling in §7
 - → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — `GetFirmwareEnvironmentVariableA/W` Win32 wiring (no dedicated section yet; add to TODO-05 when Win32 firmware-variable API surface is scoped)
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` — `UEFI GetTime` → FILETIME seeding (wall clock init)
-- → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md` — SRM verifies `kernel.exe` signature in §5
+- → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md` — `srm_verify_kernel_signature()` (called by §5 here) has no section in TODO-11 yet; needs to be added there (suggest §10 "Win32 Security API Wrappers" — WinVerifyTrust/Authenticode path, or a new §12 for Code Integrity)
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\HARDWARE\*` and `HKLM\SYSTEM\SecureBoot` storage
 
 ## Outcome
@@ -149,10 +149,10 @@ Fade-in transition, structured boot profiling, and a pre-framebuffer error recov
 
 - [ ] Bootloader fade-in: during the 300 ms between `ExitBootServices()` and kernel jump, ramp the GOP framebuffer from black to the accent color gradient from `boot.conf` key `AccentColor=RRGGBB`; use PIT-tick loop for timing; fallback to instant-black if `AccentColor` absent
 - [ ] Boot profiling: `boot_timing_record_step()` (already in `boot_timing.c` §1) is the API; ensure it is called for every major event: UEFI init, ELF load, kernel entry, GDT/IDT, PMM, VMM, VFS, scheduler, desktop ready; write human-readable report to `C:\Impossible\System\Logs\boot-profile.log` at desktop-ready (`boot_timing_print_steps()`)
-- [ ] Add `boot_profile_dump_json()`: writes JSON timeline `[{"stage":"PMM","start_ms":12,"duration_ms":3},...]` to `C:\Impossible\System\Logs\boot-timeline-{date}.json`; `boot-timeline` shell command prints ASCII bar chart
+- [ ] JSON boot-timeline export and `boot-timeline` shell command are owned by → XREF: `TODO-03-interrupt-timer-arch.md §9`; this section's `boot_timing_record_step()` calls produce the data that §9 exports and visualizes.
 - [ ] Pre-framebuffer error recovery screen: in `boot_halt()` (→ XREF `02-kernel-core/TODO-01-kernel-init-sequencing.md §7`) when called before `fb_init()`: write a solid red rectangle across the top 40 px of the framebuffer directly via `boot_info.fb.base`; draw error text using the 8×8 boot font; print error text + recovery URL to serial
 - [ ] `boot_splash_status()` integration: each `boot_progress()` call (→ XREF `TODO-02-boot-diagnostics.md §2`) also calls `boot_splash_status()` with a human-readable stage string; splash shows live progress text below the spinner
-- [ ] Commit: `"boot: fade-in transition, JSON boot profiling, pre-framebuffer error recovery screen"`
+- [ ] Commit: `"boot: fade-in transition, boot-stage instrumentation, pre-framebuffer error recovery screen"`
 
 ## 8. A/B Dual-Slot Boot `[Opus]`
 
@@ -227,7 +227,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 | 💎  | UEFI memory W^X enforcement         | ✅ Enforced since Windows 10 1607               | ✅ `CONFIG_EFI_MEMORY_ATTRIBUTES_TABLE`          | ⬜ Planned — §11                                       |
 | ⭐  | In-bootloader multi-OS menu         | ❌ Separate BCD / bootmgr UI                    | ❌ GRUB is a separate bootloader                 | ⬜ **Planned — §9 — integrated countdown menu**        |
 | ⭐  | Bootloader fade-in accent gradient  | ❌ Fixed black → logo, no user color            | ❌ Not implemented                               | ⬜ **Planned — §7 — accent color from boot.conf**      |
-| ⭐  | JSON boot profiling timeline        | ❌ ETW boot trace (binary, needs WPA to decode) | ❌ `systemd-analyze` (post-boot, not bootloader) | ⬜ **Planned — §7 — JSON file + ASCII chart command**  |
+| ⭐  | JSON boot profiling timeline        | ❌ ETW boot trace (binary, needs WPA to decode) | ❌ `systemd-analyze` (post-boot, not bootloader) | ⬜ **§7 produces timing data; export + chart owned by TODO-03 §9**  |
 
 > **After parity items:** Impossible OS will fully match Windows and Linux on Secure Boot, UEFI runtime, SMBIOS, capsule updates, and W^X enforcement. The exclusive items push beyond: the integrated countdown boot menu eliminates the need for a separate bootloader for dual-boot, the accent fade-in gives a branded first impression, and the structured JSON boot timeline makes performance regression testing trivial compared to WPA or systemd-analyze.
 
@@ -242,4 +242,4 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 - [ ] A/B rollback: corrupt kernel-A.exe in QEMU disk image; after `MaxBootAttempts+1` boots, kernel-B.exe boots successfully
 - [ ] Boot menu appears when two GPT partitions are present; timer counts down; default boots without input
 - [ ] `[UEFI] W^X enforced on N UEFI memory regions` in serial log (N > 0 on QEMU with OVMF)
-- [ ] `commit: "boot: UEFI hardening — runtime services, Secure Boot, GOP, SMBIOS, A/B slots, boot menu"`
+- [ ] Commit: `"boot: uefi-hardening verified — runtime services, Secure Boot, GOP, SMBIOS, A/B slots, boot menu"`

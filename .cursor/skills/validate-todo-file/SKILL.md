@@ -25,6 +25,11 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - Flag any path that does not exist as a broken anchor; suggest the correct path or note it as planned.
    - Do not read the files — existence check only.
 4. Read the domain `INDEX.md` and all other TODO files in the same domain folder.
+   - **Use the Srclight MCP (`user-srclight`) to accelerate scope-overlap detection before reading files manually.**
+     - Call `hybrid_search(query)` with deliverable names or feature keywords to find matching symbols, functions, or types already in the codebase or referenced in other TODOs.
+     - Use `whats_changed(project)` and `recent_changes(project)` to surface any work-in-progress that overlaps claimed scope.
+     - Use `get_dependents(symbol, project)` to identify which existing components would be affected by this TODO's deliverables — flag these as integration points.
+     - Only fall back to direct file reads when Srclight results are insufficient to resolve an overlap question.
    - Scan for scope overlap: flag any deliverable claimed by this TODO that is also claimed by another TODO in the domain.
    - Scan for duplicate XREFs pointing at the same target section — two TODOs both depending on the same section is fine; two TODOs both *implementing* it is a conflict.
 5. Validate the current lean TODO structure.

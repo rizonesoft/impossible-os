@@ -1,16 +1,9 @@
 # TODO-02 — System Logging
 
-> **Goal:** Complete the klog system from its current working foundation to a
-> production-grade logging stack: per-subsystem log splitting, log rotation,
-> structured JSON events, rate limiting, and remote syslog forwarding.
-> The core klog infrastructure (ring buffer, disk flush, serial/framebuffer
-> output, numbered boot logs, user-mode syscall) is already implemented and
-> is documented in the Completed section below for reference.
+> **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.
 
 > [!IMPORTANT]
-> **Current state:** `klog.c` (380 lines) + `klog_disk.c` (578 lines).
-> All entries go to a single `kernel.log` — per-subsystem splitting, rotation,
-> structured events, and remote forwarding are not yet implemented.
+> **Current state:** `klog.c` (380 lines) + `klog_disk.c` (578 lines). All entries go to a single `kernel.log` — per-subsystem splitting, rotation, structured events, and remote forwarding are not yet implemented.
 
 ## Inputs
 
@@ -19,8 +12,8 @@
 - [`include/kernel/klog.h`](../../include/kernel/klog.h)
 - [`src/kernel/log.c`](../../src/kernel/log.c) — legacy serial-only logger (reference)
 - [`todo/02-kernel-core/TODO-01-kernel-init-sequencing.md`](./TODO-01-kernel-init-sequencing.md)
-- → XREF: `TODO-20-kernel-libraries.md` §6 — cJSON DOM parser required by §6 (structured JSON events)
-- → XREF: `TODO-06-networking` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
+- → XREF: `TODO-20-kernel-libraries.md §6` — cJSON DOM parser required by §6 (structured JSON events)
+- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
 
 ## Outcome
 
@@ -77,9 +70,7 @@ These items are implemented and verified. Kept here for future correctness check
 
 ## 1. Boot-Phase Aware klog Init `[Sonnet]`
 
-The current `klog_disk.c` assumes VFS is available when it initialises. After TODO-01,
-the kernel has explicit Phase 0 (no VFS) and Phase 2 (VFS ready) gates.
-`klog` must split into a Phase 0 ring-buffer-only mode and a Phase 2 disk-enable step.
+The current `klog_disk.c` assumes VFS is available when it initialises. After TODO-01, the kernel has explicit Phase 0 (no VFS) and Phase 2 (VFS ready) gates. `klog` must split into a Phase 0 ring-buffer-only mode and a Phase 2 disk-enable step.
 
 - [ ] Add `klog_early_init()` — Phase 0 safe; initialises ring buffer and serial output only; no VFS
 - [ ] Add `klog_disk_enable()` — Phase 2 safe; opens log files on VFS and starts disk flushing; BOOT_REQUIRE(SUBSYS_VFS)
@@ -90,8 +81,7 @@ the kernel has explicit Phase 0 (no VFS) and Phase 2 (VFS ready) gates.
 
 ## 2. Per-Subsystem Log Splitting `[Sonnet]`
 
-Route log entries to dedicated per-subsystem log files based on the subsystem tag.
-Entries with no matching tag continue to go to `kernel.log`.
+Route log entries to dedicated per-subsystem log files based on the subsystem tag. Entries with no matching tag continue to go to `kernel.log`.
 
 - [ ] Define dispatch table in `klog_disk.c`:
   - `"net"` → `C:\Impossible\System\Logs\network.log`
@@ -114,8 +104,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 - [ ] Add `klog_set_level(const char *subsystem, log_level_t min_level)` to `klog.h`/`klog.c`
 - [ ] Store per-subsystem min levels in a small hash map keyed by subsystem tag string
 - [ ] In `klog()`: look up the subsystem's min level before writing to ring buffer; drop entries below threshold
-- [ ] Read initial per-subsystem levels from Registry at `klog_disk_enable()` time:
-  `HKLM\SYSTEM\Logs\Levels\<subsystem>` → level string (`"DEBUG"`, `"INFO"`, etc.)
+- [ ] Read initial per-subsystem levels from Registry at `klog_disk_enable()` time: `HKLM\SYSTEM\Logs\Levels\<subsystem>` → level string (`"DEBUG"`, `"INFO"`, etc.)
 - [ ] Default: all subsystems at `LOG_DEBUG` in debug builds, `LOG_INFO` in release
 - [ ] Commit: `"kernel: per-subsystem log verbosity control"`
 
@@ -145,8 +134,7 @@ Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 
 ## 6. Structured JSON Log Events `[Sonnet]`
 
-Emit machine-parseable events alongside plain-text logs.
-Requires cJSON from `TODO-20-kernel-libraries.md` §6.
+Emit machine-parseable events alongside plain-text logs. Requires cJSON from `TODO-20-kernel-libraries.md` §6.
 
 - [ ] Define JSON event format: `{"ts":<ms>,"lvl":"WARN","sub":"net","msg":"DHCP timeout","dropped":0}`
 - [ ] Add `klog_json_flush()` — serialise ring buffer entries to `C:\Impossible\System\Logs\events.jsonl`
@@ -159,8 +147,7 @@ Requires cJSON from `TODO-20-kernel-libraries.md` §6.
 
 ## 7. Remote Syslog Forwarding (RFC 5424) `[Sonnet]`
 
-Forward log entries to a remote syslog server for enterprise and headless debug use.
-`src/kernel/net/udp.c` already exists — this section wires syslog packet sending on top of it.
+Forward log entries to a remote syslog server for enterprise and headless debug use. `src/kernel/net/udp.c` already exists — this section wires syslog packet sending on top of it.
 
 - [ ] Read syslog server IP from `HKLM\SYSTEM\Logs\SyslogServer` at `klog_disk_enable()`; skip if not set
 - [ ] Map klog levels to RFC 5424 severity: `DEBUG→7`, `INFO→6`, `WARN→4`, `ERROR→3`, `FATAL→2`
@@ -205,4 +192,4 @@ Forward log entries to a remote syslog server for enterprise and headless debug 
 - [ ] Writing beyond `MaxSize` threshold causes rotation: `kernel.log.1` appears, new `kernel.log` starts fresh
 - [ ] `events.jsonl` contains one valid JSON object per line; parseable by `jq`
 - [ ] Enabling syslog in Registry causes entries to appear on a test syslog server (UDP 514)
-- [ ] `commit: "kernel: complete logging stack — splitting, rotation, JSON events, syslog"`
+- [ ] Commit: `"kernel: system-logging verified — splitting, rotation, JSON events, syslog"`

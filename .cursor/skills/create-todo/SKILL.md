@@ -19,6 +19,13 @@ description: Create lean project TODO files under todo/, choose the correct doma
 2. Gather the primary inputs.
    - If a spec exists, treat it as the primary structural input.
    - Otherwise use current code, docs, and related TODOs to define scope.
+   - **Use the Srclight MCP (`user-srclight`) for codebase discovery before scanning files manually.**
+     - Call `codebase_map()` at the start of any session to understand project structure, languages, and symbol counts.
+     - Use `hybrid_search(query)` to find existing implementations, related symbols, and prior art by concept or keyword.
+     - Use `symbols_in_file(path, project)` to enumerate all symbols in relevant source files.
+     - Use `get_callers`, `get_callees`, and `get_dependents` to trace integration points and impact boundaries.
+     - Use `whats_changed(project)` to discover recent work that may already cover planned scope.
+     - Let Srclight discovery drive what goes into Inputs, XREFs, and dependency rows — only fall back to direct file reads when Srclight results are insufficient.
 3. Choose the next local filename.
    - Follow the live domain naming pattern such as `todo/00-infrastructure/TODO-03-short-name.md`.
    - Do not revive legacy `TODO-NNN.NN-*` naming from `todo-old/`.
