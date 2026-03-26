@@ -102,26 +102,34 @@ void boot_tests_run(void)
         }
     }
 
-    /* VMM round-trip test */
+    /* VMM round-trip test.
+     *
+     * MUST use a virtual address above the bootloader's 4 GiB identity-map.
+     * The boot page tables cover 0–4 GiB with 2 MiB huge pages; vmm_map_page
+     * cannot split those, so any address below 4 GiB would silently fail and
+     * resolve to the identity-mapped frame, not test_phys.
+     * 8 GiB (0x200000000) is above that range and has no existing mapping. */
     {
         uintptr_t test_phys = pmm_alloc_frame();
-        uintptr_t test_virt = 0x700000;  /* 7 MiB — safe test address */
+        uintptr_t test_virt = 0x0000000200000000ULL;  /* 8 GiB */
         uint32_t vmm_ok = 1;
-        uint32_t k;
 
         if (test_phys) {
-            vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW);
-            volatile uint64_t *p = (volatile uint64_t *)test_virt;
-            *p = 0xDEADBEEFCAFE1234ULL;
-            if (*p != 0xDEADBEEFCAFE1234ULL)
+            if (vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW) != 0) {
+                pmm_free_frame(test_phys);
                 vmm_ok = 0;
+            } else {
+                volatile uint64_t *p = (volatile uint64_t *)test_virt;
+                *p = 0xDEADBEEFCAFE1234ULL;
+                if (*p != 0xDEADBEEFCAFE1234ULL)
+                    vmm_ok = 0;
 
-            uintptr_t resolved = vmm_get_physical(test_virt);
-            if (resolved != test_phys)
-                vmm_ok = 0;
+                uintptr_t resolved = vmm_get_physical(test_virt);
+                if (resolved != test_phys)
+                    vmm_ok = 0;
 
-            vmm_unmap_page(test_virt, 1);
-            (void)k;
+                vmm_unmap_page(test_virt, 1);  /* also frees test_phys */
+            }
         } else {
             vmm_ok = 0;
         }
