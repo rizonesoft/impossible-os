@@ -107,6 +107,15 @@ uint64_t uefi_set_variable(const struct boot_uefi_guid *guid,
  * Returns the total number of variables found. */
 uint32_t uefi_enumerate_variables(void);
 
+/* Advance the variable enumeration cursor by one step.
+ * On the first call: name[0] must be 0 and *guid must be all-zero.
+ * name_size: on entry = buffer byte capacity; on exit = actual name bytes.
+ * Returns UEFI_SUCCESS to continue, UEFI_NOT_FOUND when done,
+ *         UEFI_BUFFER_TOO_SMALL if name buffer is too small (retry with
+ *         updated name_size), UEFI_UNSUPPORTED if service unavailable. */
+uint64_t uefi_get_next_variable_name(uint64_t *name_size, uint16_t *name,
+                                     struct boot_uefi_guid *guid);
+
 /* Initialize variable services — enumerate + log summary.
  * Must be called after uefi_runtime_init(). */
 void uefi_vars_init(void);

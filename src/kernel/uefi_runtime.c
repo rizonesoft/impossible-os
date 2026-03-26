@@ -341,6 +341,20 @@ uint32_t uefi_enumerate_variables(void)
     return count;
 }
 
+uint64_t uefi_get_next_variable_name(uint64_t *name_size, uint16_t *name,
+                                     struct boot_uefi_guid *guid)
+{
+    if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
+    if (!(s_supported & EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME))
+        return UEFI_UNSUPPORTED;
+
+    spin_lock(&s_rt_lock);
+    efi_status_t status = s_rt->get_next_variable_name(name_size, name, guid);
+    spin_unlock(&s_rt_lock);
+
+    return status;
+}
+
 void uefi_vars_init(void)
 {
     if (!s_available) {

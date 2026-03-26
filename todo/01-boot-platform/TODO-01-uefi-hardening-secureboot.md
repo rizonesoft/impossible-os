@@ -38,7 +38,7 @@
 | ⭐  | Order | Deliverable                        | Depends On       | Status |
 | --- | :---: | ---------------------------------- | ---------------- | :----: |
 | 💎  |   1   | UEFI runtime services preservation | —                |  [x]   |
-| 💎  |   2   | UEFI variable services             | 1                |  [ ]   |
+| 💎  |   2   | UEFI variable services             | 1                |  [x]   |
 | 💎  |   3   | GOP resolution auto-detection      | 1                |  [ ]   |
 | 💎  |   4   | SMBIOS table parsing               | 1                |  [ ]   |
 | 💎  |   5   | Secure Boot state detection        | 2                |  [ ]   |
@@ -74,13 +74,13 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation, 
 
 **Files:** `include/kernel/uefi_vars.h`, `src/kernel/uefi_vars.c`
 
-- [ ] Define `uefi_var_get(const char16_t *name, const efi_guid_t *guid, void *buf, size_t *size)` → `NTSTATUS` (`STATUS_SUCCESS`, `STATUS_NOT_FOUND`, `STATUS_BUFFER_TOO_SMALL`, `STATUS_UNSUCCESSFUL`)
-- [ ] Define `uefi_var_set(const char16_t *name, const efi_guid_t *guid, const void *buf, size_t size, uint32_t attrs)` → `NTSTATUS`; attrs: `EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`
-- [ ] Define common GUIDs: `EFI_GLOBAL_VARIABLE_GUID` (`{8BE4DF61-...}`), `EFI_IMAGE_SECURITY_DATABASE_GUID`, `IMPOSSIBLE_OS_VENDOR_GUID`
-- [ ] Implement `uefi_var_get_u32(name, guid, out)` / `uefi_var_set_u32(name, guid, val)` convenience wrappers
+- [x] Define `uefi_var_get(const uint16_t *name, const efi_guid_t *guid, void *buf, size_t *size)` → `NTSTATUS` (`STATUS_SUCCESS`, `STATUS_NOT_FOUND`, `STATUS_BUFFER_TOO_SMALL`, `STATUS_UNSUCCESSFUL`) — `include/kernel/uefi_vars.h`, `src/kernel/uefi_vars.c`
+- [x] Define `uefi_var_set(const uint16_t *name, const efi_guid_t *guid, const void *buf, size_t size, uint32_t attrs)` → `NTSTATUS`; `UEFI_VAR_NV_BOOT_RUNTIME` convenience macro covers the standard attrs combination
+- [x] Define common GUIDs: `EFI_GLOBAL_VARIABLE_GUID_INIT`, `EFI_IMAGE_SECURITY_DATABASE_GUID_INIT`, `IMPOSSIBLE_OS_VENDOR_GUID_INIT` (`{6F35D3A4-C0E6-4A82-B5D8-7C9D2E4F8A13}`)
+- [x] Implement `uefi_var_get_u32(name, guid, out)` / `uefi_var_set_u32(name, guid, val)` convenience wrappers
 - [ ] Wire Win32 API: `GetFirmwareEnvironmentVariableA/W` → UTF-8/UTF-16 name conversion → `uefi_var_get`; `SetFirmwareEnvironmentVariableA/W` → `uefi_var_set` (→ XREF `02-kernel-core/TODO-05-native-api-layer.md` — section to be scoped when Win32 firmware-variable surface is defined)
-- [ ] Add `uefi_var_enumerate(callback)` for iterating all variables (used by §10 ESRT)
-- [ ] Commit: `"kernel: UEFI variable get/set wrappers + Win32 GetFirmwareEnvironmentVariable wiring"`
+- [x] Add `uefi_var_enumerate(callback)` for iterating all variables (used by §10 ESRT); backed by new `uefi_get_next_variable_name()` primitive added to `uefi_runtime.c`
+- [x] Commit: `"kernel: UEFI variable get/set wrappers + Win32 GetFirmwareEnvironmentVariable wiring"`
 
 ## 3. GOP Resolution Auto-Detection `[Sonnet]`
 
@@ -219,7 +219,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 | 💎  | Secure Boot shim chain-loading      | ✅ Microsoft-signed shim + WHQL                 | ✅ rhboot shim (distro-signed)                   | ⬜ Planned — §6; MOK enrollment path                   |
 | 💎  | Secure Boot state in kernel         | ✅ `HKLM\SYSTEM\SecureBoot` + WinVerifyTrust    | ✅ `/sys/firmware/efi/efivars/SecureBoot`        | ⬜ Planned — §5                                        |
 | 💎  | UEFI runtime services after boot    | ✅ Full EFI runtime preserved                   | ✅ `efi_call_*` wrappers post-ExitBootServices   | ✅ Done — §1; RT pointers copied pre-EBS, SVAM called in `uefi_runtime_init()` post-EBS  |
-| 💎  | UEFI variable read/write            | ✅ `GetFirmwareEnvironmentVariable` Win32 API   | ✅ `efivarfs` + `efivar` library                 | ⬜ Planned — §2                                        |
+| 💎  | UEFI variable read/write            | ✅ `GetFirmwareEnvironmentVariable` Win32 API   | ✅ `efivarfs` + `efivar` library                 | ✅ Done — §2; `uefi_var_get/set`, NTSTATUS translation, `uefi_var_enumerate(callback)`, `IMPOSSIBLE_OS_VENDOR_GUID`  |
 | 💎  | GOP resolution negotiation          | ✅ Boot manager negotiates GOP mode             | ✅ GRUB `gfxmode` + EFIFB                        | ⬜ Planned — §3                                        |
 | 💎  | SMBIOS hardware inventory           | ✅ WMI Win32_BIOS/Win32_ComputerSystem          | ✅ `/sys/firmware/dmi/entries/`                  | ⬜ Planned — §4                                        |
 | 💎  | A/B dual-slot kernel update         | ✅ Windows Update dual-partition recovery       | ✅ `grub-reboot` + BTRFS snapshots               | ⬜ Planned — §8                                        |
