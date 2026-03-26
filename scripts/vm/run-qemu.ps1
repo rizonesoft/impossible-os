@@ -48,7 +48,8 @@ if (-not (Test-Path $DISK)) {
 # Auto-copy OVMF firmware from WSL system path if not in build/
 if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     Write-Host "Copying OVMF firmware to build/..." -ForegroundColor Yellow
-    & wsl.exe -e bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/ && cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/"
+    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/'
+    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/'
     if (-not (Test-Path $OVMF_CODE)) {
         Write-Host "Failed to copy OVMF." -ForegroundColor Red
         pause; exit 1

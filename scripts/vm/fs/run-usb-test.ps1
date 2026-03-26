@@ -40,7 +40,7 @@ $VARS_DEST   = Join-Path $env:TEMP "OVMF_VARS_4M_usb.fd"
 # --- Build (optional) ---
 if ($Build) {
     Write-Host "Building Impossible OS in WSL2..." -ForegroundColor Yellow
-    & wsl.exe -e bash -c "cd ~/impossible-os && bash scripts/build.sh"
+    & wsl.exe bash ~/impossible-os/scripts/build.sh
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Build failed!" -ForegroundColor Red
         pause; exit 1
@@ -58,7 +58,7 @@ if (-not (Test-Path $SYSTEM_DISK)) {
 # --- Generate USB test disk (if missing) ---
 if (-not (Test-Path $USB_DISK)) {
     Write-Host "Creating 64 MiB FAT32 USB test disk in WSL2..." -ForegroundColor Yellow
-    & wsl.exe -e bash -c "cd ~/impossible-os && make test-usb-img"
+    & wsl.exe bash -c 'cd ~/impossible-os && make test-usb-img'
     if (-not (Test-Path $USB_DISK)) {
         Write-Host "USB test disk creation failed: $USB_DISK" -ForegroundColor Red
         pause; exit 1
@@ -69,7 +69,8 @@ if (-not (Test-Path $USB_DISK)) {
 # --- OVMF firmware ---
 if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     Write-Host "Copying OVMF firmware to build/..." -ForegroundColor Yellow
-    & wsl.exe -e bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/ && cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/"
+    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/'
+    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/'
     if (-not (Test-Path $OVMF_CODE)) {
         Write-Host "Failed to copy OVMF." -ForegroundColor Red
         pause; exit 1
