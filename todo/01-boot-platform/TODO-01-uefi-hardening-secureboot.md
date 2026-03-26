@@ -39,7 +39,7 @@
 | --- | :---: | ---------------------------------- | ---------------- | :----: |
 | 💎  |   1   | UEFI runtime services preservation | —                |  [x]   |
 | 💎  |   2   | UEFI variable services             | 1                |  [x]   |
-| 💎  |   3   | GOP resolution auto-detection      | 1                |  [ ]   |
+| 💎  |   3   | GOP resolution auto-detection      | 1                |  [x]   |
 | 💎  |   4   | SMBIOS table parsing               | 1                |  [ ]   |
 | 💎  |   5   | Secure Boot state detection        | 2                |  [ ]   |
 | 💎  |   6   | Secure Boot shim chain-loading     | 5                |  [ ]   |
@@ -88,14 +88,14 @@ Negotiate the best framebuffer resolution before `ExitBootServices()`, respectin
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
 
-- [ ] Implement `gop_negotiate_mode()` in bootloader: call `gop->QueryMode(i, &size, &info)` for all `i` in `[0, gop->Mode->MaxMode)`
-- [ ] Score each mode: exact match to `boot.conf` `Resolution=WxH` = max score; otherwise pick highest `width × height` the firmware offers
-- [ ] Set `boot_info.hidpi = 1` if negotiated `width >= 2560`; caller (boot splash) scales logo and font by 2×
-- [ ] If `boot.conf` `Resolution=` is absent or `auto`, pick highest native resolution
-- [ ] Call `gop->SetMode(best_mode)` before reading framebuffer base address into `boot_info.fb.*`
-- [ ] Serial log: `[Boot] GOP: {width}x{height} 32bpp (mode {idx})` after negotiation
-- [ ] Fallback: if `SetMode` fails for best mode, retry with current mode; log `[Boot] GOP: using firmware default {W}x{H}`
-- [ ] Commit: `"boot: GOP resolution auto-detection with HiDPI flag and boot.conf override"`
+- [x] Implement `gop_negotiate_mode()` in bootloader: call `gop->QueryMode(i, &size, &info)` for all `i` in `[0, gop->Mode->MaxMode)`
+- [x] Score each mode: exact match to `boot.conf` `Resolution=WxH` = max score; otherwise pick highest `width × height` the firmware offers
+- [x] Set `boot_info.hidpi = 1` if negotiated `width >= 2560`; caller (boot splash) scales logo and font by 2×
+- [x] If `boot.conf` `Resolution=` is absent or `auto`, pick highest native resolution
+- [x] Call `gop->SetMode(best_mode)` before reading framebuffer base address into `boot_info.fb.*`
+- [x] Serial log: `[Boot] GOP: {width}x{height} 32bpp (mode {idx})` after negotiation
+- [x] Fallback: if `SetMode` fails for best mode, retry with current mode; log `[Boot] GOP: using firmware default {W}x{H}`
+- [x] Commit: `"boot: GOP resolution auto-detection with HiDPI flag and boot.conf override"`
 
 ## 4. SMBIOS Table Parsing `[Sonnet]`
 
@@ -220,7 +220,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 | 💎  | Secure Boot state in kernel         | ✅ `HKLM\SYSTEM\SecureBoot` + WinVerifyTrust    | ✅ `/sys/firmware/efi/efivars/SecureBoot`        | ⬜ Planned — §5                                        |
 | 💎  | UEFI runtime services after boot    | ✅ Full EFI runtime preserved                   | ✅ `efi_call_*` wrappers post-ExitBootServices   | ✅ Done — §1; RT pointers copied pre-EBS, SVAM called in `uefi_runtime_init()` post-EBS  |
 | 💎  | UEFI variable read/write            | ✅ `GetFirmwareEnvironmentVariable` Win32 API   | ✅ `efivarfs` + `efivar` library                 | ✅ Done — §2; `uefi_var_get/set`, NTSTATUS translation, `uefi_var_enumerate(callback)`, `IMPOSSIBLE_OS_VENDOR_GUID`  |
-| 💎  | GOP resolution negotiation          | ✅ Boot manager negotiates GOP mode             | ✅ GRUB `gfxmode` + EFIFB                        | ⬜ Planned — §3                                        |
+| 💎  | GOP resolution negotiation          | ✅ Boot manager negotiates GOP mode             | ✅ GRUB `gfxmode` + EFIFB                        | ✅ Done — §3; scoring-based `gop_negotiate_mode()`, `Resolution=WxH` boot.conf, HiDPI flag, fallback log  |
 | 💎  | SMBIOS hardware inventory           | ✅ WMI Win32_BIOS/Win32_ComputerSystem          | ✅ `/sys/firmware/dmi/entries/`                  | ⬜ Planned — §4                                        |
 | 💎  | A/B dual-slot kernel update         | ✅ Windows Update dual-partition recovery       | ✅ `grub-reboot` + BTRFS snapshots               | ⬜ Planned — §8                                        |
 | 💎  | UEFI capsule firmware update        | ✅ Windows Update delivers UEFI capsules        | ✅ `fwupd` + `fwupdmgr update`                   | ⬜ Planned — §10                                       |

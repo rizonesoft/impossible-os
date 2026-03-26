@@ -111,6 +111,8 @@ struct boot_info {
     UINT32  mem_upper_kb;
     struct boot_framebuffer fb;
     UINT8   fb_available;
+    UINT8   hidpi;          /* 1 if negotiated GOP width >= 2560 */
+    UINT8   fb_pad[2];
     /* GOP mode list */
     struct boot_gop_mode gop_modes[BOOT_GOP_MODE_MAX];
     UINT32  gop_mode_count;
@@ -250,6 +252,10 @@ static UINT32  gFbWidth;
 static UINT32  gFbHeight;
 static UINT32  gFbPitch;  /* in pixels */
 
+/* Requested resolution from boot.conf Resolution=WxH (0 = auto). */
+static UINT32  g_conf_res_width  = 0;
+static UINT32  g_conf_res_height = 0;
+
 /* --- Helper: memory ops --- */
 static void efi_memset(void *dst, UINT8 val, UINTN size)
 {
@@ -325,6 +331,19 @@ static void serial_early_print(const char *s)
     }
 }
 
+static void serial_early_print_uint(UINT32 val)
+{
+    char buf[12];
+    UINT32 pos = 10;
+    buf[11] = '\0';
+    if (val == 0) { serial_early_putchar('0'); return; }
+    while (val > 0) {
+        buf[pos--] = (char)('0' + val % 10);
+        val /= 10;
+    }
+    serial_early_print(buf + pos + 1);
+}
+
 /* --- Helper: print to UEFI console (for debug, before ExitBootServices) --- */
 static void efi_print(CHAR16 *str)
 {
@@ -348,27 +367,97 @@ static void efi_print_hex(UINT64 val)
 /* ============================================================================
  * Step 1: Initialize GOP (Graphics Output Protocol)
  *
- * Resolution selection strategy:
+ * Resolution selection strategy (gop_negotiate_mode):
  *
- *   A. EDID present and valid:
- *      Scan GOP modes for exact W x H 32bpp match -> SetMode -> done.
- *      Real hardware only: panels report native resolution via EDID.
+ *   1. boot.conf Resolution=WxH — scan all 32bpp modes for exact match.
+ *      If found, SetMode to that mode.
  *
- *   B. No EDID (QEMU, VirtualBox, most emulators):
- *      If the current mode is already 32bpp with FrameBufferBase != 0,
- *      USE IT AS-IS with no SetMode call.
- *      This honors -device VGA,xres=N,yres=M -- the whole point of the
- *      HiDPI test targets is that OVMF already set the right mode.
+ *   2. Auto (no boot.conf override or Resolution=auto):
+ *      Pick the mode with the highest pixel count (width × height).
+ *      On real hardware this naturally selects the panel's native resolution.
+ *      On QEMU it picks whatever OVMF offers at the configured -device size.
  *
- *   C. Current mode unusable (FrameBufferBase==0 or non-32bpp):
- *      Search for 1280x720 -> SetMode.  Final fallback: SetMode(0).
+ *   3. Fallback: if SetMode fails, keep the current firmware mode as-is.
+ *      Log "[Boot] GOP: using firmware default WxH".
+ *
+ * HiDPI: negotiated width >= 2560 sets boot_info.hidpi = 1.
+ *        The boot splash and desktop use this flag to scale UI by 2×.
  * ============================================================================ */
+
+/* Score and select the best 32bpp GOP mode, call SetMode, set hidpi flag. */
+static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
+{
+    UINT32  best_idx = gop->Mode->Mode;
+    UINT32  best_w   = gop->Mode->Info->HorizontalResolution;
+    UINT32  best_h   = gop->Mode->Info->VerticalResolution;
+    int     found    = 0;
+    UINT32  i;
+
+    for (i = 0; i < gop->Mode->MaxMode; i++) {
+        UINTN info_size;
+        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+        if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) continue;
+
+        /* Only consider 32bpp modes */
+        if (info->PixelFormat != PixelBlueGreenRedReserved &&
+            info->PixelFormat != PixelRedGreenBlueReserved)
+            continue;
+
+        UINT32 w = info->HorizontalResolution;
+        UINT32 h = info->VerticalResolution;
+
+        if (g_conf_res_width > 0 && g_conf_res_height > 0) {
+            /* boot.conf explicit resolution: require exact match */
+            if (w == g_conf_res_width && h == g_conf_res_height) {
+                best_idx = i; best_w = w; best_h = h;
+                found = 1;
+                break;  /* exact match found, no need to scan further */
+            }
+        } else {
+            /* Auto: prefer highest total pixel count */
+            if (!found || w * h > best_w * best_h) {
+                best_idx = i; best_w = w; best_h = h;
+                found = 1;
+            }
+        }
+    }
+
+    /* Apply SetMode if the selected mode differs from the current one */
+    if (found && best_idx != gop->Mode->Mode) {
+        EFI_STATUS s = gop->SetMode(gop, best_idx);
+        if (EFI_ERROR(s) || gop->Mode->FrameBufferBase == 0) {
+            /* SetMode failed — keep current firmware mode */
+            serial_early_print("[Boot] GOP: using firmware default ");
+            serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
+            serial_early_print("x");
+            serial_early_print_uint(gop->Mode->Info->VerticalResolution);
+            serial_early_print("\n");
+            g_boot_info_ptr->hidpi =
+                (gop->Mode->Info->HorizontalResolution >= 2560) ? 1 : 0;
+            return;
+        }
+    }
+
+    /* HiDPI flag: set when negotiated width >= 2560 */
+    g_boot_info_ptr->hidpi =
+        (gop->Mode->Info->HorizontalResolution >= 2560) ? 1 : 0;
+
+    /* Serial log: [Boot] GOP: {W}x{H} 32bpp (mode {idx} of {max}) */
+    serial_early_print("[Boot] GOP: ");
+    serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
+    serial_early_print("x");
+    serial_early_print_uint(gop->Mode->Info->VerticalResolution);
+    serial_early_print(" 32bpp (mode ");
+    serial_early_print_uint(gop->Mode->Mode);
+    serial_early_print(" of ");
+    serial_early_print_uint(gop->Mode->MaxMode);
+    serial_early_print(")\n");
+}
+
 static EFI_STATUS init_gop(void)
 {
-    EFI_GUID gop_guid  = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
-    EFI_GUID edid_guid = EFI_EDID_ACTIVE_PROTOCOL_GUID;
+    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
-    EFI_EDID_ACTIVE_PROTOCOL     *edid_proto;
     EFI_STATUS status;
     UINT32 i;
 
@@ -379,7 +468,7 @@ static EFI_STATUS init_gop(void)
         return status;
     }
 
-    /* ── Enumerate all available modes ────────────────────────────────── */
+    /* ── Enumerate all available modes into boot_info ──────────────────── */
     g_boot_info_ptr->gop_mode_count = 0;
     g_boot_info_ptr->gop_mode_selected = 0;
     for (i = 0; i < gop->Mode->MaxMode && i < BOOT_GOP_MODE_MAX; i++) {
@@ -404,69 +493,15 @@ static EFI_STATUS init_gop(void)
         g_boot_info_ptr->gop_mode_count++;
     }
 
-    /* Is the current firmware mode already usable? */
-    BOOLEAN cur_ok =
-        (gop->Mode->FrameBufferBase != 0) &&
-        (gop->Mode->Info->PixelFormat == PixelBlueGreenRedReserved ||
-         gop->Mode->Info->PixelFormat == PixelRedGreenBlueReserved);
+    /* ── Negotiate best mode via boot.conf override or highest-res auto ── */
+    gop_negotiate_mode(gop);
 
-    /* ── A. Try EDID for the panel's native resolution ────────────────── */
-    UINT32 edid_w = 0, edid_h = 0;
-    status = gBS->LocateProtocol(&edid_guid, (VOID *)0, (VOID **)&edid_proto);
-    if (!EFI_ERROR(status) &&
-        edid_proto->SizeOfEdid >= 72 &&
-        edid_proto->Edid != (VOID *)0) {
-
-        const UINT8 *e = edid_proto->Edid;
-        /* Preferred Timing Descriptor at byte 54.
-         * H-active: byte[56] | (byte[58]>>4)<<8
-         * V-active: byte[59] | (byte[61]>>4)<<8 */
-        UINT32 hw = e[56] | (((UINT32)(e[58] >> 4) & 0x0F) << 8);
-        UINT32 hh = e[59] | (((UINT32)(e[61] >> 4) & 0x0F) << 8);
-        if (hw > 0 && hh > 0) { edid_w = hw; edid_h = hh; }
+    /* ── Safety: if firmware framebuffer is still unusable, try mode 0 ── */
+    if (gop->Mode->FrameBufferBase == 0) {
+        efi_print(u"[GOP] FrameBufferBase=0 after negotiate -- SetMode(0)\r\n");
+        gop->SetMode(gop, 0);
     }
 
-    if (edid_w > 0 && edid_h > 0) {
-        /* Search for matching GOP mode and switch to it */
-        for (i = 0; i < gop->Mode->MaxMode; i++) {
-            UINTN info_size;
-            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-            if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) continue;
-
-            if (info->HorizontalResolution == edid_w &&
-                info->VerticalResolution   == edid_h &&
-                (info->PixelFormat == PixelBlueGreenRedReserved ||
-                 info->PixelFormat == PixelRedGreenBlueReserved)) {
-                status = gop->SetMode(gop, i);
-                if (!EFI_ERROR(status) && gop->Mode->FrameBufferBase != 0) {
-                    efi_print(u"[GOP] EDID native mode set\r\n");
-                    goto store_fb;
-                }
-                break;  /* SetMode failed or bad FB -- fall through */
-            }
-        }
-        efi_print(u"[GOP] EDID match failed -- using firmware mode\r\n");
-    }
-
-    /* ── B. No EDID: keep OVMF's current mode ───────────────────────────
-     * OVMF initialises the display at the resolution given by xres/yres on
-     * the QEMU device (-device VGA,xres=N,yres=M or bochs-display,xres=N).
-     * By the time our bootloader runs, gop->Mode already reflects that
-     * resolution.  We just honour it -- no SetMode needed.
-     *
-     * Fallback: current mode is genuinely unusable (FrameBufferBase=0 or
-     * non-32bpp format).  In that case try mode 0 (always valid on OVMF). */
-    if (cur_ok) {
-        efi_print(u"[GOP] Keeping firmware mode\r\n");
-        goto store_fb;
-    }
-
-    /* cur_ok=false → last resort: SetMode(0) */
-    efi_print(u"[GOP] Current mode unusable -- SetMode(0)\r\n");
-    gop->SetMode(gop, 0);
-
-
-store_fb:
     /* Store framebuffer info and zero VRAM */
     gFramebuffer = (UINT32 *)(UINTN)gop->Mode->FrameBufferBase;
     gFbWidth  = gop->Mode->Info->HorizontalResolution;
@@ -573,6 +608,18 @@ static void parse_conf_kv(struct boot_config *cfg,
         for (i = 0; i < BOOT_CONF_CMDLINE_MAX - 1 && val[i]; i++)
             cfg->cmdline[i] = val[i];
         cfg->cmdline[i] = '\0';
+    }
+    else if (ascii_streq(key, "Resolution")) {
+        if (ascii_streq(val, "auto") || val[0] == '\0') {
+            g_conf_res_width  = 0;
+            g_conf_res_height = 0;
+        } else {
+            /* Parse "WxH" or "WXH" (case-insensitive 'x') */
+            g_conf_res_width = ascii_atoi(val);
+            const char *xp = val;
+            while (*xp && *xp != 'x' && *xp != 'X') xp++;
+            g_conf_res_height = (*xp) ? ascii_atoi(xp + 1) : 0;
+        }
     }
     /* Unknown keys are silently ignored -- forward compatibility */
 }
@@ -1362,7 +1409,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Record bootloader entry time */
     g_boot_info_ptr->timing.bl_entry = boot_rdtsc();
 
-    /* Step 1: Initialize graphics */
+    /* Step 1b: Parse boot.conf first — Resolution= key needed by init_gop */
+    g_boot_info_ptr->timing.conf_start = boot_rdtsc();
+    parse_boot_conf();
+    g_boot_info_ptr->timing.conf_end = boot_rdtsc();
+
+    /* Step 1: Initialize graphics (uses g_conf_res_width/height from boot.conf) */
     serial_early_print("BOOT: init_gop...\n");
     g_boot_info_ptr->timing.gop_start = boot_rdtsc();
     status = init_gop();
@@ -1373,11 +1425,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
     serial_early_print("BOOT: init_gop OK\n");
     g_boot_info_ptr->timing.gop_end = boot_rdtsc();
-
-    /* Step 1b: Parse boot.conf (must run while UEFI Boot Services available) */
-    g_boot_info_ptr->timing.conf_start = boot_rdtsc();
-    parse_boot_conf();
-    g_boot_info_ptr->timing.conf_end = boot_rdtsc();
 
     /* Clear screen to black before loading the kernel. */
     {

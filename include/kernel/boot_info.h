@@ -177,6 +177,8 @@ struct boot_info {
     /* Framebuffer */
     struct boot_framebuffer fb;
     uint8_t  fb_available;  /* 1 if framebuffer tag was found */
+    uint8_t  hidpi;         /* 1 if negotiated GOP width >= 2560 (set by bootloader) */
+    uint8_t  fb_pad[2];     /* alignment padding */
 
     /* GOP mode list (enumerated by bootloader) */
     struct boot_gop_mode gop_modes[BOOT_GOP_MODE_MAX];
