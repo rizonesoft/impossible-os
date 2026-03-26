@@ -146,18 +146,24 @@ static const char *level_prefix[] = {
     "[CRIT] ",   /* LOG_FATAL */
 };
 
-/* ANSI escape sequences applied to the [LEVEL] token in serial output.
- * Only the token itself is colored; timestamp, subsystem, and message remain
- * default so the eye goes straight to the severity indicator.
+/* ANSI escape sequences applied to the serial output.
  *
- *   LOG_DEBUG  [INFO]  dark-grey   — low-noise background chatter
- *   LOG_INFO   [ OK ]  green       — normal success
- *   LOG_WARN   [WARN]  yellow      — degraded / non-fatal
- *   LOG_ERROR  [FAIL]  red         — recoverable error
- *   LOG_FATAL  [CRIT]  bold+red    — fatal, system halted
+ * Two styles depending on severity:
+ *   Badge-only  (LOG_DEBUG, LOG_INFO):  color wraps just [LEVEL], rest default
+ *   Full-line   (LOG_WARN and above):   color starts at [LEVEL] and extends
+ *                                       through subsystem + message to EOL
+ *
+ * This matches dmesg/journalctl behavior: low-priority lines don't distract,
+ * warnings/errors make the entire line stand out instantly in a wall of text.
+ *
+ *   LOG_DEBUG  [INFO]  dark-grey, badge only  — background chatter
+ *   LOG_INFO   [ OK ]  green,     badge only  — happy-path confirmation
+ *   LOG_WARN   [WARN]  yellow,    full line   — degraded / non-fatal
+ *   LOG_ERROR  [FAIL]  red,       full line   — recoverable error
+ *   LOG_FATAL  [CRIT]  bold+red,  full line   — fatal halt
  */
 #define ANSI_RESET    "\033[0m"
-#define ANSI_DGREY    "\033[90m"    /* dark grey  */
+#define ANSI_DGREY    "\033[90m"
 #define ANSI_GREEN    "\033[32m"
 #define ANSI_YELLOW   "\033[33m"
 #define ANSI_RED      "\033[31m"
@@ -169,6 +175,15 @@ static const char *level_ansi[] = {
     ANSI_YELLOW,    /* LOG_WARN   [WARN] */
     ANSI_RED,       /* LOG_ERROR  [FAIL] */
     ANSI_BOLD_RED,  /* LOG_FATAL  [CRIT] */
+};
+
+/* 0 = badge only, 1 = color extends through subsystem + message */
+static const int level_full_line[] = {
+    0,  /* LOG_DEBUG */
+    0,  /* LOG_INFO  */
+    1,  /* LOG_WARN  */
+    1,  /* LOG_ERROR */
+    1,  /* LOG_FATAL */
 };
 
 static const uint32_t level_color[] = {
@@ -247,12 +262,16 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         LP('0' + (char)( fms        % 10));
         LP(']'); LP(' ');
 
-        /* Colored level prefix + subsystem + pre-formatted message */
+        /* Colored level prefix + subsystem + pre-formatted message.
+         * For badge-only levels: reset after [LEVEL], rest is default.
+         * For full-line levels:  reset after message, whole tail colored. */
         LS(level_ansi[level]);
         LS(level_prefix[level]);
-        LS(ANSI_RESET);
+        if (!level_full_line[level]) LS(ANSI_RESET);
         if (subsystem && subsystem[0]) { LS(subsystem); LS(": "); }
         LS(e->message);
+        if (level_full_line[level]) LS(ANSI_RESET);
+        LP('\n');
         LP('\n');
         line[pos] = '\0';
 
