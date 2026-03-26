@@ -133,18 +133,17 @@ int ncq_sync_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
 
     p->errors.cmd_failures++;
 
-    /* NCQ is repeatedly timing out on this port (common on VirtualBox where
-     * AHCI INTx is not delivered reliably for FPDMA commands).
-     * Disable NCQ permanently so that ahci_ncq_read/write fall back to
-     * ahci_do_rw, which detects the first IRQ timeout, clears use_events,
-     * and switches to polling -- recovering cleanly without further hangs. */
-    if (p->errors.cmd_failures >= 3) {
-        p->ncq_supported = 0;
-        klog(LOG_WARN, "ahci",
-               "Port %u: NCQ disabled after repeated failures -- "
-               "falling back to legacy ATA DMA",
-               (uint64_t)p->port_num);
-    }
+    /* NCQ FPDMA commands are timing out -- common on VirtualBox where INTx
+     * is not delivered reliably for queued commands.  Disable NCQ on this
+     * port immediately so ahci_ncq_read/write fall back to ahci_do_rw.
+     * That path hits port_issue_cmd's event timeout on the first call,
+     * clears use_events globally, and switches to polling -- recovering
+     * without further hangs. */
+    p->ncq_supported = 0;
+    klog(LOG_WARN, "ahci",
+           "Port %u: NCQ disabled (cmd_failures=%u) -- "
+           "falling back to legacy ATA DMA",
+           (uint64_t)p->port_num, (uint64_t)p->errors.cmd_failures);
 
     return -1;
 }

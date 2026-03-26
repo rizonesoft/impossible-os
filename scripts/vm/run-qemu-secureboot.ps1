@@ -1,7 +1,7 @@
 # run-qemu-secureboot.ps1 -- Launch Impossible OS with UEFI Secure Boot enforcement
 #
 # Boot chain:
-#   OVMF_CODE_4M.secboot.fd  (Secure Boot enforcement firmware)
+#   OVMF_CODE_4M.snakeoil.fd (matched snakeoil firmware -- Secure Boot enforcing)
 #   OVMF_VARS_4M.snakeoil.fd (snakeoil PK/KEK/db pre-enrolled; OVMF trusts snakeoil-signed shim)
 #     -> EFI/BOOT/BOOTX64.EFI  (shimx64.efi, re-signed with OVMF snakeoil key)
 #         -> EFI/BOOT/grubx64.efi (our bootloader, signed with MOK.key, trusted via VENDOR_CERT_FILE)
@@ -30,7 +30,7 @@ $PROJECT    = Split-Path -Parent (Split-Path -Parent $SCRIPT_DIR)
 $BUILD      = Join-Path $PROJECT "build"
 
 $DISK_SB    = Join-Path $BUILD "system-disk-secureboot.img"
-$OVMF_CODE  = Join-Path $BUILD "OVMF_CODE_4M.secboot.fd"
+$OVMF_CODE  = Join-Path $BUILD "OVMF_CODE_4M.snakeoil.fd"
 $OVMF_VARS  = Join-Path $BUILD "OVMF_VARS_4M.snakeoil.fd"
 $VARS_DEST  = Join-Path $env:TEMP "OVMF_VARS_4M.snakeoil.fd"
 
@@ -63,11 +63,11 @@ if (-not (Test-Path $DISK_SB)) {
 
 # --- Step 3: Verify OVMF secboot firmware (build-sb-test-disk.sh copies it) ---
 if (-not (Test-Path $OVMF_CODE)) {
-    Write-Host "Copying OVMF secboot firmware from WSL..." -ForegroundColor Yellow
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_CODE_4M.secboot.fd ~/impossible-os/build/'
+    Write-Host "Copying OVMF snakeoil firmware pair from WSL..." -ForegroundColor Yellow
+    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_CODE_4M.snakeoil.fd ~/impossible-os/build/'
     & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_VARS_4M.snakeoil.fd ~/impossible-os/build/'
     if (-not (Test-Path $OVMF_CODE)) {
-        Write-Host "OVMF_CODE_4M.secboot.fd not found. Install: sudo apt install ovmf" -ForegroundColor Red
+        Write-Host "OVMF_CODE_4M.snakeoil.fd not found. Install: sudo apt install ovmf" -ForegroundColor Red
         pause; exit 1
     }
 }

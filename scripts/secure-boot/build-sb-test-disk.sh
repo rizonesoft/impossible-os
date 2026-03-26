@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# build-sb-test-disk.sh — Build a Secure Boot test disk image.
+# build-sb-test-disk.sh -- Build a Secure Boot test disk image.
 #
 # Produces: build/system-disk-secureboot.img
 #
 # Boot chain verified by this disk:
-#   OVMF (OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd)
-#     → shimx64.efi  (signed with OVMF snakeoil key  → OVMF trusts it)
-#         → grubx64.efi (signed with MOK.key → shim trusts via VENDOR_CERT_FILE=MOK.cer)
-#             → kernel
+#   OVMF (OVMF_CODE_4M.snakeoil.fd + OVMF_VARS_4M.snakeoil.fd)
+#     -> shimx64.efi  (signed with OVMF snakeoil key  -> OVMF trusts it)
+#         -> grubx64.efi (signed with MOK.key -> shim trusts via VENDOR_CERT_FILE=MOK.cer)
+#             -> kernel
+#
+# IMPORTANT: CODE and VARS must be the matched snakeoil pair.
+# OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd is a MISMATCHED pair
+# that causes the firmware to hang before initializing the display.
 #
 # The snakeoil key is the OVMF test key at /usr/share/ovmf/PkKek-1-snakeoil.key
-# (passphrase: snakeoil). The snakeoil cert is pre-enrolled in OVMF_VARS_4M.snakeoil.fd.
+# (passphrase: snakeoil). The snakeoil cert is pre-enrolled in OVMF_VARS_4M.snakeoil.fd
+# as PK, KEK, and db -- so OVMF trusts snakeoil-signed binaries.
 #
 # Prerequisites:
 #   apt install ovmf sbsigntool mtools
@@ -85,23 +90,23 @@ MTOOLSRC="$MTOOLSRC_FILE" mcopy -o "$SIGNED_SHIM" "s:EFI/BOOT/BOOTX64.EFI"
 echo "[SB-TEST] ESP contents after injection:"
 MTOOLSRC="$MTOOLSRC_FILE" mdir "s:EFI/BOOT/"
 
-# --- Copy OVMF secboot firmware to build/ for PowerShell scripts ---
-if [ ! -f "$BUILD/OVMF_CODE_4M.secboot.fd" ]; then
-    echo "[SB-TEST] Copying OVMF secboot firmware to $BUILD/ ..."
-    cp /usr/share/OVMF/OVMF_CODE_4M.secboot.fd "$BUILD/"
-    cp /usr/share/OVMF/OVMF_VARS_4M.snakeoil.fd "$BUILD/"
-fi
+# --- Copy matched snakeoil firmware pair to build/ for PowerShell scripts ---
+# Must use the matched pair: OVMF_CODE_4M.snakeoil.fd + OVMF_VARS_4M.snakeoil.fd
+# Using OVMF_CODE_4M.secboot.fd with snakeoil VARS causes a firmware hang.
+echo "[SB-TEST] Copying OVMF snakeoil firmware pair to $BUILD/ ..."
+cp /usr/share/OVMF/OVMF_CODE_4M.snakeoil.fd "$BUILD/"
+cp /usr/share/OVMF/OVMF_VARS_4M.snakeoil.fd "$BUILD/"
 
 # --- Cleanup temp files ---
 rm -f "$SNAKEOIL_KEY_NOPASS" "$MTOOLSRC_FILE"
 
 echo ""
 echo "[SB-TEST] Done: $DST_DISK"
-echo "[SB-TEST] OVMF firmware: $BUILD/OVMF_CODE_4M.secboot.fd"
+echo "[SB-TEST] OVMF firmware: $BUILD/OVMF_CODE_4M.snakeoil.fd"
 echo "[SB-TEST] OVMF VARS:     $BUILD/OVMF_VARS_4M.snakeoil.fd (snakeoil PK/KEK/db enrolled)"
 echo ""
 echo "[SB-TEST] Boot chain:"
-echo "  OVMF (secboot, snakeoil VARS)"
+echo "  OVMF (snakeoil CODE + snakeoil VARS -- matched pair)"
 echo "    -> EFI/BOOT/BOOTX64.EFI  [shimx64.efi, snakeoil-signed]"
 echo "    -> EFI/BOOT/grubx64.efi  [our bootloader, MOK-signed, trusted via VENDOR_CERT_FILE]"
 echo "    -> kernel"
