@@ -212,6 +212,48 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 
 ---
 
+## 12. Serial Log Standardization & Race Fix ✅
+
+**Goal:** Replace inconsistent ad-hoc serial output (`[Boot]`, `BOOT:`, `[!!]`, `[OK]`, bare `printk`) with a single unified log format and eliminate serial line mangling caused by concurrent IRQ handlers.
+
+**Files:** `src/kernel/klog.c`, `src/kernel/drivers/serial.c`, `include/kernel/klog.h`, and all callers migrated from `printk`
+
+### 12.1 Unified log format *(completed)* ✅
+
+Standard line format used everywhere:
+
+```
+[  X.XXX] [LEVEL] subsystem: message
+```
+
+| Token | Values |
+| ----- | ------ |
+| Timestamp | `[  0.000]` — seconds space-padded to 3 digits, ms zero-padded to 3 |
+| Level | `[INFO]` `[ OK ]` `[WARN]` `[FAIL]` `[CRIT]` |
+| Subsystem | short lowercase tag, e.g. `uefi`, `mm`, `acpi`, `test` |
+
+- [x] `klog.h` defines five levels: `LOG_DEBUG→[INFO]`, `LOG_INFO→[ OK ]`, `LOG_WARN→[WARN]`, `LOG_ERROR→[FAIL]`, `LOG_FATAL→[CRIT]`
+- [x] All pre-`klog` callers migrated: `printk()` calls in `gfx_text.c`, `icon_store.c`, `image.c`, `image_scale.c`, `desktop.c`, `boot_desktop.c`, `terminal.c`, `gallery.c`, `ixfs_format.c`, `ixfs_cow.c`, `test_threads.c`, `version.c`, `boot_hw.c`, boot splash
+- [x] Stale `#include "kernel/printk.h"` removed from ~41 files that no longer called `printk()`
+- [x] Deprecated `include/kernel/log.h` + `src/kernel/log.c` deleted
+- [x] Commit: `"kernel: Serial Output Phase 1 — unified klog format, remove stale printk includes"`
+
+### 12.2 Serial line-mangling race fix *(completed)* ✅
+
+**Root cause:** `klog` emitted a log line as ~20+ individual `serial_putchar` calls (one per character of timestamp, level, subsystem, message). The per-character spinlock released between every byte, allowing a timer IRQ handler's `klog` call to inject a full line mid-message.
+
+**Fix:**
+1. `serial.c` — extracted `serial_putchar_raw()` (unlocked); `serial_write()` now holds the spinlock for the **entire string**.
+2. `klog.c` — formats the complete log line (`[ts] [LEVEL] sub: msg\n`) into a 256-byte stack buffer, then calls `serial_write()` once. Removed `vformat_emit()` and the old per-character serial helpers; framebuffer output reuses `e->message` from the ring buffer.
+
+- [x] `serial_putchar_raw()` static helper, no lock — called only from within a held lock
+- [x] `serial_write()` acquires `g_serial_lock` once, writes all bytes via `serial_putchar_raw()`, releases
+- [x] `klog()` builds full serial line in `char line[256]`, calls `serial_write(line)` atomically
+- [x] Verified: no interleaved lines in serial output; IRQ-sourced `[WARN]` lines no longer split ioapic route messages
+- [x] Commit: `"kernel: fix serial line mangling by making klog write atomically"`
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                             | 🪟 Windows 11                                   | 🐧 Linux (GRUB/systemd-boot)                     | 🚀 Impossible OS                                       |
