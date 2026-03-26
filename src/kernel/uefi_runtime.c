@@ -1009,9 +1009,9 @@ void uefi_capsule_init(void)
         /* Log with appropriate warnings */
         klog(LOG_INFO, "UEFI",
              "Capsule updates: firmware supports UpdateCapsule()");
-        klog(LOG_WARN, "UEFI",
-             "Capsule updates: write path NOT implemented "
-             "(requires signed capsules + crypto verification)");
+        klog(LOG_DEBUG, "UEFI",
+             "Capsule updates: write path not yet implemented "
+             "(planned -- requires signed capsules + crypto verification)");
 
         /* TODO: When we have ESRT parsing + crypto stack, implement:
          *
