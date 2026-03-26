@@ -40,7 +40,7 @@
 | 💎  |   1   | UEFI runtime services preservation | —                |  [x]   |
 | 💎  |   2   | UEFI variable services             | 1                |  [x]   |
 | 💎  |   3   | GOP resolution auto-detection      | 1                |  [x]   |
-| 💎  |   4   | SMBIOS table parsing               | 1                |  [ ]   |
+| 💎  |   4   | SMBIOS table parsing               | 1                |  [x]   |
 | 💎  |   5   | Secure Boot state detection        | 2                |  [ ]   |
 | 💎  |   6   | Secure Boot shim chain-loading     | 5                |  [ ]   |
 | 💎  |   7   | Boot UX polish                     | 3, 5, TODO-02 §2 |  [ ]   |
@@ -103,15 +103,15 @@ Walk SMBIOS 3.x structures and populate Registry hardware keys for System Proper
 
 **Files:** `include/kernel/smbios.h`, `src/kernel/smbios.c`
 
-- [ ] In bootloader: scan `EFI_CONFIGURATION_TABLE` for SMBIOS3 GUID (`{F2FD1544-9794-4A2C-992E-E5BBCF20E394}`); store `smbios3_entry_point` pointer in `boot_info.smbios_base`; fall back to SMBIOS 2.x GUID (`{EB9D2D31-...}`) if 3.x absent
-- [ ] In `smbios_init()`: validate anchor string (`"_SM3_"` or `"_SM_"`), walk structure chain by following `(char *)hdr + hdr->length` then skipping two zero bytes for the string heap
-- [ ] Extract Type 0 (BIOS info): vendor string, BIOS version, release date → `HKLM\HARDWARE\BIOS\BIOSVendor`, `BIOSVersion`, `BIOSReleaseDate`
-- [ ] Extract Type 1 (System): manufacturer, product name, version, serial number, UUID → `HKLM\HARDWARE\System\SystemManufacturer`, `SystemProductName`, `SystemSerial`, `SystemUUID`
-- [ ] Extract Type 4 (Processor, may repeat per socket): socket designation, family, speed, core count, thread count → `HKLM\HARDWARE\CPU\{idx}\*`
-- [ ] Extract Type 17 (Memory device, repeats per DIMM): size MB, speed MHz, type (DDR4/DDR5), manufacturer, part number, bank/device locator → `HKLM\HARDWARE\Memory\{idx}\*`
-- [ ] `smbios_get_system_uuid(uint8_t uuid[16])` — used by licensing and telemetry
-- [ ] Expose via System Properties dialog (`sysdm.cpl`) and `msinfo32` shell command
-- [ ] Commit: `"kernel: SMBIOS 3.x table parse → Registry HARDWARE hives"`
+- [x] In bootloader: scan `EFI_CONFIGURATION_TABLE` for SMBIOS3 GUID (`{F2FD1544-9794-4A2C-992E-E5BBCF20E394}`); store `smbios3_entry_point` pointer in `boot_info.smbios_base`; fall back to SMBIOS 2.x GUID (`{EB9D2D31-...}`) if 3.x absent
+- [x] In `smbios_init()`: validate anchor string (`"_SM3_"` or `"_SM_"`), walk structure chain by following `(char *)hdr + hdr->length` then skipping two zero bytes for the string heap
+- [x] Extract Type 0 (BIOS info): vendor string, BIOS version, release date → `HKLM\HARDWARE\BIOS\BIOSVendor`, `BIOSVersion`, `BIOSReleaseDate`
+- [x] Extract Type 1 (System): manufacturer, product name, version, serial number, UUID → `HKLM\HARDWARE\System\SystemManufacturer`, `SystemProductName`, `SystemSerial`, `SystemUUID`
+- [x] Extract Type 4 (Processor, may repeat per socket): socket designation, family, speed, core count, thread count → `HKLM\HARDWARE\CPU\{idx}\*`
+- [x] Extract Type 17 (Memory device, repeats per DIMM): size MB, speed MHz, type (DDR4/DDR5), manufacturer, part number, bank/device locator → `HKLM\HARDWARE\Memory\{idx}\*`
+- [x] `smbios_get_system_uuid(uint8_t uuid[16])` — used by licensing and telemetry
+- [ ] Expose via System Properties dialog (`sysdm.cpl`) and `msinfo32` shell command (deferred — depends on desktop shell)
+- [x] Commit: `"kernel: SMBIOS 3.x table parse → Registry HARDWARE hives"`
 
 ## 5. Secure Boot State Detection `[Sonnet]`
 
@@ -221,7 +221,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 | 💎  | UEFI runtime services after boot    | ✅ Full EFI runtime preserved                   | ✅ `efi_call_*` wrappers post-ExitBootServices   | ✅ Done — §1; RT pointers copied pre-EBS, SVAM called in `uefi_runtime_init()` post-EBS  |
 | 💎  | UEFI variable read/write            | ✅ `GetFirmwareEnvironmentVariable` Win32 API   | ✅ `efivarfs` + `efivar` library                 | ✅ Done — §2; `uefi_var_get/set`, NTSTATUS translation, `uefi_var_enumerate(callback)`, `IMPOSSIBLE_OS_VENDOR_GUID`  |
 | 💎  | GOP resolution negotiation          | ✅ Boot manager negotiates GOP mode             | ✅ GRUB `gfxmode` + EFIFB                        | ✅ Done — §3; scoring-based `gop_negotiate_mode()`, `Resolution=WxH` boot.conf, HiDPI flag, fallback log  |
-| 💎  | SMBIOS hardware inventory           | ✅ WMI Win32_BIOS/Win32_ComputerSystem          | ✅ `/sys/firmware/dmi/entries/`                  | ⬜ Planned — §4                                        |
+| 💎  | SMBIOS hardware inventory           | ✅ WMI Win32_BIOS/Win32_ComputerSystem          | ✅ `/sys/firmware/dmi/entries/`                  | ✅ Done — §4; Type 0/1/4/17 parsed, `smbios_get_system_uuid()`, `smbios_populate_registry()` → `HKLM\HARDWARE\BIOS\*`, `System\*`, `CPU\{idx}\*`, `Memory\{idx}\*`  |
 | 💎  | A/B dual-slot kernel update         | ✅ Windows Update dual-partition recovery       | ✅ `grub-reboot` + BTRFS snapshots               | ⬜ Planned — §8                                        |
 | 💎  | UEFI capsule firmware update        | ✅ Windows Update delivers UEFI capsules        | ✅ `fwupd` + `fwupdmgr update`                   | ⬜ Planned — §10                                       |
 | 💎  | UEFI memory W^X enforcement         | ✅ Enforced since Windows 10 1607               | ✅ `CONFIG_EFI_MEMORY_ATTRIBUTES_TABLE`          | ⬜ Planned — §11                                       |

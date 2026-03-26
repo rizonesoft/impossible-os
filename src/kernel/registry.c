@@ -20,6 +20,7 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "kernel/smbios.h"
 
 /* ---- String helpers ---- */
 
@@ -1709,6 +1710,9 @@ void registry_populate_defaults(void)
 
     klog(LOG_DEBUG, "registry", "Registry defaults populated (%u values)",
            (uint64_t)count);
+
+    /* Populate SMBIOS hardware keys now that the registry tree is ready */
+    smbios_populate_registry();
 }
 
 /* ============================================================================

@@ -8,6 +8,7 @@
 #include "kernel/smbios.h"
 #include "kernel/uefi_config.h"
 #include "kernel/klog.h"
+#include "registry.h"
 
 /* ---- Internal types ---- */
 
@@ -110,9 +111,17 @@ static void parse_type1(const struct smbios_header *hdr)
              SMBIOS_STRING_MAX);
     str_copy(s_info.sys_product,      smbios_get_string(hdr, d[5]),
              SMBIOS_STRING_MAX);
-    if (hdr->length >= 25)
+    if (hdr->length >= 7)
+        str_copy(s_info.sys_version,  smbios_get_string(hdr, d[6]),
+                 SMBIOS_STRING_MAX);
+    if (hdr->length >= 25) {
         str_copy(s_info.sys_serial,   smbios_get_string(hdr, d[7]),
                  SMBIOS_STRING_MAX);
+        /* UUID at bytes 8..23 (128-bit) */
+        uint32_t i;
+        for (i = 0; i < 16; i++)
+            s_info.sys_uuid[i] = d[8 + i];
+    }
 }
 
 static void parse_type2(const struct smbios_header *hdr)
@@ -131,24 +140,36 @@ static void parse_type4(const struct smbios_header *hdr)
     const uint8_t *d = (const uint8_t *)hdr;
     if (hdr->length < 26) return;
 
-    /* Only parse first CPU socket */
-    if (s_info.cpu_max_speed_mhz != 0) return;
+    /* Fill next per-socket slot */
+    if (s_info.cpu_count >= SMBIOS_CPU_MAX) return;
+    struct smbios_cpu_info *cpu = &s_info.cpus[s_info.cpu_count];
 
-    str_copy(s_info.cpu_socket,       smbios_get_string(hdr, d[4]),
+    str_copy(cpu->socket,       smbios_get_string(hdr, d[4]),
              SMBIOS_STRING_MAX);
-    str_copy(s_info.cpu_manufacturer, smbios_get_string(hdr, d[7]),
+    cpu->family = d[6];
+    str_copy(cpu->manufacturer, smbios_get_string(hdr, d[7]),
              SMBIOS_STRING_MAX);
 
     /* Max speed at offset 0x14 (uint16_t LE) */
-    s_info.cpu_max_speed_mhz = (uint16_t)(d[0x14] | ((uint16_t)d[0x15] << 8));
+    cpu->max_speed_mhz = (uint16_t)(d[0x14] | ((uint16_t)d[0x15] << 8));
 
-    /* Core count at offset 0x23 (SMBIOS 2.5+) */
+    /* Core / thread counts (SMBIOS 2.5+) */
     if (hdr->length >= 0x24)
-        s_info.cpu_core_count = (uint16_t)d[0x23];
-
-    /* Thread count at offset 0x25 (SMBIOS 2.5+) */
+        cpu->core_count   = (uint16_t)d[0x23];
     if (hdr->length >= 0x26)
-        s_info.cpu_thread_count = (uint16_t)d[0x25];
+        cpu->thread_count = (uint16_t)d[0x25];
+
+    cpu->valid = 1;
+    s_info.cpu_count++;
+
+    /* Keep legacy summary fields populated from first socket */
+    if (s_info.cpu_count == 1) {
+        str_copy(s_info.cpu_socket,       cpu->socket,       SMBIOS_STRING_MAX);
+        str_copy(s_info.cpu_manufacturer, cpu->manufacturer, SMBIOS_STRING_MAX);
+        s_info.cpu_max_speed_mhz  = cpu->max_speed_mhz;
+        s_info.cpu_core_count     = cpu->core_count;
+        s_info.cpu_thread_count   = cpu->thread_count;
+    }
 }
 
 static void parse_type17(const struct smbios_header *hdr)
@@ -175,17 +196,39 @@ static void parse_type17(const struct smbios_header *hdr)
         size_mb = ext;  /* Extended size is always in MB */
     }
 
+    /* Aggregate totals (legacy callers) */
     s_info.ram_total_mb += size_mb;
     s_info.ram_dimm_count++;
 
-    /* Speed at offset 0x15 (uint16_t LE, MHz) -- SMBIOS 2.3+ */
-    if (hdr->length >= 0x17 && s_info.ram_speed_mhz == 0) {
+    if (hdr->length >= 0x17 && s_info.ram_speed_mhz == 0)
         s_info.ram_speed_mhz = (uint16_t)(d[0x15] | ((uint16_t)d[0x16] << 8));
-    }
-
-    /* Memory type at offset 0x12 (uint8_t) */
     if (s_info.ram_type == 0)
         s_info.ram_type = d[0x12];
+
+    /* Per-DIMM slot */
+    if (s_info.dimm_count >= SMBIOS_DIMM_MAX) return;
+    struct smbios_dimm_info *dimm = &s_info.dimms[s_info.dimm_count];
+
+    dimm->size_mb   = size_mb;
+    dimm->mem_type  = d[0x12];
+    if (hdr->length >= 0x17)
+        dimm->speed_mhz = (uint16_t)(d[0x15] | ((uint16_t)d[0x16] << 8));
+
+    /* String fields: device locator (d[0x10]), bank locator (d[0x11]),
+     * manufacturer (d[0x17]), part number (d[0x1A]) — SMBIOS 2.3+ */
+    str_copy(dimm->device_locator, smbios_get_string(hdr, d[0x10]),
+             SMBIOS_STRING_MAX);
+    str_copy(dimm->bank_locator,   smbios_get_string(hdr, d[0x11]),
+             SMBIOS_STRING_MAX);
+    if (hdr->length >= 0x1B) {
+        str_copy(dimm->manufacturer, smbios_get_string(hdr, d[0x17]),
+                 SMBIOS_STRING_MAX);
+        str_copy(dimm->part_number,  smbios_get_string(hdr, d[0x1A]),
+                 SMBIOS_STRING_MAX);
+    }
+
+    dimm->valid = 1;
+    s_info.dimm_count++;
 }
 
 /* ---- Table walker ---- */
@@ -324,4 +367,139 @@ void smbios_init(void)
 const struct smbios_system_info *smbios_get_info(void)
 {
     return &s_info;
+}
+
+int smbios_get_system_uuid(uint8_t uuid[16])
+{
+    uint32_t i, all_zero = 1;
+    if (!s_info.valid) return 0;
+    for (i = 0; i < 16; i++) {
+        uuid[i] = s_info.sys_uuid[i];
+        if (s_info.sys_uuid[i] != 0) all_zero = 0;
+    }
+    return !all_zero;
+}
+
+/* Format uuid[16] as "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" into buf (37 bytes). */
+static void uuid_to_string(const uint8_t uuid[16], char *buf)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    const uint8_t order[] = {
+        3,2,1,0, 5,4, 7,6, 8,9, 10,11,12,13,14,15
+    };
+    uint32_t i, pos = 0;
+    for (i = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+            buf[pos++] = '-';
+        uint8_t b = uuid[order[i]];
+        buf[pos++] = hex[b >> 4];
+        buf[pos++] = hex[b & 0x0F];
+    }
+    buf[pos] = '\0';
+}
+
+/* Format a uint32_t as a decimal string into buf. */
+static void u32_to_str(uint32_t v, char *buf, uint32_t bufsize)
+{
+    char tmp[12];
+    uint32_t pos = 10;
+    tmp[11] = '\0';
+    if (v == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
+    while (v > 0 && pos > 0) { tmp[pos--] = (char)('0' + v % 10); v /= 10; }
+    uint32_t len = 11 - pos - 1;
+    if (len >= bufsize) len = bufsize - 1;
+    uint32_t i;
+    for (i = 0; i < len; i++) buf[i] = tmp[pos + 1 + i];
+    buf[len] = '\0';
+}
+
+void smbios_populate_registry(void)
+{
+    HKEY hKey;
+    uint32_t disp;
+    char buf[32];
+    uint32_t i;
+
+    if (!s_info.valid) return;
+
+    /* ── HKLM\HARDWARE\BIOS ──────────────────────────────────────────── */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\BIOS", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "BIOSVendor",      s_info.bios_vendor);
+        RegSetString(hKey, "BIOSVersion",     s_info.bios_version);
+        RegSetString(hKey, "BIOSReleaseDate", s_info.bios_date);
+        RegCloseKey(hKey);
+    }
+
+    /* ── HKLM\HARDWARE\System ────────────────────────────────────────── */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\System", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "SystemManufacturer", s_info.sys_manufacturer);
+        RegSetString(hKey, "SystemProductName",  s_info.sys_product);
+        RegSetString(hKey, "SystemVersion",      s_info.sys_version);
+        RegSetString(hKey, "SystemSerial",       s_info.sys_serial);
+        /* UUID as canonical string */
+        char uuid_str[40];
+        uuid_to_string(s_info.sys_uuid, uuid_str);
+        RegSetString(hKey, "SystemUUID", uuid_str);
+        RegCloseKey(hKey);
+    }
+
+    /* ── HKLM\HARDWARE\CPU\{idx} — per socket ────────────────────────── */
+    for (i = 0; i < (uint32_t)s_info.cpu_count; i++) {
+        const struct smbios_cpu_info *cpu = &s_info.cpus[i];
+        if (!cpu->valid) continue;
+
+        char path[48];
+        path[0] = '\0';
+        /* Build "HARDWARE\CPU\N" */
+        const char *prefix = "HARDWARE\\CPU\\";
+        uint32_t p = 0;
+        while (prefix[p]) { path[p] = prefix[p]; p++; }
+        u32_to_str(i, path + p, (uint32_t)(sizeof(path) - p));
+
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, path, 0,
+                           (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                           &hKey, &disp) == ERROR_SUCCESS) {
+            RegSetString(hKey, "Socket",       cpu->socket);
+            RegSetString(hKey, "Manufacturer", cpu->manufacturer);
+            RegSetDword(hKey,  "MaxSpeedMHz",  (uint32_t)cpu->max_speed_mhz);
+            RegSetDword(hKey,  "CoreCount",    (uint32_t)cpu->core_count);
+            RegSetDword(hKey,  "ThreadCount",  (uint32_t)cpu->thread_count);
+            RegSetDword(hKey,  "Family",       (uint32_t)cpu->family);
+            RegCloseKey(hKey);
+        }
+    }
+
+    /* ── HKLM\HARDWARE\Memory\{idx} — per DIMM ──────────────────────── */
+    for (i = 0; i < (uint32_t)s_info.dimm_count; i++) {
+        const struct smbios_dimm_info *dimm = &s_info.dimms[i];
+        if (!dimm->valid) continue;
+
+        char path[52];
+        const char *prefix2 = "HARDWARE\\Memory\\";
+        uint32_t p = 0;
+        while (prefix2[p]) { path[p] = prefix2[p]; p++; }
+        u32_to_str(i, path + p, (uint32_t)(sizeof(path) - p));
+
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, path, 0,
+                           (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                           &hKey, &disp) == ERROR_SUCCESS) {
+            RegSetDword(hKey,  "SizeMB",        dimm->size_mb);
+            RegSetDword(hKey,  "SpeedMHz",      (uint32_t)dimm->speed_mhz);
+            u32_to_str((uint32_t)dimm->mem_type, buf, sizeof(buf));
+            RegSetString(hKey, "MemTypeCode",   buf);
+            RegSetString(hKey, "MemType",       mem_type_name(dimm->mem_type));
+            RegSetString(hKey, "Manufacturer",  dimm->manufacturer);
+            RegSetString(hKey, "PartNumber",    dimm->part_number);
+            RegSetString(hKey, "BankLocator",   dimm->bank_locator);
+            RegSetString(hKey, "DeviceLocator", dimm->device_locator);
+            RegCloseKey(hKey);
+        }
+    }
+
+    klog(LOG_INFO, "SMBIOS", "Registry populated: BIOS, System, %u CPU(s), %u DIMM(s)",
+         (uint32_t)s_info.cpu_count, (uint32_t)s_info.dimm_count);
 }

@@ -13,6 +13,31 @@
 /* Maximum string length for SMBIOS fields */
 #define SMBIOS_STRING_MAX  64
 
+/* Per-socket CPU info (Type 4, up to 4 sockets) */
+#define SMBIOS_CPU_MAX  4
+struct smbios_cpu_info {
+    char     socket[SMBIOS_STRING_MAX];
+    char     manufacturer[SMBIOS_STRING_MAX];
+    uint16_t max_speed_mhz;
+    uint16_t core_count;
+    uint16_t thread_count;
+    uint8_t  family;
+    uint8_t  valid;
+};
+
+/* Per-DIMM memory info (Type 17, up to 16 slots) */
+#define SMBIOS_DIMM_MAX  16
+struct smbios_dimm_info {
+    char     manufacturer[SMBIOS_STRING_MAX];
+    char     part_number[SMBIOS_STRING_MAX];
+    char     bank_locator[SMBIOS_STRING_MAX];
+    char     device_locator[SMBIOS_STRING_MAX];
+    uint32_t size_mb;
+    uint16_t speed_mhz;
+    uint8_t  mem_type;   /* SMBIOS_MEM_* */
+    uint8_t  valid;
+};
+
 /* System information extracted from SMBIOS tables */
 struct smbios_system_info {
     /* Type 0 — BIOS Information */
@@ -21,26 +46,36 @@ struct smbios_system_info {
     char bios_date[SMBIOS_STRING_MAX];
 
     /* Type 1 — System Information */
-    char sys_manufacturer[SMBIOS_STRING_MAX];
-    char sys_product[SMBIOS_STRING_MAX];
-    char sys_serial[SMBIOS_STRING_MAX];
+    char    sys_manufacturer[SMBIOS_STRING_MAX];
+    char    sys_product[SMBIOS_STRING_MAX];
+    char    sys_version[SMBIOS_STRING_MAX];
+    char    sys_serial[SMBIOS_STRING_MAX];
+    uint8_t sys_uuid[16];   /* raw UUID bytes in SMBIOS wire order */
 
     /* Type 2 — Baseboard */
     char board_manufacturer[SMBIOS_STRING_MAX];
     char board_product[SMBIOS_STRING_MAX];
 
-    /* Type 4 — Processor (first socket) */
-    char cpu_manufacturer[SMBIOS_STRING_MAX];
-    char cpu_socket[SMBIOS_STRING_MAX];
+    /* Type 4 — Processor (per socket; legacy single-socket summary kept) */
+    char     cpu_manufacturer[SMBIOS_STRING_MAX];
+    char     cpu_socket[SMBIOS_STRING_MAX];
     uint16_t cpu_max_speed_mhz;
     uint16_t cpu_core_count;
     uint16_t cpu_thread_count;
 
-    /* Type 17 — Memory (aggregate) */
+    /* Per-socket array */
+    struct smbios_cpu_info  cpus[SMBIOS_CPU_MAX];
+    uint8_t                 cpu_count;
+
+    /* Type 17 — Memory (aggregate summary kept for legacy callers) */
     uint32_t ram_total_mb;
-    uint16_t ram_speed_mhz;     /* speed of first populated DIMM */
-    uint8_t  ram_type;          /* DDR type of first populated DIMM */
-    uint8_t  ram_dimm_count;    /* number of populated DIMMs */
+    uint16_t ram_speed_mhz;
+    uint8_t  ram_type;
+    uint8_t  ram_dimm_count;
+
+    /* Per-DIMM array */
+    struct smbios_dimm_info dimms[SMBIOS_DIMM_MAX];
+    uint8_t                 dimm_count;
 
     /* Metadata */
     uint8_t  smbios_major;
@@ -61,3 +96,13 @@ void smbios_init(void);
 
 /* Returns pointer to the global system info struct (valid after smbios_init). */
 const struct smbios_system_info *smbios_get_info(void);
+
+/* Copy the raw 16-byte system UUID into uuid[16].
+ * Returns 1 if SMBIOS was found and UUID is non-zero, 0 otherwise. */
+int smbios_get_system_uuid(uint8_t uuid[16]);
+
+/* Write SMBIOS hardware data into the Registry.
+ * Creates HKLM\HARDWARE\BIOS\*, HKLM\HARDWARE\System\*,
+ * HKLM\HARDWARE\CPU\{idx}\*, and HKLM\HARDWARE\Memory\{idx}\*.
+ * Must be called after smbios_init() and registry_init(). */
+void smbios_populate_registry(void);
