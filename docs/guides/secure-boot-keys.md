@@ -78,20 +78,44 @@ After enrollment the shim skips the MOK screen on future boots.
 
 ---
 
-## Testing Secure Boot in QEMU
+## Testing the Secure Boot chain in VirtualBox
 
-Use the dedicated Secure Boot test runner:
+The normal system disk already carries the full shim chain — no special
+preparation is needed:
+
+| File on ESP | Content |
+|---|---|
+| `EFI\BOOT\BOOTX64.EFI` | `shimx64.efi` — shim with `MOK.cer` embedded as `VENDOR_CERT_FILE` |
+| `EFI\BOOT\grubx64.efi` | Our bootloader, signed with `MOK.key` |
+| `EFI\BOOT\mmx64.efi`   | MokManager — key enrollment UI |
+
+Use the dedicated VirtualBox Secure Boot test runner:
 
 ```
-scripts\vm\run-qemu-kvm-secureboot.bat   (Windows/WHPX)
+scripts\vm\run-vbox-secureboot.bat
 ```
 
-This uses `OVMF_CODE_4M.secboot.fd` + `OVMF_VARS_4M.snakeoil.fd` (test keys
-pre-enrolled). The helper script `scripts/secure-boot/build-sb-test-disk.sh`
-re-signs `shimx64.efi` with the OVMF snakeoil test key automatically so no
-manual BIOS key enrollment is needed for the QEMU test run.
+**What it tests:**
 
-For the OVMF snakeoil key, see `/usr/share/ovmf/PkKek-1-snakeoil.pem` (passphrase: `snakeoil`).
+| Layer | What happens |
+|---|---|
+| Shim MOK verification | Shim verifies `grubx64.efi` against embedded `MOK.cer` |
+| Signed bootloader | `grubx64.efi` (MOK-signed) passes shim check and boots |
+| UEFI enforcement (VBox 7.x) | If `--uefi-secureboot-enabled on` is supported, the shim is rejected (not MS-signed) — demonstrates enforcement working |
+
+**Testing with UEFI enforcement + key enrollment (VBox 7.x):**
+
+1. Run `run-vbox-secureboot.bat` — VBox rejects the unsigned shim, shows
+   the EFI security error
+2. In the VBox VM, open an EFI shell and enroll `EFI\BOOT\MOK.der`
+3. Reboot — shim now passes, chainloads `grubx64.efi`, OS boots
+
+**Run without UEFI enforcement** (`-NoSecureBoot` flag) to test only the
+shim MOK chain without VirtualBox rejecting the unsigned shim:
+
+```powershell
+powershell -File scripts\vm\run-vbox-secureboot.ps1 -NoSecureBoot
+```
 
 ---
 
