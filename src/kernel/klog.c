@@ -136,7 +136,7 @@ done:
 }
 
 
-/* ---- Level prefixes and colors ---- */
+/* ---- Level prefixes, ANSI serial colors, and framebuffer colors ---- */
 
 static const char *level_prefix[] = {
     "[INFO] ",   /* LOG_DEBUG */
@@ -144,6 +144,31 @@ static const char *level_prefix[] = {
     "[WARN] ",   /* LOG_WARN  */
     "[FAIL] ",   /* LOG_ERROR */
     "[CRIT] ",   /* LOG_FATAL */
+};
+
+/* ANSI escape sequences applied to the [LEVEL] token in serial output.
+ * Only the token itself is colored; timestamp, subsystem, and message remain
+ * default so the eye goes straight to the severity indicator.
+ *
+ *   LOG_DEBUG  [INFO]  dark-grey   — low-noise background chatter
+ *   LOG_INFO   [ OK ]  green       — normal success
+ *   LOG_WARN   [WARN]  yellow      — degraded / non-fatal
+ *   LOG_ERROR  [FAIL]  red         — recoverable error
+ *   LOG_FATAL  [CRIT]  bold+red    — fatal, system halted
+ */
+#define ANSI_RESET    "\033[0m"
+#define ANSI_DGREY    "\033[90m"    /* dark grey  */
+#define ANSI_GREEN    "\033[32m"
+#define ANSI_YELLOW   "\033[33m"
+#define ANSI_RED      "\033[31m"
+#define ANSI_BOLD_RED "\033[1;31m"
+
+static const char *level_ansi[] = {
+    ANSI_DGREY,     /* LOG_DEBUG  [INFO] */
+    ANSI_GREEN,     /* LOG_INFO   [ OK ] */
+    ANSI_YELLOW,    /* LOG_WARN   [WARN] */
+    ANSI_RED,       /* LOG_ERROR  [FAIL] */
+    ANSI_BOLD_RED,  /* LOG_FATAL  [CRIT] */
 };
 
 static const uint32_t level_color[] = {
@@ -222,8 +247,10 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         LP('0' + (char)( fms        % 10));
         LP(']'); LP(' ');
 
-        /* Level prefix + subsystem + pre-formatted message */
+        /* Colored level prefix + subsystem + pre-formatted message */
+        LS(level_ansi[level]);
         LS(level_prefix[level]);
+        LS(ANSI_RESET);
         if (subsystem && subsystem[0]) { LS(subsystem); LS(": "); }
         LS(e->message);
         LP('\n');
