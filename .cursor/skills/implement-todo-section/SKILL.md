@@ -48,7 +48,19 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 
 ## Code Intelligence — Srclight MCP
 
-The `user-srclight` MCP is available for fast symbol search, call-graph navigation, and cross-file dependency analysis.  Use it instead of raw `grep` or `find` when exploring unfamiliar code before or during implementation.
+The `user-srclight` MCP is available for fast symbol search, call-graph navigation, and cross-file dependency analysis.  Use it **instead of grep/Shell search commands** whenever you are navigating unfamiliar code or need semantic understanding — not just pattern matching.
+
+**Use Srclight (not grep) for:**
+- Finding where a function is called from — `get_callers(symbol, project)`
+- Understanding what a function depends on — `get_callees(symbol, project)`
+- Impact analysis before changing a signature or struct — `get_dependents(symbol, project)`
+- Locating a symbol when you don't know which file it's in — `get_symbol(name)`
+- Natural-language queries like "where is X initialized after Y" — `hybrid_search(query)`
+
+**grep is fine for:**
+- Checking if a specific literal string or `#define` exists in a known file
+- Listing `#include` lines in a known file
+- Existence checks on exact token patterns within a file you already have open
 
 Useful entry points:
 - `codebase_map()` — project stats, language breakdown, directory structure (run once per session for orientation)
@@ -60,12 +72,6 @@ Useful entry points:
 - `symbols_in_file(path, project)` — all functions/types defined in a file
 
 Pass `project="impossible-os"` when prompted (workspace mode requires it for graph tools).
-
-When to use it during implementation:
-- **Before writing new code** — verify the symbol you are about to define does not already exist elsewhere.
-- **Before changing a function signature** — run `get_callers` to find all call sites.
-- **When an XREF points to an unfamiliar section** — use `hybrid_search` to locate the relevant code fast.
-- **When debugging a build error** — `get_symbol` shows the full definition without opening files manually.
 
 ## Additional Resources
 
