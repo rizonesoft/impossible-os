@@ -1381,6 +1381,24 @@ static void jump_to_kernel(UINT64 entry_point)
 /* ============================================================================
  * EFI Application Entry Point
  * ============================================================================ */
+/* ---- POST code output to I/O port 0x80 ----
+ * Hardware POST-code reader cards decode these bytes on real hardware.
+ * QEMU silently ignores port 0x80 writes (no fault, no side effects). */
+static inline void post_code(UINT8 code)
+{
+    __asm__ volatile ("outb %0, $0x80" :: "a"(code));
+}
+
+#define POST_ENTRY              0x01
+#define POST_GOP_INIT           0x02
+#define POST_KERNEL_OPEN        0x03
+#define POST_KERNEL_LOAD        0x04
+#define POST_RSDP_FOUND         0x05
+#define POST_MEMORY_MAP         0x06
+#define POST_EXIT_BOOT_SERVICES 0x07
+#define POST_PAGE_TABLES        0x08
+#define POST_KERNEL_JUMP        0x09
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -1402,6 +1420,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Initialize early serial for diagnostics (before anything else) */
     serial_early_init();
+    post_code(POST_ENTRY);
     serial_early_print("[BOOT] efi_main entered\n");
 
     /* Disable watchdog timer (UEFI default: 5 min timeout) */
@@ -1420,6 +1439,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     g_boot_info_ptr->timing.conf_end = boot_rdtsc();
 
     /* Step 1: Initialize graphics (uses g_conf_res_width/height from boot.conf) */
+    post_code(POST_GOP_INIT);
     serial_early_print("[BOOT] init_gop...\n");
     g_boot_info_ptr->timing.gop_start = boot_rdtsc();
     status = init_gop();
@@ -1440,6 +1460,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
 
     /* Load kernel ELF */
+    post_code(POST_KERNEL_OPEN);
     serial_early_print("[BOOT] load_kernel...\n");
     g_boot_info_ptr->timing.kernel_load_start = boot_rdtsc();
     status = load_kernel(&kernel_entry);
@@ -1450,8 +1471,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         for (;;) __asm__ volatile("hlt");
     }
     serial_early_print("[BOOT] load_kernel OK\n");
+    post_code(POST_KERNEL_LOAD);
 
     /* Step 4: Copy UEFI Configuration Table + find ACPI RSDP */
+    post_code(POST_RSDP_FOUND);
     serial_early_print("[BOOT] copy_config_tables...\n");
     copy_config_tables();
 
@@ -1470,6 +1493,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
 
     /* Step 5: Get UEFI memory map */
+    post_code(POST_MEMORY_MAP);
     serial_early_print("[BOOT] get_memory_map...\n");
     status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
                             &desc_version);
@@ -1511,6 +1535,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     serial_early_print("[BOOT] runtime services preserved\n");
 
     /* Step 6: ExitBootServices */
+    post_code(POST_EXIT_BOOT_SERVICES);
     serial_early_print("[BOOT] ExitBootServices...\n");
     g_boot_info_ptr->timing.exit_bs = boot_rdtsc();
     status = gBS->ExitBootServices(gImageHandle, map_key);
@@ -1532,10 +1557,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* === NO MORE UEFI CALLS FROM HERE === */
 
     /* Step 7: Set up page tables */
+    post_code(POST_PAGE_TABLES);
     serial_early_print("[BOOT] setup_page_tables...\n");
     setup_page_tables();
 
     /* Step 8: Jump to kernel! */
+    post_code(POST_KERNEL_JUMP);
     serial_early_print("[BOOT] jumping to kernel_main\n");
     g_boot_info_ptr->timing.kernel_jump = boot_rdtsc();
     jump_to_kernel(kernel_entry);

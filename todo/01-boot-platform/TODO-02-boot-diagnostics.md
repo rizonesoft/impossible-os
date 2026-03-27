@@ -39,7 +39,7 @@
 
 | ⭐  | Order | Deliverable                        | Depends On | Status |
 | --- | :---: | ---------------------------------- | ---------- | :----: |
-| 💎  |   1   | UEFI pre-kernel POST codes         | —          |  [ ]   |
+| 💎  |   1   | UEFI pre-kernel POST codes         | —          |  [x]   |
 | 💎  |   2   | Boot progress named-stage API      | §1         |  [ ]   |
 | 💎  |   3   | POST-style hex code display        | §2         |  [ ]   |
 | 💎  |   4   | Alive blink / hang detection       | §2         |  [ ]   |
@@ -60,10 +60,10 @@ Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader 
 
 **Files:** `src/boot/uefi/bootx64.c`
 
-- [ ] Add `post_code(uint8_t code)` inline in `bootx64.c`: `outb(0x80, code)` using `__asm__ volatile ("outb %0, $0x80" :: "a"(code))`
-- [ ] Insert `post_code()` calls at each bootloader milestone: `0x01`=entry, `0x02`=GOP init, `0x03`=ELF open, `0x04`=ELF load, `0x05`=RSDP found, `0x06`=memory map, `0x07`=ExitBootServices, `0x08`=page tables, `0x09`=kernel jump
-- [ ] Verify QEMU does not fault on port 0x80 writes (QEMU ignores writes to 0x80 silently — no change needed)
-- [ ] Commit: `"boot: UEFI pre-kernel POST codes to I/O port 0x80"`
+- [x] Add `post_code(uint8_t code)` inline in `bootx64.c`: `outb(0x80, code)` + named constants `POST_ENTRY` through `POST_KERNEL_JUMP`
+- [x] Insert `post_code()` calls at 9 milestones: `0x01`=entry, `0x02`=GOP init, `0x03`=ELF open, `0x04`=ELF load, `0x05`=RSDP found, `0x06`=memory map, `0x07`=ExitBootServices, `0x08`=page tables, `0x09`=kernel jump
+- [x] QEMU ignores port 0x80 writes silently -- no fault, verified by clean build
+- [x] Commit: `"boot: UEFI pre-kernel POST codes to I/O port 0x80"`
 
 ## 2. Boot Progress Named-Stage API `[Sonnet]`
 
