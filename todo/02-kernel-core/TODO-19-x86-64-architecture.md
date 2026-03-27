@@ -152,13 +152,13 @@
 
 ### 3.1 Centralised msr.c
 
-- [ ] Create `src/kernel/msr.c` and `include/kernel/msr.h` — centralise all `rdmsr`/`wrmsr` accesses currently scattered across `smp.c`, `acpi.c`, and inline asm:
+- [x] Create `src/kernel/msr.c` and `include/kernel/msr.h` — centralised `rdmsr`/`wrmsr` with inline functions:
   ```c
   uint64_t msr_read(uint32_t index);
   void     msr_write(uint32_t index, uint64_t value);
   bool     msr_try_read(uint32_t index, uint64_t *out); /* returns false on #GP */
   ```
-- [ ] MSR constants table in `include/kernel/msr.h`:
+- [x] MSR constants table in `include/kernel/msr.h` (22 constants including Intel, AMD, and Hyper-V):
   ```c
   #define MSR_IA32_EFER          0xC0000080
   #define MSR_IA32_STAR          0xC0000081
@@ -182,12 +182,12 @@
   #define MSR_AMD_PERF_CTL0      0xC0010200
   #define MSR_AMD_PERF_CTR0      0xC0010201
   ```
-- [ ] `msr_try_read()` — uses the `#GP` fault handler to detect unsupported MSRs on older hardware; saves the `IDT` slot temporarily, issues `rdmsr`, restores; returns false if `#GP` fires instead of crashing
-- [ ] Migrate all existing inline `rdmsr`/`wrmsr` in `smp.c` to use the new API
+- [x] `msr_try_read()` — temporarily installs #GP handler, attempts rdmsr, skips instruction on fault; returns -1 if unsupported
+- [ ] Migrate existing inline `rdmsr`/`wrmsr` in `smp.c`, `lapic.c`, `acpi.c` to use `msr_read()`/`msr_write()` — deferred (mechanical, low priority)
 
 ### 3.2 Commit
 
-- [ ] Commit: `"kernel/msr: centralised MSR read/write infrastructure, #GP-safe msr_try_read"`
+- [x] Commit: `"kernel/msr: centralised MSR read/write infrastructure, #GP-safe msr_try_read"`
 
 ---
 

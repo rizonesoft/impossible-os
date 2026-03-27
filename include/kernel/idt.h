@@ -34,3 +34,4 @@ void idt_init(void);
  * task's frame pointer to switch contexts. */
 typedef uint64_t (*interrupt_handler_t)(struct interrupt_frame *frame);
 void idt_register_handler(uint8_t n, interrupt_handler_t handler);
+interrupt_handler_t idt_get_handler(uint8_t n);

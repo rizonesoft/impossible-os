@@ -251,6 +251,11 @@ void idt_register_handler(uint8_t n, interrupt_handler_t handler)
     handlers[n] = handler;
 }
 
+interrupt_handler_t idt_get_handler(uint8_t n)
+{
+    return handlers[n];
+}
+
 void idt_init(void)
 {
     uint32_t i;
