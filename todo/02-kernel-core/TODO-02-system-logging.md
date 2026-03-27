@@ -32,7 +32,7 @@
 | 💎  |   3   | Per-subsystem verbosity control     | §2            |  [x]   |
 | 💎  |   4   | Log rotation                        | §2            |  [x]   |
 | 💎  |   5   | Rate limiting                       | §2            |  [x]   |
-| ⭐  |   6   | Structured JSON log events          | §4, T20 §6    |  [ ]   |
+| ⭐  |   6   | Structured JSON log events          | §4, T20 §6    |  [x]   |
 | 💎  |   7   | Remote syslog forwarding (RFC 5424) | UDP (exists)  |  [ ]   |
 
 > 💎 = parity — Windows Event Log and Linux journald/syslog both have these capabilities.
@@ -132,14 +132,14 @@ Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 
 Emit machine-parseable events alongside plain-text logs. Requires cJSON from `TODO-20-kernel-libraries.md` §6.
 
-- [ ] Define JSON event format: `{"ts":<ms>,"lvl":"WARN","sub":"net","msg":"DHCP timeout","dropped":0}`
-- [ ] Add `klog_json_flush()` — serialise ring buffer entries to `C:\Impossible\System\Logs\events.jsonl`
-- [ ] JSON Lines format — one JSON object per line; append-only
-- [ ] Open `events.jsonl` once at `klog_disk_enable()` time; keep handle cached
-- [ ] Apply §4 log rotation to `events.jsonl`
-- [ ] Include `"dropped"` field from §5 rate limiter in each affected event
-- [ ] Task Manager log viewer panel reads `events.jsonl` for colour-coded filtering by level and subsystem
-- [ ] Commit: `"kernel: structured JSON log events"`
+- [x] Define JSON event format: `{"ts":<ms>,"lvl":"WARN","sub":"net","msg":"DHCP timeout","dropped":0}`
+- [x] JSON Lines flush integrated into `klog_disk_flush()` — serializes ring buffer entries to `C:\Impossible\System\Logs\events.jsonl`
+- [x] JSON Lines format — one JSON object per line; append-only; batched into 16 KB buffer for single `vfs_write()`
+- [x] `events.jsonl` created at first flush; file size tracked for rotation
+- [x] §4 log rotation applied to `events.jsonl` via `rotate_log_file()`
+- [x] `"dropped"` field included from §5 rate limiter via `klog_get_dropped()` public API
+- [ ] Task Manager log viewer panel reads `events.jsonl` for colour-coded filtering — deferred to desktop shell TODO
+- [x] Commit: `"kernel: structured JSON log events"`
 
 ## 7. Remote Syslog Forwarding (RFC 5424) `[Sonnet]`
 

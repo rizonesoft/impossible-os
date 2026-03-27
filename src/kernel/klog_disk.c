@@ -16,6 +16,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/rtc.h"
+#include "libc/string.h"
 
 /* ---- Per-subsystem log dispatch ---- */
 
@@ -93,6 +94,11 @@ static uint32_t  rot_max_rotated = 3;                  /* keep .1, .2, .3 */
 
 /* Per-file size tracking for O(1) rotation check */
 static uint32_t  kernel_log_size;  /* tracked across flushes */
+
+/* JSON Lines event log state */
+static uint32_t  jsonl_flush_index;  /* ring entries already flushed */
+static uint32_t  jsonl_file_size;    /* tracked for rotation */
+static int       jsonl_inited;
 
 /* ---- Helpers ---- */
 
@@ -713,6 +719,85 @@ void klog_disk_flush(void)
             uint32_t pg;
             for (pg = 0; pg < batch_pages; pg++)
                 pmm_free_frame((uintptr_t)batch + pg * 4096);
+        }
+    }
+
+    /* ---- Flush JSON Lines to C:\Impossible\System\Logs\events.jsonl ---- */
+    if (vfs_is_mounted('C') && ixfs_inited) {
+        static const char *jsonl_path = "C:\\Impossible\\System\\Logs\\events.jsonl";
+
+        if (!jsonl_inited) {
+            /* Create events.jsonl on first flush */
+            struct vfs_node *f = vfs_open(jsonl_path,
+                                          VFS_O_WRITE | VFS_O_CREATE);
+            if (f) { jsonl_file_size = (uint32_t)f->size; vfs_close(f); }
+            jsonl_flush_index = 0;
+            jsonl_inited = 1;
+        }
+
+        /* Rotate events.jsonl if needed */
+        jsonl_file_size = rotate_log_file(
+            "C:\\Impossible\\System\\Logs\\", "events.jsonl", jsonl_file_size);
+
+        ring = klog_get_ring(&ring_count, &ring_head);
+        if (ring && ring_count > 0 && jsonl_flush_index < ring_count) {
+            /* Batch JSON lines into a 32 KB buffer */
+            uint32_t jp = 4;  /* pages */
+            uint8_t *jbuf = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(jp);
+            if (jbuf) {
+                uint32_t jsize = jp * 4096;
+                uint32_t jpos = 0;
+                static const char *lvl_names[] = {
+                    "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
+                };
+
+                for (i = jsonl_flush_index; i < ring_count; i++) {
+                    uint32_t idx;
+                    char line[320];
+                    int len;
+                    const klog_entry_t *e;
+                    const char *lvl;
+
+                    if (ring_count < KLOG_RING_SIZE)
+                        idx = i;
+                    else
+                        idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
+                              % KLOG_RING_SIZE;
+                    e = &ring[idx];
+                    lvl = ((uint32_t)e->level < 5) ? lvl_names[e->level] : "?";
+
+                    len = snprintf(line, sizeof(line),
+                        "{\"ts\":%u,\"lvl\":\"%s\",\"sub\":\"%s\","
+                        "\"msg\":\"%s\",\"dropped\":%u}\n",
+                        (unsigned)e->timestamp * 10,  /* ticks -> ms */
+                        lvl,
+                        e->subsystem ? e->subsystem : "",
+                        e->message,
+                        (unsigned)klog_get_dropped(e->subsystem));
+
+                    if (len > 0 && jpos + (uint32_t)len < jsize) {
+                        uint32_t k;
+                        for (k = 0; k < (uint32_t)len; k++)
+                            jbuf[jpos++] = (uint8_t)line[k];
+                    }
+                }
+
+                if (jpos > 0) {
+                    struct vfs_node *jf = vfs_open(jsonl_path, VFS_O_WRITE);
+                    if (jf) {
+                        vfs_write(jf, (uint32_t)jf->size, jpos, jbuf);
+                        jsonl_file_size = (uint32_t)jf->size;
+                        vfs_close(jf);
+                    }
+                }
+
+                jsonl_flush_index = ring_count;
+                {
+                    uint32_t pg;
+                    for (pg = 0; pg < jp; pg++)
+                        pmm_free_frame((uintptr_t)jbuf + pg * 4096);
+                }
+            }
         }
     }
 

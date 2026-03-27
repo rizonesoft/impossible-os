@@ -396,6 +396,17 @@ void klog_load_levels_from_registry(void)
 
 /* ---- Public API ---- */
 
+uint32_t klog_get_dropped(const char *subsystem)
+{
+    uint32_t i;
+    if (!subsystem || !subsystem[0]) return 0;
+    for (i = 0; i < s_rate_count; i++) {
+        if (s_rate[i].tag == subsystem || str_eq(s_rate[i].tag, subsystem))
+            return s_rate[i].dropped;
+    }
+    return 0;
+}
+
 void klog_set_screen_level(log_level_t min_level)
 {
     screen_min_level = min_level;

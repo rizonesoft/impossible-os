@@ -65,6 +65,9 @@ void klog_load_levels_from_registry(void);
 void klog_early_init(void);            /* Phase 0: ring buffer ready */
 void klog_disk_enable(void);           /* Phase 2: VFS-backed disk logging */
 
+/* Get rate-limited dropped count for a subsystem (0 if no drops). */
+uint32_t klog_get_dropped(const char *subsystem);
+
 /* ---- Unified disk logging (klog_disk.c) ---- */
 void klog_disk_init(void);             /* Allocate buffer, scan for log number */
 void klog_disk_flush(void);            /* Write ring to C: + buffer to X: */
