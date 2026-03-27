@@ -13,6 +13,8 @@
 #include "kernel/idt.h"
 #include "kernel/gdt.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/cpuid.h"
 #include "kernel/klog.h"
 #include "kernel/elf.h"
 #include "kernel/ipc/signal.h"
@@ -118,6 +120,45 @@ static uint32_t find_next_task(uint32_t from_task, uint32_t from_thread,
 
     *out_thread = best_thread;
     return best_task;
+}
+
+/* --- XSAVE area allocation (lazy, on first FPU use) --- */
+
+void task_alloc_xsave(struct task *t)
+{
+    extern struct cpu_features g_cpu;
+    uint32_t size, pages;
+
+    if (!t || t->xsave_area)
+        return;  /* already allocated */
+
+    size = g_cpu.xsave_size_max;
+    if (size == 0) size = 512;  /* fallback: legacy FXSAVE size */
+
+    /* Round up to 64-byte alignment */
+    size = (size + 63) & ~63u;
+
+    if (size > 4096) {
+        pages = (size + 4095) / 4096;
+        t->xsave_area = (void *)pmm_alloc_contiguous(pages);
+    } else {
+        t->xsave_area = (void *)kmalloc(size);
+    }
+
+    if (t->xsave_area) {
+        /* Zero the buffer */
+        uint8_t *p = (uint8_t *)t->xsave_area;
+        uint32_t i;
+        for (i = 0; i < size; i++)
+            p[i] = 0;
+
+        /* Set XSTATE_BV header: bit 0 = x87 initial state present */
+        if (size >= 576) {
+            /* XSAVE header at offset 512, 64 bytes.
+             * XSTATE_BV (offset 512, 8 bytes) = 0x01 (x87 state valid) */
+            p[512] = 0x01;
+        }
+    }
 }
 
 /* --- Public API --- */

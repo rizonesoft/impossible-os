@@ -53,17 +53,17 @@
 | ⭐  | Order | Deliverable                                        | Depends On           | Status |
 | --- | :---: | -------------------------------------------------- | -------------------- | :----: |
 | 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [/]   |
-| 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                    | 1                    |  [ ]   |
+| 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                    | §1                   |  [ ]   |
 | 💎  |   3   | MSR management infrastructure (`msr.c`)            | —                    |  [x]   |
-| 💎  |   4   | UMIP + PKU protection keys                         | 3                    |  [ ]   |
-| 💎  |   5   | 1 GiB huge pages + Write-Combining PAT             | 3                    |  [ ]   |
-| 💎  |   6   | FRED event delivery + LKGS                         | 3, T06 §3            |  [ ]   |
+| 💎  |   4   | UMIP + PKU protection keys                         | §3                   |  [ ]   |
+| 💎  |   5   | 1 GiB huge pages + Write-Combining PAT             | §3                   |  [ ]   |
+| 💎  |   6   | FRED event delivery + LKGS                         | §3, T06 §3           |  [ ]   |
 | 💎  |   7   | CPU topology: Zen chiplets + Intel hybrid P/E-core | —                    |  [ ]   |
-| 💎  |   8   | Performance monitoring counters (Intel + AMD)      | 3                    |  [ ]   |
-| 💎  |   9   | OSVW errata + RDTSCP processor ID setup            | 3, T07 §2            |  [ ]   |
-| 💎  |  10   | AMD IBS profiling (stretch)                        | 3                    |  [ ]   |
-| 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)      | 3                    |  [x]   |
-| ⭐  |  12   | Boot self-benchmark + auto-tune                    | 1, 2, 7              |  [ ]   |
+| 💎  |   8   | Performance monitoring counters (Intel + AMD)      | §3                   |  [ ]   |
+| 💎  |   9   | OSVW errata + RDTSCP processor ID setup            | §3, T07 §2           |  [ ]   |
+| 💎  |  10   | AMD IBS profiling (stretch)                        | §3                   |  [ ]   |
+| 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)      | §3                   |  [x]   |
+| ⭐  |  12   | Boot self-benchmark + auto-tune                    | §1, §2, §7           |  [ ]   |
 | 💎  |  13   | Future silicon stubs: APX, UINTR, AVX10, LA57      | —                    |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
@@ -83,13 +83,9 @@
 
 ### 1.2 Per-thread XSAVE areas
 
-- [ ] Add to `struct task` in `include/kernel/sched/task.h`:
-  ```c
-  void    *xsave_area;    /* 64-byte-aligned XSAVE buffer; NULL = not yet allocated */
-  bool     fpu_used;      /* lazy flag: has this thread touched FP/SIMD? */
-  ```
-- [ ] `xsave_area` size = `cpu_features.xsave_size_max` (from CPUID 0x0D ECX=0 ECX register), rounded up to the next multiple of 64; allocated with `pmm_alloc_contiguous(pages)` if > one page, else from the kernel heap; initially NULL (allocated on first FPU use)
-- [ ] `task_alloc_xsave(task)` — allocate and zero the buffer; sets `XSAVE` header bytes (bits 0-1 of the XSTATE\_BV header word = x87 initial state)
+- [x] Added `xsave_area` (void*, 64-byte-aligned) and `fpu_used` (uint8_t) to `struct task`
+- [x] `task_alloc_xsave(t)`: allocates from PMM (>4KB) or heap (<=4KB), size from `g_cpu.xsave_size_max` rounded to 64, zeroed, XSTATE_BV header bit 0 set
+- [x] Lazy allocation: `xsave_area` starts NULL, allocated on first FPU use via `task_alloc_xsave()`
 
 ### 1.3 Lazy FPU: CR0.TS + #NM
 

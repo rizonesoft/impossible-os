@@ -96,6 +96,10 @@ struct task {
     /* --- Per-task thread list --- */
     struct thread threads[THREAD_MAX];   /* thread pool for this task */
     uint32_t     num_threads;            /* number of threads (>= 1, thread 0 = main) */
+    /* --- FPU/SIMD state (lazy XSAVE) --- */
+    void       *xsave_area;     /* 64-byte-aligned XSAVE buffer; NULL = not yet allocated */
+    uint8_t     fpu_used;       /* 1 = this thread has touched FP/SIMD registers */
+    uint8_t     _fpu_pad[7];
     /* --- Signal state --- */
     struct signal_state signals;         /* per-task signal handlers + pending mask */
 };
@@ -114,6 +118,9 @@ int task_create(task_entry_t entry, const char *name);
 /* Create a new user-mode thread. Returns PID or -1 on failure.
  * The entry function runs in ring 3 with its own user stack. */
 int task_create_user(task_entry_t entry, const char *name);
+
+/* Allocate the XSAVE area for a task (lazy — called on first FPU use). */
+void task_alloc_xsave(struct task *t);
 
 /* Voluntarily yield the CPU to the next ready task. */
 void yield(void);
