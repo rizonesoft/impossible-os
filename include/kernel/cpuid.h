@@ -86,11 +86,16 @@ enum cpu_feature {
     /* CPUID Leaf 0x01 ECX (Intel VT-x) */
     CPU_FEATURE_VMX       = 48,   /* Intel Virtual Machine Extensions */
 
-    /* CPUID Leaf 0x80000001 EDX (AMD extended) */
-    CPU_FEATURE_PAGE1GB   = 49,   /* 1-Gigabyte huge pages */
-    CPU_FEATURE_RDTSCP    = 50,   /* RDTSCP instruction */
+    /* CPUID Leaf 0x0D ECX=1 EAX (XSAVE extensions) */
+    CPU_FEATURE_XSAVEOPT  = 49,   /* XSAVEOPT instruction (skip unchanged components) */
+    CPU_FEATURE_XSAVEC    = 50,   /* XSAVEC instruction (compacted format) */
+    CPU_FEATURE_XSAVES    = 51,   /* XSAVES/XRSTORS (supervisor state) */
 
-    CPU_FEATURE_COUNT     = 51    /* total features tracked */
+    /* CPUID Leaf 0x80000001 EDX (AMD extended) */
+    CPU_FEATURE_PAGE1GB   = 52,   /* 1-Gigabyte huge pages */
+    CPU_FEATURE_RDTSCP    = 53,   /* RDTSCP instruction */
+
+    CPU_FEATURE_COUNT     = 54    /* total features tracked */
 };
 
 /* --- Global CPU feature structure --- */

@@ -172,6 +172,12 @@ void cpuid_init(void)
         g_cpu.xsave_size     = ebx;  /* current enabled size */
         g_cpu.xsave_size_max = ecx;  /* max size for all features */
         g_cpu.xcr0_supported = ((uint64_t)edx << 32) | eax;
+
+        /* Sub-leaf 1: XSAVE extensions */
+        cpuid_raw(0x0D, 1, &eax, &ebx, &ecx, &edx);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_XSAVEOPT, eax, 0);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_XSAVEC,   eax, 1);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_XSAVES,   eax, 3);
     }
 
     /* ---- Extended leaves: 0x80000001, 0x80000002–4, 0x80000007 ---- */
