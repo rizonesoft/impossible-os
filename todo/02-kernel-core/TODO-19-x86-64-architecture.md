@@ -75,14 +75,11 @@
 
 ### 1.1 Full XCR0 configuration
 
-- [ ] Replace the GFX-only `simd_enable_avx()` XCR0 setup with a dedicated `cpu_configure_xcr0()` called from Phase 1 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §3`):
-  1. Assert `CR4.OSXSAVE` (bit 18) — already done by `simd_enable_avx`; ensure it runs on every AP too
-  2. Read `cpu_features.xcr0_supported` (populated from CPUID leaf 0x0D ECX=0 by `cpuid_init()`); filter to the set the kernel wishes to save:
-     - Bits 0-2: x87 + SSE + AVX — always enable if present
-     - Bits 5-7: AVX-512 opmask + ZMM\_Hi256 + Hi16\_ZMM — enable if `cpu_has(CPU_FEATURE_AVX512F)` and no known throttle risk
-     - Bit 9: PKRU — enable if `cpu_has(CPU_FEATURE_PKU)` (§4)
-  3. Write filtered mask to XCR0 via `XSETBV ecx=0, eax=mask_lo, edx=mask_hi`
-  4. Store the enabled mask in `cpu_features.xcr0_active` for later use
+- [x] Replaced `simd_enable_avx()` XCR0 setup with `cpu_configure_xcr0()` in `cpuid.c`, called from `cpuid_init()`:
+  1. Sets `CR4.OSXSAVE` (bit 18) — callable on BSP and APs
+  2. Reads `g_cpu.xcr0_supported`, builds mask: bits 0-2 (x87+SSE+AVX), bits 5-7 (AVX-512 if AVX512F), bit 9 (PKRU if supported)
+  3. Writes filtered mask via `XSETBV ecx=0`
+  4. Stores in `g_cpu.xcr0_active`; `simd_enable_avx()` now just checks `xcr0_active`
 
 ### 1.2 Per-thread XSAVE areas
 
