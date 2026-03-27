@@ -42,7 +42,7 @@
 | --- | :---: | ----------------------------------- | ------------------- | :----: |
 | 💎  |   1   | ACPI MADT parsing                   | —                   |  [x]   |
 | 💎  |   2   | LAPIC / IOAPIC init before PIT      | §1                  |  [x]   |
-| 💎  |   3   | Conditional PIC disable             | §1, §2              |  [ ]   |
+| 💎  |   3   | Conditional PIC disable             | §1, §2              |  [x]   |
 | 💎  |   4   | Full IDT coverage                   | §2, §3              |  [ ]   |
 | 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [ ]   |
 | 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [ ]   |
@@ -90,11 +90,11 @@ Only mask the 8259 PIC when MADT says PCAT_COMPAT — virtual platforms may have
 
 **Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/drivers/pic.c`
 
-- [ ] Read `acpi_madt_info()->flags & MADT_PCAT_COMPAT` before any PIC I/O port access
-- [ ] If `PCAT_COMPAT` set: call `pic_disable()` (mask all IRQs on master + slave: `outb(0x21, 0xFF)` / `outb(0xA1, 0xFF)`; issue EOIs); log `[APIC] PIC disabled (PCAT_COMPAT)`
-- [ ] If `PCAT_COMPAT` not set: skip all PIC I/O entirely; log `[APIC] No PIC (virtual platform)`
-- [ ] Add `pic_init_fallback()`: only called if LAPIC init returns `BOOT_DEGRADED` or LAPIC is completely absent; sets up PIC as the sole interrupt controller with legacy IRQ 0–15 vectors 32–47
-- [ ] Commit: `"drivers: conditional PIC disable — PCAT_COMPAT MADT flag, virtual-platform safe"`
+- [x] `boot_phase1()` checks `acpi_pcat_compat()` before PIC I/O — already implemented
+- [x] PCAT_COMPAT + IOAPIC active → `pic_disable()` called; logs "Switched to LAPIC/IOAPIC (PIC disabled)"
+- [x] PCAT_COMPAT=0 → all PIC I/O skipped; logs "APIC-only, no PIC"
+- [x] `pic_init()` fallback when no IOAPIC available or no ACPI — already implemented
+- [x] Already implemented — marking complete (no new code needed)
 
 ## 4. Full IDT Coverage `[Opus]`
 
