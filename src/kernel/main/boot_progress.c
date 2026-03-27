@@ -102,7 +102,7 @@ static inline void outb_post(uint8_t code)
     __asm__ volatile ("outb %0, $0x80" :: "a"(code));
 }
 
-static void post_display(uint8_t code)
+void post_display(uint8_t code)
 {
     uint32_t scr_w, x0, y0;
     int hi, lo;

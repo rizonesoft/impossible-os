@@ -60,3 +60,8 @@ const boot_stage_entry_t *boot_stage_history_get(uint32_t *out_count);
 /* Lightweight refresh for timer callbacks -- re-sends the last stage
  * message to boot_splash_status() without recording a new entry. */
 void boot_progress_poll(void);
+
+/* Render a 2-digit hex POST code in the top-right framebuffer corner.
+ * Also writes I/O port 0x80 for hardware POST cards.
+ * Skips pixel writes if SUBSYS_FB not ready. */
+void post_display(uint8_t code);
