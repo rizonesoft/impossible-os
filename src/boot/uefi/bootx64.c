@@ -1393,36 +1393,46 @@ static void bootloader_fade_in(void)
     UINT64 tsc_freq = g_boot_info_ptr->timing.tsc_freq;
     if (tsc_freq == 0) return;
 
-    const UINT32 STEPS   = 10;
-    const UINT32 STEP_MS = 30;          /* 10 × 30 ms = 300 ms total */
+    /* Pulse: 5 steps up (0→accent) + 5 steps down (accent→0), 30 ms each.
+     * Total = 300 ms.  Ends on solid black so the kernel inherits a clean
+     * framebuffer — no lingering accent color visible behind the splash. */
+    const UINT32 HALF_STEPS = 5;
+    const UINT32 STEP_MS    = 30;
 
     UINT8  r_target = (UINT8)((accent >> 16) & 0xFF);
     UINT8  g_target = (UINT8)((accent >> 8)  & 0xFF);
     UINT8  b_target = (UINT8)( accent         & 0xFF);
 
-    UINT64 step_tsc  = tsc_freq * STEP_MS / 1000;
-    UINT32 total_px  = gFbHeight * gFbPitch;
+    UINT64 step_tsc = tsc_freq * STEP_MS / 1000;
+    UINT32 total_px = gFbHeight * gFbPitch;
     UINT32 i, s;
 
-    /* Clear the debug bar strips from the prior DRAW_BAR calls */
+    /* Clear debug bars before starting the pulse */
     for (i = 0; i < total_px; i++)
         gFramebuffer[i] = 0;
 
-    for (s = 1; s <= STEPS; s++) {
-        /* Linear brightness 0–256 */
-        UINT32 bright = (s * 256) / STEPS;
+    /* Fade up: black → accent */
+    for (s = 1; s <= HALF_STEPS; s++) {
+        UINT32 bright = (s * 256) / HALF_STEPS;
         UINT8  r = (UINT8)((r_target * bright) >> 8);
         UINT8  g = (UINT8)((g_target * bright) >> 8);
         UINT8  b = (UINT8)((b_target * bright) >> 8);
         UINT32 color = ((UINT32)r << 16) | ((UINT32)g << 8) | b;
-
-        for (i = 0; i < total_px; i++)
-            gFramebuffer[i] = color;
-
-        /* Busy-wait for step_tsc ticks (no UEFI calls after ExitBootServices) */
+        for (i = 0; i < total_px; i++) gFramebuffer[i] = color;
         UINT64 t_end = boot_rdtsc() + step_tsc;
-        while (boot_rdtsc() < t_end)
-            __asm__ volatile ("pause");
+        while (boot_rdtsc() < t_end) __asm__ volatile ("pause");
+    }
+
+    /* Fade down: accent → black */
+    for (s = HALF_STEPS; s > 0; s--) {
+        UINT32 bright = ((s - 1) * 256) / HALF_STEPS;
+        UINT8  r = (UINT8)((r_target * bright) >> 8);
+        UINT8  g = (UINT8)((g_target * bright) >> 8);
+        UINT8  b = (UINT8)((b_target * bright) >> 8);
+        UINT32 color = ((UINT32)r << 16) | ((UINT32)g << 8) | b;
+        for (i = 0; i < total_px; i++) gFramebuffer[i] = color;
+        UINT64 t_end = boot_rdtsc() + step_tsc;
+        while (boot_rdtsc() < t_end) __asm__ volatile ("pause");
     }
 }
 
