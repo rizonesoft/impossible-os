@@ -169,7 +169,7 @@
   #define MSR_AMD_PERF_CTR0      0xC0010201
   ```
 - [x] `msr_try_read()` — temporarily installs #GP handler, attempts rdmsr, skips instruction on fault; returns -1 if unsupported
-- [ ] Migrate existing inline `rdmsr`/`wrmsr` in `smp.c`, `lapic.c`, `acpi.c` to use `msr_read()`/`msr_write()` — deferred (mechanical, low priority)
+- [x] Migrated all inline `rdmsr`/`wrmsr` in `smp.c` (3 sites) and `lapic.c` (2 sites) to `msr_read()`/`msr_write()` — zero inline asm MSR access remaining in kernel
 - [x] Commit: `"kernel/msr: centralised MSR read/write infrastructure, #GP-safe msr_try_read"`
 
 ---

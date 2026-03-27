@@ -19,6 +19,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/lapic.h"
+#include "kernel/msr.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/idt.h"
@@ -82,10 +83,9 @@ void lapic_init(void)
     /* Enable the APIC via the IA32_APIC_BASE MSR (set bit 11 = global enable)
      * This is required on some hardware before MMIO access works. */
     {
-        uint32_t lo, hi;
-        __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0x1B));
-        lo |= (1 << 11);  /* global enable */
-        __asm__ volatile("wrmsr" : : "c"(0x1B), "a"(lo), "d"(hi));
+        uint64_t apic_base = msr_read(MSR_IA32_APIC_BASE);
+        apic_base |= (1UL << 11);  /* global enable */
+        msr_write(MSR_IA32_APIC_BASE, apic_base);
     }
     klog(LOG_DEBUG, "lapic", "init: MSR enabled");
 
@@ -327,12 +327,8 @@ static uint32_t cal_ticks_per_ms = 0;
 
 /* ---- MSR / CPUID helpers for calibration ---- */
 
-static inline uint64_t cal_rdmsr(uint32_t msr)
-{
-    uint32_t lo, hi;
-    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-    return ((uint64_t)hi << 32) | lo;
-}
+/* cal_rdmsr replaced by msr_read() from kernel/msr.h */
+#define cal_rdmsr(idx) msr_read(idx)
 
 static inline void cal_cpuid(uint32_t leaf,
                               uint32_t *eax, uint32_t *ebx,

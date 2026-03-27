@@ -12,6 +12,7 @@
  * ============================================================================ */
 
 #include "kernel/smp.h"
+#include "kernel/msr.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/acpi.h"
 #include "kernel/mm/pmm.h"
@@ -42,22 +43,8 @@ static uint32_t            total_cpus = 0;
 
 /* ---- MSR helpers ---- */
 
-static inline void wrmsr(uint32_t msr, uint64_t val)
-{
-    uint32_t lo = (uint32_t)val;
-    uint32_t hi = (uint32_t)(val >> 32);
-    __asm__ volatile("wrmsr" : : "c"(msr), "a"(lo), "d"(hi));
-}
-
-static inline __attribute__((unused)) uint64_t rdmsr(uint32_t msr)
-{
-    uint32_t lo, hi;
-    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-    return ((uint64_t)hi << 32) | lo;
-}
-
-/* IA32_GS_BASE MSR -- used for per-CPU data pointer */
-#define MSR_GS_BASE  0xC0000101
+/* wrmsr/rdmsr/MSR_GS_BASE now provided by kernel/msr.h
+ * (MSR_IA32_GS_BASE = 0xC0000101) */
 
 /* Read CR3 (BSP's page table base) */
 static inline uint64_t read_cr3(void)
@@ -93,7 +80,7 @@ void ap_entry(uint32_t cpu_index)
     /* Set up GS base to point to this CPU's per_cpu_data */
     pcpu = &cpu_data[cpu_index];
     pcpu->self = pcpu;  /* self-pointer for gs:0 access */
-    wrmsr(MSR_GS_BASE, (uint64_t)(uintptr_t)pcpu);
+    msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)pcpu);
 
     /* Initialize this AP's LAPIC */
     lapic_init_ap();
@@ -147,7 +134,7 @@ void smp_init(void)
         cpu_data[0].irq_count    = 0;
         cpu_data[0].preempt_count = 0;
         cpu_data[0].current_task  = (void *)0;
-        wrmsr(MSR_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
+        msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
         total_cpus = 1;
         return;
     }
@@ -160,7 +147,7 @@ void smp_init(void)
     cpu_data[0].irq_count    = 0;
     cpu_data[0].preempt_count = 0;
     cpu_data[0].current_task  = (void *)0;
-    wrmsr(MSR_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
+    msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
 
     /* Find which MADT entry is the BSP */
     for (i = 0; i < cpu_count; i++) {
