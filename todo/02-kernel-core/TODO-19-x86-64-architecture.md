@@ -96,11 +96,12 @@
 
 ### 1.4 Replace FXSAVE in icon_store.c
 
-- [ ] Replace `fxsave_area_t` ad-hoc saves in `icon_store.c` with the new `task_alloc_xsave` + `XSAVE`/`XRSTOR` paths; use the static per-thread area rather than stack-allocating a new buffer on every icon load
+- [x] Removed `fxsave_area_t` + `simd_save_state`/`simd_restore_state` from `icon_store.c` (2 sites); lazy FPU via scheduler XSAVE handles it now
+- [ ] `gfx_text.c` still has ~20 manual save/restore calls — future cleanup
 
 ### 1.5 Commit
 
-- [ ] Commit: `"kernel/simd: XSAVE/XRSTOR per-thread areas, lazy FPU via CR0.TS/#NM, XSAVEOPT"`
+- [x] Commit: `"kernel/simd: remove manual FXSAVE from icon_store, lazy FPU handles it"`
 
 ---
 
