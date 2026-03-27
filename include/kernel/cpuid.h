@@ -83,11 +83,14 @@ enum cpu_feature {
     CPU_FEATURE_IBS       = 46,   /* Instruction Based Sampling */
     CPU_FEATURE_TOPO_EXT  = 47,   /* TopologyExtensions (enables leaf 0x8000001E) */
 
-    /* CPUID Leaf 0x80000001 EDX (AMD extended) */
-    CPU_FEATURE_PAGE1GB   = 48,   /* 1-Gigabyte huge pages */
-    CPU_FEATURE_RDTSCP    = 49,   /* RDTSCP instruction */
+    /* CPUID Leaf 0x01 ECX (Intel VT-x) */
+    CPU_FEATURE_VMX       = 48,   /* Intel Virtual Machine Extensions */
 
-    CPU_FEATURE_COUNT     = 50    /* total features tracked */
+    /* CPUID Leaf 0x80000001 EDX (AMD extended) */
+    CPU_FEATURE_PAGE1GB   = 49,   /* 1-Gigabyte huge pages */
+    CPU_FEATURE_RDTSCP    = 50,   /* RDTSCP instruction */
+
+    CPU_FEATURE_COUNT     = 51    /* total features tracked */
 };
 
 /* --- Global CPU feature structure --- */

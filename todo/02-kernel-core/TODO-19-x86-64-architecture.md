@@ -148,9 +148,7 @@
 
 ---
 
-## 3. MSR Management Infrastructure `[Sonnet]`
-
-### 3.1 Centralised msr.c
+## 3. MSR Management Infrastructure
 
 - [x] Create `src/kernel/msr.c` and `include/kernel/msr.h` — centralised `rdmsr`/`wrmsr` with inline functions:
   ```c
@@ -184,9 +182,6 @@
   ```
 - [x] `msr_try_read()` — temporarily installs #GP handler, attempts rdmsr, skips instruction on fault; returns -1 if unsupported
 - [ ] Migrate existing inline `rdmsr`/`wrmsr` in `smp.c`, `lapic.c`, `acpi.c` to use `msr_read()`/`msr_write()` — deferred (mechanical, low priority)
-
-### 3.2 Commit
-
 - [x] Commit: `"kernel/msr: centralised MSR read/write infrastructure, #GP-safe msr_try_read"`
 
 ---
@@ -416,7 +411,7 @@
 
 ---
 
-## 11. Virtualization Detection (AMD-V + Intel VT-x) `[Sonnet]`
+## 11. Virtualization Detection (AMD-V + Intel VT-x)
 
 ### 11.1 AMD SVM / Intel VMX capability reporting
 
@@ -430,9 +425,6 @@
   - `CPUID.(7,0):ECX[14]` — EPT (Extended Page Tables) supported
   - Log: `[cpu] Intel VT-x: EPT=%s, locked=%s`
 - [ ] Expose via `cpu_has(CPU_FEATURE_SVM)` / `cpu_has(CPU_FEATURE_VMX)`; neither enables virtualization — detection only for transparency reporting
-
-### 11.2 Commit
-
 - [ ] Commit: `"kernel/cpu: AMD SVM + Intel VT-x capability detection and logging"`
 
 ---

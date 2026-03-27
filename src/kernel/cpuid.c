@@ -10,6 +10,7 @@
 
 #include "kernel/cpuid.h"
 #include "kernel/klog.h"
+#include "kernel/msr.h"
 
 /* Global CPU features — zero-initialized at startup */
 struct cpu_features g_cpu;
@@ -113,6 +114,7 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SSSE3,   ecx,  9);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SSE4_1,  ecx, 19);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SSE4_2,  ecx, 20);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_VMX,     ecx,  5);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_AES,     ecx, 25);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_XSAVE,   ecx, 26);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_OSXSAVE, ecx, 27);
@@ -240,7 +242,7 @@ void cpuid_init(void)
              (uint64_t)g_cpu.stepping);
 
         /* Log feature summary — build a compact feature string */
-        klog(LOG_INFO, "cpu", "Features: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+        klog(LOG_INFO, "cpu", "Features: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
              cpu_has(CPU_FEATURE_SSE2)    ? "SSE2 "    : "",
              cpu_has(CPU_FEATURE_SSE4_2)  ? "SSE4.2 "  : "",
              cpu_has(CPU_FEATURE_AES)     ? "AES "     : "",
@@ -255,6 +257,7 @@ void cpuid_init(void)
              cpu_has(CPU_FEATURE_RDRAND)  ? "RDRAND "  : "",
              cpu_has(CPU_FEATURE_TSC_INV) ? "InvTSC "  : "",
              cpu_has(CPU_FEATURE_NX)      ? "NX "      : "",
+             cpu_has(CPU_FEATURE_VMX)     ? "VT-x "    : "",
              cpu_has(CPU_FEATURE_SVM)     ? "SVM "     : "",
              cpu_has(CPU_FEATURE_IBS)     ? "IBS "     : "",
              cpu_has(CPU_FEATURE_OSVW)    ? "OSVW "    : "",
@@ -275,6 +278,28 @@ void cpuid_init(void)
                  (uint64_t)g_cpu.ext_apic_id,
                  (uint64_t)g_cpu.compute_unit_id,
                  (uint64_t)g_cpu.node_id);
+        }
+
+        /* AMD SVM detection */
+        if (cpu_has(CPU_FEATURE_SVM)) {
+            uint32_t svm_eax, svm_ebx, svm_ecx2, svm_edx;
+            cpuid_raw(0x8000000A, 0, &svm_eax, &svm_ebx, &svm_ecx2, &svm_edx);
+            klog(LOG_INFO, "cpu", "AMD-V: rev %u, NPT=%s, ASIDs=%u",
+                 (uint64_t)(svm_eax & 0xFF),
+                 (svm_edx & 1) ? "yes" : "no",
+                 (uint64_t)svm_ebx);
+        }
+
+        /* Intel VT-x detection */
+        if (cpu_has(CPU_FEATURE_VMX)) {
+            /* Check IA32_FEATURE_CONTROL MSR (0x3A) */
+            uint64_t feat_ctrl = msr_read(0x3A);
+            int locked = (feat_ctrl & 1) ? 1 : 0;
+            int vmx_enabled = (feat_ctrl & (1 << 2)) ? 1 : 0;  /* EnableVmxOutsideSMX */
+
+            klog(LOG_INFO, "cpu", "Intel VT-x: locked=%s, enabled=%s",
+                 locked ? "yes" : "no",
+                 vmx_enabled ? "yes" : "no");
         }
     }
 
