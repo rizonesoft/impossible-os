@@ -25,6 +25,9 @@
 #include "registry.h"
 #include "kernel/symtab.h"
 #include "kernel/cpuid_platform.h"
+#include "kernel/drivers/ata.h"
+#include "kernel/drivers/virtio_blk.h"
+#include "kernel/drivers/ahci.h"
 #include "main/main_internal.h"
 
 void boot_storage_init(uint64_t magic)
@@ -34,6 +37,15 @@ void boot_storage_init(uint64_t magic)
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Storage & Filesystem ---------------------------------------------------");
+
+    /* Disk drivers -- moved from boot_hw.c Phase 0 to Phase 2 */
+    klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
+    boot_splash_status("Initializing storage...");
+    ata_init();
+    virtio_blk_init();
+    ahci_init();
+    blkdev_register_all();
+    boot_progress(2, "STORAGE_DRV", POSTCODE_STORAGE_INIT);
 
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
     boot_splash_status("Initializing VFS...");

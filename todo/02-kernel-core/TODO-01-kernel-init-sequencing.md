@@ -36,7 +36,7 @@
 | ⭐  | Order | Deliverable                   | Depends On | Status |
 | --- | :---: | ----------------------------- | ---------- | :----: |
 | 💎  |   1   | Boot init infrastructure      | —          |  [x]   |
-| 💎  |   2   | Phase 0 — critical init       | §1         |  [ ]   |
+| 💎  |   2   | Phase 0 — critical init       | §1         |  [x]   |
 | 💎  |   3   | Phase 1 — platform services   | §2         |  [ ]   |
 | 💎  |   4   | Phase 2 — system services     | §3         |  [ ]   |
 | 💎  |   5   | Phase 3 — user platform       | §4         |  [ ]   |
@@ -74,25 +74,25 @@ Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or 
 
 **File:** `src/kernel/main/boot_hw.c` (restructured as `boot_phase0`)
 
-- [ ] `serial_init()` — absolute first call; no dependencies; POST code 0x10
-- [ ] `boot_info_parse(magic, mbi)` — parse UEFI or Multiboot2 info; halt on unknown magic
-- [ ] `uefi_runtime_init()` — `SetVirtualAddressMap` + runtime props; BOOT_DEGRADED if unavailable
-- [ ] `uefi_vars_init()` — NVRAM variable enumeration; BOOT_DEGRADED if unavailable
-- [ ] `uefi_time_init()` — seed wall clock from UEFI RTC; BOOT_DEGRADED if unavailable
-- [ ] `uefi_secureboot_init()` — detect Secure Boot state; BOOT_DEGRADED if unavailable
-- [ ] `tpm_init()` — parse measured boot event log; BOOT_DEGRADED if no TPM
-- [ ] `tpm_integrity_init()` — PCR golden value check; BOOT_DEGRADED on mismatch
-- [ ] `pmm_init()` — physical memory manager; BOOT_FATAL if fails; POST code 0x20
-- [ ] `vmm_init()` — virtual memory manager; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_PMM)
-- [ ] `heap_init()` — kernel heap; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_VMM)
-- [ ] `klog_init()` — in-memory ring buffer only (no disk yet); BOOT_REQUIRE(SUBSYS_HEAP)
-- [ ] `cpuid_init()` — probe CPU features; BOOT_DEGRADED on very old CPU
-- [ ] `simd_enable()` — enable AVX2 or fall back to SSE2; BOOT_DEGRADED on no AVX2
-- [ ] `boot_config_parse()` — read `boot.conf` settings into `g_boot_info.config`; BOOT_DEGRADED on missing file (use defaults)
-- [ ] Remove driver includes (`ata.h`, `virtio_blk.h`, `ahci.h`) from this file — they belong in Phase 2
-- [ ] Remove SMBIOS, ESRT, UEFI conformance, GOP mode log from Phase 0 — move to Phase 1
-- [ ] Remove all `HV_BAR` macro definitions and usages (12 sites in `boot_hw.c`)
-- [ ] Replace every `HV_BAR` site with `boot_progress(0, "step-name", postcode)`
+- [x] `serial_init()` — absolute first call; no dependencies; POST code 0x10
+- [x] `boot_info_parse(magic, mbi)` — parse UEFI or Multiboot2 info; halt on unknown magic
+- [x] `uefi_runtime_init()` — `SetVirtualAddressMap` + runtime props; BOOT_DEGRADED if unavailable
+- [x] `uefi_vars_init()` — NVRAM variable enumeration; BOOT_DEGRADED if unavailable
+- [x] `uefi_time_init()` — seed wall clock from UEFI RTC; BOOT_DEGRADED if unavailable
+- [x] `uefi_secureboot_init()` — detect Secure Boot state; BOOT_DEGRADED if unavailable
+- [x] `tpm_init()` — parse measured boot event log; BOOT_DEGRADED if no TPM
+- [x] `tpm_integrity_init()` — PCR golden value check; BOOT_DEGRADED on mismatch
+- [x] `pmm_init()` — physical memory manager; BOOT_FATAL if fails; POST code 0x20
+- [x] `vmm_init()` — virtual memory manager; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_PMM)
+- [x] `heap_init()` — kernel heap; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_VMM)
+- [x] `klog_init()` — in-memory ring buffer only (no disk yet); BOOT_REQUIRE(SUBSYS_HEAP)
+- [x] `cpuid_init()` — probe CPU features; BOOT_DEGRADED on very old CPU
+- [x] `simd_enable()` — enable AVX2 or fall back to SSE2; BOOT_DEGRADED on no AVX2
+- [x] `boot_config_parse()` — read `boot.conf` settings into `g_boot_info.config`; BOOT_DEGRADED on missing file (use defaults)
+- [x] Remove driver includes (`ata.h`, `virtio_blk.h`, `ahci.h`) from this file — they belong in Phase 2
+- [x] Remove SMBIOS, ESRT, UEFI conformance, GOP mode log from Phase 0 — move to Phase 1
+- [x] Remove all `HV_BAR` macro definitions and usages (12 sites in `boot_hw.c`) — already removed in prior commit
+- [x] Replace every `HV_BAR` site with `boot_progress(0, "step-name", postcode)` — already done in prior commit
 
 ## 3. Phase 1 — Platform Services (Interrupts Enabled at End) `[Opus]`
 
@@ -246,13 +246,13 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 | ⭐  | Feature                              | 🪟 Windows NT / 11                         | 🐧 Linux                                   | 🚀 Impossible OS                                         |
 | --- | ------------------------------------ | ------------------------------------------- | ------------------------------------------ | --------------------------------------------------------- |
 | 💎  | Formal phase model                   | ✅ Phase 0 / Phase 1 init                  | ✅ initcall levels (early → late)          | ⬜ Planned — Steps 2–5                                   |
-| 💎  | Interrupt-disabled critical phase    | ✅ Phase 0 (no interrupts, no paging)      | ✅ `start_kernel` early before `sti`       | ⬜ Planned — Step 2                                      |
+| 💎  | Interrupt-disabled critical phase    | ✅ Phase 0 (no interrupts, no paging)      | ✅ `start_kernel` early before `sti`       | ✅ Done — §2; `boot_phase0()` runs with interrupts off   |
 | 💎  | Dependency-ordered subsystem init    | ✅ Boot driver load groups + ordering      | ✅ initcall dependency ordering            | ⬜ Planned — Step 6                                      |
 | 💎  | Typed init failure results           | ✅ `NTSTATUS` from every init routine      | ✅ `initcall_t` return codes               | ⬜ Planned — Step 1 (`boot_result_t`)                    |
 | 💎  | Halt on critical subsystem failure   | ✅ Bugcheck + halt                         | ✅ `panic()` + halt                        | ⬜ Planned — Step 7                                      |
 | 💎  | Degraded boot on non-critical fail   | ✅ Last-known-good, safe mode              | ✅ Emergency shell fallback                | ⬜ Planned — Step 7                                      |
-| 💎  | Boot progress serial log             | ✅ `DebugPrint` / ETW early tracing        | ✅ `early_printk` / `earlyprintk=serial`   | ⚠️ Partial — `klog` serial exists, no phase markers      |
-| 💎  | Boot config gating                   | ✅ `SYSTEM\CurrentControlSet\Control\`     | ✅ kernel cmdline / initrd config          | ⬜ Planned — Step 2 (`boot_config_parse` gate)           |
+| 💎  | Boot progress serial log             | ✅ `DebugPrint` / ETW early tracing        | ✅ `early_printk` / `earlyprintk=serial`   | ✅ Done — §2; `[PHASE0]` markers with POST codes          |
+| 💎  | Boot config gating                   | ✅ `SYSTEM\CurrentControlSet\Control\`     | ✅ kernel cmdline / initrd config          | ✅ Done — §2; `boot.conf` parsed in Phase 0               |
 | 💎  | Test-path separated from boot path   | ✅ Tests run in separate test OS builds    | ✅ `initcall_debug` opt-in                 | ⬜ Planned — Step 5 (debug flag gate)                    |
 | ⭐  | Degraded-boot recovery UI screen     | ❌ Safe mode is a separate boot mode       | ❌ Emergency shell is text-only            | ⬜ **Planned — Step 9 — in-kernel graphical recovery**   |
 | ⭐  | POST code written to UEFI NVRAM      | ❌ POST codes are firmware-only            | ❌ Not implemented                         | ⬜ **Planned — Step 10 — survives reboot for diagnosis** |

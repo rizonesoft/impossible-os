@@ -8,9 +8,11 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/boot_init.h"
 
-/* Initialize TPM subsystem — parse event log from boot_info. */
-void tpm_init(void);
+/* Initialize TPM subsystem -- parse event log from boot_info.
+ * Returns BOOT_OK on success, BOOT_DEGRADED if no TPM. */
+boot_result_t tpm_init(void);
 
 /* Returns 1 if a TPM was detected during boot. */
 int tpm_available(void);
@@ -82,7 +84,7 @@ struct boot_integrity_report {
  *   - Replay the event log to compute expected PCR values (requires SHA-256)
  *   - Compare computed values against TPM PCR registers (requires TPM read API)
  *   - Set per-PCR status in the boot integrity report */
-void tpm_integrity_init(void);
+boot_result_t tpm_integrity_init(void);
 
 /* Returns 1 if boot integrity is verified (all PCRs match golden values).
  * Returns 0 if not verified, no TPM, or no baseline enrolled. */

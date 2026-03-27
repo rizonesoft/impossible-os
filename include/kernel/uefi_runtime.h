@@ -116,9 +116,10 @@ uint32_t uefi_enumerate_variables(void);
 uint64_t uefi_get_next_variable_name(uint64_t *name_size, uint16_t *name,
                                      struct boot_uefi_guid *guid);
 
-/* Initialize variable services — enumerate + log summary.
- * Must be called after uefi_runtime_init(). */
-void uefi_vars_init(void);
+/* Initialize variable services -- enumerate + log summary.
+ * Must be called after uefi_runtime_init().
+ * Returns BOOT_OK on success, BOOT_DEGRADED if unavailable. */
+boot_result_t uefi_vars_init(void);
 
 /* ---- System Reset API ---- */
 
@@ -182,14 +183,16 @@ uint64_t uefi_set_time(const struct efi_time *time);
 uint64_t uefi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
                               struct efi_time *time);
 
-/* Initialize time services — read and log current time. */
-void uefi_time_init(void);
+/* Initialize time services -- read and log current time.
+ * Returns BOOT_OK on success, BOOT_DEGRADED if unavailable. */
+boot_result_t uefi_time_init(void);
 
 /* ---- Secure Boot State Detection API ---- */
 
 /* Initialize Secure Boot state by reading UEFI NVRAM variables.
- * Must be called after uefi_runtime_init() + uefi_vars_init(). */
-void uefi_secureboot_init(void);
+ * Must be called after uefi_runtime_init() + uefi_vars_init().
+ * Returns BOOT_OK on success, BOOT_DEGRADED if unavailable. */
+boot_result_t uefi_secureboot_init(void);
 
 /* Write HKLM\SYSTEM\SecureBoot\State to the registry.
  * Called from registry_populate_defaults() after registry_init(). */

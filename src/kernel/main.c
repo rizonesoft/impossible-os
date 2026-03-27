@@ -16,8 +16,8 @@
  */
 void kernel_main(uint64_t magic, uint64_t mbi)
 {
-    /* Phase 1: Hardware — serial, boot info, PMM/VMM/heap, SIMD, drivers */
-    boot_hw_init(magic, mbi);
+    /* Phase 0: Critical init — serial, boot info, PMM/VMM/heap, CPUID, SIMD */
+    boot_phase0(magic, mbi);
 
     /* Phase 2: Interrupts — GDT, IDT, PIC, PIT, framebuffer, PCI, NIC */
     boot_interrupts_init();

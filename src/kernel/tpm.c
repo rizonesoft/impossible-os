@@ -56,7 +56,7 @@ static int      s_available;
 static int      s_version;
 static uint32_t s_event_count;
 
-void tpm_init(void)
+boot_result_t tpm_init(void)
 {
     s_available = 0;
     s_version = 0;
@@ -64,7 +64,7 @@ void tpm_init(void)
 
     if (!g_boot_info.tpm_available) {
         klog(LOG_INFO, "TPM", "Not detected");
-        return;
+        return BOOT_DEGRADED;
     }
 
     s_available = 1;
@@ -76,7 +76,7 @@ void tpm_init(void)
     if (!log || log_size < sizeof(struct tcg_pcr_event)) {
         klog(LOG_WARN, "TPM", "TPM %s detected but event log invalid",
              s_version == 2 ? "2.0" : "1.2");
-        return;
+        return BOOT_DEGRADED;
     }
 
     /* Parse the first entry — must be EV_NO_ACTION with spec ID event */
@@ -88,7 +88,7 @@ void tpm_init(void)
 
     if (first_entry_size > log_size) {
         klog(LOG_WARN, "TPM", "Event log truncated");
-        return;
+        return BOOT_DEGRADED;
     }
 
     /* For TPM 2.0 crypto-agile logs, parse the spec ID event to get
@@ -186,6 +186,8 @@ done:
 
     klog(LOG_INFO, "TPM", "TPM %s detected, %s, %u boot events measured",
          s_version == 2 ? "2.0" : "1.2", hash_name, event_count);
+
+    return BOOT_OK;
 }
 
 int tpm_available(void)
@@ -238,7 +240,7 @@ uint32_t tpm_event_count(void)
 
 static struct boot_integrity_report s_integrity_report;
 
-void tpm_integrity_init(void)
+boot_result_t tpm_integrity_init(void)
 {
     uint32_t i;
     /* Zero the report */
@@ -260,7 +262,7 @@ void tpm_integrity_init(void)
         s_integrity_report.overall_status = BOOT_INTEGRITY_NO_TPM;
         s_integrity_report.pcr_count = 0;
         klog(LOG_INFO, "TPM", "Boot integrity: skipped (no TPM)");
-        return;
+        return BOOT_DEGRADED;
     }
 
     /* ---- TPM present but no crypto stack for PCR replay ----
@@ -299,6 +301,8 @@ void tpm_integrity_init(void)
     klog(LOG_INFO, "TPM",
          "Boot integrity: %u events measured, PCR[0-7] not yet verifiable",
          s_event_count);
+
+    return BOOT_OK;
 }
 
 int tpm_integrity_verified(void)

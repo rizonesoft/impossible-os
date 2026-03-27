@@ -24,10 +24,17 @@
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/shmem.h"
 #include "kernel/boot_splash.h"
+#include "kernel/boot_info.h"
 #include "main/main_internal.h"
 
 void boot_tests_run(void)
 {
+    /* Only run boot tests when debug=1 in boot.conf */
+    if (!g_boot_info.config.debug) {
+        klog(LOG_DEBUG, "boot", "Boot tests skipped (debug=0)");
+        return;
+    }
+
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Boot Tests -------------------------------------------------------------");
 

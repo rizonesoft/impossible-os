@@ -357,11 +357,11 @@ uint64_t uefi_get_next_variable_name(uint64_t *name_size, uint16_t *name,
     return status;
 }
 
-void uefi_vars_init(void)
+boot_result_t uefi_vars_init(void)
 {
     if (!s_available) {
         klog(LOG_INFO, "UEFI", "Variable services: unavailable");
-        return;
+        return BOOT_DEGRADED;
     }
 
     /* Enumerate all variables */
@@ -427,6 +427,8 @@ void uefi_vars_init(void)
         bc_str[4] = '\0';
         klog(LOG_INFO, "UEFI", "BootCurrent: Boot%s", bc_str);
     }
+
+    return BOOT_OK;
 }
 
 /* ============================================================================
@@ -514,7 +516,7 @@ uint64_t uefi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
     return status;
 }
 
-void uefi_time_init(void)
+boot_result_t uefi_time_init(void)
 {
     struct efi_time t;
     struct efi_time_capabilities caps;
@@ -522,7 +524,7 @@ void uefi_time_init(void)
     efi_status_t status = uefi_get_time(&t, &caps);
     if (status != UEFI_SUCCESS) {
         klog(LOG_WARN, "UEFI", "GetTime failed -- wall clock not seeded");
-        return;
+        return BOOT_DEGRADED;
     }
 
     /* Format: "YYYY-MM-DD HH:MM:SS" -- manual zero-padding (no %02u in klog) */
@@ -566,6 +568,8 @@ void uefi_time_init(void)
 
     klog(LOG_INFO, "UEFI", "RTC: resolution=%u Hz, accuracy=%u ppm",
          caps.resolution, caps.accuracy);
+
+    return BOOT_OK;
 }
 
 /* ============================================================================
@@ -613,7 +617,7 @@ static int global_var_exists(const uint16_t *name)
     return 0;
 }
 
-void uefi_secureboot_init(void)
+boot_result_t uefi_secureboot_init(void)
 {
     s_sb_enabled = 0;
     s_sb_setup_mode = 0;
@@ -622,7 +626,7 @@ void uefi_secureboot_init(void)
 
     if (!s_available) {
         klog(LOG_INFO, "UEFI", "Secure Boot: unknown (runtime unavailable)");
-        return;
+        return BOOT_DEGRADED;
     }
 
     /* Read SecureBoot variable (uint8_t: 0=off, 1=on) */
@@ -672,6 +676,8 @@ void uefi_secureboot_init(void)
     } else {
         klog(LOG_INFO, "SecureBoot", "state=DISABLED (firmware or user override)");
     }
+
+    return BOOT_OK;
 }
 
 /* Called from registry_populate_defaults() after registry_init() — writes

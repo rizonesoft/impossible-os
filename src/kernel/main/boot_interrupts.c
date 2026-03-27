@@ -33,6 +33,10 @@
 #include "kernel/fs/partition.h"
 #include "kernel/drivers/ahci.h"
 #include "kernel/drivers/xhci.h"
+#include "kernel/uefi_config.h"
+#include "kernel/uefi_runtime.h"
+#include "kernel/smbios.h"
+#include "kernel/boot_timing.h"
 #include "main/main_internal.h"
 
 void boot_interrupts_init(void)
@@ -167,6 +171,33 @@ void boot_interrupts_init(void)
     boot_progress(1, "FB", POSTCODE_FB_INIT);
 
     boot_splash_init();
+
+    /* --- Phase 1 info gathering (moved from Phase 0) --- */
+    uefi_config_init();
+    smbios_init();
+    boot_progress(1, "SMBIOS", POSTCODE_SMBIOS_INIT);
+    esrt_init();
+    mat_init();
+    uefi_conformance_init();
+    uefi_capsule_init();
+    uefi_crypto_agility_init();
+    secureboot_keys_init();
+    boot_timing_init();
+
+    /* GOP mode enumeration report */
+    {
+        static const char *pf_names[] = { "RGBX", "BGRX", "BitMask" };
+        uint32_t mc = g_boot_info.gop_mode_count;
+        uint32_t sel = g_boot_info.gop_mode_selected;
+        if (mc > 0) {
+            const char *pf = (g_boot_info.fb.pixel_format < 3) ?
+                pf_names[g_boot_info.fb.pixel_format] : "Unknown";
+            klog(LOG_INFO, "GOP",
+                 "%ux%u %s (mode %u of %u available)",
+                 g_boot_info.fb.width, g_boot_info.fb.height,
+                 pf, sel, mc);
+        }
+    }
 
     /* Enable interrupts + start splash animation now — the LAPIC timer
      * is already calibrated and running, so the spinner can animate

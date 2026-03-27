@@ -11,6 +11,7 @@
 
 #include "kernel/boot_halt.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
 #include "kernel/drivers/serial.h"
 
 /* ---- Inline 8×8 bitmap font (96 printable ASCII chars: 0x20–0x7F) --------
@@ -240,10 +241,15 @@ static void blit_string(volatile uint32_t *fb, uint32_t pitch_px,
 
 void boot_halt(const char *reason)
 {
-    /* Always write to serial first — works regardless of framebuffer state */
+    /* Always write to serial first -- works regardless of framebuffer state */
     serial_write("\n[BOOT HALT] ");
     serial_write(reason ? reason : "(unknown reason)");
-    serial_write("\nSystem halted. Check serial log for details.\n");
+    serial_write("\n");
+
+    /* Dump subsystem readiness so the serial log captures full state */
+    kernel_subsystem_dump();
+
+    serial_write("System halted. Check serial log for details.\n");
     serial_write("Recovery: https://impossible-os.dev/recovery\n");
 
     /* Framebuffer diagnostics — only when fb is accessible */
