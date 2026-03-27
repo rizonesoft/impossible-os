@@ -75,7 +75,7 @@ static uint32_t s_blink_counter;
 #define BLINK_RATE      50  /* toggle every 50 ticks = 0.5 sec at 100 Hz */
 #define BLINK_X         4
 #define BLINK_Y         4
-#define BLINK_SIZE      8
+#define BLINK_SIZE      12
 #define BLINK_COLOR_ON  0x0000FF00  /* green */
 #define BLINK_COLOR_OFF 0x00000000  /* black */
 
@@ -86,6 +86,9 @@ static void alive_blink_tick(void)
     if (!g_boot_info.config.heartbeat)
         return;
     if (!kernel_subsystem_ready(SUBSYS_FB))
+        return;
+    /* Stop once desktop compositor takes over */
+    if (kernel_subsystem_ready(SUBSYS_DESKTOP))
         return;
 
     s_blink_counter++;

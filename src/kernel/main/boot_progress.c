@@ -90,14 +90,13 @@ static const uint8_t s_hex_font[16][8] = {
     { 0x7E,0x60,0x60,0x78,0x60,0x60,0x60,0x00 }, /* F */
 };
 
-#define POST_SCALE   2   /* 2x scale: 8px glyph -> 16px */
-#define POST_GLYPH_W (8 * POST_SCALE)   /* 16 px */
-#define POST_GLYPH_H (8 * POST_SCALE)   /* 16 px */
+#define POST_GLYPH_W 12  /* 8 * 1.5 = 12 px */
+#define POST_GLYPH_H 12  /* 8 * 1.5 = 12 px */
 #define POST_GAP     2   /* gap between digits */
 #define POST_MARGIN  6   /* margin from screen edge */
 #define POST_TOP     6   /* top padding */
-#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 34 px */
-#define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 18 px */
+#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 26 px */
+#define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 14 px */
 
 /* Port 0x80 write */
 static inline void outb_post(uint8_t code)
@@ -117,6 +116,10 @@ void post_display(uint8_t code)
     if (!g_boot_info.config.postcode)
         return;
 
+    /* Stop rendering once desktop compositor takes over */
+    if (kernel_subsystem_ready(SUBSYS_DESKTOP))
+        return;
+
     /* Skip pixel writes if framebuffer not ready */
     if (!kernel_subsystem_ready(SUBSYS_FB))
         return;
@@ -133,39 +136,33 @@ void post_display(uint8_t code)
     hi = (code >> 4) & 0x0F;
     lo = code & 0x0F;
 
-    /* Draw high nibble (2x scale) */
+    /* Draw high nibble (1.5x scale: 8px -> 12px via nearest-neighbor) */
     {
         const uint8_t *g = s_hex_font[hi];
-        uint32_t row, col, sy, sx;
-        for (row = 0; row < 8; row++) {
-            uint8_t bits = g[row];
-            for (col = 0; col < 8; col++) {
-                if (bits & (0x80 >> col)) {
-                    for (sy = 0; sy < POST_SCALE; sy++)
-                        for (sx = 0; sx < POST_SCALE; sx++)
-                            fb_put_pixel(x0 + col * POST_SCALE + sx,
-                                         y0 + row * POST_SCALE + sy,
-                                         0x00FFFFFF);
-                }
+        uint32_t py, px;
+        for (py = 0; py < POST_GLYPH_H; py++) {
+            uint32_t sy = (py * 8) / POST_GLYPH_H;  /* map back to 0-7 */
+            uint8_t bits = g[sy];
+            for (px = 0; px < POST_GLYPH_W; px++) {
+                uint32_t sx = (px * 8) / POST_GLYPH_W;
+                if (bits & (0x80 >> sx))
+                    fb_put_pixel(x0 + px, y0 + py, 0x00FFFFFF);
             }
         }
     }
 
-    /* Draw low nibble (2x scale) */
+    /* Draw low nibble (1.5x scale) */
     {
         const uint8_t *g = s_hex_font[lo];
         uint32_t gx = x0 + POST_GLYPH_W + POST_GAP;
-        uint32_t row, col, sy, sx;
-        for (row = 0; row < 8; row++) {
-            uint8_t bits = g[row];
-            for (col = 0; col < 8; col++) {
-                if (bits & (0x80 >> col)) {
-                    for (sy = 0; sy < POST_SCALE; sy++)
-                        for (sx = 0; sx < POST_SCALE; sx++)
-                            fb_put_pixel(gx + col * POST_SCALE + sx,
-                                         y0 + row * POST_SCALE + sy,
-                                         0x00FFFFFF);
-                }
+        uint32_t py, px;
+        for (py = 0; py < POST_GLYPH_H; py++) {
+            uint32_t sy = (py * 8) / POST_GLYPH_H;
+            uint8_t bits = g[sy];
+            for (px = 0; px < POST_GLYPH_W; px++) {
+                uint32_t sx = (px * 8) / POST_GLYPH_W;
+                if (bits & (0x80 >> sx))
+                    fb_put_pixel(gx + px, y0 + py, 0x00FFFFFF);
             }
         }
     }
@@ -206,7 +203,8 @@ void render_debug_bar(void)
     uint32_t count, scr_w, i, x;
     uint64_t total_tsc;
 
-    if (!g_boot_info.config.debug)
+    /* Show when postcode=1 (default) or debug=1 */
+    if (!g_boot_info.config.postcode && !g_boot_info.config.debug)
         return;
     if (!kernel_subsystem_ready(SUBSYS_FB))
         return;
