@@ -5,10 +5,9 @@ description: Audit and rewrite the Implementation Order table in a TODO file —
 
 # Improve Implementation Order Table
 
-Read and follow the canonical workflow: [`.impossible/workflows/improve-implementation-order.md`](../../../.impossible/workflows/improve-implementation-order.md)
+Read and follow the canonical workflow: `.impossible/workflows/improve-implementation-order.md`
 
-## Cursor-Specific Notes
+## Claude Code-Specific Notes
 
-- Use the `user-srclight` MCP for dependency tracing when cross-TODO references are unclear.
-  - `hybrid_search(query)` — find deliverable implementations across the codebase.
-  - `get_dependents(symbol, project)` — verify dependency claims.
+- Use Grep to search across TODO files when verifying cross-domain references.
+- Use Glob to find TODO files by domain pattern (e.g., `todo/02-kernel-core/TODO-*.md`).

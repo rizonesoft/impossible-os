@@ -1,15 +1,36 @@
 ---
-description: Keep repo-owned AI guidance aligned when shared conventions change
+description: Update AI-facing project guidance when shared conventions change, keeping all agent adapters aligned with repo truth.
 ---
-> **Cursor skill:** [`.cursor/skills/sync-ai-system/SKILL.md`](../../.cursor/skills/sync-ai-system/SKILL.md) — `/sync-ai-system`
-> **Antigravity workflow:** [`.agents/workflows/sync-ai-system.md`](../../.agents/workflows/sync-ai-system.md) — `/sync-ai-system`
-> **Claude Code command:** `.claude/commands/sync-ai-system.md` — `/sync-ai-system`
 
-See the Cursor skill for the full procedure (authoritative). Summary:
+# Sync AI System
 
-1. Identify what changed (rule, convention, build flow, tooling)
-2. Update `.impossible/rules/` — the canonical rule content
-3. Update `.cursor/rules/*.mdc` adapters to reflect the change
-4. Update `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`
-5. Update `.impossible/context.md` if the current project state changed
-6. Update affected `todo/**/*.md` XREFs or guidance
+## Workflow
+
+1. Identify the changed convention or policy.
+2. Read the affected repo-owned AI surfaces.
+   - `AGENTS.md`
+   - `.impossible/rules/` — canonical rules
+   - `.impossible/workflows/` — canonical workflows
+   - `.cursor/rules/` — Cursor rule adapters
+   - `.cursor/skills/` — Cursor skill adapters
+   - `.claude/skills/` — Claude Code skill adapters
+   - `CLAUDE.md` — Claude Code instructions
+   - `.github/copilot-instructions.md` — Copilot instructions
+   - `todo/00-infrastructure/TODO-02-developer-tooling-stack.md` when tooling-contract assumptions changed
+3. Update the affected guidance in the same task so tracked docs stop contradicting repo reality.
+4. Preserve the top-level project posture.
+   - Impossible OS is production-grade.
+   - Difficulty is never a reason to lower standards or normalize hacks.
+5. Keep repo-owned guidance canonical.
+   - Local MCP state, dashboard settings, cloud features, and machine-local config stay downstream of tracked repo truth.
+6. Report what changed, what remains deferred, and any surfaces that still need follow-up.
+
+## Guardrails
+
+- Do not treat untracked local state as canonical project behavior.
+- Do not perform TODO roadmap sync or checkbox-vs-code audits here.
+- Do not weaken safety, build, or tooling expectations for convenience.
+
+## Supporting References
+
+- [ai-sync-checklist.md](ai-sync-checklist.md) — sync triggers and surfaces checklist

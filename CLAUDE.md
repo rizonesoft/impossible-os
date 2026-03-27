@@ -42,23 +42,18 @@ When you change code or conventions, update `.impossible/rules/`, `AGENTS.md`, a
 - Linker: `ld.lld-19`
 - Crash debug: `llvm-addr2line-19 -e build/kernel.exe -f <RIP>`
 
-## Slash Commands
+## Skills
 
-Claude Code-specific commands will live in `.claude/commands/` — not yet populated.
-Run Cursor skills via `@`-mentioning the SKILL.md file:
+Claude Code skills live in `.claude/skills/`. They auto-load when relevant. All skills are thin adapters pointing to canonical workflows in `.impossible/workflows/`.
 
-```
-@.cursor/skills/implement-todo-section/SKILL.md <target TODO and section>
-```
-
-| Cursor Skill | Description |
+| Skill | Description |
 |---|---|
-| `implement-todo-section` | Implement one TODO section end-to-end |
-| `create-todo` | Create a new TODO file |
-| `validate-todo-file` | Validate a TODO for gaps |
-| `verify-todo-section` | Verify a TODO section against code evidence |
-| `improve-implementation-order` | Audit and fix an Implementation Order table |
-| `sync-ai-system` | Sync AI guidance across all agent adapters |
+| `/implement-todo-section` | Implement one TODO section end-to-end |
+| `/create-todo` | Create a new TODO file |
+| `/validate-todo-file` | Validate a TODO for gaps |
+| `/verify-todo-section` | Verify a TODO section against code evidence |
+| `/improve-implementation-order` | Audit and fix an Implementation Order table |
+| `/sync-ai-system` | Sync AI guidance across all agent adapters |
 
 ## Repository Layout
 
@@ -73,7 +68,6 @@ include/            All headers (mirrors src/)
 resources/          Fonts, icons, wallpapers
 todo/               Development roadmap (14 domains, 86 TODO files)
 .impossible/        Agent-agnostic rules and workflows (single source of truth)
-.cursor/            Cursor-specific rules and skills
-.claude/            Claude Code commands and skills
-.agents/            Antigravity workflows
+.cursor/            Cursor-specific rule adapters and skill adapters
+.claude/            Claude Code skill adapters
 ```

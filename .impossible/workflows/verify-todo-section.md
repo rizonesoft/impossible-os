@@ -1,15 +1,32 @@
 ---
-description: Reconcile a TODO section's status against code, build, and runtime evidence
+description: Verify whether a TODO section marked done or in progress matches actual code, build, and runtime evidence, then correct the section state conservatively.
 ---
-> **Cursor skill:** [`.cursor/skills/verify-todo-section/SKILL.md`](../../.cursor/skills/verify-todo-section/SKILL.md) — `/verify-todo-section`
-> **Antigravity workflow:** [`.agents/workflows/verify-todo-section.md`](../../.agents/workflows/verify-todo-section.md) — `/verify-todo-section`
-> **Claude Code command:** `.claude/commands/verify-todo-section.md` — `/verify-todo-section`
 
-See the Cursor skill for the full procedure (authoritative). Summary:
+# Verify TODO Section
 
-1. Read the TODO section and identify all `[x]` and `[/]` items
-2. For each claimed-done item: find the code evidence (Srclight + file reads)
-3. Build to confirm no regressions: `bash scripts/build.sh`
-4. Test in QEMU if runtime evidence is needed
-5. Correct checkbox state conservatively: only mark `[x]` when evidence is clear
-6. Note any gaps or deferred limits explicitly in the TODO
+## Workflow
+
+1. Read the exact section, its notes, and any linked verification context.
+2. Build an evidence plan before changing status.
+   - Repo search and file inspection
+   - Build and test commands
+   - Runtime evidence if the section depends on execution
+3. Collect evidence with supported tools.
+   - Build: `bash scripts/build.sh` → check `tail -1 build/build.log` for `=== BUILD OK ===`.
+   - Runtime: `bash scripts/build.sh run` → verify serial output.
+   - Accept headless QEMU plus serial output, including captured serial logs surfaced as usable evidence.
+   - For crash-related fixes, use `llvm-addr2line-19` and `llvm-objdump-19` before speculating.
+4. Classify each item conservatively.
+   - Update `[x]`, `[/]`, `[ ]`, and mismatch wording based on actual evidence.
+   - Fix stale names, paths, notes, or verification wording when the implementation differs from the old text.
+5. Record what was checked, what passed, what failed, and why the section state changed.
+
+## Guardrails
+
+- Do not turn this into broad file-wide TODO validation.
+- Do not create new TODO files here.
+- Do not assume a master-and-child TODO cascade unless the current TODO actually uses one.
+
+## Supporting References
+
+- [status-evidence.md](status-evidence.md) — status classification and evidence rules

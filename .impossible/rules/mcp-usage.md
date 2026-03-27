@@ -6,7 +6,7 @@
 ## Supported MCP Baseline
 
 - **Srclight** is the only supported MCP integration in the first pass.
-- Do not use Memory MCP or filesystem MCP as part of the supported baseline (for Cursor or Antigravity). Do not use a repo-local `.memory/` store.
+- Do not use Memory MCP or filesystem MCP as part of the supported baseline. Do not use a repo-local `.memory/` store.
 - `clangd` is LSP-only and must not be configured as an MCP server.
 
 ## How to Use Srclight

@@ -56,7 +56,7 @@ UEFI Firmware → BOOTX64.EFI → kernel.exe (ELF) → Desktop Shell
 
 ## Agent Notes
 
-- **Cursor + Claude Code**: Source of truth. Use `.cursor/rules/` and `.cursor/skills/`
-- **Antigravity**: Reads `AGENTS.md` + `.agents/workflows/` (redirect stubs to `.cursor/skills/`)
-- **Copilot**: Reads `.github/copilot-instructions.md`
-- **All agents**: Rules canonical content lives in `.impossible/rules/`
+- **All agents**: Canonical rules in `.impossible/rules/`, canonical workflows in `.impossible/workflows/`
+- **Cursor**: `.cursor/rules/*.mdc` (rule adapters) + `.cursor/skills/` (skill adapters → `.impossible/workflows/`)
+- **Claude Code**: `CLAUDE.md` (inline rules) + `.claude/skills/` (skill adapters → `.impossible/workflows/`)
+- **Copilot**: `.github/copilot-instructions.md`

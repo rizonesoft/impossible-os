@@ -1,0 +1,4 @@
+# Prevent Cursor from indexing other agents' adapter directories.
+# This avoids duplicate SKILL.md detection (Cursor + Claude Code both use SKILL.md format).
+.claude/
+.agents/

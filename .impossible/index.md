@@ -1,7 +1,7 @@
 # .impossible — Agent-Agnostic Project Guidance
 
 > **Single source of truth for all AI agent rules and workflows.**
-> This directory is tool-neutral. Rules are plain markdown. Every AI coding tool — Cursor, Claude Code, GitHub Copilot, Antigravity — reads from here via thin adapters.
+> This directory is tool-neutral. Rules are plain markdown. Every AI coding tool — Cursor, Claude Code, GitHub Copilot — reads from here via thin adapters.
 
 ## What's Here
 
@@ -14,11 +14,10 @@
 
 ## Agent Adapters
 
-| Agent | Instructions file | Skills/Commands | Rules |
-|-------|-------------------|-----------------|-------|
-| **Cursor** | `.cursor/rules/*.mdc` → references here | `.cursor/skills/` (native) | Thin MDC wrappers |
-| **Claude Code** | `CLAUDE.md` → references here | `.claude/commands/` + `.claude/skills/` | Inline critical rules |
-| **Antigravity** | `AGENTS.md` → references here | `.agents/workflows/` (redirect stubs) | Inline via AGENTS.md |
+| Agent | Instructions file | Skills | Rules |
+|-------|-------------------|--------|-------|
+| **Cursor** | `.cursor/rules/*.mdc` → references here | `.cursor/skills/` — thin adapters → `workflows/` | Thin MDC wrappers |
+| **Claude Code** | `CLAUDE.md` → references here | `.claude/skills/` — thin adapters → `workflows/` | Inline critical rules |
 | **GitHub Copilot** | `.github/copilot-instructions.md` → references here | None | Inline critical rules |
 
 ## Rules Index
@@ -38,15 +37,16 @@
 | File | Description |
 |------|------------|
 | [build.md](workflows/build.md) | Build + test in QEMU |
-| [implement-todo.md](workflows/implement-todo.md) | Implement a TODO section from start to commit |
-| [todo-create.md](workflows/todo-create.md) | Create a new TODO file |
-| [todo-validate.md](workflows/todo-validate.md) | Review a TODO for gaps and fix everything |
-| [todo-done-check.md](workflows/todo-done-check.md) | Check for completed TODO items and mark done |
+| [implement-todo-section.md](workflows/implement-todo-section.md) | Implement a TODO section from start to commit |
+| [create-todo.md](workflows/create-todo.md) | Create a new TODO file |
+| [validate-todo-file.md](workflows/validate-todo-file.md) | Review a TODO for gaps and fix everything |
+| [verify-todo-section.md](workflows/verify-todo-section.md) | Reconcile section status against code/build/runtime evidence |
+| [improve-implementation-order.md](workflows/improve-implementation-order.md) | Audit and rewrite an Implementation Order table |
+| [sync-ai-system.md](workflows/sync-ai-system.md) | Keep AI guidance aligned when conventions change |
 | [todo-master-sync.md](workflows/todo-master-sync.md) | Fix implementation order, numbering, inconsistencies |
 | [todo-table-format.md](workflows/todo-table-format.md) | Align TODO tables and format columns |
 | [docs-convert-todo.md](workflows/docs-convert-todo.md) | Convert a completed TODO to documentation |
 | [docs-validate.md](workflows/docs-validate.md) | Validate documentation structure and fix violations |
-| [docs-verify-todo.md](workflows/docs-verify-todo.md) | Verify a previously implemented TODO section |
 | [add-asset.md](workflows/add-asset.md) | Load any asset (font, image, cursor) from disk |
 | [specs-create.md](workflows/specs-create.md) | Create a spec document from research |
 | [specs-fact-check.md](workflows/specs-fact-check.md) | Fact-check a spec document |

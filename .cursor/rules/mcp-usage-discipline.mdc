@@ -16,7 +16,7 @@ alwaysApply: false
 - Srclight is the only supported MCP integration in the first pass.
 - Use Srclight to orient quickly when it helps. Prefer `hybrid_search()` for most lookups, and use `codebase_map()` when you need session-level codebase orientation.
 - `clangd` is LSP-only and must not be configured as an MCP server.
-- Do not rely on Memory MCP or filesystem MCP as part of the supported baseline (Cursor or Antigravity). Do not use a repo-local `.memory/` store. If local configs still expose Memory or filesystem MCP, treat them as deprecated local-only extras rather than canonical workflow.
+- Do not rely on Memory MCP or filesystem MCP as part of the supported baseline. Do not use a repo-local `.memory/` store. If local configs still expose Memory or filesystem MCP, treat them as deprecated local-only extras rather than canonical workflow.
 - Treat `.srclight/` and other MCP state as disposable local acceleration, not project truth.
 - If Srclight results conflict with tracked files, trust the repo. Fall back to `rg`, direct file reads, and other repo-grounded evidence.
 - When repeated mismatches suggest stale indexing, refresh or rebuild the local Srclight index and re-check before using it as evidence.

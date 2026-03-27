@@ -9,21 +9,17 @@
 >
 > | Agent | Instructions | Skills / Commands | Rules |
 > |-------|-------------|------------------|-------|
-> | **Cursor** | This file (`AGENTS.md`) | `.cursor/skills/` — native `/` commands | `.cursor/rules/*.mdc` (adapters) |
-> | **Claude Code** | [`CLAUDE.md`](CLAUDE.md) | `.claude/commands/` — Claude-specific commands (pending) | Inline in `CLAUDE.md` |
-> | **Antigravity** | This file (`AGENTS.md`) | `.agents/workflows/` — thin redirects to `.cursor/skills/` | Inline in this file |
+> | **Cursor** | This file (`AGENTS.md`) | `.cursor/skills/` — thin adapters → `.impossible/workflows/` | `.cursor/rules/*.mdc` (adapters) |
+> | **Claude Code** | [`CLAUDE.md`](CLAUDE.md) | `.claude/skills/` — thin adapters → `.impossible/workflows/` | Inline in `CLAUDE.md` |
 > | **GitHub Copilot** | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | None | Inline in copilot file |
 >
-> **Cursor Project Skills** (`.cursor/skills/` — `/command-name` in Cursor):
-> - [`create-todo`](.cursor/skills/create-todo/SKILL.md) — create lean TODO files, choose the correct domain, and update indexes
-> - [`implement-todo-section`](.cursor/skills/implement-todo-section/SKILL.md) — execute one scoped TODO section with build and test evidence
-> - [`validate-todo-file`](.cursor/skills/validate-todo-file/SKILL.md) — validate TODO structure, execution order, XREFs, and gap-free continuity
-> - [`verify-todo-section`](.cursor/skills/verify-todo-section/SKILL.md) — reconcile section status against code, build, and runtime evidence
-> - [`improve-implementation-order`](.cursor/skills/improve-implementation-order/SKILL.md) — audit and rewrite the Implementation Order table
-> - [`sync-ai-system`](.cursor/skills/sync-ai-system/SKILL.md) — keep all agent adapters aligned when conventions change
->
-> **Antigravity Workflows** (`.agents/workflows/` — thin redirects to `.cursor/skills/`):
-> `build`, `create-todo`, `implement-todo-section`, `validate-todo-file`, `verify-todo-section`, `sync-ai-system`, `improve-implementation-order`, `add-asset`, `docs-convert-todo`, `docs-validate`, `todo-done-check`, `todo-master-sync`, `todo-table-format`, `specs-create`, `specs-fact-check`, `test-fs-fat32`, `test-hardware`, `release`
+> **Canonical Workflows** (`.impossible/workflows/` — full procedures, tool-neutral):
+> - [`implement-todo-section`](.impossible/workflows/implement-todo-section.md) — execute one scoped TODO section with build and test evidence
+> - [`create-todo`](.impossible/workflows/create-todo.md) — create lean TODO files, choose the correct domain, and update indexes
+> - [`validate-todo-file`](.impossible/workflows/validate-todo-file.md) — validate TODO structure, execution order, XREFs, and gap-free continuity
+> - [`verify-todo-section`](.impossible/workflows/verify-todo-section.md) — reconcile section status against code, build, and runtime evidence
+> - [`improve-implementation-order`](.impossible/workflows/improve-implementation-order.md) — audit and rewrite the Implementation Order table
+> - [`sync-ai-system`](.impossible/workflows/sync-ai-system.md) — keep all agent adapters aligned when conventions change
 
 ---
 
@@ -92,11 +88,12 @@ sdk/                    SDK for user-mode development
 
 .impossible/            Agent-agnostic rules and workflows (single source of truth)
   ├── rules/            Portable coding conventions (readable by all tools)
-  └── workflows/        Portable procedures (readable by all tools)
-.claude/                Slash commands (Cursor + Claude Code) and skills
-  └── commands/         Canonical slash commands + supporting subdirs
-.cursor/                Cursor rule adapters only (.mdc files)
-.agents/                Antigravity workflow redirects (point to .claude/commands/)
+  └── workflows/        Canonical procedures + supporting references
+.cursor/                Cursor-specific adapters
+  ├── rules/            Thin .mdc wrappers → .impossible/rules/
+  └── skills/           Thin skill adapters → .impossible/workflows/
+.claude/                Claude Code-specific adapters
+  └── skills/           Thin skill adapters → .impossible/workflows/
 ```
 
 ### Win32 Naming Conventions
@@ -418,8 +415,8 @@ Priority levels: 🔴 P0, 🟠 P1, 🟡 P2, 🟢 P3
 
 ## Known Gotchas & Code Intelligence
 
-> Full freestanding gotchas and allocator discipline are summarized in [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc). Legacy migration source material remains in [`coding.md`](.agents/rules/coding.md).
-> Srclight usage and MCP boundaries are summarized in [`mcp-usage-discipline.mdc`](.cursor/rules/mcp-usage-discipline.mdc). Legacy migration source material remains in [`intelligence.md`](.agents/rules/intelligence.md).
+> Full freestanding gotchas and allocator discipline: [`.impossible/rules/freestanding.md`](.impossible/rules/freestanding.md) (canonical) → [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc) (Cursor adapter).
+> Srclight usage and MCP boundaries: [`.impossible/rules/mcp-usage.md`](.impossible/rules/mcp-usage.md) (canonical) → [`mcp-usage-discipline.mdc`](.cursor/rules/mcp-usage-discipline.mdc) (Cursor adapter).
 
 ---
 

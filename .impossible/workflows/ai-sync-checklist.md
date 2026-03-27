@@ -11,8 +11,13 @@
 ## Surfaces To Check
 
 - `AGENTS.md`
-- Relevant `.cursor/rules/`
-- Relevant `.cursor/skills/`
+- `.impossible/rules/` — canonical rules
+- `.impossible/workflows/` — canonical workflows + supporting references
+- `.cursor/rules/` — Cursor rule adapters (thin MDC wrappers)
+- `.cursor/skills/` — Cursor skill adapters (thin, point to `.impossible/workflows/`)
+- `.claude/skills/` — Claude Code skill adapters (thin, point to `.impossible/workflows/`)
+- `CLAUDE.md` — Claude Code inline instructions
+- `.github/copilot-instructions.md` — Copilot instructions
 - User-facing docs such as `README.md` or `CONTRIBUTING.md` when contributor expectations changed
 
 ## Preserve During Sync
