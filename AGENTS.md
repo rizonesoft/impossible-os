@@ -5,23 +5,22 @@
 
 > **Single source of truth for all agent rules and workflows:** [`.impossible/`](.impossible/index.md)
 > Rules content lives in `.impossible/rules/`. Workflows live in `.impossible/workflows/`.
-> Slash commands live in `.claude/commands/` — picked up natively by both Cursor and Claude Code.
 > Each tool uses a thin adapter that points here:
 >
 > | Agent | Instructions | Skills / Commands | Rules |
 > |-------|-------------|------------------|-------|
-> | **Cursor** | This file (`AGENTS.md`) | `.claude/commands/` — native `/` commands | `.cursor/rules/*.mdc` (adapters) |
-> | **Claude Code** | [`CLAUDE.md`](CLAUDE.md) | `.claude/commands/` — native `/` commands | Inline in `CLAUDE.md` |
+> | **Cursor** | This file (`AGENTS.md`) | `.cursor/skills/` — native `/` commands | `.cursor/rules/*.mdc` (adapters) |
+> | **Claude Code** | [`CLAUDE.md`](CLAUDE.md) | `.claude/commands/` + `.claude/skills/` | Inline in `CLAUDE.md` |
 > | **Antigravity** | This file (`AGENTS.md`) | `.agents/workflows/` — thin redirects to `.claude/commands/` | Inline in this file |
 > | **GitHub Copilot** | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | None | Inline in copilot file |
 >
-> **Slash Commands** (`.claude/commands/` — `/command-name` in Cursor and Claude Code):
-> - [`create-todo`](.claude/commands/create-todo.md) — create lean TODO files, choose the correct domain, and update indexes
-> - [`implement-todo-section`](.claude/commands/implement-todo-section.md) — execute one scoped TODO section with build and test evidence
-> - [`validate-todo-file`](.claude/commands/validate-todo-file.md) — validate TODO structure, execution order, XREFs, and gap-free continuity
-> - [`verify-todo-section`](.claude/commands/verify-todo-section.md) — reconcile section status against code, build, and runtime evidence
-> - [`improve-implementation-order`](.claude/commands/improve-implementation-order.md) — audit and rewrite the Implementation Order table
-> - [`sync-ai-system`](.claude/commands/sync-ai-system.md) — keep all agent adapters aligned when conventions change
+> **Cursor Project Skills** (`.cursor/skills/` — `/command-name` in Cursor):
+> - [`create-todo`](.cursor/skills/create-todo/SKILL.md) — create lean TODO files, choose the correct domain, and update indexes
+> - [`implement-todo-section`](.cursor/skills/implement-todo-section/SKILL.md) — execute one scoped TODO section with build and test evidence
+> - [`validate-todo-file`](.cursor/skills/validate-todo-file/SKILL.md) — validate TODO structure, execution order, XREFs, and gap-free continuity
+> - [`verify-todo-section`](.cursor/skills/verify-todo-section/SKILL.md) — reconcile section status against code, build, and runtime evidence
+> - [`improve-implementation-order`](.cursor/skills/improve-implementation-order/SKILL.md) — audit and rewrite the Implementation Order table
+> - [`sync-ai-system`](.cursor/skills/sync-ai-system/SKILL.md) — keep all agent adapters aligned when conventions change
 >
 > **Antigravity Workflows** (`.agents/workflows/` — thin redirects to `.claude/commands/`):
 > `build`, `create-todo`, `implement-todo-section`, `validate-todo-file`, `verify-todo-section`, `sync-ai-system`, `improve-implementation-order`, `add-asset`, `docs-convert-todo`, `docs-validate`, `todo-done-check`, `todo-master-sync`, `todo-table-format`, `specs-create`, `specs-fact-check`, `test-fs-fat32`, `test-hardware`, `release`

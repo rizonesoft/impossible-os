@@ -1,0 +1,63 @@
+---
+name: create-todo
+description: Create lean project TODO files under todo/, choose the correct domain and local number, build the canonical Implementation Order table, wire XREFs, and update indexes. Use when the user asks to create, author, scaffold, or derive a new TODO roadmap from a feature, spec, or subsystem.
+---
+
+# Create TODO
+
+## Use This Skill When
+
+- The user wants a new TODO file under `todo/`.
+- A feature, subsystem, or spec needs a tracked execution roadmap.
+- A stale draft needs to be rewritten into the current lean TODO format.
+
+## Workflow
+
+1. Find the canonical home.
+   - Read `todo/TODO-00-INDEX.md`, the target domain `INDEX.md`, and adjacent TODOs.
+   - Prefer one canonical TODO home and cross-link instead of duplicating scope.
+2. Gather the primary inputs.
+   - If a spec exists, treat it as the primary structural input.
+   - Otherwise use current code, docs, and related TODOs to define scope.
+   - **Use the Srclight MCP (`user-srclight`) for codebase discovery before scanning files manually.**
+     - Call `codebase_map()` at the start of any session to understand project structure, languages, and symbol counts.
+     - Use `hybrid_search(query)` to find existing implementations, related symbols, and prior art by concept or keyword.
+     - Use `symbols_in_file(path, project)` to enumerate all symbols in relevant source files.
+     - Use `get_callers`, `get_callees`, and `get_dependents` to trace integration points and impact boundaries.
+     - Use `whats_changed(project)` to discover recent work that may already cover planned scope.
+     - Let Srclight discovery drive what goes into Inputs, XREFs, and dependency rows — only fall back to direct file reads when Srclight results are insufficient.
+3. Choose the next local filename.
+   - Follow the live domain naming pattern such as `todo/00-infrastructure/TODO-03-short-name.md`.
+   - Do not revive legacy `TODO-NNN.NN-*` naming from `todo-old/`.
+4. Draft the TODO in the current lean format.
+   - Default to a leaf TODO.
+   - Create a parent TODO only when the topic truly needs multiple child files or shared verification.
+5. Set up execution order at creation time.
+   - Use `Implementation Order`, not `Phase-by-Phase`.
+   - Mark every row with `💎` (parity — matches Windows/Linux) or `⭐` (exclusive — Impossible OS superior).
+   - Add dependencies, overlap notes, handoffs, and `→ XREF:` links while creating the file.
+6. Assign a model tag to every section heading.
+   - Append `` `[Sonnet]` `` or `` `[Opus]` `` directly to each `## N. Title` heading.
+   - Format: `## 1. Section Title \`[Sonnet]\`` — no column, no table, inline only.
+   - Use **`[Sonnet]`** for: well-scoped type/struct definitions, straightforward API wiring, data migration and porting tasks, log/error handling plumbing, and any section with a clear Windows reference spec.
+   - Use **`[Opus]`** for: novel architectural design (no prior Impossible OS precedent), security-critical code (ring transitions, privilege, code signing, capabilities), subtle concurrency (per-CPU state, lock-free queues, spinlock transitions), hardware-interface primitives (MSR writes, `swapgs`, interrupt entry/exit, calibration), and complex algorithm design (ASLR entropy, DPC fairness, clock drift correction).
+7. Add an OS Comparison table.
+   - Every TODO must include an `## OS Comparison` section before Verification.
+   - Columns: `⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS`
+   - Mark each row `💎` (parity) or `⭐` (exclusive/superior).
+   - Show current Impossible OS state: ✅ Done, ⚠️ Partial, ⬜ Planned, ❌ Not applicable.
+   - Add a short summary note after the table on what makes Impossible OS superior.
+8. Update indexes in the same task.
+   - Update the domain `INDEX.md`.
+   - Update `todo/TODO-00-INDEX.md` only when the new TODO changes root-visible scope.
+
+## Guardrails
+
+- Do not implement code or reconcile checkbox truth against the codebase.
+- Do not add giant mutable prompt blocks, formatting-only cleanup steps, or MCP-memory instructions.
+- Keep tables compact and split wide planning content into bullets or short subsections.
+
+## Additional Resources
+
+- [todo-template.md](todo-template.md)
+- [implementation-order.md](implementation-order.md)

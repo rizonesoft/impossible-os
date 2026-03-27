@@ -21,13 +21,13 @@ Use this as the default starting point for a new leaf TODO.
 | ⭐  | Order | Deliverable             | Depends On | Status |
 | --- | :---: | ----------------------- | ---------- | :----: |
 | 💎  |   1   | Foundation / parity     | —          |  [ ]   |
-| 💎  |   2   | More parity work        | §1         |  [ ]   |
-| ⭐  |   3   | Exclusive differentiator | §1, §2    |  [ ]   |
+| 💎  |   2   | More parity work        | 1          |  [ ]   |
+| ⭐  |   3   | Exclusive differentiator | 1, 2      |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work — Impossible OS is superior or first.
 
-## 1. Workstream `[Sonnet]`
+## 1. Workstream
 
 ### 1.1 First Section
 
