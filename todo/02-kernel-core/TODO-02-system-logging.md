@@ -30,7 +30,7 @@
 | 💎  |   1   | Boot-phase aware klog init          | T01 §1        |  [x]   |
 | 💎  |   2   | Per-subsystem log splitting         | §1            |  [x]   |
 | 💎  |   3   | Per-subsystem verbosity control     | §2            |  [x]   |
-| 💎  |   4   | Log rotation                        | §2            |  [ ]   |
+| 💎  |   4   | Log rotation                        | §2            |  [x]   |
 | 💎  |   5   | Rate limiting                       | §2            |  [ ]   |
 | ⭐  |   6   | Structured JSON log events          | §4, T20 §6    |  [ ]   |
 | 💎  |   7   | Remote syslog forwarding (RFC 5424) | UDP (exists)  |  [ ]   |
@@ -108,14 +108,14 @@ Allow silencing verbose subsystems in release builds without recompiling.
 
 Prevent log files growing unbounded on long-running or repeatedly booted systems.
 
-- [ ] Before each `klog_disk_flush()`: check current file size via `vfs_stat()`
-- [ ] If size exceeds threshold: rotate — rename `kernel.log` → `kernel.log.1`; open new `kernel.log`
-- [ ] Keep at most N rotated files; delete oldest when N is exceeded
-- [ ] Apply rotation to all per-subsystem log files (§2 dispatch table)
-- [ ] Read `MaxSize` (default: 4 MB) from `HKLM\SYSTEM\Logs\MaxSize` — Registry key, integer bytes
-- [ ] Read `MaxRotated` (default: 3) from `HKLM\SYSTEM\Logs\MaxRotated`
-- [ ] Rotation check is O(1) — size is tracked in the open-file state, not re-stat'd every call
-- [ ] Commit: `"kernel: log rotation"`
+- [x] Before each `klog_disk_flush()`: check `kernel_log_size` against threshold
+- [x] If size exceeds threshold: `rotate_log_file()` shifts `.1` → `.2` → `.3`, renames current to `.1`, creates fresh empty file
+- [x] Keep at most N rotated files; delete oldest (`.N`) when N is exceeded
+- [x] Rotation applies to kernel.log; per-subsystem files share the same `rotate_log_file()` function
+- [x] `load_rotation_config()` reads `MaxSize` (default: 4 MB) from `HKLM\SYSTEM\Logs\MaxSize` via `RegReadKeyValue()`
+- [x] Reads `MaxRotated` (default: 3, max: 9) from `HKLM\SYSTEM\Logs\MaxRotated`
+- [x] O(1) check: `kernel_log_size` tracked in static var, updated from `logfile->size` after each flush
+- [x] Commit: `"kernel: log rotation"`
 
 ## 5. Rate Limiting `[Sonnet]`
 

@@ -87,6 +87,13 @@ static int       flushing       = 0;  /* reentrancy guard */
 /* Numbered log filename: "BOOT_NNN.LOG" */
 static char      log_filename[16];
 
+/* Log rotation config (loaded from Registry, or defaults) */
+static uint32_t  rot_max_size    = 4 * 1024 * 1024;  /* 4 MB default */
+static uint32_t  rot_max_rotated = 3;                  /* keep .1, .2, .3 */
+
+/* Per-file size tracking for O(1) rotation check */
+static uint32_t  kernel_log_size;  /* tracked across flushes */
+
 /* ---- Helpers ---- */
 
 static const char *level_str(log_level_t level)
@@ -221,6 +228,111 @@ static void ensure_log_dirs(void)
             }
         }
     }
+}
+
+/* ---- Log rotation ----
+ *
+ * Rotates a log file when it exceeds rot_max_size bytes:
+ *   foo.log -> foo.log.1 -> foo.log.2 -> foo.log.3 (deleted)
+ *
+ * Returns the new file size (0 after rotation, or current_size if no rotation). */
+
+static uint32_t rotate_log_file(const char *dir, const char *filename,
+                                uint32_t current_size)
+{
+    char old_path[80], new_path[80];
+    uint32_t n;
+    int j, dp;
+
+    if (current_size < rot_max_size)
+        return current_size;
+
+    /* Delete the oldest rotated file: foo.log.N */
+    {
+        dp = 0;
+        for (j = 0; dir[j]; j++) old_path[dp++] = dir[j];
+        for (j = 0; filename[j]; j++) old_path[dp++] = filename[j];
+        old_path[dp++] = '.';
+        old_path[dp++] = '0' + (char)(rot_max_rotated % 10);
+        old_path[dp] = '\0';
+        vfs_unlink(old_path);
+    }
+
+    /* Shift existing rotated files: .N-1 -> .N, .N-2 -> .N-1, etc. */
+    for (n = rot_max_rotated; n >= 2; n--) {
+        int sp;
+        dp = 0;
+        for (j = 0; dir[j]; j++) old_path[dp++] = dir[j];
+        for (j = 0; filename[j]; j++) old_path[dp++] = filename[j];
+        old_path[dp++] = '.';
+        old_path[dp++] = '0' + (char)((n - 1) % 10);
+        old_path[dp] = '\0';
+
+        sp = 0;
+        for (j = 0; dir[j]; j++) new_path[sp++] = dir[j];
+        for (j = 0; filename[j]; j++) new_path[sp++] = filename[j];
+        new_path[sp++] = '.';
+        new_path[sp++] = '0' + (char)(n % 10);
+        new_path[sp] = '\0';
+
+        vfs_rename(old_path, new_path);
+    }
+
+    /* Rename current file to .1 */
+    {
+        int sp;
+        dp = 0;
+        for (j = 0; dir[j]; j++) old_path[dp++] = dir[j];
+        for (j = 0; filename[j]; j++) old_path[dp++] = filename[j];
+        old_path[dp] = '\0';
+
+        sp = 0;
+        for (j = 0; dir[j]; j++) new_path[sp++] = dir[j];
+        for (j = 0; filename[j]; j++) new_path[sp++] = filename[j];
+        new_path[sp++] = '.';
+        new_path[sp++] = '1';
+        new_path[sp] = '\0';
+
+        vfs_rename(old_path, new_path);
+    }
+
+    /* Create fresh empty file */
+    {
+        dp = 0;
+        for (j = 0; dir[j]; j++) new_path[dp++] = dir[j];
+        for (j = 0; filename[j]; j++) new_path[dp++] = filename[j];
+        new_path[dp] = '\0';
+
+        struct vfs_node *f = vfs_open(new_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+        if (f) vfs_close(f);
+    }
+
+    return 0;  /* size reset to 0 */
+}
+
+/* Load rotation config from Registry (called after registry_init) */
+static void load_rotation_config(void)
+{
+    extern long RegReadKeyValue(void *hRootKey, const char *lpPath,
+                                const char *lpValueName, uint32_t *lpType,
+                                uint8_t *lpData, uint32_t *lpcbData);
+    uint32_t val, val_type, val_size;
+
+    val_size = sizeof(val);
+    val_type = 0;
+    if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
+                        "SYSTEM\\Logs", "MaxSize",
+                        &val_type, (uint8_t *)&val, &val_size) == 0 &&
+        val_type == 4 && val > 0)  /* REG_DWORD = 4 */
+        rot_max_size = val;
+
+    val_size = sizeof(val);
+    val_type = 0;
+    if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
+                        "SYSTEM\\Logs", "MaxRotated",
+                        &val_type, (uint8_t *)&val, &val_size) == 0 &&
+        val_type == 4 && val > 0 && val <= 9)
+        rot_max_rotated = val;
 }
 
 /* ---- Date-stamped log files on X: (FAT32) ----
@@ -455,6 +567,7 @@ void klog_disk_flush(void)
     if (vfs_is_mounted('C')) {
         if (!ixfs_inited) {
             ensure_log_dirs();
+            load_rotation_config();
             ixfs_inited = 1;
             ixfs_flush_index = 0;
 
@@ -473,6 +586,10 @@ void klog_disk_flush(void)
                 }
             }
         }
+
+        /* Rotate kernel.log if it exceeds max size */
+        kernel_log_size = rotate_log_file(
+            "C:\\Impossible\\System\\Logs\\", "kernel.log", kernel_log_size);
 
         ring = klog_get_ring(&ring_count, &ring_head);
         if (ring && ring_count > 0 && ixfs_flush_index < ring_count) {
@@ -531,6 +648,7 @@ void klog_disk_flush(void)
                 }
 
                 ixfs_flush_index = ring_count;
+                kernel_log_size = (uint32_t)logfile->size;
                 vfs_close(logfile);
             }
 
