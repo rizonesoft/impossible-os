@@ -66,5 +66,19 @@ uint64_t irq_get_count(uint8_t vector);
  * Used by Task Manager for per-vector statistics. */
 const uint64_t *irq_get_counts(void);
 
+/* ---- High-level GSI-based API ---- */
+
+/* Request an IRQ by GSI number. Allocates a vector, programs the IOAPIC
+ * redirection entry (using MADT override flags if applicable), and
+ * registers the handler. Returns the allocated vector, or 0 on failure. */
+uint8_t irq_request_gsi(uint32_t gsi, irq_handler_t handler, void *ctx,
+                         const char *name);
+
+/* Release a GSI: mask IOAPIC entry, unregister handler, free vector. */
+void irq_free_gsi(uint32_t gsi);
+
+/* Get interrupt fire count for a GSI (looks up the mapped vector). */
+uint64_t irq_gsi_count(uint32_t gsi);
+
 /* Initialize the IRQ subsystem. Called once during boot. */
 void irq_init(void);

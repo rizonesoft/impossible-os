@@ -150,3 +150,84 @@ void irq_init(void)
     }
     klog(LOG_INFO, "irq", "Dynamic IRQ subsystem ready (vectors 0x30-0xEF allocatable)");
 }
+
+/* ---- High-level GSI-based API ---- */
+
+#include "kernel/acpi.h"
+#include "kernel/drivers/ioapic.h"
+
+/* GSI-to-vector mapping table */
+static uint8_t gsi_to_vector[256];  /* 0 = not mapped */
+
+uint8_t irq_request_gsi(uint32_t gsi, irq_handler_t handler, void *ctx,
+                         const char *name)
+{
+    uint8_t vec;
+    int rc;
+
+    if (gsi >= 256) return 0;
+
+    /* Allocate a dynamic vector */
+    vec = irq_alloc_vector();
+    if (!vec) {
+        klog(LOG_ERROR, "irq", "irq_request_gsi(%u): no free vectors", (uint64_t)gsi);
+        return 0;
+    }
+
+    /* Register handler on the allocated vector */
+    rc = irq_register(vec, handler, ctx, name);
+    if (rc != IRQ_OK) {
+        irq_free_vector(vec);
+        klog(LOG_ERROR, "irq", "irq_request_gsi(%u): register failed (%d)",
+             (uint64_t)gsi, (uint64_t)rc);
+        return 0;
+    }
+
+    /* Program IOAPIC redirection: GSI → vector, routed to BSP */
+    if (ioapic_available()) {
+        /* Check MADT overrides for polarity/trigger flags */
+        uint16_t flags = 0;
+        uint32_t i;
+        uint32_t ov_count = acpi_get_override_count();
+        for (i = 0; i < ov_count; i++) {
+            const struct madt_int_override *ovr = acpi_get_override(i);
+            if (ovr && ovr->gsi == gsi) {
+                flags = ovr->flags;
+                break;
+            }
+        }
+        ioapic_route_irq((uint8_t)gsi, vec, 0, flags);
+    }
+
+    gsi_to_vector[gsi] = vec;
+
+    klog(LOG_DEBUG, "irq", "GSI %u -> vec 0x%x (%s)",
+         (uint64_t)gsi, (uint64_t)vec, name ? name : "?");
+
+    return vec;
+}
+
+void irq_free_gsi(uint32_t gsi)
+{
+    uint8_t vec;
+    if (gsi >= 256) return;
+
+    vec = gsi_to_vector[gsi];
+    if (!vec) return;
+
+    /* Mask the IOAPIC entry */
+    if (ioapic_available())
+        ioapic_mask_irq((uint8_t)gsi);
+
+    irq_unregister(vec);
+    irq_free_vector(vec);
+    gsi_to_vector[gsi] = 0;
+}
+
+uint64_t irq_gsi_count(uint32_t gsi)
+{
+    if (gsi >= 256) return 0;
+    uint8_t vec = gsi_to_vector[gsi];
+    if (!vec) return 0;
+    return irq_get_count(vec);
+}

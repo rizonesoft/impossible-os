@@ -44,7 +44,7 @@
 | 💎  |   2   | LAPIC / IOAPIC init before PIT      | §1                  |  [x]   |
 | 💎  |   3   | Conditional PIC disable             | §1, §2              |  [x]   |
 | 💎  |   4   | Full IDT coverage                   | §2, §3              |  [x]   |
-| 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [ ]   |
+| 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [/]   |
 | 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [ ]   |
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [ ]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [ ]   |
@@ -120,15 +120,15 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 > [!IMPORTANT]
 > `include/kernel/irq.h` already defines `irq_handler_t` as `void (*)(uint8_t vector, void *ctx)` for the existing `irq_register(vector, handler, ctx, name)` API. This section either renames that typedef or introduces a separate `gsi_handler_t` — resolve the naming before implementing §5 to avoid breaking all current `irq_register()` call sites.
 
-- [ ] Define `irq_handler_t` as `void (*)(uint32_t gsi, void *ctx)` (or introduce `gsi_handler_t` if the old signature must coexist during transition)
-- [ ] `irq_request(uint32_t gsi, irq_handler_t handler, const char *name, uint32_t flags)` → allocates next free IDT vector from `[64, 239]`, writes IOAPIC redirection entry (GSI → vector, polarity + trigger mode from MADT override, delivery mode = Fixed, destination = BSP APIC ID, mask = 0); returns allocated vector or -1 on failure
-- [ ] `irq_free(uint32_t gsi)` → mask IOAPIC redirection entry, release vector back to the free pool
-- [ ] `irq_set_affinity(uint32_t gsi, uint64_t cpu_mask)` → update IOAPIC redirection entry destination field
-- [ ] `irq_stats(uint32_t gsi, uint64_t *out_count)` → return fire count since boot from per-GSI counter incremented in `irq_dispatch()`
-- [ ] `irq_dispatch(uint32_t vector)`: look up registered handler by vector, call it, send LAPIC EOI (`lapic_write(LAPIC_EOI, 0)`)
-- [ ] `irq list` shell command: prints table with columns GSI, Vector, Name, CPU affinity mask, fire count
-- [ ] Migrate existing hardcoded vector assignments (keyboard IRQ 1, RTC IRQ 8, etc.) to use `irq_request()` in their respective driver init functions
-- [ ] Commit: `"kernel: dynamic IRQ registration API — irq_request/free/affinity/stats, IOAPIC-backed"`
+- [x] Existing `irq_handler_t` kept as `void (*)(uint8_t vector, void *ctx)` — no breaking change needed; GSI API added alongside
+- [x] `irq_request_gsi(gsi, handler, ctx, name)`: allocates vector via `irq_alloc_vector()`, registers handler, programs IOAPIC redirection with MADT override flags; returns vector or 0
+- [x] `irq_free_gsi(gsi)`: masks IOAPIC entry, unregisters handler, frees vector
+- [ ] `irq_set_affinity(gsi, cpu_mask)` — deferred to SMP TODO (single-CPU for now, all routes to BSP)
+- [x] `irq_gsi_count(gsi)`: returns fire count via GSI→vector mapping table
+- [x] `irq_dispatch()` already exists in `irq.c` — registered handler called + EOI sent
+- [ ] `irq list` shell command — deferred to shell TODO
+- [ ] Migrate existing drivers to `irq_request_gsi()` — deferred (current `irq_register(vector)` works; migration is mechanical)
+- [x] Commit: `"kernel: GSI-based IRQ request API — irq_request_gsi/free_gsi, IOAPIC-backed"`
 
 ## 6. Unified Timer Subsystem (UTS) `[Opus]`
 
