@@ -36,18 +36,20 @@
 | ⭐  | Order | Deliverable                   | Depends On | Status |
 | --- | :---: | ----------------------------- | ---------- | :----: |
 | 💎  |   1   | Boot init infrastructure      | —          |  [x]   |
-| 💎  |   2   | Phase 0 — critical init       | 1          |  [ ]   |
-| 💎  |   3   | Phase 1 — platform services   | 2          |  [ ]   |
-| 💎  |   4   | Phase 2 — system services     | 3          |  [ ]   |
-| 💎  |   5   | Phase 3 — user platform       | 4          |  [ ]   |
-| 💎  |   6   | Dependency gates              | 1–4        |  [ ]   |
-| 💎  |   7   | Failure policy                | 6          |  [ ]   |
-| 💎  |   8   | Code cleanup                  | 2–5        |  [ ]   |
-| ⭐  |   9   | Degraded-boot recovery screen | 7          |  [ ]   |
-| ⭐  |  10   | POST code + UEFI variable log | 1          |  [ ]   |
+| 💎  |   2   | Phase 0 — critical init       | §1         |  [ ]   |
+| 💎  |   3   | Phase 1 — platform services   | §2         |  [ ]   |
+| 💎  |   4   | Phase 2 — system services     | §3         |  [ ]   |
+| 💎  |   5   | Phase 3 — user platform       | §4         |  [ ]   |
+| 💎  |   6   | Dependency gates              | §1–5       |  [ ]   |
+| 💎  |   7   | Failure policy                | §6         |  [ ]   |
+| 💎  |   8   | Code cleanup                  | §2–5       |  [ ]   |
+| ⭐  |   9   | Degraded-boot recovery screen | §7         |  [ ]   |
+| ⭐  |  10   | POST code + UEFI variable log | §1         |  [ ]   |
 
 > 💎 = parity — Windows NT and Linux both have formal init phase models; Impossible OS must match them.
 > ⭐ = exclusive — degraded-boot recovery UI and UEFI NVRAM POST log are not present in either competitor.
+> ⚠️ Rows 9 and 10 have no body sections yet — add `## 9.` and `## 10.` sections when implementing.
+
 
 ## 1. Boot Init Infrastructure `[Sonnet]`
 
