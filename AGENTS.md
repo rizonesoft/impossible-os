@@ -3,23 +3,27 @@
 > A 64-bit operating system built from scratch for modern x86-64 hardware.
 > No Linux kernel, no borrowed foundations — custom UEFI bootloader, kernel, graphical desktop, and everything in between.
 
-> **Cursor Project Rules:** Active project rules live in `.cursor/rules/`:
-> - [`safety-build.mdc`](.cursor/rules/safety-build.mdc) — workspace boundaries, build script, Git behavior, and command safety
-> - [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc) — freestanding kernel C, allocator rules, and crash-debugging discipline
-> - [`bare-metal-assembly.mdc`](.cursor/rules/bare-metal-assembly.mdc) — NASM, UEFI-era assembly constraints, and hardware assumptions
-> - [`api-surface-direction.mdc`](.cursor/rules/api-surface-direction.mdc) — Win32 direction, Windows paths, and product-facing conventions
-> - [`doc-sync-discipline.mdc`](.cursor/rules/doc-sync-discipline.mdc) — same-task updates to tracked project guidance when conventions change
-> - [`mcp-usage-discipline.mdc`](.cursor/rules/mcp-usage-discipline.mdc) — Srclight-only MCP usage and repo-truth boundaries
-> - [`todo-markdown-style.mdc`](.cursor/rules/todo-markdown-style.mdc) — lean TODO markdown and compact-table guidance
+> **Single source of truth for all agent rules and workflows:** [`.impossible/`](.impossible/index.md)
+> Rules content lives in `.impossible/rules/`. Workflows live in `.impossible/workflows/`.
+> Each tool uses a thin adapter that points here:
 >
-> **Cursor Project Skills:** Active shared skills live in `.cursor/skills/`:
+> | Agent | Instructions | Skills / Commands | Rules |
+> |-------|-------------|------------------|-------|
+> | **Cursor** | This file (`AGENTS.md`) | `.cursor/skills/` — native `/` commands | `.cursor/rules/*.mdc` (adapters) |
+> | **Claude Code** | [`CLAUDE.md`](CLAUDE.md) | `.claude/commands/` + `.claude/skills/` | Inline in `CLAUDE.md` |
+> | **Antigravity** | This file (`AGENTS.md`) | `.agents/workflows/` — `/` commands | Inline in this file |
+> | **GitHub Copilot** | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | None | Inline in copilot file |
+>
+> **Cursor Project Skills** (`.cursor/skills/` — `/command-name` in Cursor):
 > - [`create-todo`](.cursor/skills/create-todo/SKILL.md) — create lean TODO files, choose the correct domain, and update indexes
 > - [`implement-todo-section`](.cursor/skills/implement-todo-section/SKILL.md) — execute one scoped TODO section with supported build and test evidence
 > - [`validate-todo-file`](.cursor/skills/validate-todo-file/SKILL.md) — validate TODO structure, execution order, XREFs, and gap-free continuity
 > - [`sync-ai-system`](.cursor/skills/sync-ai-system/SKILL.md) — keep repo-owned AI guidance aligned when shared conventions change
 > - [`verify-todo-section`](.cursor/skills/verify-todo-section/SKILL.md) — reconcile section status against code, build, and runtime evidence
+> - [`improve-implementation-order`](.cursor/skills/improve-implementation-order/SKILL.md) — audit and rewrite the Implementation Order table
 >
-> Legacy migration sources remain under `.agents/rules/` and `.agents/workflows/` while the Cursor-primary rollout completes.
+> **Antigravity Workflows** (`.agents/workflows/` — `/command-name` in Antigravity):
+> `build`, `create-todo`, `implement-todo-section`, `validate-todo-file`, `verify-todo-section`, `sync-ai-system`, `improve-implementation-order`, `add-asset`, `docs-convert-todo`, `docs-validate`, `todo-done-check`, `todo-master-sync`, `todo-table-format`, `specs-create`, `specs-fact-check`, `test-fs-fat32`, `test-hardware`, `release`
 
 ---
 
@@ -78,13 +82,20 @@ include/                All header files (mirrors src/ hierarchy)
 resources/              Fonts, icons, wallpapers, cursors
 scripts/                Build, test, deploy scripts
 tools/                  Host-side build tools (jpg2raw, irespack, asset converters)
-todo/                   Development roadmap (100+ TODO items across 50+ files)
+todo/                   Development roadmap (14 domains, 86 TODO files)
 docs/                   Documentation (architecture, specs, guides)
   ├── architecture/     System architecture and implementation docs
   ├── specs/            External reference specs (AHCI, FAT32, UEFI, ...)
   └── guides/           How-to guides
 user/                   User-mode programs (hello.exe, cmd.exe)
 sdk/                    SDK for user-mode development
+
+.impossible/            Agent-agnostic rules and workflows (single source of truth)
+  ├── rules/            Portable coding conventions (readable by all tools)
+  └── workflows/        Portable procedures (readable by all tools)
+.cursor/                Cursor-specific rules (adapters) and skills (/ commands)
+.claude/                Claude Code commands (/ commands) and skills
+.agents/                Antigravity workflows (/ commands)
 ```
 
 ### Win32 Naming Conventions
@@ -321,14 +332,18 @@ Common scopes: `kernel`, `boot`, `desktop`, `drivers`, `gfx`, `fs`, `net`, `buil
 
 ## Critical Rules
 
-> Coding constraints, memory allocation rules, hardware constraints, API direction, doc-sync behavior, and MCP usage are defined in the active Cursor project rule files under `.cursor/rules/`.
+> Canonical rule content lives in [`.impossible/rules/`](.impossible/rules/) — portable markdown readable by every tool.
+> Cursor adapters in `.cursor/rules/*.mdc` point to this content.
 >
-> - **Safety & build**: [`safety-build.mdc`](.cursor/rules/safety-build.mdc)
-> - **Freestanding kernel code**: [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc)
-> - **Bare-metal assembly**: [`bare-metal-assembly.mdc`](.cursor/rules/bare-metal-assembly.mdc)
-> - **API surface & design**: [`api-surface-direction.mdc`](.cursor/rules/api-surface-direction.mdc)
-> - **Documentation sync**: [`doc-sync-discipline.mdc`](.cursor/rules/doc-sync-discipline.mdc)
-> - **Srclight MCP usage**: [`mcp-usage-discipline.mdc`](.cursor/rules/mcp-usage-discipline.mdc)
+> | Rule | Canonical | Cursor adapter |
+> |------|-----------|----------------|
+> | Safety & build | [`.impossible/rules/build.md`](.impossible/rules/build.md) | [`safety-build.mdc`](.cursor/rules/safety-build.mdc) |
+> | Freestanding kernel | [`.impossible/rules/freestanding.md`](.impossible/rules/freestanding.md) | [`freestanding-kernel-code.mdc`](.cursor/rules/freestanding-kernel-code.mdc) |
+> | Bare-metal assembly | [`.impossible/rules/assembly.md`](.impossible/rules/assembly.md) | [`bare-metal-assembly.mdc`](.cursor/rules/bare-metal-assembly.mdc) |
+> | API surface & design | [`.impossible/rules/api-surface.md`](.impossible/rules/api-surface.md) | [`api-surface-direction.mdc`](.cursor/rules/api-surface-direction.mdc) |
+> | Documentation sync | [`.impossible/rules/doc-sync.md`](.impossible/rules/doc-sync.md) | [`doc-sync-discipline.mdc`](.cursor/rules/doc-sync-discipline.mdc) |
+> | MCP usage | [`.impossible/rules/mcp-usage.md`](.impossible/rules/mcp-usage.md) | [`mcp-usage-discipline.mdc`](.cursor/rules/mcp-usage-discipline.mdc) |
+> | TODO style | [`.impossible/rules/todo-style.md`](.impossible/rules/todo-style.md) | [`todo-markdown-style.mdc`](.cursor/rules/todo-markdown-style.mdc) |
 
 ---
 
