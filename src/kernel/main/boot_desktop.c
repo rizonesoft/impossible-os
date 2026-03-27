@@ -13,6 +13,8 @@
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/sched/task.h"
 #include "kernel/boot_splash.h"
+#include "kernel/boot_timing.h"
+#include "kernel/boot_init.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
 #include "font_mgr.h"
@@ -81,6 +83,11 @@ void boot_desktop_init(void)
              "Boot complete in %u.%03us (PIT uptime from interrupt init)",
              (uint64_t)(ms / 1000), (uint64_t)(ms % 1000));
     }
+
+    /* Record desktop-ready step and write boot performance report */
+    boot_progress(3, "DESKTOP_READY", POSTCODE_DESKTOP_INIT);
+    boot_timing_print_steps();
+    boot_timing_write_report();
 
     /* Boot-time heap stats */
     {

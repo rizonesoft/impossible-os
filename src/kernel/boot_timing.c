@@ -12,6 +12,7 @@
 #include "kernel/boot_timing.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
+#include "kernel/fs/vfs.h"
 
 static uint64_t s_tsc_freq;
 
@@ -136,4 +137,80 @@ void boot_timing_init(void)
 uint64_t boot_timing_tsc_freq(void)
 {
     return s_tsc_freq;
+}
+
+/* ---- Boot profile log writer --------------------------------------------- */
+
+static uint32_t u32_to_dec(char *buf, uint32_t val)
+{
+    if (val == 0) { buf[0] = '0'; return 1; }
+    char tmp[12];
+    uint32_t n = 0;
+    while (val) { tmp[n++] = (char)('0' + val % 10); val /= 10; }
+    for (uint32_t i = 0; i < n; i++) buf[i] = tmp[n - 1 - i];
+    return n;
+}
+
+static uint32_t u8_to_hex2(char *buf, uint8_t val)
+{
+    static const char hex[] = "0123456789abcdef";
+    buf[0] = hex[val >> 4];
+    buf[1] = hex[val & 0xf];
+    return 2;
+}
+
+static uint32_t str_copy(char *dst, const char *src)
+{
+    uint32_t n = 0;
+    while (src[n]) { dst[n] = src[n]; n++; }
+    return n;
+}
+
+void boot_timing_write_report(void)
+{
+    if (s_tsc_freq == 0 || s_step_count == 0) return;
+
+    struct vfs_node *file = vfs_open(
+        "C:\\Impossible\\System\\Logs\\boot-profile.log",
+        VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (!file) {
+        klog(LOG_WARN, "BOOT", "boot-profile.log: cannot open for write");
+        return;
+    }
+
+    char line[128];
+    uint32_t offset = 0;
+    uint64_t base = s_steps[0].tsc;
+
+    /* Header */
+    static const char hdr[] = "# Impossible OS Boot Profile\n"
+                               "# +NNNms [PHASEx] 0xNN step\n";
+    vfs_write(file, offset, sizeof(hdr) - 1, (const uint8_t *)hdr);
+    offset += sizeof(hdr) - 1;
+
+    for (uint32_t i = 0; i < s_step_count; i++) {
+        uint32_t ms  = tsc_to_ms(s_steps[i].tsc - base);
+        uint32_t pos = 0;
+
+        line[pos++] = '+';
+        pos += u32_to_dec(line + pos, ms);
+        line[pos++] = 'm'; line[pos++] = 's';
+        line[pos++] = ' ';
+        line[pos++] = '['; line[pos++] = 'P'; line[pos++] = 'H';
+        line[pos++] = 'A'; line[pos++] = 'S'; line[pos++] = 'E';
+        line[pos++] = (char)('0' + (s_steps[i].phase & 0x0f));
+        line[pos++] = ']'; line[pos++] = ' ';
+        line[pos++] = '0'; line[pos++] = 'x';
+        pos += u8_to_hex2(line + pos, s_steps[i].postcode);
+        line[pos++] = ' ';
+        pos += str_copy(line + pos, s_steps[i].step);
+        line[pos++] = '\n';
+
+        vfs_write(file, offset, pos, (const uint8_t *)line);
+        offset += pos;
+    }
+
+    vfs_close(file);
+    klog(LOG_INFO, "BOOT", "Boot profile: %u steps -> C:\\Impossible\\System\\Logs\\boot-profile.log",
+         (uint64_t)s_step_count);
 }

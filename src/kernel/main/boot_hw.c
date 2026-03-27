@@ -24,6 +24,7 @@
 #include "kernel/uefi_runtime.h"
 #include "kernel/tpm.h"
 #include "kernel/boot_timing.h"
+#include "kernel/boot_init.h"
 #include "kernel/smbios.h"
 #include "main/main_internal.h"
 
@@ -57,6 +58,7 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
 
     /* Step 1: Initialize serial */
     serial_init();
+    boot_progress(0, "SERIAL", POSTCODE_SERIAL_INIT);
     HV_BAR(72, 0x0000FF00);   /* Row 72: GREEN = serial_init OK */
 
     klog(LOG_DEBUG, "", "========================================================================");
@@ -78,6 +80,7 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
         klog(LOG_FATAL, "boot", "Unknown bootloader magic!");
         for (;;) __asm__ volatile ("hlt");
     }
+    boot_progress(0, "BOOT_INFO", POSTCODE_BOOT_CFG);
     HV_BAR(84, 0x0000FFFF);   /* Row 84: CYAN = boot info parsed */
 
     /* Log boot.conf values */
@@ -150,14 +153,17 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
 
     /* Step 4: Initialize physical memory manager */
     pmm_init();
+    boot_progress(0, "PMM", POSTCODE_PMM_INIT);
     HV_BAR(96, 0x00FFFF00);   /* Row 96: YELLOW = PMM OK */
 
     /* Step 5: Initialize virtual memory manager */
     vmm_init();
+    boot_progress(0, "VMM", POSTCODE_VMM_INIT);
     HV_BAR(108, 0x000000FF);  /* Row 108: BLUE = VMM OK */
 
     /* Step 6: Initialize kernel heap */
     heap_init();
+    boot_progress(0, "HEAP", POSTCODE_HEAP_INIT);
     HV_BAR(120, 0x00FF8000);  /* Row 120: ORANGE = heap OK */
 
     /* Step 6a: Probe CPU features via CPUID */
@@ -169,6 +175,7 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
         klog(LOG_INFO, "simd", "AVX2 enabled (8 pixels/iter)");
     else
         klog(LOG_WARN, "simd", "AVX2 not available, using SSE2 fallback");
+    boot_progress(0, "CPUID_SIMD", POSTCODE_SIMD_INIT);
     HV_BAR(132, 0x00FFFFFF);  /* Row 132: WHITE = CPUID+SIMD OK */
 
     klog(LOG_DEBUG, "", "");
@@ -181,6 +188,7 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
 
     /* Step 7d: Register block devices */
     blkdev_register_all();
+    boot_progress(1, "STORAGE_DRV", POSTCODE_STORAGE_INIT);
     HV_BAR(144, 0x00FF00FF);  /* Row 144: MAGENTA = boot_hw complete */
 
 #undef HV_BAR

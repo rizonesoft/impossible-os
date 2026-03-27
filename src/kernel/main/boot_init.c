@@ -9,6 +9,7 @@
 
 #include "kernel/boot_init.h"
 #include "kernel/boot_timing.h"
+#include "kernel/boot_splash.h"
 #include "kernel/klog.h"
 #include "kernel/drivers/serial.h"
 
@@ -92,4 +93,5 @@ void boot_progress(uint8_t phase, const char *step, uint8_t postcode)
     serial_write(")\n");
 
     boot_timing_record_step(phase, step, postcode);
+    boot_splash_status(step);
 }

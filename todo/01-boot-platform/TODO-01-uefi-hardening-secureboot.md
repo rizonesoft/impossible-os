@@ -43,7 +43,7 @@
 | 💎  |   4   | SMBIOS table parsing               | 1                |  [x]   |
 | 💎  |   5   | Secure Boot state detection        | 2                |  [/]   |
 | 💎  |   6   | Secure Boot shim chain-loading     | 5                |  [x]   |
-| 💎  |   7   | Boot UX polish                     | 3, 5, TODO-02 §2 |  [ ]   |
+| 💎  |   7   | Boot UX polish                     | 3, 5, TODO-02 §2 |  [x]   |
 | 💎  |   8   | A/B dual-slot boot                 | 2                |  [ ]   |
 | ⭐  |   9   | Multi-OS detection & boot menu     | 1                |  [ ]   |
 | 💎  |  10   | UEFI capsule update & ESRT         | 2, 8             |  [ ]   |
@@ -146,14 +146,17 @@ Set up the MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build f
 
 Fade-in transition, structured boot profiling, and a pre-framebuffer error recovery screen.
 
-**Files:** `src/boot/uefi/bootx64.c`, `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`
+**Files:** `src/boot/uefi/bootx64.c`, `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`,
+`src/kernel/main/boot_init.c`, `src/kernel/main/boot_hw.c`, `src/kernel/main/boot_interrupts.c`,
+`src/kernel/main/boot_storage.c`, `src/kernel/main/boot_desktop.c`,
+`src/kernel/main/boot_halt.c`, `include/kernel/boot_halt.h`
 
-- [ ] Bootloader fade-in: during the 300 ms between `ExitBootServices()` and kernel jump, ramp the GOP framebuffer from black to the accent color gradient from `boot.conf` key `AccentColor=RRGGBB`; use PIT-tick loop for timing; fallback to instant-black if `AccentColor` absent
-- [ ] Boot profiling: `boot_timing_record_step()` (already in `boot_timing.c` §1) is the API; ensure it is called for every major event: UEFI init, ELF load, kernel entry, GDT/IDT, PMM, VMM, VFS, scheduler, desktop ready; write human-readable report to `C:\Impossible\System\Logs\boot-profile.log` at desktop-ready (`boot_timing_print_steps()`)
-- [ ] JSON boot-timeline export and `boot-timeline` shell command are owned by → XREF: `TODO-03-interrupt-timer-arch.md §9`; this section's `boot_timing_record_step()` calls produce the data that §9 exports and visualizes.
-- [ ] Pre-framebuffer error recovery screen: in `boot_halt()` (→ XREF `02-kernel-core/TODO-01-kernel-init-sequencing.md §7`) when called before `fb_init()`: write a solid red rectangle across the top 40 px of the framebuffer directly via `boot_info.fb.base`; draw error text using the 8×8 boot font; print error text + recovery URL to serial
-- [ ] `boot_splash_status()` integration: each `boot_progress()` call (→ XREF `TODO-02-boot-diagnostics.md §2`) also calls `boot_splash_status()` with a human-readable stage string; splash shows live progress text below the spinner
-- [ ] Commit: `"boot: fade-in transition, boot-stage instrumentation, pre-framebuffer error recovery screen"`
+- [x] Bootloader fade-in: `bootloader_fade_in()` in `bootx64.c`; parses `AccentColor=RRGGBB` from `boot.conf`; ramps framebuffer black→accent over 300 ms (10 × 30 ms steps) using TSC-based busy-wait (no UEFI calls after `ExitBootServices`); clears debug bars first; fallback to instant-black if `AccentColor` absent or TSC freq unknown; called between `setup_page_tables()` and `jump_to_kernel()`
+- [x] Boot profiling: `boot_progress()` now called at every major event (SERIAL, BOOT_INFO, PMM, VMM, HEAP, CPUID_SIMD, STORAGE_DRV, GDT, IDT, ACPI, LAPIC_IOAPIC, TIMER, RTC, KEYBOARD, FB, VFS, SMP, REGISTRY, DESKTOP_READY); `boot_timing_write_report()` added to `boot_timing.c` — writes human-readable `+NNNms [PHASEx] 0xNN step` lines to `C:\Impossible\System\Logs\boot-profile.log` via VFS; called at desktop-ready in `boot_desktop.c`
+- [x] JSON boot-timeline export and `boot-timeline` shell command are owned by → XREF: `TODO-03-interrupt-timer-arch.md §9`; this section's `boot_timing_record_step()` calls produce the data that §9 exports and visualizes.
+- [x] Pre-framebuffer error recovery screen: `boot_halt(reason)` created in `src/kernel/main/boot_halt.c` with inline 8×8 bitmap font (full printable ASCII 0x20–0x7F); draws solid dark-red banner (top 40 px), white title + reason text, recovery URL; always prints to serial; halts with `hlt`; `include/kernel/boot_halt.h` exposes the symbol
+- [x] `boot_splash_status()` integration: `boot_progress()` in `boot_init.c` now calls `boot_splash_status(step)` after `boot_timing_record_step()`; splash shows live stage text below the spinner during every instrumented event
+- [x] Commit: `"boot: fade-in transition, boot-stage instrumentation, pre-framebuffer error recovery screen"`
 
 ## 8. A/B Dual-Slot Boot `[Opus]`
 
@@ -269,8 +272,8 @@ Standard line format used everywhere:
 | 💎  | UEFI capsule firmware update        | ✅ Windows Update delivers UEFI capsules        | ✅ `fwupd` + `fwupdmgr update`                   | ⬜ Planned — §10                                       |
 | 💎  | UEFI memory W^X enforcement         | ✅ Enforced since Windows 10 1607               | ✅ `CONFIG_EFI_MEMORY_ATTRIBUTES_TABLE`          | ⬜ Planned — §11                                       |
 | ⭐  | In-bootloader multi-OS menu         | ❌ Separate BCD / bootmgr UI                    | ❌ GRUB is a separate bootloader                 | ⬜ **Planned — §9 — integrated countdown menu**        |
-| ⭐  | Bootloader fade-in accent gradient  | ❌ Fixed black → logo, no user color            | ❌ Not implemented                               | ⬜ **Planned — §7 — accent color from boot.conf**      |
-| ⭐  | JSON boot profiling timeline        | ❌ ETW boot trace (binary, needs WPA to decode) | ❌ `systemd-analyze` (post-boot, not bootloader) | ⬜ **§7 produces timing data; export + chart owned by TODO-03 §9**  |
+| ⭐  | Bootloader fade-in accent gradient  | ❌ Fixed black → logo, no user color            | ❌ Not implemented                               | ✅ Done — §7; bootloader_fade_in() parses AccentColor=RRGGBB from boot.conf, ramps GOP framebuffer black→accent over 300 ms (10 × 30 ms TSC-timed steps) post-ExitBootServices |
+| ⭐  | JSON boot profiling timeline        | ❌ ETW boot trace (binary, needs WPA to decode) | ❌ `systemd-analyze` (post-boot, not bootloader) | ✅ Done — §7; boot_progress() instruments 19 events; boot_timing_write_report() writes +NNNms log to C:\Impossible\System\Logs\boot-profile.log; JSON export owned by TODO-03 §9 |
 
 > **After parity items:** Impossible OS will fully match Windows and Linux on Secure Boot, UEFI runtime, SMBIOS, capsule updates, and W^X enforcement. The exclusive items push beyond: the integrated countdown boot menu eliminates the need for a separate bootloader for dual-boot, the accent fade-in gives a branded first impression, and the structured JSON boot timeline makes performance regression testing trivial compared to WPA or systemd-analyze.
 

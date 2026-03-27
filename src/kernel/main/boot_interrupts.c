@@ -28,6 +28,7 @@
 #include "kernel/drivers/ioapic.h"
 #include "kernel/smp.h"
 #include "kernel/boot_splash.h"
+#include "kernel/boot_init.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/partition.h"
 #include "kernel/drivers/ahci.h"
@@ -58,10 +59,12 @@ void boot_interrupts_init(void)
     boot_splash_status("Setting up interrupts...");
 
     gdt_init();
+    boot_progress(1, "GDT", POSTCODE_GDT_INIT);
     HV_BAR(172, 0x0000FF00);  /* GREEN = GDT OK */
 
     idt_init();
     irq_init();
+    boot_progress(1, "IDT", POSTCODE_IDT_INIT);
     HV_BAR(184, 0x0000FFFF);  /* CYAN = IDT OK */
 
     /* ACPI MADT must be parsed before PIC/PIT so we know:
@@ -77,6 +80,7 @@ void boot_interrupts_init(void)
         acpi_init();
         klog(LOG_INFO, "smp", "CPUs discovered: %u",
              (uint64_t)acpi_get_cpu_count());
+        boot_progress(1, "ACPI", POSTCODE_ACPI_INIT);
     }
     HV_BAR(190, 0x00FF4500);  /* DARK ORANGE = ACPI OK */
 
@@ -136,6 +140,7 @@ void boot_interrupts_init(void)
                 }
             }
         }
+        boot_progress(1, "LAPIC_IOAPIC", POSTCODE_LAPIC_INIT);
         HV_BAR(193, 0x0080FF00);  /* LIME = LAPIC/IOAPIC OK */
 
         /* AHCI MSI targets the LAPIC at 0xFEE00000 — it MUST be initialized
@@ -168,13 +173,16 @@ void boot_interrupts_init(void)
      * On non-TCG: calibrates LAPIC, starts timer, masks PIT IRQ0.
      * On TCG: initializes PIT as wall-clock timer. */
     timer_hal_init();
+    boot_progress(1, "TIMER", POSTCODE_TIMER_INIT);
     HV_BAR(208, 0x000000FF);  /* BLUE = timer OK */
 
     rtc_init();
+    boot_progress(1, "RTC", POSTCODE_RTC_INIT);
     HV_BAR(220, 0x00FF8000);  /* ORANGE = RTC OK */
 
     boot_splash_status("Initializing input...");
     keyboard_init();
+    boot_progress(1, "KEYBOARD", POSTCODE_KBD_INIT);
     HV_BAR(232, 0x00800080);  /* PURPLE = keyboard OK */
 
     mouse_init();
@@ -182,6 +190,7 @@ void boot_interrupts_init(void)
 
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
     fb_init();
+    boot_progress(1, "FB", POSTCODE_FB_INIT);
     HV_BAR(256, 0x00FF00FF);  /* MAGENTA = fb_init OK */
 
     boot_splash_init();

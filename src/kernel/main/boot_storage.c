@@ -21,6 +21,7 @@
 #include "kernel/drivers/pit.h"
 #include "kernel/smp.h"
 #include "kernel/boot_splash.h"
+#include "kernel/boot_init.h"
 #include "registry.h"
 #include "kernel/symtab.h"
 #include "kernel/cpuid_platform.h"
@@ -37,6 +38,7 @@ void boot_storage_init(uint64_t magic)
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
     boot_splash_status("Initializing VFS...");
     vfs_init();
+    boot_progress(2, "VFS", POSTCODE_VFS_INIT);
 
     klog(LOG_DEBUG, "boot", "--- Phase: partition & filesystem mount ---");
     boot_splash_tick();
@@ -101,6 +103,7 @@ void boot_storage_init(uint64_t magic)
     if (g_boot_info.acpi_available) {
         boot_splash_status("Initializing SMP...");
         smp_init();
+        boot_progress(2, "SMP", POSTCODE_SMP_INIT);
     }
 
 
@@ -148,6 +151,7 @@ void boot_storage_init(uint64_t magic)
     registry_init();
     boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
+    boot_progress(2, "REGISTRY", POSTCODE_REGISTRY_INIT);
 
     /* Load kernel symbol map for symbolic stack traces */
     symtab_init();
