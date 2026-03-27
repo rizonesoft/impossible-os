@@ -78,43 +78,27 @@ After enrollment the shim skips the MOK screen on future boots.
 
 ---
 
-## Testing the Secure Boot chain in VirtualBox
+## Testing the Secure Boot chain
 
-The normal system disk already carries the full shim chain — no special
-preparation is needed:
-
-| File on ESP | Content |
-|---|---|
-| `EFI\BOOT\BOOTX64.EFI` | `shimx64.efi` — shim with `MOK.cer` embedded as `VENDOR_CERT_FILE` |
-| `EFI\BOOT\grubx64.efi` | Our bootloader, signed with `MOK.key` |
-| `EFI\BOOT\mmx64.efi`   | MokManager — key enrollment UI |
-
-Use the dedicated VirtualBox Secure Boot test runner:
+The normal system disk already carries the full shim chain — every normal
+QEMU or VirtualBox boot exercises it:
 
 ```
-scripts\vm\run-vbox-secureboot.bat
+UEFI firmware (SB off)
+  └── EFI\BOOT\BOOTX64.EFI  = shimx64.efi (shim, VENDOR_CERT = MOK.cer)
+        └── EFI\BOOT\grubx64.efi  = our bootloader, signed with MOK.key
+              └── kernel
 ```
 
-**What it tests:**
+If `grubx64.efi` is not signed with the correct `MOK.key`, the shim refuses
+to load it and the OS will not boot — so the chain is verified on every
+normal run.
 
-| Layer | What happens |
-|---|---|
-| Shim MOK verification | Shim verifies `grubx64.efi` against embedded `MOK.cer` |
-| Signed bootloader | `grubx64.efi` (MOK-signed) passes shim check and boots |
-| UEFI enforcement (VBox 7.x) | If `--uefi-secureboot-enabled on` is supported, the shim is rejected (not MS-signed) — demonstrates enforcement working |
+Use the standard runners:
 
-**Testing with UEFI enforcement + key enrollment (VBox 7.x):**
-
-1. Run `run-vbox-secureboot.bat` — VBox rejects the unsigned shim, shows
-   the EFI security error
-2. In the VBox VM, open an EFI shell and enroll `EFI\BOOT\MOK.der`
-3. Reboot — shim now passes, chainloads `grubx64.efi`, OS boots
-
-**Run without UEFI enforcement** (`-NoSecureBoot` flag) to test only the
-shim MOK chain without VirtualBox rejecting the unsigned shim:
-
-```powershell
-powershell -File scripts\vm\run-vbox-secureboot.ps1 -NoSecureBoot
+```
+scripts\vm\run-qemu-kvm.bat    # QEMU/KVM (Windows, fast)
+scripts\vm\run-vbox.bat        # VirtualBox
 ```
 
 ---
