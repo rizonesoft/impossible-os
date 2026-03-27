@@ -105,27 +105,14 @@
 
 ### 1.3 snprintf / vsnprintf
 
-- [ ] `int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)` — the most critical missing function; implement format specifiers:
-  - `%d` / `%i` — signed decimal
-  - `%u` — unsigned decimal
-  - `%x` / `%X` — hex (lower/upper)
-  - `%o` — octal
-  - `%s` — string
-  - `%c` — character
-  - `%p` — pointer (zero-padded hex with `0x` prefix)
-  - `%lu`, `%llu`, `%ld`, `%lld` — long / long long variants
-  - `%zu` — `size_t`
-  - Width, precision, `0`-padding: `%08x`, `%.*s`, `%-20s`
-  - `%%` — literal `%`
-  - Always NUL-terminate even on truncation; return number of bytes that
-    *would* have been written (snprintf semantics)
-- [ ] `int snprintf(char *buf, size_t size, const char *fmt, ...)` — thin varargs wrapper over `vsnprintf`
-- [ ] Update `panic.c` to use `snprintf` in its crash text builder; remove the current hand-rolled hex formatter
-- [ ] Update `klog` / `printk` to use `vsnprintf` internally
+- [x] `int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)` — full implementation with: `%d`/`%i`, `%u`, `%x`/`%X`, `%o`, `%s`, `%c`, `%p`, `%%`, length modifiers (`l`/`ll`/`h`/`hh`/`z`), width, precision (`.*`), zero-padding, left-align (`-`), sign flags (`+`/` `). Returns total chars that *would* have been written.
+- [x] `int snprintf(char *buf, size_t size, const char *fmt, ...)` — thin varargs wrapper
+- [ ] Update `panic.c` to use `snprintf` — deferred (current hand-rolled formatter works; changing it during active development risks boot regression)
+- [ ] Update `klog` / `printk` to use `vsnprintf` internally — deferred (same reason; `vformat_buf` is battle-tested)
 
 ### 1.4 Commit
 
-- [ ] Commit: `"libc: freestanding string library — memcpy/memset/str*, snprintf/vsnprintf"`
+- [x] Commit: `"libc: freestanding string library — memcpy/memset/str*, snprintf/vsnprintf"`
 
 ---
 

@@ -258,3 +258,177 @@ int atoi(const char *s)
 {
     return (int)strtol(s, (char **)0, 10);
 }
+
+/* ---- Formatted output --------------------------------------------------- */
+
+/* Length modifier enum */
+enum { LEN_NONE, LEN_L, LEN_LL, LEN_Z, LEN_H, LEN_HH };
+
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
+{
+    size_t pos = 0;    /* current write position */
+    int total = 0;     /* total chars that would be written */
+
+    /* Write a char: always count, only store if space */
+    #define PUTC(c) do { \
+        if (pos < size - 1 && size > 0) buf[pos++] = (c); \
+        total++; \
+    } while (0)
+
+    while (*fmt) {
+        if (*fmt != '%') { PUTC(*fmt++); continue; }
+        fmt++; /* skip '%' */
+        if (*fmt == '\0') break;
+        if (*fmt == '%') { PUTC('%'); fmt++; continue; }
+
+        /* Parse flags */
+        int f_zero = 0, f_left = 0, f_plus = 0, f_space = 0;
+        for (;;) {
+            if (*fmt == '0')      { f_zero = 1; fmt++; }
+            else if (*fmt == '-') { f_left = 1; fmt++; }
+            else if (*fmt == '+') { f_plus = 1; fmt++; }
+            else if (*fmt == ' ') { f_space = 1; fmt++; }
+            else break;
+        }
+        if (f_left) f_zero = 0;  /* left-align overrides zero-pad */
+
+        /* Parse width */
+        int width = 0;
+        if (*fmt == '*') { width = va_arg(ap, int); fmt++; }
+        else { while (*fmt >= '0' && *fmt <= '9') { width = width * 10 + (*fmt - '0'); fmt++; } }
+
+        /* Parse precision */
+        int prec = -1;  /* -1 = not specified */
+        if (*fmt == '.') {
+            fmt++;
+            prec = 0;
+            if (*fmt == '*') { prec = va_arg(ap, int); fmt++; }
+            else { while (*fmt >= '0' && *fmt <= '9') { prec = prec * 10 + (*fmt - '0'); fmt++; } }
+        }
+
+        /* Parse length modifier */
+        int length = LEN_NONE;
+        if (*fmt == 'l') {
+            fmt++;
+            if (*fmt == 'l') { length = LEN_LL; fmt++; }
+            else { length = LEN_L; }
+        } else if (*fmt == 'h') {
+            fmt++;
+            if (*fmt == 'h') { length = LEN_HH; fmt++; }
+            else { length = LEN_H; }
+        } else if (*fmt == 'z') {
+            length = LEN_Z; fmt++;
+        }
+
+        /* Specifier */
+        char spec = *fmt;
+        if (spec == '\0') break;
+        fmt++;
+
+        switch (spec) {
+        case 'd': case 'i': {
+            int64_t v;
+            if (length == LEN_LL)     v = va_arg(ap, int64_t);
+            else if (length == LEN_L) v = (int64_t)va_arg(ap, long);
+            else                      v = (int64_t)va_arg(ap, int);
+            if (length == LEN_H) v = (int16_t)v;
+            if (length == LEN_HH) v = (int8_t)v;
+
+            char tmp[20]; int n = 0; int neg = 0;
+            uint64_t uv;
+            if (v < 0) { neg = 1; uv = (uint64_t)(-v); }
+            else { uv = (uint64_t)v; }
+            if (uv == 0) { tmp[n++] = '0'; }
+            else { while (uv > 0) { tmp[n++] = '0' + (char)(uv % 10); uv /= 10; } }
+
+            int sign = neg ? 1 : (f_plus ? 1 : (f_space ? 1 : 0));
+            int pad = width - n - sign;
+            if (pad < 0) pad = 0;
+
+            if (!f_left && !f_zero) { int j; for (j = 0; j < pad; j++) PUTC(' '); }
+            if (neg) PUTC('-');
+            else if (f_plus) PUTC('+');
+            else if (f_space) PUTC(' ');
+            if (!f_left && f_zero) { int j; for (j = 0; j < pad; j++) PUTC('0'); }
+            while (n > 0) PUTC(tmp[--n]);
+            if (f_left) { int j; for (j = 0; j < pad; j++) PUTC(' '); }
+            break;
+        }
+        case 'u': case 'o': case 'x': case 'X': {
+            uint64_t v;
+            if (length == LEN_LL)     v = va_arg(ap, uint64_t);
+            else if (length == LEN_L || length == LEN_Z) v = (uint64_t)va_arg(ap, unsigned long);
+            else                      v = (uint64_t)va_arg(ap, unsigned int);
+            if (length == LEN_H) v = (uint16_t)v;
+            if (length == LEN_HH) v = (uint8_t)v;
+
+            int base_val = (spec == 'o') ? 8 : ((spec == 'x' || spec == 'X') ? 16 : 10);
+            const char *digits = (spec == 'X') ? "0123456789ABCDEF" : "0123456789abcdef";
+            char tmp[22]; int n = 0;
+            if (v == 0) { tmp[n++] = '0'; }
+            else { while (v > 0) { tmp[n++] = digits[v % (uint64_t)base_val]; v /= (uint64_t)base_val; } }
+
+            int pad = width - n;
+            if (pad < 0) pad = 0;
+
+            if (!f_left && !f_zero) { int j; for (j = 0; j < pad; j++) PUTC(' '); }
+            if (!f_left && f_zero)  { int j; for (j = 0; j < pad; j++) PUTC('0'); }
+            while (n > 0) PUTC(tmp[--n]);
+            if (f_left) { int j; for (j = 0; j < pad; j++) PUTC(' '); }
+            break;
+        }
+        case 'p': {
+            uint64_t v = (uint64_t)(uintptr_t)va_arg(ap, void *);
+            const char *hex = "0123456789abcdef";
+            PUTC('0'); PUTC('x');
+            int started = 0;
+            int sh;
+            for (sh = 60; sh >= 0; sh -= 4) {
+                int d = (int)((v >> sh) & 0xF);
+                if (d || started || sh == 0) { PUTC(hex[d]); started = 1; }
+            }
+            break;
+        }
+        case 's': {
+            const char *s = va_arg(ap, const char *);
+            if (!s) s = "(null)";
+            int slen = 0;
+            while (s[slen]) slen++;
+            if (prec >= 0 && slen > prec) slen = prec;
+
+            int pad = width - slen;
+            if (pad < 0) pad = 0;
+
+            if (!f_left) { int j; for (j = 0; j < pad; j++) PUTC(' '); }
+            { int j; for (j = 0; j < slen; j++) PUTC(s[j]); }
+            if (f_left)  { int j; for (j = 0; j < pad; j++) PUTC(' '); }
+            break;
+        }
+        case 'c':
+            PUTC((char)va_arg(ap, int));
+            break;
+        default:
+            PUTC('%');
+            PUTC(spec);
+            break;
+        }
+    }
+
+    #undef PUTC
+
+    /* Always NUL-terminate */
+    if (size > 0)
+        buf[pos < size ? pos : size - 1] = '\0';
+
+    return total;
+}
+
+int snprintf(char *buf, size_t size, const char *fmt, ...)
+{
+    va_list ap;
+    int ret;
+    va_start(ap, fmt);
+    ret = vsnprintf(buf, size, fmt, ap);
+    va_end(ap);
+    return ret;
+}

@@ -44,3 +44,24 @@ size_t strlcat(char *dst, const char *src, size_t n);
 long          strtol(const char *s, char **end, int base);
 unsigned long strtoul(const char *s, char **end, int base);
 int           atoi(const char *s);
+
+/* ---- Formatted output --------------------------------------------------- */
+
+/* GCC built-in variadic args (freestanding -- no <stdarg.h>) */
+#ifndef _LIBC_VA_LIST_DEFINED
+#define _LIBC_VA_LIST_DEFINED
+typedef __builtin_va_list va_list;
+#define va_start(ap, last)  __builtin_va_start(ap, last)
+#define va_end(ap)          __builtin_va_end(ap)
+#define va_arg(ap, type)    __builtin_va_arg(ap, type)
+#define va_copy(dst, src)   __builtin_va_copy(dst, src)
+#endif
+
+/* Format into buffer with snprintf semantics.
+ * Always NUL-terminates (even on truncation).
+ * Returns the number of chars that *would* have been written (excluding NUL).
+ *
+ * Supported: %d %i %u %x %X %o %s %c %p %% %ld %lu %lx %lld %llu %llx %zu
+ *            Width, precision, 0-padding, left-align: %08x %.*s %-20s */
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap);
+int snprintf(char *buf, size_t size, const char *fmt, ...);
