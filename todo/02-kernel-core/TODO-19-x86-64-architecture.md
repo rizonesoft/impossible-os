@@ -52,7 +52,7 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On           | Status |
 | --- | :---: | -------------------------------------------------- | -------------------- | :----: |
-| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [x]   |
+| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [/]   |
 | 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                    | §1                   |  [ ]   |
 | 💎  |   3   | MSR management infrastructure (`msr.c`)            | —                    |  [x]   |
 | 💎  |   4   | UMIP + PKU protection keys                         | §3                   |  [ ]   |
@@ -89,14 +89,15 @@
 
 ### 1.3 Lazy FPU: CR0.TS + #NM
 
-- [x] Lazy FPU: `schedule()` sets `CR0.TS` after switch if `!next->fpu_used`; first FP/SIMD use faults into `#NM`
-- [x] `#NM` handler (vector 7): clears `CR0.TS`, calls `task_alloc_xsave()` on first use, sets `fpu_used = 1`
-- [x] Context switch: `XSAVE` prev task's state if `fpu_used`, `XRSTOR` next task's state if `fpu_used`, else set `CR0.TS`
-- [ ] XSAVEOPT optimization — deferred (needs `CPU_FEATURE_XSAVEOPT` detection in CPUID)
+- [/] Lazy FPU: code written but DISABLED — `XSAVE` #GPs because `kmalloc` returns 8-byte aligned, XSAVE needs 64-byte. Fix: use `pmm_alloc_contiguous(1)` for page-aligned allocation
+- [/] `#NM` handler written but disabled — blocked on same alignment issue
+- [/] Context switch XSAVE/XRSTOR written but disabled — same issue
+- [ ] XSAVEOPT optimization — deferred
+- [ ] Fix: use page-aligned PMM allocation for xsave_area (always 4096-byte aligned, satisfies 64-byte requirement)
 
 ### 1.4 Replace FXSAVE in icon_store.c
 
-- [x] Removed `fxsave_area_t` + `simd_save_state`/`simd_restore_state` from `icon_store.c` (2 sites); lazy FPU via scheduler XSAVE handles it now
+- [ ] Reverted — manual `simd_save/restore_state()` restored in icon_store.c until lazy FPU alignment is fixed
 - [ ] `gfx_text.c` still has ~20 manual save/restore calls — future cleanup
 
 ### 1.5 Commit
