@@ -306,6 +306,13 @@ void vmm_apply_nx_policy(void)
     text_start = (uintptr_t)__text_start;
     text_end   = (uintptr_t)__text_end;
 
+    /* Only apply NX to the kernel's own address range (1 MiB .. __kernel_end).
+     * Skip firmware regions, MMIO, UEFI runtime, and high memory to avoid
+     * breaking WHPX synthetic pages and UEFI callbacks. */
+    uintptr_t kernel_base = 0x100000;  /* 1 MiB — kernel load address */
+    extern char __kernel_end[];
+    uintptr_t kernel_top = (uintptr_t)__kernel_end;
+
     /* Walk all PML4 entries (only first few are populated by boot) */
     for (pml4i = 0; pml4i < 512; pml4i++) {
         pte_t pml4e = kernel_pml4[pml4i];
@@ -323,16 +330,9 @@ void vmm_apply_nx_policy(void)
             if (!(pdpte & VMM_FLAG_PRESENT))
                 continue;
 
-            /* 1 GiB huge page — set NX if not in text range */
-            if (pdpte & VMM_FLAG_HUGE) {
-                uintptr_t page_base = (pml4i << 39) | (pdpti << 30);
-                uintptr_t page_end  = page_base + (1UL << 30);
-                if (page_base >= text_end || page_end <= text_start) {
-                    pdpt[pdpti] |= VMM_FLAG_NX;
-                    nx_count++;
-                }
+            /* 1 GiB huge page — skip (too coarse for NX policy) */
+            if (pdpte & VMM_FLAG_HUGE)
                 continue;
-            }
 
             pd = (pte_t *)(pdpte & PTE_ADDR_MASK);
 
@@ -348,11 +348,14 @@ void vmm_apply_nx_policy(void)
                     page_base     = (pml4i << 39) | (pdpti << 30) | (pdi << 21);
                     page_end_addr = page_base + (1UL << 21);
 
+                    /* Only NX pages within the kernel's own range */
+                    if (page_base < kernel_base || page_end_addr > kernel_top)
+                        continue;
+
                     /* If this 2 MiB page overlaps the text section, leave it executable */
                     if (page_base < text_end && page_end_addr > text_start)
                         continue;
 
-                    /* Everything else: set NX */
                     pd[pdi] |= VMM_FLAG_NX;
                     nx_count++;
                     continue;
@@ -368,6 +371,8 @@ void vmm_apply_nx_policy(void)
                         if (!(pte & VMM_FLAG_PRESENT))
                             continue;
                         va = (pml4i << 39) | (pdpti << 30) | (pdi << 21) | (pti << 12);
+                        if (va < kernel_base || va >= kernel_top)
+                            continue;  /* outside kernel range */
                         if (va >= text_start && va < text_end)
                             continue;  /* text — must execute */
                         pt[pti] |= VMM_FLAG_NX;
