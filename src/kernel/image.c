@@ -183,66 +183,7 @@ static void *stbi_realloc_wrapper(void *ptr, uint32_t new_size)
 /* Disable failure strings to save space */
 #define STBI_NO_FAILURE_STRINGS
 
-/* ---- Weak string/memory functions for linking -------------------------- *
- * stb_image calls memcpy/memset/memmove/memcmp/strlen.  These weak symbols
- * provide implementations for the freestanding kernel environment.
- * They may already be provided by stb_truetype_impl.o — weak linkage
- * ensures no duplicate symbol errors. */
-
-typedef unsigned long stbi_sz;
-
-__attribute__((weak))
-void *memcpy(void *dst, const void *src, stbi_sz n)
-{
-    unsigned char *d = (unsigned char *)dst;
-    const unsigned char *s = (const unsigned char *)src;
-    stbi_sz i;
-    for (i = 0; i < n; i++) d[i] = s[i];
-    return dst;
-}
-
-__attribute__((weak))
-void *memset(void *s, int c, stbi_sz n)
-{
-    unsigned char *p = (unsigned char *)s;
-    stbi_sz i;
-    for (i = 0; i < n; i++) p[i] = (unsigned char)c;
-    return s;
-}
-
-__attribute__((weak))
-stbi_sz strlen(const char *s)
-{
-    stbi_sz len = 0;
-    while (s[len]) len++;
-    return len;
-}
-
-__attribute__((weak))
-void *memmove(void *dst, const void *src, stbi_sz n)
-{
-    unsigned char *d = (unsigned char *)dst;
-    const unsigned char *s2 = (const unsigned char *)src;
-    stbi_sz i;
-    if (d < s2) {
-        for (i = 0; i < n; i++) d[i] = s2[i];
-    } else {
-        for (i = n; i > 0; i--) d[i-1] = s2[i-1];
-    }
-    return dst;
-}
-
-__attribute__((weak))
-int memcmp(const void *a, const void *b, stbi_sz n)
-{
-    const unsigned char *p = (const unsigned char *)a;
-    const unsigned char *q = (const unsigned char *)b;
-    stbi_sz i;
-    for (i = 0; i < n; i++) {
-        if (p[i] != q[i]) return (int)p[i] - (int)q[i];
-    }
-    return 0;
-}
+/* String/memory functions provided by libc/string.c */
 
 /* Include the implementation */
 #define STB_IMAGE_IMPLEMENTATION

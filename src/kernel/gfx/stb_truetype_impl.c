@@ -27,57 +27,8 @@
 #define STBTT_ifloor(x)   ((int)kmath_floor(x))
 #define STBTT_iceil(x)    ((int)kmath_ceil(x))
 
-/* --- Redirect string functions --- */
-/* --- String functions for freestanding (GCC -msse2 generates explicit calls) --- */
-#ifndef _KERNEL_STRING_FOR_STB_
-#define _KERNEL_STRING_FOR_STB_
-
-typedef unsigned long stb_size_t;
-
-/* These may already be defined by other .o files; mark as weak symbols
- * so the linker picks whichever copy it finds. */
-__attribute__((weak))
-void *memcpy(void *dst, const void *src, stb_size_t n)
-{
-    unsigned char *d = (unsigned char *)dst;
-    const unsigned char *s = (const unsigned char *)src;
-    stb_size_t i;
-    for (i = 0; i < n; i++) d[i] = s[i];
-    return dst;
-}
-
-__attribute__((weak))
-void *memset(void *s, int c, stb_size_t n)
-{
-    unsigned char *p = (unsigned char *)s;
-    stb_size_t i;
-    for (i = 0; i < n; i++) p[i] = (unsigned char)c;
-    return s;
-}
-
-__attribute__((weak))
-stb_size_t strlen(const char *s)
-{
-    stb_size_t len = 0;
-    while (s[len]) len++;
-    return len;
-}
-
-__attribute__((weak))
-void *memmove(void *dst, const void *src, stb_size_t n)
-{
-    unsigned char *d = (unsigned char *)dst;
-    const unsigned char *s2 = (const unsigned char *)src;
-    stb_size_t i;
-    if (d < s2) {
-        for (i = 0; i < n; i++) d[i] = s2[i];
-    } else {
-        for (i = n; i > 0; i--) d[i-1] = s2[i-1];
-    }
-    return dst;
-}
-
-#endif
+/* --- String/memory functions provided by libc/string.c --- */
+#include "libc/string.h"
 
 #define STBTT_strlen(s)        strlen(s)
 #define STBTT_memcpy(d, s, n)  memcpy(d, s, n)

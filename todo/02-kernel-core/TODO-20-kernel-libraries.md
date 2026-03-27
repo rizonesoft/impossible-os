@@ -97,28 +97,11 @@
 
 ### 1.2 Core memory and string functions
 
-- [ ] Create `src/libc/string.c` and `include/libc/string.h`; compile with `-ffreestanding -nostdlib -O2`
-- [ ] Memory operations:
-  - `void *memcpy(void *dst, const void *src, size_t n)` — forward byte copy; for aligned large copies dispatch to `memcpy_avx` when `TODO-19-x86-64-architecture.md §2` (AVX/AVX2 kernel paths) is available
-  - `void *memmove(void *dst, const void *src, size_t n)` — overlap-safe; reverse copy when `dst > src && dst < src + n`
-  - `void *memset(void *dst, int c, size_t n)` — fill with byte `c`
-  - `int   memcmp(const void *a, const void *b, size_t n)`
-  - `void *memchr(const void *s, int c, size_t n)`
-- [ ] String operations:
-  - `size_t strlen(const char *s)`
-  - `char  *strcpy(char *dst, const char *src)`
-  - `char  *strncpy(char *dst, const char *src, size_t n)` — NUL-pads to n
-  - `char  *strcat(char *dst, const char *src)`
-  - `char  *strncat(char *dst, const char *src, size_t n)`
-  - `int    strcmp(const char *a, const char *b)`
-  - `int    strncmp(const char *a, const char *b, size_t n)`
-  - `char  *strchr(const char *s, int c)`
-  - `char  *strrchr(const char *s, int c)`
-  - `char  *strstr(const char *haystack, const char *needle)`
-  - `long   strtol(const char *s, char **end, int base)`
-  - `unsigned long strtoul(const char *s, char **end, int base)`
-  - `int    atoi(const char *s)` — thin wrapper over `strtol`
-- [ ] Provide `strlcpy(dst, src, n)` and `strlcat(dst, src, n)` (BSD safe versions) as additional utilities; always NUL-terminate
+- [x] Create `src/libc/string.c` and `include/libc/string.h`; compile with `-ffreestanding -nostdlib -O2`
+- [x] Memory operations: `memcpy`, `memmove`, `memset`, `memcmp`, `memchr` — all implemented
+- [x] String operations: `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strcmp`, `strncmp`, `strchr`, `strrchr`, `strstr`, `strtol`, `strtoul`, `atoi` — all implemented
+- [x] BSD safe: `strlcpy`, `strlcat` — always NUL-terminate
+- [x] Removed duplicate weak symbols from `image.c` and `stb_truetype_impl.c`; updated `freestanding/string.h` to redirect to `libc/string.h`
 
 ### 1.3 snprintf / vsnprintf
 
