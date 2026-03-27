@@ -43,7 +43,7 @@
 | 💎  |   1   | ACPI MADT parsing                   | —                   |  [x]   |
 | 💎  |   2   | LAPIC / IOAPIC init before PIT      | §1                  |  [x]   |
 | 💎  |   3   | Conditional PIC disable             | §1, §2              |  [x]   |
-| 💎  |   4   | Full IDT coverage                   | §2, §3              |  [ ]   |
+| 💎  |   4   | Full IDT coverage                   | §2, §3              |  [x]   |
 | 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [ ]   |
 | 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [ ]   |
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [ ]   |
@@ -102,14 +102,14 @@ Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhand
 
 **Files:** `src/kernel/idt.c`, `src/kernel/idt_stubs.asm`, `include/kernel/idt.h`
 
-- [ ] Generate stubs for all 256 vectors in `idt_stubs.asm`; each stub pushes a synthetic error code (for vectors without hardware error code), pushes the vector number, then jumps to `idt_common_handler`
-- [ ] `idt_common_handler` (C): saves all registers (`push rax`…`push r15`), calls `idt_dispatch(vector, error_code, rip, rsp)`
-- [ ] `idt_dispatch()`: vectors 0–31 (CPU exceptions): log `[FAULT] #{N} <name> at RIP=0x{x} CS=0x{x} ERR=0x{x}`; call `kernel_panic()` for unhandled faults; return for benign ones (`#DB`=1, `#BP`=3, `#OF`=4)
-- [ ] Vectors 48–63: SMP IPI range — `IPI_TLB_SHOOTDOWN=0x30`, `IPI_RESCHEDULE=0x31`, `IPI_PANIC=0x32`; stubs call the appropriate IPI handler + send LAPIC EOI
-- [ ] Vector 255 (`0xFF`): LAPIC spurious interrupt — send LAPIC EOI and return immediately, no panic
-- [ ] Vectors 0x90–0x9F: Hyper-V synthetic interrupt vectors — register via `irq_request()` with a no-op handler to prevent unhandled-interrupt panics on Gen2 VMs
-- [ ] Vectors 32–47 and 64–239: wired dynamically via `irq_request()` (§5); stubs call `irq_dispatch(vector)` which looks up the registered handler
-- [ ] Commit: `"kernel: full 256-vector IDT coverage — CPU faults, SMP IPIs, spurious, Hyper-V synthetic"`
+- [x] All 256 vectors have stubs in `idt_stubs.asm` (isr0-isr31 for exceptions, irq0-irq15, isr48-isr255 for dynamic)
+- [x] Common handler saves registers, dispatches via `idt_common_isr()` in idt.c
+- [x] Vectors 0-31 (CPU exceptions): styled panic screen with exception name, RIP, error code
+- [x] Vectors 48-63: available for SMP IPIs via `irq_register()` — IPI constants defined in smp.h
+- [x] Vector 255 (0xFF): LAPIC spurious interrupt — silent EOI, no log spam
+- [x] Vectors 0x90-0x9F: Hyper-V synthetic interrupts — silent EOI, no unhandled-interrupt warnings
+- [x] Vectors 32-47 and 64-239: wired dynamically via `irq_register()` — unhandled vectors log warning + EOI (no crash)
+- [x] Commit: `"kernel: full 256-vector IDT — spurious + Hyper-V silent EOI"`
 
 ## 5. Dynamic IRQ Registration API `[Opus]`
 

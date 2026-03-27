@@ -208,10 +208,24 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 
     /* Default handler for unclaimed dynamic vectors (32+).
      * Log a warning on first occurrence, count subsequent hits.
-     * Send LAPIC EOI — safe even if no interrupt is pending. */
+     * Send LAPIC EOI -- safe even if no interrupt is pending. */
     {
         uint8_t vec = (uint8_t)frame->int_no;
-        uint64_t count = ++unhandled_counts[vec];
+        uint64_t count;
+
+        /* Vector 255 (0xFF): LAPIC spurious interrupt -- silent EOI */
+        if (vec == 0xFF) {
+            lapic_eoi();
+            return (uint64_t)frame;
+        }
+
+        /* Vectors 0x90-0x9F: Hyper-V synthetic interrupts -- silent EOI */
+        if (vec >= 0x90 && vec <= 0x9F) {
+            lapic_eoi();
+            return (uint64_t)frame;
+        }
+
+        count = ++unhandled_counts[vec];
 
         if (count == 1) {
             /* First hit: log full details */
