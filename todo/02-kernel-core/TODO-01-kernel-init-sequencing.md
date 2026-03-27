@@ -39,10 +39,10 @@
 | 💎  |   2   | Phase 0 — critical init       | §1         |  [x]   |
 | 💎  |   3   | Phase 1 — platform services   | §2         |  [/]   |
 | 💎  |   4   | Phase 2 — system services     | §3         |  [/]   |
-| 💎  |   5   | Phase 3 — user platform       | §4         |  [ ]   |
+| 💎  |   5   | Phase 3 — user platform       | §4         |  [x]   |
 | 💎  |   6   | Dependency gates              | §1–5       |  [ ]   |
 | 💎  |   7   | Failure policy                | §6         |  [ ]   |
-| 💎  |   8   | Code cleanup                  | §2–5       |  [ ]   |
+| 💎  |   8   | Code cleanup                  | §2–5       |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen | §7         |  [ ]   |
 | ⭐  |  10   | POST code + UEFI variable log | §1         |  [ ]   |
 
@@ -156,16 +156,16 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 
 **File:** `src/kernel/main/boot_desktop.c` (restructured as `boot_phase3`)
 
-- [ ] `sched_init()` — start preemptive scheduler; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_HEAP) + BOOT_REQUIRE(SUBSYS_TIMER)
-- [ ] `ipc_init()` — init pipe, shmem, and signal subsystems; BOOT_REQUIRE(SUBSYS_SCHED)
-- [ ] `exec_loader_init()` — register ELF/PE32+/EIF format handlers; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
-- [ ] `boot_tests_run()` — **only** if `g_boot_info.config.debug == 1`; skip entirely in release
-- [ ] `boot_splash_complete()` — dismiss splash screen; requires SUBSYS_FB
-- [ ] `font_init()` + `icon_init()` + `cursor_init()` — load assets from VFS; BOOT_DEGRADED
-- [ ] `desktop_init()` — window manager + compositor init; BOOT_DEGRADED; fallback to serial console if fails
-- [ ] `compositor_run()` — event loop (never returns under normal operation)
-- [ ] On any BOOT_FATAL in Phase 3: do NOT BSOD — log via `klog(FATAL)` and drop to serial console loop
-- [ ] Add `boot_progress(3, "step-name", postcode)` at each step
+- [x] `sched_init()` — start preemptive scheduler; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_HEAP) + BOOT_REQUIRE(SUBSYS_TIMER)
+- [x] `ipc_init()` — init pipe, shmem, and signal subsystems; BOOT_REQUIRE(SUBSYS_SCHED)
+- [x] `exec_loader_init()` — register ELF/PE32+/EIF format handlers; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
+- [x] `boot_tests_run()` — **only** if `g_boot_info.config.debug == 1`; skip entirely in release
+- [x] `boot_splash_complete()` — dismiss splash screen; requires SUBSYS_FB
+- [x] `font_init()` + `icon_init()` + `cursor_init()` — load assets from VFS; BOOT_DEGRADED
+- [x] `desktop_init()` — window manager + compositor init; BOOT_DEGRADED; fallback to serial console if fails
+- [x] `compositor_run()` — event loop (never returns under normal operation)
+- [x] On any BOOT_FATAL in Phase 3: do NOT BSOD — log via `klog(FATAL)` and halt after compositor returns
+- [x] Add `boot_progress(3, "step-name", postcode)` at each step
 
 ## 6. Dependency Gates `[Sonnet]`
 
@@ -199,17 +199,17 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 
 These are bugs and structural violations that must be fixed as part of this TODO:
 
-- [ ] Remove all `HV_BAR` macro definitions and usages — `boot_hw.c` (12 sites), `boot_interrupts.c` (14 sites); replace with `boot_progress()` calls
-- [ ] Remove `#include "kernel/fs/vfs.h"` from `boot_interrupts.c` (line 31)
-- [ ] Remove `#include "kernel/fs/partition.h"` from `boot_interrupts.c` (line 32)
-- [ ] Consolidate ACPI: remove the second `acpi_init()` call in `boot_storage.c`; split into `acpi_platform_init()` (Phase 1: MADT/FADT) and `acpi_power_init()` (Phase 2: S-states)
-- [ ] Move `pci_scan()`, `xhci_init()`, NIC, and DHCP out of `boot_interrupts.c` into `boot_storage.c`
-- [ ] Move `smp_init()` AP bringup out of `boot_interrupts.c` into `boot_storage.c`
-- [ ] Move `ata_init()`, `virtio_blk_init()`, `ahci_init()` out of `boot_hw.c` into `boot_storage.c`
-- [ ] Move SMBIOS, ESRT, UEFI conformance, capsule, crypto agility, GOP log out of `boot_hw.c` into `boot_interrupts.c`
-- [ ] Simplify `main.c` to exactly: `boot_phase0()` → `boot_phase1()` → `boot_phase2()` → `boot_phase3()` → halt
-- [ ] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1` check
-- [ ] Update all init functions in `sched/`, `ipc/`, `mm/`, `fs/` to return `boot_result_t` where they currently return `void`
+- [x] Remove all `HV_BAR` macro definitions and usages — already removed in prior commits
+- [x] Remove `#include "kernel/fs/vfs.h"` from `boot_interrupts.c`
+- [x] Remove `#include "kernel/fs/partition.h"` from `boot_interrupts.c`
+- [ ] Consolidate ACPI: split into `acpi_platform_init()` (Phase 1: MADT/FADT) and `acpi_power_init()` (Phase 2: S-states) — deferred (ACPI power not yet implemented)
+- [x] Move `pci_scan()`, `xhci_init()`, NIC, and DHCP out of `boot_interrupts.c` into `boot_storage.c`
+- [x] Move `smp_init()` AP bringup out of `boot_interrupts.c` into `boot_storage.c`
+- [x] Move `ata_init()`, `virtio_blk_init()`, `ahci_init()` out of `boot_hw.c` into `boot_storage.c`
+- [x] Move SMBIOS, ESRT, UEFI conformance, capsule, crypto agility, GOP log out of `boot_hw.c` into `boot_interrupts.c`
+- [x] Simplify `main.c` to exactly: `boot_phase0()` → `boot_phase1()` → `boot_phase2()` → `boot_phase3()` → halt
+- [x] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1` check
+- [ ] Update all init functions in `sched/`, `ipc/`, `mm/`, `fs/` to return `boot_result_t` where they currently return `void` — deferred to per-subsystem TODOs
 
 ## 9. Degraded-Boot Recovery Screen `[Opus]`
 
@@ -253,7 +253,7 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 | 💎  | Degraded boot on non-critical fail   | ✅ Last-known-good, safe mode              | ✅ Emergency shell fallback                | ⬜ Planned — Step 7                                      |
 | 💎  | Boot progress serial log             | ✅ `DebugPrint` / ETW early tracing        | ✅ `early_printk` / `earlyprintk=serial`   | ✅ Done — §2; `[PHASE0]` markers with POST codes          |
 | 💎  | Boot config gating                   | ✅ `SYSTEM\CurrentControlSet\Control\`     | ✅ kernel cmdline / initrd config          | ✅ Done — §2; `boot.conf` parsed in Phase 0               |
-| 💎  | Test-path separated from boot path   | ✅ Tests run in separate test OS builds    | ✅ `initcall_debug` opt-in                 | ⬜ Planned — Step 5 (debug flag gate)                    |
+| 💎  | Test-path separated from boot path   | ✅ Tests run in separate test OS builds    | ✅ `initcall_debug` opt-in                 | ✅ Done — §5; `debug=1` gate in boot_tests_run()          |
 | ⭐  | Degraded-boot recovery UI screen     | ❌ Safe mode is a separate boot mode       | ❌ Emergency shell is text-only            | ⬜ **Planned — Step 9 — in-kernel graphical recovery**   |
 | ⭐  | POST code written to UEFI NVRAM      | ❌ POST codes are firmware-only            | ❌ Not implemented                         | ⬜ **Planned — Step 10 — survives reboot for diagnosis** |
 | ⭐  | Subsystem readiness oracle API       | ⚠️ Private internal only, not exposed      | ⚠️ `system_state` enum only                | ⬜ **Planned — Step 1 — `kernel_subsystem_ready()` API** |

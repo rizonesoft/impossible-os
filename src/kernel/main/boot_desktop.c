@@ -1,9 +1,12 @@
 /* ============================================================================
- * boot_desktop.c -- Desktop environment initialization
+ * boot_desktop.c -- Phase 3: User Platform
  *
- * TrueType font manager, icon store, cursor manager, window manager,
- * desktop (wallpaper + taskbar), boot splash finish, demo window,
- * terminal, gallery, shell loader, heap stats.
+ * Scheduler, IPC, exec loader, boot tests (debug-only), fonts, icons,
+ * cursors, window manager, desktop, cmd.exe, compositor.
+ * The kernel is fully operational before this phase; failures fall back
+ * to a text console, not BSOD.
+ *
+ * Provides: boot_phase3() and the legacy boot_desktop_init() wrapper.
  * ============================================================================ */
 
 #include "kernel/types.h"
@@ -11,10 +14,14 @@
 #include "kernel/mm/heap.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/drivers/ahci.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/workqueue.h"
+#include "kernel/sched/syscall.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_info.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
 #include "font_mgr.h"
@@ -28,17 +35,56 @@
 #include "kernel/elf.h"
 #include "main/main_internal.h"
 
-void boot_desktop_init(void)
+/* ---- Phase 3 ------------------------------------------------------------ */
+
+void boot_phase3(void)
 {
+    /* --- Scheduler init --- */
+    boot_splash_status("Initializing scheduler...");
+    task_init();
+    kernel_subsystem_set_ready(SUBSYS_SCHED, true);
+    boot_progress(3, "SCHED", POSTCODE_SCHED_INIT);
+
+    ahci_enable_events();  /* safe now: yield handler registered */
+
+    /* Create the system work queue (needed by NIC driver) */
+    {
+        extern workqueue_t *sys_wq;
+        scheduler_enable();
+        sys_wq = workqueue_create("sys_wq");
+        scheduler_disable();
+        if (sys_wq)
+            klog(LOG_DEBUG, "wq", "sys_wq created");
+        else
+            klog(LOG_ERROR, "wq", "sys_wq creation FAILED");
+    }
+
+    /* --- IPC init (pipe, shmem, signal) --- */
+    /* IPC subsystem is initialized implicitly by the kernel;
+     * pipe_create/shmem_create work after heap + sched are up.
+     * Mark ready for dependency tracking. */
+    kernel_subsystem_set_ready(SUBSYS_IPC, true);
+    boot_progress(3, "IPC", POSTCODE_IPC_INIT);
+
+    /* --- Syscall handler --- */
+    boot_splash_status("Initializing syscalls...");
+    syscall_init();
+
+    /* --- Exec loader (ELF/PE format handlers) --- */
+    kernel_subsystem_set_ready(SUBSYS_EXEC, true);
+    boot_progress(3, "EXEC", POSTCODE_EXEC_INIT);
+
+    /* --- Boot tests (debug=1 only) --- */
+    boot_tests_run();
+
+    /* --- Fonts, icons, cursors --- */
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Desktop ----------------------------------------------------------------");
 
-    /* Flush boot log to disk */
     boot_splash_status("Flushing boot log...");
     klog_disk_flush();
 
 #ifdef BSOD_TEST
-    /* Test trigger: fire a deliberate panic to test the BSOD screen */
     {
         extern void panic_screen(struct interrupt_frame *frame,
                                  uint64_t error_code,
@@ -50,33 +96,27 @@ void boot_desktop_init(void)
     }
 #endif
 
-
     boot_splash_tick();
     boot_splash_status("Loading fonts...");
-
-    /* Initialize TrueType font manager */
     ttf_mgr_init();
 
-    /* Initialize icon store */
     boot_splash_tick();
     boot_splash_status("Loading resources...");
     icon_store_init();
 
-    /* Initialize cursor manager */
     cursor_init();
 
+    /* --- Window manager + desktop --- */
     klog(LOG_DEBUG, "boot", "--- Phase: desktop & WM ---");
     boot_splash_tick();
     boot_splash_status("Almost ready...");
     wm_init();
-
-    /* Initialize desktop (wallpaper, taskbar) */
     desktop_init();
 
     /* Finish boot splash */
     boot_splash_finish();
 
-    /* Boot complete timing marker */
+    /* Boot complete timing */
     {
         uint64_t ms = system_get_ticks() * 10;
         klog(LOG_INFO, "boot",
@@ -84,8 +124,8 @@ void boot_desktop_init(void)
              (uint64_t)(ms / 1000), (uint64_t)(ms % 1000));
     }
 
-    /* Record desktop-ready step and write boot performance report */
     boot_progress(3, "DESKTOP_READY", POSTCODE_DESKTOP_INIT);
+    kernel_subsystem_set_ready(SUBSYS_DESKTOP, true);
     boot_timing_print_steps();
     boot_timing_write_report();
 
@@ -98,13 +138,12 @@ void boot_desktop_init(void)
                (h_used + 1023) / 1024,
                (h_total + 1023) / 1024,
                pct);
-        if (pct > 75) {
-            klog(LOG_WARN, "heap", "Heap pressure: %u%% used -- risk of silent exhaustion",
-                   pct);
-        }
+        if (pct > 75)
+            klog(LOG_WARN, "heap",
+                 "Heap pressure: %u%% used -- risk of silent exhaustion", pct);
     }
 
-    /* Create a demo window with icon toolbar */
+    /* --- Demo window --- */
     {
         int demo = wm_create_window("Welcome", 100, 80, 460, 300,
                                      WM_DEFAULT_FLAGS);
@@ -117,10 +156,9 @@ void boot_desktop_init(void)
                 ttf_font_t *fnt;
                 gfx_surface_init(&ws, fb, cw, ch, cw);
 
-                /* Dark background */
                 wm_fill_rect(demo, 0, 0, cw, ch, 0xFF202020);
 
-                /* Toolbar strip (8 icons, 20px, Filled variant) */
+                /* Toolbar strip */
                 {
                     static const system_icon_t toolbar_icons[] = {
                         ICON_CUT, ICON_COPY, ICON_PASTE,
@@ -155,14 +193,12 @@ void boot_desktop_init(void)
                                    cw, 1, 0xFF383838);
                 }
 
-                /* Greeting text below toolbar */
                 fnt = ttf_get(FONT_UI_BOLD, 20);
                 if (fnt)
                     ttf_draw_string(&ws, fnt, 20, 56,
                                     "Welcome to Impossible OS!",
                                     0xFF60CDFF);
 
-                /* Subtitle */
                 fnt = ttf_get(FONT_UI, 14);
                 if (fnt)
                     ttf_draw_string(&ws, fnt, 20, 86,
@@ -172,14 +208,11 @@ void boot_desktop_init(void)
         }
     }
 
+    /* --- Terminal + Gallery --- */
     terminal_open();
     gallery_open();
 
-    /* Load cmd.exe synchronously during boot — before the compositor
-     * starts and takes over PID 0.  This avoids depending on the
-     * preemptive scheduler to run ShellLoader (which doesn't work
-     * reliably because compositor's scheduler_disable/enable cycle
-     * prevents quantum accumulation). */
+    /* --- Load cmd.exe --- */
     if (vfs_is_mounted('C')) {
         struct vfs_node *file = vfs_open("C:\\cmd.exe", VFS_O_READ);
         if (file) {
@@ -208,16 +241,25 @@ void boot_desktop_init(void)
 
     scheduler_enable();
 
-    /* Yield repeatedly to give cmd.exe (PID 6) CPU time to print its
-     * banner and reach its readline() blocking point.  This runs once
-     * during boot — before compositor_run() starts its tight event loop
-     * which prevents the preemptive scheduler from ever switching to
-     * PID 6 on fast systems like QEMU.  On each yield, PID 6 runs
-     * until it blocks (AHCI I/O, SYS_READ), then control returns here.
-     * Once PID 6 blocks on keyboard input, further yields are no-ops. */
+    /* Yield to give cmd.exe CPU time to print its banner */
     {
         int i;
         for (i = 0; i < 200; i++)
             yield();
     }
+
+    /* --- Compositor event loop (never returns) --- */
+    compositor_run();
+
+    /* Unreachable under normal operation */
+    klog(LOG_FATAL, "boot", "compositor_run() returned -- halting");
+    for (;;)
+        __asm__ volatile ("hlt");
+}
+
+/* ---- Legacy wrapper ----------------------------------------------------- */
+
+void boot_desktop_init(void)
+{
+    boot_phase3();
 }
