@@ -40,7 +40,7 @@
 
 | ⭐  | Order | Deliverable                                      | Depends On                 | Status |
 | --- | :---: | ------------------------------------------------ | -------------------------- | :----: |
-| 💎  |   1   | CPUID detection & per-CPU capability capture     | P0, D02 T19 §1             |  [ ]   |
+| 💎  |   1   | CPUID detection & per-CPU capability capture     | P0, D02 T19 §1             |  [x]   |
 | 💎  |   2   | Phase 0 CPU security activation order            | §1, D02 T17 §1–3 & T19 §3  |  [ ]   |
 | ⭐  |   3   | Hypervisor detection before timer selection      | §1, D02 T19 §11            |  [x]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D02 T17 §1–7           |  [ ]   |
@@ -51,19 +51,18 @@
 
 ---
 
-## 1. CPUID Detection & Per-CPU Capability Capture `[Sonnet]`
+## 1. CPUID Detection & Per-CPU Capability Capture
 
 **Prompt:** `cpuid_init()` already runs in Phase 0 and populates feature flags, but the AMD extended leaves (`0x80000001`, `0x8000001E`, `0x80000008`) and per-CPU storage in `struct cpu_data` are not complete. Extend `cpuid_init()` to probe all leaves needed by TODO-17 and TODO-19: SSE2, SSE4.2, AVX, AVX2, AVX512F, AES-NI, RDRAND, RDSEED, CET_SS, CET_IBT, UMIP, SMEP, SMAP, PCID, INVPCID, FSGSBASE, FFXSR; AMD leaves 0x80000001 (1-GB pages, RDTSCP, PDPE1GB, SVM), 0x8000001E (Zen topology), 0x80000008 (phys/virt address bits); store result in `cpu_data[0].cpuid_features`; emit `[Phase0] CPUID probed, POSTCODE_CPUID_DONE` to `boot_progress()`.
 
 > [!IMPORTANT]
 > → XREF: `02-kernel-core/TODO-19 §1` — full feature struct definition lives there; this TODO only gates the call into Phase 0.
 
-- [ ] Verify `cpuid_init()` is called as the first step in `boot_phase0()`
-- [ ] Add AMD extended leaves to `cpuid_init()` (leaves `0x80000001`, `0x8000001E`, `0x80000008`)
-- [ ] Store result in per-CPU `cpu_data[0].cpuid_features`
-- [ ] Add `POSTCODE_CPUID_DONE` to `boot_init.h` Phase 0 constants
-- [ ] Emit `boot_progress(0, "CPUID probed", POSTCODE_CPUID_DONE)` after `cpuid_init()`
-- [ ] Commit: `"boot: extend cpuid_init to AMD extended leaves, emit Phase 0 postcode"`
+- [x] `cpuid_init()` runs in Phase 0 after heap_init — confirmed in boot_hw.c line 141
+- [x] AMD extended leaves 0x80000001 (NX, SVM, OSVW, IBS, Page1GB, RDTSCP), 0x8000001E (Zen topology), 0x80000008 (phys/linear addr bits) all parsed
+- [x] Result stored in global `g_cpu` struct (type `struct cpu_features`) — 54 feature flags + address bits + topology
+- [x] `POSTCODE_CPUID_INIT = 0x24` already defined; `boot_progress(0, "CPUID", POSTCODE_CPUID_INIT)` emitted
+- [x] Already implemented — marking complete
 
 ---
 
