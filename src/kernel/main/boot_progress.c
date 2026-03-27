@@ -8,7 +8,6 @@
 #include "kernel/boot_init.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_timing.h"
-/* boot_timing_get_steps() used by render_debug_bar() */
 #include "kernel/boot_splash.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
@@ -166,82 +165,6 @@ void post_display(uint8_t code)
     fb_swap_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H);
 }
 
-/* ---- Debug bar: proportional boot stage waterfall ----------------------- */
-
-#define BAR_HEIGHT  4
-#define BAR_Y       0   /* top of screen */
-
-/* Map postcode to a color for the debug bar */
-static uint32_t postcode_color(uint8_t pc)
-{
-    if (pc >= 0x10 && pc <= 0x19) return 0x00404040;  /* Phase 0 early: dark gray */
-    if (pc == 0x20) return 0x000000FF;  /* PMM: blue */
-    if (pc == 0x21) return 0x008000FF;  /* VMM: purple */
-    if (pc == 0x22) return 0x004080FF;  /* HEAP: light blue */
-    if (pc == 0x23) return 0x004080FF;  /* KLOG: light blue */
-    if (pc >= 0x30 && pc <= 0x34) return 0x00808080;  /* GDT/IDT/ACPI/LAPIC: gray */
-    if (pc == 0x35) return 0x00C0C000;  /* TIMER: yellow */
-    if (pc >= 0x40 && pc <= 0x41) return 0x00606060;  /* SMBIOS/FB: dim gray */
-    if (pc == 0x50) return 0x00FF8000;  /* PCI: orange */
-    if (pc == 0x51) return 0x00FF8000;  /* STORAGE: orange */
-    if (pc == 0x52) return 0x0000C000;  /* VFS: green */
-    if (pc == 0x53) return 0x0000FFAA;  /* REGISTRY: teal */
-    if (pc == 0x54) return 0x00808080;  /* SMP: gray */
-    if (pc == 0x55) return 0x0000FFFF;  /* NET: cyan */
-    if (pc == 0x60) return 0x00FF0000;  /* SCHED: red */
-    if (pc == 0x63) return 0x00FFFFFF;  /* DESKTOP: white */
-    return 0x00303030;
-}
-
-void render_debug_bar(void)
-{
-    const boot_timing_step_t *steps;
-    uint32_t count, scr_w, i, x;
-    uint64_t total_tsc;
-
-    /* Show when postcode=1 (default) or debug=1 */
-    if (!g_boot_info.config.postcode && !g_boot_info.config.debug)
-        return;
-    if (!kernel_subsystem_ready(SUBSYS_FB))
-        return;
-
-    count = boot_timing_get_steps(&steps);
-    if (count < 2) return;
-
-    scr_w = fb_get_width();
-    if (scr_w == 0) return;
-
-    total_tsc = steps[count - 1].tsc - steps[0].tsc;
-    if (total_tsc == 0) return;
-
-    x = 0;
-    for (i = 0; i + 1 < count; i++) {
-        uint64_t seg_tsc = steps[i + 1].tsc - steps[i].tsc;
-        uint32_t seg_w = (uint32_t)((seg_tsc * (uint64_t)scr_w) / total_tsc);
-        uint32_t color = postcode_color(steps[i].postcode);
-        uint32_t row, col;
-
-        if (seg_w == 0) seg_w = 1;
-        if (x + seg_w > scr_w) seg_w = scr_w - x;
-
-        for (row = 0; row < BAR_HEIGHT; row++)
-            for (col = 0; col < seg_w; col++)
-                fb_put_pixel(x + col, BAR_Y + row, color);
-
-        x += seg_w;
-    }
-
-    if (x < scr_w) {
-        uint32_t color = postcode_color(steps[count - 1].postcode);
-        uint32_t row, col;
-        for (row = 0; row < BAR_HEIGHT; row++)
-            for (col = x; col < scr_w; col++)
-                fb_put_pixel(col, BAR_Y + row, color);
-    }
-
-    fb_swap_rect(0, BAR_Y, scr_w, BAR_HEIGHT);
-}
-
 /* ---- API ---------------------------------------------------------------- */
 
 void boot_stage_report(boot_stage_t stage, const char *msg)
@@ -294,7 +217,6 @@ void boot_stage_report(boot_stage_t stage, const char *msg)
         uint32_t cx = fb_get_width() - POST_TOTAL_W - POST_MARGIN;
         fb_fill_rect(cx, POST_TOP, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
         fb_swap_rect(cx, POST_TOP, POST_TOTAL_W, POST_TOTAL_H);
-        render_debug_bar();
     }
 
     /* Forward to boot_progress (phase, step, postcode) */

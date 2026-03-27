@@ -81,8 +81,6 @@ static uint32_t s_blink_counter;
 
 static void alive_blink_tick(void)
 {
-    uint32_t color;
-
     if (!g_boot_info.config.heartbeat)
         return;
     if (!kernel_subsystem_ready(SUBSYS_FB))
@@ -97,21 +95,50 @@ static void alive_blink_tick(void)
     s_blink_counter = 0;
     s_blink_state = !s_blink_state;
 
-    color = s_blink_state ? BLINK_COLOR_ON : BLINK_COLOR_OFF;
     {
-        /* Draw a filled circle (radius = BLINK_SIZE/2) */
+        /* Anti-aliased filled circle using distance-based alpha blending */
         int r = BLINK_SIZE / 2;
         int cx = BLINK_X + r;
         int cy = BLINK_Y + r;
         int dy, dx;
-        for (dy = -r; dy <= r; dy++) {
-            for (dx = -r; dx <= r; dx++) {
-                if (dx * dx + dy * dy <= r * r)
-                    fb_put_pixel((uint32_t)(cx + dx), (uint32_t)(cy + dy), color);
+        uint32_t on_r = (BLINK_COLOR_ON >> 16) & 0xFF;
+        uint32_t on_g = (BLINK_COLOR_ON >> 8) & 0xFF;
+        uint32_t on_b = BLINK_COLOR_ON & 0xFF;
+
+        for (dy = -r - 1; dy <= r + 1; dy++) {
+            for (dx = -r - 1; dx <= r + 1; dx++) {
+                /* Distance from center (scaled by 256 for sub-pixel precision) */
+                uint32_t dist_sq = (uint32_t)(dx * dx + dy * dy);
+                uint32_t r_sq = (uint32_t)(r * r);
+                uint32_t px, py;
+                uint32_t c;
+
+                px = (uint32_t)(cx + dx);
+                py = (uint32_t)(cy + dy);
+
+                if (s_blink_state) {
+                    if (dist_sq <= r_sq - (uint32_t)r) {
+                        /* Fully inside */
+                        c = BLINK_COLOR_ON;
+                    } else if (dist_sq <= r_sq + (uint32_t)(r * 2)) {
+                        /* Edge: blend with black based on distance */
+                        uint32_t alpha = 255 - ((dist_sq - (r_sq - (uint32_t)r)) * 255)
+                                         / ((uint32_t)(r * 3) + 1);
+                        if (alpha > 255) alpha = 0;
+                        c = ((on_r * alpha / 255) << 16) |
+                            ((on_g * alpha / 255) << 8) |
+                            (on_b * alpha / 255);
+                    } else {
+                        c = 0x00000000;
+                    }
+                } else {
+                    c = 0x00000000;
+                }
+                fb_put_pixel(px, py, c);
             }
         }
     }
-    fb_swap_rect(BLINK_X, BLINK_Y, BLINK_SIZE, BLINK_SIZE);
+    fb_swap_rect(BLINK_X, BLINK_Y, BLINK_SIZE + 2, BLINK_SIZE + 2);
 }
 
 void timer_tick_callback_fire(void)

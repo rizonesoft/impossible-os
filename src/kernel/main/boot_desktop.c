@@ -140,8 +140,6 @@ void boot_phase3(void)
     boot_timing_print_steps();
     boot_timing_write_report();
 
-    /* Debug bar: render after wallpaper, before compositor takes over */
-    render_debug_bar();
 
     /* Boot-time heap stats */
     {
