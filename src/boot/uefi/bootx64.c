@@ -1395,6 +1395,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     gBS = SystemTable->BootServices;
     gImageHandle = ImageHandle;
 
+    /* Clear the UEFI text console immediately — firmware (BdsDxe, QEMU MMIO
+     * warnings) may have left text on screen before our image was launched. */
+    if (SystemTable->ConOut)
+        SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
+
     /* Initialize early serial for diagnostics (before anything else) */
     serial_early_init();
     serial_early_print("[BOOT] efi_main entered\n");
