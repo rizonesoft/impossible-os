@@ -81,7 +81,7 @@ static uint32_t s_blink_counter;
 
 static void alive_blink_tick(void)
 {
-    uint32_t row, col, color;
+    uint32_t color;
 
     if (!g_boot_info.config.heartbeat)
         return;
