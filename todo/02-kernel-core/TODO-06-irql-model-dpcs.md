@@ -38,7 +38,7 @@
 | 💎  |   3   | Interrupt entry/exit IRQL integration              | §2         |  [x]   |
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2         |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4     |  [x]   |
-| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5         |  [ ]   |
+| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5         |  [x]   |
 | 💎  |   7   | Driver migration and workqueue contract split      | §5         |  [ ]   |
 | ⭐  |   8   | IRQL violation traps and structured telemetry      | §2, §3, §5 |  [ ]   |
 | ⭐  |   9   | Budgeted DPC fairness and starvation watchdog      | §5, §6     |  [ ]   |
@@ -91,14 +91,14 @@
 - [x] Support bounded batch draining so long DPC bursts do not starve normal scheduling.
 - [x] Track queue depth, executed count, and overrun counters per CPU for diagnostics.
 - [x] Ensure DPC callbacks are forbidden from blocking waits or pageable operations.
-- [ ] Commit: `"kernel: sched — add DPC dispatcher at DISPATCH_LEVEL"`
+- [x] Commit: `"kernel: sched — add DPC dispatcher at DISPATCH_LEVEL"`
 
 ## 6. Timer/APIC Scheduling Path for DPC Dispatch
 
-- [ ] Trigger `KiDispatchDpc()` from the periodic timer/APIC path after ISR critical work and before returning to normal thread execution.
-- [ ] Add a pending flag so repeated queue inserts coalesce wakeups and avoid redundant dispatch entry.
-- [ ] Validate DPC dispatch on BSP and AP cores in SMP mode.
-- [ ] Ensure no recursion/deadlock if a DPC re-queues work for the same CPU.
+- [x] Trigger `KiDispatchDpc()` from the periodic timer/APIC path after ISR critical work and before returning to normal thread execution.
+- [x] Add a pending flag so repeated queue inserts coalesce wakeups and avoid redundant dispatch entry.
+- [x] Validate DPC dispatch on BSP and AP cores in SMP mode.
+- [x] Ensure no recursion/deadlock if a DPC re-queues work for the same CPU.
 - [ ] Commit: `"kernel: timer — schedule and coalesce DPC dispatch"`
 
 ## 7. Driver Migration and Workqueue Contract Split

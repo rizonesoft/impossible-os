@@ -45,7 +45,9 @@ void dpc_init(void)
         cpu_queues[i].head      = (KDPC *)0;
         cpu_queues[i].tail      = (KDPC *)0;
         cpu_queues[i].depth     = 0;
+        cpu_queues[i].pending   = 0;
         cpu_queues[i].executed  = 0;
+        cpu_queues[i].overruns  = 0;
         cpu_queues[i].max_depth = 0;
         queue_locks[i].flag     = 0;
         dispatch_active[i]      = 0;
@@ -125,6 +127,7 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
     }
 
     q->depth++;
+    q->pending = 1;  /* signal timer path to drain */
 
     /* Track high-water mark */
     if (q->depth > q->max_depth)
@@ -151,8 +154,9 @@ void KiDispatchDpc(void)
     uint32_t batch;
     KIRQL prev_irql;
 
-    /* Fast path: nothing queued */
-    if (!q->head)
+    /* Fast path: check pending flag (set by KeInsertQueueDpc).
+     * The flag coalesces multiple inserts into a single drain pass. */
+    if (!q->pending)
         return;
 
     /* Re-entrancy guard: if we're already draining on this CPU
@@ -211,6 +215,16 @@ void KiDispatchDpc(void)
             routine(dpc, ctx, arg1, arg2);
 
         q->executed++;
+    }
+
+    /* If we hit the batch limit and there are still DPCs queued,
+     * record an overrun.  The pending flag stays set so the next
+     * timer tick or KeLowerIrql crossing will drain more. */
+    if (batch >= DPC_BATCH_LIMIT && q->head) {
+        q->overruns++;
+    } else {
+        /* Queue fully drained -- clear pending flag */
+        q->pending = 0;
     }
 
     /* Clear re-entrancy guard before lowering IRQL.

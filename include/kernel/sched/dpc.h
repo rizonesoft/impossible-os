@@ -84,7 +84,9 @@ struct dpc_queue {
     KDPC           *head;           /* queue head (FIFO) */
     KDPC           *tail;           /* queue tail for O(1) append */
     volatile uint32_t depth;        /* current queue depth */
+    volatile uint32_t pending;      /* 1 if DPCs need draining (coalesce flag) */
     uint32_t        executed;       /* total DPCs executed (stats) */
+    uint32_t        overruns;       /* times batch limit was hit (stats) */
     uint32_t        max_depth;      /* high-water mark (stats) */
 };
 

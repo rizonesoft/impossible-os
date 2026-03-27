@@ -13,6 +13,7 @@
 #include "kernel/idt.h"
 #include "kernel/klog.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/dpc.h"
 #include "kernel/sched/spinlock.h"
 
 /* Optional periodic callback (for boot splash animation etc.) */
@@ -99,6 +100,11 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
 {
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
+
+    /* Drain pending DPCs on PIT tick (fallback path when LAPIC timer
+     * is not the active tick source). */
+    KiDispatchDpc();
+
     return (uint64_t)frame;
 }
 

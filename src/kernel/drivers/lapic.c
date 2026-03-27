@@ -24,6 +24,7 @@
 #include "kernel/drivers/pit.h"
 #include "kernel/idt.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/dpc.h"
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
@@ -797,6 +798,14 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
     lapic_tick_count++;
     timer_tick_callback_fire();
     lapic_eoi();
+
+    /* Drain pending DPCs after EOI, before scheduling.
+     * This is the periodic DPC dispatch point -- catches DPCs queued
+     * during ISR processing and any leftover from batch-limited drains.
+     * KiDispatchDpc checks the coalesced pending flag and is a no-op
+     * when the queue is empty. */
+    KiDispatchDpc();
+
     return schedule(frame);
 }
 

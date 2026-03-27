@@ -126,10 +126,11 @@ void KeLowerIrql(KIRQL old_irql)
     /* NT DPC dispatch point: when lowering below DISPATCH_LEVEL, drain
      * any pending DPCs before returning to thread-level code.  This is
      * the primary DPC execution trigger -- KiDispatchDpc raises back to
-     * DISPATCH_LEVEL internally and lowers when done. */
+     * DISPATCH_LEVEL internally and lowers when done.
+     * Uses the coalesced pending flag set by KeInsertQueueDpc. */
     if (cur >= DISPATCH_LEVEL && old_irql < DISPATCH_LEVEL) {
         struct dpc_queue *q = dpc_this_cpu_queue();
-        if (q && q->head)
+        if (q && q->pending)
             KiDispatchDpc();
     }
 }
