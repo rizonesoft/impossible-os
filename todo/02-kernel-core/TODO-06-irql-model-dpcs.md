@@ -33,15 +33,15 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On | Status |
 | --- | :---: | -------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | `KIRQL` type, constants, and core contract         | —          |  [ ]   |
-| 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | 1          |  [ ]   |
-| 💎  |   3   | Interrupt entry/exit IRQL integration              | 2          |  [ ]   |
-| 💎  |   4   | DPC object type and per-CPU queue                  | 2          |  [ ]   |
-| 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | 3, 4       |  [ ]   |
-| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | 5          |  [ ]   |
-| 💎  |   7   | Driver migration and workqueue contract split      | 5          |  [ ]   |
-| ⭐  |   8   | IRQL violation traps and structured telemetry      | 2, 3, 5    |  [ ]   |
-| ⭐  |   9   | Budgeted DPC fairness and starvation watchdog      | 5, 6       |  [ ]   |
+| 💎  |   1   | `KIRQL` type, constants, and core contract         | —          |  [x]   |
+| 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1         |  [ ]   |
+| 💎  |   3   | Interrupt entry/exit IRQL integration              | §2         |  [ ]   |
+| 💎  |   4   | DPC object type and per-CPU queue                  | §2         |  [ ]   |
+| 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4     |  [ ]   |
+| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5         |  [ ]   |
+| 💎  |   7   | Driver migration and workqueue contract split      | §5         |  [ ]   |
+| ⭐  |   8   | IRQL violation traps and structured telemetry      | §2, §3, §5 |  [ ]   |
+| ⭐  |   9   | Budgeted DPC fairness and starvation watchdog      | §5, §6     |  [ ]   |
 
 > 💎 = parity — core IRQL and DPC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq split.
 > ⭐ = exclusive — Impossible OS adds explicit diagnostics and fairness controls as first-class kernel guarantees.
@@ -50,11 +50,11 @@
 
 ## 1. `KIRQL` Type, Constants, and Core Contract `[Opus]`
 
-- [ ] Create `include/kernel/sched/irql.h` with `typedef uint8_t KIRQL`.
-- [ ] Define canonical levels: `PASSIVE_LEVEL = 0`, `APC_LEVEL = 1`, `DISPATCH_LEVEL = 2`, `HIGH_LEVEL = 31`.
-- [ ] Define device IRQL range constants (`DIRQL_MIN`, `DIRQL_MAX`) and map IRQ vectors to effective device IRQLs.
-- [ ] Document API legality per level (allocation, blocking waits, scheduler calls, and lock classes).
-- [ ] Add `KeGetCurrentIrql()`, `KeRaiseIrql(new_irql, old_irql_out)`, and `KeLowerIrql(old_irql)` declarations.
+- [x] Create `include/kernel/sched/irql.h` with `typedef uint8_t KIRQL`.
+- [x] Define canonical levels: `PASSIVE_LEVEL = 0`, `APC_LEVEL = 1`, `DISPATCH_LEVEL = 2`, `HIGH_LEVEL = 31`.
+- [x] Define device IRQL range constants (`DIRQL_MIN`, `DIRQL_MAX`) and map IRQ vectors to effective device IRQLs.
+- [x] Document API legality per level (allocation, blocking waits, scheduler calls, and lock classes).
+- [x] Add `KeGetCurrentIrql()`, `KeRaiseIrql(new_irql, old_irql_out)`, and `KeLowerIrql(old_irql)` declarations.
 - [ ] Commit: `"kernel: sched — add KIRQL model and IRQL API surface"`
 
 ## 2. Per-CPU IRQL Tracking and Transition Primitives `[Opus]`
@@ -132,11 +132,11 @@
 
 | ⭐  | Feature                                     | 🪟 Windows 11 / NT                            | 🐧 Linux                                                | 🚀 Impossible OS                                          |
 | --- | ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
-| 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | ⬜ Planned — §1–§3                                        |
+| 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | 🔄 `KIRQL` type, 6 levels, vector mapping, API declared (§1) — per-CPU tracking and ISR integration pending (§2–§3) |
 | 💎  | Deferred interrupt bottom half              | ✅ DPC queue at `DISPATCH_LEVEL`              | ✅ softirq/tasklet/NAPI bottom-half model               | ⬜ Planned — §4–§6                                        |
 | 💎  | ISR-safe deferred queue API                 | ✅ `KeInsertQueueDpc`                         | ✅ IRQ-safe enqueue primitives in net/block paths       | ⬜ Planned — §4                                           |
 | 💎  | Per-CPU deferred work queues                | ✅ Per-CPU DPC state                          | ✅ Per-CPU softirq and work processing                  | ⬜ Planned — §4–§6                                        |
-| 💎  | Context legality contract                   | ✅ API rules by IRQL                          | ✅ `might_sleep()` and atomic-context rules             | ⬜ Planned — §1, §8                                       |
+| 💎  | Context legality contract                   | ✅ API rules by IRQL                          | ✅ `might_sleep()` and atomic-context rules             | 🔄 Legality table documented in `irql.h` (§1) — runtime enforcement pending (§8) |
 | 💎  | Workqueue for thread-context deferred work  | ✅ Work items at passive level                | ✅ kernel workqueues at process context                 | ⚠️ Partial — exists; needs explicit IRQL split in §7      |
 | ⭐  | Built-in IRQL violation telemetry           | ⚠️ Mostly internal/checked builds             | ⚠️ Debug warnings exist but fragmented                  | ⬜ **Planned — §8 — unified contract diagnostics**        |
 | ⭐  | DPC fairness budget with watchdog policy    | ⚠️ Internal heuristics                        | ⚠️ Subsystem-specific tuning                            | ⬜ **Planned — §9 — explicit and configurable policy**    |
