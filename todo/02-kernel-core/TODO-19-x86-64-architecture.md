@@ -89,16 +89,10 @@
 
 ### 1.3 Lazy FPU: CR0.TS + #NM
 
-- [ ] Lazy strategy: after every context switch, set `CR0.TS` (Task Switched, bit 3) — any `FXSAVE`, `XSAVE`, or FP/SIMD instruction in user or kernel code will fault with `#NM` (Device Not Available, vector 7)
-- [ ] `#NM` handler (register via `idt_register_handler(7, nm_handler)`):
-  1. Clear `CR0.TS` (`clts` instruction)
-  2. If `current_task->fpu_used == false`: allocate `xsave_area` if NULL; zero it; set `fpu_used = true`
-  3. If prev task's `fpu_used == true`: restore prev task's XSAVE area (already done below) — no further action
-- [ ] Context switch (`sched_switch(prev, next)`):
-  1. If `prev->fpu_used`: `XSAVE [prev->xsave_area]` — save all active state components matching `xcr0_active`
-  2. If `next->fpu_used`: `XRSTOR [next->xsave_area]` — restore
-  3. If `!next->fpu_used`: skip restore; set `CR0.TS` so the first FP use faults into `#NM`
-- [ ] Use `XSAVEOPT` instead of `XSAVE` if `cpu_has(CPU_FEATURE_XSAVEOPT)` — skips saving components not modified since last `XRSTOR`; ~30% faster
+- [x] Lazy FPU: `schedule()` sets `CR0.TS` after switch if `!next->fpu_used`; first FP/SIMD use faults into `#NM`
+- [x] `#NM` handler (vector 7): clears `CR0.TS`, calls `task_alloc_xsave()` on first use, sets `fpu_used = 1`
+- [x] Context switch: `XSAVE` prev task's state if `fpu_used`, `XRSTOR` next task's state if `fpu_used`, else set `CR0.TS`
+- [ ] XSAVEOPT optimization — deferred (needs `CPU_FEATURE_XSAVEOPT` detection in CPUID)
 
 ### 1.4 Replace FXSAVE in icon_store.c
 
