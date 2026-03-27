@@ -1,8 +1,11 @@
 /* ============================================================================
- * boot_storage.c — Storage, filesystem, ACPI/SMP, registry, services
+ * boot_storage.c -- Phase 2: System Services
  *
- * VFS init, partition scanning, filesystem mount, disk log setup,
- * system summary, ACPI/SMP, heap test, registry, symbol table, mmap.
+ * PCI, peripherals, disk drivers, VFS, partition mount, registry, SMP,
+ * network, symbol table, mmap. BOOT_FATAL only if VFS or registry are
+ * completely broken; everything else degrades.
+ *
+ * Provides: boot_phase2() and the legacy boot_storage_init() wrapper.
  * ============================================================================ */
 
 #include "kernel/types.h"
@@ -14,23 +17,27 @@
 #include "kernel/mm/mmap.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/partition.h"
-#include "kernel/acpi.h"
-#include "kernel/drivers/lapic.h"
-#include "kernel/drivers/ioapic.h"
-#include "kernel/drivers/pic.h"
-#include "kernel/drivers/pit.h"
 #include "kernel/smp.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_halt.h"
 #include "registry.h"
 #include "kernel/symtab.h"
 #include "kernel/cpuid_platform.h"
+#include "kernel/drivers/pci.h"
+#include "kernel/drivers/xhci.h"
+#include "kernel/drivers/rtl8139.h"
+#include "kernel/net/net.h"
+#include "kernel/drivers/virtio_input.h"
+#include "kernel/drivers/vbox_mouse.h"
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/ahci.h"
 #include "main/main_internal.h"
 
-void boot_storage_init(uint64_t magic)
+/* ---- Phase 2 ------------------------------------------------------------ */
+
+void boot_phase2(void)
 {
     uint32_t i;
     uint64_t total_ram = 0;
@@ -38,20 +45,41 @@ void boot_storage_init(uint64_t magic)
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Storage & Filesystem ---------------------------------------------------");
 
-    /* Disk drivers -- moved from boot_hw.c Phase 0 to Phase 2 */
+    /* --- PCI + peripherals (moved from Phase 1) --- */
+    klog(LOG_DEBUG, "boot", "--- Phase: PCI & peripherals ---");
+    boot_splash_tick();
+    boot_splash_status("Scanning PCI bus...");
+    pci_scan();
+    xhci_init();
+    boot_splash_status("Initializing network...");
+    rtl8139_init();
+    net_init();
+    virtio_input_init();
+    vbox_mouse_init();
+    boot_progress(2, "PCI_NET", POSTCODE_PCI_INIT);
+
+    /* DHCP fire-and-forget */
+    dhcp_discover();
+    boot_progress(2, "DHCP", POSTCODE_NET_INIT);
+
+    /* --- Disk drivers (moved from Phase 0) --- */
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
     boot_splash_status("Initializing storage...");
     ata_init();
     virtio_blk_init();
     ahci_init();
+    ahci_setup_interrupts();  /* MSI/INTx — needs LAPIC (Phase 1) + AHCI PCI device (just found) */
     blkdev_register_all();
     boot_progress(2, "STORAGE_DRV", POSTCODE_STORAGE_INIT);
 
+    /* --- VFS: BOOT_FATAL if fails --- */
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
     boot_splash_status("Initializing VFS...");
     vfs_init();
+    kernel_subsystem_set_ready(SUBSYS_VFS, true);
     boot_progress(2, "VFS", POSTCODE_VFS_INIT);
 
+    /* --- Partition scan + filesystem mount --- */
     klog(LOG_DEBUG, "boot", "--- Phase: partition & filesystem mount ---");
     boot_splash_tick();
     boot_splash_status("Scanning partitions...");
@@ -60,7 +88,7 @@ void boot_storage_init(uint64_t magic)
     partition_mount_filesystems();
     boot_splash_status("Checking boot flags...");
 
-    /* Check for debug boot flag */
+    /* Check for debug boot flag on X: */
     if (vfs_is_mounted('X')) {
         struct vfs_node *x_root = vfs_get_drive_root('X');
         if (x_root && x_root->ops && x_root->ops->finddir) {
@@ -76,19 +104,17 @@ void boot_storage_init(uint64_t magic)
         }
     }
 
-    /* Flush accumulated log to disk — but skip on TCG because writing
-     * 100+ entries via software-emulated AHCI DMA stalls for minutes. */
+    /* --- klog disk enable --- */
     if (!platform_is_tcg())
         klog_disk_flush();
     boot_splash_tick();
 
+    /* --- System summary --- */
     boot_splash_status("Configuring system...");
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- System Summary ---------------------------------------------------------");
 
-    /* Hardware summary */
-    klog(LOG_INFO, "boot", "Multiboot2 magic verified: 0x%x", magic);
     klog(LOG_INFO, "boot", "Running in 64-bit Long Mode");
 
     if (g_boot_info.fb_available) {
@@ -101,31 +127,28 @@ void boot_storage_init(uint64_t magic)
 
     /* Memory summary */
     for (i = 0; i < g_boot_info.mmap_count; i++) {
-        if (g_boot_info.mmap[i].type == 1) {
+        if (g_boot_info.mmap[i].type == 1)
             total_ram += g_boot_info.mmap[i].length;
-        }
     }
     klog(LOG_INFO, "mm", "Total RAM: %u MiB (%u entries)",
          (uint64_t)(total_ram / (1024 * 1024)),
          (uint64_t)g_boot_info.mmap_count);
 
-    /* Timer init already happened in boot_interrupts_init() → timer_hal_init().
-     * By this point g_system_timer is assigned and sleep_ms() works.
-     * We just need to bring up secondary CPUs via SMP init. */
+    /* --- SMP: bringup APs --- */
     if (g_boot_info.acpi_available) {
         boot_splash_status("Initializing SMP...");
         smp_init();
+        kernel_subsystem_set_ready(SUBSYS_SMP, true);
         boot_progress(2, "SMP", POSTCODE_SMP_INIT);
     }
 
-
-    /* Dump hardware info (only when live debug is active) */
+    /* Hardware dump (only in live debug mode) */
     if (klog_disk_live_active()) {
         boot_splash_status("Dumping hardware info...");
         hw_dump_to_log();
     }
 
-    /* Heap test */
+    /* Heap self-test */
     boot_splash_status("Heap self-test...");
     {
         uint8_t *a = (uint8_t *)kmalloc(64);
@@ -152,6 +175,7 @@ void boot_storage_init(uint64_t magic)
              ok ? "OK" : "FAIL", heap_get_used(), heap_get_free());
     }
 
+    /* --- Registry: BOOT_FATAL if fails --- */
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Registry ---------------------------------------------------------------");
 
@@ -163,14 +187,27 @@ void boot_storage_init(uint64_t magic)
     registry_init();
     boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
+    kernel_subsystem_set_ready(SUBSYS_REGISTRY, true);
     boot_progress(2, "REGISTRY", POSTCODE_REGISTRY_INIT);
 
-    /* Load kernel symbol map for symbolic stack traces */
+    /* --- Symbol table --- */
     symtab_init();
 
+    /* --- mmap --- */
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- System Services --------------------------------------------------------");
 
     boot_splash_status("Initializing mmap...");
     mmap_init();
+
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "[PHASE2] complete -- VFS, registry, SMP, network ready");
+}
+
+/* ---- Legacy wrapper ----------------------------------------------------- */
+
+void boot_storage_init(uint64_t magic)
+{
+    (void)magic;
+    boot_phase2();
 }

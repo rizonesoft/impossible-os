@@ -19,11 +19,11 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Phase 0: Critical init — serial, boot info, PMM/VMM/heap, CPUID, SIMD */
     boot_phase0(magic, mbi);
 
-    /* Phase 2: Interrupts — GDT, IDT, PIC, PIT, framebuffer, PCI, NIC */
-    boot_interrupts_init();
+    /* Phase 1: Platform services -- GDT, IDT, ACPI, APIC, timer, display */
+    boot_phase1();
 
-    /* Phase 3: Storage — VFS, partitions, ACPI/SMP, registry, services */
-    boot_storage_init(magic);
+    /* Phase 2: System services -- PCI, storage, VFS, registry, SMP, network */
+    boot_phase2();
 
     /* Phase 4: Boot tests — VFS, IXFS, scheduler, IPC, swap, mmap */
     boot_tests_run();

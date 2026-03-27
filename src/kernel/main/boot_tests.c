@@ -31,9 +31,6 @@ void boot_tests_run(void)
 {
     /* --- Essential runtime init (must run regardless of debug mode) --- */
 
-    klog(LOG_DEBUG, "", "");
-    klog(LOG_DEBUG, "", "--- System Services --------------------------------------------------------");
-
     boot_splash_status("Initializing scheduler...");
     task_init();
     ahci_enable_events();

@@ -1,8 +1,11 @@
 /* ============================================================================
- * boot_interrupts.c — Interrupt controller and ACPI/SMP initialization
+ * boot_interrupts.c -- Phase 1: Platform Services (Interrupts Enabled at End)
  *
- * GDT, IDT, PIC, PIT, RTC, keyboard, mouse, framebuffer, boot splash,
- * PCI, NIC, VirtIO input, VBox mouse, DHCP, ACPI, LAPIC/IOAPIC, SMP.
+ * GDT, IDT, ACPI, LAPIC/IOAPIC, PIC, timer, RTC, keyboard, mouse,
+ * SMBIOS, UEFI info gathering, framebuffer, boot splash.
+ * Interrupts enabled with STI only after LAPIC/timer are ready.
+ *
+ * Provides: boot_phase1() and the legacy boot_interrupts_init() wrapper.
  * ============================================================================ */
 
 #include "kernel/types.h"
@@ -18,57 +21,50 @@
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/framebuffer.h"
-#include "kernel/drivers/pci.h"
-#include "kernel/drivers/rtl8139.h"
-#include "kernel/net/net.h"
-#include "kernel/drivers/virtio_input.h"
-#include "kernel/drivers/vbox_mouse.h"
 #include "kernel/acpi.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/ioapic.h"
-#include "kernel/smp.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_init.h"
-#include "kernel/fs/vfs.h"
-#include "kernel/fs/partition.h"
-#include "kernel/drivers/ahci.h"
-#include "kernel/drivers/xhci.h"
+#include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/smbios.h"
 #include "kernel/boot_timing.h"
 #include "main/main_internal.h"
 
-void boot_interrupts_init(void)
-{
+/* ---- Phase 1 ------------------------------------------------------------ */
 
+void boot_phase1(void)
+{
     klog(LOG_DEBUG, "boot", "--- Phase: interrupt controllers & timer ---");
     boot_splash_status("Setting up interrupts...");
 
+    /* --- GDT: BOOT_FATAL --- */
     gdt_init();
+    kernel_subsystem_set_ready(SUBSYS_GDT, true);
     boot_progress(1, "GDT", POSTCODE_GDT_INIT);
 
+    /* --- IDT + IRQ: BOOT_FATAL --- */
     idt_init();
     irq_init();
+    kernel_subsystem_set_ready(SUBSYS_IDT, true);
     boot_progress(1, "IDT", POSTCODE_IDT_INIT);
 
-    /* ACPI MADT must be parsed before PIC/PIT so we know:
-     *   (a) PCAT_COMPAT — whether a PIC exists at all
-     *   (b) IOAPIC base — for routing IRQ0 through IOAPIC
-     *   (c) CPU count   — for SMP decision
-     * Prerequisites: only g_boot_info (available since boot_hw_init). */
+    /* --- ACPI: MADT + FADT parsing --- */
     if (g_boot_info.acpi_available) {
         klog(LOG_INFO, "acpi", "RSDP v%u at %p",
                (uint64_t)g_boot_info.acpi_version,
                g_boot_info.acpi_rsdp_addr);
         boot_splash_status("Parsing ACPI tables...");
         acpi_init();
+        kernel_subsystem_set_ready(SUBSYS_ACPI, true);
         klog(LOG_INFO, "smp", "CPUs discovered: %u",
              (uint64_t)acpi_get_cpu_count());
         boot_progress(1, "ACPI", POSTCODE_ACPI_INIT);
     }
 
-    /* ---- APIC-first boot: LAPIC + IOAPIC before PIC/PIT ----
+    /* --- LAPIC + IOAPIC: APIC-first boot ---
      *
      * With the MADT parsed, we know the IOAPIC base address and whether
      * a PIC exists (PCAT_COMPAT flag).  Initialize LAPIC and IOAPIC NOW
@@ -79,10 +75,13 @@ void boot_interrupts_init(void)
         lapic_init();
 
         if (lapic_available()) {
+            kernel_subsystem_set_ready(SUBSYS_LAPIC, true);
             ioapic_init();
 
             if (ioapic_available()) {
-                /* Disable PIC if platform has one — IOAPIC takes over */
+                kernel_subsystem_set_ready(SUBSYS_IOAPIC, true);
+
+                /* Disable PIC if platform has one -- IOAPIC takes over */
                 if (acpi_pcat_compat()) {
                     pic_disable();
                     klog(LOG_INFO, "irq",
@@ -92,8 +91,7 @@ void boot_interrupts_init(void)
                          "LAPIC/IOAPIC active (APIC-only, no PIC)");
                 }
 
-                /* Drain stale ISR bits — may exist from firmware or
-                 * PIC init leaking through before we disabled it. */
+                /* Drain stale ISR bits */
                 {
                     uint32_t isr_dirty = 1;
                     uint32_t drain_rounds = 0;
@@ -126,21 +124,12 @@ void boot_interrupts_init(void)
         }
         boot_progress(1, "LAPIC_IOAPIC", POSTCODE_LAPIC_INIT);
 
-        /* AHCI MSI targets the LAPIC at 0xFEE00000 — it MUST be initialized
-         * before we program MSI.  INTx fallback needs IOAPIC routing.
-         * This also must follow irq_init() so handlers aren't wiped. */
-        ahci_setup_interrupts();
+        /* NOTE: ahci_setup_interrupts() moved to Phase 2, after ahci_init()
+         * has discovered the PCI device.  LAPIC is ready here, so MSI will
+         * work when called from Phase 2. */
     }
 
-    /* PIC init — only when a PIC exists AND IOAPIC has NOT taken over.
-     *
-     * Three states:
-     *   1. No ACPI: assume legacy PIC → pic_init()
-     *   2. PCAT_COMPAT=1, no IOAPIC: PIC is the IRQ controller → pic_init()
-     *   3. PCAT_COMPAT=1, IOAPIC active: PIC already disabled above → skip
-     *   4. PCAT_COMPAT=0: no PIC exists (APIC-only) → skip
-     *
-     * pic_unmask_irq/pic_mask_irq are self-guarding (no-op when pic_ready=0). */
+    /* --- PIC init: only when PIC exists AND IOAPIC has NOT taken over --- */
     if (!ioapic_available()) {
         if (!g_boot_info.acpi_available || acpi_pcat_compat()) {
             pic_init();
@@ -150,29 +139,30 @@ void boot_interrupts_init(void)
         }
     }
 
-    /* UTS: select timer backend (PIT for TCG, LAPIC for all else).
-     * This MUST happen before boot_splash_init() so sleep_ms() works.
-     * On non-TCG: calibrates LAPIC, starts timer, masks PIT IRQ0.
-     * On TCG: initializes PIT as wall-clock timer. */
+    /* --- Timer: select LAPIC or PIT backend, calibrate --- */
     timer_hal_init();
+    kernel_subsystem_set_ready(SUBSYS_TIMER, true);
     boot_progress(1, "TIMER", POSTCODE_TIMER_INIT);
 
+    /* --- RTC --- */
     rtc_init();
+    kernel_subsystem_set_ready(SUBSYS_RTC, true);
     boot_progress(1, "RTC", POSTCODE_RTC_INIT);
 
+    /* --- Input devices --- */
     boot_splash_status("Initializing input...");
     keyboard_init();
     boot_progress(1, "KEYBOARD", POSTCODE_KBD_INIT);
-
     mouse_init();
 
+    /* --- Framebuffer + boot splash --- */
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
     fb_init();
+    kernel_subsystem_set_ready(SUBSYS_FB, true);
     boot_progress(1, "FB", POSTCODE_FB_INIT);
-
     boot_splash_init();
 
-    /* --- Phase 1 info gathering (moved from Phase 0) --- */
+    /* --- Phase 1 info gathering (moved from Phase 0 per TODO-01 §2) --- */
     uefi_config_init();
     smbios_init();
     boot_progress(1, "SMBIOS", POSTCODE_SMBIOS_INIT);
@@ -199,28 +189,20 @@ void boot_interrupts_init(void)
         }
     }
 
-    /* Enable interrupts + start splash animation now — the LAPIC timer
-     * is already calibrated and running, so the spinner can animate
-     * during the slow PCI scan and network init that follow. */
+    /* --- Enable interrupts + start splash animation ---
+     * LAPIC timer is calibrated and running; spinner can animate during
+     * the slow PCI scan and network init that follow in Phase 2. */
     __asm__ volatile ("sti");
     boot_splash_start_animation();
     boot_splash_status("Setting up hardware...");
 
-    klog(LOG_DEBUG, "boot", "--- Phase: PCI & network hardware ---");
-    boot_splash_tick();
-    boot_splash_status("Detecting hardware...");
-    boot_splash_status("Scanning PCI bus...");
-    pci_scan();
-    xhci_init();
-    boot_splash_status("Initializing network...");
-    rtl8139_init();
-    net_init();
-    virtio_input_init();
-    vbox_mouse_init();
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "[PHASE1] complete -- interrupts, timer, display ready");
+}
 
-    /* DHCP fire-and-forget */
-    klog(LOG_DEBUG, "boot",
-         "--- Phase: network (DHCP, async fire-and-forget) ---");
-    dhcp_discover();
+/* ---- Legacy wrapper (until main.c switches to boot_phase1) -------------- */
 
+void boot_interrupts_init(void)
+{
+    boot_phase1();
 }

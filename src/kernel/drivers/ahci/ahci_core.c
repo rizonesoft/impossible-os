@@ -476,7 +476,7 @@ retry:
              * (common on VirtualBox).  Fall back to polling permanently
              * and retry this command in polling mode. */
             klog(LOG_WARN, "ahci",
-                   "Port %u: event timeout — falling back to polling mode",
+                   "Port %u: event timeout -- falling back to polling mode",
                    (uint64_t)p->port_num);
             use_events = 0;
 
@@ -945,7 +945,7 @@ void ahci_enable_events(void)
     }
     if (!ahci_irq_vector) {
         klog(LOG_WARN, "ahci",
-               "AHCI: no IRQ vector — event I/O unavailable, using polling");
+               "AHCI: no IRQ vector -- event I/O unavailable, using polling");
         return;
     }
     use_events = 1;

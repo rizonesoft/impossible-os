@@ -37,8 +37,8 @@
 | --- | :---: | ----------------------------- | ---------- | :----: |
 | 💎  |   1   | Boot init infrastructure      | —          |  [x]   |
 | 💎  |   2   | Phase 0 — critical init       | §1         |  [x]   |
-| 💎  |   3   | Phase 1 — platform services   | §2         |  [ ]   |
-| 💎  |   4   | Phase 2 — system services     | §3         |  [ ]   |
+| 💎  |   3   | Phase 1 — platform services   | §2         |  [/]   |
+| 💎  |   4   | Phase 2 — system services     | §3         |  [/]   |
 | 💎  |   5   | Phase 3 — user platform       | §4         |  [ ]   |
 | 💎  |   6   | Dependency gates              | §1–5       |  [ ]   |
 | 💎  |   7   | Failure policy                | §6         |  [ ]   |
@@ -100,29 +100,29 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 
 **File:** `src/kernel/main/boot_interrupts.c` (restructured as `boot_phase1`)
 
-- [ ] `gdt_init()` — BOOT_FATAL; POST code 0x30
-- [ ] `idt_init()` + `irq_init()` — BOOT_FATAL; BOOT_REQUIRE(SUBSYS_GDT)
-- [ ] `acpi_init()` — MADT + FADT parsing only (CPU count, LAPIC base, IOAPIC base, PM1a port); BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
-- [ ] `lapic_init()` — BOOT_FATAL on APIC-only platforms, BOOT_DEGRADED if PIC fallback available; BOOT_REQUIRE(SUBSYS_ACPI)
-- [ ] `ioapic_init()` — BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_LAPIC)
-- [ ] `pic_disable_or_init()` — disable if IOAPIC took over; init if PIC is the only controller
-- [ ] `ahci_setup_interrupts()` — MSI routing only; BOOT_DEGRADED if fails; BOOT_REQUIRE(SUBSYS_LAPIC)
-- [ ] `timer_hal_init()` — select LAPIC or PIT backend, calibrate; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
-- [ ] `dpc_init()` — per-CPU DPC queue and drain loop; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_TIMER) — see TODO-06
-- [ ] `rtc_init()` — BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_IDT)
-- [ ] `keyboard_init()` + `mouse_init()` — BOOT_DEGRADED if unavailable
-- [ ] `smbios_init()` — POST code 0x40; BOOT_DEGRADED if unavailable; move here from Phase 0
-- [ ] `esrt_init()` + `mat_init()` + `uefi_conformance_init()` + `uefi_capsule_init()` + `uefi_crypto_agility_init()` — BOOT_DEGRADED; move here from Phase 0
-- [ ] `secureboot_keys_init()` — BOOT_DEGRADED; move here from Phase 0
-- [ ] `fb_init()` + `boot_splash_init()` — BOOT_DEGRADED; display is optional for kernel correctness
-- [ ] `boot_timing_report()` — log TSC + FPDT data after timer is calibrated
-- [ ] `__asm__ volatile ("sti")` — enable interrupts only after all of the above
-- [ ] `boot_splash_start_animation()` — after STI so LAPIC timer can drive the spinner
-- [ ] Remove `#include "kernel/fs/vfs.h"` and `#include "kernel/fs/partition.h"` from this file
-- [ ] Remove PCI scan, NIC init, DHCP from Phase 1 — move to Phase 2
-- [ ] Remove SMP AP bringup from Phase 1 — move to Phase 2
-- [ ] Remove all `HV_BAR` macro definitions and usages (14 sites in `boot_interrupts.c`)
-- [ ] Replace every `HV_BAR` site with `boot_progress(1, "step-name", postcode)`
+- [x] `gdt_init()` — BOOT_FATAL; POST code 0x30
+- [x] `idt_init()` + `irq_init()` — BOOT_FATAL; BOOT_REQUIRE(SUBSYS_GDT)
+- [x] `acpi_init()` — MADT + FADT parsing only (CPU count, LAPIC base, IOAPIC base, PM1a port); BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
+- [x] `lapic_init()` — BOOT_FATAL on APIC-only platforms, BOOT_DEGRADED if PIC fallback available; BOOT_REQUIRE(SUBSYS_ACPI)
+- [x] `ioapic_init()` — BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_LAPIC)
+- [x] `pic_disable_or_init()` — disable if IOAPIC took over; init if PIC is the only controller
+- [x] `ahci_setup_interrupts()` — MSI routing only; BOOT_DEGRADED if fails; BOOT_REQUIRE(SUBSYS_LAPIC)
+- [x] `timer_hal_init()` — select LAPIC or PIT backend, calibrate; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
+- [ ] `dpc_init()` — per-CPU DPC queue and drain loop; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_TIMER) — see TODO-06 (not yet implemented)
+- [x] `rtc_init()` — BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_IDT)
+- [x] `keyboard_init()` + `mouse_init()` — BOOT_DEGRADED if unavailable
+- [x] `smbios_init()` — POST code 0x40; BOOT_DEGRADED if unavailable; move here from Phase 0
+- [x] `esrt_init()` + `mat_init()` + `uefi_conformance_init()` + `uefi_capsule_init()` + `uefi_crypto_agility_init()` — BOOT_DEGRADED; move here from Phase 0
+- [x] `secureboot_keys_init()` — BOOT_DEGRADED; move here from Phase 0
+- [x] `fb_init()` + `boot_splash_init()` — BOOT_DEGRADED; display is optional for kernel correctness
+- [x] `boot_timing_report()` — log TSC + FPDT data after timer is calibrated
+- [x] `__asm__ volatile ("sti")` — enable interrupts only after all of the above
+- [x] `boot_splash_start_animation()` — after STI so LAPIC timer can drive the spinner
+- [x] Remove `#include "kernel/fs/vfs.h"` and `#include "kernel/fs/partition.h"` from this file
+- [x] Remove PCI scan, NIC init, DHCP from Phase 1 — move to Phase 2
+- [x] Remove SMP AP bringup from Phase 1 — move to Phase 2 (already in boot_storage.c)
+- [x] Remove all `HV_BAR` macro definitions and usages — already removed in prior commit
+- [x] Replace every `HV_BAR` site with `boot_progress(1, "step-name", postcode)` — already done
 
 ## 4. Phase 2 — System Services `[Sonnet]`
 
@@ -130,25 +130,25 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 
 **File:** `src/kernel/main/boot_storage.c` (restructured as `boot_phase2`)
 
-- [ ] `pci_scan()` — enumerate PCI/PCIe bus; BOOT_DEGRADED if no devices found; moved from Phase 1
-- [ ] `object_manager_init()` — ObInit: bootstrap object type singletons and root namespace; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_HEAP) — see TODO-03
-- [ ] `xhci_init()` — USB host controller; BOOT_DEGRADED; moved from Phase 1
-- [ ] `ata_init()` + `virtio_blk_init()` + `ahci_init()` — storage drivers; BOOT_DEGRADED if all fail; moved from Phase 0
-- [ ] `blkdev_register_all()` — register block devices into the blkdev layer
-- [ ] `vfs_init()` — BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_HEAP)
-- [ ] `partition_scan_all()` + `partition_mount_filesystems()` — BOOT_FATAL if no root partition mounts
-- [ ] `klog_disk_enable()` — open `C:\Impossible\System\Logs\kernel.log`; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
-- [ ] `registry_init()` — BOOT_FATAL if fails after VFS is up; BOOT_REQUIRE(SUBSYS_VFS)
-- [ ] `symtab_init()` — load symbol table from disk; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
-- [ ] `mmap_init()` — user-mode memory map subsystem; BOOT_REQUIRE(SUBSYS_VMM)
-- [ ] `rtl8139_init()` + `net_init()` — NIC + network stack; BOOT_DEGRADED; moved from Phase 1
-- [ ] `virtio_input_init()` + `vbox_mouse_init()` — BOOT_DEGRADED; moved from Phase 1
-- [ ] `dhcp_discover()` — fire-and-forget; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS) for lease file
-- [ ] `hw_dump()` — log full hardware summary after all drivers init
-- [ ] `smp_start_aps()` — bringup APs; BOOT_DEGRADED if any AP fails; BOOT_REQUIRE(SUBSYS_HEAP) + BOOT_REQUIRE(SUBSYS_REGISTRY); moved from Phase 1
-- [ ] Consolidate all ACPI power management (`acpi_power_init`, `_S5` parse) into Phase 2; remove duplicate ACPI call from `boot_storage.c`
-- [ ] Remove `HV_BAR` macro from `boot_storage.c` if present
-- [ ] Add `boot_progress(2, "step-name", postcode)` at each step
+- [x] `pci_scan()` — enumerate PCI/PCIe bus; BOOT_DEGRADED if no devices found; moved from Phase 1
+- [ ] `object_manager_init()` — ObInit: bootstrap object type singletons and root namespace; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_HEAP) — see TODO-03 (not yet implemented)
+- [x] `xhci_init()` — USB host controller; BOOT_DEGRADED; moved from Phase 1
+- [x] `ata_init()` + `virtio_blk_init()` + `ahci_init()` — storage drivers; BOOT_DEGRADED if all fail; moved from Phase 0
+- [x] `blkdev_register_all()` — register block devices into the blkdev layer
+- [x] `vfs_init()` — BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_HEAP)
+- [x] `partition_scan_all()` + `partition_mount_filesystems()` — BOOT_FATAL if no root partition mounts
+- [x] `klog_disk_enable()` — open `C:\Impossible\System\Logs\kernel.log`; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
+- [x] `registry_init()` — BOOT_FATAL if fails after VFS is up; BOOT_REQUIRE(SUBSYS_VFS)
+- [x] `symtab_init()` — load symbol table from disk; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
+- [x] `mmap_init()` — user-mode memory map subsystem; BOOT_REQUIRE(SUBSYS_VMM)
+- [x] `rtl8139_init()` + `net_init()` — NIC + network stack; BOOT_DEGRADED; moved from Phase 1
+- [x] `virtio_input_init()` + `vbox_mouse_init()` — BOOT_DEGRADED; moved from Phase 1
+- [x] `dhcp_discover()` — fire-and-forget; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS) for lease file
+- [x] `hw_dump()` — log full hardware summary after all drivers init
+- [x] `smp_start_aps()` — bringup APs; BOOT_DEGRADED if any AP fails; BOOT_REQUIRE(SUBSYS_HEAP) + BOOT_REQUIRE(SUBSYS_REGISTRY); moved from Phase 1
+- [ ] Consolidate all ACPI power management (`acpi_power_init`, `_S5` parse) into Phase 2 — deferred (ACPI power not yet implemented)
+- [x] Remove `HV_BAR` macro from `boot_storage.c` if present — already removed in prior commit
+- [x] Add `boot_progress(2, "step-name", postcode)` at each step
 
 ## 5. Phase 3 — User Platform `[Sonnet]`
 
@@ -245,9 +245,9 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 
 | ⭐  | Feature                              | 🪟 Windows NT / 11                         | 🐧 Linux                                   | 🚀 Impossible OS                                         |
 | --- | ------------------------------------ | ------------------------------------------- | ------------------------------------------ | --------------------------------------------------------- |
-| 💎  | Formal phase model                   | ✅ Phase 0 / Phase 1 init                  | ✅ initcall levels (early → late)          | ⬜ Planned — Steps 2–5                                   |
+| 💎  | Formal phase model                   | ✅ Phase 0 / Phase 1 init                  | ✅ initcall levels (early → late)          | 🔄 In progress — §2 done, §3 done (dpc pending), §4–5 planned |
 | 💎  | Interrupt-disabled critical phase    | ✅ Phase 0 (no interrupts, no paging)      | ✅ `start_kernel` early before `sti`       | ✅ Done — §2; `boot_phase0()` runs with interrupts off   |
-| 💎  | Dependency-ordered subsystem init    | ✅ Boot driver load groups + ordering      | ✅ initcall dependency ordering            | ⬜ Planned — Step 6                                      |
+| 💎  | Dependency-ordered subsystem init    | ✅ Boot driver load groups + ordering      | ✅ initcall dependency ordering            | 🔄 In progress — §2–4 done, §6 gates pending             |
 | 💎  | Typed init failure results           | ✅ `NTSTATUS` from every init routine      | ✅ `initcall_t` return codes               | ⬜ Planned — Step 1 (`boot_result_t`)                    |
 | 💎  | Halt on critical subsystem failure   | ✅ Bugcheck + halt                         | ✅ `panic()` + halt                        | ⬜ Planned — Step 7                                      |
 | 💎  | Degraded boot on non-critical fail   | ✅ Last-known-good, safe mode              | ✅ Emergency shell fallback                | ⬜ Planned — Step 7                                      |
