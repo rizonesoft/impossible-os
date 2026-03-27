@@ -318,12 +318,14 @@ struct mouse_state vbox_mouse_get_state(void)
 {
     struct mouse_state s;
 
-    /* Return cached position updated by IRQ handler.
-     * Do NOT poll here — VMMDev only returns coordinates when
-     * there is a pending event triggered by an interrupt. */
+    /* Poll VMMDev for current absolute position.
+     * Also done in the IRQ handler, but polling here as a fallback
+     * ensures the cursor moves even if VBox IRQs aren't delivering. */
+    vbox_mouse_poll();
+
     s.x = abs_x;
     s.y = abs_y;
-    s.buttons = 0;  /* VMMDev does NOT provide buttons — merge with PS/2 */
+    s.buttons = 0;  /* VMMDev does NOT provide buttons -- merge with PS/2 */
     return s;
 }
 
