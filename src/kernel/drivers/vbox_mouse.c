@@ -21,6 +21,7 @@
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/idt.h"
+#include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/klog.h"
 #include "kernel/mm/pmm.h"
@@ -163,8 +164,11 @@ static void vbox_mouse_poll(void)
 
 /* ---- IRQ handler ---- */
 
-static uint64_t vbox_irq_handler(struct interrupt_frame *frame)
+static void vbox_irq_callback(uint8_t vector, void *ctx)
 {
+    (void)vector;
+    (void)ctx;
+
     /* Check if there are pending events */
     if (vmmdev_mem && vmmdev_mem[2]) {
         /* Acknowledge all pending events */
@@ -177,9 +181,7 @@ static uint64_t vbox_irq_handler(struct interrupt_frame *frame)
         /* Poll mouse position */
         vbox_mouse_poll();
     }
-
-    irq_eoi(irq_line);
-    return (uint64_t)frame;
+    /* EOI handled by irq_register dispatch */
 }
 
 /* ============================================================================
@@ -292,9 +294,9 @@ int vbox_mouse_init(void)
     abs_x = (int32_t)(fb_get_width() / 2);
     abs_y = (int32_t)(fb_get_height() / 2);
 
-    /* Register IRQ handler */
-    idt_register_handler(PIC1_OFFSET + irq_line, vbox_irq_handler);
-    pic_unmask_irq(irq_line);
+    /* Register IRQ handler via irq_register (works with IOAPIC + PIC) */
+    irq_register(PIC1_OFFSET + irq_line, vbox_irq_callback,
+                 (void *)0, "vbox_mouse");
 
     /* Enable all VMMDev interrupts via the MMIO region.
      * Offset [3] (uint32_t index 3 = byte offset 12) is the IRQ mask. */
