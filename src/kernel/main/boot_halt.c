@@ -237,7 +237,17 @@ static void blit_string(volatile uint32_t *fb, uint32_t pitch_px,
     }
 }
 
-/* ---- boot_halt ----------------------------------------------------------- */
+/* ---- Restart policy -----------------------------------------------------
+ *
+ * boot.conf `restart_on_halt=N` controls behavior:
+ *   0 = permanent halt (default) -- wait for manual power cycle
+ *   1 = auto-restart after 10s   -- suitable for unattended / kiosk
+ *
+ * Phase 0 failures always halt permanently (no config parsed yet).
+ * Phase 1-2 BOOT_FATAL: respect boot.conf restart policy.
+ * Phase 3 failures: log + serial console fallback (no halt).
+ * panic_screen(): uses Registry AutoRestart key (separate from boot.conf).
+ * -------------------------------------------------------------------- */
 
 void boot_halt(const char *reason)
 {

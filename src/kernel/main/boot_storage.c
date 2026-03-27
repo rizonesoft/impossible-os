@@ -72,7 +72,11 @@ void boot_phase2(void)
     blkdev_register_all();
     boot_progress(2, "STORAGE_DRV", POSTCODE_STORAGE_INIT);
 
-    /* --- VFS: BOOT_FATAL if fails --- */
+    /* --- VFS: requires HEAP --- */
+    if (!kernel_subsystem_ready(SUBSYS_HEAP)) {
+        kernel_subsystem_dump();
+        boot_halt("HEAP not ready -- cannot init VFS");
+    }
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
     boot_splash_status("Initializing VFS...");
     vfs_init();
@@ -175,7 +179,11 @@ void boot_phase2(void)
              ok ? "OK" : "FAIL", heap_get_used(), heap_get_free());
     }
 
-    /* --- Registry: BOOT_FATAL if fails --- */
+    /* --- Registry: requires VFS --- */
+    if (!kernel_subsystem_ready(SUBSYS_VFS)) {
+        kernel_subsystem_dump();
+        boot_halt("VFS not ready -- cannot init registry");
+    }
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Registry ---------------------------------------------------------------");
 

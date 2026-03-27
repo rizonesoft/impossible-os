@@ -27,6 +27,8 @@
 #include "registry.h"
 #include "bsod_icon.h"
 #include "kernel/symtab.h"
+#include "kernel/boot_init.h"
+#include "kernel/drivers/serial.h"
 
 /* --- Constants --- */
 
@@ -322,6 +324,24 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
 
     /* Disable interrupts to prevent further exceptions */
     __asm__ volatile ("cli");
+
+    /* Dump subsystem readiness to serial for post-mortem analysis */
+    kernel_subsystem_dump();
+
+    /* If framebuffer is not yet initialized (Phase 0 panic), fall back to
+     * serial-only output via boot_halt(). No BSOD drawing is possible. */
+    if (!kernel_subsystem_ready(SUBSYS_FB)) {
+        serial_write("\n[PANIC] ");
+        serial_write(description ? description : "(unknown)");
+        serial_write("\n");
+        if (file) {
+            serial_write("  at ");
+            serial_write(file);
+            serial_write("\n");
+        }
+        serial_write("System halted (no framebuffer for BSOD).\n");
+        for (;;) __asm__ volatile ("hlt");
+    }
 
     /* Stop boot animation dots if still running */
     if (boot_splash_active())

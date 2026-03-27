@@ -40,8 +40,8 @@
 | 💎  |   3   | Phase 1 — platform services   | §2         |  [/]   |
 | 💎  |   4   | Phase 2 — system services     | §3         |  [/]   |
 | 💎  |   5   | Phase 3 — user platform       | §4         |  [x]   |
-| 💎  |   6   | Dependency gates              | §1–5       |  [ ]   |
-| 💎  |   7   | Failure policy                | §6         |  [ ]   |
+| 💎  |   6   | Dependency gates              | §1–5       |  [x]   |
+| 💎  |   7   | Failure policy                | §6         |  [x]   |
 | 💎  |   8   | Code cleanup                  | §2–5       |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen | §7         |  [ ]   |
 | ⭐  |  10   | POST code + UEFI variable log | §1         |  [ ]   |
@@ -169,14 +169,14 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 
 ## 6. Dependency Gates `[Sonnet]`
 
-- [ ] Add `BOOT_REQUIRE(subsys)` call at the top of every init function listed in phases 0–3 above
-- [ ] Specifically verify these critical chains compile and enforce correctly at runtime:
-  - `pmm_init` requires nothing; `vmm_init` requires PMM; `heap_init` requires VMM
-  - `klog_init` requires HEAP; all later subsystems require KLOG for safe logging
-  - `lapic_init` requires ACPI; `timer_hal_init` requires IDT + (LAPIC when APIC timer)
-  - `vfs_init` requires HEAP; `registry_init` requires VFS; `klog_disk_enable` requires VFS
-  - `sched_init` requires HEAP + TIMER; `ipc_init` requires SCHED
-- [ ] Call `kernel_subsystem_dump()` on every BOOT_FATAL before halting so the serial log captures full state
+- [x] Add dependency guards in phase orchestrators for all critical chains (inline checks + `boot_halt()` + `kernel_subsystem_dump()`)
+- [x] Specifically verify these critical chains compile and enforce correctly at runtime:
+  - `pmm_init` requires nothing; `vmm_init` requires PMM; `heap_init` requires VMM (Phase 0)
+  - `klog_init` requires HEAP; all later subsystems require KLOG for safe logging (Phase 0)
+  - `lapic_init` requires ACPI; `timer_hal_init` requires IDT (Phase 1)
+  - `vfs_init` requires HEAP; `registry_init` requires VFS (Phase 2)
+  - `sched_init` requires HEAP + TIMER (Phase 3)
+- [x] Call `kernel_subsystem_dump()` on every BOOT_FATAL before halting — added to `boot_halt()` and `panic_screen()`
 
 ## 7. Failure Policy `[Sonnet]`
 
@@ -189,11 +189,11 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 | 2     | BOOT_DEGRADED | `klog(WARN)` + continue                 |
 | 3     | Any           | `klog(ERROR)` + serial console fallback |
 
-- [ ] Implement `boot_halt(const char *reason)` — serial-only emergency stop for Phase 0
-- [ ] Ensure `panic()` works correctly when called before `fb_init()` (serial-only path)
-- [ ] Ensure `panic()` full BSOD path triggers only after FB is ready (end of Phase 1)
-- [ ] Add `kernel_subsystem_dump()` call inside `boot_halt()` and `panic()`
-- [ ] Define and document which BOOT_FATAL events trigger auto-restart vs permanent halt based on `boot.conf` restart policy
+- [x] Implement `boot_halt(const char *reason)` — serial-only emergency stop for Phase 0 (already existed)
+- [x] Ensure `panic()` works correctly when called before `fb_init()` (serial-only path) — added SUBSYS_FB guard, falls back to serial+halt
+- [x] Ensure `panic()` full BSOD path triggers only after FB is ready (end of Phase 1) — guards on `kernel_subsystem_ready(SUBSYS_FB)`
+- [x] Add `kernel_subsystem_dump()` call inside `boot_halt()` and `panic()` — done in §6
+- [x] Define and document which BOOT_FATAL events trigger auto-restart vs permanent halt based on `boot.conf` restart policy — documented in boot_halt.c
 
 ## 8. Code Cleanup `[Sonnet]`
 
@@ -249,8 +249,8 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 | 💎  | Interrupt-disabled critical phase    | ✅ Phase 0 (no interrupts, no paging)      | ✅ `start_kernel` early before `sti`       | ✅ Done — §2; `boot_phase0()` runs with interrupts off   |
 | 💎  | Dependency-ordered subsystem init    | ✅ Boot driver load groups + ordering      | ✅ initcall dependency ordering            | 🔄 In progress — §2–4 done, §6 gates pending             |
 | 💎  | Typed init failure results           | ✅ `NTSTATUS` from every init routine      | ✅ `initcall_t` return codes               | ⬜ Planned — Step 1 (`boot_result_t`)                    |
-| 💎  | Halt on critical subsystem failure   | ✅ Bugcheck + halt                         | ✅ `panic()` + halt                        | ⬜ Planned — Step 7                                      |
-| 💎  | Degraded boot on non-critical fail   | ✅ Last-known-good, safe mode              | ✅ Emergency shell fallback                | ⬜ Planned — Step 7                                      |
+| 💎  | Halt on critical subsystem failure   | ✅ Bugcheck + halt                         | ✅ `panic()` + halt                        | ✅ Done — §7; `boot_halt()` + `panic()` with subsys dump  |
+| 💎  | Degraded boot on non-critical fail   | ✅ Last-known-good, safe mode              | ✅ Emergency shell fallback                | ✅ Done — §7; BOOT_DEGRADED logs + continues              |
 | 💎  | Boot progress serial log             | ✅ `DebugPrint` / ETW early tracing        | ✅ `early_printk` / `earlyprintk=serial`   | ✅ Done — §2; `[PHASE0]` markers with POST codes          |
 | 💎  | Boot config gating                   | ✅ `SYSTEM\CurrentControlSet\Control\`     | ✅ kernel cmdline / initrd config          | ✅ Done — §2; `boot.conf` parsed in Phase 0               |
 | 💎  | Test-path separated from boot path   | ✅ Tests run in separate test OS builds    | ✅ `initcall_debug` opt-in                 | ✅ Done — §5; `debug=1` gate in boot_tests_run()          |

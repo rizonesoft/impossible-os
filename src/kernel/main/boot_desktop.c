@@ -21,6 +21,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_halt.h"
 #include "kernel/boot_info.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
@@ -39,7 +40,12 @@
 
 void boot_phase3(void)
 {
-    /* --- Scheduler init --- */
+    /* --- Scheduler: requires HEAP + TIMER --- */
+    if (!kernel_subsystem_ready(SUBSYS_HEAP) ||
+        !kernel_subsystem_ready(SUBSYS_TIMER)) {
+        kernel_subsystem_dump();
+        boot_halt("HEAP or TIMER not ready -- cannot init scheduler");
+    }
     boot_splash_status("Initializing scheduler...");
     task_init();
     kernel_subsystem_set_ready(SUBSYS_SCHED, true);

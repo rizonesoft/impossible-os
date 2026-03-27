@@ -40,18 +40,22 @@ void boot_phase1(void)
     klog(LOG_DEBUG, "boot", "--- Phase: interrupt controllers & timer ---");
     boot_splash_status("Setting up interrupts...");
 
-    /* --- GDT: BOOT_FATAL --- */
+    /* --- GDT: no prerequisites --- */
     gdt_init();
     kernel_subsystem_set_ready(SUBSYS_GDT, true);
     boot_progress(1, "GDT", POSTCODE_GDT_INIT);
 
-    /* --- IDT + IRQ: BOOT_FATAL --- */
+    /* --- IDT + IRQ: requires GDT --- */
+    if (!kernel_subsystem_ready(SUBSYS_GDT)) {
+        kernel_subsystem_dump();
+        boot_halt("GDT not ready -- cannot init IDT");
+    }
     idt_init();
     irq_init();
     kernel_subsystem_set_ready(SUBSYS_IDT, true);
     boot_progress(1, "IDT", POSTCODE_IDT_INIT);
 
-    /* --- ACPI: MADT + FADT parsing --- */
+    /* --- ACPI: requires IDT --- */
     if (g_boot_info.acpi_available) {
         klog(LOG_INFO, "acpi", "RSDP v%u at %p",
                (uint64_t)g_boot_info.acpi_version,
@@ -139,7 +143,11 @@ void boot_phase1(void)
         }
     }
 
-    /* --- Timer: select LAPIC or PIT backend, calibrate --- */
+    /* --- Timer: requires IDT --- */
+    if (!kernel_subsystem_ready(SUBSYS_IDT)) {
+        kernel_subsystem_dump();
+        boot_halt("IDT not ready -- cannot init timer");
+    }
     timer_hal_init();
     kernel_subsystem_set_ready(SUBSYS_TIMER, true);
     boot_progress(1, "TIMER", POSTCODE_TIMER_INIT);
