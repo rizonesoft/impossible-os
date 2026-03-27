@@ -24,6 +24,18 @@ typedef __builtin_va_list va_list;
 
 static log_level_t screen_min_level = LOG_INFO;
 
+/* Per-subsystem verbosity overrides */
+#define KLOG_MAX_OVERRIDES 32
+
+typedef struct {
+    const char *tag;       /* subsystem string (pointer compare + strcmp) */
+    log_level_t min_level; /* entries below this level are dropped */
+} klog_level_override_t;
+
+static klog_level_override_t s_overrides[KLOG_MAX_OVERRIDES];
+static uint32_t              s_override_count;
+static log_level_t           s_global_min = LOG_DEBUG;  /* default: keep all */
+
 /* ---- Ring buffer ---- */
 
 static klog_entry_t klog_ring[KLOG_RING_SIZE];
@@ -212,6 +224,90 @@ void klog_disk_enable(void)
     klog_disk_flush();
 }
 
+/* ---- Per-subsystem verbosity ---- */
+
+static int str_eq(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+static log_level_t subsys_min_level(const char *subsystem)
+{
+    uint32_t i;
+    if (!subsystem || !subsystem[0])
+        return s_global_min;
+    for (i = 0; i < s_override_count; i++) {
+        if (s_overrides[i].tag == subsystem)  /* fast pointer compare */
+            return s_overrides[i].min_level;
+        if (str_eq(s_overrides[i].tag, subsystem))
+            return s_overrides[i].min_level;
+    }
+    return s_global_min;
+}
+
+void klog_set_level(const char *subsystem, log_level_t min_level)
+{
+    uint32_t i;
+
+    /* NULL or "" sets the global default */
+    if (!subsystem || !subsystem[0]) {
+        s_global_min = min_level;
+        return;
+    }
+
+    /* Update existing override */
+    for (i = 0; i < s_override_count; i++) {
+        if (str_eq(s_overrides[i].tag, subsystem)) {
+            s_overrides[i].min_level = min_level;
+            return;
+        }
+    }
+
+    /* Add new override */
+    if (s_override_count < KLOG_MAX_OVERRIDES) {
+        s_overrides[s_override_count].tag = subsystem;
+        s_overrides[s_override_count].min_level = min_level;
+        s_override_count++;
+    }
+}
+
+void klog_load_levels_from_registry(void)
+{
+    /* Known subsystem tags to check in registry */
+    static const char *tags[] = {
+        "net", "boot", "fs", "mm", "drv", "sec", "ahci", "pci",
+        "lapic", "acpi", "smp", "UEFI", "TPM", "vfs", "ixfs", "fat32"
+    };
+    uint32_t i;
+    uint32_t tag_count = sizeof(tags) / sizeof(tags[0]);
+
+    /* Use RegReadKeyValue to check HKLM\SYSTEM\Logs\Levels\<tag> */
+    extern long RegReadKeyValue(void *hRootKey, const char *lpPath,
+                                const char *lpValueName, uint32_t *lpType,
+                                uint8_t *lpData, uint32_t *lpcbData);
+
+    for (i = 0; i < tag_count; i++) {
+        char val[16];
+        uint32_t val_type = 0;
+        uint32_t val_size = sizeof(val);
+        long rc;
+
+        rc = RegReadKeyValue((void *)(uintptr_t)0x80000002,  /* HKEY_LOCAL_MACHINE */
+                             "SYSTEM\\Logs\\Levels",
+                             tags[i], &val_type, (uint8_t *)val, &val_size);
+        if (rc == 0 && val_type == 1 && val_size > 0) {  /* REG_SZ = 1 */
+            val[val_size < sizeof(val) ? val_size : sizeof(val) - 1] = '\0';
+            log_level_t lvl = LOG_DEBUG;
+            if (str_eq(val, "INFO"))       lvl = LOG_INFO;
+            else if (str_eq(val, "WARN"))  lvl = LOG_WARN;
+            else if (str_eq(val, "ERROR")) lvl = LOG_ERROR;
+            else if (str_eq(val, "FATAL")) lvl = LOG_FATAL;
+            klog_set_level(tags[i], lvl);
+        }
+    }
+}
+
 /* ---- Public API ---- */
 
 void klog_set_screen_level(log_level_t min_level)
@@ -230,6 +326,10 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 {
     va_list ap;
     klog_entry_t *e;
+
+    /* Per-subsystem verbosity filter: drop entries below threshold */
+    if (level < subsys_min_level(subsystem))
+        return;
 
     /* ---- Store formatted message in ring buffer ---- */
     e = &klog_ring[klog_ring_head];

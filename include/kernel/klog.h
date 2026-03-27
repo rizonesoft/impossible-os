@@ -48,6 +48,17 @@ const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head);
  * Set to LOG_DEBUG to show everything on screen. */
 void klog_set_screen_level(log_level_t min_level);
 
+/* Set per-subsystem minimum log level.
+ * Entries below this level are dropped entirely (not stored in ring).
+ * subsystem: tag string (e.g. "net", "fs"). NULL or "" sets the global default.
+ * Up to 32 subsystem overrides can be active simultaneously. */
+void klog_set_level(const char *subsystem, log_level_t min_level);
+
+/* Load per-subsystem log levels from Registry.
+ * Reads HKLM\SYSTEM\Logs\Levels\<subsystem> for each known tag.
+ * Call after registry_init(). */
+void klog_load_levels_from_registry(void);
+
 /* ---- Split init (Phase 0 / Phase 2) ----
  * klog_early_init(): Phase 0 safe — ring buffer + serial only, no VFS.
  * klog_disk_enable(): Phase 2 safe — opens log files, starts disk flushing. */

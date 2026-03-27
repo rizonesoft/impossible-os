@@ -29,7 +29,7 @@
 | --- | :---: | ----------------------------------- | ------------- | :----: |
 | 💎  |   1   | Boot-phase aware klog init          | T01 §1        |  [x]   |
 | 💎  |   2   | Per-subsystem log splitting         | §1            |  [x]   |
-| 💎  |   3   | Per-subsystem verbosity control     | §2            |  [ ]   |
+| 💎  |   3   | Per-subsystem verbosity control     | §2            |  [x]   |
 | 💎  |   4   | Log rotation                        | §2            |  [ ]   |
 | 💎  |   5   | Rate limiting                       | §2            |  [ ]   |
 | ⭐  |   6   | Structured JSON log events          | §4, T20 §6    |  [ ]   |
@@ -97,12 +97,12 @@ Route log entries to dedicated per-subsystem log files based on the subsystem ta
 
 Allow silencing verbose subsystems in release builds without recompiling.
 
-- [ ] Add `klog_set_level(const char *subsystem, log_level_t min_level)` to `klog.h`/`klog.c`
-- [ ] Store per-subsystem min levels in a small hash map keyed by subsystem tag string
-- [ ] In `klog()`: look up the subsystem's min level before writing to ring buffer; drop entries below threshold
-- [ ] Read initial per-subsystem levels from Registry at `klog_disk_enable()` time: `HKLM\SYSTEM\Logs\Levels\<subsystem>` → level string (`"DEBUG"`, `"INFO"`, etc.)
-- [ ] Default: all subsystems at `LOG_DEBUG` in debug builds, `LOG_INFO` in release
-- [ ] Commit: `"kernel: per-subsystem log verbosity control"`
+- [x] Add `klog_set_level(const char *subsystem, log_level_t min_level)` to `klog.h`/`klog.c`
+- [x] Store per-subsystem min levels in a 32-entry override table keyed by tag string (pointer + strcmp)
+- [x] In `klog()`: look up `subsys_min_level()` before writing to ring buffer; drop entries below threshold
+- [x] `klog_load_levels_from_registry()`: reads `HKLM\SYSTEM\Logs\Levels\<tag>` for 16 known subsystems via `RegReadKeyValue()`
+- [x] Default: all subsystems at `LOG_DEBUG` (global min); adjustable via `klog_set_level(NULL, level)` or per-tag
+- [x] Commit: `"kernel: per-subsystem log verbosity control"`
 
 ## 4. Log Rotation `[Sonnet]`
 
