@@ -591,19 +591,17 @@ void klog_disk_flush(void)
         kernel_log_size = rotate_log_file(
             "C:\\Impossible\\System\\Logs\\", "kernel.log", kernel_log_size);
 
+        /* Shared batch buffer for kernel.log + subsystem files */
+        uint32_t batch_pages = 8;  /* 32 KB */
+        uint8_t *batch = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(batch_pages);
+        uint32_t batch_size = batch ? batch_pages * 4096 : 0;
+
         ring = klog_get_ring(&ring_count, &ring_head);
         if (ring && ring_count > 0 && ixfs_flush_index < ring_count) {
             logfile = vfs_open("C:\\Impossible\\System\\Logs\\kernel.log",
                                VFS_O_WRITE);
             if (logfile) {
-                /* Batch all entries into a single write to avoid
-                 * per-entry AHCI DMA overhead (was causing 19s stall) */
-                uint32_t batch_pages = 8;  /* 32 KB batch buffer */
-                uint8_t *batch = (uint8_t *)(uintptr_t)
-                    pmm_alloc_contiguous(batch_pages);
-
                 if (batch) {
-                    uint32_t batch_size = batch_pages * 4096;
                     uint32_t batch_pos = 0;
                     uint32_t write_offset = (uint32_t)logfile->size;
 
@@ -640,11 +638,6 @@ void klog_disk_flush(void)
                         vfs_write(logfile, write_offset, batch_pos, batch);
                     }
 
-                    {
-                        uint32_t pg;
-                        for (pg = 0; pg < batch_pages; pg++)
-                            pmm_free_frame((uintptr_t)batch + pg * 4096);
-                    }
                 }
 
                 ixfs_flush_index = ring_count;
@@ -652,12 +645,10 @@ void klog_disk_flush(void)
                 vfs_close(logfile);
             }
 
-            /* ---- Per-subsystem log routing ---- */
-            /* Write each entry to its subsystem-specific log file.
-             * Uses the same ring range that was just flushed to kernel.log.
-             * Each subsystem file is opened, appended-to, and closed per flush
-             * to avoid holding many VFS handles open across boot phases. */
-            {
+            /* ---- Per-subsystem log routing (batched) ---- */
+            /* Reuse the batch buffer to write per-subsystem files in one
+             * vfs_write() each, avoiding per-entry AHCI DMA overhead. */
+            if (batch) {
                 uint32_t si;
                 for (si = 0; si < SUBSYS_LOG_COUNT; si++) {
                     char spath[64];
@@ -666,8 +657,8 @@ void klog_disk_flush(void)
                     const char *base = "C:\\Impossible\\System\\Logs\\";
                     const char *fname = s_subsys_filenames[si];
                     int k;
+                    uint32_t bp = 0;
 
-                    /* Build path */
                     for (k = 0; base[k]; k++) spath[sp++] = base[k];
                     for (k = 0; fname[k]; k++) spath[sp++] = fname[k];
                     spath[sp] = '\0';
@@ -675,40 +666,53 @@ void klog_disk_flush(void)
                     sf = vfs_open(spath, VFS_O_WRITE);
                     if (!sf) continue;
 
+                    /* Batch matching entries into buffer */
                     {
                         uint32_t sfl_start = (ring_count > KLOG_RING_SIZE)
                             ? ring_count - KLOG_RING_SIZE : 0;
-                        uint32_t write_off = (uint32_t)sf->size;
 
                         for (i = sfl_start; i < ring_count; i++) {
                             uint32_t idx;
+                            const char *df, *a, *b;
+
                             if (ring_count < KLOG_RING_SIZE)
                                 idx = i;
                             else
                                 idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
                                       % KLOG_RING_SIZE;
 
-                            const char *df = dispatch_filename(ring[idx].subsystem);
-                            /* Check if this entry belongs to this subsystem file */
-                            {
-                                const char *a = df;
-                                const char *b = fname;
-                                while (*a && *a == *b) { a++; b++; }
-                                if (*a != '\0' || *b != '\0')
-                                    continue;  /* not this file */
-                            }
+                            df = dispatch_filename(ring[idx].subsystem);
+                            a = df; b = fname;
+                            while (*a && *a == *b) { a++; b++; }
+                            if (*a != '\0' || *b != '\0')
+                                continue;
 
                             {
                                 char line[256];
                                 int pos = format_entry(&ring[idx], line, 256);
-                                vfs_write(sf, write_off, (uint32_t)pos, (uint8_t *)line);
-                                write_off += (uint32_t)pos;
+                                if (bp + (uint32_t)pos < batch_size) {
+                                    for (k = 0; k < pos; k++)
+                                        batch[bp++] = (uint8_t)line[k];
+                                }
                             }
                         }
                     }
+
+                    /* Single write for all matching entries */
+                    if (bp > 0)
+                        vfs_write(sf, (uint32_t)sf->size, bp, batch);
                     vfs_close(sf);
                 }
+
+                /* Free batch buffer after all subsystem files are written */
             }
+        }
+
+        /* Free batch buffer after both kernel.log and subsystem files */
+        if (batch) {
+            uint32_t pg;
+            for (pg = 0; pg < batch_pages; pg++)
+                pmm_free_frame((uintptr_t)batch + pg * 4096);
         }
     }
 
