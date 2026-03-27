@@ -126,3 +126,18 @@ void KeLowerIrql(KIRQL old_irql)
      * non-empty, drain pending DPCs before returning to caller.
      * This is the standard NT DPC dispatch point. */
 }
+
+/* ---- Debug assertion: IRQL contract check -------------------------------- */
+
+void _irql_check_max(KIRQL max_irql, const char *caller)
+{
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    KIRQL cur = pcpu->current_irql;
+
+    if (cur > max_irql) {
+        klog(LOG_ERROR, "irql",
+             "IRQL violation in %s: CPU %u at IRQL %u, max allowed %u",
+             caller ? caller : "?",
+             (uint64_t)pcpu->cpu_id, (uint64_t)cur, (uint64_t)max_irql);
+    }
+}

@@ -18,6 +18,7 @@
  * ============================================================================ */
 
 #include "kernel/sched/mutex.h"
+#include "kernel/sched/irql.h"
 #include "kernel/sched/task.h"
 #include "kernel/atomic.h"
 #include "kernel/printk.h"
@@ -43,6 +44,8 @@ void mutex_init_ordered(mutex_t *m, const char *name, uint32_t order)
 
 void mutex_lock(mutex_t *m)
 {
+    ASSERT_IRQL_PASSIVE_OR_APC();
+
     struct task *cur_task = task_current();
     uint32_t my_task = cur_task->pid;
     struct thread *cur_thread = thread_current();

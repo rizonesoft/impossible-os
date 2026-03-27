@@ -11,6 +11,7 @@
  * ============================================================================ */
 
 #include "kernel/sched/event.h"
+#include "kernel/sched/irql.h"
 #include "kernel/sched/task.h"
 #include "kernel/timer.h"         /* system_get_ticks(), system_get_freq() */
 /* ---------------------------------------------------------------------------
@@ -98,6 +99,8 @@ void event_init(event_t *ev, const char *name,
  * ------------------------------------------------------------------------- */
 void event_wait(event_t *ev)
 {
+    ASSERT_IRQL_PASSIVE_OR_APC();
+
     while (!atomic_read(&ev->state)) {
         enqueue_and_block(ev);
         /* Re-check on wake — could have been a spurious wakeup due to

@@ -23,6 +23,7 @@
  * ============================================================================ */
 
 #include "kernel/sched/workqueue.h"
+#include "kernel/sched/irql.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/mm/heap.h"
@@ -213,6 +214,8 @@ int workqueue_enqueue(workqueue_t *wq, work_fn_t fn, void *arg)
  * ------------------------------------------------------------------------- */
 void workqueue_flush(workqueue_t *wq)
 {
+    ASSERT_IRQL_PASSIVE_OR_APC();
+
     if (!wq) return;
     while (wq->sem_count > 0 || wq->head) {
         barrier();

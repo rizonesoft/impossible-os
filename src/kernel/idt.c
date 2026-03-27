@@ -17,6 +17,8 @@
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/panic.h"
+#include "kernel/sched/irql.h"
+#include "kernel/smp.h"
 
 /* IDT entry (16 bytes in Long Mode) */
 struct idt_entry {
@@ -190,60 +192,110 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
 }
 
 /* --- C-level interrupt dispatcher (called from assembly) ---
+ *
+ * IRQL integration (NT model):
+ *   1. On entry: save current IRQL, raise to the mapped DIRQL for this vector
+ *   2. Call handler (which manages its own EOI)
+ *   3. On exit: restore prior IRQL, reprogram LAPIC TPR
+ *
+ * For nested interrupts, the saved IRQL is per-invocation on the stack,
+ * so LIFO unwinding is automatic.  Higher-priority interrupts can still
+ * fire because the LAPIC TPR only blocks lower-priority vectors.
+ *
+ * CPU exceptions (0-31) do NOT raise IRQL -- they are synchronous faults
+ * and execute at the IRQL of the faulting code.
+ *
  * Returns the stack frame pointer to restore. Usually the same frame,
  * but the PIT scheduler may return a different task's frame. */
 uint64_t isr_handler(struct interrupt_frame *frame)
 {
-    /* If a custom handler is registered, call it */
-    if (handlers[frame->int_no]) {
-        return handlers[frame->int_no](frame);
+    uint8_t vec = (uint8_t)frame->int_no;
+    uint64_t result;
+
+    /* ---- IRQL raise for hardware interrupts (vectors 32+) ----
+     * CPU exceptions (0-31) are synchronous faults and run at the
+     * IRQL of the faulting code -- do not raise. */
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    KIRQL prev_irql = pcpu->current_irql;
+    KIRQL isr_irql;
+
+    if (vec >= 32) {
+        isr_irql = vector_to_irql(vec);
+
+        /* Only raise if the mapped IRQL is higher than current.
+         * Nested interrupts: a higher-priority device interrupt may
+         * fire while we're already at a lower DIRQL. */
+        if (isr_irql > prev_irql) {
+            pcpu->current_irql = isr_irql;
+            /* TPR is already set by hardware for LAPIC-delivered
+             * interrupts, but set it explicitly for consistency
+             * and for PIC/legacy paths. */
+            if (lapic_available())
+                lapic_write(LAPIC_REG_TPR, irql_to_tpr(isr_irql));
+        }
     }
 
-    /* Default handler for CPU exceptions (0-31) — show styled panic screen */
-    if (frame->int_no < 32) {
-        panic_screen(frame, frame->err_code, exception_names[frame->int_no],
+    /* ---- Dispatch to registered handler ---- */
+    if (handlers[vec]) {
+        result = handlers[vec](frame);
+        goto irql_restore;
+    }
+
+    /* ---- Default: CPU exceptions (0-31) -- panic ---- */
+    if (vec < 32) {
+        panic_screen(frame, frame->err_code, exception_names[vec],
                      "idt.c", 0);
         /* panic_screen never returns */
     }
 
-    /* Default handler for unclaimed dynamic vectors (32+).
-     * Log a warning on first occurrence, count subsequent hits.
-     * Send LAPIC EOI -- safe even if no interrupt is pending. */
+    /* ---- Default: unclaimed hardware/dynamic vectors ---- */
     {
-        uint8_t vec = (uint8_t)frame->int_no;
         uint64_t count;
 
-        /* Vector 255 (0xFF): LAPIC spurious interrupt -- silent EOI */
+        /* LAPIC spurious (0xFF): silent EOI, no logging */
         if (vec == 0xFF) {
             lapic_eoi();
-            return (uint64_t)frame;
+            result = (uint64_t)frame;
+            goto irql_restore;
         }
 
-        /* Vectors 0x90-0x9F: Hyper-V synthetic interrupts -- silent EOI */
+        /* Hyper-V synthetic (0x90-0x9F): silent EOI */
         if (vec >= 0x90 && vec <= 0x9F) {
             lapic_eoi();
-            return (uint64_t)frame;
+            result = (uint64_t)frame;
+            goto irql_restore;
         }
 
         count = ++unhandled_counts[vec];
 
         if (count == 1) {
-            /* First hit: log full details */
             klog(LOG_WARN, "idt",
                  "Unhandled interrupt vec=%u (0x%x), RIP=0x%x",
                  (uint64_t)vec, (uint64_t)vec, frame->rip);
         } else if (count == 10 || count == 100 || count == 1000) {
-            /* Periodic log at exponential milestones */
             klog(LOG_WARN, "idt",
                  "Unhandled interrupt vec=%u (0x%x): %u total hits",
                  (uint64_t)vec, (uint64_t)vec, count);
         }
 
-        /* Always send EOI — idempotent, prevents ISR bit getting stuck */
+        /* EOI -- idempotent, prevents ISR bit getting stuck */
         lapic_eoi();
     }
 
-    return (uint64_t)frame;
+    result = (uint64_t)frame;
+
+irql_restore:
+    /* ---- IRQL restore on interrupt exit ----
+     * Lower back to the IRQL we had before this interrupt.
+     * The LAPIC TPR is reprogrammed to accept interrupts at the
+     * restored priority level. */
+    if (vec >= 32 && pcpu->current_irql != prev_irql) {
+        pcpu->current_irql = prev_irql;
+        if (lapic_available())
+            lapic_write(LAPIC_REG_TPR, irql_to_tpr(prev_irql));
+    }
+
+    return result;
 }
 
 void idt_register_handler(uint8_t n, interrupt_handler_t handler)

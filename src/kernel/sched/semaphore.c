@@ -13,6 +13,7 @@
  * ============================================================================ */
 
 #include "kernel/sched/semaphore.h"
+#include "kernel/sched/irql.h"
 #include "kernel/sched/task.h"
 void sem_init(semaphore_t *s, const char *name, int32_t initial_count)
 {
@@ -23,6 +24,8 @@ void sem_init(semaphore_t *s, const char *name, int32_t initial_count)
 
 void sem_wait(semaphore_t *s)
 {
+    ASSERT_IRQL_PASSIVE_OR_APC();
+
     /* Fast path: count > 0, just decrement */
     while (s->count <= 0) {
         /* Add to wait queue */

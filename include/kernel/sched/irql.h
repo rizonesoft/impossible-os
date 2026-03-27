@@ -128,6 +128,18 @@ static inline KIRQL vector_to_irql(uint8_t vector)
  * and available to HAL code that needs direct TPR computation. */
 uint32_t irql_to_tpr(KIRQL irql);
 
+/* ---- Debug assertions ---------------------------------------------------- */
+
+/* Check that the current IRQL is at most max_irql.  Logs a diagnostic on
+ * violation.  Called from blocking primitives to catch illegal waits at
+ * elevated IRQL.  Full enforcement (hard traps) deferred to §8. */
+void _irql_check_max(KIRQL max_irql, const char *caller);
+
+/* Assert: current IRQL must allow blocking (at most APC_LEVEL).
+ * Use at the top of mutex_lock, sem_wait, event_wait, yield, etc. */
+#define ASSERT_IRQL_PASSIVE_OR_APC() \
+    _irql_check_max(APC_LEVEL, __func__)
+
 /* ---- IRQL query and transition API --------------------------------------- */
 
 /* Return the IRQL of the current CPU.

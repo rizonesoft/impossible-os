@@ -35,7 +35,7 @@
 | --- | :---: | -------------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | `KIRQL` type, constants, and core contract         | —          |  [x]   |
 | 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1         |  [x]   |
-| 💎  |   3   | Interrupt entry/exit IRQL integration              | §2         |  [ ]   |
+| 💎  |   3   | Interrupt entry/exit IRQL integration              | §2         |  [x]   |
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2         |  [ ]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4     |  [ ]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5         |  [ ]   |
@@ -64,15 +64,15 @@
 - [x] Implement `KeRaiseIrql()` with monotonic raise validation and debug assertions for illegal transitions.
 - [x] Implement `KeLowerIrql()` with strict restore checks (`old_irql <= current_irql`) and instrumentation.
 - [x] Ensure spinlock paths that currently `cli/sti` are aligned to IRQL semantics (`DISPATCH_LEVEL` or higher where required).
-- [ ] Commit: `"kernel: sched — track current IRQL per CPU and enforce transitions"`
+- [x] Commit: `"kernel: sched — track current IRQL per CPU and enforce transitions"`
 
 ## 3. Interrupt Entry/Exit IRQL Integration
 
-- [ ] On interrupt/trap entry from thread context, raise to the mapped DIRQL before ISR body execution.
-- [ ] Preserve prior IRQL in the interrupt frame/context and restore it on exit.
-- [ ] Ensure nested interrupts preserve highest-active IRQL correctly and unwind in strict LIFO order.
-- [ ] Keep end-of-interrupt signaling (LAPIC/PIC) ordered correctly relative to IRQL lowering.
-- [ ] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
+- [x] On interrupt/trap entry from thread context, raise to the mapped DIRQL before ISR body execution.
+- [x] Preserve prior IRQL in the interrupt frame/context and restore it on exit.
+- [x] Ensure nested interrupts preserve highest-active IRQL correctly and unwind in strict LIFO order.
+- [x] Keep end-of-interrupt signaling (LAPIC/PIC) ordered correctly relative to IRQL lowering.
+- [x] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
 - [ ] Commit: `"kernel: irq — wire IRQL raises/lowers into interrupt path"`
 
 ## 4. DPC Object Type and Per-CPU Queue
@@ -132,7 +132,7 @@
 
 | ⭐  | Feature                                     | 🪟 Windows 11 / NT                            | 🐧 Linux                                                | 🚀 Impossible OS                                          |
 | --- | ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
-| 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | 🔄 Per-CPU IRQL tracked, LAPIC TPR programmed, spinlocks IRQL-aware (§1-§2) — ISR entry/exit wiring pending (§3) |
+| 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | ✅ Per-CPU IRQL, LAPIC TPR, ISR raise/lower, spinlock integration, blocking assertions (§1-§3) |
 | 💎  | Deferred interrupt bottom half              | ✅ DPC queue at `DISPATCH_LEVEL`              | ✅ softirq/tasklet/NAPI bottom-half model               | ⬜ Planned — §4–§6                                        |
 | 💎  | ISR-safe deferred queue API                 | ✅ `KeInsertQueueDpc`                         | ✅ IRQ-safe enqueue primitives in net/block paths       | ⬜ Planned — §4                                           |
 | 💎  | Per-CPU deferred work queues                | ✅ Per-CPU DPC state                          | ✅ Per-CPU softirq and work processing                  | ⬜ Planned — §4–§6                                        |
