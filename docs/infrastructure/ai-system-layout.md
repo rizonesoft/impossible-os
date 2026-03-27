@@ -1,202 +1,188 @@
 # AI Development System Layout
 
-> Canonical reference for the Cursor-primary AI development setup.
-> Covers the checked-in layout, source-of-truth boundaries, and update rules.
+> Canonical reference for the multi-agent AI development setup in Impossible OS.
+> Covers the checked-in layout, source-of-truth boundaries, agent adapters, and update rules.
+>
+> See also: [Multi-Agent Guide](multi-agent-system.md)
+
+---
+
+## Overview
+
+Impossible OS uses a layered AI development system with a **single canonical source** and thin tool-specific adapters:
+
+```
+.impossible/            ← Single source of truth (tool-neutral)
+├── rules/              ← Coding conventions (plain markdown)
+├── workflows/          ← Procedures and workflows (plain markdown)
+├── index.md            ← Master orientation
+└── context.md          ← Current project state
+
+─── Thin adapters per tool ─────────────────────────────────────
+
+AGENTS.md               ← Antigravity + project overview (reads .impossible/)
+CLAUDE.md               ← Claude Code instructions (reads .impossible/)
+.github/copilot-instructions.md  ← GitHub Copilot (reads .impossible/)
+.cursor/rules/*.mdc     ← Cursor rule adapters → .impossible/rules/
+.cursor/skills/         ← Cursor skills (/.cmd, native format)
+.agents/workflows/      ← Antigravity workflows (/.cmd)
+.claude/commands/       ← Claude Code commands (/.cmd)
+.claude/skills/         ← Claude Code skills (SKILL.md format)
+```
 
 ---
 
 ## Checked-In Layout
 
-All durable AI-facing project guidance lives in the repo and travels with every clone.
+### `.impossible/` — Single Source of Truth
+
+```
+.impossible/
+├── index.md            ← Master orientation for any agent
+├── context.md          ← Living project state (update after major changes)
+├── rules/
+│   ├── build.md        ← Safety boundaries, build workflow, command discipline
+│   ├── freestanding.md ← Kernel C: no stdlib, allocator rules, crash debugging
+│   ├── assembly.md     ← NASM x86-64, UEFI-era assembly constraints
+│   ├── api-surface.md  ← Win32-first, Windows-style paths, product direction
+│   ├── doc-sync.md     ← Update docs in same task as code changes
+│   ├── mcp-usage.md    ← Srclight-only MCP; repo truth over MCP state
+│   └── todo-style.md   ← Lean TODO markdown, compact tables, section tags
+└── workflows/
+    ├── build.md
+    ├── create-todo.md
+    ├── implement-todo-section.md
+    ├── validate-todo-file.md
+    ├── verify-todo-section.md
+    ├── improve-implementation-order.md
+    ├── sync-ai-system.md
+    ├── add-asset.md
+    ├── docs-convert-todo.md
+    ├── docs-validate.md
+    ├── specs-create.md
+    ├── specs-fact-check.md
+    ├── test-fs-fat32.md
+    ├── test-hardware.md
+    ├── todo-done-check.md
+    ├── todo-master-sync.md
+    ├── todo-table-format.md
+    └── release.md
+```
+
+### `.cursor/` — Cursor-Specific
 
 ```
 .cursor/
-├── rules/                     ← Project-scoped Cursor rules (.mdc)
-│   ├── api-surface-direction.mdc
-│   ├── bare-metal-assembly.mdc
-│   ├── doc-sync-discipline.mdc
-│   ├── freestanding-kernel-code.mdc
-│   ├── mcp-usage-discipline.mdc
+├── rules/              ← Thin MDC adapters that surface .impossible/rules/ content
 │   ├── safety-build.mdc
+│   ├── freestanding-kernel-code.mdc
+│   ├── bare-metal-assembly.mdc
+│   ├── api-surface-direction.mdc
+│   ├── doc-sync-discipline.mdc
+│   ├── mcp-usage-discipline.mdc
 │   └── todo-markdown-style.mdc
-└── skills/                    ← Project-scoped Cursor skills
-    ├── create-todo/
-    │   ├── SKILL.md            ← Skill entry point (always SKILL.md)
-    │   ├── todo-template.md    ← Supporting reference
-    │   └── implementation-order.md
-    ├── implement-todo-section/
-    │   ├── SKILL.md
-    │   └── build-verification.md
-    ├── validate-todo-file/
-    │   ├── SKILL.md
-    │   └── validation-checklist.md
-    ├── verify-todo-section/
-    │   ├── SKILL.md
-    │   └── status-evidence.md
-    └── sync-ai-system/
-        ├── SKILL.md
-        └── ai-sync-checklist.md
-
-docs/infrastructure/
-├── ai-system-layout.md        ← This file — canonical layout reference
-├── development-tooling.md     ← Build system, tools, QEMU, CI
-└── github-setup.md
-
-AGENTS.md                      ← Human-facing project brief + philosophy
-todo/                          ← Execution roadmap (domain-based)
+└── skills/             ← Native Cursor skills (trigger as /command-name)
+    ├── create-todo/SKILL.md
+    ├── implement-todo-section/SKILL.md
+    ├── validate-todo-file/SKILL.md
+    ├── verify-todo-section/SKILL.md
+    ├── improve-implementation-order/SKILL.md
+    └── sync-ai-system/SKILL.md
 ```
 
-### Layout Rules
+### `.claude/` — Claude Code–Specific
 
-- Every rule lives as a single `.mdc` file directly inside `.cursor/rules/`. No subdirectories.
-- Every skill lives in its own subdirectory under `.cursor/skills/<name>/` with a `SKILL.md` entry point.
-  Supporting reference files (checklists, templates, examples) live alongside `SKILL.md` in the same directory.
-- Rules use `alwaysApply: false` and file-scoped globs. No new always-on rules unless the scope demands it.
-- Skills own reusable multi-step workflows. Single-step or one-shot flows belong in a command or explicit task, not a skill.
-- `AGENTS.md` is the human-facing overview. Rules contain concise enforceable guidance only.
-  Long narrative context belongs in `AGENTS.md` or `docs/`, not duplicated in every rule.
+```
+.claude/
+├── commands/           ← Slash commands (/command-name in Claude Code)
+│   └── *.md            ← 18 commands, mirrors .impossible/workflows/ naming
+└── skills/             ← SKILL.md format (same structure as .cursor/skills/)
+```
+
+### `.agents/` — Antigravity-Specific
+
+```
+.agents/
+├── workflows/          ← Slash commands (/command-name in Antigravity)
+│   └── *.md            ← 18 workflows, same naming as .cursor/skills/
+└── rules/              ← Legacy only — content migrated to .impossible/rules/
+```
 
 ---
 
 ## Source-of-Truth Table
 
-| Layer                         | Location                                           | Tracked? | Authoritative?     |
-| ----------------------------- | -------------------------------------------------- | :------: | :----------------: |
-| Project brief and philosophy  | `AGENTS.md`                                        | ✅ Yes   | ✅ Yes            |
-| Cursor project rules          | `.cursor/rules/*.mdc`                              | ✅ Yes   | ✅ Yes            |
-| Cursor project skills         | `.cursor/skills/*/SKILL.md` + support files        | ✅ Yes   | ✅ Yes            |
-| Infrastructure and arch docs  | `docs/`                                            | ✅ Yes   | ✅ Yes            |
-| Execution roadmap             | `todo/`                                            | ✅ Yes   | ✅ Yes            |
-| Legacy agent rules/workflows  | `.agents/rules/`, `.agents/workflows/`             | ✅ Yes   | ⚠️ Reference only |
-| Srclight code index           | `.srclight/` (gitignored)                          | ❌ No    | ❌ No             |
-| Cursor user rules/skills      | Local Cursor user settings                         | ❌ No    | ❌ No             |
-| Cursor MCP auth / state       | Local IDE state                                    | ❌ No    | ❌ No             |
-| Antigravity local config      | `~/.gemini/antigravity/`, `~/.antigravity-server/` | ❌ No    | ❌ No             |
-| Team Rules (Cursor dashboard) | Cursor cloud (optional)                            | ❌ No    | ❌ Overlay only   |
-| Bugbot / PR review rules      | Cursor dashboard (optional)                        | ❌ No    | ❌ Overlay only   |
-| Cloud agents / automations    | Cursor dashboard (optional)                        | ❌ No    | ❌ Overlay only   |
+| Layer | Location | Tracked? | Authoritative? |
+|-------|----------|:--------:|:--------------:|
+| Rule content | `.impossible/rules/` | ✅ Yes | ✅ Yes |
+| Workflow content | `.impossible/workflows/` | ✅ Yes | ✅ Yes |
+| Project brief | `AGENTS.md` | ✅ Yes | ✅ Yes |
+| Claude Code instructions | `CLAUDE.md` | ✅ Yes | ✅ Yes |
+| Copilot instructions | `.github/copilot-instructions.md` | ✅ Yes | ✅ Yes |
+| Cursor rule adapters | `.cursor/rules/*.mdc` | ✅ Yes | ✅ Yes (adapters) |
+| Cursor skills | `.cursor/skills/*/SKILL.md` | ✅ Yes | ✅ Yes |
+| Claude Code commands | `.claude/commands/*.md` | ✅ Yes | ✅ Yes |
+| Antigravity workflows | `.agents/workflows/*.md` | ✅ Yes | ✅ Yes |
+| Execution roadmap | `todo/` | ✅ Yes | ✅ Yes |
+| Arch / infra docs | `docs/` | ✅ Yes | ✅ Yes |
+| Srclight code index | `.srclight/` (gitignored) | ❌ No | ❌ No |
+| Local IDE state | Cursor, Claude Code local config | ❌ No | ❌ No |
+| Antigravity local config | `~/.gemini/antigravity/` | ❌ No | ❌ No |
 
 **The rule:** if guidance matters for future work, it must be in a tracked repo file.
-Local state and cloud dashboards may accelerate work but must never be the only place a convention is recorded.
 
 ---
 
 ## Boundary Model
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  CANONICAL  (git-tracked, travels with every clone)                 │
-│                                                                     │
-│  AGENTS.md  ·  .cursor/rules/  ·  .cursor/skills/                   │
-│  docs/      ·  todo/           ·  .agents/ (reference only)         │
-└───────────────────────────┬─────────────────────────────────────────┘
-                            │ feeds
-┌───────────────────────────▼─────────────────────────────────────────┐
-│  LOCAL / MACHINE-SPECIFIC  (gitignored or personal)                 │
-│                                                                     │
-│  .srclight/           — disposable index; rebuild any time          │
-│  Cursor user rules    — per-developer preferences                   │
-│  Cursor MCP auth      — local credentials                           │
-│  Antigravity config   — ~/... paths; local only                     │
-│  build/               — generated artifacts                         │
-└───────────────────────────┬─────────────────────────────────────────┘
-                            │ optional overlay
-┌───────────────────────────▼─────────────────────────────────────────┐
-│  CLOUD / DASHBOARD  (Cursor cloud, team, or dashboard-managed)      │
-│                                                                     │
-│  Team Rules   — may overlay project rules; never replace them       │
-│  Bugbot        — PR review automation; downstream of repo guidance  │
-│  Cloud agents  — must treat repo files as authority                 │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  CANONICAL  (git-tracked, travels with every clone)                  │
+│                                                                      │
+│  .impossible/rules/  ·  .impossible/workflows/  ·  .impossible/*.md │
+│  AGENTS.md  ·  CLAUDE.md  ·  .github/copilot-instructions.md        │
+│  .cursor/   ·  .claude/   ·  .agents/           ·  docs/  ·  todo/  │
+└──────────────────────────┬───────────────────────────────────────────┘
+                           │ feeds
+┌──────────────────────────▼───────────────────────────────────────────┐
+│  LOCAL / MACHINE-SPECIFIC  (gitignored or personal)                  │
+│                                                                      │
+│  .srclight/           — disposable index; rebuild any time           │
+│  Cursor user rules    — per-developer preferences                    │
+│  Cursor MCP auth      — local credentials                            │
+│  Antigravity config   — ~/... paths; local only                      │
+│  build/               — generated artifacts                          │
+└──────────────────────────────────────────────────────────────────────┘
 ```
-
-Anything adopted from the Cloud/Dashboard layer that becomes normative must also be
-recorded in the Canonical layer. Dashboard features are downstream of tracked guidance,
-not upstream of it.
 
 ---
 
 ## What Must Always Be Written Back to Tracked Files
 
-When any of the following change, update the relevant tracked files **in the same task**
-before the work is considered complete:
+When any of the following change, update the relevant tracked files **in the same task**:
 
 | Change type | Update target |
-| ----------- | ------------- |
-| New or changed coding convention | `.cursor/rules/` and/or `AGENTS.md` |
-| New or changed build / tooling flow | `docs/infrastructure/development-tooling.md`, `safety-build.mdc` |
-| New or changed API, ABI, or path convention | `AGENTS.md`, `api-surface-direction.mdc` |
-| New or changed allocator or memory rule | `freestanding-kernel-code.mdc`, `AGENTS.md` |
-| New MCP server or MCP policy change | `mcp-usage-discipline.mdc`, this file |
-| New skill or rule added or retired | This file, `TODO-01-ai-development-system.md` |
-| Antigravity compatibility change | `docs/infrastructure/ai-system-layout.md` §Antigravity |
-| Naming, domain, or TODO structure change | `todo/TODO-00-INDEX.md`, domain `INDEX.md` |
+|-------------|--------------|
+| New or changed coding convention | `.impossible/rules/` + thin adapters |
+| New or changed build / tooling flow | `.impossible/rules/build.md`, `AGENTS.md` |
+| New or changed API, ABI, or path convention | `.impossible/rules/api-surface.md`, `AGENTS.md` |
+| New or changed allocator or memory rule | `.impossible/rules/freestanding.md` |
+| New MCP server or MCP policy change | `.impossible/rules/mcp-usage.md` |
+| New skill, command, or workflow | `.impossible/workflows/`, `.impossible/index.md`, all adapter dirs |
+| AI system layout change | This file + `multi-agent-system.md` |
+| Naming or domain/TODO structure change | `todo/TODO-00-INDEX.md`, domain `INDEX.md` |
 
----
-
-## Update Path For Architecture Changes
-
-When conventions, tooling, or AI guidance changes:
-
-1. Update the tracked canonical source first.
-2. Verify that no other tracked file contradicts the new convention.
-3. If `.agents/rules/` or `.agents/workflows/` contain the old guidance, update or retire them.
-4. If a rule or skill becomes stale, update it; do not leave a known contradiction for later.
-5. Summarize the change in the commit message so future reviewers can trace it.
-
-Use the `sync-ai-system` skill for guidance on what to touch when AI conventions change.
-
----
-
-## Cursor-Primary Declaration
-
-Cursor is the primary AI development environment. All rules and skills are
-Cursor-native (`.cursor/rules/`, `.cursor/skills/`). Antigravity is a supported
-secondary consumer of the same repo-tracked guidance; it does not own a parallel
-rule system.
-
----
-
-## Antigravity Compatibility Path
-
-Antigravity works from the same project docs and rules. It does not need a separate
-rule system. The local Antigravity setup (`mcp_config.json`, `settings.json`) is a
-machine-local configuration; it is not tracked and not authoritative.
-
-**Minimum compatible Antigravity setup:**
-- Srclight MCP enabled: `srclight serve --transport stdio --workspace dev-workspace`
-- Memory MCP: **off** — not used in Cursor or Antigravity; do not enable `@modelcontextprotocol/server-memory` or a repo-local `.memory/` store. Gotchas belong in tracked docs or TODOs, not in MCP memory.
-- Filesystem MCP: disabled (not in the supported baseline)
-- Project context: read from `AGENTS.md`, `.cursor/rules/`, `docs/`, and `todo/`
-
-When Antigravity guidance and Cursor guidance conflict, the tracked repo files win.
-Antigravity should be re-oriented to repo truth, not the other way around.
+Use the `/sync-ai-system` workflow when conventions change across the system.
 
 ---
 
 ## Srclight Index Lifecycle
 
-`.srclight/` is a disposable local acceleration cache. It is never project truth.
+`.srclight/` is a disposable local acceleration cache — never project truth.
 
-**Refresh when:**
-- Large file renames or directory moves
-- Branch or worktree switch with significant structural changes
-- Repeated disagreement between Srclight results and `rg` / direct file reads
-- Tooling or dependency changes that affect the indexed symbol set
+**Refresh when:** large file renames, branch switches with structural changes, or repeated disagreement between Srclight and `rg` / direct file reads.
 
-**Health check:**
-- Known symbols and current file paths can be found accurately
-- Recently changed code appears with correct content
-- `codebase_map()` reports expected project stats
-
-**Stale-index symptoms:**
-- Missing files or deleted symbols still appearing
-- Outdated paths or wrong implementations returned
-- Srclight results consistently disagree with `rg` or direct reads
-
-**Recovery path:**
-1. Stop trusting the bad result immediately
-2. Fall back to `rg`, direct file reads, and repo-grounded evidence
-3. Run `srclight index` (add `--embed qwen3-embedding` for hybrid search)
-4. Restart the MCP session if needed
-5. Re-run the health check above before using Srclight results as evidence again
+**Recovery:**
+1. Fall back to `rg`, direct file reads, repo-grounded evidence
+2. Run `srclight index` (add `--embed qwen3-embedding` for hybrid search)
+3. Re-run health check before using results as evidence
