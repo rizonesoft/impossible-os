@@ -71,8 +71,9 @@
 
 ### 1.2 PTE NX bit definition
 
-- [ ] Add `PTE_NX (1ULL << 63)` to `include/kernel/mm/vmm.h`; gate it on `cpu_has(CPU_FEATURE_NX)` — clear if NX not available (older hardware)
-- [ ] `vmm_map_page(va, pa, flags)` — already takes `flags`; add `PTE_NX` as a valid flag and propagate to all intermediate PDPTe/PDe/PTe levels only at the leaf level (non-leaf PTE NX has no effect in x86-64)
+- [x] `VMM_FLAG_NX (1ULL << 63)` already defined in `vmm.h`
+- [x] `vmm_map_page()` applies flags to leaf PTE only; intermediates get `PRESENT | WRITABLE` (correct per x86-64)
+- [x] NX gated: `vmm_map_page()` strips `VMM_FLAG_NX` if `!cpu_has(CPU_FEATURE_NX)` — safe on older hardware
 
 ### 1.3 Apply NX to all existing mappings
 

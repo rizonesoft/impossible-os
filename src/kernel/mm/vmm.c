@@ -15,6 +15,7 @@
 
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/cpuid.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
 #include "kernel/drivers/framebuffer.h"
@@ -166,6 +167,10 @@ int vmm_map_page(uintptr_t virt, uintptr_t phys, uint64_t flags)
      * In that case we'd need to split the huge page — for now, fail. */
     pt = get_or_create_table(pd, pdi, 1);
     if (!pt) return -1;
+
+    /* Clear NX flag if CPU doesn't support it (older hardware) */
+    if (!cpu_has(CPU_FEATURE_NX))
+        flags &= ~VMM_FLAG_NX;
 
     /* Set the PT entry */
     pt[pti] = phys | flags;
