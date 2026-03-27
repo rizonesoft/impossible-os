@@ -18,6 +18,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/sched/irql.h"
 #include "kernel/acpi.h"    /* MAX_CPUS */
 
 /* ---- AP trampoline data area layout ----
@@ -47,6 +48,8 @@ struct per_cpu_data {
     uint64_t rsp0;              /* kernel stack top (for TSS) */
     uint64_t irq_count;         /* total interrupts handled */
     uint32_t preempt_count;     /* preemption nesting counter */
+    KIRQL    current_irql;      /* current IRQL (0 = PASSIVE_LEVEL) */
+    uint8_t  _irql_pad[3];     /* pad to 4-byte alignment */
     uint32_t is_online;         /* 1 when AP has finished init */
     void    *current_task;      /* pointer to current thread (future) */
 };

@@ -122,9 +122,11 @@ static inline KIRQL vector_to_irql(uint8_t vector)
  *   DIRQL N:       TPR = (N-1) << 4  (block all vectors below group N)
  *   CLOCK/IPI/...: TPR = 0xFF  (block all interrupts)
  *   HIGH:          TPR = 0xFF  (block all interrupts)
- *
- * Implemented in irql.c (see TODO-06 section 2).
  */
+
+/* Convert IRQL to LAPIC TPR value.  Used internally by KeRaiseIrql/KeLowerIrql
+ * and available to HAL code that needs direct TPR computation. */
+uint32_t irql_to_tpr(KIRQL irql);
 
 /* ---- IRQL query and transition API --------------------------------------- */
 

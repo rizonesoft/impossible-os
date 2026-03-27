@@ -3,7 +3,14 @@
  *
  * All four functions manipulate CPU interrupt state:
  *   spin_lock / spin_unlock      — unconditional cli/sti
- *   spin_lock_irqsave / spin_unlock_irqrestore — save/restore RFLAGS.IF
+ *   spin_lock_irqsave / spin_unlock_irqrestore — save/restore RFLAGS.IF + IRQL
+ *
+ * IRQL integration:
+ *   spin_lock_irqsave raises the per-CPU IRQL to DISPATCH_LEVEL (the minimum
+ *   for holding a spinlock in the NT model).  The previous IRQL is packed
+ *   into the upper byte of the saved flags value (bits 56-63 of RFLAGS are
+ *   always zero on x86-64, so this is safe).  spin_unlock_irqrestore unpacks
+ *   and restores it.
  *
  * Memory ordering (see barrier.h):
  *   - spin body:   barrier() prevents GCC from caching the flag read (CSE)
@@ -16,6 +23,8 @@
  * ============================================================================ */
 
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/irql.h"
+#include "kernel/smp.h"
 
 /* ---------------------------------------------------------------------------
  * irq_disable / irq_restore — thin wrappers around CLI and STI / POPFQ
@@ -104,9 +113,14 @@ void spin_unlock(spinlock_t *s)
 }
 
 /* ---------------------------------------------------------------------------
- * spin_lock_irqsave(s, flags) — save RFLAGS, disable IRQs, acquire lock
+ * spin_lock_irqsave(s, flags) — save RFLAGS + IRQL, raise to DISPATCH, acquire
  *
- * Saves the full RFLAGS register (including IF bit) before disabling IRQs.
+ * Saves the full RFLAGS register (including IF bit) before disabling IRQs,
+ * and packs the previous IRQL into bits 56-63 of the saved flags (these bits
+ * are always zero in x86-64 RFLAGS).  Raises the per-CPU IRQL to at least
+ * DISPATCH_LEVEL, which is the minimum level for holding a spinlock in the
+ * NT IRQL model.
+ *
  * Essential for nested callers: if a function is called from both thread
  * context (IRQs on) and IRQ context (IRQs already off), blindly calling
  * sti in the paired unlock is wrong.  irqsave/irqrestore preserves whatever
@@ -114,19 +128,47 @@ void spin_unlock(spinlock_t *s)
  * ------------------------------------------------------------------------- */
 void spin_lock_irqsave(spinlock_t *s, uint64_t *flags)
 {
+    struct per_cpu_data *pcpu;
+    KIRQL prev_irql;
+
     *flags = irq_save();   /* save RFLAGS + cli atomically */
+
+    /* Save and raise IRQL.  Read per-CPU AFTER cli to avoid preemption
+     * between read and write. */
+    pcpu = smp_this_cpu();
+    prev_irql = pcpu->current_irql;
+
+    /* Pack saved IRQL into upper byte of flags (bits 56-63) */
+    *flags |= ((uint64_t)prev_irql) << 56;
+
+    /* Raise to at least DISPATCH_LEVEL; if already higher (e.g., DIRQL),
+     * keep the higher level */
+    if (pcpu->current_irql < DISPATCH_LEVEL)
+        pcpu->current_irql = DISPATCH_LEVEL;
+
     while (!cas_acquire(&s->flag, 0, 1))
         barrier();
     barrier();
 }
 
 /* ---------------------------------------------------------------------------
- * spin_unlock_irqrestore(s, flags) — release flag then restore RFLAGS
+ * spin_unlock_irqrestore(s, flags) — release, restore IRQL, restore RFLAGS
  * ------------------------------------------------------------------------- */
 void spin_unlock_irqrestore(spinlock_t *s, uint64_t flags)
 {
+    struct per_cpu_data *pcpu;
+    KIRQL saved_irql;
+
     barrier();
     s->flag = 0;
+
+    /* Unpack saved IRQL from upper byte and restore */
+    saved_irql = (KIRQL)(flags >> 56);
+    flags &= 0x00FFFFFFFFFFFFFFULL;  /* clear IRQL bits before RFLAGS restore */
+
+    pcpu = smp_this_cpu();
+    pcpu->current_irql = saved_irql;
+
     irq_restore(flags);    /* re-enables IRQs only if they were on before */
 }
 

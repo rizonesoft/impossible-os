@@ -34,7 +34,7 @@
 | ⭐  | Order | Deliverable                                        | Depends On | Status |
 | --- | :---: | -------------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | `KIRQL` type, constants, and core contract         | —          |  [x]   |
-| 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1         |  [ ]   |
+| 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1         |  [x]   |
 | 💎  |   3   | Interrupt entry/exit IRQL integration              | §2         |  [ ]   |
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2         |  [ ]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4     |  [ ]   |
@@ -48,25 +48,25 @@
 
 ---
 
-## 1. `KIRQL` Type, Constants, and Core Contract `[Opus]`
+## 1. `KIRQL` Type, Constants, and Core Contract
 
 - [x] Create `include/kernel/sched/irql.h` with `typedef uint8_t KIRQL`.
 - [x] Define canonical levels: `PASSIVE_LEVEL = 0`, `APC_LEVEL = 1`, `DISPATCH_LEVEL = 2`, `HIGH_LEVEL = 31`.
 - [x] Define device IRQL range constants (`DIRQL_MIN`, `DIRQL_MAX`) and map IRQ vectors to effective device IRQLs.
 - [x] Document API legality per level (allocation, blocking waits, scheduler calls, and lock classes).
 - [x] Add `KeGetCurrentIrql()`, `KeRaiseIrql(new_irql, old_irql_out)`, and `KeLowerIrql(old_irql)` declarations.
-- [ ] Commit: `"kernel: sched — add KIRQL model and IRQL API surface"`
+- [x] Commit: `"kernel: sched — add KIRQL model and IRQL API surface"`
 
-## 2. Per-CPU IRQL Tracking and Transition Primitives `[Opus]`
+## 2. Per-CPU IRQL Tracking and Transition Primitives
 
-- [ ] Add `current_irql` to the per-CPU structure and initialize BSP/AP defaults to `PASSIVE_LEVEL`.
-- [ ] Implement `KeGetCurrentIrql()` as a per-CPU read with no locking.
-- [ ] Implement `KeRaiseIrql()` with monotonic raise validation and debug assertions for illegal transitions.
-- [ ] Implement `KeLowerIrql()` with strict restore checks (`old_irql <= current_irql`) and instrumentation.
-- [ ] Ensure spinlock paths that currently `cli/sti` are aligned to IRQL semantics (`DISPATCH_LEVEL` or higher where required).
+- [x] Add `current_irql` to the per-CPU structure and initialize BSP/AP defaults to `PASSIVE_LEVEL`.
+- [x] Implement `KeGetCurrentIrql()` as a per-CPU read with no locking.
+- [x] Implement `KeRaiseIrql()` with monotonic raise validation and debug assertions for illegal transitions.
+- [x] Implement `KeLowerIrql()` with strict restore checks (`old_irql <= current_irql`) and instrumentation.
+- [x] Ensure spinlock paths that currently `cli/sti` are aligned to IRQL semantics (`DISPATCH_LEVEL` or higher where required).
 - [ ] Commit: `"kernel: sched — track current IRQL per CPU and enforce transitions"`
 
-## 3. Interrupt Entry/Exit IRQL Integration `[Opus]`
+## 3. Interrupt Entry/Exit IRQL Integration
 
 - [ ] On interrupt/trap entry from thread context, raise to the mapped DIRQL before ISR body execution.
 - [ ] Preserve prior IRQL in the interrupt frame/context and restore it on exit.
@@ -75,7 +75,7 @@
 - [ ] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
 - [ ] Commit: `"kernel: irq — wire IRQL raises/lowers into interrupt path"`
 
-## 4. DPC Object Type and Per-CPU Queue `[Sonnet]`
+## 4. DPC Object Type and Per-CPU Queue
 
 - [ ] Create `include/kernel/sched/dpc.h` and `src/kernel/sched/dpc.c`.
 - [ ] Define `KDPC` with routine pointer, deferred context, optional argument pair, and queue link.
@@ -84,7 +84,7 @@
 - [ ] Enforce that `KeInsertQueueDpc()` is callable at ISR IRQL and does not block or allocate unbounded memory.
 - [ ] Commit: `"kernel: sched — add KDPC type and per-CPU DPC queue"`
 
-## 5. DPC Drain Loop at `DISPATCH_LEVEL` `[Opus]`
+## 5. DPC Drain Loop at `DISPATCH_LEVEL`
 
 - [ ] Implement `KiDispatchDpc()` that raises to `DISPATCH_LEVEL`, drains queued DPCs, and restores prior IRQL.
 - [ ] Guarantee DPC routines run with interrupts in the correct state for `DISPATCH_LEVEL` semantics.
@@ -93,7 +93,7 @@
 - [ ] Ensure DPC callbacks are forbidden from blocking waits or pageable operations.
 - [ ] Commit: `"kernel: sched — add DPC dispatcher at DISPATCH_LEVEL"`
 
-## 6. Timer/APIC Scheduling Path for DPC Dispatch `[Opus]`
+## 6. Timer/APIC Scheduling Path for DPC Dispatch
 
 - [ ] Trigger `KiDispatchDpc()` from the periodic timer/APIC path after ISR critical work and before returning to normal thread execution.
 - [ ] Add a pending flag so repeated queue inserts coalesce wakeups and avoid redundant dispatch entry.
@@ -101,7 +101,7 @@
 - [ ] Ensure no recursion/deadlock if a DPC re-queues work for the same CPU.
 - [ ] Commit: `"kernel: timer — schedule and coalesce DPC dispatch"`
 
-## 7. Driver Migration and Workqueue Contract Split `[Sonnet]`
+## 7. Driver Migration and Workqueue Contract Split
 
 - [ ] Define policy: ISR top-half does minimal register/ack work, then queues DPC; thread-level heavy work goes to workqueue.
 - [ ] Migrate at least one representative IRQ-heavy driver path (RTL8139 RX/TX or AHCI completion) to DPC-first flow.
@@ -110,7 +110,7 @@
 - [ ] Record driver follow-up checklist under `todo/04-drivers-hardware`.
 - [ ] Commit: `"drivers: irq — migrate ISR deferred path to DPC model"`
 
-## 8. IRQL Violation Traps and Structured Telemetry `[Sonnet]`
+## 8. IRQL Violation Traps and Structured Telemetry
 
 - [ ] Add `IRQL_REQUIRE_AT_MOST(level)` and `IRQL_REQUIRE_AT_LEAST(level)` macros for fast debug enforcement.
 - [ ] Log IRQL contract violations with subsystem, CPU, current level, required level, and callsite symbol.
@@ -118,7 +118,7 @@
 - [ ] Feed counters into existing kernel logging for boot/runtime health checks.
 - [ ] Commit: `"kernel: sched — add IRQL contract diagnostics and telemetry"`
 
-## 9. Budgeted DPC Fairness and Starvation Watchdog `[Opus]`
+## 9. Budgeted DPC Fairness and Starvation Watchdog
 
 - [ ] Add per-tick DPC budget (count and/or time) with carry-over to avoid monopolizing CPU time.
 - [ ] Add watchdog warning when DPC queue depth remains above threshold for N ticks.
@@ -132,7 +132,7 @@
 
 | ⭐  | Feature                                     | 🪟 Windows 11 / NT                            | 🐧 Linux                                                | 🚀 Impossible OS                                          |
 | --- | ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
-| 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | 🔄 `KIRQL` type, 6 levels, vector mapping, API declared (§1) — per-CPU tracking and ISR integration pending (§2–§3) |
+| 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | 🔄 Per-CPU IRQL tracked, LAPIC TPR programmed, spinlocks IRQL-aware (§1-§2) — ISR entry/exit wiring pending (§3) |
 | 💎  | Deferred interrupt bottom half              | ✅ DPC queue at `DISPATCH_LEVEL`              | ✅ softirq/tasklet/NAPI bottom-half model               | ⬜ Planned — §4–§6                                        |
 | 💎  | ISR-safe deferred queue API                 | ✅ `KeInsertQueueDpc`                         | ✅ IRQ-safe enqueue primitives in net/block paths       | ⬜ Planned — §4                                           |
 | 💎  | Per-CPU deferred work queues                | ✅ Per-CPU DPC state                          | ✅ Per-CPU softirq and work processing                  | ⬜ Planned — §4–§6                                        |

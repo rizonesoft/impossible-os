@@ -95,6 +95,7 @@ void ap_entry(uint32_t cpu_index)
     pcpu->is_online  = 1;
     pcpu->irq_count  = 0;
     pcpu->preempt_count = 0;
+    pcpu->current_irql  = PASSIVE_LEVEL;
     pcpu->current_task  = (void *)0;
 
     /* Memory barrier to ensure all writes are visible before incrementing count */
@@ -137,6 +138,7 @@ void smp_init(void)
         cpu_data[0].is_online    = 1;
         cpu_data[0].irq_count    = 0;
         cpu_data[0].preempt_count = 0;
+        cpu_data[0].current_irql  = PASSIVE_LEVEL;
         cpu_data[0].current_task  = (void *)0;
         msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
         total_cpus = 1;
@@ -150,6 +152,7 @@ void smp_init(void)
     cpu_data[0].is_online    = 1;
     cpu_data[0].irq_count    = 0;
     cpu_data[0].preempt_count = 0;
+    cpu_data[0].current_irql  = PASSIVE_LEVEL;
     cpu_data[0].current_task  = (void *)0;
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
 
