@@ -20,6 +20,8 @@
  * ============================================================================ */
 
 #include "kernel/cpuid_platform.h"
+#include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
 #include "kernel/klog.h"
 
 /* ---- CPUID helper (duplicated from vmbus.c to avoid coupling) ---- */
@@ -80,13 +82,30 @@ platform_id_t platform_detect(void)
     /* "Microsoft Hv" — Hyper-V (Gen 1 and Gen 2) */
     if (u32_eq(ebx, "Micr") && u32_eq(ecx, "osof") && u32_eq(edx, "t Hv")) {
         cached_platform = PLATFORM_HYPERV;
-        klog(LOG_INFO, "platform", "Detected: Hyper-V (CPUID 0x40000000)");
+        g_boot_info.hv_flags = HV_FLAG_TSC_ENLIGHTENMENT |
+                               HV_FLAG_TLBFLUSH_HYPERCALL |
+                               HV_FLAG_APIC_FREQ_MSR;
+        {
+            const char *s = "Microsoft Hv";
+            int k;
+            for (k = 0; s[k] && k < 15; k++) g_boot_info.hv_vendor[k] = s[k];
+            g_boot_info.hv_vendor[k] = '\0';
+        }
+        klog(LOG_INFO, "platform", "Detected: Hyper-V (CPUID 0x40000000, flags=0x%x)",
+             (uint64_t)g_boot_info.hv_flags);
         return cached_platform;
     }
 
     /* "VMwareVMware" — VMware Workstation / Fusion / ESXi */
     if (u32_eq(ebx, "VMwa") && u32_eq(ecx, "reVM") && u32_eq(edx, "ware")) {
         cached_platform = PLATFORM_VMWARE;
+        g_boot_info.hv_flags = HV_FLAG_VMWARE_BACKDOOR | HV_FLAG_APIC_FREQ_MSR;
+        {
+            const char *s = "VMwareVMware";
+            int k;
+            for (k = 0; s[k] && k < 15; k++) g_boot_info.hv_vendor[k] = s[k];
+            g_boot_info.hv_vendor[k] = '\0';
+        }
         klog(LOG_INFO, "platform", "Detected: VMware (CPUID 0x40000000)");
         return cached_platform;
     }
@@ -94,6 +113,12 @@ platform_id_t platform_detect(void)
     /* "VBoxVBoxVBox" — Oracle VirtualBox */
     if (u32_eq(ebx, "VBox") && u32_eq(ecx, "VBox") && u32_eq(edx, "VBox")) {
         cached_platform = PLATFORM_VIRTUALBOX;
+        {
+            const char *s = "VBoxVBoxVBox";
+            int k;
+            for (k = 0; s[k] && k < 15; k++) g_boot_info.hv_vendor[k] = s[k];
+            g_boot_info.hv_vendor[k] = '\0';
+        }
         klog(LOG_INFO, "platform", "Detected: VirtualBox (CPUID 0x40000000)");
         return cached_platform;
     }
@@ -101,7 +126,15 @@ platform_id_t platform_detect(void)
     /* "KVMKVMKVM\0\0\0" — KVM (Linux host, hardware virtualization) */
     if (u32_eq(ebx, "KVMK") && u32_eq(ecx, "VMKV") && u32_eq(edx, "M\0\0\0")) {
         cached_platform = PLATFORM_QEMU_KVM;
-        klog(LOG_INFO, "platform", "Detected: QEMU/KVM (CPUID 0x40000000)");
+        g_boot_info.hv_flags = HV_FLAG_KVM_STEAL_TIME;
+        {
+            const char *s = "KVMKVMKVM";
+            int k;
+            for (k = 0; s[k] && k < 15; k++) g_boot_info.hv_vendor[k] = s[k];
+            g_boot_info.hv_vendor[k] = '\0';
+        }
+        klog(LOG_INFO, "platform", "Detected: QEMU/KVM (CPUID 0x40000000, flags=0x%x)",
+             (uint64_t)g_boot_info.hv_flags);
         return cached_platform;
     }
 

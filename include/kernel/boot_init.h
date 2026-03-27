@@ -98,6 +98,14 @@ typedef enum {
 #define POSTCODE_DESKTOP_INIT   0x63
 
 /* Sentinel POST codes written to UEFI NVRAM for post-mortem diagnosis */
+#define POSTCODE_HV_DETECT      0x26  /* reuse BOOT_CFG slot */
+
+/* --- Hypervisor feature flags (stored in g_boot_info.hv_flags) ----------- */
+#define HV_FLAG_TSC_ENLIGHTENMENT   (1u << 0)  /* Hyper-V TSC reference counter MSR */
+#define HV_FLAG_TLBFLUSH_HYPERCALL  (1u << 1)  /* Hyper-V TLB flush hypercall */
+#define HV_FLAG_APIC_FREQ_MSR       (1u << 2)  /* HV provides APIC frequency MSR */
+#define HV_FLAG_KVM_STEAL_TIME      (1u << 3)  /* KVM steal time accounting */
+#define HV_FLAG_VMWARE_BACKDOOR     (1u << 4)  /* VMware backdoor I/O port */
 #define POSTCODE_BOOT_OK        0xFF  /* boot completed successfully */
 #define POSTCODE_BOOT_FAILED    0xFE  /* boot_halt() or panic() fired */
 

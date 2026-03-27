@@ -244,7 +244,9 @@ struct boot_info {
 
     /* Kernel-populated fields (set after boot; never written by the bootloader) */
     uint8_t  secure_boot_enabled;   /* 1 if Secure Boot is active (uefi_secureboot_init) */
-    uint8_t  _kp_pad[7];            /* alignment */
+    uint8_t  _kp_pad[3];            /* alignment */
+    uint32_t hv_flags;              /* hypervisor feature flags (HV_FLAG_*) */
+    char     hv_vendor[16];         /* hypervisor vendor string (null-terminated) */
 };
 
 /* Global boot info — populated by multiboot2_parse() or UEFI bootloader */

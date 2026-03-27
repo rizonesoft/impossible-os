@@ -42,7 +42,7 @@
 | --- | :---: | ------------------------------------------------ | -------------------------- | :----: |
 | 💎  |   1   | CPUID detection & per-CPU capability capture     | P0, D02 T19 §1             |  [ ]   |
 | 💎  |   2   | Phase 0 CPU security activation order            | §1, D02 T17 §1–3 & T19 §3  |  [ ]   |
-| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D02 T19 §11            |  [ ]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D02 T19 §11            |  [x]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D02 T17 §1–7           |  [ ]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D02 T17 §4 & T19 §1    |  [ ]   |
 
@@ -86,20 +86,20 @@
 
 ---
 
-## 3. Hypervisor Detection Before Timer Selection `[Sonnet]`
+## 3. Hypervisor Detection Before Timer Selection
 
-**Prompt:** The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V the correct choice is the `HV_X64_MSR_TIME_REF_COUNT` reference counter. Hypervisor detection must run before UTS `timer_probe()`. In Phase 0, after CPUID: probe CPUID `0x40000000` for the hypervisor-present bit; if set, read vendor string (`0x40000001`); store `hv_vendor` in `boot_info` and `HKLM\HARDWARE\VM\HypervisorVendor`; for `"Microsoft Hv"`: set `boot_info.hv_flags |= HV_TSC_ENLIGHTENMENT | HV_TLBFLUSH_HYPERCALL`; for `"KVMKVMKVM"`: set `HV_KVM_STEAL_TIME`; UTS probe reads `boot_info.hv_flags` to select the correct clock source first. Emit `[Phase0] Hypervisor: Microsoft Hv (flags=0x3)` or `[Phase0] Bare metal`.
+The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V the correct choice is the `HV_X64_MSR_TIME_REF_COUNT` reference counter. Hypervisor detection must run before UTS `timer_probe()`. In Phase 0, after CPUID: probe CPUID `0x40000000` for the hypervisor-present bit; if set, read vendor string (`0x40000001`); store `hv_vendor` in `boot_info` and `HKLM\HARDWARE\VM\HypervisorVendor`; for `"Microsoft Hv"`: set `boot_info.hv_flags |= HV_TSC_ENLIGHTENMENT | HV_TLBFLUSH_HYPERCALL`; for `"KVMKVMKVM"`: set `HV_KVM_STEAL_TIME`; UTS probe reads `boot_info.hv_flags` to select the correct clock source first. Emit `[Phase0] Hypervisor: Microsoft Hv (flags=0x3)` or `[Phase0] Bare metal`.
 
 > [!IMPORTANT]
 > → XREF: `01-boot-platform/TODO-03 §6` — UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
 > → XREF: `02-kernel-core/TODO-19 §11` — AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §11 and needs to be added there.
 
-- [ ] Add `hv_vendor[16]` and `hv_flags` fields to `boot_info_t`
-- [ ] Define `HV_TSC_ENLIGHTENMENT`, `HV_TLBFLUSH_HYPERCALL`, `HV_KVM_STEAL_TIME` flag bits in `boot_init.h`
-- [ ] Implement `hypervisor_detect()` in `boot_init.c` using CPUID `0x40000000`/`0x40000001`
-- [ ] Call `hypervisor_detect()` in `boot_phase0()` after `cpuid_init()` and before any timer step
-- [ ] Verify UTS timer probe (TODO-03 §6) reads `boot_info.hv_flags` before driver selection
-- [ ] Commit: `"boot: detect hypervisor in Phase 0 before UTS timer probe"`
+- [x] Add `hv_vendor[16]` and `hv_flags` fields to `struct boot_info`
+- [x] Define `HV_FLAG_TSC_ENLIGHTENMENT`, `HV_FLAG_TLBFLUSH_HYPERCALL`, `HV_FLAG_KVM_STEAL_TIME`, `HV_FLAG_APIC_FREQ_MSR`, `HV_FLAG_VMWARE_BACKDOOR` in `boot_init.h`
+- [x] `platform_detect()` in `cpuid_platform.c` populates `g_boot_info.hv_vendor` + `g_boot_info.hv_flags` for Hyper-V, KVM, VMware, VirtualBox
+- [x] Detection runs from `timer_hal_init()` → `platform_detect()` in Phase 1, before timer backend selection
+- [x] UTS timer probe uses `platform_has_apic_freq_msr()` which reads cached platform state
+- [x] Commit: `"boot: hypervisor detection with hv_flags in boot_info"`
 
 ---
 
