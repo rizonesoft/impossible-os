@@ -18,11 +18,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 {
     /* === Hyper-V debug: write directly to framebuffer BEFORE any call ===
      * boot_info is at physical 0x10000 (identity-mapped).
-     * Draw a MAGENTA bar at row 60 = "kernel_main entered". */
+     * Draw a MAGENTA bar at row 60 = "kernel_main entered".
+     * Gated on config.debug so it is invisible during normal boots. */
     {
         volatile struct boot_info *bi =
             (volatile struct boot_info *)(uintptr_t)0x10000;
-        if (bi->fb_available && bi->fb.addr && bi->fb.width > 0) {
+        if (bi->config.debug && bi->fb_available && bi->fb.addr && bi->fb.width > 0) {
             volatile uint32_t *px = (volatile uint32_t *)bi->fb.addr;
             uint32_t pitch_px = bi->fb.pitch / 4;
             uint32_t r, c;

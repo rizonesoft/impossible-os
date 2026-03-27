@@ -45,7 +45,7 @@ void boot_interrupts_init(void)
     uint32_t _fbw = _bi->fb.width;
     uint32_t _fbh = _bi->fb.height;
 #define HV_BAR(row, color) do { \
-    if (_fb && _fbw > 0) { \
+    if (_bi->config.debug && _fb && _fbw > 0) { \
         uint32_t _r, _c; \
         for (_r = (row); _r < (row) + 8 && _r < _fbh; _r++) \
             for (_c = 0; _c < 100 && _c < _fbw; _c++) \
