@@ -44,26 +44,21 @@ When you change code or conventions, update `.impossible/rules/`, `AGENTS.md`, a
 
 ## Slash Commands
 
-Run these with `/command-name`:
+Claude Code-specific commands will live in `.claude/commands/` — not yet populated.
+Run Cursor skills via `@`-mentioning the SKILL.md file:
 
-| Command | Description |
-|---------|-------------|
-| `/build` | Build and test in QEMU |
-| `/create-todo` | Create a new TODO file |
-| `/implement-todo-section` | Implement one TODO section end-to-end |
-| `/validate-todo-file` | Validate a TODO for gaps and fix everything |
-| `/verify-todo-section` | Verify a TODO section against code evidence |
-| `/improve-implementation-order` | Audit and fix an Implementation Order table |
-| `/sync-ai-system` | Sync AI guidance across all agent adapters |
-| `/add-asset` | Load any asset from disk into kernel memory |
-| `/docs-convert-todo` | Convert a completed TODO to documentation |
-| `/docs-validate` | Validate documentation structure |
-| `/specs-create` | Create a new spec document |
-| `/specs-fact-check` | Fact-check a spec document |
-| `/release` | Tag a release and publish |
-| `/test-hardware` | Test on real hardware via USB boot |
+```
+@.cursor/skills/implement-todo-section/SKILL.md <target TODO and section>
+```
 
-Commands are defined in `.claude/commands/`. Skills live in `.claude/skills/` (same structure as `.cursor/skills/`).
+| Cursor Skill | Description |
+|---|---|
+| `implement-todo-section` | Implement one TODO section end-to-end |
+| `create-todo` | Create a new TODO file |
+| `validate-todo-file` | Validate a TODO for gaps |
+| `verify-todo-section` | Verify a TODO section against code evidence |
+| `improve-implementation-order` | Audit and fix an Implementation Order table |
+| `sync-ai-system` | Sync AI guidance across all agent adapters |
 
 ## Repository Layout
 

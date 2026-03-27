@@ -10,8 +10,8 @@
 > | Agent | Instructions | Skills / Commands | Rules |
 > |-------|-------------|------------------|-------|
 > | **Cursor** | This file (`AGENTS.md`) | `.cursor/skills/` — native `/` commands | `.cursor/rules/*.mdc` (adapters) |
-> | **Claude Code** | [`CLAUDE.md`](CLAUDE.md) | `.claude/commands/` + `.claude/skills/` | Inline in `CLAUDE.md` |
-> | **Antigravity** | This file (`AGENTS.md`) | `.agents/workflows/` — thin redirects to `.claude/commands/` | Inline in this file |
+> | **Claude Code** | [`CLAUDE.md`](CLAUDE.md) | `.claude/commands/` — Claude-specific commands (pending) | Inline in `CLAUDE.md` |
+> | **Antigravity** | This file (`AGENTS.md`) | `.agents/workflows/` — thin redirects to `.cursor/skills/` | Inline in this file |
 > | **GitHub Copilot** | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | None | Inline in copilot file |
 >
 > **Cursor Project Skills** (`.cursor/skills/` — `/command-name` in Cursor):
@@ -22,7 +22,7 @@
 > - [`improve-implementation-order`](.cursor/skills/improve-implementation-order/SKILL.md) — audit and rewrite the Implementation Order table
 > - [`sync-ai-system`](.cursor/skills/sync-ai-system/SKILL.md) — keep all agent adapters aligned when conventions change
 >
-> **Antigravity Workflows** (`.agents/workflows/` — thin redirects to `.claude/commands/`):
+> **Antigravity Workflows** (`.agents/workflows/` — thin redirects to `.cursor/skills/`):
 > `build`, `create-todo`, `implement-todo-section`, `validate-todo-file`, `verify-todo-section`, `sync-ai-system`, `improve-implementation-order`, `add-asset`, `docs-convert-todo`, `docs-validate`, `todo-done-check`, `todo-master-sync`, `todo-table-format`, `specs-create`, `specs-fact-check`, `test-fs-fat32`, `test-hardware`, `release`
 
 ---

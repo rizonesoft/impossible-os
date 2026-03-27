@@ -1,7 +1,6 @@
 ---
-description: See .claude/commands/verify-todo-section.md (canonical source).
+description: See .cursor/skills/verify-todo-section/SKILL.md (canonical source).
 ---
 
-This workflow is fully defined in [`.claude/commands/verify-todo-section.md`](../../.claude/commands/verify-todo-section.md).
-
-Antigravity: read that file and follow it exactly.
+> **Cursor skill (authoritative):** [`.cursor/skills/verify-todo-section/SKILL.md`](../../.cursor/skills/verify-todo-section/SKILL.md)
+> **Canonical workflow:** [`.impossible/workflows/verify-todo-section.md`](../../.impossible/workflows/verify-todo-section.md)

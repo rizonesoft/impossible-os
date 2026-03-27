@@ -1,7 +1,6 @@
 ---
-description: See .claude/commands/create-todo.md (canonical source).
+description: See .cursor/skills/create-todo/SKILL.md (canonical source).
 ---
 
-This workflow is fully defined in [`.claude/commands/create-todo.md`](../../.claude/commands/create-todo.md).
-
-Antigravity: read that file and follow it exactly.
+> **Cursor skill (authoritative):** [`.cursor/skills/create-todo/SKILL.md`](../../.cursor/skills/create-todo/SKILL.md)
+> **Canonical workflow:** [`.impossible/workflows/create-todo.md`](../../.impossible/workflows/create-todo.md)

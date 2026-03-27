@@ -1,7 +1,6 @@
 ---
-description: See .claude/commands/sync-ai-system.md (canonical source).
+description: See .cursor/skills/sync-ai-system/SKILL.md (canonical source).
 ---
 
-This workflow is fully defined in [`.claude/commands/sync-ai-system.md`](../../.claude/commands/sync-ai-system.md).
-
-Antigravity: read that file and follow it exactly.
+> **Cursor skill (authoritative):** [`.cursor/skills/sync-ai-system/SKILL.md`](../../.cursor/skills/sync-ai-system/SKILL.md)
+> **Canonical workflow:** [`.impossible/workflows/sync-ai-system.md`](../../.impossible/workflows/sync-ai-system.md)

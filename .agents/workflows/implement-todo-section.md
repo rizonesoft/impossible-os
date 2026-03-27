@@ -1,7 +1,6 @@
 ---
-description: See .claude/commands/implement-todo-section.md (canonical source).
+description: See .cursor/skills/implement-todo-section/SKILL.md (canonical source).
 ---
 
-This workflow is fully defined in [`.claude/commands/implement-todo-section.md`](../../.claude/commands/implement-todo-section.md).
-
-Antigravity: read that file and follow it exactly.
+> **Cursor skill (authoritative):** [`.cursor/skills/implement-todo-section/SKILL.md`](../../.cursor/skills/implement-todo-section/SKILL.md)
+> **Canonical workflow:** [`.impossible/workflows/implement-todo-section.md`](../../.impossible/workflows/implement-todo-section.md)

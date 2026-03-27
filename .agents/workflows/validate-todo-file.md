@@ -1,7 +1,6 @@
 ---
-description: See .claude/commands/validate-todo-file.md (canonical source).
+description: See .cursor/skills/validate-todo-file/SKILL.md (canonical source).
 ---
 
-This workflow is fully defined in [`.claude/commands/validate-todo-file.md`](../../.claude/commands/validate-todo-file.md).
-
-Antigravity: read that file and follow it exactly.
+> **Cursor skill (authoritative):** [`.cursor/skills/validate-todo-file/SKILL.md`](../../.cursor/skills/validate-todo-file/SKILL.md)
+> **Canonical workflow:** [`.impossible/workflows/validate-todo-file.md`](../../.impossible/workflows/validate-todo-file.md)
