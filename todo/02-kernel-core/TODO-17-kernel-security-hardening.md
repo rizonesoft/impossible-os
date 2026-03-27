@@ -44,7 +44,7 @@
 | ⭐  | Order | Deliverable                                        | Depends On                   | Status |
 | --- | :---: | -------------------------------------------------- | ---------------------- | :----: |
 | 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings | —                      |  [x]   |
-| 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers   | §1                     |  [/]   |
+| 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers   | §1                     |  [x]   |
 | 💎  |   3   | KPTI: per-process user page table + CR3 swap       | §1, T04 §3, T05 §2     |  [ ]   |
 | 💎  |   4   | PCID: TLB tagging for KPTI (no-flush CR3 switch)   | §3                     |  [ ]   |
 | 💎  |   5   | Spectre: IBRS/IBPB MSR + retpoline build flag      | T05 §2                 |  [ ]   |
@@ -105,7 +105,7 @@
 
 ### 2.3 Commit
 
-- [ ] Commit: `"kernel/security: SMEP/SMAP CR4 activation, CLAC/STAC user-access wrappers"`
+- [x] Committed across multiple patches: CR4 SMEP/SMAP with Hyper-V gate, CLAC/STAC macros, copy_from/to_user, IDT clac
 
 ---
 
