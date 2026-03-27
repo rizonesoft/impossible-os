@@ -122,22 +122,24 @@ static uint32_t find_next_task(uint32_t from_task, uint32_t from_thread,
     return best_task;
 }
 
-/* --- #NM handler: lazy FPU allocation on first SIMD/FP use ---
- * DISABLED: XSAVE alignment issue (kmalloc returns 8-byte aligned,
- * XSAVE needs 64-byte aligned). Re-enable with aligned allocator. */
-#if 0
+/* --- #NM handler: lazy FPU allocation on first SIMD/FP use --- */
+
 static uint64_t nm_handler(struct interrupt_frame *frame)
 {
     struct task *t;
+
+    /* Clear CR0.TS so the faulting instruction can retry */
     __asm__ volatile ("clts");
+
     t = &tasks[current_task];
     if (!t->fpu_used) {
+        /* First FPU use — allocate page-aligned XSAVE area */
         task_alloc_xsave(t);
         t->fpu_used = 1;
     }
+
     return (uint64_t)frame;
 }
-#endif
 
 /* --- XSAVE area allocation (lazy, on first FPU use) --- */
 
@@ -152,15 +154,10 @@ void task_alloc_xsave(struct task *t)
     size = g_cpu.xsave_size_max;
     if (size == 0) size = 512;  /* fallback: legacy FXSAVE size */
 
-    /* Round up to 64-byte alignment */
-    size = (size + 63) & ~63u;
-
-    if (size > 4096) {
-        pages = (size + 4095) / 4096;
-        t->xsave_area = (void *)pmm_alloc_contiguous(pages);
-    } else {
-        t->xsave_area = (void *)kmalloc(size);
-    }
+    /* Round up to page boundary — XSAVE requires 64-byte alignment;
+     * PMM always returns page-aligned (4096) which satisfies this. */
+    pages = (size + 4095) / 4096;
+    t->xsave_area = (void *)pmm_alloc_contiguous(pages);
 
     if (t->xsave_area) {
         /* Zero the buffer */
@@ -241,10 +238,9 @@ void task_init(void)
     /* Register the yield software interrupt handler (INT 0x81) */
     idt_register_handler(YIELD_INT_VECTOR, yield_irq_handler);
 
-    /* #NM handler for lazy FPU disabled — see XSAVE alignment note above.
-     * Re-enable once xsave_area uses 64-byte aligned allocation. */
-    /* if (cpu_has(CPU_FEATURE_XSAVE))
-        idt_register_handler(7, nm_handler); */
+    /* Register #NM handler for lazy FPU (vector 7 = Device Not Available) */
+    if (cpu_has(CPU_FEATURE_XSAVE))
+        idt_register_handler(7, nm_handler);
 }
 
 int task_create(task_entry_t entry, const char *name)
@@ -554,11 +550,31 @@ uint64_t schedule(struct interrupt_frame *frame)
     if (tasks[prev_task].threads[prev_thread].state == THREAD_RUNNING)
         tasks[prev_task].threads[prev_thread].state = THREAD_READY;
 
-    /* --- Lazy FPU: DISABLED ---
-     * XSAVE/XRSTOR in scheduler causes #GP due to alignment requirements
-     * (kmalloc returns 8-byte aligned, XSAVE needs 64-byte aligned).
-     * FPU state is currently protected by manual simd_save/restore_state()
-     * in gfx_text.c. Re-enable once pmm_alloc_aligned() is available. */
+    /* --- Lazy FPU: save prev, restore/defer next --- */
+    {
+    extern struct cpu_features g_cpu;
+    if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
+        uint64_t xcr0 = g_cpu.xcr0_active;
+        uint32_t lo = (uint32_t)xcr0;
+        uint32_t hi = (uint32_t)(xcr0 >> 32);
+        __asm__ volatile ("xsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
+                          : "a"(lo), "d"(hi) : "memory");
+    }
+
+    if (tasks[next_task].fpu_used && tasks[next_task].xsave_area) {
+        uint64_t xcr0 = g_cpu.xcr0_active;
+        uint32_t lo = (uint32_t)xcr0;
+        uint32_t hi = (uint32_t)(xcr0 >> 32);
+        __asm__ volatile ("xrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area),
+                          "a"(lo), "d"(hi) : "memory");
+        __asm__ volatile ("clts");
+    } else {
+        uint64_t cr0;
+        __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+        cr0 |= (1UL << 3);  /* CR0.TS */
+        __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
+    }
+    }
 
     /* Switch to next task/thread */
     tasks[next_task].state = TASK_RUNNING;

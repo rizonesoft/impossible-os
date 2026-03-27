@@ -52,7 +52,7 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On           | Status |
 | --- | :---: | -------------------------------------------------- | -------------------- | :----: |
-| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [/]   |
+| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [x]   |
 | 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                    | §1                   |  [ ]   |
 | 💎  |   3   | MSR management infrastructure (`msr.c`)            | —                    |  [x]   |
 | 💎  |   4   | UMIP + PKU protection keys                         | §3                   |  [ ]   |
@@ -89,15 +89,15 @@
 
 ### 1.3 Lazy FPU: CR0.TS + #NM
 
-- [/] Lazy FPU: code written but DISABLED — `XSAVE` #GPs because `kmalloc` returns 8-byte aligned, XSAVE needs 64-byte. Fix: use `pmm_alloc_contiguous(1)` for page-aligned allocation
-- [/] `#NM` handler written but disabled — blocked on same alignment issue
-- [/] Context switch XSAVE/XRSTOR written but disabled — same issue
+- [x] Lazy FPU: `schedule()` saves/restores via XSAVE/XRSTOR; sets CR0.TS for deferred allocation
+- [x] `#NM` handler (vector 7): clears CR0.TS, allocates page-aligned XSAVE area on first FPU use
+- [x] Context switch: XSAVE prev if fpu_used, XRSTOR next if fpu_used, else set CR0.TS
+- [x] Fix: `task_alloc_xsave()` always uses `pmm_alloc_contiguous()` for page-aligned (4096-byte) allocation — satisfies XSAVE 64-byte requirement
 - [ ] XSAVEOPT optimization — deferred
-- [ ] Fix: use page-aligned PMM allocation for xsave_area (always 4096-byte aligned, satisfies 64-byte requirement)
 
 ### 1.4 Replace FXSAVE in icon_store.c
 
-- [ ] Reverted — manual `simd_save/restore_state()` restored in icon_store.c until lazy FPU alignment is fixed
+- [x] Removed manual `simd_save/restore_state()` from icon_store.c — lazy FPU handles it
 - [ ] `gfx_text.c` still has ~20 manual save/restore calls — future cleanup
 
 ### 1.5 Commit

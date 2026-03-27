@@ -505,8 +505,6 @@ static icon_bitmap_t *rasterize_glyph(system_icon_t id, uint32_t size,
     uint8_t from_pmm;
     uint32_t cr, cg, cb;
     int row, col;
-    fxsave_area_t fpu_state __attribute__((aligned(16)));
-
     if ((uint32_t)id >= ICON_MONO_COUNT) return (icon_bitmap_t *)0;
 
     codepoint = icon_codepoints[id];
@@ -519,13 +517,11 @@ static icon_bitmap_t *rasterize_glyph(system_icon_t id, uint32_t size,
         if (!font->loaded) return (icon_bitmap_t *)0;
     }
 
-    /* Rasterize glyph (manual FPU save until lazy XSAVE alignment is fixed) */
-    simd_save_state(&fpu_state);
+    /* Rasterize glyph (FPU state handled by lazy XSAVE in scheduler) */
     scale = stbtt_ScaleForPixelHeight(&font->info, (float)size);
     alpha_bmp = stbtt_GetCodepointBitmap(&font->info, 0, scale,
                                           (int)codepoint,
                                           &width, &height, &xoff, &yoff);
-    simd_restore_state(&fpu_state);
 
     if (!alpha_bmp || width <= 0 || height <= 0) {
         if (alpha_bmp) kfree(alpha_bmp);
@@ -593,13 +589,9 @@ void icon_store_init(void)
 {
     int i;
     int loaded = 0;
-    fxsave_area_t fpu_state __attribute__((aligned(16)));
-
     memset(icon_cache, 0, sizeof(icon_cache));
 
-    simd_save_state(&fpu_state);
-
-    /* Load icon font variants */
+    /* Load icon font variants (FPU state handled by lazy XSAVE) */
     for (i = 0; i < ICON_FONT_COUNT; i++) {
         int err = load_icon_font(i, icon_font_filenames[i]);
         if (err == 0) {
@@ -612,8 +604,6 @@ void icon_store_init(void)
                    (uint64_t)(uintptr_t)icon_font_filenames[i]);
         }
     }
-
-    simd_restore_state(&fpu_state);
 
     /* Load color icons from IRES file */
     {
