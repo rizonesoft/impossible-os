@@ -37,7 +37,7 @@
 | 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1         |  [x]   |
 | 💎  |   3   | Interrupt entry/exit IRQL integration              | §2         |  [x]   |
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2         |  [x]   |
-| 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4     |  [ ]   |
+| 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4     |  [x]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5         |  [ ]   |
 | 💎  |   7   | Driver migration and workqueue contract split      | §5         |  [ ]   |
 | ⭐  |   8   | IRQL violation traps and structured telemetry      | §2, §3, §5 |  [ ]   |
@@ -82,15 +82,15 @@
 - [x] Implement `KeInitializeDpc()`, `KeInsertQueueDpc()`, and `KeRemoveQueueDpc()`.
 - [x] Build a lock-protected per-CPU DPC queue with bounded memory strategy (pre-allocated nodes or static pool fallback).
 - [x] Enforce that `KeInsertQueueDpc()` is callable at ISR IRQL and does not block or allocate unbounded memory.
-- [ ] Commit: `"kernel: sched — add KDPC type and per-CPU DPC queue"`
+- [x] Commit: `"kernel: sched — add KDPC type and per-CPU DPC queue"`
 
 ## 5. DPC Drain Loop at `DISPATCH_LEVEL`
 
-- [ ] Implement `KiDispatchDpc()` that raises to `DISPATCH_LEVEL`, drains queued DPCs, and restores prior IRQL.
-- [ ] Guarantee DPC routines run with interrupts in the correct state for `DISPATCH_LEVEL` semantics.
-- [ ] Support bounded batch draining so long DPC bursts do not starve normal scheduling.
-- [ ] Track queue depth, executed count, and overrun counters per CPU for diagnostics.
-- [ ] Ensure DPC callbacks are forbidden from blocking waits or pageable operations.
+- [x] Implement `KiDispatchDpc()` that raises to `DISPATCH_LEVEL`, drains queued DPCs, and restores prior IRQL.
+- [x] Guarantee DPC routines run with interrupts in the correct state for `DISPATCH_LEVEL` semantics.
+- [x] Support bounded batch draining so long DPC bursts do not starve normal scheduling.
+- [x] Track queue depth, executed count, and overrun counters per CPU for diagnostics.
+- [x] Ensure DPC callbacks are forbidden from blocking waits or pageable operations.
 - [ ] Commit: `"kernel: sched — add DPC dispatcher at DISPATCH_LEVEL"`
 
 ## 6. Timer/APIC Scheduling Path for DPC Dispatch
@@ -133,9 +133,9 @@
 | ⭐  | Feature                                     | 🪟 Windows 11 / NT                            | 🐧 Linux                                                | 🚀 Impossible OS                                          |
 | --- | ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
 | 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | ✅ Per-CPU IRQL, LAPIC TPR, ISR raise/lower, spinlock integration, blocking assertions (§1-§3) |
-| 💎  | Deferred interrupt bottom half              | ✅ DPC queue at `DISPATCH_LEVEL`              | ✅ softirq/tasklet/NAPI bottom-half model               | 🔄 KDPC type + per-CPU queue implemented (§4) -- dispatch at DISPATCH_LEVEL pending (§5-§6) |
+| 💎  | Deferred interrupt bottom half              | ✅ DPC queue at `DISPATCH_LEVEL`              | ✅ softirq/tasklet/NAPI bottom-half model               | ✅ `KiDispatchDpc` drains FIFO queue at DISPATCH_LEVEL with batch limit, wired into KeLowerIrql (§4-§5) |
 | 💎  | ISR-safe deferred queue API                 | ✅ `KeInsertQueueDpc`                         | ✅ IRQ-safe enqueue primitives in net/block paths       | ✅ `KeInsertQueueDpc` -- zero-alloc, ISR-safe, intrusive-linked KDPC (§4) |
-| 💎  | Per-CPU deferred work queues                | ✅ Per-CPU DPC state                          | ✅ Per-CPU softirq and work processing                  | 🔄 Per-CPU FIFO queue with spinlock, depth tracking, high-water stats (§4) -- drain loop pending (§5-§6) |
+| 💎  | Per-CPU deferred work queues                | ✅ Per-CPU DPC state                          | ✅ Per-CPU softirq and work processing                  | ✅ Per-CPU FIFO queue, spinlock-protected, batch-limited drain, depth/executed/high-water stats (§4-§5) |
 | 💎  | Context legality contract                   | ✅ API rules by IRQL                          | ✅ `might_sleep()` and atomic-context rules             | 🔄 Legality table documented in `irql.h` (§1) — runtime enforcement pending (§8) |
 | 💎  | Workqueue for thread-context deferred work  | ✅ Work items at passive level                | ✅ kernel workqueues at process context                 | ⚠️ Partial — exists; needs explicit IRQL split in §7      |
 | ⭐  | Built-in IRQL violation telemetry           | ⚠️ Mostly internal/checked builds             | ⚠️ Debug warnings exist but fragmented                  | ⬜ **Planned — §8 — unified contract diagnostics**        |

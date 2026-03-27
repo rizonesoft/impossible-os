@@ -88,8 +88,26 @@ struct dpc_queue {
     uint32_t        max_depth;      /* high-water mark (stats) */
 };
 
+/* Maximum DPCs to drain per KiDispatchDpc invocation.  Prevents long
+ * DPC bursts from starving normal thread scheduling.  Remaining DPCs
+ * are drained on the next timer tick or KeLowerIrql crossing. */
+#define DPC_BATCH_LIMIT  16
+
 /* Initialize the DPC subsystem (called once during boot). */
 void dpc_init(void);
+
+/* Drain pending DPCs on the current CPU.
+ *
+ * Called from KeLowerIrql when IRQL drops below DISPATCH_LEVEL, and
+ * from the timer interrupt path after ISR work completes.
+ *
+ * Raises to DISPATCH_LEVEL, enables interrupts (so higher-priority
+ * device interrupts can still fire), drains up to DPC_BATCH_LIMIT
+ * DPCs in FIFO order, then restores the prior IRQL.
+ *
+ * DPC routines execute at DISPATCH_LEVEL with interrupts enabled.
+ * They must not block, allocate memory, or access paged memory. */
+void KiDispatchDpc(void);
 
 /* Get the per-CPU DPC queue for the current CPU. */
 struct dpc_queue *dpc_this_cpu_queue(void);

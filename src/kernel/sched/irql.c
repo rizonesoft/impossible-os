@@ -15,6 +15,7 @@
  * ============================================================================ */
 
 #include "kernel/sched/irql.h"
+#include "kernel/sched/dpc.h"
 #include "kernel/smp.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
@@ -122,9 +123,15 @@ void KeLowerIrql(KIRQL old_irql)
         __asm__ volatile("sti" ::: "memory");
     }
 
-    /* TODO (§5): If lowering below DISPATCH_LEVEL and DPC queue is
-     * non-empty, drain pending DPCs before returning to caller.
-     * This is the standard NT DPC dispatch point. */
+    /* NT DPC dispatch point: when lowering below DISPATCH_LEVEL, drain
+     * any pending DPCs before returning to thread-level code.  This is
+     * the primary DPC execution trigger -- KiDispatchDpc raises back to
+     * DISPATCH_LEVEL internally and lowers when done. */
+    if (cur >= DISPATCH_LEVEL && old_irql < DISPATCH_LEVEL) {
+        struct dpc_queue *q = dpc_this_cpu_queue();
+        if (q && q->head)
+            KiDispatchDpc();
+    }
 }
 
 /* ---- Debug assertion: IRQL contract check -------------------------------- */
