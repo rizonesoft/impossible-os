@@ -40,9 +40,9 @@
 | 💎  |   3   | Phase 1 — platform services   | §2         |  [/]   |
 | 💎  |   4   | Phase 2 — system services     | §3         |  [/]   |
 | 💎  |   5   | Phase 3 — user platform       | §4         |  [x]   |
-| 💎  |   6   | Dependency gates              | §1–5       |  [x]   |
+| 💎  |   6   | Dependency gates              | §1–§5      |  [x]   |
 | 💎  |   7   | Failure policy                | §6         |  [x]   |
-| 💎  |   8   | Code cleanup                  | §2–5       |  [/]   |
+| 💎  |   8   | Code cleanup                  | §2–§5      |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen | §7         |  [x]   |
 | ⭐  |  10   | POST code + UEFI variable log | §1         |  [x]   |
 
