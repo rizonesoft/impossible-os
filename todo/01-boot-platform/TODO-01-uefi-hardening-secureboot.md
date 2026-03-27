@@ -19,6 +19,7 @@
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` — `UEFI GetTime` → FILETIME seeding (wall clock init)
 - → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md` — `srm_verify_kernel_signature()` (called by §5 here) has no section in TODO-11 yet; needs to be added there (suggest §10 "Win32 Security API Wrappers" — WinVerifyTrust/Authenticode path, or a new §12 for Code Integrity)
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\HARDWARE\*` and `HKLM\SYSTEM\SecureBoot` storage
+- → XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md §8` — kernel multi-head `display_register_head()` consumes `boot_info.gop_handles[]` populated by §13 here
 
 ## Outcome
 
@@ -49,6 +50,7 @@
 | 💎  |  10   | UEFI capsule update & ESRT         | 2, 8             |  [ ]   |
 | 💎  |  11   | UEFI memory attributes (W^X)       | 1                |  [ ]   |
 | ⭐  |  12   | Serial log standardization         | —                |  [x]   |
+| 💎  |  13   | Multi-GPU GOP enumeration — `LocateHandleBuffer`, primary via ConOut path, `boot_info.gop_handles[]` | §3 | [ ] |
 
 > 💎 = parity — Windows Boot Manager and GRUB implement these features; Impossible OS must match them.
 > ⭐ = exclusive — the in-bootloader multi-OS detection with graphical countdown timer is not present in competitors.
@@ -258,7 +260,37 @@ Standard line format used everywhere:
 
 ---
 
-## OS Comparison
+## 13. Multi-GPU GOP Handle Enumeration `[Sonnet]`
+
+The current `init_gop()` uses `LocateProtocol()` which returns a single GOP handle — whichever the firmware happens to expose first. On machines with iGPU + dGPU, a Thunderbolt dock, or any secondary adapter, this may select the wrong display. Replace with `LocateHandleBuffer()` to enumerate all GOP handles, select the active display using the UEFI `ConOut` console path as a tiebreaker, record all framebuffers in `boot_info` so the kernel's future multi-head support can consume them, and leave the existing `boot_info.fb` (primary framebuffer) untouched so `framebuffer_init()` needs no changes.
+
+**Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
+
+> [!NOTE]
+> → XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md §8` — kernel multi-head `display_register_head()` will consume `boot_info.gop_handles[]` populated here. Bootloader identifies the primary and records all handles; the kernel decides what to do with each at runtime.
+
+- [ ] Add to `boot_info.h`:
+  ```c
+  #define BOOT_GOP_MAX_HANDLES 4
+  typedef struct {
+      uint64_t fb_base;
+      uint32_t width;
+      uint32_t height;
+      uint32_t pixel_format;  /* 0 = RGBX, 1 = BGRX */
+  } boot_gop_handle_t;
+  /* in struct boot_info: */
+  uint32_t          gop_count;                          /* total GOP handles found */
+  boot_gop_handle_t gop_handles[BOOT_GOP_MAX_HANDLES];  /* all found, [0] = primary */
+  ```
+- [ ] Replace `gBS->LocateProtocol(&gop_guid, NULL, (VOID **)&gop)` with `gBS->LocateHandleBuffer(ByProtocol, &gop_guid, NULL, &handle_count, &handles)` in `init_gop()`
+- [ ] For each handle open GOP via `gBS->OpenProtocol(..., EFI_OPEN_PROTOCOL_GET_PROTOCOL)`; record `{FrameBufferBase, HorizontalResolution, VerticalResolution, pixel_format}` into `boot_info.gop_handles[i]` (up to `BOOT_GOP_MAX_HANDLES`); set `boot_info.gop_count`
+- [ ] Primary selection: walk the device path of each handle and compare against `gST->ConsoleOutHandle`'s device path (via `EFI_DEVICE_PATH_PROTOCOL`); the handle whose device path is a prefix of, or equal to, the ConOut device path is the active display — use it as the primary; if no match, fall back to the handle with the largest `Width × Height`
+- [ ] Call existing `gop_negotiate_mode()` only on the selected primary handle; `boot_info.fb` continues to describe the primary's framebuffer unchanged — `framebuffer_init()` requires no modification
+- [ ] Free handle buffer: `gBS->FreePool(handles)` after all handles are recorded
+- [ ] Serial log: `[BOOT] GOP: %u handle(s); primary handle %u (%ux%u, ConOut match=%s)` when `gop_count > 1`; single-handle path logs unchanged (`[BOOT] GOP: %ux%u 32bpp (mode N of M)`)
+- [ ] Commit: `"boot: enumerate all GOP handles — LocateHandleBuffer, ConOut-path primary selection, boot_info.gop_handles[]"`
+
+---
 
 | ⭐  | Feature                             | 🪟 Windows 11                                   | 🐧 Linux (GRUB/systemd-boot)                     | 🚀 Impossible OS                                       |
 | --- | ----------------------------------- | ------------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------- |
@@ -274,6 +306,7 @@ Standard line format used everywhere:
 | ⭐  | In-bootloader multi-OS menu         | ❌ Separate BCD / bootmgr UI                    | ❌ GRUB is a separate bootloader                 | ⬜ **Planned — §9 — integrated countdown menu**        |
 | ⭐  | Bootloader fade-in accent gradient  | ❌ Fixed black → logo, no user color            | ❌ Not implemented                               | ✅ Done — §7; bootloader_fade_in() parses AccentColor=RRGGBB from boot.conf, ramps GOP framebuffer black→accent over 300 ms (10 × 30 ms TSC-timed steps) post-ExitBootServices |
 | ⭐  | JSON boot profiling timeline        | ❌ ETW boot trace (binary, needs WPA to decode) | ❌ `systemd-analyze` (post-boot, not bootloader) | ✅ Done — §7; boot_progress() instruments 19 events; boot_timing_write_report() writes +NNNms log to C:\Impossible\System\Logs\boot-profile.log; JSON export owned by TODO-03 §9 |
+| 💎  | Multi-GPU GOP primary display selection | ✅ Boot Manager enumerates all GOP handles via `LocateHandleBuffer`; selects via ConOut console path | ✅ GRUB `grub_efi_locate_handle_buffer()`; selects primary via ConOut or largest resolution | ⬜ Planned — §13; `LocateHandleBuffer`, ConOut-path match, `boot_info.gop_handles[]` |
 
 > **After parity items:** Impossible OS will fully match Windows and Linux on Secure Boot, UEFI runtime, SMBIOS, capsule updates, and W^X enforcement. The exclusive items push beyond: the integrated countdown boot menu eliminates the need for a separate bootloader for dual-boot, the accent fade-in gives a branded first impression, and the structured JSON boot timeline makes performance regression testing trivial compared to WPA or systemd-analyze.
 
