@@ -12,16 +12,15 @@
 
 | System | Surface | What to verify |
 |--------|---------|----------------|
-| Cursor | `.cursor/rules/*.mdc` | Rules match project conventions |
-| Cursor | `.cursor/skills/*/SKILL.md` | Self-contained, Srclight references are Cursor-only |
 | Claude Code | `CLAUDE.md` | Inline rules match project conventions |
 | Claude Code | `.claude/skills/*/SKILL.md` | Self-contained, no Srclight references |
+| Cursor | `.cursor/rules/*.mdc` | Rules match project conventions |
+| Cursor | `.cursor/skills/*/SKILL.md` | Self-contained, Srclight references are Cursor-only |
 | Shared | `.cursorignore` | `.claude/` is excluded from Cursor indexing |
 
 ## Preserve During Sync
 
 - Production-grade posture and "Nothing is impossible" standard
-- Srclight-only supported MCP baseline for Cursor unless explicitly changed
 - Repo-truth-over-local-state ownership model
 - Independence of Cursor and Claude Code systems — no cross-references
 - Supported tooling awareness from `todo/00-infrastructure/TODO-02-developer-tooling-stack.md`

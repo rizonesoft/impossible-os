@@ -547,10 +547,10 @@ scripts/
 > **`llvm-objcopy` cannot produce EFI binaries.** The UEFI bootloader pipeline must use GNU `objcopy` for the `--target efi-app-x86_64` conversion. Do not replace with `llvm-objcopy-19`.
 
 > [!CAUTION]
-> **clangd speaks LSP, not MCP.** Adding clangd as an MCP server in Antigravity causes infinite "refreshing" hang. Use clangd via editor LSP extensions only.
+> **clangd speaks LSP, not MCP.** Adding clangd as an MCP server causes infinite "refreshing" hang. Use clangd via editor LSP extensions only.
 
 > [!WARNING]
-> **`command_status` gets stuck on builds.** The tool falsely reports `RUNNING` after builds finish. Use sentinel-based checking via `tail -1 build/build.log` instead. See [safety.md](../../.agents/rules/safety.md) for the full workaround.
+> **`command_status` gets stuck on builds.** The tool falsely reports `RUNNING` after builds finish. Use sentinel-based checking via `tail -1 build/build.log` instead.
 
 > [!NOTE]
 > **Generated header race condition.** On fresh clean builds with `-j12+`, generated headers (`os_logo.h`, `bsod_icon.h`, `boot_splash_font_data.h`) must use order-only prerequisites (`| $(GENERATED_HDRS)`) to avoid compilation races.

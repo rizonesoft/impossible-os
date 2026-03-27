@@ -6,7 +6,6 @@ globs:
   - "**/*.asm"
   - "docs/**/*.md"
   - "todo/**/*.md"
-  - "AGENTS.md"
   - "README.md"
 alwaysApply: false
 ---

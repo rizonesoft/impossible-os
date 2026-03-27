@@ -38,18 +38,18 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                          | Depends On    | Status |
-| --- | :---: | ------------------------------------ | ------------- | :----: |
-| 💎  |   1   | ACPI MADT parsing                    | —             |  [ ]   |
-| 💎  |   2   | LAPIC / IOAPIC init before PIT       | 1             |  [ ]   |
-| 💎  |   3   | Conditional PIC disable              | 1, 2          |  [ ]   |
-| 💎  |   4   | Full IDT coverage                    | 2, 3          |  [ ]   |
-| 💎  |   5   | Dynamic IRQ registration API         | 2, 4          |  [ ]   |
-| 💎  |   6   | Unified timer subsystem (UTS)        | 5, TODO-04 §3 |  [ ]   |
-| 💎  |   7   | LAPIC timer calibration              | 6             |  [ ]   |
-| 💎  |   8   | Migrate boot splash spinner off PIT  | 6, 7          |  [ ]   |
-| ⭐  |   9   | Boot time visualization              | 7, TODO-02 §2, §5 |  [ ]   |
-| 💎  |  10   | Remove Hyper-V debug workarounds     | 1–7           |  [ ]   |
+| ⭐  | Order | Deliverable                         | Depends On          | Status |
+| --- | :---: | ----------------------------------- | ------------------- | :----: |
+| 💎  |   1   | ACPI MADT parsing                   | —                   |  [ ]   |
+| 💎  |   2   | LAPIC / IOAPIC init before PIT      | §1                  |  [ ]   |
+| 💎  |   3   | Conditional PIC disable             | §1, §2              |  [ ]   |
+| 💎  |   4   | Full IDT coverage                   | §2, §3              |  [ ]   |
+| 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [ ]   |
+| 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [ ]   |
+| 💎  |   7   | LAPIC timer calibration             | §6                  |  [ ]   |
+| 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [ ]   |
+| ⭐  |   9   | Boot time visualization             | §7, T02 §2 & §5     |  [ ]   |
+| 💎  |  10   | Remove Hyper-V debug workarounds    | §1–7                |  [ ]   |
 
 > 💎 = parity — Windows NT HAL and Linux interrupt subsystem both follow this init order and have equivalent abstractions.
 > ⭐ = exclusive — the post-boot animated timeline bar chart showing per-stage boot duration is not present in either competitor.

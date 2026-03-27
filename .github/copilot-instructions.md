@@ -1,12 +1,6 @@
 # Copilot Instructions — Impossible OS
 
-> Read `.impossible/index.md` for the complete rules and workflows reference.
-> Read `.impossible/context.md` for current project state.
-> Full project overview: `AGENTS.md`.
-
-## Project Summary
-
-Impossible OS is a production-grade 64-bit OS built from scratch for x86-64. Custom UEFI bootloader, kernel, compositing desktop, and Win32-compatible API surface. Not a prototype — held to the standard of outperforming Windows 11 and Linux.
+> Impossible OS is a production-grade 64-bit OS for x86-64. Custom UEFI bootloader, kernel, compositing desktop, and Win32-compatible API surface.
 
 ## Critical Rules
 
@@ -64,9 +58,10 @@ bash scripts/build.sh run       # build + QEMU
 
 ## Repository Structure
 
-See `AGENTS.md` for the complete layout. Key directories:
+Key directories:
 - `src/kernel/` — kernel core
 - `src/boot/uefi/` — UEFI bootloader
 - `include/` — all headers
 - `todo/` — development roadmap
-- `.impossible/` — all agent rules and workflows (single source of truth)
+- `.cursor/` — Cursor AI rules and skills
+- `.claude/` — Claude Code AI skills

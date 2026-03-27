@@ -35,7 +35,6 @@
 - `12-installer-release/TODO-04-release-qa.md §7` (→ XREF) — `release-checklist.md` PR template; §1 sign-off gate before `create-release.sh`
 - `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) — `release-sdk.sh`; SDK ZIP artifact; §1 coordinate
 - `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) — `compat-check.sh` score; §5 §8 roadmap metric
-- `AGENTS.md` — feature status table; architecture overview; build commands; §3 §5 source
 - `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md` — existing files to overhaul
 - `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` — existing templates to replace
 - `scripts/build.sh` — quick-start commands; §3 §5
@@ -57,7 +56,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
-| 1 | Contribution guide overhaul (`CONTRIBUTING.md`) | 💎 | `AGENTS.md`; `scripts/build.sh`; existing file |
+| 1 | Contribution guide overhaul (`CONTRIBUTING.md`) | 💎 | `scripts/build.sh`; existing file |
 | 2 | Issue & PR templates (`.github/`) | ⭐ | §1; existing templates |
 | 3 | Changelog discipline (`CHANGELOG.md`) | 💎 | `gen-changelog.sh` (TODO-03 §3) |
 | 4 | GitHub release workflow (`create-release.sh`) | 💎 | `TODO-01 §5` signing; `TODO-03 §2 §3`; SDK `TODO-06 §8` |
@@ -126,9 +125,9 @@ outsiders can track progress without reading 100+ TODO files.
 
 - [ ] **Sections** (rewrite `CONTRIBUTING.md` to cover):
   - **Development setup**: WSL2 + Ubuntu 22.04 recommended; `bash scripts/setup.sh` installs all dependencies (clang-19, nasm, lld-19, QEMU, OVMF); Windows native not supported (WSL2 only); macOS not supported
-  - **Build commands**: table matching `AGENTS.md` (`bash scripts/build.sh`, `clean`, `run`, `clean run`, `qa`); verify with `tail -1 build/build.log`
+  - **Build commands**: table (`bash scripts/build.sh`, `clean`, `run`, `clean run`, `qa`); verify with `tail -1 build/build.log`
   - **QEMU test run**: `bash scripts/run-tests.sh` for regression suite; `bash scripts/build.sh run` for interactive
-  - **Code style**: line length ≤ 120, function length < 50 lines, `snake_case` functions + vars, `UPPER_CASE` macros, `#pragma once`, no angle-bracket includes; link to `AGENTS.md §Coding Conventions`
+  - **Code style**: line length ≤ 120, function length < 50 lines, `snake_case` functions + vars, `UPPER_CASE` macros, `#pragma once`, no angle-bracket includes; link to `CONTRIBUTING.md §Coding Conventions`
   - **Commit message format**: conventional commits — `scope: short description`; common scopes table (kernel, boot, desktop, drivers, gfx, fs, net, build, docs, agent)
   - **PR process**: feature branch → PR → CI green → code review → squash-merge; PR title must follow conventional commit format; no direct pushes to `main`
   - **DCO sign-off**: `Signed-off-by: Name <email>` in each commit; `git commit -s` adds automatically; DCO bot checks PRs
@@ -188,7 +187,7 @@ outsiders can track progress without reading 100+ TODO files.
   - [ ] `bash scripts/build.sh clean` passes
   - [ ] `bash scripts/run-tests.sh` passes (no new test failures)
   - [ ] `CHANGELOG.md` updated under `## [Unreleased]`
-  - [ ] `AGENTS.md` consulted — no conventions violated
+  - [ ] project conventions consulted — no violations
   - [ ] New TODO files created with `create-todo` skill (if applicable)
   - [ ] No angle-bracket includes added
   - [ ] `Signed-off-by:` present in all commits
@@ -230,11 +229,11 @@ outsiders can track progress without reading 100+ TODO files.
   | SDK | [v{latest}](releases) | [sha256](releases) |
 
   ## Feature Status
-  <!-- same table as AGENTS.md, kept in sync -->
+  <!-- feature status table, kept in sync with README -->
 
   ## Architecture
 
-  <!-- ASCII art boot chain + memory model from AGENTS.md -->
+  <!-- ASCII art boot chain + memory model -->
 
   ## Contributing
 
@@ -248,7 +247,7 @@ outsiders can track progress without reading 100+ TODO files.
 - [ ] **Desktop screenshot**: capture QEMU framebuffer at `1280×720` showing desktop with taskbar, wallpaper, and at least one open window; save as `docs/screenshots/desktop-v{version}.png`; script `scripts/take-screenshot.sh` (QEMU `-screenshot` option on a specific frame or `sendkey` sequence to open a window)
 - [ ] **CI status badge**: `[![CI](https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg)](...)` — auto-shows green/red from GHA
 - [ ] **Auto-update download table**: `scripts/update-readme-links.sh` — reads `build/release-{version}.json`; replaces `{latest}` placeholders in README with current version + URLs; called by `create-release.sh` (§1)
-- [ ] **README / AGENTS.md sync**: feature status table in README mirrors `AGENTS.md §Project Overview` component table; `scripts/sync-readme-status.sh` generates README table from AGENTS.md source to avoid drift
+- [ ] **README status sync**: feature status table in README stays current; `scripts/sync-readme-status.sh` generates README table from source to avoid drift
 
 ---
 

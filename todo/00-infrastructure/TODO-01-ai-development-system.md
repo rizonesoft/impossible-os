@@ -1,37 +1,31 @@
 # TODO-01 - AI Development System
 
-> **Goal:** Make Cursor the primary AI development environment for Impossible OS while keeping Antigravity usable through documented compatibility setup. Move durable agent behavior into project-scoped Cursor rules and skills, keep lasting knowledge in git-tracked docs, and treat Srclight as the only supported MCP accelerator rather than the source of project truth.
+> **Goal:** Establish Cursor and Claude Code as the two independent AI development environments for Impossible OS. Each owns its own rules and skills directory. Durable agent behavior lives in project-scoped rules and skills, lasting knowledge in git-tracked docs, and Srclight is the only supported MCP accelerator (Cursor only) rather than the source of project truth.
 >
 > This TODO also defines a lean replacement for the old prompt-heavy TODO style. Future TODO files should stay execution-focused and rely on reusable skills or workflows for detailed procedure instead of carrying oversized mutable prompts.
 
 > [!IMPORTANT]
-> **Primary model:** Cursor is canonical. The repository stores durable guidance. Antigravity consumes documented local setup and validation notes instead of owning a parallel checked-in rules system.
+> **Dual-system model:** Cursor (`.cursor/`) and Claude Code (`CLAUDE.md` + `.claude/`) are independent. No shared layer. `.cursorignore` prevents cross-detection of skills.
 
 > [!CAUTION]
-> **Local state is not authoritative.** `.srclight/`, Cursor MCP state, and Antigravity local config are machine-local or gitignored. Any convention that matters to future work must also be written into tracked repo files.
+> **Local state is not authoritative.** `.srclight/`, Cursor MCP state, and machine-local config are gitignored. Any convention that matters to future work must also be written into tracked repo files.
 
 ## Inputs
 
-- [AGENTS.md](../../AGENTS.md)
-- [.agents/rules/intelligence.md](../../.agents/rules/intelligence.md)
-- [.agents/workflows/implement-todo.md](../../.agents/workflows/implement-todo.md)
-- [.agents/workflows/todo-create.md](../../.agents/workflows/todo-create.md)
 - [.githooks/pre-commit](../../.githooks/pre-commit)
 - [.githooks/post-commit](../../.githooks/post-commit)
 - [docs/infrastructure/development-tooling.md](../../docs/infrastructure/development-tooling.md)
 - [TODO-02 Developer Tooling Stack](./TODO-02-developer-tooling-stack.md)
-- [Antigravity MCP config](file:///home/derickpayne/.gemini/antigravity/mcp_config.json)
-- [Antigravity machine settings](file:///home/derickpayne/.antigravity-server/data/Machine/settings.json)
 
 ## Target Outcome
 
 - Cursor project rules live under `.cursor/rules/`.
 - Cursor project skills live under `.cursor/skills/`.
+- Claude Code instructions live in `CLAUDE.md`.
+- Claude Code skills live under `.claude/skills/`.
 - Durable AI guidance is stored in tracked repo files, not only in local IDE or MCP state.
 - Local, cloud, and dashboard-managed AI features are documented as execution surfaces, not as canonical project truth.
 - TODO files become lean and step-driven instead of prompt-heavy.
-- Antigravity remains usable through a documented compatibility path without becoming the canonical system.
-- Legacy `.agents/` material is either migrated, reduced to compatibility docs, or retired.
 
 ## 1. Canonical Architecture
 

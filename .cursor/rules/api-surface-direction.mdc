@@ -3,7 +3,6 @@ description: Keep the OS-visible API and product direction aligned with the Win3
 globs:
   - "docs/**/*.md"
   - "todo/**/*.md"
-  - "AGENTS.md"
   - "README.md"
   - "include/**/*.h"
   - "src/**/*.c"

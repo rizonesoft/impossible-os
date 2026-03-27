@@ -8,7 +8,6 @@ globs:
   - "scripts/**/*.ps1"
   - "scripts/**/*.bat"
   - ".github/workflows/*.yml"
-  - "AGENTS.md"
   - "CONTRIBUTING.md"
   - "README.md"
   - "todo/**/*.md"

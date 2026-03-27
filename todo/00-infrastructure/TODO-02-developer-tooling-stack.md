@@ -12,7 +12,6 @@
 
 ## Inputs
 
-- [AGENTS.md](../../AGENTS.md)
 - [CONTRIBUTING.md](../../CONTRIBUTING.md)
 - [docs/infrastructure/development-tooling.md](../../docs/infrastructure/development-tooling.md)
 - [scripts/build.sh](../../scripts/build.sh)
@@ -64,7 +63,7 @@ flowchart TD
 - [ ] Verify that `scripts/setup.sh` and `scripts/setup-deps.sh` remain the primary bootstrap path and that their documented package set matches current project reality.
 - [ ] Carry forward the unresolved fresh-machine validation item from the earlier tooling backlog by testing the one-command setup path on a clean Ubuntu 22.04 WSL environment or an equivalent current baseline.
 - [ ] Record non-obvious toolchain constraints that must stay visible, such as GNU `objcopy` being required for EFI binaries and host tools remaining built with host `gcc`.
-- [ ] Ensure `AGENTS.md`, `CONTRIBUTING.md`, and `docs/infrastructure/development-tooling.md` describe the same bootstrap contract.
+- [ ] Ensure `CONTRIBUTING.md` and `docs/infrastructure/development-tooling.md` describe the same bootstrap contract.
 
 ### 2.2 Build Orchestration
 

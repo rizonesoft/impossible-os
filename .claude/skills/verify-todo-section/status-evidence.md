@@ -20,5 +20,5 @@
 ## Conservative Update Rules
 
 - Do not mark work `[x]` if the implementation is a placeholder, stub, or unverified partial path.
-- Headless QEMU serial evidence counts the same as terminal-visible serial evidence when it is surfaced clearly.
+- Headless QEMU serial evidence counts the same as terminal-visible serial evidence when surfaced clearly.
 - If names, paths, or notes drifted, correct the section text rather than forcing the code to match stale wording.

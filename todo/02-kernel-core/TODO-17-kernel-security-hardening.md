@@ -247,7 +247,7 @@
 
 ### 5.3 Retpoline
 
-- [ ] Add `-mindirect-branch=thunk-extern` (GCC) or `-mretpoline` (Clang 19) to `CFLAGS` in `Makefile`; Clang 19 (`clang-19`) is already the compiler (`AGENTS.md`), so use `-mretpoline -mretpoline-external-thunk`
+- [ ] Add `-mindirect-branch=thunk-extern` (GCC) or `-mretpoline` (Clang 19) to `CFLAGS` in `Makefile`; Clang 19 (`clang-19`) is already the compiler, so use `-mretpoline -mretpoline-external-thunk`
 - [ ] Provide the retpoline thunk in `src/kernel/retpoline.asm` (one thunk per scratch register `rax`–`r15`; Clang emits `call __x86_indirect_thunk_rax` instead of `jmp rax`):
   ```asm
   __x86_indirect_thunk_rax:

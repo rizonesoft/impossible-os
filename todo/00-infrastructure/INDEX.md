@@ -21,8 +21,8 @@ This domain tracks the tooling and workflow work that supports the whole project
 
 ## Epics
 
-- [TODO-01 AI Development System](./TODO-01-ai-development-system.md) - Cursor-primary
-  rules, skills, MCP policy, and Antigravity compatibility.
+- [TODO-01 AI Development System](./TODO-01-ai-development-system.md) - Cursor and Claude
+  Code rules, skills, and MCP policy.
 - [TODO-02 Developer Tooling Stack](./TODO-02-developer-tooling-stack.md) - Parent
   epic for the git-tracked developer tooling contract, including build, run, host
   utilities, and GitHub synchronization.

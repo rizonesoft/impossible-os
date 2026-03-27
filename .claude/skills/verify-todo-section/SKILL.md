@@ -5,11 +5,28 @@ description: Verify whether a TODO section marked done or in progress matches ac
 
 # Verify TODO Section
 
-Read and follow the canonical workflow: `.impossible/workflows/verify-todo-section.md`
+## Workflow
 
-## Claude Code-Specific Notes
+1. Read the exact section, its notes, and any linked verification context.
+2. Build an evidence plan before changing status.
+   - Repo search and file inspection (use Grep/Glob)
+   - Build and test commands
+   - Runtime evidence if the section depends on execution
+3. Collect evidence with supported tools.
+   - Build: `bash scripts/build.sh` — check `tail -1 build/build.log` for `=== BUILD OK ===`.
+   - Runtime: `bash scripts/build.sh run` for headless QEMU + serial output.
+   - Crash debug: `llvm-addr2line-19 -e build/kernel.exe -f <RIP>`.
+4. Classify each item conservatively.
+   - Update `[x]`, `[/]`, `[ ]`, and mismatch wording based on actual evidence.
+   - Fix stale names, paths, notes, or verification wording when the implementation differs from the old text.
+5. Record what was checked, what passed, what failed, and why the section state changed.
 
-- Use Grep and Glob tools for finding code evidence — no Srclight MCP.
-- Use `bash scripts/build.sh` for build verification.
-- Use `bash scripts/build.sh run` for QEMU runtime evidence.
-- Use `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` for crash analysis.
+## Guardrails
+
+- Do not turn this into broad file-wide TODO validation.
+- Do not create new TODO files here.
+- Do not assume a master-and-child TODO cascade unless the current TODO actually uses one.
+
+## Additional Resources
+
+- [status-evidence.md](status-evidence.md)
