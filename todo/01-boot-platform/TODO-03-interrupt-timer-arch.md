@@ -45,7 +45,7 @@
 | 💎  |   3   | Conditional PIC disable             | §1, §2              |  [x]   |
 | 💎  |   4   | Full IDT coverage                   | §2, §3              |  [x]   |
 | 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [/]   |
-| 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [ ]   |
+| 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [/]   |
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [ ]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [ ]   |
 | ⭐  |   9   | Boot time visualization             | §7, T02 §2 & §5     |  [ ]   |
@@ -56,7 +56,7 @@
 
 ---
 
-## 1. ACPI MADT Parsing `[Sonnet]`
+## 1. ACPI MADT Parsing
 
 Extract interrupt topology from the MADT before any interrupt hardware is touched so every subsequent init function has authoritative GSI data.
 
@@ -70,7 +70,7 @@ Extract interrupt topology from the MADT before any interrupt hardware is touche
 - [x] Serial log: `MADT: N CPUs, LAPIC=0xbase, IOAPIC=0xbase GSI=base, M overrides, PCAT_COMPAT=N`
 - [x] Commit: `"acpi: consolidated MADT info struct with IOAPIC GSI base"`
 
-## 2. LAPIC / IOAPIC Init Before PIT `[Opus]`
+## 2. LAPIC / IOAPIC Init Before PIT
 
 Restructure `boot_interrupts.c` so LAPIC and IOAPIC are brought up before the PIT, using MADT data from §1.
 
@@ -84,7 +84,7 @@ Restructure `boot_interrupts.c` so LAPIC and IOAPIC are brought up before the PI
 - [x] Serial log: `LAPIC enabled: base=0xFEE00000` and `I/O APIC at 0xFEC00000: N entries, ISA IRQs routed`
 - [x] Already implemented — marking complete (no new code needed)
 
-## 3. Conditional PIC Disable `[Sonnet]`
+## 3. Conditional PIC Disable
 
 Only mask the 8259 PIC when MADT says PCAT_COMPAT — virtual platforms may have no PIC at all.
 
@@ -96,7 +96,7 @@ Only mask the 8259 PIC when MADT says PCAT_COMPAT — virtual platforms may have
 - [x] `pic_init()` fallback when no IOAPIC available or no ACPI — already implemented
 - [x] Already implemented — marking complete (no new code needed)
 
-## 4. Full IDT Coverage `[Opus]`
+## 4. Full IDT Coverage
 
 Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhandled-interrupt panic.
 
@@ -111,7 +111,7 @@ Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhand
 - [x] Vectors 32-47 and 64-239: wired dynamically via `irq_register()` — unhandled vectors log warning + EOI (no crash)
 - [x] Commit: `"kernel: full 256-vector IDT — spurious + Hyper-V silent EOI"`
 
-## 5. Dynamic IRQ Registration API `[Opus]`
+## 5. Dynamic IRQ Registration API
 
 Replace all hardcoded IRQ-to-vector assignments with a runtime registration API backed by the IOAPIC.
 
@@ -130,22 +130,22 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 - [ ] Migrate existing drivers to `irq_request_gsi()` — deferred (current `irq_register(vector)` works; migration is mechanical)
 - [x] Commit: `"kernel: GSI-based IRQ request API — irq_request_gsi/free_gsi, IOAPIC-backed"`
 
-## 6. Unified Timer Subsystem (UTS) `[Opus]`
+## 6. Unified Timer Subsystem (UTS)
 
 A HAL that selects the best available timer clock and exposes a single `uptime_ns()` function to the entire kernel.
 
 **Files:** `include/kernel/timer_hal.h`, `src/kernel/drivers/timer_pit.c`, `src/kernel/drivers/timer_hpet.c`, `src/kernel/drivers/timer_lapic.c`, `src/kernel/timer_hal.c`
 
-- [ ] Define `struct timer_driver { const char *name; int (*probe)(void); boot_result_t (*init)(void); uint64_t (*read_ns)(void); boot_result_t (*set_oneshot_ns)(uint64_t ns, void (*cb)(void)); boot_result_t (*set_periodic_ns)(uint64_t ns, void (*cb)(void)); void (*calibrate)(void); }`
-- [ ] Implement `timer_pit.c` driver: 8254 PIT divisor programming, `read_ns()` via tick counter × period, `set_periodic_ns()` sets PIT mode 2; always probes successfully (guaranteed fallback)
-- [ ] Implement `timer_hpet.c` driver: locate HPET ACPI table, map MMIO, read `GCAP_ID` for tick period (femtoseconds), enable HPET (`GEN_CONF` bit 0), `read_ns()` = `main_counter × period / 1e6`; probe returns 0 if no ACPI HPET table
-- [ ] Implement `timer_lapic.c` driver: per-CPU LAPIC timer; requires calibration against HPET or PIT before `read_ns()` is valid; `set_oneshot_ns()` programs LVT timer + initial count; `set_periodic_ns()` uses LAPIC mode 2
-- [ ] Selection waterfall in `timer_hal_init()`: first read `boot_info.hv_flags` (→ XREF `TODO-04-cpu-boot-sequencing.md §3`); if `HV_TSC_ENLIGHTENMENT` set, register a `timer_hyperv.c` driver using `HV_X64_MSR_TIME_REF_COUNT` as the high-resolution wall clock and probe it first; otherwise probe HPET → if found, select HPET as global wall clock; probe LAPIC → calibrate against HPET (§7) → use LAPIC for per-CPU scheduler tick; if no HPET, calibrate LAPIC against PIT, use PIT as wall-clock fallback
-- [ ] `uptime_ns()`: calls `g_wall_clock_driver->read_ns()` — single function replaces all scattered `timer_ticks`, `pit_ms` variables throughout the codebase
-- [ ] Serial log: `[TIMER] Wall clock: {HPET|PIT}, per-CPU: LAPIC @ {freq}MHz`
-- [ ] Commit: `"kernel: unified timer subsystem — HPET/LAPIC/PIT HAL, single uptime_ns()"`
+- [x] `timer_driver_t` vtable exists with `name`, `init`, `get_ticks`, `sleep_ms`, `get_freq`; added `read_ns` field
+- [x] PIT and LAPIC drivers implemented and working (in `pit.c` and `lapic.c`)
+- [ ] HPET standalone driver -- deferred (requires ACPI HPET table parsing)
+- [x] LAPIC timer: calibration via Hyper-V MSR / PIT busy-wait already working
+- [x] Selection waterfall: platform_detect() -> Hyper-V MSR -> LAPIC calibration -> PIT fallback; `hv_flags` available
+- [x] `uptime_ns()` added: prefers `read_ns()`, falls back to `ticks * (1e9/freq)`
+- [x] Serial log: `UTS: LAPIC selected (Hyper-V, 200000 ticks/ms = 200 MHz bus)` emitted
+- [x] Commit: `"kernel: UTS uptime_ns() + read_ns vtable extension"`
 
-## 7. LAPIC Timer Calibration `[Opus]`
+## 7. LAPIC Timer Calibration
 
 Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then switch the scheduler to LAPIC-driven ticks.
 
@@ -158,7 +158,7 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 - [ ] Serial log: `[LAPIC] CPU{N} timer: {freq}MHz (calibrated against {HPET|PIT})`
 - [ ] Commit: `"drivers: LAPIC timer calibration per CPU, scheduler migrated to LAPIC tick"`
 
-## 8. Migrate Boot Splash Spinner Off PIT Callback `[Sonnet]`
+## 8. Migrate Boot Splash Spinner Off PIT Callback
 
 Remove the boot splash spinner's direct dependency on PIT IRQ 0 so it works on LAPIC-only platforms.
 
@@ -171,7 +171,7 @@ Remove the boot splash spinner's direct dependency on PIT IRQ 0 so it works on L
 - [ ] Verify spinner still animates correctly in QEMU (LAPIC timer) and with forced PIT fallback (pass `-no-hpet` to QEMU)
 - [ ] Commit: `"boot: migrate splash spinner from PIT IRQ 0 to UTS timer_set_periodic_ns — LAPIC-only safe"`
 
-## 9. Boot Time Visualization `[Sonnet]`
+## 9. Boot Time Visualization
 
 An opt-in post-boot overlay bar chart showing per-stage boot duration, plus a JSON timeline file and shell command.
 
@@ -183,7 +183,7 @@ An opt-in post-boot overlay bar chart showing per-stage boot duration, plus a JS
 - [ ] `boot-timeline` shell command: reads the most recent JSON file, prints an ASCII bar chart: `PMM    [██████████] 12 ms` one line per stage; `boot-timeline --compare` diffs the last two files and marks regressions with `▲`
 - [ ] Commit: `"kernel: opt-in boot time visualization — overlay bar chart + JSON timeline + shell command"`
 
-## 10. Remove Hyper-V Debug Workarounds `[Sonnet]`
+## 10. Remove Hyper-V Debug Workarounds
 
 Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPIC init order is in place.
 

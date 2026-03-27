@@ -26,6 +26,7 @@ typedef struct timer_driver {
     uint64_t (*get_ticks)(void);                     /* monotonic tick counter */
     void (*sleep_ms)(uint32_t ms);                   /* blocking delay */
     uint32_t (*get_freq)(void);                      /* current tick freq (Hz) */
+    uint64_t (*read_ns)(void);                       /* monotonic nanoseconds (0 if unsupported) */
 } timer_driver_t;
 
 /* ---- THE single source of truth ---- */
@@ -49,6 +50,10 @@ uint32_t system_get_freq(void);
 /* Return seconds elapsed since boot (ticks / freq).
  * Safe to call before g_system_timer is set (returns 0). */
 uint64_t uptime(void);
+
+/* Return nanoseconds elapsed since boot via the active timer's read_ns().
+ * Falls back to ticks * (1000000000 / freq) if read_ns is not available. */
+uint64_t uptime_ns(void);
 
 /* ---- Timer tick callback (ISR-context) ----
  * One global callback invoked from the active timer ISR at configurable

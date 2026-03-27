@@ -48,6 +48,21 @@ uint64_t uptime(void)
     return system_get_ticks() / freq;
 }
 
+uint64_t uptime_ns(void)
+{
+    /* Prefer read_ns() if the driver provides it */
+    if (g_system_timer && g_system_timer->read_ns) {
+        uint64_t ns = g_system_timer->read_ns();
+        if (ns > 0) return ns;
+    }
+    /* Fallback: ticks * (1e9 / freq) */
+    {
+        uint32_t freq = system_get_freq();
+        if (freq == 0) return 0;
+        return (system_get_ticks() * 1000000000ULL) / freq;
+    }
+}
+
 /* ---- Timer tick callback (ISR-context periodic callback) ---- */
 
 static void (*tick_cb_fn)(void) = (void *)0;
