@@ -42,16 +42,36 @@ void cpu_enable_nx(void)
 
 /* ---- SMEP (Supervisor Mode Execution Prevention) via CR4.SMEP ---- */
 
+/* Check if the hypervisor supports guest CR4 SMEP/SMAP writes.
+ * Hyper-V/WHPX: does NOT handle these VM exits (VP exit code 4).
+ * KVM, VMware, VirtualBox: fully support guest SMEP/SMAP.
+ * Bare metal: always supported (no VM exits). */
+static int hv_supports_cr4_smep_smap(void)
+{
+    platform_id_t p = platform_detect();
+    switch (p) {
+        case PLATFORM_BARE_METAL:
+        case PLATFORM_QEMU_KVM:
+        case PLATFORM_QEMU_TCG:
+        case PLATFORM_VMWARE:
+        case PLATFORM_VIRTUALBOX:
+            return 1;
+        case PLATFORM_HYPERV:
+            /* Hyper-V WHPX does not handle guest CR4.SMEP/SMAP VM exits.
+             * The host enforces these via EPT/SLAT instead. */
+            return 0;
+        default:
+            return 0;  /* unknown hypervisor — be safe */
+    }
+}
+
 void cpu_enable_smep(void)
 {
     if (!cpu_has(CPU_FEATURE_SMEP))
         return;
 
-    /* Skip on hypervisors — CR4 SMEP/SMAP writes cause VM exits on
-     * WHPX/Hyper-V that the hypervisor doesn't handle. The host
-     * enforces these protections at the EPT/NPT level instead. */
-    if (platform_detect() != PLATFORM_BARE_METAL) {
-        klog(LOG_DEBUG, "cpu", "SMEP: skipped (hypervisor enforces via EPT)");
+    if (!hv_supports_cr4_smep_smap()) {
+        klog(LOG_DEBUG, "cpu", "SMEP: skipped (Hyper-V enforces via EPT)");
         return;
     }
 
@@ -69,9 +89,8 @@ void cpu_enable_smap(void)
     if (!cpu_has(CPU_FEATURE_SMAP))
         return;
 
-    /* Skip on hypervisors — same reason as SMEP above */
-    if (platform_detect() != PLATFORM_BARE_METAL) {
-        klog(LOG_DEBUG, "cpu", "SMAP: skipped (hypervisor enforces via EPT)");
+    if (!hv_supports_cr4_smep_smap()) {
+        klog(LOG_DEBUG, "cpu", "SMAP: skipped (Hyper-V enforces via EPT)");
         return;
     }
 
