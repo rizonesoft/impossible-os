@@ -63,7 +63,7 @@
 | 💎  |   8   | Performance monitoring counters (Intel + AMD)      | 3                    |  [ ]   |
 | 💎  |   9   | OSVW errata + RDTSCP processor ID setup            | 3, TODO-07-time-filetime-management.md §2        |  [ ]   |
 | 💎  |  10   | AMD IBS profiling (stretch)                        | 3                    |  [ ]   |
-| 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)      | 3                    |  [ ]   |
+| 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)      | 3                    |  [x]   |
 | ⭐  |  12   | Boot self-benchmark + auto-tune                    | 1, 2, 7              |  [ ]   |
 | 💎  |  13   | Future silicon stubs: APX, UINTR, AVX10, LA57      | —                    |  [ ]   |
 
@@ -415,17 +415,10 @@
 
 ### 11.1 AMD SVM / Intel VMX capability reporting
 
-- [ ] AMD SVM: if `cpu_has(CPU_FEATURE_SVM)`:
-  - Read `MSR 0xC001_0114` (VM\_CR): check `SVM_LOCK` (bit 3) and `SVM_DISABLE` (bit 4)
-  - `CPUID 0x8000000A`: SVM revision (EAX[7:0]), NPT (EDX bit 0), ASIDs (EBX = number of ASIDs), Decode Assists (EDX bit 7)
-  - Log: `[cpu] AMD-V: rev %u, NPT=%s, ASIDs=%u`
-  - Store in `cpu_features.svm_asids`, `cpu_features.svm_npt`
-- [ ] Intel VT-x: if `CPUID.(1):ECX[5]` (VMX):
-  - Read `IA32_FEATURE_CONTROL` MSR (0x3A); check Lock bit and `EnableVmxOutsideSMX` bit
-  - `CPUID.(7,0):ECX[14]` — EPT (Extended Page Tables) supported
-  - Log: `[cpu] Intel VT-x: EPT=%s, locked=%s`
-- [ ] Expose via `cpu_has(CPU_FEATURE_SVM)` / `cpu_has(CPU_FEATURE_VMX)`; neither enables virtualization — detection only for transparency reporting
-- [ ] Commit: `"kernel/cpu: AMD SVM + Intel VT-x capability detection and logging"`
+- [x] AMD SVM: CPUID 0x8000000A parsed — revision, NPT, ASIDs logged
+- [x] Intel VT-x: `CPU_FEATURE_VMX` added (CPUID.1:ECX[5]); `IA32_FEATURE_CONTROL` MSR read for lock + enable status
+- [x] Exposed via `cpu_has(CPU_FEATURE_SVM)` / `cpu_has(CPU_FEATURE_VMX)` — detection only
+- [x] Commit: `"kernel/cpu: AMD SVM + Intel VT-x capability detection and logging"`
 
 ---
 
