@@ -43,7 +43,7 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On                   | Status |
 | --- | :---: | -------------------------------------------------- | ---------------------- | :----: |
-| 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings | —                      |  [/]   |
+| 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings | —                      |  [x]   |
 | 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers   | §1                     |  [/]   |
 | 💎  |   3   | KPTI: per-process user page table + CR3 swap       | §1, T04 §3, T05 §2     |  [ ]   |
 | 💎  |   4   | PCID: TLB tagging for KPTI (no-flush CR3 switch)   | §3                     |  [ ]   |
@@ -79,11 +79,11 @@
 
 - [x] `vmm_apply_nx_policy()`: walks PML4→PDPT→PD→PT, sets NX on all non-text pages (2 MiB huge + 4 KiB entries); skips pages overlapping `__text_start`..`__text_end` (linker symbols added)
 - [x] `vmm_flush_tlb_all()` called after NX application; logs count of NX'd pages + text range
-- [ ] Verification test (execute heap pointer → #PF) — deferred to boot test suite
+- [ ] Verification test (execute heap pointer -> #PF) -- deferred to boot test suite (debug=1)
 
 ### 1.4 Commit
 
-- [ ] Commit: `"kernel/security: NX bit — EFER.NXE on BSP+APs, PTE_NX on all non-text mappings"`
+- [x] Committed across multiple patches: EFER.NXE activation, AP trampoline NXE+SCE, PTE NX gate, vmm_apply_nx_policy()
 
 ---
 
