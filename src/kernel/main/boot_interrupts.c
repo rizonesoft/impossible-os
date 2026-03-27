@@ -37,35 +37,16 @@
 
 void boot_interrupts_init(void)
 {
-    /* Hyper-V debug bars — read FB from boot_info at 0x10000 */
-    volatile struct boot_info *_bi =
-        (volatile struct boot_info *)(uintptr_t)0x10000;
-    volatile uint32_t *_fb = (volatile uint32_t *)_bi->fb.addr;
-    uint32_t _pitch = _bi->fb.pitch / 4;
-    uint32_t _fbw = _bi->fb.width;
-    uint32_t _fbh = _bi->fb.height;
-#define HV_BAR(row, color) do { \
-    if (_bi->config.debug && _fb && _fbw > 0) { \
-        uint32_t _r, _c; \
-        for (_r = (row); _r < (row) + 8 && _r < _fbh; _r++) \
-            for (_c = 0; _c < 100 && _c < _fbw; _c++) \
-                _fb[_r * _pitch + _c] = (color); \
-    } \
-} while (0)
-
-    HV_BAR(160, 0x00FF0000);  /* RED = entered boot_interrupts_init */
 
     klog(LOG_DEBUG, "boot", "--- Phase: interrupt controllers & timer ---");
     boot_splash_status("Setting up interrupts...");
 
     gdt_init();
     boot_progress(1, "GDT", POSTCODE_GDT_INIT);
-    HV_BAR(172, 0x0000FF00);  /* GREEN = GDT OK */
 
     idt_init();
     irq_init();
     boot_progress(1, "IDT", POSTCODE_IDT_INIT);
-    HV_BAR(184, 0x0000FFFF);  /* CYAN = IDT OK */
 
     /* ACPI MADT must be parsed before PIC/PIT so we know:
      *   (a) PCAT_COMPAT — whether a PIC exists at all
@@ -82,7 +63,6 @@ void boot_interrupts_init(void)
              (uint64_t)acpi_get_cpu_count());
         boot_progress(1, "ACPI", POSTCODE_ACPI_INIT);
     }
-    HV_BAR(190, 0x00FF4500);  /* DARK ORANGE = ACPI OK */
 
     /* ---- APIC-first boot: LAPIC + IOAPIC before PIC/PIT ----
      *
@@ -141,7 +121,6 @@ void boot_interrupts_init(void)
             }
         }
         boot_progress(1, "LAPIC_IOAPIC", POSTCODE_LAPIC_INIT);
-        HV_BAR(193, 0x0080FF00);  /* LIME = LAPIC/IOAPIC OK */
 
         /* AHCI MSI targets the LAPIC at 0xFEE00000 — it MUST be initialized
          * before we program MSI.  INTx fallback needs IOAPIC routing.
@@ -166,7 +145,6 @@ void boot_interrupts_init(void)
                  "PIC: skipped (PCAT_COMPAT=0, APIC-only platform)");
         }
     }
-    HV_BAR(196, 0x00FFFF00);  /* YELLOW = PIC OK */
 
     /* UTS: select timer backend (PIT for TCG, LAPIC for all else).
      * This MUST happen before boot_splash_init() so sleep_ms() works.
@@ -174,24 +152,19 @@ void boot_interrupts_init(void)
      * On TCG: initializes PIT as wall-clock timer. */
     timer_hal_init();
     boot_progress(1, "TIMER", POSTCODE_TIMER_INIT);
-    HV_BAR(208, 0x000000FF);  /* BLUE = timer OK */
 
     rtc_init();
     boot_progress(1, "RTC", POSTCODE_RTC_INIT);
-    HV_BAR(220, 0x00FF8000);  /* ORANGE = RTC OK */
 
     boot_splash_status("Initializing input...");
     keyboard_init();
     boot_progress(1, "KEYBOARD", POSTCODE_KBD_INIT);
-    HV_BAR(232, 0x00800080);  /* PURPLE = keyboard OK */
 
     mouse_init();
-    HV_BAR(244, 0x00FFFFFF);  /* WHITE = mouse OK */
 
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
     fb_init();
     boot_progress(1, "FB", POSTCODE_FB_INIT);
-    HV_BAR(256, 0x00FF00FF);  /* MAGENTA = fb_init OK */
 
     boot_splash_init();
 
@@ -219,6 +192,4 @@ void boot_interrupts_init(void)
          "--- Phase: network (DHCP, async fire-and-forget) ---");
     dhcp_discover();
 
-    HV_BAR(268, 0x0000FF00);  /* GREEN = boot_interrupts complete */
-#undef HV_BAR
 }

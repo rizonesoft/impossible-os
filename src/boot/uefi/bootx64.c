@@ -256,9 +256,6 @@ static UINT32  gFbPitch;  /* in pixels */
 static UINT32  g_conf_res_width  = 0;
 static UINT32  g_conf_res_height = 0;
 
-/* Accent color from boot.conf AccentColor=RRGGBB (0 = none, no fade). */
-static UINT32  g_conf_accent_color = 0;
-
 /* --- Helper: memory ops --- */
 static void efi_memset(void *dst, UINT8 val, UINTN size)
 {
@@ -623,21 +620,6 @@ static void parse_conf_kv(struct boot_config *cfg,
             while (*xp && *xp != 'x' && *xp != 'X') xp++;
             g_conf_res_height = (*xp) ? ascii_atoi(xp + 1) : 0;
         }
-    }
-    else if (ascii_streq(key, "AccentColor")) {
-        /* Parse RRGGBB hex string (no 0x prefix) */
-        UINT32 color = 0;
-        const char *p = val;
-        while (*p) {
-            UINT8 nibble;
-            if      (*p >= '0' && *p <= '9') nibble = (UINT8)(*p - '0');
-            else if (*p >= 'A' && *p <= 'F') nibble = (UINT8)(*p - 'A' + 10);
-            else if (*p >= 'a' && *p <= 'f') nibble = (UINT8)(*p - 'a' + 10);
-            else break;
-            color = (color << 4) | nibble;
-            p++;
-        }
-        g_conf_accent_color = color;
     }
     /* Unknown keys are silently ignored -- forward compatibility */
 }
@@ -1375,67 +1357,6 @@ static void setup_page_tables(void)
 /* Defined in entry64.asm */
 typedef void (*kernel_entry_fn)(UINT64 magic, UINT64 boot_info_addr);
 
-/* ============================================================================
- * Bootloader fade-in: ramp framebuffer black → accent color over ~300 ms.
- *
- * Called AFTER ExitBootServices() + setup_page_tables() so no UEFI calls are
- * made.  Uses TSC-based timing (calibrated earlier with UEFI Stall(1 ms)).
- * Falls back silently when AccentColor is absent or TSC freq is unknown.
- *
- * The animation clears the debug DRAW_BAR strips and presents a smooth
- * color ramp so the bootloader → splash transition is not a jarring cut.
- * ============================================================================ */
-static void bootloader_fade_in(void)
-{
-    UINT32 accent   = g_conf_accent_color;
-    if (accent == 0) return;
-
-    UINT64 tsc_freq = g_boot_info_ptr->timing.tsc_freq;
-    if (tsc_freq == 0) return;
-
-    /* Pulse: 5 steps up (0→accent) + 5 steps down (accent→0), 30 ms each.
-     * Total = 300 ms.  Ends on solid black so the kernel inherits a clean
-     * framebuffer — no lingering accent color visible behind the splash. */
-    const UINT32 HALF_STEPS = 5;
-    const UINT32 STEP_MS    = 30;
-
-    UINT8  r_target = (UINT8)((accent >> 16) & 0xFF);
-    UINT8  g_target = (UINT8)((accent >> 8)  & 0xFF);
-    UINT8  b_target = (UINT8)( accent         & 0xFF);
-
-    UINT64 step_tsc = tsc_freq * STEP_MS / 1000;
-    UINT32 total_px = gFbHeight * gFbPitch;
-    UINT32 i, s;
-
-    /* Clear debug bars before starting the pulse */
-    for (i = 0; i < total_px; i++)
-        gFramebuffer[i] = 0;
-
-    /* Fade up: black → accent */
-    for (s = 1; s <= HALF_STEPS; s++) {
-        UINT32 bright = (s * 256) / HALF_STEPS;
-        UINT8  r = (UINT8)((r_target * bright) >> 8);
-        UINT8  g = (UINT8)((g_target * bright) >> 8);
-        UINT8  b = (UINT8)((b_target * bright) >> 8);
-        UINT32 color = ((UINT32)r << 16) | ((UINT32)g << 8) | b;
-        for (i = 0; i < total_px; i++) gFramebuffer[i] = color;
-        UINT64 t_end = boot_rdtsc() + step_tsc;
-        while (boot_rdtsc() < t_end) __asm__ volatile ("pause");
-    }
-
-    /* Fade down: accent → black */
-    for (s = HALF_STEPS; s > 0; s--) {
-        UINT32 bright = ((s - 1) * 256) / HALF_STEPS;
-        UINT8  r = (UINT8)((r_target * bright) >> 8);
-        UINT8  g = (UINT8)((g_target * bright) >> 8);
-        UINT8  b = (UINT8)((b_target * bright) >> 8);
-        UINT32 color = ((UINT32)r << 16) | ((UINT32)g << 8) | b;
-        for (i = 0; i < total_px; i++) gFramebuffer[i] = color;
-        UINT64 t_end = boot_rdtsc() + step_tsc;
-        while (boot_rdtsc() < t_end) __asm__ volatile ("pause");
-    }
-}
-
 static void jump_to_kernel(UINT64 entry_point)
 {
     kernel_entry_fn entry = (kernel_entry_fn)entry_point;
@@ -1638,11 +1559,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     serial_early_print("[BOOT] jumping to kernel_main\n");
     DRAW_BAR(48, 0x00FFFFFF);  /* WHITE = about to jump */
     g_boot_info_ptr->timing.kernel_jump = boot_rdtsc();
-
-    /* Fade framebuffer from black to accent color (300 ms, TSC-timed).
-     * AccentColor=RRGGBB in boot.conf enables this; absent = instant black. */
-    bootloader_fade_in();
-
     jump_to_kernel(kernel_entry);
 
     /* Never reached */
