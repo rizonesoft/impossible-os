@@ -67,7 +67,7 @@
 - [x] EFER bit definitions (`EFER_SCE`, `EFER_LME`, `EFER_LMA`, `EFER_NXE`) added to `kernel/msr.h`
 - [x] `cpu_enable_nx()` in `cpu_security.c`: checks `cpu_has(CPU_FEATURE_NX)`, sets `EFER_NXE` via `msr_write()`
 - [x] Called on BSP in Phase 0 after `cpuid_init()` via `cpu_harden()`; called on each AP in `ap_entry()`
-- [ ] `ap_trampoline.asm` EFER_NXE — deferred (APs currently get NX from `cpu_harden()` in C after long mode entry; trampoline change is for NX-before-paging which is a defense-in-depth enhancement)
+- [x] `ap_trampoline.asm`: EFER set to LME + NXE + SCE before paging is enabled — no privilege gap between long mode entry and `cpu_harden()`
 
 ### 1.2 PTE NX bit definition
 

@@ -78,10 +78,12 @@ pm_entry:
     or eax, (1 << 5)
     mov cr4, eax
 
-    ; ---- Enable Long Mode (IA32_EFER.LME) ----
+    ; ---- Enable Long Mode + NX + SYSCALL (IA32_EFER) ----
     mov ecx, 0xC0000080
     rdmsr
-    or eax, (1 << 8)
+    or eax, (1 << 0)   ; SCE  — SYSCALL/SYSRET enable
+    or eax, (1 << 8)   ; LME  — Long Mode Enable
+    or eax, (1 << 11)  ; NXE  — No-Execute Enable (must be set before paging)
     wrmsr
 
     ; ---- Enable paging ----
