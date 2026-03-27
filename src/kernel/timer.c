@@ -98,9 +98,19 @@ static void alive_blink_tick(void)
     s_blink_state = !s_blink_state;
 
     color = s_blink_state ? BLINK_COLOR_ON : BLINK_COLOR_OFF;
-    for (row = 0; row < BLINK_SIZE; row++)
-        for (col = 0; col < BLINK_SIZE; col++)
-            fb_put_pixel(BLINK_X + col, BLINK_Y + row, color);
+    {
+        /* Draw a filled circle (radius = BLINK_SIZE/2) */
+        int r = BLINK_SIZE / 2;
+        int cx = BLINK_X + r;
+        int cy = BLINK_Y + r;
+        int dy, dx;
+        for (dy = -r; dy <= r; dy++) {
+            for (dx = -r; dx <= r; dx++) {
+                if (dx * dx + dy * dy <= r * r)
+                    fb_put_pixel((uint32_t)(cx + dx), (uint32_t)(cy + dy), color);
+            }
+        }
+    }
     fb_swap_rect(BLINK_X, BLINK_Y, BLINK_SIZE, BLINK_SIZE);
 }
 

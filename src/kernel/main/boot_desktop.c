@@ -21,6 +21,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_progress.h"
 #include "kernel/boot_halt.h"
 #include "kernel/boot_recovery.h"
 #include "kernel/boot_info.h"
@@ -138,6 +139,9 @@ void boot_phase3(void)
     boot_post_write(POSTCODE_BOOT_OK);  /* 0xFF = boot succeeded */
     boot_timing_print_steps();
     boot_timing_write_report();
+
+    /* Debug bar: render after wallpaper, before compositor takes over */
+    render_debug_bar();
 
     /* Boot-time heap stats */
     {
