@@ -6,6 +6,7 @@
 
 #include "kernel/cpu_security.h"
 #include "kernel/cpuid.h"
+#include "kernel/cpuid_platform.h"
 #include "kernel/msr.h"
 #include "kernel/klog.h"
 
@@ -46,6 +47,14 @@ void cpu_enable_smep(void)
     if (!cpu_has(CPU_FEATURE_SMEP))
         return;
 
+    /* Skip on hypervisors — CR4 SMEP/SMAP writes cause VM exits on
+     * WHPX/Hyper-V that the hypervisor doesn't handle. The host
+     * enforces these protections at the EPT/NPT level instead. */
+    if (platform_detect() != PLATFORM_BARE_METAL) {
+        klog(LOG_DEBUG, "cpu", "SMEP: skipped (hypervisor enforces via EPT)");
+        return;
+    }
+
     uint64_t cr4 = read_cr4();
     if (!(cr4 & CR4_SMEP)) {
         write_cr4(cr4 | CR4_SMEP);
@@ -59,6 +68,12 @@ void cpu_enable_smap(void)
 {
     if (!cpu_has(CPU_FEATURE_SMAP))
         return;
+
+    /* Skip on hypervisors — same reason as SMEP above */
+    if (platform_detect() != PLATFORM_BARE_METAL) {
+        klog(LOG_DEBUG, "cpu", "SMAP: skipped (hypervisor enforces via EPT)");
+        return;
+    }
 
     uint64_t cr4 = read_cr4();
     if (!(cr4 & CR4_SMAP)) {
