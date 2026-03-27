@@ -23,6 +23,7 @@
 #include "kernel/tpm.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
+#include "kernel/cpu_security.h"
 #include "main/main_internal.h"
 
 /* External: Multiboot2 parser */
@@ -140,6 +141,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* --- CPUID: probe CPU features --- */
     cpuid_init();
     boot_progress(0, "CPUID", POSTCODE_CPUID_INIT);
+
+    /* --- CPU security hardening: NX, SMEP, SMAP --- */
+    cpu_harden();
 
     /* --- SIMD: enable AVX2 or fall back to SSE2 --- */
     simd_enable_avx();

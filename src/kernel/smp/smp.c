@@ -13,6 +13,7 @@
 
 #include "kernel/smp.h"
 #include "kernel/msr.h"
+#include "kernel/cpu_security.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/acpi.h"
 #include "kernel/mm/pmm.h"
@@ -81,6 +82,9 @@ void ap_entry(uint32_t cpu_index)
     pcpu = &cpu_data[cpu_index];
     pcpu->self = pcpu;  /* self-pointer for gs:0 access */
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)pcpu);
+
+    /* CPU security hardening on this AP (NX, SMEP, SMAP) */
+    cpu_harden();
 
     /* Initialize this AP's LAPIC */
     lapic_init_ap();

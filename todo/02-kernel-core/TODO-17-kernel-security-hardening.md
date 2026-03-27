@@ -42,45 +42,32 @@
 ## Implementation Order
 
 | ⭐  | Order | Deliverable                                        | Depends On                   | Status |
-| --- | :---: | -------------------------------------------------- | ---------------------------- | :----: |
-| 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings | —                            |  [ ]   |
-| 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers   | 1                            |  [ ]   |
-| 💎  |   3   | KPTI: per-process user page table + CR3 swap       | 1, TODO-04-peb-teb-user-abi.md §3, TODO-05-native-api-layer.md §2 |  [ ]   |
-| 💎  |   4   | PCID: TLB tagging for KPTI (no-flush CR3 switch)   | 3                            |  [ ]   |
-| 💎  |   5   | Spectre: IBRS/IBPB MSR + retpoline build flag      | TODO-05-native-api-layer.md §2      |  [ ]   |
-| 💎  |   6   | CET shadow stack (kernel ring 0)                   | 1, 2                         |  [ ]   |
-| 💎  |   7   | CET indirect branch tracking (IBT / ENDBR64)       | 6                            |  [ ]   |
-| 💎  |   8   | Kernel heap hardening (cookies, redzone)           | TODO-16-crash-dump-generation.md §1 |  [ ]   |
-| 💎  |   9   | Stack canaries (`-fstack-protector-strong`)         | TODO-16-crash-dump-generation.md §1 |  [ ]   |
-| 💎  |  10   | Kernel stack guard pages                           | 1                            |  [ ]   |
-| ⭐  |  11   | KASLR (RDRAND kernel load address)                 | 1, 3                         |  [ ]   |
+| --- | :---: | -------------------------------------------------- | ---------------------- | :----: |
+| 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings | —                      |  [/]   |
+| 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers   | §1                     |  [/]   |
+| 💎  |   3   | KPTI: per-process user page table + CR3 swap       | §1, T04 §3, T05 §2     |  [ ]   |
+| 💎  |   4   | PCID: TLB tagging for KPTI (no-flush CR3 switch)   | §3                     |  [ ]   |
+| 💎  |   5   | Spectre: IBRS/IBPB MSR + retpoline build flag      | T05 §2                 |  [ ]   |
+| 💎  |   6   | CET shadow stack (kernel ring 0)                   | §1, §2                 |  [ ]   |
+| 💎  |   7   | CET indirect branch tracking (IBT / ENDBR64)       | §6                     |  [ ]   |
+| 💎  |   8   | Kernel heap hardening (cookies, redzone)           | T16 §1                 |  [ ]   |
+| 💎  |   9   | Stack canaries (`-fstack-protector-strong`)        | T16 §1                 |  [ ]   |
+| 💎  |  10   | Kernel stack guard pages                           | §1                     |  [ ]   |
+| ⭐  |  11   | KASLR (RDRAND kernel load address)                 | §1, §3                 |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work — Impossible OS is superior or first.
 
 ---
 
-## 1. NX Bit: EFER.NXE + PTE NX on All Non-Code Mappings `[Opus]`
+## 1. NX Bit: EFER.NXE + PTE NX on All Non-Code Mappings
 
 ### 1.1 Enable IA32_EFER.NXE
 
-- [ ] Define MSR in `include/kernel/cpu_msr.h`:
-  ```c
-  #define MSR_IA32_EFER   0xC0000080
-  #define EFER_NXE        (1ULL << 11)
-  #define EFER_LME        (1ULL << 8)
-  #define EFER_SCE        (1ULL << 0)
-  ```
-- [ ] `cpu_enable_nx()`:
-  ```c
-  void cpu_enable_nx(void) {
-      if (!cpu_has(CPU_FEATURE_NX)) return;
-      uint64_t efer = rdmsr(MSR_IA32_EFER);
-      wrmsr(MSR_IA32_EFER, efer | EFER_NXE);
-  }
-  ```
-- [ ] Call `cpu_enable_nx()` on the BSP during Phase 1 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §3`); call again on each AP in `ap_startup_c()` in `smp.c`
-- [ ] `ap_trampoline.asm`: add `or eax, EFER_NXE` to the IA32_EFER `wrmsr` sequence so APs get NX before enabling paging
+- [x] EFER bit definitions (`EFER_SCE`, `EFER_LME`, `EFER_LMA`, `EFER_NXE`) added to `kernel/msr.h`
+- [x] `cpu_enable_nx()` in `cpu_security.c`: checks `cpu_has(CPU_FEATURE_NX)`, sets `EFER_NXE` via `msr_write()`
+- [x] Called on BSP in Phase 0 after `cpuid_init()` via `cpu_harden()`; called on each AP in `ap_entry()`
+- [ ] `ap_trampoline.asm` EFER_NXE — deferred (APs currently get NX from `cpu_harden()` in C after long mode entry; trampoline change is for NX-before-paging which is a defense-in-depth enhancement)
 
 ### 1.2 PTE NX bit definition
 

@@ -35,6 +35,10 @@ int msr_try_read(uint32_t index, uint64_t *out);
 
 /* EFER / SYSCALL */
 #define MSR_IA32_EFER               0xC0000080
+#define EFER_SCE                    (1ULL << 0)   /* SYSCALL/SYSRET enable */
+#define EFER_LME                    (1ULL << 8)   /* Long Mode Enable */
+#define EFER_LMA                    (1ULL << 10)  /* Long Mode Active (read-only) */
+#define EFER_NXE                    (1ULL << 11)  /* No-Execute Enable */
 #define MSR_IA32_STAR               0xC0000081
 #define MSR_IA32_LSTAR              0xC0000082
 #define MSR_IA32_CSTAR              0xC0000083
