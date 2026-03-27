@@ -52,7 +52,7 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On           | Status |
 | --- | :---: | -------------------------------------------------- | -------------------- | :----: |
-| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [/]   |
+| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [x]   |
 | 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                    | §1                   |  [ ]   |
 | 💎  |   3   | MSR management infrastructure (`msr.c`)            | —                    |  [x]   |
 | 💎  |   4   | UMIP + PKU protection keys                         | §3                   |  [ ]   |
