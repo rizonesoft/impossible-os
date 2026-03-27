@@ -48,7 +48,6 @@
 
 > 💎 = parity — Windows NT and Linux both have formal init phase models; Impossible OS must match them.
 > ⭐ = exclusive — degraded-boot recovery UI and UEFI NVRAM POST log are not present in either competitor.
-> ⚠️ Rows 9 and 10 have no body sections yet — add `## 9.` and `## 10.` sections when implementing.
 
 
 ## 1. Boot Init Infrastructure `[Sonnet]`
@@ -212,7 +211,37 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [ ] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1` check
 - [ ] Update all init functions in `sched/`, `ipc/`, `mm/`, `fs/` to return `boot_result_t` where they currently return `void`
 
+## 9. Degraded-Boot Recovery Screen `[Opus]`
+
+In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally. Renders directly to the GOP framebuffer — no compositor, no window manager required. Displays which subsystem failed, its POST code, and a simple recovery menu (retry / boot to serial console / power off).
+
+**Files:** `src/kernel/main/boot_recovery.c`, `include/kernel/boot_recovery.h`
+
+- [ ] Design `boot_recovery_info_t` struct: failed subsystem, POST code, `boot_result_t`, phase number
+- [ ] Implement `boot_recovery_show(boot_recovery_info_t *info)` — draws panel on framebuffer using `gfx_fill_rect`, `gfx_draw_text`; no heap alloc after Phase 1
+- [ ] Implement simple three-option menu: **[R] Retry**, **[C] Serial console**, **[P] Power off**; poll keyboard via `keyboard_poll()`
+- [ ] Hook into Phase 2 failure path: call `boot_recovery_show()` instead of `panic()` when `BOOT_FATAL` and `SUBSYS_FB` is ready
+- [ ] Hook into Phase 3 failure path: call `boot_recovery_show()` for any BOOT_FATAL
+- [ ] Ensure `boot_recovery_show()` is a no-op (falls through to `boot_halt()`) if `SUBSYS_FB` is not ready
+- [ ] Add `boot_progress(9, "recovery-screen", 0xE0)` call on entry
+
+## 10. POST Code + UEFI Variable Log `[Opus]`
+
+Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every phase boundary via `uefi_runtime_services.SetVariable`. The value survives a reboot, allowing post-mortem boot failure diagnosis on real hardware even when serial is unavailable.
+
+**Files:** `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`, `src/kernel/uefi_runtime.c`
+
+- [ ] Define UEFI variable name: `ImpossiblePOST` in namespace GUID `{impossible-os-post-guid}`
+- [ ] Implement `boot_post_write(uint8_t code)` — calls `gRT->SetVariable` with `EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`; gracefully no-ops if runtime services unavailable
+- [ ] Call `boot_post_write(postcode)` at each `boot_progress()` call site in phases 0–3
+- [ ] On successful boot completion, write final code `0xFF` (`POSTCODE_BOOT_OK`)
+- [ ] On `boot_halt()` / `panic()`, write `0xFE` (`POSTCODE_BOOT_FAILED`) before halting
+- [ ] Implement `boot_post_read()` — reads last stored value; used during next boot to detect prior crash
+- [ ] Log prior POST code to serial at Phase 0 start: `[POST] Last boot code: 0xNN`
+- [ ] Add `boot_progress(10, "post-code-log", 0x11)` call after `serial_init()` in Phase 0
+
 ## OS Comparison
+
 
 | ⭐  | Feature                              | 🪟 Windows NT / 11                         | 🐧 Linux                                   | 🚀 Impossible OS                                         |
 | --- | ------------------------------------ | ------------------------------------------- | ------------------------------------------ | --------------------------------------------------------- |
