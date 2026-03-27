@@ -22,7 +22,9 @@ SECTIONS
     /* Code section */
     .text ALIGN(4K) :
     {
+        __text_start = .;
         *(.text)
+        __text_end = .;
     }
 
     /* Read-only data */

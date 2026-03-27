@@ -47,3 +47,7 @@ void vmm_flush_tlb(uintptr_t virt);
 
 /* Flush the entire TLB by reloading CR3 */
 void vmm_flush_tlb_all(void);
+
+/* Apply NX policy: mark all non-text kernel pages as non-executable.
+ * Call after vmm_init() and cpu_enable_nx(). */
+void vmm_apply_nx_policy(void);

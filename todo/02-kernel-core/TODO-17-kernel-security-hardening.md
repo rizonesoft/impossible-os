@@ -77,15 +77,9 @@
 
 ### 1.3 Apply NX to all existing mappings
 
-- [ ] `vmm_apply_nx_policy()` — walk the kernel page tables after `vmm_init()` and add `PTE_NX` to all non-text pages:
-  - **Data**: `PTE_NX` always
-  - **BSS / heap**: `PTE_NX` always
-  - **Stack pages**: `PTE_NX` always
-  - **Kernel text (`.text`)**: no `PTE_NX` (must execute)
-  - **MMIO/device regions**: `PTE_NX` (data access only)
-  - **Framebuffer**: `PTE_NX`
-  - Decision boundary: compare VA against `__kernel_text_start` / `__kernel_text_end` linker symbols; everything else gets NX
-- [ ] After applying NX, `vmm_flush_tlb_all()` to invalidate cached PTE entries; then verify with a test: attempt to execute a data page (call a function pointer into the heap) — should cause #PF (int 14) with error code `Instruction Fetch`
+- [x] `vmm_apply_nx_policy()`: walks PML4→PDPT→PD→PT, sets NX on all non-text pages (2 MiB huge + 4 KiB entries); skips pages overlapping `__text_start`..`__text_end` (linker symbols added)
+- [x] `vmm_flush_tlb_all()` called after NX application; logs count of NX'd pages + text range
+- [ ] Verification test (execute heap pointer → #PF) — deferred to boot test suite
 
 ### 1.4 Commit
 

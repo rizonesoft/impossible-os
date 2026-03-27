@@ -287,3 +287,98 @@ void vmm_init(void)
     klog(LOG_INFO, "mm", "VMM initialized (PML4 at %p, page fault handler registered)",
            (uint64_t)(uintptr_t)kernel_pml4);
 }
+
+/* ---- NX policy: mark all non-text pages as non-executable --------------- */
+
+/* Linker symbols for kernel text boundaries */
+extern char __text_start[];
+extern char __text_end[];
+
+void vmm_apply_nx_policy(void)
+{
+    uint64_t pml4i, pdpti, pdi;
+    uintptr_t text_start, text_end;
+    uint32_t nx_count = 0;
+
+    if (!cpu_has(CPU_FEATURE_NX))
+        return;
+
+    text_start = (uintptr_t)__text_start;
+    text_end   = (uintptr_t)__text_end;
+
+    /* Walk all PML4 entries (only first few are populated by boot) */
+    for (pml4i = 0; pml4i < 512; pml4i++) {
+        pte_t pml4e = kernel_pml4[pml4i];
+        pte_t *pdpt;
+
+        if (!(pml4e & VMM_FLAG_PRESENT))
+            continue;
+
+        pdpt = (pte_t *)(pml4e & PTE_ADDR_MASK);
+
+        for (pdpti = 0; pdpti < 512; pdpti++) {
+            pte_t pdpte = pdpt[pdpti];
+            pte_t *pd;
+
+            if (!(pdpte & VMM_FLAG_PRESENT))
+                continue;
+
+            /* 1 GiB huge page — set NX if not in text range */
+            if (pdpte & VMM_FLAG_HUGE) {
+                uintptr_t page_base = (pml4i << 39) | (pdpti << 30);
+                uintptr_t page_end  = page_base + (1UL << 30);
+                if (page_base >= text_end || page_end <= text_start) {
+                    pdpt[pdpti] |= VMM_FLAG_NX;
+                    nx_count++;
+                }
+                continue;
+            }
+
+            pd = (pte_t *)(pdpte & PTE_ADDR_MASK);
+
+            for (pdi = 0; pdi < 512; pdi++) {
+                pte_t pde = pd[pdi];
+                uintptr_t page_base, page_end_addr;
+
+                if (!(pde & VMM_FLAG_PRESENT))
+                    continue;
+
+                /* 2 MiB huge page — the common case for boot mappings */
+                if (pde & VMM_FLAG_HUGE) {
+                    page_base     = (pml4i << 39) | (pdpti << 30) | (pdi << 21);
+                    page_end_addr = page_base + (1UL << 21);
+
+                    /* If this 2 MiB page overlaps the text section, leave it executable */
+                    if (page_base < text_end && page_end_addr > text_start)
+                        continue;
+
+                    /* Everything else: set NX */
+                    pd[pdi] |= VMM_FLAG_NX;
+                    nx_count++;
+                    continue;
+                }
+
+                /* 4 KiB page table — walk PT entries */
+                {
+                    pte_t *pt = (pte_t *)(pde & PTE_ADDR_MASK);
+                    uint32_t pti;
+                    for (pti = 0; pti < 512; pti++) {
+                        pte_t pte = pt[pti];
+                        uintptr_t va;
+                        if (!(pte & VMM_FLAG_PRESENT))
+                            continue;
+                        va = (pml4i << 39) | (pdpti << 30) | (pdi << 21) | (pti << 12);
+                        if (va >= text_start && va < text_end)
+                            continue;  /* text — must execute */
+                        pt[pti] |= VMM_FLAG_NX;
+                        nx_count++;
+                    }
+                }
+            }
+        }
+    }
+
+    vmm_flush_tlb_all();
+    klog(LOG_INFO, "mm", "NX policy applied: %u pages marked non-executable (text: 0x%x-0x%x)",
+         (uint64_t)nx_count, (uint64_t)text_start, (uint64_t)text_end);
+}

@@ -145,6 +145,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* --- CPU security hardening: NX, SMEP, SMAP --- */
     cpu_harden();
 
+    /* --- Apply NX to all non-text kernel pages --- */
+    vmm_apply_nx_policy();
+
     /* --- SIMD: enable AVX2 or fall back to SSE2 --- */
     simd_enable_avx();
     if (simd_avx2_ok)
