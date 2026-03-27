@@ -78,6 +78,26 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
             klog(LOG_WARN, "UEFI", "Runtime services unavailable -- degraded");
     }
 
+    /* --- Read prior boot POST code from UEFI NVRAM --- */
+    {
+        int last_post = boot_post_read();
+        if (last_post >= 0) {
+            serial_write("[POST] Last boot code: 0x");
+            {
+                static const char hex[] = "0123456789ABCDEF";
+                serial_putchar(hex[(last_post >> 4) & 0xF]);
+                serial_putchar(hex[last_post & 0xF]);
+            }
+            if (last_post == 0xFF)
+                serial_write(" (OK)\n");
+            else if (last_post == 0xFE)
+                serial_write(" (FAILED -- prior boot crashed)\n");
+            else
+                serial_write(" (incomplete -- prior boot did not finish)\n");
+        }
+        boot_progress(10, "post-code-log", 0x11);
+    }
+
     /* --- UEFI variable services (NVRAM enumeration) --- */
     uefi_vars_init();
 

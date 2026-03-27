@@ -44,7 +44,7 @@
 | 💎  |   7   | Failure policy                | §6         |  [x]   |
 | 💎  |   8   | Code cleanup                  | §2–5       |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen | §7         |  [x]   |
-| ⭐  |  10   | POST code + UEFI variable log | §1         |  [ ]   |
+| ⭐  |  10   | POST code + UEFI variable log | §1         |  [x]   |
 
 > 💎 = parity — Windows NT and Linux both have formal init phase models; Impossible OS must match them.
 > ⭐ = exclusive — degraded-boot recovery UI and UEFI NVRAM POST log are not present in either competitor.
@@ -231,14 +231,14 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 
 **Files:** `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`, `src/kernel/uefi_runtime.c`
 
-- [ ] Define UEFI variable name: `ImpossiblePOST` in namespace GUID `{impossible-os-post-guid}`
-- [ ] Implement `boot_post_write(uint8_t code)` — calls `gRT->SetVariable` with `EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`; gracefully no-ops if runtime services unavailable
-- [ ] Call `boot_post_write(postcode)` at each `boot_progress()` call site in phases 0–3
-- [ ] On successful boot completion, write final code `0xFF` (`POSTCODE_BOOT_OK`)
-- [ ] On `boot_halt()` / `panic()`, write `0xFE` (`POSTCODE_BOOT_FAILED`) before halting
-- [ ] Implement `boot_post_read()` — reads last stored value; used during next boot to detect prior crash
-- [ ] Log prior POST code to serial at Phase 0 start: `[POST] Last boot code: 0xNN`
-- [ ] Add `boot_progress(10, "post-code-log", 0x11)` call after `serial_init()` in Phase 0
+- [x] Define UEFI variable name: `ImpossiblePOST` in namespace GUID `{494D504F-5354-4F53-504F-535447554944}`
+- [x] Implement `boot_post_write(uint8_t code)` — calls `uefi_set_variable()` with NV+BS+RT attributes; no-ops if runtime unavailable or `postcode=0` in boot.conf
+- [x] Call `boot_post_write(postcode)` at each `boot_progress()` call site in phases 0–3 (integrated into boot_progress itself)
+- [x] On successful boot completion, write final code `0xFF` (`POSTCODE_BOOT_OK`) in boot_phase3()
+- [x] On `boot_halt()` / `panic()`, write `0xFE` (`POSTCODE_BOOT_FAILED`) before halting
+- [x] Implement `boot_post_read()` — reads last stored value; returns -1 if unavailable
+- [x] Log prior POST code to serial at Phase 0 start: `[POST] Last boot code: 0xNN` with status interpretation
+- [x] Add `boot_progress(10, "post-code-log", 0x11)` call after `uefi_runtime_init()` in Phase 0
 
 ## OS Comparison
 
@@ -255,8 +255,8 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 | 💎  | Boot config gating                   | ✅ `SYSTEM\CurrentControlSet\Control\`     | ✅ kernel cmdline / initrd config          | ✅ Done — §2; `boot.conf` parsed in Phase 0               |
 | 💎  | Test-path separated from boot path   | ✅ Tests run in separate test OS builds    | ✅ `initcall_debug` opt-in                 | ✅ Done — §5; `debug=1` gate in boot_tests_run()          |
 | ⭐  | Degraded-boot recovery UI screen     | ❌ Safe mode is a separate boot mode       | ❌ Emergency shell is text-only            | ✅ **Done — §9 — in-kernel graphical recovery + [R]/[C]/[P] menu** |
-| ⭐  | POST code written to UEFI NVRAM      | ❌ POST codes are firmware-only            | ❌ Not implemented                         | ⬜ **Planned — Step 10 — survives reboot for diagnosis** |
-| ⭐  | Subsystem readiness oracle API       | ⚠️ Private internal only, not exposed      | ⚠️ `system_state` enum only                | ⬜ **Planned — Step 1 — `kernel_subsystem_ready()` API** |
+| ⭐  | POST code written to UEFI NVRAM      | ❌ POST codes are firmware-only            | ❌ Not implemented                         | ✅ **Done — §10 — ImpossiblePOST NVRAM var survives reboot** |
+| ⭐  | Subsystem readiness oracle API       | ⚠️ Private internal only, not exposed      | ⚠️ `system_state` enum only                | ✅ **Done — §1 — `kernel_subsystem_ready()` public API** |
 
 > **After parity items:** Impossible OS matches Windows NT and Linux on formal phased init, typed results, and dependency ordering.
 > **Exclusive items:** The degraded-boot recovery UI lets a user see exactly which subsystem failed and choose a recovery action — no other OS provides this at the kernel level. UEFI NVRAM POST codes survive a reboot, giving post-mortem boot failure diagnosis on real hardware even when serial is unavailable.

@@ -12,6 +12,8 @@
 #include "kernel/boot_splash.h"
 #include "kernel/klog.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/uefi_runtime.h"
+#include "kernel/boot_info.h"
 
 /* ---- Subsystem readiness table ------------------------------------------ */
 
@@ -72,6 +74,47 @@ void _boot_require_failed(const char *subsys_name)
     serial_write(" not ready\n");
 }
 
+/* ---- UEFI NVRAM POST code persistence ----------------------------------- */
+
+/* Impossible OS POST GUID: {494D504F-5354-4F53-504F-535447554944} */
+static const struct boot_uefi_guid s_post_guid = {
+    0x494D504F, 0x5354, 0x4F53,
+    { 0x50, 0x4F, 0x53, 0x54, 0x47, 0x55, 0x49, 0x44 }
+};
+
+/* UCS-2 variable name: "ImpossiblePOST" */
+static const uint16_t s_post_name[] = {
+    'I','m','p','o','s','s','i','b','l','e','P','O','S','T', 0
+};
+
+/* Attributes for persistent boot-visible variable */
+#define POST_ATTRS (EFI_VARIABLE_NON_VOLATILE | \
+                    EFI_VARIABLE_BOOTSERVICE_ACCESS | \
+                    EFI_VARIABLE_RUNTIME_ACCESS)
+
+void boot_post_write(uint8_t code)
+{
+    /* Only write if boot.conf postcode=1 (default) */
+    if (!g_boot_info.config.postcode) return;
+
+    uefi_set_variable(&s_post_guid, s_post_name, POST_ATTRS,
+                      sizeof(code), &code);
+    /* Ignore errors -- best effort */
+}
+
+int boot_post_read(void)
+{
+    uint8_t val = 0;
+    uint64_t sz = sizeof(val);
+    uint32_t attrs = 0;
+
+    uint64_t status = uefi_get_variable(&s_post_guid, s_post_name,
+                                        &attrs, &sz, &val);
+    if (status == 0 && sz == 1)  /* UEFI_SUCCESS = 0 */
+        return (int)val;
+    return -1;
+}
+
 /* ---- Boot progress emitter ----------------------------------------------- */
 
 static void serial_write_hex8(uint8_t v)
@@ -93,5 +136,6 @@ void boot_progress(uint8_t phase, const char *step, uint8_t postcode)
     serial_write(")\n");
 
     boot_timing_record_step(phase, step, postcode);
+    boot_post_write(postcode);
     boot_splash_status(step);
 }
