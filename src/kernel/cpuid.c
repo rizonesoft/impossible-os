@@ -303,6 +303,57 @@ void cpuid_init(void)
         }
     }
 
+    /* Configure XCR0 after all features are detected */
+    cpu_configure_xcr0();
+
     /* Suppress unused warning */
     (void)cpuid_memcpy;
+}
+
+/* ---- XCR0 configuration ------------------------------------------------ */
+
+void cpu_configure_xcr0(void)
+{
+    uint64_t mask;
+
+    if (!cpu_has(CPU_FEATURE_XSAVE))
+        return;
+
+    /* Set CR4.OSXSAVE (bit 18) to enable XGETBV/XSETBV */
+    {
+        uint64_t cr4;
+        __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
+        cr4 |= (1UL << 18);
+        __asm__ volatile ("mov %0, %%cr4" : : "r"(cr4));
+    }
+
+    /* Build mask from supported features */
+    mask = 0x03;  /* bits 0,1: x87 + SSE (always required) */
+
+    if (cpu_has(CPU_FEATURE_AVX))
+        mask |= (1UL << 2);  /* bit 2: AVX (YMM) */
+
+    if (cpu_has(CPU_FEATURE_AVX512F)) {
+        mask |= (1UL << 5);  /* bit 5: opmask (k0-k7) */
+        mask |= (1UL << 6);  /* bit 6: ZMM_Hi256 */
+        mask |= (1UL << 7);  /* bit 7: Hi16_ZMM */
+    }
+
+    if (cpu_has(CPU_FEATURE_UMIP)) {
+        /* PKRU (bit 9) — enable if PKU is supported */
+        if (g_cpu.xcr0_supported & (1UL << 9))
+            mask |= (1UL << 9);
+    }
+
+    /* Filter to only bits the CPU actually supports */
+    mask &= g_cpu.xcr0_supported;
+
+    /* Write XCR0 */
+    {
+        uint32_t lo = (uint32_t)mask;
+        uint32_t hi = (uint32_t)(mask >> 32);
+        __asm__ volatile ("xsetbv" : : "a"(lo), "d"(hi), "c"((uint32_t)0));
+    }
+
+    g_cpu.xcr0_active = mask;
 }

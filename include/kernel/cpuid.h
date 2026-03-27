@@ -108,7 +108,8 @@ struct cpu_features {
     /* XSAVE sizes */
     uint32_t xsave_size;          /* current XSAVE area size (bytes) */
     uint32_t xsave_size_max;      /* max XSAVE area size (bytes) */
-    uint64_t xcr0_supported;      /* supported XCR0 bits */
+    uint64_t xcr0_supported;      /* supported XCR0 bits (from CPUID leaf 0x0D) */
+    uint64_t xcr0_active;         /* actually enabled XCR0 bits (after cpu_configure_xcr0) */
 
     /* Feature flags — one bit per CPU_FEATURE_* */
     uint64_t flags;
@@ -130,6 +131,12 @@ struct cpu_features {
 
 /* Initialize CPUID detection. Call once at boot, after heap_init(). */
 void cpuid_init(void);
+
+/* Configure XCR0 based on detected CPU features.
+ * Enables x87+SSE+AVX always, AVX-512 if supported, PKRU if supported.
+ * Sets CR4.OSXSAVE first. Stores result in g_cpu.xcr0_active.
+ * Safe to call on BSP and each AP. */
+void cpu_configure_xcr0(void);
 
 /* Check if a CPU feature is supported. Returns 1 if available, 0 if not. */
 static inline int cpu_has(enum cpu_feature feat)

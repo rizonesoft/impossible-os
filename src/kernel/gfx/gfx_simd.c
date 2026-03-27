@@ -296,29 +296,16 @@ int simd_avx2_ok = 0;  /* Set to 1 at boot if AVX2 is available and enabled */
 
 void simd_enable_avx(void)
 {
-    /* Use centralized CPUID detection */
-    if (!cpu_has(CPU_FEATURE_XSAVE))  /* XSAVE not supported by CPU */
-        return;
-    if (!cpu_has(CPU_FEATURE_AVX))    /* AVX not supported by CPU */
-        return;
-    if (!cpu_has(CPU_FEATURE_AVX2))   /* AVX2 not supported by CPU */
+    /* XCR0 is now configured by cpu_configure_xcr0() in cpuid_init().
+     * Just check if AVX2 was successfully enabled. */
+    if (!cpu_has(CPU_FEATURE_AVX2))
         return;
 
-    /* Set CR4.OSXSAVE (bit 18) to enable XGETBV/XSETBV */
+    /* Verify XCR0 has AVX bit set (cpu_configure_xcr0 should have done this) */
     {
-        uint64_t cr4;
-        __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
-        cr4 |= (1UL << 18);
-        __asm__ volatile ("mov %0, %%cr4" : : "r"(cr4));
-    }
-
-    /* Set XCR0 bits 0 (x87), 1 (SSE), 2 (AVX) via XSETBV */
-    {
-        uint32_t xcr0_lo, xcr0_hi;
-        /* Read current XCR0 */
-        __asm__ volatile ("xgetbv" : "=a"(xcr0_lo), "=d"(xcr0_hi) : "c"((uint32_t)0));
-        xcr0_lo |= 0x07;  /* bits 0,1,2 = x87 + SSE + AVX */
-        __asm__ volatile ("xsetbv" : : "a"(xcr0_lo), "d"(xcr0_hi), "c"((uint32_t)0));
+        extern struct cpu_features g_cpu;
+        if (!(g_cpu.xcr0_active & (1UL << 2)))
+            return;  /* AVX not enabled in XCR0 */
     }
 
     simd_avx2_ok = 1;
