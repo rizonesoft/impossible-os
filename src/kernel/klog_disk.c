@@ -17,6 +17,59 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/rtc.h"
 
+/* ---- Per-subsystem log dispatch ---- */
+
+typedef struct {
+    const char *tag;         /* subsystem tag to match (case-sensitive) */
+    const char *filename;    /* file in C:\Impossible\System\Logs\ */
+} log_dispatch_entry_t;
+
+static const log_dispatch_entry_t s_dispatch[] = {
+    { "net",    "network.log" },
+    { "boot",   "boot.log"    },
+    { "fs",     "fs.log"      },
+    { "mm",     "mm.log"      },
+    { "drv",    "drivers.log" },
+    { "sec",    "security.log"},
+    { "ahci",   "drivers.log" },
+    { "pci",    "drivers.log" },
+    { "lapic",  "drivers.log" },
+    { "ioapic", "drivers.log" },
+    { "acpi",   "drivers.log" },
+    { "smp",    "boot.log"    },
+    { "UEFI",   "boot.log"    },
+    { "TPM",    "security.log"},
+    { "vfs",    "fs.log"      },
+    { "ixfs",   "fs.log"      },
+    { "fat32",  "fs.log"      },
+    { "blk",    "drivers.log" },
+};
+
+#define DISPATCH_COUNT (sizeof(s_dispatch) / sizeof(s_dispatch[0]))
+
+/* Cached VFS handles for subsystem log files (opened once at disk-enable) */
+#define SUBSYS_LOG_COUNT 6
+static const char *s_subsys_filenames[SUBSYS_LOG_COUNT] = {
+    "network.log", "boot.log", "fs.log", "mm.log", "drivers.log", "security.log"
+};
+static int s_subsys_files_created;
+
+/* Match a subsystem tag to a log filename. Returns "kernel.log" for unmatched. */
+static const char *dispatch_filename(const char *subsystem)
+{
+    uint32_t i;
+    if (!subsystem || !subsystem[0])
+        return "kernel.log";
+    for (i = 0; i < DISPATCH_COUNT; i++) {
+        const char *a = s_dispatch[i].tag;
+        const char *b = subsystem;
+        while (*a && *a == *b) { a++; b++; }
+        if (*a == '\0' && (*b == '\0' || *b == ':'))
+            return s_dispatch[i].filename;
+    }
+    return "kernel.log";
+}
+
 /* ---- State ---- */
 
 /* IXFS (C:) flush tracking */
@@ -153,6 +206,17 @@ static void ensure_log_dirs(void)
                 struct vfs_node *sys = imp->ops->finddir(imp, "System");
                 if (sys && sys->ops && sys->ops->create) {
                     sys->ops->create(sys, "Logs", VFS_DIRECTORY);
+
+                    /* Create per-subsystem log files */
+                    if (!s_subsys_files_created) {
+                        struct vfs_node *logs = sys->ops->finddir(sys, "Logs");
+                        if (logs && logs->ops && logs->ops->create) {
+                            uint32_t si;
+                            for (si = 0; si < SUBSYS_LOG_COUNT; si++)
+                                logs->ops->create(logs, s_subsys_filenames[si], VFS_FILE);
+                            s_subsys_files_created = 1;
+                        }
+                    }
                 }
             }
         }
@@ -468,6 +532,64 @@ void klog_disk_flush(void)
 
                 ixfs_flush_index = ring_count;
                 vfs_close(logfile);
+            }
+
+            /* ---- Per-subsystem log routing ---- */
+            /* Write each entry to its subsystem-specific log file.
+             * Uses the same ring range that was just flushed to kernel.log.
+             * Each subsystem file is opened, appended-to, and closed per flush
+             * to avoid holding many VFS handles open across boot phases. */
+            {
+                uint32_t si;
+                for (si = 0; si < SUBSYS_LOG_COUNT; si++) {
+                    char spath[64];
+                    uint32_t sp = 0;
+                    struct vfs_node *sf;
+                    const char *base = "C:\\Impossible\\System\\Logs\\";
+                    const char *fname = s_subsys_filenames[si];
+                    int k;
+
+                    /* Build path */
+                    for (k = 0; base[k]; k++) spath[sp++] = base[k];
+                    for (k = 0; fname[k]; k++) spath[sp++] = fname[k];
+                    spath[sp] = '\0';
+
+                    sf = vfs_open(spath, VFS_O_WRITE);
+                    if (!sf) continue;
+
+                    {
+                        uint32_t sfl_start = (ring_count > KLOG_RING_SIZE)
+                            ? ring_count - KLOG_RING_SIZE : 0;
+                        uint32_t write_off = (uint32_t)sf->size;
+
+                        for (i = sfl_start; i < ring_count; i++) {
+                            uint32_t idx;
+                            if (ring_count < KLOG_RING_SIZE)
+                                idx = i;
+                            else
+                                idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
+                                      % KLOG_RING_SIZE;
+
+                            const char *df = dispatch_filename(ring[idx].subsystem);
+                            /* Check if this entry belongs to this subsystem file */
+                            {
+                                const char *a = df;
+                                const char *b = fname;
+                                while (*a && *a == *b) { a++; b++; }
+                                if (*a != '\0' || *b != '\0')
+                                    continue;  /* not this file */
+                            }
+
+                            {
+                                char line[256];
+                                int pos = format_entry(&ring[idx], line, 256);
+                                vfs_write(sf, write_off, (uint32_t)pos, (uint8_t *)line);
+                                write_off += (uint32_t)pos;
+                            }
+                        }
+                    }
+                    vfs_close(sf);
+                }
             }
         }
     }

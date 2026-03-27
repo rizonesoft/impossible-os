@@ -27,12 +27,12 @@
 
 | ⭐  | Order | Deliverable                         | Depends On    | Status |
 | --- | :---: | ----------------------------------- | ------------- | :----: |
-| 💎  |   1   | Boot-phase aware klog init          | TODO-01 §1    |  [x]   |
-| 💎  |   2   | Per-subsystem log splitting         | §1             |  [ ]   |
-| 💎  |   3   | Per-subsystem verbosity control     | §2             |  [ ]   |
-| 💎  |   4   | Log rotation                        | §2             |  [ ]   |
-| 💎  |   5   | Rate limiting                       | §2             |  [ ]   |
-| ⭐  |   6   | Structured JSON log events          | §4, T20 §6     |  [ ]   |
+| 💎  |   1   | Boot-phase aware klog init          | T01 §1        |  [x]   |
+| 💎  |   2   | Per-subsystem log splitting         | §1            |  [x]   |
+| 💎  |   3   | Per-subsystem verbosity control     | §2            |  [ ]   |
+| 💎  |   4   | Log rotation                        | §2            |  [ ]   |
+| 💎  |   5   | Rate limiting                       | §2            |  [ ]   |
+| ⭐  |   6   | Structured JSON log events          | §4, T20 §6    |  [ ]   |
 | 💎  |   7   | Remote syslog forwarding (RFC 5424) | UDP (exists)  |  [ ]   |
 
 > 💎 = parity — Windows Event Log and Linux journald/syslog both have these capabilities.
@@ -83,19 +83,15 @@ The current `klog_disk.c` assumes VFS is available when it initialises. After TO
 
 Route log entries to dedicated per-subsystem log files based on the subsystem tag. Entries with no matching tag continue to go to `kernel.log`.
 
-- [ ] Define dispatch table in `klog_disk.c`:
-  - `"net"` → `C:\Impossible\System\Logs\network.log`
-  - `"boot"` → `C:\Impossible\System\Logs\boot.log`
-  - `"fs"` → `C:\Impossible\System\Logs\fs.log`
-  - `"mm"` → `C:\Impossible\System\Logs\mm.log`
-  - `"drv"` → `C:\Impossible\System\Logs\drivers.log`
-  - `"sec"` → `C:\Impossible\System\Logs\security.log`
-  - unmatched → `kernel.log`
-- [ ] Open each file once at `klog_disk_enable()` time; cache VFS handles
-- [ ] Route entries in the flush loop by matching the subsystem tag against the dispatch table
-- [ ] Fall back to `kernel.log` for unknown tags — do not drop entries
-- [ ] Also write boot-session numbered logs (`BOOT_NNN.LOG`) for all subsystems combined
-- [ ] Commit: `"kernel: per-subsystem log files"`
+- [x] Define dispatch table in `klog_disk.c` with 18 tag-to-file mappings:
+  - `"net"` → `network.log`, `"boot"/"smp"/"UEFI"` → `boot.log`, `"fs"/"vfs"/"ixfs"/"fat32"` → `fs.log`
+  - `"mm"` → `mm.log`, `"drv"/"ahci"/"pci"/"lapic"/"ioapic"/"acpi"/"blk"` → `drivers.log`
+  - `"sec"/"TPM"` → `security.log`, unmatched → `kernel.log`
+- [x] Create per-subsystem log files at `ensure_log_dirs()` time (6 files + kernel.log)
+- [x] Route entries in the flush loop: after writing to `kernel.log`, iterate each subsystem file and append matching entries
+- [x] Fall back to `kernel.log` for unknown tags — `dispatch_filename()` returns "kernel.log" for unmatched
+- [x] Boot-session numbered logs (`YYMMDDN.LOG`) on X: continue to contain all subsystems combined
+- [x] Commit: `"kernel: per-subsystem log files"`
 
 ## 3. Per-Subsystem Verbosity Control `[Sonnet]`
 
