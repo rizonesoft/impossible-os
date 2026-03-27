@@ -71,8 +71,29 @@
 
 ### 1.1 Audit existing string functions
 
-- [ ] Grep the entire kernel source for `memcpy`, `memset`, `strlen`, `strcmp`, `snprintf` etc.; document which are provided by compiler builtins (`__builtin_memcpy`) vs. missing vs. hand-rolled in callers
-- [ ] Map against the functions `panic.c`, `printk.h`, VFS, and drivers call — the gap list drives the implementation priority
+- [x] Grep the entire kernel source for `memcpy`, `memset`, `strlen`, `strcmp`, `snprintf` etc.; document which are provided by compiler builtins (`__builtin_memcpy`) vs. missing vs. hand-rolled in callers
+- [x] Map against the functions `panic.c`, `printk.h`, VFS, and drivers call — the gap list drives the implementation priority
+
+> **Gap analysis results (2026-03-27):**
+>
+> **Provided (weak symbols in `image.c` + `stb_truetype_impl.c` + `freestanding/string.h`):**
+> - `memcpy`, `memset`, `memmove`, `memcmp`, `strlen` — 2 duplicate implementations (image.c + stb_truetype_impl.c); should consolidate into `libc/string.c`
+>
+> **Compiler builtins used:**
+> - `__builtin_memcpy`, `__builtin_memset` — only in `image_save.c` (4 uses)
+>
+> **Missing entirely (no implementation, no builtin):**
+> - `strcmp`, `strncmp`, `strcpy`, `strncpy`, `strcat`, `strncat` — 0 actual calls, but hand-rolled `str_eq()` in 5 files (klog.c, klog_disk.c, icon_store.c, ipc/shmem.c, blkdev.c)
+> - `snprintf` / `vsnprintf` — not available; `panic.c` has a comment noting "no snprintf in freestanding"; `klog.c` has `vformat_buf()` (private, supports %d %u %x %p %s %c only)
+> - `atoi`, `strtol`, `strtoul` — not available
+> - `memchr`, `strstr`, `strchr`, `strrchr` — not available
+>
+> **Priority for §1.2:**
+> 1. Consolidate `memcpy`/`memset`/`memmove`/`memcmp`/`strlen` into `libc/string.c` (eliminate 2 duplicate weak symbol sets)
+> 2. Add `strcmp`/`strncmp` (replace 5 hand-rolled `str_eq()` functions)
+> 3. Add `snprintf`/`vsnprintf` (promote `klog.c:vformat_buf()` to public API)
+> 4. Add `strcpy`/`strncpy`/`strcat` (needed by future Win32 API + registry)
+> 5. Add `atoi`/`strtoul` (needed by future config parsing + shell)
 
 ### 1.2 Core memory and string functions
 
