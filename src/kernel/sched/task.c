@@ -122,24 +122,22 @@ static uint32_t find_next_task(uint32_t from_task, uint32_t from_thread,
     return best_task;
 }
 
-/* --- #NM handler: lazy FPU allocation on first SIMD/FP use --- */
-
+/* --- #NM handler: lazy FPU allocation on first SIMD/FP use ---
+ * DISABLED: XSAVE alignment issue (kmalloc returns 8-byte aligned,
+ * XSAVE needs 64-byte aligned). Re-enable with aligned allocator. */
+#if 0
 static uint64_t nm_handler(struct interrupt_frame *frame)
 {
     struct task *t;
-
-    /* Clear CR0.TS immediately so the faulting instruction can retry */
     __asm__ volatile ("clts");
-
     t = &tasks[current_task];
     if (!t->fpu_used) {
-        /* First FPU use by this task — allocate XSAVE area */
         task_alloc_xsave(t);
         t->fpu_used = 1;
     }
-
     return (uint64_t)frame;
 }
+#endif
 
 /* --- XSAVE area allocation (lazy, on first FPU use) --- */
 
@@ -243,9 +241,10 @@ void task_init(void)
     /* Register the yield software interrupt handler (INT 0x81) */
     idt_register_handler(YIELD_INT_VECTOR, yield_irq_handler);
 
-    /* Register #NM handler for lazy FPU (vector 7 = Device Not Available) */
-    if (cpu_has(CPU_FEATURE_XSAVE))
-        idt_register_handler(7, nm_handler);
+    /* #NM handler for lazy FPU disabled — see XSAVE alignment note above.
+     * Re-enable once xsave_area uses 64-byte aligned allocation. */
+    /* if (cpu_has(CPU_FEATURE_XSAVE))
+        idt_register_handler(7, nm_handler); */
 }
 
 int task_create(task_entry_t entry, const char *name)
@@ -555,35 +554,11 @@ uint64_t schedule(struct interrupt_frame *frame)
     if (tasks[prev_task].threads[prev_thread].state == THREAD_RUNNING)
         tasks[prev_task].threads[prev_thread].state = THREAD_READY;
 
-    /* --- Lazy FPU: save prev, restore/defer next --- */
-    {
-    extern struct cpu_features g_cpu;
-    if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
-        /* Save FPU/SIMD state of outgoing task */
-        uint64_t xcr0 = g_cpu.xcr0_active;
-        uint32_t lo = (uint32_t)xcr0;
-        uint32_t hi = (uint32_t)(xcr0 >> 32);
-        __asm__ volatile ("xsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
-                          : "a"(lo), "d"(hi) : "memory");
-    }
-
-    if (tasks[next_task].fpu_used && tasks[next_task].xsave_area) {
-        /* Restore FPU/SIMD state of incoming task */
-        uint64_t xcr0 = g_cpu.xcr0_active;
-        uint32_t lo = (uint32_t)xcr0;
-        uint32_t hi = (uint32_t)(xcr0 >> 32);
-        __asm__ volatile ("xrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area),
-                          "a"(lo), "d"(hi) : "memory");
-        /* Clear CR0.TS so FPU instructions don't fault */
-        __asm__ volatile ("clts");
-    } else {
-        /* Set CR0.TS so first FPU use faults into #NM */
-        uint64_t cr0;
-        __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
-        cr0 |= (1UL << 3);  /* TS bit */
-        __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
-    }
-    } /* end g_cpu scope */
+    /* --- Lazy FPU: DISABLED ---
+     * XSAVE/XRSTOR in scheduler causes #GP due to alignment requirements
+     * (kmalloc returns 8-byte aligned, XSAVE needs 64-byte aligned).
+     * FPU state is currently protected by manual simd_save/restore_state()
+     * in gfx_text.c. Re-enable once pmm_alloc_aligned() is available. */
 
     /* Switch to next task/thread */
     tasks[next_task].state = TASK_RUNNING;
