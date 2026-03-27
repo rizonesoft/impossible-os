@@ -97,14 +97,7 @@
 
 ### 2.2 CLAC/STAC inline wrappers
 
-- [ ] SMAP enforces that kernel code cannot access user-space memory unless `RFLAGS.AC=1`; the kernel must bracket every intentional user-space access:
-  ```c
-  static inline void stac(void) { __asm__ volatile("stac" ::: "memory"); }
-  static inline void clac(void) { __asm__ volatile("clac" ::: "memory"); }
-  /* No-op if SMAP not present (older CPUs won't fault on user access) */
-  #define KERNEL_ACCESS_USER_BEGIN()  do { if (cpu_has(CPU_FEATURE_SMAP)) stac(); } while(0)
-  #define KERNEL_ACCESS_USER_END()    do { if (cpu_has(CPU_FEATURE_SMAP)) clac(); } while(0)
-  ```
+- [x] `stac()`/`clac()` inlines + `KERNEL_ACCESS_USER_BEGIN()`/`KERNEL_ACCESS_USER_END()` macros in `cpu_security.h`; no-op if `!cpu_has(CPU_FEATURE_SMAP)`
 - [x] `copy_from_user()` / `copy_to_user()` added in `cpu_security.c` with SMAP brackets
 - [ ] Migrate existing syscall argument dereferences to use `copy_from_user` — deferred to syscall TODO
 - [ ] `ProbeForRead` / `ProbeForWrite` — deferred to TODO-10 (SEH)
