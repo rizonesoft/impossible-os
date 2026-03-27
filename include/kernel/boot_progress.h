@@ -61,6 +61,10 @@ const boot_stage_entry_t *boot_stage_history_get(uint32_t *out_count);
  * message to boot_splash_status() without recording a new entry. */
 void boot_progress_poll(void);
 
+/* Render the debug timing bar across the top of the screen.
+ * Uses boot_timing step data. Only renders when debug=1. */
+void render_debug_bar(void);
+
 /* Render a 2-digit hex POST code in the top-right framebuffer corner.
  * Also writes I/O port 0x80 for hardware POST cards.
  * Skips pixel writes if SUBSYS_FB not ready. */

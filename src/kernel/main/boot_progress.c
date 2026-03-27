@@ -8,6 +8,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_timing.h"
+/* boot_timing_get_steps() used by render_debug_bar() */
 #include "kernel/boot_splash.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
@@ -174,55 +175,59 @@ void post_display(uint8_t code)
 
 /* ---- Debug bar: proportional boot stage waterfall ----------------------- */
 
-/* Stage color table */
-static uint32_t stage_color(boot_stage_t s)
-{
-    switch (s) {
-        case BOOT_STAGE_PMM:           return 0x000000FF;  /* blue */
-        case BOOT_STAGE_VMM:           return 0x008000FF;  /* purple */
-        case BOOT_STAGE_HEAP:          return 0x004080FF;  /* light blue */
-        case BOOT_STAGE_KLOG:          return 0x004080FF;
-        case BOOT_STAGE_GDT_IDT:       return 0x00808080;  /* gray */
-        case BOOT_STAGE_APIC:          return 0x00808080;
-        case BOOT_STAGE_VFS:           return 0x0000C000;  /* green */
-        case BOOT_STAGE_REGISTRY:      return 0x0000FFAA;  /* teal */
-        case BOOT_STAGE_DRIVERS:       return 0x00FF8000;  /* orange */
-        case BOOT_STAGE_NETWORK:       return 0x0000FFFF;  /* cyan */
-        case BOOT_STAGE_SCHEDULER:     return 0x00FF0000;  /* red */
-        case BOOT_STAGE_DESKTOP_READY: return 0x00FFFFFF;  /* white */
-        default:                       return 0x00404040;  /* dark gray */
-    }
-}
-
 #define BAR_HEIGHT  4
 #define BAR_Y       0   /* top of screen */
 
-static void render_debug_bar(void)
+/* Map postcode to a color for the debug bar */
+static uint32_t postcode_color(uint8_t pc)
 {
-    uint32_t scr_w, i, x;
+    if (pc >= 0x10 && pc <= 0x19) return 0x00404040;  /* Phase 0 early: dark gray */
+    if (pc == 0x20) return 0x000000FF;  /* PMM: blue */
+    if (pc == 0x21) return 0x008000FF;  /* VMM: purple */
+    if (pc == 0x22) return 0x004080FF;  /* HEAP: light blue */
+    if (pc == 0x23) return 0x004080FF;  /* KLOG: light blue */
+    if (pc >= 0x30 && pc <= 0x34) return 0x00808080;  /* GDT/IDT/ACPI/LAPIC: gray */
+    if (pc == 0x35) return 0x00C0C000;  /* TIMER: yellow */
+    if (pc >= 0x40 && pc <= 0x41) return 0x00606060;  /* SMBIOS/FB: dim gray */
+    if (pc == 0x50) return 0x00FF8000;  /* PCI: orange */
+    if (pc == 0x51) return 0x00FF8000;  /* STORAGE: orange */
+    if (pc == 0x52) return 0x0000C000;  /* VFS: green */
+    if (pc == 0x53) return 0x0000FFAA;  /* REGISTRY: teal */
+    if (pc == 0x54) return 0x00808080;  /* SMP: gray */
+    if (pc == 0x55) return 0x0000FFFF;  /* NET: cyan */
+    if (pc == 0x60) return 0x00FF0000;  /* SCHED: red */
+    if (pc == 0x63) return 0x00FFFFFF;  /* DESKTOP: white */
+    return 0x00303030;
+}
+
+void render_debug_bar(void)
+{
+    const boot_timing_step_t *steps;
+    uint32_t count, scr_w, i, x;
     uint64_t total_tsc;
 
     if (!g_boot_info.config.debug)
         return;
-    if (s_history_count < 2)
-        return;
     if (!kernel_subsystem_ready(SUBSYS_FB))
         return;
+
+    count = boot_timing_get_steps(&steps);
+    if (count < 2) return;
 
     scr_w = fb_get_width();
     if (scr_w == 0) return;
 
-    total_tsc = s_history[s_history_count - 1].tsc - s_history[0].tsc;
+    total_tsc = steps[count - 1].tsc - steps[0].tsc;
     if (total_tsc == 0) return;
 
     x = 0;
-    for (i = 0; i + 1 < s_history_count; i++) {
-        uint64_t seg_tsc = s_history[i + 1].tsc - s_history[i].tsc;
+    for (i = 0; i + 1 < count; i++) {
+        uint64_t seg_tsc = steps[i + 1].tsc - steps[i].tsc;
         uint32_t seg_w = (uint32_t)((seg_tsc * (uint64_t)scr_w) / total_tsc);
-        uint32_t color = stage_color(s_history[i].stage);
+        uint32_t color = postcode_color(steps[i].postcode);
         uint32_t row, col;
 
-        if (seg_w == 0) seg_w = 1;  /* at least 1 px */
+        if (seg_w == 0) seg_w = 1;
         if (x + seg_w > scr_w) seg_w = scr_w - x;
 
         for (row = 0; row < BAR_HEIGHT; row++)
@@ -232,9 +237,8 @@ static void render_debug_bar(void)
         x += seg_w;
     }
 
-    /* Fill remaining pixels with the last stage color */
     if (x < scr_w) {
-        uint32_t color = stage_color(s_history[s_history_count - 1].stage);
+        uint32_t color = postcode_color(steps[count - 1].postcode);
         uint32_t row, col;
         for (row = 0; row < BAR_HEIGHT; row++)
             for (col = x; col < scr_w; col++)

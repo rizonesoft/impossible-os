@@ -31,3 +31,14 @@ void boot_timing_print_steps(void);
 /* Write the boot step timing report to C:\Impossible\System\Logs\boot-profile.log.
  * Call at desktop-ready, after VFS is mounted on C:. */
 void boot_timing_write_report(void);
+
+/* Step entry for debug bar rendering */
+typedef struct {
+    uint64_t    tsc;
+    uint8_t     phase;
+    uint8_t     postcode;
+    const char *step;
+} boot_timing_step_t;
+
+/* Get the recorded step array. Returns count. */
+uint32_t boot_timing_get_steps(const boot_timing_step_t **out);

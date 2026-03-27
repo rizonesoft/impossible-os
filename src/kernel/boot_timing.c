@@ -37,6 +37,23 @@ static inline uint64_t rdtsc(void)
     return ((uint64_t)hi << 32) | lo;
 }
 
+uint32_t boot_timing_get_steps(const boot_timing_step_t **out)
+{
+    /* The internal struct is layout-compatible with boot_timing_step_t
+     * (same fields, possibly different order). Copy to a static array
+     * to guarantee the public layout. */
+    static boot_timing_step_t s_pub[BOOT_TIMING_MAX_STEPS];
+    uint32_t i;
+    for (i = 0; i < s_step_count; i++) {
+        s_pub[i].tsc      = s_steps[i].tsc;
+        s_pub[i].phase    = s_steps[i].phase;
+        s_pub[i].postcode = s_steps[i].postcode;
+        s_pub[i].step     = s_steps[i].step;
+    }
+    if (out) *out = s_pub;
+    return s_step_count;
+}
+
 void boot_timing_record_step(uint8_t phase, const char *step, uint8_t postcode)
 {
     if (s_step_count >= BOOT_TIMING_MAX_STEPS) return;

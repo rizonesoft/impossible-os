@@ -139,5 +139,10 @@ void boot_progress(uint8_t phase, const char *step, uint8_t postcode)
     boot_timing_record_step(phase, step, postcode);
     boot_post_write(postcode);
     post_display(postcode);
+
+    /* Render debug bar at desktop-ready */
+    if (postcode == POSTCODE_DESKTOP_INIT)
+        render_debug_bar();
+
     boot_splash_status(step);
 }
