@@ -87,30 +87,13 @@
 
 ---
 
-## 2. SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers `[Opus]`
+## 2. SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers
 
 ### 2.1 CR4 helpers
 
-- [ ] `cpu_set_cr4_bit(bit)` / `cpu_clear_cr4_bit(bit)` helpers:
-  ```c
-  static inline void cpu_set_cr4_bit(uint64_t bit) {
-      uint64_t cr4;
-      __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
-      __asm__ volatile("mov %0, %%cr4" : : "r"(cr4 | bit) : "memory");
-  }
-  #define CR4_SMEP  (1ULL << 20)
-  #define CR4_SMAP  (1ULL << 21)
-  #define CR4_CET   (1ULL << 23)
-  #define CR4_PCIDE (1ULL << 17)
-  ```
-- [ ] `cpu_enable_smep_smap()`:
-  ```c
-  void cpu_enable_smep_smap(void) {
-      if (cpu_has(CPU_FEATURE_SMEP)) cpu_set_cr4_bit(CR4_SMEP);
-      if (cpu_has(CPU_FEATURE_SMAP))  cpu_set_cr4_bit(CR4_SMAP);
-  }
-  ```
-- [ ] Called on BSP (Phase 1) and each AP in `ap_startup_c()`
+- [x] `read_cr4()`/`write_cr4()` + `CR4_SMEP`/`CR4_SMAP` in `cpu_security.c`
+- [x] `cpu_enable_smep()` + `cpu_enable_smap()` with platform gate (`hv_supports_cr4_smep_smap()` -- skips on Hyper-V/WHPX, enables on KVM/VMware/VBox/bare metal)
+- [x] Called on BSP via `cpu_harden()` in Phase 0 and on each AP in `ap_entry()`
 
 ### 2.2 CLAC/STAC inline wrappers
 
