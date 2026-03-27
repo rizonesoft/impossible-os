@@ -654,6 +654,7 @@ test-disks: system-disk
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f $(BUILD_INFO_H)
+	$(MAKE) -C src/boot/uefi clean
 	@echo "[CLEAN] Build directory removed"
 
 # ============================================================================
