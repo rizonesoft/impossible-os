@@ -29,6 +29,30 @@
 
 void boot_tests_run(void)
 {
+    /* --- Essential runtime init (must run regardless of debug mode) --- */
+
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- System Services --------------------------------------------------------");
+
+    boot_splash_status("Initializing scheduler...");
+    task_init();
+    ahci_enable_events();
+
+    /* Create the system work queue (needed by NIC driver) */
+    {
+        extern workqueue_t *sys_wq;
+        scheduler_enable();
+        sys_wq = workqueue_create("sys_wq");
+        scheduler_disable();
+        if (sys_wq)
+            klog(LOG_DEBUG, "wq", "sys_wq created");
+        else
+            klog(LOG_ERROR, "wq", "sys_wq creation FAILED");
+    }
+
+    boot_splash_status("Initializing syscalls...");
+    syscall_init();
+
     /* Only run boot tests when debug=1 in boot.conf */
     if (!g_boot_info.config.debug) {
         klog(LOG_DEBUG, "boot", "Boot tests skipped (debug=0)");
@@ -176,23 +200,7 @@ void boot_tests_run(void)
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Scheduler Tests --------------------------------------------------------");
-
-    /* Cooperative threading test */
-    boot_splash_status("Initializing scheduler...");
     klog_disk_flush();
-    task_init();
-    ahci_enable_events();  /* Safe now: yield handler registered */
-
-    /* Create the system work queue */
-    {
-        scheduler_enable();
-        sys_wq = workqueue_create("sys_wq");
-        scheduler_disable();
-        if (sys_wq)
-            klog(LOG_DEBUG, "wq", "sys_wq created");
-        else
-            klog(LOG_ERROR, "wq", "sys_wq creation FAILED");
-    }
 
     {
         extern void thread_a_func(void);
@@ -523,9 +531,6 @@ void boot_tests_run(void)
         klog(LOG_DEBUG, "test", "Fork test passed");
     }
 #else
-    /* Initialize syscalls (needed even without tests) */
-    boot_splash_status("Initializing syscalls...");
-    syscall_init();
     klog(LOG_DEBUG, "test", "User mode / exec / fork tests skipped");
 #endif
 
