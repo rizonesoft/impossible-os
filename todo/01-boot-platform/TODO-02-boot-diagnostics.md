@@ -41,7 +41,7 @@
 | --- | :---: | ---------------------------------- | ---------- | :----: |
 | 💎  |   1   | UEFI pre-kernel POST codes         | —          |  [x]   |
 | 💎  |   2   | Boot progress named-stage API      | §1         |  [x]   |
-| 💎  |   3   | POST-style hex code display        | §2         |  [ ]   |
+| 💎  |   3   | POST-style hex code display        | §2         |  [x]   |
 | 💎  |   4   | Alive blink / hang detection       | §2         |  [ ]   |
 | ⭐  |   5   | Debug color bar waterfall          | §2         |  [ ]   |
 | 💎  |   6   | Panic forensic evidence            | §2         |  [ ]   |
@@ -86,13 +86,13 @@ Render a 2-digit hex POST code in the top-right framebuffer corner visible on ev
 
 **Files:** `src/kernel/main/boot_progress.c`, `include/kernel/boot_progress.h`
 
-- [ ] Embed an 8×8 pixel mini hex font for `0–9, A–F` (16 glyphs × 8 bytes = 128 bytes of static data) in `boot_progress.c`
-- [ ] `post_display(uint8_t code)`: render two glyphs at 4× scale (= 32×32 px per glyph, 68×36 px total) at 4 px from top-right corner directly via `fb_put_pixel()`; background = black rectangle before each render
-- [ ] Call `post_display(postcode)` inside `boot_stage_report()` after the serial write — covers normal boot path
-- [ ] Also write to I/O port 0x80: `outb(0x80, postcode)` in `post_display()` for hardware card visibility
-- [ ] Clear the display on `BOOT_STAGE_DESKTOP_READY`: fill the rectangle with `fb_fill_rect(x, y, 68, 36, 0x00000000)` + `fb_swap_rect()`
-- [ ] `BOOT_DEGRADED` path: if framebuffer not ready (`!fb_init_done()`), skip pixel writes; I/O port write always happens
-- [ ] Commit: `"kernel: POST-style hex code display in framebuffer corner + I/O port 0x80"`
+- [x] 8x8 hex font (16 glyphs, 128 bytes) embedded in `boot_progress.c`
+- [x] `post_display(code)`: renders 2 hex digits at 4x scale (32x32 px each, green on black) at top-right corner via `fb_put_pixel()` + `fb_swap_rect()`
+- [x] Called from `boot_stage_report()` after serial write
+- [x] Also writes I/O port 0x80 via `outb` for hardware POST cards
+- [x] Cleared on `BOOT_STAGE_DESKTOP_READY` via `fb_fill_rect()` + `fb_swap_rect()`
+- [x] Skips pixel writes when `SUBSYS_FB` not ready; I/O port write always fires
+- [x] Commit: `"kernel: POST-style hex code display in framebuffer corner + I/O port 0x80"`
 
 ## 4. Alive Blink / Hang Detection `[Sonnet]`
 

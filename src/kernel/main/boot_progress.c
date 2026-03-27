@@ -9,6 +9,7 @@
 #include "kernel/boot_timing.h"
 #include "kernel/boot_splash.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* ---- Stage metadata table ----------------------------------------------- */
 
@@ -65,6 +66,106 @@ static void serial_write_dec(uint32_t val)
     while (i > 0) serial_putchar(buf[--i]);
 }
 
+/* ---- POST hex display (framebuffer corner + I/O port 0x80) -------------- */
+
+/* 8x8 hex font: 0-9, A-F (16 glyphs x 8 bytes = 128 bytes) */
+static const uint8_t s_hex_font[16][8] = {
+    { 0x3C,0x66,0x6E,0x7E,0x76,0x66,0x3C,0x00 }, /* 0 */
+    { 0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00 }, /* 1 */
+    { 0x3C,0x66,0x06,0x0C,0x18,0x30,0x7E,0x00 }, /* 2 */
+    { 0x3C,0x66,0x06,0x1C,0x06,0x66,0x3C,0x00 }, /* 3 */
+    { 0x0C,0x1C,0x3C,0x6C,0x7E,0x0C,0x0C,0x00 }, /* 4 */
+    { 0x7E,0x60,0x7C,0x06,0x06,0x66,0x3C,0x00 }, /* 5 */
+    { 0x1C,0x30,0x60,0x7C,0x66,0x66,0x3C,0x00 }, /* 6 */
+    { 0x7E,0x06,0x0C,0x18,0x18,0x18,0x18,0x00 }, /* 7 */
+    { 0x3C,0x66,0x66,0x3C,0x66,0x66,0x3C,0x00 }, /* 8 */
+    { 0x3C,0x66,0x66,0x3E,0x06,0x0C,0x38,0x00 }, /* 9 */
+    { 0x18,0x3C,0x66,0x66,0x7E,0x66,0x66,0x00 }, /* A */
+    { 0x7C,0x66,0x66,0x7C,0x66,0x66,0x7C,0x00 }, /* B */
+    { 0x3C,0x66,0x60,0x60,0x60,0x66,0x3C,0x00 }, /* C */
+    { 0x78,0x6C,0x66,0x66,0x66,0x6C,0x78,0x00 }, /* D */
+    { 0x7E,0x60,0x60,0x78,0x60,0x60,0x7E,0x00 }, /* E */
+    { 0x7E,0x60,0x60,0x78,0x60,0x60,0x60,0x00 }, /* F */
+};
+
+#define POST_SCALE   4   /* 4x scale: 8px glyph -> 32px on screen */
+#define POST_GLYPH_W (8 * POST_SCALE)   /* 32 px */
+#define POST_GLYPH_H (8 * POST_SCALE)   /* 32 px */
+#define POST_GAP     4   /* gap between digits */
+#define POST_MARGIN  4   /* margin from screen edge */
+#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 68 px */
+#define POST_TOTAL_H (POST_GLYPH_H + POST_MARGIN)    /* 36 px */
+
+/* Port 0x80 write */
+static inline void outb_post(uint8_t code)
+{
+    __asm__ volatile ("outb %0, $0x80" :: "a"(code));
+}
+
+static void post_display(uint8_t code)
+{
+    uint32_t scr_w, x0, y0;
+    int hi, lo;
+
+    /* Always write to I/O port 0x80 for hardware POST cards */
+    outb_post(code);
+
+    /* Skip pixel writes if framebuffer not ready */
+    if (!kernel_subsystem_ready(SUBSYS_FB))
+        return;
+
+    scr_w = fb_get_width();
+    if (scr_w == 0) return;
+
+    x0 = scr_w - POST_TOTAL_W - POST_MARGIN;
+    y0 = POST_MARGIN;
+
+    /* Clear background */
+    fb_fill_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
+
+    hi = (code >> 4) & 0x0F;
+    lo = code & 0x0F;
+
+    /* Draw high nibble */
+    {
+        const uint8_t *g = s_hex_font[hi];
+        uint32_t row, col, sy, sx;
+        for (row = 0; row < 8; row++) {
+            uint8_t bits = g[row];
+            for (col = 0; col < 8; col++) {
+                if (bits & (0x80 >> col)) {
+                    for (sy = 0; sy < POST_SCALE; sy++)
+                        for (sx = 0; sx < POST_SCALE; sx++)
+                            fb_put_pixel(x0 + col * POST_SCALE + sx,
+                                         y0 + row * POST_SCALE + sy,
+                                         0x0040FF40);  /* green */
+                }
+            }
+        }
+    }
+
+    /* Draw low nibble */
+    {
+        const uint8_t *g = s_hex_font[lo];
+        uint32_t gx = x0 + POST_GLYPH_W + POST_GAP;
+        uint32_t row, col, sy, sx;
+        for (row = 0; row < 8; row++) {
+            uint8_t bits = g[row];
+            for (col = 0; col < 8; col++) {
+                if (bits & (0x80 >> col)) {
+                    for (sy = 0; sy < POST_SCALE; sy++)
+                        for (sx = 0; sx < POST_SCALE; sx++)
+                            fb_put_pixel(gx + col * POST_SCALE + sx,
+                                         y0 + row * POST_SCALE + sy,
+                                         0x0040FF40);
+                }
+            }
+        }
+    }
+
+    fb_swap_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H);
+}
+
 /* ---- API ---------------------------------------------------------------- */
 
 void boot_stage_report(boot_stage_t stage, const char *msg)
@@ -108,6 +209,16 @@ void boot_stage_report(boot_stage_t stage, const char *msg)
     serial_write(": ");
     serial_write(msg ? msg : "");
     serial_write("\n");
+
+    /* POST hex display on framebuffer + I/O port 0x80 */
+    post_display(m->postcode);
+
+    /* Clear POST display when desktop is ready */
+    if (stage == BOOT_STAGE_DESKTOP_READY && kernel_subsystem_ready(SUBSYS_FB)) {
+        uint32_t cx = fb_get_width() - POST_TOTAL_W - POST_MARGIN;
+        fb_fill_rect(cx, POST_MARGIN, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
+        fb_swap_rect(cx, POST_MARGIN, POST_TOTAL_W, POST_TOTAL_H);
+    }
 
     /* Forward to boot_progress (phase, step, postcode) */
     boot_progress(m->phase, msg ? msg : m->name, m->postcode);
