@@ -11,6 +11,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/mm/pmm.h"
 
 /* ---- Stage metadata table ----------------------------------------------- */
 
@@ -163,6 +164,69 @@ void post_display(uint8_t code)
     }
 
     fb_swap_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H);
+}
+
+/* ---- Boot timeline JSON dump --------------------------------------------- */
+
+#include "kernel/fs/vfs.h"
+#include "libc/string.h"
+
+void boot_timeline_dump_json(void)
+{
+    const boot_timing_step_t *steps;
+    uint32_t count, i;
+    struct vfs_node *f;
+    uint8_t *buf;
+    uint32_t pos = 0;
+    uint32_t buf_size = 8192;
+    uint64_t freq, base;
+
+    count = boot_timing_get_steps(&steps);
+    if (count < 2) return;
+
+    freq = boot_timing_tsc_freq();
+    if (freq == 0) return;
+    base = steps[0].tsc;
+
+    buf = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(2);  /* 8 KB */
+    if (!buf) return;
+
+    /* JSON array */
+    buf[pos++] = '[';
+    buf[pos++] = '\n';
+
+    for (i = 0; i < count && pos < buf_size - 128; i++) {
+        uint32_t start_ms = (uint32_t)((steps[i].tsc - base) / (freq / 1000));
+        uint32_t dur_ms = 0;
+        if (i + 1 < count)
+            dur_ms = (uint32_t)((steps[i + 1].tsc - steps[i].tsc) / (freq / 1000));
+
+        pos += (uint32_t)snprintf((char *)buf + pos, buf_size - pos,
+            "  {\"stage\":\"%s\",\"phase\":%u,\"post\":\"0x%02x\","
+            "\"start_ms\":%u,\"duration_ms\":%u}%s\n",
+            steps[i].step ? steps[i].step : "?",
+            (unsigned)steps[i].phase,
+            (unsigned)steps[i].postcode,
+            (unsigned)start_ms,
+            (unsigned)dur_ms,
+            (i + 1 < count) ? "," : "");
+    }
+
+    buf[pos++] = ']';
+    buf[pos++] = '\n';
+
+    f = vfs_open("C:\\Impossible\\System\\Logs\\boot-timeline.json",
+                 VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (f) {
+        vfs_write(f, 0, pos, buf);
+        vfs_close(f);
+    }
+
+    {
+        uint32_t pg;
+        for (pg = 0; pg < 2; pg++)
+            pmm_free_frame((uintptr_t)buf + pg * 4096);
+    }
 }
 
 /* ---- API ---------------------------------------------------------------- */

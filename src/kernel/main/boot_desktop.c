@@ -139,6 +139,7 @@ void boot_phase3(void)
     boot_post_write(POSTCODE_BOOT_OK);  /* 0xFF = boot succeeded */
     boot_timing_print_steps();
     boot_timing_write_report();
+    boot_timeline_dump_json();
 
 
     /* Boot-time heap stats */

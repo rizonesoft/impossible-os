@@ -48,7 +48,7 @@
 | 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [/]   |
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [x]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [x]   |
-| ⭐  |   9   | Boot time visualization             | §7, T02 §2 & §5     |  [ ]   |
+| ⭐  |   9   | Boot time visualization             | §7, T02 §2 & §5     |  [/]   |
 | 💎  |  10   | Remove Hyper-V debug workarounds    | §1–7                |  [ ]   |
 
 > 💎 = parity — Windows NT HAL and Linux interrupt subsystem both follow this init order and have equivalent abstractions.
@@ -177,11 +177,11 @@ An opt-in post-boot overlay bar chart showing per-stage boot duration, plus a JS
 
 **Files:** `src/kernel/main/boot_progress.c`, `src/shell/cmd/boot_timeline.c`
 
-- [ ] Activate when `boot.conf` key `BootTimeline=1`
-- [ ] At `BOOT_STAGE_DESKTOP_READY`: read `boot_stage_history[]` (from TODO-02 §2), compute per-stage duration in ms; render a 24 px tall horizontal bar chart across the bottom of the screen for 2 s (each bar width ∝ duration, color matches TODO-02 §5 stage color table); fade out after 2 s
-- [ ] `boot_profile_dump_json()`: write `C:\Impossible\System\Logs\boot-timeline-{version}-{date}.json` with format `[{"stage":"PMM","start_ms":12,"duration_ms":3},...]`
-- [ ] `boot-timeline` shell command: reads the most recent JSON file, prints an ASCII bar chart: `PMM    [██████████] 12 ms` one line per stage; `boot-timeline --compare` diffs the last two files and marks regressions with `▲`
-- [ ] Commit: `"kernel: opt-in boot time visualization — overlay bar chart + JSON timeline + shell command"`
+- [x] Overlay bar removed (per user preference) — JSON timeline is the diagnostic output
+- [x] `boot_timeline_dump_json()`: writes `C:\Impossible\System\Logs\boot-timeline.json` with `[{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7},...]`
+- [x] Called from `boot_phase3()` after `boot_timing_write_report()`
+- [ ] `boot-timeline` shell command — deferred to shell TODO
+- [x] Commit: `"kernel: boot timeline JSON dump"`
 
 ## 10. Remove Hyper-V Debug Workarounds
 
