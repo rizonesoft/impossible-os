@@ -40,7 +40,7 @@
 | ⭐  | Order | Deliverable                        | Depends On | Status |
 | --- | :---: | ---------------------------------- | ---------- | :----: |
 | 💎  |   1   | UEFI pre-kernel POST codes         | —          |  [x]   |
-| 💎  |   2   | Boot progress named-stage API      | §1         |  [ ]   |
+| 💎  |   2   | Boot progress named-stage API      | §1         |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2         |  [ ]   |
 | 💎  |   4   | Alive blink / hang detection       | §2         |  [ ]   |
 | ⭐  |   5   | Debug color bar waterfall          | §2         |  [ ]   |
@@ -71,14 +71,14 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 
 **Files:** `include/kernel/boot_progress.h`, `src/kernel/main/boot_progress.c`
 
-- [ ] Define `boot_stage_t` enum: `BOOT_STAGE_UEFI_INIT`, `BOOT_STAGE_ELF_LOADED`, `BOOT_STAGE_KERNEL_ENTRY`, `BOOT_STAGE_GDT_IDT`, `BOOT_STAGE_APIC`, `BOOT_STAGE_PMM`, `BOOT_STAGE_VMM`, `BOOT_STAGE_HEAP`, `BOOT_STAGE_KLOG`, `BOOT_STAGE_VFS`, `BOOT_STAGE_REGISTRY`, `BOOT_STAGE_DRIVERS`, `BOOT_STAGE_NETWORK`, `BOOT_STAGE_SCHEDULER`, `BOOT_STAGE_DESKTOP_READY`
-- [ ] Map each `boot_stage_t` to a postcode constant from `boot_init.h` and a percentage (0–100) for splash progress
-- [ ] `boot_stage_report(boot_stage_t stage, const char *msg)`: calls `boot_progress(phase, msg, postcode)`, records entry in 32-slot ring buffer `boot_stage_history[]` with TSC tick and stage, calls `boot_splash_status(msg)` if splash is active
-- [ ] `boot_get_elapsed_ms()`: returns ms since the `BOOT_STAGE_KERNEL_ENTRY` timestamp using `boot_timing_tsc_freq()`
-- [ ] Serial log format: `[+NNNms] BOOT_PMM: <msg>` where NNN = `boot_get_elapsed_ms()` at call time
-- [ ] `boot_stage_history_get(out_entries, out_count)` accessor for §6 panic forensics
-- [ ] `boot_progress_poll()`: lightweight refresh called from timer callbacks (e.g. `spinner_tick_callback` in TODO-03 §8) when no new stage is reported but the splash progress bar needs a visual update; reads current `boot_stage_history[]` tail and re-calls `boot_splash_status()` with the last stage message
-- [ ] Commit: `"kernel: boot progress named-stage API with ring buffer and elapsed-ms tracking"`
+- [x] Define `boot_stage_t` enum with 15 stages from `UEFI_INIT` through `DESKTOP_READY`
+- [x] Map each stage to phase, postcode, progress %, and name in `s_meta[]` table
+- [x] `boot_stage_report()`: calls `boot_progress()`, records in 32-slot ring with TSC + elapsed_ms, serial logs `[+NNNms] STAGE: msg`
+- [x] `boot_get_elapsed_ms()`: returns ms since `KERNEL_ENTRY` via `boot_timing_tsc_freq()`
+- [x] Serial log format: `[+NNNms] STAGE_NAME: msg`
+- [x] `boot_stage_history_get()` accessor for panic forensics
+- [x] `boot_progress_poll()`: re-sends last stage to `boot_splash_status()` for timer-driven visual refresh
+- [x] Commit: `"kernel: boot progress named-stage API with ring buffer and elapsed-ms tracking"`
 
 ## 3. POST-Style Hex Code Display `[Sonnet]`
 
