@@ -65,6 +65,10 @@ static uint32_t               lapic_base_addr = 0xFEE00000; /* default */
 static uint32_t               ioapic_base_addr = 0;
 static struct madt_int_override int_overrides[24]; /* ISA only has 16, extra room */
 static uint32_t               override_count = 0;
+static uint32_t               ioapic_gsi_base = 0;
+
+/* Consolidated MADT info struct (populated by parse_madt) */
+static struct acpi_madt_info  s_madt_info;
 
 /* ---- Helpers ---- */
 
@@ -312,6 +316,7 @@ static void parse_madt(const struct acpi_madt *madt)
             /* Use the first I/O APIC found */
             if (ioapic_base_addr == 0) {
                 ioapic_base_addr = ioapic->ioapic_addr;
+                ioapic_gsi_base  = ioapic->gsi_base;
             }
             break;
         }
@@ -349,6 +354,35 @@ static void parse_madt(const struct acpi_madt *madt)
 
         offset += entry->length;
     }
+
+    /* Populate consolidated MADT info struct */
+    s_madt_info.lapic_base       = lapic_base_addr;
+    s_madt_info.ioapic_base      = ioapic_base_addr;
+    s_madt_info.ioapic_gsi_base  = ioapic_gsi_base;
+    s_madt_info.flags            = madt->flags;
+    s_madt_info.override_count   = override_count;
+    s_madt_info.cpu_count        = cpu_count;
+    {
+        uint32_t j;
+        for (j = 0; j < override_count && j < 24; j++) {
+            s_madt_info.overrides[j].bus_irq = int_overrides[j].source;
+            s_madt_info.overrides[j].gsi     = int_overrides[j].gsi;
+            s_madt_info.overrides[j].flags   = int_overrides[j].flags;
+        }
+        for (j = 0; j < cpu_count && j < 64; j++)
+            s_madt_info.cpu_lapic_ids[j] = cpus[j].apic_id;
+    }
+
+    klog(LOG_INFO, "acpi",
+         "MADT: %u CPUs, LAPIC=0x%x, IOAPIC=0x%x GSI=%u, %u overrides, PCAT_COMPAT=%u",
+         (uint64_t)cpu_count, (uint64_t)lapic_base_addr,
+         (uint64_t)ioapic_base_addr, (uint64_t)ioapic_gsi_base,
+         (uint64_t)override_count, (uint64_t)pcat_compat);
+}
+
+const struct acpi_madt_info *acpi_madt_info(void)
+{
+    return &s_madt_info;
 }
 
 /* ---- Public API ---- */

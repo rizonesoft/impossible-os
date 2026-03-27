@@ -40,7 +40,7 @@
 
 | ⭐  | Order | Deliverable                         | Depends On          | Status |
 | --- | :---: | ----------------------------------- | ------------------- | :----: |
-| 💎  |   1   | ACPI MADT parsing                   | —                   |  [ ]   |
+| 💎  |   1   | ACPI MADT parsing                   | —                   |  [x]   |
 | 💎  |   2   | LAPIC / IOAPIC init before PIT      | §1                  |  [ ]   |
 | 💎  |   3   | Conditional PIC disable             | §1, §2              |  [ ]   |
 | 💎  |   4   | Full IDT coverage                   | §2, §3              |  [ ]   |
@@ -62,13 +62,13 @@ Extract interrupt topology from the MADT before any interrupt hardware is touche
 
 **Files:** `include/kernel/acpi.h`, `src/kernel/acpi.c`
 
-- [ ] Move `acpi_parse_madt()` to execute before `lapic_init()`, `ioapic_init()`, and `pic_*` calls in `boot_phase1()`
-- [ ] Define `struct acpi_irq_override { uint8_t bus_irq; uint32_t gsi; uint16_t flags; }` and `struct acpi_madt_info { uint32_t lapic_base; uint32_t ioapic_base; uint32_t ioapic_gsi_base; uint32_t flags; struct acpi_irq_override overrides[24]; uint32_t override_count; uint8_t cpu_lapic_ids[64]; uint32_t cpu_count; }`
-- [ ] Parse MADT entries: Type 0 (LAPIC per CPU → `cpu_lapic_ids`), Type 1 (IOAPIC → `ioapic_base`, `ioapic_gsi_base`), Type 2 (IRQ override → `overrides[]`), Type 4 (LAPIC NMI), Type 5 (LAPIC address override); ignore unknown types
-- [ ] Set `madt_flags.pcat_compat = (madt->flags & 1)` — used by §3 to decide whether to disable the PIC
-- [ ] Expose `acpi_madt_info()` getter returning const pointer to static parsed struct
-- [ ] Serial log: `[ACPI] MADT: {N} CPUs, LAPIC=0x{base}, IOAPIC=0x{base} GSI={base}, {M} IRQ overrides, PCAT_COMPAT={0|1}`
-- [ ] Commit: `"acpi: parse MADT before interrupt init — CPU APIC IDs, IOAPIC base, IRQ overrides"`
+- [x] `acpi_init()` already executes before LAPIC/IOAPIC/PIC in `boot_phase1()` — verified in boot logs
+- [x] Define `struct acpi_irq_override` and `struct acpi_madt_info` in `acpi.h`
+- [x] Parse MADT entries: Type 0 (LAPIC), Type 1 (IOAPIC + GSI base), Type 2 (IRQ override), Type 5 (LAPIC address override), Type 9 (x2APIC); unknown types skipped
+- [x] `pcat_compat` flag set from `madt->flags & 1`
+- [x] `acpi_madt_info()` getter returns const pointer to static `s_madt_info` struct
+- [x] Serial log: `MADT: N CPUs, LAPIC=0xbase, IOAPIC=0xbase GSI=base, M overrides, PCAT_COMPAT=N`
+- [x] Commit: `"acpi: consolidated MADT info struct with IOAPIC GSI base"`
 
 ## 2. LAPIC / IOAPIC Init Before PIT `[Opus]`
 

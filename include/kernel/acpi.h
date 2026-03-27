@@ -193,6 +193,28 @@ void acpi_shutdown(void);
  * Does not return on success. */
 void acpi_reboot(void);
 
+/* ---- Consolidated MADT info (TODO-03 §1) ---- */
+
+struct acpi_irq_override {
+    uint8_t  bus_irq;       /* ISA IRQ number */
+    uint32_t gsi;           /* Global System Interrupt */
+    uint16_t flags;         /* polarity + trigger mode */
+};
+
+struct acpi_madt_info {
+    uint32_t lapic_base;        /* LAPIC physical base (default 0xFEE00000) */
+    uint32_t ioapic_base;       /* I/O APIC physical base (0 if not found) */
+    uint32_t ioapic_gsi_base;   /* GSI base for this IOAPIC */
+    uint32_t flags;             /* MADT flags (bit 0 = PCAT_COMPAT) */
+    struct acpi_irq_override overrides[24];
+    uint32_t override_count;
+    uint8_t  cpu_lapic_ids[64];
+    uint32_t cpu_count;
+};
+
+/* Get consolidated MADT info (populated after acpi_init). */
+const struct acpi_madt_info *acpi_madt_info(void);
+
 /* ---- SMP discovery API ---- */
 
 /* Number of CPUs discovered in the MADT (1 = single-core / no MADT) */
