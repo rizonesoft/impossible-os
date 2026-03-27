@@ -21,6 +21,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
+#include "kernel/boot_recovery.h"
 #include "registry.h"
 #include "kernel/symtab.h"
 #include "kernel/cpuid_platform.h"
@@ -74,7 +75,9 @@ void boot_phase2(void)
 
     /* --- VFS: requires HEAP --- */
     if (!kernel_subsystem_ready(SUBSYS_HEAP)) {
+        boot_recovery_info_t ri = { SUBSYS_VFS, POSTCODE_VFS_INIT, BOOT_FATAL, 2 };
         kernel_subsystem_dump();
+        boot_recovery_show(&ri);
         boot_halt("HEAP not ready -- cannot init VFS");
     }
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
@@ -181,7 +184,9 @@ void boot_phase2(void)
 
     /* --- Registry: requires VFS --- */
     if (!kernel_subsystem_ready(SUBSYS_VFS)) {
+        boot_recovery_info_t ri = { SUBSYS_REGISTRY, POSTCODE_REGISTRY_INIT, BOOT_FATAL, 2 };
         kernel_subsystem_dump();
+        boot_recovery_show(&ri);
         boot_halt("VFS not ready -- cannot init registry");
     }
     klog(LOG_DEBUG, "", "");

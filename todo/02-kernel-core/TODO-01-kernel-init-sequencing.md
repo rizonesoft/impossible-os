@@ -43,7 +43,7 @@
 | 💎  |   6   | Dependency gates              | §1–5       |  [x]   |
 | 💎  |   7   | Failure policy                | §6         |  [x]   |
 | 💎  |   8   | Code cleanup                  | §2–5       |  [/]   |
-| ⭐  |   9   | Degraded-boot recovery screen | §7         |  [ ]   |
+| ⭐  |   9   | Degraded-boot recovery screen | §7         |  [x]   |
 | ⭐  |  10   | POST code + UEFI variable log | §1         |  [ ]   |
 
 > 💎 = parity — Windows NT and Linux both have formal init phase models; Impossible OS must match them.
@@ -217,13 +217,13 @@ In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally
 
 **Files:** `src/kernel/main/boot_recovery.c`, `include/kernel/boot_recovery.h`
 
-- [ ] Design `boot_recovery_info_t` struct: failed subsystem, POST code, `boot_result_t`, phase number
-- [ ] Implement `boot_recovery_show(boot_recovery_info_t *info)` — draws panel on framebuffer using `gfx_fill_rect`, `gfx_draw_text`; no heap alloc after Phase 1
-- [ ] Implement simple three-option menu: **[R] Retry**, **[C] Serial console**, **[P] Power off**; poll keyboard via `keyboard_poll()`
-- [ ] Hook into Phase 2 failure path: call `boot_recovery_show()` instead of `panic()` when `BOOT_FATAL` and `SUBSYS_FB` is ready
-- [ ] Hook into Phase 3 failure path: call `boot_recovery_show()` for any BOOT_FATAL
-- [ ] Ensure `boot_recovery_show()` is a no-op (falls through to `boot_halt()`) if `SUBSYS_FB` is not ready
-- [ ] Add `boot_progress(9, "recovery-screen", 0xE0)` call on entry
+- [x] Design `boot_recovery_info_t` struct: failed subsystem, POST code, `boot_result_t`, phase number
+- [x] Implement `boot_recovery_show(boot_recovery_info_t *info)` — draws panel on framebuffer using inline 8x8 font; no heap alloc
+- [x] Implement simple three-option menu: **[R] Retry**, **[C] Serial console**, **[P] Power off**; poll PS/2 keyboard via port 0x60/0x64
+- [x] Hook into Phase 2 failure path: VFS and Registry guards call `boot_recovery_show()` before `boot_halt()`
+- [x] Hook into Phase 3 failure path: Scheduler guard calls `boot_recovery_show()` before `boot_halt()`
+- [x] Ensure `boot_recovery_show()` is a no-op (falls through to `boot_halt()`) if `SUBSYS_FB` is not ready
+- [x] Add `boot_progress(9, "recovery-screen", 0xE0)` call on entry
 
 ## 10. POST Code + UEFI Variable Log `[Opus]`
 
@@ -254,7 +254,7 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 | 💎  | Boot progress serial log             | ✅ `DebugPrint` / ETW early tracing        | ✅ `early_printk` / `earlyprintk=serial`   | ✅ Done — §2; `[PHASE0]` markers with POST codes          |
 | 💎  | Boot config gating                   | ✅ `SYSTEM\CurrentControlSet\Control\`     | ✅ kernel cmdline / initrd config          | ✅ Done — §2; `boot.conf` parsed in Phase 0               |
 | 💎  | Test-path separated from boot path   | ✅ Tests run in separate test OS builds    | ✅ `initcall_debug` opt-in                 | ✅ Done — §5; `debug=1` gate in boot_tests_run()          |
-| ⭐  | Degraded-boot recovery UI screen     | ❌ Safe mode is a separate boot mode       | ❌ Emergency shell is text-only            | ⬜ **Planned — Step 9 — in-kernel graphical recovery**   |
+| ⭐  | Degraded-boot recovery UI screen     | ❌ Safe mode is a separate boot mode       | ❌ Emergency shell is text-only            | ✅ **Done — §9 — in-kernel graphical recovery + [R]/[C]/[P] menu** |
 | ⭐  | POST code written to UEFI NVRAM      | ❌ POST codes are firmware-only            | ❌ Not implemented                         | ⬜ **Planned — Step 10 — survives reboot for diagnosis** |
 | ⭐  | Subsystem readiness oracle API       | ⚠️ Private internal only, not exposed      | ⚠️ `system_state` enum only                | ⬜ **Planned — Step 1 — `kernel_subsystem_ready()` API** |
 
