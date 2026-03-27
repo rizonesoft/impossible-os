@@ -262,9 +262,9 @@
 
 ### 6.1 cJSON port
 
-- [ ] Vendor `cJSON.c` + `cJSON.h` (MIT, ~2000 lines) into `src/libs/cjson/`
-- [ ] Compile with `-ffreestanding -nostdlib`
-- [ ] Redirect allocator via `cJSON_InitHooks()` at kernel init (Phase 2, after heap is ready):
+- [x] Vendor `cJSON.c` + `cJSON.h` (MIT v1.7.18, 3443 lines) into `src/libs/cjson/`
+- [x] Compile with `-ffreestanding -nostdlib` + SSE2 for float; freestanding shim replaces all stdlib headers
+- [x] Allocator redirected via compile-time macros (`malloc` → `kmalloc`, `free` → `kfree`, `realloc` → `krealloc`):
   ```c
   cJSON_Hooks hooks = { .malloc_fn = kmalloc, .free_fn = kfree };
   cJSON_InitHooks(&hooks);
@@ -282,12 +282,13 @@
   char  *json_print(cJSON *obj);               /* cJSON_PrintUnformatted */
   void   json_free(cJSON *obj);                /* cJSON_Delete */
   ```
-- [ ] Use for: desktop theme files (`theme.json`), settings persistence, update manifests, NTP server list, and any kernel-side config read at boot
+- [x] Kernel wrapper API created: `json_parse()`, `json_get()`, `json_str()`, `json_int()`, `json_double()`, `json_bool()`, `json_print()`, `json_free()` in `src/kernel/json.c` + `include/kernel/json.h`
+- [ ] Use for: desktop theme files (`theme.json`), settings persistence, update manifests, NTP server list
 - [ ] Test: parse `{"os": "Impossible", "build": 1024, "debug": true}`; verify all fields extract correctly
 
 ### 6.3 Commit
 
-- [ ] Commit: `"libs: cJSON DOM parser, json_parse/get/print wrapper, cJSON_InitHooks"`
+- [x] Commit: `"libs: cJSON DOM parser, json_parse/get/print wrapper"`
 
 ---
 

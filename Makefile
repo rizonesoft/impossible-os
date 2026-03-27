@@ -92,8 +92,9 @@ ASM_OBJS := $(patsubst $(SRC_DIR)/%.asm, $(BUILD_DIR)/%.o, $(ASM_SRCS))
 AP_TRAMPOLINE_BIN := $(BUILD_DIR)/kernel/smp/ap_trampoline.bin
 AP_TRAMPOLINE_OBJ := $(BUILD_DIR)/kernel/smp/ap_trampoline.o
 
-# C sources (kernel + libc)
-C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(DESKTOP_DIR) -name '*.c' 2>/dev/null)
+# C sources (kernel + libc + vendored libs)
+LIBS_DIR   := $(SRC_DIR)/libs
+C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(LIBS_DIR) $(DESKTOP_DIR) -name '*.c' 2>/dev/null)
 C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 
 # All objects
@@ -711,10 +712,21 @@ $(BUILD_DIR)/kernel/icon_store.o: $(SRC_DIR)/kernel/icon_store.c | $(GENERATED_H
 	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (icon_store)"
 
+# cJSON + json wrapper: need SSE2 for float (JSON number values use double)
+$(BUILD_DIR)/libs/cjson/cJSON.o: $(SRC_DIR)/libs/cjson/cJSON.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -Wno-float-conversion -Wno-implicit-float-conversion -I$(INCLUDE) -I$(KERNEL_DIR) -I$(SRC_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $< (cJSON)"
+
+$(BUILD_DIR)/kernel/json.o: $(SRC_DIR)/kernel/json.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(SRC_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $< (json wrapper)"
+
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(SRC_DIR) -c $< -o $@
 	@echo "[CC] $<"
 
 # Assemble NASM source files
