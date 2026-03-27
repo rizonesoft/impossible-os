@@ -89,14 +89,14 @@ static const uint8_t s_hex_font[16][8] = {
     { 0x7E,0x60,0x60,0x78,0x60,0x60,0x60,0x00 }, /* F */
 };
 
-#define POST_SCALE   1   /* 1x scale: native 8px glyphs */
-#define POST_GLYPH_W 8
-#define POST_GLYPH_H 8
-#define POST_GAP     1   /* gap between digits */
+#define POST_SCALE   2   /* 2x scale: 8px glyph -> 16px */
+#define POST_GLYPH_W (8 * POST_SCALE)   /* 16 px */
+#define POST_GLYPH_H (8 * POST_SCALE)   /* 16 px */
+#define POST_GAP     2   /* gap between digits */
 #define POST_MARGIN  6   /* margin from screen edge */
 #define POST_TOP     6   /* top padding */
-#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 17 px */
-#define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 10 px */
+#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 34 px */
+#define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 18 px */
 
 /* Port 0x80 write */
 static inline void outb_post(uint8_t code)
@@ -132,29 +132,39 @@ void post_display(uint8_t code)
     hi = (code >> 4) & 0x0F;
     lo = code & 0x0F;
 
-    /* Draw high nibble (8x8 native) */
+    /* Draw high nibble (2x scale) */
     {
         const uint8_t *g = s_hex_font[hi];
-        uint32_t row, col;
+        uint32_t row, col, sy, sx;
         for (row = 0; row < 8; row++) {
             uint8_t bits = g[row];
             for (col = 0; col < 8; col++) {
-                if (bits & (0x80 >> col))
-                    fb_put_pixel(x0 + col, y0 + row, 0x00FFFFFF);
+                if (bits & (0x80 >> col)) {
+                    for (sy = 0; sy < POST_SCALE; sy++)
+                        for (sx = 0; sx < POST_SCALE; sx++)
+                            fb_put_pixel(x0 + col * POST_SCALE + sx,
+                                         y0 + row * POST_SCALE + sy,
+                                         0x00FFFFFF);
+                }
             }
         }
     }
 
-    /* Draw low nibble (8x8 native) */
+    /* Draw low nibble (2x scale) */
     {
         const uint8_t *g = s_hex_font[lo];
         uint32_t gx = x0 + POST_GLYPH_W + POST_GAP;
-        uint32_t row, col;
+        uint32_t row, col, sy, sx;
         for (row = 0; row < 8; row++) {
             uint8_t bits = g[row];
             for (col = 0; col < 8; col++) {
-                if (bits & (0x80 >> col))
-                    fb_put_pixel(gx + col, y0 + row, 0x00FFFFFF);
+                if (bits & (0x80 >> col)) {
+                    for (sy = 0; sy < POST_SCALE; sy++)
+                        for (sx = 0; sx < POST_SCALE; sx++)
+                            fb_put_pixel(gx + col * POST_SCALE + sx,
+                                         y0 + row * POST_SCALE + sy,
+                                         0x00FFFFFF);
+                }
             }
         }
     }
