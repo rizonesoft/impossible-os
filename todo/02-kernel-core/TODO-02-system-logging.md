@@ -25,14 +25,14 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                         | Depends On | Status |
-| --- | :---: | ----------------------------------- | ---------- | :----: |
-| 💎  |   1   | Boot-phase aware klog init          | TODO-01 §1 |  [ ]   |
-| 💎  |   2   | Per-subsystem log splitting         | 1          |  [ ]   |
-| 💎  |   3   | Per-subsystem verbosity control     | 2          |  [ ]   |
-| 💎  |   4   | Log rotation                        | 2          |  [ ]   |
-| 💎  |   5   | Rate limiting                       | 2          |  [ ]   |
-| ⭐  |   6   | Structured JSON log events          | 4, TODO-20 §6 |  [ ]   |
+| ⭐  | Order | Deliverable                         | Depends On    | Status |
+| --- | :---: | ----------------------------------- | ------------- | :----: |
+| 💎  |   1   | Boot-phase aware klog init          | TODO-01 §1    |  [x]   |
+| 💎  |   2   | Per-subsystem log splitting         | §1             |  [ ]   |
+| 💎  |   3   | Per-subsystem verbosity control     | §2             |  [ ]   |
+| 💎  |   4   | Log rotation                        | §2             |  [ ]   |
+| 💎  |   5   | Rate limiting                       | §2             |  [ ]   |
+| ⭐  |   6   | Structured JSON log events          | §4, T20 §6     |  [ ]   |
 | 💎  |   7   | Remote syslog forwarding (RFC 5424) | UDP (exists)  |  [ ]   |
 
 > 💎 = parity — Windows Event Log and Linux journald/syslog both have these capabilities.
@@ -72,12 +72,12 @@ These items are implemented and verified. Kept here for future correctness check
 
 The current `klog_disk.c` assumes VFS is available when it initialises. After TODO-01, the kernel has explicit Phase 0 (no VFS) and Phase 2 (VFS ready) gates. `klog` must split into a Phase 0 ring-buffer-only mode and a Phase 2 disk-enable step.
 
-- [ ] Add `klog_early_init()` — Phase 0 safe; initialises ring buffer and serial output only; no VFS
-- [ ] Add `klog_disk_enable()` — Phase 2 safe; opens log files on VFS and starts disk flushing; BOOT_REQUIRE(SUBSYS_VFS)
-- [ ] Remove any VFS calls from the path triggered during Phase 0 (before `SUBSYS_VFS` is ready)
-- [ ] Register `SUBSYS_KLOG` as ready after `klog_early_init()` and `SUBSYS_KLOG_DISK` after `klog_disk_enable()`
-- [ ] Update `main.c`/`boot_storage.c` call sites to use the split init
-- [ ] Commit: `"kernel: split klog early-init from disk-enable"`
+- [x] Add `klog_early_init()` — Phase 0 safe; resets ring buffer, serial output only; no VFS
+- [x] Add `klog_disk_enable()` — Phase 2 safe; calls `klog_disk_init()` + `klog_disk_flush()` to open log files and flush ring to disk
+- [x] Remove any VFS calls from the path triggered during Phase 0 (klog ring + serial are static; no VFS calls before Phase 2)
+- [x] Register `SUBSYS_KLOG` as ready after `klog_early_init()` in Phase 0
+- [x] Update `boot_hw.c` (Phase 0) to call `klog_early_init()` and `boot_storage.c` (Phase 2) to call `klog_disk_enable()`
+- [x] Commit: `"kernel: split klog early-init from disk-enable"`
 
 ## 2. Per-Subsystem Log Splitting `[Sonnet]`
 

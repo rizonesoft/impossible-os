@@ -194,6 +194,24 @@ static const uint32_t level_color[] = {
     FB_COLOR_RED,         /* LOG_FATAL */
 };
 
+/* ---- Split init ---- */
+
+void klog_early_init(void)
+{
+    /* Ring buffer and serial output are static -- nothing to allocate.
+     * This function exists to formalize the Phase 0 init contract. */
+    klog_ring_head  = 0;
+    klog_ring_count = 0;
+}
+
+void klog_disk_enable(void)
+{
+    /* Phase 2 disk init: allocate FAT32 buffer and open log files.
+     * Triggers the first flush of accumulated ring entries to disk. */
+    klog_disk_init();
+    klog_disk_flush();
+}
+
 /* ---- Public API ---- */
 
 void klog_set_screen_level(log_level_t min_level)

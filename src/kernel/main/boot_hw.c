@@ -132,8 +132,8 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     kernel_subsystem_set_ready(SUBSYS_HEAP, true);
     boot_progress(0, "HEAP", POSTCODE_HEAP_INIT);
 
-    /* --- klog: in-memory ring buffer (no disk yet) --- */
-    /* klog is always available (static ring), mark ready after heap */
+    /* --- klog early init: ring buffer + serial only (no disk yet) --- */
+    klog_early_init();
     kernel_subsystem_set_ready(SUBSYS_KLOG, true);
     boot_progress(0, "KLOG", POSTCODE_KLOG_INIT);
 

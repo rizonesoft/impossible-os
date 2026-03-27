@@ -48,9 +48,13 @@ const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head);
  * Set to LOG_DEBUG to show everything on screen. */
 void klog_set_screen_level(log_level_t min_level);
 
-/* ---- Unified disk logging (klog_disk.c) ----
- * Handles all disk output: C:\...\kernel.log (IXFS) + X:\BOOT_NNN.LOG (FAT32).
- * Call klog_disk_flush() after VFS is mounted. */
+/* ---- Split init (Phase 0 / Phase 2) ----
+ * klog_early_init(): Phase 0 safe — ring buffer + serial only, no VFS.
+ * klog_disk_enable(): Phase 2 safe — opens log files, starts disk flushing. */
+void klog_early_init(void);            /* Phase 0: ring buffer ready */
+void klog_disk_enable(void);           /* Phase 2: VFS-backed disk logging */
+
+/* ---- Unified disk logging (klog_disk.c) ---- */
 void klog_disk_init(void);             /* Allocate buffer, scan for log number */
 void klog_disk_flush(void);            /* Write ring to C: + buffer to X: */
 void klog_disk_set_live(int on);       /* Enable/disable per-entry live mode */
