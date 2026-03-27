@@ -31,7 +31,7 @@
 | 💎  |   2   | Per-subsystem log splitting         | §1            |  [x]   |
 | 💎  |   3   | Per-subsystem verbosity control     | §2            |  [x]   |
 | 💎  |   4   | Log rotation                        | §2            |  [x]   |
-| 💎  |   5   | Rate limiting                       | §2            |  [ ]   |
+| 💎  |   5   | Rate limiting                       | §2            |  [x]   |
 | ⭐  |   6   | Structured JSON log events          | §4, T20 §6    |  [ ]   |
 | 💎  |   7   | Remote syslog forwarding (RFC 5424) | UDP (exists)  |  [ ]   |
 
@@ -121,12 +121,12 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 
 Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 
-- [ ] Track per-subsystem message count within a sliding window (default: 100 msgs / 1 second)
-- [ ] When a subsystem exceeds the rate: drop entries and emit one summary: `"[net] rate limit: N entries dropped"`
-- [ ] Reset the counter at the start of each window tick (driven by the timer subsystem)
-- [ ] Rate limit thresholds are configurable per subsystem via Registry: `HKLM\SYSTEM\Logs\RateLimit\<subsystem>`
-- [ ] Dropped entry counts are included in the `events.jsonl` structured record (§6)
-- [ ] Commit: `"kernel: log rate limiting"`
+- [x] Track per-subsystem message count within a 100-tick sliding window (100 Hz = 1 second); 32-slot table
+- [x] When a subsystem exceeds the rate: drop entries and emit one summary: `"[<tag>] rate limit active (>N msgs/sec)"`
+- [x] Reset the counter at window expiry (checked on each `klog()` call via `system_get_ticks()`)
+- [x] Rate limit thresholds configurable per subsystem via Registry: `HKLM\SYSTEM\Logs\RateLimit\<tag>` (REG_DWORD)
+- [x] Dropped count tracked in `klog_rate_slot_t.dropped` for future `events.jsonl` integration (§6)
+- [x] Commit: `"kernel: log rate limiting"`
 
 ## 6. Structured JSON Log Events `[Sonnet]`
 

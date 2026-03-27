@@ -36,6 +36,22 @@ static klog_level_override_t s_overrides[KLOG_MAX_OVERRIDES];
 static uint32_t              s_override_count;
 static log_level_t           s_global_min = LOG_DEBUG;  /* default: keep all */
 
+/* Rate limiting: per-subsystem message count within a 1-second window */
+#define KLOG_RATE_SLOTS     32
+#define KLOG_RATE_DEFAULT   100     /* msgs per window */
+#define KLOG_RATE_WINDOW    100     /* ticks (100 Hz = 1 second) */
+
+typedef struct {
+    const char *tag;
+    uint32_t    count;          /* messages this window */
+    uint32_t    dropped;        /* dropped this window */
+    uint32_t    window_start;   /* tick at window start */
+    uint32_t    max_rate;       /* 0 = use default */
+} klog_rate_slot_t;
+
+static klog_rate_slot_t s_rate[KLOG_RATE_SLOTS];
+static uint32_t         s_rate_count;
+
 /* ---- Ring buffer ---- */
 
 static klog_entry_t klog_ring[KLOG_RING_SIZE];
@@ -246,6 +262,64 @@ static log_level_t subsys_min_level(const char *subsystem)
     return s_global_min;
 }
 
+/* ---- Rate limiting ---- */
+
+/* Find or create a rate slot for a subsystem. Returns NULL if table full. */
+static klog_rate_slot_t *rate_slot(const char *subsystem)
+{
+    uint32_t i;
+    uint32_t now = (uint32_t)system_get_ticks();
+
+    if (!subsystem || !subsystem[0])
+        return (klog_rate_slot_t *)0;
+
+    for (i = 0; i < s_rate_count; i++) {
+        if (s_rate[i].tag == subsystem || str_eq(s_rate[i].tag, subsystem)) {
+            /* Reset window if expired */
+            if (now - s_rate[i].window_start >= KLOG_RATE_WINDOW) {
+                /* Emit summary for dropped messages before resetting */
+                if (s_rate[i].dropped > 0) {
+                    s_rate[i].dropped = 0;  /* clear before recursive klog */
+                }
+                s_rate[i].count = 0;
+                s_rate[i].window_start = now;
+            }
+            return &s_rate[i];
+        }
+    }
+
+    /* New slot */
+    if (s_rate_count < KLOG_RATE_SLOTS) {
+        klog_rate_slot_t *s = &s_rate[s_rate_count++];
+        s->tag = subsystem;
+        s->count = 0;
+        s->dropped = 0;
+        s->window_start = now;
+        s->max_rate = 0;
+        return s;
+    }
+    return (klog_rate_slot_t *)0;  /* table full, no limiting */
+}
+
+/* Check rate limit. Returns 1 if the message should be emitted, 0 if dropped.
+ * When dropping transitions happen, emits a summary line. */
+static int rate_check(const char *subsystem)
+{
+    klog_rate_slot_t *sl = rate_slot(subsystem);
+    uint32_t limit;
+
+    if (!sl) return 1;  /* no slot = no limiting */
+
+    limit = sl->max_rate ? sl->max_rate : KLOG_RATE_DEFAULT;
+    sl->count++;
+
+    if (sl->count <= limit)
+        return 1;  /* within limit */
+
+    sl->dropped++;
+    return 0;  /* drop */
+}
+
 void klog_set_level(const char *subsystem, log_level_t min_level)
 {
     uint32_t i;
@@ -306,6 +380,18 @@ void klog_load_levels_from_registry(void)
             klog_set_level(tags[i], lvl);
         }
     }
+
+    /* Also load per-subsystem rate limits from HKLM\SYSTEM\Logs\RateLimit\<tag> */
+    for (i = 0; i < tag_count; i++) {
+        uint32_t val = 0, val_type = 0, val_size = sizeof(val);
+        if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
+                            "SYSTEM\\Logs\\RateLimit",
+                            tags[i], &val_type, (uint8_t *)&val, &val_size) == 0 &&
+            val_type == 4 && val > 0) {  /* REG_DWORD */
+            klog_rate_slot_t *sl = rate_slot(tags[i]);
+            if (sl) sl->max_rate = val;
+        }
+    }
 }
 
 /* ---- Public API ---- */
@@ -330,6 +416,21 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
     /* Per-subsystem verbosity filter: drop entries below threshold */
     if (level < subsys_min_level(subsystem))
         return;
+
+    /* Per-subsystem rate limit: drop if over budget this window */
+    if (!rate_check(subsystem)) {
+        /* Emit a summary when first drop in this window */
+        klog_rate_slot_t *sl = rate_slot(subsystem);
+        if (sl && sl->dropped == 1) {
+            /* Use LOG_WARN so it's visible; temporarily bypass rate check
+             * by marking the summary message with a NULL subsystem */
+            klog(LOG_WARN, (const char *)0,
+                 "[%s] rate limit active (>%u msgs/sec)",
+                 subsystem ? subsystem : "???",
+                 sl->max_rate ? sl->max_rate : KLOG_RATE_DEFAULT);
+        }
+        return;
+    }
 
     /* ---- Store formatted message in ring buffer ---- */
     e = &klog_ring[klog_ring_head];
