@@ -172,6 +172,78 @@ void post_display(uint8_t code)
     fb_swap_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H);
 }
 
+/* ---- Debug bar: proportional boot stage waterfall ----------------------- */
+
+/* Stage color table */
+static uint32_t stage_color(boot_stage_t s)
+{
+    switch (s) {
+        case BOOT_STAGE_PMM:           return 0x000000FF;  /* blue */
+        case BOOT_STAGE_VMM:           return 0x008000FF;  /* purple */
+        case BOOT_STAGE_HEAP:          return 0x004080FF;  /* light blue */
+        case BOOT_STAGE_KLOG:          return 0x004080FF;
+        case BOOT_STAGE_GDT_IDT:       return 0x00808080;  /* gray */
+        case BOOT_STAGE_APIC:          return 0x00808080;
+        case BOOT_STAGE_VFS:           return 0x0000C000;  /* green */
+        case BOOT_STAGE_REGISTRY:      return 0x0000FFAA;  /* teal */
+        case BOOT_STAGE_DRIVERS:       return 0x00FF8000;  /* orange */
+        case BOOT_STAGE_NETWORK:       return 0x0000FFFF;  /* cyan */
+        case BOOT_STAGE_SCHEDULER:     return 0x00FF0000;  /* red */
+        case BOOT_STAGE_DESKTOP_READY: return 0x00FFFFFF;  /* white */
+        default:                       return 0x00404040;  /* dark gray */
+    }
+}
+
+#define BAR_HEIGHT  4
+#define BAR_Y       0   /* top of screen */
+
+static void render_debug_bar(void)
+{
+    uint32_t scr_w, i, x;
+    uint64_t total_tsc;
+
+    if (!g_boot_info.config.debug)
+        return;
+    if (s_history_count < 2)
+        return;
+    if (!kernel_subsystem_ready(SUBSYS_FB))
+        return;
+
+    scr_w = fb_get_width();
+    if (scr_w == 0) return;
+
+    total_tsc = s_history[s_history_count - 1].tsc - s_history[0].tsc;
+    if (total_tsc == 0) return;
+
+    x = 0;
+    for (i = 0; i + 1 < s_history_count; i++) {
+        uint64_t seg_tsc = s_history[i + 1].tsc - s_history[i].tsc;
+        uint32_t seg_w = (uint32_t)((seg_tsc * (uint64_t)scr_w) / total_tsc);
+        uint32_t color = stage_color(s_history[i].stage);
+        uint32_t row, col;
+
+        if (seg_w == 0) seg_w = 1;  /* at least 1 px */
+        if (x + seg_w > scr_w) seg_w = scr_w - x;
+
+        for (row = 0; row < BAR_HEIGHT; row++)
+            for (col = 0; col < seg_w; col++)
+                fb_put_pixel(x + col, BAR_Y + row, color);
+
+        x += seg_w;
+    }
+
+    /* Fill remaining pixels with the last stage color */
+    if (x < scr_w) {
+        uint32_t color = stage_color(s_history[s_history_count - 1].stage);
+        uint32_t row, col;
+        for (row = 0; row < BAR_HEIGHT; row++)
+            for (col = x; col < scr_w; col++)
+                fb_put_pixel(col, BAR_Y + row, color);
+    }
+
+    fb_swap_rect(0, BAR_Y, scr_w, BAR_HEIGHT);
+}
+
 /* ---- API ---------------------------------------------------------------- */
 
 void boot_stage_report(boot_stage_t stage, const char *msg)
@@ -219,11 +291,12 @@ void boot_stage_report(boot_stage_t stage, const char *msg)
     /* POST hex display on framebuffer + I/O port 0x80 */
     post_display(m->postcode);
 
-    /* Clear POST display when desktop is ready */
+    /* Desktop ready: clear POST display + render debug bar */
     if (stage == BOOT_STAGE_DESKTOP_READY && kernel_subsystem_ready(SUBSYS_FB)) {
         uint32_t cx = fb_get_width() - POST_TOTAL_W - POST_MARGIN;
         fb_fill_rect(cx, POST_TOP, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
         fb_swap_rect(cx, POST_TOP, POST_TOTAL_W, POST_TOTAL_H);
+        render_debug_bar();
     }
 
     /* Forward to boot_progress (phase, step, postcode) */

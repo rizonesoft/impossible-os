@@ -43,7 +43,7 @@
 | 💎  |   2   | Boot progress named-stage API      | §1         |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2         |  [x]   |
 | 💎  |   4   | Alive blink / hang detection       | §2         |  [x]   |
-| ⭐  |   5   | Debug color bar waterfall          | §2         |  [ ]   |
+| ⭐  |   5   | Debug color bar waterfall          | §2         |  [/]   |
 | 💎  |   6   | Panic forensic evidence            | §2         |  [ ]   |
 | ⭐  |   7   | Panic QR code                      | §6         |  [ ]   |
 | 💎  |   8   | System-wide multi-instance spinner | —          |  [ ]   |
@@ -113,12 +113,12 @@ Opt-in proportional debug overlay: a bar across the top of the screen where each
 
 **Files:** `src/kernel/main/boot_progress.c`, `include/kernel/boot_progress.h`
 
-- [ ] Activate when `boot.conf` key `DebugBar=1` or `HKLM\SYSTEM\Boot\DebugBar` = 1 (→ XREF `02-kernel-core/TODO-13-registry-completion.md`)
-- [ ] Stage color table: PMM=`0x0000FF` (blue), VMM=`0x8000FF` (purple), HEAP=`0x4080FF` (light blue), VFS=`0x00C000` (green), REGISTRY=`0x00FFAA` (teal), DRIVERS=`0xFF8000` (orange), NETWORK=`0x00FFFF` (cyan), SCHEDULER=`0xFF0000` (red), DESKTOP=`0xFFFFFF` (white)
-- [ ] At `BOOT_STAGE_DESKTOP_READY`: walk `boot_stage_history[]` and render a 4 px tall horizontal bar across the full screen width; each segment width = `(stage_duration_ticks / total_boot_ticks) × screen_width`; render via direct framebuffer pixel writes before compositor takes over
-- [ ] Bar persists for 3 s using a PIT tick countdown, then fades out (50% opacity steps over 500 ms)
-- [ ] Regression overlay: save the bar pixel data (RLE-compressed) to `C:\Impossible\System\Logs\boot-bar-last.dat`; on next debug boot, if file exists, render previous bar at 50% opacity underneath the current bar so regressions are visible
-- [ ] Commit: `"kernel: opt-in boot diagnostic color bar waterfall with regression overlay"`
+- [x] Activate when `boot.conf` `debug=1`; gated by `g_boot_info.config.debug`
+- [x] 12-entry stage color table: PMM=blue, VMM=purple, HEAP/KLOG=light blue, VFS=green, REGISTRY=teal, DRIVERS=orange, NETWORK=cyan, SCHEDULER=red, DESKTOP=white, GDT/APIC=gray
+- [x] At `BOOT_STAGE_DESKTOP_READY`: walk `boot_stage_history[]`, render 4 px tall proportional bar across full screen width via direct `fb_put_pixel()` + `fb_swap_rect()`
+- [ ] Bar fade-out (3s persist + opacity steps) — deferred (adds timer callback complexity for debug-only feature)
+- [ ] Regression overlay (RLE save/load) — deferred (needs VFS write during compositor transition)
+- [x] Commit: `"kernel: opt-in boot diagnostic color bar waterfall"`
 
 ## 6. Panic Forensic Evidence `[Opus]`
 
