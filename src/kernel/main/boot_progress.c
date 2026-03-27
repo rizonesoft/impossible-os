@@ -88,13 +88,14 @@ static const uint8_t s_hex_font[16][8] = {
     { 0x7E,0x60,0x60,0x78,0x60,0x60,0x60,0x00 }, /* F */
 };
 
-#define POST_SCALE   4   /* 4x scale: 8px glyph -> 32px on screen */
-#define POST_GLYPH_W (8 * POST_SCALE)   /* 32 px */
-#define POST_GLYPH_H (8 * POST_SCALE)   /* 32 px */
-#define POST_GAP     4   /* gap between digits */
-#define POST_MARGIN  4   /* margin from screen edge */
-#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 68 px */
-#define POST_TOTAL_H (POST_GLYPH_H + POST_MARGIN)    /* 36 px */
+#define POST_SCALE   2   /* 2x scale: 8px glyph -> 16px on screen */
+#define POST_GLYPH_W (8 * POST_SCALE)   /* 16 px */
+#define POST_GLYPH_H (8 * POST_SCALE)   /* 16 px */
+#define POST_GAP     2   /* gap between digits */
+#define POST_MARGIN  8   /* margin from screen edge */
+#define POST_TOP     24  /* top padding */
+#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 34 px */
+#define POST_TOTAL_H (POST_GLYPH_H + 4)              /* 20 px */
 
 /* Port 0x80 write */
 static inline void outb_post(uint8_t code)
@@ -118,7 +119,7 @@ void post_display(uint8_t code)
     if (scr_w == 0) return;
 
     x0 = scr_w - POST_TOTAL_W - POST_MARGIN;
-    y0 = POST_MARGIN;
+    y0 = POST_TOP;
 
     /* Clear background */
     fb_fill_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
@@ -138,7 +139,7 @@ void post_display(uint8_t code)
                         for (sx = 0; sx < POST_SCALE; sx++)
                             fb_put_pixel(x0 + col * POST_SCALE + sx,
                                          y0 + row * POST_SCALE + sy,
-                                         0x0040FF40);  /* green */
+                                         0x00FFFFFF);  /* green */
                 }
             }
         }
@@ -157,7 +158,7 @@ void post_display(uint8_t code)
                         for (sx = 0; sx < POST_SCALE; sx++)
                             fb_put_pixel(gx + col * POST_SCALE + sx,
                                          y0 + row * POST_SCALE + sy,
-                                         0x0040FF40);
+                                         0x00FFFFFF);
                 }
             }
         }
@@ -216,8 +217,8 @@ void boot_stage_report(boot_stage_t stage, const char *msg)
     /* Clear POST display when desktop is ready */
     if (stage == BOOT_STAGE_DESKTOP_READY && kernel_subsystem_ready(SUBSYS_FB)) {
         uint32_t cx = fb_get_width() - POST_TOTAL_W - POST_MARGIN;
-        fb_fill_rect(cx, POST_MARGIN, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
-        fb_swap_rect(cx, POST_MARGIN, POST_TOTAL_W, POST_TOTAL_H);
+        fb_fill_rect(cx, POST_TOP, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
+        fb_swap_rect(cx, POST_TOP, POST_TOTAL_W, POST_TOTAL_H);
     }
 
     /* Forward to boot_progress (phase, step, postcode) */
