@@ -1,10 +1,7 @@
 ---
-description: How to verify a previously implemented TODO section
+description: See .claude/commands/verify-todo-section.md (canonical source).
 ---
 
-> **Migrated to Cursor skill. Cursor is the single source of truth.**
->
-> Use the canonical skill instead:
-> - **[`.cursor/skills/verify-todo-section/SKILL.md`](../../.cursor/skills/verify-todo-section/SKILL.md)** — verify a done or in-progress TODO section against code, build, and test evidence; classify status conservatively; correct checklist items when evidence conflicts.
->
-> This file is a redirect stub only. Do not add new guidance here.
+This workflow is fully defined in [`.claude/commands/verify-todo-section.md`](../../.claude/commands/verify-todo-section.md).
+
+Antigravity: read that file and follow it exactly.

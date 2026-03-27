@@ -14,13 +14,13 @@ Use this format:
 | ⭐  | Order | Deliverable             | Depends On | Status |
 | --- | :---: | ----------------------- | ---------- | :----: |
 | 💎  |   1   | Foundation / parity     | —          |  [ ]   |
-| ⭐  |   2   | Exclusive differentiator | 1          |  [ ]   |
+| ⭐  |   2   | Exclusive differentiator | §1         |  [ ]   |
 ```
 
 - `💎` = parity work — this is what Windows 11 and Linux already do; Impossible OS must match it.
 - `⭐` = exclusive work — Impossible OS is superior or first; this is a differentiating feature.
 - Every row must carry one of these two markers. Never leave the first column blank or use numbers there.
-- `Depends On` stays compact. If it gets wordy, move detail into a short note block below the table.
+- `Depends On` stays compact using `§N` notation. If it gets wordy, move detail into a short note block below the table.
 - Do not create a later formatting-only cleanup step; the table must be correct at creation time.
 
 ## OS Comparison Table

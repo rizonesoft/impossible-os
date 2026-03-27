@@ -2,7 +2,7 @@
 
 ## Common Triggers
 
-- A new Cursor rule or skill changes agent behavior.
+- A new command in `.claude/commands/` changes agent behavior.
 - MCP policy, hook policy, or `.githooks/` expectations change.
 - The supported tooling contract changes in `TODO-02`.
 - Local, cloud, or team-managed AI features need clearer boundaries.
@@ -11,9 +11,13 @@
 ## Surfaces To Check
 
 - `AGENTS.md`
-- Relevant `.cursor/rules/`
-- Relevant `.cursor/skills/`
-- Compatibility notes for Antigravity or other shared AI tooling
+- `CLAUDE.md`
+- `.github/copilot-instructions.md`
+- `.impossible/rules/` (canonical source)
+- `.impossible/context.md` (project state)
+- `.agents/workflows/` (Antigravity redirects)
+- `.claude/commands/` (canonical slash commands)
+- `.cursor/rules/*.mdc` (Cursor rule adapters)
 - User-facing docs such as `README.md` or `CONTRIBUTING.md` when contributor expectations changed
 
 ## Preserve During Sync

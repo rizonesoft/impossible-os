@@ -37,17 +37,17 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                         | Depends On | Status |
-| --- | :---: | ----------------------------------- | ---------- | :----: |
-| 💎  |   1   | UEFI pre-kernel POST codes          | —          |  [ ]   |
-| 💎  |   2   | Boot progress named-stage API       | 1          |  [ ]   |
-| 💎  |   3   | POST-style hex code display         | 2          |  [ ]   |
-| 💎  |   4   | Alive blink / hang detection        | 2          |  [ ]   |
-| ⭐  |   5   | Debug color bar waterfall           | 2          |  [ ]   |
-| 💎  |   6   | Panic forensic evidence             | 2          |  [ ]   |
-| ⭐  |   7   | Panic QR code                       | 6          |  [ ]   |
-| 💎  |   8   | System-wide multi-instance spinner  | —          |  [ ]   |
-| ⭐  |   9   | Runtime vital signs strip           | 8          |  [ ]   |
+| ⭐  | Order | Deliverable                        | Depends On | Status |
+| --- | :---: | ---------------------------------- | ---------- | :----: |
+| 💎  |   1   | UEFI pre-kernel POST codes         | —          |  [ ]   |
+| 💎  |   2   | Boot progress named-stage API      | §1         |  [ ]   |
+| 💎  |   3   | POST-style hex code display        | §2         |  [ ]   |
+| 💎  |   4   | Alive blink / hang detection       | §2         |  [ ]   |
+| ⭐  |   5   | Debug color bar waterfall          | §2         |  [ ]   |
+| 💎  |   6   | Panic forensic evidence            | §2         |  [ ]   |
+| ⭐  |   7   | Panic QR code                      | §6         |  [ ]   |
+| 💎  |   8   | System-wide multi-instance spinner | —          |  [ ]   |
+| ⭐  |   9   | Runtime vital signs strip          | §8         |  [ ]   |
 
 > 💎 = parity — Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive — the proportional debug waterfall with regression overlay, QR code on BSOD, and always-visible vital-signs strip are not present in either competitor at the kernel level.

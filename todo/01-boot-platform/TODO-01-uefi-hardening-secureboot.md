@@ -36,21 +36,21 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                        | Depends On       | Status |
-| --- | :---: | ---------------------------------- | ---------------- | :----: |
-| 💎  |   1   | UEFI runtime services preservation | —                |  [x]   |
-| 💎  |   2   | UEFI variable services             | 1                |  [x]   |
-| 💎  |   3   | GOP resolution auto-detection      | 1                |  [x]   |
-| 💎  |   4   | SMBIOS table parsing               | 1                |  [x]   |
-| 💎  |   5   | Secure Boot state detection        | 2                |  [/]   |
-| 💎  |   6   | Secure Boot shim chain-loading     | 5                |  [x]   |
-| 💎  |   7   | Boot UX polish                     | 3, 5, TODO-02 §2 |  [x]   |
-| 💎  |   8   | A/B dual-slot boot                 | 2                |  [ ]   |
-| ⭐  |   9   | Multi-OS detection & boot menu     | 1                |  [ ]   |
-| 💎  |  10   | UEFI capsule update & ESRT         | 2, 8             |  [ ]   |
-| 💎  |  11   | UEFI memory attributes (W^X)       | 1                |  [ ]   |
-| ⭐  |  12   | Serial log standardization         | —                |  [x]   |
-| 💎  |  13   | Multi-GPU GOP enumeration — `LocateHandleBuffer`, primary via ConOut path, `boot_info.gop_handles[]` | §3 | [ ] |
+| ⭐  | Order | Deliverable                        | Depends On      | Status |
+| --- | :---: | ---------------------------------- | --------------- | :----: |
+| 💎  |   1   | UEFI runtime services preservation | —               |  [x]   |
+| 💎  |   2   | UEFI variable services             | §1              |  [x]   |
+| 💎  |   3   | GOP resolution auto-detection      | §1              |  [x]   |
+| 💎  |   4   | SMBIOS table parsing               | §1              |  [x]   |
+| 💎  |   5   | Secure Boot state detection        | §2              |  [/]   |
+| 💎  |   6   | Secure Boot shim chain-loading     | §5              |  [x]   |
+| 💎  |   7   | Boot UX polish                     | §3, §5, T02 §2 |  [x]   |
+| 💎  |   8   | A/B dual-slot boot                 | §2              |  [ ]   |
+| ⭐  |   9   | Multi-OS detection & boot menu     | §1              |  [ ]   |
+| 💎  |  10   | UEFI capsule update & ESRT         | §2, §8          |  [ ]   |
+| 💎  |  11   | UEFI memory attributes (W^X)       | §1              |  [ ]   |
+| ⭐  |  12   | Serial log standardization         | —               |  [x]   |
+| 💎  |  13   | Multi-GPU GOP enumeration          | §3              |  [ ]   |
 
 > 💎 = parity — Windows Boot Manager and GRUB implement these features; Impossible OS must match them.
 > ⭐ = exclusive — the in-bootloader multi-OS detection with graphical countdown timer is not present in competitors.

@@ -38,13 +38,13 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                      | Depends On                                    | Status |
-| --- | :---: | ------------------------------------------------ | --------------------------------------------- | :----: |
-| 💎  |   1   | CPUID detection & per-CPU capability capture     | P0, 02-kernel-core/TODO-19 §1                 |  [ ]   |
-| 💎  |   2   | Phase 0 CPU security activation order            | §1, 02-kernel-core/TODO-17 §1–3 & TODO-19 §3  |  [ ]   |
-| ⭐  |   3   | Hypervisor detection before timer selection      | §1, 02-kernel-core/TODO-19 §11                |  [ ]   |
-| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, 02-kernel-core/TODO-17 §1–7               |  [ ]   |
-| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, 02-kernel-core/TODO-17 §4 & TODO-19 §1    |  [ ]   |
+| ⭐  | Order | Deliverable                                      | Depends On                 | Status |
+| --- | :---: | ------------------------------------------------ | -------------------------- | :----: |
+| 💎  |   1   | CPUID detection & per-CPU capability capture     | P0, D02 T19 §1             |  [ ]   |
+| 💎  |   2   | Phase 0 CPU security activation order            | §1, D02 T17 §1–3 & T19 §3  |  [ ]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D02 T19 §11            |  [ ]   |
+| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D02 T17 §1–7           |  [ ]   |
+| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D02 T17 §4 & T19 §1    |  [ ]   |
 
 > 💎 = parity — Windows and Linux both enforce EFER/CR4 ordering, AP parity, and deferred XSAVE/PCID relative to paging; Impossible OS must match that contract.
 > ⭐ = exclusive — hypervisor pre-detection before timer HAL selection and postcode-per-activation boot audit lines are not surfaced the same way on Windows or Linux.
