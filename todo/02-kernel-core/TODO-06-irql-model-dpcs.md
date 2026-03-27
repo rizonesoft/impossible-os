@@ -36,7 +36,7 @@
 | 💎  |   1   | `KIRQL` type, constants, and core contract         | —          |  [x]   |
 | 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1         |  [x]   |
 | 💎  |   3   | Interrupt entry/exit IRQL integration              | §2         |  [x]   |
-| 💎  |   4   | DPC object type and per-CPU queue                  | §2         |  [ ]   |
+| 💎  |   4   | DPC object type and per-CPU queue                  | §2         |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4     |  [ ]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5         |  [ ]   |
 | 💎  |   7   | Driver migration and workqueue contract split      | §5         |  [ ]   |
@@ -73,15 +73,15 @@
 - [x] Ensure nested interrupts preserve highest-active IRQL correctly and unwind in strict LIFO order.
 - [x] Keep end-of-interrupt signaling (LAPIC/PIC) ordered correctly relative to IRQL lowering.
 - [x] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
-- [ ] Commit: `"kernel: irq — wire IRQL raises/lowers into interrupt path"`
+- [x] Commit: `"kernel: irq — wire IRQL raises/lowers into interrupt path"`
 
 ## 4. DPC Object Type and Per-CPU Queue
 
-- [ ] Create `include/kernel/sched/dpc.h` and `src/kernel/sched/dpc.c`.
-- [ ] Define `KDPC` with routine pointer, deferred context, optional argument pair, and queue link.
-- [ ] Implement `KeInitializeDpc()`, `KeInsertQueueDpc()`, and `KeRemoveQueueDpc()`.
-- [ ] Build a lock-protected per-CPU DPC queue with bounded memory strategy (pre-allocated nodes or static pool fallback).
-- [ ] Enforce that `KeInsertQueueDpc()` is callable at ISR IRQL and does not block or allocate unbounded memory.
+- [x] Create `include/kernel/sched/dpc.h` and `src/kernel/sched/dpc.c`.
+- [x] Define `KDPC` with routine pointer, deferred context, optional argument pair, and queue link.
+- [x] Implement `KeInitializeDpc()`, `KeInsertQueueDpc()`, and `KeRemoveQueueDpc()`.
+- [x] Build a lock-protected per-CPU DPC queue with bounded memory strategy (pre-allocated nodes or static pool fallback).
+- [x] Enforce that `KeInsertQueueDpc()` is callable at ISR IRQL and does not block or allocate unbounded memory.
 - [ ] Commit: `"kernel: sched — add KDPC type and per-CPU DPC queue"`
 
 ## 5. DPC Drain Loop at `DISPATCH_LEVEL`
@@ -133,9 +133,9 @@
 | ⭐  | Feature                                     | 🪟 Windows 11 / NT                            | 🐧 Linux                                                | 🚀 Impossible OS                                          |
 | --- | ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
 | 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | ✅ Per-CPU IRQL, LAPIC TPR, ISR raise/lower, spinlock integration, blocking assertions (§1-§3) |
-| 💎  | Deferred interrupt bottom half              | ✅ DPC queue at `DISPATCH_LEVEL`              | ✅ softirq/tasklet/NAPI bottom-half model               | ⬜ Planned — §4–§6                                        |
-| 💎  | ISR-safe deferred queue API                 | ✅ `KeInsertQueueDpc`                         | ✅ IRQ-safe enqueue primitives in net/block paths       | ⬜ Planned — §4                                           |
-| 💎  | Per-CPU deferred work queues                | ✅ Per-CPU DPC state                          | ✅ Per-CPU softirq and work processing                  | ⬜ Planned — §4–§6                                        |
+| 💎  | Deferred interrupt bottom half              | ✅ DPC queue at `DISPATCH_LEVEL`              | ✅ softirq/tasklet/NAPI bottom-half model               | 🔄 KDPC type + per-CPU queue implemented (§4) -- dispatch at DISPATCH_LEVEL pending (§5-§6) |
+| 💎  | ISR-safe deferred queue API                 | ✅ `KeInsertQueueDpc`                         | ✅ IRQ-safe enqueue primitives in net/block paths       | ✅ `KeInsertQueueDpc` -- zero-alloc, ISR-safe, intrusive-linked KDPC (§4) |
+| 💎  | Per-CPU deferred work queues                | ✅ Per-CPU DPC state                          | ✅ Per-CPU softirq and work processing                  | 🔄 Per-CPU FIFO queue with spinlock, depth tracking, high-water stats (§4) -- drain loop pending (§5-§6) |
 | 💎  | Context legality contract                   | ✅ API rules by IRQL                          | ✅ `might_sleep()` and atomic-context rules             | 🔄 Legality table documented in `irql.h` (§1) — runtime enforcement pending (§8) |
 | 💎  | Workqueue for thread-context deferred work  | ✅ Work items at passive level                | ✅ kernel workqueues at process context                 | ⚠️ Partial — exists; needs explicit IRQL split in §7      |
 | ⭐  | Built-in IRQL violation telemetry           | ⚠️ Mostly internal/checked builds             | ⚠️ Debug warnings exist but fragmented                  | ⬜ **Planned — §8 — unified contract diagnostics**        |
