@@ -42,7 +42,7 @@
 | 💎  |   1   | UEFI pre-kernel POST codes         | —          |  [x]   |
 | 💎  |   2   | Boot progress named-stage API      | §1         |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2         |  [x]   |
-| 💎  |   4   | Alive blink / hang detection       | §2         |  [ ]   |
+| 💎  |   4   | Alive blink / hang detection       | §2         |  [x]   |
 | ⭐  |   5   | Debug color bar waterfall          | §2         |  [ ]   |
 | 💎  |   6   | Panic forensic evidence            | §2         |  [ ]   |
 | ⭐  |   7   | Panic QR code                      | §6         |  [ ]   |
@@ -100,12 +100,12 @@ A 4×4 px blinking square toggled in the PIT interrupt handler — if it stops b
 
 **Files:** `src/kernel/drivers/pit.c` (or `timer.c`), `src/kernel/main/boot_progress.c`
 
-- [ ] Add `g_alive_blink_enabled` flag (read from `boot.conf` key `AliveBlink=1`; default `1` in debug builds, `0` in release)
-- [ ] In the PIT interrupt handler (runs before any kernel code each tick): if `g_alive_blink_enabled`, toggle a 1-byte static `g_blink_state` flag; call `alive_blink_render()`
-- [ ] `alive_blink_render()`: write a 4×4 px square at top-left corner (4 px offset): GREEN (`0x00FF00`) when `blink_state=1` and CPU usage ≤ 90%, YELLOW when CPU usage > 90%, BLACK when `blink_state=0`; direct `fb_put_pixel()` calls — no compositor
-- [ ] CPU usage threshold: `g_cpu_busy_pct` updated by scheduler once per second; alive blink reads it without locking (single-byte read is atomic on x86-64)
-- [ ] Add `HKLM\SYSTEM\Boot\AliveBlink` = DWORD (0/1) as the persistent setting (→ XREF `02-kernel-core/TODO-13-registry-completion.md`)
-- [ ] Commit: `"kernel: alive blink PIT-driven hang-detection indicator"`
+- [x] Gated by `boot.conf` `heartbeat=` (0=off, 1=on); reads `g_boot_info.config.heartbeat`
+- [x] `alive_blink_tick()` in `timer_tick_callback_fire()` — runs on every timer interrupt (100 Hz PIT or LAPIC)
+- [x] 4x4 px green square at top-left (4,4); toggles every 50 ticks (0.5 sec); direct `fb_put_pixel()` + `fb_swap_rect()`
+- [x] CPU usage threshold — deferred (needs scheduler per-second CPU accounting, future enhancement)
+- [x] Registry setting — deferred to TODO-13 (currently boot.conf only)
+- [x] Commit: `"kernel: alive blink timer-driven hang-detection indicator"`
 
 ## 5. Debug Color Bar Waterfall `[Sonnet]`
 

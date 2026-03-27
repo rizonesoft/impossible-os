@@ -12,6 +12,9 @@
  * ============================================================================ */
 
 #include "kernel/timer.h"
+#include "kernel/boot_init.h"
+#include "kernel/boot_info.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* THE single source of truth -- set once by timer_hal_init() (§6.4) */
 timer_driver_t *g_system_timer = (timer_driver_t *)0;
@@ -65,8 +68,43 @@ void timer_unregister_tick_callback(void)
     tick_cb_counter = 0;
 }
 
+/* ---- Alive blink: 4x4 px top-left corner, toggled on timer interrupt ---- */
+
+static uint8_t  s_blink_state;
+static uint32_t s_blink_counter;
+#define BLINK_RATE      50  /* toggle every 50 ticks = 0.5 sec at 100 Hz */
+#define BLINK_X         4
+#define BLINK_Y         4
+#define BLINK_SIZE      4
+#define BLINK_COLOR_ON  0x0000FF00  /* green */
+#define BLINK_COLOR_OFF 0x00000000  /* black */
+
+static void alive_blink_tick(void)
+{
+    uint32_t row, col, color;
+
+    if (!g_boot_info.config.heartbeat)
+        return;
+    if (!kernel_subsystem_ready(SUBSYS_FB))
+        return;
+
+    s_blink_counter++;
+    if (s_blink_counter < BLINK_RATE)
+        return;
+    s_blink_counter = 0;
+    s_blink_state = !s_blink_state;
+
+    color = s_blink_state ? BLINK_COLOR_ON : BLINK_COLOR_OFF;
+    for (row = 0; row < BLINK_SIZE; row++)
+        for (col = 0; col < BLINK_SIZE; col++)
+            fb_put_pixel(BLINK_X + col, BLINK_Y + row, color);
+    fb_swap_rect(BLINK_X, BLINK_Y, BLINK_SIZE, BLINK_SIZE);
+}
+
 void timer_tick_callback_fire(void)
 {
+    alive_blink_tick();
+
     if (!tick_cb_fn) return;
     tick_cb_counter++;
     if (tick_cb_counter >= tick_cb_divisor) {
