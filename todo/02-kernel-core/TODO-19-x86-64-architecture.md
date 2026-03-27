@@ -98,7 +98,7 @@
 ### 1.4 Replace FXSAVE in icon_store.c
 
 - [x] Removed manual `simd_save/restore_state()` from icon_store.c — lazy FPU handles it
-- [ ] `gfx_text.c` still has ~20 manual save/restore calls — future cleanup
+- [x] Removed all ~30 manual `simd_save/restore_state()` + `fxsave_area_t` from `gfx_text.c` — lazy FPU handles it
 
 ### 1.5 Commit
 

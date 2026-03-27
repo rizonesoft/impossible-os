@@ -357,8 +357,6 @@ void ttf_mgr_init(void)
     uint64_t cache_bytes = 0;
 
     /* Protect FPU state */
-    fxsave_area_t fpu_state __attribute__((aligned(16)));
-    simd_save_state(&fpu_state);
 
     memset(ttf_slots, 0, sizeof(ttf_slots));
     memset(glyph_cache, 0, sizeof(glyph_cache));
@@ -430,7 +428,6 @@ void ttf_mgr_init(void)
     }
 
     ttf_mgr_ready = 1;
-    simd_restore_state(&fpu_state);
 
     klog(LOG_INFO, "GFX", "TTF font manager initialized (%d/%d slots loaded)",
            (uint64_t)loaded, (uint64_t)FONT_MAX_SLOTS);
@@ -451,13 +448,10 @@ ttf_font_t *ttf_get(int slot, int pixel_size)
 
     /* Rescale if pixel size changed */
     if (fi->pub.pixel_size != pixel_size) {
-        fxsave_area_t fpu_state __attribute__((aligned(16)));
-        simd_save_state(&fpu_state);
 
         fi->pub.pixel_size = pixel_size;
         fi->pub.scale = stbtt_ScaleForPixelHeight(&fi->info, (float)pixel_size);
 
-        simd_restore_state(&fpu_state);
     }
 
     return &fi->pub;
@@ -591,13 +585,10 @@ int ttf_draw_char(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
             int width, height, xoff, yoff;
             int advance, lsb;
             unsigned char *bitmap;
-            fxsave_area_t fpu_state __attribute__((aligned(16)));
 
-            simd_save_state(&fpu_state);
             bitmap = stbtt_GetCodepointBitmap(&fi->info, 0, f->scale,
                                               codepoint, &width, &height, &xoff, &yoff);
             stbtt_GetCodepointHMetrics(&fi->info, codepoint, &advance, &lsb);
-            simd_restore_state(&fpu_state);
 
             if (bitmap) {
                 int adv_px = (int)(f->scale * (float)advance);
@@ -653,8 +644,6 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
         uint32_t cr = GFX_RED(color);
         uint32_t cg = GFX_GREEN(color);
         uint32_t cb = GFX_BLUE(color);
-        fxsave_area_t fpu_state __attribute__((aligned(16)));
-        uint8_t fpu_saved = 0;
 
         for (i = 0; text[i]; i++) {
             int cp = (unsigned char)text[i];
@@ -695,7 +684,6 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
                         int advance, lsb;
                         unsigned char *bitmap;
 
-                        if (!fpu_saved) { simd_save_state(&fpu_state); fpu_saved = 1; }
                         bitmap = stbtt_GetCodepointBitmap(&fi->info, 0, f->scale,
                                                           cp, &width, &height, &xoff, &yoff);
                         stbtt_GetCodepointHMetrics(&fi->info, cp, &advance, &lsb);
@@ -734,7 +722,6 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
 
             /* Kerning with next character */
             if (text[i + 1]) {
-                if (!fpu_saved) { simd_save_state(&fpu_state); fpu_saved = 1; }
                 {
                     int kern = stbtt_GetCodepointKernAdvance(
                         &fi->info, cp, (unsigned char)text[i + 1]);
@@ -743,18 +730,13 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
             }
         }
 
-        if (fpu_saved)
-            simd_restore_state(&fpu_state);
-
         return (int)(cursor_x - x);
     }
 
     /* Slow path: uncached size — full stb_truetype rendering */
     {
         ttf_internal_t *fi = (ttf_internal_t *)f;
-        fxsave_area_t fpu_state __attribute__((aligned(16)));
 
-        simd_save_state(&fpu_state);
 
         for (i = 0; text[i]; i++) {
             int advance, lsb;
@@ -799,7 +781,6 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
             }
         }
 
-        simd_restore_state(&fpu_state);
 
         return (int)(cursor_x - x);
     }
@@ -828,24 +809,18 @@ int ttf_measure_width(ttf_font_t *f, const char *text)
                 total += glyph_cache[slot][size_idx][cp - GLYPH_CACHE_FIRST].advance;
             } else {
                 /* Non-ASCII: need stb_truetype */
-                fxsave_area_t fpu_state __attribute__((aligned(16)));
                 int advance, lsb;
-                simd_save_state(&fpu_state);
                 stbtt_GetCodepointHMetrics(&fi->info, cp, &advance, &lsb);
                 total += (int)(f->scale * (float)advance);
-                simd_restore_state(&fpu_state);
             }
 
             /* Kerning */
             if (text[i + 1]) {
-                fxsave_area_t fpu_state __attribute__((aligned(16)));
-                simd_save_state(&fpu_state);
                 {
                     int kern = stbtt_GetCodepointKernAdvance(
                         &fi->info, cp, (unsigned char)text[i + 1]);
                     total += (int)(f->scale * (float)kern);
                 }
-                simd_restore_state(&fpu_state);
             }
         }
 
@@ -855,9 +830,7 @@ int ttf_measure_width(ttf_font_t *f, const char *text)
     /* Slow path: uncached */
     {
         ttf_internal_t *fi = (ttf_internal_t *)f;
-        fxsave_area_t fpu_state __attribute__((aligned(16)));
 
-        simd_save_state(&fpu_state);
 
         for (i = 0; text[i]; i++) {
             int advance, lsb;
@@ -873,7 +846,6 @@ int ttf_measure_width(ttf_font_t *f, const char *text)
             }
         }
 
-        simd_restore_state(&fpu_state);
 
         return total;
     }
@@ -930,15 +902,11 @@ int boot_font_init(int pixel_size)
     float scale;
     uintptr_t atlas_phys;
     int bake_result;
-    fxsave_area_t fpu_state __attribute__((aligned(16)));
 
-    simd_save_state(&fpu_state);
 
     offset = stbtt_GetFontOffsetForIndex(boot_font_data, 0);
-    if (offset < 0) { simd_restore_state(&fpu_state); return -1; }
 
     if (!stbtt_InitFont(&info, boot_font_data, offset)) {
-        simd_restore_state(&fpu_state); return -1;
     }
 
     /* Store ascent for baseline calculation */
@@ -950,7 +918,6 @@ int boot_font_init(int pixel_size)
     if (!boot_atlas) {
         atlas_phys = pmm_alloc_contiguous(BOOT_ATLAS_PAGES);
         if (!atlas_phys) {
-            simd_restore_state(&fpu_state);
             klog(LOG_ERROR, "GFX", "boot_font_init: PMM atlas alloc failed");
             return -1;
         }
@@ -967,7 +934,6 @@ int boot_font_init(int pixel_size)
         BOOT_GLYPH_FIRST, BOOT_GLYPH_COUNT,
         boot_chardata);
 
-    simd_restore_state(&fpu_state);
 
     if (bake_result <= 0) {
         klog(LOG_WARN, "GFX", "boot_font BakeFontBitmap: %d chars fit (result=%d)",
