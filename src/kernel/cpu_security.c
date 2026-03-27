@@ -101,6 +101,36 @@ void cpu_enable_smap(void)
     }
 }
 
+/* ---- User-space copy helpers (SMAP-safe) ---- */
+
+int copy_from_user(void *dst, const void *user_src, uint32_t len)
+{
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)user_src;
+    uint32_t i;
+
+    KERNEL_ACCESS_USER_BEGIN();
+    for (i = 0; i < len; i++)
+        d[i] = s[i];
+    KERNEL_ACCESS_USER_END();
+
+    return 0;
+}
+
+int copy_to_user(void *user_dst, const void *src, uint32_t len)
+{
+    uint8_t *d = (uint8_t *)user_dst;
+    const uint8_t *s = (const uint8_t *)src;
+    uint32_t i;
+
+    KERNEL_ACCESS_USER_BEGIN();
+    for (i = 0; i < len; i++)
+        d[i] = s[i];
+    KERNEL_ACCESS_USER_END();
+
+    return 0;
+}
+
 /* ---- Combined hardening call ---- */
 
 void cpu_harden(void)

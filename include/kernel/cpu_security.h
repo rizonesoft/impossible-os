@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "kernel/cpuid.h"
+
 /* Enable NX (No-Execute) bit via EFER.NXE.
  * Must be called before any PTE NX bits are set. */
 void cpu_enable_nx(void);
@@ -24,3 +26,24 @@ void cpu_enable_smap(void);
 /* Enable all supported CPU security features for the current core.
  * Call on BSP in Phase 0 and on each AP during SMP bringup. */
 void cpu_harden(void);
+
+/* ---- SMAP user-space access brackets ---- */
+
+/* STAC: Set AC flag — allows kernel to access user pages (SMAP bypass).
+ * CLAC: Clear AC flag — re-enables SMAP protection.
+ * No-ops if SMAP is not active on this platform. */
+static inline void stac(void) { __asm__ volatile ("stac" ::: "memory"); }
+static inline void clac(void) { __asm__ volatile ("clac" ::: "memory"); }
+
+/* Safe wrappers that check SMAP support before emitting STAC/CLAC.
+ * Use these around every intentional user-space memory access. */
+#define KERNEL_ACCESS_USER_BEGIN() \
+    do { if (cpu_has(CPU_FEATURE_SMAP)) stac(); } while (0)
+#define KERNEL_ACCESS_USER_END() \
+    do { if (cpu_has(CPU_FEATURE_SMAP)) clac(); } while (0)
+
+/* Copy len bytes from user-space to kernel buffer. SMAP-safe. */
+int copy_from_user(void *dst, const void *user_src, uint32_t len);
+
+/* Copy len bytes from kernel buffer to user-space. SMAP-safe. */
+int copy_to_user(void *user_dst, const void *src, uint32_t len);

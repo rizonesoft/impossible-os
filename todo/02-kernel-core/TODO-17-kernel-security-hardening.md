@@ -105,11 +105,10 @@
   #define KERNEL_ACCESS_USER_BEGIN()  do { if (cpu_has(CPU_FEATURE_SMAP)) stac(); } while(0)
   #define KERNEL_ACCESS_USER_END()    do { if (cpu_has(CPU_FEATURE_SMAP)) clac(); } while(0)
   ```
-- [ ] Wrap every existing kernel path that copies data from/to user space:
-  - `ProbeForRead` / `ProbeForWrite` (→ XREF `TODO-10-exception-dispatch-seh.md §10`)
-  - `copy_from_user` / `copy_to_user` (add these if not present)
-  - Syscall argument dereferences in `syscall.c`
-- [ ] IDT entry stubs must emit `clac` on kernel entry to ensure AC=0 at the top of every interrupt / exception handler; insert in `common_stub` before the C handler call
+- [x] `copy_from_user()` / `copy_to_user()` added in `cpu_security.c` with SMAP brackets
+- [ ] Migrate existing syscall argument dereferences to use `copy_from_user` — deferred to syscall TODO
+- [ ] `ProbeForRead` / `ProbeForWrite` — deferred to TODO-10 (SEH)
+- [x] IDT `isr_common_stub` emits `clac` on kernel entry — AC=0 guaranteed at top of every interrupt/exception handler
 
 ### 2.3 Commit
 

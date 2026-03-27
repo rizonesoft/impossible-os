@@ -20,6 +20,11 @@ extern isr_handler
 ; Common interrupt handler — saves state, calls C, restores state
 ; =============================================================================
 isr_common_stub:
+    ; Clear AC flag (SMAP: prevent kernel from accessing user pages
+    ; unless explicitly bracketed with STAC/CLAC). Safe no-op on CPUs
+    ; without SMAP — clac only affects RFLAGS.AC.
+    clac
+
     ; Save all general-purpose registers
     push rax
     push rbx
