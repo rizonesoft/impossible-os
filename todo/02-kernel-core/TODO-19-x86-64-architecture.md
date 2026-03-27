@@ -4,8 +4,7 @@
 > `cpuid.c` already detects but that no kernel code yet uses: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Done (§1.1/§1.2 complete):** `cpuid_init()` probes all relevant leaves;
-> `cpu_has()` is the feature gate used everywhere. `simd_enable_avx()` sets `CR4.OSXSAVE` and `XCR0` bits 0-2 for the GFX subsystem, but `struct task` has no per-thread XSAVE area — all context switches still use the legacy 512-byte `FXSAVE`/`FXRSTOR`. `icon_store.c` saves FPU ad-hoc with `fxsave_area_t` rather than through the scheduler path.
+> **Done (§1.1/§1.2 + §3 + §11 complete):** `cpuid_init()` probes all relevant leaves; `cpu_has()` is the feature gate used everywhere. `simd_enable_avx()` sets `CR4.OSXSAVE` and `XCR0` bits 0-2 for the GFX subsystem, but `struct task` has no per-thread XSAVE area — all context switches still use the legacy 512-byte `FXSAVE`/`FXRSTOR`. `icon_store.c` saves FPU ad-hoc with `fxsave_area_t` rather than through the scheduler path. `msr.c`/`msr.h` are implemented with `msr_read()`/`msr_write()`/`msr_try_read()` (§3; inline migration deferred as low-priority). AMD SVM and Intel VT-x capability detection are fully logged via `cpu_has()` (§11).
 >
 > **Scope boundary with other TODOs — do NOT implement here:**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET → `TODO-17`
@@ -53,15 +52,15 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On           | Status |
 | --- | :---: | -------------------------------------------------- | -------------------- | :----: |
-| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [ ]   |
+| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)   | —                    |  [/]   |
 | 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                    | 1                    |  [ ]   |
-| 💎  |   3   | MSR management infrastructure (`msr.c`)            | —                    |  [ ]   |
+| 💎  |   3   | MSR management infrastructure (`msr.c`)            | —                    |  [x]   |
 | 💎  |   4   | UMIP + PKU protection keys                         | 3                    |  [ ]   |
 | 💎  |   5   | 1 GiB huge pages + Write-Combining PAT             | 3                    |  [ ]   |
-| 💎  |   6   | FRED event delivery + LKGS                         | 3, TODO-06-irql-model-dpcs.md §3        |  [ ]   |
+| 💎  |   6   | FRED event delivery + LKGS                         | 3, T06 §3            |  [ ]   |
 | 💎  |   7   | CPU topology: Zen chiplets + Intel hybrid P/E-core | —                    |  [ ]   |
 | 💎  |   8   | Performance monitoring counters (Intel + AMD)      | 3                    |  [ ]   |
-| 💎  |   9   | OSVW errata + RDTSCP processor ID setup            | 3, TODO-07-time-filetime-management.md §2        |  [ ]   |
+| 💎  |   9   | OSVW errata + RDTSCP processor ID setup            | 3, T07 §2            |  [ ]   |
 | 💎  |  10   | AMD IBS profiling (stretch)                        | 3                    |  [ ]   |
 | 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)      | 3                    |  [x]   |
 | ⭐  |  12   | Boot self-benchmark + auto-tune                    | 1, 2, 7              |  [ ]   |
@@ -72,7 +71,7 @@
 
 ---
 
-## 1. XSAVE / XRSTOR State Management `[Opus]`
+## 1. XSAVE / XRSTOR State Management
 
 ### 1.1 Full XCR0 configuration
 
@@ -413,7 +412,7 @@
 
 ## 11. Virtualization Detection (AMD-V + Intel VT-x)
 
-### 11.1 AMD SVM / Intel VMX capability reporting
+AMD SVM / Intel VMX capability reporting
 
 - [x] AMD SVM: CPUID 0x8000000A parsed — revision, NPT, ASIDs logged
 - [x] Intel VT-x: `CPU_FEATURE_VMX` added (CPUID.1:ECX[5]); `IA32_FEATURE_CONTROL` MSR read for lock + enable status
@@ -494,7 +493,7 @@
 | 💎  | XSAVE/XRSTOR per-thread (lazy FPU)      | ✅ Full                            | ✅ `fpu__*` framework                 | ⬜ Planned — §1 (FXSAVE only today)        |
 | 💎  | AVX/AVX2 kernel paths                   | ✅ Full                            | ✅ `kernel_fpu_begin/end`              | ⚠️ Partial — §2 (GFX only today)           |
 | 💎  | AVX-512 opt-in with throttle guard      | ✅ Full                            | ✅ (with throttling awareness)         | ⬜ Planned — §2.2                          |
-| 💎  | Centralised safe MSR API                | ✅ HAL wrappers                    | ✅ `rdmsrl_safe()` / `wrmsrl_safe()`   | ⬜ Planned — §3 (raw asm today)            |
+| 💎  | Centralised safe MSR API                | ✅ HAL wrappers                    | ✅ `rdmsrl_safe()` / `wrmsrl_safe()`   | ✅ Done — §3                               |
 | 💎  | UMIP (block user SGDT/SIDT)             | ✅ Enabled                         | ✅ Enabled (4.15+)                     | ⬜ Planned — §4                            |
 | 💎  | PKU memory protection keys              | ✅ (Win 10 1903+, no user API)     | ✅ `pkey_alloc()` / `pkey_mprotect()` | ⬜ Planned — §4 (`SetThreadMemoryZone()`)  |
 | 💎  | Write-Combining PAT for framebuffer     | ✅ DirectComposition GPU           | ✅ `ioremap_wc()` DRM                  | ⬜ Planned — §5 (UC today — 10–50× speedup)|
@@ -507,7 +506,7 @@
 | 💎  | OSVW silicon errata table               | ✅ HAL reads OSVW MSRs             | ✅ `arch/x86/kernel/cpu/amd.c`         | ⬜ Planned — §9                            |
 | 💎  | RDTSCP per-CPU IA32_TSC_AUX             | ✅ `KeQueryPerformanceCounter`     | ✅ TSC_AUX per-CPU on SMP              | ⬜ Planned — §9                            |
 | 💎  | AMD IBS profiling                       | ⚠️ AMD µProf external             | ✅ `perf` IBS (5.19+)                  | ⬜ Planned — §10 (stretch)                |
-| 💎  | SVM / VT-x capability detection         | ✅ HAL                             | ✅ `kvm_amd` / `kvm_intel`             | ⬜ Planned — §11                           |
+| 💎  | SVM / VT-x capability detection         | ✅ HAL                             | ✅ `kvm_amd` / `kvm_intel`             | ✅ Done — §11                              |
 | ⭐  | Boot self-benchmark + auto-tune          | ❌ Static heuristics               | ❌ Static heuristics                   | ⬜ **Planned — §12** 🚀                    |
 | ⭐  | `SetThreadMemoryZone()` PKU API          | ❌ No user-facing PKU API          | ⚠️ Raw `pkey_*` syscalls               | ⬜ **Planned — §4.2** 🚀                   |
 | ⭐  | Per-core frequency graph (Task Manager)  | ❌ Single % bar                    | ❌ `turbostat` CLI                     | ⬜ **Planned via §8 + `08-desktop-shell`** 🚀 |
