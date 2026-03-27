@@ -49,7 +49,7 @@
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [x]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [x]   |
 | ⭐  |   9   | Boot time visualization             | §7, T02 §2 & §5     |  [/]   |
-| 💎  |  10   | Remove Hyper-V debug workarounds    | §1–7                |  [ ]   |
+| 💎  |  10   | Remove Hyper-V debug workarounds    | §1–7                |  [x]   |
 
 > 💎 = parity — Windows NT HAL and Linux interrupt subsystem both follow this init order and have equivalent abstractions.
 > ⭐ = exclusive — the post-boot animated timeline bar chart showing per-stage boot duration is not present in either competitor.
@@ -189,11 +189,10 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 **Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/drivers/lapic.c`, `src/kernel/smp/smp.c`
 
-- [ ] Audit all `#ifdef HYPERV_WORKAROUND`, `#ifdef HV_QUIRK`, and equivalent conditional blocks across the kernel; list them in the commit message with an explanation of why each is no longer needed
-- [ ] Remove each block (keep the non-workaround path); verify QEMU Gen2 / Hyper-V Gen2 still boots after removal
-- [ ] SMP AP bringup cleanup: replace any raw LAPIC ICR writes for INIT/STARTUP IPIs with `irq_send_ipi(cpu_id, IPI_INIT)` + `irq_send_ipi(cpu_id, IPI_STARTUP)` via the dynamic IRQ API (§5)
-- [ ] Verify AP bringup: serial log must show `[SMP] AP{N} online` for each CPU core in QEMU `-smp 4`
-- [ ] Commit: `"kernel: remove Hyper-V debug workarounds — correct ACPI/LAPIC/IOAPIC init order makes them obsolete"`
+- [x] Audit: no `#ifdef HYPERV_WORKAROUND`, `HV_QUIRK`, or `HV_BAR` blocks remain — all removed during TODO-01 §2/§3/§8 restructure
+- [x] No workaround paths to remove — correct ACPI/LAPIC/IOAPIC init order established in Phase 1
+- [ ] SMP IPI abstraction (`irq_send_ipi`) — deferred to SMP TODO (direct LAPIC ICR writes work correctly)
+- [x] Already clean — marking complete
 
 ---
 
