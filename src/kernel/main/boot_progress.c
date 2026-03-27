@@ -90,13 +90,13 @@ static const uint8_t s_hex_font[16][8] = {
     { 0x7E,0x60,0x60,0x78,0x60,0x60,0x60,0x00 }, /* F */
 };
 
-#define POST_GLYPH_W 12  /* 8 * 1.5 = 12 px */
-#define POST_GLYPH_H 12  /* 8 * 1.5 = 12 px */
+#define POST_GLYPH_W 8   /* native 8px */
+#define POST_GLYPH_H 8
 #define POST_GAP     2   /* gap between digits */
 #define POST_MARGIN  6   /* margin from screen edge */
 #define POST_TOP     6   /* top padding */
-#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 26 px */
-#define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 14 px */
+#define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 18 px */
+#define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 10 px */
 
 /* Port 0x80 write */
 static inline void outb_post(uint8_t code)
@@ -136,33 +136,29 @@ void post_display(uint8_t code)
     hi = (code >> 4) & 0x0F;
     lo = code & 0x0F;
 
-    /* Draw high nibble (1.5x scale: 8px -> 12px via nearest-neighbor) */
+    /* Draw high nibble (8x8 native, subtle gray) */
     {
         const uint8_t *g = s_hex_font[hi];
-        uint32_t py, px;
-        for (py = 0; py < POST_GLYPH_H; py++) {
-            uint32_t sy = (py * 8) / POST_GLYPH_H;  /* map back to 0-7 */
-            uint8_t bits = g[sy];
-            for (px = 0; px < POST_GLYPH_W; px++) {
-                uint32_t sx = (px * 8) / POST_GLYPH_W;
-                if (bits & (0x80 >> sx))
-                    fb_put_pixel(x0 + px, y0 + py, 0x00FFFFFF);
+        uint32_t row, col;
+        for (row = 0; row < 8; row++) {
+            uint8_t bits = g[row];
+            for (col = 0; col < 8; col++) {
+                if (bits & (0x80 >> col))
+                    fb_put_pixel(x0 + col, y0 + row, 0x00A0A0A0);
             }
         }
     }
 
-    /* Draw low nibble (1.5x scale) */
+    /* Draw low nibble (8x8 native, subtle gray) */
     {
         const uint8_t *g = s_hex_font[lo];
         uint32_t gx = x0 + POST_GLYPH_W + POST_GAP;
-        uint32_t py, px;
-        for (py = 0; py < POST_GLYPH_H; py++) {
-            uint32_t sy = (py * 8) / POST_GLYPH_H;
-            uint8_t bits = g[sy];
-            for (px = 0; px < POST_GLYPH_W; px++) {
-                uint32_t sx = (px * 8) / POST_GLYPH_W;
-                if (bits & (0x80 >> sx))
-                    fb_put_pixel(gx + px, y0 + py, 0x00FFFFFF);
+        uint32_t row, col;
+        for (row = 0; row < 8; row++) {
+            uint8_t bits = g[row];
+            for (col = 0; col < 8; col++) {
+                if (bits & (0x80 >> col))
+                    fb_put_pixel(gx + col, y0 + row, 0x00A0A0A0);
             }
         }
     }
