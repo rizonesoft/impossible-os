@@ -40,15 +40,19 @@ static inline uint64_t vpd_rdtsc(void)
 /* ---- Layout constants ---------------------------------------------------- */
 
 #define VPD_SCALE          2   /* render text at 2× for readability */
+#define VPD_CHAR_W        (VPD_CELL_W * VPD_SCALE)  /* 12px per char at 2× */
 #define VPD_LEFT_MARGIN    8
 #define VPD_TOP_MARGIN     8
 #define VPD_ROW_HEIGHT    (VPD_GLYPH_H * VPD_SCALE + 4)  /* 18px: 14px text + 4px gap */
 #define VPD_SQUARE_SIZE   (VPD_GLYPH_H * VPD_SCALE)      /* 14px square */
 #define VPD_SQUARE_GAP     6
 #define VPD_NAME_X        (VPD_LEFT_MARGIN + VPD_SQUARE_SIZE + VPD_SQUARE_GAP)
+#define VPD_CODE_X        (VPD_NAME_X + 14 * VPD_CHAR_W)  /* fixed column for POST hex */
+#define VPD_TIME_X        (VPD_CODE_X + 6 * VPD_CHAR_W)   /* fixed column for timing */
+#define VPD_MS_X          (VPD_TIME_X + 5 * VPD_CHAR_W)   /* "ms" suffix always here */
 #define VPD_MAX_ROWS      30
 #define VPD_SEPARATOR_H    1
-#define VPD_SEPARATOR_W  300  /* fixed width, not full screen */
+#define VPD_SEPARATOR_W   (VPD_MS_X + 3 * VPD_CHAR_W)     /* width covers all columns */
 
 /* ---- Colors -------------------------------------------------------------- */
 
@@ -168,15 +172,14 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
             uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
             uint32_t ms = (uint32_t)(elapsed_tsc * 1000 /
                                       g_boot_info.timing.tsc_freq);
-            uint32_t tx = VPD_NAME_X + 18 * VPD_CELL_W * VPD_SCALE;
-            vpd_putu32_scaled(tx, s_last_row_y, ms, VPD_COLOR_PENDING);
-            /* Count digits to position "ms" suffix */
+            /* Right-align number: count digits, position so "ms" is at VPD_MS_X */
             {
                 uint32_t v = ms, digits = 0;
                 if (v == 0) digits = 1;
                 while (v > 0) { digits++; v /= 10; }
-                vpd_puts_scaled(tx + digits * VPD_CELL_W * VPD_SCALE,
-                                 s_last_row_y, "ms", VPD_COLOR_PENDING);
+                uint32_t tx = VPD_MS_X - digits * VPD_CHAR_W;
+                vpd_putu32_scaled(tx, s_last_row_y, ms, VPD_COLOR_PENDING);
+                vpd_puts_scaled(VPD_MS_X, s_last_row_y, "ms", VPD_COLOR_PENDING);
             }
         }
     }
@@ -198,18 +201,11 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
     vpd_fill_rect(VPD_LEFT_MARGIN, s_row, VPD_SQUARE_SIZE, VPD_SQUARE_SIZE,
                    VPD_COLOR_PROGRESS);
 
-    /* Draw stage name at 2× scale */
-    x = VPD_NAME_X;
-    vpd_puts_scaled(x, s_row, name, VPD_COLOR_TEXT);
+    /* Draw stage name at fixed column */
+    vpd_puts_scaled(VPD_NAME_X, s_row, name, VPD_COLOR_TEXT);
 
-    /* Draw POST code after name at 2× scale */
-    {
-        const char *p = name;
-        uint32_t name_len = 0;
-        while (*p) { name_len++; p++; }
-        x = VPD_NAME_X + (name_len + 1) * VPD_CELL_W * VPD_SCALE;
-        vpd_puthex16_scaled(x, s_row, postcode, VPD_COLOR_PENDING);
-    }
+    /* Draw POST code at fixed column */
+    vpd_puthex16_scaled(VPD_CODE_X, s_row, postcode, VPD_COLOR_PENDING);
 
     /* Record state for done/timing */
     s_last_row_y = s_row;
