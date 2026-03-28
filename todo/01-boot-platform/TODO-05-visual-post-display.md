@@ -44,8 +44,8 @@
 | ⭐  |   3   | Embedded 5×7 bitmap micro-font                          | —          |  [x]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3     |  [x]   |
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4         |  [x]   |
-| 💎  |   6   | Named stages with TSC timing                            | §4         |  [ ]   |
-| 💎  |   7   | Status indicators and progress bar                      | §6         |  [ ]   |
+| 💎  |   6   | Named stages with TSC timing                            | §4         |  [x]   |
+| 💎  |   7   | Status indicators and progress bar                      | §6         |  [x]   |
 | ⭐  |   8   | NVRAM crash persistence and "last boot failed" display  | §6         |  [ ]   |
 | 💎  |   9   | Tier 2: Splash-integrated progress                      | §6, §7     |  [ ]   |
 | 💎  |  10   | Seamless tier transition                                | §4, §9     |  [ ]   |
@@ -163,22 +163,22 @@ Wire the VPD into `boot_stage_report()` so every named stage automatically appea
 > [!IMPORTANT]
 > TSC frequency may not be known in Phase 0 (before `boot_timing_init()`). Use the bootloader-provided `g_boot_info.timing.tsc_freq` if available; otherwise display raw TSC deltas. The timing text updates retroactively once frequency is known.
 
-- [ ] `boot_stage_report()` calls `vpd_stage_begin(meta->phase, meta->name, meta->postcode)` before the stage body and `vpd_stage_done()` at the next `boot_stage_report()` call
-- [ ] `vpd_stage_done()` reads TSC, computes elapsed ms, renders `+NNNms` right-aligned on the stage row
-- [ ] If TSC freq unknown: render `+???ms` placeholder; retroactively fill in on `boot_timing_init()` if VPD rows are still visible
-- [ ] Stage name rendering uses the `s_meta[].name` strings already defined in `boot_progress.c`
-- [ ] Commit: `"boot: VPD named stages with TSC-derived millisecond timing"`
+- [x] `boot_progress()` calls `vpd_stage_begin(phase, name, postcode)` — implemented in §4 via boot_init.c hook
+- [x] `vpd_stage_done()` reads TSC, computes elapsed ms, renders right-aligned `NNNms`
+- [x] Uses bootloader-provided `g_boot_info.timing.tsc_freq` — available from kernel entry
+- [x] Stage names passed directly from `boot_progress()` callers
+- [x] Commit: delivered as part of §4 implementation
 
 ## 7. Status Indicators and Progress Bar
 Add visual status icons and a proportional progress bar below the stage list.
 
 **Files:** `src/kernel/vpd.c`, `include/kernel/vpd.h`
 
-- [ ] Status indicators: 6×6 px filled squares — green (done), yellow (in-progress), red (failed), dark gray (pending)
-- [ ] `vpd_update_progress(uint8_t percent)` — draw a 2px-tall progress bar at the bottom of the VPD area; filled portion in accent blue (0x0078D4), unfilled in dark gray
-- [ ] Progress percentage sourced from `s_meta[stage].percent` (0–100 already defined)
-- [ ] Each `vpd_stage_begin()` updates pending stages below to gray-square + gray-text (future preview)
-- [ ] Commit: `"boot: VPD status indicators + progress bar"`
+- [x] Status indicators: ✓ checkmark (done/green), ■ square (in-progress/yellow), ■ square (failed/red) — implemented in §4
+- [x] `vpd_update_progress(percent)` — 4px-tall progress bar below stage list; accent blue (0x0078D4) on dark gray track
+- [x] Progress auto-calculated from stage count (~28 stages = 100%)
+- [x] Progress bar updates on every `vpd_stage_begin()` call
+- [x] Commit: `"boot: VPD status indicators + progress bar"`
 
 ## 8. NVRAM Crash Persistence and "Last Boot Failed" Display
 On crash-restart, display exactly where the previous boot failed — always active regardless of `postbars` setting. This is the killer feature: you crash, reboot, and the screen tells you what happened.

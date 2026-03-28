@@ -29,6 +29,13 @@ static int       s_has_current; /* 1 if a stage is currently in-progress */
 
 /* TSC for timing */
 static uint64_t  s_stage_tsc;  /* TSC when current stage began */
+static uint32_t  s_stage_count; /* total stages seen (for progress estimate) */
+
+/* Progress bar constants */
+#define VPD_BAR_HEIGHT    4
+#define VPD_BAR_GAP       8   /* gap between last row and progress bar */
+#define VPD_BAR_COLOR     0x000078D4  /* accent blue */
+#define VPD_BAR_BG        0x00282828  /* dark gray track */
 
 static inline uint64_t vpd_rdtsc(void)
 {
@@ -271,6 +278,32 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
 
     /* Advance to next row */
     s_row += VPD_ROW_HEIGHT;
+
+    /* Update progress bar — estimate from stage count
+     * (~28 total boot_progress calls, so percent ≈ count * 100 / 28) */
+    s_stage_count++;
+    vpd_update_progress((uint8_t)(s_stage_count * 100 / 28));
+}
+
+void vpd_update_progress(uint8_t percent)
+{
+    uint32_t bar_y, bar_w, filled_w;
+
+    if (!s_active)
+        return;
+
+    if (percent > 100) percent = 100;
+
+    bar_y = s_row + VPD_BAR_GAP;
+    bar_w = VPD_SEPARATOR_W;
+    filled_w = bar_w * percent / 100;
+
+    /* Draw track (dark gray) */
+    vpd_fill_rect(VPD_LEFT_MARGIN, bar_y, bar_w, VPD_BAR_HEIGHT, VPD_BAR_BG);
+
+    /* Draw filled portion (accent blue) */
+    if (filled_w > 0)
+        vpd_fill_rect(VPD_LEFT_MARGIN, bar_y, filled_w, VPD_BAR_HEIGHT, VPD_BAR_COLOR);
 }
 
 void vpd_stage_done(void)

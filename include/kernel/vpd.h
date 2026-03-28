@@ -31,5 +31,8 @@ void vpd_stage_fail(void);
 /* Returns 1 if VPD Tier 1 is active and rendering. */
 int vpd_is_active(void);
 
+/* Update progress bar (0-100%). Called automatically by vpd_stage_begin. */
+void vpd_update_progress(uint8_t percent);
+
 /* Signal that splash is taking over — stop Tier 1 rendering. */
 void vpd_stop_tier1(void);
