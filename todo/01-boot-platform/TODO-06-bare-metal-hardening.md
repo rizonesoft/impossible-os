@@ -59,17 +59,18 @@
 | --- | :---: | ---------------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)          | —          |  [ ]   |
 | 💎  |   2   | IST stacks for critical exceptions                   | —          |  [ ]   |
-| 💎  |   1   | Hardware interrupt root cause investigation          | §2         |  [ ]   |
-| 💎  |   2   | ACPI FADT boot architecture flags                    | —          |  [ ]   |
-| 💎  |   1   | PS/2 controller detection and safe init              | §2         |  [ ]   |
-| 💎  |   2   | AHCI interrupt hardening                             | §1, §1     |  [ ]   |
-| 💎  |   1   | Resilient boot with graceful degradation             | §1, §2     |  [ ]   |
-| 💎  |   2   | Per-process page tables (minimal base)               | §1         |  [ ]   |
-| 💎  |   1   | CPU security activation and verification             | §2, §2    |  [ ]   |
-| 💎  |   2   | Boot order hardening (timer-last, UEFI-safe)         | §1         |  [ ]   |
-| ⭐  |   1   | `boot.conf` subsystem skip list                      | §1         |  [ ]   |
-| 💎  |   2   | CPU feature minimum requirements and verification    | §2, §1    |  [ ]   |
-| 💎  |   1   | Bare-metal test matrix and validation plan           | §1         |  [ ]   |
+| 💎  |   3   | Hardware interrupt root cause investigation          | §2         |  [ ]   |
+| 💎  |   4   | ACPI FADT boot architecture flags                    | —          |  [ ]   |
+| 💎  |   5   | PS/2 controller detection and safe init              | §4         |  [ ]   |
+| 💎  |   6   | AHCI interrupt hardening                             | §1, §3     |  [ ]   |
+| 💎  |   7   | Resilient boot with graceful degradation             | —          |  [ ]   |
+| 💎  |   8   | Per-process page tables (minimal base)               | §1         |  [ ]   |
+| 💎  |   9   | CPU security activation and verification             | §4, §8     |  [ ]   |
+| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)         | §3         |  [ ]   |
+| ⭐  |  11   | `boot.conf` subsystem skip list                      | §7         |  [ ]   |
+| 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7       |  [ ]   |
+| 💎  |  13   | CPU feature minimum requirements and verification    | §4, §9     |  [ ]   |
+| 💎  |  14   | Bare-metal test matrix and validation plan            | §3         |  [ ]   |
 
 > 💎 = parity — Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive — 4-digit POST codes in every function and a configurable skip list are not standard in any OS kernel.
@@ -113,7 +114,7 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 
 **Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot.
 
-## 1. Hardware Interrupt Root Cause Investigation
+## 3. Hardware Interrupt Root Cause Investigation
 Systematically investigate why hardware interrupts crash on the i5-11600K while software `INT 0x81` works. This section is diagnostic — it may result in a fix or in documenting a platform-specific workaround.
 
 **Files:** `src/kernel/idt.c`, `src/kernel/isr_stubs.asm`, `src/kernel/drivers/lapic.c`, `src/kernel/gdt.c`
@@ -143,7 +144,7 @@ Systematically investigate why hardware interrupts crash on the i5-11600K while 
 
 **Test checkpoint:** The LAPIC timer fires on bare metal without crashing. PCI scan completes with timer ticks running. If fix is architectural (e.g., IST required for timer), document why.
 
-## 2. ACPI FADT Boot Architecture Flags
+## 4. ACPI FADT Boot Architecture Flags
 Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices exist before touching any I/O ports. This prevents crashes on platforms without PIT, PS/2 controller, or RTC.
 
 **Files:** `src/kernel/acpi.c`, `include/kernel/acpi.h`
@@ -165,7 +166,7 @@ Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices 
 
 **Test checkpoint:** Boot on QEMU. Log shows IAPC_BOOT_ARCH with all flags. On bare metal, log shows actual hardware configuration.
 
-## 1. PS/2 Controller Detection and Safe Init
+## 5. PS/2 Controller Detection and Safe Init
 Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports 0x60/0x64 if the i8042 doesn't exist.
 
 **Files:** `src/kernel/drivers/keyboard.c`, `src/kernel/drivers/mouse.c`
@@ -180,7 +181,7 @@ Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports
 
 **Test checkpoint:** Boot on laptop without PS/2 mouse. Mouse init logs "skipped" and boot continues. Boot on QEMU with PS/2 — mouse works normally.
 
-## 2. AHCI Interrupt Hardening
+## 6. AHCI Interrupt Hardening
 Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI setup, verify ABAR MMIO accessibility, fall back to polled mode if MSI fails.
 
 **Files:** `src/kernel/drivers/ahci/ahci_core.c`
@@ -198,7 +199,7 @@ Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI s
 
 **Test checkpoint:** Boot on bare metal. AHCI init logs either "MSI vector 0xNN" or "INTx fallback" or "polled mode". No crash. Disk I/O works.
 
-## 1. Resilient Boot with Graceful Degradation
+## 7. Resilient Boot with Graceful Degradation
 Wrap every Phase 1–3 subsystem init in a protective pattern: emit POST code, call init, check result, log outcome, continue on failure. Never `boot_halt()` for non-critical subsystems.
 
 **Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/main/boot_storage.c`, `src/kernel/main/boot_desktop.c`
@@ -218,7 +219,7 @@ Wrap every Phase 1–3 subsystem init in a protective pattern: emit POST code, c
 
 **Test checkpoint:** Disable a non-critical subsystem (e.g., force `rtc_init()` to fail). Boot completes. Desktop shows degraded notification. Serial log shows `[WARN] RTC: init failed — degraded`.
 
-## 2. Per-Process Page Tables (Minimal Base)
+## 8. Per-Process Page Tables (Minimal Base)
 
 Implement the minimal per-process page table infrastructure so each task has its own PML4. Kernel pages are supervisor-only, user pages have the User bit. CR3 switches on context switch. This directly unblocks SMEP/SMAP on bare metal and eliminates the user-stacks-in-kernel-heap hack.
 
@@ -250,7 +251,7 @@ Implement the minimal per-process page table infrastructure so each task has its
 
 **Test checkpoint:** Boot on QEMU WHPX. cmd.exe runs in user mode with its own PML4. Kernel pages don't have User bit. `KeGetCurrentIrql()` works from user-mode interrupt. Boot on bare metal: SMEP/SMAP enabled (CR4 bits set), cmd.exe runs, no page faults.
 
-## 1. CPU Security Activation and Verification
+## 9. CPU Security Activation and Verification
 
 Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order and verified on bare metal. This incorporates the bare-metal-relevant parts of the CPU boot sequencing that are currently unimplemented.
 
@@ -268,7 +269,7 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 
 **Test checkpoint:** Boot on bare metal. Log shows `[OK] cpu: NX enabled, SMEP skipped (shared page tables), SMAP skipped`. On QEMU: log shows all three enabled (or EPT-enforced).
 
-## 2. Boot Order Hardening (Timer-Last, UEFI-Safe)
+## 10. Boot Order Hardening (Timer-Last, UEFI-Safe)
 
 Formalize the boot order lessons learned: timer is the last thing initialized before `sti`, all UEFI runtime calls mask the LAPIC timer, and `boot_splash_start_animation()` only runs after `sti`.
 
@@ -283,7 +284,7 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Test checkpoint:** Boot on QEMU + bare metal. Phase 1 order is correct. UEFI runtime calls don't crash with timer running. Boot order comment block is visible at top of `boot_interrupts.c`.
 
-## 1. `boot.conf` Subsystem Skip List
+## 11. `boot.conf` Subsystem Skip List
 
 Allow the user to skip specific subsystems via `boot.conf` for debugging or working around hardware bugs without recompiling.
 
@@ -298,7 +299,23 @@ Allow the user to skip specific subsystems via `boot.conf` for debugging or work
 
 **Test checkpoint:** Set `skip=mouse,smbios` in boot.conf. Boot on bare metal. Mouse and SMBIOS are skipped. Desktop works without them.
 
-## 2. CPU Feature Minimum Requirements and Verification
+## 12. Migrate Logging from X:\ to C:\ + Remove Log Partition
+
+Remove the dedicated FAT32 logging partition (`X:\`) — a development hack from when IXFS didn't support writes. All boot logs, crash dumps, and diagnostics write to `C:\Impossible\System\Logs\` on the main IXFS partition. The FAT32 partition is repurposed as EFI System Partition recovery storage.
+
+**Files:** `src/kernel/klog.c`, `src/kernel/main/boot_storage.c`, `src/kernel/boot_timing.c`, `scripts/build.sh` (disk image layout)
+
+- [ ] Change `klog` disk target from `X:\` to `C:\Impossible\System\Logs\` — create directory at first boot if it doesn't exist
+- [ ] Move `boot-profile.log` and `boot-timeline.json` writes from `X:\` to `C:\Impossible\System\Logs\`
+- [ ] Remove FAT32 log partition from GPT disk image layout in `scripts/build.sh` (or repurpose as ESP recovery area)
+- [ ] Remove `X:\` mount from VFS partition scan — no more `blk: Mounted Logs partition as X:`
+- [ ] If `C:\` is not yet mounted when early klog tries to flush (Phase 2, before VFS): buffer in ring, flush when VFS is ready (already the current behavior)
+- [ ] Verify: no references to `X:\` remain in kernel code after migration
+- [ ] Commit: `"boot: migrate logging from X:\\ to C:\\Impossible\\System\\Logs\\, remove log partition"`
+
+**Test checkpoint:** QEMU: boot log written to `C:\Impossible\System\Logs\26032801.LOG`. No `X:\` mount in serial log. Bare metal: same path, IXFS write works. Disk image has 2 partitions (ESP + IXFS) instead of 3.
+
+## 13. CPU Feature Minimum Requirements and Verification
 
 Define the minimum CPU feature set required to boot, verify features are actually enabled after activation, and provide clear diagnostics when features are missing or fail to enable.
 
@@ -316,7 +333,7 @@ Define the minimum CPU feature set required to boot, verify features are actuall
 
 **Test checkpoint:** Boot on CPU without SMAP. Log shows `[WARN] cpu: SMAP not available — skipped`. Boot continues. On CPU with SMAP: verification confirms CR4.SMAP is set.
 
-## 1. Bare-Metal Test Matrix and Validation Plan
+## 14. Bare-Metal Test Matrix and Validation Plan
 
 Define the hardware platforms to test on, expected boot timings per phase, and a regression detection framework so bare-metal issues are caught early.
 
