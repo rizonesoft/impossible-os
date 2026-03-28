@@ -37,6 +37,11 @@ description: Validate a TODO file for structural completeness, Implementation Or
      - Keep cells short: status emoji + max 5 words per cell. No full sentences.
      - Pad columns so pipe characters align vertically within the table.
      - If the table is wider than ~100 characters per row, shorten cell text further.
+   - **Parity gap check:** Scan the OS Comparison table for features where BOTH Win11 and Linux show ✅ but Impossible OS shows ⬜ or is missing entirely. These are parity gaps — features competitors have that we don't. For each gap:
+     - If covered by a section in this TODO: verify the section exists and is actionable (not deferred indefinitely).
+     - If NOT covered by any section: flag it as a missing parity feature. Suggest adding a section or noting it as deferred with a reason.
+     - If covered by another TODO: add a `→ XREF:` and note it in the table.
+   - **Competitive edge check:** Look for features where Impossible OS could be BETTER than both competitors (⭐ exclusive). Research what Win11 and Linux do poorly in this TODO's domain and suggest exclusive features that would make Impossible OS superior. Add suggested rows to the table marked ⭐ with ⬜ Planned.
 7. Validate execution coverage.
    - Check dependency order, `→ XREF:` lines, overlap notes, handoffs, and adjacent-file continuity.
    - For each `→ XREF: TODO-XX §N`, confirm the target TODO file exists **and** the referenced section number is present in that file.
