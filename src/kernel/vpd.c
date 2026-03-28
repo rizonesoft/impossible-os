@@ -47,12 +47,14 @@ static inline uint64_t vpd_rdtsc(void)
 
 /* ---- Layout constants ---------------------------------------------------- */
 
-#define VPD_SCALE          2   /* render text at 2× for readability */
-#define VPD_CHAR_W        (VPD_CELL_W * VPD_SCALE)  /* 12px per char at 2× */
+#define VPD_SCALE_X        2   /* horizontal scale: each pixel = 2px wide */
+#define VPD_SCALE_Y        1   /* vertical scale: each pixel = 1px tall */
+#define VPD_SCALE          2   /* used for legacy square size calc */
+#define VPD_CHAR_W        (VPD_CELL_W * VPD_SCALE_X)  /* 12px per char */
 #define VPD_LEFT_MARGIN   12
 #define VPD_TOP_MARGIN    14
-#define VPD_ROW_HEIGHT    (VPD_GLYPH_H * VPD_SCALE + 8)  /* 22px: 14px text + 8px gap */
-#define VPD_SQUARE_SIZE   (VPD_GLYPH_H * VPD_SCALE)      /* 14px square */
+#define VPD_ROW_HEIGHT    (VPD_GLYPH_H * VPD_SCALE_Y + 5)  /* 12px: 7px text + 5px gap */
+#define VPD_SQUARE_SIZE   (VPD_GLYPH_H * VPD_SCALE_Y)      /* 7px square */
 #define VPD_SQUARE_GAP     6
 #define VPD_NAME_X        (VPD_LEFT_MARGIN + VPD_SQUARE_SIZE + VPD_SQUARE_GAP)
 #define VPD_CODE_X        (VPD_NAME_X + 14 * VPD_CHAR_W)  /* fixed column for POST hex */
@@ -101,13 +103,11 @@ static void vpd_draw_check(uint32_t x, uint32_t y, uint32_t color)
         uint8_t bits = check[row];
         for (col = 0; col < 5; col++) {
             if (bits & (0x80 >> col)) {
-                uint32_t px = x + col * VPD_SCALE;
-                uint32_t py = y + row * VPD_SCALE;
-                if (px + 1 < s_width && py + 1 < s_height) {
-                    s_fb[py       * s_pitch_px + px]     = color;
-                    s_fb[py       * s_pitch_px + px + 1] = color;
-                    s_fb[(py + 1) * s_pitch_px + px]     = color;
-                    s_fb[(py + 1) * s_pitch_px + px + 1] = color;
+                uint32_t px = x + col * VPD_SCALE_X;
+                uint32_t py = y + row * VPD_SCALE_Y;
+                if (px + 1 < s_width && py < s_height) {
+                    s_fb[py * s_pitch_px + px]     = color;
+                    s_fb[py * s_pitch_px + px + 1] = color;
                 }
             }
         }
@@ -130,18 +130,16 @@ static void vpd_puts_scaled(uint32_t x, uint32_t y, const char *s,
             uint8_t bits = glyph[row];
             for (col = 0; col < VPD_GLYPH_W; col++) {
                 if (bits & (0x80 >> col)) {
-                    uint32_t px = x + col * VPD_SCALE;
-                    uint32_t py = y + row * VPD_SCALE;
-                    if (px + 1 < s_width && py + 1 < s_height) {
-                        s_fb[py       * s_pitch_px + px]     = color;
-                        s_fb[py       * s_pitch_px + px + 1] = color;
-                        s_fb[(py + 1) * s_pitch_px + px]     = color;
-                        s_fb[(py + 1) * s_pitch_px + px + 1] = color;
+                    uint32_t px = x + col * VPD_SCALE_X;
+                    uint32_t py = y + row * VPD_SCALE_Y;
+                    if (px + 1 < s_width && py < s_height) {
+                        s_fb[py * s_pitch_px + px]     = color;
+                        s_fb[py * s_pitch_px + px + 1] = color;
                     }
                 }
             }
         }
-        x += VPD_CELL_W * VPD_SCALE;
+        x += VPD_CELL_W * VPD_SCALE_X;
         s++;
     }
 }
@@ -218,8 +216,8 @@ void vpd_init(void)
     s_pitch_px = g_boot_info.fb.pitch / 4;
     s_width    = g_boot_info.fb.width;
     s_height   = g_boot_info.fb.height;
-    /* Push stage list down if crash banner is displayed above */
-    s_row      = s_banner_shown ? (VPD_TOP_MARGIN + VPD_ROW_HEIGHT + 4) : VPD_TOP_MARGIN;
+    /* Always start 2 rows down from top for clean spacing */
+    s_row      = VPD_TOP_MARGIN + VPD_ROW_HEIGHT * 2;
     s_last_phase = 0xFF; /* no previous phase */
     s_has_current = 0;
     s_active   = 1;
