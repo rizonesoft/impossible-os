@@ -65,11 +65,6 @@ void boot_progress_poll(void);
  * JSON array of {stage, phase, post, start_ms, duration_ms} per step. */
 void boot_timeline_dump_json(void);
 
-/* Render a 2-digit hex POST code in the top-right framebuffer corner.
- * Also writes I/O port 0x80 for hardware POST cards.
- * Skips pixel writes if SUBSYS_FB not ready. */
-void post_display(uint8_t code);
-
 /* Render 4-digit hex POST code at 2× scale in top-right corner.
  * Writes I/O port 0x80 (high byte) for hardware POST cards.
  * Skips pixel writes if SUBSYS_FB not ready. */

@@ -136,7 +136,7 @@ void boot_phase3(void)
 
     boot_progress(3, "DESKTOP_READY", POSTCODE_DESKTOP_INIT);
     kernel_subsystem_set_ready(SUBSYS_DESKTOP, true);
-    boot_post_write(POSTCODE_BOOT_OK);  /* 0xFF = boot succeeded */
+    boot_post_write16(POST16_BOOT_OK);  /* 0xFF00 = boot succeeded */
     boot_timing_print_steps();
     boot_timing_write_report();
     boot_timeline_dump_json();

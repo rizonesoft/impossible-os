@@ -87,17 +87,19 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     /* --- Read prior boot POST code from UEFI NVRAM --- */
     {
-        int last_post = boot_post_read();
+        int last_post = boot_post_read16();
         if (last_post >= 0) {
             serial_write("[POST] Last boot code: 0x");
             {
                 static const char hex[] = "0123456789ABCDEF";
+                serial_putchar(hex[(last_post >> 12) & 0xF]);
+                serial_putchar(hex[(last_post >> 8) & 0xF]);
                 serial_putchar(hex[(last_post >> 4) & 0xF]);
                 serial_putchar(hex[last_post & 0xF]);
             }
-            if (last_post == 0xFF)
+            if (last_post == (int)POST16_BOOT_OK)
                 serial_write(" (OK)\n");
-            else if (last_post == 0xFE)
+            else if (last_post == (int)POST16_BOOT_FAILED)
                 serial_write(" (FAILED -- prior boot crashed)\n");
             else
                 serial_write(" (incomplete -- prior boot did not finish)\n");

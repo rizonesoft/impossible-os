@@ -252,7 +252,7 @@ static void blit_string(volatile uint32_t *fb, uint32_t pitch_px,
 void boot_halt(const char *reason)
 {
     /* Write failure POST code to UEFI NVRAM before anything else */
-    boot_post_write(POSTCODE_BOOT_FAILED);
+    boot_post_write16(POST16_BOOT_FAILED);
 
     /* Always write to serial first -- works regardless of framebuffer state */
     serial_write("\n[BOOT HALT] ");

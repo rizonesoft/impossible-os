@@ -223,18 +223,6 @@ int boot_post_read16(void);
 #define POSTCODE_BOOT_OK        0xFF  /* boot completed successfully */
 #define POSTCODE_BOOT_FAILED    0xFE  /* boot_halt() or panic() fired */
 
-/* --- UEFI NVRAM POST code persistence ----------------------------------- */
-
-/* Write the current POST code to UEFI NVRAM variable "ImpossiblePOST".
- * Survives reboot -- allows post-mortem boot failure diagnosis on real
- * hardware even when serial is unavailable.
- * No-ops gracefully if UEFI runtime services are unavailable. */
-void boot_post_write(uint8_t code);
-
-/* Read the last stored POST code from UEFI NVRAM.
- * Returns the code (0x00-0xFF), or -1 if unavailable. */
-int boot_post_read(void);
-
 /* --- Subsystem readiness oracle ------------------------------------------ */
 
 /* Returns true if the subsystem completed init without BOOT_FATAL. */

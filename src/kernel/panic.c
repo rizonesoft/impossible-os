@@ -326,7 +326,7 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     __asm__ volatile ("cli");
 
     /* Write failure POST code to UEFI NVRAM for post-mortem diagnosis */
-    boot_post_write(POSTCODE_BOOT_FAILED);
+    boot_post_write16(POST16_BOOT_FAILED);
 
     /* Dump subsystem readiness to serial for post-mortem analysis */
     kernel_subsystem_dump();

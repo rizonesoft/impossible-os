@@ -94,46 +94,6 @@ static const uint16_t s_post_name[] = {
                     EFI_VARIABLE_BOOTSERVICE_ACCESS | \
                     EFI_VARIABLE_RUNTIME_ACCESS)
 
-void boot_post_write(uint8_t code)
-{
-    /* Only write if boot.conf postcode=1 (default) */
-    if (!g_boot_info.config.postcode) return;
-
-    /* Mask LAPIC timer during UEFI runtime call.  UEFI firmware may
-     * internally enable interrupts (sti) during SetVariable.  If the
-     * LAPIC timer is running (after timer_hal_init), the pending
-     * interrupt fires into UEFI's IDT context → crash on bare metal. */
-    {
-        uint32_t lvt_saved = 0;
-        int need_mask = lapic_available() &&
-                        kernel_subsystem_ready(SUBSYS_TIMER);
-        if (need_mask) {
-            lvt_saved = lapic_read(LAPIC_REG_LVT_TIMER);
-            lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved | LVT_MASKED);
-        }
-
-        uefi_set_variable(&s_post_guid, s_post_name, POST_ATTRS,
-                          sizeof(code), &code);
-
-        if (need_mask)
-            lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved);
-    }
-    /* Ignore errors -- best effort */
-}
-
-int boot_post_read(void)
-{
-    uint8_t val = 0;
-    uint64_t sz = sizeof(val);
-    uint32_t attrs = 0;
-
-    uint64_t status = uefi_get_variable(&s_post_guid, s_post_name,
-                                        &attrs, &sz, &val);
-    if (status == 0 && sz == 1)  /* UEFI_SUCCESS = 0 */
-        return (int)val;
-    return -1;
-}
-
 /* ---- 16-bit POST code system --------------------------------------------- */
 
 void boot_post_write16(uint16_t code)
@@ -202,8 +162,8 @@ void boot_progress(uint8_t phase, const char *step, uint8_t postcode)
     serial_write(")\n");
 
     boot_timing_record_step(phase, step, postcode);
-    boot_post_write(postcode);
-    post_display(postcode);
+    boot_post_write16((uint16_t)postcode);
+    post_display16((uint16_t)postcode);
 
     boot_splash_status(step);
 }

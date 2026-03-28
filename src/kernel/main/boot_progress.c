@@ -104,68 +104,6 @@ static inline void outb_post(uint8_t code)
     __asm__ volatile ("outb %0, $0x80" :: "a"(code));
 }
 
-void post_display(uint8_t code)
-{
-    uint32_t scr_w, x0, y0;
-    int hi, lo;
-
-    /* Always write to I/O port 0x80 for hardware POST cards */
-    outb_post(code);
-
-    /* Disabled by boot.conf postcode=0 */
-    if (!g_boot_info.config.postcode)
-        return;
-
-    /* Stop rendering once desktop compositor takes over */
-    if (kernel_subsystem_ready(SUBSYS_DESKTOP))
-        return;
-
-    /* Skip pixel writes if framebuffer not ready */
-    if (!kernel_subsystem_ready(SUBSYS_FB))
-        return;
-
-    scr_w = fb_get_width();
-    if (scr_w == 0) return;
-
-    x0 = scr_w - POST_TOTAL_W - POST_MARGIN;
-    y0 = POST_TOP;
-
-    /* Clear background */
-    fb_fill_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H, 0x00000000);
-
-    hi = (code >> 4) & 0x0F;
-    lo = code & 0x0F;
-
-    /* Draw high nibble (8x8 native, subtle gray) */
-    {
-        const uint8_t *g = s_hex_font[hi];
-        uint32_t row, col;
-        for (row = 0; row < 8; row++) {
-            uint8_t bits = g[row];
-            for (col = 0; col < 8; col++) {
-                if (bits & (0x80 >> col))
-                    fb_put_pixel(x0 + col, y0 + row, 0x00A0A0A0);
-            }
-        }
-    }
-
-    /* Draw low nibble (8x8 native, subtle gray) */
-    {
-        const uint8_t *g = s_hex_font[lo];
-        uint32_t gx = x0 + POST_GLYPH_W + POST_GAP;
-        uint32_t row, col;
-        for (row = 0; row < 8; row++) {
-            uint8_t bits = g[row];
-            for (col = 0; col < 8; col++) {
-                if (bits & (0x80 >> col))
-                    fb_put_pixel(gx + col, y0 + row, 0x00A0A0A0);
-            }
-        }
-    }
-
-    fb_swap_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H);
-}
-
 /* ---- 16-bit POST display (4 hex digits at 2× scale) ---------------------- */
 
 #define POST16_SCALE     2
@@ -346,7 +284,7 @@ void boot_stage_report(boot_stage_t stage, const char *msg)
     serial_write("\n");
 
     /* POST hex display on framebuffer + I/O port 0x80 */
-    post_display(m->postcode);
+    post_display16((uint16_t)m->postcode);
 
     /* Desktop ready: clear POST display + render debug bar */
     if (stage == BOOT_STAGE_DESKTOP_READY && kernel_subsystem_ready(SUBSYS_FB)) {
