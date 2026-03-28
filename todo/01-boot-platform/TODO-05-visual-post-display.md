@@ -98,7 +98,7 @@ Instrument every function — from UEFI `efi_main` through kernel `compositor_ru
 - [x] Phase 1: `gdt` (0x1000/01), `idt` (0x1010/11), `acpi` (0x1020/21), `lapic` (0x1030), `timer` (0x1040/41), `rtc` (0x1050/51), `kbd` (0x1060/61), `fb` (0x1080/81), `splash` (0x1090/91)
 - [x] Phase 2: `pci` (0x2000/01), `xhci` (0x2010/11), `nic` (0x2020/21), `net` (0x2030/31), `ata` (0x2040/41), `ahci` (0x2050/51), `vfs` (0x2060/61), `registry` (0x2080/81), `smp` (0x2090/91)
 - [x] Phase 3: `sched` (0x3000/01), `desktop` (0x3030/31), `compositor` (0x3040)
-- [ ] Commit: `"boot: POST16 in every function from UEFI efi_main through compositor"`
+- [x] Commit: `"boot: POST16 in every function from UEFI efi_main through compositor"`
 
 **Test checkpoint:** Force crash in `mouse_init`. Reboot. Serial shows "Last boot failed at: 0x1070 (mouse_init)". Bare metal: NVRAM contains 0x1070, next boot displays it. Pinpointed in seconds, not hours.
 

@@ -1394,8 +1394,8 @@ static inline void post_code16(UINT16 code)
 {
     /* High byte to I/O port 0x80 (hardware POST cards are 8-bit) */
     post_code((UINT8)(code >> 8));
-    /* Serial: [POST] 0xNNNN */
-    serial_early_print("[POST] 0x");
+    /* Serial: [BOOT] POST 0xNNNN */
+    serial_early_print("[BOOT] POST 0x");
     {
         static const char hex[] = "0123456789ABCDEF";
         serial_early_putchar(hex[(code >> 12) & 0xF]);

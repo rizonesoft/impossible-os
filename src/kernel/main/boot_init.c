@@ -143,22 +143,24 @@ int boot_post_read16(void)
 
 /* ---- Boot progress emitter ----------------------------------------------- */
 
-static void serial_write_hex8(uint8_t v)
+static void serial_write_hex16(uint16_t v)
 {
-    static const char hex[] = "0123456789abcdef";
-    serial_putchar(hex[v >> 4]);
-    serial_putchar(hex[v & 0xF]);
+    static const char hex[] = "0123456789ABCDEF";
+    serial_putchar(hex[(v >> 12) & 0xF]);
+    serial_putchar(hex[(v >>  8) & 0xF]);
+    serial_putchar(hex[(v >>  4) & 0xF]);
+    serial_putchar(hex[ v        & 0xF]);
 }
 
 void boot_progress(uint8_t phase, const char *step, uint8_t postcode)
 {
-    /* "[PHASEn] step (0xNN)\n" */
+    /* "[PHASEn] step (0xNNNN)\n" */
     serial_write("[PHASE");
     serial_putchar('0' + (phase & 0x0F));
     serial_write("] ");
     serial_write(step);
     serial_write(" (0x");
-    serial_write_hex8(postcode);
+    serial_write_hex16((uint16_t)postcode);
     serial_write(")\n");
 
     boot_timing_record_step(phase, step, postcode);

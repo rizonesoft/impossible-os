@@ -72,7 +72,7 @@ void boot_timing_print_steps(void)
     uint64_t base = s_steps[0].tsc;
     for (uint32_t i = 0; i < s_step_count; i++) {
         uint32_t ms = tsc_to_ms(s_steps[i].tsc - base);
-        klog(LOG_INFO, "BOOT", "  [PHASE%u] +%ums 0x%02x %s",
+        klog(LOG_INFO, "BOOT", "  [PHASE%u] +%ums 0x%04x %s",
              (uint32_t)s_steps[i].phase, ms,
              (uint32_t)s_steps[i].postcode, s_steps[i].step);
     }
