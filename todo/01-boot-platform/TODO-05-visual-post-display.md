@@ -41,7 +41,7 @@
 | --- | :---: | ------------------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | 4-digit POST code system (0x0000–0xFFFF)                | —          |  [x]   |
 | ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1         |  [x]   |
-| ⭐  |   3   | Embedded 5×7 bitmap micro-font                          | —          |  [ ]   |
+| ⭐  |   3   | Embedded 5×7 bitmap micro-font                          | —          |  [x]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3     |  [ ]   |
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4         |  [ ]   |
 | 💎  |   6   | Named stages with TSC timing                            | §4         |  [ ]   |
@@ -110,13 +110,14 @@ A zero-dependency pixel font baked into a single header — renders ASCII text d
 > [!IMPORTANT]
 > This font must have absolutely zero dependencies: no heap, no PMM, no klog, no framebuffer driver. It writes directly to the physical framebuffer address from `g_boot_info.fb`. The font data is `static const` embedded in the header.
 
-- [ ] Design 5×7 pixel bitmap glyphs for printable ASCII (0x20–0x7E, 95 chars)
-- [ ] Pack each glyph as 7 bytes (5-bit-wide rows, MSB-aligned), total ~665 bytes
-- [ ] `vpd_putchar(uint32_t *fb, uint32_t pitch_px, uint32_t x, uint32_t y, char c, uint32_t color)` — render one character at pixel position
-- [ ] `vpd_puts(uint32_t *fb, uint32_t pitch_px, uint32_t x, uint32_t y, const char *s, uint32_t color)` — render string, advance x by 6px per char (5px glyph + 1px gap)
-- [ ] `vpd_putu32(... uint32_t val)` — render unsigned integer as decimal text
-- [ ] `vpd_puthex8(... uint8_t val)` — render 2-digit hex (for POST codes)
-- [ ] All functions inline or `static` in the header — no .c file, no linker dependency
+- [x] Design 5×7 pixel bitmap glyphs for printable ASCII (0x20–0x7E, 95 chars)
+- [x] Pack each glyph as 7 bytes (5-bit-wide rows, MSB-aligned), total 665 bytes
+- [x] `vpd_putchar(fb, pitch_px, x, y, c, color)` — render one character
+- [x] `vpd_puts(fb, pitch_px, x, y, s, color)` — render string, 6px per char
+- [x] `vpd_putu32(fb, pitch_px, x, y, val, color)` — unsigned decimal text
+- [x] `vpd_puthex16(fb, pitch_px, x, y, val, color)` — 4-digit hex
+- [x] `vpd_puthex8(fb, pitch_px, x, y, val, color)` — 2-digit hex
+- [x] All functions static inline in header — no .c file, no linker dependency
 - [ ] Commit: `"boot: embedded 5x7 bitmap micro-font for pre-splash VPD"`
 
 ## 4. Tier 1: Pre-Splash VPD Renderer
