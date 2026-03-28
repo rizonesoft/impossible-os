@@ -42,7 +42,7 @@
 | 💎  |   2   | UEFI variable services             | §1              |  [x]   |
 | 💎  |   3   | GOP resolution auto-detection      | §1              |  [x]   |
 | 💎  |   4   | SMBIOS table parsing               | §1              |  [x]   |
-| 💎  |   5   | Secure Boot state detection        | §2              |  [/]   |
+| 💎  |   5   | Secure Boot state detection        | §2              |  [x]   |
 | 💎  |   6   | Secure Boot shim chain-loading     | §5              |  [x]   |
 | 💎  |   7   | Boot UX polish                     | §3, §5, T02 §2  |  [x]   |
 | 💎  |   8   | A/B dual-slot boot                 | §2              |  [ ]   |
@@ -119,7 +119,7 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel and user 
 
 - [x] Call `uefi_var_get_u32(L"SecureBoot", &EFI_GLOBAL_VARIABLE_GUID, &val)` in `uefi_secureboot_init()`; set `boot_info.secure_boot_enabled = (val == 1)`
 - [x] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1 after registry is up (→ XREF `02-kernel-core/TODO-13-registry-completion.md`)
-- [ ] If `secure_boot_enabled`: call `srm_verify_kernel_signature("C:\\boot\\kernel.exe")` (→ XREF `02-kernel-core/TODO-11-security-reference-monitor.md`); on failure: log `[SecureBoot] kernel.exe signature INVALID` + `BOOT_FATAL` *(deferred — `srm_verify_kernel_signature` has no section in TODO-11 yet)*
+- [ ] *(deferred)* If `secure_boot_enabled`: call `srm_verify_kernel_signature("C:\\boot\\kernel.exe")` — blocked until `02-kernel-core/TODO-11-security-reference-monitor.md` adds a Code Integrity section; log `[SecureBoot] kernel.exe signature INVALID` + `BOOT_FATAL` on failure
 - [x] Display padlock icon (🔒) in system tray status bar when Secure Boot is active (desktop integration hook — set flag in `g_system_state.secure_boot` readable by tray renderer)
 - [x] Serial log: `[SecureBoot] state=ENABLED` or `[SecureBoot] state=DISABLED (firmware or user override)`
 - [x] Commit: `"kernel: Secure Boot state detection, registry key, and kernel.exe signature check"`
@@ -168,6 +168,10 @@ Reliable kernel update delivery with automatic rollback on repeated boot failure
 - [ ] QEMU test: build two kernel images, set `BootSlot=A MaxBootAttempts=1`; corrupt kernel-A.exe; verify bootloader switches to kernel-B.exe on second boot
 - [ ] Commit: `"boot: A/B dual-slot boot with automatic rollback on repeated failure"`
 
+**Regression risk:** Modifies bootloader kernel load path — a bug here prevents ALL booting. Rollback: revert to single-slot `kernel.exe` load path (current behavior).
+
+**Test checkpoint:** QEMU: corrupt kernel-A → reboot → serial shows `[Boot] Rollback: slot A failed` → kernel-B boots. Bare metal: `BootSlot=A` → normal boot → `HKLM\SYSTEM\BootSlot` = `"A"`. Verify `BootAttempts` resets to 0 after successful boot.
+
 ## 9. Multi-OS Detection & Boot Menu
 Detect other OS partitions from GPT and show a countdown boot menu when the user has multiple OSes installed.
 
@@ -181,6 +185,8 @@ Detect other OS partitions from GPT and show a countdown boot menu when the user
 - [ ] `boot.conf` key `DefaultOS=0` (0-indexed; 0 = Impossible OS always default)
 - [ ] Commit: `"boot: multi-OS GPT detection and countdown text-mode boot menu"`
 
+**Test checkpoint:** QEMU with two GPT partitions (Impossible OS + dummy Linux partition GUID): boot menu appears with 2 entries, countdown from 3, auto-selects Impossible OS. Bare metal dual-boot laptop: detects Windows/Linux partitions, menu renders, chainload works.
+
 ## 10. UEFI Capsule Update & ESRT
 Parse the ESRT firmware resource table and implement the UEFI capsule delivery path for firmware updates.
 
@@ -193,6 +199,8 @@ Parse the ESRT firmware resource table and implement the UEFI capsule delivery p
 - [ ] Serial log: `[ESRT] {N} firmware entries found` at boot; `[ESRT] BIOS version 0x{ver}`
 - [ ] Commit: `"kernel: ESRT firmware table parse + UEFI capsule update delivery"`
 
+**Test checkpoint:** QEMU: serial shows `[ESRT] N firmware entries found`. Registry `HKLM\HARDWARE\Firmware\{GUID}\FwVersion` populated. Bare metal: ESRT parsed from real firmware, version logged.
+
 ## 11. UEFI Memory Attributes (W^X)
 Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEMORY_ATTRIBUTES_TABLE`.
 
@@ -203,7 +211,12 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 - [ ] For any EFI runtime code region (`EFI_MEMORY_RUNTIME | EFI_MEMORY_RT_CODE`): ensure mapped `RX` only (no write); call `vmm_set_ro(virt, size)` to remove write permission
 - [ ] `BOOT_DEGRADED` path: if `EFI_MEMORY_ATTRIBUTES_TABLE` is absent (older firmware), log `[UEFI] W^X: attributes table not present — skipping enforcement` and continue
 - [ ] Serial log: `[UEFI] W^X enforced on {N} runtime memory regions` on success
+- [ ] Prerequisite: implement `vmm_set_nx(virt, size)` and `vmm_set_ro(virt, size)` in `src/kernel/mm/vmm.c` — walk PTEs and set/clear NX and R/W bits respectively. These do not exist yet.
 - [ ] Commit: `"kernel: UEFI runtime W^X enforcement via EFI_MEMORY_ATTRIBUTES_TABLE"`
+
+**Regression risk:** Modifies page table permissions on UEFI runtime regions. A bug could make UEFI runtime calls fault (GetTime, SetVariable, ResetSystem all stop working). Rollback: skip W^X enforcement entirely (BOOT_DEGRADED path).
+
+**Test checkpoint:** QEMU: serial shows `[UEFI] W^X enforced on N runtime memory regions`. After enforcement, `uefi_get_time()` still works (runtime calls not broken). Bare metal: same serial output, RTC time reads correctly post-enforcement.
 
 ---
 
@@ -277,6 +290,8 @@ The current `init_gop()` uses `LocateProtocol()` which returns a single GOP hand
 - [ ] Free handle buffer: `gBS->FreePool(handles)` after all handles are recorded
 - [ ] Serial log: `[BOOT] GOP: %u handle(s); primary handle %u (%ux%u, ConOut match=%s)` when `gop_count > 1`; single-handle path logs unchanged (`[BOOT] GOP: %ux%u 32bpp (mode N of M)`)
 - [ ] Commit: `"boot: enumerate all GOP handles — LocateHandleBuffer, ConOut-path primary selection, boot_info.gop_handles[]"`
+
+**Test checkpoint:** QEMU (single GPU): serial shows `[BOOT] GOP: 1 handle(s)`, existing behavior unchanged. Bare metal with iGPU + dGPU: serial shows `[BOOT] GOP: 2 handle(s); primary handle N (WxH, ConOut match=yes)`. `boot_info.gop_count` > 1, `boot_info.gop_handles[0]` = primary display.
 
 ---
 
