@@ -98,13 +98,16 @@ static const uint16_t s_post_name[] = {
 
 void boot_post_write16(uint16_t code)
 {
-    if (!g_boot_info.config.postcode) return;
-
-    /* I/O port 0x80: write high byte (hardware POST cards are 8-bit) */
+    /* I/O port 0x80: always write — zero cost, works before anything */
     __asm__ volatile("outb %0, $0x80" :: "a"((uint8_t)(code >> 8)));
 
-    /* UEFI NVRAM: store full 16-bit value (backward-compatible: old reader
-     * sees high byte as the 1-byte variable, new reader sees both bytes) */
+    /* On-screen display — direct VRAM, works before fb_init */
+    post_display16(code);
+
+    /* UEFI NVRAM: only if boot.conf postcode enabled (skip if config
+     * not yet parsed — g_boot_info is zeroed, postcode defaults to 0) */
+    if (!g_boot_info.config.postcode) return;
+
     {
         uint32_t lvt_saved = 0;
         int need_mask = lapic_available() &&
@@ -120,9 +123,6 @@ void boot_post_write16(uint16_t code)
         if (need_mask)
             lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved);
     }
-
-    /* On-screen display if framebuffer is available */
-    post_display16(code);
 }
 
 int boot_post_read16(void)

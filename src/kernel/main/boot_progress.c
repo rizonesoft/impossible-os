@@ -125,13 +125,6 @@ void post_display16(uint16_t code)
     int nibbles[4];
     int d;
 
-    /* Always write high byte to I/O port 0x80 for hardware POST cards */
-    outb_post((uint8_t)(code >> 8));
-
-    /* Disabled by boot.conf postcode=0 */
-    if (!g_boot_info.config.postcode)
-        return;
-
     /* Stop rendering once desktop compositor takes over */
     if (kernel_subsystem_ready(SUBSYS_DESKTOP))
         return;
