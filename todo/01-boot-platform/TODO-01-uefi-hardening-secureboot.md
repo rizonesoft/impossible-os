@@ -45,9 +45,9 @@
 | 💎  |   5   | Secure Boot state detection        | §2              |  [x]   |
 | 💎  |   6   | Secure Boot shim chain-loading     | §5              |  [x]   |
 | 💎  |   7   | Boot UX polish                     | §3, §5, T02 §2  |  [x]   |
-| 💎  |   8   | A/B dual-slot boot                 | §2              |  [ ]   |
+| 💎  |   8   | A/B dual-slot boot                 | §2              | defer  |
 | ⭐  |   9   | Multi-OS detection & boot menu     | §1              |  [ ]   |
-| 💎  |  10   | UEFI capsule update & ESRT         | §2, §8          |  [ ]   |
+| 💎  |  10   | UEFI capsule update & ESRT         | §2              |  [ ]   |
 | 💎  |  11   | UEFI memory attributes (W^X)       | §1              |  [ ]   |
 | ⭐  |  12   | Serial log standardization         | —               |  [x]   |
 | 💎  |  13   | Multi-GPU GOP enumeration          | §3              |  [ ]   |
@@ -153,7 +153,7 @@ Fade-in transition, structured boot profiling, and a pre-framebuffer error recov
 - [x] `boot_splash_status()` integration: `boot_progress()` in `boot_init.c` now calls `boot_splash_status(step)` after `boot_timing_record_step()`; splash shows live stage text below the spinner during every instrumented event
 - [x] Commit: `"boot: fade-in transition, boot-stage instrumentation, pre-framebuffer error recovery screen"`
 
-## 8. A/B Dual-Slot Boot
+## 8. A/B Dual-Slot Boot *(deferred — release/update feature, not needed during development)*
 Reliable kernel update delivery with automatic rollback on repeated boot failure.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `src/shell/update-slot.c`
