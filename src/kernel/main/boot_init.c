@@ -104,25 +104,29 @@ void boot_post_write16(uint16_t code)
     /* On-screen display — direct VRAM, works before fb_init */
     post_display16(code);
 
-    /* UEFI NVRAM: only if boot.conf postcode enabled (skip if config
-     * not yet parsed — g_boot_info is zeroed, postcode defaults to 0) */
-    if (!g_boot_info.config.postcode) return;
+    /* No NVRAM write here — flash has limited endurance (~100K cycles).
+     * NVRAM is written only twice per boot via boot_post_nvram_write16():
+     *   1. boot_phase0: mark "booting" (entry POST code)
+     *   2. boot_phase3: mark "succeeded" (POST16_BOOT_OK)
+     * If the OS crashes between those two writes, next boot reads the
+     * entry code and knows the previous boot failed. */
+}
 
-    {
-        uint32_t lvt_saved = 0;
-        int need_mask = lapic_available() &&
-                        kernel_subsystem_ready(SUBSYS_TIMER);
-        if (need_mask) {
-            lvt_saved = lapic_read(LAPIC_REG_LVT_TIMER);
-            lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved | LVT_MASKED);
-        }
-
-        uefi_set_variable(&s_post_guid, s_post_name, POST_ATTRS,
-                          sizeof(code), &code);
-
-        if (need_mask)
-            lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved);
+void boot_post_nvram_write16(uint16_t code)
+{
+    uint32_t lvt_saved = 0;
+    int need_mask = lapic_available() &&
+                    kernel_subsystem_ready(SUBSYS_TIMER);
+    if (need_mask) {
+        lvt_saved = lapic_read(LAPIC_REG_LVT_TIMER);
+        lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved | LVT_MASKED);
     }
+
+    uefi_set_variable(&s_post_guid, s_post_name,
+                       POST_ATTRS, sizeof(code), &code);
+
+    if (need_mask)
+        lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved);
 }
 
 int boot_post_read16(void)

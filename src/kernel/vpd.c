@@ -14,6 +14,8 @@
 #include "kernel/vpd.h"
 #include "kernel/vpd_font.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
+#include "kernel/uefi_runtime.h"
 
 /* ---- State --------------------------------------------------------------- */
 
@@ -22,7 +24,9 @@ static uint32_t  s_pitch_px;
 static uint32_t  s_width;
 static uint32_t  s_height;
 static int       s_active;
-static int       s_banner_shown; /* 1 if crash banner was rendered */
+static int       s_banner_shown;  /* 1 if crash banner was rendered */
+static int       s_last_boot_ok = -1;   /* 1 = succeeded, 0 = failed, -1 = unknown */
+static uint16_t  s_last_boot_post;      /* POST code from previous boot */
 static uint32_t  s_row;        /* current Y position (next stage row) */
 static uint8_t   s_last_phase; /* phase of the previous stage */
 static uint32_t  s_last_row_y; /* Y position of the current in-progress stage */
@@ -47,14 +51,11 @@ static inline uint64_t vpd_rdtsc(void)
 
 /* ---- Layout constants ---------------------------------------------------- */
 
-#define VPD_SCALE_X        2   /* horizontal scale: each pixel = 2px wide */
-#define VPD_SCALE_Y        1   /* vertical scale: each pixel = 1px tall */
-#define VPD_SCALE          2   /* used for legacy square size calc */
-#define VPD_CHAR_W        (VPD_CELL_W * VPD_SCALE_X)  /* 12px per char */
-#define VPD_LEFT_MARGIN   12
-#define VPD_TOP_MARGIN    14
-#define VPD_ROW_HEIGHT    (VPD_GLYPH_H * VPD_SCALE_Y + 5)  /* 12px: 7px text + 5px gap */
-#define VPD_SQUARE_SIZE   (VPD_GLYPH_H * VPD_SCALE_Y)      /* 7px square */
+#define VPD_CHAR_W        VPD_CELL_W  /* 6px per char — native 1× */
+#define VPD_LEFT_MARGIN    8
+#define VPD_TOP_MARGIN    10
+#define VPD_ROW_HEIGHT    (VPD_GLYPH_H + 3)  /* 10px: 7px text + 3px gap */
+#define VPD_SQUARE_SIZE    VPD_GLYPH_H        /* 7px square */
 #define VPD_SQUARE_GAP     6
 #define VPD_NAME_X        (VPD_LEFT_MARGIN + VPD_SQUARE_SIZE + VPD_SQUARE_GAP)
 #define VPD_CODE_X        (VPD_NAME_X + 14 * VPD_CHAR_W)  /* fixed column for POST hex */
@@ -73,6 +74,8 @@ static inline uint64_t vpd_rdtsc(void)
 #define VPD_COLOR_FAIL     0x00FF2222
 #define VPD_COLOR_PENDING  0x00404040
 #define VPD_COLOR_SEPARATOR 0x00333333
+#define VPD_COLOR_LABEL    0x00808080
+#define VPD_COLOR_VALUE    0x00E0E0E0
 
 /* ---- Helpers ------------------------------------------------------------- */
 
@@ -85,10 +88,9 @@ static void vpd_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
             s_fb[cy * s_pitch_px + cx] = color;
 }
 
-/* Draw a checkmark at 2× scale using the micro-font 'v' shape but custom */
+/* Draw a checkmark at 1× native scale */
 static void vpd_draw_check(uint32_t x, uint32_t y, uint32_t color)
 {
-    /* 5×7 checkmark glyph, rendered at 2× */
     static const uint8_t check[7] = {
         0x00, /* ..... */
         0x08, /* ....X */
@@ -103,18 +105,16 @@ static void vpd_draw_check(uint32_t x, uint32_t y, uint32_t color)
         uint8_t bits = check[row];
         for (col = 0; col < 5; col++) {
             if (bits & (0x80 >> col)) {
-                uint32_t px = x + col * VPD_SCALE_X;
-                uint32_t py = y + row * VPD_SCALE_Y;
-                if (px + 1 < s_width && py < s_height) {
-                    s_fb[py * s_pitch_px + px]     = color;
-                    s_fb[py * s_pitch_px + px + 1] = color;
-                }
+                uint32_t px = x + col;
+                uint32_t py = y + row;
+                if (px < s_width && py < s_height)
+                    s_fb[py * s_pitch_px + px] = color;
             }
         }
     }
 }
 
-/* 2× scaled text rendering — each font pixel becomes a 2×2 block */
+/* 1× native text rendering — one font pixel = one screen pixel */
 static void vpd_puts_scaled(uint32_t x, uint32_t y, const char *s,
                               uint32_t color)
 {
@@ -130,16 +130,14 @@ static void vpd_puts_scaled(uint32_t x, uint32_t y, const char *s,
             uint8_t bits = glyph[row];
             for (col = 0; col < VPD_GLYPH_W; col++) {
                 if (bits & (0x80 >> col)) {
-                    uint32_t px = x + col * VPD_SCALE_X;
-                    uint32_t py = y + row * VPD_SCALE_Y;
-                    if (px + 1 < s_width && py < s_height) {
-                        s_fb[py * s_pitch_px + px]     = color;
-                        s_fb[py * s_pitch_px + px + 1] = color;
-                    }
+                    uint32_t px = x + col;
+                    uint32_t py = y + row;
+                    if (px < s_width && py < s_height)
+                        s_fb[py * s_pitch_px + px] = color;
                 }
             }
         }
-        x += VPD_CELL_W * VPD_SCALE_X;
+        x += VPD_CELL_W;
         s++;
     }
 }
@@ -195,6 +193,288 @@ static const char *s_phase_names[] = {
 
 /* ---- Public API ---------------------------------------------------------- */
 
+/* ---- UEFI variable helpers (UCS-2 names) -------------------------------- */
+
+static const uint16_t s_var_boot_current[]= {'B','o','o','t','C','u','r','r','e','n','t',0};
+static const uint16_t s_var_secure_boot[] = {'S','e','c','u','r','e','B','o','o','t',0};
+static const uint16_t s_var_setup_mode[]  = {'S','e','t','u','p','M','o','d','e',0};
+static const uint16_t s_var_timeout[]     = {'T','i','m','e','o','u','t',0};
+static const uint16_t s_var_os_ind_sup[]  = {'O','s','I','n','d','i','c','a','t','i','o','n','s',
+                                              'S','u','p','p','o','r','t','e','d',0};
+static const uint16_t s_var_os_ind[]      = {'O','s','I','n','d','i','c','a','t','i','o','n','s',0};
+
+static int vpd_read_u8_var(const uint16_t *name, uint8_t *out)
+{
+    struct boot_uefi_guid g = EFI_GLOBAL_VARIABLE_GUID;
+    uint64_t sz = 1;
+    uint32_t attrs = 0;
+    uint64_t st = uefi_get_variable(&g, name, &attrs, &sz, out);
+    return (st == 0 && sz == 1) ? 0 : -1;
+}
+
+static int vpd_read_u16_var(const uint16_t *name, uint16_t *out)
+{
+    struct boot_uefi_guid g = EFI_GLOBAL_VARIABLE_GUID;
+    uint64_t sz = 2;
+    uint32_t attrs = 0;
+    uint64_t st = uefi_get_variable(&g, name, &attrs, &sz, out);
+    return (st == 0 && sz == 2) ? 0 : -1;
+}
+
+static int vpd_read_u64_var(const uint16_t *name, uint64_t *out)
+{
+    struct boot_uefi_guid g = EFI_GLOBAL_VARIABLE_GUID;
+    uint64_t sz = 8;
+    uint32_t attrs = 0;
+    uint64_t st = uefi_get_variable(&g, name, &attrs, &sz, out);
+    return (st == 0 && sz == 8) ? 0 : -1;
+}
+
+/* Read Boot#### description (UCS-2 → ASCII, truncated to buf_len-1) */
+static int vpd_read_boot_entry_desc(uint16_t num, char *buf, uint32_t buf_len)
+{
+    struct boot_uefi_guid g = EFI_GLOBAL_VARIABLE_GUID;
+    static const char hx[] = "0123456789ABCDEF";
+    uint16_t var_name[] = {'B','o','o','t',0,0,0,0,0};
+    uint8_t data[256];
+    uint64_t sz = sizeof(data);
+    uint32_t attrs = 0;
+    uint16_t *desc;
+    uint32_t desc_offset, i;
+
+    /* Build "Boot0001" UCS-2 name */
+    var_name[4] = (uint16_t)hx[(num >> 12) & 0xF];
+    var_name[5] = (uint16_t)hx[(num >>  8) & 0xF];
+    var_name[6] = (uint16_t)hx[(num >>  4) & 0xF];
+    var_name[7] = (uint16_t)hx[ num        & 0xF];
+
+    if (uefi_get_variable(&g, var_name, &attrs, &sz, data) != 0 || sz < 8)
+        return -1;
+
+    /* EFI_LOAD_OPTION: uint32 attrs + uint16 path_len + UCS-2 desc */
+    desc_offset = 6;
+    desc = (uint16_t *)(data + desc_offset);
+
+    for (i = 0; i < buf_len - 1 && desc_offset + (i + 1) * 2 <= sz; i++) {
+        uint16_t ch = desc[i];
+        if (ch == 0) break;
+        buf[i] = (ch < 128) ? (char)ch : '?';
+    }
+    buf[i] = '\0';
+    return (int)i;
+}
+
+/* Compute total RAM in MiB from the memory map */
+static uint32_t vpd_total_ram_mb(void)
+{
+    uint64_t total = 0;
+    uint32_t i;
+    for (i = 0; i < g_boot_info.mmap_count; i++)
+        total += g_boot_info.mmap[i].length;
+    return (uint32_t)(total / (1024 * 1024));
+}
+
+/* Render the info header block above the boot table */
+static void vpd_render_info_header(void)
+{
+    uint32_t y = VPD_TOP_MARGIN;
+    uint32_t label_x = VPD_LEFT_MARGIN;
+    uint32_t val_x = VPD_LEFT_MARGIN + 16 * VPD_CHAR_W;
+
+    /* Line 1: Display resolution + pixel format */
+    {
+        static const char *pf[] = { "RGBX", "BGRX", "BitMask" };
+        const char *fmt = (g_boot_info.fb.pixel_format < 3)
+                          ? pf[g_boot_info.fb.pixel_format] : "?";
+        vpd_puts_scaled(label_x, y, "Display:", VPD_COLOR_LABEL);
+        vpd_putu32_scaled(val_x, y, g_boot_info.fb.width, VPD_COLOR_VALUE);
+        vpd_puts_scaled(val_x + 4 * VPD_CHAR_W, y, "x", VPD_COLOR_LABEL);
+        vpd_putu32_scaled(val_x + 5 * VPD_CHAR_W, y,
+                           g_boot_info.fb.height, VPD_COLOR_VALUE);
+        vpd_puts_scaled(val_x + 9 * VPD_CHAR_W, y, fmt, VPD_COLOR_LABEL);
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 2: RAM */
+    {
+        uint32_t mb = vpd_total_ram_mb();
+        vpd_puts_scaled(label_x, y, "RAM:", VPD_COLOR_LABEL);
+        vpd_putu32_scaled(val_x, y, mb, VPD_COLOR_VALUE);
+        vpd_puts_scaled(val_x + 5 * VPD_CHAR_W, y, "MiB", VPD_COLOR_LABEL);
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 3: TSC Frequency */
+    {
+        uint64_t freq = g_boot_info.timing.tsc_freq;
+        vpd_puts_scaled(label_x, y, "TSC Freq:", VPD_COLOR_LABEL);
+        if (freq > 0) {
+            vpd_putu32_scaled(val_x, y, (uint32_t)(freq / 1000000),
+                               VPD_COLOR_VALUE);
+            vpd_puts_scaled(val_x + 5 * VPD_CHAR_W, y, "MHz",
+                             VPD_COLOR_LABEL);
+        } else {
+            vpd_puts_scaled(val_x, y, "N/A", VPD_COLOR_PENDING);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 4: UEFI Boot Time */
+    {
+        uint64_t freq = g_boot_info.timing.tsc_freq;
+        vpd_puts_scaled(label_x, y, "UEFI Boot:", VPD_COLOR_LABEL);
+        if (freq > 0 && g_boot_info.timing.kernel_jump > 0
+            && g_boot_info.timing.bl_entry > 0) {
+            uint32_t ms = (uint32_t)(
+                (g_boot_info.timing.kernel_jump - g_boot_info.timing.bl_entry)
+                * 1000 / freq);
+            vpd_putu32_scaled(val_x, y, ms, VPD_COLOR_VALUE);
+            vpd_puts_scaled(val_x + 4 * VPD_CHAR_W, y, "ms",
+                             VPD_COLOR_LABEL);
+        } else {
+            vpd_puts_scaled(val_x, y, "N/A", VPD_COLOR_PENDING);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 5: ACPI */
+    {
+        vpd_puts_scaled(label_x, y, "ACPI:", VPD_COLOR_LABEL);
+        if (g_boot_info.acpi_available) {
+            vpd_puts_scaled(val_x, y, "v", VPD_COLOR_VALUE);
+            vpd_putu32_scaled(val_x + 1 * VPD_CHAR_W, y,
+                               (uint32_t)g_boot_info.acpi_version,
+                               VPD_COLOR_VALUE);
+        } else {
+            vpd_puts_scaled(val_x, y, "Not available", VPD_COLOR_PENDING);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 6: Boot Current + entry description */
+    {
+        uint16_t current = 0;
+        vpd_puts_scaled(label_x, y, "Boot Current:", VPD_COLOR_LABEL);
+        if (vpd_read_u16_var(s_var_boot_current, &current) == 0) {
+            char desc[40];
+            vpd_puts_scaled(val_x, y, "Boot", VPD_COLOR_VALUE);
+            vpd_puthex16_scaled(val_x + 4 * VPD_CHAR_W, y, current,
+                                 VPD_COLOR_VALUE);
+            if (vpd_read_boot_entry_desc(current, desc, sizeof(desc)) > 0) {
+                uint32_t dx = val_x + 9 * VPD_CHAR_W;
+                vpd_puts_scaled(dx, y, desc, VPD_COLOR_LABEL);
+            }
+        } else {
+            vpd_puts_scaled(val_x, y, "N/A", VPD_COLOR_PENDING);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 7: Secure Boot */
+    {
+        uint8_t sb = 0;
+        vpd_puts_scaled(label_x, y, "Secure Boot:", VPD_COLOR_LABEL);
+        if (vpd_read_u8_var(s_var_secure_boot, &sb) == 0) {
+            if (sb)
+                vpd_puts_scaled(val_x, y, "ENABLED", VPD_COLOR_DONE);
+            else
+                vpd_puts_scaled(val_x, y, "DISABLED", VPD_COLOR_PROGRESS);
+        } else {
+            vpd_puts_scaled(val_x, y, "N/A", VPD_COLOR_PENDING);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 8: Setup Mode */
+    {
+        uint8_t sm = 0;
+        vpd_puts_scaled(label_x, y, "Setup Mode:", VPD_COLOR_LABEL);
+        if (vpd_read_u8_var(s_var_setup_mode, &sm) == 0) {
+            if (sm)
+                vpd_puts_scaled(val_x, y, "SETUP", VPD_COLOR_PROGRESS);
+            else
+                vpd_puts_scaled(val_x, y, "USER", VPD_COLOR_DONE);
+        } else {
+            vpd_puts_scaled(val_x, y, "N/A", VPD_COLOR_PENDING);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 9: Boot Timeout */
+    {
+        uint16_t timeout = 0;
+        vpd_puts_scaled(label_x, y, "Boot Timeout:", VPD_COLOR_LABEL);
+        if (vpd_read_u16_var(s_var_timeout, &timeout) == 0) {
+            vpd_putu32_scaled(val_x, y, (uint32_t)timeout, VPD_COLOR_VALUE);
+            vpd_puts_scaled(val_x + 4 * VPD_CHAR_W, y, "sec",
+                             VPD_COLOR_LABEL);
+        } else {
+            vpd_puts_scaled(val_x, y, "N/A", VPD_COLOR_PENDING);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 10: OsIndications */
+    {
+        uint64_t supported = 0, active = 0;
+        vpd_puts_scaled(label_x, y, "FW UI Reboot:", VPD_COLOR_LABEL);
+        if (vpd_read_u64_var(s_var_os_ind_sup, &supported) == 0) {
+            if (supported & 1) {
+                vpd_read_u64_var(s_var_os_ind, &active);
+                if (active & 1)
+                    vpd_puts_scaled(val_x, y, "REQUESTED",
+                                     VPD_COLOR_PROGRESS);
+                else
+                    vpd_puts_scaled(val_x, y, "Available",
+                                     VPD_COLOR_VALUE);
+            } else {
+                vpd_puts_scaled(val_x, y, "Not supported",
+                                 VPD_COLOR_PENDING);
+            }
+        } else {
+            vpd_puts_scaled(val_x, y, "N/A", VPD_COLOR_PENDING);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Line 11: Last Boot Status + phase info + POST code */
+    {
+        uint32_t sx;
+        vpd_puts_scaled(label_x, y, "Last Boot:", VPD_COLOR_LABEL);
+        if (s_last_boot_ok == 1) {
+            vpd_puts_scaled(val_x, y, "SUCCEEDED", VPD_COLOR_DONE);
+            sx = val_x + 10 * VPD_CHAR_W;
+        } else if (s_last_boot_ok == 0) {
+            uint16_t pc = s_last_boot_post;
+            const char *phase_str;
+            if (pc < 0x1000)       phase_str = "FAILED Phase 0";
+            else if (pc < 0x2000)  phase_str = "FAILED Phase 1";
+            else if (pc < 0x3000)  phase_str = "FAILED Phase 2";
+            else                   phase_str = "FAILED Phase 3";
+            vpd_puts_scaled(val_x, y, phase_str, VPD_COLOR_FAIL);
+            sx = val_x + 15 * VPD_CHAR_W;
+        } else {
+            vpd_puts_scaled(val_x, y, "FIRST BOOT", VPD_COLOR_PENDING);
+            sx = 0;
+        }
+        if (sx && s_banner_shown) {
+            vpd_puts_scaled(sx, y, "(0x", VPD_COLOR_LABEL);
+            vpd_puthex16_scaled(sx + 3 * VPD_CHAR_W, y,
+                                 s_last_boot_post, VPD_COLOR_LABEL);
+            vpd_puts_scaled(sx + 7 * VPD_CHAR_W, y, ")", VPD_COLOR_LABEL);
+        }
+    }
+    y += VPD_ROW_HEIGHT;
+
+    /* Empty row + separator below info header */
+    y += VPD_ROW_HEIGHT;
+    vpd_fill_rect(VPD_LEFT_MARGIN, y, VPD_SEPARATOR_W, VPD_SEPARATOR_H,
+                   VPD_COLOR_SEPARATOR);
+
+    /* Boot table starts below separator */
+    s_row = y + VPD_SEPARATOR_H + VPD_ROW_HEIGHT / 2;
+}
+
 void vpd_init(void)
 {
     /* Respect boot.conf postbars setting (0=off, 1=on, 2=diag).
@@ -216,11 +496,12 @@ void vpd_init(void)
     s_pitch_px = g_boot_info.fb.pitch / 4;
     s_width    = g_boot_info.fb.width;
     s_height   = g_boot_info.fb.height;
-    /* Always start 2 rows down from top for clean spacing */
-    s_row      = VPD_TOP_MARGIN + VPD_ROW_HEIGHT * 2;
     s_last_phase = 0xFF; /* no previous phase */
     s_has_current = 0;
     s_active   = 1;
+
+    /* Render info header — boot table starts below it */
+    vpd_render_info_header();
 }
 
 void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
@@ -315,8 +596,7 @@ void vpd_stage_fail(void)
     vpd_fill_rect(VPD_LEFT_MARGIN, s_last_row_y,
                    VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_FAIL);
 
-    /* Draw FAIL text at 2× scale */
-    vpd_puts_scaled(VPD_SEPARATOR_W - 60, s_last_row_y, "FAIL", VPD_COLOR_FAIL);
+    vpd_puts_scaled(VPD_SEPARATOR_W - 30, s_last_row_y, "FAIL", VPD_COLOR_FAIL);
 
     s_has_current = 0;
 }
@@ -380,9 +660,6 @@ const char *vpd_post16_name(uint16_t code)
 
 void vpd_crash_banner(uint16_t last_postcode)
 {
-    uint32_t x;
-    const char *name;
-
     if (!g_boot_info.fb_available || !g_boot_info.fb.addr)
         return;
 
@@ -394,24 +671,9 @@ void vpd_crash_banner(uint16_t last_postcode)
         s_height   = g_boot_info.fb.height;
     }
 
-    name = vpd_post16_name(last_postcode);
     s_banner_shown = 1;
-
-    /* Render: "Last boot failed: NAME 0xNNNN" in red at 2× scale */
-    x = VPD_LEFT_MARGIN;
-    vpd_puts_scaled(x, VPD_TOP_MARGIN, "Last boot failed:", VPD_COLOR_FAIL);
-    x += 18 * VPD_CHAR_W;
-    vpd_puts_scaled(x, VPD_TOP_MARGIN, name, VPD_COLOR_TEXT);
-    {
-        const char *p = name;
-        uint32_t len = 0;
-        while (*p) { len++; p++; }
-        x += (len + 1) * VPD_CHAR_W;
-        vpd_puts_scaled(x, VPD_TOP_MARGIN, "0x", VPD_COLOR_PENDING);
-        x += 2 * VPD_CHAR_W;
-        vpd_puthex16_scaled(x, VPD_TOP_MARGIN, last_postcode, VPD_COLOR_PENDING);
-    }
-
+    s_last_boot_ok = (last_postcode == POST16_BOOT_OK) ? 1 : 0;
+    s_last_boot_post = last_postcode;
 }
 
 void vpd_stop_tier1(void)

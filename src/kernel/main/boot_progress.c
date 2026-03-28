@@ -100,17 +100,15 @@ static const uint8_t s_hex_font[16][8] = {
 #define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 18 px */
 #define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 10 px */
 
-/* ---- 16-bit POST display (4 hex digits, thin font, 2×1 scale) ------------ */
+/* ---- 16-bit POST display (4 hex digits, thin font, 1×1 native) ----------- */
 
-#define POST16_SCALE_X   2   /* horizontal: 2px per font pixel */
-#define POST16_SCALE_Y   1   /* vertical: 1px per font pixel */
-#define POST16_GLYPH_W   (8 * POST16_SCALE_X)   /* 16 px wide */
-#define POST16_GLYPH_H   (8 * POST16_SCALE_Y)   /*  8 px tall */
+#define POST16_GLYPH_W   8   /* 8 px wide — native 1× */
+#define POST16_GLYPH_H   8   /* 8 px tall — native 1× */
 #define POST16_GAP        2
 #define POST16_MARGIN     6
 #define POST16_TOP        6
 #define POST16_DIGITS     4
-#define POST16_TOTAL_W   (POST16_GLYPH_W * POST16_DIGITS + POST16_GAP * (POST16_DIGITS - 1))  /* 70 px */
+#define POST16_TOTAL_W   (POST16_GLYPH_W * POST16_DIGITS + POST16_GAP * (POST16_DIGITS - 1))  /* 38 px */
 #define POST16_TOTAL_H   (POST16_GLYPH_H + 2)  /* 10 px */
 
 /* Render 4 hex digits. Two paths:
@@ -161,10 +159,9 @@ void post_display16(uint16_t code)
                 uint8_t bits = g[row];
                 for (col = 0; col < 8; col++) {
                     if (bits & (0x80 >> col)) {
-                        uint32_t px = gx + col * POST16_SCALE_X;
-                        uint32_t py = y0 + row * POST16_SCALE_Y;
-                        fb_put_pixel(px,     py, 0x00C0C0C0);
-                        fb_put_pixel(px + 1, py, 0x00C0C0C0);
+                        uint32_t px = gx + col;
+                        uint32_t py = y0 + row;
+                        fb_put_pixel(px, py, 0x00C0C0C0);
                     }
                 }
             }
@@ -186,12 +183,10 @@ void post_display16(uint16_t code)
                 uint8_t bits = g[row];
                 for (col = 0; col < 8; col++) {
                     if (bits & (0x80 >> col)) {
-                        uint32_t px = gx + col * POST16_SCALE_X;
-                        uint32_t py = y0 + row * POST16_SCALE_Y;
-                        if (px + 1 < scr_w && py < g_boot_info.fb.height) {
-                            fb[py * pitch_px + px]     = 0x00C0C0C0;
-                            fb[py * pitch_px + px + 1] = 0x00C0C0C0;
-                        }
+                        uint32_t px = gx + col;
+                        uint32_t py = y0 + row;
+                        if (px < scr_w && py < g_boot_info.fb.height)
+                            fb[py * pitch_px + px] = 0x00C0C0C0;
                     }
                 }
             }

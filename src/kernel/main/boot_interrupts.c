@@ -246,6 +246,9 @@ void boot_phase1(void)
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE1] complete -- interrupts, timer, display ready");
+
+    /* NVRAM write: Phase 1 complete */
+    boot_post_nvram_write16(POST16_TIMER_OK);
 }
 
 /* ---- Legacy wrapper (until main.c switches to boot_phase1) -------------- */

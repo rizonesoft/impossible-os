@@ -56,8 +56,10 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     }
 }
 
-# OVMF_VARS needs a writable copy
-Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST -Force
+# OVMF_VARS needs a writable copy — preserve across runs for NVRAM persistence
+if (-not (Test-Path $VARS_DEST)) {
+    Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST
+}
 
 $Scale = if ($Yres -gt 2160) { 3 } elseif ($Yres -gt 1080) { 2 } else { 1 }
 # Per-resolution VRAM: 1440p needs 32MB (14.7MB fb), 1080p needs 16MB.

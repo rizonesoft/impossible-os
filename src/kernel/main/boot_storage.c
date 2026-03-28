@@ -240,6 +240,9 @@ void boot_phase2(void)
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE2] complete -- VFS, registry, SMP, network ready");
+
+    /* NVRAM write: Phase 2 complete */
+    boot_post_nvram_write16(POST16_REGISTRY_OK);
 }
 
 /* ---- Legacy wrapper ----------------------------------------------------- */

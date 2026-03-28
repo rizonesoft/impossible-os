@@ -146,7 +146,12 @@ void boot_phase3(void)
 
     boot_progress(3, "DESKTOP_READY", POST16_DESKTOP_OK);
     kernel_subsystem_set_ready(SUBSYS_DESKTOP, true);
-    boot_post_write16(POST16_BOOT_OK);  /* 0xFF00 = boot succeeded */
+
+    /* NVRAM write: Phase 3 complete — boot succeeded.
+     * Must be here, not later — on bare metal the compositor may crash
+     * (timer interrupt issue), and we need this written before that. */
+    boot_post_nvram_write16(POST16_BOOT_OK);
+
     boot_timing_print_steps();
     boot_timing_write_report();
     boot_timeline_dump_json();
@@ -272,7 +277,6 @@ void boot_phase3(void)
     }
 
     /* --- Compositor event loop (never returns) --- */
-    POST16(POST16_COMPOSITOR);
     compositor_run();
 
     /* Unreachable under normal operation */

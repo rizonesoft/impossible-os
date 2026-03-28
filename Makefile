@@ -386,7 +386,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 
 ## run: Launch QEMU booting from system disk (UEFI via OVMF)
 run: all
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@cp -n $(OVMF_CODE) $(BUILD_DIR)/OVMF_CODE_4M.fd 2>/dev/null || true
 	$(QEMU) \
 		-cpu Haswell \
@@ -423,7 +423,7 @@ $(USB_TEST_IMG):
 ## run-usb: Launch QEMU with xHCI controller + 64 MiB USB mass storage device
 ## Use this to develop and test the xHCI + USB MSC driver (TODO-040.20)
 run-usb: all $(USB_TEST_IMG)
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU with xHCI + USB storage device"
 	$(QEMU) \
 		-cpu Haswell \
@@ -451,7 +451,7 @@ run-usb: all $(USB_TEST_IMG)
 ##   Output: build/serial.log (filtered USB lines printed on exit)
 QEMU_TIMEOUT ?= 30
 run-usb-ci: all $(USB_TEST_IMG)
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching headless QEMU with xHCI + USB storage ($(QEMU_TIMEOUT)s timeout)"
 	@timeout $(QEMU_TIMEOUT) $(QEMU) \
 		-cpu Haswell \
@@ -484,7 +484,7 @@ clean-usb:
 ## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
 ## Serial output: [SPLASH] 1920x1080  scale=1x  font=16px
 run-1080p: all
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU at 1920×1080 (scale=1×)"
 	$(QEMU) \
 		-cpu Haswell \
@@ -506,7 +506,7 @@ run-1080p: all
 ## run-1440p: Test at 2560×1440 — HiDPI scale=2× (>1080p)
 ## Serial output: [SPLASH] 2560x1440  scale=2x  font=32px
 run-1440p: all
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU at 2560×1440 (scale=2×)"
 	$(QEMU) \
 		-cpu Haswell \
@@ -529,7 +529,7 @@ run-1440p: all
 ## bochs-display avoids the VGA PCI BAR limitation that causes FrameBufferBase=0
 ## Requires QEMU 4.0+; serial: [??] SPLASH  3840x2160  scale=2x
 run-4k: all
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU at 3840×2160 via bochs-display (scale=2×)"
 	$(QEMU) \
 		-cpu Haswell \
@@ -610,7 +610,7 @@ run-test: all test-disks
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234
 run-debug: all
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
@@ -630,7 +630,7 @@ run-debug: all
 
 ## run-log: Launch QEMU with serial output captured to serial.log
 run-log: all
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \

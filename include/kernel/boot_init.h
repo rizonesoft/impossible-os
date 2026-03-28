@@ -223,8 +223,13 @@ typedef enum {
 #define POST16_BOOT_OK          0xFF00
 #define POST16_BOOT_FAILED      0xFFFE
 
-/* Write 16-bit POST code: high byte to I/O 0x80, full value to NVRAM. */
+/* Write 16-bit POST code: I/O port 0x80 + on-screen display. No NVRAM. */
 void boot_post_write16(uint16_t code);
+
+/* Write 16-bit POST code to UEFI NVRAM only. Called twice per boot:
+ * 1. Early boot entry (marks "booting")  2. Boot OK (marks "succeeded").
+ * Limited writes protect flash endurance (~100K cycle limit). */
+void boot_post_nvram_write16(uint16_t code);
 
 /* Read last 16-bit POST code from NVRAM.  Returns code or -1. */
 int boot_post_read16(void);

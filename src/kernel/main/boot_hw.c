@@ -87,35 +87,27 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         if (r == BOOT_DEGRADED)
             klog(LOG_WARN, "UEFI", "Runtime services unavailable -- degraded");
     }
-    POST16(POST16_UEFI_RT_OK);
 
-    /* --- Read prior boot POST code from UEFI NVRAM --- */
+    /* --- Read prior boot POST code, then mark "booting" in NVRAM ---
+     * Read MUST happen before the first NVRAM write — otherwise we read
+     * our own value.  NVRAM writes per boot (5 total, flash-safe):
+     *   1. Here: mark "booting" (POST16_SERIAL = 0x0010)
+     *   2. Phase 0 complete (POST16_SIMD_OK)
+     *   3. Phase 1 complete (POST16_TIMER_OK)
+     *   4. Phase 2 complete (POST16_REGISTRY_OK)
+     *   5. Phase 3 complete (POST16_BOOT_OK) */
     {
         int last_post = boot_post_read16();
+        boot_post_nvram_write16(POST16_SERIAL);  /* NVRAM: booting */
+        POST16(POST16_UEFI_RT_OK);
+
         if (last_post >= 0) {
-            serial_write("[BOOT] Last POST code: 0x");
-            {
-                static const char hex[] = "0123456789ABCDEF";
-                serial_putchar(hex[(last_post >> 12) & 0xF]);
-                serial_putchar(hex[(last_post >> 8) & 0xF]);
-                serial_putchar(hex[(last_post >> 4) & 0xF]);
-                serial_putchar(hex[last_post & 0xF]);
-            }
-            if (last_post == (int)POST16_BOOT_OK) {
-                serial_write(" (OK)\n");
-            } else if (last_post == (int)POST16_BOOT_FAILED) {
-                serial_write(" (FAILED -- prior boot crashed)\n");
-                {
-                    extern void vpd_crash_banner(uint16_t);
-                    vpd_crash_banner((uint16_t)last_post);
-                }
-            } else {
-                serial_write(" (incomplete -- prior boot did not finish)\n");
-                {
-                    extern void vpd_crash_banner(uint16_t);
-                    vpd_crash_banner((uint16_t)last_post);
-                }
-            }
+            extern void vpd_crash_banner(uint16_t);
+            if (last_post == (int)POST16_BOOT_OK)
+                serial_write("[BOOT] Last boot succeeded\n");
+            else
+                serial_write("[BOOT] Last boot failed\n");
+            vpd_crash_banner((uint16_t)last_post);
         }
         boot_progress(0, "post-code-log", 0x11);
     }
@@ -205,6 +197,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE0] complete -- serial, memory, klog, CPUID, SIMD ready");
+
+    /* NVRAM write: Phase 0 complete (0x0091 = SIMD_OK) */
+    boot_post_nvram_write16(POST16_SIMD_OK);
 }
 
 /* ---- Legacy wrapper (until main.c switches to boot_phase0) -------------- */

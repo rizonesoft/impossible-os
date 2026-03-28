@@ -196,7 +196,9 @@ On crash-restart, display exactly where the previous boot failed — always acti
 - [x] Banner auto-clears when splash composites over it
 - [x] Commit: `"boot: NVRAM crash persistence — 'Last boot failed at' display"`
 
-## 9. Tier 2: Splash-Integrated Progress
+## 9. Tier 2: Splash-Integrated Progress *(deferred)*
+> [!NOTE] Deferred — the current Tier 1 VPD is a developer diagnostic screen (`postbars=on`). Tier 2 is end-user facing and should be designed after the splash UX is finalized. Revisit when boot reliability is proven on bare metal.
+
 When `postbars=1`, the boot splash status text area shows VPD-style named stages with timing instead of generic "Setting up interrupts..." text.
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/vpd.c`
