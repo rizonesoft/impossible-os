@@ -136,6 +136,26 @@ static void vpd_putu32_scaled(uint32_t x, uint32_t y, uint32_t val,
     }
 }
 
+/* Render right-aligned timing: "  NNNms" with ms suffix at fixed position */
+static void vpd_render_timing(uint32_t y, uint32_t ms)
+{
+    uint32_t v = ms, digits = 0;
+    if (v == 0) digits = 1;
+    while (v > 0) { digits++; v /= 10; }
+    /* Right-align: number ends just before VPD_MS_X */
+    uint32_t tx = VPD_MS_X - digits * VPD_CHAR_W;
+    vpd_putu32_scaled(tx, y, ms, VPD_COLOR_PENDING);
+    vpd_puts_scaled(VPD_MS_X, y, "ms", VPD_COLOR_PENDING);
+}
+
+/* Phase heading names */
+static const char *s_phase_names[] = {
+    "PHASE 0",
+    "PHASE 1",
+    "PHASE 2",
+    "PHASE 3",
+};
+
 /* ---- Public API ---------------------------------------------------------- */
 
 void vpd_init(void)
@@ -165,29 +185,25 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
         vpd_fill_rect(VPD_LEFT_MARGIN, s_last_row_y,
                        VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_DONE);
 
-        /* Render elapsed time if TSC is available */
         if (g_boot_info.timing.tsc_freq > 0 && s_stage_tsc > 0) {
             uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
             uint32_t ms = (uint32_t)(elapsed_tsc * 1000 /
                                       g_boot_info.timing.tsc_freq);
-            /* Right-align number: count digits, position so "ms" is at VPD_MS_X */
-            {
-                uint32_t v = ms, digits = 0;
-                if (v == 0) digits = 1;
-                while (v > 0) { digits++; v /= 10; }
-                uint32_t tx = VPD_MS_X - digits * VPD_CHAR_W;
-                vpd_putu32_scaled(tx, s_last_row_y, ms, VPD_COLOR_PENDING);
-                vpd_puts_scaled(VPD_MS_X, s_last_row_y, "ms", VPD_COLOR_PENDING);
-            }
+            vpd_render_timing(s_last_row_y, ms);
         }
     }
 
-    /* Phase separator */
+    /* Phase heading + separator when phase changes */
     if (s_last_phase != 0xFF && phase != s_last_phase) {
         vpd_fill_rect(VPD_LEFT_MARGIN, s_row,
                        VPD_SEPARATOR_W, VPD_SEPARATOR_H,
                        VPD_COLOR_SEPARATOR);
-        s_row += VPD_SEPARATOR_H + 3;
+        s_row += VPD_SEPARATOR_H + 2;
+    }
+    if (phase != s_last_phase && phase < 4) {
+        vpd_puts_scaled(VPD_LEFT_MARGIN, s_row, s_phase_names[phase],
+                         VPD_COLOR_SEPARATOR);
+        s_row += VPD_ROW_HEIGHT;
     }
     s_last_phase = phase;
 
@@ -228,15 +244,7 @@ void vpd_stage_done(void)
         uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
         uint32_t ms = (uint32_t)(elapsed_tsc * 1000 /
                                   g_boot_info.timing.tsc_freq);
-        uint32_t tx = VPD_SEPARATOR_W - 80;
-        vpd_putu32_scaled(tx, s_last_row_y, ms, VPD_COLOR_PENDING);
-        {
-            uint32_t v = ms, digits = 0;
-            if (v == 0) digits = 1;
-            while (v > 0) { digits++; v /= 10; }
-            vpd_puts_scaled(tx + digits * VPD_CELL_W * VPD_SCALE,
-                             s_last_row_y, "ms", VPD_COLOR_PENDING);
-        }
+        vpd_render_timing(s_last_row_y, ms);
     }
 
     s_has_current = 0;
