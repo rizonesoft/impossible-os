@@ -179,18 +179,19 @@
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | PrtSc → full-screen PNG capture + clipboard | ✅ PrtSc copies to clipboard; Win+PrtSc saves to Pictures | ✅ GNOME screenshot / flameshot | ⬜ Planned — §1; `fb_get_backbuffer` + `image_save_png` + `clipboard_set` |
-| 💎 | Alt+PrtSc → active window capture | ✅ Alt+PrtSc copies window to clipboard | ✅ GNOME screenshot | ⬜ Planned — §1; `wm_get_focused` + `wm_get_window_rect` crop |
-| ⭐ | Win+Shift+S → rubber-band region with clear-region dim overlay | ✅ Snipping Tool (Win+Shift+S) | ✅ flameshot / gnome-screenshot --area | ⬜ Planned — §2; z_order=32767 overlay, clear-region blit + dim composite |
-| 💎 | Snipping Tool with mode/delay selector + annotation | ✅ Snipping Tool (full app) | ✅ flameshot (annotate) | ⬜ Planned — §3; mode/delay, pen/highlighter strokes, crop, undo |
-| ⭐ | Post-capture floating toolbar (Copy/Save/Annotate/Edit) | ✅ Snipping Tool post-capture bar | ⚠️ flameshot (basic) | ⬜ Planned — §2; auto-dismiss 5 s panel with "Edit in Photos" + "Annotate" launch |
-| 💎 | ZIP browser — list Name/Type/Size/Compressed/Modified | ✅ Explorer (built-in ZIP shell extension) | ✅ GNOME Archive Manager / Ark | ⬜ Planned — §4; `zip_list` + `CTRL_LISTVIEW` with icon per extension |
-| 💎 | Extract All with progress dialog | ✅ Explorer extract wizard | ✅ Ark / file-roller | ⬜ Planned — §4; `zip_extract` + `CTRL_PROGRESSBAR` modal + toast |
-| 💎 | Create new ZIP / Add Files | ✅ Right-click → Send to Compressed folder | ✅ Ark / file-roller | ⬜ Planned — §4 §5; `zip_create` + `zip_add_file` |
-| 💎 | "Extract Here" / "Send to Compressed" context verbs | ✅ Explorer shell extension built-in | ✅ Nautilus / Dolphin | ⬜ Planned — §5; `context_menu_register_verb` for `.zip` and `*` |
-| 💎 | `.tar.gz` read support (stretch) | ✅ Explorer (via third-party or WSL) | ✅ tar built-in | ⬜ Planned (Stretch) — §5; gzip header detection + 512-byte tar block parser |
+
+| ⭐ | Feature                                                        | Win11                                      | Linux                                  | Impossible OS                                                    |
+|----|----------------------------------------------------------------|--------------------------------------------|----------------------------------------|------------------------------------------------------------------|
+| 💎 | PrtSc → full-screen PNG capture + clipboard                    | ✅ PrtSc copies to clipboard; Win+PrtSc    | ✅ GNOME screenshot / flameshot        | ⬜ §1 — `fb_get_backbuffer` + `image_save_png` + `clipboard_set` |
+| 💎 | Alt+PrtSc → active window capture                              | ✅ Alt+PrtSc copies window to clipboard    | ✅ GNOME screenshot                    | ⬜ §1 — `wm_get_focused` + `wm_get_window_rect` crop             |
+| ⭐ | Win+Shift+S → rubber-band region with clear-region dim overlay | ✅ Snipping Tool (Win+Shift+S)             | ✅ flameshot / gnome-screenshot --area | ⬜ §2 — z_order=32767 overlay, clear-region blit +               |
+| 💎 | Snipping Tool with mode/delay selector + annotation            | ✅ Snipping Tool (full app)                | ✅ flameshot (annotate)                | ⬜ §3 — mode/delay, pen/highlighter strokes, crop, undo          |
+| ⭐ | Post-capture floating toolbar                                  | ✅ Snipping Tool post-capture bar          | ⚠️ flameshot (basic)                   | ⬜ §2 — auto-dismiss 5 s panel with                              |
+| 💎 | ZIP browser                                                    | ✅ Explorer (built-in ZIP shell extension) | ✅ GNOME Archive Manager / Ark         | ⬜ §4 — `zip_list` + `CTRL_LISTVIEW` with icon                   |
+| 💎 | Extract All with progress dialog                               | ✅ Explorer extract wizard                 | ✅ Ark / file-roller                   | ⬜ §4 — `zip_extract` + `CTRL_PROGRESSBAR` modal +               |
+| 💎 | Create new ZIP / Add Files                                     | ✅ Right-click → Send to Compressed        | ✅ Ark / file-roller                   | ⬜ §4 — §5; `zip_create` + `zip_add_file`                        |
+| 💎 | "Extract Here" / "Send to Compressed" context verbs            | ✅ Explorer shell extension built-in       | ✅ Nautilus / Dolphin                  | ⬜ §5 — `context_menu_register_verb` for `.zip` and `*`          |
+| 💎 | `.tar.gz` read support                                         | ✅ Explorer (via third-party or WSL)       | ✅ tar built-in                        | ⬜ §5 — (Stretch) — ; gzip header                                |
 
 Impossible OS bundles the post-capture annotation toolbar as an intrinsic part of the
 screenshot flow — capturing, copying to clipboard, toasting, and offering instant annotation

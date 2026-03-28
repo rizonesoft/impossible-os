@@ -205,21 +205,22 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 
 ## OS Comparison
 
-| ⭐  | Feature                                  | 🪟 Windows NT / 11                          | 🐧 Linux                                      | 🚀 Impossible OS                              |
-| --- | ---------------------------------------- | ---------------------------------------------| --------------------------------------------- | ---------------------------------------------- |
-| 💎  | Typed object header with refcount        | ✅ OBJECT_HEADER (non-paged pool)           | ✅ `kobject` + `kref`                         | ⬜ Planned — §1                               |
-| 💎  | Object type descriptors with hooks       | ✅ OBJECT_TYPE (CreateProc, DeleteProc)     | ✅ `kobj_type` (release, sysfs_ops)           | ⬜ Planned — §1                               |
-| 💎  | Automatic deletion on zero refcount      | ✅ ObDereferenceObject → frees when 0       | ✅ `kref_put` → release callback              | ⬜ Planned — §2                               |
-| 💎  | Per-process handle table                 | ✅ `HANDLE_TABLE` in kernel EPROCESS        | ✅ `struct files_struct` fd table             | ⬜ Planned — §3                               |
-| 💎  | Named kernel object namespace            | ✅ `\BaseNamedObjects\`, `\Device\`         | ✅ `/proc`, `/sys`, tmpfs named objects       | ⬜ Planned — §4                               |
-| 💎  | File objects in handle table             | ✅ FILE_OBJECT with ObXxx routing           | ✅ `struct file` in fd table                  | ⬜ Planned — §5                               |
-| 💎  | Process/thread objects with handles      | ✅ EPROCESS / ETHREAD — ObXxx managed       | ✅ `struct task_struct` with `/proc/<pid>`    | ⬜ Planned — §5                               |
-| 💎  | Named sync objects (events, mutexes)     | ✅ `\BaseNamedObjects\<name>`               | ✅ POSIX named semaphores in `/dev/shm`       | ⬜ Planned — §6                               |
-| 💎  | Section / memory-mapped file objects     | ✅ SECTION_OBJECT via ObXxx                 | ✅ `struct file` backing anonymous mmap       | ⬜ Planned — §7                               |
-| 💎  | Security descriptors on objects          | ✅ DACL/SACL on every named object          | ✅ inode permissions / POSIX ACLs             | ⬜ Planned — §8                               |
-| 💎  | NtDuplicateObject / handle inherit       | ✅ Full inherit + duplicate semantics       | ✅ `dup()`/`dup2()` + `O_CLOEXEC`             | ⬜ Planned — §9, §10                          |
-| ⭐  | Public namespace browser API             | ❌ Internal only (NtQueryDirectoryObject)   | ❌ No unified namespace API                   | ⬜ **Planned — §11 — public, documented**     |
-| ⭐  | Unified type system across all resources | ⚠️ Not all resources use ObXxx (e.g. IRPs)  | ❌ fd table and kobject are separate systems  | ⬜ **Planned — §1–§7 — one header for all**   |
+
+| ⭐ | Feature                                  | Win11                                     | Linux                                      | Impossible OS                 |
+|----|------------------------------------------|-------------------------------------------|--------------------------------------------|-------------------------------|
+| 💎 | Typed object header with refcount        | ✅ OBJECT_HEADER (non-paged pool)         | ✅ `kobject` + `kref`                      | ⬜ §1                         |
+| 💎 | Object type descriptors with hooks       | ✅ OBJECT_TYPE (CreateProc, DeleteProc)   | ✅ `kobj_type` (release, sysfs_ops)        | ⬜ §1                         |
+| 💎 | Automatic deletion on zero refcount      | ✅ ObDereferenceObject → frees when 0     | ✅ `kref_put` → release callback           | ⬜ §2                         |
+| 💎 | Per-process handle table                 | ✅ `HANDLE_TABLE` in kernel EPROCESS      | ✅ `struct files_struct` fd table          | ⬜ §3                         |
+| 💎 | Named kernel object namespace            | ✅ `\BaseNamedObjects\`, `\Device\`       | ✅ `/proc`, `/sys`, tmpfs named objects    | ⬜ §4                         |
+| 💎 | File objects in handle table             | ✅ FILE_OBJECT with ObXxx routing         | ✅ `struct file` in fd table               | ⬜ §5                         |
+| 💎 | Process/thread objects with handles      | ✅ EPROCESS / ETHREAD — ObXxx             | ✅ `struct task_struct` with `/proc/<pid>` | ⬜ §5                         |
+| 💎 | Named sync objects                       | ✅ `\BaseNamedObjects\<name>`             | ✅ POSIX named semaphores in `/dev/shm`    | ⬜ §6                         |
+| 💎 | Section / memory-mapped file objects     | ✅ SECTION_OBJECT via ObXxx               | ✅ `struct file` backing anonymous mmap    | ⬜ §7                         |
+| 💎 | Security descriptors on objects          | ✅ DACL/SACL on every named object        | ✅ inode permissions / POSIX ACLs          | ⬜ §8                         |
+| 💎 | NtDuplicateObject / handle inherit       | ✅ Full inherit + duplicate semantics     | ✅ `dup()`/`dup2()` + `O_CLOEXEC`          | ⬜ §9 — , §10                 |
+| ⭐ | Public namespace browser API             | ❌ Internal only (NtQueryDirectoryObject) | ❌ No unified namespace API                | ⬜ §11 — public, documented   |
+| ⭐ | Unified type system across all resources | ⚠️ Not all resources use ObXxx            | ❌ fd table and kobject are                | ⬜ §1–§7 — one header for all |
 
 > **After §1–§10:** Impossible OS achieves full parity with Windows NT object management and exceeds Linux's split fd/kobject model with a single unified type system.
 > **§11** makes the Ob namespace a public, documented API — something neither Windows nor Linux offer — enabling user-mode tools to browse every kernel resource in one place.

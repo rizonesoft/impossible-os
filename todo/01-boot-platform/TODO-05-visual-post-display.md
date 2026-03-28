@@ -218,15 +218,16 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 
 ## OS Comparison
 
-| ⭐  | Feature                                        | 🪟 Windows 11                                   | 🐧 Linux                                        | 🚀 Impossible OS                                            |
-| --- | ---------------------------------------------- | ------------------------------------------------ | ----------------------------------------------- | ------------------------------------------------------------ |
-| 💎  | Boot progress visualization                    | ✅ Spinning dots under logo                      | ✅ Plymouth splash + text mode fallback          | ⬜ Planned — §2 + §7; two-tier VPD with Tier 1 raw + Tier 2 splash |
-| ⭐  | Pre-splash diagnostics (before display driver) | ❌ Black screen until bootmgr logo               | ⚠️ fbcon text mode (if compiled in)              | ⬜ **Planned — §1 + §2; embedded micro-font renders named stages before any kernel subsystem exists** |
-| 💎  | Boot stage timing                              | ⚠️ Event Tracing (ETW); not visible during boot  | ✅ `systemd-analyze blame` (post-boot only)      | ⬜ Planned — §4; live TSC-derived ms on every stage during boot |
-| ⭐  | NVRAM crash-restart display                    | ⚠️ "Your PC ran into a problem" (no detail)      | ❌ No NVRAM persistence; relies on journal/pstore | ⬜ **Planned — §6; "Last boot failed at: STAGE (0xNN)" — always visible, zero config** |
-| 💎  | POST code display                              | ✅ BIOS/UEFI POST on motherboard LED             | ❌ Not an OS feature                             | ✅ Done — TODO-02 §3; hex code in framebuffer corner + I/O 0x80 |
-| 💎  | Configurable boot diagnostics                  | ✅ `bcdedit /set bootlog yes`                    | ✅ `systemd.log_level=debug` kernel param        | ⬜ Planned — §3; `postbars=off/on/diag` in boot.conf |
-| ⭐  | Panic-aware boot progress                      | ❌ BSOD has no boot progress context             | ❌ Kernel oops has no boot stage context          | ⬜ **Planned — §11; panic screen shows which boot stage failed with full timing history** |
+
+| ⭐ | Feature                       | Win11                                | Linux                                       | Impossible OS                                         |
+|----|-------------------------------|--------------------------------------|---------------------------------------------|-------------------------------------------------------|
+| 💎 | Boot progress visualization   | ✅ Spinning dots under logo          | ✅ Plymouth splash + text mode              | ⬜ §2 + §7 — two-tier VPD with Tier 1                 |
+| ⭐ | Pre-splash diagnostics        | ❌ Black screen until bootmgr logo   | ⚠️ fbcon text mode (if compiled             | ⬜ §1 + §2 — embedded micro-font renders named stages |
+| 💎 | Boot stage timing             | ⚠️ Event Tracing (ETW); not visible  | ✅ `systemd-analyze blame` (post-boot only) | ⬜ §4 — live TSC-derived ms on every                  |
+| ⭐ | NVRAM crash-restart display   | ⚠️ "Your PC ran into a               | ❌ No NVRAM persistence; relies on          | ⬜ §6 — "Last boot failed at: STAGE                   |
+| 💎 | POST code display             | ✅ BIOS/UEFI POST on motherboard LED | ❌ Not an OS feature                        | ✅ §3 — Done — TODO-02 ; hex                          |
+| 💎 | Configurable boot diagnostics | ✅ `bcdedit /set bootlog yes`        | ✅ `systemd.log_level=debug` kernel param   | ⬜ §3 — `postbars=off/on/diag` in boot.conf           |
+| ⭐ | Panic-aware boot progress     | ❌ BSOD has no boot progress         | ❌ Kernel oops has no boot                  | ⬜ §11 — panic screen shows which boot                |
 
 > **After §1–§11:** Impossible OS has the most informative boot diagnostic display of any operating system — real-time named stages with millisecond timing visible from the first instruction, NVRAM-persisted crash forensics shown on restart without configuration, and seamless integration into a polished splash screen. No serial cable. No debug tools. Just boot and see everything.
 

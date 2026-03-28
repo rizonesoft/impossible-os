@@ -260,14 +260,15 @@ compositor to 4K 120 Hz.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | GPU-accelerated compositor (DWM / Mutter) | ✅ DWM (DirectCompose; D3D11; GPU flip model; Mica/Acrylic GPU blur) | ✅ Mutter/KWin (OpenGL/Vulkan; KMS; GPU planes; GPU blur) | ⬜ Planned — §5; VirtIO-GPU Phase 1; DMA flip via `display_plane_ops_t` |
-| 💎 | CPU Vulkan (no GPU hardware required) | ✅ WARPDevice (D3D12 software rasterizer) | ✅ Mesa lavapipe (CPU Vulkan 1.3) | ⬜ Planned — §2; Mesa softpipe Phase 2; lavapipe Phase 3 |
-| 💎 | Kernel-mode GPU memory + fence API | ✅ D3DKMT / `dxgkrnl.sys` (`SYS_*` GPU submit via DXGI) | ✅ DRM GEM/TTM + syncobj fences | ⬜ Planned — §4; `SYS_GPU_MAP/SUBMIT/WAIT/QUERY`; GPU fence waitqueue |
-| 💎 | DRM/KMS-style display plane abstraction | ✅ Windows DDI (DXGK display miniport; WDDM planes) | ✅ Linux DRM atomic KMS (CRTC + planes + connectors) | ⬜ Planned — §1 §5; `display_plane_ops_t` vtable; VirtIO-GPU + bare-metal backends |
-| 💎 | DirectX / Vulkan on GPU (bare-metal) | ✅ WDDM 3.x; D3D12; Vulkan via Vulkan SDK | ✅ Mesa AMDGPU/RADV/ANV; AMDKFD; i915/xe kernel | ⬜ Planned — §3 §4; blocked by IOMMU + PCIe driver; Phase 3 |
-| ⭐ | Zero-CPU-copy 4K 120 Hz compositor target | ✅ Windows 11 DWM: GPU flip model, no CPU blit | ✅ KWin/Mutter: DRM page-flip, atomic commit | ⬜ Planned — §5; VirtIO-GPU `RESOURCE_FLUSH` DMA flip; 4K 120 Hz target in §5 perf table |
+
+| ⭐ | Feature                                   | Win11                                     | Linux                                           | Impossible OS                                                |
+|----|-------------------------------------------|-------------------------------------------|-------------------------------------------------|--------------------------------------------------------------|
+| 💎 | GPU-accelerated compositor                | ✅ DWM (DirectCompose; D3D11; GPU flip    | ✅ Mutter/KWin (OpenGL/Vulkan; KMS; GPU planes; | ⬜ §5 — VirtIO-GPU Phase 1; DMA flip                         |
+| 💎 | CPU Vulkan                                | ✅ WARPDevice (D3D12 software rasterizer) | ✅ Mesa lavapipe (CPU Vulkan 1.3)               | ⬜ §2 — Mesa softpipe Phase 2; lavapipe                      |
+| 💎 | Kernel-mode GPU memory + fence API        | ✅ D3DKMT / `dxgkrnl.sys` (`SYS_*` GPU    | ✅ DRM GEM/TTM + syncobj fences                 | ⬜ §4 — `SYS_GPU_MAP/SUBMIT/WAIT/QUERY`; GPU fence waitqueue |
+| 💎 | DRM/KMS-style display plane abstraction   | ✅ Windows DDI (DXGK display miniport;    | ✅ Linux DRM atomic KMS (CRTC                   | ⬜ §1 — §5; `display_plane_ops_t` vtable; VirtIO-GPU +       |
+| 💎 | DirectX / Vulkan on GPU                   | ✅ WDDM 3.x; D3D12; Vulkan via            | ✅ Mesa AMDGPU/RADV/ANV; AMDKFD; i915/xe kernel | ⬜ §3 — §4; blocked by IOMMU +                               |
+| ⭐ | Zero-CPU-copy 4K 120 Hz compositor target | ✅ Windows 11 DWM: GPU flip               | ✅ KWin/Mutter: DRM page-flip, atomic commit    | ⬜ §5 — VirtIO-GPU `RESOURCE_FLUSH` DMA flip; 4K             |
 
 Impossible OS's `⭐` advantage: the `display_plane_ops_t` abstraction layer means VirtIO-GPU
 in QEMU and bare-metal AMD/Intel share the same compositor call path from day one —

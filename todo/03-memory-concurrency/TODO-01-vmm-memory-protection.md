@@ -219,18 +219,19 @@ Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mapping
 
 ## OS Comparison
 
-| ⭐  | Feature                                           | 🪟 Windows NT / 11                                      | 🐧 Linux                                                  | 🚀 Impossible OS                                              |
-| --- | ------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------- |
-| 💎  | `VirtualProtect` / `mprotect` + guard pages       | ✅ `VirtualProtect`; guard page per thread stack        | ✅ `mprotect(2)`; guard via `sigaltstack` + `SIGSEGV`     | ⬜ Planned — §1; `vmm_protect()` + PROT_NONE page per stack  |
-| 💎  | W^X enforcement on all mappings                   | ⚠️ DEP (NX) enforced; `PAGE_EXECUTE_READWRITE` allowed  | ✅ NX enforced; `READ_IMPLIES_EXEC` deprecated            | ⬜ Planned — §2; **hard reject** at PTE update, no bypass     |
-| 💎  | MEM_RESERVE / MEM_COMMIT demand paging            | ✅ Core Win32 contract; `VirtualAlloc(MEM_RESERVE)`     | ✅ Overcommit + anonymous zero-fill on first access       | ⬜ Planned — §3; VMM region states + zero-fill fault handler  |
-| 💎  | `NtQueryVirtualMemory` / `/proc/maps`             | ✅ `VirtualQuery` → `MEMORY_BASIC_INFORMATION`          | ✅ `/proc/self/maps` text dump of VMAs                    | ⬜ Planned — §4; `NtQueryVirtualMemory` structured query      |
-| 💎  | `VirtualAlloc` / `VirtualFree` Win32 API          | ✅ Native Win32 memory management surface               | ✅ `mmap(2)` / `munmap(2)` POSIX equivalent               | ⬜ Planned — §5; Win32 shim → `NtAllocateVirtualMemory`       |
-| ⭐  | Build-time allocator lint (fail on bare call)     | ❌ Driver Verifier is runtime only                      | ❌ `sparse`/`smatch` external; no build-fail on bare alloc| ⬜ Planned — §7; **build fails** on unannotated `kmalloc`     |
-| 💎  | PMM / physical memory statistics                  | ✅ `!poolused` (WinDbg), Task Manager                   | ✅ `/proc/meminfo`, `free(1)`                             | ⬜ Planned — §8; `mm_stats_t` + `meminfo` shell command       |
-| 💎  | Heap canaries + double-free detection             | ✅ Debug heap (user-mode); kernel via Driver Verifier   | ✅ SLUB debug allocator (`CONFIG_SLUB_DEBUG`)             | ⬜ Planned — §9; tail canary on every `kmalloc` block         |
-| 💎  | Kernel memory leak detector                       | ✅ Driver Verifier LEAK tracking                        | ✅ `kmemleak` kernel debug option                         | ⬜ Planned — §10; allocation table, `memleak` shell command   |
-| 💎  | UC MMIO mapping (`MmMapIoSpace` / `ioremap`)     | ✅ `MmMapIoSpace` with cache type                       | ✅ `ioremap()` / `ioremap_uc()` for device registers      | ⬜ Planned — §11; `vmm_map_mmio()` + HPET quirk table        |
+
+| ⭐ | Feature                                     | Win11                                                  | Linux                                           | Impossible OS                                      |
+|----|---------------------------------------------|--------------------------------------------------------|-------------------------------------------------|----------------------------------------------------|
+| 💎 | `VirtualProtect` / `mprotect` + guard pages | ✅ `VirtualProtect`; guard page per thread             | ✅ `mprotect(2)`; guard via `sigaltstack` +     | ⬜ §1 — `vmm_protect()` + PROT_NONE page per       |
+| 💎 | W^X enforcement on all mappings             | ⚠️ DEP (NX) enforced; `PAGE_EXECUTE_READWRITE` allowed | ✅ NX enforced; `READ_IMPLIES_EXEC` deprecated  | ⬜ §2 — hard reject at PTE update,                 |
+| 💎 | MEM_RESERVE / MEM_COMMIT demand paging      | ✅ Core Win32 contract; `VirtualAlloc(MEM_RESERVE)`    | ✅ Overcommit + anonymous zero-fill on          | ⬜ §3 — VMM region states + zero-fill              |
+| 💎 | `NtQueryVirtualMemory` / `/proc/maps`       | ✅ `VirtualQuery` → `MEMORY_BASIC_INFORMATION`         | ✅ `/proc/self/maps` text dump of VMAs          | ⬜ §4 — `NtQueryVirtualMemory` structured query    |
+| 💎 | `VirtualAlloc` / `VirtualFree` Win32 API    | ✅ Native Win32 memory management surface              | ✅ `mmap(2)` / `munmap(2)` POSIX equivalent     | ⬜ §5 — Win32 shim → `NtAllocateVirtualMemory`     |
+| ⭐ | Build-time allocator lint                   | ❌ Driver Verifier is runtime only                     | ❌ `sparse`/`smatch` external; no build-fail on | ⬜ §7 — build fails on unannotated `kmalloc`       |
+| 💎 | PMM / physical memory statistics            | ✅ `!poolused` (WinDbg), Task Manager                  | ✅ `/proc/meminfo`, `free(1)`                   | ⬜ §8 — `mm_stats_t` + `meminfo` shell command     |
+| 💎 | Heap canaries + double-free detection       | ✅ Debug heap (user-mode); kernel via                  | ✅ SLUB debug allocator (`CONFIG_SLUB_DEBUG`)   | ⬜ §9 — tail canary on every `kmalloc`             |
+| 💎 | Kernel memory leak detector                 | ✅ Driver Verifier LEAK tracking                       | ✅ `kmemleak` kernel debug option               | ⬜ §10 — allocation table, `memleak` shell command |
+| 💎 | UC MMIO mapping                             | ✅ `MmMapIoSpace` with cache type                      | ✅ `ioremap()` / `ioremap_uc()` for device      | ⬜ §11 — `vmm_map_mmio()` + HPET quirk table       |
 
 > **After parity items:** Impossible OS matches Windows and Linux on VirtualProtect/mprotect, demand paging, VirtualAlloc, NtQueryVirtualMemory, PMM stats, heap canaries, and leak detection. The W^X enforcement is stronger than Windows — `PAGE_EXECUTE_READWRITE` is a hard kernel reject with no bypass path. The build-time kmalloc lint enforces correct allocator discipline at compile time rather than catching violations at runtime.
 

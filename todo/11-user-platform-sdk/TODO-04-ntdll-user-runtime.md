@@ -349,15 +349,16 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | User-mode heap (`RtlHeap` / `HeapAlloc`) | ✅ `ntdll!RtlAllocateHeap`; LFH + segment heap | ✅ glibc `malloc` (ptmalloc) | ⬜ Planned — §2; free-list best-fit with coalescing; `HEAP_ZERO_MEMORY` |
-| 💎 | PE DLL loader in user-mode ntdll (`LdrLoadDll`) | ✅ `ntdll!LdrLoadDll`; full PEB LDR chain | ❌ Not applicable (ELF native) | ⬜ Planned — §3; full PEB LDR list; recursive import resolution; DllMain |
-| 💎 | Thread-local storage (`TlsAlloc` + PE TLS callbacks) | ✅ Full TLS + `__declspec(thread)` | ✅ `pthread_key_create` + `__thread` | ⬜ Planned — §4; `TEB.TlsSlots[64]`, `TlsBitmapBits`, PE TLS callbacks, FLS |
-| 💎 | Vectored Exception Handling (VEH) | ✅ `AddVectoredExceptionHandler`; KiUserExceptionDispatcher | ✅ POSIX signals (`sigaction`) | ⬜ Planned — §5; VEH list → SEH fallback → UnhandledExceptionFilter crash dialog |
-| 💎 | Process CRT startup (static initializers + argc/argv) | ✅ `ntdll!LdrpInitialize`; `.ctors`/`atexit`; Win32 entry | ✅ glibc `__libc_start_main` | ⬜ Planned — §6; heap+Ldr+TLS init → `.ctors` walk → `main`/`WinMain` → `.dtors` |
-| 💎 | User-mode libc shims (`printf`, `malloc`, `fopen`) | ✅ `msvcrt.dll` / `ucrt.dll` | ✅ glibc | ⬜ Planned — §7; `libc.lib` thin wrappers over Win32 API |
-| ⭐ | Fiber API (`CreateFiber`/`SwitchToFiber`) | ✅ Windows fibers | ⚠️ `makecontext`/`swapcontext` (POSIX; deprecated in glibc) | ⬜ Planned — §8; `SwitchToFiber` NASM context switch; `ConvertThreadToFiber`; `TEB.FiberData` |
+
+| ⭐ | Feature                          | Win11                                                       | Linux                                                       | Impossible OS                                                       |
+|----|----------------------------------|-------------------------------------------------------------|-------------------------------------------------------------|---------------------------------------------------------------------|
+| 💎 | User-mode heap                   | ✅ `ntdll!RtlAllocateHeap`; LFH + segment heap              | ✅ glibc `malloc` (ptmalloc)                                | ⬜ §2 — free-list best-fit with coalescing; `HEAP_ZERO_MEMORY`      |
+| 💎 | PE DLL loader in user-mode ntdll | ✅ `ntdll!LdrLoadDll`; full PEB LDR chain                   | ❌ Not applicable (ELF native)                              | ⬜ §3 — full PEB LDR list; recursive                                |
+| 💎 | Thread-local storage             | ✅ Full TLS + `__declspec(thread)`                          | ✅ `pthread_key_create` + `__thread`                        | ⬜ §4 — `TEB.TlsSlots[64]`, `TlsBitmapBits`, PE TLS callbacks,      |
+| 💎 | Vectored Exception Handling      | ✅ `AddVectoredExceptionHandler`; KiUserExceptionDispatcher | ✅ POSIX signals (`sigaction`)                              | ⬜ §5 — VEH list → SEH fallback                                     |
+| 💎 | Process CRT startup              | ✅ `ntdll!LdrpInitialize`; `.ctors`/`atexit`; Win32 entry   | ✅ glibc `__libc_start_main`                                | ⬜ §6 — heap+Ldr+TLS init → `.ctors` walk                           |
+| 💎 | User-mode libc shims             | ✅ `msvcrt.dll` / `ucrt.dll`                                | ✅ glibc                                                    | ⬜ §7 — `libc.lib` thin wrappers over Win32                         |
+| ⭐ | Fiber API                        | ✅ Windows fibers                                           | ⚠️ `makecontext`/`swapcontext` (POSIX; deprecated in glibc) | ⬜ §8 — `SwitchToFiber` NASM context switch; `ConvertThreadToFiber` |
 
 Impossible OS `ntdll.dll` maps at a fixed VA (`0x7FF000000000`) with **zero import dependencies**
 and issues raw `SYSCALL` instructions for all `Nt*` functions — identical to Windows NT's design.

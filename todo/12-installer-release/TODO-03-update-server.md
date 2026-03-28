@@ -262,15 +262,16 @@ and Cloudflare R2 — no live server to maintain.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Update manifest API with channels (stable/beta/dev) | ✅ Windows Update; WUfB; WSUS; channel rings | ✅ APT/DNF repos; Flatpak remote; snap channels | ⬜ Planned — §1; static JSON on GitHub Pages; `?channel=` routing via CF Worker |
-| 💎 | Package repository with install/search/upgrade | ✅ MS Store; winget repo; Chocolatey | ✅ APT/DNF/pacman/AUR; Flathub | ⬜ Planned — §4; `index.json` on R2; `ipkg search/install/update/upgrade` |
-| ⭐ | Package CI submission pipeline (auto sign+install+uninstall test) | ✅ MS Store review (opaque); winget PR workflow | ✅ Debian NEW queue; AUR PRs; Flathub CI | ⬜ Planned — §5; GitHub PR + automated QEMU install/uninstall test; maintainer approval |
-| ⭐ | Update delta packages (file-level, 10–50× smaller) | ✅ Express updates (CBS differential); WUfB express | ✅ apt delta (binary xdelta); rpm-ostree OSTree | ⬜ Planned — §6; BLAKE2b-160 file diff; `make-delta.sh`; client delta-first with full fallback |
-| ⭐ | Opt-in telemetry → public Grafana dashboard | ⚠️ Windows: opt-out telemetry; non-public data | ✅ Ubuntu Popularity Contest (opt-in; public stats) | ⬜ Planned — §7; CF Worker + D1; `stats.impossible-os.dev` public; GDPR-first, EU-anon |
-| ⭐ | Transparent public status page with auto-incidents | ✅ `windowsupdate.microsoft.com/` — minimal | ✅ Varies (Canonical status.ubuntu.com, etc.) | ⬜ Planned — §8; GitHub Actions every 5 min; auto-issue + webhook; 90-day uptime history |
-| 💎 | Release promotion pipeline (dev→beta→stable) | ✅ Windows Insider rings; WUfB rings | ✅ Debian unstable→testing→stable; Fedora Rawhide | ⬜ Planned — §3; `promote-release.sh`; `rollback-release.sh`; sign-off checklist |
+
+| ⭐ | Feature                                            | Win11                                          | Linux                                             | Impossible OS                                                           |
+|----|----------------------------------------------------|------------------------------------------------|---------------------------------------------------|-------------------------------------------------------------------------|
+| 💎 | Update manifest API with channels                  | ✅ Windows Update; WUfB; WSUS; channel         | ✅ APT/DNF repos; Flatpak remote; snap            | ⬜ §1 — static JSON on GitHub Pages                                     |
+| 💎 | Package repository with install/search/upgrade     | ✅ MS Store; winget repo; Chocolatey           | ✅ APT/DNF/pacman/AUR; Flathub                    | ⬜ §4 — `index.json` on R2; `ipkg search/install/update/upgrade`        |
+| ⭐ | Package CI submission pipeline                     | ✅ MS Store review (opaque); winget            | ✅ Debian NEW queue; AUR PRs;                     | ⬜ §5 — GitHub PR + automated QEMU                                      |
+| ⭐ | Update delta packages                              | ✅ Express updates (CBS differential); WUfB    | ✅ apt delta (binary xdelta); rpm-ostree          | ⬜ §6 — BLAKE2b-160 file diff; `make-delta.sh`; client                  |
+| ⭐ | Opt-in telemetry → public Grafana dashboard        | ⚠️ Windows: opt-out telemetry; non-public data | ✅ Ubuntu Popularity Contest (opt-in; public      | ⬜ §7 — CF Worker + D1; `stats.impossible-os.dev`                       |
+| ⭐ | Transparent public status page with auto-incidents | ✅ `windowsupdate.microsoft.com/` — minimal    | ✅ Varies (Canonical status.ubuntu.com, etc.)     | ⬜ §8 — GitHub Actions every 5 min                                      |
+| 💎 | Release promotion pipeline                         | ✅ Windows Insider rings; WUfB rings           | ✅ Debian unstable→testing→stable; Fedora Rawhide | ⬜ §3 — `promote-release.sh`; `rollback-release.sh`; sign-off checklist |
 
 Impossible OS's `⭐` advantage: the entire update delivery chain — manifest, CDN, package
 repo, delta generation, telemetry, and status page — runs on free-tier GitHub Pages,

@@ -365,24 +365,25 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                                   | 🪟 Windows 11                          | 🐧 Linux / Bash                        | 🚀 Impossible OS                                  |
-| --- | ----------------------------------------- | -------------------------------------- | -------------------------------------- | ------------------------------------------------- |
-| 💎  | Per-process env var storage               | ✅ UTF-16 env block in PEB             | ✅ POSIX `environ[]` (UTF-8)           | ⬜ Planned — §1                                   |
-| 💎  | `%VAR%` / `$VAR` expansion                | ✅ `%VAR%` in cmd.exe                  | ✅ `$VAR` in bash                      | ⬜ Planned — §3 (`%VAR%` Win-style)               |
-| 💎  | System defaults from persistent store     | ✅ Registry `Session Manager\Env`      | ✅ `/etc/environment`                  | ⬜ Planned — §2 (Registry-backed)                 |
-| 💎  | argv / argc to child process              | ✅ command-line string → CRT parses    | ✅ `execve` argv[]                     | ⬜ Planned — §4 (System V ABI via TODO-04 §7)     |
-| 💎  | `NtSetEnvironmentVariable` syscall        | ✅ Native                              | ✅ `SYS_setenv` (glibc internal)       | ⬜ Planned — §5                                   |
-| 💎  | `GetEnvironmentVariable` Win32 API        | ✅ Full A/W                            | ⚠️ Via Wine only                       | ⬜ Planned — §6                                   |
-| 💎  | `ExpandEnvironmentStrings` Win32 API      | ✅ Full A/W                            | ⚠️ Via Wine only                       | ⬜ Planned — §6                                   |
-| 💎  | `GetCommandLine` Win32 API                | ✅ Full A/W                            | ⚠️ Via Wine only                       | ⬜ Planned — §6                                   |
-| 💎  | PATH-based command lookup                 | ✅ `PATHEXT` + `.exe` fallback         | ✅ POSIX PATH                          | ⬜ Planned — §7                                   |
-| 💎  | `SET` interactive shell command           | ✅ cmd.exe built-in                    | ✅ `export` / `env`                    | ⬜ Planned — §7                                   |
-| 💎  | Shell startup config (`.profile`)         | ✅ `HKCU\Environment` at logon         | ✅ `~/.profile` / `~/.bashrc`          | ⬜ Planned — §8                                   |
-| 💎  | Env change notification to running apps   | ✅ `WM_SETTINGCHANGE` broadcast        | ⚠️ `inotify` on `/etc/environment`    | ⬜ Planned — §9                                   |
-| 💎  | Persistent env var writer (`setx`)        | ✅ `setx.exe` built-in                 | ⚠️ Manual `.bashrc` edit               | ⬜ Planned — §9.3                                 |
-| ⭐  | System Properties Environment tab        | ✅ `sysdm.cpl` → Environment Variables | ❌ Not available (GNOME Settings)      | ⬜ Planned — §9.2                                 |
-| ⭐  | `SET /A` arithmetic expansion            | ✅ cmd.exe only                        | ✅ `$((expr))` bash                    | ⬜ Planned — §7.3                                 |
-| ⭐  | `source` / `.` command                   | ❌ Not in cmd.exe (PowerShell only)    | ✅ POSIX `.`                           | ⬜ **Planned — §8.3** 🚀                           |
+
+| ⭐ | Feature                                 | Win11                                  | Linux                              | Impossible OS                     |
+|----|-----------------------------------------|----------------------------------------|------------------------------------|-----------------------------------|
+| 💎 | Per-process env var storage             | ✅ UTF-16 env block in PEB             | ✅ POSIX `environ[]` (UTF-8)       | ⬜ §1                             |
+| 💎 | `%VAR%` / `$VAR` expansion              | ✅ `%VAR%` in cmd.exe                  | ✅ `$VAR` in bash                  | ⬜ §3 — (`%VAR%` Win-style)       |
+| 💎 | System defaults from persistent store   | ✅ Registry `Session Manager\Env`      | ✅ `/etc/environment`              | ⬜ §2 — (Registry-backed)         |
+| 💎 | argv / argc to child process            | ✅ command-line string → CRT parses    | ✅ `execve` argv[]                 | ⬜ §4 — (System V ABI via TODO-04 |
+| 💎 | `NtSetEnvironmentVariable` syscall      | ✅ Native                              | ✅ `SYS_setenv` (glibc internal)   | ⬜ §5                             |
+| 💎 | `GetEnvironmentVariable` Win32 API      | ✅ Full A/W                            | ⚠️ Via Wine only                   | ⬜ §6                             |
+| 💎 | `ExpandEnvironmentStrings` Win32 API    | ✅ Full A/W                            | ⚠️ Via Wine only                   | ⬜ §6                             |
+| 💎 | `GetCommandLine` Win32 API              | ✅ Full A/W                            | ⚠️ Via Wine only                   | ⬜ §6                             |
+| 💎 | PATH-based command lookup               | ✅ `PATHEXT` + `.exe` fallback         | ✅ POSIX PATH                      | ⬜ §7                             |
+| 💎 | `SET` interactive shell command         | ✅ cmd.exe built-in                    | ✅ `export` / `env`                | ⬜ §7                             |
+| 💎 | Shell startup config                    | ✅ `HKCU\Environment` at logon         | ✅ `~/.profile` / `~/.bashrc`      | ⬜ §8                             |
+| 💎 | Env change notification to running apps | ✅ `WM_SETTINGCHANGE` broadcast        | ⚠️ `inotify` on `/etc/environment` | ⬜ §9                             |
+| 💎 | Persistent env var writer               | ✅ `setx.exe` built-in                 | ⚠️ Manual `.bashrc` edit           | ⬜ §9 — .3                        |
+| ⭐ | System Properties Environment tab       | ✅ `sysdm.cpl` → Environment Variables | ❌ Not available (GNOME Settings)  | ⬜ §9 — .2                        |
+| ⭐ | `SET /A` arithmetic expansion           | ✅ cmd.exe only                        | ✅ `$((expr))` bash                | ⬜ §7 — .3                        |
+| ⭐ | `source` / `.` command                  | ❌ Not in cmd.exe (PowerShell only)    | ✅ POSIX `.`                       | ⬜ §8 — .3 🚀                     |
 
 After §1–8, Impossible OS reaches full Windows 11 and Linux parity for every environment variable feature: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` /
 `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.

@@ -170,16 +170,17 @@ Surface live per-SLAB-cache statistics through the VFS so diagnostic tools and t
 
 ## OS Comparison
 
-| ⭐  | Feature                                          | 🪟 Windows NT / 11                                       | 🐧 Linux                                                    | 🚀 Impossible OS                                                   |
-| --- | ------------------------------------------------ | -------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
-| 💎  | Object caches with per-CPU free list             | ✅ Look-aside lists (`ExInitializeNPagedLookasideList`)  | ✅ SLUB allocator with per-CPU slabs                        | ⬜ Planned — §1; `slab_cache_t` + per-CPU hot path                 |
-| 💎  | SLAB page release under memory pressure          | ✅ Lookaside lists trimmed by Memory Manager             | ✅ SLUB shrinker + `kmem_cache_shrink`                      | ⬜ Planned — §2; `slab_cache_reap` on `MM_PRESSURE_HIGH`           |
-| 💎  | Virtual contiguous allocator                     | ✅ `MmAllocateMappingAddress` / `MmProbeAndLockPages`    | ✅ `vmalloc` / `vfree` with rb-tree VMA tracker             | ⬜ Planned — §3; sorted interval-list zone, scattered PMM frames   |
-| 💎  | Growable kernel heap                             | ✅ NonPagedPool grows automatically from free pages      | ✅ `kmalloc` backed by SLUB; grows with `slab_alloc_node`   | ⬜ Planned — §4; 256 KiB segments; 16 MiB max                      |
-| 💎  | Tagged pool allocation                           | ✅ `ExAllocatePoolWithTag` — 4-byte tag on every alloc   | ⚠️ `kmemleak` annotations; no mandatory tag                | ⬜ Planned — §5; `kmalloc_tag` / `kfree_tag`, tag-mismatch panic   |
-| 💎  | NonPagedPool / PagedPool pool classes            | ✅ Core NT contract; IRQL-aware dispatch                 | ⚠️ `GFP_KERNEL` vs `GFP_ATOMIC` flags; not named the same  | ⬜ Planned — §6; explicit `kmalloc_nonpaged` / `kmalloc_paged` API  |
-| 💎  | Memory pressure notifications                    | ✅ `CreateMemoryResourceNotification` event              | ✅ Shrinker callbacks + OOM notifier chain                  | ⬜ Planned — §7; 4-level thresholds, 1 Hz poll, callback table     |
-| 💎  | Live per-cache allocator stats                   | ✅ `!poolused`, `!slab` (WinDbg); Poolmon.exe            | ✅ `/proc/slabinfo`; `slabtop` tool                         | ⬜ Planned — §8; `/sys/slab` + `/sys/pooltags`, `slab` shell cmd   |
+
+| ⭐ | Feature                                 | Win11                                                   | Linux                                       | Impossible OS                                             |
+|----|-----------------------------------------|---------------------------------------------------------|---------------------------------------------|-----------------------------------------------------------|
+| 💎 | Object caches with per-CPU free list    | ✅ Look-aside lists (`ExInitializeNPagedLookasideList`) | ✅ SLUB allocator with per-CPU slabs        | ⬜ §1 — `slab_cache_t` + per-CPU hot path                 |
+| 💎 | SLAB page release under memory pressure | ✅ Lookaside lists trimmed by Memory                    | ✅ SLUB shrinker + `kmem_cache_shrink`      | ⬜ §2 — `slab_cache_reap` on `MM_PRESSURE_HIGH`           |
+| 💎 | Virtual contiguous allocator            | ✅ `MmAllocateMappingAddress` / `MmProbeAndLockPages`   | ✅ `vmalloc` / `vfree` with rb-tree         | ⬜ §3 — sorted interval-list zone, scattered PMM          |
+| 💎 | Growable kernel heap                    | ✅ NonPagedPool grows automatically from free           | ✅ `kmalloc` backed by SLUB; grows          | ⬜ §4 — 256 KiB segments; 16 MiB                          |
+| 💎 | Tagged pool allocation                  | ✅ `ExAllocatePoolWithTag` — 4-byte tag on              | ⚠️ `kmemleak` annotations; no mandatory tag | ⬜ §5 — `kmalloc_tag` / `kfree_tag`, tag-mismatch panic   |
+| 💎 | NonPagedPool / PagedPool pool classes   | ✅ Core NT contract; IRQL-aware dispatch                | ⚠️ `GFP_KERNEL` vs `GFP_ATOMIC` flags; not  | ⬜ §6 — explicit `kmalloc_nonpaged` / `kmalloc_paged` API |
+| 💎 | Memory pressure notifications           | ✅ `CreateMemoryResourceNotification` event             | ✅ Shrinker callbacks + OOM notifier        | ⬜ §7 — 4-level thresholds, 1 Hz poll,                    |
+| 💎 | Live per-cache allocator stats          | ✅ `!poolused`, `!slab` (WinDbg); Poolmon.exe           | ✅ `/proc/slabinfo`; `slabtop` tool         | ⬜ §8 — `/sys/slab` + `/sys/pooltags`, `slab` shell       |
 
 > **After parity items:** Impossible OS matches Windows and Linux on all eight allocator tiers. The per-CPU SLAB fast path is architecturally equivalent to SLUB and look-aside lists without the complexity of either. The tagged allocation model is a strict superset of `ExAllocatePoolWithTag` — tag mismatches panic at `kfree` time rather than being silently lost, making allocator bugs visible immediately in development.
 

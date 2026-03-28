@@ -308,16 +308,17 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | SDK distribution (headers + libs + tools ZIP) | ✅ Windows SDK installer (GB-size); WinGet | ✅ `apt install build-essential`; distro packages | ⬜ Planned — §1; single-ZIP `impossible-os-sdk-{ver}.zip` with SHA-256; `make sdk` target |
-| ⭐ | Doc-comment → Markdown API reference (`gendoc`) | ✅ MSDN auto-generated; WinRT metadata | ✅ Doxygen; kernel-doc | ⬜ Planned — §2; `tools/gendoc.c` extracts `/** */` from SDK headers → Markdown per-header |
-| 💎 | Code samples (console, window, file, networking) | ✅ MSDN samples; `winui3gallery.exe` | ✅ Linux kernel samples; GTK demos | ⬜ Planned — §3; 7 samples each with Makefile + expected output; all compile with `tcc.exe` |
-| ⭐ | 1000 Hz PIT sampling profiler (`profile` command) | ✅ VTune; ETW/xperf; WPR/WPA | ✅ `perf stat`/`perf record`; gprof | ⬜ Planned — §4; PIT hook records RIP per-task; flat profile top-20 with `%`; `SYS_PROFILER_START/STOP=78/79` |
-| ⭐ | Single-header test framework (`itest.h`) | ✅ Google Test; CTest | ✅ CUnit; Unity; `make check` | ⬜ Planned — §5; `ITEST_SUITE`/`ITEST_CASE`/`ITEST_ASSERT_EQ`; linker section auto-registration; `itest` shell command |
-| 💎 | Debugger call-stack display + disassembler | ✅ WinDbg; Visual Studio debugger | ✅ GDB; LLDB; `addr2line` | ⬜ Planned — §6; `.pdata` unwind + frame-pointer fallback; minimal x86-64 disassembler (~600 lines); `debugger disasm` |
-| ⭐ | IxUI skeleton generator (`ixui-new`) | ✅ VS project wizard; `dotnet new` | ✅ `gnome-builder` templates; `cookiecutter` | ⬜ Planned — §7; 3 template types; post-generation TCC compile check; `install.ini`/`manifest.ini` |
-| ⭐ | Automated SDK release pipeline (`release-sdk.sh`) | ✅ Azure DevOps; GitHub Actions; WiX | ✅ Launchpad PPA; Copr; GitHub Actions | ⬜ Planned — §8; `git tag` → `gh release create` with ZIP + SHA-256 → `sdk-update` on-OS |
+
+| ⭐ | Feature                                    | Win11                                      | Linux                                             | Impossible OS                                                                                   |
+|----|--------------------------------------------|--------------------------------------------|---------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| 💎 | SDK distribution                           | ✅ Windows SDK installer (GB-size); WinGet | ✅ `apt install build-essential`; distro packages | ⬜ §1 — single-ZIP `impossible-os-sdk-{ver}.zip` with SHA-256; `make                            |
+| ⭐ | Doc-comment → Markdown API reference       | ✅ MSDN auto-generated; WinRT metadata     | ✅ Doxygen; kernel-doc                            | ⬜ §2 — `tools/gendoc.c` extracts `/ */` from                                                   |
+| 💎 | Code samples                               | ✅ MSDN samples; `winui3gallery.exe`       | ✅ Linux kernel samples; GTK demos                | ⬜ §3 — 7 samples each with Makefile                                                            |
+| ⭐ | 1000 Hz PIT sampling profiler              | ✅ VTune; ETW/xperf; WPR/WPA               | ✅ `perf stat`/`perf record`; gprof               | ⬜ §4 — PIT hook records RIP per-task                                                           |
+| ⭐ | Single-header test framework               | ✅ Google Test; CTest                      | ✅ CUnit; Unity; `make check`                     | ⬜ §5 — `ITEST_SUITE`/`ITEST_CASE`/`ITEST_ASSERT_EQ`; linker section auto-registration; `itest` |
+| 💎 | Debugger call-stack display + disassembler | ✅ WinDbg; Visual Studio debugger          | ✅ GDB; LLDB; `addr2line`                         | ⬜ §6 — `.pdata` unwind + frame-pointer fallback                                                |
+| ⭐ | IxUI skeleton generator                    | ✅ VS project wizard; `dotnet new`         | ✅ `gnome-builder` templates; `cookiecutter`      | ⬜ §7 — 3 template types; post-generation TCC                                                   |
+| ⭐ | Automated SDK release pipeline             | ✅ Azure DevOps; GitHub Actions; WiX       | ✅ Launchpad PPA; Copr; GitHub Actions            | ⬜ §8 — `git tag` → `gh release                                                                 |
 
 Impossible OS's `⭐` advantage: the **entire SDK is a single well-known ZIP** (not a GB
 installer), the **profiler is kernel-native** at 1000 Hz with zero user-space overhead,

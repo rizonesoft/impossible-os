@@ -236,18 +236,19 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Per-process `KEY=VALUE` environ array | ✅ `PEB->ProcessParameters->Environment` UTF-16 block | ✅ `execve` `envp[]`; `environ` global | ⬜ Planned — `TODO-14 §1`; `struct task` environ + `env_get/set/copy` |
-| 💎 | System default variables (`PATH`, `TEMP`, `USERNAME` …) | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ Planned — `TODO-14 §2`; same dual-hive Registry pattern |
-| 💎 | `%VAR%` expansion (depth-limited, `%%` escape) | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings` | ✅ `$VAR` / `${VAR}` (shell-level) | ⬜ Planned — `TODO-14 §3`; depth-4 cap prevents cycles |
-| ⭐ | `env_expand_path` `%1`–`%9` file-assoc template substitution | ✅ `ShellExecute` HKCR command template (`%1` quoting rules) | ⚠️ `xdg-open` delegates to desktop; no standard `%1` | ⬜ Planned — §3 (this TODO); quote-wraps filepath; also expands `%VAR%` in template |
-| 💎 | `SYS_GETENV` / `SYS_SETENV` syscalls | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable` | ✅ `getenv`/`setenv` via CRT (no direct Linux syscall) | ⬜ Planned — `TODO-14 §5`; SSDT + user-mode wrappers |
-| 💎 | PATH lookup + executable-not-found error | ✅ `SearchPath`; `where.exe` utility | ✅ `execvp` + shell `type`/`which` | ⬜ Planned — `TODO-14 §7` + §5 (session cache + `where`) |
-| 💎 | `cmd_tokenize` with Win32 quote/escape rules | ✅ `CommandLineToArgvW` | ✅ POSIX shell word-splitting | ⬜ Planned — §6; `\"` inside quotes, `\\` before `"`, `%VAR%` per-token |
-| 💎 | `CommandLineToArgvW` Win32 stub | ✅ `shell32.dll` `CommandLineToArgvW` | ❌ Not applicable (different model) | ⬜ Planned — §6; adapter over `cmd_tokenize` |
-| 💎 | `.profile` sourced on shell startup | ✅ `HKCU\...\Run` / PowerShell profile | ✅ `~/.profile` / `~/.bashrc` | ⬜ Planned — `TODO-14 §8` + §7; default content shipped in ISO |
-| 💎 | `set`/`echo`/`env`/`where` shell built-ins | ✅ CMD `set`/`echo`/`where` | ✅ `export`/`echo`/`env`/`which` | ⬜ Planned — §8; `echo.` blank-line idiom + `set /P` stretch |
+
+| ⭐ | Feature                                                      | Win11                                                          | Linux                                      | Impossible OS                                   |
+|----|--------------------------------------------------------------|----------------------------------------------------------------|--------------------------------------------|-------------------------------------------------|
+| 💎 | Per-process `KEY=VALUE` environ array                        | ✅ `PEB->ProcessParameters->Environment` UTF-16 block          | ✅ `execve` `envp[]`; `environ` global     | ⬜ §1 — `TODO-14 `; `struct task` environ       |
+| 💎 | System default variables                                     | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 — `TODO-14 `; same dual-hive Registry     |
+| 💎 | `%VAR%` expansion                                            | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings`                    | ✅ `$VAR` / `${VAR}` (shell-level)         | ⬜ §3 — `TODO-14 `; depth-4 cap prevents        |
+| ⭐ | `env_expand_path` `%1`–`%9` file-assoc template substitution | ✅ `ShellExecute` HKCR command template (`%1`                  | ⚠️ `xdg-open` delegates to desktop; no     | ⬜ §3 — (this TODO); quote-wraps filepath; also |
+| 💎 | `SYS_GETENV` / `SYS_SETENV` syscalls                         | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable`   | ✅ `getenv`/`setenv` via CRT (no direct    | ⬜ §5 — `TODO-14 `; SSDT + user-mode            |
+| 💎 | PATH lookup + executable-not-found error                     | ✅ `SearchPath`; `where.exe` utility                           | ✅ `execvp` + shell `type`/`which`         | ⬜ §7 — `TODO-14 ` + §5 (session                |
+| 💎 | `cmd_tokenize` with Win32 quote/escape rules                 | ✅ `CommandLineToArgvW`                                        | ✅ POSIX shell word-splitting              | ⬜ §6 — `\"` inside quotes, `\\` before         |
+| 💎 | `CommandLineToArgvW` Win32 stub                              | ✅ `shell32.dll` `CommandLineToArgvW`                          | ❌ Not applicable (different model)        | ⬜ §6 — adapter over `cmd_tokenize`             |
+| 💎 | `.profile` sourced on shell startup                          | ✅ `HKCU\...\Run` / PowerShell profile                         | ✅ `~/.profile` / `~/.bashrc`              | ⬜ §8 — `TODO-14 ` + §7; default                |
+| 💎 | `set`/`echo`/`env`/`where` shell built-ins                   | ✅ CMD `set`/`echo`/`where`                                    | ✅ `export`/`echo`/`env`/`which`           | ⬜ §8 — `echo.` blank-line idiom + `set         |
 
 Impossible OS merges the Windows `%1`–`%9` file-association template model with `env_expand`
 into a single `env_expand_path` pass — so a command template like `"player.exe %1 /fullscreen"`

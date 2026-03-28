@@ -327,16 +327,17 @@ outsiders can track progress without reading 100+ TODO files.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Automated release workflow (tag → artifacts → GH Release) | ✅ Internal pipeline; not public | ✅ `make release` + distro infra; public | ⬜ Planned — §1; `create-release.sh`; GHA on `v*` tag; signed artifacts + SDK in one workflow |
-| 💎 | Keep-a-Changelog + changelog lint in CI | ✅ Windows Blog; no structured changelog file | ✅ kernel.org `CHANGES`; distro changelogs | ⬜ Planned — §2; `CHANGELOG.md` Keep-a-Changelog; lint-changelog.py in CI |
-| 💎 | Structured contribution guide + DCO | ✅ `CONTRIBUTING.md` on GitHub repos; not Windows itself | ✅ `Documentation/process/` in kernel; `CONTRIBUTING.md` in most distros | ⬜ Planned — §3; overhaul `CONTRIBUTING.md`; setup, style, DCO, good-first-issue criteria |
-| ⭐ | Structured YAML issue forms + PR checklist | ✅ GitHub YAML forms on MS repos | ✅ Many kernel/distro repos use forms | ⬜ Planned — §4; YAML `bug_report.yml` + `feature_request.yml`; PR checklist with build/test/changelog/DCO gates |
-| ⭐ | README with live download CTA (fetches latest version via JS) | ❌ N/A (Windows is not on GitHub with downloadable releases) | ✅ Distro READMEs; no dynamic download CTA | ⬜ Planned — §5; README download table; `main.js` fetches `api/version`; auto-update-readme-links script |
-| ⭐ | Static project website with dynamic version CTA | ✅ `microsoft.com` — commercial; not open-source | ✅ `kernel.org`, distro websites | ⬜ Planned — §6; `docs/website/`; GitHub Pages; Cloudflare CNAME `impossible-os.dev` |
-| 💎 | Discord + GitHub Discussions community | ✅ Windows Insider Hub; not Discord | ✅ Kernel mailing list; many distros have Discord | ⬜ Planned — §7; Discussions categories; Discord server + webhook auto-announcements; `#good-first-issues` bot |
-| ⭐ | Public roadmap with auto-sync from TODO system to GitHub Milestones | ✅ Windows Roadmap on Learn.microsoft.com; no code sync | ✅ kernel.org merge window schedule; no structured milestone sync | ⬜ Planned — §8; `docs/roadmap.md`; `sync-milestones.sh`; compat progress bar |
+
+| ⭐ | Feature                                                             | Win11                                            | Linux                                                       | Impossible OS                                                        |
+|----|---------------------------------------------------------------------|--------------------------------------------------|-------------------------------------------------------------|----------------------------------------------------------------------|
+| 💎 | Automated release workflow                                          | ✅ Internal pipeline; not public                 | ✅ `make release` + distro infra;                           | ⬜ §1 — `create-release.sh`; GHA on `v*` tag                         |
+| 💎 | Keep-a-Changelog + changelog lint in CI                             | ✅ Windows Blog; no structured changelog         | ✅ kernel.org `CHANGES`; distro changelogs                  | ⬜ §2 — `CHANGELOG.md` Keep-a-Changelog; lint-changelog.py in CI     |
+| 💎 | Structured contribution guide + DCO                                 | ✅ `CONTRIBUTING.md` on GitHub repos; not        | ✅ `Documentation/process/` in kernel; `CONTRIBUTING.md` in | ⬜ §3 — overhaul `CONTRIBUTING.md`; setup, style, DCO,               |
+| ⭐ | Structured YAML issue forms + PR checklist                          | ✅ GitHub YAML forms on MS                       | ✅ Many kernel/distro repos use forms                       | ⬜ §4 — YAML `bug_report.yml` + `feature_request.yml`; PR            |
+| ⭐ | README with live download CTA                                       | ❌ N/A (Windows is not on                        | ✅ Distro READMEs; no dynamic download                      | ⬜ §5 — README download table; `main.js` fetches                     |
+| ⭐ | Static project website with dynamic version CTA                     | ✅ `microsoft.com` — commercial; not open-source | ✅ `kernel.org`, distro websites                            | ⬜ §6 — `docs/website/`; GitHub Pages; Cloudflare CNAME              |
+| 💎 | Discord + GitHub Discussions community                              | ✅ Windows Insider Hub; not Discord              | ✅ Kernel mailing list; many distros                        | ⬜ §7 — Discussions categories; Discord server +                     |
+| ⭐ | Public roadmap with auto-sync from TODO system to GitHub Milestones | ✅ Windows Roadmap on Learn.microsoft.com; no    | ✅ kernel.org merge window schedule; no                     | ⬜ §8 — `docs/roadmap.md`; `sync-milestones.sh`; compat progress bar |
 
 Impossible OS's `⭐` advantage: the release workflow, changelog, README, and roadmap are
 all connected — `create-release.sh` updates the README download table, posts to Discord,

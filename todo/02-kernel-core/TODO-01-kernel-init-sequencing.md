@@ -243,20 +243,21 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 ## OS Comparison
 
 
-| ⭐  | Feature                              | 🪟 Windows NT / 11                         | 🐧 Linux                                   | 🚀 Impossible OS                                         |
-| --- | ------------------------------------ | ------------------------------------------- | ------------------------------------------ | --------------------------------------------------------- |
-| 💎  | Formal phase model                   | ✅ Phase 0 / Phase 1 init                  | ✅ initcall levels (early → late)          | 🔄 In progress — §2 done, §3 done (dpc pending), §4–5 planned |
-| 💎  | Interrupt-disabled critical phase    | ✅ Phase 0 (no interrupts, no paging)      | ✅ `start_kernel` early before `sti`       | ✅ Done — §2; `boot_phase0()` runs with interrupts off   |
-| 💎  | Dependency-ordered subsystem init    | ✅ Boot driver load groups + ordering      | ✅ initcall dependency ordering            | 🔄 In progress — §2–4 done, §6 gates pending             |
-| 💎  | Typed init failure results           | ✅ `NTSTATUS` from every init routine      | ✅ `initcall_t` return codes               | ⬜ Planned — Step 1 (`boot_result_t`)                    |
-| 💎  | Halt on critical subsystem failure   | ✅ Bugcheck + halt                         | ✅ `panic()` + halt                        | ✅ Done — §7; `boot_halt()` + `panic()` with subsys dump  |
-| 💎  | Degraded boot on non-critical fail   | ✅ Last-known-good, safe mode              | ✅ Emergency shell fallback                | ✅ Done — §7; BOOT_DEGRADED logs + continues              |
-| 💎  | Boot progress serial log             | ✅ `DebugPrint` / ETW early tracing        | ✅ `early_printk` / `earlyprintk=serial`   | ✅ Done — §2; `[PHASE0]` markers with POST codes          |
-| 💎  | Boot config gating                   | ✅ `SYSTEM\CurrentControlSet\Control\`     | ✅ kernel cmdline / initrd config          | ✅ Done — §2; `boot.conf` parsed in Phase 0               |
-| 💎  | Test-path separated from boot path   | ✅ Tests run in separate test OS builds    | ✅ `initcall_debug` opt-in                 | ✅ Done — §5; `debug=1` gate in boot_tests_run()          |
-| ⭐  | Degraded-boot recovery UI screen     | ❌ Safe mode is a separate boot mode       | ❌ Emergency shell is text-only            | ✅ **Done — §9 — in-kernel graphical recovery + [R]/[C]/[P] menu** |
-| ⭐  | POST code written to UEFI NVRAM      | ❌ POST codes are firmware-only            | ❌ Not implemented                         | ✅ **Done — §10 — ImpossiblePOST NVRAM var survives reboot** |
-| ⭐  | Subsystem readiness oracle API       | ⚠️ Private internal only, not exposed      | ⚠️ `system_state` enum only                | ✅ **Done — §1 — `kernel_subsystem_ready()` public API** |
+
+| ⭐ | Feature                            | Win11                                  | Linux                                    | Impossible OS                                      |
+|----|------------------------------------|----------------------------------------|------------------------------------------|----------------------------------------------------|
+| 💎 | Formal phase model                 | ✅ Phase 0 / Phase 1                   | ✅ initcall levels (early → late)        | 🔄 §2 — In progress — done, §3                     |
+| 💎 | Interrupt-disabled critical phase  | ✅ Phase 0 (no interrupts, no          | ✅ `start_kernel` early before `sti`     | ✅ §2 — Done — ; `boot_phase0()` runs              |
+| 💎 | Dependency-ordered subsystem init  | ✅ Boot driver load groups +           | ✅ initcall dependency ordering          | 🔄 §2 — In progress — –4 done,                     |
+| 💎 | Typed init failure results         | ✅ `NTSTATUS` from every init routine  | ✅ `initcall_t` return codes             | ⬜ Step 1 (`boot_result_t`)                        |
+| 💎 | Halt on critical subsystem failure | ✅ Bugcheck + halt                     | ✅ `panic()` + halt                      | ✅ §7 — Done — ; `boot_halt()` +                   |
+| 💎 | Degraded boot on non-critical fail | ✅ Last-known-good, safe mode          | ✅ Emergency shell fallback              | ✅ §7 — Done — ; BOOT_DEGRADED logs                |
+| 💎 | Boot progress serial log           | ✅ `DebugPrint` / ETW early tracing    | ✅ `early_printk` / `earlyprintk=serial` | ✅ §2 — Done — ; `[PHASE0]` markers                |
+| 💎 | Boot config gating                 | ✅ `SYSTEM\CurrentControlSet\Control\` | ✅ kernel cmdline / initrd config        | ✅ §2 — Done — ; `boot.conf` parsed                |
+| 💎 | Test-path separated from boot path | ✅ Tests run in separate test          | ✅ `initcall_debug` opt-in               | ✅ §5 — Done — ; `debug=1` gate                    |
+| ⭐ | Degraded-boot recovery UI screen   | ❌ Safe mode is a separate             | ❌ Emergency shell is text-only          | ✅ §9 — Done — — in-kernel graphical               |
+| ⭐ | POST code written to UEFI NVRAM    | ❌ POST codes are firmware-only        | ❌ Not implemented                       | ✅ §10 — Done — — ImpossiblePOST NVRAM             |
+| ⭐ | Subsystem readiness oracle API     | ⚠️ Private internal only, not exposed  | ⚠️ `system_state` enum only              | ✅ §1 — Done — — `kernel_subsystem_ready()` public |
 
 > **After parity items:** Impossible OS matches Windows NT and Linux on formal phased init, typed results, and dependency ordering.
 > **Exclusive items:** The degraded-boot recovery UI lets a user see exactly which subsystem failed and choose a recovery action — no other OS provides this at the kernel level. UEFI NVRAM POST codes survive a reboot, giving post-mortem boot failure diagnosis on real hardware even when serial is unavailable.

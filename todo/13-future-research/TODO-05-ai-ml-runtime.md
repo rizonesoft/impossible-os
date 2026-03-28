@@ -318,14 +318,15 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| ⭐ | Native on-device LLM inference (no Linux/WSL) | ✅ Copilot+ (NPU/ONNX Runtime); DirectML; llama.cpp via WinRT | ✅ llama.cpp natively; ONNX Runtime; CPU/GPU via ROCm/CUDA | ⬜ Planned — §3; ggml C99 port; AVX2 user-mode via §2 XSAVE enablement |
-| ⭐ | AVX2 user-mode SIMD with per-thread XSAVE context | ✅ Windows handles XSAVE/XRSTOR automatically (FXSAVE extension) | ✅ Linux XSAVE per-task (`task_struct.thread.fpu`) | ⬜ Planned — §2; `TEB.XSaveArea`; XSAVEOPT on context switch; AVX-512 optional |
-| 💎 | GGUF model loading (Q4 quantization) | ✅ llama.cpp + GGUF on Windows via llama-server | ✅ llama.cpp native GGUF on Linux | ⬜ Planned — §4; `gguf_load()` via VFS; PMM large-alloc for tensor buffers |
-| ⭐ | `SYS_AI_INFER` background inference syscall | ✅ WinRT `IntelligenceInterface`; ML.NET; no single syscall | ✅ No dedicated kernel AI syscall; userspace libs only | ⬜ Planned — §5; `SYS_AI_INFER=95`/`SYS_AI_MODEL_LOAD=96`; semaphore completion |
-| ⭐ | Start Menu semantic search (on-device embeddings) | ✅ Windows Search AI (Copilot+, NPU, cloud option) | ✅ GNOME/KDE: no on-device semantic search by default | ⬜ Planned — §5; `all-MiniLM-L6-v2` 25 MB resident; cosine similarity vs. app embedding index |
-| 💎 | GPU inference via Vulkan compute | ✅ DirectML Vulkan; CUDA; ROCm | ✅ Vulkan compute (`kompute`, `ggml-vulkan`) | ⬜ Planned — §6 (stretch); `ggml-vulkan.c` backend; blocked by TODO-03 Vulkan ICD |
+
+| ⭐ | Feature                                           | Win11                                                 | Linux                                              | Impossible OS                                                          |
+|----|---------------------------------------------------|-------------------------------------------------------|----------------------------------------------------|------------------------------------------------------------------------|
+| ⭐ | Native on-device LLM inference                    | ✅ Copilot+ (NPU/ONNX Runtime); DirectML; llama.cpp   | ✅ llama.cpp natively; ONNX Runtime; CPU/GPU       | ⬜ §3 — ggml C99 port; AVX2 user-mode                                  |
+| ⭐ | AVX2 user-mode SIMD with per-thread XSAVE context | ✅ Windows handles XSAVE/XRSTOR automatically (FXSAVE | ✅ Linux XSAVE per-task (`task_struct.thread.fpu`) | ⬜ §2 — `TEB.XSaveArea`; XSAVEOPT on context switch                    |
+| 💎 | GGUF model loading                                | ✅ llama.cpp + GGUF on Windows                        | ✅ llama.cpp native GGUF on Linux                  | ⬜ §4 — `gguf_load()` via VFS; PMM large-alloc                         |
+| ⭐ | `SYS_AI_INFER` background inference syscall       | ✅ WinRT `IntelligenceInterface`; ML.NET; no single   | ✅ No dedicated kernel AI syscall;                 | ⬜ §5 — `SYS_AI_INFER=95`/`SYS_AI_MODEL_LOAD=96`; semaphore completion |
+| ⭐ | Start Menu semantic search                        | ✅ Windows Search AI (Copilot+, NPU,                  | ✅ GNOME/KDE: no on-device semantic search         | ⬜ §5 — `all-MiniLM-L6-v2` 25 MB resident; cosine                      |
+| 💎 | GPU inference via Vulkan compute                  | ✅ DirectML Vulkan; CUDA; ROCm                        | ✅ Vulkan compute (`kompute`, `ggml-vulkan`)       | ⬜ §6 — (stretch); `ggml-vulkan.c` backend; blocked by                 |
 
 Impossible OS's `⭐` advantage: `SYS_AI_INFER` makes inference a first-class kernel
 primitive — the OS schedules inference workloads alongside threads, applies power

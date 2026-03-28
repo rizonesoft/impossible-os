@@ -324,21 +324,22 @@ Per-user time limits, app blocking, and activity logging. Admin password require
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Kernel debugger (GDB/WinDbg protocol) | ✅ WinDbg KD | ✅ KGDB (GDB RSP) | ⬜ Planned — GDB RSP on COM1 |
-| 💎 | User-mode debugger with Win32 debug API | ✅ WinDbg user | ✅ GDB/ptrace | ⬜ Planned — `debugger.exe` + INT3/DR* |
-| 💎 | Developer console overlay | ✅ DevHome | ✅ Various | ⬜ Planned — F12 overlay (⭐ in-kernel, not separate app) |
-| 💎 | Multi-touch input + gestures | ✅ WM_TOUCH | ✅ libinput | ⬜ Planned — `touch_point` + gesture engine |
-| 💎 | Gamepad / XInput API | ✅ XInput | ✅ SDL2/evdev | ⬜ Planned — `gamepad_poll()` + XInput stubs |
-| 💎 | Print-to-PDF | ✅ MS Print to PDF | ✅ CUPS/PDF | ⬜ Planned — native PDF writer |
-| 💎 | Text-to-speech | ✅ SAPI/Narrator | ✅ eSpeak | ⬜ Planned — SAM port + `SYS_TTS_SPEAK` |
-| 💎 | Software OpenGL | ✅ WARP d3d11 | ✅ Mesa llvmpipe | ⬜ Planned — TinyGL port |
-| 💎 | Multi-user fast switching | ✅ Win11 switch | ✅ DM sessions | ⬜ Planned — per-session compositor |
-| 💎 | Opt-in telemetry | ✅ Windows telemetry | ✅ Ubuntu opt-in | ⬜ Planned — zero by default |
-| 💎 | Parental controls | ✅ Family Safety | ✅ Various | ⬜ Planned — kernel-enforced |
-| ⭐ | F12 in-kernel debug console (no separate process) | ❌ DevTools are apps | ❌ External tools | ⬜ Planned — composited overlay, zero process overhead |
-| ⭐ | Kernel GDB stub + user debugger in same OS | ❌ Separate KD + VS | ❌ KGDB + GDB separate | ⬜ Planned — unified debug story |
+
+| ⭐ | Feature                                    | Win11                | Linux                  | Impossible OS                                |
+|----|--------------------------------------------|----------------------|------------------------|----------------------------------------------|
+| 💎 | Kernel debugger                            | ✅ WinDbg KD         | ✅ KGDB (GDB RSP)      | ⬜ GDB RSP on COM1                           |
+| 💎 | User-mode debugger with Win32 debug API    | ✅ WinDbg user       | ✅ GDB/ptrace          | ⬜ `debugger.exe` + INT3/DR*                 |
+| 💎 | Developer console overlay                  | ✅ DevHome           | ✅ Various             | ⬜ F12 overlay (⭐ in-kernel, not            |
+| 💎 | Multi-touch input + gestures               | ✅ WM_TOUCH          | ✅ libinput            | ⬜ `touch_point` + gesture engine            |
+| 💎 | Gamepad / XInput API                       | ✅ XInput            | ✅ SDL2/evdev          | ⬜ `gamepad_poll()` + XInput stubs           |
+| 💎 | Print-to-PDF                               | ✅ MS Print to PDF   | ✅ CUPS/PDF            | ⬜ native PDF writer                         |
+| 💎 | Text-to-speech                             | ✅ SAPI/Narrator     | ✅ eSpeak              | ⬜ SAM port + `SYS_TTS_SPEAK`                |
+| 💎 | Software OpenGL                            | ✅ WARP d3d11        | ✅ Mesa llvmpipe       | ⬜ TinyGL port                               |
+| 💎 | Multi-user fast switching                  | ✅ Win11 switch      | ✅ DM sessions         | ⬜ per-session compositor                    |
+| 💎 | Opt-in telemetry                           | ✅ Windows telemetry | ✅ Ubuntu opt-in       | ⬜ zero by default                           |
+| 💎 | Parental controls                          | ✅ Family Safety     | ✅ Various             | ⬜ kernel-enforced                           |
+| ⭐ | F12 in-kernel debug console                | ❌ DevTools are apps | ❌ External tools      | ⬜ composited overlay, zero process overhead |
+| ⭐ | Kernel GDB stub + user debugger in same OS | ❌ Separate KD + VS  | ❌ KGDB + GDB separate | ⬜ unified debug story                       |
 
 **Impossible OS advantage:** The F12 debug console is implemented in-kernel with zero process overhead — it reads live kernel state without IPC, making it faster than any userland tool. The GDB stub and user-mode debugger share the same OS, giving a unified debugging story from kernel panic to user-mode INT3 that no other OS provides out of the box.
 

@@ -328,22 +328,23 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Windows 11 (WDK)                | 🐧 Linux kernel                  | 🚀 Impossible OS                           |
-| --- | ------------------------------------- | ---------------------------------- | -------------------------------- | ------------------------------------------ |
-| 💎  | `snprintf` / `vsnprintf`              | ✅ `RtlStringCbPrintf*` (safe)     | ✅ `lib/vsprintf.c` (600+ lines) | ⬜ Planned — §1 (absent; panic.c worksaround) |
-| 💎  | Core string ops (memcpy/strlen/etc.)  | ✅ `RtlCopyMemory`, `RtlZeroMemory` | ✅ `lib/string.c`                | ⚠️ Partial — §1 (compiler builtins only)   |
-| 💎  | Floating-point math (sin/cos/log/pow) | ✅ `rtlmath` + CRT                 | ✅ `lib/math/` + libgcc          | ⚠️ Partial — §2 (kmath.h, no trig/log)    |
-| 💎  | LZ4 fast compression                 | ⚠️ Xpress (proprietary format)    | ✅ `lib/lz4/` in-tree            | ⬜ Planned — §3 (assumed by TODO-15/16)    |
-| 💎  | Deflate / zlib compression            | ✅ `RtlDecompressBuffer` (LZNT1)   | ✅ `lib/zlib_deflate/` in-tree   | ⬜ Planned — §4 (miniz)                   |
-| 💎  | ZIP archive reading                   | ✅ Shell extension / Expand.exe    | ✅ `unzip` user-mode             | ⬜ Planned — §4 (miniz ZIP API)           |
-| 💎  | ChaCha20 / Poly1305 AEAD              | ✅ BCrypt (`BCRYPT_CHACHA20_POLY1305_ALGORITHM`) | ✅ `crypto/chacha20poly1305.c` | ⬜ Planned — §5 (Monocypher) |
-| 💎  | Blake2b hash                          | ✅ BCrypt SHA-2 (no Blake2b)       | ✅ `crypto/blake2b_generic.c`    | ⬜ Planned — §5                           |
-| 💎  | Argon2id password hash                | ✅ BCrypt `BCRYPT_KDF_SP800_108`   | ✅ `crypto/argon2.c`             | ⬜ Planned — §5                           |
-| 💎  | X25519 key exchange                   | ✅ BCrypt ECDH curve25519          | ✅ `crypto/ecdh.c`               | ⬜ Planned — §5 (Monocypher)              |
-| 💎  | Ed25519 signatures                    | ✅ BCrypt EdDSA                    | ✅ `crypto/eddsa.c`              | ⬜ Planned — §5 (Monocypher)              |
-| 💎  | Kernel CSPRNG (`/dev/urandom`)        | ✅ `KeQuerySystemEntropy` / BCrypt | ✅ `drivers/char/random.c`       | ⬜ Planned — §5 (RDRAND + Blake2b)        |
-| 💎  | JSON parser in-kernel                 | ❌ COM-based, user-mode only       | ❌ Not in mainline kernel         | ⬜ Planned — §6 (cJSON) 🚀                |
-| 💎  | TLS record layer (AES-GCM, TLS 1.3)  | ✅ SChannel (kernel + user)        | ✅ `net/tls/` in-tree            | ⬜ Planned — §7 (Mbed TLS port)           |
+
+| ⭐ | Feature                    | Win11                                            | Linux                            | Impossible OS                              |
+|----|----------------------------|--------------------------------------------------|----------------------------------|--------------------------------------------|
+| 💎 | `snprintf` / `vsnprintf`   | ✅ `RtlStringCbPrintf*` (safe)                   | ✅ `lib/vsprintf.c` (600+ lines) | ⬜ §1 — (absent; panic.c worksaround)      |
+| 💎 | Core string ops            | ✅ `RtlCopyMemory`, `RtlZeroMemory`              | ✅ `lib/string.c`                | ⚠️ §1 — Partial — (compiler builtins only) |
+| 💎 | Floating-point math        | ✅ `rtlmath` + CRT                               | ✅ `lib/math/` + libgcc          | ⚠️ §2 — Partial — (kmath.h, no trig/log)   |
+| 💎 | LZ4 fast compression       | ⚠️ Xpress (proprietary format)                   | ✅ `lib/lz4/` in-tree            | ⬜ §3 — (assumed by TODO-15/16)            |
+| 💎 | Deflate / zlib compression | ✅ `RtlDecompressBuffer` (LZNT1)                 | ✅ `lib/zlib_deflate/` in-tree   | ⬜ §4 — (miniz)                            |
+| 💎 | ZIP archive reading        | ✅ Shell extension / Expand.exe                  | ✅ `unzip` user-mode             | ⬜ §4 — (miniz ZIP API)                    |
+| 💎 | ChaCha20 / Poly1305 AEAD   | ✅ BCrypt (`BCRYPT_CHACHA20_POLY1305_ALGORITHM`) | ✅ `crypto/chacha20poly1305.c`   | ⬜ §5 — (Monocypher)                       |
+| 💎 | Blake2b hash               | ✅ BCrypt SHA-2 (no Blake2b)                     | ✅ `crypto/blake2b_generic.c`    | ⬜ §5                                      |
+| 💎 | Argon2id password hash     | ✅ BCrypt `BCRYPT_KDF_SP800_108`                 | ✅ `crypto/argon2.c`             | ⬜ §5                                      |
+| 💎 | X25519 key exchange        | ✅ BCrypt ECDH curve25519                        | ✅ `crypto/ecdh.c`               | ⬜ §5 — (Monocypher)                       |
+| 💎 | Ed25519 signatures         | ✅ BCrypt EdDSA                                  | ✅ `crypto/eddsa.c`              | ⬜ §5 — (Monocypher)                       |
+| 💎 | Kernel CSPRNG              | ✅ `KeQuerySystemEntropy` / BCrypt               | ✅ `drivers/char/random.c`       | ⬜ §5 — (RDRAND + Blake2b)                 |
+| 💎 | JSON parser in-kernel      | ❌ COM-based, user-mode only                     | ❌ Not in mainline kernel        | ⬜ §6 — (cJSON) 🚀                         |
+| 💎 | TLS record layer           | ✅ SChannel (kernel + user)                      | ✅ `net/tls/` in-tree            | ⬜ §7 — (Mbed TLS port)                    |
 
 After §1–6, Impossible OS reaches full parity with Windows and Linux on every
 in-kernel library primitive. The in-kernel JSON parser (§6) is unique among

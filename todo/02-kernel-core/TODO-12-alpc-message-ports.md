@@ -564,18 +564,19 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                                 | 🪟 Windows 11        | 🐧 Linux                | 🚀 Impossible OS                             |
-| --- | --------------------------------------- | -------------------- | ----------------------- | -------------------------------------------- |
-| 💎  | Connection-oriented message ports       | ✅ ALPC              | ⚠️ Unix sockets (SOCK_SEQPACKET) | ⬜ Planned — §2–§3                  |
-| 💎  | Synchronous send+wait+reply             | ✅ Full              | ⚠️ SOCK_SEQPACKET (no typed reply) | ⬜ Planned — §4                    |
-| 💎  | Async delivery with completion ports    | ✅ Full              | ⚠️ `io_uring` (kernel version only) | ⬜ Planned — §5                 |
-| 💎  | Large data via shared section (no copy) | ✅ Port sections     | ⚠️ Manual `mmap` (no transport integration) | ⬜ Planned — §6       |
-| 💎  | Client identity capture (impersonation) | ✅ Full              | ❌ Not available        | ⬜ Planned — §7                              |
-| 💎  | Named port namespace (`\RPC Control\`)  | ✅ Full              | ⚠️ Abstract socket namespace | ⬜ Planned — §2                        |
-| 💎  | Win32 CSRSS subsystem server            | ✅ Full              | ❌ Not applicable       | ⬜ Planned — §9                              |
-| 💎  | Handle duplication across port          | ✅ Full              | ❌ Not available        | ⬜ Planned — §6.3 (ALPC_HANDLE_ATTR)         |
-| 💎  | Connection SID verification             | ✅ Full              | ❌ Not available        | ⬜ Planned — §7.4                            |
-| ⭐  | Live port monitor with msg/s stats      | ❌ WinObj/WPA only   | ❌ Not available        | ⬜ **Planned — §10** 🚀                      |
+
+| ⭐ | Feature                              | Win11              | Linux                                       | Impossible OS                 |
+|----|--------------------------------------|--------------------|---------------------------------------------|-------------------------------|
+| 💎 | Connection-oriented message ports    | ✅ ALPC            | ⚠️ Unix sockets (SOCK_SEQPACKET)            | ⬜ §2–§3                      |
+| 💎 | Synchronous send+wait+reply          | ✅ Full            | ⚠️ SOCK_SEQPACKET (no typed reply)          | ⬜ §4                         |
+| 💎 | Async delivery with completion ports | ✅ Full            | ⚠️ `io_uring` (kernel version only)         | ⬜ §5                         |
+| 💎 | Large data via shared section        | ✅ Port sections   | ⚠️ Manual `mmap` (no transport integration) | ⬜ §6                         |
+| 💎 | Client identity capture              | ✅ Full            | ❌ Not available                            | ⬜ §7                         |
+| 💎 | Named port namespace                 | ✅ Full            | ⚠️ Abstract socket namespace                | ⬜ §2                         |
+| 💎 | Win32 CSRSS subsystem server         | ✅ Full            | ❌ Not applicable                           | ⬜ §9                         |
+| 💎 | Handle duplication across port       | ✅ Full            | ❌ Not available                            | ⬜ §6 — .3 (ALPC_HANDLE_ATTR) |
+| 💎 | Connection SID verification          | ✅ Full            | ❌ Not available                            | ⬜ §7 — .4                    |
+| ⭐ | Live port monitor with msg/s stats   | ❌ WinObj/WPA only | ❌ Not available                            | ⬜ §10 — 🚀                   |
 
 After §1–9, Impossible OS reaches full Windows 11 ALPC parity — the only kernel IPC mechanism capable of hosting CSRSS, RPC local transport, COM local activation, and the rest of the Win32 subsystem server ecosystem. Linux's closest equivalent (Unix domain sockets with `SOCK_SEQPACKET`) lacks typed reply routing, integrated impersonation, and section-based zero-copy data transfer. The live port monitor (§10) gives developers a real-time view of all active message ports with throughput stats — a developer-experience exclusive that neither Windows (WinObj is read-only) nor Linux ship in their default tooling.
 

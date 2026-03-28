@@ -358,22 +358,23 @@ Provides the cross-compilation toolchain for targeting Impossible OS from a host
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Console API (`WriteConsoleA`, `ReadConsoleA`) | ✅ Win32 | ✅ POSIX tty | ⬜ Planned — routes to terminal emulator |
-| 💎 | Process management (`CreateProcess`, `WaitForSingleObject`) | ✅ Win32 | ✅ `fork`/`waitpid` | ⬜ Planned — wraps native task scheduler |
-| 💎 | Memory management (`VirtualAlloc`, `HeapAlloc`) | ✅ Win32 | ✅ `mmap`/`malloc` | ⬜ Planned — wraps `vmm_alloc_user` |
-| 💎 | Synchronization (`CreateMutex`, `CreateEvent`, `WaitForMultipleObjects`) | ✅ Win32 | ✅ `pthread_mutex`, `eventfd` | ⬜ Planned — thin wrappers on kernel `mutex_t`/`event_t` |
-| 💎 | DLL loading (`LoadLibrary`, `GetProcAddress`) | ✅ Win32 | ✅ `dlopen`/`dlsym` | ⬜ Planned — native PE export directory walk |
-| 💎 | Error API (`GetLastError`, `FormatMessage`) | ✅ Win32 | ✅ `errno`/`strerror` | ⬜ Planned — TEB-backed per-thread error |
-| 💎 | GUI window management (`CreateWindowEx`, `DispatchMessage`) | ✅ Win32 | ✅ X11/Wayland | ⬜ Planned — wraps native WM |
-| 💎 | GDI rendering (`BitBlt`, `TextOut`, `FillRect`) | ✅ GDI32 | ✅ Cairo/Skia | ⬜ Planned — wraps `gfx_*`/`ttf_*` |
-| 💎 | C runtime (`printf`, `malloc`, `memcpy`) | ✅ MSVCRT | ✅ glibc/musl | ⬜ Planned — kernel freestanding implementations |
-| 💎 | Shell API (`ShellExecute`, `SHGetFolderPath`) | ✅ shell32 | ✅ `xdg-open` | ⬜ Planned — `file_assoc_open()` + VFS paths |
-| ⭐ | Native IxUI toolkit (Win32-compatible, zero DLL overhead) | ❌ User32 emulation only | ❌ No native Win32 | ⬜ Planned — first-class kernel-backed Win32 GUI |
-| ⭐ | Zero-layer Win32 ABI (direct kernel syscalls, no Wine) | ❌ Requires Windows | ❌ Requires Wine | ⬜ Planned — native kernel implements Win32 |
-| ⭐ | Unimplemented function logger with call-count telemetry | ❌ Crashes or silent | ❌ Crashes | ⬜ Planned — safe stubs + serial diagnostics |
-| ⭐ | Developer SDK (`impossible-cc`, `windows.h`, import libs) | ❌ Windows only | ❌ No Win32 SDK | ⬜ Planned — MinGW cross-compiler + native headers |
+
+| ⭐ | Feature                                                 | Win11                    | Linux                         | Impossible OS                                  |
+|----|---------------------------------------------------------|--------------------------|-------------------------------|------------------------------------------------|
+| 💎 | Console API                                             | ✅ Win32                 | ✅ POSIX tty                  | ⬜ routes to terminal emulator                 |
+| 💎 | Process management                                      | ✅ Win32                 | ✅ `fork`/`waitpid`           | ⬜ wraps native task scheduler                 |
+| 💎 | Memory management                                       | ✅ Win32                 | ✅ `mmap`/`malloc`            | ⬜ wraps `vmm_alloc_user`                      |
+| 💎 | Synchronization                                         | ✅ Win32                 | ✅ `pthread_mutex`, `eventfd` | ⬜ thin wrappers on kernel `mutex_t`/`event_t` |
+| 💎 | DLL loading                                             | ✅ Win32                 | ✅ `dlopen`/`dlsym`           | ⬜ native PE export directory walk             |
+| 💎 | Error API                                               | ✅ Win32                 | ✅ `errno`/`strerror`         | ⬜ TEB-backed per-thread error                 |
+| 💎 | GUI window management                                   | ✅ Win32                 | ✅ X11/Wayland                | ⬜ wraps native WM                             |
+| 💎 | GDI rendering                                           | ✅ GDI32                 | ✅ Cairo/Skia                 | ⬜ wraps `gfx_*`/`ttf_*`                       |
+| 💎 | C runtime                                               | ✅ MSVCRT                | ✅ glibc/musl                 | ⬜ kernel freestanding implementations         |
+| 💎 | Shell API                                               | ✅ shell32               | ✅ `xdg-open`                 | ⬜ `file_assoc_open()` + VFS paths             |
+| ⭐ | Native IxUI toolkit                                     | ❌ User32 emulation only | ❌ No native Win32            | ⬜ first-class kernel-backed Win32 GUI         |
+| ⭐ | Zero-layer Win32 ABI                                    | ❌ Requires Windows      | ❌ Requires Wine              | ⬜ native kernel implements Win32              |
+| ⭐ | Unimplemented function logger with call-count telemetry | ❌ Crashes or silent     | ❌ Crashes                    | ⬜ safe stubs + serial diagnostics             |
+| ⭐ | Developer SDK                                           | ❌ Windows only          | ❌ No Win32 SDK               | ⬜ MinGW cross-compiler + native headers       |
 
 **Impossible OS advantage:** Win32 is implemented natively in the kernel — no translation layer, no Wine, no DLL emulation. IxUI is a first-class toolkit that gives Win32 programs a native compositor-backed window system with zero overhead. The unimplemented-function logger gives a unique observability story not available on any other platform.
 

@@ -240,17 +240,18 @@
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | MPEG-1 video decode | ✅ Windows Media Player | ✅ VLC / mpv | ⬜ Planned — §1; pl_mpeg single-header port |
-| 💎 | YCbCr → RGB (BT.601) | ✅ WMP (GPU) | ✅ VLC (libyuv) | ⬜ Planned — §2; SSE2 4-pixel-at-a-time |
-| 💎 | A/V synchronisation + drift correction | ✅ WMP | ✅ mpv (audio-driven) | ⬜ Planned — §3; 3-frame ring buffer, ±200 ms drift correction |
-| 💎 | Seek bar + time display + volume | ✅ WMP | ✅ VLC | ⬜ Planned — §4; CTRL_SCROLLBAR seek, OSD |
-| ⭐ | Fullscreen with 3 s auto-hiding controls | ✅ WMP / films app | ✅ VLC / mpv | ⬜ Planned — §4; `wm_set_fullscreen`, hide_timer_ms |
-| 💎 | Playlist with loop + shuffle | ✅ WMP | ✅ VLC | ⬜ Planned — §6; CTRL_LISTVIEW sidebar, Fisher-Yates shuffle |
-| ⭐ | SRT subtitle overlay with TTF text (built-in, no plugin) | ✅ WMP (limited) / films ✅ | ✅ VLC (built-in) | ⬜ Planned (Stretch) — §7; `ttf_draw_string` + black shadow |
-| 💎 | File associations (.mpg/.mpeg/.avi) | ✅ WMP default | ✅ `xdg-open` | ⬜ Planned — §5; `file_assoc_set` |
-| 💎 | H.264 / MP4 support (Phase 2) | ✅ WMP / HEVC codec | ✅ VLC / mpv | ⬜ Planned (Phase 2) — §8; h264bsd port |
+
+| ⭐ | Feature                                  | Win11                       | Linux                 | Impossible OS                                       |
+|----|------------------------------------------|-----------------------------|-----------------------|-----------------------------------------------------|
+| 💎 | MPEG-1 video decode                      | ✅ Windows Media Player     | ✅ VLC / mpv          | ⬜ §1 — pl_mpeg single-header port                  |
+| 💎 | YCbCr → RGB                              | ✅ WMP (GPU)                | ✅ VLC (libyuv)       | ⬜ §2 — SSE2 4-pixel-at-a-time                      |
+| 💎 | A/V synchronisation + drift correction   | ✅ WMP                      | ✅ mpv (audio-driven) | ⬜ §3 — 3-frame ring buffer, ±200 ms                |
+| 💎 | Seek bar + time display + volume         | ✅ WMP                      | ✅ VLC                | ⬜ §4 — CTRL_SCROLLBAR seek, OSD                    |
+| ⭐ | Fullscreen with 3 s auto-hiding controls | ✅ WMP / films app          | ✅ VLC / mpv          | ⬜ §4 — `wm_set_fullscreen`, hide_timer_ms          |
+| 💎 | Playlist with loop + shuffle             | ✅ WMP                      | ✅ VLC                | ⬜ §6 — CTRL_LISTVIEW sidebar, Fisher-Yates shuffle |
+| ⭐ | SRT subtitle overlay with TTF text       | ✅ WMP (limited) / films ✅ | ✅ VLC (built-in)     | ⬜ §7 — (Stretch) — ; `ttf_draw_string` +           |
+| 💎 | File associations                        | ✅ WMP default              | ✅ `xdg-open`         | ⬜ §5 — `file_assoc_set`                            |
+| 💎 | H.264 / MP4 support                      | ✅ WMP / HEVC codec         | ✅ VLC / mpv          | ⬜ §8 — (Phase 2) — ; h264bsd                       |
 
 Impossible OS ships a fully native, zero-dependency video player backed by a public-domain
 single-header codec — no COM, no DirectShow, no GStreamer pipeline. The SSE2 YCbCr converter

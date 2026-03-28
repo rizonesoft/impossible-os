@@ -302,18 +302,19 @@ Basic signal delivery for foreground process control. Full POSIX signal semantic
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Run static Linux ELF binaries | ✅ WSL2 (full VM) | ✅ Native | ⬜ Planned — in-kernel compat, no VM |
-| 💎 | Linux syscall translation (~30 syscalls) | ✅ WSL2 NT layer | ✅ Native | ⬜ Planned — `linux_syscall_table[]` |
-| 💎 | POSIX path model (`/home`, `/tmp`) | ✅ WSL2 VirtIO-FS | ✅ Native | ⬜ Planned — `linux_path_to_win32()` |
-| 💎 | Integer file descriptor table (fd 0/1/2) | ✅ WSL2 | ✅ Native | ⬜ Planned — `linux_fd_table[]` in task |
-| 💎 | Signal delivery (`SIGINT`, `SIGCHLD`, `SIGKILL`) | ✅ WSL2 | ✅ Native | ⬜ Planned — user-mode signal frames |
-| 💎 | `busybox` runs (`ls`, `cat`, `grep`, `sh`) | ✅ WSL2 | ✅ Native | ⬜ Planned — static busybox milestone |
-| ⭐ | Zero-VM Linux compat (in-kernel, not hypervisor) | ❌ WSL2 requires Hyper-V | ❌ N/A | ⬜ Planned — compat layer in kernel, ~500 KB |
-| ⭐ | PE-native + ELF-compat in same process namespace | ❌ Separate WSL env | ❌ N/A | ⬜ Planned — both formats in `exec_load()` |
-| ⭐ | `[Linux]` tag in process list for ELF processes | ❌ No tagging | ❌ No tagging | ⬜ Planned — `tasklist` shows format |
-| ❌ | Dynamic ELF / `dlopen` / `libc.so` | ✅ WSL2 | ✅ Native | ⬜ Future §11 only |
+
+| ⭐ | Feature                                          | Win11                    | Linux         | Impossible OS                    |
+|----|--------------------------------------------------|--------------------------|---------------|----------------------------------|
+| 💎 | Run static Linux ELF binaries                    | ✅ WSL2 (full VM)        | ✅ Native     | ⬜ in-kernel compat, no VM       |
+| 💎 | Linux syscall translation                        | ✅ WSL2 NT layer         | ✅ Native     | ⬜ `linux_syscall_table[]`       |
+| 💎 | POSIX path model                                 | ✅ WSL2 VirtIO-FS        | ✅ Native     | ⬜ `linux_path_to_win32()`       |
+| 💎 | Integer file descriptor table                    | ✅ WSL2                  | ✅ Native     | ⬜ `linux_fd_table[]` in task    |
+| 💎 | Signal delivery                                  | ✅ WSL2                  | ✅ Native     | ⬜ user-mode signal frames       |
+| 💎 | `busybox` runs                                   | ✅ WSL2                  | ✅ Native     | ⬜ static busybox milestone      |
+| ⭐ | Zero-VM Linux compat                             | ❌ WSL2 requires Hyper-V | ❌ N/A        | ⬜ compat layer in kernel, ~500  |
+| ⭐ | PE-native + ELF-compat in same process namespace | ❌ Separate WSL env      | ❌ N/A        | ⬜ both formats in `exec_load()` |
+| ⭐ | `[Linux]` tag in process list for ELF processes  | ❌ No tagging            | ❌ No tagging | ⬜ `tasklist` shows format       |
+| ❌ | Dynamic ELF / `dlopen` / `libc.so`               | ✅ WSL2                  | ✅ Native     | ⬜ §11 — Future only             |
 
 **Impossible OS advantage:** Linux ELF compat runs in-kernel with no hypervisor, no separate VHD, and no process namespace boundary — a static Linux binary simply runs in ring-3 alongside PE binaries using the same scheduler, memory manager, and VFS. This is architecturally lighter than WSL2 and unique among OS designs.
 

@@ -484,31 +484,32 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Windows 11                     | 🐧 Linux                          | 🚀 Impossible OS                                    |
-| --- | ------------------------------------- | ---------------------------------- | ---------------------------------- | --------------------------------------------------- |
-| 💎  | Hierarchical typed key/value store    | ✅ Full                            | ⚠️ dconf (GNOME), ini files        | ✅ Done — `reg_key_t` tree, all REG_* types         |
-| 💎  | Win32 `RegXxx` API (§2.1–2.4)        | ✅ Native                          | ❌ Not available                   | ✅ Done — complete native API                       |
-| 💎  | Persistent hive + crash-safe WAJ      | ✅ `.LOG1`/`.LOG2`                 | ⚠️ dconf binary db, no WAJ         | ✅ Done — `.hive.log` WAJ                           |
-| 💎  | KEY_* access rights enforcement       | ✅ Full                            | ❌ Not applicable                  | ⬜ Planned — §1                                    |
-| 💎  | Change notifications                  | ✅ `RegNotifyChangeKeyValue`       | ⚠️ inotify (file-level only)       | ⬜ Planned — §3                                    |
-| 💎  | NtXxx registry syscalls               | ✅ Native                          | ❌ No registry concept             | ⬜ Planned — §4                                    |
-| 💎  | advapi32.dll W variants + HKCR        | ✅ Full                            | ⚠️ Wine reimplements               | ⬜ Planned — §5                                    |
-| 💎  | Registry virtualization               | ✅ Vista+ VirtualStore             | ❌ Not applicable                  | ⬜ Planned — §6                                    |
-| 💎  | `.reg` import/export                  | ✅ regedit.exe built-in            | ⚠️ Wine `regedit`                  | ⬜ Planned — §6–§7                                 |
-| 💎  | Dual-log WAJ failover                 | ✅ `.LOG1`/`.LOG2`                 | ❌ Not available                   | ⬜ Planned — §8                                    |
-| ⭐  | Incremental delta flush               | ❌ Full hive rewrite               | ❌ Full db rewrite                 | ⬜ **Planned — §8.2** 🚀                            |
-| ⭐  | Change-detail payloads (old/new)      | ❌ Signal only                     | ❌ Not available                   | ⬜ **Planned — §3.5** 🚀                            |
-| ⭐  | Priority-based notification dispatch  | ❌ All watchers equal              | ❌ Not available                   | ⬜ **Planned — §3.5** 🚀                            |
-| ⭐  | Atomic registry transactions          | ❌ KTM deprecated                  | ⚠️ dconf change_set (no rollback)  | ⬜ **Planned — §9.1** 🚀                            |
-| ⭐  | Native pattern-search API             | ❌ Manual enumerate+match          | ❌ Not available                   | ⬜ **Planned — §9.2** 🚀                            |
-| ⭐  | Snapshot & diff                       | ❌ Needs RegShot (third-party)     | ❌ Not available                   | ⬜ **Planned — §9.3** 🚀                            |
-| ⭐  | Hive integrity reporter               | ❌ No built-in                     | ❌ Not applicable                  | ⬜ **Planned — §8.3** 🚀                            |
-| ⭐  | Idle-time hive compaction             | ❌ No defragmentation              | ❌ Not applicable                  | ⬜ **Planned — §8.4** 🚀                            |
-| ⭐  | Per-process registry sandbox          | ❌ HKCU shared                     | ❌ Not applicable                  | ⬜ **Planned — §4.4** 🚀                            |
-| ⭐  | Built-in API call tracing             | ❌ Needs ProcMon/ETW               | ❌ Not applicable                  | ⬜ **Planned — §5.4** 🚀                            |
-| ⭐  | Per-PID registry quota                | ❌ Global limit only               | ❌ Not available                   | ⬜ **Planned — §9.4** 🚀                            |
-| ⭐  | Memory-mapped hive (zero-copy reads)  | ❌ Static pool                     | ❌ Not applicable                  | ⬜ **Planned — §10.2** 🚀                           |
-| ⭐  | B-tree cell format (NT hive compat)   | ✅ `regf` format                   | ❌ Not applicable                  | ⬜ **Planned — §10.3** 🚀                           |
+
+| ⭐ | Feature                              | Win11                          | Linux                             | Impossible OS                   |
+|----|--------------------------------------|--------------------------------|-----------------------------------|---------------------------------|
+| 💎 | Hierarchical typed key/value store   | ✅ Full                        | ⚠️ dconf (GNOME), ini files       | ✅ Done — `reg_key_t` tree, all |
+| 💎 | Win32 `RegXxx` API                   | ✅ Native                      | ❌ Not available                  | ✅ Done — complete native API   |
+| 💎 | Persistent hive + crash-safe WAJ     | ✅ `.LOG1`/`.LOG2`             | ⚠️ dconf binary db, no WAJ        | ✅ Done — `.hive.log` WAJ       |
+| 💎 | KEY_* access rights enforcement      | ✅ Full                        | ❌ Not applicable                 | ⬜ §1                           |
+| 💎 | Change notifications                 | ✅ `RegNotifyChangeKeyValue`   | ⚠️ inotify (file-level only)      | ⬜ §3                           |
+| 💎 | NtXxx registry syscalls              | ✅ Native                      | ❌ No registry concept            | ⬜ §4                           |
+| 💎 | advapi32.dll W variants + HKCR       | ✅ Full                        | ⚠️ Wine reimplements              | ⬜ §5                           |
+| 💎 | Registry virtualization              | ✅ Vista+ VirtualStore         | ❌ Not applicable                 | ⬜ §6                           |
+| 💎 | `.reg` import/export                 | ✅ regedit.exe built-in        | ⚠️ Wine `regedit`                 | ⬜ §6–§7                        |
+| 💎 | Dual-log WAJ failover                | ✅ `.LOG1`/`.LOG2`             | ❌ Not available                  | ⬜ §8                           |
+| ⭐ | Incremental delta flush              | ❌ Full hive rewrite           | ❌ Full db rewrite                | ⬜ §8 — .2 🚀                   |
+| ⭐ | Change-detail payloads               | ❌ Signal only                 | ❌ Not available                  | ⬜ §3 — .5 🚀                   |
+| ⭐ | Priority-based notification dispatch | ❌ All watchers equal          | ❌ Not available                  | ⬜ §3 — .5 🚀                   |
+| ⭐ | Atomic registry transactions         | ❌ KTM deprecated              | ⚠️ dconf change_set (no rollback) | ⬜ §9 — .1 🚀                   |
+| ⭐ | Native pattern-search API            | ❌ Manual enumerate+match      | ❌ Not available                  | ⬜ §9 — .2 🚀                   |
+| ⭐ | Snapshot & diff                      | ❌ Needs RegShot (third-party) | ❌ Not available                  | ⬜ §9 — .3 🚀                   |
+| ⭐ | Hive integrity reporter              | ❌ No built-in                 | ❌ Not applicable                 | ⬜ §8 — .3 🚀                   |
+| ⭐ | Idle-time hive compaction            | ❌ No defragmentation          | ❌ Not applicable                 | ⬜ §8 — .4 🚀                   |
+| ⭐ | Per-process registry sandbox         | ❌ HKCU shared                 | ❌ Not applicable                 | ⬜ §4 — .4 🚀                   |
+| ⭐ | Built-in API call tracing            | ❌ Needs ProcMon/ETW           | ❌ Not applicable                 | ⬜ §5 — .4 🚀                   |
+| ⭐ | Per-PID registry quota               | ❌ Global limit only           | ❌ Not available                  | ⬜ §9 — .4 🚀                   |
+| ⭐ | Memory-mapped hive                   | ❌ Static pool                 | ❌ Not applicable                 | ⬜ §10 — .2 🚀                  |
+| ⭐ | B-tree cell format                   | ✅ `regf` format               | ❌ Not applicable                 | ⬜ §10 — .3 🚀                  |
 
 After §1–7, Impossible OS reaches full Windows 11 parity on every registry feature including access rights, notifications, syscalls, HKCR, virtualization,
 `.reg` I/O, and the regedit tool. Linux has no equivalent in-kernel typed store — it relies on user-space GNOME dconf or scattered ini files.

@@ -297,16 +297,17 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | `MAJOR.MINOR.BUILD` versioning baked into OS + registry | ✅ `10.0.22000`; `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` | ✅ `/etc/os-release`; kernel `uname -r` | ⬜ Planned — §1; `OS_VERSION_STRING`; `winver.exe`; baked into `HKLM\SOFTWARE\Impossible\Version` at boot |
-| 💎 | Compressed disk image with SHA-256 | ✅ Windows ISO (no zstd); WinGet package | ✅ `xz`/`zstd` compressed images (Fedora, Arch) | ⬜ Planned — §2; `zstd -T0 -9` + SHA-256 via `release-image.sh`; integrity checks before compress |
-| 💎 | Verified USB writer + cross-platform creator tool | ✅ Rufus (3rd party); Windows Media Creation Tool | ✅ `dd`; Etcher; Fedora Media Writer | ⬜ Planned — §3; `make-usb.sh` with removable-only guard; `usb_creator.exe` Win32 GUI with UAC |
-| 💎 | Joliet+Rock Ridge ISO (Windows + macOS readable) | ✅ Windows ISO uses Joliet | ✅ Most distros use `-R -J` | ⬜ Planned — §4; extends `TODO-11 §1`; versioned filename; `README.txt` at root |
-| 💎 | Ed25519 code signing + bootloader verification | ✅ Authenticode RSA; Secure Boot UEFI DB | ✅ GRUB + shim + kernel module signing | ⬜ Planned — §5; `codesign_sign` on `kernel.exe`+`BOOTX64.EFI`; bootloader verify path; `Enforce` toggle |
-| ⭐ | Artifact manifest JSON (consumed by on-OS update check) | ✅ Windows Update XML feeds (private) | ✅ Flatpak/Snap manifests; APT Packages | ⬜ Planned — §6; `release-{ver}.json`; consumed by `TODO-03` update check |
-| 💎 | VM image variants (VMDK + VHD + VHDX + OVA) | ✅ Hyper-V VHD; VMware tools | ✅ cloud images (QCOW2, VMDK, AMI) | ⬜ Planned — §7; `qemu-img convert` to VMDK/VHD/VHDX; `.ovf` + `.ova` for VirtualBox import |
-| ⭐ | Byte-reproducible builds (`SOURCE_DATE_EPOCH`) | ❌ Windows builds are not reproducible | ✅ Debian/NixOS reproducible builds | ⬜ Planned — §8; `make verify-reproducible`; `llvm-ar rcsD`; documented in `reproducible-builds.md` |
+
+| ⭐ | Feature                                                 | Win11                                                                | Linux                                           | Impossible OS                                                                            |
+|----|---------------------------------------------------------|----------------------------------------------------------------------|-------------------------------------------------|------------------------------------------------------------------------------------------|
+| 💎 | `MAJOR.MINOR.BUILD` versioning baked into OS + registry | ✅ `10.0.22000`; `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` | ✅ `/etc/os-release`; kernel `uname -r`         | ⬜ §1 — `OS_VERSION_STRING`; `winver.exe`; baked into `HKLM\SOFTWARE\Impossible\Version` |
+| 💎 | Compressed disk image with SHA-256                      | ✅ Windows ISO (no zstd); WinGet                                     | ✅ `xz`/`zstd` compressed images (Fedora, Arch) | ⬜ §2 — `zstd -T0 -9` + SHA-256                                                          |
+| 💎 | Verified USB writer + cross-platform creator tool       | ✅ Rufus (3rd party); Windows Media                                  | ✅ `dd`; Etcher; Fedora Media Writer            | ⬜ §3 — `make-usb.sh` with removable-only guard; `usb_creator.exe`                       |
+| 💎 | Joliet+Rock Ridge ISO                                   | ✅ Windows ISO uses Joliet                                           | ✅ Most distros use `-R -J`                     | ⬜ §4 — extends `TODO-11 §1`; versioned filename                                         |
+| 💎 | Ed25519 code signing + bootloader verification          | ✅ Authenticode RSA; Secure Boot UEFI                                | ✅ GRUB + shim + kernel                         | ⬜ §5 — `codesign_sign` on `kernel.exe`+`BOOTX64.EFI`; bootloader verify                 |
+| ⭐ | Artifact manifest JSON                                  | ✅ Windows Update XML feeds (private)                                | ✅ Flatpak/Snap manifests; APT Packages         | ⬜ §6 — `release-{ver}.json`; consumed by `TODO-03` update                               |
+| 💎 | VM image variants                                       | ✅ Hyper-V VHD; VMware tools                                         | ✅ cloud images (QCOW2, VMDK, AMI)              | ⬜ §7 — `qemu-img convert` to VMDK/VHD/VHDX; `.ovf`                                      |
+| ⭐ | Byte-reproducible builds                                | ❌ Windows builds are not reproducible                               | ✅ Debian/NixOS reproducible builds             | ⬜ §8 — `make verify-reproducible`; `llvm-ar rcsD`; documented                           |
 
 Impossible OS's `⭐` advantages: the **artifact manifest JSON** closes the loop to the
 on-OS update check (no separate update metadata infrastructure needed), **Ed25519 code

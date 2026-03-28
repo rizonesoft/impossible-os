@@ -205,19 +205,20 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 
 ## OS Comparison
 
-| ⭐  | Feature                                     | 🪟 Windows 11 / NT                              | 🐧 Linux                                           | 🚀 Impossible OS                                            |
-| --- | ------------------------------------------- | ----------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------- |
-| 💎  | 100 ns epoch-anchored wall time (FILETIME)  | ✅ `FILETIME`, `GetSystemTimeAsFileTime()`      | ⚠️ `timespec` (ns) since 1970; different epoch    | ⬜ Planned — §1, §5–§6                                       |
-| 💎  | High-resolution monotonic counter (QPC)     | ✅ `QueryPerformanceCounter` via TSC/HPET       | ✅ `clock_gettime(CLOCK_MONOTONIC)` via vDSO      | ⬜ Planned — §2–§4                                           |
-| 💎  | Invariant TSC frequency detection           | ✅ CPUID 0x15 + TSC_INVARIANT                   | ✅ `tsc_khz` calibration at boot                  | ⬜ Planned — §3                                              |
-| 💎  | Per-CPU TSC synchronization on SMP          | ✅ TSC synchronization at INIT                  | ✅ `check_tsc_sync_source()` + offset correction  | ⬜ Planned — §3                                              |
-| 💎  | HPET driver for QPC fallback                | ✅ used when TSC unreliable                     | ✅ `hpet_clocksource`                             | ⬜ Planned — §4                                              |
-| 💎  | Wall clock from UEFI GetTime                | ✅ `EfiGetVariable` / `GetSystemTime()`         | ✅ `efi_get_time()` in drivers/firmware/efi/      | ⬜ Planned — §5                                              |
-| 💎  | Timezone + DST offset management            | ✅ registry `TimeZoneInformation`               | ✅ `/etc/localtime` + kernel `sys_tz`             | ⬜ Planned — §8                                              |
-| 💎  | FAT32 local-time timestamps on write        | ✅ kernel32 → FAT32 dir entry DOS time          | ✅ fat32 inode time via `current_time()`          | ⬜ Planned — §9                                              |
-| 💎  | NTFS UTC FILETIME timestamps on write       | ✅ `$STANDARD_INFORMATION` FILETIME fields      | ✅ ntfs3 uses `current_time()` → FILETIME         | ⬜ Planned — §9                                              |
-| 💎  | NTP kernel adjustment interface             | ✅ `W32tm` → `NtSetSystemTime` + clock slew     | ✅ `adjtimex()` syscall (phase + freq)            | ⬜ Planned — §10                                             |
-| ⭐  | Fixed QPC frequency (10 MHz FILETIME units) | ⚠️ frequency varies by hardware (not fixed)     | ❌ no fixed-frequency monotonic API               | ⬜ **Planned — §7 — stable, portable, hardware-independent** |
+
+| ⭐ | Feature                               | Win11                                      | Linux                                            | Impossible OS                                  |
+|----|---------------------------------------|--------------------------------------------|--------------------------------------------------|------------------------------------------------|
+| 💎 | 100 ns epoch-anchored wall time       | ✅ `FILETIME`, `GetSystemTimeAsFileTime()` | ⚠️ `timespec` (ns) since 1970; different         | ⬜ §1 — , §5–§6                                |
+| 💎 | High-resolution monotonic counter     | ✅ `QueryPerformanceCounter` via TSC/HPET  | ✅ `clock_gettime(CLOCK_MONOTONIC)` via vDSO     | ⬜ §2–§4                                       |
+| 💎 | Invariant TSC frequency detection     | ✅ CPUID 0x15 + TSC_INVARIANT              | ✅ `tsc_khz` calibration at boot                 | ⬜ §3                                          |
+| 💎 | Per-CPU TSC synchronization on SMP    | ✅ TSC synchronization at INIT             | ✅ `check_tsc_sync_source()` + offset correction | ⬜ §3                                          |
+| 💎 | HPET driver for QPC fallback          | ✅ used when TSC unreliable                | ✅ `hpet_clocksource`                            | ⬜ §4                                          |
+| 💎 | Wall clock from UEFI GetTime          | ✅ `EfiGetVariable` / `GetSystemTime()`    | ✅ `efi_get_time()` in drivers/firmware/efi/     | ⬜ §5                                          |
+| 💎 | Timezone + DST offset management      | ✅ registry `TimeZoneInformation`          | ✅ `/etc/localtime` + kernel `sys_tz`            | ⬜ §8                                          |
+| 💎 | FAT32 local-time timestamps on write  | ✅ kernel32 → FAT32 dir entry              | ✅ fat32 inode time via `current_time()`         | ⬜ §9                                          |
+| 💎 | NTFS UTC FILETIME timestamps on write | ✅ `$STANDARD_INFORMATION` FILETIME fields | ✅ ntfs3 uses `current_time()` → FILETIME        | ⬜ §9                                          |
+| 💎 | NTP kernel adjustment interface       | ✅ `W32tm` → `NtSetSystemTime` + clock     | ✅ `adjtimex()` syscall (phase + freq)           | ⬜ §10                                         |
+| ⭐ | Fixed QPC frequency                   | ⚠️ frequency varies by hardware (not       | ❌ no fixed-frequency monotonic API              | ⬜ §7 — stable, portable, hardware-independent |
 
 > **After §1–§9:** Impossible OS matches Windows NT exactly on FILETIME semantics, QPC, timezone handling, and filesystem timestamp accuracy.
 > **§7** locks `QueryPerformanceFrequency` to 10 MHz (FILETIME ticks/second), making it constant and hardware-independent — Windows still returns variable hardware frequencies and apps must handle this; Linux has no equivalent fixed-frequency API.

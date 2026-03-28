@@ -230,15 +230,16 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Calendar with recurring events + ICS export | ✅ Outlook/Calendar (RRULE, ICS import/export) | ✅ GNOME Calendar / KOrganizer | ⬜ Planned — §1; daily/weekly/monthly/yearly RRULE, RFC 5545 ICS file |
-| 💎 | Sticky Notes with always-on-top restore | ✅ Sticky Notes (syncs OneDrive) | ✅ KNotes / GNOME Notes | ⬜ Planned — §2; colored WM_FLAG_ALWAYS_ON_TOP windows, Registry persist, autostart |
-| 💎 | System Information read-only summary table | ✅ `msinfo32.exe` (full detail) | ✅ `inxi` / GNOME System Info | ⬜ Planned — §3; `sysinfo_gather()` shared with `sysdm.cpl`; Copy + Export |
-| 💎 | On-Screen Keyboard injecting hardware scancodes | ✅ `osk.exe` (Win+Ctrl+O) | ✅ Onboard / GNOME OSK | ⬜ Planned — §4; `keyboard_inject_scancode`, WM_FLAG_NO_FOCUS, Win+Ctrl+O |
-| ⭐ | System-wide color picker with loupe + RGB/HSL/HEX | ✅ PowerToys Color Picker (not inbox) | ✅ gpick / KColorChooser | ⬜ Planned — §5; **inbox** Win+Shift+C, 9×9 loupe, 10-color history |
-| ⭐ | Font Manager with OS/2 Unicode coverage tag pills | ✅ Font Settings (basic list) | ✅ Font Manager / GNOME Fonts | ⬜ Planned — §6; OS/2 table `ulUnicodeRange1–4` block-name display, embedding flags |
-| 💎 | Shared Help→About dialog across all apps | ✅ Each app has own About dialog | ✅ gtk_about_dialog() shared widget | ⬜ Planned — §7; `ui_dialog_about()` single impl called by all 13+ apps |
+
+| ⭐ | Feature                                           | Win11                                          | Linux                               | Impossible OS                                                    |
+|----|---------------------------------------------------|------------------------------------------------|-------------------------------------|------------------------------------------------------------------|
+| 💎 | Calendar with recurring events + ICS export       | ✅ Outlook/Calendar (RRULE, ICS import/export) | ✅ GNOME Calendar / KOrganizer      | ⬜ §1 — daily/weekly/monthly/yearly RRULE, RFC 5545 ICS          |
+| 💎 | Sticky Notes with always-on-top restore           | ✅ Sticky Notes (syncs OneDrive)               | ✅ KNotes / GNOME Notes             | ⬜ §2 — colored WM_FLAG_ALWAYS_ON_TOP windows, Registry persist, |
+| 💎 | System Information read-only summary table        | ✅ `msinfo32.exe` (full detail)                | ✅ `inxi` / GNOME System Info       | ⬜ §3 — `sysinfo_gather()` shared with `sysdm.cpl`; Copy         |
+| 💎 | On-Screen Keyboard injecting hardware scancodes   | ✅ `osk.exe` (Win+Ctrl+O)                      | ✅ Onboard / GNOME OSK              | ⬜ §4 — `keyboard_inject_scancode`, WM_FLAG_NO_FOCUS, Win+Ctrl+O |
+| ⭐ | System-wide color picker with loupe + RGB/HSL/HEX | ✅ PowerToys Color Picker (not inbox)          | ✅ gpick / KColorChooser            | ⬜ §5 — inbox Win+Shift+C, 9×9 loupe, 10-color                   |
+| ⭐ | Font Manager with OS/2 Unicode coverage tag pills | ✅ Font Settings (basic list)                  | ✅ Font Manager / GNOME Fonts       | ⬜ §6 — OS/2 table `ulUnicodeRange1–4` block-name display,       |
+| 💎 | Shared Help→About dialog across all apps          | ✅ Each app has own About                      | ✅ gtk_about_dialog() shared widget | ⬜ §7 — `ui_dialog_about()` single impl called by                |
 
 Impossible OS ships the Color Picker as an **inbox OS feature** (Win+Shift+C hotkey baked into
 the global hotkey table) — unlike Windows where it requires PowerToys installation. The loupe

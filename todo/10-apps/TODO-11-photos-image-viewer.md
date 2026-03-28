@@ -209,19 +209,20 @@ All major image formats are registered to `photos.exe`.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | JPEG/PNG/BMP/GIF image display | ✅ Photos (stb_image-like decoders) | ✅ eog / gwenview | ✅ Done — `image_load` + `gfx_blit` complete; §1 wires into full app |
-| 💎 | Fit-to-window with aspect-ratio letterbox | ✅ Photos (auto-fit on open) | ✅ eog / feh | ⬜ Planned — §1; `IMAGE_FIT_FIT` + centered blit on dark background |
-| 💎 | Smooth mouse-wheel zoom with cursor pivot | ✅ Photos | ✅ gwenview | ⬜ Planned — §2; pivot math keeps cursor pixel fixed during zoom |
-| 💎 | Folder navigation (prev/next, arrow keys) | ✅ Photos | ✅ eog | ⬜ Planned — §3; `vfs_readdir` alphabetic sort, wrap-around |
-| 💎 | Thumbnail strip | ✅ Photos (film-strip view) | ✅ gwenview | ⬜ Planned — §3; 80×60 lazy-cached thumbs, LRU eviction |
-| 💎 | Set image as desktop wallpaper | ✅ Photos (right-click) | ✅ feh / Nautilus | ⬜ Planned — §4; `reg_set_string` + `desktop_draw_wallpaper()` reload |
-| 💎 | Slideshow with crossfade | ✅ Photos (slideshow view) | ✅ eog / feh | ⬜ Planned — §5; `system_get_ticks` timer, alpha-blend crossfade |
-| ⭐ | EXIF metadata panel (Make/Model/ISO/GPS inline) | ✅ Photos (Properties) | ⚠️ eog (basic EXIF); gwenview (full) | ⬜ Planned — §6; inline TIFF/IFD reader, GPS decimal display |
-| 💎 | Rotate 90°/180°/270° with EXIF orientation update | ✅ Photos | ✅ eog | ⬜ Planned — §7; pixel-level CW/CCW rotate + EXIF tag patch for JPEG |
-| ⭐ | Rubber-band crop with rule-of-thirds overlay | ✅ Photos (crop tool) | ✅ gwenview | ⬜ Planned — §7; drag handles, inverse-zoom transform, in-place pixel copy |
-| ⭐ | Auto-enhance via per-channel histogram stretch | ✅ Photos (auto-enhance) | ⚠️ eog (no auto-enhance); GIMP (full) | ⬜ Planned — §7; 1%/99% percentile clamp, linear RGB stretch |
+
+| ⭐ | Feature                                           | Win11                               | Linux                                 | Impossible OS                                                |
+|----|---------------------------------------------------|-------------------------------------|---------------------------------------|--------------------------------------------------------------|
+| 💎 | JPEG/PNG/BMP/GIF image display                    | ✅ Photos (stb_image-like decoders) | ✅ eog / gwenview                     | ✅ §1 — Done — `image_load` + `gfx_blit`                     |
+| 💎 | Fit-to-window with aspect-ratio letterbox         | ✅ Photos (auto-fit on open)        | ✅ eog / feh                          | ⬜ §1 — `IMAGE_FIT_FIT` + centered blit on                   |
+| 💎 | Smooth mouse-wheel zoom with cursor pivot         | ✅ Photos                           | ✅ gwenview                           | ⬜ §2 — pivot math keeps cursor pixel                        |
+| 💎 | Folder navigation                                 | ✅ Photos                           | ✅ eog                                | ⬜ §3 — `vfs_readdir` alphabetic sort, wrap-around           |
+| 💎 | Thumbnail strip                                   | ✅ Photos (film-strip view)         | ✅ gwenview                           | ⬜ §3 — 80×60 lazy-cached thumbs, LRU eviction               |
+| 💎 | Set image as desktop wallpaper                    | ✅ Photos (right-click)             | ✅ feh / Nautilus                     | ⬜ §4 — `reg_set_string` + `desktop_draw_wallpaper()` reload |
+| 💎 | Slideshow with crossfade                          | ✅ Photos (slideshow view)          | ✅ eog / feh                          | ⬜ §5 — `system_get_ticks` timer, alpha-blend crossfade      |
+| ⭐ | EXIF metadata panel                               | ✅ Photos (Properties)              | ⚠️ eog (basic EXIF); gwenview (full)  | ⬜ §6 — inline TIFF/IFD reader, GPS decimal                  |
+| 💎 | Rotate 90°/180°/270° with EXIF orientation update | ✅ Photos                           | ✅ eog                                | ⬜ §7 — pixel-level CW/CCW rotate + EXIF                     |
+| ⭐ | Rubber-band crop with rule-of-thirds overlay      | ✅ Photos (crop tool)               | ✅ gwenview                           | ⬜ §7 — drag handles, inverse-zoom transform, in-place       |
+| ⭐ | Auto-enhance via per-channel histogram stretch    | ✅ Photos (auto-enhance)            | ⚠️ eog (no auto-enhance); GIMP (full) | ⬜ §7 — 1%/99% percentile clamp, linear RGB                  |
 
 Impossible OS Photos delivers the same zero-dependency image pipeline (one `image_load` call covers JPEG/PNG/BMP/GIF/WEBP/TGA) with a richer EXIF side panel and rule-of-thirds crop overlay — features absent from basic Linux viewers — without pulling in any external imaging framework.
 

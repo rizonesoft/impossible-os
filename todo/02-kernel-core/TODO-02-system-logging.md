@@ -158,21 +158,22 @@ Forward log entries to a remote syslog server for enterprise and headless debug 
 
 ## OS Comparison
 
-| ⭐  | Feature                       | 🪟 Windows 11                        | 🐧 Linux (journald / syslog)            | 🚀 Impossible OS                                    |
-| --- | ----------------------------- | ------------------------------------- | --------------------------------------- | ---------------------------------------------------- |
-| 💎  | Unified kernel log            | ✅ Windows Event Log                 | ✅ journald + syslog                    | ✅ Done — klog ring buffer + disk flush             |
-| 💎  | Log levels (5+)               | ✅ 5 levels                          | ✅ 8 POSIX levels                       | ✅ Done — DEBUG / INFO / WARN / ERROR / FATAL       |
-| 💎  | Serial debug output           | ⚠️ Requires WinDbg or DebugPrint     | ✅ `earlyprintk=serial`                 | ✅ Done — all entries to serial with level prefix   |
-| 💎  | Numbered per-boot log files   | ❌ Not built-in                      | ❌ Not built-in                         | ✅ Done — `BOOT_NNN.LOG` on FAT32 per boot session  |
-| 💎  | User-mode log syscall         | ✅ `ReportEvent()` / ETW             | ✅ `syslog()` / write to `/dev/log`     | ✅ Done — `SYS_LOG` syscall #17                     |
-| 💎  | Boot-phase aware init         | ✅ Phase 0 / Phase 1 safe logging    | ✅ `early_printk` before VFS            | ⬜ Planned — §1                                     |
-| 💎  | Per-subsystem log splitting   | ✅ Event channels per source         | ✅ syslog facilities                    | ⬜ Planned — §2                                     |
-| 💎  | Per-subsystem verbosity       | ✅ ETW session level filters         | ✅ per-facility log level               | ⬜ Planned — §3                                     |
-| 💎  | Log rotation                  | ✅ Automatic (Event Log size limit)  | ✅ logrotate                            | ⬜ Planned — §4                                     |
-| 💎  | Rate limiting                 | ✅ ETW rate limiting built-in        | ⚠️ rsyslog rate-limit, not journald     | ⬜ Planned — §5                                     |
-| ⭐  | Structured human-readable log | ❌ XML (verbose, hard to read raw)   | ❌ Binary journal (requires journalctl) | ⬜ **Planned — §6 JSON Lines, any editor**          |
-| 💎  | Remote log forwarding         | ✅ Windows Event Forwarding (WEF)    | ✅ rsyslog / syslog UDP                 | ⬜ Planned — §7                                     |
-| ⭐  | Serial timestamp every entry  | ❌ Not standard                      | ❌ Not standard                         | ✅ Done — **Impossible OS only**                    |
+
+| ⭐ | Feature                       | Win11                               | Linux                                   | Impossible OS                     |
+|----|-------------------------------|-------------------------------------|-----------------------------------------|-----------------------------------|
+| 💎 | Unified kernel log            | ✅ Windows Event Log                | ✅ journald + syslog                    | ✅ Done — klog ring buffer        |
+| 💎 | Log levels                    | ✅ 5 levels                         | ✅ 8 POSIX levels                       | ✅ Done — DEBUG / INFO            |
+| 💎 | Serial debug output           | ⚠️ Requires WinDbg or DebugPrint    | ✅ `earlyprintk=serial`                 | ✅ Done — all entries to          |
+| 💎 | Numbered per-boot log files   | ❌ Not built-in                     | ❌ Not built-in                         | ✅ Done — `BOOT_NNN.LOG` on FAT32 |
+| 💎 | User-mode log syscall         | ✅ `ReportEvent()` / ETW            | ✅ `syslog()` / write to `/dev/log`     | ✅ Done — `SYS_LOG` syscall #17   |
+| 💎 | Boot-phase aware init         | ✅ Phase 0 / Phase 1                | ✅ `early_printk` before VFS            | ⬜ §1                             |
+| 💎 | Per-subsystem log splitting   | ✅ Event channels per source        | ✅ syslog facilities                    | ⬜ §2                             |
+| 💎 | Per-subsystem verbosity       | ✅ ETW session level filters        | ✅ per-facility log level               | ⬜ §3                             |
+| 💎 | Log rotation                  | ✅ Automatic (Event Log size limit) | ✅ logrotate                            | ⬜ §4                             |
+| 💎 | Rate limiting                 | ✅ ETW rate limiting built-in       | ⚠️ rsyslog rate-limit, not journald     | ⬜ §5                             |
+| ⭐ | Structured human-readable log | ❌ XML (verbose, hard to read       | ❌ Binary journal (requires journalctl) | ⬜ §6 — JSON Lines, any editor    |
+| 💎 | Remote log forwarding         | ✅ Windows Event Forwarding (WEF)   | ✅ rsyslog / syslog UDP                 | ⬜ §7                             |
+| ⭐ | Serial timestamp every entry  | ❌ Not standard                     | ❌ Not standard                         | ✅ Done — Impossible OS only      |
 
 > **After §1–§5:** Impossible OS matches Windows and Linux on all core logging capabilities.
 > **After §6:** `events.jsonl` beats both — Windows XML is verbose and Linux binary journal requires `journalctl`. Impossible OS logs are readable by any text editor, `grep`, `jq`, or custom tooling with zero dependencies.

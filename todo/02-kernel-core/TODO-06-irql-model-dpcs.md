@@ -132,16 +132,17 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                                     | 🪟 Windows 11 / NT                            | 🐧 Linux                                                | 🚀 Impossible OS                                          |
-| --- | ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
-| 💎  | First-class IRQL/preemption levels          | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...)   | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | ✅ Per-CPU IRQL tracked, spinlocks IRQL-aware, ISR entry/exit wired with software-only tracking (§1-§3) |
-| 💎  | Deferred interrupt bottom half              | ✅ DPC queue at `DISPATCH_LEVEL`              | ✅ softirq/tasklet/NAPI bottom-half model               | ⬜ Planned — §4–§6                                        |
-| 💎  | ISR-safe deferred queue API                 | ✅ `KeInsertQueueDpc`                         | ✅ IRQ-safe enqueue primitives in net/block paths       | ⬜ Planned — §4                                           |
-| 💎  | Per-CPU deferred work queues                | ✅ Per-CPU DPC state                          | ✅ Per-CPU softirq and work processing                  | ⬜ Planned — §4–§6                                        |
-| 💎  | Context legality contract                   | ✅ API rules by IRQL                          | ✅ `might_sleep()` and atomic-context rules             | 🔄 Legality table documented in `irql.h` (§1) — runtime enforcement pending (§8) |
-| 💎  | Workqueue for thread-context deferred work  | ✅ Work items at passive level                | ✅ kernel workqueues at process context                 | ⚠️ Partial — exists; needs explicit IRQL split in §7      |
-| ⭐  | Built-in IRQL violation telemetry           | ⚠️ Mostly internal/checked builds             | ⚠️ Debug warnings exist but fragmented                  | ⬜ **Planned — §8 — unified contract diagnostics**        |
-| ⭐  | DPC fairness budget with watchdog policy    | ⚠️ Internal heuristics                        | ⚠️ Subsystem-specific tuning                            | ⬜ **Planned — §9 — explicit and configurable policy**    |
+
+| ⭐ | Feature                                    | Win11                                       | Linux                                                   | Impossible OS                                          |
+|----|--------------------------------------------|---------------------------------------------|---------------------------------------------------------|--------------------------------------------------------|
+| 💎 | First-class IRQL/preemption levels         | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...) | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | ✅ §1-§3 — Per-CPU IRQL tracked, spinlocks IRQL-aware, |
+| 💎 | Deferred interrupt bottom half             | ✅ DPC queue at `DISPATCH_LEVEL`            | ✅ softirq/tasklet/NAPI bottom-half model               | ⬜ §4–§6                                               |
+| 💎 | ISR-safe deferred queue API                | ✅ `KeInsertQueueDpc`                       | ✅ IRQ-safe enqueue primitives in net/block             | ⬜ §4                                                  |
+| 💎 | Per-CPU deferred work queues               | ✅ Per-CPU DPC state                        | ✅ Per-CPU softirq and work processing                  | ⬜ §4–§6                                               |
+| 💎 | Context legality contract                  | ✅ API rules by IRQL                        | ✅ `might_sleep()` and atomic-context rules             | 🔄 §1 — Legality table documented in `irql.h`          |
+| 💎 | Workqueue for thread-context deferred work | ✅ Work items at passive level              | ✅ kernel workqueues at process context                 | ⚠️ §7 — Partial — exists; needs explicit               |
+| ⭐ | Built-in IRQL violation telemetry          | ⚠️ Mostly internal/checked builds           | ⚠️ Debug warnings exist but fragmented                  | ⬜ §8 — unified contract diagnostics                   |
+| ⭐ | DPC fairness budget with watchdog policy   | ⚠️ Internal heuristics                      | ⚠️ Subsystem-specific tuning                            | ⬜ §9 — explicit and configurable policy               |
 
 > **After §1–§7:** Impossible OS reaches parity on interrupt-level execution guarantees and deferred work architecture required for production drivers.
 > **§8–§9** turn correctness and fairness into explicit kernel contracts instead of hidden implementation behavior.

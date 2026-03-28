@@ -200,17 +200,18 @@ Define a `cpufreq_governor_t` vtable and wire two built-in governors — `perfor
 
 ## OS Comparison
 
-| ⭐  | Feature                                        | 🪟 Windows NT / 11                                         | 🐧 Linux                                                    | 🚀 Impossible OS                                                  |
-| --- | ---------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------- |
-| 💎  | Priority queues — O(1) dequeue                 | ✅ 32 priority levels; O(1) per-priority queue             | ✅ 40 nice levels; O(1) via `sched_prio_to_weight` bitmap   | ⬜ Planned — §1; 40 levels, 64-bit `bsf` bitmap                  |
-| 💎  | Starvation prevention / priority aging         | ✅ Priority boost heuristic (UI threads)                   | ✅ Dynamic priority decay (`sched_prio_to_weight`)          | ⬜ Planned — §2; `ticks_waiting` EMA aging, Registry-tunable     |
-| 💎  | CFS vruntime fair CPU sharing                  | ❌ Fixed-priority only; no vruntime concept                 | ✅ CFS — `prio_to_weight`, `min_vruntime`, red-black tree   | ⬜ Planned — §3; CFS within priority levels + `prio_to_weight[40]`|
-| 💎  | `SCHED_FIFO` / `SCHED_RR` real-time classes    | ✅ `REALTIME_PRIORITY_CLASS`; no explicit FIFO/RR API      | ✅ `SCHED_FIFO` / `SCHED_RR` (POSIX)                       | ⬜ Planned — §4; `SCHED_FIFO` / `SCHED_RR` with `CAP_SCHED_RT`  |
-| ⭐  | `SCHED_DEADLINE` EDF + GRUB bandwidth reclaim  | ❌ No EDF or deadline scheduling class                     | ✅ `SCHED_DEADLINE` (3.14+); CBS + GRUB reclaim             | ⬜ Planned — §5; admission control at 90%, GRUB reclaim           |
-| 💎  | CPU affinity (`SetThreadAffinityMask`)         | ✅ `SetThreadAffinityMask` Win32 API                       | ✅ `sched_setaffinity(2)` / `pthread_setaffinity_np`        | ⬜ Planned — §6; `affinity_mask` in task, `NtSetInformationThread`|
-| ⭐  | Unified `/sys/sched` all-threads snapshot      | ❌ ETW only; not human-readable without WPA                 | ❌ Per-process `/proc/<pid>/sched`; no single-file view     | ⬜ Planned — §7; **one file, all threads**, `sched` shell cmd     |
-| 💎  | Scheduler tick calibration (RDTSC + timer)     | ✅ HPET/TSC calibration in HAL at boot                     | ✅ `calibrate_delay()` + TSC-deadline LAPIC mode            | ⬜ Planned — §8; RDTSC+HPET measurement, Hyper-V synthetic fallback|
-| 💎  | CPU frequency scaling governor                 | ✅ Windows power plans; `PPM` in ntoskrnl                  | ✅ `cpufreq` governors (`ondemand`, `performance`, etc.)    | ⬜ Planned — §9; `cpufreq_governor_t` vtable, ACPI P-state hook  |
+
+| ⭐ | Feature                                       | Win11                                                 | Linux                                                    | Impossible OS                                              |
+|----|-----------------------------------------------|-------------------------------------------------------|----------------------------------------------------------|------------------------------------------------------------|
+| 💎 | Priority queues — O(1) dequeue                | ✅ 32 priority levels; O(1) per-priority              | ✅ 40 nice levels; O(1) via                              | ⬜ §1 — 40 levels, 64-bit `bsf` bitmap                     |
+| 💎 | Starvation prevention / priority aging        | ✅ Priority boost heuristic (UI threads)              | ✅ Dynamic priority decay (`sched_prio_to_weight`)       | ⬜ §2 — `ticks_waiting` EMA aging, Registry-tunable        |
+| 💎 | CFS vruntime fair CPU sharing                 | ❌ Fixed-priority only; no vruntime concept           | ✅ CFS — `prio_to_weight`, `min_vruntime`, red-black     | ⬜ §3 — CFS within priority levels +                       |
+| 💎 | `SCHED_FIFO` / `SCHED_RR` real-time classes   | ✅ `REALTIME_PRIORITY_CLASS`; no explicit FIFO/RR API | ✅ `SCHED_FIFO` / `SCHED_RR` (POSIX)                     | ⬜ §4 — `SCHED_FIFO` / `SCHED_RR` with `CAP_SCHED_RT`      |
+| ⭐ | `SCHED_DEADLINE` EDF + GRUB bandwidth reclaim | ❌ No EDF or deadline scheduling                      | ✅ `SCHED_DEADLINE` (3.14+); CBS + GRUB                  | ⬜ §5 — admission control at 90%, GRUB                     |
+| 💎 | CPU affinity                                  | ✅ `SetThreadAffinityMask` Win32 API                  | ✅ `sched_setaffinity(2)` / `pthread_setaffinity_np`     | ⬜ §6 — `affinity_mask` in task, `NtSetInformationThread`  |
+| ⭐ | Unified `/sys/sched` all-threads snapshot     | ❌ ETW only; not human-readable without               | ❌ Per-process `/proc/<pid>/sched`; no single-file view  | ⬜ §7 — one file, all threads, `sched`                     |
+| 💎 | Scheduler tick calibration                    | ✅ HPET/TSC calibration in HAL at                     | ✅ `calibrate_delay()` + TSC-deadline LAPIC mode         | ⬜ §8 — RDTSC+HPET measurement, Hyper-V synthetic fallback |
+| 💎 | CPU frequency scaling governor                | ✅ Windows power plans; `PPM` in                      | ✅ `cpufreq` governors (`ondemand`, `performance`, etc.) | ⬜ §9 — `cpufreq_governor_t` vtable, ACPI P-state hook     |
 
 > **After parity items:** Impossible OS matches Windows and Linux on priority queues, aging, RT classes, affinity, tick calibration, and cpufreq. `SCHED_DEADLINE` adds a hard real-time scheduling class Windows lacks entirely. The unified `/sys/sched` snapshot gives operator-visible scheduler state without ETW tracing infrastructure or per-process `/proc` walking.
 

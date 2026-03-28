@@ -345,16 +345,17 @@ process in future iteration)
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Per-thread MSG ring-buffer queue (CSRSS/Win32k) | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking | ❌ No equivalent (event loops are toolkit-specific) | ⬜ Planned — §1; `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE` blocking; `sched_wake` on post |
-| 💎 | Window class registry (global + per-process) | ✅ Win32k system + app classes; `RegisterClassEx`; 256-class limit | ❌ No concept (toolkit-specific) | ⬜ Planned — §2; 256 global + 64 per-process; built-in classes map to `CTRL_*` |
-| 💎 | `DefWindowProc` default message handling | ✅ `user32!DefWindowProcW`; full WM_* set | ❌ Not applicable | ⬜ Planned — §3; `WM_CLOSE→DestroyWindow`, `WM_DESTROY→PostQuitMessage`, `WM_SYSCOMMAND`, `WM_NCHITTEST` |
-| 💎 | HDC → compositor surface mapping + dirty rect | ✅ Win32k HDC; GDI `SURFOBJ`; dirty-rect coalescing | ✅ X11 expose events; Wayland damage protocol | ⬜ Planned — §4; HDC → `gfx_surface_t *`; `InvalidateRect` coalesces to one `WM_PAINT`; `EndPaint` triggers compositor flush |
-| 💎 | Accelerator tables (`TranslateAccelerator`) | ✅ `user32!TranslateAccelerator`; PE `RT_ACCELERATOR` resource | ✅ GDK accelerators; X11 keysym matching | ⬜ Planned — §5; PE resource-loaded ACCEL array; `FALT/FSHIFT/FCONTROL/FVIRTKEY` flags; `WM_COMMAND` dispatch |
-| 💎 | Window subclassing (`SetWindowLongPtr`/`SetProp`) | ✅ Full subclassing + property store | ✅ GTK subclass; X11 `XChangeProperty` | ⬜ Planned — §6; `GWLP_WNDPROC` chain; `SetProp/GetProp/RemoveProp`; `CallWindowProc` forwarding |
-| 💎 | Cross-process `SendMessage` + `WM_COPYDATA` | ✅ Win32k cross-process; `WM_COPYDATA` kernel-mapped | ❌ No standard; X11 `XSendEvent` (unsafe) | ⬜ Planned — §7; IPC pipe + shmem; 5s timeout; 64 KB `WM_COPYDATA` limit; `BroadcastSystemMessage` |
-| 💎 | `ChooseColor`/`ChooseFont` common dialogs | ✅ `comdlg32.dll` | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ Planned — §8; thin Win32 struct adapter over `dialog_color` + font picker |
+
+| ⭐ | Feature                                       | Win11                                                          | Linux                                           | Impossible OS                                                                                   |
+|----|-----------------------------------------------|----------------------------------------------------------------|-------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| 💎 | Per-thread MSG ring-buffer queue              | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking    | ❌ No equivalent (event loops are               | ⬜ §1 — `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE`                                   |
+| 💎 | Window class registry                         | ✅ Win32k system + app classes;                                | ❌ No concept (toolkit-specific)                | ⬜ §2 — 256 global + 64 per-process                                                             |
+| 💎 | `DefWindowProc` default message handling      | ✅ `user32!DefWindowProcW`; full WM_* set                      | ❌ Not applicable                               | ⬜ §3 — `WM_CLOSE→DestroyWindow`, `WM_DESTROY→PostQuitMessage`, `WM_SYSCOMMAND`, `WM_NCHITTEST` |
+| 💎 | HDC → compositor surface mapping + dirty rect | ✅ Win32k HDC; GDI `SURFOBJ`; dirty-rect                       | ✅ X11 expose events; Wayland damage            | ⬜ §4 — HDC → `gfx_surface_t *`; `InvalidateRect`                                               |
+| 💎 | Accelerator tables                            | ✅ `user32!TranslateAccelerator`; PE `RT_ACCELERATOR` resource | ✅ GDK accelerators; X11 keysym matching        | ⬜ §5 — PE resource-loaded ACCEL array; `FALT/FSHIFT/FCONTROL/FVIRTKEY`                         |
+| 💎 | Window subclassing                            | ✅ Full subclassing + property store                           | ✅ GTK subclass; X11 `XChangeProperty`          | ⬜ §6 — `GWLP_WNDPROC` chain; `SetProp/GetProp/RemoveProp`; `CallWindowProc` forwarding         |
+| 💎 | Cross-process `SendMessage` + `WM_COPYDATA`   | ✅ Win32k cross-process; `WM_COPYDATA` kernel-mapped           | ❌ No standard; X11 `XSendEvent` (unsafe)       | ⬜ §7 — IPC pipe + shmem; 5s                                                                    |
+| 💎 | `ChooseColor`/`ChooseFont` common dialogs     | ✅ `comdlg32.dll`                                              | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ §8 — thin Win32 struct adapter over                                                          |
 
 Impossible OS CSRSS delivers a **native kernel-backed Win32 message loop** — not a
 user-space emulation layer. The MSG ring buffer is allocated and managed in kernel memory;

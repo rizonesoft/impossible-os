@@ -200,16 +200,17 @@
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | VNC viewer (RFB 3.8, Raw/RRE/Hextile) | ✅ no built-in; TightVNC / RealVNC | ✅ Remmina / TigerVNC | ⬜ Planned — §1; DES auth, keyboard/mouse forward, viewer window |
-| 💎 | IRC client (PRIVMSG, slash commands, TLS 6697) | ✅ no built-in; HexChat / mIRC | ✅ HexChat / irssi / WeeChat | ⬜ Planned — §2; nick completion, colored usernames, PING/PONG |
-| ⭐ | IRC nick-tab-completion + hash-colored usernames (built-in) | ❌ no built-in IRC | ✅ HexChat built-in | ⬜ Planned — §2; `hash(nick) % 8` palette |
-| 💎 | RSS 2.0 + Atom 1.0 feed reader | ✅ no built-in (removed in Win10) | ✅ Liferea / Newsboat | ⬜ Planned — §3; callback XML parser, 30-min auto-refresh, unread badge |
-| ⭐ | RSS auto-refresh + toast notification (built-in, no plugin) | ❌ removed from Windows | ⚠️ Liferea plugin | ⬜ Planned — §3; `sched_task_add(1800)` + `notify_send` |
-| 💎 | `ping` + `traceroute` commands | ✅ built-in | ✅ built-in | ⬜ → XREF TODO-06 §5–§6; shell wrappers in §4 |
-| 💎 | `arp -a` + `route print` | ✅ `arp -a`, `route print` | ✅ `arp -n`, `ip route` | ⬜ Planned — §5; `arp_cache_dump` wrapper + routing table print |
-| ⭐ | VNC server for headless remote access (built-in) | ❌ no built-in VNC server | ⚠️ `x11vnc` / `wayvnc` (external) | ⬜ Planned (Stretch) — §6; compositor fb capture, `vncsrv start/stop` |
+
+| ⭐ | Feature                                          | Win11                              | Linux                             | Impossible OS                                         |
+|----|--------------------------------------------------|------------------------------------|-----------------------------------|-------------------------------------------------------|
+| 💎 | VNC viewer                                       | ✅ no built-in; TightVNC / RealVNC | ✅ Remmina / TigerVNC             | ⬜ §1 — DES auth, keyboard/mouse forward, viewer      |
+| 💎 | IRC client                                       | ✅ no built-in; HexChat / mIRC     | ✅ HexChat / irssi / WeeChat      | ⬜ §2 — nick completion, colored usernames, PING/PONG |
+| ⭐ | IRC nick-tab-completion + hash-colored usernames | ❌ no built-in IRC                 | ✅ HexChat built-in               | ⬜ §2 — `hash(nick) % 8` palette                      |
+| 💎 | RSS 2.0 + Atom 1.0 feed reader                   | ✅ no built-in (removed in Win10)  | ✅ Liferea / Newsboat             | ⬜ §3 — callback XML parser, 30-min auto-refresh,     |
+| ⭐ | RSS auto-refresh + toast notification            | ❌ removed from Windows            | ⚠️ Liferea plugin                 | ⬜ §3 — `sched_task_add(1800)` + `notify_send`        |
+| 💎 | `ping` + `traceroute` commands                   | ✅ built-in                        | ✅ built-in                       | ⬜ §5–§6 — → XREF TODO-06 ; shell                     |
+| 💎 | `arp -a` + `route print`                         | ✅ `arp -a`, `route print`         | ✅ `arp -n`, `ip route`           | ⬜ §5 — `arp_cache_dump` wrapper + routing table      |
+| ⭐ | VNC server for headless remote access            | ❌ no built-in VNC server          | ⚠️ `x11vnc` / `wayvnc` (external) | ⬜ §6 — (Stretch) — ; compositor fb                   |
 
 Impossible OS ships RSS news reader and IRC client out of the box — features Windows 11 dropped
 years ago — plus a built-in VNC server enabling zero-install remote desktop for QEMU testing,

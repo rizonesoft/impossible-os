@@ -161,14 +161,15 @@ Convert the existing built-in RTL8139 driver to `src/modules/rtl8139/rtl8139.kmo
 
 ## OS Comparison
 
-| ⭐  | Feature                                           | 🪟 Windows NT / 11                                          | 🐧 Linux                                                        | 🚀 Impossible OS                                                                   |
-| --- | ------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| 💎  | Kernel symbol export table                        | ✅ `HAL.dll` + `ntoskrnl.exe` export tables (PE/COFF)      | ✅ `EXPORT_SYMBOL` → `.kallsyms`; `ksym_lookup` via hash       | ⬜ Planned — §1; `EXPORT_SYMBOL` → `.ksymtab` linker section, `ksym_lookup`       |
-| 💎  | Loadable kernel module (ELF / `.ko` / `.sys`)     | ✅ `.sys` PE/COFF loaded by I/O Manager; kernel APC calls  | ✅ `insmod`/`modprobe`; ELF `.ko` with relocations              | ⬜ Planned — §2; `ET_REL` ELF loader, 4 reloc types, PMM exec pages               |
-| 💎  | Module build system + freestanding compiler flags | ✅ WDK/MSBuild; driver project templates                    | ✅ Kbuild `obj-m`; `-ffreestanding` per module                  | ⬜ Planned — §3; `src/modules/`, `Makefile.module`, IXFS install                  |
-| 💎  | Driver model + PCI match tables + HAL vtables     | ✅ WDM `DRIVER_OBJECT`; `IoCreateDevice`; miniport vtables  | ✅ `struct bus_type`; `driver.probe()`; `platform_driver`       | ⬜ Planned — §4; `struct driver`, `pci_match[]`, `blk_ops`/`net_ops`/`input_ops`  |
-| 💎  | Auto-load drivers at boot from filesystem         | ✅ `HKLM\SYSTEM\CurrentControlSet\Services`; SCM loads     | ✅ `initrd` + `depmod`; `modprobe` at `systemd` init            | ⬜ Planned — §5; scan `C:\Impossible\System\Drivers\`, non-fatal on failure        |
-| 💎  | First-party driver as loadable module (proof)     | ✅ All NDIS miniport NIC drivers are `.sys` modules        | ✅ Almost all NIC drivers are `CONFIG_=m` modules               | ⬜ Planned — §6; RTL8139 migrated to `rtl8139.kmod`; networking verified           |
+
+| ⭐ | Feature                                           | Win11                                                      | Linux                                                     | Impossible OS                                                           |
+|----|---------------------------------------------------|------------------------------------------------------------|-----------------------------------------------------------|-------------------------------------------------------------------------|
+| 💎 | Kernel symbol export table                        | ✅ `HAL.dll` + `ntoskrnl.exe` export tables                | ✅ `EXPORT_SYMBOL` → `.kallsyms`; `ksym_lookup` via       | ⬜ §1 — `EXPORT_SYMBOL` → `.ksymtab` linker section,                    |
+| 💎 | Loadable kernel module                            | ✅ `.sys` PE/COFF loaded by I/O                            | ✅ `insmod`/`modprobe`; ELF `.ko` with relocations        | ⬜ §2 — `ET_REL` ELF loader, 4 reloc                                    |
+| 💎 | Module build system + freestanding compiler flags | ✅ WDK/MSBuild; driver project templates                   | ✅ Kbuild `obj-m`; `-ffreestanding` per module            | ⬜ §3 — `src/modules/`, `Makefile.module`, IXFS install                 |
+| 💎 | Driver model + PCI match tables + HAL vtables     | ✅ WDM `DRIVER_OBJECT`; `IoCreateDevice`; miniport vtables | ✅ `struct bus_type`; `driver.probe()`; `platform_driver` | ⬜ §4 — `struct driver`, `pci_match[]`, `blk_ops`/`net_ops`/`input_ops` |
+| 💎 | Auto-load drivers at boot from filesystem         | ✅ `HKLM\SYSTEM\CurrentControlSet\Services`; SCM loads     | ✅ `initrd` + `depmod`; `modprobe` at                     | ⬜ §5 — scan `C:\Impossible\System\Drivers\`, non-fatal on failure      |
+| 💎 | First-party driver as loadable module             | ✅ All NDIS miniport NIC drivers                           | ✅ Almost all NIC drivers are                             | ⬜ §6 — RTL8139 migrated to `rtl8139.kmod`; networking                  |
 
 > **After §1–6:** Impossible OS reaches full parity with Windows NT and Linux for the foundational driver-loading infrastructure. The key design difference: no separate HAL binary (`HAL.dll`) — the HAL vtables (`blk_ops`, `net_ops`) live directly in kernel address space and are accessed via standard C function-pointer dispatch, eliminating one indirection level and one binary boundary Windows drivers must cross.
 

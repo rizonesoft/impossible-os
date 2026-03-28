@@ -266,18 +266,19 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Native C compiler on OS (TCC) | ✅ MSVC | ✅ GCC/Clang | ⬜ Planned — TCC natively, self-hosting |
-| 💎 | GCC/Clang C++ compiler | ✅ MSVC C++ | ✅ GCC/Clang | ⬜ Planned (long-term, §11) |
-| 💎 | SDK headers (`windows.h`, types, file, process) | ✅ Windows SDK | ✅ glibc headers | ⬜ Planned — `impossible.h` + subsystem headers |
-| 💎 | Import libraries for linker (`kernel32.lib`) | ✅ Windows SDK | ✅ `.so` stubs | ⬜ Planned — COFF `.lib` from `mkimportlib` |
-| 💎 | Cross-compilation toolchain (`impossible-cc`) | ✅ VS Build Tools | ✅ `gcc`/`clang` | ⬜ Planned — MinGW wrapper (`TODO-08 §15`) |
-| 💎 | `make` build utility | ✅ nmake/MSBuild | ✅ GNU make | ⬜ Planned — lightweight Makefile parser |
-| ⭐ | Self-hosting TCC on OS (compile PE natively) | ❌ Can't run TCC on Windows natively | ❌ TCC runs but targets ELF | ⬜ Planned — TCC outputs PE on Impossible OS |
-| ⭐ | SDK pre-installed out-of-the-box on OS image | ❌ Separate SDK install required | ❌ distro-specific headers | ⬜ Planned — headers + libs at `C:\Impossible\Include\` from first boot |
-| ⭐ | `cc`/`run` shell built-ins for instant C compilation | ❌ No equivalent | ❌ No equivalent | ⬜ Planned — `run hello.c` compiles and executes in one command |
-| ⭐ | IxUI GUI framework compilable natively with TCC | ❌ Requires full Win32 SDK | ❌ No native Win32 | ⬜ Planned — `tcc gui.c -lixui -o app.exe` |
+
+| ⭐ | Feature                                              | Win11                            | Linux                       | Impossible OS                                 |
+|----|------------------------------------------------------|----------------------------------|-----------------------------|-----------------------------------------------|
+| 💎 | Native C compiler on OS                              | ✅ MSVC                          | ✅ GCC/Clang                | ⬜ TCC natively, self-hosting                 |
+| 💎 | GCC/Clang C++ compiler                               | ✅ MSVC C++                      | ✅ GCC/Clang                | ⬜ §11 — (long-term, )                        |
+| 💎 | SDK headers                                          | ✅ Windows SDK                   | ✅ glibc headers            | ⬜ `impossible.h` + subsystem headers         |
+| 💎 | Import libraries for linker                          | ✅ Windows SDK                   | ✅ `.so` stubs              | ⬜ COFF `.lib` from `mkimportlib`             |
+| 💎 | Cross-compilation toolchain                          | ✅ VS Build Tools                | ✅ `gcc`/`clang`            | ⬜ §15 — MinGW wrapper (`TODO-08 `)           |
+| 💎 | `make` build utility                                 | ✅ nmake/MSBuild                 | ✅ GNU make                 | ⬜ lightweight Makefile parser                |
+| ⭐ | Self-hosting TCC on OS                               | ❌ Can't run TCC on Windows      | ❌ TCC runs but targets ELF | ⬜ TCC outputs PE on Impossible               |
+| ⭐ | SDK pre-installed out-of-the-box on OS image         | ❌ Separate SDK install required | ❌ distro-specific headers  | ⬜ headers + libs at `C:\Impossible\Include\` |
+| ⭐ | `cc`/`run` shell built-ins for instant C compilation | ❌ No equivalent                 | ❌ No equivalent            | ⬜ `run hello.c` compiles and executes        |
+| ⭐ | IxUI GUI framework compilable natively with TCC      | ❌ Requires full Win32 SDK       | ❌ No native Win32          | ⬜ `tcc gui.c -lixui -o app.exe`              |
 
 **Impossible OS advantage:** The SDK ships pre-installed on the OS — a developer can boot Impossible OS, type `run hello.c`, and their program runs, with zero additional setup. TCC self-hosting on a custom OS is a milestone that neither Windows nor Linux achieve with their native formats. The `run` shell built-in makes C feel like a scripting language.
 

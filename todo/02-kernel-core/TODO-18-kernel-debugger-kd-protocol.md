@@ -522,22 +522,23 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                                    | 🪟 Windows 11 (KDCOM)               | 🐧 Linux (KGDB)                      | 🚀 Impossible OS                              |
-| --- | ------------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------------------------------- |
-| 💎  | KD/KGDB serial stub                        | ✅ `kdcom.dll` (kernel component)   | ✅ `CONFIG_KGDB_SERIAL_CONSOLE`      | ⬜ Planned — §1–§4                            |
-| 💎  | WinDbg-compatible wire protocol (KD)       | ✅ Native                           | ❌ GDB protocol (incompatible)       | ⬜ Planned — §2–§3                            |
-| 💎  | Live breakpoints from debugger host        | ✅ Full                             | ✅ Full (GDB `break`)                | ⬜ Planned — §7                               |
-| 💎  | Hardware debug registers (DR0-DR3)         | ✅ Full (WinDbg `ba`)               | ✅ Full (GDB `watch`)                | ⬜ Planned — §8                               |
-| 💎  | Single-step (TF flag)                      | ✅ Full (WinDbg `t`/`p`)            | ✅ Full (GDB `stepi`/`nexti`)        | ⬜ Planned — §9                               |
-| 💎  | Live memory read / write                   | ✅ Full (WinDbg `db`/`eb`)          | ✅ Full (GDB `x`/`set`)              | ⬜ Planned — §6                               |
-| 💎  | Register read / write                      | ✅ Full (WinDbg `r`)                | ✅ Full (GDB `info reg`)             | ⬜ Planned — §5                               |
-| 💎  | Loaded module list                         | ✅ Full (WinDbg `lm`)               | ✅ Full (GDB `info shared`)          | ⬜ Planned — §10                              |
-| 💎  | MSR read / write from debugger             | ✅ `!msr` WinDbg extension          | ✅ `/sys/class/msr` + KGDB           | ⬜ Planned — §11                              |
-| 💎  | `DbgBreakPoint()` / `kd_break()` in code   | ✅ `DbgBreakPoint()` native         | ✅ `KGDB_BREAKPOINT()`               | ⬜ Planned — §12                              |
-| 💎  | I/O port access from debugger              | ✅ WinDbg `!ioctlsend`              | ⚠️ Indirect via KGDB+driver          | ⬜ Planned — §11                              |
-| ⭐  | Keyboard F12 breakin on target             | ❌ Requires SysRq via PS/2          | ⚠️ `SysRq+g` (limited support)      | ⬜ **Planned — §12** 🚀                        |
-| ⭐  | KD enabled/disabled via Registry           | ⚠️ `bcdedit` only                  | ⚠️ Kernel boot param only            | ⬜ **Planned — §12.3** 🚀                      |
-| ⭐  | QEMU TCP pipe KD (cross-platform)          | ⚠️ Named pipe only (Windows host)  | ⚠️ GDB remote protocol               | ⬜ **Planned — §12.3** 🚀                      |
+
+| ⭐ | Feature                                  | Win11                             | Linux                           | Impossible OS  |
+|----|------------------------------------------|-----------------------------------|---------------------------------|----------------|
+| 💎 | KD/KGDB serial stub                      | ✅ `kdcom.dll` (kernel component) | ✅ `CONFIG_KGDB_SERIAL_CONSOLE` | ⬜ §1–§4       |
+| 💎 | WinDbg-compatible wire protocol          | ✅ Native                         | ❌ GDB protocol (incompatible)  | ⬜ §2–§3       |
+| 💎 | Live breakpoints from debugger host      | ✅ Full                           | ✅ Full (GDB `break`)           | ⬜ §7          |
+| 💎 | Hardware debug registers                 | ✅ Full (WinDbg `ba`)             | ✅ Full (GDB `watch`)           | ⬜ §8          |
+| 💎 | Single-step                              | ✅ Full (WinDbg `t`/`p`)          | ✅ Full (GDB `stepi`/`nexti`)   | ⬜ §9          |
+| 💎 | Live memory read / write                 | ✅ Full (WinDbg `db`/`eb`)        | ✅ Full (GDB `x`/`set`)         | ⬜ §6          |
+| 💎 | Register read / write                    | ✅ Full (WinDbg `r`)              | ✅ Full (GDB `info reg`)        | ⬜ §5          |
+| 💎 | Loaded module list                       | ✅ Full (WinDbg `lm`)             | ✅ Full (GDB `info shared`)     | ⬜ §10         |
+| 💎 | MSR read / write from debugger           | ✅ `!msr` WinDbg extension        | ✅ `/sys/class/msr` + KGDB      | ⬜ §11         |
+| 💎 | `DbgBreakPoint()` / `kd_break()` in code | ✅ `DbgBreakPoint()` native       | ✅ `KGDB_BREAKPOINT()`          | ⬜ §12         |
+| 💎 | I/O port access from debugger            | ✅ WinDbg `!ioctlsend`            | ⚠️ Indirect via KGDB+driver     | ⬜ §11         |
+| ⭐ | Keyboard F12 breakin on target           | ❌ Requires SysRq via PS/2        | ⚠️ `SysRq+g` (limited support)  | ⬜ §12 — 🚀    |
+| ⭐ | KD enabled/disabled via Registry         | ⚠️ `bcdedit` only                 | ⚠️ Kernel boot param only       | ⬜ §12 — .3 🚀 |
+| ⭐ | QEMU TCP pipe KD                         | ⚠️ Named pipe only (Windows host) | ⚠️ GDB remote protocol          | ⬜ §12 — .3 🚀 |
 
 After §1–11, Impossible OS has a complete WinDbg-compatible KD stub — the only production
 kernel debugger protocol that Windows developers already know, with `!analyze -v`, live

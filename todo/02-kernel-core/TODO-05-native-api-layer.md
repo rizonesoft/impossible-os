@@ -269,20 +269,21 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Windows NT / 11                                    | 🐧 Linux                                         | 🚀 Impossible OS                                    |
-| --- | ------------------------------------- | ----------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
-| 💎  | SYSCALL/SYSRET fast path              | ✅ KiSystemCall64 via IA32_LSTAR                      | ✅ `syscall` entry via `entry_SYSCALL_64`        | ⬜ Planned — §2                                     |
-| 💎  | Typed failure return (NTSTATUS)       | ✅ Every NtXxx returns NTSTATUS                       | ✅ `-ERRNO` signed return                        | ⬜ Planned — §1                                     |
-| 💎  | Numbered service descriptor table     | ✅ SSDT (ntoskrnl) + shadow SSDT (win32k)             | ✅ syscall table `sys_call_table[]`              | ⬜ Planned — §4                                     |
-| 💎  | Software-interrupt compatibility path | ✅ INT 0x2E (legacy NT)                               | ✅ INT 0x80 (32-bit compat)                      | ⬜ Planned — §3                                     |
-| 💎  | IO_STATUS_BLOCK for async I/O         | ✅ Every file NtXxx populates IOSB                    | ⚠️ `io_uring` result ring; no IOSB equivalent    | ⬜ Planned — §11                                    |
-| 💎  | Process/thread creation via typed API | ✅ NtCreateProcess / NtCreateThread                   | ✅ `clone()` / `execve()`                        | ⬜ Planned — §7                                     |
-| 💎  | Named sync objects via syscall        | ✅ NtCreateEvent / NtCreateMutant / NtCreateSemaphore | ✅ POSIX named semaphores + futex                | ⬜ Planned — §8                                     |
-| 💎  | Virtual memory management syscalls    | ✅ NtAllocateVirtualMemory / NtFreeVirtualMemory      | ✅ `mmap()` / `munmap()`                         | ⬜ Planned — §9                                     |
-| 💎  | OS info query syscall                 | ✅ NtQuerySystemInformation                           | ✅ `sysinfo()` / `/proc/`                        | ⬜ Planned — §10                                    |
-| 💎  | LastError per-thread slot             | ✅ TEB->LastErrorValue set by kernel on each syscall  | ✅ `errno` via thread-local `__errno_location`   | ⬜ Planned — §11 (+ TODO-04 §6)                     |
-| ⭐  | ZwXxx CPL-gated kernel alias layer    | ✅ Internal convention; not documented/public         | ❌ No equivalent; drivers use same syscall path  | ⬜ **Planned — §12 — explicit, documented**         |
-| ⭐  | Unified Nt/Zw contract as public API  | ⚠️ NT native API is undocumented / unofficial         | ❌ No stable native API; syscall numbers change  | ⬜ **Planned — §4/§12 — stable, numbered, public**  |
+
+| ⭐ | Feature                               | Win11                                                 | Linux                                          | Impossible OS                           |
+|----|---------------------------------------|-------------------------------------------------------|------------------------------------------------|-----------------------------------------|
+| 💎 | SYSCALL/SYSRET fast path              | ✅ KiSystemCall64 via IA32_LSTAR                      | ✅ `syscall` entry via `entry_SYSCALL_64`      | ⬜ §2                                   |
+| 💎 | Typed failure return                  | ✅ Every NtXxx returns NTSTATUS                       | ✅ `-ERRNO` signed return                      | ⬜ §1                                   |
+| 💎 | Numbered service descriptor table     | ✅ SSDT (ntoskrnl) + shadow SSDT                      | ✅ syscall table `sys_call_table[]`            | ⬜ §4                                   |
+| 💎 | Software-interrupt compatibility path | ✅ INT 0x2E (legacy NT)                               | ✅ INT 0x80 (32-bit compat)                    | ⬜ §3                                   |
+| 💎 | IO_STATUS_BLOCK for async I/O         | ✅ Every file NtXxx populates IOSB                    | ⚠️ `io_uring` result ring; no IOSB             | ⬜ §11                                  |
+| 💎 | Process/thread creation via typed API | ✅ NtCreateProcess / NtCreateThread                   | ✅ `clone()` / `execve()`                      | ⬜ §7                                   |
+| 💎 | Named sync objects via syscall        | ✅ NtCreateEvent / NtCreateMutant / NtCreateSemaphore | ✅ POSIX named semaphores + futex              | ⬜ §8                                   |
+| 💎 | Virtual memory management syscalls    | ✅ NtAllocateVirtualMemory / NtFreeVirtualMemory      | ✅ `mmap()` / `munmap()`                       | ⬜ §9                                   |
+| 💎 | OS info query syscall                 | ✅ NtQuerySystemInformation                           | ✅ `sysinfo()` / `/proc/`                      | ⬜ §10                                  |
+| 💎 | LastError per-thread slot             | ✅ TEB->LastErrorValue set by kernel on               | ✅ `errno` via thread-local `__errno_location` | ⬜ §11 — (+ TODO-04 §6)                 |
+| ⭐ | ZwXxx CPL-gated kernel alias layer    | ✅ Internal convention; not documented/public         | ❌ No equivalent; drivers use same             | ⬜ §12 — explicit, documented           |
+| ⭐ | Unified Nt/Zw contract as public API  | ⚠️ NT native API is undocumented                      | ❌ No stable native API; syscall               | ⬜ §4 — /§12 — stable, numbered, public |
 
 > **After §1–§11:** Impossible OS matches Windows NT exactly on the native API calling convention, service numbers, IOSB semantics, NTSTATUS codes, and LastError propagation. Real `ntdll.dll` stubs can call into the kernel without patching.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract — Windows keeps it internal/undocumented and Linux has no equivalent at all.

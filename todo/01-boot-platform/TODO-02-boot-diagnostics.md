@@ -185,16 +185,17 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 
 ## OS Comparison
 
-| ⭐  | Feature                              | 🪟 Windows 11                                     | 🐧 Linux                                          | 🚀 Impossible OS                                           |
-| --- | ------------------------------------ | -------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------- |
-| 💎  | Boot progress POST codes (port 0x80) | ✅ Firmware POST codes; Windows boot manager none | ✅ BIOS POST codes only (kernel does not add)     | ⬜ Planned — §1 + §3; kernel adds named codes to port 0x80 |
-| 💎  | Named-stage boot progress log        | ✅ ETW boot trace (binary, WPA required)          | ✅ `dmesg` timestamps + `systemd-analyze`         | ⬜ Planned — §2; human-readable serial `[+NNNms] STAGE`    |
-| 💎  | Panic forensics preserved across boot| ✅ WER minidump + EventLog crash record           | ✅ `kdump`/`pstore` crash RAM log                 | ⬜ Planned — §6; `0x80000` evidence page + `last-panic.txt`|
-| 💎  | Multi-instance spinner component     | ✅ ProgressRing (WinUI 3) — compositor-managed    | ✅ GTK Spinner, Qt BusyIndicator                  | ⬜ Planned — §8; `spinner_create()` pool                   |
-| ⭐  | Proportional debug bar waterfall     | ❌ Not available in production builds             | ❌ `ftrace` events (no visual)                    | ⬜ **Planned — §5; opt-in visual regression indicator**    |
-| ⭐  | QR code on panic screen              | ❌ Stop code URL is text only                     | ❌ Not implemented                                | ⬜ **Planned — §7; phone-scannable recovery link**         |
-| ⭐  | Alive blink PIT-driven hang indicator| ❌ No visible hang indicator (just freezes)       | ❌ Not implemented in production kernels          | ⬜ **Planned — §4; 4×4 px corner blink stops on hang**     |
-| ⭐  | Runtime vital signs overlay          | ⚠️ Task Manager only (separate window)            | ⚠️ `htop`/`conky` (third-party, separate window)  | ⬜ **Planned — §9; always-visible bottom strip**           |
+
+| ⭐ | Feature                               | Win11                                          | Linux                                            | Impossible OS                                      |
+|----|---------------------------------------|------------------------------------------------|--------------------------------------------------|----------------------------------------------------|
+| 💎 | Boot progress POST codes              | ✅ Firmware POST codes; Windows boot           | ✅ BIOS POST codes only (kernel                  | ⬜ §1 + §3 — kernel adds named codes to            |
+| 💎 | Named-stage boot progress log         | ✅ ETW boot trace (binary, WPA                 | ✅ `dmesg` timestamps + `systemd-analyze`        | ⬜ §2 — human-readable serial `[+NNNms] STAGE`     |
+| 💎 | Panic forensics preserved across boot | ✅ WER minidump + EventLog crash               | ✅ `kdump`/`pstore` crash RAM log                | ⬜ §6 — `0x80000` evidence page + `last-panic.txt` |
+| 💎 | Multi-instance spinner component      | ✅ ProgressRing (WinUI 3) — compositor-managed | ✅ GTK Spinner, Qt BusyIndicator                 | ⬜ §8 — `spinner_create()` pool                    |
+| ⭐ | Proportional debug bar waterfall      | ❌ Not available in production builds          | ❌ `ftrace` events (no visual)                   | ⬜ §5 — opt-in visual regression indicator         |
+| ⭐ | QR code on panic screen               | ❌ Stop code URL is text                       | ❌ Not implemented                               | ⬜ §7 — phone-scannable recovery link              |
+| ⭐ | Alive blink PIT-driven hang indicator | ❌ No visible hang indicator (just             | ❌ Not implemented in production kernels         | ⬜ §4 — 4×4 px corner blink stops                  |
+| ⭐ | Runtime vital signs overlay           | ⚠️ Task Manager only (separate window)         | ⚠️ `htop`/`conky` (third-party, separate window) | ⬜ §9 — always-visible bottom strip                |
 
 > **After parity items:** Impossible OS matches Windows and Linux on POST codes, named-stage boot logging, cross-boot panic evidence, and multi-instance spinners. The exclusive items elevate it further: the proportional waterfall makes boot regressions visible without a profiler, the BSOD QR code lets anyone diagnose a panic with their phone, the alive blink gives an instant visual indication of kernel hangs, and the vital-signs strip puts developer metrics front-and-center without a separate tool.
 

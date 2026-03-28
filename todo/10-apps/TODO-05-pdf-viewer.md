@@ -227,17 +227,18 @@
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | PDF structure parse (xref, trailer, objects) | ✅ Edge PDF / Acrobat | ✅ Evince / Okular / Zathura | ⬜ Planned — §1; xref table + object cache |
-| 💎 | Page tree traversal + MediaBox inheritance | ✅ Edge PDF | ✅ Evince | ⬜ Planned — §2; recursive Kids flatten |
-| 💎 | FlateDecode / ASCIIHex stream decompress | ✅ Edge PDF | ✅ Evince | ⬜ Planned — §3; `mz_uncompress` + hex decode |
-| 💎 | Text operator rendering (Tj/TJ/Td/Tf) | ✅ Edge PDF | ✅ MuPDF | ⬜ Planned — §4; TTF font fallback + matrix transforms |
-| 💎 | Image rendering (XObject, inline, JPEG/PNG) | ✅ Edge PDF | ✅ Evince | ⬜ Planned — §5; `image_load_mem` + CTM scale-blit |
-| 💎 | Navigation + zoom + fit-to-width | ✅ Edge PDF | ✅ Evince | ⬜ Planned — §6; CTRL_SCROLLBAR, zoom dropdown |
-| ⭐ | Ctrl+F text search with highlight overlay (built-in, no plugin) | ✅ Edge PDF (built-in) | ⚠️ Evince basic; Zathura manual | ⬜ Planned — §7; semi-transparent overlay; match count |
-| ⭐ | Continuous scroll with virtual canvas + page virtualization | ✅ Edge PDF | ✅ Evince continuous | ⬜ Planned (Stretch) — §8; lazy dealloc, ±1 page lookahead |
-| 💎 | `.pdf` file association + launch from File Manager / email / browser | ✅ Edge PDF default | ✅ `xdg-open` | ⬜ Planned — §9; `file_assoc_set`, recent-files Registry |
+
+| ⭐ | Feature                                                              | Win11                  | Linux                           | Impossible OS                                   |
+|----|----------------------------------------------------------------------|------------------------|---------------------------------|-------------------------------------------------|
+| 💎 | PDF structure parse                                                  | ✅ Edge PDF / Acrobat  | ✅ Evince / Okular / Zathura    | ⬜ §1 — xref table + object cache               |
+| 💎 | Page tree traversal + MediaBox inheritance                           | ✅ Edge PDF            | ✅ Evince                       | ⬜ §2 — recursive Kids flatten                  |
+| 💎 | FlateDecode / ASCIIHex stream decompress                             | ✅ Edge PDF            | ✅ Evince                       | ⬜ §3 — `mz_uncompress` + hex decode            |
+| 💎 | Text operator rendering                                              | ✅ Edge PDF            | ✅ MuPDF                        | ⬜ §4 — TTF font fallback + matrix              |
+| 💎 | Image rendering                                                      | ✅ Edge PDF            | ✅ Evince                       | ⬜ §5 — `image_load_mem` + CTM scale-blit       |
+| 💎 | Navigation + zoom + fit-to-width                                     | ✅ Edge PDF            | ✅ Evince                       | ⬜ §6 — CTRL_SCROLLBAR, zoom dropdown           |
+| ⭐ | Ctrl+F text search with highlight overlay                            | ✅ Edge PDF (built-in) | ⚠️ Evince basic; Zathura manual | ⬜ §7 — semi-transparent overlay; match count   |
+| ⭐ | Continuous scroll with virtual canvas + page virtualization          | ✅ Edge PDF            | ✅ Evince continuous            | ⬜ §8 — (Stretch) — ; lazy dealloc,             |
+| 💎 | `.pdf` file association + launch from File Manager / email / browser | ✅ Edge PDF default    | ✅ `xdg-open`                   | ⬜ §9 — `file_assoc_set`, recent-files Registry |
 
 Impossible OS renders PDFs using the same native TTF font stack used everywhere else in the OS —
 no separate font engine, no embedded PDF font renderer — giving consistent glyph metrics and zero

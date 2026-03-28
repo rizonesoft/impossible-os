@@ -506,23 +506,24 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                                    | 🪟 Windows 11                         | 🐧 Linux                              | 🚀 Impossible OS                              |
-| --- | ------------------------------------------ | ------------------------------------- | ------------------------------------- | --------------------------------------------- |
-| 💎  | Text crash log on panic                    | ✅ Event Viewer                       | ✅ `dmesg` / `journalctl`             | ✅ Done — `crashdump.log`                     |
-| 💎  | Windows STOP code taxonomy                 | ✅ Full (`0xXXXXXXXX`)               | ❌ Kernel OOPS (different)            | ⬜ Planned — §1                               |
-| 💎  | FPU/XMM/XSAVE state in dump               | ✅ Full CONTEXT record                | ✅ `PTRACE_GETFPREGS` in coredump     | ⬜ Planned — §2                               |
-| 💎  | Loaded module list (base + size)           | ✅ Full (`lm` in WinDbg)              | ✅ `/proc/modules`, `kcore`           | ⬜ Planned — §3                               |
-| 💎  | Binary MDMP minidump format                | ✅ Full WER/WinDbg compatible         | ⚠️ ELF coredump (different format)   | ⬜ Planned — §4–§5                            |
-| 💎  | Kernel dump (kernel pages only)            | ✅ `%SystemRoot%\MEMORY.DMP`          | ✅ `makedumpfile -d 31`               | ⬜ Planned — §6                               |
-| 💎  | Full memory dump (all RAM)                 | ✅ Full memory dump option            | ✅ `makedumpfile -d 0`                | ⬜ Planned — §6                               |
-| 💎  | VFS-bypass raw partition dump sink         | ✅ Writes to pagefile before VFS      | ✅ Kdump to dedicated partition       | ⬜ Planned — §7                               |
-| 💎  | Post-boot dump recovery & notification     | ✅ WER dialog                         | ✅ `apport` / `systemd-coredump`      | ⬜ Planned — §8                               |
-| 💎  | Crash dump archive rotation                | ✅ `%Minidump%\*.dmp` (last 5)        | ⚠️ manual / distro-specific           | ⬜ Planned — §8.3                             |
-| 💎  | WinDbg-compatible dump file                | ✅ Native                             | ❌ ELF coredump (not WinDbg)          | ⬜ Planned — §4–§5                            |
-| 💎  | LZ4 dump compression                       | ⚠️ Xpress only (no LZ4)              | ✅ `makedumpfile` LZO/snappy          | ⬜ Planned — §6 (LZ4)                         |
-| ⭐  | Custom `ImpossibleOSInfoStream` in MDMP    | ❌ No vendor extension                | ❌ No equivalent                      | ⬜ **Planned — §4.4** 🚀                       |
-| ⭐  | `dmpanalyze /compare` crash deduplication | ❌ Needs WER portal                   | ❌ Not available                      | ⬜ **Planned — §9.4** 🚀                       |
-| ⭐  | Built-in `dmpanalyze.exe` on-device        | ❌ Requires WinDbg install            | ❌ Requires `crash` tool install      | ⬜ **Planned — §9** 🚀                         |
+
+| ⭐ | Feature                                   | Win11                            | Linux                              | Impossible OS             |
+|----|-------------------------------------------|----------------------------------|------------------------------------|---------------------------|
+| 💎 | Text crash log on panic                   | ✅ Event Viewer                  | ✅ `dmesg` / `journalctl`          | ✅ Done — `crashdump.log` |
+| 💎 | Windows STOP code taxonomy                | ✅ Full (`0xXXXXXXXX`)           | ❌ Kernel OOPS (different)         | ⬜ §1                     |
+| 💎 | FPU/XMM/XSAVE state in dump               | ✅ Full CONTEXT record           | ✅ `PTRACE_GETFPREGS` in coredump  | ⬜ §2                     |
+| 💎 | Loaded module list                        | ✅ Full (`lm` in WinDbg)         | ✅ `/proc/modules`, `kcore`        | ⬜ §3                     |
+| 💎 | Binary MDMP minidump format               | ✅ Full WER/WinDbg compatible    | ⚠️ ELF coredump (different format) | ⬜ §4–§5                  |
+| 💎 | Kernel dump                               | ✅ `%SystemRoot%\MEMORY.DMP`     | ✅ `makedumpfile -d 31`            | ⬜ §6                     |
+| 💎 | Full memory dump                          | ✅ Full memory dump option       | ✅ `makedumpfile -d 0`             | ⬜ §6                     |
+| 💎 | VFS-bypass raw partition dump sink        | ✅ Writes to pagefile before VFS | ✅ Kdump to dedicated partition    | ⬜ §7                     |
+| 💎 | Post-boot dump recovery & notification    | ✅ WER dialog                    | ✅ `apport` / `systemd-coredump`   | ⬜ §8                     |
+| 💎 | Crash dump archive rotation               | ✅ `%Minidump%\*.dmp` (last 5)   | ⚠️ manual / distro-specific        | ⬜ §8 — .3                |
+| 💎 | WinDbg-compatible dump file               | ✅ Native                        | ❌ ELF coredump (not WinDbg)       | ⬜ §4–§5                  |
+| 💎 | LZ4 dump compression                      | ⚠️ Xpress only (no LZ4)          | ✅ `makedumpfile` LZO/snappy       | ⬜ §6 — (LZ4)             |
+| ⭐ | Custom `ImpossibleOSInfoStream` in MDMP   | ❌ No vendor extension           | ❌ No equivalent                   | ⬜ §4 — .4 🚀             |
+| ⭐ | `dmpanalyze /compare` crash deduplication | ❌ Needs WER portal              | ❌ Not available                   | ⬜ §9 — .4 🚀             |
+| ⭐ | Built-in `dmpanalyze.exe` on-device       | ❌ Requires WinDbg install       | ❌ Requires `crash` tool install   | ⬜ §9 — 🚀                |
 
 After §1–8, Impossible OS reaches full Windows 11 crash-dump parity: WinDbg-compatible binary MDMP files, VFS-bypass raw-partition sink, post-boot recovery dialog, and archive rotation. Linux's ELF coredump format is not WinDbg-compatible and requires external `makedumpfile`/`crash` tooling. The built-in `dmpanalyze.exe` (§9), the custom `ImpossibleOSInfoStream` with OS-specific metadata, and the `/compare` deduplication command are exclusive features that make post-mortem crash analysis practical without requiring an external debugger.
 

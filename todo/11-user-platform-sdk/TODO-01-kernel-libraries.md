@@ -281,16 +281,17 @@
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Freestanding string/printf libc (no host libc) | ✅ ntdll CRT subset | ✅ kernel/lib/string.c + printk | ⬜ Planned — §1; `include/libc/string.h` consolidation |
-| 💎 | Full software math library (freestanding) | ✅ MSVC CRT `libcmt` | ✅ kernel/lib/math.c + libm | ⬜ Planned — §2; extends existing `kmath.h`; all trig/exp/log functions |
-| 💎 | deflate/inflate + ZIP read/write (in-kernel) | ✅ ntoskrnl LZNT1 + Cabinet.dll | ✅ lib/zlib in-tree + zip via modules | ⬜ Planned — §3 (extends TODO-20 §4); `mz_zip_writer` + stream API |
-| ⭐ | RDRAND-seeded ChaCha20 CSPRNG as inbox API | ✅ `BCryptGenRandom` (CNG) | ✅ `get_random_bytes` (kernel) | ⬜ Planned — §4; monocypher + RDRAND entropy + `SYS_GETRANDOM` |
-| 💎 | JSON parse/emit in-kernel | ❌ Not in ntoskrnl | ❌ Not in kernel | ⬜ Planned — §5; cJSON with `kmalloc` hooks + depth-32 limit |
-| 💎 | TLS 1.2 client (in-kernel, no user-mode shim) | ✅ Schannel (kernel TLS offload) | ✅ Rustls / OpenSSL via socket layer | ⬜ Planned — §6; Mbed TLS 3.x subset; ECDHE-RSA-AES128-GCM-SHA256 |
-| 💎 | STB image decode/encode (freestanding shim) | ✅ WIC (COM, Ring 3) | ✅ GdkPixbuf / libpng | ✅ Done — stb_truetype + stb_image already integrated; §7 consolidates |
-| ⭐ | Host-side integration test suite for embedded libs | ✅ Partial (vendor unit tests) | ✅ Partial (lib/crypto/testmgr) | ⬜ Planned — §8; `scripts/test-libs.sh` with known test vectors |
+
+| ⭐ | Feature                                            | Win11                            | Linux                           | Impossible OS                                            |
+|----|----------------------------------------------------|----------------------------------|---------------------------------|----------------------------------------------------------|
+| 💎 | Freestanding string/printf libc                    | ✅ ntdll CRT subset              | ✅ kernel/lib/string.c + printk | ⬜ §1 — `include/libc/string.h` consolidation            |
+| 💎 | Full software math library                         | ✅ MSVC CRT `libcmt`             | ✅ kernel/lib/math.c + libm     | ⬜ §2 — extends existing `kmath.h`; all trig/exp/log     |
+| 💎 | deflate/inflate + ZIP read/write                   | ✅ ntoskrnl LZNT1 + Cabinet.dll  | ✅ lib/zlib in-tree + zip via   | ⬜ §3 — (extends TODO-20 §4); `mz_zip_writer` +          |
+| ⭐ | RDRAND-seeded ChaCha20 CSPRNG as inbox API         | ✅ `BCryptGenRandom` (CNG)       | ✅ `get_random_bytes` (kernel)  | ⬜ §4 — monocypher + RDRAND entropy +                    |
+| 💎 | JSON parse/emit in-kernel                          | ❌ Not in ntoskrnl               | ❌ Not in kernel                | ⬜ §5 — cJSON with `kmalloc` hooks +                     |
+| 💎 | TLS 1.2 client                                     | ✅ Schannel (kernel TLS offload) | ✅ Rustls / OpenSSL via socket  | ⬜ §6 — Mbed TLS 3.x subset; ECDHE-RSA-AES128-GCM-SHA256 |
+| 💎 | STB image decode/encode                            | ✅ WIC (COM, Ring 3)             | ✅ GdkPixbuf / libpng           | ✅ §7 — Done — stb_truetype + stb_image                  |
+| ⭐ | Host-side integration test suite for embedded libs | ✅ Partial (vendor unit tests)   | ✅ Partial (lib/crypto/testmgr) | ⬜ §8 — `scripts/test-libs.sh` with known test vectors   |
 
 Impossible OS carries the CSPRNG as an **inbox kernel service** backed by hardware RDRAND
 entropy — the same CSPRNG that seeds SSH key generation, WiFi WPA2, and the credential store

@@ -516,18 +516,19 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                              | 🪟 Windows 11           | 🐧 Linux               | 🚀 Impossible OS                          |
-| --- | ------------------------------------ | ----------------------- | ---------------------- | ----------------------------------------- |
-| 💎  | Token-based identity (SID + groups)  | ✅ Full                 | ⚠️ UID/GID only        | ⬜ Planned — §4                           |
-| 💎  | DACL access check on every object    | ✅ Full                 | ⚠️ POSIX permission bits | ⬜ Planned — §5                         |
-| 💎  | Mandatory Integrity Control (MIC)    | ✅ Vista+               | ⚠️ SELinux/AppArmor (add-on) | ⬜ Planned — §6                     |
-| 💎  | Privilege separation (SeXxxPrivilege) | ✅ Full                | ⚠️ Capabilities only   | ⬜ Planned — §8                           |
-| 💎  | UAC filtered-token + elevation       | ✅ Full                 | ❌ Not applicable      | ⬜ Planned — §9                           |
-| 💎  | Thread impersonation                 | ✅ Full                 | ❌ Not available       | ⬜ Planned — §7                           |
-| 💎  | SDDL string security descriptors     | ✅ Full                 | ❌ Not available       | ⬜ Planned — §10                          |
-| 💎  | NtFilterToken / restricted tokens    | ✅ Full                 | ❌ Not available       | ⬜ Planned — §9                           |
-| ⭐  | Live token inspector in tray         | ❌ CLI only (whoami)    | ❌ CLI only            | ⬜ **Planned — §11** 🚀                   |
-| ⭐  | Integrated IL badge in File Manager  | ❌ Hidden in properties | ❌ Not available       | ⬜ **Planned — §11 + `08-desktop-shell`** 🚀 |
+
+| ⭐ | Feature                             | Win11                   | Linux                        | Impossible OS                    |
+|----|-------------------------------------|-------------------------|------------------------------|----------------------------------|
+| 💎 | Token-based identity                | ✅ Full                 | ⚠️ UID/GID only              | ⬜ §4                            |
+| 💎 | DACL access check on every object   | ✅ Full                 | ⚠️ POSIX permission bits     | ⬜ §5                            |
+| 💎 | Mandatory Integrity Control         | ✅ Vista+               | ⚠️ SELinux/AppArmor (add-on) | ⬜ §6                            |
+| 💎 | Privilege separation                | ✅ Full                 | ⚠️ Capabilities only         | ⬜ §8                            |
+| 💎 | UAC filtered-token + elevation      | ✅ Full                 | ❌ Not applicable            | ⬜ §9                            |
+| 💎 | Thread impersonation                | ✅ Full                 | ❌ Not available             | ⬜ §7                            |
+| 💎 | SDDL string security descriptors    | ✅ Full                 | ❌ Not available             | ⬜ §10                           |
+| 💎 | NtFilterToken / restricted tokens   | ✅ Full                 | ❌ Not available             | ⬜ §9                            |
+| ⭐ | Live token inspector in tray        | ❌ CLI only (whoami)    | ❌ CLI only                  | ⬜ §11 — 🚀                      |
+| ⭐ | Integrated IL badge in File Manager | ❌ Hidden in properties | ❌ Not available             | ⬜ §11 — + `08-desktop-shell` 🚀 |
 
 After §1–10, Impossible OS reaches full Windows 11 security architecture parity — SID tokens, DACL/SACL access checks, MIC integrity levels, privilege separation, and UAC elevation are all present. Linux with only POSIX permissions and optional MAC add-ons (SELinux/AppArmor) is strictly weaker. The tray token inspector (§11) and integrated IL badges in the File Manager are exclusive features that make Impossible OS's security model visible and actionable to developers and power users.
 

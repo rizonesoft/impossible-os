@@ -324,15 +324,16 @@ loop works end-to-end before committing to full implementation.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Type-1 / Type-1.5 hypervisor built into OS | ✅ Hyper-V (Type-1, HVCI, VBS, Hyper-V partitions) | ✅ KVM (Type-2 module in Linux kernel, VT-x/AMD-V, QEMU frontend) | ⬜ Planned — §2 §3; Type-1.5 ImpossibleHV in `src/kernel/hypervisor/` gated `#ifdef` |
-| 💎 | EPT (Extended Page Tables) nested paging | ✅ Hyper-V second-level address translation | ✅ KVM EPT + shadow page tables | ⬜ Planned — §3; 4-level EPT; 2 MiB large page entries; VPID for TLB isolation |
-| 💎 | virtio device emulation for guests | ✅ Hyper-V synthetic VMBus devices (no virtio) | ✅ QEMU virtio-blk/net/gpu + KVM acceleration | ⬜ Planned — §4; host-side virtio MMIO + split-ring; blk→VFS file, net→host stack |
-| 💎 | VM snapshot + pause-and-copy | ✅ Hyper-V checkpoints; VMMS snapshot API | ✅ QEMU savevm / libvirt snapshot | ⬜ Planned — §5; VMCS + memory serialisation to `.vmsnapshot`; miniz compression |
-| 💎 | Live migration research | ✅ Hyper-V live migration (RDMA or TCP) | ✅ KVM live migration (iterative dirty page copy) | ⬜ Planned — §5 research; EPT dirty bits; blocking: distributed kernel (post-TODO-07) |
-| ⭐ | GPU passthrough (SR-IOV / VFIO) | ✅ Hyper-V DDA (Discrete Device Assignment), SR-IOV | ✅ VFIO passthrough + IOMMU groups | ⬜ Planned — §6 research only; blocking: IOMMU driver + PCIe hot-plug not yet available |
-| ⭐ | Public hypervisor design doc + phased plan | ✅ Hyper-V: architecture docs on Learn.microsoft.com; no source | ✅ KVM: open source; architecture in `Documentation/virt/kvm/` | ⬜ Planned — §7; `hypervisor-design.md` with VMCS layout, guest matrix, effort estimate |
+
+| ⭐ | Feature                                    | Win11                                                 | Linux                                         | Impossible OS                                                 |
+|----|--------------------------------------------|-------------------------------------------------------|-----------------------------------------------|---------------------------------------------------------------|
+| 💎 | Type-1 / Type-1.5 hypervisor built into OS | ✅ Hyper-V (Type-1, HVCI, VBS, Hyper-V                | ✅ KVM (Type-2 module in Linux                | ⬜ §2 — §3; Type-1.5 ImpossibleHV in `src/kernel/hypervisor/` |
+| 💎 | EPT (Extended Page Tables) nested paging   | ✅ Hyper-V second-level address translation           | ✅ KVM EPT + shadow page                      | ⬜ §3 — 4-level EPT; 2 MiB large                              |
+| 💎 | virtio device emulation for guests         | ✅ Hyper-V synthetic VMBus devices (no                | ✅ QEMU virtio-blk/net/gpu + KVM acceleration | ⬜ §4 — host-side virtio MMIO + split-ring                    |
+| 💎 | VM snapshot + pause-and-copy               | ✅ Hyper-V checkpoints; VMMS snapshot API             | ✅ QEMU savevm / libvirt snapshot             | ⬜ §5 — VMCS + memory serialisation to                        |
+| 💎 | Live migration research                    | ✅ Hyper-V live migration (RDMA or                    | ✅ KVM live migration (iterative dirty        | ⬜ §5 — research; EPT dirty bits; blocking:                   |
+| ⭐ | GPU passthrough                            | ✅ Hyper-V DDA (Discrete Device Assignment),          | ✅ VFIO passthrough + IOMMU groups            | ⬜ §6 — research only; blocking: IOMMU driver                 |
+| ⭐ | Public hypervisor design doc + phased plan | ✅ Hyper-V: architecture docs on Learn.microsoft.com; | ✅ KVM: open source; architecture in          | ⬜ §7 — `hypervisor-design.md` with VMCS layout, guest        |
 
 Impossible OS's `⭐` advantage: ImpossibleHV is designed as an integral kernel subsystem
 from the start — not a separate binary (unlike Hyper-V), not a loadable module requiring

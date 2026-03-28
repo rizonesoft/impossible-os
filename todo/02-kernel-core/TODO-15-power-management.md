@@ -484,22 +484,23 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                                  | 🪟 Windows 11                       | 🐧 Linux (systemd/upower)           | 🚀 Impossible OS                            |
-| --- | ---------------------------------------- | ----------------------------------- | ----------------------------------- | ------------------------------------------- |
-| 💎  | S5 shutdown via ACPI PM1a                | ✅ Full                             | ✅ Full                             | ✅ Done — `acpi_shutdown()`                 |
-| 💎  | S1 CPU halt / idle                       | ✅ Full                             | ✅ Full (`cpuidle`)                 | ⬜ Planned — §2                             |
-| 💎  | S3 suspend to RAM                        | ✅ Full                             | ✅ Full (systemd-sleep)             | ⬜ Planned — §3                             |
-| 💎  | S4 hibernate to disk                     | ✅ Full                             | ✅ Full (hibernate image)           | ⬜ Planned — §4                             |
-| 💎  | ACPI Embedded Controller (EC) driver     | ✅ Full                             | ✅ Full (`acpi_ec`)                 | ⬜ Planned — §5                             |
-| 💎  | Battery status & AC adapter              | ✅ Full                             | ✅ Full (`upower`, `UPower DBus`)   | ⬜ Planned — §6                             |
-| 💎  | Power button & lid-close events          | ✅ Full                             | ✅ Full (`logind`)                  | ⬜ Planned — §7                             |
-| 💎  | PCI D-states (D0–D3cold)                 | ✅ Full                             | ✅ Full (PCI PM)                    | ⬜ Planned — §8                             |
-| 💎  | Driver sleep/wake callbacks              | ✅ Full (WDM `IRP_MJ_POWER`)        | ✅ Full (driver `pm_ops`)           | ⬜ Planned — §9                             |
-| 💎  | Connected Standby / S0ix                 | ✅ Modern Standby (S0 Low Power)    | ⚠️ Partial (Intel-specific)        | ⬜ Planned — §10                            |
-| 💎  | `powercfg` CLI                           | ✅ Full                             | ⚠️ `systemctl suspend` (no plans)   | ⬜ Planned — §11                            |
-| 💎  | Power Options GUI                        | ✅ `powercpl.dll` / Control Panel   | ⚠️ GNOME Settings (basic)          | ⬜ Planned — §11.3                          |
-| ⭐  | Battery wear indicator in tray tooltip   | ❌ Requires Settings app            | ❌ Requires `upower -i`             | ⬜ **Planned — §6.3** 🚀                    |
-| ⭐  | `powercfg /batteryreport` with history   | ✅ HTML only                        | ❌ Not available                    | ⬜ **Planned — §11.2** (CLI + plain text) 🚀 |
+
+| ⭐ | Feature                                | Win11                             | Linux                             | Impossible OS                  |
+|----|----------------------------------------|-----------------------------------|-----------------------------------|--------------------------------|
+| 💎 | S5 shutdown via ACPI PM1a              | ✅ Full                           | ✅ Full                           | ✅ Done — `acpi_shutdown()`    |
+| 💎 | S1 CPU halt / idle                     | ✅ Full                           | ✅ Full (`cpuidle`)               | ⬜ §2                          |
+| 💎 | S3 suspend to RAM                      | ✅ Full                           | ✅ Full (systemd-sleep)           | ⬜ §3                          |
+| 💎 | S4 hibernate to disk                   | ✅ Full                           | ✅ Full (hibernate image)         | ⬜ §4                          |
+| 💎 | ACPI Embedded Controller (EC) driver   | ✅ Full                           | ✅ Full (`acpi_ec`)               | ⬜ §5                          |
+| 💎 | Battery status & AC adapter            | ✅ Full                           | ✅ Full (`upower`, `UPower DBus`) | ⬜ §6                          |
+| 💎 | Power button & lid-close events        | ✅ Full                           | ✅ Full (`logind`)                | ⬜ §7                          |
+| 💎 | PCI D-states                           | ✅ Full                           | ✅ Full (PCI PM)                  | ⬜ §8                          |
+| 💎 | Driver sleep/wake callbacks            | ✅ Full (WDM `IRP_MJ_POWER`)      | ✅ Full (driver `pm_ops`)         | ⬜ §9                          |
+| 💎 | Connected Standby / S0ix               | ✅ Modern Standby (S0 Low Power)  | ⚠️ Partial (Intel-specific)       | ⬜ §10                         |
+| 💎 | `powercfg` CLI                         | ✅ Full                           | ⚠️ `systemctl suspend` (no plans) | ⬜ §11                         |
+| 💎 | Power Options GUI                      | ✅ `powercpl.dll` / Control Panel | ⚠️ GNOME Settings (basic)         | ⬜ §11 — .3                    |
+| ⭐ | Battery wear indicator in tray tooltip | ❌ Requires Settings app          | ❌ Requires `upower -i`           | ⬜ §6 — .3 🚀                  |
+| ⭐ | `powercfg /batteryreport` with history | ✅ HTML only                      | ❌ Not available                  | ⬜ §11 — .2 (CLI + plain text) |
 
 After §1–9, Impossible OS reaches full Windows 11 and Linux parity for every power-management scenario that matters on real hardware — S1/S3/S4, EC, battery, power/lid events, D-states, and driver callbacks. Linux relies on a patchwork of kernel drivers, `systemd-logind`, and `upower` D-Bus; the integration is fragmented and the UI is distribution-dependent. Impossible OS delivers a single coherent stack from hardware events to Registry-backed power plans to a consistent `powercfg` CLI. The battery-wear indicator in the tray tooltip and the plain-text `powercfg /batteryreport` are quality-of-life exclusives that require navigating menus or parsing HTML on Windows.
 

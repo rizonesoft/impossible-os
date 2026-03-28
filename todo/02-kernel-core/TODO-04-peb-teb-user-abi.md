@@ -214,18 +214,19 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Windows NT / 11                                  | 🐧 Linux                                     | 🚀 Impossible OS                               |
-| --- | ------------------------------------- | ---------------------------------------------------- | -------------------------------------------- | ----------------------------------------------- |
-| 💎  | Per-process environment block (PEB)   | ✅ PEB at `gs:[0x60]`, fully documented in ntdll    | ❌ No equivalent (argv/envp on stack only)   | ⬜ Planned — §2, §5                            |
-| 💎  | Per-thread block with GS self-pointer | ✅ TEB at `gs:[0x30]` self-ref                      | ⚠️ `fs:[0x00]` for glibc `pthread` TLS       | ⬜ Planned — §1, §6                            |
-| 💎  | swapgs on kernel-entry / exit         | ✅ SWAPGS in KiSystemCall64 and KiExceptionDispatch | ✅ `swapgs` in entry.S / iret return         | ⬜ Planned — §3, §4                            |
-| 💎  | LastError per-thread slot             | ✅ `TEB->LastErrorValue` at `gs:[0x68]`             | ⚠️ Per-thread `errno` via `__errno_location` | ⬜ Planned — §6                                |
-| 💎  | TLS static slots (64)                 | ✅ `TEB->TlsSlots[64]` at `gs:[0x1480]`             | ✅ pthread key table + FS-base TLS           | ⬜ Planned — §9                                |
-| 💎  | RTL_USER_PROCESS_PARAMETERS           | ✅ Command line, env, std handles, cwd via PEB      | ❌ Passed on stack / `/proc/self/cmdline`    | ⬜ Planned — §2, §5                            |
-| 💎  | PEB Ldr module list                   | ✅ `PEB->Ldr->InLoadOrderModuleList`                | ❌ `ld-linux` ELF link map (separate)        | ⬜ Planned — §8                                |
-| 💎  | Initial user stack frame (argv/auxv)  | ✅ Win64: RCX=PEB on first call                     | ✅ Linux ELF ABI stack layout with auxv      | ⬜ Planned — §7                                |
-| ⭐  | PEB/TEB as named Ob namespace objects | ❌ Private, not in Ob namespace                     | ❌ Not exposed                               | ⬜ **Planned — §10 — public introspection**    |
-| ⭐  | Win11 OS version fields in PEB        | ✅ Internal only                                    | ❌ N/A                                       | ⬜ **Planned — §5 — full Win11 compat fields** |
+
+| ⭐ | Feature                               | Win11                                               | Linux                                        | Impossible OS                    |
+|----|---------------------------------------|-----------------------------------------------------|----------------------------------------------|----------------------------------|
+| 💎 | Per-process environment block         | ✅ PEB at `gs:[0x60]`, fully documented             | ❌ No equivalent (argv/envp on stack         | ⬜ §2 — , §5                     |
+| 💎 | Per-thread block with GS self-pointer | ✅ TEB at `gs:[0x30]` self-ref                      | ⚠️ `fs:[0x00]` for glibc `pthread` TLS       | ⬜ §1 — , §6                     |
+| 💎 | swapgs on kernel-entry / exit         | ✅ SWAPGS in KiSystemCall64 and KiExceptionDispatch | ✅ `swapgs` in entry.S / iret                | ⬜ §3 — , §4                     |
+| 💎 | LastError per-thread slot             | ✅ `TEB->LastErrorValue` at `gs:[0x68]`             | ⚠️ Per-thread `errno` via `__errno_location` | ⬜ §6                            |
+| 💎 | TLS static slots                      | ✅ `TEB->TlsSlots[64]` at `gs:[0x1480]`             | ✅ pthread key table + FS-base               | ⬜ §9                            |
+| 💎 | RTL_USER_PROCESS_PARAMETERS           | ✅ Command line, env, std handles,                  | ❌ Passed on stack / `/proc/self/cmdline`    | ⬜ §2 — , §5                     |
+| 💎 | PEB Ldr module list                   | ✅ `PEB->Ldr->InLoadOrderModuleList`                | ❌ `ld-linux` ELF link map (separate)        | ⬜ §8                            |
+| 💎 | Initial user stack frame              | ✅ Win64: RCX=PEB on first call                     | ✅ Linux ELF ABI stack layout                | ⬜ §7                            |
+| ⭐ | PEB/TEB as named Ob namespace objects | ❌ Private, not in Ob namespace                     | ❌ Not exposed                               | ⬜ §10 — public introspection    |
+| ⭐ | Win11 OS version fields in PEB        | ✅ Internal only                                    | ❌ N/A                                       | ⬜ §5 — full Win11 compat fields |
 
 > **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets — ntdll and Win32 DLLs can initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace, enabling any user-mode tool to introspect any process without a private API or kernel debugger.

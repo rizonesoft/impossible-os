@@ -250,14 +250,15 @@ bare-metal deployment.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | UEFI Secure Boot chain of trust | ✅ Required for Win11; PK/KEK/db + shim-review | ✅ shim + MOK (distro-signed); grub2 measured boot | ⬜ Planned — §3; PK/KEK/db hierarchy; `sbsign`; `TODO-01` shim foundation |
-| 💎 | TPM 2.0 measured boot (PCR extensions) | ✅ Bitlocker PCR policy; Windows VSB PCR 7/11 | ✅ IMA (Integrity Measurement Architecture) PCR 10 + `tpm2-tools` | ⬜ Planned — §2; PCR 8–10 extended by bootloader + kernel + first user process |
-| 💎 | Full disk encryption sealed to TPM PCR | ✅ BitLocker TPM 2.0 PCR policy (PCR 0,1,2,3,4,7,11) | ✅ `cryptsetup` LUKS2 with `clevis-tpm2` TPM policy; `systemd-cryptenroll` | ⬜ Planned — §4; AES-256-XTS; TPM2 `CC_Create` PCR policy seal; `bitlocker.cpl` |
-| 💎 | Remote attestation via TPM Quote | ✅ Windows Health Attestation Service; WDAC | ✅ `tpm2-quote` + Keylime remote attestation | ⬜ Planned — §2; `tpm2_quote()` + `attest.exe`; `HKLM\SYSTEM\SecureBoot\ExpectedPCRs` |
-| ⭐ | Hardware entropy from TPM fed into CSPRNG | ✅ Windows uses TPM RNG in BCryptGenRandom | ✅ Linux: `hwrng` → `/dev/random`; `tpm_core` entropy | ⬜ Planned — §1; `tpm2_get_random()` → `csprng_add_entropy()` every 30 min |
-| 💎 | vTPM per VM guest | ✅ Hyper-V vTPM (1.2 + 2.0 per-VM) | ✅ QEMU `swtpm` + `libtpms` per-VM | ⬜ Planned — §5; `vtpm_t` per ImpossibleHV VM; co-process `swtpm` model for research phase |
+
+| ⭐ | Feature                                   | Win11                                       | Linux                                           | Impossible OS                                                                |
+|----|-------------------------------------------|---------------------------------------------|-------------------------------------------------|------------------------------------------------------------------------------|
+| 💎 | UEFI Secure Boot chain of trust           | ✅ Required for Win11; PK/KEK/db +          | ✅ shim + MOK (distro-signed); grub2            | ⬜ §3 — PK/KEK/db hierarchy; `sbsign`; `TODO-01` shim                        |
+| 💎 | TPM 2.0 measured boot                     | ✅ Bitlocker PCR policy; Windows VSB        | ✅ IMA (Integrity Measurement Architecture) PCR | ⬜ §2 — PCR 8–10 extended by bootloader                                      |
+| 💎 | Full disk encryption sealed to TPM PCR    | ✅ BitLocker TPM 2.0 PCR policy             | ✅ `cryptsetup` LUKS2 with `clevis-tpm2` TPM    | ⬜ §4 — AES-256-XTS; TPM2 `CC_Create` PCR policy                             |
+| 💎 | Remote attestation via TPM Quote          | ✅ Windows Health Attestation Service; WDAC | ✅ `tpm2-quote` + Keylime remote attestation    | ⬜ §2 — `tpm2_quote()` + `attest.exe`; `HKLM\SYSTEM\SecureBoot\ExpectedPCRs` |
+| ⭐ | Hardware entropy from TPM fed into CSPRNG | ✅ Windows uses TPM RNG in                  | ✅ Linux: `hwrng` → `/dev/random`; `tpm_core`   | ⬜ §1 — `tpm2_get_random()` → `csprng_add_entropy()` every 30                |
+| 💎 | vTPM per VM guest                         | ✅ Hyper-V vTPM (1.2 + 2.0                  | ✅ QEMU `swtpm` + `libtpms` per-VM              | ⬜ §5 — `vtpm_t` per ImpossibleHV VM; co-process                             |
 
 Impossible OS's `⭐` advantage: the `tpm2_get_random()` → CSPRNG entropy feed runs
 on a background task every 30 minutes — not just at boot — so entropy quality improves

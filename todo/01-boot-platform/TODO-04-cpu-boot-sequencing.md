@@ -138,15 +138,16 @@ The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 
 ## OS Comparison
 
-| ⭐  | Feature                                                  | 🪟 Windows NT / 11                           | 🐧 Linux                                          | 🚀 Impossible OS                                    |
-| --- | -------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
-| 💎  | EFER.NXE set before first NX page mapped                 | ✅ EFER.NXE set in `HalInitializeProcessor`  | ✅ Set in `cpu_init()` before paging              | ⬜ Planned — §2; enforced before VMM init           |
-| 💎  | SMEP/SMAP/UMIP enabled in BSP Phase 0                    | ✅ CR4 hardening in `HalInitSystem()` P0     | ✅ `setup_cr4()` during early CPU init            | ⬜ Planned — §2; `cpu_cr4_harden()`                 |
-| 💎  | AP startup applies same CPU hardening as BSP             | ✅ APs run `HalInitializeProcessor()`        | ✅ `cpu_init()` called on every secondary CPU     | ⬜ Planned — §4; `ap_cpu_harden()`                  |
-| 💎  | XSAVE activation deferred until after VMM ready          | ✅ `CR4.OSXSAVE` set post-paging in Phase 1  | ✅ `fpu__init_cpu()` deferred until paging        | ⬜ Planned — §5; `cpu_xsave_enable()`               |
-| 💎  | PCID enabled after page tables established               | ✅ `CR4.PCIDE` set after PML4 established    | ✅ `cr4_set_bits(X86_CR4_PCIDE)` post-paging      | ⬜ Planned — §5; `cpu_pcid_enable()`                |
-| ⭐  | Hypervisor vendor detected before timer driver selection | ✅ Hypervisor present before HAL timer init  | ⚠️ `detect_hypervisor_vendor()` may lag clocksrc  | ⬜ Planned — §3; `hypervisor_detect()`              |
-| ⭐  | `boot_progress()` postcode at each CPU activation step   | ❌ No per-step postcodes beyond BIOS POST    | ❌ No postcodes; `dmesg` only after console ready | ⬜ **Planned — §1–§5; `POSTCODE_*` per activation** |
+
+| ⭐ | Feature                                                  | Win11                                       | Linux                                            | Impossible OS                          |
+|----|----------------------------------------------------------|---------------------------------------------|--------------------------------------------------|----------------------------------------|
+| 💎 | EFER.NXE set before first NX page mapped                 | ✅ EFER.NXE set in `HalInitializeProcessor` | ✅ Set in `cpu_init()` before paging             | ⬜ §2 — enforced before VMM init       |
+| 💎 | SMEP/SMAP/UMIP enabled in BSP Phase 0                    | ✅ CR4 hardening in `HalInitSystem()` P0    | ✅ `setup_cr4()` during early CPU init           | ⬜ §2 — `cpu_cr4_harden()`             |
+| 💎 | AP startup applies same CPU hardening as BSP             | ✅ APs run `HalInitializeProcessor()`       | ✅ `cpu_init()` called on every secondary        | ⬜ §4 — `ap_cpu_harden()`              |
+| 💎 | XSAVE activation deferred until after VMM ready          | ✅ `CR4.OSXSAVE` set post-paging in Phase   | ✅ `fpu__init_cpu()` deferred until paging       | ⬜ §5 — `cpu_xsave_enable()`           |
+| 💎 | PCID enabled after page tables established               | ✅ `CR4.PCIDE` set after PML4 established   | ✅ `cr4_set_bits(X86_CR4_PCIDE)` post-paging     | ⬜ §5 — `cpu_pcid_enable()`            |
+| ⭐ | Hypervisor vendor detected before timer driver selection | ✅ Hypervisor present before HAL timer      | ⚠️ `detect_hypervisor_vendor()` may lag clocksrc | ⬜ §3 — `hypervisor_detect()`          |
+| ⭐ | `boot_progress()` postcode at each CPU activation step   | ❌ No per-step postcodes beyond BIOS        | ❌ No postcodes; `dmesg` only after              | ⬜ §1–§5 — `POSTCODE_*` per activation |
 
 > **After parity items:** Impossible OS matches Windows and Linux on NX-before-map, CR4 hardening, AP parity with BSP, and deferring XSAVE/PCID until paging is established. The exclusive rows add early hypervisor detection before timer HAL clock selection and postcode-per-step boot audit lines that neither OS surfaces in the same operator-visible form.
 

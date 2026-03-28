@@ -296,19 +296,20 @@ This section is gated on the Linux compat layer existing — stub it out with a 
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | EXCEPTION_RECORD / CONTEXT types | ✅ ntdll | ❌ | ⬜ Planned |
-| 💎 | #PF user/kernel triage | ✅ | ✅ | ⚠️ Kernel-only (§2) |
-| 💎 | KiUserExceptionDispatcher | ✅ | ❌ | ⬜ Planned |
-| 💎 | x64 table-based unwind (.pdata) | ✅ UNWIND_INFO | ✅ .eh_frame/DWARF | ⬜ Planned |
-| 💎 | SEH chain walk (`__try`/`__except`) | ✅ | ❌ | ⬜ Planned |
-| 💎 | RtlUnwindEx with `__finally` dispatch | ✅ | ❌ | ⬜ Planned |
-| 💎 | Vectored Exception Handlers | ✅ | ❌ | ⬜ Planned |
-| 💎 | Unhandled exception filter | ✅ WER | ✅ core dump | ⬜ Planned |
-| ⭐ | Kernel safe probing with per-CPU safe-return | ✅ ProbeForRead/Write | ✅ copy_from_user | ⬜ Planned (IRQL-aware) |
-| 💎 | Kernel `__try`/`__except` for drivers | ✅ | ❌ | ⬜ Planned |
-| 💎 | POSIX signal delivery from faults | ❌ | ✅ | ⬜ Planned (compat) |
+
+| ⭐ | Feature                                      | Win11                 | Linux              | Impossible OS          |
+|----|----------------------------------------------|-----------------------|--------------------|------------------------|
+| 💎 | EXCEPTION_RECORD / CONTEXT types             | ✅ ntdll              | ❌                 | ⬜                     |
+| 💎 | #PF user/kernel triage                       | ✅                    | ✅                 | ⚠️ §2 — Kernel-only () |
+| 💎 | KiUserExceptionDispatcher                    | ✅                    | ❌                 | ⬜                     |
+| 💎 | x64 table-based unwind                       | ✅ UNWIND_INFO        | ✅ .eh_frame/DWARF | ⬜                     |
+| 💎 | SEH chain walk                               | ✅                    | ❌                 | ⬜                     |
+| 💎 | RtlUnwindEx with `__finally` dispatch        | ✅                    | ❌                 | ⬜                     |
+| 💎 | Vectored Exception Handlers                  | ✅                    | ❌                 | ⬜                     |
+| 💎 | Unhandled exception filter                   | ✅ WER                | ✅ core dump       | ⬜                     |
+| ⭐ | Kernel safe probing with per-CPU safe-return | ✅ ProbeForRead/Write | ✅ copy_from_user  | ⬜ (IRQL-aware)        |
+| 💎 | Kernel `__try`/`__except` for drivers        | ✅                    | ❌                 | ⬜                     |
+| 💎 | POSIX signal delivery from faults            | ❌                    | ✅                 | ⬜ (compat)            |
 
 Impossible OS distinguishes itself with: IRQL-aware kernel safe probing (the per-CPU `safe_return_rip` slot is co-located with the IRQL tracking fields so the #PF handler checks probe state in a single conditional with no extra memory load), structured crash telemetry feeding the JSON log system (TODO-02), and SEH delivery that validates the user stack pointer against the TEB stack bounds before touching it — preventing an overwritten RSP from escalating a user crash into a kernel panic.
 

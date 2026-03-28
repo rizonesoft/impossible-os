@@ -214,18 +214,19 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Windows 11                     | 🐧 Linux                          | 🚀 Impossible OS                                         |
-| --- | ------------------------------------- | ---------------------------------- | --------------------------------- | --------------------------------------------------------- |
-| 💎  | Native binary format                  | ✅ PE32+                          | ✅ ELF                            | ⬜ Planned — §3–§4 (EIF native)                          |
-| 💎  | ELF loading                           | ⚠️ WSL only                       | ✅ Native                         | ⚠️ Partial — basic identity-map loader; §2 upgrades it   |
-| 💎  | PE32+ loading                         | ✅ Native                         | ⚠️ Wine only                      | ⬜ Planned — §5–§8 (kernel-level)                        |
-| 💎  | Dynamic linking / shared libs         | ✅ DLL loading                    | ✅ `ld.so`                        | ⬜ Planned — §10                                         |
-| 💎  | ASLR                                  | ✅ Mandatory since Vista          | ✅ PIE + kernel ASLR              | ⬜ Planned — §11                                         |
-| ⭐  | Triple format support (ELF+PE32++EIF) | ❌ PE32+ only natively            | ❌ ELF only natively              | ⬜ **Planned — §1–§8 — all three**                       |
-| ⭐  | < 10 µs load time (native format)     | ❌ ~50 µs PE parsing              | ❌ ~30 µs ELF + dynamic link      | ⬜ **Planned — §4 — EIF instant load**                   |
-| ⭐  | Syscall-ID import resolution          | ❌ String-based DLL imports       | ❌ String-based symbol resolution | ⬜ **Planned — §3–§4 — integer-only, no string lookup**  |
-| ⭐  | Standard toolchain → native binary    | ❌ Requires PE linker             | ⚠️ clang produces ELF directly    | ⬜ **Planned — §9 — `clang + ld.lld + elf2eif`**         |
-| ⭐  | Mandatory per-binary code signing     | ⚠️ Authenticode (optional)        | ❌ No built-in per-binary signing | ⬜ **Planned — §12 — mandatory for EIF**                 |
+
+| ⭐ | Feature                            | Win11                       | Linux                             | Impossible OS                               |
+|----|------------------------------------|-----------------------------|-----------------------------------|---------------------------------------------|
+| 💎 | Native binary format               | ✅ PE32+                    | ✅ ELF                            | ⬜ §3–§4 — (EIF native)                     |
+| 💎 | ELF loading                        | ⚠️ WSL only                 | ✅ Native                         | ⚠️ §2 — Partial — basic identity-map loader |
+| 💎 | PE32+ loading                      | ✅ Native                   | ⚠️ Wine only                      | ⬜ §5–§8 — (kernel-level)                   |
+| 💎 | Dynamic linking / shared libs      | ✅ DLL loading              | ✅ `ld.so`                        | ⬜ §10                                      |
+| 💎 | ASLR                               | ✅ Mandatory since Vista    | ✅ PIE + kernel ASLR              | ⬜ §11                                      |
+| ⭐ | Triple format support              | ❌ PE32+ only natively      | ❌ ELF only natively              | ⬜ §1–§8 — all three                        |
+| ⭐ | < 10 µs load time                  | ❌ ~50 µs PE parsing        | ❌ ~30 µs ELF + dynamic           | ⬜ §4 — EIF instant load                    |
+| ⭐ | Syscall-ID import resolution       | ❌ String-based DLL imports | ❌ String-based symbol resolution | ⬜ §3–§4 — integer-only, no string lookup   |
+| ⭐ | Standard toolchain → native binary | ❌ Requires PE linker       | ⚠️ clang produces ELF directly    | ⬜ §9 — `clang + ld.lld + elf2eif`          |
+| ⭐ | Mandatory per-binary code signing  | ⚠️ Authenticode (optional)  | ❌ No built-in per-binary signing | ⬜ §12 — mandatory for EIF                  |
 
 > **After §1–§4:** Impossible OS has a triple-format dispatcher and the world's fastest native loader (EIF).
 > **After §5–§8:** Full kernel-level PE32+ loading — run Windows-compiled executables natively without a compatibility layer.

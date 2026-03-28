@@ -224,18 +224,19 @@ A background kernel thread that promotes regions marked `MADV_HUGEPAGE` from 512
 
 ## OS Comparison
 
-| ⭐  | Feature                                         | 🪟 Windows NT / 11                                        | 🐧 Linux                                                    | 🚀 Impossible OS                                                   |
-| --- | ----------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
-| ⭐  | COW `fork()` — instant process clone            | ❌ No `fork()`; uses `CreateProcess` with full copy       | ✅ COW `fork()` — standard POSIX, O(page-table) cost        | ⬜ Planned — §1; **beats Windows** — both `fork()` + `exec()`     |
-| 💎  | 2 MiB huge pages                                | ✅ `VirtualAlloc(MEM_LARGE_PAGES)`; requires privilege    | ✅ `MAP_HUGETLB`; `hugepages=` kernel param                 | ⬜ Planned — §2; `MAP_HUGE` flag, `pmm_alloc_huge()`              |
-| 💎  | 1 GiB pages for MMIO / reserved ranges          | ✅ 1 GB large pages (Win8+, hardware dep.)                | ✅ `PUD_SIZE` mappings for MMIO in kernel drivers           | ⬜ Planned — §3; kernel-only `vmm_map_1g()`, PDPTE PS bit          |
-| 💎  | `madvise` / `MEM_RESET` access hints            | ✅ `VirtualAlloc(MEM_RESET / MEM_RESET_UNDO)`             | ✅ `madvise(2)` — `DONTNEED`, `HUGEPAGE`, `SEQUENTIAL`      | ⬜ Planned — §4; `vmm_advise()`, `MADV_*` + Win32 `MEM_RESET`     |
-| 💎  | Section Object / shared memory multi-view       | ✅ `NtCreateSection` / `MapViewOfFile` — core Win32       | ⚠️ `mmap(MAP_SHARED)` / POSIX `shm_open`; no typed sections | ⬜ Planned — §5; `NtCreateSection` + `NtMapViewOfSection`          |
-| 💎  | Per-process memory limits (Job Objects)         | ✅ `CreateJobObject` / `ProcessMemoryLimit`               | ⚠️ `cgroups` memory limit; no Win32 Job API                 | ⬜ Planned — §6; `NtCreateJobObject` + committed-page enforcement  |
-| 💎  | Zero-copy DMA buffer pool                       | ✅ `AllocateCommonBuffer` (WDM); HAL DMA API              | ✅ `dma_alloc_coherent` / `dma_map_sg` (DMA-API)            | ⬜ Planned — §7; unified `dma_alloc_coherent` / `dma_map_sg`       |
-| 💎  | Compressed memory (in-kernel swap cache)        | ✅ Memory Compression (Win10+, `MemCompressionProcess`)   | ✅ zRAM (`CONFIG_ZRAM`); LZ4/LZO/zstd backends              | ⬜ Planned — §8; LZ4 vmalloc pool, `MM_PRESSURE_HIGH` trigger      |
-| 💎  | NUMA-aware physical frame allocation            | ✅ NUMA node affinity in `MmAllocateContiguousMemory`     | ✅ `alloc_pages_node()` + `numactl` / cpuset                | ⬜ Planned — §9; ACPI SRAT parse, `pmm_alloc_node()`              |
-| ⭐  | Transparent huge page collapser (THP)           | ❌ No THP; large pages are explicit only                  | ✅ THP daemon (`khugepaged`); `MADV_HUGEPAGE` regions       | ⬜ Planned — §10; `thp_kthread` collapse pass every 200 ms         |
+
+| ⭐ | Feature                                   | Win11                                                   | Linux                                                  | Impossible OS                                            |
+|----|-------------------------------------------|---------------------------------------------------------|--------------------------------------------------------|----------------------------------------------------------|
+| ⭐ | COW `fork()` — instant process clone      | ❌ No `fork()`; uses `CreateProcess` with               | ✅ COW `fork()` — standard POSIX,                      | ⬜ §1 — beats Windows — both `fork()`                    |
+| 💎 | 2 MiB huge pages                          | ✅ `VirtualAlloc(MEM_LARGE_PAGES)`; requires privilege  | ✅ `MAP_HUGETLB`; `hugepages=` kernel param            | ⬜ §2 — `MAP_HUGE` flag, `pmm_alloc_huge()`              |
+| 💎 | 1 GiB pages for MMIO / reserved ranges    | ✅ 1 GB large pages (Win8+,                             | ✅ `PUD_SIZE` mappings for MMIO in                     | ⬜ §3 — kernel-only `vmm_map_1g()`, PDPTE PS bit         |
+| 💎 | `madvise` / `MEM_RESET` access hints      | ✅ `VirtualAlloc(MEM_RESET / MEM_RESET_UNDO)`           | ✅ `madvise(2)` — `DONTNEED`, `HUGEPAGE`, `SEQUENTIAL` | ⬜ §4 — `vmm_advise()`, `MADV_*` + Win32 `MEM_RESET`     |
+| 💎 | Section Object / shared memory multi-view | ✅ `NtCreateSection` / `MapViewOfFile` — core           | ⚠️ `mmap(MAP_SHARED)` / POSIX `shm_open`; no           | ⬜ §5 — `NtCreateSection` + `NtMapViewOfSection`         |
+| 💎 | Per-process memory limits                 | ✅ `CreateJobObject` / `ProcessMemoryLimit`             | ⚠️ `cgroups` memory limit; no Win32                    | ⬜ §6 — `NtCreateJobObject` + committed-page enforcement |
+| 💎 | Zero-copy DMA buffer pool                 | ✅ `AllocateCommonBuffer` (WDM); HAL DMA API            | ✅ `dma_alloc_coherent` / `dma_map_sg` (DMA-API)       | ⬜ §7 — unified `dma_alloc_coherent` / `dma_map_sg`      |
+| 💎 | Compressed memory                         | ✅ Memory Compression (Win10+, `MemCompressionProcess`) | ✅ zRAM (`CONFIG_ZRAM`); LZ4/LZO/zstd backends         | ⬜ §8 — LZ4 vmalloc pool, `MM_PRESSURE_HIGH` trigger     |
+| 💎 | NUMA-aware physical frame allocation      | ✅ NUMA node affinity in `MmAllocateContiguousMemory`   | ✅ `alloc_pages_node()` + `numactl` / cpuset           | ⬜ §9 — ACPI SRAT parse, `pmm_alloc_node()`              |
+| ⭐ | Transparent huge page collapser           | ❌ No THP; large pages are                              | ✅ THP daemon (`khugepaged`); `MADV_HUGEPAGE` regions  | ⬜ §10 — `thp_kthread` collapse pass every 200           |
 
 > **After parity items:** Impossible OS matches Windows and Linux on huge pages, Section Objects, DMA pools, compressed memory, and NUMA. COW `fork()` adds a POSIX capability Windows lacks entirely. The THP collapser matches Linux `khugepaged`, giving transparent large-page performance to any anonymous mapping without application changes.
 

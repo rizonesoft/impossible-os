@@ -224,17 +224,18 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | SMTP + STARTTLS (port 587) | ✅ Outlook / New Outlook | ✅ Thunderbird / Evolution | ⬜ Planned — §1; EHLO + STARTTLS + AUTH LOGIN |
-| 💎 | POP3 over TLS (port 995) | ✅ Outlook | ✅ Thunderbird | ⬜ Planned — §2; USER/PASS/STAT/LIST/RETR/DELE |
-| 💎 | IMAP + IDLE (port 993) | ✅ Outlook (push via IDLE) | ✅ Thunderbird / Mutt | ⬜ Planned (Stretch) — §3; IDLE push notifications |
-| 💎 | Three-panel GUI (sidebar / list / viewer) | ✅ Outlook / New Outlook | ✅ Thunderbird | ⬜ Planned — §4; IxUI CTRL_LISTVIEW, attachment icons |
-| 💎 | Compose with reply/forward/attach | ✅ Outlook | ✅ Thunderbird | ⬜ Planned — §5; MIME multipart attach, auto-save draft |
-| ⭐ | Account passwords encrypted in Registry (AES-256-GCM, login KEK) | ✅ Windows Credential Manager (DPAPI) | ⚠️ Seahorse / plaintext configs | ⬜ Planned — §6; `cng_aes256gcm_encrypt` + login-derived KEK |
-| ⭐ | 5-min auto-check + toast + tray badge (kernel scheduler) | ✅ Outlook background service | ✅ Thunderbird background agent | ⬜ Planned — §7; `sched_task_add(300)`, `notify_send`, `tray_register` |
-| 💎 | Contacts book with To-field autocomplete | ✅ Outlook + People app | ✅ Thunderbird address book | ⬜ Planned — §8; CSV store, `contact_lookup()`, dropdown |
-| ⭐ | Built-in spam filter with trainable thresholds (no plugins) | ✅ Outlook (server-side, Junk filter) | ⚠️ SpamAssassin plugin needed | ⬜ Planned — §9; keyword score + whitelist/blacklist, `[Mark as Spam]` training |
+
+| ⭐ | Feature                                        | Win11                                 | Linux                           | Impossible OS                                                 |
+|----|------------------------------------------------|---------------------------------------|---------------------------------|---------------------------------------------------------------|
+| 💎 | SMTP + STARTTLS                                | ✅ Outlook / New Outlook              | ✅ Thunderbird / Evolution      | ⬜ §1 — EHLO + STARTTLS + AUTH                                |
+| 💎 | POP3 over TLS                                  | ✅ Outlook                            | ✅ Thunderbird                  | ⬜ §2 — USER/PASS/STAT/LIST/RETR/DELE                         |
+| 💎 | IMAP + IDLE                                    | ✅ Outlook (push via IDLE)            | ✅ Thunderbird / Mutt           | ⬜ §3 — (Stretch) — ; IDLE push                               |
+| 💎 | Three-panel GUI                                | ✅ Outlook / New Outlook              | ✅ Thunderbird                  | ⬜ §4 — IxUI CTRL_LISTVIEW, attachment icons                  |
+| 💎 | Compose with reply/forward/attach              | ✅ Outlook                            | ✅ Thunderbird                  | ⬜ §5 — MIME multipart attach, auto-save draft                |
+| ⭐ | Account passwords encrypted in Registry        | ✅ Windows Credential Manager (DPAPI) | ⚠️ Seahorse / plaintext configs | ⬜ §6 — `cng_aes256gcm_encrypt` + login-derived KEK           |
+| ⭐ | 5-min auto-check + toast + tray badge          | ✅ Outlook background service         | ✅ Thunderbird background agent | ⬜ §7 — `sched_task_add(300)`, `notify_send`, `tray_register` |
+| 💎 | Contacts book with To-field autocomplete       | ✅ Outlook + People app               | ✅ Thunderbird address book     | ⬜ §8 — CSV store, `contact_lookup()`, dropdown               |
+| ⭐ | Built-in spam filter with trainable thresholds | ✅ Outlook (server-side, Junk filter) | ⚠️ SpamAssassin plugin needed   | ⬜ §9 — keyword score + whitelist/blacklist, `[Mark           |
 
 Impossible OS encrypts credentials natively in the Registry using the same CNG key store as the
 rest of the OS (no separate credential manager needed), and ships a built-in trainable spam filter

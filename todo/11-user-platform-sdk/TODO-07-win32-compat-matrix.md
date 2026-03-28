@@ -335,16 +335,17 @@ runs, Win32 compatibility is excellent.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| ⭐ | Win32 API coverage tracker (per-function status doc) | ✅ MSDN + Windows App Compat team; private tracking | ✅ Wine AppDB; ReactOS compat table | ⬜ Planned — §1; `sdk/docs/win32-compat.md` with per-function status; `compat-scan.sh` auto-update |
-| ⭐ | `compat_stub` shmem counter + live report tool | ✅ ETW provider; `win32u!NtUser*` logging; AppVerif | ✅ Wine `WINEDEBUG=+relay`; strace | ⬜ Planned — §1; shmem counter map; `win32compat report` live top-40 unimpl hits |
-| ⭐ | 8-tier progressive bring-up ladder | ❌ No public bring-up ladder | ✅ ReactOS internal bring-up milestones | ⬜ Planned — §2–10; explicit gate conditions + native programs + real binary targets per tier |
-| 💎 | Runs XP `cmd.exe` (Tier 2 milestone) | ✅ Native | ✅ Wine runs XP cmd.exe | ⬜ Planned — §4 |
-| 💎 | Runs Busybox, SQLite, Lua (Tier 3–5 milestones) | ✅ Native | ✅ Native Linux; Wine also runs Windows builds | ⬜ Planned — §5 §6 §7 |
-| 💎 | Runs PuTTY (Tier 7 milestone) | ✅ Native | ✅ Wine runs PuTTY | ⬜ Planned — §9 |
-| ⭐ | Stub call log analysis (`win32compat log <exe>`) | ❌ No equivalent (Windows is the reference) | ✅ `wine --log-file` + `winetricks diagnose` | ⬜ Planned — §11; pinpoints exactly which stubs blocked a binary; auto-updates `win32-compat.md` |
-| ⭐ | CI compat gate with % score in sysinfo | ❌ Not applicable | ✅ ReactOS TestBot; Wine CI | ⬜ Planned — §12; `make compat-check`; score in `HKLM\SYSTEM\Win32Compat\Score`; shown in sysinfo |
+
+| ⭐ | Feature                                        | Win11                                               | Linux                                        | Impossible OS                                                                 |
+|----|------------------------------------------------|-----------------------------------------------------|----------------------------------------------|-------------------------------------------------------------------------------|
+| ⭐ | Win32 API coverage tracker                     | ✅ MSDN + Windows App Compat                        | ✅ Wine AppDB; ReactOS compat table          | ⬜ §1 — `sdk/docs/win32-compat.md` with per-function status; `compat-scan.sh` |
+| ⭐ | `compat_stub` shmem counter + live report tool | ✅ ETW provider; `win32u!NtUser*` logging; AppVerif | ✅ Wine `WINEDEBUG=+relay`; strace           | ⬜ §1 — shmem counter map; `win32compat report`                               |
+| ⭐ | 8-tier progressive bring-up ladder             | ❌ No public bring-up ladder                        | ✅ ReactOS internal bring-up milestones      | ⬜ §2 — –10; explicit gate conditions +                                       |
+| 💎 | Runs XP `cmd.exe`                              | ✅ Native                                           | ✅ Wine runs XP cmd.exe                      | ⬜ §4                                                                         |
+| 💎 | Runs Busybox, SQLite, Lua                      | ✅ Native                                           | ✅ Native Linux; Wine also runs              | ⬜ §5 — §6 §7                                                                 |
+| 💎 | Runs PuTTY                                     | ✅ Native                                           | ✅ Wine runs PuTTY                           | ⬜ §9                                                                         |
+| ⭐ | Stub call log analysis                         | ❌ No equivalent (Windows is the                    | ✅ `wine --log-file` + `winetricks diagnose` | ⬜ §11 — pinpoints exactly which stubs blocked                                |
+| ⭐ | CI compat gate with % score in sysinfo         | ❌ Not applicable                                   | ✅ ReactOS TestBot; Wine CI                  | ⬜ §12 — `make compat-check`; score in `HKLM\SYSTEM\Win32Compat\Score`        |
 
 Impossible OS's `⭐` advantage over Wine/ReactOS: the compat tracking is **kernel-native**
 (stub counters in shmem, score in Registry, visible in System Information), the bring-up

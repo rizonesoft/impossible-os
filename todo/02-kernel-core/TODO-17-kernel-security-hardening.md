@@ -442,23 +442,24 @@
 
 ## OS Comparison
 
-| ⭐  | Feature                                     | 🪟 Windows 11                       | 🐧 Linux                             | 🚀 Impossible OS                              |
-| --- | ------------------------------------------- | ----------------------------------- | ------------------------------------ | --------------------------------------------- |
-| 💎  | NX / XD bit on data pages                   | ✅ Since Windows XP SP2             | ✅ Since kernel 2.6.8                | ⬜ Planned — §1                               |
-| 💎  | SMEP (no user-mode exec from kernel)        | ✅ Windows 8+                       | ✅ kernel 3.0+                       | ⬜ Planned — §2                               |
-| 💎  | SMAP (no user-mode data access from kernel) | ✅ Windows 10+                      | ✅ kernel 3.20+                      | ⬜ Planned — §2                               |
-| 💎  | KPTI (Meltdown mitigation)                  | ✅ Windows 10 Jan 2018              | ✅ kernel 4.15 (PTI)                 | ⬜ Planned — §3                               |
-| 💎  | PCID TLB tagging for KPTI                   | ✅ Full                             | ✅ Full                              | ⬜ Planned — §4                               |
-| 💎  | IBRS / IBPB (Spectre v2)                    | ✅ Full + Enhanced IBRS             | ✅ Full + spectre_v2 mitigations     | ⬜ Planned — §5                               |
-| 💎  | Retpoline (Spectre v2 compiler)             | ✅ `/Qspectre` MSVC                 | ✅ `-mindirect-branch=thunk-extern`  | ⬜ Planned — §5                               |
-| 💎  | CET shadow stack (ring 0)                   | ✅ Windows 10 20H1+                 | ✅ kernel 6.6+ (x86 CET-SS)         | ⬜ Planned — §6                               |
-| 💎  | CET IBT (ENDBR64 enforcement)               | ✅ Windows 11 (HVCI)                | ✅ kernel 6.6+ (x86 CET-IBT)        | ⬜ Planned — §7                               |
-| 💎  | Heap corruption detection (cookies)         | ✅ Pool header cookies              | ✅ SLUB `kmem_cache` redzone         | ⬜ Planned — §8                               |
-| 💎  | Stack canaries                              | ✅ `/GS` compiler switch            | ✅ `-fstack-protector-strong`        | ⬜ Planned — §9                               |
-| 💎  | Kernel stack guard pages                    | ✅ Full (kernel stack expansion)    | ✅ `THREAD_SIZE` guard page          | ⬜ Planned — §10                              |
-| 💎  | KASLR (kernel address randomization)        | ✅ KVA shadow + PatchGuard          | ✅ `CONFIG_RANDOMIZE_BASE`           | ⬜ Planned — §11                              |
-| ⭐  | Hardware RNG (RDRAND) for canary & KASLR   | ✅ (internal, no disclosure)        | ✅ (entropy pool, no guarantee)      | ⬜ **Planned — §9+§11 (RDRAND-first)** 🚀     |
-| ⭐  | Canary fallback visible in crash dump       | ❌ Opaque                           | ❌ Opaque                            | ⬜ **Planned — §9+TODO-16-crash-dump-generation.md §4** 🚀             |
+
+| ⭐ | Feature                                  | Win11                            | Linux                               | Impossible OS                                   |
+|----|------------------------------------------|----------------------------------|-------------------------------------|-------------------------------------------------|
+| 💎 | NX / XD bit on data pages                | ✅ Since Windows XP SP2          | ✅ Since kernel 2.6.8               | ⬜ §1                                           |
+| 💎 | SMEP                                     | ✅ Windows 8+                    | ✅ kernel 3.0+                      | ⬜ §2                                           |
+| 💎 | SMAP                                     | ✅ Windows 10+                   | ✅ kernel 3.20+                     | ⬜ §2                                           |
+| 💎 | KPTI                                     | ✅ Windows 10 Jan 2018           | ✅ kernel 4.15 (PTI)                | ⬜ §3                                           |
+| 💎 | PCID TLB tagging for KPTI                | ✅ Full                          | ✅ Full                             | ⬜ §4                                           |
+| 💎 | IBRS / IBPB                              | ✅ Full + Enhanced IBRS          | ✅ Full + spectre_v2 mitigations    | ⬜ §5                                           |
+| 💎 | Retpoline                                | ✅ `/Qspectre` MSVC              | ✅ `-mindirect-branch=thunk-extern` | ⬜ §5                                           |
+| 💎 | CET shadow stack                         | ✅ Windows 10 20H1+              | ✅ kernel 6.6+ (x86 CET-SS)         | ⬜ §6                                           |
+| 💎 | CET IBT                                  | ✅ Windows 11 (HVCI)             | ✅ kernel 6.6+ (x86 CET-IBT)        | ⬜ §7                                           |
+| 💎 | Heap corruption detection                | ✅ Pool header cookies           | ✅ SLUB `kmem_cache` redzone        | ⬜ §8                                           |
+| 💎 | Stack canaries                           | ✅ `/GS` compiler switch         | ✅ `-fstack-protector-strong`       | ⬜ §9                                           |
+| 💎 | Kernel stack guard pages                 | ✅ Full (kernel stack expansion) | ✅ `THREAD_SIZE` guard page         | ⬜ §10                                          |
+| 💎 | KASLR                                    | ✅ KVA shadow + PatchGuard       | ✅ `CONFIG_RANDOMIZE_BASE`          | ⬜ §11                                          |
+| ⭐ | Hardware RNG (RDRAND) for canary & KASLR | ✅ (internal, no disclosure)     | ✅ (entropy pool, no guarantee)     | ⬜ §9+§11 — (RDRAND-first) 🚀                   |
+| ⭐ | Canary fallback visible in crash dump    | ❌ Opaque                        | ❌ Opaque                           | ⬜ §9 — +TODO-16-crash-dump-generation.md §4 🚀 |
 
 After §1–10, Impossible OS reaches full Windows 11 / Linux security-hardening parity for
 2026. Linux without CONFIG_RANDOMIZE_BASE, CET, or IBRS (common in embedded/legacy

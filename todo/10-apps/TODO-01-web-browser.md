@@ -237,20 +237,21 @@ Settings page (`browser://settings`) and privacy controls. All state in `HKCU\So
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | HTTP/HTTPS page fetch | ✅ Edge/WebView2 | ✅ Firefox/Chrome | ⬜ Planned — `https_get()` |
-| 💎 | HTML renderer (block + inline layout) | ✅ Blink engine | ✅ Gecko/Blink | ⬜ Planned — custom or NetSurf port |
-| 💎 | CSS box model + selectors | ✅ Blink | ✅ Gecko/Blink | ⬜ Planned (stretch §4) |
-| 💎 | JavaScript engine | ✅ V8 | ✅ V8/SpiderMonkey | ⬜ Planned (long-term §5, QuickJS/Duktape) |
-| 💎 | Multi-tab browser | ✅ Edge tabs | ✅ Firefox tabs | ⬜ Planned — `CTRL_TABSTRIP` (16 tabs) |
-| 💎 | HTTPS 🔒 padlock indicator | ✅ Edge | ✅ Firefox | ⬜ Planned — Fluent `lock_closed` icon |
-| 💎 | Bookmarks + history | ✅ Edge | ✅ Firefox | ⬜ Planned — Registry-backed |
-| 💎 | Download manager | ✅ Edge | ✅ Firefox | ⬜ Planned — `https_get` stream to file |
-| 💎 | Find in page (Ctrl+F) | ✅ Edge | ✅ Firefox | ⬜ Planned — highlight matching text |
-| ⭐ | Phase 1 text browser (~500 lines, zero deps) | ❌ No minimal mode | ❌ No minimal mode | ⬜ Planned — runs without DOM/CSS |
-| ⭐ | Entire browser built on OS's own HTTP stack | ❌ Chromium ships own network layer | ❌ Gecko ships own network layer | ⬜ Planned — reuses kernel `http_get`/`https_get` |
-| ⭐ | Settings, bookmarks, history in OS Registry | ❌ Separate profile format | ❌ SQLite profile | ⬜ Planned — `HKCU\Software\Impossible\Browser\` |
+
+| ⭐ | Feature                                     | Win11                               | Linux                            | Impossible OS                           |
+|----|---------------------------------------------|-------------------------------------|----------------------------------|-----------------------------------------|
+| 💎 | HTTP/HTTPS page fetch                       | ✅ Edge/WebView2                    | ✅ Firefox/Chrome                | ⬜ `https_get()`                        |
+| 💎 | HTML renderer                               | ✅ Blink engine                     | ✅ Gecko/Blink                   | ⬜ custom or NetSurf port               |
+| 💎 | CSS box model + selectors                   | ✅ Blink                            | ✅ Gecko/Blink                   | ⬜ §4 — (stretch )                      |
+| 💎 | JavaScript engine                           | ✅ V8                               | ✅ V8/SpiderMonkey               | ⬜ §5 — (long-term , QuickJS/Duktape)   |
+| 💎 | Multi-tab browser                           | ✅ Edge tabs                        | ✅ Firefox tabs                  | ⬜ `CTRL_TABSTRIP` (16 tabs)            |
+| 💎 | HTTPS 🔒 padlock indicator                  | ✅ Edge                             | ✅ Firefox                       | ⬜ Fluent `lock_closed` icon            |
+| 💎 | Bookmarks + history                         | ✅ Edge                             | ✅ Firefox                       | ⬜ Registry-backed                      |
+| 💎 | Download manager                            | ✅ Edge                             | ✅ Firefox                       | ⬜ `https_get` stream to file           |
+| 💎 | Find in page                                | ✅ Edge                             | ✅ Firefox                       | ⬜ highlight matching text              |
+| ⭐ | Phase 1 text browser                        | ❌ No minimal mode                  | ❌ No minimal mode               | ⬜ runs without DOM/CSS                 |
+| ⭐ | Entire browser built on OS's own HTTP stack | ❌ Chromium ships own network layer | ❌ Gecko ships own network layer | ⬜ reuses kernel `http_get`/`https_get` |
+| ⭐ | Settings, bookmarks, history in OS Registry | ❌ Separate profile format          | ❌ SQLite profile                | ⬜ `HKCU\Software\Impossible\Browser\`  |
 
 **Impossible OS advantage:** The browser is the first app that exercises every major OS subsystem simultaneously — networking, TLS, TTF rendering, image decoding, IxUI windows, registry, and clipboard. Phase 1 delivers a working browser in ~500 lines by reusing the kernel's `https_get()` directly, with no Chromium or Firefox dependency. All state lives in the OS Registry, making profiles trivially inspectable and portable.
 

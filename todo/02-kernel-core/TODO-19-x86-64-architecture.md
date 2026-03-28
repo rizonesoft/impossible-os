@@ -475,30 +475,31 @@ AMD SVM / Intel VMX capability reporting
 
 ## OS Comparison
 
-| ⭐  | Feature                                 | 🪟 Windows 11                      | 🐧 Linux 6.x                         | 🚀 Impossible OS                            |
-| --- | --------------------------------------- | ---------------------------------- | ------------------------------------ | ------------------------------------------- |
-| 💎  | CPUID feature detection                 | ✅ `KeQueryProcessorFeature`        | ✅ `arch/x86/kernel/cpu/`             | ✅ Done — `cpuid_init()`, 44+ features      |
-| 💎  | AMD extended CPUID (IBS, OSVW, Page1GB) | ✅ HAL AMD leaves                  | ✅ `arch/x86/kernel/cpu/amd.c`        | ✅ Done — §1.2 complete                     |
-| 💎  | XSAVE/XRSTOR per-thread (lazy FPU)      | ✅ Full                            | ✅ `fpu__*` framework                 | ⬜ Planned — §1 (FXSAVE only today)        |
-| 💎  | AVX/AVX2 kernel paths                   | ✅ Full                            | ✅ `kernel_fpu_begin/end`              | ⚠️ Partial — §2 (GFX only today)           |
-| 💎  | AVX-512 opt-in with throttle guard      | ✅ Full                            | ✅ (with throttling awareness)         | ⬜ Planned — §2.2                          |
-| 💎  | Centralised safe MSR API                | ✅ HAL wrappers                    | ✅ `rdmsrl_safe()` / `wrmsrl_safe()`   | ✅ Done — §3                               |
-| 💎  | UMIP (block user SGDT/SIDT)             | ✅ Enabled                         | ✅ Enabled (4.15+)                     | ⬜ Planned — §4                            |
-| 💎  | PKU memory protection keys              | ✅ (Win 10 1903+, no user API)     | ✅ `pkey_alloc()` / `pkey_mprotect()` | ⬜ Planned — §4 (`SetThreadMemoryZone()`)  |
-| 💎  | Write-Combining PAT for framebuffer     | ✅ DirectComposition GPU           | ✅ `ioremap_wc()` DRM                  | ⬜ Planned — §5 (UC today — 10–50× speedup)|
-| 💎  | 1 GiB huge pages                        | ✅ `MmMapLargePages`               | ✅ `hugetlb` 1GB                       | ⬜ Planned — §5                            |
-| 💎  | FRED event delivery                     | 🔜 (planned post-2024)            | ✅ kernel 6.9+                         | ⬜ Planned — §6                            |
-| 💎  | LKGS (replace SWAPGS)                   | 🔜                                | ✅ kernel 6.4+                         | ⬜ Planned — §6                            |
-| 💎  | Zen CCD/NUMA topology                   | ✅ `KeQueryNodeActiveAffinity`     | ✅ `topology_amd_node_id()`            | ⬜ Planned — §7                            |
-| 💎  | Intel hybrid P/E-core detection         | ✅ Thread Director (Win 11+)       | ✅ HFI (kernel 5.18+)                  | ⬜ Planned — §7                            |
-| 💎  | Intel PMU / AMD PMC                     | ✅ ETW + WPA                       | ✅ `perf`                              | ⬜ Planned — §8                            |
-| 💎  | OSVW silicon errata table               | ✅ HAL reads OSVW MSRs             | ✅ `arch/x86/kernel/cpu/amd.c`         | ⬜ Planned — §9                            |
-| 💎  | RDTSCP per-CPU IA32_TSC_AUX             | ✅ `KeQueryPerformanceCounter`     | ✅ TSC_AUX per-CPU on SMP              | ⬜ Planned — §9                            |
-| 💎  | AMD IBS profiling                       | ⚠️ AMD µProf external             | ✅ `perf` IBS (5.19+)                  | ⬜ Planned — §10 (stretch)                |
-| 💎  | SVM / VT-x capability detection         | ✅ HAL                             | ✅ `kvm_amd` / `kvm_intel`             | ✅ Done — §11                              |
-| ⭐  | Boot self-benchmark + auto-tune          | ❌ Static heuristics               | ❌ Static heuristics                   | ⬜ **Planned — §12** 🚀                    |
-| ⭐  | `SetThreadMemoryZone()` PKU API          | ❌ No user-facing PKU API          | ⚠️ Raw `pkey_*` syscalls               | ⬜ **Planned — §4.2** 🚀                   |
-| ⭐  | Per-core frequency graph (Task Manager)  | ❌ Single % bar                    | ❌ `turbostat` CLI                     | ⬜ **Planned via §8 + `08-desktop-shell`** 🚀 |
+
+| ⭐ | Feature                             | Win11                          | Linux                                 | Impossible OS                          |
+|----|-------------------------------------|--------------------------------|---------------------------------------|----------------------------------------|
+| 💎 | CPUID feature detection             | ✅ `KeQueryProcessorFeature`   | ✅ `arch/x86/kernel/cpu/`             | ✅ Done — `cpuid_init()`, 44+ features |
+| 💎 | AMD extended CPUID                  | ✅ HAL AMD leaves              | ✅ `arch/x86/kernel/cpu/amd.c`        | ✅ §1 — Done — .2 complete             |
+| 💎 | XSAVE/XRSTOR per-thread             | ✅ Full                        | ✅ `fpu__*` framework                 | ⬜ §1 — (FXSAVE only today)            |
+| 💎 | AVX/AVX2 kernel paths               | ✅ Full                        | ✅ `kernel_fpu_begin/end`             | ⚠️ §2 — Partial — (GFX only today)     |
+| 💎 | AVX-512 opt-in with throttle guard  | ✅ Full                        | ✅ (with throttling awareness)        | ⬜ §2 — .2                             |
+| 💎 | Centralised safe MSR API            | ✅ HAL wrappers                | ✅ `rdmsrl_safe()` / `wrmsrl_safe()`  | ✅ §3 — Done —                         |
+| 💎 | UMIP                                | ✅ Enabled                     | ✅ Enabled (4.15+)                    | ⬜ §4                                  |
+| 💎 | PKU memory protection keys          | ✅ (Win 10 1903+, no user      | ✅ `pkey_alloc()` / `pkey_mprotect()` | ⬜ §4 — (`SetThreadMemoryZone()`)      |
+| 💎 | Write-Combining PAT for framebuffer | ✅ DirectComposition GPU       | ✅ `ioremap_wc()` DRM                 | ⬜ §5 — (UC today — 10–50× speedup)    |
+| 💎 | 1 GiB huge pages                    | ✅ `MmMapLargePages`           | ✅ `hugetlb` 1GB                      | ⬜ §5                                  |
+| 💎 | FRED event delivery                 | 🔜 (planned post-2024)         | ✅ kernel 6.9+                        | ⬜ §6                                  |
+| 💎 | LKGS                                | 🔜                             | ✅ kernel 6.4+                        | ⬜ §6                                  |
+| 💎 | Zen CCD/NUMA topology               | ✅ `KeQueryNodeActiveAffinity` | ✅ `topology_amd_node_id()`           | ⬜ §7                                  |
+| 💎 | Intel hybrid P/E-core detection     | ✅ Thread Director (Win 11+)   | ✅ HFI (kernel 5.18+)                 | ⬜ §7                                  |
+| 💎 | Intel PMU / AMD PMC                 | ✅ ETW + WPA                   | ✅ `perf`                             | ⬜ §8                                  |
+| 💎 | OSVW silicon errata table           | ✅ HAL reads OSVW MSRs         | ✅ `arch/x86/kernel/cpu/amd.c`        | ⬜ §9                                  |
+| 💎 | RDTSCP per-CPU IA32_TSC_AUX         | ✅ `KeQueryPerformanceCounter` | ✅ TSC_AUX per-CPU on SMP             | ⬜ §9                                  |
+| 💎 | AMD IBS profiling                   | ⚠️ AMD µProf external          | ✅ `perf` IBS (5.19+)                 | ⬜ §10 — (stretch)                     |
+| 💎 | SVM / VT-x capability detection     | ✅ HAL                         | ✅ `kvm_amd` / `kvm_intel`            | ✅ §11 — Done —                        |
+| ⭐ | Boot self-benchmark + auto-tune     | ❌ Static heuristics           | ❌ Static heuristics                  | ⬜ §12 — 🚀                            |
+| ⭐ | `SetThreadMemoryZone()` PKU API     | ❌ No user-facing PKU API      | ⚠️ Raw `pkey_*` syscalls              | ⬜ §4 — .2 🚀                          |
+| ⭐ | Per-core frequency graph            | ❌ Single % bar                | ❌ `turbostat` CLI                    | ⬜ §8 — via + `08-desktop-shell` 🚀    |
 
 After §1–11, Impossible OS reaches full Windows 11 / Linux 6.x parity across
 the entire x86-64 architecture enhancement stack. Linux ships FRED (6.9),

@@ -186,16 +186,17 @@ Surface the active security configuration to diagnostics, the registry, and user
 
 ## OS Comparison
 
-| ⭐  | Feature                                        | 🪟 Windows NT / 11                                        | 🐧 Linux                                                   | 🚀 Impossible OS                                                |
-| --- | ---------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------- |
-| ⭐  | User-space ASLR (mandatory, all processes)     | ⚠️ Opt-in per PE (`IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE`) | ✅ Default on all processes; ELF PIE                       | ⬜ Planned — §1; **mandatory, no per-binary opt-out**           |
-| 💎  | KASLR — kernel base randomized at each boot    | ✅ Default since Vista; random kernel VA slide            | ✅ `CONFIG_RANDOMIZE_BASE`; `kaslr` boot param             | ⬜ Planned — §2; RDRAND offset in bootloader                    |
-| 💎  | SMEP — kernel cannot exec user pages           | ✅ Enabled on supported hardware since Win8               | ✅ Set in `setup_cr4()` if CPUID reports it                | ⬜ Planned — §3; `cpu_cr4_harden()` + AP parity                 |
-| 💎  | SMAP + `copy_from_user` wrappers               | ✅ `__readgsqword` + IRQL guards; no raw user deref       | ✅ `copy_from_user` with `stac`/`clac` in all syscalls     | ⬜ Planned — §4; `copy_from_user` wrappers + syscall audit      |
-| 💎  | NX / DEP on all data mappings                  | ✅ DEP default on; all data pages NX since Vista          | ✅ NX on all anonymous + file data pages                   | ⬜ Planned — §5; audit all VMM mapping paths for NX bit         |
-| 💎  | KPTI / KVA Shadow (Meltdown mitigation)        | ✅ KVA Shadow; auto-enabled on vulnerable CPUs            | ✅ PTI (`CONFIG_PAGE_TABLE_ISOLATION`)                     | ⬜ Planned — §6; minimal trampoline PML4, CR3 swap at syscall   |
-| 💎  | CET shadow stack                               | ✅ Hardware-enforced stack protection (Win10 2004+)       | ✅ Kernel + glibc support since 5.18 / glibc 2.36          | ⬜ Planned — §7; probe + enable + `NtSetInformationThread` stub  |
-| ⭐  | Structured security layout report at boot      | ❌ No single boot-time security summary log               | ⚠️ `dmesg` grep; no unified security report               | ⬜ Planned — §8; `secinfo` command + full registry key set      |
+
+| ⭐ | Feature                                     | Win11                                                      | Linux                                          | Impossible OS                                     |
+|----|---------------------------------------------|------------------------------------------------------------|------------------------------------------------|---------------------------------------------------|
+| ⭐ | User-space ASLR                             | ⚠️ Opt-in per PE (`IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE`) | ✅ Default on all processes; ELF               | ⬜ §1 — mandatory, no per-binary opt-out          |
+| 💎 | KASLR — kernel base randomized at each boot | ✅ Default since Vista; random kernel                      | ✅ `CONFIG_RANDOMIZE_BASE`; `kaslr` boot param | ⬜ §2 — RDRAND offset in bootloader               |
+| 💎 | SMEP — kernel cannot exec user pages        | ✅ Enabled on supported hardware since                     | ✅ Set in `setup_cr4()` if CPUID               | ⬜ §3 — `cpu_cr4_harden()` + AP parity            |
+| 💎 | SMAP + `copy_from_user` wrappers            | ✅ `__readgsqword` + IRQL guards; no                       | ✅ `copy_from_user` with `stac`/`clac` in all  | ⬜ §4 — `copy_from_user` wrappers + syscall audit |
+| 💎 | NX / DEP on all data mappings               | ✅ DEP default on; all data                                | ✅ NX on all anonymous +                       | ⬜ §5 — audit all VMM mapping paths               |
+| 💎 | KPTI / KVA Shadow                           | ✅ KVA Shadow; auto-enabled on vulnerable                  | ✅ PTI (`CONFIG_PAGE_TABLE_ISOLATION`)         | ⬜ §6 — minimal trampoline PML4, CR3 swap         |
+| 💎 | CET shadow stack                            | ✅ Hardware-enforced stack protection (Win10 2004+)        | ✅ Kernel + glibc support since                | ⬜ §7 — probe + enable + `NtSetInformationThread` |
+| ⭐ | Structured security layout report at boot   | ❌ No single boot-time security summary                    | ⚠️ `dmesg` grep; no unified security           | ⬜ §8 — `secinfo` command + full registry         |
 
 > **After parity items:** Impossible OS matches Windows and Linux on KASLR, SMEP, SMAP, NX/DEP, KPTI, and CET. User-space ASLR is stronger than Windows — mandatory for all processes rather than opt-in per PE binary. The structured `secinfo` command and boot-time security summary line give operator-visible confirmation that all mitigations are active without digging through `dmesg` or WinDbg.
 

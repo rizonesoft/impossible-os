@@ -334,15 +334,16 @@ binding engine is available for the Linux ELF compat `dlopen` path.
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | ELF `R_X86_64_*` relocation engine | ❌ PE/COFF only in ntoskrnl | ✅ `arch/x86/kernel/module.c` | ⬜ Planned — §1; `elf_apply_rela/rel` for all 9 reloc types |
-| ⭐ | `.kmod` ELF relocatable kernel modules | ✅ Windows drivers (PE `.sys`) | ✅ Linux `ko` (ELF `ET_REL`) | ⬜ Planned — §2 §3; ELF format + `kmod_load/unload` with dep resolution |
-| 💎 | Kernel symbol export (`EXPORT_SYMBOL` + `__ksymtab`) | ✅ `ntoskrnl.exe` export table | ✅ `EXPORT_SYMBOL` / `kallsyms` | ⬜ Planned — §4; linker-script `__ksymtab` section + `ksym_lookup` binary search |
-| 💎 | `dlopen`/`dlsym`/`dlclose` for Linux compat `.so` | ❌ Not applicable (PE native) | ✅ glibc `ld-linux.so` | ⬜ Planned — §5; kernel-side ELF dynamic loader for `TODO-10 §11` |
-| 💎 | GOT/PLT lazy binding on first call | ❌ PE import by address (no PLT) | ✅ ld.so lazy PLT binding | ⬜ Planned — §6; PLT trampoline → GOT patch → `elf_plt_resolve` |
-| ⭐ | Module hot-swap without reboot | ✅ Partial (driver update via WU, needs reboot) | ✅ `rmmod`+`insmod` (limited) | ⬜ Planned (Stretch) — §7; `kmod_reload` with clean `exit_fn` protocol |
-| 💎 | `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands | ✅ `sc.exe` / `devcon.exe` (PE drivers) | ✅ `lsmod`/`insmod`/`rmmod`/`modprobe` | ⬜ Planned — §8; full command suite with dependency resolution |
+
+| ⭐ | Feature                                            | Win11                                   | Linux                                  | Impossible OS                                             |
+|----|----------------------------------------------------|-----------------------------------------|----------------------------------------|-----------------------------------------------------------|
+| 💎 | ELF `R_X86_64_*` relocation engine                 | ❌ PE/COFF only in ntoskrnl             | ✅ `arch/x86/kernel/module.c`          | ⬜ §1 — `elf_apply_rela/rel` for all 9 reloc              |
+| ⭐ | `.kmod` ELF relocatable kernel modules             | ✅ Windows drivers (PE `.sys`)          | ✅ Linux `ko` (ELF `ET_REL`)           | ⬜ §2 — §3; ELF format + `kmod_load/unload`               |
+| 💎 | Kernel symbol export                               | ✅ `ntoskrnl.exe` export table          | ✅ `EXPORT_SYMBOL` / `kallsyms`        | ⬜ §4 — linker-script `__ksymtab` section + `ksym_lookup` |
+| 💎 | `dlopen`/`dlsym`/`dlclose` for Linux compat `.so`  | ❌ Not applicable (PE native)           | ✅ glibc `ld-linux.so`                 | ⬜ §5 — kernel-side ELF dynamic loader for                |
+| 💎 | GOT/PLT lazy binding on first call                 | ❌ PE import by address (no             | ✅ ld.so lazy PLT binding              | ⬜ §6 — PLT trampoline → GOT patch                        |
+| ⭐ | Module hot-swap without reboot                     | ✅ Partial (driver update via WU,       | ✅ `rmmod`+`insmod` (limited)          | ⬜ §7 — (Stretch) — ; `kmod_reload` with                  |
+| 💎 | `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands | ✅ `sc.exe` / `devcon.exe` (PE drivers) | ✅ `lsmod`/`insmod`/`rmmod`/`modprobe` | ⬜ §8 — full command suite with dependency                |
 
 Impossible OS kernel modules use **ELF `ET_REL` format** (the same format the Linux kernel
 uses for `.ko` files), giving access to the entire LLVM/Clang toolchain for driver

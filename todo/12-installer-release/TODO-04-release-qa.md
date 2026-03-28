@@ -309,15 +309,16 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Automated regression tests in CI | ✅ Internal Windows Test Lab (WTL); not public | ✅ `kselftest`, LTP, KUnit; open public CI | ⬜ Planned — §1; `run-tests.sh` 11-test matrix; `TEST PASS/FAIL` serial output; GHA workflow |
-| 💎 | Hyper-V certification run | ✅ Internal HCK/HLK; WinHEC compliance | ✅ `kvm_unit_tests`; virt-io CI | ⬜ Planned — §3; `hyperv-test.ps1`; Gen2 VM; 8 required tests + HV detect |
-| 💎 | VirtualBox certification run | ✅ WHQL; VirtualBox Guest Additions official support | ✅ VirtualBox Guest Additions for Linux | ⬜ Planned — §4; `vbox-test.sh`; OVA import test; guest additions detection |
-| 💎 | Real hardware test checklist | ✅ HCK/HLK hardware logo program | ✅ Fedora/Ubuntu hardware certification (SoC vendors) | ⬜ Planned — §5; `hardware-test-checklist.md`; ≥ 3 machines; results archived |
-| ⭐ | Performance benchmark JSON with regression gate | ✅ Internal PerfLab; private; no public regression gate | ✅ `phoronix-test-suite`; public LWN perf reports | ⬜ Planned — §6; `benchmark-{version}.json`; 9 metrics; 10%/25% regression thresholds; public |
-| ⭐ | Public release readiness checklist (PR-gated) | ✅ Internal release process; not public | ✅ Distro RC process (kernel.org rc1–rc8); public | ⬜ Planned — §7; `release-checklist.md`; PR template; merge blocked until all items checked |
-| 💎 | Pre-release crash analytics + KASAN QA soak | ✅ WER crash analysis; internal crash labs | ✅ `kdump` + crash triage; KASAN QA trees | ⬜ Planned — §8; KASAN=1 + sentinel pages QA build; 30-min soak; assertion-per-fix discipline |
+
+| ⭐ | Feature                                         | Win11                                        | Linux                                                 | Impossible OS                                                     |
+|----|-------------------------------------------------|----------------------------------------------|-------------------------------------------------------|-------------------------------------------------------------------|
+| 💎 | Automated regression tests in CI                | ✅ Internal Windows Test Lab (WTL);          | ✅ `kselftest`, LTP, KUnit; open public               | ⬜ §1 — `run-tests.sh` 11-test matrix; `TEST PASS/FAIL`           |
+| 💎 | Hyper-V certification run                       | ✅ Internal HCK/HLK; WinHEC compliance       | ✅ `kvm_unit_tests`; virt-io CI                       | ⬜ §3 — `hyperv-test.ps1`; Gen2 VM; 8 required                    |
+| 💎 | VirtualBox certification run                    | ✅ WHQL; VirtualBox Guest Additions official | ✅ VirtualBox Guest Additions for Linux               | ⬜ §4 — `vbox-test.sh`; OVA import test; guest                    |
+| 💎 | Real hardware test checklist                    | ✅ HCK/HLK hardware logo program             | ✅ Fedora/Ubuntu hardware certification (SoC vendors) | ⬜ §5 — `hardware-test-checklist.md`; ≥ 3 machines; results       |
+| ⭐ | Performance benchmark JSON with regression gate | ✅ Internal PerfLab; private; no public      | ✅ `phoronix-test-suite`; public LWN perf reports     | ⬜ §6 — `benchmark-{version}.json`; 9 metrics; 10%/25% regression |
+| ⭐ | Public release readiness checklist              | ✅ Internal release process; not public      | ✅ Distro RC process (kernel.org rc1–rc8);            | ⬜ §7 — `release-checklist.md`; PR template; merge blocked        |
+| 💎 | Pre-release crash analytics + KASAN QA soak     | ✅ WER crash analysis; internal crash        | ✅ `kdump` + crash triage; KASAN                      | ⬜ §8 — KASAN=1 + sentinel pages QA                               |
 
 Impossible OS's `⭐` advantage: the benchmark JSON (`build/benchmark-{version}.json`) is
 committed to the repo and published with every release, giving the community verifiable,

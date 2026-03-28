@@ -198,16 +198,17 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Windows NT / 11                                | 🐧 Linux                                           | 🚀 Impossible OS                                           |
-| --- | ------------------------------------- | -------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------- |
-| 💎  | MADT-driven interrupt topology        | ✅ HAL reads MADT before any interrupt init       | ✅ `acpi_boot_init()` parses MADT first            | ⬜ Planned — §1; MADT parse moved before interrupt init    |
-| 💎  | LAPIC/IOAPIC init before PIT          | ✅ HAL always inits APIC before legacy PIT        | ✅ `apic_intr_init()` before `init_IRQ()`          | ⬜ Planned — §2; init order restructured                   |
-| 💎  | Conditional PIC disable               | ✅ HAL checks PCAT_COMPAT flag                    | ✅ `disable_8259A()` gated on MADT flag            | ⬜ Planned — §3                                            |
-| 💎  | Full IDT coverage (all 256 vectors)   | ✅ KiUnexpectedInterrupt fills unused vectors     | ✅ `spurious_interrupt()` for unregistered vectors | ⬜ Planned — §4                                            |
-| 💎  | Dynamic IRQ registration              | ✅ `IoConnectInterrupt` / `IoConnectInterruptEx`  | ✅ `request_irq()` / `devm_request_irq()`          | ⬜ Planned — §5; `irq_request(gsi, handler, name, flags)`  |
-| 💎  | Unified timer HAL (HPET→LAPIC→PIT)    | ✅ `HalQueryPerformanceCounter` backend selection | ✅ `clocksource` + `clockevent` framework          | ⬜ Planned — §6; `timer_driver_t` + `uptime_ns()`          |
-| 💎  | Per-CPU LAPIC timer calibration       | ✅ HAL calibrates LAPIC per logical processor     | ✅ `calibrate_delay_direct()` per CPU              | ⬜ Planned — §7                                            |
-| ⭐  | Post-boot animated timeline bar chart | ❌ WPA boot trace (offline, binary format)        | ❌ `systemd-analyze plot` (SVG, post-boot only)    | ⬜ **Planned — §9; inline overlay chart + ASCII CLI diff** |
+
+| ⭐ | Feature                               | Win11                                             | Linux                                              | Impossible OS                                    |
+|----|---------------------------------------|---------------------------------------------------|----------------------------------------------------|--------------------------------------------------|
+| 💎 | MADT-driven interrupt topology        | ✅ HAL reads MADT before any                      | ✅ `acpi_boot_init()` parses MADT first            | ⬜ §1 — MADT parse moved before interrupt        |
+| 💎 | LAPIC/IOAPIC init before PIT          | ✅ HAL always inits APIC before                   | ✅ `apic_intr_init()` before `init_IRQ()`          | ⬜ §2 — init order restructured                  |
+| 💎 | Conditional PIC disable               | ✅ HAL checks PCAT_COMPAT flag                    | ✅ `disable_8259A()` gated on MADT flag            | ⬜ §3                                            |
+| 💎 | Full IDT coverage                     | ✅ KiUnexpectedInterrupt fills unused vectors     | ✅ `spurious_interrupt()` for unregistered vectors | ⬜ §4                                            |
+| 💎 | Dynamic IRQ registration              | ✅ `IoConnectInterrupt` / `IoConnectInterruptEx`  | ✅ `request_irq()` / `devm_request_irq()`          | ⬜ §5 — `irq_request(gsi, handler, name, flags)` |
+| 💎 | Unified timer HAL                     | ✅ `HalQueryPerformanceCounter` backend selection | ✅ `clocksource` + `clockevent` framework          | ⬜ §6 — `timer_driver_t` + `uptime_ns()`         |
+| 💎 | Per-CPU LAPIC timer calibration       | ✅ HAL calibrates LAPIC per logical               | ✅ `calibrate_delay_direct()` per CPU              | ⬜ §7                                            |
+| ⭐ | Post-boot animated timeline bar chart | ❌ WPA boot trace (offline, binary                | ❌ `systemd-analyze plot` (SVG, post-boot only)    | ⬜ §9 — inline overlay chart + ASCII             |
 
 > **After parity items:** Impossible OS will fully match Windows NT and Linux on interrupt init order, IDT coverage, dynamic IRQ registration, and the timer HAL. The exclusive §9 boot timeline goes further by showing an animated bar chart at desktop-ready and offering a regression-diffing CLI tool — giving developers instant visibility into boot regressions without external profiling tools.
 

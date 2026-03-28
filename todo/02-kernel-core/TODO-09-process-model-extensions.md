@@ -150,15 +150,16 @@ Capabilities can be inherited across `fork` / `exec` but can only be dropped, ne
 
 ## OS Comparison
 
-| ⭐  | Feature                                      | 🪟 Windows 11 / NT                              | 🐧 Linux                                        | 🚀 Impossible OS                                           |
-| --- | -------------------------------------------- | ----------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------- |
-| 💎  | Per-process working directory                | ✅ `SetCurrentDirectory` / `NtSetCurDir`         | ✅ `chdir(2)` / `getcwd(2)`                      | ⬜ Planned — §1                                            |
-| 💎  | STD handle pre-wiring (STDIN/OUT/ERR)        | ✅ inherited or set via `CreateProcess`          | ✅ FDs 0/1/2 inherited via `fork`/`exec`         | ⬜ Planned — §2                                            |
-| 💎  | User-mode heap growth syscall                | ✅ `NtAllocateVirtualMemory` (Win32 native)      | ✅ `brk(2)` / `sbrk(2)`                          | ⚠️ Partial — Win32 path in TODO-05 §9; Linux compat in §3 |
-| 💎  | Process priority class                       | ✅ `SetPriorityClass` / `PROCESS_PRIORITY_*`     | ✅ `setpriority(2)` / `nice(2)`                  | ⬜ Planned — §4                                            |
-| 💎  | Per-task scheduling policy                   | ✅ `REALTIME_PRIORITY_CLASS` → no time-slice     | ✅ `SCHED_FIFO` / `SCHED_IDLE` via `sched_setscheduler` | ⬜ Planned — §5                                  |
-| 💎  | Process privilege / capability model         | ✅ Access tokens + privileges (`SeXxxPrivilege`) | ✅ POSIX capabilities (`CAP_*`)                  | ⬜ Planned — §6                                            |
-| ⭐  | Drop-only capability inheritance             | ⚠️ Token elevation allows gaining privileges     | ⚠️ `setcap` can raise ambient capabilities       | ⬜ **Planned — §7 — monotonically decreasing, auditable** 🚀 |
+
+| ⭐ | Feature                              | Win11                                            | Linux                                                   | Impossible OS                                  |
+|----|--------------------------------------|--------------------------------------------------|---------------------------------------------------------|------------------------------------------------|
+| 💎 | Per-process working directory        | ✅ `SetCurrentDirectory` / `NtSetCurDir`         | ✅ `chdir(2)` / `getcwd(2)`                             | ⬜ §1                                          |
+| 💎 | STD handle pre-wiring                | ✅ inherited or set via `CreateProcess`          | ✅ FDs 0/1/2 inherited via `fork`/`exec`                | ⬜ §2                                          |
+| 💎 | User-mode heap growth syscall        | ✅ `NtAllocateVirtualMemory` (Win32 native)      | ✅ `brk(2)` / `sbrk(2)`                                 | ⚠️ §9 — Partial — Win32 path in                |
+| 💎 | Process priority class               | ✅ `SetPriorityClass` / `PROCESS_PRIORITY_*`     | ✅ `setpriority(2)` / `nice(2)`                         | ⬜ §4                                          |
+| 💎 | Per-task scheduling policy           | ✅ `REALTIME_PRIORITY_CLASS` → no time-slice     | ✅ `SCHED_FIFO` / `SCHED_IDLE` via `sched_setscheduler` | ⬜ §5                                          |
+| 💎 | Process privilege / capability model | ✅ Access tokens + privileges (`SeXxxPrivilege`) | ✅ POSIX capabilities (`CAP_*`)                         | ⬜ §6                                          |
+| ⭐ | Drop-only capability inheritance     | ⚠️ Token elevation allows gaining privileges     | ⚠️ `setcap` can raise ambient capabilities              | ⬜ §7 — monotonically decreasing, auditable 🚀 |
 
 > **After §1–§6:** Impossible OS matches Windows NT and Linux on all core per-process state APIs.
 > **§7** enforces a strictly drop-only capability model — neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.

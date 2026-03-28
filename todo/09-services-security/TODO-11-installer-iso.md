@@ -274,19 +274,20 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|--------------|---------|-----------------|
-| 💎 | Bootable ISO image | ✅ Windows ISO | ✅ distro ISO | ⬜ Planned — `xorriso` EFI El Torito |
-| 💎 | Graphical installer wizard | ✅ Windows Setup | ✅ Anaconda/Calamares | ⬜ Planned — IxUI wizard (A–G screens) |
-| 💎 | GPT partitioning during install | ✅ Windows Setup | ✅ distro installers | ⬜ Planned — `gpt_create`/`gpt_commit` |
-| 💎 | FAT32 ESP + native FS formatting | ✅ Windows Setup | ✅ mkfs.fat + mkfs.ext4 | ⬜ Planned — `fat32_format` + `ixfs_format` |
-| 💎 | UEFI NVRAM boot entry registration | ✅ Windows Setup | ✅ grub-install | ⬜ Planned — `uefi_set_variable()` |
-| 💎 | File copy progress bar | ✅ Windows Setup | ✅ distro installers | ⬜ Planned — per-file `progress_cb` |
-| 💎 | Post-install OOBE first-boot wizard | ✅ Windows OOBE | ✅ distro firstboot | ⬜ Planned — `HKLM\SYSTEM\FirstBoot=1` |
-| 💎 | Hyper-V + VirtualBox + QEMU compat | ✅ Windows | ✅ Linux | ⬜ Planned — validation suite §9 |
-| ⭐ | Custom UEFI bootloader (no GRUB dependency) | ❌ Bootmgr only | ❌ Requires GRUB | ⬜ Planned — `BOOTX64.EFI` direct boot from ISO |
-| ⭐ | Build-time install manifest (`install-manifest.txt`) | ❌ Black-box WIM | ❌ Varies per distro | ⬜ Planned — transparent, diff-able file list |
-| ⭐ | `InstallerMode` registry flag (no separate init ramdisk) | ❌ Separate WinPE | ❌ Separate initramfs | ⬜ Planned — same kernel, flag-switched path |
+
+| ⭐ | Feature                             | Win11             | Linux                   | Impossible OS                         |
+|----|-------------------------------------|-------------------|-------------------------|---------------------------------------|
+| 💎 | Bootable ISO image                  | ✅ Windows ISO    | ✅ distro ISO           | ⬜ `xorriso` EFI El Torito            |
+| 💎 | Graphical installer wizard          | ✅ Windows Setup  | ✅ Anaconda/Calamares   | ⬜ IxUI wizard (A–G screens)          |
+| 💎 | GPT partitioning during install     | ✅ Windows Setup  | ✅ distro installers    | ⬜ `gpt_create`/`gpt_commit`          |
+| 💎 | FAT32 ESP + native FS formatting    | ✅ Windows Setup  | ✅ mkfs.fat + mkfs.ext4 | ⬜ `fat32_format` + `ixfs_format`     |
+| 💎 | UEFI NVRAM boot entry registration  | ✅ Windows Setup  | ✅ grub-install         | ⬜ `uefi_set_variable()`              |
+| 💎 | File copy progress bar              | ✅ Windows Setup  | ✅ distro installers    | ⬜ per-file `progress_cb`             |
+| 💎 | Post-install OOBE first-boot wizard | ✅ Windows OOBE   | ✅ distro firstboot     | ⬜ `HKLM\SYSTEM\FirstBoot=1`          |
+| 💎 | Hyper-V + VirtualBox + QEMU compat  | ✅ Windows        | ✅ Linux                | ⬜ §9 — validation suite              |
+| ⭐ | Custom UEFI bootloader              | ❌ Bootmgr only   | ❌ Requires GRUB        | ⬜ `BOOTX64.EFI` direct boot from ISO |
+| ⭐ | Build-time install manifest         | ❌ Black-box WIM  | ❌ Varies per distro    | ⬜ transparent, diff-able file list   |
+| ⭐ | `InstallerMode` registry flag       | ❌ Separate WinPE | ❌ Separate initramfs   | ⬜ same kernel, flag-switched path    |
 
 **Impossible OS advantage:** The installer uses the **exact same kernel** as the installed OS — there is no separate WinPE or initramfs environment. A single registry flag (`InstallerMode=1`) switches the boot into installer mode. The bootloader is our own `BOOTX64.EFI` with no GRUB dependency, and the install manifest is a human-readable build artifact that makes the file copy process fully transparent.
 
