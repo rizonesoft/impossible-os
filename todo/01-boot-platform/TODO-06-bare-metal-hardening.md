@@ -131,9 +131,11 @@ Implement a minimal `vmm_map_mmio_uc()` that creates uncacheable mappings for de
 - [ ] `vmm_unmap_mmio(void *virt, uint32_t size)` — unmap and free PTEs (can be a no-op stub initially).
 - [ ] Validate: phys_base must be page-aligned, within 64-bit physical address space, size > 0.
 - [ ] Test: map LAPIC base (0xFEE00000) as UC, read LAPIC ID register, verify same value as identity-mapped read.
-- [ ] Commit: `"mm: minimal vmm_map_mmio_uc for bare-metal MMIO safety"`
+- [ ] Re-enable HPET calibration in `lapic.c`: replace identity-mapped `hpet_read64(base, ...)` with `hpet_read64(uc_mapped_base, ...)`; uncomment `cal_try_hpet()` call in calibration waterfall.
+- [ ] Implement `hpet_read_ns()` in `lapic.c` (or new `hpet.c`): map HPET base via `vmm_map_mmio_uc()`, read counter, convert via `COUNTER_CLK_PERIOD`. Wire into `timer_driver_t.read_ns` for UTS (→ XREF: TODO-03 §6).
+- [ ] Commit: `"mm: minimal vmm_map_mmio_uc + HPET re-enabled with UC mapping"`
 
-**Test checkpoint:** Boot on QEMU. `vmm_map_mmio_uc(0xFEE00000, 0x1000)` returns valid VA. LAPIC ID read through UC mapping matches identity-mapped read.
+**Test checkpoint:** QEMU: HPET calibration succeeds (`Tier 2: HPET calibration -> N ticks/ms`). Bare metal: HPET mapped via UC, no MCE, calibration succeeds. `hpet_read_ns()` returns monotonically increasing values.
 
 ## 4. IST Stacks for Critical Exceptions
 
