@@ -107,7 +107,7 @@ A 4×4 px blinking square toggled in the PIT interrupt handler — if it stops b
 - [x] Registry setting — deferred to TODO-13 (currently boot.conf only)
 - [x] Commit: `"kernel: alive blink timer-driven hang-detection indicator"`
 
-## 5. Debug Color Bar Waterfall `[Sonnet]`
+## 5. Debug Color Bar Waterfall `[Sonnet]` *(superseded by [TODO-05 — Visual POST Display](TODO-05-visual-post-display.md))*
 
 Opt-in proportional debug overlay: a bar across the top of the screen where each boot stage's width reflects its duration.
 
