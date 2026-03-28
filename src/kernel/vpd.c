@@ -43,7 +43,7 @@ static inline uint64_t vpd_rdtsc(void)
 #define VPD_CHAR_W        (VPD_CELL_W * VPD_SCALE)  /* 12px per char at 2× */
 #define VPD_LEFT_MARGIN    8
 #define VPD_TOP_MARGIN     8
-#define VPD_ROW_HEIGHT    (VPD_GLYPH_H * VPD_SCALE + 4)  /* 18px: 14px text + 4px gap */
+#define VPD_ROW_HEIGHT    (VPD_GLYPH_H * VPD_SCALE + 8)  /* 22px: 14px text + 8px gap */
 #define VPD_SQUARE_SIZE   (VPD_GLYPH_H * VPD_SCALE)      /* 14px square */
 #define VPD_SQUARE_GAP     6
 #define VPD_NAME_X        (VPD_LEFT_MARGIN + VPD_SQUARE_SIZE + VPD_SQUARE_GAP)
@@ -73,6 +73,37 @@ static void vpd_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
     for (cy = y; cy < y + h && cy < s_height; cy++)
         for (cx = x; cx < x + w && cx < s_width; cx++)
             s_fb[cy * s_pitch_px + cx] = color;
+}
+
+/* Draw a checkmark at 2× scale using the micro-font 'v' shape but custom */
+static void vpd_draw_check(uint32_t x, uint32_t y, uint32_t color)
+{
+    /* 5×7 checkmark glyph, rendered at 2× */
+    static const uint8_t check[7] = {
+        0x00, /* ..... */
+        0x08, /* ....X */
+        0x08, /* ....X */
+        0x10, /* ...X. */
+        0x90, /* X..X. */
+        0x60, /* .XX.. */
+        0x20, /* ..X.. */
+    };
+    uint32_t row, col;
+    for (row = 0; row < 7; row++) {
+        uint8_t bits = check[row];
+        for (col = 0; col < 5; col++) {
+            if (bits & (0x80 >> col)) {
+                uint32_t px = x + col * VPD_SCALE;
+                uint32_t py = y + row * VPD_SCALE;
+                if (px + 1 < s_width && py + 1 < s_height) {
+                    s_fb[py       * s_pitch_px + px]     = color;
+                    s_fb[py       * s_pitch_px + px + 1] = color;
+                    s_fb[(py + 1) * s_pitch_px + px]     = color;
+                    s_fb[(py + 1) * s_pitch_px + px + 1] = color;
+                }
+            }
+        }
+    }
 }
 
 /* 2× scaled text rendering — each font pixel becomes a 2×2 block */
@@ -183,7 +214,8 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
     /* Mark previous stage as done */
     if (s_has_current) {
         vpd_fill_rect(VPD_LEFT_MARGIN, s_last_row_y,
-                       VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_DONE);
+                       VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_BG);
+        vpd_draw_check(VPD_LEFT_MARGIN, s_last_row_y, VPD_COLOR_DONE);
 
         if (g_boot_info.timing.tsc_freq > 0 && s_stage_tsc > 0) {
             uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
