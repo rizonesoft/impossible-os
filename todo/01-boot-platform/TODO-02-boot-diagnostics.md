@@ -44,8 +44,8 @@
 | 💎  |   3   | POST-style hex code display        | §2         |  [x]   |
 | 💎  |   4   | Alive blink / hang detection       | §2         | defer  |
 | ⭐  |   5   | Debug color bar waterfall          | §2         | defer  |
-| 💎  |   6   | Panic forensic evidence            | §2         |  [ ]   |
-| ⭐  |   7   | Panic QR code                      | §6         |  [ ]   |
+| 💎  |   6   | Panic forensic evidence            | §2         | defer  |
+| ⭐  |   7   | Panic QR code                      | §6         | defer  |
 | 💎  |   8   | System-wide multi-instance spinner | —          |  [ ]   |
 | ⭐  |   9   | Runtime vital signs strip          | §8         |  [ ]   |
 
@@ -116,7 +116,7 @@ Opt-in proportional debug overlay: a bar across the top of the screen where each
 - [ ] Regression overlay (RLE save/load) — deferred (needs VFS write during compositor transition)
 - [x] Commit: `"kernel: opt-in boot diagnostic color bar waterfall"`
 
-## 6. Panic Forensic Evidence
+## 6. Panic Forensic Evidence *(deferred — needs stable boot first; crash evidence is useless if boot itself crashes)*
 Capture a `panic_evidence` struct at fault time, survive across soft reboot via a dedicated PMM page, and restore on next boot.
 
 **Files:** `src/kernel/panic.c`, `include/kernel/panic.h`, `src/kernel/main/boot_hw.c`
@@ -133,7 +133,7 @@ Capture a `panic_evidence` struct at fault time, survive across soft reboot via 
 
 **Test checkpoint:** QEMU: force `kernel_panic("test")` → reboot → serial shows `[PANIC] Previous crash evidence found` → `C:\Impossible\System\CrashDumps\last-panic.txt` contains fault RIP + POST code. Bare metal: same flow, verify evidence survives warm reboot.
 
-## 7. Panic QR Code
+## 7. Panic QR Code *(deferred — depends on §6)*
 Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD corner.
 
 **Files:** `src/kernel/qr_encode.c`, `include/kernel/qr_encode.h`, `src/kernel/panic.c`
@@ -180,14 +180,14 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 ## OS Comparison
 
 | ⭐ | Feature                 | Win11                        | Linux                          | Impossible OS                    |
-|----|-------------------------|------------------------------|--------------------------------|----------------------------------|
-| 💎 | Boot POST codes         | ✅ Firmware + boot manager  | ✅ BIOS POST only              | ✅ §1+§3 — kernel POST + I/O 80 |
-| 💎 | Named-stage progress    | ✅ ETW boot trace (binary)  | ✅ dmesg + systemd-analyze     | ✅ §2 — serial `[+NNNms] STAGE` |
-| 💎 | Panic forensics         | ✅ WER minidump + EventLog  | ✅ kdump / pstore              | ⬜ §6 — PMM page + last-panic   |
+|----|-------------------------|------------------------------|--------------------------------|-----------------------------------|
+| 💎 | Boot POST codes         | ✅ Firmware + boot manager  | ✅ BIOS POST only              | ✅ §1+§3 — kernel POST + I/O 80  |
+| 💎 | Named-stage progress    | ✅ ETW boot trace (binary)  | ✅ dmesg + systemd-analyze     | ✅ §2 — serial `[+NNNms] STAGE`  |
+| 💎 | Panic forensics         | ✅ WER minidump + EventLog  | ✅ kdump / pstore              | ⬜ §6 — PMM page + last-panic    |
 | 💎 | Multi-instance spinner  | ✅ ProgressRing (WinUI 3)   | ✅ GTK/Qt spinners             | ⬜ §8 — spinner_create pool      |
 | ⭐ | Debug bar waterfall     | ❌ Not in production        | ❌ ftrace only (no visual)     | ⬜ §5 — superseded by TODO-05    |
 | ⭐ | Panic QR code           | ❌ Text URL only            | ❌ Not implemented             | ⬜ §7 — phone-scannable link     |
-| ⭐ | Alive blink indicator   | ❌ No visible hang signal   | ❌ Not in production           | ⚠️ §4 — removed during BM debug |
+| ⭐ | Alive blink indicator   | ❌ No visible hang signal   | ❌ Not in production           | ⚠️ §4 — removed during BM debug  |
 | ⭐ | Vital signs overlay     | ⚠️ Task Manager (separate)  | ⚠️ htop/conky (third-party)    | ⬜ §9 — always-visible strip     |
 
 > **After parity items:** POST codes, named-stage logging, panic evidence, and spinners match Windows/Linux. QR panic code and vital-signs strip go beyond both.
