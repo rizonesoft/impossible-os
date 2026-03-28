@@ -35,10 +35,10 @@
 - [`src/kernel/drivers/ahci/ahci_core.c`](../../src/kernel/drivers/ahci/ahci_core.c) — AHCI MSI setup
 - [`src/kernel/drivers/framebuffer.c`](../../src/kernel/drivers/framebuffer.c) — `fb_swap`/`fb_swap_rect` cli/sti
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) — FADT parsing, MADT, PM Timer
-- [`include/kernel/hv_bar.h`](../../include/kernel/hv_bar.h) — debug bars (to be replaced)
-- → XREF: `TODO-02-boot-diagnostics.md §2` — panic forensic evidence struct (this TODO validates it works on bare metal)
+- ~~`include/kernel/hv_bar.h`~~ — deleted 2026-03-28; replaced by TODO-05 VPD
+- → XREF: `TODO-02-boot-diagnostics.md §6` — panic forensic evidence struct (deferred; this TODO validates it works on bare metal when implemented)
 - → XREF: `TODO-03-interrupt-timer-arch.md` — timer HAL design (this TODO investigates why hw interrupts crash on bare metal)
-- → XREF: `TODO-04-cpu-boot-sequencing.md §2,§2` — CPU hardening activation order (this TODO does NOT reimplement; verifies on bare metal)
+- → XREF: `TODO-04-cpu-boot-sequencing.md §2,§4` — CPU hardening activation order (deferred there; minimal version in §9 here)
 - → XREF: `TODO-05-visual-post-display.md §1-§2` — 4-digit POST code system and per-function instrumentation (moved from this TODO to TODO-05)
 - → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` — NX/SMEP/SMAP implementation (this TODO does NOT reimplement; handles bare-metal quirks like shared page tables)
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` — boot_progress() infrastructure (this TODO consumes it)
@@ -360,22 +360,22 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 ## OS Comparison
 
 
-| ⭐ | Feature                              | Win11                                   | Linux                                            | Impossible OS                                     |
-|----|--------------------------------------|-----------------------------------------|--------------------------------------------------|----------------------------------------------------|
-| 💎 | IST stacks                           | ✅ Separate stacks for all critical    | ✅ IST1=#DF, IST2=NMI, IST3=MCE, IST4=debug      | ⬜ §1 — currently all exceptions share kernel     |
-| 💎 | ACPI FADT boot arch detection        | ✅ HAL checks all IAPC_BOOT_ARCH flags | ✅ Parses FADT, gates PIT/RTC/PS2 access         | ⬜ §1 — currently only PCAT_COMPAT and HW_REDUCED |
-| 💎 | PS/2 detection before port access    | ✅ HAL detects i8042 via ACPI          | ✅ `i8042.nopnp`, ACPI _HID match                | ⬜ §2 — currently touches ports blindly           |
-| 💎 | Graceful boot degradation            | ✅ Last Known Good, Safe Mode,         | ✅ systemd continues on unit failure             | ⬜ §2 — currently crashes on any init             |
-| ⭐ | 4-digit POST codes in every function | ❌ POST codes are BIOS-only (2-digit)  | ❌ No POST code system (relies                   | ⬜ §1+§2 — 0x0000–0xFFFF visible on screen +      |
-| 💎 | UC MMIO mapping                      | ✅ MmMapIoSpace                        | ✅ ioremap_uc                                    | ⬜ §1 — minimal vmm_map_mmio_uc                   |
-| 💎 | Per-process page tables               | ✅ Each process has own CR3            | ✅ mm_struct per task, CR3 switch                 | ⬜ §2 — minimal PML4-per-task + CR3 switch        |
-| ⭐ | boot.conf subsystem skip list        | ⚠️ `bcdedit /set safeboot` (coarse)    | ⚠️ Kernel params like `i8042.noaux` (per-driver) | ⬜ §2 — fine-grained `skip=mouse,ahci_msi`       |
-| 💎 | AHCI MSI with fallback               | ✅ StorAHCI driver with INTx fallback  | ✅ libahci with MSI/INTx/polled fallback         | ⬜ §2 — MSI/INTx/polled fallback                  |
-| 💎 | CPU security verify post-enable      | ✅ HAL verifies CR4/EFER              | ✅ Kernel checks feature enable                  | ⬜ §2 — read-back EFER/CR4 after activation      |
-| 💎 | CPU feature minimum requirements     | ✅ NX required since Vista            | ✅ Minimum feature checks at boot                | ⬜ §1 — define minimum + recommended features    |
-| ⭐ | Bare-metal test matrix               | ❌ Internal only (WHQL)               | ❌ Community-driven (no matrix)                  | ⬜ §2 — documented platforms + timing thresholds  |
+| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                    |
+|----|-------------------------|-----------------------------|------------------------------|----------------------------------|
+| 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc                | ⬜ §1                            |
+| 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE     | ⬜ §2                            |
+| 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2         | ⬜ §4                            |
+| 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp               | ⬜ §5                            |
+| 💎 | AHCI MSI fallback       | ✅ StorAHCI INTx fallback   | ✅ libahci polled fallback   | ⬜ §6                            |
+| 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues         | ⬜ §7                            |
+| 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task         | ⬜ §8                            |
+| 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable     | ⬜ §9                            |
+| ⭐ | boot.conf skip list     | ⚠️ bcdedit safeboot         | ⚠️ i8042.noaux per-driver    | ⬜ §11                           |
+| 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                   | ⬜ §12 — migrate from X:\        |
+| 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot    | ⬜ §13                           |
+| ⭐ | Bare-metal test matrix  | ❌ Internal only (WHQL)     | ❌ Community-driven           | ⬜ §14                           |
 
-> **After §1–§1:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux, plus superior diagnostics: every function has a POST code, every failure is logged and survived, users can bypass broken subsystems without recompiling, and user/kernel address spaces are properly separated with SMEP/SMAP enforced. No external TODO dependency blocks execution.
+> **After §1–§14:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with SMEP/SMAP enforced. Graceful degradation on hardware failures. Configurable skip list. Logging on main filesystem. No external TODO blocks execution.
 
 ## Verification
 
@@ -388,5 +388,5 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 - [ ] NVRAM persistence: crash at known POST code → reboot → serial shows "Last boot failed at: 0xNNNN"
 - [ ] IST verification: stack overflow → #DF fires on IST1 → BSOD shown (not silent triple fault)
 - [ ] `skip=mouse,smbios` in boot.conf → those subsystems skipped → boot completes
-- [ ] No `HV_BAR()` calls remaining in codebase (replaced by POST16 system)
+- [x] No `HV_BAR()` calls remaining in codebase — `hv_bar.h` deleted, replaced by TODO-05 VPD
 - [ ] Commit: `"boot: bare metal hardening complete — all platforms boot reliably"`
