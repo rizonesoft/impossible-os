@@ -55,11 +55,12 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - For each function, type, or API referenced in checklist items (e.g., `vmm_map_mmio()`, `BOOT_TRY()`, `POST16()`), use Grep to check if it exists in the codebase.
    - If it doesn't exist AND is not created by a prior section in this TODO: flag it as a missing prerequisite.
    - If it IS created by a prior section: verify the section order puts the creator before the consumer.
-10. **Platform coverage check.**
+10. **Platform coverage check (bare metal first).**
+    - **Bare metal is the acceptance criteria.** "Verified on QEMU" is necessary but NOT sufficient. Every section that touches hardware must include bare-metal verification.
     - Every TODO that touches hardware, interrupts, page tables, timers, or drivers MUST list which platforms each section has been verified on.
     - Required platforms: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-    - If the Test Checkpoint for a section only mentions one platform (e.g., "Boot on QEMU"), flag it — bare metal behaves differently.
-    - Add platform notes to Test Checkpoints: "Verify on QEMU WHPX AND bare metal" where applicable.
+    - If the Test Checkpoint only mentions VMs, flag it and add: "Verify on bare metal — VM behavior differs."
+    - When writing hardware-touching code, ask: "does this work without a hypervisor?"
 11. **Regression risk scan.**
     - For each section, identify what existing working functionality it could break.
     - Flag high-risk sections — those that touch:
@@ -95,6 +96,3 @@ description: Validate a TODO file for structural completeness, Implementation Or
 - Do not turn this into a formatting-only cleanup pass; structural clarity is the goal.
 - Inputs path checks are existence-only — do not read or analyse the referenced source files.
 
-## Additional Resources
-
-- [validation-checklist.md](validation-checklist.md)

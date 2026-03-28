@@ -44,7 +44,7 @@
 | 💎  |   4   | SMBIOS table parsing               | §1              |  [x]   |
 | 💎  |   5   | Secure Boot state detection        | §2              |  [/]   |
 | 💎  |   6   | Secure Boot shim chain-loading     | §5              |  [x]   |
-| 💎  |   7   | Boot UX polish                     | §3, §5, T02 §2 |  [x]   |
+| 💎  |   7   | Boot UX polish                     | §3, §5, T02 §2  |  [x]   |
 | 💎  |   8   | A/B dual-slot boot                 | §2              |  [ ]   |
 | ⭐  |   9   | Multi-OS detection & boot menu     | §1              |  [ ]   |
 | 💎  |  10   | UEFI capsule update & ESRT         | §2, §8          |  [ ]   |
@@ -57,8 +57,7 @@
 
 ---
 
-## 1. UEFI Runtime Services Preservation `[Opus]`
-
+## 1. UEFI Runtime Services Preservation
 Before `ExitBootServices()`, save UEFI runtime function pointers into `boot_info` so the kernel can call them after the boot services are gone.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `include/kernel/uefi_runtime.h`, `src/kernel/uefi_runtime.c`
@@ -71,8 +70,7 @@ Before `ExitBootServices()`, save UEFI runtime function pointers into `boot_info
 - [x] Boot-time serial log: `[UEFI] SetVirtualAddressMap OK` with count of runtime-mapped regions (`call_set_virtual_address_map()` logs region count + status via `klog`)
 - [ ] Commit: `"boot: preserve UEFI runtime service pointers across ExitBootServices"`
 
-## 2. UEFI Variable Services `[Sonnet]`
-
+## 2. UEFI Variable Services
 Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation, used throughout the kernel for Secure Boot key management, A/B slot state, and firmware settings.
 
 **Files:** `include/kernel/uefi_vars.h`, `src/kernel/uefi_vars.c`
@@ -85,8 +83,7 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation, 
 - [x] Add `uefi_var_enumerate(callback)` for iterating all variables (used by §10 ESRT); backed by new `uefi_get_next_variable_name()` primitive added to `uefi_runtime.c`
 - [x] Commit: `"kernel: UEFI variable get/set wrappers + Win32 GetFirmwareEnvironmentVariable wiring"`
 
-## 3. GOP Resolution Auto-Detection `[Sonnet]`
-
+## 3. GOP Resolution Auto-Detection
 Negotiate the best framebuffer resolution before `ExitBootServices()`, respecting `boot.conf` overrides and HiDPI display detection.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
@@ -100,8 +97,7 @@ Negotiate the best framebuffer resolution before `ExitBootServices()`, respectin
 - [x] Fallback: if `SetMode` fails for best mode, retry with current mode; log `BOOT: GOP: using firmware default {W}x{H}`
 - [x] Commit: `"boot: GOP resolution auto-detection with HiDPI flag and boot.conf override"`
 
-## 4. SMBIOS Table Parsing `[Sonnet]`
-
+## 4. SMBIOS Table Parsing
 Walk SMBIOS 3.x structures and populate Registry hardware keys for System Properties, Device Manager, and diagnostics tools.
 
 **Files:** `include/kernel/smbios.h`, `src/kernel/smbios.c`
@@ -116,8 +112,7 @@ Walk SMBIOS 3.x structures and populate Registry hardware keys for System Proper
 - [ ] Expose via System Properties dialog (`sysdm.cpl`) and `msinfo32` shell command (deferred — depends on desktop shell)
 - [x] Commit: `"kernel: SMBIOS 3.x table parse → Registry HARDWARE hives"`
 
-## 5. Secure Boot State Detection `[Sonnet]`
-
+## 5. Secure Boot State Detection
 Read the UEFI `SecureBoot` variable and expose the state to the kernel and user mode.
 
 **Files:** `src/kernel/uefi_runtime.c`, `include/kernel/uefi_runtime.h`, `src/kernel/main/boot_hw.c`
@@ -129,8 +124,7 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel and user 
 - [x] Serial log: `[SecureBoot] state=ENABLED` or `[SecureBoot] state=DISABLED (firmware or user override)`
 - [x] Commit: `"kernel: Secure Boot state detection, registry key, and kernel.exe signature check"`
 
-## 6. Secure Boot Shim Chain-Loading `[Opus]`
-
+## 6. Secure Boot Shim Chain-Loading
 Set up the MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build for hardware-compatible Secure Boot.
 
 **Files:** `scripts/build.sh`, `scripts/sign-efi.sh`, `src/boot/uefi/`, `.gitignore`
@@ -144,8 +138,7 @@ Set up the MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build f
 - [x] Long-term tracker (no code): submit shim to [rhboot/shim-review](https://github.com/rhboot/shim-review) once first release candidate is tagged — tracked in `shim/README.md`
 - [x] Commit: `"boot: Secure Boot shim chain-loading, MOK key signing pipeline, .gitignore"`
 
-## 7. Boot UX Polish `[Sonnet]`
-
+## 7. Boot UX Polish
 Fade-in transition, structured boot profiling, and a pre-framebuffer error recovery screen.
 
 **Files:** `src/boot/uefi/bootx64.c`, `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`,
@@ -160,8 +153,7 @@ Fade-in transition, structured boot profiling, and a pre-framebuffer error recov
 - [x] `boot_splash_status()` integration: `boot_progress()` in `boot_init.c` now calls `boot_splash_status(step)` after `boot_timing_record_step()`; splash shows live stage text below the spinner during every instrumented event
 - [x] Commit: `"boot: fade-in transition, boot-stage instrumentation, pre-framebuffer error recovery screen"`
 
-## 8. A/B Dual-Slot Boot `[Opus]`
-
+## 8. A/B Dual-Slot Boot
 Reliable kernel update delivery with automatic rollback on repeated boot failure.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `src/shell/update-slot.c`
@@ -176,8 +168,7 @@ Reliable kernel update delivery with automatic rollback on repeated boot failure
 - [ ] QEMU test: build two kernel images, set `BootSlot=A MaxBootAttempts=1`; corrupt kernel-A.exe; verify bootloader switches to kernel-B.exe on second boot
 - [ ] Commit: `"boot: A/B dual-slot boot with automatic rollback on repeated failure"`
 
-## 9. Multi-OS Detection & Boot Menu `[Sonnet]`
-
+## 9. Multi-OS Detection & Boot Menu
 Detect other OS partitions from GPT and show a countdown boot menu when the user has multiple OSes installed.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
@@ -190,8 +181,7 @@ Detect other OS partitions from GPT and show a countdown boot menu when the user
 - [ ] `boot.conf` key `DefaultOS=0` (0-indexed; 0 = Impossible OS always default)
 - [ ] Commit: `"boot: multi-OS GPT detection and countdown text-mode boot menu"`
 
-## 10. UEFI Capsule Update & ESRT `[Sonnet]`
-
+## 10. UEFI Capsule Update & ESRT
 Parse the ESRT firmware resource table and implement the UEFI capsule delivery path for firmware updates.
 
 **Files:** `src/kernel/uefi_capsule.c`, `include/kernel/uefi_capsule.h`
@@ -203,8 +193,7 @@ Parse the ESRT firmware resource table and implement the UEFI capsule delivery p
 - [ ] Serial log: `[ESRT] {N} firmware entries found` at boot; `[ESRT] BIOS version 0x{ver}`
 - [ ] Commit: `"kernel: ESRT firmware table parse + UEFI capsule update delivery"`
 
-## 11. UEFI Memory Attributes (W^X) `[Opus]`
-
+## 11. UEFI Memory Attributes (W^X)
 Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEMORY_ATTRIBUTES_TABLE`.
 
 **Files:** `src/kernel/uefi_runtime.c`, `src/kernel/mm/vmm.c`
@@ -260,8 +249,7 @@ Standard line format used everywhere:
 
 ---
 
-## 13. Multi-GPU GOP Handle Enumeration `[Sonnet]`
-
+## 13. Multi-GPU GOP Handle Enumeration
 The current `init_gop()` uses `LocateProtocol()` which returns a single GOP handle — whichever the firmware happens to expose first. On machines with iGPU + dGPU, a Thunderbolt dock, or any secondary adapter, this may select the wrong display. Replace with `LocateHandleBuffer()` to enumerate all GOP handles, select the active display using the UEFI `ConOut` console path as a tiebreaker, record all framebuffers in `boot_info` so the kernel's future multi-head support can consume them, and leave the existing `boot_info.fb` (primary framebuffer) untouched so `framebuffer_init()` needs no changes.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
@@ -292,21 +280,22 @@ The current `init_gop()` uses `LocateProtocol()` which returns a single GOP hand
 
 ---
 
-| ⭐  | Feature                            | 🪟 Windows 11                                | 🐧 Linux (GRUB/systemd-boot)              | 🚀 Impossible OS                                                              |
-| --- | ---------------------------------- | --------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------ |
-| 💎  | Secure Boot shim chain-loading     | ✅ Microsoft-signed shim + WHQL              | ✅ rhboot shim (distro-signed)            | ✅ Done — §6; `shimx64.efi`; MOK enrollment; snakeoil QEMU test               |
-| 💎  | Secure Boot state in kernel        | ✅ `HKLM\SYSTEM\SecureBoot` + WinVerifyTrust | ✅ `/sys/firmware/efi/efivars/SecureBoot` | 🔄 In progress — §5; reads SB/PK/KEK NVRAM; registry + SRM deferred           |
-| 💎  | UEFI runtime services after boot   | ✅ Full EFI runtime preserved                | ✅ `efi_call_*` wrappers post-EBS         | ✅ Done — §1; RT pointers pre-EBS; SVAM post-EBS                              |
-| 💎  | UEFI variable read/write           | ✅ `GetFirmwareEnvironmentVariable` Win32    | ✅ `efivarfs` + `efivar`                  | ✅ Done — §2; `uefi_var_get/set/enumerate`; NTSTATUS translation              |
-| 💎  | GOP resolution negotiation         | ✅ Boot manager negotiates GOP mode          | ✅ GRUB `gfxmode` + EFIFB                 | ✅ Done — §3; `gop_negotiate_mode()`; `Resolution=WxH`; HiDPI flag            |
-| 💎  | SMBIOS hardware inventory          | ✅ WMI `Win32_BIOS`/`Win32_ComputerSystem`   | ✅ `/sys/firmware/dmi/entries/`           | ✅ Done — §4; Type 0/1/4/17; `smbios_populate_registry()` → `HKLM\HARDWARE\*` |
-| 💎  | A/B dual-slot kernel update        | ✅ Windows Update dual-partition recovery    | ✅ `grub-reboot` + BTRFS snapshots        | ⬜ Planned — §8                                                               |
-| 💎  | UEFI capsule firmware update       | ✅ Windows Update UEFI capsules              | ✅ `fwupd` / `fwupdmgr update`            | ⬜ Planned — §10                                                              |
-| 💎  | UEFI memory W^X enforcement        | ✅ Enforced since Windows 10 1607            | ✅ `CONFIG_EFI_MEMORY_ATTRIBUTES_TABLE`   | ⬜ Planned — §11                                                              |
-| ⭐  | In-bootloader multi-OS menu        | ❌ Separate BCD / bootmgr UI                 | ❌ GRUB is a separate bootloader          | ⬜ Planned — §9; integrated countdown menu                                    |
-| ⭐  | Bootloader fade-in accent gradient | ❌ Fixed black→logo, no user color           | ❌ Not implemented                        | ✅ Done — §7; `AccentColor` from boot.conf; 300 ms ramp                       |
-| ⭐  | JSON boot profiling timeline       | ❌ ETW boot trace (binary, WPA required)     | ❌ `systemd-analyze` (post-boot only)     | ✅ Done — §7; `boot_timing_write_report()` → `boot-profile.log`; JSON §9      |
-| 💎  | Multi-GPU GOP primary display      | ✅ `LocateHandleBuffer`; ConOut path select  | ✅ `grub_efi_locate_handle_buffer()`      | ⬜ Planned — §13; `LocateHandleBuffer`; `boot_info.gop_handles[]`             |
+## OS Comparison
+
+| ⭐ | Feature                    | Win11                              | Linux                              | Impossible OS                          |
+|----|----------------------------|------------------------------------|------------------------------------|-----------------------------------------|
+| 💎 | Secure Boot shim           | ✅ MS-signed shim + WHQL          | ✅ rhboot shim (distro)            | ✅ §6 — shimx64 + MOK                  |
+| 💎 | Secure Boot state          | ✅ Registry + WinVerifyTrust      | ✅ efivarfs SecureBoot             | 🔄 §5 — NVRAM reads; SRM deferred      |
+| 💎 | UEFI runtime post-EBS      | ✅ Full RT preserved              | ✅ efi_call wrappers               | ✅ §1 — SVAM + RT pointers             |
+| 💎 | UEFI variable access       | ✅ GetFirmwareEnvVar Win32        | ✅ efivarfs + efivar               | ✅ §2 — get/set/enumerate              |
+| 💎 | GOP resolution             | ✅ Boot manager negotiates        | ✅ GRUB gfxmode + EFIFB            | ✅ §3 — auto + HiDPI + boot.conf       |
+| 💎 | SMBIOS inventory           | ✅ WMI Win32_BIOS                 | ✅ /sys/firmware/dmi               | ✅ §4 — Type 0/1/4/17 → Registry       |
+| 💎 | A/B dual-slot update       | ✅ WU dual-partition              | ✅ grub-reboot + snapshots         | ⬜ §8                                  |
+| 💎 | UEFI capsule update        | ✅ WU UEFI capsules               | ✅ fwupd                           | ⬜ §10                                 |
+| 💎 | UEFI memory W^X            | ✅ Since Win10 1607               | ✅ EFI_MEMORY_ATTRIBUTES           | ⬜ §11                                 |
+| ⭐ | In-bootloader OS menu      | ❌ Separate BCD/bootmgr           | ❌ GRUB is separate                | ⬜ §9 — integrated countdown           |
+| ⭐ | Boot profile timeline      | ❌ ETW (binary, WPA)              | ❌ systemd-analyze (post-boot)     | ✅ §7 — boot-profile.log + JSON        |
+| 💎 | Multi-GPU GOP              | ✅ LocateHandleBuffer             | ✅ grub handle buffer              | ⬜ §13 — ConOut primary select         |
 
 > **After parity items:** Impossible OS will fully match Windows and Linux on Secure Boot, UEFI runtime, SMBIOS, capsule updates, and W^X enforcement. The exclusive items push beyond: the integrated countdown boot menu eliminates the need for a separate bootloader for dual-boot, the accent fade-in gives a branded first impression, and the structured JSON boot timeline makes performance regression testing trivial compared to WPA or systemd-analyze.
 

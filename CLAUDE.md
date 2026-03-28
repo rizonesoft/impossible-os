@@ -26,6 +26,12 @@ Check `tail -1 build/build.log` for result — must show `=== BUILD OK ===`.
 - Win32 is the native API; POSIX via Linux compat layer only
 - Canonical paths use Windows style: `C:\Impossible\System32\`
 
+## Development Strategy — Bare Metal First
+
+Bare metal is the target platform. VMs (QEMU, VBox) are convenience tools for fast iteration, not validation. Every feature must work on real hardware before it's done. "Verified on QEMU" is necessary but not sufficient — "Verified on bare metal" is the acceptance criteria.
+
+When writing hardware-touching code, ask: "does this work without a hypervisor?" Emulated hardware (Bochs VGA, forgiving LAPIC, trapped MMIO) hides bugs that crash on real CPUs.
+
 ## Bare Metal Gotchas
 
 These are hard-won lessons from real hardware debugging. Violating any of these will crash on bare metal while appearing to work fine in VMs.
