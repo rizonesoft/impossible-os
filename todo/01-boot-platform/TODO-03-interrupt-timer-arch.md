@@ -139,7 +139,7 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 
 - [x] `timer_driver_t` vtable exists with `name`, `init`, `get_ticks`, `sleep_ms`, `get_freq`; added `read_ns` field
 - [x] PIT and LAPIC drivers implemented and working (in `pit.c` and `lapic.c`)
-- [ ] HPET standalone driver -- deferred (requires ACPI HPET table parsing)
+- [ ] HPET standalone driver — blocked by `vmm_map_mmio_uc()` (TODO-06 §3). HPET MMIO at ~0xFED00000 requires UC page table entries; WB caching causes MCE on bare metal. Once TODO-06 §3 delivers UC mapping, re-enable HPET calibration in `lapic.c` and implement `hpet_read_ns()` here.
 - [x] LAPIC timer: calibration via Hyper-V MSR / PIT busy-wait already working
 - [x] Selection waterfall: platform_detect() -> Hyper-V MSR -> LAPIC calibration -> PIT fallback; `hv_flags` available
 - [x] `uptime_ns()` added: prefers `read_ns()`, falls back to `ticks * (1e9/freq)`
