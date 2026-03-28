@@ -50,7 +50,7 @@
 | 💎  |  10   | UEFI capsule update & ESRT         | §2              | defer  |
 | 💎  |  11   | UEFI memory attributes (W^X)       | §1              | defer  |
 | ⭐  |  12   | Serial log standardization         | —               |  [x]   |
-| 💎  |  13   | Multi-GPU GOP enumeration          | §3              |  [ ]   |
+| 💎  |  13   | Multi-GPU GOP enumeration          | §3              | defer  |
 
 > 💎 = parity — Windows Boot Manager and GRUB implement these features; Impossible OS must match them.
 > ⭐ = exclusive — the in-bootloader multi-OS detection with graphical countdown timer is not present in competitors.
@@ -262,7 +262,7 @@ Standard line format used everywhere:
 
 ---
 
-## 13. Multi-GPU GOP Handle Enumeration
+## 13. Multi-GPU GOP Handle Enumeration *(deferred — single-GPU works, multi-GPU renders to wrong display but won't crash)*
 The current `init_gop()` uses `LocateProtocol()` which returns a single GOP handle — whichever the firmware happens to expose first. On machines with iGPU + dGPU, a Thunderbolt dock, or any secondary adapter, this may select the wrong display. Replace with `LocateHandleBuffer()` to enumerate all GOP handles, select the active display using the UEFI `ConOut` console path as a tiebreaker, record all framebuffers in `boot_info` so the kernel's future multi-head support can consume them, and leave the existing `boot_info.fb` (primary framebuffer) untouched so `framebuffer_init()` needs no changes.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
