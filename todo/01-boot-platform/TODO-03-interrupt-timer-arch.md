@@ -124,7 +124,7 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 - [x] Existing `irq_handler_t` kept as `void (*)(uint8_t vector, void *ctx)` — no breaking change needed; GSI API added alongside
 - [x] `irq_request_gsi(gsi, handler, ctx, name)`: allocates vector via `irq_alloc_vector()`, registers handler, programs IOAPIC redirection with MADT override flags; returns vector or 0
 - [x] `irq_free_gsi(gsi)`: masks IOAPIC entry, unregisters handler, frees vector
-- [ ] `irq_set_affinity(gsi, cpu_mask)` — deferred to SMP TODO (single-CPU for now, all routes to BSP)
+- [ ] `irq_set_affinity(gsi, cpu_mask)` — implement when IRQ balancing is needed; currently all routes to BSP (functional on SMP, just not balanced)
 - [x] `irq_gsi_count(gsi)`: returns fire count via GSI→vector mapping table
 - [x] `irq_dispatch()` already exists in `irq.c` — registered handler called + EOI sent
 - [ ] `irq list` shell command — deferred to shell TODO

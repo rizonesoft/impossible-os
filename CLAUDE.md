@@ -26,7 +26,9 @@ Check `tail -1 build/build.log` for result — must show `=== BUILD OK ===`.
 - Win32 is the native API; POSIX via Linux compat layer only
 - Canonical paths use Windows style: `C:\Impossible\System32\`
 
-## Development Strategy — Bare Metal First
+## Development Strategy — Bare Metal First, SMP From Day One
+
+**SMP-safe by default.** Every new feature must work correctly on multi-CPU systems. Never design single-CPU assumptions into the code — use per-CPU data, proper locking, and atomic operations from the start. Windows NT was SMP from day one; Linux added it later and paid for it with the BKL for 20 years.
 
 Bare metal is the target platform. VMs (QEMU, VBox) are convenience tools for fast iteration, not validation. Every feature must work on real hardware before it's done. "Verified on QEMU" is necessary but not sufficient — "Verified on bare metal" is the acceptance criteria.
 
