@@ -374,6 +374,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@# Step 3: Format Logs partition as FAT32
 	mkfs.fat -F 32 -n IXOS_LOG --offset $$(( $(LOG_OFFSET) / 512 )) $@
 	@# Step 4: Format IXFS partition and populate with system files
+	@mkdir -p $(BUILD_DIR)/sysroot/Impossible/System/Logs
 	@cp $(BUILD_DIR)/kernel.sym $(BUILD_DIR)/sysroot/Impossible/System/kernel.sym
 	$(BUILD_DIR)/tools/mkfs-ixfs \
 		-o $@ \
