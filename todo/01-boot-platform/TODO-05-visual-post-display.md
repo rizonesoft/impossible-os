@@ -23,6 +23,8 @@
 - → XREF: `TODO-02-boot-diagnostics.md §2` — `boot_stage_report()` named-stage API (VPD consumes this)
 - → XREF: `TODO-02-boot-diagnostics.md §6` — panic forensic evidence (VPD displays crash history from NVRAM)
 - → XREF: `TODO-03-interrupt-timer-arch.md §6` — boot timing and TSC frequency (VPD reads elapsed ms)
+- → XREF: `TODO-06-bare-metal-hardening.md §1-§2` — 4-digit POST code system feeds VPD stage names and codes
+- → XREF: `TODO-06-bare-metal-hardening.md §5` — hw interrupt investigation; VPD must work on bare metal where HV_BAR failed due to page flips
 
 ## Outcome
 
@@ -54,8 +56,7 @@
 
 ---
 
-## 1. Embedded 5×7 Bitmap Micro-Font `[Opus]`
-
+## 1. Embedded 5×7 Bitmap Micro-Font
 A zero-dependency pixel font baked into a single header — renders ASCII text directly to VRAM before any kernel subsystem exists. This is the foundation for all VPD text rendering in Tier 1.
 
 **Files:** `include/kernel/vpd_font.h` (new)
@@ -72,14 +73,16 @@ A zero-dependency pixel font baked into a single header — renders ASCII text d
 - [ ] All functions inline or `static` in the header — no .c file, no linker dependency
 - [ ] Commit: `"boot: embedded 5x7 bitmap micro-font for pre-splash VPD"`
 
-## 2. Tier 1: Pre-Splash VPD Renderer `[Opus]`
-
+## 2. Tier 1: Pre-Splash VPD Renderer
 Replace `HV_BAR` with a structured pre-splash renderer that draws named stage bars with text labels directly to VRAM. Active from the first instruction after `g_boot_info` is parsed until the splash takes over.
 
 **Files:** `include/kernel/vpd.h` (new), `src/kernel/vpd.c` (new)
 
 > [!IMPORTANT]
 > Tier 1 writes directly to the hardware framebuffer (`g_boot_info.fb.addr`). No back buffer, no `fb_swap()`. This is intentional — the framebuffer driver doesn't exist yet.
+
+> [!CAUTION]
+> **Page flip gotcha (discovered 2026-03-28):** After `boot_splash_init()` performs fade-in page flips, the visible VRAM page changes. Tier 1 bars written to page 0 become invisible. On real hardware (non-Bochs VGA), writing to page 1 offset (`fb.addr + height * pitch`) may go past VRAM bounds and crash. Tier 1 must either: (a) only render before `fb_init()`, or (b) detect the current visible page and write to it. §8 (tier transition) must handle this cleanly.
 
 - [ ] `vpd_init()` — called immediately after `g_boot_info` is parsed; stores fb pointer, pitch, dimensions; clears the VPD area (top 80–100 px) to black
 - [ ] `vpd_stage_begin(uint8_t phase, const char *name, uint8_t postcode)` — draw stage row: colored status square + name text + POST hex code; mark as in-progress (yellow)
@@ -92,8 +95,7 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 - [ ] Replace all `HV_BAR(n)` calls with `vpd_stage_begin`/`vpd_stage_done` pairs
 - [ ] Commit: `"boot: Tier 1 VPD renderer — pre-splash named stages with text"`
 
-## 3. `boot.conf` `postbars` Configuration `[Sonnet]`
-
+## 3. `boot.conf` `postbars` Configuration
 Add the `postbars` key to `boot.conf` parsing so the VPD can be configured without recompilation.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
@@ -105,8 +107,7 @@ Add the `postbars` key to `boot.conf` parsing so the VPD can be configured witho
 - [ ] Add `postbars=off` to default `boot.conf` with comment
 - [ ] Commit: `"boot: postbars boot.conf key for VPD configuration"`
 
-## 4. Named Stages with TSC Timing `[Sonnet]`
-
+## 4. Named Stages with TSC Timing
 Wire the VPD into `boot_stage_report()` so every named stage automatically appears in the VPD with millisecond timing from the TSC.
 
 **Files:** `src/kernel/main/boot_progress.c`, `src/kernel/vpd.c`
@@ -120,8 +121,7 @@ Wire the VPD into `boot_stage_report()` so every named stage automatically appea
 - [ ] Stage name rendering uses the `s_meta[].name` strings already defined in `boot_progress.c`
 - [ ] Commit: `"boot: VPD named stages with TSC-derived millisecond timing"`
 
-## 5. Status Indicators and Progress Bar `[Sonnet]`
-
+## 5. Status Indicators and Progress Bar
 Add visual status icons and a proportional progress bar below the stage list.
 
 **Files:** `src/kernel/vpd.c`, `include/kernel/vpd.h`
@@ -132,8 +132,7 @@ Add visual status icons and a proportional progress bar below the stage list.
 - [ ] Each `vpd_stage_begin()` updates pending stages below to gray-square + gray-text (future preview)
 - [ ] Commit: `"boot: VPD status indicators + progress bar"`
 
-## 6. NVRAM Crash Persistence and "Last Boot Failed" Display `[Opus]`
-
+## 6. NVRAM Crash Persistence and "Last Boot Failed" Display
 On crash-restart, display exactly where the previous boot failed — always active regardless of `postbars` setting. This is the killer feature: you crash, reboot, and the screen tells you what happened.
 
 **Files:** `src/kernel/vpd.c`, `src/kernel/main/boot_hw.c`, `src/kernel/main/boot_progress.c`
@@ -150,8 +149,7 @@ On crash-restart, display exactly where the previous boot failed — always acti
 - [ ] Serial log: `[POST] Last boot failed at: STAGE_NAME (0xNN)` (enhances existing serial message)
 - [ ] Commit: `"boot: NVRAM crash persistence — 'Last boot failed at' display"`
 
-## 7. Tier 2: Splash-Integrated Progress `[Sonnet]`
-
+## 7. Tier 2: Splash-Integrated Progress
 When `postbars=1`, the boot splash status text area shows VPD-style named stages with timing instead of generic "Setting up interrupts..." text.
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/vpd.c`
@@ -162,8 +160,7 @@ When `postbars=1`, the boot splash status text area shows VPD-style named stages
 - [ ] `postbars=2` (diagnostic mode): skip splash art entirely; render the full Tier 1 VPD layout using the TTF font at larger scale (12px instead of 7px) with phase grouping
 - [ ] Commit: `"boot: Tier 2 splash-integrated VPD progress display"`
 
-## 8. Seamless Tier Transition `[Opus]`
-
+## 8. Seamless Tier Transition
 When the splash starts, smoothly replace the Tier 1 raw VRAM bars with the Tier 2 splash-rendered progress — no visual glitch, no lost state.
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/vpd.c`
@@ -175,8 +172,7 @@ When the splash starts, smoothly replace the Tier 1 raw VRAM bars with the Tier 
 - [ ] In `postbars=2` mode: no transition — Tier 1 layout persists throughout boot, splash background is never drawn
 - [ ] Commit: `"boot: seamless VPD tier transition from raw VRAM to splash"`
 
-## 9. Phase Grouping and Diagnostic Layout `[Sonnet]`
-
+## 9. Phase Grouping and Diagnostic Layout
 Full diagnostic layout with phase headers, visual separators, and structured stage grouping — the "server POST screen" aesthetic.
 
 **Files:** `src/kernel/vpd.c`
@@ -189,8 +185,7 @@ Full diagnostic layout with phase headers, visual separators, and structured sta
 - [ ] Visible in `postbars=2` mode and during crash-restart diagnostic display
 - [ ] Commit: `"boot: VPD phase grouping with diagnostic layout"`
 
-## 10. HV_BAR Removal and Migration `[Sonnet]`
-
+## 10. HV_BAR Removal and Migration
 Remove the `HV_BAR` prototype and migrate all call sites to the VPD API.
 
 **Files:** all files that `#include "kernel/hv_bar.h"`
@@ -202,8 +197,7 @@ Remove the `HV_BAR` prototype and migrate all call sites to the VPD API.
 - [ ] Verify: `postbars=0` — no visual artifacts; `postbars=1` — clean splash with progress; `postbars=2` — full diagnostic screen
 - [ ] Commit: `"boot: remove HV_BAR prototype — fully replaced by VPD"`
 
-## 11. Panic Integration and Failure Highlighting `[Opus]`
-
+## 11. Panic Integration and Failure Highlighting
 On crash, the VPD marks the active stage as failed. On next boot, the failure is highlighted in the diagnostic display.
 
 **Files:** `src/kernel/vpd.c`, `src/kernel/panic.c`
@@ -218,18 +212,17 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 
 ## OS Comparison
 
+| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                  |
+|----|-------------------------|-----------------------------|------------------------------|--------------------------------|
+| 💎 | Boot progress visual    | ✅ Spinning dots            | ✅ Plymouth splash           | ⬜ §2+§7 — two-tier VPD       |
+| ⭐ | Pre-splash diagnostics  | ❌ Black screen             | ⚠️ fbcon (if compiled in)    | ⬜ §1+§2 — micro-font stages  |
+| 💎 | Boot stage timing       | ⚠️ ETW (not visible)        | ✅ systemd-analyze (post)    | ⬜ §4 — live TSC ms per stage  |
+| ⭐ | NVRAM crash display     | ⚠️ Generic error message    | ❌ No NVRAM persistence      | ⬜ §6 — "Last boot failed at"  |
+| 💎 | POST code display       | ✅ Motherboard LED          | ❌ Not an OS feature         | ✅ Done — TODO-02 §3           |
+| 💎 | Configurable diag       | ✅ bcdedit bootlog          | ✅ systemd.log_level         | ⬜ §3 — postbars=off/on/diag   |
+| ⭐ | Panic-aware progress    | ❌ No boot context in BSOD  | ❌ No boot context in oops   | ⬜ §11 — failed stage in red   |
 
-| ⭐ | Feature                       | Win11                                | Linux                                       | Impossible OS                                         |
-|----|-------------------------------|--------------------------------------|---------------------------------------------|-------------------------------------------------------|
-| 💎 | Boot progress visualization   | ✅ Spinning dots under logo          | ✅ Plymouth splash + text mode              | ⬜ §2 + §7 — two-tier VPD with Tier 1                 |
-| ⭐ | Pre-splash diagnostics        | ❌ Black screen until bootmgr logo   | ⚠️ fbcon text mode (if compiled             | ⬜ §1 + §2 — embedded micro-font renders named stages |
-| 💎 | Boot stage timing             | ⚠️ Event Tracing (ETW); not visible  | ✅ `systemd-analyze blame` (post-boot only) | ⬜ §4 — live TSC-derived ms on every                  |
-| ⭐ | NVRAM crash-restart display   | ⚠️ "Your PC ran into a               | ❌ No NVRAM persistence; relies on          | ⬜ §6 — "Last boot failed at: STAGE                   |
-| 💎 | POST code display             | ✅ BIOS/UEFI POST on motherboard LED | ❌ Not an OS feature                        | ✅ §3 — Done — TODO-02 ; hex                          |
-| 💎 | Configurable boot diagnostics | ✅ `bcdedit /set bootlog yes`        | ✅ `systemd.log_level=debug` kernel param   | ⬜ §3 — `postbars=off/on/diag` in boot.conf           |
-| ⭐ | Panic-aware boot progress     | ❌ BSOD has no boot progress         | ❌ Kernel oops has no boot                  | ⬜ §11 — panic screen shows which boot                |
-
-> **After §1–§11:** Impossible OS has the most informative boot diagnostic display of any operating system — real-time named stages with millisecond timing visible from the first instruction, NVRAM-persisted crash forensics shown on restart without configuration, and seamless integration into a polished splash screen. No serial cable. No debug tools. Just boot and see everything.
+> **After §1–§11:** The most informative boot diagnostic in any OS — named stages with ms timing from first instruction, NVRAM crash forensics on restart, seamless splash integration. No serial. No tools. Just boot and see.
 
 ## Verification
 
