@@ -81,11 +81,13 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
            g_boot_info.config.config_found ? "" : " (defaults)");
 
     /* --- UEFI runtime services (SetVirtualAddressMap + RT props) --- */
+    POST16(POST16_UEFI_RT);
     {
         boot_result_t r = uefi_runtime_init();
         if (r == BOOT_DEGRADED)
             klog(LOG_WARN, "UEFI", "Runtime services unavailable -- degraded");
     }
+    POST16(POST16_UEFI_RT_OK);
 
     /* --- Read prior boot POST code from UEFI NVRAM --- */
     {
@@ -110,19 +112,21 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     }
 
     /* --- UEFI variable services (NVRAM enumeration) --- */
+    POST16(POST16_UEFI_VARS);
     uefi_vars_init();
-
-    /* --- UEFI RTC time (seed wall clock) --- */
     uefi_time_init();
+    POST16(POST16_UEFI_VARS_OK);
 
     /* --- Secure Boot state detection --- */
+    POST16(POST16_SECUREBOOT);
     uefi_secureboot_init();
+    POST16(POST16_SECUREBOOT_OK);
 
     /* --- TPM measured boot (parse event log) --- */
+    POST16(POST16_TPM);
     tpm_init();
-
-    /* --- Boot integrity verification (PCR golden value check) --- */
     tpm_integrity_init();
+    POST16(POST16_TPM_OK);
 
     /* --- Physical memory manager: BOOT_FATAL if fails --- */
     POST16(POST16_PMM);

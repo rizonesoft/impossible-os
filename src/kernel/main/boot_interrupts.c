@@ -177,7 +177,9 @@ void boot_phase1(void)
 
     /* --- Phase 1 info gathering --- */
     uefi_config_init();
+    POST16(POST16_SMBIOS);
     smbios_init();
+    POST16(POST16_SMBIOS_OK);
     boot_progress(1, "SMBIOS", POSTCODE_SMBIOS_INIT);
     esrt_init();
     mat_init();
@@ -185,7 +187,9 @@ void boot_phase1(void)
     uefi_capsule_init();
     uefi_crypto_agility_init();
     secureboot_keys_init();
+    POST16(POST16_BOOT_TIMING);
     boot_timing_init();
+    POST16(POST16_BOOT_TIMING_OK);
 
     /* GOP mode enumeration report */
     {

@@ -110,13 +110,19 @@ void boot_phase3(void)
 
     boot_splash_tick();
     boot_splash_status("Loading fonts...");
+    POST16(POST16_FONTS);
     ttf_mgr_init();
+    POST16(POST16_FONTS_OK);
 
     boot_splash_tick();
     boot_splash_status("Loading resources...");
+    POST16(POST16_ICONS);
     icon_store_init();
+    POST16(POST16_ICONS_OK);
 
+    POST16(POST16_CURSORS);
     cursor_init();
+    POST16(POST16_CURSORS_OK);
 
     /* --- Window manager + desktop --- */
     klog(LOG_DEBUG, "boot", "--- Phase: desktop & WM ---");

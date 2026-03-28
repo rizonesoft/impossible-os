@@ -123,6 +123,14 @@ typedef enum {
 /* Phase 0 — Critical Init (0x0000–0x0FFF) */
 #define POST16_SERIAL           0x0010
 #define POST16_SERIAL_OK        0x0011
+#define POST16_UEFI_RT          0x0012  /* UEFI runtime services init */
+#define POST16_UEFI_RT_OK       0x0013
+#define POST16_UEFI_VARS        0x0014  /* UEFI variable enumeration */
+#define POST16_UEFI_VARS_OK     0x0015
+#define POST16_SECUREBOOT       0x0016  /* Secure Boot state detection */
+#define POST16_SECUREBOOT_OK    0x0017
+#define POST16_TPM              0x0018  /* TPM init + integrity */
+#define POST16_TPM_OK           0x0019
 #define POST16_PMM              0x0020
 #define POST16_PMM_OK           0x0021
 #define POST16_VMM              0x0030
@@ -165,6 +173,10 @@ typedef enum {
 #define POST16_FB_OK            0x1081
 #define POST16_SPLASH           0x1090
 #define POST16_SPLASH_OK        0x1091
+#define POST16_SMBIOS           0x10A0
+#define POST16_SMBIOS_OK        0x10A1
+#define POST16_BOOT_TIMING      0x10B0
+#define POST16_BOOT_TIMING_OK   0x10B1
 
 /* Phase 2 — System Services (0x2000–0x2FFF) */
 #define POST16_PCI              0x2000
@@ -197,6 +209,12 @@ typedef enum {
 #define POST16_WQ_OK            0x3011
 #define POST16_FONTS            0x3020
 #define POST16_FONTS_OK         0x3021
+#define POST16_ICONS            0x3022
+#define POST16_ICONS_OK         0x3023
+#define POST16_CURSORS          0x3024
+#define POST16_CURSORS_OK       0x3025
+#define POST16_WALLPAPER        0x3026
+#define POST16_WALLPAPER_OK     0x3027
 #define POST16_DESKTOP          0x3030
 #define POST16_DESKTOP_OK       0x3031
 #define POST16_COMPOSITOR       0x3040

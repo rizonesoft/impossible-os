@@ -109,9 +109,11 @@ void boot_phase2(void)
     klog(LOG_DEBUG, "boot", "--- Phase: partition & filesystem mount ---");
     boot_splash_tick();
     boot_splash_status("Scanning partitions...");
+    POST16(POST16_PARTITION);
     partition_scan_all();
     boot_splash_status("Mounting filesystems...");
     partition_mount_filesystems();
+    POST16(POST16_PARTITION_OK);
     boot_splash_status("Checking boot flags...");
 
     /* Check for debug boot flag on X: */
