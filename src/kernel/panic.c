@@ -325,8 +325,14 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     /* Disable interrupts to prevent further exceptions */
     __asm__ volatile ("cli");
 
+    /* Mark current VPD stage as failed (red) before BSOD overwrites screen */
+    {
+        extern void vpd_stage_fail(void);
+        vpd_stage_fail();
+    }
+
     /* Write failure POST code to UEFI NVRAM for post-mortem diagnosis */
-    boot_post_write16(POST16_BOOT_FAILED);
+    boot_post_nvram_write16(POST16_BOOT_FAILED);
 
     /* Dump subsystem readiness to serial for post-mortem analysis */
     kernel_subsystem_dump();

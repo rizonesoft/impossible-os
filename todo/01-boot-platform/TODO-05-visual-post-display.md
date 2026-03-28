@@ -246,11 +246,12 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 
 **Files:** `src/kernel/vpd.c`, `src/kernel/panic.c`
 
-- [ ] `vpd_stage_fail()` called from `kernel_panic()` before the BSOD screen is drawn — marks current stage red
-- [ ] If VPD is in Tier 1 (pre-splash panic): the failed stage is visible as a red bar with name on the black screen; system halts with this visible
-- [ ] If VPD is in Tier 2 (post-splash panic): the panic screen includes a "Boot Progress" section showing all completed stages + the failed stage highlighted in red
-- [ ] On crash-restart with `postbars=2`: full diagnostic screen shows the failed stage from last boot in red with `"✗ FAILED"` label, sourced from NVRAM data (§6)
-- [ ] Commit: `"boot: VPD panic integration — failure highlighting and crash-restart display"`
+- [x] `vpd_stage_fail()` called from `panic_screen()` before BSOD is drawn — marks current stage red
+- [x] `boot_post_nvram_write16(POST16_BOOT_FAILED)` writes failure marker to NVRAM for next-boot detection
+- [x] Pre-splash panic (Tier 1): failed stage visible as red square on black screen before halt
+- [x] Next boot info header shows "FAILED Phase N (0xNNNN)" from NVRAM
+- [ ] Tier 2 post-splash panic display *(deferred — depends on §9)*
+- [x] Commit: `"boot: VPD panic integration — failure highlighting"`
 
 ---
 

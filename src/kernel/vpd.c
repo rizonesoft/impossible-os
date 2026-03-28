@@ -525,19 +525,16 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
 
     /* Phase heading + separator when phase changes */
     if (s_last_phase != 0xFF && phase != s_last_phase) {
-        s_row += VPD_ROW_HEIGHT / 2;  /* extra gap before separator */
+        s_row += VPD_ROW_HEIGHT;  /* 1 blank line before separator */
         vpd_fill_rect(VPD_LEFT_MARGIN, s_row,
                        VPD_SEPARATOR_W, VPD_SEPARATOR_H,
                        VPD_COLOR_SEPARATOR);
-        s_row += VPD_SEPARATOR_H + VPD_ROW_HEIGHT / 2;  /* gap after separator */
+        s_row += VPD_SEPARATOR_H + VPD_ROW_HEIGHT / 2;
     }
     if (phase != s_last_phase && phase < 4) {
         vpd_puts_scaled(VPD_LEFT_MARGIN, s_row, s_phase_names[phase],
                          VPD_COLOR_VALUE);
-        /* 2px underline below heading */
-        vpd_fill_rect(VPD_LEFT_MARGIN, s_row + VPD_GLYPH_H + 1,
-                       VPD_SEPARATOR_W, 2, VPD_COLOR_SEPARATOR);
-        s_row += VPD_ROW_HEIGHT + 4;  /* heading + underline + padding */
+        s_row += VPD_ROW_HEIGHT * 2;  /* heading + 1 blank line */
     }
     s_last_phase = phase;
 
@@ -551,20 +548,6 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
 
     /* Draw stage name at fixed column */
     vpd_puts_scaled(VPD_NAME_X, s_row, name, VPD_COLOR_TEXT);
-
-    /* Dot leaders between name and POST code */
-    {
-        const char *p = name;
-        uint32_t name_len = 0;
-        uint32_t dot_x, dot_end;
-        while (*p) { name_len++; p++; }
-        dot_x = VPD_NAME_X + (name_len + 1) * VPD_CHAR_W;
-        dot_end = VPD_CODE_X - VPD_CHAR_W;
-        while (dot_x + VPD_CHAR_W <= dot_end) {
-            vpd_puts_scaled(dot_x, s_row, ".", VPD_COLOR_PENDING);
-            dot_x += 2 * VPD_CHAR_W;  /* every other cell for spacing */
-        }
-    }
 
     /* Draw POST code at fixed column */
     vpd_puthex16_scaled(VPD_CODE_X, s_row, postcode, VPD_COLOR_PENDING);
