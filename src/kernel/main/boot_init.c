@@ -167,5 +167,13 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode)
     boot_post_write16(postcode);
     post_display16(postcode);
 
+    /* VPD Tier 1: show named stage with status indicator */
+    {
+        extern void vpd_stage_begin(uint8_t, const char *, uint16_t);
+        extern int vpd_is_active(void);
+        if (vpd_is_active())
+            vpd_stage_begin(phase, step, postcode);
+    }
+
     boot_splash_status(step);
 }

@@ -71,6 +71,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     }
     boot_progress(0, "BOOT_INFO", 0x0026);
 
+    /* Initialize VPD Tier 1 — framebuffer address now valid */
+    {
+        extern void vpd_init(void);
+        vpd_init();
+    }
+
     /* boot_config_parse: boot.conf is parsed by the UEFI bootloader before
      * kernel entry and delivered in g_boot_info.config.  Log the values. */
     klog(LOG_INFO, "CONF", "boot.conf: debug=%d verbose=%d serial=%d mode=%d splash=%ds heartbeat=%d postcode=%d%s",

@@ -176,6 +176,11 @@ void boot_phase1(void)
     kernel_subsystem_set_ready(SUBSYS_FB, true);
     boot_progress(1, "FB", POST16_FB_OK);
     POST16(POST16_SPLASH);
+    {
+        /* Stop VPD Tier 1 before splash takes over the screen */
+        extern void vpd_stop_tier1(void);
+        vpd_stop_tier1();
+    }
     boot_splash_init();
     POST16(POST16_SPLASH_OK);
 

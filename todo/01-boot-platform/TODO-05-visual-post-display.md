@@ -42,7 +42,7 @@
 | 💎  |   1   | 4-digit POST code system (0x0000–0xFFFF)                | —          |  [x]   |
 | ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1         |  [x]   |
 | ⭐  |   3   | Embedded 5×7 bitmap micro-font                          | —          |  [x]   |
-| 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3     |  [ ]   |
+| 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3     |  [x]   |
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4         |  [ ]   |
 | 💎  |   6   | Named stages with TSC timing                            | §4         |  [ ]   |
 | 💎  |   7   | Status indicators and progress bar                      | §6         |  [ ]   |
@@ -131,15 +131,16 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 > [!CAUTION]
 > **Page flip gotcha (discovered 2026-03-28):** After `boot_splash_init()` performs fade-in page flips, the visible VRAM page changes. Tier 1 bars written to page 0 become invisible. On real hardware (non-Bochs VGA), writing to page 1 offset (`fb.addr + height * pitch`) may go past VRAM bounds and crash. Tier 1 must either: (a) only render before `fb_init()`, or (b) detect the current visible page and write to it. §8 (tier transition) must handle this cleanly.
 
-- [ ] `vpd_init()` — called immediately after `g_boot_info` is parsed; stores fb pointer, pitch, dimensions; clears the VPD area (top 80–100 px) to black
-- [ ] `vpd_stage_begin(uint8_t phase, const char *name, uint8_t postcode)` — draw stage row: colored status square + name text + POST hex code; mark as in-progress (yellow)
-- [ ] `vpd_stage_done(void)` — update current stage's status square to green (done); record TSC elapsed and render timing text
-- [ ] `vpd_stage_fail(void)` — update current stage's status square to red (failed)
-- [ ] Layout: each stage occupies 10px height (7px text + 3px gap); left margin 4px; status square 6×6px; name at x=14px; timing right-aligned; POST code after timing
-- [ ] Phase separator: 2px horizontal line in dark gray between Phase 0/1/2/3 groups
-- [ ] Color palette: background black, text white (0xC0C0C0), done green (0x00CC00), in-progress yellow (0xCCCC00), failed red (0xFF2222), pending gray (0x404040)
-- [ ] `vpd_is_active()` — returns 1 if VPD is enabled and rendering
-- [ ] Replace all `HV_BAR(n)` calls with `vpd_stage_begin`/`vpd_stage_done` pairs
+- [x] `vpd_init()` — called after `g_boot_info` parse in `boot_hw.c`; stores fb pointer, pitch, dimensions
+- [x] `vpd_stage_begin(phase, name, postcode)` — draws stage row: 5×5 status square + name + POST hex; yellow = in-progress
+- [x] `vpd_stage_done()` — marks current stage green + renders elapsed ms
+- [x] `vpd_stage_fail()` — marks current stage red + renders FAIL text
+- [x] Layout: 10px per row, left margin 4px, 5×5 status square, name + hex code, timing right-aligned
+- [x] Phase separator: 1px gray line between phase groups
+- [x] Colors: bg black, text 0xC0C0C0, done 0x00CC00, progress 0xCCCC00, fail 0xFF2222, pending 0x404040
+- [x] `vpd_is_active()` / `vpd_stop_tier1()` — tier lifecycle management
+- [x] Hooked into `boot_progress()` — every stage automatically rendered
+- [x] HV_BAR already removed (prior commit) — VPD is the replacement
 - [ ] Commit: `"boot: Tier 1 VPD renderer — pre-splash named stages with text"`
 
 ## 5. `boot.conf` `postbars` Configuration
