@@ -39,14 +39,16 @@ static inline uint64_t vpd_rdtsc(void)
 
 /* ---- Layout constants ---------------------------------------------------- */
 
-#define VPD_LEFT_MARGIN   4
-#define VPD_TOP_MARGIN    4
-#define VPD_ROW_HEIGHT   10   /* 7px text + 3px gap */
-#define VPD_SQUARE_SIZE   5
-#define VPD_SQUARE_GAP    3
-#define VPD_NAME_X       (VPD_LEFT_MARGIN + VPD_SQUARE_SIZE + VPD_SQUARE_GAP)
-#define VPD_MAX_ROWS     30   /* max stages visible */
-#define VPD_SEPARATOR_H   1
+#define VPD_SCALE          2   /* render text at 2× for readability */
+#define VPD_LEFT_MARGIN    8
+#define VPD_TOP_MARGIN     8
+#define VPD_ROW_HEIGHT    (VPD_GLYPH_H * VPD_SCALE + 4)  /* 18px: 14px text + 4px gap */
+#define VPD_SQUARE_SIZE   (VPD_GLYPH_H * VPD_SCALE)      /* 14px square */
+#define VPD_SQUARE_GAP     6
+#define VPD_NAME_X        (VPD_LEFT_MARGIN + VPD_SQUARE_SIZE + VPD_SQUARE_GAP)
+#define VPD_MAX_ROWS      30
+#define VPD_SEPARATOR_H    1
+#define VPD_SEPARATOR_W  300  /* fixed width, not full screen */
 
 /* ---- Colors -------------------------------------------------------------- */
 
@@ -67,6 +69,67 @@ static void vpd_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
     for (cy = y; cy < y + h && cy < s_height; cy++)
         for (cx = x; cx < x + w && cx < s_width; cx++)
             s_fb[cy * s_pitch_px + cx] = color;
+}
+
+/* 2× scaled text rendering — each font pixel becomes a 2×2 block */
+static void vpd_puts_scaled(uint32_t x, uint32_t y, const char *s,
+                              uint32_t color)
+{
+    while (*s) {
+        char c = *s;
+        const uint8_t *glyph;
+        uint32_t row, col;
+
+        if (c < VPD_FIRST || c > VPD_LAST) c = '?';
+        glyph = vpd_font_data[c - VPD_FIRST];
+
+        for (row = 0; row < VPD_GLYPH_H; row++) {
+            uint8_t bits = glyph[row];
+            for (col = 0; col < VPD_GLYPH_W; col++) {
+                if (bits & (0x80 >> col)) {
+                    uint32_t px = x + col * VPD_SCALE;
+                    uint32_t py = y + row * VPD_SCALE;
+                    if (px + 1 < s_width && py + 1 < s_height) {
+                        s_fb[py       * s_pitch_px + px]     = color;
+                        s_fb[py       * s_pitch_px + px + 1] = color;
+                        s_fb[(py + 1) * s_pitch_px + px]     = color;
+                        s_fb[(py + 1) * s_pitch_px + px + 1] = color;
+                    }
+                }
+            }
+        }
+        x += VPD_CELL_W * VPD_SCALE;
+        s++;
+    }
+}
+
+static void vpd_puthex16_scaled(uint32_t x, uint32_t y, uint16_t val,
+                                  uint32_t color)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    char buf[5];
+    buf[0] = hex[(val >> 12) & 0xF];
+    buf[1] = hex[(val >>  8) & 0xF];
+    buf[2] = hex[(val >>  4) & 0xF];
+    buf[3] = hex[ val        & 0xF];
+    buf[4] = '\0';
+    vpd_puts_scaled(x, y, buf, color);
+}
+
+static void vpd_putu32_scaled(uint32_t x, uint32_t y, uint32_t val,
+                                uint32_t color)
+{
+    char buf[12];
+    int i = 0, j;
+    if (val == 0) { vpd_puts_scaled(x, y, "0", color); return; }
+    while (val > 0 && i < 11) { buf[i++] = (char)('0' + val % 10); val /= 10; }
+    /* Reverse into a proper string */
+    {
+        char rev[12];
+        for (j = 0; j < i; j++) rev[j] = buf[i - 1 - j];
+        rev[i] = '\0';
+        vpd_puts_scaled(x, y, rev, color);
+    }
 }
 
 /* ---- Public API ---------------------------------------------------------- */
@@ -105,20 +168,25 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
             uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
             uint32_t ms = (uint32_t)(elapsed_tsc * 1000 /
                                       g_boot_info.timing.tsc_freq);
-            /* Right-align timing: +NNNms */
-            uint32_t tx = s_width - 60;
-            vpd_putchar(s_fb, s_pitch_px, tx, s_last_row_y, '+', VPD_COLOR_TEXT);
-            tx += VPD_CELL_W;
-            vpd_putu32(s_fb, s_pitch_px, tx, s_last_row_y, ms, VPD_COLOR_TEXT);
+            uint32_t tx = VPD_SEPARATOR_W - 80;
+            vpd_putu32_scaled(tx, s_last_row_y, ms, VPD_COLOR_PENDING);
+            /* Count digits to position "ms" suffix */
+            {
+                uint32_t v = ms, digits = 0;
+                if (v == 0) digits = 1;
+                while (v > 0) { digits++; v /= 10; }
+                vpd_puts_scaled(tx + digits * VPD_CELL_W * VPD_SCALE,
+                                 s_last_row_y, "ms", VPD_COLOR_PENDING);
+            }
         }
     }
 
     /* Phase separator */
     if (s_last_phase != 0xFF && phase != s_last_phase) {
         vpd_fill_rect(VPD_LEFT_MARGIN, s_row,
-                       s_width - VPD_LEFT_MARGIN * 2, VPD_SEPARATOR_H,
+                       VPD_SEPARATOR_W, VPD_SEPARATOR_H,
                        VPD_COLOR_SEPARATOR);
-        s_row += VPD_SEPARATOR_H + 2;
+        s_row += VPD_SEPARATOR_H + 3;
     }
     s_last_phase = phase;
 
@@ -130,18 +198,17 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
     vpd_fill_rect(VPD_LEFT_MARGIN, s_row, VPD_SQUARE_SIZE, VPD_SQUARE_SIZE,
                    VPD_COLOR_PROGRESS);
 
-    /* Draw stage name */
+    /* Draw stage name at 2× scale */
     x = VPD_NAME_X;
-    vpd_puts(s_fb, s_pitch_px, x, s_row, name, VPD_COLOR_TEXT);
+    vpd_puts_scaled(x, s_row, name, VPD_COLOR_TEXT);
 
-    /* Draw POST code after name */
+    /* Draw POST code after name at 2× scale */
     {
-        /* Find end of name */
         const char *p = name;
         uint32_t name_len = 0;
         while (*p) { name_len++; p++; }
-        x = VPD_NAME_X + (name_len + 1) * VPD_CELL_W;
-        vpd_puthex16(s_fb, s_pitch_px, x, s_row, postcode, VPD_COLOR_PENDING);
+        x = VPD_NAME_X + (name_len + 1) * VPD_CELL_W * VPD_SCALE;
+        vpd_puthex16_scaled(x, s_row, postcode, VPD_COLOR_PENDING);
     }
 
     /* Record state for done/timing */
@@ -167,10 +234,15 @@ void vpd_stage_done(void)
         uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
         uint32_t ms = (uint32_t)(elapsed_tsc * 1000 /
                                   g_boot_info.timing.tsc_freq);
-        uint32_t tx = s_width - 60;
-        vpd_putchar(s_fb, s_pitch_px, tx, s_last_row_y, '+', VPD_COLOR_TEXT);
-        tx += VPD_CELL_W;
-        vpd_putu32(s_fb, s_pitch_px, tx, s_last_row_y, ms, VPD_COLOR_TEXT);
+        uint32_t tx = VPD_SEPARATOR_W - 80;
+        vpd_putu32_scaled(tx, s_last_row_y, ms, VPD_COLOR_PENDING);
+        {
+            uint32_t v = ms, digits = 0;
+            if (v == 0) digits = 1;
+            while (v > 0) { digits++; v /= 10; }
+            vpd_puts_scaled(tx + digits * VPD_CELL_W * VPD_SCALE,
+                             s_last_row_y, "ms", VPD_COLOR_PENDING);
+        }
     }
 
     s_has_current = 0;
@@ -184,9 +256,8 @@ void vpd_stage_fail(void)
     vpd_fill_rect(VPD_LEFT_MARGIN, s_last_row_y,
                    VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_FAIL);
 
-    /* Draw FAIL text */
-    vpd_puts(s_fb, s_pitch_px, s_width - 36, s_last_row_y,
-             "FAIL", VPD_COLOR_FAIL);
+    /* Draw FAIL text at 2× scale */
+    vpd_puts_scaled(VPD_SEPARATOR_W - 60, s_last_row_y, "FAIL", VPD_COLOR_FAIL);
 
     s_has_current = 0;
 }
