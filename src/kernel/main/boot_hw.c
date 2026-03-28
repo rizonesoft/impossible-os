@@ -108,7 +108,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
             else
                 serial_write(" (incomplete -- prior boot did not finish)\n");
         }
-        boot_progress(10, "post-code-log", 0x11);
+        boot_progress(0, "post-code-log", 0x11);
     }
 
     /* --- UEFI variable services (NVRAM enumeration) --- */
