@@ -42,10 +42,15 @@ description: Validate a TODO file for structural completeness, Implementation Or
      - If NOT covered by any section: flag it as a missing parity feature. Suggest adding a section or noting it as deferred with a reason.
      - If covered by another TODO: add a `→ XREF:` and note it in the table.
    - **Competitive edge check:** Look for features where Impossible OS could be BETTER than both competitors (⭐ exclusive). Research what Win11 and Linux do poorly in this TODO's domain and suggest exclusive features that would make Impossible OS superior. Add suggested rows to the table marked ⭐ with ⬜ Planned.
-7. Validate execution coverage.
+7. Validate execution coverage and close loose ends.
    - Check dependency order, `→ XREF:` lines, overlap notes, handoffs, and adjacent-file continuity.
    - For each `→ XREF: TODO-XX §N`, confirm the target TODO file exists **and** the referenced section number is present in that file.
    - Check handoff boundaries: for each deliverable this TODO hands off to another, confirm the receiving TODO has a matching Inputs or XREF entry.
+   - **Loose end check:** For every "blocked by TODO-XX §N" or "deferred to TODO-XX" note in this file:
+     1. Open the referenced TODO and verify the back-reference exists (the other TODO should point back here).
+     2. If no back-reference: add one. Both sides must know about the dependency.
+     3. If this TODO creates something that unblocks work in another TODO, the deliverable section must explicitly say "after this, re-enable X in TODO-YY §M" — not just a vague XREF.
+     4. If this TODO defers an item, the item must say WHERE it's deferred to (specific TODO + section) or WHY it's deferred (with a condition for when to revisit). Never just "deferred."
    - Fix stale planning text, broken links, and roadmap inconsistencies.
 8. **Self-contained execution check (critical).**
    - The TODO must be executable from §1 to the last section WITHOUT being blocked by unimplemented sections in other TODOs.
