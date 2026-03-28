@@ -83,7 +83,7 @@ Replace the current 2-digit POST codes (28 values in 0x10–0x63) with a 4-digit
 - [x] `boot_post_read16()` — reads 2 bytes if available, 1 byte otherwise
 - [x] On-screen POST display: render 4 hex digits at 2× scale (16×16 px per glyph, top-right corner, existing 8×8 hex font doubled). Total display: 76×20 px
 - [x] Bootloader: replaced `post_code(uint8_t)` with `post_code16(uint16_t)` using 0xB000 range + serial output
-- [ ] Commit: `"boot: 4-digit POST code system with UEFI bootloader coverage"`
+- [x] Commit: `"boot: 4-digit POST code system with UEFI bootloader coverage"`
 
 **Test checkpoint:** QEMU: serial shows `[BOOT] POST 0xB001` before kernel entry. After kernel: `[PHASE0] PMM (0x0020)`. UEFI NVRAM stores 16-bit value. Bare metal: POST code reader shows high byte on port 0x80.
 
