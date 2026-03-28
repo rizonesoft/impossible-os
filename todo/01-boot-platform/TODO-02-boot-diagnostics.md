@@ -42,8 +42,8 @@
 | 💎  |   1   | UEFI pre-kernel POST codes         | —          |  [x]   |
 | 💎  |   2   | Boot progress named-stage API      | §1         |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2         |  [x]   |
-| 💎  |   4   | Alive blink / hang detection       | §2         |  [x]   |
-| ⭐  |   5   | Debug color bar waterfall          | §2         |  [/]   |
+| 💎  |   4   | Alive blink / hang detection       | §2         | defer  |
+| ⭐  |   5   | Debug color bar waterfall          | §2         | defer  |
 | 💎  |   6   | Panic forensic evidence            | §2         |  [ ]   |
 | ⭐  |   7   | Panic QR code                      | §6         |  [ ]   |
 | 💎  |   8   | System-wide multi-instance spinner | —          |  [ ]   |
@@ -54,8 +54,7 @@
 
 ---
 
-## 1. UEFI Pre-Kernel POST Codes `[Sonnet]`
-
+## 1. UEFI Pre-Kernel POST Codes
 Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader cards decode boot progress before the kernel even starts.
 
 **Files:** `src/boot/uefi/bootx64.c`
@@ -65,8 +64,7 @@ Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader 
 - [x] QEMU ignores port 0x80 writes silently -- no fault, verified by clean build
 - [x] Commit: `"boot: UEFI pre-kernel POST codes to I/O port 0x80"`
 
-## 2. Boot Progress Named-Stage API `[Sonnet]`
-
+## 2. Boot Progress Named-Stage API
 High-level named-stage wrapper over the existing `boot_progress()` that adds a 32-entry ring buffer, elapsed-ms tracking, and `boot_splash_status()` forwarding.
 
 **Files:** `include/kernel/boot_progress.h`, `src/kernel/main/boot_progress.c`
@@ -80,8 +78,7 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 - [x] `boot_progress_poll()`: re-sends last stage to `boot_splash_status()` for timer-driven visual refresh
 - [x] Commit: `"kernel: boot progress named-stage API with ring buffer and elapsed-ms tracking"`
 
-## 3. POST-Style Hex Code Display `[Sonnet]`
-
+## 3. POST-Style Hex Code Display
 Render a 2-digit hex POST code in the top-right framebuffer corner visible on every boot, cleared when the desktop is ready.
 
 **Files:** `src/kernel/main/boot_progress.c`, `include/kernel/boot_progress.h`
@@ -94,8 +91,7 @@ Render a 2-digit hex POST code in the top-right framebuffer corner visible on ev
 - [x] Skips pixel writes when `SUBSYS_FB` not ready; I/O port write always fires
 - [x] Commit: `"kernel: POST-style hex code display in framebuffer corner + I/O port 0x80"`
 
-## 4. Alive Blink / Hang Detection `[Sonnet]`
-
+## 4. Alive Blink / Hang Detection *(deferred — removed during bare-metal debug; `fb_swap_rect` from ISR caused recursive interrupts; needs redesign)*
 A 4×4 px blinking square toggled in the PIT interrupt handler — if it stops blinking, the interrupt handler has stopped.
 
 **Files:** `src/kernel/drivers/pit.c` (or `timer.c`), `src/kernel/main/boot_progress.c`
@@ -120,8 +116,7 @@ Opt-in proportional debug overlay: a bar across the top of the screen where each
 - [ ] Regression overlay (RLE save/load) — deferred (needs VFS write during compositor transition)
 - [x] Commit: `"kernel: opt-in boot diagnostic color bar waterfall"`
 
-## 6. Panic Forensic Evidence `[Opus]`
-
+## 6. Panic Forensic Evidence
 Capture a `panic_evidence` struct at fault time, survive across soft reboot via a dedicated PMM page, and restore on next boot.
 
 **Files:** `src/kernel/panic.c`, `include/kernel/panic.h`, `src/kernel/main/boot_hw.c`
@@ -136,8 +131,9 @@ Capture a `panic_evidence` struct at fault time, survive across soft reboot via 
 - [ ] After VFS write: show "System shut down unexpectedly" toast at desktop-ready (set `g_boot_info.had_panic = 1` flag; desktop init reads it)
 - [ ] Commit: `"kernel: panic forensic evidence — cross-boot PMM page + last-panic.txt"`
 
-## 7. Panic QR Code `[Sonnet]`
+**Test checkpoint:** QEMU: force `kernel_panic("test")` → reboot → serial shows `[PANIC] Previous crash evidence found` → `C:\Impossible\System\CrashDumps\last-panic.txt` contains fault RIP + POST code. Bare metal: same flow, verify evidence survives warm reboot.
 
+## 7. Panic QR Code
 Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD corner.
 
 **Files:** `src/kernel/qr_encode.c`, `include/kernel/qr_encode.h`, `src/kernel/panic.c`
@@ -148,8 +144,7 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 - [ ] Ensure `qr_encode.c` is freestanding: no libc, no floating point; uses only `kernel/types.h` and `kernel/libc/string.h`
 - [ ] Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
 
-## 8. System-Wide Multi-Instance Spinner `[Sonnet]`
-
+## 8. System-Wide Multi-Instance Spinner
 Extend the existing single-instance `spinner.h` to support up to 8 simultaneous named spinner instances for use across the desktop.
 
 **Files:** `include/kernel/spinner.h`, `src/kernel/spinner.c`
@@ -167,8 +162,7 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 - [ ] Backward compatibility: existing `spinner_init/start/advance/stop` calls remain valid; they operate on `g_active_spinners[0]` (the boot splash slot)
 - [ ] Commit: `"kernel: multi-instance spinner_t pool for compositor-integrated loading indicators"`
 
-## 9. Runtime Vital Signs Strip `[Sonnet]`
-
+## 9. Runtime Vital Signs Strip
 An always-visible 20 px overlay strip at the bottom of the desktop showing live system metrics for developers.
 
 **Files:** `src/desktop/vital_signs.c`, `include/desktop/vital_signs.h`
@@ -185,19 +179,18 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 
 ## OS Comparison
 
+| ⭐ | Feature                 | Win11                        | Linux                          | Impossible OS                    |
+|----|-------------------------|------------------------------|--------------------------------|----------------------------------|
+| 💎 | Boot POST codes         | ✅ Firmware + boot manager  | ✅ BIOS POST only              | ✅ §1+§3 — kernel POST + I/O 80 |
+| 💎 | Named-stage progress    | ✅ ETW boot trace (binary)  | ✅ dmesg + systemd-analyze     | ✅ §2 — serial `[+NNNms] STAGE` |
+| 💎 | Panic forensics         | ✅ WER minidump + EventLog  | ✅ kdump / pstore              | ⬜ §6 — PMM page + last-panic   |
+| 💎 | Multi-instance spinner  | ✅ ProgressRing (WinUI 3)   | ✅ GTK/Qt spinners             | ⬜ §8 — spinner_create pool      |
+| ⭐ | Debug bar waterfall     | ❌ Not in production        | ❌ ftrace only (no visual)     | ⬜ §5 — superseded by TODO-05    |
+| ⭐ | Panic QR code           | ❌ Text URL only            | ❌ Not implemented             | ⬜ §7 — phone-scannable link     |
+| ⭐ | Alive blink indicator   | ❌ No visible hang signal   | ❌ Not in production           | ⚠️ §4 — removed during BM debug |
+| ⭐ | Vital signs overlay     | ⚠️ Task Manager (separate)  | ⚠️ htop/conky (third-party)    | ⬜ §9 — always-visible strip     |
 
-| ⭐ | Feature                               | Win11                                          | Linux                                            | Impossible OS                                      |
-|----|---------------------------------------|------------------------------------------------|--------------------------------------------------|----------------------------------------------------|
-| 💎 | Boot progress POST codes              | ✅ Firmware POST codes; Windows boot           | ✅ BIOS POST codes only (kernel                  | ⬜ §1 + §3 — kernel adds named codes to            |
-| 💎 | Named-stage boot progress log         | ✅ ETW boot trace (binary, WPA                 | ✅ `dmesg` timestamps + `systemd-analyze`        | ⬜ §2 — human-readable serial `[+NNNms] STAGE`     |
-| 💎 | Panic forensics preserved across boot | ✅ WER minidump + EventLog crash               | ✅ `kdump`/`pstore` crash RAM log                | ⬜ §6 — `0x80000` evidence page + `last-panic.txt` |
-| 💎 | Multi-instance spinner component      | ✅ ProgressRing (WinUI 3) — compositor-managed | ✅ GTK Spinner, Qt BusyIndicator                 | ⬜ §8 — `spinner_create()` pool                    |
-| ⭐ | Proportional debug bar waterfall      | ❌ Not available in production builds          | ❌ `ftrace` events (no visual)                   | ⬜ §5 — opt-in visual regression indicator         |
-| ⭐ | QR code on panic screen               | ❌ Stop code URL is text                       | ❌ Not implemented                               | ⬜ §7 — phone-scannable recovery link              |
-| ⭐ | Alive blink PIT-driven hang indicator | ❌ No visible hang indicator (just             | ❌ Not implemented in production kernels         | ⬜ §4 — 4×4 px corner blink stops                  |
-| ⭐ | Runtime vital signs overlay           | ⚠️ Task Manager only (separate window)         | ⚠️ `htop`/`conky` (third-party, separate window) | ⬜ §9 — always-visible bottom strip                |
-
-> **After parity items:** Impossible OS matches Windows and Linux on POST codes, named-stage boot logging, cross-boot panic evidence, and multi-instance spinners. The exclusive items elevate it further: the proportional waterfall makes boot regressions visible without a profiler, the BSOD QR code lets anyone diagnose a panic with their phone, the alive blink gives an instant visual indication of kernel hangs, and the vital-signs strip puts developer metrics front-and-center without a separate tool.
+> **After parity items:** POST codes, named-stage logging, panic evidence, and spinners match Windows/Linux. QR panic code and vital-signs strip go beyond both.
 
 ## Verification
 
