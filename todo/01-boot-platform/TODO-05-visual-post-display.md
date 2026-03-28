@@ -81,7 +81,7 @@ Replace the current 2-digit POST codes (28 values in 0x10–0x63) with a 4-digit
 
 - [ ] `boot_post_write16(uint16_t code)` — stores 2 bytes in UEFI NVRAM (backward-compatible)
 - [ ] `boot_post_read16()` — reads 2 bytes if available, 1 byte otherwise
-- [ ] On-screen POST display: render 4 hex digits (top-right corner, existing 8×8 hex font)
+- [ ] On-screen POST display: render 4 hex digits at 2× scale (16×16 px per glyph, top-right corner, existing 8×8 hex font doubled). Total display: 68×18 px (4 digits × 16px + 3 gaps × 2px, plus 2px padding)
 - [ ] Bootloader: replace existing `post_code(uint8_t)` calls with `POST16()` equivalents using 0xB000 range
 - [ ] Commit: `"boot: 4-digit POST code system with UEFI bootloader coverage"`
 
