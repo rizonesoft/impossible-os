@@ -41,10 +41,10 @@
 | ⭐  | Order | Deliverable                                      | Depends On                 | Status |
 | --- | :---: | ------------------------------------------------ | -------------------------- | :----: |
 | 💎  |   1   | CPUID detection & per-CPU capability capture     | P0, D02 T19 §1             |  [x]   |
-| 💎  |   2   | Phase 0 CPU security activation order            | §1, D02 T17 §1–3 & T19 §3  |  [ ]   |
+| 💎  |   2   | Phase 0 CPU security activation order            | §1, D02 T17 §1–3 & T19 §3  | defer  |
 | ⭐  |   3   | Hypervisor detection before timer selection      | §1, D02 T19 §11            |  [x]   |
-| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D02 T17 §1–7           |  [ ]   |
-| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D02 T17 §4 & T19 §1    |  [ ]   |
+| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D02 T17 §1–7           | defer  |
+| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D02 T17 §4 & T19 §1    | defer  |
 
 > 💎 = parity — Windows and Linux both enforce EFER/CR4 ordering, AP parity, and deferred XSAVE/PCID relative to paging; Impossible OS must match that contract.
 > ⭐ = exclusive — hypervisor pre-detection before timer HAL selection and postcode-per-activation boot audit lines are not surfaced the same way on Windows or Linux.
@@ -66,8 +66,7 @@
 
 ---
 
-## 2. Phase 0 CPU Security Activation Order `[Opus]`
-
+## 2. Phase 0 CPU Security Activation Order *(deferred — blocked by TODO-17 `cpu_efer_harden`/`cpu_cr4_harden` + TODO-19 `msr_init`; minimal version in TODO-06 §11)*
 **Prompt:** Document and enforce the required activation sequence in `boot_phase0()`: (1) `msr_init()` (centralized MSR layer, TODO-19 §3) must run before any MSR write; (2) `cpu_efer_harden()` sets `EFER.NXE=1`, `EFER.SCE=1`, `EFER.FFXSR` if supported — **this must complete before VMM init** because VMM will write PTE bit 63 (NX) on the first `vmm_map_page()` call; (3) `cpu_cr4_harden()` sets `CR4.SMEP`, `CR4.SMAP`, `CR4.UMIP` if detected — must run before any user-mode-visible mapping; emit a `POSTCODE_CPU_HARDEN_DONE` after the last CR4 write. Add `BOOT_REQUIRE(SUBSYS_MSR)` guards to EFER/CR4 steps so wrong-order calls panic with a clear message. Log: `[Phase0] EFER=0x{val} CR4=0x{val}`.
 
 > [!IMPORTANT]
@@ -102,8 +101,7 @@ The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 
 ---
 
-## 4. AP CPU Hardening (`ap_cpu_harden()`) `[Opus]`
-
+## 4. AP CPU Hardening (`ap_cpu_harden()`) *(deferred — blocked by §2; current `cpu_harden()` + `cpu_harden_post_pagetable()` applied on APs in smp.c)*
 **Prompt:** When APs start up via `smp_ap_main()`, they run their own GDT/IDT/LAPIC setup but currently skip the EFER and CR4 security features that BSP Phase 0 enables. An AP running without `EFER.NXE`/`SMEP`/`SMAP` is a full privilege bypass vector — kernel code on that AP can execute user pages and access user memory unchecked. Implement `ap_cpu_harden()` that replicates the BSP Phase 0 CPU activation: `msr_write(IA32_EFER, bsp_efer_val)`, then `cr4_write(bsp_cr4_val)` (read from BSP at Phase 0, stored in `cpu_data[0].efer_at_boot` and `cpu_data[0].cr4_at_boot`); call from `smp_ap_main()` immediately after GDT load and before AP signals ready; each AP logs `[AP%u] CPU hardening applied EFER=0x{val} CR4=0x{val}`.
 
 > [!IMPORTANT]
@@ -118,8 +116,7 @@ The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 
 ---
 
-## 5. Phase 1 XSAVE & PCID Activation Window `[Opus]`
-
+## 5. Phase 1 XSAVE & PCID Activation Window *(deferred — blocked by TODO-17 §4 + TODO-19 §1; XSAVE already enabled via `simd_enable_avx()` in Phase 0)*
 **Prompt:** XSAVE and PCID require VMM to be ready first — XSAVE because per-thread XSAVE areas are allocated in TEB pages managed by VMM, and PCID because `CR4.PCIDE` changes how CR3 is loaded (PCID bits 11:0) and must be set only after the page table base is established. Slot these activations into Phase 1: (1) after `vmm_init()`: call `cpu_xsave_enable()` — sets `CR4.OSXSAVE`, calls `XSETBV(XCR0, X87|SSE|AVX)`, stores `xsave_area_size` in a global; (2) after process table is initialised: call `cpu_pcid_enable()` — sets `CR4.PCIDE`, validates INVPCID is available; PCID 0 reserved for kernel; emit `POSTCODE_XSAVE_ENABLED` and `POSTCODE_PCID_ENABLED`. Both functions are no-ops if the CPU does not support the feature.
 
 > [!IMPORTANT]
@@ -138,18 +135,17 @@ The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 
 ## OS Comparison
 
+| ⭐ | Feature                   | Win11                        | Linux                         | Impossible OS                   |
+|----|---------------------------|------------------------------|-------------------------------|---------------------------------|
+| 💎 | EFER.NXE before NX pages  | ✅ HalInitializeProcessor   | ✅ cpu_init before paging     | ⚠️ §2 defer — NX works, order WIP |
+| 💎 | SMEP/SMAP BSP Phase 0     | ✅ CR4 in HalInitSystem     | ✅ setup_cr4 early            | ⚠️ §2 defer — bare metal skips |
+| 💎 | AP hardening = BSP        | ✅ APs run HalInitProc      | ✅ cpu_init per secondary     | ⚠️ §4 defer — basic in smp.c   |
+| 💎 | XSAVE after VMM ready     | ✅ CR4.OSXSAVE post-paging  | ✅ fpu__init_cpu deferred     | ⚠️ §5 defer — AVX works        |
+| 💎 | PCID after page tables    | ✅ CR4.PCIDE post-PML4      | ✅ cr4_set_bits post-paging   | ⬜ §5 defer                     |
+| ⭐ | HV detect before timer    | ✅ Before HAL timer         | ⚠️ May lag clocksource        | ✅ §3 — done                    |
+| ⭐ | POST code per CPU step    | ❌ BIOS POST only           | ❌ dmesg only                 | ⬜ §1-5 — planned in TODO-06 §1 |
 
-| ⭐ | Feature                                                  | Win11                                       | Linux                                            | Impossible OS                          |
-|----|----------------------------------------------------------|---------------------------------------------|--------------------------------------------------|----------------------------------------|
-| 💎 | EFER.NXE set before first NX page mapped                 | ✅ EFER.NXE set in `HalInitializeProcessor` | ✅ Set in `cpu_init()` before paging             | ⬜ §2 — enforced before VMM init       |
-| 💎 | SMEP/SMAP/UMIP enabled in BSP Phase 0                    | ✅ CR4 hardening in `HalInitSystem()` P0    | ✅ `setup_cr4()` during early CPU init           | ⬜ §2 — `cpu_cr4_harden()`             |
-| 💎 | AP startup applies same CPU hardening as BSP             | ✅ APs run `HalInitializeProcessor()`       | ✅ `cpu_init()` called on every secondary        | ⬜ §4 — `ap_cpu_harden()`              |
-| 💎 | XSAVE activation deferred until after VMM ready          | ✅ `CR4.OSXSAVE` set post-paging in Phase   | ✅ `fpu__init_cpu()` deferred until paging       | ⬜ §5 — `cpu_xsave_enable()`           |
-| 💎 | PCID enabled after page tables established               | ✅ `CR4.PCIDE` set after PML4 established   | ✅ `cr4_set_bits(X86_CR4_PCIDE)` post-paging     | ⬜ §5 — `cpu_pcid_enable()`            |
-| ⭐ | Hypervisor vendor detected before timer driver selection | ✅ Hypervisor present before HAL timer      | ⚠️ `detect_hypervisor_vendor()` may lag clocksrc | ⬜ §3 — `hypervisor_detect()`          |
-| ⭐ | `boot_progress()` postcode at each CPU activation step   | ❌ No per-step postcodes beyond BIOS        | ❌ No postcodes; `dmesg` only after              | ⬜ §1–§5 — `POSTCODE_*` per activation |
-
-> **After parity items:** Impossible OS matches Windows and Linux on NX-before-map, CR4 hardening, AP parity with BSP, and deferring XSAVE/PCID until paging is established. The exclusive rows add early hypervisor detection before timer HAL clock selection and postcode-per-step boot audit lines that neither OS surfaces in the same operator-visible form.
+> **§1 and §3 complete.** §2, §4, §5 deferred — blocked by TODO-17/TODO-19 implementations. Minimal CPU hardening works via `cpu_harden()` + `cpu_harden_post_pagetable()` (TODO-06 §11). Full formal sequencing comes when TODO-17 delivers `cpu_efer_harden()`/`cpu_cr4_harden()`.
 
 ---
 
