@@ -315,14 +315,55 @@ void fb_swap(void)
 
     __asm__ volatile ("sfence" ::: "memory");
 
-    if (page_flip_ok) {
-        /* Copy back_buf to the INVISIBLE VRAM page, then flip */
-        target_y = (page_current == 0) ? fb_height : 0;
-        dst = (uint64_t *)(hw_addr + target_y * hw_stride);
-        src = (uint64_t *)back_buf;
+    /* Save/restore interrupt state instead of cli/sti — fb_swap may be
+     * called from ISR context (indirectly via alive_blink_tick).
+     * Bare cli/sti re-enables interrupts inside the ISR, causing
+     * recursive timer interrupts and stack overflow on bare metal. */
+    {
+        uint64_t rflags;
+        __asm__ volatile ("pushfq; pop %0; cli" : "=r"(rflags) ::"memory");
 
-        __asm__ volatile ("cli");
+        if (page_flip_ok) {
+            /* Copy back_buf to the INVISIBLE VRAM page, then flip */
+            target_y = (page_current == 0) ? fb_height : 0;
+            dst = (uint64_t *)(hw_addr + target_y * hw_stride);
+            src = (uint64_t *)back_buf;
+
+            if (fb_stride == hw_stride) {
+                count = (uint64_t)(fb_stride * fb_height) / 2;
+                __asm__ volatile (
+                    "rep movsq"
+                    : "+S"(src), "+D"(dst), "+c"(count) : : "memory"
+                );
+            } else {
+                uint32_t y;
+                for (y = 0; y < fb_height; y++) {
+                    src = (uint64_t *)(back_buf + y * fb_stride);
+                    dst = (uint64_t *)(hw_addr + (target_y + y) * hw_stride);
+                    count = (uint64_t)fb_width / 2;
+                    __asm__ volatile (
+                        "rep movsq"
+                        : "+S"(src), "+D"(dst), "+c"(count) : : "memory"
+                    );
+                }
+            }
+
+            __asm__ volatile ("push %0; popfq" ::"r"(rflags) : "memory");
+
+            /* Atomic flip: switch display to the page we just wrote */
+            __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)0x09),
+                              "Nd"((uint16_t)0x01CE));
+            __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)target_y),
+                              "Nd"((uint16_t)0x01CF));
+
+            page_current ^= 1;
+            return;
+        }
+
+        /* Fallback: direct copy to displayed buffer */
         if (fb_stride == hw_stride) {
+            src = (uint64_t *)back_buf;
+            dst = (uint64_t *)hw_addr;
             count = (uint64_t)(fb_stride * fb_height) / 2;
             __asm__ volatile (
                 "rep movsq"
@@ -332,7 +373,7 @@ void fb_swap(void)
             uint32_t y;
             for (y = 0; y < fb_height; y++) {
                 src = (uint64_t *)(back_buf + y * fb_stride);
-                dst = (uint64_t *)(hw_addr + (target_y + y) * hw_stride);
+                dst = (uint64_t *)(hw_addr  + y * hw_stride);
                 count = (uint64_t)fb_width / 2;
                 __asm__ volatile (
                     "rep movsq"
@@ -340,43 +381,9 @@ void fb_swap(void)
                 );
             }
         }
-        __asm__ volatile ("sti");
 
-        /* Atomic flip: switch display to the page we just wrote */
-        __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)0x09),
-                          "Nd"((uint16_t)0x01CE));
-        __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)target_y),
-                          "Nd"((uint16_t)0x01CF));
-
-        page_current ^= 1;
-        return;
+        __asm__ volatile ("push %0; popfq" ::"r"(rflags) : "memory");
     }
-
-    /* Fallback: direct copy to displayed buffer */
-    __asm__ volatile ("cli");
-
-    if (fb_stride == hw_stride) {
-        src = (uint64_t *)back_buf;
-        dst = (uint64_t *)hw_addr;
-        count = (uint64_t)(fb_stride * fb_height) / 2;
-        __asm__ volatile (
-            "rep movsq"
-            : "+S"(src), "+D"(dst), "+c"(count) : : "memory"
-        );
-    } else {
-        uint32_t y;
-        for (y = 0; y < fb_height; y++) {
-            src = (uint64_t *)(back_buf + y * fb_stride);
-            dst = (uint64_t *)(hw_addr  + y * hw_stride);
-            count = (uint64_t)fb_width / 2;
-            __asm__ volatile (
-                "rep movsq"
-                : "+S"(src), "+D"(dst), "+c"(count) : : "memory"
-            );
-        }
-    }
-
-    __asm__ volatile ("sti");
 }
 
 void fb_swap_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
@@ -410,29 +417,37 @@ void fb_swap_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
         vram_y_offset = (page_current == 0) ? 0 : fb_height;
 
     __asm__ volatile ("sfence" ::: "memory");
-    __asm__ volatile ("cli");
 
-    /* Copy each row of the dirty rectangle using 64-bit moves */
-    for (row = y; row < y1; row++) {
-        uint64_t *src = (uint64_t *)(back_buf + row * fb_stride + x);
-        uint64_t *dst = (uint64_t *)(hw_addr  + (vram_y_offset + row) * hw_stride + x);
-        uint64_t count = (uint64_t)w / 2;  /* DWORD pairs → QWORDs */
-        if (count > 0) {
-            __asm__ volatile (
-                "rep movsq"
-                : "+S"(src), "+D"(dst), "+c"(count)
-                :
-                : "memory"
-            );
+    /* Save interrupt state — fb_swap_rect may be called from ISR context
+     * (e.g., alive_blink_tick in timer handler).  Using cli/sti would
+     * re-enable interrupts inside the ISR, causing recursive timer
+     * interrupts and stack overflow on bare metal. */
+    {
+        uint64_t rflags;
+        __asm__ volatile ("pushfq; pop %0; cli" : "=r"(rflags) ::"memory");
+
+        /* Copy each row of the dirty rectangle using 64-bit moves */
+        for (row = y; row < y1; row++) {
+            uint64_t *src = (uint64_t *)(back_buf + row * fb_stride + x);
+            uint64_t *dst = (uint64_t *)(hw_addr  + (vram_y_offset + row) * hw_stride + x);
+            uint64_t count = (uint64_t)w / 2;  /* DWORD pairs → QWORDs */
+            if (count > 0) {
+                __asm__ volatile (
+                    "rep movsq"
+                    : "+S"(src), "+D"(dst), "+c"(count)
+                    :
+                    : "memory"
+                );
+            }
+            /* Handle odd trailing pixel */
+            if (w & 1) {
+                hw_addr[(vram_y_offset + row) * hw_stride + x + w - 1] =
+                    back_buf[row * fb_stride + x + w - 1];
+            }
         }
-        /* Handle odd trailing pixel */
-        if (w & 1) {
-            hw_addr[(vram_y_offset + row) * hw_stride + x + w - 1] =
-                back_buf[row * fb_stride + x + w - 1];
-        }
+
+        __asm__ volatile ("push %0; popfq" ::"r"(rflags) : "memory");
     }
-
-    __asm__ volatile ("sti");
 }
 
 void fb_blit(uint32_t dst_x, uint32_t dst_y,

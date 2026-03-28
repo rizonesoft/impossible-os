@@ -180,11 +180,34 @@ void mouse_init(void)
     ps2_send_cmd(0x20);
     ps2_wait_output();
     status_byte = inb(PS2_DATA_PORT);
+
+    /* If status reads 0xFF, the PS/2 controller has no auxiliary port
+     * (common on laptops with USB/I2C touchpads).  Bail out. */
+    if (status_byte == 0xFF) {
+        klog(LOG_INFO, "input", "PS/2 mouse: no auxiliary port (touchpad/USB?)");
+        return;
+    }
     status_byte |= 0x02;       /* Bit 1 = enable IRQ 12 */
     status_byte &= ~0x20;      /* Bit 5 = 0 = enable mouse clock */
     ps2_send_cmd(0x60);
     ps2_wait_input();
     outb(PS2_DATA_PORT, status_byte);
+
+    /* Probe: reset mouse and check for ACK (0xFA).  If the auxiliary
+     * port has no device (laptop touchpad via USB/I2C), the read
+     * returns garbage after timeout — skip full init. */
+    mouse_write(0xFF);  /* reset */
+    {
+        uint8_t ack = mouse_read();
+        if (ack != 0xFA) {
+            klog(LOG_INFO, "input",
+                 "PS/2 mouse: no ACK on reset (0x%x) — skipping",
+                 (uint64_t)ack);
+            return;
+        }
+        mouse_read();  /* self-test result (0xAA) */
+        mouse_read();  /* device ID (0x00) */
+    }
 
     /* Set defaults */
     mouse_write(0xF6);

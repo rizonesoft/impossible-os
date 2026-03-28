@@ -55,6 +55,24 @@ static inline uint64_t read_cr3(void)
     return val;
 }
 
+/* ---- Early BSP per-CPU init ---- */
+
+void smp_early_bsp_init(void)
+{
+    /* Minimal init so smp_this_cpu() works before smp_init().
+     * The timer ISR uses smp_this_cpu() for IRQL tracking.
+     * On bare metal, GS_BASE defaults to 0 and gs:0 reads IVT
+     * garbage instead of NULL — crashing the IRQL code. */
+    cpu_data[0].self          = &cpu_data[0];
+    cpu_data[0].cpu_id        = 0;
+    cpu_data[0].is_online     = 1;
+    cpu_data[0].current_irql  = PASSIVE_LEVEL;
+    cpu_data[0].current_task  = (void *)0;
+    cpu_data[0].irq_count     = 0;
+    cpu_data[0].preempt_count = 0;
+    msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
+}
+
 /* ---- Delay helpers ---- */
 
 /* Busy-wait delay using I/O port 0x80 (POST code port, ~1 µs per access) */

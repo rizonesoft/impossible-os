@@ -383,71 +383,12 @@ void vmm_apply_nx_policy(void)
         }
     }
 
-    /* ---- Clear User bit from kernel pages (SMEP/SMAP safety) ----
-     * The bootloader sets U/S on all page table entries.  Clear it from
-     * kernel-range 2 MiB pages so SMEP/SMAP can be enabled on bare metal.
-     * Keep U/S on pages that overlap the user-mode ELF load area
-     * (0x800000-0x900000) and on hierarchy entries (PML4, PDPT, PD)
-     * so user-mode access to those pages still works. */
-    {
-        uint32_t us_count = 0;
-
-        /* !!! IMPORTANT: Update these constants if the user-mode ELF load
-         * area is expanded or moved.  Must match user/user.ld and the
-         * pmm_mark_region_used() reservation in pmm.c.  When per-process
-         * page tables are implemented, this exemption becomes unnecessary
-         * because each process will have its own U/S mappings. */
-        uintptr_t user_base = 0x800000;
-        uintptr_t user_top  = 0x900000;
-
-        for (pml4i = 0; pml4i < 512; pml4i++) {
-            pte_t pml4e = kernel_pml4[pml4i];
-            pte_t *pdpt_p;
-
-            if (!(pml4e & VMM_FLAG_PRESENT))
-                continue;
-
-            pdpt_p = (pte_t *)(pml4e & PTE_ADDR_MASK);
-
-            for (pdpti = 0; pdpti < 512; pdpti++) {
-                pte_t pdpte = pdpt_p[pdpti];
-                pte_t *pd_p;
-
-                if (!(pdpte & VMM_FLAG_PRESENT))
-                    continue;
-                if (pdpte & VMM_FLAG_HUGE)
-                    continue;  /* 1 GiB page — skip */
-
-                pd_p = (pte_t *)(pdpte & PTE_ADDR_MASK);
-
-                for (pdi = 0; pdi < 512; pdi++) {
-                    pte_t pde = pd_p[pdi];
-                    uintptr_t page_base, page_end_addr;
-
-                    if (!(pde & VMM_FLAG_PRESENT))
-                        continue;
-                    if (!(pde & VMM_FLAG_HUGE))
-                        continue;  /* 4 KiB PT — skip for now */
-                    if (!(pde & VMM_FLAG_USER))
-                        continue;  /* already supervisor-only */
-
-                    page_base     = (pml4i << 39) | (pdpti << 30) | (pdi << 21);
-                    page_end_addr = page_base + (1UL << 21);
-
-                    /* Keep User on pages overlapping user-mode ELF area */
-                    if (page_base < user_top && page_end_addr > user_base)
-                        continue;
-
-                    pd_p[pdi] &= ~VMM_FLAG_USER;
-                    us_count++;
-                }
-            }
-        }
-
-        vmm_flush_tlb_all();
-        klog(LOG_INFO, "mm", "U/S cleared on %u kernel pages (user: 0x%x-0x%x kept)",
-             (uint64_t)us_count, (uint64_t)user_base, (uint64_t)user_top);
-    }
+    /* NOTE: U/S bit clearing deferred until per-process page tables exist.
+     * The shared identity-mapped address space uses 2 MiB pages; user stacks
+     * are kmalloc'd from the kernel heap, so user and kernel data share the
+     * same 2 MiB pages.  Clearing U/S on kernel pages breaks user-mode stack
+     * access.  SMEP/SMAP are skipped on bare metal for the same reason.
+     * See TODO-01-vmm-memory-protection.md §11 and TODO-04 advanced VM. */
 
     vmm_flush_tlb_all();
     klog(LOG_INFO, "mm", "NX policy applied: %u pages marked non-executable (text: 0x%x-0x%x)",

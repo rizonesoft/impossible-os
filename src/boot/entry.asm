@@ -69,6 +69,7 @@ MULTIBOOT2_BOOTLOADER_MAGIC equ 0x36D76289
 
 section .text
 global _start
+global stack_top
 extern kernel_main
 
 _start:

@@ -27,6 +27,7 @@
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
+#include "kernel/boot_info.h"
 #include "kernel/hv_bar.h"
 
 /* ---- State ---- */
@@ -331,6 +332,13 @@ static uint32_t cal_ticks_per_ms = 0;
 /* cal_rdmsr replaced by msr_read() from kernel/msr.h */
 #define cal_rdmsr(idx) msr_read(idx)
 
+static inline uint64_t cal_rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
 static inline void cal_cpuid(uint32_t leaf,
                               uint32_t *eax, uint32_t *ebx,
                               uint32_t *ecx, uint32_t *edx)
@@ -454,6 +462,52 @@ static int cal_try_cpuid_15h(void)
          (uint64_t)cal_ticks_per_ms,
          crystal_hz,
          (uint64_t)ebx, (uint64_t)eax);
+    return 1;
+}
+
+/* ---- Tier 1b: TSC-referenced calibration ----
+ * Uses the bootloader's measured TSC frequency to time a 10ms window.
+ * No MMIO, no I/O ports — just TSC reads + LAPIC register reads.
+ * Works on any platform where TSC frequency is known. */
+static int cal_try_tsc_reference(void)
+{
+    uint64_t tsc_freq = g_boot_info.timing.tsc_freq;
+    uint64_t tsc_start, tsc_target, tsc_now;
+    uint32_t lapic_remaining, lapic_elapsed;
+
+    if (tsc_freq == 0)
+        return 0;
+
+    if (!lapic_base)
+        return 0;
+
+    /* Start LAPIC timer from max (one-shot, masked) */
+    lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED | LVT_TIMER_ONESHOT | 0xFF);
+    lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
+
+    /* Wait 10ms using TSC */
+    tsc_start  = cal_rdtsc();
+    tsc_target = tsc_start + (tsc_freq * CAL_MS / 1000);
+
+    do {
+        tsc_now = cal_rdtsc();
+    } while (tsc_now < tsc_target);
+
+    /* Read LAPIC remaining count */
+    lapic_remaining = lapic_read(LAPIC_REG_TIMER_CCR);
+    lapic_elapsed = 0xFFFFFFFF - lapic_remaining;
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
+
+    if (lapic_elapsed < 1000)
+        return 0;  /* Too few ticks — unreliable */
+
+    cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+    klog(LOG_INFO, "lapic",
+         "Tier 1b: TSC-referenced -> %u ticks/ms (%u MHz bus, TSC %u MHz)",
+         (uint64_t)cal_ticks_per_ms,
+         (uint64_t)(cal_ticks_per_ms / 1000),
+         (uint64_t)(tsc_freq / 1000000));
     return 1;
 }
 
@@ -660,23 +714,25 @@ void lapic_timer_calibrate(void)
     if (!lapic_base)
         return;
 
-    HV_BAR(15);  /* light red: entering calibration waterfall */
-
     /* Tier 1: Instant frequency from MSR/CPUID */
-    HV_BAR(8);   /* lime: trying Tier 1 */
     if (cal_try_hyperv_msr() || cal_try_vmware_cpuid() || cal_try_cpuid_15h()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 1 succeeded -- no PIT/HPET needed");
         return;
     }
 
+    /* Tier 1b: TSC-referenced calibration (bootloader measured TSC freq) */
+    if (cal_try_tsc_reference()) {
+        klog(LOG_INFO, "lapic",
+             "Calibration: Tier 1b succeeded (TSC reference)");
+        return;
+    }
+
     /* Tier 2: Modern hardware timers (HPET -> PM Timer) */
-    HV_BAR(9);   /* pink: trying HPET */
     /* HPET calibration disabled until vmm_map_mmio() provides UC mappings.
      * Accessing HPET MMIO through WB identity-mapped pages causes MCE on
      * bare metal.  See TODO-01-vmm-memory-protection.md §11. */
     /* if (cal_try_hpet()) { ... } */
-    HV_BAR(11);  /* white: trying PM Timer */
     if (cal_try_pmtimer()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 2 succeeded -- no PIT needed");
@@ -684,7 +740,6 @@ void lapic_timer_calibrate(void)
     }
 
     /* Tier 3: Legacy PIT (only if PCAT_COMPAT=1 && !HW_REDUCED) */
-    HV_BAR(10);  /* sky blue: trying Tier 3 (PIT) */
     if (cal_try_pit()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 3 succeeded -- PIT channel 2");

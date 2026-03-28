@@ -18,11 +18,8 @@
 void kernel_main(uint64_t magic, uint64_t mbi)
 {
     boot_phase0(magic, mbi);    /* Critical init: serial, PMM/VMM/heap, CPUID */
-    HV_BAR(5);                  /* cyan: phase 0 complete */
     boot_phase1();              /* Platform services: GDT, IDT, APIC, timer, display */
-    HV_BAR(10);                 /* sky blue: phase 1 complete */
     boot_phase2();              /* System services: PCI, storage, VFS, registry, SMP */
-    HV_BAR(12);                 /* gray: phase 2 complete */
     boot_phase3();              /* User platform: scheduler, desktop, compositor (never returns) */
 
     /* Unreachable */

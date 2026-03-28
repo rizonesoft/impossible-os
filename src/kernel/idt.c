@@ -224,10 +224,6 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 
     if (vec >= 32) {
         KIRQL isr_irql = vector_to_irql(vec);
-
-        /* Only raise if the mapped IRQL is higher than current.
-         * Nested interrupts: a higher-priority device interrupt may
-         * fire while we're already at a lower DIRQL. */
         if (isr_irql > prev_irql)
             pcpu->current_irql = isr_irql;
     }
@@ -282,9 +278,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
     result = (uint64_t)frame;
 
 irql_restore:
-    /* ---- IRQL restore on interrupt exit ----
-     * Lower back to the IRQL we had before this interrupt.
-     * Software-only: no TPR write needed (LAPIC handles it via EOI). */
+    /* ---- IRQL restore on interrupt exit ---- */
     if (vec >= 32 && pcpu->current_irql != prev_irql)
         pcpu->current_irql = prev_irql;
 

@@ -24,6 +24,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
 #include "kernel/cpu_security.h"
+#include "kernel/smp.h"
 #include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
@@ -38,6 +39,11 @@ extern void multiboot2_parse(uintptr_t mbi_addr);
 void boot_phase0(uint64_t magic, uint64_t mbi)
 {
     uint32_t i;
+
+    /* --- BSP per-CPU data: GS_BASE must be valid before ANY interrupt fires.
+     * On bare metal, GS_BASE defaults to 0; gs:0 reads IVT garbage instead
+     * of NULL, crashing the IRQL tracking in isr_handler. */
+    smp_early_bsp_init();
 
     /* --- Serial: absolute first call, no dependencies --- */
     serial_init();
@@ -57,10 +63,8 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         for (i = 0; i < sizeof(struct boot_info); i++)
             d[i] = s[i];
         klog(LOG_INFO, "UEFI", "Boot info received from Impossible OS bootloader");
-        HV_BAR(0);  /* red: kernel entry, boot_info parsed */
     } else if (magic == MULTIBOOT2_BOOTLOADER_MAGIC) {
         multiboot2_parse((uintptr_t)mbi);
-        HV_BAR(0);  /* red: multiboot parsed */
     } else {
         boot_halt("Unknown bootloader magic");
     }
@@ -121,7 +125,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     pmm_init();
     kernel_subsystem_set_ready(SUBSYS_PMM, true);
     boot_progress(0, "PMM", POSTCODE_PMM_INIT);
-    HV_BAR(2);  /* blue: PMM done */
+    HV_BAR(15); /* sanity check: bars still work on bare metal */
 
     /* --- Virtual memory manager: BOOT_FATAL if PMM not ready --- */
     if (!kernel_subsystem_ready(SUBSYS_PMM))
@@ -129,7 +133,6 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     vmm_init();
     kernel_subsystem_set_ready(SUBSYS_VMM, true);
     boot_progress(0, "VMM", POSTCODE_VMM_INIT);
-    HV_BAR(3);  /* yellow: VMM done */
 
     /* --- Kernel heap: BOOT_FATAL if VMM not ready --- */
     if (!kernel_subsystem_ready(SUBSYS_VMM))
@@ -137,18 +140,15 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     heap_init();
     kernel_subsystem_set_ready(SUBSYS_HEAP, true);
     boot_progress(0, "HEAP", POSTCODE_HEAP_INIT);
-    HV_BAR(4);  /* magenta: HEAP done */
 
     /* --- klog early init: ring buffer + serial only (no disk yet) --- */
     klog_early_init();
     kernel_subsystem_set_ready(SUBSYS_KLOG, true);
     boot_progress(0, "KLOG", POSTCODE_KLOG_INIT);
-    HV_BAR(15); /* light red: KLOG done */
 
     /* --- CPUID: probe CPU features --- */
     cpuid_init();
     boot_progress(0, "CPUID", POSTCODE_CPUID_INIT);
-    HV_BAR(1);  /* green(dark): CPUID done */
 
     /* --- CPU security hardening: NX (SMEP/SMAP deferred until page tables fixed) --- */
     cpu_harden();

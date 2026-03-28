@@ -13,6 +13,7 @@
 #include "kernel/boot_progress.h"
 #include "kernel/klog.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/drivers/lapic.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/boot_info.h"
 
@@ -98,8 +99,25 @@ void boot_post_write(uint8_t code)
     /* Only write if boot.conf postcode=1 (default) */
     if (!g_boot_info.config.postcode) return;
 
-    uefi_set_variable(&s_post_guid, s_post_name, POST_ATTRS,
-                      sizeof(code), &code);
+    /* Mask LAPIC timer during UEFI runtime call.  UEFI firmware may
+     * internally enable interrupts (sti) during SetVariable.  If the
+     * LAPIC timer is running (after timer_hal_init), the pending
+     * interrupt fires into UEFI's IDT context → crash on bare metal. */
+    {
+        uint32_t lvt_saved = 0;
+        int need_mask = lapic_available() &&
+                        kernel_subsystem_ready(SUBSYS_TIMER);
+        if (need_mask) {
+            lvt_saved = lapic_read(LAPIC_REG_LVT_TIMER);
+            lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved | LVT_MASKED);
+        }
+
+        uefi_set_variable(&s_post_guid, s_post_name, POST_ATTRS,
+                          sizeof(code), &code);
+
+        if (need_mask)
+            lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved);
+    }
     /* Ignore errors -- best effort */
 }
 

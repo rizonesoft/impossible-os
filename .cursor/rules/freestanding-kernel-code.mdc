@@ -16,7 +16,11 @@ alwaysApply: false
 - New low-level hardware work should follow the current platform model: APIC or IOAPIC interrupts, DMA-first storage paths, and UEFI GOP framebuffer assumptions rather than new PIC, IDE PIO, or VGA text-mode paths.
 - For BSOD, panic, PAGE_FAULT, or RIP-based crash analysis, use `llvm-addr2line-19` and `llvm-objdump-19` before speculating about the fault site. Keep `build/kernel.exe` symbolized.
 - Fix root causes and allocator misuse directly instead of normalizing temporary workarounds.
-- **User-mode page range (0x800000-0x900000):** The boot identity map clears U/S from all kernel pages except this range so SMEP/SMAP work on bare metal. If you expand the user-mode ELF load area, update all three locations: `vmm_apply_nx_policy()` in vmm.c (user_base/user_top), `pmm_mark_region_used()` in pmm.c, and `user/user.ld`.
+- **User-mode page range (0x800000-0x900000):** Three files must stay in sync: `vmm.c` (any U/S policy), `pmm.c` (`pmm_mark_region_used`), `user/user.ld` (linker base).
+- **No SMEP/SMAP until per-process page tables:** User stacks are `kmalloc`'d from the kernel heap (~0x578000), sharing 2 MiB pages with kernel data. Cannot clear U/S on kernel pages without breaking user-mode stack access. `hv_supports_cr4_smep_smap()` returns 0 for `PLATFORM_BARE_METAL`.
+- **No MMIO through WB-cached pages:** HPET, ECAM, NVMe BARs need `vmm_map_mmio()` with UC attributes. The bootloader maps everything as WB. HPET calibration is disabled until UC mappings exist.
+- **GS_BASE before interrupts:** `smp_early_bsp_init()` must be called before any interrupt fires. On bare metal, `GS_BASE` defaults to 0 and `smp_this_cpu()` reads IVT garbage.
+- **No LAPIC TPR writes in ISR path:** `isr_handler` tracks IRQL in software only. TPR writes on every interrupt entry/exit break emulated LAPIC on WHPX/VBox/TCG.
 
 ## Example
 

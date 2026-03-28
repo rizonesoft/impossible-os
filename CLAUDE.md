@@ -26,6 +26,16 @@ Check `tail -1 build/build.log` for result — must show `=== BUILD OK ===`.
 - Win32 is the native API; POSIX via Linux compat layer only
 - Canonical paths use Windows style: `C:\Impossible\System32\`
 
+## Bare Metal Gotchas
+
+These are hard-won lessons from real hardware debugging. Violating any of these will crash on bare metal while appearing to work fine in VMs.
+
+- **No LAPIC TPR writes in ISR path.** The IDT `isr_handler` must track IRQL in software only — no `lapic_write(LAPIC_REG_TPR, ...)` on interrupt entry/exit. The LAPIC hardware handles vector priority masking via ISR/PPR. TPR writes break emulated LAPIC on WHPX/VBox/TCG.
+- **No SMEP/SMAP until per-process page tables.** The shared identity-mapped address space uses 2 MiB pages; user stacks are `kmalloc`'d from the kernel heap, so user and kernel data share the same 2 MiB pages. Clearing User bit from "kernel" pages also blocks user-mode stack access. `hv_supports_cr4_smep_smap()` returns 0 for `PLATFORM_BARE_METAL`.
+- **No MMIO through WB-cached pages.** HPET, ECAM, NVMe BARs, and future GPU BARs must use `vmm_map_mmio()` with UC (uncacheable) attributes. The bootloader identity-maps everything as WB. LAPIC/IOAPIC work only because MTRRs override those ranges to UC. HPET calibration is disabled until `vmm_map_mmio()` exists (TODO-01-vmm-memory-protection.md §11).
+- **GS_BASE must be set before any interrupt fires.** `smp_early_bsp_init()` is called as the first thing in `boot_phase0()` — before serial init. On bare metal, `GS_BASE` defaults to 0; `smp_this_cpu()` reads garbage from the real-mode IVT at physical address 0 instead of NULL, crashing the IRQL tracking in `isr_handler`.
+- **User-mode ELF range (0x800000–0x900000).** Three files must stay in sync: `vmm.c` (any U/S policy), `pmm.c` (`pmm_mark_region_used`), `user/user.ld` (linker base).
+
 ## Safety Gates
 
 Stop and ask before: security-sensitive changes, destructive operations, ABI changes, dependency additions, large refactors.

@@ -86,6 +86,14 @@ void gdt_init(void)
     for (i = 0; i < sizeof(struct tss); i++)
         tss_ptr[i] = 0;
 
+    /* Set RSP0 to the boot stack so ring 3→0 transitions have a valid
+     * kernel stack.  Also required on some bare-metal Intel CPUs that
+     * check RSP0 validity on interrupt delivery. */
+    {
+        extern char stack_top[];  /* defined in entry.asm */
+        kernel_tss.rsp0 = (uint64_t)(uintptr_t)stack_top;
+    }
+
     /* Set the I/O Permission Bitmap offset to beyond the TSS (no IOPB) */
     kernel_tss.iopb_offset = sizeof(struct tss);
 

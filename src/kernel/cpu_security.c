@@ -52,6 +52,13 @@ static int hv_supports_cr4_smep_smap(void)
     platform_id_t p = platform_detect();
     switch (p) {
         case PLATFORM_BARE_METAL:
+            /* Bare metal enforces SMEP/SMAP directly, but our shared
+             * identity-mapped address space uses 2 MiB pages with user
+             * stacks allocated from the kernel heap (kmalloc).  No way
+             * to set User on user pages without also setting it on kernel
+             * pages in the same 2 MiB region.  Skip until per-process
+             * page tables exist (TODO-04 advanced VM). */
+            return 0;
         case PLATFORM_QEMU_KVM:
         case PLATFORM_QEMU_TCG:
         case PLATFORM_VMWARE:

@@ -61,11 +61,11 @@ static uint8_t bcd_to_bin(uint8_t bcd)
     return (uint8_t)((bcd & 0x0F) + ((bcd >> 4) * 10));
 }
 
-/* Wait until the RTC update-in-progress flag clears */
+/* Wait until the RTC update-in-progress flag clears (with timeout) */
 static void rtc_wait_ready(void)
 {
-    /* Poll Status Register A bit 7 */
-    while (cmos_read(RTC_REG_STATUS_A) & 0x80)
+    uint32_t timeout = 100000;  /* ~1ms on modern CPUs */
+    while ((cmos_read(RTC_REG_STATUS_A) & 0x80) && --timeout > 0)
         ;  /* spin */
 }
 

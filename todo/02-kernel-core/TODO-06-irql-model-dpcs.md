@@ -73,7 +73,7 @@
 - [x] Ensure nested interrupts preserve highest-active IRQL correctly and unwind in strict LIFO order.
 - [x] Keep end-of-interrupt signaling (LAPIC/PIC) ordered correctly relative to IRQL lowering.
 - [x] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
-- [ ] Commit: `"kernel: irq — wire IRQL raises/lowers into interrupt path"`
+- [x] Commit: `"kernel: irq — wire IRQL raises/lowers into interrupt path"`
 
 > **Note:** IRQL tracking in `isr_handler` is software-only — no LAPIC TPR writes on interrupt entry/exit. The LAPIC hardware already masks lower-priority vectors via the ISR/PPR mechanism during interrupt delivery. Explicit TPR writes are reserved for `KeRaiseIrql`/`KeLowerIrql` when kernel code intentionally changes level. This avoids interference with emulated LAPIC on WHPX/VBox/TCG.
 

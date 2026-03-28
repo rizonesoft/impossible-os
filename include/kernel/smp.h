@@ -58,6 +58,10 @@ struct per_cpu_data {
 
 /* Initialize SMP: copy trampoline, start all APs discovered in MADT.
  * Must be called after acpi_init() and lapic_init(). */
+/* Early BSP per-CPU init — sets GS_BASE so smp_this_cpu() works.
+ * Must be called in Phase 0 before any interrupts fire. */
+void smp_early_bsp_init(void);
+
 void smp_init(void);
 
 /* Number of CPUs currently online */

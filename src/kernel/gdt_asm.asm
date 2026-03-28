@@ -21,7 +21,10 @@ gdt_flush:
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
+    ; GS is NOT reloaded here -- writing to GS clears the GS_BASE MSR
+    ; (IA32_GS_BASE = 0xC0000101) which smp_early_bsp_init() already set
+    ; for per-CPU data access via smp_this_cpu().
+    ; GS base is managed exclusively via wrmsr, not segment selectors.
     mov ss, ax
 
     ; Far jump to reload CS with the kernel code segment (0x08)
