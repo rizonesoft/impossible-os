@@ -30,6 +30,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-03 — Interrupt Architecture & Unified Timer Subsystem](TODO-03-interrupt-timer-arch.md) — MADT, LAPIC/IOAPIC order, full IDT, dynamic IRQ API, UTS HPET/LAPIC/PIT HAL, LAPIC calibration
 - [TODO-04 — CPU Boot Sequencing & AP Hardening](TODO-04-cpu-boot-sequencing.md) — Phase 0 activation order (EFER→CR4 before VMM), hypervisor detection before UTS, AP hardening replication
 - [TODO-05 — Visual POST Display (VPD)](TODO-05-visual-post-display.md) — Two-tier boot progress visualization: pre-splash micro-font bars + splash-integrated stages, NVRAM crash persistence, configurable via `postbars`
+- [TODO-06 — Bare Metal Boot Hardening](TODO-06-bare-metal-hardening.md) — 4-digit POST codes, IST stacks, ACPI-gated hardware access, graceful degradation, hw interrupt investigation, boot.conf skip list
 
 ## Completed / Doc-converted
 
