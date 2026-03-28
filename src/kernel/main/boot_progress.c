@@ -112,62 +112,81 @@ static const uint8_t s_hex_font[16][8] = {
 #define POST16_TOTAL_W   (POST16_GLYPH_W * POST16_DIGITS + POST16_GAP * (POST16_DIGITS - 1))  /* 70 px */
 #define POST16_TOTAL_H   (POST16_GLYPH_H + 2)  /* 18 px */
 
+/* Render 4 hex digits. Two paths:
+ *   Pre-fb_init:  direct VRAM write (works from kernel entry)
+ *   Post-fb_init: fb_put_pixel + fb_swap_rect (respects page flip + back buffer) */
 void post_display16(uint16_t code)
 {
-    uint32_t scr_w, pitch_px, x0, y0;
-    uint32_t *fb;
+    uint32_t scr_w, x0, y0;
     int nibbles[4];
     int d;
+    int use_fb_driver = kernel_subsystem_ready(SUBSYS_FB);
 
     /* Stop rendering once desktop compositor takes over */
     if (kernel_subsystem_ready(SUBSYS_DESKTOP))
         return;
 
-    /* Write directly to hardware framebuffer — works from the very
-     * first instruction after g_boot_info is parsed, before fb_init().
-     * No dependency on SUBSYS_FB, back buffer, or fb_swap. */
     if (!g_boot_info.fb_available || !g_boot_info.fb.addr)
         return;
 
-    fb       = (uint32_t *)(uintptr_t)g_boot_info.fb.addr;
-    scr_w    = g_boot_info.fb.width;
-    pitch_px = g_boot_info.fb.pitch / 4;
-
+    scr_w = use_fb_driver ? fb_get_width() : g_boot_info.fb.width;
     if (scr_w == 0) return;
 
     x0 = scr_w - POST16_TOTAL_W - POST16_MARGIN;
     y0 = POST16_TOP;
 
-    /* Clear background — direct VRAM write */
-    {
-        uint32_t cy, cx;
-        for (cy = y0; cy < y0 + POST16_TOTAL_H && cy < g_boot_info.fb.height; cy++)
-            for (cx = x0; cx < x0 + POST16_TOTAL_W && cx < scr_w; cx++)
-                fb[cy * pitch_px + cx] = 0x00000000;
-    }
-
-    /* Extract 4 nibbles (high to low) */
+    /* Extract 4 nibbles */
     nibbles[0] = (code >> 12) & 0x0F;
     nibbles[1] = (code >>  8) & 0x0F;
     nibbles[2] = (code >>  4) & 0x0F;
     nibbles[3] =  code        & 0x0F;
 
-    /* Draw each digit at 2× scale with thin strokes — direct VRAM */
-    for (d = 0; d < 4; d++) {
-        const uint8_t *g = s_hex_font[nibbles[d]];
-        uint32_t gx = x0 + d * (POST16_GLYPH_W + POST16_GAP);
-        uint32_t row, col;
-        for (row = 0; row < 8; row++) {
-            uint8_t bits = g[row];
-            for (col = 0; col < 8; col++) {
-                if (bits & (0x80 >> col)) {
-                    uint32_t px = gx + col * POST16_SCALE;
-                    uint32_t py = y0 + row * POST16_SCALE;
-                    if (px + 1 < scr_w && py + 1 < g_boot_info.fb.height) {
-                        fb[py       * pitch_px + px]     = 0x00808080;
-                        fb[py       * pitch_px + px + 1] = 0x00808080;
-                        fb[(py + 1) * pitch_px + px]     = 0x00808080;
-                        fb[(py + 1) * pitch_px + px + 1] = 0x00808080;
+    if (use_fb_driver) {
+        /* Post-fb_init: use framebuffer driver (handles page flip + back buffer) */
+        fb_fill_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
+        for (d = 0; d < 4; d++) {
+            const uint8_t *g = s_hex_font[nibbles[d]];
+            uint32_t gx = x0 + d * (POST16_GLYPH_W + POST16_GAP);
+            uint32_t row, col;
+            for (row = 0; row < 8; row++) {
+                uint8_t bits = g[row];
+                for (col = 0; col < 8; col++) {
+                    if (bits & (0x80 >> col)) {
+                        uint32_t px = gx + col * POST16_SCALE;
+                        uint32_t py = y0 + row * POST16_SCALE;
+                        fb_put_pixel(px,     py,     0x00808080);
+                        fb_put_pixel(px + 1, py,     0x00808080);
+                        fb_put_pixel(px,     py + 1, 0x00808080);
+                        fb_put_pixel(px + 1, py + 1, 0x00808080);
+                    }
+                }
+            }
+        }
+        fb_swap_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H);
+    } else {
+        /* Pre-fb_init: direct VRAM write */
+        uint32_t *fb = (uint32_t *)(uintptr_t)g_boot_info.fb.addr;
+        uint32_t pitch_px = g_boot_info.fb.pitch / 4;
+        uint32_t cy, cx;
+        for (cy = y0; cy < y0 + POST16_TOTAL_H && cy < g_boot_info.fb.height; cy++)
+            for (cx = x0; cx < x0 + POST16_TOTAL_W && cx < scr_w; cx++)
+                fb[cy * pitch_px + cx] = 0x00000000;
+        for (d = 0; d < 4; d++) {
+            const uint8_t *g = s_hex_font[nibbles[d]];
+            uint32_t gx = x0 + d * (POST16_GLYPH_W + POST16_GAP);
+            uint32_t row, col;
+            for (row = 0; row < 8; row++) {
+                uint8_t bits = g[row];
+                for (col = 0; col < 8; col++) {
+                    if (bits & (0x80 >> col)) {
+                        uint32_t px = gx + col * POST16_SCALE;
+                        uint32_t py = y0 + row * POST16_SCALE;
+                        if (px + 1 < scr_w && py + 1 < g_boot_info.fb.height) {
+                            fb[py       * pitch_px + px]     = 0x00808080;
+                            fb[py       * pitch_px + px + 1] = 0x00808080;
+                            fb[(py + 1) * pitch_px + px]     = 0x00808080;
+                            fb[(py + 1) * pitch_px + px + 1] = 0x00808080;
+                        }
                     }
                 }
             }
