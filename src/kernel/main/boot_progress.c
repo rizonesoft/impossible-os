@@ -156,10 +156,10 @@ void post_display16(uint16_t code)
                     if (bits & (0x80 >> col)) {
                         uint32_t px = gx + col * POST16_SCALE;
                         uint32_t py = y0 + row * POST16_SCALE;
-                        fb_put_pixel(px,     py,     0x00FFFFFF);
-                        fb_put_pixel(px + 1, py,     0x00FFFFFF);
-                        fb_put_pixel(px,     py + 1, 0x00FFFFFF);
-                        fb_put_pixel(px + 1, py + 1, 0x00FFFFFF);
+                        fb_put_pixel(px,     py,     0x00C0C0C0);
+                        fb_put_pixel(px + 1, py,     0x00C0C0C0);
+                        fb_put_pixel(px,     py + 1, 0x00C0C0C0);
+                        fb_put_pixel(px + 1, py + 1, 0x00C0C0C0);
                     }
                 }
             }
@@ -184,10 +184,10 @@ void post_display16(uint16_t code)
                         uint32_t px = gx + col * POST16_SCALE;
                         uint32_t py = y0 + row * POST16_SCALE;
                         if (px + 1 < scr_w && py + 1 < g_boot_info.fb.height) {
-                            fb[py       * pitch_px + px]     = 0x00FFFFFF;
-                            fb[py       * pitch_px + px + 1] = 0x00FFFFFF;
-                            fb[(py + 1) * pitch_px + px]     = 0x00FFFFFF;
-                            fb[(py + 1) * pitch_px + px + 1] = 0x00FFFFFF;
+                            fb[py       * pitch_px + px]     = 0x00C0C0C0;
+                            fb[py       * pitch_px + px + 1] = 0x00C0C0C0;
+                            fb[(py + 1) * pitch_px + px]     = 0x00C0C0C0;
+                            fb[(py + 1) * pitch_px + px + 1] = 0x00C0C0C0;
                         }
                     }
                 }
