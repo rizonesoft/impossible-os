@@ -46,6 +46,7 @@
 | 💎  |   8   | PMM statistics — `mm_stats_t` + `meminfo`                 | —                             |  [ ]   |
 | 💎  |   9   | Heap canaries + double-free detection                     | —                             |  [ ]   |
 | 💎  |  10   | Kernel memory leak detector                               | §9                            |  [ ]   |
+| 💎  |  11   | MMIO mapping with UC attributes + HPET validation         | —                             |  [ ]   |
 
 > 💎 = parity — Windows and Linux both implement these memory management features; Impossible OS must match.
 > ⭐ = exclusive — build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.
@@ -189,6 +190,31 @@ Debug-mode allocation tracker with zero overhead in release builds — enabled b
 - [ ] Boot param `kmalloc_debug=1` enables tracking at runtime without recompile (→ XREF `TODO-02-boot-diagnostics.md §1` — boot param API)
 - [ ] Commit: `"mm: kmalloc leak detector (debug build) + kmalloc_stats"`
 
+## 11. MMIO Mapping with UC Attributes + HPET Validation `[Opus]`
+
+Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mappings for device MMIO regions. The boot identity map uses write-back (WB) caching on all 2 MiB pages — directly accessing MMIO through WB pages causes stale reads, data corruption, or machine check exceptions (MCE) on real hardware. Every MMIO access in the kernel (HPET, ECAM, NVMe BARs, future GPU BARs) must go through this function.
+
+**Files:** `include/kernel/mm/vmm.h`, `src/kernel/mm/vmm.c`, `src/kernel/drivers/lapic.c`, `src/kernel/drivers/hpet.c` (new)
+
+> [!IMPORTANT]
+> → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §2` — HPET timer driver consumes `vmm_map_mmio()` for register access.
+> → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §3` — PCIe ECAM needs `vmm_map_mmio()` with UC for config space.
+> → XREF: `04-drivers-hardware/TODO-03-apic-interrupt-routing.md` — LAPIC/IOAPIC MMIO should use UC mappings (currently works via MTRR override).
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §5` — PAT configuration for WC (framebuffer) and UC (MMIO) page types.
+
+> **Current state (2026-03-28):** The bootloader maps all 4 GiB with `0x87` (Present+Writable+User+PS) — no PCD/PWT bits, so all pages are WB cached. LAPIC/IOAPIC work because MTRRs override those specific ranges to UC. HPET, ECAM, and other MMIO devices have no MTRR entries and crash on bare metal when accessed through WB pages. The HPET calibration path in `lapic.c` currently has a probe guard but should use a proper UC mapping instead.
+
+- [ ] Implement `vmm_map_mmio(phys_base, size)` — allocate 4 KiB PTEs, set `PCD=1` + `PWT=1` (UC memory type), return virtual address. Use a dedicated kernel VA region above the identity map to avoid conflicts.
+- [ ] Implement `vmm_unmap_mmio(virt, size)` — unmap and free PTEs.
+- [ ] Implement `MmMapIoSpace(phys, size, cache_type)` Win32 wrapper — routes to `vmm_map_mmio()` with cache type translation (`MmNonCached` → UC, `MmWriteCombined` → WC via PAT).
+- [ ] HPET validation: read General Capabilities register via UC mapping; reject if `REV_ID == 0`, `COUNTER_CLK_PERIOD == 0`, or `COUNTER_CLK_PERIOD > 100000000` (>100ns/tick).
+- [ ] HPET quirk table: static table of `{ vendor_id, device_id, quirk_flags }` for known-broken HPET implementations (AMD SB700/SB800 HPET counter freeze, Intel ICH9 64-bit read errata). Check against HPET's `VENDOR_ID` field in the capabilities register.
+- [ ] Migrate HPET calibration in `lapic.c` from raw identity-mapped MMIO to `vmm_map_mmio()`.
+- [ ] Migrate AHCI ABAR access to `vmm_map_mmio()` (currently identity-mapped).
+- [ ] Audit all `volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)phys_addr` patterns in drivers — each is a candidate for `vmm_map_mmio()`.
+- [ ] Boot log: `[VMM] MMIO: mapped 0x%lx (%u bytes) as UC at 0x%lx`
+- [ ] Commit: `"mm: vmm_map_mmio / MmMapIoSpace — UC MMIO mappings + HPET validation"`
+
 ---
 
 ## OS Comparison
@@ -204,6 +230,7 @@ Debug-mode allocation tracker with zero overhead in release builds — enabled b
 | 💎  | PMM / physical memory statistics                  | ✅ `!poolused` (WinDbg), Task Manager                   | ✅ `/proc/meminfo`, `free(1)`                             | ⬜ Planned — §8; `mm_stats_t` + `meminfo` shell command       |
 | 💎  | Heap canaries + double-free detection             | ✅ Debug heap (user-mode); kernel via Driver Verifier   | ✅ SLUB debug allocator (`CONFIG_SLUB_DEBUG`)             | ⬜ Planned — §9; tail canary on every `kmalloc` block         |
 | 💎  | Kernel memory leak detector                       | ✅ Driver Verifier LEAK tracking                        | ✅ `kmemleak` kernel debug option                         | ⬜ Planned — §10; allocation table, `memleak` shell command   |
+| 💎  | UC MMIO mapping (`MmMapIoSpace` / `ioremap`)     | ✅ `MmMapIoSpace` with cache type                       | ✅ `ioremap()` / `ioremap_uc()` for device registers      | ⬜ Planned — §11; `vmm_map_mmio()` + HPET quirk table        |
 
 > **After parity items:** Impossible OS matches Windows and Linux on VirtualProtect/mprotect, demand paging, VirtualAlloc, NtQueryVirtualMemory, PMM stats, heap canaries, and leak detection. The W^X enforcement is stronger than Windows — `PAGE_EXECUTE_READWRITE` is a hard kernel reject with no bypass path. The build-time kmalloc lint enforces correct allocator discipline at compile time rather than catching violations at runtime.
 
@@ -220,4 +247,7 @@ Debug-mode allocation tracker with zero overhead in release builds — enabled b
 - [ ] Heap corruption test: overwrite past `kmalloc` allocation end → `kfree` panics with `"heap corruption"`
 - [ ] Double-free test: `kfree` same pointer twice → second `kfree` panics with `"double free"`
 - [ ] `memleak` command shows no un-freed entries after a clean boot (debug build)
+- [ ] `vmm_map_mmio()` returns a UC-mapped virtual address; HPET register reads return valid capabilities (not 0xFFFFFFFF)
+- [ ] Bare-metal boot: HPET calibration succeeds via UC mapping (no MCE); LAPIC timer runs at correct frequency
+- [ ] HPET quirk table: known-broken HPET vendor IDs are skipped with a log message
 - [ ] Commit: `"mm: VMM memory protection, W^X, demand paging, allocator safety tier"`

@@ -36,12 +36,14 @@
 #include "desktop/gallery.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/elf.h"
+#include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 3 ------------------------------------------------------------ */
 
 void boot_phase3(void)
 {
+    HV_BAR(13);  /* amber: phase 3 entry */
     /* --- Scheduler: requires HEAP + TIMER --- */
     if (!kernel_subsystem_ready(SUBSYS_HEAP) ||
         !kernel_subsystem_ready(SUBSYS_TIMER)) {
@@ -262,6 +264,7 @@ void boot_phase3(void)
     }
 
     /* --- Compositor event loop (never returns) --- */
+    HV_BAR(14);  /* teal: compositor entry */
     compositor_run();
 
     /* Unreachable under normal operation */

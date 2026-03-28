@@ -27,6 +27,7 @@
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
+#include "kernel/hv_bar.h"
 
 /* ---- State ---- */
 
@@ -488,6 +489,8 @@ static inline void hpet_write32(uint64_t base, uint32_t offset, uint32_t val)
 
 /* HPET-based calibration: read HPET counter, run LAPIC for 10ms, measure ticks.
  * No PIT hardware touched.  HPET is memory-mapped (identity-mapped in first 4 GiB). */
+/* Disabled until vmm_map_mmio() provides UC mappings (TODO-01 §11) */
+static int cal_try_hpet(void) __attribute__((unused));
 static int cal_try_hpet(void)
 {
     uint64_t hpet_base;
@@ -500,6 +503,22 @@ static int cal_try_hpet(void)
     hpet_base = acpi_get_hpet_base();
     if (hpet_base == 0)
         return 0;
+
+    /* Sanity: HPET MMIO must be within the identity-mapped 4 GiB range.
+     * Also reject obviously bogus addresses (below 1 MiB or misaligned). */
+    if (hpet_base >= 0x100000000ULL || hpet_base < 0x100000 ||
+        (hpet_base & 0xFFF) != 0)
+        return 0;
+
+    /* Probe with a 32-bit read first — safer on hardware where 64-bit
+     * MMIO reads to non-functional HPET cause machine check exceptions.
+     * Read low 32 bits of capabilities; if we get all-ones the HPET
+     * is absent or non-functional at this address. */
+    {
+        uint32_t probe = hpet_read32(hpet_base, HPET_CAP_REG);
+        if (probe == 0xFFFFFFFF || probe == 0x00000000)
+            return 0;
+    }
 
     /* Read HPET capabilities -- upper 32 bits = period in femtoseconds */
     cap = hpet_read64(hpet_base, HPET_CAP_REG);
@@ -521,13 +540,22 @@ static int cal_try_hpet(void)
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED | LVT_TIMER_ONESHOT | 0xFF);
     lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
 
-    /* Wait 10ms worth of HPET ticks */
+    /* Wait 10ms worth of HPET ticks (with spin timeout) */
     start_hpet = hpet_read64(hpet_base, HPET_COUNTER);
     target_hpet = start_hpet + (hpet_freq * CAL_MS / 1000);
 
-    do {
-        cur_hpet = hpet_read64(hpet_base, HPET_COUNTER);
-    } while (cur_hpet < target_hpet);
+    {
+        uint32_t spin = 200000000;
+        do {
+            cur_hpet = hpet_read64(hpet_base, HPET_COUNTER);
+        } while (cur_hpet < target_hpet && --spin > 0);
+
+        if (spin == 0) {
+            lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
+            klog(LOG_WARN, "lapic", "Tier 2: HPET calibration timeout");
+            return 0;
+        }
+    }
 
     /* Read LAPIC remaining count */
     lapic_remaining = lapic_read(LAPIC_REG_TIMER_CCR);
@@ -583,12 +611,21 @@ static int cal_try_pmtimer(void)
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED | LVT_TIMER_ONESHOT | 0xFF);
     lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
 
-    /* Wait 10ms worth of PM Timer ticks */
+    /* Wait 10ms worth of PM Timer ticks (with spin timeout) */
     start_pm = pmtimer_read(port) & mask;
-    do {
-        cur_pm = pmtimer_read(port) & mask;
-        elapsed_pm = (cur_pm - start_pm) & mask;
-    } while (elapsed_pm < PMTIMER_10MS);
+    {
+        uint32_t spin = 200000000;
+        do {
+            cur_pm = pmtimer_read(port) & mask;
+            elapsed_pm = (cur_pm - start_pm) & mask;
+        } while (elapsed_pm < PMTIMER_10MS && --spin > 0);
+
+        if (spin == 0) {
+            lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
+            klog(LOG_WARN, "lapic", "Tier 2: PM Timer calibration timeout");
+            return 0;
+        }
+    }
 
     /* Read LAPIC remaining count */
     lapic_remaining = lapic_read(LAPIC_REG_TIMER_CCR);
@@ -623,7 +660,10 @@ void lapic_timer_calibrate(void)
     if (!lapic_base)
         return;
 
+    HV_BAR(15);  /* light red: entering calibration waterfall */
+
     /* Tier 1: Instant frequency from MSR/CPUID */
+    HV_BAR(8);   /* lime: trying Tier 1 */
     if (cal_try_hyperv_msr() || cal_try_vmware_cpuid() || cal_try_cpuid_15h()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 1 succeeded -- no PIT/HPET needed");
@@ -631,13 +671,20 @@ void lapic_timer_calibrate(void)
     }
 
     /* Tier 2: Modern hardware timers (HPET -> PM Timer) */
-    if (cal_try_hpet() || cal_try_pmtimer()) {
+    HV_BAR(9);   /* pink: trying HPET */
+    /* HPET calibration disabled until vmm_map_mmio() provides UC mappings.
+     * Accessing HPET MMIO through WB identity-mapped pages causes MCE on
+     * bare metal.  See TODO-01-vmm-memory-protection.md §11. */
+    /* if (cal_try_hpet()) { ... } */
+    HV_BAR(11);  /* white: trying PM Timer */
+    if (cal_try_pmtimer()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 2 succeeded -- no PIT needed");
         return;
     }
 
     /* Tier 3: Legacy PIT (only if PCAT_COMPAT=1 && !HW_REDUCED) */
+    HV_BAR(10);  /* sky blue: trying Tier 3 (PIT) */
     if (cal_try_pit()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 3 succeeded -- PIT channel 2");

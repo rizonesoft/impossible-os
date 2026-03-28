@@ -34,6 +34,7 @@
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/ahci.h"
+#include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 2 ------------------------------------------------------------ */
@@ -84,6 +85,7 @@ void boot_phase2(void)
     boot_splash_status("Initializing VFS...");
     vfs_init();
     kernel_subsystem_set_ready(SUBSYS_VFS, true);
+    HV_BAR(11);  /* white: VFS done */
     boot_progress(2, "VFS", POSTCODE_VFS_INIT);
 
     /* --- Partition scan + filesystem mount --- */

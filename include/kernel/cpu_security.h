@@ -23,9 +23,13 @@ void cpu_enable_smep(void);
  * Prevents kernel from reading/writing user-mode pages without CLAC/STAC. */
 void cpu_enable_smap(void);
 
-/* Enable all supported CPU security features for the current core.
+/* Enable NX for the current core.
  * Call on BSP in Phase 0 and on each AP during SMP bringup. */
 void cpu_harden(void);
+
+/* Enable SMEP/SMAP after page tables have U/S cleared from kernel pages.
+ * Must be called AFTER vmm_apply_nx_policy(). */
+void cpu_harden_post_pagetable(void);
 
 /* ---- SMAP user-space access brackets ---- */
 

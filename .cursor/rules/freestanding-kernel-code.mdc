@@ -16,6 +16,7 @@ alwaysApply: false
 - New low-level hardware work should follow the current platform model: APIC or IOAPIC interrupts, DMA-first storage paths, and UEFI GOP framebuffer assumptions rather than new PIC, IDE PIO, or VGA text-mode paths.
 - For BSOD, panic, PAGE_FAULT, or RIP-based crash analysis, use `llvm-addr2line-19` and `llvm-objdump-19` before speculating about the fault site. Keep `build/kernel.exe` symbolized.
 - Fix root causes and allocator misuse directly instead of normalizing temporary workarounds.
+- **User-mode page range (0x800000-0x900000):** The boot identity map clears U/S from all kernel pages except this range so SMEP/SMAP work on bare metal. If you expand the user-mode ELF load area, update all three locations: `vmm_apply_nx_policy()` in vmm.c (user_base/user_top), `pmm_mark_region_used()` in pmm.c, and `user/user.ld`.
 
 ## Example
 

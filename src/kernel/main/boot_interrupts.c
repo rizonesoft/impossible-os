@@ -31,12 +31,14 @@
 #include "kernel/uefi_runtime.h"
 #include "kernel/smbios.h"
 #include "kernel/boot_timing.h"
+#include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 1 ------------------------------------------------------------ */
 
 void boot_phase1(void)
 {
+    HV_BAR(6);  /* orange: phase 1 entry */
     klog(LOG_DEBUG, "boot", "--- Phase: interrupt controllers & timer ---");
     boot_splash_status("Setting up interrupts...");
 
@@ -127,6 +129,7 @@ void boot_phase1(void)
             }
         }
         boot_progress(1, "LAPIC_IOAPIC", POSTCODE_LAPIC_INIT);
+        HV_BAR(7);  /* purple: LAPIC/IOAPIC done */
 
         /* NOTE: ahci_setup_interrupts() moved to Phase 2, after ahci_init()
          * has discovered the PCI device.  LAPIC is ready here, so MSI will
@@ -151,6 +154,7 @@ void boot_phase1(void)
     timer_hal_init();
     kernel_subsystem_set_ready(SUBSYS_TIMER, true);
     boot_progress(1, "TIMER", POSTCODE_TIMER_INIT);
+    HV_BAR(8);  /* lime: timer done */
 
     /* --- RTC --- */
     rtc_init();
@@ -168,6 +172,7 @@ void boot_phase1(void)
     fb_init();
     kernel_subsystem_set_ready(SUBSYS_FB, true);
     boot_progress(1, "FB", POSTCODE_FB_INIT);
+    HV_BAR(9);  /* pink: FB init done */
     boot_splash_init();
 
     /* --- Phase 1 info gathering (moved from Phase 0 per TODO-01 §2) --- */

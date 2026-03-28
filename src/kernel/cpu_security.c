@@ -9,6 +9,7 @@
 #include "kernel/cpuid_platform.h"
 #include "kernel/msr.h"
 #include "kernel/klog.h"
+#include "kernel/hv_bar.h"
 
 /* ---- CR4 bit definitions ---- */
 #define CR4_SMEP  (1UL << 20)
@@ -136,6 +137,12 @@ int copy_to_user(void *user_dst, const void *src, uint32_t len)
 void cpu_harden(void)
 {
     cpu_enable_nx();
+}
+
+/* Enable SMEP/SMAP after page tables have been fixed (U/S cleared from
+ * kernel pages).  Must be called AFTER vmm_apply_nx_policy(). */
+void cpu_harden_post_pagetable(void)
+{
     cpu_enable_smep();
     cpu_enable_smap();
 }
