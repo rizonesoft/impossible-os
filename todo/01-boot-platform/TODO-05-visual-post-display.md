@@ -141,7 +141,7 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 - [x] `vpd_is_active()` / `vpd_stop_tier1()` — tier lifecycle management
 - [x] Hooked into `boot_progress()` — every stage automatically rendered
 - [x] HV_BAR already removed (prior commit) — VPD is the replacement
-- [ ] Commit: `"boot: Tier 1 VPD renderer — pre-splash named stages with text"`
+- [x] Commit: `"boot: Tier 1 VPD renderer — pre-splash named stages with text"`
 
 ## 5. `boot.conf` `postbars` Configuration
 Add the `postbars` key to `boot.conf` parsing so the VPD can be configured without recompilation.
