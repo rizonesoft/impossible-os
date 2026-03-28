@@ -69,7 +69,7 @@
 | 💎  |  10   | CPU security activation and verification             | §6         |  [ ]   |
 | 💎  |  11   | Boot order hardening (timer-last, UEFI-safe)         | §5         |  [ ]   |
 | ⭐  |  12   | `boot.conf` subsystem skip list                      | §9         |  [ ]   |
-| 💎  |  13   | Bare-metal test matrix and validation plan            | §5         |  [ ]   |
+| 💎  |  13   | Bare-metal test matrix and validation plan           | §5         |  [ ]   |
 
 > 💎 = parity — Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive — 4-digit POST codes in every function and a configurable skip list are not standard in any OS kernel.

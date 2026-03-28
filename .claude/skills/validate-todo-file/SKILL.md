@@ -19,22 +19,25 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - **Callout blocks** (`> [!NOTE]`, `> [!IMPORTANT]`, etc.): no blank lines inside a single callout.
    - **Tables**: no blank lines between rows.
    - **Preserve** blank lines between: section headings and content, distinct list groups, `---` separators, and code block fences.
-3. Anchor-check the Inputs section.
+3. **Remove model tags from section headings.**
+   - Strip `` `[Opus]` `` and `` `[Sonnet]` `` postfixes from all `## N. Title` headings.
+   - These tags are legacy — model selection is handled by the harness, not the TODO.
+4. Anchor-check the Inputs section.
    - For each file path listed in Inputs, use Glob to confirm it exists on disk.
    - Flag any path that does not exist as a broken anchor; suggest the correct path or note it as planned.
    - Do not read the files — existence check only.
-4. Read the domain `INDEX.md` and all other TODO files in the same domain folder.
+5. Read the domain `INDEX.md` and all other TODO files in the same domain folder.
    - Use Grep to search for deliverable names and feature keywords across domain TODOs to detect scope overlap.
    - Scan for duplicate XREFs pointing at the same target section — two TODOs depending on the same section is fine; two TODOs both *implementing* it is a conflict.
-5. Validate the current lean TODO structure.
+6. Validate the current lean TODO structure.
    - Check required sections, numbering, checklist shape, references, and exit criteria.
    - Use `Implementation Order`, not legacy phase-table rules.
-6. Validate execution coverage.
+7. Validate execution coverage.
    - Check dependency order, `→ XREF:` lines, overlap notes, handoffs, and adjacent-file continuity.
    - For each `→ XREF: TODO-XX §N`, confirm the target TODO file exists **and** the referenced section number is present in that file.
    - Check handoff boundaries: for each deliverable this TODO hands off to another, confirm the receiving TODO has a matching Inputs or XREF entry.
    - Fix stale planning text, broken links, and roadmap inconsistencies.
-7. **Self-contained execution check (critical).**
+8. **Self-contained execution check (critical).**
    - The TODO must be executable from §1 to the last section WITHOUT being blocked by unimplemented sections in other TODOs.
    - For each `Depends On` entry in the Implementation Order table that references an EXTERNAL TODO (not a section within this file):
      1. Check if that external section is already implemented (`[x]`). If yes, no action needed.
@@ -43,7 +46,42 @@ description: Validate a TODO file for structural completeness, Implementation Or
      4. Update the Implementation Order to reference the new local section instead of the external one.
    - **Principle:** When you follow a TODO from §1 to the last section, you must have a fully working base system at the end. External TODOs enhance it later, but never block it.
    - Flag any section where the `Depends On` column references something that doesn't exist yet and no local fallback is provided.
-8. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
+9. **Prerequisite code audit.**
+   - For each function, type, or API referenced in checklist items (e.g., `vmm_map_mmio()`, `BOOT_TRY()`, `POST16()`), use Grep to check if it exists in the codebase.
+   - If it doesn't exist AND is not created by a prior section in this TODO: flag it as a missing prerequisite.
+   - If it IS created by a prior section: verify the section order puts the creator before the consumer.
+10. **Platform coverage check.**
+    - Every TODO that touches hardware, interrupts, page tables, timers, or drivers MUST list which platforms each section has been verified on.
+    - Required platforms: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+    - If the Test Checkpoint for a section only mentions one platform (e.g., "Boot on QEMU"), flag it — bare metal behaves differently.
+    - Add platform notes to Test Checkpoints: "Verify on QEMU WHPX AND bare metal" where applicable.
+11. **Regression risk scan.**
+    - For each section, identify what existing working functionality it could break.
+    - Flag high-risk sections — those that touch:
+      - **Interrupt path** (IDT, ISR stubs, LAPIC, IOAPIC, EOI) — one wrong bit = triple fault
+      - **Page tables** (PTE flags, CR3, TLB flush) — breaks all memory access
+      - **GDT/TSS** (segment selectors, RSP0, IST) — breaks privilege transitions
+      - **Timer** (LAPIC timer, PIT, calibration) — breaks scheduler, compositor, sleep
+      - **Boot order** (Phase 0/1/2/3 sequencing) — breaks everything downstream
+    - For each high-risk section, require:
+      - A rollback note: "If this breaks, revert [specific change] and fall back to [known-good behavior]"
+      - An incremental test: verify the change works BEFORE proceeding to the next section
+12. **Boot-path impact analysis.**
+    - Trace the boot execution path from `kernel_main()` through Phase 0 → 1 → 2 → 3 → compositor.
+    - For each section in the TODO, identify exactly WHERE in the boot path its changes take effect.
+    - Flag any section that modifies code running BEFORE `sti` (interrupts enabled) — these are the most dangerous because errors cause silent triple faults with no diagnostic output.
+    - Flag any section that modifies the interrupt handler path — errors here crash on every interrupt, not just the subsystem being changed.
+13. **Test checkpoint enforcement.**
+    - Every section MUST have a `**Test checkpoint:**` block at the end.
+    - Each checkpoint must have concrete pass/fail criteria — not "verify it works" but specific observable outcomes:
+      - Serial log output: exact string to grep for
+      - POST code: exact hex value
+      - Screen output: what the user should see
+      - Behavior: what happens when X is triggered
+    - Each checkpoint must specify which platforms to test on.
+    - Flag any section missing a test checkpoint.
+    - Flag any checkpoint with vague criteria ("should work", "verify correct behavior").
+14. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
 
 ## Guardrails
 
