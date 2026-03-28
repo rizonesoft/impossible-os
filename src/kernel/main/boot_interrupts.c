@@ -171,16 +171,6 @@ void boot_phase1(void)
     /* --- Framebuffer + boot splash --- */
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
 
-    /* Pause to show VPD Tier 1 progress — BEFORE fb_init wipes VRAM */
-    {
-        extern void vpd_stage_done(void);
-        vpd_stage_done();
-        {
-            volatile uint64_t i;
-            for (i = 0; i < 5000000000ULL; i++) __asm__ volatile("pause");
-        }
-    }
-
     POST16(POST16_FB);
     fb_init();
     POST16(POST16_FB_OK);
