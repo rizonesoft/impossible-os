@@ -107,12 +107,21 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
                 serial_putchar(hex[(last_post >> 4) & 0xF]);
                 serial_putchar(hex[last_post & 0xF]);
             }
-            if (last_post == (int)POST16_BOOT_OK)
+            if (last_post == (int)POST16_BOOT_OK) {
                 serial_write(" (OK)\n");
-            else if (last_post == (int)POST16_BOOT_FAILED)
+            } else if (last_post == (int)POST16_BOOT_FAILED) {
                 serial_write(" (FAILED -- prior boot crashed)\n");
-            else
+                {
+                    extern void vpd_crash_banner(uint16_t);
+                    vpd_crash_banner((uint16_t)last_post);
+                }
+            } else {
                 serial_write(" (incomplete -- prior boot did not finish)\n");
+                {
+                    extern void vpd_crash_banner(uint16_t);
+                    vpd_crash_banner((uint16_t)last_post);
+                }
+            }
         }
         boot_progress(0, "post-code-log", 0x11);
     }

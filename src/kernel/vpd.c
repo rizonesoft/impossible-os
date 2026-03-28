@@ -326,6 +326,94 @@ int vpd_is_active(void)
     return s_active;
 }
 
+/* ---- POST16 code → name lookup ------------------------------------------ */
+
+struct post16_entry { uint16_t code; const char *name; };
+
+static const struct post16_entry s_post16_names[] = {
+    { 0xB001, "EFI_MAIN" },     { 0xB010, "GOP" },
+    { 0xB020, "KERNEL_LOAD" },  { 0xB050, "EXIT_BS" },
+    { 0xB060, "PAGE_TABLES" },  { 0xB070, "KERNEL_JUMP" },
+    { 0x0010, "SERIAL" },       { 0x0011, "SERIAL" },
+    { 0x0012, "UEFI_RT" },      { 0x0013, "UEFI_RT" },
+    { 0x0014, "UEFI_VARS" },    { 0x0016, "SECUREBOOT" },
+    { 0x0018, "TPM" },
+    { 0x0020, "PMM" },          { 0x0021, "PMM" },
+    { 0x0030, "VMM" },          { 0x0031, "VMM" },
+    { 0x0040, "HEAP" },         { 0x0041, "HEAP" },
+    { 0x0050, "KLOG" },         { 0x0051, "KLOG" },
+    { 0x0060, "CPUID" },        { 0x0061, "CPUID" },
+    { 0x0070, "CPU_HARDEN" },   { 0x0080, "NX_POLICY" },
+    { 0x0090, "SIMD" },         { 0x0091, "SIMD" },
+    { 0x1000, "GDT" },          { 0x1001, "GDT" },
+    { 0x1010, "IDT" },          { 0x1011, "IDT" },
+    { 0x1020, "ACPI" },         { 0x1021, "ACPI" },
+    { 0x1030, "LAPIC" },        { 0x1031, "LAPIC" },
+    { 0x1040, "TIMER" },        { 0x1041, "TIMER" },
+    { 0x1050, "RTC" },          { 0x1051, "RTC" },
+    { 0x1060, "KEYBOARD" },     { 0x1061, "KEYBOARD" },
+    { 0x1070, "MOUSE" },        { 0x1071, "MOUSE" },
+    { 0x1080, "FB" },           { 0x1081, "FB" },
+    { 0x1090, "SPLASH" },       { 0x1091, "SPLASH" },
+    { 0x2000, "PCI" },          { 0x2001, "PCI" },
+    { 0x2050, "AHCI" },         { 0x2051, "AHCI" },
+    { 0x2060, "VFS" },          { 0x2061, "VFS" },
+    { 0x2080, "REGISTRY" },     { 0x2081, "REGISTRY" },
+    { 0x2090, "SMP" },          { 0x2091, "SMP" },
+    { 0x3000, "SCHED" },        { 0x3001, "SCHED" },
+    { 0x3030, "DESKTOP" },      { 0x3031, "DESKTOP" },
+    { 0x3040, "COMPOSITOR" },
+    { 0, (const char *)0 },  /* sentinel */
+};
+
+const char *vpd_post16_name(uint16_t code)
+{
+    const struct post16_entry *e = s_post16_names;
+    while (e->name) {
+        if (e->code == code) return e->name;
+        e++;
+    }
+    return "UNKNOWN";
+}
+
+/* ---- Crash banner ------------------------------------------------------- */
+
+void vpd_crash_banner(uint16_t last_postcode)
+{
+    uint32_t x;
+    const char *name;
+
+    if (!g_boot_info.fb_available || !g_boot_info.fb.addr)
+        return;
+
+    /* Ensure VPD state is set for rendering helpers */
+    if (!s_fb) {
+        s_fb       = (uint32_t *)(uintptr_t)g_boot_info.fb.addr;
+        s_pitch_px = g_boot_info.fb.pitch / 4;
+        s_width    = g_boot_info.fb.width;
+        s_height   = g_boot_info.fb.height;
+    }
+
+    name = vpd_post16_name(last_postcode);
+
+    /* Render: "Last boot failed at: NAME (0xNNNN)" in red at 2× scale */
+    x = VPD_LEFT_MARGIN;
+    vpd_puts_scaled(x, 2, "Last boot failed:", VPD_COLOR_FAIL);
+    x += 18 * VPD_CHAR_W;
+    vpd_puts_scaled(x, 2, name, VPD_COLOR_TEXT);
+    /* Add POST hex after name */
+    {
+        const char *p = name;
+        uint32_t len = 0;
+        while (*p) { len++; p++; }
+        x += (len + 1) * VPD_CHAR_W;
+        vpd_puts_scaled(x, 2, "0x", VPD_COLOR_PENDING);
+        x += 2 * VPD_CHAR_W;
+        vpd_puthex16_scaled(x, 2, last_postcode, VPD_COLOR_PENDING);
+    }
+
+}
+
 void vpd_stop_tier1(void)
 {
     if (s_has_current)

@@ -46,7 +46,7 @@
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4         |  [x]   |
 | 💎  |   6   | Named stages with TSC timing                            | §4         |  [x]   |
 | 💎  |   7   | Status indicators and progress bar                      | §6         |  [x]   |
-| ⭐  |   8   | NVRAM crash persistence and "last boot failed" display  | §6         |  [ ]   |
+| ⭐  |   8   | NVRAM crash persistence and "last boot failed" display  | §6         |  [x]   |
 | 💎  |   9   | Tier 2: Splash-integrated progress                      | §6, §7     |  [ ]   |
 | 💎  |  10   | Seamless tier transition                                | §4, §9     |  [ ]   |
 | ⭐  |  11   | Phase grouping and diagnostic layout                    | §7         |  [ ]   |
@@ -188,14 +188,13 @@ On crash-restart, display exactly where the previous boot failed — always acti
 > [!IMPORTANT]
 > The existing `boot_post_write()` / `boot_post_read()` NVRAM persistence already saves the last POST code. This section extends it to also save the stage name index, so the next boot can display "Last boot failed at: TIMER (0x35)" instead of just "POST: 0x35".
 
-- [ ] Extend NVRAM POST variable: save 2 bytes — `{ uint8_t postcode, uint8_t stage_index }` (backward-compatible: reader ignores extra byte if only 1 byte present)
-- [ ] `boot_post_write_stage(uint8_t postcode, uint8_t stage_idx)` — called from `boot_stage_report()`
-- [ ] `boot_post_read_stage(uint8_t *postcode, uint8_t *stage_idx)` — called in early `boot_phase0()`
-- [ ] If last boot was incomplete (POST != 0xFF): render a 1-line crash banner at the very top of the screen: `"Last boot failed at: STAGE_NAME (0xNN)"` in red text on black, using the Tier 1 micro-font
-- [ ] Crash banner is **always visible** regardless of `postbars` setting — it's a safety feature
-- [ ] Banner auto-clears when `BOOT_STAGE_DESKTOP_READY` is reached (splash composites over it)
-- [ ] Serial log: `[POST] Last boot failed at: STAGE_NAME (0xNN)` (enhances existing serial message)
-- [ ] Commit: `"boot: NVRAM crash persistence — 'Last boot failed at' display"`
+- [x] NVRAM already stores full 16-bit POST code via `boot_post_write16()` / `boot_post_read16()`
+- [x] `vpd_post16_name(code)` — lookup table resolves POST16 code → stage name (55 entries)
+- [x] `vpd_crash_banner(last_postcode)` — renders "Last boot failed: NAME 0xNNNN" in red at 2× scale, always visible regardless of `postbars`
+- [x] Wired into `boot_phase0()` — displays on both incomplete and failed prior boots
+- [x] Serial log already shows `[BOOT] Last POST code: 0xNNNN (incomplete/FAILED)`
+- [x] Banner auto-clears when splash composites over it
+- [x] Commit: `"boot: NVRAM crash persistence — 'Last boot failed at' display"`
 
 ## 9. Tier 2: Splash-Integrated Progress
 When `postbars=1`, the boot splash status text area shows VPD-style named stages with timing instead of generic "Setting up interrupts..." text.
