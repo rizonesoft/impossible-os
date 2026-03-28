@@ -279,31 +279,12 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
     /* Advance to next row */
     s_row += VPD_ROW_HEIGHT;
 
-    /* Update progress bar — estimate from stage count
-     * (~28 total boot_progress calls, so percent ≈ count * 100 / 28) */
     s_stage_count++;
-    vpd_update_progress((uint8_t)(s_stage_count * 100 / 28));
 }
 
 void vpd_update_progress(uint8_t percent)
 {
-    uint32_t bar_y, bar_w, filled_w;
-
-    if (!s_active)
-        return;
-
-    if (percent > 100) percent = 100;
-
-    bar_y = s_row + VPD_BAR_GAP;
-    bar_w = VPD_SEPARATOR_W;
-    filled_w = bar_w * percent / 100;
-
-    /* Draw track (dark gray) */
-    vpd_fill_rect(VPD_LEFT_MARGIN, bar_y, bar_w, VPD_BAR_HEIGHT, VPD_BAR_BG);
-
-    /* Draw filled portion (accent blue) */
-    if (filled_w > 0)
-        vpd_fill_rect(VPD_LEFT_MARGIN, bar_y, filled_w, VPD_BAR_HEIGHT, VPD_BAR_COLOR);
+    (void)percent; /* progress bar removed — too much visual clutter */
 }
 
 void vpd_stage_done(void)
