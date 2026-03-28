@@ -32,6 +32,11 @@ description: Validate a TODO file for structural completeness, Implementation Or
 6. Validate the current lean TODO structure.
    - Check required sections, numbering, checklist shape, references, and exit criteria.
    - Use `Implementation Order`, not legacy phase-table rules.
+   - **Compact the OS Comparison table:**
+     - Header columns: `⭐ | Feature | Win11 | Linux | Impossible OS`
+     - Keep cells short: status emoji + max 5 words per cell. No full sentences.
+     - Pad columns so pipe characters align vertically within the table.
+     - If the table is wider than ~100 characters per row, shorten cell text further.
 7. Validate execution coverage.
    - Check dependency order, `→ XREF:` lines, overlap notes, handoffs, and adjacent-file continuity.
    - For each `→ XREF: TODO-XX §N`, confirm the target TODO file exists **and** the referenced section number is present in that file.
