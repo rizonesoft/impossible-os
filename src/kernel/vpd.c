@@ -22,6 +22,7 @@ static uint32_t  s_pitch_px;
 static uint32_t  s_width;
 static uint32_t  s_height;
 static int       s_active;
+static int       s_banner_shown; /* 1 if crash banner was rendered */
 static uint32_t  s_row;        /* current Y position (next stage row) */
 static uint8_t   s_last_phase; /* phase of the previous stage */
 static uint32_t  s_last_row_y; /* Y position of the current in-progress stage */
@@ -217,7 +218,8 @@ void vpd_init(void)
     s_pitch_px = g_boot_info.fb.pitch / 4;
     s_width    = g_boot_info.fb.width;
     s_height   = g_boot_info.fb.height;
-    s_row      = VPD_TOP_MARGIN;
+    /* Push stage list down if crash banner is displayed above */
+    s_row      = s_banner_shown ? (VPD_TOP_MARGIN + VPD_ROW_HEIGHT + 4) : VPD_TOP_MARGIN;
     s_last_phase = 0xFF; /* no previous phase */
     s_has_current = 0;
     s_active   = 1;
@@ -395,21 +397,21 @@ void vpd_crash_banner(uint16_t last_postcode)
     }
 
     name = vpd_post16_name(last_postcode);
+    s_banner_shown = 1;
 
-    /* Render: "Last boot failed at: NAME (0xNNNN)" in red at 2× scale */
+    /* Render: "Last boot failed: NAME 0xNNNN" in red at 2× scale */
     x = VPD_LEFT_MARGIN;
-    vpd_puts_scaled(x, 2, "Last boot failed:", VPD_COLOR_FAIL);
+    vpd_puts_scaled(x, VPD_TOP_MARGIN, "Last boot failed:", VPD_COLOR_FAIL);
     x += 18 * VPD_CHAR_W;
-    vpd_puts_scaled(x, 2, name, VPD_COLOR_TEXT);
-    /* Add POST hex after name */
+    vpd_puts_scaled(x, VPD_TOP_MARGIN, name, VPD_COLOR_TEXT);
     {
         const char *p = name;
         uint32_t len = 0;
         while (*p) { len++; p++; }
         x += (len + 1) * VPD_CHAR_W;
-        vpd_puts_scaled(x, 2, "0x", VPD_COLOR_PENDING);
+        vpd_puts_scaled(x, VPD_TOP_MARGIN, "0x", VPD_COLOR_PENDING);
         x += 2 * VPD_CHAR_W;
-        vpd_puthex16_scaled(x, 2, last_postcode, VPD_COLOR_PENDING);
+        vpd_puthex16_scaled(x, VPD_TOP_MARGIN, last_postcode, VPD_COLOR_PENDING);
     }
 
 }
