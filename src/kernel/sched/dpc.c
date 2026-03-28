@@ -31,11 +31,6 @@ static struct dpc_queue cpu_queues[MAX_CPUS];
  * struct to keep the spinlock cache-line aligned. */
 static spinlock_t queue_locks[MAX_CPUS];
 
-/* Per-CPU re-entrancy guard for KiDispatchDpc.  Prevents infinite
- * recursion when KeLowerIrql triggers DPC drain and a DPC callback
- * re-queues work. */
-static volatile uint32_t dispatch_active[MAX_CPUS];
-
 /* ---- Initialization ------------------------------------------------------ */
 
 void dpc_init(void)
@@ -45,12 +40,9 @@ void dpc_init(void)
         cpu_queues[i].head      = (KDPC *)0;
         cpu_queues[i].tail      = (KDPC *)0;
         cpu_queues[i].depth     = 0;
-        cpu_queues[i].pending   = 0;
         cpu_queues[i].executed  = 0;
-        cpu_queues[i].overruns  = 0;
         cpu_queues[i].max_depth = 0;
         queue_locks[i].flag     = 0;
-        dispatch_active[i]      = 0;
     }
     klog(LOG_INFO, "dpc", "DPC subsystem initialized (%u CPU queues)", (uint64_t)MAX_CPUS);
 }
@@ -127,7 +119,6 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
     }
 
     q->depth++;
-    q->pending = 1;  /* signal timer path to drain */
 
     /* Track high-water mark */
     if (q->depth > q->max_depth)
@@ -143,97 +134,6 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
     spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
 
     return 1;
-}
-
-/* ---- KiDispatchDpc ------------------------------------------------------- */
-
-void KiDispatchDpc(void)
-{
-    uint32_t cpu_id = smp_this_cpu()->cpu_id;
-    struct dpc_queue *q = &cpu_queues[cpu_id];
-    uint32_t batch;
-    KIRQL prev_irql;
-
-    /* Fast path: check pending flag (set by KeInsertQueueDpc).
-     * The flag coalesces multiple inserts into a single drain pass. */
-    if (!q->pending)
-        return;
-
-    /* Re-entrancy guard: if we're already draining on this CPU
-     * (KeLowerIrql -> KiDispatchDpc -> DPC re-queues -> KeLowerIrql),
-     * bail out.  The outer invocation will pick up new work. */
-    if (dispatch_active[cpu_id])
-        return;
-    dispatch_active[cpu_id] = 1;
-
-    /* Raise to DISPATCH_LEVEL.  DPC routines run at this level --
-     * preemption is disabled, but device interrupts can still fire. */
-    KeRaiseIrql(DISPATCH_LEVEL, &prev_irql);
-
-    /* Enable interrupts at DISPATCH_LEVEL so higher-priority device
-     * interrupts (DIRQL > DISPATCH_LEVEL) can still be serviced.
-     * The LAPIC TPR is already set by KeRaiseIrql to block only
-     * lower-priority vectors. */
-    __asm__ volatile("sti" ::: "memory");
-
-    /* Drain up to DPC_BATCH_LIMIT DPCs per invocation */
-    for (batch = 0; batch < DPC_BATCH_LIMIT; batch++) {
-        KDPC *dpc;
-        KDEFERRED_ROUTINE routine;
-        void *ctx, *arg1, *arg2;
-        uint64_t irq_flags;
-
-        /* Dequeue head under lock */
-        spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
-
-        dpc = q->head;
-        if (!dpc) {
-            spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
-            break;
-        }
-
-        /* Unlink from queue */
-        q->head = dpc->next;
-        if (!q->head)
-            q->tail = (KDPC *)0;
-        q->depth--;
-
-        /* Snapshot callback and args before marking unqueued --
-         * the DPC object may be re-queued immediately by the callback */
-        routine = dpc->routine;
-        ctx     = dpc->deferred_ctx;
-        arg1    = dpc->system_arg1;
-        arg2    = dpc->system_arg2;
-
-        dpc->next   = (KDPC *)0;
-        dpc->queued = 0;
-
-        spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
-
-        /* Execute the DPC routine at DISPATCH_LEVEL */
-        if (routine)
-            routine(dpc, ctx, arg1, arg2);
-
-        q->executed++;
-    }
-
-    /* If we hit the batch limit and there are still DPCs queued,
-     * record an overrun.  The pending flag stays set so the next
-     * timer tick or KeLowerIrql crossing will drain more. */
-    if (batch >= DPC_BATCH_LIMIT && q->head) {
-        q->overruns++;
-    } else {
-        /* Queue fully drained -- clear pending flag */
-        q->pending = 0;
-    }
-
-    /* Clear re-entrancy guard before lowering IRQL.
-     * KeLowerIrql may trigger another DPC drain if DPCs were added
-     * during execution, but the guard prevents infinite recursion. */
-    dispatch_active[cpu_id] = 0;
-
-    /* Restore prior IRQL */
-    KeLowerIrql(prev_irql);
 }
 
 /* ---- KeRemoveQueueDpc ---------------------------------------------------- */

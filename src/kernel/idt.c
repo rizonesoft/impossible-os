@@ -196,13 +196,17 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
  * IRQL integration (NT model):
  *   1. On entry: save current IRQL, raise to the mapped DIRQL for this vector
  *   2. Call handler (which manages its own EOI)
- *   3. On exit: restore prior IRQL, reprogram LAPIC TPR
+ *   3. On exit: restore prior IRQL
+ *
+ * IRQL tracking is software-only — we do NOT write LAPIC TPR here.
+ * The LAPIC hardware already masks lower-priority vectors via the ISR/PPR
+ * mechanism during interrupt delivery.  Explicit TPR writes are reserved
+ * for KeRaiseIrql/KeLowerIrql when kernel code intentionally changes level.
  *
  * For nested interrupts, the saved IRQL is per-invocation on the stack,
- * so LIFO unwinding is automatic.  Higher-priority interrupts can still
- * fire because the LAPIC TPR only blocks lower-priority vectors.
+ * so LIFO unwinding is automatic.
  *
- * CPU exceptions (0-31) do NOT raise IRQL -- they are synchronous faults
+ * CPU exceptions (0-31) do NOT raise IRQL — they are synchronous faults
  * and execute at the IRQL of the faulting code.
  *
  * Returns the stack frame pointer to restore. Usually the same frame,
@@ -214,25 +218,18 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 
     /* ---- IRQL raise for hardware interrupts (vectors 32+) ----
      * CPU exceptions (0-31) are synchronous faults and run at the
-     * IRQL of the faulting code -- do not raise. */
+     * IRQL of the faulting code — do not raise. */
     struct per_cpu_data *pcpu = smp_this_cpu();
     KIRQL prev_irql = pcpu->current_irql;
-    KIRQL isr_irql;
 
     if (vec >= 32) {
-        isr_irql = vector_to_irql(vec);
+        KIRQL isr_irql = vector_to_irql(vec);
 
         /* Only raise if the mapped IRQL is higher than current.
          * Nested interrupts: a higher-priority device interrupt may
          * fire while we're already at a lower DIRQL. */
-        if (isr_irql > prev_irql) {
+        if (isr_irql > prev_irql)
             pcpu->current_irql = isr_irql;
-            /* TPR is already set by hardware for LAPIC-delivered
-             * interrupts, but set it explicitly for consistency
-             * and for PIC/legacy paths. */
-            if (lapic_available())
-                lapic_write(LAPIC_REG_TPR, irql_to_tpr(isr_irql));
-        }
     }
 
     /* ---- Dispatch to registered handler ---- */
@@ -241,7 +238,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         goto irql_restore;
     }
 
-    /* ---- Default: CPU exceptions (0-31) -- panic ---- */
+    /* ---- Default: CPU exceptions (0-31) — panic ---- */
     if (vec < 32) {
         panic_screen(frame, frame->err_code, exception_names[vec],
                      "idt.c", 0);
@@ -278,7 +275,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
                  (uint64_t)vec, (uint64_t)vec, count);
         }
 
-        /* EOI -- idempotent, prevents ISR bit getting stuck */
+        /* EOI — idempotent, prevents ISR bit getting stuck */
         lapic_eoi();
     }
 
@@ -287,13 +284,9 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 irql_restore:
     /* ---- IRQL restore on interrupt exit ----
      * Lower back to the IRQL we had before this interrupt.
-     * The LAPIC TPR is reprogrammed to accept interrupts at the
-     * restored priority level. */
-    if (vec >= 32 && pcpu->current_irql != prev_irql) {
+     * Software-only: no TPR write needed (LAPIC handles it via EOI). */
+    if (vec >= 32 && pcpu->current_irql != prev_irql)
         pcpu->current_irql = prev_irql;
-        if (lapic_available())
-            lapic_write(LAPIC_REG_TPR, irql_to_tpr(prev_irql));
-    }
 
     return result;
 }
