@@ -143,8 +143,9 @@ void post_display16(uint16_t code)
 
     if (use_fb_driver) {
         /* Post-fb_init: use framebuffer driver (handles page flip + back buffer).
-         * No background clear — overdraw directly to avoid visible flash
-         * during splash transition. The splash background serves as our bg. */
+         * Clear + draw + swap in one batch — no intermediate fb_swap between
+         * clear and draw, so there's no visible flash frame. */
+        fb_fill_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
         for (d = 0; d < 4; d++) {
             const uint8_t *g = s_hex_font[nibbles[d]];
             uint32_t gx = x0 + d * (POST16_GLYPH_W + POST16_GAP);
