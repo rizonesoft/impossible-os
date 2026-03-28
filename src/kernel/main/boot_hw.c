@@ -93,7 +93,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     {
         int last_post = boot_post_read16();
         if (last_post >= 0) {
-            serial_write("[POST] Last boot code: 0x");
+            serial_write("[BOOT] Last POST code: 0x");
             {
                 static const char hex[] = "0123456789ABCDEF";
                 serial_putchar(hex[(last_post >> 12) & 0xF]);

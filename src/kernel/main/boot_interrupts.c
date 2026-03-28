@@ -156,12 +156,14 @@ void boot_phase1(void)
     rtc_init();
     POST16(POST16_RTC_OK);
     kernel_subsystem_set_ready(SUBSYS_RTC, true);
+    boot_progress(1, "RTC", POSTCODE_RTC_INIT);
 
     /* --- Input devices --- */
     boot_splash_status("Initializing input...");
     POST16(POST16_KBD);
     keyboard_init();
     POST16(POST16_KBD_OK);
+    boot_progress(1, "KEYBOARD", POSTCODE_KBD_INIT);
     /* mouse_init() skipped — crashes on i5-11600K laptop (touchpad, no PS/2 mouse) */
     /* POST16(POST16_MOUSE); mouse_init(); POST16(POST16_MOUSE_OK); */
 
@@ -171,6 +173,7 @@ void boot_phase1(void)
     fb_init();
     POST16(POST16_FB_OK);
     kernel_subsystem_set_ready(SUBSYS_FB, true);
+    boot_progress(1, "FB", POSTCODE_FB_INIT);
     POST16(POST16_SPLASH);
     boot_splash_init();
     POST16(POST16_SPLASH_OK);
@@ -219,6 +222,7 @@ void boot_phase1(void)
     timer_hal_init();
     POST16(POST16_TIMER_OK);
     kernel_subsystem_set_ready(SUBSYS_TIMER, true);
+    boot_progress(1, "TIMER", POSTCODE_TIMER_INIT);
 
     smp_early_bsp_init();
 
