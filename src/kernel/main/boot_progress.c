@@ -126,6 +126,12 @@ void post_display16(uint16_t code)
     if (kernel_subsystem_ready(SUBSYS_DESKTOP))
         return;
 
+    /* Respect boot.conf postcode=0 once config is parsed.
+     * Before config parse (g_boot_info zeroed), always show —
+     * early POST codes are the most important for diagnostics. */
+    if (g_boot_info.config.config_found && !g_boot_info.config.postcode)
+        return;
+
     if (!g_boot_info.fb_available || !g_boot_info.fb.addr)
         return;
 

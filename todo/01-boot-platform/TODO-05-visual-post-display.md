@@ -118,7 +118,7 @@ A zero-dependency pixel font baked into a single header — renders ASCII text d
 - [x] `vpd_puthex16(fb, pitch_px, x, y, val, color)` — 4-digit hex
 - [x] `vpd_puthex8(fb, pitch_px, x, y, val, color)` — 2-digit hex
 - [x] All functions static inline in header — no .c file, no linker dependency
-- [ ] Commit: `"boot: embedded 5x7 bitmap micro-font for pre-splash VPD"`
+- [x] Commit: `"boot: embedded 5x7 bitmap micro-font for pre-splash VPD"`
 
 ## 4. Tier 1: Pre-Splash VPD Renderer
 Replace `HV_BAR` with a structured pre-splash renderer that draws named stage bars with text labels directly to VRAM. Active from the first instruction after `g_boot_info` is parsed until the splash takes over.
