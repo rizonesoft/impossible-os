@@ -106,16 +106,17 @@ static inline void outb_post(uint8_t code)
     __asm__ volatile ("outb %0, $0x80" :: "a"(code));
 }
 
-/* ---- 16-bit POST display (4 hex digits, thin font, 1× scale) ------------- */
+/* ---- 16-bit POST display (4 hex digits, thin font, 2× scale) ------------- */
 
-#define POST16_GLYPH_W   8    /* native 8px cell */
-#define POST16_GLYPH_H   8
-#define POST16_GAP        1   /* 1px gap between digits */
+#define POST16_SCALE     2
+#define POST16_GLYPH_W   (8 * POST16_SCALE)   /* 16 px */
+#define POST16_GLYPH_H   (8 * POST16_SCALE)   /* 16 px */
+#define POST16_GAP        2                     /* 2px gap between digits */
 #define POST16_MARGIN     6
 #define POST16_TOP        6
 #define POST16_DIGITS     4
-#define POST16_TOTAL_W   (POST16_GLYPH_W * POST16_DIGITS + POST16_GAP * (POST16_DIGITS - 1))  /* 35 px */
-#define POST16_TOTAL_H   (POST16_GLYPH_H + 2)  /* 10 px */
+#define POST16_TOTAL_W   (POST16_GLYPH_W * POST16_DIGITS + POST16_GAP * (POST16_DIGITS - 1))  /* 70 px */
+#define POST16_TOTAL_H   (POST16_GLYPH_H + 2)  /* 18 px */
 
 void post_display16(uint16_t code)
 {
@@ -153,7 +154,7 @@ void post_display16(uint16_t code)
     nibbles[2] = (code >>  4) & 0x0F;
     nibbles[3] =  code        & 0x0F;
 
-    /* Draw each digit at native 1× scale — thin, subtle */
+    /* Draw each digit at 2× scale with thin strokes */
     for (d = 0; d < 4; d++) {
         const uint8_t *g = s_hex_font[nibbles[d]];
         uint32_t gx = x0 + d * (POST16_GLYPH_W + POST16_GAP);
@@ -161,8 +162,14 @@ void post_display16(uint16_t code)
         for (row = 0; row < 8; row++) {
             uint8_t bits = g[row];
             for (col = 0; col < 8; col++) {
-                if (bits & (0x80 >> col))
-                    fb_put_pixel(gx + col, y0 + row, 0x00808080);
+                if (bits & (0x80 >> col)) {
+                    uint32_t px = gx + col * POST16_SCALE;
+                    uint32_t py = y0 + row * POST16_SCALE;
+                    fb_put_pixel(px,     py,     0x00808080);
+                    fb_put_pixel(px + 1, py,     0x00808080);
+                    fb_put_pixel(px,     py + 1, 0x00808080);
+                    fb_put_pixel(px + 1, py + 1, 0x00808080);
+                }
             }
         }
     }
