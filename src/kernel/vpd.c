@@ -157,8 +157,6 @@ void vpd_init(void)
 
 void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
 {
-    uint32_t x;
-
     if (!s_active)
         return;
 
