@@ -168,7 +168,7 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
             uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
             uint32_t ms = (uint32_t)(elapsed_tsc * 1000 /
                                       g_boot_info.timing.tsc_freq);
-            uint32_t tx = VPD_SEPARATOR_W - 80;
+            uint32_t tx = VPD_NAME_X + 18 * VPD_CELL_W * VPD_SCALE;
             vpd_putu32_scaled(tx, s_last_row_y, ms, VPD_COLOR_PENDING);
             /* Count digits to position "ms" suffix */
             {
