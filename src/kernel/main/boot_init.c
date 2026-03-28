@@ -134,6 +134,53 @@ int boot_post_read(void)
     return -1;
 }
 
+/* ---- 16-bit POST code system --------------------------------------------- */
+
+void boot_post_write16(uint16_t code)
+{
+    if (!g_boot_info.config.postcode) return;
+
+    /* I/O port 0x80: write high byte (hardware POST cards are 8-bit) */
+    __asm__ volatile("outb %0, $0x80" :: "a"((uint8_t)(code >> 8)));
+
+    /* UEFI NVRAM: store full 16-bit value (backward-compatible: old reader
+     * sees high byte as the 1-byte variable, new reader sees both bytes) */
+    {
+        uint32_t lvt_saved = 0;
+        int need_mask = lapic_available() &&
+                        kernel_subsystem_ready(SUBSYS_TIMER);
+        if (need_mask) {
+            lvt_saved = lapic_read(LAPIC_REG_LVT_TIMER);
+            lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved | LVT_MASKED);
+        }
+
+        uefi_set_variable(&s_post_guid, s_post_name, POST_ATTRS,
+                          sizeof(code), &code);
+
+        if (need_mask)
+            lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved);
+    }
+
+    /* On-screen display if framebuffer is available */
+    post_display16(code);
+}
+
+int boot_post_read16(void)
+{
+    uint16_t val = 0;
+    uint64_t sz = sizeof(val);
+    uint32_t attrs = 0;
+
+    uint64_t status = uefi_get_variable(&s_post_guid, s_post_name,
+                                        &attrs, &sz, &val);
+    /* Backward-compatible: if only 1 byte was stored, treat as high byte */
+    if (status == 0 && sz == 1)
+        return (int)((uint16_t)(*(uint8_t *)&val) << 8);
+    if (status == 0 && sz == 2)
+        return (int)val;
+    return -1;
+}
+
 /* ---- Boot progress emitter ----------------------------------------------- */
 
 static void serial_write_hex8(uint8_t v)

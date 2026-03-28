@@ -166,6 +166,78 @@ void post_display(uint8_t code)
     fb_swap_rect(x0, y0, POST_TOTAL_W, POST_TOTAL_H);
 }
 
+/* ---- 16-bit POST display (4 hex digits at 2× scale) ---------------------- */
+
+#define POST16_SCALE     2
+#define POST16_GLYPH_W   (POST_GLYPH_W * POST16_SCALE)   /* 16 px */
+#define POST16_GLYPH_H   (POST_GLYPH_H * POST16_SCALE)   /* 16 px */
+#define POST16_GAP       (POST_GAP * POST16_SCALE)         /* 4 px */
+#define POST16_MARGIN    8
+#define POST16_TOP       8
+#define POST16_DIGITS    4
+#define POST16_TOTAL_W   (POST16_GLYPH_W * POST16_DIGITS + POST16_GAP * (POST16_DIGITS - 1))  /* 76 px */
+#define POST16_TOTAL_H   (POST16_GLYPH_H + 4)  /* 20 px */
+
+void post_display16(uint16_t code)
+{
+    uint32_t scr_w, x0, y0;
+    int nibbles[4];
+    int d;
+
+    /* Always write high byte to I/O port 0x80 for hardware POST cards */
+    outb_post((uint8_t)(code >> 8));
+
+    /* Disabled by boot.conf postcode=0 */
+    if (!g_boot_info.config.postcode)
+        return;
+
+    /* Stop rendering once desktop compositor takes over */
+    if (kernel_subsystem_ready(SUBSYS_DESKTOP))
+        return;
+
+    /* Skip pixel writes if framebuffer not ready */
+    if (!kernel_subsystem_ready(SUBSYS_FB))
+        return;
+
+    scr_w = fb_get_width();
+    if (scr_w == 0) return;
+
+    x0 = scr_w - POST16_TOTAL_W - POST16_MARGIN;
+    y0 = POST16_TOP;
+
+    /* Clear background */
+    fb_fill_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
+
+    /* Extract 4 nibbles (high to low) */
+    nibbles[0] = (code >> 12) & 0x0F;
+    nibbles[1] = (code >>  8) & 0x0F;
+    nibbles[2] = (code >>  4) & 0x0F;
+    nibbles[3] =  code        & 0x0F;
+
+    /* Draw each digit at 2× scale */
+    for (d = 0; d < 4; d++) {
+        const uint8_t *g = s_hex_font[nibbles[d]];
+        uint32_t gx = x0 + d * (POST16_GLYPH_W + POST16_GAP);
+        uint32_t row, col;
+        for (row = 0; row < 8; row++) {
+            uint8_t bits = g[row];
+            for (col = 0; col < 8; col++) {
+                if (bits & (0x80 >> col)) {
+                    /* 2× scale: each font pixel becomes a 2×2 block */
+                    uint32_t px = gx + col * POST16_SCALE;
+                    uint32_t py = y0 + row * POST16_SCALE;
+                    fb_put_pixel(px,     py,     0x00A0A0A0);
+                    fb_put_pixel(px + 1, py,     0x00A0A0A0);
+                    fb_put_pixel(px,     py + 1, 0x00A0A0A0);
+                    fb_put_pixel(px + 1, py + 1, 0x00A0A0A0);
+                }
+            }
+        }
+    }
+
+    fb_swap_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H);
+}
+
 /* ---- Boot timeline JSON dump --------------------------------------------- */
 
 #include "kernel/fs/vfs.h"

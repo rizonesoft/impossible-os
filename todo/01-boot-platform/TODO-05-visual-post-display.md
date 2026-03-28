@@ -39,7 +39,7 @@
 
 | ⭐  | Order | Deliverable                                             | Depends On | Status |
 | --- | :---: | ------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | 4-digit POST code system (0x0000–0xFFFF)                | —          |  [ ]   |
+| 💎  |   1   | 4-digit POST code system (0x0000–0xFFFF)                | —          |  [x]   |
 | ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1         |  [ ]   |
 | ⭐  |   3   | Embedded 5×7 bitmap micro-font                          | —          |  [ ]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3     |  [ ]   |
@@ -67,8 +67,8 @@ Replace the current 2-digit POST codes (28 values in 0x10–0x63) with a 4-digit
 > [!IMPORTANT]
 > POST codes must start in the **UEFI bootloader** before `ExitBootServices` — this is the earliest possible diagnostic point. I/O port 0x80 is 8-bit on most hardware POST cards; write high byte to port 0x80. UEFI NVRAM stores the full 16-bit value. On-screen display renders all 4 hex digits once the framebuffer is available.
 
-- [ ] Define `POST16(code)` macro: writes high byte to I/O 0x80, stores full 16-bit in UEFI NVRAM, updates on-screen display when available
-- [ ] Define POST code ranges:
+- [x] Define `POST16(code)` macro: writes high byte to I/O 0x80, stores full 16-bit in UEFI NVRAM, updates on-screen display when available
+- [x] Define POST code ranges:
 
 | Range | Phase | Example codes |
 |-------|-------|---------------|
@@ -79,10 +79,10 @@ Replace the current 2-digit POST codes (28 values in 0x10–0x63) with a 4-digit
 | 0x3000–0x3FFF | Phase 3 — Desktop | 0x3000=sched, 0x3010=fonts, 0x3020=compositor |
 | 0xF000–0xFFFE | Reserved | 0xFF00=BOOT_OK, 0xFFFE=BOOT_FAILED |
 
-- [ ] `boot_post_write16(uint16_t code)` — stores 2 bytes in UEFI NVRAM (backward-compatible)
-- [ ] `boot_post_read16()` — reads 2 bytes if available, 1 byte otherwise
-- [ ] On-screen POST display: render 4 hex digits at 2× scale (16×16 px per glyph, top-right corner, existing 8×8 hex font doubled). Total display: 68×18 px (4 digits × 16px + 3 gaps × 2px, plus 2px padding)
-- [ ] Bootloader: replace existing `post_code(uint8_t)` calls with `POST16()` equivalents using 0xB000 range
+- [x] `boot_post_write16(uint16_t code)` — stores 2 bytes in UEFI NVRAM (backward-compatible)
+- [x] `boot_post_read16()` — reads 2 bytes if available, 1 byte otherwise
+- [x] On-screen POST display: render 4 hex digits at 2× scale (16×16 px per glyph, top-right corner, existing 8×8 hex font doubled). Total display: 76×20 px
+- [x] Bootloader: replaced `post_code(uint8_t)` with `post_code16(uint16_t)` using 0xB000 range + serial output
 - [ ] Commit: `"boot: 4-digit POST code system with UEFI bootloader coverage"`
 
 **Test checkpoint:** QEMU: serial shows `[BOOT] POST 0xB001` before kernel entry. After kernel: `[PHASE0] PMM (0x0020)`. UEFI NVRAM stores 16-bit value. Bare metal: POST code reader shows high byte on port 0x80.

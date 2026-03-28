@@ -100,6 +100,120 @@ typedef enum {
 /* Sentinel POST codes written to UEFI NVRAM for post-mortem diagnosis */
 #define POSTCODE_HV_DETECT      0x26  /* reuse BOOT_CFG slot */
 
+/* ---- 16-bit POST code system (4-digit hex) --------------------------------
+ *
+ * Each phase gets 0x1000 codes.  Entry = even, exit = odd.
+ * UEFI bootloader uses 0xB000 range (before kernel exists).
+ * Hardware POST cards see the high byte on I/O port 0x80.
+ * UEFI NVRAM stores the full 16-bit value for post-mortem. */
+
+/* UEFI Bootloader (0xB000–0xBFFF) */
+#define POST16_EFI_MAIN         0xB001
+#define POST16_EFI_MAIN_OK      0xB002
+#define POST16_GOP_INIT         0xB010
+#define POST16_GOP_INIT_OK      0xB011
+#define POST16_KERNEL_LOAD      0xB020
+#define POST16_KERNEL_LOAD_OK   0xB021
+#define POST16_EXIT_BS          0xB030
+#define POST16_EXIT_BS_OK       0xB031
+#define POST16_PAGE_TABLES      0xB040
+#define POST16_PAGE_TABLES_OK   0xB041
+#define POST16_KERNEL_JUMP      0xB050
+
+/* Phase 0 — Critical Init (0x0000–0x0FFF) */
+#define POST16_SERIAL           0x0010
+#define POST16_SERIAL_OK        0x0011
+#define POST16_PMM              0x0020
+#define POST16_PMM_OK           0x0021
+#define POST16_VMM              0x0030
+#define POST16_VMM_OK           0x0031
+#define POST16_HEAP             0x0040
+#define POST16_HEAP_OK          0x0041
+#define POST16_KLOG             0x0050
+#define POST16_KLOG_OK          0x0051
+#define POST16_CPUID            0x0060
+#define POST16_CPUID_OK         0x0061
+#define POST16_CPU_HARDEN       0x0070
+#define POST16_CPU_HARDEN_OK    0x0071
+#define POST16_NX_POLICY        0x0080
+#define POST16_NX_POLICY_OK     0x0081
+#define POST16_SIMD             0x0090
+#define POST16_SIMD_OK          0x0091
+
+/* Phase 1 — Platform Services (0x1000–0x1FFF) */
+#define POST16_GDT              0x1000
+#define POST16_GDT_OK           0x1001
+#define POST16_IDT              0x1010
+#define POST16_IDT_OK           0x1011
+#define POST16_ACPI             0x1020
+#define POST16_ACPI_OK          0x1021
+#define POST16_LAPIC            0x1030
+#define POST16_LAPIC_OK         0x1031
+#define POST16_IOAPIC           0x1034
+#define POST16_IOAPIC_OK        0x1035
+#define POST16_TIMER            0x1040
+#define POST16_TIMER_OK         0x1041
+#define POST16_TIMER_CAL        0x1042
+#define POST16_TIMER_INIT       0x1044
+#define POST16_RTC              0x1050
+#define POST16_RTC_OK           0x1051
+#define POST16_KBD              0x1060
+#define POST16_KBD_OK           0x1061
+#define POST16_MOUSE            0x1070
+#define POST16_MOUSE_OK         0x1071
+#define POST16_FB               0x1080
+#define POST16_FB_OK            0x1081
+#define POST16_SPLASH           0x1090
+#define POST16_SPLASH_OK        0x1091
+
+/* Phase 2 — System Services (0x2000–0x2FFF) */
+#define POST16_PCI              0x2000
+#define POST16_PCI_OK           0x2001
+#define POST16_XHCI             0x2010
+#define POST16_XHCI_OK          0x2011
+#define POST16_NIC              0x2020
+#define POST16_NIC_OK           0x2021
+#define POST16_NET              0x2030
+#define POST16_NET_OK           0x2031
+#define POST16_ATA              0x2040
+#define POST16_ATA_OK           0x2041
+#define POST16_AHCI             0x2050
+#define POST16_AHCI_OK          0x2051
+#define POST16_AHCI_MSI         0x2052
+#define POST16_AHCI_MSI_OK      0x2053
+#define POST16_VFS              0x2060
+#define POST16_VFS_OK           0x2061
+#define POST16_PARTITION        0x2070
+#define POST16_PARTITION_OK     0x2071
+#define POST16_REGISTRY         0x2080
+#define POST16_REGISTRY_OK      0x2081
+#define POST16_SMP              0x2090
+#define POST16_SMP_OK           0x2091
+
+/* Phase 3 — Desktop (0x3000–0x3FFF) */
+#define POST16_SCHED            0x3000
+#define POST16_SCHED_OK         0x3001
+#define POST16_WQ               0x3010
+#define POST16_WQ_OK            0x3011
+#define POST16_FONTS            0x3020
+#define POST16_FONTS_OK         0x3021
+#define POST16_DESKTOP          0x3030
+#define POST16_DESKTOP_OK       0x3031
+#define POST16_COMPOSITOR       0x3040
+
+/* Sentinels (0xF000–0xFFFE) */
+#define POST16_BOOT_OK          0xFF00
+#define POST16_BOOT_FAILED      0xFFFE
+
+/* Write 16-bit POST code: high byte to I/O 0x80, full value to NVRAM. */
+void boot_post_write16(uint16_t code);
+
+/* Read last 16-bit POST code from NVRAM.  Returns code or -1. */
+int boot_post_read16(void);
+
+/* Convenience: write POST16 to I/O 0x80 + NVRAM + serial. */
+#define POST16(code) boot_post_write16(code)
+
 /* --- Hypervisor feature flags (stored in g_boot_info.hv_flags) ----------- */
 #define HV_FLAG_TSC_ENLIGHTENMENT   (1u << 0)  /* Hyper-V TSC reference counter MSR */
 #define HV_FLAG_TLBFLUSH_HYPERCALL  (1u << 1)  /* Hyper-V TLB flush hypercall */
