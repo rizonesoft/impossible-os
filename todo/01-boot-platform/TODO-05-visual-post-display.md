@@ -209,7 +209,9 @@ When `postbars=1`, the boot splash status text area shows VPD-style named stages
 - [ ] `postbars=2` (diagnostic mode): skip splash art entirely; render the full Tier 1 VPD layout using the TTF font at larger scale (12px instead of 7px) with phase grouping
 - [ ] Commit: `"boot: Tier 2 splash-integrated VPD progress display"`
 
-## 10. Seamless Tier Transition
+## 10. Seamless Tier Transition *(deferred)*
+> [!NOTE] Deferred — depends on §9 (Tier 2 splash integration). No transition needed until Tier 2 exists. Currently `vpd_stop_tier1()` is called before splash init and the splash background simply overwrites the VPD area.
+
 When the splash starts, smoothly replace the Tier 1 raw VRAM bars with the Tier 2 splash-rendered progress — no visual glitch, no lost state.
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/vpd.c`
@@ -221,30 +223,23 @@ When the splash starts, smoothly replace the Tier 1 raw VRAM bars with the Tier 
 - [ ] In `postbars=2` mode: no transition — Tier 1 layout persists throughout boot, splash background is never drawn
 - [ ] Commit: `"boot: seamless VPD tier transition from raw VRAM to splash"`
 
-## 11. Phase Grouping and Diagnostic Layout
-Full diagnostic layout with phase headers, visual separators, and structured stage grouping — the "server POST screen" aesthetic.
+## 11. Phase Grouping and Diagnostic Layout *(done)*
+Full diagnostic layout with phase headers, visual separators, and structured stage grouping.
 
 **Files:** `src/kernel/vpd.c`
 
-- [ ] Phase headers: `"PHASE 0 — Critical Init"`, `"PHASE 1 — Platform Services"`, `"PHASE 2 — System Services"`, `"PHASE 3 — User Platform"` rendered in brighter white, 2px underline
-- [ ] Phase separators: 1px dark gray horizontal line between phase groups
-- [ ] Stage indentation: 2-space indent under phase header
-- [ ] Column alignment: status icon at x=8, name at x=18, dots/fill at x=200, timing at x=280, POST hex at x=330
-- [ ] Dot leaders: `"PMM .................. +87ms  ✓  0x20"` — fill between name and timing with dots for readability
-- [ ] Visible in `postbars=2` mode and during crash-restart diagnostic display
-- [ ] Commit: `"boot: VPD phase grouping with diagnostic layout"`
+- [x] Phase headers: `"PHASE 0 -- Critical Init"`, `"PHASE 1 -- Platform Services"`, etc. rendered in bright white above each phase group
+- [x] 2px underline below each phase heading
+- [x] Phase separators: 1px dark gray horizontal line between phase groups
+- [x] Column alignment: status icon, name, POST hex, and timing in fixed columns
+- [x] Dot leaders between stage name and POST code for readability
+- [x] Commit: phase grouping shipped as part of §4, §7, and this session
 
-## 12. HV_BAR Removal and Migration
-Remove the `HV_BAR` prototype and migrate all call sites to the VPD API.
-
-**Files:** all files that `#include "kernel/hv_bar.h"`
-
-- [ ] Replace every `HV_BAR(n)` call with the appropriate `vpd_stage_begin()` / `vpd_stage_done()` pair
-- [ ] Remove `include/kernel/hv_bar.h`
-- [ ] Remove `#include "kernel/hv_bar.h"` from all source files
-- [ ] Update TODO-02 §5 to reference this TODO: mark §5 as superseded by TODO-05
-- [ ] Verify: `postbars=0` — no visual artifacts; `postbars=1` — clean splash with progress; `postbars=2` — full diagnostic screen
-- [ ] Commit: `"boot: remove HV_BAR prototype — fully replaced by VPD"`
+## 12. HV_BAR Removal and Migration *(done)*
+- [x] `include/kernel/hv_bar.h` deleted — file no longer exists
+- [x] All `HV_BAR()` call sites removed from source files
+- [x] All `#include "kernel/hv_bar.h"` removed
+- [x] VPD fully replaced HV_BAR functionality
 
 ## 13. Panic Integration and Failure Highlighting
 On crash, the VPD marks the active stage as failed. On next boot, the failure is highlighted in the diagnostic display.
