@@ -142,8 +142,9 @@ void post_display16(uint16_t code)
     nibbles[3] =  code        & 0x0F;
 
     if (use_fb_driver) {
-        /* Post-fb_init: use framebuffer driver (handles page flip + back buffer) */
-        fb_fill_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
+        /* Post-fb_init: use framebuffer driver (handles page flip + back buffer).
+         * No background clear — overdraw directly to avoid visible flash
+         * during splash transition. The splash background serves as our bg. */
         for (d = 0; d < 4; d++) {
             const uint8_t *g = s_hex_font[nibbles[d]];
             uint32_t gx = x0 + d * (POST16_GLYPH_W + POST16_GAP);
@@ -154,10 +155,10 @@ void post_display16(uint16_t code)
                     if (bits & (0x80 >> col)) {
                         uint32_t px = gx + col * POST16_SCALE;
                         uint32_t py = y0 + row * POST16_SCALE;
-                        fb_put_pixel(px,     py,     0x00808080);
-                        fb_put_pixel(px + 1, py,     0x00808080);
-                        fb_put_pixel(px,     py + 1, 0x00808080);
-                        fb_put_pixel(px + 1, py + 1, 0x00808080);
+                        fb_put_pixel(px,     py,     0x00FFFFFF);
+                        fb_put_pixel(px + 1, py,     0x00FFFFFF);
+                        fb_put_pixel(px,     py + 1, 0x00FFFFFF);
+                        fb_put_pixel(px + 1, py + 1, 0x00FFFFFF);
                     }
                 }
             }
@@ -182,10 +183,10 @@ void post_display16(uint16_t code)
                         uint32_t px = gx + col * POST16_SCALE;
                         uint32_t py = y0 + row * POST16_SCALE;
                         if (px + 1 < scr_w && py + 1 < g_boot_info.fb.height) {
-                            fb[py       * pitch_px + px]     = 0x00808080;
-                            fb[py       * pitch_px + px + 1] = 0x00808080;
-                            fb[(py + 1) * pitch_px + px]     = 0x00808080;
-                            fb[(py + 1) * pitch_px + px + 1] = 0x00808080;
+                            fb[py       * pitch_px + px]     = 0x00FFFFFF;
+                            fb[py       * pitch_px + px + 1] = 0x00FFFFFF;
+                            fb[(py + 1) * pitch_px + px]     = 0x00FFFFFF;
+                            fb[(py + 1) * pitch_px + px + 1] = 0x00FFFFFF;
                         }
                     }
                 }
