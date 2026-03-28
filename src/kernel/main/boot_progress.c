@@ -100,12 +100,6 @@ static const uint8_t s_hex_font[16][8] = {
 #define POST_TOTAL_W (POST_GLYPH_W * 2 + POST_GAP)  /* 18 px */
 #define POST_TOTAL_H (POST_GLYPH_H + 2)              /* 10 px */
 
-/* Port 0x80 write */
-static inline void outb_post(uint8_t code)
-{
-    __asm__ volatile ("outb %0, $0x80" :: "a"(code));
-}
-
 /* ---- 16-bit POST display (4 hex digits, thin font, 2× scale) ------------- */
 
 #define POST16_SCALE     2
