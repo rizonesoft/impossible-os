@@ -39,24 +39,70 @@
 
 | ⭐  | Order | Deliverable                                             | Depends On | Status |
 | --- | :---: | ------------------------------------------------------- | ---------- | :----: |
-| ⭐  |   1   | Embedded 5×7 bitmap micro-font                          | —          |  [ ]   |
-| 💎  |   2   | Tier 1: Pre-splash VPD renderer                         | §1         |  [ ]   |
-| 💎  |   3   | `boot.conf` `postbars` configuration                    | §2         |  [ ]   |
-| 💎  |   4   | Named stages with TSC timing                            | §2         |  [ ]   |
-| 💎  |   5   | Status indicators and progress bar                      | §4         |  [ ]   |
-| ⭐  |   6   | NVRAM crash persistence and "last boot failed" display  | §4         |  [ ]   |
-| 💎  |   7   | Tier 2: Splash-integrated progress                      | §4, §5     |  [ ]   |
-| 💎  |   8   | Seamless tier transition                                | §2, §7     |  [ ]   |
-| ⭐  |   9   | Phase grouping and diagnostic layout                    | §5         |  [ ]   |
-| 💎  |  10   | HV_BAR removal and migration                            | §2, §4     |  [ ]   |
-| ⭐  |  11   | Panic integration and failure highlighting              | §6, §9     |  [ ]   |
+| 💎  |   1   | 4-digit POST code system (0x0000–0xFFFF)                | —          |  [ ]   |
+| ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1         |  [ ]   |
+| ⭐  |   3   | Embedded 5×7 bitmap micro-font                          | —          |  [ ]   |
+| 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3     |  [ ]   |
+| 💎  |   5   | `boot.conf` `postbars` configuration                    | §4         |  [ ]   |
+| 💎  |   6   | Named stages with TSC timing                            | §4         |  [ ]   |
+| 💎  |   7   | Status indicators and progress bar                      | §6         |  [ ]   |
+| ⭐  |   8   | NVRAM crash persistence and "last boot failed" display  | §6         |  [ ]   |
+| 💎  |   9   | Tier 2: Splash-integrated progress                      | §6, §7     |  [ ]   |
+| 💎  |  10   | Seamless tier transition                                | §4, §9     |  [ ]   |
+| ⭐  |  11   | Phase grouping and diagnostic layout                    | §7         |  [ ]   |
+| 💎  |  12   | HV_BAR removal and migration                            | §4, §6     |  [ ]   |
+| ⭐  |  13   | Panic integration and failure highlighting              | §8, §11    |  [ ]   |
 
 > 💎 = parity — Windows has boot progress display (logo + dots); Linux has `plymouth` splash and `systemd-analyze blame`.
 > ⭐ = exclusive — embedded micro-font pre-splash diagnostics, NVRAM crash persistence display, and full timing waterfall are not available in Windows or Linux at the kernel level without external tools.
 
 ---
 
-## 1. Embedded 5×7 Bitmap Micro-Font
+## 1. 4-Digit POST Code System (0x0000–0xFFFF)
+
+Replace the current 2-digit POST codes (28 values in 0x10–0x63) with a 4-digit system that gives every subsystem — including the UEFI bootloader — its own range. POST codes are the first diagnostic signal, active before any display, font, or kernel subsystem exists.
+
+**Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_init.h`, `src/kernel/main/boot_init.c`, `src/kernel/main/boot_progress.c`
+
+> [!IMPORTANT]
+> POST codes must start in the **UEFI bootloader** before `ExitBootServices` — this is the earliest possible diagnostic point. I/O port 0x80 is 8-bit on most hardware POST cards; write high byte to port 0x80. UEFI NVRAM stores the full 16-bit value. On-screen display renders all 4 hex digits once the framebuffer is available.
+
+- [ ] Define `POST16(code)` macro: writes high byte to I/O 0x80, stores full 16-bit in UEFI NVRAM, updates on-screen display when available
+- [ ] Define POST code ranges:
+
+| Range | Phase | Example codes |
+|-------|-------|---------------|
+| 0xB000–0xBFFF | UEFI Bootloader | 0xB001=efi_main, 0xB010=GOP, 0xB020=kernel_load, 0xB030=ExitBS, 0xB040=page_tables, 0xB050=kernel_jump |
+| 0x0000–0x0FFF | Phase 0 — Critical Init | 0x0010=serial, 0x0020=PMM_enter, 0x0021=PMM_exit, 0x0030=VMM |
+| 0x1000–0x1FFF | Phase 1 — Platform | 0x1000=GDT, 0x1010=IDT, 0x1020=ACPI, 0x1030=LAPIC, 0x1040=timer |
+| 0x2000–0x2FFF | Phase 2 — System | 0x2000=PCI, 0x2010=NIC, 0x2020=AHCI, 0x2060=VFS |
+| 0x3000–0x3FFF | Phase 3 — Desktop | 0x3000=sched, 0x3010=fonts, 0x3020=compositor |
+| 0xF000–0xFFFE | Reserved | 0xFF00=BOOT_OK, 0xFFFE=BOOT_FAILED |
+
+- [ ] `boot_post_write16(uint16_t code)` — stores 2 bytes in UEFI NVRAM (backward-compatible)
+- [ ] `boot_post_read16()` — reads 2 bytes if available, 1 byte otherwise
+- [ ] On-screen POST display: render 4 hex digits (top-right corner, existing 8×8 hex font)
+- [ ] Bootloader: replace existing `post_code(uint8_t)` calls with `POST16()` equivalents using 0xB000 range
+- [ ] Commit: `"boot: 4-digit POST code system with UEFI bootloader coverage"`
+
+**Test checkpoint:** QEMU: serial shows `[BOOT] POST 0xB001` before kernel entry. After kernel: `[PHASE0] PMM (0x0020)`. UEFI NVRAM stores 16-bit value. Bare metal: POST code reader shows high byte on port 0x80.
+
+## 2. POST Codes in Every Boot Function
+
+Instrument every function — from UEFI `efi_main` through kernel `compositor_run` — with entry/exit POST codes. A crash between entry (even) and exit (odd) pinpoints the exact function.
+
+**Files:** `src/boot/uefi/bootx64.c`, all `boot_*.c` files, all driver `*_init()` functions
+
+- [ ] UEFI Bootloader: `efi_main` (0xB001/02), `init_gop` (0xB010/11), `load_kernel` (0xB020/21), `get_memory_map` (0xB030/31), `ExitBootServices` (0xB040/41), `setup_page_tables` (0xB050/51), `jump_to_kernel` (0xB060)
+- [ ] Phase 0: `serial_init` (0x0010/11), `pmm_init` (0x0020/21), `vmm_init` (0x0030/31), `heap_init` (0x0040/41), `klog_early_init` (0x0050/51), `cpuid_init` (0x0060/61), `cpu_harden` (0x0070/71), `vmm_apply_nx_policy` (0x0080/81), `simd_enable_avx` (0x0090/91)
+- [ ] Phase 1: `gdt_init` (0x1000/01), `idt_init` (0x1010/11), `acpi_init` (0x1020/21), `lapic_init` (0x1030/31), `ioapic_init` (0x1034/35), `timer_hal_init` (0x1040/41), `rtc_init` (0x1050/51), `keyboard_init` (0x1060/61), `mouse_init` (0x1070/71), `fb_init` (0x1080/81), `boot_splash_init` (0x1090/91)
+- [ ] Phase 2: `pci_scan` (0x2000/01), `xhci_init` (0x2010/11), `rtl8139_init` (0x2020/21), `ahci_init` (0x2050/51), `ahci_setup_interrupts` (0x2052/53), `vfs_init` (0x2060/61), `registry_init` (0x2080/81), `smp_init` (0x2090/91)
+- [ ] Phase 3: `task_init` (0x3000/01), `font_mgr_init` (0x3020/21), `desktop_init` (0x3030/31), `compositor_run` (0x3040)
+- [ ] Commit: `"boot: POST16 in every function from UEFI efi_main through compositor"`
+
+**Test checkpoint:** Force crash in `mouse_init`. Reboot. Serial shows "Last boot failed at: 0x1070 (mouse_init)". Bare metal: NVRAM contains 0x1070, next boot displays it. Pinpointed in seconds, not hours.
+
+## 3. Embedded 5×7 Bitmap Micro-Font
 A zero-dependency pixel font baked into a single header — renders ASCII text directly to VRAM before any kernel subsystem exists. This is the foundation for all VPD text rendering in Tier 1.
 
 **Files:** `include/kernel/vpd_font.h` (new)
@@ -73,7 +119,7 @@ A zero-dependency pixel font baked into a single header — renders ASCII text d
 - [ ] All functions inline or `static` in the header — no .c file, no linker dependency
 - [ ] Commit: `"boot: embedded 5x7 bitmap micro-font for pre-splash VPD"`
 
-## 2. Tier 1: Pre-Splash VPD Renderer
+## 4. Tier 1: Pre-Splash VPD Renderer
 Replace `HV_BAR` with a structured pre-splash renderer that draws named stage bars with text labels directly to VRAM. Active from the first instruction after `g_boot_info` is parsed until the splash takes over.
 
 **Files:** `include/kernel/vpd.h` (new), `src/kernel/vpd.c` (new)
@@ -95,7 +141,7 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 - [ ] Replace all `HV_BAR(n)` calls with `vpd_stage_begin`/`vpd_stage_done` pairs
 - [ ] Commit: `"boot: Tier 1 VPD renderer — pre-splash named stages with text"`
 
-## 3. `boot.conf` `postbars` Configuration
+## 5. `boot.conf` `postbars` Configuration
 Add the `postbars` key to `boot.conf` parsing so the VPD can be configured without recompilation.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
@@ -107,7 +153,7 @@ Add the `postbars` key to `boot.conf` parsing so the VPD can be configured witho
 - [ ] Add `postbars=off` to default `boot.conf` with comment
 - [ ] Commit: `"boot: postbars boot.conf key for VPD configuration"`
 
-## 4. Named Stages with TSC Timing
+## 6. Named Stages with TSC Timing
 Wire the VPD into `boot_stage_report()` so every named stage automatically appears in the VPD with millisecond timing from the TSC.
 
 **Files:** `src/kernel/main/boot_progress.c`, `src/kernel/vpd.c`
@@ -121,7 +167,7 @@ Wire the VPD into `boot_stage_report()` so every named stage automatically appea
 - [ ] Stage name rendering uses the `s_meta[].name` strings already defined in `boot_progress.c`
 - [ ] Commit: `"boot: VPD named stages with TSC-derived millisecond timing"`
 
-## 5. Status Indicators and Progress Bar
+## 7. Status Indicators and Progress Bar
 Add visual status icons and a proportional progress bar below the stage list.
 
 **Files:** `src/kernel/vpd.c`, `include/kernel/vpd.h`
@@ -132,7 +178,7 @@ Add visual status icons and a proportional progress bar below the stage list.
 - [ ] Each `vpd_stage_begin()` updates pending stages below to gray-square + gray-text (future preview)
 - [ ] Commit: `"boot: VPD status indicators + progress bar"`
 
-## 6. NVRAM Crash Persistence and "Last Boot Failed" Display
+## 8. NVRAM Crash Persistence and "Last Boot Failed" Display
 On crash-restart, display exactly where the previous boot failed — always active regardless of `postbars` setting. This is the killer feature: you crash, reboot, and the screen tells you what happened.
 
 **Files:** `src/kernel/vpd.c`, `src/kernel/main/boot_hw.c`, `src/kernel/main/boot_progress.c`
@@ -149,7 +195,7 @@ On crash-restart, display exactly where the previous boot failed — always acti
 - [ ] Serial log: `[POST] Last boot failed at: STAGE_NAME (0xNN)` (enhances existing serial message)
 - [ ] Commit: `"boot: NVRAM crash persistence — 'Last boot failed at' display"`
 
-## 7. Tier 2: Splash-Integrated Progress
+## 9. Tier 2: Splash-Integrated Progress
 When `postbars=1`, the boot splash status text area shows VPD-style named stages with timing instead of generic "Setting up interrupts..." text.
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/vpd.c`
@@ -160,7 +206,7 @@ When `postbars=1`, the boot splash status text area shows VPD-style named stages
 - [ ] `postbars=2` (diagnostic mode): skip splash art entirely; render the full Tier 1 VPD layout using the TTF font at larger scale (12px instead of 7px) with phase grouping
 - [ ] Commit: `"boot: Tier 2 splash-integrated VPD progress display"`
 
-## 8. Seamless Tier Transition
+## 10. Seamless Tier Transition
 When the splash starts, smoothly replace the Tier 1 raw VRAM bars with the Tier 2 splash-rendered progress — no visual glitch, no lost state.
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/vpd.c`
@@ -172,7 +218,7 @@ When the splash starts, smoothly replace the Tier 1 raw VRAM bars with the Tier 
 - [ ] In `postbars=2` mode: no transition — Tier 1 layout persists throughout boot, splash background is never drawn
 - [ ] Commit: `"boot: seamless VPD tier transition from raw VRAM to splash"`
 
-## 9. Phase Grouping and Diagnostic Layout
+## 11. Phase Grouping and Diagnostic Layout
 Full diagnostic layout with phase headers, visual separators, and structured stage grouping — the "server POST screen" aesthetic.
 
 **Files:** `src/kernel/vpd.c`
@@ -185,7 +231,7 @@ Full diagnostic layout with phase headers, visual separators, and structured sta
 - [ ] Visible in `postbars=2` mode and during crash-restart diagnostic display
 - [ ] Commit: `"boot: VPD phase grouping with diagnostic layout"`
 
-## 10. HV_BAR Removal and Migration
+## 12. HV_BAR Removal and Migration
 Remove the `HV_BAR` prototype and migrate all call sites to the VPD API.
 
 **Files:** all files that `#include "kernel/hv_bar.h"`
@@ -197,7 +243,7 @@ Remove the `HV_BAR` prototype and migrate all call sites to the VPD API.
 - [ ] Verify: `postbars=0` — no visual artifacts; `postbars=1` — clean splash with progress; `postbars=2` — full diagnostic screen
 - [ ] Commit: `"boot: remove HV_BAR prototype — fully replaced by VPD"`
 
-## 11. Panic Integration and Failure Highlighting
+## 13. Panic Integration and Failure Highlighting
 On crash, the VPD marks the active stage as failed. On next boot, the failure is highlighted in the diagnostic display.
 
 **Files:** `src/kernel/vpd.c`, `src/kernel/panic.c`

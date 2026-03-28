@@ -14,7 +14,7 @@
 > - CPU activation sequencing (EFER before VMM, CR4 order) → owned by `TODO-04-cpu-boot-sequencing.md`
 > - Timer HAL architecture and calibration waterfall design → owned by `TODO-03-interrupt-timer-arch.md`
 > - Visual boot progress display (VPD) → owned by `TODO-05-visual-post-display.md`
-> - Panic forensic evidence struct and cross-boot persistence → owned by `TODO-02-boot-diagnostics.md §6`
+> - Panic forensic evidence struct and cross-boot persistence → owned by `TODO-02-boot-diagnostics.md §2`
 >
 > **This TODO owns:** making all of the above **work on real hardware** — diagnostics, detection, fallbacks, IST, ACPI gating, graceful degradation, and the hw interrupt investigation.
 
@@ -36,13 +36,13 @@
 - [`src/kernel/drivers/framebuffer.c`](../../src/kernel/drivers/framebuffer.c) — `fb_swap`/`fb_swap_rect` cli/sti
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) — FADT parsing, MADT, PM Timer
 - [`include/kernel/hv_bar.h`](../../include/kernel/hv_bar.h) — debug bars (to be replaced)
-- → XREF: `TODO-02-boot-diagnostics.md §6` — panic forensic evidence struct (this TODO validates it works on bare metal)
+- → XREF: `TODO-02-boot-diagnostics.md §2` — panic forensic evidence struct (this TODO validates it works on bare metal)
 - → XREF: `TODO-03-interrupt-timer-arch.md` — timer HAL design (this TODO investigates why hw interrupts crash on bare metal)
-- → XREF: `TODO-04-cpu-boot-sequencing.md §2,§4` — CPU hardening activation order (this TODO does NOT reimplement; verifies on bare metal)
-- → XREF: `TODO-05-visual-post-display.md` — VPD replaces HV_BAR (this TODO's §1-§2 POST codes feed VPD)
+- → XREF: `TODO-04-cpu-boot-sequencing.md §2,§2` — CPU hardening activation order (this TODO does NOT reimplement; verifies on bare metal)
+- → XREF: `TODO-05-visual-post-display.md §1-§2` — 4-digit POST code system and per-function instrumentation (moved from this TODO to TODO-05)
 - → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` — NX/SMEP/SMAP implementation (this TODO does NOT reimplement; handles bare-metal quirks like shared page tables)
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` — boot_progress() infrastructure (this TODO consumes it)
-- → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` — UC MMIO mapping for HPET/AHCI
+- → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` — UC MMIO mapping for HPET/AHCI
 
 ## Outcome
 
@@ -57,87 +57,44 @@
 
 | ⭐  | Order | Deliverable                                          | Depends On | Status |
 | --- | :---: | ---------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Fine-grained POST code system (4-digit hex)          | —          |  [ ]   |
-| ⭐  |   2   | POST code in every boot function                     | §1         |  [ ]   |
-| 💎  |   3   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)          | —          |  [ ]   |
-| 💎  |   4   | IST stacks for critical exceptions                   | —          |  [ ]   |
-| 💎  |   5   | Hardware interrupt root cause investigation          | §4         |  [ ]   |
-| 💎  |   6   | ACPI FADT boot architecture flags                    | —          |  [ ]   |
-| 💎  |   7   | PS/2 controller detection and safe init              | §6         |  [ ]   |
-| 💎  |   8   | AHCI interrupt hardening                             | §3, §5     |  [ ]   |
-| 💎  |   9   | Resilient boot with graceful degradation             | §1, §2     |  [ ]   |
-| 💎  |  10   | Per-process page tables (minimal base)               | §3         |  [ ]   |
-| 💎  |  11   | CPU security activation and verification             | §6, §10    |  [ ]   |
-| 💎  |  12   | Boot order hardening (timer-last, UEFI-safe)         | §5         |  [ ]   |
-| ⭐  |  13   | `boot.conf` subsystem skip list                      | §9         |  [ ]   |
-| 💎  |  14   | CPU feature minimum requirements and verification    | §6, §11    |  [ ]   |
-| 💎  |  15   | Bare-metal test matrix and validation plan           | §5         |  [ ]   |
+| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)          | —          |  [ ]   |
+| 💎  |   2   | IST stacks for critical exceptions                   | —          |  [ ]   |
+| 💎  |   1   | Hardware interrupt root cause investigation          | §2         |  [ ]   |
+| 💎  |   2   | ACPI FADT boot architecture flags                    | —          |  [ ]   |
+| 💎  |   1   | PS/2 controller detection and safe init              | §2         |  [ ]   |
+| 💎  |   2   | AHCI interrupt hardening                             | §1, §1     |  [ ]   |
+| 💎  |   1   | Resilient boot with graceful degradation             | §1, §2     |  [ ]   |
+| 💎  |   2   | Per-process page tables (minimal base)               | §1         |  [ ]   |
+| 💎  |   1   | CPU security activation and verification             | §2, §2    |  [ ]   |
+| 💎  |   2   | Boot order hardening (timer-last, UEFI-safe)         | §1         |  [ ]   |
+| ⭐  |   1   | `boot.conf` subsystem skip list                      | §1         |  [ ]   |
+| 💎  |   2   | CPU feature minimum requirements and verification    | §2, §1    |  [ ]   |
+| 💎  |   1   | Bare-metal test matrix and validation plan           | §1         |  [ ]   |
 
 > 💎 = parity — Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive — 4-digit POST codes in every function and a configurable skip list are not standard in any OS kernel.
 
 ---
 
-## 1. Fine-Grained POST Code System (4-Digit Hex)
-Replace the current 2-digit POST codes (28 values in 0x10–0x63) with a 4-digit system (0x0000–0xFFFF) that gives every subsystem its own range. Each function entry and exit gets a unique code.
-
-**Files:** `include/kernel/boot_init.h`, `src/kernel/main/boot_init.c`, `src/kernel/main/boot_progress.c`
-
-> [!IMPORTANT]
-> I/O port 0x80 is 8-bit on most hardware POST cards. For 4-digit codes, write high byte to port 0x80 and low byte to port 0x81 (or use port 0x80 for the most-significant byte only). UEFI NVRAM stores the full 16-bit value. On-screen display renders all 4 hex digits.
-
-- [ ] Define `POST16(code)` macro: writes high byte to I/O 0x80, stores full 16-bit in UEFI NVRAM, updates on-screen display
-- [ ] Define POST code ranges — each Phase gets 0x1000 codes:
-
-| Range | Phase | Example codes |
-|-------|-------|---------------|
-| 0x0000–0x0FFF | Phase 0 — Critical Init | 0x0010=serial, 0x0020=PMM_enter, 0x0021=PMM_exit, 0x0030=VMM_enter |
-| 0x1000–0x1FFF | Phase 1 — Platform | 0x1000=GDT, 0x1010=IDT, 0x1020=ACPI, 0x1030=LAPIC, 0x1040=timer_enter, 0x1041=timer_calibrate, 0x1042=timer_init, 0x1043=timer_exit |
-| 0x2000–0x2FFF | Phase 2 — System | 0x2000=PCI_enter, 0x2001=PCI_bus0, 0x2010=NIC, 0x2020=AHCI_enter, 0x2021=AHCI_MSI |
-| 0x3000–0x3FFF | Phase 3 — Desktop | 0x3000=sched, 0x3010=fonts, 0x3020=compositor |
-| 0xF000–0xFFFE | Reserved | 0xFF00=BOOT_OK, 0xFFFE=BOOT_FAILED |
-
-- [ ] `boot_post_write16(uint16_t code)` — stores 2 bytes in UEFI NVRAM (backward-compatible: old reader sees high byte)
-- [ ] `boot_post_read16()` — reads 2 bytes if available, 1 byte otherwise
-- [ ] On-screen POST display: render 4 hex digits (top-right corner, using existing 8×8 hex font, scaled)
-- [ ] Keep backward compatibility: old `boot_progress()` still works, internally calls `POST16()`
-- [ ] Commit: `"boot: 4-digit POST code system (0x0000–0xFFFF) with NVRAM persistence"`
-
-**Test checkpoint:** Build, boot on QEMU. Verify serial shows `[PHASE1] TIMER (0x1040)` style codes. Verify UEFI NVRAM stores 16-bit value. Verify on-screen shows 4-digit hex.
-
-## 2. POST Code in Every Boot Function
-Instrument every subsystem init function with entry/exit POST codes. Each function calls `POST16(code)` on entry and `POST16(code+1)` on success, so a crash between them is pinpointed to that exact function.
-
-**Files:** all `boot_*.c` files, all driver `*_init()` functions
-
-- [ ] Phase 0: `serial_init` (0x0010/11), `pmm_init` (0x0020/21), `vmm_init` (0x0030/31), `heap_init` (0x0040/41), `klog_early_init` (0x0050/51), `cpuid_init` (0x0060/61), `cpu_harden` (0x0070/71), `vmm_apply_nx_policy` (0x0080/81), `simd_enable_avx` (0x0090/91)
-- [ ] Phase 1: `gdt_init` (0x1000/01), `idt_init` (0x1010/11), `acpi_init` (0x1020/21), `lapic_init` (0x1030/31), `ioapic_init` (0x1034/35), `timer_hal_init` (0x1040/41), `lapic_timer_calibrate` (0x1042), `lapic_timer_init` (0x1044), `rtc_init` (0x1050/51), `keyboard_init` (0x1060/61), `mouse_init` (0x1070/71), `fb_init` (0x1080/81), `boot_splash_init` (0x1090/91)
-- [ ] Phase 2: `pci_scan` (0x2000/01), `xhci_init` (0x2010/11), `rtl8139_init` (0x2020/21), `net_init` (0x2030/31), `ata_init` (0x2040/41), `ahci_init` (0x2050/51), `ahci_setup_interrupts` (0x2052/53), `vfs_init` (0x2060/61), `partition_scan_all` (0x2070/71), `registry_init` (0x2080/81), `smp_init` (0x2090/91)
-- [ ] Phase 3: `task_init` (0x3000/01), `wq_create` (0x3010/11), `font_mgr_init` (0x3020/21), `desktop_init` (0x3030/31), `compositor_run` (0x3040)
-- [ ] Verify: bare-metal crash now shows exact function in NVRAM on next boot
-- [ ] Commit: `"boot: POST16 instrumentation in all init functions"`
-
-**Test checkpoint:** Force a crash (e.g., re-enable mouse_init). Reboot. Next boot serial shows "Last boot failed at: 0x1070 (mouse_init entry)". Pinpointed in seconds, not hours.
-
-## 3. Minimal UC MMIO Mapping (`vmm_map_mmio_uc`)
-Implement a minimal `vmm_map_mmio_uc()` that creates uncacheable mappings for device MMIO regions. This unblocks HPET calibration (§5) and AHCI hardening (§8) on bare metal where WB-cached MMIO causes MCE.
+## 1. Minimal UC MMIO Mapping (`vmm_map_mmio_uc`)
+Implement a minimal `vmm_map_mmio_uc()` that creates uncacheable mappings for device MMIO regions. This unblocks HPET calibration (§1) and AHCI hardening (§2) on bare metal where WB-cached MMIO causes MCE.
 
 **Files:** `src/kernel/mm/vmm.c`, `include/kernel/mm/vmm.h`
 
 > [!NOTE]
-> Minimal prerequisite — full `vmm_map_mmio()` / `MmMapIoSpace()` with cache type selection, HPET quirk table, and driver audit is in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11`. This section implements just enough to map a device BAR as UC using 4 KiB PTEs.
+> Minimal prerequisite — full `vmm_map_mmio()` / `MmMapIoSpace()` with cache type selection, HPET quirk table, and driver audit is in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1`. This section implements just enough to map a device BAR as UC using 4 KiB PTEs.
 
 - [ ] `vmm_map_mmio_uc(uint64_t phys_base, uint32_t size)` — allocate 4 KiB page table entries with PCD=1, PWT=1 (UC), return virtual address. Use a simple bump allocator in a dedicated VA range (e.g., 0xFFFF_8000_0000_0000+ or a simpler high-address region above the identity map).
 - [ ] `vmm_unmap_mmio(void *virt, uint32_t size)` — unmap and free PTEs (can be a no-op stub initially).
 - [ ] Validate: phys_base must be page-aligned, within 64-bit physical address space, size > 0.
 - [ ] Test: map LAPIC base (0xFEE00000) as UC, read LAPIC ID register, verify same value as identity-mapped read.
 - [ ] Re-enable HPET calibration in `lapic.c`: replace identity-mapped `hpet_read64(base, ...)` with `hpet_read64(uc_mapped_base, ...)`; uncomment `cal_try_hpet()` call in calibration waterfall.
-- [ ] Implement `hpet_read_ns()` in `lapic.c` (or new `hpet.c`): map HPET base via `vmm_map_mmio_uc()`, read counter, convert via `COUNTER_CLK_PERIOD`. Wire into `timer_driver_t.read_ns` for UTS (→ XREF: TODO-03 §6).
+- [ ] Implement `hpet_read_ns()` in `lapic.c` (or new `hpet.c`): map HPET base via `vmm_map_mmio_uc()`, read counter, convert via `COUNTER_CLK_PERIOD`. Wire into `timer_driver_t.read_ns` for UTS (→ XREF: TODO-03 §2).
 - [ ] Commit: `"mm: minimal vmm_map_mmio_uc + HPET re-enabled with UC mapping"`
 
 **Test checkpoint:** QEMU: HPET calibration succeeds (`Tier 2: HPET calibration -> N ticks/ms`). Bare metal: HPET mapped via UC, no MCE, calibration succeeds. `hpet_read_ns()` returns monotonically increasing values.
 
-## 4. IST Stacks for Critical Exceptions
+## 2. IST Stacks for Critical Exceptions
 
 Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Check Exception (MCE). Without IST, a stack overflow during an exception handler causes a triple fault and silent reboot — the most common "mystery crash" on bare metal.
 
@@ -156,7 +113,7 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 
 **Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot.
 
-## 5. Hardware Interrupt Root Cause Investigation
+## 1. Hardware Interrupt Root Cause Investigation
 Systematically investigate why hardware interrupts crash on the i5-11600K while software `INT 0x81` works. This section is diagnostic — it may result in a fix or in documenting a platform-specific workaround.
 
 **Files:** `src/kernel/idt.c`, `src/kernel/isr_stubs.asm`, `src/kernel/drivers/lapic.c`, `src/kernel/gdt.c`
@@ -186,7 +143,7 @@ Systematically investigate why hardware interrupts crash on the i5-11600K while 
 
 **Test checkpoint:** The LAPIC timer fires on bare metal without crashing. PCI scan completes with timer ticks running. If fix is architectural (e.g., IST required for timer), document why.
 
-## 6. ACPI FADT Boot Architecture Flags
+## 2. ACPI FADT Boot Architecture Flags
 Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices exist before touching any I/O ports. This prevents crashes on platforms without PIT, PS/2 controller, or RTC.
 
 **Files:** `src/kernel/acpi.c`, `include/kernel/acpi.h`
@@ -208,7 +165,7 @@ Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices 
 
 **Test checkpoint:** Boot on QEMU. Log shows IAPC_BOOT_ARCH with all flags. On bare metal, log shows actual hardware configuration.
 
-## 7. PS/2 Controller Detection and Safe Init
+## 1. PS/2 Controller Detection and Safe Init
 Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports 0x60/0x64 if the i8042 doesn't exist.
 
 **Files:** `src/kernel/drivers/keyboard.c`, `src/kernel/drivers/mouse.c`
@@ -223,7 +180,7 @@ Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports
 
 **Test checkpoint:** Boot on laptop without PS/2 mouse. Mouse init logs "skipped" and boot continues. Boot on QEMU with PS/2 — mouse works normally.
 
-## 8. AHCI Interrupt Hardening
+## 2. AHCI Interrupt Hardening
 Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI setup, verify ABAR MMIO accessibility, fall back to polled mode if MSI fails.
 
 **Files:** `src/kernel/drivers/ahci/ahci_core.c`
@@ -241,7 +198,7 @@ Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI s
 
 **Test checkpoint:** Boot on bare metal. AHCI init logs either "MSI vector 0xNN" or "INTx fallback" or "polled mode". No crash. Disk I/O works.
 
-## 9. Resilient Boot with Graceful Degradation
+## 1. Resilient Boot with Graceful Degradation
 Wrap every Phase 1–3 subsystem init in a protective pattern: emit POST code, call init, check result, log outcome, continue on failure. Never `boot_halt()` for non-critical subsystems.
 
 **Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/main/boot_storage.c`, `src/kernel/main/boot_desktop.c`
@@ -261,7 +218,7 @@ Wrap every Phase 1–3 subsystem init in a protective pattern: emit POST code, c
 
 **Test checkpoint:** Disable a non-critical subsystem (e.g., force `rtc_init()` to fail). Boot completes. Desktop shows degraded notification. Serial log shows `[WARN] RTC: init failed — degraded`.
 
-## 10. Per-Process Page Tables (Minimal Base)
+## 2. Per-Process Page Tables (Minimal Base)
 
 Implement the minimal per-process page table infrastructure so each task has its own PML4. Kernel pages are supervisor-only, user pages have the User bit. CR3 switches on context switch. This directly unblocks SMEP/SMAP on bare metal and eliminates the user-stacks-in-kernel-heap hack.
 
@@ -293,14 +250,14 @@ Implement the minimal per-process page table infrastructure so each task has its
 
 **Test checkpoint:** Boot on QEMU WHPX. cmd.exe runs in user mode with its own PML4. Kernel pages don't have User bit. `KeGetCurrentIrql()` works from user-mode interrupt. Boot on bare metal: SMEP/SMAP enabled (CR4 bits set), cmd.exe runs, no page faults.
 
-## 11. CPU Security Activation and Verification
+## 1. CPU Security Activation and Verification
 
 Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order and verified on bare metal. This incorporates the bare-metal-relevant parts of the CPU boot sequencing that are currently unimplemented.
 
 **Files:** `src/kernel/cpu_security.c`, `src/kernel/main/boot_hw.c`
 
 > [!NOTE]
-> Minimal prerequisite — full CPU boot sequencing (EFER before VMM, XSAVE/PCID, AP parity) is in `TODO-04-cpu-boot-sequencing.md §2,§4,§5`. This section implements just enough to ensure NX/SMEP/SMAP work on bare metal and verifies post-activation.
+> Minimal prerequisite — full CPU boot sequencing (EFER before VMM, XSAVE/PCID, AP parity) is in `TODO-04-cpu-boot-sequencing.md §2,§2,§1`. This section implements just enough to ensure NX/SMEP/SMAP work on bare metal and verifies post-activation.
 
 - [ ] Formalize activation order in `boot_phase0()`: (1) `cpu_enable_nx()` → (2) `vmm_apply_nx_policy()` → (3) `cpu_harden_post_pagetable()` (SMEP/SMAP after page tables fixed)
 - [ ] `cpu_verify_hardening()` — read back EFER, CR4 after activation. Log discrepancy: `[WARN] cpu: EFER.NXE not set after enable`
@@ -311,7 +268,7 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 
 **Test checkpoint:** Boot on bare metal. Log shows `[OK] cpu: NX enabled, SMEP skipped (shared page tables), SMAP skipped`. On QEMU: log shows all three enabled (or EPT-enforced).
 
-## 12. Boot Order Hardening (Timer-Last, UEFI-Safe)
+## 2. Boot Order Hardening (Timer-Last, UEFI-Safe)
 
 Formalize the boot order lessons learned: timer is the last thing initialized before `sti`, all UEFI runtime calls mask the LAPIC timer, and `boot_splash_start_animation()` only runs after `sti`.
 
@@ -326,7 +283,7 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Test checkpoint:** Boot on QEMU + bare metal. Phase 1 order is correct. UEFI runtime calls don't crash with timer running. Boot order comment block is visible at top of `boot_interrupts.c`.
 
-## 13. `boot.conf` Subsystem Skip List
+## 1. `boot.conf` Subsystem Skip List
 
 Allow the user to skip specific subsystems via `boot.conf` for debugging or working around hardware bugs without recompiling.
 
@@ -334,14 +291,14 @@ Allow the user to skip specific subsystems via `boot.conf` for debugging or work
 
 - [ ] Add `skip=` key to `boot.conf`: comma-separated list of subsystem names (e.g., `skip=mouse,ahci_msi,hpet,smbios`)
 - [ ] Parse into `g_boot_info.config.skip_mask` (32-bit bitmask matching `SUBSYS_*` enum + extra flags for sub-features like `ahci_msi`, `hpet`)
-- [ ] `BOOT_TRY()` macro (§8) checks skip mask before calling init function; if skipped, log `[SKIP] SUBSYS: disabled via boot.conf`
+- [ ] `BOOT_TRY()` macro (§2) checks skip mask before calling init function; if skipped, log `[SKIP] SUBSYS: disabled via boot.conf`
 - [ ] Default: `skip=` (empty, nothing skipped)
 - [ ] Serial log: `[CONF] skip: mouse,ahci_msi` (echo parsed skip list)
 - [ ] Commit: `"boot: boot.conf skip= key for subsystem bypass"`
 
 **Test checkpoint:** Set `skip=mouse,smbios` in boot.conf. Boot on bare metal. Mouse and SMBIOS are skipped. Desktop works without them.
 
-## 14. CPU Feature Minimum Requirements and Verification
+## 2. CPU Feature Minimum Requirements and Verification
 
 Define the minimum CPU feature set required to boot, verify features are actually enabled after activation, and provide clear diagnostics when features are missing or fail to enable.
 
@@ -359,7 +316,7 @@ Define the minimum CPU feature set required to boot, verify features are actuall
 
 **Test checkpoint:** Boot on CPU without SMAP. Log shows `[WARN] cpu: SMAP not available — skipped`. Boot continues. On CPU with SMAP: verification confirms CR4.SMAP is set.
 
-## 15. Bare-Metal Test Matrix and Validation Plan
+## 1. Bare-Metal Test Matrix and Validation Plan
 
 Define the hardware platforms to test on, expected boot timings per phase, and a regression detection framework so bare-metal issues are caught early.
 
@@ -388,20 +345,20 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 
 | ⭐ | Feature                              | Win11                                   | Linux                                            | Impossible OS                                     |
 |----|--------------------------------------|-----------------------------------------|--------------------------------------------------|----------------------------------------------------|
-| 💎 | IST stacks                           | ✅ Separate stacks for all critical    | ✅ IST1=#DF, IST2=NMI, IST3=MCE, IST4=debug      | ⬜ §3 — currently all exceptions share kernel     |
-| 💎 | ACPI FADT boot arch detection        | ✅ HAL checks all IAPC_BOOT_ARCH flags | ✅ Parses FADT, gates PIT/RTC/PS2 access         | ⬜ §5 — currently only PCAT_COMPAT and HW_REDUCED |
-| 💎 | PS/2 detection before port access    | ✅ HAL detects i8042 via ACPI          | ✅ `i8042.nopnp`, ACPI _HID match                | ⬜ §6 — currently touches ports blindly           |
-| 💎 | Graceful boot degradation            | ✅ Last Known Good, Safe Mode,         | ✅ systemd continues on unit failure             | ⬜ §8 — currently crashes on any init             |
+| 💎 | IST stacks                           | ✅ Separate stacks for all critical    | ✅ IST1=#DF, IST2=NMI, IST3=MCE, IST4=debug      | ⬜ §1 — currently all exceptions share kernel     |
+| 💎 | ACPI FADT boot arch detection        | ✅ HAL checks all IAPC_BOOT_ARCH flags | ✅ Parses FADT, gates PIT/RTC/PS2 access         | ⬜ §1 — currently only PCAT_COMPAT and HW_REDUCED |
+| 💎 | PS/2 detection before port access    | ✅ HAL detects i8042 via ACPI          | ✅ `i8042.nopnp`, ACPI _HID match                | ⬜ §2 — currently touches ports blindly           |
+| 💎 | Graceful boot degradation            | ✅ Last Known Good, Safe Mode,         | ✅ systemd continues on unit failure             | ⬜ §2 — currently crashes on any init             |
 | ⭐ | 4-digit POST codes in every function | ❌ POST codes are BIOS-only (2-digit)  | ❌ No POST code system (relies                   | ⬜ §1+§2 — 0x0000–0xFFFF visible on screen +      |
-| 💎 | UC MMIO mapping                      | ✅ MmMapIoSpace                        | ✅ ioremap_uc                                    | ⬜ §3 — minimal vmm_map_mmio_uc                   |
-| 💎 | Per-process page tables               | ✅ Each process has own CR3            | ✅ mm_struct per task, CR3 switch                 | ⬜ §10 — minimal PML4-per-task + CR3 switch        |
-| ⭐ | boot.conf subsystem skip list        | ⚠️ `bcdedit /set safeboot` (coarse)    | ⚠️ Kernel params like `i8042.noaux` (per-driver) | ⬜ §12 — fine-grained `skip=mouse,ahci_msi`       |
-| 💎 | AHCI MSI with fallback               | ✅ StorAHCI driver with INTx fallback  | ✅ libahci with MSI/INTx/polled fallback         | ⬜ §8 — MSI/INTx/polled fallback                  |
-| 💎 | CPU security verify post-enable      | ✅ HAL verifies CR4/EFER              | ✅ Kernel checks feature enable                  | ⬜ §10 — read-back EFER/CR4 after activation      |
-| 💎 | CPU feature minimum requirements     | ✅ NX required since Vista            | ✅ Minimum feature checks at boot                | ⬜ §13 — define minimum + recommended features    |
-| ⭐ | Bare-metal test matrix               | ❌ Internal only (WHQL)               | ❌ Community-driven (no matrix)                  | ⬜ §14 — documented platforms + timing thresholds  |
+| 💎 | UC MMIO mapping                      | ✅ MmMapIoSpace                        | ✅ ioremap_uc                                    | ⬜ §1 — minimal vmm_map_mmio_uc                   |
+| 💎 | Per-process page tables               | ✅ Each process has own CR3            | ✅ mm_struct per task, CR3 switch                 | ⬜ §2 — minimal PML4-per-task + CR3 switch        |
+| ⭐ | boot.conf subsystem skip list        | ⚠️ `bcdedit /set safeboot` (coarse)    | ⚠️ Kernel params like `i8042.noaux` (per-driver) | ⬜ §2 — fine-grained `skip=mouse,ahci_msi`       |
+| 💎 | AHCI MSI with fallback               | ✅ StorAHCI driver with INTx fallback  | ✅ libahci with MSI/INTx/polled fallback         | ⬜ §2 — MSI/INTx/polled fallback                  |
+| 💎 | CPU security verify post-enable      | ✅ HAL verifies CR4/EFER              | ✅ Kernel checks feature enable                  | ⬜ §2 — read-back EFER/CR4 after activation      |
+| 💎 | CPU feature minimum requirements     | ✅ NX required since Vista            | ✅ Minimum feature checks at boot                | ⬜ §1 — define minimum + recommended features    |
+| ⭐ | Bare-metal test matrix               | ❌ Internal only (WHQL)               | ❌ Community-driven (no matrix)                  | ⬜ §2 — documented platforms + timing thresholds  |
 
-> **After §1–§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux, plus superior diagnostics: every function has a POST code, every failure is logged and survived, users can bypass broken subsystems without recompiling, and user/kernel address spaces are properly separated with SMEP/SMAP enforced. No external TODO dependency blocks execution.
+> **After §1–§1:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux, plus superior diagnostics: every function has a POST code, every failure is logged and survived, users can bypass broken subsystems without recompiling, and user/kernel address spaces are properly separated with SMEP/SMAP enforced. No external TODO dependency blocks execution.
 
 ## Verification
 
