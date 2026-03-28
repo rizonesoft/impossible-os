@@ -46,7 +46,7 @@
 | 💎  |   6   | Secure Boot shim chain-loading     | §5              |  [x]   |
 | 💎  |   7   | Boot UX polish                     | §3, §5, T02 §2  |  [x]   |
 | 💎  |   8   | A/B dual-slot boot                 | §2              | defer  |
-| ⭐  |   9   | Multi-OS detection & boot menu     | §1              |  [ ]   |
+| ⭐  |   9   | Multi-OS detection & boot menu     | §1              | defer  |
 | 💎  |  10   | UEFI capsule update & ESRT         | §2              |  [ ]   |
 | 💎  |  11   | UEFI memory attributes (W^X)       | §1              |  [ ]   |
 | ⭐  |  12   | Serial log standardization         | —               |  [x]   |
@@ -172,7 +172,7 @@ Reliable kernel update delivery with automatic rollback on repeated boot failure
 
 **Test checkpoint:** QEMU: corrupt kernel-A → reboot → serial shows `[Boot] Rollback: slot A failed` → kernel-B boots. Bare metal: `BootSlot=A` → normal boot → `HKLM\SYSTEM\BootSlot` = `"A"`. Verify `BootAttempts` resets to 0 after successful boot.
 
-## 9. Multi-OS Detection & Boot Menu
+## 9. Multi-OS Detection & Boot Menu *(deferred — dual-boot UX, not needed during development)*
 Detect other OS partitions from GPT and show a countdown boot menu when the user has multiple OSes installed.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
