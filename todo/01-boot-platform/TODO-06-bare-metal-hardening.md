@@ -216,7 +216,8 @@ Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports
 - [ ] Add timeouts to ALL PS/2 wait loops (`ps2_wait_input`, `ps2_wait_output`) — currently 100000 iterations, increase to 1000000 but add early-exit on 0xFF status (controller absent).
 - [ ] Mouse reset (0xFF): wait up to 500ms for self-test result; if timeout, skip mouse.
 - [ ] Remove the current `mouse_init()` skip workaround from `boot_interrupts.c` — replace with proper detection.
-- [ ] Commit: `"drivers: PS/2 keyboard/mouse gated by ACPI i8042 detection"`
+- [ ] Migrate keyboard and mouse from hardcoded `irq_register(33/44, ...)` to `irq_request_gsi(1/12, ...)` — uses proper IOAPIC routing, avoids vector collision with dynamic allocator. Same for `vbox_mouse.c`.
+- [ ] Commit: `"drivers: PS/2 keyboard/mouse gated by ACPI i8042 detection + GSI-based IRQ"`
 
 **Test checkpoint:** Boot on laptop without PS/2 mouse. Mouse init logs "skipped" and boot continues. Boot on QEMU with PS/2 — mouse works normally.
 
