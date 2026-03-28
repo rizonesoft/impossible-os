@@ -257,7 +257,7 @@ void kernel_subsystem_dump(void);
 
 /* Emit "[PHASEn] step (0xNN)\n" to serial and record a TSC timestamp.
  * Safe to call from any phase; serial must be initialised (SUBSYS_SERIAL). */
-void boot_progress(uint8_t phase, const char *step, uint8_t postcode);
+void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
 
 /* --- Macros --------------------------------------------------------------- */
 

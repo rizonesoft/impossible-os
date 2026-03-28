@@ -22,7 +22,7 @@ uint64_t boot_timing_tsc_freq(void);
 /* Record a named boot step with its raw TSC timestamp and POST code.
  * Safe to call before boot_timing_init() — captures TSC immediately.
  * phase: 0–3; step: short ASCII label; postcode: POSTCODE_* constant. */
-void boot_timing_record_step(uint8_t phase, const char *step, uint8_t postcode);
+void boot_timing_record_step(uint8_t phase, const char *step, uint16_t postcode);
 
 /* Print all recorded step timings relative to the first step.
  * Call after boot_timing_init() so TSC frequency is calibrated. */
@@ -36,7 +36,7 @@ void boot_timing_write_report(void);
 typedef struct {
     uint64_t    tsc;
     uint8_t     phase;
-    uint8_t     postcode;
+    uint16_t    postcode;
     const char *step;
 } boot_timing_step_t;
 

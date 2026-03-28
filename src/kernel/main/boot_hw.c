@@ -49,7 +49,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     serial_init();
     POST16(POST16_SERIAL_OK);
     kernel_subsystem_set_ready(SUBSYS_SERIAL, true);
-    boot_progress(0, "SERIAL", POSTCODE_SERIAL_INIT);
+    boot_progress(0, "SERIAL", POST16_SERIAL_OK);
 
     klog(LOG_DEBUG, "", "========================================================================");
     klog(LOG_DEBUG, "", "  Impossible OS -- Boot Log");
@@ -69,7 +69,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     } else {
         boot_halt("Unknown bootloader magic");
     }
-    boot_progress(0, "BOOT_INFO", POSTCODE_BOOT_CFG);
+    boot_progress(0, "BOOT_INFO", 0x0026);
 
     /* boot_config_parse: boot.conf is parsed by the UEFI bootloader before
      * kernel entry and delivered in g_boot_info.config.  Log the values. */
@@ -133,7 +133,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     pmm_init();
     POST16(POST16_PMM_OK);
     kernel_subsystem_set_ready(SUBSYS_PMM, true);
-    boot_progress(0, "PMM", POSTCODE_PMM_INIT);
+    boot_progress(0, "PMM", POST16_PMM_OK);
 
     /* --- Virtual memory manager: BOOT_FATAL if PMM not ready --- */
     if (!kernel_subsystem_ready(SUBSYS_PMM))
@@ -142,7 +142,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     vmm_init();
     POST16(POST16_VMM_OK);
     kernel_subsystem_set_ready(SUBSYS_VMM, true);
-    boot_progress(0, "VMM", POSTCODE_VMM_INIT);
+    boot_progress(0, "VMM", POST16_VMM_OK);
 
     /* --- Kernel heap: BOOT_FATAL if VMM not ready --- */
     if (!kernel_subsystem_ready(SUBSYS_VMM))
@@ -151,20 +151,20 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     heap_init();
     POST16(POST16_HEAP_OK);
     kernel_subsystem_set_ready(SUBSYS_HEAP, true);
-    boot_progress(0, "HEAP", POSTCODE_HEAP_INIT);
+    boot_progress(0, "HEAP", POST16_HEAP_OK);
 
     /* --- klog early init: ring buffer + serial only (no disk yet) --- */
     POST16(POST16_KLOG);
     klog_early_init();
     POST16(POST16_KLOG_OK);
     kernel_subsystem_set_ready(SUBSYS_KLOG, true);
-    boot_progress(0, "KLOG", POSTCODE_KLOG_INIT);
+    boot_progress(0, "KLOG", POST16_KLOG_OK);
 
     /* --- CPUID: probe CPU features --- */
     POST16(POST16_CPUID);
     cpuid_init();
     POST16(POST16_CPUID_OK);
-    boot_progress(0, "CPUID", POSTCODE_CPUID_INIT);
+    boot_progress(0, "CPUID", POST16_CPUID_OK);
 
     /* --- CPU security hardening: NX (SMEP/SMAP deferred until page tables fixed) --- */
     POST16(POST16_CPU_HARDEN);
@@ -186,7 +186,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         klog(LOG_INFO, "simd", "AVX2 enabled (8 pixels/iter)");
     else
         klog(LOG_WARN, "simd", "AVX2 not available, using SSE2 fallback");
-    boot_progress(0, "SIMD", POSTCODE_SIMD_INIT);
+    boot_progress(0, "SIMD", POST16_SIMD_OK);
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE0] complete -- serial, memory, klog, CPUID, SIMD ready");

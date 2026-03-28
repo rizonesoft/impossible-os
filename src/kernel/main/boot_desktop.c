@@ -45,7 +45,7 @@ void boot_phase3(void)
     /* --- Scheduler: requires HEAP + TIMER --- */
     if (!kernel_subsystem_ready(SUBSYS_HEAP) ||
         !kernel_subsystem_ready(SUBSYS_TIMER)) {
-        boot_recovery_info_t ri = { SUBSYS_SCHED, POSTCODE_SCHED_INIT, BOOT_FATAL, 3 };
+        boot_recovery_info_t ri = { SUBSYS_SCHED, POST16_SCHED_OK, BOOT_FATAL, 3 };
         kernel_subsystem_dump();
         boot_recovery_show(&ri);
         boot_halt("HEAP or TIMER not ready -- cannot init scheduler");
@@ -55,7 +55,7 @@ void boot_phase3(void)
     task_init();
     POST16(POST16_SCHED_OK);
     kernel_subsystem_set_ready(SUBSYS_SCHED, true);
-    boot_progress(3, "SCHED", POSTCODE_SCHED_INIT);
+    boot_progress(3, "SCHED", POST16_SCHED_OK);
 
     ahci_enable_events();  /* safe now: yield handler registered */
 
@@ -76,7 +76,7 @@ void boot_phase3(void)
      * pipe_create/shmem_create work after heap + sched are up.
      * Mark ready for dependency tracking. */
     kernel_subsystem_set_ready(SUBSYS_IPC, true);
-    boot_progress(3, "IPC", POSTCODE_IPC_INIT);
+    boot_progress(3, "IPC", 0x0061);
 
     /* --- Syscall handler --- */
     boot_splash_status("Initializing syscalls...");
@@ -84,7 +84,7 @@ void boot_phase3(void)
 
     /* --- Exec loader (ELF/PE format handlers) --- */
     kernel_subsystem_set_ready(SUBSYS_EXEC, true);
-    boot_progress(3, "EXEC", POSTCODE_EXEC_INIT);
+    boot_progress(3, "EXEC", 0x0062);
 
     /* --- Boot tests (debug=1 only) --- */
     boot_tests_run();
@@ -144,7 +144,7 @@ void boot_phase3(void)
              (uint64_t)(ms / 1000), (uint64_t)(ms % 1000));
     }
 
-    boot_progress(3, "DESKTOP_READY", POSTCODE_DESKTOP_INIT);
+    boot_progress(3, "DESKTOP_READY", POST16_DESKTOP_OK);
     kernel_subsystem_set_ready(SUBSYS_DESKTOP, true);
     boot_post_write16(POST16_BOOT_OK);  /* 0xFF00 = boot succeeded */
     boot_timing_print_steps();

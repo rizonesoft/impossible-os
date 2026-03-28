@@ -13,7 +13,7 @@
 /* Recovery info passed to the recovery screen */
 typedef struct {
     kernel_subsys_t subsystem;   /* which subsystem failed */
-    uint8_t         postcode;    /* POST code at failure */
+    uint16_t        postcode;    /* POST code at failure */
     boot_result_t   result;      /* BOOT_FATAL or BOOT_DEGRADED */
     uint8_t         phase;       /* phase number (2 or 3) */
 } boot_recovery_info_t;

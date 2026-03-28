@@ -25,7 +25,7 @@ static struct {
     uint64_t    tsc;
     const char *step;
     uint8_t     phase;
-    uint8_t     postcode;
+    uint16_t    postcode;
 } s_steps[BOOT_TIMING_MAX_STEPS];
 
 static uint32_t s_step_count;
@@ -54,7 +54,7 @@ uint32_t boot_timing_get_steps(const boot_timing_step_t **out)
     return s_step_count;
 }
 
-void boot_timing_record_step(uint8_t phase, const char *step, uint8_t postcode)
+void boot_timing_record_step(uint8_t phase, const char *step, uint16_t postcode)
 {
     if (s_step_count >= BOOT_TIMING_MAX_STEPS) return;
     uint32_t idx          = s_step_count++;
@@ -168,12 +168,14 @@ static uint32_t u32_to_dec(char *buf, uint32_t val)
     return n;
 }
 
-static uint32_t u8_to_hex2(char *buf, uint8_t val)
+static uint32_t u16_to_hex4(char *buf, uint16_t val)
 {
     static const char hex[] = "0123456789abcdef";
-    buf[0] = hex[val >> 4];
-    buf[1] = hex[val & 0xf];
-    return 2;
+    buf[0] = hex[(val >> 12) & 0xf];
+    buf[1] = hex[(val >>  8) & 0xf];
+    buf[2] = hex[(val >>  4) & 0xf];
+    buf[3] = hex[ val        & 0xf];
+    return 4;
 }
 
 static uint32_t str_copy(char *dst, const char *src)
@@ -201,7 +203,7 @@ void boot_timing_write_report(void)
 
     /* Header */
     static const char hdr[] = "# Impossible OS Boot Profile\n"
-                               "# +NNNms [PHASEx] 0xNN step\n";
+                               "# +NNNms [PHASEx] 0xNNNN step\n";
     vfs_write(file, offset, sizeof(hdr) - 1, (const uint8_t *)hdr);
     offset += sizeof(hdr) - 1;
 
@@ -218,7 +220,7 @@ void boot_timing_write_report(void)
         line[pos++] = (char)('0' + (s_steps[i].phase & 0x0f));
         line[pos++] = ']'; line[pos++] = ' ';
         line[pos++] = '0'; line[pos++] = 'x';
-        pos += u8_to_hex2(line + pos, s_steps[i].postcode);
+        pos += u16_to_hex4(line + pos, s_steps[i].postcode);
         line[pos++] = ' ';
         pos += str_copy(line + pos, s_steps[i].step);
         line[pos++] = '\n';

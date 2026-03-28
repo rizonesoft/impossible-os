@@ -161,12 +161,13 @@ static void draw_string(volatile uint32_t *fb, uint32_t pitch,
     }
 }
 
-static void draw_hex8(volatile uint32_t *fb, uint32_t pitch,
-                      uint32_t scr_w, uint32_t scr_h,
-                      uint32_t x, uint32_t y, uint8_t val, uint32_t color)
+static void draw_hex16(volatile uint32_t *fb, uint32_t pitch,
+                       uint32_t scr_w, uint32_t scr_h,
+                       uint32_t x, uint32_t y, uint16_t val, uint32_t color)
 {
     static const char hex[] = "0123456789ABCDEF";
-    char buf[5] = { '0', 'x', hex[val >> 4], hex[val & 0xF], '\0' };
+    char buf[7] = { '0', 'x', hex[(val >> 12) & 0xF], hex[(val >> 8) & 0xF],
+                    hex[(val >> 4) & 0xF], hex[val & 0xF], '\0' };
     draw_string(fb, pitch, scr_w, scr_h, x, y, buf, color);
 }
 
@@ -245,7 +246,7 @@ boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info)
     y += FONT_H;
 
     draw_string(fb, pitch, w, h, 40, y, "POST code: ", 0x00C0C0C0);
-    draw_hex8(fb, pitch, w, h, 40 + FONT_W * 11, y, info->postcode, 0x00FFFF80);
+    draw_hex16(fb, pitch, w, h, 40 + FONT_W * 11, y, info->postcode, 0x00FFFF80);
     y += FONT_H;
 
     draw_string(fb, pitch, w, h, 40, y, "Result:    ", 0x00C0C0C0);

@@ -65,11 +65,11 @@ void boot_phase2(void)
     POST16(POST16_NET_OK);
     virtio_input_init();
     vbox_mouse_init();
-    boot_progress(2, "PCI_NET", POSTCODE_PCI_INIT);
+    boot_progress(2, "PCI_NET", POST16_PCI_OK);
 
     /* DHCP fire-and-forget */
     dhcp_discover();
-    boot_progress(2, "DHCP", POSTCODE_NET_INIT);
+    boot_progress(2, "DHCP", POST16_NET_OK);
 
     /* --- Disk drivers (moved from Phase 0) --- */
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
@@ -88,11 +88,11 @@ void boot_phase2(void)
     if (platform_get() != PLATFORM_BARE_METAL)
         ahci_setup_interrupts();
     blkdev_register_all();
-    boot_progress(2, "STORAGE_DRV", POSTCODE_STORAGE_INIT);
+    boot_progress(2, "STORAGE_DRV", POST16_AHCI_OK);
 
     /* --- VFS: requires HEAP --- */
     if (!kernel_subsystem_ready(SUBSYS_HEAP)) {
-        boot_recovery_info_t ri = { SUBSYS_VFS, POSTCODE_VFS_INIT, BOOT_FATAL, 2 };
+        boot_recovery_info_t ri = { SUBSYS_VFS, POST16_VFS_OK, BOOT_FATAL, 2 };
         kernel_subsystem_dump();
         boot_recovery_show(&ri);
         boot_halt("HEAP not ready -- cannot init VFS");
@@ -103,7 +103,7 @@ void boot_phase2(void)
     vfs_init();
     POST16(POST16_VFS_OK);
     kernel_subsystem_set_ready(SUBSYS_VFS, true);
-    boot_progress(2, "VFS", POSTCODE_VFS_INIT);
+    boot_progress(2, "VFS", POST16_VFS_OK);
 
     /* --- Partition scan + filesystem mount --- */
     klog(LOG_DEBUG, "boot", "--- Phase: partition & filesystem mount ---");
@@ -169,7 +169,7 @@ void boot_phase2(void)
         smp_init();
         POST16(POST16_SMP_OK);
         kernel_subsystem_set_ready(SUBSYS_SMP, true);
-        boot_progress(2, "SMP", POSTCODE_SMP_INIT);
+        boot_progress(2, "SMP", POST16_SMP_OK);
     }
 
     /* Hardware dump (only in live debug mode) */
@@ -207,7 +207,7 @@ void boot_phase2(void)
 
     /* --- Registry: requires VFS --- */
     if (!kernel_subsystem_ready(SUBSYS_VFS)) {
-        boot_recovery_info_t ri = { SUBSYS_REGISTRY, POSTCODE_REGISTRY_INIT, BOOT_FATAL, 2 };
+        boot_recovery_info_t ri = { SUBSYS_REGISTRY, POST16_REGISTRY_OK, BOOT_FATAL, 2 };
         kernel_subsystem_dump();
         boot_recovery_show(&ri);
         boot_halt("VFS not ready -- cannot init registry");
@@ -226,7 +226,7 @@ void boot_phase2(void)
     boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
     kernel_subsystem_set_ready(SUBSYS_REGISTRY, true);
-    boot_progress(2, "REGISTRY", POSTCODE_REGISTRY_INIT);
+    boot_progress(2, "REGISTRY", POST16_REGISTRY_OK);
 
     /* --- Symbol table --- */
     symtab_init();

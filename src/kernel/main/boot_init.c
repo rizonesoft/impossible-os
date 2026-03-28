@@ -152,7 +152,7 @@ static void serial_write_hex16(uint16_t v)
     serial_putchar(hex[ v        & 0xF]);
 }
 
-void boot_progress(uint8_t phase, const char *step, uint8_t postcode)
+void boot_progress(uint8_t phase, const char *step, uint16_t postcode)
 {
     /* "[PHASEn] step (0xNNNN)\n" */
     serial_write("[PHASE");
@@ -160,12 +160,12 @@ void boot_progress(uint8_t phase, const char *step, uint8_t postcode)
     serial_write("] ");
     serial_write(step);
     serial_write(" (0x");
-    serial_write_hex16((uint16_t)postcode);
+    serial_write_hex16(postcode);
     serial_write(")\n");
 
     boot_timing_record_step(phase, step, postcode);
-    boot_post_write16((uint16_t)postcode);
-    post_display16((uint16_t)postcode);
+    boot_post_write16(postcode);
+    post_display16(postcode);
 
     boot_splash_status(step);
 }

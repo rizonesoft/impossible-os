@@ -17,7 +17,7 @@
 
 typedef struct {
     uint8_t     phase;      /* boot phase number (0-3) */
-    uint8_t     postcode;   /* POSTCODE_* constant */
+    uint16_t    postcode;   /* POST16_* constant */
     uint8_t     percent;    /* splash progress 0-100 */
     const char *name;       /* stage name for serial log */
 } stage_meta_t;

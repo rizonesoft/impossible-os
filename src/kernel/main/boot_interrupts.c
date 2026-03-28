@@ -46,7 +46,7 @@ void boot_phase1(void)
     gdt_init();
     POST16(POST16_GDT_OK);
     kernel_subsystem_set_ready(SUBSYS_GDT, true);
-    boot_progress(1, "GDT", POSTCODE_GDT_INIT);
+    boot_progress(1, "GDT", POST16_GDT_OK);
 
     /* --- IDT + IRQ: requires GDT --- */
     if (!kernel_subsystem_ready(SUBSYS_GDT)) {
@@ -58,7 +58,7 @@ void boot_phase1(void)
     irq_init();
     POST16(POST16_IDT_OK);
     kernel_subsystem_set_ready(SUBSYS_IDT, true);
-    boot_progress(1, "IDT", POSTCODE_IDT_INIT);
+    boot_progress(1, "IDT", POST16_IDT_OK);
 
     /* --- ACPI: requires IDT --- */
     if (g_boot_info.acpi_available) {
@@ -72,7 +72,7 @@ void boot_phase1(void)
         kernel_subsystem_set_ready(SUBSYS_ACPI, true);
         klog(LOG_INFO, "smp", "CPUs discovered: %u",
              (uint64_t)acpi_get_cpu_count());
-        boot_progress(1, "ACPI", POSTCODE_ACPI_INIT);
+        boot_progress(1, "ACPI", POST16_ACPI_OK);
     }
 
     /* --- LAPIC + IOAPIC: APIC-first boot ---
@@ -134,7 +134,7 @@ void boot_phase1(void)
                 }
             }
         }
-        boot_progress(1, "LAPIC_IOAPIC", POSTCODE_LAPIC_INIT);
+        boot_progress(1, "LAPIC_IOAPIC", POST16_LAPIC_OK);
 
         /* NOTE: ahci_setup_interrupts() moved to Phase 2, after ahci_init()
          * has discovered the PCI device.  LAPIC is ready here, so MSI will
@@ -150,20 +150,21 @@ void boot_phase1(void)
                  "PIC: skipped (PCAT_COMPAT=0, APIC-only platform)");
         }
     }
+    boot_progress(1, "PIC", 0x1036);
 
     /* --- RTC --- */
     POST16(POST16_RTC);
     rtc_init();
     POST16(POST16_RTC_OK);
     kernel_subsystem_set_ready(SUBSYS_RTC, true);
-    boot_progress(1, "RTC", POSTCODE_RTC_INIT);
+    boot_progress(1, "RTC", POST16_RTC_OK);
 
     /* --- Input devices --- */
     boot_splash_status("Initializing input...");
     POST16(POST16_KBD);
     keyboard_init();
     POST16(POST16_KBD_OK);
-    boot_progress(1, "KEYBOARD", POSTCODE_KBD_INIT);
+    boot_progress(1, "KEYBOARD", POST16_KBD_OK);
     /* mouse_init() skipped — crashes on i5-11600K laptop (touchpad, no PS/2 mouse) */
     /* POST16(POST16_MOUSE); mouse_init(); POST16(POST16_MOUSE_OK); */
 
@@ -173,7 +174,7 @@ void boot_phase1(void)
     fb_init();
     POST16(POST16_FB_OK);
     kernel_subsystem_set_ready(SUBSYS_FB, true);
-    boot_progress(1, "FB", POSTCODE_FB_INIT);
+    boot_progress(1, "FB", POST16_FB_OK);
     POST16(POST16_SPLASH);
     boot_splash_init();
     POST16(POST16_SPLASH_OK);
@@ -183,7 +184,7 @@ void boot_phase1(void)
     POST16(POST16_SMBIOS);
     smbios_init();
     POST16(POST16_SMBIOS_OK);
-    boot_progress(1, "SMBIOS", POSTCODE_SMBIOS_INIT);
+    boot_progress(1, "SMBIOS", POST16_SMBIOS_OK);
     esrt_init();
     mat_init();
     uefi_conformance_init();
@@ -222,7 +223,7 @@ void boot_phase1(void)
     timer_hal_init();
     POST16(POST16_TIMER_OK);
     kernel_subsystem_set_ready(SUBSYS_TIMER, true);
-    boot_progress(1, "TIMER", POSTCODE_TIMER_INIT);
+    boot_progress(1, "TIMER", POST16_TIMER_OK);
 
     smp_early_bsp_init();
 
