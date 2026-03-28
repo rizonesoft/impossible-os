@@ -24,6 +24,7 @@
 - → XREF: `TODO-04-cpu-boot-sequencing.md §3` — hypervisor detection runs in Phase 0 before §6 UTS probe; `boot_info.hv_flags` set there must be read by `timer_hal_init()` to select the correct clock source
 - → XREF: `02-kernel-core/TODO-15-power-management.md` — Intel HWP / AMD CPPC frequency changes require LAPIC timer recalibration (§7 `lapic_calibrate()`); no dedicated HWP/CPPC section in TODO-15 yet — add when frequency scaling is scoped there
 - → XREF: `04-drivers-hardware/INDEX.md` — all device drivers call `irq_request(gsi, handler, name, flags)` (§5); this API replaces hardcoded IRQ-to-vector assignments throughout that domain
+- → XREF: `TODO-06-bare-metal-hardening.md §5` — hardware interrupt crash on bare metal (LAPIC timer and PIT both crash; software INT works). Root cause investigation tracked there, not here.
 
 ## Outcome
 
@@ -44,11 +45,11 @@
 | 💎  |   2   | LAPIC / IOAPIC init before PIT      | §1                  |  [x]   |
 | 💎  |   3   | Conditional PIC disable             | §1, §2              |  [x]   |
 | 💎  |   4   | Full IDT coverage                   | §2, §3              |  [x]   |
-| 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [/]   |
-| 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [/]   |
+| 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [x]   |
+| 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [x]   |
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [x]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [x]   |
-| ⭐  |   9   | Boot time visualization             | §7, T02 §2 & §5     |  [/]   |
+| ⭐  |   9   | Boot time visualization             | §7, T02 §2 & §5     |  [x]   |
 | 💎  |  10   | Remove Hyper-V debug workarounds    | §1–7                |  [x]   |
 
 > 💎 = parity — Windows NT HAL and Linux interrupt subsystem both follow this init order and have equivalent abstractions.
@@ -151,7 +152,7 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 
 **Files:** `src/kernel/drivers/timer_lapic.c`, `src/kernel/sched/task.c` (scheduler tick hookup)
 
-- [x] LAPIC calibration: 3-tier waterfall (Hyper-V MSR → CPUID 0x15 → PIT busy-wait) in `lapic.c`; stores `cal_ticks_per_ms`
+- [x] LAPIC calibration: 4-tier waterfall (Hyper-V MSR → CPUID 0x15 → TSC-referenced → PM Timer → PIT ch2) in `lapic.c`; stores `cal_ticks_per_ms`. HPET tier disabled until UC MMIO mapping exists (WB caching causes MCE on bare metal — see TODO-06 §3). TSC-referenced tier added 2026-03-28 for bare metal.
 - [x] Run on BSP during `timer_hal_init()` — confirmed working in serial log
 - [x] Scheduler uses LAPIC periodic timer at 100 Hz; `sched_tick` driven by LAPIC ISR
 - [ ] Recalibrate hook for CPU frequency changes — deferred to TODO-15 (power management)
@@ -198,19 +199,18 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 ## OS Comparison
 
+| ⭐ | Feature                    | Win11                          | Linux                           | Impossible OS                     |
+|----|----------------------------|--------------------------------|---------------------------------|------------------------------------|
+| 💎 | MADT-driven topology       | ✅ HAL reads MADT first       | ✅ acpi_boot_init first         | ✅ §1 — done                      |
+| 💎 | LAPIC/IOAPIC before PIT   | ✅ HAL APIC before PIT        | ✅ apic_intr_init before IRQ    | ✅ §2 — done                      |
+| 💎 | Conditional PIC disable    | ✅ PCAT_COMPAT gated          | ✅ disable_8259A gated          | ✅ §3 — done                      |
+| 💎 | Full IDT coverage          | ✅ KiUnexpectedInterrupt      | ✅ spurious_interrupt           | ✅ §4 — 256 vectors filled        |
+| 💎 | Dynamic IRQ registration   | ✅ IoConnectInterrupt         | ✅ request_irq                  | ✅ §5 — irq_request_gsi           |
+| 💎 | Unified timer HAL          | ✅ HalQueryPerformanceCounter | ✅ clocksource framework        | ✅ §6 — timer_driver_t + UTS      |
+| 💎 | LAPIC timer calibration    | ✅ HAL per-CPU calibration    | ✅ calibrate_delay per CPU      | ✅ §7 — 4-tier waterfall          |
+| ⭐ | Boot timeline JSON         | ❌ WPA (offline, binary)      | ❌ systemd-analyze (post-boot)  | ✅ §9 — boot-timeline.json        |
 
-| ⭐ | Feature                               | Win11                                             | Linux                                              | Impossible OS                                    |
-|----|---------------------------------------|---------------------------------------------------|----------------------------------------------------|--------------------------------------------------|
-| 💎 | MADT-driven interrupt topology        | ✅ HAL reads MADT before any                      | ✅ `acpi_boot_init()` parses MADT first            | ⬜ §1 — MADT parse moved before interrupt        |
-| 💎 | LAPIC/IOAPIC init before PIT          | ✅ HAL always inits APIC before                   | ✅ `apic_intr_init()` before `init_IRQ()`          | ⬜ §2 — init order restructured                  |
-| 💎 | Conditional PIC disable               | ✅ HAL checks PCAT_COMPAT flag                    | ✅ `disable_8259A()` gated on MADT flag            | ⬜ §3                                            |
-| 💎 | Full IDT coverage                     | ✅ KiUnexpectedInterrupt fills unused vectors     | ✅ `spurious_interrupt()` for unregistered vectors | ⬜ §4                                            |
-| 💎 | Dynamic IRQ registration              | ✅ `IoConnectInterrupt` / `IoConnectInterruptEx`  | ✅ `request_irq()` / `devm_request_irq()`          | ⬜ §5 — `irq_request(gsi, handler, name, flags)` |
-| 💎 | Unified timer HAL                     | ✅ `HalQueryPerformanceCounter` backend selection | ✅ `clocksource` + `clockevent` framework          | ⬜ §6 — `timer_driver_t` + `uptime_ns()`         |
-| 💎 | Per-CPU LAPIC timer calibration       | ✅ HAL calibrates LAPIC per logical               | ✅ `calibrate_delay_direct()` per CPU              | ⬜ §7                                            |
-| ⭐ | Post-boot animated timeline bar chart | ❌ WPA boot trace (offline, binary                | ❌ `systemd-analyze plot` (SVG, post-boot only)    | ⬜ §9 — inline overlay chart + ASCII             |
-
-> **After parity items:** Impossible OS will fully match Windows NT and Linux on interrupt init order, IDT coverage, dynamic IRQ registration, and the timer HAL. The exclusive §9 boot timeline goes further by showing an animated bar chart at desktop-ready and offering a regression-diffing CLI tool — giving developers instant visibility into boot regressions without external profiling tools.
+> **Parity achieved on §1–§8, §10.** All interrupt init order, IDT coverage, IRQ registration, and timer HAL match Windows/Linux. Boot timeline JSON goes beyond both. Remaining: HPET standalone driver (deferred until UC MMIO), bare-metal hw interrupt crash (TODO-06 §5).
 
 ## Verification
 
