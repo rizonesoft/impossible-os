@@ -48,7 +48,7 @@
 | 💎  |   8   | A/B dual-slot boot                 | §2              | defer  |
 | ⭐  |   9   | Multi-OS detection & boot menu     | §1              | defer  |
 | 💎  |  10   | UEFI capsule update & ESRT         | §2              | defer  |
-| 💎  |  11   | UEFI memory attributes (W^X)       | §1              |  [ ]   |
+| 💎  |  11   | UEFI memory attributes (W^X)       | §1              | defer  |
 | ⭐  |  12   | Serial log standardization         | —               |  [x]   |
 | 💎  |  13   | Multi-GPU GOP enumeration          | §3              |  [ ]   |
 
@@ -201,7 +201,7 @@ Parse the ESRT firmware resource table and implement the UEFI capsule delivery p
 
 **Test checkpoint:** QEMU: serial shows `[ESRT] N firmware entries found`. Registry `HKLM\HARDWARE\Firmware\{GUID}\FwVersion` populated. Bare metal: ESRT parsed from real firmware, version logged.
 
-## 11. UEFI Memory Attributes (W^X)
+## 11. UEFI Memory Attributes (W^X) *(deferred — needs vmm_set_nx/vmm_set_ro which don't exist yet)*
 Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEMORY_ATTRIBUTES_TABLE`.
 
 **Files:** `src/kernel/uefi_runtime.c`, `src/kernel/mm/vmm.c`
