@@ -9,7 +9,6 @@
 #include "kernel/cpuid_platform.h"
 #include "kernel/msr.h"
 #include "kernel/klog.h"
-#include "kernel/hv_bar.h"
 
 /* ---- CR4 bit definitions ---- */
 #define CR4_SMEP  (1UL << 20)

@@ -36,7 +36,6 @@
 #include "desktop/gallery.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/elf.h"
-#include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 3 ------------------------------------------------------------ */

@@ -34,7 +34,6 @@
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/ahci.h"
-#include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 2 ------------------------------------------------------------ */
@@ -51,14 +50,10 @@ void boot_phase2(void)
     klog(LOG_DEBUG, "boot", "--- Phase: PCI & peripherals ---");
     boot_splash_tick();
     boot_splash_status("Scanning PCI bus...");
-    HV_BAR(0);  /* bar 0: about to pci_scan */
     pci_scan();
-    HV_BAR(1);  /* bar 1: pci_scan done */
     xhci_init();
-    HV_BAR(2);  /* bar 2: xhci done */
     boot_splash_status("Initializing network...");
     rtl8139_init();
-    HV_BAR(3);  /* bar 3: rtl8139 done */
     net_init();
     virtio_input_init();
     vbox_mouse_init();
@@ -71,18 +66,13 @@ void boot_phase2(void)
     /* --- Disk drivers (moved from Phase 0) --- */
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
     boot_splash_status("Initializing storage...");
-    HV_BAR(4);  /* bar 4: about to ata */
     ata_init();
-    HV_BAR(5);  /* bar 5: ata done */
     virtio_blk_init();
-    HV_BAR(6);  /* bar 6: virtio_blk done */
     ahci_init();
-    HV_BAR(7);  /* bar 7: ahci done */
     /* ahci_setup_interrupts() skipped — crashes on bare metal (i5-11600K laptop).
      * Likely WB MMIO write to AHCI GHC register or MSI enable triggering
      * immediate interrupt.  AHCI will work in polled mode without events. */
     /* ahci_setup_interrupts(); */
-    HV_BAR(8);  /* bar 8: ahci interrupts skipped */
     blkdev_register_all();
     boot_progress(2, "STORAGE_DRV", POSTCODE_STORAGE_INIT);
 

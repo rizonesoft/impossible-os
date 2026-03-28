@@ -25,7 +25,6 @@
 #include "kernel/boot_halt.h"
 #include "kernel/cpu_security.h"
 #include "kernel/smp.h"
-#include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
 /* External: Multiboot2 parser */
@@ -125,7 +124,6 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     pmm_init();
     kernel_subsystem_set_ready(SUBSYS_PMM, true);
     boot_progress(0, "PMM", POSTCODE_PMM_INIT);
-    HV_BAR(15); /* sanity check: bars still work on bare metal */
 
     /* --- Virtual memory manager: BOOT_FATAL if PMM not ready --- */
     if (!kernel_subsystem_ready(SUBSYS_PMM))

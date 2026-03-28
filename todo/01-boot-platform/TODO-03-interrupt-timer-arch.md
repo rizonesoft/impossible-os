@@ -127,9 +127,9 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 - [ ] `irq_set_affinity(gsi, cpu_mask)` — implement when IRQ balancing is needed; currently all routes to BSP (functional on SMP, just not balanced)
 - [x] `irq_gsi_count(gsi)`: returns fire count via GSI→vector mapping table
 - [x] `irq_dispatch()` already exists in `irq.c` — registered handler called + EOI sent
-- [ ] `irq list` shell command — deferred to shell TODO
+- [ ] `ir list` shell command — deferred to shell TODO
 - [ ] Migrate existing drivers to `irq_request_gsi()` — deferred (current `irq_register(vector)` works; migration is mechanical)
-- [x] Commit: `"kernel: GSI-based IRQ request API — irq_request_gsi/free_gsi, IOAPIC-backed"`
+- [x] Commit: `"kernel: GSI-based IRQ request API — irq_request_gsi/free_gsi, IOAPIC-backed"`q
 
 ## 6. Unified Timer Subsystem (UTS)
 
@@ -202,7 +202,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 | ⭐ | Feature                    | Win11                          | Linux                           | Impossible OS                     |
 |----|----------------------------|--------------------------------|---------------------------------|------------------------------------|
 | 💎 | MADT-driven topology       | ✅ HAL reads MADT first       | ✅ acpi_boot_init first         | ✅ §1 — done                      |
-| 💎 | LAPIC/IOAPIC before PIT   | ✅ HAL APIC before PIT        | ✅ apic_intr_init before IRQ    | ✅ §2 — done                      |
+| 💎 | LAPIC/IOAPIC before PIT    | ✅ HAL APIC before PIT        | ✅ apic_intr_init before IRQ    | ✅ §2 — done                      |
 | 💎 | Conditional PIC disable    | ✅ PCAT_COMPAT gated          | ✅ disable_8259A gated          | ✅ §3 — done                      |
 | 💎 | Full IDT coverage          | ✅ KiUnexpectedInterrupt      | ✅ spurious_interrupt           | ✅ §4 — 256 vectors filled        |
 | 💎 | Dynamic IRQ registration   | ✅ IoConnectInterrupt         | ✅ request_irq                  | ✅ §5 — irq_request_gsi           |

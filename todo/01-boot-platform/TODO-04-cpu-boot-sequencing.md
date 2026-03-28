@@ -135,15 +135,15 @@ The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 
 ## OS Comparison
 
-| ⭐ | Feature                   | Win11                        | Linux                         | Impossible OS                   |
-|----|---------------------------|------------------------------|-------------------------------|---------------------------------|
+| ⭐ | Feature                   | Win11                        | Linux                         | Impossible OS                      |
+|----|---------------------------|------------------------------|-------------------------------|------------------------------------|
 | 💎 | EFER.NXE before NX pages  | ✅ HalInitializeProcessor   | ✅ cpu_init before paging     | ⚠️ §2 defer — NX works, order WIP |
-| 💎 | SMEP/SMAP BSP Phase 0     | ✅ CR4 in HalInitSystem     | ✅ setup_cr4 early            | ⚠️ §2 defer — bare metal skips |
-| 💎 | AP hardening = BSP        | ✅ APs run HalInitProc      | ✅ cpu_init per secondary     | ⚠️ §4 defer — basic in smp.c   |
-| 💎 | XSAVE after VMM ready     | ✅ CR4.OSXSAVE post-paging  | ✅ fpu__init_cpu deferred     | ⚠️ §5 defer — AVX works        |
-| 💎 | PCID after page tables    | ✅ CR4.PCIDE post-PML4      | ✅ cr4_set_bits post-paging   | ⬜ §5 defer                     |
-| ⭐ | HV detect before timer    | ✅ Before HAL timer         | ⚠️ May lag clocksource        | ✅ §3 — done                    |
-| ⭐ | POST code per CPU step    | ❌ BIOS POST only           | ❌ dmesg only                 | ⬜ §1-5 — planned in TODO-06 §1 |
+| 💎 | SMEP/SMAP BSP Phase 0     | ✅ CR4 in HalInitSystem     | ✅ setup_cr4 early            | ⚠️ §2 defer — bare metal skips    |
+| 💎 | AP hardening = BSP        | ✅ APs run HalInitProc      | ✅ cpu_init per secondary     | ⚠️ §4 defer — basic in smp.c      |
+| 💎 | XSAVE after VMM ready     | ✅ CR4.OSXSAVE post-paging  | ✅ fpu__init_cpu deferred     | ⚠️ §5 defer — AVX works           |
+| 💎 | PCID after page tables    | ✅ CR4.PCIDE post-PML4      | ✅ cr4_set_bits post-paging   | ⬜ §5 defer                       |
+| ⭐ | HV detect before timer    | ✅ Before HAL timer         | ⚠️ May lag clocksource        | ✅ §3 — done                      |
+| ⭐ | POST code per CPU step    | ❌ BIOS POST only           | ❌ dmesg only                 | ⬜ §1-5 — planned in TODO-06 §1   |
 
 > **§1 and §3 complete.** §2, §4, §5 deferred — blocked by TODO-17/TODO-19 implementations. Minimal CPU hardening works via `cpu_harden()` + `cpu_harden_post_pagetable()` (TODO-06 §11). Full formal sequencing comes when TODO-17 delivers `cpu_efer_harden()`/`cpu_cr4_harden()`.
 

@@ -258,15 +258,15 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 
 ## OS Comparison
 
-| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                  |
-|----|-------------------------|-----------------------------|------------------------------|--------------------------------|
-| 💎 | Boot progress visual    | ✅ Spinning dots            | ✅ Plymouth splash           | ⬜ §2+§7 — two-tier VPD       |
-| ⭐ | Pre-splash diagnostics  | ❌ Black screen             | ⚠️ fbcon (if compiled in)    | ⬜ §1+§2 — micro-font stages  |
-| 💎 | Boot stage timing       | ⚠️ ETW (not visible)        | ✅ systemd-analyze (post)    | ⬜ §4 — live TSC ms per stage  |
-| ⭐ | NVRAM crash display     | ⚠️ Generic error message    | ❌ No NVRAM persistence      | ⬜ §6 — "Last boot failed at"  |
-| 💎 | POST code display       | ✅ Motherboard LED          | ❌ Not an OS feature         | ✅ Done — TODO-02 §3           |
-| 💎 | Configurable diag       | ✅ bcdedit bootlog          | ✅ systemd.log_level         | ⬜ §3 — postbars=off/on/diag   |
-| ⭐ | Panic-aware progress    | ❌ No boot context in BSOD  | ❌ No boot context in oops   | ⬜ §11 — failed stage in red   |
+| ⭐ | Feature                 | Win11                        | Linux                        | Impossible OS                  |
+|----|-------------------------|------------------------------|------------------------------|--------------------------------|
+| 💎 | Boot progress visual    | ✅ Spinning dots            | ✅ Plymouth splash          | ⬜ §2+§7 — two-tier VPD        |
+| ⭐ | Pre-splash diagnostics  | ❌ Black screen             | ⚠️ fbcon (if compiled in)   | ⬜ §1+§2 — micro-font stages   |
+| 💎 | Boot stage timing       | ⚠️ ETW (not visible)        | ✅ systemd-analyze (post)   | ⬜ §4 — live TSC ms per stage  |
+| ⭐ | NVRAM crash display     | ⚠️ Generic error message    | ❌ No NVRAM persistence     | ⬜ §6 — "Last boot failed at"  |
+| 💎 | POST code display       | ✅ Motherboard LED          | ❌ Not an OS feature        | ✅ Done — TODO-02 §3           |
+| 💎 | Configurable diag       | ✅ bcdedit bootlog          | ✅ systemd.log_level        | ⬜ §3 — postbars=off/on/diag   |
+| ⭐ | Panic-aware progress    | ❌ No boot context in BSOD  | ❌ No boot context in oops  | ⬜ §11 — failed stage in red   |
 
 > **After §1–§11:** The most informative boot diagnostic in any OS — named stages with ms timing from first instruction, NVRAM crash forensics on restart, seamless splash integration. No serial. No tools. Just boot and see.
 

@@ -32,20 +32,17 @@
 #include "kernel/smbios.h"
 #include "kernel/boot_timing.h"
 #include "kernel/smp.h"
-#include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 1 ------------------------------------------------------------ */
 
 void boot_phase1(void)
 {
-    HV_BAR(0);  /* bar 0: Phase 1 entry */
     klog(LOG_DEBUG, "boot", "--- Phase: interrupt controllers & timer ---");
     boot_splash_status("Setting up interrupts...");
 
     /* --- GDT: no prerequisites --- */
     gdt_init();
-    HV_BAR(1);  /* bar 1: GDT done */
     kernel_subsystem_set_ready(SUBSYS_GDT, true);
     boot_progress(1, "GDT", POSTCODE_GDT_INIT);
 
@@ -56,7 +53,6 @@ void boot_phase1(void)
     }
     idt_init();
     irq_init();
-    HV_BAR(2);  /* bar 2: IDT done */
     kernel_subsystem_set_ready(SUBSYS_IDT, true);
     boot_progress(1, "IDT", POSTCODE_IDT_INIT);
 
@@ -72,7 +68,6 @@ void boot_phase1(void)
              (uint64_t)acpi_get_cpu_count());
         boot_progress(1, "ACPI", POSTCODE_ACPI_INIT);
     }
-    HV_BAR(3);  /* bar 3: ACPI done */
 
     /* --- LAPIC + IOAPIC: APIC-first boot ---
      *
@@ -133,7 +128,6 @@ void boot_phase1(void)
             }
         }
         boot_progress(1, "LAPIC_IOAPIC", POSTCODE_LAPIC_INIT);
-        HV_BAR(4);  /* bar 4: LAPIC/IOAPIC done */
 
         /* NOTE: ahci_setup_interrupts() moved to Phase 2, after ahci_init()
          * has discovered the PCI device.  LAPIC is ready here, so MSI will
@@ -151,26 +145,20 @@ void boot_phase1(void)
     }
 
     /* --- RTC --- */
-    HV_BAR(5);  /* bar 5: about to RTC */
     rtc_init();
     kernel_subsystem_set_ready(SUBSYS_RTC, true);
-    HV_BAR(6);  /* bar 6: RTC done */
 
     /* --- Input devices --- */
     boot_splash_status("Initializing input...");
     keyboard_init();
-    HV_BAR(7);  /* bar 7: keyboard done */
     /* mouse_init() skipped — crashes on i5-11600K laptop (touchpad, no PS/2 mouse) */
     /* mouse_init(); */
-    HV_BAR(8);  /* bar 8: mouse skipped */
 
     /* --- Framebuffer + boot splash --- */
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
     fb_init();
     kernel_subsystem_set_ready(SUBSYS_FB, true);
-    HV_BAR(9);  /* bar 9: fb_init done */
     boot_splash_init();
-    HV_BAR(10); /* bar 10: splash done */
 
     /* --- Phase 1 info gathering --- */
     uefi_config_init();
@@ -183,7 +171,6 @@ void boot_phase1(void)
     uefi_crypto_agility_init();
     secureboot_keys_init();
     boot_timing_init();
-    HV_BAR(11); /* bar 11: info gathering done */
 
     /* GOP mode enumeration report */
     {
@@ -209,10 +196,8 @@ void boot_phase1(void)
         kernel_subsystem_dump();
         boot_halt("IDT not ready -- cannot init timer");
     }
-    HV_BAR(12); /* bar 12: about to timer */
     timer_hal_init();
     kernel_subsystem_set_ready(SUBSYS_TIMER, true);
-    HV_BAR(13); /* bar 13: timer done */
 
     smp_early_bsp_init();
 

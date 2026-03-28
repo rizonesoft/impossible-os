@@ -7,7 +7,6 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
-#include "kernel/hv_bar.h"
 #include "main/main_internal.h"
 
 /* Kernel entry point

@@ -28,7 +28,6 @@
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
 #include "kernel/boot_info.h"
-#include "kernel/hv_bar.h"
 
 /* ---- State ---- */
 

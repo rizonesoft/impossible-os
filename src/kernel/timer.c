@@ -15,7 +15,6 @@
 #include "kernel/boot_init.h"
 #include "kernel/boot_info.h"
 #include "kernel/drivers/framebuffer.h"
-#include "kernel/hv_bar.h"
 
 /* THE single source of truth -- set once by timer_hal_init() (§6.4) */
 timer_driver_t *g_system_timer = (timer_driver_t *)0;
