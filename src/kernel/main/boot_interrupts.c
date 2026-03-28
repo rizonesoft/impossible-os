@@ -42,7 +42,9 @@ void boot_phase1(void)
     boot_splash_status("Setting up interrupts...");
 
     /* --- GDT: no prerequisites --- */
+    POST16(POST16_GDT);
     gdt_init();
+    POST16(POST16_GDT_OK);
     kernel_subsystem_set_ready(SUBSYS_GDT, true);
     boot_progress(1, "GDT", POSTCODE_GDT_INIT);
 
@@ -51,8 +53,10 @@ void boot_phase1(void)
         kernel_subsystem_dump();
         boot_halt("GDT not ready -- cannot init IDT");
     }
+    POST16(POST16_IDT);
     idt_init();
     irq_init();
+    POST16(POST16_IDT_OK);
     kernel_subsystem_set_ready(SUBSYS_IDT, true);
     boot_progress(1, "IDT", POSTCODE_IDT_INIT);
 
@@ -62,7 +66,9 @@ void boot_phase1(void)
                (uint64_t)g_boot_info.acpi_version,
                g_boot_info.acpi_rsdp_addr);
         boot_splash_status("Parsing ACPI tables...");
+        POST16(POST16_ACPI);
         acpi_init();
+        POST16(POST16_ACPI_OK);
         kernel_subsystem_set_ready(SUBSYS_ACPI, true);
         klog(LOG_INFO, "smp", "CPUs discovered: %u",
              (uint64_t)acpi_get_cpu_count());
@@ -77,6 +83,7 @@ void boot_phase1(void)
      * instead of the 8259 PIC.  This fixes Hyper-V Gen 2 (no PIC). */
     if (g_boot_info.acpi_available && acpi_get_ioapic_base() != 0) {
         boot_splash_status("Initializing LAPIC...");
+        POST16(POST16_LAPIC);
         lapic_init();
 
         if (lapic_available()) {
@@ -145,20 +152,28 @@ void boot_phase1(void)
     }
 
     /* --- RTC --- */
+    POST16(POST16_RTC);
     rtc_init();
+    POST16(POST16_RTC_OK);
     kernel_subsystem_set_ready(SUBSYS_RTC, true);
 
     /* --- Input devices --- */
     boot_splash_status("Initializing input...");
+    POST16(POST16_KBD);
     keyboard_init();
+    POST16(POST16_KBD_OK);
     /* mouse_init() skipped — crashes on i5-11600K laptop (touchpad, no PS/2 mouse) */
-    /* mouse_init(); */
+    /* POST16(POST16_MOUSE); mouse_init(); POST16(POST16_MOUSE_OK); */
 
     /* --- Framebuffer + boot splash --- */
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
+    POST16(POST16_FB);
     fb_init();
+    POST16(POST16_FB_OK);
     kernel_subsystem_set_ready(SUBSYS_FB, true);
+    POST16(POST16_SPLASH);
     boot_splash_init();
+    POST16(POST16_SPLASH_OK);
 
     /* --- Phase 1 info gathering --- */
     uefi_config_init();
@@ -196,7 +211,9 @@ void boot_phase1(void)
         kernel_subsystem_dump();
         boot_halt("IDT not ready -- cannot init timer");
     }
+    POST16(POST16_TIMER);
     timer_hal_init();
+    POST16(POST16_TIMER_OK);
     kernel_subsystem_set_ready(SUBSYS_TIMER, true);
 
     smp_early_bsp_init();

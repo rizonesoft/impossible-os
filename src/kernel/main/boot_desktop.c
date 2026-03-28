@@ -51,7 +51,9 @@ void boot_phase3(void)
         boot_halt("HEAP or TIMER not ready -- cannot init scheduler");
     }
     boot_splash_status("Initializing scheduler...");
+    POST16(POST16_SCHED);
     task_init();
+    POST16(POST16_SCHED_OK);
     kernel_subsystem_set_ready(SUBSYS_SCHED, true);
     boot_progress(3, "SCHED", POSTCODE_SCHED_INIT);
 
@@ -121,7 +123,9 @@ void boot_phase3(void)
     boot_splash_tick();
     boot_splash_status("Almost ready...");
     wm_init();
+    POST16(POST16_DESKTOP);
     desktop_init();
+    POST16(POST16_DESKTOP_OK);
 
     /* Finish boot splash */
     boot_splash_finish();
@@ -262,6 +266,7 @@ void boot_phase3(void)
     }
 
     /* --- Compositor event loop (never returns) --- */
+    POST16(POST16_COMPOSITOR);
     compositor_run();
 
     /* Unreachable under normal operation */

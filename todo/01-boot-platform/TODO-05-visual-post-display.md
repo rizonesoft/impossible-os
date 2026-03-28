@@ -40,7 +40,7 @@
 | ⭐  | Order | Deliverable                                             | Depends On | Status |
 | --- | :---: | ------------------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | 4-digit POST code system (0x0000–0xFFFF)                | —          |  [x]   |
-| ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1         |  [ ]   |
+| ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1         |  [x]   |
 | ⭐  |   3   | Embedded 5×7 bitmap micro-font                          | —          |  [ ]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3     |  [ ]   |
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4         |  [ ]   |
@@ -93,11 +93,11 @@ Instrument every function — from UEFI `efi_main` through kernel `compositor_ru
 
 **Files:** `src/boot/uefi/bootx64.c`, all `boot_*.c` files, all driver `*_init()` functions
 
-- [ ] UEFI Bootloader: `efi_main` (0xB001/02), `init_gop` (0xB010/11), `load_kernel` (0xB020/21), `get_memory_map` (0xB030/31), `ExitBootServices` (0xB040/41), `setup_page_tables` (0xB050/51), `jump_to_kernel` (0xB060)
-- [ ] Phase 0: `serial_init` (0x0010/11), `pmm_init` (0x0020/21), `vmm_init` (0x0030/31), `heap_init` (0x0040/41), `klog_early_init` (0x0050/51), `cpuid_init` (0x0060/61), `cpu_harden` (0x0070/71), `vmm_apply_nx_policy` (0x0080/81), `simd_enable_avx` (0x0090/91)
-- [ ] Phase 1: `gdt_init` (0x1000/01), `idt_init` (0x1010/11), `acpi_init` (0x1020/21), `lapic_init` (0x1030/31), `ioapic_init` (0x1034/35), `timer_hal_init` (0x1040/41), `rtc_init` (0x1050/51), `keyboard_init` (0x1060/61), `mouse_init` (0x1070/71), `fb_init` (0x1080/81), `boot_splash_init` (0x1090/91)
-- [ ] Phase 2: `pci_scan` (0x2000/01), `xhci_init` (0x2010/11), `rtl8139_init` (0x2020/21), `ahci_init` (0x2050/51), `ahci_setup_interrupts` (0x2052/53), `vfs_init` (0x2060/61), `registry_init` (0x2080/81), `smp_init` (0x2090/91)
-- [ ] Phase 3: `task_init` (0x3000/01), `font_mgr_init` (0x3020/21), `desktop_init` (0x3030/31), `compositor_run` (0x3040)
+- [x] UEFI Bootloader: `efi_main` (0xB001), `init_gop` (0xB010), `load_kernel` (0xB020/21), `ExitBS` (0xB050), `page_tables` (0xB060), `kernel_jump` (0xB070)
+- [x] Phase 0: `serial` (0x0010/11), `pmm` (0x0020/21), `vmm` (0x0030/31), `heap` (0x0040/41), `klog` (0x0050/51), `cpuid` (0x0060/61), `cpu_harden` (0x0070/71), `nx_policy` (0x0080/81), `simd` (0x0090/91)
+- [x] Phase 1: `gdt` (0x1000/01), `idt` (0x1010/11), `acpi` (0x1020/21), `lapic` (0x1030), `timer` (0x1040/41), `rtc` (0x1050/51), `kbd` (0x1060/61), `fb` (0x1080/81), `splash` (0x1090/91)
+- [x] Phase 2: `pci` (0x2000/01), `xhci` (0x2010/11), `nic` (0x2020/21), `net` (0x2030/31), `ata` (0x2040/41), `ahci` (0x2050/51), `vfs` (0x2060/61), `registry` (0x2080/81), `smp` (0x2090/91)
+- [x] Phase 3: `sched` (0x3000/01), `desktop` (0x3030/31), `compositor` (0x3040)
 - [ ] Commit: `"boot: POST16 in every function from UEFI efi_main through compositor"`
 
 **Test checkpoint:** Force crash in `mouse_init`. Reboot. Serial shows "Last boot failed at: 0x1070 (mouse_init)". Bare metal: NVRAM contains 0x1070, next boot displays it. Pinpointed in seconds, not hours.

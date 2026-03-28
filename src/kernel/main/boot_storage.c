@@ -50,11 +50,19 @@ void boot_phase2(void)
     klog(LOG_DEBUG, "boot", "--- Phase: PCI & peripherals ---");
     boot_splash_tick();
     boot_splash_status("Scanning PCI bus...");
+    POST16(POST16_PCI);
     pci_scan();
+    POST16(POST16_PCI_OK);
+    POST16(POST16_XHCI);
     xhci_init();
+    POST16(POST16_XHCI_OK);
     boot_splash_status("Initializing network...");
+    POST16(POST16_NIC);
     rtl8139_init();
+    POST16(POST16_NIC_OK);
+    POST16(POST16_NET);
     net_init();
+    POST16(POST16_NET_OK);
     virtio_input_init();
     vbox_mouse_init();
     boot_progress(2, "PCI_NET", POSTCODE_PCI_INIT);
@@ -66,9 +74,13 @@ void boot_phase2(void)
     /* --- Disk drivers (moved from Phase 0) --- */
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
     boot_splash_status("Initializing storage...");
+    POST16(POST16_ATA);
     ata_init();
+    POST16(POST16_ATA_OK);
     virtio_blk_init();
+    POST16(POST16_AHCI);
     ahci_init();
+    POST16(POST16_AHCI_OK);
     /* AHCI interrupts: skip on bare metal (crashes on i5-11600K — MSI enable
      * triggers immediate interrupt into wrong context).  Enable on VMs where
      * MSI works reliably.  TODO-06 §6 will fix this properly with LAPIC
@@ -87,7 +99,9 @@ void boot_phase2(void)
     }
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
     boot_splash_status("Initializing VFS...");
+    POST16(POST16_VFS);
     vfs_init();
+    POST16(POST16_VFS_OK);
     kernel_subsystem_set_ready(SUBSYS_VFS, true);
     boot_progress(2, "VFS", POSTCODE_VFS_INIT);
 
@@ -149,7 +163,9 @@ void boot_phase2(void)
     /* --- SMP: bringup APs --- */
     if (g_boot_info.acpi_available) {
         boot_splash_status("Initializing SMP...");
+        POST16(POST16_SMP);
         smp_init();
+        POST16(POST16_SMP_OK);
         kernel_subsystem_set_ready(SUBSYS_SMP, true);
         boot_progress(2, "SMP", POSTCODE_SMP_INIT);
     }
@@ -202,7 +218,9 @@ void boot_phase2(void)
     klog_disk_flush();
 
     boot_splash_status("Initializing registry...");
+    POST16(POST16_REGISTRY);
     registry_init();
+    POST16(POST16_REGISTRY_OK);
     boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
     kernel_subsystem_set_ready(SUBSYS_REGISTRY, true);
