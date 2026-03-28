@@ -47,7 +47,7 @@
 | 💎  |   7   | Boot UX polish                     | §3, §5, T02 §2  |  [x]   |
 | 💎  |   8   | A/B dual-slot boot                 | §2              | defer  |
 | ⭐  |   9   | Multi-OS detection & boot menu     | §1              | defer  |
-| 💎  |  10   | UEFI capsule update & ESRT         | §2              |  [ ]   |
+| 💎  |  10   | UEFI capsule update & ESRT         | §2              | defer  |
 | 💎  |  11   | UEFI memory attributes (W^X)       | §1              |  [ ]   |
 | ⭐  |  12   | Serial log standardization         | —               |  [x]   |
 | 💎  |  13   | Multi-GPU GOP enumeration          | §3              |  [ ]   |
@@ -187,7 +187,7 @@ Detect other OS partitions from GPT and show a countdown boot menu when the user
 
 **Test checkpoint:** QEMU with two GPT partitions (Impossible OS + dummy Linux partition GUID): boot menu appears with 2 entries, countdown from 3, auto-selects Impossible OS. Bare metal dual-boot laptop: detects Windows/Linux partitions, menu renders, chainload works.
 
-## 10. UEFI Capsule Update & ESRT
+## 10. UEFI Capsule Update & ESRT *(deferred — firmware update infrastructure, not needed during development)*
 Parse the ESRT firmware resource table and implement the UEFI capsule delivery path for firmware updates.
 
 **Files:** `src/kernel/uefi_capsule.c`, `include/kernel/uefi_capsule.h`
