@@ -41,8 +41,8 @@ static inline uint64_t vpd_rdtsc(void)
 
 #define VPD_SCALE          2   /* render text at 2× for readability */
 #define VPD_CHAR_W        (VPD_CELL_W * VPD_SCALE)  /* 12px per char at 2× */
-#define VPD_LEFT_MARGIN    8
-#define VPD_TOP_MARGIN     8
+#define VPD_LEFT_MARGIN   12
+#define VPD_TOP_MARGIN    14
 #define VPD_ROW_HEIGHT    (VPD_GLYPH_H * VPD_SCALE + 8)  /* 22px: 14px text + 8px gap */
 #define VPD_SQUARE_SIZE   (VPD_GLYPH_H * VPD_SCALE)      /* 14px square */
 #define VPD_SQUARE_GAP     6
@@ -227,15 +227,16 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
 
     /* Phase heading + separator when phase changes */
     if (s_last_phase != 0xFF && phase != s_last_phase) {
+        s_row += VPD_ROW_HEIGHT / 2;  /* extra gap before separator */
         vpd_fill_rect(VPD_LEFT_MARGIN, s_row,
                        VPD_SEPARATOR_W, VPD_SEPARATOR_H,
                        VPD_COLOR_SEPARATOR);
-        s_row += VPD_SEPARATOR_H + 2;
+        s_row += VPD_SEPARATOR_H + VPD_ROW_HEIGHT / 2;  /* gap after separator */
     }
     if (phase != s_last_phase && phase < 4) {
         vpd_puts_scaled(VPD_LEFT_MARGIN, s_row, s_phase_names[phase],
                          VPD_COLOR_SEPARATOR);
-        s_row += VPD_ROW_HEIGHT;
+        s_row += VPD_ROW_HEIGHT + 2;  /* heading + padding before first stage */
     }
     s_last_phase = phase;
 
