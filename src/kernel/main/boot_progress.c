@@ -120,7 +120,8 @@ static inline void outb_post(uint8_t code)
 
 void post_display16(uint16_t code)
 {
-    uint32_t scr_w, x0, y0;
+    uint32_t scr_w, pitch_px, x0, y0;
+    uint32_t *fb;
     int nibbles[4];
     int d;
 
@@ -135,18 +136,28 @@ void post_display16(uint16_t code)
     if (kernel_subsystem_ready(SUBSYS_DESKTOP))
         return;
 
-    /* Skip pixel writes if framebuffer not ready */
-    if (!kernel_subsystem_ready(SUBSYS_FB))
+    /* Write directly to hardware framebuffer — works from the very
+     * first instruction after g_boot_info is parsed, before fb_init().
+     * No dependency on SUBSYS_FB, back buffer, or fb_swap. */
+    if (!g_boot_info.fb_available || !g_boot_info.fb.addr)
         return;
 
-    scr_w = fb_get_width();
+    fb       = (uint32_t *)(uintptr_t)g_boot_info.fb.addr;
+    scr_w    = g_boot_info.fb.width;
+    pitch_px = g_boot_info.fb.pitch / 4;
+
     if (scr_w == 0) return;
 
     x0 = scr_w - POST16_TOTAL_W - POST16_MARGIN;
     y0 = POST16_TOP;
 
-    /* Clear background */
-    fb_fill_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
+    /* Clear background — direct VRAM write */
+    {
+        uint32_t cy, cx;
+        for (cy = y0; cy < y0 + POST16_TOTAL_H && cy < g_boot_info.fb.height; cy++)
+            for (cx = x0; cx < x0 + POST16_TOTAL_W && cx < scr_w; cx++)
+                fb[cy * pitch_px + cx] = 0x00000000;
+    }
 
     /* Extract 4 nibbles (high to low) */
     nibbles[0] = (code >> 12) & 0x0F;
@@ -154,7 +165,7 @@ void post_display16(uint16_t code)
     nibbles[2] = (code >>  4) & 0x0F;
     nibbles[3] =  code        & 0x0F;
 
-    /* Draw each digit at 2× scale with thin strokes */
+    /* Draw each digit at 2× scale with thin strokes — direct VRAM */
     for (d = 0; d < 4; d++) {
         const uint8_t *g = s_hex_font[nibbles[d]];
         uint32_t gx = x0 + d * (POST16_GLYPH_W + POST16_GAP);
@@ -165,16 +176,16 @@ void post_display16(uint16_t code)
                 if (bits & (0x80 >> col)) {
                     uint32_t px = gx + col * POST16_SCALE;
                     uint32_t py = y0 + row * POST16_SCALE;
-                    fb_put_pixel(px,     py,     0x00808080);
-                    fb_put_pixel(px + 1, py,     0x00808080);
-                    fb_put_pixel(px,     py + 1, 0x00808080);
-                    fb_put_pixel(px + 1, py + 1, 0x00808080);
+                    if (px + 1 < scr_w && py + 1 < g_boot_info.fb.height) {
+                        fb[py       * pitch_px + px]     = 0x00808080;
+                        fb[py       * pitch_px + px + 1] = 0x00808080;
+                        fb[(py + 1) * pitch_px + px]     = 0x00808080;
+                        fb[(py + 1) * pitch_px + px + 1] = 0x00808080;
+                    }
                 }
             }
         }
     }
-
-    fb_swap_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H);
 }
 
 /* ---- Boot timeline JSON dump --------------------------------------------- */
