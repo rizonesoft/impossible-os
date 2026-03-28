@@ -46,8 +46,8 @@
 | ⭐  |   5   | Debug color bar waterfall          | §2         | defer  |
 | 💎  |   6   | Panic forensic evidence            | §2         | defer  |
 | ⭐  |   7   | Panic QR code                      | §6         | defer  |
-| 💎  |   8   | System-wide multi-instance spinner | —          |  [ ]   |
-| ⭐  |   9   | Runtime vital signs strip          | §8         |  [ ]   |
+| 💎  |   8   | System-wide multi-instance spinner | —          | defer  |
+| ⭐  |   9   | Runtime vital signs strip          | §8         | defer  |
 
 > 💎 = parity — Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive — the proportional debug waterfall with regression overlay, QR code on BSOD, and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -144,7 +144,7 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 - [ ] Ensure `qr_encode.c` is freestanding: no libc, no floating point; uses only `kernel/types.h` and `kernel/libc/string.h`
 - [ ] Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
 
-## 8. System-Wide Multi-Instance Spinner
+## 8. System-Wide Multi-Instance Spinner *(deferred — desktop polish, single spinner works)*
 Extend the existing single-instance `spinner.h` to support up to 8 simultaneous named spinner instances for use across the desktop.
 
 **Files:** `include/kernel/spinner.h`, `src/kernel/spinner.c`
@@ -162,7 +162,7 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 - [ ] Backward compatibility: existing `spinner_init/start/advance/stop` calls remain valid; they operate on `g_active_spinners[0]` (the boot splash slot)
 - [ ] Commit: `"kernel: multi-instance spinner_t pool for compositor-integrated loading indicators"`
 
-## 9. Runtime Vital Signs Strip
+## 9. Runtime Vital Signs Strip *(deferred — developer tool, needs scheduler stats first)*
 An always-visible 20 px overlay strip at the bottom of the desktop showing live system metrics for developers.
 
 **Files:** `src/desktop/vital_signs.c`, `include/desktop/vital_signs.h`
