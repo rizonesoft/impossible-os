@@ -71,6 +71,7 @@
 | 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7       |  [ ]   |
 | 💎  |  13   | CPU feature minimum requirements and verification    | §4, §9     |  [ ]   |
 | 💎  |  14   | Bare-metal test matrix and validation plan            | §3         |  [ ]   |
+| 💎  |  15   | Boot splash spinner bare-metal fix                    | §3, §10    |  [ ]   |
 
 > 💎 = parity — Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive — 4-digit POST codes in every function and a configurable skip list are not standard in any OS kernel.
@@ -354,6 +355,21 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 - [ ] Commit: `"docs: bare-metal test matrix and validation plan"`
 
 **Test checkpoint:** Bare-metal boot on i5-11600K matches the checklist. All phases within timing thresholds.
+
+## 15. Boot Splash Spinner Bare-Metal Fix
+
+The boot splash spinner stutters on bare metal — stops and restarts repeatedly during Phase 2. Root cause: the spinner animation is driven by `timer_tick_callback_fire()` in the LAPIC timer ISR. On bare metal, the timer is disabled (TODO-06 §3 hw interrupt investigation) so the spinner only advances when the compositor or `boot_splash_tick()` explicitly calls it. Between explicit calls (PCI scan, AHCI init), the spinner freezes for seconds.
+
+**Files:** `src/kernel/boot_splash.c`, `src/kernel/spinner.c`, `src/kernel/main/boot_storage.c`
+
+- [ ] Investigate: is the spinner driven by timer callback (`timer_register_tick_callback`) or by explicit `boot_splash_tick()` calls? On bare metal without timer, only explicit calls work.
+- [ ] Add `boot_splash_tick()` calls at regular intervals during long operations (PCI scan loop, AHCI port enumeration, VFS mount) — every ~100ms of wall time.
+- [ ] If timer IS working on bare metal (after §3 hw interrupt fix): verify spinner callback fires at 10fps (every 10 ticks at 100Hz). If not, the callback registration might be lost during timer reinit.
+- [ ] If timer is NOT working: implement TSC-based spinner fallback — `boot_splash_tick()` reads TSC and advances the spinner if 100ms has elapsed since last advance, independent of timer interrupts.
+- [ ] Verify: spinner rotates smoothly at ~10fps on QEMU WHPX, VBox, TCG, AND bare metal.
+- [ ] Commit: `"boot: fix spinner stutter on bare metal — TSC fallback + explicit tick calls"`
+
+**Test checkpoint:** Bare metal: spinner rotates smoothly during PCI scan and AHCI init (no visible stutter or freeze). QEMU: spinner unchanged (already smooth).
 
 ---
 
