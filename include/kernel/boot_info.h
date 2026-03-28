@@ -158,6 +158,8 @@ struct boot_config {
     /* Kernel Heartbeat */
     uint8_t  heartbeat;        /* 0=off, 1=auto, 2=always */
     uint8_t  postcode;         /* 0=off, 1=auto, 2=always */
+    /* VPD (Visual POST Display) */
+    uint8_t  postbars;         /* 0=off, 1=on (integrated), 2=diag (full) */
     /* Command line */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

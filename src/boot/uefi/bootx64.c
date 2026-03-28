@@ -61,6 +61,7 @@ struct boot_config {
     UINT16  splash_timeout;
     UINT8   heartbeat;
     UINT8   postcode;
+    UINT8   postbars;
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
 };
@@ -573,6 +574,7 @@ static void boot_config_defaults(struct boot_config *cfg)
     cfg->splash_timeout = 3;    /* 3 seconds */
     cfg->heartbeat      = 1;    /* auto */
     cfg->postcode       = 1;    /* auto */
+    cfg->postbars       = 0;    /* off — normal splash, no VPD */
     cfg->cmdline[0]     = '\0';
     cfg->config_found   = 0;
 }
@@ -596,6 +598,12 @@ static void parse_conf_kv(struct boot_config *cfg,
         else if (ascii_streq(val, "auto"))   cfg->postcode = 1;
         else if (ascii_streq(val, "always")) cfg->postcode = 2;
         else cfg->postcode = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "postbars")) {
+        if      (ascii_streq(val, "off"))  cfg->postbars = 0;
+        else if (ascii_streq(val, "on"))   cfg->postbars = 1;
+        else if (ascii_streq(val, "diag")) cfg->postbars = 2;
+        else cfg->postbars = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;

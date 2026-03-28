@@ -43,7 +43,7 @@
 | ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1         |  [x]   |
 | ⭐  |   3   | Embedded 5×7 bitmap micro-font                          | —          |  [x]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3     |  [x]   |
-| 💎  |   5   | `boot.conf` `postbars` configuration                    | §4         |  [ ]   |
+| 💎  |   5   | `boot.conf` `postbars` configuration                    | §4         |  [x]   |
 | 💎  |   6   | Named stages with TSC timing                            | §4         |  [ ]   |
 | 💎  |   7   | Status indicators and progress bar                      | §6         |  [ ]   |
 | ⭐  |   8   | NVRAM crash persistence and "last boot failed" display  | §6         |  [ ]   |
@@ -148,12 +148,12 @@ Add the `postbars` key to `boot.conf` parsing so the VPD can be configured witho
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
 
-- [ ] Add `uint8_t postbars` field to `struct boot_config` (0=off, 1=integrated, 2=diagnostic)
-- [ ] Default: `postbars = 0` (VPD hidden; normal splash)
-- [ ] Parse in `parse_conf_kv()`: `postbars=off` → 0, `postbars=on` → 1, `postbars=diag` → 2, numeric accepted
-- [ ] `vpd_init()` reads `g_boot_info.config.postbars`; returns early if 0 (except crash-restart display, which is always active — see §6)
-- [ ] Add `postbars=off` to default `boot.conf` with comment
-- [ ] Commit: `"boot: postbars boot.conf key for VPD configuration"`
+- [x] Add `uint8_t postbars` field to `struct boot_config` (0=off, 1=on, 2=diag) — both kernel and bootloader copies
+- [x] Default: `postbars = 0` (VPD hidden; normal splash)
+- [x] Parse in `parse_conf_kv()`: `postbars=off` → 0, `postbars=on` → 1, `postbars=diag` → 2, numeric accepted
+- [x] `vpd_init()` checks `config.postbars` — returns early if 0 after config parsed; always inits before config parsed (bare-metal safety)
+- [x] Add `postbars=off` to default `boot.conf` with comment
+- [x] Commit: `"boot: postbars boot.conf key for VPD configuration"`
 
 ## 6. Named Stages with TSC Timing
 Wire the VPD into `boot_stage_report()` so every named stage automatically appears in the VPD with millisecond timing from the TSC.

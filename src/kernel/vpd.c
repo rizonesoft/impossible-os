@@ -191,6 +191,16 @@ static const char *s_phase_names[] = {
 
 void vpd_init(void)
 {
+    /* Respect boot.conf postbars setting (0=off, 1=on, 2=diag).
+     * If config not yet parsed (config_found=0), default is off. */
+    if (g_boot_info.config.config_found && !g_boot_info.config.postbars) {
+        s_active = 0;
+        return;
+    }
+    /* If config not parsed yet but postbars defaults to 0, still init —
+     * bare-metal diagnostics need VPD before config is available.
+     * vpd_stop_tier1() will clean up if postbars ends up being 0. */
+
     if (!g_boot_info.fb_available || !g_boot_info.fb.addr) {
         s_active = 0;
         return;
