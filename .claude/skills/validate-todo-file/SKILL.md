@@ -51,6 +51,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
      2. If no back-reference: add one. Both sides must know about the dependency.
      3. If this TODO creates something that unblocks work in another TODO, the deliverable section must explicitly say "after this, re-enable X in TODO-YY §M" — not just a vague XREF.
      4. If this TODO defers an item, the item must say WHERE it's deferred to (specific TODO + section) or WHY it's deferred (with a condition for when to revisit). Never just "deferred."
+   - **Internal §N cross-reference check:** For every `§N` reference in prose, checklist items, and callouts within each section, verify that `N` refers to the correct section in THIS file. A section cannot reference itself as if it were a different section (e.g., §1 saying "this unblocks §1" is a bug). Cross-check each §N against the `## N.` headings and the Implementation Order table to ensure the reference makes semantic sense — the referenced section should actually deliver what the prose claims.
    - Fix stale planning text, broken links, and roadmap inconsistencies.
 8. **Self-contained execution check (critical).**
    - The TODO must be executable from §1 to the last section WITHOUT being blocked by unimplemented sections in other TODOs.
