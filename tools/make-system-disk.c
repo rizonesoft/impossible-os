@@ -3,8 +3,7 @@
  *
  * Creates a GPT-formatted disk with:
  *   Partition 1: EFI System Partition (FAT32) -- formatted externally via mkfs.fat
- *   Partition 2: FAT32 Logs                   -- formatted externally via mkfs.fat
- *   Partition 3: IXFS v2 (System)             -- formatted via mkfs-ixfs at offset
+ *   Partition 2: IXFS v2 (System)             -- formatted via mkfs-ixfs at offset
  *
  * Usage:
  *   make-system-disk -o output.img [-s SIZE] [--efi-size SIZE]
@@ -122,13 +121,11 @@ int main(int argc, char *argv[])
     const char *output = NULL;
     uint64_t disk_size = 512ULL * 1024 * 1024;  /* 512 MiB default */
     uint64_t efi_size = 64ULL * 1024 * 1024;    /* 64 MiB EFI partition */
-    uint64_t log_size = 16ULL * 1024 * 1024;    /* 16 MiB Logs partition */
     uint8_t *disk;
     uint8_t *mbr, *hdr, *entries;
     uint32_t entry_crc, hdr_crc;
     uint64_t total_sectors;
     uint64_t efi_start, efi_end;
-    uint64_t log_start, log_end;
     uint64_t ixfs_start, ixfs_end;
     FILE *fp;
     int i;
@@ -141,19 +138,15 @@ int main(int argc, char *argv[])
             disk_size = parse_size(argv[++i]);
         else if (strcmp(argv[i], "--efi-size") == 0 && i + 1 < argc)
             efi_size = parse_size(argv[++i]);
-        else if (strcmp(argv[i], "--log-size") == 0 && i + 1 < argc)
-            log_size = parse_size(argv[++i]);
         else if (strcmp(argv[i], "-h") == 0 ||
                  strcmp(argv[i], "--help") == 0) {
-            printf("Usage: make-system-disk -o FILE [-s SIZE] [--efi-size SIZE] [--log-size SIZE]\n\n"
+            printf("Usage: make-system-disk -o FILE [-s SIZE] [--efi-size SIZE]\n\n"
                    "  -o FILE        Output image (required)\n"
                    "  -s SIZE        Total disk size (default: 512M)\n"
                    "  --efi-size SZ  EFI partition size (default: 64M)\n"
-                   "  --log-size SZ  Logs partition size (default: 16M)\n"
-                   "\nCreates a GPT disk. Partitions are formatted externally.\n"
+                   "\nCreates a GPT disk with 2 partitions:\n"
                    "  Partition 1: EFI System (FAT32) at LBA 2048\n"
-                   "  Partition 2: Logs (FAT32) after EFI\n"
-                   "  Partition 3: IXFS (System) fills remaining space\n");
+                   "  Partition 2: IXFS (System) fills remaining space\n");
             return 0;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -167,11 +160,10 @@ int main(int argc, char *argv[])
     }
 
     /* Ensure disk is large enough for EFI + IXFS + GPT overhead */
-    if (disk_size < efi_size + log_size + 64 * 1024 * 1024) {
-        fprintf(stderr, "make-system-disk: disk too small (%llu < EFI %llu + Log %llu + 64M)\n",
+    if (disk_size < efi_size + 64 * 1024 * 1024) {
+        fprintf(stderr, "make-system-disk: disk too small (%llu < EFI %llu + 64M)\n",
                 (unsigned long long)disk_size,
-                (unsigned long long)efi_size,
-                (unsigned long long)log_size);
+                (unsigned long long)efi_size);
         return 1;
     }
 
@@ -190,11 +182,8 @@ int main(int argc, char *argv[])
      */
     efi_start = 2048;
     efi_end = efi_start + (efi_size / SECTOR_SIZE) - 1;
-    /* Align Logs start to 1 MiB boundary */
-    log_start = ((efi_end + 1 + 2047) / 2048) * 2048;
-    log_end = log_start + (log_size / SECTOR_SIZE) - 1;
-    /* Align IXFS start to 1 MiB boundary */
-    ixfs_start = ((log_end + 1 + 2047) / 2048) * 2048;
+    /* Align IXFS start to 1 MiB boundary (directly after EFI) */
+    ixfs_start = ((efi_end + 1 + 2047) / 2048) * 2048;
     ixfs_end = total_sectors - 34 - 1;
 
     printf("make-system-disk: %s -- %llu MiB\n", output,
@@ -202,10 +191,7 @@ int main(int argc, char *argv[])
     printf("  Part 1 (EFI):  LBA %llu - %llu (%llu MiB)\n",
            (unsigned long long)efi_start, (unsigned long long)efi_end,
            (unsigned long long)(efi_size / (1024 * 1024)));
-    printf("  Part 2 (Logs): LBA %llu - %llu (%llu MiB)\n",
-           (unsigned long long)log_start, (unsigned long long)log_end,
-           (unsigned long long)(log_size / (1024 * 1024)));
-    printf("  Part 3 (IXFS): LBA %llu - %llu (%llu MiB)\n",
+    printf("  Part 2 (IXFS): LBA %llu - %llu (%llu MiB)\n",
            (unsigned long long)ixfs_start, (unsigned long long)ixfs_end,
            (unsigned long long)((ixfs_end - ixfs_start + 1) * SECTOR_SIZE /
                                 (1024 * 1024)));
@@ -237,14 +223,8 @@ int main(int argc, char *argv[])
         0xC9, 0x3B,
         efi_start, efi_end, "EFI System");
 
-    /* Entry 1: Logs Partition (Microsoft Basic Data GUID) */
+    /* Entry 1: IXFS System Partition */
     write_partition_entry(entries + 1 * GPT_ENTRY_SIZE,
-        0xEBD0A0A2, 0xB9E5, 0x4433, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26,
-        0x99, 0xC7,
-        log_start, log_end, "Logs");
-
-    /* Entry 2: IXFS System Partition */
-    write_partition_entry(entries + 2 * GPT_ENTRY_SIZE,
         0xDA000000, 0x0000, 0x4978, 0x46, 0x53, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x01,
         ixfs_start, ixfs_end, "Impossible OS");
@@ -307,10 +287,6 @@ int main(int argc, char *argv[])
                     (unsigned long long)(efi_start * SECTOR_SIZE));
             fprintf(info_fp, "EFI_SIZE=%llu\n",
                     (unsigned long long)efi_size);
-            fprintf(info_fp, "LOG_OFFSET=%llu\n",
-                    (unsigned long long)(log_start * SECTOR_SIZE));
-            fprintf(info_fp, "LOG_SIZE=%llu\n",
-                    (unsigned long long)log_size);
             fprintf(info_fp, "IXFS_OFFSET=%llu\n",
                     (unsigned long long)(ixfs_start * SECTOR_SIZE));
             fprintf(info_fp, "IXFS_SIZE=%llu\n",
@@ -336,7 +312,7 @@ int main(int argc, char *argv[])
     fclose(fp);
     free(disk);
 
-    printf("make-system-disk: created %s (%llu MiB GPT: EFI + Logs + IXFS)\n",
+    printf("make-system-disk: created %s (%llu MiB GPT: EFI + IXFS)\n",
            output, (unsigned long long)(disk_size / (1024 * 1024)));
     return 0;
 }

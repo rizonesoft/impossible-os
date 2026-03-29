@@ -307,7 +307,7 @@ Remove the dedicated FAT32 logging partition (`X:\`) — a development hack from
 - [x] boot-profile.log and boot-timeline.json already used `C:\` — now use `KLOG_DIR` macro
 - [x] Removed `X:\` special mount from partition.c — FAT32 partitions get normal drive letters
 - [x] Debug flag check moved from `X:\DEBUG` to `C:\DEBUG`
-- [ ] Remove FAT32 log partition from disk image layout — deferred (build system change)
+- [x] Removed FAT32 log partition from disk image (2 partitions: EFI + IXFS, IXFS gets +16 MiB)
 - [x] Commit: `"boot: migrate logging from X:\\ to C:\\Impossible\\System\\Logs\\"`
 
 **Test checkpoint:** QEMU: boot log written to `C:\Impossible\System\Logs\26032801.LOG`. No `X:\` mount in serial log. Bare metal: same path, IXFS write works. Disk image has 2 partitions (ESP + IXFS) instead of 3.
