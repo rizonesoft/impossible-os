@@ -6,8 +6,10 @@
 #include "registry.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/ioapic.h"
+#include "kernel/drivers/lapic.h"
 #include "kernel/irq.h"
 #include "kernel/mm/vmm.h"
+#include "kernel/boot_init.h"
 #include "kernel/sched/event.h"
 /* ---- Driver state ---- */
 volatile uint8_t *abar;
@@ -797,9 +799,27 @@ void ahci_setup_interrupts(void)
 {
     uint32_t ghc;
     int irq_ok = 0;
+    uint32_t lvt_saved = 0;
+    int need_mask = 0;
 
     if (!initialized || !abar)
         return;
+
+    /* Validate ABAR: must be page-aligned, within 4 GiB, not NULL/bogus */
+    if ((uintptr_t)abar == 0 || ((uintptr_t)abar & 0xFFF) != 0 ||
+        (uintptr_t)abar >= 0x100000000ULL) {
+        klog(LOG_WARN, "ahci", "AHCI: invalid ABAR %p, using polling",
+             (uint64_t)(uintptr_t)abar);
+        return;
+    }
+
+    /* Mask LAPIC timer during MSI setup to prevent races between
+     * MSI address/data PCI config writes and LAPIC timer interrupts */
+    if (lapic_available() && kernel_subsystem_ready(SUBSYS_TIMER)) {
+        lvt_saved = lapic_read(LAPIC_REG_LVT_TIMER);
+        lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved | LVT_MASKED);
+        need_mask = 1;
+    }
 
     /* --- Try MSI first ---
      * Walk PCI Capabilities List searching for MSI (Cap ID 0x05).
@@ -934,6 +954,10 @@ void ahci_setup_interrupts(void)
                    (uint64_t)pci_irq_line);
         }
     }
+
+    /* Unmask LAPIC timer */
+    if (need_mask)
+        lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved);
 }
 
 /* ---- Enable event-based I/O (called after scheduler init) ---- */
