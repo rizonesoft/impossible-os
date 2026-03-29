@@ -434,6 +434,16 @@ int acpi_init(void)
            (uint64_t)(uintptr_t)fadt, (uint64_t)pm1a_cnt_port,
            (uint64_t)slp_typa);
 
+    /* Log IAPC_BOOT_ARCH flags for hardware detection */
+    if (fadt->header.length >= 113) {
+        klog(LOG_INFO, "acpi", "IAPC_BOOT_ARCH: 8042=%d RTC=%d MSI=%d VGA=%d HW_REDUCED=%d",
+             (uint64_t)((fadt->boot_arch_flags >> 1) & 1),
+             (uint64_t)((fadt->boot_arch_flags & (1u << 5)) ? 0 : 1),
+             (uint64_t)((fadt->boot_arch_flags & (1u << 3)) ? 0 : 1),
+             (uint64_t)((fadt->boot_arch_flags & (1u << 2)) ? 0 : 1),
+             (uint64_t)((fadt->flags >> 20) & 1));
+    }
+
     /* ---- Parse MADT for SMP discovery ---- */
 
     madt_hdr = find_acpi_table(rsdp, "APIC");
@@ -649,4 +659,52 @@ int acpi_hw_reduced(void)
         return 0;
     /* FADT flags bit 20: HW_REDUCED_ACPI -- legacy devices absent */
     return (fadt_ptr->flags & (1u << 20)) ? 1 : 0;
+}
+
+/* ---- FADT IAPC_BOOT_ARCH flags (offset 109, 16-bit) ----
+ * Bit 0: LEGACY_DEVICES — 8042 required
+ * Bit 1: 8042 — i8042 controller present
+ * Bit 2: VGA_NOT_PRESENT — do not probe VGA
+ * Bit 3: MSI_NOT_SUPPORTED — do not enable MSI
+ * Bit 4: PCIe_ASPM — PCIe ASPM must not be disabled
+ * Bit 5: CMOS_RTC_NOT_PRESENT — do not access CMOS RTC */
+
+int acpi_has_8042(void)
+{
+    if (!fadt_ptr)
+        return 1;  /* assume present if no FADT */
+    /* FADT length must be >= 113 for boot_arch_flags to be valid */
+    if (fadt_ptr->header.length < 113)
+        return 1;  /* too short — assume present */
+    return (fadt_ptr->boot_arch_flags & (1u << 1)) ? 1 : 0;
+}
+
+int acpi_has_cmos_rtc(void)
+{
+    if (!fadt_ptr)
+        return 1;
+    if (fadt_ptr->header.length < 113)
+        return 1;
+    /* Bit 5: CMOS_RTC_NOT_PRESENT — inverted: 0=present, 1=absent */
+    return (fadt_ptr->boot_arch_flags & (1u << 5)) ? 0 : 1;
+}
+
+int acpi_msi_supported(void)
+{
+    if (!fadt_ptr)
+        return 1;
+    if (fadt_ptr->header.length < 113)
+        return 1;
+    /* Bit 3: MSI_NOT_SUPPORTED — inverted: 0=supported, 1=not supported */
+    return (fadt_ptr->boot_arch_flags & (1u << 3)) ? 0 : 1;
+}
+
+int acpi_has_vga(void)
+{
+    if (!fadt_ptr)
+        return 1;
+    if (fadt_ptr->header.length < 113)
+        return 1;
+    /* Bit 2: VGA_NOT_PRESENT — inverted: 0=present, 1=absent */
+    return (fadt_ptr->boot_arch_flags & (1u << 2)) ? 0 : 1;
 }

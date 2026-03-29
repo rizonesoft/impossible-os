@@ -256,3 +256,20 @@ int acpi_pmtimer_is_32bit(void);
 /* Returns 1 if FADT flags bit 20 (HW_REDUCED_ACPI) is set.
  * When set, legacy devices (PIT, PIC, RTC) do NOT exist. */
 int acpi_hw_reduced(void);
+
+/* ---- FADT IAPC_BOOT_ARCH flags (ACPI 6.0, Table 5-11) ---- */
+
+/* Returns 1 if FADT IAPC_BOOT_ARCH indicates an i8042 controller is present.
+ * Check before ANY port 0x60/0x64 access (keyboard, mouse). */
+int acpi_has_8042(void);
+
+/* Returns 1 if CMOS RTC is present (bit 5 NOT set).
+ * Check before any port 0x70/0x71 access. */
+int acpi_has_cmos_rtc(void);
+
+/* Returns 1 if MSI is supported (bit 3 NOT set).
+ * Check before enabling MSI on PCI devices. */
+int acpi_msi_supported(void);
+
+/* Returns 1 if VGA is present (bit 2 NOT set). */
+int acpi_has_vga(void);

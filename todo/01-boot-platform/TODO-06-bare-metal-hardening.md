@@ -60,7 +60,7 @@
 | 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)            | —          |  [x]   |
 | 💎  |   2   | IST stacks for critical exceptions                     | —          |  [x]   |
 | 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [ ]   |
-| 💎  |   4   | ACPI FADT boot architecture flags                      | —          |  [ ]   |
+| 💎  |   4   | ACPI FADT boot architecture flags                      | —          |  [x]   |
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [ ]   |
 | 💎  |   6   | AHCI interrupt hardening                               | §1, §3     |  [ ]   |
 | 💎  |   7   | Resilient boot with graceful degradation               | —          |  [ ]   |
@@ -164,11 +164,11 @@ Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices 
 > - Bit 4: PCIe_ASPM — PCIe ASPM must not be disabled
 > - Bit 5: CMOS_RTC_NOT_PRESENT — do not access CMOS RTC ports
 
-- [ ] Parse `IAPC_BOOT_ARCH` from FADT (offset 109, 16-bit field, requires FADT length ≥ 113)
-- [ ] Expose API: `acpi_has_8042()`, `acpi_has_cmos_rtc()`, `acpi_msi_supported()`, `acpi_has_vga()`
-- [ ] `acpi_hw_reduced()` already exists — combine with IAPC_BOOT_ARCH for complete picture
-- [ ] Log flags: `[ACPI] IAPC_BOOT_ARCH: 8042=%d RTC=%d MSI=%d VGA=%d HW_REDUCED=%d`
-- [ ] Commit: `"kernel: parse ACPI FADT IAPC_BOOT_ARCH flags for legacy device detection"`
+- [x] Parse `IAPC_BOOT_ARCH` from FADT `boot_arch_flags` field (requires FADT length ≥ 113)
+- [x] API: `acpi_has_8042()`, `acpi_has_cmos_rtc()`, `acpi_msi_supported()`, `acpi_has_vga()` — all safe-default to 1 if FADT absent/short
+- [x] `acpi_hw_reduced()` already exists — logged alongside IAPC_BOOT_ARCH
+- [x] Log: `IAPC_BOOT_ARCH: 8042=%d RTC=%d MSI=%d VGA=%d HW_REDUCED=%d`
+- [x] Commit: `"kernel: parse ACPI FADT IAPC_BOOT_ARCH flags for legacy device detection"`
 
 **Debug POST codes:** `POST16(0xD400)` = FADT parse start, `0xD401` = IAPC_BOOT_ARCH read, `0xD402` = §4 complete.
 
@@ -393,7 +393,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 |----|-------------------------|-----------------------------|------------------------------|----------------------------------|
 | 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc                | ✅ §1 vmm_map_mmio_uc            |
 | 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE     | ✅ §2 IST1-3 for DF/NMI/MCE     |
-| 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2         | ⬜ §4                            |
+| 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2         | ✅ §4 IAPC_BOOT_ARCH parsed      |
 | 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp               | ⬜ §5                            |
 | 💎 | AHCI MSI fallback       | ✅ StorAHCI INTx fallback   | ✅ libahci polled fallback   | ⬜ §6                            |
 | 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues         | ⬜ §7                            |
