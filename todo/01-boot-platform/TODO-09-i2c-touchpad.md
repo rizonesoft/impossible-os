@@ -1,9 +1,9 @@
-# TODO-09 — I2C Precision Touchpad Driver (Boot-Critical)
+# TODO-09 — Laptop Touchpad Driver (Boot-Critical)
 
-> **Goal:** Enable touchpad input on modern laptops that use I2C-connected precision touchpads (most laptops since ~2015). Without this driver, the only pointing device on laptops like the i5-11600K test machine is an external USB mouse.
+> **Goal:** Enable touchpad input on laptops — covering all common touchpad buses: I2C precision touchpads (most laptops since ~2015), Synaptics/ELAN PS/2 touchpads (older laptops), and USB HID touchpads. Without this, the only pointing device on laptops is an external USB mouse.
 
 > [!IMPORTANT]
-> This TODO extracts the **boot-critical** I2C and touchpad sections from `04-drivers-hardware/TODO-13-i2c-touchpad.md`. Advanced features (gesture engine, multi-touch, Synaptics quirks, control panel) remain in TODO-13. After this TODO, the touchpad moves the cursor and generates clicks.
+> This TODO extracts the **boot-critical** touchpad sections from `04-drivers-hardware/TODO-13-i2c-touchpad.md`. Advanced features (gesture engine, multi-touch, vendor quirks, control panel) remain in TODO-13. After this TODO, the touchpad moves the cursor and generates clicks on any laptop.
 
 > [!NOTE]
 > **Discovery chain:** ACPI DSDT → `I2CSerialBusV2` resource → I2C controller (Intel PCH or AMD FCH) → HID-over-I2C device → touchpad reports. This is a full driver stack from bus to input — no shortcuts.
@@ -31,22 +31,23 @@
 | 💎  |   2   | ACPI I2C device enumeration                    | §1         |  [ ]   |
 | 💎  |   3   | HID-over-I2C transport                         | §2         |  [ ]   |
 | 💎  |   4   | Basic touchpad input (single-touch + clicks)   | §3         |  [ ]   |
+| 💎  |   5   | Synaptics/ELAN PS/2 touchpad fallback          | —          |  [ ]   |
 
 ---
 
-## 1. I2C Host Controller Driver (Intel PCH LPSS)
-Implement the I2C controller register interface for Intel PCH Low Power Subsystem (LPSS) I2C controllers, which are the most common on modern Intel laptops.
+## 1. I2C Host Controller Driver (Intel PCH + AMD FCH)
+Implement the I2C controller register interface. Both Intel PCH LPSS and AMD FCH use the Synopsys DesignWare I2C IP — same register layout, different PCI device IDs.
 
 **Files:** `src/kernel/drivers/i2c.c` (new), `include/kernel/drivers/i2c.h` (new)
 
-- [ ] PCI discovery: find Intel LPSS I2C controllers (vendor 0x8086, various device IDs per PCH generation)
+- [ ] PCI discovery: find DesignWare I2C controllers (Intel: vendor 0x8086, various IDs per PCH gen; AMD: vendor 0x1022, FCH I2C IDs)
 - [ ] Map BAR0 via `vmm_map_mmio_uc()` for I2C register access
 - [ ] I2C controller reset and initialization (IC_ENABLE, IC_CON, timing registers)
 - [ ] `i2c_read(bus, addr, reg, buf, len)` — single or burst read from I2C slave
 - [ ] `i2c_write(bus, addr, reg, buf, len)` — single or burst write to I2C slave
 - [ ] Polled transfer (TX/RX FIFO status polling) — interrupt-based deferred
-- [ ] Log: `i2c: Intel PCH LPSS I2C bus N at PCI B:D.F`
-- [ ] Commit: `"drivers: I2C host controller driver for Intel PCH LPSS"`
+- [ ] Log: `i2c: DesignWare I2C bus N at PCI B:D.F (Intel/AMD)`
+- [ ] Commit: `"drivers: I2C host controller driver for Intel PCH + AMD FCH"`
 
 **Test checkpoint:** I2C controller found, initialized, test read from known address. POST code 0xDA00. Test on: bare metal.
 
@@ -95,21 +96,41 @@ Parse touchpad input reports for single-finger movement and button clicks, injec
 
 **Test checkpoint:** Bare metal laptop: cursor moves with touchpad, tap = click, two-finger tap = right click. POST code 0xDA03.
 
+## 5. Synaptics/ELAN PS/2 Touchpad Fallback
+On older laptops without I2C touchpads, the touchpad communicates via PS/2 with vendor-specific extensions. Detect and handle these so touchpad input works on pre-2015 hardware.
+
+**Files:** `src/kernel/drivers/mouse.c`, `src/kernel/drivers/touchpad.c`
+
+> [!NOTE]
+> This is an independent path from §1–§4 (I2C). It works through the existing PS/2 mouse driver with vendor detection. Full Synaptics multi-touch and quirk handling is in `04-drivers-hardware/TODO-13-i2c-touchpad.md §7-§8`.
+
+- [ ] Detect Synaptics touchpad: send Identify command (0xE8 0x00 0xE8 0x00 0xE8 0x00 0xE9), check for magic response bytes
+- [ ] Detect ELAN touchpad: similar identification sequence with ELAN-specific response
+- [ ] If detected: enable absolute mode (Synaptics: set mode byte via 0xE8 sequence)
+- [ ] Parse absolute packets: X/Y position, pressure, finger count
+- [ ] Convert to relative cursor movement + tap-to-click (same as §4)
+- [ ] If neither Synaptics nor ELAN detected: fall back to standard PS/2 mouse protocol (already works)
+- [ ] Commit: `"drivers: Synaptics/ELAN PS/2 touchpad detection + basic cursor movement"`
+
+**Test checkpoint:** Older laptop with PS/2 touchpad: cursor moves, tap = click. Modern laptop with I2C: PS/2 detection gracefully skips. POST code 0xDA05.
+
 ---
 
 ## OS Comparison
 
 | ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                    |
 |----|-------------------------|-----------------------------|------------------------------|----------------------------------|
-| 💎 | I2C host controller    | ✅ ialmrcc.sys (Intel)       | ✅ i2c-designware-pci         | ⬜ §1 — Intel PCH LPSS          |
+| 💎 | I2C host controller    | ✅ DesignWare (Intel+AMD)    | ✅ i2c-designware-pci         | ⬜ §1 — Intel PCH + AMD FCH     |
 | 💎 | HID-over-I2C           | ✅ hidi2c.sys                | ✅ i2c-hid-acpi               | ⬜ §3 — basic transport          |
 | 💎 | Precision touchpad     | ✅ PTP class driver          | ✅ hid-multitouch             | ⬜ §4 — single-touch + click     |
+| 💎 | PS/2 touchpad          | ✅ Synaptics/ELAN drivers    | ✅ psmouse + synaptics        | ⬜ §5 — Synaptics/ELAN fallback  |
 | ⭐ | Kernel gesture engine  | ❌ User-mode only            | ❌ libinput (user-mode)       | ⬜ TODO-13 §6 — kernel-resident  |
 
-> **After §1–§4:** Laptop touchpad moves cursor and clicks. Multi-touch gestures (scroll, pinch, swipe) deferred to `TODO-13-i2c-touchpad.md §5-§6`.
+> **After §1–§5:** Touchpad works on any laptop — I2C (modern) or PS/2 (older). Multi-touch gestures deferred to `TODO-13-i2c-touchpad.md §5-§6`.
 
 ## Verification
 
 - [ ] Bare metal (i5-11600K): touchpad moves cursor, tap = click
-- [ ] QEMU: graceful skip (no I2C controller on virtual hardware)
-- [ ] No PS/2 mouse regression on systems with PS/2
+- [ ] Older laptop with PS/2 touchpad: cursor moves, tap = click
+- [ ] QEMU: graceful skip (no I2C or Synaptics on virtual hardware)
+- [ ] No PS/2 mouse regression on systems with standard PS/2 mouse
