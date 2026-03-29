@@ -1,6 +1,8 @@
 # TODO-09 — USB Stack Completion
 
-> **Goal:** Complete the USB class-driver layer on top of the existing partial xHCI implementation — adding interrupt-endpoint setup for HID, USB HID boot-protocol parsers, MSC BOT SCSI transport, hot-plug event handling, hub class driver, EHCI fallback, PS/2↔USB input handoff, Bluetooth HCI via USB, CDC-ECM Ethernet, and CDC-ACM serial — reaching parity with Windows 11's `USBXHCI.sys`/`HIDCLASS.sys`/`USBSTOR.sys` and Linux's `xhci_hcd`/`usbhid`/`usb-storage`.
+> **Goal:** Complete the USB class-driver layer on top of the existing partial xHCI implementation — adding hot-plug event handling, hub class driver, EHCI fallback, Bluetooth HCI via USB, CDC-ECM Ethernet, and CDC-ACM serial — reaching parity with Windows 11's `USBXHCI.sys`/`HIDCLASS.sys`/`USBSTOR.sys` and Linux's `xhci_hcd`/`usbhid`/`usb-storage`.
+>
+> → **Boot-critical USB sections extracted to `01-boot-platform/`:** xHCI bring-up + USB MSC BOT → `TODO-07`, USB HID keyboard/mouse → `TODO-09`. This TODO covers advanced/non-boot USB features.
 
 > [!IMPORTANT]
 > **Partial implementation exists.** `src/kernel/drivers/xhci.c` (381 lines), `xhci_dev.c` (912 lines), `xhci_ring.c` (269 lines) implement: controller halt/reset, DCBAA, scratchpad, TRB command/event rings, port scanning, slot enable, Address Device, GET_DESCRIPTOR (device + configuration), SET_CONFIGURATION, Configure Endpoint, and bulk-endpoint setup for MSC. **Do not rewrite** these files — complete them. What is missing: interrupt-endpoint setup for HID, HID boot-protocol report parsers, MSC BOT CBW/CSW transport (bulk endpoints exist but SCSI never sent), hot-plug interrupt handling, hub class driver, and EHCI fallback.

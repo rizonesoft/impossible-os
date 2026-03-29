@@ -1,6 +1,8 @@
 # TODO-02 — Core Built-in Driver Enhancements
 
-> **Goal:** Complete the remaining built-in (statically linked) driver gaps that must be available before or without a filesystem: NVMe storage, HPET timer, PCIe ECAM extended config, capability chain scanner, MSI/MSI-X interrupt routing, and PCIe hot-plug detection.
+> **Goal:** Complete the remaining built-in (statically linked) driver gaps that must be available before or without a filesystem: HPET timer, PCIe ECAM extended config, capability chain scanner, MSI/MSI-X interrupt routing, and PCIe hot-plug detection.
+>
+> → **Boot-critical NVMe driver extracted to `01-boot-platform/TODO-08-nvme-storage.md`.** This TODO covers advanced NVMe features (multi-queue, interrupt coalescing, power states) after the boot-critical §1 is done there.
 
 > [!IMPORTANT]
 > All sections here are **built-in only** — they may be needed before the IXFS mounts or are too performance-sensitive to load late. Loadable module infrastructure lives in `TODO-01`. All DMA buffers (NVMe queues, MSI-X tables) must use `pmm_alloc_contiguous()` — never `kmalloc` for anything > 4 KB.
