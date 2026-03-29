@@ -503,15 +503,15 @@ static int cal_try_tsc_reference(void)
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
 
-    /* Sanity: bus frequency below 100 MHz indicates the TSC is scaled
-     * (e.g. VirtualBox NEM mode reports ~251 MHz TSC but real host is
-     * 3.9 GHz). The LAPIC timer runs at the real bus speed, not the
-     * scaled TSC speed, so TSC-referenced calibration gives wrong results.
+    /* Sanity: bus frequency must be in a reasonable range (100-500 MHz).
+     * Below 100 MHz: TSC is scaled down (VBox NEM with slow TSC).
+     * Above 500 MHz: TSC/LAPIC mismatch (VBox NEM with fast TSC but
+     * LAPIC running at host rate). Real hardware is 100-400 MHz.
      * Fall through to PM Timer or PIT for accurate calibration. */
-    if (cal_ticks_per_ms < 100000) {
+    if (cal_ticks_per_ms < 100000 || cal_ticks_per_ms > 500000) {
         klog(LOG_INFO, "lapic",
              "Tier 1b: TSC-referenced -> %u ticks/ms (%u MHz bus) -- "
-             "too low, TSC likely scaled (VBox?), skipping",
+             "out of range, TSC/LAPIC mismatch (VM?), skipping",
              (uint64_t)cal_ticks_per_ms,
              (uint64_t)(cal_ticks_per_ms / 1000));
         cal_ticks_per_ms = 0;
