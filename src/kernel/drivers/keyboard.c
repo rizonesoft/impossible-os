@@ -12,6 +12,8 @@
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
+#include "kernel/acpi.h"
+#include "kernel/boot_init.h"
 #include "kernel/klog.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/sched/spinlock.h"
@@ -234,22 +236,31 @@ static void keyboard_irq_callback(uint8_t vector, void *ctx)
 
 void keyboard_init(void)
 {
+    POST16(0xD502);
+
+    /* Gate: skip all PS/2 port I/O if ACPI says no i8042 controller */
+    if (!acpi_has_8042()) {
+        klog(LOG_INFO, "input", "PS/2 keyboard: skipped (no i8042 in FADT)");
+        return;
+    }
+
     /* Flush any pending data in the keyboard buffer.
      * Timeout prevents infinite loop on platforms without an i8042
-     * controller (e.g. Hyper-V Gen 2) where port 0x64 returns 0xFF. */
+     * controller where port 0x64 returns 0xFF. */
     {
         uint32_t timeout = 1024;
         while ((inb(KB_STATUS_PORT) & 0x01) && --timeout)
             inb(KB_DATA_PORT);
     }
 
-    /* Register IRQ 1 handler (interrupt vector 33) via dynamic IRQ API */
-    irq_register(33, keyboard_irq_callback, (void *)0, "ps2_kbd");
-
-    /* Unmask IRQ 1: PIC path (no-op when PIC disabled) + IOAPIC path */
-    pic_unmask_irq(IRQ_KEYBOARD);
-    if (ioapic_available())
-        ioapic_unmask_irq((uint8_t)ioapic_isa_to_gsi(IRQ_KEYBOARD));
+    /* Register keyboard via GSI-based routing (IOAPIC handles vector allocation) */
+    if (ioapic_available()) {
+        irq_request_gsi(ioapic_isa_to_gsi(IRQ_KEYBOARD),
+                         keyboard_irq_callback, (void *)0, "ps2_kbd");
+    } else {
+        irq_register(33, keyboard_irq_callback, (void *)0, "ps2_kbd");
+        pic_unmask_irq(IRQ_KEYBOARD);
+    }
 
     klog(LOG_DEBUG, "input", "PS/2 keyboard initialized (US QWERTY)");
 }

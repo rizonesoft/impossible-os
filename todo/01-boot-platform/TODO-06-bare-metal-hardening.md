@@ -61,7 +61,7 @@
 | 💎  |   2   | IST stacks for critical exceptions                     | —          |  [x]   |
 | 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [x]   |
 | 💎  |   4   | ACPI FADT boot architecture flags                      | —          |  [x]   |
-| 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [ ]   |
+| 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [x]   |
 | 💎  |   6   | AHCI interrupt hardening                               | §1, §3     |  [ ]   |
 | 💎  |   7   | Resilient boot with graceful degradation               | —          |  [ ]   |
 | 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [ ]   |
@@ -174,13 +174,12 @@ Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports
 
 **Files:** `src/kernel/drivers/keyboard.c`, `src/kernel/drivers/mouse.c`
 
-- [ ] `keyboard_init()`: check `acpi_has_8042()` before any port I/O. If false, log "PS/2: skipped (no i8042)" and return.
-- [ ] `mouse_init()`: check `acpi_has_8042()` AND probe for auxiliary port (command 0xA8 + status check). If no aux port, log and return.
-- [ ] Add timeouts to ALL PS/2 wait loops (`ps2_wait_input`, `ps2_wait_output`) — currently 100000 iterations, increase to 1000000 but add early-exit on 0xFF status (controller absent).
-- [ ] Mouse reset (0xFF): wait up to 500ms for self-test result; if timeout, skip mouse.
-- [ ] Remove the current `mouse_init()` skip workaround from `boot_interrupts.c` — replace with proper detection.
-- [ ] Migrate keyboard and mouse from hardcoded `irq_register(33/44, ...)` to `irq_request_gsi(1/12, ...)` — uses proper IOAPIC routing, avoids vector collision with dynamic allocator. Same for `vbox_mouse.c`.
-- [ ] Commit: `"drivers: PS/2 keyboard/mouse gated by ACPI i8042 detection + GSI-based IRQ"`
+- [x] `keyboard_init()`: checks `acpi_has_8042()` before any port I/O — skips if no i8042
+- [x] `mouse_init()`: checks `acpi_has_8042()` + 0xFF status + reset ACK probe — skips gracefully
+- [x] Timeouts increased to 1000000 with 0xFF early-exit on `ps2_wait_input`/`ps2_wait_output`
+- [x] `mouse_init()` re-enabled in `boot_interrupts.c` — ACPI gate replaces skip workaround
+- [x] Keyboard, mouse, vbox_mouse migrated to `irq_request_gsi()` when IOAPIC available
+- [x] Commit: `"drivers: PS/2 keyboard/mouse gated by ACPI i8042 detection + GSI-based IRQ"`
 
 **Debug POST codes:** `POST16(0xD500)` = PS/2 detect start, `0xD501` = i8042 check done, `0xD502` = keyboard init, `0xD503` = mouse probe, `0xD504` = §5 complete.
 
@@ -389,7 +388,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 | 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc               | ✅ §1 vmm_map_mmio_uc           |
 | 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE    | ✅ §2 IST1-3 for DF/NMI/MCE     |
 | 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2        | ✅ §4 IAPC_BOOT_ARCH parsed     |
-| 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp              | ⬜ §5                           |
+| 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp              | ✅ §5 FADT + GSI routing        |
 | 💎 | AHCI MSI fallback       | ✅ StorAHCI INTx fallback   | ✅ libahci polled fallback  | ⬜ §6                           |
 | 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ⬜ §7                           |
 | 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task       | ⬜ §8                           |

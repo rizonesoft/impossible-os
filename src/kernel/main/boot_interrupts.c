@@ -165,8 +165,10 @@ void boot_phase1(void)
     keyboard_init();
     POST16(POST16_KBD_OK);
     boot_progress(1, "KEYBOARD", POST16_KBD_OK);
-    /* mouse_init() skipped — crashes on i5-11600K laptop (touchpad, no PS/2 mouse) */
-    /* POST16(POST16_MOUSE); mouse_init(); POST16(POST16_MOUSE_OK); */
+    POST16(POST16_MOUSE);
+    mouse_init();
+    POST16(POST16_MOUSE_OK);
+    boot_progress(1, "MOUSE", POST16_MOUSE_OK);
 
     /* --- Framebuffer + boot splash --- */
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");

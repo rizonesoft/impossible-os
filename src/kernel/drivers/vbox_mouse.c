@@ -19,6 +19,7 @@
 
 #include "kernel/drivers/vbox_mouse.h"
 #include "kernel/drivers/pci.h"
+#include "kernel/drivers/ioapic.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/idt.h"
 #include "kernel/irq.h"
@@ -294,9 +295,14 @@ int vbox_mouse_init(void)
     abs_x = (int32_t)(fb_get_width() / 2);
     abs_y = (int32_t)(fb_get_height() / 2);
 
-    /* Register IRQ handler via irq_register (works with IOAPIC + PIC) */
-    irq_register(PIC1_OFFSET + irq_line, vbox_irq_callback,
-                 (void *)0, "vbox_mouse");
+    /* Register IRQ handler via GSI-based routing */
+    if (ioapic_available()) {
+        irq_request_gsi((uint32_t)irq_line, vbox_irq_callback,
+                         (void *)0, "vbox_mouse");
+    } else {
+        irq_register(PIC1_OFFSET + irq_line, vbox_irq_callback,
+                     (void *)0, "vbox_mouse");
+    }
 
     /* Enable all VMMDev interrupts via the MMIO region.
      * Offset [3] (uint32_t index 3 = byte offset 12) is the IRQ mask. */

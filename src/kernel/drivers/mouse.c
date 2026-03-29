@@ -16,6 +16,8 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/acpi.h"
+#include "kernel/boot_init.h"
 #include "kernel/klog.h"
 /* ---- Port I/O ---- */
 
@@ -39,16 +41,22 @@ static inline void outb(uint16_t port, uint8_t val)
 
 static void ps2_wait_input(void)
 {
-    uint32_t timeout = 100000;
-    while ((inb(PS2_STATUS_PORT) & 0x02) && --timeout)
-        ;
+    uint32_t timeout = 1000000;
+    while (--timeout) {
+        uint8_t s = inb(PS2_STATUS_PORT);
+        if (s == 0xFF) break;       /* controller absent */
+        if (!(s & 0x02)) break;     /* input buffer empty */
+    }
 }
 
 static void ps2_wait_output(void)
 {
-    uint32_t timeout = 100000;
-    while (!(inb(PS2_STATUS_PORT) & 0x01) && --timeout)
-        ;
+    uint32_t timeout = 1000000;
+    while (--timeout) {
+        uint8_t s = inb(PS2_STATUS_PORT);
+        if (s == 0xFF) break;       /* controller absent */
+        if (s & 0x01) break;        /* output buffer full */
+    }
 }
 
 static void ps2_send_cmd(uint8_t cmd)
@@ -167,6 +175,14 @@ void mouse_init(void)
 {
     uint8_t status_byte;
 
+    POST16(0xD503);
+
+    /* Gate: skip all PS/2 port I/O if ACPI says no i8042 controller */
+    if (!acpi_has_8042()) {
+        klog(LOG_INFO, "input", "PS/2 mouse: skipped (no i8042 in FADT)");
+        return;
+    }
+
     /* Start cursor at screen center */
     mouse_x = (int32_t)(fb_get_width() / 2);
     mouse_y = (int32_t)(fb_get_height() / 2);
@@ -236,16 +252,16 @@ void mouse_init(void)
             inb(PS2_DATA_PORT);
     }
 
-    /* Register IRQ 12 (vector 44) via dynamic IRQ API */
-    irq_register(44, mouse_irq_callback, (void *)0, "ps2_mouse");
+    /* Register mouse via GSI-based routing (IOAPIC handles vector allocation) */
+    if (ioapic_available()) {
+        irq_request_gsi(ioapic_isa_to_gsi(IRQ_MOUSE),
+                         mouse_irq_callback, (void *)0, "ps2_mouse");
+    } else {
+        irq_register(44, mouse_irq_callback, (void *)0, "ps2_mouse");
+        pic_unmask_irq(IRQ_MOUSE);
+    }
 
-    /* Unmask IRQ 12: PIC path (no-op when PIC disabled) + IOAPIC path.
-     * Done after handler registration AND after flush so no queued ACK
-     * byte fires into the IDT before the handler is ready. */
-    pic_unmask_irq(IRQ_MOUSE);
-    if (ioapic_available())
-        ioapic_unmask_irq((uint8_t)ioapic_isa_to_gsi(IRQ_MOUSE));
-
+    POST16(0xD504);
     klog(LOG_DEBUG, "input", "PS/2 mouse initialized (IRQ 12)");
 }
 
