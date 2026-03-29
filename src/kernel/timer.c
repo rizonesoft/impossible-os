@@ -103,14 +103,9 @@ void timer_hal_init(void)
 {
     platform_detect();
 
-    if (platform_get() == PLATFORM_BARE_METAL) {
-        /* Bare metal: hardware timer interrupts crash (ISR path works for
-         * software INT but hardware delivery fails — under investigation).
-         * Boot without timer — desktop will show but compositor won't animate. */
-        klog(LOG_WARN, "timer",
-             "UTS: timer DISABLED on bare metal (hw interrupt investigation)");
-        return;
-    }
+    /* Bare metal timer workaround REMOVED — root cause was clac (#UD on
+     * CPUs without SMAP CPUID support) in isr_common_stub, fixed 2026-03-29.
+     * Hardware interrupts now work on bare metal. */
 
     if (platform_is_tcg()) {
         pit_init();

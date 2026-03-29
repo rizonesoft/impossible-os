@@ -81,12 +81,8 @@ void boot_phase2(void)
     POST16(POST16_AHCI);
     ahci_init();
     POST16(POST16_AHCI_OK);
-    /* AHCI interrupts: skip on bare metal (crashes on i5-11600K — MSI enable
-     * triggers immediate interrupt into wrong context).  Enable on VMs where
-     * MSI works reliably.  TODO-06 §6 will fix this properly with LAPIC
-     * masking and INTx/polled fallback. */
-    if (platform_get() != PLATFORM_BARE_METAL)
-        ahci_setup_interrupts();
+    /* Bare metal AHCI skip REMOVED — root cause was clac #UD, fixed 2026-03-29. */
+    ahci_setup_interrupts();
     blkdev_register_all();
     boot_progress(2, "STORAGE_DRV", POST16_AHCI_OK);
 
