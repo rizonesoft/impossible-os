@@ -5,6 +5,9 @@
 > [!IMPORTANT]
 > This TODO extracts the **boot-critical** NVMe driver from `04-drivers-hardware/TODO-02-core-driver-enhancements.md §1`. Advanced NVMe features (multiple I/O queues, interrupt coalescing, namespace management, power states) remain in TODO-02. After this TODO, NVMe drives are accessible as block devices.
 
+> [!NOTE]
+> **Architecture: built-in now, bootloader-loaded later.** Windows loads `stornvme.sys` as a boot-start driver from the EFI partition via `winload.efi` — it's not part of `ntoskrnl.exe`. For now, the NVMe driver is built into the kernel binary to get bare metal working. When the kernel module loader exists (`04-drivers-hardware/TODO-01`), refactor into a separate `.sys` driver file loaded by `bootx64.efi` from `\EFI\ImpossibleOS\drivers\` before kernel entry.
+
 ## Inputs
 
 - [`src/kernel/drivers/pci.c`](../../src/kernel/drivers/pci.c) — PCI device discovery

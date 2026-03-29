@@ -8,6 +8,9 @@
 > [!NOTE]
 > Partial xHCI implementation exists: `xhci.c` (controller init, DCBAA, TRB rings, port scan), `xhci_dev.c` (slot enable, Address Device, GET_DESCRIPTOR, SET_CONFIGURATION), `xhci_ring.c` (TRB ring management). **Do NOT rewrite — complete it.**
 
+> [!NOTE]
+> **Architecture: built-in now, bootloader-loaded later.** Windows loads `usbxhci.sys` and `USBSTOR.SYS` as boot-start drivers from the EFI partition via `winload.efi` — they're not part of `ntoskrnl.exe`. Linux uses initramfs. For now, xHCI/MSC/HID are built into the kernel binary to get bare metal working. When the kernel module loader exists (`04-drivers-hardware/TODO-01`), refactor these into separate `.sys` driver files loaded by `bootx64.efi` from `\EFI\ImpossibleOS\drivers\` before kernel entry.
+
 ## Inputs
 
 - [`src/kernel/drivers/xhci.c`](../../src/kernel/drivers/xhci.c) — xHCI controller driver (partial)
