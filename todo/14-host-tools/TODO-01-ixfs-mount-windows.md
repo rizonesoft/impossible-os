@@ -29,7 +29,7 @@
 ## Source Layout
 
 ```
-tools/host/ixfs-mount/
+sdk/src/ixfs-mount/
   ├── ixfs-mount.c          # WinFsp filesystem callbacks + main
   ├── ixfs-disk.c           # Raw disk/image I/O (CreateFile + ReadFile/WriteFile)
   ├── ixfs-disk.h           # Disk I/O API
@@ -56,7 +56,7 @@ tools/host/ixfs-mount/
 ## 1. Raw Disk/Image I/O Layer
 Read and write sectors from a physical disk partition or a raw disk image file on Windows.
 
-**Files:** `tools/host/ixfs-mount/ixfs-disk.c`, `ixfs-disk.h`
+**Files:** `sdk/src/ixfs-mount/ixfs-disk.c`, `ixfs-disk.h`
 
 - [ ] `disk_open(path, partition_index)` — open physical disk (`\\.\PhysicalDrive0`) or image file, seek to partition start via GPT parsing
 - [ ] `disk_read_sectors(lba, count, buf)` — read sectors at LBA offset within the partition
@@ -71,7 +71,7 @@ Read and write sectors from a physical disk partition or a raw disk image file o
 ## 2. IXFS Superblock + Inode Parsing
 Parse the IXFS on-disk structures: superblock, inode table, extent maps. Port the relevant logic from kernel IXFS code.
 
-**Files:** `tools/host/ixfs-mount/ixfs-mount.c`, `ixfs-structs.h`
+**Files:** `sdk/src/ixfs-mount/ixfs-mount.c`, `ixfs-structs.h`
 
 - [ ] Copy on-disk structures from `include/kernel/fs/ixfs.h` to `ixfs-structs.h` (adapted for Windows `<stdint.h>`)
 - [ ] `ixfs_read_superblock()` — read and validate superblock (magic, version, block size)
@@ -86,7 +86,7 @@ Parse the IXFS on-disk structures: superblock, inode table, extent maps. Port th
 ## 3. WinFsp Read-Only Mount
 Implement WinFsp filesystem callbacks for read-only browsing. Mount IXFS as a Windows drive letter.
 
-**Files:** `tools/host/ixfs-mount/ixfs-mount.c`
+**Files:** `sdk/src/ixfs-mount/ixfs-mount.c`
 
 - [ ] WinFsp `GetVolumeInfo` — return volume label, total/free space from superblock
 - [ ] WinFsp `GetSecurityByName` — return basic security descriptor (everyone read)
@@ -103,7 +103,7 @@ Implement WinFsp filesystem callbacks for read-only browsing. Mount IXFS as a Wi
 ## 4. Write Support
 Add create, write, delete, and rename operations for full read-write access.
 
-**Files:** `tools/host/ixfs-mount/ixfs-mount.c`
+**Files:** `sdk/src/ixfs-mount/ixfs-mount.c`
 
 - [ ] WinFsp `Create` — allocate inode, add directory entry
 - [ ] WinFsp `Write` — allocate blocks, update extents, write data
@@ -119,7 +119,7 @@ Add create, write, delete, and rename operations for full read-write access.
 ## 5. Disk Image Mode
 Mount raw `.img` files directly without needing a physical disk. Useful for development with QEMU disk images.
 
-**Files:** `tools/host/ixfs-mount/ixfs-disk.c`
+**Files:** `sdk/src/ixfs-mount/ixfs-disk.c`
 
 - [ ] Auto-detect: if path doesn't start with `\\.\`, treat as image file
 - [ ] Image file locking: open with `FILE_SHARE_READ` to prevent QEMU conflicts
@@ -137,17 +137,18 @@ Mount raw `.img` files directly without needing a physical disk. Useful for deve
 # WinFsp headers/libs at: C:\Program Files (x86)\WinFsp\
 
 # Build with MSVC (Developer Command Prompt):
-cd tools\host\ixfs-mount
+cd sdk\src\ixfs-mount
 cl /O2 /I"C:\Program Files (x86)\WinFsp\inc" ixfs-mount.c ixfs-disk.c \
-   /link /LIBPATH:"C:\Program Files (x86)\WinFsp\lib" winfsp-x64.lib
+   /link /LIBPATH:"C:\Program Files (x86)\WinFsp\lib" winfsp-x64.lib \
+   /OUT:..\..\tools\ixfs-mount.exe
 
 # Build with MinGW:
 gcc -O2 -I"/c/Program Files (x86)/WinFsp/inc" ixfs-mount.c ixfs-disk.c \
-    -L"/c/Program Files (x86)/WinFsp/lib" -lwinfsp-x64 -o ixfs-mount.exe
+    -L"/c/Program Files (x86)/WinFsp/lib" -lwinfsp-x64 -o ../../tools/ixfs-mount.exe
 ```
 
 > [!NOTE]
-> This build is completely independent of the kernel build system. No `bash scripts/build.sh` involvement. Uses native Windows compiler + WinFsp SDK.
+> SDK tools build independently from the kernel. Source in `sdk/src/`, binaries output to `sdk/tools/`. Uses native Windows compiler + WinFsp SDK, not the kernel's clang-19 cross-compiler.
 
 ## OS Comparison
 

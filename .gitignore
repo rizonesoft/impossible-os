@@ -51,3 +51,7 @@ compile_commands.json
 
 # Srclight code intelligence index
 .srclight/
+
+# SDK tool binaries (compiled on host, not tracked)
+sdk/tools/*.exe
+sdk/tools/*.o

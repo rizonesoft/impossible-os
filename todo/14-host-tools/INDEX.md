@@ -1,13 +1,13 @@
-# 14 Host Tools
+# 14 SDK Tools
 
-This domain covers development tools that run on the **host OS** (Windows, Linux) to support Impossible OS development. These are NOT part of the kernel or OS — they run alongside it.
+This domain covers SDK tools that run on the **host OS** (Windows, Linux) — both for Impossible OS development and for third-party developers working with Impossible OS formats.
 
 ## Belongs Here
 
-- Filesystem drivers for reading/writing Impossible OS disk images from the host
-- Debug utilities that attach to QEMU or parse serial logs
-- Asset pipeline tools that run during development (not build)
-- Any tool that makes the dev workflow faster without modifying the OS itself
+- Filesystem tools for reading/writing IXFS, NTFS, FAT32 disk images
+- Debug utilities that attach to QEMU or parse serial/crash logs
+- SDK utilities that ship alongside the OS for developers
+- Any standalone binary that interacts with Impossible OS formats from the host
 
 ## Does Not Belong Here
 
@@ -18,16 +18,17 @@ This domain covers development tools that run on the **host OS** (Windows, Linux
 ## Source Layout
 
 ```
-tools/
-  ├── *.c, *.py           # Build-time tools (existing, unchanged)
-  └── host/               # Host-side development tools
-      └── ixfs-mount/     # WinFsp IXFS driver for Windows
-          ├── ixfs-mount.c
-          ├── Makefile
-          └── README.md
+sdk/
+  ├── src/                # SDK tool source code
+  │   └── ixfs-mount/     # WinFsp IXFS driver for Windows
+  │       ├── ixfs-mount.c
+  │       ├── Makefile
+  │       └── README.md
+  └── tools/              # Compiled SDK binaries (output)
+      └── ixfs-mount.exe
 ```
 
-Host tools are built separately from the kernel. Each has its own Makefile/build script. They do NOT use the kernel toolchain (clang-19 cross-compiler) — they use the host's native compiler (MSVC, gcc, or clang).
+SDK tools are built separately from the kernel. Each has its own Makefile/build script. They do NOT use the kernel toolchain (clang-19 cross-compiler) — they use the host's native compiler (MSVC, gcc, or clang). Binaries compile to `sdk/tools/`.
 
 ## Active TODOs
 
