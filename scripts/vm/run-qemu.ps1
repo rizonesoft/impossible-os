@@ -1,4 +1,4 @@
-# run-qemu.ps1 — Launch Impossible OS in QEMU on Windows
+# run-qemu.ps1 - Launch Impossible OS in QEMU on Windows
 #
 # Parameters:
 #   -Xres   Horizontal resolution (default: 1280)
@@ -6,15 +6,15 @@
 #   -Accel  Accelerator: auto, whpx, tcg (default: auto)
 #
 # UTS Timer Behavior:
-#   auto/whpx: CPUID detects hypervisor → LAPIC timer selected
-#   tcg:       CPUID → "TCGTCGTCGTCG" → PIT timer selected
+#   auto/whpx: CPUID detects hypervisor -> LAPIC timer selected
+#   tcg:       CPUID -> "TCGTCGTCGTCG" -> PIT timer selected
 #
 # Usage:
-#   Double-click run-qemu-kvm.bat          → 1280×720, WHPX accel
-#   Double-click run-qemu-tcg.bat          → 1280×720, TCG (PIT timer)
-#   Double-click run-windows-1080p.bat     → 1920×1080  scale=1×
-#   Double-click run-windows-1440p.bat     → 2560×1440  scale=2×
-#   Double-click run-windows-4k.bat        → 3840×2160  scale=2×
+#   Double-click run-qemu-kvm.bat          -> 1280x720, WHPX accel
+#   Double-click run-qemu-tcg.bat          -> 1280x720, TCG (PIT timer)
+#   Double-click run-windows-1080p.bat     -> 1920x1080  scale=1x
+#   Double-click run-windows-1440p.bat     -> 2560x1440  scale=2x
+#   Double-click run-windows-4k.bat        -> 3840x2160  scale=2x
 #
 # Prerequisites:
 #   1. Install QEMU for Windows: https://qemu.weilnetz.de/w64/
@@ -56,12 +56,12 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     }
 }
 
-# OVMF_VARS needs a writable copy — preserve across runs for NVRAM persistence.
+# OVMF_VARS needs a writable copy - preserve across runs for NVRAM persistence.
 # If the source (build/) is newer than the TEMP copy, refresh it (clean build case).
 if (-not (Test-Path $VARS_DEST)) {
     Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST
 } elseif ((Get-Item $OVMF_VARS).LastWriteTime -gt (Get-Item $VARS_DEST).LastWriteTime) {
-    Write-Host "OVMF_VARS updated (clean build?) — refreshing NVRAM copy" -ForegroundColor Yellow
+    Write-Host "OVMF_VARS updated (clean build?) - refreshing NVRAM copy" -ForegroundColor Yellow
     Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST -Force
 }
 
