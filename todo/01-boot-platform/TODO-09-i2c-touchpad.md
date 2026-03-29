@@ -31,7 +31,7 @@
 | 💎  |   2   | ACPI I2C device enumeration                    | §1         |  [ ]   |
 | 💎  |   3   | HID-over-I2C transport                         | §2         |  [ ]   |
 | 💎  |   4   | Basic touchpad input (single-touch + clicks)   | §3         |  [ ]   |
-| 💎  |   5   | Synaptics/ELAN PS/2 touchpad fallback          | —          |  [ ]   |
+| 💎  |   5   | Synaptics/ELAN PS/2 touchpad driver            | —          |  [ ]   |
 
 ---
 
@@ -96,23 +96,23 @@ Parse touchpad input reports for single-finger movement and button clicks, injec
 
 **Test checkpoint:** Bare metal laptop: cursor moves with touchpad, tap = click, two-finger tap = right click. POST code 0xDA03.
 
-## 5. Synaptics/ELAN PS/2 Touchpad Fallback
-On older laptops without I2C touchpads, the touchpad communicates via PS/2 with vendor-specific extensions. Detect and handle these so touchpad input works on pre-2015 hardware.
+## 5. Synaptics/ELAN PS/2 Touchpad Driver
+Independent driver for laptops with PS/2-connected touchpads. Runs alongside the I2C driver (§1–§4) — both are probed at boot, each activates only if its hardware is present. All touchpad drivers inject into the same `mouse_handle_event()` input path.
 
-**Files:** `src/kernel/drivers/mouse.c`, `src/kernel/drivers/touchpad.c`
+**Files:** `src/kernel/drivers/ps2_touchpad.c` (new)
 
 > [!NOTE]
-> This is an independent path from §1–§4 (I2C). It works through the existing PS/2 mouse driver with vendor detection. Full Synaptics multi-touch and quirk handling is in `04-drivers-hardware/TODO-13-i2c-touchpad.md §7-§8`.
+> This is independent from §1–§4 (I2C). Both drivers probe at boot. A system may have both (rare) or neither (desktop). Full Synaptics multi-touch and quirk handling is in `04-drivers-hardware/TODO-13-i2c-touchpad.md §7-§8`.
 
-- [ ] Detect Synaptics touchpad: send Identify command (0xE8 0x00 0xE8 0x00 0xE8 0x00 0xE9), check for magic response bytes
+- [ ] Detect Synaptics touchpad: send Identify command (0xE8 sequence + 0xE9), check for magic response bytes
 - [ ] Detect ELAN touchpad: similar identification sequence with ELAN-specific response
 - [ ] If detected: enable absolute mode (Synaptics: set mode byte via 0xE8 sequence)
 - [ ] Parse absolute packets: X/Y position, pressure, finger count
 - [ ] Convert to relative cursor movement + tap-to-click (same as §4)
-- [ ] If neither Synaptics nor ELAN detected: fall back to standard PS/2 mouse protocol (already works)
-- [ ] Commit: `"drivers: Synaptics/ELAN PS/2 touchpad detection + basic cursor movement"`
+- [ ] If neither detected: driver doesn't activate (standard PS/2 mouse protocol still works independently)
+- [ ] Commit: `"drivers: Synaptics/ELAN PS/2 touchpad — independent driver"`
 
-**Test checkpoint:** Older laptop with PS/2 touchpad: cursor moves, tap = click. Modern laptop with I2C: PS/2 detection gracefully skips. POST code 0xDA05.
+**Test checkpoint:** Older laptop with PS/2 touchpad: cursor moves, tap = click. Modern laptop with I2C: PS/2 touchpad driver doesn't activate (no conflict). POST code 0xDA05.
 
 ---
 
@@ -123,10 +123,10 @@ On older laptops without I2C touchpads, the touchpad communicates via PS/2 with 
 | 💎 | I2C host controller    | ✅ DesignWare (Intel+AMD)    | ✅ i2c-designware-pci         | ⬜ §1 — Intel PCH + AMD FCH     |
 | 💎 | HID-over-I2C           | ✅ hidi2c.sys                | ✅ i2c-hid-acpi               | ⬜ §3 — basic transport          |
 | 💎 | Precision touchpad     | ✅ PTP class driver          | ✅ hid-multitouch             | ⬜ §4 — single-touch + click     |
-| 💎 | PS/2 touchpad          | ✅ Synaptics/ELAN drivers    | ✅ psmouse + synaptics        | ⬜ §5 — Synaptics/ELAN fallback  |
+| 💎 | PS/2 touchpad          | ✅ Synaptics/ELAN drivers    | ✅ psmouse + synaptics        | ⬜ §5 — independent PS/2 driver  |
 | ⭐ | Kernel gesture engine  | ❌ User-mode only            | ❌ libinput (user-mode)       | ⬜ TODO-13 §6 — kernel-resident  |
 
-> **After §1–§5:** Touchpad works on any laptop — I2C (modern) or PS/2 (older). Multi-touch gestures deferred to `TODO-13-i2c-touchpad.md §5-§6`.
+> **After §1–§5:** Touchpad works on any laptop — I2C (modern) and PS/2 (older) are independent drivers, both probed at boot. Multi-touch gestures deferred to `TODO-13-i2c-touchpad.md §5-§6`.
 
 ## Verification
 
