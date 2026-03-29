@@ -406,25 +406,26 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 > [!IMPORTANT]
 > **5 bare metal checkpoints instead of 15.** Implement and verify batches on QEMU first. Only go to bare metal at critical checkpoints where VM behavior diverges from real hardware. Debug POST codes (0xD1xx–0xD9xx) make each bare metal cycle fast — one boot, read serial/VPD, identify failure.
 
-### BM Test 1 — Foundation (after §1 + §2 + §4)
-Implement §2 (IST) and §4 (FADT) on QEMU. Then one bare metal boot.
+### BM Test 1+2 — Foundation + Interrupts (§1–§4) ✅ PASSED 2026-03-29
+> [!NOTE]
+> BM Tests 1 and 2 were combined — the `clac` fix (§3) resolved all hardware interrupt crashes simultaneously. All 4 platforms tested in one session.
 
-- [ ] HPET calibration via UC mapping: serial shows `Tier 2: HPET calibration`
-- [ ] FADT flags parsed: serial shows `IAPC_BOOT_ARCH: 8042=N RTC=N`
-- [ ] IST stacks allocated (verify via serial log; optional #DF trigger)
-- [ ] POST codes: 0xD100–0xD104, 0xD200–0xD203, 0xD400–0xD402
+- [x] UC MMIO: `vmm_map_mmio_uc: LAPIC ID match` on all platforms
+- [x] IST stacks: `IST stacks: DF=... NMI=... MCE=...` allocated
+- [x] FADT flags: `IAPC_BOOT_ARCH: 8042=1 RTC=1 MSI=1 VGA=1 HW_REDUCED=0`
+- [x] **LAPIC timer fires on bare metal** — root cause was `clac` #UD
+- [x] PCI scan completes with timer ticks running
+- [x] Desktop reached with timer active on all 4 platforms
+- [x] HPET calibration: not triggered (Tier 1/1b succeed first) — needs bare metal test without Hyper-V/TSC
 
-**~5 minutes.** One boot, read serial log.
+**Results:**
 
-### BM Test 2 — Hardware Interrupts (after §3 + §10) ⚠️ CRITICAL
-§3 is the core bare metal investigation — cannot be tested on QEMU. §10 (boot order) is closely related.
-
-- [ ] **LAPIC timer fires without crashing** — make or break
-- [ ] PCI scan completes with timer ticks running
-- [ ] Desktop reached with timer active
-- [ ] POST codes: 0xD300–0xD306 narrow the failure point
-
-**Potentially hours** for §3 investigation, but debug POST codes make each reboot cycle fast.
+| Platform | Timer | Calibration | AHCI | Desktop | Notes |
+|----------|-------|------------|------|---------|-------|
+| QEMU WHPX | LAPIC 100Hz | Tier 1 Hyper-V MSR | MSI | ✅ 8.4s | Primary dev |
+| QEMU TCG | PIT 100Hz | N/A (PIT) | MSI | ✅ | Fixed by clac removal |
+| VirtualBox | LAPIC 100Hz | Tier 1b TSC ref | INTx | ✅ 21.8s | NCQ timeout adds 15s |
+| Bare metal | LAPIC 100Hz | Tier 1b TSC ref | MSI | ✅ | Fixed by clac removal |
 
 ### BM Test 3 — Driver Hardening (after §5 + §6 + §7)
 Implement and test on QEMU first. One bare metal pass.
