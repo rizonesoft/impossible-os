@@ -195,6 +195,29 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     POST16(POST16_CPUID_OK);
     boot_progress(0, "CPUID", POST16_CPUID_OK);
 
+    /* --- CPU feature minimum requirements --- */
+    {
+        int missing = 0;
+        if (!cpu_has(CPU_FEATURE_NX)) {
+            klog(LOG_FATAL, "cpu", "MINIMUM: NX (No-Execute) not available -- cannot boot safely");
+            missing = 1;
+        }
+        if (!cpu_has(CPU_FEATURE_SSE2)) {
+            klog(LOG_FATAL, "cpu", "MINIMUM: SSE2 not available -- required for kernel math");
+            missing = 1;
+        }
+        if (missing)
+            boot_halt("CPU does not meet minimum requirements (NX + SSE2)");
+
+        /* Recommended features: warn if missing, continue */
+        if (!cpu_has(CPU_FEATURE_SMEP))
+            klog(LOG_WARN, "cpu", "RECOMMENDED: SMEP not available");
+        if (!cpu_has(CPU_FEATURE_SMAP))
+            klog(LOG_WARN, "cpu", "RECOMMENDED: SMAP not available");
+        if (!cpu_has(CPU_FEATURE_RDRAND))
+            klog(LOG_WARN, "cpu", "RECOMMENDED: RDRAND not available");
+    }
+
     /* --- CPU security hardening: NX (SMEP/SMAP deferred until page tables fixed) --- */
     POST16(POST16_CPU_HARDEN);
     cpu_harden();

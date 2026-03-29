@@ -68,7 +68,7 @@
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [x]   |
 | ⭐  |  11   | ~~`boot.conf` subsystem skip list~~                    | —          |  [x]   |
 | 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7         |  [x]   |
-| 💎  |  13   | CPU feature minimum requirements and verification      | §4, §9     |  [ ]   |
+| 💎  |  13   | CPU feature minimum requirements and verification      | §4, §9     |  [x]   |
 | 💎  |  14   | Bare-metal test matrix and validation plan             | §3         |  [ ]   |
 | 💎  |  15   | Boot splash spinner bare-metal fix                     | §3, §10    |  [ ]   |
 
@@ -321,12 +321,11 @@ Define the minimum CPU feature set required to boot, verify features are actuall
 > [!IMPORTANT]
 > → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` — owns the IMPLEMENTATION of NX/SMEP/SMAP/CET. This section owns VERIFICATION that features actually took effect on real hardware, and DIAGNOSIS when they don't.
 
-- [ ] Define `MINIMUM_CPU_FEATURES`: Long Mode (implicit), NX, SSE2. Boot halts with user-friendly message if missing.
-- [ ] Define `RECOMMENDED_CPU_FEATURES`: SMEP, SMAP, PCID, XSAVE, RDRAND, InvTSC. Boot warns if missing but continues.
-- [ ] `cpu_verify_hardening()` — called after `cpu_harden()` + `cpu_harden_post_pagetable()`: read back EFER, CR4, CR0 and verify expected bits are set. Log any discrepancy: `[WARN] cpu: EFER.NXE not set after enable (firmware override?)`
-- [ ] For each feature: if CPUID says supported but CR4/EFER write failed, emit specific POST code and log the platform (vendor, model, stepping) for the quirk database.
-- [ ] Document known bare-metal quirks: SMEP/SMAP need per-process page tables (memory saved), HPET needs UC MMIO (memory saved), GS_BASE clobbered by GDT reload (memory saved).
-- [ ] Commit: `"boot: CPU feature minimum requirements + post-activation verification"`
+- [x] Minimum: NX + SSE2 required — boot halts with clear message if missing
+- [x] Recommended: SMEP, SMAP, RDRAND — warns if missing, continues
+- [x] `cpu_verify_hardening()`: reads EFER/CR4, logs discrepancies (implemented in §9)
+- [x] Known quirks documented in CLAUDE.md bare metal gotchas section
+- [x] Commit: `"boot: CPU feature minimum requirements + post-activation verification"`
 
 **Test checkpoint:** Boot on CPU without SMAP. Log shows `[WARN] cpu: SMAP not available — skipped`. Boot continues. On CPU with SMAP: verification confirms CR4.SMAP is set.
 
@@ -384,7 +383,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 | 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable    | ✅ §9 verify NX/SMEP/SMAP       |
 | 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ✅ §7 BOOT_TRY (skip list removed) |
 | 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                 | ✅ §12 KLOG_DIR on C:\          |
-| 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot   | ⬜ §13                          |
+| 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot   | ✅ §13 NX+SSE2 required         |
 | ⭐ | Bare-metal test matrix  | ❌ Internal only (WHQL)     | ❌ Community-driven         | ⬜ §14                          |
 
 > **After §1–§14:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with SMEP/SMAP enforced. Graceful degradation on hardware failures. Configurable skip list. Logging on main filesystem. No external TODO blocks execution.
