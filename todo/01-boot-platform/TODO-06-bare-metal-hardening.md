@@ -47,7 +47,7 @@
 ## Outcome
 
 - Every boot subsystem emits granular POST codes (4-digit hex) visible on I/O port 0x80, UEFI NVRAM, and on-screen display.
-- Next boot after a crash shows "Last boot failed at: SUBSYS (0xNNNN)" without any configuration.
+- Next boot shows "SUCCEEDED" or "FAILED Phase N (0xNNNN)" via per-phase NVRAM tracking — no configuration needed.
 - Hardware interrupts work reliably on bare metal — IST stacks, correct LAPIC delivery, verified ISR frame layout.
 - PS/2, RTC, AHCI, and all legacy subsystems are gated by ACPI capability flags — never touch hardware that doesn't exist.
 - Any subsystem failure degrades gracefully with a log message instead of crashing.
@@ -94,7 +94,9 @@ Implement a minimal `vmm_map_mmio_uc()` that creates uncacheable mappings for de
 - [ ] Implement `hpet_read_ns()` in `lapic.c` (or new `hpet.c`): map HPET base via `vmm_map_mmio_uc()`, read counter, convert via `COUNTER_CLK_PERIOD`. Wire into `timer_driver_t.read_ns` for UTS (→ XREF: TODO-03 §2).
 - [ ] Commit: `"mm: minimal vmm_map_mmio_uc + HPET re-enabled with UC mapping"`
 
-**Test checkpoint:** QEMU: HPET calibration succeeds (`Tier 2: HPET calibration -> N ticks/ms`). Bare metal: HPET mapped via UC, no MCE, calibration succeeds. `hpet_read_ns()` returns monotonically increasing values.
+**Debug POST codes:** `POST16(0xD100)` = vmm_map_mmio_uc entry, `0xD101` = PTE allocated, `0xD102` = HPET mapped, `0xD103` = HPET read OK, `0xD104` = §1 complete. On crash: last POST on VPD/serial pinpoints failure.
+
+**Test checkpoint:** QEMU: HPET calibration succeeds (`Tier 2: HPET calibration -> N ticks/ms`). Bare metal: HPET mapped via UC, no MCE, calibration succeeds. `hpet_read_ns()` returns monotonically increasing values. Test on: QEMU WHPX, QEMU TCG, bare metal.
 
 ## 2. IST Stacks for Critical Exceptions
 
@@ -113,7 +115,9 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 - [ ] Verify: stack overflow in kernel → #DF fires on IST1 stack → shows BSOD instead of triple fault
 - [ ] Commit: `"kernel: IST stacks for #DF, NMI, MCE — no more silent triple faults"`
 
-**Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot.
+**Debug POST codes:** `POST16(0xD200)` = IST alloc start, `0xD201` = TSS IST fields set, `0xD202` = IDT entries updated, `0xD203` = §2 complete.
+
+**Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot. Test on: QEMU WHPX, bare metal.
 
 ## 3. Hardware Interrupt Root Cause Investigation
 Systematically investigate why hardware interrupts crash on the i5-11600K while software `INT 0x81` works. This section is diagnostic — it may result in a fix or in documenting a platform-specific workaround.
@@ -143,7 +147,9 @@ Systematically investigate why hardware interrupts crash on the i5-11600K while 
 - [ ] Document findings and apply fix
 - [ ] Commit: `"kernel: bare metal interrupt investigation — [root cause / workaround]"`
 
-**Test checkpoint:** The LAPIC timer fires on bare metal without crashing. PCI scan completes with timer ticks running. If fix is architectural (e.g., IST required for timer), document why.
+**Debug POST codes:** `POST16(0xD300)` = investigation start, `0xD301` = IDT dumped, `0xD302` = LAPIC LVT verified, `0xD303` = IOAPIC dump done, `0xD304` = minimal ISR test start, `0xD305` = first timer tick received, `0xD306` = §3 complete. On crash: if last POST is 0xD304, crash is in the minimal ISR test.
+
+**Test checkpoint:** The LAPIC timer fires on bare metal without crashing. PCI scan completes with timer ticks running. If fix is architectural (e.g., IST required for timer), document why. Test on: bare metal (primary), QEMU WHPX, QEMU TCG.
 
 ## 4. ACPI FADT Boot Architecture Flags
 Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices exist before touching any I/O ports. This prevents crashes on platforms without PIT, PS/2 controller, or RTC.
@@ -165,7 +171,9 @@ Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices 
 - [ ] Log flags: `[ACPI] IAPC_BOOT_ARCH: 8042=%d RTC=%d MSI=%d VGA=%d HW_REDUCED=%d`
 - [ ] Commit: `"kernel: parse ACPI FADT IAPC_BOOT_ARCH flags for legacy device detection"`
 
-**Test checkpoint:** Boot on QEMU. Log shows IAPC_BOOT_ARCH with all flags. On bare metal, log shows actual hardware configuration.
+**Debug POST codes:** `POST16(0xD400)` = FADT parse start, `0xD401` = IAPC_BOOT_ARCH read, `0xD402` = §4 complete.
+
+**Test checkpoint:** Boot on QEMU. Log shows IAPC_BOOT_ARCH with all flags. On bare metal, log shows actual hardware configuration. Test on: QEMU WHPX, bare metal.
 
 ## 5. PS/2 Controller Detection and Safe Init
 Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports 0x60/0x64 if the i8042 doesn't exist.
@@ -180,7 +188,9 @@ Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports
 - [ ] Migrate keyboard and mouse from hardcoded `irq_register(33/44, ...)` to `irq_request_gsi(1/12, ...)` — uses proper IOAPIC routing, avoids vector collision with dynamic allocator. Same for `vbox_mouse.c`.
 - [ ] Commit: `"drivers: PS/2 keyboard/mouse gated by ACPI i8042 detection + GSI-based IRQ"`
 
-**Test checkpoint:** Boot on laptop without PS/2 mouse. Mouse init logs "skipped" and boot continues. Boot on QEMU with PS/2 — mouse works normally.
+**Debug POST codes:** `POST16(0xD500)` = PS/2 detect start, `0xD501` = i8042 check done, `0xD502` = keyboard init, `0xD503` = mouse probe, `0xD504` = §5 complete.
+
+**Test checkpoint:** Boot on laptop without PS/2 mouse. Mouse init logs "skipped" and boot continues. Boot on QEMU with PS/2 — mouse works normally. Test on: QEMU WHPX, bare metal.
 
 ## 6. AHCI Interrupt Hardening
 Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI setup, verify ABAR MMIO accessibility, fall back to polled mode if MSI fails.
@@ -198,7 +208,9 @@ Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI s
 - [ ] Remove the current `ahci_setup_interrupts()` skip workaround from `boot_storage.c`.
 - [ ] Commit: `"drivers: AHCI interrupt hardening — MSI with LAPIC mask, INTx fallback, polled fallback"`
 
-**Test checkpoint:** Boot on bare metal. AHCI init logs either "MSI vector 0xNN" or "INTx fallback" or "polled mode". No crash. Disk I/O works.
+**Debug POST codes:** `POST16(0xD600)` = AHCI harden start, `0xD601` = LAPIC masked, `0xD602` = MSI enable, `0xD603` = MSI verify, `0xD604` = LAPIC unmasked, `0xD605` = §6 complete. On crash at 0xD602: MSI enable killed the device.
+
+**Test checkpoint:** Boot on bare metal. AHCI init logs either "MSI vector 0xNN" or "INTx fallback" or "polled mode". No crash. Disk I/O works. Test on: QEMU WHPX, bare metal.
 
 ## 7. Resilient Boot with Graceful Degradation
 Wrap every Phase 1–3 subsystem init in a protective pattern: emit POST code, call init, check result, log outcome, continue on failure. Never `boot_halt()` for non-critical subsystems.
@@ -250,7 +262,9 @@ Implement the minimal per-process page table infrastructure so each task has its
 
 **Regression risk:** This changes the memory model fundamentally. CR3 switch on every context switch adds ~100ns overhead. If page table creation has a bug, user-mode ELF won't run. Rollback: revert to shared identity map and re-skip SMEP/SMAP.
 
-**Test checkpoint:** Boot on QEMU WHPX. cmd.exe runs in user mode with its own PML4. Kernel pages don't have User bit. `KeGetCurrentIrql()` works from user-mode interrupt. Boot on bare metal: SMEP/SMAP enabled (CR4 bits set), cmd.exe runs, no page faults.
+**Debug POST codes:** `POST16(0xD800)` = PML4 create start, `0xD801` = kernel entries cloned, `0xD802` = user page mapped, `0xD803` = CR3 switch test, `0xD804` = SMEP/SMAP enable, `0xD805` = user ELF loaded in new PML4, `0xD806` = §8 complete. On crash at 0xD803: CR3 switch broke. At 0xD804: SMEP/SMAP faulted.
+
+**Test checkpoint:** Boot on QEMU WHPX. cmd.exe runs in user mode with its own PML4. Kernel pages don't have User bit. `KeGetCurrentIrql()` works from user-mode interrupt. Boot on bare metal: SMEP/SMAP enabled (CR4 bits set), cmd.exe runs, no page faults. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ## 9. CPU Security Activation and Verification
 
@@ -259,13 +273,13 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 **Files:** `src/kernel/cpu_security.c`, `src/kernel/main/boot_hw.c`
 
 > [!NOTE]
-> Minimal prerequisite — full CPU boot sequencing (EFER before VMM, XSAVE/PCID, AP parity) is in `TODO-04-cpu-boot-sequencing.md §2,§2,§1`. This section implements just enough to ensure NX/SMEP/SMAP work on bare metal and verifies post-activation.
+> Minimal prerequisite — full CPU boot sequencing (EFER before VMM, XSAVE/PCID, AP parity) is in `TODO-04-cpu-boot-sequencing.md §2,§4,§1`. This section implements just enough to ensure NX/SMEP/SMAP work on bare metal and verifies post-activation.
 
 - [ ] Formalize activation order in `boot_phase0()`: (1) `cpu_enable_nx()` → (2) `vmm_apply_nx_policy()` → (3) `cpu_harden_post_pagetable()` (SMEP/SMAP after page tables fixed)
 - [ ] `cpu_verify_hardening()` — read back EFER, CR4 after activation. Log discrepancy: `[WARN] cpu: EFER.NXE not set after enable`
 - [ ] On bare metal: SMEP/SMAP require per-process page tables (skip with log, not crash). Document this constraint clearly.
 - [ ] On VMs: SMEP/SMAP either work (KVM/VBox) or are enforced via EPT (WHPX). Log which path.
-- [ ] Emit POST16 codes: 0x0070=cpu_harden_enter, 0x0071=NX_done, 0x0072=SMEP_done, 0x0073=SMAP_done, 0x0074=verify_done
+- [ ] Emit debug POST16 codes: 0xD900=cpu_verify_enter, 0xD901=NX_verified, 0xD902=SMEP_verified, 0xD903=SMAP_verified, 0xD904=verify_done (production codes 0x0070/0x0071 already used by `cpu_harden`)
 - [ ] Commit: `"boot: CPU security activation with post-enable verification"`
 
 **Test checkpoint:** Boot on bare metal. Log shows `[OK] cpu: NX enabled, SMEP skipped (shared page tables), SMAP skipped`. On QEMU: log shows all three enabled (or EPT-enforced).
