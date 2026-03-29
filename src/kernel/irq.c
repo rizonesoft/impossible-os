@@ -197,6 +197,7 @@ uint8_t irq_request_gsi(uint32_t gsi, irq_handler_t handler, void *ctx,
             }
         }
         ioapic_route_irq((uint8_t)gsi, vec, 0, flags);
+        ioapic_unmask_irq((uint8_t)gsi);
     }
 
     gsi_to_vector[gsi] = vec;
