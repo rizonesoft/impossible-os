@@ -294,5 +294,27 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
         kernel_subsystem_set_ready((subsys), _boot_step_r != BOOT_FATAL); \
     } while (0)
 
+/*
+ * BOOT_TRY(subsys, fn, name) — non-critical subsystem init wrapper
+ *
+ * fn must have signature: boot_result_t fn(void) or void fn(void).
+ * For void functions, wrap: BOOT_TRY(SUBSYS_X, (fn(), BOOT_OK), "name")
+ *
+ * On success: sets subsystem ready, logs normally.
+ * On BOOT_DEGRADED/BOOT_FATAL: logs warning, sets degraded_mask bit,
+ * continues boot — never halts for non-critical subsystems.
+ */
+#define BOOT_TRY(subsys, fn_call, name) \
+    do { \
+        boot_result_t _bt_r = (fn_call); \
+        if (_bt_r == BOOT_OK) { \
+            kernel_subsystem_set_ready((subsys), true); \
+        } else { \
+            extern struct boot_info g_boot_info; \
+            g_boot_info.degraded_mask |= (1u << (subsys)); \
+            klog(LOG_WARN, "boot", "%s: init failed -- degraded", (name)); \
+        } \
+    } while (0)
+
 /* Internal helper used by BOOT_REQUIRE — logs via serial (klog optional). */
 void _boot_require_failed(const char *subsys_name);

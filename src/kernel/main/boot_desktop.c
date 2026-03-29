@@ -156,6 +156,21 @@ void boot_phase3(void)
     boot_timing_write_report();
     boot_timeline_dump_json();
 
+    /* Report degraded subsystems */
+    if (g_boot_info.degraded_mask) {
+        static const char *subsys_names[] = {
+            "Serial","PMM","VMM","Heap","Klog","GDT","IDT","ACPI",
+            "LAPIC","IOAPIC","Timer","RTC","FB","VFS","Registry",
+            "Sched","IPC","SMP","Exec","Desktop"
+        };
+        uint32_t mask = g_boot_info.degraded_mask;
+        uint32_t i;
+        klog(LOG_WARN, "boot", "Degraded subsystems:");
+        for (i = 0; i < 20 && mask; i++) {
+            if (mask & (1u << i))
+                klog(LOG_WARN, "boot", "  - %s", subsys_names[i]);
+        }
+    }
 
     /* Boot-time heap stats */
     {

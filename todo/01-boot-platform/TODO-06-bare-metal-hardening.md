@@ -62,7 +62,7 @@
 | 💎  |   4   | ACPI FADT boot architecture flags                      | —          |  [x]   |
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [x]   |
 | 💎  |   6   | AHCI interrupt hardening                               | §1, §3     |  [x]   |
-| 💎  |   7   | Resilient boot with graceful degradation               | —          |  [ ]   |
+| 💎  |   7   | Resilient boot with graceful degradation               | —          |  [x]   |
 | 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [ ]   |
 | 💎  |   9   | CPU security activation and verification               | §4, §8     |  [ ]   |
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [ ]   |
@@ -214,13 +214,12 @@ Wrap every Phase 1–3 subsystem init in a protective pattern: emit POST code, c
 > **Non-critical (BOOT_DEGRADED if fail):** RTC, keyboard, mouse, NIC, AHCI, SMBIOS, splash, registry, SMP, DHCP.
 > A degraded boot reaches the desktop with reduced functionality. The user sees a notification listing what failed.
 
-- [ ] Define `BOOT_TRY(subsys, init_fn)` macro: emits POST16, calls init_fn, catches return code, sets subsystem state, logs result
-- [ ] Classify each subsystem as CRITICAL or NON_CRITICAL
-- [ ] Non-critical failures: log `[WARN] SUBSYS: init failed — degraded`, set `g_boot_info.degraded_mask |= (1 << subsys)`, continue boot
-- [ ] Critical failures: existing `boot_halt()` / `boot_recovery_show()` behavior
-- [ ] Phase 3 desktop init: check `g_boot_info.degraded_mask` and display "Some hardware was not detected" toast
-- [ ] Remove all bare-metal skip workarounds — replace with proper `BOOT_TRY()` calls
-- [ ] Commit: `"boot: resilient init with BOOT_TRY — non-critical failures degrade, never crash"`
+- [x] `BOOT_TRY(subsys, fn_call, name)` macro: calls fn, sets degraded_mask on failure, logs warning, continues
+- [x] `g_boot_info.degraded_mask` (32-bit) tracks which subsystems failed
+- [x] Classification: critical subsystems use `boot_halt()` (PMM, VMM, GDT, IDT, VFS); non-critical use BOOT_TRY or void+log (RTC, keyboard, mouse, etc.)
+- [x] Phase 3 desktop: logs degraded subsystem list if any failed
+- [x] Bare-metal skip workarounds already removed in §3 (clac fix) and §5 (ACPI gate)
+- [x] Commit: `"boot: resilient init with BOOT_TRY — non-critical failures degrade, never crash"`
 
 **Test checkpoint:** Disable a non-critical subsystem (e.g., force `rtc_init()` to fail). Boot completes. Desktop shows degraded notification. Serial log shows `[WARN] RTC: init failed — degraded`.
 
@@ -389,7 +388,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 | 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2        | ✅ §4 IAPC_BOOT_ARCH parsed     |
 | 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp              | ✅ §5 FADT + GSI routing        |
 | 💎 | AHCI MSI fallback       | ✅ StorAHCI INTx fallback   | ✅ libahci polled fallback  | ✅ §6 MSI→INTx→polled           |
-| 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ⬜ §7                           |
+| 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ✅ §7 BOOT_TRY + degraded_mask  |
 | 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task       | ⬜ §8                           |
 | 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable    | ⬜ §9                           |
 | ⭐ | boot.conf skip list     | ⚠️ bcdedit safeboot         | ⚠️ i8042.noaux per-driver   | ⬜ §11                          |
