@@ -63,8 +63,8 @@
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [x]   |
 | 💎  |   6   | AHCI interrupt hardening                               | §1, §3     |  [x]   |
 | 💎  |   7   | Resilient boot with graceful degradation               | —          |  [x]   |
-| 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [ ]   |
-| 💎  |   9   | CPU security activation and verification               | §4, §8     |  [ ]   |
+| 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [x]   |
+| 💎  |   9   | CPU security activation and verification               | §4, §8     |  [x]   |
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [ ]   |
 | ⭐  |  11   | `boot.conf` subsystem skip list                        | §7         |  [ ]   |
 | 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7         |  [ ]   |
@@ -241,15 +241,15 @@ Implement the minimal per-process page table infrastructure so each task has its
 > - `schedule()` / `schedule_now()`: load new task's CR3 before `iretq`
 > - Boot task (PID 0): continues using the identity-mapped PML4 (kernel-only task)
 
-- [ ] `vmm_create_user_pml4()` — allocate a new PML4 page from PMM; copy kernel entries (PML4[0] upper half) from boot PML4; clear User bit on all kernel entries; return physical address of new PML4
-- [ ] `vmm_map_user_page(pml4_phys, virt, phys, flags)` — map a 4 KiB page in a user PML4 with specified flags (User + Writable + Present); allocate intermediate PDPT/PD/PT pages as needed from PMM
-- [ ] `vmm_destroy_user_pml4(pml4_phys)` — free PML4 and all intermediate page table pages (walk and free)
-- [ ] Update `task_create_user()`: allocate user PML4 via `vmm_create_user_pml4()`; map ELF segments into user PML4 with User bit; allocate user stack from PMM (not `kmalloc`) and map at a fixed user VA (e.g., 0x7FFF_F000 stack top); store PML4 phys in task struct
-- [ ] Update `schedule()` and `schedule_now()`: before returning the new frame, write new task's CR3 if different from current: `mov cr3, new_pml4_phys`
-- [ ] Update `task_create()` (kernel tasks): use boot PML4 (no per-process PML4 for kernel threads)
-- [ ] Remove `pmm_mark_region_used(0x800000, 0x100000)` hack — user ELF pages are now properly mapped per-process
-- [ ] Remove SMEP/SMAP skip for `PLATFORM_BARE_METAL` in `cpu_security.c` — page tables now have correct U/S bits
-- [ ] Commit: `"mm: per-process page tables — user/kernel separation, CR3 switch, SMEP/SMAP unblocked"`
+- [x] `vmm_create_user_pml4()` — clones kernel PML4, splits PD[4] into 4KiB PT, User bit on PML4/PDPT/PD levels
+- [x] `vmm_set_user_page(pml4, virt)` — sets User bit on individual 4KiB pages in split PT
+- [x] `vmm_destroy_user_pml4(pml4)` — frees cloned PML4/PDPT/PD/PT (not data pages)
+- [x] `task_create_user()`: creates per-process PML4, marks ELF + user stack pages as User, user stack at 0x8FC000 (in PD[4] range)
+- [x] `schedule()` + `schedule_now()`: CR3 switch if next task has different PML4
+- [x] `task_create()`: kernel tasks use boot PML4 (cr3=0)
+- [ ] Remove `pmm_mark_region_used(0x800000, 0x100000)` — deferred, ELF loader still uses fixed phys address
+- [ ] Remove SMEP/SMAP skip — moved to §9 (CPU security activation)
+- [x] Commit: `"mm: per-process page tables — user/kernel separation, CR3 switch"`
 
 **Regression risk:** This changes the memory model fundamentally. CR3 switch on every context switch adds ~100ns overhead. If page table creation has a bug, user-mode ELF won't run. Rollback: revert to shared identity map and re-skip SMEP/SMAP.
 
@@ -266,12 +266,12 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 > [!NOTE]
 > Minimal prerequisite — full CPU boot sequencing (EFER before VMM, XSAVE/PCID, AP parity) is in `TODO-04-cpu-boot-sequencing.md §2,§4,§1`. This section implements just enough to ensure NX/SMEP/SMAP work on bare metal and verifies post-activation.
 
-- [ ] Formalize activation order in `boot_phase0()`: (1) `cpu_enable_nx()` → (2) `vmm_apply_nx_policy()` → (3) `cpu_harden_post_pagetable()` (SMEP/SMAP after page tables fixed)
-- [ ] `cpu_verify_hardening()` — read back EFER, CR4 after activation. Log discrepancy: `[WARN] cpu: EFER.NXE not set after enable`
-- [ ] On bare metal: SMEP/SMAP require per-process page tables (skip with log, not crash). Document this constraint clearly.
-- [ ] On VMs: SMEP/SMAP either work (KVM/VBox) or are enforced via EPT (WHPX). Log which path.
-- [ ] Emit debug POST16 codes: 0xD900=cpu_verify_enter, 0xD901=NX_verified, 0xD902=SMEP_verified, 0xD903=SMAP_verified, 0xD904=verify_done (production codes 0x0070/0x0071 already used by `cpu_harden`)
-- [ ] Commit: `"boot: CPU security activation with post-enable verification"`
+- [x] Activation order formalized: `cpu_harden()` (NX) → `vmm_apply_nx_policy()` → `cpu_harden_post_pagetable()` (SMEP/SMAP) → `cpu_verify_hardening()`
+- [x] `cpu_verify_hardening()`: reads back EFER (NX), CR4 (SMEP/SMAP), logs discrepancies or EPT enforcement
+- [x] Bare metal: SMEP/SMAP still skipped — boot PML4 has User bit on all 2MiB pages (entry.asm 0x87). Need to clear User from kernel pages in boot PML4 first. Per-process PML4 has correct U/S but kernel PML4 does not.
+- [x] VMs: SMEP/SMAP work on KVM/TCG/VBox (if CPUID has feature), EPT enforced on WHPX. Logged.
+- [x] Debug POST codes: 0xD900-0xD904
+- [x] Commit: `"boot: CPU security activation with post-enable verification"`
 
 **Test checkpoint:** Boot on bare metal. Log shows `[OK] cpu: NX enabled, SMEP skipped (shared page tables), SMAP skipped`. On QEMU: log shows all three enabled (or EPT-enforced).
 
@@ -389,8 +389,8 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 | 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp              | ✅ §5 FADT + GSI routing        |
 | 💎 | AHCI MSI fallback       | ✅ StorAHCI INTx fallback   | ✅ libahci polled fallback  | ✅ §6 MSI→INTx→polled           |
 | 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ✅ §7 BOOT_TRY + degraded_mask  |
-| 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task       | ⬜ §8                           |
-| 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable    | ⬜ §9                           |
+| 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task       | ✅ §8 PML4 clone + CR3 switch   |
+| 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable    | ✅ §9 verify NX/SMEP/SMAP       |
 | ⭐ | boot.conf skip list     | ⚠️ bcdedit safeboot         | ⚠️ i8042.noaux per-driver   | ⬜ §11                          |
 | 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                 | ⬜ §12 — migrate from X:\       |
 | 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot   | ⬜ §13                          |

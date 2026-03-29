@@ -207,6 +207,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     /* --- Now safe to enable SMEP/SMAP (kernel pages no longer User) --- */
     cpu_harden_post_pagetable();
+    cpu_verify_hardening();
 
     /* --- SIMD: enable AVX2 or fall back to SSE2 --- */
     POST16(POST16_SIMD);

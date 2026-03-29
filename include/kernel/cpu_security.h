@@ -31,6 +31,10 @@ void cpu_harden(void);
  * Must be called AFTER vmm_apply_nx_policy(). */
 void cpu_harden_post_pagetable(void);
 
+/* Verify CPU security features are active. Call after cpu_harden() +
+ * cpu_harden_post_pagetable(). Reads back EFER/CR4 and logs discrepancies. */
+void cpu_verify_hardening(void);
+
 /* ---- SMAP user-space access brackets ---- */
 
 /* STAC: Set AC flag — allows kernel to access user pages (SMAP bypass).

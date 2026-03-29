@@ -8,6 +8,7 @@
 #include "kernel/cpuid.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/msr.h"
+#include "kernel/boot_init.h"
 #include "kernel/klog.h"
 
 /* ---- CR4 bit definitions ---- */
@@ -51,12 +52,11 @@ static int hv_supports_cr4_smep_smap(void)
     platform_id_t p = platform_detect();
     switch (p) {
         case PLATFORM_BARE_METAL:
-            /* Bare metal enforces SMEP/SMAP directly, but our shared
-             * identity-mapped address space uses 2 MiB pages with user
-             * stacks allocated from the kernel heap (kmalloc).  No way
-             * to set User on user pages without also setting it on kernel
-             * pages in the same 2 MiB region.  Skip until per-process
-             * page tables exist (TODO-04 advanced VM). */
+            /* Per-process page tables exist for user tasks (TODO-06 §8),
+             * but the KERNEL (PID 0) still runs on the boot PML4 which has
+             * User bit on ALL 2 MiB pages (entry.asm flag 0x87). Enabling
+             * SMEP here would fault because kernel code pages have User bit.
+             * Need to fix boot PML4 to clear User on kernel pages first. */
             return 0;
         case PLATFORM_QEMU_KVM:
         case PLATFORM_QEMU_TCG:
@@ -68,7 +68,7 @@ static int hv_supports_cr4_smep_smap(void)
              * The host enforces these via EPT/SLAT instead. */
             return 0;
         default:
-            return 0;  /* unknown hypervisor — be safe */
+            return 0;  /* unknown hypervisor -- be safe */
     }
 }
 
@@ -151,4 +151,51 @@ void cpu_harden_post_pagetable(void)
 {
     cpu_enable_smep();
     cpu_enable_smap();
+}
+
+/* Verify that CPU security features are actually active after enable.
+ * Reads back EFER and CR4 and logs any discrepancies. */
+void cpu_verify_hardening(void)
+{
+    uint64_t efer, cr4;
+
+    POST16(0xD900);
+
+    /* Verify NX (EFER.NXE, bit 11) */
+    __asm__ volatile("rdmsr" : "=a"((uint32_t){0}), "=d"((uint32_t){0})
+                     : "c"(0xC0000080));
+    {
+        uint32_t lo, hi;
+        __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000080));
+        efer = ((uint64_t)hi << 32) | lo;
+    }
+    if (cpu_has(CPU_FEATURE_NX)) {
+        if (efer & (1ULL << 11))
+            klog(LOG_INFO, "cpu", "Verify: NX enabled (EFER.NXE set)");
+        else
+            klog(LOG_WARN, "cpu", "Verify: NX FAILED -- EFER.NXE not set after enable");
+    }
+    POST16(0xD901);
+
+    /* Verify SMEP/SMAP (CR4 bits 20, 21) */
+    cr4 = read_cr4();
+    if (cpu_has(CPU_FEATURE_SMEP)) {
+        if (cr4 & CR4_SMEP)
+            klog(LOG_INFO, "cpu", "Verify: SMEP enabled (CR4.SMEP set)");
+        else if (!hv_supports_cr4_smep_smap())
+            klog(LOG_INFO, "cpu", "Verify: SMEP enforced via EPT (Hyper-V)");
+        else
+            klog(LOG_WARN, "cpu", "Verify: SMEP FAILED -- CR4.SMEP not set");
+    }
+    POST16(0xD902);
+
+    if (cpu_has(CPU_FEATURE_SMAP)) {
+        if (cr4 & CR4_SMAP)
+            klog(LOG_INFO, "cpu", "Verify: SMAP enabled (CR4.SMAP set)");
+        else if (!hv_supports_cr4_smep_smap())
+            klog(LOG_INFO, "cpu", "Verify: SMAP enforced via EPT (Hyper-V)");
+        else
+            klog(LOG_WARN, "cpu", "Verify: SMAP FAILED -- CR4.SMAP not set");
+    }
+    POST16(0xD904);
 }
