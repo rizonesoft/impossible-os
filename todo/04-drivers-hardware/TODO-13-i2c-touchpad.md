@@ -2,7 +2,7 @@
 
 > **Goal:** Add HID report descriptor parser, Microsoft Precision Touchpad (PTP) multi-touch support, a gesture engine, Synaptics PS/2 fallback, ELAN/Goodix quirks, a touchpad control panel, and diagnostic shell commands — making Impossible OS a first-class laptop OS.
 >
-> → **Boot-critical I2C + basic touchpad extracted to `01-boot-platform/TODO-10-i2c-touchpad.md` (§1-§4).** This TODO covers advanced features after basic cursor movement works.
+> → **Boot-critical I2C + basic touchpad extracted to `01-boot-platform/TODO-09-i2c-touchpad.md` (§1-§4).** This TODO covers advanced features after basic cursor movement works.
 
 > [!IMPORTANT]
 > **No I2C, HID-over-I2C, or touchpad infrastructure exists.** This is a greenfield driver stack. The correct build order is: I2C bus (§1) → ACPI device enumeration (§2) → HoI2C transport (§3) → HID report parser (§4) → PTP multi-touch (§5) → gesture engine (§6). Synaptics PS/2 (§7) and vendor quirks (§8) are independent paths that both feed into the same `mouse_driver_handle_event()` injection point. The PS/2 ↔ USB ↔ I2C priority fallback chain (§7) must not conflict with `04-drivers-hardware/TODO-05-input-system.md §7`.

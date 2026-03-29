@@ -33,7 +33,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-06 — Bare Metal Boot Hardening](TODO-06-bare-metal-hardening.md) — IST stacks, ACPI-gated hardware access, graceful degradation, hw interrupt fix (clac), boot.conf skip list
 - [TODO-07 — xHCI, USB Storage & USB HID](TODO-07-xhci-usb-boot.md) — xHCI controller, USB MSC BOT, USB HID keyboard/mouse — boot from USB + input on bare metal
 - [TODO-08 — NVMe Storage Driver](TODO-08-nvme-storage.md) — NVMe controller, Admin+I/O queues, sector read/write — access internal NVMe storage
-- [TODO-10 — I2C Precision Touchpad](TODO-10-i2c-touchpad.md) — I2C controller, HID-over-I2C, touchpad cursor + click — laptop input
+- [TODO-09 — I2C Precision Touchpad](TODO-09-i2c-touchpad.md) — I2C controller, HID-over-I2C, touchpad cursor + click — laptop input
 
 ## Completed / Doc-converted
 

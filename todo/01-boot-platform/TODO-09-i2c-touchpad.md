@@ -1,4 +1,4 @@
-# TODO-10 — I2C Precision Touchpad Driver (Boot-Critical)
+# TODO-09 — I2C Precision Touchpad Driver (Boot-Critical)
 
 > **Goal:** Enable touchpad input on modern laptops that use I2C-connected precision touchpads (most laptops since ~2015). Without this driver, the only pointing device on laptops like the i5-11600K test machine is an external USB mouse.
 
