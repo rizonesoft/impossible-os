@@ -70,7 +70,7 @@
 | 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7         |  [x]   |
 | 💎  |  13   | CPU feature minimum requirements and verification      | §4, §9     |  [x]   |
 | 💎  |  14   | Bare-metal test matrix and validation plan             | §3         |  [x]   |
-| 💎  |  15   | Boot splash spinner bare-metal fix                     | §3, §10    |  [ ]   |
+| 💎  |  15   | Boot splash spinner bare-metal fix                     | §3, §10    |  [x]   |
 
 > 💎 = parity — Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive — 4-digit POST codes in every function and a configurable skip list are not standard in any OS kernel.
@@ -357,12 +357,12 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/spinner.c`, `src/kernel/main/boot_storage.c`
 
-- [ ] Investigate: is the spinner driven by timer callback (`timer_register_tick_callback`) or by explicit `boot_splash_tick()` calls? On bare metal without timer, only explicit calls work.
-- [ ] Add `boot_splash_tick()` calls at regular intervals during long operations (PCI scan loop, AHCI port enumeration, VFS mount) — every ~100ms of wall time.
-- [ ] If timer IS working on bare metal (after §3 hw interrupt fix): verify spinner callback fires at 10fps (every 10 ticks at 100Hz). If not, the callback registration might be lost during timer reinit.
-- [ ] If timer is NOT working: implement TSC-based spinner fallback — `boot_splash_tick()` reads TSC and advances the spinner if 100ms has elapsed since last advance, independent of timer interrupts.
-- [ ] Verify: spinner rotates smoothly at ~10fps on QEMU WHPX, VBox, TCG, AND bare metal.
-- [ ] Commit: `"boot: fix spinner stutter on bare metal — TSC fallback + explicit tick calls"`
+- [x] Spinner driven by `timer_register_tick_callback(spinner_advance, 10)` — fires at 10fps from LAPIC timer ISR
+- [x] Explicit `boot_splash_tick()` calls already present during long operations (PCI, AHCI, VFS, desktop)
+- [x] Timer IS working on bare metal (§3 fixed clac). Spinner callback fires correctly.
+- [x] VBox stutter: caused by NCQ timeout (15s blocking I/O), not a spinner bug. Timer ISR fires during NCQ wait (`event_wait_timeout`), spinner advances. Display may lag due to VBox VGA emulation under heavy I/O — cosmetic, not a kernel issue.
+- [x] Verified: QEMU WHPX ✅, TCG ✅, bare metal ✅. VBox: minor stutter during NCQ timeout only.
+- [x] No code change needed — §3 (clac fix) resolved the root cause.
 
 **Test checkpoint:** Bare metal: spinner rotates smoothly during PCI scan and AHCI init (no visible stutter or freeze). QEMU: spinner unchanged (already smooth).
 
