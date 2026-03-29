@@ -50,13 +50,10 @@ void compositor_run(void)
             /* Update PS/2 mouse state for cursor position tracking */
             mouse_set_position(mx, my);
         } else if (vbox_mouse_available()) {
-            /* VBox gives absolute position but NOT buttons.
-             * Merge position from VBox + buttons from PS/2. */
             struct mouse_state vb = vbox_mouse_get_state();
-            struct mouse_state ps = mouse_get_state();
             mx = vb.x;
             my = vb.y;
-            mb = ps.buttons;
+            mb = vb.buttons;
             mouse_set_position(mx, my);
         } else {
             struct mouse_state ms = mouse_get_state();
@@ -83,8 +80,7 @@ void compositor_run(void)
                     mouse_set_position(nx, ny);
                 } else if (vbox_mouse_available()) {
                     struct mouse_state vb = vbox_mouse_get_state();
-                    struct mouse_state ps = mouse_get_state();
-                    nx = vb.x; ny = vb.y; nb = ps.buttons;
+                    nx = vb.x; ny = vb.y; nb = vb.buttons;
                     mouse_set_position(nx, ny);
                 } else {
                     struct mouse_state ms = mouse_get_state();

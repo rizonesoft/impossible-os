@@ -12,12 +12,13 @@
  *   5. Poll GetMouse packet each frame for absolute X, Y (0–0xFFFF)
  *   6. Scale to framebuffer resolution
  *
- * Buttons are NOT provided by VMMDev — PS/2 mouse still handles buttons.
+ * Buttons are NOT provided by VMMDev — read from PS/2 mouse state internally.
  *
  * Reference: https://wiki.osdev.org/VirtualBox_Guest_Additions
  * ============================================================================ */
 
 #include "kernel/drivers/vbox_mouse.h"
+#include "kernel/drivers/mouse.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/drivers/framebuffer.h"
@@ -331,7 +332,12 @@ struct mouse_state vbox_mouse_get_state(void)
 
     s.x = abs_x;
     s.y = abs_y;
-    s.buttons = 0;  /* VMMDev does NOT provide buttons -- merge with PS/2 */
+    /* VMMDev does NOT provide buttons — read from PS/2 mouse internally
+     * so the compositor doesn't need to merge two drivers. */
+    {
+        struct mouse_state ps = mouse_get_state();
+        s.buttons = ps.buttons;
+    }
     return s;
 }
 
