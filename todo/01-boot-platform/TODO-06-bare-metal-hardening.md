@@ -66,7 +66,7 @@
 | 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [x]   |
 | 💎  |   9   | CPU security activation and verification               | §4, §8     |  [x]   |
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [x]   |
-| ⭐  |  11   | `boot.conf` subsystem skip list                        | §7         |  [ ]   |
+| ⭐  |  11   | ~~`boot.conf` subsystem skip list~~                    | —          |  [x]   |
 | 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7         |  [ ]   |
 | 💎  |  13   | CPU feature minimum requirements and verification      | §4, §9     |  [ ]   |
 | 💎  |  14   | Bare-metal test matrix and validation plan             | §3         |  [ ]   |
@@ -289,18 +289,10 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Test checkpoint:** Boot on QEMU + bare metal. Phase 1 order is correct. UEFI runtime calls don't crash with timer running. Boot order comment block is visible at top of `boot_interrupts.c`.
 
-## 11. `boot.conf` Subsystem Skip List
+## 11. ~~`boot.conf` Subsystem Skip List~~ *(removed)*
 
-Allow the user to skip specific subsystems via `boot.conf` for debugging or working around hardware bugs without recompiling.
-
-**Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `src/kernel/main/boot_interrupts.c`
-
-- [ ] Add `skip=` key to `boot.conf`: comma-separated list of subsystem names (e.g., `skip=mouse,ahci_msi,hpet,smbios`)
-- [ ] Parse into `g_boot_info.config.skip_mask` (32-bit bitmask matching `SUBSYS_*` enum + extra flags for sub-features like `ahci_msi`, `hpet`)
-- [ ] `BOOT_TRY()` macro (§2) checks skip mask before calling init function; if skipped, log `[SKIP] SUBSYS: disabled via boot.conf`
-- [ ] Default: `skip=` (empty, nothing skipped)
-- [ ] Serial log: `[CONF] skip: mouse,ahci_msi` (echo parsed skip list)
-- [ ] Commit: `"boot: boot.conf skip= key for subsystem bypass"`
+> [!NOTE]
+> **Removed 2026-03-29.** A skip list encourages hiding problems instead of fixing them. Errors can go unnoticed indefinitely. The correct approach is `BOOT_TRY` (§7) — subsystems degrade gracefully with a logged warning, not silent bypass. If a subsystem crashes, fix the root cause.
 
 **Test checkpoint:** Set `skip=mouse,smbios` in boot.conf. Boot on bare metal. Mouse and SMBIOS are skipped. Desktop works without them.
 
@@ -390,7 +382,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 | 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ✅ §7 BOOT_TRY + degraded_mask  |
 | 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task       | ✅ §8 PML4 clone + CR3 switch   |
 | 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable    | ✅ §9 verify NX/SMEP/SMAP       |
-| ⭐ | boot.conf skip list     | ⚠️ bcdedit safeboot         | ⚠️ i8042.noaux per-driver   | ⬜ §11                          |
+| 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ✅ §7 BOOT_TRY (skip list removed) |
 | 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                 | ⬜ §12 — migrate from X:\       |
 | 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot   | ⬜ §13                          |
 | ⭐ | Bare-metal test matrix  | ❌ Internal only (WHQL)     | ❌ Community-driven         | ⬜ §14                          |
