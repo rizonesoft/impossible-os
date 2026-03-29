@@ -32,4 +32,5 @@ SDK tools are built separately from the kernel. Each has its own Makefile/build 
 
 ## Active TODOs
 
-- [TODO-01 — IXFS Mount](TODO-01-ixfs-mount.md) — Mount IXFS partitions on Windows (WinFsp) and Linux (libfuse3) with USB auto-mount scripts
+- [TODO-01 — SDK Build System](TODO-01-sdk-build-system.md) — Build scripts for SDK tools with progress bars, dependency detection, auto-discovery
+- [TODO-02 — IXFS Mount](TODO-02-ixfs-mount.md) — Mount IXFS partitions on Windows (WinFsp) and Linux (libfuse3) with USB auto-mount scripts
