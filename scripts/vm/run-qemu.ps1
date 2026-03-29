@@ -56,14 +56,10 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     }
 }
 
-# OVMF_VARS needs a writable copy - preserve across runs for NVRAM persistence.
-# If the source (build/) is newer than the TEMP copy, refresh it (clean build case).
-if (-not (Test-Path $VARS_DEST)) {
-    Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST
-} elseif ((Get-Item $OVMF_VARS).LastWriteTime -gt (Get-Item $VARS_DEST).LastWriteTime) {
-    Write-Host "OVMF_VARS updated (clean build?) - refreshing NVRAM copy" -ForegroundColor Yellow
-    Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST -Force
-}
+# OVMF_VARS: always copy fresh from build/ to TEMP.
+# NVRAM persistence (POST codes, boot status) resets on each QEMU launch.
+# This avoids stale TEMP copies after clean builds.
+Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST -Force
 
 $Scale = if ($Yres -gt 2160) { 3 } elseif ($Yres -gt 1080) { 2 } else { 1 }
 # Per-resolution VRAM: 1440p needs 32MB (14.7MB fb), 1080p needs 16MB.
