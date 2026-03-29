@@ -369,7 +369,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
 	@# Step 3: Format IXFS partition and populate with system files
-	@mkdir -p $(BUILD_DIR)/sysroot/Impossible/System/Logs
+	@mkdir -p $(BUILD_DIR)/sysroot/Impossible/System/Logs/Serial
 	@cp $(BUILD_DIR)/kernel.sym $(BUILD_DIR)/sysroot/Impossible/System/kernel.sym
 	$(BUILD_DIR)/tools/mkfs-ixfs \
 		-o $@ \

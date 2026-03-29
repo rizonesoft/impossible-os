@@ -86,7 +86,7 @@ static int       live_enabled   = 0;
 static int       flushing       = 0;  /* reentrancy guard */
 
 /* Numbered log filename: "BOOT_NNN.LOG" */
-static char      log_filename[16];
+static char      log_filename[24];  /* "Serial_YYMMDDNN.log" + NUL */
 
 /* Log rotation config (loaded from Registry, or defaults) */
 static uint32_t  rot_max_size    = 4 * 1024 * 1024;  /* 4 MB default */
@@ -353,41 +353,53 @@ static void load_rotation_config(void)
  */
 
 /* Helper: build a "YYMMDDnn.LOG" filename */
+/* Serial log subdirectory within KLOG_DIR */
+#define KLOG_SERIAL_DIR  KLOG_DIR "Serial\\"
+
 static void make_log_filename(uint8_t yy, uint8_t mm, uint8_t dd,
                                uint8_t seq, char *out)
 {
-    out[0] = '0' + (char)(yy / 10);
-    out[1] = '0' + (char)(yy % 10);
-    out[2] = '0' + (char)(mm / 10);
-    out[3] = '0' + (char)(mm % 10);
-    out[4] = '0' + (char)(dd / 10);
-    out[5] = '0' + (char)(dd % 10);
-    out[6] = '0' + (char)(seq / 10);
-    out[7] = '0' + (char)(seq % 10);
-    out[8] = '.'; out[9] = 'L'; out[10] = 'O'; out[11] = 'G';
-    out[12] = '\0';
+    /* Format: "Serial_YYMMDDNN.log" (19 chars + NUL) */
+    out[0]  = 'S'; out[1]  = 'e'; out[2]  = 'r'; out[3]  = 'i';
+    out[4]  = 'a'; out[5]  = 'l'; out[6]  = '_';
+    out[7]  = '0' + (char)(yy / 10);
+    out[8]  = '0' + (char)(yy % 10);
+    out[9]  = '0' + (char)(mm / 10);
+    out[10] = '0' + (char)(mm % 10);
+    out[11] = '0' + (char)(dd / 10);
+    out[12] = '0' + (char)(dd % 10);
+    out[13] = '0' + (char)(seq / 10);
+    out[14] = '0' + (char)(seq % 10);
+    out[15] = '.'; out[16] = 'l'; out[17] = 'o'; out[18] = 'g';
+    out[19] = '\0';
 }
 
-/* Parse "YYMMDDnn.LOG" → 1 if valid log file, fills out fields.
+/* Parse "Serial_YYMMDDnn.log" -> 1 if valid log file, fills out fields.
  * Returns 0 if not a log file. */
 static int parse_log_filename(const char *name, uint8_t *yy, uint8_t *mm,
                                uint8_t *dd, uint8_t *seq)
 {
     int i;
 
-    /* Must be exactly 12 chars: 8 digits + ".LOG" */
-    for (i = 0; i < 8; i++)
-        if (name[i] < '0' || name[i] > '9') return 0;
-    if (name[8] != '.' || name[9] != 'L' || name[10] != 'O' || name[11] != 'G')
+    /* Must start with "Serial_" (7 chars) */
+    if (name[0] != 'S' || name[1] != 'e' || name[2] != 'r' ||
+        name[3] != 'i' || name[4] != 'a' || name[5] != 'l' || name[6] != '_')
         return 0;
-    if (name[12] != '\0') return 0;
 
-    *yy  = (uint8_t)((name[0] - '0') * 10 + (name[1] - '0'));
-    *mm  = (uint8_t)((name[2] - '0') * 10 + (name[3] - '0'));
-    *dd  = (uint8_t)((name[4] - '0') * 10 + (name[5] - '0'));
-    *seq = (uint8_t)((name[6] - '0') * 10 + (name[7] - '0'));
+    /* Then 8 digits */
+    for (i = 7; i < 15; i++)
+        if (name[i] < '0' || name[i] > '9') return 0;
 
-    /* Basic sanity: month 01–12, day 01–31 */
+    /* Then ".log" */
+    if (name[15] != '.' || name[16] != 'l' || name[17] != 'o' || name[18] != 'g')
+        return 0;
+    if (name[19] != '\0') return 0;
+
+    *yy  = (uint8_t)((name[7]  - '0') * 10 + (name[8]  - '0'));
+    *mm  = (uint8_t)((name[9]  - '0') * 10 + (name[10] - '0'));
+    *dd  = (uint8_t)((name[11] - '0') * 10 + (name[12] - '0'));
+    *seq = (uint8_t)((name[13] - '0') * 10 + (name[14] - '0'));
+
     if (*mm < 1 || *mm > 12 || *dd < 1 || *dd > 31) return 0;
     return 1;
 }
@@ -425,11 +437,11 @@ static void pick_log_number(void)
     today_mm = (uint8_t)rtc_get_month();
     today_dd = (uint8_t)rtc_get_day();
 
-    x_root = vfs_open(KLOG_DIR, VFS_O_READ);
+    x_root = vfs_open(KLOG_SERIAL_DIR, VFS_O_READ);
     if (!x_root || !x_root->ops || !x_root->ops->finddir)
         goto fallback;
 
-    /* Enumerate Logs directory to find all log files */
+    /* Enumerate Serial directory to find all log files */
     {
         uint32_t dir_idx = 0;
         struct vfs_dirent *de;
@@ -494,11 +506,11 @@ void klog_disk_init(void)
     if (vfs_is_mounted('C')) {
         pick_log_number();
 
-        /* Create the log file in C:\Impossible\System\Logs\ */
+        /* Create the log file in C:\Impossible\System\Logs\Serial\ */
         {
-            struct vfs_node *logs_dir = vfs_open(KLOG_DIR, VFS_O_READ);
-            if (logs_dir && logs_dir->ops && logs_dir->ops->create)
-                logs_dir->ops->create(logs_dir, log_filename, VFS_FILE);
+            struct vfs_node *serial_dir = vfs_open(KLOG_SERIAL_DIR, VFS_O_READ);
+            if (serial_dir && serial_dir->ops && serial_dir->ops->create)
+                serial_dir->ops->create(serial_dir, log_filename, VFS_FILE);
         }
 
         fat32_inited = 1;
@@ -803,24 +815,24 @@ void klog_disk_flush(void)
         }
     }
 
-    /* ---- Flush to C:\Impossible\System\Logs\ (full-file overwrite) ---- */
+    /* ---- Flush to C:\Impossible\System\Logs\Serial\ (full-file overwrite) ---- */
     if (vfs_is_mounted('C') && fat32_buf && fat32_pos > 0) {
         /* Lazy init: if we haven't set up yet, do it now */
         if (!fat32_inited) {
             pick_log_number();
             {
-                struct vfs_node *logs_dir = vfs_open(KLOG_DIR, VFS_O_READ);
-                if (logs_dir && logs_dir->ops && logs_dir->ops->create)
-                    logs_dir->ops->create(logs_dir, log_filename, VFS_FILE);
+                struct vfs_node *serial_dir = vfs_open(KLOG_SERIAL_DIR, VFS_O_READ);
+                if (serial_dir && serial_dir->ops && serial_dir->ops->create)
+                    serial_dir->ops->create(serial_dir, log_filename, VFS_FILE);
             }
             fat32_inited = 1;
         }
 
         if (log_filename[0]) {
-            /* Build full path: KLOG_DIR + filename */
-            char path[64];
+            /* Build full path: KLOG_SERIAL_DIR + filename */
+            char path[80];
             int p = 0, j;
-            for (j = 0; KLOG_DIR[j]; j++) path[p++] = KLOG_DIR[j];
+            for (j = 0; KLOG_SERIAL_DIR[j]; j++) path[p++] = KLOG_SERIAL_DIR[j];
             for (j = 0; log_filename[j]; j++) path[p++] = log_filename[j];
             path[p] = '\0';
 
@@ -866,9 +878,9 @@ void klog_disk_flush(void)
         if (!fat32_inited) {
             pick_log_number();
             {
-                struct vfs_node *logs_dir = vfs_open(KLOG_DIR, VFS_O_READ);
-                if (logs_dir && logs_dir->ops && logs_dir->ops->create)
-                    logs_dir->ops->create(logs_dir, log_filename, VFS_FILE);
+                struct vfs_node *serial_dir = vfs_open(KLOG_SERIAL_DIR, VFS_O_READ);
+                if (serial_dir && serial_dir->ops && serial_dir->ops->create)
+                    serial_dir->ops->create(serial_dir, log_filename, VFS_FILE);
             }
             fat32_inited = 1;
         }
