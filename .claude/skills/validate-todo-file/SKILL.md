@@ -37,12 +37,18 @@ description: Validate a TODO file for structural completeness, Implementation Or
      - Keep cells short: status emoji + max 5 words per cell. No full sentences.
      - Pad columns so pipe characters align vertically within the table.
      - If the table is wider than ~100 characters per row, shorten cell text further.
-   - **Parity gap check:** Scan the OS Comparison table for features where BOTH Win11 and Linux show ✅ but Impossible OS shows ⬜ or is missing entirely. These are parity gaps — features competitors have that we don't. For each gap:
+7. **Win11/Linux parity and competitive edge scan (critical — do not skip).**
+   - This step is the core differentiator for Impossible OS. Every validation MUST include this analysis.
+   - **Parity gap check:** For each feature where BOTH Win11 and Linux show ✅ but Impossible OS shows ⬜ or is missing entirely:
      - If covered by a section in this TODO: verify the section exists and is actionable (not deferred indefinitely).
      - If NOT covered by any section: flag it as a missing parity feature. Suggest adding a section or noting it as deferred with a reason.
      - If covered by another TODO: add a `→ XREF:` and note it in the table.
-   - **Competitive edge check:** Look for features where Impossible OS could be BETTER than both competitors (⭐ exclusive). Research what Win11 and Linux do poorly in this TODO's domain and suggest exclusive features that would make Impossible OS superior. Add suggested rows to the table marked ⭐ with ⬜ Planned.
-7. Validate execution coverage and close loose ends.
+   - **Competitive edge check:** Research what Win11 and Linux do poorly or don't do at all in this TODO's domain. For each opportunity where Impossible OS could be BETTER than both:
+     - Add a row to the OS Comparison table marked ⭐ with ⬜ Planned.
+     - Suggest a concrete implementation (section name, scope, key deliverable).
+     - Focus on features that are visible to developers/users, not internal plumbing.
+   - **Report findings explicitly** — list discovered gaps and suggested features in the validation output even if no table changes are needed. The user must see what was checked.
+8. **Validate execution coverage and close loose ends.**
    - Check dependency order, `→ XREF:` lines, overlap notes, handoffs, and adjacent-file continuity.
    - For each `→ XREF: TODO-XX §N`, confirm the target TODO file exists **and** the referenced section number is present in that file.
    - Check handoff boundaries: for each deliverable this TODO hands off to another, confirm the receiving TODO has a matching Inputs or XREF entry.
@@ -53,7 +59,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
      4. If this TODO defers an item, the item must say WHERE it's deferred to (specific TODO + section) or WHY it's deferred (with a condition for when to revisit). Never just "deferred."
    - **Internal §N cross-reference check:** For every `§N` reference in prose, checklist items, and callouts within each section, verify that `N` refers to the correct section in THIS file. A section cannot reference itself as if it were a different section (e.g., §1 saying "this unblocks §1" is a bug). Cross-check each §N against the `## N.` headings and the Implementation Order table to ensure the reference makes semantic sense — the referenced section should actually deliver what the prose claims.
    - Fix stale planning text, broken links, and roadmap inconsistencies.
-8. **Self-contained execution check (critical).**
+9. **Self-contained execution check (critical).**
    - The TODO must be executable from §1 to the last section WITHOUT being blocked by unimplemented sections in other TODOs.
    - For each `Depends On` entry in the Implementation Order table that references an EXTERNAL TODO (not a section within this file):
      1. Check if that external section is already implemented (`[x]`). If yes, no action needed.
@@ -62,17 +68,17 @@ description: Validate a TODO file for structural completeness, Implementation Or
      4. Update the Implementation Order to reference the new local section instead of the external one.
    - **Principle:** When you follow a TODO from §1 to the last section, you must have a fully working base system at the end. External TODOs enhance it later, but never block it.
    - Flag any section where the `Depends On` column references something that doesn't exist yet and no local fallback is provided.
-9. **Prerequisite code audit.**
+10. **Prerequisite code audit.**
    - For each function, type, or API referenced in checklist items (e.g., `vmm_map_mmio()`, `BOOT_TRY()`, `POST16()`), use Grep to check if it exists in the codebase.
    - If it doesn't exist AND is not created by a prior section in this TODO: flag it as a missing prerequisite.
    - If it IS created by a prior section: verify the section order puts the creator before the consumer.
-10. **Platform coverage check (bare metal first).**
+11. **Platform coverage check (bare metal first).**
     - **Bare metal is the acceptance criteria.** "Verified on QEMU" is necessary but NOT sufficient. Every section that touches hardware must include bare-metal verification.
     - Every TODO that touches hardware, interrupts, page tables, timers, or drivers MUST list which platforms each section has been verified on.
     - Required platforms: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
     - If the Test Checkpoint only mentions VMs, flag it and add: "Verify on bare metal — VM behavior differs."
     - When writing hardware-touching code, ask: "does this work without a hypervisor?"
-11. **Regression risk scan.**
+12. **Regression risk scan.**
     - For each section, identify what existing working functionality it could break.
     - Flag high-risk sections — those that touch:
       - **Interrupt path** (IDT, ISR stubs, LAPIC, IOAPIC, EOI) — one wrong bit = triple fault
@@ -83,12 +89,12 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - For each high-risk section, require:
       - A rollback note: "If this breaks, revert [specific change] and fall back to [known-good behavior]"
       - An incremental test: verify the change works BEFORE proceeding to the next section
-12. **Boot-path impact analysis.**
+13. **Boot-path impact analysis.**
     - Trace the boot execution path from `kernel_main()` through Phase 0 → 1 → 2 → 3 → compositor.
     - For each section in the TODO, identify exactly WHERE in the boot path its changes take effect.
     - Flag any section that modifies code running BEFORE `sti` (interrupts enabled) — these are the most dangerous because errors cause silent triple faults with no diagnostic output.
     - Flag any section that modifies the interrupt handler path — errors here crash on every interrupt, not just the subsystem being changed.
-13. **Test checkpoint enforcement.**
+14. **Test checkpoint enforcement.**
     - Every section MUST have a `**Test checkpoint:**` block at the end.
     - Each checkpoint must have concrete pass/fail criteria — not "verify it works" but specific observable outcomes:
       - Serial log output: exact string to grep for
@@ -98,7 +104,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Each checkpoint must specify which platforms to test on.
     - Flag any section missing a test checkpoint.
     - Flag any checkpoint with vague criteria ("should work", "verify correct behavior").
-14. **Diagnostic POST code insertion.**
+15. **Diagnostic POST code insertion.**
     - Every section that modifies boot-path code or hardware interaction MUST add temporary `POST16()` calls around the changed code so crashes are localizable in minutes, not hours.
     - **Before the change:** `POST16(0xDDNN)` where `DD` = section number, `NN` = 00 (entry). Example: §5 entry = `POST16(0xD500)`.
     - **After the change:** `POST16(0xDDNN)` where `NN` = 01 (exit). Example: §5 exit = `POST16(0xD501)`.
@@ -107,7 +113,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - These diagnostic POST codes use the `0xD000–0xDFFF` range (reserved for development/debug) and should be removed after the section is verified on all platforms. They do not conflict with production POST codes (`0x00xx`–`0x3Fxx` for phases, `0xB0xx` for bootloader, `0xFF00` for boot OK).
     - **Conflict check:** Before assigning debug POST codes, grep `include/kernel/boot_init.h` for all `#define POST16_` entries AND grep the codebase for any existing `POST16(0xD` calls. Verify the chosen codes don't collide with existing production or debug codes. Flag any duplicates.
     - **Rationale:** On bare metal, there is no debugger. A crash with no POST code means hours of bisecting. A crash at POST 0xD503 means "§5, sub-step 3 failed" — fixable in minutes.
-14. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
+16. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
 
 ## Guardrails
 
