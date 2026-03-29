@@ -316,5 +316,19 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
         } \
     } while (0)
 
+/*
+ * BOOT_ASSERT(condition, msg) — impossible-state check
+ *
+ * If condition is false, logs the message and halts. Use for invariants
+ * that should never be violated (e.g., "IDT must be ready before timer").
+ */
+#define BOOT_ASSERT(cond, msg) \
+    do { \
+        if (!(cond)) { \
+            klog(LOG_FATAL, "boot", "ASSERT FAILED: %s", (msg)); \
+            boot_halt(msg); \
+        } \
+    } while (0)
+
 /* Internal helper used by BOOT_REQUIRE — logs via serial (klog optional). */
 void _boot_require_failed(const char *subsys_name);

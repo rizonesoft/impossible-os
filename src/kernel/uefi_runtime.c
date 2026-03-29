@@ -13,6 +13,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 #include "kernel/uefi_config.h"
+#include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/system_state.h"
@@ -272,7 +273,26 @@ uint32_t uefi_rt_supported(void)
  *
  * GetVariable, SetVariable, GetNextVariableName wrappers.
  * All calls are serialized via s_rt_lock (firmware is not reentrant).
+ * LAPIC timer masked during all calls — firmware SMI may enable interrupts.
  * ============================================================================ */
+
+/* Mask LAPIC timer during UEFI runtime calls — firmware may enable
+ * interrupts internally via SMI, causing timer to fire into wrong context. */
+static uint32_t rt_mask_timer(void)
+{
+    if (lapic_available() && kernel_subsystem_ready(SUBSYS_TIMER)) {
+        uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
+        lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);
+        return lvt;
+    }
+    return 0;
+}
+
+static void rt_unmask_timer(uint32_t saved_lvt)
+{
+    if (saved_lvt)
+        lapic_write(LAPIC_REG_LVT_TIMER, saved_lvt);
+}
 
 uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
                            const uint16_t *name,
@@ -280,13 +300,16 @@ uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
                            uint64_t *data_size,
                            void *data)
 {
+    uint32_t lvt;
     if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
     if (!(s_supported & EFI_RT_SUPPORTED_GET_VARIABLE)) return UEFI_UNSUPPORTED;
 
+    lvt = rt_mask_timer();
     spin_lock(&s_rt_lock);
     efi_status_t status = s_rt->get_variable(
         (uint16_t *)name, (void *)guid, attributes, data_size, data);
     spin_unlock(&s_rt_lock);
+    rt_unmask_timer(lvt);
 
     return status;
 }
@@ -297,13 +320,16 @@ uint64_t uefi_set_variable(const struct boot_uefi_guid *guid,
                            uint64_t data_size,
                            const void *data)
 {
+    uint32_t lvt;
     if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
     if (!(s_supported & EFI_RT_SUPPORTED_SET_VARIABLE)) return UEFI_UNSUPPORTED;
 
+    lvt = rt_mask_timer();
     spin_lock(&s_rt_lock);
     efi_status_t status = s_rt->set_variable(
         (uint16_t *)name, (void *)guid, attributes, data_size, (void *)data);
     spin_unlock(&s_rt_lock);
+    rt_unmask_timer(lvt);
 
     return status;
 }

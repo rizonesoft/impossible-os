@@ -1,9 +1,27 @@
 /* ============================================================================
  * boot_interrupts.c -- Phase 1: Platform Services (Interrupts Enabled at End)
  *
- * GDT, IDT, ACPI, LAPIC/IOAPIC, PIC, timer, RTC, keyboard, mouse,
- * SMBIOS, UEFI info gathering, framebuffer, boot splash.
- * Interrupts enabled with STI only after LAPIC/timer are ready.
+ * INIT ORDER CONTRACT (do not reorder without understanding the dependencies):
+ *
+ *   1. GDT + IST stacks    -- segment selectors + exception stacks
+ *   2. IDT + IRQ            -- interrupt vectors registered
+ *   3. ACPI (MADT)          -- discover CPUs, LAPIC/IOAPIC addresses
+ *   4. LAPIC + IOAPIC       -- interrupt routing ready (PIC disabled)
+ *   5. PIC                  -- only if no IOAPIC (legacy fallback)
+ *   6. RTC                  -- non-critical, safe after IDT
+ *   7. Input (kbd/mouse)    -- needs IRQ routing (IOAPIC or PIC)
+ *   8. Framebuffer          -- needs PMM (Phase 0), no IRQ dependency
+ *   9. Splash + UEFI info   -- cosmetic, after FB
+ *  10. Timer (LAST!)        -- generates interrupts immediately on start;
+ *                              must be LAST before sti to prevent timer
+ *                              firing into uninitialized subsystems
+ *  11. sti                  -- enable interrupts (timer starts ticking)
+ *  12. splash animation     -- only after sti (needs timer ticks)
+ *
+ * UEFI RUNTIME CALLS: All UEFI runtime service calls (SetVariable, GetTime,
+ * etc.) may enable interrupts internally via firmware SMI. The LAPIC timer
+ * must be masked during these calls if it's running. See boot_post_write16()
+ * and uefi_runtime.c for the mask/unmask pattern.
  *
  * Provides: boot_phase1() and the legacy boot_interrupts_init() wrapper.
  * ============================================================================ */
@@ -217,15 +235,9 @@ void boot_phase1(void)
         }
     }
 
-    /* --- Timer + enable interrupts ---
-     * Start LAPIC timer LAST, right before sti.  The timer generates
-     * pending interrupts immediately — if started earlier, any code
-     * that might enable interrupts (UEFI runtime, firmware SMI) will
-     * crash on bare metal because the timer fires into the wrong context. */
-    if (!kernel_subsystem_ready(SUBSYS_IDT)) {
-        kernel_subsystem_dump();
-        boot_halt("IDT not ready -- cannot init timer");
-    }
+    /* --- Timer + enable interrupts (MUST BE LAST before sti) --- */
+    BOOT_ASSERT(kernel_subsystem_ready(SUBSYS_IDT), "IDT must be ready before timer");
+    BOOT_ASSERT(kernel_subsystem_ready(SUBSYS_GDT), "GDT must be ready before timer");
     POST16(POST16_TIMER);
     timer_hal_init();
     POST16(POST16_TIMER_OK);

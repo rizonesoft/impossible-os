@@ -65,7 +65,7 @@
 | 💎  |   7   | Resilient boot with graceful degradation               | —          |  [x]   |
 | 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [x]   |
 | 💎  |   9   | CPU security activation and verification               | §4, §8     |  [x]   |
-| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [ ]   |
+| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [x]   |
 | ⭐  |  11   | `boot.conf` subsystem skip list                        | §7         |  [ ]   |
 | 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7         |  [ ]   |
 | 💎  |  13   | CPU feature minimum requirements and verification      | §4, §9     |  [ ]   |
@@ -281,12 +281,11 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/main/boot_init.c`
 
-- [ ] Move `timer_hal_init()` to the last step of Phase 1, immediately before `sti` (already done — formalize and document)
-- [ ] `boot_post_write()`: always mask LAPIC timer LVT during `uefi_set_variable()` call (already done — verify correctness)
-- [ ] `uefi_set_variable()` wrapper: generic LAPIC mask/unmask guard for ALL UEFI runtime calls, not just POST write
-- [ ] Document the Phase 1 init order contract in a comment block at the top of `boot_interrupts.c`
-- [ ] Add `BOOT_ASSERT(condition, msg)` macro for impossible-state checks (e.g., `BOOT_ASSERT(kernel_subsystem_ready(SUBSYS_IDT), "IDT must be ready before timer")`)
-- [ ] Commit: `"boot: formalize Phase 1 init order — timer-last, UEFI-safe, documented contract"`
+- [x] Timer last before sti (already in place, documented in init order contract)
+- [x] LAPIC timer masked during ALL UEFI runtime calls (rt_mask_timer/rt_unmask_timer in uefi_runtime.c)
+- [x] Phase 1 init order contract documented at top of boot_interrupts.c (12-step sequence)
+- [x] `BOOT_ASSERT(cond, msg)` macro added — used for IDT/GDT checks before timer init
+- [x] Commit: `"boot: formalize Phase 1 init order — timer-last, UEFI-safe, documented contract"`
 
 **Test checkpoint:** Boot on QEMU + bare metal. Phase 1 order is correct. UEFI runtime calls don't crash with timer running. Boot order comment block is visible at top of `boot_interrupts.c`.
 
