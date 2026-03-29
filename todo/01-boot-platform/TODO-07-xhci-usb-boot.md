@@ -158,7 +158,7 @@ Ensure PS/2 and USB input sources coexist without conflict.
 | 💎 | USB boot drive access   | ✅ Automatic                 | ✅ initramfs + usb-storage    | ⬜ §4 — boot-critical path       |
 | 💎 | USB HID keyboard        | ✅ hidusb.sys + kbdhid.sys   | ✅ usbhid + hid-generic      | ⬜ §6 — boot protocol            |
 | 💎 | USB HID mouse           | ✅ hidusb.sys + mouhid.sys   | ✅ usbhid + hid-generic      | ⬜ §7 — boot protocol            |
-| 💎 | PS/2 + USB coexist      | ✅ Automatic                 | ✅ Automatic                  | ⬜ §8 — priority chain           |
+| 💎 | PS/2 + USB coexist      | ✅ Automatic                 | ✅ Automatic                  | ⬜ §8 — independent, both active |
 
 ## Verification
 
