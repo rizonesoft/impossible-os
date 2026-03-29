@@ -386,18 +386,18 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 
 | ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                    |
 |----|-------------------------|-----------------------------|------------------------------|----------------------------------|
-| 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc                | ✅ §1 vmm_map_mmio_uc            |
-| 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE     | ✅ §2 IST1-3 for DF/NMI/MCE     |
-| 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2         | ✅ §4 IAPC_BOOT_ARCH parsed      |
-| 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp               | ⬜ §5                            |
-| 💎 | AHCI MSI fallback       | ✅ StorAHCI INTx fallback   | ✅ libahci polled fallback   | ⬜ §6                            |
-| 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues         | ⬜ §7                            |
-| 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task         | ⬜ §8                            |
-| 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable     | ⬜ §9                            |
-| ⭐ | boot.conf skip list     | ⚠️ bcdedit safeboot         | ⚠️ i8042.noaux per-driver    | ⬜ §11                           |
-| 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                   | ⬜ §12 — migrate from X:\        |
-| 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot    | ⬜ §13                           |
-| ⭐ | Bare-metal test matrix  | ❌ Internal only (WHQL)     | ❌ Community-driven           | ⬜ §14                           |
+| 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc               | ✅ §1 vmm_map_mmio_uc           |
+| 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE    | ✅ §2 IST1-3 for DF/NMI/MCE     |
+| 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2        | ✅ §4 IAPC_BOOT_ARCH parsed     |
+| 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp              | ⬜ §5                           |
+| 💎 | AHCI MSI fallback       | ✅ StorAHCI INTx fallback   | ✅ libahci polled fallback  | ⬜ §6                           |
+| 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ⬜ §7                           |
+| 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task       | ⬜ §8                           |
+| 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable    | ⬜ §9                           |
+| ⭐ | boot.conf skip list     | ⚠️ bcdedit safeboot         | ⚠️ i8042.noaux per-driver   | ⬜ §11                          |
+| 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                 | ⬜ §12 — migrate from X:\       |
+| 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot   | ⬜ §13                          |
+| ⭐ | Bare-metal test matrix  | ❌ Internal only (WHQL)     | ❌ Community-driven         | ⬜ §14                          |
 
 > **After §1–§14:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with SMEP/SMAP enforced. Graceful degradation on hardware failures. Configurable skip list. Logging on main filesystem. No external TODO blocks execution.
 

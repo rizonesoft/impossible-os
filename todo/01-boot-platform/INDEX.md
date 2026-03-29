@@ -31,9 +31,8 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-04 — CPU Boot Sequencing & AP Hardening](TODO-04-cpu-boot-sequencing.md) — Phase 0 activation order (EFER→CR4 before VMM), hypervisor detection before UTS, AP hardening replication
 - [TODO-05 — Visual POST Display (VPD)](TODO-05-visual-post-display.md) — Two-tier boot progress visualization: pre-splash micro-font bars + splash-integrated stages, NVRAM crash persistence, configurable via `postbars`
 - [TODO-06 — Bare Metal Boot Hardening](TODO-06-bare-metal-hardening.md) — IST stacks, ACPI-gated hardware access, graceful degradation, hw interrupt fix (clac), boot.conf skip list
-- [TODO-07 — xHCI & USB Mass Storage](TODO-07-xhci-usb-boot.md) — xHCI controller, USB MSC BOT, block device registration — boot from USB on bare metal
+- [TODO-07 — xHCI, USB Storage & USB HID](TODO-07-xhci-usb-boot.md) — xHCI controller, USB MSC BOT, USB HID keyboard/mouse — boot from USB + input on bare metal
 - [TODO-08 — NVMe Storage Driver](TODO-08-nvme-storage.md) — NVMe controller, Admin+I/O queues, sector read/write — access internal NVMe storage
-- [TODO-09 — USB HID Input](TODO-09-usb-hid-input.md) — USB keyboard/mouse boot-protocol drivers — input on systems without PS/2
 - [TODO-10 — I2C Precision Touchpad](TODO-10-i2c-touchpad.md) — I2C controller, HID-over-I2C, touchpad cursor + click — laptop input
 
 ## Completed / Doc-converted
