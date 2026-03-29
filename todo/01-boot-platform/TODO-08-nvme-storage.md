@@ -47,7 +47,7 @@ Find NVMe controllers on PCI and map BAR0 as UC for register access.
 - [ ] Controller disable → reset → enable sequence (CC.EN = 0 → wait CSTS.RDY=0 → CC.EN=1 → wait CSTS.RDY=1)
 - [ ] Commit: `"drivers: NVMe controller discovery + BAR0 UC mapping"`
 
-**Test checkpoint:** Serial shows `nvme: Controller v1.N at PCI B:D.F, BAR0=0xNNNN`. POST code 0xD800. Test on: bare metal (NVMe present), QEMU (no NVMe — graceful skip).
+**Test checkpoint:** Serial shows `nvme: Controller v1.N at PCI B:D.F, BAR0=0xNNNN`. POST code 0xDE00. Test on: bare metal (NVMe present), QEMU (no NVMe — graceful skip).
 
 ## 2. Admin Queue Setup and Identify Commands
 Create the Admin Submission/Completion Queue pair and execute Identify Controller + Identify Namespace.
@@ -61,7 +61,7 @@ Create the Admin Submission/Completion Queue pair and execute Identify Controlle
 - [ ] Log: `nvme: "Samsung 980 PRO" 500 GiB, 512-byte sectors, 976773168 LBAs`
 - [ ] Commit: `"drivers: NVMe Admin Queue + Identify Controller/Namespace"`
 
-**Test checkpoint:** Serial shows controller model and capacity. POST code 0xD801.
+**Test checkpoint:** Serial shows controller model and capacity. POST code 0xDE01. Test on: bare metal.
 
 ## 3. I/O Queue Creation and Sector Read/Write
 Create one I/O Submission/Completion Queue pair and implement read/write sector operations.
@@ -76,7 +76,7 @@ Create one I/O Submission/Completion Queue pair and implement read/write sector 
 - [ ] Polled completion (check CQ head) — interrupt-based deferred to TODO-02
 - [ ] Commit: `"drivers: NVMe I/O Queue — read/write sectors via polled completion"`
 
-**Test checkpoint:** Read sector 0, verify GPT/MBR header. Write + readback test. POST code 0xD802.
+**Test checkpoint:** Read sector 0, verify GPT/MBR header. Write + readback test. POST code 0xDE02. Test on: bare metal.
 
 ## 4. Block Device Registration and VFS Integration
 Register NVMe namespaces as block devices for partition scanning and filesystem mount.
@@ -88,7 +88,7 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 - [ ] Partition scan + filesystem mount (GPT + IXFS/FAT32/NTFS)
 - [ ] Commit: `"drivers: NVMe block device registration — NVMe drives mountable"`
 
-**Test checkpoint:** Bare metal with NVMe: drive visible, partitions scanned, C:\ mounted. POST code 0xD803.
+**Test checkpoint:** Bare metal with NVMe: drive visible, partitions scanned, C:\ mounted. POST code 0xDE03.
 
 ---
 
@@ -99,6 +99,7 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 | 💎 | NVMe controller        | ✅ stornvme.sys              | ✅ nvme.ko                    | ⬜ §1 — discovery + BAR map      |
 | 💎 | NVMe I/O               | ✅ Multi-queue + interrupt   | ✅ Multi-queue + interrupt    | ⬜ §3 — single queue, polled     |
 | 💎 | NVMe boot              | ✅ Automatic                 | ✅ initramfs + nvme.ko        | ⬜ §4 — boot-critical path       |
+| ⭐ | NVMe health at boot    | ❌ Requires tools            | ❌ Requires nvme-cli          | ⬜ Planned — SMART in VPD/log    |
 
 ## Verification
 
