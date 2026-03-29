@@ -30,6 +30,7 @@ This tree is the live planning scaffold for active work.
 | 12 | [11 User Platform SDK](./11-user-platform-sdk/INDEX.md) | User-mode ABI, compatibility surface, SDK assets, and developer-facing contracts. |
 | 13 | [12 Installer Release](./12-installer-release/INDEX.md) | Installer flow, deployable media, packaging, and release readiness. |
 | 14 | [13 Future Research](./13-future-research/INDEX.md) | Long-range research, stretch goals, and ideas not yet ready for active execution. |
+| 15 | [14 Host Tools](./14-host-tools/INDEX.md) | Development tools running on the host OS (Windows/Linux) to support Impossible OS development. |
 
 ## Active Epics
 
