@@ -14,6 +14,8 @@
 
 #include "kernel/gdt.h"
 #include "kernel/klog.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/boot_init.h"
 /* A single GDT entry (8 bytes) */
 struct gdt_entry {
     uint16_t limit_low;
@@ -93,6 +95,25 @@ void gdt_init(void)
         extern char stack_top[];  /* defined in entry.asm */
         kernel_tss.rsp0 = (uint64_t)(uintptr_t)stack_top;
     }
+
+    /* IST stacks for critical exceptions: #DF, NMI, MCE.
+     * Allocated from PMM (identity-mapped, phys = virt).
+     * PMM is initialized in Phase 0, GDT in Phase 1 — always available.
+     * Each stack is 4 KiB — IST points to the TOP (highest address). */
+    POST16(0xD200);
+    {
+        uintptr_t ist1_page = pmm_alloc_frame();  /* #DF stack */
+        uintptr_t ist2_page = pmm_alloc_frame();  /* NMI stack */
+        uintptr_t ist3_page = pmm_alloc_frame();  /* MCE stack */
+
+        if (ist1_page) kernel_tss.ist1 = ist1_page + 4096;
+        if (ist2_page) kernel_tss.ist2 = ist2_page + 4096;
+        if (ist3_page) kernel_tss.ist3 = ist3_page + 4096;
+
+        klog(LOG_INFO, "cpu", "IST stacks: DF=%p NMI=%p MCE=%p",
+             kernel_tss.ist1, kernel_tss.ist2, kernel_tss.ist3);
+    }
+    POST16(0xD201);
 
     /* Set the I/O Permission Bitmap offset to beyond the TSS (no IOPB) */
     kernel_tss.iopb_offset = sizeof(struct tss);

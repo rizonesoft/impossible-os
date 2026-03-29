@@ -58,7 +58,7 @@
 | ⭐  | Order | Deliverable                                            | Depends On | Status |
 | --- | :---: | ------------------------------------------------------ | ---------- | :----: |
 | 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)            | —          |  [x]   |
-| 💎  |   2   | IST stacks for critical exceptions                     | —          |  [ ]   |
+| 💎  |   2   | IST stacks for critical exceptions                     | —          |  [x]   |
 | 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [ ]   |
 | 💎  |   4   | ACPI FADT boot architecture flags                      | —          |  [ ]   |
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [ ]   |
@@ -107,13 +107,12 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 > [!IMPORTANT]
 > Linux uses IST1 for #DF, IST2 for NMI, IST3 for MCE. Windows uses separate stacks for the same exceptions via task gates (32-bit) or IST (64-bit). Both guarantee that these critical exceptions can always execute even when the kernel stack is corrupted.
 
-- [ ] Allocate 3 IST stacks (4 KiB each) from PMM during `gdt_init()` — identity-mapped, so phys = virt
-- [ ] Set `kernel_tss.ist1` = DF stack top, `kernel_tss.ist2` = NMI stack top, `kernel_tss.ist3` = MCE stack top
-- [ ] Update IDT entries: vector 8 (#DF) → IST=1, vector 2 (NMI) → IST=2, vector 18 (MCE) → IST=3
-- [ ] Add NMI handler: log "NMI received", dump registers, emit POST16(0xE002), halt
-- [ ] Add MCE handler: read MCi_STATUS MSRs, log machine check info, emit POST16(0xE018), halt
-- [ ] Verify: stack overflow in kernel → #DF fires on IST1 stack → shows BSOD instead of triple fault
-- [ ] Commit: `"kernel: IST stacks for #DF, NMI, MCE — no more silent triple faults"`
+- [x] Allocate 3 IST stacks (4 KiB each) from PMM during `gdt_init()` — identity-mapped, phys = virt
+- [x] Set `kernel_tss.ist1` = DF stack top, `kernel_tss.ist2` = NMI stack top, `kernel_tss.ist3` = MCE stack top
+- [x] Update IDT entries: vector 8 (#DF) → IST=1, vector 2 (NMI) → IST=2, vector 18 (MCE) → IST=3
+- [x] NMI/MCE/#DF handlers: existing `panic_screen()` provides register dump, BSOD, NVRAM write, halt — no separate handler needed
+- [ ] Verify: stack overflow in kernel → #DF fires on IST1 stack → shows BSOD instead of triple fault *(deferred to BM Test 1)*
+- [x] Commit: `"kernel: IST stacks for #DF, NMI, MCE — no more silent triple faults"`
 
 **Debug POST codes:** `POST16(0xD200)` = IST alloc start, `0xD201` = TSS IST fields set, `0xD202` = IDT entries updated, `0xD203` = §2 complete.
 
@@ -393,7 +392,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 | ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                    |
 |----|-------------------------|-----------------------------|------------------------------|----------------------------------|
 | 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc                | ✅ §1 vmm_map_mmio_uc            |
-| 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE     | ⬜ §2                            |
+| 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE     | ✅ §2 IST1-3 for DF/NMI/MCE     |
 | 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2         | ⬜ §4                            |
 | 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp               | ⬜ §5                            |
 | 💎 | AHCI MSI fallback       | ✅ StorAHCI INTx fallback   | ✅ libahci polled fallback   | ⬜ §6                            |

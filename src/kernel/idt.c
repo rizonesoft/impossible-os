@@ -400,6 +400,13 @@ void idt_init(void)
                       0, 0x8E);
     }
 
+    /* IST overrides for critical exceptions — use dedicated stacks
+     * so these handlers work even when the kernel stack is corrupted.
+     * IST indices match TSS ist1-ist3 set in gdt_init(). */
+    idt[2].ist  = 2;   /* NMI → IST2 */
+    idt[8].ist  = 1;   /* #DF → IST1 */
+    idt[18].ist = 3;   /* MCE → IST3 */
+
     /* Override DPL for software interrupts callable from ring 3 */
     /* INT 0x80: syscall — DPL=3 (0xEE) so ring 3 can trigger it */
     idt[128].type_attr = 0xEE;
