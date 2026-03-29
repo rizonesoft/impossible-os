@@ -57,7 +57,7 @@
 
 | ⭐  | Order | Deliverable                                            | Depends On | Status |
 | --- | :---: | ------------------------------------------------------ | ---------- | :----: |
-| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)            | —          |  [ ]   |
+| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)            | —          |  [x]   |
 | 💎  |   2   | IST stacks for critical exceptions                     | —          |  [ ]   |
 | 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [ ]   |
 | 💎  |   4   | ACPI FADT boot architecture flags                      | —          |  [ ]   |
@@ -86,13 +86,13 @@ Implement a minimal `vmm_map_mmio_uc()` that creates uncacheable mappings for de
 > [!NOTE]
 > Minimal prerequisite — full `vmm_map_mmio()` / `MmMapIoSpace()` with cache type selection, HPET quirk table, and driver audit is in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1`. This section implements just enough to map a device BAR as UC using 4 KiB PTEs.
 
-- [ ] `vmm_map_mmio_uc(uint64_t phys_base, uint32_t size)` — allocate 4 KiB page table entries with PCD=1, PWT=1 (UC), return virtual address. Use a simple bump allocator in a dedicated VA range (e.g., 0xFFFF_8000_0000_0000+ or a simpler high-address region above the identity map).
-- [ ] `vmm_unmap_mmio(void *virt, uint32_t size)` — unmap and free PTEs (can be a no-op stub initially).
-- [ ] Validate: phys_base must be page-aligned, within 64-bit physical address space, size > 0.
-- [ ] Test: map LAPIC base (0xFEE00000) as UC, read LAPIC ID register, verify same value as identity-mapped read.
-- [ ] Re-enable HPET calibration in `lapic.c`: replace identity-mapped `hpet_read64(base, ...)` with `hpet_read64(uc_mapped_base, ...)`; uncomment `cal_try_hpet()` call in calibration waterfall.
-- [ ] Implement `hpet_read_ns()` in `lapic.c` (or new `hpet.c`): map HPET base via `vmm_map_mmio_uc()`, read counter, convert via `COUNTER_CLK_PERIOD`. Wire into `timer_driver_t.read_ns` for UTS (→ XREF: TODO-03 §2).
-- [ ] Commit: `"mm: minimal vmm_map_mmio_uc + HPET re-enabled with UC mapping"`
+- [x] `vmm_map_mmio_uc(uint64_t phys_base, uint32_t size)` — bump allocator at 4 GiB+ VA range, 4 KiB PTEs with PCD=1+PWT=1 (UC)+NX
+- [x] `vmm_unmap_mmio(void *virt, uint32_t size)` — walks and unmaps PTEs (does not free physical frames)
+- [x] Validate: page-aligned phys_base, size > 0, within 1 GiB MMIO VA limit
+- [x] Test: map LAPIC base (0xFEE00000) as UC in boot_phase0, verify LAPIC ID matches identity-mapped read
+- [x] Re-enable HPET calibration in `lapic.c`: `cal_try_hpet()` maps HPET via `vmm_map_mmio_uc()` and uses UC pointer for all MMIO reads
+- [ ] `hpet_read_ns()` — deferred to TODO-03 §2 (UTS timer driver); HPET calibration works without it
+- [x] Commit: `"mm: minimal vmm_map_mmio_uc + HPET re-enabled with UC mapping"`
 
 **Debug POST codes:** `POST16(0xD100)` = vmm_map_mmio_uc entry, `0xD101` = PTE allocated, `0xD102` = HPET mapped, `0xD103` = HPET read OK, `0xD104` = §1 complete. On crash: last POST on VPD/serial pinpoints failure.
 
@@ -392,7 +392,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 
 | ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                    |
 |----|-------------------------|-----------------------------|------------------------------|----------------------------------|
-| 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc                | ⬜ §1                            |
+| 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc                | ✅ §1 vmm_map_mmio_uc            |
 | 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE     | ⬜ §2                            |
 | 💎 | ACPI FADT boot arch     | ✅ HAL checks all flags     | ✅ Gates PIT/RTC/PS2         | ⬜ §4                            |
 | 💎 | PS/2 ACPI detection     | ✅ HAL detects i8042        | ✅ i8042.nopnp               | ⬜ §5                            |

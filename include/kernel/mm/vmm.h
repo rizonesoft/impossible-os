@@ -48,6 +48,14 @@ void vmm_flush_tlb(uintptr_t virt);
 /* Flush the entire TLB by reloading CR3 */
 void vmm_flush_tlb_all(void);
 
+/* Map device MMIO as Uncacheable (PCD=1 + PWT=1).
+ * phys_base must be page-aligned.  Returns UC-mapped virtual address,
+ * or NULL on failure.  Uses a bump allocator above the 4 GiB identity map. */
+void *vmm_map_mmio_uc(uint64_t phys_base, uint32_t size);
+
+/* Unmap a previous vmm_map_mmio_uc() mapping. Does NOT free physical frames. */
+void vmm_unmap_mmio(void *virt, uint32_t size);
+
 /* Apply NX policy: mark all non-text kernel pages as non-executable.
  * Call after vmm_init() and cpu_enable_nx(). */
 void vmm_apply_nx_policy(void);

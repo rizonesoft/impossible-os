@@ -513,6 +513,8 @@ static int cal_try_tsc_reference(void)
 /* ---- Tier 2: Modern Hardware Timers (10ms Delay, No PIT) ---- */
 
 #include "kernel/acpi.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/boot_init.h"
 
 /* HPET register offsets (MMIO) */
 #define HPET_CAP_REG    0x000   /* General Capabilities -- bits 32-63: period (fs) */
@@ -540,44 +542,49 @@ static inline void hpet_write32(uint64_t base, uint32_t offset, uint32_t val)
     *reg = val;
 }
 
-/* HPET-based calibration: read HPET counter, run LAPIC for 10ms, measure ticks.
- * No PIT hardware touched.  HPET is memory-mapped (identity-mapped in first 4 GiB). */
-/* Disabled until vmm_map_mmio() provides UC mappings (TODO-01 §11) */
-static int cal_try_hpet(void) __attribute__((unused));
+/* HPET-based calibration: map HPET as UC, read counter, measure LAPIC ticks.
+ * Requires vmm_map_mmio_uc() — HPET MMIO through WB pages causes MCE. */
 static int cal_try_hpet(void)
 {
-    uint64_t hpet_base;
+    uint64_t hpet_phys;
+    void *hpet_uc;           /* UC-mapped HPET base */
     uint64_t cap;
-    uint32_t period_fs;    /* HPET period in femtoseconds */
+    uint32_t period_fs;
     uint64_t hpet_freq;
     uint64_t start_hpet, target_hpet, cur_hpet;
     uint32_t lapic_remaining, lapic_elapsed;
 
-    hpet_base = acpi_get_hpet_base();
-    if (hpet_base == 0)
+    hpet_phys = acpi_get_hpet_base();
+    if (hpet_phys == 0)
         return 0;
 
-    /* Sanity: HPET MMIO must be within the identity-mapped 4 GiB range.
-     * Also reject obviously bogus addresses (below 1 MiB or misaligned). */
-    if (hpet_base >= 0x100000000ULL || hpet_base < 0x100000 ||
-        (hpet_base & 0xFFF) != 0)
+    /* Reject bogus addresses (below 1 MiB or misaligned) */
+    if (hpet_phys < 0x100000 || (hpet_phys & 0xFFF) != 0)
         return 0;
 
-    /* Probe with a 32-bit read first — safer on hardware where 64-bit
-     * MMIO reads to non-functional HPET cause machine check exceptions.
-     * Read low 32 bits of capabilities; if we get all-ones the HPET
-     * is absent or non-functional at this address. */
-    {
-        uint32_t probe = hpet_read32(hpet_base, HPET_CAP_REG);
-        if (probe == 0xFFFFFFFF || probe == 0x00000000)
-            return 0;
+    /* Map HPET MMIO as UC — 4 KiB is enough for all HPET registers */
+    POST16(0xD102);
+    hpet_uc = vmm_map_mmio_uc(hpet_phys, VMM_PAGE_SIZE);
+    if (!hpet_uc) {
+        klog(LOG_WARN, "lapic", "Tier 2: HPET UC mapping failed");
+        return 0;
     }
 
-    /* Read HPET capabilities -- upper 32 bits = period in femtoseconds */
-    cap = hpet_read64(hpet_base, HPET_CAP_REG);
+    /* Probe with a 32-bit read — reject if non-functional */
+    {
+        uint32_t probe = hpet_read32((uint64_t)(uintptr_t)hpet_uc, HPET_CAP_REG);
+        if (probe == 0xFFFFFFFF || probe == 0x00000000) {
+            vmm_unmap_mmio(hpet_uc, VMM_PAGE_SIZE);
+            return 0;
+        }
+    }
+    POST16(0xD103);
+
+    /* Read capabilities — upper 32 bits = period in femtoseconds */
+    cap = hpet_read64((uint64_t)(uintptr_t)hpet_uc, HPET_CAP_REG);
     period_fs = (uint32_t)(cap >> 32);
     if (period_fs == 0 || period_fs > 100000000) {
-        /* Invalid period (>100ns per tick is unreasonable) */
+        vmm_unmap_mmio(hpet_uc, VMM_PAGE_SIZE);
         return 0;
     }
 
@@ -585,8 +592,8 @@ static int cal_try_hpet(void)
     hpet_freq = 1000000000000000ULL / period_fs;
 
     /* Enable HPET counter if not already running */
-    hpet_write32(hpet_base, HPET_CFG_REG,
-                 hpet_read32(hpet_base, HPET_CFG_REG) | 0x01);
+    hpet_write32((uint64_t)(uintptr_t)hpet_uc, HPET_CFG_REG,
+                 hpet_read32((uint64_t)(uintptr_t)hpet_uc, HPET_CFG_REG) | 0x01);
 
     /* Start LAPIC timer from max (one-shot, masked) */
     lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
@@ -594,17 +601,18 @@ static int cal_try_hpet(void)
     lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
 
     /* Wait 10ms worth of HPET ticks (with spin timeout) */
-    start_hpet = hpet_read64(hpet_base, HPET_COUNTER);
+    start_hpet = hpet_read64((uint64_t)(uintptr_t)hpet_uc, HPET_COUNTER);
     target_hpet = start_hpet + (hpet_freq * CAL_MS / 1000);
 
     {
         uint32_t spin = 200000000;
         do {
-            cur_hpet = hpet_read64(hpet_base, HPET_COUNTER);
+            cur_hpet = hpet_read64((uint64_t)(uintptr_t)hpet_uc, HPET_COUNTER);
         } while (cur_hpet < target_hpet && --spin > 0);
 
         if (spin == 0) {
             lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
+            vmm_unmap_mmio(hpet_uc, VMM_PAGE_SIZE);
             klog(LOG_WARN, "lapic", "Tier 2: HPET calibration timeout");
             return 0;
         }
@@ -615,8 +623,10 @@ static int cal_try_hpet(void)
     lapic_elapsed = 0xFFFFFFFF - lapic_remaining;
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
 
-    if (lapic_elapsed < 1000)
-        return 0;  /* Too few ticks -- unreliable */
+    if (lapic_elapsed < 1000) {
+        vmm_unmap_mmio(hpet_uc, VMM_PAGE_SIZE);
+        return 0;
+    }
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
     klog(LOG_INFO, "lapic",
@@ -624,6 +634,7 @@ static int cal_try_hpet(void)
          (uint64_t)cal_ticks_per_ms,
          (uint64_t)(cal_ticks_per_ms / 1000),
          (uint64_t)(hpet_freq / 1000000));
+    POST16(0xD104);
     return 1;
 }
 
@@ -728,10 +739,11 @@ void lapic_timer_calibrate(void)
     }
 
     /* Tier 2: Modern hardware timers (HPET -> PM Timer) */
-    /* HPET calibration disabled until vmm_map_mmio() provides UC mappings.
-     * Accessing HPET MMIO through WB identity-mapped pages causes MCE on
-     * bare metal.  See TODO-01-vmm-memory-protection.md §11. */
-    /* if (cal_try_hpet()) { ... } */
+    if (cal_try_hpet()) {
+        klog(LOG_INFO, "lapic",
+             "Calibration: Tier 2 succeeded -- HPET (UC mapped)");
+        return;
+    }
     if (cal_try_pmtimer()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 2 succeeded -- no PIT needed");

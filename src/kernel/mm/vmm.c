@@ -274,6 +274,59 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
     return (uint64_t)frame;  /* unreachable */
 }
 
+/* --- MMIO mapping (UC — Uncacheable) ------------------------------------ */
+
+/* Bump allocator for MMIO virtual addresses.
+ * Starts at 4 GiB (above the identity map) and grows upward.
+ * Each mapping is page-aligned. */
+#define MMIO_VA_BASE  0x100000000ULL  /* 4 GiB */
+#define MMIO_VA_LIMIT 0x140000000ULL  /* 5 GiB — 1 GiB for MMIO */
+
+static uintptr_t s_mmio_next_va = MMIO_VA_BASE;
+
+/* UC flags: PCD=1 (bit 4) + PWT=1 (bit 3) = Strong Uncacheable */
+#define VMM_MMIO_UC  (VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | \
+                      VMM_FLAG_NOCACHE | VMM_FLAG_WRITETHROUGH | VMM_FLAG_NX)
+
+void *vmm_map_mmio_uc(uint64_t phys_base, uint32_t size)
+{
+    uintptr_t va, va_start;
+    uint32_t pages, i;
+
+    if (size == 0 || (phys_base & 0xFFF) != 0)
+        return (void *)0;
+
+    pages = (size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
+    va_start = s_mmio_next_va;
+
+    if (va_start + (uint64_t)pages * VMM_PAGE_SIZE > MMIO_VA_LIMIT)
+        return (void *)0;  /* out of MMIO VA space */
+
+    for (i = 0; i < pages; i++) {
+        va = va_start + (uint64_t)i * VMM_PAGE_SIZE;
+        if (vmm_map_page(va, phys_base + (uint64_t)i * VMM_PAGE_SIZE,
+                          VMM_MMIO_UC) != 0)
+            return (void *)0;
+    }
+
+    s_mmio_next_va = va_start + (uint64_t)pages * VMM_PAGE_SIZE;
+
+    return (void *)va_start;
+}
+
+void vmm_unmap_mmio(void *virt, uint32_t size)
+{
+    uintptr_t va = (uintptr_t)virt;
+    uint32_t pages, i;
+
+    if (!virt || size == 0)
+        return;
+
+    pages = (size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
+    for (i = 0; i < pages; i++)
+        vmm_unmap_page(va + (uint64_t)i * VMM_PAGE_SIZE, 0);
+}
+
 /* --- Initialization --- */
 
 void vmm_init(void)

@@ -151,6 +151,28 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     kernel_subsystem_set_ready(SUBSYS_VMM, true);
     boot_progress(0, "VMM", POST16_VMM_OK);
 
+    /* Validate vmm_map_mmio_uc: map LAPIC base as UC, compare with identity-mapped read */
+    POST16(0xD100);
+    {
+        volatile uint32_t *lapic_id = (volatile uint32_t *)0xFEE00020;
+        uint32_t id_identity = *lapic_id;
+        void *uc = vmm_map_mmio_uc(0xFEE00000, 4096);
+        POST16(0xD101);
+        if (uc) {
+            volatile uint32_t *uc_id = (volatile uint32_t *)((uintptr_t)uc + 0x20);
+            uint32_t id_uc = *uc_id;
+            if (id_identity == id_uc)
+                klog(LOG_INFO, "mm", "vmm_map_mmio_uc: LAPIC ID match (%p -> 0x%x)",
+                     (uint64_t)(uintptr_t)uc, (uint64_t)id_uc);
+            else
+                klog(LOG_WARN, "mm", "vmm_map_mmio_uc: LAPIC ID mismatch (0x%x vs 0x%x)",
+                     (uint64_t)id_identity, (uint64_t)id_uc);
+            vmm_unmap_mmio(uc, 4096);
+        } else {
+            klog(LOG_WARN, "mm", "vmm_map_mmio_uc: LAPIC test failed (NULL)");
+        }
+    }
+
     /* --- Kernel heap: BOOT_FATAL if VMM not ready --- */
     if (!kernel_subsystem_ready(SUBSYS_VMM))
         boot_halt("VMM not ready -- cannot init heap");
