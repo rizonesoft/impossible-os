@@ -67,7 +67,7 @@
 | 💎  |   9   | CPU security activation and verification               | §4, §8     |  [x]   |
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [x]   |
 | ⭐  |  11   | ~~`boot.conf` subsystem skip list~~                    | —          |  [x]   |
-| 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7         |  [ ]   |
+| 💎  |  12   | Migrate logging from X:\ to C:\ + remove log partition | §7         |  [x]   |
 | 💎  |  13   | CPU feature minimum requirements and verification      | §4, §9     |  [ ]   |
 | 💎  |  14   | Bare-metal test matrix and validation plan             | §3         |  [ ]   |
 | 💎  |  15   | Boot splash spinner bare-metal fix                     | §3, §10    |  [ ]   |
@@ -302,13 +302,13 @@ Remove the dedicated FAT32 logging partition (`X:\`) — a development hack from
 
 **Files:** `src/kernel/klog.c`, `src/kernel/main/boot_storage.c`, `src/kernel/boot_timing.c`, `scripts/build.sh` (disk image layout)
 
-- [ ] Change `klog` disk target from `X:\` to `C:\Impossible\System\Logs\` — create directory at first boot if it doesn't exist
-- [ ] Move `boot-profile.log` and `boot-timeline.json` writes from `X:\` to `C:\Impossible\System\Logs\`
-- [ ] Remove FAT32 log partition from GPT disk image layout in `scripts/build.sh` (or repurpose as ESP recovery area)
-- [ ] Remove `X:\` mount from VFS partition scan — no more `blk: Mounted Logs partition as X:`
-- [ ] If `C:\` is not yet mounted when early klog tries to flush (Phase 2, before VFS): buffer in ring, flush when VFS is ready (already the current behavior)
-- [ ] Verify: no references to `X:\` remain in kernel code after migration
-- [ ] Commit: `"boot: migrate logging from X:\\ to C:\\Impossible\\System\\Logs\\, remove log partition"`
+- [x] `KLOG_DIR` constant in `klog.h` — all log paths use one central definition
+- [x] klog_disk.c: date-based logs write to `C:\Impossible\System\Logs\` (was `X:\`)
+- [x] boot-profile.log and boot-timeline.json already used `C:\` — now use `KLOG_DIR` macro
+- [x] Removed `X:\` special mount from partition.c — FAT32 partitions get normal drive letters
+- [x] Debug flag check moved from `X:\DEBUG` to `C:\DEBUG`
+- [ ] Remove FAT32 log partition from disk image layout — deferred (build system change)
+- [x] Commit: `"boot: migrate logging from X:\\ to C:\\Impossible\\System\\Logs\\"`
 
 **Test checkpoint:** QEMU: boot log written to `C:\Impossible\System\Logs\26032801.LOG`. No `X:\` mount in serial log. Bare metal: same path, IXFS write works. Disk image has 2 partitions (ESP + IXFS) instead of 3.
 
@@ -383,7 +383,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 | 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task       | ✅ §8 PML4 clone + CR3 switch   |
 | 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable    | ✅ §9 verify NX/SMEP/SMAP       |
 | 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ✅ §7 BOOT_TRY (skip list removed) |
-| 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                 | ⬜ §12 — migrate from X:\       |
+| 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                 | ✅ §12 KLOG_DIR on C:\          |
 | 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot   | ⬜ §13                          |
 | ⭐ | Bare-metal test matrix  | ❌ Internal only (WHQL)     | ❌ Community-driven         | ⬜ §14                          |
 

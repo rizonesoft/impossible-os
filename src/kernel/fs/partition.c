@@ -426,14 +426,7 @@ void partition_mount_filesystems(void)
                 klog(LOG_WARN, "blk", "FAT32: failed to init %s", name);
                 continue;
             }
-            /* Check if this is the Logs partition -> mount as X: */
-            if (pi->gpt_name[0] == 'L' && pi->gpt_name[1] == 'o' &&
-                pi->gpt_name[2] == 'g' && pi->gpt_name[3] == 's' &&
-                pi->gpt_name[4] == '\0') {
-                vfs_mount('X', fat32_get_driver(),
-                          fat32_get_root(fat_vol));
-                klog(LOG_INFO, "blk", "Mounted Logs partition as X:");
-            } else if (next_fat32_letter <= 'Z') {
+            if (next_fat32_letter <= 'Z') {
                 vfs_mount(next_fat32_letter,
                           fat32_get_driver(),
                           fat32_get_root(fat_vol));

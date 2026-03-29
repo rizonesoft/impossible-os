@@ -407,10 +407,10 @@ static int log_date_cmp(uint8_t ya, uint8_t ma, uint8_t da, uint8_t sa,
 
 #define KLOG_MAX_LOG_FILES 100
 
-/* Scan X: for log files, pick today's next sequence, enforce 100-file cap. */
+/* Scan C:\Impossible\System\Logs\ for log files, pick today's next sequence, enforce 100-file cap. */
 static void pick_log_number(void)
 {
-    struct vfs_node *x_root;
+    struct vfs_node *x_root;  /* legacy name — actually the Logs directory */
     uint8_t today_yy, today_mm, today_dd;
     uint8_t max_seq_today = 0;
     uint32_t count = 0;
@@ -425,11 +425,11 @@ static void pick_log_number(void)
     today_mm = (uint8_t)rtc_get_month();
     today_dd = (uint8_t)rtc_get_day();
 
-    x_root = vfs_get_drive_root('X');
+    x_root = vfs_open(KLOG_DIR, VFS_O_READ);
     if (!x_root || !x_root->ops || !x_root->ops->finddir)
         goto fallback;
 
-    /* Enumerate X: root directory to find all log files */
+    /* Enumerate Logs directory to find all log files */
     {
         uint32_t dir_idx = 0;
         struct vfs_dirent *de;
@@ -463,7 +463,7 @@ static void pick_log_number(void)
     /* Cap at 100 files: delete oldest when full */
     if (count >= KLOG_MAX_LOG_FILES && x_root->ops->unlink && oldest_name[0]) {
         x_root->ops->unlink(x_root, oldest_name);
-        klog(LOG_DEBUG, "klog", "deleted oldest log: X:\\%s (%u files)", oldest_name, count);
+        klog(LOG_DEBUG, "klog", "deleted oldest log: %s%s (%u files)", KLOG_DIR, oldest_name, count);
     }
 
 fallback:
@@ -473,7 +473,7 @@ fallback:
         if (next_seq > 99) next_seq = 99;  /* safety clamp */
 
         make_log_filename(today_yy, today_mm, today_dd, next_seq, log_filename);
-        klog(LOG_INFO, "klog", "writing to X:\\%s", log_filename);
+        klog(LOG_INFO, "klog", "writing to %s%s", KLOG_DIR, log_filename);
     }
 }
 
@@ -491,13 +491,15 @@ void klog_disk_init(void)
     fat32_pos = 0;
 
     /* Determine numbered log filename */
-    if (vfs_is_mounted('X')) {
+    if (vfs_is_mounted('C')) {
         pick_log_number();
 
-        /* Create the log file on X: */
-        struct vfs_node *x_root = vfs_get_drive_root('X');
-        if (x_root && x_root->ops && x_root->ops->create)
-            x_root->ops->create(x_root, log_filename, VFS_FILE);
+        /* Create the log file in C:\Impossible\System\Logs\ */
+        {
+            struct vfs_node *logs_dir = vfs_open(KLOG_DIR, VFS_O_READ);
+            if (logs_dir && logs_dir->ops && logs_dir->ops->create)
+                logs_dir->ops->create(logs_dir, log_filename, VFS_FILE);
+        }
 
         fat32_inited = 1;
     }
@@ -595,7 +597,7 @@ void klog_disk_flush(void)
 
         /* Rotate kernel.log if it exceeds max size */
         kernel_log_size = rotate_log_file(
-            "C:\\Impossible\\System\\Logs\\", "kernel.log", kernel_log_size);
+            KLOG_DIR, "kernel.log", kernel_log_size);
 
         /* Shared batch buffer for kernel.log + subsystem files */
         uint32_t batch_pages = 8;  /* 32 KB */
@@ -660,7 +662,7 @@ void klog_disk_flush(void)
                     char spath[64];
                     uint32_t sp = 0;
                     struct vfs_node *sf;
-                    const char *base = "C:\\Impossible\\System\\Logs\\";
+                    const char *base = KLOG_DIR;
                     const char *fname = s_subsys_filenames[si];
                     int k;
                     uint32_t bp = 0;
@@ -737,7 +739,7 @@ void klog_disk_flush(void)
 
         /* Rotate events.jsonl if needed */
         jsonl_file_size = rotate_log_file(
-            "C:\\Impossible\\System\\Logs\\", "events.jsonl", jsonl_file_size);
+            KLOG_DIR, "events.jsonl", jsonl_file_size);
 
         ring = klog_get_ring(&ring_count, &ring_head);
         if (ring && ring_count > 0 && jsonl_flush_index < ring_count) {
@@ -801,30 +803,25 @@ void klog_disk_flush(void)
         }
     }
 
-    /* ---- Flush to FAT32 X: drive (full-file overwrite) ---- */
-    if (vfs_is_mounted('X') && fat32_buf && fat32_pos > 0) {
+    /* ---- Flush to C:\Impossible\System\Logs\ (full-file overwrite) ---- */
+    if (vfs_is_mounted('C') && fat32_buf && fat32_pos > 0) {
         /* Lazy init: if we haven't set up yet, do it now */
         if (!fat32_inited) {
             pick_log_number();
-            struct vfs_node *x_root = vfs_get_drive_root('X');
-            if (x_root && x_root->ops && x_root->ops->create)
-                x_root->ops->create(x_root, log_filename, VFS_FILE);
+            {
+                struct vfs_node *logs_dir = vfs_open(KLOG_DIR, VFS_O_READ);
+                if (logs_dir && logs_dir->ops && logs_dir->ops->create)
+                    logs_dir->ops->create(logs_dir, log_filename, VFS_FILE);
+            }
             fat32_inited = 1;
         }
 
-        /* If no init happened yet or no filename, fall back to serial.log */
         if (log_filename[0]) {
-            /* Build full path: "X:\BOOT_NNN.LOG" */
-            char path[20];
-            int p = 0;
-            path[p++] = 'X';
-            path[p++] = ':';
-            path[p++] = '\\';
-            {
-                int j;
-                for (j = 0; log_filename[j]; j++)
-                    path[p++] = log_filename[j];
-            }
+            /* Build full path: KLOG_DIR + filename */
+            char path[64];
+            int p = 0, j;
+            for (j = 0; KLOG_DIR[j]; j++) path[p++] = KLOG_DIR[j];
+            for (j = 0; log_filename[j]; j++) path[p++] = log_filename[j];
             path[p] = '\0';
 
             logfile = vfs_open(path, VFS_O_WRITE);
@@ -833,7 +830,7 @@ void klog_disk_flush(void)
                 vfs_close(logfile);
             }
         }
-    } else if (vfs_is_mounted('X') && !fat32_buf) {
+    } else if (vfs_is_mounted('C') && !fat32_buf) {
         /* No PMM buffer — allocate on demand and do a ring-buffer dump */
         uint32_t buf_pages = 64;
         uint8_t *tmp_buf = (uint8_t *)pmm_alloc_contiguous(buf_pages);
@@ -868,23 +865,19 @@ void klog_disk_flush(void)
         /* Lazy init for filename */
         if (!fat32_inited) {
             pick_log_number();
-            struct vfs_node *x_root = vfs_get_drive_root('X');
-            if (x_root && x_root->ops && x_root->ops->create)
-                x_root->ops->create(x_root, log_filename, VFS_FILE);
+            {
+                struct vfs_node *logs_dir = vfs_open(KLOG_DIR, VFS_O_READ);
+                if (logs_dir && logs_dir->ops && logs_dir->ops->create)
+                    logs_dir->ops->create(logs_dir, log_filename, VFS_FILE);
+            }
             fat32_inited = 1;
         }
 
         if (log_filename[0]) {
-            char path[20];
-            int p = 0;
-            path[p++] = 'X';
-            path[p++] = ':';
-            path[p++] = '\\';
-            {
-                int j;
-                for (j = 0; log_filename[j]; j++)
-                    path[p++] = log_filename[j];
-            }
+            char path[64];
+            int p = 0, j;
+            for (j = 0; KLOG_DIR[j]; j++) path[p++] = KLOG_DIR[j];
+            for (j = 0; log_filename[j]; j++) path[p++] = log_filename[j];
             path[p] = '\0';
 
             logfile = vfs_open(path, VFS_O_WRITE);

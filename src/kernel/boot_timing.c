@@ -190,7 +190,7 @@ void boot_timing_write_report(void)
     if (s_tsc_freq == 0 || s_step_count == 0) return;
 
     struct vfs_node *file = vfs_open(
-        "C:\\Impossible\\System\\Logs\\boot-profile.log",
+        KLOG_DIR "boot-profile.log",
         VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
     if (!file) {
         klog(LOG_WARN, "BOOT", "boot-profile.log: cannot open for write");
@@ -230,6 +230,6 @@ void boot_timing_write_report(void)
     }
 
     vfs_close(file);
-    klog(LOG_INFO, "BOOT", "Boot profile: %u steps -> C:\\Impossible\\System\\Logs\\boot-profile.log",
+    klog(LOG_INFO, "BOOT", "Boot profile: %u steps written",
          (uint64_t)s_step_count);
 }

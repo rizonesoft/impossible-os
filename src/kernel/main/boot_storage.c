@@ -112,14 +112,14 @@ void boot_phase2(void)
     POST16(POST16_PARTITION_OK);
     boot_splash_status("Checking boot flags...");
 
-    /* Check for debug boot flag on X: */
-    if (vfs_is_mounted('X')) {
-        struct vfs_node *x_root = vfs_get_drive_root('X');
-        if (x_root && x_root->ops && x_root->ops->finddir) {
-            struct vfs_node *dbg = x_root->ops->finddir(x_root, "DEBUG");
+    /* Check for debug boot flag on C:\ */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *c_root = vfs_get_drive_root('C');
+        if (c_root && c_root->ops && c_root->ops->finddir) {
+            struct vfs_node *dbg = c_root->ops->finddir(c_root, "DEBUG");
             if (dbg) {
                 klog(LOG_INFO, "boot",
-                     "DEBUG flag found on X: -- disabling splash");
+                     "DEBUG flag found on C:\\ -- disabling splash");
                 boot_splash_abort();
                 printk("\n=== DEBUG BOOT MODE ===\n");
                 printk("Splash disabled. Showing live boot output.\n\n");

@@ -6,6 +6,7 @@
 
 #include "kernel/boot_progress.h"
 #include "kernel/boot_init.h"
+#include "kernel/klog.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_timing.h"
 #include "kernel/boot_splash.h"
@@ -243,7 +244,7 @@ void boot_timeline_dump_json(void)
     buf[pos++] = ']';
     buf[pos++] = '\n';
 
-    f = vfs_open("C:\\Impossible\\System\\Logs\\boot-timeline.json",
+    f = vfs_open(KLOG_DIR "boot-timeline.json",
                  VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
     if (f) {
         vfs_write(f, 0, pos, buf);
