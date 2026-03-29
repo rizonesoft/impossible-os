@@ -407,16 +407,69 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 
 > **After §1–§14:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with SMEP/SMAP enforced. Graceful degradation on hardware failures. Configurable skip list. Logging on main filesystem. No external TODO blocks execution.
 
+## Bare Metal Testing Plan
+
+> [!IMPORTANT]
+> **5 bare metal checkpoints instead of 15.** Implement and verify batches on QEMU first. Only go to bare metal at critical checkpoints where VM behavior diverges from real hardware. Debug POST codes (0xD1xx–0xD9xx) make each bare metal cycle fast — one boot, read serial/VPD, identify failure.
+
+### BM Test 1 — Foundation (after §1 + §2 + §4)
+Implement §2 (IST) and §4 (FADT) on QEMU. Then one bare metal boot.
+
+- [ ] HPET calibration via UC mapping: serial shows `Tier 2: HPET calibration`
+- [ ] FADT flags parsed: serial shows `IAPC_BOOT_ARCH: 8042=N RTC=N`
+- [ ] IST stacks allocated (verify via serial log; optional #DF trigger)
+- [ ] POST codes: 0xD100–0xD104, 0xD200–0xD203, 0xD400–0xD402
+
+**~5 minutes.** One boot, read serial log.
+
+### BM Test 2 — Hardware Interrupts (after §3 + §10) ⚠️ CRITICAL
+§3 is the core bare metal investigation — cannot be tested on QEMU. §10 (boot order) is closely related.
+
+- [ ] **LAPIC timer fires without crashing** — make or break
+- [ ] PCI scan completes with timer ticks running
+- [ ] Desktop reached with timer active
+- [ ] POST codes: 0xD300–0xD306 narrow the failure point
+
+**Potentially hours** for §3 investigation, but debug POST codes make each reboot cycle fast.
+
+### BM Test 3 — Driver Hardening (after §5 + §6 + §7)
+Implement and test on QEMU first. One bare metal pass.
+
+- [ ] Mouse: serial shows `PS/2: skipped (no aux port)` on laptop
+- [ ] AHCI: `MSI vector 0xNN` or `INTx fallback` — no crash
+- [ ] Graceful degradation: forced failure → boot continues → degraded toast
+- [ ] Keyboard still works after PS/2 detection changes
+
+**~10 minutes.** One boot, check serial, test keyboard.
+
+### BM Test 4 — Memory Model (after §8 + §9) ⚠️ HIGH RISK
+Test extensively on QEMU WHPX, TCG, AND VBox before bare metal. All must pass: cmd.exe in own PML4, no User bit on kernel pages, CR3 switch on context switch.
+
+- [ ] cmd.exe runs, types input, shows output
+- [ ] Serial: `SMEP enabled`, `SMAP enabled`
+- [ ] No page faults, no triple faults
+- [ ] POST codes: 0xD800–0xD806, 0xD900–0xD904
+
+**~15 minutes.** Second most critical test.
+
+### BM Test 5 — Final Validation (after §11–§15)
+Full acceptance pass. All sections complete.
+
+- [ ] Full boot to desktop, timer running, no workarounds
+- [ ] `skip=mouse,smbios` → those subsystems skipped → boot completes
+- [ ] NVRAM: reboot shows "Last boot: SUCCEEDED"
+- [ ] Spinner smooth during PCI scan (no stutter)
+- [ ] Boot time within thresholds (Phase 0 <200ms, Phase 1 <2s)
+- [ ] Keyboard responsive, AHCI I/O works
+
+**~20 minutes.** Full regression pass.
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
 - [ ] QEMU WHPX: full boot to desktop, all subsystems OK, POST codes visible in serial log
 - [ ] QEMU TCG: full boot to desktop with PIT timer path
 - [ ] VirtualBox: full boot to desktop
-- [ ] Bare metal (i5-11600K): full boot to desktop with timer running, no workaround skip flags
-- [ ] Bare metal crash test: force `mouse_init()` failure → boot continues → desktop shows degraded notification
-- [ ] NVRAM persistence: crash at known POST code → reboot → serial shows "Last boot failed at: 0xNNNN"
-- [ ] IST verification: stack overflow → #DF fires on IST1 → BSOD shown (not silent triple fault)
-- [ ] `skip=mouse,smbios` in boot.conf → those subsystems skipped → boot completes
+- [ ] Bare metal (i5-11600K): BM Tests 1–5 all pass
 - [x] No `HV_BAR()` calls remaining in codebase — `hv_bar.h` deleted, replaced by TODO-05 VPD
 - [ ] Commit: `"boot: bare metal hardening complete — all platforms boot reliably"`
