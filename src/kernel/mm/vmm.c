@@ -332,11 +332,12 @@ uintptr_t vmm_create_user_pml4(void)
     /* Copy remaining kernel PDPT entries (PDPT[1..3] for 1-4 GiB) */
     for (i = 0; i < PT_ENTRIES; i++)
         pdpt[i] = kern_pdpt[i];
-    /* Override PDPT[0] to point to our cloned PD */
-    pdpt[0] = pd_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
+    /* Override PDPT[0] to point to our cloned PD.
+     * User bit required at EVERY level for ring 3 access. */
+    pdpt[0] = pd_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER;
 
     /* PML4[0] points to our cloned PDPT */
-    pml4[0] = pdpt_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
+    pml4[0] = pdpt_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER;
 
     /* Copy any other kernel PML4 entries (currently only [0] is used) */
     for (i = 1; i < PT_ENTRIES; i++)
