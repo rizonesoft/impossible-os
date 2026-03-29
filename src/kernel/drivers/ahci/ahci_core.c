@@ -884,6 +884,21 @@ void ahci_setup_interrupts(void)
                                     ahci_pci_func, cap_off + 2,
                                     msi_ctrl);
 
+                        /* Verify device still present after MSI enable */
+                        {
+                            uint16_t verify = pci_read16(ahci_pci_bus,
+                                                          ahci_pci_slot,
+                                                          ahci_pci_func,
+                                                          0x00);
+                            if (verify == 0xFFFF) {
+                                klog(LOG_WARN, "ahci",
+                                     "AHCI: device gone after MSI enable");
+                                irq_free_vector(ahci_irq_vector);
+                                ahci_irq_vector = 0;
+                                break;
+                            }
+                        }
+
                         /* Disable legacy INTx -- MSI takes over */
                         {
                             uint16_t cmd = pci_read16(ahci_pci_bus,

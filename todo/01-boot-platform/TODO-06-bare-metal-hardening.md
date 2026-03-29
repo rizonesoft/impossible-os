@@ -194,7 +194,7 @@ Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI s
 
 - [x] Mask LAPIC timer LVT before MSI enable; unmask after
 - [x] Validate ABAR: page-aligned, within 4 GiB, not 0 — logs and uses polling if invalid
-- [ ] MSI enable timeout — deferred, not observed needed on tested platforms
+- [x] MSI enable verify: read VID after enable, if 0xFFFF → device gone, free vector, fall back to INTx
 - [x] MSI → INTx fallback (already existed in ahci_core.c)
 - [x] INTx → polled fallback (already existed — logs "using polling")
 - [x] Bare metal skip workaround removed (done in §3 clac fix)
