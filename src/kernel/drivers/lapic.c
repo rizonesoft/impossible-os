@@ -468,6 +468,7 @@ static int cal_try_cpuid_15h(void)
  * Uses the bootloader's measured TSC frequency to time a 10ms window.
  * No MMIO, no I/O ports — just TSC reads + LAPIC register reads.
  * Works on any platform where TSC frequency is known. */
+static int cal_try_tsc_reference(void) __attribute__((unused));
 static int cal_try_tsc_reference(void)
 {
     uint64_t tsc_freq = g_boot_info.timing.tsc_freq;
@@ -747,12 +748,10 @@ void lapic_timer_calibrate(void)
         return;
     }
 
-    /* Tier 1b: TSC-referenced calibration (bootloader measured TSC freq) */
-    if (cal_try_tsc_reference()) {
-        klog(LOG_INFO, "lapic",
-             "Calibration: Tier 1b succeeded (TSC reference)");
-        return;
-    }
+    /* Tier 1b: TSC-referenced calibration — DISABLED.
+     * TSC frequency != LAPIC timer frequency on many platforms (VMs, AMD,
+     * turbo boost). Linux and Windows don't use TSC for LAPIC calibration.
+     * PM Timer and HPET give reliable results on all hardware. */
 
     /* Tier 2: Modern hardware timers (HPET -> PM Timer) */
     if (cal_try_hpet()) {
