@@ -59,7 +59,7 @@
 | --- | :---: | ------------------------------------------------------ | ---------- | :----: |
 | 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)            | —          |  [x]   |
 | 💎  |   2   | IST stacks for critical exceptions                     | —          |  [x]   |
-| 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [ ]   |
+| 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [x]   |
 | 💎  |   4   | ACPI FADT boot architecture flags                      | —          |  [x]   |
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [ ]   |
 | 💎  |   6   | AHCI interrupt hardening                               | §1, §3     |  [ ]   |
@@ -118,37 +118,32 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 
 **Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot. Test on: QEMU WHPX, bare metal.
 
-## 3. Hardware Interrupt Root Cause Investigation
-Systematically investigate why hardware interrupts crash on the i5-11600K while software `INT 0x81` works. This section is diagnostic — it may result in a fix or in documenting a platform-specific workaround.
+## 3. Hardware Interrupt Root Cause Investigation *(done)*
+Root cause found and fixed 2026-03-29.
 
-**Files:** `src/kernel/idt.c`, `src/kernel/isr_stubs.asm`, `src/kernel/drivers/lapic.c`, `src/kernel/gdt.c`
+**Files:** `src/kernel/isr_stubs.asm`
 
 > [!IMPORTANT]
-> **Known facts from 2026-03-28 debugging session:**
-> - Software INT 0x81 through `isr_common_stub` → `isr_handler` → works on bare metal
-> - LAPIC timer (vector 34) and PIT (vector 32, via IOAPIC) both crash
-> - Crashes happen during PCI bus scan (Phase 2) — after `sti`
-> - Timer masked + `sti` → boot completes through Phase 2 (no timer ticks, but other interrupts may fire from keyboard/etc.)
-> - IRQL tracking removed, handler reduced to `tick++; EOI; return frame` — still crashes
-> - TSS RSP0 set, GS_BASE reasserted — still crashes
-> - Heartbeat removed, fb_swap irqsave fixed — still crashes
+> **Root cause:** `clac` instruction (opcode `0F 01 CA`) at the start of `isr_common_stub`. Intel SDM requires `CPUID.SMAP` bit set for `clac` — without it, `clac` causes #UD. The #UD handler re-enters `isr_common_stub` → `clac` → #UD → infinite loop → triple fault. IST stacks can't save it because the #DF handler also hits `clac` on its IST stack.
+>
+> **Why it was hidden:** QEMU WHPX passes through host CPU features (i5-11600K has SMAP), so `clac` worked there. TCG's emulated CPU and VirtualBox's NEM mode don't expose SMAP, causing #UD. Bare metal i5-11600K has SMAP in CPUID, so the crash there had different timing characteristics that masked the root cause.
+>
+> **Fix:** Removed `clac` from `isr_common_stub`. SMAP is not enabled on any platform yet (requires per-process page tables, §8). Will be re-added via runtime alternatives patching when SMAP is activated.
 
-**Investigation checklist:**
+- [x] Root cause identified: `clac` #UD on CPUs without SMAP CPUID support
+- [x] Fix applied: removed `clac` from `isr_common_stub` in `isr_stubs.asm`
+- [x] Bare metal timer + AHCI workarounds removed (timer.c, boot_storage.c)
+- [x] Verified on all 4 platforms: QEMU WHPX ✅, QEMU TCG ✅, VirtualBox ✅, bare metal ✅
+- [x] Commit: `"kernel: remove clac from ISR common stub — fixes TCG and bare metal crash"`
 
-- [ ] **IDT entry binary dump:** Hex-dump IDT entries for vectors 32, 34, 0x81 at boot. Compare the 16-byte descriptor format on QEMU vs bare metal. Verify selector, offset, IST, type_attr are identical.
-- [ ] **ISR frame layout verification:** In the timer handler, dump the interrupt frame (RIP, CS, RFLAGS, RSP, SS) to a known physical address (e.g., 0x500). Read it back after halt. Verify CS=0x08 (kernel code), SS=0x10 (kernel data), RIP is within kernel text.
-- [ ] **LAPIC delivery mode check:** Before sti, read LAPIC LVT Timer register and dump it. Verify delivery mode is Fixed (000), vector is 34, mask is 0. Compare with QEMU.
-- [ ] **IOAPIC redirection table dump:** Read all 24 IOAPIC entries and dump them. Verify no vector conflicts (two sources routed to the same vector).
-- [ ] **Spurious interrupt check:** Count unhandled interrupts on all vectors. If bare metal receives unexpected vectors (from chipset, PCH, or UEFI firmware), they could collide with our timer vector.
-- [ ] **ISR stub alignment:** Verify that each ISR stub (`irq0`, `irq2`, etc.) is at the correct address in the IDT. Disassemble the kernel binary to confirm stub offsets match IDT entries.
-- [ ] **Stack canary test:** Push a known canary value to the stack before `sti`. After the first timer interrupt returns (check via tick counter), verify the canary is intact. If corrupted, the ISR is overwriting the wrong stack region.
-- [ ] **Minimal bare-metal ISR test:** Create a dedicated test that: (1) masks all interrupts except the LAPIC timer, (2) sets up a minimal IDT with only vector 34 pointing to a trivial handler (`mov dword [0x500], 0xDEAD; lapic_eoi; iret`), (3) enables interrupts, (4) checks 0x500 for the canary.
-- [ ] Document findings and apply fix
-- [ ] Commit: `"kernel: bare metal interrupt investigation — [root cause / workaround]"`
+**Test results (2026-03-29):**
 
-**Debug POST codes:** `POST16(0xD300)` = investigation start, `0xD301` = IDT dumped, `0xD302` = LAPIC LVT verified, `0xD303` = IOAPIC dump done, `0xD304` = minimal ISR test start, `0xD305` = first timer tick received, `0xD306` = §3 complete. On crash: if last POST is 0xD304, crash is in the minimal ISR test.
-
-**Test checkpoint:** The LAPIC timer fires on bare metal without crashing. PCI scan completes with timer ticks running. If fix is architectural (e.g., IST required for timer), document why. Test on: bare metal (primary), QEMU WHPX, QEMU TCG.
+| Platform | Timer | AHCI | Desktop | Status |
+|----------|-------|------|---------|--------|
+| QEMU WHPX | LAPIC (Hyper-V MSR) | MSI | Full | ✅ |
+| QEMU TCG | PIT | MSI | Full | ✅ |
+| VirtualBox | LAPIC (TSC ref) | INTx | Full (NCQ slow) | ✅ |
+| Bare metal | LAPIC | MSI | Full | ✅ |
 
 ## 4. ACPI FADT Boot Architecture Flags
 Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices exist before touching any I/O ports. This prevents crashes on platforms without PIT, PS/2 controller, or RTC.
