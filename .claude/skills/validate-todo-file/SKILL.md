@@ -97,6 +97,14 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Each checkpoint must specify which platforms to test on.
     - Flag any section missing a test checkpoint.
     - Flag any checkpoint with vague criteria ("should work", "verify correct behavior").
+14. **Diagnostic POST code insertion.**
+    - Every section that modifies boot-path code or hardware interaction MUST add temporary `POST16()` calls around the changed code so crashes are localizable in minutes, not hours.
+    - **Before the change:** `POST16(0xDDNN)` where `DD` = section number, `NN` = 00 (entry). Example: §5 entry = `POST16(0xD500)`.
+    - **After the change:** `POST16(0xDDNN)` where `NN` = 01 (exit). Example: §5 exit = `POST16(0xD501)`.
+    - **Around risky sub-steps:** add intermediate POST codes (0xD502, 0xD503, ...) inside the section's code to narrow down the exact failure point.
+    - The test checkpoint should reference these POST codes: "If crash, check last POST code on VPD/serial — 0xD500 = never entered, 0xD502 = failed at sub-step 2."
+    - These diagnostic POST codes use the `0xD000–0xDFFF` range (reserved for development/debug) and can be removed after the section is verified on all platforms.
+    - **Rationale:** On bare metal, there is no debugger. A crash with no POST code means hours of bisecting. A crash at POST 0xD503 means "§5, sub-step 3 failed" — fixable in minutes.
 14. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
 
 ## Guardrails
