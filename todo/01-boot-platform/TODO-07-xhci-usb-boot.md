@@ -69,7 +69,7 @@ Complete the device enumeration path: slot enable → Address Device → GET_DES
 - [ ] Log: `xhci: USB device VID:PID class=08 (Mass Storage)` or `class=03 (HID)`
 - [ ] Commit: `"drivers: USB device enumeration — MSC and HID interfaces detected"`
 
-**Test checkpoint:** Serial shows detected USB devices with class info. POST code 0xD701. Test on: QEMU `run-usb`.
+**Test checkpoint:** Serial shows detected USB devices with class info. POST code 0xD701. Test on: QEMU `run-usb`, bare metal.
 
 ## 3. USB MSC BOT (Bulk-Only Transport) Driver
 Implement the SCSI-over-USB transport layer: CBW/CSW framing, INQUIRY, READ CAPACITY, READ(10), WRITE(10).
@@ -111,7 +111,7 @@ Configure interrupt-IN endpoints for HID devices so the xHCI controller polls th
 - [ ] Event ring callback: when interrupt-IN completes, deliver report to HID driver
 - [ ] Commit: `"drivers: xHCI interrupt endpoint setup for USB HID devices"`
 
-**Test checkpoint:** USB keyboard/mouse detected, interrupt endpoint configured. POST code 0xD705.
+**Test checkpoint:** USB keyboard/mouse detected, interrupt endpoint configured. POST code 0xD704. Test on: QEMU `run-usb`, bare metal.
 
 ## 6. USB HID Boot-Protocol Keyboard Driver
 Parse 8-byte boot-protocol keyboard reports and inject key events into the input subsystem.
@@ -120,11 +120,11 @@ Parse 8-byte boot-protocol keyboard reports and inject key events into the input
 
 - [ ] Parse boot keyboard report: byte 0 = modifiers, bytes 2-7 = keycodes
 - [ ] Convert USB HID usage codes to PS/2 scancodes (lookup table, ~104 entries)
-- [ ] Inject into `keyboard_handle_scancode()` — same path as PS/2
+- [ ] Inject into `keyboard_inject_scancode()` — same path as PS/2
 - [ ] Handle key-up: compare current vs previous report, detect released keys
 - [ ] Commit: `"drivers: USB HID boot-protocol keyboard — key events via interrupt-IN"`
 
-**Test checkpoint:** USB keyboard: type characters, see them in terminal. POST code 0xD706.
+**Test checkpoint:** USB keyboard: type characters, see them in terminal. POST code 0xD705. Test on: QEMU `run-usb`, bare metal.
 
 ## 7. USB HID Boot-Protocol Mouse Driver
 Parse 3-byte boot-protocol mouse reports and inject mouse events.
@@ -132,10 +132,10 @@ Parse 3-byte boot-protocol mouse reports and inject mouse events.
 **Files:** `src/kernel/drivers/usb_hid_mouse.c` (new)
 
 - [ ] Parse boot mouse report: byte 0 = buttons, byte 1 = X delta, byte 2 = Y delta
-- [ ] Inject into mouse subsystem via `mouse_handle_event(dx, dy, buttons)`
+- [ ] Inject into mouse subsystem via `mouse_inject_state(x, y, buttons)`
 - [ ] Commit: `"drivers: USB HID boot-protocol mouse — movement + buttons"`
 
-**Test checkpoint:** USB mouse: cursor moves on screen. POST code 0xD707.
+**Test checkpoint:** USB mouse: cursor moves on screen. POST code 0xD706. Test on: QEMU `run-usb`, bare metal.
 
 ## 8. Input Source Priority and Coexistence
 Ensure PS/2 and USB input sources coexist without conflict.
@@ -148,7 +148,7 @@ Ensure PS/2 and USB input sources coexist without conflict.
 - [ ] Log active input sources at boot
 - [ ] Commit: `"drivers: input source coexistence — PS/2 + USB active simultaneously"`
 
-**Test checkpoint:** System with both PS/2 and USB — both work. USB-only system — works. POST code 0xD708.
+**Test checkpoint:** System with both PS/2 and USB — both work. USB-only system — works. POST code 0xD707. Test on: QEMU `run-usb`, bare metal.
 
 ---
 
