@@ -32,4 +32,4 @@ SDK tools are built separately from the kernel. Each has its own Makefile/build 
 
 ## Active TODOs
 
-- [TODO-01 — IXFS Mount for Windows](TODO-01-ixfs-mount-windows.md) — WinFsp user-mode filesystem driver to mount IXFS partitions as drive letters in Windows Explorer
+- [TODO-01 — IXFS Mount](TODO-01-ixfs-mount.md) — Mount IXFS partitions on Windows (WinFsp) and Linux (libfuse3) with USB auto-mount scripts
