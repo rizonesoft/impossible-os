@@ -36,13 +36,19 @@ count_lines() {
     echo "$files $total"
 }
 
-# Kernel / OS source code + SDK
-read -r c_files c_lines <<< "$(count_lines c "$ROOT/src" "$ROOT/include" "$ROOT/sdk")"
-read -r h_files h_lines <<< "$(count_lines h "$ROOT/src" "$ROOT/include" "$ROOT/sdk")"
+# Kernel / OS source code
+read -r c_files c_lines <<< "$(count_lines c "$ROOT/src" "$ROOT/include")"
+read -r h_files h_lines <<< "$(count_lines h "$ROOT/src" "$ROOT/include")"
 read -r asm_files asm_lines <<< "$(count_lines asm "$ROOT/src")"
 
+# SDK tools
+read -r sdk_c_files sdk_c_lines <<< "$(count_lines c "$ROOT/sdk/src")"
+read -r sdk_h_files sdk_h_lines <<< "$(count_lines h "$ROOT/sdk/src")"
+sdk_files=$((sdk_c_files + sdk_h_files))
+sdk_lines=$((sdk_c_lines + sdk_h_lines))
+
 # Build system & scripts
-read -r sh_files sh_lines <<< "$(count_lines sh "$ROOT/scripts")"
+read -r sh_files sh_lines <<< "$(count_lines sh "$ROOT/scripts" "$ROOT/sdk/scripts")"
 
 mk_files=0; mk_lines=0
 if [ -f "$ROOT/Makefile" ]; then
@@ -63,8 +69,8 @@ code_lines=$((c_lines + h_lines + asm_lines))
 infra_files=$((sh_files + mk_files + ld_files))
 infra_lines=$((sh_lines + mk_lines + ld_lines))
 
-total_files=$((code_files + infra_files))
-total_lines=$((code_lines + infra_lines))
+total_files=$((code_files + sdk_files + infra_files))
+total_lines=$((code_lines + sdk_lines + infra_lines))
 
 # Count vendored lines
 vendored_lines=0
@@ -98,6 +104,14 @@ cat > "$COUNT_FILE" << EOF
 | **Headers** (\`.h\`) | ${h_files} | ${h_lines} |
 | **Assembly** (\`.asm\`) | ${asm_files} | ${asm_lines} |
 | **Subtotal** | **${code_files}** | **${code_lines}** |
+
+## SDK Tools
+
+| | Files | Lines |
+|---|---:|---:|
+| **C sources** (\`.c\`) | ${sdk_c_files} | ${sdk_c_lines} |
+| **Headers** (\`.h\`) | ${sdk_h_files} | ${sdk_h_lines} |
+| **Subtotal** | **${sdk_files}** | **${sdk_lines}** |
 
 ## Build System & Scripts
 
