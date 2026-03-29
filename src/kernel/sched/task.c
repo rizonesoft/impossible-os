@@ -365,13 +365,11 @@ int task_create_user(task_entry_t entry, const char *name)
         return -1;
     }
 
-    /* Allocate user stack */
-    ustack = (uint8_t *)kmalloc(USER_STACK_SIZE);
-    if (!ustack) {
-        klog(LOG_ERROR, "sched", "task_create_user: cannot allocate user stack");
-        /* TODO: free kstack */
-        return -1;
-    }
+    /* User stack: placed at the top of the user region (0x800000-0x9FFFFF)
+     * which is identity-mapped in the split PD[4] PT. These physical pages
+     * are already reserved by pmm_mark_region_used(0x800000, 0x100000).
+     * Stack top at 0x900000, grows down. */
+    ustack = (uint8_t *)(0x900000 - USER_STACK_SIZE);
 
     /* Build initial interrupt frame on the KERNEL stack.
      * The ISR restore does: pop regs, add rsp 16, iretq.
