@@ -274,6 +274,130 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
     return (uint64_t)frame;  /* unreachable */
 }
 
+/* --- Per-process page tables -------------------------------------------- */
+
+/* User ELF PD index: 0x800000 >> 21 = 4 (each PD entry covers 2 MiB) */
+#define USER_PD_INDEX  4
+
+uintptr_t vmm_create_user_pml4(void)
+{
+    uintptr_t pml4_phys, pdpt_phys, pd_phys, pt_phys;
+    pte_t *pml4, *pdpt, *pd, *pt;
+    pte_t *kern_pdpt, *kern_pd;
+    uint32_t i;
+
+    /* Allocate 4 pages: PML4, PDPT, PD, PT for the user 2 MiB region */
+    pml4_phys = pmm_alloc_frame();
+    pdpt_phys = pmm_alloc_frame();
+    pd_phys   = pmm_alloc_frame();
+    pt_phys   = pmm_alloc_frame();
+    if (!pml4_phys || !pdpt_phys || !pd_phys || !pt_phys)
+        return 0;
+
+    pml4 = (pte_t *)pml4_phys;
+    pdpt = (pte_t *)pdpt_phys;
+    pd   = (pte_t *)pd_phys;
+    pt   = (pte_t *)pt_phys;
+
+    /* Zero all new tables */
+    zero_page(pml4_phys);
+    zero_page(pdpt_phys);
+    zero_page(pd_phys);
+    zero_page(pt_phys);
+
+    /* Get kernel's PDPT and PD (via identity mapping) */
+    kern_pdpt = (pte_t *)(kernel_pml4[0] & PTE_ADDR_MASK);
+    kern_pd   = (pte_t *)(kern_pdpt[0] & PTE_ADDR_MASK);
+
+    /* Clone kernel PD entries into the new PD (all 512 entries).
+     * These are 2 MiB huge pages — kernel-only, no User bit. */
+    for (i = 0; i < PT_ENTRIES; i++)
+        pd[i] = kern_pd[i] & ~((pte_t)VMM_FLAG_USER);
+
+    /* Split PD[USER_PD_INDEX] (0x800000–0x9FFFFF) from a 2 MiB huge page
+     * into 512 x 4 KiB pages. This lets us set User bit on individual pages. */
+    {
+        uintptr_t base_phys = (uintptr_t)USER_PD_INDEX << 21;
+        for (i = 0; i < PT_ENTRIES; i++) {
+            uintptr_t page_phys = base_phys + (uintptr_t)i * VMM_PAGE_SIZE;
+            /* Default: kernel-only (Present + Writable, no User) */
+            pt[i] = page_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
+        }
+    }
+
+    /* Replace the huge page PD entry with the fine-grained PT */
+    pd[USER_PD_INDEX] = pt_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE
+                                | VMM_FLAG_USER;
+
+    /* Copy remaining kernel PDPT entries (PDPT[1..3] for 1-4 GiB) */
+    for (i = 0; i < PT_ENTRIES; i++)
+        pdpt[i] = kern_pdpt[i];
+    /* Override PDPT[0] to point to our cloned PD */
+    pdpt[0] = pd_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
+
+    /* PML4[0] points to our cloned PDPT */
+    pml4[0] = pdpt_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
+
+    /* Copy any other kernel PML4 entries (currently only [0] is used) */
+    for (i = 1; i < PT_ENTRIES; i++)
+        pml4[i] = kernel_pml4[i];
+
+    return pml4_phys;
+}
+
+void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
+{
+    pte_t *pml4, *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi, pti;
+
+    pml4 = (pte_t *)pml4_phys;
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+    pti   = pt_index(virt);
+
+    pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
+    if (!pdpt) return;
+    pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
+    if (!pd) return;
+
+    /* PD entry must be a PT (not a huge page) */
+    if (pd[pdi] & VMM_FLAG_HUGE) return;
+
+    pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
+    if (!pt) return;
+
+    /* Set User bit on the specific 4 KiB page */
+    pt[pti] |= VMM_FLAG_USER;
+}
+
+void vmm_destroy_user_pml4(uintptr_t pml4_phys)
+{
+    pte_t *pml4, *pdpt, *pd;
+
+    if (!pml4_phys) return;
+
+    pml4 = (pte_t *)pml4_phys;
+    pdpt = (pte_t *)(pml4[0] & PTE_ADDR_MASK);
+    if (pdpt) {
+        pd = (pte_t *)(pdpt[0] & PTE_ADDR_MASK);
+        if (pd) {
+            /* Free the PT for the user region */
+            pte_t *pt = (pte_t *)(pd[USER_PD_INDEX] & PTE_ADDR_MASK);
+            if (pt && !(pd[USER_PD_INDEX] & VMM_FLAG_HUGE))
+                pmm_free_frame((uintptr_t)pt);
+            pmm_free_frame((uintptr_t)pd);
+        }
+        pmm_free_frame((uintptr_t)pdpt);
+    }
+    pmm_free_frame(pml4_phys);
+}
+
+uintptr_t vmm_get_kernel_cr3(void)
+{
+    return (uintptr_t)kernel_pml4;
+}
+
 /* --- MMIO mapping (UC — Uncacheable) ------------------------------------ */
 
 /* Bump allocator for MMIO virtual addresses.

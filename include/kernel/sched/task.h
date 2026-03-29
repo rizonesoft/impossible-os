@@ -93,6 +93,7 @@ struct task {
     int32_t     exit_status;    /* exit code (set on TASK_DEAD) */
     int32_t     wait_pid;       /* PID we're waiting on (-1 = none) */
     uint32_t    exec_pending;   /* 1 = exec'd frame pending, skip save on switch-out */
+    uintptr_t   cr3;            /* per-process PML4 phys addr (0 = kernel PML4) */
     /* --- Per-task thread list --- */
     struct thread threads[THREAD_MAX];   /* thread pool for this task */
     uint32_t     num_threads;            /* number of threads (>= 1, thread 0 = main) */

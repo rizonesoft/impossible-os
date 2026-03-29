@@ -14,6 +14,7 @@
 #include "kernel/gdt.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/cpuid.h"
 #include "kernel/klog.h"
 #include "kernel/elf.h"
@@ -193,6 +194,7 @@ void task_init(void)
         tasks[i].exit_status = 0;
         tasks[i].wait_pid = -1;
         tasks[i].exec_pending = 0;
+        tasks[i].cr3 = 0;
         tasks[i].xsave_area = (void *)0;
         tasks[i].fpu_used = 0;
         tasks[i].num_threads = 0;
@@ -322,6 +324,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
+    tasks[pid].cr3 = 0;  /* kernel task uses boot PML4 */
 
     /* Thread 0 = main thread (uses task's kernel stack) */
     tasks[pid].threads[0].id = 0;
@@ -420,6 +423,26 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
 
+    /* Per-process page table: clone kernel PML4, mark ELF + user stack as User */
+    {
+        uintptr_t user_cr3 = vmm_create_user_pml4();
+        if (user_cr3) {
+            uintptr_t addr;
+            /* Mark ELF pages (0x800000 range) as User */
+            for (addr = 0x800000; addr < 0x900000; addr += 4096)
+                vmm_set_user_page(user_cr3, addr);
+            /* Mark user stack pages as User */
+            for (addr = (uintptr_t)ustack;
+                 addr < (uintptr_t)ustack + USER_STACK_SIZE;
+                 addr += 4096)
+                vmm_set_user_page(user_cr3, addr);
+            tasks[pid].cr3 = user_cr3;
+        } else {
+            tasks[pid].cr3 = 0;
+            klog(LOG_WARN, "sched", "Task %u: per-process PML4 failed", (uint64_t)pid);
+        }
+    }
+
     /* Thread 0 = main thread (uses task's kernel stack) */
     tasks[pid].threads[0].id = 0;
     tasks[pid].threads[0].state = THREAD_READY;
@@ -492,9 +515,20 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     current_thread = next_thread;
     sched_ticks = 0;
 
-    /* Update TSS rsp0 so ring 3→0 transitions use the correct kernel stack */
+    /* Update TSS rsp0 so ring 3->0 transitions use the correct kernel stack */
     if (tasks[next_task].kernel_rsp)
         tss_set_kernel_stack(tasks[next_task].kernel_rsp);
+
+    /* CR3 switch: load per-process page tables if different from current */
+    {
+        uintptr_t new_cr3 = tasks[next_task].cr3;
+        if (!new_cr3)
+            new_cr3 = vmm_get_kernel_cr3();
+        uintptr_t cur_cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cur_cr3));
+        if (new_cr3 != cur_cr3)
+            __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
+    }
 
     /* Return the correct RSP: thread stack if secondary thread, task stack otherwise */
     if (next_thread > 0)
@@ -589,9 +623,20 @@ uint64_t schedule(struct interrupt_frame *frame)
     current_task = next_task;
     current_thread = next_thread;
 
-    /* Update TSS rsp0 so ring 3→0 transitions use the correct kernel stack */
+    /* Update TSS rsp0 so ring 3->0 transitions use the correct kernel stack */
     if (tasks[next_task].kernel_rsp)
         tss_set_kernel_stack(tasks[next_task].kernel_rsp);
+
+    /* CR3 switch: load per-process page tables if different from current */
+    {
+        uintptr_t new_cr3 = tasks[next_task].cr3;
+        if (!new_cr3)
+            new_cr3 = vmm_get_kernel_cr3();
+        uintptr_t cur_cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cur_cr3));
+        if (new_cr3 != cur_cr3)
+            __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
+    }
 
     /* Return the correct RSP */
     if (next_thread > 0)
