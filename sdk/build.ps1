@@ -82,15 +82,16 @@ function Format-Elapsed($sw) {
 # Downloads MinGW-w64 and WinFsp SDK into sdk/build/ on first run.
 # No system-wide install, no environment variables, fully self-contained.
 
-$MinGWUrl   = "https://github.com/niXman/mingw-builds-binaries/releases/download/14.2.0-rt_v12-rev1/x86_64-14.2.0-release-posix-seh-ucrt-rt_v12-rev1.7z"
-$WinFspUrl  = "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25099.msi"
+# Pre-packaged build tools hosted on CDN -- no GitHub redirects, no MSI extraction
+$CdnBase    = "https://impossible-storage.b-cdn.net/dev/sdk/build"
+$SevenZipUrl = "$CdnBase/7z.zip"
+$MinGWUrl    = "$CdnBase/mingw64.7z"
+$WinFspUrl   = "$CdnBase/WinFsp.7z"
 
-# Download a file with progress -- uses curl.exe (ships with Windows 10+)
-# Falls back to WebClient if curl is not available
+# Download a file with progress using curl.exe (ships with Windows 10+)
 function Download-WithProgress {
     param([string]$Url, [string]$OutFile, [string]$Label)
 
-    # Prefer curl.exe -- handles GitHub redirects, shows progress natively
     if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
         Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
         & curl.exe -L --progress-bar -o $OutFile $Url
@@ -100,50 +101,67 @@ function Download-WithProgress {
         return
     }
 
-    # Fallback: WebClient with progress events
+    # Fallback: Invoke-WebRequest (no progress bar, but works)
+    Write-Host "       Downloading $Label (no progress -- install curl for progress bar)..." -ForegroundColor DarkGray
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $wc = New-Object System.Net.WebClient
-    $script:dlLastPct = -1
+    $ProgressPreference = "SilentlyContinue"
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+    $ProgressPreference = "Continue"
+}
 
-    $progressHandler = {
-        param($sender, $e)
-        $pct = $e.ProgressPercentage
-        if ($pct -ne $script:dlLastPct -and ($pct % 5 -eq 0)) {
-            $script:dlLastPct = $pct
-            $mbDone = [math]::Round($e.BytesReceived / 1MB, 1)
-            $mbTotal = [math]::Round($e.TotalBytesToReceive / 1MB, 1)
-            Write-Host "`r       $Label -- ${mbDone} / ${mbTotal} MB (${pct}%)    " -ForegroundColor DarkGray -NoNewline
-        }
+# Step 1: Ensure 7z.exe is available (needed to extract .7z archives)
+function Ensure-7Zip {
+    # Check local sdk/build/7z/7z.exe first
+    $local7z = Join-Path $BuildDir "7z\7z.exe"
+    if (Test-Path $local7z) { return $local7z }
+
+    # Check system 7-Zip
+    if (Get-Command 7z.exe -ErrorAction SilentlyContinue) { return "7z.exe" }
+    if (Test-Path "C:\Program Files\7-Zip\7z.exe") { return "C:\Program Files\7-Zip\7z.exe" }
+    if (Test-Path "C:\Program Files (x86)\7-Zip\7z.exe") { return "C:\Program Files (x86)\7-Zip\7z.exe" }
+
+    # Download 7z.zip from CDN (small, extracts with Expand-Archive)
+    Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
+    Write-Host " Downloading 7-Zip..."
+
+    if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null }
+
+    $zipFile = Join-Path $BuildDir "7z.zip"
+    try {
+        Download-WithProgress -Url $SevenZipUrl -OutFile $zipFile -Label "7-Zip"
+    } catch {
+        Write-Host "  FAIL " -ForegroundColor Red -NoNewline
+        Write-Host "7-Zip download failed: $_"
+        Exit-Build 1
     }
 
-    $wc.add_DownloadProgressChanged($progressHandler)
+    $destDir = Join-Path $BuildDir "7z"
+    Expand-Archive -Path $zipFile -DestinationPath $destDir -Force
+    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
 
-    try {
-        $task = $wc.DownloadFileTaskAsync($Url, $OutFile)
-        while (-not $task.IsCompleted) {
-            Start-Sleep -Milliseconds 100
-        }
-        if ($task.IsFaulted) {
-            throw $task.Exception.InnerException
-        }
-        Write-Host ""
-    } finally {
-        $wc.Dispose()
+    if (Test-Path $local7z) {
+        Write-Host "  OK   " -ForegroundColor Green -NoNewline
+        Write-Host "7-Zip installed to sdk/build/7z/"
+        return $local7z
+    } else {
+        Write-Host "  FAIL " -ForegroundColor Red -NoNewline
+        Write-Host "7-Zip extraction failed -- 7z.exe not found"
+        Exit-Build 1
     }
 }
 
+# Step 2: Ensure MinGW-w64 is available
 function Ensure-MinGW {
+    param([string]$SevenZip)
+
     $gcc = Join-Path $BuildDir "mingw64\bin\gcc.exe"
     if (Test-Path $gcc) { return }
 
     Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
     Write-Host " Downloading MinGW-w64 toolchain..."
 
-    if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null }
-
     $archive = Join-Path $BuildDir "mingw64.7z"
 
-    # Download with progress
     try {
         Download-WithProgress -Url $MinGWUrl -OutFile $archive -Label "MinGW-w64"
     } catch {
@@ -152,41 +170,8 @@ function Ensure-MinGW {
         Exit-Build 1
     }
 
-    # Extract -- .7z requires 7-Zip or compatible tar
     Write-Host "       Extracting to sdk/build/mingw64/..." -ForegroundColor DarkGray
-
-    $extracted = $false
-
-    # Try 7z.exe (7-Zip installed)
-    $sevenZip = $null
-    if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
-        $sevenZip = "7z.exe"
-    } elseif (Test-Path "C:\Program Files\7-Zip\7z.exe") {
-        $sevenZip = "C:\Program Files\7-Zip\7z.exe"
-    } elseif (Test-Path "C:\Program Files (x86)\7-Zip\7z.exe") {
-        $sevenZip = "C:\Program Files (x86)\7-Zip\7z.exe"
-    }
-
-    if ($sevenZip) {
-        Write-Host "       Using 7-Zip..." -ForegroundColor DarkGray
-        & $sevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { $extracted = $true }
-    }
-
-    # Try tar (Windows 10+ ships tar that handles some 7z via libarchive)
-    if (-not $extracted -and (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
-        Write-Host "       Using tar..." -ForegroundColor DarkGray
-        & tar.exe -xf $archive -C $BuildDir 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { $extracted = $true }
-    }
-
-    if (-not $extracted) {
-        Write-Host "  FAIL " -ForegroundColor Red -NoNewline
-        Write-Host "Cannot extract .7z archive."
-        Write-Host "       Install 7-Zip from https://7-zip.org/ and try again." -ForegroundColor DarkGray
-        Remove-Item $archive -Force -ErrorAction SilentlyContinue
-        Exit-Build 1
-    }
+    & $SevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
 
     Remove-Item $archive -Force -ErrorAction SilentlyContinue
 
@@ -196,27 +181,25 @@ function Ensure-MinGW {
         Write-Host "MinGW installed: $ver"
     } else {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
-        Write-Host "MinGW extraction failed -- gcc.exe not found at: $gcc"
-        Write-Host "       Check that the archive extracted a mingw64/ directory." -ForegroundColor DarkGray
+        Write-Host "MinGW extraction failed -- gcc.exe not found"
         Exit-Build 1
     }
 }
 
+# Step 3: Ensure WinFsp SDK is available
 function Ensure-WinFsp {
+    param([string]$SevenZip)
+
     $header = Join-Path $BuildDir "winfsp\inc\winfsp\winfsp.h"
     if (Test-Path $header) { return }
 
     Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
     Write-Host " Downloading WinFsp SDK..."
 
-    if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null }
+    $archive = Join-Path $BuildDir "WinFsp.7z"
 
-    $msi = Join-Path $BuildDir "winfsp.msi"
-    $extractDir = Join-Path $BuildDir "winfsp-extract"
-
-    # Download with progress
     try {
-        Download-WithProgress -Url $WinFspUrl -OutFile $msi -Label "WinFsp SDK"
+        Download-WithProgress -Url $WinFspUrl -OutFile $archive -Label "WinFsp SDK"
     } catch {
         Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
         Write-Host "WinFsp download failed: $_"
@@ -224,57 +207,10 @@ function Ensure-WinFsp {
         return
     }
 
-    # Extract headers + libs from MSI
-    # 7-Zip can open MSI files directly (more reliable than msiexec on mapped drives)
-    Write-Host "       Extracting headers + libs..." -ForegroundColor DarkGray
+    Write-Host "       Extracting to sdk/build/winfsp/..." -ForegroundColor DarkGray
+    & $SevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
 
-    if (-not (Test-Path $extractDir)) { New-Item -ItemType Directory -Path $extractDir -Force | Out-Null }
-
-    $extracted = $false
-
-    # Try 7z first (can extract MSI directly, no admin needed)
-    $sevenZip = $null
-    if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
-        $sevenZip = "7z.exe"
-    } elseif (Test-Path "C:\Program Files\7-Zip\7z.exe") {
-        $sevenZip = "C:\Program Files\7-Zip\7z.exe"
-    } elseif (Test-Path "C:\Program Files (x86)\7-Zip\7z.exe") {
-        $sevenZip = "C:\Program Files (x86)\7-Zip\7z.exe"
-    }
-
-    if ($sevenZip) {
-        & $sevenZip x $msi "-o$extractDir" -y 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { $extracted = $true }
-    }
-
-    # Fall back to msiexec if 7z not available
-    if (-not $extracted) {
-        $msiFullPath = (Resolve-Path $msi).Path
-        $extractFullPath = (Resolve-Path $extractDir).Path
-        Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msiFullPath`" /qn TARGETDIR=`"$extractFullPath`"" -Wait -NoNewWindow
-        $extracted = $true
-    }
-
-    # Find and copy the SDK files (inc/ and lib/)
-    $winfspDir = Join-Path $BuildDir "winfsp"
-    if (-not (Test-Path $winfspDir)) { New-Item -ItemType Directory -Path $winfspDir -Force | Out-Null }
-
-    # Search for winfsp.h in the extracted tree
-    $incSrc = Get-ChildItem -Path $extractDir -Recurse -Filter "winfsp.h" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($incSrc) {
-        # Go up to the WinFsp root (parent of inc/winfsp/)
-        $winfspRoot = $incSrc.Directory.Parent.Parent.FullName
-        if (Test-Path (Join-Path $winfspRoot "inc")) {
-            Copy-Item -Path (Join-Path $winfspRoot "inc") -Destination $winfspDir -Recurse -Force
-        }
-        if (Test-Path (Join-Path $winfspRoot "lib")) {
-            Copy-Item -Path (Join-Path $winfspRoot "lib") -Destination $winfspDir -Recurse -Force
-        }
-    }
-
-    # Cleanup
-    Remove-Item $msi -Force -ErrorAction SilentlyContinue
-    Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $archive -Force -ErrorAction SilentlyContinue
 
     if (Test-Path $header) {
         Write-Host "  OK   " -ForegroundColor Green -NoNewline
@@ -288,8 +224,9 @@ function Ensure-WinFsp {
 
 # Auto-download toolchains if needed (skip during clean)
 if (-not $clean) {
-    Ensure-MinGW
-    Ensure-WinFsp
+    $SevenZip = Ensure-7Zip
+    Ensure-MinGW -SevenZip $SevenZip
+    Ensure-WinFsp -SevenZip $SevenZip
 }
 
 # -- Detect compiler -------------------------------------------------------
