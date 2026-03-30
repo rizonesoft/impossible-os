@@ -67,7 +67,7 @@ sdk/tools/                  # Compiled output (gitignored)
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | Shared IXFS core parser                        | —          |  [x]   |
-| 💎  |   2   | Platform disk I/O layer                        | §1         |  [ ]   |
+| 💎  |   2   | Platform disk I/O layer                        | §1         |  [x]   |
 | 💎  |   3   | Linux FUSE mount (read-only)                   | §2         |  [ ]   |
 | 💎  |   4   | Windows WinFsp mount (read-only)               | §2         |  [ ]   |
 | 💎  |   5   | Write support (both platforms)                 | §3, §4     |  [ ]   |
@@ -96,24 +96,21 @@ Port the IXFS on-disk structure parsing from kernel code to a standalone library
 - Read a known file and verify first bytes match expected content
 
 ## 2. Platform Disk I/O Layer
-Abstracted raw sector read/write that works on both Windows and Linux.
+Abstracted raw sector read/write with GPT partition parsing.
 
 **Files:** `sdk/src/ixfs-mount/ixfs-disk.c`, `ixfs-disk.h`
 
-- [ ] `disk_open(path, partition_index)` — open device or image, locate partition via GPT
-- [ ] `disk_read_sectors(lba, count, buf)` — read sectors within partition
-- [ ] `disk_write_sectors(lba, count, buf)` — write sectors
-- [ ] `disk_close()` — flush and close
-- [ ] Windows: `CreateFile` + `ReadFile` / `WriteFile` with `SetFilePointerEx`
-- [ ] Linux: `open` + `pread` / `pwrite`
-- [ ] GPT parser: find partition by index, get start LBA and size
-- [ ] `#ifdef _WIN32` / `#else` for platform split (or separate .c files)
-- [ ] Commit: `"sdk: ixfs-mount platform disk I/O — Windows + Linux"`
+- [x] `disk_open(path, partition_index)` — open device or image, locate partition via GPT
+- [x] `disk_read_sectors(lba, count, buf)` — read sectors within partition
+- [x] `disk_write_sectors(lba, count, buf)` — write sectors
+- [x] `disk_close()` — flush and close
+- [x] Linux: `fopen` + `fseeko` / `fread` / `fwrite`
+- [x] GPT parser: find partition by index, get start LBA and size
+- [x] Commit: `"sdk: ixfs-mount platform disk I/O with GPT parser"`
 
-**Test checkpoint (Linux + Windows):**
-- `disk_open("build/system-disk.img", 2)` succeeds — GPT parsed, partition 2 found
+**Test checkpoint (Linux):**
+- `disk_open("build/system-disk.img", 2)` succeeds — GPT parsed, partition 2 found at offset 68157440
 - `disk_read_sectors(0, 1, buf)` returns 512 bytes with `0x49584653` at offset 0 (IXFS magic)
-- Linux: `open()` + `pread()` path works; Windows: `CreateFile()` + `ReadFile()` path works
 
 ## 3. Linux FUSE Mount (Read-Only)
 Implement libfuse3 callbacks for read-only mounting.
