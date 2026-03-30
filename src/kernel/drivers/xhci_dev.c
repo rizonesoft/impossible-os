@@ -27,6 +27,15 @@
 
 static struct xhci_device devices[XHCI_MAX_DEVICES];
 
+/* Debug: tracks how far USB enumeration got (readable from diagnostic splash)
+ * 0=no device, 1=CCS detected, 2=port reset, 3=slot enabled, 4=addressed,
+ * 5=descriptor, 6=configured, 7=MSC identified, 8=MSC init done */
+static int g_usb_enum_stage = 0;
+static int g_usb_ccs_count = 0;
+
+int xhci_get_enum_stage(void) { return g_usb_enum_stage; }
+int xhci_get_ccs_count(void)  { return g_usb_ccs_count; }
+
 /* ---- MMIO / memory helpers ----------------------------------------------- */
 
 static inline uint32_t dev_read32(volatile uint8_t *base, uint32_t offset)
@@ -426,6 +435,7 @@ static int xhci_enumerate_device(struct xhci_controller *hc,
         return -1;
     }
 
+    g_usb_enum_stage = 2;  /* port reset complete */
     klog(LOG_DEBUG, "usb", "Port %u: reset complete, speed=%s",
          (uint64_t)port, speed_to_str(speed));
 
@@ -443,6 +453,7 @@ static int xhci_enumerate_device(struct xhci_controller *hc,
              (uint64_t)cc, (uint64_t)slot_id);
         return -1;
     }
+    g_usb_enum_stage = 3;  /* slot enabled */
     klog(LOG_DEBUG, "usb", "Slot %u enabled for port %u",
          (uint64_t)slot_id, (uint64_t)port);
 
@@ -549,6 +560,7 @@ static int xhci_enumerate_device(struct xhci_controller *hc,
              (uint64_t)slot_id, (uint64_t)cc);
         return -1;
     }
+    g_usb_enum_stage = 4;  /* device addressed */
     klog(LOG_DEBUG, "usb", "Device addressed (slot %u)", (uint64_t)slot_id);
 
     /* ---- Step 6: GET_DESCRIPTOR (Device, 18 bytes) ---- */
@@ -599,6 +611,7 @@ static int xhci_enumerate_device(struct xhci_controller *hc,
              * QEMU's xHCI is lenient about this. */
         }
 
+        g_usb_enum_stage = 5;  /* device descriptor received */
         klog(LOG_INFO, "usb",
              "Device descriptor: USB %x.%02x, VID=%04x PID=%04x, "
              "MaxPkt0=%u, %u configs",
@@ -696,6 +709,7 @@ static int xhci_enumerate_device(struct xhci_controller *hc,
                  (uint64_t)slot_id);
             return -1;
         }
+        g_usb_enum_stage = 6;  /* configured */
         klog(LOG_DEBUG, "usb", "Configuration %u set (slot %u)",
              (uint64_t)dev->config_value, (uint64_t)slot_id);
     }
@@ -704,10 +718,13 @@ static int xhci_enumerate_device(struct xhci_controller *hc,
      * Walk config descriptor to find MSC BOT interface, extract Bulk-IN/OUT
      * endpoints, allocate Transfer Rings, and issue Configure Endpoint. */
     xhci_msc_identify(hc, dev);
+    if (dev->is_msc) g_usb_enum_stage = 7;  /* MSC identified */
 
     /* ---- Step 10: MSC BOT initialization (INQUIRY + READ CAPACITY) ---- */
-    if (dev->is_msc)
-        usb_msc_init(hc, dev);
+    if (dev->is_msc) {
+        if (usb_msc_init(hc, dev) == 0)
+            g_usb_enum_stage = 8;  /* MSC init complete */
+    }
 
     /* ---- Enumeration complete ---- */
     dev->active = 1;
@@ -935,6 +952,8 @@ int xhci_enumerate_ports(struct xhci_controller *hc)
 
         speed = (portsc & XHCI_PORTSC_SPEED_MASK) >> XHCI_PORTSC_SPEED_SHIFT;
 
+        g_usb_ccs_count++;
+        g_usb_enum_stage = 1;  /* CCS detected */
         klog(LOG_INFO, "usb", "Port %u: device connected, speed=%s",
              (uint64_t)port, speed_to_str(speed));
 

@@ -255,3 +255,7 @@ int xhci_msc_device_count(void);
 
 /* Get the global array index of the N-th MSC device (0-based). Returns -1 if not found. */
 int xhci_msc_device_index(int nth);
+
+/* Debug: USB enumeration progress (0-8) and CCS port count */
+int xhci_get_enum_stage(void);
+int xhci_get_ccs_count(void);

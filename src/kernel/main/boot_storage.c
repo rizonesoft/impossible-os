@@ -141,8 +141,12 @@ void boot_phase2(void)
             diag[p++] = '0' + (char)(blk_n > 9 ? 9 : blk_n);
             s = " C:="; while (*s) diag[p++] = *s++;
             s = vfs_is_mounted('C') ? "Y" : "N"; while (*s) diag[p++] = *s++;
-            s = " D:="; while (*s) diag[p++] = *s++;
-            s = vfs_is_mounted('D') ? "Y" : "N"; while (*s) diag[p++] = *s++;
+            s = " ccs="; while (*s) diag[p++] = *s++;
+            diag[p++] = '0' + (char)xhci_get_ccs_count();
+            s = " stg="; while (*s) diag[p++] = *s++;
+            diag[p++] = '0' + (char)xhci_get_enum_stage();
+            s = " C:="; while (*s) diag[p++] = *s++;
+            s = vfs_is_mounted('C') ? "Y" : "N"; while (*s) diag[p++] = *s++;
         }
         diag[p] = '\0';
         boot_splash_status(diag);
