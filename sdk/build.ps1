@@ -323,8 +323,8 @@ foreach ($dir in $toolDirs) {
     Write-Host "$name" -ForegroundColor Cyan -NoNewline
     Write-Host "..." -NoNewline
 
-    # SHELL=cmd.exe prevents mingw32-make from using /usr/bin/sh (WSL)
-    $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" SHELL=cmd.exe --no-print-directory 2>&1
+    # SHELL=cmd.exe is set in the Makefile for Windows builds
+    $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" --no-print-directory 2>&1
     $buildRC = $LASTEXITCODE
 
     $toolTimer.Stop()

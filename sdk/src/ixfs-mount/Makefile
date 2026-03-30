@@ -7,6 +7,7 @@ CORE_HDR = ixfs-core.h ixfs-disk.h ixfs-structs.h
 
 # Detect Windows (mingw32-make sets OS=Windows_NT)
 ifeq ($(OS),Windows_NT)
+  SHELL = cmd.exe
   EXE = .exe
   RM = del /q
 
