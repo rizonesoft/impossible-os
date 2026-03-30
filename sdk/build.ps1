@@ -100,32 +100,20 @@ $SevenZipUrl  = "https://7-zip.org/a/7zr.exe"
 function Download-WithProgress {
     param([string]$Url, [string]$OutFile, [string]$Label)
 
+    Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
+
     if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-        Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
-        # Use default curl progress (not --progress-bar which can show garbled chars)
-        & curl.exe -L -# -o $OutFile $Url 2>&1 | ForEach-Object {
-            # curl outputs progress to stderr; just let it flow
-        }
-        # Check if download succeeded
+        # Let curl write progress directly to console (no piping)
+        $curlArgs = @("-L", "-o", $OutFile, $Url)
+        Start-Process -FilePath "curl.exe" -ArgumentList $curlArgs -NoNewWindow -Wait
         if (-not (Test-Path $OutFile) -or (Get-Item $OutFile).Length -eq 0) {
-            throw "Download produced empty or missing file"
+            throw "Download failed or produced empty file"
         }
     } else {
-        # Fallback: PowerShell native with Write-Progress
-        Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
+        # Fallback: PowerShell Write-Progress bar
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $wc = New-Object System.Net.WebClient
-        $dlDone = $false
-        Register-ObjectEvent -InputObject $wc -EventName DownloadProgressChanged -Action {
-            Write-Progress -Activity "Downloading" -Status "$($EventArgs.ProgressPercentage)%" -PercentComplete $EventArgs.ProgressPercentage
-        } | Out-Null
-        Register-ObjectEvent -InputObject $wc -EventName DownloadFileCompleted -Action {
-            $script:dlDone = $true
-        } | Out-Null
-        $wc.DownloadFileAsync([Uri]$Url, $OutFile)
-        while (-not $dlDone) { Start-Sleep -Milliseconds 200 }
-        Write-Progress -Activity "Downloading" -Completed
-        $wc.Dispose()
+        $ProgressPreference = "Continue"
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
     }
 
     if (Test-Path $OutFile) {
