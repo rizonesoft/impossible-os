@@ -308,6 +308,36 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
          (uint64_t)hc->max_intrs,
          (uint64_t)hc->max_scratchpads);
 
+    /* ---- Intel USB port routing (switch ports from EHCI to xHCI) ---- */
+    /* On Intel 7/8/9/100/200/300/400/500 series chipsets, USB ports default
+     * to EHCI. The xHCI PCI config space has routing registers:
+     *   XUSB2PR   (0xD0): USB 2.0 port routing — set bits to route to xHCI
+     *   USB3_PSSEN (0xD8): USB 3.0 port SuperSpeed enable
+     * Writing all-1s routes ALL available ports to xHCI. */
+    {
+        uint16_t vid = pci_read16(bus, dev, func, PCI_VENDOR_ID);
+        if (vid == 0x8086) {  /* Intel only */
+            uint32_t xusb2pr, usb3pssen;
+
+            /* Route all USB 2.0 ports to xHCI */
+            xusb2pr = pci_read32(bus, dev, func, 0xD0);
+            pci_write32(bus, dev, func, 0xD0, xusb2pr | 0xFFFFFFFF);
+            klog(LOG_DEBUG, "xhci", "Intel XUSB2PR: 0x%x -> 0x%x",
+                 (uint64_t)xusb2pr,
+                 (uint64_t)pci_read32(bus, dev, func, 0xD0));
+
+            /* Enable SuperSpeed on all USB 3.0 ports */
+            usb3pssen = pci_read32(bus, dev, func, 0xD8);
+            pci_write32(bus, dev, func, 0xD8, usb3pssen | 0xFFFFFFFF);
+            klog(LOG_DEBUG, "xhci", "Intel USB3_PSSEN: 0x%x -> 0x%x",
+                 (uint64_t)usb3pssen,
+                 (uint64_t)pci_read32(bus, dev, func, 0xD8));
+
+            /* Give ports time to settle after routing change */
+            xhci_delay_us(50000);  /* 50ms for device re-detection */
+        }
+    }
+
     /* Step 11: Enumerate any already-connected devices */
     xhci_enumerate_ports(hc);
 
