@@ -75,15 +75,6 @@ function Format-Elapsed($sw) {
     return "{0:F1}" -f $sw.Elapsed.TotalSeconds
 }
 
-function Write-ProgressBar {
-    param([int]$Percent, [string]$Label)
-    $barWidth = 30
-    $filled = [math]::Floor($barWidth * $Percent / 100)
-    $empty = $barWidth - $filled
-    $bar = ("#" * $filled) + ("-" * $empty)
-    Write-Host "`r       [$bar] ${Percent}% $Label      " -ForegroundColor DarkGray -NoNewline
-}
-
 # -- Toolchain auto-download -----------------------------------------------
 # Downloads MinGW-w64 into sdk/build/ on first run from official sources.
 # WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/.
@@ -96,51 +87,37 @@ $MinGWUrl     = "https://github.com/niXman/mingw-builds-binaries/releases/downlo
 # Official 7-Zip console version (7-zip.org)
 $SevenZipUrl  = "https://7-zip.org/a/7zr.exe"
 
-# Download with progress (ships with Windows 10+)
-function Download-WithProgress {
+function Download-File {
     param([string]$Url, [string]$OutFile, [string]$Label)
 
     Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
-
-    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-        # Let curl write progress directly to console (no piping)
-        $curlArgs = @("-L", "-o", $OutFile, $Url)
-        Start-Process -FilePath "curl.exe" -ArgumentList $curlArgs -NoNewWindow -Wait
-        if (-not (Test-Path $OutFile) -or (Get-Item $OutFile).Length -eq 0) {
-            throw "Download failed or produced empty file"
-        }
-    } else {
-        # Fallback: PowerShell Write-Progress bar
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $ProgressPreference = "Continue"
-        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
-    }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = "SilentlyContinue"
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+    $ProgressPreference = "Continue"
 
     if (Test-Path $OutFile) {
         $sizeMB = [math]::Round((Get-Item $OutFile).Length / 1MB, 1)
-        Write-Host "       Downloaded ${sizeMB} MB" -ForegroundColor DarkGray
+        Write-Host "       Done (${sizeMB} MB)" -ForegroundColor DarkGray
     }
 }
 
 # Step 1: Ensure 7-Zip extractor is available
 function Ensure-7Zip {
-    # Check local sdk/build/7zr.exe first (standalone console extractor)
     $local7z = Join-Path $BuildDir "7zr.exe"
     if (Test-Path $local7z) { return $local7z }
 
-    # Check system 7-Zip
     if (Get-Command 7z.exe -ErrorAction SilentlyContinue) { return "7z.exe" }
     if (Test-Path "C:\Program Files\7-Zip\7z.exe") { return "C:\Program Files\7-Zip\7z.exe" }
     if (Test-Path "C:\Program Files (x86)\7-Zip\7z.exe") { return "C:\Program Files (x86)\7-Zip\7z.exe" }
 
-    # Download 7zr.exe from official 7-zip.org (standalone ~1MB, no installation needed)
     Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
     Write-Host " Downloading 7-Zip extractor (7-zip.org)..."
 
     if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null }
 
     try {
-        Download-WithProgress -Url $SevenZipUrl -OutFile $local7z -Label "7zr.exe"
+        Download-File -Url $SevenZipUrl -OutFile $local7z -Label "7zr.exe"
     } catch {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
         Write-Host "7-Zip download failed: $_"
@@ -174,44 +151,16 @@ function Ensure-MinGW {
     $archive = Join-Path $BuildDir "mingw64.7z"
 
     try {
-        Download-WithProgress -Url $MinGWUrl -OutFile $archive -Label "MinGW-w64 ($MinGWFile)"
+        Download-File -Url $MinGWUrl -OutFile $archive -Label "MinGW-w64 ($MinGWFile)"
     } catch {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
         Write-Host "Download failed: $_"
         Exit-Build 1
     }
 
-    # Extract with progress using Write-Progress (native PowerShell progress bar)
-    Write-Host "       Extracting MinGW-w64..." -ForegroundColor DarkGray
+    Write-Host "       Extracting MinGW-w64 (this takes a minute)..." -ForegroundColor DarkGray
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-
-    # Get archive size for a time-based progress estimate
-    $archiveSize = (Get-Item $archive).Length
-
-    # Run 7zr in background, poll file count in sdk/build/mingw64/ for progress
-    $job = Start-Job -ScriptBlock {
-        param($exe, $arc, $dest)
-        & $exe x $arc "-o$dest" -y 2>&1
-    } -ArgumentList $SevenZip, $archive, $BuildDir
-
-    # MinGW has ~47000 files; poll every 500ms
-    $expectedFiles = 47000
-    while ($job.State -eq "Running") {
-        Start-Sleep -Milliseconds 500
-        $mingwDir = Join-Path $BuildDir "mingw64"
-        if (Test-Path $mingwDir) {
-            # Fast count: just count items in a few key subdirs
-            $count = 0
-            try { $count = (Get-ChildItem $mingwDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count } catch {}
-            $pct = [math]::Min(99, [math]::Floor($count * 100 / $expectedFiles))
-            Write-Progress -Activity "Extracting MinGW-w64" -Status "$count files ($pct%)" -PercentComplete $pct
-        }
-    }
-
-    Receive-Job $job | Out-Null
-    Remove-Job $job
-    Write-Progress -Activity "Extracting MinGW-w64" -Completed
-
+    & $SevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
     $sw.Stop()
     Write-Host "       Extracted in $("{0:F1}" -f $sw.Elapsed.TotalSeconds)s" -ForegroundColor DarkGray
 
@@ -229,7 +178,6 @@ function Ensure-MinGW {
 }
 
 # Auto-download MinGW if needed (skip during clean)
-# WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/
 if (-not $clean) {
     $SevenZip = Ensure-7Zip
     Ensure-MinGW -SevenZip $SevenZip
