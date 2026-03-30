@@ -54,8 +54,6 @@ static void fill_file_info(FSP_FSCTL_FILE_INFO *fi, const struct ixfs_inode *ino
         fi->FileAttributes = FILE_ATTRIBUTE_DIRECTORY;
     else
         fi->FileAttributes = FILE_ATTRIBUTE_NORMAL;
-    if (!g_vol->bitmap)
-        fi->FileAttributes |= FILE_ATTRIBUTE_READONLY;
     fi->FileSize = inode->i_size;
     fi->AllocationSize = (UINT64)inode->i_blocks * IXFS_BLOCK_SIZE;
     fi->CreationTime = unix_to_wintime(inode->i_ctime);
@@ -171,7 +169,6 @@ static NTSTATUS ixfs_GetSecurityByName(FSP_FILE_SYSTEM *FileSystem,
 {
     struct ixfs_inode inode;
     uint32_t ino;
-    DWORD sd_len;
 
     (void)FileSystem;
 
@@ -181,9 +178,9 @@ static NTSTATUS ixfs_GetSecurityByName(FSP_FILE_SYSTEM *FileSystem,
 
     if (PFileAttributes) {
         if (inode.i_mode & IXFS_S_DIR)
-            *PFileAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY;
+            *PFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
         else
-            *PFileAttributes = FILE_ATTRIBUTE_READONLY;
+            *PFileAttributes = FILE_ATTRIBUTE_NORMAL;
     }
 
     if (PSecurityDescriptorSize) {
@@ -537,7 +534,7 @@ static VOID ixfs_Cleanup_rw(FSP_FILE_SYSTEM *FileSystem,
 
 static FSP_FILE_SYSTEM_INTERFACE ixfs_winfsp_interface = {
     .GetVolumeInfo = ixfs_GetVolumeInfo,
-    .GetSecurityByName = 0,
+    .GetSecurityByName = ixfs_GetSecurityByName,
     .Create = ixfs_Create,
     .Open = ixfs_Open,
     .Close = ixfs_Close,
@@ -622,7 +619,21 @@ int main(int argc, char *argv[])
             (unsigned long long)g_vol->sb.s_total_blocks,
             rw ? "R/W" : "read-only");
 
-    /* No security descriptors — PersistentAcls=0 tells WinFsp to skip ACL checks */
+    /* Create a self-relative security descriptor (Everyone: full control)
+     * SDDL: D:P(A;;GA;;;WD) = DACL protected, Allow Generic All to Everyone */
+    {
+        PSECURITY_DESCRIPTOR sd = NULL;
+        ULONG sdLen = 0;
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
+                "D:P(A;;GA;;;WD)", SDDL_REVISION_1, &sd, &sdLen)) {
+            fprintf(stderr, "Failed to create security descriptor (error %lu)\n", GetLastError());
+            ixfs_close(g_vol);
+            disk_close(disk);
+            return 1;
+        }
+        g_security_desc = sd;
+        g_security_desc_len = sdLen;
+    }
 
     /* Set up volume parameters */
     memset(&vol_params, 0, sizeof(vol_params));
