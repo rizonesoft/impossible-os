@@ -56,5 +56,8 @@ compile_commands.json
 sdk/tools/*
 !sdk/tools/.gitkeep
 
-# SDK downloaded build tools (MinGW, WinFsp SDK — auto-downloaded by build.ps1)
+# SDK downloaded build tools
 sdk/build/
+
+# Extracted debug logs
+debug/
