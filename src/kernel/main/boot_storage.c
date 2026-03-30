@@ -132,7 +132,7 @@ void boot_phase2(void)
         diag[p] = '\0';
         boot_splash_status(diag);
         klog(LOG_WARN, "boot", "DIAG: %s", diag);
-        sleep_ms(5000);
+        sleep_ms(30000);
 
         /* Line 2: list block device names */
         p = 0;
@@ -167,7 +167,7 @@ void boot_phase2(void)
         diag[p] = '\0';
         boot_splash_status(diag);
         klog(LOG_WARN, "boot", "DIAG: %s", diag);
-        sleep_ms(5000);
+        sleep_ms(30000);
     }
 
     boot_splash_status("Checking boot flags...");
