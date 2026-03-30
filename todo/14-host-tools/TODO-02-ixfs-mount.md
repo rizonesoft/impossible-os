@@ -68,7 +68,7 @@ sdk/tools/                  # Compiled output (gitignored)
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | Shared IXFS core parser                        | —          |  [x]   |
 | 💎  |   2   | Platform disk I/O layer                        | §1         |  [x]   |
-| 💎  |   3   | Linux FUSE mount (read-only)                   | §2         |  [ ]   |
+| 💎  |   3   | Linux FUSE mount (read-only)                   | §2         |  [x]   |
 | 💎  |   4   | Windows WinFsp mount (read-only)               | §2         |  [ ]   |
 | 💎  |   5   | Write support (both platforms)                 | §3, §4     |  [ ]   |
 | 💎  |   6   | USB auto-mount scripts                         | §3, §4     |  [ ]   |
@@ -117,14 +117,14 @@ Implement libfuse3 callbacks for read-only mounting.
 
 **Files:** `sdk/src/ixfs-mount/ixfs-fuse-linux.c`, `Makefile`
 
-- [ ] `fuse_getattr` — stat from inode
-- [ ] `fuse_readdir` — enumerate directory
-- [ ] `fuse_open` — validate file access
-- [ ] `fuse_read` — read file data via extent lookup
-- [ ] Command: `ixfs-mount /dev/sdb2 /mnt/ixfs` or `ixfs-mount build/system-disk.img:2 /mnt/ixfs`
-- [ ] `fusermount -u /mnt/ixfs` for unmount
-- [ ] Makefile: `gcc -O2 ixfs-core.c ixfs-disk.c ixfs-fuse-linux.c -lfuse3 -o ../../tools/ixfs-mount`
-- [ ] Commit: `"sdk: ixfs-mount Linux FUSE read-only mount"`
+- [x] `fuse_getattr` — stat from inode
+- [x] `fuse_readdir` — enumerate directory
+- [x] `fuse_open` — validate file access (read-only enforced)
+- [x] `fuse_read` — read file data via extent lookup
+- [x] Command: `ixfs-mount build/system-disk.img:2 /mnt/ixfs`
+- [x] `fusermount -u /mnt/ixfs` for unmount
+- [x] Makefile: conditional build — skips ixfs-mount if libfuse3-dev missing
+- [x] Commit: `"sdk: ixfs-mount Linux FUSE read-only mount"`
 
 **Test checkpoint (Linux):**
 - `./ixfs-mount build/system-disk.img:2 /mnt/ixfs` — mounts without error
