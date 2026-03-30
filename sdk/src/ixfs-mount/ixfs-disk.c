@@ -10,6 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#endif
+
 #define SECTOR_SIZE 512
 
 /* --- GPT structures --- */
@@ -107,21 +113,47 @@ static int gpt_find_partition(FILE *fp, int partition_index,
 
 /* --- Public API --- */
 
+/* Open a file or raw device for binary I/O */
+static FILE *open_path(const char *path, int want_write)
+{
+#ifdef _WIN32
+    /* On Windows, \\.\PhysicalDriveN requires CreateFile */
+    if (path[0] == '\\' && path[1] == '\\' && path[2] == '.' && path[3] == '\\') {
+        DWORD access = GENERIC_READ | (want_write ? GENERIC_WRITE : 0);
+        HANDLE h = CreateFileA(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               NULL, OPEN_EXISTING, 0, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            NULL, OPEN_EXISTING, 0, NULL);
+        }
+        if (h == INVALID_HANDLE_VALUE) {
+            fprintf(stderr, "%s: cannot open device (error %lu)\n", path, GetLastError());
+            return NULL;
+        }
+        int fd = _open_osfhandle((intptr_t)h, want_write ? _O_RDWR : _O_RDONLY);
+        if (fd < 0) { CloseHandle(h); return NULL; }
+        FILE *fp = _fdopen(fd, want_write ? "r+b" : "rb");
+        if (!fp) { _close(fd); return NULL; }
+        return fp;
+    }
+#else
+    (void)want_write;
+#endif
+    FILE *fp = fopen(path, "r+b");
+    if (!fp) fp = fopen(path, "rb");
+    if (!fp) perror(path);
+    return fp;
+}
+
 ixfs_disk_ctx_t *disk_open(const char *path, int partition_index)
 {
     FILE *fp;
     uint64_t start_lba, sector_count;
     ixfs_disk_ctx_t *disk;
 
-    fp = fopen(path, "r+b");
-    if (!fp) {
-        /* Try read-only */
-        fp = fopen(path, "rb");
-        if (!fp) {
-            perror(path);
-            return NULL;
-        }
-    }
+    fp = open_path(path, 1);
+    if (!fp)
+        return NULL;
 
     if (gpt_find_partition(fp, partition_index, &start_lba, &sector_count) != 0) {
         fclose(fp);
