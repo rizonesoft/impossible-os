@@ -388,10 +388,11 @@ foreach ($dir in $toolDirs) {
         $winfspArg = "WINFSP_DIR=$winfspSystem"
     }
 
+    # SHELL=cmd.exe prevents mingw32-make from using /usr/bin/sh (WSL) which mangles Windows paths
     if ($winfspArg) {
-        $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" $winfspArg --no-print-directory 2>&1
+        $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" $winfspArg SHELL=cmd.exe --no-print-directory 2>&1
     } else {
-        $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" --no-print-directory 2>&1
+        $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" SHELL=cmd.exe --no-print-directory 2>&1
     }
     $buildRC = $LASTEXITCODE
 
