@@ -287,26 +287,30 @@ static BOOLEAN guid_equal(const EFI_GUID *a, const EFI_GUID *b)
 }
 
 /* --- Boot debug log buffer (captures all serial output for ESP write) --- */
-#define BOOT_LOG_SIZE (32 * 1024)
-static char *boot_log_buf = 0;
+#define BOOT_LOG_SIZE (16 * 1024)
+static char boot_log_static[BOOT_LOG_SIZE];  /* Static fallback — always available */
+static char *boot_log_buf = boot_log_static;
 static UINTN boot_log_pos = 0;
-static UINTN boot_log_cap = 0;
+static UINTN boot_log_cap = BOOT_LOG_SIZE;
 
 static void boot_log_init(void)
 {
-    /* Allocate from UEFI pool — avoids BSS address issues on some firmware */
+    /* Try UEFI pool allocation; if it fails, static buffer is already in use */
     EFI_STATUS status;
-    status = gBS->AllocatePool(EfiLoaderData, BOOT_LOG_SIZE, (VOID **)&boot_log_buf);
-    if (!EFI_ERROR(status) && boot_log_buf) {
-        boot_log_cap = BOOT_LOG_SIZE;
+    char *pool_buf = 0;
+    status = gBS->AllocatePool(EfiLoaderData, BOOT_LOG_SIZE, (VOID **)&pool_buf);
+    if (!EFI_ERROR(status) && pool_buf) {
+        /* Copy anything already captured to the pool buffer */
         UINTN i;
-        for (i = 0; i < BOOT_LOG_SIZE; i++) boot_log_buf[i] = 0;
+        for (i = 0; i < boot_log_pos; i++) pool_buf[i] = boot_log_static[i];
+        for (; i < BOOT_LOG_SIZE; i++) pool_buf[i] = 0;
+        boot_log_buf = pool_buf;
     }
+    /* If AllocatePool failed, boot_log_buf stays pointing to boot_log_static */
 }
 
 static void boot_log_append(const char *s)
 {
-    if (!boot_log_buf) return;
     while (*s && boot_log_pos < boot_log_cap - 1)
         boot_log_buf[boot_log_pos++] = *s++;
 }
@@ -404,10 +408,10 @@ static void write_boot_debug_log(void)
         return;
     }
 
-    /* Create/overwrite boot-debug.log on the EFI System Partition */
+    /* Create boot-debug.log in ESP root (not inside \EFI\ — some firmware restricts writes there) */
     status = root_dir->Open(
         root_dir, &log_file,
-        u"\\EFI\\BOOT\\boot-debug.log",
+        u"\\boot-debug.log",
         EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0
     );
     if (EFI_ERROR(status)) {
