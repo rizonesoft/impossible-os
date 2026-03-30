@@ -14,6 +14,8 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
+#include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
 
 /* ---- Static state -------------------------------------------------------- */
 
@@ -67,6 +69,74 @@ static void xhci_delay_us(uint32_t us)
     uint32_t i;
     for (i = 0; i < us; i++)
         __asm__ volatile("outb %%al, $0x80" ::: "memory");
+}
+
+/* ---- BIOS/OS handoff (xHCI spec §4.22.1) -------------------------------- */
+
+/* Perform USBLEGSUP handoff: take xHCI ownership from BIOS/firmware.
+ * Must be called BEFORE halt/reset so firmware can clean up gracefully.
+ * The Extended Capabilities list starts at HCCPARAMS1 bits 31:16 (dword offset
+ * from MMIO base).  We search for capability ID 1 (USB Legacy Support). */
+static void xhci_bios_handoff(struct xhci_controller *hc)
+{
+    uint32_t hccparams1 = xhci_read32(hc->mmio_base, XHCI_CAP_HCCPARAMS1);
+    uint32_t xecp_off = ((hccparams1 >> 16) & 0xFFFF) << 2;  /* dword → byte offset */
+
+    if (xecp_off == 0) {
+        klog(LOG_DEBUG, "xhci", "No extended capabilities — skipping BIOS handoff");
+        return;
+    }
+
+    /* Walk the extended capabilities linked list */
+    uint32_t max_iter = 64;  /* safety limit */
+    while (xecp_off != 0 && max_iter-- > 0) {
+        uint32_t cap = xhci_read32(hc->mmio_base, xecp_off);
+        uint8_t  cap_id   = (uint8_t)(cap & 0xFF);
+        uint8_t  next_ptr = (uint8_t)((cap >> 8) & 0xFF);
+
+        if (cap_id == 1) {  /* USB Legacy Support (USBLEGSUP) */
+            /* Check if BIOS owns the controller (bit 16 = HC BIOS Owned Semaphore) */
+            if (!(cap & (1 << 16))) {
+                klog(LOG_DEBUG, "xhci", "BIOS does not own controller — no handoff needed");
+                return;
+            }
+
+            klog(LOG_DEBUG, "xhci", "USBLEGSUP at offset 0x%x — requesting ownership",
+                 (uint64_t)xecp_off);
+
+            /* Set HC OS Owned Semaphore (bit 24) */
+            xhci_write32(hc->mmio_base, xecp_off, cap | (1 << 24));
+
+            /* Wait up to 1s for BIOS Owned Semaphore (bit 16) to clear */
+            uint32_t timeout = 1000;
+            while (timeout > 0) {
+                cap = xhci_read32(hc->mmio_base, xecp_off);
+                if (!(cap & (1 << 16))) {
+                    klog(LOG_INFO, "xhci", "BIOS handoff complete");
+                    /* Clear any legacy SMI enables (USBLEGCTLSTS at xecp_off + 4) */
+                    xhci_write32(hc->mmio_base, xecp_off + 4, 0);
+                    return;
+                }
+                xhci_delay_us(1000);  /* 1ms */
+                timeout--;
+            }
+
+            /* Timeout — force-clear BIOS bit and proceed */
+            klog(LOG_WARN, "xhci", "BIOS handoff timeout — forcing ownership");
+            cap |= (1 << 24);         /* OS owned */
+            cap &= ~(1 << 16);        /* Clear BIOS owned */
+            xhci_write32(hc->mmio_base, xecp_off, cap);
+            xhci_write32(hc->mmio_base, xecp_off + 4, 0);
+            return;
+        }
+
+        /* Advance to next capability (next_ptr is dword offset) */
+        if (next_ptr == 0)
+            break;
+        xecp_off += (uint32_t)next_ptr << 2;
+    }
+
+    klog(LOG_DEBUG, "xhci", "USBLEGSUP not found — no BIOS handoff needed");
 }
 
 /* ---- PCI discovery ------------------------------------------------------- */
@@ -165,6 +235,36 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     klog(LOG_INFO, "xhci",
          "Found controller at PCI %02x:%02x.%x, MMIO @ 0x%x",
          (uint64_t)bus, (uint64_t)dev, (uint64_t)func, mmio_phys);
+
+    /* ---- BIOS/OS handoff — BEFORE halt/reset (xHCI spec §4.22.1) ---- */
+    POST16(0xD750);
+    xhci_bios_handoff(hc);
+
+    /* ---- §5 Phase B: Log pre-enumerated USB device inventory ---- */
+    /* If the bootloader discovered USB devices via EFI_USB_IO_PROTOCOL,
+     * log the inventory.  We still halt/reset the controller because
+     * firmware DMA buffers (DCBAA, device contexts) live in freed
+     * EfiBootServicesData memory.  But we skip the 500ms Intel port
+     * routing delay since firmware already routed ports, and we use
+     * boot_info geometry to skip INQUIRY/READ_CAPACITY for MSC. */
+    if (g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0) {
+        uint32_t bi;
+        klog(LOG_INFO, "xhci",
+             "Bootloader pre-enumerated %u USB device(s) — fast-path enabled",
+             (uint64_t)g_boot_info.usb_device_count);
+        for (bi = 0; bi < g_boot_info.usb_device_count; bi++) {
+            const struct boot_usb_device *bd = &g_boot_info.usb_devices[bi];
+            if (!bd->active) continue;
+            klog(LOG_INFO, "xhci", "  boot_info[%u]: VID:%04x PID:%04x class=%u/%u/%u%s%s",
+                 (uint64_t)bi,
+                 (uint64_t)bd->vendor_id, (uint64_t)bd->product_id,
+                 (uint64_t)bd->iface_class, (uint64_t)bd->iface_subclass,
+                 (uint64_t)bd->iface_protocol,
+                 bd->is_msc ? " [MSC]" : "",
+                 bd->is_hid ? " [HID]" : "");
+        }
+    }
+    POST16(0xD751);
 
     /* ---- §1.2: Controller initialization sequence ---- */
 
@@ -333,12 +433,16 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                  (uint64_t)usb3pssen,
                  (uint64_t)pci_read32(bus, dev, func, 0xD8));
 
-            /* Wait for devices to appear after routing change.
-             * Fixed 500ms delay — polling was unreliable on real Intel hardware.
-             * The i/o port 0x80 busy-wait timing may not be accurate enough
-             * for 1ms granularity, and devices need time to fully re-initialize
-             * after EHCI->xHCI ownership transfer. */
-            xhci_delay_us(500000);
+            /* §5 Phase B optimization: if bootloader already discovered USB
+             * devices, firmware routed ports before ExitBootServices — skip
+             * the 500ms post-routing delay.  Otherwise, wait for devices to
+             * appear after the EHCI→xHCI ownership transfer. */
+            if (g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0) {
+                klog(LOG_INFO, "xhci",
+                     "Firmware pre-routed ports — skipping 500ms delay");
+            } else {
+                xhci_delay_us(500000);
+            }
         }
     }
 

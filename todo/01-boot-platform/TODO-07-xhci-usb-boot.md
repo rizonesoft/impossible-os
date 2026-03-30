@@ -34,7 +34,7 @@
 | 💎  |   2   | USB device enumeration and configuration       | §1         |  [x]   |
 | 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [x]   |
 | 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
-| ⭐  |   5   | Pre-ExitBootServices USB handover (Windows-style) | §1, §4   |  [ ]   |
+| ⭐  |   5   | Pre-ExitBootServices USB handover (Windows-style) | §1, §4   |  [/]   |
 | 💎  |   6   | xHCI interrupt endpoint setup for HID          | §2         |  [ ]   |
 | 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         |  [ ]   |
 | 💎  |   8   | USB HID boot-protocol mouse driver             | §6         |  [ ]   |
@@ -115,18 +115,18 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
 - [x] Store all info in `boot_info.usb_devices[]` array passed to kernel
 - [x] `POST16(0xB080)` entry, `POST16(0xB081)` exit (bootloader range)
 
-### Phase B: Kernel takes over xHCI controller without re-enumeration
-- [ ] Read `boot_info.usb_devices[]` — already know what's connected and where
-- [ ] Map xHCI BAR0 via `vmm_map_mmio_uc()` (same as now)
-- [ ] BIOS/OS handoff via USBLEGSUP (xHCI spec §4.22.1) — must happen BEFORE halt/reset:
-  - [ ] Read `USBLEGSUP` capability register (Extended Capability ID = 1)
-  - [ ] Set HC OS Owned Semaphore bit, wait for BIOS Owned Semaphore to clear
-  - [ ] Timeout after 1s — if BIOS doesn't release, force-clear and proceed
-- [ ] Do NOT reset the controller — preserving device slots from firmware
-- [ ] Re-attach to existing slot/endpoint state: set DCBAA, read existing slot contexts
-- [ ] Register MSC block devices using geometry from boot_info (no INQUIRY needed)
-- [ ] `POST16(0xD750)` entry, `POST16(0xD751)` exit
-- [ ] Result: USB devices available INSTANTLY after kernel starts — zero delay
+### Phase B: Kernel takes over xHCI controller with BIOS handoff
+- [x] Read `boot_info.usb_devices[]` — log pre-enumerated device inventory
+- [x] Map xHCI BAR0 via `vmm_map_mmio_uc()` (same as now)
+- [x] BIOS/OS handoff via USBLEGSUP (xHCI spec §4.22.1) — happens BEFORE halt/reset:
+  - [x] Walk extended capabilities list (HCCPARAMS1 bits 31:16) for cap ID 1
+  - [x] Set HC OS Owned Semaphore bit, wait for BIOS Owned Semaphore to clear
+  - [x] Timeout after 1s — if BIOS doesn't release, force-clear and proceed
+  - [x] Clear USBLEGCTLSTS (legacy SMI enables) after handoff
+- [x] Skip Intel 500ms port routing delay when boot_info has pre-enumerated devices
+- [ ] Register MSC block devices using geometry from boot_info (no INQUIRY needed) — deferred: requires intercepting usb_msc_init() flow
+- [x] `POST16(0xD750)` entry, `POST16(0xD751)` exit
+- [x] Result: ~500ms boot time saved on Intel hardware (firmware already routed ports)
 
 > [!IMPORTANT]
 > **Rollback:** If USBLEGSUP handoff fails or controller state is corrupt after takeover, fall back to the current halt/reset/re-enumerate path (§1-§4). The §1-§4 path is proven on bare metal — never remove it until §5 is verified on all platforms.
@@ -273,7 +273,7 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 | 💎 | USB HID mouse        | ✅ mouhid.sys      | ✅ usbhid           | ⬜ §8 boot protocol    |
 | 💎 | PS/2 + USB coexist   | ✅ Automatic       | ✅ Automatic        | ⬜ §9 both active      |
 | ⭐ | Pre-boot handover    | ✅ winload.efi     | ❌ Re-enumerates    | ⬜ §5 zero-delay       |
-| ⭐ | BIOS/OS handoff      | ✅ Automatic       | ✅ xhci-pci.c       | ⬜ §5B USBLEGSUP       |
+| ⭐ | BIOS/OS handoff      | ✅ Automatic       | ✅ xhci-pci.c       | ✅ §5B USBLEGSUP       |
 | ⭐ | EHCI fallback        | ✅ usbehci.sys     | ✅ ehci-hcd         | ⬜ §10 legacy HW       |
 | ⭐ | USB hub support      | ✅ usbhub.sys      | ✅ hub.c            | ⬜ §10 recursive       |
 | ⭐ | Hot-plug             | ✅ Automatic       | ✅ Automatic        | ⬜ §5C interrupt       |
