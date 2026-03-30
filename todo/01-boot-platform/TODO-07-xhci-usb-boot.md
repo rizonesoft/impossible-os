@@ -37,7 +37,7 @@
 | 💎  |   2   | USB device enumeration and configuration       | §1         |  [x]   |
 | 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [x]   |
 | 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
-| ⭐  |   5   | Interrupt-driven port detection + Intel routing | §1         |  [ ]   |
+| ⭐  |   5   | Pre-ExitBootServices USB handover (Windows-style) | §1       |  [ ]   |
 | 💎  |   6   | xHCI interrupt endpoint setup for HID          | §2         |  [ ]   |
 | 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         |  [ ]   |
 | 💎  |   8   | USB HID boot-protocol mouse driver             | §6         |  [ ]   |
@@ -101,22 +101,39 @@ Register USB MSC devices as block devices so VFS can mount filesystems from USB 
 
 **Test checkpoint:** `bash scripts/build.sh run-usb` — USB drive visible, partition scanned, filesystem mounted. Bare metal: boot from USB, C:\ accessible. POST code 0xD703.
 
-## 5. Interrupt-Driven Port Detection and Intel Port Routing
-Replace the fixed 500ms delay after Intel EHCI-to-xHCI port routing with proper interrupt-driven port status change detection. Currently works but wastes 500ms on every boot.
+## 5. Pre-ExitBootServices USB Handover (Windows-Style)
+Discover USB devices using UEFI firmware's own USB stack BEFORE ExitBootServices, then seamlessly hand over to our kernel xHCI driver. This eliminates the 500ms port routing delay, Intel-specific hacks, and the entire re-enumeration-from-scratch problem.
 
-**Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/xhci_ring.c`
+This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` while firmware USB is still active. After ExitBootServices, the drivers take over with full knowledge of what's connected.
 
-- [ ] Register xHCI MSI/MSI-X interrupt handler during controller init
-- [ ] After Intel port routing (XUSB2PR + USB3_PSSEN), enable Port Status Change Events
-- [ ] ISR reads Event Ring for TRB type 34 (Port Status Change Event)
-- [ ] On PSC event: identify port, read PORTSC, start enumeration if CCS=1
-- [ ] Remove the fixed 500ms `xhci_delay_us()` — interrupt fires within ~50ms
-- [ ] Fallback: if no interrupt after 1s, fall back to PORTSC polling (non-Intel or broken MSI)
-- [ ] Non-Intel xHCI controllers: skip port routing, rely on normal CCS detection
-- [ ] Hot-plug support: same ISR handles devices connected after boot
-- [ ] Commit: `"drivers: xHCI interrupt-driven port detection — replace 500ms delay"`
+**Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `src/kernel/drivers/xhci.c`
 
-**Test checkpoint:** Boot from USB — device detected via interrupt within 50ms (vs 500ms fixed delay). Serial log shows `xhci: PSC event on port N`. Hot-plug: plug USB drive after boot, device appears. QEMU `run-usb` still works.
+### Phase A: Bootloader discovers USB devices via UEFI protocols (before ExitBootServices)
+- [ ] Use `EFI_USB_IO_PROTOCOL` to enumerate all USB devices while firmware is active
+- [ ] For each USB device: read device descriptor (VID, PID, class, endpoints)
+- [ ] Identify MSC devices (class 0x08, subclass 0x06, protocol 0x50)
+- [ ] For MSC devices: read the disk geometry (sector count, sector size) via SCSI INQUIRY + READ CAPACITY through `EFI_BLOCK_IO_PROTOCOL`
+- [ ] Record xHCI controller PCI location (bus:dev.func) and BAR0 address
+- [ ] Record each USB device: port, speed, slot, endpoints, MSC geometry
+- [ ] Store all info in `boot_info.usb_devices[]` array passed to kernel
+
+### Phase B: Kernel takes over xHCI controller without re-enumeration
+- [ ] Read `boot_info.usb_devices[]` — already know what's connected and where
+- [ ] Map xHCI BAR0 via `vmm_map_mmio_uc()` (same as now)
+- [ ] BIOS/OS handoff via USBLEGSUP — take ownership from firmware
+- [ ] Do NOT reset the controller — preserving device slots from firmware
+- [ ] Re-attach to existing slot/endpoint state: set DCBAA, read existing slot contexts
+- [ ] Register MSC block devices using geometry from boot_info (no INQUIRY needed)
+- [ ] Result: USB devices available INSTANTLY after kernel starts — zero delay
+
+### Phase C: Interrupt-driven hot-plug (post-boot)
+- [ ] Register xHCI MSI interrupt handler
+- [ ] ISR reads Event Ring for Port Status Change Events (TRB type 34)
+- [ ] New device connected after boot → full enumeration (slot enable, address, etc.)
+- [ ] Device removed → clean up slot, unregister block device
+- [ ] Commit: `"boot: pre-ExitBootServices USB handover — zero-delay USB boot"`
+
+**Test checkpoint:** Boot from USB — C:\ mounted within 10ms of kernel start (no 500ms delay). Hot-plug: plug USB drive after boot, device appears within 100ms. Bare metal + QEMU both work. No Intel-specific port routing code needed (firmware already routed ports correctly).
 
 ## 6. xHCI Interrupt Endpoint Setup for HID
 Configure interrupt-IN endpoints for HID devices so the xHCI controller polls them periodically.
