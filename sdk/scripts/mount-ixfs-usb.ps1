@@ -169,16 +169,15 @@ if (-not $proc.HasExited) {
         Write-Host ""
         Write-Host "  Mounted IXFS as $driveLetter" -ForegroundColor Green
         Write-Host ""
-        Write-Host "  The drive is mounted in the admin session." -ForegroundColor DarkGray
-        Write-Host "  To browse: type $driveLetter\ in this window, or open an admin Explorer." -ForegroundColor DarkGray
+        Write-Host "  Unmount: close this window or run unmount-ixfs.bat" -ForegroundColor DarkGray
         Write-Host ""
-        Write-Host "  Quick test:" -ForegroundColor DarkGray
-        Write-Host "    dir $driveLetter\" -ForegroundColor White
+
+        # Open Explorer at the mounted drive
+        Start-Process "explorer.exe" -ArgumentList "$driveLetter\"
+        Write-Host "  Explorer opened at $driveLetter\" -ForegroundColor DarkGray
         Write-Host ""
-        Write-Host "  Unmount: unmount-ixfs.bat" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "  Press any key to keep the mount alive (closing this window unmounts)..."
-        cmd /c "dir $driveLetter\ 2>nul"
+        Write-Host "  Keep this window open -- closing it unmounts the drive."
+        Write-Host "  Press Ctrl+C to unmount."
     } else {
         Write-Host "  Process running but $driveLetter not yet visible" -ForegroundColor Yellow
         Write-Host "  Try: dir $driveLetter\" -ForegroundColor DarkGray
