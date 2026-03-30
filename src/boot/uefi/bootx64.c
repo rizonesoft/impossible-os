@@ -287,31 +287,22 @@ static BOOLEAN guid_equal(const EFI_GUID *a, const EFI_GUID *b)
 }
 
 /* --- Boot debug log buffer (captures all serial output for ESP write) --- */
-#define BOOT_LOG_SIZE (16 * 1024)
-static char boot_log_static[BOOT_LOG_SIZE];  /* Static fallback — always available */
-static char *boot_log_buf = boot_log_static;
+#define BOOT_LOG_SIZE (32 * 1024)
+static char *boot_log_buf = 0;
 static UINTN boot_log_pos = 0;
-static UINTN boot_log_cap = BOOT_LOG_SIZE;
 
 static void boot_log_init(void)
 {
-    /* Try UEFI pool allocation; if it fails, static buffer is already in use */
     EFI_STATUS status;
-    char *pool_buf = 0;
-    status = gBS->AllocatePool(EfiLoaderData, BOOT_LOG_SIZE, (VOID **)&pool_buf);
-    if (!EFI_ERROR(status) && pool_buf) {
-        /* Copy anything already captured to the pool buffer */
-        UINTN i;
-        for (i = 0; i < boot_log_pos; i++) pool_buf[i] = boot_log_static[i];
-        for (; i < BOOT_LOG_SIZE; i++) pool_buf[i] = 0;
-        boot_log_buf = pool_buf;
-    }
-    /* If AllocatePool failed, boot_log_buf stays pointing to boot_log_static */
+    status = gBS->AllocatePool(EfiLoaderData, BOOT_LOG_SIZE, (VOID **)&boot_log_buf);
+    if (EFI_ERROR(status))
+        boot_log_buf = 0;
 }
 
 static void boot_log_append(const char *s)
 {
-    while (*s && boot_log_pos < boot_log_cap - 1)
+    if (!boot_log_buf) return;
+    while (*s && boot_log_pos < BOOT_LOG_SIZE - 1)
         boot_log_buf[boot_log_pos++] = *s++;
 }
 
