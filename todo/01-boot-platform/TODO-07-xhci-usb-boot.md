@@ -202,6 +202,15 @@ Make USB boot work on the vast majority of real hardware: Intel, AMD, third-part
 - [ ] Register as block device via same `usb_msc` layer
 - [ ] This is a significant driver (~1000-2000 lines) — only implement if xHCI is absent
 
+### UHCI/OHCI Legacy Controllers (pre-2008 hardware)
+- [ ] UHCI (prog-if 0x00): Intel/VIA USB 1.x — Frame List + Transfer Descriptors
+- [ ] OHCI (prog-if 0x10): AMD/NEC/others USB 1.x — HCCA + Endpoint Descriptors
+- [ ] Both are USB 1.1 (12 Mbps max) — sufficient for keyboards, mice, and slow storage
+- [ ] Detect at PCI scan: if no xHCI and no EHCI, try UHCI/OHCI
+- [ ] Shared USB device layer: same `usb_msc` + `usb_hid` code on top, different transport
+- [ ] Priority: LOW — only needed for hardware older than ~2008. Log warning if only UHCI/OHCI found.
+- [ ] If not implemented: log `"USB: only UHCI/OHCI found — USB not supported on this hardware"`
+
 ### USB Hub Support
 - [ ] Detect hub devices (class 0x09) during enumeration
 - [ ] Hub descriptor: number of ports, power characteristics
@@ -216,10 +225,13 @@ Make USB boot work on the vast majority of real hardware: Intel, AMD, third-part
 - [ ] Graceful degradation: if xHCI init fails, log and continue (don't hang boot)
 - [ ] Commit: `"drivers: xHCI hardware compatibility — BIOS handoff, AMD, EHCI fallback"`
 
-**Test checkpoint:** Test matrix:
-- Intel desktop (i5-11600K): ✅ verified working with port routing
-- AMD desktop: USB detected without port routing (BIOS handoff only)
-- Laptop with EHCI only: EHCI driver detects and enumerates USB drive
+**Test checkpoint:** Test matrix (diagnostic splash shows `USB:XX` prog-if codes):
+- `USB:30` Intel (i5-11600K): ✅ verified — port routing + 500ms settle
+- `USB:30` AMD: BIOS handoff only, no port routing needed
+- `USB:30,20` Intel (xHCI+EHCI): port routing moves EHCI ports to xHCI
+- `USB:20` EHCI only: EHCI fallback driver handles enumeration
+- `USB:00` UHCI only: log warning, graceful skip (low priority)
+- `USB:10` OHCI only: log warning, graceful skip (low priority)
 - USB hub: device behind hub enumerated
 - QEMU `run-usb`: still works (regression check)
 
