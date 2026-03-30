@@ -117,28 +117,57 @@ void boot_phase2(void)
     if (g_boot_info.config.debug) {
         char diag[256];
         int p = 0;
-        int xhci_n = xhci_controller_count();
         int blk_n = blkdev_count();
-        int c_ok = vfs_is_mounted('C');
-
-        /* Build diagnostic string */
         const char *s;
-        s = "DEBUG: xHCI="; while (*s) diag[p++] = *s++;
-        diag[p++] = '0' + (char)xhci_n;
-        s = " blk="; while (*s) diag[p++] = *s++;
+
+        /* Line 1: block devices and mount status */
+        s = "blk="; while (*s) diag[p++] = *s++;
         diag[p++] = '0' + (char)(blk_n > 9 ? 9 : blk_n);
+        s = " xHCI="; while (*s) diag[p++] = *s++;
+        diag[p++] = '0' + (char)xhci_controller_count();
         s = " C:="; while (*s) diag[p++] = *s++;
-        s = c_ok ? "YES" : "NO"; while (*s) diag[p++] = *s++;
-        s = " B:="; while (*s) diag[p++] = *s++;
-        s = vfs_is_mounted('B') ? "YES" : "NO"; while (*s) diag[p++] = *s++;
+        s = vfs_is_mounted('C') ? "YES" : "NO"; while (*s) diag[p++] = *s++;
         s = " D:="; while (*s) diag[p++] = *s++;
         s = vfs_is_mounted('D') ? "YES" : "NO"; while (*s) diag[p++] = *s++;
         diag[p] = '\0';
-
         boot_splash_status(diag);
-        klog(LOG_WARN, "boot", "%s", diag);
-        klog(LOG_WARN, "boot", "Pausing 10s for diagnostic read...");
-        sleep_ms(10000);
+        klog(LOG_WARN, "boot", "DIAG: %s", diag);
+        sleep_ms(5000);
+
+        /* Line 2: list block device names */
+        p = 0;
+        {
+            int i;
+            for (i = 0; i < blk_n && i < 6; i++) {
+                const struct blkdev *bd = blkdev_get_by_index(i);
+                if (!bd) continue;
+                if (i > 0) diag[p++] = ' ';
+                int j;
+                for (j = 0; bd->name[j] && p < 240; j++)
+                    diag[p++] = bd->name[j];
+                diag[p++] = ':';
+                /* Show size in MB */
+                uint32_t mb = (uint32_t)(bd->sector_count * bd->sector_size / (1024*1024));
+                if (mb >= 1000) {
+                    diag[p++] = '0' + (char)(mb/1000 % 10);
+                    diag[p++] = '0' + (char)(mb/100 % 10);
+                    diag[p++] = '0' + (char)(mb/10 % 10);
+                    diag[p++] = '0' + (char)(mb % 10);
+                } else if (mb >= 100) {
+                    diag[p++] = '0' + (char)(mb/100 % 10);
+                    diag[p++] = '0' + (char)(mb/10 % 10);
+                    diag[p++] = '0' + (char)(mb % 10);
+                } else {
+                    diag[p++] = '0' + (char)(mb/10 % 10);
+                    diag[p++] = '0' + (char)(mb % 10);
+                }
+                diag[p++] = 'M';
+            }
+        }
+        diag[p] = '\0';
+        boot_splash_status(diag);
+        klog(LOG_WARN, "boot", "DIAG: %s", diag);
+        sleep_ms(5000);
     }
 
     boot_splash_status("Checking boot flags...");
