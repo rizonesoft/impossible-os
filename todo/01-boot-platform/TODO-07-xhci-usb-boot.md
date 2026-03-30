@@ -42,7 +42,7 @@
 | 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         |  [ ]   |
 | 💎  |   8   | USB HID boot-protocol mouse driver             | §6         |  [ ]   |
 | 💎  |   9   | Input source priority and coexistence          | §7, §8     |  [ ]   |
-| ⭐  |  10   | Hardware compatibility (90%+ of systems)       | §1, §5     |  [ ]   |
+| ⭐  |  10   | Hardware compatibility (95%+ of systems)       | §1, §5     |  [ ]   |
 
 ---
 
@@ -170,8 +170,8 @@ Ensure PS/2 and USB input sources coexist without conflict.
 
 **Test checkpoint:** System with both PS/2 and USB — both work. USB-only system — works. POST code 0xD707. Test on: QEMU `run-usb`, bare metal.
 
-## 10. Hardware Compatibility — 90%+ of Systems
-Make USB boot work on the vast majority of real hardware: Intel, AMD, third-party xHCI controllers, and systems with only EHCI (no xHCI). Currently only Intel with specific port routing is tested.
+## 10. Hardware Compatibility — 95%+ of Systems
+Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI controllers, EHCI fallback, USB hubs, and BIOS/OS handoff. Currently only Intel with specific port routing is tested.
 
 **Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/ehci.c` (new)
 
