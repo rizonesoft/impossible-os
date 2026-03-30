@@ -1,13 +1,12 @@
 # TODO-01 — SDK Build System
 
-> **Goal:** Create a build system for SDK tools that mirrors the kernel's `scripts/build.sh` experience — progress bars, colored output, error extraction, and dependency detection. SDK tools build independently from the kernel using the host's native compiler.
+> **Goal:** Create a build system for SDK tools that mirrors the kernel's `scripts/build.sh` experience — progress bars, colored output, error extraction, and dependency detection. SDK tools build independently from the kernel using the host's native compiler. Works on both Linux (bash) and Windows (PowerShell) with zero manual setup.
 
 > [!IMPORTANT]
-> SDK tools are NOT built by `scripts/build.sh` (kernel build). They have their own build script that:
-> - Finds the correct compiler (gcc, clang)
-> - Finds SDK dependencies (libfuse3 on Linux)
-> - Builds all SDK tools with progress output
-> - Outputs binaries to `sdk/tools/`
+> SDK tools are NOT built by `scripts/build.sh` (kernel build). They have their own build scripts:
+> - **Linux:** `bash sdk/build.sh` — uses system gcc/clang
+> - **Windows:** `sdk\build.bat` → `sdk\build.ps1` — downloads MinGW + WinFsp SDK into `sdk/build/` automatically
+> - Both discover tools in `sdk/src/*/`, show progress, and output to `sdk/tools/`
 
 ## Inputs
 
@@ -19,31 +18,39 @@
 
 ## Outcome
 
-- `bash sdk/build.sh` — builds all SDK tools
+- `bash sdk/build.sh` (Linux) or `sdk\build.bat` (Windows) — builds all SDK tools
 - Progress bar, colored output, timing — same feel as kernel build
 - Auto-detects dependencies and reports missing ones clearly
-- `sdk/build.sh clean` — clean build
+- `sdk/build.sh clean` / `sdk\build.bat clean` — clean build
 - Each tool in `sdk/src/*/` is discovered and built automatically
+- **Windows:** build tools (MinGW, WinFsp SDK) downloaded into `sdk/build/` — no system-wide install, no environment variables, fully self-contained
 
 ## Source Layout
 
 ```
 sdk/
   build.sh              # Linux build script (bash)
+  build.bat             # Windows build launcher (calls build.ps1)
+  build.ps1             # Windows build script (PowerShell)
+  build/                # Downloaded build tools (gitignored)
+    mingw64/            # MinGW-w64 toolchain (auto-downloaded)
+    winfsp/             # WinFsp SDK headers + libs (auto-downloaded)
   src/
-    ixfs-mount/          # First SDK tool (TODO-02)
+    ixfs-mount/         # First SDK tool (TODO-02)
     (future tools...)
-  tools/                 # Compiled output (gitignored)
-  scripts/               # Mount/utility scripts
+  tools/                # Compiled output (gitignored)
+  scripts/              # Mount/utility scripts
 ```
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                        | Depends On | Status |
-| --- | :---: | ---------------------------------- | ---------- | :----: |
-| 💎  |   1   | Linux build script (bash)          | —          |  [x]   |
-| 💎  |   2   | Dependency detection and reporting | §1         |  [x]   |
-| 💎  |   3   | Auto-discovery of SDK tool dirs    | §1         |  [x]   |
+| ⭐  | Order | Deliverable                                  | Depends On | Status |
+| --- | :---: | -------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | Linux build script (bash)                    | —          |  [x]   |
+| 💎  |   2   | Dependency detection and reporting           | §1         |  [x]   |
+| 💎  |   3   | Auto-discovery of SDK tool dirs              | §1         |  [x]   |
+| 💎  |   4   | Windows build script (PowerShell + bat)      | —          |  [ ]   |
+| 💎  |   5   | Windows toolchain auto-download              | §4         |  [ ]   |
 
 ---
 
@@ -101,15 +108,58 @@ Build discovers new tools automatically — add a directory to `sdk/src/`, it ge
 - Dir without Makefile is silently skipped (no error)
 - Tools built in alphabetical order
 
+## 4. Windows Build Script
+Build all SDK tools on Windows with progress output. Self-contained — downloads its own toolchain.
+
+**Files:** `sdk/build.bat`, `sdk/build.ps1`
+
+- [ ] `build.bat` — launcher that calls `build.ps1` via PowerShell (bypass execution policy)
+- [ ] Discover tool directories: `Get-ChildItem sdk\src\*` with `Makefile` check
+- [ ] Each tool directory built via `mingw32-make -C $dir` using local MinGW
+- [ ] Progress: `[1/N] Building ixfs-mount...` with color (`Write-Host -ForegroundColor`)
+- [ ] Timing: per-tool and total build time via `[System.Diagnostics.Stopwatch]`
+- [ ] `sdk\build.bat clean` — clean build
+- [ ] Error extraction: capture stderr, show relevant compiler errors on failure
+- [ ] Commit: `"sdk: Windows build script with progress"`
+
+**Test checkpoint (Windows):**
+- `sdk\build.bat` completes without error
+- Output contains `[1/1] Building test-tool...`
+- Output ends with `SDK BUILD OK` and total time
+- `dir sdk\tools\` shows compiled binary
+
+## 5. Windows Toolchain Auto-Download
+The PowerShell build script downloads MinGW-w64 and WinFsp SDK into `sdk/build/` on first run. No system-wide install, no environment variables, no manual setup.
+
+**Files:** `sdk/build.ps1`
+
+- [ ] On first run: check if `sdk/build/mingw64/bin/gcc.exe` exists
+- [ ] If missing: download MinGW-w64 release zip from GitHub (x86_64-posix-seh)
+- [ ] Extract to `sdk/build/mingw64/` — use `Expand-Archive`
+- [ ] Check if `sdk/build/winfsp/inc/winfsp/winfsp.h` exists
+- [ ] If missing: download WinFsp SDK installer (MSI), extract headers + libs only via `msiexec /a`
+- [ ] All paths resolved relative to `sdk/build/` — no `$env:PATH` modification beyond the build script
+- [ ] `sdk\build.bat clean` also removes `sdk/build/` for a full reset
+- [ ] Add `sdk/build/` to `.gitignore`
+- [ ] Commit: `"sdk: Windows auto-download MinGW + WinFsp SDK into sdk/build/"`
+
+**Test checkpoint (Windows):**
+- Delete `sdk/build/`, run `sdk\build.bat` — downloads MinGW + WinFsp, then builds all tools
+- Second run: no download, uses cached toolchain, builds immediately
+- `sdk\build.bat clean` removes `sdk/build/` and `sdk/tools/`
+- `sdk/build/mingw64/bin/gcc.exe --version` shows MinGW gcc
+- `dir sdk\build\winfsp\inc\winfsp\winfsp.h` exists
+
 ---
 
 ## OS Comparison
 
 | ⭐ | Feature            | Win11              | Linux              | Impossible OS              |
 |----|--------------------|--------------------|--------------------|-----------------------------|
-| 💎 | Build system       | ✅ MSBuild / CMake | ✅ make / CMake    | ✅ §1 bash build script    |
+| 💎 | Build system       | ✅ MSBuild / CMake | ✅ make / CMake    | ✅ §1 bash + §4 PowerShell |
 | ⭐ | Progress output    | ❌ Verbose only    | ❌ Verbose only    | ✅ §1 colored progress bar |
 | ⭐ | Dep detection      | ❌ Manual install  | ❌ Manual install  | ✅ §2 auto-detect + guide  |
+| ⭐ | Zero-setup Windows | ❌ Install VS/CMake| N/A                | ⬜ §5 auto-download tools  |
 | ⭐ | Watch mode         | ❌ None built-in   | ❌ None built-in   | ⬜ Planned `--watch` flag  |
 
 ## Verification
@@ -117,3 +167,5 @@ Build discovers new tools automatically — add a directory to `sdk/src/`, it ge
 - [x] Linux: `bash sdk/build.sh` — builds all tools, progress shown, timing reported
 - [x] Missing deps: clear install instructions printed
 - [x] New tool: add directory, auto-discovered on next build
+- [ ] Windows: `sdk\build.bat` — downloads tools on first run, builds all tools
+- [ ] Windows: clean run after deleting `sdk/build/` re-downloads and builds
