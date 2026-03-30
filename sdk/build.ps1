@@ -25,6 +25,49 @@ $SrcDir    = Join-Path $SdkRoot "src"
 $ToolsDir  = Join-Path $SdkRoot "tools"
 $BuildDir  = Join-Path $SdkRoot "build"
 
+# -- UNC path workaround ---------------------------------------------------
+# CMD.EXE and mingw32-make cannot use UNC paths (\\wsl.localhost\...) as CWD.
+# If we're on a UNC path, map a temporary drive letter via subst.
+$MappedDrive = $null
+if ($SdkRoot -like "\\*") {
+    # Find a free drive letter (Z: down to G:)
+    $repoRoot = Split-Path -Parent $SdkRoot
+    foreach ($letter in [char[]]('Z','Y','X','W','V','U','T','S','R','Q','P','O','N','M','L','K','J','I','H','G')) {
+        $drive = "${letter}:"
+        if (-not (Test-Path $drive)) {
+            & subst $drive $repoRoot 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $MappedDrive = $drive
+                # Rebase all paths to the mapped drive
+                $SdkRoot  = Join-Path $drive "sdk"
+                $SrcDir   = Join-Path $SdkRoot "src"
+                $ToolsDir = Join-Path $SdkRoot "tools"
+                $BuildDir = Join-Path $SdkRoot "build"
+                Write-Host "  INFO " -ForegroundColor DarkGray -NoNewline
+                Write-Host "Mapped UNC path to $drive"
+                break
+            }
+        }
+    }
+    if (-not $MappedDrive) {
+        Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
+        Write-Host "Could not map UNC path to drive letter -- builds may fail"
+    }
+}
+
+# Cleanup mapped drive on exit
+function Cleanup-Drive {
+    if ($script:MappedDrive) {
+        & subst /d $script:MappedDrive 2>$null | Out-Null
+    }
+}
+trap { Cleanup-Drive; break }
+
+function Exit-Build($code) {
+    Cleanup-Drive
+    exit $code
+}
+
 if (-not (Test-Path $ToolsDir)) { New-Item -ItemType Directory -Path $ToolsDir -Force | Out-Null }
 
 # -- Helpers ----------------------------------------------------------------
@@ -42,20 +85,31 @@ function Format-Elapsed($sw) {
 $MinGWUrl   = "https://github.com/niXman/mingw-builds-binaries/releases/download/14.2.0-rt_v12-rev1/x86_64-14.2.0-release-posix-seh-ucrt-rt_v12-rev1.7z"
 $WinFspUrl  = "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25099.msi"
 
-# Download a file with progress bar using WebClient
+# Download a file with progress -- uses curl.exe (ships with Windows 10+)
+# Falls back to WebClient if curl is not available
 function Download-WithProgress {
     param([string]$Url, [string]$OutFile, [string]$Label)
 
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    # Prefer curl.exe -- handles GitHub redirects, shows progress natively
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
+        & curl.exe -L --progress-bar -o $OutFile $Url
+        if ($LASTEXITCODE -ne 0) {
+            throw "curl failed with exit code $LASTEXITCODE"
+        }
+        return
+    }
 
+    # Fallback: WebClient with progress events
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $wc = New-Object System.Net.WebClient
-    $lastPercent = -1
+    $script:dlLastPct = -1
 
     $progressHandler = {
         param($sender, $e)
         $pct = $e.ProgressPercentage
-        if ($pct -ne $script:lastPercent -and ($pct % 5 -eq 0)) {
-            $script:lastPercent = $pct
+        if ($pct -ne $script:dlLastPct -and ($pct % 5 -eq 0)) {
+            $script:dlLastPct = $pct
             $mbDone = [math]::Round($e.BytesReceived / 1MB, 1)
             $mbTotal = [math]::Round($e.TotalBytesToReceive / 1MB, 1)
             Write-Host "`r       $Label -- ${mbDone} / ${mbTotal} MB (${pct}%)    " -ForegroundColor DarkGray -NoNewline
@@ -72,7 +126,7 @@ function Download-WithProgress {
         if ($task.IsFaulted) {
             throw $task.Exception.InnerException
         }
-        Write-Host ""  # newline after progress
+        Write-Host ""
     } finally {
         $wc.Dispose()
     }
@@ -95,7 +149,7 @@ function Ensure-MinGW {
     } catch {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
         Write-Host "Download failed: $_"
-        exit 1
+        Exit-Build 1
     }
 
     # Extract -- .7z requires 7-Zip or compatible tar
@@ -131,7 +185,7 @@ function Ensure-MinGW {
         Write-Host "Cannot extract .7z archive."
         Write-Host "       Install 7-Zip from https://7-zip.org/ and try again." -ForegroundColor DarkGray
         Remove-Item $archive -Force -ErrorAction SilentlyContinue
-        exit 1
+        Exit-Build 1
     }
 
     Remove-Item $archive -Force -ErrorAction SilentlyContinue
@@ -144,7 +198,7 @@ function Ensure-MinGW {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
         Write-Host "MinGW extraction failed -- gcc.exe not found at: $gcc"
         Write-Host "       Check that the archive extracted a mingw64/ directory." -ForegroundColor DarkGray
-        exit 1
+        Exit-Build 1
     }
 }
 
@@ -245,14 +299,14 @@ if (-not $CC) {
     Write-Host "  FAIL " -ForegroundColor Red -NoNewline
     Write-Host "No C compiler found -- toolchain download may have failed."
     Write-Host "=== SDK BUILD FAILED ==="
-    exit 1
+    Exit-Build 1
 }
 
 if (-not $MAKE) {
     Write-Host "  FAIL " -ForegroundColor Red -NoNewline
     Write-Host "No make found (need mingw32-make or make)."
     Write-Host "=== SDK BUILD FAILED ==="
-    exit 1
+    Exit-Build 1
 }
 
 # -- Check optional dependencies -------------------------------------------
@@ -310,7 +364,7 @@ if ($clean) {
     Write-Host "  OK   " -ForegroundColor Green -NoNewline
     Write-Host "Clean complete"
     Write-Host "=== SDK BUILD OK ==="
-    exit 0
+    Exit-Build 0
 }
 
 # -- Build ------------------------------------------------------------------
@@ -340,7 +394,7 @@ if ($toolCount -eq 0) {
     Write-Host "  OK   " -ForegroundColor Green -NoNewline
     Write-Host "Nothing to build"
     Write-Host "=== SDK BUILD OK ==="
-    exit 0
+    Exit-Build 0
 }
 
 # Report discovered tools
@@ -400,12 +454,12 @@ if ($failCount -eq 0) {
     Write-Host " -- $toolCount tools built in ${totalElapsed}s"
     Write-Header
     Write-Host "=== SDK BUILD OK ==="
-    exit 0
+    Exit-Build 0
 } else {
     Write-Host "  " -NoNewline
     Write-Host "SDK BUILD FAILED" -ForegroundColor Red -NoNewline
     Write-Host " -- $failCount/$toolCount tools failed (${totalElapsed}s)"
     Write-Header
     Write-Host "=== SDK BUILD FAILED ==="
-    exit 1
+    Exit-Build 1
 }
