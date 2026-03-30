@@ -489,6 +489,61 @@ fallback:
     }
 }
 
+/* ---- Debug: dump klog ring buffer to ESP (B:\boot-kernel.log) ---- */
+
+static void klog_dump_to_esp(void)
+{
+    struct vfs_node *b_root, *log_node;
+    uint32_t ring_count, ring_head;
+    const klog_entry_t *ring;
+    uint32_t i, idx;
+    char line[512];
+    uint32_t total_written = 0;
+
+    b_root = vfs_open("B:\\", VFS_O_READ);
+    if (!b_root || !b_root->ops || !b_root->ops->create)
+        return;
+
+    b_root->ops->create(b_root, "boot-kernel.log", VFS_FILE);
+
+    log_node = vfs_finddir(b_root, "boot-kernel.log");
+    if (!log_node)
+        return;
+
+    ring = klog_get_ring(&ring_count, &ring_head);
+    if (!ring || ring_count == 0)
+        return;
+
+    for (i = 0; i < ring_count; i++) {
+        idx = (ring_head + i) % ring_count;
+        const klog_entry_t *e = &ring[idx];
+        if (e->message[0] == '\0') continue;
+
+        /* Format: [LEVEL] subsystem: message\n */
+        uint32_t p = 0;
+        const char *level_str = "INFO";
+        if (e->level == LOG_ERROR) level_str = "ERROR";
+        else if (e->level == LOG_WARN) level_str = "WARN";
+        else if (e->level == LOG_DEBUG) level_str = "DEBUG";
+
+        line[p++] = '[';
+        for (uint32_t j = 0; level_str[j] && p < 500; j++) line[p++] = level_str[j];
+        line[p++] = ']'; line[p++] = ' ';
+        if (e->subsystem) {
+            for (uint32_t j = 0; e->subsystem[j] && p < 500; j++) line[p++] = e->subsystem[j];
+        }
+        line[p++] = ':'; line[p++] = ' ';
+        for (uint32_t j = 0; e->message[j] && p < 500; j++) line[p++] = e->message[j];
+        line[p++] = '\n';
+
+        if (log_node->ops && log_node->ops->write)
+            log_node->ops->write(log_node, total_written, p, (const uint8_t *)line);
+        total_written += p;
+    }
+
+    klog(LOG_INFO, "klog", "Dumped %u bytes to B:\\boot-kernel.log", (uint64_t)total_written);
+}
+
 /* ---- Public API ---- */
 
 void klog_disk_init(void)
@@ -514,6 +569,11 @@ void klog_disk_init(void)
         }
 
         fat32_inited = 1;
+    } else if (vfs_is_mounted('B')) {
+        /* Debug mode fallback: dump klog ring buffer to B:\boot-kernel.log
+         * when IXFS on C:\ failed to mount. */
+        klog(LOG_WARN, "klog", "C:\\ not mounted -- dumping log to B:\\boot-kernel.log");
+        klog_dump_to_esp();
     }
 }
 

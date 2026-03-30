@@ -24,6 +24,7 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "kernel/boot_info.h"
 
 /* ---- Partition storage ---- */
 static struct partition_info part_store[PART_MAX];
@@ -394,9 +395,15 @@ void partition_mount_filesystems(void)
             && pi->fs_type != PART_FS_NTFS)
             continue;
 
-        /* Skip EFI System Partition — no drive letter (like Windows) */
-        if (pi->is_efi)
-            continue;
+        /* Skip EFI System Partition — no drive letter (like Windows).
+         * Exception: debug=1 in boot.conf mounts ESP as B:\ for log recovery. */
+        if (pi->is_efi) {
+            if (g_boot_info.config.debug) {
+                klog(LOG_INFO, "blk", "Debug mode: mounting EFI partition as B:\\");
+            } else {
+                continue;
+            }
+        }
 
         /* Build sub-blkdev name: "disk0p1" */
         part_strcpy(name, "disk", sizeof(name));
