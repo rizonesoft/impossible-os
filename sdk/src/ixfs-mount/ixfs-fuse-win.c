@@ -641,7 +641,7 @@ int main(int argc, char *argv[])
     vol_params.ReadOnlyVolume = rw ? 0 : 1;
     wcscpy(vol_params.FileSystemName, L"IXFS");
 
-    result = FspFileSystemCreate(L"\\\\.\\WinFsp.Disk",
+    result = FspFileSystemCreate(L"WinFsp.Disk",
                                  &vol_params, &ixfs_winfsp_interface, &fs);
     if (!NT_SUCCESS(result)) {
         fprintf(stderr, "FspFileSystemCreate failed: 0x%08lX\n", result);
