@@ -172,9 +172,9 @@ if (-not $proc.HasExited) {
         Write-Host "  Unmount: close this window or run unmount-ixfs.bat" -ForegroundColor DarkGray
         Write-Host ""
 
-        # Open Explorer at the mounted drive
-        Start-Process "explorer.exe" -ArgumentList "$driveLetter\"
-        Write-Host "  Explorer opened at $driveLetter\" -ForegroundColor DarkGray
+        # Open a cmd window at the mounted drive (admin context, can see the mount)
+        Start-Process "cmd.exe" -ArgumentList "/k cd /d $driveLetter\ && dir && echo. && echo Type EXIT to close this window (mount stays alive)"
+        Write-Host "  Opened cmd at $driveLetter\" -ForegroundColor DarkGray
         Write-Host ""
         Write-Host "  Keep this window open -- closing it unmounts the drive."
         Write-Host "  Press Ctrl+C to unmount."
