@@ -71,7 +71,7 @@ sdk/tools/                  # Compiled output (gitignored)
 | 💎  |   3   | Linux FUSE mount (read-only)                   | §2         |  [x]   |
 | 💎  |   4   | Windows WinFsp mount (read-only)               | §2         |  [x]   |
 | 💎  |   5   | Write support (both platforms)                 | §3, §4     |  [x]   |
-| 💎  |   6   | USB auto-mount scripts                         | §3, §4     |  [ ]   |
+| 💎  |   6   | USB auto-mount scripts                         | §3, §4     |  [x]   |
 
 ---
 
@@ -183,20 +183,20 @@ Scripts to detect USB drives with IXFS partitions and mount them automatically.
 **Files:** `sdk/scripts/mount-ixfs-usb.*`
 
 ### Windows (`mount-ixfs-usb.bat` + `mount-ixfs-usb.ps1`):
-- [ ] Enumerate physical drives via `wmic diskdrive`
-- [ ] For each removable drive: read GPT, find partition with IXFS type GUID
-- [ ] Mount first IXFS partition as next available drive letter
-- [ ] Log: `Mounted IXFS from USB (PhysicalDrive2, partition 3) as I:\`
-- [ ] `unmount-ixfs.bat` — clean unmount
+- [x] Enumerate physical drives via `Get-WmiObject Win32_DiskDrive` (USB + removable)
+- [x] For each removable drive: parse GPT, read IXFS magic at partition start
+- [x] Mount first IXFS partition as next available drive letter (I: through Z:)
+- [x] Log: `Mounted IXFS from PhysicalDrive2, partition 2 as I:`
+- [x] `unmount-ixfs.bat` — kills ixfs-mount.exe process
 
 ### Linux (`mount-ixfs-usb.sh`):
-- [ ] Scan `/dev/sd*` and `/dev/nvme*` for removable/USB drives
-- [ ] For each: read GPT via `sgdisk -p` or raw GPT parse, find IXFS partition
-- [ ] Mount at `/mnt/ixfs` (create if needed)
-- [ ] Log: `Mounted IXFS from /dev/sdb3 at /mnt/ixfs`
-- [ ] Unmount: `fusermount -u /mnt/ixfs`
+- [x] Scan `/sys/block/sd*` and `/sys/block/nvme*` for USB/removable drives
+- [x] For each partition: read IXFS magic (0x49584653) at offset 0
+- [x] Mount at `/mnt/ixfs` via ixfs-mount
+- [x] Log: `Mounted IXFS from /dev/sdb2 at /mnt/ixfs`
+- [x] Unmount: `fusermount -u /mnt/ixfs`
 
-- [ ] Commit: `"sdk: USB auto-mount scripts for IXFS — Windows + Linux"`
+- [x] Commit: `"sdk: USB auto-mount scripts for IXFS — Windows + Linux"`
 
 **Test checkpoint (Linux + Windows):**
 - Linux: plug USB boot drive, run `./mount-ixfs-usb.sh` — output: `Mounted IXFS from /dev/sdb2 at /mnt/ixfs`
