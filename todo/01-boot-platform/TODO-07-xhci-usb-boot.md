@@ -42,6 +42,7 @@
 | 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         |  [ ]   |
 | 💎  |   8   | USB HID boot-protocol mouse driver             | §6         |  [ ]   |
 | 💎  |   9   | Input source priority and coexistence          | §7, §8     |  [ ]   |
+| ⭐  |  10   | Hardware compatibility (90%+ of systems)       | §1, §5     |  [ ]   |
 
 ---
 
@@ -169,18 +170,74 @@ Ensure PS/2 and USB input sources coexist without conflict.
 
 **Test checkpoint:** System with both PS/2 and USB — both work. USB-only system — works. POST code 0xD707. Test on: QEMU `run-usb`, bare metal.
 
+## 10. Hardware Compatibility — 90%+ of Systems
+Make USB boot work on the vast majority of real hardware: Intel, AMD, third-party xHCI controllers, and systems with only EHCI (no xHCI). Currently only Intel with specific port routing is tested.
+
+**Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/ehci.c` (new)
+
+### BIOS/OS Handoff (xHCI spec §4.22.1)
+- [ ] Read `USBLEGSUP` capability register (Extended Capability ID = 1)
+- [ ] Set HC OS Owned Semaphore bit, wait for BIOS Owned Semaphore to clear
+- [ ] Timeout after 1s — if BIOS doesn't release, force-clear and proceed
+- [ ] Must happen BEFORE controller halt/reset (currently missing)
+- [ ] Without this, BIOS may still own the controller and interfere with our driver
+
+### AMD xHCI Support
+- [ ] AMD chipsets (vendor 0x1022) route all ports to xHCI by default — no XUSB2PR needed
+- [ ] Verify BIOS handoff works on AMD (same USBLEGSUP mechanism)
+- [ ] Test on AMD system if available
+
+### Third-Party xHCI Controllers (ASMedia, Renesas, VIA)
+- [ ] ASMedia (vendor 0x1B21): no port routing, just BIOS handoff + standard init
+- [ ] Renesas (vendor 0x1912): may need firmware upload — detect and skip if unsupported
+- [ ] VIA (vendor 0x1106): standard xHCI, BIOS handoff only
+- [ ] Generic path: if vendor != Intel, skip port routing, rely on BIOS handoff + CCS
+
+### EHCI Fallback Driver
+- [ ] For systems with NO xHCI controller (only EHCI, prog-if 0x20)
+- [ ] EHCI controller init: halt, reset, PERIODICLISTBASE, ASYNCLISTADDR
+- [ ] EHCI BIOS/OS handoff via `USBLEGSUP` (PCI capability, same concept as xHCI)
+- [ ] Async schedule: QH + qTD for control and bulk transfers
+- [ ] Port reset + device enumeration (same USB protocol, different transport)
+- [ ] Register as block device via same `usb_msc` layer
+- [ ] This is a significant driver (~1000-2000 lines) — only implement if xHCI is absent
+
+### USB Hub Support
+- [ ] Detect hub devices (class 0x09) during enumeration
+- [ ] Hub descriptor: number of ports, power characteristics
+- [ ] Set port power, poll port status, reset ports with connected devices
+- [ ] Enumerate devices behind hubs (recursive, max 5 levels per USB spec)
+- [ ] Without this, devices plugged into USB hubs are invisible
+
+### Robustness
+- [ ] Timeout all bulk transfers (currently infinite wait on event ring)
+- [ ] Bulk reset recovery on stall (BOT spec §5.3.4: clear HALT + reset endpoint)
+- [ ] Handle controller errors: Host System Error (HSE), event ring full
+- [ ] Graceful degradation: if xHCI init fails, log and continue (don't hang boot)
+- [ ] Commit: `"drivers: xHCI hardware compatibility — BIOS handoff, AMD, EHCI fallback"`
+
+**Test checkpoint:** Test matrix:
+- Intel desktop (i5-11600K): ✅ verified working with port routing
+- AMD desktop: USB detected without port routing (BIOS handoff only)
+- Laptop with EHCI only: EHCI driver detects and enumerates USB drive
+- USB hub: device behind hub enumerated
+- QEMU `run-usb`: still works (regression check)
+
 ---
 
 ## OS Comparison
 
 | ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                     |
 |----|-------------------------|-----------------------------|------------------------------|-----------------------------------|
-| 💎 | xHCI controller         | ✅ usbxhci.sys             | ✅ xhci-hcd                  | ⬜ §1 — partial, needs fix       |
-| 💎 | USB MSC                 | ✅ USBSTOR.SYS             | ✅ usb-storage               | ⬜ §3 — BOT transport            |
-| 💎 | USB boot drive access   | ✅ Automatic               | ✅ initramfs + usb-storage   | ⬜ §4 — boot-critical path       |
-| 💎 | USB HID keyboard        | ✅ hidusb.sys + kbdhid.sys | ✅ usbhid + hid-generic      | ⬜ §6 — boot protocol            |
-| 💎 | USB HID mouse           | ✅ hidusb.sys + mouhid.sys | ✅ usbhid + hid-generic      | ⬜ §7 — boot protocol            |
-| 💎 | PS/2 + USB coexist      | ✅ Automatic               | ✅ Automatic                 | ⬜ §8 — independent, both active |
+| 💎 | xHCI controller         | ✅ usbxhci.sys             | ✅ xhci-hcd                  | ✅ §1-§4 done, §5 planned        |
+| 💎 | USB MSC                 | ✅ USBSTOR.SYS             | ✅ usb-storage               | ✅ §3 — BOT transport done       |
+| 💎 | USB boot drive access   | ✅ Automatic               | ✅ initramfs + usb-storage   | ✅ §4 — verified on bare metal   |
+| 💎 | USB HID keyboard        | ✅ hidusb.sys + kbdhid.sys | ✅ usbhid + hid-generic      | ⬜ §7 — boot protocol            |
+| 💎 | USB HID mouse           | ✅ hidusb.sys + mouhid.sys | ✅ usbhid + hid-generic      | ⬜ §8 — boot protocol            |
+| 💎 | PS/2 + USB coexist      | ✅ Automatic               | ✅ Automatic                 | ⬜ §9 — independent, both active |
+| ⭐ | BIOS/OS handoff         | ✅ Automatic               | ✅ xhci-pci.c                | ⬜ §10 — USBLEGSUP              |
+| ⭐ | EHCI fallback           | ✅ usbehci.sys             | ✅ ehci-hcd                  | ⬜ §10 — for legacy hardware     |
+| ⭐ | USB hub support         | ✅ usbhub.sys              | ✅ hub.c                     | ⬜ §10 — recursive enumeration   |
 
 ## Verification
 
