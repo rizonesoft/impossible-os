@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <time.h>
 
 #include "ixfs-core.h"
 #include "ixfs-disk.h"
