@@ -224,21 +224,42 @@ function Ensure-WinFsp {
         return
     }
 
-    # Extract headers + libs from MSI (admin-free extraction)
-    Write-Host "       Extracting headers + libs from MSI..." -ForegroundColor DarkGray
+    # Extract headers + libs from MSI
+    # 7-Zip can open MSI files directly (more reliable than msiexec on mapped drives)
+    Write-Host "       Extracting headers + libs..." -ForegroundColor DarkGray
 
     if (-not (Test-Path $extractDir)) { New-Item -ItemType Directory -Path $extractDir -Force | Out-Null }
 
-    # msiexec needs full Windows paths (not UNC), use short path if needed
-    $msiFullPath = (Resolve-Path $msi).Path
-    $extractFullPath = (Resolve-Path $extractDir).Path
-    Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msiFullPath`" /qn TARGETDIR=`"$extractFullPath`"" -Wait -NoNewWindow
+    $extracted = $false
+
+    # Try 7z first (can extract MSI directly, no admin needed)
+    $sevenZip = $null
+    if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
+        $sevenZip = "7z.exe"
+    } elseif (Test-Path "C:\Program Files\7-Zip\7z.exe") {
+        $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+    } elseif (Test-Path "C:\Program Files (x86)\7-Zip\7z.exe") {
+        $sevenZip = "C:\Program Files (x86)\7-Zip\7z.exe"
+    }
+
+    if ($sevenZip) {
+        & $sevenZip x $msi "-o$extractDir" -y 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $extracted = $true }
+    }
+
+    # Fall back to msiexec if 7z not available
+    if (-not $extracted) {
+        $msiFullPath = (Resolve-Path $msi).Path
+        $extractFullPath = (Resolve-Path $extractDir).Path
+        Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msiFullPath`" /qn TARGETDIR=`"$extractFullPath`"" -Wait -NoNewWindow
+        $extracted = $true
+    }
 
     # Find and copy the SDK files (inc/ and lib/)
     $winfspDir = Join-Path $BuildDir "winfsp"
     if (-not (Test-Path $winfspDir)) { New-Item -ItemType Directory -Path $winfspDir -Force | Out-Null }
 
-    # The MSI extracts to a nested path -- find the winfsp.h file
+    # Search for winfsp.h in the extracted tree
     $incSrc = Get-ChildItem -Path $extractDir -Recurse -Filter "winfsp.h" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($incSrc) {
         # Go up to the WinFsp root (parent of inc/winfsp/)
