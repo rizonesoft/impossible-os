@@ -69,7 +69,7 @@ sdk/tools/                  # Compiled output (gitignored)
 | 💎  |   1   | Shared IXFS core parser                        | —          |  [x]   |
 | 💎  |   2   | Platform disk I/O layer                        | §1         |  [x]   |
 | 💎  |   3   | Linux FUSE mount (read-only)                   | §2         |  [x]   |
-| 💎  |   4   | Windows WinFsp mount (read-only)               | §2         |  [ ]   |
+| 💎  |   4   | Windows WinFsp mount (read-only)               | §2         |  [x]   |
 | 💎  |   5   | Write support (both platforms)                 | §3, §4     |  [ ]   |
 | 💎  |   6   | USB auto-mount scripts                         | §3, §4     |  [ ]   |
 
@@ -138,16 +138,16 @@ Implement WinFsp callbacks for read-only mounting as a drive letter.
 
 **Files:** `sdk/src/ixfs-mount/ixfs-fuse-win.c`, `build-win.bat`
 
-- [ ] WinFsp `GetVolumeInfo` — volume label, total/free space
-- [ ] WinFsp `GetSecurityByName` — basic security descriptor
-- [ ] WinFsp `Open` — lookup by path
-- [ ] WinFsp `Read` — read file data
-- [ ] WinFsp `ReadDirectory` — enumerate directory
-- [ ] WinFsp `GetFileInfo` — size, timestamps, attributes
-- [ ] WinFsp `Close` — release handle
-- [ ] Command: `ixfs-mount.exe I: build\system-disk.img 2`
-- [ ] build-win.bat: compile with MSVC or MinGW + WinFsp SDK
-- [ ] Commit: `"sdk: ixfs-mount Windows WinFsp read-only mount"`
+- [x] WinFsp `GetVolumeInfo` — volume label, total/free space
+- [x] WinFsp `GetSecurityByName` — basic security descriptor
+- [x] WinFsp `Open` — lookup by path
+- [x] WinFsp `Read` — read file data
+- [x] WinFsp `ReadDirectory` — enumerate directory
+- [x] WinFsp `GetFileInfo` — size, timestamps, attributes
+- [x] WinFsp `Close` — release handle
+- [x] Command: `ixfs-mount.exe I: build\system-disk.img 2`
+- [x] Makefile: conditional MinGW + WinFsp SDK build (auto-detects sdk/build/WinFsp or system install)
+- [x] Commit: `"sdk: ixfs-mount Windows WinFsp read-only mount"`
 
 **Test checkpoint (Windows):**
 - `ixfs-mount.exe I: build\system-disk.img 2` — mounts as drive I:
