@@ -210,14 +210,25 @@ if (Test-Path $winfspBin) {
     $env:PATH = "$winfspBin;$env:PATH"
 }
 
-# Run in foreground briefly to capture any startup errors
+# IMPORTANT: If running as admin, the WinFsp mount won't be visible in Explorer
+# (different security context). Drop to non-elevated for the mount process.
 $errLog = Join-Path $env:TEMP "ixfs-mount-err.log"
 $outLog = Join-Path $env:TEMP "ixfs-mount-out.log"
+
+# Check if we're elevated
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($isAdmin) {
+    Write-Host "  NOTE " -ForegroundColor Yellow -NoNewline
+    Write-Host "Running as admin -- mount may not be visible in Explorer"
+    Write-Host "       Try running mount-ixfs-usb.bat WITHOUT admin privileges" -ForegroundColor DarkGray
+    Write-Host "       (raw drive scan needs admin, but mount does not)" -ForegroundColor DarkGray
+}
+
 $proc = Start-Process -FilePath $IxfsMount -ArgumentList $mountArgs -NoNewWindow -PassThru -RedirectStandardError $errLog -RedirectStandardOutput $outLog
 
 Start-Sleep -Seconds 3
 
-# Check if process is still running (good -- means mount is active)
 if (-not $proc.HasExited) {
     if (Test-Path "$driveLetter\") {
         Write-Host "  " -NoNewline
@@ -226,24 +237,28 @@ if (-not $proc.HasExited) {
         Write-Host "  Unmount: unmount-ixfs.bat $driveLetter"
     } else {
         Write-Host "  " -NoNewline
-        Write-Host "Process running but drive not visible yet -- check $driveLetter in Explorer" -ForegroundColor Yellow
+        Write-Host "Process running but $driveLetter not visible" -ForegroundColor Yellow
+        Write-Host ""
+        if ($isAdmin) {
+            Write-Host "  This is likely because you ran as Administrator." -ForegroundColor Yellow
+            Write-Host "  The mount exists but is in the admin context." -ForegroundColor DarkGray
+            Write-Host "  Try: run mount-ixfs-usb.bat as normal user (not admin)" -ForegroundColor DarkGray
+        }
+        # Show any output from ixfs-mount
+        if (Test-Path $errLog) {
+            $err = Get-Content $errLog -Raw
+            if ($err) { Write-Host "  $err" -ForegroundColor DarkGray }
+        }
     }
 } else {
-    # Process exited -- show error output
     Write-Host "  " -NoNewline
     Write-Host "Mount failed (exit code $($proc.ExitCode))" -ForegroundColor Red
     if (Test-Path $errLog) {
         $err = Get-Content $errLog -Raw
-        if ($err) {
-            Write-Host ""
-            Write-Host "  Error output:" -ForegroundColor DarkGray
-            Write-Host "  $err"
-        }
+        if ($err) { Write-Host ""; Write-Host "  $err" }
     }
     if (Test-Path $outLog) {
         $out = Get-Content $outLog -Raw
-        if ($out) {
-            Write-Host "  $out"
-        }
+        if ($out) { Write-Host "  $out" }
     }
 }
