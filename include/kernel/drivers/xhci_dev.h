@@ -239,3 +239,10 @@ int xhci_enumerate_ports(struct xhci_controller *hc);
  * endpoints, allocate Transfer Rings, and issue Configure Endpoint command.
  * Returns 0 if MSC device identified and configured, -1 otherwise. */
 int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev);
+
+/* Perform a bulk transfer on a non-EP0 endpoint.
+ * dir_in: 1 = bulk IN, 0 = bulk OUT.
+ * Returns 0 on success, -1 on failure. */
+int xhci_bulk_transfer(struct xhci_controller *hc, struct xhci_device *dev,
+                       struct xhci_ring *ring, void *buf, uint32_t len,
+                       int dir_in);

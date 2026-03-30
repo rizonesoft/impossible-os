@@ -76,13 +76,13 @@ Implement the SCSI-over-USB transport layer: CBW/CSW framing, INQUIRY, READ CAPA
 
 **Files:** `src/kernel/drivers/usb_msc.c` (new), `include/kernel/drivers/usb_msc.h` (new)
 
-- [ ] CBW (Command Block Wrapper) and CSW (Command Status Wrapper) structures
-- [ ] `usb_msc_inquiry()` — identify device type and name
-- [ ] `usb_msc_read_capacity()` — get sector count and sector size
-- [ ] `usb_msc_read_sectors(lba, count, buf)` — READ(10) via bulk-OUT CBW + bulk-IN data + bulk-IN CSW
-- [ ] `usb_msc_write_sectors(lba, count, buf)` — WRITE(10) via bulk-OUT CBW + bulk-OUT data + bulk-IN CSW
-- [ ] Error handling: CSW status check, bulk reset recovery on stall
-- [ ] Commit: `"drivers: USB MSC BOT — SCSI READ/WRITE over bulk endpoints"`
+- [x] CBW (Command Block Wrapper) and CSW (Command Status Wrapper) structures
+- [x] `usb_msc_inquiry()` — identify device type and name
+- [x] `usb_msc_read_capacity()` — get sector count and sector size
+- [x] `usb_msc_read_sectors(lba, count, buf)` — READ(10) via bulk-OUT CBW + bulk-IN data + bulk-IN CSW
+- [x] `usb_msc_write_sectors(lba, count, buf)` — WRITE(10) via bulk-OUT CBW + bulk-OUT data + bulk-IN CSW
+- [x] Error handling: CSW status check, tag validation, TEST UNIT READY with retries
+- [x] Commit: `"drivers: USB MSC BOT — SCSI READ/WRITE over bulk endpoints"`
 
 **Test checkpoint:** `usb_msc_read_capacity()` returns correct sector count. Read sector 0 matches expected MBR/GPT. POST code 0xD702. Test on: QEMU `run-usb`.
 

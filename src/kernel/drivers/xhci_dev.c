@@ -292,6 +292,44 @@ static int xhci_control_transfer(struct xhci_controller *hc,
     return 0;
 }
 
+/* ---- Bulk transfer ------------------------------------------------------- */
+
+/* Perform a bulk transfer on a non-EP0 endpoint.
+ * dir_in: 1 = bulk IN (device to host), 0 = bulk OUT (host to device).
+ * Returns 0 on success, -1 on failure. */
+int xhci_bulk_transfer(struct xhci_controller *hc,
+                       struct xhci_device *dev,
+                       struct xhci_ring *ring,
+                       void *buf, uint32_t len, int dir_in)
+{
+    struct xhci_trb trb;
+    uint8_t cc;
+    uint32_t dci;
+
+    if (dir_in)
+        dci = XHCI_DCI(dev->bulk_in_ep, 1);
+    else
+        dci = XHCI_DCI(dev->bulk_out_ep, 0);
+
+    trb.parameter = (uint64_t)(uintptr_t)buf;
+    trb.status    = len;
+    trb.control   = (XHCI_TRB_NORMAL << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC;
+
+    if (ep0_ring_enqueue(ring, &trb) != 0)
+        return -1;
+
+    dev_write32(hc->db_base, dev->slot_id * 4, dci);
+
+    cc = xhci_wait_transfer(hc, NULL);
+    if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
+        klog(LOG_ERROR, "usb", "Bulk %s failed (slot %u, cc=%u)",
+             dir_in ? "IN" : "OUT", (uint64_t)dev->slot_id, (uint64_t)cc);
+        return -1;
+    }
+
+    return 0;
+}
+
 /* ---- Port speed to max packet size -------------------------------------- */
 
 static uint16_t speed_to_max_packet(uint8_t speed)
