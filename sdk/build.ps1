@@ -193,37 +193,36 @@ function Ensure-MinGW {
         Exit-Build 1
     }
 
-    # Extract with progress
+    # Extract with progress using Write-Progress (native PowerShell progress bar)
     Write-Host "       Extracting MinGW-w64..." -ForegroundColor DarkGray
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
-    # 7zr.exe outputs percentage lines like " 12% - mingw64/bin/gcc.exe"
-    # Parse these for progress updates
-    $lastPct = -1
-    $proc = New-Object System.Diagnostics.Process
-    $proc.StartInfo.FileName = $SevenZip
-    $proc.StartInfo.Arguments = "x `"$archive`" -o`"$BuildDir`" -y"
-    $proc.StartInfo.UseShellExecute = $false
-    $proc.StartInfo.RedirectStandardOutput = $true
-    $proc.StartInfo.RedirectStandardError = $true
-    $proc.StartInfo.CreateNoWindow = $true
-    $proc.Start() | Out-Null
+    # Get archive size for a time-based progress estimate
+    $archiveSize = (Get-Item $archive).Length
 
-    while (-not $proc.HasExited) {
-        $line = $proc.StandardOutput.ReadLine()
-        if ($line -match "^\s*(\d+)%") {
-            $pct = [int]$Matches[1]
-            if ($pct -ne $lastPct) {
-                $lastPct = $pct
-                Write-ProgressBar -Percent $pct -Label "extracting"
-            }
+    # Run 7zr in background, poll file count in sdk/build/mingw64/ for progress
+    $job = Start-Job -ScriptBlock {
+        param($exe, $arc, $dest)
+        & $exe x $arc "-o$dest" -y 2>&1
+    } -ArgumentList $SevenZip, $archive, $BuildDir
+
+    # MinGW has ~47000 files; poll every 500ms
+    $expectedFiles = 47000
+    while ($job.State -eq "Running") {
+        Start-Sleep -Milliseconds 500
+        $mingwDir = Join-Path $BuildDir "mingw64"
+        if (Test-Path $mingwDir) {
+            # Fast count: just count items in a few key subdirs
+            $count = 0
+            try { $count = (Get-ChildItem $mingwDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count } catch {}
+            $pct = [math]::Min(99, [math]::Floor($count * 100 / $expectedFiles))
+            Write-Progress -Activity "Extracting MinGW-w64" -Status "$count files ($pct%)" -PercentComplete $pct
         }
     }
-    # Drain remaining output
-    $proc.StandardOutput.ReadToEnd() | Out-Null
-    $proc.WaitForExit()
-    Write-ProgressBar -Percent 100 -Label "done"
-    Write-Host ""
+
+    Receive-Job $job | Out-Null
+    Remove-Job $job
+    Write-Progress -Activity "Extracting MinGW-w64" -Completed
 
     $sw.Stop()
     Write-Host "       Extracted in $("{0:F1}" -f $sw.Elapsed.TotalSeconds)s" -ForegroundColor DarkGray
