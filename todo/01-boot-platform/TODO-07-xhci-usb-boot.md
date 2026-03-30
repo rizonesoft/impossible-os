@@ -53,7 +53,7 @@ Verify and fix the existing xHCI controller initialization. Currently logs "No x
 - [x] Controller halt, reset, DCBAA allocation, command ring, event ring — audit existing code
 - [x] Port scan: detect attached USB devices, log port status
 - [x] Map xHCI BAR0 via `vmm_map_mmio_uc()` (MMIO registers need UC mapping)
-- [ ] Commit: `"drivers: xHCI controller bring-up verified on QEMU + bare metal"`
+- [x] Commit: `"drivers: xHCI controller bring-up verified on QEMU + bare metal"`
 
 **Test checkpoint:** Serial shows `xhci: N ports, M devices attached`. POST code 0xD700. Test on: QEMU `run-usb`, bare metal.
 
