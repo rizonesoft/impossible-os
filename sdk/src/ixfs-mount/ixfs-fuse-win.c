@@ -12,26 +12,6 @@
 
 #ifdef _WIN32
 
-/* WinFsp headers use static_assert (MSVC keyword); C11 has _Static_assert */
-#ifndef static_assert
-#define static_assert _Static_assert
-#endif
-
-/* MinGW compat: include <windows.h> first, then fix _ReadWriteBarrier
- * before WinFsp's fsctl.h tries to redeclare it as a function.
- * MinGW's <intrin.h> defines _ReadWriteBarrier as a 0-arg macro,
- * but fsctl.h line 750 declares: void _ReadWriteBarrier(void);
- * which conflicts. We undef the macro AFTER windows.h loads intrin.h,
- * then provide it as a proper function-like macro. */
-#define WIN32_NO_STATUS
-#include <windows.h>
-#undef WIN32_NO_STATUS
-#undef _ReadWriteBarrier
-static __inline__ void _ReadWriteBarrier(void)
-{
-    __asm__ __volatile__("" ::: "memory");
-}
-
 #include <winfsp/winfsp.h>
 #include <stdio.h>
 #include <stdlib.h>

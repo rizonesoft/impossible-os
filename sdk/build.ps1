@@ -269,20 +269,25 @@ if (-not $MAKE) {
 
 # -- Check optional dependencies -------------------------------------------
 function Check-Dependencies {
-    $WinFspLocal = Join-Path $BuildDir "WinFsp\inc\winfsp\winfsp.h"
-    $WinFspSystem = "C:\Program Files (x86)\WinFsp\inc\winfsp\winfsp.h"
+    # Headers are vendored in sdk/include/winfsp/ -- check for libs
+    $vendoredHeader = Join-Path $SdkRoot "include\winfsp\winfsp.h"
+    $winfspLocalLib = Join-Path $BuildDir "WinFsp\lib\winfsp-x64.lib"
+    $winfspSystemLib = "C:\Program Files (x86)\WinFsp\lib\winfsp-x64.lib"
 
-    if (Test-Path $WinFspLocal) {
+    if (-not (Test-Path $vendoredHeader)) {
+        Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
+        Write-Host "MISSING: sdk/include/winfsp/winfsp.h -- WinFsp headers not vendored"
+    } elseif (Test-Path $winfspLocalLib) {
         Write-Host "  INFO " -ForegroundColor DarkGray -NoNewline
-        Write-Host "WinFsp SDK found (sdk/build/winfsp)"
-    } elseif (Test-Path $WinFspSystem) {
+        Write-Host "WinFsp: headers vendored, libs in sdk/build/WinFsp/"
+    } elseif (Test-Path $winfspSystemLib) {
         Write-Host "  INFO " -ForegroundColor DarkGray -NoNewline
-        Write-Host "WinFsp found (system install)"
+        Write-Host "WinFsp: headers vendored, libs from system install"
     } else {
         Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "MISSING: WinFsp SDK -- run build.bat to auto-download (see TODO-01 S5), or install from: https://winfsp.dev/"
+        Write-Host "MISSING: WinFsp libs -- run build.bat to download, or install from: https://winfsp.dev/"
         Write-Host "       " -ForegroundColor DarkGray -NoNewline
-        Write-Host "Tools requiring WinFsp may fail to build"
+        Write-Host "Tools requiring WinFsp may fail to link"
     }
 }
 
@@ -378,22 +383,18 @@ foreach ($dir in $toolDirs) {
     Write-Host "..." -NoNewline
 
     # Capture make output for error extraction
-    # Pass WINFSP_DIR if WinFsp SDK is available (absolute path for reliable resolution)
-    $winfspArg = ""
-    $winfspLocal = Join-Path $BuildDir "WinFsp"
-    $winfspSystem = "C:\Program Files (x86)\WinFsp"
-    if (Test-Path (Join-Path $winfspLocal "inc\winfsp\winfsp.h")) {
-        $winfspArg = "WINFSP_DIR=$winfspLocal"
-    } elseif (Test-Path (Join-Path $winfspSystem "inc\winfsp\winfsp.h")) {
-        $winfspArg = "WINFSP_DIR=$winfspSystem"
+    # WinFsp headers are vendored in sdk/include/; pass lib path if available
+    $extraArgs = @()
+    $winfspLocalLib = Join-Path $BuildDir "WinFsp\lib"
+    $winfspSystemLib = "C:\Program Files (x86)\WinFsp\lib"
+    if (Test-Path $winfspLocalLib) {
+        $extraArgs += "WINFSP_LOCAL_LIB=$winfspLocalLib"
+    } elseif (Test-Path $winfspSystemLib) {
+        $extraArgs += "WINFSP_SYSTEM_LIB=$winfspSystemLib"
     }
 
     # SHELL=cmd.exe prevents mingw32-make from using /usr/bin/sh (WSL) which mangles Windows paths
-    if ($winfspArg) {
-        $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" $winfspArg SHELL=cmd.exe --no-print-directory 2>&1
-    } else {
-        $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" SHELL=cmd.exe --no-print-directory 2>&1
-    }
+    $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" SHELL=cmd.exe @extraArgs --no-print-directory 2>&1
     $buildRC = $LASTEXITCODE
 
     $toolTimer.Stop()

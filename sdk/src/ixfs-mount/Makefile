@@ -10,20 +10,17 @@ ifeq ($(OS),Windows_NT)
   EXE = .exe
   RM = del /q
 
-  # WinFsp SDK: accept WINFSP_DIR override, or auto-detect
-  ifndef WINFSP_DIR
-    WINFSP_LOCAL = ../../build/WinFsp
-    WINFSP_SYSTEM = C:/Program Files (x86)/WinFsp
-    ifneq ($(wildcard $(WINFSP_LOCAL)/inc/winfsp/winfsp.h),)
-      WINFSP_DIR = $(WINFSP_LOCAL)
-    else ifneq ($(wildcard $(WINFSP_SYSTEM)/inc/winfsp/winfsp.h),)
-      WINFSP_DIR = $(WINFSP_SYSTEM)
-    endif
-  endif
+  # WinFsp: headers vendored in sdk/include/, libs from sdk/build/WinFsp or system
+  WINFSP_CFLAGS = -I../../include
 
-  ifdef WINFSP_DIR
-    WINFSP_CFLAGS = -I"$(WINFSP_DIR)/inc"
-    WINFSP_LIBS = -L"$(WINFSP_DIR)/lib" -lwinfsp-x64
+  WINFSP_LOCAL_LIB = ../../build/WinFsp/lib
+  WINFSP_SYSTEM_LIB = C:/Program Files (x86)/WinFsp/lib
+
+  ifneq ($(wildcard $(WINFSP_LOCAL_LIB)/winfsp-x64.lib),)
+    WINFSP_LIBS = -L"$(WINFSP_LOCAL_LIB)" -lwinfsp-x64
+    HAS_WINFSP = yes
+  else ifneq ($(wildcard $(WINFSP_SYSTEM_LIB)/winfsp-x64.lib),)
+    WINFSP_LIBS = -L"$(WINFSP_SYSTEM_LIB)" -lwinfsp-x64
     HAS_WINFSP = yes
   else
     HAS_WINFSP = no
