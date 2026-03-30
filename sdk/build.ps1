@@ -86,7 +86,6 @@ function Format-Elapsed($sw) {
 $CdnBase    = "https://impossible-storage.b-cdn.net/dev/sdk/build"
 $SevenZipUrl = "$CdnBase/7z.zip"
 $MinGWUrl    = "$CdnBase/mingw64.7z"
-$WinFspUrl   = "$CdnBase/WinFsp.7z"
 
 # Download a file with progress using curl.exe (ships with Windows 10+)
 function Download-WithProgress {
@@ -186,47 +185,11 @@ function Ensure-MinGW {
     }
 }
 
-# Step 3: Ensure WinFsp SDK is available
-function Ensure-WinFsp {
-    param([string]$SevenZip)
-
-    $header = Join-Path $BuildDir "WinFsp\inc\winfsp\winfsp.h"
-    if (Test-Path $header) { return }
-
-    Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
-    Write-Host " Downloading WinFsp SDK..."
-
-    $archive = Join-Path $BuildDir "WinFsp.7z"
-
-    try {
-        Download-WithProgress -Url $WinFspUrl -OutFile $archive -Label "WinFsp SDK"
-    } catch {
-        Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "WinFsp download failed: $_"
-        Write-Host "       Tools requiring WinFsp may fail to build" -ForegroundColor DarkGray
-        return
-    }
-
-    Write-Host "       Extracting to sdk/build/WinFsp/..." -ForegroundColor DarkGray
-    & $SevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
-
-    Remove-Item $archive -Force -ErrorAction SilentlyContinue
-
-    if (Test-Path $header) {
-        Write-Host "  OK   " -ForegroundColor Green -NoNewline
-        Write-Host "WinFsp SDK installed to sdk/build/WinFsp/"
-    } else {
-        Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "WinFsp SDK extraction incomplete -- winfsp.h not found"
-        Write-Host "       Install WinFsp manually from https://winfsp.dev/" -ForegroundColor DarkGray
-    }
-}
-
 # Auto-download toolchains if needed (skip during clean)
+# WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/ -- no download needed
 if (-not $clean) {
     $SevenZip = Ensure-7Zip
     Ensure-MinGW -SevenZip $SevenZip
-    Ensure-WinFsp -SevenZip $SevenZip
 }
 
 # -- Detect compiler -------------------------------------------------------
@@ -269,25 +232,16 @@ if (-not $MAKE) {
 
 # -- Check optional dependencies -------------------------------------------
 function Check-Dependencies {
-    # Headers are vendored in sdk/include/winfsp/ -- check for libs
+    # WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/
     $vendoredHeader = Join-Path $SdkRoot "include\winfsp\winfsp.h"
-    $winfspLocalLib = Join-Path $BuildDir "WinFsp\lib\winfsp-x64.lib"
-    $winfspSystemLib = "C:\Program Files (x86)\WinFsp\lib\winfsp-x64.lib"
+    $vendoredLib = Join-Path $SdkRoot "lib\winfsp-x64.lib"
 
-    if (-not (Test-Path $vendoredHeader)) {
-        Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "MISSING: sdk/include/winfsp/winfsp.h -- WinFsp headers not vendored"
-    } elseif (Test-Path $winfspLocalLib) {
+    if ((Test-Path $vendoredHeader) -and (Test-Path $vendoredLib)) {
         Write-Host "  INFO " -ForegroundColor DarkGray -NoNewline
-        Write-Host "WinFsp: headers vendored, libs in sdk/build/WinFsp/"
-    } elseif (Test-Path $winfspSystemLib) {
-        Write-Host "  INFO " -ForegroundColor DarkGray -NoNewline
-        Write-Host "WinFsp: headers vendored, libs from system install"
+        Write-Host "WinFsp SDK: headers + lib vendored in sdk/"
     } else {
         Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "MISSING: WinFsp libs -- run build.bat to download, or install from: https://winfsp.dev/"
-        Write-Host "       " -ForegroundColor DarkGray -NoNewline
-        Write-Host "Tools requiring WinFsp may fail to link"
+        Write-Host "MISSING: WinFsp SDK files in sdk/include/ or sdk/lib/"
     }
 }
 
@@ -383,18 +337,8 @@ foreach ($dir in $toolDirs) {
     Write-Host "..." -NoNewline
 
     # Capture make output for error extraction
-    # WinFsp headers are vendored in sdk/include/; pass lib path if available
-    $extraArgs = @()
-    $winfspLocalLib = Join-Path $BuildDir "WinFsp\lib"
-    $winfspSystemLib = "C:\Program Files (x86)\WinFsp\lib"
-    if (Test-Path $winfspLocalLib) {
-        $extraArgs += "WINFSP_LOCAL_LIB=$winfspLocalLib"
-    } elseif (Test-Path $winfspSystemLib) {
-        $extraArgs += "WINFSP_SYSTEM_LIB=$winfspSystemLib"
-    }
-
     # SHELL=cmd.exe prevents mingw32-make from using /usr/bin/sh (WSL) which mangles Windows paths
-    $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" SHELL=cmd.exe @extraArgs --no-print-directory 2>&1
+    $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" SHELL=cmd.exe --no-print-directory 2>&1
     $buildRC = $LASTEXITCODE
 
     $toolTimer.Stop()

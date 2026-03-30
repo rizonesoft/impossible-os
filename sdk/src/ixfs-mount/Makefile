@@ -10,21 +10,10 @@ ifeq ($(OS),Windows_NT)
   EXE = .exe
   RM = del /q
 
-  # WinFsp: headers vendored in sdk/include/, libs from sdk/build/WinFsp or system
+  # WinFsp: headers in sdk/include/, lib in sdk/lib/ (both vendored)
   WINFSP_CFLAGS = -I../../include
-
-  WINFSP_LOCAL_LIB = ../../build/WinFsp/lib
-  WINFSP_SYSTEM_LIB = C:/Program Files (x86)/WinFsp/lib
-
-  ifneq ($(wildcard $(WINFSP_LOCAL_LIB)/winfsp-x64.lib),)
-    WINFSP_LIBS = -L"$(WINFSP_LOCAL_LIB)" -lwinfsp-x64
-    HAS_WINFSP = yes
-  else ifneq ($(wildcard $(WINFSP_SYSTEM_LIB)/winfsp-x64.lib),)
-    WINFSP_LIBS = -L"$(WINFSP_SYSTEM_LIB)" -lwinfsp-x64
-    HAS_WINFSP = yes
-  else
-    HAS_WINFSP = no
-  endif
+  WINFSP_LIBS = -L../../lib -lwinfsp-x64
+  HAS_WINFSP = yes
 
 else
   EXE =
