@@ -413,55 +413,58 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
          (uint64_t)hc->max_intrs,
          (uint64_t)hc->max_scratchpads);
 
-    /* ---- Intel USB port routing (switch ports from EHCI to xHCI) ---- */
-    /* On Intel 7/8/9/100/200/300/400/500 series chipsets, USB ports default
-     * to EHCI. The xHCI PCI config space has routing registers:
-     *   XUSB2PR   (0xD0): USB 2.0 port routing — set bits to route to xHCI
-     *   USB3_PSSEN (0xD8): USB 3.0 port SuperSpeed enable
-     * Writing all-1s routes ALL available ports to xHCI.
+    /* ---- Intel USB port routing (EHCI→xHCI, 7/8/9-series only) ---- */
+    /* XUSB2PR (0xD0) and USB3_PSSEN (0xD8) only exist on Intel 7/8/9-series
+     * chipsets that have both EHCI and xHCI.  On 100-series+ (Sunrise Point
+     * and later, including 500-series i5-11600K), EHCI is removed entirely
+     * and these registers are reserved/repurposed.  Writing to them on modern
+     * hardware causes false positives and wasted 500ms delays.
      *
-     * §5 Phase B: SKIP when bootloader found USB devices.  The firmware's
-     * USB stack was active before ExitBootServices, which means it already
-     * configured the xHCI controller and ports.  Since we halted without
-     * reset, port CCS is preserved — no routing change or 500ms wait needed. */
+     * Check: only touch XUSB2PR if an EHCI controller (prog-if 0x20) exists
+     * on the same PCI bus as this xHCI controller. */
     {
         uint16_t vid = pci_read16(bus, dev, func, PCI_VENDOR_ID);
         if (vid == 0x8086) {  /* Intel only */
-            uint32_t xusb2pr, xusb2pr_new, usb3pssen, usb3pssen_new;
-            int routing_changed = 0;
+            /* Scan for EHCI controller on same bus */
+            int ehci_found = 0;
+            {
+                uint8_t d, f;
+                for (d = 0; d < PCI_MAX_DEV && !ehci_found; d++) {
+                    for (f = 0; f < PCI_MAX_FUNC && !ehci_found; f++) {
+                        uint16_t v = pci_read16(bus, d, f, PCI_VENDOR_ID);
+                        if (v == 0xFFFF) continue;
+                        if (pci_read8(bus, d, f, PCI_CLASS)    == 0x0C &&
+                            pci_read8(bus, d, f, PCI_SUBCLASS) == 0x03 &&
+                            pci_read8(bus, d, f, PCI_PROG_IF)  == 0x20) {
+                            ehci_found = 1;
+                            klog(LOG_INFO, "xhci",
+                                 "EHCI found at %u:%u.%u — XUSB2PR routing needed",
+                                 (uint64_t)bus, (uint64_t)d, (uint64_t)f);
+                        }
+                    }
+                }
+            }
 
-            /* Route all USB 2.0 ports to xHCI */
-            xusb2pr = pci_read32(bus, dev, func, 0xD0);
-            pci_write32(bus, dev, func, 0xD0, xusb2pr | 0xFFFFFFFF);
-            xusb2pr_new = pci_read32(bus, dev, func, 0xD0);
-            if (xusb2pr_new != xusb2pr)
-                routing_changed = 1;
-            klog(LOG_DEBUG, "xhci", "Intel XUSB2PR: 0x%x -> 0x%x%s",
-                 (uint64_t)xusb2pr, (uint64_t)xusb2pr_new,
-                 routing_changed ? " (CHANGED)" : " (unchanged)");
+            if (ehci_found) {
+                /* 7/8/9-series: route USB 2.0 ports from EHCI to xHCI */
+                uint32_t xusb2pr = pci_read32(bus, dev, func, 0xD0);
+                pci_write32(bus, dev, func, 0xD0, xusb2pr | 0xFFFFFFFF);
+                klog(LOG_DEBUG, "xhci", "Intel XUSB2PR: 0x%x -> 0x%x",
+                     (uint64_t)xusb2pr,
+                     (uint64_t)pci_read32(bus, dev, func, 0xD0));
 
-            /* Enable SuperSpeed on all USB 3.0 ports */
-            usb3pssen = pci_read32(bus, dev, func, 0xD8);
-            pci_write32(bus, dev, func, 0xD8, usb3pssen | 0xFFFFFFFF);
-            usb3pssen_new = pci_read32(bus, dev, func, 0xD8);
-            if (usb3pssen_new != usb3pssen)
-                routing_changed = 1;
-            klog(LOG_DEBUG, "xhci", "Intel USB3_PSSEN: 0x%x -> 0x%x%s",
-                 (uint64_t)usb3pssen, (uint64_t)usb3pssen_new,
-                 (usb3pssen_new != usb3pssen) ? " (CHANGED)" : " (unchanged)");
+                uint32_t usb3pssen = pci_read32(bus, dev, func, 0xD8);
+                pci_write32(bus, dev, func, 0xD8, usb3pssen | 0xFFFFFFFF);
+                klog(LOG_DEBUG, "xhci", "Intel USB3_PSSEN: 0x%x -> 0x%x",
+                     (uint64_t)usb3pssen,
+                     (uint64_t)pci_read32(bus, dev, func, 0xD8));
 
-            /* §5 Phase B: Only wait 500ms if port routing actually changed.
-             * On modern Intel (100-series+), EHCI doesn't exist and all ports
-             * default to xHCI — XUSB2PR is already all-1s.  The 500ms delay
-             * is only needed when EHCI→xHCI routing change causes link
-             * re-negotiation on previously EHCI-owned ports. */
-            if (routing_changed) {
-                klog(LOG_INFO, "xhci",
-                     "Port routing changed — waiting 500ms for device link negotiation");
+                /* Wait for devices to re-appear after EHCI→xHCI routing */
                 xhci_delay_us(500000);
             } else {
                 klog(LOG_INFO, "xhci",
-                     "Ports already routed to xHCI — skipping 500ms delay");
+                     "No EHCI on bus %u — skipping XUSB2PR + 500ms (modern Intel)",
+                     (uint64_t)bus);
             }
         }
     }
