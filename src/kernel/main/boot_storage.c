@@ -27,6 +27,7 @@
 #include "kernel/cpuid_platform.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/xhci.h"
+#include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/rtl8139.h"
 #include "kernel/net/net.h"
 #include "kernel/drivers/virtio_input.h"
@@ -120,15 +121,29 @@ void boot_phase2(void)
         int blk_n = blkdev_count();
         const char *s;
 
-        /* Line 1: block devices and mount status */
-        s = "blk="; while (*s) diag[p++] = *s++;
-        diag[p++] = '0' + (char)(blk_n > 9 ? 9 : blk_n);
-        s = " xHCI="; while (*s) diag[p++] = *s++;
-        diag[p++] = '0' + (char)xhci_controller_count();
-        s = " C:="; while (*s) diag[p++] = *s++;
-        s = vfs_is_mounted('C') ? "YES" : "NO"; while (*s) diag[p++] = *s++;
-        s = " D:="; while (*s) diag[p++] = *s++;
-        s = vfs_is_mounted('D') ? "YES" : "NO"; while (*s) diag[p++] = *s++;
+        /* Line 1: xHCI, USB devices, mount status */
+        {
+            int usb_ports = 0, usb_msc = 0;
+            if (xhci_controller_count() > 0) {
+                const struct xhci_controller *hc = xhci_get_controller(0);
+                if (hc) usb_ports = (int)hc->max_ports;
+            }
+            usb_msc = xhci_msc_device_count();
+
+            s = "xHCI="; while (*s) diag[p++] = *s++;
+            diag[p++] = '0' + (char)xhci_controller_count();
+            s = " ports="; while (*s) diag[p++] = *s++;
+            diag[p++] = '0' + (char)(usb_ports / 10);
+            diag[p++] = '0' + (char)(usb_ports % 10);
+            s = " msc="; while (*s) diag[p++] = *s++;
+            diag[p++] = '0' + (char)usb_msc;
+            s = " blk="; while (*s) diag[p++] = *s++;
+            diag[p++] = '0' + (char)(blk_n > 9 ? 9 : blk_n);
+            s = " C:="; while (*s) diag[p++] = *s++;
+            s = vfs_is_mounted('C') ? "Y" : "N"; while (*s) diag[p++] = *s++;
+            s = " D:="; while (*s) diag[p++] = *s++;
+            s = vfs_is_mounted('D') ? "Y" : "N"; while (*s) diag[p++] = *s++;
+        }
         diag[p] = '\0';
         boot_splash_status(diag);
         klog(LOG_WARN, "boot", "DIAG: %s", diag);
