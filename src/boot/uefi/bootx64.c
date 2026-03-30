@@ -286,6 +286,17 @@ static BOOLEAN guid_equal(const EFI_GUID *a, const EFI_GUID *b)
     return 1;
 }
 
+/* --- Boot debug log buffer (captures all serial output for ESP write) --- */
+#define BOOT_LOG_SIZE (32 * 1024)
+static char boot_log_buf[BOOT_LOG_SIZE];
+static UINTN boot_log_pos = 0;
+
+static void boot_log_append(const char *s)
+{
+    while (*s && boot_log_pos < BOOT_LOG_SIZE - 1)
+        boot_log_buf[boot_log_pos++] = *s++;
+}
+
 /* --- Helper: early serial output to COM1 (0x3F8) ---
  * Works before ExitBootServices -- provides diagnostics even when
  * UEFI video console doesn't work (e.g. Hyper-V Gen 2).
@@ -325,10 +336,12 @@ static void serial_early_putchar(char c)
 
 static void serial_early_print(const char *s)
 {
-    while (*s) {
-        if (*s == '\n')
+    boot_log_append(s);
+    const char *p = s;
+    while (*p) {
+        if (*p == '\n')
             serial_early_putchar('\r');
-        serial_early_putchar(*s++);
+        serial_early_putchar(*p++);
     }
 }
 
@@ -343,6 +356,46 @@ static void serial_early_print_uint(UINT32 val)
         val /= 10;
     }
     serial_early_print(buf + pos + 1);
+}
+
+/* --- Write boot debug log to ESP before ExitBootServices --- */
+static void write_boot_debug_log(void)
+{
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
+    EFI_FILE_PROTOCOL *root_dir, *log_file;
+    EFI_STATUS status;
+    UINTN write_size;
+
+    if (boot_log_pos == 0) return;
+
+    status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+    if (EFI_ERROR(status)) return;
+
+    status = fs->OpenVolume(fs, &root_dir);
+    if (EFI_ERROR(status)) return;
+
+    /* Create/overwrite boot-debug.log on the EFI System Partition */
+    status = root_dir->Open(
+        root_dir, &log_file,
+        u"\\EFI\\BOOT\\boot-debug.log",
+        EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0
+    );
+    if (EFI_ERROR(status)) {
+        root_dir->Close(root_dir);
+        serial_early_print("[BOOT] boot-debug.log: cannot create\n");
+        return;
+    }
+
+    write_size = boot_log_pos;
+    status = log_file->Write(log_file, &write_size, boot_log_buf);
+    log_file->Close(log_file);
+    root_dir->Close(root_dir);
+
+    if (!EFI_ERROR(status))
+        serial_early_print("[BOOT] boot-debug.log written to ESP\n");
+    else
+        serial_early_print("[BOOT] boot-debug.log write failed\n");
 }
 
 /* --- Helper: print to UEFI console (for debug, before ExitBootServices) --- */
@@ -1570,6 +1623,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
     serial_early_print("[BOOT] runtime services preserved\n");
+
+    /* Write boot debug log to ESP (before ExitBootServices kills filesystem access) */
+    write_boot_debug_log();
 
     /* Step 6: ExitBootServices */
     post_code16(POST16_BL_EXIT_BS);

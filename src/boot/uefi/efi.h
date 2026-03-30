@@ -277,6 +277,12 @@ typedef EFI_STATUS (EFIAPI *EFI_FILE_READ)(
     VOID *Buffer
 );
 
+typedef EFI_STATUS (EFIAPI *EFI_FILE_WRITE)(
+    struct EFI_FILE_PROTOCOL *This,
+    UINTN *BufferSize,
+    VOID *Buffer
+);
+
 typedef EFI_STATUS (EFIAPI *EFI_FILE_GET_INFO)(
     struct EFI_FILE_PROTOCOL *This,
     EFI_GUID *InformationType,
@@ -290,7 +296,7 @@ typedef struct EFI_FILE_PROTOCOL {
     EFI_FILE_CLOSE      Close;
     VOID               *Delete;
     EFI_FILE_READ       Read;
-    VOID               *Write;
+    EFI_FILE_WRITE      Write;
     VOID               *GetPosition;
     VOID               *SetPosition;
     EFI_FILE_GET_INFO   GetInfo;
@@ -317,7 +323,9 @@ typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME     OpenVolume;
 } EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
 
-#define EFI_FILE_MODE_READ  0x0000000000000001ULL
+#define EFI_FILE_MODE_READ    0x0000000000000001ULL
+#define EFI_FILE_MODE_WRITE   0x0000000000000002ULL
+#define EFI_FILE_MODE_CREATE  0x8000000000000000ULL
 
 /* --- Boot Services --- */
 typedef EFI_STATUS (EFIAPI *EFI_GET_MEMORY_MAP)(
