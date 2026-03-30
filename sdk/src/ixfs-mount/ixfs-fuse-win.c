@@ -597,7 +597,7 @@ int main(int argc, char *argv[])
     part_idx = atoi(argv[3]);
 
     if (part_idx < 0) {
-        fprintf(stderr, "Error: partition index must be >= 1\n");
+        fprintf(stderr, "Error: partition index must be >= 0 (0 = raw image, no GPT)\n");
         return 1;
     }
 
