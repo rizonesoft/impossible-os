@@ -55,3 +55,6 @@ compile_commands.json
 # SDK tool binaries (compiled on host, not tracked)
 sdk/tools/*.exe
 sdk/tools/*.o
+
+# SDK downloaded build tools (MinGW, WinFsp SDK — auto-downloaded by build.ps1)
+sdk/build/

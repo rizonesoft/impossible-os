@@ -50,7 +50,7 @@ sdk/
 | 💎  |   2   | Dependency detection and reporting           | §1         |  [x]   |
 | 💎  |   3   | Auto-discovery of SDK tool dirs              | §1         |  [x]   |
 | 💎  |   4   | Windows build script (PowerShell + bat)      | —          |  [x]   |
-| 💎  |   5   | Windows toolchain auto-download              | §4         |  [ ]   |
+| 💎  |   5   | Windows toolchain auto-download              | §4         |  [x]   |
 
 ---
 
@@ -133,15 +133,15 @@ The PowerShell build script downloads MinGW-w64 and WinFsp SDK into `sdk/build/`
 
 **Files:** `sdk/build.ps1`
 
-- [ ] On first run: check if `sdk/build/mingw64/bin/gcc.exe` exists
-- [ ] If missing: download MinGW-w64 release zip from GitHub (x86_64-posix-seh)
-- [ ] Extract to `sdk/build/mingw64/` — use `Expand-Archive`
-- [ ] Check if `sdk/build/winfsp/inc/winfsp/winfsp.h` exists
-- [ ] If missing: download WinFsp SDK installer (MSI), extract headers + libs only via `msiexec /a`
-- [ ] All paths resolved relative to `sdk/build/` — no `$env:PATH` modification beyond the build script
-- [ ] `sdk\build.bat clean` also removes `sdk/build/` for a full reset
-- [ ] Add `sdk/build/` to `.gitignore`
-- [ ] Commit: `"sdk: Windows auto-download MinGW + WinFsp SDK into sdk/build/"`
+- [x] On first run: check if `sdk/build/mingw64/bin/gcc.exe` exists
+- [x] If missing: download MinGW-w64 release .7z from GitHub (x86_64-posix-seh-ucrt)
+- [x] Extract to `sdk/build/mingw64/` — use 7z or tar
+- [x] Check if `sdk/build/winfsp/inc/winfsp/winfsp.h` exists
+- [x] If missing: download WinFsp MSI, extract headers + libs via `msiexec /a`
+- [x] All paths resolved relative to `sdk/build/` — no `$env:PATH` modification beyond the build script
+- [x] `sdk\build.bat clean` also removes `sdk/build/` for a full reset
+- [x] Add `sdk/build/` to `.gitignore`
+- [x] Commit: `"sdk: Windows auto-download MinGW + WinFsp SDK into sdk/build/"`
 
 **Test checkpoint (Windows):**
 - Delete `sdk/build/`, run `sdk\build.bat` — downloads MinGW + WinFsp, then builds all tools
@@ -159,7 +159,7 @@ The PowerShell build script downloads MinGW-w64 and WinFsp SDK into `sdk/build/`
 | 💎 | Build system       | ✅ MSBuild / CMake | ✅ make / CMake    | ✅ §1 bash + §4 PowerShell |
 | ⭐ | Progress output    | ❌ Verbose only    | ❌ Verbose only    | ✅ §1 colored progress bar |
 | ⭐ | Dep detection      | ❌ Manual install  | ❌ Manual install  | ✅ §2 auto-detect + guide  |
-| ⭐ | Zero-setup Windows | ❌ Install VS/CMake| N/A                | ⬜ §5 auto-download tools  |
+| ⭐ | Zero-setup Windows | ❌ Install VS/CMake| N/A                | ✅ §5 auto-download tools  |
 | ⭐ | Watch mode         | ❌ None built-in   | ❌ None built-in   | ⬜ Planned `--watch` flag  |
 
 ## Verification
@@ -167,5 +167,5 @@ The PowerShell build script downloads MinGW-w64 and WinFsp SDK into `sdk/build/`
 - [x] Linux: `bash sdk/build.sh` — builds all tools, progress shown, timing reported
 - [x] Missing deps: clear install instructions printed
 - [x] New tool: add directory, auto-discovered on next build
-- [ ] Windows: `sdk\build.bat` — downloads tools on first run, builds all tools
-- [ ] Windows: clean run after deleting `sdk/build/` re-downloads and builds
+- [ ] Windows: `sdk\build.bat` — downloads tools on first run, builds all tools (test on Windows)
+- [ ] Windows: clean run after deleting `sdk/build/` re-downloads and builds (test on Windows)
