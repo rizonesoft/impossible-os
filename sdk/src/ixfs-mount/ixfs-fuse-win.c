@@ -596,7 +596,7 @@ int main(int argc, char *argv[])
     mbstowcs(mount_point, argv[1], 8);
     part_idx = atoi(argv[3]);
 
-    if (part_idx < 1) {
+    if (part_idx < 0) {
         fprintf(stderr, "Error: partition index must be >= 1\n");
         return 1;
     }

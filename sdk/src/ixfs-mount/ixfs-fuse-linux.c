@@ -425,8 +425,8 @@ int main(int argc, char *argv[])
     image_path[path_len] = '\0';
     part_idx = atoi(colon + 1);
 
-    if (part_idx < 1) {
-        fprintf(stderr, "Error: partition index must be >= 1\n");
+    if (part_idx < 0) {
+        fprintf(stderr, "Error: partition index must be >= 0 (0 = raw image, no GPT)\n");
         return 1;
     }
 

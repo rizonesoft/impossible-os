@@ -155,6 +155,21 @@ ixfs_disk_ctx_t *disk_open(const char *path, int partition_index)
     if (!fp)
         return NULL;
 
+    if (partition_index == 0) {
+        /* Partition index 0: treat entire file as raw IXFS volume (no GPT) */
+        fseeko(fp, 0, SEEK_END);
+        uint64_t file_size = (uint64_t)ftello(fp);
+        fseeko(fp, 0, SEEK_SET);
+
+        disk = calloc(1, sizeof(ixfs_disk_ctx_t));
+        if (!disk) { fclose(fp); return NULL; }
+
+        disk->fp = fp;
+        disk->part_offset = 0;
+        disk->part_size = file_size;
+        return disk;
+    }
+
     if (gpt_find_partition(fp, partition_index, &start_lba, &sector_count) != 0) {
         fclose(fp);
         return NULL;

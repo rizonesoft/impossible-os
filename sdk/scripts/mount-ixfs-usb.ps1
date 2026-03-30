@@ -1,12 +1,15 @@
 # mount-ixfs-usb.ps1 -- Detect USB drives with IXFS partitions and mount them.
 #
-# Must run as Administrator (raw disk access requires it).
-# The WinFsp mount will be visible in Explorer windows opened from this session.
+# Strategy: Extract IXFS partition from USB to a temp image file (requires admin),
+# then mount the image as normal user (visible in Explorer).
 #
-# Usage:
-#   Right-click mount-ixfs-usb.bat -> Run as administrator
-#
+# Usage: mount-ixfs-usb.bat
 # Unmount: unmount-ixfs.bat
+
+param(
+    [string]$Phase = "",
+    [string]$ImageFile = ""
+)
 
 $ErrorActionPreference = "Continue"
 
@@ -14,20 +17,8 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SdkDir    = Split-Path -Parent $ScriptDir
 $IxfsMount = Join-Path $SdkDir "tools\ixfs-mount.exe"
 $IXFS_MAGIC = 0x49584653
-
-if (-not (Test-Path $IxfsMount)) {
-    Write-Host "  ERROR" -ForegroundColor Red -NoNewline
-    Write-Host " ixfs-mount.exe not found. Run: sdk\build.bat"
-    exit 1
-}
-
-# -- Check admin --
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "  Requesting administrator privileges (required for raw disk access)..." -ForegroundColor Yellow
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -Verb RunAs
-    exit 0
-}
+$TempImage = Join-Path $env:TEMP "ixfs-usb-partition.img"
+$ResultFile = Join-Path $env:TEMP "ixfs-usb-result.txt"
 
 # -- Helpers --
 function Open-RawDrive {
@@ -77,12 +68,13 @@ function Find-IXFSPartition {
             if ($allZero) { continue }
             $partIndex++
             $startLBA = [BitConverter]::ToUInt64($entry, 32)
+            $endLBA = [BitConverter]::ToUInt64($entry, 40)
             $magicBuf = Read-Bytes -Stream $fs -Offset ($startLBA * 512) -Count 4
             if ($magicBuf) {
                 $magic = [BitConverter]::ToUInt32($magicBuf, 0)
                 if ($magic -eq $IXFS_MAGIC) {
                     $fs.Close()
-                    return @{ Index = $partIndex; StartLBA = $startLBA }
+                    return @{ Index = $partIndex; StartLBA = $startLBA; EndLBA = $endLBA }
                 }
             }
         }
@@ -91,110 +83,231 @@ function Find-IXFSPartition {
     return $null
 }
 
-function Get-FreeDriveLetter {
-    foreach ($letter in [char[]]('I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z')) {
-        $drive = "${letter}:"
-        if (-not (Test-Path $drive)) { return $drive }
+# ============================================================================
+# Phase: extract -- runs elevated, extracts IXFS partition to temp image file
+# ============================================================================
+function Run-Extract {
+    Write-Host "  Scanning for IXFS partitions..." -ForegroundColor Cyan
+
+    $drives = Get-WmiObject Win32_DiskDrive | Where-Object {
+        $_.InterfaceType -eq "USB" -or $_.MediaType -match "Removable"
     }
-    return $null
+
+    if (-not $drives -or @($drives).Count -eq 0) {
+        Write-Host "  No USB/removable drives found" -ForegroundColor Red
+        return $false
+    }
+
+    Write-Host "  Found $(@($drives).Count) removable device(s)"
+
+    foreach ($drive in $drives) {
+        $devPath = $drive.Name
+        $model = $drive.Model
+        $sizeMB = [math]::Round($drive.Size / 1MB)
+        Write-Host "  Scanning $devPath ($model, ${sizeMB} MB)..." -ForegroundColor DarkGray
+
+        $result = Find-IXFSPartition -DrivePath $devPath
+        if ($result) {
+            Write-Host "  FOUND " -ForegroundColor Green -NoNewline
+            Write-Host "IXFS partition $($result.Index)"
+            Write-Host ""
+
+            # Extract partition to temp image file
+            $partBytes = ($result.EndLBA - $result.StartLBA + 1) * 512
+            $partMB = [math]::Round($partBytes / 1MB)
+            Write-Host "  Extracting partition ($partMB MB) to temp file..." -ForegroundColor Cyan
+
+            $fs = Open-RawDrive -Path $devPath
+            if (-not $fs) {
+                Write-Host "  Failed to open drive" -ForegroundColor Red
+                return $false
+            }
+
+            try {
+                $outFs = [System.IO.File]::Create($TempImage)
+                $fs.Seek($result.StartLBA * 512, [System.IO.SeekOrigin]::Begin) | Out-Null
+
+                $bufSize = 1048576  # 1 MB chunks
+                $buf = New-Object byte[] $bufSize
+                $remaining = $partBytes
+                $written = 0
+
+                while ($remaining -gt 0) {
+                    $toRead = [math]::Min($bufSize, $remaining)
+                    $bytesRead = $fs.Read($buf, 0, $toRead)
+                    if ($bytesRead -le 0) { break }
+                    $outFs.Write($buf, 0, $bytesRead)
+                    $remaining -= $bytesRead
+                    $written += $bytesRead
+
+                    # Progress every 10 MB
+                    $pct = [math]::Floor($written * 100 / $partBytes)
+                    if ($written % (10 * 1048576) -lt $bufSize) {
+                        $writtenMB = [math]::Round($written / 1MB)
+                        Write-Host "`r  Extracted $writtenMB / $partMB MB ($pct%)   " -NoNewline -ForegroundColor DarkGray
+                    }
+                }
+
+                $outFs.Close()
+                $fs.Close()
+
+                Write-Host "`r  Extracted $partMB / $partMB MB (100%)   " -ForegroundColor DarkGray
+                Write-Host "  OK " -ForegroundColor Green -NoNewline
+                Write-Host "Partition saved to temp file"
+
+                # Write result file so Phase 2 knows the image path
+                Set-Content -Path $ResultFile -Value $TempImage
+                return $true
+
+            } catch {
+                Write-Host "  Extraction failed: $_" -ForegroundColor Red
+                try { $outFs.Close() } catch {}
+                try { $fs.Close() } catch {}
+                return $false
+            }
+        }
+    }
+
+    Write-Host "  No IXFS partitions found" -ForegroundColor Red
+    return $false
 }
 
-# -- Main --
+# ============================================================================
+# Phase: mount -- runs as normal user, mounts the extracted image file
+# ============================================================================
+function Run-Mount {
+    param([string]$Image)
+
+    if (-not (Test-Path $Image)) {
+        Write-Host "  Image file not found: $Image" -ForegroundColor Red
+        return
+    }
+
+    if (-not (Test-Path $IxfsMount)) {
+        Write-Host "  ixfs-mount.exe not found. Run: sdk\build.bat" -ForegroundColor Red
+        return
+    }
+
+    # Find free drive letter
+    foreach ($letter in [char[]]('I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z')) {
+        $drive = "${letter}:"
+        if (-not (Test-Path $drive)) { $driveLetter = $drive; break }
+    }
+    if (-not $driveLetter) {
+        Write-Host "  No free drive letters" -ForegroundColor Red
+        return
+    }
+
+    # Ensure WinFsp DLL is findable
+    $winfspBin = "C:\Program Files (x86)\WinFsp\bin"
+    if (Test-Path $winfspBin) { $env:PATH = "$winfspBin;$env:PATH" }
+
+    # The image IS the partition (no GPT wrapper), so partition index = 0
+    # But ixfs-mount.exe expects a GPT image with partition index.
+    # We need to pass the raw image directly. Use partition index 0 as a signal
+    # to skip GPT parsing and treat the whole file as the IXFS volume.
+    $mountArgs = "$driveLetter `"$Image`" 0"
+    Write-Host "  Mounting as $driveLetter..." -ForegroundColor Cyan
+
+    $errLog = Join-Path $env:TEMP "ixfs-mount-err.log"
+    $proc = Start-Process -FilePath $IxfsMount -ArgumentList $mountArgs -NoNewWindow -PassThru -RedirectStandardError $errLog
+
+    Start-Sleep -Seconds 3
+
+    if (-not $proc.HasExited) {
+        if (Test-Path "$driveLetter\") {
+            Write-Host ""
+            Write-Host "  Mounted IXFS as $driveLetter" -ForegroundColor Green
+            Write-Host ""
+
+            # Open Explorer
+            Start-Process "explorer.exe" $driveLetter
+
+            Write-Host "  Keep this window open -- closing it unmounts the drive." -ForegroundColor Yellow
+            Write-Host "  Unmount: close this window or run unmount-ixfs.bat"
+            Write-Host ""
+
+            # Block to keep mount alive
+            Read-Host "  Press Enter to unmount"
+
+            # Cleanup
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+            Remove-Item $Image -Force -ErrorAction SilentlyContinue
+            Write-Host "  Unmounted and cleaned up." -ForegroundColor Green
+        } else {
+            Write-Host "  Process running but $driveLetter not visible" -ForegroundColor Yellow
+            if (Test-Path $errLog) {
+                $err = Get-Content $errLog -Raw
+                if ($err) { Write-Host "  $err" -ForegroundColor DarkGray }
+            }
+        }
+    } else {
+        Write-Host "  Mount failed (exit code $($proc.ExitCode))" -ForegroundColor Red
+        if (Test-Path $errLog) {
+            $err = Get-Content $errLog -Raw
+            if ($err) { Write-Host "  $err" }
+        }
+        Remove-Item $Image -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ============================================================================
+# Main
+# ============================================================================
 Write-Host ""
 Write-Host "  IXFS USB Mount" -ForegroundColor White
 Write-Host ("=" * 50)
 Write-Host ""
 
-# Scan for USB drives
-Write-Host "  Scanning for IXFS partitions on USB drives..." -ForegroundColor Cyan
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-$drives = Get-WmiObject Win32_DiskDrive | Where-Object {
-    $_.InterfaceType -eq "USB" -or $_.MediaType -match "Removable"
+if ($Phase -eq "extract") {
+    # Phase 1: elevated, extract partition
+    $ok = Run-Extract
+    if (-not $ok) { Set-Content -Path $ResultFile -Value "FAILED" }
+    exit 0
 }
 
-if (-not $drives -or @($drives).Count -eq 0) {
-    Write-Host "  No USB/removable drives found" -ForegroundColor Red
-    exit 1
+if ($Phase -eq "mount" -and $ImageFile) {
+    # Phase 2: normal user, mount image
+    Run-Mount -Image $ImageFile
+    exit 0
 }
 
-Write-Host "  Found $(@($drives).Count) removable device(s)"
-
-$foundInfo = $null
-$foundDriveNum = $null
-
-foreach ($drive in $drives) {
-    $devPath = $drive.Name
-    $model = $drive.Model
-    $sizeMB = [math]::Round($drive.Size / 1MB)
-    Write-Host "  Scanning $devPath ($model, ${sizeMB} MB)..." -ForegroundColor DarkGray
-
-    $result = Find-IXFSPartition -DrivePath $devPath
-    if ($result) {
-        $foundDriveNum = [regex]::Match($devPath, '\d+$').Value
-        $foundInfo = $result
-        Write-Host "  FOUND " -ForegroundColor Green -NoNewline
-        Write-Host "IXFS partition $($result.Index) on PhysicalDrive$foundDriveNum"
-        break
-    }
-}
-
-if (-not $foundInfo) {
-    Write-Host "  No IXFS partitions found on USB drives" -ForegroundColor Red
-    exit 1
-}
-
-# Mount
-$driveLetter = Get-FreeDriveLetter
-if (-not $driveLetter) {
-    Write-Host "  ERROR: No free drive letters" -ForegroundColor Red
-    exit 1
-}
-
-# Ensure WinFsp DLL is findable
-$winfspBin = "C:\Program Files (x86)\WinFsp\bin"
-if (Test-Path $winfspBin) { $env:PATH = "$winfspBin;$env:PATH" }
-
-$mountArgs = "$driveLetter \\.\PhysicalDrive$foundDriveNum $($foundInfo.Index)"
-Write-Host ""
-Write-Host "  Mounting IXFS as $driveLetter..." -ForegroundColor Cyan
-Write-Host "  Command: ixfs-mount.exe $mountArgs" -ForegroundColor DarkGray
-
-$errLog = Join-Path $env:TEMP "ixfs-mount-err.log"
-$proc = Start-Process -FilePath $IxfsMount -ArgumentList $mountArgs -NoNewWindow -PassThru -RedirectStandardError $errLog
-
-Start-Sleep -Seconds 3
-
-if (-not $proc.HasExited) {
-    if (Test-Path "$driveLetter\") {
-        Write-Host ""
-        Write-Host "  Mounted IXFS as $driveLetter" -ForegroundColor Green
-        Write-Host ""
-        Write-Host "  Unmount: close this window or run unmount-ixfs.bat" -ForegroundColor DarkGray
-        Write-Host ""
-
-        Write-Host ""
-        Write-Host "  Contents of ${driveLetter}\" -ForegroundColor White
-        Write-Host ("-" * 50)
-        & cmd.exe /c "dir $driveLetter\"
-        Write-Host ("-" * 50)
-        Write-Host ""
-        Write-Host "  Keep this window open -- closing it unmounts the drive." -ForegroundColor Yellow
-        Write-Host "  To browse: open a new admin cmd and type: dir $driveLetter\"
-        Write-Host ""
-        # Block forever to keep the mount alive
-        & cmd.exe /c "pause"
-    } else {
-        Write-Host "  Process running but $driveLetter not yet visible" -ForegroundColor Yellow
-        Write-Host "  Try: dir $driveLetter\" -ForegroundColor DarkGray
-        if (Test-Path $errLog) {
-            $err = Get-Content $errLog -Raw
-            if ($err) { Write-Host "  $err" -ForegroundColor DarkGray }
-        }
-    }
+# Default: orchestrate both phases
+# Phase 1: extract (needs admin)
+if (-not $isAdmin) {
+    Write-Host "  Requesting admin to read USB drive..." -ForegroundColor Yellow
+    $thisScript = $MyInvocation.MyCommand.Path
+    Start-Process -FilePath "powershell.exe" `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$thisScript`" -Phase extract" `
+        -Verb RunAs -Wait
 } else {
-    Write-Host "  Mount failed (exit code $($proc.ExitCode))" -ForegroundColor Red
-    if (Test-Path $errLog) {
-        $err = Get-Content $errLog -Raw
-        if ($err) { Write-Host "  $err" }
-    }
+    Run-Extract
+}
+
+# Check result
+if (-not (Test-Path $ResultFile)) {
+    Write-Host "  Extraction failed or was cancelled" -ForegroundColor Red
+    exit 1
+}
+
+$imageResult = (Get-Content $ResultFile -Raw).Trim()
+Remove-Item $ResultFile -Force -ErrorAction SilentlyContinue
+
+if ($imageResult -eq "FAILED" -or -not (Test-Path $imageResult)) {
+    Write-Host "  Extraction failed" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host ""
+
+# Phase 2: mount as normal user (this context, not elevated)
+if ($isAdmin) {
+    # We're already admin -- mount here (may not show in Explorer but will work)
+    Run-Mount -Image $imageResult
+} else {
+    # Normal user -- mount directly (visible in Explorer!)
+    Run-Mount -Image $imageResult
 }
