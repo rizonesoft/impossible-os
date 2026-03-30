@@ -265,8 +265,6 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                  bd->is_msc ? " [MSC]" : "",
                  bd->is_hid ? " [HID]" : "");
         }
-        POST16(0xD751);
-        goto handover_init;  /* Skip reset + Intel routing, go straight to DCBAA setup */
     }
     POST16(0xD751);
 
@@ -284,8 +282,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     hc->rt_base = hc->mmio_base + hc->rts_offset;
     hc->db_base = hc->mmio_base + hc->db_offset;
 
-    /* Step 3: Halt controller (USBCMD.RS = 0, wait USBSTS.HCH = 1)
-     * This stops DMA — safe even in handover path (firmware buffers freed). */
+    /* Step 3: Halt controller (USBCMD.RS = 0, wait USBSTS.HCH = 1) */
     {
         uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
         cmd &= ~XHCI_CMD_RUN;
@@ -302,14 +299,11 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     }
     klog(LOG_DEBUG, "xhci", "Controller halted");
 
-handover_init:
-    /* §5 Phase B fast-path lands here: halted, CCS preserved, no reset.
-     * Legacy path falls through from above with CCS cleared by reset. */
-
-    /* Step 4: Reset controller — SKIPPED in handover path.
-     * Reset clears port CCS bits, forcing 500ms link re-negotiation.
-     * Without reset, connected devices remain visible immediately. */
-    if (!(g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0)) {
+    /* Step 4: Reset controller (USBCMD.HCRST = 1, wait HCRST=0 AND CNR=0)
+     * Always reset — halt-without-reset leaves command ring in unknown state
+     * and Enable Slot commands fail.  Reset clears port CCS, but that's OK
+     * because we optimize the port routing delay below instead. */
+    {
         xhci_write32(hc->op_base, XHCI_OP_USBCMD, XHCI_CMD_HCRST);
 
         uint32_t timeout = XHCI_RESET_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
@@ -324,16 +318,8 @@ handover_init:
             }
             xhci_delay_us(XHCI_POLL_INTERVAL_US);
         }
-        klog(LOG_DEBUG, "xhci", "Controller reset complete");
-    } else {
-        /* Wait for CNR to clear after halt (controller needs a moment) */
-        uint32_t timeout = XHCI_RESET_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
-        while (xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_CNR) {
-            if (--timeout == 0) break;
-            xhci_delay_us(XHCI_POLL_INTERVAL_US);
-        }
-        klog(LOG_INFO, "xhci", "Handover: halt without reset — CCS preserved");
     }
+    klog(LOG_DEBUG, "xhci", "Controller reset complete");
 
     /* Step 5: Configure MaxSlotsEn */
     xhci_write32(hc->op_base, XHCI_OP_CONFIG, hc->max_slots);
@@ -438,31 +424,46 @@ handover_init:
      * USB stack was active before ExitBootServices, which means it already
      * configured the xHCI controller and ports.  Since we halted without
      * reset, port CCS is preserved — no routing change or 500ms wait needed. */
-    if (!(g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0)) {
+    {
         uint16_t vid = pci_read16(bus, dev, func, PCI_VENDOR_ID);
         if (vid == 0x8086) {  /* Intel only */
-            uint32_t xusb2pr, usb3pssen;
+            uint32_t xusb2pr, xusb2pr_new, usb3pssen, usb3pssen_new;
+            int routing_changed = 0;
 
             /* Route all USB 2.0 ports to xHCI */
             xusb2pr = pci_read32(bus, dev, func, 0xD0);
             pci_write32(bus, dev, func, 0xD0, xusb2pr | 0xFFFFFFFF);
-            klog(LOG_DEBUG, "xhci", "Intel XUSB2PR: 0x%x -> 0x%x",
-                 (uint64_t)xusb2pr,
-                 (uint64_t)pci_read32(bus, dev, func, 0xD0));
+            xusb2pr_new = pci_read32(bus, dev, func, 0xD0);
+            if (xusb2pr_new != xusb2pr)
+                routing_changed = 1;
+            klog(LOG_DEBUG, "xhci", "Intel XUSB2PR: 0x%x -> 0x%x%s",
+                 (uint64_t)xusb2pr, (uint64_t)xusb2pr_new,
+                 routing_changed ? " (CHANGED)" : " (unchanged)");
 
             /* Enable SuperSpeed on all USB 3.0 ports */
             usb3pssen = pci_read32(bus, dev, func, 0xD8);
             pci_write32(bus, dev, func, 0xD8, usb3pssen | 0xFFFFFFFF);
-            klog(LOG_DEBUG, "xhci", "Intel USB3_PSSEN: 0x%x -> 0x%x",
-                 (uint64_t)usb3pssen,
-                 (uint64_t)pci_read32(bus, dev, func, 0xD8));
+            usb3pssen_new = pci_read32(bus, dev, func, 0xD8);
+            if (usb3pssen_new != usb3pssen)
+                routing_changed = 1;
+            klog(LOG_DEBUG, "xhci", "Intel USB3_PSSEN: 0x%x -> 0x%x%s",
+                 (uint64_t)usb3pssen, (uint64_t)usb3pssen_new,
+                 (usb3pssen_new != usb3pssen) ? " (CHANGED)" : " (unchanged)");
 
-            /* Wait for devices to appear after EHCI→xHCI routing change */
-            xhci_delay_us(500000);
+            /* §5 Phase B: Only wait 500ms if port routing actually changed.
+             * On modern Intel (100-series+), EHCI doesn't exist and all ports
+             * default to xHCI — XUSB2PR is already all-1s.  The 500ms delay
+             * is only needed when EHCI→xHCI routing change causes link
+             * re-negotiation on previously EHCI-owned ports. */
+            if (routing_changed) {
+                klog(LOG_INFO, "xhci",
+                     "Port routing changed — waiting 500ms for device link negotiation");
+                xhci_delay_us(500000);
+            } else {
+                klog(LOG_INFO, "xhci",
+                     "Ports already routed to xHCI — skipping 500ms delay");
+            }
         }
-    } else {
-        klog(LOG_INFO, "xhci",
-             "Handover: skipping Intel port routing + 500ms delay (firmware pre-configured)");
     }
 
     /* Step 11: Enumerate any already-connected devices */
