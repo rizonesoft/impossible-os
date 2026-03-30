@@ -190,7 +190,7 @@ function Ensure-MinGW {
 function Ensure-WinFsp {
     param([string]$SevenZip)
 
-    $header = Join-Path $BuildDir "winfsp\inc\winfsp\winfsp.h"
+    $header = Join-Path $BuildDir "WinFsp\inc\winfsp\winfsp.h"
     if (Test-Path $header) { return }
 
     Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
@@ -207,14 +207,14 @@ function Ensure-WinFsp {
         return
     }
 
-    Write-Host "       Extracting to sdk/build/winfsp/..." -ForegroundColor DarkGray
+    Write-Host "       Extracting to sdk/build/WinFsp/..." -ForegroundColor DarkGray
     & $SevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
 
     Remove-Item $archive -Force -ErrorAction SilentlyContinue
 
     if (Test-Path $header) {
         Write-Host "  OK   " -ForegroundColor Green -NoNewline
-        Write-Host "WinFsp SDK installed to sdk/build/winfsp/"
+        Write-Host "WinFsp SDK installed to sdk/build/WinFsp/"
     } else {
         Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
         Write-Host "WinFsp SDK extraction incomplete -- winfsp.h not found"
@@ -269,7 +269,7 @@ if (-not $MAKE) {
 
 # -- Check optional dependencies -------------------------------------------
 function Check-Dependencies {
-    $WinFspLocal = Join-Path $BuildDir "winfsp\inc\winfsp\winfsp.h"
+    $WinFspLocal = Join-Path $BuildDir "WinFsp\inc\winfsp\winfsp.h"
     $WinFspSystem = "C:\Program Files (x86)\WinFsp\inc\winfsp\winfsp.h"
 
     if (Test-Path $WinFspLocal) {
