@@ -240,17 +240,19 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     POST16(0xD750);
     xhci_bios_handoff(hc);
 
-    /* ---- §5 Phase B: Log pre-enumerated USB device inventory ---- */
+    /* ---- §5 Phase B: Handover fast-path when bootloader found USB devices ---- */
     /* If the bootloader discovered USB devices via EFI_USB_IO_PROTOCOL,
-     * log the inventory.  We still halt/reset the controller because
-     * firmware DMA buffers (DCBAA, device contexts) live in freed
-     * EfiBootServicesData memory.  But we skip the 500ms Intel port
-     * routing delay since firmware already routed ports, and we use
-     * boot_info geometry to skip INQUIRY/READ_CAPACITY for MSC. */
+     * the firmware already configured ports and devices were connected.
+     * We HALT (stop DMA to protect against stale firmware buffers) but
+     * do NOT RESET — reset clears port CCS (Current Connect Status) which
+     * forces link re-negotiation and the 500ms wait.  By preserving CCS,
+     * devices are immediately visible after we set up fresh DCBAA/rings
+     * and restart the controller.  Intel XUSB2PR routing is also skipped
+     * since firmware already configured ports. */
     if (g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0) {
         uint32_t bi;
         klog(LOG_INFO, "xhci",
-             "Bootloader pre-enumerated %u USB device(s) — fast-path enabled",
+             "Bootloader pre-enumerated %u USB device(s) — handover fast-path",
              (uint64_t)g_boot_info.usb_device_count);
         for (bi = 0; bi < g_boot_info.usb_device_count; bi++) {
             const struct boot_usb_device *bd = &g_boot_info.usb_devices[bi];
@@ -263,6 +265,8 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                  bd->is_msc ? " [MSC]" : "",
                  bd->is_hid ? " [HID]" : "");
         }
+        POST16(0xD751);
+        goto handover_init;  /* Skip reset + Intel routing, go straight to DCBAA setup */
     }
     POST16(0xD751);
 
@@ -280,7 +284,8 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     hc->rt_base = hc->mmio_base + hc->rts_offset;
     hc->db_base = hc->mmio_base + hc->db_offset;
 
-    /* Step 3: Halt controller (USBCMD.RS = 0, wait USBSTS.HCH = 1) */
+    /* Step 3: Halt controller (USBCMD.RS = 0, wait USBSTS.HCH = 1)
+     * This stops DMA — safe even in handover path (firmware buffers freed). */
     {
         uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
         cmd &= ~XHCI_CMD_RUN;
@@ -297,8 +302,14 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     }
     klog(LOG_DEBUG, "xhci", "Controller halted");
 
-    /* Step 4: Reset controller (USBCMD.HCRST = 1, wait HCRST=0 AND CNR=0) */
-    {
+handover_init:
+    /* §5 Phase B fast-path lands here: halted, CCS preserved, no reset.
+     * Legacy path falls through from above with CCS cleared by reset. */
+
+    /* Step 4: Reset controller — SKIPPED in handover path.
+     * Reset clears port CCS bits, forcing 500ms link re-negotiation.
+     * Without reset, connected devices remain visible immediately. */
+    if (!(g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0)) {
         xhci_write32(hc->op_base, XHCI_OP_USBCMD, XHCI_CMD_HCRST);
 
         uint32_t timeout = XHCI_RESET_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
@@ -313,8 +324,16 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
             }
             xhci_delay_us(XHCI_POLL_INTERVAL_US);
         }
+        klog(LOG_DEBUG, "xhci", "Controller reset complete");
+    } else {
+        /* Wait for CNR to clear after halt (controller needs a moment) */
+        uint32_t timeout = XHCI_RESET_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
+        while (xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_CNR) {
+            if (--timeout == 0) break;
+            xhci_delay_us(XHCI_POLL_INTERVAL_US);
+        }
+        klog(LOG_INFO, "xhci", "Handover: halt without reset — CCS preserved");
     }
-    klog(LOG_DEBUG, "xhci", "Controller reset complete");
 
     /* Step 5: Configure MaxSlotsEn */
     xhci_write32(hc->op_base, XHCI_OP_CONFIG, hc->max_slots);
@@ -413,8 +432,13 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
      * to EHCI. The xHCI PCI config space has routing registers:
      *   XUSB2PR   (0xD0): USB 2.0 port routing — set bits to route to xHCI
      *   USB3_PSSEN (0xD8): USB 3.0 port SuperSpeed enable
-     * Writing all-1s routes ALL available ports to xHCI. */
-    {
+     * Writing all-1s routes ALL available ports to xHCI.
+     *
+     * §5 Phase B: SKIP when bootloader found USB devices.  The firmware's
+     * USB stack was active before ExitBootServices, which means it already
+     * configured the xHCI controller and ports.  Since we halted without
+     * reset, port CCS is preserved — no routing change or 500ms wait needed. */
+    if (!(g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0)) {
         uint16_t vid = pci_read16(bus, dev, func, PCI_VENDOR_ID);
         if (vid == 0x8086) {  /* Intel only */
             uint32_t xusb2pr, usb3pssen;
@@ -433,13 +457,12 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                  (uint64_t)usb3pssen,
                  (uint64_t)pci_read32(bus, dev, func, 0xD8));
 
-            /* Wait for devices to appear after EHCI→xHCI routing change.
-             * The 500ms delay is required on real Intel hardware — UEFI
-             * firmware uses its own internal USB stack and does NOT
-             * necessarily set XUSB2PR, so the kernel's port routing is
-             * the first time devices see the xHCI controller. */
+            /* Wait for devices to appear after EHCI→xHCI routing change */
             xhci_delay_us(500000);
         }
+    } else {
+        klog(LOG_INFO, "xhci",
+             "Handover: skipping Intel port routing + 500ms delay (firmware pre-configured)");
     }
 
     /* Step 11: Enumerate any already-connected devices */

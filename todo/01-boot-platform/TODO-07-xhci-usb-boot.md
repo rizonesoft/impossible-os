@@ -123,10 +123,10 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
   - [x] Set HC OS Owned Semaphore bit, wait for BIOS Owned Semaphore to clear
   - [x] Timeout after 1s — if BIOS doesn't release, force-clear and proceed
   - [x] Clear USBLEGCTLSTS (legacy SMI enables) after handoff
-- [ ] Skip Intel 500ms port routing delay — reverted: UEFI firmware uses its own USB stack and does NOT set XUSB2PR; kernel port routing is still needed on bare metal
+- [x] Skip controller RESET + Intel 500ms port routing when boot_info has devices (halt-without-reset preserves CCS)
 - [ ] Register MSC block devices using geometry from boot_info (no INQUIRY needed) — deferred: requires intercepting usb_msc_init() flow
 - [x] `POST16(0xD750)` entry, `POST16(0xD751)` exit
-- [x] Result: USBLEGSUP prevents firmware interference; 500ms skip deferred pending bare-metal XUSB2PR investigation
+- [ ] Result: ~500ms saved — needs bare-metal verification (halt-without-reset + skip XUSB2PR)
 
 > [!IMPORTANT]
 > **Rollback:** If USBLEGSUP handoff fails or controller state is corrupt after takeover, fall back to the current halt/reset/re-enumerate path (§1-§4). The §1-§4 path is proven on bare metal — never remove it until §5 is verified on all platforms.
