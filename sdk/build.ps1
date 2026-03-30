@@ -1,4 +1,4 @@
-# sdk/build.ps1 — Build all SDK tools on Windows with progress bar, timing, and error extraction.
+# sdk/build.ps1 -- Build all SDK tools on Windows with progress bar, timing, and error extraction.
 #
 # Usage:
 #   sdk\build.bat          Build all SDK tools
@@ -15,11 +15,11 @@ param(
 # Also accept "clean" as a positional argument
 if ($args -contains "clean") { $clean = $true }
 
-# Use Continue — "Stop" causes PowerShell to abort on ANY stderr output
+# Use Continue -- "Stop" causes PowerShell to abort on ANY stderr output
 # from external commands (gcc warnings, etc.), which kills the script silently.
 $ErrorActionPreference = "Continue"
 
-# ── Resolve paths ──────────────────────────────────────────────────────────
+# -- Resolve paths ----------------------------------------------------------
 $SdkRoot   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SrcDir    = Join-Path $SdkRoot "src"
 $ToolsDir  = Join-Path $SdkRoot "tools"
@@ -27,19 +27,19 @@ $BuildDir  = Join-Path $SdkRoot "build"
 
 if (-not (Test-Path $ToolsDir)) { New-Item -ItemType Directory -Path $ToolsDir -Force | Out-Null }
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-function Write-Divider  { Write-Host ("─" * 50) -ForegroundColor DarkGray }
-function Write-Header   { Write-Host ("═" * 50) -ForegroundColor White }
+# -- Helpers ----------------------------------------------------------------
+function Write-Divider  { Write-Host ("-" * 50) -ForegroundColor DarkGray }
+function Write-Header   { Write-Host ("=" * 50) -ForegroundColor White }
 
 function Format-Elapsed($sw) {
     return "{0:F1}" -f $sw.Elapsed.TotalSeconds
 }
 
-# ── Toolchain auto-download ───────────────────────────────────────────────
+# -- Toolchain auto-download -----------------------------------------------
 # Downloads MinGW-w64 and WinFsp SDK into sdk/build/ on first run.
 # No system-wide install, no environment variables, fully self-contained.
 
-# MinGW-w64: use .zip (not .7z) — .zip works with Expand-Archive, no 7-Zip needed
+# MinGW-w64: use .zip (not .7z) -- .zip works with Expand-Archive, no 7-Zip needed
 $MinGWUrl   = "https://github.com/niXman/mingw-builds-binaries/releases/download/14.2.0-rt_v12-rev1/x86_64-14.2.0-release-posix-seh-ucrt-rt_v12-rev1.7z"
 $WinFspUrl  = "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25099.msi"
 
@@ -67,7 +67,7 @@ function Ensure-MinGW {
         exit 1
     }
 
-    # Extract — .7z requires 7-Zip or compatible tar
+    # Extract -- .7z requires 7-Zip or compatible tar
     Write-Host "       Extracting to sdk/build/mingw64/..." -ForegroundColor DarkGray
 
     $extracted = $false
@@ -109,7 +109,7 @@ function Ensure-MinGW {
         Write-Host "MinGW installed: $ver"
     } else {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
-        Write-Host "MinGW extraction failed — gcc.exe not found at: $gcc"
+        Write-Host "MinGW extraction failed -- gcc.exe not found at: $gcc"
         Write-Host "       Check that the archive extracted a mingw64/ directory." -ForegroundColor DarkGray
         exit 1
     }
@@ -155,7 +155,7 @@ function Ensure-WinFsp {
     $winfspDir = Join-Path $BuildDir "winfsp"
     if (-not (Test-Path $winfspDir)) { New-Item -ItemType Directory -Path $winfspDir -Force | Out-Null }
 
-    # The MSI extracts to a nested path — find the winfsp.h file
+    # The MSI extracts to a nested path -- find the winfsp.h file
     $incSrc = Get-ChildItem -Path $extractDir -Recurse -Filter "winfsp.h" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($incSrc) {
         # Go up to the WinFsp root (parent of inc/winfsp/)
@@ -177,7 +177,7 @@ function Ensure-WinFsp {
         Write-Host "WinFsp SDK installed to sdk/build/winfsp/"
     } else {
         Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "WinFsp SDK extraction incomplete — winfsp.h not found"
+        Write-Host "WinFsp SDK extraction incomplete -- winfsp.h not found"
         Write-Host "       Install WinFsp manually from https://winfsp.dev/" -ForegroundColor DarkGray
     }
 }
@@ -188,7 +188,7 @@ if (-not $clean) {
     Ensure-WinFsp
 }
 
-# ── Detect compiler ───────────────────────────────────────────────────────
+# -- Detect compiler -------------------------------------------------------
 # Prefer local MinGW from sdk/build/, fall back to system PATH
 $LocalGcc   = Join-Path $BuildDir "mingw64\bin\gcc.exe"
 $LocalMake  = Join-Path $BuildDir "mingw64\bin\mingw32-make.exe"
@@ -214,7 +214,7 @@ if (Test-Path $LocalGcc) {
 
 if (-not $CC) {
     Write-Host "  FAIL " -ForegroundColor Red -NoNewline
-    Write-Host "No C compiler found — toolchain download may have failed."
+    Write-Host "No C compiler found -- toolchain download may have failed."
     Write-Host "=== SDK BUILD FAILED ==="
     exit 1
 }
@@ -226,7 +226,7 @@ if (-not $MAKE) {
     exit 1
 }
 
-# ── Check optional dependencies ───────────────────────────────────────────
+# -- Check optional dependencies -------------------------------------------
 function Check-Dependencies {
     $WinFspLocal = Join-Path $BuildDir "winfsp\inc\winfsp\winfsp.h"
     $WinFspSystem = "C:\Program Files (x86)\WinFsp\inc\winfsp\winfsp.h"
@@ -239,13 +239,13 @@ function Check-Dependencies {
         Write-Host "WinFsp found (system install)"
     } else {
         Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "MISSING: WinFsp SDK — run build.bat to auto-download (see TODO-01 §5), or install from: https://winfsp.dev/"
+        Write-Host "MISSING: WinFsp SDK -- run build.bat to auto-download (see TODO-01 S5), or install from: https://winfsp.dev/"
         Write-Host "       " -ForegroundColor DarkGray -NoNewline
         Write-Host "Tools requiring WinFsp may fail to build"
     }
 }
 
-# ── Discover SDK tool directories ─────────────────────────────────────────
+# -- Discover SDK tool directories -----------------------------------------
 function Get-ToolDirs {
     $tools = @()
     if (Test-Path $SrcDir) {
@@ -259,7 +259,7 @@ function Get-ToolDirs {
     return $tools
 }
 
-# ── Clean ──────────────────────────────────────────────────────────────────
+# -- Clean ------------------------------------------------------------------
 if ($clean) {
     Write-Header
     Write-Host "  SDK CLEAN" -ForegroundColor White
@@ -284,7 +284,7 @@ if ($clean) {
     exit 0
 }
 
-# ── Build ──────────────────────────────────────────────────────────────────
+# -- Build ------------------------------------------------------------------
 $buildTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
 Write-Header
@@ -360,7 +360,7 @@ foreach ($dir in $toolDirs) {
     }
 }
 
-# ── Summary ────────────────────────────────────────────────────────────────
+# -- Summary ----------------------------------------------------------------
 Write-Divider
 $buildTimer.Stop()
 $totalElapsed = Format-Elapsed $buildTimer
@@ -368,14 +368,14 @@ $totalElapsed = Format-Elapsed $buildTimer
 if ($failCount -eq 0) {
     Write-Host "  " -NoNewline
     Write-Host "SDK BUILD OK" -ForegroundColor Green -NoNewline
-    Write-Host " — $toolCount tools built in ${totalElapsed}s"
+    Write-Host " -- $toolCount tools built in ${totalElapsed}s"
     Write-Header
     Write-Host "=== SDK BUILD OK ==="
     exit 0
 } else {
     Write-Host "  " -NoNewline
     Write-Host "SDK BUILD FAILED" -ForegroundColor Red -NoNewline
-    Write-Host " — $failCount/$toolCount tools failed (${totalElapsed}s)"
+    Write-Host " -- $failCount/$toolCount tools failed (${totalElapsed}s)"
     Write-Header
     Write-Host "=== SDK BUILD FAILED ==="
     exit 1
