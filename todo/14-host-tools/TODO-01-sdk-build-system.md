@@ -61,7 +61,7 @@ Build all SDK tools on Linux with progress output.
 - [x] Color output: green OK, red FAILED, yellow WARN
 - [x] `sdk/build.sh clean` — run `make -C $dir clean` for each tool
 - [x] Error extraction: show relevant compiler errors on failure
-- [ ] Commit: `"sdk: Linux build script with progress and dependency detection"`
+- [x] Commit: `"sdk: Linux build script with progress and dependency detection"`
 
 **Test checkpoint (Linux):**
 - `bash sdk/build.sh` completes without error
@@ -78,7 +78,7 @@ Clear messages when required dependencies are missing.
 - [x] Missing dependency: print install instructions, not just "not found"
 - [x] Example: `MISSING: libfuse3-dev — install with: sudo apt install libfuse3-dev`
 - [x] Build continues for tools that don't need the missing dep (graceful skip)
-- [ ] Commit: `"sdk: dependency detection with install instructions"`
+- [x] Commit: `"sdk: dependency detection with install instructions"`
 
 **Test checkpoint (Linux):**
 - Uninstall `libfuse3-dev`, run `bash sdk/build.sh` — output contains `MISSING: libfuse3-dev — install with: sudo apt install libfuse3-dev`
@@ -93,7 +93,7 @@ Build discovers new tools automatically — add a directory to `sdk/src/`, it ge
 - [x] Skip directories without build files (no error, just skip)
 - [x] Report: `Found N SDK tools: ixfs-mount, disk-inspector, ...`
 - [x] Build in alphabetical order (deterministic)
-- [ ] Commit: `"sdk: auto-discover SDK tool directories"`
+- [x] Commit: `"sdk: auto-discover SDK tool directories"`
 
 **Test checkpoint (Linux):**
 - Create `sdk/src/test-tool/Makefile` with a trivial target, run `bash sdk/build.sh`
