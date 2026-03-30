@@ -34,6 +34,8 @@
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/ahci.h"
+#include "kernel/drivers/blkdev.h"
+#include "kernel/timer.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 2 ------------------------------------------------------------ */
@@ -110,6 +112,35 @@ void boot_phase2(void)
     boot_splash_status("Mounting filesystems...");
     partition_mount_filesystems();
     POST16(POST16_PARTITION_OK);
+
+    /* --- Debug diagnostic pause (shows storage state on splash screen) --- */
+    if (g_boot_info.config.debug) {
+        char diag[256];
+        int p = 0;
+        int xhci_n = xhci_controller_count();
+        int blk_n = blkdev_count();
+        int c_ok = vfs_is_mounted('C');
+
+        /* Build diagnostic string */
+        const char *s;
+        s = "DEBUG: xHCI="; while (*s) diag[p++] = *s++;
+        diag[p++] = '0' + (char)xhci_n;
+        s = " blk="; while (*s) diag[p++] = *s++;
+        diag[p++] = '0' + (char)(blk_n > 9 ? 9 : blk_n);
+        s = " C:="; while (*s) diag[p++] = *s++;
+        s = c_ok ? "YES" : "NO"; while (*s) diag[p++] = *s++;
+        s = " B:="; while (*s) diag[p++] = *s++;
+        s = vfs_is_mounted('B') ? "YES" : "NO"; while (*s) diag[p++] = *s++;
+        s = " D:="; while (*s) diag[p++] = *s++;
+        s = vfs_is_mounted('D') ? "YES" : "NO"; while (*s) diag[p++] = *s++;
+        diag[p] = '\0';
+
+        boot_splash_status(diag);
+        klog(LOG_WARN, "boot", "%s", diag);
+        klog(LOG_WARN, "boot", "Pausing 10s for diagnostic read...");
+        sleep_ms(10000);
+    }
+
     boot_splash_status("Checking boot flags...");
 
     /* Check for debug boot flag on C:\ */
