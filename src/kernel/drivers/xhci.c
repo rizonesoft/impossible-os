@@ -433,16 +433,12 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                  (uint64_t)usb3pssen,
                  (uint64_t)pci_read32(bus, dev, func, 0xD8));
 
-            /* §5 Phase B optimization: if bootloader already discovered USB
-             * devices, firmware routed ports before ExitBootServices — skip
-             * the 500ms post-routing delay.  Otherwise, wait for devices to
-             * appear after the EHCI→xHCI ownership transfer. */
-            if (g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0) {
-                klog(LOG_INFO, "xhci",
-                     "Firmware pre-routed ports — skipping 500ms delay");
-            } else {
-                xhci_delay_us(500000);
-            }
+            /* Wait for devices to appear after EHCI→xHCI routing change.
+             * The 500ms delay is required on real Intel hardware — UEFI
+             * firmware uses its own internal USB stack and does NOT
+             * necessarily set XUSB2PR, so the kernel's port routing is
+             * the first time devices see the xHCI controller. */
+            xhci_delay_us(500000);
         }
     }
 
