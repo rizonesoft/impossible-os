@@ -166,6 +166,42 @@ struct boot_config {
     uint8_t  config_found;     /* 1 if boot.conf was successfully parsed */
 };
 
+/* USB device discovered by UEFI firmware before ExitBootServices.
+ * The bootloader uses EFI_USB_IO_PROTOCOL to enumerate all USB devices while
+ * firmware is active, then passes this inventory to the kernel so it can skip
+ * re-enumeration after taking over the xHCI controller. */
+#define BOOT_USB_MAX_DEVICES     16
+#define BOOT_USB_MAX_ENDPOINTS    4
+
+struct boot_usb_endpoint {
+    uint8_t  address;       /* bEndpointAddress (bit 7 = direction: 1=IN) */
+    uint8_t  attributes;    /* bmAttributes (bits 1:0 = transfer type) */
+    uint16_t max_packet;    /* wMaxPacketSize */
+    uint8_t  interval;      /* bInterval (polling interval) */
+    uint8_t  pad[3];
+};
+
+struct boot_usb_device {
+    uint8_t  active;            /* 1 if entry is valid */
+    uint8_t  port;              /* root hub port (1-based, from device path) */
+    uint8_t  speed;             /* USB_SPEED_*: 1=FS, 2=LS, 3=HS, 4=SS */
+    uint8_t  device_class;      /* bDeviceClass from device descriptor */
+    uint8_t  iface_class;       /* bInterfaceClass of primary interface */
+    uint8_t  iface_subclass;    /* bInterfaceSubClass */
+    uint8_t  iface_protocol;    /* bInterfaceProtocol */
+    uint8_t  num_endpoints;     /* number of populated entries in endpoints[] */
+    uint16_t vendor_id;         /* idVendor */
+    uint16_t product_id;        /* idProduct */
+    /* MSC geometry (populated if iface_class == 0x08) */
+    uint8_t  is_msc;            /* 1 if MSC BOT interface found */
+    uint8_t  is_hid;            /* 1 if HID interface found */
+    uint16_t pad0;
+    uint32_t block_size;        /* bytes per sector (from EFI_BLOCK_IO_MEDIA) */
+    uint64_t block_count;       /* total sectors (LastBlock + 1) */
+    /* Endpoints (bulk-in, bulk-out, interrupt-in, etc.) */
+    struct boot_usb_endpoint endpoints[BOOT_USB_MAX_ENDPOINTS];
+};
+
 /* All boot info collected from UEFI bootloader */
 struct boot_info {
     /* Memory map */
@@ -219,6 +255,12 @@ struct boot_info {
     uint8_t   tpm_available;          /* 1 if TPM was detected */
     uint8_t   tpm_version;            /* 0=none, 1=TPM 1.2, 2=TPM 2.0 */
     uint16_t  tpm_event_count;        /* number of events in log */
+
+    /* USB devices discovered by UEFI firmware before ExitBootServices */
+    struct boot_usb_device usb_devices[BOOT_USB_MAX_DEVICES];
+    uint32_t usb_device_count;      /* number of valid entries */
+    uint8_t  usb_discovery_ok;      /* 1 if USB discovery completed successfully */
+    uint8_t  usb_pad[3];
 
     /* Boot Timing (TSC timestamps from bootloader + FPDT) */
     struct {

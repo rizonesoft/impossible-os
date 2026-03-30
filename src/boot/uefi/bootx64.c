@@ -105,6 +105,37 @@ struct boot_uefi_config_entry {
     UINT64  table_addr;
 };
 
+/* USB device structures — must match kernel/boot_info.h */
+#define BOOT_USB_MAX_DEVICES     16
+#define BOOT_USB_MAX_ENDPOINTS    4
+
+struct boot_usb_endpoint {
+    UINT8   address;
+    UINT8   attributes;
+    UINT16  max_packet;
+    UINT8   interval;
+    UINT8   pad[3];
+};
+
+struct boot_usb_device {
+    UINT8   active;
+    UINT8   port;
+    UINT8   speed;
+    UINT8   device_class;
+    UINT8   iface_class;
+    UINT8   iface_subclass;
+    UINT8   iface_protocol;
+    UINT8   num_endpoints;
+    UINT16  vendor_id;
+    UINT16  product_id;
+    UINT8   is_msc;
+    UINT8   is_hid;
+    UINT16  pad0;
+    UINT32  block_size;
+    UINT64  block_count;
+    struct boot_usb_endpoint endpoints[BOOT_USB_MAX_ENDPOINTS];
+};
+
 struct boot_info {
     struct boot_mmap_entry  mmap[BOOT_MMAP_MAX_ENTRIES];
     UINT32  mmap_count;
@@ -142,6 +173,11 @@ struct boot_info {
     UINT8   tpm_available;
     UINT8   tpm_version;
     UINT16  tpm_event_count;
+    /* USB devices discovered before ExitBootServices */
+    struct boot_usb_device usb_devices[BOOT_USB_MAX_DEVICES];
+    UINT32  usb_device_count;
+    UINT8   usb_discovery_ok;
+    UINT8   usb_pad[3];
     /* Boot Timing */
     struct {
         UINT64 reset_end;
@@ -365,6 +401,15 @@ static void serial_early_print_uint(UINT32 val)
         val /= 10;
     }
     serial_early_print(buf + pos + 1);
+}
+
+static void serial_early_print_hex16(UINT16 val)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    serial_early_putchar(hex[(val >> 12) & 0xF]);
+    serial_early_putchar(hex[(val >>  8) & 0xF]);
+    serial_early_putchar(hex[(val >>  4) & 0xF]);
+    serial_early_putchar(hex[ val        & 0xF]);
 }
 
 
@@ -1410,6 +1455,160 @@ static void jump_to_kernel(UINT64 entry_point)
 }
 
 /* ============================================================================
+ * Pre-ExitBootServices USB Device Discovery (TODO-07 §5 Phase A)
+ *
+ * Uses EFI_USB_IO_PROTOCOL to enumerate all USB devices while firmware is
+ * active.  For each device, reads the device descriptor (VID, PID, class),
+ * interface descriptor (class, subclass, protocol, endpoints), and for MSC
+ * devices queries disk geometry via EFI_BLOCK_IO_PROTOCOL.  All info is
+ * stored in boot_info.usb_devices[] for the kernel to inherit.
+ * ============================================================================ */
+
+static void discover_usb_devices(void)
+{
+    EFI_GUID usb_io_guid   = EFI_USB_IO_PROTOCOL_GUID;
+    EFI_GUID block_io_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_STATUS status;
+    UINTN handle_count = 0;
+    EFI_HANDLE *handle_buf = (EFI_HANDLE *)0;
+    UINTN i;
+    UINT32 dev_idx = 0;
+
+    g_boot_info_ptr->usb_device_count = 0;
+    g_boot_info_ptr->usb_discovery_ok = 0;
+
+    /* Find all handles that expose EFI_USB_IO_PROTOCOL */
+    status = gBS->LocateHandleBuffer(ByProtocol, &usb_io_guid,
+                                     (VOID *)0, &handle_count, &handle_buf);
+    if (EFI_ERROR(status) || handle_count == 0) {
+        serial_early_print("[BOOT] USB: no USB devices found (");
+        serial_early_print_uint((UINT32)(status & 0xFFFFFFFF));
+        serial_early_print(")\n");
+        g_boot_info_ptr->usb_discovery_ok = 1;  /* success — just no devices */
+        return;
+    }
+
+    serial_early_print("[BOOT] USB: found ");
+    serial_early_print_uint((UINT32)handle_count);
+    serial_early_print(" USB device handle(s)\n");
+
+    for (i = 0; i < handle_count && dev_idx < BOOT_USB_MAX_DEVICES; i++) {
+        EFI_USB_IO_PROTOCOL *usb_io = (EFI_USB_IO_PROTOCOL *)0;
+        EFI_USB_DEVICE_DESCRIPTOR dev_desc;
+        EFI_USB_INTERFACE_DESCRIPTOR iface_desc;
+        struct boot_usb_device *bdev;
+
+        /* Open USB I/O protocol on this handle */
+        status = gBS->HandleProtocol(handle_buf[i], &usb_io_guid,
+                                     (VOID **)&usb_io);
+        if (EFI_ERROR(status) || !usb_io)
+            continue;
+
+        /* Read device descriptor */
+        status = usb_io->UsbGetDeviceDescriptor(usb_io, &dev_desc);
+        if (EFI_ERROR(status))
+            continue;
+
+        /* Read interface descriptor */
+        status = usb_io->UsbGetInterfaceDescriptor(usb_io, &iface_desc);
+        if (EFI_ERROR(status))
+            continue;
+
+        /* Populate boot_info entry */
+        bdev = &g_boot_info_ptr->usb_devices[dev_idx];
+        efi_memset(bdev, 0, sizeof(*bdev));
+
+        bdev->active          = 1;
+        bdev->port            = 0;  /* port info not available via USB_IO */
+        bdev->speed           = 0;  /* speed not exposed by USB_IO */
+        bdev->device_class    = dev_desc.DeviceClass;
+        bdev->vendor_id       = dev_desc.IdVendor;
+        bdev->product_id      = dev_desc.IdProduct;
+        bdev->iface_class     = iface_desc.InterfaceClass;
+        bdev->iface_subclass  = iface_desc.InterfaceSubClass;
+        bdev->iface_protocol  = iface_desc.InterfaceProtocol;
+
+        /* Collect endpoint descriptors */
+        {
+            UINT8 ep_idx;
+            UINT8 ep_count = 0;
+            for (ep_idx = 0; ep_idx < iface_desc.NumEndpoints &&
+                             ep_count < BOOT_USB_MAX_ENDPOINTS; ep_idx++) {
+                EFI_USB_ENDPOINT_DESCRIPTOR ep_desc;
+                status = usb_io->UsbGetEndpointDescriptor(usb_io, ep_idx,
+                                                          &ep_desc);
+                if (EFI_ERROR(status))
+                    continue;
+                bdev->endpoints[ep_count].address    = ep_desc.EndpointAddress;
+                bdev->endpoints[ep_count].attributes = ep_desc.Attributes;
+                bdev->endpoints[ep_count].max_packet = ep_desc.MaxPacketSize;
+                bdev->endpoints[ep_count].interval   = ep_desc.Interval;
+                ep_count++;
+            }
+            bdev->num_endpoints = ep_count;
+        }
+
+        /* Identify MSC BOT device (class 0x08, subclass 0x06, protocol 0x50) */
+        if (iface_desc.InterfaceClass    == 0x08 &&
+            iface_desc.InterfaceSubClass == 0x06 &&
+            iface_desc.InterfaceProtocol == 0x50) {
+            bdev->is_msc = 1;
+
+            /* Try to get disk geometry from EFI_BLOCK_IO_PROTOCOL */
+            {
+                EFI_BLOCK_IO_PROTOCOL *block_io = (EFI_BLOCK_IO_PROTOCOL *)0;
+                status = gBS->HandleProtocol(handle_buf[i], &block_io_guid,
+                                             (VOID **)&block_io);
+                if (!EFI_ERROR(status) && block_io && block_io->Media) {
+                    bdev->block_size  = block_io->Media->BlockSize;
+                    bdev->block_count = block_io->Media->LastBlock + 1;
+                    serial_early_print("[BOOT] USB MSC: ");
+                    serial_early_print_uint(bdev->block_size);
+                    serial_early_print("B x ");
+                    serial_early_print_uint((UINT32)(bdev->block_count & 0xFFFFFFFF));
+                    serial_early_print(" sectors\n");
+                }
+            }
+        }
+
+        /* Identify HID device (class 0x03) */
+        if (iface_desc.InterfaceClass == 0x03)
+            bdev->is_hid = 1;
+
+        /* Log device */
+        serial_early_print("[BOOT] USB dev ");
+        serial_early_print_uint(dev_idx);
+        serial_early_print(": VID=");
+        serial_early_print_hex16(dev_desc.IdVendor);
+        serial_early_print(" PID=");
+        serial_early_print_hex16(dev_desc.IdProduct);
+        serial_early_print(" class=");
+        serial_early_print_uint(iface_desc.InterfaceClass);
+        serial_early_print("/");
+        serial_early_print_uint(iface_desc.InterfaceSubClass);
+        serial_early_print("/");
+        serial_early_print_uint(iface_desc.InterfaceProtocol);
+        if (bdev->is_msc)
+            serial_early_print(" [MSC]");
+        if (bdev->is_hid)
+            serial_early_print(" [HID]");
+        serial_early_print("\n");
+
+        dev_idx++;
+    }
+
+    g_boot_info_ptr->usb_device_count = dev_idx;
+    g_boot_info_ptr->usb_discovery_ok = 1;
+
+    /* Free the handle buffer */
+    gBS->FreePool((VOID *)handle_buf);
+
+    serial_early_print("[BOOT] USB discovery: ");
+    serial_early_print_uint(dev_idx);
+    serial_early_print(" device(s) recorded\n");
+}
+
+/* ============================================================================
  * EFI Application Entry Point
  * ============================================================================ */
 /* ---- 16-bit POST code output ----
@@ -1455,6 +1654,8 @@ static inline void post_code16(UINT16 code)
 #define POST16_BL_KERNEL_LOAD   0xB021
 #define POST16_BL_RSDP          0xB030
 #define POST16_BL_MEMMAP        0xB040
+#define POST16_BL_USB_DISC      0xB080
+#define POST16_BL_USB_DISC_OK   0xB081
 #define POST16_BL_EXIT_BS       0xB050
 #define POST16_BL_PAGE_TABLES   0xB060
 #define POST16_BL_KERNEL_JUMP   0xB070
@@ -1552,6 +1753,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         UINT64 t1 = boot_rdtsc();
         g_boot_info_ptr->timing.tsc_freq = (t1 - t0) * 1000;  /* Hz */
     }
+
+    /* Step 4e: Discover USB devices via UEFI firmware (TODO-07 §5 Phase A) */
+    post_code16(POST16_BL_USB_DISC);
+    serial_early_print("[BOOT] discover_usb_devices...\n");
+    discover_usb_devices();
+    post_code16(POST16_BL_USB_DISC_OK);
 
     /* Step 5: Get UEFI memory map */
     post_code16(POST16_BL_MEMMAP);

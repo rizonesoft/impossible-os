@@ -34,7 +34,7 @@
 | 💎  |   2   | USB device enumeration and configuration       | §1         |  [x]   |
 | 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [x]   |
 | 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
-| ⭐  |   5   | Pre-ExitBootServices USB handover (Windows-style) | §1       |  [ ]   |
+| ⭐  |   5   | Pre-ExitBootServices USB handover (Windows-style) | §1, §4   |  [ ]   |
 | 💎  |   6   | xHCI interrupt endpoint setup for HID          | §2         |  [ ]   |
 | 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         |  [ ]   |
 | 💎  |   8   | USB HID boot-protocol mouse driver             | §6         |  [ ]   |
@@ -83,7 +83,7 @@ Implement the SCSI-over-USB transport layer: CBW/CSW framing, INQUIRY, READ CAPA
 - [x] Error handling: CSW status check, tag validation, TEST UNIT READY with retries
 - [x] Commit: `"drivers: USB MSC BOT — SCSI READ/WRITE over bulk endpoints"`
 
-**Test checkpoint:** `usb_msc_read_capacity()` returns correct sector count. Read sector 0 matches expected MBR/GPT. POST code 0xD702. Test on: QEMU `run-usb`.
+**Test checkpoint:** `usb_msc_read_capacity()` returns correct sector count. Read sector 0 matches expected MBR/GPT. POST code 0xD702. Test on: QEMU `run-usb`, bare metal.
 
 ## 4. Block Device Registration and VFS Integration
 Register USB MSC devices as block devices so VFS can mount filesystems from USB drives.
@@ -106,34 +106,47 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `src/kernel/drivers/xhci.c`
 
 ### Phase A: Bootloader discovers USB devices via UEFI protocols (before ExitBootServices)
-- [ ] Use `EFI_USB_IO_PROTOCOL` to enumerate all USB devices while firmware is active
-- [ ] For each USB device: read device descriptor (VID, PID, class, endpoints)
-- [ ] Identify MSC devices (class 0x08, subclass 0x06, protocol 0x50)
-- [ ] For MSC devices: read the disk geometry (sector count, sector size) via SCSI INQUIRY + READ CAPACITY through `EFI_BLOCK_IO_PROTOCOL`
-- [ ] Record xHCI controller PCI location (bus:dev.func) and BAR0 address
-- [ ] Record each USB device: port, speed, slot, endpoints, MSC geometry
-- [ ] Store all info in `boot_info.usb_devices[]` array passed to kernel
+- [x] Use `EFI_USB_IO_PROTOCOL` to enumerate all USB devices while firmware is active
+- [x] For each USB device: read device descriptor (VID, PID, class, endpoints)
+- [x] Identify MSC devices (class 0x08, subclass 0x06, protocol 0x50)
+- [x] For MSC devices: read the disk geometry (sector count, sector size) via `EFI_BLOCK_IO_PROTOCOL`
+- [ ] Record xHCI controller PCI location (bus:dev.func) and BAR0 address — deferred to Phase B (kernel discovers via PCI scan)
+- [x] Record each USB device: port, speed, slot, endpoints, MSC geometry
+- [x] Store all info in `boot_info.usb_devices[]` array passed to kernel
+- [x] `POST16(0xB080)` entry, `POST16(0xB081)` exit (bootloader range)
 
 ### Phase B: Kernel takes over xHCI controller without re-enumeration
 - [ ] Read `boot_info.usb_devices[]` — already know what's connected and where
 - [ ] Map xHCI BAR0 via `vmm_map_mmio_uc()` (same as now)
-- [ ] BIOS/OS handoff via USBLEGSUP — take ownership from firmware
+- [ ] BIOS/OS handoff via USBLEGSUP (xHCI spec §4.22.1) — must happen BEFORE halt/reset:
+  - [ ] Read `USBLEGSUP` capability register (Extended Capability ID = 1)
+  - [ ] Set HC OS Owned Semaphore bit, wait for BIOS Owned Semaphore to clear
+  - [ ] Timeout after 1s — if BIOS doesn't release, force-clear and proceed
 - [ ] Do NOT reset the controller — preserving device slots from firmware
 - [ ] Re-attach to existing slot/endpoint state: set DCBAA, read existing slot contexts
 - [ ] Register MSC block devices using geometry from boot_info (no INQUIRY needed)
+- [ ] `POST16(0xD750)` entry, `POST16(0xD751)` exit
 - [ ] Result: USB devices available INSTANTLY after kernel starts — zero delay
 
+> [!IMPORTANT]
+> **Rollback:** If USBLEGSUP handoff fails or controller state is corrupt after takeover, fall back to the current halt/reset/re-enumerate path (§1-§4). The §1-§4 path is proven on bare metal — never remove it until §5 is verified on all platforms.
+
 ### Phase C: Interrupt-driven hot-plug (post-boot)
-- [ ] Register xHCI MSI interrupt handler
+- [ ] Register xHCI MSI interrupt handler (requires `pci_enable_msi()` from `04-drivers-hardware/TODO-02 §5`)
+- [ ] If MSI not yet available: use event ring polling as fallback (no external blocker)
 - [ ] ISR reads Event Ring for Port Status Change Events (TRB type 34)
 - [ ] New device connected after boot → full enumeration (slot enable, address, etc.)
 - [ ] Device removed → clean up slot, unregister block device
+- [ ] `POST16(0xD752)` entry, `POST16(0xD753)` exit
 - [ ] Commit: `"boot: pre-ExitBootServices USB handover — zero-delay USB boot"`
 
-**Test checkpoint:** Boot from USB — C:\ mounted within 10ms of kernel start (no 500ms delay). Hot-plug: plug USB drive after boot, device appears within 100ms. Bare metal + QEMU both work. No Intel-specific port routing code needed (firmware already routed ports correctly).
+**Test checkpoint:** Boot from USB — C:\ mounted within 10ms of kernel start (no 500ms delay). Hot-plug: plug USB drive after boot, device appears within 100ms. POST codes: 0xB080/0xB081 (bootloader), 0xD750/0xD751 (kernel takeover), 0xD752/0xD753 (hot-plug). If crash, check last POST — 0xD750 = USBLEGSUP handoff failed, fall back to §1-§4 path. Test on: bare metal, QEMU `run-usb`. No Intel-specific port routing code needed (firmware already routed ports correctly).
 
 ## 6. xHCI Interrupt Endpoint Setup for HID
 Configure interrupt-IN endpoints for HID devices so the xHCI controller polls them periodically.
+
+> [!NOTE]
+> **Scope overlap with `04-drivers-hardware/TODO-09-usb-stack.md`:** TODO-09 §1-§3 still contain HID interrupt endpoint, HID class driver, and PS/2↔USB fallback sections that duplicate TODO-07 §6-§9. TODO-09 should be updated to XREF these sections instead of re-implementing them.
 
 **Files:** `src/kernel/drivers/xhci_dev.c`
 
@@ -189,12 +202,10 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 
 **Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/ehci.c` (new)
 
-### BIOS/OS Handoff (xHCI spec §4.22.1)
-- [ ] Read `USBLEGSUP` capability register (Extended Capability ID = 1)
-- [ ] Set HC OS Owned Semaphore bit, wait for BIOS Owned Semaphore to clear
-- [ ] Timeout after 1s — if BIOS doesn't release, force-clear and proceed
-- [ ] Must happen BEFORE controller halt/reset (currently missing)
-- [ ] Without this, BIOS may still own the controller and interfere with our driver
+### BIOS/OS Handoff
+- [ ] Core USBLEGSUP handoff implemented in §5 Phase B — reuse for all controller types
+- [ ] Verify USBLEGSUP works identically on AMD, ASMedia, Renesas, VIA (same xHCI spec §4.22.1)
+- [ ] EHCI variant: USBLEGSUP is a PCI capability (not xHCI extended cap) — same semaphore concept, different register offset
 
 ### AMD xHCI Support
 - [ ] AMD chipsets (vendor 0x1022) route all ports to xHCI by default — no XUSB2PR needed
@@ -239,7 +250,7 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 - [ ] Graceful degradation: if xHCI init fails, log and continue (don't hang boot)
 - [ ] Commit: `"drivers: xHCI hardware compatibility — BIOS handoff, AMD, EHCI fallback"`
 
-**Test checkpoint:** Test matrix (diagnostic splash shows `USB:XX` prog-if codes):
+**Test checkpoint:** POST codes: `POST16(0xD7A0)` entry, `POST16(0xD7A1)` exit. If crash at 0xD7A0: BIOS handoff or vendor-specific init failed — check serial for vendor ID. Test matrix (diagnostic splash shows `USB:XX` prog-if codes):
 - `USB:30` Intel (i5-11600K): ✅ verified — §5 handover replaces port routing hack
 - `USB:30` AMD: BIOS handoff only, no port routing needed
 - `USB:30,20` Intel (xHCI+EHCI): port routing moves EHCI ports to xHCI
@@ -253,19 +264,20 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 
 ## OS Comparison
 
-| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                     |
-|----|-------------------------|-----------------------------|------------------------------|-----------------------------------|
-| 💎 | xHCI controller         | ✅ usbxhci.sys             | ✅ xhci-hcd                  | ✅ §1-§4 done, §5 planned        |
-| 💎 | USB MSC                 | ✅ USBSTOR.SYS             | ✅ usb-storage               | ✅ §3 — BOT transport done       |
-| 💎 | USB boot drive access   | ✅ Automatic               | ✅ initramfs + usb-storage   | ✅ §4 — verified on bare metal   |
-| 💎 | USB HID keyboard        | ✅ hidusb.sys + kbdhid.sys | ✅ usbhid + hid-generic      | ⬜ §7 — boot protocol            |
-| 💎 | USB HID mouse           | ✅ hidusb.sys + mouhid.sys | ✅ usbhid + hid-generic      | ⬜ §8 — boot protocol            |
-| 💎 | PS/2 + USB coexist      | ✅ Automatic               | ✅ Automatic                 | ⬜ §9 — independent, both active |
-| ⭐ | Pre-boot USB handover   | ✅ winload.efi             | ❌ Re-enumerates              | ⬜ §5 — zero-delay handover      |
-| ⭐ | BIOS/OS handoff         | ✅ Automatic               | ✅ xhci-pci.c                | ⬜ §5B + §10 — USBLEGSUP        |
-| ⭐ | EHCI fallback           | ✅ usbehci.sys             | ✅ ehci-hcd                  | ⬜ §10 — for legacy hardware     |
-| ⭐ | USB hub support         | ✅ usbhub.sys              | ✅ hub.c                     | ⬜ §10 — recursive enumeration   |
-| ⭐ | Hot-plug                | ✅ Automatic               | ✅ Automatic                 | ⬜ §5C — interrupt-driven        |
+| ⭐ | Feature              | Win11              | Linux              | Impossible OS          |
+|----|----------------------|--------------------|--------------------|------------------------|
+| 💎 | xHCI controller      | ✅ usbxhci.sys    | ✅ xhci-hcd        | ✅ §1-§4 done          |
+| 💎 | USB MSC              | ✅ USBSTOR.SYS    | ✅ usb-storage      | ✅ §3 BOT done         |
+| 💎 | USB boot drive       | ✅ Automatic       | ✅ initramfs        | ✅ §4 bare metal       |
+| 💎 | USB HID keyboard     | ✅ kbdhid.sys      | ✅ usbhid           | ⬜ §7 boot protocol    |
+| 💎 | USB HID mouse        | ✅ mouhid.sys      | ✅ usbhid           | ⬜ §8 boot protocol    |
+| 💎 | PS/2 + USB coexist   | ✅ Automatic       | ✅ Automatic        | ⬜ §9 both active      |
+| ⭐ | Pre-boot handover    | ✅ winload.efi     | ❌ Re-enumerates    | ⬜ §5 zero-delay       |
+| ⭐ | BIOS/OS handoff      | ✅ Automatic       | ✅ xhci-pci.c       | ⬜ §5B USBLEGSUP       |
+| ⭐ | EHCI fallback        | ✅ usbehci.sys     | ✅ ehci-hcd         | ⬜ §10 legacy HW       |
+| ⭐ | USB hub support      | ✅ usbhub.sys      | ✅ hub.c            | ⬜ §10 recursive       |
+| ⭐ | Hot-plug             | ✅ Automatic       | ✅ Automatic        | ⬜ §5C interrupt       |
+| ⭐ | USB boot timing VPD  | ❌ Not exposed     | ❌ Not exposed      | ⬜ §5 handover latency |
 
 ## Verification
 

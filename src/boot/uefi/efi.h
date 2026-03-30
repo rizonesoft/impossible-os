@@ -399,6 +399,19 @@ typedef EFI_STATUS (EFIAPI *EFI_SET_WATCHDOG_TIMER)(
 
 typedef EFI_STATUS (EFIAPI *EFI_STALL)(UINTN Microseconds);
 
+typedef enum {
+    AllHandles,
+    ByRegisterNotify,
+    ByProtocol
+} EFI_LOCATE_SEARCH_TYPE;
+
+typedef EFI_STATUS (EFIAPI *EFI_LOCATE_HANDLE_BUFFER)(
+    EFI_LOCATE_SEARCH_TYPE SearchType,
+    EFI_GUID *Protocol,
+    VOID *SearchKey,
+    UINTN *NoHandles,
+    EFI_HANDLE **Buffer);
+
 typedef struct EFI_BOOT_SERVICES {
     EFI_TABLE_HEADER        Hdr;
 
@@ -455,7 +468,7 @@ typedef struct EFI_BOOT_SERVICES {
 
     /* Library Services */
     VOID                   *ProtocolsPerHandle; /* 35 */
-    VOID                   *LocateHandleBuffer; /* 36 */
+    EFI_LOCATE_HANDLE_BUFFER LocateHandleBuffer; /* 36 */
     EFI_LOCATE_PROTOCOL     LocateProtocol;     /* 37 */
     VOID                   *InstallMultipleProtocolInterfaces; /* 38 */
     VOID                   *UninstallMultipleProtocolInterfaces; /* 39 */
@@ -570,5 +583,136 @@ typedef struct EFI_TCG2_PROTOCOL {
     EFI_TCG2_GET_EVENT_LOG      GetEventLog;
     VOID                        *HashLogExtendEventEx; /* not used */
 } EFI_TCG2_PROTOCOL;
+
+/* --- USB I/O Protocol (per USB device — available before ExitBootServices) --- */
+
+#define EFI_USB_IO_PROTOCOL_GUID \
+    { 0x2B2F68D6, 0x0CD2, 0x44cf, \
+      { 0x8E, 0x8B, 0xBB, 0xA2, 0x0B, 0x1B, 0x5B, 0x75 } }
+
+/* USB descriptor structures (UEFI spec representation) */
+typedef struct {
+    UINT8   Length;
+    UINT8   DescriptorType;     /* 0x01 = Device */
+    UINT16  BcdUSB;
+    UINT8   DeviceClass;
+    UINT8   DeviceSubClass;
+    UINT8   DeviceProtocol;
+    UINT8   MaxPacketSize0;
+    UINT16  IdVendor;
+    UINT16  IdProduct;
+    UINT16  BcdDevice;
+    UINT8   StrManufacturer;
+    UINT8   StrProduct;
+    UINT8   StrSerialNumber;
+    UINT8   NumConfigurations;
+} EFI_USB_DEVICE_DESCRIPTOR;
+
+typedef struct {
+    UINT8   Length;
+    UINT8   DescriptorType;     /* 0x04 = Interface */
+    UINT8   InterfaceNumber;
+    UINT8   AlternateSetting;
+    UINT8   NumEndpoints;
+    UINT8   InterfaceClass;
+    UINT8   InterfaceSubClass;
+    UINT8   InterfaceProtocol;
+    UINT8   Interface;
+} EFI_USB_INTERFACE_DESCRIPTOR;
+
+typedef struct {
+    UINT8   Length;
+    UINT8   DescriptorType;     /* 0x05 = Endpoint */
+    UINT8   EndpointAddress;    /* bit 7 = direction (1=IN) */
+    UINT8   Attributes;         /* bits 1:0 = transfer type */
+    UINT16  MaxPacketSize;
+    UINT8   Interval;
+} EFI_USB_ENDPOINT_DESCRIPTOR;
+
+/* Forward-declare for function pointer typedefs */
+struct EFI_USB_IO_PROTOCOL;
+
+typedef EFI_STATUS (EFIAPI *EFI_USB_IO_CONTROL_TRANSFER)(
+    struct EFI_USB_IO_PROTOCOL *This,
+    VOID *Request, UINT32 Direction,
+    UINT32 Timeout, VOID *Data, UINTN DataLength, UINT32 *Status);
+
+typedef EFI_STATUS (EFIAPI *EFI_USB_IO_BULK_TRANSFER)(
+    struct EFI_USB_IO_PROTOCOL *This,
+    UINT8 Endpoint, VOID *Data, UINTN *DataLength,
+    UINTN Timeout, UINT32 *Status);
+
+typedef EFI_STATUS (EFIAPI *EFI_USB_IO_GET_DEVICE_DESCRIPTOR)(
+    struct EFI_USB_IO_PROTOCOL *This,
+    EFI_USB_DEVICE_DESCRIPTOR *DeviceDescriptor);
+
+typedef EFI_STATUS (EFIAPI *EFI_USB_IO_GET_CONFIG_DESCRIPTOR)(
+    struct EFI_USB_IO_PROTOCOL *This,
+    VOID *ConfigurationDescriptor);
+
+typedef EFI_STATUS (EFIAPI *EFI_USB_IO_GET_INTERFACE_DESCRIPTOR)(
+    struct EFI_USB_IO_PROTOCOL *This,
+    EFI_USB_INTERFACE_DESCRIPTOR *InterfaceDescriptor);
+
+typedef EFI_STATUS (EFIAPI *EFI_USB_IO_GET_ENDPOINT_DESCRIPTOR)(
+    struct EFI_USB_IO_PROTOCOL *This,
+    UINT8 EndpointIndex,
+    EFI_USB_ENDPOINT_DESCRIPTOR *EndpointDescriptor);
+
+typedef struct EFI_USB_IO_PROTOCOL {
+    EFI_USB_IO_CONTROL_TRANSFER        UsbControlTransfer;
+    EFI_USB_IO_BULK_TRANSFER           UsbBulkTransfer;
+    VOID                              *UsbAsyncInterruptTransfer;
+    VOID                              *UsbSyncInterruptTransfer;
+    VOID                              *UsbIsochronousTransfer;
+    VOID                              *UsbAsyncIsochronousTransfer;
+    EFI_USB_IO_GET_DEVICE_DESCRIPTOR   UsbGetDeviceDescriptor;
+    EFI_USB_IO_GET_CONFIG_DESCRIPTOR   UsbGetConfigDescriptor;
+    EFI_USB_IO_GET_INTERFACE_DESCRIPTOR UsbGetInterfaceDescriptor;
+    EFI_USB_IO_GET_ENDPOINT_DESCRIPTOR UsbGetEndpointDescriptor;
+    VOID                              *UsbGetStringDescriptor;
+    VOID                              *UsbGetSupportedLanguages;
+    VOID                              *UsbPortReset;
+} EFI_USB_IO_PROTOCOL;
+
+/* --- Block I/O Protocol (for reading MSC disk geometry) --- */
+
+#define EFI_BLOCK_IO_PROTOCOL_GUID \
+    { 0x964e5b21, 0x6459, 0x11d2, \
+      { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } }
+
+typedef struct {
+    UINT32   MediaId;
+    BOOLEAN  RemovableMedia;
+    BOOLEAN  MediaPresent;
+    BOOLEAN  LogicalPartition;
+    BOOLEAN  ReadOnly;
+    BOOLEAN  WriteCaching;
+    UINT32   BlockSize;
+    UINT32   IoAlign;
+    UINT64   LastBlock;          /* LBA of last block (block_count = LastBlock + 1) */
+} EFI_BLOCK_IO_MEDIA;
+
+struct EFI_BLOCK_IO_PROTOCOL;
+
+typedef EFI_STATUS (EFIAPI *EFI_BLOCK_RESET)(
+    struct EFI_BLOCK_IO_PROTOCOL *This, BOOLEAN ExtendedVerification);
+typedef EFI_STATUS (EFIAPI *EFI_BLOCK_READ)(
+    struct EFI_BLOCK_IO_PROTOCOL *This,
+    UINT32 MediaId, UINT64 Lba, UINTN BufferSize, VOID *Buffer);
+typedef EFI_STATUS (EFIAPI *EFI_BLOCK_WRITE)(
+    struct EFI_BLOCK_IO_PROTOCOL *This,
+    UINT32 MediaId, UINT64 Lba, UINTN BufferSize, VOID *Buffer);
+typedef EFI_STATUS (EFIAPI *EFI_BLOCK_FLUSH)(
+    struct EFI_BLOCK_IO_PROTOCOL *This);
+
+typedef struct EFI_BLOCK_IO_PROTOCOL {
+    UINT64                  Revision;
+    EFI_BLOCK_IO_MEDIA     *Media;
+    EFI_BLOCK_RESET         Reset;
+    EFI_BLOCK_READ          ReadBlocks;
+    EFI_BLOCK_WRITE         WriteBlocks;
+    EFI_BLOCK_FLUSH         FlushBlocks;
+} EFI_BLOCK_IO_PROTOCOL;
 
 #endif /* UEFI_EFI_H */

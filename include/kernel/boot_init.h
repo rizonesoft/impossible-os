@@ -119,6 +119,8 @@ typedef enum {
 #define POST16_PAGE_TABLES      0xB040
 #define POST16_PAGE_TABLES_OK   0xB041
 #define POST16_KERNEL_JUMP      0xB050
+#define POST16_USB_DISC         0xB080  /* USB device discovery (before ExitBS) */
+#define POST16_USB_DISC_OK      0xB081
 
 /* Phase 0 — Critical Init (0x0000–0x0FFF) */
 #define POST16_SERIAL           0x0010
