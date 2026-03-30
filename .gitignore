@@ -53,8 +53,8 @@ compile_commands.json
 .srclight/
 
 # SDK tool binaries (compiled on host, not tracked)
-sdk/tools/*.exe
-sdk/tools/*.o
+sdk/tools/*
+!sdk/tools/.gitkeep
 
 # SDK downloaded build tools (MinGW, WinFsp SDK — auto-downloaded by build.ps1)
 sdk/build/
