@@ -147,6 +147,36 @@ void boot_phase2(void)
             diag[p++] = '0' + (char)xhci_get_enum_stage();
             s = " C:="; while (*s) diag[p++] = *s++;
             s = vfs_is_mounted('C') ? "Y" : "N"; while (*s) diag[p++] = *s++;
+
+            /* Scan PCI for all USB controllers: show prog-if codes */
+            s = " USB:"; while (*s) diag[p++] = *s++;
+            {
+                uint16_t bus; uint8_t dv, fn;
+                int usb_found = 0;
+                for (bus = 0; bus < 256 && p < 230; bus++) {
+                    for (dv = 0; dv < 32; dv++) {
+                        for (fn = 0; fn < 8; fn++) {
+                            uint16_t vid = pci_read16((uint8_t)bus, dv, fn, 0x00);
+                            if (vid == 0xFFFF) continue;
+                            uint8_t cls = pci_read8((uint8_t)bus, dv, fn, 0x0B);
+                            uint8_t sub = pci_read8((uint8_t)bus, dv, fn, 0x0A);
+                            if (cls == 0x0C && sub == 0x03) {
+                                uint8_t pi = pci_read8((uint8_t)bus, dv, fn, 0x09);
+                                if (usb_found > 0) diag[p++] = ',';
+                                /* Show prog-if as hex: 00=UHCI 10=OHCI 20=EHCI 30=xHCI */
+                                diag[p++] = "0123456789ABCDEF"[pi >> 4];
+                                diag[p++] = "0123456789ABCDEF"[pi & 0xF];
+                                usb_found++;
+                            }
+                            if (fn == 0) {
+                                uint8_t hdr = pci_read8((uint8_t)bus, dv, fn, 0x0E);
+                                if (!(hdr & 0x80)) break;
+                            }
+                        }
+                    }
+                }
+                if (usb_found == 0) { s = "none"; while (*s) diag[p++] = *s++; }
+            }
         }
         diag[p] = '\0';
         boot_splash_status(diag);
