@@ -18,6 +18,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <time.h>
+#include <sddl.h>
 
 #include "ixfs-core.h"
 #include "ixfs-disk.h"
@@ -33,7 +34,8 @@ typedef struct {
 
 /* -- Global volume state -- */
 static ixfs_vol_t *g_vol;
-static SECURITY_DESCRIPTOR g_security_desc;
+static PSECURITY_DESCRIPTOR g_security_desc;
+static DWORD g_security_desc_len;
 
 /* -- Helpers -- */
 
@@ -185,14 +187,13 @@ static NTSTATUS ixfs_GetSecurityByName(FSP_FILE_SYSTEM *FileSystem,
     }
 
     if (PSecurityDescriptorSize) {
-        sd_len = GetSecurityDescriptorLength(&g_security_desc);
-        if (*PSecurityDescriptorSize < sd_len) {
-            *PSecurityDescriptorSize = sd_len;
+        if (*PSecurityDescriptorSize < g_security_desc_len) {
+            *PSecurityDescriptorSize = g_security_desc_len;
             return STATUS_BUFFER_OVERFLOW;
         }
-        *PSecurityDescriptorSize = sd_len;
+        *PSecurityDescriptorSize = g_security_desc_len;
         if (SecurityDescriptor)
-            memcpy(SecurityDescriptor, &g_security_desc, sd_len);
+            memcpy(SecurityDescriptor, g_security_desc, g_security_desc_len);
     }
 
     return STATUS_SUCCESS;
@@ -621,9 +622,15 @@ int main(int argc, char *argv[])
             (unsigned long long)g_vol->sb.s_total_blocks,
             rw ? "R/W" : "read-only");
 
-    /* Create a basic security descriptor (Everyone: full control for R/W) */
-    InitializeSecurityDescriptor(&g_security_desc, SECURITY_DESCRIPTOR_REVISION);
-    SetSecurityDescriptorDacl(&g_security_desc, TRUE, NULL, FALSE);
+    /* Create a self-relative security descriptor (Everyone: full control)
+     * SDDL: D:P(A;;GA;;;WD) = DACL, protected, Allow, Generic All, Everyone */
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
+            "D:P(A;;GA;;;WD)", SDDL_REVISION_1, &g_security_desc, &g_security_desc_len)) {
+        fprintf(stderr, "Failed to create security descriptor (error %lu)\n", GetLastError());
+        ixfs_close(g_vol);
+        disk_close(disk);
+        return 1;
+    }
 
     /* Set up volume parameters */
     memset(&vol_params, 0, sizeof(vol_params));
