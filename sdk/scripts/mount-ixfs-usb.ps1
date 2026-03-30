@@ -199,18 +199,51 @@ Write-Host "  Mounting as " -NoNewline
 Write-Host "$driveLetter" -ForegroundColor Cyan -NoNewline
 Write-Host "..."
 
-# Launch ixfs-mount.exe
+# Launch ixfs-mount.exe and capture output for debugging
 $driveNum = [regex]::Match($foundDrive, '\d+$').Value
-Start-Process -FilePath $IxfsMount -ArgumentList "$driveLetter \\.\PhysicalDrive$driveNum $($found.Index)" -NoNewWindow
+$mountArgs = "$driveLetter \\.\PhysicalDrive$driveNum $($found.Index)"
+Write-Host "  Command: $IxfsMount $mountArgs" -ForegroundColor DarkGray
 
-Start-Sleep -Seconds 2
+# Ensure WinFsp DLL is findable (add system WinFsp bin to PATH if needed)
+$winfspBin = "C:\Program Files (x86)\WinFsp\bin"
+if (Test-Path $winfspBin) {
+    $env:PATH = "$winfspBin;$env:PATH"
+}
 
-if (Test-Path "$driveLetter\") {
-    Write-Host "  " -NoNewline
-    Write-Host "Mounted IXFS from PhysicalDrive$driveNum, partition $($found.Index) as $driveLetter" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  Unmount: unmount-ixfs.bat $driveLetter"
+# Run in foreground briefly to capture any startup errors
+$errLog = Join-Path $env:TEMP "ixfs-mount-err.log"
+$outLog = Join-Path $env:TEMP "ixfs-mount-out.log"
+$proc = Start-Process -FilePath $IxfsMount -ArgumentList $mountArgs -NoNewWindow -PassThru -RedirectStandardError $errLog -RedirectStandardOutput $outLog
+
+Start-Sleep -Seconds 3
+
+# Check if process is still running (good -- means mount is active)
+if (-not $proc.HasExited) {
+    if (Test-Path "$driveLetter\") {
+        Write-Host "  " -NoNewline
+        Write-Host "Mounted IXFS from PhysicalDrive$driveNum, partition $($found.Index) as $driveLetter" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  Unmount: unmount-ixfs.bat $driveLetter"
+    } else {
+        Write-Host "  " -NoNewline
+        Write-Host "Process running but drive not visible yet -- check $driveLetter in Explorer" -ForegroundColor Yellow
+    }
 } else {
+    # Process exited -- show error output
     Write-Host "  " -NoNewline
-    Write-Host "Mount may still be starting -- check $driveLetter in Explorer" -ForegroundColor Yellow
+    Write-Host "Mount failed (exit code $($proc.ExitCode))" -ForegroundColor Red
+    if (Test-Path $errLog) {
+        $err = Get-Content $errLog -Raw
+        if ($err) {
+            Write-Host ""
+            Write-Host "  Error output:" -ForegroundColor DarkGray
+            Write-Host "  $err"
+        }
+    }
+    if (Test-Path $outLog) {
+        $out = Get-Content $outLog -Raw
+        if ($out) {
+            Write-Host "  $out"
+        }
+    }
 }
