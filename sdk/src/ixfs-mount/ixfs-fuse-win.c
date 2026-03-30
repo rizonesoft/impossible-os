@@ -17,6 +17,14 @@
 #define static_assert _Static_assert
 #endif
 
+/* MinGW compat: _ReadWriteBarrier is an MSVC intrinsic; MinGW defines it as
+ * a 0-arg macro in <intrin.h> but WinFsp re-declares it as a function.
+ * Suppress the redeclaration by ensuring no conflict. */
+#ifdef __GNUC__
+#undef _ReadWriteBarrier
+#define _ReadWriteBarrier() __asm__ __volatile__("" ::: "memory")
+#endif
+
 #include <winfsp/winfsp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -430,7 +438,7 @@ int main(int argc, char *argv[])
     vol_params.ReadOnlyVolume = 1;
     wcscpy(vol_params.FileSystemName, L"IXFS");
 
-    result = FspFileSystemCreate(FSP_FSCTL_DISK_DEVICE_NAME,
+    result = FspFileSystemCreate(L"\\\\.\\WinFsp.Disk",
                                  &vol_params, &ixfs_winfsp_interface, &fs);
     if (!NT_SUCCESS(result)) {
         fprintf(stderr, "FspFileSystemCreate failed: 0x%08lX\n", result);
