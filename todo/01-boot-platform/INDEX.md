@@ -33,6 +33,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-06 — Bare Metal Boot Hardening](TODO-06-bare-metal-hardening.md) — IST stacks, ACPI-gated hardware access, graceful degradation, hw interrupt fix (clac), boot.conf skip list
 - [TODO-07 — xHCI, USB Storage & USB HID](TODO-07-xhci-usb-boot.md) — xHCI controller, USB MSC BOT, USB HID keyboard/mouse — boot from USB + input on bare metal
 - [TODO-08 — NVMe Storage Driver](TODO-08-nvme-storage.md) — NVMe controller, Admin+I/O queues, sector read/write — access internal NVMe storage
+- [TODO-09 — Zero-Delay USB Boot](TODO-09-usb-zero-delay-handover.md) — Pre-ExitBootServices xHCI driver loading with persistent DMA — true Windows-style zero-delay USB handover
 
 ## Completed / Doc-converted
 
