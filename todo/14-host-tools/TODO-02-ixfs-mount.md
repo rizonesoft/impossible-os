@@ -167,7 +167,7 @@ Add create, write, delete, rename operations.
 - [x] Block allocator: port from `ixfs_alloc.c`
 - [x] Flush dirty inodes + superblock on unmount
 - [x] Wire into Linux FUSE backend (write, create, mkdir, unlink, rmdir, rename, truncate)
-- [ ] Wire into Windows WinFsp backend
+- [x] Wire into Windows WinFsp backend (Create, Write, Overwrite, SetFileSize, Rename, Cleanup delete)
 - [x] Commit: `"sdk: ixfs-mount read-write support"`
 
 **Test checkpoint (Linux + Windows):**

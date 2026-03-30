@@ -24,8 +24,10 @@
 /* -- File context: stored per open file/directory handle -- */
 typedef struct {
     uint32_t ino;
+    uint32_t parent_ino;
     struct ixfs_inode inode;
     int is_dir;
+    char name[IXFS_MAX_NAME];    /* filename for Cleanup delete */
 } IXFS_FILE_CTX;
 
 /* -- Global volume state -- */
@@ -46,9 +48,11 @@ static void fill_file_info(FSP_FSCTL_FILE_INFO *fi, const struct ixfs_inode *ino
 {
     memset(fi, 0, sizeof(*fi));
     if (inode->i_mode & IXFS_S_DIR)
-        fi->FileAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY;
+        fi->FileAttributes = FILE_ATTRIBUTE_DIRECTORY;
     else
-        fi->FileAttributes = FILE_ATTRIBUTE_READONLY;
+        fi->FileAttributes = FILE_ATTRIBUTE_NORMAL;
+    if (!g_vol->bitmap)
+        fi->FileAttributes |= FILE_ATTRIBUTE_READONLY;
     fi->FileSize = inode->i_size;
     fi->AllocationSize = (UINT64)inode->i_blocks * IXFS_BLOCK_SIZE;
     fi->CreationTime = unix_to_wintime(inode->i_ctime);
@@ -104,6 +108,35 @@ static uint32_t resolve_path(const WCHAR *path, struct ixfs_inode *out_inode)
 
     if (out_inode) *out_inode = inode;
     return ino;
+}
+
+/* Split a path into parent path + filename.
+ * parent_out must be at least 1024 bytes. Returns pointer to name within path. */
+static const WCHAR *split_path(const WCHAR *path, WCHAR *parent_out)
+{
+    const WCHAR *last_sep = wcsrchr(path, L'\\');
+    if (!last_sep || last_sep == path) {
+        /* Root or single component */
+        parent_out[0] = L'\\';
+        parent_out[1] = L'\0';
+        return last_sep ? last_sep + 1 : path;
+    }
+    size_t plen = (size_t)(last_sep - path);
+    if (plen >= 1024) plen = 1023;
+    memcpy(parent_out, path, plen * sizeof(WCHAR));
+    parent_out[plen] = L'\0';
+    return last_sep + 1;
+}
+
+/* Convert wide name to narrow */
+static void wchar_to_narrow(const WCHAR *w, char *out, int max)
+{
+    int i = 0;
+    while (i < max - 1 && w[i]) {
+        out[i] = (char)(w[i] & 0x7F);
+        i++;
+    }
+    out[i] = '\0';
 }
 
 /* -- WinFsp callbacks -- */
@@ -191,6 +224,13 @@ static NTSTATUS ixfs_Open(FSP_FILE_SYSTEM *FileSystem,
     ctx->inode = inode;
     ctx->is_dir = (inode.i_mode & IXFS_S_DIR) ? 1 : 0;
 
+    /* Store parent info for Cleanup delete */
+    WCHAR parent_w[1024];
+    const WCHAR *name_w = split_path(FileName, parent_w);
+    struct ixfs_inode dummy;
+    ctx->parent_ino = resolve_path(parent_w, &dummy);
+    wchar_to_narrow(name_w, ctx->name, IXFS_MAX_NAME);
+
     fill_file_info(FileInfo, &inode, ino);
     *PFileContext = ctx;
 
@@ -204,16 +244,6 @@ static VOID ixfs_Close(FSP_FILE_SYSTEM *FileSystem,
     free(FileContext);
 }
 
-static VOID ixfs_Cleanup(FSP_FILE_SYSTEM *FileSystem,
-                         PVOID FileContext,
-                         PWSTR FileName,
-                         ULONG Flags)
-{
-    (void)FileSystem;
-    (void)FileContext;
-    (void)FileName;
-    (void)Flags;
-}
 
 static NTSTATUS ixfs_Read(FSP_FILE_SYSTEM *FileSystem,
                           PVOID FileContext,
@@ -327,13 +357,194 @@ static NTSTATUS ixfs_GetFileInfo(FSP_FILE_SYSTEM *FileSystem,
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS ixfs_Create(FSP_FILE_SYSTEM *FileSystem,
+                            PWSTR FileName,
+                            UINT32 CreateOptions,
+                            UINT32 GrantedAccess,
+                            UINT32 FileAttributes,
+                            PSECURITY_DESCRIPTOR SecurityDescriptor,
+                            UINT64 AllocationSize,
+                            PVOID *PFileContext,
+                            FSP_FSCTL_FILE_INFO *FileInfo)
+{
+    IXFS_FILE_CTX *ctx;
+    WCHAR parent_w[1024];
+    const WCHAR *name_w;
+    char name_n[IXFS_MAX_NAME];
+    struct ixfs_inode parent_inode;
+    uint32_t parent_ino, new_ino;
+    uint16_t type;
+
+    (void)FileSystem;
+    (void)GrantedAccess;
+    (void)SecurityDescriptor;
+    (void)AllocationSize;
+
+    if (!g_vol->bitmap)
+        return STATUS_MEDIA_WRITE_PROTECTED;
+
+    name_w = split_path(FileName, parent_w);
+    wchar_to_narrow(name_w, name_n, IXFS_MAX_NAME);
+
+    parent_ino = resolve_path(parent_w, &parent_inode);
+    if (parent_ino == 0)
+        return STATUS_OBJECT_PATH_NOT_FOUND;
+
+    type = (CreateOptions & FILE_DIRECTORY_FILE) ? IXFS_S_DIR : IXFS_S_FILE;
+    new_ino = ixfs_create(g_vol, parent_ino, &parent_inode, name_n, type);
+    if (new_ino == 0)
+        return STATUS_DISK_FULL;
+
+    ctx = malloc(sizeof(IXFS_FILE_CTX));
+    if (!ctx) return STATUS_INSUFFICIENT_RESOURCES;
+
+    ctx->ino = new_ino;
+    ctx->parent_ino = parent_ino;
+    ixfs_read_inode(g_vol, new_ino, &ctx->inode);
+    ctx->is_dir = (type == IXFS_S_DIR) ? 1 : 0;
+    strncpy(ctx->name, name_n, IXFS_MAX_NAME - 1);
+
+    fill_file_info(FileInfo, &ctx->inode, new_ino);
+    *PFileContext = ctx;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS ixfs_Write(FSP_FILE_SYSTEM *FileSystem,
+                           PVOID FileContext,
+                           PVOID Buffer,
+                           UINT64 Offset,
+                           ULONG Length,
+                           BOOLEAN WriteToEndOfFile,
+                           BOOLEAN ConstrainedIo,
+                           PULONG PBytesTransferred,
+                           FSP_FSCTL_FILE_INFO *FileInfo)
+{
+    IXFS_FILE_CTX *ctx = (IXFS_FILE_CTX *)FileContext;
+    int64_t n;
+
+    (void)FileSystem;
+    (void)ConstrainedIo;
+
+    if (!g_vol->bitmap)
+        return STATUS_MEDIA_WRITE_PROTECTED;
+
+    if (WriteToEndOfFile)
+        Offset = ctx->inode.i_size;
+
+    n = ixfs_write_data(g_vol, ctx->ino, &ctx->inode, Offset, Buffer, Length);
+    if (n < 0)
+        return STATUS_DEVICE_NOT_READY;
+
+    *PBytesTransferred = (ULONG)n;
+    fill_file_info(FileInfo, &ctx->inode, ctx->ino);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS ixfs_Overwrite(FSP_FILE_SYSTEM *FileSystem,
+                               PVOID FileContext,
+                               UINT32 FileAttributes,
+                               BOOLEAN ReplaceFileAttributes,
+                               UINT64 AllocationSize,
+                               FSP_FSCTL_FILE_INFO *FileInfo)
+{
+    IXFS_FILE_CTX *ctx = (IXFS_FILE_CTX *)FileContext;
+
+    (void)FileSystem;
+    (void)FileAttributes;
+    (void)ReplaceFileAttributes;
+    (void)AllocationSize;
+
+    /* Truncate to zero */
+    ctx->inode.i_size = 0;
+    ctx->inode.i_mtime = (uint32_t)time(NULL);
+    ixfs_write_inode(g_vol, ctx->ino, &ctx->inode);
+
+    fill_file_info(FileInfo, &ctx->inode, ctx->ino);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS ixfs_SetFileSize(FSP_FILE_SYSTEM *FileSystem,
+                                 PVOID FileContext,
+                                 UINT64 NewSize,
+                                 BOOLEAN SetAllocationSize,
+                                 FSP_FSCTL_FILE_INFO *FileInfo)
+{
+    IXFS_FILE_CTX *ctx = (IXFS_FILE_CTX *)FileContext;
+
+    (void)FileSystem;
+    (void)SetAllocationSize;
+
+    ctx->inode.i_size = NewSize;
+    ctx->inode.i_mtime = (uint32_t)time(NULL);
+    ixfs_write_inode(g_vol, ctx->ino, &ctx->inode);
+
+    fill_file_info(FileInfo, &ctx->inode, ctx->ino);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS ixfs_Rename(FSP_FILE_SYSTEM *FileSystem,
+                            PVOID FileContext,
+                            PWSTR FileName,
+                            PWSTR NewFileName,
+                            BOOLEAN ReplaceIfExists)
+{
+    IXFS_FILE_CTX *ctx = (IXFS_FILE_CTX *)FileContext;
+    char old_name[IXFS_MAX_NAME], new_name[IXFS_MAX_NAME];
+    WCHAR parent_w[1024];
+    const WCHAR *new_name_w;
+
+    (void)FileSystem;
+    (void)ReplaceIfExists;
+
+    if (!g_vol->bitmap)
+        return STATUS_MEDIA_WRITE_PROTECTED;
+
+    new_name_w = split_path(NewFileName, parent_w);
+    strncpy(old_name, ctx->name, IXFS_MAX_NAME - 1);
+    wchar_to_narrow(new_name_w, new_name, IXFS_MAX_NAME);
+
+    struct ixfs_inode parent_inode;
+    if (ixfs_read_inode(g_vol, ctx->parent_ino, &parent_inode) != 0)
+        return STATUS_INTERNAL_ERROR;
+
+    if (ixfs_rename(g_vol, ctx->parent_ino, &parent_inode, old_name, new_name) != 0)
+        return STATUS_OBJECT_NAME_COLLISION;
+
+    strncpy(ctx->name, new_name, IXFS_MAX_NAME - 1);
+    return STATUS_SUCCESS;
+}
+
+static VOID ixfs_Cleanup_rw(FSP_FILE_SYSTEM *FileSystem,
+                             PVOID FileContext,
+                             PWSTR FileName,
+                             ULONG Flags)
+{
+    IXFS_FILE_CTX *ctx = (IXFS_FILE_CTX *)FileContext;
+
+    (void)FileSystem;
+    (void)FileName;
+
+    if (Flags & FspCleanupDelete) {
+        if (g_vol->bitmap && ctx->parent_ino != 0) {
+            struct ixfs_inode parent_inode;
+            if (ixfs_read_inode(g_vol, ctx->parent_ino, &parent_inode) == 0)
+                ixfs_delete(g_vol, ctx->parent_ino, &parent_inode, ctx->name);
+        }
+    }
+}
+
 static FSP_FILE_SYSTEM_INTERFACE ixfs_winfsp_interface = {
     .GetVolumeInfo = ixfs_GetVolumeInfo,
     .GetSecurityByName = ixfs_GetSecurityByName,
+    .Create = ixfs_Create,
     .Open = ixfs_Open,
     .Close = ixfs_Close,
-    .Cleanup = ixfs_Cleanup,
+    .Cleanup = ixfs_Cleanup_rw,
     .Read = ixfs_Read,
+    .Write = ixfs_Write,
+    .SetFileSize = ixfs_SetFileSize,
+    .Overwrite = ixfs_Overwrite,
+    .Rename = ixfs_Rename,
     .ReadDirectory = ixfs_ReadDirectory,
     .GetFileInfo = ixfs_GetFileInfo,
 };
@@ -400,12 +611,16 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    fprintf(stderr, "IXFS: \"%s\" v%u, %llu blocks\n",
+    /* Load bitmap for R/W support */
+    int rw = (ixfs_load_bitmap(g_vol) == 0);
+
+    fprintf(stderr, "IXFS: \"%s\" v%u, %llu blocks (%s)\n",
             g_vol->sb.s_volume_name,
             g_vol->sb.s_version,
-            (unsigned long long)g_vol->sb.s_total_blocks);
+            (unsigned long long)g_vol->sb.s_total_blocks,
+            rw ? "R/W" : "read-only");
 
-    /* Create a basic security descriptor (Everyone: read) */
+    /* Create a basic security descriptor (Everyone: full control for R/W) */
     InitializeSecurityDescriptor(&g_security_desc, SECURITY_DESCRIPTOR_REVISION);
     SetSecurityDescriptorDacl(&g_security_desc, TRUE, NULL, FALSE);
 
@@ -422,7 +637,7 @@ int main(int argc, char *argv[])
     vol_params.CasePreservedNames = 1;
     vol_params.UnicodeOnDisk = 0;
     vol_params.PersistentAcls = 0;
-    vol_params.ReadOnlyVolume = 1;
+    vol_params.ReadOnlyVolume = rw ? 0 : 1;
     wcscpy(vol_params.FileSystemName, L"IXFS");
 
     result = FspFileSystemCreate(L"\\\\.\\WinFsp.Disk",
