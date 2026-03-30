@@ -367,71 +367,6 @@ static void serial_early_print_uint(UINT32 val)
     serial_early_print(buf + pos + 1);
 }
 
-/* --- Write boot debug log to ESP before ExitBootServices --- */
-static void write_boot_debug_log(void)
-{
-    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
-    EFI_FILE_PROTOCOL *root_dir, *log_file;
-    EFI_STATUS status;
-    UINTN write_size;
-
-    /* Use LoadedImage to get the device handle we booted from,
-     * then open the filesystem on that specific device */
-    {
-        EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
-        EFI_LOADED_IMAGE_PROTOCOL *li = 0;
-        status = gBS->HandleProtocol(gImageHandle, &li_guid, (VOID **)&li);
-        if (EFI_ERROR(status) || !li || !li->DeviceHandle) {
-            serial_early_print("[BOOT] boot-debug.log: no loaded image\n");
-            return;
-        }
-        status = gBS->HandleProtocol(li->DeviceHandle, &fs_guid, (VOID **)&fs);
-        if (EFI_ERROR(status)) {
-            serial_early_print("[BOOT] boot-debug.log: no fs on boot device\n");
-            return;
-        }
-    }
-
-    status = fs->OpenVolume(fs, &root_dir);
-    if (EFI_ERROR(status)) {
-        serial_early_print("[BOOT] boot-debug.log: cannot open volume\n");
-        return;
-    }
-
-    /* Create boot-debug.log in ESP root (not inside \EFI\ — some firmware restricts writes there) */
-    status = root_dir->Open(
-        root_dir, &log_file,
-        u"\\boot-debug.log",
-        EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0
-    );
-    if (EFI_ERROR(status)) {
-        root_dir->Close(root_dir);
-        serial_early_print("[BOOT] boot-debug.log: cannot create\n");
-        return;
-    }
-
-    /* Write the boot log buffer */
-    if (boot_log_buf && boot_log_pos > 0) {
-        write_size = boot_log_pos;
-        status = log_file->Write(log_file, &write_size, boot_log_buf);
-    } else {
-        /* Fallback: write a diagnostic message if buffer is empty */
-        const char *fallback = "[BOOT] Log buffer was empty (boot_log_pos=0)\n";
-        write_size = 46;
-        status = log_file->Write(log_file, &write_size, (VOID *)fallback);
-    }
-
-    /* Flush to ensure data reaches disk */
-    log_file->Flush(log_file);
-    log_file->Close(log_file);
-    root_dir->Close(root_dir);
-
-    if (!EFI_ERROR(status))
-        serial_early_print("[BOOT] boot-debug.log written to ESP\n");
-    else
-        serial_early_print("[BOOT] boot-debug.log write failed\n");
-}
 
 /* --- Helper: print to UEFI console (for debug, before ExitBootServices) --- */
 static void efi_print(CHAR16 *str)
@@ -1659,9 +1594,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
     serial_early_print("[BOOT] runtime services preserved\n");
-
-    /* Write boot debug log to ESP (before ExitBootServices kills filesystem access) */
-    write_boot_debug_log();
 
     /* Step 6: ExitBootServices */
     post_code16(POST16_BL_EXIT_BS);
