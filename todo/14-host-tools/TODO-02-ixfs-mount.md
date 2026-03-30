@@ -66,7 +66,7 @@ sdk/tools/                  # Compiled output (gitignored)
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Shared IXFS core parser                        | —          |  [ ]   |
+| 💎  |   1   | Shared IXFS core parser                        | —          |  [x]   |
 | 💎  |   2   | Platform disk I/O layer                        | §1         |  [ ]   |
 | 💎  |   3   | Linux FUSE mount (read-only)                   | §2         |  [ ]   |
 | 💎  |   4   | Windows WinFsp mount (read-only)               | §2         |  [ ]   |
@@ -80,13 +80,13 @@ Port the IXFS on-disk structure parsing from kernel code to a standalone library
 
 **Files:** `sdk/src/ixfs-mount/ixfs-core.c`, `ixfs-core.h`, `ixfs-structs.h`
 
-- [ ] Copy on-disk structures from `include/kernel/fs/ixfs.h` to `ixfs-structs.h`
-- [ ] `ixfs_open(disk_ctx)` — read and validate superblock
-- [ ] `ixfs_read_inode(ino)` — read inode from inode table
-- [ ] `ixfs_extent_lookup(inode, file_block)` — resolve file block to disk block
-- [ ] `ixfs_readdir(inode, callback)` — enumerate directory entries
-- [ ] `ixfs_lookup(parent_ino, name)` — find inode by name in directory
-- [ ] `ixfs_read_data(inode, offset, buf, len)` — read file data
+- [x] Copy on-disk structures from `include/kernel/fs/ixfs.h` to `ixfs-structs.h`
+- [x] `ixfs_open(disk_ctx)` — read and validate superblock
+- [x] `ixfs_read_inode(ino)` — read inode from inode table
+- [x] `ixfs_extent_lookup(inode, file_block)` — resolve file block to disk block
+- [x] `ixfs_readdir(inode, callback)` — enumerate directory entries
+- [x] `ixfs_lookup(parent_ino, name)` — find inode by name in directory
+- [x] `ixfs_read_data(inode, offset, buf, len)` — read file data
 - [ ] Commit: `"sdk: ixfs-mount shared IXFS parser — no kernel dependencies"`
 
 **Test checkpoint (Linux + Windows):**
