@@ -69,20 +69,6 @@ static void xhci_delay_us(uint32_t us)
         __asm__ volatile("outb %%al, $0x80" ::: "memory");
 }
 
-/* Map MMIO region with uncacheable flags (PCD=1, PWT=1) */
-static void xhci_map_mmio(uint64_t phys, uint32_t size)
-{
-    uint64_t page_start = phys & ~(uint64_t)0xFFF;
-    uint64_t page_end   = (phys + size + 0xFFF) & ~(uint64_t)0xFFF;
-    uint64_t page;
-    uint64_t flags = VMM_KERNEL_RW | VMM_FLAG_NOCACHE | VMM_FLAG_WRITETHROUGH;
-
-    for (page = page_start; page < page_end; page += VMM_PAGE_SIZE) {
-        if (vmm_get_physical(page) == 0)
-            vmm_map_page(page, page, flags);
-    }
-}
-
 /* ---- PCI discovery ------------------------------------------------------- */
 
 /* Try to initialize an xHCI controller at the given PCI location.
@@ -138,8 +124,15 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     /* ---- Map MMIO region (minimum 64 KiB for xHCI) ---- */
     hc->mmio_phys = mmio_phys;
     hc->mmio_size = 0x10000;  /* 64 KiB minimum per xHCI spec */
-    xhci_map_mmio(mmio_phys, hc->mmio_size);
-    hc->mmio_base = (volatile uint8_t *)mmio_phys;
+    {
+        void *va = vmm_map_mmio_uc(mmio_phys, hc->mmio_size);
+        if (!va) {
+            klog(LOG_ERROR, "xhci", "vmm_map_mmio_uc failed for 0x%llx",
+                 (uint64_t)mmio_phys);
+            return -1;
+        }
+        hc->mmio_base = (volatile uint8_t *)va;
+    }
 
     /* ---- Read Capability Registers ---- */
     hc->cap_length  = xhci_read8(hc->mmio_base, XHCI_CAP_CAPLENGTH);
@@ -237,8 +230,6 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
             klog(LOG_ERROR, "xhci", "Failed to allocate DCBAA");
             return -1;
         }
-        /* Identity-map the DCBAA page */
-        xhci_map_mmio(dcbaa_phys, 0x1000);
         hc->dcbaa      = (uint64_t *)dcbaa_phys;
         hc->dcbaa_phys = dcbaa_phys;
         xhci_zero(hc->dcbaa, dcbaa_entries * sizeof(uint64_t));
@@ -260,7 +251,6 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
             klog(LOG_ERROR, "xhci", "Failed to allocate scratchpad array");
             return -1;
         }
-        xhci_map_mmio(array_phys, array_pages * 0x1000);
         hc->scratchpad_array      = (uint64_t *)array_phys;
         hc->scratchpad_array_phys = array_phys;
         xhci_zero(hc->scratchpad_array, hc->max_scratchpads * sizeof(uint64_t));
@@ -273,7 +263,6 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                      (uint64_t)i);
                 return -1;
             }
-            xhci_map_mmio(sp_phys, 0x1000);
             xhci_zero((void *)sp_phys, 0x1000);
             hc->scratchpad_array[i] = sp_phys;
         }
@@ -348,7 +337,13 @@ int xhci_init(void)
                 if (cls     == XHCI_PCI_CLASS &&
                     sub     == XHCI_PCI_SUBCLASS &&
                     prog_if == XHCI_PCI_PROG_IF) {
-                    xhci_init_controller((uint8_t)bus, dev, func);
+                    uint16_t did = pci_read16((uint8_t)bus, dev, func, PCI_DEVICE_ID);
+                    klog(LOG_INFO, "xhci", "Found xHCI at PCI %u:%u.%u (VID:DID %04x:%04x)",
+                         (uint64_t)bus, (uint64_t)dev, (uint64_t)func,
+                         (uint64_t)vid, (uint64_t)did);
+                    if (xhci_init_controller((uint8_t)bus, dev, func) != 0)
+                        klog(LOG_ERROR, "xhci", "Controller init failed at %u:%u.%u",
+                             (uint64_t)bus, (uint64_t)dev, (uint64_t)func);
                 }
             }
         }

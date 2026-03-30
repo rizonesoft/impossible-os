@@ -49,10 +49,10 @@ Verify and fix the existing xHCI controller initialization. Currently logs "No x
 
 **Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/pci.c`
 
-- [ ] Verify PCI discovery finds xHCI (class 0x0C, subclass 0x03, prog-if 0x30)
-- [ ] Controller halt, reset, DCBAA allocation, command ring, event ring — audit existing code
-- [ ] Port scan: detect attached USB devices, log port status
-- [ ] Map xHCI BAR0 via `vmm_map_mmio_uc()` (MMIO registers need UC mapping)
+- [x] Verify PCI discovery finds xHCI (class 0x0C, subclass 0x03, prog-if 0x30)
+- [x] Controller halt, reset, DCBAA allocation, command ring, event ring — audit existing code
+- [x] Port scan: detect attached USB devices, log port status
+- [x] Map xHCI BAR0 via `vmm_map_mmio_uc()` (MMIO registers need UC mapping)
 - [ ] Commit: `"drivers: xHCI controller bring-up verified on QEMU + bare metal"`
 
 **Test checkpoint:** Serial shows `xhci: N ports, M devices attached`. POST code 0xD700. Test on: QEMU `run-usb`, bare metal.
@@ -154,14 +154,14 @@ Ensure PS/2 and USB input sources coexist without conflict.
 
 ## OS Comparison
 
-| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                    |
-|----|-------------------------|-----------------------------|------------------------------|----------------------------------|
-| 💎 | xHCI controller         | ✅ usbxhci.sys              | ✅ xhci-hcd                  | ⬜ §1 — partial, needs fix       |
-| 💎 | USB MSC                 | ✅ USBSTOR.SYS              | ✅ usb-storage                | ⬜ §3 — BOT transport            |
-| 💎 | USB boot drive access   | ✅ Automatic                 | ✅ initramfs + usb-storage    | ⬜ §4 — boot-critical path       |
-| 💎 | USB HID keyboard        | ✅ hidusb.sys + kbdhid.sys   | ✅ usbhid + hid-generic      | ⬜ §6 — boot protocol            |
-| 💎 | USB HID mouse           | ✅ hidusb.sys + mouhid.sys   | ✅ usbhid + hid-generic      | ⬜ §7 — boot protocol            |
-| 💎 | PS/2 + USB coexist      | ✅ Automatic                 | ✅ Automatic                  | ⬜ §8 — independent, both active |
+| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                     |
+|----|-------------------------|-----------------------------|------------------------------|-----------------------------------|
+| 💎 | xHCI controller         | ✅ usbxhci.sys             | ✅ xhci-hcd                  | ⬜ §1 — partial, needs fix       |
+| 💎 | USB MSC                 | ✅ USBSTOR.SYS             | ✅ usb-storage               | ⬜ §3 — BOT transport            |
+| 💎 | USB boot drive access   | ✅ Automatic               | ✅ initramfs + usb-storage   | ⬜ §4 — boot-critical path       |
+| 💎 | USB HID keyboard        | ✅ hidusb.sys + kbdhid.sys | ✅ usbhid + hid-generic      | ⬜ §6 — boot protocol            |
+| 💎 | USB HID mouse           | ✅ hidusb.sys + mouhid.sys | ✅ usbhid + hid-generic      | ⬜ §7 — boot protocol            |
+| 💎 | PS/2 + USB coexist      | ✅ Automatic               | ✅ Automatic                 | ⬜ §8 — independent, both active |
 
 ## Verification
 
