@@ -18,7 +18,6 @@
 #include <string.h>
 #include <wchar.h>
 #include <time.h>
-#include <sddl.h>
 
 #include "ixfs-core.h"
 #include "ixfs-disk.h"
@@ -619,20 +618,45 @@ int main(int argc, char *argv[])
             (unsigned long long)g_vol->sb.s_total_blocks,
             rw ? "R/W" : "read-only");
 
-    /* Create a self-relative security descriptor (Everyone: full control)
-     * SDDL: D:P(A;;GA;;;WD) = DACL protected, Allow Generic All to Everyone */
+    /* Build a minimal self-relative security descriptor in raw bytes.
+     * This is the binary form of "D:P(A;;GA;;;WD)" (Everyone: Full Control).
+     * Hand-crafted to avoid ConvertStringSecurityDescriptorToSecurityDescriptor
+     * which may not work correctly under MinGW. */
     {
-        PSECURITY_DESCRIPTOR sd = NULL;
-        ULONG sdLen = 0;
-        if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
-                "D:P(A;;GA;;;WD)", SDDL_REVISION_1, &sd, &sdLen)) {
-            fprintf(stderr, "Failed to create security descriptor (error %lu)\n", GetLastError());
-            ixfs_close(g_vol);
-            disk_close(disk);
-            return 1;
-        }
-        g_security_desc = sd;
-        g_security_desc_len = sdLen;
+        /* Self-relative SD layout:
+         *   SECURITY_DESCRIPTOR_RELATIVE header (20 bytes)
+         *   ACL header (8 bytes) + ACE (20 bytes) = 28 bytes
+         *   Total: 48 bytes */
+        static UINT8 sd_bytes[] = {
+            /* SECURITY_DESCRIPTOR_RELATIVE */
+            0x01,                   /* Revision = 1 */
+            0x00,                   /* Sbz1 */
+            0x04, 0x80,             /* Control = SE_DACL_PRESENT | SE_SELF_RELATIVE */
+            0x00, 0x00, 0x00, 0x00, /* OffsetOwner = 0 (none) */
+            0x00, 0x00, 0x00, 0x00, /* OffsetGroup = 0 (none) */
+            0x00, 0x00, 0x00, 0x00, /* OffsetSacl = 0 (none) */
+            0x14, 0x00, 0x00, 0x00, /* OffsetDacl = 20 (right after header) */
+
+            /* ACL header */
+            0x02,                   /* AclRevision = 2 */
+            0x00,                   /* Sbz1 */
+            0x1C, 0x00,             /* AclSize = 28 (8 header + 20 ACE) */
+            0x01, 0x00,             /* AceCount = 1 */
+            0x00, 0x00,             /* Sbz2 */
+
+            /* ACCESS_ALLOWED_ACE (Everyone, Generic All) */
+            0x00,                   /* AceType = ACCESS_ALLOWED_ACE_TYPE */
+            0x00,                   /* AceFlags = 0 */
+            0x14, 0x00,             /* AceSize = 20 */
+            0xFF, 0x01, 0x1F, 0x00, /* Mask = FILE_ALL_ACCESS (0x001F01FF) */
+            /* SID: S-1-1-0 (Everyone / World) */
+            0x01,                   /* Revision = 1 */
+            0x01,                   /* SubAuthorityCount = 1 */
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x01, /* IdentifierAuthority = {0,0,0,0,0,1} = WORLD */
+            0x00, 0x00, 0x00, 0x00, /* SubAuthority[0] = 0 (SECURITY_WORLD_RID) */
+        };
+        g_security_desc = (PSECURITY_DESCRIPTOR)sd_bytes;
+        g_security_desc_len = sizeof(sd_bytes);
     }
 
     /* Set up volume parameters */
