@@ -333,8 +333,10 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                  (uint64_t)usb3pssen,
                  (uint64_t)pci_read32(bus, dev, func, 0xD8));
 
-            /* Give ports time to settle after routing change */
-            xhci_delay_us(50000);  /* 50ms for device re-detection */
+            /* Give ports time to settle after routing change.
+             * USB devices need time to re-enumerate after port ownership
+             * switches from EHCI to xHCI. 500ms is conservative but safe. */
+            xhci_delay_us(500000);  /* 500ms for device re-detection */
         }
     }
 
