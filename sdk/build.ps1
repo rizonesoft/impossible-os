@@ -96,23 +96,36 @@ $MinGWUrl     = "https://github.com/niXman/mingw-builds-binaries/releases/downlo
 # Official 7-Zip console version (7-zip.org)
 $SevenZipUrl  = "https://7-zip.org/a/7zr.exe"
 
-# Download with curl.exe progress bar (ships with Windows 10+)
+# Download with progress (ships with Windows 10+)
 function Download-WithProgress {
     param([string]$Url, [string]$OutFile, [string]$Label)
 
-    Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
-
     if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-        & curl.exe -L --progress-bar -o $OutFile $Url
-        if ($LASTEXITCODE -ne 0) {
-            throw "curl failed with exit code $LASTEXITCODE"
+        Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
+        # Use default curl progress (not --progress-bar which can show garbled chars)
+        & curl.exe -L -# -o $OutFile $Url 2>&1 | ForEach-Object {
+            # curl outputs progress to stderr; just let it flow
+        }
+        # Check if download succeeded
+        if (-not (Test-Path $OutFile) -or (Get-Item $OutFile).Length -eq 0) {
+            throw "Download produced empty or missing file"
         }
     } else {
-        Write-Host "       (no progress bar -- curl.exe not found)" -ForegroundColor DarkGray
+        # Fallback: PowerShell native with Write-Progress
+        Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $ProgressPreference = "SilentlyContinue"
-        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
-        $ProgressPreference = "Continue"
+        $wc = New-Object System.Net.WebClient
+        $dlDone = $false
+        Register-ObjectEvent -InputObject $wc -EventName DownloadProgressChanged -Action {
+            Write-Progress -Activity "Downloading" -Status "$($EventArgs.ProgressPercentage)%" -PercentComplete $EventArgs.ProgressPercentage
+        } | Out-Null
+        Register-ObjectEvent -InputObject $wc -EventName DownloadFileCompleted -Action {
+            $script:dlDone = $true
+        } | Out-Null
+        $wc.DownloadFileAsync([Uri]$Url, $OutFile)
+        while (-not $dlDone) { Start-Sleep -Milliseconds 200 }
+        Write-Progress -Activity "Downloading" -Completed
+        $wc.Dispose()
     }
 
     if (Test-Path $OutFile) {
@@ -180,29 +193,35 @@ function Ensure-MinGW {
         Exit-Build 1
     }
 
-    # Extract with progress (count files via 7z listing first)
+    # Extract with progress
     Write-Host "       Extracting MinGW-w64..." -ForegroundColor DarkGray
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
-    # Get total file count for progress
-    $listOutput = & $SevenZip l $archive 2>&1
-    $totalFiles = ($listOutput | Select-String "^\d{4}-\d{2}-\d{2}" | Measure-Object).Count
-    if ($totalFiles -lt 1) { $totalFiles = 1 }
-
-    # Extract with line-by-line progress tracking
-    $extractedFiles = 0
+    # 7zr.exe outputs percentage lines like " 12% - mingw64/bin/gcc.exe"
+    # Parse these for progress updates
     $lastPct = -1
-    & $SevenZip x $archive "-o$BuildDir" -y -bsp1 2>&1 | ForEach-Object {
-        $line = "$_"
-        if ($line -match "^- " -or $line -match "^Extracting") {
-            $extractedFiles++
-            $pct = [math]::Min(100, [math]::Floor($extractedFiles * 100 / $totalFiles))
-            if ($pct -ne $lastPct -and ($pct % 2 -eq 0)) {
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo.FileName = $SevenZip
+    $proc.StartInfo.Arguments = "x `"$archive`" -o`"$BuildDir`" -y"
+    $proc.StartInfo.UseShellExecute = $false
+    $proc.StartInfo.RedirectStandardOutput = $true
+    $proc.StartInfo.RedirectStandardError = $true
+    $proc.StartInfo.CreateNoWindow = $true
+    $proc.Start() | Out-Null
+
+    while (-not $proc.HasExited) {
+        $line = $proc.StandardOutput.ReadLine()
+        if ($line -match "^\s*(\d+)%") {
+            $pct = [int]$Matches[1]
+            if ($pct -ne $lastPct) {
                 $lastPct = $pct
                 Write-ProgressBar -Percent $pct -Label "extracting"
             }
         }
     }
+    # Drain remaining output
+    $proc.StandardOutput.ReadToEnd() | Out-Null
+    $proc.WaitForExit()
     Write-ProgressBar -Percent 100 -Label "done"
     Write-Host ""
 
@@ -363,11 +382,6 @@ foreach ($dir in $toolDirs) {
     $name = Split-Path -Leaf $dir
     $toolTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
-    # Show progress bar for overall build
-    $overallPct = [math]::Floor(($idx - 1) * 100 / $toolCount)
-    Write-ProgressBar -Percent $overallPct -Label "building"
-    Write-Host ""
-
     Write-Host "  " -NoNewline
     Write-Host "[$idx/$toolCount]" -ForegroundColor White -NoNewline
     Write-Host " Building " -NoNewline
@@ -399,10 +413,6 @@ foreach ($dir in $toolDirs) {
         Write-Divider
     }
 }
-
-# Final progress bar
-Write-ProgressBar -Percent 100 -Label "done"
-Write-Host ""
 
 # -- Summary ----------------------------------------------------------------
 Write-Divider
