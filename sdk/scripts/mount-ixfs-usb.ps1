@@ -45,18 +45,50 @@ function Read-Magic {
     }
 }
 
+# Open a raw physical drive for reading (requires admin on some systems)
+function Open-RawDrive {
+    param([string]$Path)
+
+    # Use .NET FileStream with explicit sharing flags for raw device access
+    # FileAccess.Read = 1, FileShare.ReadWrite = 3, FileMode.Open = 3
+    try {
+        return New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    } catch {
+        return $null
+    }
+}
+
+# Read bytes from a FileStream at a given offset (sector-aligned for raw drives)
+function Read-Bytes {
+    param([System.IO.FileStream]$Stream, [uint64]$Offset, [int]$Count)
+
+    # Raw drives require sector-aligned reads; read a full sector then extract
+    $sectorOff = $Offset - ($Offset % 512)
+    $intraOff = $Offset - $sectorOff
+    $readLen = [math]::Ceiling(($intraOff + $Count) / 512.0) * 512
+
+    $Stream.Seek($sectorOff, [System.IO.SeekOrigin]::Begin) | Out-Null
+    $buf = New-Object byte[] $readLen
+    $bytesRead = $Stream.Read($buf, 0, $readLen)
+    if ($bytesRead -lt ($intraOff + $Count)) { return $null }
+
+    $result = New-Object byte[] $Count
+    [Array]::Copy($buf, $intraOff, $result, 0, $Count)
+    return $result
+}
+
 # Parse GPT to find IXFS partitions on a physical drive
 function Find-IXFSPartition {
     param([string]$DrivePath)
 
-    # Read GPT header at LBA 1
-    try {
-        $fs = [System.IO.File]::Open($DrivePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $fs = Open-RawDrive -Path $DrivePath
+    if (-not $fs) { return $null }
 
-        # Read LBA 1 (GPT header)
-        $fs.Seek(512, [System.IO.SeekOrigin]::Begin) | Out-Null
-        $hdr = New-Object byte[] 512
-        $fs.Read($hdr, 0, 512) | Out-Null
+    try {
+        # Read GPT header at LBA 1 (offset 512)
+        $hdr = Read-Bytes -Stream $fs -Offset 512 -Count 92
+        if (-not $hdr) { $fs.Close(); return $null }
 
         # Check GPT signature "EFI PART"
         $sig = [System.Text.Encoding]::ASCII.GetString($hdr, 0, 8)
@@ -68,14 +100,13 @@ function Find-IXFSPartition {
         $entryLBA = [BitConverter]::ToUInt64($hdr, 72)
         $numEntries = [BitConverter]::ToUInt32($hdr, 80)
         $entrySize = [BitConverter]::ToUInt32($hdr, 84)
-
-        # Read partition entries
-        $fs.Seek($entryLBA * 512, [System.IO.SeekOrigin]::Begin) | Out-Null
+        if ($entrySize -lt 128) { $entrySize = 128 }
 
         $partIndex = 0
         for ($i = 0; $i -lt $numEntries; $i++) {
-            $entry = New-Object byte[] $entrySize
-            $fs.Read($entry, 0, $entrySize) | Out-Null
+            $entryOffset = $entryLBA * 512 + $i * $entrySize
+            $entry = Read-Bytes -Stream $fs -Offset $entryOffset -Count 128
+            if (-not $entry) { break }
 
             # Check if entry is used (type GUID not all zeros)
             $allZero = $true
@@ -88,21 +119,19 @@ function Find-IXFSPartition {
             $startLBA = [BitConverter]::ToUInt64($entry, 32)
 
             # Check IXFS magic at the start of this partition
-            $partOffset = $startLBA * 512
-            $fs.Seek($partOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
-            $magicBuf = New-Object byte[] 4
-            $fs.Read($magicBuf, 0, 4) | Out-Null
-            $magic = [BitConverter]::ToUInt32($magicBuf, 0)
-
-            if ($magic -eq $IXFS_MAGIC) {
-                $fs.Close()
-                return @{ Index = $partIndex; StartLBA = $startLBA }
+            $magicBuf = Read-Bytes -Stream $fs -Offset ($startLBA * 512) -Count 4
+            if ($magicBuf) {
+                $magic = [BitConverter]::ToUInt32($magicBuf, 0)
+                if ($magic -eq $IXFS_MAGIC) {
+                    $fs.Close()
+                    return @{ Index = $partIndex; StartLBA = $startLBA }
+                }
             }
         }
 
         $fs.Close()
     } catch {
-        # Access denied or other error
+        try { $fs.Close() } catch {}
     }
 
     return $null
@@ -132,8 +161,8 @@ $found = $null
 $foundDrive = $null
 
 foreach ($drive in $drives) {
-    $devPath = $drive.DevicePath
-    if (-not $devPath) { $devPath = $drive.Name }
+    # Win32_DiskDrive.Name is \\.\PHYSICALDRIVE7 format
+    $devPath = $drive.Name
     $model = $drive.Model
     $sizeMB = [math]::Round($drive.Size / 1MB)
 
