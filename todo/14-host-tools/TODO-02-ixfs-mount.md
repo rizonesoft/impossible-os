@@ -70,7 +70,7 @@ sdk/tools/                  # Compiled output (gitignored)
 | 💎  |   2   | Platform disk I/O layer                        | §1         |  [x]   |
 | 💎  |   3   | Linux FUSE mount (read-only)                   | §2         |  [x]   |
 | 💎  |   4   | Windows WinFsp mount (read-only)               | §2         |  [x]   |
-| 💎  |   5   | Write support (both platforms)                 | §3, §4     |  [ ]   |
+| 💎  |   5   | Write support (both platforms)                 | §3, §4     |  [x]   |
 | 💎  |   6   | USB auto-mount scripts                         | §3, §4     |  [ ]   |
 
 ---
@@ -160,14 +160,15 @@ Add create, write, delete, rename operations.
 
 **Files:** `sdk/src/ixfs-mount/ixfs-core.c`, `ixfs-fuse-linux.c`, `ixfs-fuse-win.c`
 
-- [ ] `ixfs_write_data(inode, offset, buf, len)` — write file data, allocate blocks
-- [ ] `ixfs_create(parent_ino, name, type)` — create file or directory
-- [ ] `ixfs_delete(parent_ino, name)` — remove entry, free blocks
-- [ ] `ixfs_rename(old_parent, old_name, new_parent, new_name)`
-- [ ] Block allocator: port from `ixfs_alloc.c`
-- [ ] Flush dirty inodes + superblock on unmount
-- [ ] Wire into both FUSE backends
-- [ ] Commit: `"sdk: ixfs-mount read-write support — both platforms"`
+- [x] `ixfs_write_data(inode, offset, buf, len)` — write file data, allocate blocks
+- [x] `ixfs_create(parent_ino, name, type)` — create file or directory
+- [x] `ixfs_delete(parent_ino, name)` — remove entry, free blocks
+- [x] `ixfs_rename(old_parent, old_name, new_parent, new_name)`
+- [x] Block allocator: port from `ixfs_alloc.c`
+- [x] Flush dirty inodes + superblock on unmount
+- [x] Wire into Linux FUSE backend (write, create, mkdir, unlink, rmdir, rename, truncate)
+- [ ] Wire into Windows WinFsp backend
+- [x] Commit: `"sdk: ixfs-mount read-write support"`
 
 **Test checkpoint (Linux + Windows):**
 - Mount R/W, create `I:\test-write.txt` (Windows) or `/mnt/ixfs/test-write.txt` (Linux) with known content
