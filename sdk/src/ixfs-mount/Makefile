@@ -70,9 +70,9 @@ endif
 $(OUTDIR)/ixfs-mount: ixfs-fuse-linux.c $(CORE_SRC) $(CORE_HDR)
 	$(CC) $(CFLAGS) $(FUSE3_CFLAGS) -o $@ ixfs-fuse-linux.c $(CORE_SRC) $(FUSE3_LIBS)
 
-# Windows WinFsp mount
+# Windows WinFsp mount (use gnu11 not c11 -- WinFsp headers use MSVC extensions)
 $(OUTDIR)/ixfs-mount.exe: ixfs-fuse-win.c $(CORE_SRC) $(CORE_HDR)
-	$(CC) $(CFLAGS) $(WINFSP_CFLAGS) -D_WIN32 -o $@ ixfs-fuse-win.c $(CORE_SRC) $(WINFSP_LIBS)
+	$(CC) -O2 -Wall -Wextra -std=gnu11 -D_FILE_OFFSET_BITS=64 $(WINFSP_CFLAGS) -o $@ ixfs-fuse-win.c $(CORE_SRC) $(WINFSP_LIBS)
 
 # Dev-only test binary (builds in-place, not shipped to sdk/tools/)
 test: test_ixfs_core$(EXE)

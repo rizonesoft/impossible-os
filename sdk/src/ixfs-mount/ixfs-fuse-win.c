@@ -12,6 +12,11 @@
 
 #ifdef _WIN32
 
+/* WinFsp headers use static_assert (MSVC keyword); C11 has _Static_assert */
+#ifndef static_assert
+#define static_assert _Static_assert
+#endif
+
 #include <winfsp/winfsp.h>
 #include <stdio.h>
 #include <stdlib.h>
