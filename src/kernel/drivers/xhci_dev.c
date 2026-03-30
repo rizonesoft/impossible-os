@@ -953,3 +953,36 @@ int xhci_enumerate_ports(struct xhci_controller *hc)
     klog(LOG_INFO, "usb", "%u device(s) enumerated", (uint64_t)count);
     return count;
 }
+
+/* ---- Device accessors ---- */
+
+struct xhci_device *xhci_get_device(int index)
+{
+    if (index < 0 || index >= XHCI_MAX_DEVICES)
+        return NULL;
+    return devices[index].active ? &devices[index] : NULL;
+}
+
+int xhci_msc_device_count(void)
+{
+    int count = 0;
+    for (int i = 0; i < XHCI_MAX_DEVICES; i++) {
+        if (devices[i].active && devices[i].is_msc)
+            count++;
+    }
+    return count;
+}
+
+/* Get the N-th active MSC device (0-based). Returns device index in global array. */
+int xhci_msc_device_index(int nth)
+{
+    int count = 0;
+    for (int i = 0; i < XHCI_MAX_DEVICES; i++) {
+        if (devices[i].active && devices[i].is_msc) {
+            if (count == nth)
+                return i;
+            count++;
+        }
+    }
+    return -1;
+}

@@ -246,3 +246,12 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev);
 int xhci_bulk_transfer(struct xhci_controller *hc, struct xhci_device *dev,
                        struct xhci_ring *ring, void *buf, uint32_t len,
                        int dir_in);
+
+/* Get a device by global array index. Returns NULL if inactive. */
+struct xhci_device *xhci_get_device(int index);
+
+/* Count of active MSC devices across all controllers. */
+int xhci_msc_device_count(void);
+
+/* Get the global array index of the N-th MSC device (0-based). Returns -1 if not found. */
+int xhci_msc_device_index(int nth);

@@ -91,10 +91,11 @@ Register USB MSC devices as block devices so VFS can mount filesystems from USB 
 
 **Files:** `src/kernel/main/boot_storage.c`, `src/kernel/drivers/blkdev.c`
 
-- [ ] `usb_msc_register_blkdev()` — register each MSC LUN as a block device via `blkdev_register()`
-- [ ] Wire into `boot_phase2()`: after xHCI init, enumerate USB devices, register MSC block devices
-- [ ] Partition scan + filesystem mount works on USB drives (GPT/MBR + FAT32/IXFS)
-- [ ] Commit: `"drivers: USB MSC block device registration — USB drives mountable as C:\"`
+- [x] USB MSC adapter in `blkdev_adapters.c` — register each MSC device as "usb0", "usb1", etc.
+- [x] `xhci_get_device()`, `xhci_msc_device_count()`, `xhci_msc_device_index()` accessors
+- [x] Adapter callbacks: `blkdev_usb_msc_read/write` route to `usb_msc_read/write_sectors`
+- [x] Automatic: partition scan + filesystem mount via existing `partition_scan_all()`
+- [x] Commit: `"drivers: USB MSC block device registration — USB drives mountable"`
 
 **Test checkpoint:** `bash scripts/build.sh run-usb` — USB drive visible, partition scanned, filesystem mounted. Bare metal: boot from USB, C:\ accessible. POST code 0xD703.
 

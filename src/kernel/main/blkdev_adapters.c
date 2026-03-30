@@ -10,6 +10,9 @@
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/ahci.h"
+#include "kernel/drivers/xhci.h"
+#include "kernel/drivers/xhci_dev.h"
+#include "kernel/drivers/usb_msc.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
@@ -89,6 +92,35 @@ static int blkdev_ata_write(uint64_t lba, uint32_t count,
 {
     (void)driver_data;
     return ata_write_sectors((uint32_t)lba, (uint8_t)count, buf);
+}
+
+/* ---- USB MSC adapter ---- */
+
+/* driver_data packs controller index (high 16) + device index (low 16) */
+#define MSC_PACK(ctrl, dev)   ((void *)(uintptr_t)(((uint32_t)(ctrl) << 16) | (uint32_t)(dev)))
+#define MSC_CTRL(dd)          ((int)((uint32_t)(uintptr_t)(dd) >> 16))
+#define MSC_DEV(dd)           ((int)((uint32_t)(uintptr_t)(dd) & 0xFFFF))
+
+static int blkdev_usb_msc_read(uint64_t lba, uint32_t count, void *buf,
+                                void *driver_data)
+{
+    int ci = MSC_CTRL(driver_data);
+    int di = MSC_DEV(driver_data);
+    struct xhci_controller *hc = xhci_get_controller_mut(ci);
+    struct xhci_device *dev = xhci_get_controller_mut(ci) ? xhci_get_device(di) : NULL;
+    if (!hc || !dev) return -1;
+    return usb_msc_read_sectors(hc, dev, (uint32_t)lba, count, buf);
+}
+
+static int blkdev_usb_msc_write(uint64_t lba, uint32_t count,
+                                 const void *buf, void *driver_data)
+{
+    int ci = MSC_CTRL(driver_data);
+    int di = MSC_DEV(driver_data);
+    struct xhci_controller *hc = xhci_get_controller_mut(ci);
+    struct xhci_device *dev = xhci_get_controller_mut(ci) ? xhci_get_device(di) : NULL;
+    if (!hc || !dev) return -1;
+    return usb_msc_write_sectors(hc, dev, (uint32_t)lba, count, buf);
 }
 
 /* ---- Directory tree dump (serial-only) ---- */
@@ -282,6 +314,32 @@ void blkdev_register_all(void)
             bd.read  = blkdev_atapi_read;
             bd.write = NULL;
             bd.driver_data  = (void *)(uintptr_t)ai;
+            blkdev_register(&bd);
+        }
+    }
+
+    /* USB MSC (Mass Storage) devices */
+    {
+        int msc_count = xhci_msc_device_count();
+        int mi;
+        for (mi = 0; mi < msc_count; mi++) {
+            int dev_idx = xhci_msc_device_index(mi);
+            struct xhci_device *dev = xhci_get_device(dev_idx);
+            const struct usb_msc_info *info;
+
+            if (!dev || dev_idx < 0) continue;
+            info = usb_msc_get_info(dev);
+            if (!info) continue;
+
+            bd = (struct blkdev){0};
+            bd.name[0]='u'; bd.name[1]='s'; bd.name[2]='b';
+            bd.name[3]='0' + (char)mi; bd.name[4]='\0';
+            bd.sector_size  = info->sector_size;
+            bd.sector_count = info->sector_count;
+            bd.read  = blkdev_usb_msc_read;
+            bd.write = blkdev_usb_msc_write;
+            /* Pack controller 0 + device index into driver_data */
+            bd.driver_data = MSC_PACK(0, dev_idx);
             blkdev_register(&bd);
         }
     }
