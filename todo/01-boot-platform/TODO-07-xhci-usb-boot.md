@@ -33,14 +33,15 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | xHCI controller bring-up and port scan         | —          |  [ ]   |
-| 💎  |   2   | USB device enumeration and configuration       | §1         |  [ ]   |
-| 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [ ]   |
-| 💎  |   4   | Block device registration and VFS integration  | §3         |  [ ]   |
-| 💎  |   5   | xHCI interrupt endpoint setup for HID          | §2         |  [ ]   |
-| 💎  |   6   | USB HID boot-protocol keyboard driver          | §5         |  [ ]   |
-| 💎  |   7   | USB HID boot-protocol mouse driver             | §5         |  [ ]   |
-| 💎  |   8   | Input source priority and coexistence          | §6, §7     |  [ ]   |
+| 💎  |   1   | xHCI controller bring-up and port scan         | —          |  [x]   |
+| 💎  |   2   | USB device enumeration and configuration       | §1         |  [x]   |
+| 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [x]   |
+| 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
+| ⭐  |   5   | Interrupt-driven port detection + Intel routing | §1         |  [ ]   |
+| 💎  |   6   | xHCI interrupt endpoint setup for HID          | §2         |  [ ]   |
+| 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         |  [ ]   |
+| 💎  |   8   | USB HID boot-protocol mouse driver             | §6         |  [ ]   |
+| 💎  |   9   | Input source priority and coexistence          | §7, §8     |  [ ]   |
 
 ---
 
@@ -99,7 +100,24 @@ Register USB MSC devices as block devices so VFS can mount filesystems from USB 
 
 **Test checkpoint:** `bash scripts/build.sh run-usb` — USB drive visible, partition scanned, filesystem mounted. Bare metal: boot from USB, C:\ accessible. POST code 0xD703.
 
-## 5. xHCI Interrupt Endpoint Setup for HID
+## 5. Interrupt-Driven Port Detection and Intel Port Routing
+Replace the fixed 500ms delay after Intel EHCI-to-xHCI port routing with proper interrupt-driven port status change detection. Currently works but wastes 500ms on every boot.
+
+**Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/xhci_ring.c`
+
+- [ ] Register xHCI MSI/MSI-X interrupt handler during controller init
+- [ ] After Intel port routing (XUSB2PR + USB3_PSSEN), enable Port Status Change Events
+- [ ] ISR reads Event Ring for TRB type 34 (Port Status Change Event)
+- [ ] On PSC event: identify port, read PORTSC, start enumeration if CCS=1
+- [ ] Remove the fixed 500ms `xhci_delay_us()` — interrupt fires within ~50ms
+- [ ] Fallback: if no interrupt after 1s, fall back to PORTSC polling (non-Intel or broken MSI)
+- [ ] Non-Intel xHCI controllers: skip port routing, rely on normal CCS detection
+- [ ] Hot-plug support: same ISR handles devices connected after boot
+- [ ] Commit: `"drivers: xHCI interrupt-driven port detection — replace 500ms delay"`
+
+**Test checkpoint:** Boot from USB — device detected via interrupt within 50ms (vs 500ms fixed delay). Serial log shows `xhci: PSC event on port N`. Hot-plug: plug USB drive after boot, device appears. QEMU `run-usb` still works.
+
+## 6. xHCI Interrupt Endpoint Setup for HID
 Configure interrupt-IN endpoints for HID devices so the xHCI controller polls them periodically.
 
 **Files:** `src/kernel/drivers/xhci_dev.c`
@@ -114,7 +132,7 @@ Configure interrupt-IN endpoints for HID devices so the xHCI controller polls th
 
 **Test checkpoint:** USB keyboard/mouse detected, interrupt endpoint configured. POST code 0xD704. Test on: QEMU `run-usb`, bare metal.
 
-## 6. USB HID Boot-Protocol Keyboard Driver
+## 7. USB HID Boot-Protocol Keyboard Driver
 Parse 8-byte boot-protocol keyboard reports and inject key events into the input subsystem.
 
 **Files:** `src/kernel/drivers/usb_hid_kbd.c` (new)
@@ -127,7 +145,7 @@ Parse 8-byte boot-protocol keyboard reports and inject key events into the input
 
 **Test checkpoint:** USB keyboard: type characters, see them in terminal. POST code 0xD705. Test on: QEMU `run-usb`, bare metal.
 
-## 7. USB HID Boot-Protocol Mouse Driver
+## 8. USB HID Boot-Protocol Mouse Driver
 Parse 3-byte boot-protocol mouse reports and inject mouse events.
 
 **Files:** `src/kernel/drivers/usb_hid_mouse.c` (new)
@@ -138,7 +156,7 @@ Parse 3-byte boot-protocol mouse reports and inject mouse events.
 
 **Test checkpoint:** USB mouse: cursor moves on screen. POST code 0xD706. Test on: QEMU `run-usb`, bare metal.
 
-## 8. Input Source Priority and Coexistence
+## 9. Input Source Priority and Coexistence
 Ensure PS/2 and USB input sources coexist without conflict.
 
 **Files:** `src/kernel/drivers/keyboard.c`, `src/kernel/drivers/mouse.c`
