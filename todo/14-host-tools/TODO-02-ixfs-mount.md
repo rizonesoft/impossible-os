@@ -1,4 +1,4 @@
-# TODO-01 — IXFS Mount (Windows + Linux)
+# TODO-02 — IXFS Mount (Windows + Linux)
 
 > **Goal:** Mount IXFS partitions from both Windows and Linux so developers can browse Impossible OS filesystems from the host — read logs, inspect files, copy assets, without booting the OS. Also provides mount scripts for USB boot drives.
 
@@ -18,17 +18,20 @@
 - [`src/kernel/fs/ixfs/ixfs_alloc.c`](../../src/kernel/fs/ixfs/ixfs_alloc.c) — block allocator
 - [`include/kernel/fs/ixfs.h`](../../include/kernel/fs/ixfs.h) — on-disk structures
 - [`tools/mkfs-ixfs.c`](../../tools/mkfs-ixfs.c) — IXFS formatter (reference for on-disk layout)
+- → XREF: `14-host-tools/TODO-01-sdk-build-system.md §4` — SDK build system discovers and builds this tool
+- → XREF: `14-host-tools/TODO-06-disk-inspect.md` — shares IXFS core parser (`ixfs-core.c`); coordinate struct changes
+- → XREF: `14-host-tools/TODO-07-ixfs-fsck.md` — shares IXFS core parser; coordinate struct changes
 
 ## Outcome
 
 **Windows:**
-- `ixfs-mount.exe I: \\.\PhysicalDrive0 3` — mount partition 3 as `I:\`
-- `ixfs-mount.exe I: build\system-disk.img 3` — mount from disk image
+- `ixfs-mount.exe I: \\.\PhysicalDrive0 2` — mount partition 2 as `I:\`
+- `ixfs-mount.exe I: build\system-disk.img 2` — mount from disk image
 - Double-click `mount-ixfs-usb.bat` — auto-detect USB drive, mount IXFS partition
 
 **Linux:**
-- `ixfs-mount /dev/sdb3 /mnt/ixfs` — mount partition
-- `ixfs-mount build/system-disk.img:3 /mnt/ixfs` — mount from disk image
+- `ixfs-mount /dev/sdb2 /mnt/ixfs` — mount partition
+- `ixfs-mount build/system-disk.img:2 /mnt/ixfs` — mount from disk image
 - `./mount-ixfs-usb.sh` — auto-detect USB drive, mount IXFS partition
 
 ## Source Layout
@@ -86,7 +89,11 @@ Port the IXFS on-disk structure parsing from kernel code to a standalone library
 - [ ] `ixfs_read_data(inode, offset, buf, len)` — read file data
 - [ ] Commit: `"sdk: ixfs-mount shared IXFS parser — no kernel dependencies"`
 
-**Test checkpoint:** Parse `build/system-disk.img`, list root directory, read `boot.conf`.
+**Test checkpoint (Linux + Windows):**
+- Write a minimal `test_ixfs_core.c` that calls `ixfs_open()` on `build/system-disk.img` partition 2
+- Output: `IXFS: "Impossible OS" v2, N blocks` — superblock parsed correctly
+- Output: `ROOT: Impossible/ System/ ...` — root directory entries listed
+- Read a known file and verify first bytes match expected content
 
 ## 2. Platform Disk I/O Layer
 Abstracted raw sector read/write that works on both Windows and Linux.
@@ -103,7 +110,10 @@ Abstracted raw sector read/write that works on both Windows and Linux.
 - [ ] `#ifdef _WIN32` / `#else` for platform split (or separate .c files)
 - [ ] Commit: `"sdk: ixfs-mount platform disk I/O — Windows + Linux"`
 
-**Test checkpoint:** Read sector 0 of IXFS partition from disk image, verify IXFS magic on both platforms.
+**Test checkpoint (Linux + Windows):**
+- `disk_open("build/system-disk.img", 2)` succeeds — GPT parsed, partition 2 found
+- `disk_read_sectors(0, 1, buf)` returns 512 bytes with `0x49584653` at offset 0 (IXFS magic)
+- Linux: `open()` + `pread()` path works; Windows: `CreateFile()` + `ReadFile()` path works
 
 ## 3. Linux FUSE Mount (Read-Only)
 Implement libfuse3 callbacks for read-only mounting.
@@ -114,12 +124,17 @@ Implement libfuse3 callbacks for read-only mounting.
 - [ ] `fuse_readdir` — enumerate directory
 - [ ] `fuse_open` — validate file access
 - [ ] `fuse_read` — read file data via extent lookup
-- [ ] Command: `ixfs-mount /dev/sdb3 /mnt/ixfs` or `ixfs-mount build/system-disk.img:3 /mnt/ixfs`
+- [ ] Command: `ixfs-mount /dev/sdb2 /mnt/ixfs` or `ixfs-mount build/system-disk.img:2 /mnt/ixfs`
 - [ ] `fusermount -u /mnt/ixfs` for unmount
 - [ ] Makefile: `gcc -O2 ixfs-core.c ixfs-disk.c ixfs-fuse-linux.c -lfuse3 -o ../../tools/ixfs-mount`
 - [ ] Commit: `"sdk: ixfs-mount Linux FUSE read-only mount"`
 
-**Test checkpoint:** `./ixfs-mount build/system-disk.img:3 /mnt/ixfs && ls /mnt/ixfs/Impossible/`
+**Test checkpoint (Linux):**
+- `./ixfs-mount build/system-disk.img:2 /mnt/ixfs` — mounts without error
+- `ls /mnt/ixfs/` lists root directory (Impossible/, System/, etc.)
+- `cat /mnt/ixfs/Impossible/boot.conf` reads file content correctly
+- `stat /mnt/ixfs/Impossible/` shows directory attributes (mode, size, timestamps)
+- `fusermount -u /mnt/ixfs` — clean unmount, no errors
 
 ## 4. Windows WinFsp Mount (Read-Only)
 Implement WinFsp callbacks for read-only mounting as a drive letter.
@@ -133,11 +148,15 @@ Implement WinFsp callbacks for read-only mounting as a drive letter.
 - [ ] WinFsp `ReadDirectory` — enumerate directory
 - [ ] WinFsp `GetFileInfo` — size, timestamps, attributes
 - [ ] WinFsp `Close` — release handle
-- [ ] Command: `ixfs-mount.exe I: build\system-disk.img 3`
+- [ ] Command: `ixfs-mount.exe I: build\system-disk.img 2`
 - [ ] build-win.bat: compile with MSVC or MinGW + WinFsp SDK
 - [ ] Commit: `"sdk: ixfs-mount Windows WinFsp read-only mount"`
 
-**Test checkpoint:** `ixfs-mount.exe I: build\system-disk.img 3` — browse in Explorer.
+**Test checkpoint (Windows):**
+- `ixfs-mount.exe I: build\system-disk.img 2` — mounts as drive I:
+- `dir I:\` lists root directory in Explorer and cmd
+- `type I:\Impossible\boot.conf` reads file content correctly
+- Right-click drive → Eject or `ixfs-mount.exe --unmount I:` — clean unmount
 
 ## 5. Write Support (Both Platforms)
 Add create, write, delete, rename operations.
@@ -153,7 +172,12 @@ Add create, write, delete, rename operations.
 - [ ] Wire into both FUSE backends
 - [ ] Commit: `"sdk: ixfs-mount read-write support — both platforms"`
 
-**Test checkpoint:** Create file from host, boot OS, verify file exists.
+**Test checkpoint (Linux + Windows):**
+- Mount R/W, create `I:\test-write.txt` (Windows) or `/mnt/ixfs/test-write.txt` (Linux) with known content
+- Unmount cleanly
+- Re-mount read-only, verify file exists and content matches
+- Boot OS in QEMU, verify `C:\test-write.txt` exists with correct content
+- Delete file from host, unmount, re-mount, verify file gone
 
 ## 6. USB Auto-Mount Scripts
 Scripts to detect USB drives with IXFS partitions and mount them automatically.
@@ -176,7 +200,11 @@ Scripts to detect USB drives with IXFS partitions and mount them automatically.
 
 - [ ] Commit: `"sdk: USB auto-mount scripts for IXFS — Windows + Linux"`
 
-**Test checkpoint:** Plug in USB boot drive, run script, IXFS mounted automatically.
+**Test checkpoint (Linux + Windows):**
+- Linux: plug USB boot drive, run `./mount-ixfs-usb.sh` — output: `Mounted IXFS from /dev/sdb2 at /mnt/ixfs`
+- Windows: plug USB, run `mount-ixfs-usb.bat` — output: `Mounted IXFS from PhysicalDrive2, partition 2 as I:\`
+- `ls /mnt/ixfs/` or `dir I:\` shows IXFS root directory
+- Unmount script works cleanly on both platforms
 
 ---
 
@@ -200,15 +228,18 @@ REM Output: sdk\tools\ixfs-mount.exe
 
 ## OS Comparison
 
-| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                    |
-|----|-------------------------|-----------------------------|------------------------------|----------------------------------|
-| 💎 | Cross-OS filesystem     | ✅ ext2fsd, Linux FS         | ✅ ntfs-3g, mount.cifs       | ⬜ §3+§4 — IXFS on both hosts   |
-| ⭐ | USB auto-mount          | ❌ No custom FS auto-mount   | ❌ No custom FS auto-mount   | ⬜ §6 — detect + mount IXFS USB |
-| ⭐ | Shared parser code      | ❌ Separate implementations  | ❌ Separate implementations  | ⬜ §1 — single core, two backends |
+| ⭐ | Feature              | Win11                | Linux                | Impossible OS              |
+|----|----------------------|----------------------|----------------------|----------------------------|
+| 💎 | Cross-OS FS mount    | ✅ ext2fsd, Paragon  | ✅ ntfs-3g           | ⬜ §3+§4 IXFS both hosts  |
+| ⭐ | USB auto-mount       | ❌ No custom FS      | ❌ No custom FS      | ⬜ §6 detect + mount USB  |
+| ⭐ | Shared parser code   | ❌ Separate impls    | ❌ Separate impls    | ⬜ §1 single core, 2 back |
+| ⭐ | Image:partition mount | ❌ Manual losetup    | ❌ Manual losetup    | ⬜ §2 `img:N` one-command |
+| ⭐ | Snapshot browsing    | ❌ None              | ❌ None              | ⬜ Planned read-only snap |
+| ⭐ | R/W from day one     | ⚠️ ext2fsd corrupts  | ⚠️ ntfs-3g slow      | ⬜ §5 journal-safe writes |
 
 ## Verification
 
-- [ ] Linux: `ixfs-mount build/system-disk.img:3 /mnt/ixfs && ls /mnt/ixfs/`
-- [ ] Windows: `ixfs-mount.exe I: build\system-disk.img 3` — browse in Explorer
-- [ ] Write: create file from host, verify in OS after boot
-- [ ] USB: plug USB drive, run mount script, IXFS accessible
+- [ ] Linux: `ixfs-mount build/system-disk.img:2 /mnt/ixfs && ls /mnt/ixfs/`
+- [ ] Windows: `ixfs-mount.exe I: build\system-disk.img 2` — browse in Explorer
+- [ ] Write: create file from host, unmount, boot OS, verify file exists at `C:\`
+- [ ] USB: plug USB drive, run mount script, IXFS mounted and browsable

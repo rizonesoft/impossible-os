@@ -15,6 +15,9 @@
 - [`scripts/build.sh`](../../scripts/build.sh) — kernel build script (reference for progress/output style)
 - `sdk/src/` — SDK tool source directories
 
+> [!NOTE]
+> `sdk/src/ixfs-mount/` is created by TODO-02. Until TODO-02 §1 scaffolds the first tool, `sdk/build.sh` will discover zero tools. Test §1–§4 with a minimal stub `Makefile` in `sdk/src/test-tool/` if TODO-02 hasn't landed yet.
+
 ## Outcome
 
 - `bash sdk/build.sh` (Linux) or `sdk\build.bat` (Windows) — builds all SDK tools
@@ -39,9 +42,9 @@ sdk/
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                    | Depends On | Status |
-| --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Linux build script (bash)                      | —          |  [ ]   |
+| ⭐  | Order | Deliverable                                     | Depends On | Status |
+| --- | :---: | ----------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | Linux build script (bash)                       | —          |  [ ]   |
 | 💎  |   2   | Windows build script (PowerShell + bat)         | —          |  [ ]   |
 | 💎  |   3   | Dependency detection and reporting              | §1, §2     |  [ ]   |
 | 💎  |   4   | Auto-discovery of SDK tool directories          | §1, §2     |  [ ]   |
@@ -53,18 +56,22 @@ Build all SDK tools on Linux with progress output.
 
 **Files:** `sdk/build.sh`
 
-- [ ] Detect host compiler: prefer `gcc`, fall back to `clang`
-- [ ] Check for `libfuse3-dev` (pkg-config or header check) — warn if missing
-- [ ] Discover tool directories: `for dir in sdk/src/*/; do ...`
-- [ ] Each tool directory must have a `Makefile` — run `make -C $dir`
-- [ ] Progress bar: `[1/N] Building ixfs-mount...`
-- [ ] Timing: report per-tool and total build time
-- [ ] Color output: green OK, red FAILED, yellow WARN
-- [ ] `sdk/build.sh clean` — run `make -C $dir clean` for each tool
-- [ ] Error extraction: show relevant compiler errors on failure
+- [x] Detect host compiler: prefer `gcc`, fall back to `clang`
+- [x] Check for `libfuse3-dev` (pkg-config or header check) — warn if missing
+- [x] Discover tool directories: `for dir in sdk/src/*/; do ...`
+- [x] Each tool directory must have a `Makefile` — run `make -C $dir`
+- [x] Progress bar: `[1/N] Building ixfs-mount...`
+- [x] Timing: report per-tool and total build time
+- [x] Color output: green OK, red FAILED, yellow WARN
+- [x] `sdk/build.sh clean` — run `make -C $dir clean` for each tool
+- [x] Error extraction: show relevant compiler errors on failure
 - [ ] Commit: `"sdk: Linux build script with progress and dependency detection"`
 
-**Test checkpoint:** `bash sdk/build.sh` — builds ixfs-mount, shows progress, reports time.
+**Test checkpoint (Linux):**
+- `bash sdk/build.sh` completes without error
+- Output contains `[1/1] Building test-tool...` (or ixfs-mount if TODO-02 landed)
+- Output ends with `SDK BUILD OK` and total time
+- `ls sdk/tools/` shows compiled binary
 
 ## 2. Windows Build Script
 Build all SDK tools on Windows with progress output.
@@ -81,7 +88,11 @@ Build all SDK tools on Windows with progress output.
 - [ ] `sdk\build.bat clean` — clean build
 - [ ] Commit: `"sdk: Windows build script with progress and dependency detection"`
 
-**Test checkpoint:** `sdk\build.bat` — builds ixfs-mount.exe, shows progress.
+**Test checkpoint (Windows):**
+- `sdk\build.bat` completes without error
+- Output contains `[1/1] Building test-tool...`
+- Output ends with `SDK BUILD OK` and total time
+- `dir sdk\tools\` shows compiled binary
 
 ## 3. Dependency Detection and Reporting
 Clear messages when required dependencies are missing.
@@ -95,7 +106,10 @@ Clear messages when required dependencies are missing.
 - [ ] Example: `MISSING: WinFsp — install from: https://winfsp.dev/`
 - [ ] Commit: `"sdk: dependency detection with install instructions"`
 
-**Test checkpoint:** Uninstall libfuse3-dev, run build, see clear install instructions.
+**Test checkpoint (Linux + Windows):**
+- Linux: uninstall `libfuse3-dev`, run `bash sdk/build.sh` — output contains `MISSING: libfuse3-dev — install with: sudo apt install libfuse3-dev`
+- Windows: rename WinFsp dir, run `sdk\build.bat` — output contains `MISSING: WinFsp — install from: https://winfsp.dev/`
+- Build continues for tools that don't need the missing dep (graceful skip)
 
 ## 4. Auto-Discovery of SDK Tool Directories
 Build discovers new tools automatically — add a directory to `sdk/src/`, it gets built.
@@ -108,17 +122,23 @@ Build discovers new tools automatically — add a directory to `sdk/src/`, it ge
 - [ ] Build in alphabetical order (deterministic)
 - [ ] Commit: `"sdk: auto-discover SDK tool directories"`
 
-**Test checkpoint:** Add empty `sdk/src/test-tool/Makefile`, run build, see it discovered.
+**Test checkpoint (Linux + Windows):**
+- Create `sdk/src/test-tool/Makefile` with a trivial target, run `bash sdk/build.sh`
+- Output contains `Found 2 SDK tools: ixfs-mount, test-tool` (or `Found 1 SDK tools: test-tool` if no ixfs-mount yet)
+- Dir without Makefile is silently skipped (no error)
+- Tools built in alphabetical order
 
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature                 | Win11 SDK                   | Linux SDK                    | Impossible OS SDK            |
-|----|-------------------------|-----------------------------|------------------------------|------------------------------|
-| 💎 | Build system            | ✅ MSBuild / CMake           | ✅ make / CMake              | ⬜ §1+§2 — bash + PowerShell |
-| ⭐ | Progress output         | ❌ MSBuild verbose only      | ❌ make verbose only         | ⬜ §1 — colored progress bar |
-| ⭐ | Dep detection           | ❌ Manual install            | ❌ Manual install            | ⬜ §3 — auto-detect + guide  |
+| ⭐ | Feature            | Win11                | Linux                | Impossible OS               |
+|----|--------------------|-----------------------|----------------------|-----------------------------|
+| 💎 | Build system       | ✅ MSBuild / CMake   | ✅ make / CMake      | ⬜ §1+§2 bash + PowerShell |
+| ⭐ | Progress output    | ❌ Verbose only      | ❌ Verbose only      | ⬜ §1 colored progress bar |
+| ⭐ | Dep detection      | ❌ Manual install    | ❌ Manual install    | ⬜ §3 auto-detect + guide  |
+| ⭐ | Watch mode         | ❌ None built-in     | ❌ None built-in     | ⬜ Planned `--watch` flag  |
+| ⭐ | Cross-host build   | ❌ Manual toolchain  | ❌ Manual toolchain  | ⬜ Planned one-flag cross  |
 
 ## Verification
 

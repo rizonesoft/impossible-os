@@ -24,9 +24,9 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **C sources** (`.c`) | 0 | 0 |
+| **C sources** (`.c`) | 1 | 5 |
 | **Headers** (`.h`) | 0 | 0 |
-| **Subtotal** | **0** | **0** |
+| **Subtotal** | **1** | **5** |
 
 ## Build System & Scripts
 
@@ -41,10 +41,10 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **All project code** | **343** | **125692** |
+| **All project code** | **344** | **125697** |
 
 > Vendored code excluded: ~13612 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 
 ---
 
-*Last updated: 2026-03-29 23:31 · commit `bbabca3`*
+*Last updated: 2026-03-30 12:27 · commit `a572cfa`*
