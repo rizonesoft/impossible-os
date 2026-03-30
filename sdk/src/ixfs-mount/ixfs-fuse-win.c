@@ -17,13 +17,20 @@
 #define static_assert _Static_assert
 #endif
 
-/* MinGW compat: _ReadWriteBarrier is an MSVC intrinsic; MinGW defines it as
- * a 0-arg macro in <intrin.h> but WinFsp re-declares it as a function.
- * Suppress the redeclaration by ensuring no conflict. */
-#ifdef __GNUC__
+/* MinGW compat: include <windows.h> first, then fix _ReadWriteBarrier
+ * before WinFsp's fsctl.h tries to redeclare it as a function.
+ * MinGW's <intrin.h> defines _ReadWriteBarrier as a 0-arg macro,
+ * but fsctl.h line 750 declares: void _ReadWriteBarrier(void);
+ * which conflicts. We undef the macro AFTER windows.h loads intrin.h,
+ * then provide it as a proper function-like macro. */
+#define WIN32_NO_STATUS
+#include <windows.h>
+#undef WIN32_NO_STATUS
 #undef _ReadWriteBarrier
-#define _ReadWriteBarrier() __asm__ __volatile__("" ::: "memory")
-#endif
+static __inline__ void _ReadWriteBarrier(void)
+{
+    __asm__ __volatile__("" ::: "memory");
+}
 
 #include <winfsp/winfsp.h>
 #include <stdio.h>
