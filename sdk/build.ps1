@@ -79,33 +79,42 @@ function Format-Elapsed($sw) {
 }
 
 # -- Toolchain auto-download -----------------------------------------------
-# Downloads MinGW-w64 and WinFsp SDK into sdk/build/ on first run.
-# No system-wide install, no environment variables, fully self-contained.
+# Downloads MinGW-w64 into sdk/build/ on first run.
+# WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/.
+# Only MinGW (the compiler) needs downloading -- from the official GitHub release.
 
-# Pre-packaged build tools hosted on CDN -- no GitHub redirects, no MSI extraction
-$CdnBase    = "https://impossible-storage.b-cdn.net/dev/sdk/build"
-$SevenZipUrl = "$CdnBase/7z.zip"
-$MinGWUrl    = "$CdnBase/mingw64.7z"
+# Official MinGW-w64 release (niXman/mingw-builds-binaries)
+$MinGWVersion = "14.2.0-rt_v12-rev1"
+$MinGWFile    = "x86_64-14.2.0-release-posix-seh-ucrt-rt_v12-rev1.7z"
+$MinGWUrl     = "https://github.com/niXman/mingw-builds-binaries/releases/download/$MinGWVersion/$MinGWFile"
 
-# Download a file with progress using curl.exe (ships with Windows 10+)
+# 7-Zip standalone console (for extracting .7z)
+$SevenZipCdnUrl = "https://impossible-storage.b-cdn.net/dev/sdk/build/7z.zip"
+
+# Download a file with curl.exe (ships with Windows 10+) -- shows progress bar
 function Download-WithProgress {
     param([string]$Url, [string]$OutFile, [string]$Label)
 
+    Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
+
     if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-        Write-Host "       Downloading $Label..." -ForegroundColor DarkGray
         & curl.exe -L --progress-bar -o $OutFile $Url
         if ($LASTEXITCODE -ne 0) {
             throw "curl failed with exit code $LASTEXITCODE"
         }
-        return
+    } else {
+        Write-Host "       (no progress bar -- curl.exe not found)" -ForegroundColor DarkGray
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $ProgressPreference = "SilentlyContinue"
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+        $ProgressPreference = "Continue"
     }
 
-    # Fallback: Invoke-WebRequest (no progress bar, but works)
-    Write-Host "       Downloading $Label (no progress -- install curl for progress bar)..." -ForegroundColor DarkGray
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $ProgressPreference = "SilentlyContinue"
-    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
-    $ProgressPreference = "Continue"
+    # Report downloaded file size
+    if (Test-Path $OutFile) {
+        $sizeMB = [math]::Round((Get-Item $OutFile).Length / 1MB, 1)
+        Write-Host "       Downloaded ${sizeMB} MB" -ForegroundColor DarkGray
+    }
 }
 
 # Step 1: Ensure 7z.exe is available (needed to extract .7z archives)
@@ -119,28 +128,29 @@ function Ensure-7Zip {
     if (Test-Path "C:\Program Files\7-Zip\7z.exe") { return "C:\Program Files\7-Zip\7z.exe" }
     if (Test-Path "C:\Program Files (x86)\7-Zip\7z.exe") { return "C:\Program Files (x86)\7-Zip\7z.exe" }
 
-    # Download 7z.zip from CDN (small, extracts with Expand-Archive)
+    # Download 7z.zip (small, extracts with Expand-Archive -- no external deps)
     Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
-    Write-Host " Downloading 7-Zip..."
+    Write-Host " Installing 7-Zip (needed to extract MinGW)..."
 
     if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null }
 
     $zipFile = Join-Path $BuildDir "7z.zip"
     try {
-        Download-WithProgress -Url $SevenZipUrl -OutFile $zipFile -Label "7-Zip"
+        Download-WithProgress -Url $SevenZipCdnUrl -OutFile $zipFile -Label "7-Zip"
     } catch {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
         Write-Host "7-Zip download failed: $_"
         Exit-Build 1
     }
 
+    Write-Host "       Extracting 7-Zip..." -ForegroundColor DarkGray
     $destDir = Join-Path $BuildDir "7z"
     Expand-Archive -Path $zipFile -DestinationPath $destDir -Force
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
 
     if (Test-Path $local7z) {
         Write-Host "  OK   " -ForegroundColor Green -NoNewline
-        Write-Host "7-Zip installed to sdk/build/7z/"
+        Write-Host "7-Zip ready"
         return $local7z
     } else {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
@@ -157,20 +167,26 @@ function Ensure-MinGW {
     if (Test-Path $gcc) { return }
 
     Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
-    Write-Host " Downloading MinGW-w64 toolchain..."
+    Write-Host " Installing MinGW-w64 GCC $MinGWVersion..."
+    Write-Host "       Source: github.com/niXman/mingw-builds-binaries" -ForegroundColor DarkGray
+
+    if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null }
 
     $archive = Join-Path $BuildDir "mingw64.7z"
 
     try {
-        Download-WithProgress -Url $MinGWUrl -OutFile $archive -Label "MinGW-w64"
+        Download-WithProgress -Url $MinGWUrl -OutFile $archive -Label "MinGW-w64 ($MinGWFile)"
     } catch {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
         Write-Host "Download failed: $_"
         Exit-Build 1
     }
 
-    Write-Host "       Extracting to sdk/build/mingw64/..." -ForegroundColor DarkGray
+    Write-Host "       Extracting MinGW-w64 (this may take a minute)..." -ForegroundColor DarkGray
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     & $SevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
+    $sw.Stop()
+    Write-Host "       Extracted in $("{0:F1}" -f $sw.Elapsed.TotalSeconds)s" -ForegroundColor DarkGray
 
     Remove-Item $archive -Force -ErrorAction SilentlyContinue
 
@@ -185,7 +201,7 @@ function Ensure-MinGW {
     }
 }
 
-# Auto-download toolchains if needed (skip during clean)
+# Auto-download MinGW if needed (skip during clean)
 # WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/ -- no download needed
 if (-not $clean) {
     $SevenZip = Ensure-7Zip
