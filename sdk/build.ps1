@@ -339,7 +339,7 @@ foreach ($dir in $toolDirs) {
         $failCount++
 
         Write-Divider
-        $errors = $buildOutput | Select-String -Pattern "(error:|undefined reference|fatal error|cannot find)" | Select-Object -First 20
+        $errors = $buildOutput | Select-String -Pattern "(error:|error |undefined reference|fatal error|cannot find|ld returned)" | Select-Object -First 30
         if ($errors) {
             $errors | ForEach-Object { Write-Host $_.Line }
         } else {

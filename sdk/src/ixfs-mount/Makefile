@@ -13,7 +13,7 @@ ifeq ($(OS),Windows_NT)
 
   # WinFsp: headers in sdk/include/, lib in sdk/lib/ (both vendored)
   WINFSP_CFLAGS = -I../../include
-  WINFSP_LIBS = -L../../lib -lwinfsp-x64 -ladvapi32
+  WINFSP_LIBS = -L../../lib -lwinfsp-x64 -ladvapi32 -lntdll
   HAS_WINFSP = yes
 
 else
