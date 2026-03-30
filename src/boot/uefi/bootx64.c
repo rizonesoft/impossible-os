@@ -288,12 +288,26 @@ static BOOLEAN guid_equal(const EFI_GUID *a, const EFI_GUID *b)
 
 /* --- Boot debug log buffer (captures all serial output for ESP write) --- */
 #define BOOT_LOG_SIZE (32 * 1024)
-static char boot_log_buf[BOOT_LOG_SIZE];
+static char *boot_log_buf = 0;
 static UINTN boot_log_pos = 0;
+static UINTN boot_log_cap = 0;
+
+static void boot_log_init(void)
+{
+    /* Allocate from UEFI pool — avoids BSS address issues on some firmware */
+    EFI_STATUS status;
+    status = gBS->AllocatePool(EfiLoaderData, BOOT_LOG_SIZE, (VOID **)&boot_log_buf);
+    if (!EFI_ERROR(status) && boot_log_buf) {
+        boot_log_cap = BOOT_LOG_SIZE;
+        UINTN i;
+        for (i = 0; i < BOOT_LOG_SIZE; i++) boot_log_buf[i] = 0;
+    }
+}
 
 static void boot_log_append(const char *s)
 {
-    while (*s && boot_log_pos < BOOT_LOG_SIZE - 1)
+    if (!boot_log_buf) return;
+    while (*s && boot_log_pos < boot_log_cap - 1)
         boot_log_buf[boot_log_pos++] = *s++;
 }
 
@@ -1510,6 +1524,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Initialize early serial for diagnostics (before anything else) */
     serial_early_init();
+    boot_log_init();
     post_code16(POST16_BL_ENTRY);
     serial_early_print("[BOOT] efi_main entered\n");
 
