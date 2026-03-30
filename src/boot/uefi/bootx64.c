@@ -381,13 +381,28 @@ static void write_boot_debug_log(void)
     EFI_STATUS status;
     UINTN write_size;
 
-    if (boot_log_pos == 0) return;
-
-    status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
-    if (EFI_ERROR(status)) return;
+    /* Use LoadedImage to get the device handle we booted from,
+     * then open the filesystem on that specific device */
+    {
+        EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+        EFI_LOADED_IMAGE_PROTOCOL *li = 0;
+        status = gBS->HandleProtocol(gImageHandle, &li_guid, (VOID **)&li);
+        if (EFI_ERROR(status) || !li || !li->DeviceHandle) {
+            serial_early_print("[BOOT] boot-debug.log: no loaded image\n");
+            return;
+        }
+        status = gBS->HandleProtocol(li->DeviceHandle, &fs_guid, (VOID **)&fs);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[BOOT] boot-debug.log: no fs on boot device\n");
+            return;
+        }
+    }
 
     status = fs->OpenVolume(fs, &root_dir);
-    if (EFI_ERROR(status)) return;
+    if (EFI_ERROR(status)) {
+        serial_early_print("[BOOT] boot-debug.log: cannot open volume\n");
+        return;
+    }
 
     /* Create/overwrite boot-debug.log on the EFI System Partition */
     status = root_dir->Open(
@@ -401,8 +416,19 @@ static void write_boot_debug_log(void)
         return;
     }
 
-    write_size = boot_log_pos;
-    status = log_file->Write(log_file, &write_size, boot_log_buf);
+    /* Write the boot log buffer */
+    if (boot_log_buf && boot_log_pos > 0) {
+        write_size = boot_log_pos;
+        status = log_file->Write(log_file, &write_size, boot_log_buf);
+    } else {
+        /* Fallback: write a diagnostic message if buffer is empty */
+        const char *fallback = "[BOOT] Log buffer was empty (boot_log_pos=0)\n";
+        write_size = 46;
+        status = log_file->Write(log_file, &write_size, (VOID *)fallback);
+    }
+
+    /* Flush to ensure data reaches disk */
+    log_file->Flush(log_file);
     log_file->Close(log_file);
     root_dir->Close(root_dir);
 

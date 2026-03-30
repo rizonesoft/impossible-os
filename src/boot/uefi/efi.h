@@ -301,7 +301,7 @@ typedef struct EFI_FILE_PROTOCOL {
     VOID               *SetPosition;
     EFI_FILE_GET_INFO   GetInfo;
     VOID               *SetInfo;
-    VOID               *Flush;
+    EFI_STATUS (EFIAPI *Flush)(struct EFI_FILE_PROTOCOL *This);
 } EFI_FILE_PROTOCOL;
 
 typedef struct {
@@ -326,6 +326,27 @@ typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
 #define EFI_FILE_MODE_READ    0x0000000000000001ULL
 #define EFI_FILE_MODE_WRITE   0x0000000000000002ULL
 #define EFI_FILE_MODE_CREATE  0x8000000000000000ULL
+
+/* --- Loaded Image Protocol (identifies the device we booted from) --- */
+
+#define EFI_LOADED_IMAGE_PROTOCOL_GUID \
+    { 0x5B1B31A1, 0x9562, 0x11d2, { 0x8E, 0x3F, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B } }
+
+typedef struct {
+    UINT32            Revision;
+    EFI_HANDLE        ParentHandle;
+    VOID             *SystemTable;
+    EFI_HANDLE        DeviceHandle;     /* Device we booted from */
+    VOID             *FilePath;
+    VOID             *Reserved;
+    UINT32            LoadOptionsSize;
+    VOID             *LoadOptions;
+    VOID             *ImageBase;
+    UINT64            ImageSize;
+    UINT32            ImageCodeType;
+    UINT32            ImageDataType;
+    VOID             *Unload;
+} EFI_LOADED_IMAGE_PROTOCOL;
 
 /* --- Boot Services --- */
 typedef EFI_STATUS (EFIAPI *EFI_GET_MEMORY_MAP)(
@@ -404,7 +425,7 @@ typedef struct EFI_BOOT_SERVICES {
     VOID                   *InstallProtocolInterface;   /* 13 */
     VOID                   *ReinstallProtocolInterface; /* 14 */
     VOID                   *UninstallProtocolInterface; /* 15 */
-    VOID                   *HandleProtocol;     /* 16 */
+    EFI_STATUS (EFIAPI *HandleProtocol)(EFI_HANDLE Handle, EFI_GUID *Protocol, VOID **Interface); /* 16 */
     VOID                   *Reserved;           /* 17 */
     VOID                   *RegisterProtocolNotify; /* 18 */
     VOID                   *LocateHandle;       /* 19 */
