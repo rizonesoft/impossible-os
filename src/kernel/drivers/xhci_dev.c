@@ -18,6 +18,7 @@
 #include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/xhci.h"
 #include "kernel/drivers/xhci_ring.h"
+#include "kernel/drivers/usb_msc.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
@@ -703,6 +704,10 @@ static int xhci_enumerate_device(struct xhci_controller *hc,
      * Walk config descriptor to find MSC BOT interface, extract Bulk-IN/OUT
      * endpoints, allocate Transfer Rings, and issue Configure Endpoint. */
     xhci_msc_identify(hc, dev);
+
+    /* ---- Step 10: MSC BOT initialization (INQUIRY + READ CAPACITY) ---- */
+    if (dev->is_msc)
+        usb_msc_init(hc, dev);
 
     /* ---- Enumeration complete ---- */
     dev->active = 1;
