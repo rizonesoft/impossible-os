@@ -260,6 +260,19 @@ Write-Host "  IXFS USB Mount" -ForegroundColor White
 Write-Host ("=" * 50)
 Write-Host ""
 
+# Kill any existing ixfs-mount.exe processes
+$existing = Get-Process -Name "ixfs-mount" -ErrorAction SilentlyContinue
+if ($existing) {
+    Write-Host "  Stopping previous ixfs-mount..." -ForegroundColor DarkGray
+    $existing | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}
+
+# Clean up stale temp image
+if (Test-Path $TempImage) {
+    Remove-Item $TempImage -Force -ErrorAction SilentlyContinue
+}
+
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if ($Phase -eq "extract") {
