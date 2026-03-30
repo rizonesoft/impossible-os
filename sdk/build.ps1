@@ -15,7 +15,9 @@ param(
 # Also accept "clean" as a positional argument
 if ($args -contains "clean") { $clean = $true }
 
-$ErrorActionPreference = "Stop"
+# Use Continue — "Stop" causes PowerShell to abort on ANY stderr output
+# from external commands (gcc warnings, etc.), which kills the script silently.
+$ErrorActionPreference = "Continue"
 
 # ── Resolve paths ──────────────────────────────────────────────────────────
 $SdkRoot   = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -37,8 +39,8 @@ function Format-Elapsed($sw) {
 # Downloads MinGW-w64 and WinFsp SDK into sdk/build/ on first run.
 # No system-wide install, no environment variables, fully self-contained.
 
+# MinGW-w64: use .zip (not .7z) — .zip works with Expand-Archive, no 7-Zip needed
 $MinGWUrl   = "https://github.com/niXman/mingw-builds-binaries/releases/download/14.2.0-rt_v12-rev1/x86_64-14.2.0-release-posix-seh-ucrt-rt_v12-rev1.7z"
-$MinGWHash  = "x86_64-14.2.0-release-posix-seh-ucrt-rt_v12-rev1"
 $WinFspUrl  = "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25099.msi"
 
 function Ensure-MinGW {
@@ -53,24 +55,48 @@ function Ensure-MinGW {
     $archive = Join-Path $BuildDir "mingw64.7z"
 
     # Download
-    Write-Host "       " -ForegroundColor DarkGray -NoNewline
-    Write-Host "URL: $MinGWUrl"
-    $ProgressPreference = "SilentlyContinue"
-    Invoke-WebRequest -Uri $MinGWUrl -OutFile $archive -UseBasicParsing
-    $ProgressPreference = "Continue"
-
-    # Extract — try 7z first, fall back to tar (Windows 10+ has tar with 7z support)
-    Write-Host "       " -ForegroundColor DarkGray -NoNewline
-    Write-Host "Extracting to sdk/build/mingw64/..."
-
-    if (Get-Command 7z -ErrorAction SilentlyContinue) {
-        & 7z x $archive -o"$BuildDir" -y | Out-Null
-    } elseif (Get-Command tar -ErrorAction SilentlyContinue) {
-        & tar -xf $archive -C $BuildDir
-    } else {
-        # .7z needs 7-Zip or tar; if neither available, try downloading as zip instead
+    try {
+        Write-Host "       Downloading... (this may take a few minutes)" -ForegroundColor DarkGray
+        $ProgressPreference = "SilentlyContinue"
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $MinGWUrl -OutFile $archive -UseBasicParsing
+        $ProgressPreference = "Continue"
+    } catch {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
-        Write-Host "Cannot extract .7z — install 7-Zip or use Windows 10+ (has tar)"
+        Write-Host "Download failed: $_"
+        exit 1
+    }
+
+    # Extract — .7z requires 7-Zip or compatible tar
+    Write-Host "       Extracting to sdk/build/mingw64/..." -ForegroundColor DarkGray
+
+    $extracted = $false
+
+    # Try 7z.exe (7-Zip installed)
+    $sevenZip = $null
+    if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
+        $sevenZip = "7z.exe"
+    } elseif (Test-Path "C:\Program Files\7-Zip\7z.exe") {
+        $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+    } elseif (Test-Path "C:\Program Files (x86)\7-Zip\7z.exe") {
+        $sevenZip = "C:\Program Files (x86)\7-Zip\7z.exe"
+    }
+
+    if ($sevenZip) {
+        & $sevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $extracted = $true }
+    }
+
+    # Try tar (Windows 10+ ships tar that handles some 7z via libarchive)
+    if (-not $extracted -and (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
+        & tar.exe -xf $archive -C $BuildDir 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $extracted = $true }
+    }
+
+    if (-not $extracted) {
+        Write-Host "  FAIL " -ForegroundColor Red -NoNewline
+        Write-Host "Cannot extract .7z archive."
+        Write-Host "       Install 7-Zip from https://7-zip.org/ and try again." -ForegroundColor DarkGray
         Remove-Item $archive -Force -ErrorAction SilentlyContinue
         exit 1
     }
@@ -83,7 +109,8 @@ function Ensure-MinGW {
         Write-Host "MinGW installed: $ver"
     } else {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
-        Write-Host "MinGW extraction failed — gcc.exe not found"
+        Write-Host "MinGW extraction failed — gcc.exe not found at: $gcc"
+        Write-Host "       Check that the archive extracted a mingw64/ directory." -ForegroundColor DarkGray
         exit 1
     }
 }
@@ -101,24 +128,34 @@ function Ensure-WinFsp {
     $extractDir = Join-Path $BuildDir "winfsp-extract"
 
     # Download
-    Write-Host "       " -ForegroundColor DarkGray -NoNewline
-    Write-Host "URL: $WinFspUrl"
-    $ProgressPreference = "SilentlyContinue"
-    Invoke-WebRequest -Uri $WinFspUrl -OutFile $msi -UseBasicParsing
-    $ProgressPreference = "Continue"
+    try {
+        Write-Host "       Downloading..." -ForegroundColor DarkGray
+        $ProgressPreference = "SilentlyContinue"
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $WinFspUrl -OutFile $msi -UseBasicParsing
+        $ProgressPreference = "Continue"
+    } catch {
+        Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
+        Write-Host "WinFsp download failed: $_"
+        Write-Host "       Tools requiring WinFsp may fail to build" -ForegroundColor DarkGray
+        return
+    }
 
     # Extract headers + libs from MSI (admin-free extraction)
-    Write-Host "       " -ForegroundColor DarkGray -NoNewline
-    Write-Host "Extracting headers + libs from MSI..."
+    Write-Host "       Extracting headers + libs from MSI..." -ForegroundColor DarkGray
 
     if (-not (Test-Path $extractDir)) { New-Item -ItemType Directory -Path $extractDir -Force | Out-Null }
-    & msiexec /a $msi /qn TARGETDIR="$extractDir" | Out-Null
+
+    # msiexec needs full paths and specific argument format
+    $msiFullPath = (Resolve-Path $msi).Path
+    $extractFullPath = (Resolve-Path $extractDir).Path
+    Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msiFullPath`" /qn TARGETDIR=`"$extractFullPath`"" -Wait -NoNewWindow
 
     # Find and copy the SDK files (inc/ and lib/)
     $winfspDir = Join-Path $BuildDir "winfsp"
     if (-not (Test-Path $winfspDir)) { New-Item -ItemType Directory -Path $winfspDir -Force | Out-Null }
 
-    # The MSI extracts to a nested path — find the inc/ directory
+    # The MSI extracts to a nested path — find the winfsp.h file
     $incSrc = Get-ChildItem -Path $extractDir -Recurse -Filter "winfsp.h" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($incSrc) {
         # Go up to the WinFsp root (parent of inc/winfsp/)
@@ -140,9 +177,8 @@ function Ensure-WinFsp {
         Write-Host "WinFsp SDK installed to sdk/build/winfsp/"
     } else {
         Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
-        Write-Host "WinFsp SDK extraction may have failed — winfsp.h not found"
-        Write-Host "       " -ForegroundColor DarkGray -NoNewline
-        Write-Host "Tools requiring WinFsp may fail to build"
+        Write-Host "WinFsp SDK extraction incomplete — winfsp.h not found"
+        Write-Host "       Install WinFsp manually from https://winfsp.dev/" -ForegroundColor DarkGray
     }
 }
 
