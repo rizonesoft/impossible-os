@@ -49,7 +49,7 @@ sdk/
 | 💎  |   1   | Linux build script (bash)                    | —          |  [x]   |
 | 💎  |   2   | Dependency detection and reporting           | §1         |  [x]   |
 | 💎  |   3   | Auto-discovery of SDK tool dirs              | §1         |  [x]   |
-| 💎  |   4   | Windows build script (PowerShell + bat)      | —          |  [ ]   |
+| 💎  |   4   | Windows build script (PowerShell + bat)      | —          |  [x]   |
 | 💎  |   5   | Windows toolchain auto-download              | §4         |  [ ]   |
 
 ---
@@ -113,14 +113,14 @@ Build all SDK tools on Windows with progress output. Self-contained — download
 
 **Files:** `sdk/build.bat`, `sdk/build.ps1`
 
-- [ ] `build.bat` — launcher that calls `build.ps1` via PowerShell (bypass execution policy)
-- [ ] Discover tool directories: `Get-ChildItem sdk\src\*` with `Makefile` check
-- [ ] Each tool directory built via `mingw32-make -C $dir` using local MinGW
-- [ ] Progress: `[1/N] Building ixfs-mount...` with color (`Write-Host -ForegroundColor`)
-- [ ] Timing: per-tool and total build time via `[System.Diagnostics.Stopwatch]`
-- [ ] `sdk\build.bat clean` — clean build
-- [ ] Error extraction: capture stderr, show relevant compiler errors on failure
-- [ ] Commit: `"sdk: Windows build script with progress"`
+- [x] `build.bat` — launcher that calls `build.ps1` via PowerShell (bypass execution policy)
+- [x] Discover tool directories: `Get-ChildItem sdk\src\*` with `Makefile` check
+- [x] Each tool directory built via `mingw32-make -C $dir` using local MinGW
+- [x] Progress: `[1/N] Building ixfs-mount...` with color (`Write-Host -ForegroundColor`)
+- [x] Timing: per-tool and total build time via `[System.Diagnostics.Stopwatch]`
+- [x] `sdk\build.bat clean` — clean build
+- [x] Error extraction: capture stderr, show relevant compiler errors on failure
+- [x] Commit: `"sdk: Windows build script with progress"`
 
 **Test checkpoint (Windows):**
 - `sdk\build.bat` completes without error
