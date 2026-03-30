@@ -1,15 +1,12 @@
 # TODO-07 — xHCI, USB Storage & USB HID (Boot-Critical)
 
-> **Goal:** Enable USB storage and USB input after ExitBootServices so bare metal can: (1) mount C:\ from a USB boot drive, and (2) use USB keyboards/mice on systems without PS/2. Without this, bare metal boots from USB show desktop but can't access any filesystem or accept input on USB-only systems.
+> **Goal:** USB boot that works on 95%+ of hardware with zero delay. The bootloader discovers USB devices via UEFI firmware BEFORE ExitBootServices (like Windows), passes device state to the kernel, and the kernel inherits it instantly. USB keyboards and mice work in boot-protocol mode. Hot-plug via xHCI interrupts after boot.
 
 > [!IMPORTANT]
-> This TODO extracts the **boot-critical** xHCI, USB MSC, and USB HID sections from `04-drivers-hardware/TODO-09-usb-stack.md`. Advanced USB features (hub driver, hot-plug, EHCI fallback, Bluetooth, CDC, full HID report parsing) remain in TODO-09. After this TODO, USB drives are mountable and USB keyboards/mice work in boot-protocol mode.
+> **Two-phase approach:** §1-§4 are the working prototype (xHCI re-enumeration after ExitBootServices, Intel port routing, 500ms delay). §5 replaces this with the proper Windows-style handover: bootloader uses UEFI protocols to discover devices, kernel inherits state with zero re-enumeration. §10 adds EHCI/UHCI/OHCI fallback for legacy hardware.
 
 > [!NOTE]
-> Partial xHCI implementation exists: `xhci.c` (controller init, DCBAA, TRB rings, port scan), `xhci_dev.c` (slot enable, Address Device, GET_DESCRIPTOR, SET_CONFIGURATION), `xhci_ring.c` (TRB ring management). **Do NOT rewrite — complete it.**
-
-> [!NOTE]
-> **Architecture: built-in now, bootloader-loaded later.** Windows loads `usbxhci.sys` and `USBSTOR.SYS` as boot-start drivers from the EFI partition via `winload.efi` — they're not part of `ntoskrnl.exe`. Linux uses initramfs. For now, xHCI/MSC/HID are built into the kernel binary to get bare metal working. When the kernel module loader exists (`04-drivers-hardware/TODO-01`), refactor these into separate `.sys` driver files loaded by `bootx64.efi` from `\EFI\ImpossibleOS\drivers\` before kernel entry.
+> Working code exists: `xhci.c` (controller init, DCBAA, TRB rings, Intel port routing), `xhci_dev.c` (full 9-step enumeration + MSC identification), `xhci_ring.c` (TRB ring management), `usb_msc.c` (BOT SCSI transport). Verified on QEMU TCG + bare metal i5-11600K.
 
 ## Inputs
 
@@ -23,11 +20,11 @@
 
 ## Outcome
 
-- xHCI controller discovered, initialized, and operational on bare metal
-- USB mass storage devices enumerated and registered as block devices
-- USB keyboards and mice work in boot-protocol mode
-- Boot from USB drive: filesystem accessible, input working
-- PS/2 and USB input coexist — both active if both present
+- USB boot drive mounted as C:\ instantly on kernel start (zero delay via §5 handover)
+- USB keyboards and mice work in boot-protocol mode (§7, §8)
+- Hot-plug: USB devices connected after boot detected via xHCI interrupts (§5 Phase C)
+- Works on Intel, AMD, ASMedia, and EHCI-only hardware (§10)
+- PS/2 and USB input coexist — both active if both present (§9)
 
 ## Implementation Order
 
@@ -243,7 +240,7 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 - [ ] Commit: `"drivers: xHCI hardware compatibility — BIOS handoff, AMD, EHCI fallback"`
 
 **Test checkpoint:** Test matrix (diagnostic splash shows `USB:XX` prog-if codes):
-- `USB:30` Intel (i5-11600K): ✅ verified — port routing + 500ms settle
+- `USB:30` Intel (i5-11600K): ✅ verified — §5 handover replaces port routing hack
 - `USB:30` AMD: BIOS handoff only, no port routing needed
 - `USB:30,20` Intel (xHCI+EHCI): port routing moves EHCI ports to xHCI
 - `USB:20` EHCI only: EHCI fallback driver handles enumeration
@@ -264,9 +261,11 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 | 💎 | USB HID keyboard        | ✅ hidusb.sys + kbdhid.sys | ✅ usbhid + hid-generic      | ⬜ §7 — boot protocol            |
 | 💎 | USB HID mouse           | ✅ hidusb.sys + mouhid.sys | ✅ usbhid + hid-generic      | ⬜ §8 — boot protocol            |
 | 💎 | PS/2 + USB coexist      | ✅ Automatic               | ✅ Automatic                 | ⬜ §9 — independent, both active |
-| ⭐ | BIOS/OS handoff         | ✅ Automatic               | ✅ xhci-pci.c                | ⬜ §10 — USBLEGSUP              |
+| ⭐ | Pre-boot USB handover   | ✅ winload.efi             | ❌ Re-enumerates              | ⬜ §5 — zero-delay handover      |
+| ⭐ | BIOS/OS handoff         | ✅ Automatic               | ✅ xhci-pci.c                | ⬜ §5B + §10 — USBLEGSUP        |
 | ⭐ | EHCI fallback           | ✅ usbehci.sys             | ✅ ehci-hcd                  | ⬜ §10 — for legacy hardware     |
 | ⭐ | USB hub support         | ✅ usbhub.sys              | ✅ hub.c                     | ⬜ §10 — recursive enumeration   |
+| ⭐ | Hot-plug                | ✅ Automatic               | ✅ Automatic                 | ⬜ §5C — interrupt-driven        |
 
 ## Verification
 
