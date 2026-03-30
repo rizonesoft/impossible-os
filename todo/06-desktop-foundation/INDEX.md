@@ -26,4 +26,5 @@ This domain completes the core desktop infrastructure that everything else build
 - [TODO-02 — Compositor Optimization](TODO-02-compositor-optimization.md) — Dirty-rect tracking, partial repaints, 60fps target
 - [TODO-03 — Input System](TODO-03-input-system.md) — Keyboard routing, modifier keys, focus model, Tab navigation, system hotkeys
 - [TODO-04 — Control Library Completion](TODO-04-control-library.md) — Checkbox, radio, combobox, listbox, progress bar, context menu
-- [TODO-05 — Desktop Shell Completion](TODO-05-desktop-shell.md) — Desktop icons, right-click menu, taskbar sync, start menu actions
+- [TODO-05 — Desktop Shell Completion](TODO-05-desktop-shell.md) — Right-click menu, taskbar sync, start menu actions, power/settings
+- [TODO-06 — Desktop Icon System](TODO-06-desktop-icons.md) — Dynamic icons, special folders, shortcuts, grid layout, drag, rename, file type icons
