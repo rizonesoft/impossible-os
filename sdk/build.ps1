@@ -378,7 +378,21 @@ foreach ($dir in $toolDirs) {
     Write-Host "..." -NoNewline
 
     # Capture make output for error extraction
-    $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" --no-print-directory 2>&1
+    # Pass WINFSP_DIR if WinFsp SDK is available (absolute path for reliable resolution)
+    $winfspArg = ""
+    $winfspLocal = Join-Path $BuildDir "WinFsp"
+    $winfspSystem = "C:\Program Files (x86)\WinFsp"
+    if (Test-Path (Join-Path $winfspLocal "inc\winfsp\winfsp.h")) {
+        $winfspArg = "WINFSP_DIR=$winfspLocal"
+    } elseif (Test-Path (Join-Path $winfspSystem "inc\winfsp\winfsp.h")) {
+        $winfspArg = "WINFSP_DIR=$winfspSystem"
+    }
+
+    if ($winfspArg) {
+        $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" $winfspArg --no-print-directory 2>&1
+    } else {
+        $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" --no-print-directory 2>&1
+    }
     $buildRC = $LASTEXITCODE
 
     $toolTimer.Stop()
@@ -392,10 +406,14 @@ foreach ($dir in $toolDirs) {
         Write-Host "(${elapsed}s)"
         $failCount++
 
-        # Extract relevant compiler errors
+        # Show build output -- first errors, then full output if no errors found
         Write-Divider
-        $buildOutput | Select-String -Pattern "(error:|undefined reference|fatal error|cannot find)" | Select-Object -First 20 | ForEach-Object {
-            Write-Host $_.Line
+        $errors = $buildOutput | Select-String -Pattern "(error:|undefined reference|fatal error|cannot find)" | Select-Object -First 20
+        if ($errors) {
+            $errors | ForEach-Object { Write-Host $_.Line }
+        } else {
+            # No recognized errors -- show full output for diagnosis
+            $buildOutput | ForEach-Object { Write-Host $_ }
         }
         Write-Divider
     }

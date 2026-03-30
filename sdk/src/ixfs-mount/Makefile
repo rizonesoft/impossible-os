@@ -10,14 +10,15 @@ ifeq ($(OS),Windows_NT)
   EXE = .exe
   RM = del /q
 
-  # WinFsp SDK paths (local sdk/build/ or system install)
-  WINFSP_LOCAL = ../../build/WinFsp
-  WINFSP_SYSTEM = C:/Program Files (x86)/WinFsp
-
-  ifneq ($(wildcard $(WINFSP_LOCAL)/inc/winfsp/winfsp.h),)
-    WINFSP_DIR = $(WINFSP_LOCAL)
-  else ifneq ($(wildcard $(WINFSP_SYSTEM)/inc/winfsp/winfsp.h),)
-    WINFSP_DIR = $(WINFSP_SYSTEM)
+  # WinFsp SDK: accept WINFSP_DIR override, or auto-detect
+  ifndef WINFSP_DIR
+    WINFSP_LOCAL = ../../build/WinFsp
+    WINFSP_SYSTEM = C:/Program Files (x86)/WinFsp
+    ifneq ($(wildcard $(WINFSP_LOCAL)/inc/winfsp/winfsp.h),)
+      WINFSP_DIR = $(WINFSP_LOCAL)
+    else ifneq ($(wildcard $(WINFSP_SYSTEM)/inc/winfsp/winfsp.h),)
+      WINFSP_DIR = $(WINFSP_SYSTEM)
+    endif
   endif
 
   ifdef WINFSP_DIR
