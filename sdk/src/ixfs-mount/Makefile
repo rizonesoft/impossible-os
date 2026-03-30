@@ -19,25 +19,26 @@ FUSE3_CFLAGS := $(shell pkg-config --cflags fuse3 2>/dev/null)
 FUSE3_LIBS   := $(shell pkg-config --libs fuse3 2>/dev/null)
 HAS_FUSE3    := $(if $(FUSE3_LIBS),yes,no)
 
-TARGETS = $(OUTDIR)/test_ixfs_core$(EXE)
+# Default target: ixfs-mount (FUSE) on Linux, nothing on Windows yet
 ifeq ($(HAS_FUSE3),yes)
-TARGETS += $(OUTDIR)/ixfs-mount
-endif
-
-all: $(TARGETS)
-ifeq ($(HAS_FUSE3),no)
+all: $(OUTDIR)/ixfs-mount
+else
+all:
 ifeq ($(OS),Windows_NT)
-	@echo NOTE: FUSE not available on Windows -- only building test_ixfs_core
+	@echo NOTE: WinFsp FUSE build not yet implemented -- skipping
 else
 	@echo NOTE: libfuse3-dev not found -- skipping ixfs-mount FUSE binary
 endif
 endif
 
-$(OUTDIR)/test_ixfs_core$(EXE): test_ixfs_core.c $(CORE_SRC) $(CORE_HDR)
-	$(CC) $(CFLAGS) -o $@ test_ixfs_core.c $(CORE_SRC)
-
 $(OUTDIR)/ixfs-mount: ixfs-fuse-linux.c $(CORE_SRC) $(CORE_HDR)
 	$(CC) $(CFLAGS) $(FUSE3_CFLAGS) -o $@ ixfs-fuse-linux.c $(CORE_SRC) $(FUSE3_LIBS)
 
+# Dev-only test binary (builds in-place, not shipped to sdk/tools/)
+test: test_ixfs_core$(EXE)
+
+test_ixfs_core$(EXE): test_ixfs_core.c $(CORE_SRC) $(CORE_HDR)
+	$(CC) $(CFLAGS) -o $@ test_ixfs_core.c $(CORE_SRC)
+
 clean:
-	-$(RM) $(OUTDIR)/test_ixfs_core$(EXE) $(OUTDIR)/ixfs-mount
+	-$(RM) $(OUTDIR)/ixfs-mount$(EXE) test_ixfs_core$(EXE)
