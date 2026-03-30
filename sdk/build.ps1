@@ -39,9 +39,44 @@ function Format-Elapsed($sw) {
 # Downloads MinGW-w64 and WinFsp SDK into sdk/build/ on first run.
 # No system-wide install, no environment variables, fully self-contained.
 
-# MinGW-w64: use .zip (not .7z) -- .zip works with Expand-Archive, no 7-Zip needed
 $MinGWUrl   = "https://github.com/niXman/mingw-builds-binaries/releases/download/14.2.0-rt_v12-rev1/x86_64-14.2.0-release-posix-seh-ucrt-rt_v12-rev1.7z"
 $WinFspUrl  = "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25099.msi"
+
+# Download a file with progress bar using WebClient
+function Download-WithProgress {
+    param([string]$Url, [string]$OutFile, [string]$Label)
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    $wc = New-Object System.Net.WebClient
+    $lastPercent = -1
+
+    $progressHandler = {
+        param($sender, $e)
+        $pct = $e.ProgressPercentage
+        if ($pct -ne $script:lastPercent -and ($pct % 5 -eq 0)) {
+            $script:lastPercent = $pct
+            $mbDone = [math]::Round($e.BytesReceived / 1MB, 1)
+            $mbTotal = [math]::Round($e.TotalBytesToReceive / 1MB, 1)
+            Write-Host "`r       $Label -- ${mbDone} / ${mbTotal} MB (${pct}%)    " -ForegroundColor DarkGray -NoNewline
+        }
+    }
+
+    $wc.add_DownloadProgressChanged($progressHandler)
+
+    try {
+        $task = $wc.DownloadFileTaskAsync($Url, $OutFile)
+        while (-not $task.IsCompleted) {
+            Start-Sleep -Milliseconds 100
+        }
+        if ($task.IsFaulted) {
+            throw $task.Exception.InnerException
+        }
+        Write-Host ""  # newline after progress
+    } finally {
+        $wc.Dispose()
+    }
+}
 
 function Ensure-MinGW {
     $gcc = Join-Path $BuildDir "mingw64\bin\gcc.exe"
@@ -54,13 +89,9 @@ function Ensure-MinGW {
 
     $archive = Join-Path $BuildDir "mingw64.7z"
 
-    # Download
+    # Download with progress
     try {
-        Write-Host "       Downloading... (this may take a few minutes)" -ForegroundColor DarkGray
-        $ProgressPreference = "SilentlyContinue"
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $MinGWUrl -OutFile $archive -UseBasicParsing
-        $ProgressPreference = "Continue"
+        Download-WithProgress -Url $MinGWUrl -OutFile $archive -Label "MinGW-w64"
     } catch {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
         Write-Host "Download failed: $_"
@@ -83,12 +114,14 @@ function Ensure-MinGW {
     }
 
     if ($sevenZip) {
+        Write-Host "       Using 7-Zip..." -ForegroundColor DarkGray
         & $sevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { $extracted = $true }
     }
 
     # Try tar (Windows 10+ ships tar that handles some 7z via libarchive)
     if (-not $extracted -and (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
+        Write-Host "       Using tar..." -ForegroundColor DarkGray
         & tar.exe -xf $archive -C $BuildDir 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { $extracted = $true }
     }
@@ -127,13 +160,9 @@ function Ensure-WinFsp {
     $msi = Join-Path $BuildDir "winfsp.msi"
     $extractDir = Join-Path $BuildDir "winfsp-extract"
 
-    # Download
+    # Download with progress
     try {
-        Write-Host "       Downloading..." -ForegroundColor DarkGray
-        $ProgressPreference = "SilentlyContinue"
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $WinFspUrl -OutFile $msi -UseBasicParsing
-        $ProgressPreference = "Continue"
+        Download-WithProgress -Url $WinFspUrl -OutFile $msi -Label "WinFsp SDK"
     } catch {
         Write-Host "  WARN " -ForegroundColor Yellow -NoNewline
         Write-Host "WinFsp download failed: $_"
@@ -146,7 +175,7 @@ function Ensure-WinFsp {
 
     if (-not (Test-Path $extractDir)) { New-Item -ItemType Directory -Path $extractDir -Force | Out-Null }
 
-    # msiexec needs full paths and specific argument format
+    # msiexec needs full Windows paths (not UNC), use short path if needed
     $msiFullPath = (Resolve-Path $msi).Path
     $extractFullPath = (Resolve-Path $extractDir).Path
     Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msiFullPath`" /qn TARGETDIR=`"$extractFullPath`"" -Wait -NoNewWindow
