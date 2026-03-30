@@ -537,7 +537,7 @@ static VOID ixfs_Cleanup_rw(FSP_FILE_SYSTEM *FileSystem,
 
 static FSP_FILE_SYSTEM_INTERFACE ixfs_winfsp_interface = {
     .GetVolumeInfo = ixfs_GetVolumeInfo,
-    .GetSecurityByName = ixfs_GetSecurityByName,
+    .GetSecurityByName = 0,
     .Create = ixfs_Create,
     .Open = ixfs_Open,
     .Close = ixfs_Close,
@@ -622,15 +622,7 @@ int main(int argc, char *argv[])
             (unsigned long long)g_vol->sb.s_total_blocks,
             rw ? "R/W" : "read-only");
 
-    /* Create a self-relative security descriptor (Everyone: full control)
-     * SDDL: D:P(A;;GA;;;WD) = DACL, protected, Allow, Generic All, Everyone */
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
-            "D:P(A;;GA;;;WD)", SDDL_REVISION_1, &g_security_desc, &g_security_desc_len)) {
-        fprintf(stderr, "Failed to create security descriptor (error %lu)\n", GetLastError());
-        ixfs_close(g_vol);
-        disk_close(disk);
-        return 1;
-    }
+    /* No security descriptors — PersistentAcls=0 tells WinFsp to skip ACL checks */
 
     /* Set up volume parameters */
     memset(&vol_params, 0, sizeof(vol_params));
