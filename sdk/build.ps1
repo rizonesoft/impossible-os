@@ -30,7 +30,6 @@ $BuildDir  = Join-Path $SdkRoot "build"
 # If we're on a UNC path, map a temporary drive letter via subst.
 $MappedDrive = $null
 if ($SdkRoot -like "\\*") {
-    # Find a free drive letter (Z: down to G:)
     $repoRoot = Split-Path -Parent $SdkRoot
     foreach ($letter in [char[]]('Z','Y','X','W','V','U','T','S','R','Q','P','O','N','M','L','K','J','I','H','G')) {
         $drive = "${letter}:"
@@ -38,7 +37,6 @@ if ($SdkRoot -like "\\*") {
             & subst $drive $repoRoot 2>$null
             if ($LASTEXITCODE -eq 0) {
                 $MappedDrive = $drive
-                # Rebase all paths to the mapped drive
                 $SdkRoot  = Join-Path $drive "sdk"
                 $SrcDir   = Join-Path $SdkRoot "src"
                 $ToolsDir = Join-Path $SdkRoot "tools"
@@ -55,7 +53,6 @@ if ($SdkRoot -like "\\*") {
     }
 }
 
-# Cleanup mapped drive on exit
 function Cleanup-Drive {
     if ($script:MappedDrive) {
         & subst /d $script:MappedDrive 2>$null | Out-Null
@@ -71,27 +68,35 @@ function Exit-Build($code) {
 if (-not (Test-Path $ToolsDir)) { New-Item -ItemType Directory -Path $ToolsDir -Force | Out-Null }
 
 # -- Helpers ----------------------------------------------------------------
-function Write-Divider  { Write-Host ("-" * 50) -ForegroundColor DarkGray }
-function Write-Header   { Write-Host ("=" * 50) -ForegroundColor White }
+function Write-Divider  { Write-Host ("-" * 60) -ForegroundColor DarkGray }
+function Write-Header   { Write-Host ("=" * 60) -ForegroundColor White }
 
 function Format-Elapsed($sw) {
     return "{0:F1}" -f $sw.Elapsed.TotalSeconds
 }
 
-# -- Toolchain auto-download -----------------------------------------------
-# Downloads MinGW-w64 into sdk/build/ on first run.
-# WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/.
-# Only MinGW (the compiler) needs downloading -- from the official GitHub release.
+function Write-ProgressBar {
+    param([int]$Percent, [string]$Label)
+    $barWidth = 30
+    $filled = [math]::Floor($barWidth * $Percent / 100)
+    $empty = $barWidth - $filled
+    $bar = ("#" * $filled) + ("-" * $empty)
+    Write-Host "`r       [$bar] ${Percent}% $Label      " -ForegroundColor DarkGray -NoNewline
+}
 
-# Official MinGW-w64 release (niXman/mingw-builds-binaries)
+# -- Toolchain auto-download -----------------------------------------------
+# Downloads MinGW-w64 into sdk/build/ on first run from official sources.
+# WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/.
+
+# Official MinGW-w64 release (github.com/niXman/mingw-builds-binaries)
 $MinGWVersion = "14.2.0-rt_v12-rev1"
 $MinGWFile    = "x86_64-14.2.0-release-posix-seh-ucrt-rt_v12-rev1.7z"
 $MinGWUrl     = "https://github.com/niXman/mingw-builds-binaries/releases/download/$MinGWVersion/$MinGWFile"
 
-# 7-Zip standalone console (for extracting .7z)
-$SevenZipCdnUrl = "https://impossible-storage.b-cdn.net/dev/sdk/build/7z.zip"
+# Official 7-Zip console version (7-zip.org)
+$SevenZipUrl  = "https://7-zip.org/a/7zr.exe"
 
-# Download a file with curl.exe (ships with Windows 10+) -- shows progress bar
+# Download with curl.exe progress bar (ships with Windows 10+)
 function Download-WithProgress {
     param([string]$Url, [string]$OutFile, [string]$Label)
 
@@ -110,17 +115,16 @@ function Download-WithProgress {
         $ProgressPreference = "Continue"
     }
 
-    # Report downloaded file size
     if (Test-Path $OutFile) {
         $sizeMB = [math]::Round((Get-Item $OutFile).Length / 1MB, 1)
         Write-Host "       Downloaded ${sizeMB} MB" -ForegroundColor DarkGray
     }
 }
 
-# Step 1: Ensure 7z.exe is available (needed to extract .7z archives)
+# Step 1: Ensure 7-Zip extractor is available
 function Ensure-7Zip {
-    # Check local sdk/build/7z/7z.exe first
-    $local7z = Join-Path $BuildDir "7z\7z.exe"
+    # Check local sdk/build/7zr.exe first (standalone console extractor)
+    $local7z = Join-Path $BuildDir "7zr.exe"
     if (Test-Path $local7z) { return $local7z }
 
     # Check system 7-Zip
@@ -128,33 +132,27 @@ function Ensure-7Zip {
     if (Test-Path "C:\Program Files\7-Zip\7z.exe") { return "C:\Program Files\7-Zip\7z.exe" }
     if (Test-Path "C:\Program Files (x86)\7-Zip\7z.exe") { return "C:\Program Files (x86)\7-Zip\7z.exe" }
 
-    # Download 7z.zip (small, extracts with Expand-Archive -- no external deps)
+    # Download 7zr.exe from official 7-zip.org (standalone ~1MB, no installation needed)
     Write-Host "  SETUP" -ForegroundColor Cyan -NoNewline
-    Write-Host " Installing 7-Zip (needed to extract MinGW)..."
+    Write-Host " Downloading 7-Zip extractor (7-zip.org)..."
 
     if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null }
 
-    $zipFile = Join-Path $BuildDir "7z.zip"
     try {
-        Download-WithProgress -Url $SevenZipCdnUrl -OutFile $zipFile -Label "7-Zip"
+        Download-WithProgress -Url $SevenZipUrl -OutFile $local7z -Label "7zr.exe"
     } catch {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
         Write-Host "7-Zip download failed: $_"
         Exit-Build 1
     }
 
-    Write-Host "       Extracting 7-Zip..." -ForegroundColor DarkGray
-    $destDir = Join-Path $BuildDir "7z"
-    Expand-Archive -Path $zipFile -DestinationPath $destDir -Force
-    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
-
     if (Test-Path $local7z) {
         Write-Host "  OK   " -ForegroundColor Green -NoNewline
-        Write-Host "7-Zip ready"
+        Write-Host "7-Zip extractor ready"
         return $local7z
     } else {
         Write-Host "  FAIL " -ForegroundColor Red -NoNewline
-        Write-Host "7-Zip extraction failed -- 7z.exe not found"
+        Write-Host "7zr.exe download failed"
         Exit-Build 1
     }
 }
@@ -182,9 +180,32 @@ function Ensure-MinGW {
         Exit-Build 1
     }
 
-    Write-Host "       Extracting MinGW-w64 (this may take a minute)..." -ForegroundColor DarkGray
+    # Extract with progress (count files via 7z listing first)
+    Write-Host "       Extracting MinGW-w64..." -ForegroundColor DarkGray
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    & $SevenZip x $archive "-o$BuildDir" -y 2>&1 | Out-Null
+
+    # Get total file count for progress
+    $listOutput = & $SevenZip l $archive 2>&1
+    $totalFiles = ($listOutput | Select-String "^\d{4}-\d{2}-\d{2}" | Measure-Object).Count
+    if ($totalFiles -lt 1) { $totalFiles = 1 }
+
+    # Extract with line-by-line progress tracking
+    $extractedFiles = 0
+    $lastPct = -1
+    & $SevenZip x $archive "-o$BuildDir" -y -bsp1 2>&1 | ForEach-Object {
+        $line = "$_"
+        if ($line -match "^- " -or $line -match "^Extracting") {
+            $extractedFiles++
+            $pct = [math]::Min(100, [math]::Floor($extractedFiles * 100 / $totalFiles))
+            if ($pct -ne $lastPct -and ($pct % 2 -eq 0)) {
+                $lastPct = $pct
+                Write-ProgressBar -Percent $pct -Label "extracting"
+            }
+        }
+    }
+    Write-ProgressBar -Percent 100 -Label "done"
+    Write-Host ""
+
     $sw.Stop()
     Write-Host "       Extracted in $("{0:F1}" -f $sw.Elapsed.TotalSeconds)s" -ForegroundColor DarkGray
 
@@ -202,14 +223,13 @@ function Ensure-MinGW {
 }
 
 # Auto-download MinGW if needed (skip during clean)
-# WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/ -- no download needed
+# WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/
 if (-not $clean) {
     $SevenZip = Ensure-7Zip
     Ensure-MinGW -SevenZip $SevenZip
 }
 
 # -- Detect compiler -------------------------------------------------------
-# Prefer local MinGW from sdk/build/, fall back to system PATH
 $LocalGcc   = Join-Path $BuildDir "mingw64\bin\gcc.exe"
 $LocalMake  = Join-Path $BuildDir "mingw64\bin\mingw32-make.exe"
 
@@ -248,7 +268,6 @@ if (-not $MAKE) {
 
 # -- Check optional dependencies -------------------------------------------
 function Check-Dependencies {
-    # WinFsp headers + lib are vendored in sdk/include/ and sdk/lib/
     $vendoredHeader = Join-Path $SdkRoot "include\winfsp\winfsp.h"
     $vendoredLib = Join-Path $SdkRoot "lib\winfsp-x64.lib"
 
@@ -288,7 +307,6 @@ if ($clean) {
         & $MAKE -C $dir clean OUTDIR="$ToolsDir" CC="$CC" --no-print-directory 2>$null
     }
 
-    # Remove downloaded toolchains for a full reset
     if (Test-Path $BuildDir) {
         Write-Host "  Removing sdk/build/ (downloaded toolchains)..."
         Remove-Item $BuildDir -Recurse -Force
@@ -330,14 +348,13 @@ if ($toolCount -eq 0) {
     Exit-Build 0
 }
 
-# Report discovered tools
 $toolNames = ($toolDirs | ForEach-Object { Split-Path -Leaf $_ }) -join ", "
 Write-Host "  Found " -NoNewline
 Write-Host "$toolCount" -ForegroundColor Cyan -NoNewline
 Write-Host " SDK tools: $toolNames"
 Write-Divider
 
-# Build each tool
+# Build each tool with progress
 $failCount = 0
 $idx = 0
 
@@ -346,14 +363,18 @@ foreach ($dir in $toolDirs) {
     $name = Split-Path -Leaf $dir
     $toolTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
+    # Show progress bar for overall build
+    $overallPct = [math]::Floor(($idx - 1) * 100 / $toolCount)
+    Write-ProgressBar -Percent $overallPct -Label "building"
+    Write-Host ""
+
     Write-Host "  " -NoNewline
     Write-Host "[$idx/$toolCount]" -ForegroundColor White -NoNewline
     Write-Host " Building " -NoNewline
     Write-Host "$name" -ForegroundColor Cyan -NoNewline
     Write-Host "..." -NoNewline
 
-    # Capture make output for error extraction
-    # SHELL=cmd.exe prevents mingw32-make from using /usr/bin/sh (WSL) which mangles Windows paths
+    # SHELL=cmd.exe prevents mingw32-make from using /usr/bin/sh (WSL)
     $buildOutput = & $MAKE -C $dir CC="$CC" OUTDIR="$ToolsDir" SHELL=cmd.exe --no-print-directory 2>&1
     $buildRC = $LASTEXITCODE
 
@@ -368,18 +389,20 @@ foreach ($dir in $toolDirs) {
         Write-Host "(${elapsed}s)"
         $failCount++
 
-        # Show build output -- first errors, then full output if no errors found
         Write-Divider
         $errors = $buildOutput | Select-String -Pattern "(error:|undefined reference|fatal error|cannot find)" | Select-Object -First 20
         if ($errors) {
             $errors | ForEach-Object { Write-Host $_.Line }
         } else {
-            # No recognized errors -- show full output for diagnosis
             $buildOutput | ForEach-Object { Write-Host $_ }
         }
         Write-Divider
     }
 }
+
+# Final progress bar
+Write-ProgressBar -Percent 100 -Label "done"
+Write-Host ""
 
 # -- Summary ----------------------------------------------------------------
 Write-Divider
