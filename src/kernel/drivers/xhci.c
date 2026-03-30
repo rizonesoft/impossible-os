@@ -333,10 +333,27 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                  (uint64_t)usb3pssen,
                  (uint64_t)pci_read32(bus, dev, func, 0xD8));
 
-            /* Give ports time to settle after routing change.
-             * USB devices need time to re-enumerate after port ownership
-             * switches from EHCI to xHCI. 500ms is conservative but safe. */
-            xhci_delay_us(500000);  /* 500ms for device re-detection */
+            /* Wait for devices to appear after routing change.
+             * Poll PORTSC.CCS on all ports — like Linux xhci-hub.c.
+             * Timeout after 200ms (devices typically appear within 50ms). */
+            {
+                uint32_t wait_us = 0;
+                int any_ccs = 0;
+                while (wait_us < 200000 && !any_ccs) {
+                    uint32_t pt;
+                    for (pt = 1; pt <= hc->max_ports; pt++) {
+                        uint32_t ps = xhci_read32(hc->op_base,
+                            XHCI_PORTSC_BASE + (pt - 1) * XHCI_PORTSC_STRIDE);
+                        if (ps & 0x01) { any_ccs = 1; break; }  /* CCS bit */
+                    }
+                    if (!any_ccs) { xhci_delay_us(1000); wait_us += 1000; }
+                }
+                if (any_ccs)
+                    klog(LOG_DEBUG, "xhci", "Intel port routing: device detected after %ums",
+                         (uint64_t)(wait_us / 1000));
+                else
+                    klog(LOG_DEBUG, "xhci", "Intel port routing: no device after 200ms");
+            }
         }
     }
 
