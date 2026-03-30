@@ -87,7 +87,7 @@ Port the IXFS on-disk structure parsing from kernel code to a standalone library
 - [x] `ixfs_readdir(inode, callback)` — enumerate directory entries
 - [x] `ixfs_lookup(parent_ino, name)` — find inode by name in directory
 - [x] `ixfs_read_data(inode, offset, buf, len)` — read file data
-- [ ] Commit: `"sdk: ixfs-mount shared IXFS parser — no kernel dependencies"`
+- [x] Commit: `"sdk: ixfs-mount shared IXFS parser — no kernel dependencies"`
 
 **Test checkpoint (Linux + Windows):**
 - Write a minimal `test_ixfs_core.c` that calls `ixfs_open()` on `build/system-disk.img` partition 2
