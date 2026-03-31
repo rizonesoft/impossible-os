@@ -348,7 +348,39 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
         POST16(0xD751);
 
-        /* Step 6: Enumerate ports */
+        /* Step 6: Intel EHCI→xHCI port routing (needed even in handover —
+         * halt clears port CCS on Intel 8-series, and EHCI may own ports) */
+        {
+            uint16_t vid = pci_read16(bus, dev, func, PCI_VENDOR_ID);
+            if (vid == 0x8086) {
+                /* Check for EHCI on same bus */
+                int ehci_found = 0;
+                uint8_t d2, f2;
+                for (d2 = 0; d2 < PCI_MAX_DEV && !ehci_found; d2++) {
+                    for (f2 = 0; f2 < PCI_MAX_FUNC && !ehci_found; f2++) {
+                        uint16_t v2 = pci_read16(bus, d2, f2, PCI_VENDOR_ID);
+                        if (v2 == 0xFFFF) continue;
+                        if (pci_read8(bus, d2, f2, PCI_CLASS) == 0x0C &&
+                            pci_read8(bus, d2, f2, PCI_SUBCLASS) == 0x03 &&
+                            pci_read8(bus, d2, f2, PCI_PROG_IF) == 0x20)
+                            ehci_found = 1;
+                    }
+                }
+                if (ehci_found) {
+                    boot_splash_status("HANDOVER: Intel EHCI routing...");
+                    pci_write32(bus, dev, func, 0xD0,
+                                pci_read32(bus, dev, func, 0xD0) | 0xFFFFFFFF);
+                    pci_write32(bus, dev, func, 0xD8,
+                                pci_read32(bus, dev, func, 0xD8) | 0xFFFFFFFF);
+                    xhci_delay_us(500000);
+                } else {
+                    klog(LOG_INFO, "xhci",
+                         "Handover: no EHCI — skipping routing");
+                }
+            }
+        }
+
+        /* Step 7: Enumerate ports */
         boot_splash_status("HANDOVER: enumerating ports...");
         {
             int enum_count = xhci_enumerate_ports(hc);
