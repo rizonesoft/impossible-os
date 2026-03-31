@@ -256,6 +256,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         klog(LOG_INFO, "xhci",
              "Zero-delay handover: inheriting bootloader DMA (%u pages)",
              (uint64_t)bc->dma_page_count);
+        boot_splash_status("HANDOVER: inheriting DMA...");
 
         /* Populate controller struct from boot_info */
         hc->max_scratchpads = bc->max_scratchpads;
@@ -272,34 +273,54 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         hc->erst      = (struct xhci_erst_entry *)(uintptr_t)bc->erst_phys;
         hc->erst_phys = bc->erst_phys;
 
-        /* Halt controller to sync ring state — quick halt, no reset.
-         * The bootloader left it running but ring pointers may have drifted. */
+        /* Step 1: Halt controller to sync ring state */
+        boot_splash_status("HANDOVER: halting...");
         {
             uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
-            cmd &= ~XHCI_CMD_RUN;
-            xhci_write32(hc->op_base, XHCI_OP_USBCMD, cmd);
-            uint32_t timeout = XHCI_HALT_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
-            while (!(xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH)) {
-                if (--timeout == 0) break;
-                xhci_delay_us(XHCI_POLL_INTERVAL_US);
+            uint32_t sts = xhci_read32(hc->op_base, XHCI_OP_USBSTS);
+            int already_halted = (sts & XHCI_STS_HCH) ? 1 : 0;
+
+            if (!already_halted) {
+                cmd &= ~XHCI_CMD_RUN;
+                xhci_write32(hc->op_base, XHCI_OP_USBCMD, cmd);
+                uint32_t timeout = XHCI_HALT_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
+                while (!(xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH)) {
+                    if (--timeout == 0) break;
+                    xhci_delay_us(XHCI_POLL_INTERVAL_US);
+                }
             }
+
+            sts = xhci_read32(hc->op_base, XHCI_OP_USBSTS);
+            if (!(sts & XHCI_STS_HCH)) {
+                boot_splash_status("HANDOVER FAIL: halt timeout");
+                sleep_ms(30000);
+                goto full_init;
+            }
+            klog(LOG_DEBUG, "xhci", "Handover: halted (was %s)",
+                 already_halted ? "already halted" : "running");
         }
 
-        /* Re-initialize rings on the existing persistent pages.
-         * This zeros the TRBs, sets up Link TRBs, and writes CRCR/ERDP/ERSTBA
-         * so hardware and software ring state are perfectly in sync.
-         * Uses xhci_rings_init() which operates on hc->cmd_ring/evt_ring. */
+        /* Step 2: Write MaxSlotsEn (may have been cleared by halt) */
+        xhci_write32(hc->op_base, XHCI_OP_CONFIG, hc->max_slots);
+
+        /* Step 3: Write DCBAAP to our persistent DCBAA */
+        xhci_write64(hc->op_base, XHCI_OP_DCBAAP, hc->dcbaa_phys);
+
+        /* Step 4: Re-initialize rings on existing pages */
+        boot_splash_status("HANDOVER: init rings...");
         hc->cmd_ring.trbs = (struct xhci_trb *)(uintptr_t)bc->cmd_ring_phys;
         hc->cmd_ring.phys = bc->cmd_ring_phys;
         hc->evt_ring.trbs = (struct xhci_trb *)(uintptr_t)bc->evt_ring_phys;
         hc->evt_ring.phys = bc->evt_ring_phys;
 
         if (xhci_rings_init(hc) != 0) {
-            klog(LOG_WARN, "xhci", "Handover ring init failed — falling back");
+            boot_splash_status("HANDOVER FAIL: ring init");
+            sleep_ms(30000);
             goto full_init;
         }
 
-        /* Restart controller */
+        /* Step 5: Restart controller */
+        boot_splash_status("HANDOVER: starting...");
         {
             uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
             cmd |= XHCI_CMD_RUN;
@@ -307,7 +328,8 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
             uint32_t timeout = XHCI_HALT_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
             while (xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH) {
                 if (--timeout == 0) {
-                    klog(LOG_WARN, "xhci", "Handover restart failed — falling back");
+                    boot_splash_status("HANDOVER FAIL: start timeout");
+                    sleep_ms(30000);
                     goto full_init;
                 }
                 xhci_delay_us(XHCI_POLL_INTERVAL_US);
@@ -318,7 +340,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         num_controllers++;
 
         klog(LOG_INFO, "xhci",
-             "xHCI v%u.%u handover — %u slots, %u ports (DMA inherited, no reset/routing)",
+             "xHCI v%u.%u handover OK — %u slots, %u ports",
              (uint64_t)((hc->hci_version >> 8) & 0xFF),
              (uint64_t)(hc->hci_version & 0xFF),
              (uint64_t)hc->max_slots,
@@ -326,9 +348,28 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
         POST16(0xD751);
 
-        /* Skip Intel routing — bootloader already handled it.
-         * Go straight to port enumeration. */
-        xhci_enumerate_ports(hc);
+        /* Step 6: Enumerate ports */
+        boot_splash_status("HANDOVER: enumerating ports...");
+        {
+            int enum_count = xhci_enumerate_ports(hc);
+
+            /* Show result with details */
+            static char res[80];
+            int p = 0;
+            const char *rs;
+            for (rs = "HANDOVER OK: "; *rs; rs++) res[p++] = *rs;
+            res[p++] = '0' + (enum_count > 9 ? 9 : enum_count);
+            for (rs = " devs, CCS="; *rs; rs++) res[p++] = *rs;
+            res[p++] = '0' + (xhci_get_ccs_count() > 9 ? 9 : xhci_get_ccs_count());
+            for (rs = " stg="; *rs; rs++) res[p++] = *rs;
+            res[p++] = '0' + xhci_get_enum_stage();
+            for (rs = " msc="; *rs; rs++) res[p++] = *rs;
+            res[p++] = '0' + xhci_msc_device_count();
+            res[p] = '\0';
+            boot_splash_status(res);
+            sleep_ms(60000);
+        }
+
         return 0;
     }
 
