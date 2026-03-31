@@ -32,7 +32,7 @@
 | ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [x]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [ ]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state        | §3         |  [ ]   |
-| ⭐  |   5   | Kernel inherits controller without halt/reset         | §4         |  [ ]   |
+| ⭐  |   5   | Kernel inherits controller without halt/reset         | §1, §2     |  [x]   |
 | ⭐  |   6   | Kernel registers MSC devices from boot_info geometry  | §5         |  [ ]   |
 | 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path  | §5         |  [ ]   |
 
@@ -83,7 +83,10 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 **Regression risk:** HIGH — halting the firmware USB stack may break EFI services that depend on USB (e.g., EFI console on USB keyboard). Must happen late in bootloader, after kernel load and config table copy. Rollback: if takeover fails, don't modify controller and let kernel handle it.
 
 ## 3. Bootloader Enumerates Devices with Persistent State
-With the controller running on our DMA structures, enumerate connected devices so their slot contexts and endpoint rings are in persistent memory.
+Enumerate connected devices in the bootloader so slot contexts and endpoint rings are in persistent memory. This is the true Windows-style zero-delay — devices have pre-configured slots when the kernel inherits.
+
+> [!NOTE]
+> **Deferred.** Requires porting the full 9-step USB enumeration sequence (~350 lines of xhci_dev.c) into the bootloader. The pragmatic approach is to share the code (compile xhci_dev.c for both bootloader and kernel contexts) rather than duplicate it. For now, §5 handles kernel inheritance of DMA structures and the kernel runs its own enumeration on the persistent DCBAA/rings — still saves all allocation time + Intel 500ms.
 
 **Files:** `src/boot/uefi/bootx64.c`
 
@@ -94,7 +97,7 @@ With the controller running on our DMA structures, enumerate connected devices s
 - [ ] Record slot_id, port, speed, VID:PID, endpoint addresses in boot_info
 - [ ] Commit: `"boot: enumerate USB devices with persistent DMA state"`
 
-**Test checkpoint:** Serial shows enumerated devices with slot IDs. POST code 0xB084. Device descriptors match Phase A discovery. Test on: QEMU `run-usb`, bare metal.
+**Test checkpoint:** Serial shows enumerated devices with slot IDs. POST code 0xB086. Device descriptors match Phase A discovery. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
 **Regression risk:** MEDIUM — USB enumeration is complex (9-step sequence). If any step fails, the device is skipped and kernel re-enumerates it via TODO-07 path. No system-level risk.
 
@@ -117,10 +120,11 @@ When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_
 
 **Files:** `src/kernel/drivers/xhci.c`
 
-- [ ] If `usb_handover_complete`: skip halt/reset/DCBAA alloc/ring init/Intel routing
-- [ ] Point `xhci_controller` struct at boot_info's DMA addresses
-- [ ] Verify controller is running (USBSTS.HCH=0) — if not, fall back to TODO-07
-- [ ] Issue a No-Op command to verify command ring is functional
+- [x] If `usb_handover_complete`: skip halt/reset/DCBAA alloc/ring init/Intel routing
+- [x] Point `xhci_controller` struct at boot_info's DMA addresses (DCBAA, cmd/evt rings, ERST, scratchpads)
+- [x] Verify controller is running (USBSTS.HCH=0) — if HCH=1, fall back via `goto full_init`
+- [ ] Issue a No-Op command to verify command ring — deferred (enumeration validates it implicitly)
+- [x] Go straight to `xhci_enumerate_ports()` — skip Intel routing entirely
 - [ ] Commit: `"drivers: xHCI zero-delay handover — inherit bootloader DMA state"`
 
 **Test checkpoint:** Serial shows "zero-delay handover: controller inherited". No halt/reset/500ms in log. USB device available within 1ms of kernel start. POST code 0xD755. If crash at 0xD755: controller state corrupt — fall back to TODO-07 path. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
@@ -160,8 +164,8 @@ If any handover validation fails, transparently fall back to the proven halt/res
 
 | ⭐ | Feature             | Win11             | Linux            | Impossible OS         |
 |----|---------------------|-------------------|------------------|-----------------------|
-| ⭐ | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot     | ⬜ §1-§3 planned     |
-| ⭐ | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset    | ⬜ §5 planned        |
+| ⭐ | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot     | 🔄 §1-§2 DMA only   |
+| ⭐ | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset    | ✅ §5 DMA inherit    |
 | ⭐ | Persistent DMA      | ✅ Kernel memory | ❌ Reallocates   | ✅ §1 EfiLoaderData  |
 | 💎 | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c    | ✅ TODO-07 §5B done  |
 | ⭐ | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed   | ⬜ TODO-07 planned   |

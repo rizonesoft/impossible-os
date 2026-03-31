@@ -241,19 +241,83 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     POST16(0xD750);
     xhci_bios_handoff(hc);
 
-    /* ---- §5 Phase B: Handover fast-path when bootloader found USB devices ---- */
-    /* If the bootloader discovered USB devices via EFI_USB_IO_PROTOCOL,
-     * the firmware already configured ports and devices were connected.
-     * We HALT (stop DMA to protect against stale firmware buffers) but
-     * do NOT RESET — reset clears port CCS (Current Connect Status) which
-     * forces link re-negotiation and the 500ms wait.  By preserving CCS,
-     * devices are immediately visible after we set up fresh DCBAA/rings
-     * and restart the controller.  Intel XUSB2PR routing is also skipped
-     * since firmware already configured ports. */
+    /* ---- TODO-09 §5: Inherit controller from bootloader (zero-delay) ---- */
+    /* If the bootloader allocated persistent DMA and took over the controller
+     * (usb_handover_complete=1), skip ALL kernel init (halt/reset/DCBAA/rings).
+     * The controller is still running with our DMA structures — we just need
+     * to point kernel data structures at the bootloader's physical addresses
+     * and go straight to port enumeration. */
+    if (g_boot_info.usb_handover_complete &&
+        g_boot_info.usb_controller.active) {
+        const struct boot_usb_controller *bc = &g_boot_info.usb_controller;
+
+        klog(LOG_INFO, "xhci",
+             "Zero-delay handover: inheriting bootloader DMA (%u pages)",
+             (uint64_t)bc->dma_page_count);
+
+        /* Populate controller struct from boot_info */
+        hc->max_scratchpads = bc->max_scratchpads;
+        hc->rt_base = hc->mmio_base + hc->rts_offset;
+        hc->db_base = hc->mmio_base + hc->db_offset;
+
+        /* Point at bootloader-allocated DMA (PMM already reserved these pages) */
+        hc->dcbaa      = (uint64_t *)(uintptr_t)bc->dcbaa_phys;
+        hc->dcbaa_phys = bc->dcbaa_phys;
+        hc->scratchpad_array      = bc->scratchpad_array_phys ?
+            (uint64_t *)(uintptr_t)bc->scratchpad_array_phys : (uint64_t *)0;
+        hc->scratchpad_array_phys = bc->scratchpad_array_phys;
+
+        /* Point rings at bootloader-allocated memory */
+        hc->cmd_ring.trbs    = (struct xhci_trb *)(uintptr_t)bc->cmd_ring_phys;
+        hc->cmd_ring.phys    = bc->cmd_ring_phys;
+        hc->cmd_ring.size    = 256;
+        hc->cmd_ring.enqueue = 0;
+        hc->cmd_ring.dequeue = 0;
+        hc->cmd_ring.cycle   = 1;
+
+        hc->evt_ring.trbs    = (struct xhci_trb *)(uintptr_t)bc->evt_ring_phys;
+        hc->evt_ring.phys    = bc->evt_ring_phys;
+        hc->evt_ring.size    = 256;
+        hc->evt_ring.enqueue = 0;
+        hc->evt_ring.dequeue = 0;
+        hc->evt_ring.cycle   = 1;
+
+        hc->erst      = (struct xhci_erst_entry *)(uintptr_t)bc->erst_phys;
+        hc->erst_phys = bc->erst_phys;
+
+        /* Verify controller is running (USBSTS.HCH should be 0) */
+        {
+            uint32_t sts = xhci_read32(hc->op_base, XHCI_OP_USBSTS);
+            if (sts & XHCI_STS_HCH) {
+                klog(LOG_WARN, "xhci",
+                     "Handover controller not running (HCH=1) — falling back to full init");
+                goto full_init;
+            }
+        }
+
+        hc->active = 1;
+        num_controllers++;
+
+        klog(LOG_INFO, "xhci",
+             "xHCI v%u.%u inherited — %u slots, %u ports, skipping halt/reset/alloc",
+             (uint64_t)((hc->hci_version >> 8) & 0xFF),
+             (uint64_t)(hc->hci_version & 0xFF),
+             (uint64_t)hc->max_slots,
+             (uint64_t)hc->max_ports);
+
+        POST16(0xD751);
+
+        /* Skip Intel routing — bootloader already handled it */
+        /* Go straight to port enumeration */
+        xhci_enumerate_ports(hc);
+        return 0;
+    }
+
+    /* Log boot_info USB inventory (informational, even if not using handover) */
     if (g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0) {
         uint32_t bi;
         klog(LOG_INFO, "xhci",
-             "Bootloader pre-enumerated %u USB device(s) — handover fast-path",
+             "Bootloader found %u USB device(s) (handover not active — full init)",
              (uint64_t)g_boot_info.usb_device_count);
         for (bi = 0; bi < g_boot_info.usb_device_count; bi++) {
             const struct boot_usb_device *bd = &g_boot_info.usb_devices[bi];
@@ -268,6 +332,8 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         }
     }
     POST16(0xD751);
+
+full_init:
 
     /* ---- §1.2: Controller initialization sequence ---- */
 
