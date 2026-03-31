@@ -154,14 +154,14 @@ If any handover validation fails, transparently fall back to the proven halt/res
 
 ## OS Comparison
 
-| ⭐ | Feature             | Win11            | Linux            | Impossible OS        |
-|----|---------------------|------------------|------------------|----------------------|
+| ⭐ | Feature             | Win11             | Linux            | Impossible OS         |
+|----|---------------------|-------------------|------------------|-----------------------|
 | ⭐ | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot     | ⬜ §1-§3 planned     |
 | ⭐ | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset    | ⬜ §5 planned        |
 | ⭐ | Persistent DMA      | ✅ Kernel memory | ❌ Reallocates   | ⬜ §1 EfiLoaderData  |
 | 💎 | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c    | ✅ TODO-07 §5B done  |
 | ⭐ | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed   | ⬜ TODO-07 planned   |
-| 💎 | Handover fallback   | ✅ Automatic     | ✅ Always fresh   | ⬜ §7 planned        |
+| 💎 | Handover fallback   | ✅ Automatic     | ✅ Always fresh  | ⬜ §7 planned        |
 | ⭐ | Handover + EHCI     | ✅ usbehci.sys   | ❌ Always reset  | ⬜ §2 EHCI path      |
 
 > Matches Windows USB boot speed, exceeds Linux. VPD timing visibility would be a competitive first.
