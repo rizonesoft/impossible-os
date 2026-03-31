@@ -342,64 +342,84 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     }
     POST16(0xD751);
 
-    /* VPD diagnostic: show handover state — always visible, no debug flag needed */
+    /* VPD diagnostic: show handover state across 3 short lines */
     {
-        static char diag[200];
-        int p = 0;
+        static char d[80];
+        int p;
         const char *s;
         static const char hx[] = "0123456789ABCDEF";
         const struct boot_usb_controller *bc = &g_boot_info.usb_controller;
 
-        for (s = "USB: hc="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + g_boot_info.usb_handover_complete;
-        for (s = " disc="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + g_boot_info.usb_discovery_ok;
-        for (s = " devs="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (g_boot_info.usb_device_count > 9 ? 9 : g_boot_info.usb_device_count);
-        for (s = " ctrl="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + bc->active;
-        for (s = " pci="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (bc->pci_bus / 10);
-        diag[p++] = '0' + (bc->pci_bus % 10);
-        diag[p++] = ':';
-        diag[p++] = '0' + (bc->pci_dev / 10);
-        diag[p++] = '0' + (bc->pci_dev % 10);
-        diag[p++] = '.';
-        diag[p++] = '0' + bc->pci_func;
-        for (s = " mmio="; *s; s++) diag[p++] = *s;
-        { uint64_t m = bc->mmio_phys;
-          diag[p++] = hx[(m>>28)&0xF]; diag[p++] = hx[(m>>24)&0xF];
-          diag[p++] = hx[(m>>20)&0xF]; diag[p++] = hx[(m>>16)&0xF];
-          diag[p++] = hx[(m>>12)&0xF]; diag[p++] = hx[(m>>8)&0xF];
-          diag[p++] = hx[(m>>4)&0xF];  diag[p++] = hx[m&0xF]; }
-        for (s = " dma="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (bc->dma_page_count / 10);
-        diag[p++] = '0' + (bc->dma_page_count % 10);
-        for (s = " sp="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (bc->max_scratchpads / 10);
-        diag[p++] = '0' + (bc->max_scratchpads % 10);
-        for (s = " slots="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (bc->max_slots / 10);
-        diag[p++] = '0' + (bc->max_slots % 10);
-        for (s = " ports="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (bc->max_ports / 10);
-        diag[p++] = '0' + (bc->max_ports % 10);
-        for (s = " err="; *s; s++) diag[p++] = *s;
-        { uint32_t e = bc->alloc_fail_status;
-          diag[p++] = hx[(e>>12)&0xF]; diag[p++] = hx[(e>>8)&0xF];
-          diag[p++] = hx[(e>>4)&0xF];  diag[p++] = hx[e&0xF]; }
-        diag[p++] = '/';
-        diag[p++] = '0' + bc->alloc_fail_page;
-        for (s = " v="; *s; s++) diag[p++] = *s;
-        diag[p++] = hx[(bc->hci_version >> 12) & 0xF];
-        diag[p++] = hx[(bc->hci_version >> 8) & 0xF];
-        diag[p++] = hx[(bc->hci_version >> 4) & 0xF];
-        diag[p++] = hx[bc->hci_version & 0xF];
-        diag[p] = '\0';
+        /* Line 1: hc disc devs ctrl pci */
+        p = 0;
+        for (s = "hc="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + g_boot_info.usb_handover_complete;
+        for (s = " disc="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + g_boot_info.usb_discovery_ok;
+        for (s = " devs="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + (g_boot_info.usb_device_count > 9 ? 9 : g_boot_info.usb_device_count);
+        for (s = " ctrl="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + bc->active;
+        for (s = " pci="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + (bc->pci_bus / 10);
+        d[p++] = '0' + (bc->pci_bus % 10);
+        d[p++] = ':';
+        d[p++] = '0' + (bc->pci_dev / 10);
+        d[p++] = '0' + (bc->pci_dev % 10);
+        d[p++] = '.';
+        d[p++] = '0' + bc->pci_func;
+        d[p] = '\0';
+        boot_splash_status(d);
+        klog(LOG_INFO, "xhci", "VPD1: %s", d);
+        sleep_ms(20000);
 
-        boot_splash_status(diag);
-        klog(LOG_INFO, "xhci", "VPD: %s", diag);
-        sleep_ms(60000);
+        /* Line 2: mmio dma sp slots ports v */
+        p = 0;
+        for (s = "mmio="; *s; s++) d[p++] = *s;
+        { uint64_t m = bc->mmio_phys;
+          d[p++] = hx[(m>>28)&0xF]; d[p++] = hx[(m>>24)&0xF];
+          d[p++] = hx[(m>>20)&0xF]; d[p++] = hx[(m>>16)&0xF];
+          d[p++] = hx[(m>>12)&0xF]; d[p++] = hx[(m>>8)&0xF];
+          d[p++] = hx[(m>>4)&0xF];  d[p++] = hx[m&0xF]; }
+        for (s = " sp="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + (bc->max_scratchpads / 10);
+        d[p++] = '0' + (bc->max_scratchpads % 10);
+        for (s = " slots="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + (bc->max_slots / 10);
+        d[p++] = '0' + (bc->max_slots % 10);
+        for (s = " ports="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + (bc->max_ports / 10);
+        d[p++] = '0' + (bc->max_ports % 10);
+        for (s = " v="; *s; s++) d[p++] = *s;
+        d[p++] = hx[(bc->hci_version>>8)&0xF];
+        d[p++] = hx[(bc->hci_version>>4)&0xF];
+        d[p++] = hx[bc->hci_version&0xF];
+        d[p] = '\0';
+        boot_splash_status(d);
+        klog(LOG_INFO, "xhci", "VPD2: %s", d);
+        sleep_ms(20000);
+
+        /* Line 3: dma pages + error status */
+        p = 0;
+        for (s = "dma="; *s; s++) d[p++] = *s;
+        d[p++] = '0' + (bc->dma_page_count / 10);
+        d[p++] = '0' + (bc->dma_page_count % 10);
+        for (s = " err="; *s; s++) d[p++] = *s;
+        { uint32_t e = bc->alloc_fail_status;
+          d[p++] = hx[(e>>12)&0xF]; d[p++] = hx[(e>>8)&0xF];
+          d[p++] = hx[(e>>4)&0xF];  d[p++] = hx[e&0xF]; }
+        d[p++] = '/';
+        d[p++] = '0' + bc->alloc_fail_page;
+        for (s = " dcbaa="; *s; s++) d[p++] = *s;
+        { uint64_t a = bc->dcbaa_phys;
+          d[p++] = hx[(a>>28)&0xF]; d[p++] = hx[(a>>24)&0xF];
+          d[p++] = hx[(a>>20)&0xF]; d[p++] = hx[(a>>16)&0xF];
+          d[p++] = hx[(a>>12)&0xF]; d[p++] = hx[(a>>8)&0xF];
+          d[p++] = hx[(a>>4)&0xF];  d[p++] = hx[a&0xF]; }
+        d[p] = '\0';
+        boot_splash_status(d);
+        klog(LOG_INFO, "xhci", "VPD3: %s", d);
+        sleep_ms(20000);
     }
 
 full_init:
