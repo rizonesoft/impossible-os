@@ -235,6 +235,11 @@ struct xhci_device {
  * Returns number of devices successfully enumerated. */
 int xhci_enumerate_ports(struct xhci_controller *hc);
 
+/* Enumerate a single device on the given port.
+ * Used by hot-plug ISR for newly connected devices.
+ * Returns 0 on success, -1 on failure. */
+int xhci_enumerate_device(struct xhci_controller *hc, uint8_t port, uint8_t speed);
+
 /* Walk config descriptor to find MSC BOT interface, extract Bulk-IN/OUT
  * endpoints, allocate Transfer Rings, and issue Configure Endpoint command.
  * Returns 0 if MSC device identified and configured, -1 otherwise. */

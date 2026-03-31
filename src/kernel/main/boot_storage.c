@@ -58,6 +58,7 @@ void boot_phase2(void)
     POST16(POST16_PCI_OK);
     POST16(POST16_XHCI);
     xhci_init();
+    xhci_setup_interrupts();
     POST16(POST16_XHCI_OK);
     boot_splash_status("Initializing network...");
     POST16(POST16_NIC);

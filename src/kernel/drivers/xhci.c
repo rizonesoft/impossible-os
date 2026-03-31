@@ -14,6 +14,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
+#include "kernel/irq.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 
@@ -515,6 +516,179 @@ int xhci_init(void)
     }
 
     return num_controllers;
+}
+
+/* ---- §5 Phase C: Interrupt-driven hot-plug -------------------------------- */
+
+static uint8_t xhci_irq_vector = 0;
+
+/* Process Port Status Change events from the event ring.
+ * Called from ISR context — must not block. */
+static void xhci_process_port_events(struct xhci_controller *hc)
+{
+    struct xhci_trb evt;
+
+    while (xhci_event_poll(hc, &evt)) {
+        uint32_t trb_type = (evt.control & XHCI_TRB_TYPE_MASK) >> XHCI_TRB_TYPE_SHIFT;
+
+        if (trb_type == XHCI_TRB_PORT_STATUS) {
+            /* Port Status Change Event: parameter bits 31:24 = port ID */
+            uint8_t port_id = (uint8_t)((evt.parameter >> 24) & 0xFF);
+            uint32_t portsc_offset = XHCI_PORTSC_BASE + (port_id - 1) * XHCI_PORTSC_STRIDE;
+            uint32_t portsc = xhci_read32(hc->op_base, portsc_offset);
+
+            klog(LOG_INFO, "xhci", "Port %u status change: PORTSC=0x%x (CCS=%u CSC=%u)",
+                 (uint64_t)port_id, (uint64_t)portsc,
+                 (uint64_t)((portsc & XHCI_PORTSC_CCS) ? 1 : 0),
+                 (uint64_t)((portsc & XHCI_PORTSC_CSC) ? 1 : 0));
+
+            /* Clear CSC by writing 1 (RW1C), preserve other bits */
+            if (portsc & XHCI_PORTSC_CSC) {
+                portsc = (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_CSC;
+                xhci_write32(hc->op_base, portsc_offset, portsc);
+            }
+
+            /* Re-read after clearing change bits */
+            portsc = xhci_read32(hc->op_base, portsc_offset);
+
+            if (portsc & XHCI_PORTSC_CCS) {
+                /* Device connected — enumerate it */
+                uint8_t speed = (portsc & XHCI_PORTSC_SPEED_MASK) >> XHCI_PORTSC_SPEED_SHIFT;
+                klog(LOG_INFO, "xhci", "Hot-plug: device connected on port %u (speed=%u)",
+                     (uint64_t)port_id, (uint64_t)speed);
+                xhci_enumerate_device(hc, port_id, speed);
+            } else {
+                /* Device disconnected — log for now (slot cleanup requires
+                 * Disable Slot command which is deferred to TODO-07 §5C full) */
+                klog(LOG_INFO, "xhci", "Hot-unplug: device removed from port %u",
+                     (uint64_t)port_id);
+            }
+        }
+        /* Command Completion and Transfer events are handled by polling
+         * loops in xhci_dev.c — they don't arrive unsolicited. */
+    }
+}
+
+/* xHCI MSI interrupt handler */
+static void xhci_irq_handler(uint8_t vector, void *ctx)
+{
+    int i;
+    (void)vector;
+    (void)ctx;
+
+    for (i = 0; i < num_controllers; i++) {
+        struct xhci_controller *hc = &controllers[i];
+        if (!hc->active)
+            continue;
+
+        /* Check and clear Interrupt Pending (IMAN.IP) on Interrupter 0 */
+        volatile uint8_t *ir = hc->rt_base + XHCI_IR_OFFSET;
+        uint32_t iman = xhci_read32(ir, XHCI_IR_IMAN);
+        if (iman & XHCI_IMAN_IP) {
+            /* Clear IP by writing 1, keep IE set */
+            xhci_write32(ir, XHCI_IR_IMAN, iman | XHCI_IMAN_IP);
+            /* Also clear USBSTS.EINT (Event Interrupt) */
+            uint32_t sts = xhci_read32(hc->op_base, XHCI_OP_USBSTS);
+            if (sts & (1 << 3))  /* EINT bit */
+                xhci_write32(hc->op_base, XHCI_OP_USBSTS, (1 << 3));
+            xhci_process_port_events(hc);
+        }
+    }
+}
+
+/* Set up MSI for the first xHCI controller (following AHCI pattern).
+ * Called after interrupts are enabled and IOAPIC is configured. */
+void xhci_setup_interrupts(void)
+{
+    struct xhci_controller *hc;
+    uint8_t bus, dev, func;
+    uint16_t status;
+    uint8_t cap_off;
+
+    POST16(0xD752);
+
+    if (num_controllers == 0) {
+        POST16(0xD753);
+        return;
+    }
+
+    hc = &controllers[0];
+    bus  = hc->pci_bus;
+    dev  = hc->pci_dev;
+    func = hc->pci_func;
+
+    /* Check PCI Status bit 4 (Capabilities List) */
+    status = pci_read16(bus, dev, func, PCI_STATUS);
+    if (!(status & (1 << 4))) {
+        klog(LOG_WARN, "xhci", "No PCI capabilities — interrupt-driven hot-plug unavailable");
+        POST16(0xD753);
+        return;
+    }
+
+    /* Walk PCI capability list looking for MSI (cap ID 0x05) */
+    cap_off = pci_read8(bus, dev, func, 0x34) & 0xFC;  /* Capabilities Pointer */
+    while (cap_off != 0) {
+        uint8_t cap_id = pci_read8(bus, dev, func, cap_off);
+        if (cap_id == 0x05) {
+            /* Found MSI capability */
+            uint16_t msi_ctrl = pci_read16(bus, dev, func, cap_off + 2);
+            uint8_t  msi_data_off;
+
+            xhci_irq_vector = irq_alloc_vector();
+            if (!xhci_irq_vector) {
+                klog(LOG_WARN, "xhci", "No free IRQ vectors for xHCI MSI");
+                break;
+            }
+
+            irq_register(xhci_irq_vector, xhci_irq_handler, NULL, "xhci");
+
+            /* Message Address: 0xFEE00000 targets BSP (LAPIC ID 0) */
+            pci_write32(bus, dev, func, cap_off + 4, 0xFEE00000);
+
+            /* 64-bit capable? (bit 7 of MSI Control) */
+            if (msi_ctrl & (1U << 7)) {
+                pci_write32(bus, dev, func, cap_off + 8, 0);  /* Upper addr = 0 */
+                msi_data_off = cap_off + 12;
+            } else {
+                msi_data_off = cap_off + 8;
+            }
+
+            /* Message Data: vector number */
+            pci_write16(bus, dev, func, msi_data_off, (uint16_t)xhci_irq_vector);
+
+            /* Enable MSI, 1 vector */
+            msi_ctrl &= ~(0x7U << 4);  /* MME = 0 (1 message) */
+            msi_ctrl |= (1U << 0);     /* MSI Enable */
+            pci_write16(bus, dev, func, cap_off + 2, msi_ctrl);
+
+            /* Disable legacy INTx */
+            {
+                uint16_t cmd = pci_read16(bus, dev, func, PCI_COMMAND);
+                cmd |= PCI_CMD_INT_DISABLE;
+                pci_write16(bus, dev, func, PCI_COMMAND, cmd);
+            }
+
+            klog(LOG_INFO, "xhci", "MSI vector 0x%x registered for hot-plug",
+                 (uint64_t)xhci_irq_vector);
+            POST16(0xD753);
+            return;
+        }
+
+        /* MSI-X (cap ID 0x11) — try if MSI not found */
+        if (cap_id == 0x11) {
+            /* MSI-X is more complex; defer to TODO-02 §5 pci_enable_msix() */
+            klog(LOG_DEBUG, "xhci", "MSI-X capability found — deferring to pci_enable_msix()");
+        }
+
+        cap_off = pci_read8(bus, dev, func, cap_off + 1) & 0xFC;
+    }
+
+    /* No MSI found — hot-plug events still work via event ring polling
+     * (existing xhci_wait_command/xhci_wait_transfer consume them).
+     * Port status changes won't fire interrupts but boot-time devices
+     * are already enumerated. */
+    klog(LOG_INFO, "xhci", "No MSI — hot-plug via event ring polling only");
+    POST16(0xD753);
 }
 
 const struct xhci_controller *xhci_get_controller(int index)

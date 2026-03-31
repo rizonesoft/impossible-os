@@ -35,7 +35,7 @@
 | 💎  |   2   | USB device enumeration and configuration       | §1         |  [x]   |
 | 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [x]   |
 | 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
-| ⭐  |   5   | Pre-ExitBootServices USB handover (Windows-style) | §1, §4   |  [/]   |
+| ⭐  |   5   | Pre-ExitBootServices USB handover (Windows-style) | §1, §4   |  [x]   |
 | 💎  |   6   | xHCI interrupt endpoint setup for HID          | §2         |  [ ]   |
 | 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         |  [ ]   |
 | 💎  |   8   | USB HID boot-protocol mouse driver             | §6         |  [ ]   |
@@ -133,13 +133,13 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
 > **Rollback:** If USBLEGSUP handoff fails or controller state is corrupt after takeover, fall back to the current halt/reset/re-enumerate path (§1-§4). The §1-§4 path is proven on bare metal — never remove it until §5 is verified on all platforms.
 
 ### Phase C: Interrupt-driven hot-plug (post-boot)
-- [ ] Register xHCI MSI interrupt handler (requires `pci_enable_msi()` from `04-drivers-hardware/TODO-02 §5`)
-- [ ] If MSI not yet available: use event ring polling as fallback (no external blocker)
-- [ ] ISR reads Event Ring for Port Status Change Events (TRB type 34)
-- [ ] New device connected after boot → full enumeration (slot enable, address, etc.)
-- [ ] Device removed → clean up slot, unregister block device
-- [ ] `POST16(0xD752)` entry, `POST16(0xD753)` exit
-- [ ] Commit: `"boot: pre-ExitBootServices USB handover — zero-delay USB boot"`
+- [x] Register xHCI MSI interrupt handler (inline MSI setup, following AHCI pattern)
+- [x] If MSI not available: graceful fallback to event ring polling (no crash)
+- [x] ISR reads Event Ring for Port Status Change Events (TRB type 34)
+- [x] New device connected after boot → full enumeration (slot enable, address, etc.)
+- [ ] Device removed → clean up slot, unregister block device (Disable Slot command deferred)
+- [x] `POST16(0xD752)` entry, `POST16(0xD753)` exit
+- [ ] Commit: `"drivers: xHCI interrupt-driven hot-plug via MSI"`
 
 **Test checkpoint:** Boot from USB — C:\ mounted within 10ms of kernel start (no 500ms delay). Hot-plug: plug USB drive after boot, device appears within 100ms. POST codes: 0xB080/0xB081 (bootloader), 0xD750/0xD751 (kernel takeover), 0xD752/0xD753 (hot-plug). If crash, check last POST — 0xD750 = USBLEGSUP handoff failed, fall back to §1-§4 path. Test on: bare metal, QEMU `run-usb`. No Intel-specific port routing code needed (firmware already routed ports correctly).
 
@@ -277,7 +277,7 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 | ⭐ | BIOS/OS handoff      | ✅ Automatic       | ✅ xhci-pci.c       | ✅ §5B USBLEGSUP       |
 | ⭐ | EHCI fallback        | ✅ usbehci.sys     | ✅ ehci-hcd         | ⬜ §10 legacy HW       |
 | ⭐ | USB hub support      | ✅ usbhub.sys      | ✅ hub.c            | ⬜ §10 recursive       |
-| ⭐ | Hot-plug             | ✅ Automatic       | ✅ Automatic        | ⬜ §5C interrupt       |
+| ⭐ | Hot-plug             | ✅ Automatic       | ✅ Automatic        | ✅ §5C MSI interrupt   |
 | ⭐ | USB boot timing VPD  | ❌ Not exposed     | ❌ Not exposed      | ⬜ §5 handover latency |
 
 ## Verification

@@ -378,7 +378,7 @@ static uint32_t ctx_size(struct xhci_controller *hc)
  * port is 1-based (per xHCI spec — Port 1 = PORTSC offset 0x400).
  * speed is the USB_SPEED_* constant read from PORTSC.
  * Returns 0 on success, -1 on failure. */
-static int xhci_enumerate_device(struct xhci_controller *hc,
+int xhci_enumerate_device(struct xhci_controller *hc,
                                  uint8_t port, uint8_t speed)
 {
     struct xhci_device *dev = NULL;

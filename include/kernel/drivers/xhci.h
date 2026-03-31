@@ -138,3 +138,7 @@ struct xhci_controller *xhci_get_controller_mut(int index);
 
 /* Get number of active xHCI controllers. */
 int xhci_controller_count(void);
+
+/* Set up MSI interrupt for hot-plug event detection.
+ * Called after interrupts are enabled. */
+void xhci_setup_interrupts(void);
