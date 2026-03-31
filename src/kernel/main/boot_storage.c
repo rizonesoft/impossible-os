@@ -58,7 +58,6 @@ void boot_phase2(void)
     POST16(POST16_PCI_OK);
     POST16(POST16_XHCI);
     xhci_init();
-    xhci_setup_interrupts();
     POST16(POST16_XHCI_OK);
     boot_splash_status("Initializing network...");
     POST16(POST16_NIC);
@@ -87,6 +86,7 @@ void boot_phase2(void)
     POST16(POST16_AHCI_OK);
     /* Bare metal AHCI skip REMOVED — root cause was clac #UD, fixed 2026-03-29. */
     ahci_setup_interrupts();
+    xhci_setup_interrupts();  /* After enumeration — ISR would steal events from polling loops */
     blkdev_register_all();
     boot_progress(2, "STORAGE_DRV", POST16_AHCI_OK);
 
