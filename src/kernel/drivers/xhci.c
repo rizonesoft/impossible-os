@@ -293,8 +293,8 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
             if (sts & XHCI_STS_HCH) {
                 klog(LOG_WARN, "xhci",
                      "Handover controller not running (HCH=1) — falling back to full init");
-                /* DEBUG: show fallback on splash */
-                boot_splash_status("xHCI HANDOVER FAIL — HCH=1, full init (35s)");
+                boot_splash_status("xHCI HANDOVER FAIL — HCH=1, falling back");
+                klog(LOG_WARN, "xhci", "VPD: HANDOVER FAIL — HCH=1");
                 sleep_ms(35000);
                 goto full_init;
             }
@@ -312,10 +312,9 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
         POST16(0xD751);
 
-        /* DEBUG: show handover result on splash for bare-metal verification */
-        boot_splash_status("xHCI HANDOVER OK — inherited DMA, no halt/reset (35s)");
+        boot_splash_status("xHCI HANDOVER OK — inherited DMA, no halt/reset");
+        klog(LOG_INFO, "xhci", "VPD: HANDOVER OK — zero-delay path active");
         sleep_ms(35000);
-        boot_splash_status("Enumerating USB ports...");
 
         /* Skip Intel routing — bootloader already handled it */
         /* Go straight to port enumeration */
@@ -343,57 +342,63 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     }
     POST16(0xD751);
 
-    /* DEBUG: no handover — show on splash with diagnostic values */
-    if (!g_boot_info.usb_handover_complete) {
-        static char diag[128];
+    /* VPD diagnostic: show handover state — always visible, no debug flag needed */
+    {
+        static char diag[200];
         int p = 0;
         const char *s;
-        /* "NO HANDOVER: hc=X disc=X ctrl.active=X ctrl.pci=BB:DD.F" */
-        for (s = "NO HANDOVER hc="; *s; s++) diag[p++] = *s;
+        static const char hx[] = "0123456789ABCDEF";
+        const struct boot_usb_controller *bc = &g_boot_info.usb_controller;
+
+        for (s = "USB: hc="; *s; s++) diag[p++] = *s;
         diag[p++] = '0' + g_boot_info.usb_handover_complete;
         for (s = " disc="; *s; s++) diag[p++] = *s;
         diag[p++] = '0' + g_boot_info.usb_discovery_ok;
+        for (s = " devs="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + (g_boot_info.usb_device_count > 9 ? 9 : g_boot_info.usb_device_count);
         for (s = " ctrl="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + g_boot_info.usb_controller.active;
+        diag[p++] = '0' + bc->active;
         for (s = " pci="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (g_boot_info.usb_controller.pci_bus / 10);
-        diag[p++] = '0' + (g_boot_info.usb_controller.pci_bus % 10);
+        diag[p++] = '0' + (bc->pci_bus / 10);
+        diag[p++] = '0' + (bc->pci_bus % 10);
         diag[p++] = ':';
-        diag[p++] = '0' + (g_boot_info.usb_controller.pci_dev / 10);
-        diag[p++] = '0' + (g_boot_info.usb_controller.pci_dev % 10);
+        diag[p++] = '0' + (bc->pci_dev / 10);
+        diag[p++] = '0' + (bc->pci_dev % 10);
         diag[p++] = '.';
-        diag[p++] = '0' + g_boot_info.usb_controller.pci_func;
-        for (s = " dma="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (g_boot_info.usb_controller.dma_page_count / 10);
-        diag[p++] = '0' + (g_boot_info.usb_controller.dma_page_count % 10);
+        diag[p++] = '0' + bc->pci_func;
         for (s = " mmio="; *s; s++) diag[p++] = *s;
-        {
-            uint64_t m = g_boot_info.usb_controller.mmio_phys;
-            static const char hx[] = "0123456789ABCDEF";
-            diag[p++] = hx[(m >> 28) & 0xF];
-            diag[p++] = hx[(m >> 24) & 0xF];
-            diag[p++] = hx[(m >> 20) & 0xF];
-            diag[p++] = hx[(m >> 16) & 0xF];
-            diag[p++] = hx[(m >> 12) & 0xF];
-            diag[p++] = hx[(m >> 8) & 0xF];
-            diag[p++] = hx[(m >> 4) & 0xF];
-            diag[p++] = hx[m & 0xF];
-        }
+        { uint64_t m = bc->mmio_phys;
+          diag[p++] = hx[(m>>28)&0xF]; diag[p++] = hx[(m>>24)&0xF];
+          diag[p++] = hx[(m>>20)&0xF]; diag[p++] = hx[(m>>16)&0xF];
+          diag[p++] = hx[(m>>12)&0xF]; diag[p++] = hx[(m>>8)&0xF];
+          diag[p++] = hx[(m>>4)&0xF];  diag[p++] = hx[m&0xF]; }
+        for (s = " dma="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + (bc->dma_page_count / 10);
+        diag[p++] = '0' + (bc->dma_page_count % 10);
         for (s = " sp="; *s; s++) diag[p++] = *s;
-        diag[p++] = '0' + (g_boot_info.usb_controller.max_scratchpads / 10);
-        diag[p++] = '0' + (g_boot_info.usb_controller.max_scratchpads % 10);
+        diag[p++] = '0' + (bc->max_scratchpads / 10);
+        diag[p++] = '0' + (bc->max_scratchpads % 10);
+        for (s = " slots="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + (bc->max_slots / 10);
+        diag[p++] = '0' + (bc->max_slots % 10);
+        for (s = " ports="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + (bc->max_ports / 10);
+        diag[p++] = '0' + (bc->max_ports % 10);
         for (s = " err="; *s; s++) diag[p++] = *s;
-        {
-            uint32_t e = g_boot_info.usb_controller.alloc_fail_status;
-            static const char hx[] = "0123456789ABCDEF";
-            diag[p++] = hx[(e >> 4) & 0xF];
-            diag[p++] = hx[e & 0xF];
-        }
+        { uint32_t e = bc->alloc_fail_status;
+          diag[p++] = hx[(e>>12)&0xF]; diag[p++] = hx[(e>>8)&0xF];
+          diag[p++] = hx[(e>>4)&0xF];  diag[p++] = hx[e&0xF]; }
         diag[p++] = '/';
-        diag[p++] = '0' + g_boot_info.usb_controller.alloc_fail_page;
-        for (s = " (35s)"; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + bc->alloc_fail_page;
+        for (s = " v="; *s; s++) diag[p++] = *s;
+        diag[p++] = hx[(bc->hci_version >> 12) & 0xF];
+        diag[p++] = hx[(bc->hci_version >> 8) & 0xF];
+        diag[p++] = hx[(bc->hci_version >> 4) & 0xF];
+        diag[p++] = hx[bc->hci_version & 0xF];
         diag[p] = '\0';
+
         boot_splash_status(diag);
+        klog(LOG_INFO, "xhci", "VPD: %s", diag);
         sleep_ms(35000);
     }
 
