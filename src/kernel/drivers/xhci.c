@@ -17,8 +17,6 @@
 #include "kernel/irq.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
-#include "kernel/boot_splash.h"
-#include "kernel/timer.h"
 
 /* ---- Static state -------------------------------------------------------- */
 
@@ -254,9 +252,8 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         const struct boot_usb_controller *bc = &g_boot_info.usb_controller;
 
         klog(LOG_INFO, "xhci",
-             "Zero-delay handover: inheriting bootloader DMA (%u pages)",
-             (uint64_t)bc->dma_page_count);
-        boot_splash_status("HANDOVER: inheriting DMA...");
+             "Handover: inheriting bootloader DMA (%u pages, %u scratchpads)",
+             (uint64_t)bc->dma_page_count, (uint64_t)bc->scratchpad_page_count);
 
         /* Populate controller struct from boot_info */
         hc->max_scratchpads = bc->max_scratchpads;
@@ -269,18 +266,14 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         hc->scratchpad_array      = bc->scratchpad_array_phys ?
             (uint64_t *)(uintptr_t)bc->scratchpad_array_phys : (uint64_t *)0;
         hc->scratchpad_array_phys = bc->scratchpad_array_phys;
-
         hc->erst      = (struct xhci_erst_entry *)(uintptr_t)bc->erst_phys;
         hc->erst_phys = bc->erst_phys;
 
-        /* Step 1: Halt controller to sync ring state */
-        boot_splash_status("HANDOVER: halting...");
+        /* Halt controller to sync ring state (no reset — preserves DCBAA) */
         {
             uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
             uint32_t sts = xhci_read32(hc->op_base, XHCI_OP_USBSTS);
-            int already_halted = (sts & XHCI_STS_HCH) ? 1 : 0;
-
-            if (!already_halted) {
+            if (!(sts & XHCI_STS_HCH)) {
                 cmd &= ~XHCI_CMD_RUN;
                 xhci_write32(hc->op_base, XHCI_OP_USBCMD, cmd);
                 uint32_t timeout = XHCI_HALT_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
@@ -289,38 +282,28 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                     xhci_delay_us(XHCI_POLL_INTERVAL_US);
                 }
             }
-
-            sts = xhci_read32(hc->op_base, XHCI_OP_USBSTS);
-            if (!(sts & XHCI_STS_HCH)) {
-                boot_splash_status("HANDOVER FAIL: halt timeout");
-                sleep_ms(30000);
+            if (!(xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH)) {
+                klog(LOG_WARN, "xhci", "Handover halt timeout — falling back");
                 goto full_init;
             }
-            klog(LOG_DEBUG, "xhci", "Handover: halted (was %s)",
-                 already_halted ? "already halted" : "running");
         }
+        klog(LOG_DEBUG, "xhci", "Handover: halted");
 
-        /* Step 2: Write MaxSlotsEn (may have been cleared by halt) */
+        /* Configure registers and re-init rings on persistent pages */
         xhci_write32(hc->op_base, XHCI_OP_CONFIG, hc->max_slots);
-
-        /* Step 3: Write DCBAAP to our persistent DCBAA */
         xhci_write64(hc->op_base, XHCI_OP_DCBAAP, hc->dcbaa_phys);
 
-        /* Step 4: Re-initialize rings on existing pages */
-        boot_splash_status("HANDOVER: init rings...");
         hc->cmd_ring.trbs = (struct xhci_trb *)(uintptr_t)bc->cmd_ring_phys;
         hc->cmd_ring.phys = bc->cmd_ring_phys;
         hc->evt_ring.trbs = (struct xhci_trb *)(uintptr_t)bc->evt_ring_phys;
         hc->evt_ring.phys = bc->evt_ring_phys;
 
         if (xhci_rings_init(hc) != 0) {
-            boot_splash_status("HANDOVER FAIL: ring init");
-            sleep_ms(30000);
+            klog(LOG_WARN, "xhci", "Handover ring init failed — falling back");
             goto full_init;
         }
 
-        /* Step 5: Restart controller */
-        boot_splash_status("HANDOVER: starting...");
+        /* Restart controller */
         {
             uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
             cmd |= XHCI_CMD_RUN;
@@ -328,8 +311,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
             uint32_t timeout = XHCI_HALT_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
             while (xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH) {
                 if (--timeout == 0) {
-                    boot_splash_status("HANDOVER FAIL: start timeout");
-                    sleep_ms(30000);
+                    klog(LOG_WARN, "xhci", "Handover restart failed — falling back");
                     goto full_init;
                 }
                 xhci_delay_us(XHCI_POLL_INTERVAL_US);
@@ -340,7 +322,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         num_controllers++;
 
         klog(LOG_INFO, "xhci",
-             "xHCI v%u.%u handover OK — %u slots, %u ports",
+             "xHCI v%u.%u handover OK — %u slots, %u ports (DMA inherited)",
              (uint64_t)((hc->hci_version >> 8) & 0xFF),
              (uint64_t)(hc->hci_version & 0xFF),
              (uint64_t)hc->max_slots,
@@ -348,12 +330,10 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
         POST16(0xD751);
 
-        /* Step 6: Intel EHCI→xHCI port routing (needed even in handover —
-         * halt clears port CCS on Intel 8-series, and EHCI may own ports) */
+        /* Intel EHCI→xHCI port routing (halt clears CCS on Intel 8-series) */
         {
             uint16_t vid = pci_read16(bus, dev, func, PCI_VENDOR_ID);
             if (vid == 0x8086) {
-                /* Check for EHCI on same bus */
                 int ehci_found = 0;
                 uint8_t d2, f2;
                 for (d2 = 0; d2 < PCI_MAX_DEV && !ehci_found; d2++) {
@@ -367,41 +347,19 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                     }
                 }
                 if (ehci_found) {
-                    boot_splash_status("HANDOVER: Intel EHCI routing...");
+                    klog(LOG_INFO, "xhci", "Handover: EHCI found — routing ports + 500ms");
                     pci_write32(bus, dev, func, 0xD0,
                                 pci_read32(bus, dev, func, 0xD0) | 0xFFFFFFFF);
                     pci_write32(bus, dev, func, 0xD8,
                                 pci_read32(bus, dev, func, 0xD8) | 0xFFFFFFFF);
                     xhci_delay_us(500000);
                 } else {
-                    klog(LOG_INFO, "xhci",
-                         "Handover: no EHCI — skipping routing");
+                    klog(LOG_INFO, "xhci", "Handover: no EHCI — skipping routing");
                 }
             }
         }
 
-        /* Step 7: Enumerate ports */
-        boot_splash_status("HANDOVER: enumerating ports...");
-        {
-            int enum_count = xhci_enumerate_ports(hc);
-
-            /* Show result with details */
-            static char res[80];
-            int p = 0;
-            const char *rs;
-            for (rs = "HANDOVER OK: "; *rs; rs++) res[p++] = *rs;
-            res[p++] = '0' + (enum_count > 9 ? 9 : enum_count);
-            for (rs = " devs, CCS="; *rs; rs++) res[p++] = *rs;
-            res[p++] = '0' + (xhci_get_ccs_count() > 9 ? 9 : xhci_get_ccs_count());
-            for (rs = " stg="; *rs; rs++) res[p++] = *rs;
-            res[p++] = '0' + xhci_get_enum_stage();
-            for (rs = " msc="; *rs; rs++) res[p++] = *rs;
-            res[p++] = '0' + xhci_msc_device_count();
-            res[p] = '\0';
-            boot_splash_status(res);
-            sleep_ms(60000);
-        }
-
+        xhci_enumerate_ports(hc);
         return 0;
     }
 
@@ -425,87 +383,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     }
     POST16(0xD751);
 
-    /* VPD diagnostic: show handover state across 3 short lines */
-    {
-        static char d[80];
-        int p;
-        const char *s;
-        static const char hx[] = "0123456789ABCDEF";
-        const struct boot_usb_controller *bc = &g_boot_info.usb_controller;
 
-        /* Line 1: hc disc devs ctrl pci */
-        p = 0;
-        for (s = "hc="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + g_boot_info.usb_handover_complete;
-        for (s = " disc="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + g_boot_info.usb_discovery_ok;
-        for (s = " devs="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + (g_boot_info.usb_device_count > 9 ? 9 : g_boot_info.usb_device_count);
-        for (s = " ctrl="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + bc->active;
-        for (s = " pci="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + (bc->pci_bus / 10);
-        d[p++] = '0' + (bc->pci_bus % 10);
-        d[p++] = ':';
-        d[p++] = '0' + (bc->pci_dev / 10);
-        d[p++] = '0' + (bc->pci_dev % 10);
-        d[p++] = '.';
-        d[p++] = '0' + bc->pci_func;
-        d[p] = '\0';
-        boot_splash_status(d);
-        klog(LOG_INFO, "xhci", "VPD1: %s", d);
-        sleep_ms(20000);
-
-        /* Line 2: mmio dma sp slots ports v */
-        p = 0;
-        for (s = "mmio="; *s; s++) d[p++] = *s;
-        { uint64_t m = bc->mmio_phys;
-          d[p++] = hx[(m>>28)&0xF]; d[p++] = hx[(m>>24)&0xF];
-          d[p++] = hx[(m>>20)&0xF]; d[p++] = hx[(m>>16)&0xF];
-          d[p++] = hx[(m>>12)&0xF]; d[p++] = hx[(m>>8)&0xF];
-          d[p++] = hx[(m>>4)&0xF];  d[p++] = hx[m&0xF]; }
-        for (s = " sp="; *s; s++) d[p++] = *s;
-        { uint32_t sv = bc->max_scratchpads;
-          d[p++] = hx[(sv >> 8) & 0xF];
-          d[p++] = hx[(sv >> 4) & 0xF];
-          d[p++] = hx[sv & 0xF]; }
-        for (s = " slots="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + (bc->max_slots / 10);
-        d[p++] = '0' + (bc->max_slots % 10);
-        for (s = " ports="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + (bc->max_ports / 10);
-        d[p++] = '0' + (bc->max_ports % 10);
-        for (s = " v="; *s; s++) d[p++] = *s;
-        d[p++] = hx[(bc->hci_version>>8)&0xF];
-        d[p++] = hx[(bc->hci_version>>4)&0xF];
-        d[p++] = hx[bc->hci_version&0xF];
-        d[p] = '\0';
-        boot_splash_status(d);
-        klog(LOG_INFO, "xhci", "VPD2: %s", d);
-        sleep_ms(20000);
-
-        /* Line 3: dma pages + error status */
-        p = 0;
-        for (s = "dma="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + (bc->dma_page_count / 10);
-        d[p++] = '0' + (bc->dma_page_count % 10);
-        for (s = " err="; *s; s++) d[p++] = *s;
-        { uint32_t e = bc->alloc_fail_status;
-          d[p++] = hx[(e>>12)&0xF]; d[p++] = hx[(e>>8)&0xF];
-          d[p++] = hx[(e>>4)&0xF];  d[p++] = hx[e&0xF]; }
-        d[p++] = '/';
-        d[p++] = '0' + bc->alloc_fail_page;
-        for (s = " dcbaa="; *s; s++) d[p++] = *s;
-        { uint64_t a = bc->dcbaa_phys;
-          d[p++] = hx[(a>>28)&0xF]; d[p++] = hx[(a>>24)&0xF];
-          d[p++] = hx[(a>>20)&0xF]; d[p++] = hx[(a>>16)&0xF];
-          d[p++] = hx[(a>>12)&0xF]; d[p++] = hx[(a>>8)&0xF];
-          d[p++] = hx[(a>>4)&0xF];  d[p++] = hx[a&0xF]; }
-        d[p] = '\0';
-        boot_splash_status(d);
-        klog(LOG_INFO, "xhci", "VPD3: %s", d);
-        sleep_ms(20000);
-    }
 
 full_init:
 

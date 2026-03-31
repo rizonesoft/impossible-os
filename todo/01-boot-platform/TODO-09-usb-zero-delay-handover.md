@@ -30,7 +30,7 @@
 | --- | :---: | ----------------------------------------------------- | ---------- | :----: |
 | ⭐  |   1   | Bootloader allocates xHCI DMA structures              | —          |  [x]   |
 | ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [x]   |
-| ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [ ]   |
+| ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [-]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state        | §3         |  [ ]   |
 | ⭐  |   5   | Kernel inherits controller without halt/reset         | §1, §2     |  [x]   |
 | ⭐  |   6   | Kernel registers MSC devices from boot_info geometry  | §5         |  [ ]   |
