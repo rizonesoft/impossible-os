@@ -54,7 +54,7 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 - [x] Mark allocated pages in `dma_pages[]` array; kernel PMM calls `pmm_mark_region_used()` for each
 - [x] PCI config space access added to bootloader (`bl_pci_read8/16/32` via 0xCF8/0xCFC)
 - [x] xHCI capability registers read (HCSPARAMS1/2, HCCPARAMS1, DBOFF, RTSOFF)
-- [ ] Commit: `"boot: allocate persistent xHCI DMA structures in EfiLoaderData"`
+- [x] Commit: `"boot: allocate persistent xHCI DMA structures in EfiLoaderData"`
 
 **Test checkpoint:** Serial shows allocated DMA addresses. POST code 0xB082. Verify `EfiLoaderData` pages survive ExitBootServices by reading back from kernel. Test on: QEMU `run-usb`, bare metal.
 
