@@ -382,6 +382,15 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         for (s = " sp="; *s; s++) diag[p++] = *s;
         diag[p++] = '0' + (g_boot_info.usb_controller.max_scratchpads / 10);
         diag[p++] = '0' + (g_boot_info.usb_controller.max_scratchpads % 10);
+        for (s = " err="; *s; s++) diag[p++] = *s;
+        {
+            uint32_t e = g_boot_info.usb_controller.alloc_fail_status;
+            static const char hx[] = "0123456789ABCDEF";
+            diag[p++] = hx[(e >> 4) & 0xF];
+            diag[p++] = hx[e & 0xF];
+        }
+        diag[p++] = '/';
+        diag[p++] = '0' + g_boot_info.usb_controller.alloc_fail_page;
         for (s = " (35s)"; *s; s++) diag[p++] = *s;
         diag[p] = '\0';
         boot_splash_status(diag);

@@ -243,6 +243,8 @@ struct boot_usb_controller {
     /* Page tracking for kernel PMM reservation */
     uint64_t dma_pages[BOOT_USB_MAX_DMA_PAGES];
     uint32_t dma_page_count;     /* number of valid entries in dma_pages[] */
+    uint32_t alloc_fail_status;  /* DEBUG: last AllocatePages failure EFI_STATUS (low 32 bits) */
+    uint32_t alloc_fail_page;    /* DEBUG: which page# failed */
 };
 
 /* All boot info collected from UEFI bootloader */

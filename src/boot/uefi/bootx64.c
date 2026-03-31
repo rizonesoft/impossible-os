@@ -165,6 +165,8 @@ struct boot_usb_controller {
     UINT64  erst_phys;
     UINT64  dma_pages[BOOT_USB_MAX_DMA_PAGES];
     UINT32  dma_page_count;
+    UINT32  alloc_fail_status;
+    UINT32  alloc_fail_page;
 };
 
 struct boot_info {
@@ -1698,16 +1700,14 @@ static UINT64 bl_alloc_dma_page(struct boot_usb_controller *ctrl)
 
     /* Use AllocatePages for page-aligned DMA memory */
     status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
-    if (EFI_ERROR(status)) {
+    if (EFI_ERROR(status) || addr == 0) {
+        ctrl->alloc_fail_status = (UINT32)(status & 0xFFFFFFFF);
+        ctrl->alloc_fail_page   = ctrl->dma_page_count;
         serial_early_print("[BOOT] xHCI DMA: AllocatePages failed status=");
         serial_early_print_uint((UINT32)(status & 0xFFFF));
         serial_early_print(" page#=");
         serial_early_print_uint(ctrl->dma_page_count);
         serial_early_print("\n");
-        return 0;
-    }
-    if (addr == 0) {
-        serial_early_print("[BOOT] xHCI DMA: AllocatePages returned addr=0\n");
         return 0;
     }
 
