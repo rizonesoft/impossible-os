@@ -125,7 +125,7 @@ When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_
 - [x] Verify controller is running (USBSTS.HCH=0) — if HCH=1, fall back via `goto full_init`
 - [ ] Issue a No-Op command to verify command ring — deferred (enumeration validates it implicitly)
 - [x] Go straight to `xhci_enumerate_ports()` — skip Intel routing entirely
-- [ ] Commit: `"drivers: xHCI zero-delay handover — inherit bootloader DMA state"`
+- [x] Commit: `"drivers: xHCI zero-delay handover — inherit bootloader DMA state"`
 
 **Test checkpoint:** Serial shows "zero-delay handover: controller inherited". No halt/reset/500ms in log. USB device available within 1ms of kernel start. POST code 0xD755. If crash at 0xD755: controller state corrupt — fall back to TODO-07 path. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
