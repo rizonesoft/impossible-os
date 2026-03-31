@@ -25,7 +25,7 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
-# Resolve project root: scripts/vm/fs -> parent -> parent -> parent
+# Resolve project root: scripts/vm/storage -> parent -> parent -> parent
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VM_DIR     = Split-Path -Parent $SCRIPT_DIR
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $VM_DIR)

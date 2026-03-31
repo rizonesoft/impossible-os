@@ -35,6 +35,7 @@
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/ahci.h"
+#include "kernel/drivers/nvme.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/timer.h"
 #include "main/main_internal.h"
@@ -85,6 +86,9 @@ void boot_phase2(void)
     ahci_init();
     POST16(POST16_AHCI_OK);
     /* Bare metal AHCI skip REMOVED — root cause was clac #UD, fixed 2026-03-29. */
+    POST16(POST16_NVME);
+    nvme_init();
+    POST16(POST16_NVME_OK);
     ahci_setup_interrupts();
     xhci_setup_interrupts();  /* After enumeration — ISR would steal events from polling loops */
     blkdev_register_all();

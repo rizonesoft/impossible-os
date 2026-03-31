@@ -17,13 +17,14 @@
 #   2. Build in WSL2: bash scripts/build.sh
 Param(
     [ValidateSet('auto','whpx','tcg')]
-    [string]$Accel = 'auto',
+    # TCG required: WHPX hangs at LAPIC Init Level De-Assert during SMP bringup
+    [string]$Accel = 'tcg',
     [switch]$Build = $false
 )
 
 $ErrorActionPreference = "Stop"
 
-# Resolve project root: scripts/vm/fs -> parent -> parent -> parent
+# Resolve project root: scripts/vm/storage -> parent -> parent -> parent
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VM_DIR     = Split-Path -Parent $SCRIPT_DIR
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $VM_DIR)
