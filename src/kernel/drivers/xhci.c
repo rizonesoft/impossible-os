@@ -366,6 +366,9 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         for (s = " dma="; *s; s++) diag[p++] = *s;
         diag[p++] = '0' + (g_boot_info.usb_controller.dma_page_count / 10);
         diag[p++] = '0' + (g_boot_info.usb_controller.dma_page_count % 10);
+        for (s = " sp="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + (g_boot_info.usb_controller.max_scratchpads / 10);
+        diag[p++] = '0' + (g_boot_info.usb_controller.max_scratchpads % 10);
         for (s = " (35s)"; *s; s++) diag[p++] = *s;
         diag[p] = '\0';
         boot_splash_status(diag);
