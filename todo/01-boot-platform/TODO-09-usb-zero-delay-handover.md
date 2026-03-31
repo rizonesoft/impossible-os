@@ -73,7 +73,7 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 - [x] Write DCBAAP, CRCR (with Link TRB + cycle=1), ERST, ERDP, ERSTBA, CONFIG
 - [x] Start controller (USBCMD.RS=1 + INTE=1, IMAN.IE=1)
 - [x] `usb_handover_complete` set to 1 on success
-- [ ] Commit: `"boot: USBLEGSUP handoff + controller takeover in bootloader"`
+- [x] Commit: `"boot: USBLEGSUP handoff + controller takeover in bootloader"`
 
 > [!IMPORTANT]
 > After halting the firmware's USB stack, `EFI_USB_IO_PROTOCOL` and `EFI_BLOCK_IO_PROTOCOL` are no longer usable. Phase A device discovery must complete BEFORE this step. Order: Phase A (discover via EFI) → §2 (takeover) → §3 (enumerate with our state).
