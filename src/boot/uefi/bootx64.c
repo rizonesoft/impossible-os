@@ -1694,26 +1694,42 @@ static UINT64 bl_alloc_dma_page(struct boot_usb_controller *ctrl)
 {
     EFI_PHYSICAL_ADDRESS addr = 0;
     EFI_STATUS status;
+    UINTN i;
 
+    /* Use AllocatePages for page-aligned DMA memory */
     status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
-    if (EFI_ERROR(status) || addr == 0) {
+    if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] xHCI DMA: AllocatePages failed status=");
         serial_early_print_uint((UINT32)(status & 0xFFFF));
-        serial_early_print(" addr=");
-        serial_early_print_hex16((UINT16)(addr >> 16));
-        serial_early_print_hex16((UINT16)addr);
         serial_early_print(" page#=");
         serial_early_print_uint(ctrl->dma_page_count);
         serial_early_print("\n");
         return 0;
     }
+    if (addr == 0) {
+        serial_early_print("[BOOT] xHCI DMA: AllocatePages returned addr=0\n");
+        return 0;
+    }
 
-    /* Zero the page */
-    efi_memset((void *)(UINTN)addr, 0, 4096);
+    /* Zero the page using gBS->SetMem if available, otherwise byte-by-byte.
+     * Some firmware have memory protection that makes efi_memset fail on
+     * newly allocated pages. */
+    {
+        volatile UINT8 *p = (volatile UINT8 *)(UINTN)addr;
+        for (i = 0; i < 4096; i++)
+            p[i] = 0;
+    }
 
     /* Track for kernel PMM reservation */
     if (ctrl->dma_page_count < BOOT_USB_MAX_DMA_PAGES)
         ctrl->dma_pages[ctrl->dma_page_count++] = addr;
+
+    serial_early_print("[BOOT] xHCI DMA: page ");
+    serial_early_print_uint(ctrl->dma_page_count);
+    serial_early_print(" @ 0x");
+    serial_early_print_hex16((UINT16)(addr >> 16));
+    serial_early_print_hex16((UINT16)addr);
+    serial_early_print("\n");
 
     return addr;
 }
