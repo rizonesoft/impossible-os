@@ -137,7 +137,7 @@ struct boot_usb_device {
 };
 
 /* xHCI controller DMA state — must match kernel/boot_info.h */
-#define BOOT_USB_MAX_SCRATCHPADS 32
+#define BOOT_USB_MAX_SCRATCHPADS 128
 #define BOOT_USB_MAX_DMA_PAGES   64
 
 struct boot_usb_controller {
@@ -1806,7 +1806,7 @@ found_xhci:
 
     /* ---- Read capability registers (MMIO is identity-mapped by firmware) ---- */
     ctrl->cap_length  = bl_mmio_read8(mmio, 0x00);
-    ctrl->hci_version = (UINT16)bl_mmio_read32(mmio, 0x00) >> 16;
+    ctrl->hci_version = (UINT16)(bl_mmio_read32(mmio, 0x00) >> 16);
 
     hcsparams1 = bl_mmio_read32(mmio, 0x04);
     ctrl->max_slots = hcsparams1 & 0xFF;

@@ -206,7 +206,7 @@ struct boot_usb_device {
  * Survives ExitBootServices.  Kernel must call pmm_mark_region_used() for
  * each non-zero physical address to prevent PMM from reclaiming them.
  * Set usb_handover_complete = 1 when all structures are valid. */
-#define BOOT_USB_MAX_SCRATCHPADS 32
+#define BOOT_USB_MAX_SCRATCHPADS 128
 #define BOOT_USB_MAX_DMA_PAGES   64  /* max pages to reserve in PMM */
 
 struct boot_usb_controller {
