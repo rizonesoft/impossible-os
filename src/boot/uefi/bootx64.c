@@ -137,8 +137,8 @@ struct boot_usb_device {
 };
 
 /* xHCI controller DMA state — must match kernel/boot_info.h */
-#define BOOT_USB_MAX_SCRATCHPADS 256
-#define BOOT_USB_MAX_DMA_PAGES   270
+#define BOOT_USB_MAX_SCRATCHPADS 16
+#define BOOT_USB_MAX_DMA_PAGES   16
 
 struct boot_usb_controller {
     UINT8   pci_bus;
@@ -159,7 +159,9 @@ struct boot_usb_controller {
     UINT32  max_scratchpads;
     UINT64  dcbaa_phys;
     UINT64  scratchpad_array_phys;
-    UINT64  scratchpad_pages[BOOT_USB_MAX_SCRATCHPADS];
+    UINT64  scratchpad_base_phys;
+    UINT32  scratchpad_page_count;
+    UINT32  scratchpad_pad;
     UINT64  cmd_ring_phys;
     UINT64  evt_ring_phys;
     UINT64  erst_phys;
@@ -1850,28 +1852,55 @@ found_xhci:
 
     /* ---- Allocate scratchpad buffers ---- */
     if (ctrl->max_scratchpads > 0) {
-        if (ctrl->max_scratchpads > BOOT_USB_MAX_SCRATCHPADS) {
-            serial_early_print("[BOOT] xHCI DMA: too many scratchpads (");
-            serial_early_print_uint(ctrl->max_scratchpads);
-            serial_early_print(")\n");
-            return;
-        }
-        /* Scratchpad array page */
-        ctrl->scratchpad_array_phys = bl_alloc_dma_page(ctrl);
-        if (!ctrl->scratchpad_array_phys) {
+        EFI_PHYSICAL_ADDRESS sp_array_addr = 0, sp_base_addr = 0;
+        EFI_STATUS sp_status;
+        UINT32 sp_count = ctrl->max_scratchpads;
+
+        /* Scratchpad array: sp_count × 8 bytes (fits in 1 page for up to 512 entries) */
+        sp_status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+                                       (sp_count * 8 + 4095) / 4096, &sp_array_addr);
+        if (EFI_ERROR(sp_status) || sp_array_addr == 0) {
             serial_early_print("[BOOT] xHCI DMA: scratchpad array alloc failed\n");
             return;
         }
+        efi_memset((void *)(UINTN)sp_array_addr, 0, sp_count * 8);
+        ctrl->scratchpad_array_phys = sp_array_addr;
+        if (ctrl->dma_page_count < BOOT_USB_MAX_DMA_PAGES)
+            ctrl->dma_pages[ctrl->dma_page_count++] = sp_array_addr;
 
-        /* Individual scratchpad pages */
-        for (i = 0; i < ctrl->max_scratchpads; i++) {
-            ctrl->scratchpad_pages[i] = bl_alloc_dma_page(ctrl);
-            if (!ctrl->scratchpad_pages[i]) return;
-            /* Write page address into scratchpad array */
-            ((UINT64 *)(UINTN)ctrl->scratchpad_array_phys)[i] = ctrl->scratchpad_pages[i];
+        /* Scratchpad buffer pages: allocate all contiguously */
+        sp_status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+                                       sp_count, &sp_base_addr);
+        if (EFI_ERROR(sp_status) || sp_base_addr == 0) {
+            serial_early_print("[BOOT] xHCI DMA: scratchpad pages alloc failed (");
+            serial_early_print_uint(sp_count);
+            serial_early_print(" pages)\n");
+            ctrl->alloc_fail_status = (UINT32)(sp_status & 0xFFFFFFFF);
+            ctrl->alloc_fail_page   = ctrl->dma_page_count;
+            return;
         }
+        efi_memset((void *)(UINTN)sp_base_addr, 0, (UINTN)sp_count * 4096);
+        ctrl->scratchpad_base_phys  = sp_base_addr;
+        ctrl->scratchpad_page_count = sp_count;
+        if (ctrl->dma_page_count < BOOT_USB_MAX_DMA_PAGES)
+            ctrl->dma_pages[ctrl->dma_page_count++] = sp_base_addr;
+
+        /* Fill scratchpad array with individual page addresses */
+        {
+            volatile UINT64 *arr = (volatile UINT64 *)(UINTN)sp_array_addr;
+            for (i = 0; i < sp_count; i++)
+                arr[i] = sp_base_addr + (UINT64)i * 4096;
+        }
+
         /* DCBAA[0] = scratchpad array physical address */
-        ((UINT64 *)(UINTN)ctrl->dcbaa_phys)[0] = ctrl->scratchpad_array_phys;
+        ((UINT64 *)(UINTN)ctrl->dcbaa_phys)[0] = sp_array_addr;
+
+        serial_early_print("[BOOT] xHCI DMA: ");
+        serial_early_print_uint(sp_count);
+        serial_early_print(" scratchpad pages at 0x");
+        serial_early_print_hex16((UINT16)(sp_base_addr >> 16));
+        serial_early_print_hex16((UINT16)sp_base_addr);
+        serial_early_print("\n");
     }
 
     /* ---- Allocate Command Ring (256 TRBs × 16B = 4 KiB) ---- */

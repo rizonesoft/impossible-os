@@ -206,8 +206,8 @@ struct boot_usb_device {
  * Survives ExitBootServices.  Kernel must call pmm_mark_region_used() for
  * each non-zero physical address to prevent PMM from reclaiming them.
  * Set usb_handover_complete = 1 when all structures are valid. */
-#define BOOT_USB_MAX_SCRATCHPADS 256
-#define BOOT_USB_MAX_DMA_PAGES   270  /* max pages to reserve in PMM */
+#define BOOT_USB_MAX_SCRATCHPADS 16
+#define BOOT_USB_MAX_DMA_PAGES   16  /* max pages to reserve in PMM */
 
 struct boot_usb_controller {
     /* PCI identity */
@@ -235,7 +235,9 @@ struct boot_usb_controller {
     /* DMA structure physical addresses (allocated as EfiLoaderData pages) */
     uint64_t dcbaa_phys;         /* DCBAA: (max_slots+1) × 8B, 64B aligned */
     uint64_t scratchpad_array_phys;
-    uint64_t scratchpad_pages[BOOT_USB_MAX_SCRATCHPADS];
+    uint64_t scratchpad_base_phys; /* contiguous scratchpad pages base */
+    uint32_t scratchpad_page_count; /* actual pages allocated */
+    uint32_t scratchpad_pad;
     uint64_t cmd_ring_phys;      /* Command Ring: 256 TRBs × 16B = 4 KiB */
     uint64_t evt_ring_phys;      /* Event Ring: 256 TRBs × 16B = 4 KiB */
     uint64_t erst_phys;          /* ERST: 1 entry × 16B (1 page) */

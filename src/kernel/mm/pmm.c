@@ -185,13 +185,22 @@ void pmm_init(void)
      * reclaimed.  Reserve them so the kernel can inherit the DMA state. */
     if (g_boot_info.usb_controller.active && g_boot_info.usb_controller.dma_page_count > 0) {
         uint32_t ui;
+        /* Reserve individual DMA pages (DCBAA, cmd ring, evt ring, ERST, etc.) */
         for (ui = 0; ui < g_boot_info.usb_controller.dma_page_count; ui++) {
             uint64_t page = g_boot_info.usb_controller.dma_pages[ui];
             if (page != 0)
                 pmm_mark_region_used((uintptr_t)page, 4096);
         }
-        klog(LOG_INFO, "mm", "PMM: reserved %u xHCI DMA pages from bootloader",
-             (uint64_t)g_boot_info.usb_controller.dma_page_count);
+        /* Reserve contiguous scratchpad buffer region */
+        if (g_boot_info.usb_controller.scratchpad_base_phys &&
+            g_boot_info.usb_controller.scratchpad_page_count > 0) {
+            pmm_mark_region_used(
+                (uintptr_t)g_boot_info.usb_controller.scratchpad_base_phys,
+                (uint64_t)g_boot_info.usb_controller.scratchpad_page_count * 4096);
+        }
+        klog(LOG_INFO, "mm", "PMM: reserved %u xHCI DMA pages + %u scratchpad pages",
+             (uint64_t)g_boot_info.usb_controller.dma_page_count,
+             (uint64_t)g_boot_info.usb_controller.scratchpad_page_count);
     }
 
     /* Log UEFI memory map summary */
