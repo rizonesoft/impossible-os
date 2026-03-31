@@ -1696,8 +1696,17 @@ static UINT64 bl_alloc_dma_page(struct boot_usb_controller *ctrl)
     EFI_STATUS status;
 
     status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
-    if (EFI_ERROR(status) || addr == 0)
+    if (EFI_ERROR(status) || addr == 0) {
+        serial_early_print("[BOOT] xHCI DMA: AllocatePages failed status=");
+        serial_early_print_uint((UINT32)(status & 0xFFFF));
+        serial_early_print(" addr=");
+        serial_early_print_hex16((UINT16)(addr >> 16));
+        serial_early_print_hex16((UINT16)addr);
+        serial_early_print(" page#=");
+        serial_early_print_uint(ctrl->dma_page_count);
+        serial_early_print("\n");
         return 0;
+    }
 
     /* Zero the page */
     efi_memset((void *)(UINTN)addr, 0, 4096);
@@ -1826,12 +1835,17 @@ found_xhci:
     /* ---- Allocate scratchpad buffers ---- */
     if (ctrl->max_scratchpads > 0) {
         if (ctrl->max_scratchpads > BOOT_USB_MAX_SCRATCHPADS) {
-            serial_early_print("[BOOT] xHCI DMA: too many scratchpads\n");
+            serial_early_print("[BOOT] xHCI DMA: too many scratchpads (");
+            serial_early_print_uint(ctrl->max_scratchpads);
+            serial_early_print(")\n");
             return;
         }
         /* Scratchpad array page */
         ctrl->scratchpad_array_phys = bl_alloc_dma_page(ctrl);
-        if (!ctrl->scratchpad_array_phys) return;
+        if (!ctrl->scratchpad_array_phys) {
+            serial_early_print("[BOOT] xHCI DMA: scratchpad array alloc failed\n");
+            return;
+        }
 
         /* Individual scratchpad pages */
         for (i = 0; i < ctrl->max_scratchpads; i++) {

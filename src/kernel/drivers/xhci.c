@@ -366,6 +366,19 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         for (s = " dma="; *s; s++) diag[p++] = *s;
         diag[p++] = '0' + (g_boot_info.usb_controller.dma_page_count / 10);
         diag[p++] = '0' + (g_boot_info.usb_controller.dma_page_count % 10);
+        for (s = " mmio="; *s; s++) diag[p++] = *s;
+        {
+            uint64_t m = g_boot_info.usb_controller.mmio_phys;
+            static const char hx[] = "0123456789ABCDEF";
+            diag[p++] = hx[(m >> 28) & 0xF];
+            diag[p++] = hx[(m >> 24) & 0xF];
+            diag[p++] = hx[(m >> 20) & 0xF];
+            diag[p++] = hx[(m >> 16) & 0xF];
+            diag[p++] = hx[(m >> 12) & 0xF];
+            diag[p++] = hx[(m >> 8) & 0xF];
+            diag[p++] = hx[(m >> 4) & 0xF];
+            diag[p++] = hx[m & 0xF];
+        }
         for (s = " sp="; *s; s++) diag[p++] = *s;
         diag[p++] = '0' + (g_boot_info.usb_controller.max_scratchpads / 10);
         diag[p++] = '0' + (g_boot_info.usb_controller.max_scratchpads % 10);
