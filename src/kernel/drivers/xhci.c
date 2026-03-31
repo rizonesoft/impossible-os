@@ -399,7 +399,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
         boot_splash_status(diag);
         klog(LOG_INFO, "xhci", "VPD: %s", diag);
-        sleep_ms(35000);
+        sleep_ms(60000);
     }
 
 full_init:
