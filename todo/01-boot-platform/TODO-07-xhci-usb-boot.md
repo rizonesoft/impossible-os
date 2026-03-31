@@ -17,6 +17,7 @@
 - [`src/kernel/drivers/mouse.c`](../../src/kernel/drivers/mouse.c) — PS/2 mouse (injection target for USB HID)
 - → XREF: `04-drivers-hardware/TODO-09-usb-stack.md` — advanced USB features (hub, hot-plug, EHCI, BT, CDC)
 - → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §5` — MSI/MSI-X (xHCI uses MSI)
+- → XREF: `01-boot-platform/TODO-09-usb-zero-delay-handover.md` — true zero-delay handover (persistent DMA in bootloader)
 
 ## Outcome
 
