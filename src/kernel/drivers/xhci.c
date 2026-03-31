@@ -17,6 +17,8 @@
 #include "kernel/irq.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_splash.h"
+#include "kernel/timer.h"
 
 /* ---- Static state -------------------------------------------------------- */
 
@@ -291,6 +293,9 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
             if (sts & XHCI_STS_HCH) {
                 klog(LOG_WARN, "xhci",
                      "Handover controller not running (HCH=1) — falling back to full init");
+                /* DEBUG: show fallback on splash */
+                boot_splash_status("xHCI HANDOVER FAIL — HCH=1, full init (35s)");
+                sleep_ms(35000);
                 goto full_init;
             }
         }
@@ -306,6 +311,11 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
              (uint64_t)hc->max_ports);
 
         POST16(0xD751);
+
+        /* DEBUG: show handover result on splash for bare-metal verification */
+        boot_splash_status("xHCI HANDOVER OK — inherited DMA, no halt/reset (35s)");
+        sleep_ms(35000);
+        boot_splash_status("Enumerating USB ports...");
 
         /* Skip Intel routing — bootloader already handled it */
         /* Go straight to port enumeration */
@@ -332,6 +342,12 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         }
     }
     POST16(0xD751);
+
+    /* DEBUG: no handover — show on splash */
+    if (!g_boot_info.usb_handover_complete) {
+        boot_splash_status("xHCI NO HANDOVER — full init path (35s)");
+        sleep_ms(35000);
+    }
 
 full_init:
 
