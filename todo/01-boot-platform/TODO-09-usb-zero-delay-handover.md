@@ -29,7 +29,7 @@
 | ⭐  | Order | Deliverable                                           | Depends On | Status |
 | --- | :---: | ----------------------------------------------------- | ---------- | :----: |
 | ⭐  |   1   | Bootloader allocates xHCI DMA structures              | —          |  [x]   |
-| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [ ]   |
+| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [x]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [ ]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state        | §3         |  [ ]   |
 | ⭐  |   5   | Kernel inherits controller without halt/reset         | §4         |  [ ]   |
@@ -65,12 +65,14 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 
 **Files:** `src/boot/uefi/bootx64.c`
 
-- [ ] Read xHCI BAR0 from PCI config space (class 0x0C/0x03/0x30)
-- [ ] Map MMIO via identity mapping (bootloader runs with firmware page tables)
-- [ ] Perform USBLEGSUP handoff (same algorithm as kernel, but pre-ExitBootServices)
-- [ ] Halt controller (USBCMD.RS=0) — firmware USB stack becomes unavailable
-- [ ] Write our DCBAAP, CRCR, ERST to point to persistent DMA structures
-- [ ] Start controller (USBCMD.RS=1) — now running with our DMA buffers
+- [x] Read xHCI BAR0 from PCI config space — reuses §1 `allocate_xhci_dma()` discovery
+- [x] MMIO identity-mapped by firmware — direct volatile pointer access
+- [x] USBLEGSUP handoff (walk extended caps for ID=1, set OS Owned, wait 1s)
+- [x] Halt controller (USBCMD.RS=0, poll HCH=1, 16ms timeout)
+- [x] Reset controller (HCRST=1, poll HCRST=0 AND CNR=0) — clean state for our DMA
+- [x] Write DCBAAP, CRCR (with Link TRB + cycle=1), ERST, ERDP, ERSTBA, CONFIG
+- [x] Start controller (USBCMD.RS=1 + INTE=1, IMAN.IE=1)
+- [x] `usb_handover_complete` set to 1 on success
 - [ ] Commit: `"boot: USBLEGSUP handoff + controller takeover in bootloader"`
 
 > [!IMPORTANT]

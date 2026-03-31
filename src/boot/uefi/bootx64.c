@@ -1870,6 +1870,216 @@ found_xhci:
 }
 
 /* ============================================================================
+ * TODO-09 §2: USBLEGSUP handoff + controller takeover
+ *
+ * Take xHCI ownership from BIOS/firmware, halt the controller, reset it,
+ * configure it to use our persistent DMA structures (from §1), and start it.
+ * After this, the controller runs with our DCBAA/rings and is ready for §3
+ * device enumeration.
+ * ============================================================================ */
+
+static inline void bl_mmio_write32(UINT64 base, UINT32 off, UINT32 val)
+{
+    *(volatile UINT32 *)((UINTN)base + off) = val;
+}
+
+static inline void bl_mmio_write64(UINT64 base, UINT32 off, UINT64 val)
+{
+    /* Two 32-bit writes — some xHCI controllers don't support 64-bit MMIO */
+    *(volatile UINT32 *)((UINTN)base + off)     = (UINT32)(val & 0xFFFFFFFF);
+    *(volatile UINT32 *)((UINTN)base + off + 4) = (UINT32)(val >> 32);
+}
+
+/* Busy-wait microseconds (port 0x80 write ≈ 1 µs on x86) */
+static void bl_delay_us(UINT32 us)
+{
+    UINT32 i;
+    for (i = 0; i < us; i++)
+        __asm__ volatile("outb %%al, $0x80" ::: "memory");
+}
+
+static void bl_usblegsup_handoff(UINT64 mmio, UINT32 hccparams1)
+{
+    UINT32 xecp_off = ((hccparams1 >> 16) & 0xFFFF) << 2;
+    UINT32 max_iter = 64;
+
+    if (xecp_off == 0) {
+        serial_early_print("[BOOT] xHCI takeover: no extended caps\n");
+        return;
+    }
+
+    while (xecp_off != 0 && max_iter-- > 0) {
+        UINT32 cap = bl_mmio_read32(mmio, xecp_off);
+        UINT8  cap_id   = (UINT8)(cap & 0xFF);
+        UINT8  next_ptr = (UINT8)((cap >> 8) & 0xFF);
+
+        if (cap_id == 1) {  /* USBLEGSUP */
+            if (!(cap & (1 << 16))) {
+                serial_early_print("[BOOT] xHCI takeover: BIOS doesn't own controller\n");
+                return;
+            }
+
+            serial_early_print("[BOOT] xHCI takeover: USBLEGSUP — requesting ownership\n");
+            bl_mmio_write32(mmio, xecp_off, cap | (1 << 24));
+
+            /* Wait up to 1s for BIOS to release */
+            {
+                UINT32 timeout = 1000;
+                while (timeout > 0) {
+                    cap = bl_mmio_read32(mmio, xecp_off);
+                    if (!(cap & (1 << 16))) {
+                        serial_early_print("[BOOT] xHCI takeover: BIOS released\n");
+                        bl_mmio_write32(mmio, xecp_off + 4, 0);  /* Clear USBLEGCTLSTS */
+                        return;
+                    }
+                    bl_delay_us(1000);
+                    timeout--;
+                }
+            }
+
+            /* Timeout — force */
+            serial_early_print("[BOOT] xHCI takeover: BIOS timeout — forcing\n");
+            cap |= (1 << 24);
+            cap &= ~(1 << 16);
+            bl_mmio_write32(mmio, xecp_off, cap);
+            bl_mmio_write32(mmio, xecp_off + 4, 0);
+            return;
+        }
+
+        if (next_ptr == 0) break;
+        xecp_off += (UINT32)next_ptr << 2;
+    }
+
+    serial_early_print("[BOOT] xHCI takeover: USBLEGSUP not found\n");
+}
+
+static void xhci_controller_takeover(void)
+{
+    struct boot_usb_controller *ctrl = &g_boot_info_ptr->usb_controller;
+    UINT64 mmio;
+    UINT64 op_base;
+    UINT64 rt_base;
+    UINT64 ir0;
+    UINT32 cmd, sts, timeout;
+    UINT32 hccparams1;
+
+    if (!ctrl->active) {
+        serial_early_print("[BOOT] xHCI takeover: no controller — skipping\n");
+        return;
+    }
+
+    mmio    = ctrl->mmio_phys;
+    op_base = mmio + ctrl->cap_length;
+    rt_base = mmio + ctrl->rts_offset;
+    ir0     = rt_base + 0x20;  /* Interrupter 0 */
+
+    /* ---- Step 1: USBLEGSUP handoff ---- */
+    hccparams1 = bl_mmio_read32(mmio, 0x10);
+    bl_usblegsup_handoff(mmio, hccparams1);
+
+    /* ---- Step 2: Halt controller (USBCMD.RS=0, wait HCH=1) ---- */
+    cmd = bl_mmio_read32(op_base, 0x00);  /* USBCMD */
+    cmd &= ~(1 << 0);  /* Clear RS */
+    bl_mmio_write32(op_base, 0x00, cmd);
+
+    timeout = 16000;
+    while (timeout > 0) {
+        sts = bl_mmio_read32(op_base, 0x04);  /* USBSTS */
+        if (sts & (1 << 0))  /* HCH */
+            break;
+        bl_delay_us(100);
+        timeout -= 100;
+    }
+    if (!(bl_mmio_read32(op_base, 0x04) & (1 << 0))) {
+        serial_early_print("[BOOT] xHCI takeover: halt timeout — aborting\n");
+        ctrl->active = 0;
+        return;
+    }
+    serial_early_print("[BOOT] xHCI takeover: halted\n");
+
+    /* ---- Step 3: Reset controller (HCRST=1, wait HCRST=0 AND CNR=0) ---- */
+    bl_mmio_write32(op_base, 0x00, (1 << 1));  /* USBCMD = HCRST */
+
+    timeout = 100000;
+    while (timeout > 0) {
+        cmd = bl_mmio_read32(op_base, 0x00);
+        sts = bl_mmio_read32(op_base, 0x04);
+        if (!(cmd & (1 << 1)) && !(sts & (1 << 11)))
+            break;
+        bl_delay_us(100);
+        timeout -= 100;
+    }
+    if ((bl_mmio_read32(op_base, 0x00) & (1 << 1)) ||
+        (bl_mmio_read32(op_base, 0x04) & (1 << 11))) {
+        serial_early_print("[BOOT] xHCI takeover: reset timeout — aborting\n");
+        ctrl->active = 0;
+        return;
+    }
+    serial_early_print("[BOOT] xHCI takeover: reset complete\n");
+
+    /* ---- Step 4: Configure MaxSlotsEn ---- */
+    bl_mmio_write32(op_base, 0x38, ctrl->max_slots);  /* CONFIG */
+
+    /* ---- Step 5: Write DCBAAP ---- */
+    bl_mmio_write64(op_base, 0x30, ctrl->dcbaa_phys);
+
+    /* ---- Step 6: Set up Command Ring (CRCR) ---- */
+    /* Set Link TRB at slot 255 pointing back to start, with toggle cycle */
+    {
+        volatile UINT32 *link = (volatile UINT32 *)((UINTN)ctrl->cmd_ring_phys + 255 * 16);
+        /* parameter = ring base (low 32) */
+        link[0] = (UINT32)(ctrl->cmd_ring_phys & 0xFFFFFFFF);
+        /* parameter high = ring base (high 32) */
+        link[1] = (UINT32)(ctrl->cmd_ring_phys >> 32);
+        /* status = 0 */
+        link[2] = 0;
+        /* control = TRB type 6 (Link) << 10 | Toggle Cycle (bit 1) | Cycle (bit 0) */
+        link[3] = (6 << 10) | (1 << 1) | 1;
+    }
+    bl_mmio_write64(op_base, 0x18, ctrl->cmd_ring_phys | 1);  /* CRCR | cycle=1 */
+
+    /* ---- Step 7: Set up Event Ring (ERST + Interrupter 0) ---- */
+    {
+        /* ERST entry: ring_base (8B) + ring_size (4B) + reserved (4B) */
+        volatile UINT64 *erst = (volatile UINT64 *)(UINTN)ctrl->erst_phys;
+        erst[0] = ctrl->evt_ring_phys;         /* ring_base */
+        ((volatile UINT32 *)(UINTN)ctrl->erst_phys)[2] = 256; /* ring_size (TRBs) */
+        ((volatile UINT32 *)(UINTN)ctrl->erst_phys)[3] = 0;   /* reserved */
+    }
+
+    /* Interrupter 0 registers */
+    bl_mmio_write32(ir0, 0x08, 1);                       /* ERSTSZ = 1 segment */
+    bl_mmio_write64(ir0, 0x18, ctrl->evt_ring_phys);     /* ERDP = ring start */
+    bl_mmio_write64(ir0, 0x10, ctrl->erst_phys);         /* ERSTBA (write last per spec) */
+
+    /* ---- Step 8: Enable interrupts + start controller ---- */
+    cmd = bl_mmio_read32(op_base, 0x00);
+    cmd |= (1 << 0) | (1 << 2);  /* RS + INTE */
+    bl_mmio_write32(op_base, 0x00, cmd);
+
+    /* Enable Interrupter 0 */
+    bl_mmio_write32(ir0, 0x00, (1 << 1));  /* IMAN.IE = 1 */
+
+    /* Wait for HCH to clear */
+    timeout = 16000;
+    while (timeout > 0) {
+        sts = bl_mmio_read32(op_base, 0x04);
+        if (!(sts & (1 << 0)))
+            break;
+        bl_delay_us(100);
+        timeout -= 100;
+    }
+    if (bl_mmio_read32(op_base, 0x04) & (1 << 0)) {
+        serial_early_print("[BOOT] xHCI takeover: start timeout — aborting\n");
+        ctrl->active = 0;
+        return;
+    }
+
+    serial_early_print("[BOOT] xHCI takeover: controller running with our DMA\n");
+    g_boot_info_ptr->usb_handover_complete = 1;
+}
+
+/* ============================================================================
  * EFI Application Entry Point
  * ============================================================================ */
 /* ---- 16-bit POST code output ----
@@ -2026,6 +2236,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     serial_early_print("[BOOT] allocate_xhci_dma...\n");
     allocate_xhci_dma();
     post_code16(0xB083);
+
+    /* Step 4g: Take over xHCI controller (TODO-09 §2) */
+    post_code16(0xB084);
+    serial_early_print("[BOOT] xhci_controller_takeover...\n");
+    xhci_controller_takeover();
+    post_code16(0xB085);
 
     /* Step 5: Get UEFI memory map */
     post_code16(POST16_BL_MEMMAP);
