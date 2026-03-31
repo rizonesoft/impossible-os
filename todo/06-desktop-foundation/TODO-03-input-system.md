@@ -24,6 +24,7 @@
 | 💎  |   2   | Key event struct + dispatch pipeline      | §1         |  [ ]   |
 | 💎  |   3   | Focus model and Tab navigation            | §2         |  [ ]   |
 | 💎  |   4   | Global hotkey dispatch table              | §2         |  [ ]   |
+| 💎  |   5   | Bare-metal input bugs (focus + mouse)     | §2, §3     |  [ ]   |
 
 ---
 
@@ -79,6 +80,34 @@ Register system-wide hotkeys that intercept before window routing.
 - [ ] Commit
 
 **Test checkpoint:** Alt+F4 closes window. PrintScreen captures to file (placeholder log).
+
+## 5. Bare-Metal Input Bugs (Focus + Mouse)
+Fix two input issues observed on bare metal (i5-4210U laptop, 2026-03-31):
+
+**Files:** `src/desktop/wm.c`, `src/desktop/terminal.c`, `src/kernel/drivers/mouse.c`
+
+### Bug A: Mouse pointer jumps when crossing window boundaries
+The cursor visibly jumps or moves irregularly when it moves over a window. Likely cause: compositor hit-test or coordinate translation has an off-by-one or stale-rect issue at window edges. The WM may be switching between "window drag" and "desktop" coordinate spaces incorrectly.
+
+- [ ] Audit `wm_handle_mouse()` — check hit-test at window boundary transitions
+- [ ] Check if mouse delta is being applied twice (raw + compositor) during window crossings
+- [ ] Verify cursor coordinates are clamped to screen bounds during fast movement
+- [ ] Test: move mouse smoothly across window edges — no jumps
+
+### Bug B: Keyboard input delayed or requires click on Command Prompt
+When the terminal window is visually focused, typing either appears after a 1-2 second delay, or doesn't appear until the user clicks on the terminal. Likely cause: keyboard events are not being routed to the terminal because the WM focus state doesn't match the visual state, or the terminal's key handler isn't being called on every key event.
+
+- [ ] Audit keyboard event routing: ISR → `wm_handle_key()` → focused window → terminal
+- [ ] Check if `wm_get_focused()` returns the terminal after it's created (may lose focus to gallery)
+- [ ] Check if terminal has a key event handler registered with the WM
+- [ ] Verify no event queue overflow or stale event coalescing drops keystrokes
+- [ ] Test: type immediately after boot without clicking — text appears instantly
+
+- [ ] Commit: `"desktop: fix bare-metal input bugs — mouse jump + keyboard focus"`
+
+**Test checkpoint:** Mouse moves smoothly across window edges on bare metal. Typing in terminal works immediately without clicking. Test on: bare metal i5-4210U, QEMU.
+
+**Regression risk:** LOW — input routing changes. If focus breaks, windows stop receiving events. Rollback: revert to current ad-hoc routing.
 
 ---
 
