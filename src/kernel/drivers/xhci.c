@@ -382,8 +382,10 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
           d[p++] = hx[(m>>12)&0xF]; d[p++] = hx[(m>>8)&0xF];
           d[p++] = hx[(m>>4)&0xF];  d[p++] = hx[m&0xF]; }
         for (s = " sp="; *s; s++) d[p++] = *s;
-        d[p++] = '0' + (bc->max_scratchpads / 10);
-        d[p++] = '0' + (bc->max_scratchpads % 10);
+        { uint32_t sv = bc->max_scratchpads;
+          d[p++] = hx[(sv >> 8) & 0xF];
+          d[p++] = hx[(sv >> 4) & 0xF];
+          d[p++] = hx[sv & 0xF]; }
         for (s = " slots="; *s; s++) d[p++] = *s;
         d[p++] = '0' + (bc->max_slots / 10);
         d[p++] = '0' + (bc->max_slots % 10);

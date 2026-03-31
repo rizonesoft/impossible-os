@@ -137,8 +137,8 @@ struct boot_usb_device {
 };
 
 /* xHCI controller DMA state — must match kernel/boot_info.h */
-#define BOOT_USB_MAX_SCRATCHPADS 128
-#define BOOT_USB_MAX_DMA_PAGES   64
+#define BOOT_USB_MAX_SCRATCHPADS 256
+#define BOOT_USB_MAX_DMA_PAGES   270
 
 struct boot_usb_controller {
     UINT8   pci_bus;
