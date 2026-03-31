@@ -202,6 +202,49 @@ struct boot_usb_device {
     struct boot_usb_endpoint endpoints[BOOT_USB_MAX_ENDPOINTS];
 };
 
+/* xHCI controller state allocated by bootloader in EfiLoaderData memory.
+ * Survives ExitBootServices.  Kernel must call pmm_mark_region_used() for
+ * each non-zero physical address to prevent PMM from reclaiming them.
+ * Set usb_handover_complete = 1 when all structures are valid. */
+#define BOOT_USB_MAX_SCRATCHPADS 32
+#define BOOT_USB_MAX_DMA_PAGES   64  /* max pages to reserve in PMM */
+
+struct boot_usb_controller {
+    /* PCI identity */
+    uint8_t  pci_bus;
+    uint8_t  pci_dev;
+    uint8_t  pci_func;
+    uint8_t  active;             /* 1 if controller was found and configured */
+
+    /* MMIO base (physical — kernel must remap via vmm_map_mmio_uc) */
+    uint64_t mmio_phys;
+    uint32_t mmio_size;
+
+    /* Capability register cache */
+    uint8_t  cap_length;
+    uint16_t hci_version;
+    uint32_t max_slots;
+    uint32_t max_intrs;
+    uint32_t max_ports;
+    uint32_t db_offset;
+    uint32_t rts_offset;
+    uint8_t  ac64;               /* 64-bit addressing */
+    uint8_t  csz;                /* context size: 0=32B, 1=64B */
+    uint32_t max_scratchpads;
+
+    /* DMA structure physical addresses (allocated as EfiLoaderData pages) */
+    uint64_t dcbaa_phys;         /* DCBAA: (max_slots+1) × 8B, 64B aligned */
+    uint64_t scratchpad_array_phys;
+    uint64_t scratchpad_pages[BOOT_USB_MAX_SCRATCHPADS];
+    uint64_t cmd_ring_phys;      /* Command Ring: 256 TRBs × 16B = 4 KiB */
+    uint64_t evt_ring_phys;      /* Event Ring: 256 TRBs × 16B = 4 KiB */
+    uint64_t erst_phys;          /* ERST: 1 entry × 16B (1 page) */
+
+    /* Page tracking for kernel PMM reservation */
+    uint64_t dma_pages[BOOT_USB_MAX_DMA_PAGES];
+    uint32_t dma_page_count;     /* number of valid entries in dma_pages[] */
+};
+
 /* All boot info collected from UEFI bootloader */
 struct boot_info {
     /* Memory map */
@@ -260,7 +303,11 @@ struct boot_info {
     struct boot_usb_device usb_devices[BOOT_USB_MAX_DEVICES];
     uint32_t usb_device_count;      /* number of valid entries */
     uint8_t  usb_discovery_ok;      /* 1 if USB discovery completed successfully */
-    uint8_t  usb_pad[3];
+    uint8_t  usb_handover_complete; /* 1 if bootloader allocated DMA + configured controller */
+    uint8_t  usb_pad[2];
+
+    /* xHCI controller DMA state (allocated by bootloader in EfiLoaderData) */
+    struct boot_usb_controller usb_controller;
 
     /* Boot Timing (TSC timestamps from bootloader + FPDT) */
     struct {

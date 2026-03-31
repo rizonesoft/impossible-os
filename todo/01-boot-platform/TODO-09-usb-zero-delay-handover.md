@@ -28,13 +28,13 @@
 
 | ⭐  | Order | Deliverable                                           | Depends On | Status |
 | --- | :---: | ----------------------------------------------------- | ---------- | :----: |
-| ⭐  |   1   | Bootloader allocates xHCI DMA structures              | —          |  [ ]   |
-| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover    | §1         |  [ ]   |
+| ⭐  |   1   | Bootloader allocates xHCI DMA structures              | —          |  [x]   |
+| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [ ]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [ ]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state        | §3         |  [ ]   |
 | ⭐  |   5   | Kernel inherits controller without halt/reset         | §4         |  [ ]   |
 | ⭐  |   6   | Kernel registers MSC devices from boot_info geometry  | §5         |  [ ]   |
-| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path | §5         |  [ ]   |
+| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path  | §5         |  [ ]   |
 
 > All ⭐ rows — this is a competitive advantage over Linux (which always re-enumerates after kexec/boot). Windows does this via winload.efi but it's invisible to users. Making it visible in boot timing would be a first.
 
@@ -45,13 +45,15 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
 
-- [ ] Allocate DCBAA: `(MaxSlots + 1) × 8` bytes, 64-byte aligned, `EfiLoaderData`
-- [ ] Allocate scratchpad buffers (if `HCSPARAMS2.MaxScratchpadBufs > 0`)
-- [ ] Allocate device output context per enumerated device (32×32B or 32×64B depending on CSZ)
-- [ ] Allocate EP0 transfer ring per device (256 TRBs × 16B = 4 KiB)
-- [ ] Allocate bulk-IN/OUT transfer rings for MSC devices
-- [ ] Record all physical addresses in extended `boot_info.usb_controller` struct
-- [ ] Mark allocated pages in boot_info so kernel PMM doesn't reclaim them
+- [x] Allocate DCBAA: 1 page `EfiLoaderData`, zeroed (fits max_slots+1 entries)
+- [x] Allocate scratchpad buffers (array + individual pages, if `HCSPARAMS2.MaxScratchpadBufs > 0`)
+- [ ] Allocate device output context per enumerated device — deferred to §3 (enumeration)
+- [ ] Allocate EP0 transfer ring per device — deferred to §3 (enumeration)
+- [ ] Allocate bulk-IN/OUT transfer rings for MSC devices — deferred to §3 (enumeration)
+- [x] Record all physical addresses in `boot_info.usb_controller` struct
+- [x] Mark allocated pages in `dma_pages[]` array; kernel PMM calls `pmm_mark_region_used()` for each
+- [x] PCI config space access added to bootloader (`bl_pci_read8/16/32` via 0xCF8/0xCFC)
+- [x] xHCI capability registers read (HCSPARAMS1/2, HCCPARAMS1, DBOFF, RTSOFF)
 - [ ] Commit: `"boot: allocate persistent xHCI DMA structures in EfiLoaderData"`
 
 **Test checkpoint:** Serial shows allocated DMA addresses. POST code 0xB082. Verify `EfiLoaderData` pages survive ExitBootServices by reading back from kernel. Test on: QEMU `run-usb`, bare metal.
@@ -158,7 +160,7 @@ If any handover validation fails, transparently fall back to the proven halt/res
 |----|---------------------|-------------------|------------------|-----------------------|
 | ⭐ | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot     | ⬜ §1-§3 planned     |
 | ⭐ | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset    | ⬜ §5 planned        |
-| ⭐ | Persistent DMA      | ✅ Kernel memory | ❌ Reallocates   | ⬜ §1 EfiLoaderData  |
+| ⭐ | Persistent DMA      | ✅ Kernel memory | ❌ Reallocates   | ✅ §1 EfiLoaderData  |
 | 💎 | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c    | ✅ TODO-07 §5B done  |
 | ⭐ | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed   | ⬜ TODO-07 planned   |
 | 💎 | Handover fallback   | ✅ Automatic     | ✅ Always fresh  | ⬜ §7 planned        |

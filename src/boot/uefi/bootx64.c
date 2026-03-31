@@ -136,6 +136,37 @@ struct boot_usb_device {
     struct boot_usb_endpoint endpoints[BOOT_USB_MAX_ENDPOINTS];
 };
 
+/* xHCI controller DMA state — must match kernel/boot_info.h */
+#define BOOT_USB_MAX_SCRATCHPADS 32
+#define BOOT_USB_MAX_DMA_PAGES   64
+
+struct boot_usb_controller {
+    UINT8   pci_bus;
+    UINT8   pci_dev;
+    UINT8   pci_func;
+    UINT8   active;
+    UINT64  mmio_phys;
+    UINT32  mmio_size;
+    UINT8   cap_length;
+    UINT16  hci_version;
+    UINT32  max_slots;
+    UINT32  max_intrs;
+    UINT32  max_ports;
+    UINT32  db_offset;
+    UINT32  rts_offset;
+    UINT8   ac64;
+    UINT8   csz;
+    UINT32  max_scratchpads;
+    UINT64  dcbaa_phys;
+    UINT64  scratchpad_array_phys;
+    UINT64  scratchpad_pages[BOOT_USB_MAX_SCRATCHPADS];
+    UINT64  cmd_ring_phys;
+    UINT64  evt_ring_phys;
+    UINT64  erst_phys;
+    UINT64  dma_pages[BOOT_USB_MAX_DMA_PAGES];
+    UINT32  dma_page_count;
+};
+
 struct boot_info {
     struct boot_mmap_entry  mmap[BOOT_MMAP_MAX_ENTRIES];
     UINT32  mmap_count;
@@ -177,7 +208,10 @@ struct boot_info {
     struct boot_usb_device usb_devices[BOOT_USB_MAX_DEVICES];
     UINT32  usb_device_count;
     UINT8   usb_discovery_ok;
-    UINT8   usb_pad[3];
+    UINT8   usb_handover_complete;
+    UINT8   usb_pad[2];
+    /* xHCI controller DMA state */
+    struct boot_usb_controller usb_controller;
     /* Boot Timing */
     struct {
         UINT64 reset_end;
@@ -358,6 +392,44 @@ static inline UINT8 inb_early(UINT16 port)
     UINT8 ret;
     __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
+}
+
+/* ---- PCI Configuration Space access (via I/O ports 0xCF8/0xCFC) ---- */
+
+static inline UINT32 bl_pci_addr(UINT8 bus, UINT8 dev, UINT8 func, UINT8 off)
+{
+    return 0x80000000U | ((UINT32)bus << 16) | ((UINT32)dev << 11)
+         | ((UINT32)func << 8) | (off & 0xFC);
+}
+
+static inline void outl_early(UINT16 port, UINT32 val)
+{
+    __asm__ volatile ("outl %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline UINT32 inl_early(UINT16 port)
+{
+    UINT32 ret;
+    __asm__ volatile ("inl %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+static UINT32 bl_pci_read32(UINT8 bus, UINT8 dev, UINT8 func, UINT8 off)
+{
+    outl_early(0xCF8, bl_pci_addr(bus, dev, func, off));
+    return inl_early(0xCFC);
+}
+
+static UINT16 bl_pci_read16(UINT8 bus, UINT8 dev, UINT8 func, UINT8 off)
+{
+    outl_early(0xCF8, bl_pci_addr(bus, dev, func, off));
+    return (UINT16)(inl_early(0xCFC) >> ((off & 2) * 8));
+}
+
+static UINT8 bl_pci_read8(UINT8 bus, UINT8 dev, UINT8 func, UINT8 off)
+{
+    outl_early(0xCF8, bl_pci_addr(bus, dev, func, off));
+    return (UINT8)(inl_early(0xCFC) >> ((off & 3) * 8));
 }
 
 static void serial_early_init(void)
@@ -1609,6 +1681,195 @@ static void discover_usb_devices(void)
 }
 
 /* ============================================================================
+ * TODO-09 §1: Allocate persistent xHCI DMA structures
+ *
+ * Find the xHCI controller via PCI scan, read capability registers to
+ * determine structure sizes, and allocate DCBAA, scratchpad buffers,
+ * command ring, event ring, and ERST using EfiLoaderData pages.
+ * These pages survive ExitBootServices; kernel must reserve them in PMM.
+ * ============================================================================ */
+
+/* Helper: allocate one 4 KiB page as EfiLoaderData and track it */
+static UINT64 bl_alloc_dma_page(struct boot_usb_controller *ctrl)
+{
+    EFI_PHYSICAL_ADDRESS addr = 0;
+    EFI_STATUS status;
+
+    status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    if (EFI_ERROR(status) || addr == 0)
+        return 0;
+
+    /* Zero the page */
+    efi_memset((void *)(UINTN)addr, 0, 4096);
+
+    /* Track for kernel PMM reservation */
+    if (ctrl->dma_page_count < BOOT_USB_MAX_DMA_PAGES)
+        ctrl->dma_pages[ctrl->dma_page_count++] = addr;
+
+    return addr;
+}
+
+/* MMIO read helpers (bootloader identity-maps all memory) */
+static inline UINT32 bl_mmio_read32(UINT64 base, UINT32 off)
+{
+    return *(volatile UINT32 *)((UINTN)base + off);
+}
+
+static inline UINT8 bl_mmio_read8(UINT64 base, UINT32 off)
+{
+    return *(volatile UINT8 *)((UINTN)base + off);
+}
+
+static void allocate_xhci_dma(void)
+{
+    struct boot_usb_controller *ctrl = &g_boot_info_ptr->usb_controller;
+    UINT16 bus;
+    UINT8 dev, func;
+    UINT32 bar0, bar1, hcsparams1, hcsparams2, hccparams1;
+    UINT64 mmio;
+    UINT32 i;
+
+    efi_memset(ctrl, 0, sizeof(*ctrl));
+    g_boot_info_ptr->usb_handover_complete = 0;
+
+    /* ---- Find xHCI controller via PCI scan (class 0x0C/0x03/0x30) ---- */
+    for (bus = 0; bus < 256; bus++) {
+        for (dev = 0; dev < 32; dev++) {
+            for (func = 0; func < 8; func++) {
+                UINT16 vid = bl_pci_read16((UINT8)bus, dev, func, 0x00);
+                if (vid == 0xFFFF) continue;
+
+                UINT8 cls = bl_pci_read8((UINT8)bus, dev, func, 0x0B);
+                UINT8 sub = bl_pci_read8((UINT8)bus, dev, func, 0x0A);
+                UINT8 pif = bl_pci_read8((UINT8)bus, dev, func, 0x09);
+
+                if (cls == 0x0C && sub == 0x03 && pif == 0x30)
+                    goto found_xhci;
+            }
+        }
+    }
+    serial_early_print("[BOOT] xHCI DMA: no controller found\n");
+    return;
+
+found_xhci:
+    ctrl->pci_bus  = (UINT8)bus;
+    ctrl->pci_dev  = dev;
+    ctrl->pci_func = func;
+
+    serial_early_print("[BOOT] xHCI DMA: found at PCI ");
+    serial_early_print_uint((UINT32)bus);
+    serial_early_print(":");
+    serial_early_print_uint((UINT32)dev);
+    serial_early_print(".");
+    serial_early_print_uint((UINT32)func);
+    serial_early_print("\n");
+
+    /* ---- Read BAR0/BAR1 to get MMIO base ---- */
+    bar0 = bl_pci_read32((UINT8)bus, dev, func, 0x10);
+    bar1 = bl_pci_read32((UINT8)bus, dev, func, 0x14);
+    if (bar0 & 0x01) {
+        serial_early_print("[BOOT] xHCI DMA: BAR0 is I/O — skipping\n");
+        return;
+    }
+    mmio = (UINT64)(bar0 & 0xFFFFFFF0) | ((UINT64)bar1 << 32);
+    if (mmio == 0) {
+        serial_early_print("[BOOT] xHCI DMA: BAR0 is zero — skipping\n");
+        return;
+    }
+    ctrl->mmio_phys = mmio;
+    ctrl->mmio_size = 0x10000;  /* 64 KiB min per xHCI spec */
+
+    /* ---- Read capability registers (MMIO is identity-mapped by firmware) ---- */
+    ctrl->cap_length  = bl_mmio_read8(mmio, 0x00);
+    ctrl->hci_version = (UINT16)bl_mmio_read32(mmio, 0x00) >> 16;
+
+    hcsparams1 = bl_mmio_read32(mmio, 0x04);
+    ctrl->max_slots = hcsparams1 & 0xFF;
+    ctrl->max_intrs = (hcsparams1 >> 8) & 0x7FF;
+    ctrl->max_ports = (hcsparams1 >> 24) & 0xFF;
+
+    hccparams1 = bl_mmio_read32(mmio, 0x10);
+    ctrl->ac64 = (hccparams1 & 1) ? 1 : 0;
+    ctrl->csz  = (hccparams1 & 4) ? 1 : 0;
+
+    ctrl->db_offset  = bl_mmio_read32(mmio, 0x14) & ~0x03;
+    ctrl->rts_offset = bl_mmio_read32(mmio, 0x18) & ~0x1F;
+
+    hcsparams2 = bl_mmio_read32(mmio, 0x08);
+    {
+        UINT32 spb_hi = (hcsparams2 >> 27) & 0x1F;
+        UINT32 spb_lo = (hcsparams2 >> 21) & 0x1F;
+        ctrl->max_scratchpads = (spb_hi << 5) | spb_lo;
+    }
+
+    serial_early_print("[BOOT] xHCI DMA: v");
+    serial_early_print_uint((ctrl->hci_version >> 8) & 0xFF);
+    serial_early_print(".");
+    serial_early_print_uint(ctrl->hci_version & 0xFF);
+    serial_early_print(", ");
+    serial_early_print_uint(ctrl->max_slots);
+    serial_early_print(" slots, ");
+    serial_early_print_uint(ctrl->max_ports);
+    serial_early_print(" ports, ");
+    serial_early_print_uint(ctrl->max_scratchpads);
+    serial_early_print(" scratchpads, csz=");
+    serial_early_print_uint(ctrl->csz);
+    serial_early_print("\n");
+
+    /* ---- Allocate DCBAA: (max_slots + 1) × 8 bytes ---- */
+    ctrl->dcbaa_phys = bl_alloc_dma_page(ctrl);
+    if (!ctrl->dcbaa_phys) {
+        serial_early_print("[BOOT] xHCI DMA: DCBAA alloc failed\n");
+        return;
+    }
+
+    /* ---- Allocate scratchpad buffers ---- */
+    if (ctrl->max_scratchpads > 0) {
+        if (ctrl->max_scratchpads > BOOT_USB_MAX_SCRATCHPADS) {
+            serial_early_print("[BOOT] xHCI DMA: too many scratchpads\n");
+            return;
+        }
+        /* Scratchpad array page */
+        ctrl->scratchpad_array_phys = bl_alloc_dma_page(ctrl);
+        if (!ctrl->scratchpad_array_phys) return;
+
+        /* Individual scratchpad pages */
+        for (i = 0; i < ctrl->max_scratchpads; i++) {
+            ctrl->scratchpad_pages[i] = bl_alloc_dma_page(ctrl);
+            if (!ctrl->scratchpad_pages[i]) return;
+            /* Write page address into scratchpad array */
+            ((UINT64 *)(UINTN)ctrl->scratchpad_array_phys)[i] = ctrl->scratchpad_pages[i];
+        }
+        /* DCBAA[0] = scratchpad array physical address */
+        ((UINT64 *)(UINTN)ctrl->dcbaa_phys)[0] = ctrl->scratchpad_array_phys;
+    }
+
+    /* ---- Allocate Command Ring (256 TRBs × 16B = 4 KiB) ---- */
+    ctrl->cmd_ring_phys = bl_alloc_dma_page(ctrl);
+    if (!ctrl->cmd_ring_phys) return;
+
+    /* ---- Allocate Event Ring (256 TRBs × 16B = 4 KiB) ---- */
+    ctrl->evt_ring_phys = bl_alloc_dma_page(ctrl);
+    if (!ctrl->evt_ring_phys) return;
+
+    /* ---- Allocate ERST (1 entry × 16B, 1 page) ---- */
+    ctrl->erst_phys = bl_alloc_dma_page(ctrl);
+    if (!ctrl->erst_phys) return;
+
+    ctrl->active = 1;
+
+    serial_early_print("[BOOT] xHCI DMA: allocated ");
+    serial_early_print_uint(ctrl->dma_page_count);
+    serial_early_print(" pages (DCBAA=0x");
+    serial_early_print_hex16((UINT16)(ctrl->dcbaa_phys >> 16));
+    serial_early_print_hex16((UINT16)(ctrl->dcbaa_phys));
+    serial_early_print(", CmdRing=0x");
+    serial_early_print_hex16((UINT16)(ctrl->cmd_ring_phys >> 16));
+    serial_early_print_hex16((UINT16)(ctrl->cmd_ring_phys));
+    serial_early_print(")\n");
+}
+
+/* ============================================================================
  * EFI Application Entry Point
  * ============================================================================ */
 /* ---- 16-bit POST code output ----
@@ -1759,6 +2020,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     serial_early_print("[BOOT] discover_usb_devices...\n");
     discover_usb_devices();
     post_code16(POST16_BL_USB_DISC_OK);
+
+    /* Step 4f: Allocate persistent xHCI DMA structures (TODO-09 §1) */
+    post_code16(0xB082);
+    serial_early_print("[BOOT] allocate_xhci_dma...\n");
+    allocate_xhci_dma();
+    post_code16(0xB083);
 
     /* Step 5: Get UEFI memory map */
     post_code16(POST16_BL_MEMMAP);

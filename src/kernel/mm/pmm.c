@@ -180,6 +180,20 @@ void pmm_init(void)
      * wallpaper, framebuffer, or font allocations. */
     pmm_mark_region_used(0x800000, 0x100000);
 
+    /* USB xHCI DMA pages (allocated by bootloader in EfiLoaderData).
+     * EfiLoaderData is normally marked free above, so these pages would be
+     * reclaimed.  Reserve them so the kernel can inherit the DMA state. */
+    if (g_boot_info.usb_controller.active && g_boot_info.usb_controller.dma_page_count > 0) {
+        uint32_t ui;
+        for (ui = 0; ui < g_boot_info.usb_controller.dma_page_count; ui++) {
+            uint64_t page = g_boot_info.usb_controller.dma_pages[ui];
+            if (page != 0)
+                pmm_mark_region_used((uintptr_t)page, 4096);
+        }
+        klog(LOG_INFO, "mm", "PMM: reserved %u xHCI DMA pages from bootloader",
+             (uint64_t)g_boot_info.usb_controller.dma_page_count);
+    }
+
     /* Log UEFI memory map summary */
     klog(LOG_INFO, "UEFI", "Memory map: %u MB RAM, %u descriptors",
            (uint64_t)(total_frames * PMM_FRAME_SIZE / (1024 * 1024)),
