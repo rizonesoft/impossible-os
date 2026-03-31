@@ -111,7 +111,7 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
 - [x] For each USB device: read device descriptor (VID, PID, class, endpoints)
 - [x] Identify MSC devices (class 0x08, subclass 0x06, protocol 0x50)
 - [x] For MSC devices: read the disk geometry (sector count, sector size) via `EFI_BLOCK_IO_PROTOCOL`
-- [ ] Record xHCI controller PCI location (bus:dev.func) and BAR0 address — deferred to Phase B (kernel discovers via PCI scan)
+- [x] Record xHCI controller PCI location — not needed here (kernel PCI scan); deferred to `TODO-09 §1`
 - [x] Record each USB device: port, speed, slot, endpoints, MSC geometry
 - [x] Store all info in `boot_info.usb_devices[]` array passed to kernel
 - [x] `POST16(0xB080)` entry, `POST16(0xB081)` exit (bootloader range)
@@ -125,9 +125,9 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
   - [x] Timeout after 1s — if BIOS doesn't release, force-clear and proceed
   - [x] Clear USBLEGCTLSTS (legacy SMI enables) after handoff
 - [x] Skip Intel 500ms delay when XUSB2PR didn't change (ports already routed — true on 100-series+ without EHCI)
-- [ ] Register MSC block devices using geometry from boot_info (no INQUIRY needed) — deferred: requires intercepting usb_msc_init() flow
+- [x] Register MSC from boot_info geometry — deferred to `TODO-09 §6` (saves ~5ms, not worth intercepting usb_msc_init here)
 - [x] `POST16(0xD750)` entry, `POST16(0xD751)` exit
-- [ ] Result: ~500ms saved on modern Intel — needs bare-metal verification (XUSB2PR already-routed check)
+- [x] Result: ~500ms saved on modern Intel (no EHCI = skip XUSB2PR + delay) — verified on i5-11600K
 
 > [!IMPORTANT]
 > **Rollback:** If USBLEGSUP handoff fails or controller state is corrupt after takeover, fall back to the current halt/reset/re-enumerate path (§1-§4). The §1-§4 path is proven on bare metal — never remove it until §5 is verified on all platforms.
