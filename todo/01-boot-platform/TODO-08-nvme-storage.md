@@ -38,7 +38,7 @@
 | 💎  |   1   | NVMe controller discovery and BAR mapping      | —          |  [x]   |
 | 💎  |   2   | Admin Queue setup and Identify commands        | §1         |  [x]   |
 | 💎  |   3   | I/O Queue creation and sector read/write       | §2         |  [x]   |
-| 💎  |   4   | Block device registration and VFS integration  | §3         |  [ ]   |
+| 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
 
 ---
 
@@ -100,7 +100,7 @@ Create one I/O Submission/Completion Queue pair and implement read/write sector 
 - [x] Polled completion (check CQ head) — interrupt-based deferred to TODO-02
 - [x] `POST16(POST16_NVME_IO)` on entry, `POST16(POST16_NVME_IO_OK)` on exit
 - [x] Validate PRP list alignment before every DMA submit (must be page-aligned for multi-page)
-- [ ] Commit: `"drivers: NVMe I/O Queue — read/write sectors via polled completion"`
+- [x] Commit: `"drivers: NVMe I/O Queue — read/write sectors via polled completion"`
 
 **Test checkpoint:** Read sector 0, verify GPT/MBR header. Write + readback test on test partition only. POST code 0x20A4/0x20A5 (`POST16_NVME_IO`/`POST16_NVME_IO_OK`). Test on:
 - Bare metal: read sector 0 matches GPT header
@@ -114,10 +114,10 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 
 **Files:** `src/kernel/main/boot_storage.c`, `src/kernel/drivers/blkdev.c`
 
-- [ ] `nvme_register_blkdev()` — register each namespace as a block device
-- [ ] Wire into `boot_phase2()`: after NVMe init, register block devices
-- [ ] Partition scan + filesystem mount (GPT + IXFS/FAT32/NTFS)
-- [ ] `POST16(POST16_NVME_BLK)` on entry, `POST16(POST16_NVME_BLK_OK)` on exit
+- [x] `nvme_register_blkdev()` — register each namespace as a block device
+- [x] Wire into `boot_phase2()`: after NVMe init, register block devices
+- [x] Partition scan + filesystem mount (GPT + IXFS/FAT32/NTFS)
+- [x] `POST16(POST16_NVME_BLK)` on entry, `POST16(POST16_NVME_BLK_OK)` on exit
 - [ ] Commit: `"drivers: NVMe block device registration — NVMe drives mountable"`
 
 **Test checkpoint:** NVMe drive visible as block device, partitions scanned, filesystem mounted. POST code 0x20A6/0x20A7 (`POST16_NVME_BLK`/`POST16_NVME_BLK_OK`). Test on:
@@ -134,11 +134,11 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 
 | ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                     |
 |----|-------------------------|-----------------------------|------------------------------|-----------------------------------|
-| 💎 | NVMe controller        | ✅ stornvme.sys              | ✅ nvme.ko                  | ⬜ §1 — discovery + BAR map      |
-| 💎 | NVMe I/O               | ✅ Multi-queue + interrupt   | ✅ Multi-queue + interrupt  | ⬜ §3 — single queue, polled     |
-| 💎 | NVMe boot              | ✅ Automatic                 | ✅ initramfs + nvme.ko      | ⬜ §4 — boot-critical path       |
+| 💎 | NVMe controller        | ✅ stornvme.sys              | ✅ nvme.ko                  | ✅ §1 — discovery + BAR map      |
+| 💎 | NVMe I/O               | ✅ Multi-queue + interrupt   | ✅ Multi-queue + interrupt  | ✅ §3 — single queue, polled     |
+| 💎 | NVMe boot              | ✅ Automatic                 | ✅ initramfs + nvme.ko      | ✅ §4 — blkdev + VFS mount       |
 | ⭐ | NVMe health at boot    | ❌ Requires tools            | ❌ Requires nvme-cli        | ⬜ Planned — SMART in VPD/log    |
-| ⭐ | Firmware ver at boot   | ❌ Not displayed             | ❌ dmesg post-boot only     | ⬜ §2 — Identify Controller log  |
+| ⭐ | Firmware ver at boot   | ❌ Not displayed             | ❌ dmesg post-boot only     | ✅ §2 — Identify Controller log  |
 | ⭐ | Drive wear at boot     | ❌ CrystalDiskInfo needed    | ❌ Requires nvme-cli        | ⬜ Planned — SMART wear field    |
 | ⭐ | Thermal throttle detect| ❌ Third-party tools         | ❌ Requires nvme-cli        | ⬜ Planned — CSTS.CFS + SMART    |
 

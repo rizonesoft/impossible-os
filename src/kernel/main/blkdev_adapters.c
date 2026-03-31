@@ -13,8 +13,10 @@
 #include "kernel/drivers/xhci.h"
 #include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/usb_msc.h"
+#include "kernel/drivers/nvme.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/klog.h"
+#include "kernel/boot_init.h"
 #include "kernel/fs/vfs.h"
 
 /* ---- Block device adapter wrappers ---- */
@@ -121,6 +123,22 @@ static int blkdev_usb_msc_write(uint64_t lba, uint32_t count,
     struct xhci_device *dev = xhci_get_controller_mut(ci) ? xhci_get_device(di) : NULL;
     if (!hc || !dev) return -1;
     return usb_msc_write_sectors(hc, dev, (uint32_t)lba, count, buf);
+}
+
+/* ---- NVMe adapter ---- */
+
+static int blkdev_nvme_read(uint64_t lba, uint32_t count, void *buf,
+                             void *driver_data)
+{
+    int ctrl = (int)(uintptr_t)driver_data;
+    return nvme_read_sectors(ctrl, lba, count, buf);
+}
+
+static int blkdev_nvme_write(uint64_t lba, uint32_t count,
+                              const void *buf, void *driver_data)
+{
+    int ctrl = (int)(uintptr_t)driver_data;
+    return nvme_write_sectors(ctrl, lba, count, buf);
 }
 
 /* ---- Directory tree dump (serial-only) ---- */
@@ -343,6 +361,28 @@ void blkdev_register_all(void)
             blkdev_register(&bd);
         }
     }
+
+    /* NVMe namespaces */
+    POST16(POST16_NVME_BLK);
+    {
+        int ci;
+        for (ci = 0; ci < nvme_controller_count(); ci++) {
+            struct nvme_controller *nc = nvme_get_controller(ci);
+            if (!nc || !nc->io_queue_active)
+                continue;
+            bd = (struct blkdev){0};
+            bd.name[0]='n'; bd.name[1]='v'; bd.name[2]='m';
+            bd.name[3]='e'; bd.name[4]='0' + (char)ci;
+            bd.name[5]='\0';
+            bd.sector_size  = nc->ns_sector_size;
+            bd.sector_count = nc->ns_lba_count;
+            bd.read  = blkdev_nvme_read;
+            bd.write = blkdev_nvme_write;
+            bd.driver_data  = (void *)(uintptr_t)ci;
+            blkdev_register(&bd);
+        }
+    }
+    POST16(POST16_NVME_BLK_OK);
 
     blkdev_list();
 }
