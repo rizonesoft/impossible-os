@@ -107,7 +107,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build assets kernel userland uefi-boot system-disk
@@ -475,6 +475,76 @@ run-usb-ci: all $(USB_TEST_IMG)
 ## clean-usb: Remove test USB disk image
 clean-usb:
 	rm -f $(USB_TEST_IMG)
+
+## ── NVMe test targets ────────────────────────────────────────────────────────
+
+NVME_TEST_IMG := $(BUILD_DIR)/test-nvme.img
+test-nvme-img: $(NVME_TEST_IMG)
+$(NVME_TEST_IMG):
+	@echo "[NVMe] Creating 128 MiB FAT32 test NVMe disk..."
+	@mkdir -p $(BUILD_DIR)
+	dd if=/dev/zero of=$@ bs=1M count=128 status=none
+	mkfs.fat -F 32 -n "NVME_TEST" $@
+	@echo "Hello from NVMe!" > /tmp/nvme_test.txt
+	mcopy -i $@ /tmp/nvme_test.txt ::
+	@rm -f /tmp/nvme_test.txt
+	@echo "[NVMe] $@ ready (128 MiB FAT32)"
+
+## run-nvme: Launch QEMU with NVMe controller + 128 MiB NVMe drive
+## Use this to develop and test the NVMe storage driver (TODO-08)
+run-nvme: all $(NVME_TEST_IMG)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
+	@echo "[TEST] Launching QEMU with NVMe storage device"
+	$(QEMU) \
+		-cpu Haswell \
+		-smp 2 \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ich9-ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
+		-drive id=nvme0,file=$(NVME_TEST_IMG),format=raw,if=none \
+		-device nvme,serial=ImpOS-NVMe-Test,drive=nvme0 \
+		-m 2G \
+		-serial stdio \
+		-vga none \
+		-device VGA,xres=1280,yres=720 \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot
+
+## run-nvme-ci: Headless NVMe test — no display, serial to file, auto-timeout
+run-nvme-ci: all $(NVME_TEST_IMG)
+	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
+	@echo "[TEST] Launching headless QEMU with NVMe storage ($(QEMU_TIMEOUT)s timeout)"
+	@timeout $(QEMU_TIMEOUT) $(QEMU) \
+		-cpu Haswell \
+		-smp 2 \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ich9-ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
+		-drive id=nvme0,file=$(NVME_TEST_IMG),format=raw,if=none \
+		-device nvme,serial=ImpOS-NVMe-Test,drive=nvme0 \
+		-m 2G \
+		-serial file:build/serial.log \
+		-display none \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot 2>/dev/null; true
+	@echo ""
+	@echo "───── Serial output (NVMe) ─────"
+	@grep -iE 'nvme|01:08' build/serial.log 2>/dev/null || echo "(no NVMe output found)"
+	@echo "─────────────────────────────────"
+
+## clean-nvme: Remove test NVMe disk image
+clean-nvme:
+	rm -f $(NVME_TEST_IMG)
 
 ## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
 ## Serial output: [SPLASH] 1920x1080  scale=1x  font=16px

@@ -26,6 +26,8 @@ DO_CLEAN=false
 DO_RUN=false
 DO_RUN_USB=false
 DO_RUN_USB_CI=false
+DO_RUN_NVME=false
+DO_RUN_NVME_CI=false
 JOBS=$(nproc 2>/dev/null || echo 4)
 
 if [[ $# -eq 0 ]]; then
@@ -37,8 +39,10 @@ else
             run)     DO_RUN=true ;;
             run-usb) DO_RUN_USB=true ;;
             run-usb-ci) DO_RUN_USB_CI=true ;;
+            run-nvme) DO_RUN_NVME=true ;;
+            run-nvme-ci) DO_RUN_NVME_CI=true ;;
             --jobs=*) JOBS="${arg#--jobs=}" ;;
-            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run|run-usb|run-usb-ci] [--jobs=N]"; exit 1 ;;
+            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run|run-usb|run-nvme|...] [--jobs=N]"; exit 1 ;;
         esac
     done
 fi
@@ -326,4 +330,20 @@ if $DO_RUN_USB_CI; then
     printf ' %b▶ Launching headless QEMU (xHCI + USB, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
     divider | tee -a "$LOG"
     make $MAKE_FLAGS run-usb-ci 2>&1
+fi
+
+# Run QEMU with NVMe (optional)
+if $DO_RUN_NVME; then
+    divider | tee -a "$LOG"
+    printf ' %b▶ Launching QEMU with NVMe storage%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
+    divider | tee -a "$LOG"
+    make $MAKE_FLAGS run-nvme 2>&1
+fi
+
+# Run QEMU headless NVMe test (optional)
+if $DO_RUN_NVME_CI; then
+    divider | tee -a "$LOG"
+    printf ' %b▶ Launching headless QEMU (NVMe, 20s timeout)%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
+    divider | tee -a "$LOG"
+    make $MAKE_FLAGS run-nvme-ci 2>&1
 fi
