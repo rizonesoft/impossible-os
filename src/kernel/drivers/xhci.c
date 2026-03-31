@@ -343,9 +343,32 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     }
     POST16(0xD751);
 
-    /* DEBUG: no handover — show on splash */
+    /* DEBUG: no handover — show on splash with diagnostic values */
     if (!g_boot_info.usb_handover_complete) {
-        boot_splash_status("xHCI NO HANDOVER — full init path (35s)");
+        static char diag[128];
+        int p = 0;
+        const char *s;
+        /* "NO HANDOVER: hc=X disc=X ctrl.active=X ctrl.pci=BB:DD.F" */
+        for (s = "NO HANDOVER hc="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + g_boot_info.usb_handover_complete;
+        for (s = " disc="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + g_boot_info.usb_discovery_ok;
+        for (s = " ctrl="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + g_boot_info.usb_controller.active;
+        for (s = " pci="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + (g_boot_info.usb_controller.pci_bus / 10);
+        diag[p++] = '0' + (g_boot_info.usb_controller.pci_bus % 10);
+        diag[p++] = ':';
+        diag[p++] = '0' + (g_boot_info.usb_controller.pci_dev / 10);
+        diag[p++] = '0' + (g_boot_info.usb_controller.pci_dev % 10);
+        diag[p++] = '.';
+        diag[p++] = '0' + g_boot_info.usb_controller.pci_func;
+        for (s = " dma="; *s; s++) diag[p++] = *s;
+        diag[p++] = '0' + (g_boot_info.usb_controller.dma_page_count / 10);
+        diag[p++] = '0' + (g_boot_info.usb_controller.dma_page_count % 10);
+        for (s = " (35s)"; *s; s++) diag[p++] = *s;
+        diag[p] = '\0';
+        boot_splash_status(diag);
         sleep_ms(35000);
     }
 
