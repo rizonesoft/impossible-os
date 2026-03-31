@@ -139,7 +139,7 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
 - [x] New device connected after boot → full enumeration (slot enable, address, etc.)
 - [ ] Device removed → clean up slot, unregister block device (Disable Slot command deferred)
 - [x] `POST16(0xD752)` entry, `POST16(0xD753)` exit
-- [ ] Commit: `"drivers: xHCI interrupt-driven hot-plug via MSI"`
+- [x] Commit: `"drivers: xHCI interrupt-driven hot-plug via MSI"`
 
 **Test checkpoint:** Boot from USB — C:\ mounted within 10ms of kernel start (no 500ms delay). Hot-plug: plug USB drive after boot, device appears within 100ms. POST codes: 0xB080/0xB081 (bootloader), 0xD750/0xD751 (kernel takeover), 0xD752/0xD753 (hot-plug). If crash, check last POST — 0xD750 = USBLEGSUP handoff failed, fall back to §1-§4 path. Test on: bare metal, QEMU `run-usb`. No Intel-specific port routing code needed (firmware already routed ports correctly).
 
