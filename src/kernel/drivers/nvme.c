@@ -1,8 +1,9 @@
 /* ============================================================================
- * nvme.c — NVMe storage driver: controller discovery and BAR0 mapping
+ * nvme.c — NVMe storage driver
  *
- * §1: PCI scan for NVMe controllers, BAR0 UC mapping, CAP/VS read,
- *     controller disable → reset → enable sequence.
+ * §1: PCI scan, BAR0 UC mapping, CAP/VS read, controller disable/enable.
+ * §2: Admin Queue setup, Identify Controller + Identify Namespace.
+ * §3: I/O Queue creation, sector read/write via polled completion.
  * ============================================================================ */
 
 #include "kernel/drivers/nvme.h"
@@ -204,6 +205,168 @@ static void nvme_identify(struct nvme_controller *nc, uint32_t timeout_ms)
     POST16(POST16_NVME_ADMIN_OK);
 }
 
+/* Forward declaration */
+static int nvme_submit_io_cmd(struct nvme_controller *nc,
+                              struct nvme_sqe *cmd,
+                              uint32_t timeout_ms);
+
+/* ---- I/O Queue creation ---- */
+
+static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms)
+{
+    struct nvme_sqe cmd;
+    uint32_t db_stride = 4u << nc->dstrd;
+    uint16_t io_depth;
+
+    POST16(POST16_NVME_IO);
+
+    /* Cap I/O queue depth to controller's MQES+1 */
+    io_depth = NVME_IO_QUEUE_DEPTH;
+    if (io_depth > (nc->mqes + 1))
+        io_depth = nc->mqes + 1;
+
+    /* Allocate I/O SQ and CQ pages */
+    nc->io_sq_phys = pmm_alloc_contiguous(1);
+    nc->io_cq_phys = pmm_alloc_contiguous(1);
+    if (!nc->io_sq_phys || !nc->io_cq_phys) {
+        klog(LOG_ERROR, "nvme", "failed to allocate I/O queues");
+        POST16(POST16_NVME_IO_OK);
+        return -1;
+    }
+    nc->io_sq = (volatile struct nvme_sqe *)nc->io_sq_phys;
+    nc->io_cq = (volatile struct nvme_cqe *)nc->io_cq_phys;
+    nvme_memset((void *)nc->io_sq_phys, 0, 4096);
+    nvme_memset((void *)nc->io_cq_phys, 0, 4096);
+    nc->io_sq_tail  = 0;
+    nc->io_cq_head  = 0;
+    nc->io_cq_phase = 1;
+
+    /* ---- Create I/O Completion Queue (QID=1) ---- */
+    nvme_memset(&cmd, 0, sizeof(cmd));
+    cmd.cdw0 = NVME_ADMIN_CREATE_IOCQ;
+    cmd.prp1 = (uint64_t)nc->io_cq_phys;
+    cmd.cdw10 = ((uint32_t)(io_depth - 1) << 16) | 1;  /* size[31:16] | QID[15:0] */
+    cmd.cdw11 = (1 << 0);  /* PC=1 (physically contiguous) */
+
+    if (nvme_submit_admin_cmd(nc, &cmd, timeout_ms) != 0) {
+        klog(LOG_ERROR, "nvme", "Create I/O CQ failed");
+        POST16(POST16_NVME_IO_OK);
+        return -1;
+    }
+
+    /* ---- Create I/O Submission Queue (QID=1, CQID=1) ---- */
+    nvme_memset(&cmd, 0, sizeof(cmd));
+    cmd.cdw0 = NVME_ADMIN_CREATE_IOSQ;
+    cmd.prp1 = (uint64_t)nc->io_sq_phys;
+    cmd.cdw10 = ((uint32_t)(io_depth - 1) << 16) | 1;  /* size[31:16] | QID[15:0] */
+    cmd.cdw11 = (1 << 16) | (1 << 0);  /* CQID=1[31:16] | PC=1[0] */
+
+    if (nvme_submit_admin_cmd(nc, &cmd, timeout_ms) != 0) {
+        klog(LOG_ERROR, "nvme", "Create I/O SQ failed");
+        POST16(POST16_NVME_IO_OK);
+        return -1;
+    }
+
+    nc->io_queue_active = 1;
+
+    klog(LOG_INFO, "nvme", "I/O Queue created (QID=1, depth=%u, db_stride=%u)",
+         (uint64_t)io_depth, (uint64_t)db_stride);
+
+    /* ---- Verify: read sector 0 ---- */
+    {
+        uintptr_t test_phys = pmm_alloc_contiguous(1);
+        if (test_phys) {
+            struct nvme_sqe rd;
+            uint8_t *test_buf = (uint8_t *)test_phys;
+            nvme_memset(test_buf, 0, 512);
+
+            nvme_memset(&rd, 0, sizeof(rd));
+            rd.cdw0 = NVME_IO_READ;
+            rd.nsid = 1;
+            rd.prp1 = (uint64_t)test_phys;
+            rd.cdw10 = 0;  /* LBA 0 */
+            rd.cdw11 = 0;
+            rd.cdw12 = 0;  /* 1 sector (0-based) */
+
+            if (nvme_submit_io_cmd(nc, &rd, timeout_ms) == 0) {
+                /* Check for GPT/MBR signature */
+                if (test_buf[510] == 0x55 && test_buf[511] == 0xAA)
+                    klog(LOG_INFO, "nvme", "sector 0 read OK (MBR signature found)");
+                else if (test_buf[0] == 0xEB || test_buf[0] == 0xE9)
+                    klog(LOG_INFO, "nvme", "sector 0 read OK (FAT boot jump)");
+                else
+                    klog(LOG_INFO, "nvme", "sector 0 read OK (sig=0x%x 0x%x)",
+                         (uint64_t)test_buf[510], (uint64_t)test_buf[511]);
+            } else {
+                klog(LOG_WARN, "nvme", "sector 0 read failed");
+            }
+            pmm_free_frame(test_phys);
+        }
+    }
+
+    POST16(POST16_NVME_IO_OK);
+    return 0;
+}
+
+/* ---- I/O command submission ---- */
+
+static int nvme_submit_io_cmd(struct nvme_controller *nc,
+                              struct nvme_sqe *cmd,
+                              uint32_t timeout_ms)
+{
+    volatile struct nvme_sqe *sqe;
+    volatile struct nvme_cqe *cqe;
+    uint32_t db_stride, elapsed;
+    uint16_t status;
+
+    db_stride = 4u << nc->dstrd;
+
+    /* Write command into I/O SQ at tail */
+    sqe = &nc->io_sq[nc->io_sq_tail];
+    {
+        const uint32_t *src = (const uint32_t *)cmd;
+        volatile uint32_t *dst = (volatile uint32_t *)sqe;
+        uint32_t i;
+        for (i = 0; i < 16; i++)
+            dst[i] = src[i];
+    }
+
+    /* Advance tail and ring I/O SQ 1 tail doorbell */
+    nc->io_sq_tail = (nc->io_sq_tail + 1) % NVME_IO_QUEUE_DEPTH;
+    /* SQ y tail doorbell: 0x1000 + (2y * db_stride), y=1 for I/O QID 1 */
+    nvme_write32(nc->mmio_base, 0x1000 + (2 * db_stride), nc->io_sq_tail);
+
+    /* Poll I/O CQ for completion */
+    elapsed = 0;
+    while (elapsed < timeout_ms) {
+        cqe = &nc->io_cq[nc->io_cq_head];
+        status = cqe->status;
+
+        if ((status & 1) == nc->io_cq_phase)
+            goto done;
+
+        sleep_ms(1);
+        elapsed++;
+    }
+    return -1;  /* timeout */
+
+done:
+    if ((status >> 1) != 0) {
+        klog(LOG_ERROR, "nvme", "I/O cmd failed: status=0x%x",
+             (uint64_t)(status >> 1));
+    }
+
+    /* Advance CQ head, flip phase on wrap */
+    nc->io_cq_head = (nc->io_cq_head + 1) % NVME_IO_QUEUE_DEPTH;
+    if (nc->io_cq_head == 0)
+        nc->io_cq_phase ^= 1;
+
+    /* Ring I/O CQ 1 head doorbell: 0x1000 + ((2*1+1) * db_stride) */
+    nvme_write32(nc->mmio_base, 0x1000 + (3 * db_stride), nc->io_cq_head);
+
+    return (status >> 1) != 0 ? -1 : 0;
+}
+
 /* ---- Controller init ---- */
 
 static int nvme_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
@@ -400,6 +563,9 @@ static int nvme_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     /* ---- Identify Controller + Namespace ---- */
     nvme_identify(nc, timeout_ms);
 
+    /* ---- I/O Queue creation ---- */
+    nvme_create_io_queues(nc, timeout_ms);
+
     return 0;
 }
 
@@ -465,4 +631,130 @@ struct nvme_controller *nvme_get_controller(int idx)
     if (idx < 0 || idx >= num_controllers)
         return (struct nvme_controller *)0;
     return &controllers[idx];
+}
+
+/* ---- Sector I/O ---- */
+
+int nvme_read_sectors(int ctrl_idx, uint64_t lba, uint32_t count, void *buf)
+{
+    struct nvme_controller *nc;
+    struct nvme_sqe cmd;
+    uint32_t timeout_ms, sectors_done, chunk;
+    uintptr_t dma_phys;
+    uint8_t *dma_buf;
+    uint8_t *dst = (uint8_t *)buf;
+
+    nc = nvme_get_controller(ctrl_idx);
+    if (!nc || !nc->io_queue_active)
+        return -1;
+
+    timeout_ms = (uint32_t)nc->to * 500;
+    if (timeout_ms < 500)
+        timeout_ms = 500;
+
+    /* Allocate a single DMA page (4096 bytes) for transfers */
+    dma_phys = pmm_alloc_contiguous(1);
+    if (!dma_phys)
+        return -1;
+    dma_buf = (uint8_t *)dma_phys;
+
+    sectors_done = 0;
+    while (sectors_done < count) {
+        /* Max sectors per 4 KiB page */
+        chunk = 4096 / nc->ns_sector_size;
+        if (chunk > (count - sectors_done))
+            chunk = count - sectors_done;
+
+        nvme_memset(&cmd, 0, sizeof(cmd));
+        cmd.cdw0 = NVME_IO_READ;
+        cmd.nsid = 1;
+        cmd.prp1 = (uint64_t)dma_phys;
+        /* CDW10-11: Starting LBA (64-bit) */
+        cmd.cdw10 = (uint32_t)(lba + sectors_done);
+        cmd.cdw11 = (uint32_t)((lba + sectors_done) >> 32);
+        /* CDW12: Number of Logical Blocks (0-based) */
+        cmd.cdw12 = chunk - 1;
+
+        if (nvme_submit_io_cmd(nc, &cmd, timeout_ms) != 0) {
+            klog(LOG_ERROR, "nvme", "read failed: LBA=%llu count=%u",
+                 lba + sectors_done, (uint64_t)chunk);
+            pmm_free_frame(dma_phys);
+            return -1;
+        }
+
+        /* Copy from DMA buffer to caller's buffer */
+        {
+            uint32_t bytes = chunk * nc->ns_sector_size;
+            uint32_t j;
+            for (j = 0; j < bytes; j++)
+                dst[j] = dma_buf[j];
+        }
+
+        dst += chunk * nc->ns_sector_size;
+        sectors_done += chunk;
+    }
+
+    pmm_free_frame(dma_phys);
+    return 0;
+}
+
+int nvme_write_sectors(int ctrl_idx, uint64_t lba, uint32_t count,
+                       const void *buf)
+{
+    struct nvme_controller *nc;
+    struct nvme_sqe cmd;
+    uint32_t timeout_ms, sectors_done, chunk;
+    uintptr_t dma_phys;
+    uint8_t *dma_buf;
+    const uint8_t *src = (const uint8_t *)buf;
+
+    nc = nvme_get_controller(ctrl_idx);
+    if (!nc || !nc->io_queue_active)
+        return -1;
+
+    timeout_ms = (uint32_t)nc->to * 500;
+    if (timeout_ms < 500)
+        timeout_ms = 500;
+
+    /* Allocate a single DMA page for transfers */
+    dma_phys = pmm_alloc_contiguous(1);
+    if (!dma_phys)
+        return -1;
+    dma_buf = (uint8_t *)dma_phys;
+
+    sectors_done = 0;
+    while (sectors_done < count) {
+        chunk = 4096 / nc->ns_sector_size;
+        if (chunk > (count - sectors_done))
+            chunk = count - sectors_done;
+
+        /* Copy from caller's buffer to DMA buffer */
+        {
+            uint32_t bytes = chunk * nc->ns_sector_size;
+            uint32_t j;
+            for (j = 0; j < bytes; j++)
+                dma_buf[j] = src[j];
+        }
+
+        nvme_memset(&cmd, 0, sizeof(cmd));
+        cmd.cdw0 = NVME_IO_WRITE;
+        cmd.nsid = 1;
+        cmd.prp1 = (uint64_t)dma_phys;
+        cmd.cdw10 = (uint32_t)(lba + sectors_done);
+        cmd.cdw11 = (uint32_t)((lba + sectors_done) >> 32);
+        cmd.cdw12 = chunk - 1;
+
+        if (nvme_submit_io_cmd(nc, &cmd, timeout_ms) != 0) {
+            klog(LOG_ERROR, "nvme", "write failed: LBA=%llu count=%u",
+                 lba + sectors_done, (uint64_t)chunk);
+            pmm_free_frame(dma_phys);
+            return -1;
+        }
+
+        src += chunk * nc->ns_sector_size;
+        sectors_done += chunk;
+    }
+
+    pmm_free_frame(dma_phys);
+    return 0;
 }

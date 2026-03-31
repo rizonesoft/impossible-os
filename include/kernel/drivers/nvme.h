@@ -53,13 +53,20 @@
 
 /* ---- Admin command opcodes ---- */
 #define NVME_ADMIN_IDENTIFY     0x06
+#define NVME_ADMIN_CREATE_IOCQ  0x05
+#define NVME_ADMIN_CREATE_IOSQ  0x01
+
+/* ---- NVM I/O command opcodes ---- */
+#define NVME_IO_READ            0x02
+#define NVME_IO_WRITE           0x01
 
 /* ---- Identify CNS values ---- */
 #define NVME_IDENTIFY_CNS_CTRL  0x01
 #define NVME_IDENTIFY_CNS_NS    0x00
 
-/* ---- Admin queue depth ---- */
+/* ---- Queue depths ---- */
 #define NVME_ADMIN_QUEUE_DEPTH  32
+#define NVME_IO_QUEUE_DEPTH     64
 
 /* ---- Limits ---- */
 #define NVME_MAX_CONTROLLERS    4
@@ -125,7 +132,15 @@ struct nvme_controller {
     uint16_t            admin_cq_head;
     uint8_t             admin_cq_phase;
 
-    /* §3: I/O queue (populated later) */
+    /* §3: I/O queue (QID=1) */
+    uintptr_t           io_sq_phys;
+    uintptr_t           io_cq_phys;
+    volatile struct nvme_sqe *io_sq;
+    volatile struct nvme_cqe *io_cq;
+    uint16_t            io_sq_tail;
+    uint16_t            io_cq_head;
+    uint8_t             io_cq_phase;
+    uint8_t             io_queue_active;
 
     /* §4: Namespace info */
     uint64_t            ns_lba_count;
@@ -138,3 +153,7 @@ struct nvme_controller {
 int                     nvme_init(void);
 int                     nvme_controller_count(void);
 struct nvme_controller *nvme_get_controller(int idx);
+int                     nvme_read_sectors(int ctrl_idx, uint64_t lba,
+                                          uint32_t count, void *buf);
+int                     nvme_write_sectors(int ctrl_idx, uint64_t lba,
+                                           uint32_t count, const void *buf);

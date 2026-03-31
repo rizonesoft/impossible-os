@@ -207,6 +207,8 @@ typedef enum {
 #define POST16_NVME_OK          0x20A1
 #define POST16_NVME_ADMIN       0x20A2
 #define POST16_NVME_ADMIN_OK    0x20A3
+#define POST16_NVME_IO          0x20A4
+#define POST16_NVME_IO_OK       0x20A5
 
 /* Phase 3 — Desktop (0x3000–0x3FFF) */
 #define POST16_SCHED            0x3000

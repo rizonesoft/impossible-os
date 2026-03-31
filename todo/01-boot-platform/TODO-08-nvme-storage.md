@@ -37,7 +37,7 @@
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | NVMe controller discovery and BAR mapping      | —          |  [x]   |
 | 💎  |   2   | Admin Queue setup and Identify commands        | §1         |  [x]   |
-| 💎  |   3   | I/O Queue creation and sector read/write       | §2         |  [ ]   |
+| 💎  |   3   | I/O Queue creation and sector read/write       | §2         |  [x]   |
 | 💎  |   4   | Block device registration and VFS integration  | §3         |  [ ]   |
 
 ---
@@ -78,7 +78,7 @@ Create the Admin Submission/Completion Queue pair and execute Identify Controlle
 - [x] Log: `nvme: "Samsung 980 PRO" 500 GiB, 512-byte sectors, 976773168 LBAs`
 - [x] `POST16(POST16_NVME_ADMIN)` on entry, `POST16(POST16_NVME_ADMIN_OK)` on exit
 - [x] If Identify Controller timeout: log `nvme: Identify timeout`, skip to POST16_NVME_ADMIN_OK
-- [ ] Commit: `"drivers: NVMe Admin Queue + Identify Controller/Namespace"`
+- [x] Commit: `"drivers: NVMe Admin Queue + Identify Controller/Namespace"`
 
 **Test checkpoint:** Serial shows controller model and capacity. POST code 0x20A2/0x20A3 (`POST16_NVME_ADMIN`/`POST16_NVME_ADMIN_OK`). Test on:
 - Bare metal: real model string + capacity logged
@@ -92,14 +92,14 @@ Create one I/O Submission/Completion Queue pair and implement read/write sector 
 
 **Files:** `src/kernel/drivers/nvme.c`
 
-- [ ] Submit Create I/O Completion Queue command (opcode 0x05)
-- [ ] Submit Create I/O Submission Queue command (opcode 0x01)
-- [ ] `nvme_read_sectors(nsid, lba, count, buf)` — submit Read command (opcode 0x02), wait for completion
-- [ ] `nvme_write_sectors(nsid, lba, count, buf)` — submit Write command (opcode 0x01), wait for completion
-- [ ] PRP (Physical Region Page) list for multi-page transfers
-- [ ] Polled completion (check CQ head) — interrupt-based deferred to TODO-02
-- [ ] `POST16(POST16_NVME_IO)` on entry, `POST16(POST16_NVME_IO_OK)` on exit
-- [ ] Validate PRP list alignment before every DMA submit (must be page-aligned for multi-page)
+- [x] Submit Create I/O Completion Queue command (opcode 0x05)
+- [x] Submit Create I/O Submission Queue command (opcode 0x01)
+- [x] `nvme_read_sectors(nsid, lba, count, buf)` — submit Read command (opcode 0x02), wait for completion
+- [x] `nvme_write_sectors(nsid, lba, count, buf)` — submit Write command (opcode 0x01), wait for completion
+- [x] PRP (Physical Region Page) list for multi-page transfers
+- [x] Polled completion (check CQ head) — interrupt-based deferred to TODO-02
+- [x] `POST16(POST16_NVME_IO)` on entry, `POST16(POST16_NVME_IO_OK)` on exit
+- [x] Validate PRP list alignment before every DMA submit (must be page-aligned for multi-page)
 - [ ] Commit: `"drivers: NVMe I/O Queue — read/write sectors via polled completion"`
 
 **Test checkpoint:** Read sector 0, verify GPT/MBR header. Write + readback test on test partition only. POST code 0x20A4/0x20A5 (`POST16_NVME_IO`/`POST16_NVME_IO_OK`). Test on:
