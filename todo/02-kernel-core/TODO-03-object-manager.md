@@ -187,7 +187,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
   - Enumerates entries in an `OBJECT_DIRECTORY`
   - Each entry: name string + type name string (OBJECT_DIRECTORY_INFORMATION)
 - [x] Syscalls: SYS_OPENDIROBJ (42), SYS_QUERYDIROBJ (43) — user-mode can walk `\` and enumerate all named objects
-- [ ] User-mode `ObBrowse.exe` or desktop shell namespace panel (deferred to 11-apps)
+- [ ] User-mode `ObBrowse.exe` — see [16-tools-accessories/TODO-01](../16-tools-accessories/TODO-01-obbrowse-namespace-browser.md)
 - [x] Commit: `"kernel: ob — NtOpenDirectoryObject and NtQueryDirectoryObject (public API)"`
 
 ---

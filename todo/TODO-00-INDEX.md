@@ -32,9 +32,9 @@ This tree is the live planning scaffold for active work.
 | 14 | [13 Installer Release](./13-installer-release/INDEX.md) | Installer flow, deployable media, packaging, and release readiness. |
 | 15 | [14 Future Research](./14-future-research/INDEX.md) | Long-range research, stretch goals, and ideas not yet ready for active execution. |
 | 16 | [15 SDK Tools](./15-host-tools/INDEX.md) | SDK tools running on the host OS (Linux) for development and third-party use. |
+| 17 | [16 Tools & Accessories](./16-tools-accessories/INDEX.md) | System diagnostic tools, namespace browsers, and administrative utilities. |
 
 ## Active Epics
 
 - [00 Infrastructure] [TODO-01 AI Development System](./00-infrastructure/TODO-01-ai-development-system.md) - Establish Cursor as the canonical agent layer, define MCP policy, and replace prompt-heavy TODO procedure with reusable skills.
-- [00 Infrastructure] [TODO-02 Developer Tooling Stack](./00-infrastructure/TODO-02-developer-tooling-stack.md) - Define the parent roadmap for the git-tracked developer tooling contract, with build, run, host utilities, and GitHub sync kept aligned.
 - [03 Memory Concurrency] [TODO-01 VMM Memory Protection & Diagnostics](./03-memory-concurrency/TODO-01-vmm-memory-protection.md) - Harden the memory model with mprotect, W^X enforcement, demand paging, VirtualAlloc Win32 wrappers, kmalloc lint, heap canaries, leak detector, and PMM statistics.
