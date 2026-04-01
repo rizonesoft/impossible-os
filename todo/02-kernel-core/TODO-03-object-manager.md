@@ -38,7 +38,7 @@
 | 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [x]   |
 | 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [x]   |
 | 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [x]   |
-| 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [ ]   |
+| 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [ ]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3             |  [ ]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [ ]   |
@@ -135,12 +135,12 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
 ## 7. Section (Shared Memory) Object Type
 Sections represent mappable memory objects; the foundation for `MapViewOfFile` and shared memory.
 
-- [ ] Register `ObpSectionType` — body: physical base address, size, page count, flags, refcount
-- [ ] `ObCreateSection(size, protect, name)` — allocates contiguous physical pages via `pmm_alloc_contiguous`; inserts into Ob namespace if named
-- [ ] `ObMapViewOfSection(section, process, address, size, offset, protect)` — maps the physical pages into the target process address space via VMM page-table entries
-- [ ] `ObUnmapViewOfSection(process, base_address)` — removes VMM mappings; does not free physical pages until refcount drops to 0
-- [ ] Re-implement `SYS_SHMEM_CREATE` / `SYS_SHMEM_MAP` as thin wrappers over the Ob section API
-- [ ] Commit: `"kernel: ob — section object type and view mapping"`
+- [x] Register `ObpSectionType` — body: physical base address, size, page count, flags, refcount
+- [x] `ObCreateSection(size, protect, name)` — allocates contiguous physical pages via `pmm_alloc_contiguous`; inserts into Ob namespace if named
+- [x] `ObMapViewOfSection(section, process, address, size, offset, protect)` — maps the physical pages into the target process address space via VMM page-table entries
+- [x] `ObUnmapViewOfSection(process, base_address)` — removes VMM mappings; does not free physical pages until refcount drops to 0
+- [x] Re-implement `SYS_SHMEM_CREATE` / `SYS_SHMEM_MAP` as thin wrappers over the Ob section API
+- [x] Commit: `"kernel: ob — section object type and view mapping"`
 
 ## 8. Security Descriptor Integration
 Attach DACL/SACL/Owner/Group to named objects so the Security Reference Monitor can enforce access rights at open time. Depends on TODO-11 (SRM) for full enforcement; this section wires the storage and basic check hook.
@@ -204,7 +204,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 | 💎 | File objects          | ✅ FILE_OBJECT         | ✅ struct file       | ✅ §5                        |
 | 💎 | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct       | ✅ §5                        |
 | 💎 | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem   | ✅ §6                        |
-| 💎 | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap    | ⬜ §7                        |
+| 💎 | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap    | ✅ §7                        |
 | 💎 | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs  | ⬜ §8                        |
 | 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ⬜ §9, §10                   |
 | ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ⬜ §11 — public, documented  |

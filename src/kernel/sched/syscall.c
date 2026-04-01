@@ -22,6 +22,7 @@
 #include "kernel/ipc/signal.h"
 #include "kernel/ipc/shmem.h"
 #include "kernel/ob/ob_file.h"
+#include "kernel/ob/ob_section.h"
 #include "kernel/ob/ob.h"
 #include "desktop/terminal.h"
 
@@ -329,12 +330,15 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     }
     case SYS_SHMEM_CREATE: {
         const char *name = (const char *)arg1;
-        ret = (int64_t)shmem_create(name, (uint32_t)arg2);
+        uint32_t size = (uint32_t)arg2;
+        ret = (int64_t)ObCreateSection(&task_current()->handle_table,
+                                       size, SECTION_ALL_ACCESS, name);
         break;
     }
     case SYS_SHMEM_MAP: {
-        void *ptr = shmem_map((int)arg1);
-        ret = (int64_t)(uint64_t)ptr;
+        HANDLE sh = (HANDLE)(int32_t)arg1;
+        uintptr_t addr = ObMapViewOfSection(&task_current()->handle_table, sh);
+        ret = (int64_t)(uint64_t)addr;
         break;
     }
     case SYS_LOG: {

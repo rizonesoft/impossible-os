@@ -13,6 +13,7 @@
 #include "kernel/ob/ob_mutex.h"
 #include "kernel/ob/ob_semaphore.h"
 #include "kernel/ob/ob_timer.h"
+#include "kernel/ob/ob_section.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
@@ -178,9 +179,7 @@ boot_result_t ob_init(void)
     ob_event_type_init();
     ob_mutex_type_init();
     ob_semaphore_type_init();
-    ObpSectionType = ob_create_type(&(OBJECT_TYPE){
-        .name = "Section", .body_size = 0
-    });
+    ob_section_type_init();
     ob_timer_type_init();
 
     klog(LOG_INFO, "ob", "Registered %u built-in types",
