@@ -144,12 +144,26 @@ typedef struct {
 /* The SID starts at &ace->SidStart. Cast to SID* for access. */
 #define ACE_SID(ace)  ((SID *)&(ace)->SidStart)
 
-/* Get the Nth ACE from an ACL (0-based, no bounds check). */
-static inline ACE_HEADER *RtlGetAceInline(const ACL *acl, uint32_t index)
-{
-    const uint8_t *p = (const uint8_t *)acl + sizeof(ACL);
-    uint32_t i;
-    for (i = 0; i < index; i++)
-        p += ((const ACE_HEADER *)p)->AceSize;
-    return (ACE_HEADER *)p;
-}
+/* ---- ACL utility functions --------------------------------------------- */
+
+/* Initialize an empty ACL in a caller-supplied buffer.
+ * size = total buffer size (must be >= sizeof(ACL)).
+ * rev  = ACL_REVISION (2). Returns 0 on success, -1 on error. */
+int RtlCreateAcl(ACL *acl, uint16_t size, uint8_t rev);
+
+/* Append an ACCESS_ALLOWED_ACE to the ACL. Returns 0 or -1 if full. */
+int RtlAddAccessAllowedAce(ACL *acl, uint8_t rev, uint32_t mask, const SID *sid);
+
+/* Append an ACCESS_DENIED_ACE to the ACL. Returns 0 or -1 if full. */
+int RtlAddAccessDeniedAce(ACL *acl, uint8_t rev, uint32_t mask, const SID *sid);
+
+/* Append a SYSTEM_MANDATORY_LABEL_ACE to the SACL. Returns 0 or -1. */
+int RtlAddMandatoryAce(ACL *acl, uint8_t rev, uint8_t flags,
+                       uint32_t mask, uint8_t type, const SID *integrity_sid);
+
+/* Get the Nth ACE (0-based). Returns 0 and sets *ace, or -1 if OOB. */
+int RtlGetAce(const ACL *acl, uint32_t index, ACE_HEADER **ace);
+
+/* Format an ACL as SDDL-like string: "(A;;FA;;;SY)(D;;GA;;;BA)..."
+ * Returns chars written (excluding NUL), or -1 on error. */
+int RtlAclToCStr(const ACL *acl, char *buf, uint32_t len);

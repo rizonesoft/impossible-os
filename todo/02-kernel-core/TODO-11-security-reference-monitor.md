@@ -206,12 +206,12 @@
 
 ### 3.2 ACL helpers
 
-- [ ] `RtlCreateAcl(acl, size, rev)` — initialise empty ACL
-- [ ] `RtlAddAccessAllowedAce(acl, rev, mask, sid)` — append allowed ACE
-- [ ] `RtlAddAccessDeniedAce(acl, rev, mask, sid)` — append denied ACE
-- [ ] `RtlAddMandatoryAce(acl, rev, flags, mask, type, integrity_sid)`
-- [ ] `RtlGetAce(acl, index, ace_ptr)` — walk ACE by index
-- [ ] `RtlAclToCStr(acl, buf, len)` — debug dump (`"D:(A;;FA;;;SY)(A;;FA;;;BA)"`)
+- [x] `RtlCreateAcl(acl, size, rev)` — initialise empty ACL
+- [x] `RtlAddAccessAllowedAce(acl, rev, mask, sid)` — append allowed ACE
+- [x] `RtlAddAccessDeniedAce(acl, rev, mask, sid)` — append denied ACE
+- [x] `RtlAddMandatoryAce(acl, rev, flags, mask, type, integrity_sid)`
+- [x] `RtlGetAce(acl, index, ace_ptr)` — walk ACE by index
+- [x] `RtlAclToCStr(acl, buf, len)` — debug dump (`"D:(A;;FA;;;SY)(A;;FA;;;BA)"`)
 
 ### 3.3 SECURITY_DESCRIPTOR helpers
 
