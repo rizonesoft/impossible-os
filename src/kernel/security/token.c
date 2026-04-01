@@ -214,3 +214,188 @@ ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin)
 
     return tok;
 }
+
+/* ============================================================================
+ * Token query functions (§4.3)
+ * ============================================================================ */
+
+extern void *memcpy(void *dst, const void *src, size_t n);
+
+/* --- NtOpenProcessToken -------------------------------------------------- */
+
+int32_t NtOpenProcessToken(ACCESS_TOKEN *process_token, HANDLE_TABLE *ht,
+                           uint32_t desired_access, HANDLE *out_handle)
+{
+    HANDLE h;
+
+    if (!process_token || !ht || !out_handle)
+        return STATUS_INVALID_PARAMETER;
+
+    h = ObpAllocateHandle(ht, process_token, desired_access, 0);
+    if (h == INVALID_HANDLE_VALUE)
+        return STATUS_INVALID_HANDLE;
+
+    *out_handle = h;
+    return STATUS_SUCCESS;
+}
+
+/* --- NtOpenThreadToken --------------------------------------------------- */
+
+int32_t NtOpenThreadToken(ACCESS_TOKEN *impersonation_token, HANDLE_TABLE *ht,
+                          uint32_t desired_access, HANDLE *out_handle)
+{
+    HANDLE h;
+
+    if (!ht || !out_handle)
+        return STATUS_INVALID_PARAMETER;
+
+    if (!impersonation_token)
+        return STATUS_NO_TOKEN;
+
+    h = ObpAllocateHandle(ht, impersonation_token, desired_access, 0);
+    if (h == INVALID_HANDLE_VALUE)
+        return STATUS_INVALID_HANDLE;
+
+    *out_handle = h;
+    return STATUS_SUCCESS;
+}
+
+/* --- NtQueryInformationToken --------------------------------------------- */
+
+int32_t NtQueryInformationToken(const ACCESS_TOKEN *token,
+                                TOKEN_INFORMATION_CLASS info_class,
+                                void *buf, uint32_t buf_len,
+                                uint32_t *ret_len)
+{
+    uint32_t needed;
+
+    if (!token)
+        return STATUS_INVALID_HANDLE;
+
+    switch (info_class) {
+
+    case TokenUser: {
+        /* Returns SID_AND_ATTRIBUTES for the user */
+        needed = sizeof(SID_AND_ATTRIBUTES);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        SID_AND_ATTRIBUTES *out = (SID_AND_ATTRIBUTES *)buf;
+        out->Sid = token->UserSid;
+        out->Attributes = 0;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenGroups: {
+        needed = sizeof(uint32_t) + token->GroupCount * sizeof(SID_AND_ATTRIBUTES);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(uint32_t *)buf = token->GroupCount;
+        memcpy((uint8_t *)buf + sizeof(uint32_t), token->Groups,
+               token->GroupCount * sizeof(SID_AND_ATTRIBUTES));
+        return STATUS_SUCCESS;
+    }
+
+    case TokenPrivileges: {
+        needed = sizeof(uint32_t) + token->PrivilegeCount * sizeof(LUID_AND_ATTRIBUTES);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(uint32_t *)buf = token->PrivilegeCount;
+        memcpy((uint8_t *)buf + sizeof(uint32_t), token->Privileges,
+               token->PrivilegeCount * sizeof(LUID_AND_ATTRIBUTES));
+        return STATUS_SUCCESS;
+    }
+
+    case TokenOwner: {
+        needed = sizeof(SID *);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(SID **)buf = token->UserSid;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenPrimaryGroup: {
+        needed = sizeof(SID *);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(SID **)buf = token->PrimaryGroup;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenDefaultDacl: {
+        needed = sizeof(ACL *);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(ACL **)buf = token->DefaultDacl;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenTypeInfo: {
+        needed = sizeof(TOKEN_TYPE);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(TOKEN_TYPE *)buf = token->TokenType;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenImpersonationLevelInfo: {
+        needed = sizeof(SECURITY_IMPERSONATION_LEVEL);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(SECURITY_IMPERSONATION_LEVEL *)buf = token->ImpersonationLevel;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenStatistics: {
+        /* Return TokenId, AuthenticationId, ModifiedId, GroupCount, PrivilegeCount */
+        needed = 3 * sizeof(LUID) + 2 * sizeof(uint32_t);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        {
+            uint8_t *p = (uint8_t *)buf;
+            memcpy(p, &token->TokenId, sizeof(LUID)); p += sizeof(LUID);
+            memcpy(p, &token->AuthenticationId, sizeof(LUID)); p += sizeof(LUID);
+            memcpy(p, &token->ModifiedId, sizeof(LUID)); p += sizeof(LUID);
+            *(uint32_t *)p = token->GroupCount; p += sizeof(uint32_t);
+            *(uint32_t *)p = token->PrivilegeCount;
+        }
+        return STATUS_SUCCESS;
+    }
+
+    case TokenIntegrityLevel: {
+        needed = sizeof(SID_AND_ATTRIBUTES);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        SID_AND_ATTRIBUTES *out = (SID_AND_ATTRIBUTES *)buf;
+        out->Sid = token->IntegrityLevelSid;
+        out->Attributes = SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenElevationTypeInfo: {
+        needed = sizeof(TOKEN_ELEVATION_TYPE);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(TOKEN_ELEVATION_TYPE *)buf = token->ElevationType;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenLinkedToken: {
+        needed = sizeof(LUID);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(LUID *)buf = token->LinkedTokenId;
+        return STATUS_SUCCESS;
+    }
+
+    case TokenIsElevatedInfo: {
+        needed = sizeof(uint32_t);
+        if (ret_len) *ret_len = needed;
+        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        *(uint32_t *)buf = token->IsElevated;
+        return STATUS_SUCCESS;
+    }
+
+    default:
+        return STATUS_INVALID_INFO_CLASS;
+    }
+}

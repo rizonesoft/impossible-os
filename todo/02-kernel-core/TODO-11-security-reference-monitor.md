@@ -285,9 +285,9 @@
 
 ### 4.3 Token query syscalls
 
-- [ ] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` — opens the primary token of a process; access check on the process object for `PROCESS_QUERY_INFORMATION`; returns handle with requested access
-- [ ] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` — returns impersonation token or `STATUS_NO_TOKEN` if thread is not impersonating
-- [ ] `NtQueryInformationToken(hToken, class, buf, len, retlen)` — implement `TokenUser`, `TokenGroups`, `TokenPrivileges`, `TokenOwner`, `TokenPrimaryGroup`, `TokenDefaultDacl`, `TokenType`, `TokenImpersonationLevel`, `TokenStatistics`, `TokenIntegrityLevel`, `TokenElevationType`, `TokenLinkedToken`, `TokenIsElevated`
+- [x] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` — opens the primary token of a process; access check on the process object for `PROCESS_QUERY_INFORMATION`; returns handle with requested access
+- [x] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` — returns impersonation token or `STATUS_NO_TOKEN` if thread is not impersonating
+- [x] `NtQueryInformationToken(hToken, class, buf, len, retlen)` — implement `TokenUser`, `TokenGroups`, `TokenPrivileges`, `TokenOwner`, `TokenPrimaryGroup`, `TokenDefaultDacl`, `TokenType`, `TokenImpersonationLevel`, `TokenStatistics`, `TokenIntegrityLevel`, `TokenElevationType`, `TokenLinkedToken`, `TokenIsElevated`
 
 ### 4.4 Token mutation syscalls
 

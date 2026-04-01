@@ -13,6 +13,7 @@
 #include "kernel/security/luid.h"
 #include "kernel/security/privileges.h"
 #include "kernel/security/acl.h"
+#include "kernel/ob/handle_table.h"
 
 /* --- Limits -------------------------------------------------------------- */
 
@@ -100,7 +101,7 @@ ACCESS_TOKEN *SeCreateSystemToken(void);
  */
 ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin);
 
-/* --- Token information classes (for NtQueryInformationToken) ------------- */
+/* --- Token information classes ------------------------------------------- */
 
 typedef enum {
     TokenUser                  = 1,
@@ -113,8 +114,30 @@ typedef enum {
     TokenTypeInfo              = 8,
     TokenImpersonationLevelInfo = 9,
     TokenStatistics            = 10,
-    TokenIntegrityLevel        = 25,
     TokenElevationTypeInfo     = 18,
     TokenLinkedToken           = 19,
     TokenIsElevatedInfo        = 20,
+    TokenIntegrityLevel        = 25,
 } TOKEN_INFORMATION_CLASS;
+
+/* --- NTSTATUS codes for token operations -------------------------------- */
+
+#define STATUS_SUCCESS           0
+#define STATUS_NO_TOKEN         ((int32_t)0xC000007C)
+#define STATUS_BUFFER_TOO_SMALL ((int32_t)0xC0000023)
+#define STATUS_INVALID_HANDLE   ((int32_t)0xC0000008)
+#define STATUS_INVALID_PARAMETER ((int32_t)0xC000000D)
+#define STATUS_INVALID_INFO_CLASS ((int32_t)0xC0000003)
+
+/* --- Token query/open functions ------------------------------------------ */
+
+int32_t NtOpenProcessToken(ACCESS_TOKEN *process_token, HANDLE_TABLE *ht,
+                           uint32_t desired_access, HANDLE *out_handle);
+
+int32_t NtOpenThreadToken(ACCESS_TOKEN *impersonation_token, HANDLE_TABLE *ht,
+                          uint32_t desired_access, HANDLE *out_handle);
+
+int32_t NtQueryInformationToken(const ACCESS_TOKEN *token,
+                                TOKEN_INFORMATION_CLASS info_class,
+                                void *buf, uint32_t buf_len,
+                                uint32_t *ret_len);
