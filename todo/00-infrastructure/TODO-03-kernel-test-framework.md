@@ -17,7 +17,9 @@
 - `scripts/test-fs.sh` — filesystem driver test suite (written, not in CI)
 - `.github/workflows/build.yml` — CI pipeline (smoke test commented out)
 - `Makefile` — build targets (no `make test` target)
-- → XREF: `TODO-02-developer-tooling-stack.md §5` — GitHub sync and CI parity
+- → XREF: `TODO-02-developer-tooling-stack.md §2.5` — GitHub sync and CI parity
+- → XREF: `TODO-04-ci-notifications.md §1` — branch protection depends on test steps from §4–§6
+- → XREF: `TODO-05-test-suites-coverage.md §1–§9` — individual test suites depend on framework wiring from §1
 
 ---
 
@@ -208,14 +210,15 @@ Track which kernel subsystems have test coverage.
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                     | Linux                      | Impossible OS                 |
-|----|----------------------------|---------------------------|----------------------------|-------------------------------|
-| 💎 | Kernel unit test framework | ✅ KUnit + WHQL           | ✅ KUnit + kselftest      | ⚠️ Framework exists, unwired |
-| 💎 | CI build verification      | ✅ Internal CI            | ✅ kernel.org CI          | ✅ GitHub Actions build      |
-| 💎 | CI boot test               | ✅ Internal CI            | ✅ LKFT + kernelci        | ⬜ §4 (smoke test ready)     |
-| 💎 | CI driver tests            | ✅ HLK/WHQL               | ✅ LTP + blktests         | ⬜ §5–§6                     |
-| ⭐ | PR test summary table      | ❌ Internal only          | ⚠️ Bot comments           | ⬜ §7                        |
-| ⭐ | Pre-push local tests       | ❌ Not standard           | ⚠️ Optional               | ⬜ §8                        |
+| ⭐ | Feature                  | Win11              | Linux               | Impossible OS            |
+|----|--------------------------|--------------------|----- ----------------|--------------------------|
+| 💎 | Kernel unit tests        | ✅ KUnit + WHQL    | ✅ KUnit + kselftest | ⚠️ Framework, unwired    |
+| 💎 | CI build verification    | ✅ Internal CI     | ✅ kernel.org CI     | ✅ GitHub Actions         |
+| 💎 | CI boot test             | ✅ Internal CI     | ✅ LKFT + kernelci   | ⬜ §4                    |
+| 💎 | CI driver tests          | ✅ HLK/WHQL        | ✅ LTP + blktests    | ⬜ §5–§6                 |
+| ⭐ | PR test summary table    | ❌ Internal only   | ⚠️ Bot comments      | ⬜ §7 🚀                 |
+| ⭐ | Pre-push local tests     | ❌ Not standard    | ⚠️ Optional          | ⬜ §8 🚀                 |
+| ⭐ | Coverage tracking        | ❌ Internal only   | ⚠️ lcov optional     | ⬜ §9 🚀                 |
 
 After §1–§6, Impossible OS has automated testing on par with Linux kernel CI (build + boot + unit + driver tests on every commit). §7–§9 add developer-facing features neither Windows nor Linux provides at the PR level.
 
