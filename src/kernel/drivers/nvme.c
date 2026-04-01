@@ -294,14 +294,6 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
          (uint64_t)io_depth, (uint64_t)db_stride,
          (uint64_t)nc->io_sq_phys, (uint64_t)nc->io_cq_phys);
 
-    /* Allow controller to finalize I/O queue setup before first I/O.
-     * On WHPX the emulated NVMe processes the Create I/O SQ admin
-     * completion asynchronously — issuing I/O immediately can fail.
-     * 10ms is conservative; real hardware needs ~0, but QEMU's
-     * device model under WHPX needs time to wire up the queue. */
-    mb();
-    sleep_ms(10);
-
     /* ---- Verify: read sector 0 ---- */
     {
         uintptr_t test_phys = pmm_alloc_contiguous(1);

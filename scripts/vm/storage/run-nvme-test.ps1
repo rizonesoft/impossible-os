@@ -17,8 +17,11 @@
 #   2. Build in WSL2: bash scripts/build.sh
 Param(
     [ValidateSet('auto','whpx','tcg')]
-    # WHPX preferred (near-native, closest to real hardware).
-    [string]$Accel = 'auto',
+    # TCG required: QEMU's WHPX backend processes NVMe doorbell MMIO writes
+    # asynchronously through its event loop. The vCPU polls the CQ before
+    # the main thread processes the command, causing intermittent timeouts.
+    # Not a driver bug — real hardware and KVM handle this synchronously.
+    [string]$Accel = 'tcg',
     [switch]$Build = $false
 )
 
