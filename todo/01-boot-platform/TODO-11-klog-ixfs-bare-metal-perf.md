@@ -1,4 +1,7 @@
-# TODO-11 — klog Disk Flush & IXFS Boot Tests on Slow Media
+# TODO-11 — klog Disk Flush & IXFS Boot Tests on Slow Media *(PARTIALLY SUPERSEDED by TODO-14)*
+
+> [!NOTE]
+> **§1 (bounded flush), §3 (deferred flush), §4 (speed detection), §6 (restore flush calls)** are superseded by `TODO-14-usb-boot-hardening.md §6–§8`. **§2 (single-pass routing), §5 (IXFS test adaptation), §7 (flush progress)** remain in this TODO as they are not covered elsewhere.
 
 > **Goal:** Fix `klog_disk_flush()` hanging for 10+ minutes on USB 2.0 bare metal, and make IXFS boot tests runnable on slow media (USB sticks, SD cards) without freezing. Currently both are bypassed with comments on bare metal — they must work correctly on all boot media.
 

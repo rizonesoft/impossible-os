@@ -1,9 +1,9 @@
-# TODO-10 — USB MSC Retry & Device Readiness
-
-> **Goal:** Replace the 2-second sleep hack after `xhci_init()` with proper SCSI retry logic in the USB MSC read/write path. USB drives may return UNIT ATTENTION or NOT READY on the first command after BOT init — this is normal SCSI behavior that requires retry, not a delay. The current hack masks a timing race on EHCI→xHCI routed Haswell systems where partition scan fails without a settle delay.
+# TODO-10 — USB MSC Retry & Device Readiness *(SUPERSEDED by TODO-14)*
 
 > [!IMPORTANT]
-> This was discovered on an i5-4210U Haswell laptop where USB 2.0 MSC drives intermittently fail the first sector read during `partition_scan_all()`. The 2s sleep in `boot_storage.c` after `xhci_init()` is a temporary workaround. Windows uses PnP device-ready signaling; Linux uses `usb-storage` retry logic with sense data parsing. Both avoid raw delays.
+> **This TODO is fully superseded by `TODO-14-usb-boot-hardening.md`** which consolidates all USB boot fragility fixes into a single fail-safe pipeline. TODO-14 §1–§5 implements REQUEST SENSE, TEST UNIT READY, MSC BOT retry, sleep hack removal, and XUSB2PR polling — the complete scope of this TODO plus EHCI fallback, klog flush fixes, and media speed detection.
+
+> **Original goal:** Replace the 2-second sleep hack after `xhci_init()` with proper SCSI retry logic in the USB MSC read/write path.
 
 ## Inputs
 

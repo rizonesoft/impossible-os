@@ -36,9 +36,9 @@
 | 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [x]   |
 | 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
 | ⭐  |   5   | Pre-ExitBootServices USB handover (Windows-style) | §1, §4   |  [x]   |
-| 💎  |   6   | xHCI interrupt endpoint setup for HID          | §2         |  [ ]   |
-| 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         |  [ ]   |
-| 💎  |   8   | USB HID boot-protocol mouse driver             | §6         |  [ ]   |
+| 💎  |   6   | xHCI interrupt endpoint setup for HID          | §2         | →T15   |
+| 💎  |   7   | USB HID boot-protocol keyboard driver          | §6         | →T15   |
+| 💎  |   8   | USB HID boot-protocol mouse driver             | §6         | →T15   |
 | 💎  |   9   | Input source priority and coexistence          | §7, §8     |  [ ]   |
 | ⭐  |  10   | Hardware compatibility (95%+ of systems)       | §1, §5     |  [ ]   |
 
@@ -143,11 +143,10 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
 
 **Test checkpoint:** Boot from USB — C:\ mounted within 10ms of kernel start (no 500ms delay). Hot-plug: plug USB drive after boot, device appears within 100ms. POST codes: 0xB080/0xB081 (bootloader), 0xD750/0xD751 (kernel takeover), 0xD752/0xD753 (hot-plug). If crash, check last POST — 0xD750 = USBLEGSUP handoff failed, fall back to §1-§4 path. Test on: bare metal, QEMU `run-usb`. No Intel-specific port routing code needed (firmware already routed ports correctly).
 
-## 6. xHCI Interrupt Endpoint Setup for HID
-Configure interrupt-IN endpoints for HID devices so the xHCI controller polls them periodically.
+## 6. xHCI Interrupt Endpoint Setup for HID *(SUPERSEDED by TODO-15 §1)*
 
 > [!NOTE]
-> **Scope overlap with `04-drivers-hardware/TODO-09-usb-stack.md`:** TODO-09 §1-§3 still contain HID interrupt endpoint, HID class driver, and PS/2↔USB fallback sections that duplicate TODO-07 §6-§9. TODO-09 should be updated to XREF these sections instead of re-implementing them.
+> Sections 6–9 are fully superseded by `TODO-15-usb-hid-keyboard-mouse.md` which provides a more detailed implementation with interrupt endpoint setup (§1), interrupt transfer polling (§2), boot-protocol keyboard (§3), mouse (§4), input coexistence (§5), and hot-plug detection (§6).
 
 **Files:** `src/kernel/drivers/xhci_dev.c`
 
