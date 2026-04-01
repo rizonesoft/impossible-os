@@ -34,6 +34,13 @@ This domain tracks the tooling and workflow work that supports the whole project
 - [TODO-02 Developer Tooling Stack](./TODO-02-developer-tooling-stack.md) - Define the
   parent roadmap for toolchain bootstrap, build orchestration, run/debug tooling, host
   utilities, and GitHub workflow parity.
+- [TODO-03 Kernel Test Framework & Automation](./TODO-03-kernel-test-framework.md) - Wire
+  test_runner into boot, `make test` target, enable smoke/unit/FS tests in GitHub Actions,
+  pre-push hooks, test result summaries in CI.
+- [TODO-04 CI Notifications & Build Status](./TODO-04-ci-notifications.md) - Branch
+  protection, build badge, failure notifications, nightly builds, PR comment bot.
+- [TODO-05 Kernel Test Suites & Coverage](./TODO-05-test-suites-coverage.md) - Per-subsystem
+  test suites (OB, security, timer, IPC, VMM, ELF, NVMe, USB), 100+ assertions, coverage report.
 
 ## Completed / Doc-converted
 
