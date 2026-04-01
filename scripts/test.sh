@@ -144,6 +144,8 @@ done
 echo ""
 if [ "${FAILED:-0}" = "0" ] || [ -z "$FAILED" ]; then
     echo -e "${GREEN}${BOLD}PASS: ${PASSED} tests passed${RESET}"
+    # Update coverage report on success
+    bash "$PROJECT/scripts/test-coverage.sh" --save --quiet
     exit 0
 else
     TOTAL=$((PASSED + FAILED))

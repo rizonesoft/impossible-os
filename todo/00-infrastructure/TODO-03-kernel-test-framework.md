@@ -136,7 +136,7 @@ Track which kernel subsystems have test coverage.
 - [x] Outputs: suite name, assertion count, functions tested
 - [x] Generates `build/test-coverage.md` with coverage table
 - [x] Track coverage over time in a simple JSON file (`build/test-coverage.json`)
-- [ ] Commit: `"infra: test coverage tracking — assertion count per subsystem"`
+- [x] Commit: `"infra: test coverage tracking — assertion count per subsystem"`
 
 **Test checkpoint:** `bash scripts/test-coverage.sh` outputs table showing suites and assertion counts.
 
