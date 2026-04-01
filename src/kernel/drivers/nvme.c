@@ -280,6 +280,12 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
     klog(LOG_INFO, "nvme", "I/O Queue created (QID=1, depth=%u, db_stride=%u)",
          (uint64_t)io_depth, (uint64_t)db_stride);
 
+    /* Allow controller to finalize I/O queue setup before first I/O.
+     * On WHPX the emulated NVMe processes the Create I/O SQ admin
+     * completion asynchronously — issuing I/O immediately can fail. */
+    mb();
+    sleep_ms(1);
+
     /* ---- Verify: read sector 0 ---- */
     {
         uintptr_t test_phys = pmm_alloc_contiguous(1);
