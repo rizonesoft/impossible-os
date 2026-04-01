@@ -121,8 +121,8 @@ Optional local smoke test before pushing.
 - [x] `pre-push` hook: runs `make test` (headless QEMU, 60s timeout)
 - [x] If tests fail: block push with message `"Tests failed — run 'make test' to see details"`
 - [x] Make it optional: `bash scripts/install-hooks.sh` to enable, `bash scripts/install-hooks.sh --remove` to disable
-- [ ] Document in CONTRIBUTING.md
-- [ ] Commit: `"infra: pre-push git hook — optional local smoke test before push"`
+- [x] Document in CONTRIBUTING.md
+- [x] Commit: `"infra: pre-push git hook — optional local smoke test before push"`
 
 **Test checkpoint:** Install hook → make a breaking change → `git push` blocked with test failure message.
 

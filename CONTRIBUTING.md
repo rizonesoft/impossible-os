@@ -27,10 +27,14 @@ distro, check the script for the package list and install manually.
 ### Enable Git Hooks
 
 ```bash
-git config core.hooksPath .githooks
+git config core.hooksPath .githooks       # Post-commit: auto-update COUNT.md
+bash scripts/install-hooks.sh             # Pre-push: run tests before push (optional)
 ```
 
-This enables the post-commit line count hook that keeps `COUNT.md` up to date.
+The post-commit hook keeps `COUNT.md` up to date. The pre-push hook runs
+`make test` before every push — if tests fail, the push is blocked. The
+pre-push hook requires KVM access (`sudo usermod -aG kvm $USER`) for fast
+QEMU execution. To remove: `bash scripts/install-hooks.sh --remove`.
 
 ---
 
@@ -132,8 +136,9 @@ docs: professional README with feature table
 3. **Implement** your changes following the code style above
 4. **Test** before submitting:
    ```bash
-   bash scripts/build.sh clean run    # Must boot successfully in QEMU
-   tail -1 build/build.log            # Must show "=== BUILD OK ==="
+   bash scripts/build.sh             # Must show "=== BUILD OK ==="
+   make test                         # Run kernel unit tests (needs KVM)
+   bash scripts/build.sh run         # Boot in QEMU to verify visually
    ```
 5. **Commit** with a conventional commit message
 6. **Push** and open a Pull Request against `main`
