@@ -17,8 +17,8 @@
 #   2. Build in WSL2: bash scripts/build.sh
 Param(
     [ValidateSet('auto','whpx','tcg')]
-    # TCG required: WHPX NVMe identify command times out (emulated NVMe + WHPX issue)
-    [string]$Accel = 'tcg',
+    # WHPX preferred (near-native, closest to real hardware).
+    [string]$Accel = 'auto',
     [switch]$Build = $false
 )
 

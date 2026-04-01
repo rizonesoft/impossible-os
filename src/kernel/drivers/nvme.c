@@ -13,6 +13,7 @@
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
 #include "kernel/timer.h"
+#include "kernel/barrier.h"
 
 /* ---- Static state ---- */
 static struct nvme_controller controllers[NVME_MAX_CONTROLLERS];
@@ -76,13 +77,20 @@ static int nvme_submit_admin_cmd(struct nvme_controller *nc,
             dst[i] = src[i];
     }
 
-    /* Advance tail and ring SQ 0 tail doorbell */
+    /* Advance tail and ring SQ 0 tail doorbell.
+     * wmb() ensures the SQ entry writes are globally visible before the
+     * doorbell MMIO write.  Without this, the controller (or WHPX device
+     * model) can read a stale/empty SQ entry → command never completes. */
     nc->admin_sq_tail = (nc->admin_sq_tail + 1) % NVME_ADMIN_QUEUE_DEPTH;
+    wmb();
     nvme_write32(nc->mmio_base, 0x1000, nc->admin_sq_tail);
 
-    /* Poll CQ for completion */
+    /* Poll CQ for completion.
+     * rmb() forces re-read of the CQE from RAM on each iteration —
+     * without it, the CPU can cache the old status word and spin forever. */
     elapsed = 0;
     while (elapsed < timeout_ms) {
+        rmb();
         cqe = &nc->admin_cq[nc->admin_cq_head];
         status = cqe->status;
 
@@ -333,12 +341,14 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
 
     /* Advance tail and ring I/O SQ 1 tail doorbell */
     nc->io_sq_tail = (nc->io_sq_tail + 1) % NVME_IO_QUEUE_DEPTH;
+    wmb();  /* SQ entry visible before doorbell */
     /* SQ y tail doorbell: 0x1000 + (2y * db_stride), y=1 for I/O QID 1 */
     nvme_write32(nc->mmio_base, 0x1000 + (2 * db_stride), nc->io_sq_tail);
 
     /* Poll I/O CQ for completion */
     elapsed = 0;
     while (elapsed < timeout_ms) {
+        rmb();  /* re-read CQE from RAM */
         cqe = &nc->io_cq[nc->io_cq_head];
         status = cqe->status;
 
