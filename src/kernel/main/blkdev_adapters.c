@@ -368,7 +368,8 @@ void blkdev_register_all(void)
         int ci;
         for (ci = 0; ci < nvme_controller_count(); ci++) {
             struct nvme_controller *nc = nvme_get_controller(ci);
-            if (!nc || !nc->io_queue_active)
+            if (!nc || !nc->io_queue_active ||
+                nc->ns_sector_size == 0 || nc->ns_lba_count == 0)
                 continue;
             bd = (struct blkdev){0};
             bd.name[0]='n'; bd.name[1]='v'; bd.name[2]='m';

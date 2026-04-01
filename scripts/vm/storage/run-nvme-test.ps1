@@ -17,8 +17,8 @@
 #   2. Build in WSL2: bash scripts/build.sh
 Param(
     [ValidateSet('auto','whpx','tcg')]
-    # WHPX preferred (near-native speed). Init Level De-Assert hang fixed 2026-04-01.
-    [string]$Accel = 'auto',
+    # TCG required: WHPX NVMe identify command times out (emulated NVMe + WHPX issue)
+    [string]$Accel = 'tcg',
     [switch]$Build = $false
 )
 
