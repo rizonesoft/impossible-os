@@ -37,6 +37,8 @@
 #define SYS_OPENFILE     39 /* sys_openfile(path, access)    → HANDLE / -1 */
 #define SYS_CLOSEHANDLE  40 /* sys_closehandle(handle)       → 0 / -1 */
 #define SYS_READHANDLE   41 /* sys_readhandle(handle, buf, size) → bytes / -1 */
+#define SYS_OPENDIROBJ   42 /* NtOpenDirectoryObject(name, access, &handle) → 0 / -1 */
+#define SYS_QUERYDIROBJ  43 /* NtQueryDirectoryObject(handle, buf, count, &ctx, &ret) → 0 / -1 */
 
 /* File descriptors */
 #define STDOUT_FD   1

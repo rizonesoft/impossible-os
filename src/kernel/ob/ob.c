@@ -295,6 +295,90 @@ int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
     }
 }
 
+/* --- NtOpenDirectoryObject / NtQueryDirectoryObject ---------------------- */
+
+int NtOpenDirectoryObject(HANDLE_TABLE *ht, const char *name,
+                          uint32_t access, HANDLE *out_handle)
+{
+    void *body = NULL;
+    HANDLE h;
+
+    if (!ht || !name || !out_handle)
+        return -1;
+
+    if (ObLookupObjectByName(name, ObpDirectoryType, access, &body) != 0
+        || !body)
+        return -1;
+
+    h = ObpAllocateHandle(ht, body, access, 0);
+    ObDereferenceObject(body);  /* drop lookup ref — handle holds its own */
+
+    if (h == INVALID_HANDLE_VALUE)
+        return -1;
+
+    *out_handle = h;
+    return 0;
+}
+
+int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
+                           OBJECT_DIRECTORY_INFORMATION *buffer,
+                           uint32_t buffer_count,
+                           uint32_t *context,
+                           uint32_t *return_count)
+{
+    HANDLE_TABLE_ENTRY *entry;
+    OBJECT_HEADER *hdr;
+    OBJECT_DIRECTORY *dir;
+    OBJECT_DIRECTORY_ENTRY *e;
+    uint32_t skip, filled, idx;
+
+    if (!ht || !buffer || !context || !return_count || buffer_count == 0)
+        return -1;
+
+    entry = ObpLookupHandle(ht, dir_handle);
+    if (!entry)
+        return -1;
+
+    hdr = OB_HEADER_FROM_BODY(entry->object);
+    if (hdr->type != ObpDirectoryType)
+        return -1;
+
+    dir = (OBJECT_DIRECTORY *)entry->object;
+    skip = *context;
+    filled = 0;
+    idx = 0;
+
+    for (e = dir->first; e && filled < buffer_count; e = e->next, idx++) {
+        if (idx < skip)
+            continue;
+
+        /* Copy entry name */
+        {
+            uint32_t i;
+            for (i = 0; i < 63 && e->name[i]; i++)
+                buffer[filled].name[i] = e->name[i];
+            buffer[filled].name[i] = '\0';
+        }
+
+        /* Copy type name from object header */
+        {
+            OBJECT_HEADER *obj_hdr = OB_HEADER_FROM_BODY(e->object);
+            const char *tname = (obj_hdr->type && obj_hdr->type->name)
+                              ? obj_hdr->type->name : "Unknown";
+            uint32_t i;
+            for (i = 0; i < 31 && tname[i]; i++)
+                buffer[filled].type_name[i] = tname[i];
+            buffer[filled].type_name[i] = '\0';
+        }
+
+        filled++;
+    }
+
+    *context = idx;
+    *return_count = filled;
+    return 0;
+}
+
 /* --- ob_init ------------------------------------------------------------- */
 
 boot_result_t ob_init(void)

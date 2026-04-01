@@ -378,6 +378,30 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = ob_file_read(&task_current()->handle_table, handle, buf, size);
         break;
     }
+    case SYS_OPENDIROBJ: {
+        const char *path = (const char *)arg1;
+        uint32_t access = (uint32_t)arg2;
+        HANDLE out_h;
+        if (NtOpenDirectoryObject(&task_current()->handle_table, path,
+                                  access, &out_h) == 0)
+            ret = (int64_t)out_h;
+        else
+            ret = -1;
+        break;
+    }
+    case SYS_QUERYDIROBJ: {
+        HANDLE dh = (HANDLE)(int32_t)arg1;
+        OBJECT_DIRECTORY_INFORMATION *buf = (OBJECT_DIRECTORY_INFORMATION *)arg2;
+        uint32_t count = (uint32_t)(arg3 & 0xFFFF);
+        uint32_t ctx = (uint32_t)(arg3 >> 16);
+        uint32_t ret_count = 0;
+        if (NtQueryDirectoryObject(&task_current()->handle_table, dh,
+                                   buf, count, &ctx, &ret_count) == 0)
+            ret = (int64_t)((uint64_t)ctx << 16 | ret_count);
+        else
+            ret = -1;
+        break;
+    }
     default:
         klog(LOG_WARN, "sys", "Unknown syscall %u from PID %u",
                syscall_nr, (uint64_t)task_current()->pid);

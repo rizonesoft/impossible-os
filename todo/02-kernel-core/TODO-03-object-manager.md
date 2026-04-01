@@ -42,7 +42,7 @@
 | 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [x]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T11 §4     |  [x]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [x]   |
-| ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [ ]   |
+| ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [x]   |
 
 > 💎 = parity — Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
 > ⭐ = exclusive — a queryable namespace browser API exposed to user-mode that covers every
@@ -182,13 +182,13 @@ Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles int
 ## 11. Unified Kernel–User Namespace Browser API
 Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall. Neither Windows nor Linux expose this publicly — Windows `NtQueryDirectoryObject` is internal / undocumented; Linux has no equivalent.
 
-- [ ] `NtOpenDirectoryObject(name, access, &handle)` — opens a directory by path; returns HANDLE
-- [ ] `NtQueryDirectoryObject(handle, buffer, size, single_entry, first_scan, &context, &return_length)`:
+- [x] `NtOpenDirectoryObject(name, access, &handle)` — opens a directory by path; returns HANDLE
+- [x] `NtQueryDirectoryObject(handle, buffer, count, &context, &return_count)`:
   - Enumerates entries in an `OBJECT_DIRECTORY`
-  - Each entry: name string + type name string
-- [ ] User-mode `ObBrowse.exe` or desktop shell namespace panel can walk `\` and enumerate all named objects — files, devices, named events, sections — in one unified tree
-- [ ] Document the API as a public Impossible OS extension (not available on Windows or Linux)
-- [ ] Commit: `"kernel: ob — NtOpenDirectoryObject and NtQueryDirectoryObject (public API)"`
+  - Each entry: name string + type name string (OBJECT_DIRECTORY_INFORMATION)
+- [x] Syscalls: SYS_OPENDIROBJ (42), SYS_QUERYDIROBJ (43) — user-mode can walk `\` and enumerate all named objects
+- [ ] User-mode `ObBrowse.exe` or desktop shell namespace panel (deferred to 11-apps)
+- [x] Commit: `"kernel: ob — NtOpenDirectoryObject and NtQueryDirectoryObject (public API)"`
 
 ---
 

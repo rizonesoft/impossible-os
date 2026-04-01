@@ -151,6 +151,31 @@ int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
                   OBJECT_INFORMATION_CLASS info_class,
                   void *buffer, uint32_t size, uint32_t *return_length);
 
+/* --- NtOpenDirectoryObject / NtQueryDirectoryObject ---------------------- */
+
+/* Directory entry info returned by NtQueryDirectoryObject */
+typedef struct {
+    char name[64];       /* object component name (OB_NAME_MAX) */
+    char type_name[32];  /* object type name ("File", "Process", etc.) */
+} OBJECT_DIRECTORY_INFORMATION;
+
+/* NtOpenDirectoryObject — open a namespace directory by path.
+ * Returns 0 on success (*out_handle set), -1 on failure. */
+int NtOpenDirectoryObject(HANDLE_TABLE *ht, const char *name,
+                          uint32_t access, HANDLE *out_handle);
+
+/* NtQueryDirectoryObject — enumerate entries in an opened directory.
+ * buffer: array of OBJECT_DIRECTORY_INFORMATION to fill.
+ * buffer_count: max entries to return.
+ * context: in/out iteration state (0 = start from beginning).
+ * return_count: receives number of entries actually returned.
+ * Returns 0 on success, -1 on error. */
+int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
+                           OBJECT_DIRECTORY_INFORMATION *buffer,
+                           uint32_t buffer_count,
+                           uint32_t *context,
+                           uint32_t *return_count);
+
 /*
  * ob_init — initialise the Object Manager subsystem
  *
