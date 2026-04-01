@@ -102,6 +102,15 @@ HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
     if (!table->entries || !object)
         return INVALID_HANDLE_VALUE;
 
+    /* Security check hook: if the object has an SD and the type provides
+     * an on_open callback, call it to validate access.  Full SeAccessCheck
+     * enforcement is wired in TODO-11 §5; this is the structural hook. */
+    hdr = OB_HEADER_FROM_BODY(object);
+    if (hdr->security && hdr->type && hdr->type->on_open) {
+        if (hdr->type->on_open(object, access) != 0)
+            return INVALID_HANDLE_VALUE;  /* access denied */
+    }
+
     /* Find a free slot */
     for (i = 0; i < table->capacity; i++) {
         if (!table->entries[i].object)

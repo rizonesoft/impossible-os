@@ -110,6 +110,20 @@ int ObReferenceObjectByPointer(void *body, const OBJECT_TYPE *expected_type,
 void ObMakeTemporaryObject(void *body);
 
 /*
+ * ObSetSecurityDescriptor — attach a self-relative SD to an object.
+ * The SD is stored as a pointer in the object header.  The caller
+ * retains ownership of the memory (use static blobs from default_sds
+ * or kmalloc'd copies).
+ */
+void ObSetSecurityDescriptor(void *body, SECURITY_DESCRIPTOR *sd);
+
+/*
+ * ObGetSecurityDescriptor — return the SD attached to an object.
+ * Returns NULL if no SD is set.
+ */
+SECURITY_DESCRIPTOR *ObGetSecurityDescriptor(void *body);
+
+/*
  * ob_init — initialise the Object Manager subsystem
  *
  * Registers all built-in type singletons.  Called during boot_phase2,

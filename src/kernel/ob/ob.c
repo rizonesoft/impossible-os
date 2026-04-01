@@ -19,6 +19,7 @@
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
 #include "kernel/sched/task.h"
+#include "kernel/security/default_sds.h"
 
 extern void *memset(void *s, int c, size_t n);
 
@@ -90,6 +91,9 @@ void *ob_alloc_object(const OBJECT_TYPE *type)
     if (total > PMM_FRAME_SIZE)
         hdr->flags |= OB_FLAG_PMM_ALLOC;
 
+    /* Attach default security descriptor (kernel objects get the generic SD) */
+    hdr->security = (SECURITY_DESCRIPTOR *)SeCreateDefaultSD(SE_SD_TYPE_DEFAULT);
+
     return OB_BODY_FROM_HEADER(hdr);
 }
 
@@ -156,6 +160,23 @@ void ObMakeTemporaryObject(void *body)
 {
     OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(body);
     hdr->flags &= ~OB_FLAG_PERMANENT;
+}
+
+/* --- ObSetSecurityDescriptor / ObGetSecurityDescriptor -------------------- */
+
+void ObSetSecurityDescriptor(void *body, SECURITY_DESCRIPTOR *sd)
+{
+    if (body) {
+        OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(body);
+        hdr->security = sd;
+    }
+}
+
+SECURITY_DESCRIPTOR *ObGetSecurityDescriptor(void *body)
+{
+    if (!body)
+        return (SECURITY_DESCRIPTOR *)0;
+    return OB_HEADER_FROM_BODY(body)->security;
 }
 
 /* --- ob_init ------------------------------------------------------------- */

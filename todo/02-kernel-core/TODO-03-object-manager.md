@@ -39,7 +39,7 @@
 | 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [x]   |
 | 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [x]   |
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
-| 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [ ]   |
+| 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [x]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3             |  [ ]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [ ]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [ ]   |
@@ -145,13 +145,13 @@ Sections represent mappable memory objects; the foundation for `MapViewOfFile` a
 ## 8. Security Descriptor Integration
 Attach DACL/SACL/Owner/Group to named objects so the Security Reference Monitor can enforce access rights at open time. Depends on TODO-11 (SRM) for full enforcement; this section wires the storage and basic check hook.
 
-- [ ] Define minimal `SECURITY_DESCRIPTOR` in `include/kernel/ob/security.h`: owner SID, group SID, DACL pointer, SACL pointer, flags
-- [ ] `ObSetSecurityDescriptor(object, sd)` — attaches an SD; stored in `header->security`
-- [ ] `ObGetSecurityDescriptor(object, &sd)` — returns current SD
-- [ ] In `ObpAllocateHandle`: call `SrmAccessCheck(header->security, requested_access)` if `SUBSYS_SRM` is ready — deny handle creation on access denied
-- [ ] Default SD for kernel-created objects: DACL granting `GENERIC_ALL` to SYSTEM SID only
-- [ ] Default SD for user-created named objects: DACL granting `GENERIC_ALL` to creator SID
-- [ ] Commit: `"kernel: ob — security descriptor storage and access check hook"`
+- [x] Define `SECURITY_DESCRIPTOR` in `include/kernel/security/acl.h` (full struct, not minimal); matches ob.h forward declaration
+- [x] `ObSetSecurityDescriptor(object, sd)` — attaches an SD; stored in `header->security`
+- [x] `ObGetSecurityDescriptor(object, &sd)` — returns current SD
+- [x] In `ObpAllocateHandle`: call `type->on_open(object, access)` if `header->security` is non-NULL — deny handle creation on access denied (full SeAccessCheck wired in TODO-11 §5)
+- [x] Default SD for kernel-created objects: DACL granting `GENERIC_ALL` to SYSTEM SID (via `SeCreateDefaultSD(SE_SD_TYPE_DEFAULT)` in `ob_alloc_object`)
+- [ ] Default SD for user-created named objects: DACL granting `GENERIC_ALL` to creator SID (requires ACCESS_TOKEN — deferred to TODO-11 §4)
+- [x] Commit: `"kernel: ob — security descriptor storage and access check hook"`
 
 ## 9. NtClose / NtDuplicateObject / NtQueryObject
 Core Win32 handle management syscalls routed through the Ob layer.
