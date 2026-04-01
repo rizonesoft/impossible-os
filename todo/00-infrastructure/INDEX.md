@@ -41,6 +41,11 @@ This domain tracks the tooling and workflow work that supports the whole project
   protection, build badge, failure notifications, nightly builds, PR comment bot.
 - [TODO-05 Kernel Test Suites & Coverage](./TODO-05-test-suites-coverage.md) - Per-subsystem
   test suites (OB, security, timer, IPC, VMM, ELF, NVMe, USB), 100+ assertions, coverage report.
+- [TODO-06 User-Mode Test Framework](./TODO-06-usermode-test-framework.md) - Test binaries
+  for syscalls, libc, IPC, process lifecycle, file I/O, Win32 API — real user-mode programs
+  exercising the real syscall interface.
+- [TODO-07 Desktop & UI Test Framework](./TODO-07-desktop-ui-test-framework.md) - Framebuffer
+  snapshots, input injection, terminal verification, visual regression CI, WM state introspection.
 
 ## Completed / Doc-converted
 
