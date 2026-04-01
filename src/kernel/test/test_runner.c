@@ -50,6 +50,7 @@ extern void test_register_vfs(void);
 extern void test_register_sched(void);
 extern void test_register_registry(void);
 extern void test_register_boot_init(void);
+extern void test_register_klog(void);
 
 void test_runner_init(void)
 {
@@ -62,6 +63,7 @@ void test_runner_init(void)
     test_register_sched();
     test_register_registry();
     test_register_boot_init();
+    test_register_klog();
 
     klog(LOG_INFO, "TEST", "%u suite(s) registered", g_test_state.suite_count);
 }

@@ -90,13 +90,15 @@ Update the TODO file's `## Unit Tests` section:
 
 If the TODO has an **Implementation Order table** with a row for unit tests, update its Status to `[x]`.
 
-### 8. Commit
+### 8. Commit and push
 
-Use the commit message specified in the Unit Tests section (typically `"test: add <subsystem> test suite"`). Stage:
+Use the commit message from the `Commit:` line in the Unit Tests section. Stage:
 - The new test file (`src/kernel/test/test_<name>.c`)
 - The modified `test_runner.c`
 - The updated TODO file
 - Any bug fixes found during test development
+
+After a successful commit and push, mark the `- [ ] Commit: "..."` checklist item as `[x]` in the TODO.
 
 ## Guardrails
 

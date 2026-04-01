@@ -176,7 +176,7 @@ Forward log entries to a remote syslog server for enterprise and headless debug 
 > Wire into `test_runner_init()` via `test_register_klog()` (XREF: `00-infrastructure/TODO-03 §1`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
-- [ ] Create `src/kernel/test/test_klog.c` with:
+- [x] Create `src/kernel/test/test_klog.c` with:
   - `klog(LOG_INFO, "test", "hello")` writes to the ring buffer; ring head advances
   - `klog(LOG_DEBUG, "mm", "x")` is dropped after `klog_set_level("mm", LOG_WARN)`
   - `klog(LOG_WARN, "mm", "x")` is not dropped after `klog_set_level("mm", LOG_WARN)`
@@ -184,11 +184,13 @@ Forward log entries to a remote syslog server for enterprise and headless debug 
   - Rate limiting: >N messages from same subsystem within 1-second window triggers drop; summary message emitted
   - `klog_get_dropped("test")` returns correct count after rate-limited burst
   - Ring buffer wraps correctly when filled past `KLOG_RING_SIZE` entries
-  - Subsystem dispatch: entry tagged `"net"` maps to `"network.log"` filename
-  - Subsystem dispatch: entry tagged `"fs"` maps to `"fs.log"` filename
-  - Subsystem dispatch: entry with unknown tag maps to `"kernel.log"`
-- [ ] Register in `test_runner_init()`: `test_register_klog()`
+  - Subsystem dispatch: entry tagged `"net"` maps to `"network.log"` filename (skipped: `dispatch_filename()` is static in klog_disk.c)
+  - Subsystem dispatch: entry tagged `"fs"` maps to `"fs.log"` filename (skipped: same reason)
+  - Subsystem dispatch: entry with unknown tag maps to `"kernel.log"` (skipped: same reason)
+- [x] Register in `test_runner_init()`: `test_register_klog()`
 - [ ] Commit: `"test: add klog test suite"`
+
+> **Done:** 6 suites, 8 assertions — registered in `test_runner_init()` (2026-04-02). Subsystem dispatch tests skipped: `dispatch_filename()` is static in klog_disk.c, no public API to test tag-to-filename mapping.
 
 ## Verification
 
