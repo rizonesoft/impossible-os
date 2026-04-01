@@ -197,7 +197,7 @@ void boot_tests_run(void)
             (void)status_b;
 
             klog(thread_shared_counter == 10 ? LOG_DEBUG : LOG_ERROR,
-                 "test",
+                 "TEST",
                  "Kernel thread test: counter=%u (%s)",
                  (uint64_t)thread_shared_counter,
                  thread_shared_counter == 10 ? "passed" : "FAIL");
@@ -223,7 +223,7 @@ void boot_tests_run(void)
             thread_join((uint32_t)mtid_b);
 
             klog(mutex_shared_counter == 200 ? LOG_DEBUG : LOG_ERROR,
-                 "test",
+                 "TEST",
                  "Mutex test: counter=%u (%s)",
                  (uint64_t)mutex_shared_counter,
                  mutex_shared_counter == 200 ? "passed" : "FAIL");
