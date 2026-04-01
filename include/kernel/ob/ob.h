@@ -12,6 +12,7 @@
 #include "kernel/atomic.h"
 #include "kernel/boot_init.h"
 #include "kernel/ob/ob_type.h"
+#include "kernel/ob/handle_table.h"
 
 /* Forward-declare — implemented in §8 (security descriptor integration) */
 typedef struct security_descriptor SECURITY_DESCRIPTOR;
@@ -123,6 +124,32 @@ void ObSetSecurityDescriptor(void *body, SECURITY_DESCRIPTOR *sd);
  * Returns NULL if no SD is set.
  */
 SECURITY_DESCRIPTOR *ObGetSecurityDescriptor(void *body);
+
+/* --- NtClose / NtDuplicateObject / NtQueryObject ------------------------- */
+
+#define DUPLICATE_CLOSE_SOURCE  0x00000001
+#define DUPLICATE_SAME_ACCESS   0x00000002
+
+/* Object information classes for NtQueryObject */
+typedef enum {
+    ObjectBasicInformation = 0,
+    ObjectNameInformation  = 1,
+    ObjectTypeInformation  = 2,
+} OBJECT_INFORMATION_CLASS;
+
+/* NtClose — close a handle in the current process */
+int NtClose(HANDLE_TABLE *ht, HANDLE handle);
+
+/* NtDuplicateObject — duplicate a handle between processes */
+int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
+                      HANDLE_TABLE *dst_ht, HANDLE *dst_handle,
+                      uint32_t desired_access, uint32_t attrs,
+                      uint32_t options);
+
+/* NtQueryObject — query object metadata by handle */
+int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
+                  OBJECT_INFORMATION_CLASS info_class,
+                  void *buffer, uint32_t size, uint32_t *return_length);
 
 /*
  * ob_init — initialise the Object Manager subsystem

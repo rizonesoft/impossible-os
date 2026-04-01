@@ -198,6 +198,103 @@ SECURITY_DESCRIPTOR *ObGetSecurityDescriptor(void *body)
     return OB_HEADER_FROM_BODY(body)->security;
 }
 
+/* --- NtClose / NtDuplicateObject / NtQueryObject ------------------------- */
+
+extern void *memcpy(void *dst, const void *src, size_t n);
+extern size_t strlen(const char *s);
+
+int NtClose(HANDLE_TABLE *ht, HANDLE handle)
+{
+    if (!ht || handle < 0)
+        return -1;
+    return ObpFreeHandle(ht, handle);
+}
+
+int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
+                      HANDLE_TABLE *dst_ht, HANDLE *dst_handle,
+                      uint32_t desired_access, uint32_t attrs,
+                      uint32_t options)
+{
+    HANDLE_TABLE_ENTRY *entry;
+    HANDLE new_h;
+    uint32_t access;
+
+    if (!src_ht || !dst_ht || !dst_handle)
+        return -1;
+
+    entry = ObpLookupHandle(src_ht, src_handle);
+    if (!entry)
+        return -1;
+
+    access = (options & DUPLICATE_SAME_ACCESS)
+           ? entry->granted_access : desired_access;
+
+    new_h = ObpAllocateHandle(dst_ht, entry->object, access, attrs);
+    if (new_h == INVALID_HANDLE_VALUE)
+        return -1;
+
+    *dst_handle = new_h;
+
+    if (options & DUPLICATE_CLOSE_SOURCE)
+        ObpFreeHandle(src_ht, src_handle);
+
+    return 0;
+}
+
+int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
+                  OBJECT_INFORMATION_CLASS info_class,
+                  void *buffer, uint32_t size, uint32_t *return_length)
+{
+    HANDLE_TABLE_ENTRY *entry;
+    OBJECT_HEADER *hdr;
+
+    if (!ht || !buffer)
+        return -1;
+
+    entry = ObpLookupHandle(ht, handle);
+    if (!entry)
+        return -1;
+
+    hdr = OB_HEADER_FROM_BODY(entry->object);
+
+    switch (info_class) {
+
+    case ObjectBasicInformation: {
+        /* Return: ref_count, handle_count, attributes (flags) */
+        uint32_t needed = 3 * sizeof(uint32_t);
+        if (return_length) *return_length = needed;
+        if (size < needed) return -1;
+        ((uint32_t *)buffer)[0] = (uint32_t)atomic_read(&hdr->ref_count);
+        ((uint32_t *)buffer)[1] = hdr->handle_count;
+        ((uint32_t *)buffer)[2] = hdr->flags;
+        return 0;
+    }
+
+    case ObjectNameInformation: {
+        /* Return: object name string (component name from namespace) */
+        const char *name = hdr->name ? hdr->name : "";
+        uint32_t len = (uint32_t)strlen(name) + 1;
+        if (return_length) *return_length = len;
+        if (size < len) return -1;
+        memcpy(buffer, name, len);
+        return 0;
+    }
+
+    case ObjectTypeInformation: {
+        /* Return: type name string */
+        const char *tname = hdr->type && hdr->type->name ? hdr->type->name : "";
+        uint32_t len = (uint32_t)strlen(tname) + 1;
+        if (return_length) *return_length = len;
+        if (size < len) return -1;
+        memcpy(buffer, tname, len);
+        return 0;
+    }
+
+    default:
+        return -1;
+    }
+}
+
 /* --- ob_init ------------------------------------------------------------- */
 
 boot_result_t ob_init(void)

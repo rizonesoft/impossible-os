@@ -368,9 +368,7 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     }
     case SYS_CLOSEHANDLE: {
         HANDLE handle = (HANDLE)(int32_t)arg1;
-        /* Reject pseudo-handles */
-        if (handle < 0) { ret = -1; break; }
-        ret = (int64_t)ObpFreeHandle(&task_current()->handle_table, handle);
+        ret = (int64_t)NtClose(&task_current()->handle_table, handle);
         break;
     }
     case SYS_READHANDLE: {

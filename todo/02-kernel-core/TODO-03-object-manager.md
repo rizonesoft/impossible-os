@@ -40,7 +40,7 @@
 | 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [x]   |
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [x]   |
-| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T11 §4     |  [ ]   |
+| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T11 §4     |  [x]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [ ]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [ ]   |
 
@@ -156,18 +156,18 @@ Attach DACL/SACL/Owner/Group to named objects so the Security Reference Monitor 
 ## 9. NtClose / NtDuplicateObject / NtQueryObject
 Core Win32 handle management syscalls routed through the Ob layer.
 
-- [ ] `NtClose(HANDLE)` — look up handle in calling process's table, call `ObpFreeHandle`
-- [ ] `NtDuplicateObject(src_process, src_handle, dst_process, &dst_handle, access, attrs, options)`:
+- [x] `NtClose(HANDLE)` — look up handle in calling process's table, call `ObpFreeHandle`
+- [x] `NtDuplicateObject(src_process, src_handle, dst_process, &dst_handle, access, attrs, options)`:
   - Look up `src_handle` in `src_process` handle table
   - Allocate new entry in `dst_process` handle table pointing to the same object
   - Call `ObReferenceObject` for the new reference
   - If `DUPLICATE_CLOSE_SOURCE` is set, free the source handle
-- [ ] `NtQueryObject(handle, info_class, buffer, size, &return_length)`:
+- [x] `NtQueryObject(handle, info_class, buffer, size, &return_length)`:
   - `ObjectNameInformation` — returns the Ob namespace path of the object
   - `ObjectTypeInformation` — returns type name, total handles, total references
   - `ObjectBasicInformation` — returns refcount, handle count, attributes
-- [ ] Expose `NtClose` via `SYS_CLOSE` (add to `syscall.h`) replacing per-resource close syscalls
-- [ ] Commit: `"kernel: ob — NtClose, NtDuplicateObject, NtQueryObject"`
+- [x] Expose `NtClose` via `SYS_CLOSEHANDLE` replacing inline `ObpFreeHandle` in syscall.c
+- [x] Commit: `"kernel: ob — NtClose, NtDuplicateObject, NtQueryObject"`
 
 ## 10. Handle Inheritance Across CreateProcess
 Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles into the child.
