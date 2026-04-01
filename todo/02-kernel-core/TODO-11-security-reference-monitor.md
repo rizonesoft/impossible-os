@@ -245,7 +245,7 @@
 ## 4. ACCESS_TOKEN Object 
 ### 4.1 Token struct
 
-- [ ] Define `struct ACCESS_TOKEN` in `include/kernel/security/token.h`:
+- [x] Define `struct ACCESS_TOKEN` in `include/kernel/security/token.h`:
   ```c
   typedef struct {
       SID               *UserSid;
@@ -270,13 +270,13 @@
       uint32_t           RestrictedSidCount;
   } ACCESS_TOKEN;
   ```
-- [ ] Integrity level SID constants:
+- [x] Integrity level SID constants:
   - `SeILUntrusted` = `S-1-16-0`
   - `SeILLow` = `S-1-16-4096`
   - `SeILMedium` = `S-1-16-8192`
   - `SeILHigh` = `S-1-16-12288`
   - `SeILSystem` = `S-1-16-16384`
-- [ ] Register `ObTypeToken` via `ObCreateObjectType("Token", ...)` (→ XREF `TODO-03 §1`); token objects are reference-counted kernel objects with `OB_TYPE_TOKEN` type index
+- [x] Register `ObpTokenType` via `ob_create_type("Token", sizeof(ACCESS_TOKEN), ...)` (→ XREF `TODO-03 §1`); token objects are reference-counted kernel objects
 
 ### 4.2 Token creation and system tokens
 

@@ -20,6 +20,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/sched/task.h"
 #include "kernel/security/default_sds.h"
+#include "kernel/security/token.h"
 
 extern void *memset(void *s, int c, size_t n);
 
@@ -40,6 +41,7 @@ const OBJECT_TYPE *ObpMutexType     = NULL;
 const OBJECT_TYPE *ObpSemaphoreType = NULL;
 const OBJECT_TYPE *ObpSectionType   = NULL;
 const OBJECT_TYPE *ObpTimerType     = NULL;
+const OBJECT_TYPE *ObpTokenType     = NULL;
 
 /* --- ob_create_type ------------------------------------------------------ */
 
@@ -202,6 +204,7 @@ boot_result_t ob_init(void)
     ob_semaphore_type_init();
     ob_section_type_init();
     ob_timer_type_init();
+    ob_token_type_init();
 
     klog(LOG_INFO, "ob", "Registered %u built-in types",
          (uint64_t)g_ob_type_count);
