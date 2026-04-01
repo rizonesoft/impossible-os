@@ -133,7 +133,7 @@ Emit machine-parseable events alongside plain-text logs. Requires cJSON from `TO
 - [x] `events.jsonl` created at first flush; file size tracked for rotation
 - [x] §4 log rotation applied to `events.jsonl` via `rotate_log_file()`
 - [x] `"dropped"` field included from §5 rate limiter via `klog_get_dropped()` public API
-- [ ] Task Manager log viewer panel reads `events.jsonl` for colour-coded filtering — deferred to desktop shell TODO
+- [ ] Event viewer reads `events.jsonl` for colour-coded filtering — see [16-tools-accessories/TODO-02](../16-tools-accessories/TODO-02-event-viewer.md)
 - [x] Commit: `"kernel: structured JSON log events"`
 
 ## 7. Remote Syslog Forwarding (RFC 5424)
