@@ -215,15 +215,15 @@
 
 ### 3.3 SECURITY_DESCRIPTOR helpers
 
-- [ ] `RtlCreateSecurityDescriptor(sd, rev)`
-- [ ] `RtlSetOwnerSecurityDescriptor(sd, owner, defaulted)`
-- [ ] `RtlSetGroupSecurityDescriptor(sd, group, defaulted)`
-- [ ] `RtlSetDaclSecurityDescriptor(sd, present, dacl, defaulted)`
-- [ ] `RtlSetSaclSecurityDescriptor(sd, present, sacl, defaulted)`
-- [ ] `RtlGetOwnerSecurityDescriptor(sd, owner, defaulted)`
-- [ ] `RtlGetDaclSecurityDescriptor(sd, present, dacl, defaulted)`
-- [ ] `RtlAbsoluteToSelfRelativeSD(abs, rel_buf, rel_len)` — marshal to flat buffer
-- [ ] `RtlSelfRelativeToAbsoluteSD(rel, abs_buf, ...)` — unmarshal from flat buffer
+- [x] `RtlCreateSecurityDescriptor(sd, rev)`
+- [x] `RtlSetOwnerSecurityDescriptor(sd, owner, defaulted)`
+- [x] `RtlSetGroupSecurityDescriptor(sd, group, defaulted)`
+- [x] `RtlSetDaclSecurityDescriptor(sd, present, dacl, defaulted)`
+- [x] `RtlSetSaclSecurityDescriptor(sd, present, sacl, defaulted)`
+- [x] `RtlGetOwnerSecurityDescriptor(sd, owner, defaulted)`
+- [x] `RtlGetDaclSecurityDescriptor(sd, present, dacl, defaulted)`
+- [x] `RtlAbsoluteToSelfRelativeSD(abs, rel_buf, rel_len)` — marshal to flat buffer
+- [x] `RtlSelfRelativeToAbsoluteSD(rel, abs_buf, ...)` — unmarshal from flat buffer
 
 ### 3.4 Default SDs for kernel object types
 

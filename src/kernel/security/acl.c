@@ -11,6 +11,249 @@ extern void *memcpy(void *dst, const void *src, size_t n);
 extern void *memset(void *s, int c, size_t n);
 extern int   snprintf(char *buf, size_t size, const char *fmt, ...);
 
+/* ============================================================================
+ * SECURITY_DESCRIPTOR helpers
+ * ============================================================================ */
+
+int RtlCreateSecurityDescriptor(SECURITY_DESCRIPTOR *sd, uint8_t rev)
+{
+    if (!sd)
+        return -1;
+    memset(sd, 0, sizeof(*sd));
+    sd->Revision = rev;
+    return 0;
+}
+
+int RtlSetOwnerSecurityDescriptor(SECURITY_DESCRIPTOR *sd, SID *owner, int defaulted)
+{
+    if (!sd)
+        return -1;
+    sd->Owner = owner;
+    if (defaulted)
+        sd->Control |= SE_OWNER_DEFAULTED;
+    else
+        sd->Control &= ~SE_OWNER_DEFAULTED;
+    return 0;
+}
+
+int RtlGetOwnerSecurityDescriptor(const SECURITY_DESCRIPTOR *sd, SID **owner, int *defaulted)
+{
+    if (!sd || !owner)
+        return -1;
+    *owner = sd->Owner;
+    if (defaulted)
+        *defaulted = (sd->Control & SE_OWNER_DEFAULTED) ? 1 : 0;
+    return 0;
+}
+
+int RtlSetGroupSecurityDescriptor(SECURITY_DESCRIPTOR *sd, SID *group, int defaulted)
+{
+    if (!sd)
+        return -1;
+    sd->Group = group;
+    if (defaulted)
+        sd->Control |= SE_GROUP_DEFAULTED;
+    else
+        sd->Control &= ~SE_GROUP_DEFAULTED;
+    return 0;
+}
+
+int RtlSetDaclSecurityDescriptor(SECURITY_DESCRIPTOR *sd, int present, ACL *dacl, int defaulted)
+{
+    if (!sd)
+        return -1;
+    if (present) {
+        sd->Control |= SE_DACL_PRESENT;
+        sd->Dacl = dacl;
+    } else {
+        sd->Control &= ~SE_DACL_PRESENT;
+        sd->Dacl = (ACL *)0;
+    }
+    if (defaulted)
+        sd->Control |= SE_DACL_DEFAULTED;
+    else
+        sd->Control &= ~SE_DACL_DEFAULTED;
+    return 0;
+}
+
+int RtlGetDaclSecurityDescriptor(const SECURITY_DESCRIPTOR *sd, int *present, ACL **dacl, int *defaulted)
+{
+    if (!sd || !present)
+        return -1;
+    *present = (sd->Control & SE_DACL_PRESENT) ? 1 : 0;
+    if (dacl)
+        *dacl = sd->Dacl;
+    if (defaulted)
+        *defaulted = (sd->Control & SE_DACL_DEFAULTED) ? 1 : 0;
+    return 0;
+}
+
+int RtlSetSaclSecurityDescriptor(SECURITY_DESCRIPTOR *sd, int present, ACL *sacl, int defaulted)
+{
+    if (!sd)
+        return -1;
+    if (present) {
+        sd->Control |= SE_SACL_PRESENT;
+        sd->Sacl = sacl;
+    } else {
+        sd->Control &= ~SE_SACL_PRESENT;
+        sd->Sacl = (ACL *)0;
+    }
+    if (defaulted)
+        sd->Control |= SE_SACL_DEFAULTED;
+    else
+        sd->Control &= ~SE_SACL_DEFAULTED;
+    return 0;
+}
+
+/* ---- Self-relative marshalling ----------------------------------------- */
+
+/*
+ * Self-relative layout (flat buffer):
+ *   [SD header: Rev, Sbz1, Control | SE_SELF_RELATIVE, OffsetOwner,
+ *    OffsetGroup, OffsetSacl, OffsetDacl]
+ *   [Owner SID bytes]
+ *   [Group SID bytes]
+ *   [SACL bytes]
+ *   [DACL bytes]
+ *
+ * Offsets are uint32_t from the start of the buffer (0 = not present).
+ */
+typedef struct {
+    uint8_t  Revision;
+    uint8_t  Sbz1;
+    uint16_t Control;
+    uint32_t OffsetOwner;
+    uint32_t OffsetGroup;
+    uint32_t OffsetSacl;
+    uint32_t OffsetDacl;
+} SECURITY_DESCRIPTOR_RELATIVE;
+
+int RtlAbsoluteToSelfRelativeSD(const SECURITY_DESCRIPTOR *abs,
+                                void *rel_buf, uint32_t *rel_len)
+{
+    uint32_t needed, offset;
+    uint32_t owner_len = 0, group_len = 0, sacl_len = 0, dacl_len = 0;
+    SECURITY_DESCRIPTOR_RELATIVE *rel;
+    uint8_t *p;
+
+    if (!abs || !rel_len)
+        return -1;
+
+    if (abs->Owner) owner_len = RtlLengthSid(abs->Owner);
+    if (abs->Group) group_len = RtlLengthSid(abs->Group);
+    if (abs->Sacl)  sacl_len  = abs->Sacl->AclSize;
+    if (abs->Dacl)  dacl_len  = abs->Dacl->AclSize;
+
+    needed = sizeof(SECURITY_DESCRIPTOR_RELATIVE) +
+             owner_len + group_len + sacl_len + dacl_len;
+
+    if (!rel_buf || *rel_len < needed) {
+        *rel_len = needed;
+        return -1;
+    }
+
+    memset(rel_buf, 0, needed);
+    rel = (SECURITY_DESCRIPTOR_RELATIVE *)rel_buf;
+    rel->Revision = abs->Revision;
+    rel->Control  = abs->Control | SE_SELF_RELATIVE;
+
+    offset = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
+    p = (uint8_t *)rel_buf + offset;
+
+    if (abs->Owner && owner_len) {
+        rel->OffsetOwner = offset;
+        memcpy(p, abs->Owner, owner_len);
+        p += owner_len; offset += owner_len;
+    }
+    if (abs->Group && group_len) {
+        rel->OffsetGroup = offset;
+        memcpy(p, abs->Group, group_len);
+        p += group_len; offset += group_len;
+    }
+    if (abs->Sacl && sacl_len) {
+        rel->OffsetSacl = offset;
+        memcpy(p, abs->Sacl, sacl_len);
+        p += sacl_len; offset += sacl_len;
+    }
+    if (abs->Dacl && dacl_len) {
+        rel->OffsetDacl = offset;
+        memcpy(p, abs->Dacl, dacl_len);
+        offset += dacl_len;
+    }
+
+    *rel_len = needed;
+    return 0;
+}
+
+int RtlSelfRelativeToAbsoluteSD(const void *rel,
+                                SECURITY_DESCRIPTOR *abs,
+                                void *abs_buf, uint32_t abs_buf_len)
+{
+    const SECURITY_DESCRIPTOR_RELATIVE *sr;
+    const uint8_t *base;
+    uint8_t *wp;
+    uint32_t used = 0;
+    uint32_t len;
+
+    if (!rel || !abs || !abs_buf)
+        return -1;
+
+    sr   = (const SECURITY_DESCRIPTOR_RELATIVE *)rel;
+    base = (const uint8_t *)rel;
+    wp   = (uint8_t *)abs_buf;
+
+    memset(abs, 0, sizeof(*abs));
+    abs->Revision = sr->Revision;
+    abs->Control  = sr->Control & ~SE_SELF_RELATIVE;
+
+    /* Copy Owner SID */
+    if (sr->OffsetOwner) {
+        const SID *src = (const SID *)(base + sr->OffsetOwner);
+        len = RtlLengthSid(src);
+        if (used + len > abs_buf_len) return -1;
+        memcpy(wp + used, src, len);
+        abs->Owner = (SID *)(wp + used);
+        used += len;
+    }
+
+    /* Copy Group SID */
+    if (sr->OffsetGroup) {
+        const SID *src = (const SID *)(base + sr->OffsetGroup);
+        len = RtlLengthSid(src);
+        if (used + len > abs_buf_len) return -1;
+        memcpy(wp + used, src, len);
+        abs->Group = (SID *)(wp + used);
+        used += len;
+    }
+
+    /* Copy SACL */
+    if (sr->OffsetSacl) {
+        const ACL *src = (const ACL *)(base + sr->OffsetSacl);
+        len = src->AclSize;
+        if (used + len > abs_buf_len) return -1;
+        memcpy(wp + used, src, len);
+        abs->Sacl = (ACL *)(wp + used);
+        used += len;
+    }
+
+    /* Copy DACL */
+    if (sr->OffsetDacl) {
+        const ACL *src = (const ACL *)(base + sr->OffsetDacl);
+        len = src->AclSize;
+        if (used + len > abs_buf_len) return -1;
+        memcpy(wp + used, src, len);
+        abs->Dacl = (ACL *)(wp + used);
+        used += len;
+    }
+
+    return 0;
+}
+
+/* ============================================================================
+ * ACL helpers
+ * ============================================================================ */
+
 /* ---- RtlCreateAcl ------------------------------------------------------ */
 
 int RtlCreateAcl(ACL *acl, uint16_t size, uint8_t rev)

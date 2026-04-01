@@ -48,8 +48,9 @@ struct security_descriptor {
     ACL      *Dacl;        /* discretionary ACL (NULL = not present) */
 };
 
-/* Note: SECURITY_DESCRIPTOR typedef is in ob.h (forward declaration).
- * Include this header to get the full struct definition. */
+/* Provide the typedef here so users of acl.h don't need ob.h.
+ * ob.h has a matching forward declaration — both are compatible. */
+typedef struct security_descriptor SECURITY_DESCRIPTOR;
 
 /* ---- ACL ---------------------------------------------------------------- */
 
@@ -143,6 +144,39 @@ typedef struct {
 
 /* The SID starts at &ace->SidStart. Cast to SID* for access. */
 #define ACE_SID(ace)  ((SID *)&(ace)->SidStart)
+
+/* ---- SECURITY_DESCRIPTOR helpers --------------------------------------- */
+
+/* Initialize an absolute SD. rev = SECURITY_DESCRIPTOR_REVISION (1). */
+int RtlCreateSecurityDescriptor(SECURITY_DESCRIPTOR *sd, uint8_t rev);
+
+/* Set/get Owner SID. defaulted = SE_OWNER_DEFAULTED flag. */
+int RtlSetOwnerSecurityDescriptor(SECURITY_DESCRIPTOR *sd, SID *owner, int defaulted);
+int RtlGetOwnerSecurityDescriptor(const SECURITY_DESCRIPTOR *sd, SID **owner, int *defaulted);
+
+/* Set/get Group SID. */
+int RtlSetGroupSecurityDescriptor(SECURITY_DESCRIPTOR *sd, SID *group, int defaulted);
+
+/* Set/get DACL. present = whether DACL is set (SE_DACL_PRESENT). */
+int RtlSetDaclSecurityDescriptor(SECURITY_DESCRIPTOR *sd, int present, ACL *dacl, int defaulted);
+int RtlGetDaclSecurityDescriptor(const SECURITY_DESCRIPTOR *sd, int *present, ACL **dacl, int *defaulted);
+
+/* Set SACL. */
+int RtlSetSaclSecurityDescriptor(SECURITY_DESCRIPTOR *sd, int present, ACL *sacl, int defaulted);
+
+/* Marshal absolute SD to a flat self-relative buffer.
+ * *rel_len is in/out: on entry the buffer size, on exit the required size.
+ * Returns 0 on success, -1 if buffer too small (rel_len set to needed). */
+int RtlAbsoluteToSelfRelativeSD(const SECURITY_DESCRIPTOR *abs,
+                                void *rel_buf, uint32_t *rel_len);
+
+/* Unmarshal a self-relative SD back to absolute form.
+ * Allocates SID/ACL copies from the supplied abs_buf workspace.
+ * abs_buf_len must be large enough for the SD struct + all SIDs + ACLs.
+ * Returns 0 on success, -1 on error. */
+int RtlSelfRelativeToAbsoluteSD(const void *rel,
+                                SECURITY_DESCRIPTOR *abs,
+                                void *abs_buf, uint32_t abs_buf_len);
 
 /* ---- ACL utility functions --------------------------------------------- */
 
