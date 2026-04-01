@@ -39,8 +39,8 @@
 | ⭐  | Order | Deliverable                                            | Depends On | Status |
 | --- | :---: | ------------------------------------------------------ | ---------- | :----: |
 | 💎  |   1   | Wire test_runner into boot path                        | —          |  [x]   |
-| 💎  |   2   | `make test` target with QEMU headless + serial parse   | §1         |  [ ]   |
-| 💎  |   3   | Add OB, security, and NVMe test suites                 | §1         |  [ ]   |
+| 💎  |   2   | `make test` target with QEMU headless + serial parse   | §1         |  [x]   |
+| 💎  |   3   | Add OB, security, and NVMe test suites                 | §1         |  [x]   |
 | 💎  |   4   | Enable smoke test in GitHub Actions                    | §2         |  [ ]   |
 | 💎  |   5   | Enable filesystem tests in GitHub Actions              | §4         |  [ ]   |
 | 💎  |   6   | Enable unit tests in GitHub Actions                    | §2, §4     |  [ ]   |
@@ -72,16 +72,16 @@ Connect the existing test framework to the boot sequence so tests actually run.
 
 A single command that builds, boots QEMU headless, runs tests, and reports pass/fail.
 
-- [ ] Add `make test` Makefile target:
+- [x] Add `make test` Makefile target:
   1. Build with `CFLAGS += -DKERNEL_TESTS`
   2. Set `test=1` in boot.conf (temp copy)
   3. Launch QEMU with `-display none -serial file:build/test.log -no-reboot`
   4. Timeout: 60 seconds (kill QEMU if not exited)
   5. Parse `build/test.log` for `=== X tests passed, Y FAILED ===`
   6. Exit 0 if Y=0, exit 1 if Y>0 or timeout
-- [ ] Add `bash scripts/test.sh` wrapper that does the same with colored output
-- [ ] Support selective suites: `make test SUITE=ob` runs only OB tests
-- [ ] Commit: `"test: make test target — headless QEMU, serial parse, exit code"`
+- [x] Add `bash scripts/test.sh` wrapper that does the same with colored output
+- [x] Support selective suites: `make test SUITE=ob` runs only OB tests
+- [x] Commit: `"test: make test target — headless QEMU, serial parse, exit code"`
 
 **Test checkpoint:** `make test` from clean checkout → builds, boots QEMU headless, runs tests, prints `PASS: 12 tests passed` or `FAIL: 2 of 14 failed`, exits with correct code.
 
@@ -91,7 +91,7 @@ A single command that builds, boots QEMU headless, runs tests, and reports pass/
 
 Expand test coverage to the new Object Manager and security subsystems.
 
-- [ ] `src/kernel/test/test_ob.c` — test suite covering:
+- [x] `src/kernel/test/test_ob.c` — test suite covering:
   - `ob_alloc_object` + `OB_HEADER_FROM_BODY` round-trip
   - `ObReferenceObject` + `ObDereferenceObject` → refcount reaches 0, on_delete called
   - Handle table: alloc + lookup + free cycle
@@ -99,14 +99,16 @@ Expand test coverage to the new Object Manager and security subsystems.
   - `NtDuplicateObject`: duplicate handle, close source, duplicate still valid
   - `ob_handle_table_inherit`: parent OBJ_INHERIT handle appears in child at same index
   - `NtQueryDirectoryObject`: enumerate `\` returns Device, KernelObjects, BaseNamedObjects
-- [ ] `src/kernel/test/test_security.c` — test suite covering:
+- [x] `src/kernel/test/test_security.c` — test suite covering:
   - SID comparison: `RtlEqualSid(SeLocalSystemSid, SeLocalSystemSid)` → true
   - SID formatting: `RtlConvertSidToString(SeLocalSystemSid)` → `"S-1-5-18"`
   - ACL creation: `RtlCreateAcl` + `RtlAddAccessAllowedAce` + `RtlGetAce` round-trip
   - Token creation: `SeCreateSystemToken()` → non-NULL, 24 privileges, IL=System
   - Privilege lookup: `RtlPrivilegeLuidToName(&SeShutdownPrivilege)` → `"SeShutdownPrivilege"`
-- [ ] Register both in `test_runner_init()`: `test_register_ob()`, `test_register_security()`
+- [x] Register both in `test_runner_init()`: `test_register_ob()`, `test_register_security()`
 - [ ] Commit: `"test: add OB and security test suites — 15+ new test assertions"`
+
+> **Done:** OB: 7 suites, 15 assertions. Security: 5 suites, 8 assertions. Total 23 new assertions registered in `test_runner_init()` (2026-04-02).
 
 **Test checkpoint:** `make test` → OB and security suites appear in output with all assertions passing.
 

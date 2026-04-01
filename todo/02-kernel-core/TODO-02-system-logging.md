@@ -188,21 +188,21 @@ Forward log entries to a remote syslog server for enterprise and headless debug 
   - Subsystem dispatch: entry tagged `"fs"` maps to `"fs.log"` filename (skipped: same reason)
   - Subsystem dispatch: entry with unknown tag maps to `"kernel.log"` (skipped: same reason)
 - [x] Register in `test_runner_init()`: `test_register_klog()`
-- [ ] Commit: `"test: add klog test suite"`
+- [x] Commit: `"test: add klog test suite"`
 
 > **Done:** 6 suites, 8 assertions — registered in `test_runner_init()` (2026-04-02). Subsystem dispatch tests skipped: `dispatch_filename()` is static in klog_disk.c, no public API to test tag-to-filename mapping.
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`
-- [ ] QEMU WHPX: serial log shows `klog_early_init()` in Phase 0, `klog_disk_enable()` in Phase 2
-- [ ] QEMU TCG: same as WHPX
-- [ ] VirtualBox: boot completes, log files created
-- [ ] `C:\Impossible\System\Logs\network.log` contains only `"net"` tagged entries
-- [ ] `C:\Impossible\System\Logs\boot.log` contains only `"boot"` tagged entries
-- [ ] `klog_set_level("mm", LOG_WARN)` silences mm DEBUG entries in serial
-- [ ] Rotation: `kernel.log.1` appears when `kernel.log` exceeds MaxSize
-- [ ] `events.jsonl` parseable by `jq` — one JSON object per line
-- [ ] Syslog: entries appear on test syslog server (UDP 514) when configured
-- [ ] Bare metal: log files written correctly to IXFS on SATA/NVMe
+- [x] `bash scripts/build.sh clean` → `=== BUILD OK ===` — PASS: build 1939 booted successfully (WHPX, 2026-04-02)
+- [x] QEMU WHPX: serial log shows `klog_early_init()` in Phase 0, `klog_disk_enable()` in Phase 2 — PASS: `[PHASE0] KLOG (0x0051)` at 0.000s, `klog: writing to C:\...\Serial_26040201.log` at 4.560s after VFS mount (WHPX, 2026-04-02)
+- [ ] QEMU TCG: same as WHPX — (not tested in this log, WHPX only)
+- [ ] VirtualBox: boot completes, log files created — (manual: requires VirtualBox)
+- [ ] `C:\Impossible\System\Logs\network.log` contains only `"net"` tagged entries — (not verifiable from serial log, requires filesystem inspection)
+- [ ] `C:\Impossible\System\Logs\boot.log` contains only `"boot"` tagged entries — (not verifiable from serial log, requires filesystem inspection)
+- [x] `klog_set_level("mm", LOG_WARN)` silences mm DEBUG entries in serial — PASS: unit test `Klog: level drop` passed at 8.510s, confirms LOG_DEBUG dropped after set_level(mm, LOG_WARN) (WHPX, 2026-04-02)
+- [ ] Rotation: `kernel.log.1` appears when `kernel.log` exceeds MaxSize — (not verifiable from serial log, requires filesystem inspection after multiple boots)
+- [ ] `events.jsonl` parseable by `jq` — one JSON object per line — (not verifiable from serial log, requires filesystem inspection)
+- [ ] Syslog: entries appear on test syslog server (UDP 514) when configured — (not verifiable from serial log, requires syslog server setup)
+- [ ] Bare metal: log files written correctly to IXFS on SATA/NVMe — (manual: requires physical hardware)
 - [ ] Commit: `"kernel: system-logging verified — splitting, rotation, JSON events, syslog"`
