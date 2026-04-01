@@ -11,7 +11,7 @@
 - [`src/kernel/klog_disk.c`](../../src/kernel/klog_disk.c)
 - [`include/kernel/klog.h`](../../include/kernel/klog.h)
 - ~~`src/kernel/log.c`~~ — legacy serial-only logger (removed, superseded by klog)
-- [`todo/02-kernel-core/TODO-01-kernel-init-sequencing.md`](./TODO-01-kernel-init-sequencing.md)
+- [`todo/02-kernel-core/docs/kernel/init-sequencing.md (completed, was TODO-01)`](./docs/kernel/init-sequencing.md (completed, was TODO-01))
 - → XREF: `TODO-20-kernel-libraries.md §6` — cJSON DOM parser required by §6 (structured JSON events)
 - → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
 - → XREF: `01-boot-platform/TODO-11-klog-ixfs-bare-metal-perf.md` — klog_disk_flush performance fix (ring snapshot, deferred flush mode); both TODOs modify klog_disk.c

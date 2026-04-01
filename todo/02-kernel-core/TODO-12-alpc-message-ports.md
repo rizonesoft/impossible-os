@@ -192,7 +192,7 @@
 
 ### 2.2 Object type registration
 
-- [ ] `AlpcInitialize()` called from Phase 1 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §3`):
+- [ ] `AlpcInitialize()` called from Phase 1 kernel init (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §3`):
   - `ObCreateObjectType("ALPC Port", sizeof(ALPC_PORT), AlpcPortDelete, ...)`
   - Registers `AlpcPortDelete` as the `DeleteProcedure`; drains queues, disconnects linked port, frees all message entries
 - [ ] Named server connection ports live in `\RPC Control\<name>` in the Ob namespace (→ XREF `TODO-03-object-manager.md §4`); `NtAlpcCreatePort` with non-NULL `ObjectAttributes->ObjectName` inserts there
@@ -505,7 +505,7 @@
 ### 9.1 CSRSS as the first ALPC server
 
 - [ ] CSRSS (`src/apps/csrss/csrss.c`) — the Win32 subsystem server process (→ XREF `11-user-platform-sdk/TODO-05` *(planned)*); it is the first real user-mode process that uses ALPC; this section defines only the kernel-side bootstrap contract
-- [ ] On kernel init Phase 3 (→ XREF `TODO-01-kernel-init-sequencing.md §5`): spawn CSRSS as a `SYSTEM`-token process before any other user processes; CSRSS calls:
+- [ ] On kernel init Phase 3 (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §5`): spawn CSRSS as a `SYSTEM`-token process before any other user processes; CSRSS calls:
   ```c
   NtAlpcCreatePort(&ApiPort,
       &ObjAttr(L"\\Windows\\ApiPort"),

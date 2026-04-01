@@ -2,7 +2,11 @@
 
 Core kernel internals — boot chain, memory management, scheduling, and inter-process communication.
 
-*Implementation docs will be added here as kernel TODOs are completed.*
+## Documents
+
+| Document | Topics |
+|---|---|
+| [Init Sequencing](init-sequencing.md) | 4-phase boot, dependency gates, readiness oracle, POST codes, recovery UI |
 
 ## Subdirectories
 

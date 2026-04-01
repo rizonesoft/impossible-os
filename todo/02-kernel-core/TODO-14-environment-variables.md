@@ -115,7 +115,7 @@
 
 ### 2.2 Bootstrap env before Registry is mounted
 
-- [ ] A minimal hardcoded fallback is used during kernel init before `registry_init()` completes (Phase 1); replace with Registry values during Phase 2 (→ XREF `TODO-01-kernel-init-sequencing.md §4`):
+- [ ] A minimal hardcoded fallback is used during kernel init before `registry_init()` completes (Phase 1); replace with Registry values during Phase 2 (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §4`):
   ```c
   static const char *bootstrap_env[] = {
       "PATH=C:\\Impossible\\Bin",

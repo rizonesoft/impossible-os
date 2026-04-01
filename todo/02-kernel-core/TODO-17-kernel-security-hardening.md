@@ -363,7 +363,7 @@
       __stack_chk_guard = (uintptr_t)rand;
   }
   ```
-- [ ] Call `canary_init()` very early in Phase 1 kernel init, before any stack-protected function is called (→ XREF `TODO-01-kernel-init-sequencing.md §3`)
+- [ ] Call `canary_init()` very early in Phase 1 kernel init, before any stack-protected function is called (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §3`)
 
 ### 9.3 `__stack_chk_fail` handler
 

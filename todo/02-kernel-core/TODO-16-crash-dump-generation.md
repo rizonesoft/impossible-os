@@ -56,7 +56,7 @@
 | 💎  |   5   | Minidump writer (crashing thread + small memory)       | 4                       |  [ ]   |
 | 💎  |   6   | Kernel dump & full dump variants                       | 5                       |  [ ]   |
 | 💎  |   7   | Raw-partition dump sink (VFS bypass)                   | 5, TODO-15-power-management.md §4           |  [ ]   |
-| 💎  |   8   | Post-boot crash recovery: copy dump + "unexpected shutdown" dialog | 7, TODO-01-kernel-init-sequencing.md §4 |  [ ]   |
+| 💎  |   8   | Post-boot crash recovery: copy dump + "unexpected shutdown" dialog | 7, docs/kernel/init-sequencing.md (completed, was TODO-01) §4 |  [ ]   |
 | ⭐  |   9   | `dmpanalyze.exe` crash analyzer                        | 4, 8                    |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
@@ -416,7 +416,7 @@
 
 ### 8.1 Kernel init check for pending dump
 
-- [ ] In kernel init Phase 2 (→ XREF `TODO-01-kernel-init-sequencing.md §4`), after VFS mounts but before the desktop starts: call `dump_recovery_check()`:
+- [ ] In kernel init Phase 2 (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §4`), after VFS mounts but before the desktop starts: call `dump_recovery_check()`:
   1. `dump_sink_probe()` — open dump partition
   2. Read sector 0; check `DUMP_PARTITION_HEADER.DumpPresent == 1`
   3. If present: read `DumpSize` bytes; write to `C:\Impossible\System\CrashDumps\{timestamp}.dmp` (create directory if absent; timestamp from `DumpPartitionHeader` or system RTC if unavailable)
