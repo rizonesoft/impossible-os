@@ -15,10 +15,10 @@
 - → XREF: `TODO-03-object-manager.md §8` — Object Manager security descriptor integration; ObXxx calls `SeAccessCheck` before granting any handle
 - → XREF: `TODO-04-peb-teb-user-abi.md §1` — TEB carries `ImpersonationInfo` pointer (thread token)
 - → XREF: `TODO-05-native-api-layer.md §1` — NTSTATUS return codes used by all token/ACL syscalls
-- → XREF: `TODO-09-process-model-extensions.md §1` — process spawn path (NtCreateProcess) must copy parent token and attach it
+- → XREF: `TODO-09-process-model-extensions.md §2` — process spawn path (NtCreateProcess) must copy parent token and attach it
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` — file handle open calls `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §5` — IXFS security descriptors stored as `SECURITY_DESCRIPTOR` on inodes; SRM is the enforcement engine
-- → XREF: `08-desktop-shell/TODO-06-security-accounts.md §11` — UAC consent UI triggers token elevation; this TODO provides `NtFilterToken` + elevation protocol
+- → XREF: `09-desktop-shell/TODO-06-security-accounts.md §11` — UAC consent UI triggers token elevation; this TODO provides `NtFilterToken` + elevation protocol
 
 ---
 
@@ -41,13 +41,13 @@
 | 💎  |   1   | SID & LUID primitives                             | —                   |  [ ]   |
 | 💎  |   2   | Privilege constants & PRIVILEGE_SET               | 1                   |  [ ]   |
 | 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | 1                   |  [ ]   |
-| 💎  |   4   | ACCESS_TOKEN object (primary)                     | 1, 2, 3, TODO-03    |  [ ]   |
+| 💎  |   4   | ACCESS_TOKEN object (primary)                     | 1, 2, 3, T03 §1     |  [ ]   |
 | 💎  |   5   | SeAccessCheck engine                              | 3, 4                |  [ ]   |
 | 💎  |   6   | Mandatory Integrity Control (MIC)                 | 4, 5                |  [ ]   |
-| 💎  |   7   | Process/thread token assignment & impersonation   | 4, TODO-09 §1       |  [ ]   |
+| 💎  |   7   | Process/thread token assignment & impersonation   | 4, T09 §2           |  [ ]   |
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | 2, 4, 5             |  [ ]   |
 | 💎  |   9   | UAC token split & NtFilterToken                   | 4, 6, 7             |  [ ]   |
-| 💎  |  10   | Win32 security API wrappers                       | 4–9, TODO-05        |  [ ]   |
+| 💎  |  10   | Win32 security API wrappers                       | 4–9, T05 §1         |  [ ]   |
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | 4–10                |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
@@ -55,11 +55,10 @@
 
 ---
 
-## 1. SID & LUID Primitives `[Sonnet]`
-
+## 1. SID & LUID Primitives 
 ### 1.1 SID type and helpers
 
-- [ ] Define `struct SID` in `include/kernel/security/sid.h`:
+- [x] Define `struct SID` in `include/kernel/security/sid.h`:
   ```c
   typedef struct {
       uint8_t  Revision;           /* always 1 */
@@ -68,17 +67,31 @@
       uint32_t SubAuthority[];     /* variable-length */
   } SID;
   ```
-- [ ] Define well-known SID constants as initialised globals in `src/kernel/security/sid.c`:
+- [x] Define well-known SID constants as initialised globals in `src/kernel/security/sid.c`:
 
-  | Constant | Value | |----------|-------| | `SeNullSid` | `S-1-0-0` | | `SeWorldSid` (Everyone) | `S-1-1-0` | | `SeCreatorOwnerSid` | `S-1-3-0` | | `SeNtAuthoritySid` | `S-1-5` | | `SeInteractiveSid` | `S-1-5-4` | | `SeServiceSid` | `S-1-5-6` | | `SeAnonymousLogonSid` | `S-1-5-7` | | `SeLocalSystemSid` | `S-1-5-18` | | `SeLocalServiceSid` | `S-1-5-19` | | `SeNetworkServiceSid` | `S-1-5-20` | | `SeBuiltinAdministratorsSid` | `S-1-5-32-544` | | `SeBuiltinUsersSid` | `S-1-5-32-545` | | `SeBuiltinGuestsSid` | `S-1-5-32-546` |
+  | Constant                      | Value          |
+  |-------------------------------|----------------|
+  | `SeNullSid`                   | `S-1-0-0`      |
+  | `SeWorldSid` (Everyone)       | `S-1-1-0`      |
+  | `SeCreatorOwnerSid`           | `S-1-3-0`      |
+  | `SeNtAuthoritySid`            | `S-1-5`        |
+  | `SeInteractiveSid`            | `S-1-5-4`      |
+  | `SeServiceSid`                | `S-1-5-6`      |
+  | `SeAnonymousLogonSid`         | `S-1-5-7`      |
+  | `SeLocalSystemSid`            | `S-1-5-18`     |
+  | `SeLocalServiceSid`           | `S-1-5-19`     |
+  | `SeNetworkServiceSid`         | `S-1-5-20`     |
+  | `SeBuiltinAdministratorsSid`  | `S-1-5-32-544` |
+  | `SeBuiltinUsersSid`           | `S-1-5-32-545` |
+  | `SeBuiltinGuestsSid`          | `S-1-5-32-546` |
 
-- [ ] Implement SID utilities:
+- [x] Implement SID utilities:
   - `RtlLengthSid(sid)` → `8 + 4 * SubAuthorityCount`
   - `RtlEqualSid(a, b)` → `memcmp` after length check
   - `RtlCopySid(buf, sid)` → validated `memcpy`
   - `RtlInitializeSid(sid, authority, count)`
   - `RtlSubAuthoritySid(sid, n)` → pointer into SubAuthority array
-  - `RtlConvertSidToUnicodeString(str, sid, alloc)` — formats `S-1-X-Y-...`
+  - `RtlConvertSidToString(str, sid, buf_size)` — formats `S-1-X-Y-...`
   - `RtlCreateServiceSid(name, sid, len)` — generates `S-1-5-80-<hash>` for service accounts (used by Service Manager)
 
 ### 1.2 LUID type
@@ -96,13 +109,37 @@
 
 ---
 
-## 2. Privilege Constants & PRIVILEGE_SET `[Sonnet]`
-
+## 2. Privilege Constants & PRIVILEGE_SET 
 ### 2.1 Privilege LUID constants
 
 - [ ] Define all standard privilege LUIDs in `include/kernel/security/privileges.h` as `const LUID` values with `HighPart=0`, `LowPart=<n>`:
 
-  | Constant | LowPart | When needed | |----------|---------|-------------| | `SeCreateTokenPrivilege` | 2 | NtCreateToken | | `SeAssignPrimaryTokenPrivilege` | 3 | NtAssignProcessToJobObject | | `SeLockMemoryPrivilege` | 4 | MmLockPages | | `SeIncreaseQuotaPrivilege` | 5 | NtSetInformationProcess quota | | `SeTcbPrivilege` (Trusted Computing Base) | 7 | Token operations bypassing checks | | `SeSecurityPrivilege` | 8 | SACL read/write | | `SeTakeOwnershipPrivilege` | 9 | Write owner without DACL | | `SeLoadDriverPrivilege` | 10 | `module_load()` | | `SeSystemProfilePrivilege` | 11 | NtQuerySystemInformation (perf) | | `SeSystemtimePrivilege` | 12 | NtSetSystemTime | | `SeProfileSingleProcessPrivilege` | 13 | per-process profiling | | `SeIncreaseBasePriorityPrivilege` | 14 | REALTIME_PRIORITY_CLASS | | `SeCreatePagefilePrivilege` | 15 | NtCreatePagingFile | | `SeBackupPrivilege` | 17 | read files ignoring DACL | | `SeRestorePrivilege` | 18 | write files ignoring DACL | | `SeShutdownPrivilege` | 19 | NtShutdownSystem | | `SeDebugPrivilege` | 20 | NtOpenProcess any PID | | `SeAuditPrivilege` | 21 | NtAccessCheckAndAuditAlarm | | `SeChangeNotifyPrivilege` | 23 | bypass traverse-check (always enabled) | | `SeUndockPrivilege` | 25 | laptop undock | | `SeManageVolumePrivilege` | 28 | direct volume I/O | | `SeImpersonatePrivilege` | 29 | NtImpersonateThread at higher IL | | `SeCreateGlobalPrivilege` | 30 | create objects in global namespace | | `SeCreateSymbolicLinkPrivilege` | 35 | NtCreateSymbolicLinkObject |
+  | Constant                          | LP | When needed                       |
+  |-----------------------------------|----|-----------------------------------|
+  | `SeCreateTokenPrivilege`          |  2 | NtCreateToken                     |
+  | `SeAssignPrimaryTokenPrivilege`   |  3 | NtAssignProcessToJobObject        |
+  | `SeLockMemoryPrivilege`           |  4 | MmLockPages                       |
+  | `SeIncreaseQuotaPrivilege`        |  5 | NtSetInformationProcess quota     |
+  | `SeTcbPrivilege`                  |  7 | Token ops bypassing checks        |
+  | `SeSecurityPrivilege`             |  8 | SACL read/write                   |
+  | `SeTakeOwnershipPrivilege`        |  9 | Write owner without DACL          |
+  | `SeLoadDriverPrivilege`           | 10 | `module_load()`                   |
+  | `SeSystemProfilePrivilege`        | 11 | NtQuerySystemInformation (perf)   |
+  | `SeSystemtimePrivilege`           | 12 | NtSetSystemTime                   |
+  | `SeProfileSingleProcessPrivilege` | 13 | per-process profiling             |
+  | `SeIncreaseBasePriorityPrivilege` | 14 | REALTIME_PRIORITY_CLASS           |
+  | `SeCreatePagefilePrivilege`       | 15 | NtCreatePagingFile                |
+  | `SeBackupPrivilege`               | 17 | read files ignoring DACL          |
+  | `SeRestorePrivilege`              | 18 | write files ignoring DACL         |
+  | `SeShutdownPrivilege`             | 19 | NtShutdownSystem                  |
+  | `SeDebugPrivilege`                | 20 | NtOpenProcess any PID             |
+  | `SeAuditPrivilege`                | 21 | NtAccessCheckAndAuditAlarm        |
+  | `SeChangeNotifyPrivilege`         | 23 | bypass traverse-check (always on) |
+  | `SeUndockPrivilege`               | 25 | laptop undock                     |
+  | `SeManageVolumePrivilege`         | 28 | direct volume I/O                 |
+  | `SeImpersonatePrivilege`          | 29 | NtImpersonateThread at higher IL  |
+  | `SeCreateGlobalPrivilege`         | 30 | objects in global namespace       |
+  | `SeCreateSymbolicLinkPrivilege`   | 35 | NtCreateSymbolicLinkObject        |
 
 ### 2.2 PRIVILEGE_SET and TOKEN_PRIVILEGES
 
@@ -131,8 +168,7 @@
 
 ---
 
-## 3. SECURITY_DESCRIPTOR, ACL & ACE Types `[Sonnet]`
-
+## 3. SECURITY_DESCRIPTOR, ACL & ACE Types 
 ### 3.1 Core types
 
 - [ ] Define in `include/kernel/security/acl.h`:
@@ -206,8 +242,7 @@
 
 ---
 
-## 4. ACCESS_TOKEN Object `[Opus]`
-
+## 4. ACCESS_TOKEN Object 
 ### 4.1 Token struct
 
 - [ ] Define `struct ACCESS_TOKEN` in `include/kernel/security/token.h`:
@@ -266,8 +301,7 @@
 
 ---
 
-## 5. SeAccessCheck Engine `[Opus]`
-
+## 5. SeAccessCheck Engine 
 ### 5.1 Subject security context
 
 - [ ] Define `SECURITY_SUBJECT_CONTEXT`:
@@ -326,8 +360,7 @@
 
 ---
 
-## 6. Mandatory Integrity Control (MIC) `[Opus]`
-
+## 6. Mandatory Integrity Control (MIC) 
 ### 6.1 Integrity level comparison
 
 - [ ] `SeGetTokenIntegrityLevel(token)` — returns `uint32_t` from `token->IntegrityLevelSid->SubAuthority[0]` (0, 4096, 8192, 12288, 16384)
@@ -357,8 +390,7 @@
 
 ---
 
-## 7. Process/Thread Token Assignment & Impersonation `[Sonnet]`
-
+## 7. Process/Thread Token Assignment & Impersonation 
 ### 7.1 Token field in task struct
 
 - [ ] Add `ACCESS_TOKEN *Token;` to `struct task` in `include/kernel/sched/task.h`
@@ -368,7 +400,7 @@
 
 ### 7.2 Token assignment at spawn
 
-- [ ] In `NtCreateProcess` (→ XREF `TODO-09 §1`): call `NtDuplicateToken(parent->Token, TOKEN_ALL_ACCESS, NULL, FALSE, TokenPrimary, &child->Token)` — child starts with a deep copy of parent's primary token
+- [ ] In `NtCreateProcess` (→ XREF `TODO-09 §2`): call `NtDuplicateToken(parent->Token, TOKEN_ALL_ACCESS, NULL, FALSE, TokenPrimary, &child->Token)` — child starts with a deep copy of parent's primary token
 - [ ] `SeCreateSystemToken()` result assigned to `PsInitialSystemProcess->Token` during Phase 0 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §2`)
 
 ### 7.3 Thread impersonation
@@ -388,8 +420,7 @@
 
 ---
 
-## 8. SePrivilegeCheck & Per-Privilege Enforcement `[Opus]`
-
+## 8. SePrivilegeCheck & Per-Privilege Enforcement 
 ### 8.1 Core privilege check
 
 - [ ] `SePrivilegeCheck(PrivilegeSet, ctx, AccessMode)`:
@@ -414,8 +445,7 @@
 
 ---
 
-## 9. UAC Token Split & NtFilterToken `[Opus]`
-
+## 9. UAC Token Split & NtFilterToken 
 ### 9.1 NtFilterToken
 
 - [ ] `NtFilterToken(ExistingToken, Flags, SidsToDisable, PrivilegesToDelete, RestrictedSids, NewToken)`:
@@ -440,7 +470,7 @@
 
 - [ ] `NtRequestTokenElevation(ProcessHandle, hToken, ElevationType)` — kernel side of the elevation flow:
   1. Check calling process has `TokenElevationTypeLimited` token
-  2. Signal the consent UI process (→ XREF `08-desktop-shell/TODO-06-security-accounts.md §11`) via a dedicated kernel event object
+  2. Signal the consent UI process (→ XREF `09-desktop-shell/TODO-06-security-accounts.md §11`) via a dedicated kernel event object
   3. Wait for consent UI to signal approval or denial event
   4. On approval: `NtSetInformationProcess(ProcessHandle, ProcessAccessToken, &linked_token)` — replaces the process token with the full-admin linked token
   5. On denial: return `STATUS_PRIVILEGE_NOT_HELD`
@@ -452,8 +482,7 @@
 
 ---
 
-## 10. Win32 Security API Wrappers `[Sonnet]`
-
+## 10. Win32 Security API Wrappers 
 ### 10.1 Token Win32 API
 
 - [ ] `OpenProcessToken(hProcess, DesiredAccess, phToken)` → `NtOpenProcessToken`
@@ -490,8 +519,7 @@
 
 ---
 
-## 11. Live Token Inspector `[Sonnet]`
-
+## 11. Live Token Inspector 
 ### 11.1 whoami.exe
 
 - [ ] `src/apps/whoami/whoami.c` — command-line tool; calls `OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)` then `GetTokenInformation` for each class; formats output as aligned table. CLI usage:
@@ -516,7 +544,6 @@
 
 ## OS Comparison
 
-
 | ⭐ | Feature                             | Win11                   | Linux                        | Impossible OS                    |
 |----|-------------------------------------|-------------------------|------------------------------|----------------------------------|
 | 💎 | Token-based identity                | ✅ Full                 | ⚠️ UID/GID only              | ⬜ §4                            |
@@ -528,7 +555,8 @@
 | 💎 | SDDL string security descriptors    | ✅ Full                 | ❌ Not available             | ⬜ §10                           |
 | 💎 | NtFilterToken / restricted tokens   | ✅ Full                 | ❌ Not available             | ⬜ §9                            |
 | ⭐ | Live token inspector in tray        | ❌ CLI only (whoami)    | ❌ CLI only                  | ⬜ §11 — 🚀                      |
-| ⭐ | Integrated IL badge in File Manager | ❌ Hidden in properties | ❌ Not available             | ⬜ §11 — + `08-desktop-shell` 🚀 |
+| ⭐ | Integrated IL badge in File Manager | ❌ Hidden in properties | ❌ Not available             | ⬜ §11 + `09-desktop-shell` 🚀   |
+| ⭐ | Real-time ACL denial toast          | ❌ Event log only       | ❌ auditd log only           | ⬜ Planned — `10-services` 🚀    |
 
 After §1–10, Impossible OS reaches full Windows 11 security architecture parity — SID tokens, DACL/SACL access checks, MIC integrity levels, privilege separation, and UAC elevation are all present. Linux with only POSIX permissions and optional MAC add-ons (SELinux/AppArmor) is strictly weaker. The tray token inspector (§11) and integrated IL badges in the File Manager are exclusive features that make Impossible OS's security model visible and actionable to developers and power users.
 
@@ -541,5 +569,5 @@ After §1–10, Impossible OS reaches full Windows 11 security architecture pari
 - [ ] **Unit test — AdjustTokenPrivileges**: create token with `SeShutdownPrivilege` disabled; call `AdjustTokenPrivileges` to enable it; verify privilege now reports `SE_PRIVILEGE_ENABLED`; call again with `DisableAll=TRUE`; verify all disabled.
 - [ ] **`whoami.exe` in QEMU**: launch `whoami /all`; output must show the system token's SID, group list (System, Administrators, Everyone), and privilege table with all expected LUIDs present.
 - [ ] **Object access check in QEMU**: create a file with a DACL that denies the current user; verify `CreateFile` returns `ERROR_ACCESS_DENIED`.
-- [ ] **Remaining limits**: full consent UI (UAC dialog) is in `08-desktop-shell/TODO-06-security-accounts.md §11`; SACL audit logging deferred to `09-services-security`; kernel object type SACL auditing (file access audit events) deferred to the same.
+- [ ] **Remaining limits**: full consent UI (UAC dialog) is in `09-desktop-shell/TODO-06-security-accounts.md §11`; SACL audit logging deferred to `09-services-security`; kernel object type SACL auditing (file access audit events) deferred to the same.
 - [ ] Commit: `"kernel/security: SRM complete — ACCESS_TOKEN, ACL/DACL, SeAccessCheck, MIC, impersonation, UAC token split, Win32 security API"`
