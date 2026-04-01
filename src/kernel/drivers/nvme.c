@@ -19,6 +19,18 @@
 static struct nvme_controller controllers[NVME_MAX_CONTROLLERS];
 static int num_controllers;
 
+/* ---- Cache flush helper for DMA buffers ---- */
+static inline void clflush_range(volatile void *addr, uint32_t size)
+{
+    uintptr_t p = (uintptr_t)addr & ~63ULL;  /* align to cache line */
+    uintptr_t end = (uintptr_t)addr + size;
+    while (p < end) {
+        __asm__ volatile("clflush (%0)" :: "r"(p) : "memory");
+        p += 64;
+    }
+    __asm__ volatile("mfence" ::: "memory");
+}
+
 /* ---- MMIO helpers ---- */
 
 static inline uint32_t nvme_read32(volatile uint8_t *base, uint32_t off)
@@ -358,7 +370,11 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
 
     /* Advance tail and ring I/O SQ 1 tail doorbell */
     nc->io_sq_tail = (nc->io_sq_tail + 1) % NVME_IO_QUEUE_DEPTH;
-    wmb();  /* SQ entry visible before doorbell */
+    /* Flush the SQ entry cache line to RAM so the controller's DMA sees it.
+     * On WHPX, sfence alone isn't sufficient — the hypervisor's DMA path
+     * may not snoop the CPU cache for emulated NVMe device reads. */
+    clflush_range(sqe, sizeof(*sqe));
+    wmb();
     /* SQ y tail doorbell: 0x1000 + (2y * db_stride), y=1 for I/O QID 1 */
     nvme_write32(nc->mmio_base, 0x1000 + (2 * db_stride), nc->io_sq_tail);
 
