@@ -202,3 +202,42 @@ HANDLE_TABLE_ENTRY *ObpLookupHandle(HANDLE_TABLE *table, HANDLE handle)
 
     return &table->entries[idx];
 }
+
+/* --- ob_handle_table_inherit --------------------------------------------- */
+
+uint32_t ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
+{
+    uint32_t i, count = 0;
+    OBJECT_HEADER *hdr;
+
+    if (!parent || !child || !parent->entries || !child->entries)
+        return 0;
+
+    /* Grow child table to match parent capacity if needed */
+    while (child->capacity < parent->capacity) {
+        if (handle_table_grow(child) < 0)
+            break;  /* can't grow further — inherit what fits */
+    }
+
+    for (i = 0; i < parent->capacity && i < child->capacity; i++) {
+        if (!parent->entries[i].object)
+            continue;
+        if (!(parent->entries[i].attributes & OBJ_INHERIT))
+            continue;
+
+        /* Copy entry at the same slot index (preserves HANDLE value) */
+        child->entries[i].object         = parent->entries[i].object;
+        child->entries[i].granted_access = parent->entries[i].granted_access;
+        child->entries[i].attributes     = parent->entries[i].attributes;
+        child->count++;
+
+        /* Child holds its own reference */
+        ObReferenceObject(parent->entries[i].object);
+        hdr = OB_HEADER_FROM_BODY(parent->entries[i].object);
+        hdr->handle_count++;
+
+        count++;
+    }
+
+    return count;
+}

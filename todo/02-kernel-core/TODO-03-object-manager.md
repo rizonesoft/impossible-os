@@ -41,7 +41,7 @@
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [x]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T11 §4     |  [x]   |
-| 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [ ]   |
+| 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [x]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [ ]   |
 
 > 💎 = parity — Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
@@ -172,12 +172,12 @@ Core Win32 handle management syscalls routed through the Ob layer.
 ## 10. Handle Inheritance Across CreateProcess
 Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles into the child.
 
-- [ ] At process creation: if inherit flag is set, iterate parent handle table
-- [ ] For each entry with `OBJ_INHERIT` attribute: call `ObpAllocateHandle` in child table at the same slot index with the same access rights
-- [ ] Call `ObReferenceObject` for each inherited handle — child holds independent references
-- [ ] Inherited handle indices in the child match the parent (Win32 contract)
-- [ ] On child `NtClose`, child's references are released independently of the parent's
-- [ ] Commit: `"kernel: ob — handle inheritance across CreateProcess"`
+- [x] At process creation: if inherit flag is set, call `ob_handle_table_inherit(parent, child)`
+- [x] For each entry with `OBJ_INHERIT` attribute: copy to child table at the same slot index with the same access rights
+- [x] Call `ObReferenceObject` for each inherited handle — child holds independent references
+- [x] Inherited handle indices in the child match the parent (Win32 contract — same HANDLE value)
+- [x] On child `NtClose`, child's references are released independently of the parent's
+- [x] Commit: `"kernel: ob — handle inheritance across CreateProcess"`
 
 ## 11. Unified Kernel–User Namespace Browser API
 Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall. Neither Windows nor Linux expose this publicly — Windows `NtQueryDirectoryObject` is internal / undocumented; Linux has no equivalent.

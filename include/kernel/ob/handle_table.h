@@ -61,3 +61,10 @@ int ObpFreeHandle(HANDLE_TABLE *table, HANDLE handle);
 
 /* Look up a handle. Returns entry pointer, or NULL if invalid. */
 HANDLE_TABLE_ENTRY *ObpLookupHandle(HANDLE_TABLE *table, HANDLE handle);
+
+/* Inherit handles from parent to child. Copies all entries with
+ * OBJ_INHERIT attribute, preserving slot indices (HANDLE values match).
+ * Calls ObReferenceObject for each inherited handle.
+ * Child table must be freshly initialized (empty).
+ * Returns the number of handles inherited. */
+uint32_t ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child);
