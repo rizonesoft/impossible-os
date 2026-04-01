@@ -40,7 +40,7 @@
 | --- | :---: | ------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | SID & LUID primitives                             | —                   |  [x]   |
 | 💎  |   2   | Privilege constants & PRIVILEGE_SET               | 1                   |  [x]   |
-| 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | 1                   |  [ ]   |
+| 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | 1                   |  [x]   |
 | 💎  |   4   | ACCESS_TOKEN object (primary)                     | 1, 2, 3, T03 §1     |  [ ]   |
 | 💎  |   5   | SeAccessCheck engine                              | 3, 4                |  [ ]   |
 | 💎  |   6   | Mandatory Integrity Control (MIC)                 | 4, 5                |  [ ]   |
@@ -227,18 +227,18 @@
 
 ### 3.4 Default SDs for kernel object types
 
-- [ ] `SeCreateDefaultSD(type)` — returns a self-relative SD with:
+- [x] `SeCreateDefaultSD(type)` — returns a self-relative SD with:
   - Owner = `SeLocalSystemSid`
   - DACL: `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;WD)` — System+Admins=FullControl, Everyone=ReadControl
   - Stored as static blobs in `src/kernel/security/default_sds.c`
-- [ ] Object types needing custom defaults:
+- [x] Object types needing custom defaults:
   - `OB_TYPE_PROCESS` — `(A;;GA;;;SY)(A;;0x1FFFFF;;;BA)(A;;0x1000;;;WD)` (create/terminate restricted for Everyone)
   - `OB_TYPE_TOKEN` — `(A;;GA;;;SY)(A;;0x0008;;;OW)` (Query only for owner)
   - `OB_TYPE_REGISTRY_KEY` — `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)` (BuiltinUsers=Read)
 
 ### 3.5 Commit
 
-- [ ] Commit: `"kernel/security: SECURITY_DESCRIPTOR, ACL, ACE types and helpers"`
+- [x] Commit: `"kernel/security: SECURITY_DESCRIPTOR, ACL, ACE types and helpers"`
 
 ---
 
