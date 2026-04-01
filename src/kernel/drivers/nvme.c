@@ -278,8 +278,9 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
 
     nc->io_queue_active = 1;
 
-    klog(LOG_INFO, "nvme", "I/O Queue created (QID=1, depth=%u, db_stride=%u)",
-         (uint64_t)io_depth, (uint64_t)db_stride);
+    klog(LOG_INFO, "nvme", "I/O Queue created (QID=1, depth=%u, db_stride=%u, SQ=0x%llx CQ=0x%llx)",
+         (uint64_t)io_depth, (uint64_t)db_stride,
+         (uint64_t)nc->io_sq_phys, (uint64_t)nc->io_cq_phys);
 
     /* Allow controller to finalize I/O queue setup before first I/O.
      * On WHPX the emulated NVMe processes the Create I/O SQ admin
@@ -315,7 +316,14 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
                     klog(LOG_INFO, "nvme", "sector 0 read OK (sig=0x%x 0x%x)",
                          (uint64_t)test_buf[510], (uint64_t)test_buf[511]);
             } else {
-                klog(LOG_WARN, "nvme", "sector 0 read failed");
+                /* Dump diagnostics for debugging I/O queue issues */
+                volatile struct nvme_cqe *dcqe = &nc->io_cq[0];
+                klog(LOG_WARN, "nvme", "sector 0 read failed (CQ[0] status=0x%x dw0=0x%x sqhd=%u phase=%u)",
+                     (uint64_t)dcqe->status, (uint64_t)dcqe->dw0,
+                     (uint64_t)dcqe->sq_head, (uint64_t)nc->io_cq_phase);
+                klog(LOG_WARN, "nvme", "  SQ tail=%u CQ head=%u io_sq=0x%llx io_cq=0x%llx",
+                     (uint64_t)nc->io_sq_tail, (uint64_t)nc->io_cq_head,
+                     (uint64_t)nc->io_sq_phys, (uint64_t)nc->io_cq_phys);
             }
             pmm_free_frame(test_phys);
         }

@@ -15,10 +15,10 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **C sources** (`.c`) | 196 | 95933 |
+| **C sources** (`.c`) | 196 | 95941 |
 | **Headers** (`.h`) | 149 | 30985 |
 | **Assembly** (`.asm`) | 7 | 817 |
-| **Subtotal** | **352** | **127735** |
+| **Subtotal** | **352** | **127743** |
 
 ## SDK Tools
 
@@ -41,10 +41,10 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **All project code** | **383** | **133816** |
+| **All project code** | **383** | **133824** |
 
 > Vendored code excluded: ~13785 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 
 ---
 
-*Last updated: 2026-04-01 11:33 · commit `9c8d65d`*
+*Last updated: 2026-04-01 11:39 · commit `d388d6c`*
