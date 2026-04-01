@@ -19,18 +19,6 @@
 static struct nvme_controller controllers[NVME_MAX_CONTROLLERS];
 static int num_controllers;
 
-/* ---- Cache flush helper for DMA buffers ---- */
-static inline void clflush_range(volatile void *addr, uint32_t size)
-{
-    uintptr_t p = (uintptr_t)addr & ~63ULL;  /* align to cache line */
-    uintptr_t end = (uintptr_t)addr + size;
-    while (p < end) {
-        __asm__ volatile("clflush (%0)" :: "r"(p) : "memory");
-        p += 64;
-    }
-    __asm__ volatile("mfence" ::: "memory");
-}
-
 /* ---- MMIO helpers ---- */
 
 static inline uint32_t nvme_read32(volatile uint8_t *base, uint32_t off)
@@ -90,19 +78,16 @@ static int nvme_submit_admin_cmd(struct nvme_controller *nc,
     }
 
     /* Advance tail and ring SQ 0 tail doorbell.
-     * wmb() ensures the SQ entry writes are globally visible before the
-     * doorbell MMIO write.  Without this, the controller (or WHPX device
-     * model) can read a stale/empty SQ entry → command never completes. */
+     * wmb() ensures SQ entry stores are visible before the MMIO doorbell
+     * write (NVMe spec requirement; x86 TSO provides this naturally, but
+     * the barrier makes the contract explicit and portable). */
     nc->admin_sq_tail = (nc->admin_sq_tail + 1) % NVME_ADMIN_QUEUE_DEPTH;
     wmb();
     nvme_write32(nc->mmio_base, 0x1000, nc->admin_sq_tail);
 
-    /* Poll CQ for completion.
-     * rmb() forces re-read of the CQE from RAM on each iteration —
-     * without it, the CPU can cache the old status word and spin forever. */
+    /* Poll CQ for completion (volatile CQE access prevents compiler CSE) */
     elapsed = 0;
     while (elapsed < timeout_ms) {
-        rmb();
         cqe = &nc->admin_cq[nc->admin_cq_head];
         status = cqe->status;
 
@@ -257,7 +242,6 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
     nc->io_cq = (volatile struct nvme_cqe *)nc->io_cq_phys;
     nvme_memset((void *)nc->io_sq_phys, 0, 4096);
     nvme_memset((void *)nc->io_cq_phys, 0, 4096);
-    wmb();  /* flush zeroed SQ/CQ to RAM before controller sees the addresses */
     nc->io_sq_tail  = 0;
     nc->io_cq_head  = 0;
     nc->io_cq_phase = 1;
@@ -320,14 +304,7 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
                     klog(LOG_INFO, "nvme", "sector 0 read OK (sig=0x%x 0x%x)",
                          (uint64_t)test_buf[510], (uint64_t)test_buf[511]);
             } else {
-                /* Dump diagnostics for debugging I/O queue issues */
-                volatile struct nvme_cqe *dcqe = &nc->io_cq[0];
-                klog(LOG_WARN, "nvme", "sector 0 read failed (CQ[0] status=0x%x dw0=0x%x sqhd=%u phase=%u)",
-                     (uint64_t)dcqe->status, (uint64_t)dcqe->dw0,
-                     (uint64_t)dcqe->sq_head, (uint64_t)nc->io_cq_phase);
-                klog(LOG_WARN, "nvme", "  SQ tail=%u CQ head=%u io_sq=0x%llx io_cq=0x%llx",
-                     (uint64_t)nc->io_sq_tail, (uint64_t)nc->io_cq_head,
-                     (uint64_t)nc->io_sq_phys, (uint64_t)nc->io_cq_phys);
+                klog(LOG_WARN, "nvme", "sector 0 read failed (I/O timeout)");
             }
             pmm_free_frame(test_phys);
         }
@@ -362,18 +339,13 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
 
     /* Advance tail and ring I/O SQ 1 tail doorbell */
     nc->io_sq_tail = (nc->io_sq_tail + 1) % NVME_IO_QUEUE_DEPTH;
-    /* Flush the SQ entry cache line to RAM so the controller's DMA sees it.
-     * On WHPX, sfence alone isn't sufficient — the hypervisor's DMA path
-     * may not snoop the CPU cache for emulated NVMe device reads. */
-    clflush_range(sqe, sizeof(*sqe));
-    wmb();
+    wmb();  /* SQ entry visible before doorbell (NVMe spec) */
     /* SQ y tail doorbell: 0x1000 + (2y * db_stride), y=1 for I/O QID 1 */
     nvme_write32(nc->mmio_base, 0x1000 + (2 * db_stride), nc->io_sq_tail);
 
-    /* Poll I/O CQ for completion */
+    /* Poll I/O CQ for completion (volatile CQE access prevents compiler CSE) */
     elapsed = 0;
     while (elapsed < timeout_ms) {
-        rmb();  /* re-read CQE from RAM */
         cqe = &nc->io_cq[nc->io_cq_head];
         status = cqe->status;
 
