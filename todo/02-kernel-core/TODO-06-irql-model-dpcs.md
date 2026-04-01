@@ -85,6 +85,7 @@
 - [ ] Build a lock-protected per-CPU DPC queue with bounded memory strategy (pre-allocated nodes or static pool fallback).
 - [ ] Enforce that `KeInsertQueueDpc()` is callable at ISR IRQL and does not block or allocate unbounded memory.
 - [ ] Wire `dpc_init()` into boot path (Phase 1, after timer): per-CPU DPC queue + drain loop; `BOOT_REQUIRE(SUBSYS_TIMER)` — moved from TODO-01 §3
+- [ ] Update `task_init()` to return `boot_result_t` instead of `void` — moved from TODO-01 §8
 - [ ] Commit: `"kernel: sched — add KDPC type and per-CPU DPC queue"`
 
 ## 5. DPC Drain Loop at `DISPATCH_LEVEL`

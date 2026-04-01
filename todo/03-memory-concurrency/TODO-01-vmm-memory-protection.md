@@ -69,6 +69,7 @@ Change page permissions on an existing mapping — essential for W^X policy, JIT
 - [ ] Wire `mprotect(addr, len, prot)` POSIX syscall → `vmm_protect()`
 - [ ] Wire `NtProtectVirtualMemory(handle, &base, &size, new_protect, &old_protect)` → `vmm_protect()` (→ XREF `02-kernel-core/TODO-05-native-api-layer.md`)
 - [ ] Allocate one PROT_NONE guard page below each thread's initial stack in `thread_create()`; page fault on guard page → deliver `EXCEPTION_STACK_OVERFLOW`
+- [ ] Update `pmm_init()`, `vmm_init()`, `heap_init()` to return `boot_result_t` instead of `void` — moved from TODO-01 §8
 - [ ] Commit: `"mm: mprotect / NtProtectVirtualMemory + stack guard pages"`
 
 ## 2. W^X Enforcement `[Opus]`

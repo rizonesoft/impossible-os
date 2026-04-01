@@ -140,6 +140,7 @@
 
 ### 1.4 Commit
 
+- [ ] Update `pipe_init()` to return `boot_result_t` instead of `void` — moved from TODO-01 §8
 - [ ] Commit: `"kernel/ipc/alpc: message header, port attributes, type codes"`
 
 ---

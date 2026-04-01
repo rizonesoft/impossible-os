@@ -83,6 +83,7 @@ Grow inode from 128 → 256 bytes. Add 10 new Win32-compatibility fields. Bump `
 - [ ] Zero-init all new fields in `ixfs_inode_create()` (no garbage in new slots)
 - [ ] Update `ixfs_format()` to write v3 superblock with `s_version = 3`
 - [ ] `_Static_assert(sizeof(struct ixfs_inode) == 256, ...)` — compile-time guard
+- [ ] Update `vfs_init()` to return `boot_result_t` instead of `void` — moved from TODO-01 §8
 - [ ] Commit: `"ixfs: v3 inode — 256B, 10 Win32 fields, IXFS_VERSION=3, v2 read-only mount"`
 
 ## 3. Case-Insensitive Paths `[Sonnet]`

@@ -201,7 +201,11 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [x] Move SMBIOS, ESRT, UEFI conformance, capsule, crypto agility, GOP log out of `boot_hw.c` into `boot_interrupts.c`
 - [x] Simplify `main.c` to exactly: `boot_phase0()` → `boot_phase1()` → `boot_phase2()` → `boot_phase3()` → halt
 - [x] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1` check
-- [ ] Update all init functions in `sched/`, `ipc/`, `mm/`, `fs/` to return `boot_result_t` where they currently return `void` — deferred to per-subsystem TODOs
+- [ ] Update init functions to return `boot_result_t` — distributed to per-subsystem TODOs:
+  - `task_init()` → [TODO-06 §4](./TODO-06-irql-model-dpcs.md)
+  - `pipe_init()` → [TODO-12 §1](./TODO-12-alpc-message-ports.md)
+  - `pmm/vmm/heap_init()` → [03-memory/TODO-01 §1](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
+  - `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
 
 ## 9. Degraded-Boot Recovery Screen
 In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally. Renders directly to the GOP framebuffer — no compositor, no window manager required. Displays which subsystem failed, its POST code, and a simple recovery menu (retry / boot to serial console / power off).
