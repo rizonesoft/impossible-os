@@ -194,37 +194,37 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 
 ## OS Comparison
 
-| ⭐ | Feature               | Win11                  | Linux                 | Impossible OS                |
-|----|-----------------------|-------------------------|---------------------=-|------------------------------|
-| 💎 | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref    | ⬜ §1                        |
-| 💎 | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type         | ⬜ §1                        |
-| 💎 | Auto-delete on 0 ref  | ✅ ObDereferenceObject | ✅ kref_put          | ⬜ §2                        |
-| 💎 | Per-process handles   | ✅ HANDLE_TABLE        | ✅ fd table          | ⬜ §3                        |
-| 💎 | Named namespace       | ✅ \BaseNamedObjects   | ✅ /proc, /sys       | ⬜ §4                        |
-| 💎 | File objects          | ✅ FILE_OBJECT         | ✅ struct file       | ✅ §5                        |
-| 💎 | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct       | ✅ §5                        |
-| 💎 | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem   | ✅ §6                        |
-| 💎 | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap    | ✅ §7                        |
-| 💎 | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs  | ⬜ §8                        |
-| 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ⬜ §9, §10                   |
-| ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ⬜ §11 — public, documented  |
-| ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ⬜ §1-§7 — one header        |
+| ⭐ | Feature               | Win11                  | Linux                | Impossible OS                 |
+|----|-----------------------|------------------------|----------------------|-------------------------------|
+| 💎 | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref    | ✅ §1                       |
+| 💎 | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type         | ✅ §1                       |
+| 💎 | Auto-delete on 0 ref  | ✅ ObDereferenceObject | ✅ kref_put          | ✅ §2                       |
+| 💎 | Per-process handles   | ✅ HANDLE_TABLE        | ✅ fd table          | ✅ §3                       |
+| 💎 | Named namespace       | ✅ \BaseNamedObjects   | ✅ /proc, /sys       | ✅ §4                       |
+| 💎 | File objects          | ✅ FILE_OBJECT         | ✅ struct file       | ✅ §5                       |
+| 💎 | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct       | ✅ §5                       |
+| 💎 | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem   | ✅ §6                       |
+| 💎 | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap    | ✅ §7                       |
+| 💎 | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs  | ✅ §8                       |
+| 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ✅ §9, §10                  |
+| ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ✅ §11 — public, documented |
+| ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ✅ §1–§7 — one header       |
 
-> After §1-§10, Impossible OS matches Windows NT object management.
-> §11 and unified type system are exclusive competitive edges.
+> All parity items complete — Impossible OS matches Windows NT object management.
+> Both exclusive features (⭐) are implemented: public namespace browser API and unified single-header type system covering files, processes, threads, sync objects, and sections.
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`
-- [ ] QEMU WHPX: `ObCreateObject(ObpFileType)` returns valid body; `OB_HEADER_FROM_BODY` recovers header
-- [ ] QEMU TCG: same as WHPX
-- [ ] `ObReferenceObject` + `ObDereferenceObject` drives refcount to 0, calls `on_delete`
-- [ ] Handle table: 1000 alloc/free round trips with no leak
-- [ ] Named event in `\BaseNamedObjects\TestEvent` findable via `ObLookupObjectByName`
-- [ ] `NtDuplicateObject` produces independent handle; closing source doesn't affect duplicate
-- [ ] Child process inherits `OBJ_INHERIT` handles at correct indices
-- [ ] `NtQueryDirectoryObject(\)` enumerates `Device`, `KernelObjects`, `BaseNamedObjects`
-- [ ] VirtualBox: boot completes with Ob init, no regression
-- [ ] Bare metal: boot completes with Ob init, handles work end-to-end
-- [ ] Zero use-after-free on object deletion (serial log shows no heap corruption)
-- [ ] Commit: `"kernel: ob — object manager complete"`
+- [x] `bash scripts/build.sh clean` → `=== BUILD OK ===` (verified every commit)
+- [x] QEMU WHPX: `ob: Registered 11 built-in types` + namespace created, 2 CPUs, desktop boots (verified 2026-04-01)
+- [x] QEMU TCG: same — verified via NVMe test (NVMe + OB + SMP all working)
+- [ ] `ObReferenceObject` + `ObDereferenceObject` drives refcount to 0, calls `on_delete` (needs kernel unit test)
+- [ ] Handle table: 1000 alloc/free round trips with no leak (needs kernel unit test)
+- [ ] Named event in `\BaseNamedObjects\TestEvent` findable via `ObLookupObjectByName` (needs kernel unit test)
+- [ ] `NtDuplicateObject` produces independent handle; closing source doesn't affect duplicate (needs kernel unit test)
+- [ ] Child process inherits `OBJ_INHERIT` handles at correct indices (needs kernel unit test)
+- [ ] `NtQueryDirectoryObject(\)` enumerates `Device`, `KernelObjects`, `BaseNamedObjects` (needs ObBrowse.exe or kernel test)
+- [ ] VirtualBox: boot completes with Ob init, no regression (needs VBox test)
+- [ ] Bare metal: boot completes with Ob init, handles work end-to-end (needs bare metal test)
+- [ ] Zero use-after-free on object deletion (needs stress test)
+- [x] All §1–§11 committed individually (12 commits across OB §5–§11, security §1–§4, OB §8)
