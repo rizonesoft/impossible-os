@@ -81,9 +81,24 @@ typedef struct access_token {
 
 /* --- Token Ob type ------------------------------------------------------- */
 
-/* Registered at boot via ob_token_type_init(). The global ObpTokenType
- * pointer is declared in ob.h (currently unused stub). */
 void ob_token_type_init(void);
+
+/* --- Token creation ------------------------------------------------------ */
+
+/*
+ * SeCreateSystemToken — create the initial SYSTEM token (Phase 0).
+ * UserSid = SeLocalSystemSid, all privileges enabled, IL = System.
+ * Returns an Ob-allocated ACCESS_TOKEN body pointer, or NULL.
+ */
+ACCESS_TOKEN *SeCreateSystemToken(void);
+
+/*
+ * SeCreateUserToken — create a primary token for interactive logon.
+ * user_sid: the user's SID.
+ * admin:    if non-zero, creates a High IL admin token; otherwise Medium IL.
+ * Returns an Ob-allocated ACCESS_TOKEN body pointer, or NULL.
+ */
+ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin);
 
 /* --- Token information classes (for NtQueryInformationToken) ------------- */
 

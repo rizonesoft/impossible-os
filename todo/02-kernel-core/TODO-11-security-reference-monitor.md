@@ -280,8 +280,8 @@
 
 ### 4.2 Token creation and system tokens
 
-- [ ] `SeCreateSystemToken()` — called in Phase 0 of kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §2`): UserSid=`SeLocalSystemSid`, Groups=`{SeBuiltinAdministratorsSid | SE_GROUP_ENABLED, SeWorldSid | SE_GROUP_ENABLED}`, all privileges enabled, IL=System; stored in `PsInitialSystemProcess->Token`
-- [ ] `SeCreateUserToken(user_sid, admin)` — creates Medium IL primary token for interactive logon (called by login manager in `08-desktop-shell`); if `admin`, also creates High IL linked token for elevation; groups include `SeBuiltinUsersSid`; privileges: `SeChangeNotifyPrivilege` enabled by default; `SeShutdownPrivilege`/`SeUndockPrivilege` enabled by default; admin token adds `SeBackupPrivilege`, `SeRestorePrivilege`, `SeLoadDriverPrivilege` as disabled by default (present but off until elevated)
+- [x] `SeCreateSystemToken()` — called in Phase 0 of kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §2`): UserSid=`SeLocalSystemSid`, Groups=`{SeBuiltinAdministratorsSid | SE_GROUP_ENABLED, SeWorldSid | SE_GROUP_ENABLED}`, all privileges enabled, IL=System; stored in `PsInitialSystemProcess->Token`
+- [x] `SeCreateUserToken(user_sid, admin)` — creates Medium IL primary token for interactive logon (called by login manager in `09-desktop-shell`); if `admin`, also creates High IL linked token for elevation; groups include `SeBuiltinUsersSid`; privileges: `SeChangeNotifyPrivilege` enabled by default; `SeShutdownPrivilege`/`SeUndockPrivilege` enabled by default; admin token adds `SeBackupPrivilege`, `SeRestorePrivilege`, `SeLoadDriverPrivilege` as disabled by default (present but off until elevated)
 
 ### 4.3 Token query syscalls
 
