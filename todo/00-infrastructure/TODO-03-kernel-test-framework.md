@@ -17,7 +17,7 @@
 - `scripts/test-fs.sh` — filesystem driver test suite (written, not in CI)
 - `.github/workflows/build.yml` — CI pipeline (smoke test commented out)
 - `Makefile` — build targets (no `make test` target)
-- → XREF: `TODO-02-developer-tooling-stack.md §2.5` — GitHub sync and CI parity
+- → XREF: `docs/infrastructure/development-tooling.md` — GitHub sync (completed, was TODO-02 §2.5)
 - → XREF: `TODO-04-ci-notifications.md §1` — branch protection depends on test steps from §4–§6
 - → XREF: `TODO-05-test-suites-coverage.md §1–§9` — individual test suites depend on framework wiring from §1
 

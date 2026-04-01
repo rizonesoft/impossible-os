@@ -11,7 +11,7 @@
 
 - `.github/workflows/build.yml` — existing CI pipeline
 - → XREF: `TODO-03-kernel-test-framework.md §2` — `make test` for local verification (CI QEMU tests removed)
-- → XREF: `TODO-02-developer-tooling-stack.md §2.5, §4` — GitHub sync workstream that spawned this TODO
+- → XREF: `docs/infrastructure/development-tooling.md` — GitHub sync (completed, was TODO-02 §2.5)
 
 ---
 

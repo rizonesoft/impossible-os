@@ -15,7 +15,7 @@
 - [.githooks/pre-commit](../../.githooks/pre-commit)
 - [.githooks/post-commit](../../.githooks/post-commit)
 - [docs/infrastructure/development-tooling.md](../../docs/infrastructure/development-tooling.md)
-- [TODO-02 Developer Tooling Stack](./TODO-02-developer-tooling-stack.md)
+- [Developer Tooling Stack](../../docs/infrastructure/development-tooling.md) (completed, was TODO-02)
 
 ## Target Outcome
 
@@ -68,7 +68,7 @@ Move durable constraints into a specific checked-in rule set under `.cursor/rule
 - [x] `AGENTS.md` is the human-facing overview; Cursor rules contain concise enforceable guidance only
 - [x] `AGENTS.md` updated to keep the production-grade philosophy explicit
 - [x] Rule set verified: covers safety, freestanding kernel, assembly, API direction, doc-sync, MCP discipline, and TODO markdown style without overlap
-- [ ] Ensure the rule and skill system exposes the tooling contract from [TODO-02](./TODO-02-developer-tooling-stack.md), including `llvm-addr2line-19`
+- [ ] Ensure the rule and skill system exposes the tooling contract from [development-tooling.md](../../docs/infrastructure/development-tooling.md), including `llvm-addr2line-19`
 
 ## 3. Cursor Skills And Workflow Equivalents
 
