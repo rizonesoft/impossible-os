@@ -78,6 +78,7 @@
 
 ### 1.1 Sleep type values for S1–S4
 
+- [ ] Consolidate ACPI init: split into `acpi_platform_init()` (Phase 1: MADT/FADT parsing, existing) and `acpi_power_init()` (Phase 2: S-state discovery, new) — moved from TODO-01 §8
 - [ ] Extend `src/kernel/acpi.c` to parse `\_S1_`, `\_S3_`, and `\_S4_` AML objects using the same pattern as the existing `\_S5_` parser:
   ```c
   static uint16_t slp_typa_s1 = ACPI_SLP_TYPE_INVALID;

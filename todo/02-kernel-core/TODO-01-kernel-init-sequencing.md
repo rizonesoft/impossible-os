@@ -127,7 +127,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 **File:** `src/kernel/main/boot_storage.c` (restructured as `boot_phase2`)
 
 - [x] `pci_scan()` — enumerate PCI/PCIe bus; BOOT_DEGRADED if no devices found; moved from Phase 1
-- [ ] `object_manager_init()` — ObInit: bootstrap object type singletons and root namespace; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_HEAP) — see TODO-03 (not yet implemented)
+- [x] `object_manager_init()` — `ob_init()` in boot_storage.c:335; 11 built-in types, 6 root directories; BOOT_FATAL with recovery screen; BOOT_REQUIRE(SUBSYS_HEAP)
 - [x] `xhci_init()` — USB host controller; BOOT_DEGRADED; moved from Phase 1
 - [x] `ata_init()` + `virtio_blk_init()` + `ahci_init()` — storage drivers; BOOT_DEGRADED if all fail; moved from Phase 0
 - [x] `blkdev_register_all()` — register block devices into the blkdev layer
@@ -194,7 +194,7 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [x] Remove all `HV_BAR` macro definitions and usages — already removed in prior commits
 - [x] Remove `#include "kernel/fs/vfs.h"` from `boot_interrupts.c`
 - [x] Remove `#include "kernel/fs/partition.h"` from `boot_interrupts.c`
-- [ ] Consolidate ACPI: split into `acpi_platform_init()` (Phase 1: MADT/FADT) and `acpi_power_init()` (Phase 2: S-states) — deferred (ACPI power not yet implemented)
+- [ ] Consolidate ACPI init split — moved to [TODO-15 §1](./TODO-15-power-management.md) (ACPI sleep object parsing)
 - [x] Move `pci_scan()`, `xhci_init()`, NIC, and DHCP out of `boot_interrupts.c` into `boot_storage.c`
 - [x] Move `smp_init()` AP bringup out of `boot_interrupts.c` into `boot_storage.c`
 - [x] Move `ata_init()`, `virtio_blk_init()`, `ahci_init()` out of `boot_hw.c` into `boot_storage.c`
