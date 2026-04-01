@@ -1,0 +1,155 @@
+/* ============================================================================
+ * acl.h — SECURITY_DESCRIPTOR, ACL, and ACE types
+ *
+ * Defines the core security data structures used by the SRM to make
+ * access decisions.  A SECURITY_DESCRIPTOR owns an optional Owner SID,
+ * Group SID, DACL (discretionary), and SACL (system/audit).
+ *
+ * The struct tag "security_descriptor" matches the forward declaration
+ * in ob.h so OBJECT_HEADER can point to it without including this file.
+ * ============================================================================ */
+
+#pragma once
+
+#include "kernel/types.h"
+#include "kernel/security/sid.h"
+
+/* ---- SECURITY_DESCRIPTOR Control flags --------------------------------- */
+
+#define SE_OWNER_DEFAULTED       0x0001
+#define SE_GROUP_DEFAULTED       0x0002
+#define SE_DACL_PRESENT          0x0004
+#define SE_DACL_DEFAULTED        0x0008
+#define SE_SACL_PRESENT          0x0010
+#define SE_SACL_DEFAULTED        0x0020
+#define SE_DACL_AUTO_INHERIT_REQ 0x0100
+#define SE_SACL_AUTO_INHERIT_REQ 0x0200
+#define SE_DACL_AUTO_INHERITED   0x0400
+#define SE_SACL_AUTO_INHERITED   0x0800
+#define SE_DACL_PROTECTED        0x1000
+#define SE_SACL_PROTECTED        0x2000
+#define SE_SELF_RELATIVE         0x8000
+
+#define SECURITY_DESCRIPTOR_REVISION  1
+
+/* ---- Forward-declare ACL (used by SECURITY_DESCRIPTOR) ----------------- */
+
+typedef struct acl ACL;
+
+/* ---- SECURITY_DESCRIPTOR (absolute form — pointers) -------------------- */
+
+struct security_descriptor {
+    uint8_t   Revision;    /* SECURITY_DESCRIPTOR_REVISION (1) */
+    uint8_t   Sbz1;        /* padding */
+    uint16_t  Control;     /* SE_* control flags */
+    SID      *Owner;       /* owner SID (NULL = not set) */
+    SID      *Group;       /* primary group SID (NULL = not set) */
+    ACL      *Sacl;        /* system ACL (NULL = not present) */
+    ACL      *Dacl;        /* discretionary ACL (NULL = not present) */
+};
+
+/* Note: SECURITY_DESCRIPTOR typedef is in ob.h (forward declaration).
+ * Include this header to get the full struct definition. */
+
+/* ---- ACL ---------------------------------------------------------------- */
+
+#define ACL_REVISION  2
+
+struct acl {
+    uint8_t  AclRevision;  /* ACL_REVISION (2) */
+    uint8_t  Sbz1;         /* padding */
+    uint16_t AclSize;      /* total size in bytes (header + all ACEs) */
+    uint16_t AceCount;     /* number of ACEs */
+    uint16_t Sbz2;         /* padding */
+};
+
+/* ---- ACE types --------------------------------------------------------- */
+
+#define ACCESS_ALLOWED_ACE_TYPE          0x00
+#define ACCESS_DENIED_ACE_TYPE           0x01
+#define SYSTEM_AUDIT_ACE_TYPE            0x02
+#define SYSTEM_ALARM_ACE_TYPE            0x03
+#define SYSTEM_MANDATORY_LABEL_ACE_TYPE  0x11
+
+/* ---- ACE flags --------------------------------------------------------- */
+
+#define OBJECT_INHERIT_ACE           0x01
+#define CONTAINER_INHERIT_ACE        0x02
+#define NO_PROPAGATE_INHERIT_ACE     0x04
+#define INHERIT_ONLY_ACE             0x08
+#define INHERITED_ACE                0x10
+#define SUCCESSFUL_ACCESS_ACE_FLAG   0x40
+#define FAILED_ACCESS_ACE_FLAG       0x80
+
+/* ---- ACE_HEADER -------------------------------------------------------- */
+
+typedef struct {
+    uint8_t  AceType;
+    uint8_t  AceFlags;
+    uint16_t AceSize;      /* total size of ACE (header + body) */
+} ACE_HEADER;
+
+/* ---- Concrete ACE types ------------------------------------------------ */
+
+/* ACCESS_ALLOWED_ACE / ACCESS_DENIED_ACE: the SID follows immediately
+ * after SidStart in memory.  SidStart is the first uint32_t of the SID
+ * (i.e., the SID is at &ace->SidStart). */
+
+typedef struct {
+    ACE_HEADER Header;
+    uint32_t   Mask;       /* ACCESS_MASK — granted/denied rights */
+    uint32_t   SidStart;   /* first dword of the SID (SID follows in-line) */
+} ACCESS_ALLOWED_ACE;
+
+typedef struct {
+    ACE_HEADER Header;
+    uint32_t   Mask;
+    uint32_t   SidStart;
+} ACCESS_DENIED_ACE;
+
+typedef struct {
+    ACE_HEADER Header;
+    uint32_t   Mask;
+    uint32_t   SidStart;
+} SYSTEM_AUDIT_ACE;
+
+typedef struct {
+    ACE_HEADER Header;
+    uint32_t   Mask;       /* SYSTEM_MANDATORY_LABEL_NO_WRITE_UP etc. */
+    uint32_t   SidStart;   /* integrity level SID (S-1-16-XXXX) */
+} SYSTEM_MANDATORY_LABEL_ACE;
+
+/* ---- Mandatory label policy masks -------------------------------------- */
+
+#define SYSTEM_MANDATORY_LABEL_NO_WRITE_UP    0x01
+#define SYSTEM_MANDATORY_LABEL_NO_READ_UP     0x02
+#define SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP  0x04
+
+/* ---- Generic access rights (mapped per object type) -------------------- */
+
+#define DELETE                   0x00010000
+#define READ_CONTROL             0x00020000
+#define WRITE_DAC                0x00040000
+#define WRITE_OWNER              0x00080000
+#define SYNCHRONIZE              0x00100000
+#define STANDARD_RIGHTS_ALL      (DELETE | READ_CONTROL | WRITE_DAC | WRITE_OWNER | SYNCHRONIZE)
+
+#define GENERIC_READ             0x80000000
+#define GENERIC_WRITE            0x40000000
+#define GENERIC_EXECUTE          0x20000000
+#define GENERIC_ALL              0x10000000
+
+/* ---- Helper: get SID pointer from an ACE ------------------------------- */
+
+/* The SID starts at &ace->SidStart. Cast to SID* for access. */
+#define ACE_SID(ace)  ((SID *)&(ace)->SidStart)
+
+/* Get the Nth ACE from an ACL (0-based, no bounds check). */
+static inline ACE_HEADER *RtlGetAceInline(const ACL *acl, uint32_t index)
+{
+    const uint8_t *p = (const uint8_t *)acl + sizeof(ACL);
+    uint32_t i;
+    for (i = 0; i < index; i++)
+        p += ((const ACE_HEADER *)p)->AceSize;
+    return (ACE_HEADER *)p;
+}

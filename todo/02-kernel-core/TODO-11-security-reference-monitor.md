@@ -171,7 +171,7 @@
 ## 3. SECURITY_DESCRIPTOR, ACL & ACE Types 
 ### 3.1 Core types
 
-- [ ] Define in `include/kernel/security/acl.h`:
+- [x] Define in `include/kernel/security/acl.h`:
   ```c
   /* Absolute SECURITY_DESCRIPTOR (pointers) */
   typedef struct {
@@ -201,8 +201,8 @@
   typedef struct { ACE_HEADER Header; uint32_t Mask;
                    uint32_t SidStart; } SYSTEM_MANDATORY_LABEL_ACE;
   ```
-- [ ] ACE type constants: `ACCESS_ALLOWED_ACE_TYPE=0`, `ACCESS_DENIED_ACE_TYPE=1`, `SYSTEM_AUDIT_ACE_TYPE=2`, `SYSTEM_MANDATORY_LABEL_ACE_TYPE=0x11`
-- [ ] ACE flag constants: `OBJECT_INHERIT_ACE`, `CONTAINER_INHERIT_ACE`, `INHERIT_ONLY_ACE`, `INHERITED_ACE`, `SUCCESSFUL_ACCESS_ACE_FLAG`, `FAILED_ACCESS_ACE_FLAG`
+- [x] ACE type constants: `ACCESS_ALLOWED_ACE_TYPE=0`, `ACCESS_DENIED_ACE_TYPE=1`, `SYSTEM_AUDIT_ACE_TYPE=2`, `SYSTEM_MANDATORY_LABEL_ACE_TYPE=0x11`
+- [x] ACE flag constants: `OBJECT_INHERIT_ACE`, `CONTAINER_INHERIT_ACE`, `INHERIT_ONLY_ACE`, `INHERITED_ACE`, `SUCCESSFUL_ACCESS_ACE_FLAG`, `FAILED_ACCESS_ACE_FLAG`
 
 ### 3.2 ACL helpers
 
