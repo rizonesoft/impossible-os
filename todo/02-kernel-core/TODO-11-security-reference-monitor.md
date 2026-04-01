@@ -39,7 +39,7 @@
 | ⭐  | Order | Deliverable                                       | Depends On          | Status |
 | --- | :---: | ------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | SID & LUID primitives                             | —                   |  [x]   |
-| 💎  |   2   | Privilege constants & PRIVILEGE_SET               | 1                   |  [ ]   |
+| 💎  |   2   | Privilege constants & PRIVILEGE_SET               | 1                   |  [x]   |
 | 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | 1                   |  [ ]   |
 | 💎  |   4   | ACCESS_TOKEN object (primary)                     | 1, 2, 3, T03 §1     |  [ ]   |
 | 💎  |   5   | SeAccessCheck engine                              | 3, 4                |  [ ]   |
@@ -112,7 +112,7 @@
 ## 2. Privilege Constants & PRIVILEGE_SET 
 ### 2.1 Privilege LUID constants
 
-- [ ] Define all standard privilege LUIDs in `include/kernel/security/privileges.h` as `const LUID` values with `HighPart=0`, `LowPart=<n>`:
+- [x] Define all standard privilege LUIDs in `include/kernel/security/privileges.h` as `const LUID` values with `HighPart=0`, `LowPart=<n>`:
 
   | Constant                          | LP | When needed                       |
   |-----------------------------------|----|-----------------------------------|
@@ -143,7 +143,7 @@
 
 ### 2.2 PRIVILEGE_SET and TOKEN_PRIVILEGES
 
-- [ ] Define types:
+- [x] Define types:
   ```c
   typedef struct { LUID Luid; uint32_t Attributes; } LUID_AND_ATTRIBUTES;
   /* Attributes: SE_PRIVILEGE_ENABLED, SE_PRIVILEGE_ENABLED_BY_DEFAULT,
@@ -160,11 +160,11 @@
       LUID_AND_ATTRIBUTES Privileges[];
   } TOKEN_PRIVILEGES;
   ```
-- [ ] `RtlPrivilegeSetToString(ps, buf, len)` — debug helper
+- [x] `RtlPrivilegeSetToString(ps, buf, len)` — debug helper
 
 ### 2.3 Commit
 
-- [ ] Commit: `"kernel/security: privilege LUID table and PRIVILEGE_SET types"`
+- [x] Commit: `"kernel/security: privilege LUID table and PRIVILEGE_SET types"`
 
 ---
 
