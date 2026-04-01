@@ -38,7 +38,7 @@
 
 | ⭐  | Order | Deliverable                                       | Depends On          | Status |
 | --- | :---: | ------------------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | SID & LUID primitives                             | —                   |  [ ]   |
+| 💎  |   1   | SID & LUID primitives                             | —                   |  [x]   |
 | 💎  |   2   | Privilege constants & PRIVILEGE_SET               | 1                   |  [ ]   |
 | 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | 1                   |  [ ]   |
 | 💎  |   4   | ACCESS_TOKEN object (primary)                     | 1, 2, 3, T03 §1     |  [ ]   |
@@ -96,16 +96,16 @@
 
 ### 1.2 LUID type
 
-- [ ] Define `LUID` (64-bit opaque identifier):
+- [x] Define `LUID` (64-bit opaque identifier):
   ```c
   typedef struct { uint32_t LowPart; int32_t HighPart; } LUID;
   ```
-- [ ] `RtlEqualLuid`, `RtlIsZeroLuid`
-- [ ] `NtAllocateLocallyUniqueId` — monotonically incrementing counter, returned to user mode for dynamic LUID allocation
+- [x] `RtlEqualLuid`, `RtlIsZeroLuid`
+- [x] `NtAllocateLocallyUniqueId` — monotonically incrementing counter, returned to user mode for dynamic LUID allocation
 
 ### 1.3 Commit
 
-- [ ] Commit: `"kernel/security: SID primitives and well-known SID table"`
+- [x] Commit: `"kernel/security: SID primitives and well-known SID table"`
 
 ---
 
