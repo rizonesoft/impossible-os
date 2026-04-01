@@ -140,29 +140,14 @@ void lapic_init(void)
     /* Enable error vector now (after masking everything else) */
     lapic_write(LAPIC_REG_LVT_ERROR, 0xFE); /* vector 0xFE for errors */
 
-    /* Send Init Level De-Assert to synchronize arbitration IDs (xv6).
-     * Under WHPX, the delivery status bit may never clear for broadcast
-     * IPIs -- add a timeout to prevent infinite hang.
-     * On modern CPUs (P6+), this IPI is actually a no-op anyway. Skip it
-     * entirely on single-CPU systems where it serves no purpose. */
-    if (acpi_get_cpu_count() > 1) {
-        klog(LOG_DEBUG, "lapic", "init: sending Init Level De-Assert...");
-        lapic_write(LAPIC_REG_ICR_HI, 0);
-        lapic_write(LAPIC_REG_ICR_LO,
-                    ICR_INIT | ICR_DEST_ALL |
-                    ICR_LEVEL_DEASSERT | ICR_TRIGGER_LEVEL);
-        {
-            uint32_t icr_timeout = 1000000;  /* ~1M iterations */
-            while ((lapic_read(LAPIC_REG_ICR_LO) & (1 << 12)) && icr_timeout--)
-                barrier();
-            if (icr_timeout == 0)
-                klog(LOG_WARN, "lapic",
-                     "ICR delivery status timeout (WHPX? single-vCPU?)");
-        }
-    } else {
-        klog(LOG_DEBUG, "lapic",
-             "init: single CPU -- skipping Init Level De-Assert");
-    }
+    /* Init Level De-Assert: deprecated since P6 (Intel SDM Vol.3 10.6.1).
+     * On modern CPUs it is a hardware no-op. On WHPX with 2+ vCPUs the
+     * broadcast ICR write hangs because the hypervisor traps it and stalls
+     * waiting for the not-yet-booted AP to acknowledge.
+     * Skip unconditionally — bare metal doesn't need it (modern CPU),
+     * hypervisors can't handle it reliably. */
+    klog(LOG_DEBUG, "lapic",
+         "init: Init Level De-Assert skipped (deprecated on P6+)");
 
     /* Final EOI */
     lapic_write(LAPIC_REG_EOI, 0);
