@@ -166,7 +166,7 @@ Capabilities can be inherited across `fork` / `exec` but can only be dropped, ne
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_proc_ext()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_proc_ext()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_proc_ext.c` with:

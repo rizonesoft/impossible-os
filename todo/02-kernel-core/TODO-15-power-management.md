@@ -508,7 +508,7 @@ After §1–9, Impossible OS reaches full Windows 11 and Linux parity for every 
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_power()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_power()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_power.c` with:

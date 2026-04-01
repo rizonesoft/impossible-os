@@ -173,7 +173,7 @@ Forward log entries to a remote syslog server for enterprise and headless debug 
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_klog()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_klog()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [x] Create `src/kernel/test/test_klog.c` with:

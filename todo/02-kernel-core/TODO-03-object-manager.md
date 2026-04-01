@@ -215,7 +215,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_ob()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_ob()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_ob.c` with:

@@ -144,7 +144,7 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_nvme()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Wire into `test_runner_init()` via `test_register_nvme()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 > NVMe tests require an NVMe controller (QEMU `run-nvme` or bare metal). Tests gracefully skip when no NVMe controller is found.
 

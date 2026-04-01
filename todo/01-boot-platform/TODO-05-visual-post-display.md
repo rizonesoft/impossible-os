@@ -273,7 +273,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_vpd()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Wire into `test_runner_init()` via `test_register_vpd()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 > VPD is primarily a visual/boot-level system -- most testing is via `scripts/test-smoke.sh` serial pattern matching and manual visual inspection. Kernel unit tests cover the data model, not pixel output.
 

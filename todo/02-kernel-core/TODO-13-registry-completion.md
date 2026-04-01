@@ -519,7 +519,7 @@ Sections §8–10 deliver a set of exclusive features that exceed Windows 11: in
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_registry_ext()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_registry_ext()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Existing `test_registry.c` covers basic REG_DWORD/REG_SZ. This extends it.
 
 - [ ] Create `src/kernel/test/test_registry_ext.c` with:

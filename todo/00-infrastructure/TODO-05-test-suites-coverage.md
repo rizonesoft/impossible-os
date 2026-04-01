@@ -6,7 +6,7 @@
 > **Current state (2026-04-02):** 26 test suites, 59 assertions. Suites: PMM (2), heap (4), VFS (3), sched (1), registry (2), boot init (8), klog (6), OB (7), security (5). `make test` runs all via headless QEMU. Still needed: timer, IPC, VMM, ELF, NVMe, USB, coverage report.
 
 > [!NOTE]
-> **Resolved overlap:** TODO-03 §3 created initial `test_ob.c` (7 suites, 15 assertions) and `test_security.c` (5 suites, 8 assertions) on 2026-04-02. The expanded assertions listed in §2–§3 below are additions on top of those.
+> **Resolved overlap:** docs/infrastructure/kernel-test-framework.md (was TODO-03 §3) created initial `test_ob.c` (7 suites, 15 assertions) and `test_security.c` (5 suites, 8 assertions) on 2026-04-02. The expanded assertions listed in §2–§3 below are additions on top of those.
 
 ---
 
@@ -15,7 +15,7 @@
 - `src/kernel/test/test_runner.c` — test framework
 - `src/kernel/test/test_*.c` — existing 5 suites
 - `src/kernel/main/boot_tests.c` — 15+ integration tests (not in unit framework)
-- → XREF: `TODO-03-kernel-test-framework.md §1` — full framework wiring; this TODO provides minimal local prerequisite in §1
+- → XREF: `docs/infrastructure/kernel-test-framework.md` — full framework wiring; this TODO provides minimal local prerequisite in §1
 
 ---
 
@@ -53,12 +53,12 @@
 ## 1. Minimal test_runner Wiring
 
 > [!NOTE]
-> Minimal prerequisite — full implementation in TODO-03 §1. This section adds just enough to compile and run test suites during boot. TODO-03 §1 adds `make test`, headless QEMU, serial parsing, and CI integration.
+> Minimal prerequisite — full implementation in docs/infrastructure/kernel-test-framework.md (was TODO-03 §1). This section adds just enough to compile and run test suites during boot. docs/infrastructure/kernel-test-framework.md (was TODO-03 §1) adds `make test`, headless QEMU, serial parsing, and CI integration.
 
 - [x] Add `-DKERNEL_TESTS` to CFLAGS in Makefile (unconditional)
 - [x] In `boot_tests.c`: call `test_runner_init()` + `test_runner_run()` when `debug=1` or `test=1`
 - [x] Serial shows `=== Running 26 test suite(s) ===` (verified WHPX 2026-04-02)
-- [x] Commit: done via TODO-03 §1
+- [x] Commit: done via docs/infrastructure/kernel-test-framework.md (was TODO-03 §1)
 
 **Test checkpoint:** `bash scripts/build.sh run` with `debug=1` in boot.conf → serial shows `=== Running 5 test suite(s) ===` with PMM, heap, VFS, sched, registry results.
 
@@ -67,7 +67,7 @@
 ## 2. Object Manager Test Suite
 
 > [!NOTE]
-> Initial `test_ob.c` created by TODO-03 §3 (7 suites, 15 assertions, 2026-04-02). Remaining assertions below are expansions.
+> Initial `test_ob.c` created by docs/infrastructure/kernel-test-framework.md (was TODO-03 §3) (7 suites, 15 assertions, 2026-04-02). Remaining assertions below are expansions.
 
 - [x] `src/kernel/test/test_ob.c`:
   - `ob_alloc_object(ObpFileType)` → non-NULL body, header recoverable via `OB_HEADER_FROM_BODY` macro
@@ -90,7 +90,7 @@
 ## 3. Security Test Suite
 
 > [!NOTE]
-> Initial `test_security.c` created by TODO-03 §3 (5 suites, 8 assertions, 2026-04-02). Remaining assertions below are expansions.
+> Initial `test_security.c` created by docs/infrastructure/kernel-test-framework.md (was TODO-03 §3) (5 suites, 8 assertions, 2026-04-02). Remaining assertions below are expansions.
 
 - [x] `src/kernel/test/test_security.c`:
   - `RtlEqualSid(SeLocalSystemSid, SeLocalSystemSid)` → true

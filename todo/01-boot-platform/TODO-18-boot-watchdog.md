@@ -146,7 +146,7 @@ Show watchdog countdown in the VPD display during boot.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_watchdog()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_watchdog()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Watchdog trigger tests use `scripts/test-smoke.sh` with intentional hang builds.
 
 - [ ] Create `src/kernel/test/test_watchdog.c` with:

@@ -194,7 +194,7 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_boot_diag()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Wire into `test_runner_init()` via `test_register_boot_diag()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_boot_diag.c` with:

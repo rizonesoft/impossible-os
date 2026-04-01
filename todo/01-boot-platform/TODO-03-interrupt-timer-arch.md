@@ -214,7 +214,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_irq_timer()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Wire into `test_runner_init()` via `test_register_irq_timer()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_irq_timer.c` with:

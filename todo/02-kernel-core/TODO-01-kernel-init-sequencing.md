@@ -252,7 +252,7 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_boot_init()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_boot_init()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [x] Create `src/kernel/test/test_boot_init.c` with:

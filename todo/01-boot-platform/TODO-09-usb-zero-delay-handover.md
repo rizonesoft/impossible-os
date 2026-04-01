@@ -176,7 +176,7 @@ If any handover validation fails, transparently fall back to the proven halt/res
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_usb_handover()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Wire into `test_runner_init()` via `test_register_usb_handover()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 > Zero-delay handover tests require USB hardware. Use `bash scripts/build.sh run-usb` for QEMU tests. Tests gracefully skip when handover is not active (fallback to TODO-07 path).
 

@@ -564,7 +564,7 @@ After §1–10, Impossible OS reaches full Windows 11 security architecture pari
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_security()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_security()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_security.c` with:

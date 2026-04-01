@@ -290,7 +290,7 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_nt_api()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_nt_api()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_nt_api.c` with:

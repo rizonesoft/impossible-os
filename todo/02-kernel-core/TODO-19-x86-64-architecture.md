@@ -516,7 +516,7 @@ PKU that neither Windows (hidden) nor Linux (raw syscalls) exposes.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_x86()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Wire into `test_runner_init()` via `test_register_x86()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_x86.c` with:
