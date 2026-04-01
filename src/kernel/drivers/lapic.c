@@ -140,15 +140,6 @@ void lapic_init(void)
     /* Enable error vector now (after masking everything else) */
     lapic_write(LAPIC_REG_LVT_ERROR, 0xFE); /* vector 0xFE for errors */
 
-    /* Init Level De-Assert: deprecated since P6 (Intel SDM Vol.3 10.6.1).
-     * On modern CPUs it is a hardware no-op. On WHPX with 2+ vCPUs the
-     * broadcast ICR write hangs because the hypervisor traps it and stalls
-     * waiting for the not-yet-booted AP to acknowledge.
-     * Skip unconditionally — bare metal doesn't need it (modern CPU),
-     * hypervisors can't handle it reliably. */
-    klog(LOG_DEBUG, "lapic",
-         "init: Init Level De-Assert skipped (deprecated on P6+)");
-
     /* Final EOI */
     lapic_write(LAPIC_REG_EOI, 0);
 
