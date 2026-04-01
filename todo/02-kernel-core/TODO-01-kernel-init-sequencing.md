@@ -105,7 +105,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `pic_disable_or_init()` — disable if IOAPIC took over; init if PIC is the only controller
 - [x] `ahci_setup_interrupts()` — MSI routing only; BOOT_DEGRADED if fails; BOOT_REQUIRE(SUBSYS_LAPIC)
 - [x] `timer_hal_init()` — select LAPIC or PIT backend, calibrate; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
-- [ ] `dpc_init()` — per-CPU DPC queue and drain loop; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_TIMER) — see TODO-06 (not yet implemented)
+- [ ] `dpc_init()` — moved to [TODO-06 §4](./TODO-06-irql-model-dpcs.md) (DPC object type and per-CPU queue)
 - [x] `rtc_init()` — BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_IDT)
 - [x] `keyboard_init()` + `mouse_init()` — BOOT_DEGRADED if unavailable
 - [x] `smbios_init()` — POST code 0x40; BOOT_DEGRADED if unavailable; move here from Phase 0
