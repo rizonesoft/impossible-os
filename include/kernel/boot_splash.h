@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "kernel/types.h"
+
 /* Initialize and draw the boot splash screen.
  * Call immediately after fb_init(). */
 void boot_splash_init(void);
@@ -18,6 +20,13 @@ void boot_splash_start_animation(void);
 /* Update the status message below the spinner.
  * The previous message is cleared and the new one is drawn. */
 void boot_splash_status(const char *msg);
+
+/* Update the diagnostic line below the status text (debug=1 only).
+ * Persists until explicitly cleared — not overwritten by boot_splash_status(). */
+void boot_splash_diag(const char *msg);
+
+/* Pause for N seconds while keeping the spinner animated. */
+void boot_splash_delay(uint32_t seconds);
 
 /* Advance the animation by one frame and redraw.
  * Call periodically during kernel init (e.g., every subsystem init). */

@@ -120,14 +120,21 @@ void boot_phase2(void)
     partition_mount_filesystems();
     POST16(POST16_PARTITION_OK);
 
-    /* --- Debug diagnostic pause (shows storage state on splash screen) --- */
+    /* --- Debug diagnostic (shows storage state on serial + optionally splash) ---
+     * diag_splash=1: render each message on the splash diag line and pause.
+     *                If diag_delay=0, default to 5s so the text is readable
+     *                on bare metal without serial access. */
     if (g_boot_info.config.debug) {
         char diag[256];
         int p = 0;
         int blk_n = blkdev_count();
         const char *s;
+        uint8_t show_splash = g_boot_info.config.diag_splash;
+        uint8_t delay = g_boot_info.config.diag_delay;
+        if (show_splash && delay == 0)
+            delay = 5;  /* bare metal default: 5s per screen */
 
-        /* Line 1: xHCI, USB devices, mount status */
+        /* Diag 1: xHCI, USB devices, mount status */
         {
             int usb_ports = 0, usb_msc = 0;
             if (xhci_controller_count() > 0) {
@@ -185,11 +192,13 @@ void boot_phase2(void)
             }
         }
         diag[p] = '\0';
-        boot_splash_status(diag);
         klog(LOG_WARN, "boot", "DIAG: %s", diag);
-        sleep_ms(30000);
+        if (show_splash) {
+            boot_splash_diag(diag);
+            boot_splash_delay(delay);
+        }
 
-        /* Line 2: list block device names */
+        /* Diag 2: list block device names and sizes */
         p = 0;
         {
             int i;
@@ -220,9 +229,12 @@ void boot_phase2(void)
             }
         }
         diag[p] = '\0';
-        boot_splash_status(diag);
         klog(LOG_WARN, "boot", "DIAG: %s", diag);
-        sleep_ms(30000);
+        if (show_splash) {
+            boot_splash_diag(diag);
+            boot_splash_delay(delay);
+            boot_splash_diag("");  /* clear diag line before resuming */
+        }
     }
 
     boot_splash_status("Checking boot flags...");

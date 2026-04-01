@@ -34,7 +34,7 @@ void boot_tests_run(void)
     /* test=1 in boot.conf: run ONLY unit tests, then shutdown.
      * This is the gate used by `make test` for automated CI testing. */
     if (g_boot_info.config.test) {
-        klog(LOG_INFO, "TEST", "");
+        klog(LOG_INFO, "TEST", "========================================================================");
         klog(LOG_INFO, "TEST", "=== Kernel Unit Test Mode (test=1) ===");
         test_runner_init();
         test_runner_run();
@@ -52,14 +52,12 @@ void boot_tests_run(void)
         return;
     }
 
-    klog(LOG_DEBUG, "", "");
-    klog(LOG_DEBUG, "", "--- Boot Tests -------------------------------------------------------------");
+    klog(LOG_DEBUG, "TEST", "------------------------------------------------------------------------");
+    klog(LOG_DEBUG, "TEST", "--- Boot Tests -------------------------------------------------------------");
 
     /* Run unit test framework first (if compiled with -DKERNEL_TESTS) */
     test_runner_init();
     test_runner_run();
-
-    klog(LOG_DEBUG, "", "");
 
     boot_splash_status("Running boot tests...");
     klog_disk_flush();
@@ -72,7 +70,7 @@ void boot_tests_run(void)
             int n = vfs_read(f, 0, sizeof(buf) - 1, buf);
             if (n > 0) {
                 buf[n] = '\0';
-                klog(LOG_DEBUG, "test", "VFS read C:\\hello.txt: \"%s\"", (char *)buf);
+                klog(LOG_DEBUG, "TEST", "VFS read C:\\hello.txt: \"%s\"", (char *)buf);
             }
             vfs_close(f);
         }
@@ -95,7 +93,7 @@ void boot_tests_run(void)
                     int n = vfs_read(tf, 0, 63, rbuf);
                     if (n > 0) {
                         rbuf[n] = '\0';
-                        klog(LOG_DEBUG, "test",
+                        klog(LOG_DEBUG, "TEST",
                              "IXFS CRUD: C:\\test.txt = \"%s\"", (char *)rbuf);
                     }
                     vfs_close(tf);
@@ -103,7 +101,7 @@ void boot_tests_run(void)
 
                 if (c_root->ops->unlink) {
                     c_root->ops->unlink(c_root, "test.txt");
-                    klog(LOG_DEBUG, "test", "IXFS delete: C:\\test.txt removed");
+                    klog(LOG_DEBUG, "TEST", "IXFS delete: C:\\test.txt removed");
                 }
             }
 
@@ -111,7 +109,7 @@ void boot_tests_run(void)
             c_root->ops->create(c_root, "TestDir", VFS_DIRECTORY);
             if (c_root->ops->unlink) {
                 c_root->ops->unlink(c_root, "TestDir");
-                klog(LOG_DEBUG, "test", "IXFS rmdir: C:\\TestDir removed");
+                klog(LOG_DEBUG, "TEST", "IXFS rmdir: C:\\TestDir removed");
             }
         }
     }
@@ -121,13 +119,13 @@ void boot_tests_run(void)
 
     /* Directory tree dump */
     if (klog_disk_live_active()) {
-        klog(LOG_DEBUG, "", "");
-        klog(LOG_DEBUG, "", "--- C:\\ Directory Tree ---");
+        klog(LOG_DEBUG, "TEST", "------------------------------------------------------------------------");
+        klog(LOG_DEBUG, "TEST", "--- C:\\ Directory Tree ---");
         if (vfs_is_mounted('C')) {
             struct vfs_node *cr = vfs_get_drive_root('C');
             if (cr) {
                 uint32_t count = dump_dir_tree("C:", cr, 0);
-                klog(LOG_DEBUG, "tree", "(%u entries total)", (uint64_t)count);
+                klog(LOG_DEBUG, "TEST", "(%u entries total)", (uint64_t)count);
             }
         }
     }
@@ -164,75 +162,20 @@ void boot_tests_run(void)
             vmm_ok = 0;
         }
 
-        klog(vmm_ok ? LOG_DEBUG : LOG_ERROR, "test",
+        klog(vmm_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
              "VMM map/read/unmap: %s", vmm_ok ? "passed" : "FAIL");
-    }
-
-    /* PMM alloc/free test */
-    {
-        uintptr_t f1, f2, f3;
-        uint32_t pmm_ok = 1;
-
-        f1 = pmm_alloc_frame();
-        f2 = pmm_alloc_frame();
-        if (!f1 || !f2) {
-            pmm_ok = 0;
-        } else {
-            if (f1 == f2) pmm_ok = 0;
-            pmm_free_frame(f1);
-            f3 = pmm_alloc_frame();
-            if (!f3) pmm_ok = 0;
-            pmm_free_frame(f2);
-            pmm_free_frame(f3);
-        }
-
-        klog(pmm_ok ? LOG_DEBUG : LOG_ERROR, "test",
-             "PMM alloc/free: %s", pmm_ok ? "passed" : "FAIL");
     }
 
     /* Timer verification */
     boot_splash_status("Timer test (1s sleep)...");
-    klog(LOG_DEBUG, "test", "Timer: sleeping 1 second...");
+    klog(LOG_DEBUG, "TEST", "Timer: sleeping 1 second...");
     sleep_ms(1000);
-    klog(LOG_DEBUG, "test", "Timer OK (ticks: %u, uptime: %u sec)",
+    klog(LOG_DEBUG, "TEST", "Timer OK (ticks: %u, uptime: %u sec)",
          system_get_ticks(), uptime());
 
-    klog(LOG_DEBUG, "", "");
-    klog(LOG_DEBUG, "", "--- Scheduler Tests --------------------------------------------------------");
+    klog(LOG_DEBUG, "TEST", "------------------------------------------------------------------------");
+    klog(LOG_DEBUG, "TEST", "--- IPC & Threading --------------------------------------------------------");
     klog_disk_flush();
-
-    {
-        extern void thread_a_func(void);
-        extern void thread_b_func(void);
-
-        task_create(thread_a_func, "ThreadA");
-        task_create(thread_b_func, "ThreadB");
-
-        klog(LOG_DEBUG, "test",
-             "Cooperative: two threads alternate via yield()");
-
-        yield(); yield(); yield();
-        yield(); yield(); yield();
-
-        klog(LOG_DEBUG, "test", "Cooperative threading test passed");
-    }
-
-    /* Preemptive scheduling test */
-    {
-        extern void preempt_a_func(void);
-        extern void preempt_b_func(void);
-
-        task_create(preempt_a_func, "PreemptA");
-        task_create(preempt_b_func, "PreemptB");
-
-        klog(LOG_DEBUG, "test",
-             "Preemptive: threads run without yield()");
-        scheduler_enable();
-        sleep_ms(600);
-        scheduler_disable();
-
-        klog(LOG_DEBUG, "test", "Preemptive scheduling test passed");
-    }
 
     /* Kernel thread test (shared globals) */
     {
@@ -259,7 +202,7 @@ void boot_tests_run(void)
                  (uint64_t)thread_shared_counter,
                  thread_shared_counter == 10 ? "passed" : "FAIL");
         } else {
-            klog(LOG_ERROR, "test", "thread_create failed");
+            klog(LOG_ERROR, "TEST", "thread_create failed");
         }
     }
 
@@ -285,7 +228,7 @@ void boot_tests_run(void)
                  (uint64_t)mutex_shared_counter,
                  mutex_shared_counter == 200 ? "passed" : "FAIL");
         } else {
-            klog(LOG_ERROR, "test", "mutex thread_create failed");
+            klog(LOG_ERROR, "TEST", "mutex thread_create failed");
         }
     }
 
@@ -308,12 +251,12 @@ void boot_tests_run(void)
             thread_join((uint32_t)stid_p);
             thread_join((uint32_t)stid_c);
 
-            klog(sem_consumed == 5 ? LOG_DEBUG : LOG_ERROR, "test",
+            klog(sem_consumed == 5 ? LOG_DEBUG : LOG_ERROR, "TEST",
                  "Semaphore test: consumed=%u (%s)",
                  (uint64_t)sem_consumed,
                  sem_consumed == 5 ? "passed" : "FAIL");
         } else {
-            klog(LOG_ERROR, "test", "semaphore thread_create failed");
+            klog(LOG_ERROR, "TEST", "semaphore thread_create failed");
         }
     }
 
@@ -340,14 +283,14 @@ void boot_tests_run(void)
                 thread_join((uint32_t)ptid_w);
                 thread_join((uint32_t)ptid_r);
 
-                klog(pipe_test_ok ? LOG_DEBUG : LOG_ERROR, "test",
+                klog(pipe_test_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
                      "Pipe test: %s",
                      pipe_test_ok ? "passed" : "data mismatch");
             } else {
-                klog(LOG_ERROR, "test", "pipe thread_create failed");
+                klog(LOG_ERROR, "TEST", "pipe thread_create failed");
             }
         } else {
-            klog(LOG_ERROR, "test", "pipe_create failed");
+            klog(LOG_ERROR, "TEST", "pipe_create failed");
         }
     }
 
@@ -371,16 +314,16 @@ void boot_tests_run(void)
                 thread_join((uint32_t)shm_tw);
                 thread_join((uint32_t)shm_tr);
 
-                klog(shmem_test_ok ? LOG_DEBUG : LOG_ERROR, "test",
+                klog(shmem_test_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
                      "Shared memory test: %s",
                      shmem_test_ok ? "passed" : "counter != 200");
             } else {
-                klog(LOG_ERROR, "test", "shmem thread_create failed");
+                klog(LOG_ERROR, "TEST", "shmem thread_create failed");
             }
 
             shmem_unmap(shm_id);
         } else {
-            klog(LOG_ERROR, "test", "shmem_create failed");
+            klog(LOG_ERROR, "TEST", "shmem_create failed");
         }
     }
 
@@ -425,13 +368,13 @@ void boot_tests_run(void)
 
             vmm_unmap_page(test_virt, 1);
 
-            klog(swap_ok ? LOG_DEBUG : LOG_ERROR, "test",
+            klog(swap_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
                  "Swap test: %s (%u/%u slots)",
                  swap_ok ? "passed" : "FAIL",
                  (uint64_t)swap_get_used_slots(),
                  (uint64_t)swap_get_total_slots());
         } else {
-            klog(LOG_ERROR, "test", "swap test alloc failed");
+            klog(LOG_ERROR, "TEST", "swap test alloc failed");
         }
     }
 
@@ -446,18 +389,18 @@ void boot_tests_run(void)
                 const char *txt = (const char *)mapped;
                 uint32_t mmap_ok = (txt[0] != '\0') ? 1 : 0;
 
-                klog(mmap_ok ? LOG_DEBUG : LOG_ERROR, "test",
+                klog(mmap_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
                      "mmap test: %s (mapped at %p, first='%c')",
                      mmap_ok ? "passed" : "FAIL",
                      (uintptr_t)mapped, (uint64_t)(uint8_t)txt[0]);
 
                 munmap(mapped, 4096);
             } else {
-                klog(LOG_ERROR, "test", "mmap returned MAP_FAILED");
+                klog(LOG_ERROR, "TEST", "mmap returned MAP_FAILED");
             }
             vfs_close(mf);
         } else {
-            klog(LOG_DEBUG, "test",
+            klog(LOG_DEBUG, "TEST",
                  "mmap test: hello.txt not found (skipped)");
         }
     }
@@ -473,11 +416,11 @@ void boot_tests_run(void)
 
         vrc = virtio_blk_read(0, 1, sect0);
         if (vrc == 0) {
-            klog(LOG_DEBUG, "test",
+            klog(LOG_DEBUG, "TEST",
                  "VirtIO-blk: sector 0 read OK (%u sectors)",
                  (uint64_t)virtio_blk_capacity());
         } else {
-            klog(LOG_ERROR, "test", "VirtIO-blk: sector 0 read failed");
+            klog(LOG_ERROR, "TEST", "VirtIO-blk: sector 0 read failed");
         }
     }
 
@@ -492,11 +435,11 @@ void boot_tests_run(void)
 
         arc = ahci_read(0, 0, 1, asect0);
         if (arc == 0) {
-            klog(LOG_DEBUG, "test",
+            klog(LOG_DEBUG, "TEST",
                  "AHCI: sector 0 read OK (%u sectors)",
                  (uint64_t)ahci_capacity(0));
         } else {
-            klog(LOG_ERROR, "test", "AHCI: sector 0 read failed");
+            klog(LOG_ERROR, "TEST", "AHCI: sector 0 read failed");
         }
     }
 
@@ -509,7 +452,7 @@ void boot_tests_run(void)
         scheduler_enable();
         sleep_ms(500);
         scheduler_disable();
-        klog(LOG_DEBUG, "test", "User mode test passed");
+        klog(LOG_DEBUG, "TEST", "User mode test passed");
     }
 
     {
@@ -518,7 +461,7 @@ void boot_tests_run(void)
         scheduler_enable();
         sleep_ms(500);
         scheduler_disable();
-        klog(LOG_DEBUG, "test", "Exec test passed");
+        klog(LOG_DEBUG, "TEST", "Exec test passed");
     }
 
     {
@@ -527,10 +470,10 @@ void boot_tests_run(void)
         scheduler_enable();
         sleep_ms(800);
         scheduler_disable();
-        klog(LOG_DEBUG, "test", "Fork test passed");
+        klog(LOG_DEBUG, "TEST", "Fork test passed");
     }
 #else
-    klog(LOG_DEBUG, "test", "User mode / exec / fork tests skipped");
+    klog(LOG_DEBUG, "TEST", "User mode / exec / fork tests skipped");
 #endif
 
     boot_splash_status("Preparing desktop...");

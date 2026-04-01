@@ -1,40 +1,62 @@
 ---
-description: Run kernel unit tests automatically. Use after implementing code to verify nothing broke. Builds the OS, boots QEMU headless with test=1, captures serial output, parses pass/fail results, and reports them.
-user_invocable: true
+name: test
+description: Run kernel unit tests. Use after implementing code, fixing bugs, or when asked to verify the build. Builds the OS, boots QEMU headless with test=1, parses pass/fail from serial output, and reports results. Invoke with /test.
 ---
 
-# Run Kernel Tests
+# Kernel Unit Test Runner
 
 ## When to Use
 
 - After implementing a TODO section to verify correctness
 - After any code change that could affect existing functionality
 - When the user asks to "run tests", "check if tests pass", or "verify the build"
-- Proactively after writing code that touches: Object Manager, security, VFS, scheduler, memory, drivers
+- Proactively after writing code that touches: memory, scheduler, VFS, drivers, Object Manager, registry
 
-## Workflow
+## Quick Path
 
-1. Build the OS with `bash scripts/build.sh clean` — verify `=== BUILD OK ===`
-2. Patch boot.conf to `test=1` for automated test mode
-3. Boot QEMU headless with serial captured to file
-4. Wait for QEMU to exit (test=1 triggers acpi_shutdown after tests)
-5. Parse serial output for test results
-6. Report pass/fail to the user
-7. Restore boot.conf to defaults
-
-## Commands
+Run tests via the standalone script — it handles build, boot.conf patching, QEMU, parsing, and cleanup:
 
 ```bash
-# Step 1: Build
-bash scripts/build.sh clean
+bash scripts/test.sh
+```
+
+Or via Make:
+
+```bash
+make test                  # all suites
+make test SUITE=pmm        # only suites matching "pmm"
+```
+
+### What the Script Does
+
+1. Builds the kernel (`scripts/build.sh`)
+2. Patches `boot.conf` with `test=1` (unit-test-only mode, auto-shutdown)
+3. Auto-detects KVM or falls back to TCG (with warning)
+4. Boots QEMU headless, serial output to `build/test.log`
+5. Waits for QEMU exit or timeout (default 60s, override with `TIMEOUT=120`)
+6. Restores `boot.conf` to defaults (even on failure)
+7. Parses the `=== N tests passed, M failed ===` summary line
+8. Prints colored per-suite pass/fail results
+9. Exits 0 if all passed, 1 if any failed or timeout
+
+### Exit Codes
+
+- `0` — all tests passed
+- `1` — one or more tests failed, timeout, or build failure
+
+## Manual Path (if script unavailable)
+
+```bash
+# Build
+bash scripts/build.sh
 tail -1 build/build.log  # must show === BUILD OK ===
 
-# Step 2: Patch boot.conf for test mode
+# Patch boot.conf for test mode
 bash scripts/patch-boot-conf.sh test 1
 
-# Step 3: Boot headless QEMU, capture serial, timeout 60s
+# Boot headless QEMU (60s timeout, serial to file)
 timeout 60 qemu-system-x86_64 \
-    -cpu Haswell -smp 2 \
+    -accel kvm -cpu host -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=build/OVMF_VARS_4M.fd \
     -drive id=disk0,file=build/system-disk.img,format=raw,if=none \
@@ -43,31 +65,45 @@ timeout 60 qemu-system-x86_64 \
     -m 2G \
     -serial file:build/test.log \
     -display none \
-    -no-reboot \
-    2>/dev/null || true
+    -device rtl8139,netdev=net0 \
+    -netdev user,id=net0 \
+    -device virtio-tablet-pci \
+    -rtc base=localtime \
+    -no-reboot 2>/dev/null; true
 
-# Step 4: Restore boot.conf
+# ALWAYS restore boot.conf
 bash scripts/patch-boot-conf.sh reset
 
-# Step 5: Parse results
-grep -E "\[ OK \]|\[FAIL\]|=== .* test|TEST" build/test.log | tail -30
+# Parse results
+grep -E "TEST:.*::|\[FAIL\]|=== .* test" build/test.log | tail -40
 ```
+
+If KVM is unavailable (no `/dev/kvm` access), replace `-accel kvm -cpu host` with `-accel tcg -cpu Haswell` (10x slower).
 
 ## Interpreting Results
 
-- `=== X tests passed, 0 failed ===` → ALL PASS ✅
-- `=== X passed, Y FAILED ===` → FAILURES ❌ — report which suites failed
-- No test output at all → test framework not wired or boot crashed before tests ran
-- `KERNEL PANIC` or `triple fault` in log → boot failure, not test failure
+- `=== N tests passed, 0 failed ===` — ALL PASS
+- `=== N passed, M FAILED (of T) ===` — FAILURES, report which suites failed
+- No test output / empty log — boot crashed before tests ran (check build)
+- `KERNEL PANIC` or `triple fault` — boot failure, not test failure
+- Timeout with partial output — boot too slow (TCG) or hung (kernel bug)
 
 ## What NOT to Do
 
-- Do NOT set `debug=1` — that runs boot tests too and doesn't shutdown (desktop continues)
-- Do NOT forget to restore boot.conf (`patch-boot-conf.sh reset`)
-- Do NOT run tests on WHPX from WSL (use KVM or TCG from Linux)
+- Do NOT set `debug=1` for automated testing — that runs boot tests too and doesn't shutdown
+- Do NOT forget to restore boot.conf (`patch-boot-conf.sh reset`) when running manually
+- Do NOT use `bash scripts/build.sh clean` for test runs unless the user requests it — incremental builds are faster
 
 ## After Tests
 
-- If all pass: report "All tests passed" and continue with the task
-- If any fail: read the `[FAIL]` lines, diagnose the root cause, fix it, re-run tests
-- Always restore boot.conf even if tests fail
+- If all pass: report "All N tests passed" and continue with the task
+- If any fail: read the `[FAIL]` lines from `build/test.log`, diagnose the root cause, fix it, re-run
+- Always restore boot.conf even if tests fail (the script handles this automatically)
+
+## Test Modes Reference
+
+| boot.conf | Behavior |
+|---|---|
+| `test=1` | Unit tests only, then `acpi_shutdown()` — for CI/automation |
+| `debug=1` | Unit tests + boot tests + continue to desktop — for interactive debugging |
+| Both `0` | Skip all tests, boot straight to desktop — production |

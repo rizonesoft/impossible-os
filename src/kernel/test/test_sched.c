@@ -16,7 +16,6 @@ static void test_thread_entry(void *arg)
 {
     (void)arg;
     g_thread_ran = 1;
-    task_exit(0);
 }
 
 /* Test: create a thread and verify it was registered */

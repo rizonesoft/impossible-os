@@ -162,16 +162,19 @@ struct boot_config {
     uint8_t  postbars;         /* 0=off, 1=on (integrated), 2=diag (full) */
     /* Test mode */
     uint8_t  test;             /* 1 = run unit tests only, then shutdown */
+    /* Debug diagnostics */
+    uint8_t  diag_delay;       /* seconds to pause on each diag screen (0 = skip) */
+    uint8_t  diag_splash;      /* 1 = show diag on splash (bare metal, no serial) */
     /* Reserved — new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[22];
+    uint8_t  _reserved[20];
     /* Command line (offset 32 — stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
     uint8_t  config_found;     /* 1 if boot.conf was successfully parsed */
     /* Pad to 512 bytes total — sector-aligned, matches Windows convention.
-     * 9 (fields) + 23 (reserved) + 256 (cmdline) + 1 (config_found) = 289.
+     * 11 (fields) + 21 (reserved) + 256 (cmdline) + 1 (config_found) = 289.
      * 512 - 289 = 223 bytes tail padding. */
     uint8_t  _pad[223];
 };

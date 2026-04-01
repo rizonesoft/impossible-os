@@ -21,20 +21,14 @@
 
 void thread_a_func(void)
 {
-    klog(LOG_DEBUG, "TEST", "[ThreadA] Hello from thread A (1/3)");
     yield();
-    klog(LOG_DEBUG, "TEST", "[ThreadA] Back in thread A (2/3)");
     yield();
-    klog(LOG_DEBUG, "TEST", "[ThreadA] Thread A finishing (3/3)");
 }
 
 void thread_b_func(void)
 {
-    klog(LOG_DEBUG, "TEST", "[ThreadB] Hello from thread B (1/3)");
     yield();
-    klog(LOG_DEBUG, "TEST", "[ThreadB] Back in thread B (2/3)");
     yield();
-    klog(LOG_DEBUG, "TEST", "[ThreadB] Thread B finishing (3/3)");
 }
 
 /* --- Kernel thread test --- */
@@ -44,11 +38,9 @@ volatile uint32_t thread_shared_counter = 0;
 void thread_inc_func(void *arg)
 {
     uint32_t i;
-    const char *label = (const char *)arg;
+    (void)arg;
     for (i = 0; i < 5; i++) {
         thread_shared_counter++;
-        klog(LOG_DEBUG, "TEST", "[%s] shared_counter = %u", label,
-               (uint64_t)thread_shared_counter);
         thread_yield();
     }
 }
@@ -61,13 +53,12 @@ volatile uint32_t mutex_shared_counter = 0;
 void mutex_inc_func(void *arg)
 {
     uint32_t i;
-    const char *label = (const char *)arg;
+    (void)arg;
     for (i = 0; i < 100; i++) {
         mutex_lock(&test_mutex);
         mutex_shared_counter++;
         mutex_unlock(&test_mutex);
     }
-    klog(LOG_DEBUG, "TEST", "[%s] done (100 increments)", label);
 }
 
 /* --- Semaphore test --- */
@@ -82,7 +73,6 @@ void sem_producer_func(void *arg)
     (void)arg;
     for (i = 0; i < 5; i++) {
         sem_produced++;
-        klog(LOG_DEBUG, "TEST", "[Producer] produced item %u", (uint64_t)sem_produced);
         sem_signal(&test_sem);
         thread_yield();
     }
@@ -95,7 +85,6 @@ void sem_consumer_func(void *arg)
     for (i = 0; i < 5; i++) {
         sem_wait(&test_sem);
         sem_consumed++;
-        klog(LOG_DEBUG, "TEST", "[Consumer] consumed item %u", (uint64_t)sem_consumed);
     }
 }
 
@@ -130,7 +119,6 @@ void pipe_reader_func(void *arg)
         }
         if (match) pipe_test_ok = 1;
     }
-    klog(LOG_DEBUG, "TEST", "[Reader] got %d bytes: \"%s\"", (uint64_t)(uint32_t)n, buf);
     pipe_close(pipe_test_id, PIPE_READ);
 }
 
@@ -154,8 +142,6 @@ void shmem_writer_func(void *arg)
     for (i = 0; i < 100; i++)
         (*counter)++;
 
-    klog(LOG_DEBUG, "TEST", "[ShmWriter] done (100 increments, counter=%u)",
-           (uint64_t)*counter);
     shmem_unmap(id);
 }
 
@@ -175,9 +161,6 @@ void shmem_reader_func(void *arg)
     for (i = 0; i < 100; i++)
         (*counter)++;
 
-    klog(LOG_DEBUG, "TEST", "[ShmReader] done (100 increments, counter=%u)",
-           (uint64_t)*counter);
-
     if (*counter == 200)
         shmem_test_ok = 1;
 
@@ -194,9 +177,6 @@ void preempt_a_func(void)
     uint32_t i;
     for (i = 0; i < 3; i++) {
         pa_count++;
-        klog(LOG_DEBUG, "TEST", "[PreemptA] Running (%u/3) -- no yield!",
-               (uint64_t)pa_count);
-        /* Busy-wait ~50ms (loop, not yield) to prove preemption */
         sleep_ms(100);
     }
 }
@@ -206,8 +186,6 @@ void preempt_b_func(void)
     uint32_t i;
     for (i = 0; i < 3; i++) {
         pb_count++;
-        klog(LOG_DEBUG, "TEST", "[PreemptB] Running (%u/3) -- no yield!",
-               (uint64_t)pb_count);
         sleep_ms(100);
     }
 }

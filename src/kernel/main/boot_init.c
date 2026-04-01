@@ -159,15 +159,16 @@ static void serial_write_hex16(uint16_t v)
 void boot_progress(uint8_t phase, const char *step, uint16_t postcode)
 {
     /* "[PHASEn] step (0xNNNN)\n" */
+    const char *safe_step = step ? step : "(null)";
     serial_write("[PHASE");
     serial_putchar('0' + (phase & 0x0F));
     serial_write("] ");
-    serial_write(step);
+    serial_write(safe_step);
     serial_write(" (0x");
     serial_write_hex16(postcode);
     serial_write(")\n");
 
-    boot_timing_record_step(phase, step, postcode);
+    boot_timing_record_step(phase, safe_step, postcode);
     boot_post_write16(postcode);
     post_display16(postcode);
 
@@ -176,8 +177,11 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode)
         extern void vpd_stage_begin(uint8_t, const char *, uint16_t);
         extern int vpd_is_active(void);
         if (vpd_is_active())
-            vpd_stage_begin(phase, step, postcode);
+            vpd_stage_begin(phase, safe_step, postcode);
     }
 
-    boot_splash_status(step);
+    /* NOTE: do NOT call boot_splash_status() here — the step name is an
+     * internal identifier (e.g. "EXEC", "PCI_NET"), not a user-friendly
+     * message.  Friendly status is set by explicit boot_splash_status()
+     * calls before each boot_progress() in the boot sequence. */
 }

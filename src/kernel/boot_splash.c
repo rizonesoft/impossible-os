@@ -49,6 +49,7 @@ static uint32_t icon_size;         /* pixel size of selected prebuilt logo */
 static const unsigned int *icon_pixels; /* pointer to selected logo array */
 static uint32_t spinner_cx, spinner_cy; /* center of spinner ring */
 static uint32_t text_y;            /* top of status text */
+static uint32_t diag_y;            /* top of diagnostic line (below status) */
 
 /* HiDPI scale factor (1, 2, or 3) — computed in boot_splash_init() */
 static uint32_t g_scale;
@@ -162,6 +163,7 @@ void boot_splash_init(void)
     spinner_cy = icon_y + icon_size + g_spinner_y_offset;
 
     text_y = spinner_cy + g_text_y_offset;
+    diag_y = text_y + g_font_size + 8;   /* diagnostic line below status */
 
     /* ---- Initialize spinner (does NOT start animation yet) ------------ */
     spinner_init((int32_t)spinner_cx, (int32_t)spinner_cy,
@@ -221,6 +223,35 @@ void boot_splash_status(const char *msg)
     uint32_t area_x = (scr_w > g_text_area_w) ? (scr_w - g_text_area_w) / 2 : 0;
     uint32_t text_h = g_font_size + 8;
     fb_swap_rect(area_x, text_y, g_text_area_w, text_h);
+}
+
+void boot_splash_diag(const char *msg)
+{
+    if (!splash_on) return;
+
+    uint32_t area_x = (scr_w > g_text_area_w) ? (scr_w - g_text_area_w) / 2 : 0;
+    uint32_t dh = g_font_size + 8;
+    splash_fill_rect(area_x, diag_y, g_text_area_w, dh, 0x000000);
+
+    if (ttf_ready && msg && msg[0]) {
+        int32_t tw = boot_font_measure(msg);
+        int32_t sx = (int32_t)(scr_w - (uint32_t)tw) / 2;
+        boot_font_render(msg, sx, (int32_t)diag_y, 0x00888888);
+    }
+
+    fb_swap_rect(area_x, diag_y, g_text_area_w, dh);
+}
+
+void boot_splash_delay(uint32_t seconds)
+{
+    if (!splash_on || seconds == 0) return;
+
+    /* Sleep in 50ms steps, advancing the spinner each step */
+    uint32_t steps = seconds * 20;
+    for (uint32_t i = 0; i < steps; i++) {
+        sleep_ms(50);
+        spinner_advance();
+    }
 }
 
 void boot_splash_tick(void)

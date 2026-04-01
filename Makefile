@@ -414,6 +414,13 @@ run-test: all
 	@$(MAKE) --no-print-directory run
 	@bash scripts/patch-boot-conf.sh reset
 
+## test: Build, boot QEMU headless, run unit tests, report pass/fail, exit code
+##   Usage: make test                  # all suites
+##          make test SUITE=pmm        # only PMM suites
+##          make test TIMEOUT=120      # longer timeout
+test: all
+	@bash scripts/test.sh $(if $(SUITE),SUITE=$(SUITE))
+
 ## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
 ## test-usb-img: Create a 64 MiB FAT32 test USB disk image
 USB_TEST_IMG := $(BUILD_DIR)/test-usb.img
