@@ -216,6 +216,203 @@ ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin)
 }
 
 /* ============================================================================
+ * Token mutation functions (§4.4)
+ * ============================================================================ */
+
+/* --- NtDuplicateToken ---------------------------------------------------- */
+
+ACCESS_TOKEN *NtDuplicateToken(const ACCESS_TOKEN *existing,
+                               uint32_t desired_access,
+                               int effective_only,
+                               TOKEN_TYPE new_type)
+{
+    ACCESS_TOKEN *dup;
+    uint32_t i, j;
+
+    (void)desired_access;
+
+    if (!existing)
+        return (ACCESS_TOKEN *)0;
+
+    dup = (ACCESS_TOKEN *)ob_alloc_object(ObpTokenType);
+    if (!dup)
+        return (ACCESS_TOKEN *)0;
+
+    /* Copy scalar fields */
+    dup->UserSid          = existing->UserSid;
+    dup->PrimaryGroup     = existing->PrimaryGroup;
+    dup->DefaultDacl      = existing->DefaultDacl;
+    dup->TokenType        = new_type;
+    dup->ImpersonationLevel = existing->ImpersonationLevel;
+    dup->TokenId          = NtAllocateLocallyUniqueId();  /* new unique ID */
+    dup->AuthenticationId = existing->AuthenticationId;
+    dup->ModifiedId       = NtAllocateLocallyUniqueId();
+    dup->SessionId        = existing->SessionId;
+    dup->IntegrityLevelSid = existing->IntegrityLevelSid;
+    dup->IntegrityPolicy  = existing->IntegrityPolicy;
+    dup->IsElevated       = existing->IsElevated;
+    dup->LinkedTokenId    = existing->LinkedTokenId;
+    dup->ElevationType    = existing->ElevationType;
+    dup->RestrictedSids   = existing->RestrictedSids;
+    dup->RestrictedSidCount = existing->RestrictedSidCount;
+    dup->Flags            = existing->Flags;
+
+    /* Copy groups — strip disabled if effective_only */
+    j = 0;
+    for (i = 0; i < existing->GroupCount && j < TOKEN_MAX_GROUPS; i++) {
+        if (effective_only &&
+            !(existing->Groups[i].Attributes & SE_GROUP_ENABLED))
+            continue;
+        dup->Groups[j] = existing->Groups[i];
+        j++;
+    }
+    dup->GroupCount = j;
+
+    /* Copy privileges — strip disabled if effective_only */
+    j = 0;
+    for (i = 0; i < existing->PrivilegeCount && j < TOKEN_MAX_PRIVS; i++) {
+        if (effective_only &&
+            !(existing->Privileges[i].Attributes & SE_PRIVILEGE_ENABLED))
+            continue;
+        dup->Privileges[j] = existing->Privileges[i];
+        j++;
+    }
+    dup->PrivilegeCount = j;
+
+    return dup;
+}
+
+/* --- NtAdjustPrivilegesToken --------------------------------------------- */
+
+int32_t NtAdjustPrivilegesToken(ACCESS_TOKEN *token, int disable_all,
+                                const LUID_AND_ATTRIBUTES *new_state,
+                                uint32_t new_count,
+                                LUID_AND_ATTRIBUTES *previous_state,
+                                uint32_t *prev_count)
+{
+    uint32_t i, j, prev_idx = 0;
+    int all_found = 1;
+
+    if (!token)
+        return STATUS_INVALID_HANDLE;
+
+    /* DisableAll: disable every privilege */
+    if (disable_all) {
+        for (i = 0; i < token->PrivilegeCount; i++) {
+            if (previous_state && prev_idx < (prev_count ? *prev_count : 0)) {
+                previous_state[prev_idx] = token->Privileges[i];
+                prev_idx++;
+            }
+            token->Privileges[i].Attributes &= ~SE_PRIVILEGE_ENABLED;
+        }
+        token->ModifiedId = NtAllocateLocallyUniqueId();
+        if (prev_count) *prev_count = prev_idx;
+        return STATUS_SUCCESS;
+    }
+
+    if (!new_state)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Apply each requested change */
+    for (j = 0; j < new_count; j++) {
+        int found = 0;
+        for (i = 0; i < token->PrivilegeCount; i++) {
+            if (RtlEqualLuid(&token->Privileges[i].Luid, &new_state[j].Luid)) {
+                /* Save previous state */
+                if (previous_state && prev_idx < (prev_count ? *prev_count : 0)) {
+                    previous_state[prev_idx] = token->Privileges[i];
+                    prev_idx++;
+                }
+                /* Apply new attributes */
+                if (new_state[j].Attributes & SE_PRIVILEGE_REMOVED) {
+                    /* Remove: shift remaining privileges down */
+                    uint32_t k;
+                    for (k = i; k + 1 < token->PrivilegeCount; k++)
+                        token->Privileges[k] = token->Privileges[k + 1];
+                    token->PrivilegeCount--;
+                } else if (new_state[j].Attributes & SE_PRIVILEGE_ENABLED) {
+                    token->Privileges[i].Attributes |= SE_PRIVILEGE_ENABLED;
+                } else {
+                    token->Privileges[i].Attributes &= ~SE_PRIVILEGE_ENABLED;
+                }
+                found = 1;
+                break;
+            }
+        }
+        if (!found)
+            all_found = 0;
+    }
+
+    token->ModifiedId = NtAllocateLocallyUniqueId();
+    if (prev_count) *prev_count = prev_idx;
+
+    return all_found ? STATUS_SUCCESS : STATUS_NOT_ALL_ASSIGNED;
+}
+
+/* --- NtAdjustGroupsToken ------------------------------------------------- */
+
+int32_t NtAdjustGroupsToken(ACCESS_TOKEN *token, int reset_to_default,
+                             const SID_AND_ATTRIBUTES *new_state,
+                             uint32_t new_count,
+                             SID_AND_ATTRIBUTES *previous_state,
+                             uint32_t *prev_count)
+{
+    uint32_t i, j, prev_idx = 0;
+
+    if (!token)
+        return STATUS_INVALID_HANDLE;
+
+    if (reset_to_default) {
+        for (i = 0; i < token->GroupCount; i++) {
+            if (previous_state && prev_idx < (prev_count ? *prev_count : 0)) {
+                previous_state[prev_idx] = token->Groups[i];
+                prev_idx++;
+            }
+            /* Restore enabled-by-default state, but never re-enable deny-only */
+            if (token->Groups[i].Attributes & SE_GROUP_USE_FOR_DENY_ONLY)
+                continue;
+            if (token->Groups[i].Attributes & SE_GROUP_ENABLED_BY_DEFAULT)
+                token->Groups[i].Attributes |= SE_GROUP_ENABLED;
+            else
+                token->Groups[i].Attributes &= ~SE_GROUP_ENABLED;
+        }
+        token->ModifiedId = NtAllocateLocallyUniqueId();
+        if (prev_count) *prev_count = prev_idx;
+        return STATUS_SUCCESS;
+    }
+
+    if (!new_state)
+        return STATUS_INVALID_PARAMETER;
+
+    for (j = 0; j < new_count; j++) {
+        for (i = 0; i < token->GroupCount; i++) {
+            if (!RtlEqualSid(token->Groups[i].Sid, new_state[j].Sid))
+                continue;
+
+            /* Cannot re-enable a deny-only group */
+            if ((token->Groups[i].Attributes & SE_GROUP_USE_FOR_DENY_ONLY) &&
+                (new_state[j].Attributes & SE_GROUP_ENABLED))
+                continue;
+
+            if (previous_state && prev_idx < (prev_count ? *prev_count : 0)) {
+                previous_state[prev_idx] = token->Groups[i];
+                prev_idx++;
+            }
+
+            if (new_state[j].Attributes & SE_GROUP_ENABLED)
+                token->Groups[i].Attributes |= SE_GROUP_ENABLED;
+            else
+                token->Groups[i].Attributes &= ~SE_GROUP_ENABLED;
+            break;
+        }
+    }
+
+    token->ModifiedId = NtAllocateLocallyUniqueId();
+    if (prev_count) *prev_count = prev_idx;
+    return STATUS_SUCCESS;
+}
+
+/* ============================================================================
  * Token query functions (§4.3)
  * ============================================================================ */
 

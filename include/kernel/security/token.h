@@ -101,6 +101,42 @@ ACCESS_TOKEN *SeCreateSystemToken(void);
  */
 ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin);
 
+/* --- Token mutation functions -------------------------------------------- */
+
+#define STATUS_NOT_ALL_ASSIGNED ((int32_t)0x00000106)
+
+/*
+ * NtDuplicateToken — deep-copy token, allocate new TokenId.
+ * If effective_only is set, disabled privileges and groups are stripped.
+ */
+ACCESS_TOKEN *NtDuplicateToken(const ACCESS_TOKEN *existing,
+                               uint32_t desired_access,
+                               int effective_only,
+                               TOKEN_TYPE new_type);
+
+/*
+ * NtAdjustPrivilegesToken — enable/disable/remove privileges.
+ * If disable_all, disables every privilege. Otherwise walks new_state.
+ * Returns STATUS_NOT_ALL_ASSIGNED if any LUID not found in the token.
+ * previous_state receives the old state (can be NULL).
+ */
+int32_t NtAdjustPrivilegesToken(ACCESS_TOKEN *token, int disable_all,
+                                const LUID_AND_ATTRIBUTES *new_state,
+                                uint32_t new_count,
+                                LUID_AND_ATTRIBUTES *previous_state,
+                                uint32_t *prev_count);
+
+/*
+ * NtAdjustGroupsToken — enable/disable group SIDs.
+ * Cannot re-enable a SE_GROUP_USE_FOR_DENY_ONLY group.
+ * If reset_to_default, restores all groups to enabled-by-default state.
+ */
+int32_t NtAdjustGroupsToken(ACCESS_TOKEN *token, int reset_to_default,
+                             const SID_AND_ATTRIBUTES *new_state,
+                             uint32_t new_count,
+                             SID_AND_ATTRIBUTES *previous_state,
+                             uint32_t *prev_count);
+
 /* --- Token information classes ------------------------------------------- */
 
 typedef enum {

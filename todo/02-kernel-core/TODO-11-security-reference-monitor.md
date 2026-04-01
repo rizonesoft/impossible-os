@@ -39,16 +39,16 @@
 | ⭐  | Order | Deliverable                                       | Depends On          | Status |
 | --- | :---: | ------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | SID & LUID primitives                             | —                   |  [x]   |
-| 💎  |   2   | Privilege constants & PRIVILEGE_SET               | 1                   |  [x]   |
-| 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | 1                   |  [x]   |
-| 💎  |   4   | ACCESS_TOKEN object (primary)                     | 1, 2, 3, T03 §1     |  [ ]   |
-| 💎  |   5   | SeAccessCheck engine                              | 3, 4                |  [ ]   |
-| 💎  |   6   | Mandatory Integrity Control (MIC)                 | 4, 5                |  [ ]   |
-| 💎  |   7   | Process/thread token assignment & impersonation   | 4, T09 §2           |  [ ]   |
-| 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | 2, 4, 5             |  [ ]   |
-| 💎  |   9   | UAC token split & NtFilterToken                   | 4, 6, 7             |  [ ]   |
-| 💎  |  10   | Win32 security API wrappers                       | 4–9, T05 §1         |  [ ]   |
-| ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | 4–10                |  [ ]   |
+| 💎  |   2   | Privilege constants & PRIVILEGE_SET               | §1                  |  [x]   |
+| 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | §1                  |  [x]   |
+| 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T03 §1  |  [x]   |
+| 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [ ]   |
+| 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [ ]   |
+| 💎  |   7   | Process/thread token assignment & impersonation   | §4, T09 §2          |  [ ]   |
+| 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [ ]   |
+| 💎  |   9   | UAC token split & NtFilterToken                   | §4, §6, §7          |  [ ]   |
+| 💎  |  10   | Win32 security API wrappers                       | §4–§9, T05 §1       |  [ ]   |
+| ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work — Impossible OS is superior or first.
@@ -291,13 +291,13 @@
 
 ### 4.4 Token mutation syscalls
 
-- [ ] `NtDuplicateToken(Existing, Access, ObjAttr, EffectiveOnly, Type, New)` — deep-copies token struct, allocates new `TokenId` LUID; `EffectiveOnly` strips disabled privileges and groups
-- [ ] `NtAdjustPrivilegesToken(hToken, DisableAll, NewState, BufferLen, PreviousState, ReturnLen)` — for each LUID_AND_ATTRIBUTES in `NewState`: find matching privilege in token, apply SE_PRIVILEGE_ENABLED / SE_PRIVILEGE_REMOVED; requires `TOKEN_ADJUST_PRIVILEGES`; write previous state to `PreviousState`; return `STATUS_NOT_ALL_ASSIGNED` if any LUID not found
-- [ ] `NtAdjustGroupsToken(hToken, ResetToDefault, NewState, BufferLen, PreviousState, ReturnLen)` — enable/disable group SIDs; cannot re-enable a `SE_GROUP_USE_FOR_DENY_ONLY` group (immutable once disabled)
+- [x] `NtDuplicateToken(Existing, Access, ObjAttr, EffectiveOnly, Type, New)` — deep-copies token struct, allocates new `TokenId` LUID; `EffectiveOnly` strips disabled privileges and groups
+- [x] `NtAdjustPrivilegesToken(hToken, DisableAll, NewState, BufferLen, PreviousState, ReturnLen)` — for each LUID_AND_ATTRIBUTES in `NewState`: find matching privilege in token, apply SE_PRIVILEGE_ENABLED / SE_PRIVILEGE_REMOVED; requires `TOKEN_ADJUST_PRIVILEGES`; write previous state to `PreviousState`; return `STATUS_NOT_ALL_ASSIGNED` if any LUID not found
+- [x] `NtAdjustGroupsToken(hToken, ResetToDefault, NewState, BufferLen, PreviousState, ReturnLen)` — enable/disable group SIDs; cannot re-enable a `SE_GROUP_USE_FOR_DENY_ONLY` group (immutable once disabled)
 
 ### 4.5 Commit
 
-- [ ] Commit: `"kernel/security: ACCESS_TOKEN object, SeCreateSystemToken, NtOpenProcessToken"`
+- [x] Commit: `"kernel/security: ACCESS_TOKEN object, SeCreateSystemToken, NtOpenProcessToken"`
 
 ---
 
