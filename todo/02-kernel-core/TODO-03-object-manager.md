@@ -30,19 +30,19 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                   | Depends On | Status |
-| --- | :---: | ------------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure                  | —          |  [ ]   |
-| 💎  |   2   | Reference counting and object lifetime                        | 1          |  [ ]   |
-| 💎  |   3   | Per-process handle table                                      | 2          |  [ ]   |
-| 💎  |   4   | Object namespace (directory + symbolic link)                  | 2          |  [ ]   |
-| 💎  |   5   | File, Process, Thread object types                            | 3, 4       |  [ ]   |
-| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | 3, 4 | [ ] |
-| 💎  |   7   | Section (shared memory) object type                           | 3, 4       |  [ ]   |
-| 💎  |   8   | Security descriptor integration                               | 1, TODO-11 |  [ ]   |
-| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | 3          |  [ ]   |
-| 💎  |  10   | Handle inheritance across CreateProcess                       | 3, 5       |  [ ]   |
-| ⭐  |  11   | Unified kernel–user namespace browser API                     | 4          |  [ ]   |
+| ⭐  | Order | Deliverable                                                   | Depends On     | Status |
+| --- | :---: | ------------------------------------------------------------- | -------------- | :----: |
+| 💎  |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure                  | —              |  [x]   |
+| 💎  |   2   | Reference counting and object lifetime                        | §1             |  [x]   |
+| 💎  |   3   | Per-process handle table                                      | §2             |  [x]   |
+| 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [x]   |
+| 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [x]   |
+| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [ ]   |
+| 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [ ]   |
+| 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [ ]   |
+| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3             |  [ ]   |
+| 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [ ]   |
+| ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [ ]   |
 
 > 💎 = parity — Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
 > ⭐ = exclusive — a queryable namespace browser API exposed to user-mode that covers every
@@ -50,83 +50,77 @@
 
 ---
 
-## 1. OBJECT_HEADER and OBJECT_TYPE Infrastructure `[Opus]`
-
+## 1. OBJECT_HEADER and OBJECT_TYPE Infrastructure
 Every kernel object body is preceded in memory by an `OBJECT_HEADER`. Types are described by an `OBJECT_TYPE` singleton registered at boot.
 
-- [ ] Define `OBJECT_HEADER` in `include/kernel/ob/ob.h`:
-  - `uint32_t ref_count` — atomic reference count
+- [x] Define `OBJECT_HEADER` in `include/kernel/ob/ob.h`:
+  - `atomic_t ref_count` — atomic reference count (SMP-safe)
   - `uint32_t handle_count` — number of open handles
   - `const OBJECT_TYPE *type` — pointer to the type descriptor
   - `const char *name` — pointer into the name buffer (NULL if unnamed)
   - `SECURITY_DESCRIPTOR *security` — NULL until §8
   - `uint32_t flags` — `OB_FLAG_PERMANENT`, `OB_FLAG_KERNEL_ONLY`, `OB_FLAG_NAMED`
-- [ ] Define `OBJECT_TYPE` in `include/kernel/ob/ob_type.h`:
+- [x] Define `OBJECT_TYPE` in `include/kernel/ob/ob_type.h`:
   - `const char *name` — type name string (e.g. `"File"`, `"Process"`)
   - `void (*on_close)(void *body, uint32_t handle_count)` — called when handle count drops to 0
   - `void (*on_delete)(void *body)` — called when ref count drops to 0; frees body memory
   - `int (*on_open)(void *body, uint32_t access)` — optional access check on open
   - `int (*on_parse)(void *body, const char *remaining, void **result)` — namespace parse
   - `size_t body_size` — size of the object body (for combined allocation)
-- [ ] Implement `ob_create_type(name, callbacks, body_size)` — registers a type in a static global type table
-- [ ] Implement `ob_alloc_object(type)` — allocates `sizeof(OBJECT_HEADER) + type->body_size` via `kmalloc` or `pmm_alloc_contiguous` based on body size; returns pointer to the body (header is at `body - sizeof(OBJECT_HEADER)`)
-- [ ] Add `OB_HEADER_FROM_BODY(ptr)` macro — subtracts header size from a body pointer
-- [ ] Register built-in type singletons at ObInit time: `ObpFileType`, `ObpProcessType`, `ObpThreadType`, `ObpDirectoryType`, `ObpSymlinkType`, `ObpEventType`, `ObpMutexType`, `ObpSemaphoreType`, `ObpSectionType`, `ObpTimerType`
-- [ ] Commit: `"kernel: ob — OBJECT_HEADER and OBJECT_TYPE infrastructure"`
+- [x] Implement `ob_create_type(name, callbacks, body_size)` — registers a type in a static global type table
+- [x] Implement `ob_alloc_object(type)` — allocates `sizeof(OBJECT_HEADER) + type->body_size` via `kmalloc` or `pmm_alloc_contiguous` based on body size; returns pointer to the body (header is at `body - sizeof(OBJECT_HEADER)`)
+- [x] Add `OB_HEADER_FROM_BODY(ptr)` macro — subtracts header size from a body pointer
+- [x] Register built-in type singletons at ObInit time: `ObpFileType`, `ObpProcessType`, `ObpThreadType`, `ObpDirectoryType`, `ObpSymlinkType`, `ObpEventType`, `ObpMutexType`, `ObpSemaphoreType`, `ObpSectionType`, `ObpTimerType`
+- [x] Commit: `"kernel: ob — OBJECT_HEADER and OBJECT_TYPE infrastructure"`
 
-## 2. Reference Counting and Object Lifetime `[Opus]`
+## 2. Reference Counting and Object Lifetime
+- [x] Implement `ObReferenceObject(void *body)` — atomic increment of `header->ref_count`
+- [x] Implement `ObDereferenceObject(void *body)` — atomic decrement; when count reaches 0, call `type->on_delete(body)` and free the combined allocation
+- [x] Implement `ObReferenceObjectByPointer(void *body, uint32_t access)` — validates type before ref
+- [x] Permanent objects (`OB_FLAG_PERMANENT`) are never deleted when refcount hits 0; must be explicitly made temporary with `ObMakeTemporaryObject()` first
+- [x] All existing code that stores raw `vfs_node *` pointers must be audited and wrapped in ObRef/ObDeref pairs — track this as a follow-up checklist in §5
+- [x] Commit: `"kernel: ob — reference counting and object lifetime"`
 
-- [ ] Implement `ObReferenceObject(void *body)` — atomic increment of `header->ref_count`
-- [ ] Implement `ObDereferenceObject(void *body)` — atomic decrement; when count reaches 0, call `type->on_delete(body)` and free the combined allocation
-- [ ] Implement `ObReferenceObjectByPointer(void *body, uint32_t access)` — validates type before ref
-- [ ] Permanent objects (`OB_FLAG_PERMANENT`) are never deleted when refcount hits 0; must be explicitly made temporary with `ObMakeTemporaryObject()` first
-- [ ] All existing code that stores raw `vfs_node *` pointers must be audited and wrapped in ObRef/ObDeref pairs — track this as a follow-up checklist in §5
-- [ ] Commit: `"kernel: ob — reference counting and object lifetime"`
-
-## 3. Per-Process Handle Table `[Sonnet]`
-
+## 3. Per-Process Handle Table
 The handle table maps opaque `HANDLE` integer values to (object pointer + granted access + flags) within a single process. `HANDLE` values are always multiples of 4 (low bits reserved for inheritance flags).
 
-- [ ] Define `HANDLE_TABLE_ENTRY` in `include/kernel/ob/handle_table.h`:
+- [x] Define `HANDLE_TABLE_ENTRY` in `include/kernel/ob/handle_table.h`:
   - `void *object` — body pointer (NULL = free slot)
   - `uint32_t granted_access` — access rights granted at open time
   - `uint32_t attributes` — `OBJ_INHERIT`, `OBJ_PROTECT_CLOSE`
-- [ ] Define `HANDLE_TABLE` — array of `HANDLE_TABLE_ENTRY` with grow-on-demand capacity (initial: 64 entries, grows by doubling; allocated via `kmalloc` for small tables, `pmm_alloc_contiguous` for tables exceeding 4 KB)
-- [ ] Add `HANDLE_TABLE handle_table` to the `task_t` / process struct in `task.c`
-- [ ] Implement `ObpAllocateHandle(table, object, access, attrs)` — finds a free slot, stores entry, calls `ObReferenceObject`, returns `HANDLE` value (slot index × 4)
-- [ ] Implement `ObpFreeHandle(table, handle)` — validates handle, calls `type->on_close` if handle_count drops to 0, calls `ObDereferenceObject`, zeroes slot
-- [ ] Implement `ObpLookupHandle(table, handle)` — validates index bounds and non-NULL; returns entry ptr
-- [ ] Handle table is freed at process exit: iterate all slots and call `ObpFreeHandle` for each
-- [ ] Special kernel pseudo-handles: `INVALID_HANDLE_VALUE (-1)`, `CURRENT_PROCESS (-2)`, `CURRENT_THREAD (-3)` — resolve in `ObpLookupHandle` without a table entry
-- [ ] Commit: `"kernel: ob — per-process handle table"`
+- [x] Define `HANDLE_TABLE` — array of `HANDLE_TABLE_ENTRY` with grow-on-demand capacity (initial: 64 entries, grows by doubling; allocated via `kmalloc` for small tables, `pmm_alloc_contiguous` for tables exceeding 4 KB)
+- [x] Add `HANDLE_TABLE handle_table` to the `task_t` / process struct in `task.c`
+- [x] Implement `ObpAllocateHandle(table, object, access, attrs)` — finds a free slot, stores entry, calls `ObReferenceObject`, returns `HANDLE` value (slot index × 4)
+- [x] Implement `ObpFreeHandle(table, handle)` — validates handle, calls `type->on_close` if handle_count drops to 0, calls `ObDereferenceObject`, zeroes slot
+- [x] Implement `ObpLookupHandle(table, handle)` — validates index bounds and non-NULL; returns entry ptr
+- [x] Handle table is freed at process exit: iterate all slots and call `ObpFreeHandle` for each
+- [x] Special kernel pseudo-handles: `INVALID_HANDLE_VALUE (-1)`, `CURRENT_PROCESS (-2)`, `CURRENT_THREAD (-3)` — resolve in `ObpLookupHandle` without a table entry
+- [x] Commit: `"kernel: ob — per-process handle table"`
 
-## 4. Object Namespace `[Opus]`
-
+## 4. Object Namespace
 A hierarchical in-memory namespace rooted at `\`. Directories hold named object entries. Symbolic links redirect name lookups.
 
-- [ ] Define `OBJECT_DIRECTORY_ENTRY` — linked list node: `name[64]`, `void *object`
-- [ ] Implement `OBJECT_DIRECTORY` body type — list of entries, lock, parent pointer
-- [ ] Implement `ObpLookupDirectory(path, &remaining)` — walks `\Foo\Bar` splitting on `\`; follows symlinks; stops at the deepest found directory
-- [ ] Implement `ObInsertObject(object, name, directory)` — adds a named entry; fails if name exists and object is not a permanent replacement
-- [ ] Implement `ObLookupObjectByName(path, type, access, &result)` — full parse walk calling `type->on_parse` at each node; calls `ObReferenceObject` on success
-- [ ] Implement `OBJECT_SYMBOLIC_LINK` body type — target string; `on_parse` redirects the walk
-- [ ] Create the root namespace at ObInit: `\`, `\Device`, `\KernelObjects`, `\DosDevices`, `\BaseNamedObjects`, `\Sessions\0\BaseNamedObjects` (alias for user-mode named objects)
-- [ ] `C:` → `\Device\HardDisk0\Partition0` via symlink in `\DosDevices`
-- [ ] Commit: `"kernel: ob — object namespace directory and symlinks"`
+- [x] Define `OBJECT_DIRECTORY_ENTRY` — linked list node: `name[64]`, `void *object`
+- [x] Implement `OBJECT_DIRECTORY` body type — list of entries, lock, parent pointer
+- [x] Implement `ObpLookupDirectory(path, &remaining)` — walks `\Foo\Bar` splitting on `\`; follows symlinks; stops at the deepest found directory
+- [x] Implement `ObInsertObject(object, name, directory)` — adds a named entry; fails if name exists and object is not a permanent replacement
+- [x] Implement `ObLookupObjectByName(path, type, access, &result)` — full parse walk calling `type->on_parse` at each node; calls `ObReferenceObject` on success
+- [x] Implement `OBJECT_SYMBOLIC_LINK` body type — target string; `on_parse` redirects the walk
+- [x] Create the root namespace at ObInit: `\`, `\Device`, `\KernelObjects`, `\DosDevices`, `\BaseNamedObjects`, `\Sessions\0\BaseNamedObjects` (alias for user-mode named objects)
+- [x] `C:` → `\Device\HardDisk0\Partition0` via symlink in `\DosDevices`
+- [x] Commit: `"kernel: ob — object namespace directory and symlinks"`
 
-## 5. File, Process, and Thread Object Types `[Sonnet]`
-
+## 5. File, Process, and Thread Object Types
 Register VFS nodes, tasks, and threads as first-class Ob-managed objects.
 
-- [ ] Register `ObpFileType` — body wraps a `vfs_node *`; `on_close` calls `vfs_close`; `on_delete` frees the VFS node wrapper; `on_parse` defers remaining path to VFS
-- [ ] Replace all direct `vfs_open` / `vfs_close` call sites in syscall.c with ObRef/ObDeref wrappers routed through `NtCreateFile` / `NtOpenFile` stubs (→ XREF: TODO-05 §6)
-- [ ] Register `ObpProcessType` — body is `task_t *`; permanent while process is alive; `on_delete` releases task memory; inserted into `\KernelObjects\Process<PID>` at creation
-- [ ] Register `ObpThreadType` — body is `thread_t *` (or task sub-struct); same lifetime semantics
-- [ ] Audit all existing raw `task_t *` / `vfs_node *` storage in the syscall table and IPC code; replace with handle-table lookups or `ObReferenceObjectByPointer` calls
-- [ ] Commit: `"kernel: ob — file, process, thread object types"`
+- [x] Register `ObpFileType` — body wraps a `vfs_node *`; `on_close` calls `vfs_close`; `on_delete` frees the VFS node wrapper; `on_parse` defers remaining path to VFS
+- [x] Replace all direct `vfs_open` / `vfs_close` call sites in syscall.c with ObRef/ObDeref wrappers routed through `NtCreateFile` / `NtOpenFile` stubs (→ XREF: TODO-05 §6)
+- [x] Register `ObpProcessType` — body is `task_t *`; permanent while process is alive; `on_delete` releases task memory; inserted into `\KernelObjects\Process<PID>` at creation
+- [x] Register `ObpThreadType` — body is `thread_t *` (or task sub-struct); same lifetime semantics
+- [x] Audit all existing raw `task_t *` / `vfs_node *` storage in the syscall table and IPC code; replace with handle-table lookups or `ObReferenceObjectByPointer` calls
+- [x] Commit: `"kernel: ob — file, process, thread object types"`
 
-## 6. Synchronisation Object Types `[Sonnet]`
-
+## 6. Synchronisation Object Types
 Re-register the existing event, mutex, semaphore, and timer primitives as Ob-managed objects so they can be named in `\BaseNamedObjects`, duplicated, and inherited.
 
 - [ ] Register `ObpEventType` — body wraps existing `event_t`; `on_delete` frees event state
@@ -138,8 +132,7 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
 - [ ] Update `SYS_PIPE` to wrap the pipe read/write ends as two File objects in the handle table so pipes are closeable with `NtClose` like any other handle
 - [ ] Commit: `"kernel: ob — event, mutex, semaphore, timer object types"`
 
-## 7. Section (Shared Memory) Object Type `[Sonnet]`
-
+## 7. Section (Shared Memory) Object Type
 Sections represent mappable memory objects; the foundation for `MapViewOfFile` and shared memory.
 
 - [ ] Register `ObpSectionType` — body: physical base address, size, page count, flags, refcount
@@ -149,8 +142,7 @@ Sections represent mappable memory objects; the foundation for `MapViewOfFile` a
 - [ ] Re-implement `SYS_SHMEM_CREATE` / `SYS_SHMEM_MAP` as thin wrappers over the Ob section API
 - [ ] Commit: `"kernel: ob — section object type and view mapping"`
 
-## 8. Security Descriptor Integration `[Opus]`
-
+## 8. Security Descriptor Integration
 Attach DACL/SACL/Owner/Group to named objects so the Security Reference Monitor can enforce access rights at open time. Depends on TODO-11 (SRM) for full enforcement; this section wires the storage and basic check hook.
 
 - [ ] Define minimal `SECURITY_DESCRIPTOR` in `include/kernel/ob/security.h`: owner SID, group SID, DACL pointer, SACL pointer, flags
@@ -161,8 +153,7 @@ Attach DACL/SACL/Owner/Group to named objects so the Security Reference Monitor 
 - [ ] Default SD for user-created named objects: DACL granting `GENERIC_ALL` to creator SID
 - [ ] Commit: `"kernel: ob — security descriptor storage and access check hook"`
 
-## 9. NtClose / NtDuplicateObject / NtQueryObject `[Sonnet]`
-
+## 9. NtClose / NtDuplicateObject / NtQueryObject
 Core Win32 handle management syscalls routed through the Ob layer.
 
 - [ ] `NtClose(HANDLE)` — look up handle in calling process's table, call `ObpFreeHandle`
@@ -178,8 +169,7 @@ Core Win32 handle management syscalls routed through the Ob layer.
 - [ ] Expose `NtClose` via `SYS_CLOSE` (add to `syscall.h`) replacing per-resource close syscalls
 - [ ] Commit: `"kernel: ob — NtClose, NtDuplicateObject, NtQueryObject"`
 
-## 10. Handle Inheritance Across CreateProcess `[Sonnet]`
-
+## 10. Handle Inheritance Across CreateProcess
 Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles into the child.
 
 - [ ] At process creation: if inherit flag is set, iterate parent handle table
@@ -189,8 +179,7 @@ Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles int
 - [ ] On child `NtClose`, child's references are released independently of the parent's
 - [ ] Commit: `"kernel: ob — handle inheritance across CreateProcess"`
 
-## 11. Unified Kernel–User Namespace Browser API `[Opus]`
-
+## 11. Unified Kernel–User Namespace Browser API
 Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall. Neither Windows nor Linux expose this publicly — Windows `NtQueryDirectoryObject` is internal / undocumented; Linux has no equivalent.
 
 - [ ] `NtOpenDirectoryObject(name, access, &handle)` — opens a directory by path; returns HANDLE
@@ -205,35 +194,37 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 
 ## OS Comparison
 
+| ⭐ | Feature               | Win11                  | Linux                 | Impossible OS                |
+|----|-----------------------|-------------------------|---------------------=-|------------------------------|
+| 💎 | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref    | ⬜ §1                        |
+| 💎 | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type         | ⬜ §1                        |
+| 💎 | Auto-delete on 0 ref  | ✅ ObDereferenceObject | ✅ kref_put          | ⬜ §2                        |
+| 💎 | Per-process handles   | ✅ HANDLE_TABLE        | ✅ fd table          | ⬜ §3                        |
+| 💎 | Named namespace       | ✅ \BaseNamedObjects   | ✅ /proc, /sys       | ⬜ §4                        |
+| 💎 | File objects          | ✅ FILE_OBJECT         | ✅ struct file       | ✅ §5                        |
+| 💎 | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct       | ✅ §5                        |
+| 💎 | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem   | ⬜ §6                        |
+| 💎 | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap    | ⬜ §7                        |
+| 💎 | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs  | ⬜ §8                        |
+| 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ⬜ §9, §10                   |
+| ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ⬜ §11 — public, documented  |
+| ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ⬜ §1-§7 — one header        |
 
-| ⭐ | Feature                                  | Win11                                     | Linux                                      | Impossible OS                 |
-|----|------------------------------------------|-------------------------------------------|--------------------------------------------|-------------------------------|
-| 💎 | Typed object header with refcount        | ✅ OBJECT_HEADER (non-paged pool)         | ✅ `kobject` + `kref`                      | ⬜ §1                         |
-| 💎 | Object type descriptors with hooks       | ✅ OBJECT_TYPE (CreateProc, DeleteProc)   | ✅ `kobj_type` (release, sysfs_ops)        | ⬜ §1                         |
-| 💎 | Automatic deletion on zero refcount      | ✅ ObDereferenceObject → frees when 0     | ✅ `kref_put` → release callback           | ⬜ §2                         |
-| 💎 | Per-process handle table                 | ✅ `HANDLE_TABLE` in kernel EPROCESS      | ✅ `struct files_struct` fd table          | ⬜ §3                         |
-| 💎 | Named kernel object namespace            | ✅ `\BaseNamedObjects\`, `\Device\`       | ✅ `/proc`, `/sys`, tmpfs named objects    | ⬜ §4                         |
-| 💎 | File objects in handle table             | ✅ FILE_OBJECT with ObXxx routing         | ✅ `struct file` in fd table               | ⬜ §5                         |
-| 💎 | Process/thread objects with handles      | ✅ EPROCESS / ETHREAD — ObXxx             | ✅ `struct task_struct` with `/proc/<pid>` | ⬜ §5                         |
-| 💎 | Named sync objects                       | ✅ `\BaseNamedObjects\<name>`             | ✅ POSIX named semaphores in `/dev/shm`    | ⬜ §6                         |
-| 💎 | Section / memory-mapped file objects     | ✅ SECTION_OBJECT via ObXxx               | ✅ `struct file` backing anonymous mmap    | ⬜ §7                         |
-| 💎 | Security descriptors on objects          | ✅ DACL/SACL on every named object        | ✅ inode permissions / POSIX ACLs          | ⬜ §8                         |
-| 💎 | NtDuplicateObject / handle inherit       | ✅ Full inherit + duplicate semantics     | ✅ `dup()`/`dup2()` + `O_CLOEXEC`          | ⬜ §9 — , §10                 |
-| ⭐ | Public namespace browser API             | ❌ Internal only (NtQueryDirectoryObject) | ❌ No unified namespace API                | ⬜ §11 — public, documented   |
-| ⭐ | Unified type system across all resources | ⚠️ Not all resources use ObXxx            | ❌ fd table and kobject are                | ⬜ §1–§7 — one header for all |
-
-> **After §1–§10:** Impossible OS achieves full parity with Windows NT object management and exceeds Linux's split fd/kobject model with a single unified type system.
-> **§11** makes the Ob namespace a public, documented API — something neither Windows nor Linux offer — enabling user-mode tools to browse every kernel resource in one place.
+> After §1-§10, Impossible OS matches Windows NT object management.
+> §11 and unified type system are exclusive competitive edges.
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] `ObCreateObject(ObpFileType)` returns a valid body pointer; `OB_HEADER_FROM_BODY` recovers the header
-- [ ] `ObReferenceObject` + `ObDereferenceObject` pair drives refcount to 0 and calls `on_delete`
-- [ ] Process handle table survives 1000 `ObpAllocateHandle` + `ObpFreeHandle` round trips with no leak
-- [ ] Named event created in `\BaseNamedObjects\TestEvent` is findable via `ObLookupObjectByName`
-- [ ] `NtDuplicateObject` produces an independent handle; closing source does not affect duplicate
+- [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`
+- [ ] QEMU WHPX: `ObCreateObject(ObpFileType)` returns valid body; `OB_HEADER_FROM_BODY` recovers header
+- [ ] QEMU TCG: same as WHPX
+- [ ] `ObReferenceObject` + `ObDereferenceObject` drives refcount to 0, calls `on_delete`
+- [ ] Handle table: 1000 alloc/free round trips with no leak
+- [ ] Named event in `\BaseNamedObjects\TestEvent` findable via `ObLookupObjectByName`
+- [ ] `NtDuplicateObject` produces independent handle; closing source doesn't affect duplicate
 - [ ] Child process inherits `OBJ_INHERIT` handles at correct indices
-- [ ] `NtQueryDirectoryObject` on `\` enumerates at least `Device`, `KernelObjects`, `BaseNamedObjects`
-- [ ] KASAN / heap checker shows zero use-after-free on object deletion under QEMU
+- [ ] `NtQueryDirectoryObject(\)` enumerates `Device`, `KernelObjects`, `BaseNamedObjects`
+- [ ] VirtualBox: boot completes with Ob init, no regression
+- [ ] Bare metal: boot completes with Ob init, handles work end-to-end
+- [ ] Zero use-after-free on object deletion (serial log shows no heap corruption)
 - [ ] Commit: `"kernel: ob — object manager complete"`

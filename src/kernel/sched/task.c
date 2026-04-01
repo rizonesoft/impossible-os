@@ -19,6 +19,9 @@
 #include "kernel/klog.h"
 #include "kernel/elf.h"
 #include "kernel/ipc/signal.h"
+#include "kernel/ob/handle_table.h"
+#include "kernel/ob/ob_process.h"
+#include "kernel/ob/ob_thread.h"
 
 /* Software interrupt vector for yield() */
 #define YIELD_INT_VECTOR 0x81
@@ -197,6 +200,9 @@ void task_init(void)
         tasks[i].cr3 = 0;
         tasks[i].xsave_area = (void *)0;
         tasks[i].fpu_used = 0;
+        tasks[i].handle_table.entries  = NULL;
+        tasks[i].handle_table.capacity = 0;
+        tasks[i].handle_table.count    = 0;
         tasks[i].num_threads = 0;
         for (j = 0; j < THREAD_MAX; j++) {
             tasks[i].threads[j].id = 0;
@@ -233,6 +239,9 @@ void task_init(void)
 
     /* Initialize signal state for PID 0 */
     signal_init_task(&tasks[0].signals);
+
+    /* Initialize handle table for PID 0 */
+    ob_handle_table_init(&tasks[0].handle_table);
 
     klog(LOG_DEBUG, "sched", "Scheduler initialized (PID 0 = main, quantum = %u ticks)",
            (uint64_t)SCHED_QUANTUM);
@@ -337,7 +346,12 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].num_threads = 1;
     signal_init_task(&tasks[pid].signals);
+    ob_handle_table_init(&tasks[pid].handle_table);
     num_tasks++;
+
+    /* Register process and main thread with Object Manager */
+    ob_process_create(&tasks[pid]);
+    ob_thread_create(&tasks[pid].threads[0], pid);
 
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") created (kernel)",
            (uint64_t)pid, name ? name : "?");
@@ -452,7 +466,12 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].num_threads = 1;
     signal_init_task(&tasks[pid].signals);
+    ob_handle_table_init(&tasks[pid].handle_table);
     num_tasks++;
+
+    /* Register process and main thread with Object Manager */
+    ob_process_create(&tasks[pid]);
+    ob_thread_create(&tasks[pid].threads[0], pid);
 
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") created (user mode)",
            (uint64_t)pid, name ? name : "?");
@@ -750,7 +769,12 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].exit_status = 0;
     tasks[child_pid].wait_pid = -1;
     tasks[child_pid].exec_pending = 0;
+    ob_handle_table_init(&tasks[child_pid].handle_table);
     num_tasks++;
+
+    /* Register forked process and main thread with Object Manager */
+    ob_process_create(&tasks[child_pid]);
+    ob_thread_create(&tasks[child_pid].threads[0], child_pid);
 
     klog(LOG_DEBUG, "sched", "PID %u forked -> child PID %u",
            (uint64_t)parent_pid_val, (uint64_t)child_pid);
@@ -844,6 +868,9 @@ void task_exit(int32_t status)
     tasks[pid].state = TASK_DEAD;
     tasks[pid].exit_status = status;
 
+    /* Mark process object as temporary so it can be freed */
+    ob_process_mark_dead(pid);
+
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited with status %d",
            (uint64_t)pid,
            tasks[pid].name ? tasks[pid].name : "?",
@@ -913,6 +940,9 @@ void task_cleanup(uint32_t pid)
 
     if (tasks[pid].state != TASK_DEAD)
         return;
+
+    /* Close all handles and free handle table */
+    ob_handle_table_destroy(&tasks[pid].handle_table);
 
     /* Free kernel stack */
     if (tasks[pid].stack_base) {
@@ -1030,6 +1060,9 @@ int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->num_threads++;
 
+    /* Register thread with Object Manager */
+    ob_thread_create(&t->threads[tid], t->pid);
+
     klog(LOG_DEBUG, "sched", "Thread %u created in task %u (\"%s\")",
            (uint64_t)tid, (uint64_t)t->pid,
            t->name ? t->name : "?");
@@ -1045,6 +1078,9 @@ void thread_exit(int32_t status)
 
     thr->state = THREAD_DEAD;
     thr->exit_status = status;
+
+    /* Mark thread object as temporary so it can be freed */
+    ob_thread_mark_dead(t->pid, thr->id);
 
     klog(LOG_DEBUG, "sched", "Thread %u (task %u \"%s\") exited with status %d",
            (uint64_t)thr->id, (uint64_t)t->pid,

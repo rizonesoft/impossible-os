@@ -21,6 +21,8 @@
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ipc/shmem.h"
+#include "kernel/ob/ob_file.h"
+#include "kernel/ob/ob.h"
 #include "desktop/terminal.h"
 
 /* --- Port I/O helper --- */
@@ -346,6 +348,26 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
             klog(lvl, "user", "%s", tmp);
         }
         ret = 0;
+        break;
+    }
+    case SYS_OPENFILE: {
+        const char *path = (const char *)arg1;
+        uint32_t access = (uint32_t)arg2;
+        ret = (int64_t)ob_create_file_handle(path, access);
+        break;
+    }
+    case SYS_CLOSEHANDLE: {
+        HANDLE handle = (HANDLE)(int32_t)arg1;
+        /* Reject pseudo-handles */
+        if (handle < 0) { ret = -1; break; }
+        ret = (int64_t)ObpFreeHandle(&task_current()->handle_table, handle);
+        break;
+    }
+    case SYS_READHANDLE: {
+        HANDLE handle = (HANDLE)(int32_t)arg1;
+        void *buf = (void *)arg2;
+        uint32_t size = (uint32_t)arg3;
+        ret = ob_file_read(&task_current()->handle_table, handle, buf, size);
         break;
     }
     default:

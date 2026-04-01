@@ -34,6 +34,9 @@
 #define SYS_SHMEM_MAP    36 /* sys_shmem_map(id)            → ptr / 0 */
 #define SYS_MMAP         37 /* sys_mmap(addr, len, prot, flags, fd, off) → ptr */
 #define SYS_MUNMAP       38 /* sys_munmap(addr, len)         → 0 / -1 */
+#define SYS_OPENFILE     39 /* sys_openfile(path, access)    → HANDLE / -1 */
+#define SYS_CLOSEHANDLE  40 /* sys_closehandle(handle)       → 0 / -1 */
+#define SYS_READHANDLE   41 /* sys_readhandle(handle, buf, size) → bytes / -1 */
 
 /* File descriptors */
 #define STDOUT_FD   1
