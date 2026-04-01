@@ -229,6 +229,28 @@ After §1–§8, Impossible OS matches Windows and Linux bootloader error handli
 
 ---
 
+## Unit Tests
+
+> Bootloader code runs pre-ExitBootServices in UEFI context -- not kernel test framework.
+> Use `scripts/test-smoke.sh` serial pattern matching for boot-level validation.
+
+- [ ] Add smoke test patterns to `scripts/test-smoke.sh`:
+  - Serial line `"[BOOT] ELF segment"` present (§1 — ELF loader logs each segment)
+  - Serial line `"ExitBootServices attempt 1/"` present (§2 — retry loop logs attempt)
+  - Serial line `"[BOOT] Kernel found at"` present (§3 — fallback search logs selected path)
+  - Absence of `"[FAIL] Kernel ELF corrupt"` on normal boot (§1 — no corruption)
+  - Absence of `"[CRIT] ExitBootServices failed"` on normal boot (§2 — exit succeeds)
+- [ ] Create `scripts/test-boot-elf-corrupt.sh`:
+  - Build disk image, truncate `\boot\kernel.exe` to 512 bytes
+  - Boot QEMU headless, capture serial
+  - Assert serial contains `"[FAIL] Kernel ELF corrupt"` (§1 rejects truncated ELF)
+  - Assert serial contains `"Kernel not found"` or error screen text (§9)
+- [ ] Create `scripts/test-boot-missing-kernel.sh`:
+  - Build disk image, delete `\boot\kernel.exe`
+  - Boot QEMU headless, capture serial
+  - Assert serial contains `"Trying \boot\kernel.exe... not found"` (§3 fallback search)
+- [ ] Commit: `"test: add bootloader error recovery smoke tests"`
+
 ## Verification
 
 - [ ] **ELF corruption test**: build test kernel with corrupted phdr → bootloader rejects with specific error message, not crash.

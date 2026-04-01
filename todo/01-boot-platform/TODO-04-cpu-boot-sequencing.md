@@ -149,6 +149,23 @@ The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_cpu_seq()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_cpu_seq.c` with:
+  - `g_cpu` struct populated: `g_cpu.has_nx == 1` (NX is a minimum requirement)
+  - `g_cpu.has_sse2 == 1` (SSE2 is a minimum requirement)
+  - EFER.NXE is set: `rdmsr(0xC0000080) & (1 << 11)` is non-zero
+  - `g_boot_info.hv_vendor` is either empty (bare metal) or a recognized string ("Microsoft Hv", "KVMKVMKVM", etc.)
+  - `g_boot_info.hv_flags` is consistent with vendor: `HV_FLAG_TSC_ENLIGHTENMENT` set only when `hv_vendor == "Microsoft Hv"`
+  - Hypervisor detection ran before timer: `g_boot_info.hv_flags` is valid by the time `timer_hal_init()` reads it (verified by boot order postcodes)
+  - `cpu_has(CPU_FEATURE_SSE2)` returns true (matches `g_cpu.has_sse2`)
+  - CR4.OSXSAVE is set if CPU supports XSAVE (`g_cpu.has_xsave` implies `CR4 & (1 << 18)`)
+- [ ] Register in `test_runner_init()`: `test_register_cpu_seq()`
+- [ ] Commit: `"test: add cpu_seq test suite"`
+
 ## Verification
 
 - [ ] Serial log shows `EFER.NXE=1` line **before** first `[VMM]` line in boot output

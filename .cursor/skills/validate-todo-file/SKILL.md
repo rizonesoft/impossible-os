@@ -38,6 +38,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
 6. Validate execution coverage.
    - Check dependency order, `→ XREF:` lines, overlap notes, handoffs, and adjacent-file continuity.
    - For each `→ XREF: TODO-XX §N`, confirm the target TODO file exists **and** the referenced section number is present in that file. Flag section-level mismatches, not just missing files.
+   - **Section-level specificity check:** Every cross-TODO `Depends On` entry MUST include specific section numbers (e.g., `T11 §1,§3`). A bare TODO number without sections (e.g., `T11`) is ambiguous — flag it and resolve which sections are actually needed.
    - Check handoff boundaries: for each deliverable this TODO hands off to another, confirm the receiving TODO has a matching Inputs or XREF entry covering that handoff.
    - Fix stale planning text, broken links, and roadmap inconsistencies that the validation exposes.
 7. If the problem is code-truth or completion-state accuracy, hand off to `verify-todo-section` instead of guessing here.

@@ -34,8 +34,8 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                           | Depends On | Status |
-| --- | :---: | ----------------------------------------------------- | ---------- | :----: |
+| ⭐  | Order | Deliverable                                            | Depends On | Status |
+| --- | :---: | ------------------------------------------------------ | ---------- | :----: |
 | 💎  |   1   | Wire test_runner into boot path                        | —          |  [ ]   |
 | 💎  |   2   | `make test` target with QEMU headless + serial parse   | §1         |  [ ]   |
 | 💎  |   3   | Add OB, security, and NVMe test suites                 | §1         |  [ ]   |
@@ -208,14 +208,14 @@ Track which kernel subsystems have test coverage.
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                     | Linux                     | Impossible OS              |
-|----|----------------------------|---------------------------|---------------------------|----------------------------|
+| ⭐ | Feature                    | Win11                     | Linux                      | Impossible OS                 |
+|----|----------------------------|---------------------------|----------------------------|-------------------------------|
 | 💎 | Kernel unit test framework | ✅ KUnit + WHQL           | ✅ KUnit + kselftest      | ⚠️ Framework exists, unwired |
-| 💎 | CI build verification      | ✅ Internal CI            | ✅ kernel.org CI          | ✅ GitHub Actions build    |
-| 💎 | CI boot test               | ✅ Internal CI            | ✅ LKFT + kernelci        | ⬜ §4 (smoke test ready)   |
-| 💎 | CI driver tests            | ✅ HLK/WHQL              | ✅ LTP + blktests         | ⬜ §5–§6                   |
-| ⭐ | PR test summary table      | ❌ Internal only          | ⚠️ Bot comments           | ⬜ §7 🚀                   |
-| ⭐ | Pre-push local tests       | ❌ Not standard           | ⚠️ Optional               | ⬜ §8 🚀                   |
+| 💎 | CI build verification      | ✅ Internal CI            | ✅ kernel.org CI          | ✅ GitHub Actions build      |
+| 💎 | CI boot test               | ✅ Internal CI            | ✅ LKFT + kernelci        | ⬜ §4 (smoke test ready)     |
+| 💎 | CI driver tests            | ✅ HLK/WHQL               | ✅ LTP + blktests         | ⬜ §5–§6                     |
+| ⭐ | PR test summary table      | ❌ Internal only          | ⚠️ Bot comments           | ⬜ §7                        |
+| ⭐ | Pre-push local tests       | ❌ Not standard           | ⚠️ Optional               | ⬜ §8                        |
 
 After §1–§6, Impossible OS has automated testing on par with Linux kernel CI (build + boot + unit + driver tests on every commit). §7–§9 add developer-facing features neither Windows nor Linux provides at the PR level.
 

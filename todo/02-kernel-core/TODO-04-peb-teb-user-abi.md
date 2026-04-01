@@ -231,6 +231,29 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 > **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets — ntdll and Win32 DLLs can initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace, enabling any user-mode tool to introspect any process without a private API or kernel debugger.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_peb_teb()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_peb_teb.c` with:
+  - TEB `NtTib.Self` at offset `0x30` equals the TEB base address (GS self-pointer contract)
+  - TEB `ClientId.UniqueProcess` at offset `0x40` matches the task PID
+  - TEB `ClientId.UniqueThread` at offset `0x48` matches the thread TID
+  - TEB `ProcessEnvironmentBlock` at offset `0x60` points to a valid PEB address
+  - TEB `LastErrorValue` at offset `0x68` is initialized to 0
+  - PEB `ImageBaseAddress` at offset `0x10` matches the ELF load base from exec
+  - PEB `ProcessParameters` at offset `0x20` is non-NULL and points to valid `RTL_USER_PROCESS_PARAMETERS`
+  - PEB `OSMajorVersion == 10`, `OSMinorVersion == 0`, `OSBuildNumber == 22621`
+  - PEB `NumberOfProcessors` matches CPUID-reported logical processor count
+  - `RTL_USER_PROCESS_PARAMETERS.CommandLine` contains the executable name
+  - `RTL_USER_PROCESS_PARAMETERS.ImagePathName` is non-empty
+  - TLS slot 0 is initially free; `TlsAlloc()` returns 0; `TlsFree(0)` succeeds
+  - `TlsSetValue(0, 0xDEAD)` followed by `TlsGetValue(0)` returns `0xDEAD`
+  - `TlsAlloc()` for index >= 64 returns error (expansion not yet supported)
+- [ ] Register in `test_runner_init()`: `test_register_peb_teb()`
+- [ ] Commit: `"test: add PEB/TEB user-mode ABI test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

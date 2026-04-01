@@ -463,6 +463,31 @@ Full acceptance pass. All sections complete.
 
 **~20 minutes.** Full regression pass.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_bare_metal()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+> Bare-metal hardening is primarily verified by multi-platform boot (QEMU WHPX/TCG, VBox, bare metal). Kernel unit tests cover the infrastructure APIs; full validation requires `scripts/test-smoke.sh` on each platform.
+
+- [ ] Create `src/kernel/test/test_bare_metal.c` with:
+  - `vmm_map_mmio_uc(0xFEE00000, 0x1000)` returns non-NULL; LAPIC ID read via returned pointer matches identity-mapped read
+  - `vmm_unmap_mmio()` on the mapped region does not crash; subsequent access would fault (not tested, just unmap)
+  - IST stacks allocated: `kernel_tss.ist1 != 0`, `kernel_tss.ist2 != 0`, `kernel_tss.ist3 != 0`
+  - ACPI FADT flags: `acpi_has_8042()` returns 0 or 1; `acpi_has_cmos_rtc()` returns 0 or 1 (never crashes)
+  - `acpi_msi_supported()` returns 0 or 1 (consistent with FADT)
+  - `g_boot_info.degraded_mask == 0` on a clean boot (no subsystems failed)
+  - Per-process PML4: `vmm_create_user_pml4()` returns non-NULL; `vmm_destroy_user_pml4()` frees without crash
+  - `vmm_set_user_page()` on a valid PML4+virt succeeds (User bit is set in PTE)
+  - CPU verification: `cpu_verify_hardening()` does not crash; logs NX/SMEP/SMAP status
+  - `KLOG_DIR` macro expands to `"C:\\Impossible\\System\\Logs\\"` (logging path on main FS)
+- [ ] Add to `scripts/test-smoke.sh`:
+  - Grep serial for `IAPC_BOOT_ARCH:` (FADT flags parsed)
+  - Grep serial for `IST stacks:` (IST allocated)
+  - Grep serial for `NX enabled` (CPU hardening ran)
+  - Boot completes to desktop on QEMU TCG (PIT path) and QEMU WHPX (LAPIC path)
+- [ ] Register in `test_runner_init()`: `test_register_bare_metal()`
+- [ ] Commit: `"test: add bare_metal test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

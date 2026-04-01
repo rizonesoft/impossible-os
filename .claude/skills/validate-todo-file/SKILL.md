@@ -62,8 +62,9 @@ description: Validate a TODO file for structural completeness, Implementation Or
 9. **Self-contained execution check (critical).**
    - The TODO must be executable from §1 to the last section WITHOUT being blocked by unimplemented sections in other TODOs.
    - For each `Depends On` entry in the Implementation Order table that references an EXTERNAL TODO (not a section within this file):
-     1. Check if that external section is already implemented (`[x]`). If yes, no action needed.
-     2. If NOT implemented (`[ ]`): the TODO is **blocked**. Fix it by adding a new section to THIS TODO that implements the minimal prerequisite — just enough to unblock the dependent section, not the full scope of the other TODO.
+     1. **Section-level specificity check:** The reference MUST include specific section numbers (e.g., `T11 §1,§3`), not just a bare TODO number (e.g., `T11`). A bare TODO reference is ambiguous — flag it and resolve which sections are actually needed.
+     2. Check if that external section is already implemented (`[x]`). If yes, no action needed.
+     3. If NOT implemented (`[ ]`): the TODO is **blocked**. Fix it by adding a new section to THIS TODO that implements the minimal prerequisite — just enough to unblock the dependent section, not the full scope of the other TODO.
      3. The new section should be clearly marked: `> [!NOTE] Minimal prerequisite — full implementation in TODO-XX §N`
      4. Update the Implementation Order to reference the new local section instead of the external one.
    - **Principle:** When you follow a TODO from §1 to the last section, you must have a fully working base system at the end. External TODOs enhance it later, but never block it.

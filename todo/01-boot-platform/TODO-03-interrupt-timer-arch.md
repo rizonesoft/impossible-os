@@ -212,6 +212,25 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 > **Parity achieved on §1–§8, §10.** All interrupt init order, IDT coverage, IRQ registration, and timer HAL match Windows/Linux. Boot timeline JSON goes beyond both. Remaining: HPET standalone driver (deferred until UC MMIO), bare-metal hw interrupt crash (TODO-06 §5).
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_irq_timer()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_irq_timer.c` with:
+  - `acpi_madt_info()` returns non-NULL with `lapic_count >= 1` and valid `lapic_base`
+  - `acpi_pcat_compat()` returns 0 or 1 (consistent with MADT flags)
+  - `acpi_get_ioapic_base()` returns non-zero address when IOAPIC present
+  - `irq_request_gsi(99, dummy_handler, NULL, "test")` returns 0 for invalid GSI (no crash)
+  - `irq_request_gsi()` with valid GSI (e.g., ISA IRQ 1) returns non-zero vector in range 32-239
+  - `irq_gsi_count()` returns 0 for an unregistered GSI
+  - `uptime_ns()` returns > 0 after boot; two calls 1ms apart differ by approximately 1000000 ns (within 50% tolerance)
+  - Timer driver active: `timer_hal_get_name()` returns non-NULL string ("LAPIC", "PIT", or "HPET")
+  - IDT coverage: software `INT 0xFE` does not triple-fault (unhandled vector logs warning + EOI)
+  - LAPIC spurious vector (0xFF): software `INT 0xFF` does not crash
+- [ ] Register in `test_runner_init()`: `test_register_irq_timer()`
+- [ ] Commit: `"test: add irq_timer test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

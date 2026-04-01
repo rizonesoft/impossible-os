@@ -316,6 +316,23 @@ The current `init_gop()` uses `LocateProtocol()` which returns a single GOP hand
 
 > **After parity items:** Impossible OS will fully match Windows and Linux on Secure Boot, UEFI runtime, SMBIOS, capsule updates, and W^X enforcement. The exclusive items push beyond: the integrated countdown boot menu eliminates the need for a separate bootloader for dual-boot, the accent fade-in gives a branded first impression, and the structured JSON boot timeline makes performance regression testing trivial compared to WPA or systemd-analyze.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_uefi_boot()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_uefi_boot.c` with:
+  - `uefi_rt_available()` returns 1 after `uefi_runtime_init()` completes (runtime services preserved)
+  - `uefi_var_get()` for `L"SecureBoot"` returns `STATUS_SUCCESS` or `STATUS_NOT_FOUND` (never crashes)
+  - `uefi_var_get_u32()` / `uefi_var_set_u32()` roundtrip: write a test GUID variable, read back, values match
+  - `boot_info.fb.width > 0` and `boot_info.fb.height > 0` (GOP negotiated a valid resolution)
+  - `boot_info.hidpi == 1` when `boot_info.fb.width >= 2560`, else `0`
+  - `smbios_get_system_uuid()` returns non-zero UUID on real hardware (all-zero acceptable on QEMU)
+  - `boot_info.secure_boot_enabled` matches value read from UEFI `SecureBoot` variable
+  - SMBIOS registry keys exist: `HKLM\HARDWARE\BIOS\BIOSVendor` is non-empty string
+- [ ] Register in `test_runner_init()`: `test_register_uefi_boot()`
+- [ ] Commit: `"test: add uefi_boot test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

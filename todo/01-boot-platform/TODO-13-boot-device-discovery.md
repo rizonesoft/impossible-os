@@ -142,6 +142,23 @@ Log the full boot device enumeration to serial for debugging.
 
 ---
 
+## Unit Tests
+
+> Boot device discovery runs in UEFI bootloader context -- not kernel test framework.
+> Use `scripts/test-smoke.sh` serial pattern matching for boot-level validation.
+> Kernel-side boot_info fields can be validated via kernel unit tests.
+
+- [ ] Add smoke test patterns to `scripts/test-smoke.sh`:
+  - Serial line `"[BOOT] Boot device: handle="` present (§1 — LoadedImage identification)
+  - Serial line `"[BOOT] Using boot device filesystem"` present (§2 — scoped filesystem access)
+  - Serial line `"[BOOT] Booted from:"` present (§3 — device path in boot_info)
+- [ ] Create `src/kernel/test/test_boot_device.c` with:
+  - `boot_info.boot_device_type` is a valid enum value (0-4, not out of range)
+  - `boot_info.boot_device_path` is non-empty (at least 1 character)
+  - `boot_info.boot_device_type != 0` (UNKNOWN) when booted from a real device (QEMU always has SATA)
+- [ ] Register in `test_runner_init()`: `test_register_boot_device()`
+- [ ] Commit: `"test: add boot device discovery smoke and unit tests"`
+
 ## Verification
 
 - [ ] **Multi-disk test**: QEMU with SATA + NVMe — kernel loads from correct device.

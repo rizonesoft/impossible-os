@@ -170,6 +170,22 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 > After §1-§6, Impossible OS handles slow media as well as Windows and Linux.
 > §4 and §7 are exclusive: media type visibility and flush progress at boot.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_klog_flush()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_klog_flush.c` with:
+  - Ring snapshot captures count at call time: fill ring with 10 entries, snapshot returns 10
+  - Entries added during flush are not included in current snapshot
+  - Single-pass routing dispatches to correct subsystem slot (fill 3 entries across 2 subsystems, verify each slot has correct entries)
+  - Empty subsystem slots produce zero VFS writes (mock VFS, assert no open/write/close for empty slots)
+  - `klog_disk_set_deferred(1)` suppresses disk writes: call `klog_disk_flush()`, assert zero VFS writes
+  - `klog_disk_commit()` writes accumulated buffer in one batch
+  - `blkdev_boot_media_type()` returns valid enum value (not out of range)
+- [ ] Register in `test_runner_init()`: `test_register_klog_flush()`
+- [ ] Commit: `"test: add klog disk flush and media detection test suite"`
+
 ## Verification
 
 - [ ] QEMU `make run`: klog_disk_flush <1s, full IXFS tests pass

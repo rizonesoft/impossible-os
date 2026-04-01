@@ -24,6 +24,8 @@ Domain numbers are the two-digit prefix of the folder (e.g. `02` for `02-kernel-
 
 Use `&` to join tightly-coupled deps that must both be satisfied at the same call site. Use `,` to separate independent prerequisites.
 
+**Section-level specificity is mandatory.** Every cross-TODO reference MUST include the specific section numbers needed (e.g., `T11 §1,§3`). A bare TODO number without sections (e.g., `T11`) is ambiguous and must be resolved — open the referenced TODO and identify exactly which sections are prerequisites.
+
 ## Workflow
 
 1. **Read** the full TODO file.

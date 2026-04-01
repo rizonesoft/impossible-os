@@ -171,6 +171,25 @@ Forward log entries to a remote syslog server for enterprise and headless debug 
 > After §1-§6, Impossible OS matches or exceeds Windows and Linux on all logging.
 > §6 (JSON Lines) and serial timestamps are exclusive competitive edges.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_klog()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_klog.c` with:
+  - `klog(LOG_INFO, "test", "hello")` writes to the ring buffer; ring head advances
+  - `klog(LOG_DEBUG, "mm", "x")` is dropped after `klog_set_level("mm", LOG_WARN)`
+  - `klog(LOG_WARN, "mm", "x")` is not dropped after `klog_set_level("mm", LOG_WARN)`
+  - Global level override: `klog_set_level(NULL, LOG_ERROR)` suppresses all INFO/WARN entries
+  - Rate limiting: >N messages from same subsystem within 1-second window triggers drop; summary message emitted
+  - `klog_get_dropped("test")` returns correct count after rate-limited burst
+  - Ring buffer wraps correctly when filled past `KLOG_RING_SIZE` entries
+  - Subsystem dispatch: entry tagged `"net"` maps to `"network.log"` filename
+  - Subsystem dispatch: entry tagged `"fs"` maps to `"fs.log"` filename
+  - Subsystem dispatch: entry with unknown tag maps to `"kernel.log"`
+- [ ] Register in `test_runner_init()`: `test_register_klog()`
+- [ ] Commit: `"test: add klog test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`

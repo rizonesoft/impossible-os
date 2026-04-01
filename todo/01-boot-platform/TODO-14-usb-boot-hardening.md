@@ -217,6 +217,24 @@ After §1–§9, USB boot is as reliable as Windows and Linux across all USB gen
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_usb_boot()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Hardware-dependent tests use `scripts/test-smoke.sh` serial pattern matching on QEMU `run-usb`.
+
+- [ ] Create `src/kernel/test/test_usb_boot.c` with:
+  - SCSI sense classification: `UNIT_ATTENTION` (key=6) classified as retriable
+  - SCSI sense classification: `NOT_READY` (key=2) classified as retriable
+  - SCSI sense classification: `MEDIUM_ERROR` (key=3) classified as unrecoverable
+  - Retry cap honored: mock a command that always fails NOT_READY, verify exactly 3 retries (not infinite)
+  - `boot_info.boot_media_speed` is a valid value (0-3)
+  - klog bounded flush: ring snapshot count does not grow during flush
+- [ ] Register in `test_runner_init()`: `test_register_usb_boot()`
+- [ ] Add smoke test patterns to `scripts/test-smoke.sh` for QEMU `run-usb`:
+  - Serial line `"[USB] === USB Boot Report ==="` present (§10 — diagnostic report)
+  - Absence of `"WATCHDOG"` or `"KERNEL PANIC"` during USB boot
+- [ ] Commit: `"test: add USB boot hardening test suite"`
+
 ## Verification
 
 - [ ] **USB 2.0 bare metal**: boot from USB 2.0 on i5-4210U — no sleep hack, SCSI retries handle readiness, klog flush completes in seconds.

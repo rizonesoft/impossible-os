@@ -192,6 +192,24 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 
 > **After parity items:** POST codes, named-stage logging, panic evidence, and spinners match Windows/Linux. QR panic code and vital-signs strip go beyond both.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_boot_diag()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_boot_diag.c` with:
+  - `boot_stage_report()` with a test stage records entry in `boot_stage_history[]` (ring buffer not empty after call)
+  - `boot_get_elapsed_ms()` returns monotonically increasing values (two calls 1ms apart, second >= first)
+  - `boot_stage_history_get()` returns non-NULL pointer with valid `count > 0` after boot
+  - POST hex display: `boot_post_write16(0xAABB)` followed by `boot_post_read16()` returns `0xAABB`
+  - `boot_progress_poll()` does not crash when called with no active stage
+  - Alive blink toggle counter increments over 100 timer ticks when `heartbeat=1`
+  - `spinner_create(SPINNER_MEDIUM, 0x0078D4)` returns non-NULL; `spinner_destroy()` frees the slot; re-create succeeds
+  - `spinner_create()` returns NULL after 8 allocations (pool exhausted)
+  - Panic evidence struct at `0x80000`: `panic_collect_evidence()` writes magic `0xDEADBEEF`, readback matches
+- [ ] Register in `test_runner_init()`: `test_register_boot_diag()`
+- [ ] Commit: `"test: add boot_diag test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

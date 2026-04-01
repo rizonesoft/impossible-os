@@ -168,6 +168,24 @@ After §1–§5, USB input is at parity with Windows and Linux. §6–§7 add ho
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_usb_hid()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_usb_hid.c` with:
+  - Boot-protocol keyboard report parsing: `[0x00, 0x00, 0x04, 0,0,0,0,0]` (modifier=0, key=A) produces ASCII `'a'`
+  - Modifier key handling: `[0x02, 0x00, 0x04, 0,0,0,0,0]` (L_SHIFT + A) produces ASCII `'A'`
+  - Multiple simultaneous keys: report with key1=0x04, key2=0x05 produces both `'a'` and `'b'`
+  - Key release detection: report with all zeroes after keypress produces no new characters
+  - Boot-protocol mouse report parsing: `[0x01, 0x0A, 0xF6]` (left button, dx=10, dy=-10) produces correct relative movement
+  - HID interface classification: class=0x03, subclass=0x01, protocol=0x01 identified as keyboard
+  - HID interface classification: class=0x03, subclass=0x01, protocol=0x02 identified as mouse
+  - `keyboard_trygetchar()` returns characters from USB source when PS/2 buffer is empty (§5 coexistence)
+- [ ] Register in `test_runner_init()`: `test_register_usb_hid()`
+- [ ] Add smoke test for QEMU USB keyboard: extend `scripts/test-smoke.sh` to check serial line `"[INPUT] Sources:"` present (§7 — input diagnostic summary)
+- [ ] Commit: `"test: add USB HID keyboard and mouse test suite"`
+
 ## Verification
 
 - [ ] **QEMU USB keyboard**: `-device usb-kbd` → type commands in shell.

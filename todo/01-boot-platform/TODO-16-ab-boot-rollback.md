@@ -153,6 +153,27 @@ After §1–§5, Impossible OS has stronger rollback than Windows (which require
 
 ---
 
+## Unit Tests
+
+> Boot metadata and slot selection run in UEFI bootloader context -- use smoke tests.
+> Kernel-side `mark_boot_successful()` logic can be validated via kernel unit tests.
+
+- [ ] Create `src/kernel/test/test_ab_boot.c` with:
+  - Boot metadata struct round-trip: write `{active_slot=A, tries=0, successful=1}`, read back, fields match
+  - Slot selection logic: `slot_a.tries=3, slot_a.successful=0` causes rollback to slot B
+  - Slot selection logic: `slot_a.tries=2, slot_a.successful=0` still boots slot A (under threshold)
+  - Slot selection logic: both slots `tries>=3` triggers recovery mode (returns error code)
+  - Try counter increment: before boot, `tries` increments by 1
+  - `mark_boot_successful()` resets `tries=0` and sets `successful=1` for active slot
+  - `boot_info.active_slot` is valid (`'A'` or `'B'`)
+- [ ] Register in `test_runner_init()`: `test_register_ab_boot()`
+- [ ] Create `scripts/test-boot-rollback.sh`:
+  - Build dual-slot disk image
+  - Corrupt slot A kernel (truncate to 0 bytes)
+  - Boot QEMU 4 times in sequence, capture serial each time
+  - Assert 4th boot serial contains `"rolling back to Slot B"` (§4 — automatic rollback)
+- [ ] Commit: `"test: add A/B boot rollback test suite"`
+
 ## Verification
 
 - [ ] **Normal boot**: Slot A boots, try counter resets, `mark_boot_successful` logged.

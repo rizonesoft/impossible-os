@@ -288,6 +288,30 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 > **After §1–§11:** Impossible OS matches Windows NT exactly on the native API calling convention, service numbers, IOSB semantics, NTSTATUS codes, and LastError propagation. Real `ntdll.dll` stubs can call into the kernel without patching.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract — Windows keeps it internal/undocumented and Linux has no equivalent at all.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_nt_api()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_nt_api.c` with:
+  - `NT_SUCCESS(STATUS_SUCCESS)` returns true; `NT_ERROR(STATUS_INVALID_HANDLE)` returns true
+  - `NT_SUCCESS(STATUS_ACCESS_DENIED)` returns false; `NT_WARNING(STATUS_BUFFER_OVERFLOW)` returns true
+  - SSDT dispatch: valid index calls handler; invalid index returns `STATUS_NOT_IMPLEMENTED`
+  - SSDT dispatch: index beyond table size returns `STATUS_NOT_IMPLEMENTED`, not a crash
+  - `NtClose(INVALID_HANDLE_VALUE)` returns `STATUS_INVALID_HANDLE`
+  - `NtCreateFile` on existing file returns `STATUS_SUCCESS` and a non-NULL HANDLE
+  - `NtClose` on a valid HANDLE returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`
+  - `NtReadFile` populates `IO_STATUS_BLOCK.Status = STATUS_SUCCESS` and `Information = bytes_read`
+  - `NtWriteFile` populates `IO_STATUS_BLOCK` correctly after write
+  - `NtDuplicateObject` from kernel-mode produces valid second handle to same object
+  - `NtQuerySystemInformation(SystemBasicInformation)` returns correct page size and processor count
+  - `NtAllocateVirtualMemory` with `MEM_COMMIT` returns a usable address; write/read round-trip succeeds
+  - `NtFreeVirtualMemory` on allocated region returns `STATUS_SUCCESS`
+  - `RtlNtStatusToDosError(STATUS_ACCESS_DENIED)` returns `5`; `STATUS_NO_MEMORY` returns `8`
+  - ZwXxx kernel-mode call: `ZwClose` from CPL=0 skips user-buffer probe (no fault)
+- [ ] Register in `test_runner_init()`: `test_register_nt_api()`
+- [ ] Commit: `"test: add native API layer test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

@@ -158,6 +158,22 @@ Report USB device readiness status on the splash diagnostic line, showing retry 
 > After §1-§5, Impossible OS matches Windows and Linux USB robustness.
 > §6 is exclusive: visible readiness reporting + per-device settle metrics at boot.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_usb_msc_retry()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_usb_msc_retry.c` with:
+  - `msc_is_retriable(SENSE_NOT_READY, 0x04, 0x01)` returns 1 (becoming ready)
+  - `msc_is_retriable(SENSE_UNIT_ATTENTION, 0x29, 0x00)` returns 1 (reset)
+  - `msc_is_retriable(SENSE_MEDIUM_ERROR, 0x00, 0x00)` returns 0 (fatal)
+  - `msc_is_retriable(SENSE_HARDWARE_ERROR, 0x00, 0x00)` returns 0 (fatal)
+  - `usb_msc_get_retry_count()` returns 0 after clean init (no retries needed)
+  - `usb_msc_get_settle_ms()` returns 0 after clean init
+- [ ] Register in `test_runner_init()`: `test_register_usb_msc_retry()`
+- [ ] Add smoke test pattern to `scripts/test-smoke.sh`: serial line `"usb-msc: device ready after"` present on USB boot (QEMU `run-usb`)
+- [ ] Commit: `"test: add USB MSC retry and readiness test suite"`
+
 ## Verification
 
 - [ ] QEMU WHPX `make run-usb`: USB MSC boot works, no retries needed

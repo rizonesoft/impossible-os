@@ -153,6 +153,26 @@ User-visible recovery interface with clear status.
 
 ---
 
+## Unit Tests
+
+> Recovery environment runs as a separate UEFI app -- use boot-level smoke tests.
+> IXFS fsck logic can be validated via kernel unit tests.
+
+- [ ] Create `src/kernel/test/test_ixfs_fsck.c` with:
+  - Clean IXFS superblock passes validation (no corruption detected)
+  - Corrupted inode bitmap detected: flip 1 bit in bitmap, `ixfs_fsck()` reports bitmap inconsistency
+  - Orphan inode detected: mark inode allocated but not in any directory, fsck reports orphan
+  - Journal replay: write partial journal entry, fsck replays cleanly
+  - Free block count mismatch: set wrong count in superblock, fsck detects and corrects
+- [ ] Register in `test_runner_init()`: `test_register_ixfs_fsck()`
+- [ ] Create `scripts/test-boot-recovery.sh`:
+  - Build disk image with recovery partition (4 partitions in GPT)
+  - Assert `fdisk -l` shows EFI + Slot A + Slot B + Recovery partitions
+  - Corrupt both slot A and slot B kernels
+  - Boot QEMU headless, capture serial
+  - Assert serial contains `"Impossible OS Recovery"` (§2 — recovery bootloader activates)
+- [ ] Commit: `"test: add IXFS fsck and recovery partition smoke tests"`
+
 ## Verification
 
 - [ ] **Both slots bad**: corrupt both → recovery activates automatically.

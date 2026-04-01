@@ -144,6 +144,26 @@ Show watchdog countdown in the VPD display during boot.
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_watchdog()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Watchdog trigger tests use `scripts/test-smoke.sh` with intentional hang builds.
+
+- [ ] Create `src/kernel/test/test_watchdog.c` with:
+  - Per-phase timeout lookup: Phase 0 returns 2s, Phase 1 returns 5s, Phase 2 returns 30s, Phase 3 returns 60s
+  - `watchdog_pet()` resets countdown without firing (call pet, verify timer reloaded)
+  - Timeout configuration: `boot_watchdog_timeouts[]` values are all > 0 and within sane range (1s-300s)
+  - TCO detection: `tco_watchdog_available()` returns 0 on QEMU (no TCO emulation)
+  - NVRAM flag read: `watchdog_triggered` flag readable from boot_info (0 on clean boot)
+- [ ] Register in `test_runner_init()`: `test_register_watchdog()`
+- [ ] Create `scripts/test-boot-watchdog.sh`:
+  - Build a debug kernel with `WATCHDOG_TEST_HANG=1` (intentional `for(;;){}` in Phase 2)
+  - Boot QEMU headless with 45s timeout
+  - Assert serial contains `"WATCHDOG: boot hung at POST"` (§4 — NMI fired with diagnostics)
+  - Assert QEMU exits (reboot triggered, `-no-reboot` causes shutdown)
+- [ ] Add smoke test pattern to `scripts/test-smoke.sh`: absence of `"WATCHDOG"` on normal boot (no false triggers)
+- [ ] Commit: `"test: add boot watchdog test suite with intentional-hang smoke test"`
+
 ## Verification
 
 - [ ] **Hang detection**: intentional infinite loop in Phase 2 → watchdog fires, system reboots.

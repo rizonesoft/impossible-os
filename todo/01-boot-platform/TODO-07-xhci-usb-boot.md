@@ -279,6 +279,28 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 | ⭐ | Hot-plug             | ✅ Automatic       | ✅ Automatic        | ✅ §5C MSI interrupt   |
 | ⭐ | USB boot timing VPD  | ❌ Not exposed     | ❌ Not exposed      | ⬜ §5 handover latency |
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_usb_boot()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+> USB driver tests require hardware (real or emulated xHCI controller). Use `bash scripts/build.sh run-usb` for QEMU USB tests. Tests that need a controller gracefully skip when no xHCI is present.
+
+- [ ] Create `src/kernel/test/test_usb_boot.c` with:
+  - `xhci_controller_count()` returns >= 0 (no crash when no controller present)
+  - When xHCI present: `xhci_get_port_count()` returns > 0
+  - When xHCI present: USBLEGSUP handoff completed (controller OS-owned, `USBSTS.HCH == 0` when running)
+  - `xhci_msc_device_count()` returns >= 0 (valid count even when no MSC devices attached)
+  - USB MSC read: `usb_msc_read_sectors(0, 1, buf)` on first MSC device returns valid MBR/GPT header (when device present)
+  - `usb_msc_read_capacity()` returns non-zero sector count and valid sector size (512 or 4096) for attached MSC device
+  - Block device registration: `blkdev_find("usb0")` returns non-NULL when USB MSC device is present
+  - `boot_info.usb_device_count` matches number of devices discovered by bootloader Phase A
+- [ ] Add to `scripts/test-smoke.sh` (with `run-usb` target):
+  - Grep serial for `xhci:` (controller discovered) or `xhci: no controller` (graceful skip)
+  - Grep serial for `usb: Device` (device enumerated) when USB drive attached
+  - Grep serial for `block device registered` when USB MSC present
+- [ ] Register in `test_runner_init()`: `test_register_usb_boot()`
+- [ ] Commit: `"test: add usb_boot test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh run-usb` — USB drive mounted, files readable

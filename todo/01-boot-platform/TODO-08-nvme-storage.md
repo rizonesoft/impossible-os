@@ -142,6 +142,29 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 | ⭐ | Drive wear at boot     | ❌ CrystalDiskInfo needed    | ❌ Requires nvme-cli        | ⬜ Planned — SMART wear field    |
 | ⭐ | Thermal throttle detect| ❌ Third-party tools         | ❌ Requires nvme-cli        | ⬜ Planned — CSTS.CFS + SMART    |
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_nvme()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+> NVMe tests require an NVMe controller (QEMU `run-nvme` or bare metal). Tests gracefully skip when no NVMe controller is found.
+
+- [ ] Create `src/kernel/test/test_nvme.c` with:
+  - `nvme_controller_count()` returns >= 0 (no crash when no controller)
+  - When NVMe present: Identify Controller completed — model string is non-empty
+  - When NVMe present: Identify Namespace returns `lba_count > 0` and `sector_size` is 512 or 4096
+  - When NVMe present: `nvme_read_sectors(1, 0, 1, buf)` succeeds; sector 0 contains valid GPT/MBR signature (`0x55AA` at offset 510 or `"EFI PART"` at offset 0)
+  - When NVMe present: block device registered — `blkdev_find("nvme0")` returns non-NULL
+  - When NVMe absent: `nvme_init()` returns gracefully (no hang, no crash)
+  - Admin Queue: `nvme_admin_submit()` + poll returns completion within 500ms timeout (no infinite wait)
+  - I/O Queue: `nvme_read_sectors()` + `nvme_write_sectors()` roundtrip on test sector (read, write pattern, read back, verify match) -- only on test partition, never sector 0
+- [ ] Add to `scripts/test-smoke.sh` (with `run-nvme` and `run-nvme-ci` targets):
+  - Grep serial for `nvme: Controller v1.` (controller discovered)
+  - Grep serial for `nvme: no controller found` (graceful skip when absent)
+  - Grep serial for `nvme: block device registered` (VFS integration)
+  - POST code sequence: `0x20A0` through `0x20A7` all present in serial
+- [ ] Register in `test_runner_init()`: `test_register_nvme()`
+- [ ] Commit: `"test: add nvme test suite"`
+
 ## Verification
 
 - [ ] QEMU WHPX `make run-nvme`: serial shows controller discovery, Identify, sector read, block device registered

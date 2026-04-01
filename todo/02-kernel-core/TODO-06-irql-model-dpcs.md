@@ -147,6 +147,28 @@
 > **After §1–§7:** Impossible OS reaches parity on interrupt-level execution guarantees and deferred work architecture required for production drivers.
 > **§8–§9** turn correctness and fairness into explicit kernel contracts instead of hidden implementation behavior.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_irql_dpc()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_irql_dpc.c` with:
+  - `KeGetCurrentIrql()` returns `PASSIVE_LEVEL` when called from normal thread context
+  - `KeRaiseIrql(DISPATCH_LEVEL, &old)` sets current IRQL to `DISPATCH_LEVEL`; old is `PASSIVE_LEVEL`
+  - `KeLowerIrql(PASSIVE_LEVEL)` restores to `PASSIVE_LEVEL` after raise
+  - `KeRaiseIrql` to a level below current IRQL triggers a debug assertion (illegal transition)
+  - `KIRQL` constants: `PASSIVE_LEVEL == 0`, `APC_LEVEL == 1`, `DISPATCH_LEVEL == 2`, `HIGH_LEVEL == 31`
+  - `KeInitializeDpc` sets routine and context; `KDPC` fields are non-NULL after init
+  - `KeInsertQueueDpc` from `DISPATCH_LEVEL` succeeds and enqueues the DPC
+  - `KeRemoveQueueDpc` removes a queued DPC before it fires; returns TRUE
+  - DPC callback executes at `DISPATCH_LEVEL` (callback checks `KeGetCurrentIrql() == DISPATCH_LEVEL`)
+  - DPC callback sets a flag; after `KiDispatchDpc()`, the flag is set (proves execution)
+  - Duplicate `KeInsertQueueDpc` for same DPC does not double-enqueue (single execution)
+  - Per-CPU queue isolation: DPC queued on CPU 0 does not drain on CPU 1 (SMP test)
+  - IRQL violation: attempt blocking wait at `DISPATCH_LEVEL` is trapped (does not deadlock)
+- [ ] Register in `test_runner_init()`: `test_register_irql_dpc()`
+- [ ] Commit: `"test: add IRQL model and DPC test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

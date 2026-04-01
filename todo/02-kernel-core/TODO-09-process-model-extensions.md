@@ -164,6 +164,32 @@ Capabilities can be inherited across `fork` / `exec` but can only be dropped, ne
 > **After §1–§6:** Impossible OS matches Windows NT and Linux on all core per-process state APIs.
 > **§7** enforces a strictly drop-only capability model — neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_proc_ext()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_proc_ext.c` with:
+  - New process `task->cwd` defaults to `"C:\\"` after `task_create()`
+  - `NtSetCurrentDirectory("C:\\Impossible")` updates `task->cwd`; `NtQueryCurrentDirectory` returns `"C:\\Impossible"`
+  - `NtSetCurrentDirectory` on non-existent path returns error (CWD unchanged)
+  - Relative path `"System\\Logs"` resolves to `"C:\\System\\Logs"` when CWD is `"C:\\"`
+  - `task_fork()` child inherits parent CWD string exactly
+  - `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE` are valid handles after process creation
+  - `sys_brk(0)` returns current program break (non-zero, above BSS end)
+  - `sys_sbrk(4096)` returns old break; new address is 4096 bytes higher; memory is writable
+  - `sys_sbrk` with negative increment that would shrink below BSS end is rejected
+  - `PROCESS_PRIORITY_NORMAL` maps thread base to `THREAD_PRIO_NORMAL`
+  - `PROCESS_PRIORITY_HIGH` maps thread base to `THREAD_PRIO_HIGH`
+  - `PROCESS_PRIORITY_REALTIME` without `CAP_REALTIME` returns `STATUS_PRIVILEGE_NOT_HELD`
+  - `SCHED_POLICY_FIFO` without `CAP_SCHED_FIFO` returns `STATUS_PRIVILEGE_NOT_HELD`
+  - System process has `CAP_ALL`; `capability_check(CAP_RAW_IO)` returns `STATUS_SUCCESS`
+  - User process has `CAP_DEFAULT_USER`; `capability_check(CAP_RAW_IO)` returns `STATUS_PRIVILEGE_NOT_HELD`
+  - `NtDropCapability(CAP_RAW_IO)` clears the bit; subsequent `capability_check(CAP_RAW_IO)` fails
+  - `task_fork()` child inherits exact capability set; child drop does not affect parent
+- [ ] Register in `test_runner_init()`: `test_register_proc_ext()`
+- [ ] Commit: `"test: add process model extensions test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

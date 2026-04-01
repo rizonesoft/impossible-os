@@ -315,6 +315,31 @@ Impossible OS distinguishes itself with: IRQL-aware kernel safe probing (the per
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_except()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_except.c` with:
+  - `context_from_frame` populates all GP registers from an `interrupt_frame` correctly
+  - `frame_from_context` restores registers back; round-trip preserves RIP, RSP, RFLAGS
+  - `EXCEPTION_RECORD` for `STATUS_ACCESS_VIOLATION` has correct code and fault address in `ExceptionInformation[1]`
+  - `EXCEPTION_RECORD` for `STATUS_INTEGER_DIVIDE_BY_ZERO` has correct code and `EXCEPTION_CONTINUABLE` flag
+  - `ProbeForRead` on user-space address (below `USER_SPACE_LIMIT`) with correct alignment succeeds
+  - `ProbeForRead` on kernel address raises `STATUS_ACCESS_VIOLATION` (does not panic)
+  - `ProbeForWrite` on kernel address raises `STATUS_ACCESS_VIOLATION`
+  - `ProbeForRead` with misaligned address and alignment > 1 raises `STATUS_DATATYPE_MISALIGNMENT`
+  - `try_copy_from_user` from valid mapped user page succeeds; data matches
+  - `try_copy_from_user` from unmapped address returns error (does not panic)
+  - `try_copy_to_user` to valid mapped user page succeeds; data readable back
+  - `RtlVirtualUnwind` on a known 3-frame kernel stack recovers correct RIP chain
+  - `RtlLookupFunctionEntry` returns non-NULL for a known function in `.pdata`; returns NULL for address outside any module
+  - VEH registration: `RtlAddVectoredExceptionHandler` returns non-NULL handle
+  - VEH removal: `RtlRemoveVectoredExceptionHandler` with valid handle succeeds
+  - Kernel `__try`/`__except` around a guarded region: exception handler fires and kernel continues
+- [ ] Register in `test_runner_init()`: `test_register_except()`
+- [ ] Commit: `"test: add exception dispatch and SEH test suite"`
+
 ## Verification
 
 - [ ] Trigger a deliberate user-mode `NULL` dereference; verify the process terminates with `STATUS_ACCESS_VIOLATION` and a log entry — not a kernel panic.

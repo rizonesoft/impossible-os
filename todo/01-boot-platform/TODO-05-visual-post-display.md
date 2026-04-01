@@ -271,6 +271,27 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 
 > **After §1–§11:** The most informative boot diagnostic in any OS — named stages with ms timing from first instruction, NVRAM crash forensics on restart, seamless splash integration. No serial. No tools. Just boot and see.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_vpd()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+> VPD is primarily a visual/boot-level system -- most testing is via `scripts/test-smoke.sh` serial pattern matching and manual visual inspection. Kernel unit tests cover the data model, not pixel output.
+
+- [ ] Create `src/kernel/test/test_vpd.c` with:
+  - `POST16(0xTEST)` followed by `boot_post_read16()` returns the written value (POST code roundtrip)
+  - `vpd_post16_name(0x0020)` returns `"pmm"` (or matching stage name from lookup table)
+  - `vpd_post16_name(0xFFFF)` returns `"UNKNOWN"` or NULL for unmapped codes (no crash)
+  - `vpd_is_active()` returns 0 when `postbars=0` (VPD disabled)
+  - `vpd_putchar()` / `vpd_puts()` do not crash when framebuffer pointer is valid (smoke test)
+  - `boot_info.config.postbars` reflects parsed `boot.conf` value (0, 1, or 2)
+  - NVRAM crash persistence: `boot_post_write16(POST16_BOOT_FAILED)` followed by `boot_post_read16()` returns `POST16_BOOT_FAILED`
+- [ ] Add to `scripts/test-smoke.sh`:
+  - `postbars=on`: grep serial for `POST 0x0020` (PMM stage reported)
+  - `postbars=off`: grep serial confirms no `[VPD]` rendering lines
+  - Crash recovery: grep serial for `Last POST code:` or `Last boot failed` after forced panic + reboot
+- [ ] Register in `test_runner_init()`: `test_register_vpd()`
+- [ ] Commit: `"test: add vpd test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

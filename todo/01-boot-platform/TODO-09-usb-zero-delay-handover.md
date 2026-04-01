@@ -174,6 +174,28 @@ If any handover validation fails, transparently fall back to the proven halt/res
 
 > Matches Windows USB boot speed, exceeds Linux. VPD timing visibility would be a competitive first.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_usb_handover()` (-> XREF: `00-infrastructure/TODO-03 S1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+> Zero-delay handover tests require USB hardware. Use `bash scripts/build.sh run-usb` for QEMU tests. Tests gracefully skip when handover is not active (fallback to TODO-07 path).
+
+- [ ] Create `src/kernel/test/test_usb_handover.c` with:
+  - `boot_info.usb_handover_complete` is 0 or 1 (valid flag, not garbage)
+  - When handover active: controller is running (`USBSTS.HCH == 0`) without kernel halt/reset
+  - When handover active: `boot_info.usb_controller.dcbaa_phys` is page-aligned and non-zero
+  - When handover active: `boot_info.usb_controller.dma_page_count > 0` (DMA pages allocated by bootloader)
+  - When handover active: PMM marked DMA pages as used (`pmm_is_allocated(dcbaa_phys)` returns true)
+  - When handover active: scratchpad buffer count matches `HCSPARAMS2.MaxScratchpadBufs` from capability registers
+  - Fallback validation: set `boot_info.usb_handover_complete = 0` in test, call `xhci_init_controller()`, verify full init path runs (halt/reset/enumerate)
+  - When handover active: USB device available within 5ms of kernel entry (TSC delta check against `boot_info.timing.kernel_entry_tsc`)
+- [ ] Add to `scripts/test-smoke.sh` (with `run-usb` target):
+  - Grep serial for `zero-delay handover` (handover path taken) or `Controller halted` (fallback path)
+  - When handover active: no `500ms` delay string in serial log
+  - Grep serial for `DMA pages:` (bootloader allocation logged)
+- [ ] Register in `test_runner_init()`: `test_register_usb_handover()`
+- [ ] Commit: `"test: add usb_handover test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh run-usb` — USB drive mounted as D:\ with zero-delay handover active

@@ -213,6 +213,29 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 > All parity items complete — Impossible OS matches Windows NT object management.
 > Both exclusive features (⭐) are implemented: public namespace browser API and unified single-header type system covering files, processes, threads, sync objects, and sections.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_ob()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_ob.c` with:
+  - `ObReferenceObject` increments refcount; `ObDereferenceObject` decrements it
+  - Refcount reaching 0 calls `type->on_delete`; object memory freed (verify via flag in test body)
+  - `OB_FLAG_PERMANENT` object survives refcount 0; only deleted after `ObMakeTemporaryObject()` + deref
+  - `ObpAllocateHandle` returns valid HANDLE (multiple of 4); `ObpLookupHandle` returns correct entry
+  - 1000 handle alloc/free round trips with no leak (final table empty, all refs released)
+  - `INVALID_HANDLE_VALUE`, `CURRENT_PROCESS`, `CURRENT_THREAD` pseudo-handles resolve without table entry
+  - `ObInsertObject` with name into `\BaseNamedObjects\TestObj`; `ObLookupObjectByName` finds it
+  - `ObInsertObject` with duplicate name fails (returns error, not crash)
+  - Symbolic link `\DosDevices\Z:` → `\Device\TestDev`; `ObLookupObjectByName(\DosDevices\Z:)` follows the link
+  - `NtDuplicateObject` produces independent handle; closing source does not invalidate duplicate
+  - Handle with `OBJ_INHERIT` is copied to child process at same index by `ob_handle_table_inherit`
+  - `NtQueryDirectoryObject(\)` enumerates `Device`, `KernelObjects`, `BaseNamedObjects`
+  - `NtQueryObject(ObjectBasicInformation)` returns correct refcount and handle count
+  - `NtClose` on a valid handle returns success; second `NtClose` on same handle returns `STATUS_INVALID_HANDLE`
+- [ ] Register in `test_runner_init()`: `test_register_ob()`
+- [ ] Commit: `"test: add object manager test suite"`
+
 ## Verification
 
 - [x] `bash scripts/build.sh clean` → `=== BUILD OK ===` (verified every commit)

@@ -223,6 +223,31 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 > **After §1–§9:** Impossible OS matches Windows NT exactly on FILETIME semantics, QPC, timezone handling, and filesystem timestamp accuracy.
 > **§7** locks `QueryPerformanceFrequency` to 10 MHz (FILETIME ticks/second), making it constant and hardware-independent — Windows still returns variable hardware frequencies and apps must handle this; Linux has no equivalent fixed-frequency API.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_time()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_time.c` with:
+  - `filetime_from_unix_seconds(0)` returns `116444736000000000ULL` (epoch offset)
+  - `filetime_to_unix_seconds(116444736000000000ULL)` returns `0`
+  - `filetime_from_unix_seconds(1)` returns `116444736010000000ULL` (1 second = 10M ticks)
+  - Round-trip: `filetime_to_unix_seconds(filetime_from_unix_seconds(N)) == N` for N = 0, 1000, 1700000000
+  - `filetime_to_dos_datetime` on known FILETIME produces correct DOS date and time words
+  - `filetime_from_dos_datetime` round-trips back to the original FILETIME (within 2-second FAT32 resolution)
+  - `filetime_from_rtc` on a known `rtc_time` struct produces the expected FILETIME
+  - `filetime_from_efi_time` on a known `efi_time` struct produces the expected FILETIME
+  - `mono_ns()` returns monotonically increasing values across two consecutive calls
+  - `mono_clock_source_name()` returns one of `"TSC"`, `"HPET"`, or `"LAPIC"` (not NULL)
+  - `KeQuerySystemTime` returns a plausible FILETIME (year 2024+ encoded)
+  - `KeQuerySystemTime` called twice ~1 ms apart returns increasing values
+  - `KeQueryPerformanceCounter` returns non-zero, monotonically increasing value
+  - `filetime_to_local` with `bias_minutes = -300` subtracts 5 hours from UTC FILETIME
+  - `filetime_from_local` is inverse of `filetime_to_local` for same timezone
+  - `filetime_to_string` produces ISO 8601 format string with `T` and `Z` markers
+- [ ] Register in `test_runner_init()`: `test_register_time()`
+- [ ] Commit: `"test: add time and FILETIME management test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

@@ -250,6 +250,23 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 > After parity items, Impossible OS matches Windows NT and Linux on phased init.
 > Exclusive: graphical recovery UI, UEFI NVRAM POST codes, public readiness oracle.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_boot_init()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_boot_init.c` with:
+  - `boot_result_t` values: assert `BOOT_OK == 0`, `BOOT_DEGRADED == 1`, `BOOT_FATAL == 2`
+  - `kernel_subsystem_set_ready(SUBSYS_PMM, true)` then `kernel_subsystem_ready(SUBSYS_PMM)` returns true
+  - `kernel_subsystem_set_ready(SUBSYS_PMM, false)` then `kernel_subsystem_ready(SUBSYS_PMM)` returns false
+  - All `SUBSYS_COUNT` entries default to not-ready before any `set_ready` call
+  - `BOOT_REQUIRE(SUBSYS_PMM)` returns `BOOT_FATAL` when PMM is not ready
+  - `BOOT_REQUIRE(SUBSYS_PMM)` does not return `BOOT_FATAL` when PMM is ready
+  - `boot_progress()` does not crash with NULL step name
+  - POST code constants are non-zero and unique across phases
+- [ ] Register in `test_runner_init()`: `test_register_boot_init()`
+- [ ] Commit: `"test: add boot-init sequencing test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`

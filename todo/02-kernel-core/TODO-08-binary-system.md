@@ -232,6 +232,31 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 > **After §5–§8:** Full kernel-level PE32+ loading — run Windows-compiled executables natively without a compatibility layer.
 > **§12** makes EIF code signing mandatory, not optional — providing stronger integrity guarantees than Windows Authenticode.
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_exec()` (XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_exec.c` with:
+  - `exec_load` with `\x7FELF` magic routes to ELF loader (not PE32+ or EIF)
+  - `exec_load` with `MZ` magic routes to PE32+ loader
+  - `exec_load` with `EIF!` magic routes to EIF loader
+  - `exec_load` with unknown magic returns `ENOEXEC`
+  - `exec_load` on non-existent file returns `ENOENT`
+  - ELF `PT_LOAD` segments are mapped at VMM user pages (address within user range, not identity-mapped)
+  - ELF page permissions: `PF_X` segment has execute permission; `PF_W` segment has write permission
+  - ELF BSS region (`memsz > filesz`) is zero-filled
+  - PE32+ validation: `pe_validate` accepts valid PE32+ header (Machine `0x8664`, Magic `0x20B`)
+  - PE32+ validation: `pe_validate` rejects 32-bit PE (Magic `0x10B`) with `ENOEXEC`
+  - PE32+ base relocation: `IMAGE_REL_BASED_DIR64` applies correct delta to 64-bit value
+  - PE32+ import resolver: known `kernel32.dll!ExitProcess` maps to `NtTerminateProcess` SSDT index
+  - PE32+ import resolver: unknown DLL name returns stub (not crash)
+  - EIF header validation: correct magic + arch + version accepted; wrong magic rejected
+  - EIF import table: syscall ID resolves to valid SSDT handler
+  - EIF `SIGNED` flag with missing signature returns `ENOEXEC`
+- [ ] Register in `test_runner_init()`: `test_register_exec()`
+- [ ] Commit: `"test: add binary format system test suite"`
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
