@@ -34,6 +34,15 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-07 — xHCI, USB Storage & USB HID](TODO-07-xhci-usb-boot.md) — xHCI controller, USB MSC BOT, USB HID keyboard/mouse — boot from USB + input on bare metal
 - [TODO-08 — NVMe Storage Driver](TODO-08-nvme-storage.md) — NVMe controller, Admin+I/O queues, sector read/write — access internal NVMe storage
 - [TODO-09 — Zero-Delay USB Boot](TODO-09-usb-zero-delay-handover.md) — Pre-ExitBootServices xHCI driver loading with persistent DMA — true Windows-style zero-delay USB handover
+- [TODO-10 — USB MSC Retry & Device Readiness](TODO-10-usb-msc-retry-readiness.md) — SCSI REQUEST SENSE, TEST UNIT READY, retry logic for USB boot readiness
+- [TODO-11 — klog Disk Flush & IXFS Boot Tests](TODO-11-klog-ixfs-bare-metal-perf.md) — Fix klog_disk_flush hanging on slow USB media, deferred flush mode
+- [TODO-12 — Bootloader Error Recovery & ELF Hardening](TODO-12-bootloader-error-recovery.md) — Eliminate silent failures: ELF bounds checking, ExitBootServices retry, fallback kernel search, boot failure error screen
+- [TODO-13 — Boot Device Discovery & Fallback Chain](TODO-13-boot-device-discovery.md) — Correct boot device identification via LoadedImage, multi-device fallback, device type detection
+- [TODO-14 — USB Boot Hardening & Fail-Safe Pipeline](TODO-14-usb-boot-hardening.md) — SCSI retry, remove sleep hacks, EHCI fallback, bounded klog flush, media speed detection
+- [TODO-15 — USB HID Boot-Protocol Keyboard & Mouse](TODO-15-usb-hid-keyboard-mouse.md) — xHCI interrupt endpoints, HID boot-protocol keyboard/mouse, input coexistence
+- [TODO-16 — A/B Dual-Slot Boot & Automatic Rollback](TODO-16-ab-boot-rollback.md) — Never unbootable: dual root partitions, failure counting, automatic rollback
+- [TODO-17 — Recovery Partition & Self-Repair](TODO-17-recovery-partition.md) — Recovery environment: filesystem repair, kernel restore, NVRAM reconstruction
+- [TODO-18 — Boot Watchdog & Hang Detection](TODO-18-boot-watchdog.md) — LAPIC NMI + ACPI TCO watchdog: detect hung boot, auto-reboot, integrate with A/B rollback
 
 ## Completed / Doc-converted
 
