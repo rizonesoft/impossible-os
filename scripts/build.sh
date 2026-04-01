@@ -308,6 +308,9 @@ TOTAL_SECS=$(elapsed "$BUILD_START")
 print_summary "$TOTAL_SECS"
 echo "=== BUILD OK ===" >> "$LOG"
 
+# Update test coverage report (static source scan, no QEMU needed)
+bash scripts/test-coverage.sh --save --quiet 2>/dev/null || true
+
 # Run QEMU (optional)
 if $DO_RUN; then
     divider | tee -a "$LOG"
