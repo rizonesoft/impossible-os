@@ -50,8 +50,7 @@
 > ⭐ = exclusive — degraded-boot recovery UI and UEFI NVRAM POST log are not present in either competitor.
 
 
-## 1. Boot Init Infrastructure `[Sonnet]`
-
+## 1. Boot Init Infrastructure
 New header and source file providing the result type, readiness oracle, and progress tracker used by every phase.
 
 **Files:** `include/kernel/boot_init.h`, `src/kernel/main/boot_init.c`
@@ -68,8 +67,7 @@ New header and source file providing the result type, readiness oracle, and prog
 - [x] Define `BOOT_STEP(subsys, fn)` macro — calls `fn()`, sets readiness from result, calls `boot_progress()`
 - [x] Expose `boot_phase0()`, `boot_phase1()`, `boot_phase2()`, `boot_phase3()` in `main_internal.h`
 
-## 2. Phase 0 — Critical Init (Interrupts Disabled) `[Opus]`
-
+## 2. Phase 0 — Critical Init (Interrupts Disabled)
 Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or network. Any failure in Phase 0 calls `boot_halt()` on serial — framebuffer is not yet available.
 
 **File:** `src/kernel/main/boot_hw.c` (restructured as `boot_phase0`)
@@ -94,8 +92,7 @@ Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or 
 - [x] Remove all `HV_BAR` macro definitions and usages (12 sites in `boot_hw.c`) — already removed in prior commit
 - [x] Replace every `HV_BAR` site with `boot_progress(0, "step-name", postcode)` — already done in prior commit
 
-## 3. Phase 1 — Platform Services (Interrupts Enabled at End) `[Opus]`
-
+## 3. Phase 1 — Platform Services (Interrupts Enabled at End)
 Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display. BOOT_FATAL halts; BOOT_DEGRADED logs and continues. Interrupts enabled with `sti` only after LAPIC/timer are ready.
 
 **File:** `src/kernel/main/boot_interrupts.c` (restructured as `boot_phase1`)
@@ -124,8 +121,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] Remove all `HV_BAR` macro definitions and usages — already removed in prior commit
 - [x] Replace every `HV_BAR` site with `boot_progress(1, "step-name", postcode)` — already done
 
-## 4. Phase 2 — System Services `[Sonnet]`
-
+## 4. Phase 2 — System Services
 Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL only if VFS or registry are completely broken; everything else degrades.
 
 **File:** `src/kernel/main/boot_storage.c` (restructured as `boot_phase2`)
@@ -150,8 +146,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [x] Remove `HV_BAR` macro from `boot_storage.c` if present — already removed in prior commit
 - [x] Add `boot_progress(2, "step-name", postcode)` at each step
 
-## 5. Phase 3 — User Platform `[Sonnet]`
-
+## 5. Phase 3 — User Platform
 Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before this phase; failures here fall back to a text console, not BSOD.
 
 **File:** `src/kernel/main/boot_desktop.c` (restructured as `boot_phase3`)
@@ -167,8 +162,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] On any BOOT_FATAL in Phase 3: do NOT BSOD — log via `klog(FATAL)` and halt after compositor returns
 - [x] Add `boot_progress(3, "step-name", postcode)` at each step
 
-## 6. Dependency Gates `[Sonnet]`
-
+## 6. Dependency Gates
 - [x] Add dependency guards in phase orchestrators for all critical chains (inline checks + `boot_halt()` + `kernel_subsystem_dump()`)
 - [x] Specifically verify these critical chains compile and enforce correctly at runtime:
   - `pmm_init` requires nothing; `vmm_init` requires PMM; `heap_init` requires VMM (Phase 0)
@@ -178,8 +172,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
   - `sched_init` requires HEAP + TIMER (Phase 3)
 - [x] Call `kernel_subsystem_dump()` on every BOOT_FATAL before halting — added to `boot_halt()` and `panic_screen()`
 
-## 7. Failure Policy `[Sonnet]`
-
+## 7. Failure Policy
 | Phase | Failure       | Action                                  |
 | ----- | ------------- | --------------------------------------- |
 | 0     | Any           | `boot_halt()` — serial message + halt   |
@@ -195,8 +188,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] Add `kernel_subsystem_dump()` call inside `boot_halt()` and `panic()` — done in §6
 - [x] Define and document which BOOT_FATAL events trigger auto-restart vs permanent halt based on `boot.conf` restart policy — documented in boot_halt.c
 
-## 8. Code Cleanup `[Sonnet]`
-
+## 8. Code Cleanup
 These are bugs and structural violations that must be fixed as part of this TODO:
 
 - [x] Remove all `HV_BAR` macro definitions and usages — already removed in prior commits
@@ -211,8 +203,7 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [x] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1` check
 - [ ] Update all init functions in `sched/`, `ipc/`, `mm/`, `fs/` to return `boot_result_t` where they currently return `void` — deferred to per-subsystem TODOs
 
-## 9. Degraded-Boot Recovery Screen `[Opus]`
-
+## 9. Degraded-Boot Recovery Screen
 In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally. Renders directly to the GOP framebuffer — no compositor, no window manager required. Displays which subsystem failed, its POST code, and a simple recovery menu (retry / boot to serial console / power off).
 
 **Files:** `src/kernel/main/boot_recovery.c`, `include/kernel/boot_recovery.h`
@@ -225,8 +216,7 @@ In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally
 - [x] Ensure `boot_recovery_show()` is a no-op (falls through to `boot_halt()`) if `SUBSYS_FB` is not ready
 - [x] Add `boot_progress(9, "recovery-screen", 0xE0)` call on entry
 
-## 10. POST Code + UEFI Variable Log `[Opus]`
-
+## 10. POST Code + UEFI Variable Log
 Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every phase boundary via `uefi_runtime_services.SetVariable`. The value survives a reboot, allowing post-mortem boot failure diagnosis on real hardware even when serial is unavailable.
 
 **Files:** `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`, `src/kernel/uefi_runtime.c`
@@ -242,35 +232,36 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 
 ## OS Comparison
 
+| ⭐ | Feature                | Win11                 | Linux                | Impossible OS              |
+|----|------------------------|-----------------------|----------------------|----------------------------|
+| 💎 | Formal phase model     | ✅ Phase 0/1          | ✅ initcall levels   | ✅ §2-§5 — 4 phases        |
+| 💎 | Interrupts-off phase   | ✅ Phase 0            | ✅ early start_kernel | ✅ §2 — boot_phase0       |
+| 💎 | Dependency ordering    | ✅ Boot load groups   | ✅ initcall deps     | ✅ §6 — gates done         |
+| 💎 | Typed init results     | ✅ NTSTATUS           | ✅ initcall_t        | ⚠️ §1 — boot_result_t     |
+| 💎 | Halt on critical fail  | ✅ Bugcheck           | ✅ panic()           | ✅ §7 — boot_halt          |
+| 💎 | Degraded boot          | ✅ Safe mode          | ✅ Emergency shell   | ✅ §7 — BOOT_DEGRADED      |
+| 💎 | Boot serial log        | ✅ DebugPrint/ETW     | ✅ early_printk      | ✅ §2 — [PHASE0] markers   |
+| 💎 | Boot config gating     | ✅ Registry           | ✅ cmdline           | ✅ §2 — boot.conf          |
+| 💎 | Tests separated        | ✅ Separate env       | ✅ initcall_debug    | ✅ §5 — debug=1 gate       |
+| ⭐ | Recovery UI at boot    | ❌ Separate safe mode | ❌ Text-only shell   | ✅ §9 — graphical recovery |
+| ⭐ | POST to UEFI NVRAM     | ❌ Firmware-only      | ❌ Not implemented   | ✅ §10 — ImpossiblePOST    |
+| ⭐ | Readiness oracle API   | ⚠️ Private internal   | ⚠️ system_state only | ✅ §1 — public API          |
 
-
-| ⭐ | Feature                            | Win11                                  | Linux                                    | Impossible OS                                      |
-|----|------------------------------------|----------------------------------------|------------------------------------------|----------------------------------------------------|
-| 💎 | Formal phase model                 | ✅ Phase 0 / Phase 1                   | ✅ initcall levels (early → late)        | 🔄 §2 — In progress — done, §3                     |
-| 💎 | Interrupt-disabled critical phase  | ✅ Phase 0 (no interrupts, no          | ✅ `start_kernel` early before `sti`     | ✅ §2 — Done — ; `boot_phase0()` runs              |
-| 💎 | Dependency-ordered subsystem init  | ✅ Boot driver load groups +           | ✅ initcall dependency ordering          | 🔄 §2 — In progress — –4 done,                     |
-| 💎 | Typed init failure results         | ✅ `NTSTATUS` from every init routine  | ✅ `initcall_t` return codes             | ⬜ Step 1 (`boot_result_t`)                        |
-| 💎 | Halt on critical subsystem failure | ✅ Bugcheck + halt                     | ✅ `panic()` + halt                      | ✅ §7 — Done — ; `boot_halt()` +                   |
-| 💎 | Degraded boot on non-critical fail | ✅ Last-known-good, safe mode          | ✅ Emergency shell fallback              | ✅ §7 — Done — ; BOOT_DEGRADED logs                |
-| 💎 | Boot progress serial log           | ✅ `DebugPrint` / ETW early tracing    | ✅ `early_printk` / `earlyprintk=serial` | ✅ §2 — Done — ; `[PHASE0]` markers                |
-| 💎 | Boot config gating                 | ✅ `SYSTEM\CurrentControlSet\Control\` | ✅ kernel cmdline / initrd config        | ✅ §2 — Done — ; `boot.conf` parsed                |
-| 💎 | Test-path separated from boot path | ✅ Tests run in separate test          | ✅ `initcall_debug` opt-in               | ✅ §5 — Done — ; `debug=1` gate                    |
-| ⭐ | Degraded-boot recovery UI screen   | ❌ Safe mode is a separate             | ❌ Emergency shell is text-only          | ✅ §9 — Done — — in-kernel graphical               |
-| ⭐ | POST code written to UEFI NVRAM    | ❌ POST codes are firmware-only        | ❌ Not implemented                       | ✅ §10 — Done — — ImpossiblePOST NVRAM             |
-| ⭐ | Subsystem readiness oracle API     | ⚠️ Private internal only, not exposed  | ⚠️ `system_state` enum only              | ✅ §1 — Done — — `kernel_subsystem_ready()` public |
-
-> **After parity items:** Impossible OS matches Windows NT and Linux on formal phased init, typed results, and dependency ordering.
-> **Exclusive items:** The degraded-boot recovery UI lets a user see exactly which subsystem failed and choose a recovery action — no other OS provides this at the kernel level. UEFI NVRAM POST codes survive a reboot, giving post-mortem boot failure diagnosis on real hardware even when serial is unavailable.
+> After parity items, Impossible OS matches Windows NT and Linux on phased init.
+> Exclusive: graphical recovery UI, UEFI NVRAM POST codes, public readiness oracle.
 
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] Headless QEMU serial log shows `[PHASE0]`…`[PHASE3]` markers in dependency order
+- [ ] QEMU WHPX: serial log shows `[PHASE0]`…`[PHASE3]` markers in dependency order
+- [ ] QEMU TCG: same as WHPX
+- [ ] VirtualBox: boot completes with all phases logged
 - [ ] Serial log contains no `HV_BAR` or raw pixel-write output
 - [ ] Serial log shows `kernel_subsystem_dump()` output before any halt
 - [ ] Forcing PMM failure causes `boot_halt()` on serial — no framebuffer writes attempted
 - [ ] Forcing VFS failure causes degraded-boot screen — kernel stays up, no BSOD
 - [ ] `boot_tests_run()` does not appear in serial log when `debug=0`
 - [ ] `boot_tests_run()` does appear in serial log when `debug=1`
+- [ ] Bare metal: all phases complete, POST codes visible on VPD
 - [ ] Commit: `"kernel: init-sequencing verified — phases, readiness oracle, dependency gates"`
 

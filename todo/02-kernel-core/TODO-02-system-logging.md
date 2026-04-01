@@ -3,17 +3,18 @@
 > **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.
 
 > [!IMPORTANT]
-> **Current state:** `klog.c` (380 lines) + `klog_disk.c` (578 lines). All entries go to a single `kernel.log` — per-subsystem splitting, rotation, structured events, and remote forwarding are not yet implemented.
+> **Current state:** `klog.c` (541 lines) + `klog_disk.c` (912 lines). §1-§6 are complete: per-subsystem splitting, verbosity control, rotation, rate limiting, and JSON Lines events all working. Only §7 (remote syslog forwarding) remains.
 
 ## Inputs
 
 - [`src/kernel/klog.c`](../../src/kernel/klog.c)
 - [`src/kernel/klog_disk.c`](../../src/kernel/klog_disk.c)
 - [`include/kernel/klog.h`](../../include/kernel/klog.h)
-- [`src/kernel/log.c`](../../src/kernel/log.c) — legacy serial-only logger (reference)
+- ~~`src/kernel/log.c`~~ — legacy serial-only logger (removed, superseded by klog)
 - [`todo/02-kernel-core/TODO-01-kernel-init-sequencing.md`](./TODO-01-kernel-init-sequencing.md)
 - → XREF: `TODO-20-kernel-libraries.md §6` — cJSON DOM parser required by §6 (structured JSON events)
-- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
+- → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
+- → XREF: `01-boot-platform/TODO-11-klog-ixfs-bare-metal-perf.md` — klog_disk_flush performance fix (ring snapshot, deferred flush mode); both TODOs modify klog_disk.c
 
 ## Outcome
 
@@ -68,8 +69,7 @@ These items are implemented and verified. Kept here for future correctness check
 
 ---
 
-## 1. Boot-Phase Aware klog Init `[Sonnet]`
-
+## 1. Boot-Phase Aware klog Init
 The current `klog_disk.c` assumes VFS is available when it initialises. After TODO-01, the kernel has explicit Phase 0 (no VFS) and Phase 2 (VFS ready) gates. `klog` must split into a Phase 0 ring-buffer-only mode and a Phase 2 disk-enable step.
 
 - [x] Add `klog_early_init()` — Phase 0 safe; resets ring buffer, serial output only; no VFS
@@ -79,8 +79,7 @@ The current `klog_disk.c` assumes VFS is available when it initialises. After TO
 - [x] Update `boot_hw.c` (Phase 0) to call `klog_early_init()` and `boot_storage.c` (Phase 2) to call `klog_disk_enable()`
 - [x] Commit: `"kernel: split klog early-init from disk-enable"`
 
-## 2. Per-Subsystem Log Splitting `[Sonnet]`
-
+## 2. Per-Subsystem Log Splitting
 Route log entries to dedicated per-subsystem log files based on the subsystem tag. Entries with no matching tag continue to go to `kernel.log`.
 
 - [x] Define dispatch table in `klog_disk.c` with 18 tag-to-file mappings:
@@ -93,8 +92,7 @@ Route log entries to dedicated per-subsystem log files based on the subsystem ta
 - [x] Boot-session numbered logs (`YYMMDDN.LOG`) on X: continue to contain all subsystems combined
 - [x] Commit: `"kernel: per-subsystem log files"`
 
-## 3. Per-Subsystem Verbosity Control `[Sonnet]`
-
+## 3. Per-Subsystem Verbosity Control
 Allow silencing verbose subsystems in release builds without recompiling.
 
 - [x] Add `klog_set_level(const char *subsystem, log_level_t min_level)` to `klog.h`/`klog.c`
@@ -104,8 +102,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 - [x] Default: all subsystems at `LOG_DEBUG` (global min); adjustable via `klog_set_level(NULL, level)` or per-tag
 - [x] Commit: `"kernel: per-subsystem log verbosity control"`
 
-## 4. Log Rotation `[Sonnet]`
-
+## 4. Log Rotation
 Prevent log files growing unbounded on long-running or repeatedly booted systems.
 
 - [x] Before each `klog_disk_flush()`: check `kernel_log_size` against threshold
@@ -117,8 +114,7 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 - [x] O(1) check: `kernel_log_size` tracked in static var, updated from `logfile->size` after each flush
 - [x] Commit: `"kernel: log rotation"`
 
-## 5. Rate Limiting `[Sonnet]`
-
+## 5. Rate Limiting
 Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 
 - [x] Track per-subsystem message count within a 100-tick sliding window (100 Hz = 1 second); 32-slot table
@@ -128,8 +124,7 @@ Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 - [x] Dropped count tracked in `klog_rate_slot_t.dropped` for future `events.jsonl` integration (§6)
 - [x] Commit: `"kernel: log rate limiting"`
 
-## 6. Structured JSON Log Events `[Sonnet]`
-
+## 6. Structured JSON Log Events
 Emit machine-parseable events alongside plain-text logs. Requires cJSON from `TODO-20-kernel-libraries.md` §6.
 
 - [x] Define JSON event format: `{"ts":<ms>,"lvl":"WARN","sub":"net","msg":"DHCP timeout","dropped":0}`
@@ -141,8 +136,7 @@ Emit machine-parseable events alongside plain-text logs. Requires cJSON from `TO
 - [ ] Task Manager log viewer panel reads `events.jsonl` for colour-coded filtering — deferred to desktop shell TODO
 - [x] Commit: `"kernel: structured JSON log events"`
 
-## 7. Remote Syslog Forwarding (RFC 5424) `[Sonnet]`
-
+## 7. Remote Syslog Forwarding (RFC 5424)
 Forward log entries to a remote syslog server for enterprise and headless debug use. `src/kernel/net/udp.c` already exists — this section wires syslog packet sending on top of it.
 
 - [ ] Read syslog server IP from `HKLM\SYSTEM\Logs\SyslogServer` at `klog_disk_enable()`; skip if not set
@@ -158,35 +152,36 @@ Forward log entries to a remote syslog server for enterprise and headless debug 
 
 ## OS Comparison
 
+| ⭐ | Feature               | Win11                | Linux                  | Impossible OS              |
+|----|-----------------------|----------------------|------------------------|--------------------------==|
+| 💎 | Unified kernel log    | ✅ Event Log         | ✅ journald/syslog    | ✅ klog ring buffer       |
+| 💎 | Log levels            | ✅ 5 levels          | ✅ 8 POSIX levels     | ✅ 5 levels               |
+| 💎 | Serial debug output   | ⚠️ Needs WinDbg      | ✅ earlyprintk        | ✅ All entries to serial  |
+| 💎 | Per-boot log files    | ❌ Not built-in      | ❌ Not built-in       | ✅ BOOT_NNN.LOG on FAT32  |
+| 💎 | User-mode log API     | ✅ ReportEvent/ETW   | ✅ syslog()           | ✅ SYS_LOG syscall #17    |
+| 💎 | Boot-phase init       | ✅ Phase 0/1         | ✅ early_printk       | ✅ §1 — done              |
+| 💎 | Subsystem splitting   | ✅ Event channels    | ✅ syslog facilities  | ✅ §2 — done              |
+| 💎 | Subsystem verbosity   | ✅ ETW filters       | ✅ per-facility level | ✅ §3 — done              |
+| 💎 | Log rotation          | ✅ Size-limited      | ✅ logrotate          | ✅ §4 — done              |
+| 💎 | Rate limiting         | ✅ ETW built-in      | ⚠️ rsyslog only       | ✅ §5 — done              |
+| ⭐ | Human-readable struct | ❌ XML verbose       | ❌ Binary journal     | ✅ §6 — JSON Lines        |
+| 💎 | Remote forwarding     | ✅ WEF               | ✅ rsyslog UDP        | ⬜ §7 — syslog RFC 5424   |
+| ⭐ | Serial timestamps     | ❌ Not standard      | ❌ Not standard       | ✅ Every entry            |
 
-| ⭐ | Feature                       | Win11                               | Linux                                   | Impossible OS                     |
-|----|-------------------------------|-------------------------------------|-----------------------------------------|-----------------------------------|
-| 💎 | Unified kernel log            | ✅ Windows Event Log                | ✅ journald + syslog                    | ✅ Done — klog ring buffer        |
-| 💎 | Log levels                    | ✅ 5 levels                         | ✅ 8 POSIX levels                       | ✅ Done — DEBUG / INFO            |
-| 💎 | Serial debug output           | ⚠️ Requires WinDbg or DebugPrint    | ✅ `earlyprintk=serial`                 | ✅ Done — all entries to          |
-| 💎 | Numbered per-boot log files   | ❌ Not built-in                     | ❌ Not built-in                         | ✅ Done — `BOOT_NNN.LOG` on FAT32 |
-| 💎 | User-mode log syscall         | ✅ `ReportEvent()` / ETW            | ✅ `syslog()` / write to `/dev/log`     | ✅ Done — `SYS_LOG` syscall #17   |
-| 💎 | Boot-phase aware init         | ✅ Phase 0 / Phase 1                | ✅ `early_printk` before VFS            | ⬜ §1                             |
-| 💎 | Per-subsystem log splitting   | ✅ Event channels per source        | ✅ syslog facilities                    | ⬜ §2                             |
-| 💎 | Per-subsystem verbosity       | ✅ ETW session level filters        | ✅ per-facility log level               | ⬜ §3                             |
-| 💎 | Log rotation                  | ✅ Automatic (Event Log size limit) | ✅ logrotate                            | ⬜ §4                             |
-| 💎 | Rate limiting                 | ✅ ETW rate limiting built-in       | ⚠️ rsyslog rate-limit, not journald     | ⬜ §5                             |
-| ⭐ | Structured human-readable log | ❌ XML (verbose, hard to read       | ❌ Binary journal (requires journalctl) | ⬜ §6 — JSON Lines, any editor    |
-| 💎 | Remote log forwarding         | ✅ Windows Event Forwarding (WEF)   | ✅ rsyslog / syslog UDP                 | ⬜ §7                             |
-| ⭐ | Serial timestamp every entry  | ❌ Not standard                     | ❌ Not standard                         | ✅ Done — Impossible OS only      |
-
-> **After §1–§5:** Impossible OS matches Windows and Linux on all core logging capabilities.
-> **After §6:** `events.jsonl` beats both — Windows XML is verbose and Linux binary journal requires `journalctl`. Impossible OS logs are readable by any text editor, `grep`, `jq`, or custom tooling with zero dependencies.
+> After §1-§6, Impossible OS matches or exceeds Windows and Linux on all logging.
+> §6 (JSON Lines) and serial timestamps are exclusive competitive edges.
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] Headless QEMU serial log confirms `klog_early_init()` runs in Phase 0 before VFS
-- [ ] Headless QEMU serial log confirms `klog_disk_enable()` runs in Phase 2 after VFS ready
-- [ ] `C:\Impossible\System\Logs\network.log` exists and contains only `"net"` tagged entries
-- [ ] `C:\Impossible\System\Logs\boot.log` exists and contains only `"boot"` tagged entries
-- [ ] Forcing `klog_set_level("mm", LOG_WARN)` silences mm DEBUG entries in serial log
-- [ ] Writing beyond `MaxSize` threshold causes rotation: `kernel.log.1` appears, new `kernel.log` starts fresh
-- [ ] `events.jsonl` contains one valid JSON object per line; parseable by `jq`
-- [ ] Enabling syslog in Registry causes entries to appear on a test syslog server (UDP 514)
+- [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`
+- [ ] QEMU WHPX: serial log shows `klog_early_init()` in Phase 0, `klog_disk_enable()` in Phase 2
+- [ ] QEMU TCG: same as WHPX
+- [ ] VirtualBox: boot completes, log files created
+- [ ] `C:\Impossible\System\Logs\network.log` contains only `"net"` tagged entries
+- [ ] `C:\Impossible\System\Logs\boot.log` contains only `"boot"` tagged entries
+- [ ] `klog_set_level("mm", LOG_WARN)` silences mm DEBUG entries in serial
+- [ ] Rotation: `kernel.log.1` appears when `kernel.log` exceeds MaxSize
+- [ ] `events.jsonl` parseable by `jq` — one JSON object per line
+- [ ] Syslog: entries appear on test syslog server (UDP 514) when configured
+- [ ] Bare metal: log files written correctly to IXFS on SATA/NVMe
 - [ ] Commit: `"kernel: system-logging verified — splitting, rotation, JSON events, syslog"`
