@@ -83,11 +83,19 @@ Create a polished doc file following the quality standard of `docs/infrastructur
 
 Use a descriptive filename: `kernel-test-framework.md`, not `TODO-03.md`.
 
-### 6. Update indexes
+### 6. Update ALL indexes
 
-- **Remove** the TODO file: `git rm todo/<domain>/TODO-XX-name.md`
-- **Update** the domain INDEX.md: change the entry from active to completed with link to new doc
-- **Update** `CLAUDE.md` if the TODO was referenced there
+Three indexes must be updated:
+
+1. **Docs folder `index.md`** — add the new doc to `docs/<subfolder>/index.md`
+   - Add a row to the Documents table with the doc title and topic summary
+   - If `index.md` doesn't exist in the subfolder, create one following the pattern from `docs/infrastructure/index.md`
+
+2. **TODO domain `INDEX.md`** — move the entry from Active to Completed
+   - Remove from "Active TODOs" section
+   - Add to "Completed / Doc-converted" section with strikethrough and link to new doc
+
+3. **`CLAUDE.md`** — update if the TODO was referenced there
 
 ### 7. Handle XREF resolution
 

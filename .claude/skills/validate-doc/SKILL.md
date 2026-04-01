@@ -59,6 +59,7 @@ Every doc should have these sections (quality standard from `docs/infrastructure
 | Gotchas | Recommended | Hard-won lessons, common mistakes |
 | OS Comparison table | Yes | Win11 / Linux / Impossible OS columns |
 | References | Recommended | Links to source, related docs, specs |
+| Listed in folder index.md | Yes | Doc appears in `docs/<subfolder>/index.md` Documents table |
 
 ### 4. Check for missing content
 
