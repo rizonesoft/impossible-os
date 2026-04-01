@@ -311,9 +311,15 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         break;
     }
     case SYS_PIPE: {
-        int *user_fds = (int *)arg1;
-        if (!user_fds) { ret = -1; break; }
-        ret = (int64_t)pipe_create(user_fds);
+        HANDLE *user_handles = (HANDLE *)arg1;
+        HANDLE pipe_handles[2];
+        if (!user_handles) { ret = -1; break; }
+        ret = (int64_t)ob_create_pipe_handles(
+            &task_current()->handle_table, pipe_handles);
+        if (ret == 0) {
+            user_handles[0] = pipe_handles[0];  /* read end */
+            user_handles[1] = pipe_handles[1];  /* write end */
+        }
         break;
     }
     case SYS_SIGNAL: {

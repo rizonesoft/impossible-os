@@ -1,12 +1,13 @@
 /* ============================================================================
  * ob_file.c — File object type: callbacks, handle-based open/read
  *
- * Implements TODO-03 §5: ObpFileType with VFS node wrapper.
+ * Implements TODO-03 §5/§6: ObpFileType with VFS node wrapper and pipe support.
  * ============================================================================ */
 
 #include "kernel/ob/ob_file.h"
 #include "kernel/ob/ob.h"
 #include "kernel/fs/vfs.h"
+#include "kernel/ipc/pipe.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
 
@@ -14,7 +15,7 @@
 
 /*
  * file_on_close — called when the last handle to the file is closed.
- * Closes the underlying VFS node.
+ * Closes the underlying VFS node or pipe end.
  */
 static void file_on_close(void *body, uint32_t handle_count)
 {
@@ -22,7 +23,10 @@ static void file_on_close(void *body, uint32_t handle_count)
 
     (void)handle_count;
 
-    if (fo->vfs_node) {
+    if (fo->pipe_id >= 0) {
+        pipe_close(fo->pipe_id, fo->pipe_end);
+        fo->pipe_id = -1;
+    } else if (fo->vfs_node) {
         vfs_close(fo->vfs_node);
         fo->vfs_node = NULL;
     }
@@ -30,14 +34,16 @@ static void file_on_close(void *body, uint32_t handle_count)
 
 /*
  * file_on_delete — safety net when ref_count hits 0.
- * If the VFS node was never closed via on_close (kernel-internal ref
- * with no handle), close it here.
+ * If the resource was never closed via on_close, close it here.
  */
 static void file_on_delete(void *body)
 {
     FILE_OBJECT *fo = (FILE_OBJECT *)body;
 
-    if (fo->vfs_node) {
+    if (fo->pipe_id >= 0) {
+        pipe_close(fo->pipe_id, fo->pipe_end);
+        fo->pipe_id = -1;
+    } else if (fo->vfs_node) {
         vfs_close(fo->vfs_node);
         fo->vfs_node = NULL;
     }
@@ -86,6 +92,8 @@ HANDLE ob_create_file_handle(const char *path, uint32_t access)
     fo->vfs_node = node;
     fo->access   = access;
     fo->offset   = 0;
+    fo->pipe_id  = -1;
+    fo->pipe_end = 0;
 
     h = ObpAllocateHandle(&task_current()->handle_table, fo, access, 0);
     /* Drop the creation ref — the handle holds its own */
@@ -118,6 +126,12 @@ int64_t ob_file_read(HANDLE_TABLE *ht, HANDLE h, void *buf, uint32_t size)
         return -1;
 
     fo = (FILE_OBJECT *)entry->object;
+
+    /* Pipe read path */
+    if (fo->pipe_id >= 0)
+        return (int64_t)pipe_read(fo->pipe_id, buf, size);
+
+    /* VFS read path */
     if (!fo->vfs_node)
         return -1;
 
@@ -126,4 +140,93 @@ int64_t ob_file_read(HANDLE_TABLE *ht, HANDLE h, void *buf, uint32_t size)
         fo->offset += (uint64_t)bytes;
 
     return (int64_t)bytes;
+}
+
+int64_t ob_file_write(HANDLE_TABLE *ht, HANDLE h, const void *buf, uint32_t size)
+{
+    HANDLE_TABLE_ENTRY *entry;
+    OBJECT_HEADER *hdr;
+    FILE_OBJECT *fo;
+
+    if (!ht || !buf || size == 0)
+        return -1;
+
+    entry = ObpLookupHandle(ht, h);
+    if (!entry)
+        return -1;
+
+    hdr = OB_HEADER_FROM_BODY(entry->object);
+    if (hdr->type != ObpFileType)
+        return -1;
+
+    fo = (FILE_OBJECT *)entry->object;
+
+    /* Pipe write path */
+    if (fo->pipe_id >= 0)
+        return (int64_t)pipe_write(fo->pipe_id, buf, size);
+
+    /* VFS write path */
+    if (!fo->vfs_node)
+        return -1;
+
+    return (int64_t)vfs_write(fo->vfs_node, (uint32_t)fo->offset, size,
+                              (const uint8_t *)buf);
+}
+
+/* --- Pipe handle creation ------------------------------------------------ */
+
+int ob_create_pipe_handles(HANDLE_TABLE *ht, HANDLE handles[2])
+{
+    int pipe_fds[2];
+    FILE_OBJECT *fo_read, *fo_write;
+
+    if (!ht || !handles)
+        return -1;
+
+    if (pipe_create(pipe_fds) < 0)
+        return -1;
+
+    /* Create read-end file object */
+    fo_read = (FILE_OBJECT *)ob_alloc_object(ObpFileType);
+    if (!fo_read) {
+        pipe_close(pipe_fds[0], PIPE_READ);
+        pipe_close(pipe_fds[0], PIPE_WRITE);
+        return -1;
+    }
+    fo_read->vfs_node = NULL;
+    fo_read->access   = 0;
+    fo_read->offset   = 0;
+    fo_read->pipe_id  = pipe_fds[0];
+    fo_read->pipe_end = PIPE_READ;
+
+    /* Create write-end file object */
+    fo_write = (FILE_OBJECT *)ob_alloc_object(ObpFileType);
+    if (!fo_write) {
+        ObDereferenceObject(fo_read);  /* triggers pipe_close(read) */
+        pipe_close(pipe_fds[1], PIPE_WRITE);
+        return -1;
+    }
+    fo_write->vfs_node = NULL;
+    fo_write->access   = 0;
+    fo_write->offset   = 0;
+    fo_write->pipe_id  = pipe_fds[1];
+    fo_write->pipe_end = PIPE_WRITE;
+
+    /* Allocate handles */
+    handles[0] = ObpAllocateHandle(ht, fo_read, 0, 0);
+    handles[1] = ObpAllocateHandle(ht, fo_write, 0, 0);
+
+    /* Drop creation refs */
+    ObDereferenceObject(fo_read);
+    ObDereferenceObject(fo_write);
+
+    if (handles[0] == INVALID_HANDLE_VALUE || handles[1] == INVALID_HANDLE_VALUE) {
+        if (handles[0] != INVALID_HANDLE_VALUE)
+            ObpFreeHandle(ht, handles[0]);
+        if (handles[1] != INVALID_HANDLE_VALUE)
+            ObpFreeHandle(ht, handles[1]);
+        return -1;
+    }
+
+    return 0;
 }

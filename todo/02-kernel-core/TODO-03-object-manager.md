@@ -37,7 +37,7 @@
 | 💎  |   3   | Per-process handle table                                      | §2             |  [x]   |
 | 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [x]   |
 | 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [x]   |
-| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [ ]   |
+| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [x]   |
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [ ]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [ ]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3             |  [ ]   |
@@ -123,14 +123,14 @@ Register VFS nodes, tasks, and threads as first-class Ob-managed objects.
 ## 6. Synchronisation Object Types
 Re-register the existing event, mutex, semaphore, and timer primitives as Ob-managed objects so they can be named in `\BaseNamedObjects`, duplicated, and inherited.
 
-- [ ] Register `ObpEventType` — body wraps existing `event_t`; `on_delete` frees event state
-- [ ] Register `ObpMutexType` — body wraps existing `mutex_t`; `on_delete` frees mutex state; if thread holding the mutex is deleted, signal `MUTEX_ABANDONED`
-- [ ] Register `ObpSemaphoreType` — body wraps existing `semaphore_t`
-- [ ] Register `ObpTimerType` — body wraps timer state; `on_close` cancels the timer
-- [ ] Named variants: inserting into `\BaseNamedObjects\<name>` makes the object findable by name
-- [ ] `NtCreateEvent`, `NtOpenEvent`, `NtCreateMutex`, `NtOpenMutex`, `NtCreateSemaphore`, `NtCreateTimer` stubs — resolve name via Ob namespace, allocate or open, return HANDLE (→ XREF: TODO-05 §8)
-- [ ] Update `SYS_PIPE` to wrap the pipe read/write ends as two File objects in the handle table so pipes are closeable with `NtClose` like any other handle
-- [ ] Commit: `"kernel: ob — event, mutex, semaphore, timer object types"`
+- [x] Register `ObpEventType` — body wraps existing `event_t`; `on_delete` frees event state
+- [x] Register `ObpMutexType` — body wraps existing `mutex_t`; `on_delete` frees mutex state; if thread holding the mutex is deleted, signal `MUTEX_ABANDONED`
+- [x] Register `ObpSemaphoreType` — body wraps existing `semaphore_t`
+- [x] Register `ObpTimerType` — body wraps timer state; `on_close` cancels the timer
+- [x] Named variants: inserting into `\BaseNamedObjects\<name>` makes the object findable by name
+- [x] `NtCreateEvent`, `NtOpenEvent`, `NtCreateMutex`, `NtOpenMutex`, `NtCreateSemaphore`, `NtCreateTimer` stubs — resolve name via Ob namespace, allocate or open, return HANDLE (→ XREF: TODO-05 §8)
+- [x] Update `SYS_PIPE` to wrap the pipe read/write ends as two File objects in the handle table so pipes are closeable with `NtClose` like any other handle
+- [x] Commit: `"kernel: ob — event, mutex, semaphore, timer object types"`
 
 ## 7. Section (Shared Memory) Object Type
 Sections represent mappable memory objects; the foundation for `MapViewOfFile` and shared memory.
@@ -203,7 +203,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 | 💎 | Named namespace       | ✅ \BaseNamedObjects   | ✅ /proc, /sys       | ⬜ §4                        |
 | 💎 | File objects          | ✅ FILE_OBJECT         | ✅ struct file       | ✅ §5                        |
 | 💎 | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct       | ✅ §5                        |
-| 💎 | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem   | ⬜ §6                        |
+| 💎 | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem   | ✅ §6                        |
 | 💎 | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap    | ⬜ §7                        |
 | 💎 | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs  | ⬜ §8                        |
 | 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ⬜ §9, §10                   |

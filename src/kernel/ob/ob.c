@@ -9,6 +9,10 @@
 #include "kernel/ob/ob_file.h"
 #include "kernel/ob/ob_process.h"
 #include "kernel/ob/ob_thread.h"
+#include "kernel/ob/ob_event.h"
+#include "kernel/ob/ob_mutex.h"
+#include "kernel/ob/ob_semaphore.h"
+#include "kernel/ob/ob_timer.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
@@ -171,21 +175,13 @@ boot_result_t ob_init(void)
     ObpSymlinkType = ob_create_type(&(OBJECT_TYPE){
         .name = "SymbolicLink", .body_size = sizeof(OBJECT_SYMBOLIC_LINK)
     });
-    ObpEventType = ob_create_type(&(OBJECT_TYPE){
-        .name = "Event", .body_size = 0
-    });
-    ObpMutexType = ob_create_type(&(OBJECT_TYPE){
-        .name = "Mutant", .body_size = 0
-    });
-    ObpSemaphoreType = ob_create_type(&(OBJECT_TYPE){
-        .name = "Semaphore", .body_size = 0
-    });
+    ob_event_type_init();
+    ob_mutex_type_init();
+    ob_semaphore_type_init();
     ObpSectionType = ob_create_type(&(OBJECT_TYPE){
         .name = "Section", .body_size = 0
     });
-    ObpTimerType = ob_create_type(&(OBJECT_TYPE){
-        .name = "Timer", .body_size = 0
-    });
+    ob_timer_type_init();
 
     klog(LOG_INFO, "ob", "Registered %u built-in types",
          (uint64_t)g_ob_type_count);
