@@ -38,6 +38,7 @@
 #include "kernel/drivers/nvme.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/timer.h"
+#include "kernel/ob/ob.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 2 ------------------------------------------------------------ */
@@ -314,6 +315,22 @@ void boot_phase2(void)
              "Heap: %s (used: %u, free: %u bytes)",
              ok ? "OK" : "FAIL", heap_get_used(), heap_get_free());
     }
+
+    /* --- Object Manager: requires HEAP --- */
+    boot_splash_status("Initializing Object Manager...");
+    POST16(POST16_OB);
+    {
+        boot_result_t r = ob_init();
+        kernel_subsystem_set_ready(SUBSYS_OB, r != BOOT_FATAL);
+        if (r == BOOT_FATAL) {
+            boot_recovery_info_t ri = { SUBSYS_OB, POST16_OB_OK, BOOT_FATAL, 2 };
+            kernel_subsystem_dump();
+            boot_recovery_show(&ri);
+            boot_halt("Object Manager init failed");
+        }
+    }
+    POST16(POST16_OB_OK);
+    boot_progress(2, "OB", POST16_OB_OK);
 
     /* --- Registry: requires VFS --- */
     if (!kernel_subsystem_ready(SUBSYS_VFS)) {

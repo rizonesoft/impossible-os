@@ -54,7 +54,8 @@ typedef enum {
     SUBSYS_SMP      = 17,
     SUBSYS_EXEC     = 18,
     SUBSYS_DESKTOP  = 19,
-    SUBSYS_COUNT    = 20,  /* sentinel — keep last */
+    SUBSYS_OB       = 20,
+    SUBSYS_COUNT    = 21,  /* sentinel — keep last */
 } kernel_subsys_t;
 
 /* --- POST code constants --------------------------------------------------
@@ -211,6 +212,8 @@ typedef enum {
 #define POST16_NVME_IO_OK       0x20A5
 #define POST16_NVME_BLK         0x20A6
 #define POST16_NVME_BLK_OK      0x20A7
+#define POST16_OB               0x20B0
+#define POST16_OB_OK            0x20B1
 
 /* Phase 3 — Desktop (0x3000–0x3FFF) */
 #define POST16_SCHED            0x3000

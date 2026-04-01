@@ -18,6 +18,7 @@
 
 #include "kernel/types.h"
 #include "kernel/ipc/signal.h"
+#include "kernel/ob/handle_table.h"
 
 /* Task states */
 #define TASK_RUNNING    0   /* currently on the CPU */
@@ -103,6 +104,8 @@ struct task {
     uint8_t     _fpu_pad[7];
     /* --- Signal state --- */
     struct signal_state signals;         /* per-task signal handlers + pending mask */
+    /* --- Object Manager handle table --- */
+    HANDLE_TABLE handle_table;           /* per-process handle table (§3) */
 };
 
 /* Task entry function type */
