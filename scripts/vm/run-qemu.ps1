@@ -24,7 +24,9 @@ Param(
     [int]$Yres = 720,
     [ValidateSet('auto','whpx','tcg')]
     [string]$Accel = 'auto',
-    [int]$Smp = 0  # 0 = auto (2 for WHPX/KVM, 1 for TCG)
+    [int]$Smp = 0,  # 0 = auto (2 for WHPX/KVM, 1 for TCG)
+    [switch]$DebugTests,  # boot with debug=1 (unit + boot tests)
+    [switch]$TestOnly     # boot with test=1 (unit tests, then shutdown)
 )
 
 $ErrorActionPreference = "Stop"
@@ -132,4 +134,21 @@ $QemuArgs += @(
     '-no-reboot'
 )
 
-& $QEMU @QemuArgs
+# Patch boot.conf if debug/test mode requested
+$PatchKey = $null
+if ($DebugTests) { $PatchKey = 'debug'; $PatchVal = '1' }
+if ($TestOnly)   { $PatchKey = 'test';  $PatchVal = '1' }
+
+if ($PatchKey) {
+    Write-Host "  Mode:   $PatchKey=$PatchVal" -ForegroundColor Cyan
+    & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh $PatchKey $PatchVal"
+}
+
+try {
+    & $QEMU @QemuArgs
+} finally {
+    # Always restore boot.conf to defaults
+    if ($PatchKey) {
+        & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset"
+    }
+}

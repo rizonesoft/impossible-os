@@ -32,19 +32,19 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **Shell scripts** (`.sh`) | 21 | 3426 |
-| **Makefile** | 1 | 812 |
+| **Shell scripts** (`.sh`) | 22 | 3502 |
+| **Makefile** | 1 | 824 |
 | **Linker scripts** (`.ld`/`.lds`) | 2 | 125 |
-| **Subtotal** | **24** | **4363** |
+| **Subtotal** | **25** | **4451** |
 
 ## Grand Total
 
 | | Files | Lines |
 |---|---:|---:|
-| **All project code** | **391** | **136085** |
+| **All project code** | **392** | **136173** |
 
 > Vendored code excluded: ~13785 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 
 ---
 
-*Last updated: 2026-04-01 19:59 · commit `735fa01`*
+*Last updated: 2026-04-01 20:12 · commit `ead9dd9`*

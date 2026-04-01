@@ -3,10 +3,12 @@
 # scripts/run-qemu.sh — Launch Impossible OS in QEMU (UEFI boot via OVMF)
 #
 # Usage:
-#   ./scripts/run-qemu.sh               # Normal boot (2 CPUs)
-#   ./scripts/run-qemu.sh --single-cpu   # 1 CPU (for bisecting SMP bugs)
-#   ./scripts/run-qemu.sh --debug        # Paused boot waiting for GDB on :1234
-#   ./scripts/run-qemu.sh --headless     # No display, serial only
+#   ./scripts/run-qemu.sh                  # Normal boot (2 CPUs)
+#   ./scripts/run-qemu.sh --debug-tests    # Boot with debug=1 (unit + boot tests)
+#   ./scripts/run-qemu.sh --test-only      # Boot with test=1 (unit tests, then shutdown)
+#   ./scripts/run-qemu.sh --single-cpu     # 1 CPU (for bisecting SMP bugs)
+#   ./scripts/run-qemu.sh --debug          # Paused boot waiting for GDB on :1234
+#   ./scripts/run-qemu.sh --headless       # No display, serial only
 # =============================================================================
 
 set -euo pipefail
@@ -63,6 +65,7 @@ fi
 # Parse arguments
 DEBUG=false
 HEADLESS=false
+PATCH_CONF=""
 
 for arg in "$@"; do
     case "$arg" in
@@ -75,13 +78,27 @@ for arg in "$@"; do
         --single-cpu)
             SMP=1
             ;;
+        --debug-tests)
+            PATCH_CONF="debug=1"
+            ;;
+        --test-only)
+            PATCH_CONF="test=1"
+            ;;
         *)
             echo "Unknown argument: $arg"
-            echo "Usage: $0 [--debug] [--headless] [--single-cpu]"
+            echo "Usage: $0 [--debug] [--headless] [--single-cpu] [--debug-tests] [--test-only]"
             exit 1
             ;;
     esac
 done
+
+# Patch boot.conf if requested
+if [ -n "$PATCH_CONF" ]; then
+    KEY="${PATCH_CONF%%=*}"
+    VAL="${PATCH_CONF##*=}"
+    bash "$SCRIPT_DIR/patch-boot-conf.sh" "$KEY" "$VAL"
+    trap 'bash "$SCRIPT_DIR/patch-boot-conf.sh" reset' EXIT
+fi
 
 # Auto SMP: 2 for KVM, 1 for TCG
 if [ "$SMP" -eq 0 ]; then

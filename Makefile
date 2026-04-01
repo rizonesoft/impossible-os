@@ -402,6 +402,18 @@ run: all
 		-rtc base=localtime \
 		-no-reboot
 
+## run-debug: Build + boot with debug=1 (unit tests + boot tests run)
+run-debug: all
+	@bash scripts/patch-boot-conf.sh debug 1
+	@$(MAKE) --no-print-directory run
+	@bash scripts/patch-boot-conf.sh reset
+
+## run-test: Build + boot with test=1 (unit tests only, then shutdown)
+run-test: all
+	@bash scripts/patch-boot-conf.sh test 1
+	@$(MAKE) --no-print-directory run
+	@bash scripts/patch-boot-conf.sh reset
+
 ## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
 ## test-usb-img: Create a 64 MiB FAT32 test USB disk image
 USB_TEST_IMG := $(BUILD_DIR)/test-usb.img
