@@ -23,7 +23,8 @@ Param(
     [int]$Xres = 1280,
     [int]$Yres = 720,
     [ValidateSet('auto','whpx','tcg')]
-    [string]$Accel = 'auto'
+    [string]$Accel = 'auto',
+    [int]$Smp = 0  # 0 = auto (2 for WHPX/KVM, 1 for TCG)
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,8 +76,14 @@ $VgaDevice = if ($Yres -ge 2160) { "bochs-display" } `
 $CpuModel = if ($Accel -eq 'tcg') { 'qemu64' } else { 'Haswell' }
 $TimerExpected = if ($Accel -eq 'tcg') { 'PIT (TCG path)' } else { 'LAPIC (HW accel path)' }
 
+# SMP: default 2 CPUs for HW-accel (test SMP), 1 for TCG (too slow for multi-CPU)
+if ($Smp -eq 0) {
+    $Smp = if ($Accel -eq 'tcg') { 1 } else { 2 }
+}
+
 Write-Host "Launching Impossible OS at ${Xres}x${Yres} (HiDPI scale=${Scale}x)..." -ForegroundColor Green
 Write-Host "  Accel:  $Accel" -ForegroundColor DarkGray
+Write-Host "  CPUs:   $Smp" -ForegroundColor DarkGray
 Write-Host "  Timer:  $TimerExpected" -ForegroundColor DarkGray
 Write-Host "  Disk:   $DISK" -ForegroundColor DarkGray
 Write-Host "  Device: $VgaDevice" -ForegroundColor DarkGray
@@ -104,6 +111,8 @@ switch ($Accel) {
         $QemuArgs += '-accel', 'whpx', '-accel', 'tcg'
     }
 }
+
+$QemuArgs += '-smp', "$Smp"
 
 $QemuArgs += @(
     '-cpu', $CpuModel,

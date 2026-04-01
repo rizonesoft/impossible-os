@@ -3,9 +3,10 @@
 # scripts/run-qemu.sh — Launch Impossible OS in QEMU (UEFI boot via OVMF)
 #
 # Usage:
-#   ./scripts/run-qemu.sh          # Normal boot
-#   ./scripts/run-qemu.sh --debug  # Paused boot waiting for GDB on :1234
-#   ./scripts/run-qemu.sh --headless  # No display, serial only
+#   ./scripts/run-qemu.sh               # Normal boot (2 CPUs)
+#   ./scripts/run-qemu.sh --single-cpu   # 1 CPU (for bisecting SMP bugs)
+#   ./scripts/run-qemu.sh --debug        # Paused boot waiting for GDB on :1234
+#   ./scripts/run-qemu.sh --headless     # No display, serial only
 # =============================================================================
 
 set -euo pipefail
@@ -46,9 +47,14 @@ QEMU_FLAGS=(
     -no-shutdown
 )
 
+# Default SMP: 2 CPUs for KVM (test SMP), 1 for TCG (too slow)
+SMP=0  # 0 = auto
+
 # Check for KVM support
+HAS_KVM=false
 if [ -c /dev/kvm ] && [ -w /dev/kvm ]; then
     QEMU_FLAGS+=(-enable-kvm -cpu host)
+    HAS_KVM=true
     echo "[QEMU] KVM acceleration enabled"
 else
     echo "[QEMU] KVM not available, using TCG (slower)"
@@ -66,13 +72,27 @@ for arg in "$@"; do
         --headless)
             HEADLESS=true
             ;;
+        --single-cpu)
+            SMP=1
+            ;;
         *)
             echo "Unknown argument: $arg"
-            echo "Usage: $0 [--debug] [--headless]"
+            echo "Usage: $0 [--debug] [--headless] [--single-cpu]"
             exit 1
             ;;
     esac
 done
+
+# Auto SMP: 2 for KVM, 1 for TCG
+if [ "$SMP" -eq 0 ]; then
+    if [ "$HAS_KVM" = true ]; then
+        SMP=2
+    else
+        SMP=1
+    fi
+fi
+QEMU_FLAGS+=(-smp "$SMP")
+echo "[QEMU] CPUs: $SMP"
 
 # Debug mode: pause CPU, open GDB port
 if [ "$DEBUG" = true ]; then
