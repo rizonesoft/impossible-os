@@ -582,6 +582,25 @@ After §1–9, Impossible OS reaches full Windows 11 ALPC parity — the only ke
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_alpc()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_alpc.c` with:
+  - Port create: `NtCreatePort` returns valid handle, port object in namespace
+  - Port connect: client `NtConnectPort` to server → connection handle valid on both sides
+  - Send/receive: client sends 64-byte message → server `NtReplyWaitReceivePort` receives matching data
+  - Reply: server replies → client receives reply with correct data
+  - Max message size enforced: message exceeding `MaxMessageLength` rejected
+  - Port close: closing server port → pending client receives `STATUS_PORT_DISCONNECTED`
+  - Multiple clients: 3 clients connect to 1 server, each gets independent connection
+  - View section: `NtCreateSection` + attach to port → shared memory accessible from both sides
+- [ ] Register in `test_runner_init()`: `test_register_alpc()`
+- [ ] Commit: `"test: add ALPC message port test suite"`
+
+---
+
 ## Verification
 
 - [ ] **Unit test — connection handshake**: two kernel tasks; task A creates `\RPC Control\TestPort`; task B calls `NtAlpcConnectPort`; task A calls `NtAlpcAcceptConnectPort`; verify both ends hold valid port handles; verify `NtAlpcDisconnectPort` sends `PORT_CLOSED` to peer.

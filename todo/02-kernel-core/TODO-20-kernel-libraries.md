@@ -358,6 +358,30 @@ hardware RNG, while remaining safe on hardware without RDRAND.
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_klibs()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_klibs.c` with:
+  - `snprintf(buf, 32, "%d", 42)` → `"42"`, returns 2
+  - `snprintf(buf, 32, "%s %s", "hello", "world")` → `"hello world"`
+  - `snprintf(buf, 32, "0x%x", 0xDEAD)` → `"0xdead"`
+  - `snprintf(buf, 4, "hello")` → `"hel"` (truncated, NUL-terminated)
+  - `strlen("test")` → 4
+  - `strcmp("abc", "abc")` → 0; `strcmp("abc", "abd")` → negative
+  - `memcpy` 256-byte round-trip → destination matches source
+  - `memset(buf, 0xAA, 64)` → all bytes are 0xAA
+  - `memcmp(a, a, 32)` → 0; `memcmp(a, b, 32)` → non-zero when different
+  - LZ4 compress/decompress round-trip: 1 KiB input → compressed → decompressed matches original
+  - CRC32: known input → matches precomputed CRC
+  - SHA-256: `"abc"` → known hash `ba7816bf...`
+  - AES-128-ECB: encrypt + decrypt round-trip → plaintext matches
+- [ ] Register in `test_runner_init()`: `test_register_klibs()`
+- [ ] Commit: `"test: add kernel libraries test suite"`
+
+---
+
 ## Verification
 
 - [ ] **snprintf**: `snprintf(buf, sizeof buf, "%08x %s %d", 0xDEAD, "os", 42)` → `"0000dead os 42"` byte-for-byte; truncation test: `snprintf(buf, 5, "hello world")` → `"hell\0"`, returns `11`.

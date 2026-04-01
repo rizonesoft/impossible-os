@@ -544,8 +544,8 @@
 
 ## OS Comparison
 
-| ⭐ | Feature                             | Win11                   | Linux                        | Impossible OS                    |
-|----|-------------------------------------|-------------------------|------------------------------|----------------------------------|
+| ⭐ | Feature                             | Win11                   | Linux                         | Impossible OS                    |
+|----|-------------------------------------|-------------------------|-------------------------------|----------------------------------|
 | 💎 | Token-based identity                | ✅ Full                 | ⚠️ UID/GID only              | ⬜ §4                            |
 | 💎 | DACL access check on every object   | ✅ Full                 | ⚠️ POSIX permission bits     | ⬜ §5                            |
 | 💎 | Mandatory Integrity Control         | ✅ Vista+               | ⚠️ SELinux/AppArmor (add-on) | ⬜ §6                            |
@@ -554,11 +554,42 @@
 | 💎 | Thread impersonation                | ✅ Full                 | ❌ Not available             | ⬜ §7                            |
 | 💎 | SDDL string security descriptors    | ✅ Full                 | ❌ Not available             | ⬜ §10                           |
 | 💎 | NtFilterToken / restricted tokens   | ✅ Full                 | ❌ Not available             | ⬜ §9                            |
-| ⭐ | Live token inspector in tray        | ❌ CLI only (whoami)    | ❌ CLI only                  | ⬜ §11 — 🚀                      |
-| ⭐ | Integrated IL badge in File Manager | ❌ Hidden in properties | ❌ Not available             | ⬜ §11 + `09-desktop-shell` 🚀   |
-| ⭐ | Real-time ACL denial toast          | ❌ Event log only       | ❌ auditd log only           | ⬜ Planned — `10-services` 🚀    |
+| ⭐ | Live token inspector in tray        | ❌ CLI only (whoami)    | ❌ CLI only                  | ⬜ §11 —                         |
+| ⭐ | Integrated IL badge in File Manager | ❌ Hidden in properties | ❌ Not available             | ⬜ §11 + `09-desktop-shell`      |
+| ⭐ | Real-time ACL denial toast          | ❌ Event log only       | ❌ auditd log only           | ⬜ Planned — `10-services`       |
 
 After §1–10, Impossible OS reaches full Windows 11 security architecture parity — SID tokens, DACL/SACL access checks, MIC integrity levels, privilege separation, and UAC elevation are all present. Linux with only POSIX permissions and optional MAC add-ons (SELinux/AppArmor) is strictly weaker. The tray token inspector (§11) and integrated IL badges in the File Manager are exclusive features that make Impossible OS's security model visible and actionable to developers and power users.
+
+---
+
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_security()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_security.c` with:
+  - `RtlEqualSid(SeLocalSystemSid, SeLocalSystemSid)` → true
+  - `RtlEqualSid(SeLocalSystemSid, SeWorldSid)` → false
+  - `RtlLengthSid(SeLocalSystemSid)` → 12 (8 + 4×1)
+  - `RtlConvertSidToString(SeLocalSystemSid)` → `"S-1-5-18"`
+  - `RtlConvertSidToString(SeBuiltinAdministratorsSid)` → `"S-1-5-32-544"`
+  - `NtAllocateLocallyUniqueId()` × 2 → different LUIDs
+  - `RtlPrivilegeLuidToName(&SeShutdownPrivilege)` → `"SeShutdownPrivilege"`
+  - `RtlCreateAcl` + `RtlAddAccessAllowedAce` + `RtlGetAce` → ACE SID matches input
+  - `RtlAbsoluteToSelfRelativeSD` + `RtlSelfRelativeToAbsoluteSD` round-trip preserves Owner SID
+  - `SeCreateDefaultSD(SE_SD_TYPE_DEFAULT)` → non-NULL
+  - `SeCreateSystemToken()` → non-NULL, PrivilegeCount=24, IL=System
+  - `SeCreateUserToken(SeLocalSystemSid, 0)` → Medium IL, 3 privileges
+  - `SeCreateUserToken(SeLocalSystemSid, 1)` → High IL, IsElevated=1
+  - `NtQueryInformationToken(TokenUser)` → returns UserSid matching token
+  - `NtAdjustPrivilegesToken` enable SeShutdownPrivilege → SE_PRIVILEGE_ENABLED set
+  - `NtDuplicateToken` effective_only=1 → disabled privileges stripped from copy
+  - `NtAdjustGroupsToken` deny-only group cannot be re-enabled
+  - `SeAccessCheck` kernel bypass: KernelMode → always grant
+  - `SeAccessCheck` DACL deny before allow: deny ACE for user → deny even if allow follows
+  - `SeCheckMandatoryAccess` No-Write-Up: Low IL writing Medium IL object → deny
+- [ ] Register in `test_runner_init()`: `test_register_security()`
+- [ ] Commit: `"test: add security reference monitor test suite"`
 
 ---
 

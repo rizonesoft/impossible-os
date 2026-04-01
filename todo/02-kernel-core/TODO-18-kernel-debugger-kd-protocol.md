@@ -550,6 +550,25 @@ kernel development smoother.
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_kd()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_kd.c` with:
+  - KD packet framing: `kd_build_packet(DATA, payload)` produces valid header (leader, type, length, checksum)
+  - KD checksum: `kd_checksum(data, len)` matches manual calculation
+  - Memory read: `kd_read_memory(kernel_main_addr, 4)` returns non-zero bytes (kernel code present)
+  - Register read: `kd_get_context()` returns CONTEXT with valid RIP (in kernel text range)
+  - Breakpoint: `kd_set_breakpoint(addr)` → INT3 written at addr; `kd_clear_breakpoint` restores original byte
+  - Symbol lookup: `kd_lookup_symbol("kernel_main")` returns address matching `symtab_resolve`
+  - DbgPrint: `DbgPrint("test %d", 42)` → formatted string in KD output buffer
+  - Serial transport: `kd_serial_send(buf, len)` writes correct bytes to COM port (mock serial)
+- [ ] Register in `test_runner_init()`: `test_register_kd()`
+- [ ] Commit: `"test: add kernel debugger (KD protocol) test suite"`
+
+---
+
 ## Verification
 
 - [ ] **115200 baud**: connect a terminal emulator (PuTTY / minicom) at

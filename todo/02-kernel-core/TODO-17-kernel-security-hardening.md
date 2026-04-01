@@ -470,6 +470,27 @@ KASLR slide (for post-mortem analysis) are minor implementation-quality exclusiv
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_cpu_security()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_cpu_security.c` with:
+  - NX verification: `EFER.NXE` bit set (read MSR 0xC0000080)
+  - SMEP verification: CR4.SMEP set OR hypervisor EPT enforces (platform-dependent)
+  - SMAP verification: CR4.SMAP set OR hypervisor EPT enforces
+  - KPTI: user-mode PML4 entries don't map kernel text (when per-process PT active)
+  - Stack canary: `__stack_chk_guard` is non-zero and randomized
+  - KASLR: kernel base != default 0x100000 (when KASLR enabled)
+  - W^X kernel pages: text pages are R-X (not writable), data pages are RW- (not executable)
+  - Spectre v2: IBRS or retpoline active (check MSR or compiler flag)
+  - CET: if CPU supports CET, IBT/SHSTK status verified
+  - UMIP: if CPU supports UMIP, CR4.UMIP set
+- [ ] Register in `test_runner_init()`: `test_register_cpu_security()`
+- [ ] Commit: `"test: add CPU security hardening test suite"`
+
+---
+
 ## Verification
 
 - [ ] **NX**: map a heap page and attempt to `jmp` to it; must raise `#PF` with error code bit 4 (Instruction Fetch) set.

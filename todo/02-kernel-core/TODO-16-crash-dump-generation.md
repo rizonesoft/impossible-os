@@ -529,6 +529,25 @@ After §1–8, Impossible OS reaches full Windows 11 crash-dump parity: WinDbg-c
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_crashdump()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_crashdump.c` with:
+  - Minidump header: `minidump_init()` produces valid MDMP signature (`"MDMP"`)
+  - Thread list stream: current thread's RIP/RSP captured in dump
+  - Module list stream: kernel.exe appears with correct base address
+  - Memory region: stack region included in memory dump
+  - Exception record: `EXCEPTION_RECORD` fields populated from test fault context
+  - Symbol resolution: `symtab_resolve(kernel_main)` returns correct name
+  - Black-box recorder: `bbr_write("test")` → `bbr_read()` returns `"test"` after simulated restart
+  - Dump file write: `crashdump_write()` produces non-empty file on disk (mock VFS)
+- [ ] Register in `test_runner_init()`: `test_register_crashdump()`
+- [ ] Commit: `"test: add crash dump generation test suite"`
+
+---
+
 ## Verification
 
 - [ ] **STOP code**: trigger `KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH, 1, 2, 3, 4)` from a shell command; BSOD screen shows `STOP: 0x000000E2 (0x1, 0x2, 0x3, 0x4)`; Registry `HKLM\SYSTEM\LastBugCheck\Code` == `0xE2`.

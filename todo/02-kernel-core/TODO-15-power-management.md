@@ -506,6 +506,24 @@ After §1–9, Impossible OS reaches full Windows 11 and Linux parity for every 
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_power()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_power.c` with:
+  - ACPI sleep type lookup: `acpi_get_slp_typ(S5)` returns valid SLP_TYPa/b values
+  - Power state query: `PoGetSystemPowerState()` returns `PowerSystemWorking` during boot
+  - Device D-state: `PoSetDevicePowerState(dev, D0)` succeeds for active device
+  - Idle detection: CPU idle counter increments when no work scheduled
+  - Thermal zone: `acpi_get_temperature()` returns plausible value (20–100°C) or graceful skip if no zone
+  - Shutdown path: `acpi_shutdown()` writes correct PM1a_CNT value (verify register, don't actually shut down)
+  - Reboot path: `acpi_reboot()` writes to correct reset register
+- [ ] Register in `test_runner_init()`: `test_register_power()`
+- [ ] Commit: `"test: add power management test suite"`
+
+---
+
 ## Verification
 
 - [ ] **S1 idle**: run `powercfg /query`; set `SleepTimeout=0`, `HibernateTimeout=0`; confirm CPU stays at `HLT` when scheduler is idle (verify via PMU idle counter).

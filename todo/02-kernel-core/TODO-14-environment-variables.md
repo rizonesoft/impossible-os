@@ -391,6 +391,25 @@ The `source` / `.` command (§8.3) is a genuine differentiator over Windows cmd.
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_env()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_env.c` with:
+  - `SetEnvironmentVariable("TEST_KEY", "hello")` + `GetEnvironmentVariable("TEST_KEY")` → `"hello"`
+  - Delete: `SetEnvironmentVariable("TEST_KEY", NULL)` → subsequent get returns 0
+  - `ExpandEnvironmentStrings("%TEST_KEY%")` → expanded value
+  - Nonexistent var: `%NOEXIST%` left as-is or empty per Windows semantics
+  - `GetEnvironmentStrings()` → block contains `PATH=`, `SystemRoot=`
+  - Child inherits parent env: set var, fork, child reads same var
+  - `PATH` search: `SearchPath(NULL, "hello.exe")` finds binary in `C:\Impossible\System32\`
+  - Case insensitivity: `%path%` and `%PATH%` resolve to same value
+- [ ] Register in `test_runner_init()`: `test_register_env()`
+- [ ] Commit: `"test: add environment variables test suite"`
+
+---
+
 ## Verification
 
 - [ ] **env_get/set**: kernel unit test — create a task with empty environ; `env_set(t, "GREETING", "hello")`; `env_get(t, "GREETING")` → `"hello"`; `env_unset(t, "GREETING")`; `env_get(t, "GREETING")` → `NULL`.

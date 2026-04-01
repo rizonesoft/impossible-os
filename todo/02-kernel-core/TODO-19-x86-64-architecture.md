@@ -514,6 +514,28 @@ PKU that neither Windows (hidden) nor Linux (raw syscalls) exposes.
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_x86()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Boot tests run with `debug=1` or `test=1` in boot.conf.
+
+- [ ] Create `src/kernel/test/test_x86.c` with:
+  - MSR read: `rdmsr(IA32_EFER)` returns value with NXE bit set
+  - MSR write/read round-trip: write scratch MSR, read back matches (platform-dependent)
+  - XSAVE area: `xsave_area_size()` returns > 0 when XSAVE enabled
+  - CPUID leaf 0x01: returns valid family/model/stepping (non-zero)
+  - CPUID leaf 0x07: feature flags readable without fault
+  - CR4 read: CR4 value has expected bits (PSE, PAE, PGE set for x86-64)
+  - GDT/IDT base: `sgdt`/`sidt` return non-zero base addresses
+  - TSC monotonic: two `rdtsc()` calls → second >= first
+  - 1 GiB page support: `cpu_has(CPU_FEATURE_PAGE1GB)` matches CPUID leaf
+  - Per-CPU data: `smp_this_cpu()` returns valid CPU struct (non-NULL, valid ID)
+  - UMIP: if enabled, `sidt` from ring 3 causes #GP (can't test from ring 0 directly)
+- [ ] Register in `test_runner_init()`: `test_register_x86()`
+- [ ] Commit: `"test: add x86-64 architecture test suite"`
+
+---
+
 ## Verification
 
 - [ ] **XSAVE round-trip**: load YMM0–15 with known values; context switch to another task; switch back; verify YMM values intact via `XRSTOR` + read.

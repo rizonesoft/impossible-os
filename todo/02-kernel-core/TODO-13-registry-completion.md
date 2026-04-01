@@ -517,6 +517,29 @@ Sections §8–10 deliver a set of exclusive features that exceed Windows 11: in
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_registry_ext()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+> Existing `test_registry.c` covers basic REG_DWORD/REG_SZ. This extends it.
+
+- [ ] Create `src/kernel/test/test_registry_ext.c` with:
+  - `RegCreateKeyEx` + `RegCloseKey` round-trip: key exists after create
+  - `RegSetValueEx(REG_DWORD)` + `RegQueryValueEx` → same value back
+  - `RegSetValueEx(REG_SZ)` + `RegQueryValueEx` → same string back
+  - `RegSetValueEx(REG_MULTI_SZ)` → multiple NUL-separated strings preserved
+  - `RegSetValueEx(REG_BINARY)` → raw bytes preserved
+  - `RegDeleteValue` → subsequent query returns `ERROR_FILE_NOT_FOUND`
+  - `RegDeleteKey` → subsequent open returns `ERROR_FILE_NOT_FOUND`
+  - `RegEnumKeyEx` → enumerates subkeys in creation order
+  - `RegEnumValue` → enumerates values in creation order
+  - Hive flush: `RegFlushKey` → re-read from disk matches in-memory state
+  - Key path depth: 10 nested subkeys → all accessible
+  - Value size limit: write 4096-byte REG_BINARY → succeeds; write 65536 → fails gracefully
+- [ ] Register in `test_runner_init()`: `test_register_registry_ext()`
+- [ ] Commit: `"test: add extended registry test suite"`
+
+---
+
 ## Verification
 
 - [ ] **Access rights**: `RegOpenKeyEx(HKLM\SOFTWARE, KEY_SET_VALUE)` from a `Medium` IL process against a key with `Admins-only` DACL → returns `ERROR_ACCESS_DENIED`; `RegOpenKeyEx` as SYSTEM → returns `ERROR_SUCCESS`.
