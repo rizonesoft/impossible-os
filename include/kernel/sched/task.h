@@ -106,6 +106,8 @@ struct task {
     struct signal_state signals;         /* per-task signal handlers + pending mask */
     /* --- Object Manager handle table --- */
     HANDLE_TABLE handle_table;           /* per-process handle table (§3) */
+    /* --- Security token --- */
+    void *token;                         /* ACCESS_TOKEN * (NULL until SRM assigns one) */
 };
 
 /* Task entry function type */

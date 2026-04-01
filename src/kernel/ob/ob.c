@@ -93,8 +93,25 @@ void *ob_alloc_object(const OBJECT_TYPE *type)
     if (total > PMM_FRAME_SIZE)
         hdr->flags |= OB_FLAG_PMM_ALLOC;
 
-    /* Attach default security descriptor (kernel objects get the generic SD) */
-    hdr->security = (SECURITY_DESCRIPTOR *)SeCreateDefaultSD(SE_SD_TYPE_DEFAULT);
+    /* Attach security descriptor: if the current task has a token, build
+     * a creator SD with the user's SID; otherwise use the kernel default. */
+    {
+        struct task *cur = task_current();
+        if (cur && cur->token) {
+            /* Use a stack-local absolute SD + DACL workspace.
+             * The SD pointers reference static SIDs so they remain valid. */
+            static SECURITY_DESCRIPTOR s_creator_sd;
+            static uint8_t s_creator_dacl[128];
+            ACCESS_TOKEN *tok = (ACCESS_TOKEN *)cur->token;
+            if (SeCreateCreatorSD(&s_creator_sd, tok->UserSid,
+                                  s_creator_dacl, sizeof(s_creator_dacl)) == 0)
+                hdr->security = &s_creator_sd;
+            else
+                hdr->security = (SECURITY_DESCRIPTOR *)SeCreateDefaultSD(SE_SD_TYPE_DEFAULT);
+        } else {
+            hdr->security = (SECURITY_DESCRIPTOR *)SeCreateDefaultSD(SE_SD_TYPE_DEFAULT);
+        }
+    }
 
     return OB_BODY_FROM_HEADER(hdr);
 }

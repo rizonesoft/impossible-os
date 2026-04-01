@@ -33,3 +33,17 @@ uint32_t SeGetDefaultSDSize(uint32_t type);
  * Called once from ob_init() or security subsystem init.
  */
 void se_default_sds_init(void);
+
+/* Forward-declare (uses acl.h types) */
+#include "kernel/security/acl.h"
+
+/*
+ * SeCreateCreatorSD — build an absolute SD owned by creator_sid with
+ * DACL: (A;;GA;;;creator)(A;;GA;;;SY)(A;;GR;;;WD).
+ * Writes into sd_out (caller provides storage).
+ * dacl_buf/dacl_buf_size: workspace for the DACL.
+ * Returns 0 on success, -1 on error.
+ */
+int SeCreateCreatorSD(SECURITY_DESCRIPTOR *sd_out,
+                      const SID *creator_sid,
+                      void *dacl_buf, uint32_t dacl_buf_size);

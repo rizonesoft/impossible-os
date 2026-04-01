@@ -40,7 +40,7 @@
 | 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [x]   |
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T11 §1,§3  |  [x]   |
-| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3             |  [ ]   |
+| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T11 §4     |  [ ]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [ ]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [ ]   |
 
@@ -150,7 +150,7 @@ Attach DACL/SACL/Owner/Group to named objects so the Security Reference Monitor 
 - [x] `ObGetSecurityDescriptor(object, &sd)` — returns current SD
 - [x] In `ObpAllocateHandle`: call `type->on_open(object, access)` if `header->security` is non-NULL — deny handle creation on access denied (full SeAccessCheck wired in TODO-11 §5)
 - [x] Default SD for kernel-created objects: DACL granting `GENERIC_ALL` to SYSTEM SID (via `SeCreateDefaultSD(SE_SD_TYPE_DEFAULT)` in `ob_alloc_object`)
-- [ ] Default SD for user-created named objects: DACL granting `GENERIC_ALL` to creator SID (requires ACCESS_TOKEN — deferred to TODO-11 §4)
+- [x] Default SD for user-created named objects: DACL granting `GENERIC_ALL` to creator SID (via `SeCreateCreatorSD` using `task->token->UserSid`)
 - [x] Commit: `"kernel: ob — security descriptor storage and access check hook"`
 
 ## 9. NtClose / NtDuplicateObject / NtQueryObject

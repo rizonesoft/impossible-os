@@ -144,3 +144,27 @@ uint32_t SeGetDefaultSDSize(uint32_t type)
 
     return g_sd_sizes[type];
 }
+
+/* ---- SeCreateCreatorSD -------------------------------------------------- */
+
+int SeCreateCreatorSD(SECURITY_DESCRIPTOR *sd_out,
+                      const SID *creator_sid,
+                      void *dacl_buf, uint32_t dacl_buf_size)
+{
+    ACL *dacl;
+
+    if (!sd_out || !creator_sid || !dacl_buf || dacl_buf_size < 64)
+        return -1;
+
+    dacl = (ACL *)dacl_buf;
+    RtlCreateAcl(dacl, (uint16_t)dacl_buf_size, ACL_REVISION);
+    RtlAddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, creator_sid);
+    RtlAddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, SeLocalSystemSid);
+    RtlAddAccessAllowedAce(dacl, ACL_REVISION, READ_CONTROL, SeWorldSid);
+
+    RtlCreateSecurityDescriptor(sd_out, SECURITY_DESCRIPTOR_REVISION);
+    RtlSetOwnerSecurityDescriptor(sd_out, (SID *)creator_sid, 0);
+    RtlSetDaclSecurityDescriptor(sd_out, 1, dacl, 0);
+
+    return 0;
+}
