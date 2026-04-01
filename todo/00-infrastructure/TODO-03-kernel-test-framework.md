@@ -41,7 +41,7 @@
 | 💎  |   2   | `make test` target with QEMU headless + serial parse   | §1         |  [x]   |
 | 💎  |   3   | Add OB, security, and NVMe test suites                 | §1         |  [x]   |
 | ⭐  |   4   | Pre-push git hook for local smoke test                 | §2         |  [x]   |
-| ⭐  |   5   | Test coverage tracking and dashboard                   | §2         |  [ ]   |
+| ⭐  |   5   | Test coverage tracking and dashboard                   | §2         |  [x]   |
 
 > §4–§9 from original plan (GitHub Actions QEMU smoke/unit/filesystem tests, CI result summary)
 > removed — QEMU in GitHub Actions runners is unreliable (UEFI+OVMF flaky under nested virt).
@@ -132,10 +132,10 @@ Optional local smoke test before pushing.
 
 Track which kernel subsystems have test coverage.
 
-- [ ] `scripts/test-coverage.sh` — scans `src/kernel/test/test_*.c` for TEST_ASSERT calls
-- [ ] Outputs: suite name, assertion count, functions tested
-- [ ] Generates `build/test-coverage.md` with coverage table
-- [ ] Track coverage over time in a simple JSON file
+- [x] `scripts/test-coverage.sh` — scans `src/kernel/test/test_*.c` for TEST_ASSERT calls
+- [x] Outputs: suite name, assertion count, functions tested
+- [x] Generates `build/test-coverage.md` with coverage table
+- [x] Track coverage over time in a simple JSON file (`build/test-coverage.json`)
 - [ ] Commit: `"infra: test coverage tracking — assertion count per subsystem"`
 
 **Test checkpoint:** `bash scripts/test-coverage.sh` outputs table showing suites and assertion counts.
