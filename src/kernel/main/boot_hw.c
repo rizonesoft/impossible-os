@@ -73,11 +73,11 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     /* boot_config_parse: boot.conf is parsed by the UEFI bootloader before
      * kernel entry and delivered in g_boot_info.config.  Log the values. */
-    klog(LOG_INFO, "CONF", "boot.conf: debug=%d verbose=%d serial=%d mode=%d splash=%ds heartbeat=%d postcode=%d%s",
+    klog(LOG_INFO, "CONF", "boot.conf: debug=%d verbose=%d serial=%d mode=%d splash=%ds heartbeat=%d postcode=%d test=%d%s",
            g_boot_info.config.debug, g_boot_info.config.verbose,
            g_boot_info.config.serial_debug, g_boot_info.config.boot_mode,
            g_boot_info.config.splash_timeout, g_boot_info.config.heartbeat,
-           g_boot_info.config.postcode,
+           g_boot_info.config.postcode, g_boot_info.config.test,
            g_boot_info.config.config_found ? "" : " (defaults)");
 
     /* --- UEFI runtime services (SetVirtualAddressMap + RT props) --- */

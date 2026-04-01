@@ -160,10 +160,12 @@ struct boot_config {
     uint8_t  postcode;         /* 0=off, 1=auto, 2=always */
     /* VPD (Visual POST Display) */
     uint8_t  postbars;         /* 0=off, 1=on (integrated), 2=diag (full) */
+    /* Test mode */
+    uint8_t  test;             /* 1 = run unit tests only, then shutdown */
     /* Reserved — new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[23];
+    uint8_t  _reserved[22];
     /* Command line (offset 32 — stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

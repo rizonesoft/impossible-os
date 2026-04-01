@@ -19,7 +19,8 @@ CFLAGS  := --target=x86_64-elf \
            -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
            -mcmodel=kernel -std=gnu11 -O2 -g \
            -MMD -MP \
-           -DCONFIG_SMP
+           -DCONFIG_SMP \
+           -DKERNEL_TESTS
 ASFLAGS := -f elf64 -g
 LDFLAGS := -nostdlib -static -z max-page-size=0x1000
 

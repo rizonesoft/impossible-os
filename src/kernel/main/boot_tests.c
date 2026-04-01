@@ -25,10 +25,25 @@
 #include "kernel/ipc/shmem.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_info.h"
+#include "kernel/test/test.h"
+#include "kernel/acpi.h"
 #include "main/main_internal.h"
 
 void boot_tests_run(void)
 {
+    /* test=1 in boot.conf: run ONLY unit tests, then shutdown.
+     * This is the gate used by `make test` for automated CI testing. */
+    if (g_boot_info.config.test) {
+        klog(LOG_INFO, "TEST", "");
+        klog(LOG_INFO, "TEST", "=== Kernel Unit Test Mode (test=1) ===");
+        test_runner_init();
+        test_runner_run();
+        klog(LOG_INFO, "TEST", "=== Test run complete — shutting down ===");
+        acpi_shutdown();
+        /* acpi_shutdown should not return, but just in case: */
+        for (;;) __asm__ volatile("hlt");
+    }
+
     /* Only run boot tests when debug=1 in boot.conf.
      * Essential runtime init (task_init, syscall_init, workqueue) is now
      * handled by boot_phase3() before this function is called. */
@@ -39,6 +54,12 @@ void boot_tests_run(void)
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Boot Tests -------------------------------------------------------------");
+
+    /* Run unit test framework first (if compiled with -DKERNEL_TESTS) */
+    test_runner_init();
+    test_runner_run();
+
+    klog(LOG_DEBUG, "", "");
 
     boot_splash_status("Running boot tests...");
     klog_disk_flush();

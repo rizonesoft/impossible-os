@@ -29,7 +29,7 @@ static void test_registry_dword(void)
     /* Read it back */
     uint32_t out = 0;
     uint32_t out_size = sizeof(out);
-    rc = RegGetValue(hKey, NULL, "TestDword", RRF_RT_DWORD, NULL,
+    rc = RegGetValue(hKey, NULL, "TestDword", RRF_RT_REG_DWORD, NULL,
                      &out, &out_size);
     TEST_ASSERT(rc == 0, "RegGetValue DWORD succeeds");
     TEST_ASSERT(out == 42, "RegGetValue DWORD returns correct value");

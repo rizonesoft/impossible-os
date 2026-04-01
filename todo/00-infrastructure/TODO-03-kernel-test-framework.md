@@ -38,7 +38,7 @@
 
 | ⭐  | Order | Deliverable                                            | Depends On | Status |
 | --- | :---: | ------------------------------------------------------ | ---------- | :----: |
-| 💎  |   1   | Wire test_runner into boot path                        | —          |  [ ]   |
+| 💎  |   1   | Wire test_runner into boot path                        | —          |  [x]   |
 | 💎  |   2   | `make test` target with QEMU headless + serial parse   | §1         |  [ ]   |
 | 💎  |   3   | Add OB, security, and NVMe test suites                 | §1         |  [ ]   |
 | 💎  |   4   | Enable smoke test in GitHub Actions                    | §2         |  [ ]   |
@@ -57,12 +57,12 @@
 
 Connect the existing test framework to the boot sequence so tests actually run.
 
-- [ ] In `boot_tests.c`: add `#include "kernel/test/test.h"` and call `test_runner_init()` + `test_runner_run()` at the start of `boot_tests_run()` (before the ad-hoc tests)
-- [ ] This means tests run when `debug=1` in boot.conf — same gate as existing boot tests
-- [ ] Add a separate gate: `test=1` in boot.conf → run ONLY unit tests (not boot tests), then halt with exit code
-- [ ] When `test=1`: after `test_runner_run()`, write pass/fail summary to serial, then `acpi_shutdown()` (clean QEMU exit)
-- [ ] Makefile: add `-DKERNEL_TESTS` to CFLAGS when building test target
-- [ ] Commit: `"test: wire kernel test_runner into boot path — runs with debug=1 or test=1"`
+- [x] In `boot_tests.c`: add `#include "kernel/test/test.h"` and call `test_runner_init()` + `test_runner_run()` at the start of `boot_tests_run()` (before the ad-hoc tests)
+- [x] This means tests run when `debug=1` in boot.conf — same gate as existing boot tests
+- [x] Add a separate gate: `test=1` in boot.conf → run ONLY unit tests (not boot tests), then `acpi_shutdown()`
+- [x] When `test=1`: after `test_runner_run()`, write pass/fail summary to serial, then `acpi_shutdown()` (clean QEMU exit)
+- [x] Makefile: `-DKERNEL_TESTS` added to CFLAGS unconditionally (zero overhead — `#ifdef` guards in test files)
+- [x] Commit: `"test: wire kernel test_runner into boot path — runs with debug=1 or test=1"`
 
 **Test checkpoint:** `make run` with `debug=1` in boot.conf → serial shows `=== Running 5 test suite(s) ===` followed by pass/fail for each test.
 
@@ -210,15 +210,15 @@ Track which kernel subsystems have test coverage.
 
 ## OS Comparison
 
-| ⭐ | Feature                  | Win11              | Linux               | Impossible OS            |
+| ⭐ | Feature                  | Win11              | Linux                | Impossible OS            |
 |----|--------------------------|--------------------|----- ----------------|--------------------------|
-| 💎 | Kernel unit tests        | ✅ KUnit + WHQL    | ✅ KUnit + kselftest | ⚠️ Framework, unwired    |
-| 💎 | CI build verification    | ✅ Internal CI     | ✅ kernel.org CI     | ✅ GitHub Actions         |
-| 💎 | CI boot test             | ✅ Internal CI     | ✅ LKFT + kernelci   | ⬜ §4                    |
-| 💎 | CI driver tests          | ✅ HLK/WHQL        | ✅ LTP + blktests    | ⬜ §5–§6                 |
-| ⭐ | PR test summary table    | ❌ Internal only   | ⚠️ Bot comments      | ⬜ §7 🚀                 |
-| ⭐ | Pre-push local tests     | ❌ Not standard    | ⚠️ Optional          | ⬜ §8 🚀                 |
-| ⭐ | Coverage tracking        | ❌ Internal only   | ⚠️ lcov optional     | ⬜ §9 🚀                 |
+| 💎 | Kernel unit tests        | ✅ KUnit + WHQL    | ✅ KUnit + kselftest | ⚠️ Framework, unwired  |
+| 💎 | CI build verification    | ✅ Internal CI     | ✅ kernel.org CI     | ✅ GitHub Actions      |
+| 💎 | CI boot test             | ✅ Internal CI     | ✅ LKFT + kernelci   | ⬜ §4                  |
+| 💎 | CI driver tests          | ✅ HLK/WHQL        | ✅ LTP + blktests    | ⬜ §5–§6               |
+| ⭐ | PR test summary table    | ❌ Internal only   | ⚠️ Bot comments      | ⬜ §7                  |
+| ⭐ | Pre-push local tests     | ❌ Not standard    | ⚠️ Optional          | ⬜ §8                  |
+| ⭐ | Coverage tracking        | ❌ Internal only   | ⚠️ lcov optional     | ⬜ §9                  |
 
 After §1–§6, Impossible OS has automated testing on par with Linux kernel CI (build + boot + unit + driver tests on every commit). §7–§9 add developer-facing features neither Windows nor Linux provides at the PR level.
 
