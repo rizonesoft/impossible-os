@@ -160,10 +160,18 @@ struct boot_config {
     uint8_t  postcode;         /* 0=off, 1=auto, 2=always */
     /* VPD (Visual POST Display) */
     uint8_t  postbars;         /* 0=off, 1=on (integrated), 2=diag (full) */
-    /* Command line */
+    /* Reserved — new config fields go here without shifting cmdline.
+     * Bootloader zero-fills the entire struct, so new fields default to 0
+     * in older bootloaders that don't know about them. */
+    uint8_t  _reserved[23];
+    /* Command line (offset 32 — stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
     uint8_t  config_found;     /* 1 if boot.conf was successfully parsed */
+    /* Pad to 512 bytes total — sector-aligned, matches Windows convention.
+     * 9 (fields) + 23 (reserved) + 256 (cmdline) + 1 (config_found) = 289.
+     * 512 - 289 = 223 bytes tail padding. */
+    uint8_t  _pad[223];
 };
 
 /* USB device discovered by UEFI firmware before ExitBootServices.

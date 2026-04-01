@@ -62,8 +62,10 @@ struct boot_config {
     UINT8   heartbeat;
     UINT8   postcode;
     UINT8   postbars;
+    UINT8   _reserved[23];     /* future fields — zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
+    UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
 };
 
 #define BOOT_CONFIG_TABLE_MAX 32
