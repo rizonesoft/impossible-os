@@ -114,7 +114,18 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - These diagnostic POST codes use the `0xD000–0xDFFF` range (reserved for development/debug) and should be removed after the section is verified on all platforms. They do not conflict with production POST codes (`0x00xx`–`0x3Fxx` for phases, `0xB0xx` for bootloader, `0xFF00` for boot OK).
     - **Conflict check:** Before assigning debug POST codes, grep `include/kernel/boot_init.h` for all `#define POST16_` entries AND grep the codebase for any existing `POST16(0xD` calls. Verify the chosen codes don't collide with existing production or debug codes. Flag any duplicates.
     - **Rationale:** On bare metal, there is no debugger. A crash with no POST code means hours of bisecting. A crash at POST 0xD503 means "§5, sub-step 3 failed" — fixable in minutes.
-16. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
+16. **Unit Tests section enforcement.**
+    - Every TODO file MUST have a `## Unit Tests` section after the last numbered implementation section.
+    - The section must wire into the kernel test framework via `test_runner_init()` (→ XREF: `00-infrastructure/TODO-03 §1`).
+    - Required structure:
+      - A `>` callout stating how the tests register (e.g., `test_register_<feature>()`) and when they run (`debug=1` or `test=1` in boot.conf).
+      - A `- [ ] Create src/kernel/test/test_<feature>.c with:` checklist item containing concrete test cases as sub-bullets.
+      - Each test case must be a specific assertion — function call + expected return value or observable state. No vague "test that X works" items.
+      - A `- [ ] Register in test_runner_init(): test_register_<feature>()` checklist item.
+      - A `- [ ] Commit: "test: add <feature> test suite"` checklist item.
+    - **Test case quality check:** Each sub-bullet must test one specific behavior with a concrete expected outcome. Flag any test that lacks an expected value (e.g., "call `foo()`" without stating what it should return or what state it should produce).
+    - If the TODO file is missing this section entirely, flag it and draft a skeleton `## Unit Tests` section with test cases derived from the TODO's deliverables.
+17. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
 
 ## Guardrails
 
