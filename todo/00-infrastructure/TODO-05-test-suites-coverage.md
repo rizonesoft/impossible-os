@@ -3,10 +3,10 @@
 > **Goal:** Every kernel subsystem has test coverage. When a new feature is implemented, a test suite is created alongside it. Test coverage is tracked and visible. The test system is easy to extend — adding a new test suite is one file + one register call. Target: 100+ test assertions covering every subsystem that has shipped code.
 
 > [!IMPORTANT]
-> **Current state:** 5 test suites exist (PMM, heap, VFS, sched, registry) with ~12 test functions. Missing: Object Manager, security (SID/ACL/token), NVMe, USB, timer, interrupt, IPC (pipe/shmem/signal), process model, page tables, ELF loader. boot_tests.c has 15+ integration tests but they're not in the unit test framework.
+> **Current state (2026-04-02):** 26 test suites, 59 assertions. Suites: PMM (2), heap (4), VFS (3), sched (1), registry (2), boot init (8), klog (6), OB (7), security (5). `make test` runs all via headless QEMU. Still needed: timer, IPC, VMM, ELF, NVMe, USB, coverage report.
 
-> [!WARNING]
-> **Scope overlap with TODO-03 §3:** TODO-03 §3 also creates `test_ob.c` and `test_security.c`. This TODO (§2–§3) has the authoritative expanded versions with more assertions. When implementing, use THIS TODO's test cases — TODO-03 §3 should XREF here instead of duplicating.
+> [!NOTE]
+> **Resolved overlap:** TODO-03 §3 created initial `test_ob.c` (7 suites, 15 assertions) and `test_security.c` (5 suites, 8 assertions) on 2026-04-02. The expanded assertions listed in §2–§3 below are additions on top of those.
 
 ---
 
@@ -33,9 +33,9 @@
 
 | ⭐  | Order | Deliverable                                  | Depends On | Status |
 | --- | :---: | -------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Minimal test_runner wiring                    | —          |  [ ]   |
-| 💎  |   2   | Object Manager test suite (test_ob.c)         | §1         |  [ ]   |
-| 💎  |   3   | Security test suite (test_security.c)         | §1         |  [ ]   |
+| 💎  |   1   | Minimal test_runner wiring                    | —          |  [x]   |
+| 💎  |   2   | Object Manager test suite (test_ob.c)         | §1         |  [x]   |
+| 💎  |   3   | Security test suite (test_security.c)         | §1         |  [x]   |
 | 💎  |   4   | Timer test suite                              | §1         |  [ ]   |
 | 💎  |   5   | IPC test suite (event, semaphore)             | §1         |  [ ]   |
 | 💎  |   6   | VMM and page table test suite                 | §1         |  [ ]   |
@@ -55,10 +55,10 @@
 > [!NOTE]
 > Minimal prerequisite — full implementation in TODO-03 §1. This section adds just enough to compile and run test suites during boot. TODO-03 §1 adds `make test`, headless QEMU, serial parsing, and CI integration.
 
-- [ ] Add `-DKERNEL_TESTS` to CFLAGS in Makefile (unconditional or gated on `TEST=1`)
-- [ ] In `boot_tests.c`: add `#include "kernel/test/test.h"` and call `test_runner_init()` + `test_runner_run()` when `debug=1` or `test=1` in boot.conf
-- [ ] Verify serial output shows `=== Running N test suite(s) ===` followed by existing suite results
-- [ ] Commit: `"test: minimal test_runner wiring — enables kernel test compilation and boot-time execution"`
+- [x] Add `-DKERNEL_TESTS` to CFLAGS in Makefile (unconditional)
+- [x] In `boot_tests.c`: call `test_runner_init()` + `test_runner_run()` when `debug=1` or `test=1`
+- [x] Serial shows `=== Running 26 test suite(s) ===` (verified WHPX 2026-04-02)
+- [x] Commit: done via TODO-03 §1
 
 **Test checkpoint:** `bash scripts/build.sh run` with `debug=1` in boot.conf → serial shows `=== Running 5 test suite(s) ===` with PMM, heap, VFS, sched, registry results.
 
@@ -66,10 +66,10 @@
 
 ## 2. Object Manager Test Suite
 
-> [!WARNING]
-> Scope overlap: TODO-03 §3 also creates `test_ob.c` with fewer assertions. This section is authoritative — use these test cases.
+> [!NOTE]
+> Initial `test_ob.c` created by TODO-03 §3 (7 suites, 15 assertions, 2026-04-02). Remaining assertions below are expansions.
 
-- [ ] `src/kernel/test/test_ob.c`:
+- [x] `src/kernel/test/test_ob.c`:
   - `ob_alloc_object(ObpFileType)` → non-NULL body, header recoverable via `OB_HEADER_FROM_BODY` macro
   - `ObReferenceObject` × 5 + `ObDereferenceObject` × 6 → on_delete called, object freed
   - Handle alloc → lookup returns same object → free → lookup returns NULL
@@ -89,10 +89,10 @@
 
 ## 3. Security Test Suite
 
-> [!WARNING]
-> Scope overlap: TODO-03 §3 also creates `test_security.c` with fewer assertions. This section is authoritative.
+> [!NOTE]
+> Initial `test_security.c` created by TODO-03 §3 (5 suites, 8 assertions, 2026-04-02). Remaining assertions below are expansions.
 
-- [ ] `src/kernel/test/test_security.c`:
+- [x] `src/kernel/test/test_security.c`:
   - `RtlEqualSid(SeLocalSystemSid, SeLocalSystemSid)` → true
   - `RtlEqualSid(SeLocalSystemSid, SeWorldSid)` → false
   - `RtlLengthSid(SeLocalSystemSid)` → 12 (8 + 4×1)

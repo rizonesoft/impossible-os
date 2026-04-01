@@ -3,14 +3,14 @@
 > **Goal:** Never miss a broken build. When CI fails — build error, test failure, boot crash — the developer gets notified immediately. GitHub PR status checks block merge on failure. Email or webhook notifications on `main` branch failures. Build badge in README shows current status. The developer should never have to manually check CI — failures come to them.
 
 > [!IMPORTANT]
-> **Current state:** GitHub Actions builds on push but the only notification is the default GitHub email (which many developers disable). No build badge in README. Smoke tests commented out. No Slack/Discord/webhook integration. No branch protection rules enforcing status checks.
+> **Current state (2026-04-02):** GitHub Actions builds on push. No build badge in README. No branch protection rules enforcing status checks. CI QEMU tests removed from TODO-03 (unreliable under nested virt) — CI only verifies build, not boot. Local testing via `make test`.
 
 ---
 
 ## Inputs
 
 - `.github/workflows/build.yml` — existing CI pipeline
-- → XREF: `TODO-03-kernel-test-framework.md §4–§6` — test steps that need status check enforcement
+- → XREF: `TODO-03-kernel-test-framework.md §2` — `make test` for local verification (CI QEMU tests removed)
 - → XREF: `TODO-02-developer-tooling-stack.md §2.5, §4` — GitHub sync workstream that spawned this TODO
 
 ---
@@ -33,7 +33,7 @@
 | 💎  |   2   | Build status badge in README.md                 | —          |  [ ]   |
 | 💎  |   3   | Workflow failure notification (email/webhook)    | —          |  [ ]   |
 | 💎  |   4   | Nightly scheduled build                         | —          |  [ ]   |
-| ⭐  |   5   | PR comment bot with test results                | T03 §7     |  [ ]   |
+| ⭐  |   5   | PR comment bot with build results               | §1         |  [ ]   |
 | ⭐  |   6   | Build time trend tracking                       | §4         |  [ ]   |
 
 > 💎 = parity — standard CI/CD practice for any serious project.
@@ -46,7 +46,7 @@
 Configure GitHub to require passing CI before merge to `main`.
 
 - [ ] Settings → Branches → `main` → Require status checks: `Build Impossible OS`
-- [ ] Initially only the build check is required; add smoke test, unit test, FS test as required checks after TODO-03 §4–§6 deliver them
+- [ ] Only the build check is required (CI QEMU tests removed from TODO-03)
 - [ ] Require branches to be up to date before merging
 - [ ] Document in CONTRIBUTING.md
 - [ ] Commit: `"ci: branch protection — require passing CI for merge to main"`
@@ -98,7 +98,7 @@ Get notified when `main` breaks.
 Catch drift and flaky tests even without pushes.
 
 - [ ] Add `schedule` trigger to build.yml: `cron: '0 2 * * *'` (2 AM UTC daily)
-- [ ] Initially runs build-only; upgrade to full test suite (smoke + unit + FS) after TODO-03 §4–§6 land
+- [ ] Runs build-only (CI QEMU tests removed — local `make test` covers runtime verification)
 - [ ] Upload all artifacts regardless of pass/fail
 - [ ] Commit: `"ci: nightly scheduled build with full test suite"`
 
@@ -116,7 +116,7 @@ Automatically post test results as a PR comment.
 - [ ] Commit: `"ci: PR comment bot — automated test result summary on every PR"`
 
 > [!NOTE]
-> §5 is blocked until TODO-03 §7 delivers test result parsing. Implement §1–§4 first; §5 activates after test infrastructure lands.
+> §5 posts build pass/fail from CI. Runtime test results are local-only (`make test`) since CI QEMU was removed.
 
 **Test checkpoint:** Open PR with code changes → CI runs → PR receives comment with test summary table (suite, passed, failed columns) → re-push updates existing comment, no duplicate.
 
