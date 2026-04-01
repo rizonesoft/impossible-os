@@ -40,7 +40,7 @@
 | 💎  |   1   | Wire test_runner into boot path                        | —          |  [x]   |
 | 💎  |   2   | `make test` target with QEMU headless + serial parse   | §1         |  [x]   |
 | 💎  |   3   | Add OB, security, and NVMe test suites                 | §1         |  [x]   |
-| ⭐  |   4   | Pre-push git hook for local smoke test                 | §2         |  [ ]   |
+| ⭐  |   4   | Pre-push git hook for local smoke test                 | §2         |  [x]   |
 | ⭐  |   5   | Test coverage tracking and dashboard                   | §2         |  [ ]   |
 
 > §4–§9 from original plan (GitHub Actions QEMU smoke/unit/filesystem tests, CI result summary)
@@ -117,10 +117,10 @@ Expand test coverage to the new Object Manager and security subsystems.
 
 Optional local smoke test before pushing.
 
-- [ ] Create `scripts/install-hooks.sh` that symlinks hooks into `.git/hooks/`
-- [ ] `pre-push` hook: runs `make test` (headless QEMU, 60s timeout)
-- [ ] If tests fail: block push with message `"Tests failed — run 'make test' to see details"`
-- [ ] Make it optional: `bash scripts/install-hooks.sh` to enable, `bash scripts/install-hooks.sh --remove` to disable
+- [x] Create `scripts/install-hooks.sh` that symlinks hooks into `.git/hooks/`
+- [x] `pre-push` hook: runs `make test` (headless QEMU, 60s timeout)
+- [x] If tests fail: block push with message `"Tests failed — run 'make test' to see details"`
+- [x] Make it optional: `bash scripts/install-hooks.sh` to enable, `bash scripts/install-hooks.sh --remove` to disable
 - [ ] Document in CONTRIBUTING.md
 - [ ] Commit: `"infra: pre-push git hook — optional local smoke test before push"`
 
