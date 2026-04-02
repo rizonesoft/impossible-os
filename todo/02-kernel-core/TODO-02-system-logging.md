@@ -15,6 +15,7 @@
 - → XREF: `TODO-20-kernel-libraries.md §6` — cJSON DOM parser required by §6 (structured JSON events)
 - → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
 - → XREF: `01-boot-platform/TODO-11-klog-ixfs-bare-metal-perf.md` — klog_disk_flush performance fix (ring snapshot, deferred flush mode); both TODOs modify klog_disk.c
+- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §8 of this TODO wires them into the SSDT
 
 ## Outcome
 
@@ -35,6 +36,7 @@
 | 💎  |   5   | Rate limiting                       | §2            |  [x]   |
 | ⭐  |   6   | Structured JSON log events          | §4, T20 §6    |  [x]   |
 | 💎  |   7   | Remote syslog forwarding (RFC 5424) | UDP (exists)  |  [ ]   |
+| 💎  |   8   | ETW tracing syscalls wired to SSDT  | §4, TODO-05 §4|  [ ]   |
 
 > 💎 = parity — Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive — JSON Lines events.jsonl is human-readable by any editor; beats Windows XML and Linux binary journal.
@@ -140,6 +142,21 @@ Emit machine-parseable events alongside plain-text logs. Requires cJSON from `TO
 
 Moved to [07-networking/TODO-11](../07-networking/TODO-11-syslog-forwarding.md) — syslog is a networking feature that depends on UDP stack readiness.
 
+## 8. ETW Tracing Syscalls Wired to SSDT
+Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. This section wires the tracing control syscalls into the SSDT. (→ XREF: TODO-05-native-api-layer.md §4, §22)
+
+- [ ] `NtTraceEvent(TraceHandle, Flags, FieldSize, Fields)` → SSDT 0x01D0: write a trace event to a session
+- [ ] `NtTraceControl(FunctionCode, InBuffer, InLen, OutBuffer, OutLen, RetLen)` → SSDT 0x01D1: control trace sessions (start/stop/query/update/flush)
+- [ ] `NtCreateTrace(TraceHandle, DesiredAccess, ObjectAttributes, TraceGuid)` → SSDT 0x01D2: create a new trace session
+- [ ] `NtQueryTrace(TraceHandle, TraceInformationClass, Buffer, Length)` → SSDT 0x01D3
+- [ ] `NtUpdateTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D4
+- [ ] `NtStopTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D5
+- [ ] `NtFlushTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D6
+- [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)
+- [ ] Commit: `"kernel: klog — wire ETW tracing syscalls to SSDT (0x01D0–0x01D6)"`
+
+**Test checkpoint:** `NtCreateTrace` returns valid session handle. `NtTraceEvent` writes event visible via `NtTraceControl` query. `NtStopTrace` + `NtFlushTrace` drain the buffer.
+
 ---
 
 ## OS Comparison
@@ -158,6 +175,7 @@ Moved to [07-networking/TODO-11](../07-networking/TODO-11-syslog-forwarding.md) 
 | 💎 | Rate limiting         | ✅ ETW built-in      | ⚠️ rsyslog only       | ✅ §5 — done              |
 | ⭐ | Human-readable struct | ❌ XML verbose       | ❌ Binary journal     | ✅ §6 — JSON Lines        |
 | 💎 | Remote forwarding     | ✅ WEF               | ✅ rsyslog UDP        | ⬜ §7 — syslog RFC 5424   |
+| 💎 | ETW tracing API       | ✅ NtTraceEvent       | ✅ ftrace/perf_event  | ⬜ §8 — SSDT 0x01D0–0x01D6|
 | ⭐ | Serial timestamps     | ❌ Not standard      | ❌ Not standard       | ✅ Every entry            |
 
 > After §1-§6, Impossible OS matches or exceeds Windows and Linux on all logging.

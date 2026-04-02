@@ -17,6 +17,7 @@
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md` — scheduler tick ISR runs at `DISPATCH_LEVEL`; RT scheduling interacts with DPC queuing and IRQL transitions
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` — `uptime_ns()` used for CFS vruntime accounting in §3 and for EDF deadline tracking in §5
 - → XREF: `04-drivers-hardware` domain — ACPI `_PSS` P-state table needed for §9 CPU frequency scaling governors
+- → XREF: `02-kernel-core/TODO-05-native-api-layer.md §4` — SSDT indices 0x0180–0x0186 reserved for Worker Factory (kernel thread pool) syscalls; §10 wires them
 
 ## Outcome
 
@@ -42,6 +43,7 @@
 | 💎  |   7   | §6 CPU affinity (`ThreadAffinityMask`)               | §1 (per-CPU run queues)             |  [ ]   |
 | ⭐  |   8   | §7 Scheduler stats + `/sys/sched` VFS file           | §1–§5 (meaningful data)             |  [ ]   |
 | 💎  |   9   | §9 CPU frequency scaling hook + P-state governors    | §7 (load measurement), ACPI         |  [ ]   |
+| 💎  |  10   | Worker Factory syscalls wired to SSDT                | §1, TODO-05 §4                      |  [ ]   |
 
 > 💎 = parity — Windows and Linux both implement priority queues, aging, CFS-equivalent, RT classes, affinity, tick calibration, and cpufreq; Impossible OS must match.
 > ⭐ = exclusive — `SCHED_DEADLINE` with GRUB bandwidth reclaim and the unified `/sys/sched` all-threads snapshot are differentiators over the base Windows NT scheduler.
@@ -195,6 +197,20 @@ Define a `cpufreq_governor_t` vtable and wire two built-in governors — `perfor
 - [ ] Active governor selectable via Registry `HKLM\SYSTEM\Scheduler\CpufreqGovernor` (`"performance"` / `"powersave"`)
 - [ ] Boot log: `[CPUFREQ] governor: %s; %u P-states available` (or `no cpufreq driver registered` if ACPI not ready)
 - [ ] Commit: `"sched: cpufreq governor vtable — performance and powersave, load tracking"`
+
+## 10. Worker Factory Syscalls Wired to SSDT
+The Worker Factory is the kernel-side thread pool (backs `TpAllocPool` / `CreateThreadpoolWork`). The scheduler owns thread creation/reaping logic. (→ XREF: TODO-05-native-api-layer.md §4)
+
+- [ ] `NtCreateWorkerFactory(FactoryHandle, DesiredAccess, ObjectAttributes, CompletionPortHandle, WorkerProcessHandle, StartRoutine, StartParameter, MaxThreadCount, StackReserve, StackCommit)` → SSDT 0x0180
+- [ ] `NtWorkerFactoryWorkerReady(WorkerFactoryHandle)` → SSDT 0x0181: signal that worker thread is idle and ready
+- [ ] `NtReleaseWorkerFactoryWorker(WorkerFactoryHandle)` → SSDT 0x0182: release a worker back to pool
+- [ ] `NtShutdownWorkerFactory(WorkerFactoryHandle, PendingWorkerCount)` → SSDT 0x0183
+- [ ] `NtQueryInformationWorkerFactory(FactoryHandle, InfoClass, Buffer, Length, RetLen)` → SSDT 0x0184
+- [ ] `NtSetInformationWorkerFactory(FactoryHandle, InfoClass, Buffer, Length)` → SSDT 0x0185
+- [ ] `NtWaitForWorkViaWorkerFactory(FactoryHandle, MiniPacket, ...)` → SSDT 0x0186: block until work item available
+- [ ] Commit: `"sched: wire Worker Factory syscalls to SSDT (0x0180–0x0186)"`
+
+**Test checkpoint:** `NtCreateWorkerFactory` tied to I/O completion port creates pool. `NtWaitForWorkViaWorkerFactory` blocks; posting to IOCP wakes a worker. `NtShutdownWorkerFactory` drains all threads.
 
 ---
 

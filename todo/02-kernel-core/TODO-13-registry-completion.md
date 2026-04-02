@@ -60,6 +60,7 @@
 | ⭐  |   8   | Advanced hive features (dual-log, delta, compact)  | 4                   |  [ ]   |
 | ⭐  |   9   | Transactions, search API & snapshot/diff           | 2, 3, 8             |  [ ]   |
 | ⭐  |  10   | Performance (mmap hive, B-tree cell format)        | 9                   |  [ ]   |
+| 💎  |  11   | KTM Transaction syscalls wired to SSDT             | §9, TODO-05 §4      |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work — Impossible OS is superior or first.
@@ -479,6 +480,24 @@
 ### 10.4 Commit
 
 - [ ] Commit: `"kernel/registry: hash map child lookup, mmap hive, B-tree cell format"`
+
+---
+
+## 11. KTM Transaction Syscalls Wired to SSDT
+
+Register the full Kernel Transaction Manager (KTM) syscall surface in the SSDT for transactional registry, file, and resource management. (→ XREF: TODO-05-native-api-layer.md §4)
+
+- [ ] Implement KTM Transaction Manager syscalls: `NtCreateTransactionManager` (0x01A0), `NtOpenTransactionManager` (0x01A1)
+- [ ] Implement Transaction syscalls: `NtCreateTransaction` (0x01A2), `NtOpenTransaction` (0x01A3), `NtCommitTransaction` (0x01A4), `NtRollbackTransaction` (0x01A5), `NtQueryInformationTransaction` (0x01A6), `NtSetInformationTransaction` (0x01A7)
+- [ ] Implement Resource Manager syscalls: `NtCreateResourceManager` (0x01A8), `NtOpenResourceManager` (0x01A9), `NtQueryInformationResourceManager` (0x01AA), `NtSetInformationResourceManager` (0x01AB)
+- [ ] Implement Enlistment syscalls: `NtCreateEnlistment` (0x01AC), `NtOpenEnlistment` (0x01AD), `NtQueryInformationEnlistment` (0x01AE), `NtSetInformationEnlistment` (0x01AF), `NtPrepareEnlistment` (0x01B0), `NtPrePrepareEnlistment` (0x01B1), `NtCommitEnlistment` (0x01B2), `NtRollbackEnlistment` (0x01B3)
+- [ ] Implement Recovery syscalls: `NtRecoverTransactionManager` (0x01B4), `NtRecoverResourceManager` (0x01B5), `NtRecoverEnlistment` (0x01B6)
+- [ ] Implement misc KTM: `NtPropagationComplete` (0x01B7), `NtPropagationFailed` (0x01B8), `NtFreezeTransactions` (0x01B9), `NtThawTransactions` (0x01BA)
+- [ ] Implement Registry Transaction syscalls: `NtCreateRegistryTransaction` (0x01BB), `NtOpenRegistryTransaction` (0x01BC), `NtCommitRegistryTransaction` (0x01BD), `NtRollbackRegistryTransaction` (0x01BE)
+- [ ] All functions return `NTSTATUS`
+- [ ] Commit: `"kernel/registry: wire KTM transaction syscalls to SSDT (0x01A0–0x01BE)"`
+
+**Test checkpoint:** `NtCreateTransactionManager` + `NtCreateTransaction` + `NtCommitTransaction` round-trip succeeds. `NtRollbackTransaction` reverts changes. `NtCreateRegistryTransaction` + `NtCommitRegistryTransaction` atomically applies registry mutations.
 
 ---
 

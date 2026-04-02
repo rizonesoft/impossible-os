@@ -41,6 +41,7 @@
 | 💎  |   7   | §7 LPC basic — `NtCreatePort`, request/reply, `PORT_MESSAGE`   | §6, Ob `\RPC Control\`                    |  [ ]   |
 | 💎  |   8   | §8 ALPC extensions — shared section, handle attrs, direct mode | §7, TODO-04 §5 (Section Object)           |  [ ]   |
 | ⭐  |   9   | §9 `ImpossibleRing` SQ+CQ async submission rings               | §4, §5, TODO-04 §5 (NtMapViewOfSection)   |  [ ]   |
+| 💎  |  10   | IPC syscalls wired to SSDT                                      | §1–§4, TODO-05 §4                          |  [ ]   |
 
 > 💎 = parity — named pipes, IOCP, named sync objects, LPC, and ALPC are Windows NT core IPC primitives; Impossible OS must match for Win32 compatibility. Mailslots are a Windows-exclusive feature Linux lacks.
 > ⭐ = exclusive — `ImpossibleRing` provides io_uring–style zero-syscall async submission, going beyond classic Windows I/O models.
@@ -210,6 +211,27 @@ Two memory-mapped rings (submission queue SQ + completion queue CQ) shared betwe
 - [ ] `NtCloseRing(handle)` — unmap both sections; drain pending SQEs before return
 - [ ] Boot log: `[RING] ImpossibleRing subsystem active (SQ+CQ rings, io_uring compatible)`
 - [ ] Commit: `"ipc: ImpossibleRing — SQ+CQ shared rings, NtSubmitRing, zero-syscall I/O submission"`
+
+---
+
+## 10. IPC Syscalls Wired to SSDT
+
+Wire named pipes, mailslots, and I/O completion port syscalls into the SSDT. (→ XREF: 02-kernel-core/TODO-05-native-api-layer.md §4)
+
+- [ ] `NtCreateNamedPipeFile(...)` → SSDT 0x001B: named pipe creation via NPFS (§1)
+- [ ] `NtCreateNamedPipeFileEx(...)` → SSDT 0x0398: extended named pipe creation
+- [ ] `NtCreateMailslotFile(...)` → SSDT 0x001C: one-way IPC mailslot (§3)
+- [ ] `NtCreateMailslotFileEx(...)` → SSDT 0x0399: extended mailslot creation
+- [ ] `NtCreateIoCompletion(IoCompletionHandle, DesiredAccess, ObjectAttributes, Count)` → SSDT 0x0088 (§4)
+- [ ] `NtSetIoCompletion(IoCompletionHandle, KeyContext, ApcContext, IoStatus, IoStatusInformation)` → SSDT 0x0089
+- [ ] `NtRemoveIoCompletion(IoCompletionHandle, KeyContext, ApcContext, IoStatusBlock, Timeout)` → SSDT 0x008A
+- [ ] `NtQueryIoCompletion(IoCompletionHandle, InformationClass, Buffer, Length, RetLen)` → SSDT 0x008B
+- [ ] `NtSetIoCompletionEx(...)` → SSDT 0x008C / 0x0382
+- [ ] `NtRemoveIoCompletionEx(...)` → SSDT 0x008D / 0x0383
+- [ ] All functions return `NTSTATUS`
+- [ ] Commit: `"ipc: wire named pipe, mailslot, and IOCP syscalls to SSDT"`
+
+**Test checkpoint:** `NtCreateNamedPipeFile` creates `\\.\pipe\test`; reader/writer round-trip. `NtCreateIoCompletion` + `NtSetIoCompletion` + `NtRemoveIoCompletion` post/dequeue round-trip.
 
 ---
 

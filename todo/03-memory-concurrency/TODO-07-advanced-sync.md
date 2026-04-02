@@ -20,6 +20,7 @@
 - → XREF: `03-memory-concurrency/TODO-06-smp-phase2.md §8` — `READ_ONCE`/`WRITE_ONCE` macros required for ticket lock spin loop and mutex owner polling in §1 and §2
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md` — preemption count in §2 lives below IRQL `DISPATCH_LEVEL`; `preempt_disable` must not lower IRQL, only inhibit the scheduler
 - → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — `NtWaitForKeyedEvent` / `NtReleaseKeyedEvent` (§4 futexes) and `NtWaitForMultipleObjects` (§8) are Native API entries
+- → XREF: `02-kernel-core/TODO-05-native-api-layer.md §4` — SSDT indices 0x0084–0x0087 reserved for keyed events, 0x030B–0x030C and 0x0384–0x0385 for alert-by-thread-id, 0x038B for NtOpenKeyedEvent2
 
 ## Outcome
 
@@ -46,6 +47,7 @@
 | 💎  |   7   | §7 Thread cancellation (`pthread_cancel`)                 | §4, §3                               |  [ ]   |
 | ⭐  |   8   | §8 `WaitForMultipleObjects` (`waitable_t` + `wait_any`)   | §4, §9                               |  [ ]   |
 | ⭐  |   9   | §6 `pthread_barrier_t` — kernel-level, reusable           | §8 or §9 (timeout variant)           |  [ ]   |
+| 💎  |  10   | Sync syscalls wired to SSDT (keyed events, alerts)        | §4, §8, TODO-05 §4                   |  [ ]   |
 
 > 💎 = parity — ticket locks, preemption count, TLS, futexes, timeout API, pthread_once, and thread cancellation all have direct Linux or Windows NT equivalents.
 > ⭐ = exclusive — `WaitForMultipleObjects` with a first-class `waitable_t` vtable across all sync types is superior to Linux's fd-only `epoll`; `pthread_barrier_t` as a kernel primitive (not just user-space pthreads) is a Windows gap.
@@ -231,6 +233,26 @@ Every blocking primitive gets a `_timeout(ms)` variant with identical semantics:
 - [ ] `cond_wait_timeout(cond, mutex, ms)` → `WAIT_SIGNALLED` or `WAIT_TIMEOUT`
 - [ ] All variants read the monotonic tick counter (`uptime_ns()`) for deadline computation; use `WAIT_INFINITE (-1)` to match existing non-timeout behaviour
 - [ ] Commit: `"sched: unified _timeout(ms) API — mutex/sem/rwlock/cond variants, WAIT_SIGNALLED/WAIT_TIMEOUT"`
+
+---
+
+## 10. Sync Syscalls Wired to SSDT (Keyed Events, Alerts)
+
+Register keyed event and alert-by-thread-id syscalls in the SSDT for user-mode synchronisation primitives. (→ XREF: 02-kernel-core/TODO-05-native-api-layer.md §4)
+
+- [ ] `NtCreateKeyedEvent(KeyedEventHandle, DesiredAccess, ObjectAttributes, Flags)` → SSDT 0x0084
+- [ ] `NtOpenKeyedEvent(KeyedEventHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0085
+- [ ] `NtWaitForKeyedEvent(KeyedEventHandle, KeyValue, Alertable, Timeout)` → SSDT 0x0086
+- [ ] `NtReleaseKeyedEvent(KeyedEventHandle, KeyValue, Alertable, Timeout)` → SSDT 0x0087
+- [ ] `NtWaitForAlertByThreadId(Address, Timeout)` → SSDT 0x030B
+- [ ] `NtAlertThreadByThreadId(ThreadId)` → SSDT 0x030C
+- [ ] `NtAlertThreadByThreadIdEx(...)` → SSDT 0x0384
+- [ ] `NtWaitForAlertByThreadIdEx(...)` → SSDT 0x0385
+- [ ] `NtOpenKeyedEvent2(...)` → SSDT 0x038B
+- [ ] All functions return `NTSTATUS`
+- [ ] Commit: `"sync: wire keyed event and alert-by-thread-id syscalls to SSDT"`
+
+**Test checkpoint:** `NtCreateKeyedEvent` + `NtWaitForKeyedEvent` blocks; `NtReleaseKeyedEvent` from another thread wakes it. `NtAlertThreadByThreadId` + `NtWaitForAlertByThreadId` round-trip completes.
 
 ---
 

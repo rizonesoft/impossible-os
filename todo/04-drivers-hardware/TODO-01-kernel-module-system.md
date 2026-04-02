@@ -13,6 +13,7 @@
 - → XREF: `05-storage-filesystems` domain — VFS and IXFS must be mounted before `module_load_all()` in §5 can scan `C:\Impossible\System\Drivers\`
 - → XREF: `02-kernel-core/TODO-02-pci-bus.md` — PCI enumeration scan completes before `driver_probe_all()` in §4; the driver model in §4 hooks into that scan callback
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` — `vmm_map_exec(base, size)` call needed by §2 to mark module `.text` pages as executable (NX cleared)
+- → XREF: `02-kernel-core/TODO-05-native-api-layer.md §4` — SSDT indices 0x0270–0x0272 reserved for Plug and Play syscalls
 
 ## Outcome
 
@@ -33,6 +34,7 @@
 | 💎  |   4   | §2 ELF relocatable module loader                        | §1, §3 (test `.kmod` to load)           |  [ ]   |
 | 💎  |   5   | §5 Auto-load modules at boot                            | §2, VFS/IXFS mounted                   |  [ ]   |
 | 💎  |   6   | §6 RTL8139 as first loadable module                     | §2, §3, §4, §5                          |  [ ]   |
+| 💎  |   7   | Plug and Play syscalls wired to SSDT                    | §1, TODO-05 §4                           |  [ ]   |
 
 > All six rows are 💎 parity: Windows NT has `.sys` driver loading with a symbol table (HAL.dll exports); Linux has `insmod`/`modprobe` with `.ko` ELF modules and `EXPORT_SYMBOL`. Impossible OS matches both with a leaner design — no separate HAL.dll, no kernel version magic — but achieves the same driver isolation and hot-load capability.
 
@@ -156,6 +158,20 @@ Convert the existing built-in RTL8139 driver to `src/modules/rtl8139/rtl8139.kmo
 - [ ] Remove RTL8139 from `src/kernel/drivers/` and from the kernel `Makefile` source list
 - [ ] Boot verification: `bash scripts/build.sh clean run` — serial log shows `[MODULE] Loaded rtl8139.kmod (RTL8139 NIC, BSD-2)` and `[DRIVER] RTL8139: probe PCI 10EC:8139 OK`; networking functions (ARP/ICMP) still work
 - [ ] Commit: `"drivers: convert RTL8139 to loadable module — first .kmod end-to-end test"`
+
+---
+
+## 7. Plug and Play Syscalls Wired to SSDT
+
+Register PnP control syscalls in the SSDT for user-mode device management. (→ XREF: 02-kernel-core/TODO-05-native-api-layer.md §4, §22)
+
+- [ ] `NtPlugPlayControl(PnPControlClass, PnPControlData, PnPControlDataLength)` → SSDT 0x0270: device enumerate, enable/disable, eject
+- [ ] `NtGetPlugPlayEvent(EventBuffer, EventBufferLength, Timeout)` → SSDT 0x0271: wait for device arrival/removal events
+- [ ] `NtSerializeBoot(Command)` → SSDT 0x0272: serialize boot-critical driver loading order
+- [ ] All functions return `NTSTATUS`
+- [ ] Commit: `"drivers: wire Plug and Play syscalls to SSDT (0x0270–0x0272)"`
+
+**Test checkpoint:** `NtPlugPlayControl` enumerates PCI devices. `NtGetPlugPlayEvent` receives device arrival event after hot-plug.
 
 ---
 

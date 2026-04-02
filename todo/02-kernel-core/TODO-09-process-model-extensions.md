@@ -14,6 +14,7 @@
 - → XREF: `TODO-03-object-manager.md §3` — `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
 - → XREF: `TODO-04-peb-teb-user-abi.md §5` — `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
 - → XREF: `TODO-05-native-api-layer.md §9` — `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
+- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x0160–0x0167 reserved for Job Object syscalls
 - → XREF: `TODO-07-time-filetime-management.md §6` — `KeDelayExecutionThread` is the sleep implementation; `NtDelayExecution` syscall wiring belongs there
 - → XREF: `TODO-08-binary-system.md §1` — `exec_load()` dispatcher sets `brk` to end of BSS at load time
 
@@ -38,6 +39,7 @@
 | 💎  |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)     | 4                      |  [ ]   |
 | 💎  |   6   | Process capabilities and privilege bitmask           | —                      |  [ ]   |
 | ⭐  |   7   | Capability inheritance and drop-only policy          | 6                      |  [ ]   |
+| 💎  |   8   | Job Object syscalls wired to SSDT                    | §6, TODO-05 §4         |  [ ]   |
 
 > 💎 = parity — Windows NT (tokens + priority classes) and Linux (capabilities + scheduling policies) both provide these.
 > ⭐ = exclusive — strict drop-only capability inheritance with no privilege escalation path is more auditable than both Windows token elevation and Linux `setcap`.
@@ -145,6 +147,25 @@ Capabilities can be inherited across `fork` / `exec` but can only be dropped, ne
 - [ ] No syscall or path grants new capabilities — escalation requires a restart or a privileged parent spawning with a specific mask
 - [ ] Document the invariant: `child->capabilities ⊆ parent->capabilities` is enforced at fork and exec
 - [ ] Commit: `"kernel: security — capability inheritance and drop-only policy"`
+
+---
+
+## 8. Job Object Syscalls Wired to SSDT
+
+Register Job Object management syscalls in the SSDT for process-group resource control. (→ XREF: TODO-05-native-api-layer.md §4)
+
+- [ ] `NtCreateJobObject(JobHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0160
+- [ ] `NtOpenJobObject(JobHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0161
+- [ ] `NtAssignProcessToJobObject(JobHandle, ProcessHandle)` → SSDT 0x0162
+- [ ] `NtTerminateJobObject(JobHandle, ExitStatus)` → SSDT 0x0163
+- [ ] `NtQueryInformationJobObject(JobHandle, InfoClass, Buffer, Length, RetLen)` → SSDT 0x0164
+- [ ] `NtSetInformationJobObject(JobHandle, InfoClass, Buffer, Length)` → SSDT 0x0165
+- [ ] `NtIsProcessInJob(ProcessHandle, JobHandle)` → SSDT 0x0166
+- [ ] `NtCreateJobSet(NumJob, UserJobSet, Flags)` → SSDT 0x0167
+- [ ] All functions return `NTSTATUS`
+- [ ] Commit: `"kernel: wire Job Object syscalls to SSDT (0x0160–0x0167)"`
+
+**Test checkpoint:** `NtCreateJobObject` creates a job. `NtAssignProcessToJobObject` assigns a child process. `NtQueryInformationJobObject` returns accounting data. `NtTerminateJobObject` kills all processes in the job.
 
 ---
 

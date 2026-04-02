@@ -22,6 +22,7 @@
 - → XREF: `TODO-05-native-api-layer.md §2` — SYSCALL/SYSRET fast path is where the CR3 swap for KPTI (§4) is inserted and IBRS enable (§5) happens on kernel entry; §3 (INT 0x2E path) also needs the same CR3 swap
 - → XREF: `TODO-11-security-reference-monitor.md §6` — MIC Low-IL processes are the primary beneficiaries of SMEP/SMAP (user code cannot exec kernel pages or read kernel memory)
 - → XREF: `TODO-16-crash-dump-generation.md §1` — `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE` is the stop code emitted by §9 (`__stack_chk_fail`) and §8 (cookie mismatch)
+- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x01F0–0x01F4 and 0x02A2–0x02A4 reserved for Enclave and signing-level syscalls
 
 ---
 
@@ -54,6 +55,7 @@
 | 💎  |   9   | Stack canaries (`-fstack-protector-strong`)        | T16 §1                 |  [ ]   |
 | 💎  |  10   | Kernel stack guard pages                           | §1                     |  [ ]   |
 | ⭐  |  11   | KASLR (RDRAND kernel load address)                 | §1, §3                 |  [ ]   |
+| 💎  |  12   | Enclave and signing syscalls wired to SSDT         | §11, TODO-05 §4        |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work — Impossible OS is superior or first.
@@ -437,6 +439,25 @@
 ### 11.4 Commit
 
 - [ ] Commit: `"kernel/security: KASLR — bootloader RDRAND slide, ELF relocation, kaslr_slide in boot_info"`
+
+---
+
+## 12. Enclave and Code Signing Syscalls Wired to SSDT
+
+Register VBS/SGX enclave management and code signing verification syscalls in the SSDT. (→ XREF: TODO-05-native-api-layer.md §4)
+
+- [ ] `NtCreateEnclave(ProcessHandle, BaseAddress, ZeroBits, Size, InitialCommitment, EnclaveType, EnclaveInformation, InformationLength, EnclaveError)` → SSDT 0x01F0
+- [ ] `NtLoadEnclaveData(ProcessHandle, BaseAddress, Buffer, BufferSize, Protect, PageInformation, InformationLength, NumberOfBytesWritten, EnclaveError)` → SSDT 0x01F1
+- [ ] `NtInitializeEnclave(ProcessHandle, BaseAddress, EnclaveInformation, InformationLength, EnclaveError)` → SSDT 0x01F2
+- [ ] `NtTerminateEnclave(BaseAddress, WaitForThread)` → SSDT 0x01F3
+- [ ] `NtCallEnclave(EnclaveRoutine, WaitForThread, EnclaveRoutineReturn)` → SSDT 0x01F4
+- [ ] `NtSetCachedSigningLevel(Flags, InputSigningLevel, SourceFiles, SourceFileCount, TargetFile)` → SSDT 0x02A2
+- [ ] `NtGetCachedSigningLevel(File, Flags, SigningLevel, Thumbprint, ThumbprintSize, ThumbprintAlgorithm)` → SSDT 0x02A3
+- [ ] `NtCompareSigningLevels(FirstSigningLevel, SecondSigningLevel)` → SSDT 0x02A4
+- [ ] All functions return `NTSTATUS`
+- [ ] Commit: `"kernel/security: wire Enclave and code signing syscalls to SSDT"`
+
+**Test checkpoint:** `NtCreateEnclave` allocates enclave region. `NtSetCachedSigningLevel` stores signing level on file. `NtGetCachedSigningLevel` retrieves it. `NtCompareSigningLevels` returns correct ordering.
 
 ---
 
