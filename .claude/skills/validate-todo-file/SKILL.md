@@ -32,6 +32,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
 6. Validate the current lean TODO structure.
    - Check required sections, numbering, checklist shape, references, and exit criteria.
    - Use `Implementation Order`, not legacy phase-table rules.
+   - **`Depends On` column must use `§` prefix:** All section references in the `Depends On` column must use `§N` notation (e.g., `§1, §3`), not bare numbers (e.g., `1, 3`). Fix any bare numbers by adding the `§` prefix.
    - **Compact the OS Comparison table:**
      - Header columns: `⭐ | Feature | Win11 | Linux | Impossible OS`
      - Keep cells short: status emoji + max 5 words per cell. No full sentences.

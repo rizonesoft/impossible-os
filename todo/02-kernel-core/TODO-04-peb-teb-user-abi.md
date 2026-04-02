@@ -30,14 +30,14 @@
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | TEB struct and GS self-pointer                 | —          |  [x]   |
 | 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS     | —          |  [x]   |
-| 💎  |   3   | swapgs on INT 0x80 entry and exit              | 1          |  [x]   |
-| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [x]   |
-| 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [x]   |
-| 💎  |   6   | TEB allocation and population at thread create | 1, 4       |  [x]   |
-| 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | 5, 6       |  [x]   |
-| 💎  |   8   | PEB Ldr (module list) basic population         | 5          |  [x]   |
-| 💎  |   9   | TLS slot allocation (64 static slots)          | 6          |  [ ]   |
-| ⭐  |  10   | PEB / TEB exposed in Ob namespace              | 5, 6       |  [ ]   |
+| 💎  |   3   | swapgs on INT 0x80 entry and exit              | §1         |  [x]   |
+| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | §1, §3     |  [x]   |
+| 💎  |   5   | PEB allocation and population at task_exec     | §2, §4     |  [x]   |
+| 💎  |   6   | TEB allocation and population at thread create | §1, §4     |  [x]   |
+| 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | §5, §6     |  [x]   |
+| 💎  |   8   | PEB Ldr (module list) basic population         | §5         |  [x]   |
+| 💎  |   9   | TLS slot allocation (64 static slots)          | §6         |  [ ]   |
+| ⭐  |  10   | PEB / TEB exposed in Ob namespace              | §5, §6     |  [ ]   |
 
 > 💎 = parity — Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive — exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -137,7 +137,7 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [x] `LDR_DATA_TABLE_ENTRY`: DllBase, EntryPoint, SizeOfImage, FullDllName + BaseDllName as UNICODE_STRING
 - [x] `PEB->Ldr` wired to the allocated `PEB_LDR_DATA`
 - [ ] Full module list (LoadLibrary/FreeLibrary) — see TODO-08 §7
-- [ ] Commit: `"kernel: peb — minimal PEB Ldr with main module entry"`
+- [x] Commit: `"kernel: peb — minimal PEB Ldr with main module entry"`
 
 ## 9. TLS Slot Allocation (64 Static Slots)
 TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(thread)` and `TlsAlloc`. A minimal allocator is needed for Win32 DLLs that use TLS before the full heap is available.
