@@ -1,9 +1,10 @@
 /* ============================================================================
  * test_peb_teb.c — PEB / TEB user-mode ABI unit tests
  *
- * Tests PEB struct offsets, population after task_exec, OS version fields,
- * and RTL_USER_PROCESS_PARAMETERS content. TEB tests that require ring-3
- * execution (GS self-pointer, ClientId) are deferred until §6.
+ * Tests PEB/TEB struct offsets (compile-time), PEB population after
+ * task_exec, OS version fields, and RTL_USER_PROCESS_PARAMETERS content.
+ * TEB runtime tests (GS self-pointer, ClientId) need a user-mode test
+ * binary — kernel GS points to per-CPU data, not TEB.
  *
  * XREF: 02-kernel-core/TODO-04-peb-teb-user-abi.md §Unit Tests
  * ============================================================================ */

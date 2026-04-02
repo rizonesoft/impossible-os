@@ -36,9 +36,14 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
    - Find the row(s) whose `Feature` maps to what the section delivers.
    - Replace placeholder text in the `🚀 Impossible OS` cell with a concrete description and section reference.
    - If a row was `⬜ Planned` and is now fully working, change `⬜` to `✅`; if partial, use `🔄`.
-9. Commit and push after the section is complete and the build passes.
+9. Wire up unit tests for the section's deliverables.
+   - If the TODO has a `## Unit Tests` section, check if the new code is testable.
+   - Add or update test assertions in the relevant `test_*.c` file for the functionality just implemented.
+   - If tests already exist but skip (e.g., "not yet allocated"), update them to verify the new state.
+   - Run `bash scripts/build.sh` to confirm tests compile.
+10. Commit and push after the section is complete and the build passes.
    - Use the section's `Commit:` line as the commit message.
-   - Stage all changed source files, headers, and the updated TODO file together.
+   - Stage all changed source files, headers, the updated TODO file, and any test changes together.
    - Always push to `origin/main` immediately after a successful commit.
    - After a successful push, mark the section's `- [ ] Commit: "..."` checklist item `[x]`.
 
