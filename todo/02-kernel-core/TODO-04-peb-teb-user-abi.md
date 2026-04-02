@@ -36,7 +36,7 @@
 | 💎  |   6   | TEB allocation and population at thread create | §1, §4     |  [x]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | §5, §6     |  [x]   |
 | 💎  |   8   | PEB Ldr (module list) basic population         | §5         |  [x]   |
-| 💎  |   9   | TLS slot allocation (64 static slots)          | §6         |  [ ]   |
+| 💎  |   9   | TLS slot allocation (64 static slots)          | §6         |  [x]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace              | §5, §6     |  [ ]   |
 
 > 💎 = parity — Windows NT / 11 and ntdll both require and implement all of these.
@@ -142,11 +142,11 @@ The user stack must have a valid calling frame waiting for the first instruction
 ## 9. TLS Slot Allocation (64 Static Slots)
 TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(thread)` and `TlsAlloc`. A minimal allocator is needed for Win32 DLLs that use TLS before the full heap is available.
 
-- [ ] Add a per-process static TLS bitmap: 64-bit `uint64_t tls_bitmap` in `task_t` (one bit per slot; bit=0 means free)
-- [ ] Implement `TlsAlloc()` kernel helper: scan bitmap for first free bit, set it, return slot index (0–63)
-- [ ] Implement `TlsFree(index)`: clear the bit; zero the TLS slot in all threads of the process
-- [ ] `TlsGetValue(index)` / `TlsSetValue(index, value)`: read/write `teb->TlsSlots[index]` directly (inline via GS offset for performance)
-- [ ] Slots 0–63 map to `gs:[0x1480 + index * 8]`; expansion slots (index ≥ 64) go through `teb->TlsExpansionSlots` pointer — stub the expansion path (return error for index ≥ 64)
+- [x] `uint64_t tls_bitmap` added to `struct task` — bit N = slot N allocated
+- [x] `tls_alloc(pid)`: scan bitmap for first 0 bit, set it, return index (0–63) or -1
+- [x] `tls_free(pid, index)`: clear bit, zero TEB->TlsSlots[index]
+- [x] `tls_get_value(pid, index)` / `tls_set_value(pid, index, value)`: read/write TEB->TlsSlots[]
+- [x] Slots 0–63 at gs:[0x1480 + index*8]; index ≥ 64 returns -1/0 (expansion stub)
 - [ ] Commit: `"kernel: peb — TLS slot allocation (64 static slots)"`
 
 ## 10. PEB / TEB Exposed in Ob Namespace
@@ -170,7 +170,7 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 | 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | ✅ §1+§6 TEB allocated |
 | 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | ✅ §3+§4 swapgs+MSR   |
 | 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ✅ §6 LastError=0     |
-| 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
+| 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ✅ §9 bitmap alloc    |
 | 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ✅ §5 RTLPP populated  |
 | 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ✅ §8 main module     |
 | 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ✅ §7 argc/argv/auxv |

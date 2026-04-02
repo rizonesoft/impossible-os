@@ -112,6 +112,7 @@ struct task {
     uint64_t kernel_gs_base;             /* MSR 0xC0000102 value; 0 for kernel tasks */
     void *peb;                           /* PEB * in user address space (NULL for kernel tasks) */
     void *teb;                           /* TEB * in user address space (NULL for kernel tasks) */
+    uint64_t tls_bitmap;                 /* per-process TLS bitmap: bit N = slot N allocated */
 };
 
 /* Task entry function type */
@@ -209,6 +210,19 @@ int thread_boost_priority(uint32_t task_pid, uint32_t thread_id, uint32_t new_pr
 /* Restore a thread's effective priority to its base_priority.
  * Called from mutex_unlock() to undo PI boosts. */
 void thread_restore_priority(uint32_t task_pid, uint32_t thread_id);
+
+/* --- TLS slot allocation (64 static slots) --- */
+
+/* Allocate a TLS slot. Returns slot index (0–63) or -1 if all full. */
+int tls_alloc(uint32_t pid);
+
+/* Free a TLS slot. Zeroes the slot in all threads. Returns 0 or -1. */
+int tls_free(uint32_t pid, uint32_t index);
+
+/* Get/Set TLS value for the current thread (kernel-side helper).
+ * User-mode code reads/writes gs:[0x1480 + index*8] directly. */
+uint64_t tls_get_value(uint32_t pid, uint32_t index);
+void tls_set_value(uint32_t pid, uint32_t index, uint64_t value);
 
 /* --- Assembly (switch_context.asm) --- */
 

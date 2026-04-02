@@ -203,6 +203,7 @@ void task_init(void)
         tasks[i].exec_pending = 0;
         tasks[i].cr3 = 0;
         tasks[i].kernel_gs_base = 0;
+        tasks[i].tls_bitmap = 0;
         tasks[i].xsave_area = (void *)0;
         tasks[i].fpu_used = 0;
         tasks[i].handle_table.entries  = NULL;
@@ -1341,6 +1342,55 @@ static void thread_wrapper(void)
 
     /* Thread returned — exit cleanly */
     thread_exit(0);
+}
+
+/* ---- TLS slot allocation (64 static slots) ------------------------------ */
+
+int tls_alloc(uint32_t pid)
+{
+    uint64_t bm;
+    uint32_t i;
+
+    if (pid >= num_tasks) return -1;
+    bm = tasks[pid].tls_bitmap;
+
+    /* Find first free bit (0 = free) */
+    for (i = 0; i < 64; i++) {
+        if (!(bm & (1ULL << i))) {
+            tasks[pid].tls_bitmap |= (1ULL << i);
+            return (int)i;
+        }
+    }
+    return -1;  /* all 64 slots occupied */
+}
+
+int tls_free(uint32_t pid, uint32_t index)
+{
+    if (pid >= num_tasks || index >= 64) return -1;
+    if (!(tasks[pid].tls_bitmap & (1ULL << index))) return -1; /* not allocated */
+
+    tasks[pid].tls_bitmap &= ~(1ULL << index);
+
+    /* Zero the slot in the main thread's TEB */
+    if (tasks[pid].teb) {
+        TEB *teb = (TEB *)tasks[pid].teb;
+        teb->TlsSlots[index] = 0;
+    }
+    return 0;
+}
+
+uint64_t tls_get_value(uint32_t pid, uint32_t index)
+{
+    if (pid >= num_tasks || index >= 64 || !tasks[pid].teb)
+        return 0;
+    return ((TEB *)tasks[pid].teb)->TlsSlots[index];
+}
+
+void tls_set_value(uint32_t pid, uint32_t index, uint64_t value)
+{
+    if (pid >= num_tasks || index >= 64 || !tasks[pid].teb)
+        return;
+    ((TEB *)tasks[pid].teb)->TlsSlots[index] = value;
 }
 
 int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
