@@ -15,7 +15,7 @@
 
 #include "kernel/types.h"
 
-/* Forward-declare PEB (defined in peb.h) */
+/* Forward-declare PEB (full definition in peb.h) */
 struct peb;
 
 /* ---- CLIENT_ID ---------------------------------------------------------- */

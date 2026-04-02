@@ -29,7 +29,7 @@
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | TEB struct and GS self-pointer                 | —          |  [x]   |
-| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS     | —          |  [ ]   |
+| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS     | —          |  [x]   |
 | 💎  |   3   | swapgs on INT 0x80 entry and exit              | 1          |  [ ]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [ ]   |
 | 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [ ]   |
@@ -61,38 +61,17 @@ Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macro
 - [x] Add `CLIENT_ID` struct: two `uint64_t` fields (UniqueProcess, UniqueThread)
 - [x] Add `NT_TIB` struct with correct field order and sizes
 - [x] Annotate each field with its Windows offset as a comment — 11 `_Static_assert` offset checks
-- [ ] Commit: `"kernel: peb — TEB struct with correct Windows x64 offsets"`
+- [x] Commit: `"kernel: peb — TEB struct with correct Windows x64 offsets"`
 
 ## 2. PEB Struct and RTL_USER_PROCESS_PARAMETERS
 Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk it without any patching.
 
-- [ ] Create `include/kernel/ob/peb.h` with `PEB` struct:
-  - `uint8_t InheritedAddressSpace` at `0x00`
-  - `uint8_t ReadImageFileExecOptions` at `0x01`
-  - `uint8_t BeingDebugged` at `0x02`
-  - `uint8_t BitField` at `0x03` — ImageUsesLargePages, NtGlobalFlag bits
-  - `void *Mutant` at `0x08`
-  - `void *ImageBaseAddress` at `0x10`
-  - `PEB_LDR_DATA *Ldr` at `0x18`
-  - `RTL_USER_PROCESS_PARAMETERS *ProcessParameters` at `0x20`
-  - `uint32_t NtGlobalFlag` at `0xBC`
-  - `LARGE_INTEGER CriticalSectionTimeout` at `0xC8`
-  - `uint64_t HeapSegmentReserve` / `HeapSegmentCommit` at `0xD0`/`0xD8`
-  - `uint32_t NumberOfProcessors` at `0xB8`
-  - `uint32_t OSMajorVersion`, `OSMinorVersion`, `OSBuildNumber` at `0xA4`/`0xA8`/`0xAC`
-  - `uint64_t TlsBitmap` / `TlsBitmapBits[2]` at `0x230`
-- [ ] Create `RTL_USER_PROCESS_PARAMETERS` struct:
-  - `uint32_t MaximumLength`, `Length`
-  - `uint32_t Flags`
-  - `uint32_t DebugFlags`
-  - `void *ConsoleHandle`
-  - `uint32_t ConsoleFlags`
-  - `HANDLE StandardInput`, `StandardOutput`, `StandardError`
-  - `UNICODE_STRING CurrentDirectory.DosPath`, `HANDLE CurrentDirectory.Handle`
-  - `UNICODE_STRING DllPath`, `ImagePathName`, `CommandLine`
-  - `void *Environment` — pointer to env block (null-terminated name=value pairs in UTF-16)
-- [ ] Create minimal `UNICODE_STRING` struct: `Length`, `MaximumLength` (uint16_t), `Buffer` (wchar_t *)
-- [ ] Add `PEB_LDR_DATA` stub for §8
+- [x] Create `include/kernel/ob/peb.h` with `PEB` struct — 15 `_Static_assert` offset checks
+- [x] Create `RTL_USER_PROCESS_PARAMETERS` struct with UNICODE_STRING fields
+- [x] Create `UNICODE_STRING` struct: Length, MaximumLength (uint16_t), Buffer (uint16_t *)
+- [x] Create `UHANDLE` type (uint64_t) for Win64 user-mode HANDLE (separate from kernel HANDLE)
+- [x] Add `PEB_LDR_DATA` and `LDR_DATA_TABLE_ENTRY` stubs with `LIST_ENTRY` for §8
+- [x] Add `LARGE_INTEGER`, `LIST_ENTRY` Win64 primitive types
 - [ ] Commit: `"kernel: peb — PEB and RTL_USER_PROCESS_PARAMETERS structs"`
 
 ## 3. swapgs on INT 0x80 Entry and Exit
@@ -207,12 +186,12 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 
 | ⭐ | Feature                  | Win11                    | Linux                  | Impossible OS        |
 |----|--------------------------|--------------------------|------------------------|----------------------|
-| 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | ⬜ §2, §5            |
+| 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | 🔄 §2 done, §5 todo  |
 | 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | 🔄 §1 done, §6 todo  |
 | 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | ⬜ §3, §4            |
 | 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ⬜ §6                |
 | 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
-| 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ⬜ §2, §5            |
+| 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | 🔄 §2 done, §5 todo  |
 | 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ⬜ §8                |
 | 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ⬜ §7                |
 | ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ⬜ §10               |
