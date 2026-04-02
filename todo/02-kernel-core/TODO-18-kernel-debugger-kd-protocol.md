@@ -25,6 +25,7 @@
 - → XREF: `TODO-16-crash-dump-generation.md §3` — `g_module_list` / `g_module_count` from the module registry fed into `DbgKdGetVersionApi` response (§10)
 - → XREF: `TODO-16-crash-dump-generation.md §2` — `CONTEXT` record layout must match exactly what §5 of this TODO sends to WinDbg over the wire
 - → XREF: `TODO-06-irql-model-dpcs.md §3` — IRQL must be at `HIGH_LEVEL` while the kernel is frozen in the debugger; DPC timer must not fire during the debug loop
+- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x0130–0x0137 reserved for debug/exception syscalls; §13 wires NtDebugActiveProcess, NtWaitForDebugEvent, etc. into the SSDT
 
 ---
 
@@ -56,6 +57,7 @@
 | 💎  |  10   | DbgKdGetVersionApi + module list                         | 3, TODO-16-crash-dump-generation.md §3 |  [ ]   |
 | 💎  |  11   | I/O port & MSR read/write (DbgKdReadIoSpace / MSR apis)  | 4                       |  [ ]   |
 | ⭐  |  12   | `kd_break()` + keyboard F12 breakin + QEMU pipe guide    | 3                       |  [ ]   |
+| 💎  |  13   | Debug syscalls wired to SSDT                             | §1, §4, TODO-05 §4     |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work — Impossible OS is superior or first.
@@ -517,6 +519,20 @@
 ### 12.4 Commit
 
 - [ ] Commit: `"kernel/kd: kd_break, DbgBreakPoint, F12 keyboard breakin, QEMU KD setup guide"`
+
+## 13. Debug Syscalls Wired to SSDT
+Register user-mode debug API entry points in the SSDT so debuggers can attach/detach/wait via `syscall`. (→ XREF: TODO-05-native-api-layer.md §4, §20)
+
+- [ ] `NtCreateDebugObject(DebugObjectHandle, DesiredAccess, ObjectAttributes, Flags)` → SSDT 0x0135: allocate debug port object; register as ObpDebugType
+- [ ] `NtDebugActiveProcess(ProcessHandle, DebugObjectHandle)` → SSDT 0x0132: attach debug port to target process; all exceptions route to debugger first
+- [ ] `NtRemoveProcessDebug(ProcessHandle, DebugObjectHandle)` → SSDT 0x0134: detach debugger from process
+- [ ] `NtWaitForDebugEvent(DebugObjectHandle, Alertable, Timeout, WaitStateChange)` → SSDT 0x0136: wait for breakpoint, exception, thread create/exit, process exit, module load events
+- [ ] `NtDebugContinue(DebugObjectHandle, ClientId, ContinueStatus)` → SSDT 0x0133: continue after debug event with `DBG_CONTINUE` or `DBG_EXCEPTION_NOT_HANDLED`
+- [ ] `NtSetInformationDebugObject(DebugObjectHandle, DebugObjectInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0137: control debug object behavior
+- [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)
+- [ ] Commit: `"kernel/kd: wire debug syscalls to SSDT (0x0132–0x0137)"`
+
+**Test checkpoint:** `NtCreateDebugObject` returns valid handle. `NtDebugActiveProcess` on child process captures INT3 breakpoint via `NtWaitForDebugEvent`. `NtDebugContinue(DBG_CONTINUE)` resumes debuggee. `NtRemoveProcessDebug` detaches cleanly.
 
 ---
 

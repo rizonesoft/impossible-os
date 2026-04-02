@@ -15,6 +15,7 @@
 - → XREF: `TODO-03-object-manager.md §8` — Object Manager security descriptor integration; ObXxx calls `SeAccessCheck` before granting any handle
 - → XREF: `TODO-04-peb-teb-user-abi.md §1` — TEB carries `ImpersonationInfo` pointer (thread token)
 - → XREF: `TODO-05-native-api-layer.md §1` — NTSTATUS return codes used by all token/ACL syscalls
+- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x00B0–0x00C4 reserved for security/token syscalls; §12 of this TODO wires NtOpenProcessToken, NtAccessCheck, etc. into the SSDT
 - → XREF: `TODO-09-process-model-extensions.md §2` — process spawn path (NtCreateProcess) must copy parent token and attach it
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` — file handle open calls `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §5` — IXFS security descriptors stored as `SECURITY_DESCRIPTOR` on inodes; SRM is the enforcement engine
@@ -49,6 +50,7 @@
 | 💎  |   9   | UAC token split & NtFilterToken                   | §4, §6, §7          |  [ ]   |
 | 💎  |  10   | Win32 security API wrappers                       | §4–§9, T05 §1       |  [ ]   |
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [ ]   |
+| 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, TODO-05 §4  |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work — Impossible OS is superior or first.
@@ -539,6 +541,30 @@
 ### 11.3 Commit
 
 - [ ] Commit: `"kernel/security: whoami.exe and token tray popout"`
+
+## 12. Security and Token Syscalls Wired to SSDT
+Register all token and access control NtXxx entry points in the SSDT. Most implementations already exist in `src/kernel/security/token.c` and `luid.c`. (→ XREF: TODO-05-native-api-layer.md §4, §15)
+
+- [ ] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` → SSDT 0x00B0 (token.c exists — wire to SSDT)
+- [ ] `NtOpenProcessTokenEx(ProcessHandle, DesiredAccess, HandleAttributes, TokenHandle)` → SSDT 0x00B1
+- [ ] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` → SSDT 0x00B2 (token.c exists)
+- [ ] `NtOpenThreadTokenEx(...)` → SSDT 0x00B3
+- [ ] `NtQueryInformationToken(TokenHandle, TokenInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x00B4 (token.c exists — 13 info classes)
+- [ ] `NtSetInformationToken(TokenHandle, TokenInformationClass, Buffer, Length)` → SSDT 0x00B5
+- [ ] `NtAdjustPrivilegesToken(TokenHandle, DisableAll, NewState, BufLen, PrevState, RetLen)` → SSDT 0x00B6 (token.c exists)
+- [ ] `NtAdjustGroupsToken(...)` → SSDT 0x00B7 (token.c exists)
+- [ ] `NtDuplicateToken(ExistingHandle, DesiredAccess, ObjAttrs, EffectiveOnly, TokenType, NewHandle)` → SSDT 0x00B8 (token.c exists)
+- [ ] `NtFilterToken(ExistingHandle, Flags, SidsToDisable, PrivsToDelete, RestrictedSids, NewHandle)` → SSDT 0x00B9
+- [ ] `NtCreateToken(...)` → SSDT 0x00BA: privileged operation for LSA
+- [ ] `NtAccessCheck(SD, ClientToken, DesiredAccess, GenericMapping, PrivSet, PrivSetLen, GrantedAccess, AccessStatus)` → SSDT 0x00BC: route to `SeAccessCheck()` (§4)
+- [ ] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF: route to `SePrivilegeCheck()` (§8)
+- [ ] `NtSetSecurityObject(Handle, SecurityInformation, SD)` → SSDT 0x00C1
+- [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SD, Length, LengthNeeded)` → SSDT 0x00C2
+- [ ] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3 (luid.c exists)
+- [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)
+- [ ] Commit: `"kernel/security: wire token and access control syscalls to SSDT (0x00B0–0x00C4)"`
+
+**Test checkpoint:** `NtOpenProcessToken` on current process returns valid handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAccessCheck` against DACL returns correct granted access. `NtAdjustPrivilegesToken` enables `SeShutdownPrivilege`.
 
 ---
 

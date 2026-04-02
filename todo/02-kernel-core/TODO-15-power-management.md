@@ -35,6 +35,7 @@
 - → XREF: `TODO-01-kernel-init-sequencing.md §3` — S4 resume check runs early in Phase 1; must distinguish cold boot from hibernate resume via hibernation signature
 - → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §4` — driver model HAL vtables required for USB xHCI to register power callbacks; xHCI D3cold→D0 handled via callback registered in §9
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` — IXFS WAL journal (`ixfs_journal_begin`/`commit`/`abort`) must be verified (§1 Subsystem Verification) before S4 journal-flush dependency is safe; storage driver must reach D0 before journal replay on resume
+- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x00D7 (NtShutdownSystem) and 0x0140–0x0145 (NtSetSystemPowerState, NtInitiatePowerAction, NtPowerInformation, NtGetDevicePowerState, NtSetThreadExecutionState, NtRequestWakeupLatency) reserved for this TODO; §12 wires them into the SSDT
 
 ---
 
@@ -68,6 +69,7 @@
 | 💎  |   9   | Driver power callbacks & resume ordering            | 3, 8                     |  [ ]   |
 | ⭐  |  10   | Connected Standby (S0ix / Modern Standby)           | 2, 9, TODO-06-irql-model-dpcs.md §3 |  [ ]   |
 | 💎  |  11   | Power plan UI & `powercfg`                          | 6, 7, 9                  |  [ ]   |
+| 💎  |  12   | Power syscalls wired to SSDT                        | §2, §6, TODO-05 §4      |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work — Impossible OS is superior or first.
@@ -480,6 +482,21 @@
 ### 11.4 Commit
 
 - [ ] Commit: `"kernel/acpi: powercfg shell command, power plan Registry schema, Power Options UI"`
+
+## 12. Power Syscalls Wired to SSDT
+Register all power management NtXxx entry points in the SSDT so user-mode code can invoke them via `syscall`. (→ XREF: TODO-05-native-api-layer.md §4, §21)
+
+- [ ] `NtShutdownSystem(Action)` → SSDT 0x00D7: call `pm_shutdown()` / `pm_reboot()` based on action; requires `SeShutdownPrivilege`
+- [ ] `NtSetSystemPowerState(SystemAction, LightestSystemState, Flags)` → SSDT 0x0140: route through ACPI S-state transition (§2)
+- [ ] `NtInitiatePowerAction(SystemAction, LightestSystemState, Flags, Asynchronous)` → SSDT 0x0141: async power action initiation
+- [ ] `NtPowerInformation(InformationLevel, InputBuffer, InputLen, OutputBuffer, OutputLen)` → SSDT 0x0142: return battery state, processor info, S-state capabilities from §6
+- [ ] `NtGetDevicePowerState(Device, State)` → SSDT 0x0143: query PCI device D-state (§8)
+- [ ] `NtSetThreadExecutionState(NewFlags, PreviousFlags)` → SSDT 0x0144: `ES_SYSTEM_REQUIRED` / `ES_DISPLAY_REQUIRED` prevents idle sleep
+- [ ] `NtRequestWakeupLatency(Latency)` → SSDT 0x0145: hint to power manager about acceptable wake latency
+- [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)
+- [ ] Commit: `"kernel/acpi: wire power syscalls to SSDT (0x00D7, 0x0140–0x0145)"`
+
+**Test checkpoint:** `NtShutdownSystem(ShutdownReboot)` triggers ACPI reset. `NtPowerInformation(SystemPowerCapabilities)` returns valid S-state mask. `NtSetThreadExecutionState(ES_SYSTEM_REQUIRED)` prevents idle sleep during long operation.
 
 ---
 
