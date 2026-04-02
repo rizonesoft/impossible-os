@@ -14,8 +14,8 @@
 - `src/kernel/mm/vmm.c` — kernel/user access mode (UserMode / KernelMode)
 - → XREF: `TODO-03-object-manager.md §8` — Object Manager security descriptor integration; ObXxx calls `SeAccessCheck` before granting any handle
 - → XREF: `TODO-04-peb-teb-user-abi.md §1` — TEB carries `ImpersonationInfo` pointer (thread token)
-- → XREF: `TODO-05-native-api-layer.md §1` — NTSTATUS return codes used by all token/ACL syscalls
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x00B0–0x00C4 reserved for security/token syscalls; §12 of this TODO wires NtOpenProcessToken, NtAccessCheck, etc. into the SSDT
+- → XREF: `TODO-05-native-api-ssdt.md §1` — NTSTATUS return codes used by all token/ACL syscalls
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x00B0–0x00C4 reserved for security/token syscalls; §12 of this TODO wires NtOpenProcessToken, NtAccessCheck, etc. into the SSDT
 - → XREF: `TODO-09-process-model-extensions.md §2` — process spawn path (NtCreateProcess) must copy parent token and attach it
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §3` — file handle open calls `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §5` — IXFS security descriptors stored as `SECURITY_DESCRIPTOR` on inodes; SRM is the enforcement engine
@@ -543,7 +543,7 @@
 - [ ] Commit: `"kernel/security: whoami.exe and token tray popout"`
 
 ## 12. Security and Token Syscalls Wired to SSDT
-Register all token and access control NtXxx entry points in the SSDT. Most implementations already exist in `src/kernel/security/token.c` and `luid.c`. (→ XREF: TODO-05-native-api-layer.md §4, §15)
+Register all token and access control NtXxx entry points in the SSDT. Most implementations already exist in `src/kernel/security/token.c` and `luid.c`. (→ XREF: TODO-05-native-api-ssdt.md §4, §15)
 
 - [ ] `NtOpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle)` → SSDT 0x00B0 (token.c exists — wire to SSDT)
 - [ ] `NtOpenProcessTokenEx(ProcessHandle, DesiredAccess, HandleAttributes, TokenHandle)` → SSDT 0x00B1

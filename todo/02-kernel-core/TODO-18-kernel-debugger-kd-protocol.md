@@ -25,7 +25,7 @@
 - → XREF: `TODO-16-crash-dump-generation.md §3` — `g_module_list` / `g_module_count` from the module registry fed into `DbgKdGetVersionApi` response (§10)
 - → XREF: `TODO-16-crash-dump-generation.md §2` — `CONTEXT` record layout must match exactly what §5 of this TODO sends to WinDbg over the wire
 - → XREF: `TODO-06-irql-model-dpcs.md §3` — IRQL must be at `HIGH_LEVEL` while the kernel is frozen in the debugger; DPC timer must not fire during the debug loop
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x0130–0x0137 reserved for debug/exception syscalls; §13 wires NtDebugActiveProcess, NtWaitForDebugEvent, etc. into the SSDT
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x0130–0x0137 reserved for debug/exception syscalls; §13 wires NtDebugActiveProcess, NtWaitForDebugEvent, etc. into the SSDT
 
 ---
 
@@ -521,7 +521,7 @@
 - [ ] Commit: `"kernel/kd: kd_break, DbgBreakPoint, F12 keyboard breakin, QEMU KD setup guide"`
 
 ## 13. Debug Syscalls Wired to SSDT
-Register user-mode debug API entry points in the SSDT so debuggers can attach/detach/wait via `syscall`. (→ XREF: TODO-05-native-api-layer.md §4, §20)
+Register user-mode debug API entry points in the SSDT so debuggers can attach/detach/wait via `syscall`. (→ XREF: TODO-05-native-api-ssdt.md §4, §20)
 
 - [ ] `NtCreateDebugObject(DebugObjectHandle, DesiredAccess, ObjectAttributes, Flags)` → SSDT 0x0135: allocate debug port object; register as ObpDebugType
 - [ ] `NtDebugActiveProcess(ProcessHandle, DebugObjectHandle)` → SSDT 0x0132: attach debug port to target process; all exceptions route to debugger first

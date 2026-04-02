@@ -17,7 +17,7 @@
 - [`scripts/build.sh`](../../scripts/build.sh)
 - → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` — EFER.NXE and CR4 hardening must be active before §1–§3 can rely on NX bits
 - → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` — TEB and stack bounds required for §1 guard page placement
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
 - → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §11` — UEFI W^X (firmware runtime pages); §3 policy applies there too
 
 ## Outcome
@@ -67,7 +67,7 @@ Change page permissions on an existing mapping — essential for W^X policy, JIT
 - [ ] Implement `vmm_protect(virt, size, prot)` — walk PTEs for range; map `PROT_WRITE` → R/W=1, `PROT_EXEC` → NX=0, `PROT_NONE` → Present=0 (access fault on touch)
 - [ ] `invlpg` on every modified PTE address to invalidate TLB; on SMP, IPI shootdown for other CPUs
 - [ ] Wire `mprotect(addr, len, prot)` POSIX syscall → `vmm_protect()`
-- [ ] Wire `NtProtectVirtualMemory(handle, &base, &size, new_protect, &old_protect)` → `vmm_protect()` (→ XREF `02-kernel-core/TODO-05-native-api-layer.md`)
+- [ ] Wire `NtProtectVirtualMemory(handle, &base, &size, new_protect, &old_protect)` → `vmm_protect()` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 - [ ] Allocate one PROT_NONE guard page below each thread's initial stack in `thread_create()`; page fault on guard page → deliver `EXCEPTION_STACK_OVERFLOW`
 - [ ] Update `pmm_init()`, `vmm_init()`, `heap_init()` to return `boot_result_t` instead of `void` — moved from TODO-01 §8
 - [ ] Commit: `"mm: mprotect / NtProtectVirtualMemory + stack guard pages"`
@@ -94,7 +94,7 @@ Reserve virtual address space without backing frames; commit pages on-demand wit
 - [ ] Extend `vmm_alloc_region()` to accept `MEM_RESERVE` and `MEM_COMMIT` flags
 - [ ] `MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access (page fault handler checks if faulting address is in a committed region → allocate frame + zero + map PTE → retry)
 - [ ] `MEM_RESERVE` path: record region; page faults in a reserved-but-not-committed range → `EXCEPTION_ACCESS_VIOLATION` (not a silent commit)
-- [ ] Wire `NtAllocateVirtualMemory(handle, &base, zero_bits, &size, type, protect)` accepting `MEM_RESERVE`, `MEM_COMMIT`, and `MEM_RESERVE|MEM_COMMIT` (→ XREF `02-kernel-core/TODO-05-native-api-layer.md`)
+- [ ] Wire `NtAllocateVirtualMemory(handle, &base, zero_bits, &size, type, protect)` accepting `MEM_RESERVE`, `MEM_COMMIT`, and `MEM_RESERVE|MEM_COMMIT` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 - [ ] Wire `NtFreeVirtualMemory(handle, &base, &size, MEM_RELEASE)` → unmap committed pages and remove reservation
 - [ ] Commit: `"mm: demand paging — MEM_RESERVE / MEM_COMMIT / NtAllocateVirtualMemory"`
 
@@ -117,7 +117,7 @@ Thin Win32 shim layer over the NT memory API so user-mode code can use the stand
 **Files:** `include/kernel/win32/memory.h`, `src/kernel/sched/syscall.c`
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — Win32 memory API surface; confirm function signatures and `PAGE_*` constant values match Windows documentation before implementing.
+> → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — Win32 memory API surface; confirm function signatures and `PAGE_*` constant values match Windows documentation before implementing.
 
 - [ ] Define `PAGE_NOACCESS`, `PAGE_READONLY`, `PAGE_READWRITE`, `PAGE_EXECUTE`, `PAGE_EXECUTE_READ`, `PAGE_EXECUTE_READWRITE` constants; map each to `PROT_*` combinations
 - [ ] `VirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect)` → `NtAllocateVirtualMemory()`; translate `MEM_RESERVE` / `MEM_COMMIT` / `MEM_RESERVE|MEM_COMMIT` and `PAGE_*` protect flags

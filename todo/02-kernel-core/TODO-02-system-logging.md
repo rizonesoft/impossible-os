@@ -15,7 +15,7 @@
 - → XREF: `TODO-20-kernel-libraries.md §6` — cJSON DOM parser required by §6 (structured JSON events)
 - → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
 - → XREF: `01-boot-platform/TODO-11-klog-ixfs-bare-metal-perf.md` — klog_disk_flush performance fix (ring snapshot, deferred flush mode); both TODOs modify klog_disk.c
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §8 of this TODO wires them into the SSDT
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §8 of this TODO wires them into the SSDT
 
 ## Outcome
 
@@ -143,7 +143,7 @@ Emit machine-parseable events alongside plain-text logs. Requires cJSON from `TO
 Moved to [07-networking/TODO-11](../07-networking/TODO-11-syslog-forwarding.md) — syslog is a networking feature that depends on UDP stack readiness.
 
 ## 8. ETW Tracing Syscalls Wired to SSDT
-Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. This section wires the tracing control syscalls into the SSDT. (→ XREF: TODO-05-native-api-layer.md §4, §22)
+Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. This section wires the tracing control syscalls into the SSDT. (→ XREF: TODO-05-native-api-ssdt.md §4, §22)
 
 - [ ] `NtTraceEvent(TraceHandle, Flags, FieldSize, Fields)` → SSDT 0x01D0: write a trace event to a session
 - [ ] `NtTraceControl(FunctionCode, InBuffer, InLen, OutBuffer, OutLen, RetLen)` → SSDT 0x01D1: control trace sessions (start/stop/query/update/flush)

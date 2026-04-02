@@ -15,7 +15,7 @@
 - `src/kernel/sched/task.c` — task_create_user, task_exec
 - `src/kernel/sched/syscall.c` — syscall dispatcher
 - → XREF: `TODO-03-kernel-test-framework.md §2` — `make test` target (local headless QEMU, no CI QEMU)
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — NtXxx syscalls tested here
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — NtXxx syscalls tested here
 - → XREF: `02-kernel-core/TODO-08-binary-system.md` — ELF/PE/EIF loader tested here
 
 ---

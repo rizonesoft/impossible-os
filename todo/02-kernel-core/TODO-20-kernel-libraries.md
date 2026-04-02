@@ -250,7 +250,7 @@
   4. XOR all sources into a 256-bit seed; expand with Blake2b to produce the initial ChaCha20 key
 - [ ] Continuous operation: maintain a global ChaCha20 state; `csprng_fill` calls `crypto_chacha20_x()` to generate output; re-key every 4 MiB of output (forward-secrecy)
 - [ ] Share the RDRAND seed path with `TODO-17-kernel-security-hardening.md §9` (`__stack_chk_guard` canary init); `canary_init()` calls `csprng_u64()` after `csprng_init()` runs
-- [ ] `SYS_GETRANDOM` syscall: `getrandom(buf, len, flags)` fills user buffer via `csprng_fill` + `copy_to_user`; add to SSDT (→ XREF `TODO-05-native-api-layer.md §4`)
+- [ ] `SYS_GETRANDOM` syscall: `getrandom(buf, len, flags)` fills user buffer via `csprng_fill` + `copy_to_user`; add to SSDT (→ XREF `TODO-05-native-api-ssdt.md §4`)
 
 ### 5.3 Commit
 

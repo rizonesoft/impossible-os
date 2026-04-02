@@ -13,8 +13,8 @@
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) — `vmm_map_pages` for program-break page allocation
 - → XREF: `TODO-03-object-manager.md §3` — `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
 - → XREF: `TODO-04-peb-teb-user-abi.md §5` — `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
-- → XREF: `TODO-05-native-api-layer.md §9` — `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x0160–0x0167 reserved for Job Object syscalls
+- → XREF: `TODO-05-native-api-ssdt.md §9` — `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x0160–0x0167 reserved for Job Object syscalls
 - → XREF: `TODO-07-time-filetime-management.md §6` — `KeDelayExecutionThread` is the sleep implementation; `NtDelayExecution` syscall wiring belongs there
 - → XREF: `TODO-08-binary-system.md §1` — `exec_load()` dispatcher sets `brk` to end of BSS at load time
 
@@ -152,7 +152,7 @@ Capabilities can be inherited across `fork` / `exec` but can only be dropped, ne
 
 ## 8. Job Object Syscalls Wired to SSDT
 
-Register Job Object management syscalls in the SSDT for process-group resource control. (→ XREF: TODO-05-native-api-layer.md §4)
+Register Job Object management syscalls in the SSDT for process-group resource control. (→ XREF: TODO-05-native-api-ssdt.md §4)
 
 - [ ] `NtCreateJobObject(JobHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0160
 - [ ] `NtOpenJobObject(JobHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0161

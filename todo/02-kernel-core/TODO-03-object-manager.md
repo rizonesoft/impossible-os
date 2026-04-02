@@ -16,7 +16,7 @@
 - [`src/kernel/ipc/`](../../src/kernel/ipc/) — pipes, shared memory
 - → XREF: `TODO-01-kernel-init-sequencing.md §4` — ObInit (`object_manager_init()`) is a Phase 2 gate, before registry
 - → XREF: `TODO-04-peb-teb-user-abi.md` — TODO-04 §10 exposes PEB/TEB in the Ob namespace (depends on §4 Object Namespace and §11 Namespace Browser)
-- → XREF: `TODO-05-native-api-layer.md` — NtCreateFile / NtOpenFile / NtClose and sync Nt syscalls are all Ob-routed; SSDT entries depend on §3, §5, §6
+- → XREF: `TODO-05-native-api-ssdt.md` — NtCreateFile / NtOpenFile / NtClose and sync Nt syscalls are all Ob-routed; SSDT entries depend on §3, §5, §6
 - → XREF: `TODO-11-security-reference-monitor.md` — SRM enforces DACLs registered here
 
 ## Outcome

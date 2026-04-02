@@ -161,7 +161,7 @@ Probe for Intel CET (Control-flow Enforcement Technology) shadow stacks; if the 
 - [ ] Probe CPUID leaf 7 subleaf 0 ECX bit 7 (`CET_SS`) for shadow stack support; store in `cpu_features.cet_ss`
 - [ ] If `cpu_features.cet_ss`: set `CR4.CET` (bit 23); write `MSR_IA32_U_CET` (0x6A0) to enable user-mode shadow stacks (`CET_U_ENDBR_EN | CET_U_SHSTK_EN`)
 - [ ] Allocate a shadow stack page per thread in `thread_create()` if CET is active; store shadow stack pointer in thread struct
-- [ ] Stub `NtSetInformationThread(handle, ThreadEnableShadowStack, &enabled, sizeof(enabled))` → set/clear CET shadow stack for the target thread (→ XREF `02-kernel-core/TODO-05-native-api-layer.md`)
+- [ ] Stub `NtSetInformationThread(handle, ThreadEnableShadowStack, &enabled, sizeof(enabled))` → set/clear CET shadow stack for the target thread (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 - [ ] Boot log: `[CPU] CET shadow stack: enabled` or `[CPU] CET shadow stack: not supported`
 - [ ] Commit: `"mm: CET shadow stack — probe, enable if present, NtSetInformationThread stub"`
 

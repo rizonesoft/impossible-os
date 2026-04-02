@@ -11,7 +11,7 @@
 - [`src/kernel/ipc/shmem.c`](../../src/kernel/ipc/shmem.c)
 - [`src/kernel/drivers/ahci.c`](../../src/kernel/drivers/ahci.c) — DMA completion hook for §5 IOCP worker pool
 - → XREF: `02-kernel-core/TODO-03-object-manager.md §4` — Ob namespace (`\Device\NamedPipe\`, `\RPC Control\`) required for §1, §6, §7; named sync object lookup in §6 traverses the Ob directory tree
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — all `Nt*` function stubs (`NtCreateNamedPipeFile`, `NtCreateIoCompletion`, `NtCreateEvent`, `NtCreatePort`, `NtAlpcSendWaitReceivePort`, `NtSubmitRing`) are registered as Native API dispatch entries here
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — all `Nt*` function stubs (`NtCreateNamedPipeFile`, `NtCreateIoCompletion`, `NtCreateEvent`, `NtCreatePort`, `NtAlpcSendWaitReceivePort`, `NtSubmitRing`) are registered as Native API dispatch entries here
 - → XREF: `03-memory-concurrency/TODO-07-advanced-sync.md §4` — `FUTEX_WAIT`/`WAKE` underlies IOCP wait in §4 and ALPC blocking in §8
 - → XREF: `03-memory-concurrency/TODO-07-advanced-sync.md §8` — `waitable_t` vtable used by IOCP completion port and Ob sync objects to integrate with `WaitForMultipleObjects`
 - → XREF: `03-memory-concurrency/TODO-04-advanced-virtual-memory.md §5` — Section Object `NtMapViewOfSection` used by §8 ALPC view attribute and §9 `ImpossibleRing` shared ring buffer
@@ -216,7 +216,7 @@ Two memory-mapped rings (submission queue SQ + completion queue CQ) shared betwe
 
 ## 10. IPC Syscalls Wired to SSDT
 
-Wire named pipes, mailslots, and I/O completion port syscalls into the SSDT. (→ XREF: 02-kernel-core/TODO-05-native-api-layer.md §4)
+Wire named pipes, mailslots, and I/O completion port syscalls into the SSDT. (→ XREF: 02-kernel-core/TODO-05-native-api-ssdt.md §4)
 
 - [ ] `NtCreateNamedPipeFile(...)` → SSDT 0x001B: named pipe creation via NPFS (§1)
 - [ ] `NtCreateNamedPipeFileEx(...)` → SSDT 0x0398: extended named pipe creation

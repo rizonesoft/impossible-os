@@ -17,7 +17,7 @@
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md` — scheduler tick ISR runs at `DISPATCH_LEVEL`; RT scheduling interacts with DPC queuing and IRQL transitions
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` — `uptime_ns()` used for CFS vruntime accounting in §3 and for EDF deadline tracking in §5
 - → XREF: `04-drivers-hardware` domain — ACPI `_PSS` P-state table needed for §9 CPU frequency scaling governors
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md §4` — SSDT indices 0x0180–0x0186 reserved for Worker Factory (kernel thread pool) syscalls; §10 wires them
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` — SSDT indices 0x0180–0x0186 reserved for Worker Factory (kernel thread pool) syscalls; §10 wires them
 
 ## Outcome
 
@@ -145,7 +145,7 @@ Pin threads to specific CPUs by setting an `affinity_mask` bitmask on the task; 
 
 - [ ] Add `affinity_mask` (`uint64_t`, bit N = CPU N allowed) to `task_t`; default `0xFFFFFFFFFFFFFFFF` (all CPUs)
 - [ ] In `rq_enqueue()`: if `affinity_mask` has exactly one CPU bit set, force enqueue to that CPU's run queue; otherwise balance normally
-- [ ] `NtSetInformationThread(handle, ThreadAffinityMask, &mask, sizeof(mask))` — store mask, re-queue thread if needed (→ XREF `02-kernel-core/TODO-05-native-api-layer.md`)
+- [ ] `NtSetInformationThread(handle, ThreadAffinityMask, &mask, sizeof(mask))` — store mask, re-queue thread if needed (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 - [ ] `NtQueryInformationThread(handle, ThreadAffinityMask, &mask, ...)` — return current mask
 - [ ] Win32 `SetThreadAffinityMask(thread, mask)` → `NtSetInformationThread(ThreadAffinityMask)`
 - [ ] Commit: `"sched: CPU affinity — affinity_mask in task_t, NtSetInformationThread wiring"`
@@ -199,7 +199,7 @@ Define a `cpufreq_governor_t` vtable and wire two built-in governors — `perfor
 - [ ] Commit: `"sched: cpufreq governor vtable — performance and powersave, load tracking"`
 
 ## 10. Worker Factory Syscalls Wired to SSDT
-The Worker Factory is the kernel-side thread pool (backs `TpAllocPool` / `CreateThreadpoolWork`). The scheduler owns thread creation/reaping logic. (→ XREF: TODO-05-native-api-layer.md §4)
+The Worker Factory is the kernel-side thread pool (backs `TpAllocPool` / `CreateThreadpoolWork`). The scheduler owns thread creation/reaping logic. (→ XREF: TODO-05-native-api-ssdt.md §4)
 
 - [ ] `NtCreateWorkerFactory(FactoryHandle, DesiredAccess, ObjectAttributes, CompletionPortHandle, WorkerProcessHandle, StartRoutine, StartParameter, MaxThreadCount, StackReserve, StackCommit)` → SSDT 0x0180
 - [ ] `NtWorkerFactoryWorkerReady(WorkerFactoryHandle)` → SSDT 0x0181: signal that worker thread is idle and ready

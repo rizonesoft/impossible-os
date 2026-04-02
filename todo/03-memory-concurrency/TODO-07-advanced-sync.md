@@ -19,8 +19,8 @@
 - → XREF: `03-memory-concurrency/TODO-06-smp-phase2.md §6` — per-CPU RCU upgrade consumes `preempt_disable()`/`preempt_enable()` from §2 as its read-side primitive
 - → XREF: `03-memory-concurrency/TODO-06-smp-phase2.md §8` — `READ_ONCE`/`WRITE_ONCE` macros required for ticket lock spin loop and mutex owner polling in §1 and §2
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md` — preemption count in §2 lives below IRQL `DISPATCH_LEVEL`; `preempt_disable` must not lower IRQL, only inhibit the scheduler
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — `NtWaitForKeyedEvent` / `NtReleaseKeyedEvent` (§4 futexes) and `NtWaitForMultipleObjects` (§8) are Native API entries
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md §4` — SSDT indices 0x0084–0x0087 reserved for keyed events, 0x030B–0x030C and 0x0384–0x0385 for alert-by-thread-id, 0x038B for NtOpenKeyedEvent2
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — `NtWaitForKeyedEvent` / `NtReleaseKeyedEvent` (§4 futexes) and `NtWaitForMultipleObjects` (§8) are Native API entries
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` — SSDT indices 0x0084–0x0087 reserved for keyed events, 0x030B–0x030C and 0x0384–0x0385 for alert-by-thread-id, 0x038B for NtOpenKeyedEvent2
 
 ## Outcome
 
@@ -127,7 +127,7 @@ Fast userspace mutexes: `FUTEX_WAIT(uaddr, expected)` atomically checks that `*u
 - [ ] `FUTEX_WAKE(uaddr, n)` — lock bucket; wake up to `n` waiters, remove from queue; unlock; return count woken
 - [ ] `FUTEX_WAKE_OP(uaddr, uaddr2, n, op, val)` — atomically `op(uaddr2, val)`, then wake up to `n` on `uaddr` and 1 on `uaddr2` (for condvar broadcast)
 - [ ] `SYS_FUTEX` syscall dispatch: routes to above three operations based on `op` argument
-- [ ] `NtWaitForKeyedEvent` / `NtReleaseKeyedEvent` — Native API wrapper over futex `WAIT`/`WAKE` (→ XREF `TODO-05-native-api-layer.md`)
+- [ ] `NtWaitForKeyedEvent` / `NtReleaseKeyedEvent` — Native API wrapper over futex `WAIT`/`WAKE` (→ XREF `TODO-05-native-api-ssdt.md`)
 - [ ] On `thread_exit()`: drain any remaining futex wait-table entries to avoid dangling waiter records
 - [ ] Commit: `"kernel: futex syscall — WAIT/WAKE/WAKE_OP, per-process hash table, NtWaitForKeyedEvent"`
 
@@ -210,7 +210,7 @@ A `waitable_t` vtable pointer is embedded in every sync object (`mutex_t`, `sema
 - [ ] Embed `waitable_t *waitable` pointer in `mutex_t`, `semaphore_t`, `event_t`, `condvar_t`; implement vtable for each type
 - [ ] `wait_any(waitable_t *handles[], count, timeout_ms)` — iterate in index order; register as waiter on all handles; `schedule()`; on wake, identify which handle fired, `remove_waiter` from others; return index
 - [ ] `wait_all(waitable_t *handles[], count, timeout_ms)` — block until all handles report `is_ready`; return 0 or `WAIT_TIMEOUT`
-- [ ] `NtWaitForMultipleObjects(count, handles[], wait_all, timeout)` — Native API entry over `wait_any`/`wait_all` (→ XREF `TODO-05-native-api-layer.md`)
+- [ ] `NtWaitForMultipleObjects(count, handles[], wait_all, timeout)` — Native API entry over `wait_any`/`wait_all` (→ XREF `TODO-05-native-api-ssdt.md`)
 - [ ] Win32 `WaitForMultipleObjects(count, handles[], bWaitAll, ms)` → `NtWaitForMultipleObjects`
 - [ ] Test: `wait_any` on `[mutex, event]` — verify correct index returned when event fires first
 - [ ] Commit: `"sched: WaitForMultipleObjects — waitable_t vtable, wait_any/wait_all, NtWaitForMultipleObjects"`
@@ -238,7 +238,7 @@ Every blocking primitive gets a `_timeout(ms)` variant with identical semantics:
 
 ## 10. Sync Syscalls Wired to SSDT (Keyed Events, Alerts)
 
-Register keyed event and alert-by-thread-id syscalls in the SSDT for user-mode synchronisation primitives. (→ XREF: 02-kernel-core/TODO-05-native-api-layer.md §4)
+Register keyed event and alert-by-thread-id syscalls in the SSDT for user-mode synchronisation primitives. (→ XREF: 02-kernel-core/TODO-05-native-api-ssdt.md §4)
 
 - [ ] `NtCreateKeyedEvent(KeyedEventHandle, DesiredAccess, ObjectAttributes, Flags)` → SSDT 0x0084
 - [ ] `NtOpenKeyedEvent(KeyedEventHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0085

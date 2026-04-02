@@ -19,10 +19,10 @@
 - `include/kernel/idt.h` — `struct interrupt_frame` (syscall/exception entry)
 - `scripts/build.sh` / `Makefile` — compiler flag changes for §9 (canaries)
 - → XREF: `TODO-04-peb-teb-user-abi.md §3` — `swapgs` on INT 0x80 entry/exit path; must also emit IBRS save and STAC/CLAC inline ASM for SMAP compliance (§3 of this TODO)
-- → XREF: `TODO-05-native-api-layer.md §2` — SYSCALL/SYSRET fast path is where the CR3 swap for KPTI (§4) is inserted and IBRS enable (§5) happens on kernel entry; §3 (INT 0x2E path) also needs the same CR3 swap
+- → XREF: `TODO-05-native-api-ssdt.md §2` — SYSCALL/SYSRET fast path is where the CR3 swap for KPTI (§4) is inserted and IBRS enable (§5) happens on kernel entry; §3 (INT 0x2E path) also needs the same CR3 swap
 - → XREF: `TODO-11-security-reference-monitor.md §6` — MIC Low-IL processes are the primary beneficiaries of SMEP/SMAP (user code cannot exec kernel pages or read kernel memory)
 - → XREF: `TODO-16-crash-dump-generation.md §1` — `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE` is the stop code emitted by §9 (`__stack_chk_fail`) and §8 (cookie mismatch)
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x01F0–0x01F4 and 0x02A2–0x02A4 reserved for Enclave and signing-level syscalls
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x01F0–0x01F4 and 0x02A2–0x02A4 reserved for Enclave and signing-level syscalls
 
 ---
 
@@ -133,7 +133,7 @@
 
 ### 3.3 CR3 swap at ring transitions
 
-- [ ] Syscall entry (→ XREF `TODO-05-native-api-layer.md §2`): immediately after `SWAPGS`:
+- [ ] Syscall entry (→ XREF `TODO-05-native-api-ssdt.md §2`): immediately after `SWAPGS`:
   ```asm
   mov rax, [gs:pcpu_kernel_cr3]   ; load per-CPU saved kernel CR3
   mov cr3, rax                    ; switch to kernel CR3
@@ -444,7 +444,7 @@
 
 ## 12. Enclave and Code Signing Syscalls Wired to SSDT
 
-Register VBS/SGX enclave management and code signing verification syscalls in the SSDT. (→ XREF: TODO-05-native-api-layer.md §4)
+Register VBS/SGX enclave management and code signing verification syscalls in the SSDT. (→ XREF: TODO-05-native-api-ssdt.md §4)
 
 - [ ] `NtCreateEnclave(ProcessHandle, BaseAddress, ZeroBits, Size, InitialCommitment, EnclaveType, EnclaveInformation, InformationLength, EnclaveError)` → SSDT 0x01F0
 - [ ] `NtLoadEnclaveData(ProcessHandle, BaseAddress, Buffer, BufferSize, Protect, PageInformation, InformationLength, NumberOfBytesWritten, EnclaveError)` → SSDT 0x01F1

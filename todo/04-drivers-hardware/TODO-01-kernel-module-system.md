@@ -13,7 +13,7 @@
 - → XREF: `05-storage-filesystems` domain — VFS and IXFS must be mounted before `module_load_all()` in §5 can scan `C:\Impossible\System\Drivers\`
 - → XREF: `02-kernel-core/TODO-02-pci-bus.md` — PCI enumeration scan completes before `driver_probe_all()` in §4; the driver model in §4 hooks into that scan callback
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` — `vmm_map_exec(base, size)` call needed by §2 to mark module `.text` pages as executable (NX cleared)
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md §4` — SSDT indices 0x0270–0x0272 reserved for Plug and Play syscalls
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` — SSDT indices 0x0270–0x0272 reserved for Plug and Play syscalls
 
 ## Outcome
 
@@ -163,7 +163,7 @@ Convert the existing built-in RTL8139 driver to `src/modules/rtl8139/rtl8139.kmo
 
 ## 7. Plug and Play Syscalls Wired to SSDT
 
-Register PnP control syscalls in the SSDT for user-mode device management. (→ XREF: 02-kernel-core/TODO-05-native-api-layer.md §4, §22)
+Register PnP control syscalls in the SSDT for user-mode device management. (→ XREF: 02-kernel-core/TODO-05-native-api-ssdt.md §4, §22)
 
 - [ ] `NtPlugPlayControl(PnPControlClass, PnPControlData, PnPControlDataLength)` → SSDT 0x0270: device enumerate, enable/disable, eject
 - [ ] `NtGetPlugPlayEvent(EventBuffer, EventBufferLength, Timeout)` → SSDT 0x0271: wait for device arrival/removal events

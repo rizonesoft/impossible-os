@@ -35,7 +35,7 @@
 - → XREF: `TODO-01-kernel-init-sequencing.md §3` — S4 resume check runs early in Phase 1; must distinguish cold boot from hibernate resume via hibernation signature
 - → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §4` — driver model HAL vtables required for USB xHCI to register power callbacks; xHCI D3cold→D0 handled via callback registered in §9
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` — IXFS WAL journal (`ixfs_journal_begin`/`commit`/`abort`) must be verified (§1 Subsystem Verification) before S4 journal-flush dependency is safe; storage driver must reach D0 before journal replay on resume
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT indices 0x00D7 (NtShutdownSystem) and 0x0140–0x0145 (NtSetSystemPowerState, NtInitiatePowerAction, NtPowerInformation, NtGetDevicePowerState, NtSetThreadExecutionState, NtRequestWakeupLatency) reserved for this TODO; §12 wires them into the SSDT
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x00D7 (NtShutdownSystem) and 0x0140–0x0145 (NtSetSystemPowerState, NtInitiatePowerAction, NtPowerInformation, NtGetDevicePowerState, NtSetThreadExecutionState, NtRequestWakeupLatency) reserved for this TODO; §12 wires them into the SSDT
 
 ---
 
@@ -484,7 +484,7 @@
 - [ ] Commit: `"kernel/acpi: powercfg shell command, power plan Registry schema, Power Options UI"`
 
 ## 12. Power Syscalls Wired to SSDT
-Register all power management NtXxx entry points in the SSDT so user-mode code can invoke them via `syscall`. (→ XREF: TODO-05-native-api-layer.md §4, §21)
+Register all power management NtXxx entry points in the SSDT so user-mode code can invoke them via `syscall`. (→ XREF: TODO-05-native-api-ssdt.md §4, §21)
 
 - [ ] `NtShutdownSystem(Action)` → SSDT 0x00D7: call `pm_shutdown()` / `pm_reboot()` based on action; requires `SeShutdownPrivilege`
 - [ ] `NtSetSystemPowerState(SystemAction, LightestSystemState, Flags)` → SSDT 0x0140: route through ACPI S-state transition (§2)

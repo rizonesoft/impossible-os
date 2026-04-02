@@ -19,7 +19,7 @@
 - `src/kernel/sched/task.c` — `struct task`, `signals` field, `task_exec` ring-3 entry
 - → XREF: `TODO-04-peb-teb-user-abi.md §1` (TEB `ExceptionList` pointer and struct layout)
 - → XREF: `TODO-04-peb-teb-user-abi.md §7` (initial user stack frame — KiUserExceptionDispatcher target)
-- → XREF: `TODO-05-native-api-layer.md §1` (NTSTATUS — `NtRaiseException`/`NtContinue` return values)
+- → XREF: `TODO-05-native-api-ssdt.md §1` (NTSTATUS — `NtRaiseException`/`NtContinue` return values)
 - → XREF: `TODO-06-irql-model-dpcs.md §3` (interrupt entry/exit IRQL — fault occurs at hardware IRQL)
 
 ## Outcome
@@ -32,7 +32,7 @@
 - `src/kernel/rtl/veh.c` — `RtlAddVectoredExceptionHandler`, `RtlRemoveVectoredExceptionHandler`, `ki_call_veh_list`
 - `src/kernel/probe.c` + `include/kernel/probe.h` — `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`
 - `src/kernel/compat/signal_compat.c` — `ki_deliver_compat_signal()` (Linux compat, `CONFIG_LINUX_COMPAT` guarded)
-- `NtRaiseException` and `NtContinue` registered in SSDT (→ `TODO-05-native-api-layer.md §4`)
+- `NtRaiseException` and `NtContinue` registered in SSDT (→ `TODO-05-native-api-ssdt.md §4`)
 
 ---
 

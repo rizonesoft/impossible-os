@@ -11,7 +11,7 @@
 - [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c), [`include/kernel/drivers/keyboard.h`](../../include/kernel/drivers/keyboard.h)
 - → XREF: `07-graphics-ui` domain — `WM_SCROLL`, `WM_INPUT`, cursor hide/show, and layout indicator popup are message types and UI elements handled by the compositor/window manager
 - → XREF: `08-desktop-shell` domain — system-tray layout indicator (`EN`/`FR`/`DE`) and layout picker popup are shell components consuming `kbd_get_layout()` / `kbd_set_layout()`
-- → XREF: `04-drivers-hardware/TODO-05-input-system.md §5` — `SYS_MOUSE_GRAB`/`SYS_MOUSE_RELEASE` syscalls registered in the native API dispatch table (→ XREF `02-kernel-core/TODO-05-native-api-layer.md`)
+- → XREF: `04-drivers-hardware/TODO-05-input-system.md §5` — `SYS_MOUSE_GRAB`/`SYS_MOUSE_RELEASE` syscalls registered in the native API dispatch table (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 
 ## Outcome
 

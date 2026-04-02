@@ -15,7 +15,7 @@
 - → XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §3` — `vmalloc` backing needed for §8 compressed memory pool
 - → XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §7` — memory pressure notifications trigger §8 compression
 - → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §1` — CPUID capability capture; huge page support (§2, §3) and RDRAND (§9) require it
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — `NtCreateSection` / `NtMapViewOfSection` / `NtCreateJobObject` syscall wiring for §5 and §6
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — `NtCreateSection` / `NtMapViewOfSection` / `NtCreateJobObject` syscall wiring for §5 and §6
 - → XREF: `04-drivers-hardware` domain — AHCI and VirtIO drivers consume the zero-copy DMA pool in §7
 
 ## Outcome
@@ -122,7 +122,7 @@ Allow callers to communicate access patterns and reclaim committed pages without
 
 > [!IMPORTANT]
 > → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` — demand paging infrastructure is the foundation; `NtMapViewOfSection` maps committed pages into a new address space.
-> → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — `NtCreateSection` and `NtMapViewOfSection` syscall numbers and parameter structures.
+> → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — `NtCreateSection` and `NtMapViewOfSection` syscall numbers and parameter structures.
 > A section handle must outlive all views. Track refcounts on the section object; the last `NtUnmapViewOfSection` or handle close frees the backing pages.
 
 - [ ] Define `section_t`: backing type (anonymous / file-backed), size, PMM frame list or VFS file reference, view list, refcount, protect flags
@@ -140,7 +140,7 @@ Enforce committed-page limits per process or group of processes via the Win32 Jo
 **Files:** `include/kernel/job.h` (new), `src/kernel/job.c` (new), `src/kernel/sched/syscall.c`
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — `NtCreateJobObject` / `NtSetInformationJobObject` syscall wiring.
+> → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — `NtCreateJobObject` / `NtSetInformationJobObject` syscall wiring.
 > Committed-page count tracking must be updated atomically at every `MEM_COMMIT` in `vmm_alloc_region()` and every `MEM_RELEASE` in `NtFreeVirtualMemory`. A missed decrement causes phantom limits.
 
 - [ ] Define `job_t`: `ProcessMemoryLimit` (committed pages), current committed count, process list, refcount

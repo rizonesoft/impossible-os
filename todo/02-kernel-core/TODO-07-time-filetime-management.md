@@ -18,7 +18,7 @@
 - [`src/kernel/fs/ntfs/ntfs_metadata.c`](../../src/kernel/fs/ntfs/ntfs_metadata.c) — NTFS timestamp callsites
 - [`src/kernel/fs/ntfs/ntfs_data_write.c`](../../src/kernel/fs/ntfs/ntfs_data_write.c) — NTFS data write timestamp callsites
 - → XREF: `TODO-01-kernel-init-sequencing.md §4` — time service init (`wall_clock_init()`) belongs in Phase 2 (§4) after UEFI runtime; NTP wall clock adjustment belongs in Phase 3 (§5); `wall_clock_init()` is not yet listed in §4's checklist — add before implementing
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT registration; time syscalls (`NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`, `NtQueryTimerResolution`) are added to the SSDT table in §7 of this TODO
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT registration; time syscalls (`NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`, `NtQueryTimerResolution`) are added to the SSDT table in §7 of this TODO
 - → XREF: `TODO-06-irql-model-dpcs.md §6` — Timer/APIC scheduling path (§6) drives monotonic tick accumulation via `KiDispatchDpc()`; `DISPATCH_LEVEL` clock interrupt is the tick source
 
 ## Outcome

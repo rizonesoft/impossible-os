@@ -136,7 +136,7 @@ Two pool classes matching the Windows NonPagedPool / PagedPool contract: `kmallo
 - [ ] `kfree_nonpaged(ptr)` → returns frame to PMM
 - [ ] `kmalloc_paged(size)` → `vmalloc(size)` backing; may be reclaimed by the shrinker under pressure
 - [ ] `kfree_paged(ptr)` → `vfree(ptr)`
-- [ ] `ExAllocatePoolWithTag(pool_type, size, tag)` Win32 wrapper → dispatch to `kmalloc_nonpaged` or `kmalloc_paged` based on `pool_type`, then apply tag header (→ XREF `02-kernel-core/TODO-05-native-api-layer.md`)
+- [ ] `ExAllocatePoolWithTag(pool_type, size, tag)` Win32 wrapper → dispatch to `kmalloc_nonpaged` or `kmalloc_paged` based on `pool_type`, then apply tag header (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 - [ ] Debug: assert in `kmalloc_paged` that current IRQL is `PASSIVE_LEVEL` (to be wired once IRQL is implemented → XREF `02-kernel-core/TODO-06-irql-model-dpcs.md`)
 - [ ] Commit: `"mm: NonPagedPool / PagedPool — PMM-backed and vmalloc-backed pool classes"`
 

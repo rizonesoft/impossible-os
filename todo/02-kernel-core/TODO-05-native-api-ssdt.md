@@ -206,643 +206,643 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 **0x0000–0x000F: Core Object and Handle Operations**
 
-| Index  | Function                         | §   | Owner                |
-|--------|----------------------------------|-----|----------------------|
-| 0x0000 | NtClose                          | §6  | T05 (ob.c exists)    |
-| 0x0001 | NtDuplicateObject                | §6  | T05 (ob.c exists)    |
-| 0x0002 | NtQueryObject                    | §6  | T05 (ob.c exists)    |
-| 0x0003 | NtMakeTemporaryObject            | §16 | T05                  |
-| 0x0004 | NtMakePermanentObject            | §16 | T05                  |
-| 0x0005 | NtSetInformationObject           | §16 | T05                  |
-| 0x0006 | NtWaitForSingleObject            | §8  | T05                  |
-| 0x0007 | NtWaitForMultipleObjects         | §8  | T05                  |
-| 0x0008 | NtSignalAndWaitForSingleObject   | §8  | T05                  |
-| 0x0009 | NtCompareObjects                 | §16 | T05                  |
+| Index  | Function                         | §   | Owner                | Done |
+|--------|----------------------------------|-----|----------------------|------|
+| 0x0000 | NtClose                          | §6  | T05 (ob.c exists)    | [x]  |
+| 0x0001 | NtDuplicateObject                | §6  | T05 (ob.c exists)    | [x]  |
+| 0x0002 | NtQueryObject                    | §6  | T05 (ob.c exists)    | [x]  |
+| 0x0003 | NtMakeTemporaryObject            | §16 | T05                  | [ ]  |
+| 0x0004 | NtMakePermanentObject            | §16 | T05                  | [ ]  |
+| 0x0005 | NtSetInformationObject           | §16 | T05                  | [ ]  |
+| 0x0006 | NtWaitForSingleObject            | §8  | T05                  | [ ]  |
+| 0x0007 | NtWaitForMultipleObjects         | §8  | T05                  | [ ]  |
+| 0x0008 | NtSignalAndWaitForSingleObject   | §8  | T05                  | [ ]  |
+| 0x0009 | NtCompareObjects                 | §16 | T05                  | [ ]  |
 
 **0x0010–0x002F: File I/O**
 
-| Index  | Function                         | §   | Owner                |
-|--------|----------------------------------|-----|----------------------|
-| 0x0010 | NtCreateFile                     | §6  | T05                  |
-| 0x0011 | NtOpenFile                       | §6  | T05                  |
-| 0x0012 | NtReadFile                       | §6  | T05 (vfs exists)     |
-| 0x0013 | NtWriteFile                      | §6  | T05 (vfs exists)     |
-| 0x0014 | NtDeleteFile                     | §13 | T05                  |
-| 0x0015 | NtQueryInformationFile           | §13 | T05                  |
-| 0x0016 | NtSetInformationFile             | §13 | T05                  |
-| 0x0017 | NtQueryDirectoryFile             | §13 | T05                  |
-| 0x0018 | NtFlushBuffersFile               | §13 | T05                  |
-| 0x0019 | NtDeviceIoControlFile            | §13 | T05 (dispatch to drivers) |
-| 0x001A | NtFsControlFile                  | §13 | T05                  |
-| 0x001B | NtCreateNamedPipeFile            | §6  | T08-mem §1 (NPFS)    |
-| 0x001C | NtCreateMailslotFile             | §13 | T08-mem §3 (MSFS)    |
-| 0x001D | NtLockFile                       | §13 | T05                  |
-| 0x001E | NtUnlockFile                     | §13 | T05                  |
-| 0x001F | NtNotifyChangeDirectoryFile      | §13 | T05                  |
-| 0x0020 | NtQueryVolumeInformationFile     | §13 | T05                  |
-| 0x0021 | NtSetVolumeInformationFile       | §13 | T05                  |
-| 0x0022 | NtQueryEaFile                    | §13 | T05                  |
-| 0x0023 | NtSetEaFile                      | §13 | T05                  |
-| 0x0024 | NtReadFileScatter                | §13 | T05                  |
-| 0x0025 | NtWriteFileGather                | §13 | T05                  |
-| 0x0026 | NtCancelIoFile                   | §13 | T05                  |
-| 0x0027 | NtCancelIoFileEx                 | §13 | T05                  |
-| 0x0028 | NtQueryAttributesFile            | §13 | T05                  |
-| 0x0029 | NtQueryFullAttributesFile        | §13 | T05                  |
+| Index  | Function                         | §   | Owner                | Done |
+|--------|----------------------------------|-----|----------------------|------|
+| 0x0010 | NtCreateFile                     | §6  | T05                  | [ ]  |
+| 0x0011 | NtOpenFile                       | §6  | T05                  | [ ]  |
+| 0x0012 | NtReadFile                       | §6  | T05 (vfs exists)     | [ ]  |
+| 0x0013 | NtWriteFile                      | §6  | T05 (vfs exists)     | [ ]  |
+| 0x0014 | NtDeleteFile                     | §13 | T05                  | [ ]  |
+| 0x0015 | NtQueryInformationFile           | §13 | T05                  | [ ]  |
+| 0x0016 | NtSetInformationFile             | §13 | T05                  | [ ]  |
+| 0x0017 | NtQueryDirectoryFile             | §13 | T05                  | [ ]  |
+| 0x0018 | NtFlushBuffersFile               | §13 | T05                  | [ ]  |
+| 0x0019 | NtDeviceIoControlFile            | §13 | T05 (dispatch to drivers) | [ ]  |
+| 0x001A | NtFsControlFile                  | §13 | T05                  | [ ]  |
+| 0x001B | NtCreateNamedPipeFile            | §6  | T08-mem §1 (NPFS)    | [ ]  |
+| 0x001C | NtCreateMailslotFile             | §13 | T08-mem §3 (MSFS)    | [ ]  |
+| 0x001D | NtLockFile                       | §13 | T05                  | [ ]  |
+| 0x001E | NtUnlockFile                     | §13 | T05                  | [ ]  |
+| 0x001F | NtNotifyChangeDirectoryFile      | §13 | T05                  | [ ]  |
+| 0x0020 | NtQueryVolumeInformationFile     | §13 | T05                  | [ ]  |
+| 0x0021 | NtSetVolumeInformationFile       | §13 | T05                  | [ ]  |
+| 0x0022 | NtQueryEaFile                    | §13 | T05                  | [ ]  |
+| 0x0023 | NtSetEaFile                      | §13 | T05                  | [ ]  |
+| 0x0024 | NtReadFileScatter                | §13 | T05                  | [ ]  |
+| 0x0025 | NtWriteFileGather                | §13 | T05                  | [ ]  |
+| 0x0026 | NtCancelIoFile                   | §13 | T05                  | [ ]  |
+| 0x0027 | NtCancelIoFileEx                 | §13 | T05                  | [ ]  |
+| 0x0028 | NtQueryAttributesFile            | §13 | T05                  | [ ]  |
+| 0x0029 | NtQueryFullAttributesFile        | §13 | T05                  | [ ]  |
 
 **0x0030–0x004F: Process and Thread**
 
-| Index  | Function                         | §   | Owner                |
-|--------|----------------------------------|-----|----------------------|
-| 0x0030 | NtCreateProcess                  | §7  | T05 (task.c exists)  |
-| 0x0031 | NtCreateProcessEx                | §7  | T09 §4               |
-| 0x0032 | NtOpenProcess                    | §7  | T05                  |
-| 0x0033 | NtTerminateProcess               | §7  | T05 (sys_exit exists)|
-| 0x0034 | NtQueryInformationProcess        | §10 | T05                  |
-| 0x0035 | NtSetInformationProcess          | §7  | T05                  |
-| 0x0036 | NtCreateThread                   | §7  | T05                  |
-| 0x0037 | NtCreateThreadEx                 | §7  | T09 §5               |
-| 0x0038 | NtOpenThread                     | §7  | T05                  |
-| 0x0039 | NtTerminateThread                | §7  | T05                  |
-| 0x003A | NtResumeThread                   | §7  | T05                  |
-| 0x003B | NtSuspendThread                  | §7  | T05                  |
-| 0x003C | NtGetContextThread               | §7  | T10 §4 (CONTEXT)     |
-| 0x003D | NtSetContextThread               | §7  | T10 §4 (CONTEXT)     |
-| 0x003E | NtQueryInformationThread         | §7  | T05                  |
-| 0x003F | NtSetInformationThread           | §7  | T05                  |
-| 0x0040 | NtAlertThread                    | §7  | T05                  |
-| 0x0041 | NtAlertResumeThread              | §7  | T05                  |
-| 0x0042 | NtImpersonateThread              | §15 | T11 (SRM)            |
-| 0x0043 | NtQueueApcThread                 | §7  | T10 §4 (APC)         |
-| 0x0044 | NtYieldExecution                 | §5  | T05 (sys_yield exists)|
-| 0x0045 | NtCreateUserProcess              | §7  | T09 §4               |
-| 0x0046 | NtTestAlert                      | §7  | T05                  |
-| 0x0047 | NtDelayExecution                 | §7  | T05                  |
+| Index  | Function                         | §   | Owner                | Done |
+|--------|----------------------------------|-----|----------------------|------|
+| 0x0030 | NtCreateProcess                  | §7  | T05 (task.c exists)  | [ ]  |
+| 0x0031 | NtCreateProcessEx                | §7  | T09 §4               | [ ]  |
+| 0x0032 | NtOpenProcess                    | §7  | T05                  | [ ]  |
+| 0x0033 | NtTerminateProcess               | §7  | T05 (sys_exit exists)| [ ]  |
+| 0x0034 | NtQueryInformationProcess        | §10 | T05                  | [ ]  |
+| 0x0035 | NtSetInformationProcess          | §7  | T05                  | [ ]  |
+| 0x0036 | NtCreateThread                   | §7  | T05                  | [ ]  |
+| 0x0037 | NtCreateThreadEx                 | §7  | T09 §5               | [ ]  |
+| 0x0038 | NtOpenThread                     | §7  | T05                  | [ ]  |
+| 0x0039 | NtTerminateThread                | §7  | T05                  | [ ]  |
+| 0x003A | NtResumeThread                   | §7  | T05                  | [ ]  |
+| 0x003B | NtSuspendThread                  | §7  | T05                  | [ ]  |
+| 0x003C | NtGetContextThread               | §7  | T10 §4 (CONTEXT)     | [ ]  |
+| 0x003D | NtSetContextThread               | §7  | T10 §4 (CONTEXT)     | [ ]  |
+| 0x003E | NtQueryInformationThread         | §7  | T05                  | [ ]  |
+| 0x003F | NtSetInformationThread           | §7  | T05                  | [ ]  |
+| 0x0040 | NtAlertThread                    | §7  | T05                  | [ ]  |
+| 0x0041 | NtAlertResumeThread              | §7  | T05                  | [ ]  |
+| 0x0042 | NtImpersonateThread              | §15 | T11 (SRM)            | [ ]  |
+| 0x0043 | NtQueueApcThread                 | §7  | T10 §4 (APC)         | [ ]  |
+| 0x0044 | NtYieldExecution                 | §5  | T05 (sys_yield exists)| [ ]  |
+| 0x0045 | NtCreateUserProcess              | §7  | T09 §4               | [ ]  |
+| 0x0046 | NtTestAlert                      | §7  | T05                  | [ ]  |
+| 0x0047 | NtDelayExecution                 | §7  | T05                  | [ ]  |
 
 **0x0050–0x006F: Memory Management**
 
 | Index  | Function                         | §   | Owner                   |
-|--------|----------------------------------|-----|-------------------------|
-| 0x0050 | NtAllocateVirtualMemory          | §9  | T05 (pmm exists)        |
-| 0x0051 | NtFreeVirtualMemory              | §9  | T05                     |
-| 0x0052 | NtProtectVirtualMemory           | §9  | T01-mem §1 (VMM prot)   |
-| 0x0053 | NtQueryVirtualMemory             | §9  | T05                     |
-| 0x0054 | NtLockVirtualMemory              | §9  | T04-mem §4 (adv VM)     |
-| 0x0055 | NtUnlockVirtualMemory            | §9  | T04-mem §4              |
-| 0x0056 | NtFlushVirtualMemory             | §9  | T05                     |
-| 0x0057 | NtReadVirtualMemory              | §9  | T05                     |
-| 0x0058 | NtWriteVirtualMemory             | §9  | T05                     |
-| 0x0059 | NtAllocateUserPhysicalPages      | §9  | T04-mem §4 (AWE)        |
-| 0x005A | NtFreeUserPhysicalPages          | §9  | T04-mem §4              |
-| 0x005B | NtMapUserPhysicalPages           | §9  | T04-mem §4              |
-| 0x005C | NtCreateSection                  | §17 | T05 (ob_section exists) |
-| 0x005D | NtOpenSection                    | §17 | T05                     |
-| 0x005E | NtMapViewOfSection               | §17 | T05 (ob_section exists) |
-| 0x005F | NtUnmapViewOfSection             | §17 | T05 (ob_section exists) |
-| 0x0060 | NtExtendSection                  | §17 | T05                     |
-| 0x0061 | NtQuerySection                   | §17 | T05                     |
-| 0x0062 | NtAreMappedFilesTheSame          | §17 | T05                     |
+|--------|----------------------------------|-----|-------------------------|------|
+| 0x0050 | NtAllocateVirtualMemory          | §9  | T05 (pmm exists)        | [ ]  |
+| 0x0051 | NtFreeVirtualMemory              | §9  | T05                     | [ ]  |
+| 0x0052 | NtProtectVirtualMemory           | §9  | T01-mem §1 (VMM prot)   | [ ]  |
+| 0x0053 | NtQueryVirtualMemory             | §9  | T05                     | [ ]  |
+| 0x0054 | NtLockVirtualMemory              | §9  | T04-mem §4 (adv VM)     | [ ]  |
+| 0x0055 | NtUnlockVirtualMemory            | §9  | T04-mem §4              | [ ]  |
+| 0x0056 | NtFlushVirtualMemory             | §9  | T05                     | [ ]  |
+| 0x0057 | NtReadVirtualMemory              | §9  | T05                     | [ ]  |
+| 0x0058 | NtWriteVirtualMemory             | §9  | T05                     | [ ]  |
+| 0x0059 | NtAllocateUserPhysicalPages      | §9  | T04-mem §4 (AWE)        | [ ]  |
+| 0x005A | NtFreeUserPhysicalPages          | §9  | T04-mem §4              | [ ]  |
+| 0x005B | NtMapUserPhysicalPages           | §9  | T04-mem §4              | [ ]  |
+| 0x005C | NtCreateSection                  | §17 | T05 (ob_section exists) | [ ]  |
+| 0x005D | NtOpenSection                    | §17 | T05                     | [ ]  |
+| 0x005E | NtMapViewOfSection               | §17 | T05 (ob_section exists) | [ ]  |
+| 0x005F | NtUnmapViewOfSection             | §17 | T05 (ob_section exists) | [ ]  |
+| 0x0060 | NtExtendSection                  | §17 | T05                     | [ ]  |
+| 0x0061 | NtQuerySection                   | §17 | T05                     | [ ]  |
+| 0x0062 | NtAreMappedFilesTheSame          | §17 | T05                     | [ ]  |
 
 **0x0070–0x008F: Synchronization**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0070 | NtCreateEvent                    | §8  | T05 (ob_event exists)    |
-| 0x0071 | NtOpenEvent                      | §8  | T05                      |
-| 0x0072 | NtSetEvent                       | §8  | T05                      |
-| 0x0073 | NtResetEvent                     | §8  | T05                      |
-| 0x0074 | NtPulseEvent                     | §8  | T05                      |
-| 0x0075 | NtQueryEvent                     | §8  | T05                      |
-| 0x0076 | NtCreateMutant                   | §8  | T05 (ob_mutex exists)    |
-| 0x0077 | NtOpenMutant                     | §8  | T05                      |
-| 0x0078 | NtReleaseMutant                  | §8  | T05                      |
-| 0x0079 | NtQueryMutant                    | §8  | T05                      |
-| 0x007A | NtCreateSemaphore                | §8  | T05 (ob_sem exists)      |
-| 0x007B | NtOpenSemaphore                  | §8  | T05                      |
-| 0x007C | NtReleaseSemaphore               | §8  | T05                      |
-| 0x007D | NtQuerySemaphore                 | §8  | T05                      |
-| 0x007E | NtCreateTimer                    | §18 | T05 (ob_timer exists)    |
-| 0x007F | NtOpenTimer                      | §18 | T07 §7                   |
-| 0x0080 | NtSetTimer                       | §18 | T07 §7                   |
-| 0x0081 | NtCancelTimer                    | §18 | T07 §7                   |
-| 0x0082 | NtQueryTimer                     | §18 | T07 §7                   |
-| 0x0083 | NtSetTimerEx                     | §18 | T07 §7                   |
-| 0x0084 | NtCreateKeyedEvent               | §8  | T07-mem §4 (futex)       |
-| 0x0085 | NtOpenKeyedEvent                 | §8  | T07-mem §4               |
-| 0x0086 | NtWaitForKeyedEvent              | §8  | T07-mem §4               |
-| 0x0087 | NtReleaseKeyedEvent              | §8  | T07-mem §4               |
-| 0x0088 | NtCreateIoCompletion             | §13 | T08-mem §4 (IOCP)        |
-| 0x0089 | NtSetIoCompletion                | §13 | T08-mem §4               |
-| 0x008A | NtRemoveIoCompletion             | §13 | T08-mem §4               |
-| 0x008B | NtQueryIoCompletion              | §13 | T08-mem §4               |
-| 0x008C | NtSetIoCompletionEx              | §13 | T08-mem §4               |
-| 0x008D | NtRemoveIoCompletionEx           | §13 | T08-mem §4               |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0070 | NtCreateEvent                    | §8  | T05 (ob_event exists)    | [x]  |
+| 0x0071 | NtOpenEvent                      | §8  | T05                      | [ ]  |
+| 0x0072 | NtSetEvent                       | §8  | T05                      | [ ]  |
+| 0x0073 | NtResetEvent                     | §8  | T05                      | [ ]  |
+| 0x0074 | NtPulseEvent                     | §8  | T05                      | [ ]  |
+| 0x0075 | NtQueryEvent                     | §8  | T05                      | [ ]  |
+| 0x0076 | NtCreateMutant                   | §8  | T05 (ob_mutex exists)    | [x]  |
+| 0x0077 | NtOpenMutant                     | §8  | T05                      | [ ]  |
+| 0x0078 | NtReleaseMutant                  | §8  | T05                      | [ ]  |
+| 0x0079 | NtQueryMutant                    | §8  | T05                      | [ ]  |
+| 0x007A | NtCreateSemaphore                | §8  | T05 (ob_sem exists)      | [x]  |
+| 0x007B | NtOpenSemaphore                  | §8  | T05                      | [ ]  |
+| 0x007C | NtReleaseSemaphore               | §8  | T05                      | [ ]  |
+| 0x007D | NtQuerySemaphore                 | §8  | T05                      | [ ]  |
+| 0x007E | NtCreateTimer                    | §18 | T05 (ob_timer exists)    | [x]  |
+| 0x007F | NtOpenTimer                      | §18 | T07 §7                   | [ ]  |
+| 0x0080 | NtSetTimer                       | §18 | T07 §7                   | [ ]  |
+| 0x0081 | NtCancelTimer                    | §18 | T07 §7                   | [ ]  |
+| 0x0082 | NtQueryTimer                     | §18 | T07 §7                   | [ ]  |
+| 0x0083 | NtSetTimerEx                     | §18 | T07 §7                   | [ ]  |
+| 0x0084 | NtCreateKeyedEvent               | §8  | T07-mem §4 (futex)       | [ ]  |
+| 0x0085 | NtOpenKeyedEvent                 | §8  | T07-mem §4               | [ ]  |
+| 0x0086 | NtWaitForKeyedEvent              | §8  | T07-mem §4               | [ ]  |
+| 0x0087 | NtReleaseKeyedEvent              | §8  | T07-mem §4               | [ ]  |
+| 0x0088 | NtCreateIoCompletion             | §13 | T08-mem §4 (IOCP)        | [ ]  |
+| 0x0089 | NtSetIoCompletion                | §13 | T08-mem §4               | [ ]  |
+| 0x008A | NtRemoveIoCompletion             | §13 | T08-mem §4               | [ ]  |
+| 0x008B | NtQueryIoCompletion              | §13 | T08-mem §4               | [ ]  |
+| 0x008C | NtSetIoCompletionEx              | §13 | T08-mem §4               | [ ]  |
+| 0x008D | NtRemoveIoCompletionEx           | §13 | T08-mem §4               | [ ]  |
 
 **0x0090–0x00AF: Registry**
 
-| Index  | Function                         | §   | Owner                |
-|--------|----------------------------------|-----|----------------------|
-| 0x0090 | NtCreateKey                      | §14 | T13 §4               |
-| 0x0091 | NtCreateKeyTransacted            | §14 | T13 §4               |
-| 0x0092 | NtOpenKey                        | §14 | T13 §4               |
-| 0x0093 | NtOpenKeyTransacted              | §14 | T13 §4               |
-| 0x0094 | NtOpenKeyEx                      | §14 | T13 §4               |
-| 0x0095 | NtDeleteKey                      | §14 | T13 §4               |
-| 0x0096 | NtSetValueKey                    | §14 | T13 §4               |
-| 0x0097 | NtQueryValueKey                  | §14 | T13 §4               |
-| 0x0098 | NtDeleteValueKey                 | §14 | T13 §4               |
-| 0x0099 | NtEnumerateKey                   | §14 | T13 §4               |
-| 0x009A | NtEnumerateValueKey              | §14 | T13 §4               |
-| 0x009B | NtQueryKey                       | §14 | T13 §4               |
-| 0x009C | NtFlushKey                       | §14 | T13 §4               |
-| 0x009D | NtNotifyChangeKey                | §14 | T13 §4               |
-| 0x009E | NtNotifyChangeMultipleKeys       | §14 | T13 §4               |
-| 0x009F | NtRenameKey                      | §14 | T13 §4               |
-| 0x00A0 | NtSaveKey                        | §14 | T13 §4               |
-| 0x00A1 | NtSaveKeyEx                      | §14 | T13 §4               |
-| 0x00A2 | NtRestoreKey                     | §14 | T13 §4               |
-| 0x00A3 | NtLoadKey                        | §14 | T13 §4               |
-| 0x00A4 | NtLoadKeyEx                      | §14 | T13 §4               |
-| 0x00A5 | NtUnloadKey                      | §14 | T13 §4               |
-| 0x00A6 | NtUnloadKeyEx                    | §14 | T13 §4               |
-| 0x00A7 | NtQueryOpenSubKeys               | §14 | T13 §4               |
-| 0x00A8 | NtCompactKeys                    | §14 | T13 §4               |
-| 0x00A9 | NtCompressKey                    | §14 | T13 §4               |
-| 0x00AA | NtLockRegistryKey                | §14 | T13 §4               |
+| Index  | Function                         | §   | Owner                | Done |
+|--------|----------------------------------|-----|----------------------|------|
+| 0x0090 | NtCreateKey                      | §14 | T13 §4               | [ ]  |
+| 0x0091 | NtCreateKeyTransacted            | §14 | T13 §4               | [ ]  |
+| 0x0092 | NtOpenKey                        | §14 | T13 §4               | [ ]  |
+| 0x0093 | NtOpenKeyTransacted              | §14 | T13 §4               | [ ]  |
+| 0x0094 | NtOpenKeyEx                      | §14 | T13 §4               | [ ]  |
+| 0x0095 | NtDeleteKey                      | §14 | T13 §4               | [ ]  |
+| 0x0096 | NtSetValueKey                    | §14 | T13 §4               | [ ]  |
+| 0x0097 | NtQueryValueKey                  | §14 | T13 §4               | [ ]  |
+| 0x0098 | NtDeleteValueKey                 | §14 | T13 §4               | [ ]  |
+| 0x0099 | NtEnumerateKey                   | §14 | T13 §4               | [ ]  |
+| 0x009A | NtEnumerateValueKey              | §14 | T13 §4               | [ ]  |
+| 0x009B | NtQueryKey                       | §14 | T13 §4               | [ ]  |
+| 0x009C | NtFlushKey                       | §14 | T13 §4               | [ ]  |
+| 0x009D | NtNotifyChangeKey                | §14 | T13 §4               | [ ]  |
+| 0x009E | NtNotifyChangeMultipleKeys       | §14 | T13 §4               | [ ]  |
+| 0x009F | NtRenameKey                      | §14 | T13 §4               | [ ]  |
+| 0x00A0 | NtSaveKey                        | §14 | T13 §4               | [ ]  |
+| 0x00A1 | NtSaveKeyEx                      | §14 | T13 §4               | [ ]  |
+| 0x00A2 | NtRestoreKey                     | §14 | T13 §4               | [ ]  |
+| 0x00A3 | NtLoadKey                        | §14 | T13 §4               | [ ]  |
+| 0x00A4 | NtLoadKeyEx                      | §14 | T13 §4               | [ ]  |
+| 0x00A5 | NtUnloadKey                      | §14 | T13 §4               | [ ]  |
+| 0x00A6 | NtUnloadKeyEx                    | §14 | T13 §4               | [ ]  |
+| 0x00A7 | NtQueryOpenSubKeys               | §14 | T13 §4               | [ ]  |
+| 0x00A8 | NtCompactKeys                    | §14 | T13 §4               | [ ]  |
+| 0x00A9 | NtCompressKey                    | §14 | T13 §4               | [ ]  |
+| 0x00AA | NtLockRegistryKey                | §14 | T13 §4               | [ ]  |
 
 **0x00B0–0x00CF: Security and Token**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x00B0 | NtOpenProcessToken               | §15 | T11 (token.c exists)     |
-| 0x00B1 | NtOpenProcessTokenEx             | §15 | T11                      |
-| 0x00B2 | NtOpenThreadToken                | §15 | T11 (token.c exists)     |
-| 0x00B3 | NtOpenThreadTokenEx              | §15 | T11                      |
-| 0x00B4 | NtQueryInformationToken          | §15 | T11 (token.c exists)     |
-| 0x00B5 | NtSetInformationToken            | §15 | T11                      |
-| 0x00B6 | NtAdjustPrivilegesToken          | §15 | T11 (token.c exists)     |
-| 0x00B7 | NtAdjustGroupsToken              | §15 | T11 (token.c exists)     |
-| 0x00B8 | NtDuplicateToken                 | §15 | T11 (token.c exists)     |
-| 0x00B9 | NtFilterToken                    | §15 | T11                      |
-| 0x00BA | NtCreateToken                    | §15 | T11                      |
-| 0x00BB | NtCompareTokens                  | §15 | T11                      |
-| 0x00BC | NtAccessCheck                    | §15 | T11 §4 (SeAccessCheck)   |
-| 0x00BD | NtAccessCheckAndAuditAlarm       | §15 | T11                      |
-| 0x00BE | NtAccessCheckByType              | §15 | T11                      |
-| 0x00BF | NtPrivilegeCheck                 | §15 | T11                      |
-| 0x00C0 | NtPrivilegeObjectAuditAlarm      | §15 | T11                      |
-| 0x00C1 | NtSetSecurityObject              | §15 | T11                      |
-| 0x00C2 | NtQuerySecurityObject            | §15 | T11                      |
-| 0x00C3 | NtAllocateLocallyUniqueId        | §15 | T11 (luid.c exists)      |
-| 0x00C4 | NtCreateTokenEx                  | §15 | T11                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x00B0 | NtOpenProcessToken               | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B1 | NtOpenProcessTokenEx             | §15 | T11                      | [ ]  |
+| 0x00B2 | NtOpenThreadToken                | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B3 | NtOpenThreadTokenEx              | §15 | T11                      | [ ]  |
+| 0x00B4 | NtQueryInformationToken          | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B5 | NtSetInformationToken            | §15 | T11                      | [ ]  |
+| 0x00B6 | NtAdjustPrivilegesToken          | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B7 | NtAdjustGroupsToken              | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B8 | NtDuplicateToken                 | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B9 | NtFilterToken                    | §15 | T11                      | [ ]  |
+| 0x00BA | NtCreateToken                    | §15 | T11                      | [ ]  |
+| 0x00BB | NtCompareTokens                  | §15 | T11                      | [ ]  |
+| 0x00BC | NtAccessCheck                    | §15 | T11 §4 (SeAccessCheck)   | [ ]  |
+| 0x00BD | NtAccessCheckAndAuditAlarm       | §15 | T11                      | [ ]  |
+| 0x00BE | NtAccessCheckByType              | §15 | T11                      | [ ]  |
+| 0x00BF | NtPrivilegeCheck                 | §15 | T11                      | [ ]  |
+| 0x00C0 | NtPrivilegeObjectAuditAlarm      | §15 | T11                      | [ ]  |
+| 0x00C1 | NtSetSecurityObject              | §15 | T11                      | [ ]  |
+| 0x00C2 | NtQuerySecurityObject            | §15 | T11                      | [ ]  |
+| 0x00C3 | NtAllocateLocallyUniqueId        | §15 | T11 (luid.c exists)      | [x]  |
+| 0x00C4 | NtCreateTokenEx                  | §15 | T11                      | [ ]  |
 
 **0x00D0–0x00EF: System Information and Control**
 
 | Index  | Function                             | §   | Owner                  |
-|--------|--------------------------------------|-----|------------------------|
-| 0x00D0 | NtQuerySystemInformation             | §10 | T05                    |
-| 0x00D1 | NtSetSystemInformation               | §10 | T05                    |
-| 0x00D2 | NtQuerySystemEnvironmentValue        | §22 | T14 §5 (env vars)      |
-| 0x00D3 | NtSetSystemEnvironmentValue          | §22 | T14 §5                 |
-| 0x00D4 | NtQuerySystemEnvironmentValueEx      | §22 | T14 §5                 |
-| 0x00D5 | NtSetSystemEnvironmentValueEx        | §22 | T14 §5                 |
-| 0x00D6 | NtEnumerateSystemEnvironmentValuesEx | §22 | T14 §5                 |
-| 0x00D7 | NtShutdownSystem                     | §21 | T15 (power mgmt)       |
-| 0x00D8 | NtDisplayString                      | §22 | T05                    |
-| 0x00D9 | NtRaiseHardError                     | §22 | T05                    |
-| 0x00DA | NtQueryDefaultLocale                 | §22 | T05                    |
-| 0x00DB | NtSetDefaultLocale                   | §22 | T05                    |
-| 0x00DC | NtQueryDefaultUILanguage             | §22 | T05                    |
-| 0x00DD | NtSetDefaultUILanguage               | §22 | T05                    |
-| 0x00DE | NtQueryInstallUILanguage             | §22 | T05                    |
-| 0x00DF | NtAddAtom                            | §22 | T05                    |
-| 0x00E0 | NtFindAtom                           | §22 | T05                    |
-| 0x00E1 | NtDeleteAtom                         | §22 | T05                    |
-| 0x00E2 | NtQueryInformationAtom               | §22 | T05                    |
+|--------|--------------------------------------|-----|------------------------|------|
+| 0x00D0 | NtQuerySystemInformation             | §10 | T05                    | [ ]  |
+| 0x00D1 | NtSetSystemInformation               | §10 | T05                    | [ ]  |
+| 0x00D2 | NtQuerySystemEnvironmentValue        | §22 | T14 §5 (env vars)      | [ ]  |
+| 0x00D3 | NtSetSystemEnvironmentValue          | §22 | T14 §5                 | [ ]  |
+| 0x00D4 | NtQuerySystemEnvironmentValueEx      | §22 | T14 §5                 | [ ]  |
+| 0x00D5 | NtSetSystemEnvironmentValueEx        | §22 | T14 §5                 | [ ]  |
+| 0x00D6 | NtEnumerateSystemEnvironmentValuesEx | §22 | T14 §5                 | [ ]  |
+| 0x00D7 | NtShutdownSystem                     | §21 | T15 (power mgmt)       | [ ]  |
+| 0x00D8 | NtDisplayString                      | §22 | T05                    | [ ]  |
+| 0x00D9 | NtRaiseHardError                     | §22 | T05                    | [ ]  |
+| 0x00DA | NtQueryDefaultLocale                 | §22 | T05                    | [ ]  |
+| 0x00DB | NtSetDefaultLocale                   | §22 | T05                    | [ ]  |
+| 0x00DC | NtQueryDefaultUILanguage             | §22 | T05                    | [ ]  |
+| 0x00DD | NtSetDefaultUILanguage               | §22 | T05                    | [ ]  |
+| 0x00DE | NtQueryInstallUILanguage             | §22 | T05                    | [ ]  |
+| 0x00DF | NtAddAtom                            | §22 | T05                    | [ ]  |
+| 0x00E0 | NtFindAtom                           | §22 | T05                    | [ ]  |
+| 0x00E1 | NtDeleteAtom                         | §22 | T05                    | [ ]  |
+| 0x00E2 | NtQueryInformationAtom               | §22 | T05                    | [ ]  |
 
 **0x00F0–0x00FF: Time and Timer (→ XREF TODO-07 §7)**
 
-| Index  | Function                         | §   | Owner                |
-|--------|----------------------------------|-----|----------------------|
-| 0x00F0 | NtQuerySystemTime                | §18 | T07 §7               |
-| 0x00F1 | NtSetSystemTime                  | §18 | T07 §7               |
-| 0x00F2 | NtQueryPerformanceCounter        | §18 | T07 §7               |
-| 0x00F3 | NtQueryTimerResolution           | §18 | T07 §7               |
-| 0x00F4 | NtSetTimerResolution             | §18 | T07 §7               |
+| Index  | Function                         | §   | Owner                | Done |
+|--------|----------------------------------|-----|----------------------|------|
+| 0x00F0 | NtQuerySystemTime                | §18 | T07 §7               | [ ]  |
+| 0x00F1 | NtSetSystemTime                  | §18 | T07 §7               | [ ]  |
+| 0x00F2 | NtQueryPerformanceCounter        | §18 | T07 §7               | [ ]  |
+| 0x00F3 | NtQueryTimerResolution           | §18 | T07 §7               | [ ]  |
+| 0x00F4 | NtSetTimerResolution             | §18 | T07 §7               | [ ]  |
 
 **0x0100–0x011F: ALPC and LPC Ports (→ XREF TODO-12 §8)**
 
-| Index  | Function                         | §   | Owner                |
-|--------|----------------------------------|-----|----------------------|
-| 0x0100 | NtCreatePort                     | §19 | T12 §8               |
-| 0x0101 | NtCreateWaitablePort             | §19 | T12 §8               |
-| 0x0102 | NtConnectPort                    | §19 | T12 §8               |
-| 0x0103 | NtSecureConnectPort              | §19 | T12 §8               |
-| 0x0104 | NtAcceptConnectPort              | §19 | T12 §8               |
-| 0x0105 | NtCompleteConnectPort            | §19 | T12 §8               |
-| 0x0106 | NtListenPort                     | §19 | T12 §8               |
-| 0x0107 | NtReplyPort                      | §19 | T12 §8               |
-| 0x0108 | NtReplyWaitReceivePort           | §19 | T12 §8               |
-| 0x0109 | NtReplyWaitReceivePortEx         | §19 | T12 §8               |
-| 0x010A | NtRequestPort                    | §19 | T12 §8               |
-| 0x010B | NtRequestWaitReplyPort           | §19 | T12 §8               |
-| 0x010C | NtImpersonateClientOfPort        | §19 | T12 §8               |
-| 0x010D | NtReadRequestData                | §19 | T12 §8               |
-| 0x010E | NtWriteRequestData               | §19 | T12 §8               |
-| 0x010F | NtAlpcCreatePort                 | §19 | T12 §8               |
-| 0x0110 | NtAlpcConnectPort                | §19 | T12 §8               |
-| 0x0111 | NtAlpcConnectPortEx              | §19 | T12 §8               |
-| 0x0112 | NtAlpcAcceptConnectPort          | §19 | T12 §8               |
-| 0x0113 | NtAlpcSendWaitReceivePort        | §19 | T12 §8               |
-| 0x0114 | NtAlpcDisconnectPort             | §19 | T12 §8               |
-| 0x0115 | NtAlpcCancelMessage              | §19 | T12 §8               |
-| 0x0116 | NtAlpcCreatePortSection          | §19 | T12 §8               |
-| 0x0117 | NtAlpcDeletePortSection          | §19 | T12 §8               |
-| 0x0118 | NtAlpcCreateSectionView          | §19 | T12 §8               |
-| 0x0119 | NtAlpcDeleteSectionView          | §19 | T12 §8               |
-| 0x011A | NtAlpcCreateResourceReserve      | §19 | T12 §8               |
-| 0x011B | NtAlpcDeleteResourceReserve      | §19 | T12 §8               |
-| 0x011C | NtAlpcQueryInformation           | §19 | T12 §8               |
-| 0x011D | NtAlpcSetInformation             | §19 | T12 §8               |
-| 0x011E | NtAlpcQueryInformationMessage    | §19 | T12 §8               |
+| Index  | Function                         | §   | Owner                | Done |
+|--------|----------------------------------|-----|----------------------|------|
+| 0x0100 | NtCreatePort                     | §19 | T12 §8               | [ ]  |
+| 0x0101 | NtCreateWaitablePort             | §19 | T12 §8               | [ ]  |
+| 0x0102 | NtConnectPort                    | §19 | T12 §8               | [ ]  |
+| 0x0103 | NtSecureConnectPort              | §19 | T12 §8               | [ ]  |
+| 0x0104 | NtAcceptConnectPort              | §19 | T12 §8               | [ ]  |
+| 0x0105 | NtCompleteConnectPort            | §19 | T12 §8               | [ ]  |
+| 0x0106 | NtListenPort                     | §19 | T12 §8               | [ ]  |
+| 0x0107 | NtReplyPort                      | §19 | T12 §8               | [ ]  |
+| 0x0108 | NtReplyWaitReceivePort           | §19 | T12 §8               | [ ]  |
+| 0x0109 | NtReplyWaitReceivePortEx         | §19 | T12 §8               | [ ]  |
+| 0x010A | NtRequestPort                    | §19 | T12 §8               | [ ]  |
+| 0x010B | NtRequestWaitReplyPort           | §19 | T12 §8               | [ ]  |
+| 0x010C | NtImpersonateClientOfPort        | §19 | T12 §8               | [ ]  |
+| 0x010D | NtReadRequestData                | §19 | T12 §8               | [ ]  |
+| 0x010E | NtWriteRequestData               | §19 | T12 §8               | [ ]  |
+| 0x010F | NtAlpcCreatePort                 | §19 | T12 §8               | [ ]  |
+| 0x0110 | NtAlpcConnectPort                | §19 | T12 §8               | [ ]  |
+| 0x0111 | NtAlpcConnectPortEx              | §19 | T12 §8               | [ ]  |
+| 0x0112 | NtAlpcAcceptConnectPort          | §19 | T12 §8               | [ ]  |
+| 0x0113 | NtAlpcSendWaitReceivePort        | §19 | T12 §8               | [ ]  |
+| 0x0114 | NtAlpcDisconnectPort             | §19 | T12 §8               | [ ]  |
+| 0x0115 | NtAlpcCancelMessage              | §19 | T12 §8               | [ ]  |
+| 0x0116 | NtAlpcCreatePortSection          | §19 | T12 §8               | [ ]  |
+| 0x0117 | NtAlpcDeletePortSection          | §19 | T12 §8               | [ ]  |
+| 0x0118 | NtAlpcCreateSectionView          | §19 | T12 §8               | [ ]  |
+| 0x0119 | NtAlpcDeleteSectionView          | §19 | T12 §8               | [ ]  |
+| 0x011A | NtAlpcCreateResourceReserve      | §19 | T12 §8               | [ ]  |
+| 0x011B | NtAlpcDeleteResourceReserve      | §19 | T12 §8               | [ ]  |
+| 0x011C | NtAlpcQueryInformation           | §19 | T12 §8               | [ ]  |
+| 0x011D | NtAlpcSetInformation             | §19 | T12 §8               | [ ]  |
+| 0x011E | NtAlpcQueryInformationMessage    | §19 | T12 §8               | [ ]  |
 
 **0x0120–0x012F: Namespace and Directory Objects**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0120 | NtCreateDirectoryObject          | §16 | T05                      |
-| 0x0121 | NtOpenDirectoryObject            | §16 | T05 (ob.c exists)        |
-| 0x0122 | NtQueryDirectoryObject           | §16 | T05 (ob.c exists)        |
-| 0x0123 | NtCreateSymbolicLinkObject       | §16 | T05                      |
-| 0x0124 | NtOpenSymbolicLinkObject         | §16 | T05                      |
-| 0x0125 | NtQuerySymbolicLinkObject        | §16 | T05                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0120 | NtCreateDirectoryObject          | §16 | T05                      | [ ]  |
+| 0x0121 | NtOpenDirectoryObject            | §16 | T05 (ob.c exists)        | [x]  |
+| 0x0122 | NtQueryDirectoryObject           | §16 | T05 (ob.c exists)        | [x]  |
+| 0x0123 | NtCreateSymbolicLinkObject       | §16 | T05                      | [ ]  |
+| 0x0124 | NtOpenSymbolicLinkObject         | §16 | T05                      | [ ]  |
+| 0x0125 | NtQuerySymbolicLinkObject        | §16 | T05                      | [ ]  |
 
 **0x0130–0x013F: Debug and Exception (→ XREF TODO-10 §4, TODO-18)**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0130 | NtRaiseException                 | §20 | T10 §4                   |
-| 0x0131 | NtContinue                       | §20 | T10 §4                   |
-| 0x0132 | NtDebugActiveProcess             | §20 | T18 §13                  |
-| 0x0133 | NtDebugContinue                  | §20 | T18 §13                  |
-| 0x0134 | NtRemoveProcessDebug             | §20 | T18 §13                  |
-| 0x0135 | NtCreateDebugObject              | §20 | T18 §13                  |
-| 0x0136 | NtWaitForDebugEvent              | §20 | T18 §13                  |
-| 0x0137 | NtSetInformationDebugObject      | §20 | T18 §13                  |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0130 | NtRaiseException                 | §20 | T10 §4                   | [ ]  |
+| 0x0131 | NtContinue                       | §20 | T10 §4                   | [ ]  |
+| 0x0132 | NtDebugActiveProcess             | §20 | T18 §13                  | [ ]  |
+| 0x0133 | NtDebugContinue                  | §20 | T18 §13                  | [ ]  |
+| 0x0134 | NtRemoveProcessDebug             | §20 | T18 §13                  | [ ]  |
+| 0x0135 | NtCreateDebugObject              | §20 | T18 §13                  | [ ]  |
+| 0x0136 | NtWaitForDebugEvent              | §20 | T18 §13                  | [ ]  |
+| 0x0137 | NtSetInformationDebugObject      | §20 | T18 §13                  | [ ]  |
 
 **0x0140–0x014F: Power and Shutdown (→ XREF TODO-15)**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0140 | NtSetSystemPowerState            | §21 | T15 §12                  |
-| 0x0141 | NtInitiatePowerAction            | §21 | T15 §12                  |
-| 0x0142 | NtPowerInformation               | §21 | T15 §12                  |
-| 0x0143 | NtGetDevicePowerState            | §21 | T15 §12                  |
-| 0x0144 | NtSetThreadExecutionState        | §21 | T15 §12                  |
-| 0x0145 | NtRequestWakeupLatency           | §21 | T15 §12                  |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0140 | NtSetSystemPowerState            | §21 | T15 §12                  | [ ]  |
+| 0x0141 | NtInitiatePowerAction            | §21 | T15 §12                  | [ ]  |
+| 0x0142 | NtPowerInformation               | §21 | T15 §12                  | [ ]  |
+| 0x0143 | NtGetDevicePowerState            | §21 | T15 §12                  | [ ]  |
+| 0x0144 | NtSetThreadExecutionState        | §21 | T15 §12                  | [ ]  |
+| 0x0145 | NtRequestWakeupLatency           | §21 | T15 §12                  | [ ]  |
 
 **0x0150–0x015F: Audit and Tracing (Impossible OS exclusive)**
 
-| Index  | Function                         | §   | Owner                |
-|--------|----------------------------------|-----|----------------------|
-| 0x0150 | NtRegisterSyscallAuditHook       | §23 | T05                  |
-| 0x0151 | NtUnregisterSyscallAuditHook     | §23 | T05                  |
-| 0x0152 | NtQuerySyscallAuditState         | §23 | T05                  |
+| Index  | Function                         | §   | Owner                | Done |
+|--------|----------------------------------|-----|----------------------|------|
+| 0x0150 | NtRegisterSyscallAuditHook       | §23 | T05                  | [ ]  |
+| 0x0151 | NtUnregisterSyscallAuditHook     | §23 | T05                  | [ ]  |
+| 0x0152 | NtQuerySyscallAuditState         | §23 | T05                  | [ ]  |
 
 **0x0160–0x017F: Job Objects**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0160 | NtCreateJobObject                | §7  | T09 §6                   |
-| 0x0161 | NtOpenJobObject                  | §7  | T09 §6                   |
-| 0x0162 | NtAssignProcessToJobObject       | §7  | T09 §6                   |
-| 0x0163 | NtTerminateJobObject             | §7  | T09 §6                   |
-| 0x0164 | NtQueryInformationJobObject      | §7  | T09 §6                   |
-| 0x0165 | NtSetInformationJobObject        | §7  | T09 §6                   |
-| 0x0166 | NtIsProcessInJob                 | §7  | T09 §6                   |
-| 0x0167 | NtCreateJobSet                   | §7  | T09 §6                   |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0160 | NtCreateJobObject                | §7  | T09 §6                   | [ ]  |
+| 0x0161 | NtOpenJobObject                  | §7  | T09 §6                   | [ ]  |
+| 0x0162 | NtAssignProcessToJobObject       | §7  | T09 §6                   | [ ]  |
+| 0x0163 | NtTerminateJobObject             | §7  | T09 §6                   | [ ]  |
+| 0x0164 | NtQueryInformationJobObject      | §7  | T09 §6                   | [ ]  |
+| 0x0165 | NtSetInformationJobObject        | §7  | T09 §6                   | [ ]  |
+| 0x0166 | NtIsProcessInJob                 | §7  | T09 §6                   | [ ]  |
+| 0x0167 | NtCreateJobSet                   | §7  | T09 §6                   | [ ]  |
 
 **0x0180–0x019F: Worker Factory (Thread Pool)**
 
 | Index  | Function                           | §   | Owner                  |
-|--------|--------------------------------------|-----|------------------------|
-| 0x0180 | NtCreateWorkerFactory              | §7  | T05-mem §5 (IOCP pool)  |
-| 0x0181 | NtWorkerFactoryWorkerReady         | §7  | T05-mem §5              |
-| 0x0182 | NtReleaseWorkerFactoryWorker       | §7  | T05-mem §5              |
-| 0x0183 | NtShutdownWorkerFactory            | §7  | T05-mem §5              |
-| 0x0184 | NtQueryInformationWorkerFactory    | §7  | T05-mem §5              |
-| 0x0185 | NtSetInformationWorkerFactory      | §7  | T05-mem §5              |
-| 0x0186 | NtWaitForWorkViaWorkerFactory      | §7  | T05-mem §5              |
+|--------|--------------------------------------|-----|------------------------|------|
+| 0x0180 | NtCreateWorkerFactory              | §7  | T05-mem §5 (IOCP pool)  | [ ]  |
+| 0x0181 | NtWorkerFactoryWorkerReady         | §7  | T05-mem §5              | [ ]  |
+| 0x0182 | NtReleaseWorkerFactoryWorker       | §7  | T05-mem §5              | [ ]  |
+| 0x0183 | NtShutdownWorkerFactory            | §7  | T05-mem §5              | [ ]  |
+| 0x0184 | NtQueryInformationWorkerFactory    | §7  | T05-mem §5              | [ ]  |
+| 0x0185 | NtSetInformationWorkerFactory      | §7  | T05-mem §5              | [ ]  |
+| 0x0186 | NtWaitForWorkViaWorkerFactory      | §7  | T05-mem §5              | [ ]  |
 
 **0x01A0–0x01CF: Kernel Transaction Manager (KTM)**
 
 | Index  | Function                           | §   | Owner                  |
-|--------|--------------------------------------|-----|------------------------|
-| 0x01A0 | NtCreateTransactionManager         | §22 | T13 (registry txn)     |
-| 0x01A1 | NtOpenTransactionManager           | §22 | T13                    |
-| 0x01A2 | NtCreateTransaction               | §22 | T13                    |
-| 0x01A3 | NtOpenTransaction                  | §22 | T13                    |
-| 0x01A4 | NtCommitTransaction               | §22 | T13                    |
-| 0x01A5 | NtRollbackTransaction             | §22 | T13                    |
-| 0x01A6 | NtQueryInformationTransaction      | §22 | T13                    |
-| 0x01A7 | NtSetInformationTransaction        | §22 | T13                    |
-| 0x01A8 | NtCreateResourceManager            | §22 | T13                    |
-| 0x01A9 | NtOpenResourceManager              | §22 | T13                    |
-| 0x01AA | NtQueryInformationResourceManager  | §22 | T13                    |
-| 0x01AB | NtSetInformationResourceManager    | §22 | T13                    |
-| 0x01AC | NtCreateEnlistment                 | §22 | T13                    |
-| 0x01AD | NtOpenEnlistment                   | §22 | T13                    |
-| 0x01AE | NtQueryInformationEnlistment       | §22 | T13                    |
-| 0x01AF | NtSetInformationEnlistment         | §22 | T13                    |
-| 0x01B0 | NtPrepareEnlistment               | §22 | T13                    |
-| 0x01B1 | NtPrePrepareEnlistment            | §22 | T13                    |
-| 0x01B2 | NtCommitEnlistment                | §22 | T13                    |
-| 0x01B3 | NtRollbackEnlistment              | §22 | T13                    |
-| 0x01B4 | NtRecoverTransactionManager        | §22 | T13                    |
-| 0x01B5 | NtRecoverResourceManager           | §22 | T13                    |
-| 0x01B6 | NtRecoverEnlistment               | §22 | T13                    |
-| 0x01B7 | NtPropagationComplete             | §22 | T13                    |
-| 0x01B8 | NtPropagationFailed               | §22 | T13                    |
-| 0x01B9 | NtFreezeTransactions              | §22 | T13                    |
-| 0x01BA | NtThawTransactions                | §22 | T13                    |
-| 0x01BB | NtCreateRegistryTransaction        | §14 | T13 §4                 |
-| 0x01BC | NtOpenRegistryTransaction          | §14 | T13 §4                 |
-| 0x01BD | NtCommitRegistryTransaction        | §14 | T13 §4                 |
-| 0x01BE | NtRollbackRegistryTransaction      | §14 | T13 §4                 |
+|--------|--------------------------------------|-----|------------------------|------|
+| 0x01A0 | NtCreateTransactionManager         | §22 | T13 (registry txn)     | [ ]  |
+| 0x01A1 | NtOpenTransactionManager           | §22 | T13                    | [ ]  |
+| 0x01A2 | NtCreateTransaction               | §22 | T13                    | [ ]  |
+| 0x01A3 | NtOpenTransaction                  | §22 | T13                    | [ ]  |
+| 0x01A4 | NtCommitTransaction               | §22 | T13                    | [ ]  |
+| 0x01A5 | NtRollbackTransaction             | §22 | T13                    | [ ]  |
+| 0x01A6 | NtQueryInformationTransaction      | §22 | T13                    | [ ]  |
+| 0x01A7 | NtSetInformationTransaction        | §22 | T13                    | [ ]  |
+| 0x01A8 | NtCreateResourceManager            | §22 | T13                    | [ ]  |
+| 0x01A9 | NtOpenResourceManager              | §22 | T13                    | [ ]  |
+| 0x01AA | NtQueryInformationResourceManager  | §22 | T13                    | [ ]  |
+| 0x01AB | NtSetInformationResourceManager    | §22 | T13                    | [ ]  |
+| 0x01AC | NtCreateEnlistment                 | §22 | T13                    | [ ]  |
+| 0x01AD | NtOpenEnlistment                   | §22 | T13                    | [ ]  |
+| 0x01AE | NtQueryInformationEnlistment       | §22 | T13                    | [ ]  |
+| 0x01AF | NtSetInformationEnlistment         | §22 | T13                    | [ ]  |
+| 0x01B0 | NtPrepareEnlistment               | §22 | T13                    | [ ]  |
+| 0x01B1 | NtPrePrepareEnlistment            | §22 | T13                    | [ ]  |
+| 0x01B2 | NtCommitEnlistment                | §22 | T13                    | [ ]  |
+| 0x01B3 | NtRollbackEnlistment              | §22 | T13                    | [ ]  |
+| 0x01B4 | NtRecoverTransactionManager        | §22 | T13                    | [ ]  |
+| 0x01B5 | NtRecoverResourceManager           | §22 | T13                    | [ ]  |
+| 0x01B6 | NtRecoverEnlistment               | §22 | T13                    | [ ]  |
+| 0x01B7 | NtPropagationComplete             | §22 | T13                    | [ ]  |
+| 0x01B8 | NtPropagationFailed               | §22 | T13                    | [ ]  |
+| 0x01B9 | NtFreezeTransactions              | §22 | T13                    | [ ]  |
+| 0x01BA | NtThawTransactions                | §22 | T13                    | [ ]  |
+| 0x01BB | NtCreateRegistryTransaction        | §14 | T13 §4                 | [ ]  |
+| 0x01BC | NtOpenRegistryTransaction          | §14 | T13 §4                 | [ ]  |
+| 0x01BD | NtCommitRegistryTransaction        | §14 | T13 §4                 | [ ]  |
+| 0x01BE | NtRollbackRegistryTransaction      | §14 | T13 §4                 | [ ]  |
 
 **0x01D0–0x01DF: ETW (Event Tracing for Windows)**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x01D0 | NtTraceEvent                     | §22 | T02 (klog/ETW)           |
-| 0x01D1 | NtTraceControl                   | §22 | T02                      |
-| 0x01D2 | NtCreateTrace                    | §22 | T02                      |
-| 0x01D3 | NtQueryTrace                     | §22 | T02                      |
-| 0x01D4 | NtUpdateTrace                    | §22 | T02                      |
-| 0x01D5 | NtStopTrace                      | §22 | T02                      |
-| 0x01D6 | NtFlushTrace                     | §22 | T02                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x01D0 | NtTraceEvent                     | §22 | T02 (klog/ETW)           | [ ]  |
+| 0x01D1 | NtTraceControl                   | §22 | T02                      | [ ]  |
+| 0x01D2 | NtCreateTrace                    | §22 | T02                      | [ ]  |
+| 0x01D3 | NtQueryTrace                     | §22 | T02                      | [ ]  |
+| 0x01D4 | NtUpdateTrace                    | §22 | T02                      | [ ]  |
+| 0x01D5 | NtStopTrace                      | §22 | T02                      | [ ]  |
+| 0x01D6 | NtFlushTrace                     | §22 | T02                      | [ ]  |
 
 **0x01E0–0x01EF: WNF (Windows Notification Facility)**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x01E0 | NtCreateWnfStateName             | §22 | T05                      |
-| 0x01E1 | NtDeleteWnfStateName             | §22 | T05                      |
-| 0x01E2 | NtQueryWnfStateData              | §22 | T05                      |
-| 0x01E3 | NtUpdateWnfStateData             | §22 | T05                      |
-| 0x01E4 | NtSubscribeWnfStateChange        | §22 | T05                      |
-| 0x01E5 | NtUnsubscribeWnfStateChange      | §22 | T05                      |
-| 0x01E6 | NtQueryWnfStateNameInformation   | §22 | T05                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x01E0 | NtCreateWnfStateName             | §22 | T05                      | [ ]  |
+| 0x01E1 | NtDeleteWnfStateName             | §22 | T05                      | [ ]  |
+| 0x01E2 | NtQueryWnfStateData              | §22 | T05                      | [ ]  |
+| 0x01E3 | NtUpdateWnfStateData             | §22 | T05                      | [ ]  |
+| 0x01E4 | NtSubscribeWnfStateChange        | §22 | T05                      | [ ]  |
+| 0x01E5 | NtUnsubscribeWnfStateChange      | §22 | T05                      | [ ]  |
+| 0x01E6 | NtQueryWnfStateNameInformation   | §22 | T05                      | [ ]  |
 
 **0x01F0–0x01FF: Enclave (VBS / SGX)**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x01F0 | NtCreateEnclave                  | §22 | T17 (security hardening) |
-| 0x01F1 | NtLoadEnclaveData                | §22 | T17                      |
-| 0x01F2 | NtInitializeEnclave              | §22 | T17                      |
-| 0x01F3 | NtTerminateEnclave               | §22 | T17                      |
-| 0x01F4 | NtCallEnclave                    | §22 | T17                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x01F0 | NtCreateEnclave                  | §22 | T17 (security hardening) | [ ]  |
+| 0x01F1 | NtLoadEnclaveData                | §22 | T17                      | [ ]  |
+| 0x01F2 | NtInitializeEnclave              | §22 | T17                      | [ ]  |
+| 0x01F3 | NtTerminateEnclave               | §22 | T17                      | [ ]  |
+| 0x01F4 | NtCallEnclave                    | §22 | T17                      | [ ]  |
 
 **0x0200–0x021F: Process and Thread Extensions**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0200 | NtSuspendProcess                 | §7  | T09 §4                   |
-| 0x0201 | NtResumeProcess                  | §7  | T09 §4                   |
-| 0x0202 | NtGetNextProcess                 | §7  | T09 §4                   |
-| 0x0203 | NtGetNextThread                  | §7  | T09 §4                   |
-| 0x0204 | NtCreateProcessStateChange       | §7  | T09                      |
-| 0x0205 | NtChangeProcessState             | §7  | T09                      |
-| 0x0206 | NtCreateThreadStateChange        | §7  | T09                      |
-| 0x0207 | NtChangeThreadState              | §7  | T09                      |
-| 0x0208 | NtGetCurrentProcessorNumber      | §10 | T05                      |
-| 0x0209 | NtGetCurrentProcessorNumberEx    | §10 | T05                      |
-| 0x020A | NtFlushProcessWriteBuffers       | §9  | T05                      |
-| 0x020B | NtQueryPortInformationProcess    | §10 | T05                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0200 | NtSuspendProcess                 | §7  | T09 §4                   | [ ]  |
+| 0x0201 | NtResumeProcess                  | §7  | T09 §4                   | [ ]  |
+| 0x0202 | NtGetNextProcess                 | §7  | T09 §4                   | [ ]  |
+| 0x0203 | NtGetNextThread                  | §7  | T09 §4                   | [ ]  |
+| 0x0204 | NtCreateProcessStateChange       | §7  | T09                      | [ ]  |
+| 0x0205 | NtChangeProcessState             | §7  | T09                      | [ ]  |
+| 0x0206 | NtCreateThreadStateChange        | §7  | T09                      | [ ]  |
+| 0x0207 | NtChangeThreadState              | §7  | T09                      | [ ]  |
+| 0x0208 | NtGetCurrentProcessorNumber      | §10 | T05                      | [ ]  |
+| 0x0209 | NtGetCurrentProcessorNumberEx    | §10 | T05                      | [ ]  |
+| 0x020A | NtFlushProcessWriteBuffers       | §9  | T05                      | [ ]  |
+| 0x020B | NtQueryPortInformationProcess    | §10 | T05                      | [ ]  |
 
 **0x0220–0x023F: Memory Extensions**
 
 | Index  | Function                           | §   | Owner                  |
-|--------|--------------------------------------|-----|------------------------|
-| 0x0220 | NtAllocateVirtualMemoryEx          | §9  | T04-mem §4              |
-| 0x0221 | NtCreateSectionEx                  | §17 | T05                    |
-| 0x0222 | NtMapViewOfSectionEx               | §17 | T05                    |
-| 0x0223 | NtSetInformationVirtualMemory      | §9  | T04-mem §4              |
-| 0x0224 | NtGetWriteWatch                    | §9  | T04-mem §4              |
-| 0x0225 | NtResetWriteWatch                  | §9  | T04-mem §4              |
-| 0x0226 | NtCreatePagingFile                 | §9  | T05                    |
+|--------|--------------------------------------|-----|------------------------|------|
+| 0x0220 | NtAllocateVirtualMemoryEx          | §9  | T04-mem §4              | [ ]  |
+| 0x0221 | NtCreateSectionEx                  | §17 | T05                    | [ ]  |
+| 0x0222 | NtMapViewOfSectionEx               | §17 | T05                    | [ ]  |
+| 0x0223 | NtSetInformationVirtualMemory      | §9  | T04-mem §4              | [ ]  |
+| 0x0224 | NtGetWriteWatch                    | §9  | T04-mem §4              | [ ]  |
+| 0x0225 | NtResetWriteWatch                  | §9  | T04-mem §4              | [ ]  |
+| 0x0226 | NtCreatePagingFile                 | §9  | T05                    | [ ]  |
 
 **0x0240–0x024F: Event Pair**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0240 | NtCreateEventPair                | §8  | T05                      |
-| 0x0241 | NtOpenEventPair                  | §8  | T05                      |
-| 0x0242 | NtSetHighEventPair               | §8  | T05                      |
-| 0x0243 | NtSetLowEventPair                | §8  | T05                      |
-| 0x0244 | NtWaitHighEventPair              | §8  | T05                      |
-| 0x0245 | NtWaitLowEventPair               | §8  | T05                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0240 | NtCreateEventPair                | §8  | T05                      | [ ]  |
+| 0x0241 | NtOpenEventPair                  | §8  | T05                      | [ ]  |
+| 0x0242 | NtSetHighEventPair               | §8  | T05                      | [ ]  |
+| 0x0243 | NtSetLowEventPair                | §8  | T05                      | [ ]  |
+| 0x0244 | NtWaitHighEventPair              | §8  | T05                      | [ ]  |
+| 0x0245 | NtWaitLowEventPair               | §8  | T05                      | [ ]  |
 
 **0x0250–0x025F: Profile and Performance Counters**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0250 | NtCreateProfile                  | §10 | T05                      |
-| 0x0251 | NtCreateProfileEx                | §10 | T05                      |
-| 0x0252 | NtStartProfile                   | §10 | T05                      |
-| 0x0253 | NtStopProfile                    | §10 | T05                      |
-| 0x0254 | NtSetIntervalProfile             | §10 | T05                      |
-| 0x0255 | NtQueryIntervalProfile           | §10 | T05                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0250 | NtCreateProfile                  | §10 | T05                      | [ ]  |
+| 0x0251 | NtCreateProfileEx                | §10 | T05                      | [ ]  |
+| 0x0252 | NtStartProfile                   | §10 | T05                      | [ ]  |
+| 0x0253 | NtStopProfile                    | §10 | T05                      | [ ]  |
+| 0x0254 | NtSetIntervalProfile             | §10 | T05                      | [ ]  |
+| 0x0255 | NtQueryIntervalProfile           | §10 | T05                      | [ ]  |
 
 **0x0260–0x026F: Session and Licensing**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0260 | NtOpenSession                    | §22 | T05                      |
-| 0x0261 | NtNotifyChangeSession            | §22 | T05                      |
-| 0x0262 | NtQueryLicenseValue              | §22 | T05                      |
-| 0x0263 | NtGetMUIRegistryInfo             | §22 | T05                      |
-| 0x0264 | NtIsUILanguageComitted           | §22 | T05                      |
-| 0x0265 | NtFlushInstallUILanguage         | §22 | T05                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0260 | NtOpenSession                    | §22 | T05                      | [ ]  |
+| 0x0261 | NtNotifyChangeSession            | §22 | T05                      | [ ]  |
+| 0x0262 | NtQueryLicenseValue              | §22 | T05                      | [ ]  |
+| 0x0263 | NtGetMUIRegistryInfo             | §22 | T05                      | [ ]  |
+| 0x0264 | NtIsUILanguageComitted           | §22 | T05                      | [ ]  |
+| 0x0265 | NtFlushInstallUILanguage         | §22 | T05                      | [ ]  |
 
 **0x0270–0x027F: Plug and Play**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0270 | NtPlugPlayControl                | §22 | T01-drv §1 (device mgr)  |
-| 0x0271 | NtGetPlugPlayEvent               | §22 | T01-drv §1               |
-| 0x0272 | NtSerializeBoot                  | §22 | T05                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0270 | NtPlugPlayControl                | §22 | T01-drv §1 (device mgr)  | [ ]  |
+| 0x0271 | NtGetPlugPlayEvent               | §22 | T01-drv §1               | [ ]  |
+| 0x0272 | NtSerializeBoot                  | §22 | T05                      | [ ]  |
 
 **0x0280–0x029F: I/O Ring (Fast Async I/O — Win11+)**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x0280 | NtCreateIoRing                   | §13 | T05                      |
-| 0x0281 | NtSubmitIoRing                   | §13 | T05                      |
-| 0x0282 | NtQueryIoRingCapabilities        | §13 | T05                      |
-| 0x0283 | NtSetInformationIoRing           | §13 | T05                      |
-| 0x0284 | NtCloseIoRing                    | §13 | T05                      |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x0280 | NtCreateIoRing                   | §13 | T05                      | [ ]  |
+| 0x0281 | NtSubmitIoRing                   | §13 | T05                      | [ ]  |
+| 0x0282 | NtQueryIoRingCapabilities        | §13 | T05                      | [ ]  |
+| 0x0283 | NtSetInformationIoRing           | §13 | T05                      | [ ]  |
+| 0x0284 | NtCloseIoRing                    | §13 | T05                      | [ ]  |
 
 **0x02A0–0x02BF: Security Extensions (AppContainer, Signing)**
 
 | Index  | Function                           | §   | Owner                  |
-|--------|--------------------------------------|-----|------------------------|
-| 0x02A0 | NtCreateLowBoxToken                | §15 | T11                    |
-| 0x02A1 | NtQuerySecurityPolicy              | §15 | T11                    |
-| 0x02A2 | NtSetCachedSigningLevel            | §15 | T17 (security harden)  |
-| 0x02A3 | NtGetCachedSigningLevel            | §15 | T17                    |
-| 0x02A4 | NtCompareSigningLevels             | §15 | T17                    |
-| 0x02A5 | NtSetInformationSymbolicLink       | §16 | T05                    |
-| 0x02A6 | NtQuerySecurityAttributesToken     | §15 | T11                    |
-| 0x02A7 | NtAccessCheckByTypeAndAuditAlarm   | §15 | T11                    |
-| 0x02A8 | NtAccessCheckByTypeResultListAndAuditAlarm | §15 | T11            |
+|--------|--------------------------------------|-----|------------------------|------|
+| 0x02A0 | NtCreateLowBoxToken                | §15 | T11                    | [ ]  |
+| 0x02A1 | NtQuerySecurityPolicy              | §15 | T11                    | [ ]  |
+| 0x02A2 | NtSetCachedSigningLevel            | §15 | T17 (security harden)  | [ ]  |
+| 0x02A3 | NtGetCachedSigningLevel            | §15 | T17                    | [ ]  |
+| 0x02A4 | NtCompareSigningLevels             | §15 | T17                    | [ ]  |
+| 0x02A5 | NtSetInformationSymbolicLink       | §16 | T05                    | [ ]  |
+| 0x02A6 | NtQuerySecurityAttributesToken     | §15 | T11                    | [ ]  |
+| 0x02A7 | NtAccessCheckByTypeAndAuditAlarm   | §15 | T11                    | [ ]  |
+| 0x02A8 | NtAccessCheckByTypeResultListAndAuditAlarm | §15 | T11            | [ ]  |
 
 **0x02C0–0x02DF: Object and Namespace Extensions**
 
 | Index  | Function                           | §   | Owner                  |
-|--------|--------------------------------------|-----|------------------------|
-| 0x02C0 | NtCreateDirectoryObjectEx          | §16 | T05                    |
-| 0x02C1 | NtQueryDirectoryFileEx             | §13 | T05                    |
-| 0x02C2 | NtCreatePrivateNamespace           | §16 | T05                    |
-| 0x02C3 | NtOpenPrivateNamespace             | §16 | T05                    |
-| 0x02C4 | NtDeletePrivateNamespace           | §16 | T05                    |
+|--------|--------------------------------------|-----|------------------------|------|
+| 0x02C0 | NtCreateDirectoryObjectEx          | §16 | T05                    | [ ]  |
+| 0x02C1 | NtQueryDirectoryFileEx             | §13 | T05                    | [ ]  |
+| 0x02C2 | NtCreatePrivateNamespace           | §16 | T05                    | [ ]  |
+| 0x02C3 | NtOpenPrivateNamespace             | §16 | T05                    | [ ]  |
+| 0x02C4 | NtDeletePrivateNamespace           | §16 | T05                    | [ ]  |
 
 **0x02E0–0x02FF: Debug and Filter Extensions**
 
 | Index  | Function                         | §   | Owner                    |
-|--------|----------------------------------|-----|--------------------------|
-| 0x02E0 | NtSystemDebugControl             | §20 | T18 §13                  |
-| 0x02E1 | NtQueryDebugFilterState          | §20 | T18 §13                  |
-| 0x02E2 | NtSetDebugFilterState            | §20 | T18 §13                  |
+|--------|----------------------------------|-----|--------------------------|------|
+| 0x02E0 | NtSystemDebugControl             | §20 | T18 §13                  | [ ]  |
+| 0x02E1 | NtQueryDebugFilterState          | §20 | T18 §13                  | [ ]  |
+| 0x02E2 | NtSetDebugFilterState            | §20 | T18 §13                  | [ ]  |
 
 **0x0300–0x034F: Miscellaneous / Extended APIs**
 
 | Index  | Function                             | §   | Owner                |
-|--------|--------------------------------------|-----|----------------------|
-| 0x0300 | NtCallbackReturn                     | §22 | T05                  |
-| 0x0301 | NtSetLdtEntries                      | §22 | T05 (x86 compat)     |
-| 0x0302 | NtQueryOpenSubKeysEx                 | §14 | T13 §4               |
-| 0x0303 | NtMapCMFModule                       | §22 | T05                  |
-| 0x0304 | NtCancelSynchronousIoFile            | §13 | T05                  |
-| 0x0305 | NtSetTimer2                          | §18 | T07 §7               |
-| 0x0306 | NtCancelTimer2                       | §18 | T07 §7               |
-| 0x0307 | NtCreateResourceManager              | §22 | T13                  |
-| 0x0308 | NtApphelpCacheControl                | §22 | T05                  |
-| 0x0309 | NtRaiseStatus                        | §22 | T05                  |
-| 0x030A | NtFlushKey                           | §14 | T13 §4               |
-| 0x030B | NtWaitForAlertByThreadId             | §8  | T07-mem §4            |
-| 0x030C | NtAlertThreadByThreadId              | §8  | T07-mem §4            |
-| 0x030D | NtQueryAuxiliaryCounterFrequency     | §10 | T05                  |
-| 0x030E | NtConvertBetweenAuxiliaryCounterAndPerformanceCounter | §10 | T05 |
-| 0x030F | NtManagePartition                    | §22 | T05                  |
-| 0x0310 | NtCreatePartition                    | §22 | T05                  |
-| 0x0311 | NtOpenPartition                      | §22 | T05                  |
-| 0x0312 | NtManageHotPatch                     | §22 | T05                  |
-| 0x0313 | NtQuerySystemInformationEx           | §10 | T05                  |
-| 0x0314 | NtCreateTokenEx                      | §15 | T11                  |
-| 0x0315 | NtCompareObjects                     | §16 | T05                  |
-| 0x0316 | NtQueryInformationByName             | §13 | T05                  |
-| 0x0317 | NtCancelWaitCompletionPacket         | §13 | T05                  |
-| 0x0318 | NtAssociateWaitCompletionPacket      | §13 | T05                  |
-| 0x0319 | NtCreateWaitCompletionPacket         | §13 | T05                  |
-| 0x031A | NtDirectGraphicsCall                 | §22 | T08-gfx (GPU)         |
-| 0x031B | NtSetWnfProcessNotificationEvent     | §22 | T05                  |
-| 0x031C | NtCopyFileChunk                      | §13 | T05                  |
-| 0x031D | NtCreateCrossVmEvent                 | §8  | T05                  |
-| 0x031E | NtCreateCrossVmMutant                | §8  | T05                  |
-| 0x031F | NtAcquireCrossVmMutant               | §8  | T05                  |
-| 0x0320 | NtQueryInformationEnlistment         | §22 | T13                  |
-| 0x0321 | NtSetInformationEnlistment           | §22 | T13                  |
-| 0x0322 | NtQueryInformationResourceManager    | §22 | T13                  |
-| 0x0323 | NtSetInformationResourceManager      | §22 | T13                  |
-| 0x0324 | NtQueryInformationTransactionManager | §22 | T13                  |
-| 0x0325 | NtSetInformationTransactionManager   | §22 | T13                  |
+|--------|--------------------------------------|-----|----------------------|------|
+| 0x0300 | NtCallbackReturn                     | §22 | T05                  | [ ]  |
+| 0x0301 | NtSetLdtEntries                      | §22 | T05 (x86 compat)     | [ ]  |
+| 0x0302 | NtQueryOpenSubKeysEx                 | §14 | T13 §4               | [ ]  |
+| 0x0303 | NtMapCMFModule                       | §22 | T05                  | [ ]  |
+| 0x0304 | NtCancelSynchronousIoFile            | §13 | T05                  | [ ]  |
+| 0x0305 | NtSetTimer2                          | §18 | T07 §7               | [ ]  |
+| 0x0306 | NtCancelTimer2                       | §18 | T07 §7               | [ ]  |
+| 0x0307 | NtCreateResourceManager              | §22 | T13                  | [ ]  |
+| 0x0308 | NtApphelpCacheControl                | §22 | T05                  | [ ]  |
+| 0x0309 | NtRaiseStatus                        | §22 | T05                  | [ ]  |
+| 0x030A | NtFlushKey                           | §14 | T13 §4               | [ ]  |
+| 0x030B | NtWaitForAlertByThreadId             | §8  | T07-mem §4            | [ ]  |
+| 0x030C | NtAlertThreadByThreadId              | §8  | T07-mem §4            | [ ]  |
+| 0x030D | NtQueryAuxiliaryCounterFrequency     | §10 | T05                  | [ ]  |
+| 0x030E | NtConvertBetweenAuxiliaryCounterAndPerformanceCounter | §10 | T05 | [ ]  |
+| 0x030F | NtManagePartition                    | §22 | T05                  | [ ]  |
+| 0x0310 | NtCreatePartition                    | §22 | T05                  | [ ]  |
+| 0x0311 | NtOpenPartition                      | §22 | T05                  | [ ]  |
+| 0x0312 | NtManageHotPatch                     | §22 | T05                  | [ ]  |
+| 0x0313 | NtQuerySystemInformationEx           | §10 | T05                  | [ ]  |
+| 0x0314 | NtCreateTokenEx                      | §15 | T11                  | [ ]  |
+| 0x0315 | NtCompareObjects                     | §16 | T05                  | [ ]  |
+| 0x0316 | NtQueryInformationByName             | §13 | T05                  | [ ]  |
+| 0x0317 | NtCancelWaitCompletionPacket         | §13 | T05                  | [ ]  |
+| 0x0318 | NtAssociateWaitCompletionPacket      | §13 | T05                  | [ ]  |
+| 0x0319 | NtCreateWaitCompletionPacket         | §13 | T05                  | [ ]  |
+| 0x031A | NtDirectGraphicsCall                 | §22 | T08-gfx (GPU)         | [ ]  |
+| 0x031B | NtSetWnfProcessNotificationEvent     | §22 | T05                  | [ ]  |
+| 0x031C | NtCopyFileChunk                      | §13 | T05                  | [ ]  |
+| 0x031D | NtCreateCrossVmEvent                 | §8  | T05                  | [ ]  |
+| 0x031E | NtCreateCrossVmMutant                | §8  | T05                  | [ ]  |
+| 0x031F | NtAcquireCrossVmMutant               | §8  | T05                  | [ ]  |
+| 0x0320 | NtQueryInformationEnlistment         | §22 | T13                  | [ ]  |
+| 0x0321 | NtSetInformationEnlistment           | §22 | T13                  | [ ]  |
+| 0x0322 | NtQueryInformationResourceManager    | §22 | T13                  | [ ]  |
+| 0x0323 | NtSetInformationResourceManager      | §22 | T13                  | [ ]  |
+| 0x0324 | NtQueryInformationTransactionManager | §22 | T13                  | [ ]  |
+| 0x0325 | NtSetInformationTransactionManager   | §22 | T13                  | [ ]  |
 
 **0x0340–0x037F: Extended File and Volume Operations**
 
 | Index  | Function                             | §   | Owner                |
-|--------|--------------------------------------|-----|----------------------|
-| 0x0340 | NtQueryQuotaInformationFile          | §13 | T05                  |
-| 0x0341 | NtSetQuotaInformationFile            | §13 | T05                  |
-| 0x0342 | NtQueryOleDirectoryFile              | §13 | T05                  |
-| 0x0343 | NtCancelIoFileEx                     | §13 | T05                  |
-| 0x0344 | NtSetVolumeInformationFile           | §13 | T05                  |
-| 0x0345 | NtSetEaFile                          | §13 | T05                  |
-| 0x0346 | NtQueryEaFile                        | §13 | T05                  |
-| 0x0347 | NtCreateToken                        | §15 | T11                  |
-| 0x0348 | NtFilterToken                        | §15 | T11                  |
-| 0x0349 | NtCompareTokens                      | §15 | T11                  |
-| 0x034A | NtAccessCheckByTypeResultList        | §15 | T11                  |
-| 0x034B | NtOpenObjectAuditAlarm               | §15 | T11                  |
-| 0x034C | NtCloseObjectAuditAlarm              | §15 | T11                  |
-| 0x034D | NtDeleteObjectAuditAlarm             | §15 | T11                  |
-| 0x034E | NtPrivilegedServiceAuditAlarm        | §15 | T11                  |
-| 0x034F | NtSetContextChannel                  | §22 | T05                  |
+|--------|--------------------------------------|-----|----------------------|------|
+| 0x0340 | NtQueryQuotaInformationFile          | §13 | T05                  | [ ]  |
+| 0x0341 | NtSetQuotaInformationFile            | §13 | T05                  | [ ]  |
+| 0x0342 | NtQueryOleDirectoryFile              | §13 | T05                  | [ ]  |
+| 0x0343 | NtCancelIoFileEx                     | §13 | T05                  | [ ]  |
+| 0x0344 | NtSetVolumeInformationFile           | §13 | T05                  | [ ]  |
+| 0x0345 | NtSetEaFile                          | §13 | T05                  | [ ]  |
+| 0x0346 | NtQueryEaFile                        | §13 | T05                  | [ ]  |
+| 0x0347 | NtCreateToken                        | §15 | T11                  | [ ]  |
+| 0x0348 | NtFilterToken                        | §15 | T11                  | [ ]  |
+| 0x0349 | NtCompareTokens                      | §15 | T11                  | [ ]  |
+| 0x034A | NtAccessCheckByTypeResultList        | §15 | T11                  | [ ]  |
+| 0x034B | NtOpenObjectAuditAlarm               | §15 | T11                  | [ ]  |
+| 0x034C | NtCloseObjectAuditAlarm              | §15 | T11                  | [ ]  |
+| 0x034D | NtDeleteObjectAuditAlarm             | §15 | T11                  | [ ]  |
+| 0x034E | NtPrivilegedServiceAuditAlarm        | §15 | T11                  | [ ]  |
+| 0x034F | NtSetContextChannel                  | §22 | T05                  | [ ]  |
 
 **0x0380–0x03BF: Extended Thread, Memory, and Misc**
 
 | Index  | Function                             | §   | Owner                |
-|--------|--------------------------------------|-----|----------------------|
-| 0x0380 | NtQueueApcThreadEx                   | §7  | T10 §4 (APC)         |
-| 0x0381 | NtQueueApcThreadEx2                  | §7  | T10 §4               |
-| 0x0382 | NtSetIoCompletionEx                  | §13 | T08-mem §4            |
-| 0x0383 | NtRemoveIoCompletionEx              | §13 | T08-mem §4            |
-| 0x0384 | NtAlertThreadByThreadIdEx            | §8  | T07-mem §4            |
-| 0x0385 | NtWaitForAlertByThreadIdEx           | §8  | T07-mem §4            |
-| 0x0386 | NtMapViewOfSection3                  | §17 | T05                  |
-| 0x0387 | NtUnmapViewOfSection2                | §17 | T05                  |
-| 0x0388 | NtCreateSemaphoreEx                  | §8  | T05                  |
-| 0x0389 | NtCreateMutantEx                     | §8  | T05                  |
-| 0x038A | NtCreateEventEx                      | §8  | T05                  |
-| 0x038B | NtOpenKeyedEvent2                    | §8  | T07-mem §4            |
-| 0x038C | NtCreateTimerEx                      | §18 | T07 §7               |
-| 0x038D | NtQueryTimerEx                       | §18 | T07 §7               |
-| 0x038E | NtSetTimer2                          | §18 | T07 §7               |
-| 0x038F | NtCancelTimer2                       | §18 | T07 §7               |
-| 0x0390 | NtOpenProcessEx                      | §7  | T09 §4               |
-| 0x0391 | NtOpenThreadEx                       | §7  | T09 §4               |
-| 0x0392 | NtQueryInformationJobObject          | §7  | T09 §6               |
-| 0x0393 | NtSetInformationJobObject            | §7  | T09 §6               |
-| 0x0394 | NtQueryDirectoryObjectEx            | §16 | T05                  |
-| 0x0395 | NtQuerySymbolicLinkObjectEx          | §16 | T05                  |
-| 0x0396 | NtSetSecurityObjectEx                | §15 | T11                  |
-| 0x0397 | NtQuerySecurityObjectEx              | §15 | T11                  |
-| 0x0398 | NtCreateNamedPipeFileEx              | §6  | T08-mem §1            |
-| 0x0399 | NtCreateMailslotFileEx               | §13 | T08-mem §3            |
-| 0x039A | NtNotifyChangeDirectoryFileEx        | §13 | T05                  |
-| 0x039B | NtSetInformationProcessEx            | §7  | T09 §4               |
-| 0x039C | NtQueryInformationProcessEx          | §10 | T05                  |
-| 0x039D | NtQueryInformationThreadEx           | §7  | T05                  |
+|--------|--------------------------------------|-----|----------------------|------|
+| 0x0380 | NtQueueApcThreadEx                   | §7  | T10 §4 (APC)         | [ ]  |
+| 0x0381 | NtQueueApcThreadEx2                  | §7  | T10 §4               | [ ]  |
+| 0x0382 | NtSetIoCompletionEx                  | §13 | T08-mem §4            | [ ]  |
+| 0x0383 | NtRemoveIoCompletionEx              | §13 | T08-mem §4            | [ ]  |
+| 0x0384 | NtAlertThreadByThreadIdEx            | §8  | T07-mem §4            | [ ]  |
+| 0x0385 | NtWaitForAlertByThreadIdEx           | §8  | T07-mem §4            | [ ]  |
+| 0x0386 | NtMapViewOfSection3                  | §17 | T05                  | [ ]  |
+| 0x0387 | NtUnmapViewOfSection2                | §17 | T05                  | [ ]  |
+| 0x0388 | NtCreateSemaphoreEx                  | §8  | T05                  | [ ]  |
+| 0x0389 | NtCreateMutantEx                     | §8  | T05                  | [ ]  |
+| 0x038A | NtCreateEventEx                      | §8  | T05                  | [ ]  |
+| 0x038B | NtOpenKeyedEvent2                    | §8  | T07-mem §4            | [ ]  |
+| 0x038C | NtCreateTimerEx                      | §18 | T07 §7               | [ ]  |
+| 0x038D | NtQueryTimerEx                       | §18 | T07 §7               | [ ]  |
+| 0x038E | NtSetTimer2                          | §18 | T07 §7               | [ ]  |
+| 0x038F | NtCancelTimer2                       | §18 | T07 §7               | [ ]  |
+| 0x0390 | NtOpenProcessEx                      | §7  | T09 §4               | [ ]  |
+| 0x0391 | NtOpenThreadEx                       | §7  | T09 §4               | [ ]  |
+| 0x0392 | NtQueryInformationJobObject          | §7  | T09 §6               | [ ]  |
+| 0x0393 | NtSetInformationJobObject            | §7  | T09 §6               | [ ]  |
+| 0x0394 | NtQueryDirectoryObjectEx            | §16 | T05                  | [ ]  |
+| 0x0395 | NtQuerySymbolicLinkObjectEx          | §16 | T05                  | [ ]  |
+| 0x0396 | NtSetSecurityObjectEx                | §15 | T11                  | [ ]  |
+| 0x0397 | NtQuerySecurityObjectEx              | §15 | T11                  | [ ]  |
+| 0x0398 | NtCreateNamedPipeFileEx              | §6  | T08-mem §1            | [ ]  |
+| 0x0399 | NtCreateMailslotFileEx               | §13 | T08-mem §3            | [ ]  |
+| 0x039A | NtNotifyChangeDirectoryFileEx        | §13 | T05                  | [ ]  |
+| 0x039B | NtSetInformationProcessEx            | §7  | T09 §4               | [ ]  |
+| 0x039C | NtQueryInformationProcessEx          | §10 | T05                  | [ ]  |
+| 0x039D | NtQueryInformationThreadEx           | §7  | T05                  | [ ]  |
 
 **0x03C0–0x03DF: Impossible OS Exclusive Extensions**
 
 | Index  | Function                             | §   | Owner                |
-|--------|--------------------------------------|-----|----------------------|
-| 0x03C0 | NtQueryKernelModuleInfo              | §10 | T05                  |
-| 0x03C1 | NtQueryBootConfiguration             | §10 | T05                  |
-| 0x03C2 | NtQueryPmmStatistics                 | §10 | T05                  |
-| 0x03C3 | NtQueryHeapStatistics                | §10 | T05                  |
-| 0x03C4 | NtQuerySchedulerStatistics           | §10 | T05 (sched stats)    |
-| 0x03C5 | NtQueryInterruptStatistics           | §10 | T05                  |
-| 0x03C6 | NtQueryPciDeviceList                 | §10 | T05                  |
-| 0x03C7 | NtQueryUsbDeviceList                 | §10 | T05                  |
-| 0x03C8 | NtQueryNvmeNamespaceList             | §10 | T05                  |
-| 0x03C9 | NtQueryNetworkInterfaceList          | §10 | T05                  |
-| 0x03CA | NtQueryPostCodeHistory               | §10 | T05 (boot diagnostics)|
-| 0x03CB | NtQueryObNamespaceTree               | §16 | T05                  |
-| 0x03CC | NtQueryRegistryStatistics            | §14 | T13                  |
-| 0x03CD | NtQueryVfsStatistics                 | §13 | T05                  |
-| 0x03CE | NtQuerySmpCpuInfo                    | §10 | T05 (per-CPU info)   |
-| 0x03CF | NtQueryKlogRingBuffer                | §10 | T05 (serial log)     |
-| 0x03D0 | NtSetKlogLevel                       | §10 | T05                  |
-| 0x03D1 | NtQueryCompositorStatistics          | §10 | T05 (desktop stats)  |
-| 0x03D2 | NtQueryTimerCalibration              | §18 | T07 §7               |
-| 0x03D3 | NtQueryAcpiTables                    | §10 | T05                  |
-| 0x03D4 | NtCreateHardLink                     | §13 | T05                  |
-| 0x03D5 | NtQueryHardLinks                     | §13 | T05                  |
-| 0x03D6 | NtQueryDriverList                    | §10 | T05 (loaded drivers) |
-| 0x03D7 | NtQueryTaskList                      | §10 | T05 (sched tasks)    |
+|--------|--------------------------------------|-----|----------------------|------|
+| 0x03C0 | NtQueryKernelModuleInfo              | §10 | T05                  | [ ]  |
+| 0x03C1 | NtQueryBootConfiguration             | §10 | T05                  | [ ]  |
+| 0x03C2 | NtQueryPmmStatistics                 | §10 | T05                  | [ ]  |
+| 0x03C3 | NtQueryHeapStatistics                | §10 | T05                  | [ ]  |
+| 0x03C4 | NtQuerySchedulerStatistics           | §10 | T05 (sched stats)    | [ ]  |
+| 0x03C5 | NtQueryInterruptStatistics           | §10 | T05                  | [ ]  |
+| 0x03C6 | NtQueryPciDeviceList                 | §10 | T05                  | [ ]  |
+| 0x03C7 | NtQueryUsbDeviceList                 | §10 | T05                  | [ ]  |
+| 0x03C8 | NtQueryNvmeNamespaceList             | §10 | T05                  | [ ]  |
+| 0x03C9 | NtQueryNetworkInterfaceList          | §10 | T05                  | [ ]  |
+| 0x03CA | NtQueryPostCodeHistory               | §10 | T05 (boot diagnostics)| [ ]  |
+| 0x03CB | NtQueryObNamespaceTree               | §16 | T05                  | [ ]  |
+| 0x03CC | NtQueryRegistryStatistics            | §14 | T13                  | [ ]  |
+| 0x03CD | NtQueryVfsStatistics                 | §13 | T05                  | [ ]  |
+| 0x03CE | NtQuerySmpCpuInfo                    | §10 | T05 (per-CPU info)   | [ ]  |
+| 0x03CF | NtQueryKlogRingBuffer                | §10 | T05 (serial log)     | [ ]  |
+| 0x03D0 | NtSetKlogLevel                       | §10 | T05                  | [ ]  |
+| 0x03D1 | NtQueryCompositorStatistics          | §10 | T05 (desktop stats)  | [ ]  |
+| 0x03D2 | NtQueryTimerCalibration              | §18 | T07 §7               | [ ]  |
+| 0x03D3 | NtQueryAcpiTables                    | §10 | T05                  | [ ]  |
+| 0x03D4 | NtCreateHardLink                     | §13 | T05                  | [ ]  |
+| 0x03D5 | NtQueryHardLinks                     | §13 | T05                  | [ ]  |
+| 0x03D6 | NtQueryDriverList                    | §10 | T05 (loaded drivers) | [ ]  |
+| 0x03D7 | NtQueryTaskList                      | §10 | T05 (sched tasks)    | [ ]  |
 
 > **Total: 470 service entries** across 30 functional ranges — full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 

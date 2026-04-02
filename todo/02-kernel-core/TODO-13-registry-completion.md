@@ -27,7 +27,7 @@
 
 - `src/kernel/registry.c` — 2 529-line implementation (engine complete)
 - `include/registry.h` — types, constants, API declarations
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT: all `NtXxx` registry entry points are SSDT slots; §4 must exist before §4 of this TODO
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT: all `NtXxx` registry entry points are SSDT slots; §4 must exist before §4 of this TODO
 - → XREF: `TODO-11-security-reference-monitor.md §3–§5` — `SECURITY_DESCRIPTOR` + `SeAccessCheck` are used to enforce `KEY_*` access rights on `RegOpenKeyEx` / `NtOpenKey`
 - → XREF: `TODO-03-object-manager.md §3` — registry `HKEY` handles must eventually be registered in the per-process handle table for `DuplicateHandle` parity; deferred to §4 of this TODO as a note
 
@@ -206,7 +206,7 @@
 
 ### 4.1 Syscall entry points
 
-- [ ] Add to SSDT (→ XREF `TODO-05-native-api-layer.md §4`):
+- [ ] Add to SSDT (→ XREF `TODO-05-native-api-ssdt.md §4`):
   ```
   NtCreateKey(KeyHandle, DesiredAccess, ObjectAttributes, TitleIndex, Class, CreateOptions, Disposition)
   NtOpenKey(KeyHandle, DesiredAccess, ObjectAttributes)
@@ -485,7 +485,7 @@
 
 ## 11. KTM Transaction Syscalls Wired to SSDT
 
-Register the full Kernel Transaction Manager (KTM) syscall surface in the SSDT for transactional registry, file, and resource management. (→ XREF: TODO-05-native-api-layer.md §4)
+Register the full Kernel Transaction Manager (KTM) syscall surface in the SSDT for transactional registry, file, and resource management. (→ XREF: TODO-05-native-api-ssdt.md §4)
 
 - [ ] Implement KTM Transaction Manager syscalls: `NtCreateTransactionManager` (0x01A0), `NtOpenTransactionManager` (0x01A1)
 - [ ] Implement Transaction syscalls: `NtCreateTransaction` (0x01A2), `NtOpenTransaction` (0x01A3), `NtCommitTransaction` (0x01A4), `NtRollbackTransaction` (0x01A5), `NtQueryInformationTransaction` (0x01A6), `NtSetInformationTransaction` (0x01A7)

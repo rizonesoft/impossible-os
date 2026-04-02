@@ -20,7 +20,7 @@
 - `src/desktop/terminal.c` — terminal/shell command dispatch
 - → XREF: `TODO-04-peb-teb-user-abi.md §2` — `RTL_USER_PROCESS_PARAMETERS.Environment` points to the UTF-16 env block built by §5 of this TODO
 - → XREF: `TODO-04-peb-teb-user-abi.md §7` — initial stack frame pushes `argc`/`argv[]`/`envp[]`; requires `task->argv` and `task->environ` to be populated first
-- → XREF: `TODO-05-native-api-layer.md §4` — SSDT slots for `NtSetEnvironmentVariable` and `NtQueryEnvironmentVariable`
+- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT slots for `NtSetEnvironmentVariable` and `NtQueryEnvironmentVariable`
 - → XREF: `TODO-09-process-model-extensions.md §1` — `NtCreateProcess` must deep-copy `task->environ` and `task->argv` from parent to child
 - → XREF: `TODO-13-registry-completion.md §1` — system defaults read from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` and `HKCU\Environment`
 
@@ -222,7 +222,7 @@
     3. If found: replace the value portion by moving the tail of the block and inserting the new value; if the new value is longer, reallocate the block with `NtAllocateVirtualMemory` and update the pointer in `RTL_USER_PROCESS_PARAMETERS`
     4. If not found: extend the block (realloc) and append `name=value\0` before the final `\0`
   - Concurrency note: only the owning process can call this for its own block; no cross-process env modification is supported without `NtWriteVirtualMemory` + `SeDebugPrivilege`
-- [ ] Add `NtQueryEnvironmentVariable` and `NtSetEnvironmentVariable` to the SSDT (→ XREF `TODO-05-native-api-layer.md §4`); add corresponding `ZwXxx` aliases
+- [ ] Add `NtQueryEnvironmentVariable` and `NtSetEnvironmentVariable` to the SSDT (→ XREF `TODO-05-native-api-ssdt.md §4`); add corresponding `ZwXxx` aliases
 
 ### 5.3 Commit
 

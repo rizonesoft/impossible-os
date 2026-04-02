@@ -14,7 +14,7 @@
 - [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h) — syscall table
 - → XREF: `TODO-03-object-manager.md` — handle table needed for `PEB->ProcessParameters` stdin/stdout/stderr HANDLE fields
 - → XREF: `TODO-01-kernel-init-sequencing.md` — PEB/TEB init belongs in Phase 3 (user platform); requires VMM and scheduler (Phase 2)
-- → XREF: `TODO-05-native-api-layer.md` — `NtCreateProcess` populates PEB; `LdrInitializeThunk` (ntdll entry) reads PEB->Ldr
+- → XREF: `TODO-05-native-api-ssdt.md` — `NtCreateProcess` populates PEB; `LdrInitializeThunk` (ntdll entry) reads PEB->Ldr
 
 ## Outcome
 

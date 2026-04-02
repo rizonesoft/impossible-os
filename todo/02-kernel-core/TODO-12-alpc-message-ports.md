@@ -14,7 +14,7 @@
 - `src/kernel/sched/task.c` — `struct task`, wait/wake primitives
 - → XREF: `TODO-03-object-manager.md §1–§4` — ALPC ports are `OBJECT_TYPE` kernel objects with handles, reference counts, and named entries in `\RPC Control\`
 - → XREF: `TODO-03-object-manager.md §7` — `NtAlpcCreatePortSection` registers a Section object with the port; section creation depends on the Section object type
-- → XREF: `TODO-05-native-api-layer.md §4` — all `NtAlpc*` entry points are SSDT slots; wiring happens after the SSDT exists
+- → XREF: `TODO-05-native-api-ssdt.md §4` — all `NtAlpc*` entry points are SSDT slots; wiring happens after the SSDT exists
 - → XREF: `TODO-06-irql-model-dpcs.md §3` — message delivery runs at `DISPATCH_LEVEL` briefly when queuing to the server's message queue; IRQL discipline applies
 - → XREF: `TODO-11-security-reference-monitor.md §4–§7` — client security context capture requires `ACCESS_TOKEN`; server impersonating a client requires `SeImpersonatePrivilege`
 - → XREF: `11-user-platform-sdk/TODO-05` *(planned)* — CSRSS (Win32 subsystem server) creates its `ApiPort` using the bootstrap path defined in §9 of this TODO

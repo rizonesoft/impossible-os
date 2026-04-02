@@ -15,7 +15,7 @@
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
 - → XREF: `TODO-02-boot-diagnostics.md` — `boot_progress()` API consumed by §7
 - → XREF: `TODO-03-interrupt-timer-arch.md` — timer calibration affects boot profiling in §7
-- → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — `GetFirmwareEnvironmentVariableA/W` Win32 wiring (no dedicated section yet; add to TODO-05 when Win32 firmware-variable API surface is scoped)
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — `GetFirmwareEnvironmentVariableA/W` Win32 wiring (no dedicated section yet; add to TODO-05 when Win32 firmware-variable API surface is scoped)
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` — `UEFI GetTime` → FILETIME seeding (wall clock init)
 - → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md` — `srm_verify_kernel_signature()` (called by §5 here) has no section in TODO-11 yet; needs to be added there (suggest §10 "Win32 Security API Wrappers" — WinVerifyTrust/Authenticode path, or a new §12 for Code Integrity)
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\HARDWARE\*` and `HKLM\SYSTEM\SecureBoot` storage
@@ -79,7 +79,7 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation, 
 - [x] Define `uefi_var_set(const uint16_t *name, const efi_guid_t *guid, const void *buf, size_t size, uint32_t attrs)` → `NTSTATUS`; `UEFI_VAR_NV_BOOT_RUNTIME` convenience macro covers the standard attrs combination
 - [x] Define common GUIDs: `EFI_GLOBAL_VARIABLE_GUID_INIT`, `EFI_IMAGE_SECURITY_DATABASE_GUID_INIT`, `IMPOSSIBLE_OS_VENDOR_GUID_INIT` (`{6F35D3A4-C0E6-4A82-B5D8-7C9D2E4F8A13}`)
 - [x] Implement `uefi_var_get_u32(name, guid, out)` / `uefi_var_set_u32(name, guid, val)` convenience wrappers
-- [ ] Wire Win32 API: `GetFirmwareEnvironmentVariableA/W` → UTF-8/UTF-16 name conversion → `uefi_var_get`; `SetFirmwareEnvironmentVariableA/W` → `uefi_var_set` (→ XREF `02-kernel-core/TODO-05-native-api-layer.md` — section to be scoped when Win32 firmware-variable surface is defined)
+- [ ] Wire Win32 API: `GetFirmwareEnvironmentVariableA/W` → UTF-8/UTF-16 name conversion → `uefi_var_get`; `SetFirmwareEnvironmentVariableA/W` → `uefi_var_set` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md` — section to be scoped when Win32 firmware-variable surface is defined)
 - [x] Add `uefi_var_enumerate(callback)` for iterating all variables (used by §10 ESRT); backed by new `uefi_get_next_variable_name()` primitive added to `uefi_runtime.c`
 - [x] Commit: `"kernel: UEFI variable get/set wrappers + Win32 GetFirmwareEnvironmentVariable wiring"`
 
