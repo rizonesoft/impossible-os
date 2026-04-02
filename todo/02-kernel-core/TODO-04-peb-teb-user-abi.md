@@ -33,7 +33,7 @@
 | 💎  |   3   | swapgs on INT 0x80 entry and exit              | 1          |  [x]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [x]   |
 | 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [x]   |
-| 💎  |   6   | TEB allocation and population at thread create | 1, 4       |  [ ]   |
+| 💎  |   6   | TEB allocation and population at thread create | 1, 4       |  [x]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | 5, 6       |  [ ]   |
 | 💎  |   8   | PEB Ldr (module list) basic population         | 5          |  [ ]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)          | 6          |  [ ]   |
@@ -110,18 +110,12 @@ Allocate the PEB in the user address space and fill it before the first instruct
 ## 6. TEB Allocation and Population at Thread Create
 One TEB per thread. Allocated in the user address space near the thread stack.
 
-- [ ] Allocate one page for the TEB at user address `0x7FFDC000` for the initial thread; subsequent threads increment by page (or use VMM range allocation)
-- [ ] Zero the TEB page
-- [ ] Populate mandatory fields:
-  - `NtTib.Self` ← TEB address (the GS self-pointer; `gs:[0x30]` must return the TEB address)
-  - `NtTib.StackBase` ← `user_stack_base + USER_STACK_SIZE`
-  - `NtTib.StackLimit` ← `user_stack_base`
-  - `NtTib.ExceptionList` ← `0xFFFFFFFFFFFFFFFF` (no active SEH frame)
-  - `ClientId.UniqueProcess` ← PID (as uint64_t)
-  - `ClientId.UniqueThread` ← TID
-  - `ProcessEnvironmentBlock` ← PEB address from §5
-  - `LastErrorValue` ← 0
-- [ ] Store TEB pointer in the task struct: `tasks[pid].teb`
+- [x] TEB at `0x7FFDB000` (TID 0), subsequent threads decrement by page (`0x7FFDB000 - TID * 0x1000`)
+- [x] PMM alloc → VMM map (VMM_USER_RW) → zero-fill
+- [x] Populated: NtTib.Self (gs:[0x30] self-pointer), StackBase/StackLimit, ExceptionList=0xFFFF...
+- [x] ClientId: UniqueProcess=PID, UniqueThread=TID
+- [x] ProcessEnvironmentBlock → PEB from §5, LastErrorValue = 0
+- [x] `tasks[pid].teb` stored, `kernel_gs_base` set to TEB address for swapgs
 - [ ] Commit: `"kernel: peb — TEB allocation and population at thread create"`
 
 ## 7. Initial User Stack Frame
@@ -180,9 +174,9 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 | ⭐ | Feature                  | Win11                    | Linux                  | Impossible OS        |
 |----|--------------------------|--------------------------|------------------------|----------------------|
 | 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | ✅ §2+§5 PEB allocated |
-| 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | 🔄 §1 done, §6 todo  |
-| 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | 🔄 §3 done, §4 todo  |
-| 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ⬜ §6                |
+| 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | ✅ §1+§6 TEB allocated |
+| 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | ✅ §3+§4 swapgs+MSR   |
+| 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ✅ §6 LastError=0     |
 | 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
 | 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ✅ §5 RTLPP populated  |
 | 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ⬜ §8                |
@@ -206,7 +200,7 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
   - RTLPP content: ImagePathName non-empty, CommandLine non-empty, Environment non-NULL
   - TEB runtime tests (GS self-pointer, ClientId, LastError, TLS) — deferred to §6+§9
 - [x] Register in `test_runner_init()`: `test_register_peb_teb()`
-- [ ] Commit: `"test: add PEB/TEB user-mode ABI test suite"`
+- [x] Commit: `"test: add PEB/TEB user-mode ABI test suite"`
 
 > **Done:** 5 suites, 18 assertions (2026-04-02). Offset tests always pass (compile-time). OS version + populated field tests skip gracefully if PEB not yet allocated (tests run before task_exec). TEB runtime tests deferred to §6.
 

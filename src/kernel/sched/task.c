@@ -927,6 +927,53 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
     return peb;
 }
 
+/* ---- TEB allocation ----------------------------------------------------- */
+
+/* Base address for TEB pages — one page per thread, growing downward */
+#define TEB_USER_BASE   0x7FFDB000ULL  /* below env block at 0x7FFDC000 */
+
+/* Allocate and populate a TEB for a user-mode thread.
+ * Returns TEB pointer (user-space address) or NULL on failure. */
+static TEB *teb_alloc_for_task(uint32_t pid, uint32_t tid,
+                                uintptr_t user_stack_base_addr,
+                                uint32_t user_stack_size,
+                                void *peb_addr)
+{
+    uintptr_t teb_virt = TEB_USER_BASE - (uintptr_t)tid * 0x1000;
+    uintptr_t teb_phys = pmm_alloc_frame();
+    TEB *teb;
+
+    if (!teb_phys) return (TEB *)0;
+
+    vmm_map_page(teb_virt, teb_phys, VMM_USER_RW);
+
+    /* Zero the page */
+    teb = (TEB *)teb_virt;
+    {
+        uint8_t *p = (uint8_t *)teb;
+        uint32_t i;
+        for (i = 0; i < 4096; i++) p[i] = 0;
+    }
+
+    /* NT_TIB */
+    teb->NtTib.Self = &teb->NtTib;        /* gs:[0x30] → TEB self-pointer */
+    teb->NtTib.StackBase = (void *)(user_stack_base_addr + user_stack_size);
+    teb->NtTib.StackLimit = (void *)user_stack_base_addr;
+    teb->NtTib.ExceptionList = (void *)0xFFFFFFFFFFFFFFFFULL; /* no SEH */
+
+    /* ClientId */
+    teb->ClientId.UniqueProcess = (uint64_t)pid;
+    teb->ClientId.UniqueThread = (uint64_t)tid;
+
+    /* PEB pointer — gs:[0x60] */
+    teb->ProcessEnvironmentBlock = (struct peb *)peb_addr;
+
+    /* LastErrorValue — gs:[0x68] */
+    teb->LastErrorValue = 0;
+
+    return teb;
+}
+
 int task_exec(const uint8_t *data, uint64_t size)
 {
     struct elf_load_result elf;
@@ -1002,10 +1049,16 @@ int task_exec(const uint8_t *data, uint64_t size)
     tasks[pid].peb = (void *)peb_alloc_for_task(
         pid, elf.entry, tasks[pid].name);
 
-    /* KERNEL_GS_BASE: TEB address for this user-mode task.
-     * §6 will set this to the actual TEB address once allocated.
-     * For now, 0 means no TEB — swapgs will swap in 0. */
-    tasks[pid].kernel_gs_base = 0;
+    /* Allocate TEB for the initial thread (TID 0) */
+    {
+        uintptr_t ustack = (uintptr_t)tasks[pid].user_stack_base;
+        TEB *teb = teb_alloc_for_task(pid, 0, ustack, USER_STACK_SIZE,
+                                       tasks[pid].peb);
+        tasks[pid].teb = (void *)teb;
+        /* Wire GS: swapgs in ISR exchanges GS_BASE ↔ KERNEL_GS_BASE.
+         * After swapgs on ring-3 return, user-mode GS points to TEB. */
+        tasks[pid].kernel_gs_base = teb ? (uint64_t)(uintptr_t)teb : 0;
+    }
 
     if (tasks[pid].peb) {
         PEB *p = (PEB *)tasks[pid].peb;
