@@ -364,6 +364,10 @@ int task_create(task_entry_t entry, const char *name)
     return (int)pid;
 }
 
+/* Forward declaration — defined below task_exec */
+static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
+                                const char *name);
+
 int task_create_user(task_entry_t entry, const char *name)
 {
     uint32_t pid;
@@ -474,10 +478,25 @@ int task_create_user(task_entry_t entry, const char *name)
     ob_handle_table_init(&tasks[pid].handle_table);
     num_tasks++;
 
+    /* Allocate PEB in user address space */
+    tasks[pid].peb = (void *)peb_alloc_for_task(
+        pid, (uintptr_t)(uint64_t)entry, name);
+    tasks[pid].kernel_gs_base = 0;  /* TEB set in §6 */
+
     /* Register process and main thread with Object Manager */
     ob_process_create(&tasks[pid]);
     ob_thread_create(&tasks[pid].threads[0], pid);
 
+    if (tasks[pid].peb) {
+        PEB *p = (PEB *)tasks[pid].peb;
+        klog(LOG_INFO, "sched",
+             "PID %u: PEB=%p (Win %u.%u.%u, %u CPUs)",
+             (uint64_t)pid, (uint64_t)(uintptr_t)tasks[pid].peb,
+             (uint64_t)p->OSMajorVersion,
+             (uint64_t)p->OSMinorVersion,
+             (uint64_t)p->OSBuildNumber,
+             (uint64_t)p->NumberOfProcessors);
+    }
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") created (user mode)",
            (uint64_t)pid, name ? name : "?");
 
