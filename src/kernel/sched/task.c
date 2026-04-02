@@ -1091,7 +1091,13 @@ int task_exec(const uint8_t *data, uint64_t size)
         sp[9]  = 0;                                /* rdi */
         sp[10] = 0;                                /* rsi */
         sp[11] = 0;                                /* rdx */
-        sp[12] = 0;                                /* rcx */
+        /* RCX = PEB address (Win64 first arg for ntdll/LdrpInitialize).
+         * ELF crt0.asm ignores RCX, so this is safe for both formats.
+         * When PE32+ loading lands (TODO-08), ntdll will find PEB in RCX
+         * and parse ProcessParameters for argv — no stack changes needed. */
+        sp[12] = tasks[pid].peb
+                     ? (uint64_t)(uintptr_t)tasks[pid].peb
+                     : 0;                          /* rcx = PEB */
         sp[13] = 0;                                /* rbx */
         sp[14] = 0;                                /* rax */
         sp[15] = 0;                                /* int_no */

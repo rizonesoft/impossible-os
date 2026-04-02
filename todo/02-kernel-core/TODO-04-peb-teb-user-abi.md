@@ -123,10 +123,10 @@ The user stack must have a valid calling frame waiting for the first instruction
 
 - [x] ELF initial stack: argc=1, argv[0]=program name, NULL, envp NULL, auxv (AT_ENTRY, AT_PAGESZ, AT_NULL)
 - [x] String data at top of user stack, argv pointer to it, 16-byte aligned RSP
-- [ ] PE32+ (future): RCX=PEB, single NULL return address — not yet needed
+- [x] PE32+: RCX=PEB set in interrupt frame for all user tasks — ntdll will find PEB in RCX when PE32+ loading lands (TODO-08)
 - [x] Replaced all-zero stack top with Linux x86-64 ABI layout
 - [ ] Confirm `_start` in `user/hello.c` still executes correctly with the new stack
-- [ ] Commit: `"kernel: abi — initial user stack frame with argv, envp, auxv"`
+- [x] Commit: `"kernel: abi — initial user stack frame with argv, envp, auxv"`
 
 ## 8. PEB Ldr (Module List) Basic Population
 `ntdll!LdrInitializeThunk` walks `PEB->Ldr->InLoadOrderModuleList` to find already-loaded modules. Even a stub Ldr with just the main module prevents ntdll from faulting on an empty list.
