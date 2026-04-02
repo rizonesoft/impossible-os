@@ -14,7 +14,7 @@
 - `include/kernel/uefi_runtime.h` — `uefi_reboot()` called by crash loop protection when auto-restart is enabled
 - `include/registry.h` — `RegGetValue()`/`RegSetValueEx()` for §6 crash counter and §7 validation
 - `tools/` directory — §3 adds `tools/png2bootsplash.py` alongside existing `tools/convert_boot_font.py`, `tools/convert_bsod_icon.py`
-- → XREF: `01-boot-platform/TODO-02-boot-diagnostics.md` — serial boot log behavior; `boot_splash_status()` must call `klog()` to keep serial output uninterrupted
+- → XREF: `01-boot-platform/TODO-07-boot-diagnostics.md` — serial boot log behavior; `boot_splash_status()` must call `klog()` to keep serial output uninterrupted
 - → XREF: `02-kernel-core/TODO-16-crash-dump-generation.md` — BSOD core (done); §7 validates the auto-restart flow end-to-end
 
 ## Outcome

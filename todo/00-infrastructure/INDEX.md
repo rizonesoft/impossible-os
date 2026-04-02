@@ -21,29 +21,16 @@ This domain tracks the tooling and workflow work that supports the whole project
 
 ## Epics
 
-- [TODO-01 AI Development System](./TODO-01-ai-development-system.md) - Cursor and Claude
-  Code rules, skills, and MCP policy.
-- [TODO-02 Developer Tooling Stack](./TODO-02-developer-tooling-stack.md) - Parent
-  epic for the git-tracked developer tooling contract, including build, run, host
-  utilities, and GitHub synchronization.
+- None currently.
 
 ## Active TODOs
 
-- [TODO-01 AI Development System](./TODO-01-ai-development-system.md) - Establish the
-  canonical AI operating model before expanding the rest of the infrastructure backlog.
-- [TODO-02 Developer Tooling Stack](./TODO-02-developer-tooling-stack.md) - Define the
-  parent roadmap for toolchain bootstrap, build orchestration, run/debug tooling, host
-  utilities, and GitHub workflow parity.
-- [TODO-03 Kernel Test Framework & Automation](./TODO-03-kernel-test-framework.md) - Wire
-  test_runner into boot, `make test` target, pre-push hooks, test coverage tracking.
-- [TODO-04 CI Notifications & Build Status](./TODO-04-ci-notifications.md) - Branch
+- [TODO-01 CI Notifications & Build Status](./TODO-01-ci-notifications.md) - Branch
   protection, build badge, failure notifications, nightly builds, PR comment bot.
-- [TODO-05 Kernel Test Suites & Coverage](./TODO-05-test-suites-coverage.md) - Per-subsystem
-  test suites (OB, security, timer, IPC, VMM, ELF, NVMe, USB), 100+ assertions, coverage report.
-- [TODO-06 User-Mode Test Framework](./TODO-06-usermode-test-framework.md) - Test binaries
+- [TODO-02 User-Mode Test Framework](./TODO-02-usermode-test-framework.md) - Test binaries
   for syscalls, libc, IPC, process lifecycle, file I/O, Win32 API — real user-mode programs
   exercising the real syscall interface.
-- [TODO-07 Desktop & UI Test Framework](./TODO-07-desktop-ui-test-framework.md) - Framebuffer
+- [TODO-03 Desktop & UI Test Framework](./TODO-03-desktop-ui-test-framework.md) - Framebuffer
   snapshots, input injection, terminal verification, visual regression CI, WM state introspection.
 
 ## Completed / Doc-converted

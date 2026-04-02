@@ -31,7 +31,7 @@
 - `02-kernel-core/TODO-16-crash-dump-generation.md` (→ XREF) — `C:\Impossible\System\CrashDumps\`; minidump format; §8 crash triage
 - `03-memory-concurrency/TODO-09-concurrency-diagnostics.md` (→ XREF) — `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §8 QA build profile
 - `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) — `HV_TSC_ENLIGHTENMENT` detection; `boot_info.hv_flags`; §3 Hyper-V boot dependency
-- `01-boot-platform/TODO-02-boot-diagnostics.md` (→ XREF) — `[READY]` serial marker; `boot_stage_history[]`; §1 §2 serial output parsing
+- `01-boot-platform/TODO-07-boot-diagnostics.md` (→ XREF) — `[READY]` serial marker; `boot_stage_history[]`; §1 §2 serial output parsing
 - `09-services-security/TODO-11-installer-iso.md §8` (→ XREF) — post-install first boot + OOBE trigger verification; §3 Hyper-V certification baseline test
 - `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) — `scripts/compat-check.sh` Tier 1–7 gate; §7 sign-off gating condition
 - `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) — `OS_VERSION_STRING`, `increment-build.sh`, code signing; §7 checklist items
@@ -54,9 +54,9 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 | Step | Section | 💎/⭐ | Dependency |
 |------|---------|-------|-----------|
-| 1 | Automated regression test suite | ⭐ | `TODO-02` serial marker; `scripts/build.sh` |
+| 1 | Automated regression test suite | ⭐ | `01-boot-platform/TODO-07` serial marker; `scripts/build.sh` |
 | 2 | QEMU validation (`qemu-test.sh`) | ⭐ | §1 test suite; `build.sh run` |
-| 3 | Performance benchmarks | ⭐ | §2 QEMU; `TODO-02` boot stage timing |
+| 3 | Performance benchmarks | ⭐ | §2 QEMU; `01-boot-platform/TODO-07` boot stage timing |
 | 4 | Crash analytics review (QA build + soak) | 💎 | `TODO-09` KASAN flags; `TODO-16` crash dumps |
 | 5 | Hyper-V certification | 💎 | §1; `TODO-11 §8` OOBE; `TODO-04 §3` HV detect |
 | 6 | VirtualBox certification | 💎 | §1; §5 (parallel) |
@@ -71,7 +71,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 - [ ] **`scripts/run-tests.sh [--qemu-args <extra>]`**:
   - Boot OS in QEMU headless: `qemu-system-x86_64 -nographic -serial stdio -drive file=build/system-disk.img,format=raw -m 512 -bios OVMF.fd <extra_args>`
-  - Wait for serial `[READY]` marker (emitted by kernel init after desktop subsystem init completes — coordinate with `TODO-02` boot progress API); timeout 60 s
+  - Wait for serial `[READY]` marker (emitted by kernel init after desktop subsystem init completes — coordinate with `01-boot-platform/TODO-07` boot progress API); timeout 60 s
   - After `[READY]`: send test commands via QEMU monitor or serial input; collect all output to `build/test-{timestamp}.log`
   - Parse `build/test-{timestamp}.log` for `TEST <name> PASS [<ms>ms]` / `TEST <name> FAIL [<ms>ms]` lines; exit code 0 if all PASS; exit code 1 on any FAIL
 - [ ] **Test matrix** (each test emits `TEST <name> PASS|FAIL [<ms>ms]`):
@@ -214,7 +214,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
   | Metric | Measurement method | Target |
   |--------|--------------------|--------|
-  | Boot time (UEFI → `[READY]`) | `boot_stage_history[]` timestamps (→ XREF `TODO-02`) | < 5 s in QEMU |
+  | Boot time (UEFI → `[READY]`) | `boot_stage_history[]` timestamps (→ XREF `01-boot-platform/TODO-07`) | < 5 s in QEMU |
   | PMM alloc throughput | 1M `pmm_alloc_frame()` + `pmm_free_frame()` pairs; measure via PIT | > 1M pairs/s |
   | Heap alloc throughput | 1M `kmalloc(64)` + `kfree()` pairs | > 500K pairs/s |
   | FS sequential write | Write 256 MiB to `C:\Temp\bench.bin` via VFS (VirtIO) | > 500 MB/s |

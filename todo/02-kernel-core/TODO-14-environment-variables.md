@@ -186,7 +186,7 @@
 ### 4.3 exec argument handoff
 
 - [ ] `SYS_EXEC(path, argv[], envp[])` syscall (extends existing exec syscall):
-  - Validate `argv[]` pointer array with `ProbeForRead` (→ XREF `TODO-10-exception-dispatch-seh.md §10`)
+  - Validate `argv[]` pointer array with `ProbeForRead` (→ XREF `TODO-10-exception-dispatch-seh.md §13`)
   - Validate each `argv[i]` string pointer
   - Call `task_set_argv(new_task, argc, argv)` — deep copy into kernel
   - Call `env_copy(new_task, ...)` from `envp[]` — deep copy env

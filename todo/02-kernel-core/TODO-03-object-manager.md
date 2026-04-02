@@ -219,7 +219,7 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 - [ ] Add `NtQueryObject(ObjectTypesInformation)` info class — enumerate all registered types and their statistics (used by system diagnostic tools and → XREF: `TODO-05 §10` `NtQuerySystemInformation`)
 - [ ] Commit: `"kernel: ob — per-type object and handle statistics"`
 
-**Test checkpoint:** `ob_alloc_object(ObpEventType)` increments `ObpEventType->total_objects`; `ObDereferenceObject` decrements it. After creating 100 events and freeing 50, `total_objects == 50` and `peak_objects == 100`. `NtQueryObject(ObjectTypeInformation)` returns correct counters. Verify on QEMU WHPX + TCG + VirtualBox. Bare metal follow-up (no hardware interaction, low risk). `POST16(0xD900)`–`POST16(0xD903)` (range `0xD9xx` confirmed free — `0xDBxx` used by `TODO-11-klog-ixfs-bare-metal-perf.md`).
+**Test checkpoint:** `ob_alloc_object(ObpEventType)` increments `ObpEventType->total_objects`; `ObDereferenceObject` decrements it. After creating 100 events and freeing 50, `total_objects == 50` and `peak_objects == 100`. `NtQueryObject(ObjectTypeInformation)` returns correct counters. Verify on QEMU WHPX + TCG + VirtualBox. Bare metal follow-up (no hardware interaction, low risk). `POST16(0xD900)`–`POST16(0xD903)` (range `0xD9xx` confirmed free — `0xDBxx` used by `TODO-11-usb-boot-hardening.md`).
 
 ## 13. Object Callbacks — Handle Operation Filtering
 Allow kernel-mode drivers to register pre- and post-operation callbacks on handle create and duplicate operations. Win11's `ObRegisterCallbacks` (Vista SP1+) is used by anti-malware, EDR agents, and Protected Process Light enforcement to intercept and filter access to process/thread handles.
@@ -292,7 +292,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 
 ## OS Comparison
 
-| ⭐ | Feature               | 🪟 Win11               | 🐧 Linux             | 🚀 Impossible OS             |
+| ⭐ | Feature               | 🪟 Win11               | 🐧 Linux             | 🚀 Impossible OS            |
 |----|-----------------------|-------------------------|----------------------|------------------------------|
 | 💎 | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref    | ✅ §1                       |
 | 💎 | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type         | ✅ §1                       |

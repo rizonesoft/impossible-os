@@ -1,4 +1,4 @@
-# TODO-13 — Boot Device Discovery & Fallback Chain
+# TODO-03 — Boot Device Discovery & Fallback Chain
 
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. Current code uses `LocateProtocol()` which returns an arbitrary filesystem — on multi-disk systems this loads the kernel from the wrong device. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search. This TODO implements proper boot device identification and a fallback chain so the OS boots reliably on any hardware configuration.
 
@@ -11,9 +11,9 @@
 
 - `src/boot/uefi/bootx64.c` — `load_kernel()` and `parse_boot_conf()` filesystem access
 - `include/kernel/boot_info.h` — boot_info struct (needs boot device info)
-- → XREF: `TODO-01-uefi-hardening-secureboot.md §9` — multi-OS detection and boot menu
-- → XREF: `TODO-12-bootloader-error-recovery.md §3` — fallback kernel search paths
-- → XREF: `TODO-07-xhci-usb-boot.md §5` — USB device handover
+- → XREF: `TODO-01-uefi-hardening-secureboot.md §8` — multi-OS detection and boot menu
+- → XREF: `TODO-02-bootloader-error-recovery.md §3` — fallback kernel search paths
+- → XREF: `TODO-10-xhci-usb-boot.md §5` — USB device handover
 
 ---
 
@@ -108,7 +108,7 @@ If the boot device's kernel is missing or corrupt, try other devices in priority
 - [ ] For each handle: check if `\boot\kernel.exe` exists (try to open, close immediately)
 - [ ] Priority order: boot device first → SATA/NVMe → USB → other
 - [ ] If kernel found on non-boot device: `"[WARN] Kernel not on boot device, using %s"` with device path
-- [ ] If no device has kernel: trigger boot failure screen (→ XREF: TODO-12 §9)
+- [ ] If no device has kernel: trigger boot failure screen (→ XREF: TODO-02 §9)
 - [ ] Commit: `"boot: device fallback chain — search all filesystems for kernel"`
 
 **Test checkpoint:** Remove kernel from SATA disk, leave it on USB. Boot from SATA → bootloader finds kernel on USB with warning.

@@ -25,6 +25,9 @@
 - → XREF: `TODO-04-peb-teb-user-abi.md §13` — AT_RANDOM in the ELF auxv provides user-mode stack canary seed bytes, complementing §9's kernel-side `__stack_chk_guard` via shared RDRAND path
 - → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x01F0–0x01F4 and 0x02A2–0x02A4 reserved for Enclave and signing-level syscalls
 - → XREF: `TODO-05-native-api-ssdt.md §26` — SSDT hardware write-protection complements KASLR and SMEP/SMAP; #PF on SSDT write → CRITICAL_STRUCTURE_CORRUPTION BugCheck
+- → XREF: `TODO-08-binary-system.md §3,§12` — ELF `PT_GNU_PROPERTY` (§3) and PE `IMAGE_LOAD_CONFIG_DIRECTORY64` (§12) carry per-binary CET IBT/SHSTK and CFG flags; this TODO's §6 (CET shadow stack) and §7 (CET IBT) consume those flags to decide enforcement
+- → XREF: `TODO-09-process-model-extensions.md §11` — per-process mitigation flags (`MIT_DEP_ENABLE`, `MIT_ASLR_FORCE`, etc.) consume §1 NX/DEP enforcement; mitigation API surface is authoritative in TODO-09
+- → XREF: `TODO-10-exception-dispatch-seh.md §3` — `#CP` (vector 21, CET shadow-stack violation) exception handler; §6 of this TODO enables CET SS, §3 of TODO-10 routes the resulting `#CP` faults through `ki_dispatch_exception()`
 
 ---
 

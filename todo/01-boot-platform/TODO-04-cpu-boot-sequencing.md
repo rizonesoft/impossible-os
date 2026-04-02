@@ -22,7 +22,7 @@
 - → XREF: `02-kernel-core/TODO-01 §2` — `boot_phase0` sequence; CPU hardening steps slot in here
 - → XREF: `02-kernel-core/TODO-17 §1–§7` — NX, SMEP, SMAP, PCID, Spectre, CET (implementation details)
 - → XREF: `02-kernel-core/TODO-19 §1, §3–§7, §9, §11` — XSAVE, MSR layer, UMIP, 1 GiB pages, errata, VM detection
-- → XREF: `01-boot-platform/TODO-03 §6` — UTS timer driver selection; hypervisor detection (§3 here) feeds it
+- → XREF: `01-boot-platform/TODO-06 §6` — UTS timer driver selection; hypervisor detection (§3 here) feeds it
 
 ---
 
@@ -66,7 +66,7 @@
 
 ---
 
-## 2. Phase 0 CPU Security Activation Order *(deferred — blocked by TODO-17 `cpu_efer_harden`/`cpu_cr4_harden` + TODO-19 `msr_init`; minimal version in TODO-06 §11)*
+## 2. Phase 0 CPU Security Activation Order *(deferred — blocked by TODO-17 `cpu_efer_harden`/`cpu_cr4_harden` + TODO-19 `msr_init`; minimal version in TODO-05 §11)*
 **Prompt:** Document and enforce the required activation sequence in `boot_phase0()`: (1) `msr_init()` (centralized MSR layer, TODO-19 §3) must run before any MSR write; (2) `cpu_efer_harden()` sets `EFER.NXE=1`, `EFER.SCE=1`, `EFER.FFXSR` if supported — **this must complete before VMM init** because VMM will write PTE bit 63 (NX) on the first `vmm_map_page()` call; (3) `cpu_cr4_harden()` sets `CR4.SMEP`, `CR4.SMAP`, `CR4.UMIP` if detected — must run before any user-mode-visible mapping; emit a `POSTCODE_CPU_HARDEN_DONE` after the last CR4 write. Add `BOOT_REQUIRE(SUBSYS_MSR)` guards to EFER/CR4 steps so wrong-order calls panic with a clear message. Log: `[Phase0] EFER=0x{val} CR4=0x{val}`.
 
 > [!IMPORTANT]
@@ -86,10 +86,10 @@
 
 ## 3. Hypervisor Detection Before Timer Selection
 
-The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V the correct choice is the `HV_X64_MSR_TIME_REF_COUNT` reference counter. Hypervisor detection must run before UTS `timer_probe()`. In Phase 0, after CPUID: probe CPUID `0x40000000` for the hypervisor-present bit; if set, read vendor string (`0x40000001`); store `hv_vendor` in `boot_info` and `HKLM\HARDWARE\VM\HypervisorVendor`; for `"Microsoft Hv"`: set `boot_info.hv_flags |= HV_TSC_ENLIGHTENMENT | HV_TLBFLUSH_HYPERCALL`; for `"KVMKVMKVM"`: set `HV_KVM_STEAL_TIME`; UTS probe reads `boot_info.hv_flags` to select the correct clock source first. Emit `[Phase0] Hypervisor: Microsoft Hv (flags=0x3)` or `[Phase0] Bare metal`.
+The UTS probe in TODO-06 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V the correct choice is the `HV_X64_MSR_TIME_REF_COUNT` reference counter. Hypervisor detection must run before UTS `timer_probe()`. In Phase 0, after CPUID: probe CPUID `0x40000000` for the hypervisor-present bit; if set, read vendor string (`0x40000001`); store `hv_vendor` in `boot_info` and `HKLM\HARDWARE\VM\HypervisorVendor`; for `"Microsoft Hv"`: set `boot_info.hv_flags |= HV_TSC_ENLIGHTENMENT | HV_TLBFLUSH_HYPERCALL`; for `"KVMKVMKVM"`: set `HV_KVM_STEAL_TIME`; UTS probe reads `boot_info.hv_flags` to select the correct clock source first. Emit `[Phase0] Hypervisor: Microsoft Hv (flags=0x3)` or `[Phase0] Bare metal`.
 
 > [!IMPORTANT]
-> → XREF: `01-boot-platform/TODO-03 §6` — UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
+> → XREF: `01-boot-platform/TODO-06 §6` — UTS reads `boot_info.hv_flags` to select clock; must be set before `timer_probe()`.
 > → XREF: `02-kernel-core/TODO-19 §11` — AMD-V / VT-x host capability detection; Hyper-V guest enlightenment MSR initialization (using `boot_info.hv_flags` populated by this step) is not yet specced in §11 and needs to be added there.
 
 - [x] Add `hv_vendor[16]` and `hv_flags` fields to `struct boot_info`
@@ -143,9 +143,9 @@ The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 | 💎 | XSAVE after VMM ready     | ✅ CR4.OSXSAVE post-paging  | ✅ fpu__init_cpu deferred     | ⚠️ §5 defer — AVX works           |
 | 💎 | PCID after page tables    | ✅ CR4.PCIDE post-PML4      | ✅ cr4_set_bits post-paging   | ⬜ §5 defer                       |
 | ⭐ | HV detect before timer    | ✅ Before HAL timer         | ⚠️ May lag clocksource        | ✅ §3 — done                      |
-| ⭐ | POST code per CPU step    | ❌ BIOS POST only           | ❌ dmesg only                 | ⬜ §1-5 — planned in TODO-06 §1   |
+| ⭐ | POST code per CPU step    | ❌ BIOS POST only           | ❌ dmesg only                 | ⬜ §1-5 — planned in TODO-05 §1   |
 
-> **§1 and §3 complete.** §2, §4, §5 deferred — blocked by TODO-17/TODO-19 implementations. Minimal CPU hardening works via `cpu_harden()` + `cpu_harden_post_pagetable()` (TODO-06 §11). Full formal sequencing comes when TODO-17 delivers `cpu_efer_harden()`/`cpu_cr4_harden()`.
+> **§1 and §3 complete.** §2, §4, §5 deferred — blocked by TODO-17/TODO-19 implementations. Minimal CPU hardening works via `cpu_harden()` + `cpu_harden_post_pagetable()` (TODO-05 §11). Full formal sequencing comes when TODO-17 delivers `cpu_efer_harden()`/`cpu_cr4_harden()`.
 
 ---
 

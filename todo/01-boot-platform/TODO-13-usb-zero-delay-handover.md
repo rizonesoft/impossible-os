@@ -1,9 +1,9 @@
-# TODO-09 — Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)
+# TODO-13 — Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)
 
 > **Goal:** Eliminate all post-ExitBootServices USB initialization latency by loading the xHCI driver's DMA structures inside the UEFI bootloader while firmware is still active. The bootloader allocates DCBAA, device contexts, and transfer rings in `EfiLoaderData` memory (survives ExitBootServices), performs USBLEGSUP handoff while firmware USB is running, and passes persistent controller state to the kernel. The kernel inherits the controller without halt/reset — USB devices are available instantly. This is how Windows `winload.efi` + `iusb3xhc.sys` achieves zero-delay USB boot.
 
 > [!NOTE]
-> **Non-blocking.** The current TODO-07 §1-§4 path (halt/reset/enumerate) works on all hardware. TODO-07 §5 Phase A/B add USBLEGSUP handoff and EHCI detection. This TODO is a pure performance optimization — it can be done at any time without breaking existing functionality.
+> **Non-blocking.** The current TODO-10 §1-§4 path (halt/reset/enumerate) works on all hardware. TODO-10 §5 Phase A/B add USBLEGSUP handoff and EHCI detection. This TODO is a pure performance optimization — it can be done at any time without breaking existing functionality.
 
 ## Inputs
 
@@ -11,8 +11,8 @@
 - [`src/kernel/drivers/xhci.c`](../../src/kernel/drivers/xhci.c) — xHCI controller driver (USBLEGSUP handoff already implemented)
 - [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) — boot_info USB device array (already defined)
 - [`include/kernel/drivers/xhci.h`](../../include/kernel/drivers/xhci.h) — xHCI controller and device context structures
-- → XREF: `01-boot-platform/TODO-07-xhci-usb-boot.md §5` — current handover (Phase A/B done, Phase C pending)
-- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §5` — MSI/MSI-X (hot-plug in TODO-07 §5C)
+- → XREF: `01-boot-platform/TODO-10-xhci-usb-boot.md §5` — current handover (Phase A/B done, Phase C pending)
+- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §5` — MSI/MSI-X (hot-plug in TODO-10 §5C)
 - → XREF: `04-drivers-hardware/TODO-09-usb-stack.md` — advanced USB features (builds on top of this handover)
 
 ## Outcome
@@ -21,7 +21,7 @@
 - No 500ms Intel port routing delay (no XUSB2PR needed — firmware already routed)
 - No SCSI INQUIRY/READ CAPACITY (geometry from bootloader via EFI_BLOCK_IO_PROTOCOL)
 - Kernel inherits fully-configured xHCI controller with active device slots
-- Fallback: if handover state is corrupt, kernel falls back to TODO-07 §1-§4 path automatically
+- Fallback: if handover state is corrupt, kernel falls back to TODO-10 §1-§4 path automatically
 - Works on QEMU `run-usb`, bare metal i5-4210U (EHCI+xHCI), bare metal i5-11600K (xHCI only)
 
 ## Implementation Order
@@ -58,7 +58,7 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 
 **Test checkpoint:** Serial shows allocated DMA addresses. POST code 0xB082. Verify `EfiLoaderData` pages survive ExitBootServices by reading back from kernel. Test on: QEMU `run-usb`, bare metal.
 
-**Regression risk:** Allocating extra `EfiLoaderData` pages reduces available RAM. If allocation fails (low memory), fall back to not allocating and let kernel use TODO-07 path. Rollback: skip bootloader DMA allocation entirely.
+**Regression risk:** Allocating extra `EfiLoaderData` pages reduces available RAM. If allocation fails (low memory), fall back to not allocating and let kernel use TODO-10 path. Rollback: skip bootloader DMA allocation entirely.
 
 ## 2. Bootloader Performs USBLEGSUP + Controller Takeover
 While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and configure the controller to use our persistent DMA structures.
@@ -78,7 +78,7 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 > [!IMPORTANT]
 > After halting the firmware's USB stack, `EFI_USB_IO_PROTOCOL` and `EFI_BLOCK_IO_PROTOCOL` are no longer usable. Phase A device discovery must complete BEFORE this step. Order: Phase A (discover via EFI) → §2 (takeover) → §3 (enumerate with our state).
 
-**Test checkpoint:** Controller running with bootloader-allocated DMA. POST code 0xB083. If halt/takeover fails, log error and skip (kernel falls back to TODO-07). Test on: QEMU `run-usb`, bare metal.
+**Test checkpoint:** Controller running with bootloader-allocated DMA. POST code 0xB083. If halt/takeover fails, log error and skip (kernel falls back to TODO-10). Test on: QEMU `run-usb`, bare metal.
 
 **Regression risk:** HIGH — halting the firmware USB stack may break EFI services that depend on USB (e.g., EFI console on USB keyboard). Must happen late in bootloader, after kernel load and config table copy. Rollback: if takeover fails, don't modify controller and let kernel handle it.
 
@@ -99,7 +99,7 @@ Enumerate connected devices in the bootloader so slot contexts and endpoint ring
 
 **Test checkpoint:** Serial shows enumerated devices with slot IDs. POST code 0xB086. Device descriptors match Phase A discovery. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
-**Regression risk:** MEDIUM — USB enumeration is complex (9-step sequence). If any step fails, the device is skipped and kernel re-enumerates it via TODO-07 path. No system-level risk.
+**Regression risk:** MEDIUM — USB enumeration is complex (9-step sequence). If any step fails, the device is skipped and kernel re-enumerates it via TODO-10 path. No system-level risk.
 
 ## 4. boot_info Passes Controller + Device DMA State
 Extend boot_info to carry the full controller state: DCBAA physical address, scratchpad pointers, per-device slot contexts, transfer ring addresses.
@@ -113,7 +113,7 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 
 **Test checkpoint:** Kernel reads boot_info, logs controller state with matching physical addresses. POST code 0xD754. Test on: QEMU `run-usb`, bare metal i5-4210U (EHCI+xHCI), bare metal i5-11600K (xHCI only).
 
-**Regression risk:** LOW — boot_info extension is additive. If `usb_handover_complete` is 0 (not set), kernel uses TODO-07 path unchanged. No existing fields affected.
+**Regression risk:** LOW — boot_info extension is additive. If `usb_handover_complete` is 0 (not set), kernel uses TODO-10 path unchanged. No existing fields affected.
 
 ## 5. Kernel Inherits Controller Without Halt/Reset
 When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_init_controller() halt/reset/DCBAA/rings sequence and directly uses the bootloader's DMA structures.
@@ -127,9 +127,9 @@ When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_
 - [x] Go straight to `xhci_enumerate_ports()` — skip Intel routing entirely
 - [x] Commit: `"drivers: xHCI zero-delay handover — inherit bootloader DMA state"`
 
-**Test checkpoint:** Serial shows "zero-delay handover: controller inherited". No halt/reset/500ms in log. USB device available within 1ms of kernel start. POST code 0xD755. If crash at 0xD755: controller state corrupt — fall back to TODO-07 path. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
+**Test checkpoint:** Serial shows "zero-delay handover: controller inherited". No halt/reset/500ms in log. USB device available within 1ms of kernel start. POST code 0xD755. If crash at 0xD755: controller state corrupt — fall back to TODO-10 path. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
-**Regression risk:** HIGH — modifies xhci_init_controller() core path. If handover detection is wrong (false positive), controller has stale DMA pointers and all USB fails. Rollback: if `usb_handover_complete` check causes any issue, set it to 0 in kernel entry and the entire TODO-07 path runs unchanged.
+**Regression risk:** HIGH — modifies xhci_init_controller() core path. If handover detection is wrong (false positive), controller has stale DMA pointers and all USB fails. Rollback: if `usb_handover_complete` check causes any issue, set it to 0 in kernel entry and the entire TODO-10 path runs unchanged.
 
 ## 6. Kernel Registers MSC Devices from boot_info Geometry
 Skip INQUIRY + READ CAPACITY for MSC devices — use sector count/size from Phase A's EFI_BLOCK_IO_PROTOCOL query.
@@ -143,7 +143,7 @@ Skip INQUIRY + READ CAPACITY for MSC devices — use sector count/size from Phas
 
 **Test checkpoint:** `usb0` block device registered. Sector 0 read matches expected content. No INQUIRY/READ CAPACITY commands in serial log. POST code 0xD756. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
-## 7. Fallback: Detect Corrupt State, Revert to TODO-07 Path
+## 7. Fallback: Detect Corrupt State, Revert to TODO-10 Path
 If any handover validation fails, transparently fall back to the proven halt/reset/enumerate path.
 
 **Files:** `src/kernel/drivers/xhci.c`
@@ -151,12 +151,12 @@ If any handover validation fails, transparently fall back to the proven halt/res
 - [ ] Check: USBSTS.HCH should be 0 (controller running)
 - [ ] Check: No-Op command completes within 100ms
 - [ ] Check: DCBAAP matches boot_info value
-- [ ] If any check fails: log warning, halt/reset, full re-enumerate (TODO-07 §1-§4)
+- [ ] If any check fails: log warning, halt/reset, full re-enumerate (TODO-10 §1-§4)
 - [ ] Commit: `"drivers: xHCI handover fallback — detect corrupt state and recover"`
 
-**Test checkpoint:** Force-fail handover (corrupt boot_info), verify clean fallback to TODO-07 path with no crash. POST code 0xD757. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
+**Test checkpoint:** Force-fail handover (corrupt boot_info), verify clean fallback to TODO-10 path with no crash. POST code 0xD757. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
-**Regression risk:** LOW — fallback is the proven TODO-07 path. If fallback detection itself crashes, the issue is in the validation code, not the USB stack. Rollback: disable handover validation, always use TODO-07 path.
+**Regression risk:** LOW — fallback is the proven TODO-10 path. If fallback detection itself crashes, the issue is in the validation code, not the USB stack. Rollback: disable handover validation, always use TODO-10 path.
 
 ---
 
@@ -167,8 +167,8 @@ If any handover validation fails, transparently fall back to the proven halt/res
 | ⭐ | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot     | 🔄 §1-§2 DMA only   |
 | ⭐ | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset    | ✅ §5 DMA inherit    |
 | ⭐ | Persistent DMA      | ✅ Kernel memory | ❌ Reallocates   | ✅ §1 EfiLoaderData  |
-| 💎 | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c    | ✅ TODO-07 §5B done  |
-| ⭐ | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed   | ⬜ TODO-07 planned   |
+| 💎 | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c    | ✅ TODO-10 §5B done  |
+| ⭐ | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed   | ⬜ TODO-10 planned   |
 | 💎 | Handover fallback   | ✅ Automatic     | ✅ Always fresh  | ⬜ §7 planned        |
 | ⭐ | Handover + EHCI     | ✅ usbehci.sys   | ❌ Always reset  | ⬜ §2 EHCI path      |
 
@@ -178,7 +178,7 @@ If any handover validation fails, transparently fall back to the proven halt/res
 
 > Wire into `test_runner_init()` via `test_register_usb_handover()` (-> XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
-> Zero-delay handover tests require USB hardware. Use `bash scripts/build.sh run-usb` for QEMU tests. Tests gracefully skip when handover is not active (fallback to TODO-07 path).
+> Zero-delay handover tests require USB hardware. Use `bash scripts/build.sh run-usb` for QEMU tests. Tests gracefully skip when handover is not active (fallback to TODO-10 path).
 
 - [ ] Create `src/kernel/test/test_usb_handover.c` with:
   - `boot_info.usb_handover_complete` is 0 or 1 (valid flag, not garbage)
@@ -202,5 +202,5 @@ If any handover validation fails, transparently fall back to the proven halt/res
 - [ ] Serial log: no "Controller halted" / "Controller reset" / "500ms" when handover is active
 - [ ] Bare metal i5-4210U: handover works with EHCI+xHCI (USBLEGSUP in bootloader)
 - [ ] Bare metal i5-11600K: handover works with xHCI-only
-- [ ] Fallback: corrupt boot_info → clean recovery to TODO-07 path, no crash
+- [ ] Fallback: corrupt boot_info → clean recovery to TODO-10 path, no crash
 - [ ] Boot timing: USB device available within 1ms of kernel start (measured via TSC)

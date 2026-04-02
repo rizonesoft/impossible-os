@@ -2,7 +2,7 @@
 
 > **Goal:** Complete the remaining built-in (statically linked) driver gaps that must be available before or without a filesystem: HPET timer, PCIe ECAM extended config, capability chain scanner, MSI/MSI-X interrupt routing, and PCIe hot-plug detection.
 >
-> → **Boot-critical NVMe driver extracted to `01-boot-platform/TODO-08-nvme-storage.md`.** This TODO covers advanced NVMe features (multi-queue, interrupt coalescing, power states) after the boot-critical §1 is done there.
+> → **Boot-critical NVMe driver extracted to `01-boot-platform/TODO-09-nvme-storage.md`.** This TODO covers advanced NVMe features (multi-queue, interrupt coalescing, power states) after the boot-critical §1 is done there.
 
 > [!IMPORTANT]
 > All sections here are **built-in only** — they may be needed before the IXFS mounts or are too performance-sensitive to load late. Loadable module infrastructure lives in `TODO-01`. All DMA buffers (NVMe queues, MSI-X tables) must use `pmm_alloc_contiguous()` — never `kmalloc` for anything > 4 KB.
@@ -13,7 +13,7 @@
 - [`src/kernel/drivers/ahci.c`](../../src/kernel/drivers/ahci.c) — reference for DMA queue pattern used in §1
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) — `acpi_get_hpet_base()` consumed by §2; `acpi_get_mcfg()` consumed by §3
 - Port base for §1: SerenityOS `Kernel/Devices/Storage/NVMe/` (BSD-2-Clause)
-- → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §3` — HPET register layout and unified `uptime_ns()` HAL consumed by §2; LAPIC calibration call site also lives there
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §3` — HPET register layout and unified `uptime_ns()` HAL consumed by §2; LAPIC calibration call site also lives there
 - → XREF: `02-kernel-core/TODO-02-pci-bus.md` — PCI enumeration and bus scan that §3–§6 extend
 - → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §1` — `EXPORT_SYMBOL` for `nvme_*`, `hpet_read_ns`, `pci_read_config32_ext`, `pci_find_capability`, `pci_enable_msi/msix`
 - Spec refs: NVMe 1.4 spec; PCI Local Bus 3.0 spec; PCIe Base 4.0 spec; ACPI 6.5 §5.2.6 (MCFG)
@@ -75,7 +75,7 @@ Map the HPET MMIO registers from the ACPI HPET table base address. Parse the cap
 **Files:** `src/kernel/drivers/hpet.c` (new), `include/kernel/drivers/hpet.h` (new)
 
 > [!IMPORTANT]
-> → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §3` — the unified timer HAL and LAPIC calibration call site live there. This section implements the hardware read path; the calibration integration is a one-line change in the LAPIC init path to call `hpet_read_ns()` instead of a PIT-based fallback.
+> → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §3` — the unified timer HAL and LAPIC calibration call site live there. This section implements the hardware read path; the calibration integration is a one-line change in the LAPIC init path to call `hpet_read_ns()` instead of a PIT-based fallback.
 > HPET registers are 64-bit wide but must be read with 32-bit accesses on some firmware implementations. Use `mmio_read32_lo` + `mmio_read32_hi` with a re-read loop to handle counter wrap.
 
 - [ ] `acpi_get_hpet_base()` returns the HPET MMIO base; `vmm_map_mmio(base, 0x400)` as uncacheable

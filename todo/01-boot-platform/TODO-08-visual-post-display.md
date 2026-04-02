@@ -1,4 +1,4 @@
-# TODO-05 — Visual POST Display (VPD)
+# TODO-08 — Visual POST Display (VPD)
 
 > **Goal:** Replace the crude `HV_BAR` colored pixel bars with a production-grade Visual POST Display — a two-tier boot progress visualization with embedded micro-font, TSC timing, status indicators, and UEFI NVRAM crash persistence. The VPD is the single visual diagnostic system for every boot: it owns the pre-splash black-screen phase, integrates seamlessly into the splash, and on crash-restart shows exactly where the previous boot failed — all without serial, all configurable, all platforms.
 
@@ -19,12 +19,11 @@
 - [`src/kernel/main/boot_progress.c`](../../src/kernel/main/boot_progress.c) — `boot_stage_report()`, POST hex display, stage metadata
 - [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) — `boot_config` struct, framebuffer info
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) — `boot.conf` parsing, NVRAM POST read/write
-- → XREF: `TODO-02-boot-diagnostics.md §5` — debug color bar waterfall (superseded by this TODO)
-- → XREF: `TODO-02-boot-diagnostics.md §2` — `boot_stage_report()` named-stage API (VPD consumes this)
-- → XREF: `TODO-02-boot-diagnostics.md §6` — panic forensic evidence (VPD displays crash history from NVRAM)
-- → XREF: `TODO-03-interrupt-timer-arch.md §6` — boot timing and TSC frequency (VPD reads elapsed ms)
-- → XREF: `TODO-06-bare-metal-hardening.md §1-§2` — 4-digit POST code system feeds VPD stage names and codes
-- → XREF: `TODO-06-bare-metal-hardening.md §5` — hw interrupt investigation; VPD must work on bare metal where HV_BAR failed due to page flips
+- → XREF: `TODO-07-boot-diagnostics.md §2` — `boot_stage_report()` named-stage API (VPD consumes this)
+- → XREF: `TODO-07-boot-diagnostics.md §5` — panic forensic evidence (VPD displays crash history from NVRAM)
+- → XREF: `TODO-06-interrupt-timer-arch.md §6` — boot timing and TSC frequency (VPD reads elapsed ms)
+- → XREF: `TODO-05-bare-metal-hardening.md §1-§2` — 4-digit POST code system feeds VPD stage names and codes
+- → XREF: `TODO-05-bare-metal-hardening.md §5` — hw interrupt investigation; VPD must work on bare metal where HV_BAR failed due to page flips
 
 ## Outcome
 

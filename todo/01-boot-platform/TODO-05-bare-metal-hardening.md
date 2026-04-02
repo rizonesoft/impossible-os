@@ -1,4 +1,4 @@
-# TODO-06 — Bare Metal Boot Hardening & POST Diagnostics
+# TODO-05 — Bare Metal Boot Hardening & POST Diagnostics
 
 > **Goal:** Make the kernel boot reliably on any x86-64 bare-metal hardware with production-grade error reporting. After this TODO, the boot sequence is robust against absent hardware, misconfigured firmware, and platform-specific quirks — with fine-grained POST codes that pinpoint failures without serial, debugger, or color bars.
 
@@ -12,9 +12,9 @@
 > **Scope boundary — this TODO does NOT own:**
 > - CPU security feature implementation (NX, SMEP, SMAP, CET, Spectre) → owned by `TODO-17-kernel-security-hardening.md`
 > - CPU activation sequencing (EFER before VMM, CR4 order) → owned by `TODO-04-cpu-boot-sequencing.md`
-> - Timer HAL architecture and calibration waterfall design → owned by `TODO-03-interrupt-timer-arch.md`
-> - Visual boot progress display (VPD) → owned by `TODO-05-visual-post-display.md`
-> - Panic forensic evidence struct and cross-boot persistence → owned by `TODO-02-boot-diagnostics.md §2`
+> - Timer HAL architecture and calibration waterfall design → owned by `TODO-06-interrupt-timer-arch.md`
+> - Visual boot progress display (VPD) → owned by `TODO-08-visual-post-display.md`
+> - Panic forensic evidence struct and cross-boot persistence → owned by `TODO-07-boot-diagnostics.md §5`
 >
 > **This TODO owns:** making all of the above **work on real hardware** — diagnostics, detection, fallbacks, IST, ACPI gating, graceful degradation, and the hw interrupt investigation.
 
@@ -35,10 +35,10 @@
 - [`src/kernel/drivers/ahci/ahci_core.c`](../../src/kernel/drivers/ahci/ahci_core.c) — AHCI MSI setup
 - [`src/kernel/drivers/framebuffer.c`](../../src/kernel/drivers/framebuffer.c) — `fb_swap`/`fb_swap_rect` cli/sti
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) — FADT parsing, MADT, PM Timer
-- → XREF: `TODO-02-boot-diagnostics.md §6` — panic forensic evidence struct (deferred; this TODO validates it works on bare metal when implemented)
-- → XREF: `TODO-03-interrupt-timer-arch.md` — timer HAL design (this TODO investigates why hw interrupts crash on bare metal)
+- → XREF: `TODO-07-boot-diagnostics.md §5` — panic forensic evidence struct (deferred; this TODO validates it works on bare metal when implemented)
+- → XREF: `TODO-06-interrupt-timer-arch.md` — timer HAL design (this TODO investigates why hw interrupts crash on bare metal)
 - → XREF: `TODO-04-cpu-boot-sequencing.md §2,§4` — CPU hardening activation order (deferred there; minimal version in §9 here)
-- → XREF: `TODO-05-visual-post-display.md §1-§2` — 4-digit POST code system and per-function instrumentation (moved from this TODO to TODO-05)
+- → XREF: `TODO-08-visual-post-display.md §1-§2` — 4-digit POST code system and per-function instrumentation (moved from this TODO to TODO-08)
 - → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` — NX/SMEP/SMAP implementation (this TODO does NOT reimplement; handles bare-metal quirks like shared page tables)
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` — boot_progress() infrastructure (this TODO consumes it)
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` — UC MMIO mapping for HPET/AHCI
@@ -90,7 +90,7 @@ Implement a minimal `vmm_map_mmio_uc()` that creates uncacheable mappings for de
 - [x] Validate: page-aligned phys_base, size > 0, within 1 GiB MMIO VA limit
 - [x] Test: map LAPIC base (0xFEE00000) as UC in boot_phase0, verify LAPIC ID matches identity-mapped read
 - [x] Re-enable HPET calibration in `lapic.c`: `cal_try_hpet()` maps HPET via `vmm_map_mmio_uc()` and uses UC pointer for all MMIO reads
-- [ ] `hpet_read_ns()` — deferred to TODO-03 §2 (UTS timer driver); HPET calibration works without it
+- [ ] `hpet_read_ns()` — deferred to TODO-06 §2 (UTS timer driver); HPET calibration works without it
 - [x] Commit: `"mm: minimal vmm_map_mmio_uc + HPET re-enabled with UC mapping"`
 
 **Debug POST codes:** `POST16(0xD100)` = vmm_map_mmio_uc entry, `0xD101` = PTE allocated, `0xD102` = HPET mapped, `0xD103` = HPET read OK, `0xD104` = §1 complete. On crash: last POST on VPD/serial pinpoints failure.
@@ -333,7 +333,7 @@ Define the minimum CPU feature set required to boot, verify features are actuall
 
 Define the hardware platforms to test on, expected boot timings per phase, and a regression detection framework so bare-metal issues are caught early.
 
-**Files:** `docs/bare-metal-test-matrix.md` (new), `todo/01-boot-platform/TODO-06-bare-metal-hardening.md`
+**Files:** `docs/bare-metal-test-matrix.md` (new), `todo/01-boot-platform/TODO-05-bare-metal-hardening.md`
 
 - [x] Test platforms documented in BM Testing Plan section above (BM Tests 1-4 with results tables)
 - [x] Platform matrix:
@@ -353,7 +353,7 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 
 ## 15. Boot Splash Spinner Bare-Metal Fix
 
-The boot splash spinner stutters on bare metal — stops and restarts repeatedly during Phase 2. Root cause: the spinner animation is driven by `timer_tick_callback_fire()` in the LAPIC timer ISR. On bare metal, the timer is disabled (TODO-06 §3 hw interrupt investigation) so the spinner only advances when the compositor or `boot_splash_tick()` explicitly calls it. Between explicit calls (PCI scan, AHCI init), the spinner freezes for seconds.
+The boot splash spinner stutters on bare metal — stops and restarts repeatedly during Phase 2. Root cause: the spinner animation is driven by `timer_tick_callback_fire()` in the LAPIC timer ISR. On bare metal, the timer is disabled (TODO-05 §3 hw interrupt investigation) so the spinner only advances when the compositor or `boot_splash_tick()` explicitly calls it. Between explicit calls (PCI scan, AHCI init), the spinner freezes for seconds.
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/spinner.c`, `src/kernel/main/boot_storage.c`
 
@@ -495,5 +495,5 @@ Full acceptance pass. All sections complete.
 - [ ] QEMU TCG: full boot to desktop with PIT timer path
 - [ ] VirtualBox: full boot to desktop
 - [ ] Bare metal (i5-11600K): BM Tests 1–5 all pass
-- [x] No `HV_BAR()` calls remaining in codebase — `hv_bar.h` deleted, replaced by TODO-05 VPD
+- [x] No `HV_BAR()` calls remaining in codebase — `hv_bar.h` deleted, replaced by TODO-08 VPD
 - [ ] Commit: `"boot: bare metal hardening complete — all platforms boot reliably"`

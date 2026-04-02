@@ -1,9 +1,9 @@
-# TODO-15 — USB HID Boot-Protocol Keyboard & Mouse
+# TODO-12 — USB HID Boot-Protocol Keyboard & Mouse
 
 > **Goal:** USB keyboards and mice work during boot and at the desktop on systems without PS/2 hardware. Most modern laptops and desktops (post-2015) have only USB input. Without this, the OS is unusable on real hardware. This TODO implements USB HID boot-protocol drivers for keyboard and mouse, interrupt endpoint polling, and input source coexistence with existing PS/2 drivers. The result: type commands, move the cursor, and click on any system with USB input.
 
 > [!IMPORTANT]
-> **Current state:** TODO-07 §6–§9 scoped USB HID but no code exists. PS/2 keyboard and mouse work on hardware that has i8042 (detected via ACPI FADT). Modern laptops without i8042 show `"PS/2 keyboard: skipped (no i8042 in FADT)"` and have zero input. xHCI interrupt endpoint setup, HID report parsing, and input routing are all unimplemented.
+> **Current state:** USB HID was split out of `TODO-10-xhci-usb-boot.md` into this file; no HID code exists yet. PS/2 keyboard and mouse work on hardware that has i8042 (detected via ACPI FADT). Modern laptops without i8042 show `"PS/2 keyboard: skipped (no i8042 in FADT)"` and have zero input. xHCI interrupt endpoint setup, HID report parsing, and input routing are all unimplemented.
 
 ---
 
@@ -14,7 +14,7 @@
 - `src/kernel/drivers/keyboard.c` — PS/2 keyboard driver (input sink interface)
 - `src/kernel/drivers/mouse.c` — PS/2 mouse driver (input sink interface)
 - `include/kernel/drivers/keyboard.h` — keyboard API (`keyboard_trygetchar()`)
-- → XREF: `TODO-07-xhci-usb-boot.md §6–§9` — scoped but unimplemented
+- → XREF: `TODO-10-xhci-usb-boot.md` §1–§5 — xHCI/USB MSC/boot handover foundation for this TODO
 - → XREF: `04-drivers-hardware/TODO-05-input-system.md` — unified input system (downstream consumer)
 
 ---

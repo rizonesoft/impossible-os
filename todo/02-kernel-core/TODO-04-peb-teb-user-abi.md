@@ -15,10 +15,11 @@
 - → XREF: `TODO-03-object-manager.md` — handle table needed for `PEB->ProcessParameters` stdin/stdout/stderr HANDLE fields
 - → XREF: `TODO-01-kernel-init-sequencing.md` — PEB/TEB init belongs in Phase 3 (user platform); requires VMM and scheduler (Phase 2)
 - → XREF: `TODO-05-native-api-ssdt.md` — `NtCreateProcess` populates PEB; `LdrInitializeThunk` (ntdll entry) reads PEB->Ldr
-- → XREF: `TODO-07-time-filetime-management.md §6` — §11 KUSER_SHARED_DATA time fields (SystemTime, InterruptTime, QpcFrequency) are populated by the kernel time service
+- → XREF: `TODO-07-time-filetime-management.md §6, §12` — §11 KUSER_SHARED_DATA time fields (SystemTime, InterruptTime, QpcFrequency) are populated by the kernel time service (§6); ISR time update function provided by §12
 - → XREF: `TODO-08-binary-system.md §2` — §13 extended auxv (AT_PHDR, AT_PHNUM) requires `elf_load_result` extension with `phdr_vaddr` and `phnum` from the Enhanced ELF Loader
 - → XREF: `TODO-17-kernel-security-hardening.md §9` — §13 AT_RANDOM provides user-mode stack canary seed bytes; shares RDRAND path
 - → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §4` — §12 kernel TLS expansion allocator consumed by user-mode TlsAlloc/TlsFree wrappers
+- → XREF: `TODO-09-process-model-extensions.md §1` — §1 adds `cwd[MAX_PATH]` to `struct task`; `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` in the PEB should be populated from `task->cwd` at `task_exec()` time
 
 ## Outcome
 
@@ -33,20 +34,20 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                    | Depends On | Status |
-| --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | TEB struct and GS self-pointer                 | —          |  [x]   |
-| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS     | —          |  [x]   |
-| 💎  |   3   | swapgs on INT 0x80 entry and exit              | §1         |  [x]   |
-| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | §1, §3     |  [x]   |
-| 💎  |   5   | PEB allocation and population at task_exec     | §2, §4     |  [x]   |
-| 💎  |   6   | TEB allocation and population at thread create | §1, §4     |  [x]   |
-| 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | §5, §6     |  [x]   |
-| 💎  |   8   | PEB Ldr (module list) basic population         | §5         |  [x]   |
-| 💎  |   9   | TLS slot allocation (64 static slots)          | §6         |  [x]   |
-| ⭐  |  10   | PEB / TEB exposed in Ob namespace              | §5, §6     |  [x]   |
-| 💎  |  11   | KUSER_SHARED_DATA — kernel-user shared page    | §5         |  [ ]   |
-| 💎  |  12   | TLS expansion slots (1024 dynamic slots)       | §9         |  [ ]   |
+| ⭐  | Order | Deliverable                                     | Depends On | Status |
+| --- | :---: | ----------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | TEB struct and GS self-pointer                  | —          |  [x]   |
+| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | —          |  [x]   |
+| 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1         |  [x]   |
+| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3     |  [x]   |
+| 💎  |   5   | PEB allocation and population at task_exec      | §2, §4     |  [x]   |
+| 💎  |   6   | TEB allocation and population at thread create  | §1, §4     |  [x]   |
+| 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6     |  [x]   |
+| 💎  |   8   | PEB Ldr (module list) basic population          | §5         |  [x]   |
+| 💎  |   9   | TLS slot allocation (64 static slots)           | §6         |  [x]   |
+| ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6     |  [x]   |
+| 💎  |  11   | KUSER_SHARED_DATA — kernel-user shared page     | §5         |  [ ]   |
+| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9         |  [ ]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7         |  [ ]   |
 
 > 💎 = parity — Windows NT / 11 and ntdll both require and implement all of these.
@@ -147,7 +148,7 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [x] Main executable inserted in all 3 lists (InLoadOrder, InMemoryOrder, InInitializationOrder) as circular linked list
 - [x] `LDR_DATA_TABLE_ENTRY`: DllBase, EntryPoint, SizeOfImage, FullDllName + BaseDllName as UNICODE_STRING
 - [x] `PEB->Ldr` wired to the allocated `PEB_LDR_DATA`
-- [ ] Full module list (LoadLibrary/FreeLibrary) — see TODO-08 §7
+- [ ] Full module list (LoadLibrary/FreeLibrary) — see TODO-08 §6 (module list registration)
 - [x] Commit: `"kernel: peb — minimal PEB Ldr with main module entry"`
 
 ## 9. TLS Slot Allocation (64 Static Slots)
@@ -257,23 +258,23 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 
 ## OS Comparison
 
-| ⭐ | Feature                  | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS           |
-|----|--------------------------|--------------------------|-------------------------|-------------------------|
-| 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | ✅ §2+§5 PEB allocated |
-| 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | ✅ §1+§6 TEB allocated |
-| 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | ✅ §3+§4 swapgs+MSR    |
-| 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ✅ §6 LastError=0      |
-| 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ✅ §9 bitmap alloc     |
-| 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ✅ §5 RTLPP populated  |
-| 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ✅ §8 main module      |
-| 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ✅ §7 argc/argv/auxv   |
-| ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ✅ §10 public API      |
-| ⭐ | 🪟 Win11 version in PEB     | ✅ Internal only         | ❌ N/A                 | ✅ §5 10.0.22621       |
-| 💎 | KUSER_SHARED_DATA page     | ✅ 0x7FFE0000 read-only  | ✅ vDSO equivalent     | ⬜ §11 shared page     |
-| 💎 | TLS expansion (1024 slots) | ✅ TlsExpansionSlots     | ✅ pthread TLS unlimited | ⬜ §12 expansion bitmap |
-| 💎 | AT_RANDOM stack canary     | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM      | ⬜ §13 auxv extension  |
-| 💎 | AT_PHDR/AT_PHNUM auxv      | ❌ PE, not ELF           | ✅ auxv standard       | ⬜ §13 ELF compat      |
-| 💎 | CPU feature auxv (AT_HWCAP)| ⚠️ ProcessorFeatures[]   | ✅ AT_HWCAP/AT_HWCAP2  | ⬜ §13 cpuid bits      |
+| ⭐ | Feature                     | 🪟 Win11                   | 🐧 Linux                | 🚀 Impossible OS        |
+|----|-----------------------------|----------------------------|--------------------------|--------------------------|
+| 💎 | Per-process env block       | ✅ PEB at gs:[0x60]       | ❌ argv/envp on stack    | ✅ §2+§5 PEB allocated  |
+| 💎 | Per-thread block (TEB)      | ✅ TEB at gs:[0x30]       | ⚠️ glibc pthread TLS     | ✅ §1+§6 TEB allocated  |
+| 💎 | swapgs kernel entry/exit    | ✅ KiSystemCall64         | ✅ entry.S swapgs        | ✅ §3+§4 swapgs+MSR     |
+| 💎 | LastError per-thread        | ✅ TEB offset 0x68        | ⚠️ errno per-thread      | ✅ §6 LastError=0       |
+| 💎 | TLS static slots (64)       | ✅ TEB offset 0x1480      | ✅ pthread + FS-base     | ✅ §9 bitmap alloc      |
+| 💎 | Process parameters          | ✅ cmdline, env, handles  | ❌ stack + /proc         | ✅ §5 RTLPP populated   |
+| 💎 | Ldr module list             | ✅ PEB->Ldr linked list   | ❌ ld-linux link map     | ✅ §8 main module       |
+| 💎 | Initial stack frame         | ✅ RCX=PEB (Win64)        | ✅ ELF ABI layout        | ✅ §7 argc/argv/auxv    |
+| ⭐ | PEB/TEB in Ob namespace     | ❌ Private internal       | ❌ Not exposed           | ✅ §10 public API       |
+| ⭐ | Win11 version in PEB        | ✅ Internal only          | ❌ N/A                   | ✅ §5 10.0.22621        |
+| 💎 | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only   | ✅ vDSO equivalent       | ⬜ §11 shared page      |
+| 💎 | TLS expansion (1024 slots)  | ✅ TlsExpansionSlots      | ✅ pthread TLS unlimited | ⬜ §12 expansion bitmap |
+| 💎 | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ⬜ §13 auxv extension   |
+| 💎 | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF            | ✅ auxv standard         | ⬜ §13 ELF compat       |
+| 💎 | CPU feature auxv (AT_HWCAP) | ⚠️ ProcessorFeatures[]    | ✅ AT_HWCAP/AT_HWCAP2    | ⬜ §13 cpuid bits       |
 
 > **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets — ntdll and Win32 DLLs can initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace, enabling any user-mode tool to introspect any process without a private API or kernel debugger.

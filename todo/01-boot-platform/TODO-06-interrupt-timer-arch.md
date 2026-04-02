@@ -1,4 +1,4 @@
-# TODO-03 — Interrupt Architecture & Unified Timer Subsystem
+# TODO-06 — Interrupt Architecture & Unified Timer Subsystem
 
 > **Goal:** APIC and PIT exist but are initialised in the wrong order (PIT before LAPIC/IOAPIC), creating IRQ conflicts and race conditions on real hardware and Hyper-V. This TODO re-sequences interrupt hardware init so ACPI MADT drives everything, delivers full 256-vector IDT coverage, adds a dynamic IRQ registration API that replaces all hardcoded IRQ-to-vector mappings, and builds a unified timer HAL that picks the best available clock (HPET → LAPIC → PIT) as a single `uptime_ns()` abstraction.
 
@@ -19,12 +19,13 @@
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §3` — Phase 1 calls every init function listed here in the correct order; this TODO defines what correct order means
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §1` — DPC queue init requires LAPIC timer ready (§7); IRQL model depends on the correct interrupt priority assignment established in §2
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §2` — `uptime_ns()` from the UTS (§6) is the clock source for the monotonic nanosecond clock used by FILETIME and `QueryPerformanceCounter`
-- → XREF: `TODO-02-boot-diagnostics.md §2` — boot time visualization (§9) reads `boot_stage_history[]` built by the boot progress API
-- → XREF: `TODO-02-boot-diagnostics.md §5` — §9 boot time visualization bar chart uses the stage color table defined there (`DebugBar=1` feature)
+- → XREF: `TODO-07-boot-diagnostics.md §2` — `boot_stage_history[]` from the named-stage API feeds downstream visualization
+- → XREF: `TODO-07-boot-diagnostics.md §8` — runtime vital signs strip (developer overlay)
+- → XREF: `TODO-08-visual-post-display.md` — proportional stage bar / VPD (stage colors, timing on screen; supersedes former TODO-07 debug color bar)
 - → XREF: `TODO-04-cpu-boot-sequencing.md §3` — hypervisor detection runs in Phase 0 before §6 UTS probe; `boot_info.hv_flags` set there must be read by `timer_hal_init()` to select the correct clock source
 - → XREF: `02-kernel-core/TODO-15-power-management.md` — Intel HWP / AMD CPPC frequency changes require LAPIC timer recalibration (§7 `lapic_calibrate()`); no dedicated HWP/CPPC section in TODO-15 yet — add when frequency scaling is scoped there
 - → XREF: `04-drivers-hardware/INDEX.md` — all device drivers call `irq_request(gsi, handler, name, flags)` (§5); this API replaces hardcoded IRQ-to-vector assignments throughout that domain
-- → XREF: `TODO-06-bare-metal-hardening.md §5` — hardware interrupt crash on bare metal (LAPIC timer and PIT both crash; software INT works). Root cause investigation tracked there, not here.
+- → XREF: `TODO-05-bare-metal-hardening.md §5` — hardware interrupt crash on bare metal (LAPIC timer and PIT both crash; software INT works). Root cause investigation tracked there, not here.
 
 ## Outcome
 
@@ -49,7 +50,7 @@
 | 💎  |   6   | Unified timer subsystem (UTS)       | §5, T04 §3          |  [x]   |
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [x]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [x]   |
-| ⭐  |   9   | Boot time visualization             | §7, T02 §2 & §5     |  [x]   |
+| ⭐  |   9   | Boot time visualization             | §7, T07 §2 & §5     |  [x]   |
 | 💎  |  10   | Remove Hyper-V debug workarounds    | §1–7                |  [x]   |
 
 > 💎 = parity — Windows NT HAL and Linux interrupt subsystem both follow this init order and have equivalent abstractions.
@@ -139,7 +140,7 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 
 - [x] `timer_driver_t` vtable exists with `name`, `init`, `get_ticks`, `sleep_ms`, `get_freq`; added `read_ns` field
 - [x] PIT and LAPIC drivers implemented and working (in `pit.c` and `lapic.c`)
-- [ ] HPET standalone driver — blocked by `vmm_map_mmio_uc()` (TODO-06 §3). HPET MMIO at ~0xFED00000 requires UC page table entries; WB caching causes MCE on bare metal. Once TODO-06 §3 delivers UC mapping, re-enable HPET calibration in `lapic.c` and implement `hpet_read_ns()` here.
+- [ ] HPET standalone driver — blocked by `vmm_map_mmio_uc()` (TODO-05 §3). HPET MMIO at ~0xFED00000 requires UC page table entries; WB caching causes MCE on bare metal. Once TODO-05 §3 delivers UC mapping, re-enable HPET calibration in `lapic.c` and implement `hpet_read_ns()` here.
 - [x] LAPIC timer: calibration via Hyper-V MSR / PIT busy-wait already working
 - [x] Selection waterfall: platform_detect() -> Hyper-V MSR -> LAPIC calibration -> PIT fallback; `hv_flags` available
 - [x] `uptime_ns()` added: prefers `read_ns()`, falls back to `ticks * (1e9/freq)`
@@ -152,7 +153,7 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 
 **Files:** `src/kernel/drivers/timer_lapic.c`, `src/kernel/sched/task.c` (scheduler tick hookup)
 
-- [x] LAPIC calibration: 4-tier waterfall (Hyper-V MSR → CPUID 0x15 → TSC-referenced → PM Timer → PIT ch2) in `lapic.c`; stores `cal_ticks_per_ms`. HPET tier disabled until UC MMIO mapping exists (WB caching causes MCE on bare metal — see TODO-06 §3). TSC-referenced tier added 2026-03-28 for bare metal.
+- [x] LAPIC calibration: 4-tier waterfall (Hyper-V MSR → CPUID 0x15 → TSC-referenced → PM Timer → PIT ch2) in `lapic.c`; stores `cal_ticks_per_ms`. HPET tier disabled until UC MMIO mapping exists (WB caching causes MCE on bare metal — see TODO-05 §3). TSC-referenced tier added 2026-03-28 for bare metal.
 - [x] Run on BSP during `timer_hal_init()` — confirmed working in serial log
 - [x] Scheduler uses LAPIC periodic timer at 100 Hz; `sched_tick` driven by LAPIC ISR
 - [ ] Recalibrate hook for CPU frequency changes — deferred to TODO-15 (power management)
@@ -210,7 +211,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 | 💎 | LAPIC timer calibration    | ✅ HAL per-CPU calibration    | ✅ calibrate_delay per CPU      | ✅ §7 — 4-tier waterfall          |
 | ⭐ | Boot timeline JSON         | ❌ WPA (offline, binary)      | ❌ systemd-analyze (post-boot)  | ✅ §9 — boot-timeline.json        |
 
-> **Parity achieved on §1–§8, §10.** All interrupt init order, IDT coverage, IRQ registration, and timer HAL match Windows/Linux. Boot timeline JSON goes beyond both. Remaining: HPET standalone driver (deferred until UC MMIO), bare-metal hw interrupt crash (TODO-06 §5).
+> **Parity achieved on §1–§8, §10.** All interrupt init order, IDT coverage, IRQ registration, and timer HAL match Windows/Linux. Boot timeline JSON goes beyond both. Remaining: HPET standalone driver (deferred until UC MMIO), bare-metal hw interrupt crash (TODO-05 §5).
 
 ## Unit Tests
 

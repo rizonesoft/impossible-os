@@ -14,7 +14,7 @@
 - [`todo/02-kernel-core/TODO-01-kernel-init-sequencing.md`](./TODO-01-kernel-init-sequencing.md)
 - → XREF: `TODO-20-kernel-libraries.md §6` — cJSON DOM parser; §6 was implemented with manual JSON formatting in `klog_disk.c` (cJSON not needed for serialization, may be used by Event Viewer for parsing)
 - → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` — UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
-- → XREF: `01-boot-platform/TODO-11-klog-ixfs-bare-metal-perf.md` — klog_disk_flush performance fix (ring snapshot, deferred flush mode); both TODOs modify klog_disk.c
+- → XREF: `01-boot-platform/TODO-11-usb-boot-hardening.md` — USB boot hardening (klog_disk_flush bounded loop, deferred flush mode); both TODOs modify klog_disk.c
 - → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §8 of this TODO wires them into the SSDT
 - → XREF: `TODO-16-crash-dump-generation.md §2,§7` — crash dump raw-partition sink bypasses VFS; §9 of this TODO captures ring buffer to reserved physical memory on panic (complementary — TODO-16 captures binary state, §9 captures text log)
 - → XREF: `TODO-20-kernel-libraries.md §5` — Monocypher Blake2b + kernel CSPRNG required by §11 (HMAC-chain log integrity)

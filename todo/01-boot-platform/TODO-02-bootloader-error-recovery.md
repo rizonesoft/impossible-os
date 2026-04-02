@@ -1,4 +1,4 @@
-# TODO-12 — Bootloader Error Recovery & ELF Hardening
+# TODO-02 — Bootloader Error Recovery & ELF Hardening
 
 > **Goal:** Eliminate every silent failure in `bootx64.c`. The bootloader currently has 15+ fragility points where errors cause infinite HLT loops with no visible output, corrupt memory from unchecked ELF segments, or silently use wrong defaults. After this TODO: every failure produces a visible error message on screen and serial with actionable information. The bootloader never hangs silently — it either boots or tells you exactly why it can't.
 
@@ -13,8 +13,8 @@
 - `src/boot/entry.asm` — 32-to-64-bit mode transition
 - `include/kernel/boot_info.h` — boot data structures (boot_info at 0x10000)
 - → XREF: `TODO-01-uefi-hardening-secureboot.md §7` — boot UX polish
-- → XREF: `TODO-06-bare-metal-hardening.md §7` — resilient boot with graceful degradation
-- → XREF: `TODO-13-boot-device-discovery.md §1` — boot device identification (uses filesystem protocol correctly)
+- → XREF: `TODO-05-bare-metal-hardening.md §7` — resilient boot with graceful degradation
+- → XREF: `TODO-03-boot-device-discovery.md §1` — boot device identification (uses filesystem protocol correctly)
 
 ---
 

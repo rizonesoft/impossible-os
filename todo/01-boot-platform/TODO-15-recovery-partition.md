@@ -1,4 +1,4 @@
-# TODO-17 — Recovery Partition & Self-Repair
+# TODO-15 — Recovery Partition & Self-Repair
 
 > **Goal:** A read-only recovery partition that can repair a broken system without external media. If both A/B slots fail, the system boots into a minimal recovery environment that can: rebuild boot metadata, verify filesystem integrity, restore a known-good kernel from backup, and recreate UEFI NVRAM boot entries. Modeled after Windows Recovery Environment (WinRE), Chrome OS recovery, and Linux's fallback.efi NVRAM repair.
 
@@ -11,9 +11,9 @@
 
 - `src/boot/uefi/bootx64.c` — bootloader (needs recovery boot path)
 - `scripts/build.sh` — disk image creation (needs recovery partition)
-- → XREF: `TODO-16-ab-boot-rollback.md §4` — both slots failed → enter recovery
-- → XREF: `TODO-12-bootloader-error-recovery.md §9` — boot failure error screen
-- → XREF: `TODO-01-uefi-hardening-secureboot.md §9` — multi-OS detection
+- → XREF: `TODO-14-ab-boot-rollback.md §4` — both slots failed → enter recovery
+- → XREF: `TODO-02-bootloader-error-recovery.md §9` — boot failure error screen
+- → XREF: `TODO-01-uefi-hardening-secureboot.md §8` — multi-OS detection
 
 ---
 
@@ -35,7 +35,7 @@
 | 💎  |   2   | Recovery bootloader (minimal UEFI app)         | §1               |  [ ]   |
 | 💎  |   3   | Filesystem integrity check (IXFS fsck)         | §2               |  [ ]   |
 | 💎  |   4   | Backup kernel restore                          | §2               |  [ ]   |
-| 💎  |   5   | Boot metadata reset                            | §2, T16 §1       |  [ ]   |
+| 💎  |   5   | Boot metadata reset                            | §2, T14 §1       |  [ ]   |
 | 💎  |   6   | NVRAM boot entry reconstruction                | §2               |  [ ]   |
 | ⭐  |   7   | Recovery UI with status display                | §2–§6            |  [ ]   |
 
@@ -95,7 +95,7 @@ Restore a known-good kernel from recovery partition to the active slot.
 - [ ] Recovery partition contains `kernel.bak` — copy of the last verified working kernel
 - [ ] `restore_kernel(slot)` — copies `kernel.bak` to `\boot\kernel.exe` on target slot
 - [ ] After restore: reset boot metadata for target slot (tries=0, successful=0)
-- [ ] Update `kernel.bak` whenever `mark_boot_successful()` fires (→ XREF: TODO-16 §5)
+- [ ] Update `kernel.bak` whenever `mark_boot_successful()` fires (→ XREF: TODO-14 §5)
 - [ ] Commit: `"recovery: restore backup kernel to slot — last known-good version"`
 
 **Test checkpoint:** Corrupt Slot A kernel. Enter recovery. Restore backup. Reboot → Slot A boots successfully.
@@ -134,7 +134,7 @@ User-visible recovery interface with clear status.
 - [ ] Text-mode UI showing: `"Impossible OS Recovery"`, slot status, available actions
 - [ ] Actions: `[1] Repair filesystem`, `[2] Restore backup kernel`, `[3] Reset boot metadata`, `[4] Rebuild NVRAM`, `[5] Reboot`
 - [ ] Progress display for each action
-- [ ] Requires USB keyboard (→ XREF: TODO-15) or serial input
+- [ ] Requires USB keyboard (→ XREF: TODO-12) or serial input
 - [ ] Commit: `"recovery: text-mode recovery UI with repair actions"`
 
 **Test checkpoint:** Enter recovery → menu displayed → select "Repair filesystem" → fsck runs with progress → reboot option.

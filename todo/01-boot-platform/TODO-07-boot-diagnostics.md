@@ -1,6 +1,6 @@
-# TODO-02 — Boot Diagnostics, Heartbeat & Spinner
+# TODO-07 — Boot Diagnostics, Heartbeat & Spinner
 
-> **Goal:** The arc spinner and boot splash are done. This TODO builds the production diagnostics layer: a named-stage boot progress API that feeds the splash, POST-style hex codes visible on hardware debug cards, a debug color-bar waterfall replacing the raw `HV_BAR` hack, cross-boot panic forensics, a panic QR code, runtime vital-signs overlay, alive-blink hang detection, and a multi-instance compositor-integrated spinner — turning the ad-hoc debug tooling into production-grade features.
+> **Goal:** The arc spinner and boot splash are done. This TODO builds the production diagnostics layer: a named-stage boot progress API that feeds the splash, POST-style hex codes visible on hardware debug cards, cross-boot panic forensics, a panic QR code, runtime vital-signs overlay, alive-blink hang detection, and a multi-instance compositor-integrated spinner — turning the ad-hoc debug tooling into production-grade features.
 
 > [!NOTE]
 > **Origin:** The HV_BAR colored pixel bars were added during Hyper-V Gen 2 debugging — crude but instantly effective. This TODO formalises that approach as an opt-in production debug feature while replacing the unconditional hack with proper structured output.
@@ -18,17 +18,16 @@
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` — `boot_progress(phase, step, postcode)` in `boot_init.h`; §2 of this TODO wraps it with a named-stage layer
-- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §7` — `boot_halt()` is the pre-FB panic anchor that §6 extends with forensic evidence
-- → XREF: `02-kernel-core/TODO-16-crash-dump-generation.md` — crash dumps complement §6 panic forensics; coordinate PMM page reservation at `0x80000` to avoid collision with minidump workspace
-- → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\SYSTEM\Boot\DebugBar`, `AliveBlink`, `VitalSigns` registry keys
+- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §7` — `boot_halt()` is the pre-FB panic anchor that §5 extends with forensic evidence
+- → XREF: `02-kernel-core/TODO-16-crash-dump-generation.md` — crash dumps complement §5 panic forensics; coordinate PMM page reservation at `0x80000` to avoid collision with minidump workspace
+- → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\SYSTEM\Boot\AliveBlink`, `VitalSigns` registry keys (visual POST / debug bar: [TODO-08 — Visual POST Display](TODO-08-visual-post-display.md))
 - → XREF: `TODO-01-uefi-hardening-secureboot.md §7` — boot UX polish calls `boot_splash_status()` via the §2 API
-- → XREF: `07-graphics-ui/TODO-06-window-manager.md §8` — compositor frame loop must call `spinner_tick()` on every active `g_active_spinners[]` entry per frame; §8 (Compositor Performance) is the natural owner for this per-frame integration
+- → XREF: `07-graphics-ui/TODO-06-window-manager.md §8` — compositor frame loop must call `spinner_tick()` on every active `g_active_spinners[]` entry per frame; TODO-06 §8 (Compositor Performance) is the natural owner for this per-frame integration
 
 ## Outcome
 
 - Serial log shows `[+NNNms] BOOT_PMM: Physical memory manager ready` style entries for every major stage.
 - Two-digit hex POST code visible in the top-right corner of the framebuffer from kernel entry until `BOOT_DESKTOP_READY`; same codes output to I/O port 0x80.
-- `DebugBar=1` in `boot.conf` activates a proportional colored bar across the top of the screen; fades after 3 s.
 - On panic: `struct panic_evidence` captured at `0x80000`; next boot saves `last-panic.txt` and shows "System shut down unexpectedly" toast.
 - Panic BSOD shows a QR code in the bottom-right corner linking to the troubleshooting page.
 - `AliveBlink=1` activates a 4×4 px blinking square in the top-left corner driven by the PIT handler.
@@ -43,14 +42,13 @@
 | 💎  |   2   | Boot progress named-stage API      | §1         |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2         |  [x]   |
 | 💎  |   4   | Alive blink / hang detection       | §2         | defer  |
-| ⭐  |   5   | Debug color bar waterfall          | §2         | defer  |
-| 💎  |   6   | Panic forensic evidence            | §2         | defer  |
-| ⭐  |   7   | Panic QR code                      | §6         | defer  |
-| 💎  |   8   | System-wide multi-instance spinner | —          | defer  |
-| ⭐  |   9   | Runtime vital signs strip          | §8         | defer  |
+| 💎  |   5   | Panic forensic evidence            | §2         | defer  |
+| ⭐  |   6   | Panic QR code                      | §5         | defer  |
+| 💎  |   7   | System-wide multi-instance spinner | —          | defer  |
+| ⭐  |   8   | Runtime vital signs strip          | §7         | defer  |
 
 > 💎 = parity — Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
-> ⭐ = exclusive — the proportional debug waterfall with regression overlay, QR code on BSOD, and always-visible vital-signs strip are not present in either competitor at the kernel level.
+> ⭐ = exclusive — the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
 
 ---
 
@@ -103,20 +101,7 @@ A 4×4 px blinking square toggled in the PIT interrupt handler — if it stops b
 - [x] Registry setting — deferred to TODO-13 (currently boot.conf only)
 - [x] Commit: `"kernel: alive blink timer-driven hang-detection indicator"`
 
-## 5. Debug Color Bar Waterfall `[Sonnet]` *(superseded by [TODO-05 — Visual POST Display](TODO-05-visual-post-display.md))*
-
-Opt-in proportional debug overlay: a bar across the top of the screen where each boot stage's width reflects its duration.
-
-**Files:** `src/kernel/main/boot_progress.c`, `include/kernel/boot_progress.h`
-
-- [x] Activate when `boot.conf` `debug=1`; gated by `g_boot_info.config.debug`
-- [x] 12-entry stage color table: PMM=blue, VMM=purple, HEAP/KLOG=light blue, VFS=green, REGISTRY=teal, DRIVERS=orange, NETWORK=cyan, SCHEDULER=red, DESKTOP=white, GDT/APIC=gray
-- [x] At `BOOT_STAGE_DESKTOP_READY`: walk `boot_stage_history[]`, render 4 px tall proportional bar across full screen width via direct `fb_put_pixel()` + `fb_swap_rect()`
-- [ ] Bar fade-out (3s persist + opacity steps) — deferred (adds timer callback complexity for debug-only feature)
-- [ ] Regression overlay (RLE save/load) — deferred (needs VFS write during compositor transition)
-- [x] Commit: `"kernel: opt-in boot diagnostic color bar waterfall"`
-
-## 6. Panic Forensic Evidence *(deferred — needs stable boot first; crash evidence is useless if boot itself crashes)*
+## 5. Panic Forensic Evidence *(deferred — needs stable boot first; crash evidence is useless if boot itself crashes)*
 Capture a `panic_evidence` struct at fault time, survive across soft reboot via a dedicated PMM page, and restore on next boot.
 
 **Files:** `src/kernel/panic.c`, `include/kernel/panic.h`, `src/kernel/main/boot_hw.c`
@@ -133,7 +118,7 @@ Capture a `panic_evidence` struct at fault time, survive across soft reboot via 
 
 **Test checkpoint:** QEMU: force `kernel_panic("test")` → reboot → serial shows `[PANIC] Previous crash evidence found` → `C:\Impossible\System\CrashDumps\last-panic.txt` contains fault RIP + POST code. Bare metal: same flow, verify evidence survives warm reboot.
 
-## 7. Panic QR Code *(deferred — depends on §6)*
+## 6. Panic QR Code *(deferred — depends on §5)*
 Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD corner.
 
 **Files:** `src/kernel/qr_encode.c`, `include/kernel/qr_encode.h`, `src/kernel/panic.c`
@@ -144,7 +129,7 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 - [ ] Ensure `qr_encode.c` is freestanding: no libc, no floating point; uses only `kernel/types.h` and `kernel/libc/string.h`
 - [ ] Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
 
-## 8. System-Wide Multi-Instance Spinner *(deferred — desktop polish, single spinner works)*
+## 7. System-Wide Multi-Instance Spinner *(deferred — desktop polish, single spinner works)*
 Extend the existing single-instance `spinner.h` to support up to 8 simultaneous named spinner instances for use across the desktop.
 
 **Files:** `include/kernel/spinner.h`, `src/kernel/spinner.c`
@@ -162,7 +147,7 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 - [ ] Backward compatibility: existing `spinner_init/start/advance/stop` calls remain valid; they operate on `g_active_spinners[0]` (the boot splash slot)
 - [ ] Commit: `"kernel: multi-instance spinner_t pool for compositor-integrated loading indicators"`
 
-## 9. Runtime Vital Signs Strip *(deferred — developer tool, needs scheduler stats first)*
+## 8. Runtime Vital Signs Strip *(deferred — developer tool, needs scheduler stats first)*
 An always-visible 20 px overlay strip at the bottom of the desktop showing live system metrics for developers.
 
 **Files:** `src/desktop/vital_signs.c`, `include/desktop/vital_signs.h`
@@ -183,12 +168,11 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 |----|-------------------------|------------------------------|--------------------------------|-----------------------------------|
 | 💎 | Boot POST codes         | ✅ Firmware + boot manager  | ✅ BIOS POST only              | ✅ §1+§3 — kernel POST + I/O 80  |
 | 💎 | Named-stage progress    | ✅ ETW boot trace (binary)  | ✅ dmesg + systemd-analyze     | ✅ §2 — serial `[+NNNms] STAGE`  |
-| 💎 | Panic forensics         | ✅ WER minidump + EventLog  | ✅ kdump / pstore              | ⬜ §6 — PMM page + last-panic    |
-| 💎 | Multi-instance spinner  | ✅ ProgressRing (WinUI 3)   | ✅ GTK/Qt spinners             | ⬜ §8 — spinner_create pool      |
-| ⭐ | Debug bar waterfall     | ❌ Not in production        | ❌ ftrace only (no visual)     | ⬜ §5 — superseded by TODO-05    |
-| ⭐ | Panic QR code           | ❌ Text URL only            | ❌ Not implemented             | ⬜ §7 — phone-scannable link     |
+| 💎 | Panic forensics         | ✅ WER minidump + EventLog  | ✅ kdump / pstore              | ⬜ §5 — PMM page + last-panic    |
+| 💎 | Multi-instance spinner  | ✅ ProgressRing (WinUI 3)   | ✅ GTK/Qt spinners             | ⬜ §7 — spinner_create pool      |
+| ⭐ | Panic QR code           | ❌ Text URL only            | ❌ Not implemented             | ⬜ §6 — phone-scannable link     |
 | ⭐ | Alive blink indicator   | ❌ No visible hang signal   | ❌ Not in production           | ⚠️ §4 — removed during BM debug  |
-| ⭐ | Vital signs overlay     | ⚠️ Task Manager (separate)  | ⚠️ htop/conky (third-party)    | ⬜ §9 — always-visible strip     |
+| ⭐ | Vital signs overlay     | ⚠️ Task Manager (separate)  | ⚠️ htop/conky (third-party)    | ⬜ §8 — always-visible strip     |
 
 > **After parity items:** POST codes, named-stage logging, panic evidence, and spinners match Windows/Linux. QR panic code and vital-signs strip go beyond both.
 
@@ -215,10 +199,9 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
 - [ ] Serial log shows `[+Nms] BOOT_PMM: Physical memory manager ready` style entries for at least 8 stages
 - [ ] POST code visible in top-right corner during QEMU boot; disappears when desktop loads
-- [ ] `DebugBar=1` in `boot.conf` → proportional colored bar appears at top of screen after desktop ready, fades after 3 s
 - [ ] `AliveBlink=1` in `boot.conf` → 4×4 green square blinks in top-left corner during boot and desktop
 - [ ] Force `kernel_panic("test")` from shell → BSOD shows QR code in bottom-right corner
 - [ ] Force panic twice → second boot finds `last-panic.txt` in `C:\Impossible\System\CrashDumps\`
 - [ ] `VitalSigns=1` → bottom strip shows CPU/RAM/IRQ/uptime/FPS, updates every 500 ms
 - [ ] `spinner_create(SPINNER_MEDIUM, 0x0078D4)` in test harness → spinner renders in compositor frame
-- [ ] Commit: `"kernel: boot-diagnostics verified — POST codes, waterfall, panic forensics, QR code, vital signs, multi-instance spinner"`
+- [ ] Commit: `"kernel: boot-diagnostics verified — POST codes, panic forensics, QR code, vital signs, multi-instance spinner"`

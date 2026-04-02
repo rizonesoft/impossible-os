@@ -32,6 +32,7 @@
 - `src/kernel/mm/vmm.c` — page table save for S3 wakeup identity map
 - → XREF: `TODO-06-irql-model-dpcs.md §3` — DPCs and IRQL transitions must be quiesced before entering any sleep state; `KeLowerIrql(PASSIVE_LEVEL)` required on resume
 - → XREF: `TODO-07-time-filetime-management.md §3` — TSC must be recalibrated after S3/S0ix wake (clock drift); `acpi_pm_timer_read()` used as reference; §3 = Invariant TSC Detection and Per-CPU Offset Calibration
+- → XREF: `TODO-07-time-filetime-management.md §14` — S3/S4 resume path must call `ke_suspend_bias_update()` to adjust `InterruptTimeBias` by the sleep duration; §14 = Suspend/Hibernate Time Bias Tracking
 - → XREF: `TODO-01-kernel-init-sequencing.md §3` — S4 resume check runs early in Phase 1; must distinguish cold boot from hibernate resume via hibernation signature
 - → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §4` — driver model HAL vtables required for USB xHCI to register power callbacks; xHCI D3cold→D0 handled via callback registered in §9
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` — IXFS WAL journal (`ixfs_journal_begin`/`commit`/`abort`) must be verified (§1 Subsystem Verification) before S4 journal-flush dependency is safe; storage driver must reach D0 before journal replay on resume
@@ -170,8 +171,9 @@
   3. Restore BSP general-purpose + SSE registers
   4. Wake AP CPUs: write `INIT`→`SIPI`→`SIPI` IPI sequence; each AP restores its own saved state and un-parks from the spin barrier
   5. Recalibrate TSC (→ XREF `TODO-07-time-filetime-management.md §3`) — PM timer used as reference
-  6. Call `pm_notify_resume()` (§9) — drivers transition back D3→D0
-  7. Unfreeze scheduler; resume from the instruction after `acpi_enter_sleep_state(3)`
+  6. Compute sleep duration from RTC/UEFI time delta; call `ke_suspend_bias_update()` (→ XREF `TODO-07-time-filetime-management.md §14`)
+  7. Call `pm_notify_resume()` (§9) — drivers transition back D3→D0
+  8. Unfreeze scheduler; resume from the instruction after `acpi_enter_sleep_state(3)`
 
 ### 3.3 Wakeup sources
 

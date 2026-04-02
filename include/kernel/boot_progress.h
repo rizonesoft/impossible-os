@@ -5,7 +5,7 @@
  * a 32-entry history ring buffer, elapsed-ms timing, and splash progress
  * forwarding. Used by panic forensics and boot timing reports.
  *
- * XREF: 01-boot-platform/TODO-02-boot-diagnostics.md §2
+ * XREF: 01-boot-platform/TODO-07-boot-diagnostics.md §2
  * ============================================================================ */
 
 #pragma once

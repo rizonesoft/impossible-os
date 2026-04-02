@@ -1,6 +1,6 @@
 # TODO-01 — UEFI Bootloader Hardening & Secure Boot
 
-> **Goal:** The basic UEFI bootloader and boot splash are done. This TODO hardens the boot path with Secure Boot shim chain-loading, UEFI runtime service preservation, UEFI variable access, GOP resolution auto-detection, SMBIOS hardware info, A/B dual-slot booting, multi-OS boot menu, UEFI capsule firmware updates, and W^X memory enforcement — the complete production-quality boot experience expected of a shipped OS.
+> **Goal:** The basic UEFI bootloader and boot splash are done. This TODO hardens the boot path with Secure Boot shim chain-loading, UEFI runtime service preservation, UEFI variable access, GOP resolution auto-detection, SMBIOS hardware info, multi-OS boot menu, UEFI capsule firmware updates, and W^X memory enforcement — the complete production-quality boot experience expected of a shipped OS.
 
 > [!IMPORTANT]
 > **Secure Boot strategy:** Use the rhboot/shim chain-loading approach. MOK key pair (`MOK.key`) is generated locally and MUST NEVER be committed to the repo. Long-term goal: submit shim to Microsoft shim-review to eliminate the MOK enrollment popup for end users.
@@ -13,13 +13,13 @@
 - [`include/kernel/smbios.h`](../../include/kernel/smbios.h)
 - [`include/kernel/boot_splash.h`](../../include/kernel/boot_splash.h)
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
-- → XREF: `TODO-02-boot-diagnostics.md` — `boot_progress()` API consumed by §7
-- → XREF: `TODO-03-interrupt-timer-arch.md` — timer calibration affects boot profiling in §7
+- → XREF: `TODO-07-boot-diagnostics.md` — `boot_progress()` API consumed by §7
+- → XREF: `TODO-06-interrupt-timer-arch.md` — timer calibration affects boot profiling in §7
 - → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — `GetFirmwareEnvironmentVariableA/W` Win32 wiring (no dedicated section yet; add to TODO-05 when Win32 firmware-variable API surface is scoped)
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` — `UEFI GetTime` → FILETIME seeding (wall clock init)
 - → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md` — `srm_verify_kernel_signature()` (called by §5 here) has no section in TODO-11 yet; needs to be added there (suggest §10 "Win32 Security API Wrappers" — WinVerifyTrust/Authenticode path, or a new §12 for Code Integrity)
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\HARDWARE\*` and `HKLM\SYSTEM\SecureBoot` storage
-- → XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md §8` — kernel multi-head `display_register_head()` consumes `boot_info.gop_handles[]` populated by §13 here
+- → XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md §8` — kernel multi-head `display_register_head()` consumes `boot_info.gop_handles[]` populated by §12 here
 
 ## Outcome
 
@@ -29,7 +29,6 @@
 - `HKLM\HARDWARE\BIOS\*`, `HKLM\HARDWARE\CPU\*`, `HKLM\HARDWARE\Memory\*` populated from SMBIOS at first boot.
 - `boot_info.secure_boot_enabled` set correctly; padlock shown in system tray when Secure Boot is active; kernel verifies `kernel.exe` signature when enforced.
 - `BOOTX64.EFI` signed with MOK key; `.gitignore` entry for `MOK.key`.
-- A/B slot flip works on kernel update; auto-recovery rolls back after 3 failed boots.
 - Boot menu appears on dual-boot hardware; Impossible OS boots by default after 3 s.
 - UEFI capsule delivery path tested end-to-end in QEMU.
 - `[Boot] W^X enforced on N UEFI memory regions` appears in serial log.
@@ -44,13 +43,12 @@
 | 💎  |   4   | SMBIOS table parsing               | §1              |  [x]   |
 | 💎  |   5   | Secure Boot state detection        | §2              |  [x]   |
 | 💎  |   6   | Secure Boot shim chain-loading     | §5              |  [x]   |
-| 💎  |   7   | Boot UX polish                     | §3, §5, T02 §2  |  [x]   |
-| 💎  |   8   | A/B dual-slot boot                 | §2              | →T16   |
-| ⭐  |   9   | Multi-OS detection & boot menu     | §1              | defer  |
-| 💎  |  10   | UEFI capsule update & ESRT         | §2              | defer  |
-| 💎  |  11   | UEFI memory attributes (W^X)       | §1              | defer  |
-| ⭐  |  12   | Serial log standardization         | —               |  [x]   |
-| 💎  |  13   | Multi-GPU GOP enumeration          | §3              | defer  |
+| 💎  |   7   | Boot UX polish                     | §3, §5, T07 §2  |  [x]   |
+| ⭐  |   8   | Multi-OS detection & boot menu     | §1              | defer  |
+| 💎  |   9   | UEFI capsule update & ESRT         | §2              | defer  |
+| 💎  |  10   | UEFI memory attributes (W^X)       | §1              | defer  |
+| ⭐  |  11   | Serial log standardization         | —               |  [x]   |
+| 💎  |  12   | Multi-GPU GOP enumeration          | §3              | defer  |
 
 > 💎 = parity — Windows Boot Manager and GRUB implement these features; Impossible OS must match them.
 > ⭐ = exclusive — the in-bootloader multi-OS detection with graphical countdown timer is not present in competitors.
@@ -80,7 +78,7 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation, 
 - [x] Define common GUIDs: `EFI_GLOBAL_VARIABLE_GUID_INIT`, `EFI_IMAGE_SECURITY_DATABASE_GUID_INIT`, `IMPOSSIBLE_OS_VENDOR_GUID_INIT` (`{6F35D3A4-C0E6-4A82-B5D8-7C9D2E4F8A13}`)
 - [x] Implement `uefi_var_get_u32(name, guid, out)` / `uefi_var_set_u32(name, guid, val)` convenience wrappers
 - [ ] Wire Win32 API: `GetFirmwareEnvironmentVariableA/W` → UTF-8/UTF-16 name conversion → `uefi_var_get`; `SetFirmwareEnvironmentVariableA/W` → `uefi_var_set` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md` — section to be scoped when Win32 firmware-variable surface is defined)
-- [x] Add `uefi_var_enumerate(callback)` for iterating all variables (used by §10 ESRT); backed by new `uefi_get_next_variable_name()` primitive added to `uefi_runtime.c`
+- [x] Add `uefi_var_enumerate(callback)` for iterating all variables (used by §9 ESRT); backed by new `uefi_get_next_variable_name()` primitive added to `uefi_runtime.c`
 - [x] Commit: `"kernel: UEFI variable get/set wrappers + Win32 GetFirmwareEnvironmentVariable wiring"`
 
 ## 3. GOP Resolution Auto-Detection
@@ -148,33 +146,12 @@ Fade-in transition, structured boot profiling, and a pre-framebuffer error recov
 
 - [x] Bootloader fade-in: removed — a brief accent color pulse between ExitBootServices and kernel jump added visual noise without benefit; the DRAW_BAR strips in the bootloader itself are sufficient for pre-kernel diagnostics; the screen stays black until boot_splash_init()
 - [x] Boot profiling: `boot_progress()` now called at every major event (SERIAL, BOOT_INFO, PMM, VMM, HEAP, CPUID_SIMD, STORAGE_DRV, GDT, IDT, ACPI, LAPIC_IOAPIC, TIMER, RTC, KEYBOARD, FB, VFS, SMP, REGISTRY, DESKTOP_READY); `boot_timing_write_report()` added to `boot_timing.c` — writes human-readable `+NNNms [PHASEx] 0xNN step` lines to `C:\Impossible\System\Logs\boot-profile.log` via VFS; called at desktop-ready in `boot_desktop.c`
-- [x] JSON boot-timeline export and `boot-timeline` shell command are owned by → XREF: `TODO-03-interrupt-timer-arch.md §9`; this section's `boot_timing_record_step()` calls produce the data that §9 exports and visualizes.
+- [x] JSON boot-timeline export and `boot-timeline` shell command are owned by → XREF: `TODO-06-interrupt-timer-arch.md §9`; this section's `boot_timing_record_step()` calls produce the data that §9 exports and visualizes.
 - [x] Pre-framebuffer error recovery screen: `boot_halt(reason)` created in `src/kernel/main/boot_halt.c` with inline 8×8 bitmap font (full printable ASCII 0x20–0x7F); draws solid dark-red banner (top 40 px), white title + reason text, recovery URL; always prints to serial; halts with `hlt`; `include/kernel/boot_halt.h` exposes the symbol
 - [x] `boot_splash_status()` integration: `boot_progress()` in `boot_init.c` now calls `boot_splash_status(step)` after `boot_timing_record_step()`; splash shows live stage text below the spinner during every instrumented event
 - [x] Commit: `"boot: fade-in transition, boot-stage instrumentation, pre-framebuffer error recovery screen"`
 
-## 8. A/B Dual-Slot Boot *(SUPERSEDED by TODO-16)*
-
-> [!NOTE]
-> This section is fully superseded by `TODO-16-ab-boot-rollback.md` which implements proper dual-slot partitioning with GPT layout, UEFI NVRAM metadata, failure counting, and automatic rollback. The boot.conf-based approach below is obsoleted.
-
-**Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `src/shell/update-slot.c`
-
-- [ ] `boot.conf` keys: `BootSlot=A` (or `B`), `MaxBootAttempts=3`; bootloader reads these via FAT32 file open before loading kernel
-- [ ] Bootloader loads `\boot\kernel-A.exe` when `BootSlot=A`, `\boot\kernel-B.exe` when `BootSlot=B`; store active slot in `boot_info.boot_slot`
-- [ ] Bootloader increments `BootAttempts` counter in `boot.conf` (read-modify-write via UEFI SimpleFileSystem) on every boot attempt
-- [ ] Kernel success path: call `boot_slot_mark_good()` which resets `BootAttempts=0` in `boot.conf` via VFS after VFS is up; must be called from Phase 3 after `vfs_init()` succeeds
-- [ ] Auto-recovery: if `BootAttempts > MaxBootAttempts` at bootloader time → flip `BootSlot` (A↔B), reset `BootAttempts=0`, reboot; log `[Boot] Rollback: slot A failed 3× — switching to slot B`
-- [ ] `HKLM\SYSTEM\BootSlot` = `"A"` or `"B"` (written by kernel after slot confirmed good)
-- [ ] `update-slot` shell command: shows active slot, pending slot, attempt count; `update-slot --apply <kernel_path>` writes new kernel to inactive slot + flips `BootSlot`
-- [ ] QEMU test: build two kernel images, set `BootSlot=A MaxBootAttempts=1`; corrupt kernel-A.exe; verify bootloader switches to kernel-B.exe on second boot
-- [ ] Commit: `"boot: A/B dual-slot boot with automatic rollback on repeated failure"`
-
-**Regression risk:** Modifies bootloader kernel load path — a bug here prevents ALL booting. Rollback: revert to single-slot `kernel.exe` load path (current behavior).
-
-**Test checkpoint:** QEMU: corrupt kernel-A → reboot → serial shows `[Boot] Rollback: slot A failed` → kernel-B boots. Bare metal: `BootSlot=A` → normal boot → `HKLM\SYSTEM\BootSlot` = `"A"`. Verify `BootAttempts` resets to 0 after successful boot.
-
-## 9. Multi-OS Detection & Boot Menu *(deferred — dual-boot UX, not needed during development)*
+## 8. Multi-OS Detection & Boot Menu *(deferred — dual-boot UX, not needed during development)*
 Detect other OS partitions from GPT and show a countdown boot menu when the user has multiple OSes installed.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
@@ -189,7 +166,7 @@ Detect other OS partitions from GPT and show a countdown boot menu when the user
 
 **Test checkpoint:** QEMU with two GPT partitions (Impossible OS + dummy Linux partition GUID): boot menu appears with 2 entries, countdown from 3, auto-selects Impossible OS. Bare metal dual-boot laptop: detects Windows/Linux partitions, menu renders, chainload works.
 
-## 10. UEFI Capsule Update & ESRT *(deferred — firmware update infrastructure, not needed during development)*
+## 9. UEFI Capsule Update & ESRT *(deferred — firmware update infrastructure, not needed during development)*
 Parse the ESRT firmware resource table and implement the UEFI capsule delivery path for firmware updates.
 
 **Files:** `src/kernel/uefi_capsule.c`, `include/kernel/uefi_capsule.h`
@@ -203,7 +180,7 @@ Parse the ESRT firmware resource table and implement the UEFI capsule delivery p
 
 **Test checkpoint:** QEMU: serial shows `[ESRT] N firmware entries found`. Registry `HKLM\HARDWARE\Firmware\{GUID}\FwVersion` populated. Bare metal: ESRT parsed from real firmware, version logged.
 
-## 11. UEFI Memory Attributes (W^X) *(deferred — needs vmm_set_nx/vmm_set_ro which don't exist yet)*
+## 10. UEFI Memory Attributes (W^X) *(deferred — needs vmm_set_nx/vmm_set_ro which don't exist yet)*
 Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEMORY_ATTRIBUTES_TABLE`.
 
 **Files:** `src/kernel/uefi_runtime.c`, `src/kernel/mm/vmm.c`
@@ -222,13 +199,13 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 
 ---
 
-## 12. Serial Log Standardization & Race Fix ✅
+## 11. Serial Log Standardization & Race Fix ✅
 
 **Goal:** Replace inconsistent ad-hoc serial output (`[Boot]`, `BOOT:`, `[!!]`, `[OK]`, bare `printk`) with a single unified log format and eliminate serial line mangling caused by concurrent IRQ handlers.
 
 **Files:** `src/kernel/klog.c`, `src/kernel/drivers/serial.c`, `include/kernel/klog.h`, and all callers migrated from `printk`
 
-### 12.1 Unified log format *(completed)* ✅
+### 11.1 Unified log format *(completed)* ✅
 
 Standard line format used everywhere:
 
@@ -248,7 +225,7 @@ Standard line format used everywhere:
 - [x] Deprecated `include/kernel/log.h` + `src/kernel/log.c` deleted
 - [x] Commit: `"kernel: Serial Output Phase 1 — unified klog format, remove stale printk includes"`
 
-### 12.2 Serial line-mangling race fix *(completed)* ✅
+### 11.2 Serial line-mangling race fix *(completed)* ✅
 
 **Root cause:** `klog` emitted a log line as ~20+ individual `serial_putchar` calls (one per character of timestamp, level, subsystem, message). The per-character spinlock released between every byte, allowing a timer IRQ handler's `klog` call to inject a full line mid-message.
 
@@ -264,7 +241,7 @@ Standard line format used everywhere:
 
 ---
 
-## 13. Multi-GPU GOP Handle Enumeration *(deferred — single-GPU works, multi-GPU renders to wrong display but won't crash)*
+## 12. Multi-GPU GOP Handle Enumeration *(deferred — single-GPU works, multi-GPU renders to wrong display but won't crash)*
 The current `init_gop()` uses `LocateProtocol()` which returns a single GOP handle — whichever the firmware happens to expose first. On machines with iGPU + dGPU, a Thunderbolt dock, or any secondary adapter, this may select the wrong display. Replace with `LocateHandleBuffer()` to enumerate all GOP handles, select the active display using the UEFI `ConOut` console path as a tiebreaker, record all framebuffers in `boot_info` so the kernel's future multi-head support can consume them, and leave the existing `boot_info.fb` (primary framebuffer) untouched so `framebuffer_init()` needs no changes.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
@@ -307,12 +284,11 @@ The current `init_gop()` uses `LocateProtocol()` which returns a single GOP hand
 | 💎 | UEFI variable access       | ✅ GetFirmwareEnvVar Win32        | ✅ efivarfs + efivar               | ✅ §2 — get/set/enumerate              |
 | 💎 | GOP resolution             | ✅ Boot manager negotiates        | ✅ GRUB gfxmode + EFIFB            | ✅ §3 — auto + HiDPI + boot.conf       |
 | 💎 | SMBIOS inventory           | ✅ WMI Win32_BIOS                 | ✅ /sys/firmware/dmi               | ✅ §4 — Type 0/1/4/17 → Registry       |
-| 💎 | A/B dual-slot update       | ✅ WU dual-partition              | ✅ grub-reboot + snapshots         | ⬜ §8                                  |
-| 💎 | UEFI capsule update        | ✅ WU UEFI capsules               | ✅ fwupd                           | ⬜ §10                                 |
-| 💎 | UEFI memory W^X            | ✅ Since Win10 1607               | ✅ EFI_MEMORY_ATTRIBUTES           | ⬜ §11                                 |
-| ⭐ | In-bootloader OS menu      | ❌ Separate BCD/bootmgr           | ❌ GRUB is separate                | ⬜ §9 — integrated countdown           |
+| 💎 | UEFI capsule update        | ✅ WU UEFI capsules               | ✅ fwupd                           | ⬜ §9                                  |
+| 💎 | UEFI memory W^X            | ✅ Since Win10 1607               | ✅ EFI_MEMORY_ATTRIBUTES           | ⬜ §10                                 |
+| ⭐ | In-bootloader OS menu      | ❌ Separate BCD/bootmgr           | ❌ GRUB is separate                | ⬜ §8 — integrated countdown           |
 | ⭐ | Boot profile timeline      | ❌ ETW (binary, WPA)              | ❌ systemd-analyze (post-boot)     | ✅ §7 — boot-profile.log + JSON        |
-| 💎 | Multi-GPU GOP              | ✅ LocateHandleBuffer             | ✅ grub handle buffer              | ⬜ §13 — ConOut primary select         |
+| 💎 | Multi-GPU GOP              | ✅ LocateHandleBuffer             | ✅ grub handle buffer              | ⬜ §12 — ConOut primary select         |
 
 > **After parity items:** Impossible OS will fully match Windows and Linux on Secure Boot, UEFI runtime, SMBIOS, capsule updates, and W^X enforcement. The exclusive items push beyond: the integrated countdown boot menu eliminates the need for a separate bootloader for dual-boot, the accent fade-in gives a branded first impression, and the structured JSON boot timeline makes performance regression testing trivial compared to WPA or systemd-analyze.
 
@@ -341,7 +317,6 @@ The current `init_gop()` uses `LocateProtocol()` which returns a single GOP hand
 - [ ] GOP negotiation log shows `[Boot] GOP: {W}x{H} 32bpp (mode N)` matching QEMU display resolution
 - [ ] SMBIOS data appears in Registry under `HKLM\HARDWARE\BIOS\*` and `HKLM\HARDWARE\System\*`
 - [ ] `BOOTX64.EFI` signed build present when `keys/MOK.key` + `keys/MOK.crt` exist; skipped silently when absent
-- [ ] A/B rollback: corrupt kernel-A.exe in QEMU disk image; after `MaxBootAttempts+1` boots, kernel-B.exe boots successfully
 - [ ] Boot menu appears when two GPT partitions are present; timer counts down; default boots without input
 - [ ] `[UEFI] W^X enforced on N UEFI memory regions` in serial log (N > 0 on QEMU with OVMF)
-- [ ] Commit: `"boot: uefi-hardening verified — runtime services, Secure Boot, GOP, SMBIOS, A/B slots, boot menu"`
+- [ ] Commit: `"boot: uefi-hardening verified — runtime services, Secure Boot, GOP, SMBIOS, boot menu"`

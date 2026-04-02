@@ -20,7 +20,8 @@
 - → XREF: `04-drivers-hardware/INDEX.md` — all driver `_init()` functions must accept and return `boot_result_t`
 - → XREF: `00-infrastructure/TODO-02-developer-tooling-stack.md` — headless QEMU serial log is the verification path
 - → XREF: `TODO-06-irql-model-dpcs.md §4` — DPC subsystem init belongs in Phase 1, after timer; §4 is the DPC Object Type and Per-CPU Queue init
-- → XREF: `01-boot-platform/TODO-18-boot-watchdog.md` — watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
+- → XREF: `TODO-07-time-filetime-management.md §5` — `wall_clock_init()` belongs in Phase 2, after UEFI runtime services; NTP wall clock adjustment (§17) belongs in Phase 3
+- → XREF: `01-boot-platform/TODO-16-boot-watchdog.md` — watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
 - → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §4` — TPM2 `PCR_Extend` for measured boot; extends the PCR event log parsed in Phase 0
 
 ## Outcome

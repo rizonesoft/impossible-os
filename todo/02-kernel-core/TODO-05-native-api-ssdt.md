@@ -16,17 +16,18 @@
 - → XREF: `TODO-03-object-manager.md` — Ob-routed NtXxx functions (NtClose, NtDuplicateObject, NtQueryObject, NtOpenDirectoryObject, NtQueryDirectoryObject already implemented); SSDT entries for file/process/sync depend on TODO-03 §3–§10
 - → XREF: `TODO-04-peb-teb-user-abi.md §3–§4` — `swapgs` in syscall entry/exit uses the TEB GS contract; KERNEL_GS_BASE per-task
 - → XREF: `TODO-01-kernel-init-sequencing.md §3` — syscall fast path init belongs in Phase 1 (after GDT/IDT, before scheduler)
-- → XREF: `TODO-07-time-filetime-management.md §7` — NtQuerySystemTime, NtSetSystemTime, NtQueryPerformanceCounter, NtQueryTimerResolution; service numbers reserved in §4
-- → XREF: `TODO-10-exception-dispatch-seh.md §4` — NtRaiseException and NtContinue; SSDT indices reserved in §4
+- → XREF: `TODO-07-time-filetime-management.md §8–§9` — NtSetTimerResolution/NtQueryTimerResolution (§8), NtQuerySystemTime/NtSetSystemTime/NtQueryPerformanceCounter (§9); service numbers reserved in §4
+- → XREF: `TODO-10-exception-dispatch-seh.md §5` — NtRaiseException and NtContinue; SSDT indices reserved in §4
 - → XREF: `TODO-11-security-reference-monitor.md §5,§12` — §5 SeAccessCheck bypasses for kernel-mode (ZwXxx) callers; §12 wires NtAccessCheck, NtOpenProcessToken, etc. to SSDT
 - → XREF: `TODO-12-alpc-message-ports.md §8` — ALPC port syscalls (NtCreatePort, NtAlpcSendWaitReceivePort, etc.); SSDT indices reserved in §4
 - → XREF: `TODO-13-registry-completion.md §4` — Registry syscalls (NtCreateKey, NtOpenKey, NtSetValueKey, etc.); SSDT indices reserved in §4
 - → XREF: `TODO-15-power-management.md §12` — NtSetSystemPowerState, NtInitiatePowerAction; SSDT indices reserved in §4
 - → XREF: `TODO-18-kernel-debugger-kd-protocol.md §13` — NtDebugActiveProcess, NtWaitForDebugEvent; SSDT indices reserved in §4
-- → XREF: `TODO-10-exception-dispatch-seh.md §10` — ProbeForRead/ProbeForWrite safe probing used by §12 and all NtXxx handlers
+- → XREF: `TODO-10-exception-dispatch-seh.md §13` — ProbeForRead/ProbeForWrite safe probing used by §12 and all NtXxx handlers
 - → XREF: `TODO-17-kernel-security-hardening.md` — SSDT integrity protection (§26) complements KASLR and SMEP/SMAP
 - → XREF: `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §8` — Win32k user-mode callback dispatch via §25 KeUserModeCallback; shadow SSDT stub registered in §4
 - → XREF: `TODO-06-irql-model-dpcs.md §11,§12` — KAPC object type and APC delivery mechanism; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume KeInitializeApc/KeInsertQueueApc
+- → XREF: `TODO-09-process-model-extensions.md §4,§5,§8,§10,§11,§13` — §4 priority class, §5 scheduling policy, §8 accounting fields, §10 CPU affinity, §11 mitigation policy all flow through `NtSetInformationProcess`/`NtQueryInformationProcess` (§10 of this TODO); §13 wires Job Object SSDT entries 0x0160–0x0167; §12 pledge check integrates into the SSDT dispatcher alongside §24 syscall filter
 
 ## Outcome
 
@@ -62,9 +63,9 @@
 | 💎  |  15   | Token and access control syscalls                              | §5, TODO-11 §4  |  [ ]   |
 | 💎  |  16   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4  |  [ ]   |
 | 💎  |  17   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7  |  [ ]   |
-| 💎  |  18   | Timer control syscalls                                         | §5, TODO-07 §7  |  [ ]   |
+| 💎  |  18   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [ ]   |
 | 💎  |  19   | ALPC / LPC port syscalls                                       | §5, TODO-12 §8  |  [ ]   |
-| 💎  |  20   | Exception and debug syscalls                                   | §5, TODO-10 §4  |  [ ]   |
+| 💎  |  20   | Exception and debug syscalls                                   | §5, TODO-10 §5  |  [ ]   |
 | 💎  |  21   | Power and system control                                       | §5, TODO-15 §12 |  [ ]   |
 | 💎  |  22   | Atom, locale, and miscellaneous                                | §5              |  [ ]   |
 | ⭐  |  23   | Syscall audit and tracing hook                                 | §4              |  [ ]   |
@@ -338,11 +339,11 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x007C | NtReleaseSemaphore               | §8  | T05                      | [ ]  |
 | 0x007D | NtQuerySemaphore                 | §8  | T05                      | [ ]  |
 | 0x007E | NtCreateTimer                    | §18 | T05 (ob_timer exists)    | [ ]  |
-| 0x007F | NtOpenTimer                      | §18 | T07 §7                   | [ ]  |
-| 0x0080 | NtSetTimer                       | §18 | T07 §7                   | [ ]  |
-| 0x0081 | NtCancelTimer                    | §18 | T07 §7                   | [ ]  |
-| 0x0082 | NtQueryTimer                     | §18 | T07 §7                   | [ ]  |
-| 0x0083 | NtSetTimerEx                     | §18 | T07 §7                   | [ ]  |
+| 0x007F | NtOpenTimer                      | §18 | T05 §18                  | [ ]  |
+| 0x0080 | NtSetTimer                       | §18 | T05 §18                  | [ ]  |
+| 0x0081 | NtCancelTimer                    | §18 | T05 §18                  | [ ]  |
+| 0x0082 | NtQueryTimer                     | §18 | T05 §18                  | [ ]  |
+| 0x0083 | NtSetTimerEx                     | §18 | T05 §18                  | [ ]  |
 | 0x0084 | NtCreateKeyedEvent               | §8  | T07-mem §4 (futex)       | [ ]  |
 | 0x0085 | NtOpenKeyedEvent                 | §8  | T07-mem §4               | [ ]  |
 | 0x0086 | NtWaitForKeyedEvent              | §8  | T07-mem §4               | [ ]  |
@@ -436,15 +437,15 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x00E1 | NtDeleteAtom                         | §22 | T05                    | [ ]  |
 | 0x00E2 | NtQueryInformationAtom               | §22 | T05                    | [ ]  |
 
-**0x00F0–0x00FF: Time and Timer (→ XREF TODO-07 §7)**
+**0x00F0–0x00FF: Time and Timer (→ XREF TODO-07 §8,§9)**
 
 | Index  | Function                         | §   | Owner                | Done |
 |--------|----------------------------------|-----|----------------------|------|
-| 0x00F0 | NtQuerySystemTime                | §18 | T07 §7               | [ ]  |
-| 0x00F1 | NtSetSystemTime                  | §18 | T07 §7               | [ ]  |
-| 0x00F2 | NtQueryPerformanceCounter        | §18 | T07 §7               | [ ]  |
-| 0x00F3 | NtQueryTimerResolution           | §18 | T07 §7               | [ ]  |
-| 0x00F4 | NtSetTimerResolution             | §18 | T07 §7               | [ ]  |
+| 0x00F0 | NtQuerySystemTime                | §18 | T07 §9               | [ ]  |
+| 0x00F1 | NtSetSystemTime                  | §18 | T07 §9               | [ ]  |
+| 0x00F2 | NtQueryPerformanceCounter        | §18 | T07 §9               | [ ]  |
+| 0x00F3 | NtQueryTimerResolution           | §18 | T07 §8               | [ ]  |
+| 0x00F4 | NtSetTimerResolution             | §18 | T07 §8               | [ ]  |
 
 **0x0100–0x011F: ALPC and LPC Ports (→ XREF TODO-12 §8)**
 
@@ -493,7 +494,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0124 | NtOpenSymbolicLinkObject         | §16 | T05                      | [ ]  |
 | 0x0125 | NtQuerySymbolicLinkObject        | §16 | T05                      | [ ]  |
 
-**0x0130–0x013F: Debug and Exception (→ XREF TODO-10 §4, TODO-18)**
+**0x0130–0x013F: Debug and Exception (→ XREF TODO-10 §5, TODO-18)**
 
 | Index  | Function                         | §   | Owner                    | Done |
 |--------|----------------------------------|-----|--------------------------|------|
@@ -529,14 +530,14 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                    | Done |
 |--------|----------------------------------|-----|--------------------------|------|
-| 0x0160 | NtCreateJobObject                | §7  | T09 §6                   | [ ]  |
-| 0x0161 | NtOpenJobObject                  | §7  | T09 §6                   | [ ]  |
-| 0x0162 | NtAssignProcessToJobObject       | §7  | T09 §6                   | [ ]  |
-| 0x0163 | NtTerminateJobObject             | §7  | T09 §6                   | [ ]  |
-| 0x0164 | NtQueryInformationJobObject      | §7  | T09 §6                   | [ ]  |
-| 0x0165 | NtSetInformationJobObject        | §7  | T09 §6                   | [ ]  |
-| 0x0166 | NtIsProcessInJob                 | §7  | T09 §6                   | [ ]  |
-| 0x0167 | NtCreateJobSet                   | §7  | T09 §6                   | [ ]  |
+| 0x0160 | NtCreateJobObject                | §7  | T09 §13                  | [ ]  |
+| 0x0161 | NtOpenJobObject                  | §7  | T09 §13                  | [ ]  |
+| 0x0162 | NtAssignProcessToJobObject       | §7  | T09 §13                  | [ ]  |
+| 0x0163 | NtTerminateJobObject             | §7  | T09 §13                  | [ ]  |
+| 0x0164 | NtQueryInformationJobObject      | §7  | T09 §13                  | [ ]  |
+| 0x0165 | NtSetInformationJobObject        | §7  | T09 §13                  | [ ]  |
+| 0x0166 | NtIsProcessInJob                 | §7  | T09 §13                  | [ ]  |
+| 0x0167 | NtCreateJobSet                   | §7  | T09 §13                  | [ ]  |
 
 **0x0180–0x019F: Worker Factory (Thread Pool)**
 
@@ -741,8 +742,8 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0302 | NtQueryOpenSubKeysEx                                  | §14 | T13 §4           | [ ]  |
 | 0x0303 | NtMapCMFModule                                        | §22 | T05              | [ ]  |
 | 0x0304 | NtCancelSynchronousIoFile                             | §13 | T05              | [ ]  |
-| 0x0305 | NtSetTimer2                                           | §18 | T07 §7           | [ ]  |
-| 0x0306 | NtCancelTimer2                                        | §18 | T07 §7           | [ ]  |
+| 0x0305 | NtSetTimer2                                           | §18 | T05 §18          | [ ]  |
+| 0x0306 | NtCancelTimer2                                        | §18 | T05 §18          | [ ]  |
 | 0x0307 | NtCreateResourceManager                               | §22 | T13              | [ ]  |
 | 0x0308 | NtApphelpCacheControl                                 | §22 | T05              | [ ]  |
 | 0x0309 | NtRaiseStatus                                         | §22 | T05              | [ ]  |
@@ -812,14 +813,14 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0389 | NtCreateMutantEx                     | §8  | T05                  | [ ]  |
 | 0x038A | NtCreateEventEx                      | §8  | T05                  | [ ]  |
 | 0x038B | NtOpenKeyedEvent2                    | §8  | T07-mem §4           | [ ]  |
-| 0x038C | NtCreateTimerEx                      | §18 | T07 §7               | [ ]  |
-| 0x038D | NtQueryTimerEx                       | §18 | T07 §7               | [ ]  |
-| 0x038E | NtSetTimer2                          | §18 | T07 §7               | [ ]  |
-| 0x038F | NtCancelTimer2                       | §18 | T07 §7               | [ ]  |
+| 0x038C | NtCreateTimerEx                      | §18 | T05 §18              | [ ]  |
+| 0x038D | NtQueryTimerEx                       | §18 | T05 §18              | [ ]  |
+| 0x038E | NtSetTimer2                          | §18 | T05 §18              | [ ]  |
+| 0x038F | NtCancelTimer2                       | §18 | T05 §18              | [ ]  |
 | 0x0390 | NtOpenProcessEx                      | §7  | T09 §4               | [ ]  |
 | 0x0391 | NtOpenThreadEx                       | §7  | T09 §4               | [ ]  |
-| 0x0392 | NtQueryInformationJobObject          | §7  | T09 §6               | [ ]  |
-| 0x0393 | NtSetInformationJobObject            | §7  | T09 §6               | [ ]  |
+| 0x0392 | NtQueryInformationJobObject          | §7  | T09 §13              | [ ]  |
+| 0x0393 | NtSetInformationJobObject            | §7  | T09 §13              | [ ]  |
 | 0x0394 | NtQueryDirectoryObjectEx             | §16 | T05                  | [ ]  |
 | 0x0395 | NtQuerySymbolicLinkObjectEx          | §16 | T05                  | [ ]  |
 | 0x0396 | NtSetSecurityObjectEx                | §15 | T11                  | [ ]  |
@@ -853,7 +854,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x03CF | NtQueryKlogRingBuffer                | §10 | T05 (serial log)       | [ ]  |
 | 0x03D0 | NtSetKlogLevel                       | §10 | T05                    | [ ]  |
 | 0x03D1 | NtQueryCompositorStatistics          | §10 | T05 (desktop stats)    | [ ]  |
-| 0x03D2 | NtQueryTimerCalibration              | §18 | T07 §7                 | [ ]  |
+| 0x03D2 | NtQueryTimerCalibration              | §18 | T07 §8                 | [ ]  |
 | 0x03D3 | NtQueryAcpiTables                    | §10 | T05                    | [ ]  |
 | 0x03D4 | NtCreateHardLink                     | §13 | T05                    | [ ]  |
 | 0x03D5 | NtQueryHardLinks                     | §13 | T05                    | [ ]  |
@@ -1206,7 +1207,7 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
 ## 18. Timer Control Syscalls
 
 > [!NOTE]
-> Timer object type implemented in TODO-03 (`ob_timer.c`). Time source APIs (NtQuerySystemTime, etc.) implemented in TODO-07 §7. This section provides the full timer control surface and SSDT wiring.
+> Timer object type implemented in TODO-03 (`ob_timer.c`). Time source APIs (NtQuerySystemTime, etc.) implemented in TODO-07 §9; timer resolution APIs in TODO-07 §8. This section provides the full timer control surface and SSDT wiring.
 
 - [ ] `NtCreateTimer(TimerHandle, DesiredAccess, ObjectAttributes, TimerType)` → SSDT 0x007E:
   - `TimerType`: `NotificationTimer (0)` = manual-reset, `SynchronizationTimer (1)` = auto-reset
@@ -1217,11 +1218,11 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
 - [ ] `NtCancelTimer(TimerHandle, CurrentState)` → SSDT 0x0081
 - [ ] `NtQueryTimer(TimerHandle, TimerInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0082
 - [ ] `NtSetTimerEx(TimerHandle, TimerSetInformationClass, Buffer, Length)` → SSDT 0x0083
-- [ ] `NtQuerySystemTime(SystemTime)` → SSDT 0x00F0 (→ XREF TODO-07 §7)
-- [ ] `NtSetSystemTime(SystemTime, PreviousTime)` → SSDT 0x00F1 (→ XREF TODO-07 §7)
-- [ ] `NtQueryPerformanceCounter(PerformanceCounter, PerformanceFrequency)` → SSDT 0x00F2 (→ XREF TODO-07 §7)
-- [ ] `NtQueryTimerResolution(MaximumTime, MinimumTime, CurrentTime)` → SSDT 0x00F3 (→ XREF TODO-07 §7)
-- [ ] `NtSetTimerResolution(DesiredTime, SetResolution, ActualTime)` → SSDT 0x00F4
+- [ ] `NtQuerySystemTime(SystemTime)` → SSDT 0x00F0 (→ XREF TODO-07 §9)
+- [ ] `NtSetSystemTime(SystemTime, PreviousTime)` → SSDT 0x00F1 (→ XREF TODO-07 §9)
+- [ ] `NtQueryPerformanceCounter(PerformanceCounter, PerformanceFrequency)` → SSDT 0x00F2 (→ XREF TODO-07 §9)
+- [ ] `NtQueryTimerResolution(MaximumTime, MinimumTime, CurrentTime)` → SSDT 0x00F3 (→ XREF TODO-07 §8)
+- [ ] `NtSetTimerResolution(DesiredTime, SetResolution, ActualTime)` → SSDT 0x00F4 (→ XREF TODO-07 §8)
 - [ ] Commit: `"kernel: nt — timer control and time query syscalls"`
 
 **Test checkpoint:** `NtCreateTimer` + `NtSetTimer` with relative 100ms due time fires. `NtCancelTimer` cancels before fire returns `STATUS_SUCCESS`. `NtQueryPerformanceCounter` returns monotonically increasing value. `NtQueryTimerResolution` reports correct LAPIC timer resolution.
@@ -1270,11 +1271,11 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
 ## 20. Exception and Debug Syscalls
 
 > [!NOTE]
-> Exception dispatch implemented in TODO-10-exception-dispatch-seh.md §4. Debug infrastructure in TODO-18-kernel-debugger-kd-protocol.md. This section reserves SSDT indices and defines the NT-compatible signatures.
+> Exception dispatch implemented in TODO-10-exception-dispatch-seh.md §5. Debug infrastructure in TODO-18-kernel-debugger-kd-protocol.md. This section reserves SSDT indices and defines the NT-compatible signatures.
 
-- [ ] `NtRaiseException(ExceptionRecord, ContextRecord, FirstChance)` → SSDT 0x0130 (→ XREF TODO-10 §4):
+- [ ] `NtRaiseException(ExceptionRecord, ContextRecord, FirstChance)` → SSDT 0x0130 (→ XREF TODO-10 §5):
   - Delivers exception to the structured exception handler chain
-- [ ] `NtContinue(ContextRecord, RaiseAlert)` → SSDT 0x0131 (→ XREF TODO-10 §4):
+- [ ] `NtContinue(ContextRecord, RaiseAlert)` → SSDT 0x0131 (→ XREF TODO-10 §5):
   - Resume execution from exception with modified context
 - [ ] `NtCreateDebugObject(DebugObjectHandle, DesiredAccess, ObjectAttributes, Flags)` → SSDT 0x0135
 - [ ] `NtDebugActiveProcess(ProcessHandle, DebugObjectHandle)` → SSDT 0x0132:
@@ -1355,6 +1356,10 @@ Catch-all for global atom table, locale management, environment variables, and d
 **Test checkpoint:** Register pre-call audit hook; every syscall logs service number to ring buffer. Register post-call hook; verify NTSTATUS is captured. Pre-call hook returning `STATUS_ACCESS_DENIED` blocks the syscall. Unregister hook; verify zero overhead (no measurable latency increase).
 
 ## 24. Per-Process Syscall Filtering
+
+> [!NOTE]
+> → XREF: `TODO-09-process-model-extensions.md §12` — scope overlap: TODO-09 §12 adds pledge/unveil-style category-based restriction (`NtPledge`/`NtUnveil`). This section adds per-index bitmap filtering. Both run in the SSDT dispatcher; bitmap filter runs FIRST (per-index), then pledge category check. Both must pass for the syscall to proceed.
+
 Per-process syscall restrictions allow a process to lock down which system services its children (or itself) can invoke. Windows has `PROCESS_MITIGATION_SYSTEM_CALL_DISABLE_POLICY` (DisallowWin32kSystemCalls, DisallowFsctlSystemCalls) stored in EPROCESS MitigationFlags. Linux has seccomp-bpf with per-process BPF programs and constant-action bitmap caching. Impossible OS provides a first-class bitmap-based filter with optional BPF programs for argument inspection.
 
 - [ ] Define `SYSCALL_FILTER` struct in `include/kernel/nt/syscall_filter.h`:
@@ -1446,7 +1451,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC  | ⬜ §15 + TODO-11            |
 | 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace     | ⬜ §16                      |
 | 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | ⬜ §17 + TODO-03 §7         |
-| 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ⬜ §18 + TODO-07 §7         |
+| 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ⬜ §18 + TODO-07 §8,§9      |
 | 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | ⬜ §19 + TODO-12            |
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §20 + TODO-18            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | ⬜ §21 + TODO-15            |

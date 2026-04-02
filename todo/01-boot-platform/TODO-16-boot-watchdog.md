@@ -1,6 +1,6 @@
-# TODO-18 — Boot Watchdog & Hang Detection
+# TODO-16 — Boot Watchdog & Hang Detection
 
-> **Goal:** Detect and recover from boot hangs automatically. If any boot phase takes longer than its expected maximum, a hardware or software watchdog triggers a reboot. Combined with A/B rollback (TODO-16), this means a hung boot = automatic reboot = automatic rollback to working version. No infinite hang, no user intervention. Models: embedded systems watchdog best practices, systemd watchdog integration.
+> **Goal:** Detect and recover from boot hangs automatically. If any boot phase takes longer than its expected maximum, a hardware or software watchdog triggers a reboot. Combined with A/B rollback (TODO-14), this means a hung boot = automatic reboot = automatic rollback to working version. No infinite hang, no user intervention. Models: embedded systems watchdog best practices, systemd watchdog integration.
 
 > [!IMPORTANT]
 > **Current state:** No watchdog of any kind. If boot hangs (e.g., AHCI probe on absent hardware, xHCI takeover timeout, VFS mount of corrupt filesystem), the system stops forever. The only recovery is power cycling. With no boot failure counting, the same hang repeats on every reboot.
@@ -13,8 +13,8 @@
 - `src/kernel/main/boot_desktop.c` — Phase 3 boot (scheduler, desktop)
 - `src/kernel/drivers/lapic.c` — LAPIC timer (software watchdog source)
 - `include/kernel/boot_init.h` — boot phases and subsystem tracking
-- → XREF: `TODO-16-ab-boot-rollback.md §4` — failure counting + rollback on hang
-- → XREF: `TODO-12-bootloader-error-recovery.md §9` — boot failure screen
+- → XREF: `TODO-14-ab-boot-rollback.md §4` — failure counting + rollback on hang
+- → XREF: `TODO-02-bootloader-error-recovery.md §9` — boot failure screen
 
 ---
 
@@ -35,7 +35,7 @@
 | 💎  |   1   | Software watchdog via LAPIC NMI timer           | —          |  [ ]   |
 | 💎  |   2   | Per-phase timeout configuration                 | §1         |  [ ]   |
 | 💎  |   3   | Watchdog pet at each boot_progress() call       | §1, §2     |  [ ]   |
-| 💎  |   4   | Watchdog-triggered reboot with diagnostics      | §3, T16 §4 |  [ ]   |
+| 💎  |   4   | Watchdog-triggered reboot with diagnostics      | §3, T14 §4 |  [ ]   |
 | 💎  |   5   | ACPI TCO hardware watchdog (Intel platforms)     | —          |  [ ]   |
 | ⭐  |   6   | Watchdog status in VPD display                  | §1–§5      |  [ ]   |
 
@@ -97,8 +97,8 @@ When watchdog fires, produce useful diagnostics before rebooting.
 - [ ] NMI handler writes to serial: phase, last POST code, RIP, RSP, last 5 boot_progress entries
 - [ ] Set NVRAM flag: `watchdog_triggered = 1`, `watchdog_post = <last POST code>`
 - [ ] On next boot: bootloader reads NVRAM flag → `"[WARN] Previous boot hung at POST 0xNNNN"` on serial
-- [ ] Increment A/B try counter (→ XREF: TODO-16 §4) so 3 hangs → rollback
-- [ ] Boot failure screen (→ XREF: TODO-12 §9) shows hang location if available
+- [ ] Increment A/B try counter (→ XREF: TODO-14 §4) so 3 hangs → rollback
+- [ ] Boot failure screen (→ XREF: TODO-02 §9) shows hang location if available
 - [ ] Commit: `"boot: watchdog reboot with diagnostics — POST code, RIP, NVRAM flag"`
 
 **Test checkpoint:** Intentional hang → watchdog fires → reboot → serial shows previous hang location → A/B counter incremented.
@@ -139,7 +139,7 @@ Show watchdog countdown in the VPD display during boot.
 |----|----------------------------|-------------------------|----------------------------|---------------------------|
 | 💎 | Boot hang detection        | ✅ Boot watchdog        | ✅ systemd watchdog        | ⬜ §1–§3                  |
 | 💎 | Hardware watchdog          | ✅ ACPI WDT driver      | ✅ iTCO_wdt driver         | ⬜ §5                     |
-| 💎 | Hang → rollback            | ✅ Automatic Repair     | ⚠️ Manual intervention     | ⬜ §4 + T16               |
+| 💎 | Hang → rollback            | ✅ Automatic Repair     | ⚠️ Manual intervention     | ⬜ §4 + T14               |
 | ⭐ | Watchdog in boot display   | ❌ Hidden               | ❌ Hidden                  | ⬜ §6 🚀                  |
 
 ---

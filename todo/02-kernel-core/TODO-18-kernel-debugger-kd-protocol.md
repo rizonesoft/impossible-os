@@ -22,6 +22,7 @@
 - `include/kernel/idt.h` — `struct interrupt_frame` (full x64 register save)
 - `src/kernel/smp/smp.c` — `wrmsr`/`rdmsr`; per-CPU data (AP freeze in §4)
 - → XREF: `TODO-10-exception-dispatch-seh.md §1` — `EXCEPTION_RECORD` and `CONTEXT` types defined there; §5 of this TODO serialises them into `KD_STATE_CHANGE64`
+- → XREF: `TODO-10-exception-dispatch-seh.md §4` — `ki_dispatch_exception()` calls `KiDebugRoutine` for first/second-chance debugger notification; §4 of TODO-18 provides the `KiDebugRoutine` implementation that enters the KD command loop
 - → XREF: `TODO-16-crash-dump-generation.md §3` — `g_module_list` / `g_module_count` from the module registry fed into `DbgKdGetVersionApi` response (§10)
 - → XREF: `TODO-16-crash-dump-generation.md §2` — `CONTEXT` record layout must match exactly what §5 of this TODO sends to WinDbg over the wire
 - → XREF: `TODO-06-irql-model-dpcs.md §3` — IRQL must be at `HIGH_LEVEL` while the kernel is frozen in the debugger; DPC timer must not fire during the debug loop

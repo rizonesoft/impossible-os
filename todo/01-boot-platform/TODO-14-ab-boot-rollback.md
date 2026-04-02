@@ -1,4 +1,4 @@
-# TODO-16 — A/B Dual-Slot Boot & Automatic Rollback
+# TODO-14 — A/B Dual-Slot Boot & Automatic Rollback
 
 > **Goal:** The system is never unbootable. Implement A/B dual-slot boot partitioning with automatic rollback on failed updates. If a kernel update breaks boot, the system automatically reverts to the previous working version on the next reboot — no user intervention, no recovery USB, no expertise needed. This is the pattern used by Android, Chrome OS, and modern embedded systems. Windows achieves similar via Automatic Repair; Linux via systemd-boot auto-assessment.
 
@@ -12,8 +12,8 @@
 - `src/boot/uefi/bootx64.c` — bootloader (needs slot selection logic)
 - `scripts/build.sh` — disk image creation (needs dual-slot layout)
 - `include/kernel/boot_info.h` — boot_info (needs slot metadata)
-- → XREF: `TODO-01-uefi-hardening-secureboot.md §8` — A/B dual-slot boot (deferred, now implemented here)
-- → XREF: `TODO-12-bootloader-error-recovery.md §9` — boot failure screen integration
+- → XREF: `TODO-01-uefi-hardening-secureboot.md` — UEFI bootloader (§8 A/B dual-slot was removed; this TODO is the sole owner)
+- → XREF: `TODO-02-bootloader-error-recovery.md §9` — boot failure screen integration
 - → XREF: `10-services-security/TODO-03-updates-packages.md` — update engine (downstream consumer)
 
 ---
@@ -102,7 +102,7 @@ Automatic rollback after 3 consecutive boot failures.
 - [ ] If 3 boots without `mark_boot_successful()`: switch active slot on next boot
 - [ ] On rollback: `"[BOOT] Slot %c failed 3 times — rolling back to Slot %c"` on serial
 - [ ] On rollback: render brief notification on boot splash: `"Update failed — reverting to previous version"`
-- [ ] If BOTH slots have `tries >= 3`: enter recovery mode (→ XREF: TODO-17)
+- [ ] If BOTH slots have `tries >= 3`: enter recovery mode (→ XREF: TODO-15)
 - [ ] Commit: `"boot: automatic rollback after 3 failed boot attempts"`
 
 **Test checkpoint:** Intentionally corrupt Slot A kernel. Boot 3 times → 4th boot automatically switches to Slot B.

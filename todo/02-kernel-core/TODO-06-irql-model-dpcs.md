@@ -15,12 +15,12 @@
 - [`src/kernel/drivers/lapic.c`](../../src/kernel/drivers/lapic.c)
 - [`src/kernel/sched/spinlock.c`](../../src/kernel/sched/spinlock.c)
 - → XREF: `TODO-01-kernel-init-sequencing.md §3` — DPC init belongs in Phase 1 (§3) after timer/interrupt controller readiness; `dpc_init()` is gated on `SUBSYS_TIMER`.
-- → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §5` — `irq_request()` dynamic IRQ API must exist before IRQL levels are mapped to IOAPIC vectors; LAPIC timer (§7 of that TODO) must be calibrated before DPC dispatch at `DISPATCH_LEVEL` is wired.
-- → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §7` — LAPIC timer calibration is the prerequisite for the timer/APIC scheduling path for DPC dispatch (§6 of this TODO).
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §5` — `irq_request()` dynamic IRQ API must exist before IRQL levels are mapped to IOAPIC vectors; LAPIC timer (§7 of that TODO) must be calibrated before DPC dispatch at `DISPATCH_LEVEL` is wired.
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §7` — LAPIC timer calibration is the prerequisite for the timer/APIC scheduling path for DPC dispatch (§6 of this TODO).
 - → XREF: `04-drivers-hardware/INDEX.md` — ISR drivers (NIC/storage/input) must migrate from ad-hoc workqueue usage to DPC top-half/bottom-half contracts.
 - → XREF: `TODO-05-native-api-ssdt.md §8` — synchronization and wait semantics at `DISPATCH_LEVEL` must align with native API behavior; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume §11–§12 APC infrastructure
-- → XREF: `TODO-07-time-filetime-management.md §7` — KTIMER object carries optional KDPC pointer; when timer fires, §9 Timer-DPC association auto-queues the DPC
-- → XREF: `TODO-10-exception-dispatch-seh.md §4` — KiUserApcDispatcher ring-3 delivery of user-mode APCs parallels KiUserExceptionDispatcher; §12 sets up the user-mode frame
+- → XREF: `TODO-07-time-filetime-management.md §6` — kernel time service (`KeQuerySystemTime`, `KeQueryTickCount`) provides FILETIME-based due times for KTIMER upgrade in §9
+- → XREF: `TODO-10-exception-dispatch-seh.md §5` — KiUserApcDispatcher ring-3 delivery of user-mode APCs parallels KiUserExceptionDispatcher; §12 sets up the user-mode frame
 - → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §9` — async I/O completion queues user-mode APC to the issuing thread; depends on §11–§12 APC infrastructure
 
 ## Outcome
@@ -165,7 +165,7 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allow
 Bridge between kernel timer objects and the DPC subsystem. When a timer fires, its associated DPC is automatically queued — no manual `KeInsertQueueDpc` in the timer callback.
 
 > [!NOTE]
-> Minimal prerequisite — full KTIMER implementation in TODO-07 §7. This section defines a lightweight `kernel_timer_t` struct with a `KDPC *dpc` field, a linked-list timer wheel checked on each LAPIC timer tick, and `KeSetTimerEx`/`KeCancelTimer` API. When TODO-07 §7 lands, `kernel_timer_t` is upgraded to the full KTIMER type with FILETIME due times, QPC-based expiry, and timer coalescing.
+> Minimal prerequisite — full KTIMER upgrade deferred until TODO-07 §6 (kernel time service) lands. This section defines a lightweight `kernel_timer_t` struct with a `KDPC *dpc` field, a linked-list timer wheel checked on each LAPIC timer tick, and `KeSetTimerEx`/`KeCancelTimer` API. When TODO-07 §6 provides `KeQuerySystemTime` and FILETIME arithmetic, `kernel_timer_t` is upgraded to the full KTIMER type with FILETIME due times, QPC-based expiry, and timer coalescing.
 
 - [ ] Define `kernel_timer_t` struct: `due_time_ticks` (absolute tick count), `period_ticks` (0 = single-shot), `KDPC *dpc` (optional), `active` flag, linked-list next pointer
 - [ ] Add per-CPU timer list; check expired timers in the LAPIC timer ISR after DPC dispatch (§6)
@@ -215,7 +215,7 @@ The APC delivery engine runs at defined IRQL transition points — on return fro
   - Raise IRQL to `APC_LEVEL`
   - **Special kernel APCs**: drain all from head of kernel APC list; execute `KernelRoutine` at `APC_LEVEL`; no thread permission needed
   - **Normal kernel APCs**: if thread is not in critical region and `KernelApcInProgress == FALSE`: set `KernelApcInProgress = TRUE`, lower to `PASSIVE_LEVEL`, call `NormalRoutine`, raise back to `APC_LEVEL`, clear `KernelApcInProgress`
-  - **User APCs**: if `PreviousMode == UserMode` and thread is alertable and user APC list is non-empty: set up user-mode trap frame to redirect execution to `KiUserApcDispatcher` (→ XREF TODO-10 §4 for user-mode frame setup)
+  - **User APCs**: if `PreviousMode == UserMode` and thread is alertable and user APC list is non-empty: set up user-mode trap frame to redirect execution to `KiUserApcDispatcher` (→ XREF TODO-10 §5 for user-mode frame setup)
   - Restore original IRQL
 - [ ] Wire `KiDeliverApc` into interrupt/exception return path: call when returning to `PASSIVE_LEVEL` or `APC_LEVEL` and `KernelApcPending` or `UserApcPending` is set. Add `POST16(0xDC00)` before first `KiDeliverApc` call in ISR return and `POST16(0xDC01)` after return
 - [ ] Wire into `KeWaitForSingleObject` / `KeWaitForMultipleObjects`: when `Alertable == TRUE` and wait completes or is interrupted, deliver user APCs before returning `STATUS_USER_APC`
@@ -225,7 +225,7 @@ The APC delivery engine runs at defined IRQL transition points — on return fro
 - [ ] Commit: `"kernel: sched — add KiDeliverApc and APC delivery integration"`
 
 > [!NOTE]
-> User-mode APC delivery requires `KiUserApcDispatcher` in the user-mode runtime (ntdll equivalent). The kernel sets up a modified trap frame that redirects ring-3 execution to the dispatcher, which calls the APC routine and then calls `NtContinue` to restore the original context. Full user-mode dispatcher implementation is in TODO-10 §4; this section handles the kernel-side frame setup only.
+> User-mode APC delivery requires `KiUserApcDispatcher` in the user-mode runtime (ntdll equivalent). The kernel sets up a modified trap frame that redirects ring-3 execution to the dispatcher, which calls the APC routine and then calls `NtContinue` to restore the original context. Full user-mode dispatcher implementation is in TODO-10 §5; this section handles the kernel-side frame setup only.
 
 **Test checkpoint:** Queue kernel APC to current thread; on `KeLowerIrql` to `PASSIVE_LEVEL`, APC fires (callback sets flag). Queue special kernel APC during ISR; APC fires on interrupt return. `KeEnterCriticalRegion` suppresses normal kernel APC delivery; `KeLeaveCriticalRegion` triggers deferred delivery. Thread exit calls `RundownRoutine` for un-delivered APCs. Serial: `"apc: delivered N kernel APCs, M user APCs"`. If crash, check POST — 0xDC00 = entered `KiDeliverApc` in ISR return, 0xDC01 = completed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal — ISR return path modification is platform-sensitive.
 

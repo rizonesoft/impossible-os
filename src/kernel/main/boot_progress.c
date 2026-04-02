@@ -1,7 +1,7 @@
 /* ============================================================================
  * boot_progress.c -- Named-stage boot progress implementation
  *
- * XREF: 01-boot-platform/TODO-02-boot-diagnostics.md §2
+ * XREF: 01-boot-platform/TODO-07-boot-diagnostics.md §2
  * ============================================================================ */
 
 #include "kernel/boot_progress.h"

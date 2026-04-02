@@ -12,12 +12,13 @@
 - [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c)
 - [`include/kernel/sched/task.h`](../../include/kernel/sched/task.h)
 - [`src/kernel/drivers/lapic.c`](../../src/kernel/drivers/lapic.c)
-- → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §3` — HPET and LAPIC calibration APIs consumed by §8
+- → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §3` — HPET and LAPIC calibration APIs consumed by §8
 - → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` — hypervisor detection before timer selection; §8 Hyper-V synthetic timer fallback depends on it
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md` — scheduler tick ISR runs at `DISPATCH_LEVEL`; RT scheduling interacts with DPC queuing and IRQL transitions
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` — `uptime_ns()` used for CFS vruntime accounting in §3 and for EDF deadline tracking in §5
 - → XREF: `04-drivers-hardware` domain — ACPI `_PSS` P-state table needed for §9 CPU frequency scaling governors
 - → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` — SSDT indices 0x0180–0x0186 reserved for Worker Factory (kernel thread pool) syscalls; §10 wires them
+- → XREF: `02-kernel-core/TODO-09-process-model-extensions.md §5,§10` — scope overlap: TODO-09 §5 defines the process-level `sched_policy` field and `NtSetInformationProcess(ProcessSchedulingPolicy)` API; TODO-09 §10 defines `SetProcessAffinityMask`. Scheduler loop changes for RT classes (§4) and thread-level affinity (§6) are authoritative HERE.
 
 ## Outcome
 
@@ -36,7 +37,7 @@
 | --- | :---: | ---------------------------------------------------- | ----------------------------------- | :----: |
 | 💎  |   1   | §1 40-level priority queues + O(1) bitmap dequeue    | —                                   |  [ ]   |
 | 💎  |   2   | §2 Dynamic priority aging (starvation prevention)    | §1                                  |  [ ]   |
-| 💎  |   3   | §8 Scheduler tick calibration (RDTSC+HPET)           | TODO-03 §3, TODO-04-cpu §3          |  [ ]   |
+| 💎  |   3   | §8 Scheduler tick calibration (RDTSC+HPET)           | TODO-06 §3, TODO-04-cpu §3          |  [ ]   |
 | 💎  |   4   | §3 CFS vruntime + `prio_to_weight` table             | §1, §3 (tick calibration)           |  [ ]   |
 | 💎  |   5   | §4 `SCHED_FIFO` / `SCHED_RR` real-time classes       | §1, §4 (CFS baseline)               |  [ ]   |
 | ⭐  |   6   | §5 `SCHED_DEADLINE` EDF scheduling                   | §5 (RT infra), §4 (CFS)             |  [ ]   |
@@ -170,7 +171,7 @@ Replace the hardcoded LAPIC ICR with a measured RDTSC + HPET calibration that pr
 **Files:** `src/kernel/drivers/lapic.c`, `include/kernel/drivers/lapic.h`, `src/kernel/sched/sched.c`
 
 > [!IMPORTANT]
-> → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §3` — unified timer HAL (`uptime_ns()` and HPET calibration APIs) must be ready before this section; do not duplicate the HPET read path.
+> → XREF: `01-boot-platform/TODO-06-interrupt-timer-arch.md §3` — unified timer HAL (`uptime_ns()` and HPET calibration APIs) must be ready before this section; do not duplicate the HPET read path.
 > → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` — hypervisor detection must be complete so the Hyper-V synthetic timer fallback can be safely branched on.
 
 - [ ] At boot, measure LAPIC timer frequency: set ICR to a known value, read RDTSC before and after `N` PIT/HPET ticks, compute `lapic_hz = (N * hpet_period_ns) / rdtsc_delta`
