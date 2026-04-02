@@ -53,6 +53,7 @@ extern void test_register_boot_init(void);
 extern void test_register_klog(void);
 extern void test_register_ob(void);
 extern void test_register_security(void);
+extern void test_register_peb_teb(void);
 
 void test_runner_init(void)
 {
@@ -68,6 +69,7 @@ void test_runner_init(void)
     test_register_klog();
     test_register_ob();
     test_register_security();
+    test_register_peb_teb();
 
     klog(LOG_INFO, "TEST", "%u suite(s) registered", g_test_state.suite_count);
 }
