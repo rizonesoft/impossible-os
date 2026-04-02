@@ -23,6 +23,9 @@
 #include "kernel/ob/ob_process.h"
 #include "kernel/ob/ob_thread.h"
 #include "kernel/msr.h"
+#include "kernel/ob/peb.h"
+#include "kernel/ob/teb.h"
+#include "kernel/acpi.h"
 
 /* Software interrupt vector for yield() */
 #define YIELD_INT_VECTOR 0x81
@@ -802,6 +805,129 @@ int task_fork(struct interrupt_frame *frame)
     return (int)child_pid;
 }
 
+/* ---- PEB / RTL_USER_PROCESS_PARAMETERS allocation ----------------------- */
+
+/* Fixed user-mode addresses (matches Windows x64 defaults) */
+#define PEB_USER_ADDR   0x7FFDE000ULL
+#define RTLPP_USER_ADDR 0x7FFDD000ULL  /* RTL_USER_PROCESS_PARAMETERS page */
+#define ENV_USER_ADDR   0x7FFDC000ULL  /* Environment block page */
+
+/* Helper: write a UTF-16 UNICODE_STRING from an ASCII source.
+ * Writes UTF-16 data at *buf_pos, advances it, and fills us. */
+static void peb_build_ustr(UNICODE_STRING *us, uint16_t **buf_pos,
+                            const char *ascii)
+{
+    uint16_t *start = *buf_pos;
+    while (*ascii)
+        *(*buf_pos)++ = (uint16_t)(uint8_t)*ascii++;
+    *(*buf_pos)++ = 0;  /* NUL terminator */
+    uint32_t byte_len = (uint32_t)((uintptr_t)*buf_pos - (uintptr_t)start - 2);
+    us->Length = (uint16_t)byte_len;
+    us->MaximumLength = (uint16_t)(byte_len + 2);
+    us->_pad = 0;
+    us->Buffer = start;
+}
+
+/* Allocate and populate PEB + RTL_USER_PROCESS_PARAMETERS for a user task.
+ * Returns PEB pointer (user-space address) or NULL on failure. */
+static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
+                                const char *name)
+{
+    (void)pid;  /* reserved for future per-process page table */
+    uintptr_t peb_phys, rtlpp_phys, env_phys;
+    PEB *peb;
+    RTL_USER_PROCESS_PARAMETERS *pp;
+    uint16_t *env;
+
+    /* Allocate physical pages */
+    peb_phys = pmm_alloc_frame();
+    rtlpp_phys = pmm_alloc_frame();
+    env_phys = pmm_alloc_frame();
+    if (!peb_phys || !rtlpp_phys || !env_phys) {
+        if (peb_phys) pmm_free_frame(peb_phys);
+        if (rtlpp_phys) pmm_free_frame(rtlpp_phys);
+        if (env_phys) pmm_free_frame(env_phys);
+        return (PEB *)0;
+    }
+
+    /* Map into user address space */
+    vmm_map_page(PEB_USER_ADDR, peb_phys, VMM_USER_RW);
+    vmm_map_page(RTLPP_USER_ADDR, rtlpp_phys, VMM_USER_RW);
+    vmm_map_page(ENV_USER_ADDR, env_phys, VMM_USER_RW);
+
+    /* Zero all pages */
+    peb = (PEB *)PEB_USER_ADDR;
+    pp = (RTL_USER_PROCESS_PARAMETERS *)RTLPP_USER_ADDR;
+    env = (uint16_t *)ENV_USER_ADDR;
+
+    {
+        uint8_t *p;
+        uint32_t i;
+        p = (uint8_t *)peb;
+        for (i = 0; i < 4096; i++) p[i] = 0;
+        p = (uint8_t *)pp;
+        for (i = 0; i < 4096; i++) p[i] = 0;
+        p = (uint8_t *)env;
+        for (i = 0; i < 4096; i++) p[i] = 0;
+    }
+
+    /* ---- Populate PEB ---- */
+    peb->BeingDebugged = 0;
+    peb->ImageBaseAddress = (void *)image_base;
+    peb->ProcessParameters = pp;
+    peb->OSMajorVersion = 10;
+    peb->OSMinorVersion = 0;
+    peb->OSBuildNumber = 22621;    /* Windows 11 22H2 */
+    peb->OSPlatformId = 2;        /* VER_PLATFORM_WIN32_NT */
+    peb->NumberOfProcessors = acpi_get_cpu_count();
+
+    /* ---- Populate RTL_USER_PROCESS_PARAMETERS ---- */
+    pp->MaximumLength = sizeof(RTL_USER_PROCESS_PARAMETERS);
+    pp->Length = sizeof(RTL_USER_PROCESS_PARAMETERS);
+
+    /* Build UNICODE_STRING fields in the RTLPP page after the struct */
+    {
+        uint16_t *buf = (uint16_t *)((uint8_t *)pp +
+                         sizeof(RTL_USER_PROCESS_PARAMETERS));
+
+        /* ImagePathName */
+        if (name && name[0])
+            peb_build_ustr(&pp->ImagePathName, &buf, name);
+
+        /* CommandLine (same as image path for now) */
+        if (name && name[0])
+            peb_build_ustr(&pp->CommandLine, &buf, name);
+
+        /* CurrentDirectory */
+        peb_build_ustr(&pp->CurrentDirectoryDosPath, &buf, "C:\\");
+    }
+
+    /* Standard handles: INVALID for now (§6 wires real console handles) */
+    pp->StandardInput = UHANDLE_INVALID;
+    pp->StandardOutput = UHANDLE_INVALID;
+    pp->StandardError = UHANDLE_INVALID;
+
+    /* ---- Environment block ---- */
+    pp->Environment = (void *)ENV_USER_ADDR;
+    {
+        uint16_t *ep = env;
+        /* PATH=C:\Impossible\System32\ */
+        const char *path = "PATH=C:\\Impossible\\System32\\";
+        while (*path)
+            *ep++ = (uint16_t)(uint8_t)*path++;
+        *ep++ = 0;  /* terminate this variable */
+        /* SystemRoot=C:\Impossible */
+        const char *sysroot = "SystemRoot=C:\\Impossible";
+        while (*sysroot)
+            *ep++ = (uint16_t)(uint8_t)*sysroot++;
+        *ep++ = 0;
+        /* Double-NUL terminates the block */
+        *ep++ = 0;
+    }
+
+    return peb;
+}
+
 int task_exec(const uint8_t *data, uint64_t size)
 {
     struct elf_load_result elf;
@@ -872,6 +998,10 @@ int task_exec(const uint8_t *data, uint64_t size)
     tasks[pid].stack_base = new_kstack;
     tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
     tasks[pid].exec_pending = 1;  /* prevent scheduler from overwriting this frame */
+
+    /* Allocate PEB in user address space */
+    tasks[pid].peb = (void *)peb_alloc_for_task(
+        pid, elf.entry, tasks[pid].name);
 
     /* KERNEL_GS_BASE: TEB address for this user-mode task.
      * §6 will set this to the actual TEB address once allocated.

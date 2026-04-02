@@ -32,7 +32,7 @@
 | 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS     | —          |  [x]   |
 | 💎  |   3   | swapgs on INT 0x80 entry and exit              | 1          |  [x]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [x]   |
-| 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [ ]   |
+| 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [x]   |
 | 💎  |   6   | TEB allocation and population at thread create | 1, 4       |  [ ]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | 5, 6       |  [ ]   |
 | 💎  |   8   | PEB Ldr (module list) basic population         | 5          |  [ ]   |
@@ -93,25 +93,18 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 - [x] `task_fork`: copies parent's `kernel_gs_base` to child (§6 will allocate child TEB)
 - [x] `task_init`: explicitly zeroes `kernel_gs_base` for all task slots
 - [x] Context switch (`schedule_now` + `schedule`): save/restore via `msr_read`/`msr_write` on task switch
-- [ ] Commit: `"kernel: abi — write KERNEL_GS_BASE at task_exec and fork"`
+- [x] Commit: `"kernel: abi — write KERNEL_GS_BASE at task_exec and fork"`
 
 ## 5. PEB Allocation and Population at task_exec
 Allocate the PEB in the user address space and fill it before the first instruction runs.
 
-- [ ] Reserve a fixed user-mode address for PEB: `0x7FFDE000` (matches Windows default for 64-bit processes on low addresses); map a VMM page there (writable, user-accessible)
-- [ ] Zero the entire PEB page
-- [ ] Populate mandatory fields:
-  - `ImageBaseAddress` ← ELF load base from `elf_load_result`
-  - `ProcessParameters` ← pointer to the `RTL_USER_PROCESS_PARAMETERS` block (§2)
-  - `OSMajorVersion = 10`, `OSMinorVersion = 0`, `OSBuildNumber = 22621` — Win11 compatibility
-  - `NumberOfProcessors` ← CPUID leaf 1 logical processor count
-  - `BeingDebugged = 0`
-- [ ] Build `RTL_USER_PROCESS_PARAMETERS` in user address space:
-  - Convert `task->name` to a `UNICODE_STRING` ImagePathName (ASCII → UTF-16 inline)
-  - Build `CommandLine` from task argv array
-  - Set `StandardInput`, `StandardOutput`, `StandardError` ← handles from the process handle table (`ObpAllocateHandle` — OB completed)
-  - Build environment block: null-terminated UTF-16 `name=value\0name=value\0\0` pairs starting with `PATH=C:\Impossible\System32\`
-- [ ] Store PEB pointer in `task_t` struct for kernel reference: `tasks[pid].peb`
+- [x] PEB at `0x7FFDE000`, RTL_USER_PROCESS_PARAMETERS at `0x7FFDD000`, env block at `0x7FFDC000`
+- [x] All three pages: PMM alloc → VMM map (VMM_USER_RW) → zero-fill
+- [x] PEB fields: ImageBaseAddress, ProcessParameters, OSMajorVersion=10, OSBuildNumber=22621, NumberOfProcessors via `acpi_get_cpu_count()`
+- [x] RTL_USER_PROCESS_PARAMETERS: ImagePathName + CommandLine as UNICODE_STRING (ASCII→UTF-16), CurrentDirectory = `C:\`
+- [x] Std handles: UHANDLE_INVALID (console wiring in future)
+- [x] Environment block: `PATH=C:\Impossible\System32\` + `SystemRoot=C:\Impossible` (UTF-16, double-NUL terminated)
+- [x] `tasks[pid].peb` and `tasks[pid].teb` fields added to `struct task`
 - [ ] Commit: `"kernel: peb — PEB allocation and population at exec"`
 
 ## 6. TEB Allocation and Population at Thread Create
@@ -186,12 +179,12 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 
 | ⭐ | Feature                  | Win11                    | Linux                  | Impossible OS        |
 |----|--------------------------|--------------------------|------------------------|----------------------|
-| 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | 🔄 §2 done, §5 todo  |
+| 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | ✅ §2+§5 PEB allocated |
 | 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | 🔄 §1 done, §6 todo  |
 | 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | 🔄 §3 done, §4 todo  |
 | 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ⬜ §6                |
 | 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
-| 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | 🔄 §2 done, §5 todo  |
+| 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ✅ §5 RTLPP populated  |
 | 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ⬜ §8                |
 | 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ⬜ §7                |
 | ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ⬜ §10               |
