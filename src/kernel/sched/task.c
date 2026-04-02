@@ -924,6 +924,74 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
         *ep++ = 0;
     }
 
+    /* ---- PEB Ldr — minimal module list with main executable ----
+     * Place PEB_LDR_DATA + LDR_DATA_TABLE_ENTRY in the PEB page after
+     * the PEB struct (offset 0x240+). Plenty of room in the 4 KB page. */
+    {
+        PEB_LDR_DATA *ldr = (PEB_LDR_DATA *)((uint8_t *)peb + 0x800);
+        LDR_DATA_TABLE_ENTRY *mod = (LDR_DATA_TABLE_ENTRY *)(
+            (uint8_t *)ldr + sizeof(PEB_LDR_DATA));
+        uint16_t *str_buf = (uint16_t *)(
+            (uint8_t *)mod + sizeof(LDR_DATA_TABLE_ENTRY));
+
+        /* Zero both structs */
+        {
+            uint8_t *p = (uint8_t *)ldr;
+            uint32_t i;
+            uint32_t total = sizeof(PEB_LDR_DATA) +
+                             sizeof(LDR_DATA_TABLE_ENTRY);
+            for (i = 0; i < total; i++) p[i] = 0;
+        }
+
+        /* PEB_LDR_DATA */
+        ldr->Length = sizeof(PEB_LDR_DATA);
+        ldr->Initialized = 1;
+
+        /* Self-referencing list heads (empty list = Flink/Blink → self) */
+        ldr->InLoadOrderModuleList.Flink = &ldr->InLoadOrderModuleList;
+        ldr->InLoadOrderModuleList.Blink = &ldr->InLoadOrderModuleList;
+        ldr->InMemoryOrderModuleList.Flink = &ldr->InMemoryOrderModuleList;
+        ldr->InMemoryOrderModuleList.Blink = &ldr->InMemoryOrderModuleList;
+        ldr->InInitializationOrderModuleList.Flink =
+            &ldr->InInitializationOrderModuleList;
+        ldr->InInitializationOrderModuleList.Blink =
+            &ldr->InInitializationOrderModuleList;
+
+        /* LDR_DATA_TABLE_ENTRY for main executable */
+        mod->DllBase = (void *)image_base;
+        mod->EntryPoint = (void *)image_base;  /* _start */
+        mod->SizeOfImage = 0x20000;  /* approximate; refined by PE loader */
+        mod->Flags = 0x00004000;     /* LDRP_ENTRY_PROCESSED */
+        mod->LoadCount = 1;
+
+        /* Build FullDllName and BaseDllName UNICODE_STRINGs */
+        peb_build_ustr(&mod->FullDllName, &str_buf, name ? name : "a.out");
+        peb_build_ustr(&mod->BaseDllName, &str_buf, name ? name : "a.out");
+
+        /* Insert module into all three lists (single element: circular) */
+        mod->InLoadOrderLinks.Flink = &ldr->InLoadOrderModuleList;
+        mod->InLoadOrderLinks.Blink = &ldr->InLoadOrderModuleList;
+        ldr->InLoadOrderModuleList.Flink = &mod->InLoadOrderLinks;
+        ldr->InLoadOrderModuleList.Blink = &mod->InLoadOrderLinks;
+
+        mod->InMemoryOrderLinks.Flink = &ldr->InMemoryOrderModuleList;
+        mod->InMemoryOrderLinks.Blink = &ldr->InMemoryOrderModuleList;
+        ldr->InMemoryOrderModuleList.Flink = &mod->InMemoryOrderLinks;
+        ldr->InMemoryOrderModuleList.Blink = &mod->InMemoryOrderLinks;
+
+        mod->InInitializationOrderLinks.Flink =
+            &ldr->InInitializationOrderModuleList;
+        mod->InInitializationOrderLinks.Blink =
+            &ldr->InInitializationOrderModuleList;
+        ldr->InInitializationOrderModuleList.Flink =
+            &mod->InInitializationOrderLinks;
+        ldr->InInitializationOrderModuleList.Blink =
+            &mod->InInitializationOrderLinks;
+
+        /* Wire PEB->Ldr */
+        peb->Ldr = ldr;
+    }
+
     return peb;
 }
 

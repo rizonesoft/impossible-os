@@ -35,7 +35,7 @@
 | 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [x]   |
 | 💎  |   6   | TEB allocation and population at thread create | 1, 4       |  [x]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | 5, 6       |  [x]   |
-| 💎  |   8   | PEB Ldr (module list) basic population         | 5          |  [ ]   |
+| 💎  |   8   | PEB Ldr (module list) basic population         | 5          |  [x]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)          | 6          |  [ ]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace              | 5, 6       |  [ ]   |
 
@@ -125,23 +125,18 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [x] String data at top of user stack, argv pointer to it, 16-byte aligned RSP
 - [x] PE32+: RCX=PEB set in interrupt frame for all user tasks — ntdll will find PEB in RCX when PE32+ loading lands (TODO-08)
 - [x] Replaced all-zero stack top with Linux x86-64 ABI layout
-- [ ] Confirm `_start` in `user/hello.c` still executes correctly with the new stack
+- [x] Confirmed: cmd.exe _start→main()→printf works with new stack (WHPX build 1963, 2026-04-02)
 - [x] Commit: `"kernel: abi — initial user stack frame with argv, envp, auxv"`
 
 ## 8. PEB Ldr (Module List) Basic Population
 `ntdll!LdrInitializeThunk` walks `PEB->Ldr->InLoadOrderModuleList` to find already-loaded modules. Even a stub Ldr with just the main module prevents ntdll from faulting on an empty list.
 
-- [ ] Define `PEB_LDR_DATA` struct:
-  - `uint32_t Length`, `uint8_t Initialized`
-  - `void *SsHandle`
-  - `LIST_ENTRY InLoadOrderModuleList`
-  - `LIST_ENTRY InMemoryOrderModuleList`
-  - `LIST_ENTRY InInitializationOrderModuleList`
-- [ ] Define `LDR_DATA_TABLE_ENTRY` with DllBase, EntryPoint, SizeOfImage, FullDllName (UNICODE_STRING), BaseDllName (UNICODE_STRING), Flags, LoadCount
-- [ ] Allocate `PEB_LDR_DATA` in user space; set `Initialized = 1`
-- [ ] Insert main executable as the first and only `LDR_DATA_TABLE_ENTRY` in all three lists
-- [ ] Wire `PEB->Ldr` to the allocated `PEB_LDR_DATA`
-- [ ] Full module list management (LoadLibrary / FreeLibrary) is out of scope here — see `TODO-08-binary-system.md` §7 (PE32+ import resolver) and §10 (ELF dynamic linker)
+- [x] `PEB_LDR_DATA` and `LDR_DATA_TABLE_ENTRY` already defined in peb.h (§2)
+- [x] `PEB_LDR_DATA` allocated at PEB page offset 0x800; `Initialized = 1`
+- [x] Main executable inserted in all 3 lists (InLoadOrder, InMemoryOrder, InInitializationOrder) as circular linked list
+- [x] `LDR_DATA_TABLE_ENTRY`: DllBase, EntryPoint, SizeOfImage, FullDllName + BaseDllName as UNICODE_STRING
+- [x] `PEB->Ldr` wired to the allocated `PEB_LDR_DATA`
+- [ ] Full module list (LoadLibrary/FreeLibrary) — see TODO-08 §7
 - [ ] Commit: `"kernel: peb — minimal PEB Ldr with main module entry"`
 
 ## 9. TLS Slot Allocation (64 Static Slots)
@@ -177,7 +172,7 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 | 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ✅ §6 LastError=0     |
 | 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
 | 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ✅ §5 RTLPP populated  |
-| 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ⬜ §8                |
+| 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ✅ §8 main module     |
 | 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ✅ §7 argc/argv/auxv |
 | ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ⬜ §10               |
 | ⭐ | Win11 version in PEB     | ✅ Internal only         | ❌ N/A                 | ⬜ §5                |
