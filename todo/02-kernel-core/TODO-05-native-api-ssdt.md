@@ -194,7 +194,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 - [ ] Define `SSDT_ENTRY` and `SSDT_TABLE` in `include/kernel/nt/ssdt.h`:
   - `typedef NTSTATUS (*SSDT_HANDLER)(uint64_t a1, a2, a3, a4, a5, a6)`
   - `SSDT_TABLE` — array of `SSDT_HANDLER` + count + table name string
-- [ ] Allocate Win32k shadow SSDT stub (table 1) as empty placeholder — filled by Win32k layer later
+- [ ] Allocate Win32k shadow SSDT stub (table 1) as empty placeholder — filled by `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md` (108 NtGdiXxx/NtUserXxx entries at 0x1000+)
 - [ ] Define complete service index assignments in `include/kernel/nt/service_numbers.h`:
 - [ ] Implement `syscall_dispatch`: index RAX into active SSDT; call handler; return `NTSTATUS` in RAX
 - [ ] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` rather than crashing
