@@ -175,7 +175,7 @@ Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. T
 | 💎 | Rate limiting         | ✅ ETW built-in      | ⚠️ rsyslog only       | ✅ §5 — done              |
 | ⭐ | Human-readable struct | ❌ XML verbose       | ❌ Binary journal     | ✅ §6 — JSON Lines        |
 | 💎 | Remote forwarding     | ✅ WEF               | ✅ rsyslog UDP        | ⬜ §7 — syslog RFC 5424   |
-| 💎 | ETW tracing API       | ✅ NtTraceEvent       | ✅ ftrace/perf_event  | ⬜ §8 — SSDT 0x01D0–0x01D6|
+| 💎 | ETW tracing API       | ✅ NtTraceEvent       | ✅ ftrace/perf_event | ⬜ §8 — SSDT 0x01D0–0x01D6|
 | ⭐ | Serial timestamps     | ❌ Not standard      | ❌ Not standard       | ✅ Every entry            |
 
 > After §1-§6, Impossible OS matches or exceeds Windows and Linux on all logging.
