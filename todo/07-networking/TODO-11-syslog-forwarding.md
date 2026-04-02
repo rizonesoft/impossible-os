@@ -13,7 +13,7 @@
 - `src/kernel/net/udp.c` — existing UDP send function
 - `include/kernel/klog.h` — `log_level_t` enum for severity mapping
 - `src/kernel/registry.c` — Registry API for reading syslog server config
-- → XREF: `02-kernel-core/TODO-02-system-logging.md §7` — original home of this requirement (moved here)
+- → XREF: `docs/kernel/system-logging.md` — original home was TODO-02 §7 (moved here)
 - → XREF: `docs/kernel/init-sequencing.md` — `klog_disk_enable()` is Phase 2 gate
 
 ---

@@ -12,7 +12,7 @@
 - `src/kernel/klog_disk.c` — writes `events.jsonl` (JSONL format: `{"ts":N,"level":"INFO","tag":"net","msg":"..."}`)
 - `include/kernel/klog.h` — `log_level_t` enum (DEBUG=0, INFO=1, WARN=2, ERROR=3, FATAL=4)
 - `C:\Impossible\System\Logs\events.jsonl` — on-disk event log
-- → XREF: `02-kernel-core/TODO-02-system-logging.md §6` — JSON Lines event format
+- → XREF: `docs/kernel/system-logging.md` — JSON Lines event format (was TODO-02 §6)
 - → XREF: `docs/infrastructure/kernel-test-framework.md` — unit test wiring
 
 ---
