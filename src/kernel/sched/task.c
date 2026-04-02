@@ -1009,7 +1009,7 @@ int task_exec(const uint8_t *data, uint64_t size)
 
     if (tasks[pid].peb) {
         PEB *p = (PEB *)tasks[pid].peb;
-        klog(LOG_INFO, "sched",
+        klog(LOG_DEBUG, "sched",
              "PID %u: PEB=%p (Win %u.%u.%u, %u CPUs)",
              (uint64_t)pid, (uint64_t)(uintptr_t)tasks[pid].peb,
              (uint64_t)p->OSMajorVersion,
