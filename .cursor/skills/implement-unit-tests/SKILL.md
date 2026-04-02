@@ -87,6 +87,7 @@ Before writing any test code:
 - Read the header file for the API being tested — get exact function signatures, enum values, macro definitions
 - Read the implementation to understand edge cases (NULL handling, out-of-range, etc.)
 - Read an existing test file to match the exact pattern
+- Use the `user-srclight` MCP (`get_symbol`, `get_callers`, `hybrid_search`) to navigate unfamiliar APIs
 
 ### 3. Create the test file
 
