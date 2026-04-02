@@ -483,23 +483,23 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 |--------|----------------------------------|-----|--------------------------|
 | 0x0130 | NtRaiseException                 | §20 | T10 §4                   |
 | 0x0131 | NtContinue                       | §20 | T10 §4                   |
-| 0x0132 | NtDebugActiveProcess             | §20 | ⚠️ T18 (needs SSDT §)    |
-| 0x0133 | NtDebugContinue                  | §20 | ⚠️ T18 (needs SSDT §)    |
-| 0x0134 | NtRemoveProcessDebug             | §20 | ⚠️ T18 (needs SSDT §)    |
-| 0x0135 | NtCreateDebugObject              | §20 | ⚠️ T18 (needs SSDT §)    |
-| 0x0136 | NtWaitForDebugEvent              | §20 | ⚠️ T18 (needs SSDT §)    |
-| 0x0137 | NtSetInformationDebugObject      | §20 | ⚠️ T18 (needs SSDT §)    |
+| 0x0132 | NtDebugActiveProcess             | §20 | T18 §13                  |
+| 0x0133 | NtDebugContinue                  | §20 | T18 §13                  |
+| 0x0134 | NtRemoveProcessDebug             | §20 | T18 §13                  |
+| 0x0135 | NtCreateDebugObject              | §20 | T18 §13                  |
+| 0x0136 | NtWaitForDebugEvent              | §20 | T18 §13                  |
+| 0x0137 | NtSetInformationDebugObject      | §20 | T18 §13                  |
 
 **0x0140–0x014F: Power and Shutdown (→ XREF TODO-15)**
 
 | Index  | Function                         | §   | Owner                    |
 |--------|----------------------------------|-----|--------------------------|
-| 0x0140 | NtSetSystemPowerState            | §21 | ⚠️ T15 (needs SSDT §)    |
-| 0x0141 | NtInitiatePowerAction            | §21 | ⚠️ T15 (needs SSDT §)    |
-| 0x0142 | NtPowerInformation               | §21 | ⚠️ T15 (needs SSDT §)    |
-| 0x0143 | NtGetDevicePowerState            | §21 | ⚠️ T15 (needs SSDT §)    |
-| 0x0144 | NtSetThreadExecutionState        | §21 | ⚠️ T15 (needs SSDT §)    |
-| 0x0145 | NtRequestWakeupLatency           | §21 | ⚠️ T15 (needs SSDT §)    |
+| 0x0140 | NtSetSystemPowerState            | §21 | T15 §12                  |
+| 0x0141 | NtInitiatePowerAction            | §21 | T15 §12                  |
+| 0x0142 | NtPowerInformation               | §21 | T15 §12                  |
+| 0x0143 | NtGetDevicePowerState            | §21 | T15 §12                  |
+| 0x0144 | NtSetThreadExecutionState        | §21 | T15 §12                  |
+| 0x0145 | NtRequestWakeupLatency           | §21 | T15 §12                  |
 
 **0x0150–0x015F: Audit and Tracing (Impossible OS exclusive)**
 
