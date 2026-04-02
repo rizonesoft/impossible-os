@@ -137,16 +137,8 @@ Emit machine-parseable events alongside plain-text logs. Requires cJSON from `TO
 - [x] Commit: `"kernel: structured JSON log events"`
 
 ## 7. Remote Syslog Forwarding (RFC 5424)
-Forward log entries to a remote syslog server for enterprise and headless debug use. `src/kernel/net/udp.c` already exists — this section wires syslog packet sending on top of it.
 
-- [ ] Read syslog server IP from `HKLM\SYSTEM\Logs\SyslogServer` at `klog_disk_enable()`; skip if not set
-- [ ] Map klog levels to RFC 5424 severity: `DEBUG→7`, `INFO→6`, `WARN→4`, `ERROR→3`, `FATAL→2`
-- [ ] Facility: `LOG_KERN (0)`
-- [ ] Format each packet: `<PRI>1 TIMESTAMP HOSTNAME APPNAME - - - MSG`
-- [ ] In `klog_disk_flush()`: if syslog is configured, also send formatted packet via UDP port 514
-- [ ] Queue entries in the ring buffer if network is not yet up; drain queue once network is ready
-- [ ] Graceful no-op if network goes down mid-session — never block the flush path waiting for network
-- [ ] Commit: `"kernel: syslog UDP forwarding"`
+Moved to [07-networking/TODO-11](../07-networking/TODO-11-syslog-forwarding.md) — syslog is a networking feature that depends on UDP stack readiness.
 
 ---
 
