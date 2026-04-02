@@ -108,6 +108,8 @@ struct task {
     HANDLE_TABLE handle_table;           /* per-process handle table (§3) */
     /* --- Security token --- */
     void *token;                         /* ACCESS_TOKEN * (NULL until SRM assigns one) */
+    /* --- User-mode ABI: TEB address for swapgs --- */
+    uint64_t kernel_gs_base;             /* MSR 0xC0000102 value; 0 for kernel tasks */
 };
 
 /* Task entry function type */

@@ -22,6 +22,7 @@
 #include "kernel/ob/handle_table.h"
 #include "kernel/ob/ob_process.h"
 #include "kernel/ob/ob_thread.h"
+#include "kernel/msr.h"
 
 /* Software interrupt vector for yield() */
 #define YIELD_INT_VECTOR 0x81
@@ -198,6 +199,7 @@ void task_init(void)
         tasks[i].wait_pid = -1;
         tasks[i].exec_pending = 0;
         tasks[i].cr3 = 0;
+        tasks[i].kernel_gs_base = 0;
         tasks[i].xsave_area = (void *)0;
         tasks[i].fpu_used = 0;
         tasks[i].handle_table.entries  = NULL;
@@ -547,6 +549,14 @@ uint64_t schedule_now(struct interrupt_frame *frame)
             __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
     }
 
+    /* KERNEL_GS_BASE switch: save prev task's TEB, load next task's TEB.
+     * swapgs in the ISR stub handles ring transition; this handles
+     * switching between different user-mode tasks with different TEBs. */
+    if (prev_task != next_task) {
+        tasks[prev_task].kernel_gs_base = msr_read(MSR_IA32_KERNEL_GS_BASE);
+        msr_write(MSR_IA32_KERNEL_GS_BASE, tasks[next_task].kernel_gs_base);
+    }
+
     /* Return the correct RSP: thread stack if secondary thread, task stack otherwise */
     if (next_thread > 0)
         return tasks[next_task].threads[next_thread].rsp;
@@ -653,6 +663,12 @@ uint64_t schedule(struct interrupt_frame *frame)
         __asm__ volatile("mov %%cr3, %0" : "=r"(cur_cr3));
         if (new_cr3 != cur_cr3)
             __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
+    }
+
+    /* KERNEL_GS_BASE switch: save prev task's TEB, load next task's TEB */
+    if (prev_task != next_task) {
+        tasks[prev_task].kernel_gs_base = msr_read(MSR_IA32_KERNEL_GS_BASE);
+        msr_write(MSR_IA32_KERNEL_GS_BASE, tasks[next_task].kernel_gs_base);
     }
 
     /* Return the correct RSP */
@@ -770,6 +786,9 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].wait_pid = -1;
     tasks[child_pid].exec_pending = 0;
     ob_handle_table_init(&tasks[child_pid].handle_table);
+    /* Copy parent's KERNEL_GS_BASE (TEB address) — §6 will allocate
+     * a new TEB for the child and update this field. */
+    tasks[child_pid].kernel_gs_base = tasks[parent_pid_val].kernel_gs_base;
     num_tasks++;
 
     /* Register forked process and main thread with Object Manager */
@@ -853,6 +872,11 @@ int task_exec(const uint8_t *data, uint64_t size)
     tasks[pid].stack_base = new_kstack;
     tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
     tasks[pid].exec_pending = 1;  /* prevent scheduler from overwriting this frame */
+
+    /* KERNEL_GS_BASE: TEB address for this user-mode task.
+     * §6 will set this to the actual TEB address once allocated.
+     * For now, 0 means no TEB — swapgs will swap in 0. */
+    tasks[pid].kernel_gs_base = 0;
 
     klog(LOG_DEBUG, "sched", "PID %u -> entry %p",
            (uint64_t)pid, elf.entry);

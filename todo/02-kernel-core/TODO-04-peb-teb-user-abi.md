@@ -31,7 +31,7 @@
 | 💎  |   1   | TEB struct and GS self-pointer                 | —          |  [x]   |
 | 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS     | —          |  [x]   |
 | 💎  |   3   | swapgs on INT 0x80 entry and exit              | 1          |  [x]   |
-| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [ ]   |
+| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [x]   |
 | 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [ ]   |
 | 💎  |   6   | TEB allocation and population at thread create | 1, 4       |  [ ]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | 5, 6       |  [ ]   |
@@ -81,17 +81,18 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 - [x] On exit path (before `iretq`): `test byte [rsp+8], 3` checks return CS RPL; matching `swapgs`
 - [x] On `iretq` to ring 0 (kernel→kernel): `jz .no_swapgs_*` skips both swapgs
 - [x] Regression comment block with symmetry requirement added at both swapgs sites
-- [ ] Verify with QEMU: after ring-3 task runs, GS in ring 0 still points to per-CPU data
-- [ ] Commit: `"kernel: abi — swapgs on INT 0x80 ring-3 entry and exit"`
+- [x] Verify with QEMU: ring-3 cmd.exe runs, 95 tests pass, desktop stable — GS correct (WHPX, 2026-04-02)
+- [x] Commit: `"kernel: abi — swapgs on INT 0x80 ring-3 entry and exit"`
 
 ## 4. KERNEL_GS_BASE Written at task_exec and Fork
 `IA32_KERNEL_GS_BASE` (MSR 0xC0000102) must hold the TEB address before the first ring-3 instruction runs. `swapgs` (§3) exchanges GS_BASE ↔ KERNEL_GS_BASE, so after `swapgs` in the ISR entry the kernel sees per-CPU GS and user-mode sees TEB via GS.
 
-- [ ] Define `MSR_KERNEL_GS_BASE 0xC0000102` in `include/kernel/smp/msr.h` (or smp.c)
-- [ ] In `task_exec`: after allocating TEB (§6), `wrmsr(MSR_KERNEL_GS_BASE, teb_addr)` before the scheduler runs the task
-- [ ] In `task_fork`: duplicate TEB for the child; write child's TEB address to `IA32_KERNEL_GS_BASE` when the child is first scheduled
-- [ ] In `task_create` for kernel tasks: write `0` to `IA32_KERNEL_GS_BASE` — kernel tasks never execute `swapgs` back to a TEB
-- [ ] On context switch (`switch_context.asm`): save and restore `IA32_KERNEL_GS_BASE` per task if SMP or if multiple user tasks share the same CPU
+- [x] `MSR_IA32_KERNEL_GS_BASE` (0xC0000102) already defined in `include/kernel/msr.h` line 50
+- [x] Added `kernel_gs_base` field to `struct task` in task.h
+- [x] `task_exec`: sets `tasks[pid].kernel_gs_base = 0` (§6 will set TEB address)
+- [x] `task_fork`: copies parent's `kernel_gs_base` to child (§6 will allocate child TEB)
+- [x] `task_init`: explicitly zeroes `kernel_gs_base` for all task slots
+- [x] Context switch (`schedule_now` + `schedule`): save/restore via `msr_read`/`msr_write` on task switch
 - [ ] Commit: `"kernel: abi — write KERNEL_GS_BASE at task_exec and fork"`
 
 ## 5. PEB Allocation and Population at task_exec
