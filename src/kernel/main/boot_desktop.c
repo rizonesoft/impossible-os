@@ -255,31 +255,10 @@ void boot_phase3(void)
     terminal_open();
     gallery_open();
 
-    /* --- Load cmd.exe --- */
-    if (vfs_is_mounted('C')) {
-        struct vfs_node *file = vfs_open("C:\\cmd.exe", VFS_O_READ);
-        if (file) {
-            uint8_t *buf = (uint8_t *)kmalloc(file->size);
-            if (buf) {
-                struct elf_load_result elf;
-                vfs_read(file, 0, (uint32_t)file->size, buf);
-                vfs_close(file);
-                elf = elf_load(buf, file->size);
-                kfree(buf);
-                if (elf.success) {
-                    task_create_user((task_entry_t)elf.entry, "cmd.exe");
-                    klog(LOG_DEBUG, "boot",
-                         "cmd.exe loaded: entry %p", elf.entry);
-                } else {
-                    klog(LOG_WARN, "boot", "cmd.exe ELF load failed");
-                }
-            } else {
-                vfs_close(file);
-                klog(LOG_ERROR, "boot", "Cannot allocate buffer for cmd.exe");
-            }
-        } else {
-            klog(LOG_WARN, "boot", "cmd.exe not found on C:\\");
-        }
+    /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
+    {
+        extern void shell_loader_func(void);
+        task_create(shell_loader_func, "cmd.exe");
     }
 
     scheduler_enable();
