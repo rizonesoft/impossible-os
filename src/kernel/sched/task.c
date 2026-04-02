@@ -22,6 +22,8 @@
 #include "kernel/ob/handle_table.h"
 #include "kernel/ob/ob_process.h"
 #include "kernel/ob/ob_thread.h"
+#include "kernel/ob/ob.h"
+#include "kernel/ob/ob_ns.h"
 #include "kernel/msr.h"
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
@@ -1211,6 +1213,41 @@ int task_exec(const uint8_t *data, uint64_t size)
              (uint64_t)p->OSBuildNumber,
              (uint64_t)p->NumberOfProcessors);
     }
+    /* ---- §10: Register PEB/TEB in Ob namespace ----
+     * Insert as named objects under \KernelObjects\Process<PID>\ so
+     * user-mode tools can enumerate all processes via NtQueryDirectoryObject.
+     * This is an Impossible OS exclusive — neither Windows nor Linux
+     * expose PEB/TEB as public named objects. */
+    {
+        void *ko_dir = (void *)0;
+        ObLookupObjectByName("\\KernelObjects", (void *)0, 0, &ko_dir);
+        if (ko_dir) {
+            /* Build "Process<PID>" directory name */
+            char pdir_name[16];
+            {
+                const char *pfx = "Process";
+                uint32_t n = 0;
+                while (*pfx) pdir_name[n++] = *pfx++;
+                if (pid >= 10) pdir_name[n++] = '0' + (char)(pid / 10);
+                pdir_name[n++] = '0' + (char)(pid % 10);
+                pdir_name[n] = '\0';
+            }
+
+            void *proc_dir = ob_ns_create_directory(ko_dir);
+            if (proc_dir) {
+                ObInsertObject(proc_dir, pdir_name, ko_dir);
+
+                /* Insert PEB and TEB as named objects.
+                 * These are raw pointers — the OB body IS the PEB/TEB. */
+                if (tasks[pid].peb)
+                    ObInsertObject(tasks[pid].peb, "Peb", proc_dir);
+                if (tasks[pid].teb)
+                    ObInsertObject(tasks[pid].teb, "Teb", proc_dir);
+            }
+            ObDereferenceObject(ko_dir);
+        }
+    }
+
     klog(LOG_DEBUG, "sched", "PID %u -> entry %p",
            (uint64_t)pid, elf.entry);
 

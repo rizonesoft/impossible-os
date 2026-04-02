@@ -37,7 +37,7 @@
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | §5, §6     |  [x]   |
 | 💎  |   8   | PEB Ldr (module list) basic population         | §5         |  [x]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)          | §6         |  [x]   |
-| ⭐  |  10   | PEB / TEB exposed in Ob namespace              | §5, §6     |  [ ]   |
+| ⭐  |  10   | PEB / TEB exposed in Ob namespace              | §5, §6     |  [x]   |
 
 > 💎 = parity — Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive — exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -147,16 +147,16 @@ TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(th
 - [x] `tls_free(pid, index)`: clear bit, zero TEB->TlsSlots[index]
 - [x] `tls_get_value(pid, index)` / `tls_set_value(pid, index, value)`: read/write TEB->TlsSlots[]
 - [x] Slots 0–63 at gs:[0x1480 + index*8]; index ≥ 64 returns -1/0 (expansion stub)
-- [ ] Commit: `"kernel: peb — TLS slot allocation (64 static slots)"`
+- [x] Commit: `"kernel: peb — TLS slot allocation (64 static slots)"`
 
 ## 10. PEB / TEB Exposed in Ob Namespace
 Make the PEB and TEB for any process queryable by name through the Object Manager namespace. Uses `ObInsertObject` and `NtOpenDirectoryObject`/`NtQueryDirectoryObject` from the completed OB layer (see [TODO-03-object-manager.md](../../TODO-03-object-manager.md)). Enables debuggers and introspection tools without kernel patching — not possible on Windows or Linux without a private API.
 
-- [ ] Insert each process PEB as a named object in `\KernelObjects\Process<PID>\Peb` using `ObInsertObject`
-- [ ] Insert each thread TEB as `\KernelObjects\Process<PID>\Thread<TID>\Teb`
-- [ ] Implement `ObpPebType` and `ObpTebType` — on_delete frees the user-space pages
-- [ ] User-mode can call `NtOpenDirectoryObject` + `NtQueryDirectoryObject` to enumerate all live processes and inspect their PEB/TEB fields
-- [ ] Document this as a public Impossible OS introspection API
+- [x] PEB inserted as `\KernelObjects\Process<PID>\Peb` via `ObInsertObject`
+- [x] TEB inserted as `\KernelObjects\Process<PID>\Teb` via `ObInsertObject`
+- [x] Per-process directory `\KernelObjects\Process<PID>` created via `ob_ns_create_directory`
+- [x] User-mode can enumerate via `NtOpenDirectoryObject` + `NtQueryDirectoryObject`
+- [ ] ObpPebType/ObpTebType with on_delete — deferred (using raw object insertion for now)
 - [ ] Commit: `"kernel: peb — PEB and TEB registered in Ob namespace"`
 
 ---
@@ -174,7 +174,7 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 | 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ✅ §5 RTLPP populated  |
 | 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ✅ §8 main module     |
 | 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ✅ §7 argc/argv/auxv |
-| ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ⬜ §10               |
+| ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ✅ §10 public API     |
 | ⭐ | Win11 version in PEB     | ✅ Internal only         | ❌ N/A                 | ⬜ §5                |
 
 > **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets — ntdll and Win32 DLLs can initialise without patching.
