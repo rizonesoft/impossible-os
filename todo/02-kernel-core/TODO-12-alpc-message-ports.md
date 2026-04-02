@@ -12,8 +12,8 @@
 - `src/kernel/ipc/` — existing pipe, shm, signal primitives (context only)
 - `include/kernel/ipc/` — current IPC headers
 - `src/kernel/sched/task.c` — `struct task`, wait/wake primitives
-- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03) §1–§4` — ALPC ports are `OBJECT_TYPE` kernel objects with handles, reference counts, and named entries in `\RPC Control\`
-- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03) §7` — `NtAlpcCreatePortSection` registers a Section object with the port; section creation depends on the Section object type
+- → XREF: `TODO-03-object-manager.md §1–§4` — ALPC ports are `OBJECT_TYPE` kernel objects with handles, reference counts, and named entries in `\RPC Control\`
+- → XREF: `TODO-03-object-manager.md §7` — `NtAlpcCreatePortSection` registers a Section object with the port; section creation depends on the Section object type
 - → XREF: `TODO-05-native-api-layer.md §4` — all `NtAlpc*` entry points are SSDT slots; wiring happens after the SSDT exists
 - → XREF: `TODO-06-irql-model-dpcs.md §3` — message delivery runs at `DISPATCH_LEVEL` briefly when queuing to the server's message queue; IRQL discipline applies
 - → XREF: `TODO-11-security-reference-monitor.md §4–§7` — client security context capture requires `ACCESS_TOKEN`; server impersonating a client requires `SeImpersonatePrivilege`
@@ -192,10 +192,10 @@
 
 ### 2.2 Object type registration
 
-- [ ] `AlpcInitialize()` called from Phase 1 kernel init (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §3`):
+- [ ] `AlpcInitialize()` called from Phase 1 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §3`):
   - `ObCreateObjectType("ALPC Port", sizeof(ALPC_PORT), AlpcPortDelete, ...)`
   - Registers `AlpcPortDelete` as the `DeleteProcedure`; drains queues, disconnects linked port, frees all message entries
-- [ ] Named server connection ports live in `\RPC Control\<name>` in the Ob namespace (→ XREF `docs/kernel/object-manager.md (completed, was TODO-03) §4`); `NtAlpcCreatePort` with non-NULL `ObjectAttributes->ObjectName` inserts there
+- [ ] Named server connection ports live in `\RPC Control\<name>` in the Ob namespace (→ XREF `TODO-03-object-manager.md §4`); `NtAlpcCreatePort` with non-NULL `ObjectAttributes->ObjectName` inserts there
 - [ ] Unnamed ports (client + server communication ports) have no namespace entry; accessed only via handle
 
 ### 2.3 Commit
@@ -505,14 +505,14 @@
 ### 9.1 CSRSS as the first ALPC server
 
 - [ ] CSRSS (`src/apps/csrss/csrss.c`) — the Win32 subsystem server process (→ XREF `11-user-platform-sdk/TODO-05` *(planned)*); it is the first real user-mode process that uses ALPC; this section defines only the kernel-side bootstrap contract
-- [ ] On kernel init Phase 3 (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §5`): spawn CSRSS as a `SYSTEM`-token process before any other user processes; CSRSS calls:
+- [ ] On kernel init Phase 3 (→ XREF `TODO-01-kernel-init-sequencing.md §5`): spawn CSRSS as a `SYSTEM`-token process before any other user processes; CSRSS calls:
   ```c
   NtAlpcCreatePort(&ApiPort,
       &ObjAttr(L"\\Windows\\ApiPort"),
       &PortAttrs{ .MaxMessageLength = 512,
                   .Flags = ALPC_PORTFLG_SYSTEM_PROCESS });
   ```
-- [ ] `\Windows\ApiPort` must be resolvable in the Ob namespace (→ XREF `docs/kernel/object-manager.md (completed, was TODO-03) §4`); add `\Windows\` directory creation to Phase 1 Ob init
+- [ ] `\Windows\ApiPort` must be resolvable in the Ob namespace (→ XREF `TODO-03-object-manager.md §4`); add `\Windows\` directory creation to Phase 1 Ob init
 
 ### 9.2 Win32 process creation notification
 
@@ -585,7 +585,7 @@ After §1–9, Impossible OS reaches full Windows 11 ALPC parity — the only ke
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_alpc()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_alpc()` (→ XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_alpc.c` with:
@@ -609,5 +609,5 @@ After §1–9, Impossible OS reaches full Windows 11 ALPC parity — the only ke
 - [ ] **Unit test — concurrent receivers**: 4 server threads all call `NtAlpcSendWaitReceivePort`; send 100 messages from one client; verify each message is delivered exactly once and total received count == 100.
 - [ ] **Unit test — port section large transfer**: register a 4 MiB section, map it, write a pattern, send; receiver maps same section, reads back pattern; verify byte-for-byte match without any `kmalloc` for the message body.
 - [ ] **CSRSS boot test in QEMU**: kernel spawns CSRSS; a test `hello.exe` connects to `\Windows\ApiPort`; CSRSS logs the connection and replies; verify `hello.exe` receives session ID; `alpcmon.exe` shows `\Windows\ApiPort` with 1 connected client.
-- [ ] **Remaining limits**: I/O completion port integration (§5) requires `NtCreateIoCompletion` / `NtRemoveIoCompletion` from `05-storage-filesystems`; handle duplication attribute (`ALPC_HANDLE_ATTR`) deferred to after `NtDuplicateObject` is stable (→ `docs/kernel/object-manager.md (completed, was TODO-03) §9`); ALPC debugging/tracing via ETW deferred to `09-services-security`.
+- [ ] **Remaining limits**: I/O completion port integration (§5) requires `NtCreateIoCompletion` / `NtRemoveIoCompletion` from `05-storage-filesystems`; handle duplication attribute (`ALPC_HANDLE_ATTR`) deferred to after `NtDuplicateObject` is stable (→ `TODO-03-object-manager.md §9`); ALPC debugging/tracing via ETW deferred to `09-services-security`.
 - [ ] Commit: `"kernel/ipc/alpc: ALPC complete — port objects, connection handshake, sync send+reply, async completion, port sections, security impersonation, CSRSS ApiPort, alpcmon"`

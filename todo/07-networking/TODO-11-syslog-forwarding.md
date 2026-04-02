@@ -13,8 +13,8 @@
 - `src/kernel/net/udp.c` — existing UDP send function
 - `include/kernel/klog.h` — `log_level_t` enum for severity mapping
 - `src/kernel/registry.c` — Registry API for reading syslog server config
-- → XREF: `docs/kernel/system-logging.md` — original home was TODO-02 §7 (moved here)
-- → XREF: `docs/kernel/init-sequencing.md` — `klog_disk_enable()` is Phase 2 gate
+- → XREF: `TODO-02-system-logging.md` — original home was TODO-02 §7 (moved here)
+- → XREF: `TODO-01-kernel-init-sequencing.md` — `klog_disk_enable()` is Phase 2 gate
 
 ---
 
@@ -77,7 +77,7 @@
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_syslog()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_syslog()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 
 - [ ] Create `src/kernel/test/test_syslog.c` with:
   - Syslog packet formatter produces valid `<PRI>1 ...` format

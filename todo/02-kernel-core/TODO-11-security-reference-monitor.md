@@ -12,7 +12,7 @@
 - `src/kernel/sched/task.c` — `struct task`, `task_exec`, `NtCreateProcess` path
 - `include/kernel/sched/task.h` — task struct (token field must be added)
 - `src/kernel/mm/vmm.c` — kernel/user access mode (UserMode / KernelMode)
-- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03) §8` — Object Manager security descriptor integration; ObXxx calls `SeAccessCheck` before granting any handle
+- → XREF: `TODO-03-object-manager.md §8` — Object Manager security descriptor integration; ObXxx calls `SeAccessCheck` before granting any handle
 - → XREF: `TODO-04-peb-teb-user-abi.md §1` — TEB carries `ImpersonationInfo` pointer (thread token)
 - → XREF: `TODO-05-native-api-layer.md §1` — NTSTATUS return codes used by all token/ACL syscalls
 - → XREF: `TODO-09-process-model-extensions.md §2` — process spawn path (NtCreateProcess) must copy parent token and attach it
@@ -280,7 +280,7 @@
 
 ### 4.2 Token creation and system tokens
 
-- [x] `SeCreateSystemToken()` — called in Phase 0 of kernel init (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §2`): UserSid=`SeLocalSystemSid`, Groups=`{SeBuiltinAdministratorsSid | SE_GROUP_ENABLED, SeWorldSid | SE_GROUP_ENABLED}`, all privileges enabled, IL=System; stored in `PsInitialSystemProcess->Token`
+- [x] `SeCreateSystemToken()` — called in Phase 0 of kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §2`): UserSid=`SeLocalSystemSid`, Groups=`{SeBuiltinAdministratorsSid | SE_GROUP_ENABLED, SeWorldSid | SE_GROUP_ENABLED}`, all privileges enabled, IL=System; stored in `PsInitialSystemProcess->Token`
 - [x] `SeCreateUserToken(user_sid, admin)` — creates Medium IL primary token for interactive logon (called by login manager in `09-desktop-shell`); if `admin`, also creates High IL linked token for elevation; groups include `SeBuiltinUsersSid`; privileges: `SeChangeNotifyPrivilege` enabled by default; `SeShutdownPrivilege`/`SeUndockPrivilege` enabled by default; admin token adds `SeBackupPrivilege`, `SeRestorePrivilege`, `SeLoadDriverPrivilege` as disabled by default (present but off until elevated)
 
 ### 4.3 Token query syscalls
@@ -401,7 +401,7 @@
 ### 7.2 Token assignment at spawn
 
 - [ ] In `NtCreateProcess` (→ XREF `TODO-09 §2`): call `NtDuplicateToken(parent->Token, TOKEN_ALL_ACCESS, NULL, FALSE, TokenPrimary, &child->Token)` — child starts with a deep copy of parent's primary token
-- [ ] `SeCreateSystemToken()` result assigned to `PsInitialSystemProcess->Token` during Phase 0 kernel init (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §2`)
+- [ ] `SeCreateSystemToken()` result assigned to `PsInitialSystemProcess->Token` during Phase 0 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §2`)
 
 ### 7.3 Thread impersonation
 
@@ -564,7 +564,7 @@ After §1–10, Impossible OS reaches full Windows 11 security architecture pari
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_security()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_security()` (→ XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_security.c` with:

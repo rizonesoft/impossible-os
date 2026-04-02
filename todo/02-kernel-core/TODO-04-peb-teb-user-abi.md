@@ -12,8 +12,8 @@
 - [`src/kernel/smp/smp.c`](../../src/kernel/smp/smp.c) — `IA32_GS_BASE` MSR setup
 - [`src/kernel/elf.c`](../../src/kernel/elf.c) — ELF loader (`elf_load`, `elf_load_result`)
 - [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h) — syscall table
-- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03)` — handle table needed for `PEB->ProcessParameters` stdin/stdout/stderr HANDLE fields
-- → XREF: `docs/kernel/init-sequencing.md (completed, was TODO-01)` — PEB/TEB init belongs in Phase 3 (user platform); requires VMM and scheduler (Phase 2)
+- → XREF: `TODO-03-object-manager.md` — handle table needed for `PEB->ProcessParameters` stdin/stdout/stderr HANDLE fields
+- → XREF: `TODO-01-kernel-init-sequencing.md` — PEB/TEB init belongs in Phase 3 (user platform); requires VMM and scheduler (Phase 2)
 - → XREF: `TODO-05-native-api-layer.md` — `NtCreateProcess` populates PEB; `LdrInitializeThunk` (ntdll entry) reads PEB->Ldr
 
 ## Outcome
@@ -116,7 +116,7 @@ One TEB per thread. Allocated in the user address space near the thread stack.
 - [x] ClientId: UniqueProcess=PID, UniqueThread=TID
 - [x] ProcessEnvironmentBlock → PEB from §5, LastErrorValue = 0
 - [x] `tasks[pid].teb` stored, `kernel_gs_base` set to TEB address for swapgs
-- [ ] Commit: `"kernel: peb — TEB allocation and population at thread create"`
+- [x] Commit: `"kernel: peb — TEB allocation and population at thread create"`
 
 ## 7. Initial User Stack Frame
 The user stack must have a valid calling frame waiting for the first instruction. Win32 convention: `ntdll!_LdrpInitialize` reads `PEB->ProcessParameters`; it does not expect argc/argv on the stack itself. However, the ELF ABI (for ELF-based binaries in the compatibility path) needs the Linux-style stack layout.
@@ -157,7 +157,7 @@ TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(th
 - [ ] Commit: `"kernel: peb — TLS slot allocation (64 static slots)"`
 
 ## 10. PEB / TEB Exposed in Ob Namespace
-Make the PEB and TEB for any process queryable by name through the Object Manager namespace. Uses `ObInsertObject` and `NtOpenDirectoryObject`/`NtQueryDirectoryObject` from the completed OB layer (see [docs/kernel/object-manager.md](../../docs/kernel/object-manager.md)). Enables debuggers and introspection tools without kernel patching — not possible on Windows or Linux without a private API.
+Make the PEB and TEB for any process queryable by name through the Object Manager namespace. Uses `ObInsertObject` and `NtOpenDirectoryObject`/`NtQueryDirectoryObject` from the completed OB layer (see [TODO-03-object-manager.md](../../TODO-03-object-manager.md)). Enables debuggers and introspection tools without kernel patching — not possible on Windows or Linux without a private API.
 
 - [ ] Insert each process PEB as a named object in `\KernelObjects\Process<PID>\Peb` using `ObInsertObject`
 - [ ] Insert each thread TEB as `\KernelObjects\Process<PID>\Thread<TID>\Teb`
@@ -189,7 +189,7 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_peb_teb()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_peb_teb()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [x] Create `src/kernel/test/test_peb_teb.c` — 5 suites, 18 assertions:

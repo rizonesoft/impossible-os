@@ -12,8 +12,8 @@
 - `src/kernel/klog_disk.c` — writes `events.jsonl` (JSONL format: `{"ts":N,"level":"INFO","tag":"net","msg":"..."}`)
 - `include/kernel/klog.h` — `log_level_t` enum (DEBUG=0, INFO=1, WARN=2, ERROR=3, FATAL=4)
 - `C:\Impossible\System\Logs\events.jsonl` — on-disk event log
-- → XREF: `docs/kernel/system-logging.md` — JSON Lines event format (was TODO-02 §6)
-- → XREF: `docs/infrastructure/kernel-test-framework.md` — unit test wiring
+- → XREF: `TODO-02-system-logging.md` — JSON Lines event format (was TODO-02 §6)
+- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` — unit test wiring
 
 ---
 
@@ -93,7 +93,7 @@ Watch for new events and update the display.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_eventview()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_eventview()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 
 - [ ] Create `src/kernel/test/test_eventview.c` with:
   - `events.jsonl` exists after boot with debug=1

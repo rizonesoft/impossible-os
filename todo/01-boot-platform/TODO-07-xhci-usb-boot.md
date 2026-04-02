@@ -281,7 +281,7 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_usb_boot()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_usb_boot()` (-> XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 > USB driver tests require hardware (real or emulated xHCI controller). Use `bash scripts/build.sh run-usb` for QEMU USB tests. Tests that need a controller gracefully skip when no xHCI is present.
 

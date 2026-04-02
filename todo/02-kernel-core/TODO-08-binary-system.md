@@ -14,7 +14,7 @@
 - [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) — `vfs_read()` for file I/O in loaders
 - → XREF: `TODO-04-peb-teb-user-abi.md §6–§7` — TEB allocation (§6) and initial user stack frame (§7) are populated after `exec_load()` hands control to ring 3
 - → XREF: `TODO-05-native-api-layer.md §5` — `NtXxx` SSDT entries must exist before §7 (import resolver) maps DLL function names to SSDT indices
-- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03) §5` — process object registered in Ob namespace at `exec_load()` time
+- → XREF: `TODO-03-object-manager.md §5` — process object registered in Ob namespace at `exec_load()` time
 - → XREF: `11-user-platform-sdk/INDEX.md` — EIF spec doc lives there; `elf2eif` tool and SDK integration wire back to §9
 
 ## Outcome
@@ -234,7 +234,7 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_exec()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_exec()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_exec.c` with:

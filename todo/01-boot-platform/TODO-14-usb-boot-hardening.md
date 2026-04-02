@@ -219,7 +219,7 @@ After §1–§9, USB boot is as reliable as Windows and Linux across all USB gen
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_usb_boot()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_usb_boot()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Hardware-dependent tests use `scripts/test-smoke.sh` serial pattern matching on QEMU `run-usb`.
 
 - [ ] Create `src/kernel/test/test_usb_boot.c` with:

@@ -22,8 +22,8 @@
 - `include/kernel/idt.h` — `struct interrupt_frame` (15 GPRs + int_no + err_code + CPU-pushed RIP/CS/RFLAGS/RSP/SS)
 - `include/kernel/symtab.h` — `symtab_resolve(addr, offset)`
 - `src/kernel/mm/pmm.c` — `pmm_used_page_count()`, `pmm_for_each_used_page()` needed for Full dump page walk
-- → XREF: `docs/kernel/system-logging.md (completed, was TODO-02) §2` — structured crash event written to per-subsystem crash log at panic time; `dmpanalyze.exe` (§9) reads these log entries too
-- → XREF: `docs/kernel/system-logging.md (completed, was TODO-02) §6` — structured JSON crash event (§6) should include bugcheck code, params, and RIP in `events.jsonl` at panic time; note: the raw-partition dump workspace (§7) must not use physical page `0x80000` — choose a different address or probe PMM for a contiguous free region (this constraint is a local §7 design note, not defined in TODO-02 §6)
+- → XREF: `TODO-02-system-logging.md §2` — structured crash event written to per-subsystem crash log at panic time; `dmpanalyze.exe` (§9) reads these log entries too
+- → XREF: `TODO-02-system-logging.md §6` — structured JSON crash event (§6) should include bugcheck code, params, and RIP in `events.jsonl` at panic time; note: the raw-partition dump workspace (§7) must not use physical page `0x80000` — choose a different address or probe PMM for a contiguous free region (this constraint is a local §7 design note, not defined in TODO-02 §6)
 - → XREF: `TODO-08-binary-system.md §1` — ELF/PE loader registers modules in the module list (§3); `LOADED_MODULE.image_base` comes from the loader
 - → XREF: `TODO-10-exception-dispatch-seh.md §1` — `EXCEPTION_RECORD` and `CONTEXT` types defined there; §4 of this TODO embeds them verbatim in the MDMP Exception stream
 - → XREF: `TODO-15-power-management.md §4` — S4 hibernate partition GPT GUID reused as the raw dump partition backing store (§7); both share the same raw-write path
@@ -56,7 +56,7 @@
 | 💎  |   5   | Minidump writer (crashing thread + small memory)       | 4                       |  [ ]   |
 | 💎  |   6   | Kernel dump & full dump variants                       | 5                       |  [ ]   |
 | 💎  |   7   | Raw-partition dump sink (VFS bypass)                   | 5, TODO-15-power-management.md §4           |  [ ]   |
-| 💎  |   8   | Post-boot crash recovery: copy dump + "unexpected shutdown" dialog | 7, docs/kernel/init-sequencing.md (completed, was TODO-01) §4 |  [ ]   |
+| 💎  |   8   | Post-boot crash recovery: copy dump + "unexpected shutdown" dialog | 7, TODO-01-kernel-init-sequencing.md §4 |  [ ]   |
 | ⭐  |   9   | `dmpanalyze.exe` crash analyzer                        | 4, 8                    |  [ ]   |
 
 > 💎 = parity work — matches what Windows 11 and Linux already do.
@@ -416,7 +416,7 @@
 
 ### 8.1 Kernel init check for pending dump
 
-- [ ] In kernel init Phase 2 (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §4`), after VFS mounts but before the desktop starts: call `dump_recovery_check()`:
+- [ ] In kernel init Phase 2 (→ XREF `TODO-01-kernel-init-sequencing.md §4`), after VFS mounts but before the desktop starts: call `dump_recovery_check()`:
   1. `dump_sink_probe()` — open dump partition
   2. Read sector 0; check `DUMP_PARTITION_HEADER.DumpPresent == 1`
   3. If present: read `DumpSize` bytes; write to `C:\Impossible\System\CrashDumps\{timestamp}.dmp` (create directory if absent; timestamp from `DumpPartitionHeader` or system RTC if unavailable)
@@ -531,7 +531,7 @@ After §1–8, Impossible OS reaches full Windows 11 crash-dump parity: WinDbg-c
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_crashdump()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_crashdump()` (→ XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_crashdump.c` with:

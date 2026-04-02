@@ -1,12 +1,13 @@
 {
-  "timestamp": "2026-04-01T23:00:34Z",
-  "total_suites": 38,
-  "total_assertions": 96,
+  "timestamp": "2026-04-02T10:36:43Z",
+  "total_suites": 43,
+  "total_assertions": 121,
   "files": [
     {"file": "test_boot_init.c", "suites": 8, "assertions": 19},
     {"file": "test_heap.c", "suites": 4, "assertions": 9},
     {"file": "test_klog.c", "suites": 6, "assertions": 9},
     {"file": "test_ob.c", "suites": 7, "assertions": 23},
+    {"file": "test_peb_teb.c", "suites": 5, "assertions": 25},
     {"file": "test_pmm.c", "suites": 2, "assertions": 5},
     {"file": "test_registry.c", "suites": 2, "assertions": 8},
     {"file": "test_sched.c", "suites": 1, "assertions": 1},

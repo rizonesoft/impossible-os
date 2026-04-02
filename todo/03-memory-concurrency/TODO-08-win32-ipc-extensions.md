@@ -10,7 +10,7 @@
 - [`src/kernel/ipc/pipe.c`](../../src/kernel/ipc/pipe.c), [`include/kernel/ipc/pipe.h`](../../include/kernel/ipc/pipe.h)
 - [`src/kernel/ipc/shmem.c`](../../src/kernel/ipc/shmem.c)
 - [`src/kernel/drivers/ahci.c`](../../src/kernel/drivers/ahci.c) — DMA completion hook for §5 IOCP worker pool
-- → XREF: `02-kernel-core/docs/kernel/object-manager.md (completed, was TODO-03) §4` — Ob namespace (`\Device\NamedPipe\`, `\RPC Control\`) required for §1, §6, §7; named sync object lookup in §6 traverses the Ob directory tree
+- → XREF: `02-kernel-core/TODO-03-object-manager.md §4` — Ob namespace (`\Device\NamedPipe\`, `\RPC Control\`) required for §1, §6, §7; named sync object lookup in §6 traverses the Ob directory tree
 - → XREF: `02-kernel-core/TODO-05-native-api-layer.md` — all `Nt*` function stubs (`NtCreateNamedPipeFile`, `NtCreateIoCompletion`, `NtCreateEvent`, `NtCreatePort`, `NtAlpcSendWaitReceivePort`, `NtSubmitRing`) are registered as Native API dispatch entries here
 - → XREF: `03-memory-concurrency/TODO-07-advanced-sync.md §4` — `FUTEX_WAIT`/`WAKE` underlies IOCP wait in §4 and ALPC blocking in §8
 - → XREF: `03-memory-concurrency/TODO-07-advanced-sync.md §8` — `waitable_t` vtable used by IOCP completion port and Ob sync objects to integrate with `WaitForMultipleObjects`
@@ -144,7 +144,7 @@ AHCI and VirtIO DMA-done ISRs post completion packets to the associated IOCP por
 **Files:** `src/kernel/sched/ob_sync.c` (new), `include/kernel/sched/ob_sync.h` (new)
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/docs/kernel/object-manager.md (completed, was TODO-03) §4` — objects are registered in the Ob directory; `NtOpenEvent(name)` must resolve through the Ob namespace. Handle table reference counting must prevent use-after-free when a process closes a handle while another is blocked on it.
+> → XREF: `02-kernel-core/TODO-03-object-manager.md §4` — objects are registered in the Ob directory; `NtOpenEvent(name)` must resolve through the Ob namespace. Handle table reference counting must prevent use-after-free when a process closes a handle while another is blocked on it.
 
 - [ ] `NtCreateEvent(name, type, initial_state)` — `type` = `NotificationEvent` (manual reset) or `SynchronizationEvent` (auto reset); register in Ob under `name` if provided; return handle
 - [ ] `NtSetEvent` / `NtResetEvent` / `NtPulseEvent` — signal, clear, or signal-then-auto-clear; wake waiters via `waitable_t`

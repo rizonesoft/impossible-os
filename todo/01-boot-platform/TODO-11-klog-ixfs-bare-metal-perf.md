@@ -172,7 +172,7 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_klog_flush()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_klog_flush()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_klog_flush.c` with:

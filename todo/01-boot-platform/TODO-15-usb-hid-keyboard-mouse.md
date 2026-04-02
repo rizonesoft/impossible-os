@@ -170,7 +170,7 @@ After §1–§5, USB input is at parity with Windows and Linux. §6–§7 add ho
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_usb_hid()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_usb_hid()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_usb_hid.c` with:

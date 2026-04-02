@@ -174,7 +174,7 @@
   static bool kd_active     = false; /* currently in KD command loop */
   static uint32_t g_kd_packet_id = 0;
   ```
-- [ ] `kd_init()` — called from Phase 1 kernel init (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §3`); sets `kd_present = true` if the boot command line contains `kddebug=serial` or `HKLM\SYSTEM\KernelDebugger\Enabled = 1`; calls `kd_serial_init()` (§1.3)
+- [ ] `kd_init()` — called from Phase 1 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §3`); sets `kd_present = true` if the boot command line contains `kddebug=serial` or `HKLM\SYSTEM\KernelDebugger\Enabled = 1`; calls `kd_serial_init()` (§1.3)
 
 ### 3.2 Breakin detection on RX interrupt
 
@@ -552,7 +552,7 @@ kernel development smoother.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_kd()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_kd()` (→ XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_kd.c` with:

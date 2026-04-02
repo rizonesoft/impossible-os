@@ -363,7 +363,7 @@
       __stack_chk_guard = (uintptr_t)rand;
   }
   ```
-- [ ] Call `canary_init()` very early in Phase 1 kernel init, before any stack-protected function is called (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §3`)
+- [ ] Call `canary_init()` very early in Phase 1 kernel init, before any stack-protected function is called (→ XREF `TODO-01-kernel-init-sequencing.md §3`)
 
 ### 9.3 `__stack_chk_fail` handler
 
@@ -472,7 +472,7 @@ KASLR slide (for post-mortem analysis) are minor implementation-quality exclusiv
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_cpu_security()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_cpu_security()` (→ XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_cpu_security.c` with:

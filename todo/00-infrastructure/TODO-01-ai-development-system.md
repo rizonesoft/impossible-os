@@ -15,7 +15,7 @@
 - [.githooks/pre-commit](../../.githooks/pre-commit)
 - [.githooks/post-commit](../../.githooks/post-commit)
 - [docs/infrastructure/development-tooling.md](../../docs/infrastructure/development-tooling.md)
-- [Developer Tooling Stack](../../docs/infrastructure/development-tooling.md) (completed, was TODO-02)
+- [TODO-02 Developer Tooling Stack](./TODO-02-developer-tooling-stack.md)
 
 ## Target Outcome
 

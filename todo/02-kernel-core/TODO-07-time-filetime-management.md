@@ -17,7 +17,7 @@
 - [`src/kernel/fs/fat32/fat32_ops.c`](../../src/kernel/fs/fat32/fat32_ops.c) — current FAT32 timestamp callsites
 - [`src/kernel/fs/ntfs/ntfs_metadata.c`](../../src/kernel/fs/ntfs/ntfs_metadata.c) — NTFS timestamp callsites
 - [`src/kernel/fs/ntfs/ntfs_data_write.c`](../../src/kernel/fs/ntfs/ntfs_data_write.c) — NTFS data write timestamp callsites
-- → XREF: `docs/kernel/init-sequencing.md (completed, was TODO-01) §4` — time service init (`wall_clock_init()`) belongs in Phase 2 (§4) after UEFI runtime; NTP wall clock adjustment belongs in Phase 3 (§5); `wall_clock_init()` is not yet listed in §4's checklist — add before implementing
+- → XREF: `TODO-01-kernel-init-sequencing.md §4` — time service init (`wall_clock_init()`) belongs in Phase 2 (§4) after UEFI runtime; NTP wall clock adjustment belongs in Phase 3 (§5); `wall_clock_init()` is not yet listed in §4's checklist — add before implementing
 - → XREF: `TODO-05-native-api-layer.md §4` — SSDT registration; time syscalls (`NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`, `NtQueryTimerResolution`) are added to the SSDT table in §7 of this TODO
 - → XREF: `TODO-06-irql-model-dpcs.md §6` — Timer/APIC scheduling path (§6) drives monotonic tick accumulation via `KiDispatchDpc()`; `DISPATCH_LEVEL` clock interrupt is the tick source
 
@@ -225,7 +225,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_time()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_time()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_time.c` with:

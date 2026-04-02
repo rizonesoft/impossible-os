@@ -11,7 +11,7 @@
 - [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) — `task_create`, `task_fork`, `task_exec`, `task_exit`, scheduler loop
 - [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) — `vfs_open`, relative path lookup entry point
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) — `vmm_map_pages` for program-break page allocation
-- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03) §3` — `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
+- → XREF: `TODO-03-object-manager.md §3` — `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
 - → XREF: `TODO-04-peb-teb-user-abi.md §5` — `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
 - → XREF: `TODO-05-native-api-layer.md §9` — `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
 - → XREF: `TODO-07-time-filetime-management.md §6` — `KeDelayExecutionThread` is the sleep implementation; `NtDelayExecution` syscall wiring belongs there
@@ -166,7 +166,7 @@ Capabilities can be inherited across `fork` / `exec` but can only be dropped, ne
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_proc_ext()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_proc_ext()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_proc_ext.c` with:

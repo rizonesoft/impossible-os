@@ -40,7 +40,7 @@
 - → XREF: `TODO-04-cpu-boot-sequencing.md §2,§4` — CPU hardening activation order (deferred there; minimal version in §9 here)
 - → XREF: `TODO-05-visual-post-display.md §1-§2` — 4-digit POST code system and per-function instrumentation (moved from this TODO to TODO-05)
 - → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` — NX/SMEP/SMAP implementation (this TODO does NOT reimplement; handles bare-metal quirks like shared page tables)
-- → XREF: `02-kernel-core/docs/kernel/init-sequencing.md (completed, was TODO-01) §1` — boot_progress() infrastructure (this TODO consumes it)
+- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` — boot_progress() infrastructure (this TODO consumes it)
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` — UC MMIO mapping for HPET/AHCI
 
 ## Outcome
@@ -465,7 +465,7 @@ Full acceptance pass. All sections complete.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_bare_metal()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_bare_metal()` (-> XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 > Bare-metal hardening is primarily verified by multi-platform boot (QEMU WHPX/TCG, VBox, bare metal). Kernel unit tests cover the infrastructure APIs; full validation requires `scripts/test-smoke.sh` on each platform.
 

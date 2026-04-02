@@ -14,7 +14,7 @@
 - [`src/kernel/drivers/pit.c`](../../src/kernel/drivers/pit.c)
 - [`src/kernel/drivers/lapic.c`](../../src/kernel/drivers/lapic.c)
 - [`src/kernel/sched/spinlock.c`](../../src/kernel/sched/spinlock.c)
-- → XREF: `docs/kernel/init-sequencing.md (completed, was TODO-01) §3` — DPC init belongs in Phase 1 (§3) after timer/interrupt controller readiness; `dpc_init()` is gated on `SUBSYS_TIMER`.
+- → XREF: `TODO-01-kernel-init-sequencing.md §3` — DPC init belongs in Phase 1 (§3) after timer/interrupt controller readiness; `dpc_init()` is gated on `SUBSYS_TIMER`.
 - → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §5` — `irq_request()` dynamic IRQ API must exist before IRQL levels are mapped to IOAPIC vectors; LAPIC timer (§7 of that TODO) must be calibrated before DPC dispatch at `DISPATCH_LEVEL` is wired.
 - → XREF: `01-boot-platform/TODO-03-interrupt-timer-arch.md §7` — LAPIC timer calibration is the prerequisite for the timer/APIC scheduling path for DPC dispatch (§6 of this TODO).
 - → XREF: `04-drivers-hardware/INDEX.md` — ISR drivers (NIC/storage/input) must migrate from ad-hoc workqueue usage to DPC top-half/bottom-half contracts.
@@ -151,7 +151,7 @@
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_irql_dpc()` (XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_irql_dpc()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_irql_dpc.c` with:

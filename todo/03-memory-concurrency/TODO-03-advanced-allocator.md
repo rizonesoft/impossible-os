@@ -14,7 +14,7 @@
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c)
 - [`include/kernel/mm/vmm.h`](../../include/kernel/mm/vmm.h)
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` — demand paging (MEM_COMMIT zero-fill) needed before vmalloc can map scattered frames
-- → XREF: `02-kernel-core/docs/kernel/init-sequencing.md (completed, was TODO-01)` — heap init timing; §4 growable heap must not regress the boot sequence
+- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md` — heap init timing; §4 growable heap must not regress the boot sequence
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `/sys/pooltags` and NonPagedPool/PagedPool pool-tag registry integration
 - → XREF: `05-storage-filesystems` domain — `/sys/slab` and `/sys/pooltags` VFS files require VFS to be initialised
 
@@ -129,7 +129,7 @@ Two pool classes matching the Windows NonPagedPool / PagedPool contract: `kmallo
 **Files:** `include/kernel/mm/pool.h` (new), `src/kernel/mm/pool.c` (new)
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/docs/kernel/init-sequencing.md (completed, was TODO-01)` — interrupt handlers and code executing above `PASSIVE_LEVEL` must only use NonPagedPool. Using PagedPool at elevated IRQL produces a blue screen on Windows; Impossible OS must enforce the same contract and panic rather than silently succeed.
+> → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md` — interrupt handlers and code executing above `PASSIVE_LEVEL` must only use NonPagedPool. Using PagedPool at elevated IRQL produces a blue screen on Windows; Impossible OS must enforce the same contract and panic rather than silently succeed.
 
 - [ ] Define `POOL_TYPE_NONPAGED` and `POOL_TYPE_PAGED` constants
 - [ ] `kmalloc_nonpaged(size)` → `pmm_alloc_contiguous()` for the backing frame; always physically resident, safe at any IRQL

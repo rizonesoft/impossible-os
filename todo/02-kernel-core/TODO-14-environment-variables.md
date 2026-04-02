@@ -115,7 +115,7 @@
 
 ### 2.2 Bootstrap env before Registry is mounted
 
-- [ ] A minimal hardcoded fallback is used during kernel init before `registry_init()` completes (Phase 1); replace with Registry values during Phase 2 (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §4`):
+- [ ] A minimal hardcoded fallback is used during kernel init before `registry_init()` completes (Phase 1); replace with Registry values during Phase 2 (→ XREF `TODO-01-kernel-init-sequencing.md §4`):
   ```c
   static const char *bootstrap_env[] = {
       "PATH=C:\\Impossible\\Bin",
@@ -393,7 +393,7 @@ The `source` / `.` command (§8.3) is a genuine differentiator over Windows cmd.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_env()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_env()` (→ XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_env.c` with:

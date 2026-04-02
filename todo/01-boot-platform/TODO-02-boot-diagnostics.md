@@ -17,8 +17,8 @@
 - [`src/kernel/panic.c`](../../src/kernel/panic.c)
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
-- → XREF: `02-kernel-core/docs/kernel/init-sequencing.md (completed, was TODO-01) §1` — `boot_progress(phase, step, postcode)` in `boot_init.h`; §2 of this TODO wraps it with a named-stage layer
-- → XREF: `02-kernel-core/docs/kernel/init-sequencing.md (completed, was TODO-01) §7` — `boot_halt()` is the pre-FB panic anchor that §6 extends with forensic evidence
+- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` — `boot_progress(phase, step, postcode)` in `boot_init.h`; §2 of this TODO wraps it with a named-stage layer
+- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §7` — `boot_halt()` is the pre-FB panic anchor that §6 extends with forensic evidence
 - → XREF: `02-kernel-core/TODO-16-crash-dump-generation.md` — crash dumps complement §6 panic forensics; coordinate PMM page reservation at `0x80000` to avoid collision with minidump workspace
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` — `HKLM\SYSTEM\Boot\DebugBar`, `AliveBlink`, `VitalSigns` registry keys
 - → XREF: `TODO-01-uefi-hardening-secureboot.md §7` — boot UX polish calls `boot_splash_status()` via the §2 API
@@ -194,7 +194,7 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_boot_diag()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_boot_diag()` (-> XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_boot_diag.c` with:

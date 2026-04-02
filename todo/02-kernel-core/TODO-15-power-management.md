@@ -32,7 +32,7 @@
 - `src/kernel/mm/vmm.c` — page table save for S3 wakeup identity map
 - → XREF: `TODO-06-irql-model-dpcs.md §3` — DPCs and IRQL transitions must be quiesced before entering any sleep state; `KeLowerIrql(PASSIVE_LEVEL)` required on resume
 - → XREF: `TODO-07-time-filetime-management.md §3` — TSC must be recalibrated after S3/S0ix wake (clock drift); `acpi_pm_timer_read()` used as reference; §3 = Invariant TSC Detection and Per-CPU Offset Calibration
-- → XREF: `docs/kernel/init-sequencing.md (completed, was TODO-01) §3` — S4 resume check runs early in Phase 1; must distinguish cold boot from hibernate resume via hibernation signature
+- → XREF: `TODO-01-kernel-init-sequencing.md §3` — S4 resume check runs early in Phase 1; must distinguish cold boot from hibernate resume via hibernation signature
 - → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §4` — driver model HAL vtables required for USB xHCI to register power callbacks; xHCI D3cold→D0 handled via callback registered in §9
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` — IXFS WAL journal (`ixfs_journal_begin`/`commit`/`abort`) must be verified (§1 Subsystem Verification) before S4 journal-flush dependency is safe; storage driver must reach D0 before journal replay on resume
 
@@ -215,7 +215,7 @@
 
 ### 4.3 Hibernation resume on boot
 
-- [ ] In kernel init (→ XREF `docs/kernel/init-sequencing.md (completed, was TODO-01) §3`), early in Phase 1: check the hibernation partition for a valid `HIBR_HEADER.magic`; if found and `kernel_version` matches: enter hibernation resume path
+- [ ] In kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §3`), early in Phase 1: check the hibernation partition for a valid `HIBR_HEADER.magic`; if found and `kernel_version` matches: enter hibernation resume path
 - [ ] `pm_hibernate_resume()`:
   1. Read all compressed chunks from the partition; decompress into a separate bounce buffer
   2. CRC32C verify the full image; halt with `KERNEL_HIBERNATE_CORRUPT` (→ XREF `TODO-16-crash-dump-generation.md §1`) if mismatch
@@ -509,7 +509,7 @@ After §1–9, Impossible OS reaches full Windows 11 and Linux parity for every 
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_power()` (→ XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_power()` (→ XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_power.c` with:

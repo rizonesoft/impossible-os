@@ -3,15 +3,15 @@
 > **Goal:** Never miss a broken build. When CI fails — build error, test failure, boot crash — the developer gets notified immediately. GitHub PR status checks block merge on failure. Email or webhook notifications on `main` branch failures. Build badge in README shows current status. The developer should never have to manually check CI — failures come to them.
 
 > [!IMPORTANT]
-> **Current state (2026-04-02):** GitHub Actions builds on push. No build badge in README. No branch protection rules enforcing status checks. CI QEMU tests removed (see docs/infrastructure/kernel-test-framework.md) (unreliable under nested virt) — CI only verifies build, not boot. Local testing via `make test`.
+> **Current state (2026-04-02):** GitHub Actions builds on push. No build badge in README. No branch protection rules enforcing status checks. CI QEMU tests removed (see 00-infrastructure/TODO-03-kernel-test-framework.md) (unreliable under nested virt) — CI only verifies build, not boot. Local testing via `make test`.
 
 ---
 
 ## Inputs
 
 - `.github/workflows/build.yml` — existing CI pipeline
-- → XREF: `docs/infrastructure/kernel-test-framework.md` — `make test` for local verification (CI QEMU tests removed)
-- → XREF: `docs/infrastructure/development-tooling.md` — GitHub sync (completed, was TODO-02 §2.5)
+- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` — `make test` for local verification (CI QEMU tests removed)
+- → XREF: `TODO-02-developer-tooling-stack.md
 
 ---
 
@@ -46,7 +46,7 @@
 Configure GitHub to require passing CI before merge to `main`.
 
 - [ ] Settings → Branches → `main` → Require status checks: `Build Impossible OS`
-- [ ] Only the build check is required (CI QEMU tests removed (see docs/infrastructure/kernel-test-framework.md))
+- [ ] Only the build check is required (CI QEMU tests removed (see 00-infrastructure/TODO-03-kernel-test-framework.md))
 - [ ] Require branches to be up to date before merging
 - [ ] Document in CONTRIBUTING.md
 - [ ] Commit: `"ci: branch protection — require passing CI for merge to main"`

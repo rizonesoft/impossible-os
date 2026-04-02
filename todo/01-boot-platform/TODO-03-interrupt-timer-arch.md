@@ -16,7 +16,7 @@
 - [`include/kernel/irq.h`](../../include/kernel/irq.h)
 - [`include/kernel/timer.h`](../../include/kernel/timer.h)
 - [`include/kernel/drivers/pit.h`](../../include/kernel/drivers/pit.h)
-- → XREF: `02-kernel-core/docs/kernel/init-sequencing.md (completed, was TODO-01) §3` — Phase 1 calls every init function listed here in the correct order; this TODO defines what correct order means
+- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §3` — Phase 1 calls every init function listed here in the correct order; this TODO defines what correct order means
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §1` — DPC queue init requires LAPIC timer ready (§7); IRQL model depends on the correct interrupt priority assignment established in §2
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §2` — `uptime_ns()` from the UTS (§6) is the clock source for the monotonic nanosecond clock used by FILETIME and `QueryPerformanceCounter`
 - → XREF: `TODO-02-boot-diagnostics.md §2` — boot time visualization (§9) reads `boot_stage_history[]` built by the boot progress API
@@ -214,7 +214,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_irq_timer()` (-> XREF: `docs/infrastructure/kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_irq_timer()` (-> XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_irq_timer.c` with:
