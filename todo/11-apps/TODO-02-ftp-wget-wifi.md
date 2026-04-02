@@ -210,7 +210,7 @@ Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_L
 ## OS Comparison
 
 
-| ⭐ | Feature                                        | Win11                              | Linux                      | Impossible OS                           |
+| ⭐ | Feature                                        | 🪟 Win11                              | 🐧 Linux                      | 🚀 Impossible OS                           |
 |----|------------------------------------------------|------------------------------------|----------------------------|-----------------------------------------|
 | 💎 | FTP client                                     | ✅ `ftp.exe` built-in              | ✅ `ftp`/`lftp`            | ⬜ `ftp` shell command + PASV/RETR/STOR |
 | 💎 | `wget` file downloader                         | ❌ Not built-in (requires install) | ✅ Built-in                | ⬜ built-in with `-O/-q/-c/-r` flags    |

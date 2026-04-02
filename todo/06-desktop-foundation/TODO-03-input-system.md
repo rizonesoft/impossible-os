@@ -113,7 +113,7 @@ When the terminal window is visually focused, typing either appears after a 1-2 
 
 ## OS Comparison
 
-| ⭐ | Feature          | Win11            | Linux (Wayland)  | Impossible OS        |
+| ⭐ | Feature          | 🪟 Win11            | 🐧 Linux (Wayland)  | 🚀 Impossible OS        |
 |----|------------------|------------------|------------------|----------------------|
 | 💎 | Modifier tracking | ✅ Full          | ✅ Full          | ⬜ §1                |
 | 💎 | Tab navigation   | ✅ Built-in      | ✅ Built-in      | ⬜ §3                |

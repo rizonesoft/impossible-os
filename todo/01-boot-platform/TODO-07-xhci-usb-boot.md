@@ -264,7 +264,7 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11              | Linux              | Impossible OS          |
+| ⭐ | Feature              | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS          |
 |----|----------------------|--------------------|--------------------|------------------------|
 | 💎 | xHCI controller      | ✅ usbxhci.sys    | ✅ xhci-hcd        | ✅ §1-§4 done          |
 | 💎 | USB MSC              | ✅ USBSTOR.SYS    | ✅ usb-storage      | ✅ §3 BOT done         |

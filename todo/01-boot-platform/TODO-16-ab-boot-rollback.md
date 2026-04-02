@@ -141,7 +141,7 @@ Integrate A/B slot status into the VPD and boot timing display.
 
 ## OS Comparison
 
-| ⭐ | Feature                   | Win11                      | Linux                    | Impossible OS             |
+| ⭐ | Feature                   | 🪟 Win11                      | 🐧 Linux                    | 🚀 Impossible OS             |
 |----|---------------------------|----------------------------|--------------------------|---------------------------|
 | 💎 | Dual-slot boot            | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess   | ⬜ §1–§3                  |
 | 💎 | Boot failure counting     | ✅ 2-attempt detection     | ✅ systemd tries counter | ⬜ §4                     |

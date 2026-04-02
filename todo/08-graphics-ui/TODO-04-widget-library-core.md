@@ -186,7 +186,7 @@ Audit all 6 new controls and confirm zero hardcoded hex colors. All color refere
 ## OS Comparison
 
 
-| ⭐ | Feature             | Win11                                                    | Linux                                                                             | Impossible OS                                                                  |
+| ⭐ | Feature             | 🪟 Win11                                                    | 🐧 Linux                                                                             | 🚀 Impossible OS                                                                  |
 |----|---------------------|----------------------------------------------------------|-----------------------------------------------------------------------------------|--------------------------------------------------------------------------------|
 | 💎 | Checkbox            | ✅ WinUI3 `CheckBox`; BS_CHECKBOX; full state            | ✅ GTK `GtkCheckButton`; Qt `QCheckBox`; full                                     | ⬜ §1 — `gfx_fill_rounded_rect` + Fluent checkmark glyph                       |
 | 💎 | Radio button        | ✅ WinUI3 `RadioButton`; BS_RADIOBUTTON; `WM_COMMAND` on | ✅ GTK `GtkRadioButton`; `gtk_radio_button_new_with_label_from_widget` group link | ⬜ §2 — `gfx_fill_circle` outer ring + inner                                   |

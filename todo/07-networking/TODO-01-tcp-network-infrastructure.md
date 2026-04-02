@@ -167,7 +167,7 @@ Hash table keyed on `(src_ip, src_port, dst_ip, dst_port)`. Create entries on ou
 ## OS Comparison
 
 
-| ⭐ | Feature                                                         | Win11                                        | Linux                                              | Impossible OS                                              |
+| ⭐ | Feature                                                         | 🪟 Win11                                        | 🐧 Linux                                              | 🚀 Impossible OS                                              |
 |----|-----------------------------------------------------------------|----------------------------------------------|----------------------------------------------------|------------------------------------------------------------|
 | 💎 | TCP header + pseudo-header checksum, IP_PROTO_TCP routing       | ✅ `tcpip.sys`; full TCP/IP stack            | ✅ `net/ipv4/tcp.c`; full TCP stack                | ⬜ §1 — 20-byte header, flags, pseudo-CRC, ipv4_handle     |
 | 💎 | TCP 11-state RFC 793 machine                                    | ✅ `tcpip.sys`; RFC 793 + RFC                | ✅ Linux TCP; RFC 793 +                            | ⬜ §2 — 32-slot table, all 11 states,                      |

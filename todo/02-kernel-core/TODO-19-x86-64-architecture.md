@@ -476,7 +476,7 @@ AMD SVM / Intel VMX capability reporting
 ## OS Comparison
 
 
-| ⭐ | Feature                             | Win11                          | Linux                                 | Impossible OS                          |
+| ⭐ | Feature                             | 🪟 Win11                          | 🐧 Linux                                 | 🚀 Impossible OS                          |
 |----|-------------------------------------|--------------------------------|---------------------------------------|----------------------------------------|
 | 💎 | CPUID feature detection             | ✅ `KeQueryProcessorFeature`   | ✅ `arch/x86/kernel/cpu/`             | ✅ Done — `cpuid_init()`, 44+ features |
 | 💎 | AMD extended CPUID                  | ✅ HAL AMD leaves              | ✅ `arch/x86/kernel/cpu/amd.c`        | ✅ §1 — Done — .2 complete             |

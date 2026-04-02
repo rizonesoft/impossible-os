@@ -174,7 +174,7 @@ Verify WM state without screenshots — pure data inspection.
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                   | Linux                   | Impossible OS            |
+| ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS            |
 |----|----------------------------|-------------------------|-------------------------|--------------------------|
 | 💎 | UI automation framework    | ✅ UI Automation + WACK | ⚠️ dogtail/LDTP         | ⬜ §4–§5                 |
 | 💎 | Automated boot UI test     | ✅ Internal CI          | ⚠️ OpenQA (SUSE)        | ⬜ §3                    |

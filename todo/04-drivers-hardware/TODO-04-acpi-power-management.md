@@ -238,7 +238,7 @@ Three named power profiles — Balanced, Performance, Power Saver — configure 
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                                              | Linux                                                              | Impossible OS                                                           |
+| ⭐ | Feature                                           | 🪟 Win11                                                              | 🐧 Linux                                                              | 🚀 Impossible OS                                                           |
 |----|---------------------------------------------------|--------------------------------------------------------------------|--------------------------------------------------------------------|-------------------------------------------------------------------------|
 | 💎 | AML interpreter                                   | ✅ `ACPI.sys` — Microsoft AML interpreter                          | ✅ `drivers/acpi/` — ACPICA (Apache-2.0) static                    | ⬜ §1 — ACPICA + OSL (Apache-2.0), `AcpiEvaluateObject`                 |
 | 💎 | S3 suspend/resume — trampoline + state restore    | ✅ `ntoskrnl` power manager; `PO_S3_RESUME` wakeup                 | ✅ `kernel/power/suspend.c`; `arch/x86/power/hibernate_asm_64.S`   | ⬜ §2 — 1 MiB real-mode trampoline, `cpu_sleep_state`,                  |

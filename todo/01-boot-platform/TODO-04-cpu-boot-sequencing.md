@@ -135,7 +135,7 @@ The UTS probe in TODO-03 §6 selects HPET vs PIT vs LAPIC timer, but on Hyper-V 
 
 ## OS Comparison
 
-| ⭐ | Feature                   | Win11                        | Linux                         | Impossible OS                      |
+| ⭐ | Feature                   | 🪟 Win11                        | 🐧 Linux                         | 🚀 Impossible OS                      |
 |----|---------------------------|------------------------------|-------------------------------|------------------------------------|
 | 💎 | EFER.NXE before NX pages  | ✅ HalInitializeProcessor   | ✅ cpu_init before paging     | ⚠️ §2 defer — NX works, order WIP |
 | 💎 | SMEP/SMAP BSP Phase 0     | ✅ CR4 in HalInitSystem     | ✅ setup_cr4 early            | ⚠️ §2 defer — bare metal skips    |

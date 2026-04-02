@@ -112,7 +112,7 @@ Reusable popup menu that appears at cursor position on right-click.
 
 ## OS Comparison
 
-| ⭐ | Feature        | Win11            | Linux (GTK)      | Impossible OS      |
+| ⭐ | Feature        | 🪟 Win11            | 🐧 Linux (GTK)      | 🚀 Impossible OS      |
 |----|----------------|------------------|------------------|--------------------|
 | 💎 | Checkbox/Radio | ✅ Built-in      | ✅ Built-in      | ⬜ §1              |
 | 💎 | Progress bar   | ✅ Built-in      | ✅ Built-in      | ⬜ §2              |

@@ -155,7 +155,7 @@ Extend `ntfs_test.c` with an end-to-end scenario: format a 64 MiB in-memory imag
 ## OS Comparison
 
 
-| ⭐ | Feature                                                             | Win11                                                              | Linux                                               | Impossible OS                                                           |
+| ⭐ | Feature                                                             | 🪟 Win11                                                              | 🐧 Linux                                               | 🚀 Impossible OS                                                           |
 |----|---------------------------------------------------------------------|--------------------------------------------------------------------|-----------------------------------------------------|-------------------------------------------------------------------------|
 | 💎 | NTFS B+ tree insert/delete with split/merge + `$LogFile` journaling | ✅ `NTFS.sys`; full B+ tree mutation;                              | ✅ `ntfs3.ko`; B+ tree insert/delete; journal;      | ⚠️ §1 — Partial — cores exist; audits                                   |
 | 💎 | NTFS data write                                                     | ✅ `NTFS.sys`; full write path; `NtWriteFile`/`NtSetEndOfFile`     | ✅ `ntfs3.ko`; `file_write_iter()`; cluster alloc + | ⚠️ §2 — Partial — `ntfs_write_data()`/`ntfs_truncate()` exist; wires    |

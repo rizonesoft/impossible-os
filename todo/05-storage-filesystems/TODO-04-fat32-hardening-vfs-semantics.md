@@ -224,7 +224,7 @@ Return correct stub responses for Win32 queries that user-mode programs issue on
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                                                       | Linux                                                                  | Impossible OS                                                                  |
+| ⭐ | Feature                                           | 🪟 Win11                                                                       | 🐧 Linux                                                                  | 🚀 Impossible OS                                                                  |
 |----|---------------------------------------------------|-----------------------------------------------------------------------------|------------------------------------------------------------------------|--------------------------------------------------------------------------------|
 | 💎 | FAT32 BPB strict validation + dirty-volume marker | ✅ `fatfs.sys`; strict BPB check at                                         | ✅ `fat/inode.c`; `fat_fill_super()` validates BPB; `FAT_STATE_DIRTY`  | ⬜ §1 — `fat32_validate_bpb()`, dirty FAT[1] bit 27,                           |
 | 💎 | FSInfo `FreeCount`                                | ✅ `fatfs.sys`; FSInfo maintained; full scan                                | ✅ `fat/fatent.c`; `fat_count_free_clusters()` fallback                | ⚠️ §2 — Partial — flush exists; adds                                           |

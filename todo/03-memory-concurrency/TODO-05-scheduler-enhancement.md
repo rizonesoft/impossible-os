@@ -201,7 +201,7 @@ Define a `cpufreq_governor_t` vtable and wire two built-in governors — `perfor
 ## OS Comparison
 
 
-| ⭐ | Feature                                       | Win11                                                 | Linux                                                    | Impossible OS                                              |
+| ⭐ | Feature                                       | 🪟 Win11                                                 | 🐧 Linux                                                    | 🚀 Impossible OS                                              |
 |----|-----------------------------------------------|-------------------------------------------------------|----------------------------------------------------------|------------------------------------------------------------|
 | 💎 | Priority queues — O(1) dequeue                | ✅ 32 priority levels; O(1) per-priority              | ✅ 40 nice levels; O(1) via                              | ⬜ §1 — 40 levels, 64-bit `bsf` bitmap                     |
 | 💎 | Starvation prevention / priority aging        | ✅ Priority boost heuristic (UI threads)              | ✅ Dynamic priority decay (`sched_prio_to_weight`)       | ⬜ §2 — `ticks_waiting` EMA aging, Registry-tunable        |

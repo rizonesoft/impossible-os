@@ -248,7 +248,7 @@ Full-text search over local message cache (grep headers + body). `SEARCH <term>`
 ## OS Comparison
 
 
-| ⭐ | Feature                                   | Win11                                                    | Linux                                                 | Impossible OS                                                     |
+| ⭐ | Feature                                   | 🪟 Win11                                                    | 🐧 Linux                                                 | 🚀 Impossible OS                                                     |
 |----|-------------------------------------------|----------------------------------------------------------|-------------------------------------------------------|-------------------------------------------------------------------|
 | 💎 | Message parser                            | ✅ Windows Mail / Outlook: full                          | ✅ Thunderbird/Evolution: full MIME; `libmime` /      | ⬜ §1 — hand-written MIME parser; `base64_decode` reused          |
 | 💎 | SMTP client                               | ✅ `System.Net.Mail.SmtpClient`; Outlook SMTP; full AUTH | ✅ `sendmail`/`postfix` + `libesmtp`; Thunderbird     | ⬜ §2 — STARTTLS via Mbed TLS; QP                                 |

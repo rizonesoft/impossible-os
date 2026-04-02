@@ -210,7 +210,7 @@ Win32-compatible `MessageBox()` (exact `MB_*`/`ID*` constants, embedded 48×48 B
 ## OS Comparison
 
 
-| ⭐ | Feature                                         | Win11                                                           | Linux                                                          | Impossible OS                                                        |
+| ⭐ | Feature                                         | 🪟 Win11                                                           | 🐧 Linux                                                          | 🚀 Impossible OS                                                        |
 |----|-------------------------------------------------|-----------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------|
 | 💎 | ListView                                        | ✅ WinUI3 `ListView`/`GridView`; Win32 `LVM_SORTITEMS`; virtual | ✅ GTK `GtkTreeView`/`GtkIconView`; Qt `QListView`; virtual    | ⬜ §1 — DFS-rebuilt visible list; shell-sort; `pmm_alloc_contiguous` |
 | 💎 | TreeView                                        | ✅ WinUI3 `TreeView`; Win32 `WC_TREEVIEW`; `TVN_ITEMEXPANDING`  | ✅ GTK `GtkTreeView` with `GtkTreeStore`; Qt                   | ⬜ §2 — 512-node `pmm_alloc_contiguous` slab; DFS visible-list       |

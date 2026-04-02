@@ -146,7 +146,7 @@ Per-icon context menu with standard actions.
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11            | Linux (GNOME)    | Impossible OS        |
+| ⭐ | Feature              | 🪟 Win11            | 🐧 Linux (GNOME)    | 🚀 Impossible OS        |
 |----|----------------------|------------------|------------------|----------------------|
 | 💎 | Desktop icons        | ✅ Built-in      | ✅ Nautilus      | ⬜ §1-§2             |
 | 💎 | Dynamic from folder  | ✅ Built-in      | ✅ ~/Desktop     | ⬜ §3                |

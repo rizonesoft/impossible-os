@@ -211,7 +211,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                          | Win11                                            | Linux                     | Impossible OS                                               |
+| ⭐ | Feature                                          | 🪟 Win11                                            | 🐧 Linux                     | 🚀 Impossible OS                                               |
 |----|--------------------------------------------------|--------------------------------------------------|---------------------------|-------------------------------------------------------------|
 | 💎 | SSH2 transport — ChaCha20-Poly1305 + HKDF-SHA256 | ✅ OpenSSH via `ssh.exe`                         | ✅ OpenSSH                | ⬜ §1 — monocypher crypto; HKDF-SHA256 key derivation       |
 | 💎 | Password + pubkey (Ed25519) auth                 | ✅ OpenSSH                                       | ✅ OpenSSH                | ⬜ §2 — Ed25519 auto-generate on first use                  |

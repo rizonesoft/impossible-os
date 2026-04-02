@@ -82,7 +82,7 @@ Watch for new events and update the display.
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11             | Linux              | Impossible OS         |
+| ⭐ | Feature              | 🪟 Win11             | 🐧 Linux              | 🚀 Impossible OS         |
 |----|----------------------|-------------------|--------------------|----------------------|
 | 💎 | Event log viewer     | ✅ Event Viewer   | ✅ journalctl       | ⬜ §1–§2             |
 | 💎 | Level filtering      | ✅ Filter by type | ✅ journalctl -p    | ⬜ §1–§2             |

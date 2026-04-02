@@ -237,7 +237,7 @@ Every blocking primitive gets a `_timeout(ms)` variant with identical semantics:
 ## OS Comparison
 
 
-| ⭐ | Feature                                          | Win11                                                              | Linux                                                               | Impossible OS                                                          |
+| ⭐ | Feature                                          | 🪟 Win11                                                              | 🐧 Linux                                                               | 🚀 Impossible OS                                                          |
 |----|--------------------------------------------------|--------------------------------------------------------------------|---------------------------------------------------------------------|------------------------------------------------------------------------|
 | 💎 | FIFO ticket locks                                | ✅ `KSPIN_LOCK` queued spinlocks (FIFO via                         | ✅ `arch/x86/include/asm/spinlock.h` — ticket locks (pre-qspinlock) | ⬜ §1 — `ticket_lock_t`, run-queue lock replacement                    |
 | 💎 | Preemption count                                 | ✅ `KiAcquireApcLock` / preemption depth in                        | ✅ `preempt_disable()` / `preempt_enable()` per-thread counter      | ⬜ §2 — `preempt_count` + `need_resched` in `task_t`                   |

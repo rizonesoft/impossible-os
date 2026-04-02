@@ -167,7 +167,7 @@ Subscribe to the Hot-Plug interrupt via the PCIe Slot Control register. On a Pre
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                               | Linux                                                                | Impossible OS                                                     |
+| ⭐ | Feature                                           | 🪟 Win11                                               | 🐧 Linux                                                                | 🚀 Impossible OS                                                     |
 |----|---------------------------------------------------|-----------------------------------------------------|----------------------------------------------------------------------|-------------------------------------------------------------------|
 | 💎 | NVMe storage driver — Admin + I/O queue           | ✅ `storport.sys` + `stornvme.sys`; multi-queue     | ✅ `drivers/nvme/host/`; multi-queue, io_uring                       | ⬜ §1 — Admin+1×IO queue, Identify, read/write, `blkdev_register` |
 | 💎 | HPET timer — `hpet_read_ns()` + LAPIC calibration | ✅ HAL uses HPET for TSC                            | ✅ `arch/x86/kernel/hpet.c`; LAPIC calibration reference             | ⬜ §2 — MMIO map, `hpet_read_ns()`, LAPIC ICR                     |

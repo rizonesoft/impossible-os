@@ -219,7 +219,7 @@ Register Btrfs with `vfs_probe()`. Mount unconditionally read-only. Show subvolu
 ## OS Comparison
 
 
-| ⭐ | Feature                                              | Win11                | Linux                                                               | Impossible OS                                            |
+| ⭐ | Feature                                              | 🪟 Win11                | 🐧 Linux                                                               | 🚀 Impossible OS                                            |
 |----|------------------------------------------------------|----------------------|---------------------------------------------------------------------|----------------------------------------------------------|
 | ⭐ | Btrfs superblock + CRC32C verify + backup superblock | ❌ No native support | ✅ `btrfs.ko`; CRC32C hardware-accelerated; 3 backup                | ⬜ §1 — hardware CRC32C via SSE4.2; 3-level              |
 | ⭐ | B-tree node format + per-node CRC verify             | ❌ No native support | ✅ `btrfs.ko`; per-node CRC verified on                             | ⬜ §2 — `btrfs_key_compare`, binary search, per-node CRC |

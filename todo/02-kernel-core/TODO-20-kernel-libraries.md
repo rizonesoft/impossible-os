@@ -329,7 +329,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                    | Win11                                            | Linux                            | Impossible OS                              |
+| ⭐ | Feature                    | 🪟 Win11                                            | 🐧 Linux                            | 🚀 Impossible OS                              |
 |----|----------------------------|--------------------------------------------------|----------------------------------|--------------------------------------------|
 | 💎 | `snprintf` / `vsnprintf`   | ✅ `RtlStringCbPrintf*` (safe)                   | ✅ `lib/vsprintf.c` (600+ lines) | ⬜ §1 — (absent; panic.c worksaround)      |
 | 💎 | Core string ops            | ✅ `RtlCopyMemory`, `RtlZeroMemory`              | ✅ `lib/string.c`                | ⚠️ §1 — Partial — (compiler builtins only) |

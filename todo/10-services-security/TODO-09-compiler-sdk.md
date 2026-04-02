@@ -267,7 +267,7 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 ## OS Comparison
 
 
-| ⭐ | Feature                                              | Win11                            | Linux                       | Impossible OS                                 |
+| ⭐ | Feature                                              | 🪟 Win11                            | 🐧 Linux                       | 🚀 Impossible OS                                 |
 |----|------------------------------------------------------|----------------------------------|-----------------------------|-----------------------------------------------|
 | 💎 | Native C compiler on OS                              | ✅ MSVC                          | ✅ GCC/Clang                | ⬜ TCC natively, self-hosting                 |
 | 💎 | GCC/Clang C++ compiler                               | ✅ MSVC C++                      | ✅ GCC/Clang                | ⬜ §11 — (long-term, )                        |

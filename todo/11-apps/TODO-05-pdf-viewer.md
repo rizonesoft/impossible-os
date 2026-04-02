@@ -228,7 +228,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                                              | Win11                  | Linux                           | Impossible OS                                   |
+| ⭐ | Feature                                                              | 🪟 Win11                  | 🐧 Linux                           | 🚀 Impossible OS                                   |
 |----|----------------------------------------------------------------------|------------------------|---------------------------------|-------------------------------------------------|
 | 💎 | PDF structure parse                                                  | ✅ Edge PDF / Acrobat  | ✅ Evince / Okular / Zathura    | ⬜ §1 — xref table + object cache               |
 | 💎 | Page tree traversal + MediaBox inheritance                           | ✅ Edge PDF            | ✅ Evince                       | ⬜ §2 — recursive Kids flatten                  |

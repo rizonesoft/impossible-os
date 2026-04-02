@@ -231,7 +231,7 @@ Implement CDC-ACM (Abstract Control Model) for USB serial adapters, Arduinos, GP
 ## OS Comparison
 
 
-| ⭐ | Feature                                              | Win11                                                         | Linux                                                    | Impossible OS                                                         |
+| ⭐ | Feature                                              | 🪟 Win11                                                         | 🐧 Linux                                                    | 🚀 Impossible OS                                                         |
 |----|------------------------------------------------------|---------------------------------------------------------------|----------------------------------------------------------|-----------------------------------------------------------------------|
 | ⚠️ | xHCI controller init + basic enumeration             | ✅ `USBXHCI.sys` full xHCI implementation                     | ✅ `xhci_hcd` full xHCI; slot/ring management            | ⚠️ Partial — controller init, DCBAA,                                  |
 | 💎 | USB HID keyboard + mouse                             | ✅ `HIDCLASS.sys` + `HIDUSB.sys`; full HID                    | ✅ `usbhid` driver; boot + full                          | ⬜ §1 — +2; interrupt-IN endpoint setup, 8-byte                       |

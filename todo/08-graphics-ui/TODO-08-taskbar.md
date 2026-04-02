@@ -199,7 +199,7 @@ Right-click pinned or window button → jump list popup above context menu showi
 ## OS Comparison
 
 
-| ⭐ | Feature             | Win11                                                                   | Linux                                                   | Impossible OS                                              |
+| ⭐ | Feature             | 🪟 Win11                                                                   | 🐧 Linux                                                   | 🚀 Impossible OS                                              |
 |----|---------------------|-------------------------------------------------------------------------|---------------------------------------------------------|------------------------------------------------------------|
 | 💎 | Window list         | ✅ Taskbar grouping, labels, accent underline,                          | ✅ GNOME dash-to-panel, KDE task manager;               | ⬜ §1 — `taskbar_entry_t` 64-slot static array; accent     |
 | 💎 | Button context menu | ✅ Right-click taskbar button → window                                  | ✅ KDE right-click task; GNOME extension;               | ⬜ §2 — uses `context_menu_show()` (TODO-07 §1); virtual   |

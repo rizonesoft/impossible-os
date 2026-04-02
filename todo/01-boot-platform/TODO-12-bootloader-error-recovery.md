@@ -213,7 +213,7 @@ Replace all `for (;;) hlt;` loops with a visible error screen rendered using the
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                      | Linux                     | Impossible OS              |
+| ⭐ | Feature                    | 🪟 Win11                      | 🐧 Linux                     | 🚀 Impossible OS              |
 |----|----------------------------|----------------------------|---------------------------|----------------------------|
 | 💎 | ELF/PE bounds checking     | ✅ winload validates PE    | ✅ GRUB validates ELF     | ⬜ §1                      |
 | 💎 | ExitBootServices retry     | ✅ Multiple retries        | ✅ GRUB retries           | ⬜ §2                      |

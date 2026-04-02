@@ -202,7 +202,7 @@ During SMP bringup each AP executes CPUID and reports its feature flags to the B
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                                  | Linux                                                   | Impossible OS                                               |
+| ⭐ | Feature                                           | 🪟 Win11                                                  | 🐧 Linux                                                   | 🚀 Impossible OS                                               |
 |----|---------------------------------------------------|--------------------------------------------------------|---------------------------------------------------------|-------------------------------------------------------------|
 | 💎 | LOCK-prefix atomics + hardware memory barriers    | ✅ `InterlockedXxx`; `KeMemoryBarrier()`               | ✅ `atomic_t`; `smp_mb/rmb/wmb`; `LOCK` prefix enforced | ⬜ §1 — full audit, `smp_mb/rmb/wmb`, CONFIG_SMP gate       |
 | 💎 | TLB shootdown IPI                                 | ✅ `KeFlushEntireTb` / per-processor IPI               | ✅ `flush_tlb_mm_range()`; IPI + `invlpg`               | ⬜ §2 — `tlb_shootdown(mask, vaddr, len)`, atomic ack       |

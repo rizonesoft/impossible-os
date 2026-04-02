@@ -210,7 +210,7 @@ Expose "Unload Driver" and "Reload Driver" actions in the Device Manager context
 ## OS Comparison
 
 
-| ⭐ | Feature                                                   | Win11                                                                       | Linux                                                            | Impossible OS                                                                  |
+| ⭐ | Feature                                                   | 🪟 Win11                                                                       | 🐧 Linux                                                            | 🚀 Impossible OS                                                                  |
 |----|-----------------------------------------------------------|-----------------------------------------------------------------------------|------------------------------------------------------------------|--------------------------------------------------------------------------------|
 | 💎 | PCI device registry                                       | ✅ PnP manager device tree; `HKLM\SYSTEM\CurrentControlSet\Enum\PCI\`       | ✅ `struct pci_dev` in driver model;                             | ⬜ §1 — `pci_device_db[]`, `pci_bind_driver()`, `pci_enumerate_devices()`      |
 | 💎 | Embedded PCI ID name database                             | ✅ `pci.ids` via Windows Update; `SetupAPI`                                 | ✅ `pci.ids` file; `libpci` or kernel                            | ⬜ §2 — 2000-entry binary-search C array, `gen_pci_ids.py`                     |

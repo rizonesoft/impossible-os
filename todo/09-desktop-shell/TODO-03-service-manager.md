@@ -218,7 +218,7 @@ Scan `C:\Users\Default\AppData\Startup\` for `.lnk` files after desktop fully in
 ## OS Comparison
 
 
-| ⭐ | Feature                               | Win11                                                                        | Linux                                                                      | Impossible OS                                                |
+| ⭐ | Feature                               | 🪟 Win11                                                                        | 🐧 Linux                                                                      | 🚀 Impossible OS                                                |
 |----|---------------------------------------|------------------------------------------------------------------------------|----------------------------------------------------------------------------|--------------------------------------------------------------|
 | ⭐ | Service manager                       | ✅ SCM (Services Control Manager); full                                      | ✅ systemd / OpenRC / runit;                                               | ⬜ §1 — `⭐` zero-dependency static table; no                |
 | ⭐ | Auto-restart with exponential backoff | ✅ SCM restart policy (delay, max                                            | ✅ systemd `Restart=on-failure`; `RestartSec`; `StartLimitBurst`; journald | ⬜ §2 — `⭐` PIT-ticked in-kernel monitor; no                |

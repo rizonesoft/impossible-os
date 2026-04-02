@@ -145,7 +145,7 @@ Report USB device readiness status on the splash diagnostic line, showing retry 
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11                    | Linux                   | Impossible OS                |
+| ⭐ | Feature              | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS                |
 |----|----------------------|--------------------------|-------------------------|------------------------------|
 | 💎 | SCSI retry on error  | ✅ USBSTOR.SYS          | ✅ usb-storage          | ⬜ §2 — retry + backoff      |
 | 💎 | REQUEST SENSE        | ✅ Full sense parse      | ✅ Full sense parse     | ⬜ §1 — key/ASC/ASCQ         |

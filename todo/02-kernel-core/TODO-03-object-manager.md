@@ -194,7 +194,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 
 ## OS Comparison
 
-| ⭐ | Feature               | Win11                  | Linux                | Impossible OS                 |
+| ⭐ | Feature               | 🪟 Win11                  | 🐧 Linux                | 🚀 Impossible OS                 |
 |----|-----------------------|------------------------|----------------------|-------------------------------|
 | 💎 | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref    | ✅ §1                       |
 | 💎 | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type         | ✅ §1                       |

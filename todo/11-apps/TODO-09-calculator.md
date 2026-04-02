@@ -152,7 +152,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                                                           | Win11                                      | Linux                           | Impossible OS                                          |
+| ⭐ | Feature                                                                           | 🪟 Win11                                      | 🐧 Linux                           | 🚀 Impossible OS                                          |
 |----|-----------------------------------------------------------------------------------|--------------------------------------------|---------------------------------|--------------------------------------------------------|
 | 💎 | Standard two-operand arithmetic + rounded-rect button grid                        | ✅ Windows Calculator                      | ✅ GNOME Calculator / KCalc     | ⬜ §1–§2 — `gfx_fill_rounded_rect`, hover/press states |
 | 💎 | Memory register                                                                   | ✅ Windows Calculator                      | ✅ GNOME Calculator             | ⬜ §3 — single double register, M indicator            |

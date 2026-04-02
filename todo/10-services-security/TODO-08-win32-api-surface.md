@@ -359,7 +359,7 @@ Provides the cross-compilation toolchain for targeting Impossible OS from a host
 ## OS Comparison
 
 
-| ⭐ | Feature                                                 | Win11                    | Linux                         | Impossible OS                                  |
+| ⭐ | Feature                                                 | 🪟 Win11                    | 🐧 Linux                         | 🚀 Impossible OS                                  |
 |----|---------------------------------------------------------|--------------------------|-------------------------------|------------------------------------------------|
 | 💎 | Console API                                             | ✅ Win32                 | ✅ POSIX tty                  | ⬜ routes to terminal emulator                 |
 | 💎 | Process management                                      | ✅ Win32                 | ✅ `fork`/`waitpid`           | ⬜ wraps native task scheduler                 |

@@ -350,7 +350,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 ## OS Comparison
 
 
-| ⭐ | Feature                          | Win11                                                       | Linux                                                       | Impossible OS                                                       |
+| ⭐ | Feature                          | 🪟 Win11                                                       | 🐧 Linux                                                       | 🚀 Impossible OS                                                       |
 |----|----------------------------------|-------------------------------------------------------------|-------------------------------------------------------------|---------------------------------------------------------------------|
 | 💎 | User-mode heap                   | ✅ `ntdll!RtlAllocateHeap`; LFH + segment heap              | ✅ glibc `malloc` (ptmalloc)                                | ⬜ §2 — free-list best-fit with coalescing; `HEAP_ZERO_MEMORY`      |
 | 💎 | PE DLL loader in user-mode ntdll | ✅ `ntdll!LdrLoadDll`; full PEB LDR chain                   | ❌ Not applicable (ELF native)                              | ⬜ §3 — full PEB LDR list; recursive                                |

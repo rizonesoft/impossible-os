@@ -199,7 +199,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                          | Linux                           | Impossible OS                     |
+| ⭐ | Feature                    | 🪟 Win11                          | 🐧 Linux                           | 🚀 Impossible OS                     |
 |----|----------------------------|--------------------------------|---------------------------------|------------------------------------|
 | 💎 | MADT-driven topology       | ✅ HAL reads MADT first       | ✅ acpi_boot_init first         | ✅ §1 — done                      |
 | 💎 | LAPIC/IOAPIC before PIT    | ✅ HAL APIC before PIT        | ✅ apic_intr_init before IRQ    | ✅ §2 — done                      |

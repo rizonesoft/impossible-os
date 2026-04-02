@@ -236,7 +236,7 @@ Block mixed content (HTTP resource on HTTPS page). TLS padlock icon in address b
 ## OS Comparison
 
 
-| ⭐ | Feature                                         | Win11                                      | Linux                                                | Impossible OS                                                        |
+| ⭐ | Feature                                         | 🪟 Win11                                      | 🐧 Linux                                                | 🚀 Impossible OS                                                        |
 |----|-------------------------------------------------|--------------------------------------------|------------------------------------------------------|----------------------------------------------------------------------|
 | 💎 | Text-only HTML browser                          | ✅ Edge + IE legacy; `lynx`                | ✅ `w3m`, `lynx`, `elinks` text browsers             | ⬜ §1 — kernel-native `http_get` → tag-strip →                       |
 | 💎 | HTML parser + DOM tree                          | ✅ Edge (Chromium Blink); IE (Trident);    | ✅ Firefox (Gecko), Chromium (Blink), WebKit;        | ⬜ §2 — custom tokenizer; void-element auto-close; 20                |

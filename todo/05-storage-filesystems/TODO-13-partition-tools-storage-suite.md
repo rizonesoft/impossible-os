@@ -223,7 +223,7 @@ CRUD wrapper over the IXFS snapshot API. CLI: `snapshot create|list|restore|dele
 ## OS Comparison
 
 
-| ⭐ | Feature                                                     | Win11                                                         | Linux                                                  | Impossible OS                                                            |
+| ⭐ | Feature                                                     | 🪟 Win11                                                         | 🐧 Linux                                                  | 🚀 Impossible OS                                                            |
 |----|-------------------------------------------------------------|---------------------------------------------------------------|--------------------------------------------------------|--------------------------------------------------------------------------|
 | 💎 | GPT partition write                                         | ✅ `diskpart.exe`; kernel-level GPT write via                 | ✅ `fdisk`/`gdisk`/`parted`; GPT write via kernel      | ⬜ §1 — `gpt_partition_create/delete/resize` + atomic backup-first write |
 | 💎 | MBR partition write — CHS saturation, active flag           | ✅ `diskpart.exe`; `IOCTL_DISK_SET_DRIVE_LAYOUT_EX`           | ✅ `fdisk`; direct MBR sector write                    | ⬜ §2 — saturated CHS for large disks                                    |

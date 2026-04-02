@@ -212,7 +212,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                    | Win11                                                                | Linux                                             | Impossible OS                                                        |
+| ⭐ | Feature                    | 🪟 Win11                                                                | 🐧 Linux                                             | 🚀 Impossible OS                                                        |
 |----|----------------------------|----------------------------------------------------------------------|---------------------------------------------------|----------------------------------------------------------------------|
 | 💎 | Shell icon index map       | ✅ shell32.dll + imageres.dll; full icon                             | ✅ XDG icon theme; `gtk_icon_theme_load_icon`; no | ⬜ §1 — ~45 mapped entries; `win32_shell_icon(dll, index)`           |
 | 💎 | GDI device context         | ✅ Win32 GDI DC; GDI object                                          | ✅ Xlib `XCreateGC`; Cairo device contexts;       | ⬜ §2 — 256-slot object table; `gfx_surface_t` backing               |

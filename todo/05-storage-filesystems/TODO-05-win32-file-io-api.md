@@ -275,7 +275,7 @@ Implement `GetDiskFreeSpaceExW`/`GetDiskFreeSpaceW` and the remaining `GetVolume
 ## OS Comparison
 
 
-| ⭐ | Feature                                                                | Win11                                                                          | Linux                                                         | Impossible OS                                                                         |
+| ⭐ | Feature                                                                | 🪟 Win11                                                                          | 🐧 Linux                                                         | 🚀 Impossible OS                                                                         |
 |----|------------------------------------------------------------------------|--------------------------------------------------------------------------------|---------------------------------------------------------------|---------------------------------------------------------------------------------------|
 | 💎 | IRP engine                                                             | ✅ `ntoskrnl.exe`; full IRP + stack                                            | ❌ VFS `file_operations` vtable; no IRP                       | ⬜ §1 — `IoAllocateIrp/Complete/CallDriver`, 7 major functions, VFS                   |
 | 💎 | MDL — safe user↔kernel buffer mapping                                  | ✅ `ntoskrnl.exe`; full MDL with physical                                      | ❌ `copy_to/from_user()`; no MDL                              | ⬜ §2 — `MmCreateMdl/ProbeAndLock/GetSystemAddressForMdl`                             |

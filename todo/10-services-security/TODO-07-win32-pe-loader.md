@@ -207,7 +207,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 ## OS Comparison
 
 
-| ⭐ | Feature                                                              | Win11                                                                            | Linux                                                                      | Impossible OS                                                                |
+| ⭐ | Feature                                                              | 🪟 Win11                                                                            | 🐧 Linux                                                                      | 🚀 Impossible OS                                                                |
 |----|----------------------------------------------------------------------|----------------------------------------------------------------------------------|----------------------------------------------------------------------------|------------------------------------------------------------------------------|
 | ⭐ | Ring-3 execution via `SYSCALL`/`SYSRET` with correct STAR/LSTAR MSRs | ✅ `SYSCALL`/`SYSRET`; `KiSystemCall64` entry; `SWAPGS`; per-CPU                 | ✅ `SYSCALL`/`SYSRET`; `entry_SYSCALL_64`; per-CPU `rsp_scratch`; `swapgs` | ⬜ §1 — `[Opus]` STAR reorder + `SWAPGS`                                     |
 | ⭐ | Windows x64 syscall ABI                                              | ✅ `NtUserCall*`; `NtCreateFile`; HANDLE objects; kernel                         | ✅ `int 0x80`/`SYSCALL`; RDI/RSI/RDX/RCX; fd integers                      | ⬜ §2 — `⭐` native Win32 ABI —                                              |

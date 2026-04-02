@@ -164,7 +164,7 @@ Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** 
 ## OS Comparison
 
 
-| ⭐ | Feature                   | Win11                                           | Linux                                                      | Impossible OS                                                              |
+| ⭐ | Feature                   | 🪟 Win11                                           | 🐧 Linux                                                      | 🚀 Impossible OS                                                              |
 |----|---------------------------|-------------------------------------------------|------------------------------------------------------------|----------------------------------------------------------------------------|
 | 💎 | Screensaver               | ✅ Built-in screensavers; idle timeout; lock    | ✅ GNOME/KDE screensavers; `xscreensaver`; idle timeout    | ⬜ §1 — `⭐` `scr_entry_fn` pluggable API; 5                               |
 | 💎 | Screensaver → lock bridge | ✅ Windows lock screen shown on                 | ✅ `gnome-screensaver` + PAM; `xscreensaver-auth`; `slock` | ⬜ §2 — direct `lock_screen_show()` callback from `scr_dismiss()`          |

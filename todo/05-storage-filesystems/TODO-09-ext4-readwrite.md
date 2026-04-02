@@ -262,7 +262,7 @@ Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `e
 ## OS Comparison
 
 
-| ⭐ | Feature                                                    | Win11                                      | Linux                                                                                  | Impossible OS                                                          |
+| ⭐ | Feature                                                    | 🪟 Win11                                      | 🐧 Linux                                                                                  | 🚀 Impossible OS                                                          |
 |----|------------------------------------------------------------|--------------------------------------------|----------------------------------------------------------------------------------------|------------------------------------------------------------------------|
 | ⭐ | Native ext4 read support                                   | ❌ No native support (requires third-party | ✅ `ext4.ko`; first-class support since 2008                                           | ⬜ §1–§5 — , §12; read path with                                       |
 | ⭐ | Native ext4 write support                                  | ❌ No native support                       | ✅ `ext4.ko`; full R/W with JBD2                                                       | ⬜ §6–§10 — JBD2-wrapped writes, extent tree mutation,                 |

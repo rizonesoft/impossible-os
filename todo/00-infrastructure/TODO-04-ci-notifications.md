@@ -138,7 +138,7 @@ Track build and boot times per commit to catch performance regressions.
 
 ## OS Comparison
 
-| ⭐ | Feature                | Win11             | Linux              | Impossible OS |
+| ⭐ | Feature                | 🪟 Win11             | 🐧 Linux              | 🚀 Impossible OS |
 |----|------------------------|-------------------|--------------------|---------------|
 | 💎 | Branch protection      | ✅ Internal gates | ✅ kernel.org rules | ⬜ §1         |
 | 💎 | Build badge            | ❌ Internal       | ✅ kernelci badge   | ⬜ §2         |

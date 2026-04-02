@@ -306,8 +306,8 @@ loop works end-to-end before committing to full implementation.
 
     | Guest OS | CPU mode | Boot protocol | Serial | virtio-blk | Status |
     |----------|----------|---------------|--------|-----------|--------|
-    | Linux x64 (busybox) | 64-bit long mode | `bzImage` + `boot_params` | COM1 via I/O exit | ✅ prototype | Phase 1 |
-    | Impossible OS (nested) | 64-bit long mode | ELF + boot_info struct | Serial | ✅ same | Phase 2 |
+    | 🐧 Linux x64 (busybox) | 64-bit long mode | `bzImage` + `boot_params` | COM1 via I/O exit | ✅ prototype | Phase 1 |
+    | 🚀 Impossible OS (nested) | 64-bit long mode | ELF + boot_info struct | Serial | ✅ same | Phase 2 |
     | Windows 10 x64 | 64-bit long mode | UEFI boot | Hyper-V synthetic | Requires APIC virt + UEFI firmware | Phase 3 |
 
   - **Phased implementation plan**:
@@ -325,7 +325,7 @@ loop works end-to-end before committing to full implementation.
 ## OS Comparison
 
 
-| ⭐ | Feature                                    | Win11                                                 | Linux                                         | Impossible OS                                                 |
+| ⭐ | Feature                                    | 🪟 Win11                                                 | 🐧 Linux                                         | 🚀 Impossible OS                                                 |
 |----|--------------------------------------------|-------------------------------------------------------|-----------------------------------------------|---------------------------------------------------------------|
 | 💎 | Type-1 / Type-1.5 hypervisor built into OS | ✅ Hyper-V (Type-1, HVCI, VBS, Hyper-V                | ✅ KVM (Type-2 module in Linux                | ⬜ §2 — §3; Type-1.5 ImpossibleHV in `src/kernel/hypervisor/` |
 | 💎 | EPT (Extended Page Tables) nested paging   | ✅ Hyper-V second-level address translation           | ✅ KVM EPT + shadow page                      | ⬜ §3 — 4-level EPT; 2 MiB large                              |

@@ -189,7 +189,7 @@ Wire user-mode test binaries into `make test`.
 
 ## OS Comparison
 
-| ⭐ | Feature                  | Win11             | Linux              | Impossible OS        |
+| ⭐ | Feature                  | 🪟 Win11             | 🐧 Linux              | 🚀 Impossible OS        |
 |----|--------------------------|-------------------|--------------------|----------------------|
 | 💎 | User-mode test binaries  | ✅ HLK test.exe   | ✅ kselftest       | ⬜ §1–§7             |
 | 💎 | Syscall coverage tests   | ✅ NtDll tests    | ✅ kselftest/ptrace | ⬜ §3                |

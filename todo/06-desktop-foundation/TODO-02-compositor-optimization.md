@@ -87,7 +87,7 @@ Measure frame times and optionally sync to display refresh.
 
 ## OS Comparison
 
-| ⭐ | Feature            | Win11        | Linux (Wayland)  | Impossible OS        |
+| ⭐ | Feature            | 🪟 Win11        | 🐧 Linux (Wayland)  | 🚀 Impossible OS        |
 |----|--------------------|--------------|------------------|----------------------|
 | 💎 | Dirty rect compose | ✅ DWM       | ✅ Compositor    | ⬜ §1-§3             |
 | ⭐ | VSync              | ✅ D3D       | ✅ DRM           | ⬜ §4 Bochs VGA      |

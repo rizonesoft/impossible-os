@@ -225,7 +225,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 ## OS Comparison
 
 
-| ⭐ | Feature                                        | Win11                                 | Linux                           | Impossible OS                                                 |
+| ⭐ | Feature                                        | 🪟 Win11                                 | 🐧 Linux                           | 🚀 Impossible OS                                                 |
 |----|------------------------------------------------|---------------------------------------|---------------------------------|---------------------------------------------------------------|
 | 💎 | SMTP + STARTTLS                                | ✅ Outlook / New Outlook              | ✅ Thunderbird / Evolution      | ⬜ §1 — EHLO + STARTTLS + AUTH                                |
 | 💎 | POP3 over TLS                                  | ✅ Outlook                            | ✅ Thunderbird                  | ⬜ §2 — USER/PASS/STAT/LIST/RETR/DELE                         |

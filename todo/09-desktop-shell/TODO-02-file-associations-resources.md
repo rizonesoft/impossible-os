@@ -188,7 +188,7 @@ WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossib
 ## OS Comparison
 
 
-| ⭐ | Feature                         | Win11                                            | Linux                                                             | Impossible OS                                                          |
+| ⭐ | Feature                         | 🪟 Win11                                            | 🐧 Linux                                                             | 🚀 Impossible OS                                                          |
 |----|---------------------------------|--------------------------------------------------|-------------------------------------------------------------------|------------------------------------------------------------------------|
 | 💎 | Extension-to-app mapping        | ✅ Win32 HKCR; Shell `ShellExecuteEx`; prog_id   | ✅ XDG MIME types (`xdg-open`, `mimeapps.list`);                  | ⬜ §1 — `RegGetValue(HKCR, ...)` prog_id chain; `icon_for_extension()` |
 | 💎 | First-boot default associations | ✅ Windows ships with all default                | ✅ Distro ships `mimeapps.list`; `update-mime-database` on        | ⬜ §2 — `FileAssocsInit` guard flag; 12-entry static                   |

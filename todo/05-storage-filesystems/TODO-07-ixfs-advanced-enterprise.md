@@ -317,7 +317,7 @@ Extend `ixfs_test.c` to cover every feature from TODO-06 and TODO-07. Journal re
 ## OS Comparison
 
 
-| ⭐ | Feature                                                  | Win11                                                          | Linux                                                                       | Impossible OS                                                               |
+| ⭐ | Feature                                                  | 🪟 Win11                                                          | 🐧 Linux                                                                       | 🚀 Impossible OS                                                               |
 |----|----------------------------------------------------------|----------------------------------------------------------------|-----------------------------------------------------------------------------|-----------------------------------------------------------------------------|
 | 💎 | Sparse files                                             | ✅ NTFS sparse; `FSCTL_SET_SPARSE`; `DeviceIoControl`          | ✅ All major FS; `lseek(SEEK_HOLE/DATA)`; `fallocate(FALLOC_FL_PUNCH_HOLE)` | ⬜ §1 — hole extent type in extent                                          |
 | ⭐ | Real-time journal-batched TRIM + SSD auto-detect         | ⚠️ NTFS TRIM: scheduled once/week by                           | ⚠️ `ext4` `discard` mount flag real-time,                                   | ⬜ §2 — batched in txn commit, coalesced,                                   |

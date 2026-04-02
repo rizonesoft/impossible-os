@@ -153,7 +153,7 @@ Hook `vfs_create`/`vfs_unlink`/`vfs_rename` to mark index dirty. `search_index_a
 ## OS Comparison
 
 
-| ⭐ | Feature              | Win11                                     | Linux                                                      | Impossible OS                                                          |
+| ⭐ | Feature              | 🪟 Win11                                     | 🐧 Linux                                                      | 🚀 Impossible OS                                                          |
 |----|----------------------|-------------------------------------------|------------------------------------------------------------|------------------------------------------------------------------------|
 | ⭐ | Search index         | ✅ Windows Search (ETW-based, NTFS change | ✅ `locate`/`updatedb`; `mlocate.db` binary; `inotify` for | ⬜ §1 — `⭐` no background daemon —                                    |
 | 💎 | Ranked query API     | ✅ Windows Search API; relevance ranking; | ✅ `locate -i`; `grep -r` for                              | ⬜ §2 — scoring 3/2/1; type-primary sort; live                         |

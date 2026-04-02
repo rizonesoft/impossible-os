@@ -94,7 +94,7 @@ System-wide keyboard shortcuts that work regardless of focused window.
 
 ## OS Comparison
 
-| ⭐ | Feature          | Win11              | Linux (GNOME)      | Impossible OS          |
+| ⭐ | Feature          | 🪟 Win11              | 🐧 Linux (GNOME)      | 🚀 Impossible OS          |
 |----|------------------|--------------------|--------------------|------------------------|
 | 💎 | Min/Max/Restore  | ✅ Built-in        | ✅ Built-in        | ⬜ §1                  |
 | 💎 | Edge resize      | ✅ Built-in        | ✅ Built-in        | ⬜ §2                  |

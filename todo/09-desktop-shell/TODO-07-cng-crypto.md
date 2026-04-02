@@ -207,7 +207,7 @@ Per-user private key storage encrypted at rest with AES-256-GCM. `cng_key_store_
 ## OS Comparison
 
 
-| ⭐ | Feature                                     | Win11                                                      | Linux                                                                | Impossible OS                                            |
+| ⭐ | Feature                                     | 🪟 Win11                                                      | 🐧 Linux                                                                | 🚀 Impossible OS                                            |
 |----|---------------------------------------------|------------------------------------------------------------|----------------------------------------------------------------------|----------------------------------------------------------|
 | ⭐ | Crypto primitives                           | ✅ BCryptPrimitives.dll; AES-NI acceleration; CNG provider | ✅ kernel `crypto/` subsystem; AES-NI; GCM                           | ⬜ §1 — `⭐` no AES-NI yet (pure-C                       |
 | 💎 | TLS handshake helpers                       | ✅ SChannel; BCrypt TLS extension; full                    | ✅ OpenSSL / BoringSSL / mbedTLS;                                    | ⬜ §8 — TLS 1.2 PRF + PKCS#1                             |

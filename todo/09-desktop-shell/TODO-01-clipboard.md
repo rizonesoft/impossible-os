@@ -146,7 +146,7 @@ Ctrl+C/X/V in global WM key handler → dispatch to focused window's focused con
 ## OS Comparison
 
 
-| ⭐ | Feature                 | Win11                                                    | Linux                                                      | Impossible OS                                                                          |
+| ⭐ | Feature                 | 🪟 Win11                                                    | 🐧 Linux                                                      | 🚀 Impossible OS                                                                          |
 |----|-------------------------|----------------------------------------------------------|------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | 💎 | Kernel clipboard buffer | ✅ Global clipboard via Win32 `SetClipboardData`;        | ✅ X11 selection atoms (PRIMARY/CLIPBOARD); Wayland        | ⬜ §1 — single global `g_clipboard`; spinlock-protected; `SYS_CLIPBOARD_SET/GET=56/57` |
 | ⭐ | Ctrl+C/X/V wiring       | ✅ Win32 apps handle WM_COPY/PASTE; no                   | ✅ X11 selection; terminal emulators handle                | ⬜ §2 — `⭐` kernel decision tree: terminal+no-selection                               |

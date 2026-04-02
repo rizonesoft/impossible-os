@@ -36,7 +36,7 @@ sdk/
 
 | ⭐  | Order | Deliverable                        | Depends On | Status |
 | --- | :---: | ---------------------------------- | ---------- | :----: |
-| 💎  |   1   | Linux build script (bash)          | —          |  [x]   |
+| 💎  |   1   | 🐧 Linux build script (bash)          | —          |  [x]   |
 | 💎  |   2   | Dependency detection and reporting | §1         |  [x]   |
 | 💎  |   3   | Auto-discovery of SDK tool dirs    | §1         |  [x]   |
 
@@ -94,7 +94,7 @@ Build discovers new tools automatically — add a directory to `sdk/src/`, it ge
 
 ## OS Comparison
 
-| ⭐ | Feature          | Win11              | Linux              | Impossible OS              |
+| ⭐ | Feature          | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS              |
 |----|------------------|--------------------|--------------------|----------------------------|
 | 💎 | Build system     | ✅ MSBuild / CMake | ✅ make / CMake    | ✅ §1 bash build script    |
 | ⭐ | Progress output  | ❌ Verbose only    | ❌ Verbose only    | ✅ §1 colored progress bar |

@@ -179,7 +179,7 @@ Mouse-wheel zoom (25%–800%), zoom buttons in status bar. Image→Resize (new W
 ## OS Comparison
 
 
-| ⭐ | Feature           | Win11                                               | Linux                                                     | Impossible OS                                           |
+| ⭐ | Feature           | 🪟 Win11                                               | 🐧 Linux                                                     | 🚀 Impossible OS                                           |
 |----|-------------------|-----------------------------------------------------|-----------------------------------------------------------|---------------------------------------------------------|
 | 💎 | Canvas & viewport | ✅ MS Paint: GDI-backed canvas; scroll;             | ✅ GIMP, Pinta, KolourPaint; Cairo/GDK backed;            | ⬜ §1 — `⭐` PMM `gfx_surface_t` canvas (no             |
 | 💎 | Drawing tools     | ✅ MS Paint: all standard tools;                    | ✅ Pinta / KolourPaint: full standard                     | ⬜ §2 — BFS flood fill via PMM                          |

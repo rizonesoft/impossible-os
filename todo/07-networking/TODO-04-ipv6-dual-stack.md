@@ -233,7 +233,7 @@ Show link-local and global IPv6 addresses in `ifconfig` output. `ndp -an` shell 
 ## OS Comparison
 
 
-| ⭐ | Feature                                        | Win11                                                        | Linux                                                               | Impossible OS                                                |
+| ⭐ | Feature                                        | 🪟 Win11                                                        | 🐧 Linux                                                               | 🚀 Impossible OS                                                |
 |----|------------------------------------------------|--------------------------------------------------------------|---------------------------------------------------------------------|--------------------------------------------------------------|
 | 💎 | IPv6 header + ethertype 0x86DD routing         | ✅ `tcpip.sys` full IPv6; dual-stack on                      | ✅ `net/ipv6/ip6_input.c`; full dual-stack                          | ⬜ §1 — `struct ipv6_header`, ethertype dispatch; no         |
 | 💎 | IPv6 send/receive — TCP/UDP/ICMPv6 dispatch    | ✅ Full IPv6 in `tcpip.sys`; extension                       | ✅ Full extension header support in                                 | ⬜ §2 — extension header skip (log+drop); full               |

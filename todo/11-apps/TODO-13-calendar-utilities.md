@@ -231,7 +231,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                          | Linux                               | Impossible OS                                                    |
+| ⭐ | Feature                                           | 🪟 Win11                                          | 🐧 Linux                               | 🚀 Impossible OS                                                    |
 |----|---------------------------------------------------|------------------------------------------------|-------------------------------------|------------------------------------------------------------------|
 | 💎 | Calendar with recurring events + ICS export       | ✅ Outlook/Calendar (RRULE, ICS import/export) | ✅ GNOME Calendar / KOrganizer      | ⬜ §1 — daily/weekly/monthly/yearly RRULE, RFC 5545 ICS          |
 | 💎 | Sticky Notes with always-on-top restore           | ✅ Sticky Notes (syncs OneDrive)               | ✅ KNotes / GNOME Notes             | ⬜ §2 — colored WM_FLAG_ALWAYS_ON_TOP windows, Registry persist, |

@@ -177,7 +177,7 @@ Implement `NtFsControlFile` FSCTL codes needed by backup software and system too
 ## OS Comparison
 
 
-| ⭐ | Feature                                                                      | Win11                                                        | Linux                                                        | Impossible OS                                                               |
+| ⭐ | Feature                                                                      | 🪟 Win11                                                        | 🐧 Linux                                                        | 🚀 Impossible OS                                                               |
 |----|------------------------------------------------------------------------------|--------------------------------------------------------------|--------------------------------------------------------------|-----------------------------------------------------------------------------|
 | ⭐ | In-kernel probe chain + dynamic drive-letter assignment + Registry write     | ⚠️ `mountmgr.sys` assigns letters; probe in                  | ⚠️ `udev` rules in user space;                               | ⬜ §1 — priority probe: IXFS→NTFS→FAT32→exFAT→ext4→Btrfs→ISO; auto-assign + |
 | 💎 | Boot-time partition scan + auto-mount of all filesystems                     | ✅ `IoInitSystem`, `mountmgr.sys`; all partitions enumerated | ✅ `init` + `udev` + `/etc/fstab`;                           | ⚠️ §2 — Partial — ; replaces hardcoded                                      |

@@ -141,7 +141,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                              | Win11                                  | Linux                           | Impossible OS                                                        |
+| ⭐ | Feature                                              | 🪟 Win11                                  | 🐧 Linux                           | 🚀 Impossible OS                                                        |
 |----|------------------------------------------------------|----------------------------------------|---------------------------------|----------------------------------------------------------------------|
 | 💎 | Gap buffer O(1) insert/delete                        | ✅ Notepad (rope-based in modern; gap  | ✅ gedit / Kate (GtkTextBuffer) | ⬜ §1 — `pmm_alloc_contiguous`, grow-by-doubling                     |
 | 💎 | TTF text rendering + blinking I-beam                 | ✅ Notepad (DirectWrite)               | ✅ gedit (Pango/Cairo)          | ⬜ §2 — `ttf_draw_string()` per visible line                         |

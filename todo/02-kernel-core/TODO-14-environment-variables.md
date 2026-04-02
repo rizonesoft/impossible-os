@@ -366,7 +366,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                 | Win11                                  | Linux                              | Impossible OS                     |
+| ⭐ | Feature                                 | 🪟 Win11                                  | 🐧 Linux                              | 🚀 Impossible OS                     |
 |----|-----------------------------------------|----------------------------------------|------------------------------------|-----------------------------------|
 | 💎 | Per-process env var storage             | ✅ UTF-16 env block in PEB             | ✅ POSIX `environ[]` (UTF-8)       | ⬜ §1                             |
 | 💎 | `%VAR%` / `$VAR` expansion              | ✅ `%VAR%` in cmd.exe                  | ✅ `$VAR` in bash                  | ⬜ §3 — (`%VAR%` Win-style)       |

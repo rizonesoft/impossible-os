@@ -310,7 +310,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 ## OS Comparison
 
 
-| ⭐ | Feature                                         | Win11                                        | Linux                                                 | Impossible OS                                                     |
+| ⭐ | Feature                                         | 🪟 Win11                                        | 🐧 Linux                                                 | 🚀 Impossible OS                                                     |
 |----|-------------------------------------------------|----------------------------------------------|-------------------------------------------------------|-------------------------------------------------------------------|
 | 💎 | Automated regression tests in CI                | ✅ Internal Windows Test Lab (WTL);          | ✅ `kselftest`, LTP, KUnit; open public               | ⬜ §1 — `run-tests.sh` 11-test matrix; `TEST PASS/FAIL`           |
 | 💎 | Hyper-V certification run                       | ✅ Internal HCK/HLK; WinHEC compliance       | ✅ `kvm_unit_tests`; virt-io CI                       | ⬜ §3 — `hyperv-test.ps1`; Gen2 VM; 8 required                    |

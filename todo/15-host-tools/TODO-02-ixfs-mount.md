@@ -55,7 +55,7 @@ sdk/tools/                  # Compiled output (gitignored)
 | --- | :---: | ---------------------------------- | ---------- | :----: |
 | 💎  |   1   | Shared IXFS core parser            | —          |  [x]   |
 | 💎  |   2   | Disk I/O layer with GPT            | §1         |  [x]   |
-| 💎  |   3   | Linux FUSE mount (read-only)       | §2         |  [x]   |
+| 💎  |   3   | 🐧 Linux FUSE mount (read-only)       | §2         |  [x]   |
 | 💎  |   4   | Write support                      | §3         |  [x]   |
 | 💎  |   5   | USB auto-mount script              | §3         |  [x]   |
 
@@ -153,7 +153,7 @@ Script to detect USB drives with IXFS partitions and mount them automatically.
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11              | Linux              | Impossible OS            |
+| ⭐ | Feature              | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS            |
 |----|----------------------|--------------------|--------------------|--------------------------|
 | 💎 | Cross-OS FS mount    | ✅ ext2fsd         | ✅ ntfs-3g         | ✅ §3 IXFS FUSE mount   |
 | ⭐ | USB auto-mount       | ❌ No custom FS    | ❌ No custom FS    | ✅ §5 detect + mount USB |

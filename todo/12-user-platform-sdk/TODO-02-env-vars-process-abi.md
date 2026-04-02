@@ -237,7 +237,7 @@ int         env_expand_path(struct task *t, const char *templ,
 ## OS Comparison
 
 
-| ⭐ | Feature                                                      | Win11                                                          | Linux                                      | Impossible OS                                   |
+| ⭐ | Feature                                                      | 🪟 Win11                                                          | 🐧 Linux                                      | 🚀 Impossible OS                                   |
 |----|--------------------------------------------------------------|----------------------------------------------------------------|--------------------------------------------|-------------------------------------------------|
 | 💎 | Per-process `KEY=VALUE` environ array                        | ✅ `PEB->ProcessParameters->Environment` UTF-16 block          | ✅ `execve` `envp[]`; `environ` global     | ⬜ §1 — `TODO-14 `; `struct task` environ       |
 | 💎 | System default variables                                     | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 — `TODO-14 `; same dual-hive Registry     |

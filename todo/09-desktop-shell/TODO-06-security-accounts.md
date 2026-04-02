@@ -251,7 +251,7 @@ Wire `ixfs_check_perm(inode, uid, access_type)` into `vfs_open/write/exec` paths
 ## OS Comparison
 
 
-| ⭐ | Feature          | Win11                                             | Linux                                                                | Impossible OS                                       |
+| ⭐ | Feature          | 🪟 Win11                                             | 🐧 Linux                                                                | 🚀 Impossible OS                                       |
 |----|------------------|---------------------------------------------------|----------------------------------------------------------------------|-----------------------------------------------------|
 | ⭐ | CSPRNG           | ✅ `CryptGenRandom` / `BCryptGenRandom`; RDRAND + | ✅ `/dev/urandom`, `/dev/random`; CSPRNG in kernel                   | ⬜ §11 — `⭐` pool seeded RDRAND +                  |
 | ⭐ | Password hashing | ✅ NTLM / Kerberos (not argon2i);                 | ✅ `shadow` with yescrypt/SHA-512/bcrypt; PAM pluggable              | ⬜ §2 — `⭐` argon2i (2015 Password Hashing         |

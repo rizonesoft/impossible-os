@@ -252,7 +252,7 @@ Verify 64-bit `DataLength` and `ValidDataLength` in the Stream Extension are han
 ## OS Comparison
 
 
-| ⭐ | Feature                                              | Win11                                                   | Linux                                                                    | Impossible OS                                                              |
+| ⭐ | Feature                                              | 🪟 Win11                                                   | 🐧 Linux                                                                    | 🚀 Impossible OS                                                              |
 |----|------------------------------------------------------|---------------------------------------------------------|--------------------------------------------------------------------------|----------------------------------------------------------------------------|
 | 💎 | VBR parse + boot checksum + backup VBR fallback      | ✅ `exfatfs.sys`; full VBR + 11-sector                  | ✅ `exfat.ko` (Linux 5.7+); VBR parse                                    | ⬜ §1 — CRC32 11-sector checksum, backup VBR                               |
 | 💎 | Allocation Bitmap                                    | ✅ `exfatfs.sys`; bitmap maintained in sync             | ✅ `exfat.ko`; bitmap alloc + free                                       | ⬜ §2 — `exfat_alloc_cluster()`, first-fit scan, `vol->bitmap_dirty` flush |

@@ -209,7 +209,7 @@ Sticky Keys activates after 5 rapid consecutive Shift presses (< 500 ms each); m
 ## OS Comparison
 
 
-| ⭐ | Feature                                     | Win11                                                    | Linux                                                     | Impossible OS                                                      |
+| ⭐ | Feature                                     | 🪟 Win11                                                    | 🐧 Linux                                                     | 🚀 Impossible OS                                                      |
 |----|---------------------------------------------|----------------------------------------------------------|-----------------------------------------------------------|--------------------------------------------------------------------|
 | 💎 | Intellimouse scroll wheel                   | ✅ `mouhid.sys`; `WM_MOUSEWHEEL`                         | ✅ `psmouse`; `INPUT_EV_REL` `REL_WHEEL`                  | ⬜ §1 — magic init, 4-byte parser, `WM_SCROLL`                     |
 | 💎 | Explorer 5-button (ID 4) side/extra buttons | ✅ `mouhid.sys`; `WM_XBUTTONDOWN`; `XBUTTON1`/`XBUTTON2` | ✅ `psmouse` Explorer; `BTN_SIDE`/`BTN_EXTRA`             | ⬜ §2 — second magic sequence, `MOUSE_BTN_SIDE`/`EXTRA`            |

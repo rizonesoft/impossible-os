@@ -237,7 +237,7 @@ Implement `btctl` as a built-in shell command matching Linux `bluetoothctl` synt
 ## OS Comparison
 
 
-| ⭐ | Feature                                      | Win11                                                    | Linux                                                            | Impossible OS                                                                     |
+| ⭐ | Feature                                      | 🪟 Win11                                                    | 🐧 Linux                                                            | 🚀 Impossible OS                                                                     |
 |----|----------------------------------------------|----------------------------------------------------------|------------------------------------------------------------------|-----------------------------------------------------------------------------------|
 | ⚠️ | HCI transport (USB) — commands, events, ACL  | ✅ `BTHUSB.sys`; full HCI over USB                       | ✅ `btusb.c`; full HCI; `hci_register_dev()`                     | ⚠️ §8 — Partial — `bt_hci_usb.c` stub (TODO-09                                    |
 | 💎 | Chipset firmware loading                     | ✅ Firmware embedded in `ibtusb.sys` /                   | ✅ `btintel.c`/`btrtl.c`; firmware from `linux-firmware`; loaded | ⬜ §2 — Intel TLV vendor opcode download,                                         |

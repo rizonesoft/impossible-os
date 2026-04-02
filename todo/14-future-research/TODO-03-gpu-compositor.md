@@ -261,7 +261,7 @@ compositor to 4K 120 Hz.
 ## OS Comparison
 
 
-| ⭐ | Feature                                   | Win11                                     | Linux                                           | Impossible OS                                                |
+| ⭐ | Feature                                   | 🪟 Win11                                     | 🐧 Linux                                           | 🚀 Impossible OS                                                |
 |----|-------------------------------------------|-------------------------------------------|-------------------------------------------------|--------------------------------------------------------------|
 | 💎 | GPU-accelerated compositor                | ✅ DWM (DirectCompose; D3D11; GPU flip    | ✅ Mutter/KWin (OpenGL/Vulkan; KMS; GPU planes; | ⬜ §5 — VirtIO-GPU Phase 1; DMA flip                         |
 | 💎 | CPU Vulkan                                | ✅ WARPDevice (D3D12 software rasterizer) | ✅ Mesa lavapipe (CPU Vulkan 1.3)               | ⬜ §2 — Mesa softpipe Phase 2; lavapipe                      |

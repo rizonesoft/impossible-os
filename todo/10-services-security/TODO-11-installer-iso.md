@@ -275,7 +275,7 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 ## OS Comparison
 
 
-| ⭐ | Feature                             | Win11             | Linux                   | Impossible OS                         |
+| ⭐ | Feature                             | 🪟 Win11             | 🐧 Linux                   | 🚀 Impossible OS                         |
 |----|-------------------------------------|-------------------|-------------------------|---------------------------------------|
 | 💎 | Bootable ISO image                  | ✅ Windows ISO    | ✅ distro ISO           | ⬜ `xorriso` EFI El Torito            |
 | 💎 | Graphical installer wizard          | ✅ Windows Setup  | ✅ Anaconda/Calamares   | ⬜ IxUI wizard (A–G screens)          |

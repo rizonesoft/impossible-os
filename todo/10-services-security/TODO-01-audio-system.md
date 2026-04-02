@@ -239,7 +239,7 @@ Control Panel Sound applet: master volume slider + mute + output device selector
 ## OS Comparison
 
 
-| ⭐ | Feature                                         | Win11                                              | Linux                                                | Impossible OS                                                             |
+| ⭐ | Feature                                         | 🪟 Win11                                              | 🐧 Linux                                                | 🚀 Impossible OS                                                             |
 |----|-------------------------------------------------|----------------------------------------------------|------------------------------------------------------|---------------------------------------------------------------------------|
 | 💎 | Audio abstraction layer — driver-agnostic API   | ✅ WDM kernel streaming; WASAPI; Core              | ✅ ALSA kernel API; PulseAudio/PipeWire userspace;   | ⬜ §1 — `struct audio_device` fn-ptr dispatch; `audio_play/stop/volume()` |
 | ⭐ | Audio mixer                                     | ✅ KMixer (kernel); WASAPI exclusive/shared; HDA   | ✅ PulseAudio/PipeWire: userspace daemon; ALSA dmix: | ⬜ §2 — `⭐` INT32 accumulate + clamp                                     |

@@ -523,7 +523,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                  | Win11                             | Linux                           | Impossible OS  |
+| ⭐ | Feature                                  | 🪟 Win11                             | 🐧 Linux                           | 🚀 Impossible OS  |
 |----|------------------------------------------|-----------------------------------|---------------------------------|----------------|
 | 💎 | KD/KGDB serial stub                      | ✅ `kdcom.dll` (kernel component) | ✅ `CONFIG_KGDB_SERIAL_CONSOLE` | ⬜ §1–§4       |
 | 💎 | WinDbg-compatible wire protocol          | ✅ Native                         | ❌ GDB protocol (incompatible)  | ⬜ §2–§3       |

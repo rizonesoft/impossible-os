@@ -189,7 +189,7 @@ Pool of 8 connections per host (`host:port` key). Reuse existing TCP (or TLS) co
 ## OS Comparison
 
 
-| ⭐ | Feature                                        | Win11                                                                | Linux                                                                | Impossible OS                                               |
+| ⭐ | Feature                                        | 🪟 Win11                                                                | 🐧 Linux                                                                | 🚀 Impossible OS                                               |
 |----|------------------------------------------------|----------------------------------------------------------------------|----------------------------------------------------------------------|-------------------------------------------------------------|
 | 💎 | URL parser                                     | ✅ `wininet.dll` `InternetCrackUrl()`; heap-based                    | ✅ glibc `getaddrinfo()`; various userspace URL                      | ⬜ §1 — stack-only in-place parse; kernel-native; no        |
 | 💎 | HTTP GET                                       | ✅ `winhttp.dll` `WinHttpSendRequest()`; full redirect follow        | ✅ `libcurl`/`wget`/glibc; kernel HTTP via eBPF                      | ⬜ §2 — kernel-native `http_get()`; no userspace DLL        |

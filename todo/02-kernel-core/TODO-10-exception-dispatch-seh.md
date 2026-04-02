@@ -51,7 +51,7 @@
 | 9 | Unhandled exception filter and WER hook | 💎 | §6, §8 | Terminal fault handling |
 | 10 | Kernel safe probing (ProbeForRead / ProbeForWrite) | ⭐ | §2 | Prerequisite for §11 |
 | 11 | Kernel-mode `__try`/`__except` for drivers | 💎 | §5, §7, §10 | Driver exception safety |
-| 12 | POSIX signal delivery from exceptions (Linux compat) | 💎 | §3, §4 | Linux compat layer handoff |
+| 12 | POSIX signal delivery from exceptions (Linux compat) | 💎 | §3, §4 | 🐧 Linux compat layer handoff |
 
 ---
 
@@ -297,7 +297,7 @@ This section is gated on the Linux compat layer existing — stub it out with a 
 ## OS Comparison
 
 
-| ⭐ | Feature                                      | Win11                 | Linux              | Impossible OS          |
+| ⭐ | Feature                                      | 🪟 Win11                 | 🐧 Linux              | 🚀 Impossible OS          |
 |----|----------------------------------------------|-----------------------|--------------------|------------------------|
 | 💎 | EXCEPTION_RECORD / CONTEXT types             | ✅ ntdll              | ❌                 | ⬜                     |
 | 💎 | #PF user/kernel triage                       | ✅                    | ✅                 | ⚠️ §2 — Kernel-only () |

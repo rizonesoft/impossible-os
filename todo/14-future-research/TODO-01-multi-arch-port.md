@@ -302,7 +302,7 @@ the toolchain and UEFI boot path work.
 ## OS Comparison
 
 
-| ⭐ | Feature                               | Win11                                 | Linux                                        | Impossible OS                                                        |
+| ⭐ | Feature                               | 🪟 Win11                                 | 🐧 Linux                                        | 🚀 Impossible OS                                                        |
 |----|---------------------------------------|---------------------------------------|----------------------------------------------|----------------------------------------------------------------------|
 | 💎 | ARM64 (AArch64) port                  | ✅ Windows 11 ARM runs natively       | ✅ Linux ARM64 is tier-1; ships              | ⬜ §3 — §6; research spike first; ARM64                              |
 | 💎 | RISC-V port                           | ✅ Windows on RISC-V: announced but   | ✅ Linux RISC-V is tier-2; mainline          | ⬜ §4 — RV64GC second port; shared arch                              |

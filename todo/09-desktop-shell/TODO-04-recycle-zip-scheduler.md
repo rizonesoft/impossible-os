@@ -200,7 +200,7 @@ NTP sync every 3600 s → `ntp_sync()`. Registry flush every 2 s → `registry_f
 ## OS Comparison
 
 
-| ⭐ | Feature                  | Win11                                                      | Linux                                                                     | Impossible OS                                       |
+| ⭐ | Feature                  | 🪟 Win11                                                      | 🐧 Linux                                                                     | 🚀 Impossible OS                                       |
 |----|--------------------------|------------------------------------------------------------|---------------------------------------------------------------------------|-----------------------------------------------------|
 | ⭐ | Recycle Bin              | ✅ `$Recycle.Bin`; `$I`/`$R` file pairs; Recycle           | ✅ `~/.local/share/Trash/`; `.trashinfo` INI; `trash-cli`; per-filesystem | ⬜ §1 — `⭐` human-readable INI meta (matches       |
 | 💎 | Recycle Bin UI           | ✅ Recycle Bin explorer window; list/icon                  | ✅ GNOME/KDE Trash window; restore; empty;                                | ⬜ §2 — `CTRL_LISTVIEW` with 4 columns; column-sort |

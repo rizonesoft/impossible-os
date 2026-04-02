@@ -263,7 +263,7 @@ and Cloudflare R2 — no live server to maintain.
 ## OS Comparison
 
 
-| ⭐ | Feature                                            | Win11                                          | Linux                                             | Impossible OS                                                           |
+| ⭐ | Feature                                            | 🪟 Win11                                          | 🐧 Linux                                             | 🚀 Impossible OS                                                           |
 |----|----------------------------------------------------|------------------------------------------------|---------------------------------------------------|-------------------------------------------------------------------------|
 | 💎 | Update manifest API with channels                  | ✅ Windows Update; WUfB; WSUS; channel         | ✅ APT/DNF repos; Flatpak remote; snap            | ⬜ §1 — static JSON on GitHub Pages                                     |
 | 💎 | Package repository with install/search/upgrade     | ✅ MS Store; winget repo; Chocolatey           | ✅ APT/DNF/pacman/AUR; Flathub                    | ⬜ §4 — `index.json` on R2; `ipkg search/install/update/upgrade`        |

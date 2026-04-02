@@ -159,7 +159,7 @@ Implement an LRU sector cache (2–8 MiB configurable) in `blkdev.c` as a write-
 ## OS Comparison
 
 
-| ⭐ | Feature                                                        | Win11                                                                    | Linux                                                              | Impossible OS                                                      |
+| ⭐ | Feature                                                        | 🪟 Win11                                                                    | 🐧 Linux                                                              | 🚀 Impossible OS                                                      |
 |----|----------------------------------------------------------------|--------------------------------------------------------------------------|--------------------------------------------------------------------|--------------------------------------------------------------------|
 | 💎 | VirtIO-blk flush (`VIRTIO_BLK_T_FLUSH`) + `fsync()`            | ✅ `storport.sys` flush via `SCSI_SYNCHRONIZE_CACHE`; `FlushFileBuffers` | ✅ `virtio_blk.c` `REQ_OP_FLUSH`; `fsync()` via `submit_bio()`     | ⬜ §1 — `VIRTIO_BLK_T_FLUSH`, write-back queue, blocking `fsync()` |
 | 💎 | VirtIO-blk error recovery                                      | ✅ `storport.sys` request retry + error                                  | ✅ `virtio_blk.c` `VIRTIO_BLK_S_IOERR` → `BLK_STS_IOERR`; retry    | ⬜ §2 — status byte parse, 3× retry,                               |

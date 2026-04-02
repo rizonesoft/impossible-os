@@ -251,7 +251,7 @@ bare-metal deployment.
 ## OS Comparison
 
 
-| ⭐ | Feature                                   | Win11                                       | Linux                                           | Impossible OS                                                                |
+| ⭐ | Feature                                   | 🪟 Win11                                       | 🐧 Linux                                           | 🚀 Impossible OS                                                                |
 |----|-------------------------------------------|---------------------------------------------|-------------------------------------------------|------------------------------------------------------------------------------|
 | 💎 | UEFI Secure Boot chain of trust           | ✅ Required for Win11; PK/KEK/db +          | ✅ shim + MOK (distro-signed); grub2            | ⬜ §3 — PK/KEK/db hierarchy; `sbsign`; `TODO-01` shim                        |
 | 💎 | TPM 2.0 measured boot                     | ✅ Bitlocker PCR policy; Windows VSB        | ✅ IMA (Integrity Measurement Architecture) PCR | ⬜ §2 — PCR 8–10 extended by bootloader                                      |

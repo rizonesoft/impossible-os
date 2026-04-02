@@ -346,7 +346,7 @@ process in future iteration)
 ## OS Comparison
 
 
-| ⭐ | Feature                                       | Win11                                                          | Linux                                           | Impossible OS                                                                                   |
+| ⭐ | Feature                                       | 🪟 Win11                                                          | 🐧 Linux                                           | 🚀 Impossible OS                                                                                   |
 |----|-----------------------------------------------|----------------------------------------------------------------|-------------------------------------------------|-------------------------------------------------------------------------------------------------|
 | 💎 | Per-thread MSG ring-buffer queue              | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking    | ❌ No equivalent (event loops are               | ⬜ §1 — `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE`                                   |
 | 💎 | Window class registry                         | ✅ Win32k system + app classes;                                | ❌ No concept (toolkit-specific)                | ⬜ §2 — 256 global + 64 per-process                                                             |

@@ -485,7 +485,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                              | Win11                          | Linux                             | Impossible OS                   |
+| ⭐ | Feature                              | 🪟 Win11                          | 🐧 Linux                             | 🚀 Impossible OS                   |
 |----|--------------------------------------|--------------------------------|-----------------------------------|---------------------------------|
 | 💎 | Hierarchical typed key/value store   | ✅ Full                        | ⚠️ dconf (GNOME), ini files       | ✅ Done — `reg_key_t` tree, all |
 | 💎 | Win32 `RegXxx` API                   | ✅ Native                      | ❌ Not available                  | ✅ Done — complete native API   |

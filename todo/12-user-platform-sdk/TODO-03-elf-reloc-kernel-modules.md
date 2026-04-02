@@ -335,7 +335,7 @@ binding engine is available for the Linux ELF compat `dlopen` path.
 ## OS Comparison
 
 
-| ⭐ | Feature                                            | Win11                                   | Linux                                  | Impossible OS                                             |
+| ⭐ | Feature                                            | 🪟 Win11                                   | 🐧 Linux                                  | 🚀 Impossible OS                                             |
 |----|----------------------------------------------------|-----------------------------------------|----------------------------------------|-----------------------------------------------------------|
 | 💎 | ELF `R_X86_64_*` relocation engine                 | ❌ PE/COFF only in ntoskrnl             | ✅ `arch/x86/kernel/module.c`          | ⬜ §1 — `elf_apply_rela/rel` for all 9 reloc              |
 | ⭐ | `.kmod` ELF relocatable kernel modules             | ✅ Windows drivers (PE `.sys`)          | ✅ Linux `ko` (ELF `ET_REL`)           | ⬜ §2 — §3; ELF format + `kmod_load/unload`               |

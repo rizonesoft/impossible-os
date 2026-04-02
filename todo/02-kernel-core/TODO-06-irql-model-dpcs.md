@@ -135,7 +135,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                    | Win11                                       | Linux                                                   | Impossible OS                                          |
+| ⭐ | Feature                                    | 🪟 Win11                                       | 🐧 Linux                                                   | 🚀 Impossible OS                                          |
 |----|--------------------------------------------|---------------------------------------------|---------------------------------------------------------|--------------------------------------------------------|
 | 💎 | First-class IRQL/preemption levels         | ✅ `KIRQL` (`PASSIVE`/`DISPATCH`/DIRQL/...) | ✅ preempt/irq contexts (`process`/`softirq`/`hardirq`) | ✅ §1-§3 — Per-CPU IRQL tracked, spinlocks IRQL-aware, |
 | 💎 | Deferred interrupt bottom half             | ✅ DPC queue at `DISPATCH_LEVEL`            | ✅ softirq/tasklet/NAPI bottom-half model               | ⬜ §4–§6                                               |

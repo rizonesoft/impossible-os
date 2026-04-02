@@ -298,7 +298,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 ## OS Comparison
 
 
-| ⭐ | Feature                                                 | Win11                                                                | Linux                                           | Impossible OS                                                                            |
+| ⭐ | Feature                                                 | 🪟 Win11                                                                | 🐧 Linux                                           | 🚀 Impossible OS                                                                            |
 |----|---------------------------------------------------------|----------------------------------------------------------------------|-------------------------------------------------|------------------------------------------------------------------------------------------|
 | 💎 | `MAJOR.MINOR.BUILD` versioning baked into OS + registry | ✅ `10.0.22000`; `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` | ✅ `/etc/os-release`; kernel `uname -r`         | ⬜ §1 — `OS_VERSION_STRING`; `winver.exe`; baked into `HKLM\SOFTWARE\Impossible\Version` |
 | 💎 | Compressed disk image with SHA-256                      | ✅ Windows ISO (no zstd); WinGet                                     | ✅ `xz`/`zstd` compressed images (Fedora, Arch) | ⬜ §2 — `zstd -T0 -9` + SHA-256                                                          |

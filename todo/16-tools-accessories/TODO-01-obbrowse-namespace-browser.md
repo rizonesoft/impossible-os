@@ -103,7 +103,7 @@ Enhanced display with per-type icons and security info.
 
 ## OS Comparison
 
-| ⭐ | Feature                   | Win11                    | Linux               | Impossible OS            |
+| ⭐ | Feature                   | 🪟 Win11                    | 🐧 Linux               | 🚀 Impossible OS            |
 |----|---------------------------|--------------------------|----------------------|--------------------------|
 | 💎 | Object namespace browser  | ✅ WinObj (Sysinternals) | ⚠️ /proc + /sys      | ⬜ §2–§3                 |
 | 💎 | Handle viewer             | ✅ Process Explorer      | ⚠️ lsof              | ⬜ §3 detail panel       |

@@ -187,7 +187,7 @@ Start Menu search bar: typing filters pinned + All Programs + right-column links
 ## OS Comparison
 
 
-| ⭐ | Feature                 | Win11                                                             | Linux                                                  | Impossible OS                                                                            |
+| ⭐ | Feature                 | 🪟 Win11                                                             | 🐧 Linux                                                  | 🚀 Impossible OS                                                                            |
 |----|-------------------------|-------------------------------------------------------------------|--------------------------------------------------------|------------------------------------------------------------------------------------------|
 | 💎 | Start Menu data loading | ✅ Start Menu from Start layout                                   | ✅ GNOME App Grid from `.desktop`                      | ⬜ §1 — VFS scan of `C:\Impossible\Bin\` +                                               |
 | 💎 | Start Menu interaction  | ✅ Win key toggle; click launch;                                  | ✅ GNOME Activities overlay; KDE Kickoff;              | ⬜ §2 — `task_exec()` launch; dual `anim_mgr` tween                                      |

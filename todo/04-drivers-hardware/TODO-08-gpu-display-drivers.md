@@ -202,7 +202,7 @@ Extend `display_device_t` registration to a per-head array. Compositor spans or 
 ## OS Comparison
 
 
-| ⭐ | Feature                                                | Win11                                                               | Linux                                                | Impossible OS                                                                      |
+| ⭐ | Feature                                                | 🪟 Win11                                                               | 🐧 Linux                                                | 🚀 Impossible OS                                                                      |
 |----|--------------------------------------------------------|---------------------------------------------------------------------|------------------------------------------------------|------------------------------------------------------------------------------------|
 | ⭐ | Unified `display_device_t` vtable for all GPU backends | ❌ WDDM DDI is ABI-stable but                                       | ❌ DRM/KMS has a similar role                        | ⬜ §4 — lean 7-function vtable; modules register                                   |
 | 💎 | VMware/VMSVGA 2D FIFO acceleration + hardware cursor   | ✅ `vmswitch.sys` / `vm3dmp.sys` SVGA driver                        | ✅ `vmwgfx` DRM driver; FIFO commands;               | ⬜ §1 — `RECT_FILL`/`RECT_COPY`/`UPDATE` FIFO, `DEFINE_CURSOR`, VirtualBox display |

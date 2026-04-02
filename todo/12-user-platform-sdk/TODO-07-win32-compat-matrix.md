@@ -336,7 +336,7 @@ runs, Win32 compatibility is excellent.
 ## OS Comparison
 
 
-| ⭐ | Feature                                        | Win11                                               | Linux                                        | Impossible OS                                                                 |
+| ⭐ | Feature                                        | 🪟 Win11                                               | 🐧 Linux                                        | 🚀 Impossible OS                                                                 |
 |----|------------------------------------------------|-----------------------------------------------------|----------------------------------------------|-------------------------------------------------------------------------------|
 | ⭐ | Win32 API coverage tracker                     | ✅ MSDN + Windows App Compat                        | ✅ Wine AppDB; ReactOS compat table          | ⬜ §1 — `sdk/docs/win32-compat.md` with per-function status; `compat-scan.sh` |
 | ⭐ | `compat_stub` shmem counter + live report tool | ✅ ETW provider; `win32u!NtUser*` logging; AppVerif | ✅ Wine `WINEDEBUG=+relay`; strace           | ⬜ §1 — shmem counter map; `win32compat report`                               |

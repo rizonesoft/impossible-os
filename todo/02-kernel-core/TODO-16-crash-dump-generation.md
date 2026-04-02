@@ -507,7 +507,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                   | Win11                            | Linux                              | Impossible OS             |
+| ⭐ | Feature                                   | 🪟 Win11                            | 🐧 Linux                              | 🚀 Impossible OS             |
 |----|-------------------------------------------|----------------------------------|------------------------------------|---------------------------|
 | 💎 | Text crash log on panic                   | ✅ Event Viewer                  | ✅ `dmesg` / `journalctl`          | ✅ Done — `crashdump.log` |
 | 💎 | Windows STOP code taxonomy                | ✅ Full (`0xXXXXXXXX`)           | ❌ Kernel OOPS (different)         | ⬜ §1                     |

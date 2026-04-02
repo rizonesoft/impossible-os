@@ -238,7 +238,7 @@ Settings page (`browser://settings`) and privacy controls. All state in `HKCU\So
 ## OS Comparison
 
 
-| ⭐ | Feature                                     | Win11                               | Linux                            | Impossible OS                           |
+| ⭐ | Feature                                     | 🪟 Win11                               | 🐧 Linux                            | 🚀 Impossible OS                           |
 |----|---------------------------------------------|-------------------------------------|----------------------------------|-----------------------------------------|
 | 💎 | HTTP/HTTPS page fetch                       | ✅ Edge/WebView2                    | ✅ Firefox/Chrome                | ⬜ `https_get()`                        |
 | 💎 | HTML renderer                               | ✅ Blink engine                     | ✅ Gecko/Blink                   | ⬜ custom or NetSurf port               |

@@ -151,7 +151,7 @@ Capabilities can be inherited across `fork` / `exec` but can only be dropped, ne
 ## OS Comparison
 
 
-| ⭐ | Feature                              | Win11                                            | Linux                                                   | Impossible OS                                  |
+| ⭐ | Feature                              | 🪟 Win11                                            | 🐧 Linux                                                   | 🚀 Impossible OS                                  |
 |----|--------------------------------------|--------------------------------------------------|---------------------------------------------------------|------------------------------------------------|
 | 💎 | Per-process working directory        | ✅ `SetCurrentDirectory` / `NtSetCurDir`         | ✅ `chdir(2)` / `getcwd(2)`                             | ⬜ §1                                          |
 | 💎 | STD handle pre-wiring                | ✅ inherited or set via `CreateProcess`          | ✅ FDs 0/1/2 inherited via `fork`/`exec`                | ⬜ §2                                          |

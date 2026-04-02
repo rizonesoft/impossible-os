@@ -111,7 +111,7 @@ Wire the bottom buttons in the start menu.
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11            | Linux (GNOME)    | Impossible OS        |
+| ⭐ | Feature              | 🪟 Win11            | 🐧 Linux (GNOME)    | 🚀 Impossible OS        |
 |----|----------------------|------------------|------------------|----------------------|
 | 💎 | Desktop icon launch  | ✅ Built-in      | ✅ Nautilus      | ⬜ §1                |
 | 💎 | Desktop right-click  | ✅ Built-in      | ✅ Built-in      | ⬜ §2                |

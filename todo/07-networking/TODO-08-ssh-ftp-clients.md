@@ -221,7 +221,7 @@ SSH channel with `SSH_MSG_CHANNEL_REQUEST "subsystem" "sftp"`. SFTP v3 protocol:
 ## OS Comparison
 
 
-| ⭐ | Feature                                    | Win11                                                | Linux                                               | Impossible OS                                                          |
+| ⭐ | Feature                                    | 🪟 Win11                                                | 🐧 Linux                                               | 🚀 Impossible OS                                                          |
 |----|--------------------------------------------|------------------------------------------------------|-----------------------------------------------------|------------------------------------------------------------------------|
 | 💎 | FTP client                                 | ✅ `ftp.exe` CLI; File Explorer `ftp://`;            | ✅ `ftp`/`lftp`; File Manager `ftp://` via          | ⬜ §1 — `ftp_session_t` API; PASV mode; binary/ASCII                   |
 | 💎 | FTP shell + GUI                            | ✅ `ftp.exe` interactive; Windows Explorer drag-drop | ✅ `ftp`/`lftp` interactive; GNOME/KDE file manager | ⬜ §2 — glob matching; `wget ftp://` anonymous                         |

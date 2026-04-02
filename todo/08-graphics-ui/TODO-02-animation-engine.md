@@ -183,7 +183,7 @@ Non-animating frames skip compositor redraw when no dirty rects. Animating windo
 ## OS Comparison
 
 
-| ⭐ | Feature                                | Win11                                                                 | Linux                                                                            | Impossible OS                                                                         |
+| ⭐ | Feature                                | 🪟 Win11                                                                 | 🐧 Linux                                                                            | 🚀 Impossible OS                                                                         |
 |----|----------------------------------------|-----------------------------------------------------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
 | 💎 | Core tween engine                      | ✅ DWM storyboard animations; WinUI3 `AnimationInterpolation`         | ✅ GTK `GskRenderNode` + CSS transitions;                                        | ⬜ §1 — 16.16 fixed-point; no float; `int64_t`                                        |
 | 💎 | Easing functions                       | ✅ WinUI3 `EasingFunctionBase` hierarchy; bounce/back in              | ✅ GTK CSS `cubic-bezier`; GNOME Shell                                           | ⬜ §2 — 9 functions; all integer; `gfx_ease_bounce`                                   |

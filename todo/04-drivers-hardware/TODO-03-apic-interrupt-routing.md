@@ -153,7 +153,7 @@ Increment a per-vector `irq_count` and accumulate `irq_ns` in each IDT stub befo
 ## OS Comparison
 
 
-| ⭐ | Feature                                            | Win11                                                         | Linux                                                              | Impossible OS                                                       |
+| ⭐ | Feature                                            | 🪟 Win11                                                         | 🐧 Linux                                                              | 🚀 Impossible OS                                                       |
 |----|----------------------------------------------------|---------------------------------------------------------------|--------------------------------------------------------------------|---------------------------------------------------------------------|
 | 💎 | x2APIC MSR mode — 32-bit APIC IDs, atomic IPI      | ✅ HAL enables x2APIC on systems                              | ✅ `arch/x86/kernel/apic/x2apic_*.c`; `x2apic_enabled()` check     | ⬜ §1 — `lapic_read/write` dispatch, 32-bit `apic_id`, single-MSR   |
 | 💎 | LAPIC timer calibration via HPET reference         | ✅ HAL `HalCalibratePerformanceCounter` via HPET              | ✅ `lapic_calibrate()`; HPET 10 ms window;                         | ⬜ §2 — 3-sample median, `g_lapic_ticks_per_ms`, `g_tick_ns` update |

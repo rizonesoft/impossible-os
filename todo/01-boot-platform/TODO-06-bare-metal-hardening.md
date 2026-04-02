@@ -371,7 +371,7 @@ The boot splash spinner stutters on bare metal — stops and restarts repeatedly
 ## OS Comparison
 
 
-| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                    |
+| ⭐ | Feature                 | 🪟 Win11                       | 🐧 Linux                        | 🚀 Impossible OS                    |
 |----|-------------------------|-----------------------------|------------------------------|----------------------------------|
 | 💎 | UC MMIO mapping         | ✅ MmMapIoSpace             | ✅ ioremap_uc               | ✅ §1 vmm_map_mmio_uc           |
 | 💎 | IST stacks              | ✅ All critical exceptions  | ✅ IST1-4 for DF/NMI/MCE    | ✅ §2 IST1-3 for DF/NMI/MCE     |

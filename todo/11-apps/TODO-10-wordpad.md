@@ -212,7 +212,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                             | Win11                             | Linux                                   | Impossible OS                                                     |
+| ⭐ | Feature                                             | 🪟 Win11                             | 🐧 Linux                                   | 🚀 Impossible OS                                                     |
 |----|-----------------------------------------------------|-----------------------------------|-----------------------------------------|-------------------------------------------------------------------|
 | 💎 | Paragraph + run rich text document model            | ✅ WordPad (internal; RTF-backed) | ✅ AbiWord / LibreOffice Writer         | ⬜ §1 — doubly-linked para list, per-run char_fmt,                |
 | 💎 | RTF 1.5 reader                                      | ✅ WordPad (full RTF 1.5)         | ✅ AbiWord (RTF import)                 | ⬜ §2 — stack-based control word parser, font                     |

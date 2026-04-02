@@ -211,7 +211,7 @@ Create `LICENSES/` with the BSD-2-Clause and MIT license texts, and `NOTICE.md` 
 ## OS Comparison
 
 
-| ⭐ | Feature                                       | Win11                                             | Linux                                                               | Impossible OS                                                        |
+| ⭐ | Feature                                       | 🪟 Win11                                             | 🐧 Linux                                                               | 🚀 Impossible OS                                                        |
 |----|-----------------------------------------------|---------------------------------------------------|---------------------------------------------------------------------|----------------------------------------------------------------------|
 | 💎 | Intel e1000 / e1000e wired NIC                | ✅ `e1000e.sys` inbox NDIS driver                 | ✅ `drivers/net/ethernet/intel/e1000/`                              | ⬜ §1 — loadable `.kmod`, VirtualBox default NIC,                    |
 | 💎 | VirtIO-net paravirtual NIC                    | ✅ `netkvm.sys` (Red Hat VirtIO drivers           | ✅ `drivers/net/virtio_net.c`; widely used in QEMU/KVM              | ⬜ §2 — loadable `.kmod`, reuses VirtIO transport                    |

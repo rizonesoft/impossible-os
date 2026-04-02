@@ -328,7 +328,7 @@ outsiders can track progress without reading 100+ TODO files.
 ## OS Comparison
 
 
-| ⭐ | Feature                                                             | Win11                                            | Linux                                                       | Impossible OS                                                        |
+| ⭐ | Feature                                                             | 🪟 Win11                                            | 🐧 Linux                                                       | 🚀 Impossible OS                                                        |
 |----|---------------------------------------------------------------------|--------------------------------------------------|-------------------------------------------------------------|----------------------------------------------------------------------|
 | 💎 | Automated release workflow                                          | ✅ Internal pipeline; not public                 | ✅ `make release` + distro infra;                           | ⬜ §1 — `create-release.sh`; GHA on `v*` tag                         |
 | 💎 | Keep-a-Changelog + changelog lint in CI                             | ✅ Windows Blog; no structured changelog         | ✅ kernel.org `CHANGES`; distro changelogs                  | ⬜ §2 — `CHANGELOG.md` Keep-a-Changelog; lint-changelog.py in CI     |

@@ -221,7 +221,7 @@ Print connected input devices and detailed touchpad diagnostics from the shell. 
 ## OS Comparison
 
 
-| ⭐ | Feature                               | Win11                                                  | Linux                                                      | Impossible OS                                                       |
+| ⭐ | Feature                               | 🪟 Win11                                                  | 🐧 Linux                                                      | 🚀 Impossible OS                                                       |
 |----|---------------------------------------|--------------------------------------------------------|------------------------------------------------------------|---------------------------------------------------------------------|
 | 💎 | I2C/SMBus host controller driver      | ✅ `smbus.sys`; inbox ACPI-enumerated SMBus            | ✅ `i2c-i801.c`; `i2c-piix4.c` (AMD); ACPI `_CRS`          | ⬜ §1 — PCI + ACPI `PNP0C50`, `bus_controller_t`,                   |
 | 💎 | ACPI I2C device enumeration from DSDT | ✅ ACPI PnP manager; `I2CSerialBusV2` resource         | ✅ `i2c-acpi.c`; `acpi_i2c_register_devices()`             | ⬜ §2 — ACPICA walk, `I2CSerialBusV2` CRS parse,                    |

@@ -143,7 +143,7 @@ User-visible recovery interface with clear status.
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                   | Linux                   | Impossible OS             |
+| ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS             |
 |----|----------------------------|-------------------------|-------------------------|---------------------------|
 | 💎 | Recovery partition         | ✅ WinRE partition      | ⚠️ Optional initramfs   | ⬜ §1                     |
 | 💎 | Filesystem repair          | ✅ chkdsk in WinRE      | ✅ fsck in initramfs    | ⬜ §3                     |

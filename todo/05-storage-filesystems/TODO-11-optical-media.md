@@ -189,7 +189,7 @@ Detect audio tracks from the TOC. Issue READ CD (CDB `0xBE`) for raw 2 352-byte 
 ## OS Comparison
 
 
-| ⭐ | Feature                                             | Win11                                                    | Linux                                                      | Impossible OS                                                   |
+| ⭐ | Feature                                             | 🪟 Win11                                                    | 🐧 Linux                                                      | 🚀 Impossible OS                                                   |
 |----|-----------------------------------------------------|----------------------------------------------------------|------------------------------------------------------------|-----------------------------------------------------------------|
 | 💎 | READ TOC + DISC INFO + TRACK INFO SCSI MMC commands | ✅ `cdrom.sys`; full MMC support; `IOCTL_CDROM_READ_TOC` | ✅ `cdrom.ko`; `cdrom_read_toc()`, `cdrom_get_disc_info()` | ⚠️ §1 — In progress — ; `atapi_dma_command`                     |
 | 💎 | ISO 9660 base                                       | ✅ `cdfs.sys`; full ISO 9660 R/O                         | ✅ `isofs.ko`; full ISO 9660 R/O                           | ⬜ §2 — PVD scan, directory record walk,                        |

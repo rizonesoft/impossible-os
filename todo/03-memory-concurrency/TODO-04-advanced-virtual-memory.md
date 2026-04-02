@@ -225,7 +225,7 @@ A background kernel thread that promotes regions marked `MADV_HUGEPAGE` from 512
 ## OS Comparison
 
 
-| ⭐ | Feature                                   | Win11                                                   | Linux                                                  | Impossible OS                                            |
+| ⭐ | Feature                                   | 🪟 Win11                                                   | 🐧 Linux                                                  | 🚀 Impossible OS                                            |
 |----|-------------------------------------------|---------------------------------------------------------|--------------------------------------------------------|----------------------------------------------------------|
 | ⭐ | COW `fork()` — instant process clone      | ❌ No `fork()`; uses `CreateProcess` with               | ✅ COW `fork()` — standard POSIX,                      | ⬜ §1 — beats Windows — both `fork()`                    |
 | 💎 | 2 MiB huge pages                          | ✅ `VirtualAlloc(MEM_LARGE_PAGES)`; requires privilege  | ✅ `MAP_HUGETLB`; `hugepages=` kernel param            | ⬜ §2 — `MAP_HUGE` flag, `pmm_alloc_huge()`              |

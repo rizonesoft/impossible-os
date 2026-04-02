@@ -194,7 +194,7 @@ Dirty-rect union: only re-composite screen regions touched by changed windows. F
 ## OS Comparison
 
 
-| ⭐ | Feature                     | Win11                                                                 | Linux                                                              | Impossible OS                                                                            |
+| ⭐ | Feature                     | 🪟 Win11                                                                 | 🐧 Linux                                                              | 🚀 Impossible OS                                                                            |
 |----|-----------------------------|-----------------------------------------------------------------------|--------------------------------------------------------------------|------------------------------------------------------------------------------------------|
 | 💎 | Min/max/restore             | ✅ DWM animated; `WM_SYSCOMMAND SC_MINIMIZE/MAXIMIZE/RESTORE`; window | ✅ Mutter/KWin animated; window state via                          | ⬜ §1 — `WM_FLAG_MINIMIZED/MAXIMIZED`, `saved_x/y/w/h`, Registry `Windows\{title}\State` |
 | 💎 | Mica titlebar               | ✅ DWM Mica material; `DWMWA_USE_IMMERSIVE_DARK_MODE`; Fluent         | ⚠️ KDE Breeze blur titlebar; GNOME                                 | ⬜ §2 — `gfx_mica()` per window titlebar; Fluent                                         |

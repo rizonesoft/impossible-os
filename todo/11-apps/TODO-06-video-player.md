@@ -241,7 +241,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                  | Win11                       | Linux                 | Impossible OS                                       |
+| ⭐ | Feature                                  | 🪟 Win11                       | 🐧 Linux                 | 🚀 Impossible OS                                       |
 |----|------------------------------------------|-----------------------------|-----------------------|-----------------------------------------------------|
 | 💎 | MPEG-1 video decode                      | ✅ Windows Media Player     | ✅ VLC / mpv          | ⬜ §1 — pl_mpeg single-header port                  |
 | 💎 | YCbCr → RGB                              | ✅ WMP (GPU)                | ✅ VLC (libyuv)       | ⬜ §2 — SSE2 4-pixel-at-a-time                      |

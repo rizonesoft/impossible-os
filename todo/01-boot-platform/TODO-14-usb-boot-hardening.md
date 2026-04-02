@@ -204,7 +204,7 @@ At end of USB enumeration, produce a comprehensive diagnostic summary.
 
 ## OS Comparison
 
-| ⭐ | Feature                      | Win11                     | Linux                      | Impossible OS               |
+| ⭐ | Feature                      | 🪟 Win11                     | 🐧 Linux                      | 🚀 Impossible OS               |
 |----|------------------------------|---------------------------|----------------------------|-----------------------------|
 | 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ⬜ §1–§3                    |
 | 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ⬜ §4                       |

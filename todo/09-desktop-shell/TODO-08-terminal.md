@@ -179,7 +179,7 @@ Multi-tab strip (each tab = independent `terminal_t` + scrollback). Acrylic tran
 ## OS Comparison
 
 
-| ⭐ | Feature           | Win11                                                | Linux                                                    | Impossible OS                                                            |
+| ⭐ | Feature           | 🪟 Win11                                                | 🐧 Linux                                                    | 🚀 Impossible OS                                                            |
 |----|-------------------|------------------------------------------------------|----------------------------------------------------------|--------------------------------------------------------------------------|
 | ⭐ | Cell grid         | ✅ Windows Terminal: full Unicode, unlimited         | ✅ GNOME Terminal/Alacritty: full Unicode, unlimited     | ⬜ §1 — `⭐` PMM flat-array ring buffer                                  |
 | 💎 | ANSI/VT100 parser | ✅ Windows Terminal: VT220+; Sixel; iTerm2           | ✅ libvte/Alacritty: near-complete VT220; full 256-color | ⬜ §3 — 16-color + SGR + cursor                                          |

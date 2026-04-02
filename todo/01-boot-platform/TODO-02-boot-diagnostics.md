@@ -179,7 +179,7 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 
 ## OS Comparison
 
-| ⭐ | Feature                 | Win11                        | Linux                          | Impossible OS                    |
+| ⭐ | Feature                 | 🪟 Win11                        | 🐧 Linux                          | 🚀 Impossible OS                    |
 |----|-------------------------|------------------------------|--------------------------------|-----------------------------------|
 | 💎 | Boot POST codes         | ✅ Firmware + boot manager  | ✅ BIOS POST only              | ✅ §1+§3 — kernel POST + I/O 80  |
 | 💎 | Named-stage progress    | ✅ ETW boot trace (binary)  | ✅ dmesg + systemd-analyze     | ✅ §2 — serial `[+NNNms] STAGE`  |

@@ -256,7 +256,7 @@ Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/D
 ## OS Comparison
 
 
-| ⭐ | Feature                                        | Win11                                                              | Linux                                               | Impossible OS                                                              |
+| ⭐ | Feature                                        | 🪟 Win11                                                              | 🐧 Linux                                               | 🚀 Impossible OS                                                              |
 |----|------------------------------------------------|--------------------------------------------------------------------|-----------------------------------------------------|----------------------------------------------------------------------------|
 | ⭐ | WiFi driver vtable                             | ❌ NDIS 6.x miniport DDI —                                         | ❌ `mac80211` + `cfg80211` — two-layer              | ⬜ §1 — 7-function vtable, `wifi_manager.c` singleton, no                  |
 | 💎 | Realtek RTL8188/8192 USB WiFi                  | ✅ `rtwlane.sys` inbox; some via WU                                | ✅ `rtl8xxxu.c`; embedded firmware; USB bulk        | ⬜ §2 — firmware embed, USB control upload,                                |

@@ -67,7 +67,7 @@
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11              | Linux               | Impossible OS        |
+| ⭐ | Feature              | 🪟 Win11              | 🐧 Linux               | 🚀 Impossible OS        |
 |----|----------------------|--------------------|---------------------|----------------------|
 | 💎 | Remote syslog        | ✅ WEF             | ✅ rsyslog/journald  | ⬜ §1–§2             |
 | 💎 | RFC 5424 format      | ⚠️ Custom ETW      | ✅ rsyslog           | ⬜ §1                |

@@ -1007,37 +1007,37 @@ Catch-all for global atom table, locale management, environment variables, and d
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                      | Linux                      | Impossible OS              |
-|----|----------------------------|----------------------------|----------------------------|----------------------------|
-| 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR    | ✅ entry_SYSCALL_64        | ⬜ §2                      |
-| 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx   | ✅ -ERRNO signed           | ⬜ §1                      |
-| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT      | ✅ sys_call_table[]        | ⬜ §4 — 235 entries        |
-| 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)       | ✅ INT 0x80 (32-bit)       | ⬜ §3                      |
-| 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt     | ⚠️ io_uring only           | ⬜ §11                     |
-| 💎 | File metadata syscalls     | ✅ NtQuery/SetInfoFile     | ✅ stat/fstat/utimensat    | ⬜ §13                     |
-| 💎 | Device I/O control         | ✅ NtDeviceIoControlFile   | ✅ ioctl()                 | ⬜ §13                     |
-| 💎 | I/O completion ports       | ✅ NtCreateIoCompletion    | ✅ epoll/io_uring          | ⬜ §13                     |
-| 💎 | Process/thread create API  | ✅ NtCreate{Process,Thread}| ✅ clone/execve            | ⬜ §7                      |
-| 💎 | Thread context get/set     | ✅ NtGet/SetContextThread  | ✅ ptrace GETREGS          | ⬜ §7                      |
-| 💎 | Named sync objects         | ✅ NtCreate{Event,Mutant}  | ✅ POSIX sem + futex       | ⬜ §8                      |
-| 💎 | Multi-object wait          | ✅ NtWaitForMultipleObj    | ⚠️ No direct equivalent   | ⬜ §8                      |
-| 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent     | ✅ futex()                 | ⬜ §8                      |
-| 💎 | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect | ✅ mmap/mprotect/munmap    | ⬜ §9                      |
-| 💎 | Cross-process memory       | ✅ NtRead/WriteVirtualMem  | ✅ process_vm_readv        | ⬜ §9                      |
-| 💎 | OS info query syscall      | ✅ NtQuerySystemInfo       | ✅ sysinfo + /proc         | ⬜ §10                     |
-| 💎 | LastError per-thread       | ✅ TEB→LastErrorValue      | ✅ errno via TLS           | ⬜ §11 + TODO-04 §6       |
-| 💎 | Registry syscalls          | ✅ NtCreate/Open/QueryKey  | ❌ No equivalent           | ⬜ §14 + TODO-13           |
-| 💎 | Token/access control       | ✅ NtAccessCheck + tokens  | ✅ capabilities + DAC/MAC  | ⬜ §15 + TODO-11           |
-| 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj    | ❌ No kernel namespace     | ⬜ §16                     |
-| 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView | ✅ mmap with MAP_SHARED    | ⬜ §17 + TODO-03 §7       |
-| 💎 | Timer objects              | ✅ NtSetTimer periodic     | ✅ timerfd_create          | ⬜ §18 + TODO-07 §7       |
-| 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive   | ❌ No equivalent           | ⬜ §19 + TODO-12           |
-| 💎 | Debug API                  | ✅ NtDebugActiveProcess    | ✅ ptrace                  | ⬜ §20 + TODO-18           |
-| 💎 | Power management           | ✅ NtSetSystemPowerState   | ✅ sys_reboot + ACPI       | ⬜ §21 + TODO-15           |
-| 💎 | Atom table                 | ✅ NtAddAtom/FindAtom      | ❌ No equivalent           | ⬜ §22                     |
-| ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented  | ❌ No equivalent           | ⬜ §12 — explicit, public  |
-| ⭐ | Stable native API contract | ⚠️ Undocumented            | ❌ No stable native API    | ⬜ §4+§12 — numbered+public|
-| ⭐ | Syscall audit hook         | ⚠️ ETW, heavyweight        | ⚠️ seccomp-bpf, complex   | ⬜ §23 — first-class API   |
+| ⭐ | Feature                    | 🪟 Win11                        | 🐧 Linux                      | 🚀 Impossible OS                |
+|----|----------------------------|------------------------------|----------------------------|------------------------------|
+| 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | ⬜ §2                       |
+| 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ⬜ §1                       |
+| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ⬜ §4 — 235 entries         |
+| 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ⬜ §3                       |
+| 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only           | ⬜ §11                      |
+| 💎 | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat    | ⬜ §13                      |
+| 💎 | Device I/O control         | ✅ NtDeviceIoControlFile    | ✅ ioctl()                 | ⬜ §13                      |
+| 💎 | I/O completion ports       | ✅ NtCreateIoCompletion     | ✅ epoll/io_uring          | ⬜ §13                      |
+| 💎 | Process/thread create API  | ✅ NtCreate{Process,Thread} | ✅ clone/execve            | ⬜ §7                       |
+| 💎 | Thread context get/set     | ✅ NtGet/SetContextThread   | ✅ ptrace GETREGS          | ⬜ §7                       |
+| 💎 | Named sync objects         | ✅ NtCreate{Event,Mutant}   | ✅ POSIX sem + futex       | ⬜ §8                       |
+| 💎 | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent    | ⬜ §8                       |
+| 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | ⬜ §8                       |
+| 💎 | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap    | ⬜ §9                       |
+| 💎 | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv        | ⬜ §9                       |
+| 💎 | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc         | ⬜ §10                      |
+| 💎 | LastError per-thread       | ✅ TEB→LastErrorValue       | ✅ errno via TLS           | ⬜ §11 + TODO-04 §6         |
+| 💎 | Registry syscalls          | ✅ NtCreate/Open/QueryKey   | ❌ No equivalent           | ⬜ §14 + TODO-13            |
+| 💎 | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC  | ⬜ §15 + TODO-11            |
+| 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace     | ⬜ §16                      |
+| 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | ⬜ §17 + TODO-03 §7         |
+| 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ⬜ §18 + TODO-07 §7         |
+| 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | ⬜ §19 + TODO-12            |
+| 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §20 + TODO-18            |
+| 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | ⬜ §21 + TODO-15            |
+| 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ⬜ §22                      |
+| ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ⬜ §12 — explicit, public   |
+| ⭐ | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API    | ⬜ §4+§12 — numbered+public |
+| ⭐ | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex    | ⬜ §23 — first-class API    |
 
 > **After §1–§22:** Impossible OS has complete NT native API coverage — 235 syscall endpoints across file I/O, process/thread, memory, sync, registry, security, sections, timers, ALPC, debug, power, namespace, atoms, and system info. Real `ntdll.dll` stubs can call into the kernel.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract — Windows keeps it internal/undocumented and Linux has no equivalent.

@@ -161,7 +161,7 @@ Test plan: enable `BSOD_TEST` compile flag, boot in QEMU, verify BSOD → countd
 ## OS Comparison
 
 
-| ⭐ | Feature                      | Win11                                              | Linux                                                                                       | Impossible OS                                                  |
+| ⭐ | Feature                      | 🪟 Win11                                              | 🐧 Linux                                                                                       | 🚀 Impossible OS                                                  |
 |----|------------------------------|----------------------------------------------------|---------------------------------------------------------------------------------------------|----------------------------------------------------------------|
 | 💎 | Graphical boot splash        | ✅ `winload.exe` boot animation; progress spinner; | ✅ Plymouth daemon; themed spinner; distro                                                  | ⬜ §1 — arc ring spinner + `boot_splash_progress(pct)`         |
 | ⭐ | Build pipeline               | ✅ Logo baked into `winload.exe` binary            | ✅ Plymouth compiles SVG/PNG into initrd                                                    | ⬜ §3 — `⭐` `tools/png2bootsplash.py` same pattern as         |

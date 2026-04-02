@@ -167,7 +167,7 @@ Search bar at top of Control Panel filters all applet names + descriptions live.
 ## OS Comparison
 
 
-| ⭐ | Feature                                         | Win11                                                 | Linux                                           | Impossible OS                                                                                            |
+| ⭐ | Feature                                         | 🪟 Win11                                                 | 🐧 Linux                                           | 🚀 Impossible OS                                                                                            |
 |----|-------------------------------------------------|-------------------------------------------------------|-------------------------------------------------|----------------------------------------------------------------------------------------------------------|
 | 💎 | CPL framework                                   | ✅ Full Win32 CPL ABI; `.cpl`                         | ❌ No CPL equivalent; GNOME uses                | ⬜ §1 — `⭐` Win32-identical message IDs and                                                             |
 | 💎 | Host app                                        | ✅ Control Panel + Settings app                       | ✅ GNOME Control Center; KDE System             | ⬜ §2 — two-panel 900×600 layout; `.cpl` scan                                                            |

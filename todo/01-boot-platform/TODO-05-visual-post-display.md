@@ -257,7 +257,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 
 ## OS Comparison
 
-| ⭐ | Feature                 | Win11                        | Linux                         | Impossible OS                   |
+| ⭐ | Feature                 | 🪟 Win11                        | 🐧 Linux                         | 🚀 Impossible OS                   |
 |----|-------------------------|------------------------------|-------------------------------|---------------------------------|
 | 💎 | Boot progress visual    | ✅ Spinning dots             | ✅ Plymouth splash           | ✅ §4+§7 — VPD stage list      |
 | ⭐ | Pre-splash diagnostics  | ❌ Black screen              | ⚠️ fbcon (if compiled in)    | ✅ §3+§4 — micro-font stages   |

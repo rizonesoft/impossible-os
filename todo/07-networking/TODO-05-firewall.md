@@ -215,7 +215,7 @@ Atomic `u64 hits` per `fw_rule_t` entry, incremented on each rule match in `fw_c
 ## OS Comparison
 
 
-| ⭐ | Feature                                                 | Win11                                                                                       | Linux                                                                   | Impossible OS                                              |
+| ⭐ | Feature                                                 | 🪟 Win11                                                                                       | 🐧 Linux                                                                   | 🚀 Impossible OS                                              |
 |----|---------------------------------------------------------|---------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|------------------------------------------------------------|
 | 💎 | Packet filter engine                                    | ✅ Windows Firewall (`mpssvc`); thousands of                                                | ✅ `nftables`/`iptables` in kernel; arbitrary rule                      | ⬜ §1 — 64-rule compact table; O(64) linear                |
 | 💎 | Stateful CT integration                                 | ✅ WFP stateful inspection; SYN-flood protection                                            | ✅ `conntrack` module; `nftables ct state                               | ⬜ §3 — CT 4-tuple lookup (reversed) before                |

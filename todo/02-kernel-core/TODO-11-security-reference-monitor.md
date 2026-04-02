@@ -544,7 +544,7 @@
 
 ## OS Comparison
 
-| ⭐ | Feature                             | Win11                   | Linux                         | Impossible OS                    |
+| ⭐ | Feature                             | 🪟 Win11                   | 🐧 Linux                         | 🚀 Impossible OS                    |
 |----|-------------------------------------|-------------------------|-------------------------------|----------------------------------|
 | 💎 | Token-based identity                | ✅ Full                 | ⚠️ UID/GID only              | ⬜ §4                            |
 | 💎 | DACL access check on every object   | ✅ Full                 | ⚠️ POSIX permission bits     | ⬜ §5                            |

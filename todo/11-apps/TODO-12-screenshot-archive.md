@@ -180,7 +180,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                                        | Win11                                      | Linux                                  | Impossible OS                                                    |
+| ⭐ | Feature                                                        | 🪟 Win11                                      | 🐧 Linux                                  | 🚀 Impossible OS                                                    |
 |----|----------------------------------------------------------------|--------------------------------------------|----------------------------------------|------------------------------------------------------------------|
 | 💎 | PrtSc → full-screen PNG capture + clipboard                    | ✅ PrtSc copies to clipboard; Win+PrtSc    | ✅ GNOME screenshot / flameshot        | ⬜ §1 — `fb_get_backbuffer` + `image_save_png` + `clipboard_set` |
 | 💎 | Alt+PrtSc → active window capture                              | ✅ Alt+PrtSc copies window to clipboard    | ✅ GNOME screenshot                    | ⬜ §1 — `wm_get_focused` + `wm_get_window_rect` crop             |

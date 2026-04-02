@@ -158,7 +158,7 @@ Embedded minimal timezone table: UTC, UTC±1 through ±14, plus named entries (U
 ## OS Comparison
 
 
-| ⭐ | Feature                 | Win11                                                                  | Linux                                                                       | Impossible OS                                                       |
+| ⭐ | Feature                 | 🪟 Win11                                                                  | 🐧 Linux                                                                       | 🚀 Impossible OS                                                       |
 |----|-------------------------|------------------------------------------------------------------------|-----------------------------------------------------------------------------|---------------------------------------------------------------------|
 | 💎 | Kernel time API         | ✅ `GetSystemTime`, `SystemTimeToTzSpecificLocalTime`, `SetSystemTime` | ✅ `clock_gettime(CLOCK_REALTIME)`, `mktime`, `localtime_r`, `settimeofday` | ⬜ §1 — `time_now()` = boot CMOS +                                  |
 | 💎 | Time formatting         | ✅ `strftime`, `GetTimeFormat`, locale-aware                           | ✅ `strftime()` + locale; `date` utility                                    | ⬜ §2 — 13 specifiers; hand-coded (no `-nostdinc`                   |

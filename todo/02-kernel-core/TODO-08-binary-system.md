@@ -215,7 +215,7 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 ## OS Comparison
 
 
-| ⭐ | Feature                            | Win11                       | Linux                             | Impossible OS                               |
+| ⭐ | Feature                            | 🪟 Win11                       | 🐧 Linux                             | 🚀 Impossible OS                               |
 |----|------------------------------------|-----------------------------|-----------------------------------|---------------------------------------------|
 | 💎 | Native binary format               | ✅ PE32+                    | ✅ ELF                            | ⬜ §3–§4 — (EIF native)                     |
 | 💎 | ELF loading                        | ⚠️ WSL only                 | ✅ Native                         | ⚠️ §2 — Partial — basic identity-map loader |

@@ -133,7 +133,7 @@ Log the full boot device enumeration to serial for debugging.
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                   | Linux                    | Impossible OS             |
+| ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                    | 🚀 Impossible OS             |
 |----|----------------------------|-------------------------|--------------------------|---------------------------|
 | 💎 | Boot device identification | ✅ BCD + device path    | ✅ GRUB search command   | ⬜ §1–§2                  |
 | 💎 | Multi-device fallback      | ✅ BCD boot order       | ✅ GRUB menu entries     | ⬜ §5                     |

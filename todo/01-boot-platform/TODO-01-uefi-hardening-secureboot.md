@@ -299,7 +299,7 @@ The current `init_gop()` uses `LocateProtocol()` which returns a single GOP hand
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                              | Linux                              | Impossible OS                          |
+| ⭐ | Feature                    | 🪟 Win11                              | 🐧 Linux                              | 🚀 Impossible OS                          |
 |----|----------------------------|------------------------------------|------------------------------------|-----------------------------------------|
 | 💎 | Secure Boot shim           | ✅ MS-signed shim + WHQL          | ✅ rhboot shim (distro)            | ✅ §6 — shimx64 + MOK                  |
 | 💎 | Secure Boot state          | ✅ Registry + WinVerifyTrust      | ✅ efivarfs SecureBoot             | 🔄 §5 — NVRAM reads; SRM deferred      |

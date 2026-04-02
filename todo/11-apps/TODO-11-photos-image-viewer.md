@@ -210,7 +210,7 @@ All major image formats are registered to `photos.exe`.
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                               | Linux                                 | Impossible OS                                                |
+| ⭐ | Feature                                           | 🪟 Win11                               | 🐧 Linux                                 | 🚀 Impossible OS                                                |
 |----|---------------------------------------------------|-------------------------------------|---------------------------------------|--------------------------------------------------------------|
 | 💎 | JPEG/PNG/BMP/GIF image display                    | ✅ Photos (stb_image-like decoders) | ✅ eog / gwenview                     | ✅ §1 — Done — `image_load` + `gfx_blit`                     |
 | 💎 | Fit-to-window with aspect-ratio letterbox         | ✅ Photos (auto-fit on open)        | ✅ eog / feh                          | ⬜ §1 — `IMAGE_FIT_FIT` + centered blit on                   |

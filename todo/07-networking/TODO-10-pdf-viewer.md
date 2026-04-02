@@ -239,7 +239,7 @@ Detect `AcroForm` dictionary in catalog. Render form fields (text, checkbox, rad
 ## OS Comparison
 
 
-| ⭐ | Feature                    | Win11                                          | Linux                                                  | Impossible OS                                              |
+| ⭐ | Feature                    | 🪟 Win11                                          | 🐧 Linux                                                  | 🚀 Impossible OS                                              |
 |----|----------------------------|------------------------------------------------|--------------------------------------------------------|------------------------------------------------------------|
 | 💎 | PDF structure + xref       | ✅ Edge PDF viewer; Adobe Acrobat;             | ✅ `poppler`/`mupdf`; full xref stream +               | ⬜ §1 — xref table + stream; incremental                   |
 | 💎 | Object model               | ✅ Full object model in `poppler`/Adobe        | ✅ `mupdf`/`poppler` full object model                 | ⬜ §2 — stbi_zlib_decode for FlateDecode; hand-written LZW |

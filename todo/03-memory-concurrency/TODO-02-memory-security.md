@@ -187,7 +187,7 @@ Surface the active security configuration to diagnostics, the registry, and user
 ## OS Comparison
 
 
-| ⭐ | Feature                                     | Win11                                                      | Linux                                          | Impossible OS                                     |
+| ⭐ | Feature                                     | 🪟 Win11                                                      | 🐧 Linux                                          | 🚀 Impossible OS                                     |
 |----|---------------------------------------------|------------------------------------------------------------|------------------------------------------------|---------------------------------------------------|
 | ⭐ | User-space ASLR                             | ⚠️ Opt-in per PE (`IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE`) | ✅ Default on all processes; ELF               | ⬜ §1 — mandatory, no per-binary opt-out          |
 | 💎 | KASLR — kernel base randomized at each boot | ✅ Default since Vista; random kernel                      | ✅ `CONFIG_RANDOMIZE_BASE`; `kaslr` boot param | ⬜ §2 — RDRAND offset in bootloader               |

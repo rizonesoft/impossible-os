@@ -58,9 +58,9 @@
 | 1 | `task_t` Linux flags + fd table | `[Sonnet]` | TODO-07 §1 | ⭐ |
 | 2 | ELF Linux loader (SYSV stack + auxv) | `[Opus]` | §1, TODO-07 §8 | ⭐ |
 | 3 | Syscall entry dispatch (`is_linux_elf` branch) | `[Opus]` | §2 | ⭐ |
-| 4 | Linux syscall translation table (file I/O, process, memory, misc) | `[Sonnet]` | §3 | ⭐ |
+| 4 | 🐧 Linux syscall translation table (file I/O, process, memory, misc) | `[Sonnet]` | §3 | ⭐ |
 | 5 | Path translation (`/` → `C:\`, `/tmp`, `/proc` stubs) | `[Sonnet]` | §4 | ⭐ |
-| 6 | Linux file descriptor table | `[Sonnet]` | §4 | ⭐ |
+| 6 | 🐧 Linux file descriptor table | `[Sonnet]` | §4 | ⭐ |
 | 7 | POSIX filesystem stubs (`opendir`/`readdir`/`getdents`) | `[Sonnet]` | §6 | 💎 |
 | 8 | Signal stubs (`rt_sigaction`, `SIGINT`, `SIGCHLD`, `SIGKILL`) | `[Opus]` | §3 | 💎 |
 | 9 | Shell ELF integration + `[Linux]` process tag | `[Sonnet]` | §2 | ⭐ |
@@ -303,10 +303,10 @@ Basic signal delivery for foreground process control. Full POSIX signal semantic
 ## OS Comparison
 
 
-| ⭐ | Feature                                          | Win11                    | Linux         | Impossible OS                    |
+| ⭐ | Feature                                          | 🪟 Win11                    | 🐧 Linux         | 🚀 Impossible OS                    |
 |----|--------------------------------------------------|--------------------------|---------------|----------------------------------|
 | 💎 | Run static Linux ELF binaries                    | ✅ WSL2 (full VM)        | ✅ Native     | ⬜ in-kernel compat, no VM       |
-| 💎 | Linux syscall translation                        | ✅ WSL2 NT layer         | ✅ Native     | ⬜ `linux_syscall_table[]`       |
+| 💎 | 🐧 Linux syscall translation                        | ✅ WSL2 NT layer         | ✅ Native     | ⬜ `linux_syscall_table[]`       |
 | 💎 | POSIX path model                                 | ✅ WSL2 VirtIO-FS        | ✅ Native     | ⬜ `linux_path_to_win32()`       |
 | 💎 | Integer file descriptor table                    | ✅ WSL2                  | ✅ Native     | ⬜ `linux_fd_table[]` in task    |
 | 💎 | Signal delivery                                  | ✅ WSL2                  | ✅ Native     | ⬜ user-mode signal frames       |

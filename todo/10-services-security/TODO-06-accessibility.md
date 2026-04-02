@@ -196,7 +196,7 @@ One-page Control Panel applet with all 8 toggles: High Contrast, Large Text, Sti
 ## OS Comparison
 
 
-| ⭐ | Feature                   | Win11                                              | Linux                                                                           | Impossible OS                                                      |
+| ⭐ | Feature                   | 🪟 Win11                                              | 🐧 Linux                                                                           | 🚀 Impossible OS                                                      |
 |----|---------------------------|----------------------------------------------------|---------------------------------------------------------------------------------|--------------------------------------------------------------------|
 | 💎 | High contrast mode        | ✅ High Contrast themes (4 presets);               | ✅ GNOME/KDE high contrast theme; GTK                                           | ⬜ §1 — `THEME_HIGH_CONTRAST` preset wired via `WM_THEME_CHANGED`  |
 | 💎 | Large text / DPI override | ✅ Display Settings → Scale: 100–350%;             | ✅ GNOME: text-scaling-factor; KDE: Force Font                                  | ⬜ §2 — `dpi_set_scale()` + `WM_DPI_CHANGED` broadcast; all        |

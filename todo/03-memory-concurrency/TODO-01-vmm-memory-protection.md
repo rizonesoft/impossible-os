@@ -221,7 +221,7 @@ Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mapping
 ## OS Comparison
 
 
-| ⭐ | Feature                                     | Win11                                                  | Linux                                           | Impossible OS                                      |
+| ⭐ | Feature                                     | 🪟 Win11                                                  | 🐧 Linux                                           | 🚀 Impossible OS                                      |
 |----|---------------------------------------------|--------------------------------------------------------|-------------------------------------------------|----------------------------------------------------|
 | 💎 | `VirtualProtect` / `mprotect` + guard pages | ✅ `VirtualProtect`; guard page per thread             | ✅ `mprotect(2)`; guard via `sigaltstack` +     | ⬜ §1 — `vmm_protect()` + PROT_NONE page per       |
 | 💎 | W^X enforcement on all mappings             | ⚠️ DEP (NX) enforced; `PAGE_EXECUTE_READWRITE` allowed | ✅ NX enforced; `READ_IMPLIES_EXEC` deprecated  | ⬜ §2 — hard reject at PTE update,                 |

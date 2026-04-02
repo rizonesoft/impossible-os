@@ -178,7 +178,7 @@ SCHED_IDLE background thread. Polls SMART every 60 seconds. Compares attribute d
 ## OS Comparison
 
 
-| ⭐ | Feature                                                                              | Win11                                                                                      | Linux                                                    | Impossible OS                                                      |
+| ⭐ | Feature                                                                              | 🪟 Win11                                                                                      | 🐧 Linux                                                    | 🚀 Impossible OS                                                      |
 |----|--------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|----------------------------------------------------------|--------------------------------------------------------------------|
 | ⭐ | Built-in disk benchmark                                                              | ❌ No built-in benchmark; requires `CrystalDiskMark`                                       | ❌ `hdparm -tT` (read only, no                           | ⬜ §1 — TSC-delta latency percentiles; QD=1/4/16/32 sweep          |
 | ⭐ | Disk Benchmark GUI                                                                   | ❌ No built-in GUI benchmark                                                               | ❌ No built-in GUI; `gnome-disks` has                    | ⬜ §2 — animated fill bars; 64-bucket histogram                    |

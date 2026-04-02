@@ -220,7 +220,7 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 ## OS Comparison
 
 
-| ⭐ | Feature                                                  | Win11                                                | Linux                                                                  | Impossible OS                                    |
+| ⭐ | Feature                                                  | 🪟 Win11                                                | 🐧 Linux                                                                  | 🚀 Impossible OS                                    |
 |----|----------------------------------------------------------|------------------------------------------------------|------------------------------------------------------------------------|--------------------------------------------------|
 | 💎 | DHCP lease renewal                                       | ✅ `dhcpcsvc.dll` T1/T2 RFC 2131-compliant renewal;  | ✅ `dhclient`/`systemd-networkd` T1/T2; in-kernel DHCP not             | ⬜ §1 — in-kernel daemon; `ksleep` 1 s           |
 | 💎 | NTP v4 client                                            | ✅ `w32tm.exe` Windows Time Service; slew            | ✅ `ntpd`/`chronyd`/`systemd-timesyncd` (userspace); `adjtimex()` slew | ⬜ §2 — `⭐` in-kernel (no userspace daemon)     |

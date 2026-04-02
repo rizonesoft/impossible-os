@@ -162,7 +162,7 @@ If any handover validation fails, transparently fall back to the proven halt/res
 
 ## OS Comparison
 
-| ⭐ | Feature             | Win11             | Linux            | Impossible OS         |
+| ⭐ | Feature             | 🪟 Win11             | 🐧 Linux            | 🚀 Impossible OS         |
 |----|---------------------|-------------------|------------------|-----------------------|
 | ⭐ | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot     | 🔄 §1-§2 DMA only   |
 | ⭐ | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset    | ✅ §5 DMA inherit    |

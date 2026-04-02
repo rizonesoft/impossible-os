@@ -256,7 +256,7 @@ Register both drivers with `vfs_probe()`. Probe APFS then HFS+ for Apple-partiti
 ## OS Comparison
 
 
-| ⭐ | Feature                                                         | Win11                                      | Linux                                                | Impossible OS                                                    |
+| ⭐ | Feature                                                         | 🪟 Win11                                      | 🐧 Linux                                                | 🚀 Impossible OS                                                    |
 |----|-----------------------------------------------------------------|--------------------------------------------|------------------------------------------------------|------------------------------------------------------------------|
 | ⭐ | APFS container superblock + Fletcher-64 + checkpoint resolution | ❌ No native support (requires third-party | ❌ No upstream kernel driver; `apfs-fuse`            | ⬜ §1 — native in-kernel; Fletcher-64 verify; checkpoint         |
 | ⭐ | APFS object map B-tree                                          | ❌ N/A                                     | ❌ `apfs-fuse` only (userspace FUSE)                 | ⬜ §2 — MVCC lookup (highest xid ≤                               |

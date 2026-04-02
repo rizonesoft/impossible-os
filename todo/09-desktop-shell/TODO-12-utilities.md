@@ -235,7 +235,7 @@ Ctrl+Shift+Esc hotkey. Two tabs: **Processes** (Name/CPU%/RAM/PID/Status, End Ta
 ## OS Comparison
 
 
-| ⭐ | Feature           | Win11                                                                    | Linux                                                         | Impossible OS                                                                                 |
+| ⭐ | Feature           | 🪟 Win11                                                                    | 🐧 Linux                                                         | 🚀 Impossible OS                                                                                 |
 |----|-------------------|--------------------------------------------------------------------------|---------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
 | 💎 | Task Manager      | ✅ Task Manager: CPU/memory/disk/network charts; Details                 | ✅ `gnome-system-monitor`; `htop`; `ps`; `top`; process       | ⬜ §1 — `cpu_ticks` in task_t; rolling 60-s                                                   |
 | 💎 | Device Manager    | ✅ Device Manager: full PnP tree;                                        | ✅ `lspci`, `lshw`; GNOME `gnome-device-manager`; `hwinfo`;   | ⬜ §2 — `pci_get_all_devices()`; `CTRL_TREEVIEW` categories; ✅⚠❌ driver                    |

@@ -162,7 +162,7 @@ Convert the existing built-in RTL8139 driver to `src/modules/rtl8139/rtl8139.kmo
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                                      | Linux                                                     | Impossible OS                                                           |
+| ⭐ | Feature                                           | 🪟 Win11                                                      | 🐧 Linux                                                     | 🚀 Impossible OS                                                           |
 |----|---------------------------------------------------|------------------------------------------------------------|-----------------------------------------------------------|-------------------------------------------------------------------------|
 | 💎 | Kernel symbol export table                        | ✅ `HAL.dll` + `ntoskrnl.exe` export tables                | ✅ `EXPORT_SYMBOL` → `.kallsyms`; `ksym_lookup` via       | ⬜ §1 — `EXPORT_SYMBOL` → `.ksymtab` linker section,                    |
 | 💎 | Loadable kernel module                            | ✅ `.sys` PE/COFF loaded by I/O                            | ✅ `insmod`/`modprobe`; ELF `.ko` with relocations        | ⬜ §2 — `ET_REL` ELF loader, 4 reloc                                    |

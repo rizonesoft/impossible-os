@@ -156,7 +156,7 @@ Comprehensive USB input status in serial log.
 
 ## OS Comparison
 
-| ⭐ | Feature                   | Win11                    | Linux                     | Impossible OS              |
+| ⭐ | Feature                   | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS              |
 |----|---------------------------|--------------------------|---------------------------|----------------------------|
 | 💎 | USB keyboard in boot      | ✅ HID minidriver        | ✅ usbhid + usbkbd       | ⬜ §3                      |
 | 💎 | USB mouse in boot         | ✅ HID minidriver        | ✅ usbhid + usbmouse     | ⬜ §4                      |

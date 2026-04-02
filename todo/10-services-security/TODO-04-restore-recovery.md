@@ -252,7 +252,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 ## OS Comparison
 
 
-| ⭐ | Feature                                  | Win11                                           | Linux                                                          | Impossible OS                                                               |
+| ⭐ | Feature                                  | 🪟 Win11                                           | 🐧 Linux                                                          | 🚀 Impossible OS                                                               |
 |----|------------------------------------------|-------------------------------------------------|----------------------------------------------------------------|-----------------------------------------------------------------------------|
 | 💎 | Event log — structured persistent events | ✅ Windows Event Log: XML structured;           | ✅ systemd journal (`journalctl`); syslog; `/var/log/*`;       | ⬜ §1 — `kevent_log()` + `LOG_SECURITY=4`; rolling 1                        |
 | 💎 | Restore points                           | ✅ System Restore: VSS shadow copies;           | ⚠️ No built-in; Btrfs/ZFS snapshots; `snapper`;                | ⬜ §2 — `⭐` explicit ZIP + registry                                        |

@@ -206,7 +206,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 ## OS Comparison
 
 
-| ⭐ | Feature                               | Win11                                      | Linux                                            | Impossible OS                                  |
+| ⭐ | Feature                               | 🪟 Win11                                      | 🐧 Linux                                            | 🚀 Impossible OS                                  |
 |----|---------------------------------------|--------------------------------------------|--------------------------------------------------|------------------------------------------------|
 | 💎 | 100 ns epoch-anchored wall time       | ✅ `FILETIME`, `GetSystemTimeAsFileTime()` | ⚠️ `timespec` (ns) since 1970; different         | ⬜ §1 — , §5–§6                                |
 | 💎 | High-resolution monotonic counter     | ✅ `QueryPerformanceCounter` via TSC/HPET  | ✅ `clock_gettime(CLOCK_MONOTONIC)` via vDSO     | ⬜ §2–§4                                       |

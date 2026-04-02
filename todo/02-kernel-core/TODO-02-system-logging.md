@@ -144,7 +144,7 @@ Moved to [07-networking/TODO-11](../07-networking/TODO-11-syslog-forwarding.md) 
 
 ## OS Comparison
 
-| ⭐ | Feature               | Win11                | Linux                  | Impossible OS              |
+| ⭐ | Feature               | 🪟 Win11                | 🐧 Linux                  | 🚀 Impossible OS              |
 |----|-----------------------|----------------------|------------------------|--------------------------==|
 | 💎 | Unified kernel log    | ✅ Event Log         | ✅ journald/syslog    | ✅ klog ring buffer       |
 | 💎 | Log levels            | ✅ 5 levels          | ✅ 8 POSIX levels     | ✅ 5 levels               |

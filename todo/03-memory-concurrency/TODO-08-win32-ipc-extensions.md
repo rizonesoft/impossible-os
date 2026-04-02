@@ -216,7 +216,7 @@ Two memory-mapped rings (submission queue SQ + completion queue CQ) shared betwe
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                                              | Linux                                                | Impossible OS                                                           |
+| ⭐ | Feature                                           | 🪟 Win11                                                              | 🐧 Linux                                                | 🚀 Impossible OS                                                           |
 |----|---------------------------------------------------|--------------------------------------------------------------------|------------------------------------------------------|-------------------------------------------------------------------------|
 | 💎 | Named pipes — byte/message, duplex                | ✅ NPFS; `CreateNamedPipe`; message + byte                         | ✅ `mkfifo(3)` / `open(O_RDWR)`; byte only;          | ⬜ §1 — NPFS, `NtCreateNamedPipeFile`, byte + message,                  |
 | 💎 | Overlapped I/O + multiple pipe instances          | ✅ `dwMaxInstances`; `FILE_FLAG_OVERLAPPED`; `GetOverlappedResult` | ❌ No named pipe instances; `O_NONBLOCK`             | ⬜ §2 — `dwMaxInstances`, `irp_t`, `FILE_FLAG_OVERLAPPED`               |

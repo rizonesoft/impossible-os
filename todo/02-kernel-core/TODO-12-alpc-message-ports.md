@@ -566,7 +566,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                              | Win11              | Linux                                       | Impossible OS                 |
+| ⭐ | Feature                              | 🪟 Win11              | 🐧 Linux                                       | 🚀 Impossible OS                 |
 |----|--------------------------------------|--------------------|---------------------------------------------|-------------------------------|
 | 💎 | Connection-oriented message ports    | ✅ ALPC            | ⚠️ Unix sockets (SOCK_SEQPACKET)            | ⬜ §2–§3                      |
 | 💎 | Synchronous send+wait+reply          | ✅ Full            | ⚠️ SOCK_SEQPACKET (no typed reply)          | ⬜ §4                         |

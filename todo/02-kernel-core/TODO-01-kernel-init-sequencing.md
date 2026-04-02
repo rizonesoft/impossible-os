@@ -236,7 +236,7 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 
 ## OS Comparison
 
-| ⭐ | Feature                | Win11                 | Linux                | Impossible OS                |
+| ⭐ | Feature                | 🪟 Win11                 | 🐧 Linux                | 🚀 Impossible OS                |
 |----|------------------------|-----------------------|----------------------|------------------------------|
 | 💎 | Formal phase model     | ✅ Phase 0/1          | ✅ initcall levels   | ✅ §2-§5 — 4 phases        |
 | 💎 | Interrupts-off phase   | ✅ Phase 0            | ✅ early start_kernel | ✅ §2 — boot_phase0       |

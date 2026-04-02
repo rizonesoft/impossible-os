@@ -135,7 +135,7 @@ Show watchdog countdown in the VPD display during boot.
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                   | Linux                      | Impossible OS             |
+| ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                      | 🚀 Impossible OS             |
 |----|----------------------------|-------------------------|----------------------------|---------------------------|
 | 💎 | Boot hang detection        | ✅ Boot watchdog        | ✅ systemd watchdog        | ⬜ §1–§3                  |
 | 💎 | Hardware watchdog          | ✅ ACPI WDT driver      | ✅ iTCO_wdt driver         | ⬜ §5                     |

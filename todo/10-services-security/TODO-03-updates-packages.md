@@ -246,7 +246,7 @@ List all installed apps from `HKLM\SOFTWARE\*`: Name, Version, Size, Install Dat
 ## OS Comparison
 
 
-| ⭐ | Feature                                             | Win11                                            | Linux                                                | Impossible OS                                                        |
+| ⭐ | Feature                                             | 🪟 Win11                                            | 🐧 Linux                                                | 🚀 Impossible OS                                                        |
 |----|-----------------------------------------------------|--------------------------------------------------|------------------------------------------------------|----------------------------------------------------------------------|
 | 💎 | Update check                                        | ✅ Windows Update: HTTPS WSUS/WU endpoint;       | ✅ `apt check`; `dnf check-update`; `pacman          | ⬜ §1 — `http_get()` INI endpoint; Registry version                  |
 | 💎 | Update download + SHA-256 verification before apply | ✅ Windows Update: SHA-256 + code-signed         | ✅ `apt/dnf`: GPG-signed package files +             | ⬜ §2 — `cng_sha256()` + `crypto_verify32()` constant-time compare   |

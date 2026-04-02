@@ -197,7 +197,7 @@ At boot, compute SHA-256 of the kernel `.text` and `.rodata` sections. Extend TP
 ## OS Comparison
 
 
-| ⭐ | Feature                                                   | Win11                                                       | Linux                                                          | Impossible OS                                                                |
+| ⭐ | Feature                                                   | 🪟 Win11                                                       | 🐧 Linux                                                          | 🚀 Impossible OS                                                                |
 |----|-----------------------------------------------------------|-------------------------------------------------------------|----------------------------------------------------------------|------------------------------------------------------------------------------|
 | 💎 | Hardware RNG (`RDRAND`/`RDSEED`) + CSPRNG fallback        | ✅ `BCryptGenRandom`; CNG uses RDRAND; SP800-90A            | ✅ `arch_get_random_{long,seed}`; ChaCha20 DRNG in kernel      | ⬜ §1 — `hwrng_read()`, 10× retry, ChaCha20 fallback,                        |
 | 💎 | IOMMU/VT-d DMA isolation — default-deny policy            | ✅ VBS + IOMMU; Kernel DMA                                  | ✅ `intel_iommu=on`; 4-level page tables; default-deny         | ⬜ §2 — DMAR/IVRS parse, 4-level IOMMU PT,                                   |

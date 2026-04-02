@@ -242,7 +242,7 @@ Verify that after §1–10, IXFS matches NTFS on all Win32 compatibility feature
 ## OS Comparison
 
 
-| ⭐ | Feature                                                                      | Win11                                                                 | Linux                                               | Impossible OS                                                                |
+| ⭐ | Feature                                                                      | 🪟 Win11                                                                 | 🐧 Linux                                               | 🚀 Impossible OS                                                                |
 |----|------------------------------------------------------------------------------|-----------------------------------------------------------------------|-----------------------------------------------------|------------------------------------------------------------------------------|
 | 💎 | In-kernel CRC32C per-block checksums + `scrub` scan                          | ❌ NTFS has no per-block checksum;                                    | ✅ Btrfs per-block CRC32C; `btrfs scrub`;           | ⚠️ §1 — Partial — `ixfs_scrub()` exists; verifies                            |
 | ⭐ | v3 256-byte inode with all Win32+Linux fields in one struct                  | ❌ NTFS `$STANDARD_INFORMATION` + `$DATA` +                           | ❌ `ext4_inode` has separate inode +                | ⬜ §2 — single 256B struct: `i_win32_attrs`, `i_crtime`,                     |

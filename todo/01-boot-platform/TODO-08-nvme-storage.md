@@ -132,7 +132,7 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 
 ## OS Comparison
 
-| ⭐ | Feature                 | Win11                       | Linux                        | Impossible OS                     |
+| ⭐ | Feature                 | 🪟 Win11                       | 🐧 Linux                        | 🚀 Impossible OS                     |
 |----|-------------------------|-----------------------------|------------------------------|-----------------------------------|
 | 💎 | NVMe controller        | ✅ stornvme.sys              | ✅ nvme.ko                  | ✅ §1 — discovery + BAR map      |
 | 💎 | NVMe I/O               | ✅ Multi-queue + interrupt   | ✅ Multi-queue + interrupt  | ✅ §3 — single queue, polled     |

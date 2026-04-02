@@ -296,7 +296,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 ## OS Comparison
 
 
-| ⭐ | Feature                                  | Win11                                               | Linux                                             | Impossible OS                                                                    |
+| ⭐ | Feature                                  | 🪟 Win11                                               | 🐧 Linux                                             | 🚀 Impossible OS                                                                    |
 |----|------------------------------------------|-----------------------------------------------------|---------------------------------------------------|----------------------------------------------------------------------------------|
 | 💎 | Unattended install via answer file       | ✅ `unattend.xml`; Windows SIM; WDS                 | ✅ Kickstart (RHEL); `preseed` (Debian); AutoYaST | ⬜ §1 — §2; `answer.ini` INI format; auto-proceed                                |
 | 💎 | `sysprep /generalize`                    | ✅ `sysprep.exe /generalize`; full SID regeneration | ✅ `virt-sysprep`; cloud-init; `cloud-utils`      | ⬜ §3 — CSPRNG 96-bit SID; hostname/GUID/credential/log clear                    |

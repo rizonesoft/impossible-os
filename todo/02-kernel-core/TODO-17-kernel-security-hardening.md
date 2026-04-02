@@ -443,7 +443,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                  | Win11                            | Linux                               | Impossible OS                                   |
+| ⭐ | Feature                                  | 🪟 Win11                            | 🐧 Linux                               | 🚀 Impossible OS                                   |
 |----|------------------------------------------|----------------------------------|-------------------------------------|-------------------------------------------------|
 | 💎 | NX / XD bit on data pages                | ✅ Since Windows XP SP2          | ✅ Since kernel 2.6.8               | ⬜ §1                                           |
 | 💎 | SMEP                                     | ✅ Windows 8+                    | ✅ kernel 3.0+                      | ⬜ §2                                           |

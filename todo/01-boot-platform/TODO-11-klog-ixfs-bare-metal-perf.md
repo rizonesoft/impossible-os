@@ -158,7 +158,7 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11                  | Linux                  | Impossible OS              |
+| ⭐ | Feature              | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS              |
 |----|----------------------|------------------------|------------------------|----------------------------|
 | 💎 | Bounded log flush    | ✅ ETW batched         | ✅ printk ring         | ⬜ §1 — snapshot ring      |
 | 💎 | Single-pass routing  | ✅ ETW channel         | ✅ /dev/kmsg           | ⬜ §2 — 1 scan vs 6       |

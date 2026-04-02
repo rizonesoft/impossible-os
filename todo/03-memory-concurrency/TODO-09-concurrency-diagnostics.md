@@ -227,7 +227,7 @@ Aggregate statistics from PMM, SLAB, huge pages, compressed memory, and swap int
 ## OS Comparison
 
 
-| ⭐ | Feature                                                  | Win11                                              | Linux                                                           | Impossible OS                                               |
+| ⭐ | Feature                                                  | 🪟 Win11                                              | 🐧 Linux                                                           | 🚀 Impossible OS                                               |
 |----|----------------------------------------------------------|----------------------------------------------------|-----------------------------------------------------------------|-------------------------------------------------------------|
 | 💎 | Thread stack guard pages                                 | ✅ Guard page per thread stack;                    | ✅ `MAP_STACK` + `SIGSEGV` on overflow;                         | ⬜ §1 — `vmm_map_guard`, `#PF` panic with thread            |
 | 💎 | Preemption count + debug assertions                      | ✅ `IRQL` preemption depth in `KTHREAD`            | ✅ `preempt_count()` per-thread; `WARN_ON_ONCE` in `schedule()` | ⬜ §2 — nesting cap, `schedule()` assert, `preemptible()`   |

@@ -217,7 +217,7 @@ Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (1
 ## OS Comparison
 
 
-| ⭐ | Feature              | Win11                                                                         | Linux                                                               | Impossible OS                                                          |
+| ⭐ | Feature              | 🪟 Win11                                                                         | 🐧 Linux                                                               | 🚀 Impossible OS                                                          |
 |----|----------------------|-------------------------------------------------------------------------------|---------------------------------------------------------------------|------------------------------------------------------------------------|
 | 💎 | Context menu engine  | ✅ Win32 `CreatePopupMenu`; WinUI3 `MenuFlyout`; Acrylic                      | ✅ GTK `GtkMenu`; Qt `QMenu`; cascading                             | ⬜ §1 — z_order=25000 overlay; 300 ms hover                            |
 | 💎 | Wallpaper engine     | ✅ `SystemParametersInfo(SPI_SETDESKWALLPAPER)`; fill/fit/stretch/tile/center | ✅ GNOME `gsettings org.gnome.desktop.background`; feh/nitrogen for | ⬜ §3 — `image_scale(mode)` + `pmm_alloc_contiguous` cache; 5          |

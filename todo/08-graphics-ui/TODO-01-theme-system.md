@@ -191,7 +191,7 @@ Update all `gfx_drop_shadow()` and `gfx_acrylic()` call sites to pass `theme_get
 ## OS Comparison
 
 
-| ⭐ | Feature                                            | Win11                                                                  | Linux                                             | Impossible OS                                                            |
+| ⭐ | Feature                                            | 🪟 Win11                                                                  | 🐧 Linux                                             | 🚀 Impossible OS                                                            |
 |----|----------------------------------------------------|------------------------------------------------------------------------|---------------------------------------------------|--------------------------------------------------------------------------|
 | 💎 | Semantic color token struct                        | ✅ `COLORREF` + `GetSysColor()` + WinUI3                               | ✅ GTK `GtkStyleContext`; CSS custom properties   | ⬜ §1 — `theme_t` 21-field POD; inline `theme_get()`                     |
 | 💎 | Dark + Light built-in presets                      | ✅ Dark/Light system theme; auto-switches at                           | ✅ GTK prefers-color-scheme; GNOME night mode     | ⬜ §3 — `THEME_DARK` + `THEME_LIGHT` `const theme_t`                     |

@@ -223,7 +223,7 @@
 
 ## OS Comparison
 
-| ⭐ | Feature                | Win11            | Linux            | Impossible OS |
+| ⭐ | Feature                | 🪟 Win11            | 🐧 Linux            | 🚀 Impossible OS |
 |----|------------------------|------------------|------------------|---------------|
 | 💎 | Per-subsystem tests    | ✅ HLK suites   | ✅ KUnit + LTP   | ⬜ §2–§10     |
 | 💎 | 100+ assertions        | ✅ Thousands     | ✅ Thousands     | ⬜ §2–§10     |

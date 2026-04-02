@@ -193,7 +193,7 @@ Notify the audio subsystem when a new audio device appears or disappears. Switch
 ## OS Comparison
 
 
-| ⭐ | Feature                                      | Win11                                                 | Linux                                               | Impossible OS                                                                  |
+| ⭐ | Feature                                      | 🪟 Win11                                                 | 🐧 Linux                                               | 🚀 Impossible OS                                                                  |
 |----|----------------------------------------------|-------------------------------------------------------|-----------------------------------------------------|--------------------------------------------------------------------------------|
 | ⭐ | Single `audio_device_t` HAL vtable           | ❌ WaveRT→WASAPI multi-layer stack; KMixer in         | ❌ ALSA PCM + mixer layers;                         | ⬜ §1 — 6-function vtable, passthrough only, desktop                           |
 | 💎 | AC97 PCM playback                            | ✅ `msac97.sys` inbox AC97 WDM audio                  | ✅ `snd_intel8x0` ALSA driver; BDL DMA;             | ⬜ §2 — cold reset, NAM/NAB I/O, 32-entry                                      |

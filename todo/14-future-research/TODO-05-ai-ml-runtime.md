@@ -157,7 +157,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 - [ ] **Dependency map** (what to replace):
 
-  | ggml POSIX dependency | Impossible OS replacement | Notes |
+  | ggml POSIX dependency | 🚀 Impossible OS replacement | Notes |
   |----------------------|--------------------------|-------|
   | `malloc(n)` | `kmalloc(n)` for < 4 KB; `pmm_alloc_contiguous(pages)` for tensors | Tensor allocation via PMM |
   | `free(p)` | `kfree(p)` / `pmm_free_contiguous(p, pages)` | Match allocator |
@@ -319,7 +319,7 @@ the ggml port and XSAVE context switch work end-to-end.
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                                 | Linux                                              | Impossible OS                                                          |
+| ⭐ | Feature                                           | 🪟 Win11                                                 | 🐧 Linux                                              | 🚀 Impossible OS                                                          |
 |----|---------------------------------------------------|-------------------------------------------------------|----------------------------------------------------|------------------------------------------------------------------------|
 | ⭐ | Native on-device LLM inference                    | ✅ Copilot+ (NPU/ONNX Runtime); DirectML; llama.cpp   | ✅ llama.cpp natively; ONNX Runtime; CPU/GPU       | ⬜ §3 — ggml C99 port; AVX2 user-mode                                  |
 | ⭐ | AVX2 user-mode SIMD with per-thread XSAVE context | ✅ Windows handles XSAVE/XRSTOR automatically (FXSAVE | ✅ Linux XSAVE per-task (`task_struct.thread.fpu`) | ⬜ §2 — `TEB.XSaveArea`; XSAVEOPT on context switch                    |

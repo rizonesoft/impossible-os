@@ -210,7 +210,7 @@ Preview pane (toggle right panel: text via `ttf_draw_string`, images via `stb_im
 ## OS Comparison
 
 
-| ⭐ | Feature         | Win11                                                          | Linux                                                                      | Impossible OS                                                                 |
+| ⭐ | Feature         | 🪟 Win11                                                          | 🐧 Linux                                                                      | 🚀 Impossible OS                                                                 |
 |----|-----------------|----------------------------------------------------------------|----------------------------------------------------------------------------|-------------------------------------------------------------------------------|
 | 💎 | Core layout     | ✅ File Explorer: Ribbon (simplified in                        | ✅ Nautilus/Dolphin: toolbar; sidebar; main area;                          | ⬜ §1 — 4-zone layout; 16-entry history stack                                 |
 | 💎 | Sidebar         | ✅ File Explorer nav pane: Quick                               | ✅ Nautilus bookmarks + Drives (GIO                                        | ⬜ §2 — Quick Access hardcoded + `auth_get_userprofile()`                     |

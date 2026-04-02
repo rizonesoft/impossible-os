@@ -309,7 +309,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 ## OS Comparison
 
 
-| ⭐ | Feature                                    | Win11                                      | Linux                                             | Impossible OS                                                                                   |
+| ⭐ | Feature                                    | 🪟 Win11                                      | 🐧 Linux                                             | 🚀 Impossible OS                                                                                   |
 |----|--------------------------------------------|--------------------------------------------|---------------------------------------------------|-------------------------------------------------------------------------------------------------|
 | 💎 | SDK distribution                           | ✅ Windows SDK installer (GB-size); WinGet | ✅ `apt install build-essential`; distro packages | ⬜ §1 — single-ZIP `impossible-os-sdk-{ver}.zip` with SHA-256; `make                            |
 | ⭐ | Doc-comment → Markdown API reference       | ✅ MSDN auto-generated; WinRT metadata     | ✅ Doxygen; kernel-doc                            | ⬜ §2 — `tools/gendoc.c` extracts `/ */` from                                                   |

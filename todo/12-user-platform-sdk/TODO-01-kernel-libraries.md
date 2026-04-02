@@ -282,7 +282,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                            | Win11                            | Linux                           | Impossible OS                                            |
+| ⭐ | Feature                                            | 🪟 Win11                            | 🐧 Linux                           | 🚀 Impossible OS                                            |
 |----|----------------------------------------------------|----------------------------------|---------------------------------|----------------------------------------------------------|
 | 💎 | Freestanding string/printf libc                    | ✅ ntdll CRT subset              | ✅ kernel/lib/string.c + printk | ⬜ §1 — `include/libc/string.h` consolidation            |
 | 💎 | Full software math library                         | ✅ MSVC CRT `libcmt`             | ✅ kernel/lib/math.c + libm     | ⬜ §2 — extends existing `kmath.h`; all trig/exp/log     |

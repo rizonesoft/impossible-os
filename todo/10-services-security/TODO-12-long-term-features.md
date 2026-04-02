@@ -325,7 +325,7 @@ Per-user time limits, app blocking, and activity logging. Admin password require
 ## OS Comparison
 
 
-| ⭐ | Feature                                    | Win11                | Linux                  | Impossible OS                                |
+| ⭐ | Feature                                    | 🪟 Win11                | 🐧 Linux                  | 🚀 Impossible OS                                |
 |----|--------------------------------------------|----------------------|------------------------|----------------------------------------------|
 | 💎 | Kernel debugger                            | ✅ WinDbg KD         | ✅ KGDB (GDB RSP)      | ⬜ GDB RSP on COM1                           |
 | 💎 | User-mode debugger with Win32 debug API    | ✅ WinDbg user       | ✅ GDB/ptrace          | ⬜ `debugger.exe` + INT3/DR*                 |

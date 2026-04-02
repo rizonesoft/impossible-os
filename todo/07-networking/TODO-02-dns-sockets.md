@@ -185,7 +185,7 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
 ## OS Comparison
 
 
-| ⭐ | Feature                                                              | Win11                                              | Linux                                                   | Impossible OS                                                              |
+| ⭐ | Feature                                                              | 🪟 Win11                                              | 🐧 Linux                                                   | 🚀 Impossible OS                                                              |
 |----|----------------------------------------------------------------------|----------------------------------------------------|---------------------------------------------------------|----------------------------------------------------------------------------|
 | 💎 | DNS query builder                                                    | ✅ `dnsapi.dll` + `dns.exe` resolver; kernel       | ✅ `net/dns/` in kernel; `glibc` resolver               | ⬜ §1 — kernel-native `dns_build_query()` + `udp_register_handler()` reply |
 | 💎 | DNS response parser                                                  | ✅ Full RFC 1035 + EDNS0                           | ✅ `net/dns_resolve.c`; compression pointer handling    | ⬜ §2 — pointer depth cap 8; RCODE                                         |

@@ -171,7 +171,7 @@ Surface live per-SLAB-cache statistics through the VFS so diagnostic tools and t
 ## OS Comparison
 
 
-| ⭐ | Feature                                 | Win11                                                   | Linux                                       | Impossible OS                                             |
+| ⭐ | Feature                                 | 🪟 Win11                                                   | 🐧 Linux                                       | 🚀 Impossible OS                                             |
 |----|-----------------------------------------|---------------------------------------------------------|---------------------------------------------|-----------------------------------------------------------|
 | 💎 | Object caches with per-CPU free list    | ✅ Look-aside lists (`ExInitializeNPagedLookasideList`) | ✅ SLUB allocator with per-CPU slabs        | ⬜ §1 — `slab_cache_t` + per-CPU hot path                 |
 | 💎 | SLAB page release under memory pressure | ✅ Lookaside lists trimmed by Memory                    | ✅ SLUB shrinker + `kmem_cache_shrink`      | ⬜ §2 — `slab_cache_reap` on `MM_PRESSURE_HIGH`           |

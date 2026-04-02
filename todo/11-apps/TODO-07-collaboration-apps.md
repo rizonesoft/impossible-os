@@ -201,7 +201,7 @@
 ## OS Comparison
 
 
-| ⭐ | Feature                                          | Win11                              | Linux                             | Impossible OS                                         |
+| ⭐ | Feature                                          | 🪟 Win11                              | 🐧 Linux                             | 🚀 Impossible OS                                         |
 |----|--------------------------------------------------|------------------------------------|-----------------------------------|-------------------------------------------------------|
 | 💎 | VNC viewer                                       | ✅ no built-in; TightVNC / RealVNC | ✅ Remmina / TigerVNC             | ⬜ §1 — DES auth, keyboard/mouse forward, viewer      |
 | 💎 | IRC client                                       | ✅ no built-in; HexChat / mIRC     | ✅ HexChat / irssi / WeeChat      | ⬜ §2 — nick completion, colored usernames, PING/PONG |

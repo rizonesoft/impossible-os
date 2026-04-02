@@ -144,7 +144,7 @@ Track which kernel subsystems have test coverage.
 
 ## OS Comparison
 
-| ⭐ | Feature                  | Win11              | Linux                | Impossible OS            |
+| ⭐ | Feature                  | 🪟 Win11              | 🐧 Linux                | 🚀 Impossible OS            |
 |----|--------------------------|--------------------|----- ----------------|-------------------------------------|
 | 💎 | Kernel unit tests        | ✅ KUnit + WHQL    | ✅ KUnit + kselftest | ✅ test_runner + make test §1–§3  |
 | 💎 | CI build verification    | ✅ Internal CI     | ✅ kernel.org CI     | ✅ GitHub Actions build.yml       |  

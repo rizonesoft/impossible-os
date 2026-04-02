@@ -210,7 +210,7 @@ Implement the `hv_ops_t` null backend for `HV_NONE`. Every function returns the 
 ## OS Comparison
 
 
-| ⭐ | Feature                                 | Win11                                                          | Linux                                                          | Impossible OS                                                              |
+| ⭐ | Feature                                 | 🪟 Win11                                                          | 🐧 Linux                                                          | 🚀 Impossible OS                                                              |
 |----|-----------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------|
 | 💎 | Hypervisor detection                    | ✅ `hvinfo`; Hyper-V detection built into                      | ✅ `hypervisor` CPUID leaf; `arch/x86/kernel/cpu/hypervisor.c` | ⬜ §1 — `HV_NONE/VBOX/KVM/HYPERV` enum, PCI `80EE:CAFE` fallback           |
 | ⭐ | Unified cross-hypervisor dispatch table | ❌ Per-hypervisor drivers in separate kernel                   | ❌ No unified abstraction; hypervisor drivers                  | ⬜ §2 — single `hv_ops_t` vtable; one `hypervisor_init()`                  |

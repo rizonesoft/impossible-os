@@ -194,7 +194,7 @@ Line number gutter (12 px, right-aligned, muted color). Tokenizer-based syntax h
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | Win11                                                    | Linux                                       | Impossible OS                                                       |
+| ⭐ | Feature                                           | 🪟 Win11                                                    | 🐧 Linux                                       | 🚀 Impossible OS                                                       |
 |----|---------------------------------------------------|----------------------------------------------------------|---------------------------------------------|---------------------------------------------------------------------|
 | ⭐ | Gap buffer                                        | ✅ Notepad: undisclosed internal (likely piece           | ✅ gedit: piece table; Kate: custom         | ⬜ §1 — `⭐` explicit gap buffer design                             |
 | 💎 | Text rendering                                    | ✅ Notepad: hardware-accelerated Direct2D rendering; GDI | ✅ gedit/Kate: Pango + Cairo; GLib;         | ⬜ §2 — `ttf_draw_string()` per line; software rasterizer           |
