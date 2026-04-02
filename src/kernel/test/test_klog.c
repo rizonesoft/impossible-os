@@ -54,18 +54,20 @@ static void test_klog_level_pass(void)
     uint32_t count_before, head_before;
     uint32_t count_after, head_after;
 
-    /* Set "mm" to WARN — WARN entries should pass through */
-    klog_set_level("mm", LOG_WARN);
+    /* Set "mm" to WARN — WARN entries should pass through.
+     * Use TEST tag so the WARN line appears as cyan test output,
+     * not as a scary yellow warning in the boot log. */
+    klog_set_level("TEST", LOG_WARN);
 
     klog_get_ring(&count_before, &head_before);
-    klog(LOG_WARN, "mm", "this should pass");
+    klog(LOG_WARN, "TEST", "(level pass test — expected WARN)");
     klog_get_ring(&count_after, &head_after);
 
     TEST_ASSERT(head_after != head_before,
-                "LOG_WARN not dropped after klog_set_level(mm, LOG_WARN)");
+                "LOG_WARN not dropped after klog_set_level(TEST, LOG_WARN)");
 
     /* Restore default */
-    klog_set_level("mm", LOG_DEBUG);
+    klog_set_level("TEST", LOG_DEBUG);
 }
 
 /* ---- Global level override ---- */
