@@ -11,6 +11,28 @@ bash scripts/build.sh run       # build + QEMU
 ```
 Check `tail -1 build/build.log` for result — must show `=== BUILD OK ===`.
 
+## Testing — Category-Based Test Infrastructure
+
+```bash
+bash scripts/test.sh              # all suites
+bash scripts/test.sh SUITE=mm     # Memory Management only
+bash scripts/test.sh SUITE=ob     # Object Manager only
+bash scripts/test.sh QUIET=1      # summary only (suppress PASS lines)
+make test-mm                      # shorthand for SUITE=mm
+make test-fs                      # Filesystem suites
+make test-ob                      # Object Manager suites
+make test-security                # Security suites
+make test-ipc                     # IPC suites (pipe, shmem, semaphore)
+make test-sched                   # Scheduler suites
+make test-boot                    # Boot init + klog suites
+make test-abi                     # PEB/TEB + Registry suites
+make test-storage                 # AHCI, VirtIO suites
+```
+
+Categories: `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `boot`, `abi`, `storage`. Configured via `test_suite=` and `test_quiet=` in `boot.conf`. Windows: `scripts/debug/run-mm-tests.bat` etc.
+
+Register new tests with `test_suite_register_cat("name", fn, TEST_CAT_XX)`. Use `TEST_ASSERT_EQ(a, b, msg)` for value comparisons and `TEST_SKIP(msg)` for hardware-dependent tests.
+
 ## Freestanding Kernel — No stdlib
 
 - No `<stdint.h>`, `<string.h>`, etc. — use `#include "kernel/types.h"`

@@ -64,9 +64,9 @@ static void test_vfs_mkdir_rmdir(void)
 /* Registration */
 void test_register_vfs(void)
 {
-    test_suite_register("VFS: file roundtrip", test_vfs_file_roundtrip);
-    test_suite_register("VFS: open nonexistent", test_vfs_open_nonexistent);
-    test_suite_register("VFS: mkdir+rmdir", test_vfs_mkdir_rmdir);
+    test_suite_register_cat("VFS: file roundtrip", test_vfs_file_roundtrip, TEST_CAT_FS);
+    test_suite_register_cat("VFS: open nonexistent", test_vfs_open_nonexistent, TEST_CAT_FS);
+    test_suite_register_cat("VFS: mkdir+rmdir", test_vfs_mkdir_rmdir, TEST_CAT_FS);
 }
 
 #endif /* KERNEL_TESTS */

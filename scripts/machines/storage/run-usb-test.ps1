@@ -1,47 +1,41 @@
-# run-fs-test.ps1 — Launch Impossible OS with a filesystem test disk
+# run-usb-test.ps1 — Launch Impossible OS with xHCI + USB mass storage test disk
 #
-# Attaches a test disk image on AHCI port 1 alongside the system disk
-# on port 0. The kernel auto-detects the filesystem and runs self-tests
-# when the volume label matches the expected test pattern (e.g. "NTFS_TEST").
+# Attaches a 64 MiB FAT32 USB disk via an emulated xHCI controller alongside
+# the regular AHCI system disk. Use this to develop and test the xHCI + USB MSC
+# driver (TODO-040.20).
 #
 # Parameters:
-#   -Disk    Filesystem to test: ntfs, fat32, ext2, ext4, ixfs (default: ntfs)
 #   -Accel   Accelerator: auto, whpx, tcg (default: auto)
 #   -Build   Build before testing (runs build.sh in WSL) (default: $false)
-#   -GenDisk Force-regenerate the test disk image (default: $false)
 #
 # Usage:
-#   Double-click run-ntfs-test.bat                → test NTFS with WHPX
-#   powershell -File run-fs-test.ps1 -Disk fat32  → test FAT32
-#   powershell -File run-fs-test.ps1 -Build       → build first, then test
+#   Double-click run-usb-test.bat
+#   powershell -File run-usb-test.ps1
+#   powershell -File run-usb-test.ps1 -Build
 #
 # Prerequisites:
 #   1. Install QEMU for Windows: https://qemu.weilnetz.de/w64/
 #   2. Build in WSL2: bash scripts/build.sh
-#   3. Generate test disks in WSL2: bash tools/make-test-disks.sh build/test-disks build
 Param(
-    [ValidateSet('ntfs','fat32','ext2','ext3','ext4','exfat','ixfs','mbr','gpt')]
-    [string]$Disk = 'ntfs',
     [ValidateSet('auto','whpx','tcg')]
-    [string]$Accel = 'auto',
-    [switch]$Build = $false,
-    [switch]$GenDisk = $false
+    # TCG required: WHPX hangs with xHCI device attached
+    [string]$Accel = 'tcg',
+    [switch]$Build = $false
 )
 
 $ErrorActionPreference = "Stop"
 
-# Resolve project root: scripts/vm/fs -> parent -> parent -> parent
+# Resolve project root: scripts/machines/storage -> parent -> parent -> parent
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VM_DIR     = Split-Path -Parent $SCRIPT_DIR
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $VM_DIR)
 $BuildDir   = Join-Path $PROJECT "build"
 
 $SYSTEM_DISK = Join-Path $BuildDir "system-disk.img"
-$TEST_DISK   = Join-Path $BuildDir "test-disks\$Disk.img"
+$USB_DISK    = Join-Path $BuildDir "test-usb.img"
 $OVMF_CODE   = Join-Path $BuildDir "OVMF_CODE_4M.fd"
 $OVMF_VARS   = Join-Path $BuildDir "OVMF_VARS_4M.fd"
-$VARS_DEST   = Join-Path $env:TEMP "OVMF_VARS_4M_test.fd"
-$SERIAL_LOG  = Join-Path $BuildDir "test-disks\$Disk-serial.log"
+$VARS_DEST   = Join-Path $env:TEMP "OVMF_VARS_4M_usb.fd"
 
 # --- Build (optional) ---
 if ($Build) {
@@ -61,19 +55,15 @@ if (-not (Test-Path $SYSTEM_DISK)) {
     pause; exit 1
 }
 
-# --- Generate test disk (if missing or forced) ---
-if (-not (Test-Path $TEST_DISK) -or $GenDisk) {
-    Write-Host "Generating $Disk test disk in WSL2..." -ForegroundColor Yellow
-    if ($Disk -eq 'ntfs') {
-        & wsl.exe bash ~/impossible-os/scripts/make-ntfs-test.sh build/test-disks
-    } else {
-        & wsl.exe bash ~/impossible-os/tools/make-test-disks.sh build/test-disks build
-    }
-    if (-not (Test-Path $TEST_DISK)) {
-        Write-Host "Test disk generation failed: $TEST_DISK" -ForegroundColor Red
+# --- Generate USB test disk (if missing) ---
+if (-not (Test-Path $USB_DISK)) {
+    Write-Host "Creating 64 MiB FAT32 USB test disk in WSL2..." -ForegroundColor Yellow
+    & wsl.exe bash -c 'cd ~/impossible-os && make test-usb-img'
+    if (-not (Test-Path $USB_DISK)) {
+        Write-Host "USB test disk creation failed: $USB_DISK" -ForegroundColor Red
         pause; exit 1
     }
-    Write-Host "Test disk ready: $TEST_DISK" -ForegroundColor Green
+    Write-Host "USB test disk ready: $USB_DISK" -ForegroundColor Green
 }
 
 # --- OVMF firmware ---
@@ -100,18 +90,16 @@ if (-not (Get-Command $QEMU -ErrorAction SilentlyContinue)) {
 }
 
 # --- Display test info ---
-$diskSizeMB = [math]::Round((Get-Item $TEST_DISK).Length / 1MB, 1)
-$diskLabel  = $Disk.ToUpper()
+$diskSizeMB = [math]::Round((Get-Item $USB_DISK).Length / 1MB, 1)
 Write-Host '' -ForegroundColor Cyan
-Write-Host '  Impossible OS - Filesystem Test' -ForegroundColor Cyan
-Write-Host '  ================================' -ForegroundColor Cyan
-Write-Host "  Filesystem:  $diskLabel" -ForegroundColor White
-Write-Host "  Test disk:   $TEST_DISK ($diskSizeMB MiB)" -ForegroundColor DarkGray
-Write-Host "  Serial log:  $SERIAL_LOG" -ForegroundColor DarkGray
+Write-Host '  Impossible OS - USB xHCI Test' -ForegroundColor Cyan
+Write-Host '  ==============================' -ForegroundColor Cyan
+Write-Host "  USB disk:    $USB_DISK ($diskSizeMB MiB, FAT32)" -ForegroundColor DarkGray
+Write-Host "  Controller:  xHCI (qemu-xhci)" -ForegroundColor DarkGray
 Write-Host "  Accel:       $Accel" -ForegroundColor DarkGray
 Write-Host '' -ForegroundColor Cyan
-Write-Host '  Look for [PASS]/[FAIL] lines in the serial output.' -ForegroundColor Yellow
-Write-Host '  Test suite runs automatically on volume detection.' -ForegroundColor Yellow
+Write-Host '  The xHCI controller will appear as PCI class 0C:03:30.' -ForegroundColor Yellow
+Write-Host '  Look for [xHCI] and [USB-MSC] lines in serial output.' -ForegroundColor Yellow
 Write-Host ''
 
 # --- Build QEMU arguments ---
@@ -126,15 +114,17 @@ switch ($Accel) {
 $CpuModel = if ($Accel -eq 'tcg') { 'qemu64' } else { 'Haswell' }
 
 $QemuArgs += '-cpu', $CpuModel
+$QemuArgs += '-smp', '2'
 $QemuArgs += '-drive', "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
 $QemuArgs += '-drive', "if=pflash,format=raw,file=$VARS_DEST"
 # System disk on AHCI port 0
 $QemuArgs += '-drive', "id=disk0,file=$SYSTEM_DISK,format=raw,if=none"
-# Test disk on AHCI port 1
-$QemuArgs += '-drive', "id=testdisk,file=$TEST_DISK,format=raw,if=none"
 $QemuArgs += '-device', 'ich9-ahci,id=ahci0'
 $QemuArgs += '-device', 'ide-hd,drive=disk0,bus=ahci0.0'
-$QemuArgs += '-device', 'ide-hd,drive=testdisk,bus=ahci0.1'
+# USB test disk on xHCI
+$QemuArgs += '-device', 'qemu-xhci,id=xhci0'
+$QemuArgs += '-drive', "id=usbdisk0,file=$USB_DISK,format=raw,if=none"
+$QemuArgs += '-device', 'usb-storage,bus=xhci0.0,drive=usbdisk0'
 $QemuArgs += '-m', '2G'
 $QemuArgs += '-serial', 'stdio'
 $QemuArgs += '-vga', 'none'

@@ -213,7 +213,7 @@ bash scripts/build.sh run
 
 ### VirtualBox Test Runner
 
-`scripts/vm/run-vbox.sh` — cross-platform VirtualBox launcher.
+`scripts/machines/run-vbox.sh` — cross-platform VirtualBox launcher.
 
 | Setting  | Value                     |
 | -------- | ------------------------- |

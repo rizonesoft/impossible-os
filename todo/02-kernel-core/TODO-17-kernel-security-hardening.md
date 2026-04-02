@@ -22,7 +22,9 @@
 - → XREF: `TODO-05-native-api-ssdt.md §2` — SYSCALL/SYSRET fast path is where the CR3 swap for KPTI (§4) is inserted and IBRS enable (§5) happens on kernel entry; §3 (INT 0x2E path) also needs the same CR3 swap
 - → XREF: `TODO-11-security-reference-monitor.md §6` — MIC Low-IL processes are the primary beneficiaries of SMEP/SMAP (user code cannot exec kernel pages or read kernel memory)
 - → XREF: `TODO-16-crash-dump-generation.md §1` — `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE` is the stop code emitted by §9 (`__stack_chk_fail`) and §8 (cookie mismatch)
+- → XREF: `TODO-04-peb-teb-user-abi.md §13` — AT_RANDOM in the ELF auxv provides user-mode stack canary seed bytes, complementing §9's kernel-side `__stack_chk_guard` via shared RDRAND path
 - → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x01F0–0x01F4 and 0x02A2–0x02A4 reserved for Enclave and signing-level syscalls
+- → XREF: `TODO-05-native-api-ssdt.md §26` — SSDT hardware write-protection complements KASLR and SMEP/SMAP; #PF on SSDT write → CRITICAL_STRUCTURE_CORRUPTION BugCheck
 
 ---
 

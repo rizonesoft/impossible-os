@@ -29,19 +29,38 @@
 #define TEST_MAX_SUITES     64
 #define TEST_MAX_NAME_LEN   32
 
+/* ---- Test categories for selective execution ---- */
+typedef enum {
+    TEST_CAT_MM = 0,
+    TEST_CAT_FS,
+    TEST_CAT_SCHED,
+    TEST_CAT_OB,
+    TEST_CAT_SECURITY,
+    TEST_CAT_IPC,
+    TEST_CAT_BOOT,
+    TEST_CAT_ABI,
+    TEST_CAT_STORAGE,
+    TEST_CAT_COUNT,
+    TEST_CAT_ALL = 0xFF,
+} test_category_t;
+
 /* ---- Test suite entry ---- */
 typedef void (*test_fn_t)(void);
 
 typedef struct {
-    const char *name;
-    test_fn_t   fn;
+    const char     *name;
+    test_fn_t       fn;
+    test_category_t cat;
 } test_suite_t;
 
 /* ---- Test state (global, used by TEST_ASSERT) ---- */
 typedef struct {
     uint32_t passed;
     uint32_t failed;
+    uint32_t skipped;
     uint32_t suite_count;
+    uint32_t suites_passed;
+    uint32_t suites_failed;
     const char *current_suite;
     test_suite_t suites[TEST_MAX_SUITES];
 } test_state_t;
@@ -52,8 +71,18 @@ extern test_state_t g_test_state;
 
 #ifdef KERNEL_TESTS
 
-/* Register a test suite (name + function) */
+/* Register a test suite with category (preferred) */
+void test_suite_register_cat(const char *name, test_fn_t fn, test_category_t cat);
+
+/* Register a test suite (backward compat — defaults to TEST_CAT_ALL) */
 void test_suite_register(const char *name, test_fn_t fn);
+
+/* Set category filter: only suites matching this category will run.
+ * Pass TEST_CAT_ALL (default) to run everything. */
+void test_runner_set_filter(test_category_t cat);
+
+/* Set quiet mode: suppress [PASS] lines, only show [FAIL] + summary */
+void test_runner_set_quiet(int quiet);
 
 /* Run all registered test suites and print summary */
 void test_runner_run(void);
@@ -64,19 +93,58 @@ void test_runner_init(void);
 /* Internal: called by TEST_ASSERT macro */
 void _test_assert(int condition, const char *msg, const char *file, int line);
 
-/* ---- TEST_ASSERT macro ---- */
+/* Internal: called by TEST_SKIP macro */
+void _test_skip(const char *msg, const char *file, int line);
+
+/* Category name lookup */
+const char *test_category_name(test_category_t cat);
+
+/* Category from short string (e.g. "mm", "fs", "ob") — returns TEST_CAT_ALL on no match */
+test_category_t test_category_from_string(const char *str);
+
+/* ---- Assertion macros ---- */
 #define TEST_ASSERT(cond, msg) \
     _test_assert((cond), (msg), __FILE__, __LINE__)
+
+#define TEST_ASSERT_EQ(a, b, msg) \
+    _test_assert_eq((uint64_t)(a), (uint64_t)(b), (msg), __FILE__, __LINE__)
+
+#define TEST_ASSERT_NEQ(a, b, msg) \
+    _test_assert_neq((uint64_t)(a), (uint64_t)(b), (msg), __FILE__, __LINE__)
+
+#define TEST_ASSERT_NULL(p, msg) \
+    _test_assert((p) == (void *)0, (msg), __FILE__, __LINE__)
+
+#define TEST_ASSERT_NOT_NULL(p, msg) \
+    _test_assert((p) != (void *)0, (msg), __FILE__, __LINE__)
+
+#define TEST_SKIP(msg) \
+    _test_skip((msg), __FILE__, __LINE__)
+
+void _test_assert_eq(uint64_t a, uint64_t b, const char *msg,
+                     const char *file, int line);
+void _test_assert_neq(uint64_t a, uint64_t b, const char *msg,
+                      const char *file, int line);
 
 #else /* !KERNEL_TESTS */
 
 /* When tests are disabled, everything compiles to nothing */
 
+static inline void test_suite_register_cat(const char *name __attribute__((unused)),
+                                           test_fn_t fn __attribute__((unused)),
+                                           test_category_t cat __attribute__((unused))) {}
 static inline void test_suite_register(const char *name __attribute__((unused)),
                                         test_fn_t fn __attribute__((unused))) {}
+static inline void test_runner_set_filter(test_category_t cat __attribute__((unused))) {}
+static inline void test_runner_set_quiet(int quiet __attribute__((unused))) {}
 static inline void test_runner_run(void) {}
 static inline void test_runner_init(void) {}
 
-#define TEST_ASSERT(cond, msg) ((void)0)
+#define TEST_ASSERT(cond, msg)      ((void)0)
+#define TEST_ASSERT_EQ(a, b, msg)   ((void)0)
+#define TEST_ASSERT_NEQ(a, b, msg)  ((void)0)
+#define TEST_ASSERT_NULL(p, msg)    ((void)0)
+#define TEST_ASSERT_NOT_NULL(p, msg)((void)0)
+#define TEST_SKIP(msg)              ((void)0)
 
 #endif /* KERNEL_TESTS */

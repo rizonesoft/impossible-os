@@ -1,68 +1,63 @@
 /* ============================================================================
  * boot_tests.c — Boot-time verification tests
  *
- * VFS read, IXFS CRUD, IXFS performance, directory tree dump, VMM test,
- * PMM test, timer test, scheduler tests, IPC tests, swap/mmap tests,
- * driver tests, syscall init.
+ * Dispatches to the test_runner framework for unit tests, then runs
+ * debug=1-only integration tests (IXFS perf, directory dump, timer).
  * ============================================================================ */
 
 #include "kernel/types.h"
 #include "kernel/klog.h"
-#include "kernel/mm/pmm.h"
-#include "kernel/mm/vmm.h"
-#include "kernel/mm/heap.h"
-#include "kernel/mm/swap.h"
-#include "kernel/mm/mmap.h"
 #include "kernel/timer.h"
-#include "kernel/drivers/virtio_blk.h"
-#include "kernel/drivers/ahci.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/ixfs.h"
-#include "kernel/sched/task.h"
-#include "kernel/sched/workqueue.h"
-#include "kernel/sched/syscall.h"
-#include "kernel/ipc/pipe.h"
-#include "kernel/ipc/shmem.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_info.h"
 #include "kernel/test/test.h"
-#include "kernel/acpi.h"
 #include "main/main_internal.h"
 
 void boot_tests_run(void)
 {
-    /* test=1 in boot.conf: run ONLY unit tests, then shutdown.
-     * This is the gate used by `make test` for automated CI testing. */
-    if (g_boot_info.config.test) {
-        klog(LOG_INFO, "TEST", "========================================================================");
-        klog(LOG_INFO, "TEST", "=== Kernel Unit Test Mode (test=1) ===");
+    /* test=1 or debug=1: run unit tests, then continue booting to desktop. */
+    if (g_boot_info.config.test || g_boot_info.config.debug) {
+        /* Apply category filter and quiet mode from boot.conf */
+        uint8_t suite_val = g_boot_info.config.test_suite;
+        if (suite_val < TEST_CAT_COUNT)
+            test_runner_set_filter((test_category_t)suite_val);
+
+        if (g_boot_info.config.test_quiet)
+            test_runner_set_quiet(1);
+
+        /* Suppress non-TEST boot chatter during test mode */
+        if (g_boot_info.config.test) {
+            klog_set_level((const char *)0, LOG_WARN);
+            klog_set_level("TEST", LOG_DEBUG);
+        }
+
         test_runner_init();
         test_runner_run();
-        klog(LOG_INFO, "TEST", "=== Test run complete — shutting down ===");
-        acpi_shutdown();
-        /* acpi_shutdown should not return, but just in case: */
-        for (;;) __asm__ volatile("hlt");
+
+        /* Restore normal logging so remaining boot output is visible */
+        klog_set_level((const char *)0, LOG_DEBUG);
     }
 
-    /* Only run boot tests when debug=1 in boot.conf.
-     * Essential runtime init (task_init, syscall_init, workqueue) is now
-     * handled by boot_phase3() before this function is called. */
-    if (!g_boot_info.config.debug) {
+    /* debug=0 and test=0: skip everything below */
+    if (!g_boot_info.config.debug && !g_boot_info.config.test) {
         klog(LOG_DEBUG, "boot", "Boot tests skipped (debug=0)");
         return;
     }
 
-    klog(LOG_DEBUG, "TEST", "------------------------------------------------------------------------");
-    klog(LOG_DEBUG, "TEST", "--- Boot Tests -------------------------------------------------------------");
-
-    /* Run unit test framework first (if compiled with -DKERNEL_TESTS) */
-    test_runner_init();
-    test_runner_run();
+    /* test=1 without debug=1: skip integration tests, continue to desktop */
+    if (g_boot_info.config.test && !g_boot_info.config.debug) {
+        boot_splash_status("Preparing desktop...");
+        return;
+    }
 
     boot_splash_status("Running boot tests...");
     klog_disk_flush();
 
-    /* VFS test: read a file from C:\ (IXFS system partition) */
+    /* ---- debug=1-only integration tests below ---- */
+
+    /* VFS smoke test: read a known file */
     if (vfs_is_mounted('C')) {
         struct vfs_node *f = vfs_open("C:\\hello.txt", VFS_O_READ);
         if (f) {
@@ -76,7 +71,7 @@ void boot_tests_run(void)
         }
     }
 
-    /* IXFS CRUD test */
+    /* IXFS CRUD demo */
     if (vfs_is_mounted('C')) {
         struct vfs_node *c_root = vfs_get_drive_root('C');
         if (c_root && c_root->ops && c_root->ops->create) {
@@ -105,7 +100,6 @@ void boot_tests_run(void)
                 }
             }
 
-            /* mkdir + rmdir test */
             c_root->ops->create(c_root, "TestDir", VFS_DIRECTORY);
             if (c_root->ops->unlink) {
                 c_root->ops->unlink(c_root, "TestDir");
@@ -130,42 +124,6 @@ void boot_tests_run(void)
         }
     }
 
-    /* VMM round-trip test.
-     *
-     * MUST use a virtual address above the bootloader's 4 GiB identity-map.
-     * The boot page tables cover 0–4 GiB with 2 MiB huge pages; vmm_map_page
-     * cannot split those, so any address below 4 GiB would silently fail and
-     * resolve to the identity-mapped frame, not test_phys.
-     * 8 GiB (0x200000000) is above that range and has no existing mapping. */
-    {
-        uintptr_t test_phys = pmm_alloc_frame();
-        uintptr_t test_virt = 0x0000000200000000ULL;  /* 8 GiB */
-        uint32_t vmm_ok = 1;
-
-        if (test_phys) {
-            if (vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW) != 0) {
-                pmm_free_frame(test_phys);
-                vmm_ok = 0;
-            } else {
-                volatile uint64_t *p = (volatile uint64_t *)test_virt;
-                *p = 0xDEADBEEFCAFE1234ULL;
-                if (*p != 0xDEADBEEFCAFE1234ULL)
-                    vmm_ok = 0;
-
-                uintptr_t resolved = vmm_get_physical(test_virt);
-                if (resolved != test_phys)
-                    vmm_ok = 0;
-
-                vmm_unmap_page(test_virt, 1);  /* also frees test_phys */
-            }
-        } else {
-            vmm_ok = 0;
-        }
-
-        klog(vmm_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
-             "VMM map/read/unmap: %s", vmm_ok ? "passed" : "FAIL");
-    }
-
     /* Timer verification */
     boot_splash_status("Timer test (1s sleep)...");
     klog(LOG_DEBUG, "TEST", "Timer: sleeping 1 second...");
@@ -173,316 +131,7 @@ void boot_tests_run(void)
     klog(LOG_DEBUG, "TEST", "Timer OK (ticks: %u, uptime: %u sec)",
          system_get_ticks(), uptime());
 
-    klog(LOG_DEBUG, "TEST", "------------------------------------------------------------------------");
-    klog(LOG_DEBUG, "TEST", "--- IPC & Threading --------------------------------------------------------");
-    klog_disk_flush();
-
-    /* Suppress noisy sched/ipc thread create/exit logs during IPC tests */
-    klog_set_level("sched", LOG_WARN);
-    klog_set_level("ipc", LOG_WARN);
-
-    /* Kernel thread test (shared globals) */
-    {
-        extern volatile uint32_t thread_shared_counter;
-        extern void thread_inc_func(void *arg);
-
-        int tid_a, tid_b;
-        int32_t status_a, status_b;
-
-        thread_shared_counter = 0;
-
-        tid_a = thread_create(thread_inc_func, (void *)"ThreadA", 0);
-        tid_b = thread_create(thread_inc_func, (void *)"ThreadB", 0);
-
-        if (tid_a >= 0 && tid_b >= 0) {
-            status_a = thread_join((uint32_t)tid_a);
-            status_b = thread_join((uint32_t)tid_b);
-            (void)status_a;
-            (void)status_b;
-
-            klog(thread_shared_counter == 10 ? LOG_DEBUG : LOG_ERROR,
-                 "TEST",
-                 "Kernel thread test: counter=%u (%s)",
-                 (uint64_t)thread_shared_counter,
-                 thread_shared_counter == 10 ? "passed" : "FAIL");
-        } else {
-            klog(LOG_ERROR, "TEST", "thread_create failed");
-        }
-    }
-
-    /* Mutex test */
-    {
-        extern volatile uint32_t mutex_shared_counter;
-        extern void mutex_inc_func(void *arg);
-
-        int mtid_a, mtid_b;
-
-        mutex_shared_counter = 0;
-
-        mtid_a = thread_create(mutex_inc_func, (void *)"MutexA", 0);
-        mtid_b = thread_create(mutex_inc_func, (void *)"MutexB", 0);
-
-        if (mtid_a >= 0 && mtid_b >= 0) {
-            thread_join((uint32_t)mtid_a);
-            thread_join((uint32_t)mtid_b);
-
-            klog(mutex_shared_counter == 200 ? LOG_DEBUG : LOG_ERROR,
-                 "TEST",
-                 "Mutex test: counter=%u (%s)",
-                 (uint64_t)mutex_shared_counter,
-                 mutex_shared_counter == 200 ? "passed" : "FAIL");
-        } else {
-            klog(LOG_ERROR, "TEST", "mutex thread_create failed");
-        }
-    }
-
-    /* Semaphore test */
-    {
-        extern volatile uint32_t sem_produced;
-        extern volatile uint32_t sem_consumed;
-        extern void sem_producer_func(void *arg);
-        extern void sem_consumer_func(void *arg);
-
-        int stid_p, stid_c;
-
-        sem_produced = 0;
-        sem_consumed = 0;
-
-        stid_c = thread_create(sem_consumer_func, (void *)0, 0);
-        stid_p = thread_create(sem_producer_func, (void *)0, 0);
-
-        if (stid_p >= 0 && stid_c >= 0) {
-            thread_join((uint32_t)stid_p);
-            thread_join((uint32_t)stid_c);
-
-            klog(sem_consumed == 5 ? LOG_DEBUG : LOG_ERROR, "TEST",
-                 "Semaphore test: consumed=%u (%s)",
-                 (uint64_t)sem_consumed,
-                 sem_consumed == 5 ? "passed" : "FAIL");
-        } else {
-            klog(LOG_ERROR, "TEST", "semaphore thread_create failed");
-        }
-    }
-
-    /* Pipe test */
-    {
-        extern int pipe_test_id;
-        extern volatile uint32_t pipe_test_ok;
-        extern void pipe_writer_func(void *arg);
-        extern void pipe_reader_func(void *arg);
-
-        int pipe_fds[2];
-        int ptid_w, ptid_r;
-
-        pipe_init();
-        pipe_test_ok = 0;
-
-        if (pipe_create(pipe_fds) == 0) {
-            pipe_test_id = pipe_fds[0];
-
-            ptid_r = thread_create(pipe_reader_func, (void *)0, 0);
-            ptid_w = thread_create(pipe_writer_func, (void *)0, 0);
-
-            if (ptid_w >= 0 && ptid_r >= 0) {
-                thread_join((uint32_t)ptid_w);
-                thread_join((uint32_t)ptid_r);
-
-                klog(pipe_test_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
-                     "Pipe test: %s",
-                     pipe_test_ok ? "passed" : "data mismatch");
-            } else {
-                klog(LOG_ERROR, "TEST", "pipe thread_create failed");
-            }
-        } else {
-            klog(LOG_ERROR, "TEST", "pipe_create failed");
-        }
-    }
-
-    /* Shared memory test */
-    {
-        extern volatile uint32_t shmem_test_ok;
-        extern void shmem_writer_func(void *arg);
-        extern void shmem_reader_func(void *arg);
-
-        int shm_id;
-        int shm_tw, shm_tr;
-
-        shmem_test_ok = 0;
-
-        shm_id = shmem_create("test_counter", sizeof(uint32_t));
-        if (shm_id >= 0) {
-            shm_tw = thread_create(shmem_writer_func, (void *)0, 0);
-            shm_tr = thread_create(shmem_reader_func, (void *)0, 0);
-
-            if (shm_tw >= 0 && shm_tr >= 0) {
-                thread_join((uint32_t)shm_tw);
-                thread_join((uint32_t)shm_tr);
-
-                klog(shmem_test_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
-                     "Shared memory test: %s",
-                     shmem_test_ok ? "passed" : "counter != 200");
-            } else {
-                klog(LOG_ERROR, "TEST", "shmem thread_create failed");
-            }
-
-            shmem_unmap(shm_id);
-        } else {
-            klog(LOG_ERROR, "TEST", "shmem_create failed");
-        }
-    }
-
-    /* Swap test */
-    boot_splash_status("Testing swap...");
-    {
-        uintptr_t test_phys = pmm_alloc_frame();
-        uintptr_t test_virt = 0x800000;  /* 8 MiB */
-        uint32_t swap_ok = 1;
-        uint32_t k;
-        int slot_id;
-
-        swap_init(64);
-
-        if (test_phys) {
-            vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW);
-
-            {
-                uint8_t *page = (uint8_t *)test_virt;
-                for (k = 0; k < 4096; k++)
-                    page[k] = (uint8_t)(k & 0xFF);
-            }
-
-            swap_clock_register(test_virt);
-
-            slot_id = swap_out(test_virt);
-            if (slot_id >= 0) {
-                if (swap_in((uint32_t)slot_id, test_virt) == 0) {
-                    uint8_t *page = (uint8_t *)test_virt;
-                    for (k = 0; k < 4096; k++) {
-                        if (page[k] != (uint8_t)(k & 0xFF)) {
-                            swap_ok = 0;
-                            break;
-                        }
-                    }
-                } else {
-                    swap_ok = 0;
-                }
-            } else {
-                swap_ok = 0;
-            }
-
-            vmm_unmap_page(test_virt, 1);
-
-            klog(swap_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
-                 "Swap test: %s (%u/%u slots)",
-                 swap_ok ? "passed" : "FAIL",
-                 (uint64_t)swap_get_used_slots(),
-                 (uint64_t)swap_get_total_slots());
-        } else {
-            klog(LOG_ERROR, "TEST", "swap test alloc failed");
-        }
-    }
-
-    /* mmap test */
-    boot_splash_status("Testing mmap...");
-    if (vfs_is_mounted('C')) {
-        struct vfs_node *mf = vfs_open("C:\\hello.txt", VFS_O_READ);
-        if (mf) {
-            void *mapped = mmap((void *)0, 4096, PROT_READ, MAP_PRIVATE,
-                                mf, 0);
-            if (mapped != MAP_FAILED) {
-                const char *txt = (const char *)mapped;
-                uint32_t mmap_ok = (txt[0] != '\0') ? 1 : 0;
-
-                klog(mmap_ok ? LOG_DEBUG : LOG_ERROR, "TEST",
-                     "mmap test: %s (mapped at %p, first='%c')",
-                     mmap_ok ? "passed" : "FAIL",
-                     (uintptr_t)mapped, (uint64_t)(uint8_t)txt[0]);
-
-                munmap(mapped, 4096);
-            } else {
-                klog(LOG_ERROR, "TEST", "mmap returned MAP_FAILED");
-            }
-            vfs_close(mf);
-        } else {
-            klog(LOG_DEBUG, "TEST",
-                 "mmap test: hello.txt not found (skipped)");
-        }
-    }
-
-    /* VirtIO-blk test */
-    boot_splash_status("Testing storage...");
-    if (virtio_blk_present()) {
-        uint8_t sect0[512];
-        uint32_t vt;
-        int vrc;
-
-        for (vt = 0; vt < 512; vt++) sect0[vt] = 0;
-
-        vrc = virtio_blk_read(0, 1, sect0);
-        if (vrc == 0) {
-            klog(LOG_DEBUG, "TEST",
-                 "VirtIO-blk: sector 0 read OK (%u sectors)",
-                 (uint64_t)virtio_blk_capacity());
-        } else {
-            klog(LOG_ERROR, "TEST", "VirtIO-blk: sector 0 read failed");
-        }
-    }
-
-    /* AHCI sector 0 test */
-    boot_splash_status("Testing AHCI...");
-    if (ahci_present()) {
-        uint8_t asect0[512];
-        uint32_t at;
-        int arc;
-
-        for (at = 0; at < 512; at++) asect0[at] = 0;
-
-        arc = ahci_read(0, 0, 1, asect0);
-        if (arc == 0) {
-            klog(LOG_DEBUG, "TEST",
-                 "AHCI: sector 0 read OK (%u sectors)",
-                 (uint64_t)ahci_capacity(0));
-        } else {
-            klog(LOG_ERROR, "TEST", "AHCI: sector 0 read failed");
-        }
-    }
-
-    /* User mode tests (currently skipped) */
-#if 0
-    {
-        extern void user_test_func(void);
-        syscall_init();
-        task_create_user(user_test_func, "UserTest");
-        scheduler_enable();
-        sleep_ms(500);
-        scheduler_disable();
-        klog(LOG_DEBUG, "TEST", "User mode test passed");
-    }
-
-    {
-        extern void exec_loader_func(void);
-        task_create(exec_loader_func, "ExecLoader");
-        scheduler_enable();
-        sleep_ms(500);
-        scheduler_disable();
-        klog(LOG_DEBUG, "TEST", "Exec test passed");
-    }
-
-    {
-        extern void fork_test_func(void);
-        task_create_user(fork_test_func, "ForkTest");
-        scheduler_enable();
-        sleep_ms(800);
-        scheduler_disable();
-        klog(LOG_DEBUG, "TEST", "Fork test passed");
-    }
-#else
     klog(LOG_DEBUG, "TEST", "User mode / exec / fork tests skipped");
-#endif
-
-    /* Restore sched/ipc logging after IPC tests */
-    klog_set_level("sched", LOG_DEBUG);
-    klog_set_level("ipc", LOG_DEBUG);
 
     boot_splash_status("Preparing desktop...");
     boot_splash_tick();

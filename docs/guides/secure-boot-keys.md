@@ -97,8 +97,8 @@ normal run.
 Use the standard runners:
 
 ```
-scripts\vm\run-qemu-kvm.bat    # QEMU/KVM (Windows, fast)
-scripts\vm\run-vbox.bat        # VirtualBox
+scripts\machines\run-qemu-kvm.bat    # QEMU/KVM (Windows, fast)
+scripts\machines\run-vbox.bat        # VirtualBox
 ```
 
 ---

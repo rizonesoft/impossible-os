@@ -136,12 +136,12 @@ static void test_klog_ring_wrap(void)
 
 void test_register_klog(void)
 {
-    test_suite_register("Klog: ring write", test_klog_ring_write);
-    test_suite_register("Klog: level drop", test_klog_level_drop);
-    test_suite_register("Klog: level pass", test_klog_level_pass);
-    test_suite_register("Klog: global level", test_klog_global_level);
-    test_suite_register("Klog: rate limit API", test_klog_rate_limit_api);
-    test_suite_register("Klog: ring wrap", test_klog_ring_wrap);
+    test_suite_register_cat("Klog: ring write", test_klog_ring_write, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: level drop", test_klog_level_drop, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: level pass", test_klog_level_pass, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: global level", test_klog_global_level, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: rate limit API", test_klog_rate_limit_api, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: ring wrap", test_klog_ring_wrap, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

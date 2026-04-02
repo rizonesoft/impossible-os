@@ -63,9 +63,11 @@ struct boot_config {
     UINT8   postcode;
     UINT8   postbars;
     UINT8   test;              /* 1 = run unit tests only, then shutdown */
+    UINT8   test_suite;        /* category filter: 0-8 = specific, 0xFF = all */
+    UINT8   test_quiet;        /* 1 = suppress PASS lines, show FAIL + summary */
     UINT8   diag_delay;        /* seconds to pause on each diag screen (0 = skip) */
     UINT8   diag_splash;       /* 1 = show diag on splash (bare metal, no serial) */
-    UINT8   _reserved[20];     /* future fields — zero-filled by defaults */
+    UINT8   _reserved[18];     /* future fields — zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
@@ -724,6 +726,8 @@ static void boot_config_defaults(struct boot_config *cfg)
     cfg->heartbeat      = 1;    /* auto */
     cfg->postcode       = 1;    /* auto */
     cfg->postbars       = 0;    /* off — normal splash, no VPD */
+    cfg->test_suite     = 0xFF; /* all categories */
+    cfg->test_quiet     = 0;    /* verbose (show PASS lines) */
     cfg->cmdline[0]     = '\0';
     cfg->config_found   = 0;
 }
@@ -756,6 +760,21 @@ static void parse_conf_kv(struct boot_config *cfg,
     }
     else if (ascii_streq(key, "test")) {
         cfg->test = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "test_suite")) {
+        if      (ascii_streq(val, "mm"))       cfg->test_suite = 0;
+        else if (ascii_streq(val, "fs"))       cfg->test_suite = 1;
+        else if (ascii_streq(val, "sched"))    cfg->test_suite = 2;
+        else if (ascii_streq(val, "ob"))       cfg->test_suite = 3;
+        else if (ascii_streq(val, "security")) cfg->test_suite = 4;
+        else if (ascii_streq(val, "ipc"))      cfg->test_suite = 5;
+        else if (ascii_streq(val, "boot"))     cfg->test_suite = 6;
+        else if (ascii_streq(val, "abi"))      cfg->test_suite = 7;
+        else if (ascii_streq(val, "storage"))  cfg->test_suite = 8;
+        else                                   cfg->test_suite = 0xFF;
+    }
+    else if (ascii_streq(key, "test_quiet")) {
+        cfg->test_quiet = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "diag_delay")) {
         cfg->diag_delay = (UINT8)ascii_atoi(val);

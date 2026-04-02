@@ -20,6 +20,8 @@
 - → XREF: `TODO-01-kernel-init-sequencing.md §4` — time service init (`wall_clock_init()`) belongs in Phase 2 (§4) after UEFI runtime; NTP wall clock adjustment belongs in Phase 3 (§5); `wall_clock_init()` is not yet listed in §4's checklist — add before implementing
 - → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT registration; time syscalls (`NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`, `NtQueryTimerResolution`) are added to the SSDT table in §7 of this TODO
 - → XREF: `TODO-06-irql-model-dpcs.md §6` — Timer/APIC scheduling path (§6) drives monotonic tick accumulation via `KiDispatchDpc()`; `DISPATCH_LEVEL` clock interrupt is the tick source
+- → XREF: `TODO-06-irql-model-dpcs.md §9` — Timer-DPC association: KTIMER objects carry an optional KDPC pointer; when the timer fires, the DPC is auto-queued via `KeInsertQueueDpc`
+- → XREF: `TODO-04-peb-teb-user-abi.md §11` — KUSER_SHARED_DATA time fields (SystemTime, InterruptTime, QpcFrequency) are populated by §6 of this TODO; `kusd_update_time()` is called from the timer ISR
 
 ## Outcome
 

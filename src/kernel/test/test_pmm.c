@@ -41,8 +41,8 @@ static void test_pmm_contiguous(void)
 /* Registration */
 void test_register_pmm(void)
 {
-    test_suite_register("PMM: alloc+free", test_pmm_alloc_free);
-    test_suite_register("PMM: contiguous", test_pmm_contiguous);
+    test_suite_register_cat("PMM: alloc+free", test_pmm_alloc_free, TEST_CAT_MM);
+    test_suite_register_cat("PMM: contiguous", test_pmm_contiguous, TEST_CAT_MM);
 }
 
 #endif /* KERNEL_TESTS */

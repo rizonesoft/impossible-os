@@ -3,7 +3,7 @@
 > **Goal:** Implement the kernel Object Manager (ObXxx layer) — the unified substrate that gives every kernel resource (files, processes, threads, events, mutexes, semaphores, registry keys, sections) a typed header, reference-counted lifetime, named namespace entry, security descriptor, and per-process handle-table slot. Without this, Win32 `HANDLE` semantics are impossible and resource leaks are unavoidable. This is the single most foundational Win32 prerequisite in the kernel.
 
 > [!IMPORTANT]
-> **Current state:** No Object Manager exists. VFS returns raw `vfs_node *` pointers with no reference counting. Syscalls use raw fd integers (0, 1…) from a POSIX-style table. IPC primitives (events, mutexes, semaphores, pipes, shared memory) are unregistered in any unified namespace and cannot be named, duplicated, or inherited.
+> **Current state:** Core Object Manager is complete (§1–§11 done). OBJECT_HEADER, OBJECT_TYPE, reference counting, handle tables, namespace, all major object types, security descriptors, NtClose/NtDuplicateObject/NtQueryObject, handle inheritance, and namespace browser API are all implemented and verified on QEMU WHPX + TCG. Remaining work: §12 (per-type statistics), §13 (object callbacks), §14 (handle quota), §15 (handle tracing).
 
 ## Inputs
 
@@ -17,7 +17,9 @@
 - → XREF: `TODO-01-kernel-init-sequencing.md §4` — ObInit (`object_manager_init()`) is a Phase 2 gate, before registry
 - → XREF: `TODO-04-peb-teb-user-abi.md` — TODO-04 §10 exposes PEB/TEB in the Ob namespace (depends on §4 Object Namespace and §11 Namespace Browser)
 - → XREF: `TODO-05-native-api-ssdt.md` — NtCreateFile / NtOpenFile / NtClose and sync Nt syscalls are all Ob-routed; SSDT entries depend on §3, §5, §6
-- → XREF: `TODO-11-security-reference-monitor.md` — SRM enforces DACLs registered here
+- → XREF: `TODO-11-security-reference-monitor.md` — SRM enforces DACLs registered here; §13 callbacks enable PPL-style protection
+- → XREF: `TODO-05-native-api-ssdt.md §10` — `NtQuerySystemInformation(SystemHandleInformation)` consumes §12 per-type statistics
+- → XREF: `TODO-02-system-logging.md` — §15 handle tracing integrates with klog subsystem
 
 ## Outcome
 
@@ -27,6 +29,10 @@
 - Named objects live in a hierarchical namespace: `\`, `\Device\`, `\BaseNamedObjects\`, `\DosDevices\`.
 - `NtCreateFile`, `NtOpenFile`, `NtClose`, `NtDuplicateObject` are routed through the Ob layer.
 - Existing IPC primitives are re-registered as Ob-managed named object types.
+- Per-type object and handle statistics (current + peak) are tracked and queryable via `NtQueryObject(ObjectTypeInformation)`.
+- Kernel drivers can register pre/post callbacks on handle create and duplicate operations via `ObRegisterCallbacks`.
+- Per-process handle quota is configurable and enforced, preventing resource exhaustion.
+- Tagged reference tracking and optional handle tracing enable kernel-level leak detection integrated with klog.
 
 ## Implementation Order
 
@@ -43,10 +49,14 @@
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T11 §4     |  [x]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [x]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [x]   |
+| 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [ ]   |
+| 💎  |  13   | Object callbacks — handle operation filtering                 | §3, §9         |  [ ]   |
+| 💎  |  14   | Per-process handle quota                                      | §3             |  [ ]   |
+| ⭐  |  15   | Handle tracing and leak detection                             | §2, §12        |  [ ]   |
 
 > 💎 = parity — Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
-> ⭐ = exclusive — a queryable namespace browser API exposed to user-mode that covers every
->     kernel object type in one unified tree; neither Windows nor Linux expose this publicly.
+> ⭐ = exclusive — built-in handle/reference leak detection integrated with klog, providing
+>     first-class kernel-level diagnostics that neither Windows ETW nor Linux exposes natively.
 
 ---
 
@@ -190,12 +200,100 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 - [ ] User-mode `ObBrowse.exe` — see [16-tools-accessories/TODO-01](../16-tools-accessories/TODO-01-obbrowse-namespace-browser.md)
 - [x] Commit: `"kernel: ob — NtOpenDirectoryObject and NtQueryDirectoryObject (public API)"`
 
+## 12. Per-Type Object and Handle Statistics
+Track per-type creation counts, live object counts, live handle counts, and peak (high-water) values so `NtQueryObject(ObjectTypeInformation)` can return the full `OBJECT_TYPE_INFORMATION` structure that Win11 provides. Currently `NtQueryObject` only returns the type name string.
+
+> [!WARNING]
+> Modifies `ob_alloc_object()`, `ob_free_object()`, `ObpAllocateHandle()`, and `ObpFreeHandle()` — all core Ob paths used by every kernel subsystem. Test incrementally: add counters to `ob_alloc_object` first, verify boot still works, then proceed to handle-side counters. Rollback: revert counter increments if boot regresses.
+
+- [ ] Add atomic counters to `OBJECT_TYPE` in `include/kernel/ob/ob_type.h`:
+  - `atomic_t total_objects` — current live objects of this type
+  - `atomic_t total_handles` — current open handles to objects of this type
+  - `uint32_t peak_objects` — high-water mark for `total_objects`
+  - `uint32_t peak_handles` — high-water mark for `total_handles`
+- [ ] In `ob_alloc_object()`: increment `type->total_objects`; update `peak_objects` if new value exceeds it
+- [ ] In `ob_free_object()`: decrement `type->total_objects`
+- [ ] In `ObpAllocateHandle()`: increment `type->total_handles`; update `peak_handles`
+- [ ] In `ObpFreeHandle()`: decrement `type->total_handles`
+- [ ] Update `NtQueryObject(ObjectTypeInformation)` in `ob.c` to return a struct containing: type name, `total_objects`, `total_handles`, `peak_objects`, `peak_handles`, `body_size`, valid access mask
+- [ ] Add `NtQueryObject(ObjectTypesInformation)` info class — enumerate all registered types and their statistics (used by system diagnostic tools and → XREF: `TODO-05 §10` `NtQuerySystemInformation`)
+- [ ] Commit: `"kernel: ob — per-type object and handle statistics"`
+
+**Test checkpoint:** `ob_alloc_object(ObpEventType)` increments `ObpEventType->total_objects`; `ObDereferenceObject` decrements it. After creating 100 events and freeing 50, `total_objects == 50` and `peak_objects == 100`. `NtQueryObject(ObjectTypeInformation)` returns correct counters. Verify on QEMU WHPX + TCG + VirtualBox. Bare metal follow-up (no hardware interaction, low risk). `POST16(0xD900)`–`POST16(0xD903)` (range `0xD9xx` confirmed free — `0xDBxx` used by `TODO-11-klog-ixfs-bare-metal-perf.md`).
+
+## 13. Object Callbacks — Handle Operation Filtering
+Allow kernel-mode drivers to register pre- and post-operation callbacks on handle create and duplicate operations. Win11's `ObRegisterCallbacks` (Vista SP1+) is used by anti-malware, EDR agents, and Protected Process Light enforcement to intercept and filter access to process/thread handles.
+
+> [!WARNING]
+> Modifies `ObpAllocateHandle()` and `NtDuplicateObject()` hot paths. An incorrectly registered callback that always denies access will break all handle creation. Test with a no-op callback first, then progressively add filtering logic. Rollback: remove callback list traversal from `ObpAllocateHandle()` to restore pre-§13 behavior.
+
+> [!NOTE]
+> Process access mask constants (`PROCESS_TERMINATE`, `PROCESS_QUERY_INFORMATION`, etc.) are not yet defined — they are deliverables of `TODO-05 §7`. For §13 testing, define local `#define PROCESS_TERMINATE 0x0001` matching the Win32 spec. Replace with the canonical header once TODO-05 §7 is complete.
+
+- [ ] Define `OB_PRE_OPERATION_INFORMATION` in `include/kernel/ob/ob_callback.h`:
+  - `OB_OPERATION operation` — `OB_OPERATION_HANDLE_CREATE` or `OB_OPERATION_HANDLE_DUPLICATE`
+  - `void *object` — target object body pointer
+  - `const OBJECT_TYPE *object_type` — type of the target object
+  - `uint32_t *desired_access` — mutable pointer; pre-callback can strip access bits
+  - `void *context` — caller-supplied context from registration
+- [ ] Define `OB_POST_OPERATION_INFORMATION` — same fields but `granted_access` is read-only
+- [ ] Define `OB_OPERATION_REGISTRATION` — `{object_type, operations_mask, pre_callback, post_callback}`
+- [ ] Define `OB_CALLBACK_REGISTRATION` — `{version, altitude, context, operation_count, operations[]}`
+- [ ] Implement `ObRegisterCallbacks(registration, &handle)`:
+  - Validate all fields; allocate a callback node; insert into a global callback list sorted by altitude
+  - Return a registration handle for later unregistration
+- [ ] Implement `ObUnRegisterCallbacks(handle)` — remove callback node from the list and free it
+- [ ] In `ObpAllocateHandle()`: before inserting the handle, invoke all registered pre-callbacks matching the object type; if any callback zeroes `desired_access`, deny the handle creation
+- [ ] In `NtDuplicateObject()`: invoke pre-callbacks for `OB_OPERATION_HANDLE_DUPLICATE`
+- [ ] After successful handle creation/duplication: invoke post-callbacks with the granted access
+- [ ] Commit: `"kernel: ob — ObRegisterCallbacks handle operation filtering"`
+
+> [!NOTE]
+> Linux uses LSM (Linux Security Modules) hooks at a different layer. The Ob callback approach matches Win32 driver compatibility requirements and enables anti-tamper protection for critical processes (→ XREF: `TODO-11-security-reference-monitor.md` for PPL integration).
+
+**Test checkpoint:** Register a callback for `ObpProcessType` that strips `PROCESS_TERMINATE` from `desired_access`. Open a handle to a process — verify `granted_access` lacks `PROCESS_TERMINATE`. Unregister callback — verify full access is restored. Multiple callbacks at different altitudes invoked in order. Verify on QEMU WHPX + TCG + VirtualBox. `POST16(0xD910)`–`POST16(0xD913)`.
+
+## 14. Per-Process Handle Quota
+Enforce a configurable per-process handle limit to prevent resource exhaustion from buggy or malicious processes. Win11 enforces pool quota charges per handle with a theoretical 16M limit. Linux enforces `RLIMIT_NOFILE` per process. Currently `HANDLE_TABLE_MAX_CAP` is a hard compile-time 4096 with no per-process configurability.
+
+> [!NOTE]
+> The `NtSetInformationProcess(ProcessHandleQuota)` SSDT wiring depends on `TODO-05 §10` which is not yet implemented. Core quota enforcement in `ObpAllocateHandle()` works independently — the SSDT entry is a user-mode convenience, not a blocker.
+
+- [ ] Add `uint32_t handle_limit` to `HANDLE_TABLE` — default `HANDLE_TABLE_DEFAULT_LIMIT` (16384); adjustable per process
+- [ ] In `ObpAllocateHandle()`: if `table->count >= table->handle_limit`, return `INVALID_HANDLE_VALUE` (quota exceeded) instead of growing
+- [ ] Add `ob_handle_table_set_limit(table, new_limit)` — clamp to `HANDLE_TABLE_ABSOLUTE_MAX` (1 << 20 = 1M handles)
+- [ ] Wire into `NtSetInformationProcess(ProcessHandleQuota)` (→ XREF: `TODO-05 §10`) — requires `SeIncreaseQuotaPrivilege` to raise above default
+- [ ] Track cumulative handle allocations per process in `task_t.total_handles_created` for diagnostic reporting
+- [ ] On quota exhaustion: log `klog(LOG_WARN, "ob", "PID %u handle quota exhausted (%u/%u)")` with PID, count, limit
+- [ ] Commit: `"kernel: ob — per-process handle quota enforcement"`
+
+**Test checkpoint:** Set handle limit to 100 for a test process. Allocate 100 handles successfully. 101st allocation returns `INVALID_HANDLE_VALUE`. Free 1 handle, allocate again succeeds. `klog` warning emitted on exhaustion. Default limit (16384) works for normal boot. Verify on QEMU WHPX + TCG + VirtualBox. `POST16(0xD920)`–`POST16(0xD923)`.
+
+## 15. Handle Tracing and Leak Detection
+Provide tagged reference tracking and optional per-handle event recording for diagnosing object leaks and under-references. Win11 has `ObReferenceObjectWithTag` / `ObDereferenceObjectWithTag` (Win7+) and ETW handle tracing, but ETW is complex and buffer-limited. Linux has no equivalent. Impossible OS integrates tracing directly with klog for a better developer experience.
+
+> [!TIP]
+> Neither Windows nor Linux provides built-in, always-available handle leak detection at the kernel level without external tooling (ETW requires WPR setup; Linux requires strace/lsof). Impossible OS's klog-integrated tracing means `debug=1` in `boot.conf` automatically captures handle leaks — zero setup required.
+
+- [ ] Implement `ObReferenceObjectWithTag(body, tag)` — calls `ObReferenceObject` and records `{tag, +1, caller_rip}` in the object's trace log (if tracing enabled)
+- [ ] Implement `ObDereferenceObjectWithTag(body, tag)` — calls `ObDereferenceObject` and records `{tag, -1, caller_rip}`
+- [ ] Define `OB_REF_TRACE_ENTRY` — `{uint32_t tag, int8_t delta, uintptr_t caller, uint64_t timestamp}`
+- [ ] Per-object trace log: circular buffer of 64 `OB_REF_TRACE_ENTRY` in an optional `OBJECT_HEADER_TRACE_INFO` extension allocated when tracing is enabled for the type
+- [ ] `ob_enable_type_tracing(type)` / `ob_disable_type_tracing(type)` — toggle per-type tracing; controlled via `boot.conf` `ob_trace=Process,File` or at runtime via a debug syscall
+- [ ] `ob_dump_trace(body)` — emit the object's trace log entries to klog at `LOG_DEBUG` level; summarize per-tag ref/deref counts and identify imbalances
+- [ ] In `ObDereferenceObject` when refcount hits 0 and tracing is enabled: call `ob_dump_trace` automatically, highlighting any tag with ref != deref
+- [ ] Handle event tracing: in `ObpAllocateHandle` and `ObpFreeHandle`, emit `klog(LOG_TRACE, "ob", "HANDLE %s PID=%u H=0x%x obj=%p type=%s")` when `ob_handle_trace` global is enabled
+- [ ] `ob_handle_trace` flag: set from `boot.conf` `ob_handle_trace=1` or toggled via `NtSetSystemInformation`
+- [ ] Commit: `"kernel: ob — tagged reference tracing and handle leak detection"`
+
+**Test checkpoint:** Enable tracing for `ObpEventType`. Create event, ref with tag `"Lk01"`, ref with tag `"Lk02"`, deref with tag `"Lk01"`, deref (untagged). On final deref (refcount 0), `ob_dump_trace` reports tag `"Lk02"` has 1 ref / 0 deref = over-reference by 1. `ob_handle_trace=1`: every `ObpAllocateHandle` / `ObpFreeHandle` emits a klog entry with PID, handle value, object pointer, and type name. Verify on QEMU WHPX + TCG. `POST16(0xD930)`–`POST16(0xD933)`.
+
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature               | 🪟 Win11                  | 🐧 Linux                | 🚀 Impossible OS                 |
-|----|-----------------------|------------------------|----------------------|-------------------------------|
+| ⭐ | Feature               | 🪟 Win11               | 🐧 Linux             | 🚀 Impossible OS             |
+|----|-----------------------|-------------------------|----------------------|------------------------------|
 | 💎 | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref    | ✅ §1                       |
 | 💎 | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type         | ✅ §1                       |
 | 💎 | Auto-delete on 0 ref  | ✅ ObDereferenceObject | ✅ kref_put          | ✅ §2                       |
@@ -209,9 +307,14 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 | 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ✅ §9, §10                  |
 | ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ✅ §11 — public, documented |
 | ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ✅ §1–§7 — one header       |
+| 💎 | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo    | ⬜ §12 — atomic counters    |
+| 💎 | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ⬜ §13 — pre/post filtering |
+| 💎 | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE     | ⬜ §14 — configurable limit |
+| ⭐ | Handle leak detection | ⚠️ ETW (complex)       | ❌ No built-in       | ⬜ §15 — klog-integrated    |
 
-> All parity items complete — Impossible OS matches Windows NT object management.
-> Both exclusive features (⭐) are implemented: public namespace browser API and unified single-header type system covering files, processes, threads, sync objects, and sections.
+> All foundational parity items (§1–§11) complete — Impossible OS matches Windows NT object management.
+> Three exclusive features (⭐): public namespace browser API (§11), unified single-header type system (§1–§7), and built-in klog-integrated handle leak detection (§15).
+> Four new parity gaps identified: per-type statistics (§12), handle operation callbacks (§13), handle quota (§14) require implementation for full NT driver compatibility.
 
 ## Unit Tests
 
@@ -233,6 +336,15 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
   - `NtQueryDirectoryObject(\)` enumerates `Device`, `KernelObjects`, `BaseNamedObjects`
   - `NtQueryObject(ObjectBasicInformation)` returns correct refcount and handle count
   - `NtClose` on a valid handle returns success; second `NtClose` on same handle returns `STATUS_INVALID_HANDLE`
+  - §12: `ObpEventType->total_objects` tracks create/delete; `peak_objects` records high-water mark; `NtQueryObject(ObjectTypeInformation)` returns correct counters
+  - §12: `NtQueryObject(ObjectTypesInformation)` enumerates all registered types with statistics
+  - §13: `ObRegisterCallbacks` pre-callback strips `PROCESS_TERMINATE` from desired_access; handle created without that right
+  - §13: `ObUnRegisterCallbacks` removes callback; subsequent handle creation has full access
+  - §13: Multiple callbacks at different altitudes invoked in ascending altitude order
+  - §14: Set handle limit to 100; 101st `ObpAllocateHandle` returns `INVALID_HANDLE_VALUE`; free 1 + retry succeeds
+  - §14: Default handle limit (16384) allows normal boot with no quota failures
+  - §15: `ObReferenceObjectWithTag` / `ObDereferenceObjectWithTag` records trace entries; `ob_dump_trace` reports per-tag imbalance
+  - §15: `ob_handle_trace=1` emits klog entry on every handle alloc/free with PID, handle value, type
 - [ ] Register in `test_runner_init()`: `test_register_ob()`
 - [ ] Commit: `"test: add object manager test suite"`
 

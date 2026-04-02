@@ -75,7 +75,7 @@ flowchart TD
 
 ### 2.3 Run And Debug
 
-- [x] Canonical run path: `bash scripts/build.sh run` (build+QEMU via Makefile `run` target). `scripts/run-qemu.sh` is Linux standalone runner (KVM, 2 CPUs default, `--single-cpu` / `--debug` / `--headless` flags). `scripts/vm/run-qemu.ps1` is Windows runner (WHPX/TCG auto-detect, `-Smp` param, HiDPI support). VBox via `scripts/vm/run-vbox.sh/.ps1`. USB deploy via `scripts/deploy/write-usb.*`.
+- [x] Canonical run path: `bash scripts/build.sh run` (build+QEMU via Makefile `run` target). `scripts/run-qemu.sh` is Linux standalone runner (KVM, 2 CPUs default, `--single-cpu` / `--debug` / `--headless` flags). `scripts/machines/run-qemu.ps1` is Windows runner (WHPX/TCG auto-detect, `-Smp` param, HiDPI support). VBox via `scripts/machines/run-vbox.sh/.ps1`. USB deploy via `scripts/deploy/write-usb.*`.
 - [x] Headless QEMU is a supported baseline: `-serial stdio` for interactive, `-serial file:build/test.log` for CI/automation. `scripts/test-smoke.sh` uses headless with serial capture and 30s timeout.
 - [x] Windows runner consolidation: `run-qemu.ps1` is the single PowerShell runner. `.bat` files are thin wrappers: `run-qemu-kvm.bat` (WHPX), `run-qemu-tcg.bat` (TCG), `run-qemu-1cpu.bat` (single CPU debug). Resolution variants via `-Xres/-Yres` params. No consolidation needed — architecture is clean.
 - [x] Hyper-V is a separate concern: WHPX acceleration handled transparently in `run-qemu.ps1`. Hyper-V Gen2 VM (not QEMU) is a future item — not absorbed here.

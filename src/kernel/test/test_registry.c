@@ -69,8 +69,8 @@ static void test_registry_string(void)
 /* Registration */
 void test_register_registry(void)
 {
-    test_suite_register("Registry: DWORD", test_registry_dword);
-    test_suite_register("Registry: string", test_registry_string);
+    test_suite_register_cat("Registry: DWORD", test_registry_dword, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: string", test_registry_string, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

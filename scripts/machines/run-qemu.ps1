@@ -26,12 +26,14 @@ Param(
     [string]$Accel = 'auto',
     [int]$Smp = 0,  # 0 = auto (2 for WHPX/KVM, 1 for TCG)
     [switch]$DebugTests,  # boot with debug=1 (unit + boot tests)
-    [switch]$TestOnly     # boot with test=1 (unit tests, then shutdown)
+    [switch]$TestOnly,    # boot with test=1 (unit tests, then shutdown)
+    [string]$TestSuite = '',  # category filter: mm, fs, ob, security, ipc, sched, boot, abi, storage
+    [switch]$Quiet        # suppress PASS lines, show FAIL + summary only
 )
 
 $ErrorActionPreference = "Stop"
 
-# Resolve project root from this script's location (scripts/vm -> parent -> parent)
+# Resolve project root from this script's location (scripts/machines -> parent -> parent)
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $SCRIPT_DIR)
 $BUILD      = Join-Path $PROJECT "build"
@@ -135,20 +137,26 @@ $QemuArgs += @(
 )
 
 # Patch boot.conf if debug/test mode requested
-$PatchKey = $null
-if ($DebugTests) { $PatchKey = 'debug'; $PatchVal = '1' }
-if ($TestOnly)   { $PatchKey = 'test';  $PatchVal = '1' }
+$PatchArgs = @()
+if ($DebugTests) { $PatchArgs += @('debug', '1') }
+if ($TestOnly -or $TestSuite) { $PatchArgs += @('test', '1') }
+if ($TestSuite) { $PatchArgs += @('test_suite', $TestSuite) }
+if ($Quiet)     { $PatchArgs += @('test_quiet', '1') }
 
-if ($PatchKey) {
-    Write-Host "  Mode:   $PatchKey=$PatchVal" -ForegroundColor Cyan
-    & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh $PatchKey $PatchVal"
+if ($PatchArgs.Count -gt 0) {
+    $PatchStr = $PatchArgs -join ' '
+    $ModeLabel = ($PatchArgs | ForEach-Object -Begin { $i=0 } -Process {
+        if ($i % 2 -eq 0) { "$_=" } else { "$_ " }; $i++
+    }) -join ''
+    Write-Host "  Mode:   $($ModeLabel.Trim())" -ForegroundColor Cyan
+    & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh $PatchStr"
 }
 
 try {
     & $QEMU @QemuArgs
 } finally {
     # Always restore boot.conf to defaults
-    if ($PatchKey) {
+    if ($PatchArgs.Count -gt 0) {
         & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset"
     }
 }

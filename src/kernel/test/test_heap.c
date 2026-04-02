@@ -76,10 +76,10 @@ static void test_heap_realloc(void)
 /* Registration */
 void test_register_heap(void)
 {
-    test_suite_register("Heap: alloc+free", test_heap_alloc_free);
-    test_suite_register("Heap: zero alloc", test_heap_zero_alloc);
-    test_suite_register("Heap: no overlap", test_heap_no_overlap);
-    test_suite_register("Heap: realloc", test_heap_realloc);
+    test_suite_register_cat("Heap: alloc+free", test_heap_alloc_free, TEST_CAT_MM);
+    test_suite_register_cat("Heap: zero alloc", test_heap_zero_alloc, TEST_CAT_MM);
+    test_suite_register_cat("Heap: no overlap", test_heap_no_overlap, TEST_CAT_MM);
+    test_suite_register_cat("Heap: realloc", test_heap_realloc, TEST_CAT_MM);
 }
 
 #endif /* KERNEL_TESTS */

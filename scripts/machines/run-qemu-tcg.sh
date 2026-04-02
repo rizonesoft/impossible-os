@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# run-qemu-kvm.sh — Launch Impossible OS under QEMU with KVM acceleration
+# run-qemu-tcg.sh — Launch Impossible OS under QEMU TCG (software emulation)
 #
-# Purpose: Forces QEMU to use KVM hardware acceleration. This makes the
-#          OS detect a KVM hypervisor via CPUID and select LAPIC as
-#          g_system_timer (via timer_hal_init() non-TCG path).
+# Purpose: Forces QEMU to use TCG (software CPU emulation) instead of
+#          KVM/WHPX hardware acceleration. This makes the OS select PIT
+#          as g_system_timer (via platform_is_tcg() detection), matching
+#          the QEMU TCG timer path in timer_hal_init().
 #
 # UTS Behavior:
-#   - CPUID hypervisor leaf → "KVMKVMKVM" → PLATFORM_QEMU_KVM
-#   - timer_hal_init() → lapic_timer_calibrate() → g_system_timer = &lapic_driver
-#   - LAPIC timer calibrated via Tier 1 (CPUID 0x40000010 paravirt freq)
-#   - PIT IRQ0 is masked via ioapic_mask_irq(0)
+#   - CPUID hypervisor leaf → "TCGTCGTCGTCG" → PLATFORM_QEMU_TCG
+#   - timer_hal_init() → pit_init() → g_system_timer = &pit_driver
+#   - PIT ticks at wall-clock rate (host-backed)
+#   - LAPIC timer is NOT used for timekeeping
 #
 # Usage:
-#   bash scripts/vm/run-qemu-kvm.sh           # default 1280×720
-#   bash scripts/vm/run-qemu-kvm.sh 1920 1080 # custom resolution
+#   bash scripts/machines/run-qemu-tcg.sh           # default 1280×720
+#   bash scripts/machines/run-qemu-tcg.sh 1920 1080 # custom resolution
 #
-# Prerequisites:
-#   - /dev/kvm must exist (KVM kernel modules loaded)
-#   - User must be in the 'kvm' group: sudo usermod -aG kvm $USER
+# Compare with `bash scripts/build.sh run` which auto-detects KVM/WHPX
+# and selects LAPIC timer instead.
 
 set -euo pipefail
 
@@ -31,21 +31,9 @@ YRES="${2:-720}"
 DISK="$BUILD/system-disk.img"
 OVMF_CODE="$BUILD/OVMF_CODE_4M.fd"
 OVMF_VARS="$BUILD/OVMF_VARS_4M.fd"
-OVMF_VARS_CP="/tmp/OVMF_VARS_4M_kvm.fd"
+OVMF_VARS_CP="/tmp/OVMF_VARS_4M_tcg.fd"
 
-# Preflight: check KVM availability
-if [ ! -e /dev/kvm ]; then
-    echo "ERROR: /dev/kvm not found — KVM is not available"
-    echo ""
-    echo "Possible fixes:"
-    echo "  1. Load KVM module: sudo modprobe kvm-intel (or kvm-amd)"
-    echo "  2. Enable VT-x/AMD-V in BIOS"
-    echo "  3. WSL2 note: KVM requires nested virtualization"
-    echo ""
-    echo "To test without KVM, use: bash scripts/vm/run-qemu-tcg.sh"
-    exit 1
-fi
-
+# Preflight
 if [ ! -f "$DISK" ]; then
     echo "ERROR: Missing $DISK"
     echo "Run: bash scripts/build.sh"
@@ -70,23 +58,23 @@ fi
 cp "$OVMF_VARS" "$OVMF_VARS_CP"
 
 echo "══════════════════════════════════════════════════"
-echo "  Impossible OS — QEMU KVM (Hardware Accelerated)"
+echo "  Impossible OS — QEMU TCG (Software Emulation)"
 echo "══════════════════════════════════════════════════"
-echo "  Accelerator : KVM"
+echo "  Accelerator : TCG (no KVM/WHPX)"
 echo "  Resolution  : ${XRES}×${YRES}"
-echo "  Timer Source: LAPIC (via timer_hal_init non-TCG)"
+echo "  Timer Source: PIT (via platform_is_tcg())"
 echo "  Disk        : $DISK"
 echo "══════════════════════════════════════════════════"
 echo ""
 echo "  Expected UTS log lines:"
-echo "    [platform] Detected: QEMU-KVM (CPUID 0x40000000)"
-echo "    [timer] UTS: using LAPIC timer"
+echo "    [platform] Detected: QEMU-TCG (CPUID 0x40000000)"
+echo "    [timer] UTS: using PIT timer"
 echo ""
 
 qemu-system-x86_64 \
-    -accel kvm \
-    -cpu host \
-    -smp 2 \
+    -accel tcg \
+    -cpu qemu64 \
+    -smp 1 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$OVMF_VARS_CP" \
     -drive id=disk0,file="$DISK",format=raw,if=none \

@@ -162,13 +162,15 @@ struct boot_config {
     uint8_t  postbars;         /* 0=off, 1=on (integrated), 2=diag (full) */
     /* Test mode */
     uint8_t  test;             /* 1 = run unit tests only, then shutdown */
+    uint8_t  test_suite;       /* category filter: 0-8 = specific, 0xFF = all (default) */
+    uint8_t  test_quiet;       /* 1 = suppress PASS lines, show FAIL + summary only */
     /* Debug diagnostics */
     uint8_t  diag_delay;       /* seconds to pause on each diag screen (0 = skip) */
     uint8_t  diag_splash;      /* 1 = show diag on splash (bare metal, no serial) */
     /* Reserved — new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[20];
+    uint8_t  _reserved[18];
     /* Command line (offset 32 — stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

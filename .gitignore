@@ -60,4 +60,4 @@ sdk/tools/*
 sdk/build/
 
 # Extracted debug logs
-debug/
+/debug/

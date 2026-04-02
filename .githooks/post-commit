@@ -49,6 +49,8 @@ sdk_lines=$((sdk_c_lines + sdk_h_lines))
 
 # Build system & scripts
 read -r sh_files sh_lines <<< "$(count_lines sh "$ROOT/scripts" "$ROOT/sdk/scripts")"
+read -r bat_files bat_lines <<< "$(count_lines bat "$ROOT/scripts")"
+read -r ps1_files ps1_lines <<< "$(count_lines ps1 "$ROOT/scripts")"
 
 mk_files=0; mk_lines=0
 if [ -f "$ROOT/Makefile" ]; then
@@ -66,8 +68,8 @@ done < <(find "$ROOT/src" -type f \( -name "*.ld" -o -name "*.lds" \) 2>/dev/nul
 code_files=$((c_files + h_files + asm_files))
 code_lines=$((c_lines + h_lines + asm_lines))
 
-infra_files=$((sh_files + mk_files + ld_files))
-infra_lines=$((sh_lines + mk_lines + ld_lines))
+infra_files=$((sh_files + bat_files + ps1_files + mk_files + ld_files))
+infra_lines=$((sh_lines + bat_lines + ps1_lines + mk_lines + ld_lines))
 
 total_files=$((code_files + sdk_files + infra_files))
 total_lines=$((code_lines + sdk_lines + infra_lines))
@@ -118,6 +120,8 @@ cat > "$COUNT_FILE" << EOF
 | | Files | Lines |
 |---|---:|---:|
 | **Shell scripts** (\`.sh\`) | ${sh_files} | ${sh_lines} |
+| **Batch scripts** (\`.bat\`) | ${bat_files} | ${bat_lines} |
+| **PowerShell** (\`.ps1\`) | ${ps1_files} | ${ps1_lines} |
 | **Makefile** | ${mk_files} | ${mk_lines} |
 | **Linker scripts** (\`.ld\`/\`.lds\`) | ${ld_files} | ${ld_lines} |
 | **Subtotal** | **${infra_files}** | **${infra_lines}** |

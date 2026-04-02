@@ -98,11 +98,11 @@ static void test_privilege_name(void)
 
 void test_register_security(void)
 {
-    test_suite_register("Security: SID equal", test_sid_equal);
-    test_suite_register("Security: SID to string", test_sid_to_string);
-    test_suite_register("Security: ACL roundtrip", test_acl_roundtrip);
-    test_suite_register("Security: system token", test_system_token);
-    test_suite_register("Security: privilege name", test_privilege_name);
+    test_suite_register_cat("Security: SID equal", test_sid_equal, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: SID to string", test_sid_to_string, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: ACL roundtrip", test_acl_roundtrip, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: system token", test_system_token, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: privilege name", test_privilege_name, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */

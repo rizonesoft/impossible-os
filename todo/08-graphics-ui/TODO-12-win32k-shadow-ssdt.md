@@ -16,6 +16,7 @@
 - → XREF: `08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md` — user-mode GDI/USER32 stub layer; this TODO provides the kernel-mode dispatch those stubs call into
 - → XREF: `12-user-platform-sdk/TODO-05-win32-subsystem.md` — CSRSS loads win32k; message queue infrastructure (SYS_WAIT_MESSAGE etc.) migrates to this shadow SSDT
 - → XREF: `08-graphics-ui/TODO-06-window-manager.md` — `wm_minimize/maximize/restore/set_title` wrapped by NtUserXxx
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §25` — KeUserModeCallback dispatch infrastructure; NtUserDispatchMessage and NtUserSendMessage call KeUserModeCallback to invoke user-mode window procedures
 - → XREF: `08-graphics-ui/TODO-04-widget-library-core.md` — control painting routed through GDI DC
 
 ## Outcome

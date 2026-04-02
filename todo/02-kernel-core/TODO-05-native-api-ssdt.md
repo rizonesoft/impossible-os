@@ -15,14 +15,18 @@
 - [`include/kernel/gdt.h`](../../include/kernel/gdt.h) — GDT_KERNEL_CODE, GDT_USER_CODE selectors
 - → XREF: `TODO-03-object-manager.md` — Ob-routed NtXxx functions (NtClose, NtDuplicateObject, NtQueryObject, NtOpenDirectoryObject, NtQueryDirectoryObject already implemented); SSDT entries for file/process/sync depend on TODO-03 §3–§10
 - → XREF: `TODO-04-peb-teb-user-abi.md §3–§4` — `swapgs` in syscall entry/exit uses the TEB GS contract; KERNEL_GS_BASE per-task
-- → XREF: `TODO-01-kernel-init-sequencing.md` — syscall fast path init belongs in Phase 1 (after GDT/IDT, before scheduler)
+- → XREF: `TODO-01-kernel-init-sequencing.md §3` — syscall fast path init belongs in Phase 1 (after GDT/IDT, before scheduler)
 - → XREF: `TODO-07-time-filetime-management.md §7` — NtQuerySystemTime, NtSetSystemTime, NtQueryPerformanceCounter, NtQueryTimerResolution; service numbers reserved in §4
 - → XREF: `TODO-10-exception-dispatch-seh.md §4` — NtRaiseException and NtContinue; SSDT indices reserved in §4
-- → XREF: `TODO-11-security-reference-monitor.md` — ZwXxx kernel-mode calls bypass SRM access checks; NtAccessCheck routed through SRM
+- → XREF: `TODO-11-security-reference-monitor.md §5,§12` — §5 SeAccessCheck bypasses for kernel-mode (ZwXxx) callers; §12 wires NtAccessCheck, NtOpenProcessToken, etc. to SSDT
 - → XREF: `TODO-12-alpc-message-ports.md §8` — ALPC port syscalls (NtCreatePort, NtAlpcSendWaitReceivePort, etc.); SSDT indices reserved in §4
 - → XREF: `TODO-13-registry-completion.md §4` — Registry syscalls (NtCreateKey, NtOpenKey, NtSetValueKey, etc.); SSDT indices reserved in §4
-- → XREF: `TODO-15-power-management.md` — NtSetSystemPowerState, NtInitiatePowerAction; SSDT indices reserved in §4
-- → XREF: `TODO-18-kernel-debugger-kd-protocol.md` — NtDebugActiveProcess, NtWaitForDebugEvent; SSDT indices reserved in §4
+- → XREF: `TODO-15-power-management.md §12` — NtSetSystemPowerState, NtInitiatePowerAction; SSDT indices reserved in §4
+- → XREF: `TODO-18-kernel-debugger-kd-protocol.md §13` — NtDebugActiveProcess, NtWaitForDebugEvent; SSDT indices reserved in §4
+- → XREF: `TODO-10-exception-dispatch-seh.md §10` — ProbeForRead/ProbeForWrite safe probing used by §12 and all NtXxx handlers
+- → XREF: `TODO-17-kernel-security-hardening.md` — SSDT integrity protection (§26) complements KASLR and SMEP/SMAP
+- → XREF: `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §8` — Win32k user-mode callback dispatch via §25 KeUserModeCallback; shadow SSDT stub registered in §4
+- → XREF: `TODO-06-irql-model-dpcs.md §11,§12` — KAPC object type and APC delivery mechanism; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume KeInitializeApc/KeInsertQueueApc
 
 ## Outcome
 
@@ -33,6 +37,9 @@
 - The existing 22 `SYS_*` calls are migrated to `Nt`-named equivalents at stable indices.
 - `NtCurrentTeb()` (`mov rax, gs:[0x30]`) and `NtCurrentPeb()` (`mov rax, gs:[0x60]`) return correct values per TODO-04.
 - All endpoint categories covered: file I/O, process/thread, memory, sync, registry, security/token, sections, timers, ALPC ports, debug, power, namespace, system info, atoms.
+- Per-process syscall filtering allows processes to restrict which syscalls their children can invoke — parity with Win11 SystemCallDisablePolicy and Linux seccomp-bpf.
+- `KeUserModeCallback()` enables the kernel to call user-mode functions (window procedures, hooks) and await their return via `NtCallbackReturn`.
+- SSDT pages are hardware write-protected after init — simpler and more secure than PatchGuard periodic checksums.
 
 ## Implementation Order
 
@@ -58,12 +65,18 @@
 | 💎  |  18   | Timer control syscalls                                         | §5, TODO-07 §7  |  [ ]   |
 | 💎  |  19   | ALPC / LPC port syscalls                                       | §5, TODO-12 §8  |  [ ]   |
 | 💎  |  20   | Exception and debug syscalls                                   | §5, TODO-10 §4  |  [ ]   |
-| 💎  |  21   | Power and system control                                       | §5, TODO-15     |  [ ]   |
+| 💎  |  21   | Power and system control                                       | §5, TODO-15 §12 |  [ ]   |
 | 💎  |  22   | Atom, locale, and miscellaneous                                | §5              |  [ ]   |
 | ⭐  |  23   | Syscall audit and tracing hook                                 | §4              |  [ ]   |
+| 💎  |  24   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7          |  [ ]   |
+| 💎  |  25   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-04 §5  |  [ ]   |
+| ⭐  |  26   | SSDT integrity protection (hardware write-protect)             | §4              |  [ ]   |
 
 > 💎 = parity — Windows NT and Linux both have equivalents for these categories.
-> ⭐ = exclusive — the ZwXxx privilege layer, the audit hook, and the IOSB/LastError unified path go beyond what Linux offers.
+> ⭐ = exclusive — the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
+
+> [!IMPORTANT]
+> **Self-contained execution model:** §1–§5 (NTSTATUS, SYSCALL/SYSRET, INT 0x2E, SSDT, migration) are fully self-contained — no external blockers. §9–§12, §22–§26 are also unblocked. Sections §6–§8, §13–§21 wire domain-specific syscalls through the SSDT and depend on their respective domain TODOs (Object Manager, Registry, SRM, ALPC, etc.). This is by design — this TODO is the **master registry** for all NT syscall endpoints. Domain TODOs implement the logic; this TODO provides the SSDT wiring. The unblocked core (§1–§5 + §9–§12 + §22–§26) delivers a fully functional SYSCALL/SYSRET fast path with 470 SSDT slots, NTSTATUS return values, and the audit/filter/integrity infrastructure. Domain-specific NtXxx wrappers activate as their domain TODOs complete.
 
 ---
 
@@ -150,6 +163,9 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
 
 ## 2. SYSCALL/SYSRET Fast Path
 
+> [!WARNING]
+> **High-risk section.** Writing wrong values to IA32_STAR, IA32_LSTAR, IA32_FMASK, or EFER will triple-fault on the next `syscall` instruction with no diagnostic output. A bug in the assembly entry point (`swapgs` sequence, stack switch, callee-save frame) corrupts every subsequent syscall. **Rollback:** If this breaks, revert the MSR writes and keep the existing `INT 0x80` handler — it remains registered until §3 completes. Test each MSR write individually before enabling EFER_SCE.
+
 Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSCALL`: CPU saves RIP→RCX, RFLAGS→R11; jumps to `IA32_LSTAR`. On `SYSRET`: restores RIP from RCX, RFLAGS from R11; returns to ring 3.
 
 - [ ] Use existing MSR constants from `include/kernel/msr.h`:
@@ -171,7 +187,7 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
 - [ ] Keep `INT 0x80` registered in IDT for the transition period; remove after §3 INT 0x2E is up
 - [ ] Commit: `"kernel: nt — SYSCALL/SYSRET fast path init"`
 
-**Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 1. `POST16(0xD200)` entry, `POST16(0xD201)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+**Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 1. `POST16(0xDA00)` entry, `POST16(0xDA01)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. (Note: 0xD200/0xD201 are taken by `gdt.c`.)
 
 ## 3. INT 0x2E Compatibility Path
 Windows NT's original software-interrupt syscall vector. Required for early ntdll and any code that does not use `SYSCALL`.
@@ -273,7 +289,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0040 | NtAlertThread                    | §7  | T05                    | [ ]  |
 | 0x0041 | NtAlertResumeThread              | §7  | T05                    | [ ]  |
 | 0x0042 | NtImpersonateThread              | §15 | T11 (SRM)              | [ ]  |
-| 0x0043 | NtQueueApcThread                 | §7  | T10 §4 (APC)           | [ ]  |
+| 0x0043 | NtQueueApcThread                 | §7  | T06 §11 (APC)          | [ ]  |
 | 0x0044 | NtYieldExecution                 | §5  | T05 (sys_yield exists) | [ ]  |
 | 0x0045 | NtCreateUserProcess              | §7  | T09 §4                 | [ ]  |
 | 0x0046 | NtTestAlert                      | §7  | T05                    | [ ]  |
@@ -784,8 +800,8 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                             | §   | Owner                | Done |
 |--------|--------------------------------------|-----|----------------------|------|
-| 0x0380 | NtQueueApcThreadEx                   | §7  | T10 §4 (APC)         | [ ]  |
-| 0x0381 | NtQueueApcThreadEx2                  | §7  | T10 §4               | [ ]  |
+| 0x0380 | NtQueueApcThreadEx                   | §7  | T06 §11 (APC)        | [ ]  |
+| 0x0381 | NtQueueApcThreadEx2                  | §7  | T06 §11              | [ ]  |
 | 0x0382 | NtSetIoCompletionEx                  | §13 | T08-mem §4           | [ ]  |
 | 0x0383 | NtRemoveIoCompletionEx               | §13 | T08-mem §4           | [ ]  |
 | 0x0384 | NtAlertThreadByThreadIdEx            | §8  | T07-mem §4           | [ ]  |
@@ -846,8 +862,6 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 > **Total: 470 service entries** across 30 functional ranges — full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 
-**Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init. across 30 functional ranges — full Windows 11 parity. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
-
 **Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.
 
 ## 5. Nt/Zw Naming and Existing Syscall Migration
@@ -870,7 +884,7 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 - [ ] Change all `sys_*` implementations to return `NTSTATUS`; convert error paths to `STATUS_*` codes
 - [ ] Commit: `"kernel: nt — migrate existing syscalls to NtXxx naming and NTSTATUS"`
 
-**Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression.
+**Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression. Verify on QEMU WHPX, TCG, VirtualBox, bare metal — this is the most dangerous migration; a return-type mismatch silently corrupts all user-mode callers.
 
 ## 6. NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile
 Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
@@ -1340,6 +1354,71 @@ Catch-all for global atom table, locale management, environment variables, and d
 
 **Test checkpoint:** Register pre-call audit hook; every syscall logs service number to ring buffer. Register post-call hook; verify NTSTATUS is captured. Pre-call hook returning `STATUS_ACCESS_DENIED` blocks the syscall. Unregister hook; verify zero overhead (no measurable latency increase).
 
+## 24. Per-Process Syscall Filtering
+Per-process syscall restrictions allow a process to lock down which system services its children (or itself) can invoke. Windows has `PROCESS_MITIGATION_SYSTEM_CALL_DISABLE_POLICY` (DisallowWin32kSystemCalls, DisallowFsctlSystemCalls) stored in EPROCESS MitigationFlags. Linux has seccomp-bpf with per-process BPF programs and constant-action bitmap caching. Impossible OS provides a first-class bitmap-based filter with optional BPF programs for argument inspection.
+
+- [ ] Define `SYSCALL_FILTER` struct in `include/kernel/nt/syscall_filter.h`:
+  - `uint64_t allow_bitmap[SSDT_MAX_ENTRIES / 64]` — one bit per SSDT index; 1 = allowed, 0 = blocked
+  - `uint64_t allow_shadow_bitmap[WIN32K_MAX_ENTRIES / 64]` — same for shadow SSDT (Win32k)
+  - `uint32_t flags` — `SYSCALL_FILTER_INHERIT = 1` (child inherits), `SYSCALL_FILTER_LOCKED = 2` (cannot relax)
+- [ ] Add `SYSCALL_FILTER *syscall_filter` field to `task_t` (NULL = no filter, all syscalls allowed)
+- [ ] Add `ProcessSystemCallFilterPolicy` info class to `NtSetInformationProcess` (§7, SSDT 0x0035):
+  - `DisallowWin32kSystemCalls`: clear all shadow SSDT bits in filter bitmap
+  - `DisallowFsctlSystemCalls`: clear `NtFsControlFile` (0x001A) bit, except pipe-related FSCTL codes
+  - `CustomBitmap`: install a caller-supplied allow/deny bitmap
+  - Filter can only be tightened (bits cleared), never relaxed once `SYSCALL_FILTER_LOCKED` is set
+- [ ] SSDT dispatcher integration: after index lookup, before handler call, check `current_task->syscall_filter`:
+  - If filter is NULL, skip (zero overhead — single pointer test)
+  - If filter exists, test bitmap bit for the service index; if blocked, return `STATUS_ACCESS_DENIED`
+- [ ] Filter inheritance: `NtCreateProcess` / `NtCreateUserProcess` copies parent's filter to child if `SYSCALL_FILTER_INHERIT` is set
+- [ ] Audit mode: `SYSCALL_FILTER_AUDIT = 4` — log blocked syscalls to klog instead of denying
+- [ ] Commit: `"kernel: nt — per-process syscall filter bitmap (seccomp/SystemCallDisable parity)"`
+
+**Test checkpoint:** Set filter blocking `NtWriteFile` on child process; child's `NtWriteFile` returns `STATUS_ACCESS_DENIED`. Parent's `NtWriteFile` still works. `DisallowWin32kSystemCalls` blocks shadow SSDT calls. Filter inheritance: grandchild also blocked. Locked filter cannot be relaxed. Audit mode logs but doesn't block.
+
+## 25. Kernel-to-User Mode Callback Dispatch
+Windows NT allows the kernel to call user-mode functions (window procedures, clipboard callbacks, hooks) via `KeUserModeCallback`. The kernel pushes a callback frame, returns to user mode at `KiUserCallbackDispatcher` in ntdll, which indexes the `PEB.KernelCallbackTable` array and calls the registered function. The user-mode function then calls `NtCallbackReturn` (SSDT 0x0300) to return the result to the kernel. This mechanism is critical for Win32k — every `DispatchMessage` / `SendMessage` uses it.
+
+- [ ] Add `PEB.KernelCallbackTable` field at offset 0x058 (Windows x64 layout) — pointer to an array of callback function pointers, populated by ntdll/user32 init
+- [ ] Implement `KeUserModeCallback(ApiNumber, InputBuffer, InputLength, OutputBuffer, OutputLength)` in `src/kernel/nt/callback.c`:
+  - Save current kernel stack frame (RSP, RBP, return address) in a per-thread callback stack
+  - Build a user-mode trap frame pointing to `KiUserCallbackDispatcher` in ntdll
+  - Pass `ApiNumber`, `InputBuffer`, `InputLength` on the user stack
+  - Return to user mode via `sysret` or `iretq`
+  - Block until user mode calls `NtCallbackReturn`
+- [ ] Wire `NtCallbackReturn` (SSDT 0x0300, currently in §22 catch-all):
+  - Copy `OutputBuffer` / `OutputLength` / `Status` back to the kernel-side `KeUserModeCallback` caller
+  - Restore kernel stack frame from the callback stack
+  - Resume kernel execution at the point after `KeUserModeCallback` returned
+- [ ] Per-thread callback depth counter: limit to `CALLBACK_MAX_DEPTH = 64` to prevent stack exhaustion
+- [ ] Re-entrant syscalls: user-mode callback code can itself call syscalls; the SSDT dispatcher must handle nested kernel entry correctly
+- [ ] Add `KiUserCallbackDispatcher` export address to ntdll (→ XREF: 12-user-platform-sdk/TODO-04-ntdll-user-runtime.md)
+- [ ] Commit: `"kernel: nt — KeUserModeCallback and kernel-to-user callback dispatch"`
+
+> [!NOTE]
+> This mechanism is consumed by Win32k (→ XREF: 08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §8) for `NtUserDispatchMessage` and `NtUserSendMessage`. Until this section is implemented, Win32k cannot call user-mode window procedures.
+
+**Test checkpoint:** Kernel calls `KeUserModeCallback(0, ...)` → user-mode callback fires → `NtCallbackReturn` returns result to kernel. Nested callback (callback calls syscall which calls another callback) succeeds up to depth 64. Depth 65 returns `STATUS_STACK_OVERFLOW`. Callback on terminated thread returns `STATUS_THREAD_IS_TERMINATING`.
+
+## 26. SSDT Integrity Protection
+
+> [!TIP]
+> **Impossible OS competitive edge.** Windows uses PatchGuard/KPP — a complex, opaque system that periodically checksums kernel structures and BSODs on tampering. It's a cat-and-mouse arms race with rootkits. Linux has no SSDT integrity protection at all (`sys_call_table` is `const` but not hardware-enforced). Impossible OS uses hardware write-protection: mark the SSDT pages as read-only via PTE after initialization. Any write attempt triggers a #PF that the kernel catches and escalates to `KeBugCheck(CRITICAL_STRUCTURE_CORRUPTION)`. Zero runtime overhead, no periodic polling, no timing-based detection — just hardware-enforced immutability.
+
+- [ ] After `ssdt_init()` completes and all 470 handlers are registered, mark SSDT pages as read-only via PTE manipulation (clear R/W bit, flush TLB for affected pages)
+
+> [!NOTE]
+> `vmm_protect()` is planned in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` but does not yet exist. Until it lands, use direct PTE writes: `pte &= ~PTE_WRITE; invlpg(addr)`. This is self-contained — no external dependency blocks §26.
+- [ ] Same for shadow SSDT pages after `win32k_init()` (→ XREF: 08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §1)
+- [ ] In the #PF handler: if faulting address is within SSDT page range AND fault was a write, call `KeBugCheck(0x00000109)` — `CRITICAL_STRUCTURE_CORRUPTION`
+- [ ] Provide `ssdt_register_late(index, handler)` for drivers that need to register handlers after init:
+  - Temporarily mark SSDT page writable, write the handler, re-mark read-only
+  - Requires `SeLoadDriverPrivilege`; logs to klog
+- [ ] Compile-time: declare SSDT arrays as `const` where possible; the runtime write-protect is the enforcement layer
+- [ ] Commit: `"kernel: nt — SSDT hardware write-protection (integrity enforcement)"`
+
+**Test checkpoint:** After init, writing to SSDT address triggers #PF → BugCheck. `ssdt_register_late` succeeds with correct privilege. `ssdt_register_late` without privilege returns `STATUS_PRIVILEGE_NOT_HELD`. SSDT dispatch still works normally after write-protect (read-only doesn't block reads).
+
 ---
 
 ## OS Comparison
@@ -1375,10 +1454,16 @@ Catch-all for global atom table, locale management, environment variables, and d
 | ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ⬜ §12 — explicit, public   |
 | ⭐ | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API    | ⬜ §4+§12 — numbered+public |
 | ⭐ | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex    | ⬜ §23 — first-class API    |
+| 💎 | Per-process syscall filter | ✅ SystemCallDisablePolicy  | ✅ seccomp-bpf + Landlock  | ⬜ §24 — bitmap + BPF       |
+| 💎 | Kernel→user callbacks      | ✅ KeUserModeCallback       | ⚠️ Signals only            | ⬜ §25                      |
+| ⭐ | SSDT integrity protection  | ⚠️ PatchGuard (periodic)    | ❌ No protection           | ⬜ §26 — HW write-protect   |
 
 > **After §1–§22:** Impossible OS has complete NT native API coverage — 470 syscall endpoints across file I/O, process/thread, memory, sync, registry, security, sections, timers, ALPC, debug, power, namespace, atoms, and system info. Real `ntdll.dll` stubs can call into the kernel.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract — Windows keeps it internal/undocumented and Linux has no equivalent.
 > **§23** provides first-class syscall auditing — no ETW complexity, no BPF programs, just a kernel callback with near-zero idle overhead.
+> **§24** closes the per-process syscall filtering parity gap — both Win11 and Linux restrict per-process syscall access; Impossible OS uses a fast bitmap with optional BPF programs.
+> **§25** enables kernel→user callbacks required by Win32k for window procedure dispatch — without it, `SendMessage` and `DispatchMessage` cannot work.
+> **§26** provides hardware-enforced SSDT immutability — simpler and more secure than PatchGuard's periodic checksums.
 
 ## Unit Tests
 
@@ -1405,8 +1490,8 @@ Catch-all for global atom table, locale management, environment variables, and d
     - `NtQueryInformationFile(FileBasicInformation)` returns non-zero creation time
     - `NtQueryAttributesFile` returns file attributes without opening
   - **Sync (§8):**
-    - `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip
-    - `NtWaitForMultipleObjects(WaitAny)` returns correct index when one object signalled
+    - `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` returns `STATUS_WAIT_0`
+    - `NtWaitForMultipleObjects(WaitAny)` returns `STATUS_WAIT_0 + 1` when second object signalled
   - **Memory (§9):**
     - `NtAllocateVirtualMemory` with `MEM_COMMIT` returns a usable address; write/read round-trip succeeds
     - `NtProtectVirtualMemory` changes RW→RO; old protect returned correctly
@@ -1424,6 +1509,18 @@ Catch-all for global atom table, locale management, environment variables, and d
   - **Audit hook (§23):**
     - Register pre-call hook; verify it fires on `NtClose`
     - Unregister hook; verify no more callbacks
+  - **Syscall filter (§24):**
+    - Set filter blocking `NtWriteFile` on child; child's `NtWriteFile` returns `STATUS_ACCESS_DENIED`
+    - Parent's `NtWriteFile` still works (filter is per-process)
+    - `DisallowWin32kSystemCalls` blocks shadow SSDT calls
+    - Locked filter (`SYSCALL_FILTER_LOCKED`) cannot be relaxed
+  - **Kernel→user callback (§25):**
+    - `KeUserModeCallback(0, ...)` fires user-mode callback; `NtCallbackReturn` returns result
+    - Nested callback (depth 2) succeeds; depth > 64 returns `STATUS_STACK_OVERFLOW`
+  - **SSDT integrity (§26):**
+    - Write to SSDT page after init triggers BugCheck
+    - `ssdt_register_late` with correct privilege succeeds
+    - `ssdt_register_late` without privilege returns `STATUS_PRIVILEGE_NOT_HELD`
 - [ ] Register in `test_runner_init()`: `test_register_nt_api()`
 - [ ] Commit: `"test: add native API layer test suite"`
 
@@ -1450,5 +1547,8 @@ Catch-all for global atom table, locale management, environment variables, and d
 - [ ] IOSB populated correctly: `Status = STATUS_SUCCESS`, `Information = bytes_read` after `NtReadFile`
 - [ ] CPL=0 `ZwXxx` call skips user-buffer probe; CPL=3 call through same index validates pointer
 - [ ] Syscall audit hook captures service numbers for all calls during test run
+- [ ] Per-process syscall filter blocks `NtWriteFile` for child process; parent unaffected
+- [ ] `KeUserModeCallback` → user-mode callback → `NtCallbackReturn` round-trip succeeds
+- [ ] SSDT page write after init triggers `CRITICAL_STRUCTURE_CORRUPTION` BugCheck
 - [ ] All 4 platforms: QEMU WHPX, QEMU TCG, VirtualBox, bare metal
 - [ ] Commit: `"kernel: nt — native API layer complete"`

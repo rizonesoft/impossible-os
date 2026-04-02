@@ -122,11 +122,11 @@ static void test_rtlpp_content(void)
 
 void test_register_peb_teb(void)
 {
-    test_suite_register("PEB/TEB: TEB offsets", test_teb_offsets);
-    test_suite_register("PEB/TEB: PEB offsets", test_peb_offsets);
-    test_suite_register("PEB/TEB: OS version", test_peb_os_version);
-    test_suite_register("PEB/TEB: populated", test_peb_populated);
-    test_suite_register("PEB/TEB: RTLPP content", test_rtlpp_content);
+    test_suite_register_cat("PEB/TEB: TEB offsets", test_teb_offsets, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: PEB offsets", test_peb_offsets, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: OS version", test_peb_os_version, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: populated", test_peb_populated, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: RTLPP content", test_rtlpp_content, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

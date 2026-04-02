@@ -3,7 +3,7 @@
 > **Goal:** A complete, automated kernel test system that catches regressions before they ship. Tests run automatically on every commit (GitHub Actions), on every local build (optional), and on-demand via `bash scripts/test.sh`. The test framework covers unit tests (PMM, heap, OB, VFS, scheduler), integration tests (boot-to-desktop), and driver tests (USB, NVMe, filesystem). Results are visible in serial output, CI job summaries, and developer notifications. No manual "boot and check serial" — the system tells you pass/fail.
 
 > [!IMPORTANT]
-> **Current state (2026-04-02):** Test framework is fully wired — `-DKERNEL_TESTS` always on, 26 suites (59 assertions) covering PMM, heap, VFS, sched, registry, boot init, klog, OB, and security. `make test` / `scripts/test.sh` builds, boots QEMU headless, parses pass/fail. Boot tests run with `debug=1`, unit-only with `test=1`. CI builds but does not run QEMU (removed — unreliable under nested virt).
+> **Current state (2026-04-02):** Test framework fully wired with category-based filtering and quiet mode. 50+ suites across 9 categories (MM, FS, Sched, OB, Security, IPC, Boot, ABI, Storage). `test_suite=` and `test_quiet=` in boot.conf enable per-category runs and summary-only output. `make test-mm` / `make test-ob` / etc. for quick feedback. `scripts/debug/` has 11 `.bat` files for Windows runners. Boot noise suppressed during `test=1` mode. Enhanced macros: `TEST_ASSERT_EQ`, `TEST_ASSERT_NEQ`, `TEST_ASSERT_NULL`, `TEST_ASSERT_NOT_NULL`, `TEST_SKIP`.
 
 ---
 
@@ -27,8 +27,12 @@
 
 - `make test` builds, boots QEMU headless with `test=1`, runs all kernel unit tests, parses serial for pass/fail, exits with code 0 or 1.
 - `bash scripts/test.sh` does the same with colored output and KVM auto-detection.
-- `make test SUITE=ob` filters to specific suites.
-- New test suites are easy to add: one `test_register_*()` call in `test_runner_init()`.
+- `make test-mm` / `make test-ob` / etc. filter to specific categories via `test_suite=` in boot.conf.
+- `make test QUIET=1` suppresses PASS lines — shows only FAIL + summary.
+- `scripts/debug/run-mm-tests.bat` etc. — 11 per-category `.bat` files for Windows test runners.
+- New test suites: `test_suite_register_cat("name", fn, TEST_CAT_XX)` in `test_register_*()`.
+- Enhanced asserts: `TEST_ASSERT_EQ(a, b, msg)` prints expected vs actual on failure.
+- `TEST_SKIP(msg)` for hardware-dependent tests (skips don't count as pass or fail).
 - Test results visible in serial log and `build/test.log`.
 
 ---

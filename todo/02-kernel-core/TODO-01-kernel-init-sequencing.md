@@ -20,6 +20,8 @@
 - → XREF: `04-drivers-hardware/INDEX.md` — all driver `_init()` functions must accept and return `boot_result_t`
 - → XREF: `00-infrastructure/TODO-02-developer-tooling-stack.md` — headless QEMU serial log is the verification path
 - → XREF: `TODO-06-irql-model-dpcs.md §4` — DPC subsystem init belongs in Phase 1, after timer; §4 is the DPC Object Type and Per-CPU Queue init
+- → XREF: `01-boot-platform/TODO-18-boot-watchdog.md` — watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
+- → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §4` — TPM2 `PCR_Extend` for measured boot; extends the PCR event log parsed in Phase 0
 
 ## Outcome
 
@@ -30,25 +32,30 @@
 - No `HV_BAR` pixel-write calls anywhere in the boot path.
 - Boot tests run only when `debug=1`; release boots are silent on that path.
 - A forced VFS failure produces a degraded-boot screen, not a BSOD or hang.
+- Non-critical subsystems (NIC, DHCP, VBox mouse) defer init to after desktop appears, reducing time-to-desktop.
+- Boot performance regression detection compares timing between runs and flags slowdowns.
+- Independent subsystems within a phase can init concurrently on SMP systems.
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                   | Depends On | Status |
-| --- | :---: | ----------------------------- | ---------- | :----: |
-| 💎  |   1   | Boot init infrastructure      | —          |  [x]   |
-| 💎  |   2   | Phase 0 — critical init       | §1         |  [x]   |
-| 💎  |   3   | Phase 1 — platform services   | §2         |  [/]   |
-| 💎  |   4   | Phase 2 — system services     | §3         |  [/]   |
-| 💎  |   5   | Phase 3 — user platform       | §4         |  [x]   |
-| 💎  |   6   | Dependency gates              | §1–§5      |  [x]   |
-| 💎  |   7   | Failure policy                | §6         |  [x]   |
-| 💎  |   8   | Code cleanup                  | §2–§5      |  [/]   |
-| ⭐  |   9   | Degraded-boot recovery screen | §7         |  [x]   |
-| ⭐  |  10   | POST code + UEFI variable log | §1         |  [x]   |
+| ⭐  | Order | Deliverable                                | Depends On | Status |
+| --- | :---: | ------------------------------------------ | ---------- | :----: |
+| 💎  |   1   | Boot init infrastructure                   | —          |  [x]   |
+| 💎  |   2   | Phase 0 — critical init                    | §1         |  [x]   |
+| 💎  |   3   | Phase 1 — platform services                | §2         |  [/]   |
+| 💎  |   4   | Phase 2 — system services                  | §3         |  [/]   |
+| 💎  |   5   | Phase 3 — user platform                    | §4         |  [x]   |
+| 💎  |   6   | Dependency gates                           | §1–§5      |  [x]   |
+| 💎  |   7   | Failure policy                             | §6         |  [x]   |
+| 💎  |   8   | Code cleanup                               | §2–§5      |  [/]   |
+| ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [x]   |
+| ⭐  |  10   | POST code + UEFI variable log              | §1         |  [x]   |
+| 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [ ]   |
+| ⭐  |  12   | Boot performance regression detection      | §10        |  [ ]   |
+| ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [ ]   |
 
 > 💎 = parity — Windows NT and Linux both have formal init phase models; Impossible OS must match them.
-> ⭐ = exclusive — degraded-boot recovery UI and UEFI NVRAM POST log are not present in either competitor.
-
+> ⭐ = exclusive — degraded-boot recovery UI, UEFI NVRAM POST log, boot perf regression detection, and SMP parallel init.
 
 ## 1. Boot Init Infrastructure
 New header and source file providing the result type, readiness oracle, and progress tracker used by every phase.
@@ -62,7 +69,7 @@ New header and source file providing the result type, readiness oracle, and prog
 - [x] Implement `void kernel_subsystem_set_ready(kernel_subsys_t subsys, bool ok)`
 - [x] Implement `void kernel_subsystem_dump(void)` — prints all subsystem states via `klog`
 - [x] Define POST code constants for every major init step (`POSTCODE_PMM_INIT = 0x20`, etc.)
-- [x] Implement `void boot_progress(uint8_t phase, const char *step, uint8_t postcode)` — writes `[PHASEn] step` to serial and records timestamp in `boot_timing.c`
+- [x] Implement `void boot_progress(uint8_t phase, const char *step, uint16_t postcode)` — writes `[PHASEn] step` to serial and records timestamp in `boot_timing.c`
 - [x] Define `BOOT_REQUIRE(subsys)` macro — if `!kernel_subsystem_ready(subsys)`, logs the missing prerequisite and returns `BOOT_FATAL`
 - [x] Define `BOOT_STEP(subsys, fn)` macro — calls `fn()`, sets readiness from result, calls `boot_progress()`
 - [x] Expose `boot_phase0()`, `boot_phase1()`, `boot_phase2()`, `boot_phase3()` in `main_internal.h`
@@ -142,7 +149,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [x] `dhcp_discover()` — fire-and-forget; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS) for lease file
 - [x] `hw_dump()` — log full hardware summary after all drivers init
 - [x] `smp_start_aps()` — bringup APs; BOOT_DEGRADED if any AP fails; BOOT_REQUIRE(SUBSYS_HEAP) + BOOT_REQUIRE(SUBSYS_REGISTRY); moved from Phase 1
-- [ ] Consolidate all ACPI power management (`acpi_power_init`, `_S5` parse) into Phase 2 — deferred (ACPI power not yet implemented)
+- [ ] Consolidate all ACPI power management (`acpi_power_init`, `_S5` parse) into Phase 2 — moved to [TODO-15 §1](./TODO-15-power-management.md) (ACPI sleep object parsing)
 - [x] Remove `HV_BAR` macro from `boot_storage.c` if present — already removed in prior commit
 - [x] Add `boot_progress(2, "step-name", postcode)` at each step
 
@@ -234,25 +241,92 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 - [x] Log prior POST code to serial at Phase 0 start: `[POST] Last boot code: 0xNN` with status interpretation
 - [x] Add `boot_progress(10, "post-code-log", 0x11)` call after `uefi_runtime_init()` in Phase 0
 
+## 11. Deferred Init for Non-Critical Subsystems
+Move non-critical subsystem init out of the blocking boot path so the desktop appears faster. Win11 defers non-critical services until after Explorer starts; Linux has `deferred_initcall()` for post-boot init.
+
+**Files:** `src/kernel/main/boot_storage.c`, `src/kernel/main/boot_desktop.c`, `include/kernel/boot_init.h`
+
+- [ ] Define `BOOT_DEFERRED` return code in `boot_result_t` — subsystem skipped, will init later
+- [ ] Add `g_deferred_inits[]` array in `boot_init.c` — stores function pointers + names for deferred subsystems (max 16 slots)
+- [ ] Add `boot_defer(const char *name, boot_result_t (*fn)(void))` — registers a subsystem for post-desktop init
+- [ ] Move `rtl8139_init()` + `net_init()` + `dhcp_discover()` from Phase 2 blocking path to deferred — network is not needed for desktop; wrap in `static boot_result_t deferred_net_init(void)` since originals return `int`/`void`
+- [ ] Move `virtio_input_init()` + `vbox_mouse_init()` from Phase 2 blocking path to deferred — PS/2 mouse is sufficient for initial desktop; wrap in `static boot_result_t deferred_input_init(void)` since originals return `int`
+- [ ] Add `boot_run_deferred()` call in Phase 3 after `desktop_init()` but before `compositor_run()` — runs all deferred inits sequentially
+- [ ] Each deferred init logs `[DEFERRED] name +NNNms` via `boot_progress()` with POST code range `POST16(0xD000)`–`POST16(0xD00F)` (16-bit debug range, confirmed free)
+- [ ] If a deferred init fails, log `klog(WARN)` and set `SUBSYS_X` not-ready — no halt, no BSOD
+- [ ] Add `deferred=0` boot.conf option to disable deferral (all subsystems init in-phase, old behavior) for debugging
+- [ ] Commit: `"kernel: deferred init — non-critical subsystems after desktop"`
+
+**Test checkpoint:** Boot with default config → desktop appears → deferred inits run → `[DEFERRED]` lines appear in serial log after `[PHASE3] desktop_init`. Boot with `deferred=0` → no `[DEFERRED]` lines, all subsystems init in-phase. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+## 12. Boot Performance Regression Detection
+Compare `boot_timing` data across reboots to detect init regressions. Win11 uses ETW boot traces with XPerf analysis; Linux uses `systemd-analyze blame` + `bootchart`. Impossible OS stores structured timing per-boot and compares automatically.
+
+> [!TIP]
+> Neither Win11 nor Linux alerts automatically when a subsystem gets slower between boots. Impossible OS detects regressions at boot time and logs a warning — no external tooling needed.
+
+**Files:** `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`
+
+- [ ] Extend `boot_timing.c` to store per-subsystem elapsed time in a `boot_perf_record_t` struct array (subsystem name, phase, elapsed_us)
+- [ ] After Phase 3 completes, write the `boot_perf_record_t` array to UEFI NVRAM variable `ImpossibleBootPerf` (NV+BS+RT) — survives reboot
+- [ ] On next boot, read `ImpossibleBootPerf` from NVRAM into `g_prev_boot_perf[]`
+- [ ] In `boot_timing_report()`, compare each subsystem's current elapsed time against previous: if >200% of previous OR >500ms regression, log `[PERF] WARNING: <subsys> init regressed: <prev>ms → <cur>ms`
+- [ ] Add `boot_perf_dump()` — prints all subsystem timings as a sorted table to serial (called from `boot_timing_report()`)
+- [ ] Add `bootperf` shell command — reads `ImpossibleBootPerf` NVRAM variable and displays historical comparison
+- [ ] Add debug POST codes: `POST16(0xDC00)` entry, `POST16(0xDC01)` NVRAM read, `POST16(0xDC02)` comparison done, `POST16(0xDC03)` NVRAM write — range `0xDCxx` confirmed free
+- [ ] Commit: `"kernel: boot performance regression detection via UEFI NVRAM"`
+
+**Test checkpoint:** Boot twice → second boot serial log shows `[PERF]` comparison lines. Inject a `sleep_ms(1000)` in a subsystem init → second boot shows `[PERF] WARNING` for that subsystem. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. On bare metal, verify NVRAM read/write works with real UEFI firmware.
+
+> [!NOTE]
+> UEFI NVRAM has limited write endurance (~100K cycles). `ImpossibleBootPerf` is written once per boot (end of Phase 3). Combined with `ImpossiblePOST` (2 writes/boot), total is 3 NVRAM writes per boot — acceptable for flash endurance.
+
+## 13. Async Subsystem Init (SMP Parallel)
+Allow independent subsystems within a phase to initialize concurrently on different CPUs. Win11 uses parallel DLL loading (1–16 worker threads). Linux has `async_schedule()` for device probing. Impossible OS can parallelize Phase 2, where many subsystems (storage, NIC, USB) have no mutual dependencies.
+
+> [!TIP]
+> Win11 parallelizes DLL loading but not kernel init. Linux parallelizes device probing but not initcalls. Impossible OS can parallelize subsystem init at the kernel level with correct dependency tracking — designed for SMP from day one.
+
+**Files:** `src/kernel/main/boot_init.c`, `include/kernel/boot_init.h`
+
+- [ ] BOOT_REQUIRE(SUBSYS_SMP) — APs must be online before async dispatch; `smp_start_aps()` runs in Phase 2 §4
+- [ ] Add `BOOT_STEP_ASYNC(subsys, fn)` macro — spawns `fn` on an idle AP via a lightweight kernel thread (no scheduler needed yet, direct AP dispatch)
+- [ ] Add `boot_async_barrier()` — BSP spins until all async init threads complete, collecting their `boot_result_t` values
+- [ ] Identify Phase 2 parallelizable groups:
+  - Group A (storage): `ata_init()`, `virtio_blk_init()`, `ahci_init()` — independent of each other, all depend on PCI
+  - Group B (input): `xhci_init()`, `virtio_input_init()`, `vbox_mouse_init()` — independent of each other
+  - Group C (network): `rtl8139_init()`, `net_init()` — sequential within group, parallel with A/B
+- [ ] Implement `boot_async_group(const char *name, boot_step_t *steps, int count)` — dispatches `count` init functions across available APs
+- [ ] Add `async_init=1` boot.conf option — disabled by default; enable after stability testing. Rollback: if parallel init causes crashes on any platform, revert to sequential by removing `async_init` from boot.conf — no code change needed
+- [ ] Add per-AP init error isolation: if an AP faults during async init, capture the fault on that AP and report BOOT_FATAL for just that subsystem, don't crash BSP
+- [ ] Log `[ASYNC] <subsys> started on CPU<n>` and `[ASYNC] <subsys> completed in <N>ms` for each parallel init
+- [ ] Add debug POST codes: `POST16(0xDD00)` async dispatch start, `POST16(0xDD01)` per-AP entry, `POST16(0xDD02)` barrier wait, `POST16(0xDD03)` all complete — range `0xDDxx` confirmed free
+- [ ] Commit: `"kernel: async subsystem init — SMP parallel Phase 2"`
+
+**Test checkpoint:** Boot with `async_init=1` → storage/input/network init on different CPUs → serial log shows `[ASYNC]` entries with different CPU numbers. Total Phase 2 time decreases vs sequential. Boot with `async_init=0` → sequential behavior unchanged. Verify on QEMU WHPX (2+ vCPUs), TCG, VirtualBox, bare metal. Bare metal is critical — per-AP fault isolation must work on real hardware.
+
 ## OS Comparison
 
-| ⭐ | Feature                | 🪟 Win11                 | 🐧 Linux                | 🚀 Impossible OS                |
-|----|------------------------|-----------------------|----------------------|------------------------------|
-| 💎 | Formal phase model     | ✅ Phase 0/1          | ✅ initcall levels   | ✅ §2-§5 — 4 phases        |
-| 💎 | Interrupts-off phase   | ✅ Phase 0            | ✅ early start_kernel | ✅ §2 — boot_phase0       |
-| 💎 | Dependency ordering    | ✅ Boot load groups   | ✅ initcall deps     | ✅ §6 — gates done         |
-| 💎 | Typed init results     | ✅ NTSTATUS           | ✅ initcall_t        | ⚠️ §1 — boot_result_t      |
-| 💎 | Halt on critical fail  | ✅ Bugcheck           | ✅ panic()           | ✅ §7 — boot_halt          |
-| 💎 | Degraded boot          | ✅ Safe mode          | ✅ Emergency shell   | ✅ §7 — BOOT_DEGRADED      |
-| 💎 | Boot serial log        | ✅ DebugPrint/ETW     | ✅ early_printk      | ✅ §2 — [PHASE0] markers   |
-| 💎 | Boot config gating     | ✅ Registry           | ✅ cmdline           | ✅ §2 — boot.conf          |
-| 💎 | Tests separated        | ✅ Separate env       | ✅ initcall_debug    | ✅ §5 — debug=1 gate       |
-| ⭐ | Recovery UI at boot    | ❌ Separate safe mode | ❌ Text-only shell   | ✅ §9 — graphical recovery |
-| ⭐ | POST to UEFI NVRAM     | ❌ Firmware-only      | ❌ Not implemented   | ✅ §10 — ImpossiblePOST    |
-| ⭐ | Readiness oracle API   | ⚠️ Private internal   | ⚠️ system_state only | ✅ §1 — public API         |
+| ⭐ | Feature              | Win11               | Linux                 | Impossible OS             |
+|----|----------------------|---------------------|-----------------------|---------------------------|
+| 💎 | Formal phase model   | ✅ Phase 0/1       | ✅ initcall levels    | ✅ §2–§5 4 phases        |
+| 💎 | Interrupts-off phase | ✅ Phase 0         | ✅ early start_kernel | ✅ §2 boot_phase0        |
+| 💎 | Dependency ordering  | ✅ Boot load groups| ✅ initcall deps      | ✅ §6 gates done         |
+| 💎 | Typed init results   | ✅ NTSTATUS        | ✅ initcall_t         | ⚠️ §1 boot_result_t      |
+| 💎 | Halt on critical     | ✅ Bugcheck        | ✅ panic()            | ✅ §7 boot_halt          |
+| 💎 | Degraded boot        | ✅ Safe mode       | ✅ Emergency shell    | ✅ §7 BOOT_DEGRADED      |
+| 💎 | Boot serial log      | ✅ DebugPrint/ETW  | ✅ early_printk       | ✅ §2 [PHASE0] markers   |
+| 💎 | Boot config gating   | ✅ Registry        | ✅ cmdline            | ✅ §2 boot.conf          |
+| 💎 | Tests separated      | ✅ Separate env    | ✅ initcall_debug     | ✅ §5 debug=1 gate       |
+| ⭐ | Recovery UI at boot  | ❌ Separate WinRE  | ❌ Text-only shell    | ✅ §9 graphical recovery |
+| ⭐ | POST to UEFI NVRAM   | ❌ Firmware-only   | ❌ Not implemented    | ✅ §10 ImpossiblePOST    |
+| ⭐ | Readiness oracle API | ⚠️ Private internal| ⚠️ system_state only  | ✅ §1 public API         |
+| 💎 | Deferred init        | ✅ Delayed services| ✅ deferred_initcall  | ⬜ §11 BOOT_DEFERRED     |
+| ⭐ | Boot perf regression | ❌ Manual ETW      | ❌ Manual bootchart   | ⬜ §12 auto NVRAM diff   |
+| ⭐ | Parallel kernel init | ⚠️ DLL load only   | ⚠️ async_schedule     | ⬜ §13 SMP phase init    |
 
 > After parity items, Impossible OS matches Windows NT and Linux on phased init.
-> Exclusive: graphical recovery UI, UEFI NVRAM POST codes, public readiness oracle.
+> Exclusive: graphical recovery UI, UEFI NVRAM POST codes, public readiness oracle, auto boot perf regression, SMP parallel init.
 
 ## Unit Tests
 
@@ -270,6 +344,16 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
   - POST code constants are non-zero and unique across phases
 - [x] Register in `test_runner_init()`: `test_register_boot_init()`
 - [ ] Commit: `"test: add boot-init sequencing test suite"`
+- [ ] Add deferred init tests (§11):
+  - `boot_defer("test_subsys", test_fn)` registers successfully and `g_deferred_inits` count increases
+  - `boot_run_deferred()` calls all registered functions and clears the array
+  - `boot_defer()` with 17th entry returns error (max 16 slots)
+  - Deferred function returning `BOOT_FATAL` does NOT halt — only logs warning
+- [ ] Add boot perf regression tests (§12):
+  - `boot_perf_record_t` stores subsystem name, phase, and elapsed_us correctly
+  - `boot_perf_dump()` does not crash with zero recorded subsystems
+  - Regression detection: inject prev=100ms, cur=250ms → `[PERF] WARNING` logged
+  - No regression: inject prev=100ms, cur=150ms → no warning logged
 
 > **Done:** 8 suites, 16 assertions — registered in `test_runner_init()` (2026-04-01). Also fixed NULL crash in `boot_progress()` when `step` is NULL.
 

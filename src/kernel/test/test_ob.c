@@ -178,13 +178,13 @@ static void test_ob_query_directory(void)
 
 void test_register_ob(void)
 {
-    test_suite_register("OB: alloc+header roundtrip", test_ob_alloc_header_roundtrip);
-    test_suite_register("OB: refcount lifecycle", test_ob_refcount_lifecycle);
-    test_suite_register("OB: handle table", test_ob_handle_table);
-    test_suite_register("OB: namespace lookup", test_ob_namespace_lookup);
-    test_suite_register("OB: duplicate handle", test_ob_duplicate_handle);
-    test_suite_register("OB: handle inherit", test_ob_handle_inherit);
-    test_suite_register("OB: query directory", test_ob_query_directory);
+    test_suite_register_cat("OB: alloc+header roundtrip", test_ob_alloc_header_roundtrip, TEST_CAT_OB);
+    test_suite_register_cat("OB: refcount lifecycle", test_ob_refcount_lifecycle, TEST_CAT_OB);
+    test_suite_register_cat("OB: handle table", test_ob_handle_table, TEST_CAT_OB);
+    test_suite_register_cat("OB: namespace lookup", test_ob_namespace_lookup, TEST_CAT_OB);
+    test_suite_register_cat("OB: duplicate handle", test_ob_duplicate_handle, TEST_CAT_OB);
+    test_suite_register_cat("OB: handle inherit", test_ob_handle_inherit, TEST_CAT_OB);
+    test_suite_register_cat("OB: query directory", test_ob_query_directory, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */

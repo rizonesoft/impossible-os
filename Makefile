@@ -108,7 +108,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build assets kernel userland uefi-boot system-disk
@@ -416,10 +416,31 @@ run-test: all
 
 ## test: Build, boot QEMU headless, run unit tests, report pass/fail, exit code
 ##   Usage: make test                  # all suites
-##          make test SUITE=pmm        # only PMM suites
+##          make test SUITE=mm         # only Memory Management suites
+##          make test QUIET=1          # summary only
 ##          make test TIMEOUT=120      # longer timeout
 test: all
-	@bash scripts/test.sh $(if $(SUITE),SUITE=$(SUITE))
+	@bash scripts/test.sh $(if $(SUITE),SUITE=$(SUITE)) $(if $(QUIET),QUIET=$(QUIET))
+
+## Per-category test targets
+test-mm: all
+	@bash scripts/test.sh SUITE=mm
+test-fs: all
+	@bash scripts/test.sh SUITE=fs
+test-ob: all
+	@bash scripts/test.sh SUITE=ob
+test-security: all
+	@bash scripts/test.sh SUITE=security
+test-ipc: all
+	@bash scripts/test.sh SUITE=ipc
+test-sched: all
+	@bash scripts/test.sh SUITE=sched
+test-boot: all
+	@bash scripts/test.sh SUITE=boot
+test-abi: all
+	@bash scripts/test.sh SUITE=abi
+test-storage: all
+	@bash scripts/test.sh SUITE=storage
 
 ## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
 ## test-usb-img: Create a 64 MiB FAT32 test USB disk image
@@ -640,7 +661,7 @@ vbox: all
 	@qemu-img convert -f raw -O vdi $(SYSTEM_DISK) $(BUILD_DIR)/system-disk.vdi
 	@echo "VDI created: $(BUILD_DIR)/system-disk.vdi"
 	@echo ""
-	@echo "To launch in VirtualBox, run:  scripts/vm/run-vbox.bat"
+	@echo "To launch in VirtualBox, run:  scripts/machines/run-vbox.bat"
 
 ## run-test: Launch QEMU with a secondary test disk on AHCI port 1
 ##   Usage: make run-test DISK=fat32       (loads build/test-disks/fat32.img)

@@ -35,25 +35,27 @@ if [ "${1:-}" = "reset" ]; then
     exit 0
 fi
 
-if [ $# -lt 2 ]; then
-    echo "Usage: $0 <key> <value>   or   $0 reset"
+if [ $# -lt 2 ] || [ $(( $# % 2 )) -ne 0 ]; then
+    echo "Usage: $0 <key> <value> [<key2> <value2> ...]   or   $0 reset"
     exit 1
 fi
 
-KEY="$1"
-VALUE="$2"
-
-# Copy original, patch the key
+# Copy original, patch all key-value pairs
 cp "$BOOT_CONF" "$TEMP_CONF"
-if grep -q "^${KEY}=" "$TEMP_CONF"; then
-    sed -i "s/^${KEY}=.*/${KEY}=${VALUE}/" "$TEMP_CONF"
-else
-    # Key doesn't exist — append it
-    echo "${KEY}=${VALUE}" >> "$TEMP_CONF"
-fi
+while [ $# -ge 2 ]; do
+    KEY="$1"
+    VALUE="$2"
+    shift 2
+
+    if grep -q "^${KEY}=" "$TEMP_CONF"; then
+        sed -i "s/^${KEY}=.*/${KEY}=${VALUE}/" "$TEMP_CONF"
+    else
+        echo "${KEY}=${VALUE}" >> "$TEMP_CONF"
+    fi
+
+    echo "[PATCH] boot.conf: ${KEY}=${VALUE}"
+done
 
 # Write patched config back into disk image EFI partition
 mcopy -o -i "${DISK}@@${EFI_OFFSET}" "$TEMP_CONF" ::/EFI/ImpossibleOS/boot.conf
 rm -f "$TEMP_CONF"
-
-echo "[PATCH] boot.conf: ${KEY}=${VALUE}"

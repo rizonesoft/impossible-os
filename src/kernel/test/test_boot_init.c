@@ -120,14 +120,14 @@ static void test_post_codes_nonzero_and_unique(void)
 
 void test_register_boot_init(void)
 {
-    test_suite_register("Boot init: result values", test_boot_result_values);
-    test_suite_register("Boot init: set_ready true", test_subsys_set_ready_true);
-    test_suite_register("Boot init: set_ready false", test_subsys_set_ready_false);
-    test_suite_register("Boot init: out of range", test_subsys_out_of_range);
-    test_suite_register("Boot init: REQUIRE fails", test_boot_require_fails_when_not_ready);
-    test_suite_register("Boot init: REQUIRE passes", test_boot_require_passes_when_ready);
-    test_suite_register("Boot init: progress null", test_boot_progress_null_step);
-    test_suite_register("Boot init: POST codes", test_post_codes_nonzero_and_unique);
+    test_suite_register_cat("Boot init: result values", test_boot_result_values, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: set_ready true", test_subsys_set_ready_true, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: set_ready false", test_subsys_set_ready_false, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: out of range", test_subsys_out_of_range, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: REQUIRE fails", test_boot_require_fails_when_not_ready, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: REQUIRE passes", test_boot_require_passes_when_ready, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: progress null", test_boot_progress_null_step, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: POST codes", test_post_codes_nonzero_and_unique, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

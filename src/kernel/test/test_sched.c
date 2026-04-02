@@ -29,7 +29,7 @@ static void test_sched_create_thread(void)
 /* Registration */
 void test_register_sched(void)
 {
-    test_suite_register("Sched: create thread", test_sched_create_thread);
+    test_suite_register_cat("Sched: create thread", test_sched_create_thread, TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */

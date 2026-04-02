@@ -4,7 +4,10 @@
 #
 # Usage:
 #   bash scripts/test.sh              # run all test suites
-#   bash scripts/test.sh SUITE=pmm    # run only suites matching "pmm"
+#   bash scripts/test.sh SUITE=mm     # run only Memory Management suites
+#   bash scripts/test.sh SUITE=ob     # run only Object Manager suites
+#   bash scripts/test.sh QUIET=1      # summary only (suppress PASS lines)
+#   bash scripts/test.sh SUITE=fs QUIET=1  # combine both
 #
 # Exit codes:
 #   0 = all tests passed
@@ -31,11 +34,15 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-# Parse optional SUITE= argument
+# Parse optional arguments
 SUITE_FILTER=""
+SUITE_CATEGORY=""
+QUIET_MODE=0
 for arg in "$@"; do
     case "$arg" in
-        SUITE=*) SUITE_FILTER="${arg#SUITE=}" ;;
+        SUITE=*)  SUITE_FILTER="${arg#SUITE=}"
+                  SUITE_CATEGORY="$SUITE_FILTER" ;;
+        QUIET=1)  QUIET_MODE=1 ;;
     esac
 done
 
@@ -48,7 +55,14 @@ fi
 echo -e "${GREEN}[TEST]${RESET} Build OK"
 
 # --- Step 2: Patch boot.conf for test mode ---
-bash "$PROJECT/scripts/patch-boot-conf.sh" test 1 > /dev/null
+PATCH_ARGS="test 1"
+if [ -n "$SUITE_CATEGORY" ]; then
+    PATCH_ARGS="$PATCH_ARGS test_suite $SUITE_CATEGORY"
+fi
+if [ "$QUIET_MODE" -eq 1 ]; then
+    PATCH_ARGS="$PATCH_ARGS test_quiet 1"
+fi
+bash "$PROJECT/scripts/patch-boot-conf.sh" $PATCH_ARGS > /dev/null
 
 # --- Step 3: Boot QEMU headless ---
 cp -n "$OVMF_VARS" "$OVMF_VARS_CP" 2>/dev/null || true
@@ -65,7 +79,10 @@ else
 fi
 
 echo -e "${CYAN}[TEST]${RESET} Booting QEMU headless (${ACCEL_NAME}, ${TIMEOUT}s timeout)..."
-timeout "$TIMEOUT" qemu-system-x86_64 \
+
+# Launch QEMU in background — kernel continues to desktop after tests,
+# so we poll for the summary line and kill QEMU once we have results.
+qemu-system-x86_64 \
     $ACCEL_ARGS \
     -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
@@ -80,8 +97,31 @@ timeout "$TIMEOUT" qemu-system-x86_64 \
     -netdev user,id=net0 \
     -device virtio-tablet-pci \
     -rtc base=localtime \
-    -no-reboot 2>/dev/null
-QEMU_EXIT=$?
+    -no-reboot 2>/dev/null &
+QEMU_PID=$!
+
+# Poll for test summary line or timeout
+ELAPSED=0
+FOUND=0
+while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+    if [ -f "$TEST_LOG" ] && grep -q '=== .* tests\? passed' "$TEST_LOG" 2>/dev/null; then
+        FOUND=1
+        sleep 1  # let any trailing output flush
+        break
+    fi
+    # Check if QEMU exited on its own (crash, etc.)
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+        break
+    fi
+done
+
+# Kill QEMU if still running
+if kill -0 "$QEMU_PID" 2>/dev/null; then
+    kill "$QEMU_PID" 2>/dev/null
+    wait "$QEMU_PID" 2>/dev/null
+fi
 
 # --- Step 4: Restore boot.conf ---
 bash "$PROJECT/scripts/patch-boot-conf.sh" reset > /dev/null
@@ -92,9 +132,8 @@ if [ ! -f "$TEST_LOG" ]; then
     exit 1
 fi
 
-# Check for timeout (exit code 124)
-if [ "$QEMU_EXIT" -eq 124 ]; then
-    echo -e "${RED}${BOLD}[FAIL]${RESET} QEMU timed out after ${TIMEOUT}s"
+if [ "$FOUND" -eq 0 ]; then
+    echo -e "${RED}${BOLD}[FAIL]${RESET} Test summary not found within ${TIMEOUT}s"
     echo ""
     echo -e "${YELLOW}Last 10 lines of serial output:${RESET}"
     tail -10 "$TEST_LOG" 2>/dev/null || true
@@ -124,14 +163,14 @@ if [ -n "$SUITE_FILTER" ]; then
 fi
 
 # Show suite results
-grep -E '\[ OK \].*TEST:.*::|\[FAIL\].*TEST:.*::' "$TEST_LOG" 2>/dev/null | while IFS= read -r line; do
+grep -E 'TEST:.*::' "$TEST_LOG" 2>/dev/null | while IFS= read -r line; do
     if [ -n "$SUITE_FILTER" ]; then
         echo "$line" | grep -qi "$SUITE_FILTER" || continue
     fi
     if echo "$line" | grep -q '\[FAIL\]'; then
         echo -e "  ${RED}FAIL${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
     else
-        echo -e "  ${GREEN} OK ${RESET}  $(echo "$line" | sed 's/.*TEST: \[ OK \] //')"
+        echo -e "  ${GREEN} OK ${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
     fi
 done
 

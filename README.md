@@ -161,7 +161,7 @@ todo/              Development roadmap (100+ TODO items across 50+ files)
 | Platform | Method |
 |----------|--------|
 | **QEMU** | `bash scripts/build.sh run` — default, fastest iteration |
-| **VirtualBox** | `scripts/vm/run-vbox.bat` (Windows) or configure a 64-bit EFI VM |
+| **VirtualBox** | `scripts/machines/run-vbox.bat` (Windows) or configure a 64-bit EFI VM |
 | **Hyper-V** | Gen 2 VM, Secure Boot disabled, UEFI boot from `.vhdx` |
 | **Real hardware** | Write `build/system-disk.img` to USB with `dd` or Rufus |
 

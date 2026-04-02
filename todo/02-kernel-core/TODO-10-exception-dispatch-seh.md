@@ -21,6 +21,7 @@
 - → XREF: `TODO-04-peb-teb-user-abi.md §7` (initial user stack frame — KiUserExceptionDispatcher target)
 - → XREF: `TODO-05-native-api-ssdt.md §1` (NTSTATUS — `NtRaiseException`/`NtContinue` return values)
 - → XREF: `TODO-06-irql-model-dpcs.md §3` (interrupt entry/exit IRQL — fault occurs at hardware IRQL)
+- → XREF: `TODO-06-irql-model-dpcs.md §12` — KiDeliverApc sets up user-mode trap frame for user APC delivery; KiUserApcDispatcher parallels KiUserExceptionDispatcher (§4) and should be implemented alongside it
 
 ## Outcome
 
