@@ -1007,13 +1007,77 @@ int task_exec(const uint8_t *data, uint64_t size)
         return -1;
     }
 
-    /* Build a fresh interrupt frame on the NEW kernel stack */
-    sp = (uint64_t *)(new_kstack + TASK_STACK_SIZE);
-    sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
-
+    /* ---- Build Linux x86-64 initial user stack frame ----
+     *
+     * Layout (growing downward from user stack top):
+     *   [rsp+0]   argc        (uint64_t)
+     *   [rsp+8]   argv[0]     (pointer to program name string)
+     *   [rsp+16]  NULL        (argv terminator)
+     *   [rsp+24]  NULL        (envp terminator — no env on stack)
+     *   [rsp+32]  AT_ENTRY    auxv[0].type
+     *   [rsp+40]  entry       auxv[0].value
+     *   [rsp+48]  AT_PAGESZ   auxv[1].type
+     *   [rsp+56]  4096        auxv[1].value
+     *   [rsp+64]  AT_NULL     auxv[2].type (terminator)
+     *   [rsp+72]  0           auxv[2].value
+     *   [rsp+80+] "cmd.exe\0" (program name string data)
+     *
+     * RSP must be 16-byte aligned BEFORE _start is entered.
+     * _start sees argc at [rsp]. Current crt0 ignores argc/argv
+     * but this layout is ready for a future crt0 that parses them.
+     */
     {
-        uint64_t user_rsp = (uint64_t)(tasks[pid].user_stack_base +
-                                        USER_STACK_SIZE) & ~0xFULL;
+        uint64_t *ustk = (uint64_t *)((uint64_t)(
+            tasks[pid].user_stack_base + USER_STACK_SIZE) & ~0xFULL);
+        const char *name = tasks[pid].name ? tasks[pid].name : "a.out";
+        uint32_t name_len = 0;
+        uint64_t user_rsp;
+
+        /* Count name length */
+        { const char *p = name; while (*p++) name_len++; }
+
+        /* String data at very top of stack */
+        ustk -= 2;  /* room for string (up to 16 bytes aligned) */
+        {
+            char *str = (char *)ustk;
+            uint32_t i;
+            for (i = 0; i <= name_len && i < 15; i++)
+                str[i] = name[i];
+            str[i > 0 ? i : 0] = '\0';
+        }
+        uint64_t argv0_addr = (uint64_t)ustk;
+
+        /* auxv (3 entries: AT_ENTRY, AT_PAGESZ, AT_NULL) */
+        #define AT_NULL   0
+        #define AT_ENTRY  9
+        #define AT_PAGESZ 6
+        ustk -= 6;  /* 3 pairs × 2 qwords */
+        ustk[0] = AT_ENTRY;  ustk[1] = elf.entry;
+        ustk[2] = AT_PAGESZ; ustk[3] = 4096;
+        ustk[4] = AT_NULL;   ustk[5] = 0;
+
+        /* envp NULL terminator */
+        ustk--;
+        *ustk = 0;
+
+        /* argv[1] = NULL (terminator) */
+        ustk--;
+        *ustk = 0;
+
+        /* argv[0] = program name */
+        ustk--;
+        *ustk = argv0_addr;
+
+        /* argc = 1 */
+        ustk--;
+        *ustk = 1;
+
+        /* Ensure 16-byte alignment */
+        user_rsp = (uint64_t)ustk & ~0xFULL;
+
+        /* Build kernel interrupt frame */
+        sp = (uint64_t *)(new_kstack + TASK_STACK_SIZE);
+        sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
         sp -= 22;
         sp[0]  = 0;                                /* r15 */
         sp[1]  = 0;                                /* r14 */
@@ -1033,10 +1097,10 @@ int task_exec(const uint8_t *data, uint64_t size)
         sp[15] = 0;                                /* int_no */
         sp[16] = 0;                                /* err_code */
         sp[17] = elf.entry;                        /* rip = ELF entry */
-        sp[18] = GDT_USER_CODE | 3;                /* cs = user code, RPL=3 */
+        sp[18] = GDT_USER_CODE | 3;                /* cs = user code */
         sp[19] = 0x202;                            /* rflags: IF set */
         sp[20] = user_rsp;                         /* rsp = user stack */
-        sp[21] = GDT_USER_DATA | 3;                /* ss = user data, RPL=3 */
+        sp[21] = GDT_USER_DATA | 3;                /* ss = user data */
     }
 
     /* Switch to new kernel stack and mark exec pending */

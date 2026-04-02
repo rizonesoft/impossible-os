@@ -34,7 +34,7 @@
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [x]   |
 | 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [x]   |
 | 💎  |   6   | TEB allocation and population at thread create | 1, 4       |  [x]   |
-| 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | 5, 6       |  [ ]   |
+| 💎  |   7   | Initial user stack frame (argv / envp / PEB)   | 5, 6       |  [x]   |
 | 💎  |   8   | PEB Ldr (module list) basic population         | 5          |  [ ]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)          | 6          |  [ ]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace              | 5, 6       |  [ ]   |
@@ -121,12 +121,10 @@ One TEB per thread. Allocated in the user address space near the thread stack.
 ## 7. Initial User Stack Frame
 The user stack must have a valid calling frame waiting for the first instruction. Win32 convention: `ntdll!_LdrpInitialize` reads `PEB->ProcessParameters`; it does not expect argc/argv on the stack itself. However, the ELF ABI (for ELF-based binaries in the compatibility path) needs the Linux-style stack layout.
 
-- [ ] For **ELF executables** (current path): push the Linux x86-64 initial stack layout:
-  - `argc` (uint64_t), then `argv[0]…argv[argc-1]`, NULL, then `envp[0]…`, NULL, then `AT_NULL` auxv entry — RSP on entry to `_start` points to `argc`
-  - `AT_ENTRY`, `AT_PHDR`, `AT_PHENT`, `AT_PHNUM`, `AT_BASE`, `AT_FLAGS`, `AT_PAGESZ` auxv entries populated from ELF load result
-  - `AT_NULL` terminator
-- [ ] For **PE32+ executables** (future): push a single null pointer as the return address and pass PEB address in RCX (Win64 calling convention first arg); ntdll will parse ProcessParameters for argv
-- [ ] Replace the current all-zero stack top in `task_exec` with the correct layout above
+- [x] ELF initial stack: argc=1, argv[0]=program name, NULL, envp NULL, auxv (AT_ENTRY, AT_PAGESZ, AT_NULL)
+- [x] String data at top of user stack, argv pointer to it, 16-byte aligned RSP
+- [ ] PE32+ (future): RCX=PEB, single NULL return address — not yet needed
+- [x] Replaced all-zero stack top with Linux x86-64 ABI layout
 - [ ] Confirm `_start` in `user/hello.c` still executes correctly with the new stack
 - [ ] Commit: `"kernel: abi — initial user stack frame with argv, envp, auxv"`
 
@@ -180,7 +178,7 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 | 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
 | 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ✅ §5 RTLPP populated  |
 | 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ⬜ §8                |
-| 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ⬜ §7                |
+| 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ✅ §7 argc/argv/auxv |
 | ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ⬜ §10               |
 | ⭐ | Win11 version in PEB     | ✅ Internal only         | ❌ N/A                 | ⬜ §5                |
 
