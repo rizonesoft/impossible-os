@@ -196,6 +196,7 @@ static const char *level_prefix[] = {
 #define ANSI_YELLOW   "\033[33m"
 #define ANSI_RED      "\033[31m"
 #define ANSI_BOLD_RED "\033[1;31m"
+#define ANSI_CYAN     "\033[36m"
 
 static const char *level_ansi[] = {
     ANSI_DGREY,     /* LOG_DEBUG  [INFO] */
@@ -494,13 +495,22 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 
         /* Colored level prefix + subsystem + pre-formatted message.
          * For badge-only levels: reset after [LEVEL], rest is default.
-         * For full-line levels:  reset after message, whole tail colored. */
-        LS(level_ansi[level]);
-        LS(level_prefix[level]);
-        if (!level_full_line[level]) LS(ANSI_RESET);
-        if (subsystem && subsystem[0]) { LS(subsystem); LS(": "); }
-        LS(e->message);
-        if (level_full_line[level]) LS(ANSI_RESET);
+         * For full-line levels:  reset after message, whole tail colored.
+         * Special: "TEST" subsystem always gets cyan full-line color. */
+        {
+            int is_test = (subsystem && subsystem[0] == 'T' &&
+                           subsystem[1] == 'E' && subsystem[2] == 'S' &&
+                           subsystem[3] == 'T' &&
+                           (subsystem[4] == '\0' || subsystem[4] == ':'));
+            int full_line = level_full_line[level] || is_test;
+
+            LS(is_test ? ANSI_CYAN : level_ansi[level]);
+            LS(level_prefix[level]);
+            if (!full_line) LS(ANSI_RESET);
+            if (subsystem && subsystem[0]) { LS(subsystem); LS(": "); }
+            LS(e->message);
+            if (full_line) LS(ANSI_RESET);
+        }
         LP('\n');
         line[pos] = '\0';
 
@@ -512,7 +522,13 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 
     /* ---- Output to framebuffer if level >= screen threshold ---- */
     if (level >= screen_min_level) {
-        fb_set_color(level_color[level], FB_COLOR_BG_DEFAULT);
+        int fb_is_test = (subsystem && subsystem[0] == 'T' &&
+                          subsystem[1] == 'E' && subsystem[2] == 'S' &&
+                          subsystem[3] == 'T' &&
+                          (subsystem[4] == '\0' || subsystem[4] == ':'));
+        uint32_t fb_color = fb_is_test ? FB_COLOR_CYAN : level_color[level];
+
+        fb_set_color(fb_color, FB_COLOR_BG_DEFAULT);
         fb_str(level_prefix[level]);
         fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
 
@@ -520,7 +536,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
             fb_str(subsystem);
             fb_str(": ");
         }
-        fb_str(e->message);   /* reuse pre-formatted ring buffer entry */
+        fb_str(e->message);
         fb_putchar('\n');
     }
 
