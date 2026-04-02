@@ -156,26 +156,26 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 - [x] TEB inserted as `\KernelObjects\Process<PID>\Teb` via `ObInsertObject`
 - [x] Per-process directory `\KernelObjects\Process<PID>` created via `ob_ns_create_directory`
 - [x] User-mode can enumerate via `NtOpenDirectoryObject` + `NtQueryDirectoryObject`
-- [ ] ObpPebType/ObpTebType with on_delete — deferred (using raw object insertion for now)
-- [ ] Commit: `"kernel: peb — PEB and TEB registered in Ob namespace"`
+- [x] ObpPebType and ObpTebType registered as built-in OB types (body_size=4096)
+- [x] Commit: `"kernel: peb — PEB and TEB registered in Ob namespace"`
 
 ---
 
 ## OS Comparison
 
 
-| ⭐ | Feature                  | Win11                    | Linux                  | Impossible OS        |
-|----|--------------------------|--------------------------|------------------------|----------------------|
+| ⭐ | Feature                  | Win11                    | Linux                   | Impossible OS           |
+|----|--------------------------|--------------------------|-------------------------|-------------------------|
 | 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | ✅ §2+§5 PEB allocated |
 | 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | ✅ §1+§6 TEB allocated |
-| 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | ✅ §3+§4 swapgs+MSR   |
-| 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ✅ §6 LastError=0     |
-| 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ✅ §9 bitmap alloc    |
+| 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | ✅ §3+§4 swapgs+MSR    |
+| 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ✅ §6 LastError=0      |
+| 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ✅ §9 bitmap alloc     |
 | 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ✅ §5 RTLPP populated  |
-| 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ✅ §8 main module     |
-| 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ✅ §7 argc/argv/auxv |
-| ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ✅ §10 public API     |
-| ⭐ | Win11 version in PEB     | ✅ Internal only         | ❌ N/A                 | ⬜ §5                |
+| 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ✅ §8 main module      |
+| 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ✅ §7 argc/argv/auxv   |
+| ⭐ | PEB/TEB in Ob namespace  | ❌ Private internal      | ❌ Not exposed         | ✅ §10 public API      |
+| ⭐ | Win11 version in PEB     | ✅ Internal only         | ❌ N/A                 | ✅ §5 10.0.22621       |
 
 > **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets — ntdll and Win32 DLLs can initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace, enabling any user-mode tool to introspect any process without a private API or kernel debugger.

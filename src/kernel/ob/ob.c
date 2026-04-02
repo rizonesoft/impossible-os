@@ -42,6 +42,8 @@ const OBJECT_TYPE *ObpSemaphoreType = NULL;
 const OBJECT_TYPE *ObpSectionType   = NULL;
 const OBJECT_TYPE *ObpTimerType     = NULL;
 const OBJECT_TYPE *ObpTokenType     = NULL;
+const OBJECT_TYPE *ObpPebType       = NULL;
+const OBJECT_TYPE *ObpTebType       = NULL;
 
 /* --- ob_create_type ------------------------------------------------------ */
 
@@ -403,6 +405,14 @@ boot_result_t ob_init(void)
     ob_section_type_init();
     ob_timer_type_init();
     ob_token_type_init();
+
+    /* PEB and TEB types — exposed in \KernelObjects\Process<PID>\ */
+    ObpPebType = ob_create_type(&(OBJECT_TYPE){
+        .name = "Peb", .body_size = 4096
+    });
+    ObpTebType = ob_create_type(&(OBJECT_TYPE){
+        .name = "Teb", .body_size = 4096
+    });
 
     klog(LOG_INFO, "ob", "Registered %u built-in types",
          (uint64_t)g_ob_type_count);

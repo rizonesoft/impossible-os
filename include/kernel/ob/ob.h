@@ -61,6 +61,8 @@ extern const OBJECT_TYPE *ObpSemaphoreType;
 extern const OBJECT_TYPE *ObpSectionType;
 extern const OBJECT_TYPE *ObpTimerType;
 extern const OBJECT_TYPE *ObpTokenType;
+extern const OBJECT_TYPE *ObpPebType;
+extern const OBJECT_TYPE *ObpTebType;
 
 /* --- API ----------------------------------------------------------------- */
 
