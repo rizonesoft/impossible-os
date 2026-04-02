@@ -8,6 +8,7 @@ Core kernel internals — boot chain, memory management, scheduling, and inter-p
 |---|---|
 | [Init Sequencing](init-sequencing.md) | 4-phase boot, dependency gates, readiness oracle, POST codes, recovery UI |
 | [System Logging](system-logging.md) | klog ring buffer, per-subsystem splitting, rotation, rate limiting, JSON events |
+| [Object Manager](object-manager.md) | ObXxx layer: typed headers, ref counting, handle tables, namespace, 11 types |
 
 ## Subdirectories
 

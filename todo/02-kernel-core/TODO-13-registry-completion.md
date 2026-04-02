@@ -29,7 +29,7 @@
 - `include/registry.h` — types, constants, API declarations
 - → XREF: `TODO-05-native-api-layer.md §4` — SSDT: all `NtXxx` registry entry points are SSDT slots; §4 must exist before §4 of this TODO
 - → XREF: `TODO-11-security-reference-monitor.md §3–§5` — `SECURITY_DESCRIPTOR` + `SeAccessCheck` are used to enforce `KEY_*` access rights on `RegOpenKeyEx` / `NtOpenKey`
-- → XREF: `TODO-03-object-manager.md §3` — registry `HKEY` handles must eventually be registered in the per-process handle table for `DuplicateHandle` parity; deferred to §4 of this TODO as a note
+- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03) §3` — registry `HKEY` handles must eventually be registered in the per-process handle table for `DuplicateHandle` parity; deferred to §4 of this TODO as a note
 
 ---
 
@@ -461,10 +461,10 @@
 
 ### 10.2 Memory-mapped hive files ⭐
 
-- [ ] `hive_open_mmap(path)` — map the hive file directly into kernel address space via `NtMapViewOfSection` (→ XREF `TODO-03-object-manager.md §7`); keys/values reference offsets into the mapped region instead of the static pool
+- [ ] `hive_open_mmap(path)` — map the hive file directly into kernel address space via `NtMapViewOfSection` (→ XREF `docs/kernel/object-manager.md (completed, was TODO-03) §7`); keys/values reference offsets into the mapped region instead of the static pool
 - [ ] Zero-copy reads: `RegQueryValueEx` for a mapped hive reads directly from the mapped page; no `memcpy` for read-only queries
 - [ ] Dirty page tracking: maintain `dirty_bitmap` (§8.2) over the mapped region; on flush, only `msync` dirty pages to disk
-- [ ] Prerequisite: `NtMapViewOfSection` must be stable (→ XREF `TODO-03-object-manager.md §7`); implement after that TODO
+- [ ] Prerequisite: `NtMapViewOfSection` must be stable (→ XREF `docs/kernel/object-manager.md (completed, was TODO-03) §7`); implement after that TODO
 
 ### 10.3 B-tree cell format ⭐
 
@@ -549,5 +549,5 @@ Sections §8–10 deliver a set of exclusive features that exceed Windows 11: in
 - [ ] **.reg round-trip**: `regedit export HKLM\SYSTEM\Display /tmp/test.reg`; delete key; `regedit import /tmp/test.reg`; verify all values restored byte-for-byte.
 - [ ] **Dual-log WAJ**: corrupt `SYSTEM.hive.log1` mid-write simulation; `registry_init` mounts from `log2`; all data intact.
 - [ ] **Delta flush timing**: modify one value in a 1 MiB hive; measure `hive_flush_incremental` write size — must be exactly 4 KiB (one dirty page), not 1 MiB.
-- [ ] **Remaining limits**: mmap hive (§10.2) requires → XREF `TODO-03-object-manager.md §7` (Section Object / NtMapViewOfSection) to be stable; B-tree cell format (§10.3) is a stretch-goal redesign of the on-disk format and should be prototyped in a separate branch first.
+- [ ] **Remaining limits**: mmap hive (§10.2) requires → XREF `docs/kernel/object-manager.md (completed, was TODO-03) §7` (Section Object / NtMapViewOfSection) to be stable; B-tree cell format (§10.3) is a stretch-goal redesign of the on-disk format and should be prototyped in a separate branch first.
 - [ ] Commit: `"kernel/registry: registry system complete — access rights, notifications, NtXxx syscalls, advapi32, virtualization, regedit, dual-log WAJ, transactions, search API, snapshot/diff, B-tree hive"`

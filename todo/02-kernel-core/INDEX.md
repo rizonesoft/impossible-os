@@ -25,7 +25,6 @@ This domain holds kernel work that is foundational but is not primarily memory m
 
 ## Active TODOs
 
-- [TODO-03 Object Manager](./TODO-03-object-manager.md) — OBJECT_HEADER/OBJECT_TYPE infrastructure, reference counting, per-process handle table, named object namespace, security descriptors, and Win32 handle APIs. Greenfield — no ObXxx layer exists yet.
 - [TODO-04 PEB / TEB & User-Mode ABI](./TODO-04-peb-teb-user-abi.md) — PEB, TEB, swapgs, KERNEL_GS_BASE, RTL_USER_PROCESS_PARAMETERS, Ldr module list, TLS slots, and initial stack frame. Greenfield — task_exec currently enters ring 3 with all-zero registers and no PEB/TEB.
 - [TODO-05 Native API Layer (Nt/Zw)](./TODO-05-native-api-layer.md) — NTSTATUS, SYSCALL/SYSRET fast path, SSDT, Nt/Zw naming, file/process/sync/memory syscalls, IOSB, LastError, ZwXxx CPL alias layer. Greenfield — current syscall table is POSIX-style INT 0x80 with no NTSTATUS.
 - [TODO-06 IRQL Model & DPCs](./TODO-06-irql-model-dpcs.md) — Windows-style IRQL contract, per-CPU IRQL tracking, interrupt-level transition rules, and `DISPATCH_LEVEL` DPC queueing so ISR top-halves can defer work safely.
@@ -48,6 +47,7 @@ This domain holds kernel work that is foundational but is not primarily memory m
 
 - ~~TODO-01 Kernel Init Sequencing~~ → [docs/kernel/init-sequencing.md](../../docs/kernel/init-sequencing.md) — 4-phase boot, readiness oracle, POST codes, recovery UI (completed 2026-04-02)
 - ~~TODO-02 System Logging~~ → [docs/kernel/system-logging.md](../../docs/kernel/system-logging.md) — klog §1-§6, per-subsystem splitting, rotation, rate limiting, JSON events (completed 2026-04-02)
+- ~~TODO-03 Object Manager~~ → [docs/kernel/object-manager.md](../../docs/kernel/object-manager.md) — ObXxx layer, 11 types, handle tables, namespace, security (completed 2026-04-02)
 
 ## Local Naming
 

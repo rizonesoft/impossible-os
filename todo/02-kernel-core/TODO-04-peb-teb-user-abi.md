@@ -12,7 +12,7 @@
 - [`src/kernel/smp/smp.c`](../../src/kernel/smp/smp.c) — `IA32_GS_BASE` MSR setup
 - [`src/kernel/elf.c`](../../src/kernel/elf.c) — ELF loader (`elf_load`, `elf_load_result`)
 - [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h) — syscall table
-- → XREF: `TODO-03-object-manager.md` — handle table needed for `PEB->ProcessParameters` stdin/stdout/stderr HANDLE fields
+- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03)` — handle table needed for `PEB->ProcessParameters` stdin/stdout/stderr HANDLE fields
 - → XREF: `docs/kernel/init-sequencing.md (completed, was TODO-01)` — PEB/TEB init belongs in Phase 3 (user platform); requires VMM and scheduler (Phase 2)
 - → XREF: `TODO-05-native-api-layer.md` — `NtCreateProcess` populates PEB; `LdrInitializeThunk` (ntdll entry) reads PEB->Ldr
 

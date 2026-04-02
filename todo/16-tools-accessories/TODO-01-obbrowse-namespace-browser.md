@@ -13,7 +13,7 @@
 - `include/kernel/ob/ob_ns.h` — `ObLookupObjectByName`
 - `src/kernel/sched/syscall.c` — `SYS_OPENDIROBJ` (line 381), `SYS_QUERYDIROBJ` (line 392)
 - `src/kernel/ob/ob_ns.c` — namespace root directories (line 350)
-- → XREF: `02-kernel-core/TODO-03-object-manager.md` — OB implementation (deferred this tool)
+- → XREF: `docs/kernel/object-manager.md` — OB implementation (was TODO-03, deferred this tool)
 - → XREF: `docs/infrastructure/kernel-test-framework.md` — unit test wiring for test_register_obbrowse()
 
 ---

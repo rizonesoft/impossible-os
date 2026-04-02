@@ -11,7 +11,7 @@
 - [`src/kernel/sched/syscall.c`](../../src/kernel/sched/syscall.c)
 - [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) — `task_exec`, ring-3 entry frame
 - [`src/kernel/smp/smp.c`](../../src/kernel/smp/smp.c) — MSR_GS_BASE, per-CPU data
-- → XREF: `TODO-03-object-manager.md` — `NtCreateFile`, `NtOpenFile`, `NtClose` are Ob-routed; SSDT entries 0x0025–0x002C depend on TODO-03
+- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03)` — `NtCreateFile`, `NtOpenFile`, `NtClose` are Ob-routed; SSDT entries 0x0025–0x002C depend on TODO-03
 - → XREF: `TODO-04-peb-teb-user-abi.md` — `swapgs` in syscall entry/exit uses the TEB GS contract from TODO-04 §3–§4
 - → XREF: `docs/kernel/init-sequencing.md (completed, was TODO-01)` — syscall fast path init belongs in Phase 1 (after GDT/IDT, before scheduler)
 - → XREF: `TODO-07-time-filetime-management.md §7` — `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`, `NtQueryTimerResolution` are registered in this SSDT; service numbers must be reserved before TODO-07 §7 is implemented

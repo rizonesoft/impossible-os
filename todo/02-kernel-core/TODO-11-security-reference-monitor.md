@@ -12,7 +12,7 @@
 - `src/kernel/sched/task.c` — `struct task`, `task_exec`, `NtCreateProcess` path
 - `include/kernel/sched/task.h` — task struct (token field must be added)
 - `src/kernel/mm/vmm.c` — kernel/user access mode (UserMode / KernelMode)
-- → XREF: `TODO-03-object-manager.md §8` — Object Manager security descriptor integration; ObXxx calls `SeAccessCheck` before granting any handle
+- → XREF: `docs/kernel/object-manager.md (completed, was TODO-03) §8` — Object Manager security descriptor integration; ObXxx calls `SeAccessCheck` before granting any handle
 - → XREF: `TODO-04-peb-teb-user-abi.md §1` — TEB carries `ImpersonationInfo` pointer (thread token)
 - → XREF: `TODO-05-native-api-layer.md §1` — NTSTATUS return codes used by all token/ACL syscalls
 - → XREF: `TODO-09-process-model-extensions.md §2` — process spawn path (NtCreateProcess) must copy parent token and attach it
