@@ -28,7 +28,7 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | TEB struct and GS self-pointer                 | —          |  [ ]   |
+| 💎  |   1   | TEB struct and GS self-pointer                 | —          |  [x]   |
 | 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS     | —          |  [ ]   |
 | 💎  |   3   | swapgs on INT 0x80 entry and exit              | 1          |  [ ]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [ ]   |
@@ -47,7 +47,7 @@
 ## 1. TEB Struct and GS Self-Pointer
 Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macros (`NtCurrentTeb()` = `mov rax, gs:[0x30]`) work without patching.
 
-- [ ] Create `include/kernel/ob/teb.h` with `TEB` struct at exact Windows x64 offsets:
+- [x] Create `include/kernel/ob/teb.h` with `TEB` struct at exact Windows x64 offsets:
   - `NT_TIB NtTib` at offset `0x00` — ExceptionList, StackBase, StackLimit, SubSystemTib, FiberData/Version, ArbitraryUserPointer, **Self** (pointer to the TEB itself)
   - `void *EnvironmentPointer` at `0x38`
   - `CLIENT_ID ClientId` at `0x40` — UniqueProcess (PID), UniqueThread (TID)
@@ -58,9 +58,9 @@ Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macro
   - `uint32_t CountOfOwnedCriticalSections` at `0x6C`
   - `uint64_t TlsSlots[64]` at `0x1480`
   - `uint64_t TlsExpansionSlots` pointer at `0x1780`
-- [ ] Add `CLIENT_ID` struct: two `uint64_t` fields (UniqueProcess, UniqueThread)
-- [ ] Add `NT_TIB` struct with correct field order and sizes
-- [ ] Annotate each field with its Windows offset as a comment — future correctness check
+- [x] Add `CLIENT_ID` struct: two `uint64_t` fields (UniqueProcess, UniqueThread)
+- [x] Add `NT_TIB` struct with correct field order and sizes
+- [x] Annotate each field with its Windows offset as a comment — 11 `_Static_assert` offset checks
 - [ ] Commit: `"kernel: peb — TEB struct with correct Windows x64 offsets"`
 
 ## 2. PEB Struct and RTL_USER_PROCESS_PARAMETERS
@@ -208,10 +208,10 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 | ⭐ | Feature                  | Win11                    | Linux                  | Impossible OS        |
 |----|--------------------------|--------------------------|------------------------|----------------------|
 | 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | ⬜ §2, §5            |
-| 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | ⬜ §1, §6            |
+| 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | 🔄 §1 done, §6 todo  |
 | 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | ⬜ §3, §4            |
 | 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ⬜ §6                |
-| 💎 | TLS static slots (64)   | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
+| 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
 | 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | ⬜ §2, §5            |
 | 💎 | Ldr module list          | ✅ PEB->Ldr linked list  | ❌ ld-linux link map   | ⬜ §8                |
 | 💎 | Initial stack frame      | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout      | ⬜ §7                |
