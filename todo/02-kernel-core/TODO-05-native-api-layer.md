@@ -33,24 +33,23 @@
 | --- | :---: | ---------------------------------------------------------- | -------------- | :----: |
 | 💎  |   1   | NTSTATUS type and canonical status codes                   | —              |  [ ]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                      | TODO-04 §3–§4  |  [ ]   |
-| 💎  |   3   | INT 0x2E compatibility path                                | 2              |  [ ]   |
-| 💎  |   4   | System Service Descriptor Table (SSDT)                     | 1              |  [ ]   |
-| 💎  |   5   | Nt/Zw naming and existing syscall migration                | 1, 4           |  [ ]   |
-| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose                        | 5, TODO-03 §3  |  [ ]   |
-| 💎  |   7   | NtCreateProcess / NtCreateThread                           | 5, TODO-03 §5  |  [ ]   |
-| 💎  |   8   | NtCreateEvent / NtCreateMutex / NtCreateSemaphore          | 5, TODO-03 §6  |  [ ]   |
-| 💎  |   9   | NtAllocateVirtualMemory / NtFreeVirtualMemory              | 5              |  [ ]   |
-| 💎  |  10   | NtQuerySystemInformation (basic classes)                   | 5              |  [ ]   |
-| ⭐  |  11   | Extended error information (NtCurrentTeb LastError + IOSB) | 5, TODO-04 §6  |  [ ]   |
-| ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion     | 4, 5           |  [ ]   |
+| 💎  |   3   | INT 0x2E compatibility path                                | §2             |  [ ]   |
+| 💎  |   4   | System Service Descriptor Table (SSDT)                     | §1             |  [ ]   |
+| 💎  |   5   | Nt/Zw naming and existing syscall migration                | §1, §4         |  [ ]   |
+| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose                        | §5, TODO-03 §3 |  [ ]   |
+| 💎  |   7   | NtCreateProcess / NtCreateThread                           | §5, TODO-03 §5 |  [ ]   |
+| 💎  |   8   | NtCreateEvent / NtCreateMutex / NtCreateSemaphore          | §5, TODO-03 §6 |  [ ]   |
+| 💎  |   9   | NtAllocateVirtualMemory / NtFreeVirtualMemory              | §5             |  [ ]   |
+| 💎  |  10   | NtQuerySystemInformation (basic classes)                   | §5             |  [ ]   |
+| ⭐  |  11   | Extended error information (NtCurrentTeb LastError + IOSB) | §5, TODO-04 §6 |  [ ]   |
+| ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion     | §4, §5         |  [ ]   |
 
 > 💎 = parity — Windows NT and Linux (syscall fast path, typed return, SSDT equivalent) both have these.
 > ⭐ = exclusive — the `ZwXxx` privilege assertion check and the IOSB/LastError unified path are more explicit than anything in the Linux syscall model, exposing correctness invariants at the API boundary.
 
 ---
 
-## 1. NTSTATUS Type and Canonical Status Codes `[Sonnet]`
-
+## 1. NTSTATUS Type and Canonical Status Codes
 Define the NT status type and the minimum set of codes needed by syscall implementations.
 
 - [ ] Create `include/kernel/nt/ntstatus.h`:
@@ -75,23 +74,25 @@ Define the NT status type and the minimum set of codes needed by syscall impleme
   - `STATUS_PROCESS_IS_TERMINATING     0xC000010A`
   - `STATUS_NOT_SUPPORTED              0xC00000BB`
 - [ ] Create `include/kernel/nt/nt_types.h` with foundational NT types:
-  - `HANDLE` = `void *` (opaque; index into handle table)
+  - `HANDLE` — already `typedef int32_t HANDLE` in `include/kernel/ob/handle_table.h`; re-export, do not redefine
   - `IO_STATUS_BLOCK` — `NTSTATUS Status`, `uint64_t Information`
-  - `UNICODE_STRING` — already in TODO-04; include or re-export here
+  - `UNICODE_STRING` — re-export from `include/kernel/ob/peb.h` (already defined per TODO-04)
   - `OBJECT_ATTRIBUTES` — `uint64_t Length`, `HANDLE RootDirectory`, `UNICODE_STRING *ObjectName`, `uint32_t Attributes` (`OBJ_CASE_INSENSITIVE = 0x40`, `OBJ_KERNEL_HANDLE = 0x200`)
-  - `LARGE_INTEGER` = `int64_t`
+  - `LARGE_INTEGER` — re-export from `include/kernel/ob/peb.h` (already defined per TODO-04)
   - `ACCESS_MASK` = `uint32_t`; `GENERIC_READ = 0x80000000`, `GENERIC_WRITE = 0x40000000`, `GENERIC_ALL = 0x10000000`
 - [ ] Annotate each `NTSTATUS` code with the condition that triggers it — serves as inline documentation
 - [ ] Commit: `"kernel: nt — NTSTATUS type and canonical status codes"`
 
-## 2. SYSCALL/SYSRET Fast Path `[Opus]`
+**Test checkpoint:** `bash scripts/build.sh` → `=== BUILD OK ===`. Serial log: `#include "kernel/nt/ntstatus.h"` compiles without error. `NT_SUCCESS(0)` == true, `NT_ERROR(0xC0000001)` == true verified by unit test.
+
+## 2. SYSCALL/SYSRET Fast Path
 
 Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSCALL`: CPU saves RIP→RCX, RFLAGS→R11; jumps to `IA32_LSTAR`. On `SYSRET`: restores RIP from RCX, RFLAGS from R11; returns to ring 3.
 
-- [ ] Define MSR constants in `include/kernel/smp/msr.h` (or alongside `MSR_GS_BASE` in `smp.c`):
-  - `MSR_STAR    0xC0000081` — CS/SS selectors for SYSCALL/SYSRET
-  - `MSR_LSTAR   0xC0000082` — 64-bit SYSCALL entry point address
-  - `MSR_FMASK   0xC0000084` — RFLAGS mask to clear on SYSCALL entry
+- [ ] Use existing MSR constants from `include/kernel/msr.h`:
+  - `MSR_IA32_STAR    0xC0000081` — CS/SS selectors for SYSCALL/SYSRET
+  - `MSR_IA32_LSTAR   0xC0000082` — 64-bit SYSCALL entry point address
+  - `MSR_IA32_FMASK   0xC0000084` — RFLAGS mask to clear on SYSCALL entry
 - [ ] Write `syscall_entry` in `src/kernel/sched/syscall_entry.asm`:
   - `swapgs` (exchange user GS/TEB → kernel GS/per-CPU) — requires TODO-04 §3 to be done first
   - Save user RSP; load kernel RSP from `IA32_KERNEL_GS_BASE` or per-CPU TSS RSP0
@@ -99,16 +100,17 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
   - `call syscall_dispatch` — C handler taking `(syscall_number, arg1..arg5)`
   - Restore frame; `swapgs`; `sysretq`
 - [ ] In Phase 1 init (after GDT/IDT, before scheduler): call `syscall_init_fast()`:
-  - `wrmsr(MSR_STAR,  (KERNEL_CS << 32) | (USER_CS32 << 48))` — ring-0 CS on SYSCALL, ring-3 CS on SYSRET
-  - `wrmsr(MSR_LSTAR, (uint64_t)syscall_entry)` — entry point
-  - `wrmsr(MSR_FMASK, 0x200)` — clear IF (interrupts off on entry)
-  - Set `SCE` bit in `IA32_EFER` MSR (`0xC0000080`) to enable `SYSCALL`/`SYSRET`
+  - `wrmsr(MSR_IA32_STAR,  (GDT_KERNEL_CODE << 32) | ((GDT_USER_CODE - 16) << 48))` — ring-0 CS on SYSCALL, ring-3 CS on SYSRET (SYSRET loads CS from STAR[63:48]+16)
+  - `wrmsr(MSR_IA32_LSTAR, (uint64_t)syscall_entry)` — entry point
+  - `wrmsr(MSR_IA32_FMASK, 0x200)` — clear IF (interrupts off on entry)
+  - Set `EFER_SCE` bit in `MSR_IA32_EFER` (`0xC0000080`) to enable `SYSCALL`/`SYSRET`
 - [ ] `syscall_dispatch(uint64_t number, uint64_t a1..a5)` — calls into SSDT (§4)
 - [ ] Keep `INT 0x80` registered in IDT for the transition period; remove after §3 INT 0x2E is up
 - [ ] Commit: `"kernel: nt — SYSCALL/SYSRET fast path init"`
 
-## 3. INT 0x2E Compatibility Path `[Sonnet]`
+**Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 1. `POST16(0xD200)` entry, `POST16(0xD201)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
+## 3. INT 0x2E Compatibility Path
 Windows NT's original software-interrupt syscall vector. Required for early ntdll and any code that does not use `SYSCALL`.
 
 - [ ] Register a new IDT handler for vector `0x2E` in `idt.c`:
@@ -120,7 +122,9 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 - [ ] After INT 0x2E is verified working, keep INT 0x80 as a second alias until all existing user-mode test binaries are updated to use the new calling convention
 - [ ] Commit: `"kernel: nt — INT 0x2E syscall compatibility path"`
 
-## 4. System Service Descriptor Table (SSDT) `[Opus]`
+**Test checkpoint:** Ring-3 `int 0x2E` with RAX=0x0015 reaches `NtClose` handler. Same register mapping as SYSCALL path. `POST16(0xD300)` entry, `POST16(0xD301)` exit. Verify on all 4 platforms.
+
+## 4. System Service Descriptor Table (SSDT)
 
 The SSDT is a flat array of function pointers indexed by the 12-bit service number in RAX. `ntdll` stubs `mov rax, <service_number>` then `syscall`.
 
@@ -143,8 +147,9 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 - [ ] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` rather than crashing
 - [ ] Commit: `"kernel: nt — SSDT and service number table"`
 
-## 5. Nt/Zw Naming and Existing Syscall Migration `[Sonnet]`
+**Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered N services"` during init.
 
+## 5. Nt/Zw Naming and Existing Syscall Migration
 Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalents, change return types to `NTSTATUS`, and register them in the SSDT.
 
 - [ ] Add `NtWriteFile(HANDLE, PIOSB, buf, len)` wrapping `SYS_WRITE` logic
@@ -164,8 +169,9 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 - [ ] Change all `sys_*` implementations to return `NTSTATUS`; convert error paths to `STATUS_*` codes rather than `-1`
 - [ ] Commit: `"kernel: nt — migrate existing syscalls to NtXxx naming and NTSTATUS"`
 
-## 6. NtCreateFile / NtOpenFile / NtClose `[Sonnet]`
+**Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression.
 
+## 6. NtCreateFile / NtOpenFile / NtClose
 Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
 
 - [ ] `NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, EaBuffer, EaLength)`:
@@ -180,8 +186,9 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
 - [ ] `NtWriteFile(...)`: symmetric with NtReadFile
 - [ ] Commit: `"kernel: nt — NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 
-## 7. NtCreateProcess / NtCreateThread `[Sonnet]`
+**Test checkpoint:** `NtCreateFile` on `C:\Impossible\System\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
 
+## 7. NtCreateProcess / NtCreateThread
 Process and thread creation through the Ob-managed process model (→ XREF TODO-03 §5).
 
 - [ ] `NtCreateProcess(ProcessHandle, DesiredAccess, ObjectAttributes, ParentProcess, InheritObjectTable, SectionHandle, DebugPort, ExceptionPort)`:
@@ -199,8 +206,9 @@ Process and thread creation through the Ob-managed process model (→ XREF TODO-
 - [ ] `NtSuspendThread(ThreadHandle, PreviousSuspendCount)`: increment suspend count; deschedule
 - [ ] Commit: `"kernel: nt — NtCreateProcess, NtCreateThread, NtOpenProcess, NtOpenThread"`
 
-## 8. NtCreateEvent / NtCreateMutex / NtCreateSemaphore `[Sonnet]`
+**Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtOpenProcess` by PID returns same object.
 
+## 8. NtCreateEvent / NtCreateMutex / NtCreateSemaphore
 Synchronisation objects through Ob-managed named types (→ XREF TODO-03 §6).
 
 - [ ] `NtCreateEvent(EventHandle, DesiredAccess, ObjectAttributes, EventType, InitialState)`:
@@ -216,8 +224,9 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-03 §6).
 - [ ] `NtReleaseSemaphore(SemaphoreHandle, ReleaseCount, PreviousCount)`
 - [ ] Commit: `"kernel: nt — NtCreateEvent, NtCreateMutant, NtCreateSemaphore and wait"`
 
-## 9. NtAllocateVirtualMemory / NtFreeVirtualMemory `[Sonnet]`
+**Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`.
 
+## 9. NtAllocateVirtualMemory / NtFreeVirtualMemory
 Virtual memory management entry points.
 
 - [ ] `NtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect)`:
@@ -230,8 +239,9 @@ Virtual memory management entry points.
   - `MemoryBasicInformation`: base, allocation base, protect flags, state, type
 - [ ] Commit: `"kernel: nt — NtAllocateVirtualMemory, NtFreeVirtualMemory, NtQueryVirtualMemory"`
 
-## 10. NtQuerySystemInformation (Basic Classes) `[Sonnet]`
+**Test checkpoint:** `NtAllocateVirtualMemory` with `MEM_COMMIT` returns usable address; write+read round-trip. `NtFreeVirtualMemory` with `MEM_RELEASE` returns `STATUS_SUCCESS`. `NtQueryVirtualMemory` reports correct state.
 
+## 10. NtQuerySystemInformation (Basic Classes)
 Provides OS version, process list, and hardware info to ntdll and user-mode tools.
 
 - [ ] `NtQuerySystemInformation(SystemInformationClass, SystemInformation, Length, ReturnLength)`:
@@ -245,8 +255,9 @@ Provides OS version, process list, and hardware info to ntdll and user-mode tool
   - `ProcessImageFileName (27)`: full path of the executable
 - [ ] Commit: `"kernel: nt — NtQuerySystemInformation and NtQueryInformationProcess"`
 
-## 11. Extended Error Information (IOSB + LastError) `[Sonnet]`
+**Test checkpoint:** `NtQuerySystemInformation(SystemBasicInformation)` returns correct page size (4096) and processor count. `NtQueryInformationProcess(ProcessBasicInformation)` returns valid PEB address matching TODO-04 (0x7FFDE000).
 
+## 11. Extended Error Information (IOSB + LastError)
 NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async I/O) and `TEB->LastErrorValue` (Win32 `GetLastError`). Both must be populated correctly.
 
 - [ ] All file I/O `NtXxx` functions write final `NTSTATUS` into `IoStatusBlock->Status` and byte count / disposition into `IoStatusBlock->Information`
@@ -255,7 +266,9 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [ ] This is the only place `TEB->LastErrorValue` is written by kernel code — usermode `SetLastError` writes it directly via GS offset without a syscall
 - [ ] Commit: `"kernel: nt — IOSB and TEB LastErrorValue propagation"`
 
-## 12. ZwXxx Kernel-Mode Alias Layer `[Opus]`
+**Test checkpoint:** After a failing `NtOpenFile` (non-existent path), `gs:[0x68]` == Win32 error code (2 = FILE_NOT_FOUND). After `NtReadFile`, IOSB `Status == STATUS_SUCCESS`, `Information == bytes_read`.
+
+## 12. ZwXxx Kernel-Mode Alias Layer
 
 `ZwXxx` names are identical to `NtXxx` in user mode. In kernel mode (`CPL=0`), `ZwXxx` calls bypass the user-mode probe and use kernel-mode access rights directly. This is the convention all of Windows' own drivers and executive components use.
 
@@ -265,25 +278,28 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [ ] Document the convention: kernel components call `Zw` variants; user-mode calls `Nt` variants; both resolve to the same implementation, differentiated only by CPL check
 - [ ] Commit: `"kernel: nt — ZwXxx kernel-mode alias layer with CPL probe bypass"`
 
+**Test checkpoint:** `ZwClose` from CPL=0 succeeds without user-buffer probe. CPL=3 call with kernel-space pointer returns `STATUS_ACCESS_VIOLATION`. `ASSERT_KERNEL_CALLER()` fires `STATUS_PRIVILEGE_NOT_HELD` from ring 3.
+
 ---
 
 ## OS Comparison
 
 
-| ⭐ | Feature                               | Win11                                                 | Linux                                          | Impossible OS                           |
-|----|---------------------------------------|-------------------------------------------------------|------------------------------------------------|-----------------------------------------|
-| 💎 | SYSCALL/SYSRET fast path              | ✅ KiSystemCall64 via IA32_LSTAR                      | ✅ `syscall` entry via `entry_SYSCALL_64`      | ⬜ §2                                   |
-| 💎 | Typed failure return                  | ✅ Every NtXxx returns NTSTATUS                       | ✅ `-ERRNO` signed return                      | ⬜ §1                                   |
-| 💎 | Numbered service descriptor table     | ✅ SSDT (ntoskrnl) + shadow SSDT                      | ✅ syscall table `sys_call_table[]`            | ⬜ §4                                   |
-| 💎 | Software-interrupt compatibility path | ✅ INT 0x2E (legacy NT)                               | ✅ INT 0x80 (32-bit compat)                    | ⬜ §3                                   |
-| 💎 | IO_STATUS_BLOCK for async I/O         | ✅ Every file NtXxx populates IOSB                    | ⚠️ `io_uring` result ring; no IOSB             | ⬜ §11                                  |
-| 💎 | Process/thread creation via typed API | ✅ NtCreateProcess / NtCreateThread                   | ✅ `clone()` / `execve()`                      | ⬜ §7                                   |
-| 💎 | Named sync objects via syscall        | ✅ NtCreateEvent / NtCreateMutant / NtCreateSemaphore | ✅ POSIX named semaphores + futex              | ⬜ §8                                   |
-| 💎 | Virtual memory management syscalls    | ✅ NtAllocateVirtualMemory / NtFreeVirtualMemory      | ✅ `mmap()` / `munmap()`                       | ⬜ §9                                   |
-| 💎 | OS info query syscall                 | ✅ NtQuerySystemInformation                           | ✅ `sysinfo()` / `/proc/`                      | ⬜ §10                                  |
-| 💎 | LastError per-thread slot             | ✅ TEB->LastErrorValue set by kernel on               | ✅ `errno` via thread-local `__errno_location` | ⬜ §11 — (+ TODO-04 §6)                 |
-| ⭐ | ZwXxx CPL-gated kernel alias layer    | ✅ Internal convention; not documented/public         | ❌ No equivalent; drivers use same             | ⬜ §12 — explicit, documented           |
-| ⭐ | Unified Nt/Zw contract as public API  | ⚠️ NT native API is undocumented                      | ❌ No stable native API; syscall               | ⬜ §4 — /§12 — stable, numbered, public |
+| ⭐ | Feature                    | Win11                      | Linux                      | Impossible OS              |
+|----|----------------------------|----------------------------|----------------------------|----------------------------|
+| 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR    | ✅ entry_SYSCALL_64        | ⬜ §2                      |
+| 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx   | ✅ -ERRNO signed           | ⬜ §1                      |
+| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT      | ✅ sys_call_table[]        | ⬜ §4                      |
+| 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)       | ✅ INT 0x80 (32-bit)       | ⬜ §3                      |
+| 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt     | ⚠️ io_uring only           | ⬜ §11                     |
+| 💎 | Process/thread create API  | ✅ NtCreate{Process,Thread}| ✅ clone/execve            | ⬜ §7                      |
+| 💎 | Named sync objects         | ✅ NtCreate{Event,Mutant}  | ✅ POSIX sem + futex       | ⬜ §8                      |
+| 💎 | Virtual memory syscalls    | ✅ NtAllocate/FreeVirtMem  | ✅ mmap/munmap             | ⬜ §9                      |
+| 💎 | OS info query syscall      | ✅ NtQuerySystemInfo       | ✅ sysinfo + /proc         | ⬜ §10                     |
+| 💎 | LastError per-thread       | ✅ TEB→LastErrorValue      | ✅ errno via TLS           | ⬜ §11 + TODO-04 §6       |
+| ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented  | ❌ No equivalent           | ⬜ §12 — explicit, public  |
+| ⭐ | Stable native API contract | ⚠️ Undocumented            | ❌ No stable native API    | ⬜ §4+§12 — numbered+public|
+| ⭐ | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex    | ⬜ Planned — SSDT pre/post |
 
 > **After §1–§11:** Impossible OS matches Windows NT exactly on the native API calling convention, service numbers, IOSB semantics, NTSTATUS codes, and LastError propagation. Real `ntdll.dll` stubs can call into the kernel without patching.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract — Windows keeps it internal/undocumented and Linux has no equivalent at all.
