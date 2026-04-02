@@ -1008,9 +1008,18 @@ int task_exec(const uint8_t *data, uint64_t size)
      * For now, 0 means no TEB — swapgs will swap in 0. */
     tasks[pid].kernel_gs_base = 0;
 
-    klog(LOG_DEBUG, "sched", "PID %u -> entry %p, PEB=%p",
-           (uint64_t)pid, elf.entry,
-           (uintptr_t)tasks[pid].peb);
+    if (tasks[pid].peb) {
+        PEB *p = (PEB *)tasks[pid].peb;
+        klog(LOG_INFO, "sched",
+             "PID %u: PEB=%p (Win %u.%u.%u, %u CPUs)",
+             (uint64_t)pid, (uint64_t)(uintptr_t)tasks[pid].peb,
+             (uint64_t)p->OSMajorVersion,
+             (uint64_t)p->OSMinorVersion,
+             (uint64_t)p->OSBuildNumber,
+             (uint64_t)p->NumberOfProcessors);
+    }
+    klog(LOG_DEBUG, "sched", "PID %u -> entry %p",
+           (uint64_t)pid, elf.entry);
 
     return 0;
 }
