@@ -24,6 +24,28 @@ isr_common_stub:
     ; support (e.g. QEMU TCG). Re-add via alternatives patching when SMAP
     ; is actually enabled (requires per-process page tables, TODO-06 §8).
 
+    ; ---- swapgs on ring-3 → ring-0 entry ----
+    ; If we came from ring 3 (CS & 3 != 0), swap GS so the kernel sees
+    ; per-CPU data via GS, and KERNEL_GS_BASE holds the user TEB address.
+    ;
+    ; Stack at this point:
+    ;   [rsp+0]  = int_no (pushed by stub)
+    ;   [rsp+8]  = err_code (pushed by stub or CPU)
+    ;   [rsp+16] = RIP  (CPU)
+    ;   [rsp+24] = CS   (CPU)  ← check this
+    ;   [rsp+32] = RFLAGS
+    ;   [rsp+40] = RSP  (user, if ring-3 entry)
+    ;   [rsp+48] = SS   (user, if ring-3 entry)
+    ;
+    ; SYMMETRY REQUIREMENT: every swapgs here MUST have a matching swapgs
+    ; on the exit path. A missing or double swapgs corrupts GS for all
+    ; subsequent kernel code and is extremely hard to debug. If you modify
+    ; this code, verify both paths in lockstep.
+    test byte [rsp+24], 3     ; check RPL bits of saved CS
+    jz .no_swapgs_entry       ; came from ring 0 → skip
+    swapgs                    ; ring 3 → ring 0: swap TEB ↔ per-CPU
+.no_swapgs_entry:
+
     ; Save all general-purpose registers
     push rax
     push rbx
@@ -73,6 +95,21 @@ isr_common_stub:
 
     ; Remove int_no and err_code from stack
     add rsp, 16
+
+    ; ---- swapgs on ring-0 → ring-3 exit ----
+    ; If returning to ring 3 (CS & 3 != 0), swap GS back so user-mode
+    ; sees TEB via GS. Must match the entry swapgs exactly.
+    ;
+    ; Stack at this point (iret frame):
+    ;   [rsp+0]  = RIP
+    ;   [rsp+8]  = CS   ← check this
+    ;   [rsp+16] = RFLAGS
+    ;   [rsp+24] = RSP  (user)
+    ;   [rsp+32] = SS   (user)
+    test byte [rsp+8], 3      ; check RPL bits of return CS
+    jz .no_swapgs_exit        ; returning to ring 0 → skip
+    swapgs                    ; ring 0 → ring 3: swap per-CPU ↔ TEB
+.no_swapgs_exit:
 
     ; Return from interrupt
     iretq

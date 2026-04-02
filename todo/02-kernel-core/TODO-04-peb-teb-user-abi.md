@@ -30,7 +30,7 @@
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | TEB struct and GS self-pointer                 | —          |  [x]   |
 | 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS     | —          |  [x]   |
-| 💎  |   3   | swapgs on INT 0x80 entry and exit              | 1          |  [ ]   |
+| 💎  |   3   | swapgs on INT 0x80 entry and exit              | 1          |  [x]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork     | 1, 3       |  [ ]   |
 | 💎  |   5   | PEB allocation and population at task_exec     | 2, 4       |  [ ]   |
 | 💎  |   6   | TEB allocation and population at thread create | 1, 4       |  [ ]   |
@@ -72,16 +72,15 @@ Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk 
 - [x] Create `UHANDLE` type (uint64_t) for Win64 user-mode HANDLE (separate from kernel HANDLE)
 - [x] Add `PEB_LDR_DATA` and `LDR_DATA_TABLE_ENTRY` stubs with `LIST_ENTRY` for §8
 - [x] Add `LARGE_INTEGER`, `LIST_ENTRY` Win64 primitive types
-- [ ] Commit: `"kernel: peb — PEB and RTL_USER_PROCESS_PARAMETERS structs"`
+- [x] Commit: `"kernel: peb — PEB and RTL_USER_PROCESS_PARAMETERS structs"`
 
 ## 3. swapgs on INT 0x80 Entry and Exit
 Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) holds the TEB address. `swapgs` exchanges the two MSRs — must fire on every ring-3→ring-0 transition and be reversed on every ring-0→ring-3 return.
 
-- [ ] In the INT 0x80 ISR stub (`idt.asm` or equivalent): add `swapgs` as the **first** instruction before any register save when `CS & 3 == 3` (came from ring 3)
-  - Check CPL using `testb $3, 8(%rsp)` (CS is 8 bytes past `rsp` on exception entry) — execute `swapgs` only if non-zero, to be safe on nested kernel faults
-- [ ] On INT 0x80 exit path (before `iretq` back to ring 3): add matching `swapgs` to restore TEB address to GS before `iretq`
-- [ ] On `iretq` to ring 0 (kernel→kernel): do NOT call `swapgs`
-- [ ] Add regression comment block at the swapgs site explaining the symmetry requirement — a missing or double swapgs causes immediate GS corruption and is hard to debug
+- [x] In `isr_common_stub` (isr_stubs.asm): `test byte [rsp+24], 3` checks saved CS RPL; `swapgs` if ring 3
+- [x] On exit path (before `iretq`): `test byte [rsp+8], 3` checks return CS RPL; matching `swapgs`
+- [x] On `iretq` to ring 0 (kernel→kernel): `jz .no_swapgs_*` skips both swapgs
+- [x] Regression comment block with symmetry requirement added at both swapgs sites
 - [ ] Verify with QEMU: after ring-3 task runs, GS in ring 0 still points to per-CPU data
 - [ ] Commit: `"kernel: abi — swapgs on INT 0x80 ring-3 entry and exit"`
 
@@ -188,7 +187,7 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 |----|--------------------------|--------------------------|------------------------|----------------------|
 | 💎 | Per-process env block    | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack  | 🔄 §2 done, §5 todo  |
 | 💎 | Per-thread block (TEB)   | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS   | 🔄 §1 done, §6 todo  |
-| 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | ⬜ §3, §4            |
+| 💎 | swapgs kernel entry/exit | ✅ KiSystemCall64        | ✅ entry.S swapgs      | 🔄 §3 done, §4 todo  |
 | 💎 | LastError per-thread     | ✅ TEB offset 0x68       | ⚠️ errno per-thread    | ⬜ §6                |
 | 💎 | TLS static slots (64)    | ✅ TEB offset 0x1480     | ✅ pthread + FS-base   | ⬜ §9                |
 | 💎 | Process parameters       | ✅ cmdline, env, handles | ❌ stack + /proc       | 🔄 §2 done, §5 todo  |
