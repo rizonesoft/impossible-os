@@ -496,20 +496,31 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         /* Colored level prefix + subsystem + pre-formatted message.
          * For badge-only levels: reset after [LEVEL], rest is default.
          * For full-line levels:  reset after message, whole tail colored.
-         * Special: "TEST" subsystem always gets cyan full-line color. */
+         * Special: "TEST" subsystem — badge keeps level color,
+         *          subsystem + message text is cyan. */
         {
             int is_test = (subsystem && subsystem[0] == 'T' &&
                            subsystem[1] == 'E' && subsystem[2] == 'S' &&
                            subsystem[3] == 'T' &&
                            (subsystem[4] == '\0' || subsystem[4] == ':'));
-            int full_line = level_full_line[level] || is_test;
 
-            LS(is_test ? ANSI_CYAN : level_ansi[level]);
+            /* Badge: normal level color */
+            LS(level_ansi[level]);
             LS(level_prefix[level]);
-            if (!full_line) LS(ANSI_RESET);
-            if (subsystem && subsystem[0]) { LS(subsystem); LS(": "); }
-            LS(e->message);
-            if (full_line) LS(ANSI_RESET);
+            LS(ANSI_RESET);
+
+            /* Subsystem + message: cyan for TEST, else default or full-line */
+            if (is_test) {
+                LS(ANSI_CYAN);
+                if (subsystem[0]) { LS(subsystem); LS(": "); }
+                LS(e->message);
+                LS(ANSI_RESET);
+            } else {
+                if (level_full_line[level]) LS(level_ansi[level]);
+                if (subsystem && subsystem[0]) { LS(subsystem); LS(": "); }
+                LS(e->message);
+                if (level_full_line[level]) LS(ANSI_RESET);
+            }
         }
         LP('\n');
         line[pos] = '\0';

@@ -177,6 +177,10 @@ void boot_tests_run(void)
     klog(LOG_DEBUG, "TEST", "--- IPC & Threading --------------------------------------------------------");
     klog_disk_flush();
 
+    /* Suppress noisy sched/ipc thread create/exit logs during IPC tests */
+    klog_set_level("sched", LOG_WARN);
+    klog_set_level("ipc", LOG_WARN);
+
     /* Kernel thread test (shared globals) */
     {
         extern volatile uint32_t thread_shared_counter;
@@ -475,6 +479,10 @@ void boot_tests_run(void)
 #else
     klog(LOG_DEBUG, "TEST", "User mode / exec / fork tests skipped");
 #endif
+
+    /* Restore sched/ipc logging after IPC tests */
+    klog_set_level("sched", LOG_DEBUG);
+    klog_set_level("ipc", LOG_DEBUG);
 
     boot_splash_status("Preparing desktop...");
     boot_splash_tick();

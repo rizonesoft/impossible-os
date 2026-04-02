@@ -1008,8 +1008,9 @@ int task_exec(const uint8_t *data, uint64_t size)
      * For now, 0 means no TEB — swapgs will swap in 0. */
     tasks[pid].kernel_gs_base = 0;
 
-    klog(LOG_DEBUG, "sched", "PID %u -> entry %p",
-           (uint64_t)pid, elf.entry);
+    klog(LOG_DEBUG, "sched", "PID %u -> entry %p, PEB=%p",
+           (uint64_t)pid, elf.entry,
+           (uintptr_t)tasks[pid].peb);
 
     return 0;
 }
