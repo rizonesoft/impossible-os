@@ -208,9 +208,9 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                | Done |
 |--------|----------------------------------|-----|----------------------|------|
-| 0x0000 | NtClose                          | §6  | T05 (ob.c exists)    | [x]  |
-| 0x0001 | NtDuplicateObject                | §6  | T05 (ob.c exists)    | [x]  |
-| 0x0002 | NtQueryObject                    | §6  | T05 (ob.c exists)    | [x]  |
+| 0x0000 | NtClose                          | §6  | T05 (ob.c exists)    | [ ]  |
+| 0x0001 | NtDuplicateObject                | §6  | T05 (ob.c exists)    | [ ]  |
+| 0x0002 | NtQueryObject                    | §6  | T05 (ob.c exists)    | [ ]  |
 | 0x0003 | NtMakeTemporaryObject            | §16 | T05                  | [ ]  |
 | 0x0004 | NtMakePermanentObject            | §16 | T05                  | [ ]  |
 | 0x0005 | NtSetInformationObject           | §16 | T05                  | [ ]  |
@@ -307,21 +307,21 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                    |
 |--------|----------------------------------|-----|--------------------------|------|
-| 0x0070 | NtCreateEvent                    | §8  | T05 (ob_event exists)    | [x]  |
+| 0x0070 | NtCreateEvent                    | §8  | T05 (ob_event exists)    | [ ]  |
 | 0x0071 | NtOpenEvent                      | §8  | T05                      | [ ]  |
 | 0x0072 | NtSetEvent                       | §8  | T05                      | [ ]  |
 | 0x0073 | NtResetEvent                     | §8  | T05                      | [ ]  |
 | 0x0074 | NtPulseEvent                     | §8  | T05                      | [ ]  |
 | 0x0075 | NtQueryEvent                     | §8  | T05                      | [ ]  |
-| 0x0076 | NtCreateMutant                   | §8  | T05 (ob_mutex exists)    | [x]  |
+| 0x0076 | NtCreateMutant                   | §8  | T05 (ob_mutex exists)    | [ ]  |
 | 0x0077 | NtOpenMutant                     | §8  | T05                      | [ ]  |
 | 0x0078 | NtReleaseMutant                  | §8  | T05                      | [ ]  |
 | 0x0079 | NtQueryMutant                    | §8  | T05                      | [ ]  |
-| 0x007A | NtCreateSemaphore                | §8  | T05 (ob_sem exists)      | [x]  |
+| 0x007A | NtCreateSemaphore                | §8  | T05 (ob_sem exists)      | [ ]  |
 | 0x007B | NtOpenSemaphore                  | §8  | T05                      | [ ]  |
 | 0x007C | NtReleaseSemaphore               | §8  | T05                      | [ ]  |
 | 0x007D | NtQuerySemaphore                 | §8  | T05                      | [ ]  |
-| 0x007E | NtCreateTimer                    | §18 | T05 (ob_timer exists)    | [x]  |
+| 0x007E | NtCreateTimer                    | §18 | T05 (ob_timer exists)    | [ ]  |
 | 0x007F | NtOpenTimer                      | §18 | T07 §7                   | [ ]  |
 | 0x0080 | NtSetTimer                       | §18 | T07 §7                   | [ ]  |
 | 0x0081 | NtCancelTimer                    | §18 | T07 §7                   | [ ]  |
@@ -374,15 +374,15 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                    |
 |--------|----------------------------------|-----|--------------------------|------|
-| 0x00B0 | NtOpenProcessToken               | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B0 | NtOpenProcessToken               | §15 | T11 (token.c exists)     | [ ]  |
 | 0x00B1 | NtOpenProcessTokenEx             | §15 | T11                      | [ ]  |
-| 0x00B2 | NtOpenThreadToken                | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B2 | NtOpenThreadToken                | §15 | T11 (token.c exists)     | [ ]  |
 | 0x00B3 | NtOpenThreadTokenEx              | §15 | T11                      | [ ]  |
-| 0x00B4 | NtQueryInformationToken          | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B4 | NtQueryInformationToken          | §15 | T11 (token.c exists)     | [ ]  |
 | 0x00B5 | NtSetInformationToken            | §15 | T11                      | [ ]  |
-| 0x00B6 | NtAdjustPrivilegesToken          | §15 | T11 (token.c exists)     | [x]  |
-| 0x00B7 | NtAdjustGroupsToken              | §15 | T11 (token.c exists)     | [x]  |
-| 0x00B8 | NtDuplicateToken                 | §15 | T11 (token.c exists)     | [x]  |
+| 0x00B6 | NtAdjustPrivilegesToken          | §15 | T11 (token.c exists)     | [ ]  |
+| 0x00B7 | NtAdjustGroupsToken              | §15 | T11 (token.c exists)     | [ ]  |
+| 0x00B8 | NtDuplicateToken                 | §15 | T11 (token.c exists)     | [ ]  |
 | 0x00B9 | NtFilterToken                    | §15 | T11                      | [ ]  |
 | 0x00BA | NtCreateToken                    | §15 | T11                      | [ ]  |
 | 0x00BB | NtCompareTokens                  | §15 | T11                      | [ ]  |
@@ -393,7 +393,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x00C0 | NtPrivilegeObjectAuditAlarm      | §15 | T11                      | [ ]  |
 | 0x00C1 | NtSetSecurityObject              | §15 | T11                      | [ ]  |
 | 0x00C2 | NtQuerySecurityObject            | §15 | T11                      | [ ]  |
-| 0x00C3 | NtAllocateLocallyUniqueId        | §15 | T11 (luid.c exists)      | [x]  |
+| 0x00C3 | NtAllocateLocallyUniqueId        | §15 | T11 (luid.c exists)      | [ ]  |
 | 0x00C4 | NtCreateTokenEx                  | §15 | T11                      | [ ]  |
 
 **0x00D0–0x00EF: System Information and Control**
@@ -471,8 +471,8 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | Index  | Function                         | §   | Owner                    |
 |--------|----------------------------------|-----|--------------------------|------|
 | 0x0120 | NtCreateDirectoryObject          | §16 | T05                      | [ ]  |
-| 0x0121 | NtOpenDirectoryObject            | §16 | T05 (ob.c exists)        | [x]  |
-| 0x0122 | NtQueryDirectoryObject           | §16 | T05 (ob.c exists)        | [x]  |
+| 0x0121 | NtOpenDirectoryObject            | §16 | T05 (ob.c exists)        | [ ]  |
+| 0x0122 | NtQueryDirectoryObject           | §16 | T05 (ob.c exists)        | [ ]  |
 | 0x0123 | NtCreateSymbolicLinkObject       | §16 | T05                      | [ ]  |
 | 0x0124 | NtOpenSymbolicLinkObject         | §16 | T05                      | [ ]  |
 | 0x0125 | NtQuerySymbolicLinkObject        | §16 | T05                      | [ ]  |
