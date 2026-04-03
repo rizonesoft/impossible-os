@@ -44,21 +44,21 @@
 ## Implementation Order
 
 | Star | Order | Deliverable                                       | Depends On | Status |
-| --- | :---: | ------------------------------------------------- | ---------- | :----: |
-| ⭐  |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [ ]   |
-| ⭐  |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [ ]   |
-| ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [ ]   |
-| ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [ ]   |
-| ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [ ]   |
-| ⭐  |   6   | IDT vector assignment collision detection          | --         |  [ ]   |
-| ⭐  |   7   | SSDT service number count stability                | --         |  [ ]   |
-| ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [ ]   |
-| ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [ ]   |
-| ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [ ]   |
-| ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [ ]   |
-| ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [ ]   |
-| ⭐  |  13   | VFS drive letter range and partition offsets        | --         |  [ ]   |
-| ⭐  |  14   | exec_pending state machine verification            | §5         |  [ ]   |
+| --- | :---: | -------------------------------------------------- | ---------- | :----: |
+| ⭐  |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [x]  |
+| ⭐  |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [ ]  |
+| ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [ ]  |
+| ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [ ]  |
+| ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [ ]  |
+| ⭐  |   6   | IDT vector assignment collision detection          | --         |  [ ]  |
+| ⭐  |   7   | SSDT service number count stability                | --         |  [ ]  |
+| ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [ ]  |
+| ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [ ]  |
+| ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [ ]  |
+| ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [ ]  |
+| ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [ ]  |
+| ⭐  |  13   | VFS drive letter range and partition offsets       | --         |  [ ]  |
+| ⭐  |  14   | exec_pending state machine verification            | §5         |  [ ]  |
 
 > ⭐ = all exclusive -- no other OS has systematic compile-time + boot-time invariant verification across the entire kernel.
 
@@ -70,13 +70,13 @@ Assembly code (syscall_entry.asm, ap_trampoline.asm) reads `gs:0`, `gs:24`, `gs:
 
 **Files:** `include/kernel/smp.h`, `src/kernel/sched/syscall_entry.asm`
 
-- [ ] Add `_Static_assert(offsetof(struct per_cpu_data, self) == 0, "gs:0 must be self-pointer")`
-- [ ] Add `_Static_assert(offsetof(struct per_cpu_data, syscall_rsp0) == 24, "gs:24 must be syscall_rsp0")`
-- [ ] Add `_Static_assert(offsetof(struct per_cpu_data, user_rsp_scratch) == 32, "gs:32 must be user_rsp_scratch")`
-- [ ] Runtime: `smp_early_bsp_init()` writes a known value to `self`, reads it back via `mov %%gs:0, %0` inline asm, verifies match
-- [ ] Unit test: verify all 3 offsets match between C `offsetof()` and expected assembly constants
-- [ ] Documentation: add offset table comment in smp.h with `/* Assembly depends on these offsets -- do NOT reorder */`
-- [ ] Commit: `"bulletproof: per_cpu_data assembly offsets -- static assert + runtime verify"`
+- [x] Add `_Static_assert(offsetof(struct per_cpu_data, self) == 0, "gs:0 must be self-pointer")`
+- [x] Add `_Static_assert(offsetof(struct per_cpu_data, syscall_rsp0) == 24, "gs:24 must be syscall_rsp0")`
+- [x] Add `_Static_assert(offsetof(struct per_cpu_data, user_rsp_scratch) == 32, "gs:32 must be user_rsp_scratch")`
+- [x] Runtime: `smp_early_bsp_init()` writes a known value to `self`, reads it back via `mov %%gs:0, %0` inline asm, verifies match
+- [x] Unit test: verify all 6 offsets (self, cpu_id, lapic_id, rsp0, syscall_rsp0, user_rsp_scratch) in test_nt_types.c
+- [x] Documentation: add offset table comment in smp.h with `/* Assembly depends on these offsets -- do NOT reorder */`
+- [x] Commit: `"bulletproof: per_cpu_data assembly offsets -- static assert + runtime verify"`
 
 **Test checkpoint:** Build with field inserted before `syscall_rsp0` -> static assert fires at compile time. Runtime verify logs `gs:0 self-pointer OK` at boot. Unit test passes on QEMU WHPX, TCG, VBox.
 
@@ -324,16 +324,16 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 
 ## OS Comparison
 
-| ⭐ | Feature                     | Win11                  | Linux                   | Impossible OS              |
-|----|-----------------------------|------------------------|-------------------------|----------------------------|
+| ⭐ | Feature                     | Win11                  | Linux                    | Impossible OS               |
+|----|-----------------------------|------------------------|--------------------------|-----------------------------|
 | ⭐ | Compile-time struct asserts | ❌ Not systematic      | ⚠️ BUILD_BUG_ON sparse  | ⬜ §1-§14 all subsystems   |
 | ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ⬜ §1-§14 every init       |
 | ⭐ | Assembly offset asserts     | ❌ Manual sync         | ⚠️ asm-offsets.c        | ⬜ §1,§4,§5 static assert  |
-| ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard      | ⬜ §10 heap+stack+user     |
-| ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks         | ⬜ §2,§5,§11,§12 all ABIs  |
-| ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual                | ⬜ §6 compile-time unique  |
-| ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified          | ⬜ §9 depth counter        |
-| ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked           | ⬜ §14 exec_pending age    |
+| ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard     | ⬜ §10 heap+stack+user     |
+| ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ⬜ §2,§5,§11,§12 all ABIs  |
+| ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ⬜ §6 compile-time unique  |
+| ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ⬜ §9 depth counter        |
+| ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked          | ⬜ §14 exec_pending age    |
 
 > **All exclusive.** No other OS systematically applies 5-layer defense to every critical kernel invariant. Linux has sparse `BUILD_BUG_ON` checks and `asm-offsets.c` for assembly offset generation, but nothing approaching comprehensive coverage. Windows has no public compile-time invariant system.
 

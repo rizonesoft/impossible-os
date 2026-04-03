@@ -71,6 +71,20 @@ void smp_early_bsp_init(void)
     cpu_data[0].irq_count     = 0;
     cpu_data[0].preempt_count = 0;
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
+
+    /* Runtime verify: read gs:0 back via inline asm and confirm it
+     * matches the address we just wrote. If GS_BASE is wrong, every
+     * per-CPU access in the kernel will read garbage. */
+    {
+        struct per_cpu_data *readback;
+        __asm__ volatile("mov %%gs:0, %0" : "=r"(readback));
+        if (readback != &cpu_data[0]) {
+            /* Serial is the only output available this early */
+            extern void serial_write(const char *s);
+            serial_write("[FATAL] gs:0 self-pointer mismatch after GS_BASE write\n");
+            for (;;) __asm__ volatile("cli; hlt");
+        }
+    }
 }
 
 /* ---- Delay helpers ---- */

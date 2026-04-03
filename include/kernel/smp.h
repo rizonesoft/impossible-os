@@ -39,15 +39,26 @@
 /* Per-AP kernel stack size (16 KiB, same as BSP) */
 #define AP_STACK_SIZE          16384
 
-/* ---- Per-CPU data ---- */
+/* ---- Per-CPU data ----
+ *
+ * WARNING: Assembly code reads hardcoded offsets into this struct via GS.
+ * Do NOT insert fields before or between the first 3 entries without
+ * updating syscall_entry.asm and the _Static_asserts below.
+ *
+ * Offset  Field              Used by
+ * ------  -----------------  ----------------------------------
+ * gs:0    self               smp_this_cpu() inline asm, ISR stubs
+ * gs:24   syscall_rsp0       syscall_entry.asm (SYSCALL fast path)
+ * gs:32   user_rsp_scratch   syscall_entry.asm (user RSP save)
+ */
 
 struct per_cpu_data {
-    struct per_cpu_data *self;   /* self-pointer (gs:0 reads this) */
-    uint32_t cpu_id;            /* logical CPU index (0 = BSP) */
-    uint32_t lapic_id;          /* hardware LAPIC ID */
-    uint64_t rsp0;              /* kernel stack top (for TSS) */
-    uint64_t syscall_rsp0;      /* SYSCALL entry kernel stack (gs:24) */
-    uint64_t user_rsp_scratch;  /* scratch for saving user RSP during SYSCALL (gs:32) */
+    struct per_cpu_data *self;   /* gs:0  -- self-pointer */
+    uint32_t cpu_id;            /* gs:8  -- logical CPU index (0 = BSP) */
+    uint32_t lapic_id;          /* gs:12 -- hardware LAPIC ID */
+    uint64_t rsp0;              /* gs:16 -- kernel stack top (for TSS) */
+    uint64_t syscall_rsp0;      /* gs:24 -- SYSCALL kernel stack */
+    uint64_t user_rsp_scratch;  /* gs:32 -- scratch for user RSP */
     uint64_t irq_count;         /* total interrupts handled */
     uint32_t preempt_count;     /* preemption nesting counter */
     KIRQL    current_irql;      /* current IRQL (0 = PASSIVE_LEVEL) */
@@ -63,6 +74,14 @@ struct per_cpu_data {
     const char       *async_name;       /* step name for logging */
     void             *async_fn;         /* boot_result_t (*fn)(void) */
 };
+
+/* Compile-time enforcement of assembly-referenced struct offsets */
+_Static_assert(__builtin_offsetof(struct per_cpu_data, self) == 0,
+    "gs:0 must be self-pointer -- syscall_entry.asm and ISR stubs depend on this");
+_Static_assert(__builtin_offsetof(struct per_cpu_data, syscall_rsp0) == 24,
+    "gs:24 must be syscall_rsp0 -- syscall_entry.asm depends on this");
+_Static_assert(__builtin_offsetof(struct per_cpu_data, user_rsp_scratch) == 32,
+    "gs:32 must be user_rsp_scratch -- syscall_entry.asm depends on this");
 
 /* ---- API ---- */
 

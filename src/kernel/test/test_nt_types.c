@@ -15,6 +15,7 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/gdt.h"
+#include "kernel/smp.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -153,6 +154,29 @@ static void test_ssdt_register_and_dispatch(void)
     ssdt_register(0x03FF, ssdt_stub_not_implemented);
 }
 
+/* ---- per_cpu_data assembly offsets ---- */
+
+static void test_per_cpu_offsets(void)
+{
+    /* These offsets are hardcoded in syscall_entry.asm and ISR stubs.
+     * If any field is inserted or reordered, assembly will silently
+     * read the wrong data -- corrupting every ring transition. */
+    TEST_ASSERT_EQ(__builtin_offsetof(struct per_cpu_data, self), 0,
+                   "per_cpu_data.self at gs:0");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct per_cpu_data, syscall_rsp0), 24,
+                   "per_cpu_data.syscall_rsp0 at gs:24");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct per_cpu_data, user_rsp_scratch), 32,
+                   "per_cpu_data.user_rsp_scratch at gs:32");
+
+    /* Verify field ordering: cpu_id and lapic_id sit between self and rsp0 */
+    TEST_ASSERT_EQ(__builtin_offsetof(struct per_cpu_data, cpu_id), 8,
+                   "per_cpu_data.cpu_id at gs:8");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct per_cpu_data, lapic_id), 12,
+                   "per_cpu_data.lapic_id at gs:12");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct per_cpu_data, rsp0), 16,
+                   "per_cpu_data.rsp0 at gs:16");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -168,6 +192,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: SSDT invalid table", test_ssdt_invalid_table_returns_error, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT main count", test_ssdt_main_count, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT register+dispatch", test_ssdt_register_and_dispatch, TEST_CAT_ABI);
+    test_suite_register_cat("NT: per_cpu_data offsets", test_per_cpu_offsets, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
