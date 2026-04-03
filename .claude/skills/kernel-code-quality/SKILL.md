@@ -131,6 +131,21 @@ static void test_my_invariant(void) {
 - [ ] **Changed a convention?** Update CLAUDE.md, `.claude/skills/`, and affected TODO files in the same commit.
 - [ ] **New struct with assembly offsets?** Add an offset table comment above the struct definition.
 
+### Gate 9: Production Quality -- No Patches, No Workarounds
+
+> Every line of code ships as if it is the final version. There is no "fix it later" pass. Impossible OS is built to rival Windows and Linux -- that standard applies to every commit, not just milestone releases.
+
+- [ ] **No TODO/FIXME/HACK in new code.** If something needs work, do the work now or don't write it. A `// TODO: handle error` comment is a shipped bug. Either handle the error or don't merge.
+- [ ] **No hardcoded magic numbers.** Every constant gets a `#define` with a descriptive name in a header. Inline `0x8E00` or `470` in source code is a maintenance trap -- use `AP_DATA_BASE` or `SSDT_MAIN_COUNT`.
+- [ ] **No copy-paste code.** If you write the same pattern three times, extract it. But don't extract prematurely for one use -- wait for the third occurrence.
+- [ ] **No emulator workarounds.** Code must be correct per the hardware specification. If QEMU does something wrong, that's QEMU's bug -- never add `if (running_on_qemu)` branching. The only platform-specific code allowed is `hv_supports_*()` checks where hardware genuinely differs.
+- [ ] **No skip lists or suppression.** If a test fails, fix the code, don't skip the test. If a warning fires, fix the root cause, don't suppress the warning. `#pragma GCC diagnostic ignored` is almost never correct.
+- [ ] **Complete error paths.** Every `if (error)` branch must do something meaningful: log, clean up partial state, return an error code. An empty `if (err) {}` block or a bare `return;` is a silent failure waiting to become a crash.
+- [ ] **Correct the first time.** Read the spec, read the existing code, understand the integration surface BEFORE writing. A function that works on the first `build.sh` run is the goal -- iterating through compile errors is wasted motion. Think, then type.
+- [ ] **No backwards-compatibility shims.** If a function signature changes, update all callers. Don't add a wrapper that converts old arguments to new ones. Don't re-export removed symbols. If it's unused, delete it completely.
+
+<!-- Updated 2026-04-03: added Gate 9 after user feedback -- never patch, always production-ready -->
+
 ---
 
 ## Post-Write Verification
@@ -174,3 +189,7 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | New public function | At least one unit test assertion |
 | Bare-metal crash lesson | Add to CLAUDE.md Bare Metal Gotchas |
 | Unicode in strings/comments | Replace with ASCII `--` |
+| Tempted to write TODO/FIXME | Do the work now or don't write the code |
+| Magic number in source | Extract to `#define` in a header |
+| Test failing | Fix the code, never skip the test |
+| Emulator-specific behavior | Write to the hardware spec, not the emulator |
