@@ -28,7 +28,8 @@ Param(
     [switch]$DebugTests,  # boot with debug=1 (unit + boot tests)
     [switch]$TestOnly,    # boot with test=1 (unit tests, then shutdown)
     [string]$TestSuite = '',  # category filter: mm, fs, ob, security, ipc, sched, boot, abi, storage
-    [switch]$Quiet        # suppress PASS lines, show FAIL + summary only
+    [switch]$Quiet,       # suppress PASS lines, show FAIL + summary only
+    [string]$ExtraArgs = ''  # additional QEMU arguments (e.g., "-machine pc,i8042=on")
 )
 
 $ErrorActionPreference = "Stop"
@@ -154,6 +155,11 @@ if ($PatchArgs.Count -gt 0) {
     # No test flags -- reset boot.conf to defaults in case a previous
     # test run was interrupted before its finally{} block could restore it.
     & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset" 2>$null
+}
+
+# Append extra arguments if provided (e.g., "-machine pc,i8042=on")
+if ($ExtraArgs) {
+    $QemuArgs += $ExtraArgs.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
 }
 
 try {
