@@ -49,7 +49,7 @@
 | ⭐  |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [x]  |
 | ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [x]  |
 | ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [x]  |
-| ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [ ]  |
+| ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [x]  |
 | ⭐  |   6   | IDT vector assignment collision detection          | --         |  [ ]  |
 | ⭐  |   7   | SSDT service number count stability                | --         |  [ ]  |
 | ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [ ]  |
@@ -141,14 +141,12 @@ The AP trampoline assembly reads data from fixed offsets at physical 0x8E00. `sm
 
 **Files:** `include/kernel/idt.h`, `src/kernel/isr_stubs.asm`
 
-- [ ] Add `_Static_assert(sizeof(struct interrupt_frame) == EXPECTED_SIZE, "interrupt frame size mismatch")`
-- [ ] Add `_Static_assert(offsetof(struct interrupt_frame, rax) == EXPECTED_OFFSET, "rax offset")`
-- [ ] Add offset asserts for all registers: rip, cs, rflags, rsp, ss (iretq expects these last 5 in order)
-- [ ] Runtime: `isr_handler()` can verify frame->cs has valid selector values (0x08 or 0x20|3)
-- [ ] Unit test: trigger a known interrupt, verify all frame fields are populated correctly
-- [ ] Canary: write sentinel 0xDEADBEEFCAFEBABE in unused frame padding (if any), verify on exit
-- [ ] Documentation: frame layout diagram in idt.h with byte offsets matching asm push order
-- [ ] Commit: `"bulletproof: interrupt frame layout -- size + offset asserts"`
+- [x] 12 `_Static_assert` in idt.h: sizeof==176, r15==0, r8==56, rbp==64, rdi==72, rax==112, int_no==120, err_code==128, rip==136, cs==144, rflags==152, rsp==160, ss==168
+- [x] Runtime: `isr_handler()` checks `frame->cs` is 0x08 (kernel) or 0x23 (user RPL=3); FATAL halt on corruption
+- [x] Unit test: `test_interrupt_frame_layout()` -- 9 assertions covering sizeof, GPR endpoints, iretq frame order, int_no/err_code
+- [x] No unused padding in struct (packed, all 22 fields x 8 bytes = 176); canary N/A
+- [x] Documentation: 30-line frame layout diagram in idt.h with offset, size, field, pushed-by, and pop-order columns
+- [x] Commit: `"bulletproof: interrupt frame layout -- size + offset asserts"`
 
 > [!WARNING]
 > **Regression risk:** If interrupt frame layout changes, every ISR, every context switch, and every ring transition breaks. This is the single most critical struct in the entire kernel.

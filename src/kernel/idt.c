@@ -216,6 +216,19 @@ uint64_t isr_handler(struct interrupt_frame *frame)
     uint8_t vec = (uint8_t)frame->int_no;
     uint64_t result;
 
+    /* ---- Interrupt frame integrity check ----
+     * CS must be kernel (0x08) or user (0x23 = GDT_USER_CODE|RPL3).
+     * Any other value means the frame is corrupt -- push/pop order
+     * mismatch, stack corruption, or struct layout drift. */
+    {
+        uint64_t cs_val = frame->cs;
+        if (cs_val != 0x08 && cs_val != 0x23) {
+            extern void serial_write(const char *s);
+            serial_write("[FATAL] isr_handler: corrupt CS in interrupt frame\n");
+            for (;;) __asm__ volatile("cli; hlt");
+        }
+    }
+
     /* ---- IRQL raise for hardware interrupts (vectors 32+) ----
      * CPU exceptions (0-31) are synchronous faults and run at the
      * IRQL of the faulting code -- do not raise. */

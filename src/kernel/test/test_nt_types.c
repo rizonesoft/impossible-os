@@ -15,6 +15,7 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/gdt.h"
+#include "kernel/idt.h"
 #include "kernel/smp.h"
 #include "kernel/boot_info.h"
 #include "kernel/mm/user_range.h"
@@ -242,6 +243,42 @@ static void test_ap_trampoline_offsets(void)
                    "AP_DATA_BASE == trampoline + 0xE00");
 }
 
+/* ---- interrupt frame layout ---- */
+
+static void test_interrupt_frame_layout(void)
+{
+    /* struct interrupt_frame is the single most critical struct in the kernel.
+     * isr_stubs.asm pushes/pops in this exact order; schedule() returns a
+     * frame pointer; task.c builds frames for new tasks. Any drift = silent
+     * register corruption on every interrupt. */
+    TEST_ASSERT_EQ(sizeof(struct interrupt_frame), 176,
+                   "interrupt_frame == 22 x 8 = 176 bytes");
+
+    /* First pushed (rax) = highest offset; last pushed (r15) = offset 0 */
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, r15), 0,
+                   "r15 at offset 0 (last pushed, first popped)");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, rax), 112,
+                   "rax at offset 112 (first pushed, last popped)");
+
+    /* iretq frame: must be last 5 fields in exact CPU order */
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, rip), 136,
+                   "rip at offset 136 (iretq field 1)");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, cs), 144,
+                   "cs at offset 144 (iretq field 2)");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, rflags), 152,
+                   "rflags at offset 152 (iretq field 3)");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, rsp), 160,
+                   "rsp at offset 160 (iretq field 4)");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, ss), 168,
+                   "ss at offset 168 (iretq field 5)");
+
+    /* int_no/err_code between GPRs and iretq frame */
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, int_no), 120,
+                   "int_no at offset 120");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct interrupt_frame, err_code), 128,
+                   "err_code at offset 128");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -261,6 +298,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: boot_config layout", test_boot_config_layout, TEST_CAT_ABI);
     test_suite_register_cat("NT: user ELF range sync", test_user_elf_range, TEST_CAT_ABI);
     test_suite_register_cat("NT: AP trampoline offsets", test_ap_trampoline_offsets, TEST_CAT_ABI);
+    test_suite_register_cat("NT: interrupt frame layout", test_interrupt_frame_layout, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
