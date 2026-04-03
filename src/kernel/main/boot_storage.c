@@ -41,6 +41,33 @@
 #include "kernel/ob/ob.h"
 #include "main/main_internal.h"
 
+/* ---- Deferred init wrappers --------------------------------------------- */
+
+/* Network: rtl8139 + net stack + DHCP — not needed for desktop */
+static boot_result_t deferred_net_init(void)
+{
+    POST16(POST16_DEFERRED_NET);
+    int nic = rtl8139_init();
+    if (nic < 0) {
+        POST16(POST16_DEFERRED_NET_OK);
+        return BOOT_DEGRADED;  /* no NIC found — not fatal */
+    }
+    net_init();
+    dhcp_discover();
+    POST16(POST16_DEFERRED_NET_OK);
+    return BOOT_OK;
+}
+
+/* Optional input: VirtIO tablet + VBox absolute mouse — PS/2 is sufficient */
+static boot_result_t deferred_input_init(void)
+{
+    POST16(POST16_DEFERRED_INPUT);
+    virtio_input_init();
+    vbox_mouse_init();
+    POST16(POST16_DEFERRED_INPUT_OK);
+    return BOOT_OK;
+}
+
 /* ---- Phase 2 ------------------------------------------------------------ */
 
 void boot_phase2(void)
@@ -61,20 +88,28 @@ void boot_phase2(void)
     POST16(POST16_XHCI);
     xhci_init();
     POST16(POST16_XHCI_OK);
-    boot_splash_status("Initializing network...");
-    POST16(POST16_NIC);
-    rtl8139_init();
-    POST16(POST16_NIC_OK);
-    POST16(POST16_NET);
-    net_init();
-    POST16(POST16_NET_OK);
-    virtio_input_init();
-    vbox_mouse_init();
-    boot_progress(2, "PCI_NET", POST16_PCI_OK);
+    if (g_boot_info.config.deferred) {
+        /* Defer non-critical peripherals until after desktop is up */
+        boot_defer("network", deferred_net_init);
+        boot_defer("input",   deferred_input_init);
+        boot_progress(2, "PCI_NET_DEFERRED", POST16_PCI_OK);
+    } else {
+        /* Legacy: all subsystems init in-phase */
+        boot_splash_status("Initializing network...");
+        POST16(POST16_NIC);
+        rtl8139_init();
+        POST16(POST16_NIC_OK);
+        POST16(POST16_NET);
+        net_init();
+        POST16(POST16_NET_OK);
+        virtio_input_init();
+        vbox_mouse_init();
+        boot_progress(2, "PCI_NET", POST16_PCI_OK);
 
-    /* DHCP fire-and-forget */
-    dhcp_discover();
-    boot_progress(2, "DHCP", POST16_NET_OK);
+        /* DHCP fire-and-forget */
+        dhcp_discover();
+        boot_progress(2, "DHCP", POST16_NET_OK);
+    }
 
     /* --- Disk drivers (moved from Phase 0) --- */
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");

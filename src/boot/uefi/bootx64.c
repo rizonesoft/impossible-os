@@ -67,7 +67,8 @@ struct boot_config {
     UINT8   test_quiet;        /* 1 = suppress PASS lines, show FAIL + summary */
     UINT8   diag_delay;        /* seconds to pause on each diag screen (0 = skip) */
     UINT8   diag_splash;       /* 1 = show diag on splash (bare metal, no serial) */
-    UINT8   _reserved[18];     /* future fields — zero-filled by defaults */
+    UINT8   deferred;          /* 1 = defer non-critical inits (default), 0 = all in-phase */
+    UINT8   _reserved[17];     /* future fields — zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
@@ -728,6 +729,7 @@ static void boot_config_defaults(struct boot_config *cfg)
     cfg->postbars       = 0;    /* off — normal splash, no VPD */
     cfg->test_suite     = 0xFF; /* all categories */
     cfg->test_quiet     = 0;    /* verbose (show PASS lines) */
+    cfg->deferred       = 1;    /* defer non-critical inits by default */
     cfg->cmdline[0]     = '\0';
     cfg->config_found   = 0;
 }
@@ -781,6 +783,9 @@ static void parse_conf_kv(struct boot_config *cfg,
     }
     else if (ascii_streq(key, "diag_splash")) {
         cfg->diag_splash = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "deferred")) {
+        cfg->deferred = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;

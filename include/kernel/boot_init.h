@@ -24,6 +24,7 @@ typedef enum {
     BOOT_OK       = 0,   /* Subsystem initialised successfully */
     BOOT_DEGRADED = 1,   /* Initialised with reduced capability; log + continue */
     BOOT_FATAL    = 2,   /* Cannot proceed; caller must halt or BSOD */
+    BOOT_DEFERRED = 3,   /* Subsystem skipped; will init after desktop is up */
 } boot_result_t;
 
 /* --- Subsystem identifiers ------------------------------------------------ */
@@ -232,6 +233,14 @@ typedef enum {
 #define POST16_DESKTOP_OK       0x3031
 #define POST16_COMPOSITOR       0x3040
 
+/* Deferred Init (0xD000–0xD00F) — post-desktop non-critical subsystems */
+#define POST16_DEFERRED         0xD000
+#define POST16_DEFERRED_OK      0xD001
+#define POST16_DEFERRED_NET     0xD002  /* network: rtl8139 + net + dhcp */
+#define POST16_DEFERRED_NET_OK  0xD003
+#define POST16_DEFERRED_INPUT   0xD004  /* input: virtio_input + vbox_mouse */
+#define POST16_DEFERRED_INPUT_OK 0xD005
+
 /* Sentinels (0xF000–0xFFFE) */
 #define POST16_BOOT_OK          0xFF00
 #define POST16_BOOT_FAILED      0xFFFE
@@ -342,6 +351,20 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
             boot_halt(msg); \
         } \
     } while (0)
+
+/* --- Deferred init -------------------------------------------------------- */
+
+/* Maximum number of deferred init slots.  16 is generous — currently only
+ * network (rtl8139+net+dhcp) and optional input (virtio+vbox) are deferred. */
+#define BOOT_DEFERRED_MAX 16
+
+/* Register a subsystem for post-desktop init.  fn must have signature:
+ * boot_result_t fn(void).  Returns 0 on success, -1 if array full. */
+int boot_defer(const char *name, boot_result_t (*fn)(void));
+
+/* Run all deferred inits sequentially.  Call in Phase 3 after desktop_init()
+ * but before compositor_run().  Logs [DEFERRED] name +NNNms for each. */
+void boot_run_deferred(void);
 
 /* Internal helper used by BOOT_REQUIRE — logs via serial (klog optional). */
 void _boot_require_failed(const char *subsys_name);

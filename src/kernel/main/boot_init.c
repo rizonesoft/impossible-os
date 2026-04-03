@@ -76,6 +76,62 @@ void _boot_require_failed(const char *subsys_name)
     serial_write(" not ready\n");
 }
 
+/* ---- Deferred init registration ----------------------------------------- */
+
+typedef struct {
+    const char    *name;
+    boot_result_t (*fn)(void);
+} deferred_entry_t;
+
+static deferred_entry_t g_deferred[BOOT_DEFERRED_MAX];
+static uint32_t         g_deferred_count;
+
+int boot_defer(const char *name, boot_result_t (*fn)(void))
+{
+    if (g_deferred_count >= BOOT_DEFERRED_MAX) {
+        klog(LOG_ERROR, "boot", "deferred init full (%u/%u) -- cannot defer %s",
+             g_deferred_count, (uint32_t)BOOT_DEFERRED_MAX, name ? name : "?");
+        return -1;
+    }
+    g_deferred[g_deferred_count].name = name;
+    g_deferred[g_deferred_count].fn   = fn;
+    g_deferred_count++;
+    klog(LOG_DEBUG, "boot", "deferred: registered %s (slot %u)",
+         name ? name : "?", g_deferred_count - 1);
+    return 0;
+}
+
+void boot_run_deferred(void)
+{
+    extern uint64_t system_get_ticks(void);
+    uint32_t i;
+
+    if (g_deferred_count == 0)
+        return;
+
+    POST16(POST16_DEFERRED);
+    klog(LOG_INFO, "boot", "--- Running %u deferred init(s) ---",
+         g_deferred_count);
+
+    for (i = 0; i < g_deferred_count; i++) {
+        const char *name = g_deferred[i].name ? g_deferred[i].name : "?";
+        uint64_t t0 = system_get_ticks();
+        boot_result_t r = g_deferred[i].fn();
+        uint64_t elapsed_ms = (system_get_ticks() - t0) * 10;
+
+        if (r == BOOT_OK || r == BOOT_DEGRADED) {
+            klog(LOG_INFO, "boot", "[DEFERRED] %s +%ums", name,
+                 (uint32_t)elapsed_ms);
+        } else {
+            klog(LOG_WARN, "boot", "[DEFERRED] %s FAILED +%ums", name,
+                 (uint32_t)elapsed_ms);
+        }
+    }
+
+    POST16(POST16_DEFERRED_OK);
+    boot_progress(3, "DEFERRED", POST16_DEFERRED_OK);
+}
+
 /* ---- UEFI NVRAM POST code persistence ----------------------------------- */
 
 /* Impossible OS POST GUID: {494D504F-5354-4F53-504F-535447554944} */

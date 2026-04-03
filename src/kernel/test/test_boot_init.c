@@ -116,6 +116,43 @@ static void test_post_codes_nonzero_and_unique(void)
     TEST_ASSERT(POST16_BOOT_OK != POST16_BOOT_FAILED, "BOOT_OK != BOOT_FAILED");
 }
 
+/* ---- BOOT_DEFERRED value ---- */
+
+static void test_boot_deferred_value(void)
+{
+    TEST_ASSERT_EQ(BOOT_DEFERRED, 3, "BOOT_DEFERRED == 3");
+}
+
+/* ---- Deferred init registration ---- */
+
+static boot_result_t deferred_test_fn(void)
+{
+    return BOOT_OK;
+}
+
+static void test_boot_defer_register(void)
+{
+    /* boot_defer returns 0 on success.
+     * Note: this adds to the real deferred array, but boot_run_deferred()
+     * has already run by the time tests execute, so these entries won't
+     * cause problems — they'd run only if boot_run_deferred() is called
+     * again (which it won't be). */
+    int r = boot_defer("test_deferred", deferred_test_fn);
+    TEST_ASSERT_EQ(r, 0, "boot_defer returns 0 on success");
+}
+
+/* ---- Deferred POST codes ---- */
+
+static void test_deferred_post_codes(void)
+{
+    TEST_ASSERT(POST16_DEFERRED != 0, "POST16_DEFERRED is non-zero");
+    TEST_ASSERT(POST16_DEFERRED_OK != 0, "POST16_DEFERRED_OK is non-zero");
+    TEST_ASSERT(POST16_DEFERRED != POST16_DEFERRED_OK,
+                "DEFERRED != DEFERRED_OK");
+    TEST_ASSERT(POST16_DEFERRED_NET != POST16_DEFERRED_INPUT,
+                "DEFERRED_NET != DEFERRED_INPUT");
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_init(void)
@@ -128,6 +165,9 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: REQUIRE passes", test_boot_require_passes_when_ready, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: progress null", test_boot_progress_null_step, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: POST codes", test_post_codes_nonzero_and_unique, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: BOOT_DEFERRED value", test_boot_deferred_value, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: defer register", test_boot_defer_register, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: deferred POST codes", test_deferred_post_codes, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

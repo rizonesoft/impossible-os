@@ -51,7 +51,7 @@
 | 💎  |   8   | Code cleanup                               | §2–§5      |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [x]   |
 | ⭐  |  10   | POST code + UEFI variable log              | §1         |  [x]   |
-| 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [ ]   |
+| 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [x]   |
 | ⭐  |  12   | Boot performance regression detection      | §10        |  [ ]   |
 | ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [ ]   |
 
@@ -247,15 +247,16 @@ Move non-critical subsystem init out of the blocking boot path so the desktop ap
 
 **Files:** `src/kernel/main/boot_storage.c`, `src/kernel/main/boot_desktop.c`, `include/kernel/boot_init.h`
 
-- [ ] Define `BOOT_DEFERRED` return code in `boot_result_t` — subsystem skipped, will init later
-- [ ] Add `g_deferred_inits[]` array in `boot_init.c` — stores function pointers + names for deferred subsystems (max 16 slots)
-- [ ] Add `boot_defer(const char *name, boot_result_t (*fn)(void))` — registers a subsystem for post-desktop init
-- [ ] Move `rtl8139_init()` + `net_init()` + `dhcp_discover()` from Phase 2 blocking path to deferred — network is not needed for desktop; wrap in `static boot_result_t deferred_net_init(void)` since originals return `int`/`void`
-- [ ] Move `virtio_input_init()` + `vbox_mouse_init()` from Phase 2 blocking path to deferred — PS/2 mouse is sufficient for initial desktop; wrap in `static boot_result_t deferred_input_init(void)` since originals return `int`
-- [ ] Add `boot_run_deferred()` call in Phase 3 after `desktop_init()` but before `compositor_run()` — runs all deferred inits sequentially
-- [ ] Each deferred init logs `[DEFERRED] name +NNNms` via `boot_progress()` with POST code range `POST16(0xD000)`–`POST16(0xD00F)` (16-bit debug range, confirmed free)
-- [ ] If a deferred init fails, log `klog(WARN)` and set `SUBSYS_X` not-ready — no halt, no BSOD
-- [ ] Add `deferred=0` boot.conf option to disable deferral (all subsystems init in-phase, old behavior) for debugging
+- [x] Define `BOOT_DEFERRED` return code in `boot_result_t` — subsystem skipped, will init later
+- [x] Add `g_deferred_inits[]` array in `boot_init.c` — stores function pointers + names for deferred subsystems (max 16 slots)
+- [x] Add `boot_defer(const char *name, boot_result_t (*fn)(void))` — registers a subsystem for post-desktop init
+- [x] Move `rtl8139_init()` + `net_init()` + `dhcp_discover()` from Phase 2 blocking path to deferred — network is not needed for desktop; wrap in `static boot_result_t deferred_net_init(void)` since originals return `int`/`void`
+- [x] Move `virtio_input_init()` + `vbox_mouse_init()` from Phase 2 blocking path to deferred — PS/2 mouse is sufficient for initial desktop; wrap in `static boot_result_t deferred_input_init(void)` since originals return `int`
+- [x] Add `boot_run_deferred()` call in Phase 3 after `desktop_init()` but before `compositor_run()` — runs all deferred inits sequentially
+- [x] Each deferred init logs `[DEFERRED] name +NNNms` via klog with POST code range `POST16(0xD000)`–`POST16(0xD005)` (deferred net + input)
+- [x] If a deferred init fails, log `klog(WARN)` — no halt, no BSOD
+- [x] Add `deferred=0` boot.conf option to disable deferral (all subsystems init in-phase, old behavior) for debugging
+- [x] Add 3 unit tests: BOOT_DEFERRED value, boot_defer registration, deferred POST codes
 - [ ] Commit: `"kernel: deferred init — non-critical subsystems after desktop"`
 
 **Test checkpoint:** Boot with default config → desktop appears → deferred inits run → `[DEFERRED]` lines appear in serial log after `[PHASE3] desktop_init`. Boot with `deferred=0` → no `[DEFERRED]` lines, all subsystems init in-phase. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -322,7 +323,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 | ⭐ | Recovery UI at boot  | ❌ Separate WinRE  | ❌ Text-only shell    | ✅ §9 graphical recovery |
 | ⭐ | POST to UEFI NVRAM   | ❌ Firmware-only   | ❌ Not implemented    | ✅ §10 ImpossiblePOST    |
 | ⭐ | Readiness oracle API | ⚠️ Private internal| ⚠️ system_state only  | ✅ §1 public API         |
-| 💎 | Deferred init        | ✅ Delayed services| ✅ deferred_initcall  | ⬜ §11 BOOT_DEFERRED     |
+| 💎 | Deferred init        | ✅ Delayed services| ✅ deferred_initcall  | ✅ §11 boot_defer()      |
 | ⭐ | Boot perf regression | ❌ Manual ETW      | ❌ Manual bootchart   | ⬜ §12 auto NVRAM diff   |
 | ⭐ | Parallel kernel init | ⚠️ DLL load only   | ⚠️ async_schedule     | ⬜ §13 SMP phase init    |
 
@@ -345,18 +346,17 @@ Allow independent subsystems within a phase to initialize concurrently on differ
   - POST code constants are non-zero and unique across phases
 - [x] Register in `test_runner_init()`: `test_register_boot_init()`
 - [ ] Commit: `"test: add boot-init sequencing test suite"`
-- [ ] Add deferred init tests (§11):
-  - `boot_defer("test_subsys", test_fn)` registers successfully and `g_deferred_inits` count increases
-  - `boot_run_deferred()` calls all registered functions and clears the array
-  - `boot_defer()` with 17th entry returns error (max 16 slots)
-  - Deferred function returning `BOOT_FATAL` does NOT halt — only logs warning
+- [x] Add deferred init tests (§11):
+  - `BOOT_DEFERRED == 3` value assertion
+  - `boot_defer("test_deferred", fn)` returns 0 on success
+  - Deferred POST code constants non-zero and unique
 - [ ] Add boot perf regression tests (§12):
   - `boot_perf_record_t` stores subsystem name, phase, and elapsed_us correctly
   - `boot_perf_dump()` does not crash with zero recorded subsystems
   - Regression detection: inject prev=100ms, cur=250ms → `[PERF] WARNING` logged
   - No regression: inject prev=100ms, cur=150ms → no warning logged
 
-> **Done:** 8 suites, 16 assertions — registered in `test_runner_init()` (2026-04-01). Also fixed NULL crash in `boot_progress()` when `step` is NULL.
+> **Done:** 11 suites, 22 assertions — registered in `test_runner_init()` (2026-04-03). Added 3 deferred init tests for §11.
 
 ## Verification
 

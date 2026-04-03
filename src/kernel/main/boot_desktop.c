@@ -147,6 +147,9 @@ void boot_phase3(void)
     boot_progress(3, "DESKTOP_READY", POST16_DESKTOP_OK);
     kernel_subsystem_set_ready(SUBSYS_DESKTOP, true);
 
+    /* Run deferred non-critical inits now that the desktop is visible */
+    boot_run_deferred();
+
     /* NVRAM write: Phase 3 complete — boot succeeded.
      * Must be here, not later — on bare metal the compositor may crash
      * (timer interrupt issue), and we need this written before that. */
