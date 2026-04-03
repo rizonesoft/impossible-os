@@ -252,8 +252,8 @@ static void test_ap_trampoline_offsets(void)
                    "AP_OFF_CPUID == 0x28");
     TEST_ASSERT_EQ(AP_OFF_IDT_PTR, 0x30,
                    "AP_OFF_IDT_PTR == 0x30");
-    TEST_ASSERT_EQ(AP_OFF_CANARY, 0x38,
-                   "AP_OFF_CANARY == 0x38");
+    TEST_ASSERT_EQ(AP_OFF_CANARY, 0x3C,
+                   "AP_OFF_CANARY == 0x3C (after IDT_PTR 10-byte span)");
     TEST_ASSERT_EQ(AP_DATA_BASE, AP_TRAMPOLINE_ADDR + 0xE00,
                    "AP_DATA_BASE == trampoline + 0xE00");
 }

@@ -40,7 +40,7 @@
  *   +0x20     8   ENTRY        lm_entry: mov rax, [AP_DATA+0x20]
  *   +0x28     4   CPUID        lm_entry: mov edi, [AP_DATA+0x28]
  *   +0x30    10   IDT_PTR      lm_entry: lidt [AP_DATA+0x30]
- *   +0x38     4   CANARY       smp_init: 0xDEADC0DE magic verify
+ *   +0x3C     4   CANARY       smp_init: 0xDEADC0DE magic verify
  */
 #define AP_TRAMPOLINE_ADDR     0x8000   /* where trampoline code is loaded */
 #define AP_DATA_BASE           0x8E00   /* shared data at trampoline+0xE00 */
@@ -51,7 +51,7 @@
 #define AP_OFF_ENTRY           0x20     /* uint64_t: C entry point */
 #define AP_OFF_CPUID           0x28     /* uint32_t: logical CPU index */
 #define AP_OFF_IDT_PTR         0x30     /* 10 bytes: IDTR */
-#define AP_OFF_CANARY          0x38     /* uint32_t: magic 0xDEADC0DE */
+#define AP_OFF_CANARY          0x3C     /* uint32_t: magic 0xDEADC0DE */
 
 #define AP_CANARY_MAGIC        0xDEADC0DE
 
