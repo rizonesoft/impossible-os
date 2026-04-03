@@ -189,7 +189,7 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 - [x] `syscall_handler_2e()` registered in `syscall.c` -- reads RAX as service number, R10/RDX/R8/R9 as args (Windows x64 ABI), dispatches via `ssdt_dispatch()`
 - [x] Uses existing `irq14` stub which has full register save/restore + swapgs + iretq
 - [x] INT 0x80 kept active alongside INT 0x2E (both paths coexist)
-- [ ] Commit: `"kernel: nt -- INT 0x2E syscall compatibility path"`
+- [x] Commit: `"kernel: nt -- INT 0x2E syscall compatibility path"`
 
 **Test checkpoint:** Ring-3 `int 0x2E` with RAX=0x0015 reaches `NtClose` handler. Same register mapping as SYSCALL path. `POST16(0xD300)` entry, `POST16(0xD301)` exit. Verify on all 4 platforms.
 

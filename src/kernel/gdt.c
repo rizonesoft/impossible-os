@@ -133,15 +133,15 @@ void gdt_init(void)
      * Flags:  L=0, D=1, G=1 = 0x0C */
     gdt_set_entry(2, 0, 0xFFFFF, 0x92, 0x0C);
 
-    /* [3] User code segment (Ring 3, 64-bit)
-     * Access: Present=1, DPL=11, S=1, Type=Execute/Read = 0xFA
-     * Flags:  L=1 (Long Mode), D=0, G=0 = 0x02 */
-    gdt_set_entry(3, 0, 0xFFFFF, 0xFA, 0x0A);
-
-    /* [4] User data segment (Ring 3)
+    /* [3] User data segment (Ring 3) -- MUST be before user code for SYSRET
      * Access: Present=1, DPL=11, S=1, Type=Read/Write = 0xF2
      * Flags:  L=0, D=1, G=1 = 0x0C */
-    gdt_set_entry(4, 0, 0xFFFFF, 0xF2, 0x0C);
+    gdt_set_entry(3, 0, 0xFFFFF, 0xF2, 0x0C);
+
+    /* [4] User code segment (Ring 3, 64-bit)
+     * Access: Present=1, DPL=11, S=1, Type=Execute/Read = 0xFA
+     * Flags:  L=1 (Long Mode), D=0, G=0 = 0x02 */
+    gdt_set_entry(4, 0, 0xFFFFF, 0xFA, 0x0A);
 
     /* [5-6] TSS descriptor (16 bytes in Long Mode) */
     gdt_set_tss(5, tss_base, tss_limit);

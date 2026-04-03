@@ -20,66 +20,28 @@ void syscall_init_fast(void)
 {
     uint64_t star, efer;
 
-    /* MSR_IA32_STAR layout:
-     * Bits 63:48 = SYSRET CS/SS base selector (user code CS = base+16, SS = base+8)
-     * Bits 47:32 = SYSCALL CS/SS base selector (kernel code CS = base, SS = base+8)
-     * Bits 31:0  = reserved (EIP for 32-bit SYSCALL, unused in long mode)
-     *
-     * GDT layout: 0x08=KCODE, 0x10=KDATA, 0x18=UCODE, 0x20=UDATA
-     *
-     * SYSCALL: CS = STAR[47:32] = 0x08 (kernel code)
-     *          SS = STAR[47:32]+8 = 0x10 (kernel data)
-     *
-     * SYSRET:  CS = STAR[63:48]+16 = 0x08+16 = 0x18 (user code) -- only if STAR[63:48]=0x08
-     *          SS = STAR[63:48]+8  = 0x08+8  = 0x10 ... WRONG, that's kernel data.
-     *
-     * Actually for SYSRET in long mode:
-     *   CS = STAR[63:48]+16 with RPL=3
-     *   SS = STAR[63:48]+8 with RPL=3
-     *
-     * So STAR[63:48] = GDT_USER_CODE - 16 = 0x18 - 16 = 0x08
-     * That gives: SYSRET CS = 0x08+16 = 0x18 | 3 = user code ring 3
-     *             SYSRET SS = 0x08+8  = 0x10 | 3 = ... kernel data ring 3?
-     *
-     * Actually the standard trick: STAR[63:48] should be such that +8 = user data.
-     * GDT_USER_DATA = 0x20. So STAR[63:48] = 0x20 - 8 = 0x18.
-     * Then: SYSRET SS = 0x18+8 = 0x20 | 3 = user data ring 3 (correct)
-     *       SYSRET CS = 0x18+16 = 0x28 ... but 0x28 is the TSS!
-     *
-     * The issue: in the Intel/AMD spec, SYSRET in 64-bit mode:
-     *   CS.sel = STAR[63:48]+16, SS.sel = STAR[63:48]+8
-     * But GDT_USER_CODE=0x18, GDT_USER_DATA=0x20.
-     * Standard solution: GDT must be ordered: KCODE(0x08), KDATA(0x10),
-     *   UDATA(0x18), UCODE(0x20) -- then STAR[63:48]=0x10:
-     *   SYSRET CS = 0x10+16 = 0x20 = UCODE, SS = 0x10+8 = 0x18 = UDATA
-     *
-     * BUT our GDT is KCODE(0x08), KDATA(0x10), UCODE(0x18), UDATA(0x20).
-     * This is the WRONG order for SYSRET. We need UDATA before UCODE.
-     *
-     * For now: do NOT enable SYSCALL/SYSRET. The GDT needs to be reordered
-     * first. Log a warning and keep INT 0x80.
-     *
-     * TODO: Reorder GDT entries so UDATA comes before UCODE (swap 0x18/0x20),
-     * update all ring-3 transitions that hardcode selectors, then enable.
-     */
+    /* GDT layout: 0x08=KCODE, 0x10=KDATA, 0x18=UDATA, 0x20=UCODE.
+     * SYSRET in 64-bit mode: CS=STAR[63:48]+16, SS=STAR[63:48]+8.
+     * With STAR[63:48]=0x10: CS=0x20 (user code), SS=0x18 (user data). */
 
-    /* Check if GDT order is compatible with SYSRET */
-    if (GDT_USER_DATA != GDT_USER_CODE + 8) {
-        /* GDT order incompatible with SYSRET (need UDATA = UCODE + 8).
-         * Current: UCODE=0x18, UDATA=0x20 (reversed).
-         * SYSRET requires: UCODE = STAR[63:48]+16, UDATA = STAR[63:48]+8.
-         * This means UDATA must be at a LOWER selector than UCODE.
-         * Keep INT 0x80 path until GDT is reordered. */
+    /* Check if GDT order is compatible with SYSRET.
+     * SYSRET: CS = STAR[63:48]+16, SS = STAR[63:48]+8.
+     * So GDT_USER_CODE must be GDT_USER_DATA + 8 (data before code). */
+    if (GDT_USER_CODE != GDT_USER_DATA + 8) {
         klog(LOG_WARN, "syscall",
              "SYSCALL/SYSRET deferred: GDT order incompatible "
-             "(UCODE=0x%x, UDATA=0x%x -- need UDATA before UCODE)",
+             "(UCODE=0x%x, UDATA=0x%x -- need UCODE = UDATA + 8)",
              (uint32_t)GDT_USER_CODE, (uint32_t)GDT_USER_DATA);
         return;
     }
 
-    /* Set up STAR */
+    /* Set up STAR.
+     * Bits 47:32 = SYSCALL selectors: CS = this value, SS = this+8.
+     *   -> GDT_KERNEL_CODE (0x08): CS=0x08 (kernel code), SS=0x10 (kernel data)
+     * Bits 63:48 = SYSRET selectors: SS = this+8, CS = this+16.
+     *   -> GDT_USER_DATA - 8 = 0x10: SS=0x18 (user data), CS=0x20 (user code) */
     star = ((uint64_t)GDT_KERNEL_CODE << 32) |
-           ((uint64_t)(GDT_USER_CODE - 16) << 48);
+           ((uint64_t)(GDT_USER_DATA - 8) << 48);
     msr_write(MSR_IA32_STAR, star);
 
     /* Set LSTAR to assembly entry point */

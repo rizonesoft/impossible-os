@@ -8,12 +8,15 @@
 
 #include "kernel/types.h"
 
-/* GDT segment selectors (byte offsets into the GDT) */
+/* GDT segment selectors (byte offsets into the GDT)
+ * User data MUST be before user code for SYSRET compatibility:
+ * SYSRET CS = STAR[63:48]+16, SS = STAR[63:48]+8.
+ * With STAR[63:48] = 0x10: SS=0x18 (user data), CS=0x20 (user code). */
 #define GDT_NULL_SEG     0x00
 #define GDT_KERNEL_CODE  0x08    /* Ring 0 code */
 #define GDT_KERNEL_DATA  0x10    /* Ring 0 data */
-#define GDT_USER_CODE    0x18    /* Ring 3 code */
-#define GDT_USER_DATA    0x20    /* Ring 3 data */
+#define GDT_USER_DATA    0x18    /* Ring 3 data (before code for SYSRET) */
+#define GDT_USER_CODE    0x20    /* Ring 3 code */
 #define GDT_TSS_SEG      0x28    /* TSS (16 bytes -- two GDT slots) */
 
 /* Number of GDT entries (TSS takes 2 slots in 64-bit mode) */
