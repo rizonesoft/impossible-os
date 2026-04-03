@@ -180,17 +180,22 @@ Display helpful text based on the stop code, similar to Windows "search for STOP
 
 ---
 
-## 7. Crash Statistics Counter in NVRAM
+## 7. Crash Statistics & Loop Protection
 
-Track crash history in UEFI NVRAM so the kernel knows how many times it has crashed and what the recent stop codes were.
+Track crash history in UEFI NVRAM and Registry so the kernel knows how many times it has crashed, detects crash loops, and can disable auto-restart after repeated failures. Absorbed from `08-graphics-ui/TODO-03 §6` (crash loop protection).
 
-**Files:** `src/kernel/panic.c`, `src/kernel/main/boot_hw.c`
+**Files:** `src/kernel/panic.c`, `src/kernel/main/boot_hw.c`, `src/kernel/main/boot_desktop.c`
 
 - [ ] Define `ImpossibleCrashStats` NVRAM variable: `{ uint32_t total_crashes, uint32_t consecutive_crashes, struct { uint32_t stop_code; uint64_t timestamp; } last_5[5] }`
 - [ ] In `panic_screen()`: read current stats, increment `total_crashes` and `consecutive_crashes`, push stop code to circular `last_5[]`, write back to NVRAM
-- [ ] In `boot_phase0()` (after UEFI runtime init): read stats, reset `consecutive_crashes` to 0 (successful boot clears the counter)
+- [ ] Also write `HKLM\SYSTEM\Recovery\ConsecutiveCrashes` (DWORD) if Registry is accessible -- dual persistence (NVRAM survives corrupted disk, Registry survives NVRAM issues)
+- [ ] Write `HKLM\SYSTEM\Recovery\LastBootTime` (DWORD, PIT ticks) after `registry_init()` in Phase 2
+- [ ] In `boot_phase0()` (after UEFI runtime init): read NVRAM stats, reset `consecutive_crashes` to 0 (successful boot clears the counter)
+- [ ] In `boot_desktop.c` after successful `desktop_init()`: `RegSetValueEx(HKLM, key, "ConsecutiveCrashes", REG_DWORD, &zero, 4)` -- confirms boot succeeded
+- [ ] If `consecutive_crashes >= 3` in `panic_screen()`: skip auto-restart countdown, display halt message instead
 - [ ] Display "Crash #N" on BSOD screen (total lifetime crash count)
-- [ ] Commit: `"kernel: crash statistics counter in UEFI NVRAM"`
+- [ ] Log `[recovery] ConsecutiveCrashes=%u` at both increment and reset sites
+- [ ] Commit: `"kernel: crash statistics + loop protection via NVRAM and Registry"`
 
 > [!NOTE]
 > UEFI NVRAM write endurance: one write per crash + one write per successful boot = 2 writes per boot cycle. Combined with ImpossiblePOST (2), ImpossibleBootPerf (1), and ImpossibleCrashLog (1) = 6 total NVRAM writes per boot. ~100K cycle endurance / 6 = ~16K boot cycles before flash wear concern.
@@ -368,6 +373,12 @@ Windows shows "37% complete" during crash dump collection. When TODO-16 implemen
 - [ ] QEMU TCG: crash_test=1 -> BSOD renders correctly on single CPU
 - [ ] VirtualBox: crash_test=1 -> BSOD renders at 1920x1080 VMSVGA
 - [ ] Bare metal: verify BSOD renders on real hardware (if panic occurs)
-- [ ] QR code scans correctly from phone camera
-- [ ] Crash stats persist across QEMU restarts (NVRAM)
-- [ ] 3 consecutive crashes -> safe mode suggestion appears
+- [ ] QR code scans correctly from phone camera -- decoder shows structured crash data
+- [ ] Crash stats persist across QEMU restarts (NVRAM preserved if OVMF_VARS not reset)
+- [ ] 3 consecutive crashes -> safe mode suggestion appears; auto-restart disabled
+- [ ] Normal auto-restart: crash_test=1 -> countdown runs (default 30s) -> system reboots -> next boot is normal
+- [ ] AutoRestart=0: crash_test=1 -> BSOD halts immediately (no countdown)
+- [ ] Successful boot after crash -> `ConsecutiveCrashes` reset to 0 in Registry
+- [ ] "What failed" shows correct module name for crash_test (boot_desktop.c)
+- [ ] F1 on BSOD -> next boot in safe mode (boot_mode=1)
+- [ ] PC speaker beep audible during crash (QEMU + bare metal)

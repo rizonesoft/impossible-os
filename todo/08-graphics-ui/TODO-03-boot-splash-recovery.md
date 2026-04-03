@@ -23,8 +23,7 @@
 - `boot_splash_finish()` performs the 8-step fade-to-black using `spinner_draw_faded()`.
 - Logo build pipeline: `make splash-logo` generates `src/kernel/boot_splash_logo.h` from `assets/logo/impossible_os_logo.png`.
 - F8 during early boot (within 2 s) shows a text-mode numbered menu: Normal / Safe Mode / Recovery Shell / Last Known Good.
-- `HKLM\SYSTEM\Recovery\ConsecutiveCrashes` increments on each BSOD, resets on successful desktop load; ≥ 3 disables auto-restart.
-- BSOD auto-restart validation test plan passes in QEMU.
+- Crash loop protection and BSOD validation moved to `02-kernel-core/TODO-21-bsod-ux-enhancements.md`.
 
 ## Implementation Order
 
@@ -35,8 +34,8 @@
 | 💎  |   3   | §2 Loading spinner -- confirm `spinner_draw_faded()` integrated into fade path; no re-implementation | §1 (fade loop calls `spinner_draw_faded()` at each of 8 steps)                       |  [ ]   |
 | 💎  |   4   | §4 Boot progress milestones -- `BOOT_MILESTONE_*` constants + `boot_splash_milestone()` call sites | §1 (`boot_splash_progress()` must exist before milestones can drive it)               |  [ ]   |
 | ⭐  |   5   | §5 F8 boot menu -- early PS/2 polling, text-mode menu, `boot_mode_t`, boot flag propagation        | §1 (splash must be functional so F8 path can abort it cleanly)                       |  [ ]   |
-| 💎  |   6   | §6 Crash loop protection -- `ConsecutiveCrashes` Registry key, increment/reset, ≥3 halt message   | §5 (needs to know if booting from recovery or normal boot before incrementing)       |  [ ]   |
-| 💎  |   7   | §7 BSOD auto-restart validation -- QEMU test plan for countdown, reboot, crash loop, `AutoRestart=0` | §6 (crash loop protection must be live before testing consecutive crash scenarios)   |  [ ]   |
+| 💎  |   6   | ~~§6 Crash loop protection~~ → MOVED to `TODO-21 §7-§8`   | --       |  N/A   |
+| 💎  |   7   | ~~§7 BSOD validation~~ → MOVED to `TODO-21` Verification   | --       |  N/A   |
 
 ---
 
@@ -121,40 +120,13 @@ Poll PS/2 keyboard data port (0x60) for 2 seconds during early boot. F8 key dete
 - [ ] Safe Mode watermark: after desktop would start, if `BOOT_MODE_SAFE`: render "Safe Mode" text at all 4 corners in red using `boot_font_render()` every frame
 - [ ] Commit: `"boot/f8: early PS/2 poll, text-mode boot menu, boot_mode_t, safe/recovery/LKG modes"`
 
-## 6. Crash Loop Protection `[Sonnet]`
+## 6. [MOVED] Crash Loop Protection
 
-Track `HKLM\SYSTEM\Recovery\ConsecutiveCrashes` DWORD: increment at panic time (before auto-restart), reset to 0 after successful desktop load. `HKLM\SYSTEM\Recovery\LastBootTime` records boot timestamp. If `ConsecutiveCrashes ≥ 3`: skip auto-restart, display halt message.
+> **Moved to `02-kernel-core/TODO-21-bsod-ux-enhancements.md §7-§8`.** Crash loop tracking (NVRAM stats + consecutive crash counter) and safe mode suggestion are owned by TODO-21 alongside all other panic screen behavior.
 
-**Files:** `src/kernel/panic.c` (extend), `src/kernel/main/boot_desktop.c` (extend)
+## 7. [MOVED] BSOD Auto-Restart Validation
 
-> [!NOTE]
-> Increment in `panic()` (in `src/kernel/panic.c`) before calling `uefi_reboot()` -- this is the same place auto-restart countdown runs. The increment must happen after Registry is accessible; if Registry is not yet initialized (early panic): skip the increment (log to serial only). Reset to 0 from `boot_desktop.c` after `desktop_init()` returns successfully -- i.e., once the desktop is live. `LastBootTime`: write current `system_get_ticks()` as a DWORD at the start of `kernel_main()` (before any other init). Halt message: draw centered text on the BSOD screen: `"Your PC has crashed multiple times. Automatic restart has been disabled."` in white on the existing BSOD background; then call `cpu_halt()` (infinite HLT loop). Registry key path: `HKLM\SYSTEM\Recovery\ConsecutiveCrashes`.
-
-- [ ] In `panic()`: `if (registry_available()) { RegGetValue(HKLM, key, "ConsecutiveCrashes", …, &count); RegSetValueEx(HKLM, key, "ConsecutiveCrashes", REG_DWORD, &count+1, 4); }`
-- [ ] In `panic()`: read `ConsecutiveCrashes`; if `count >= 3`: render halt message on BSOD screen; call `cpu_halt()` instead of `uefi_reboot()`
-- [ ] In `boot_desktop.c` after successful `desktop_init()`: `RegSetValueEx(HKLM, key, "ConsecutiveCrashes", REG_DWORD, &zero, 4);`
-- [ ] `LastBootTime`: in `kernel_main()` early: `uint64_t ts = system_get_ticks(); RegSetValueEx(HKLM, …, "LastBootTime", REG_DWORD, &ts, 4);` -- skip if registry not yet ready (write after `registry_init()`)
-- [ ] Log: `[recovery] ConsecutiveCrashes=%u` at both increment and reset sites
-- [ ] Commit: `"panic: crash loop protection -- ConsecutiveCrashes Registry counter, >=3 disables restart"`
-
-## 7. BSOD Auto-Restart Validation `[Sonnet]`
-
-Test plan: enable `BSOD_TEST` compile flag, boot in QEMU, verify BSOD → countdown → reboot → normal boot. Test `AutoRestart=0` halts. Test `AutoRestart=10` gives 10 s countdown. Verify crash dump written. Verify crash loop protection triggers at 3 consecutive crashes.
-
-**Files:** (test-only; no new source files required)
-
-> [!NOTE]
-> This section is a QEMU test plan -- all implementation is complete in prior sections and in the already-done BSOD core. `BSOD_TEST` flag: already defined in `src/kernel/panic.c` (confirm); triggers a panic after desktop init to test the full flow. Test the crash loop: trigger `BSOD_TEST` 3 times in succession; on the 3rd crash the halt message must appear and the system must not reboot. `AutoRestart` Registry key: `HKLM\SYSTEM\CrashControl\AutoRestart` (same as Windows). Test plan is documentation; create it as comments in a new file `docs/testing/bsod-validation.md`.
-
-- [ ] Locate `BSOD_TEST` flag in `panic.c`; document how to enable it (comment block or `#define BSOD_TEST 0` guard)
-- [ ] Test 1 -- normal auto-restart: enable `BSOD_TEST`; `bash scripts/build.sh run`; verify BSOD screen appears, countdown runs (default 10 s), system reboots, next boot is normal
-- [ ] Test 2 -- `AutoRestart=0`: set `HKLM\SYSTEM\CrashControl\AutoRestart=0` in pre-built disk; boot; verify BSOD halts (no reboot)
-- [ ] Test 3 -- custom countdown: `AutoRestart=10` (10 s); verify countdown matches
-- [ ] Test 4 -- crash dump: verify `C:\Impossible\System\Logs\crash.dmp` written before reboot; check magic header
-- [ ] Test 5 -- crash loop: enable `BSOD_TEST`, boot 3 times in succession; on 3rd crash: halt message displayed; `ConsecutiveCrashes` = 3 in Registry
-- [ ] Test 6 -- successful boot resets counter: after a clean boot to desktop, verify `ConsecutiveCrashes = 0`
-- [ ] Document results in `docs/testing/bsod-validation.md` with pass/fail per test
-- [ ] Commit: `"docs/testing: BSOD auto-restart validation test plan + results"`
+> **Moved to `02-kernel-core/TODO-21-bsod-ux-enhancements.md` Verification section.** BSOD test plan now uses runtime `crash_test=1` boot.conf flag (no recompile) and `scripts/debug/panic/` test runners.
 
 ---
 
