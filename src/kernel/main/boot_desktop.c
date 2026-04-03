@@ -156,6 +156,9 @@ void boot_phase3(void)
     boot_post_nvram_write16(POST16_BOOT_OK);
 
     boot_timing_print_steps();
+    boot_perf_dump();
+    boot_perf_compare();
+    boot_perf_save();
     boot_timing_write_report();
     boot_timeline_dump_json();
 

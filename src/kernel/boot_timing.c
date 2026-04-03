@@ -10,9 +10,11 @@
  * ============================================================================ */
 
 #include "kernel/boot_timing.h"
+#include "kernel/boot_init.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
+#include "kernel/uefi_runtime.h"
 
 static uint64_t s_tsc_freq;
 
@@ -232,4 +234,224 @@ void boot_timing_write_report(void)
     vfs_close(file);
     klog(LOG_INFO, "BOOT", "Boot profile: %u steps written",
          (uint64_t)s_step_count);
+}
+
+/* ---- Boot performance regression detection ------------------------------- */
+
+/* GUID: same namespace as ImpossiblePOST -- all Impossible OS boot vars share it */
+static const struct boot_uefi_guid s_perf_guid = {
+    0x494D504F, 0x5354, 0x4F53,
+    { 0x50, 0x4F, 0x53, 0x54, 0x47, 0x55, 0x49, 0x44 }
+};
+
+/* UCS-2 variable name: "ImpossibleBootPerf" */
+static const uint16_t s_perf_name[] = {
+    'I','m','p','o','s','s','i','b','l','e',
+    'B','o','o','t','P','e','r','f', 0
+};
+
+#define PERF_ATTRS (EFI_VARIABLE_NON_VOLATILE | \
+                    EFI_VARIABLE_BOOTSERVICE_ACCESS | \
+                    EFI_VARIABLE_RUNTIME_ACCESS)
+
+/* Previous boot's perf data, read from NVRAM at early boot */
+static boot_perf_record_t s_prev_records[BOOT_PERF_MAX_RECORDS];
+static uint32_t            s_prev_count;
+
+static void str_copy_trunc(char *dst, const char *src, uint32_t max)
+{
+    uint32_t i;
+    for (i = 0; i + 1 < max && src && src[i]; i++)
+        dst[i] = src[i];
+    dst[i] = '\0';
+}
+
+static int str_eq(const char *a, const char *b)
+{
+    while (*a && *b && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+void boot_perf_read_prev(void)
+{
+    /* Buffer: header + max records */
+    static uint8_t buf[sizeof(boot_perf_header_t) +
+                       BOOT_PERF_MAX_RECORDS * sizeof(boot_perf_record_t)];
+    uint64_t sz = sizeof(buf);
+    uint32_t attrs = 0;
+
+    POST16(POST16_BOOTPERF);
+
+    uint64_t status = uefi_get_variable(&s_perf_guid, s_perf_name,
+                                        &attrs, &sz, buf);
+    if (status != 0) {
+        klog(LOG_INFO, "PERF", "No previous boot perf data (first boot or cleared)");
+        POST16(POST16_BOOTPERF_READ);
+        return;
+    }
+
+    if (sz < sizeof(boot_perf_header_t)) {
+        klog(LOG_WARN, "PERF", "Boot perf NVRAM too small (%u bytes)", (uint32_t)sz);
+        POST16(POST16_BOOTPERF_READ);
+        return;
+    }
+
+    boot_perf_header_t *hdr = (boot_perf_header_t *)buf;
+    if (hdr->magic != BOOT_PERF_MAGIC) {
+        klog(LOG_WARN, "PERF", "Boot perf NVRAM bad magic (0x%08x)", (uint64_t)hdr->magic);
+        POST16(POST16_BOOTPERF_READ);
+        return;
+    }
+
+    uint32_t count = hdr->count;
+    if (count > BOOT_PERF_MAX_RECORDS)
+        count = BOOT_PERF_MAX_RECORDS;
+
+    uint64_t expected = sizeof(boot_perf_header_t) + count * sizeof(boot_perf_record_t);
+    if (sz < expected) {
+        klog(LOG_WARN, "PERF", "Boot perf NVRAM truncated (%u < %u)",
+             (uint32_t)sz, (uint32_t)expected);
+        POST16(POST16_BOOTPERF_READ);
+        return;
+    }
+
+    boot_perf_record_t *recs = (boot_perf_record_t *)(buf + sizeof(boot_perf_header_t));
+    for (uint32_t i = 0; i < count; i++)
+        s_prev_records[i] = recs[i];
+    s_prev_count = count;
+
+    klog(LOG_INFO, "PERF", "Previous boot: %u step(s) loaded from NVRAM", count);
+    POST16(POST16_BOOTPERF_READ);
+}
+
+void boot_perf_compare(void)
+{
+    if (s_tsc_freq == 0 || s_step_count == 0 || s_prev_count == 0)
+        return;
+
+    uint64_t base = s_steps[0].tsc;
+
+    klog(LOG_INFO, "PERF", "--- Boot perf comparison (prev vs current) ---");
+
+    for (uint32_t i = 0; i < s_step_count; i++) {
+        uint32_t cur_ms = tsc_to_ms(s_steps[i].tsc - base);
+        const char *name = s_steps[i].step;
+
+        /* Find matching step in previous boot */
+        for (uint32_t j = 0; j < s_prev_count; j++) {
+            if (!str_eq(s_prev_records[j].name, name))
+                continue;
+
+            uint32_t prev_ms = s_prev_records[j].elapsed_ms;
+            int32_t delta = (int32_t)cur_ms - (int32_t)prev_ms;
+
+            /* Regression threshold: >200% of previous OR >500ms absolute */
+            if (prev_ms > 0 && cur_ms > prev_ms * 2) {
+                klog(LOG_WARN, "PERF",
+                     "[PERF] WARNING: %s init regressed: %ums -> %ums (+%ums, %u%%)",
+                     name, prev_ms, cur_ms,
+                     (uint32_t)delta,
+                     prev_ms > 0 ? (cur_ms * 100 / prev_ms) : 0);
+            } else if (delta > 500) {
+                klog(LOG_WARN, "PERF",
+                     "[PERF] WARNING: %s init regressed: %ums -> %ums (+%ums)",
+                     name, prev_ms, cur_ms, (uint32_t)delta);
+            }
+            break;
+        }
+    }
+
+    POST16(POST16_BOOTPERF_CMP);
+}
+
+void boot_perf_save(void)
+{
+    if (s_tsc_freq == 0 || s_step_count == 0)
+        return;
+
+    /* Build the NVRAM payload: header + records */
+    static uint8_t buf[sizeof(boot_perf_header_t) +
+                       BOOT_PERF_MAX_RECORDS * sizeof(boot_perf_record_t)];
+
+    uint32_t count = s_step_count;
+    if (count > BOOT_PERF_MAX_RECORDS)
+        count = BOOT_PERF_MAX_RECORDS;
+
+    boot_perf_header_t *hdr = (boot_perf_header_t *)buf;
+    hdr->magic = BOOT_PERF_MAGIC;
+    hdr->count = count;
+
+    boot_perf_record_t *recs = (boot_perf_record_t *)(buf + sizeof(boot_perf_header_t));
+    uint64_t base = s_steps[0].tsc;
+
+    for (uint32_t i = 0; i < count; i++) {
+        str_copy_trunc(recs[i].name, s_steps[i].step, BOOT_PERF_NAME_LEN);
+        recs[i].elapsed_ms = tsc_to_ms(s_steps[i].tsc - base);
+        recs[i].phase      = s_steps[i].phase;
+        recs[i]._pad[0]    = 0;
+        recs[i]._pad[1]    = 0;
+        recs[i]._pad[2]    = 0;
+    }
+
+    uint64_t total_sz = sizeof(boot_perf_header_t) + count * sizeof(boot_perf_record_t);
+
+    uint64_t status = uefi_set_variable(&s_perf_guid, s_perf_name,
+                                        PERF_ATTRS, total_sz, buf);
+    if (status == 0) {
+        klog(LOG_INFO, "PERF", "Boot perf saved to NVRAM (%u steps, %u bytes)",
+             count, (uint32_t)total_sz);
+    } else {
+        klog(LOG_WARN, "PERF", "Boot perf NVRAM write failed (status 0x%x)",
+             (uint32_t)status);
+    }
+
+    POST16(POST16_BOOTPERF_WRITE);
+}
+
+void boot_perf_dump(void)
+{
+    if (s_tsc_freq == 0 || s_step_count == 0) return;
+
+    uint64_t base = s_steps[0].tsc;
+
+    /* Simple insertion sort by elapsed time (descending) for the dump */
+    uint32_t indices[BOOT_TIMING_MAX_STEPS];
+    uint32_t ms_vals[BOOT_TIMING_MAX_STEPS];
+    uint32_t n = s_step_count;
+
+    for (uint32_t i = 0; i < n; i++) {
+        indices[i] = i;
+        ms_vals[i] = tsc_to_ms(s_steps[i].tsc - base);
+    }
+
+    /* Compute per-step durations (delta between consecutive steps) */
+    uint32_t durations[BOOT_TIMING_MAX_STEPS];
+    for (uint32_t i = 0; i + 1 < n; i++)
+        durations[i] = ms_vals[i + 1] - ms_vals[i];
+    durations[n > 0 ? n - 1 : 0] = 0;  /* last step has no duration */
+
+    /* Sort indices by duration descending */
+    for (uint32_t i = 1; i < n; i++) {
+        uint32_t key_idx = indices[i];
+        uint32_t key_dur = durations[key_idx];
+        int32_t j = (int32_t)i - 1;
+        while (j >= 0 && durations[indices[j]] < key_dur) {
+            indices[j + 1] = indices[j];
+            j--;
+        }
+        indices[j + 1] = key_idx;
+    }
+
+    klog(LOG_INFO, "PERF", "--- Boot step durations (sorted by time) ---");
+    klog(LOG_INFO, "PERF", "  %-16s %6s %6s %s", "Step", "+ms", "dur", "Phase");
+
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t idx = indices[i];
+        if (durations[idx] == 0 && idx == n - 1) continue;  /* skip last */
+        klog(LOG_INFO, "PERF", "  %-16s %5ums %5ums P%u",
+             s_steps[idx].step,
+             ms_vals[idx],
+             durations[idx],
+             (uint32_t)s_steps[idx].phase);
+    }
 }

@@ -11,6 +11,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_timing.h"
 
 /* ---- boot_result_t values ---- */
 
@@ -153,6 +154,35 @@ static void test_deferred_post_codes(void)
                 "DEFERRED_NET != DEFERRED_INPUT");
 }
 
+/* ---- Boot perf record struct ---- */
+
+static void test_boot_perf_record_size(void)
+{
+    /* boot_perf_record_t must be 24 bytes for NVRAM layout stability */
+    TEST_ASSERT_EQ(sizeof(boot_perf_record_t), 24,
+                   "boot_perf_record_t is 24 bytes");
+}
+
+static void test_boot_perf_header_magic(void)
+{
+    TEST_ASSERT_EQ(BOOT_PERF_MAGIC, 0x50455246, "BOOT_PERF_MAGIC == 'PERF'");
+}
+
+/* ---- Boot perf POST codes ---- */
+
+static void test_bootperf_post_codes(void)
+{
+    TEST_ASSERT(POST16_BOOTPERF != 0, "POST16_BOOTPERF is non-zero");
+    TEST_ASSERT(POST16_BOOTPERF_WRITE != 0, "POST16_BOOTPERF_WRITE is non-zero");
+    TEST_ASSERT(POST16_BOOTPERF != POST16_BOOTPERF_READ,
+                "BOOTPERF != BOOTPERF_READ");
+    TEST_ASSERT(POST16_BOOTPERF_CMP != POST16_BOOTPERF_WRITE,
+                "BOOTPERF_CMP != BOOTPERF_WRITE");
+    /* Confirm no overlap with deferred POST range */
+    TEST_ASSERT(POST16_BOOTPERF != POST16_DEFERRED,
+                "BOOTPERF != DEFERRED");
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_init(void)
@@ -168,6 +198,9 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: BOOT_DEFERRED value", test_boot_deferred_value, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: defer register", test_boot_defer_register, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: deferred POST codes", test_deferred_post_codes, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: perf record size", test_boot_perf_record_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: perf magic", test_boot_perf_header_magic, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: bootperf POST codes", test_bootperf_post_codes, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

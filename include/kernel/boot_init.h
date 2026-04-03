@@ -241,6 +241,12 @@ typedef enum {
 #define POST16_DEFERRED_INPUT   0xD004  /* input: virtio_input + vbox_mouse */
 #define POST16_DEFERRED_INPUT_OK 0xD005
 
+/* Boot Performance Regression (0xDC00–0xDC03) */
+#define POST16_BOOTPERF         0xDC00  /* perf detection entry */
+#define POST16_BOOTPERF_READ    0xDC01  /* NVRAM read of prev boot */
+#define POST16_BOOTPERF_CMP     0xDC02  /* comparison done */
+#define POST16_BOOTPERF_WRITE   0xDC03  /* NVRAM write of current boot */
+
 /* Sentinels (0xF000–0xFFFE) */
 #define POST16_BOOT_OK          0xFF00
 #define POST16_BOOT_FAILED      0xFFFE

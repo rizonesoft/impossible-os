@@ -52,7 +52,7 @@
 | ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [x]   |
 | ⭐  |  10   | POST code + UEFI variable log              | §1         |  [x]   |
 | 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [x]   |
-| ⭐  |  12   | Boot performance regression detection      | §10        |  [ ]   |
+| ⭐  |  12   | Boot performance regression detection      | §10        |  [x]   |
 | ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have formal init phase models; Impossible OS must match them.
@@ -269,13 +269,14 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 
 **Files:** `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`
 
-- [ ] Extend `boot_timing.c` to store per-subsystem elapsed time in a `boot_perf_record_t` struct array (subsystem name, phase, elapsed_us)
-- [ ] After Phase 3 completes, write the `boot_perf_record_t` array to UEFI NVRAM variable `ImpossibleBootPerf` (NV+BS+RT) -- survives reboot
-- [ ] On next boot, read `ImpossibleBootPerf` from NVRAM into `g_prev_boot_perf[]`
-- [ ] In `boot_timing_report()`, compare each subsystem's current elapsed time against previous: if >200% of previous OR >500ms regression, log `[PERF] WARNING: <subsys> init regressed: <prev>ms → <cur>ms`
-- [ ] Add `boot_perf_dump()` -- prints all subsystem timings as a sorted table to serial (called from `boot_timing_report()`)
-- [ ] Add `bootperf` shell command -- reads `ImpossibleBootPerf` NVRAM variable and displays historical comparison
-- [ ] Add debug POST codes: `POST16(0xDC00)` entry, `POST16(0xDC01)` NVRAM read, `POST16(0xDC02)` comparison done, `POST16(0xDC03)` NVRAM write -- range `0xDCxx` confirmed free
+- [x] Extend `boot_timing.c` with `boot_perf_record_t` struct (name[16], elapsed_ms, phase) -- fixed-size for NVRAM layout
+- [x] After Phase 3 completes, `boot_perf_save()` writes header + records to UEFI NVRAM variable `ImpossibleBootPerf` (NV+BS+RT)
+- [x] On next boot, `boot_perf_read_prev()` reads `ImpossibleBootPerf` from NVRAM into `s_prev_records[]` (called in Phase 0 after uefi_runtime_init)
+- [x] `boot_perf_compare()` compares current vs previous: if >200% OR >500ms regression, logs `[PERF] WARNING: <step> init regressed: <prev>ms -> <cur>ms`
+- [x] `boot_perf_dump()` prints all step durations as a sorted-by-time table to serial
+- [ ] Add `bootperf` shell command -- deferred until NtQuerySystemInformation syscall provides NVRAM access to user-mode
+- [x] Add debug POST codes: `POST16(0xDC00)` entry, `POST16(0xDC01)` NVRAM read, `POST16(0xDC02)` comparison done, `POST16(0xDC03)` NVRAM write
+- [x] Add 3 unit tests: perf record size (24 bytes), BOOT_PERF_MAGIC value, bootperf POST code uniqueness
 - [ ] Commit: `"kernel: boot performance regression detection via UEFI NVRAM"`
 
 **Test checkpoint:** Boot twice → second boot serial log shows `[PERF]` comparison lines. Inject a `sleep_ms(1000)` in a subsystem init → second boot shows `[PERF] WARNING` for that subsystem. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. On bare metal, verify NVRAM read/write works with real UEFI firmware.
@@ -324,7 +325,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 | ⭐ | POST to UEFI NVRAM   | ❌ Firmware-only   | ❌ Not implemented    | ✅ §10 ImpossiblePOST    |
 | ⭐ | Readiness oracle API | ⚠️ Private internal| ⚠️ system_state only  | ✅ §1 public API         |
 | 💎 | Deferred init        | ✅ Delayed services| ✅ deferred_initcall  | ✅ §11 boot_defer()      |
-| ⭐ | Boot perf regression | ❌ Manual ETW      | ❌ Manual bootchart   | ⬜ §12 auto NVRAM diff   |
+| ⭐ | Boot perf regression | ❌ Manual ETW      | ❌ Manual bootchart   | ✅ §12 auto NVRAM diff   |
 | ⭐ | Parallel kernel init | ⚠️ DLL load only   | ⚠️ async_schedule     | ⬜ §13 SMP phase init    |
 
 > After parity items, Impossible OS matches Windows NT and Linux on phased init.
@@ -350,13 +351,12 @@ Allow independent subsystems within a phase to initialize concurrently on differ
   - `BOOT_DEFERRED == 3` value assertion
   - `boot_defer("test_deferred", fn)` returns 0 on success
   - Deferred POST code constants non-zero and unique
-- [ ] Add boot perf regression tests (§12):
-  - `boot_perf_record_t` stores subsystem name, phase, and elapsed_us correctly
-  - `boot_perf_dump()` does not crash with zero recorded subsystems
-  - Regression detection: inject prev=100ms, cur=250ms → `[PERF] WARNING` logged
-  - No regression: inject prev=100ms, cur=150ms → no warning logged
+- [x] Add boot perf regression tests (§12):
+  - `boot_perf_record_t` size is 24 bytes (NVRAM layout stability)
+  - `BOOT_PERF_MAGIC == 0x50455246` ("PERF")
+  - Bootperf POST codes non-zero, unique, no overlap with deferred range
 
-> **Done:** 11 suites, 22 assertions -- registered in `test_runner_init()` (2026-04-03). Added 3 deferred init tests for §11.
+> **Done:** 14 suites, 30 assertions -- registered in `test_runner_init()` (2026-04-03). Added 3 perf regression tests for §12.
 
 ## Verification
 

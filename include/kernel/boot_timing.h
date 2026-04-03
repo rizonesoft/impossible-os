@@ -42,3 +42,39 @@ typedef struct {
 
 /* Get the recorded step array. Returns count. */
 uint32_t boot_timing_get_steps(const boot_timing_step_t **out);
+
+/* ---- Boot performance regression detection ------------------------------- */
+
+#define BOOT_PERF_MAX_RECORDS  32
+#define BOOT_PERF_NAME_LEN     16  /* truncated step name stored in NVRAM */
+#define BOOT_PERF_MAGIC        0x50455246  /* "PERF" */
+
+/* Per-step performance record stored in UEFI NVRAM across reboots.
+ * Fixed-size so the NVRAM variable is a flat array with no pointers. */
+typedef struct {
+    char     name[BOOT_PERF_NAME_LEN];  /* step name (null-terminated) */
+    uint32_t elapsed_ms;                /* duration from boot start */
+    uint8_t  phase;                     /* boot phase 0-3 */
+    uint8_t  _pad[3];                   /* alignment */
+} boot_perf_record_t;
+
+/* NVRAM variable header -- prefixed before the record array. */
+typedef struct {
+    uint32_t magic;                     /* BOOT_PERF_MAGIC */
+    uint32_t count;                     /* number of records following */
+} boot_perf_header_t;
+
+/* Read previous boot perf from NVRAM into internal buffer.
+ * Call early in boot (after uefi_runtime_init). */
+void boot_perf_read_prev(void);
+
+/* Compare current boot timings against previous and log regressions.
+ * Call after boot_timing_print_steps() when all timings are finalized. */
+void boot_perf_compare(void);
+
+/* Write current boot timings to NVRAM for next-boot comparison.
+ * Call once at end of Phase 3 (one NVRAM write per boot). */
+void boot_perf_save(void);
+
+/* Print all subsystem timings as a sorted table to serial. */
+void boot_perf_dump(void);

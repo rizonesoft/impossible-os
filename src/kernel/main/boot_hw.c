@@ -15,6 +15,7 @@
 #include "gfx_simd.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/klog.h"
+#include "kernel/boot_timing.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/heap.h"
@@ -111,6 +112,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         }
         boot_progress(0, "post-code-log", 0x11);
     }
+
+    /* Read previous boot perf data from NVRAM (before we overwrite it) */
+    boot_perf_read_prev();
 
     /* Initialize VPD Tier 1 -- after crash banner so s_banner_shown is set */
     {
