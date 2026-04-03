@@ -103,7 +103,11 @@ struct ixfs_inode {
     uint8_t  i_extent_flags;
     uint16_t i_extent_pad;
     uint64_t i_extent_block;
+    uint8_t  i_reserved[36];       /* pad to 128 bytes (matches kernel) */
 };
+
+_Static_assert(sizeof(struct ixfs_inode) == 128,
+    "IXFS inode must be 128 bytes (matches kernel)");
 
 struct ixfs_dir_entry {
     uint32_t d_inode;

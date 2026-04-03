@@ -203,7 +203,11 @@ struct ixfs_inode {
     uint8_t  i_extent_flags;       /* IXFS_EXTENT_OVERFLOW if overflow in use */
     uint16_t i_extent_pad;         /* alignment padding */
     uint64_t i_extent_block;       /* block for overflow extent tree (0=none) */
+    uint8_t  i_reserved[36];       /* pad to 128 bytes (32 inodes per block) */
 } __attribute__((packed));
+
+_Static_assert(sizeof(struct ixfs_inode) == 128,
+    "IXFS inode must be exactly 128 bytes (32 per 4 KiB block)");
 
 #define IXFS_INODES_PER_BLOCK  (IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode))
 
