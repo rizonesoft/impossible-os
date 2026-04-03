@@ -8,6 +8,7 @@
 
 #include "kernel/sched/syscall.h"
 #include "kernel/idt.h"
+#include "kernel/nt/ntstatus.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
 #include "kernel/drivers/keyboard.h"
@@ -413,8 +414,33 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     return (uint64_t)frame;
 }
 
+/* --- INT 0x2E handler: NT syscall compatibility path ---
+ * Uses RAX as SSDT service number, Windows x64 arg passing:
+ * R10=arg1 (RCX clobbered by SYSCALL, so ntdll copies to R10),
+ * RDX=arg2, R8=arg3, R9=arg4.
+ * Returns NTSTATUS in RAX via frame->rax. */
+static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
+{
+    extern NTSTATUS ssdt_dispatch(uint32_t, uint64_t, uint64_t,
+                                  uint64_t, uint64_t, uint64_t, uint64_t);
+    NTSTATUS result = ssdt_dispatch(
+        (uint32_t)frame->rax,   /* service number */
+        frame->r10,             /* arg1 (Windows: R10 = original RCX) */
+        frame->rdx,             /* arg2 */
+        frame->r8,              /* arg3 */
+        frame->r9,              /* arg4 */
+        0, 0);                  /* arg5, arg6 (from user stack, future) */
+    frame->rax = (uint64_t)result;
+    return (uint64_t)frame;
+}
+
 void syscall_init(void)
 {
+    /* INT 0x80: legacy Linux-style syscall path (existing user-mode binaries) */
     idt_register_handler(0x80, syscall_handler);
-    klog(LOG_INFO, "sys", "Syscall handler registered (INT 0x80)");
+
+    /* INT 0x2E: NT syscall compatibility path (SSDT dispatch) */
+    idt_register_handler(0x2E, syscall_handler_2e);
+
+    klog(LOG_INFO, "sys", "Syscall handler registered (INT 0x80 + INT 0x2E)");
 }

@@ -408,7 +408,9 @@ void idt_init(void)
     idt[18].ist = 3;   /* MCE → IST3 */
 
     /* Override DPL for software interrupts callable from ring 3 */
-    /* INT 0x80: syscall -- DPL=3 (0xEE) so ring 3 can trigger it */
+    /* INT 0x2E: NT syscall compatibility -- DPL=3 */
+    idt[0x2E].type_attr = 0xEE;
+    /* INT 0x80: Linux-style syscall -- DPL=3 */
     idt[128].type_attr = 0xEE;
 
     /* Load the IDT */

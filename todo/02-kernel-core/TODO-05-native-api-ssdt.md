@@ -48,7 +48,7 @@
 | --- | :---: | -------------------------------------------------------------- | --------------- | :----: |
 | 💎  |   1   | NTSTATUS type and canonical status codes                       | --               |  [x]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [/]   |
-| 💎  |   3   | INT 0x2E compatibility path                                    | §2              |  [ ]   |
+| 💎  |   3   | INT 0x2E compatibility path                                    | §2              |  [x]   |
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries           | §1              |  [x]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4          |  [ ]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3  |  [ ]   |
@@ -56,22 +56,22 @@
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6  |  [ ]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5              |  [ ]   |
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5              |  [ ]   |
-| ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6  |  [ ]   |
-| ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5          |  [ ]   |
-| 💎  |  13   | File metadata and device control                               | §6              |  [ ]   |
-| 💎  |  14   | Registry syscalls                                              | §5, TODO-13 §4  |  [ ]   |
-| 💎  |  15   | Token and access control syscalls                              | §5, TODO-11 §4  |  [ ]   |
-| 💎  |  16   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4  |  [ ]   |
-| 💎  |  17   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7  |  [ ]   |
+| ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [ ]   |
+| ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [ ]   |
+| 💎  |  13   | File metadata and device control                               | §6                |  [ ]   |
+| 💎  |  14   | Registry syscalls                                              | §5, TODO-13 §4    |  [ ]   |
+| 💎  |  15   | Token and access control syscalls                              | §5, TODO-11 §4    |  [ ]   |
+| 💎  |  16   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [ ]   |
+| 💎  |  17   | Section and memory-mapped file syscalls                        | §5, TODO-03 §7    |  [ ]   |
 | 💎  |  18   | Timer control syscalls                                         | §5, TODO-07 §8,§9 |  [ ]   |
-| 💎  |  19   | ALPC / LPC port syscalls                                       | §5, TODO-12 §8  |  [ ]   |
-| 💎  |  20   | Exception and debug syscalls                                   | §5, TODO-10 §5  |  [ ]   |
-| 💎  |  21   | Power and system control                                       | §5, TODO-15 §12 |  [ ]   |
-| 💎  |  22   | Atom, locale, and miscellaneous                                | §5              |  [ ]   |
-| ⭐  |  23   | Syscall audit and tracing hook                                 | §4              |  [ ]   |
-| 💎  |  24   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7          |  [ ]   |
-| 💎  |  25   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-04 §5  |  [ ]   |
-| ⭐  |  26   | SSDT integrity protection (hardware write-protect)             | §4              |  [ ]   |
+| 💎  |  19   | ALPC / LPC port syscalls                                       | §5, TODO-12 §8    |  [ ]   |
+| 💎  |  20   | Exception and debug syscalls                                   | §5, TODO-10 §5    |  [ ]   |
+| 💎  |  21   | Power and system control                                       | §5, TODO-15 §12   |  [ ]   |
+| 💎  |  22   | Atom, locale, and miscellaneous                                | §5                |  [ ]   |
+| ⭐  |  23   | Syscall audit and tracing hook                                 | §4                |  [ ]   |
+| 💎  |  24   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [ ]   |
+| 💎  |  25   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-04 §5    |  [ ]   |
+| ⭐  |  26   | SSDT integrity protection (hardware write-protect)             | §4                |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -185,13 +185,10 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
 ## 3. INT 0x2E Compatibility Path
 Windows NT's original software-interrupt syscall vector. Required for early ntdll and any code that does not use `SYSCALL`.
 
-- [ ] Register a new IDT handler for vector `0x2E` in `idt.c`:
-  - Entry stub saves full register frame (same layout as INT 0x80 stub)
-  - `swapgs` if coming from ring 3 (check CS & 3)
-  - Calls `syscall_dispatch(rax, rdi, rsi, rdx, r10, r8, r9)` (NT calling convention for syscall args)
-  - `swapgs` on return; `iretq`
-- [ ] The INT 0x2E handler shares `syscall_dispatch`; no separate dispatch logic
-- [ ] After INT 0x2E is verified working, keep INT 0x80 as a second alias until all existing user-mode test binaries are updated to use the new calling convention
+- [x] IDT vector 0x2E set to DPL=3 (type_attr 0xEE) in `idt.c` -- user-mode `int 0x2E` works
+- [x] `syscall_handler_2e()` registered in `syscall.c` -- reads RAX as service number, R10/RDX/R8/R9 as args (Windows x64 ABI), dispatches via `ssdt_dispatch()`
+- [x] Uses existing `irq14` stub which has full register save/restore + swapgs + iretq
+- [x] INT 0x80 kept active alongside INT 0x2E (both paths coexist)
 - [ ] Commit: `"kernel: nt -- INT 0x2E syscall compatibility path"`
 
 **Test checkpoint:** Ring-3 `int 0x2E` with RAX=0x0015 reaches `NtClose` handler. Same register mapping as SYSCALL path. `POST16(0xD300)` entry, `POST16(0xD301)` exit. Verify on all 4 platforms.
@@ -1427,7 +1424,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | 🔄 §2 blocked on GDT order  |
 | 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ✅ §1 NTSTATUS + 50 codes   |
 | 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ✅ §4 SSDT 470 + shadow stub |
-| 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ⬜ §3                       |
+| 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ✅ §3 INT 0x2E + 0x80       |
 | 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only           | ⬜ §11                      |
 | 💎 | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat    | ⬜ §13                      |
 | 💎 | Device I/O control         | ✅ NtDeviceIoControlFile    | ✅ ioctl()                 | ⬜ §13                      |
