@@ -18,6 +18,7 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
+#include "kernel/nt/ssdt.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
 #include "kernel/boot_init.h"
@@ -78,8 +79,9 @@ void boot_phase3(void)
     kernel_subsystem_set_ready(SUBSYS_IPC, true);
     boot_progress(3, "IPC", 0x0061);
 
-    /* --- Syscall handler --- */
+    /* --- Syscall handler + SSDT --- */
     boot_splash_status("Initializing syscalls...");
+    ssdt_init();
     syscall_init();
 
     /* --- Exec loader (ELF/PE format handlers) --- */

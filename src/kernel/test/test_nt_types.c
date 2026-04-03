@@ -12,6 +12,8 @@
 #include "kernel/test/test.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nt_types.h"
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/service_numbers.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -87,6 +89,51 @@ static void test_object_attributes_size(void)
                 "OBJECT_ATTRIBUTES <= 64 bytes");
 }
 
+/* ---- SSDT dispatch ---- */
+
+static void test_ssdt_unimplemented_returns_not_implemented(void)
+{
+    /* ssdt_init() was already called during boot.
+     * An unregistered slot should return STATUS_NOT_IMPLEMENTED. */
+    NTSTATUS s = ssdt_dispatch(0x0FFF, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
+                   "ssdt_dispatch(unregistered) returns STATUS_NOT_IMPLEMENTED");
+}
+
+static void test_ssdt_invalid_table_returns_error(void)
+{
+    /* Table selector 2 (bits 13:12 = 10) is invalid */
+    NTSTATUS s = ssdt_dispatch(0x2000, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "ssdt_dispatch(invalid table) returns STATUS_INVALID_PARAMETER");
+}
+
+static void test_ssdt_main_count(void)
+{
+    TEST_ASSERT_EQ(SSDT_MAIN_COUNT, 470, "SSDT_MAIN_COUNT == 470");
+}
+
+static NTSTATUS test_ssdt_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                  uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return (NTSTATUS)a1;  /* echo first arg as status */
+}
+
+static void test_ssdt_register_and_dispatch(void)
+{
+    /* Register a test handler at a high unused index */
+    int r = ssdt_register(0x03FF, test_ssdt_handler);
+    TEST_ASSERT_EQ(r, 0, "ssdt_register returns 0 on success");
+
+    NTSTATUS s = ssdt_dispatch(0x03FF, STATUS_SUCCESS, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ssdt_dispatch calls registered handler");
+
+    /* Restore stub */
+    ssdt_register(0x03FF, ssdt_stub_not_implemented);
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -97,6 +144,10 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: NTSTATUS information", test_ntstatus_information, TEST_CAT_ABI);
     test_suite_register_cat("NT: type sizes", test_nt_type_sizes, TEST_CAT_ABI);
     test_suite_register_cat("NT: OBJECT_ATTRIBUTES size", test_object_attributes_size, TEST_CAT_ABI);
+    test_suite_register_cat("NT: SSDT unimplemented stub", test_ssdt_unimplemented_returns_not_implemented, TEST_CAT_ABI);
+    test_suite_register_cat("NT: SSDT invalid table", test_ssdt_invalid_table_returns_error, TEST_CAT_ABI);
+    test_suite_register_cat("NT: SSDT main count", test_ssdt_main_count, TEST_CAT_ABI);
+    test_suite_register_cat("NT: SSDT register+dispatch", test_ssdt_register_and_dispatch, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

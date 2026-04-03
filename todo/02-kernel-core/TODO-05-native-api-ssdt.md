@@ -49,7 +49,7 @@
 | 💎  |   1   | NTSTATUS type and canonical status codes                       | --               |  [x]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [ ]   |
 | 💎  |   3   | INT 0x2E compatibility path                                    | §2              |  [ ]   |
-| 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries           | §1              |  [ ]   |
+| 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries           | §1              |  [x]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4          |  [ ]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3  |  [ ]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5  |  [ ]   |
@@ -160,7 +160,7 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
 - [x] Annotate each `NTSTATUS` code with inline comment describing trigger condition
 - [x] uefi_vars.h updated to forward-include from canonical `kernel/nt/ntstatus.h`
 - [x] 6 unit tests: NT_SUCCESS, NT_ERROR, NT_WARNING, NT_INFORMATION, type sizes, OBJECT_ATTRIBUTES size
-- [ ] Commit: `"kernel: nt -- NTSTATUS type and canonical status codes"`
+- [x] Commit: `"kernel: nt -- NTSTATUS type and canonical status codes"`
 
 **Test checkpoint:** `bash scripts/build.sh` → `=== BUILD OK ===`. `NT_SUCCESS(0)` == true, `NT_ERROR(0xC0000001)` == true, `NT_WARNING(0x80000005)` == true, `NT_INFORMATION(0x00000101)` == true verified by unit test.
 
@@ -210,13 +210,14 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 
 The SSDT is a flat array of function pointers indexed by the 12-bit service number in RAX. `ntdll` stubs do `mov rax, <service_number>; syscall`. This section defines the complete service number allocation for all 470 NT API endpoints. Numbers are stable -- changing them is an ABI break.
 
-- [ ] Define `SSDT_ENTRY` and `SSDT_TABLE` in `include/kernel/nt/ssdt.h`:
-  - `typedef NTSTATUS (*SSDT_HANDLER)(uint64_t a1, a2, a3, a4, a5, a6)`
-  - `SSDT_TABLE` -- array of `SSDT_HANDLER` + count + table name string
-- [ ] Allocate Win32k shadow SSDT stub (table 1) as empty placeholder -- filled by `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md` (108 NtGdiXxx/NtUserXxx entries at 0x1000+)
-- [ ] Define complete service index assignments in `include/kernel/nt/service_numbers.h`:
-- [ ] Implement `syscall_dispatch`: index RAX into active SSDT; call handler; return `NTSTATUS` in RAX
-- [ ] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` rather than crashing
+- [x] Define `SSDT_HANDLER` and `SSDT_TABLE` in `include/kernel/nt/ssdt.h` -- handler takes 6 uint64_t args, returns NTSTATUS; table has handlers array + count + implemented count + name
+- [x] Shadow SSDT (table 1) allocated as empty placeholder -- indices 0x1000+, filled by Win32k later
+- [x] 470 service index assignments in `include/kernel/nt/service_numbers.h` -- `SSDT_NtXxx` defines for every entry, `SSDT_MAIN_COUNT = 470`
+- [x] `ssdt_dispatch()` -- selects table from bits 13:12, index from bits 11:0, calls handler
+- [x] `ssdt_register()` -- replaces stub with real handler, tracks implemented count
+- [x] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` via `ssdt_stub_not_implemented()`
+- [x] `ssdt_init()` called in Phase 3 before `syscall_init()`
+- [x] 4 unit tests: unimplemented stub, invalid table, main count=470, register+dispatch
 - [ ] Commit: `"kernel: nt -- SSDT and service number table"`
 
 ### SSDT Master Table
@@ -1435,7 +1436,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 |----|----------------------------|------------------------------|----------------------------|------------------------------|
 | 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | ⬜ §2                       |
 | 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ✅ §1 NTSTATUS + 50 codes   |
-| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ⬜ §4 -- 470 entries         |
+| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ✅ §4 SSDT 470 + shadow stub |
 | 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ⬜ §3                       |
 | 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only           | ⬜ §11                      |
 | 💎 | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat    | ⬜ §13                      |
