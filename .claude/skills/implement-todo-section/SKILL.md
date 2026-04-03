@@ -14,34 +14,41 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 3. Explore the codebase before editing.
    - Use Grep/Glob tools for symbol search, call-graph tracing, and cross-file discovery.
    - Read relevant source files to understand the integration surface.
-4. Implement only the bounded section scope.
+4. **Run the kernel-code-quality checklist BEFORE writing code.**
+   - Walk through every gate in `.claude/skills/kernel-code-quality/SKILL.md` that applies to the code you're about to write.
+   - Gate 1 (freestanding), Gate 2 (SMP), Gate 5 (error handling), Gate 6 (bare metal), and Gate 9 (production quality) apply to ALL kernel code changes.
+   - Gate 3 (5-layer defense) applies when adding cross-file constants or assembly-referenced structs.
+   - Gate 4 (boot path) applies when touching code that runs before `sti`.
+   - Gate 7 (unit tests) applies when adding any new public function or invariant.
+   - **Do not skip this step.** Past incidents where it was skipped: SMP race in vmm_set_user_page, PT frame leak in vmm_destroy_user_pml4, inode size test asserted wrong value.
+5. Implement only the bounded section scope.
    - Freestanding kernel: no `<stdint.h>` / `<string.h>` -- use `#include "kernel/types.h"`.
    - No `malloc()` / `printf()` -- use `kmalloc()` (≤ 4 KB), `pmm_alloc_contiguous()` (larger), `printk()`.
    - Assembly: NASM x86-64 only. UEFI-era, Long Mode, APIC -- no BIOS/VGA/PIC.
    - API surface: Win32 native. Windows-style canonical paths (`C:\Impossible\System32\`).
    - **Diagnostic POST codes:** When modifying boot-path or hardware code, add `POST16()` calls around the change using the `0xD000–0xDFFF` debug range. Format: `POST16(0xDDNN)` where `DD` = section number, `NN` = step (00=entry, 01=exit, 02+=sub-steps). Before assigning codes, grep `include/kernel/boot_init.h` for all `POST16_` defines and the codebase for `POST16(0xD` to avoid conflicts. On bare metal crash, the last POST code on VPD/serial pinpoints the failure in minutes. Remove debug POST codes after verification on all platforms.
-5. Verify with supported evidence.
+6. Verify with supported evidence.
    - Build: `bash scripts/build.sh` (incremental) or `bash scripts/build.sh clean` (full).
    - Check: `tail -1 build/build.log` -- must show `=== BUILD OK ===`.
    - Crash debug: `llvm-addr2line-19 -e build/kernel.exe -f <RIP>`.
    - Runtime: `bash scripts/build.sh run` for headless QEMU + serial output.
-6. Update the TODO section before finishing.
+7. Update the TODO section before finishing.
    - Correct stale checklist state, notes, and verification wording when evidence contradicts the current text.
    - Keep TODO edits scoped to the section you actually executed.
-7. Update the Implementation Order table.
+8. Update the Implementation Order table.
    - Find the row(s) whose `Deliverable` maps to the section you just implemented.
    - Change the `Status` cell to `[x]` (fully done) or `[/]` (in progress) to match the evidence.
    - Do not change `Order`, `Deliverable`, or `Depends On` cells unless the implementation revealed they were wrong.
-8. Update the OS Comparison table.
+9. Update the OS Comparison table.
    - Find the row(s) whose `Feature` maps to what the section delivers.
    - Replace placeholder text in the `🚀 Impossible OS` cell with a concrete description and section reference.
    - If a row was `⬜ Planned` and is now fully working, change `⬜` to `✅`; if partial, use `🔄`.
-9. Wire up unit tests for the section's deliverables.
+10. Wire up unit tests for the section's deliverables.
    - If the TODO has a `## Unit Tests` section, check if the new code is testable.
    - Add or update test assertions in the relevant `test_*.c` file for the functionality just implemented.
    - If tests already exist but skip (e.g., "not yet allocated"), update them to verify the new state.
    - Run `bash scripts/build.sh` to confirm tests compile.
-10. **Commit and push IMMEDIATELY after the section is complete and the build passes.**
+11. **Commit and push IMMEDIATELY after the section is complete and the build passes.**
    - **CRITICAL: Never batch multiple sections or features into one commit.** Each completed implementation gets its own commit+push before starting the next task. This keeps COUNT.md current, git history granular, and rollback possible.
    - Use the section's `Commit:` line as the commit message.
    - Stage all changed source files, headers, the updated TODO file, and any test changes together.
