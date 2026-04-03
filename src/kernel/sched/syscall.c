@@ -8,6 +8,7 @@
 
 #include "kernel/sched/syscall.h"
 #include "kernel/idt.h"
+#include "kernel/vectors.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
@@ -437,10 +438,10 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
 void syscall_init(void)
 {
     /* INT 0x80: legacy Linux-style syscall path (existing user-mode binaries) */
-    idt_register_handler(0x80, syscall_handler);
+    idt_register_handler(VECTOR_LINUX_SYSCALL, syscall_handler);
 
     /* INT 0x2E: NT syscall compatibility path (SSDT dispatch) */
-    idt_register_handler(0x2E, syscall_handler_2e);
+    idt_register_handler(VECTOR_NT_SYSCALL, syscall_handler_2e);
 
     klog(LOG_INFO, "sys", "Syscall handler registered (INT 0x80 + INT 0x2E)");
 }

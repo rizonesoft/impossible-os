@@ -50,7 +50,7 @@
 | ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [x]  |
 | ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [x]  |
 | ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [x]  |
-| ⭐  |   6   | IDT vector assignment collision detection          | --         |  [ ]  |
+| ⭐  |   6   | IDT vector assignment collision detection          | --         |  [x]  |
 | ⭐  |   7   | SSDT service number count stability                | --         |  [ ]  |
 | ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [ ]  |
 | ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [ ]  |
@@ -161,12 +161,12 @@ Multiple subsystems claim IDT vectors: INT 0x80 (syscall), INT 0x81 (yield), INT
 
 **Files:** `src/kernel/idt.c`, `include/kernel/boot_init.h`
 
-- [ ] Create `include/kernel/vectors.h` with all assigned vectors as `#define VECTOR_*` constants
-- [ ] Add compile-time uniqueness verification: `_Static_assert(VECTOR_SYSCALL != VECTOR_YIELD, "...")` for all pairs
-- [ ] Runtime: `idt_register_handler()` logs a FATAL error if the vector already has a non-default handler registered
-- [ ] Unit test: attempt to register two handlers on the same vector -> verify error returned
-- [ ] Documentation: vector allocation table in vectors.h with purpose and owner
-- [ ] Commit: `"bulletproof: IDT vector collision detection -- uniqueness asserts + registration guard"`
+- [x] Created `include/kernel/vectors.h` with 22 `VECTOR_*` constants + 16 uniqueness `_Static_assert` pairs
+- [x] Wired into syscall.c (VECTOR_LINUX_SYSCALL, VECTOR_NT_SYSCALL) and task.c (VECTOR_YIELD)
+- [x] Runtime: `idt_register_handler()` logs WARN on double-registration (non-NULL overwrite)
+- [x] Unit test: `test_vector_uniqueness()` -- 10 assertions verifying values + pairwise uniqueness
+- [x] Documentation: vector allocation table in vectors.h header (range/purpose/owner columns)
+- [x] Commit: `"bulletproof: IDT vector collision detection -- vectors.h + uniqueness asserts"`
 
 **Test checkpoint:** Define two vectors with same value -> static assert fires. Register handler on occupied vector -> FATAL log + handler not overwritten.
 

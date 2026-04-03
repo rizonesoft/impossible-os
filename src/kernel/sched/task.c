@@ -30,9 +30,10 @@
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
 #include "kernel/acpi.h"
+#include "kernel/vectors.h"
 
-/* Software interrupt vector for yield() */
-#define YIELD_INT_VECTOR 0x81
+/* Use VECTOR_YIELD from vectors.h (single source of truth) */
+#define YIELD_INT_VECTOR VECTOR_YIELD
 
 /* --- Task table --- */
 static struct task tasks[TASK_MAX];

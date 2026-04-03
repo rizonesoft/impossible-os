@@ -16,6 +16,7 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/gdt.h"
 #include "kernel/idt.h"
+#include "kernel/vectors.h"
 #include "kernel/smp.h"
 #include "kernel/boot_info.h"
 #include "kernel/mm/user_range.h"
@@ -279,6 +280,30 @@ static void test_interrupt_frame_layout(void)
                    "err_code at offset 128");
 }
 
+/* ---- IDT vector uniqueness ---- */
+
+static void test_vector_uniqueness(void)
+{
+    /* Every statically assigned vector must be unique. The static asserts
+     * in vectors.h catch this at compile time; these tests verify the
+     * actual values at runtime and document the expected assignments. */
+    TEST_ASSERT_EQ(VECTOR_LINUX_SYSCALL, 0x80, "VECTOR_LINUX_SYSCALL == 0x80");
+    TEST_ASSERT_EQ(VECTOR_NT_SYSCALL, 0x2E, "VECTOR_NT_SYSCALL == 0x2E");
+    TEST_ASSERT_EQ(VECTOR_YIELD, 0x81, "VECTOR_YIELD == 0x81");
+    TEST_ASSERT_EQ(VECTOR_IPI_ASYNC_INIT, 0xFC, "VECTOR_IPI_ASYNC_INIT == 0xFC");
+    TEST_ASSERT_EQ(VECTOR_IPI_RESCHEDULE, 0xFD, "VECTOR_IPI_RESCHEDULE == 0xFD");
+    TEST_ASSERT_EQ(VECTOR_IPI_TLB_SHOOTDOWN, 0xFE, "VECTOR_IPI_TLB_SHOOTDOWN == 0xFE");
+    TEST_ASSERT_EQ(VECTOR_LAPIC_SPURIOUS, 0xFF, "VECTOR_LAPIC_SPURIOUS == 0xFF");
+
+    /* Verify no pair of software/IPI vectors collide */
+    TEST_ASSERT(VECTOR_LINUX_SYSCALL != VECTOR_YIELD,
+                "syscall and yield vectors differ");
+    TEST_ASSERT(VECTOR_NT_SYSCALL != VECTOR_LINUX_SYSCALL,
+                "NT and Linux syscall vectors differ");
+    TEST_ASSERT(VECTOR_IPI_ASYNC_INIT != VECTOR_IPI_RESCHEDULE,
+                "async init and reschedule IPI differ");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -299,6 +324,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: user ELF range sync", test_user_elf_range, TEST_CAT_ABI);
     test_suite_register_cat("NT: AP trampoline offsets", test_ap_trampoline_offsets, TEST_CAT_ABI);
     test_suite_register_cat("NT: interrupt frame layout", test_interrupt_frame_layout, TEST_CAT_ABI);
+    test_suite_register_cat("NT: IDT vector uniqueness", test_vector_uniqueness, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
