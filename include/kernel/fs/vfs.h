@@ -15,6 +15,9 @@
 #define VFS_MAX_PATH     512
 #define VFS_MAX_DRIVES   26     /* A: through Z: */
 
+/* Bulletproofing: drive count must be exactly 26 (A-Z) */
+_Static_assert(VFS_MAX_DRIVES == 26, "VFS drive letters must be A-Z (26)");
+
 /* Node types */
 #define VFS_FILE         0x01
 #define VFS_DIRECTORY    0x02

@@ -20,12 +20,30 @@
 
 /* MBR layout constants */
 #define MBR_SIGNATURE        0xAA55
-#define MBR_ENTRY_OFFSET     446
+#define MBR_ENTRY_OFFSET     446      /* 0x1BE -- industry standard */
 #define MBR_MAX_PARTITIONS   4
 #define MBR_ENTRY_SIZE       16
 #define MBR_DISK_SIG_OFFSET  440
 #define MBR_RESERVED_OFFSET  444
 #define MBR_SIG_OFFSET       510
+
+/* Bulletproofing: MBR layout constants are industry standards that must not drift.
+ *   Offset  Size  Description
+ *   ------  ----  -----------
+ *   0       440   Bootstrap code
+ *   440     4     Disk signature
+ *   444     2     Reserved
+ *   446     64    4 x 16-byte partition entries
+ *   510     2     Boot signature (0x55AA)
+ */
+_Static_assert(MBR_ENTRY_OFFSET == 446,
+    "MBR partition table must start at offset 446 (0x1BE)");
+_Static_assert(MBR_SIG_OFFSET == 510,
+    "MBR boot signature must be at offset 510");
+_Static_assert(MBR_ENTRY_SIZE == 16,
+    "MBR partition entry must be 16 bytes");
+_Static_assert(MBR_ENTRY_OFFSET + MBR_MAX_PARTITIONS * MBR_ENTRY_SIZE == MBR_SIG_OFFSET,
+    "4 partition entries (64 bytes) must fill exactly to boot signature");
 #define MBR_MAX_LOGICAL      128  /* Safety cap for EBR chain traversal */
 
 /* ---- Partition Type IDs ----

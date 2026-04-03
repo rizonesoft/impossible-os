@@ -57,7 +57,7 @@
 | ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [x]  |
 | ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [x]  |
 | ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [x]  |
-| ⭐  |  13   | VFS drive letter range and partition offsets       | --         |  [ ]  |
+| ⭐  |  13   | VFS drive letter range and partition offsets       | --         |  [x]  |
 | ⭐  |  14   | exec_pending state machine verification            | §5         |  [ ]  |
 | ⭐  |  15   | Framebuffer bare-metal safety (5 rules)            | --         |  [x]  |
 
@@ -281,7 +281,7 @@ Windows security structs have exact binary layouts for ABI compatibility. If siz
 - [x] Unit test: `test_acl_3ace_walk` -- 3 ACEs (2 allowed + 1 denied), walk all 3, verify types, OOB returns error
 - [x] Unit test: `test_security_struct_sizes` -- runtime verification of all sizes (ACL=8, ACE_HEADER=4, ACCESS_ALLOWED_ACE=12, SID=8)
 - [x] Documentation: Windows ABI compatibility comments in sid.h and acl.h
-- [ ] Commit: `"bulletproof: security structs -- SID/ACL/ACE size asserts + ABI unit tests"`
+- [x] Commit: `"bulletproof: security structs -- SID/ACL/ACE size asserts + ABI unit tests"`
 
 **Test checkpoint:** Resize ACL struct -> static assert fires. Create SID with wrong SubAuthorityCount -> runtime check catches.
 
@@ -293,12 +293,13 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 
 **Files:** `src/kernel/fs/vfs.c`, `src/kernel/fs/mbr.c`, `src/kernel/fs/gpt.c`
 
-- [ ] `_Static_assert(VFS_MAX_DRIVES == 26, "VFS drive letters A-Z")`
-- [ ] `_Static_assert(MBR_PARTITION_TABLE_OFFSET == 0x1BE, "MBR partition table at 446")`
-- [ ] Runtime: `vfs_mount()` rejects drive letters outside A-Z range
-- [ ] Unit test: mount at 'Z' succeeds, mount at '[' (after Z) fails
-- [ ] Unit test: read MBR from sample disk, verify partition entries at 0x1BE
-- [ ] Documentation: partition offset table in mbr.c and gpt.c
+- [x] `_Static_assert(VFS_MAX_DRIVES == 26)` in vfs.h
+- [x] `_Static_assert(MBR_ENTRY_OFFSET == 446)` + `MBR_SIG_OFFSET == 510` + `MBR_ENTRY_SIZE == 16` + non-overlap (4*16=64 fills to signature) in mbr.h
+- [x] `_Static_assert(GPT_HEADER_LBA == 1)` + `GPT_ENTRY_SIZE == 128` in gpt.h
+- [x] Runtime: `drive_index()` already rejects letters outside A-Z (returns -1); `vfs_mount()` checks `idx < 0`
+- [x] Unit test: `test_vfs_drive_constants` -- VFS_MAX_DRIVES==26, Z valid, '[' rejected, '@' rejected
+- [x] Unit test: `test_mbr_gpt_constants` -- MBR offset 446, sig 510, entry 16, 4 partitions, GPT LBA 1, GPT entry 128
+- [x] Documentation: MBR layout table in mbr.h, GPT constants documented in gpt.h
 - [ ] Commit: `"bulletproof: VFS + partition offsets -- range checks + industry-standard asserts"`
 
 **Test checkpoint:** Change VFS_MAX_DRIVES -> static assert fires. Out-of-range drive letter -> runtime rejection.
@@ -342,16 +343,16 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 
 ## OS Comparison
 
-| ⭐ | Feature                     | Win11                  | Linux                    | Impossible OS               |
-|----|-----------------------------|------------------------|--------------------------|-----------------------------|
-| ⭐ | Compile-time struct asserts | ❌ Not systematic      | ⚠️ BUILD_BUG_ON sparse  | ⬜ §1-§14 all subsystems   |
-| ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ⬜ §1-§14 every init       |
-| ⭐ | Assembly offset asserts     | ❌ Manual sync         | ⚠️ asm-offsets.c        | ⬜ §1,§4,§5 static assert  |
-| ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard     | ✅ §10 stack+heap+IST+AP   |
-| ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ✅ §2,§5,§11,§12 all ABIs  |
-| ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ⬜ §6 compile-time unique  |
-| ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ⬜ §9 depth counter        |
-| ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked          | ⬜ §14 exec_pending age    |
+| ⭐ | Feature                     | Win11                  | Linux                    | Impossible OS                     |
+|----|-----------------------------|------------------------|--------------------------|-----------------------------------|
+| ⭐ | Compile-time struct asserts | ❌ Not systematic      | ⚠️ BUILD_BUG_ON sparse  | ⬜ §1-§14 all subsystems         |
+| ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ⬜ §1-§14 every init             |
+| ⭐ | Assembly offset asserts     | ❌ Manual sync         | ⚠️ asm-offsets.c        | ⬜ §1,§4,§5 static assert        |
+| ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard     | ✅ §10 stack + heap + IST + AP   |
+| ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ✅ §2,§5,§11,§12 all ABIs        |
+| ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ⬜ §6 compile-time unique        |
+| ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ⬜ §9 depth counter              |
+| ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked          | ⬜ §14 exec_pending age          |
 
 > **All exclusive.** No other OS systematically applies 5-layer defense to every critical kernel invariant. Linux has sparse `BUILD_BUG_ON` checks and `asm-offsets.c` for assembly offset generation, but nothing approaching comprehensive coverage. Windows has no public compile-time invariant system.
 

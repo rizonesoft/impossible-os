@@ -17,8 +17,14 @@
 
 /* GPT constants */
 #define GPT_SIGNATURE       0x5452415020494645ULL  /* "EFI PART" as uint64 LE */
-#define GPT_HEADER_LBA      1
-#define GPT_ENTRY_SIZE      128
+#define GPT_HEADER_LBA      1        /* UEFI spec: GPT header at LBA 1 */
+#define GPT_ENTRY_SIZE      128      /* UEFI spec: each entry is 128 bytes */
+
+/* Bulletproofing: GPT layout constants are UEFI standards */
+_Static_assert(GPT_HEADER_LBA == 1,
+    "GPT header must be at LBA 1 (UEFI spec)");
+_Static_assert(GPT_ENTRY_SIZE == 128,
+    "GPT partition entry must be 128 bytes (UEFI spec)");
 #define GPT_MAX_PARTITIONS  128
 #define GPT_MAX_RESULTS     32   /* Max partitions we report */
 #define GPT_NAME_MAX        36   /* UTF-16LE chars in entry name field */
