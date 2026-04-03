@@ -100,6 +100,8 @@ Reserve virtual address space without backing frames; commit pages on-demand wit
 - [ ] `MEM_RESERVE` path: record region; page faults in a reserved-but-not-committed range → `EXCEPTION_ACCESS_VIOLATION` (not a silent commit)
 - [ ] Wire `NtAllocateVirtualMemory(handle, &base, zero_bits, &size, type, protect)` accepting `MEM_RESERVE`, `MEM_COMMIT`, and `MEM_RESERVE|MEM_COMMIT` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 - [ ] Wire `NtFreeVirtualMemory(handle, &base, &size, MEM_RELEASE)` → unmap committed pages and remove reservation
+- [ ] **Per-process physical isolation:** `vmm_create_user_pml4()` must allocate unique physical pages per process instead of cloning the kernel's identity-mapped frames. Currently all processes share the same physical pages at the same virtual addresses -- process A can read/write process B's data. `MEM_COMMIT` must allocate fresh zero-filled frames from PMM and map them into the per-process PML4 only. Prerequisite for multi-process Win32 (→ XREF D10/T7§4, D10/T7§7)
+- [ ] **Per-process PML4 spinlock:** when multi-threaded process creation or `VirtualAlloc` from user threads calls `vmm_set_user_page()` concurrently on the same PML4, add a per-process lock to serialize PD splitting and User bit propagation. Currently safe because PML4 manipulation is task-local and single-threaded (documented in vmm.c)
 - [ ] Commit: `"mm: demand paging -- MEM_RESERVE / MEM_COMMIT / NtAllocateVirtualMemory"`
 
 ## 4. `NtQueryVirtualMemory` `[Sonnet]`
