@@ -1,5 +1,5 @@
 /* ============================================================================
- * make-system-disk.c — Build a bootable GPT system disk image
+ * make-system-disk.c -- Build a bootable GPT system disk image
  *
  * Creates a GPT-formatted disk with:
  *   Partition 1: EFI System Partition (FAT32) -- formatted externally via mkfs.fat

@@ -86,7 +86,7 @@ This 32-bit identifier acts as a persistent serial number or pseudo-UUID for the
 > [!CAUTION]
 > The stage-one bootloader payload must **strictly never exceed 440 bytes**. Overwriting this 32-bit field with executable bootstrap code will corrupt the signature.
 >
-> If this signature changes, is overwritten with random executable bytes, or is zeroed out in a system that relies on it, the operating system's storage stack will fail to correlate the physical disk with its internal volume mount registry. In the Windows NT family, this results in catastrophic boot failures — fatal stop errors (Blue Screen of Death).
+> If this signature changes, is overwritten with random executable bytes, or is zeroed out in a system that relies on it, the operating system's storage stack will fail to correlate the physical disk with its internal volume mount registry. In the Windows NT family, this results in catastrophic boot failures -- fatal stop errors (Blue Screen of Death).
 
 Since Windows Vista, non-Windows environments (including the Linux kernel and the GRUB bootloader) have also adopted and supported this signature to ensure stable block device mapping across reboots. Consequently, modern generic bootloaders (Syslinux, GRUB) strictly constrain their compiled stage-one binaries to 440 bytes to preserve this crucial metadata.
 
@@ -98,7 +98,7 @@ The two bytes at offsets `0x1BC` to `0x1BD` (444 to 445) function as an intermed
 
 | Value    | Meaning                                                                      |
 | -------- | ---------------------------------------------------------------------------- |
-| `0x0000` | Standard — unused (the vast majority of MBR implementations)                 |
+| `0x0000` | Standard -- unused (the vast majority of MBR implementations)                 |
 | `0x5A5A` | Obsolete commercial copy-protection mechanism active                         |
 | Other    | Advanced Active Partition (AAP) MBR layout (PTS-DOS 7, DR-DOS 7.07)         |
 
@@ -164,8 +164,8 @@ The core metadata defining a logical volume is encapsulated within a compact **1
 
 The first byte dictates the active status. The MBR bootstrap code iterates through entries searching for `0x80`:
 
-- **`0x80`**: Bit 7 set — partition is active/bootable
-- **`0x00`**: Inactive — bypassed during boot
+- **`0x80`**: Bit 7 set -- partition is active/bootable
+- **`0x00`**: Inactive -- bypassed during boot
 - **Any other value**: Partition table is considered corrupted by standard-compliant loaders
 
 > [!WARNING]
@@ -197,9 +197,9 @@ Despite their practical obsolescence, the Starting CHS (offset `0x01`) and Endin
 
 The CHS system is a three-dimensional coordinate model mapping to physical drive geometry:
 
-- **Cylinder** (10 bits): Vertical intersection through the platter stack — max 1024
-- **Head** (8 bits): Specific platter surface — max 256
-- **Sector** (6 bits): Angular arc block along a track — max 63 (1-based numbering)
+- **Cylinder** (10 bits): Vertical intersection through the platter stack -- max 1024
+- **Head** (8 bits): Specific platter surface -- max 256
+- **Sector** (6 bits): Angular arc block along a track -- max 63 (1-based numbering)
 
 ### 9.2 Bit-Packed 3-Byte Format
 
@@ -299,7 +299,7 @@ Hex dump: `3F 00 00 00` at offset `0x1C6` (little-endian).
 
 With Advanced Format drives (4096-byte internal sectors) and SSDs (128–512 KiB erase blocks), the legacy 63-sector alignment creates **severe performance degradation**:
 
-- **32,256 bytes is NOT divisible by 4096** — every cluster operation straddles two physical sector boundaries
+- **32,256 bytes is NOT divisible by 4096** -- every cluster operation straddles two physical sector boundaries
 - Forces read-modify-write loops, reducing I/O throughput and increasing SSD wear
 
 Modern alignment rule: **Start at LBA 2048**:
@@ -326,7 +326,7 @@ An Extended Partition is created by designating one of the four primary MBR entr
 | `0x05`    | Extended Partition (CHS addressing)  |
 | `0x0F`    | Extended Partition (LBA addressing)  |
 
-This entry acts as an architectural envelope — it does **not** hold a standard filesystem. The space it defines is subdivided into **Logical Partitions** using Extended Boot Records (EBRs).
+This entry acts as an architectural envelope -- it does **not** hold a standard filesystem. The space it defines is subdivided into **Logical Partitions** using Extended Boot Records (EBRs).
 
 ### 12.2 EBR Structure
 
@@ -340,8 +340,8 @@ Each EBR is exactly **512 bytes** with the same layout as the MBR, but:
 | ----------- | ------- | --------------------------------------------------------------- |
 | **Entry 1** | `0x1BE` | Describes the logical partition associated with this EBR        |
 | **Entry 2** | `0x1CE` | Pointer to the **next** EBR in the chain (linked list)          |
-| **Entry 3** | `0x1DE` | Unused — must be zeroed                                         |
-| **Entry 4** | `0x1EE` | Unused — must be zeroed                                         |
+| **Entry 3** | `0x1DE` | Unused -- must be zeroed                                         |
+| **Entry 4** | `0x1EE` | Unused -- must be zeroed                                         |
 
 ### 12.3 Linked List Traversal Example
 
@@ -375,7 +375,7 @@ This offset is typically 63 (legacy) or 2048 (modern), creating the gap between 
 
 #### Rule 2: Resolving the Next EBR Pointer (EBR Entry 2)
 
-The Starting LBA in Entry 2 is **relative to the FIRST EBR** in the entire extended partition — never relative to the current EBR, never an absolute address:
+The Starting LBA in Entry 2 is **relative to the FIRST EBR** in the entire extended partition -- never relative to the current EBR, never an absolute address:
 
 ```text
 Absolute_LBA_of_Next_EBR = Absolute_LBA_of_FIRST_EBR + Entry2.Starting_LBA
@@ -411,7 +411,7 @@ The single byte at offset `0x04` of every partition entry is the **Partition Typ
 | `0x05`   | Extended Partition (CHS)           | Envelope for EBR logical drives, legacy CHS addressing                         |
 | `0x0F`   | Extended Partition (LBA)           | Envelope for EBR logical drives, LBA addressing. Replaces `0x05` beyond 8.4 GB |
 | `0x07`   | NTFS / HPFS / exFAT                | Windows NT File System, OS/2 HPFS, or exFAT                                   |
-| `0x27`   | Windows Recovery Environment       | Hidden utility/diagnostic partition — OS should not auto-mount                 |
+| `0x27`   | Windows Recovery Environment       | Hidden utility/diagnostic partition -- OS should not auto-mount                 |
 
 ### 13.3 Unix, Linux, and Alternative Operating Systems
 
@@ -450,7 +450,7 @@ Hard-limit the stage-one assembly bootloader to exactly **440 bytes**. Expanding
 ### Phase 2: LBA Exclusivity
 
 - Device addressing must rely **exclusively** on 32-bit LBA
-- CHS is a deprecated artifact — populate CHS fields for backward compatibility only
+- CHS is a deprecated artifact -- populate CHS fields for backward compatibility only
 - When a partition exceeds CHS bounds, write the dummy tuple `FE FF FF`
 - Storage drivers should **never** use CHS arithmetic for actual I/O
 
@@ -487,5 +487,5 @@ Hard-limit the stage-one assembly bootloader to exactly **440 bytes**. Expanding
 | Modern start alignment  | LBA 2048      | 1 MiB boundary for 4K/SSD optimization            |
 | Extended CHS type       | `0x05`        | Extended partition, legacy CHS                     |
 | Extended LBA type       | `0x0F`        | Extended partition, modern LBA                     |
-| GPT Protective type     | `0xEE`        | Signals GPT — abort MBR parsing                   |
+| GPT Protective type     | `0xEE`        | Signals GPT -- abort MBR parsing                   |
 | EBR used entries        | 2 of 4        | Entry 1 = logical volume, Entry 2 = next EBR ptr  |

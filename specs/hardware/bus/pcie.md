@@ -1,4 +1,4 @@
-# PCI Express (PCIe) — Technical Specification for OS Implementation
+# PCI Express (PCIe) -- Technical Specification for OS Implementation
 
 ## Overview and Architectural Context
 
@@ -59,7 +59,7 @@ PCIe implements a three-layer protocol stack, analogous to network protocols:
 
 The OS interacts exclusively with the Transaction Layer by triggering TLP creation through memory
 reads/writes to device-mapped addresses. The Data Link Layer provides automatic error recovery
-via CRC checking and replay — transparent to software.
+via CRC checking and replay -- transparent to software.
 
 ### Transaction Layer Packets (TLPs)
 
@@ -75,8 +75,8 @@ All data movement across the PCIe fabric uses TLPs. Key TLP types relevant to OS
 | Message (Msg/MsgD)         | Various         | In-band signaling (INTx emulation, PME, errors)  |
 
 > [!IMPORTANT]
-> Memory Write TLPs are **posted** — the requester does not wait for a completion. Memory Read
-> TLPs are **non-posted** — the CPU stalls until a Completion TLP returns. This asymmetry is
+> Memory Write TLPs are **posted** -- the requester does not wait for a completion. Memory Read
+> TLPs are **non-posted** -- the CPU stalls until a Completion TLP returns. This asymmetry is
 > critical for driver performance: minimize MMIO reads, prefer writes.
 
 ---
@@ -127,7 +127,7 @@ present Type 0 configuration headers.
 
 ## Firmware Dependencies: ACPI Tables
 
-### MCFG — Memory Mapped Configuration Table
+### MCFG -- Memory Mapped Configuration Table
 
 The ECAM base address is platform-specific and must be obtained from firmware. On x86 UEFI/ACPI
 systems, the ACPI MCFG table provides this information.
@@ -152,13 +152,13 @@ All fields are little-endian. The number of entries is calculated from the MCFG 
 > The 8-byte reserved field between the ACPI header and the first allocation entry is mandatory.
 > Skipping it causes all subsequent entries to be parsed at incorrect offsets.
 
-### ACPI _PRT — Interrupt Routing
+### ACPI _PRT -- Interrupt Routing
 
 For legacy INTx interrupt routing (fallback only), the ACPI namespace provides `_PRT` (PCI Routing
 Table) objects under each PCI host bridge device. These map device pin assertions to Global System
 Interrupt (GSI) numbers. MSI/MSI-X bypasses `_PRT` entirely.
 
-### ACPI DMAR — DMA Remapping (Intel VT-d)
+### ACPI DMAR -- DMA Remapping (Intel VT-d)
 
 The DMAR table provides IOMMU hardware unit locations and reserved memory regions. See §12 for
 IOMMU details.
@@ -174,7 +174,7 @@ the first 256 bytes of configuration space. This mechanism is x86-specific and c
 extended configuration space (offsets `0x100`–`0xFFF`).
 
 ```c
-/* Legacy Mechanism 1 — x86 only, first 256 bytes only */
+/* Legacy Mechanism 1 -- x86 only, first 256 bytes only */
 #define PCI_CONFIG_ADDR  0x0CF8
 #define PCI_CONFIG_DATA  0x0CFC
 
@@ -223,7 +223,7 @@ contiguous physical address space.
 > the CPU to return stale data, leading to catastrophic driver desynchronization.
 
 ```c
-/* ECAM access — architecture-independent */
+/* ECAM access -- architecture-independent */
 static volatile void *ecam_base_virt;  /* Kernel virtual mapping of ECAM region */
 
 static inline uint32_t pcie_cfg_read32(uint8_t bus, uint8_t dev, uint8_t func, uint16_t offset) {
@@ -240,7 +240,7 @@ static inline uint32_t pcie_cfg_read32(uint8_t bus, uint8_t dev, uint8_t func, u
 
 ## Configuration Space Layout
 
-### Type 0 Header (Endpoints) — Offsets 0x00–0x3F
+### Type 0 Header (Endpoints) -- Offsets 0x00–0x3F
 
 | Offset | Size | Register                  | Description                                      |
 | ------ | ---- | ------------------------- | ------------------------------------------------ |
@@ -265,14 +265,14 @@ static inline uint32_t pcie_cfg_read32(uint8_t bus, uint8_t dev, uint8_t func, u
 | 0x2E   | 2    | `Subsystem ID`            | Subsystem identifier                              |
 | 0x30   | 4    | `Expansion ROM BAR`       | Expansion ROM base address                        |
 | 0x34   | 1    | `Capabilities Pointer`    | Offset to first capability in linked list          |
-| 0x35   | 3    | Reserved                  | —                                                |
-| 0x38   | 4    | Reserved                  | —                                                |
+| 0x35   | 3    | Reserved                  | --                                                |
+| 0x38   | 4    | Reserved                  | --                                                |
 | 0x3C   | 1    | `Interrupt Line`          | System IRQ (written by firmware/OS)                |
 | 0x3D   | 1    | `Interrupt Pin`           | INTx pin used (1=A, 2=B, 3=C, 4=D, 0=none)       |
 | 0x3E   | 1    | `Min Grant`               | Legacy (hardwired to 0 in PCIe)                   |
 | 0x3F   | 1    | `Max Latency`             | Legacy (hardwired to 0 in PCIe)                   |
 
-### Type 1 Header (Bridges) — Offsets 0x00–0x3F
+### Type 1 Header (Bridges) -- Offsets 0x00–0x3F
 
 | Offset | Size | Register                  | Description                                       |
 | ------ | ---- | ------------------------- | ------------------------------------------------- |
@@ -304,13 +304,13 @@ static inline uint32_t pcie_cfg_read32(uint8_t bus, uint8_t dev, uint8_t func, u
 | 0x30   | 2    | `I/O Base Upper 16`       | Upper 16 bits of I/O base (32-bit I/O)             |
 | 0x32   | 2    | `I/O Limit Upper 16`      | Upper 16 bits of I/O limit (32-bit I/O)            |
 | 0x34   | 1    | `Capabilities Pointer`    | Offset to first capability                         |
-| 0x35   | 3    | Reserved                  | —                                                 |
+| 0x35   | 3    | Reserved                  | --                                                 |
 | 0x38   | 4    | `Expansion ROM BAR`       | Bridge expansion ROM                               |
 | 0x3C   | 1    | `Interrupt Line`          | System IRQ                                         |
 | 0x3D   | 1    | `Interrupt Pin`           | INTx pin                                           |
 | 0x3E   | 2    | `Bridge Control`          | Secondary bus reset (bit 6), ISA enable, etc.      |
 
-### Command Register (Offset 0x04) — Bit Fields
+### Command Register (Offset 0x04) -- Bit Fields
 
 | Bit   | Name                     | Description                                          |
 | ----- | ------------------------ | ---------------------------------------------------- |
@@ -326,7 +326,7 @@ static inline uint32_t pcie_cfg_read32(uint8_t bus, uint8_t dev, uint8_t func, u
 
 > [!IMPORTANT]
 > **Bus Master Enable (bit 2)** must be set before a device can perform DMA. Forgetting this bit
-> is one of the most common PCIe driver bugs — the device silently drops all DMA TLPs.
+> is one of the most common PCIe driver bugs -- the device silently drops all DMA TLPs.
 
 ---
 
@@ -358,7 +358,7 @@ for each bridge discovered:
 
 > [!CAUTION]
 > Always check bit 7 of `Header Type` on function 0 of every device. If clear, **do not scan**
-> functions 1–7 — reading non-existent functions on some hardware causes undefined behavior
+> functions 1–7 -- reading non-existent functions on some hardware causes undefined behavior
 > (platform hangs, machine check exceptions).
 
 ### Hotplug Bus Padding
@@ -395,7 +395,7 @@ BARs at offsets `0x10`–`0x14`.
 | Bits  | Field          | Description                                             |
 | ----- | -------------- | ------------------------------------------------------- |
 | 0     | Space Type     | 1 = I/O                                                |
-| 1     | Reserved       | —                                                      |
+| 1     | Reserved       | --                                                      |
 | 31:2  | Base Address   | Aligned I/O base address                                |
 
 ### BAR Sizing Algorithm
@@ -525,8 +525,8 @@ status, device capabilities, and performance tuning registers.
 **MPS** controls the largest TLP data payload. Both the Device Capabilities register and Device
 Control register contain MPS fields:
 
-- `Device Capabilities` bits 2:0 — Max MPS Supported (encoded as 2^(value+7) bytes)
-- `Device Control` bits 7:5 — Current MPS (same encoding)
+- `Device Capabilities` bits 2:0 -- Max MPS Supported (encoded as 2^(value+7) bytes)
+- `Device Control` bits 7:5 -- Current MPS (same encoding)
 
 | Encoded Value | MPS (bytes) |
 | ------------- | ----------- |
@@ -537,7 +537,7 @@ Control register contain MPS fields:
 | 4             | 2048        |
 | 5             | 4096        |
 
-**MRRS** (Device Control bits 14:12) uses the same encoding. MRRS may exceed MPS — the completer
+**MRRS** (Device Control bits 14:12) uses the same encoding. MRRS may exceed MPS -- the completer
 fragments the response into multiple Completion TLPs of MPS size.
 
 > [!CAUTION]
@@ -554,11 +554,11 @@ fragments the response into multiple Completion TLPs of MPS size.
 
 PCIe devices can emulate legacy INTx interrupts using in-band Assert_INTx and Deassert_INTx
 Message TLPs. These are level-triggered, shared, and require the OS to poll device status
-registers to identify the interrupt source — identical to the conventional PCI performance problem.
+registers to identify the interrupt source -- identical to the conventional PCI performance problem.
 
 **INTx should be disabled** (Command register bit 10 = 1) whenever MSI or MSI-X is active.
 
-### Message Signaled Interrupts (MSI) — Capability ID 0x05
+### Message Signaled Interrupts (MSI) -- Capability ID 0x05
 
 MSI generates interrupts by performing a Memory Write TLP to the Local APIC address. The OS
 programs the Message Address and Message Data registers within the MSI capability structure.
@@ -577,7 +577,7 @@ programs the Message Address and Message Data registers within the MSI capabilit
 MSI supports 1, 2, 4, 8, 16, or 32 vectors (power of two). The device modifies the lowest N bits
 of Message Data to select the vector within the allocated range.
 
-### MSI-X — Capability ID 0x11
+### MSI-X -- Capability ID 0x11
 
 MSI-X provides up to **2048 independent vectors** per device, each with its own address and data.
 
@@ -618,8 +618,8 @@ MMIO maps device control registers (exposed via BARs) into the CPU's physical ad
 CPU reads/writes to these addresses generate Memory Read/Write TLPs.
 
 **Key characteristics:**
-- Reads are **synchronous** — CPU stalls until Completion TLP returns
-- Writes are **posted** — CPU does not wait for acknowledgment
+- Reads are **synchronous** -- CPU stalls until Completion TLP returns
+- Writes are **posted** -- CPU does not wait for acknowledgment
 - MMIO pages must be mapped as **strongly-ordered, uncacheable**
 - Use only for low-frequency control operations (register writes, doorbell rings)
 
@@ -634,7 +634,7 @@ DMA is device-initiated: the device reads/writes system RAM independently, freei
 4. Device signals completion via MSI/MSI-X interrupt
 
 **Scatter-Gather DMA:**
-For fragmented physical memory, the OS builds a descriptor ring — a linked list of
+For fragmented physical memory, the OS builds a descriptor ring -- a linked list of
 `(physical_address, length)` entries. The device's DMA engine iterates the list, gathering data
 from or scattering data across multiple disjoint physical pages.
 
@@ -649,7 +649,7 @@ from or scattering data across multiple disjoint physical pages.
 > [!CAUTION]
 > On ARM64 (if ported in future), a DMA-capable driver **must** call explicit cache maintenance
 > ops. On x86-64 (Impossible OS's current target), hardware snooping handles coherency
-> automatically — no explicit cache management is needed for DMA buffers.
+> automatically -- no explicit cache management is needed for DMA buffers.
 
 ---
 
@@ -712,7 +712,7 @@ upstream through the IOMMU.
 ## Advanced Error Reporting (AER)
 
 AER (Extended Capability ID `0x0001`) provides granular hardware error detection, classification,
-and logging — critical for system reliability.
+and logging -- critical for system reliability.
 
 ### Error Classification
 

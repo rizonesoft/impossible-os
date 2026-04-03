@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_ixfs_core.c — Smoke test for the shared IXFS parser + disk I/O layer
+ * test_ixfs_core.c -- Smoke test for the shared IXFS parser + disk I/O layer
  *
  * Usage: test_ixfs_core <disk-image> <partition-index>
  * Example: test_ixfs_core build/system-disk.img 2
@@ -42,7 +42,7 @@ int main(int argc, char **argv)
            (unsigned long long)disk->part_offset,
            (unsigned long long)disk->part_size);
 
-    /* Test sector read — read first sector, verify IXFS magic */
+    /* Test sector read -- read first sector, verify IXFS magic */
     {
         uint8_t sector[512];
         if (disk_read_sectors(disk, 0, 1, sector) != 0) {

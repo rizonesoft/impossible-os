@@ -1,20 +1,20 @@
-# TODO-01 — ObBrowse: Object Namespace Browser
+# TODO-01 -- ObBrowse: Object Namespace Browser
 
-> **Goal:** A user-mode GUI tool (`obbrowse.exe`) that displays the kernel object namespace as a tree — like Windows WinObj or Process Explorer's handle viewer. Shows directory objects (`\`, `\Device`, `\BaseNamedObjects`, `\DosDevices`, `\Sessions`), object types, reference counts, and security descriptors. Essential for kernel development debugging and verifying Object Manager correctness.
+> **Goal:** A user-mode GUI tool (`obbrowse.exe`) that displays the kernel object namespace as a tree -- like Windows WinObj or Process Explorer's handle viewer. Shows directory objects (`\`, `\Device`, `\BaseNamedObjects`, `\DosDevices`, `\Sessions`), object types, reference counts, and security descriptors. Essential for kernel development debugging and verifying Object Manager correctness.
 
 > [!IMPORTANT]
-> **Current state:** The kernel Object Manager namespace is fully functional (11 built-in types, 6 root directories). `NtOpenDirectoryObject` + `NtQueryDirectoryObject` syscalls exist (`SYS_OPENDIROBJ`, `SYS_QUERYDIROBJ`). No user-mode tool to browse it — only visible via serial log (`ob: Namespace: \, \Device, \KernelObjects, ...`).
+> **Current state:** The kernel Object Manager namespace is fully functional (11 built-in types, 6 root directories). `NtOpenDirectoryObject` + `NtQueryDirectoryObject` syscalls exist (`SYS_OPENDIROBJ`, `SYS_QUERYDIROBJ`). No user-mode tool to browse it -- only visible via serial log (`ob: Namespace: \, \Device, \KernelObjects, ...`).
 
 ---
 
 ## Inputs
 
-- `include/kernel/ob/ob.h` — `NtOpenDirectoryObject`, `NtQueryDirectoryObject`, `OBJECT_DIRECTORY_INFORMATION`
-- `include/kernel/ob/ob_ns.h` — `ObLookupObjectByName`
-- `src/kernel/sched/syscall.c` — `SYS_OPENDIROBJ` (line 381), `SYS_QUERYDIROBJ` (line 392)
-- `src/kernel/ob/ob_ns.c` — namespace root directories (line 350)
-- → XREF: `TODO-03-object-manager.md` — OB implementation (was TODO-03, deferred this tool)
-- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` — unit test wiring for test_register_obbrowse()
+- `include/kernel/ob/ob.h` -- `NtOpenDirectoryObject`, `NtQueryDirectoryObject`, `OBJECT_DIRECTORY_INFORMATION`
+- `include/kernel/ob/ob_ns.h` -- `ObLookupObjectByName`
+- `src/kernel/sched/syscall.c` -- `SYS_OPENDIROBJ` (line 381), `SYS_QUERYDIROBJ` (line 392)
+- `src/kernel/ob/ob_ns.c` -- namespace root directories (line 350)
+- → XREF: `TODO-03-object-manager.md` -- OB implementation (was TODO-03, deferred this tool)
+- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` -- unit test wiring for test_register_obbrowse()
 
 ---
 
@@ -33,13 +33,13 @@
 
 | ⭐  | Order | Deliverable                                              | Depends On | Status |
 | --- | :---: | -------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | User-mode syscall wrappers for OB directory enumeration   | —          |  [ ]   |
+| 💎  |   1   | User-mode syscall wrappers for OB directory enumeration   | --          |  [ ]   |
 | 💎  |   2   | Console-mode ObBrowse (text tree dump to stdout)          | §1         |  [ ]   |
 | ⭐  |   3   | GUI ObBrowse with tree view + detail panel                | §2         |  [ ]   |
 | ⭐  |   4   | Object type icons and security descriptor display         | §3         |  [ ]   |
 
-> 💎 = parity — Windows ships WinObj (Sysinternals) and Process Explorer handle view.
-> ⭐ = exclusive — integrated into the OS itself, not a third-party download.
+> 💎 = parity -- Windows ships WinObj (Sysinternals) and Process Explorer handle view.
+> ⭐ = exclusive -- integrated into the OS itself, not a third-party download.
 
 ---
 
@@ -61,7 +61,7 @@ Wrap the existing kernel syscalls for use from user-mode code.
 
 ## 2. Console-Mode ObBrowse
 
-Text-based namespace tree — works before GUI is needed.
+Text-based namespace tree -- works before GUI is needed.
 
 - [ ] Create `user/apps/obbrowse.c`:
   - Open root `\` via `ob_open_directory("\\")`
@@ -70,7 +70,7 @@ Text-based namespace tree — works before GUI is needed.
   - Print type name next to each entry: `[Directory]`, `[Event]`, `[Mutant]`, `[File]`
 - [ ] Add to Makefile: compile as `obbrowse.exe`, deploy to sysroot
 - [ ] Test: `C:\> obbrowse` → prints namespace tree to terminal
-- [ ] Commit: `"tools: console-mode obbrowse.exe — text namespace tree"`
+- [ ] Commit: `"tools: console-mode obbrowse.exe -- text namespace tree"`
 
 ---
 
@@ -86,7 +86,7 @@ Graphical version with split-pane layout.
   - Lazy expansion: only enumerate children when user clicks to expand
 - [ ] Toolbar: Refresh button, address bar showing current path
 - [ ] Status bar: object count in current directory
-- [ ] Commit: `"tools: GUI obbrowse.exe — tree view namespace browser"`
+- [ ] Commit: `"tools: GUI obbrowse.exe -- tree view namespace browser"`
 
 ---
 
@@ -107,7 +107,7 @@ Enhanced display with per-type icons and security info.
 |----|---------------------------|--------------------------|----------------------|--------------------------|
 | 💎 | Object namespace browser  | ✅ WinObj (Sysinternals) | ⚠️ /proc + /sys      | ⬜ §2–§3                 |
 | 💎 | Handle viewer             | ✅ Process Explorer      | ⚠️ lsof              | ⬜ §3 detail panel       |
-| ⭐ | Built-in (not 3rd party)  | ❌ WinObj is download    | ✅ /proc is built-in  | ⬜ §2–§3 — ships with OS |
+| ⭐ | Built-in (not 3rd party)  | ❌ WinObj is download    | ✅ /proc is built-in  | ⬜ §2–§3 -- ships with OS |
 | ⭐ | Security descriptor view  | ✅ WinObj shows SD       | ❌ Not in /proc       | ⬜ §4                    |
 
 ---
@@ -134,4 +134,4 @@ Enhanced display with per-type icons and security info.
 - [ ] QEMU WHPX: GUI version shows tree with expandable directories
 - [ ] Object count matches `ob: Registered 11 built-in types` from boot log
 - [ ] Bare metal: obbrowse.exe runs correctly on real hardware
-- [ ] Commit: `"tools: obbrowse.exe verified — namespace browser complete"`
+- [ ] Commit: `"tools: obbrowse.exe verified -- namespace browser complete"`

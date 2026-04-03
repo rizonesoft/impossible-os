@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_section.c — Section object type: callbacks, create/map/unmap
+ * ob_section.c -- Section object type: callbacks, create/map/unmap
  *
  * Implements TODO-03 §7: ObpSectionType backed by contiguous physical pages.
  *

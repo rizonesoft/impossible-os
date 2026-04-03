@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# make-ntfs-test.sh — Generate comprehensive NTFS test disk image
+# make-ntfs-test.sh -- Generate comprehensive NTFS test disk image
 #
 # Creates a 32 MiB NTFS image populated with various test cases:
 #   - Root directory files (basic read test)
@@ -41,7 +41,7 @@ command -v ntfscp  &>/dev/null && HAVE_NTFSCP=true
 command -v ntfs-3g &>/dev/null && HAVE_NTFS3G=true
 
 if ! $HAVE_MKNTFS; then
-    warn "mkntfs not found — install ntfs-3g"
+    warn "mkntfs not found -- install ntfs-3g"
     exit 1
 fi
 
@@ -71,7 +71,7 @@ truncate -s 4096 "$SAMPLE_DIR/verify.txt"
 # 3. Empty file
 touch "$SAMPLE_DIR/empty.txt"
 
-# 4. Resident small file (< 700 bytes — fits in MFT record)
+# 4. Resident small file (< 700 bytes -- fits in MFT record)
 python3 -c "print('R' * 500, end='')" > "$SAMPLE_DIR/resident.txt"
 
 # 5. Large file (5 MB with known repeating pattern for multi-run verification)
@@ -117,7 +117,7 @@ fi
 
 # ---- Populate via FUSE mount (directories and advanced cases) ----
 # ntfs-3g requires root for loop-device mounts.
-# We try sudo — if passwordless sudo is available, it works automatically.
+# We try sudo -- if passwordless sudo is available, it works automatically.
 # If not, fall back to ntfscp-only (root-level files).
 
 if $HAVE_NTFS3G; then
@@ -176,7 +176,7 @@ if $HAVE_NTFS3G; then
         if $COMPRESS_OK; then
             log "Creating LZNT1 compressed test files..."
 
-            # 1. Known-content file (highly compressible — repeating pattern)
+            # 1. Known-content file (highly compressible -- repeating pattern)
             # 8192 bytes of repeating "COMPRESS_TEST_" (14 chars × 585 + padding)
             {
                 for _ in $(seq 1 585); do
@@ -184,10 +184,10 @@ if $HAVE_NTFS3G; then
                 done
             } | head -c 8192 > "$MNT/compressed/known.txt"
 
-            # 2. Sparse/zero file (all zeros — should become sparse CU)
+            # 2. Sparse/zero file (all zeros -- should become sparse CU)
             dd if=/dev/zero of="$MNT/compressed/zeros.bin" bs=1K count=64 2>/dev/null
 
-            # 3. Incompressible file (random data — stored uncompressed)
+            # 3. Incompressible file (random data -- stored uncompressed)
             dd if=/dev/urandom of="$MNT/compressed/random.bin" bs=1K count=8 2>/dev/null
 
             # 4. Mixed file: compressible header + random middle + compressible tail
@@ -201,10 +201,10 @@ if $HAVE_NTFS3G; then
                 dd if=/dev/zero bs=1K count=32 2>/dev/null | tr '\0' 'Z'
             } > "$MNT/compressed/mixed.bin"
 
-            log "  ✓ compressed/known.txt    — 8 KB compressible pattern"
-            log "  ✓ compressed/zeros.bin    — 64 KB all-zeros (sparse)"
-            log "  ✓ compressed/random.bin   — 8 KB random (incompressible)"
-            log "  ✓ compressed/mixed.bin    — 128 KB mixed (compress+random+compress)"
+            log "  ✓ compressed/known.txt    -- 8 KB compressible pattern"
+            log "  ✓ compressed/zeros.bin    -- 64 KB all-zeros (sparse)"
+            log "  ✓ compressed/random.bin   -- 8 KB random (incompressible)"
+            log "  ✓ compressed/mixed.bin    -- 128 KB mixed (compress+random+compress)"
         else
             warn "Cannot set compressed attribute (setfattr unavailable or failed)"
             warn "LZNT1 tests will be skipped at runtime"
@@ -224,20 +224,20 @@ if $HAVE_NTFS3G; then
     fi
     rmdir "$MNT" 2>/dev/null || true
 else
-    warn "ntfs-3g not available — only root-level files (via ntfscp)"
+    warn "ntfs-3g not available -- only root-level files (via ntfscp)"
 fi
 
 # ---- Summary ----
 log "NTFS test image created: $IMG ($(du -h "$IMG" | cut -f1))"
 log "Test cases:"
-log "  ✓ test.txt         — basic text file (34 bytes)"
-log "  ✓ verify.txt       — known 4 KB pattern for byte-exact verification"
-log "  ✓ empty.txt        — zero-byte file"
-log "  ✓ resident.txt     — 500-byte file (resident in MFT)"
-log "  ✓ large.bin        — 5 MB file (multi-run data)"
+log "  ✓ test.txt         -- basic text file (34 bytes)"
+log "  ✓ verify.txt       -- known 4 KB pattern for byte-exact verification"
+log "  ✓ empty.txt        -- zero-byte file"
+log "  ✓ resident.txt     -- 500-byte file (resident in MFT)"
+log "  ✓ large.bin        -- 5 MB file (multi-run data)"
 if $HAVE_NTFS3G; then
-    log "  ✓ subdir/nested.txt — file in subdirectory"
-    log "  ✓ A/B/C/D/E/file.txt — deep directory tree (5 levels)"
-    log "  ✓ manyfiles/file_NNN.txt — 120 files (forces INDX allocation)"
-    log "  ✓ longname (200+ chars) — UTF-16LE long filename"
+    log "  ✓ subdir/nested.txt -- file in subdirectory"
+    log "  ✓ A/B/C/D/E/file.txt -- deep directory tree (5 levels)"
+    log "  ✓ manyfiles/file_NNN.txt -- 120 files (forces INDX allocation)"
+    log "  ✓ longname (200+ chars) -- UTF-16LE long filename"
 fi

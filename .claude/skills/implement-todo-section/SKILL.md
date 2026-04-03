@@ -15,14 +15,14 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
    - Use Grep/Glob tools for symbol search, call-graph tracing, and cross-file discovery.
    - Read relevant source files to understand the integration surface.
 4. Implement only the bounded section scope.
-   - Freestanding kernel: no `<stdint.h>` / `<string.h>` — use `#include "kernel/types.h"`.
-   - No `malloc()` / `printf()` — use `kmalloc()` (≤ 4 KB), `pmm_alloc_contiguous()` (larger), `printk()`.
-   - Assembly: NASM x86-64 only. UEFI-era, Long Mode, APIC — no BIOS/VGA/PIC.
+   - Freestanding kernel: no `<stdint.h>` / `<string.h>` -- use `#include "kernel/types.h"`.
+   - No `malloc()` / `printf()` -- use `kmalloc()` (≤ 4 KB), `pmm_alloc_contiguous()` (larger), `printk()`.
+   - Assembly: NASM x86-64 only. UEFI-era, Long Mode, APIC -- no BIOS/VGA/PIC.
    - API surface: Win32 native. Windows-style canonical paths (`C:\Impossible\System32\`).
    - **Diagnostic POST codes:** When modifying boot-path or hardware code, add `POST16()` calls around the change using the `0xD000–0xDFFF` debug range. Format: `POST16(0xDDNN)` where `DD` = section number, `NN` = step (00=entry, 01=exit, 02+=sub-steps). Before assigning codes, grep `include/kernel/boot_init.h` for all `POST16_` defines and the codebase for `POST16(0xD` to avoid conflicts. On bare metal crash, the last POST code on VPD/serial pinpoints the failure in minutes. Remove debug POST codes after verification on all platforms.
 5. Verify with supported evidence.
    - Build: `bash scripts/build.sh` (incremental) or `bash scripts/build.sh clean` (full).
-   - Check: `tail -1 build/build.log` — must show `=== BUILD OK ===`.
+   - Check: `tail -1 build/build.log` -- must show `=== BUILD OK ===`.
    - Crash debug: `llvm-addr2line-19 -e build/kernel.exe -f <RIP>`.
    - Runtime: `bash scripts/build.sh run` for headless QEMU + serial output.
 6. Update the TODO section before finishing.

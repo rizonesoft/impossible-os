@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_cache.c — MFT Record LRU Cache (§10.1)
+ * ntfs_cache.c -- MFT Record LRU Cache (§10.1)
  *
  * Caches recently-accessed MFT records to avoid redundant disk reads.
  * Key: MFT inode number.  Value: full record buffer (fixup-verified).
@@ -38,11 +38,11 @@ struct ntfs_mft_cache_entry {
 /* Sentinel value for empty cache slots */
 #define CACHE_EMPTY_INODE  ((uint64_t)-1)
 
-/* Monotonic access counter (shared across all volumes — fine for LRU) */
+/* Monotonic access counter (shared across all volumes -- fine for LRU) */
 static uint64_t g_access_counter = 0;
 
 /* ============================================================================
- * ntfs_cache_init — Allocate and initialize the MFT record cache.
+ * ntfs_cache_init -- Allocate and initialize the MFT record cache.
  *
  * Each entry needs one PMM page for the record buffer (frs_size <= 4096).
  * The cache entry array itself is allocated via PMM (fits in a few pages).
@@ -84,7 +84,7 @@ int ntfs_cache_init(struct ntfs_volume *vol, uint32_t cache_size)
         {
             vol->mft_cache[i].record_buf = (uint8_t *)kmalloc(vol->frs_size);
             if (!vol->mft_cache[i].record_buf) {
-                /* Failed — free everything allocated so far */
+                /* Failed -- free everything allocated so far */
                 uint32_t j;
                 for (j = 0; j < i; j++) {
                     if (vol->mft_cache[j].record_buf)
@@ -115,7 +115,7 @@ int ntfs_cache_init(struct ntfs_volume *vol, uint32_t cache_size)
 }
 
 /* ============================================================================
- * Cache lookup — find an entry by inode number.
+ * Cache lookup -- find an entry by inode number.
  * Returns entry index or -1 if not found.
  * ============================================================================ */
 
@@ -136,7 +136,7 @@ static int cache_find(const struct ntfs_volume *vol, uint64_t inode)
 }
 
 /* ============================================================================
- * Find LRU victim — the entry with the lowest access counter.
+ * Find LRU victim -- the entry with the lowest access counter.
  * Pinned entries are skipped. Returns entry index.
  * ============================================================================ */
 
@@ -165,14 +165,14 @@ static int cache_find_victim(const struct ntfs_volume *vol)
 }
 
 /* ============================================================================
- * ntfs_read_mft_record — Cached MFT record reader (public API)
+ * ntfs_read_mft_record -- Cached MFT record reader (public API)
  *
  * This replaces the original ntfs_read_mft_record. All existing callers
  * automatically benefit from caching.
  *
  * Flow:
- *   1. Check cache — if hit and sequence number matches, copy out.
- *   2. On miss — call ntfs_read_mft_record_raw(), apply fixup, store.
+ *   1. Check cache -- if hit and sequence number matches, copy out.
+ *   2. On miss -- call ntfs_read_mft_record_raw(), apply fixup, store.
  *   3. Pin inodes 0 ($MFT) and 5 (root directory).
  * ============================================================================ */
 
@@ -215,7 +215,7 @@ int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
     /* Apply fixup before caching (callers expect fixup-verified data) */
     rc = ntfs_apply_fixup(buf, vol->frs_size, vol->bytes_per_sector);
     if (rc != NTFS_OK) {
-        /* Fixup failed — return the record but don't cache it */
+        /* Fixup failed -- return the record but don't cache it */
         return rc;
     }
 
@@ -247,7 +247,7 @@ int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
 }
 
 /* ============================================================================
- * ntfs_cache_invalidate — Remove a specific inode from the cache.
+ * ntfs_cache_invalidate -- Remove a specific inode from the cache.
  * Called when an MFT record is modified (write path).
  * ============================================================================ */
 
@@ -267,7 +267,7 @@ void ntfs_cache_invalidate(struct ntfs_volume *vol, uint64_t inode)
 }
 
 /* ============================================================================
- * ntfs_cache_log_stats — Log cache telemetry to serial output.
+ * ntfs_cache_log_stats -- Log cache telemetry to serial output.
  * ============================================================================ */
 
 void ntfs_cache_log_stats(const struct ntfs_volume *vol)

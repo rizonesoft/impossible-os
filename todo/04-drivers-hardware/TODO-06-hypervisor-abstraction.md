@@ -1,34 +1,34 @@
-# TODO-06 — Hypervisor Abstraction Layer
+# TODO-06 -- Hypervisor Abstraction Layer
 
-> **Goal:** Build a unified cross-hypervisor abstraction layer so Impossible OS works identically in VirtualBox, QEMU/KVM, Hyper-V, and on bare metal — completing guest-additions support (display resize, HGCM, shared folders, shared clipboard, VirtIO GPU/9P, Hyper-V synthetic HID/video) and adding a clean `hv.h` backend dispatch table that eliminates all hypervisor-specific `if/else` chains from the kernel core.
+> **Goal:** Build a unified cross-hypervisor abstraction layer so Impossible OS works identically in VirtualBox, QEMU/KVM, Hyper-V, and on bare metal -- completing guest-additions support (display resize, HGCM, shared folders, shared clipboard, VirtIO GPU/9P, Hyper-V synthetic HID/video) and adding a clean `hv.h` backend dispatch table that eliminates all hypervisor-specific `if/else` chains from the kernel core.
 
 > [!IMPORTANT]
-> **Already complete:** VBox absolute mouse (`vbox_mouse.c`), VirtIO tablet (`src/kernel/drivers/virtio/input.c`), VMBus core and storvsc. This TODO builds the remaining guest-additions stack (display, HGCM, shared folders, clipboard) and new hypervisor backends (VirtIO GPU, 9P, Hyper-V synthetic HID/video) plus the unified abstraction layer. The bare-metal path is the "null backend" — every `hv_*` function must handle `HV_NONE` gracefully.
+> **Already complete:** VBox absolute mouse (`vbox_mouse.c`), VirtIO tablet (`src/kernel/drivers/virtio/input.c`), VMBus core and storvsc. This TODO builds the remaining guest-additions stack (display, HGCM, shared folders, clipboard) and new hypervisor backends (VirtIO GPU, 9P, Hyper-V synthetic HID/video) plus the unified abstraction layer. The bare-metal path is the "null backend" -- every `hv_*` function must handle `HV_NONE` gracefully.
 
 ## Inputs
 
-- [`src/kernel/drivers/vbox_mouse.c`](../../src/kernel/drivers/vbox_mouse.c) — existing VBox mouse port-based backend (reference for port I/O pattern)
-- [`src/kernel/drivers/virtio/input.c`](../../src/kernel/drivers/virtio/input.c) — VirtIO tablet (reference for VirtIO queue pattern)
-- [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) — VirtIO core init
-- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §3` — PCI ECAM/MCFG needed for PCI `80EE:CAFE` VBox detection
-- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §4` — PCIe capability scanner used to enumerate VirtIO GPU and 9P PCI devices
-- → XREF: `07-graphics-ui` domain — `wm_display_resized(w,h)` is a compositor API notified by §3, §7, §10 when display resolution changes
-- → XREF: `04-drivers-hardware/TODO-05-input-system.md §5` — raw input grab API and `SYS_MOUSE_GRAB` must remain compatible with Hyper-V synthetic HID injecting into the same keyboard/mouse subsystem (§9)
+- [`src/kernel/drivers/vbox_mouse.c`](../../src/kernel/drivers/vbox_mouse.c) -- existing VBox mouse port-based backend (reference for port I/O pattern)
+- [`src/kernel/drivers/virtio/input.c`](../../src/kernel/drivers/virtio/input.c) -- VirtIO tablet (reference for VirtIO queue pattern)
+- [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO core init
+- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §3` -- PCI ECAM/MCFG needed for PCI `80EE:CAFE` VBox detection
+- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §4` -- PCIe capability scanner used to enumerate VirtIO GPU and 9P PCI devices
+- → XREF: `07-graphics-ui` domain -- `wm_display_resized(w,h)` is a compositor API notified by §3, §7, §10 when display resolution changes
+- → XREF: `04-drivers-hardware/TODO-05-input-system.md §5` -- raw input grab API and `SYS_MOUSE_GRAB` must remain compatible with Hyper-V synthetic HID injecting into the same keyboard/mouse subsystem (§9)
 
 ## Outcome
 
 - `hypervisor_type()` reliably identifies VBox, KVM, Hyper-V, or bare metal via CPUID leaf `0x40000000` (with PCI fallback for VBox); `hypervisor_init()` fills a backend dispatch table `hv_ops`.
-- All hypervisor-specific logic is isolated behind `hv.h`; `kernel/main.c` calls `hv_mouse_available()`, `hv_display_resize()`, etc. — no platform `if/else` chains in core code.
+- All hypervisor-specific logic is isolated behind `hv.h`; `kernel/main.c` calls `hv_mouse_available()`, `hv_display_resize()`, etc. -- no platform `if/else` chains in core code.
 - VBox: display auto-resize, HGCM channel, shared folders at `H:\`, bidirectional clipboard.
 - QEMU/KVM: VirtIO GPU page-flip pipeline, VirtIO 9P shared folders (9P2000.L), hardware cursor via cursor queue.
 - Hyper-V: synthetic keyboard/mouse via VMBus HID VSP channels, synthetic video via VMBus Video VSP.
-- Bare metal: null backend returns graceful errors — existing PS/2, USB HID, and VBE framebuffer continue to work unchanged.
+- Bare metal: null backend returns graceful errors -- existing PS/2, USB HID, and VBE framebuffer continue to work unchanged.
 
 ## Implementation Order
 
 | ⭐  | Order | Deliverable                                                     | Depends On                                  | Status |
 | --- | :---: | --------------------------------------------------------------- | ------------------------------------------- | :----: |
-| 💎  |   1   | §1 Hypervisor detection — CPUID `0x40000000`, PCI `80EE:CAFE`  | PCI scan (existing)                         |  [ ]   |
+| 💎  |   1   | §1 Hypervisor detection -- CPUID `0x40000000`, PCI `80EE:CAFE`  | PCI scan (existing)                         |  [ ]   |
 | 💎  |   2   | §2 Unified `hv.h` interface + backend dispatch table           | §1 (type known at boot)                     |  [ ]   |
 | 💎  |   3   | §11 Bare-metal null backend                                     | §2 (dispatch table structure defined)       |  [ ]   |
 | 💎  |   4   | §3 VBox display auto-resize                                     | §2, VBox IRQ handler (existing)             |  [ ]   |
@@ -40,7 +40,7 @@
 | 💎  |  10   | §9 Hyper-V synthetic HID (keyboard + mouse)                     | §2, VMBus core (existing)                   |  [ ]   |
 | 💎  |  11   | §10 Hyper-V synthetic video                                     | §2, VMBus, framebuffer infrastructure       |  [ ]   |
 
-> All eleven rows are 💎 parity: VirtualBox, KVM/QEMU, and Hyper-V guest-additions are shipping features of those hypervisors. The ⭐ differentiator is the unified `hv.h` dispatch table — Impossible OS treats all three hypervisors as first-class targets behind a single clean interface, whereas Linux's hypervisor drivers span dozens of kernel subsystems with no cross-hypervisor abstraction.
+> All eleven rows are 💎 parity: VirtualBox, KVM/QEMU, and Hyper-V guest-additions are shipping features of those hypervisors. The ⭐ differentiator is the unified `hv.h` dispatch table -- Impossible OS treats all three hypervisors as first-class targets behind a single clean interface, whereas Linux's hypervisor drivers span dozens of kernel subsystems with no cross-hypervisor abstraction.
 
 ---
 
@@ -55,7 +55,7 @@ Use CPUID leaf `0x40000000` (the hypervisor brand-string leaf) to identify the p
 - [ ] VBox PCI fallback: if CPUID inconclusive, scan PCI for `vendor=0x80EE, device=0xCAFE`; if found, set `HV_VBOX`
 - [ ] Cache result in `static hypervisor_type_t g_hv_type`; `hypervisor_type()` returns it
 - [ ] Boot log: `[HV] Hypervisor: VirtualBox` / `KVM` / `Hyper-V` / `None (bare metal)`
-- [ ] Commit: `"drivers: hypervisor detection — CPUID 0x40000000 brand, PCI 80EE:CAFE fallback"`
+- [ ] Commit: `"drivers: hypervisor detection -- CPUID 0x40000000 brand, PCI 80EE:CAFE fallback"`
 
 ## 2. Unified `hv.h` Interface + Backend Dispatch `[Sonnet]`
 
@@ -67,7 +67,7 @@ Define the `hv_ops_t` vtable with all cross-hypervisor operations. `hypervisor_i
 - [ ] Global `hv_ops_t g_hv_ops`; inline `hv_mouse_available()` etc. forward to `g_hv_ops.*`
 - [ ] `hypervisor_init()`: call `hypervisor_detect()`; switch on type, assign backend `hv_ops_*` pointer, call `g_hv_ops.init()`
 - [ ] Remove hypervisor `if/else` chains from `kernel/main.c`; replace with `hypervisor_init()` call + `hv_*` API usage
-- [ ] Commit: `"kernel: hv_ops_t dispatch table — unified hypervisor backend interface"`
+- [ ] Commit: `"kernel: hv_ops_t dispatch table -- unified hypervisor backend interface"`
 
 ## 3. VBox Display Auto-Resize `[Sonnet]`
 
@@ -81,7 +81,7 @@ Handle the VBox display-change IRQ to read the new resolution and reconfigure th
 - [ ] Post `wm_display_resized(w, h)` to the compositor message queue; compositor reflows all windows
 - [ ] Graceful handling if VBE mode-set fails (resolution unsupported): log warning, keep existing resolution
 - [ ] Boot log: `[VBOX] Display auto-resize enabled`; on each resize: `[VBOX] Display resized to %ux%u`
-- [ ] Commit: `"drivers: VBox display auto-resize — SetGuestCaps, DISPLAY_CHANGE IRQ, VBE reconfigure"`
+- [ ] Commit: `"drivers: VBox display auto-resize -- SetGuestCaps, DISPLAY_CHANGE IRQ, VBE reconfigure"`
 
 ## 4. VBox HGCM Client `[Sonnet]`
 
@@ -90,11 +90,11 @@ Implement the Host-Guest Communication Manager (HGCM) channel layer. Provides `H
 **Files:** `src/kernel/drivers/vbox_hgcm.c` (new), `include/kernel/drivers/vbox_hgcm.h` (new)
 
 - [ ] Define `hgcm_param_t { type: uint32/uint64/ptr; union { u32, u64, { ptr, size } }; }` and `hgcm_call_t { client_id, function, param_count, params[] }`
-- [ ] `hgcm_connect(service_name, &client_id)` — issue `VBOX_REQUEST_HGCM_CONNECT (60)`; service location type = `HGCM_LOC_NAMED`; return assigned `client_id`
-- [ ] `hgcm_disconnect(client_id)` — issue `VBOX_REQUEST_HGCM_DISCONNECT (61)`
-- [ ] `hgcm_call(client_id, function, params, param_count)` — issue `VBOX_REQUEST_HGCM_CALL (62)`; wait for completion event (VBox signals IRQ then sets `request.rc`)
+- [ ] `hgcm_connect(service_name, &client_id)` -- issue `VBOX_REQUEST_HGCM_CONNECT (60)`; service location type = `HGCM_LOC_NAMED`; return assigned `client_id`
+- [ ] `hgcm_disconnect(client_id)` -- issue `VBOX_REQUEST_HGCM_DISCONNECT (61)`
+- [ ] `hgcm_call(client_id, function, params, param_count)` -- issue `VBOX_REQUEST_HGCM_CALL (62)`; wait for completion event (VBox signals IRQ then sets `request.rc`)
 - [ ] Handle async completion: HGCM calls may complete asynchronously (`VINF_HGCM_ASYNC_EXECUTE`); poll/wait on `request.rc` with timeout
-- [ ] Commit: `"drivers: VBox HGCM client — CONNECT/DISCONNECT/CALL, param encoding, async completion"`
+- [ ] Commit: `"drivers: VBox HGCM client -- CONNECT/DISCONNECT/CALL, param encoding, async completion"`
 
 ## 5. VBox Shared Folders `[Sonnet]`
 
@@ -103,14 +103,14 @@ Use HGCM to connect to `"VBoxSharedFolders"`, enumerate mappings, map the first 
 **Files:** `src/kernel/drivers/vbox_sf.c` (new), `include/kernel/drivers/vbox_sf.h` (new)
 
 > [!NOTE]
-> → XREF: `05-storage-filesystems` domain — VFS mount-point API (`vfs_mount(letter, ops)`) must be used to register the `H:\` drive; this section wires HGCM calls to a `vfs_ops_t` backend.
+> → XREF: `05-storage-filesystems` domain -- VFS mount-point API (`vfs_mount(letter, ops)`) must be used to register the `H:\` drive; this section wires HGCM calls to a `vfs_ops_t` backend.
 
 - [ ] `vbox_sf_init()`: `hgcm_connect("VBoxSharedFolders", &client_id)`; call `QueryMappings` → get list of share names; call `QueryMapName` on first share; call `MapFolder` → receive `folder_handle`
 - [ ] Implement `vfs_ops_t vbox_sf_ops { .open, .read, .write, .close, .readdir }` backed by HGCM `CreateFile`/`ReadFile`/`WriteFile`/`ListDir` function codes
 - [ ] `vfs_mount('H', &vbox_sf_ops)` to register drive
 - [ ] `ls H:\` in shell enumerates host directory; `type H:\readme.txt` reads file content
 - [ ] Boot log: `[VBOX] Shared folder "%s" mounted as H:\`; if none available: `[VBOX] No shared folders configured`
-- [ ] Commit: `"drivers: VBox shared folders — HGCM QueryMappings/MapFolder, VFS H:\\ mount"`
+- [ ] Commit: `"drivers: VBox shared folders -- HGCM QueryMappings/MapFolder, VFS H:\\ mount"`
 
 ## 6. VBox Shared Clipboard `[Sonnet]`
 
@@ -122,7 +122,7 @@ Connect to `"VBoxSharedClipboard"` via HGCM. Support bidirectional plain-text cl
 - [ ] `vbox_clipboard_set_text(text, len)`: announce `GUEST_REPORT_FORMATS(CF_UNICODETEXT)` to host; on `HOST_REQUEST_FORMATS`, respond with `GUEST_DATA(CF_UNICODETEXT, text)`
 - [ ] `vbox_clipboard_get_text(buf, max_len)`: send `GUEST_REQUEST_FORMATS` to host; read `HOST_DATA(CF_UNICODETEXT, ...)`; copy to `buf`
 - [ ] Register as clipboard backend: `clipboard_register_backend(&vbox_clipboard_ops)` (kernel clipboard API)
-- [ ] Commit: `"drivers: VBox shared clipboard — HGCM bidirectional text, CF_UNICODETEXT"`
+- [ ] Commit: `"drivers: VBox shared clipboard -- HGCM bidirectional text, CF_UNICODETEXT"`
 
 ## 7. VirtIO GPU Display Resize + Page Flip `[Sonnet]`
 
@@ -142,7 +142,7 @@ Drive the VirtIO GPU device (`PCI 1AF4:1050`) through its control queue: `GET_DI
 - [ ] Handle `VIRTIO_GPU_EVENT_DISPLAY` (bit 0 in `events_read` config field): re-issue `GET_DISPLAY_INFO`, reconfigure resource, notify WM
 - [ ] Implement `hv_ops.display_resize` for VirtIO GPU: destroy old resource, create new, re-bind scanout
 - [ ] Boot log: `[VIRTIO-GPU] Display %ux%u, scanout_id=%u`
-- [ ] Commit: `"drivers: VirtIO GPU — GET_DISPLAY_INFO, RESOURCE_CREATE/SET_SCANOUT/FLUSH, hardware cursor"`
+- [ ] Commit: `"drivers: VirtIO GPU -- GET_DISPLAY_INFO, RESOURCE_CREATE/SET_SCANOUT/FLUSH, hardware cursor"`
 
 ## 8. VirtIO 9P Shared Folders `[Sonnet]`
 
@@ -157,7 +157,7 @@ Attach to the VirtIO 9P device (PCI transport, subsystem 9) and implement 9P2000
 - [ ] `Twalk(fid, newfid, wnames[])` → `Rwalk` for path traversal; `Topen` / `Tcreate`; `Tread` / `Twrite`; `Tstat` / `Twstat`; `Tclunk` on close
 - [ ] Implement `vfs_ops_t virtio_9p_ops` wired to above; `vfs_mount('I', &virtio_9p_ops)`
 - [ ] Boot log: `[9P] VirtIO-9P mounted as I:\\` if device present; skip silently if absent
-- [ ] Commit: `"drivers: VirtIO 9P — 9P2000.L version/attach/walk/read/write, VFS I:\\ mount"`
+- [ ] Commit: `"drivers: VirtIO 9P -- 9P2000.L version/attach/walk/read/write, VFS I:\\ mount"`
 
 ## 9. Hyper-V Synthetic HID `[Opus]`
 
@@ -174,7 +174,7 @@ Open two VMBus channels (Keyboard VSP and Mouse VSP GUIDs) and parse synthetic H
 - [ ] Both channels: handle `VMBus_Channel_Message_Rescind` (hotplug remove); log and gracefully shut down
 - [ ] Hyper-V `hv_ops.mouse_available()` returns true when Hyper-V mouse channel is open
 - [ ] Boot log: `[HYPERV] Synthetic keyboard channel open`, `[HYPERV] Synthetic mouse channel open`
-- [ ] Commit: `"drivers: Hyper-V synthetic HID — VMBus kbd/mouse VSP channels, keystroke + mouse injection"`
+- [ ] Commit: `"drivers: Hyper-V synthetic HID -- VMBus kbd/mouse VSP channels, keystroke + mouse injection"`
 
 ## 10. Hyper-V Synthetic Video `[Opus]`
 
@@ -191,7 +191,7 @@ Open the VMBus Video VSP channel, negotiate a resolution, and map the synthetic 
 - [ ] Dirty-region flush: `hyperv_video_flush(x, y, w, h)` sends `VIDSYN_POINTER_POSITION_UPDATE` or equivalent dirty-region message to Video VSP; called by compositor on each repaint
 - [ ] `hv_ops.display_resize(w, h)`: send `VIDSYN_SCREEN_RESIZE`, renegotiate VRAM mapping
 - [ ] Boot log: `[HYPERV] Synthetic video %ux%u @ GPA 0x%llx`
-- [ ] Commit: `"drivers: Hyper-V synthetic video — Video VSP, VRAM mapping, dirty-region flush"`
+- [ ] Commit: `"drivers: Hyper-V synthetic video -- Video VSP, VRAM mapping, dirty-region flush"`
 
 ## 11. Bare-Metal Null Backend `[Sonnet]`
 
@@ -203,7 +203,7 @@ Implement the `hv_ops_t` null backend for `HV_NONE`. Every function returns the 
 - [ ] Assign `g_hv_ops = hv_none_ops` when `hypervisor_detect()` returns `HV_NONE`
 - [ ] Confirm that bare-metal boot still reaches desktop without modification after §1–2 land
 - [ ] Boot log: no hypervisor line (or at `LOG_DEBUG` verbosity only)
-- [ ] Commit: `"kernel: HV_NONE null backend — bare-metal safe fallback for all hv_ops"`
+- [ ] Commit: `"kernel: HV_NONE null backend -- bare-metal safe fallback for all hv_ops"`
 
 ---
 
@@ -212,19 +212,19 @@ Implement the `hv_ops_t` null backend for `HV_NONE`. Every function returns the 
 
 | ⭐ | Feature                                 | 🪟 Win11                                                          | 🐧 Linux                                                          | 🚀 Impossible OS                                                              |
 |----|-----------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------|----------------------------------------------------------------------------|
-| 💎 | Hypervisor detection                    | ✅ `hvinfo`; Hyper-V detection built into                      | ✅ `hypervisor` CPUID leaf; `arch/x86/kernel/cpu/hypervisor.c` | ⬜ §1 — `HV_NONE/VBOX/KVM/HYPERV` enum, PCI `80EE:CAFE` fallback           |
-| ⭐ | Unified cross-hypervisor dispatch table | ❌ Per-hypervisor drivers in separate kernel                   | ❌ No unified abstraction; hypervisor drivers                  | ⬜ §2 — single `hv_ops_t` vtable; one `hypervisor_init()`                  |
-| 💎 | VirtualBox display auto-resize          | ✅ `VBoxVideoW8.sys` wddm driver                               | ✅ `vboxvideo` kernel module; `drm_mode_set`                   | ⬜ §3 — `SetGuestCaps`, DISPLAY_CHANGE IRQ, VBE reconfigure,               |
-| 💎 | VirtualBox HGCM channel                 | ✅ `VBoxSF.sys` (shared folders), `VBoxTray.exe` (clipboard)   | ✅ `vboxsf` module; `vboxguest` IOCTL interface                | ⬜ §4 — HGCM_CONNECT/CALL, param encoding, async completion                |
-| 💎 | VirtualBox shared folders               | ✅ `\\\\vboxsvr\\share` UNC path; `net use`                    | ✅ `mount -t vboxsf name /mnt/share`                           | ⬜ §5 — HGCM QueryMappings/MapFolder, VFS `H:\` mount                      |
-| 💎 | VirtualBox shared clipboard             | ✅ `VBoxTray.exe` clipboard integration                        | ✅ `vboxclient --clipboard`                                    | ⬜ §6 — HGCM `VBoxSharedClipboard`, `CF_UNICODETEXT` bidirectional         |
-| 💎 | VirtIO GPU display + page flip          | ✅ `viogpu.sys` WDDM display driver                            | ✅ `virtio-gpu` DRM driver; `DRM_FORMAT_XRGB8888`, KMS         | ⬜ §7 — RESOURCE_CREATE/SET_SCANOUT/FLUSH, hardware cursor, display events |
-| 💎 | VirtIO 9P shared folders                | ❌ Not supported (no VirtIO 9P                                 | ✅ `9p` kernel module; `mount -t                               | ⬜ §8 — 9P2000.L protocol, `I:\` VFS mount                                 |
-| 💎 | Hyper-V synthetic keyboard/mouse        | ✅ `hid-hyperv.sys`; `hyperv-keyboard`; full WM integration    | ✅ `hv_kbd.c`, `hv_mouse.c`; evdev injection                   | ⬜ §9 — VSP GUIDs, `SYNTH_KBD_KEYSTROKE`, mouse report                     |
-| 💎 | Hyper-V synthetic video                 | ✅ `hypervideo.sys` (pre-Hyper-V Integration Services); `synth | ✅ `hyperv_fb.c`; `fbdev` interface; dirty-region flush        | ⬜ §10 — Video VSP GUID, VRAM GPA                                          |
-| ⭐ | Bare-metal null backend                 | ❌ HAL hardcodes bare-metal vs. guest                          | ❌ Hypervisor modules loaded/not loaded by                     | ⬜ §11 — `hv_none_ops` struct; bare-metal boot is                          |
+| 💎 | Hypervisor detection                    | ✅ `hvinfo`; Hyper-V detection built into                      | ✅ `hypervisor` CPUID leaf; `arch/x86/kernel/cpu/hypervisor.c` | ⬜ §1 -- `HV_NONE/VBOX/KVM/HYPERV` enum, PCI `80EE:CAFE` fallback           |
+| ⭐ | Unified cross-hypervisor dispatch table | ❌ Per-hypervisor drivers in separate kernel                   | ❌ No unified abstraction; hypervisor drivers                  | ⬜ §2 -- single `hv_ops_t` vtable; one `hypervisor_init()`                  |
+| 💎 | VirtualBox display auto-resize          | ✅ `VBoxVideoW8.sys` wddm driver                               | ✅ `vboxvideo` kernel module; `drm_mode_set`                   | ⬜ §3 -- `SetGuestCaps`, DISPLAY_CHANGE IRQ, VBE reconfigure,               |
+| 💎 | VirtualBox HGCM channel                 | ✅ `VBoxSF.sys` (shared folders), `VBoxTray.exe` (clipboard)   | ✅ `vboxsf` module; `vboxguest` IOCTL interface                | ⬜ §4 -- HGCM_CONNECT/CALL, param encoding, async completion                |
+| 💎 | VirtualBox shared folders               | ✅ `\\\\vboxsvr\\share` UNC path; `net use`                    | ✅ `mount -t vboxsf name /mnt/share`                           | ⬜ §5 -- HGCM QueryMappings/MapFolder, VFS `H:\` mount                      |
+| 💎 | VirtualBox shared clipboard             | ✅ `VBoxTray.exe` clipboard integration                        | ✅ `vboxclient --clipboard`                                    | ⬜ §6 -- HGCM `VBoxSharedClipboard`, `CF_UNICODETEXT` bidirectional         |
+| 💎 | VirtIO GPU display + page flip          | ✅ `viogpu.sys` WDDM display driver                            | ✅ `virtio-gpu` DRM driver; `DRM_FORMAT_XRGB8888`, KMS         | ⬜ §7 -- RESOURCE_CREATE/SET_SCANOUT/FLUSH, hardware cursor, display events |
+| 💎 | VirtIO 9P shared folders                | ❌ Not supported (no VirtIO 9P                                 | ✅ `9p` kernel module; `mount -t                               | ⬜ §8 -- 9P2000.L protocol, `I:\` VFS mount                                 |
+| 💎 | Hyper-V synthetic keyboard/mouse        | ✅ `hid-hyperv.sys`; `hyperv-keyboard`; full WM integration    | ✅ `hv_kbd.c`, `hv_mouse.c`; evdev injection                   | ⬜ §9 -- VSP GUIDs, `SYNTH_KBD_KEYSTROKE`, mouse report                     |
+| 💎 | Hyper-V synthetic video                 | ✅ `hypervideo.sys` (pre-Hyper-V Integration Services); `synth | ✅ `hyperv_fb.c`; `fbdev` interface; dirty-region flush        | ⬜ §10 -- Video VSP GUID, VRAM GPA                                          |
+| ⭐ | Bare-metal null backend                 | ❌ HAL hardcodes bare-metal vs. guest                          | ❌ Hypervisor modules loaded/not loaded by                     | ⬜ §11 -- `hv_none_ops` struct; bare-metal boot is                          |
 
-> **After §1–11:** Impossible OS targets all four environments (VirtualBox, QEMU/KVM, Hyper-V, bare metal) with a single kernel binary and no `#ifdef` or `if/else` sprawl. The unified `hv_ops_t` dispatch table (§2) and null backend (§11) are exclusive to Impossible OS — neither Linux nor Windows exposes a clean cross-hypervisor abstraction behind a single vtable in the kernel core. Linux users on Hyper-V, VirtualBox, and KVM each configure separate kernel modules; Impossible OS makes all three first-class targets behind one interface.
+> **After §1–11:** Impossible OS targets all four environments (VirtualBox, QEMU/KVM, Hyper-V, bare metal) with a single kernel binary and no `#ifdef` or `if/else` sprawl. The unified `hv_ops_t` dispatch table (§2) and null backend (§11) are exclusive to Impossible OS -- neither Linux nor Windows exposes a clean cross-hypervisor abstraction behind a single vtable in the kernel core. Linux users on Hyper-V, VirtualBox, and KVM each configure separate kernel modules; Impossible OS makes all three first-class targets behind one interface.
 
 ## Verification
 
@@ -238,4 +238,4 @@ Implement the `hv_ops_t` null backend for `HV_NONE`. Every function returns the 
 - [ ] QEMU VirtIO 9P (`-virtfs local,path=/tmp/share,...`): boot log shows `[9P] VirtIO-9P mounted as I:\\`; `ls I:\` lists `/tmp/share`
 - [ ] Hyper-V Gen 2 VM: boot log shows `[HYPERV] Synthetic keyboard channel open` + `[HYPERV] Synthetic mouse channel open`; typing in terminal works; mouse moves correctly
 - [ ] No hypervisor `if/else` chains remain in `kernel/main.c` (grep check: `rg "HV_VBOX\|HV_KVM\|HV_HYPERV" src/kernel/main.c` → 0 matches outside `hv/` directory)
-- [ ] Commit: `"drivers: hypervisor abstraction — hv_ops_t, VBox (resize/HGCM/SF/clipboard), VirtIO (GPU/9P), Hyper-V (HID/video), null backend"`
+- [ ] Commit: `"drivers: hypervisor abstraction -- hv_ops_t, VBox (resize/HGCM/SF/clipboard), VirtIO (GPU/9P), Hyper-V (HID/video), null backend"`

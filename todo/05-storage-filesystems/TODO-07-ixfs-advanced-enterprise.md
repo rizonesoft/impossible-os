@@ -1,21 +1,21 @@
-# TODO-07 — IXFS Advanced Storage, Reliability & Enterprise
+# TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise
 
 > **Goal:** Deliver the features that make IXFS genuinely superior to NTFS and competitive with ZFS/Btrfs: transparent LZ4/Zstd compression, inline block deduplication, reflink instant copy, online defragmentation, sparse files, real-time TRIM, online volume resize, self-healing metadata, automatic scheduled snapshots, per-file AES-256-XTS encryption, USN change journal, disk quotas, filesystem-native storage tiering, a volume health dashboard, and a comprehensive test suite.
 
 > [!IMPORTANT]
-> All sections depend on the v3 inode from `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2` being on disk (`IXFS_VERSION=3`, 256-byte inodes). §10 (encryption) uses Monocypher and §1 (compression) uses LZ4/Zstd from `→ XREF: TODO-20-kernel-libraries`. §6 (TRIM) builds on `blkdev_discard()` which already exists in `src/kernel/drivers/blkdev.c:125`. Do **not** begin §7 (online resize), §8 (self-healing), or §13 (storage tiering) before §3 (reflink) and §4 (defrag) are stable — they all manipulate the extent tree and block allocator. Delete `todo-old/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.11-IXFS.md` after this TODO file is created.
+> All sections depend on the v3 inode from `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2` being on disk (`IXFS_VERSION=3`, 256-byte inodes). §10 (encryption) uses Monocypher and §1 (compression) uses LZ4/Zstd from `→ XREF: TODO-20-kernel-libraries`. §6 (TRIM) builds on `blkdev_discard()` which already exists in `src/kernel/drivers/blkdev.c:125`. Do **not** begin §7 (online resize), §8 (self-healing), or §13 (storage tiering) before §3 (reflink) and §4 (defrag) are stable -- they all manipulate the extent tree and block allocator. Delete `todo-old/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.11-IXFS.md` after this TODO file is created.
 
 ## Inputs
 
-- `src/kernel/fs/ixfs/ixfs_alloc.c` — block allocator; §4 (defrag), §6 (TRIM), §7 (resize), §13 (tiering) all extend it
-- `src/kernel/fs/ixfs/ixfs_cow.c` — CoW refcount table; §2 (dedup), §3 (reflink), §5 (sparse CoW), §9 (auto-snapshot) reuse it
-- `src/kernel/fs/ixfs/ixfs_extent.c` — extent engine; §1 (compression per-4KiB), §3 (reflink), §4 (defrag), §5 (hole extents), §7 (resize) extend it
-- `src/kernel/fs/ixfs/ixfs_journal.c` — WAL journal; all destructive operations must be journaled
-- `src/kernel/drivers/blkdev.c` — `blkdev_discard(dev, lba, count)` already exists; §6 wires IXFS into it
-- → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` — v3 inode with `i_compress_type`, `i_encrypt_key_id`, `i_flags` (sparse/immutable), `i_access_count` (tiering) must be in place
-- → XREF: TODO-20-kernel-libraries (future) — LZ4 frame encoder/decoder and Zstd single-frame decompressor; Monocypher for AES-256-XTS and PBKDF2; xxHash64 for dedup hashing; until that TODO completes, stub §1 and §10 behind compile-time feature flags
-- → XREF: `08-desktop-shell` domain — Disk Manager UI panels (§14 health dashboard, §4 defrag button, §9 Previous Versions, §12 quota panel, §13 tier config) are desktop components; coordinate on the IPC/message interface used to query IXFS stats
-- → XREF: `04-drivers-hardware/TODO-01-block-storage-hardening.md §5` — AHCI SMART data feeds the health dashboard (§14) disk temperature + error count fields
+- `src/kernel/fs/ixfs/ixfs_alloc.c` -- block allocator; §4 (defrag), §6 (TRIM), §7 (resize), §13 (tiering) all extend it
+- `src/kernel/fs/ixfs/ixfs_cow.c` -- CoW refcount table; §2 (dedup), §3 (reflink), §5 (sparse CoW), §9 (auto-snapshot) reuse it
+- `src/kernel/fs/ixfs/ixfs_extent.c` -- extent engine; §1 (compression per-4KiB), §3 (reflink), §4 (defrag), §5 (hole extents), §7 (resize) extend it
+- `src/kernel/fs/ixfs/ixfs_journal.c` -- WAL journal; all destructive operations must be journaled
+- `src/kernel/drivers/blkdev.c` -- `blkdev_discard(dev, lba, count)` already exists; §6 wires IXFS into it
+- → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` -- v3 inode with `i_compress_type`, `i_encrypt_key_id`, `i_flags` (sparse/immutable), `i_access_count` (tiering) must be in place
+- → XREF: TODO-20-kernel-libraries (future) -- LZ4 frame encoder/decoder and Zstd single-frame decompressor; Monocypher for AES-256-XTS and PBKDF2; xxHash64 for dedup hashing; until that TODO completes, stub §1 and §10 behind compile-time feature flags
+- → XREF: `08-desktop-shell` domain -- Disk Manager UI panels (§14 health dashboard, §4 defrag button, §9 Previous Versions, §12 quota panel, §13 tier config) are desktop components; coordinate on the IPC/message interface used to query IXFS stats
+- → XREF: `04-drivers-hardware/TODO-01-block-storage-hardening.md §5` -- AHCI SMART data feeds the health dashboard (§14) disk temperature + error count fields
 
 ## Outcome
 
@@ -39,21 +39,21 @@
 
 | ⭐  | Order | Deliverable                                                                              | Depends On                                                        | Status |
 | --- | :---: | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | :----: |
-| 💎  |   1   | §5 Sparse files — hole extents, `FSCTL_SET_SPARSE/SET_ZERO_DATA/QUERY_ALLOCATED_RANGES`  | v3 inode `i_flags` (TODO-06 §2)                                  |  [ ]   |
-| ⭐  |   2   | §6 Real-time TRIM — journal-batched discard, SSD auto-detect, `blkdev_discard()`         | `blkdev_discard()` exists; §1 (hole extents inform TRIM ranges)  |  [ ]   |
-| ⭐  |   3   | §1 Transparent compression — LZ4/Zstd 4KiB units, write gate ≥10%, `FSCTL_SET_COMPRESSION` | extent engine; kernel-libraries TODO for codecs              |  [ ]   |
-| ⭐  |   4   | §2 Inline block dedup — xxHash64, `dedupe_ht`, CoW refcount reuse, per-volume opt-in     | §3 (compression changes write path; dedup runs after compress)   |  [ ]   |
-| ⭐  |   5   | §3 Reflink instant copy — `ixfs_reflink()`, O(1) `CopyFileW` same-volume, CoW on write  | §4 (dedup + CoW refcounts must be stable)                        |  [ ]   |
-| ⭐  |   6   | §4 Online defrag — `ixfs_defrag_file()`, background idle thread, `FSCTL_DEFRAGMENT_FILE`  | §5 (reflink stable before extent rewrite path used by defrag)    |  [ ]   |
-| ⭐  |   7   | §7 Online volume resize — `ixfs_grow()`, bitmap extend, superblock update                | §6 (defrag stable before extending block ranges)                 |  [ ]   |
-| ⭐  |   8   | §8 Self-healing metadata — backup superblock, auto-restore on CRC fail                   | §7 (final volume layout stable before backup SB location fixed)  |  [ ]   |
-| 💎  |   9   | §9 Auto snapshots + Explorer Previous Versions — schedule, retention, prune              | §8 (self-healing ensures snapshot metadata survives)             |  [ ]   |
-| ⭐  |  10   | §10 Per-file AES-256-XTS encryption — key table, PBKDF2, per-block encrypt/decrypt       | §8 (backup SB for key table resilience); Monocypher              |  [ ]   |
-| ⭐  |  11   | §11 USN change journal — circular buffer in reserved region, 5 reason codes, `FSCTL_*`   | §7 (resize stable; USN region locked at format time)             |  [ ]   |
-| 💎  |  12   | §12 Volume quotas — quota table, `ixfs_alloc_block` check, `FSCTL_GET/SET_VOLUME_QUOTA`  | §7 (resize changes block counts; quota check needs stable alloc) |  [ ]   |
-| ⭐  |  13   | §13 Storage tiering — multi-device superblock, promote/demote thread, Disk Manager panel | §6 (defrag migration is the same block-copy mechanism)           |  [ ]   |
-| ⭐  |  14   | §14 Volume health dashboard — Disk Manager panel, stats, one-click actions               | §1–13 all complete (all stats sources must exist)                |  [ ]   |
-| ⭐  |  15   | §15 Comprehensive test suite — all features, journal recovery, QEMU clean run            | §1–14 all complete                                               |  [ ]   |
+| 💎  |   1   | §5 Sparse files -- hole extents, `FSCTL_SET_SPARSE/SET_ZERO_DATA/QUERY_ALLOCATED_RANGES`  | v3 inode `i_flags` (TODO-06 §2)                                  |  [ ]   |
+| ⭐  |   2   | §6 Real-time TRIM -- journal-batched discard, SSD auto-detect, `blkdev_discard()`         | `blkdev_discard()` exists; §1 (hole extents inform TRIM ranges)  |  [ ]   |
+| ⭐  |   3   | §1 Transparent compression -- LZ4/Zstd 4KiB units, write gate ≥10%, `FSCTL_SET_COMPRESSION` | extent engine; kernel-libraries TODO for codecs              |  [ ]   |
+| ⭐  |   4   | §2 Inline block dedup -- xxHash64, `dedupe_ht`, CoW refcount reuse, per-volume opt-in     | §3 (compression changes write path; dedup runs after compress)   |  [ ]   |
+| ⭐  |   5   | §3 Reflink instant copy -- `ixfs_reflink()`, O(1) `CopyFileW` same-volume, CoW on write  | §4 (dedup + CoW refcounts must be stable)                        |  [ ]   |
+| ⭐  |   6   | §4 Online defrag -- `ixfs_defrag_file()`, background idle thread, `FSCTL_DEFRAGMENT_FILE`  | §5 (reflink stable before extent rewrite path used by defrag)    |  [ ]   |
+| ⭐  |   7   | §7 Online volume resize -- `ixfs_grow()`, bitmap extend, superblock update                | §6 (defrag stable before extending block ranges)                 |  [ ]   |
+| ⭐  |   8   | §8 Self-healing metadata -- backup superblock, auto-restore on CRC fail                   | §7 (final volume layout stable before backup SB location fixed)  |  [ ]   |
+| 💎  |   9   | §9 Auto snapshots + Explorer Previous Versions -- schedule, retention, prune              | §8 (self-healing ensures snapshot metadata survives)             |  [ ]   |
+| ⭐  |  10   | §10 Per-file AES-256-XTS encryption -- key table, PBKDF2, per-block encrypt/decrypt       | §8 (backup SB for key table resilience); Monocypher              |  [ ]   |
+| ⭐  |  11   | §11 USN change journal -- circular buffer in reserved region, 5 reason codes, `FSCTL_*`   | §7 (resize stable; USN region locked at format time)             |  [ ]   |
+| 💎  |  12   | §12 Volume quotas -- quota table, `ixfs_alloc_block` check, `FSCTL_GET/SET_VOLUME_QUOTA`  | §7 (resize changes block counts; quota check needs stable alloc) |  [ ]   |
+| ⭐  |  13   | §13 Storage tiering -- multi-device superblock, promote/demote thread, Disk Manager panel | §6 (defrag migration is the same block-copy mechanism)           |  [ ]   |
+| ⭐  |  14   | §14 Volume health dashboard -- Disk Manager panel, stats, one-click actions               | §1–13 all complete (all stats sources must exist)                |  [ ]   |
+| ⭐  |  15   | §15 Comprehensive test suite -- all features, journal recovery, QEMU clean run            | §1–14 all complete                                               |  [ ]   |
 
 > Sections §1–§13 are all `⭐` exclusive or represent clear superior positioning: no single general-purpose filesystem ships transparent per-file compression + inline dedup + reflinks + AES-256-XTS encryption + filesystem-native tiering + USN journal + self-healing all in one volume. NTFS has compression and EFS but not dedup/reflinks/tiering. Btrfs has compression/dedup/snapshots but not per-file encryption or tiering. ZFS has most features but requires a pool layer and 300 MB RAM overhead. IXFS delivers all of them at the block driver abstraction level with CoW-reuse for near-zero dedup RAM cost.
 
@@ -75,7 +75,7 @@ Implement hole extents (a special extent type marking unallocated data ranges), 
 - [ ] `FSCTL_QUERY_ALLOCATED_RANGES(hFile, query_range, out_buf, buf_len)`: iterate extent list; emit `FILE_ALLOCATED_RANGE_BUFFER {FileOffset, Length}` for every non-hole extent within the query range
 - [ ] `ixfs_stat()` update: `actual_blocks` = total extents minus hole extent counts
 - [ ] Add to `ixfs_test.c`: write 10 MB; punch 5 MB hole in middle; read back (zeros in hole, data outside); `QUERY_ALLOCATED_RANGES` shows two ranges; sparse + CoW: share block between file and snapshot; punch hole in file → snapshot block intact
-- [ ] Commit: `"ixfs: sparse files — hole extents, FSCTL_SET_SPARSE/SET_ZERO_DATA/QUERY_ALLOCATED_RANGES, CoW-safe punch"`
+- [ ] Commit: `"ixfs: sparse files -- hole extents, FSCTL_SET_SPARSE/SET_ZERO_DATA/QUERY_ALLOCATED_RANGES, CoW-safe punch"`
 
 ## 2. Real-Time TRIM `[Sonnet]`
 
@@ -91,7 +91,7 @@ Batch freed blocks within journal transactions. Coalesce adjacent ranges. Issue 
 - [ ] `ixfs_txn_commit()`: after commit record written, sort `trim_ranges[]` by start; merge adjacent; for each range: `blkdev_discard(vol->dev, lba, count)`; clear list
 - [ ] SSD auto-detect: in `ixfs_init()`: call `blkdev_identify(dev)` if available; check TRIM support bit; set `IXFS_MOUNT_DISCARD` accordingly; log `[IXFS] TRIM: %s`, enabled/disabled
 - [ ] Registry override: `HKLM\SYSTEM\Storage\IXFS\DisableDiscard (REG_DWORD)` = 1 forces off
-- [ ] Commit: `"ixfs: real-time TRIM — journal-batched discard, SSD auto-detect, 64-range coalesce"`
+- [ ] Commit: `"ixfs: real-time TRIM -- journal-batched discard, SSD auto-detect, 64-range coalesce"`
 
 ## 3. Transparent LZ4/Zstd Compression `[Opus]`
 
@@ -110,7 +110,7 @@ Per-4KiB compression unit on the write path. Skip compression if ratio < 10%. De
 - [ ] `FSCTL_SET_COMPRESSION(hFile, COMPRESSION_FORMAT_NONE)` → clear `i_compress_type`; decompress existing blocks on next write
 - [ ] `FSCTL_GET_COMPRESSION(hFile, &fmt)` → return current `i_compress_type`
 - [ ] Log on unmount: `[IXFS] Compression: %llu blocks compressed, avg ratio %.1f%%`
-- [ ] Commit: `"ixfs: LZ4/Zstd transparent compression — 4KiB units, 10% gate, FSCTL_SET_COMPRESSION"`
+- [ ] Commit: `"ixfs: LZ4/Zstd transparent compression -- 4KiB units, 10% gate, FSCTL_SET_COMPRESSION"`
 
 ## 4. Inline Block Deduplication `[Opus]`
 
@@ -128,7 +128,7 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 - [ ] `ixfs_dedup_remove(vol, block_num)` → called on block free; remove from hash table
 - [ ] Unmount log: `[IXFS] Dedup: %llu blocks deduped, %llu blocks saved, ratio %.1f:1`
 - [ ] Enabled gate: check `vol->sb.s_total_blocks * IXFS_BLOCK_SIZE >= 1 GiB`; else skip dedup silently
-- [ ] Commit: `"ixfs: inline block dedup — xxHash64, byte-compare confirm, CoW refcount reuse, dedup_ht"`
+- [ ] Commit: `"ixfs: inline block dedup -- xxHash64, byte-compare confirm, CoW refcount reuse, dedup_ht"`
 
 ## 5. Reflink Instant Copy `[Opus]`
 
@@ -137,14 +137,14 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 **Files:** `src/kernel/fs/ixfs/ixfs_cow.c` (extend), `src/kernel/win32/fileops.c` (extend CopyFileW)
 
 > [!NOTE]
-> Reflink = copy-on-write clone at inode granularity. The new inode gets an identical copy of the source's extent list; the physical blocks are shared. Every shared block's refcount is incremented (using the existing CoW refcount table). A write to either file triggers `ixfs_cow_block()` for the specific block being written, creating an independent copy. Reflink time is O(N extents), not O(file size) — for a 1 GiB file with 2 extents, reflink takes ~microseconds. `CopyFileW` on same-volume IXFS source and destination: detect via drive letter and call `ixfs_reflink()` instead of the byte-copy loop.
+> Reflink = copy-on-write clone at inode granularity. The new inode gets an identical copy of the source's extent list; the physical blocks are shared. Every shared block's refcount is incremented (using the existing CoW refcount table). A write to either file triggers `ixfs_cow_block()` for the specific block being written, creating an independent copy. Reflink time is O(N extents), not O(file size) -- for a 1 GiB file with 2 extents, reflink takes ~microseconds. `CopyFileW` on same-volume IXFS source and destination: detect via drive letter and call `ixfs_reflink()` instead of the byte-copy loop.
 
 - [ ] `ixfs_reflink(vol, src_inode_num, dst_dir_inode, dst_name)`: create new inode; copy `i_extents[]` and `i_extent_count` from source; for each extent block: `ixfs_refcount_inc(block)`; journal both the new inode and refcount increments; set `dst->i_size = src->i_size`; add dir entry; return dst inode number
 - [ ] `CopyFileW` same-volume detection: in `fileops.c`, if `src_letter == dst_letter` and `vfs_probe_type(src_letter) == FS_IXFS`: call `ixfs_reflink()` → return TRUE; else fall through to existing byte-copy loop
 - [ ] Verify `ixfs_cow_block()` fires correctly when either the original or clone is written (CoW already implemented in `ixfs_cow.c`)
-- [ ] `ixfs_stat()` must not double-count shared blocks — `actual_blocks` should count only blocks where refcount == 1 (exclusively owned)
+- [ ] `ixfs_stat()` must not double-count shared blocks -- `actual_blocks` should count only blocks where refcount == 1 (exclusively owned)
 - [ ] Test: reflink 1 GiB file → instant (< 10 ms); write 1 byte to clone → only that block CoW'd; original unchanged; delete clone → refcounts decremented; delete original → last-refcount blocks freed
-- [ ] Commit: `"ixfs: reflink instant copy — O(1) extent clone, CoW on write, CopyFileW same-volume hook"`
+- [ ] Commit: `"ixfs: reflink instant copy -- O(1) extent clone, CoW on write, CopyFileW same-volume hook"`
 
 ## 6. Online Defragmentation `[Opus]`
 
@@ -153,7 +153,7 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 **Files:** `src/kernel/fs/ixfs/ixfs_defrag.c` (new), `src/kernel/sched/` (background thread)
 
 > [!NOTE]
-> Defrag algorithm: (1) skip if `i_extent_count ≤ 2`; (2) compute total block count `N`; (3) `ixfs_alloc_block_near(vol, first_extent.e_start, N)` — allocate N contiguous blocks near the file's current location; (4) copy all data blocks in extent order to new contiguous range; (5) in a single journal transaction: update `i_extents[]` to a single entry covering the new range; free each old block (respecting CoW refcounts — do not free blocks with refcount > 1); (6) commit. CoW-safety: shared blocks (from reflink or snapshot) are copied to new blocks during defrag — this increases their refcounts on the old copy, not the new one.
+> Defrag algorithm: (1) skip if `i_extent_count ≤ 2`; (2) compute total block count `N`; (3) `ixfs_alloc_block_near(vol, first_extent.e_start, N)` -- allocate N contiguous blocks near the file's current location; (4) copy all data blocks in extent order to new contiguous range; (5) in a single journal transaction: update `i_extents[]` to a single entry covering the new range; free each old block (respecting CoW refcounts -- do not free blocks with refcount > 1); (6) commit. CoW-safety: shared blocks (from reflink or snapshot) are copied to new blocks during defrag -- this increases their refcounts on the old copy, not the new one.
 
 - [ ] `ixfs_defrag_file(vol, inode_num)`: check extent count; allocate contiguous range; copy; update extents; free old; journal; log `[IXFS] Defrag: inode %u %u→1 extents`
 - [ ] `ixfs_alloc_block_near(vol, hint_block, count)`: attempt to allocate `count` contiguous blocks starting at or near `hint_block`; fall back to any contiguous range if unavailable
@@ -161,7 +161,7 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 - [ ] `FSCTL_DEFRAGMENT_FILE(hFile)` → `ixfs_defrag_file(vol, inode)` synchronously on the calling thread
 - [ ] `defrag C:` shell command: `ixfs_defrag_file` on all fragmented inodes; print progress `Defragmenting... %u files, %u extents eliminated`
 - [ ] Disk Manager "Defragment" button → same as `defrag C:` + show progress in panel
-- [ ] Commit: `"ixfs: online defrag — ixfs_defrag_file, contiguous alloc, background IDLE thread, FSCTL_DEFRAGMENT_FILE"`
+- [ ] Commit: `"ixfs: online defrag -- ixfs_defrag_file, contiguous alloc, background IDLE thread, FSCTL_DEFRAGMENT_FILE"`
 
 ## 7. Online Volume Resize `[Opus]`
 
@@ -170,14 +170,14 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 **Files:** `src/kernel/fs/ixfs/ixfs_format.c` (extend), `src/kernel/fs/ixfs/ixfs_alloc.c` (extend)
 
 > [!NOTE]
-> Growth-only (shrink requires data relocation — deferred). Steps: (1) validate `new_total_blocks > vol->sb.s_total_blocks`; (2) extend the block bitmap by writing new bitmap blocks at their calculated location (beyond current volume end); (3) update `s_total_blocks`, `s_free_blocks += delta`, `s_bitmap_blocks` in the superblock in a journal transaction; (4) recalculate block group descriptors (`ixfs_init_groups(vol)`); (5) flush superblock + new bitmap blocks + checksum of new blocks; (6) log and return. The underlying block device must already present the larger size (verified via `blkdev_capacity(dev)`).
+> Growth-only (shrink requires data relocation -- deferred). Steps: (1) validate `new_total_blocks > vol->sb.s_total_blocks`; (2) extend the block bitmap by writing new bitmap blocks at their calculated location (beyond current volume end); (3) update `s_total_blocks`, `s_free_blocks += delta`, `s_bitmap_blocks` in the superblock in a journal transaction; (4) recalculate block group descriptors (`ixfs_init_groups(vol)`); (5) flush superblock + new bitmap blocks + checksum of new blocks; (6) log and return. The underlying block device must already present the larger size (verified via `blkdev_capacity(dev)`).
 
 - [ ] `ixfs_grow(vol, new_total_blocks)`: validate new size > current; compute new bitmap size; allocate and zero new bitmap blocks via `ixfs_write_block()`; journal superblock update; call `ixfs_init_groups(vol)` to update group descriptors; flush; log `[IXFS] Volume grown: %llu → %llu blocks`
 - [ ] Verify `blkdev_capacity(dev) >= new_total_blocks * IXFS_BLOCK_SIZE / 512` before starting
 - [ ] Disk Manager "Extend Volume" right-click: calls `ixfs_grow(vol, new_size_in_blocks)`; shows progress and result
 - [ ] `diskpart extend fs=ixfs size=<MB>` shell: calls `ixfs_grow()`
 - [ ] Test: format 100 MiB volume; grow to 200 MiB; verify `s_total_blocks` correct; write file to new region; read back; `bash scripts/build.sh clean run` passes
-- [ ] Commit: `"ixfs: online volume resize — ixfs_grow(), bitmap extension, superblock update, group recalculation"`
+- [ ] Commit: `"ixfs: online volume resize -- ixfs_grow(), bitmap extension, superblock update, group recalculation"`
 
 ## 8. Self-Healing Metadata `[Sonnet]`
 
@@ -193,7 +193,7 @@ Write backup superblock at last volume block on every flush. On mount, if primar
 - [ ] Self-heal event counter: `vol->self_heal_count++`; persisted in superblock reserved field; shown in health dashboard (§14)
 - [ ] Extend `ixfs_format()` (v3): write backup superblock at last block on initial format
 - [ ] Disk Manager: health panel shows `Self-heals: %u (last: %s)` from event log
-- [ ] Commit: `"ixfs: self-healing metadata — backup superblock, CRC32C restore on mount, heal event counter"`
+- [ ] Commit: `"ixfs: self-healing metadata -- backup superblock, CRC32C restore on mount, heal event counter"`
 
 ## 9. Automatic Scheduled Snapshots `[Sonnet]`
 
@@ -209,7 +209,7 @@ Configurable interval + retention policy. Prune oldest automatically. Wire to Ex
 - [ ] `ixfs_snapshot_prune(vol)`: call `ixfs_snapshot_list()` to get all snapshots; separate `auto_*` from manual; bucket by age; delete oldest exceeding each bucket limit
 - [ ] Explorer "Previous Versions" tab: on file Properties → Previous Versions tab: query `ixfs_snapshot_list()`; for each snapshot containing the file: list entry with date/time; "Restore" button → `ixfs_snapshot_restore(name)` + VFS re-read; "Open" → mount snapshot as read-only temporary drive letter
 - [ ] Log: `[IXFS] Auto-snapshot created: %s`; `[IXFS] Snapshot pruned: %s (retention policy)`
-- [ ] Commit: `"ixfs: auto snapshots — scheduled create, retention 24h/7d/4w, prune, Explorer Previous Versions"`
+- [ ] Commit: `"ixfs: auto snapshots -- scheduled create, retention 24h/7d/4w, prune, Explorer Previous Versions"`
 
 ## 10. Per-File AES-256-XTS Encryption `[Opus]`
 
@@ -218,7 +218,7 @@ Key table in reserved blocks. Master key via PBKDF2 (100 K iterations). Per-file
 **Files:** `src/kernel/fs/ixfs/ixfs_encrypt.c` (new), `include/kernel/fs/ixfs.h` (extend)
 
 > [!NOTE]
-> Key slot (48 bytes): `uint8_t key_id[4]`; `uint8_t wrapped_key[32]` (per-file key AES-256-wrapped by master key); `uint8_t salt[16]` (for per-file key derivation); `uint32_t flags`. Key table in reserved inode 9 (`s_key_table_inode`). Master key: derived once at mount from user password via PBKDF2-SHA256 (100 K iterations, 32-byte salt stored in superblock); stored in `vol->master_key[32]` in RAM only — never written to disk. AES-256-XTS tweak: block number (64-bit) in little-endian. Requires Monocypher from TODO-20-kernel-libraries. Until available: stub behind `#ifdef IXFS_ENCRYPTION_ENABLED`.
+> Key slot (48 bytes): `uint8_t key_id[4]`; `uint8_t wrapped_key[32]` (per-file key AES-256-wrapped by master key); `uint8_t salt[16]` (for per-file key derivation); `uint32_t flags`. Key table in reserved inode 9 (`s_key_table_inode`). Master key: derived once at mount from user password via PBKDF2-SHA256 (100 K iterations, 32-byte salt stored in superblock); stored in `vol->master_key[32]` in RAM only -- never written to disk. AES-256-XTS tweak: block number (64-bit) in little-endian. Requires Monocypher from TODO-20-kernel-libraries. Until available: stub behind `#ifdef IXFS_ENCRYPTION_ENABLED`.
 
 - [ ] Master key derivation: `ixfs_master_key_derive(password, salt, master_key)` → PBKDF2-SHA256; prompt for password at mount if any encrypted files exist
 - [ ] Per-file key: `ixfs_file_key_create(vol, &key_id)` → random 32-byte key via `hwrng_read()`; AES-256-wrap with master key; store in key table inode; return `key_id` stored in `i_encrypt_key_id`
@@ -228,7 +228,7 @@ Key table in reserved blocks. Master key via PBKDF2 (100 K iterations). Per-file
 - [ ] `FSCTL_SET_ENCRYPTION(hFile, 1)` → generate per-file key; set `FILE_ATTRIBUTE_ENCRYPTED`; encrypt existing blocks; journal all changes
 - [ ] Encrypt directory → all new files within automatically get per-file keys
 - [ ] Lock enforcement: if `vol->master_key` not set (wrong/no password): return `STATUS_ACCESS_DENIED` for any encrypted file open
-- [ ] Commit: `"ixfs: per-file AES-256-XTS encryption — PBKDF2 master key, key table, block-number tweak, FSCTL_SET_ENCRYPTION"`
+- [ ] Commit: `"ixfs: per-file AES-256-XTS encryption -- PBKDF2 master key, key table, block-number tweak, FSCTL_SET_ENCRYPTION"`
 
 ## 11. USN Change Journal `[Sonnet]`
 
@@ -244,7 +244,7 @@ Circular 32-byte USN record buffer in the reserved journal region. 5 reason code
 - [ ] `FSCTL_QUERY_USN_JOURNAL` → return `{ UsnJournalID, FirstUsn, NextUsn, MinSupportedMajorVersion=2, MaxSupportedMajorVersion=2 }`
 - [ ] `FSCTL_READ_USN_JOURNAL(hVol, data, out_buf, buf_len)` → read records starting from `data.StartUsn`; fill `FILE_NOTIFY_INFORMATION`-compatible structures; return bytes read
 - [ ] `FSCTL_DELETE_USN_JOURNAL` → zero the region; reset `s_usn_current = 0`
-- [ ] Commit: `"ixfs: USN change journal — circular 32B records, 5 reason codes, FSCTL_QUERY/READ_USN_JOURNAL, persists on reboot"`
+- [ ] Commit: `"ixfs: USN change journal -- circular 32B records, 5 reason codes, FSCTL_QUERY/READ_USN_JOURNAL, persists on reboot"`
 
 ## 12. Volume Quotas `[Sonnet]`
 
@@ -261,7 +261,7 @@ Quota table in reserved blocks. `ixfs_alloc_block` checks limit. `STATUS_DISK_FU
 - [ ] `FSCTL_GET_VOLUME_QUOTA(hVol, uid, &entry)` → read entry from `vol->quota[]`
 - [ ] `FSCTL_SET_VOLUME_QUOTA(hVol, uid, limit_bytes)` → convert to blocks; write entry; persist; return STATUS_SUCCESS
 - [ ] Disk Manager quota panel: list all users with quotas; "Add/Edit" button; "Remove" button; shows used vs. limit bar chart per user
-- [ ] Commit: `"ixfs: volume quotas — quota table, ixfs_alloc check, STATUS_DISK_FULL, FSCTL_GET/SET_VOLUME_QUOTA"`
+- [ ] Commit: `"ixfs: volume quotas -- quota table, ixfs_alloc check, STATUS_DISK_FULL, FSCTL_GET/SET_VOLUME_QUOTA"`
 
 ## 13. Filesystem-Native Storage Tiering `[Opus]`
 
@@ -279,7 +279,7 @@ Multi-device IXFS volume with SSD fast tier + HDD capacity tier. Background prom
 - [ ] `i_access_count` decay: midnight kernel timer: for each mounted IXFS volume, walk inodes; `i_access_count >>= 1`
 - [ ] Registry thresholds: `HKLM\SYSTEM\Storage\IXFS\TierPromoteThreshold` (default 100); `TierDemoteDays` (default 7)
 - [ ] Disk Manager tier config: list tiers (SSD/HDD, size, used, hot/cold file counts); "Add Tier" (attach new blkdev); migration progress bar during background migration
-- [ ] Commit: `"ixfs: storage tiering — SSD/HDD multi-device, promote/demote background thread, Disk Manager panel"`
+- [ ] Commit: `"ixfs: storage tiering -- SSD/HDD multi-device, promote/demote background thread, Disk Manager panel"`
 
 ## 14. Volume Health Dashboard `[Sonnet]`
 
@@ -294,7 +294,7 @@ Disk Manager panel with superblock health, journal state, checksum failures, fra
 - [ ] Disk Manager panel: top status line `● Healthy / ⚠ Needs Attention / ✖ Critical` with colour; stats grid; one-click actions: "Scrub" → `ixfs_scrub()`; "Defragment" → `ixfs_defrag_file()` all; "Create Snapshot" → `ixfs_snapshot_create(manual_name)`; "Repair" → attempt superblock restore + journal replay
 - [ ] Auto-refresh: panel polls `ixfs_health_query()` every 10 s; update displayed values
 - [ ] AHCI SMART integration: if `blkdev_smart_query(dev)` available (TODO-01 §5): show temperature + reallocated sector count in the panel
-- [ ] Commit: `"desktop: IXFS volume health dashboard — stats, health score, one-click scrub/defrag/snapshot/repair"`
+- [ ] Commit: `"desktop: IXFS volume health dashboard -- stats, health score, one-click scrub/defrag/snapshot/repair"`
 
 ## 15. Comprehensive Test Suite `[Sonnet]`
 
@@ -310,7 +310,7 @@ Extend `ixfs_test.c` to cover every feature from TODO-06 and TODO-07. Journal re
 - [ ] `ixfs_test_run_all()`: call all test functions; count failures; log summary `[IXFS-TEST] %u/%u tests passed`
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
 - [ ] QEMU boot: serial log shows `[IXFS-TEST] 35/35 tests passed` (or however many tests total)
-- [ ] Commit: `"test: IXFS comprehensive test suite — all features covered, journal recovery, QEMU verified"`
+- [ ] Commit: `"test: IXFS comprehensive test suite -- all features covered, journal recovery, QEMU verified"`
 
 ---
 
@@ -319,22 +319,22 @@ Extend `ixfs_test.c` to cover every feature from TODO-06 and TODO-07. Journal re
 
 | ⭐ | Feature                                                  | 🪟 Win11                                                          | 🐧 Linux                                                                       | 🚀 Impossible OS                                                               |
 |----|----------------------------------------------------------|----------------------------------------------------------------|-----------------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| 💎 | Sparse files                                             | ✅ NTFS sparse; `FSCTL_SET_SPARSE`; `DeviceIoControl`          | ✅ All major FS; `lseek(SEEK_HOLE/DATA)`; `fallocate(FALLOC_FL_PUNCH_HOLE)` | ⬜ §1 — hole extent type in extent                                          |
-| ⭐ | Real-time journal-batched TRIM + SSD auto-detect         | ⚠️ NTFS TRIM: scheduled once/week by                           | ⚠️ `ext4` `discard` mount flag real-time,                                   | ⬜ §2 — batched in txn commit, coalesced,                                   |
-| ⭐ | Transparent per-file LZ4/Zstd compression, 10% cost gate | ⚠️ NTFS uses LZ77 (1993) per-cluster;                          | ✅ Btrfs (LZ4/Zstd/LZO); `ext4` no compression;                             | ⬜ §3 — per-4KiB unit, LZ4+Zstd selectable per-file,                        |
-| ⭐ | Inline dedup reusing CoW refcounts                       | ❌ No inline dedup in NTFS;                                    | ✅ Btrfs inline dedup (experimental, high                                   | ⬜ §4 — xxHash64, byte-compare confirm, reuses CoW                          |
-| ⭐ | Reflink instant copy via `CopyFileW` same-volume hook    | ⚠️ NTFS block cloning (`FSCTL_DUPLICATE_EXTENTS_TO_FILE`) only | ✅ Btrfs/XFS reflink via `FICLONE` ioctl;                                   | ⬜ §5 — O(1) `ixfs_reflink()` hooked transparently into                     |
-| ⭐ | Online in-filesystem defrag                              | ✅ NTFS `Defragment` via `defrag.exe` +                        | ✅ `e4defrag`; `btrfs balance`; not in-FS                                   | ⬜ §6 — `ixfs_defrag_file()`, IDLE background thread, CoW-refcount-aware    |
-| ⭐ | Online volume grow                                       | ✅ NTFS online grow via Disk                                   | ✅ `resize2fs -f` (online for ext4);                                        | ⬜ §7 — `ixfs_grow()`, bitmap extension, journal-protected superblock       |
-| ⭐ | Self-healing                                             | ❌ NTFS no self-heal; requires `chkdsk                         | ⚠️ `ext4` has journal replay but                                            | ⬜ §8 — backup SB at last block,                                            |
-| ⭐ | Auto snapshots                                           | ⚠️ VSS: separate `vssvc.exe` service, unreliable,              | ⚠️ Btrfs: `snapper` daemon (user-space script);                             | ⬜ §9 — in-kernel schedule, 24h/7d/4w retention, Explorer                   |
-| ⭐ | Per-file AES-256-XTS encryption with PBKDF2              | ⚠️ NTFS EFS: certificate-based, breaks on                      | ⚠️ `ext4` fscrypt: requires CLI key                                         | ⬜ §10 — `ixfs_encrypt.c`, PBKDF2 master key, per-block                     |
-| ⭐ | USN journal persisted across reboots                     | ✅ NTFS `$UsnJrnl` in `$Extend`; full                          | ❌ `inotify`/`fanotify` are in-memory only; lost                            | ⬜ §11 — reserved-region circular buffer, 32B records,                      |
-| 💎 | Volume quotas                                            | ✅ NTFS quotas via `fsutil quota`;                             | ✅ `ext4`/`xfs` quotas; `quota`/`repquota` tools; per-user+group            | ⬜ §12 — `ixfs_quota.c`, in-alloc check, `FSCTL_GET/SET_VOLUME_QUOTA`, Disk |
-| ⭐ | Filesystem-native storage tiering (SSD/HDD)              | ❌ Windows Storage Spaces (separate volume                     | ❌ bcache/dm-cache (block-level, not filesystem-aware); no                  | ⬜ §13 — multi-device superblock, access-count promote/demote, CoW-safe     |
-| ⭐ | Volume health dashboard                                  | ⚠️ Disk Management: basic; `fsutil volume`                     | ⚠️ `smartmontools`; `btrfs scrub status`; no                                | ⬜ §14 — Disk Manager panel, health score,                                  |
+| 💎 | Sparse files                                             | ✅ NTFS sparse; `FSCTL_SET_SPARSE`; `DeviceIoControl`          | ✅ All major FS; `lseek(SEEK_HOLE/DATA)`; `fallocate(FALLOC_FL_PUNCH_HOLE)` | ⬜ §1 -- hole extent type in extent                                          |
+| ⭐ | Real-time journal-batched TRIM + SSD auto-detect         | ⚠️ NTFS TRIM: scheduled once/week by                           | ⚠️ `ext4` `discard` mount flag real-time,                                   | ⬜ §2 -- batched in txn commit, coalesced,                                   |
+| ⭐ | Transparent per-file LZ4/Zstd compression, 10% cost gate | ⚠️ NTFS uses LZ77 (1993) per-cluster;                          | ✅ Btrfs (LZ4/Zstd/LZO); `ext4` no compression;                             | ⬜ §3 -- per-4KiB unit, LZ4+Zstd selectable per-file,                        |
+| ⭐ | Inline dedup reusing CoW refcounts                       | ❌ No inline dedup in NTFS;                                    | ✅ Btrfs inline dedup (experimental, high                                   | ⬜ §4 -- xxHash64, byte-compare confirm, reuses CoW                          |
+| ⭐ | Reflink instant copy via `CopyFileW` same-volume hook    | ⚠️ NTFS block cloning (`FSCTL_DUPLICATE_EXTENTS_TO_FILE`) only | ✅ Btrfs/XFS reflink via `FICLONE` ioctl;                                   | ⬜ §5 -- O(1) `ixfs_reflink()` hooked transparently into                     |
+| ⭐ | Online in-filesystem defrag                              | ✅ NTFS `Defragment` via `defrag.exe` +                        | ✅ `e4defrag`; `btrfs balance`; not in-FS                                   | ⬜ §6 -- `ixfs_defrag_file()`, IDLE background thread, CoW-refcount-aware    |
+| ⭐ | Online volume grow                                       | ✅ NTFS online grow via Disk                                   | ✅ `resize2fs -f` (online for ext4);                                        | ⬜ §7 -- `ixfs_grow()`, bitmap extension, journal-protected superblock       |
+| ⭐ | Self-healing                                             | ❌ NTFS no self-heal; requires `chkdsk                         | ⚠️ `ext4` has journal replay but                                            | ⬜ §8 -- backup SB at last block,                                            |
+| ⭐ | Auto snapshots                                           | ⚠️ VSS: separate `vssvc.exe` service, unreliable,              | ⚠️ Btrfs: `snapper` daemon (user-space script);                             | ⬜ §9 -- in-kernel schedule, 24h/7d/4w retention, Explorer                   |
+| ⭐ | Per-file AES-256-XTS encryption with PBKDF2              | ⚠️ NTFS EFS: certificate-based, breaks on                      | ⚠️ `ext4` fscrypt: requires CLI key                                         | ⬜ §10 -- `ixfs_encrypt.c`, PBKDF2 master key, per-block                     |
+| ⭐ | USN journal persisted across reboots                     | ✅ NTFS `$UsnJrnl` in `$Extend`; full                          | ❌ `inotify`/`fanotify` are in-memory only; lost                            | ⬜ §11 -- reserved-region circular buffer, 32B records,                      |
+| 💎 | Volume quotas                                            | ✅ NTFS quotas via `fsutil quota`;                             | ✅ `ext4`/`xfs` quotas; `quota`/`repquota` tools; per-user+group            | ⬜ §12 -- `ixfs_quota.c`, in-alloc check, `FSCTL_GET/SET_VOLUME_QUOTA`, Disk |
+| ⭐ | Filesystem-native storage tiering (SSD/HDD)              | ❌ Windows Storage Spaces (separate volume                     | ❌ bcache/dm-cache (block-level, not filesystem-aware); no                  | ⬜ §13 -- multi-device superblock, access-count promote/demote, CoW-safe     |
+| ⭐ | Volume health dashboard                                  | ⚠️ Disk Management: basic; `fsutil volume`                     | ⚠️ `smartmontools`; `btrfs scrub status`; no                                | ⬜ §14 -- Disk Manager panel, health score,                                  |
 
-> **After §1–15:** IXFS is the only general-purpose filesystem with all of: transparent per-file compression (LZ4+Zstd), inline dedup reusing CoW refs, reflinks exposed as standard `CopyFileW`, per-file AES-256-XTS without certificate infrastructure, filesystem-native storage tiering, a persistent USN journal, and self-healing metadata — all in one volume, all journaled, all CoW-safe, all accessible via the standard Win32 API surface. The nearest competitor for feature breadth is ZFS, which requires 300+ MiB RAM overhead and a pool layer; IXFS achieves comparable features at a fraction of the RAM cost by reusing the CoW refcount table for both snapshots, dedup, and reflinks rather than maintaining three separate data structures.
+> **After §1–15:** IXFS is the only general-purpose filesystem with all of: transparent per-file compression (LZ4+Zstd), inline dedup reusing CoW refs, reflinks exposed as standard `CopyFileW`, per-file AES-256-XTS without certificate infrastructure, filesystem-native storage tiering, a persistent USN journal, and self-healing metadata -- all in one volume, all journaled, all CoW-safe, all accessible via the standard Win32 API surface. The nearest competitor for feature breadth is ZFS, which requires 300+ MiB RAM overhead and a pool layer; IXFS achieves comparable features at a fraction of the RAM cost by reusing the CoW refcount table for both snapshots, dedup, and reflinks rather than maintaining three separate data structures.
 
 ## Verification
 
@@ -354,4 +354,4 @@ Extend `ixfs_test.c` to cover every feature from TODO-06 and TODO-07. Journal re
 - [ ] Tiering: promote test: set `i_access_count = 200` (above threshold); tier thread fires → block migrated to SSD tier; `i_tier_id` updated
 - [ ] Health dashboard: shows all stats; "Scrub" button runs `ixfs_scrub()`; "Create Snapshot" button works; health score changes to "Needs Attention" after injected checksum failure
 - [ ] `ixfs_test.c` suite: `[IXFS-TEST] N/N tests passed` in QEMU serial log; N ≥ 35
-- [ ] Commit: `"ixfs: advanced enterprise features — compression, dedup, reflinks, encrypt, tiering, USN, quotas, health"`
+- [ ] Commit: `"ixfs: advanced enterprise features -- compression, dedup, reflinks, encrypt, tiering, USN, quotas, health"`

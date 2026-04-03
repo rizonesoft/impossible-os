@@ -1,21 +1,21 @@
-# TODO-10 — PDF Viewer & Document Reader
+# TODO-10 -- PDF Viewer & Document Reader
 
 > **Goal:** Build a full PDF viewer: structure parser (xref, trailer, object streams), object model with stream decompression (FlateDecode/LZW/ASCII85), page tree walker, content stream interpreter (graphics + text operators), embedded font rendering via stb_truetype, image rendering (FlateDecode + DCTDecode via stb_image), page rasterizer compositing text+graphics+images, a scrollable viewer app with zoom/navigation/text search, HTTP-fetched PDF streaming, and an AcroForm stub. The PDF viewer is the standard document format reader required by every desktop OS.
 
 > [!IMPORTANT]
-> `stbi_zlib_decode_buffer()` from `include/stb_image.h` is the FlateDecode decompressor — no separate miniz port is needed. `stbi_load_from_memory()` handles DCTDecode (JPEG streams in PDF). `stbtt_PackFontRange()` + `stbtt_GetPackedQuad()` from `include/stb_truetype.h` render embedded TrueType fonts. `fb_blit(dst_x, dst_y, ...)` from `include/kernel/drivers/framebuffer.h` composites pixel buffers to screen. All page render buffers > 4 KB use `pmm_alloc_contiguous()`. The sections build as a strict dependency chain: structure parser → object model → page tree → content stream → fonts + images → page renderer → viewer app. Do not start any section until the section it depends on passes its verification step.
+> `stbi_zlib_decode_buffer()` from `include/stb_image.h` is the FlateDecode decompressor -- no separate miniz port is needed. `stbi_load_from_memory()` handles DCTDecode (JPEG streams in PDF). `stbtt_PackFontRange()` + `stbtt_GetPackedQuad()` from `include/stb_truetype.h` render embedded TrueType fonts. `fb_blit(dst_x, dst_y, ...)` from `include/kernel/drivers/framebuffer.h` composites pixel buffers to screen. All page render buffers > 4 KB use `pmm_alloc_contiguous()`. The sections build as a strict dependency chain: structure parser → object model → page tree → content stream → fonts + images → page renderer → viewer app. Do not start any section until the section it depends on passes its verification step.
 
 ## Inputs
 
-- `include/stb_image.h` — `stbi_zlib_decode_buffer(out, olen, in, ilen)` for FlateDecode; `stbi_load_from_memory(data, len, &w, &h, &ch, 4)` for DCTDecode (JPEG) and PNG image XObjects
-- `include/stb_truetype.h` — `stbtt_InitFont()`, `stbtt_PackFontRange()`, `stbtt_GetPackedQuad()`, `stbtt_ScaleForPixelHeight()` for embedded TrueType font rendering
-- `include/kernel/drivers/framebuffer.h` — `fb_blit(dst_x, dst_y, src, src_w, src_h, stride)` for compositing rasterized pages to screen
-- `include/kernel/image.h` — `image_t`, `image_load_mem()`, `image_scale()` for auxiliary image handling
-- `include/desktop/wm.h` + `include/desktop/controls.h` — `wm_create_window()`, `ctrl_create_button/scrollbar/textbox`, `ctrl_draw_all()` for viewer app UI
-- `src/kernel/net/http.c` (TODO-03) — `https_get(url, buf, max)` for §9 HTTP-fetched PDF streaming
-- `src/kernel/fs/vfs.c` — `vfs_open()`/`vfs_read()` for opening local `.pdf` files
-- → XREF: `06-networking/TODO-03-http-tls.md` — `https_get()` prerequisite for §9 PDF-from-HTTP
-- → XREF: `06-networking/TODO-07-web-browser.md` — §9 connects the browser's "Open PDF" flow to `pdfview_open_url()`; browser calls viewer directly rather than saving to disk
+- `include/stb_image.h` -- `stbi_zlib_decode_buffer(out, olen, in, ilen)` for FlateDecode; `stbi_load_from_memory(data, len, &w, &h, &ch, 4)` for DCTDecode (JPEG) and PNG image XObjects
+- `include/stb_truetype.h` -- `stbtt_InitFont()`, `stbtt_PackFontRange()`, `stbtt_GetPackedQuad()`, `stbtt_ScaleForPixelHeight()` for embedded TrueType font rendering
+- `include/kernel/drivers/framebuffer.h` -- `fb_blit(dst_x, dst_y, src, src_w, src_h, stride)` for compositing rasterized pages to screen
+- `include/kernel/image.h` -- `image_t`, `image_load_mem()`, `image_scale()` for auxiliary image handling
+- `include/desktop/wm.h` + `include/desktop/controls.h` -- `wm_create_window()`, `ctrl_create_button/scrollbar/textbox`, `ctrl_draw_all()` for viewer app UI
+- `src/kernel/net/http.c` (TODO-03) -- `https_get(url, buf, max)` for §9 HTTP-fetched PDF streaming
+- `src/kernel/fs/vfs.c` -- `vfs_open()`/`vfs_read()` for opening local `.pdf` files
+- → XREF: `06-networking/TODO-03-http-tls.md` -- `https_get()` prerequisite for §9 PDF-from-HTTP
+- → XREF: `06-networking/TODO-07-web-browser.md` -- §9 connects the browser's "Open PDF" flow to `pdfview_open_url()`; browser calls viewer directly rather than saving to disk
 
 ## Outcome
 
@@ -31,16 +31,16 @@
 
 | ⭐  | Order | Deliverable                                                                                      | Depends On                                                           | Status |
 | --- | :---: | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 PDF structure parser — `%PDF` header, xref table, trailer, incremental updates, object streams | `vfs_read()` only; standalone parser                                |  [ ]   |
-| 💎  |   2   | §2 Object model — indirect ref resolver, stream decompressor, dict/array/string type system     | §1 (raw bytes + xref offsets needed to locate objects)               |  [ ]   |
-| 💎  |   3   | §3 Page tree — catalog → Pages, MediaBox, Contents stream, recursive Kids                       | §2 (dict/array deref needed to traverse page tree)                   |  [ ]   |
-| 💎  |   4   | §4 Content stream interpreter — text operators (BT/ET/Tf/Td/Tj), path (m/l/S/f), state (q/Q/cm) | §3 (page dict provides Contents stream obj IDs)                     |  [ ]   |
-| 💎  |   5   | §5 Font handling — embedded TrueType/Type1, ToUnicode CMap, stb_truetype render, system fallback | §4 (Tf operator is the font context for text rendering)              |  [ ]   |
-| 💎  |   6   | §6 Image rendering — XObject images + inline, FlateDecode+DCTDecode, CMYK→RGB, fb_blit         | §4 (Do operator invokes image XObject); §2 (stream decompression)    |  [ ]   |
-| 💎  |   7   | §7 Page renderer — rasterize to bitmap, composite text+graphics+images, DPI scaling             | §5 fonts + §6 images (all content types must render before compositor) |  [ ]   |
-| 💎  |   8   | §8 PDF viewer app — scroll, zoom, navigation, thumbnail sidebar, text search, print            | §7 (renderer must produce pixel buffers before viewer can display)   |  [ ]   |
-| 💎  |   9   | §9 PDF from HTTP — `https_get` pipe to viewer, pdf:/https: URL, no disk write                  | §8 (viewer app must be ready to accept in-memory buffer); TODO-03    |  [ ]   |
-| 💎  |  10   | §10 PDF forms stub — AcroForm detection, field widgets, FDF/XFDF export                        | §8 viewer (form fields rendered as overlay on top of page bitmap)    |  [ ]   |
+| 💎  |   1   | §1 PDF structure parser -- `%PDF` header, xref table, trailer, incremental updates, object streams | `vfs_read()` only; standalone parser                                |  [ ]   |
+| 💎  |   2   | §2 Object model -- indirect ref resolver, stream decompressor, dict/array/string type system     | §1 (raw bytes + xref offsets needed to locate objects)               |  [ ]   |
+| 💎  |   3   | §3 Page tree -- catalog → Pages, MediaBox, Contents stream, recursive Kids                       | §2 (dict/array deref needed to traverse page tree)                   |  [ ]   |
+| 💎  |   4   | §4 Content stream interpreter -- text operators (BT/ET/Tf/Td/Tj), path (m/l/S/f), state (q/Q/cm) | §3 (page dict provides Contents stream obj IDs)                     |  [ ]   |
+| 💎  |   5   | §5 Font handling -- embedded TrueType/Type1, ToUnicode CMap, stb_truetype render, system fallback | §4 (Tf operator is the font context for text rendering)              |  [ ]   |
+| 💎  |   6   | §6 Image rendering -- XObject images + inline, FlateDecode+DCTDecode, CMYK→RGB, fb_blit         | §4 (Do operator invokes image XObject); §2 (stream decompression)    |  [ ]   |
+| 💎  |   7   | §7 Page renderer -- rasterize to bitmap, composite text+graphics+images, DPI scaling             | §5 fonts + §6 images (all content types must render before compositor) |  [ ]   |
+| 💎  |   8   | §8 PDF viewer app -- scroll, zoom, navigation, thumbnail sidebar, text search, print            | §7 (renderer must produce pixel buffers before viewer can display)   |  [ ]   |
+| 💎  |   9   | §9 PDF from HTTP -- `https_get` pipe to viewer, pdf:/https: URL, no disk write                  | §8 (viewer app must be ready to accept in-memory buffer); TODO-03    |  [ ]   |
+| 💎  |  10   | §10 PDF forms stub -- AcroForm detection, field widgets, FDF/XFDF export                        | §8 viewer (form fields rendered as overlay on top of page bitmap)    |  [ ]   |
 
 ---
 
@@ -51,9 +51,9 @@
 **Files:** `src/apps/pdfview/pdf_parser.c` (new), `include/apps/pdfview/pdf.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` — PDF xref parsing has multiple quirky edge cases: (1) cross-reference **tables** (traditional: `xref\n N F\n` sections with 20-byte entries each); (2) cross-reference **streams** (PDF 1.5: a compressed stream object at `startxref` with `W` array specifying field widths); (3) **incremental updates**: each revision appends a new xref + trailer; chain via `Prev` offsets in trailer dict. Algorithm: start at file end; scan backward for `startxref`; read offset; seek to offset; determine `xref` table or stream; if table: parse sections; if stream: decompress and parse per `W` field widths; merge into global `xref_table[MAX_OBJECTS]`. Object stream (`ObjStm`): a compressed stream containing multiple objects concatenated; parse the `N` and `First` fields for offset table; objects are stored compressed and resolved lazily. Max objects: 32768 initial (expand with `pmm_alloc_contiguous` if needed).
+> This is `[Opus]` -- PDF xref parsing has multiple quirky edge cases: (1) cross-reference **tables** (traditional: `xref\n N F\n` sections with 20-byte entries each); (2) cross-reference **streams** (PDF 1.5: a compressed stream object at `startxref` with `W` array specifying field widths); (3) **incremental updates**: each revision appends a new xref + trailer; chain via `Prev` offsets in trailer dict. Algorithm: start at file end; scan backward for `startxref`; read offset; seek to offset; determine `xref` table or stream; if table: parse sections; if stream: decompress and parse per `W` field widths; merge into global `xref_table[MAX_OBJECTS]`. Object stream (`ObjStm`): a compressed stream containing multiple objects concatenated; parse the `N` and `First` fields for offset table; objects are stored compressed and resolved lazily. Max objects: 32768 initial (expand with `pmm_alloc_contiguous` if needed).
 
-- [ ] `pdf_xref_entry_t { uint64_t offset; uint16_t gen; uint8_t type; }` — type: `IN_USE=1`, `FREE=0`, `IN_STREAM=2` (for ObjStm objects); in `pdf.h`
+- [ ] `pdf_xref_entry_t { uint64_t offset; uint16_t gen; uint8_t type; }` -- type: `IN_USE=1`, `FREE=0`, `IN_STREAM=2` (for ObjStm objects); in `pdf.h`
 - [ ] `pdf_doc_t { uint8_t *data; size_t len; pdf_xref_entry_t *xref; uint32_t xref_size; pdf_dict_t *trailer; uint8_t version_major, version_minor; }` in `pdf.h`
 - [ ] `pdf_parse_header(doc)` → 0 or -EINVAL: find `%PDF-` in first 1 KiB; extract major.minor version
 - [ ] `pdf_find_startxref(doc)` → file offset: scan last 1 KiB of file for `startxref\r\n` or `startxref\n`; parse offset integer
@@ -63,7 +63,7 @@
 - [ ] `pdf_parse_trailer(doc, trailer_offset)` → dict: parse `trailer\n<<...>>` block or stream dict
 - [ ] `pdf_open(path, &doc)` → 0 or -errno: `vfs_open(path)`; `vfs_read()` full file into `pmm_alloc_contiguous()` buffer; `pdf_parse_header()`; `pdf_find_startxref()`; `pdf_load_xref()`; `pdf_parse_trailer()`
 - [ ] Log: `[PDF] Version %u.%u, %u objects, xref type=%s`
-- [ ] Commit: `"apps/pdf: structure parser — xref table+stream, trailer, incremental updates, ObjStm index"`
+- [ ] Commit: `"apps/pdf: structure parser -- xref table+stream, trailer, incremental updates, ObjStm index"`
 
 ## 2. Object Model `[Opus]`
 
@@ -72,11 +72,11 @@ Indirect object resolver (`N G obj … endobj`). Stream decompressor: FlateDecod
 **Files:** `src/apps/pdfview/pdf_objects.c` (new), `include/apps/pdfview/pdf.h` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — the PDF object model requires a recursive parser for nested dicts, arrays, and indirect references with no fixed depth limit (legitimate PDFs nest arrays 10+ levels deep). **Token types**: `<<…>>` dict, `[…]` array, `(…)` string (with octal + `\n\r\t\b\f\\()` escapes), `<hex>` hex string, `/name` name, `N G R` indirect ref, integer, real, `true`/`false`/`null`. **Deref chain**: `pdf_get_object(doc, id)` → look up `xref[id].offset` → seek to offset → parse `id gen obj … endobj`; if the value is another `R` ref: recurse; cap depth at 16 to prevent loops. **Stream decompression**: after parsing stream dict: read `Length` (possibly itself an indirect ref); read raw stream bytes; check `/Filter` — may be an array of filters to apply in sequence; decompress using the correct decoder; return decompressed bytes. FlateDecode: `stbi_zlib_decode_buffer(out, olen, src+2, len-2)` (skip 2-byte zlib header). LZWDecode: implement LZW decompressor (used in older PDFs and TIFF images); ~100 lines. ASCII85: `~>` terminus; 5-char groups → 4 bytes. ASCIIHex: `>` terminus; two-hex-digit pairs.
+> This is `[Opus]` -- the PDF object model requires a recursive parser for nested dicts, arrays, and indirect references with no fixed depth limit (legitimate PDFs nest arrays 10+ levels deep). **Token types**: `<<…>>` dict, `[…]` array, `(…)` string (with octal + `\n\r\t\b\f\\()` escapes), `<hex>` hex string, `/name` name, `N G R` indirect ref, integer, real, `true`/`false`/`null`. **Deref chain**: `pdf_get_object(doc, id)` → look up `xref[id].offset` → seek to offset → parse `id gen obj … endobj`; if the value is another `R` ref: recurse; cap depth at 16 to prevent loops. **Stream decompression**: after parsing stream dict: read `Length` (possibly itself an indirect ref); read raw stream bytes; check `/Filter` -- may be an array of filters to apply in sequence; decompress using the correct decoder; return decompressed bytes. FlateDecode: `stbi_zlib_decode_buffer(out, olen, src+2, len-2)` (skip 2-byte zlib header). LZWDecode: implement LZW decompressor (used in older PDFs and TIFF images); ~100 lines. ASCII85: `~>` terminus; 5-char groups → 4 bytes. ASCIIHex: `>` terminus; two-hex-digit pairs.
 
 - [ ] `pdf_value_t` union + tag enum: `PDF_NULL, PDF_BOOL, PDF_INT, PDF_REAL, PDF_STRING, PDF_NAME, PDF_ARRAY, PDF_DICT, PDF_REF, PDF_STREAM` in `pdf.h`
 - [ ] `pdf_dict_t { pdf_kv_t entries[64]; int count; }` and `pdf_array_t { pdf_value_t *items; int count; }` (items via `kmalloc` up to 64; larger via `pmm_alloc_contiguous`)
-- [ ] `pdf_stream_t { pdf_dict_t *dict; uint8_t *data; size_t len; uint8_t *raw; size_t raw_len; }` — `data` is decompressed; `raw` is original bytes
+- [ ] `pdf_stream_t { pdf_dict_t *dict; uint8_t *data; size_t len; uint8_t *raw; size_t raw_len; }` -- `data` is decompressed; `raw` is original bytes
 - [ ] `pdf_parse_token(src, pos, end, &val)` → new_pos: recursive descent tokenizer; handle all PDF token types; return `pdf_value_t`
 - [ ] `pdf_parse_dict(src, pos, end, &dict)` → new_pos: `<<` → parse key/value pairs until `>>`
 - [ ] `pdf_parse_array(src, pos, end, &arr)` → new_pos: `[` → parse values until `]`
@@ -85,7 +85,7 @@ Indirect object resolver (`N G obj … endobj`). Stream decompressor: FlateDecod
 - [ ] `pdf_decompress_stream(stream, filter_name)` → 0 or -errno: `"FlateDecode"` → `stbi_zlib_decode_buffer()`; `"LZWDecode"` → lzw_decode(); `"ASCII85Decode"` → ascii85_decode(); `"ASCIIHexDecode"` → hex_decode()
 - [ ] `pdf_get_stream_data(doc, stream_dict, &data, &len)`: resolve Length; read raw; apply filter chain from `/Filter` (single name or array)
 - [ ] `pdf_dict_get(dict, key)` → `pdf_value_t*`: case-sensitive key lookup; return NULL if absent
-- [ ] Commit: `"apps/pdf: object model — indirect resolver, FlateDecode/LZW/ASCII85 decompressor, type system"`
+- [ ] Commit: `"apps/pdf: object model -- indirect resolver, FlateDecode/LZW/ASCII85 decompressor, type system"`
 
 ## 3. Page Tree `[Sonnet]`
 
@@ -94,7 +94,7 @@ Catalog → Pages node → recursive Kids traversal. Page count. Page dict: Medi
 **Files:** `src/apps/pdfview/pdf_pages.c` (new)
 
 > [!NOTE]
-> Page tree walk: `Catalog` dict (obj ID from `trailer[Root]`) → `Pages` dict (type=Pages) → `Count` (total pages) + `Kids` array (child page or Pages node IDs). `Kids` entries are either `Pages` nodes (recurse) or `Page` nodes (leaf). Efficient random access: build a flat `page_map[page_count]` array of page dict object IDs during open; `pdf_get_page(doc, n)` = `pdf_get_object(doc, page_map[n])`. Inherited attributes: MediaBox, Resources, Rotate can be on parent Pages node; if absent on Page: walk up via `Parent` ref until found. MediaBox: `[x0 y0 x1 y1]` — PDF coordinate origin is bottom-left; viewer must flip Y. Content stream: `/Contents` may be a single stream ref or an array of stream refs; concatenate all into one logical stream before interpretation.
+> Page tree walk: `Catalog` dict (obj ID from `trailer[Root]`) → `Pages` dict (type=Pages) → `Count` (total pages) + `Kids` array (child page or Pages node IDs). `Kids` entries are either `Pages` nodes (recurse) or `Page` nodes (leaf). Efficient random access: build a flat `page_map[page_count]` array of page dict object IDs during open; `pdf_get_page(doc, n)` = `pdf_get_object(doc, page_map[n])`. Inherited attributes: MediaBox, Resources, Rotate can be on parent Pages node; if absent on Page: walk up via `Parent` ref until found. MediaBox: `[x0 y0 x1 y1]` -- PDF coordinate origin is bottom-left; viewer must flip Y. Content stream: `/Contents` may be a single stream ref or an array of stream refs; concatenate all into one logical stream before interpretation.
 
 - [ ] `pdf_page_t { uint32_t dict_obj_id; float media_box[4]; int rotate; uint32_t resources_obj_id; uint32_t *content_obj_ids; int content_count; }` in `pdf.h`
 - [ ] `pdf_build_page_map(doc)`: DFS page tree from `Catalog` → `Pages`; append each `Page` leaf's obj_id to `doc->page_map[]`; allocate via `pmm_alloc_contiguous()` if `page_count > 1024`
@@ -102,7 +102,7 @@ Catalog → Pages node → recursive Kids traversal. Page count. Page dict: Medi
 - [ ] `pdf_get_contents_stream(doc, page, &buf, &len)` → 0 or -errno: if single ref: `pdf_get_stream_data()`; if array: concatenate all stream data into one buffer (`pmm_alloc_contiguous()`)
 - [ ] `pdf_get_resources(doc, page)` → `pdf_dict_t*`: resolve Resources dict (possibly inherited)
 - [ ] Log: `[PDF] Page count=%u, page 0: MediaBox=[%.0f %.0f %.0f %.0f]`
-- [ ] Commit: `"apps/pdf: page tree — catalog/Pages walk, page_map[], MediaBox, Resources, Contents concat"`
+- [ ] Commit: `"apps/pdf: page tree -- catalog/Pages walk, page_map[], MediaBox, Resources, Contents concat"`
 
 ## 4. Content Stream Interpreter `[Opus]`
 
@@ -111,7 +111,7 @@ Parse and execute PDF graphics operators from the page content stream. Text stat
 **Files:** `src/apps/pdfview/pdf_interp.c` (new), `include/apps/pdfview/pdf_interp.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` — the PDF content stream interpreter is a novel virtual machine: it maintains a graphics state stack (CTM, color, line width, font, text position) and dispatches 50+ named operators. The coordinate system is PDF user space (origin bottom-left, Y increases up) — all drawn primitives must be transformed to screen space (Y-flip: `screen_y = page_h - pdf_y`). **CTM (Current Transformation Matrix)**: 3×2 affine matrix `[a b c d e f]`; `cm` post-multiplies the CTM; `q` pushes a copy; `Q` pops. Text position: maintained as `(tx, ty)` in text space; `Td` translates by (dx, dy); `Tm` sets an absolute matrix; `T*` advances one line. **Operator dispatch**: scan the token stream; push non-operator tokens onto operand stack; on operator name: dispatch to handler function with stack contents. Operand stack: max 8 entries (`pdf_value_t stack[8]`). Unknown operators: log + skip.
+> This is `[Opus]` -- the PDF content stream interpreter is a novel virtual machine: it maintains a graphics state stack (CTM, color, line width, font, text position) and dispatches 50+ named operators. The coordinate system is PDF user space (origin bottom-left, Y increases up) -- all drawn primitives must be transformed to screen space (Y-flip: `screen_y = page_h - pdf_y`). **CTM (Current Transformation Matrix)**: 3×2 affine matrix `[a b c d e f]`; `cm` post-multiplies the CTM; `q` pushes a copy; `Q` pops. Text position: maintained as `(tx, ty)` in text space; `Td` translates by (dx, dy); `Tm` sets an absolute matrix; `T*` advances one line. **Operator dispatch**: scan the token stream; push non-operator tokens onto operand stack; on operator name: dispatch to handler function with stack contents. Operand stack: max 8 entries (`pdf_value_t stack[8]`). Unknown operators: log + skip.
 
 - [ ] `pdf_gs_t { float ctm[6]; float color_fill[4]; float color_stroke[4]; float line_width; uint32_t font_obj_id; float font_size; float text_pos[2]; float text_matrix[6]; float char_spacing; float word_spacing; float text_leading; pdf_gs_t *prev; }` graphics state in `pdf_interp.h`
 - [ ] `pdf_interp_ctx_t { pdf_doc_t *doc; pdf_page_t *page; pdf_gs_t *gs_stack; pdf_render_buf_t *render; }` interpreter context
@@ -123,7 +123,7 @@ Parse and execute PDF graphics operators from the page content stream. Text stat
 - [ ] `op_Do(ctx, name)`: look up XObject in Resources; if `Subtype=Image` → queue image render; if `Subtype=Form` → recurse interpreter with form's content stream + its own CTM
 - [ ] `pdf_mat_multiply(a, b, out)`: 3×2 affine multiply; used by `cm` and `Tm`
 - [ ] `pdf_transform_point(ctm, x, y, &sx, &sy)`: apply CTM + Y-flip for screen coords
-- [ ] Commit: `"apps/pdf: content stream interpreter — text+path+color+XObject operators, CTM, state stack"`
+- [ ] Commit: `"apps/pdf: content stream interpreter -- text+path+color+XObject operators, CTM, state stack"`
 
 ## 5. Font Handling `[Opus]`
 
@@ -132,7 +132,7 @@ Extract embedded TrueType font programs from `/FontFile2`. Parse `ToUnicode` CMa
 **Files:** `src/apps/pdfview/pdf_font.c` (new), `include/apps/pdfview/pdf_font.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` — font handling in PDF is security-adjacent: malformed font programs can cause buffer overruns in naive parsers; use stb_truetype's safe API (it does bounds-checked reads). **Embedded TrueType** (`/FontDescriptor → /FontFile2`): extract raw TTF bytes from the stream; call `stbtt_InitFont()` on the bytes; cache `stbtt_fontinfo` keyed by font obj_id. **ToUnicode CMap**: a stream containing a series of `beginbfchar`/`endbfchar` and `beginbfrange`/`endbfrange` blocks mapping CID → Unicode; parse into a `uint16_t cmap[256]` lookup table (for simple 1-byte encoding; for 2-byte CIDFonts, a 65536-entry table via `pmm_alloc_contiguous()`). **Glyph rendering**: `stbtt_ScaleForPixelHeight(info, font_size_px)` → scale; `stbtt_GetCodepointBitmap(info, sx, sy, codepoint, &bw, &bh, &bx, &by)` → alpha bitmap; composite alpha bitmap at text position into page render buffer using current fill color. **Type1 fallback**: Type1 fonts are not directly supported — use the system fallback font. **Fallback fonts**: load `C:\Impossible\Fonts\Inter.ttf` (or Selawik) once at startup; use for any font without a valid FontFile2.
+> This is `[Opus]` -- font handling in PDF is security-adjacent: malformed font programs can cause buffer overruns in naive parsers; use stb_truetype's safe API (it does bounds-checked reads). **Embedded TrueType** (`/FontDescriptor → /FontFile2`): extract raw TTF bytes from the stream; call `stbtt_InitFont()` on the bytes; cache `stbtt_fontinfo` keyed by font obj_id. **ToUnicode CMap**: a stream containing a series of `beginbfchar`/`endbfchar` and `beginbfrange`/`endbfrange` blocks mapping CID → Unicode; parse into a `uint16_t cmap[256]` lookup table (for simple 1-byte encoding; for 2-byte CIDFonts, a 65536-entry table via `pmm_alloc_contiguous()`). **Glyph rendering**: `stbtt_ScaleForPixelHeight(info, font_size_px)` → scale; `stbtt_GetCodepointBitmap(info, sx, sy, codepoint, &bw, &bh, &bx, &by)` → alpha bitmap; composite alpha bitmap at text position into page render buffer using current fill color. **Type1 fallback**: Type1 fonts are not directly supported -- use the system fallback font. **Fallback fonts**: load `C:\Impossible\Fonts\Inter.ttf` (or Selawik) once at startup; use for any font without a valid FontFile2.
 
 - [ ] `pdf_font_t { uint32_t obj_id; stbtt_fontinfo info; uint8_t *font_data; uint16_t cmap[256]; uint8_t has_embedded; uint8_t is_type1; char base_font[64]; }` + `pdf_font_cache[16]` + `font_cache_count`
 - [ ] `pdf_font_load(doc, font_obj_id, &font)` → 0 or -errno: resolve font dict; get `/FontDescriptor → /FontFile2` stream; `stbtt_InitFont(&font->info, data, 0)`; parse ToUnicode CMap if present
@@ -141,7 +141,7 @@ Extract embedded TrueType font programs from `/FontFile2`. Parse `ToUnicode` CMa
 - [ ] `pdf_render_glyph(font, codepoint, x, y, size_px, color, render_buf)`: `stbtt_ScaleForPixelHeight()`; `stbtt_GetCodepointBitmapSubpixel()`; alpha-composite into `render_buf` at `(x, y)` with fill `color`
 - [ ] `pdf_get_font(doc, resources, font_name)` → `pdf_font_t*`: look up `/Font/<name>` in resources dict; check cache; if miss: `pdf_font_load()`; add to cache
 - [ ] Fallback font: at `pdf_init()`: load `C:\Impossible\Fonts\Inter.ttf` into global `fallback_font`; `pdf_render_glyph` falls back if `font->has_embedded == 0`
-- [ ] Commit: `"apps/pdf: font handling — FontFile2 TTF extract, ToUnicode CMap, stbtt render, fallback font"`
+- [ ] Commit: `"apps/pdf: font handling -- FontFile2 TTF extract, ToUnicode CMap, stbtt render, fallback font"`
 
 ## 6. Image Rendering `[Sonnet]`
 
@@ -150,7 +150,7 @@ Inline images and XObject images. Decompress: FlateDecode (`stbi_zlib_decode_buf
 **Files:** `src/apps/pdfview/pdf_image.c` (new)
 
 > [!NOTE]
-> PDF image types: `Subtype=Image` XObject dict with `Width`, `Height`, `ColorSpace`, `BitsPerComponent`, `Filter`. FlateDecode + DeviceRGB: decompress raw bytes; each pixel is `R G B` (3 bytes); convert to ARGB32. DCTDecode (JPEG): raw stream bytes are a valid JPEG file; `stbi_load_from_memory(stream_data, len, &w, &h, &ch, 4)` decodes to RGBA32 directly — width/height from the PDF dict must match. CMYK→RGB formula: `R = 255 × (1−C) × (1−K)`, `G = 255 × (1−M) × (1−K)`, `B = 255 × (1−Y) × (1−K)`. Coordinate transform: PDF image origin is bottom-left of the image box; apply CTM then Y-flip for screen placement. Inline images (`BI … ID … EI` operators): parse image dict inline in the content stream; decode and blit immediately. XObject images (`/Do` operator): queued by content stream interpreter (§4 `op_Do`); resolved and rendered here.
+> PDF image types: `Subtype=Image` XObject dict with `Width`, `Height`, `ColorSpace`, `BitsPerComponent`, `Filter`. FlateDecode + DeviceRGB: decompress raw bytes; each pixel is `R G B` (3 bytes); convert to ARGB32. DCTDecode (JPEG): raw stream bytes are a valid JPEG file; `stbi_load_from_memory(stream_data, len, &w, &h, &ch, 4)` decodes to RGBA32 directly -- width/height from the PDF dict must match. CMYK→RGB formula: `R = 255 × (1−C) × (1−K)`, `G = 255 × (1−M) × (1−K)`, `B = 255 × (1−Y) × (1−K)`. Coordinate transform: PDF image origin is bottom-left of the image box; apply CTM then Y-flip for screen placement. Inline images (`BI … ID … EI` operators): parse image dict inline in the content stream; decode and blit immediately. XObject images (`/Do` operator): queued by content stream interpreter (§4 `op_Do`); resolved and rendered here.
 
 - [ ] `pdf_image_t { uint32_t width, height; uint8_t *pixels; }` (ARGB32, allocated via `pmm_alloc_contiguous`)
 - [ ] `pdf_decode_image(doc, image_dict_obj_id, &img)` → 0 or -errno: get stream data; check Filter; check ColorSpace; decode accordingly; produce ARGB32 pixel buffer
@@ -159,7 +159,7 @@ Inline images and XObject images. Decompress: FlateDecode (`stbi_zlib_decode_buf
 - [ ] `pdf_decode_cmyk(data, len, w, h, &img)`: apply CMYK→RGB formula per pixel; output ARGB32
 - [ ] `pdf_render_image(ctx, img, x, y, w_pts, h_pts)`: transform `(x, y, w, h)` from PDF user space to screen pixels via CTM + Y-flip + DPI scale; `image_scale(&scaled, &src_img, screen_w, screen_h)` if dimensions differ; `fb_blit(screen_x, screen_y, scaled.pixels, screen_w, screen_h, screen_w*4)` into page render buffer
 - [ ] Inline image parser: in `pdf_interp.c` handle `BI` → parse abbreviated key/value pairs (e.g., `/CS /RGB /BPC 8`) until `ID`; read pixel data until `EI`; call `pdf_decode_*`
-- [ ] Commit: `"apps/pdf: image rendering — FlateDecode+DCT decode, CMYK→RGB, CTM transform, fb_blit"`
+- [ ] Commit: `"apps/pdf: image rendering -- FlateDecode+DCT decode, CMYK→RGB, CTM transform, fb_blit"`
 
 ## 7. Page Renderer `[Opus]`
 
@@ -168,7 +168,7 @@ Rasterize content stream to an in-memory ARGB32 bitmap at requested DPI (screen=
 **Files:** `src/apps/pdfview/pdf_render.c` (new), `include/apps/pdfview/pdf.h` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — the page compositor must maintain correct Z-order (objects drawn in content stream order) and handle alpha-compositing of text glyphs (grayscale alpha bitmaps from stb_truetype) over colored backgrounds. **Render buffer**: `uint32_t *pixels = pmm_alloc_contiguous(w * h * 4)`; initialized to white (`0xFFFFFFFF`). **DPI scaling**: PDF user space is in points (1/72 inch); at 96 DPI: `scale = 96.0 / 72.0 = 1.333`; pixel dimensions = `ceil(media_box_w × scale) × ceil(media_box_h × scale)`. **Path rendering**: after collecting path segments from `m/l/c/h` operators, rasterize using a scanline fill algorithm for filled paths and a Bresenham segment rasterizer for stroked paths. **Alpha composite for text**: `dst = src_alpha × src_color + (1 - src_alpha) × dst_color` per channel; stb_truetype glyph bitmaps are 8-bit alpha. **Bezier curves** (`c` operator): subdivide to line segments at a flatness of 0.5 px (de Casteljau subdivision).
+> This is `[Opus]` -- the page compositor must maintain correct Z-order (objects drawn in content stream order) and handle alpha-compositing of text glyphs (grayscale alpha bitmaps from stb_truetype) over colored backgrounds. **Render buffer**: `uint32_t *pixels = pmm_alloc_contiguous(w * h * 4)`; initialized to white (`0xFFFFFFFF`). **DPI scaling**: PDF user space is in points (1/72 inch); at 96 DPI: `scale = 96.0 / 72.0 = 1.333`; pixel dimensions = `ceil(media_box_w × scale) × ceil(media_box_h × scale)`. **Path rendering**: after collecting path segments from `m/l/c/h` operators, rasterize using a scanline fill algorithm for filled paths and a Bresenham segment rasterizer for stroked paths. **Alpha composite for text**: `dst = src_alpha × src_color + (1 - src_alpha) × dst_color` per channel; stb_truetype glyph bitmaps are 8-bit alpha. **Bezier curves** (`c` operator): subdivide to line segments at a flatness of 0.5 px (de Casteljau subdivision).
 
 - [ ] `pdf_render_buf_t { uint32_t *pixels; int width, height; float dpi; float scale; }` in `pdf.h`
 - [ ] `pdf_render_page(doc, page_n, dpi, &buf)` → 0 or -errno: `pdf_get_page()`; compute pixel dimensions; `pmm_alloc_contiguous(w*h*4)`; fill white; `pdf_get_contents_stream()`; `pdf_interp_run()`; return `buf`
@@ -178,7 +178,7 @@ Rasterize content stream to an in-memory ARGB32 bitmap at requested DPI (screen=
 - [ ] Bezier flatten: `bezier_flatten(p0, p1, p2, p3, segs_out[], max)` → seg_count: recursive de Casteljau with flatness test `< 0.5 px`
 - [ ] `pdf_render_free(buf)`: `pmm_free(buf.pixels, buf.width * buf.height * 4)`
 - [ ] Log: `[PDF] Rendered page %u: %ux%u at %.0f DPI in %u ms`
-- [ ] Commit: `"apps/pdf: page renderer — scanline fill, stroke, alpha glyph composite, bezier flatten"`
+- [ ] Commit: `"apps/pdf: page renderer -- scanline fill, stroke, alpha glyph composite, bezier flatten"`
 
 ## 8. PDF Viewer App `[Sonnet]`
 
@@ -198,7 +198,7 @@ Scrollable single-page view. Zoom 50–400% + fit-to-width + fit-to-page. Page n
 - [ ] `pdfview_search(state, term)`: iterate pages; `pdf_search_page()`; show first match; draw highlight rects
 - [ ] `pdfview_print(state)`: render page at 300 DPI; scale to framebuffer dimensions; `fb_blit()` full-screen; wait for keypress; restore desktop
 - [ ] `cmd_pdfview(argc, argv)`: parse filename; `pdfview_open()`; register in shell command table; also register as `.pdf` file association
-- [ ] Commit: `"apps/pdfview: viewer app — zoom/scroll/navigation, thumbnail sidebar, text search, print"`
+- [ ] Commit: `"apps/pdfview: viewer app -- zoom/scroll/navigation, thumbnail sidebar, text search, print"`
 
 ## 9. PDF from HTTP `[Sonnet]`
 
@@ -214,7 +214,7 @@ Scrollable single-page view. Zoom 50–400% + fit-to-width + fit-to-page. Page n
 - [ ] Update `cmd_pdfview()`: if argument starts with `http://` or `https://`: call `pdfview_open_url()` instead of `pdfview_open()`
 - [ ] Browser hook in TODO-07: `browser_navigate()` checks `Content-Type: application/pdf` → route to `pdfview_open_url()`
 - [ ] Log: `[PDF] HTTP stream %zu bytes from %s`
-- [ ] Commit: `"apps/pdfview: HTTP streaming — pdf_open_mem, pdfview_open_url, browser Content-Type hook"`
+- [ ] Commit: `"apps/pdfview: HTTP streaming -- pdf_open_mem, pdfview_open_url, browser Content-Type hook"`
 
 ## 10. PDF Forms Stub `[Sonnet]`
 
@@ -232,7 +232,7 @@ Detect `AcroForm` dictionary in catalog. Render form fields (text, checkbox, rad
 - [ ] `pdf_export_fdf(doc, path)`: write FDF file: `%FDF-1.2\n1 0 obj\n<</FDF <</Fields [<</T (name) /V (value)>> ...]>>>>\nendobj`
 - [ ] `pdf_export_xfdf(doc, path)`: write XFDF XML: `<?xml ...><xfdf><fields><field name="..."><value>...</value></field>...`
 - [ ] Register `--export-fdf` flag in `cmd_pdfview()`
-- [ ] Commit: `"apps/pdfview: AcroForm stub — field detect/render, Tx/Btn/Ch widgets, FDF/XFDF export"`
+- [ ] Commit: `"apps/pdfview: AcroForm stub -- field detect/render, Tx/Btn/Ch widgets, FDF/XFDF export"`
 
 ---
 
@@ -241,18 +241,18 @@ Detect `AcroForm` dictionary in catalog. Render form fields (text, checkbox, rad
 
 | ⭐ | Feature                    | 🪟 Win11                                          | 🐧 Linux                                                  | 🚀 Impossible OS                                              |
 |----|----------------------------|------------------------------------------------|--------------------------------------------------------|------------------------------------------------------------|
-| 💎 | PDF structure + xref       | ✅ Edge PDF viewer; Adobe Acrobat;             | ✅ `poppler`/`mupdf`; full xref stream +               | ⬜ §1 — xref table + stream; incremental                   |
-| 💎 | Object model               | ✅ Full object model in `poppler`/Adobe        | ✅ `mupdf`/`poppler` full object model                 | ⬜ §2 — stbi_zlib_decode for FlateDecode; hand-written LZW |
-| 💎 | Page tree                  | ✅ Full page tree in all                       | ✅ Full page tree support                              | ⬜ §3 — flat `page_map[]` for O(1) random                  |
-| 💎 | Content stream interpreter | ✅ Full PDF operator set in                    | ✅ `mupdf` full operator set; `poppler`                | ⬜ §4 — 50+ operators; CTM affine stack                    |
-| 💎 | Embedded font rendering    | ✅ DirectWrite font rendering; full CMap       | ✅ FreeType2 in `poppler`/`mupdf`; full CMap           | ⬜ §5 — stb_truetype render (already in OS)                |
-| 💎 | Image rendering            | ✅ Full colorspace support in Acrobat/Edge     | ✅ JPEG via libjpeg; CMYK conversion                   | ⬜ §6 — stbi_load_from_memory for JPEG (already in         |
-| 💎 | Page renderer              | ✅ DirectX hardware-accelerated; 300 DPI print | ✅ Cairo/Skia software rasterizer in `poppler`/`mupdf` | ⬜ §7 — software rasterizer; de Casteljau bezier           |
-| 💎 | Viewer app                 | ✅ Edge PDF viewer + Adobe                     | ✅ Evince/Okular; thumbnail sidebar; text search       | ⬜ §8 — 50–400% zoom + fit-to-width/page; 16-thumb         |
-| ⭐ | PDF from HTTP              | ✅ Edge opens PDF URLs in-browser;             | ✅ Firefox opens PDFs via `pdf.js`                     | ⬜ §9 — `⭐` true in-kernel streaming —                    |
-| 💎 | PDF forms                  | ✅ Acrobat full form support; Edge             | ✅ Okular/Evince form fill; `poppler` FDF              | ⬜ §10 — stub renders field widgets; FDF/XFDF              |
+| 💎 | PDF structure + xref       | ✅ Edge PDF viewer; Adobe Acrobat;             | ✅ `poppler`/`mupdf`; full xref stream +               | ⬜ §1 -- xref table + stream; incremental                   |
+| 💎 | Object model               | ✅ Full object model in `poppler`/Adobe        | ✅ `mupdf`/`poppler` full object model                 | ⬜ §2 -- stbi_zlib_decode for FlateDecode; hand-written LZW |
+| 💎 | Page tree                  | ✅ Full page tree in all                       | ✅ Full page tree support                              | ⬜ §3 -- flat `page_map[]` for O(1) random                  |
+| 💎 | Content stream interpreter | ✅ Full PDF operator set in                    | ✅ `mupdf` full operator set; `poppler`                | ⬜ §4 -- 50+ operators; CTM affine stack                    |
+| 💎 | Embedded font rendering    | ✅ DirectWrite font rendering; full CMap       | ✅ FreeType2 in `poppler`/`mupdf`; full CMap           | ⬜ §5 -- stb_truetype render (already in OS)                |
+| 💎 | Image rendering            | ✅ Full colorspace support in Acrobat/Edge     | ✅ JPEG via libjpeg; CMYK conversion                   | ⬜ §6 -- stbi_load_from_memory for JPEG (already in         |
+| 💎 | Page renderer              | ✅ DirectX hardware-accelerated; 300 DPI print | ✅ Cairo/Skia software rasterizer in `poppler`/`mupdf` | ⬜ §7 -- software rasterizer; de Casteljau bezier           |
+| 💎 | Viewer app                 | ✅ Edge PDF viewer + Adobe                     | ✅ Evince/Okular; thumbnail sidebar; text search       | ⬜ §8 -- 50–400% zoom + fit-to-width/page; 16-thumb         |
+| ⭐ | PDF from HTTP              | ✅ Edge opens PDF URLs in-browser;             | ✅ Firefox opens PDFs via `pdf.js`                     | ⬜ §9 -- `⭐` true in-kernel streaming --                    |
+| 💎 | PDF forms                  | ✅ Acrobat full form support; Edge             | ✅ Okular/Evince form fill; `poppler` FDF              | ⬜ §10 -- stub renders field widgets; FDF/XFDF              |
 
-> **After §1–§10:** Impossible OS has a kernel-native PDF renderer using stb_truetype (already in the OS), stb_image's zlib decoder (already present), and a custom scanline rasterizer — zero external PDF libraries required. The HTTP streaming path (`⭐`) opens PDFs from URLs without writing to disk, a capability native browsers handle via JavaScript (pdf.js) but that Impossible OS handles in the kernel directly.
+> **After §1–§10:** Impossible OS has a kernel-native PDF renderer using stb_truetype (already in the OS), stb_image's zlib decoder (already present), and a custom scanline rasterizer -- zero external PDF libraries required. The HTTP streaming path (`⭐`) opens PDFs from URLs without writing to disk, a capability native browsers handle via JavaScript (pdf.js) but that Impossible OS handles in the kernel directly.
 
 ## Verification
 
@@ -267,4 +267,4 @@ Detect `AcroForm` dictionary in catalog. Render form fields (text, checkbox, rad
 - [ ] Viewer app: `pdfview test.pdf` opens window; zoom to 200% → page zooms; Next → page 2 renders; thumbnail sidebar shows small page previews; `Ctrl+F "hello"` highlights occurrences
 - [ ] HTTP: `pdfview https://www.w3.org/WAI/WCAG21/wcag21.pdf` → page renders from streamed bytes (no file on disk); serial log shows `[PDF] HTTP stream N bytes`
 - [ ] Forms: PDF with AcroForm renders text fields as white boxes with existing values; click on field → textbox overlay appears; `--export-fdf out.fdf` writes valid FDF file
-- [ ] Commit: `"apps/pdfview: complete PDF viewer — parser, renderer, stb_truetype fonts, HTTP stream, AcroForms"`
+- [ ] Commit: `"apps/pdfview: complete PDF viewer -- parser, renderer, stb_truetype fonts, HTTP stream, AcroForms"`

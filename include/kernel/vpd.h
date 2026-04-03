@@ -12,11 +12,11 @@
 
 #include "kernel/types.h"
 
-/* Initialize VPD Tier 1 — call right after g_boot_info is populated.
+/* Initialize VPD Tier 1 -- call right after g_boot_info is populated.
  * Stores framebuffer pointer and clears the VPD display area. */
 void vpd_init(void);
 
-/* Begin a new boot stage — marks previous stage as done (green),
+/* Begin a new boot stage -- marks previous stage as done (green),
  * draws new stage row as in-progress (yellow). */
 void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode);
 
@@ -35,7 +35,7 @@ int vpd_is_active(void);
 void vpd_update_progress(uint8_t percent);
 
 /* Render "Last boot failed at: NAME (0xNNNN)" crash banner at top of screen.
- * Always renders regardless of postbars setting — safety feature.
+ * Always renders regardless of postbars setting -- safety feature.
  * Call before vpd_init() if needed (uses g_boot_info.fb directly). */
 void vpd_crash_banner(uint16_t last_postcode);
 
@@ -43,5 +43,5 @@ void vpd_crash_banner(uint16_t last_postcode);
  * Returns "UNKNOWN" if code is not in the lookup table. */
 const char *vpd_post16_name(uint16_t code);
 
-/* Signal that splash is taking over — stop Tier 1 rendering. */
+/* Signal that splash is taking over -- stop Tier 1 rendering. */
 void vpd_stop_tier1(void);

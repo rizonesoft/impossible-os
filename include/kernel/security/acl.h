@@ -1,5 +1,5 @@
 /* ============================================================================
- * acl.h — SECURITY_DESCRIPTOR, ACL, and ACE types
+ * acl.h -- SECURITY_DESCRIPTOR, ACL, and ACE types
  *
  * Defines the core security data structures used by the SRM to make
  * access decisions.  A SECURITY_DESCRIPTOR owns an optional Owner SID,
@@ -36,7 +36,7 @@
 
 typedef struct acl ACL;
 
-/* ---- SECURITY_DESCRIPTOR (absolute form — pointers) -------------------- */
+/* ---- SECURITY_DESCRIPTOR (absolute form -- pointers) -------------------- */
 
 struct security_descriptor {
     uint8_t   Revision;    /* SECURITY_DESCRIPTOR_REVISION (1) */
@@ -49,7 +49,7 @@ struct security_descriptor {
 };
 
 /* Provide the typedef here so users of acl.h don't need ob.h.
- * ob.h has a matching forward declaration — both are compatible. */
+ * ob.h has a matching forward declaration -- both are compatible. */
 typedef struct security_descriptor SECURITY_DESCRIPTOR;
 
 /* ---- ACL ---------------------------------------------------------------- */
@@ -98,7 +98,7 @@ typedef struct {
 
 typedef struct {
     ACE_HEADER Header;
-    uint32_t   Mask;       /* ACCESS_MASK — granted/denied rights */
+    uint32_t   Mask;       /* ACCESS_MASK -- granted/denied rights */
     uint32_t   SidStart;   /* first dword of the SID (SID follows in-line) */
 } ACCESS_ALLOWED_ACE;
 

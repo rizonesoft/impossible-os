@@ -24,9 +24,9 @@ without requiring interactive MOK enrollment on every machine.
 
 | File | Format | Committed | Purpose |
 |------|--------|-----------|---------|
-| `keys/MOK.key` | PEM PKCS#8 | **Never** | Private key — signs EFI binaries at build time |
-| `keys/MOK.cer` | PEM X.509  | Yes | Public cert — embedded in shim as `VENDOR_CERT_FILE` |
-| `keys/MOK.der` | DER X.509  | Yes | Binary form of cert — used for UEFI manual enrollment |
+| `keys/MOK.key` | PEM PKCS#8 | **Never** | Private key -- signs EFI binaries at build time |
+| `keys/MOK.cer` | PEM X.509  | Yes | Public cert -- embedded in shim as `VENDOR_CERT_FILE` |
+| `keys/MOK.der` | DER X.509  | Yes | Binary form of cert -- used for UEFI manual enrollment |
 
 ---
 
@@ -43,7 +43,7 @@ openssl x509 -in keys/MOK.cer -out keys/MOK.der -outform DER
 ```
 
 After generating a new key:
-1. Commit `keys/MOK.cer` and `keys/MOK.der` — never commit `keys/MOK.key`
+1. Commit `keys/MOK.cer` and `keys/MOK.der` -- never commit `keys/MOK.key`
 2. Rebuild the shim: `bash scripts/secure-boot/build-shim.sh`
 3. Rebuild the OS: `bash scripts/build.sh`
 
@@ -69,7 +69,7 @@ The `make sign-efi` target and `scripts/sign-efi.sh` do this automatically.
 
 On machines without the key pre-enrolled in the shim:
 
-1. Boot the machine — the shim shows the blue **MokManager** screen
+1. Boot the machine -- the shim shows the blue **MokManager** screen
 2. Select **Enroll key from disk**
 3. Navigate to `EFI\BOOT\MOK.der` on the EFI partition
 4. Confirm enrollment and reboot
@@ -80,7 +80,7 @@ After enrollment the shim skips the MOK screen on future boots.
 
 ## Testing the Secure Boot chain
 
-The normal system disk already carries the full shim chain — every normal
+The normal system disk already carries the full shim chain -- every normal
 QEMU or VirtualBox boot exercises it:
 
 ```
@@ -91,7 +91,7 @@ UEFI firmware (SB off)
 ```
 
 If `grubx64.efi` is not signed with the correct `MOK.key`, the shim refuses
-to load it and the OS will not boot — so the chain is verified on every
+to load it and the OS will not boot -- so the chain is verified on every
 normal run.
 
 Use the standard runners:

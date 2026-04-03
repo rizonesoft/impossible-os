@@ -1,5 +1,5 @@
 /* ============================================================================
- * semaphore.c — Kernel counting semaphore
+ * semaphore.c -- Kernel counting semaphore
  *
  * Blocking counting semaphore with FIFO wait queue.
  *
@@ -43,7 +43,7 @@ void sem_wait(semaphore_t *s)
             }
             yield();
         } else {
-            /* Wait queue full — spin-yield as fallback */
+            /* Wait queue full -- spin-yield as fallback */
             yield();
         }
     }

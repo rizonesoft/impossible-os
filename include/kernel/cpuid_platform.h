@@ -1,5 +1,5 @@
 /* ============================================================================
- * cpuid_platform.h — CPUID-based Platform Detection
+ * cpuid_platform.h -- CPUID-based Platform Detection
  *
  * Detects whether the OS is running on bare metal or a hypervisor, and if so,
  * which hypervisor.  Used by the Unified Timer Subsystem (§6) to select the
@@ -23,15 +23,15 @@ typedef enum {
     PLATFORM_HYPERV,       /* Microsoft Hv (Gen 1 or Gen 2) */
     PLATFORM_VMWARE,       /* VMwareVMware */
     PLATFORM_VIRTUALBOX,   /* VBoxVBoxVBox */
-    PLATFORM_QEMU_KVM,     /* KVMKVMKVM — KVM with HW virt */
-    PLATFORM_QEMU_TCG,     /* TCGTCGTCGTCG — software emulation */
+    PLATFORM_QEMU_KVM,     /* KVMKVMKVM -- KVM with HW virt */
+    PLATFORM_QEMU_TCG,     /* TCGTCGTCGTCG -- software emulation */
     PLATFORM_UNKNOWN_HV,   /* hypervisor bit set, unknown vendor */
 } platform_id_t;
 
 /* ---- Public API ---- */
 
 /* Detect the platform via CPUID.  Called once during early boot.
- * Result is cached — subsequent calls return the cached value. */
+ * Result is cached -- subsequent calls return the cached value. */
 platform_id_t platform_detect(void);
 
 /* Return the cached platform ID (must call platform_detect() first). */
@@ -41,7 +41,7 @@ platform_id_t platform_get(void);
 const char *platform_name(void);
 
 /* Return true if running under QEMU TCG (software emulation).
- * TCG has inaccurate LAPIC timing — PIT should be preferred. */
+ * TCG has inaccurate LAPIC timing -- PIT should be preferred. */
 int platform_is_tcg(void);
 
 /* Return true if the hypervisor provides an APIC frequency MSR or CPUID leaf.

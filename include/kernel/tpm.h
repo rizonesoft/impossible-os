@@ -1,5 +1,5 @@
 /* ============================================================================
- * tpm.h — TPM Measured Boot interface
+ * tpm.h -- TPM Measured Boot interface
  *
  * Parses the TCG event log passed from the bootloader and exposes TPM
  * availability, version, and boot event summary to the kernel.
@@ -52,7 +52,7 @@ uint32_t tpm_event_count(void);
 #define BOOT_INTEGRITY_UNKNOWN       0  /* Not yet checked */
 #define BOOT_INTEGRITY_VERIFIED      1  /* All PCRs match golden values */
 #define BOOT_INTEGRITY_MISMATCH      2  /* One or more PCRs differ */
-#define BOOT_INTEGRITY_NO_TPM        3  /* No TPM — cannot verify */
+#define BOOT_INTEGRITY_NO_TPM        3  /* No TPM -- cannot verify */
 #define BOOT_INTEGRITY_NO_BASELINE   4  /* No golden values enrolled */
 #define BOOT_INTEGRITY_NO_CRYPTO     5  /* Crypto stack not available */
 
@@ -63,7 +63,7 @@ struct pcr_check {
     uint8_t  pad[2];
 };
 
-/* Full boot integrity report — feeds into the "Boot Integrity" UI panel */
+/* Full boot integrity report -- feeds into the "Boot Integrity" UI panel */
 struct boot_integrity_report {
     uint8_t  overall_status;           /* BOOT_INTEGRITY_* */
     uint8_t  pcr_count;                /* number of PCRs checked */

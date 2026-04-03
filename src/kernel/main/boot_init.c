@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_init.c — Subsystem readiness oracle and boot progress tracker
+ * boot_init.c -- Subsystem readiness oracle and boot progress tracker
  *
  * Provides:
  *   - g_subsys_ready[] table with get/set/dump helpers
@@ -70,7 +70,7 @@ void kernel_subsystem_dump(void)
 
 void _boot_require_failed(const char *subsys_name)
 {
-    /* Write directly to serial — klog may not be fully initialised yet. */
+    /* Write directly to serial -- klog may not be fully initialised yet. */
     serial_write("[BOOT] REQUIRE failed: ");
     serial_write(subsys_name);
     serial_write(" not ready\n");
@@ -154,13 +154,13 @@ static const uint16_t s_post_name[] = {
 
 void boot_post_write16(uint16_t code)
 {
-    /* I/O port 0x80: always write — zero cost, works before anything */
+    /* I/O port 0x80: always write -- zero cost, works before anything */
     __asm__ volatile("outb %0, $0x80" :: "a"((uint8_t)(code >> 8)));
 
-    /* On-screen display — direct VRAM, works before fb_init */
+    /* On-screen display -- direct VRAM, works before fb_init */
     post_display16(code);
 
-    /* No NVRAM write here — flash has limited endurance (~100K cycles).
+    /* No NVRAM write here -- flash has limited endurance (~100K cycles).
      * NVRAM is written only twice per boot via boot_post_nvram_write16():
      *   1. boot_phase0: mark "booting" (entry POST code)
      *   2. boot_phase3: mark "succeeded" (POST16_BOOT_OK)
@@ -236,7 +236,7 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode)
             vpd_stage_begin(phase, safe_step, postcode);
     }
 
-    /* NOTE: do NOT call boot_splash_status() here — the step name is an
+    /* NOTE: do NOT call boot_splash_status() here -- the step name is an
      * internal identifier (e.g. "EXEC", "PCI_NET"), not a user-friendly
      * message.  Friendly status is set by explicit boot_splash_status()
      * calls before each boot_progress() in the boot sequence. */

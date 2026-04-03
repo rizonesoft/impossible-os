@@ -1,18 +1,18 @@
-# TODO-09 — ext4 Read/Write Driver
+# TODO-09 -- ext4 Read/Write Driver
 
-> **Goal:** Implement a complete ext4 read/write driver — superblock + block group descriptors, inode reader, extent tree decoder (with triple-indirect fallback), htree directory B+ tree, file read (including inline data), JBD2 journal replay on mount, file write wrapped in JBD2 transactions, extent tree mutation, directory write, create/delete/rename, extended attributes, and VFS registration with fsck. Windows 11 still cannot natively read ext4; this is a genuine differentiator that lets users with Linux dual-boots or Linux-formatted USB drives access their files.
+> **Goal:** Implement a complete ext4 read/write driver -- superblock + block group descriptors, inode reader, extent tree decoder (with triple-indirect fallback), htree directory B+ tree, file read (including inline data), JBD2 journal replay on mount, file write wrapped in JBD2 transactions, extent tree mutation, directory write, create/delete/rename, extended attributes, and VFS registration with fsck. Windows 11 still cannot natively read ext4; this is a genuine differentiator that lets users with Linux dual-boots or Linux-formatted USB drives access their files.
 
 > [!IMPORTANT]
-> ext4 is the default filesystem on every major Linux distribution (Ubuntu, Fedora, Debian, Arch). The existing codebase has only a `probe_ext2_sector2()` magic-byte check in `src/kernel/fs/partition.c` — this is a blank-slate driver. **JBD2 journal replay (§6) must run before any write path (§7–§10) is active** — mounting without journal replay risks data corruption on a dirty volume. Refuse mount (or mount read-only) if `s_feature_incompat` contains unknown bits. Wire `ext4_probe()` into `vfs_probe()` at step 5 (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1`). This is a `⭐` exclusive feature — Windows 11 cannot read ext4 natively.
+> ext4 is the default filesystem on every major Linux distribution (Ubuntu, Fedora, Debian, Arch). The existing codebase has only a `probe_ext2_sector2()` magic-byte check in `src/kernel/fs/partition.c` -- this is a blank-slate driver. **JBD2 journal replay (§6) must run before any write path (§7–§10) is active** -- mounting without journal replay risks data corruption on a dirty volume. Refuse mount (or mount read-only) if `s_feature_incompat` contains unknown bits. Wire `ext4_probe()` into `vfs_probe()` at step 5 (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1`). This is a `⭐` exclusive feature -- Windows 11 cannot read ext4 natively.
 
 ## Inputs
 
-- `src/kernel/fs/partition.c` — `probe_ext2_sector2()` at line 133; magic `0xEF53` detection already present; replace with `ext4_probe()` registered via `vfs_probe()` (TODO-03 §1)
-- `src/kernel/fs/fat32/` + `src/kernel/fs/ntfs/` — reference for VFS driver vtable pattern, cluster-chain traversal style, and block-device I/O helper usage; do not share code
-- `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` — `vfs_mount()`, `vfs_fs_driver`, `vfs_node_t` interface all drivers implement
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` — `vfs_probe()` calls `ext4_probe()` at step 5 in the probe priority chain; must return `fs_identify_result_t` with label, total bytes, free bytes
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` — `CreateFile` on an ext4 volume calls `NtCreateFile` → `vfs_open` → `ext4_ops.finddir`; ensure `ext4_ops` exposes the full 14-entry `vfs_fs_driver` vtable
-- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §7` — `vfs_path_fold()` applies case fold before passing name components to `ext4_dir_lookup()`; ext4 directories are case-sensitive by default but the VFS layer still normalizes the separator and drive letter prefix
+- `src/kernel/fs/partition.c` -- `probe_ext2_sector2()` at line 133; magic `0xEF53` detection already present; replace with `ext4_probe()` registered via `vfs_probe()` (TODO-03 §1)
+- `src/kernel/fs/fat32/` + `src/kernel/fs/ntfs/` -- reference for VFS driver vtable pattern, cluster-chain traversal style, and block-device I/O helper usage; do not share code
+- `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, `vfs_node_t` interface all drivers implement
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `ext4_probe()` at step 5 in the probe priority chain; must return `fs_identify_result_t` with label, total bytes, free bytes
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` -- `CreateFile` on an ext4 volume calls `NtCreateFile` → `vfs_open` → `ext4_ops.finddir`; ensure `ext4_ops` exposes the full 14-entry `vfs_fs_driver` vtable
+- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §7` -- `vfs_path_fold()` applies case fold before passing name components to `ext4_dir_lookup()`; ext4 directories are case-sensitive by default but the VFS layer still normalizes the separator and drive letter prefix
 
 ## Outcome
 
@@ -32,26 +32,26 @@
 
 | ⭐  | Order | Deliverable                                                                           | Depends On                                                   | Status |
 | --- | :---: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------ | :----: |
-| ⭐  |   1   | §1 Superblock + block group descriptors — parse, feature gating, 64-bit counts       | Block device I/O working                                     |  [ ]   |
-| ⭐  |   2   | §2 Inode reader — `ext4_read_inode()`, 64-bit sizes, flags, `i_extra_isize`          | §1 (inode table LBA from group descriptor)                   |  [ ]   |
-| ⭐  |   3   | §3 Extent tree decoder — header, leaf extents, index nodes, triple-indirect fallback  | §2 (inode's `i_block` is the tree root)                      |  [ ]   |
+| ⭐  |   1   | §1 Superblock + block group descriptors -- parse, feature gating, 64-bit counts       | Block device I/O working                                     |  [ ]   |
+| ⭐  |   2   | §2 Inode reader -- `ext4_read_inode()`, 64-bit sizes, flags, `i_extra_isize`          | §1 (inode table LBA from group descriptor)                   |  [ ]   |
+| ⭐  |   3   | §3 Extent tree decoder -- header, leaf extents, index nodes, triple-indirect fallback  | §2 (inode's `i_block` is the tree root)                      |  [ ]   |
 | ⭐  |   4   | §4 Directory htree (B+ tree) + linear scan fallback + `readdir`                      | §2 (dir inode), §3 (extent lookup for dir blocks)            |  [ ]   |
-| ⭐  |   5   | §5 File read — extent-mapped data, multi-block, inline data (`INLINE_DATA_FL`)       | §3 (physical block lookup), §2 (inode flags)                 |  [ ]   |
-| ⭐  |   6   | §6 JBD2 journal replay — superblock, descriptor blocks, transaction apply, sequence  | §1 (journal inode number), §2 (read journal inode)           |  [ ]   |
-| ⭐  |   7   | §7 File write — within-block RMW, block alloc, extent append, JBD2 wrap             | §6 (journal must run before writes), §3 (extent tree)        |  [ ]   |
-| ⭐  |   8   | §8 Extent tree write — `ext4_extent_insert`, leaf split, index propagation, remove   | §7 (writes call the extent mutator), §3 (read path proven)   |  [ ]   |
-| ⭐  |   9   | §9 Directory write — `ext4_dir_add`, `ext4_dir_remove`, htree index maintenance      | §8 (dir block alloc uses extent write), §6 (JBD2 wrap)       |  [ ]   |
-| ⭐  |  10   | §10 File create / delete / rename — inode alloc, link count, block free, atomic move | §9 (dir entry write), §6 (JBD2 atomicity)                    |  [ ]   |
-| 💎  |  11   | §11 Extended attributes — inline xattr, xattr block, ACL + capability xattrs        | §2 (inode `i_extra_isize` for inline xattr), §7 (xattr write)|  [ ]   |
+| ⭐  |   5   | §5 File read -- extent-mapped data, multi-block, inline data (`INLINE_DATA_FL`)       | §3 (physical block lookup), §2 (inode flags)                 |  [ ]   |
+| ⭐  |   6   | §6 JBD2 journal replay -- superblock, descriptor blocks, transaction apply, sequence  | §1 (journal inode number), §2 (read journal inode)           |  [ ]   |
+| ⭐  |   7   | §7 File write -- within-block RMW, block alloc, extent append, JBD2 wrap             | §6 (journal must run before writes), §3 (extent tree)        |  [ ]   |
+| ⭐  |   8   | §8 Extent tree write -- `ext4_extent_insert`, leaf split, index propagation, remove   | §7 (writes call the extent mutator), §3 (read path proven)   |  [ ]   |
+| ⭐  |   9   | §9 Directory write -- `ext4_dir_add`, `ext4_dir_remove`, htree index maintenance      | §8 (dir block alloc uses extent write), §6 (JBD2 wrap)       |  [ ]   |
+| ⭐  |  10   | §10 File create / delete / rename -- inode alloc, link count, block free, atomic move | §9 (dir entry write), §6 (JBD2 atomicity)                    |  [ ]   |
+| 💎  |  11   | §11 Extended attributes -- inline xattr, xattr block, ACL + capability xattrs        | §2 (inode `i_extra_isize` for inline xattr), §7 (xattr write)|  [ ]   |
 | ⭐  |  12   | §12 VFS registration + probe + fsck + `chkdsk /ext4` + read-only fallback           | §1–§11 all complete                                          |  [ ]   |
 
-> §1–§5 (read path), §6 (journal replay), and §7–§10 (write path) are `⭐` exclusive — Windows 11 has no native ext4 support and cannot read Linux-formatted drives. §11 is `💎` parity — Linux and macOS both handle xattrs. §12 is `⭐` for the combined in-kernel fsck without an external tool.
+> §1–§5 (read path), §6 (journal replay), and §7–§10 (write path) are `⭐` exclusive -- Windows 11 has no native ext4 support and cannot read Linux-formatted drives. §11 is `💎` parity -- Linux and macOS both handle xattrs. §12 is `⭐` for the combined in-kernel fsck without an external tool.
 
 ---
 
 ## 1. Superblock + Block Group Descriptors `[Sonnet]`
 
-Parse the ext4 superblock at offset 1024. Validate magic. Check incompatible feature bits — refuse mount (or mount read-only) if unknown bits are set. Read the block group descriptor table.
+Parse the ext4 superblock at offset 1024. Validate magic. Check incompatible feature bits -- refuse mount (or mount read-only) if unknown bits are set. Read the block group descriptor table.
 
 **Files:** `src/kernel/fs/ext4/ext4_core.c` (new), `include/kernel/fs/ext4.h` (new), `include/kernel/fs/ext4_internal.h` (new)
 
@@ -59,13 +59,13 @@ Parse the ext4 superblock at offset 1024. Validate magic. Check incompatible fea
 > Superblock location: always at byte offset 1024 from the partition start (sectors 2–3 for 512 B/sector). Magic: `s_magic = 0xEF53`. Key fields: `s_blocks_count_lo`/`s_blocks_count_hi` (64-bit when `INCOMPAT_64BIT` set), `s_log_block_size` (0→1 KiB, 1→2 KiB, 2→4 KiB), `s_inodes_per_group`, `s_inode_size` (128 or 256 bytes), `s_first_data_block` (1 for 1 KiB blocks, 0 otherwise). Block group descriptor table at block `s_first_data_block + 1`. `s_desc_size` = 32 (ext2/3 compat) or 64 bytes (when `INCOMPAT_64BIT`). Required incompat features to support: `EXT4_FEATURE_INCOMPAT_EXTENTS (0x40)`, `EXT4_FEATURE_INCOMPAT_64BIT (0x80)`, `EXT4_FEATURE_INCOMPAT_FLEX_BG (0x200)`, `EXT4_FEATURE_INCOMPAT_META_BG (0x10)`, `EXT4_FEATURE_INCOMPAT_LARGE_FILE (0x8)`, `EXT4_FEATURE_INCOMPAT_HTREE_DIR (0x2)`, `EXT4_FEATURE_INCOMPAT_INLINE_DATA (0x10000)`.
 
 - [ ] `ext4_sb_t` struct: all geometry/count fields, computed: `block_size`, `blocks_per_group`, `inodes_per_group`, `group_count`, `inode_size`, `desc_size`, flags
-- [ ] `ext4_sb_parse(dev, &sb)`: read sector at offset 1024; verify magic; check `s_feature_incompat & ~SUPPORTED_INCOMPAT` == 0 — if nonzero: log unsupported features, return -ENOTSUP (caller mounts read-only); populate `ext4_sb_t`
+- [ ] `ext4_sb_parse(dev, &sb)`: read sector at offset 1024; verify magic; check `s_feature_incompat & ~SUPPORTED_INCOMPAT` == 0 -- if nonzero: log unsupported features, return -ENOTSUP (caller mounts read-only); populate `ext4_sb_t`
 - [ ] `ext4_group_desc_t`: union of 32-byte (ext2/3) and 64-byte (ext4) descriptor; fields: `bg_inode_table_lo`/`hi`, `bg_block_bitmap_lo`/`hi`, `bg_inode_bitmap_lo`/`hi`, `bg_free_blocks_count_lo`/`hi`, `bg_free_inodes_count_lo`/`hi`
 - [ ] `ext4_read_group_desc(sb, group_idx, &gd)`: compute LBA of descriptor table entry; read `desc_size` bytes; populate `ext4_group_desc_t`
-- [ ] `ext4_block_to_lba(sb, block)`: `(partition_lba_start + block * sectors_per_block)` — used by all read/write paths
+- [ ] `ext4_block_to_lba(sb, block)`: `(partition_lba_start + block * sectors_per_block)` -- used by all read/write paths
 - [ ] `ext4_read_block(sb, block, buf)`: read `block_size` bytes via blkdev; `ext4_write_block(sb, block, buf)` for the write path
 - [ ] Log: `[ext4] Mounted %c: blocks=%llu inode_size=%u block_size=%u groups=%u`
-- [ ] Commit: `"fs/ext4: superblock parser — magic, feature gating, block group descriptors, block I/O helpers"`
+- [ ] Commit: `"fs/ext4: superblock parser -- magic, feature gating, block group descriptors, block I/O helpers"`
 
 ## 2. Inode Reader `[Sonnet]`
 
@@ -74,14 +74,14 @@ Read a 256-byte ext4 inode. Decode `i_flags`, `i_size` (64-bit), `i_block[15]`, 
 **Files:** `src/kernel/fs/ext4/ext4_inode.c` (new)
 
 > [!NOTE]
-> Inode location: given inode number `ino` (1-based), `group = (ino - 1) / inodes_per_group`; `local_idx = (ino - 1) % inodes_per_group`; `inode_table_block = gd.bg_inode_table_lo`; `byte_offset = local_idx * inode_size`; read `inode_size` bytes starting at `block_to_lba(inode_table_block) * 512 + byte_offset`. Key `i_flags` bits: `EXT4_EXTENTS_FL (0x80000)`, `EXT4_INLINE_DATA_FL (0x10000000)`, `EXT4_EA_INODE_FL (0x200000)`, `EXT4_INDEX_FL (0x1000)`. `i_size_lo` + `i_size_high` = 64-bit file size (only valid when `LARGE_FILE` or `EXTENTS` incompat feature set). `i_extra_isize`: if `inode_size > 128`, `i_extra_isize` at offset 128 gives number of extra bytes after the standard 128-byte block — used for `i_crtime`, `i_mtime_extra`, and inline xattrs.
+> Inode location: given inode number `ino` (1-based), `group = (ino - 1) / inodes_per_group`; `local_idx = (ino - 1) % inodes_per_group`; `inode_table_block = gd.bg_inode_table_lo`; `byte_offset = local_idx * inode_size`; read `inode_size` bytes starting at `block_to_lba(inode_table_block) * 512 + byte_offset`. Key `i_flags` bits: `EXT4_EXTENTS_FL (0x80000)`, `EXT4_INLINE_DATA_FL (0x10000000)`, `EXT4_EA_INODE_FL (0x200000)`, `EXT4_INDEX_FL (0x1000)`. `i_size_lo` + `i_size_high` = 64-bit file size (only valid when `LARGE_FILE` or `EXTENTS` incompat feature set). `i_extra_isize`: if `inode_size > 128`, `i_extra_isize` at offset 128 gives number of extra bytes after the standard 128-byte block -- used for `i_crtime`, `i_mtime_extra`, and inline xattrs.
 
 - [ ] `ext4_inode_t` struct: all on-disk fields (128-byte standard block) + extended fields if `inode_size > 128`; computed: `size` (64-bit from `size_lo + size_high`), `mode`, `uid`, `gid`, `nlinks`, `flags`
 - [ ] `ext4_read_inode(sb, ino, &inode)`: compute group + local index; read group descriptor; compute inode table LBA + byte offset; read `inode_size` bytes; populate `ext4_inode_t`
 - [ ] `ext4_write_inode(sb, ino, &inode)`: write back `inode_size` bytes to same location
 - [ ] `ext4_inode_to_vfs_node(sb, ino, &inode)` → `vfs_node_t*`: set `size`, `flags` (dir, file, symlink), `inode_num`; store `ext4_inode_t` as private data
 - [ ] Handle `ino == 2` as root directory (always mounted as VFS root)
-- [ ] Commit: `"fs/ext4: inode reader — group lookup, 64-bit size, flags, i_extra_isize, inode→vfs_node"`
+- [ ] Commit: `"fs/ext4: inode reader -- group lookup, 64-bit size, flags, i_extra_isize, inode→vfs_node"`
 
 ## 3. Extent Tree Decoder `[Opus]`
 
@@ -90,7 +90,7 @@ Walk the extent tree rooted at `i_block[0..14]`. Implement `ext4_extent_lookup(i
 **Files:** `src/kernel/fs/ext4/ext4_extent.c` (new)
 
 > [!NOTE]
-> Extent tree root: `i_block` field (60 bytes) holds the root node when `EXT4_EXTENTS_FL` is set. Root `ext4_extent_header` at `i_block[0]`: `eh_magic = 0xF30A`, `eh_entries` (current entries), `eh_max` (max entries in this node), `eh_depth` (0 = leaf, >0 = index). Leaf nodes: `struct ext4_extent { uint32_t ee_block; uint16_t ee_len; uint16_t ee_start_hi; uint32_t ee_start_lo; }` — `ee_len > 32768` means uninitialized (sparse hole, return zeros). Index nodes: `struct ext4_extent_idx { uint32_t ei_block; uint32_t ei_leaf_lo; uint16_t ei_leaf_hi; uint16_t ei_unused; }`. Algorithm: at each level, binary search index entries where `ei_block <= logical_block`; follow `ei_leaf` to next level block; at leaf, binary search extents for `ee_block <= logical_block < ee_block + ee_len`. Triple-indirect fallback: `i_block[0..11]` = direct blocks, `i_block[12]` = single-indirect, `i_block[13]` = double-indirect, `i_block[14]` = triple-indirect; each indirect block holds `block_size / 4` block numbers.
+> Extent tree root: `i_block` field (60 bytes) holds the root node when `EXT4_EXTENTS_FL` is set. Root `ext4_extent_header` at `i_block[0]`: `eh_magic = 0xF30A`, `eh_entries` (current entries), `eh_max` (max entries in this node), `eh_depth` (0 = leaf, >0 = index). Leaf nodes: `struct ext4_extent { uint32_t ee_block; uint16_t ee_len; uint16_t ee_start_hi; uint32_t ee_start_lo; }` -- `ee_len > 32768` means uninitialized (sparse hole, return zeros). Index nodes: `struct ext4_extent_idx { uint32_t ei_block; uint32_t ei_leaf_lo; uint16_t ei_leaf_hi; uint16_t ei_unused; }`. Algorithm: at each level, binary search index entries where `ei_block <= logical_block`; follow `ei_leaf` to next level block; at leaf, binary search extents for `ee_block <= logical_block < ee_block + ee_len`. Triple-indirect fallback: `i_block[0..11]` = direct blocks, `i_block[12]` = single-indirect, `i_block[13]` = double-indirect, `i_block[14]` = triple-indirect; each indirect block holds `block_size / 4` block numbers.
 
 - [ ] `ext4_extent_header` / `ext4_extent` / `ext4_extent_idx` structs with exact on-disk layout
 - [ ] `ext4_extent_lookup(sb, inode, logical_block, &phys_block)`:
@@ -100,7 +100,7 @@ Walk the extent tree rooted at `i_block[0..14]`. Implement `ext4_extent_lookup(i
 - [ ] `ext4_extent_find_leaf(sb, header_buf, depth, logical_block, &leaf_block)`: recursive descent for index nodes
 - [ ] `ext4_indirect_lookup(sb, inode, logical_block, &phys_block)`: triple-indirect path; read indirect blocks at each level; cache last read indirect block
 - [ ] Log on sparse hole: `[ext4] sparse hole at logical block %u in inode %u`
-- [ ] Commit: `"fs/ext4: extent tree decoder — header, leaf lookup, index descent, sparse holes, triple-indirect fallback"`
+- [ ] Commit: `"fs/ext4: extent tree decoder -- header, leaf lookup, index descent, sparse holes, triple-indirect fallback"`
 
 ## 4. Directory htree (B+ Tree) + Readdir `[Opus]`
 
@@ -109,15 +109,15 @@ Walk the htree index for fast name lookup. Fall back to linear scan for small di
 **Files:** `src/kernel/fs/ext4/ext4_dir.c` (new)
 
 > [!NOTE]
-> htree (Hash Tree) directory: `EXT4_INDEX_FL` set in inode flags. Root block (block 0 of the directory's data): `struct dx_root { struct dx_root_info { uint32_t reserved_zero; uint8_t hash_version (0=legacy, 1=half_md4, 2=tea); uint8_t info_length (8); uint8_t indirect_levels (0 or 1); } info; struct dx_entry { uint32_t hash; uint32_t block; } entries[...]; }`. For lookup: compute `ext4_dirhash(name)` using the specified `hash_version`; binary search `dx_root.entries` for the largest hash ≤ target; for `indirect_levels == 1`: read the indicated block (htree leaf index), binary search again; finally read the data block; linear scan `ext4_dir_entry_2` entries for name match. `ext4_dir_entry_2`: `inode (4)`, `rec_len (2)`, `name_len (1)`, `file_type (1)`, `name[255]` — each entry is 4-byte aligned; `rec_len` includes padding to next entry; `inode == 0` means deleted.
+> htree (Hash Tree) directory: `EXT4_INDEX_FL` set in inode flags. Root block (block 0 of the directory's data): `struct dx_root { struct dx_root_info { uint32_t reserved_zero; uint8_t hash_version (0=legacy, 1=half_md4, 2=tea); uint8_t info_length (8); uint8_t indirect_levels (0 or 1); } info; struct dx_entry { uint32_t hash; uint32_t block; } entries[...]; }`. For lookup: compute `ext4_dirhash(name)` using the specified `hash_version`; binary search `dx_root.entries` for the largest hash ≤ target; for `indirect_levels == 1`: read the indicated block (htree leaf index), binary search again; finally read the data block; linear scan `ext4_dir_entry_2` entries for name match. `ext4_dir_entry_2`: `inode (4)`, `rec_len (2)`, `name_len (1)`, `file_type (1)`, `name[255]` -- each entry is 4-byte aligned; `rec_len` includes padding to next entry; `inode == 0` means deleted.
 
-- [ ] `ext4_dirhash_half_md4(name, len)` + `ext4_dirhash_tea(name, len)` + `ext4_dirhash_legacy(name, len)` — implement all three variants; select via `dx_root.info.hash_version`
+- [ ] `ext4_dirhash_half_md4(name, len)` + `ext4_dirhash_tea(name, len)` + `ext4_dirhash_legacy(name, len)` -- implement all three variants; select via `dx_root.info.hash_version`
 - [ ] `ext4_htree_lookup(sb, dir_inode, name, name_len, &result_ino)`: if `EXT4_INDEX_FL`: follow htree; else: linear scan all directory blocks; return inode number or -ENOENT
 - [ ] `ext4_dir_entry_scan(block_buf, block_size, name, name_len, &result_ino)`: linear scan a single 4 KiB block for a matching `ext4_dir_entry_2` entry; skip deleted entries (`inode == 0`)
 - [ ] `ext4_readdir(sb, dir_inode, callback, ctx)`: walk all data blocks of directory via `ext4_extent_lookup`; for each block: scan all `ext4_dir_entry_2` entries; skip deleted; call `callback(ctx, name, name_len, ino, file_type)` per valid entry
 - [ ] VFS `finddir` callback: `ext4_vfs_finddir(vfs_node, name)` → `ext4_htree_lookup()` → `ext4_read_inode()` → `ext4_inode_to_vfs_node()`
 - [ ] VFS `readdir` callback: `ext4_vfs_readdir(vfs_node, index)` → `ext4_readdir()` counting to `index`-th entry; return `vfs_dirent`
-- [ ] Commit: `"fs/ext4: directory htree — half_md4/tea hash, htree descent, linear fallback, readdir VFS callbacks"`
+- [ ] Commit: `"fs/ext4: directory htree -- half_md4/tea hash, htree descent, linear fallback, readdir VFS callbacks"`
 
 ## 5. File Read `[Sonnet]`
 
@@ -126,15 +126,15 @@ Read file data by mapping logical blocks to physical blocks via the extent tree.
 **Files:** `src/kernel/fs/ext4/ext4_io.c` (new)
 
 > [!NOTE]
-> Inline data (`EXT4_INLINE_DATA_FL`): if file size ≤ 60 bytes, the file data is stored directly in the 60-byte `i_block` field of the inode (no extent tree, no block allocation). For slightly larger inline data (≤ 60 + `i_extra_isize` bytes), remaining bytes go into the `system.data` xattr in the inline xattr area after the 128-byte inode. Read path: check `EXT4_INLINE_DATA_FL` first — return from `i_block` (and optionally the inline xattr `system.data`). Otherwise: `logical_block = offset / block_size`; call `ext4_extent_lookup()` for physical block; if `phys_block == 0`: sparse hole, return zeros; else: read `block_size` bytes; handle partial first/last blocks by offsetting within the buffer.
+> Inline data (`EXT4_INLINE_DATA_FL`): if file size ≤ 60 bytes, the file data is stored directly in the 60-byte `i_block` field of the inode (no extent tree, no block allocation). For slightly larger inline data (≤ 60 + `i_extra_isize` bytes), remaining bytes go into the `system.data` xattr in the inline xattr area after the 128-byte inode. Read path: check `EXT4_INLINE_DATA_FL` first -- return from `i_block` (and optionally the inline xattr `system.data`). Otherwise: `logical_block = offset / block_size`; call `ext4_extent_lookup()` for physical block; if `phys_block == 0`: sparse hole, return zeros; else: read `block_size` bytes; handle partial first/last blocks by offsetting within the buffer.
 
 - [ ] `ext4_file_read(sb, inode, offset, buf, len)`:
   - If `EXT4_INLINE_DATA_FL` and `offset + len <= 60`: memcpy from `inode->i_block`; done
   - Else: loop: `lb = offset / block_size`; `ext4_extent_lookup(lb, &pb)`; if `pb == 0`: memset 0 (sparse); else: `ext4_read_block(pb, tmp)`; copy relevant bytes; advance
-- [ ] Sparse hole read: `ext4_extent_lookup` returns `phys_block == 0` for uninitialized extents — fill with zeros, do not read disk
+- [ ] Sparse hole read: `ext4_extent_lookup` returns `phys_block == 0` for uninitialized extents -- fill with zeros, do not read disk
 - [ ] `ext4_read_inline_data(inode, offset, buf, len)`: handle case where inline data spills into the `system.data` xattr (call §11 xattr read)
 - [ ] VFS `read` callback: `ext4_vfs_read(vfs_node, buf, offset, len)` → `ext4_file_read()`
-- [ ] Commit: `"fs/ext4: file read — extent-mapped, sparse-hole zero-fill, inline data, VFS read callback"`
+- [ ] Commit: `"fs/ext4: file read -- extent-mapped, sparse-hole zero-fill, inline data, VFS read callback"`
 
 ## 6. JBD2 Journal Replay `[Opus]`
 
@@ -152,7 +152,7 @@ Read the JBD2 journal inode (always inode 8). Replay committed but not yet check
 - [ ] `jbd2_transaction_add_block(txn, fs_block, buf)`: copy block data into next journal position; add tag to descriptor
 - [ ] `jbd2_transaction_commit(sb, txn)`: flush all data blocks to journal; write commit block; `fsync` journal area; update `jsb.j_sequence`
 - [ ] Mount-time: if `s_state != EXT4_VALID_FS || EXT4_SB_DIRTY`: run `jbd2_replay()`; then set `s_state = EXT4_VALID_FS`; write superblock
-- [ ] Commit: `"fs/ext4: JBD2 journal replay — descriptor/commit/revoke walk, block apply, transaction start/commit"`
+- [ ] Commit: `"fs/ext4: JBD2 journal replay -- descriptor/commit/revoke walk, block apply, transaction start/commit"`
 
 ## 7. File Write `[Opus]`
 
@@ -171,7 +171,7 @@ Within-block read-modify-write. Block append via `ext4_alloc_block()`. All mutat
   - `jbd2_transaction_commit(sb, txn)`
 - [ ] `ext4_file_truncate(sb, inode, new_length)`: if shorter → `ext4_extent_remove()` for tail extents (§8); free physical blocks; update `i_size`; wrap in JBD2 transaction
 - [ ] VFS `write` callback: `ext4_vfs_write(vfs_node, buf, offset, len)` → `ext4_file_write()`
-- [ ] Commit: `"fs/ext4: file write — within-block RMW, block alloc, JBD2 transaction wrap, i_size/i_mtime update"`
+- [ ] Commit: `"fs/ext4: file write -- within-block RMW, block alloc, JBD2 transaction wrap, i_size/i_mtime update"`
 
 ## 8. Extent Tree Write `[Opus]`
 
@@ -188,7 +188,7 @@ Insert and remove leaf extents. Split full leaves and propagate index to parent.
 - [ ] `ext4_extent_leaf_split(sb, inode, leaf_buf, &new_block)`: allocate new block; move upper half of entries; create index entry in parent pointing to both
 - [ ] `ext4_extent_remove(sb, inode, log_block, len)`: find containing extent; if partial: shrink `ee_len` or split into two extents; free physical blocks in freed range; free empty leaf/index blocks; write back inode
 - [ ] `ext4_free_block(sb, phys_block)`: clear bit in block bitmap; `jbd2_transaction_add_block()` for bitmap; update `bg_free_blocks_count` in group descriptor
-- [ ] Commit: `"fs/ext4: extent tree write — insert with merge, leaf split, index propagation, remove + block free"`
+- [ ] Commit: `"fs/ext4: extent tree write -- insert with merge, leaf split, index propagation, remove + block free"`
 
 ## 9. Directory Write `[Sonnet]`
 
@@ -197,13 +197,13 @@ Add, remove, and maintain directory entries. Maintain htree index when `EXT4_IND
 **Files:** `src/kernel/fs/ext4/ext4_dir.c` (extend)
 
 > [!NOTE]
-> `ext4_dir_add`: scan directory data blocks for a `rec_len` gap: an entry is a valid insertion point if `actual_len = 8 + name_len (rounded up to 4)` and `entry.rec_len - actual_len >= 8 + new_name_len (rounded up to 4)`; shrink the existing entry's `rec_len` to `actual_len`; write the new entry in the remaining gap with `rec_len = (old_rec_len - actual_len)`. If no gap: allocate a new directory block via `ext4_alloc_block` + `ext4_extent_insert`; write the new entry with `rec_len = block_size`. `ext4_dir_remove`: find entry; merge its `rec_len` into the preceding entry (`prev.rec_len += deleted.rec_len`); if first entry in block: set `inode = 0` (deleted marker). Update htree index entries when `EXT4_INDEX_FL` (or re-initialize htree if tree becomes unbalanced — this is optional; acceptable to leave htree stale and fall back to linear scan).
+> `ext4_dir_add`: scan directory data blocks for a `rec_len` gap: an entry is a valid insertion point if `actual_len = 8 + name_len (rounded up to 4)` and `entry.rec_len - actual_len >= 8 + new_name_len (rounded up to 4)`; shrink the existing entry's `rec_len` to `actual_len`; write the new entry in the remaining gap with `rec_len = (old_rec_len - actual_len)`. If no gap: allocate a new directory block via `ext4_alloc_block` + `ext4_extent_insert`; write the new entry with `rec_len = block_size`. `ext4_dir_remove`: find entry; merge its `rec_len` into the preceding entry (`prev.rec_len += deleted.rec_len`); if first entry in block: set `inode = 0` (deleted marker). Update htree index entries when `EXT4_INDEX_FL` (or re-initialize htree if tree becomes unbalanced -- this is optional; acceptable to leave htree stale and fall back to linear scan).
 
 - [ ] `ext4_dir_add(sb, dir_inode, name, name_len, child_ino, file_type)`: scan data blocks for gap; if none: alloc new dir block + extend extents; write `ext4_dir_entry_2`; update dir `i_size`; wrap in JBD2 transaction
 - [ ] `ext4_dir_remove(sb, dir_inode, name, name_len)`: find entry; merge `rec_len`; write block; JBD2 transaction
 - [ ] `ext4_dir_rename(sb, old_dir, old_ino, old_name, new_dir, new_name)`: `ext4_dir_remove(old_dir, old_name)` + `ext4_dir_add(new_dir, new_name, old_ino)` in a single JBD2 transaction for atomicity
-- [ ] VFS callbacks: `ext4_vfs_mkdir`, `ext4_vfs_rmdir` — create/remove directory entry + allocate/free directory inode + add `.` and `..` entries
-- [ ] Commit: `"fs/ext4: directory write — gap-fill add, rec_len merge delete, atomic rename, JBD2 wrapping"`
+- [ ] VFS callbacks: `ext4_vfs_mkdir`, `ext4_vfs_rmdir` -- create/remove directory entry + allocate/free directory inode + add `.` and `..` entries
+- [ ] Commit: `"fs/ext4: directory write -- gap-fill add, rec_len merge delete, atomic rename, JBD2 wrapping"`
 
 ## 10. File Create / Delete / Rename `[Sonnet]`
 
@@ -220,7 +220,7 @@ Allocate inodes from inode bitmaps. Manage `i_links_count`. Free all blocks and 
 - [ ] `ext4_unlink(sb, dir_inode, name)`: `ext4_dir_remove()`; decrement `i_links_count`; if 0: walk extent tree + `ext4_free_block()` for each physical block; `ext4_free_inode()`; all in JBD2 transaction
 - [ ] `ext4_rename(sb, old_dir, old_name, new_dir, new_name)`: `ext4_dir_rename()` already handles both dirs; here: if `new_name` exists in `new_dir`: call `ext4_unlink()` first (atomically)
 - [ ] VFS callbacks: `ext4_vfs_create`, `ext4_vfs_unlink`, `ext4_vfs_rename`, `ext4_vfs_link` → call the above
-- [ ] Commit: `"fs/ext4: create/delete/rename — inode alloc/free, link count, block free on last unlink, JBD2 atomic"`
+- [ ] Commit: `"fs/ext4: create/delete/rename -- inode alloc/free, link count, block free on last unlink, JBD2 atomic"`
 
 ## 11. Extended Attributes `[Sonnet]`
 
@@ -236,7 +236,7 @@ Read and write inline xattrs (in the extra inode space) and xattr blocks. Suppor
 - [ ] `ext4_xattr_remove(sb, ino, &inode, name_index, name, name_len)`: find and compact xattr entry list
 - [ ] `ext4_xattr_list(sb, inode, buf, buf_len)`: enumerate all xattr names (e.g., `user.foo\0system.posix_acl_access\0`)
 - [ ] Expose via `NtQueryEaFile` / `NtSetEaFile` stubs (→ XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §9` for EA interface pattern)
-- [ ] Commit: `"fs/ext4: extended attributes — inline xattr, xattr block, ACL + capability namespaces"`
+- [ ] Commit: `"fs/ext4: extended attributes -- inline xattr, xattr block, ACL + capability namespaces"`
 
 ## 12. VFS Registration + Probe + fsck `[Sonnet]`
 
@@ -245,7 +245,7 @@ Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `e
 **Files:** `src/kernel/fs/ext4/ext4_vfs.c` (new), `src/shell/cmd_chkdsk.c` (extend)
 
 > [!NOTE]
-> `ext4_probe(blkdev)`: read sector 2 (byte offset 1024); check `s_magic == 0xEF53`. `ext4_mount()`: `ext4_sb_parse()` → if unknown incompat bits: mount read-only; `jbd2_replay()` → if replay fails: mount read-only + log; scan root inode (2) for VFS root. `ext4_fsck()`: walk all block group descriptors; for each group: read block bitmap + inode bitmap; walk inode table — for each non-free inode: walk extent tree + count allocated blocks; verify against block bitmap; detect orphan inodes (allocated but not reachable from directory tree); detect cross-linked blocks (same physical block in two different inodes). `ext4_unmount()`: flush all dirty inode/bitmap/journal blocks; write final commit block; clear `MOUNT_FLAGS` in superblock; write `s_state = EXT4_VALID_FS`.
+> `ext4_probe(blkdev)`: read sector 2 (byte offset 1024); check `s_magic == 0xEF53`. `ext4_mount()`: `ext4_sb_parse()` → if unknown incompat bits: mount read-only; `jbd2_replay()` → if replay fails: mount read-only + log; scan root inode (2) for VFS root. `ext4_fsck()`: walk all block group descriptors; for each group: read block bitmap + inode bitmap; walk inode table -- for each non-free inode: walk extent tree + count allocated blocks; verify against block bitmap; detect orphan inodes (allocated but not reachable from directory tree); detect cross-linked blocks (same physical block in two different inodes). `ext4_unmount()`: flush all dirty inode/bitmap/journal blocks; write final commit block; clear `MOUNT_FLAGS` in superblock; write `s_state = EXT4_VALID_FS`.
 
 - [ ] `ext4_probe(blkdev_t *dev)` → read sector 2; return 1 if `buf[56..57] == 0xEF53` and `buf[96..99] & INCOMPAT_EXTENTS`, 0 otherwise (distinguish from ext2/ext3 which also use 0xEF53 magic but lack extents)
 - [ ] `ext4_mount(blkdev_t *dev, char letter)` → full init: `ext4_sb_parse` → feature check → `jbd2_replay` → VFS root → `vfs_mount()`
@@ -255,7 +255,7 @@ Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `e
 - [ ] `chkdsk D: /ext4` → `ext4_fsck(vol, fix=0)`; `/fix` calls with `fix=1`
 - [ ] Add to `vfs_probe()` probe chain at step 5 (after exFAT, before ISO 9660); update `partition.c` to remove old `probe_ext2_sector2()` stub and redirect to `ext4_probe()`
 - [ ] Log: `[ext4] Mounted %c: "%s", %llu inodes, %llu blocks, block_size=%u%s`; `%s` = ` [READ-ONLY]` if read-only
-- [ ] Commit: `"fs/ext4: VFS registration — probe, mount, read-only fallback, journal gating, fsck, chkdsk /ext4"`
+- [ ] Commit: `"fs/ext4: VFS registration -- probe, mount, read-only fallback, journal gating, fsck, chkdsk /ext4"`
 
 ---
 
@@ -264,18 +264,18 @@ Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `e
 
 | ⭐ | Feature                                                    | 🪟 Win11                                      | 🐧 Linux                                                                                  | 🚀 Impossible OS                                                          |
 |----|------------------------------------------------------------|--------------------------------------------|----------------------------------------------------------------------------------------|------------------------------------------------------------------------|
-| ⭐ | Native ext4 read support                                   | ❌ No native support (requires third-party | ✅ `ext4.ko`; first-class support since 2008                                           | ⬜ §1–§5 — , §12; read path with                                       |
-| ⭐ | Native ext4 write support                                  | ❌ No native support                       | ✅ `ext4.ko`; full R/W with JBD2                                                       | ⬜ §6–§10 — JBD2-wrapped writes, extent tree mutation,                 |
-| ⭐ | JBD2 journal replay on mount                               | ❌ N/A — no ext4 support                   | ✅ `jbd2.ko`; always replays before mounting                                           | ⬜ §6 — committed-transaction replay, `EXT4_VALID_FS` state management |
-| ⭐ | Extent tree B+ tree (depth 0–4) + triple-indirect fallback | ❌ N/A                                     | ✅ `ext4_ext_find_extent()`; depth up to 5;                                            | ⬜ §3 — , §8; binary search descent,                                   |
-| ⭐ | Directory htree (B+ tree) — half_md4 / TEA hash            | ❌ N/A                                     | ✅ `dx_probe()` in `namei.c`; htree with                                               | ⬜ §4 — all three hash variants; linear                                |
-| ⭐ | Inline data                                                | ❌ N/A                                     | ✅ `EXT4_INLINE_DATA_FL`; `ext4_readpage_inline()` / `ext4_writepage_inline()`         | ⬜ §5 — `i_block` inline read; inline+xattr data                       |
-| ⭐ | ext4 fsck                                                  | ❌ N/A                                     | ✅ `e2fsck` (external tool); not in-kernel                                             | ⬜ §12 — in-kernel fsck; orphan inode detection                        |
-| ⭐ | Read-only mount on unknown incompat features               | ❌ N/A                                     | ✅ `ext4_fill_super()` refuses mount on unknown                                        | ⬜ §12 — `s_feature_incompat & ~SUPPORTED` check; `[READ-ONLY]`        |
-| 💎 | Extended attributes                                        | ❌ N/A for ext4; NTFS has                  | ✅ `ext4_xattr_get/set()`; `system.posix_acl_access`, `security.capability` namespaces | ⬜ §11 — inline xattr + xattr block                                    |
-| ⭐ | Replace ext2 probe stub with full ext4 VFS driver          | ❌ N/A                                     | ✅ Full driver since 2.6.28 (2008)                                                     | ⬜ §12 — `ext4_probe()` replaces `probe_ext2_sector2()` stub in        |
+| ⭐ | Native ext4 read support                                   | ❌ No native support (requires third-party | ✅ `ext4.ko`; first-class support since 2008                                           | ⬜ §1–§5 -- , §12; read path with                                       |
+| ⭐ | Native ext4 write support                                  | ❌ No native support                       | ✅ `ext4.ko`; full R/W with JBD2                                                       | ⬜ §6–§10 -- JBD2-wrapped writes, extent tree mutation,                 |
+| ⭐ | JBD2 journal replay on mount                               | ❌ N/A -- no ext4 support                   | ✅ `jbd2.ko`; always replays before mounting                                           | ⬜ §6 -- committed-transaction replay, `EXT4_VALID_FS` state management |
+| ⭐ | Extent tree B+ tree (depth 0–4) + triple-indirect fallback | ❌ N/A                                     | ✅ `ext4_ext_find_extent()`; depth up to 5;                                            | ⬜ §3 -- , §8; binary search descent,                                   |
+| ⭐ | Directory htree (B+ tree) -- half_md4 / TEA hash            | ❌ N/A                                     | ✅ `dx_probe()` in `namei.c`; htree with                                               | ⬜ §4 -- all three hash variants; linear                                |
+| ⭐ | Inline data                                                | ❌ N/A                                     | ✅ `EXT4_INLINE_DATA_FL`; `ext4_readpage_inline()` / `ext4_writepage_inline()`         | ⬜ §5 -- `i_block` inline read; inline+xattr data                       |
+| ⭐ | ext4 fsck                                                  | ❌ N/A                                     | ✅ `e2fsck` (external tool); not in-kernel                                             | ⬜ §12 -- in-kernel fsck; orphan inode detection                        |
+| ⭐ | Read-only mount on unknown incompat features               | ❌ N/A                                     | ✅ `ext4_fill_super()` refuses mount on unknown                                        | ⬜ §12 -- `s_feature_incompat & ~SUPPORTED` check; `[READ-ONLY]`        |
+| 💎 | Extended attributes                                        | ❌ N/A for ext4; NTFS has                  | ✅ `ext4_xattr_get/set()`; `system.posix_acl_access`, `security.capability` namespaces | ⬜ §11 -- inline xattr + xattr block                                    |
+| ⭐ | Replace ext2 probe stub with full ext4 VFS driver          | ❌ N/A                                     | ✅ Full driver since 2.6.28 (2008)                                                     | ⬜ §12 -- `ext4_probe()` replaces `probe_ext2_sector2()` stub in        |
 
-> **After §1–§12:** Impossible OS becomes one of only two desktop OS kernels (alongside Linux) capable of natively reading and writing ext4 volumes — surpassing Windows 11 which requires third-party drivers. The in-kernel `ext4_fsck()` callable via `chkdsk /ext4` is a further exclusive — Linux uses the external `e2fsck` tool which is not available in-kernel.
+> **After §1–§12:** Impossible OS becomes one of only two desktop OS kernels (alongside Linux) capable of natively reading and writing ext4 volumes -- surpassing Windows 11 which requires third-party drivers. The in-kernel `ext4_fsck()` callable via `chkdsk /ext4` is a further exclusive -- Linux uses the external `e2fsck` tool which is not available in-kernel.
 
 ## Verification
 
@@ -293,4 +293,4 @@ Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `e
 - [ ] Rename: `ext4_rename(dir, "a.txt", dir, "b.txt")` → `FindFirstFileW` returns `"b.txt"` only; old name gone; JBD2 log shows single commit for the rename
 - [ ] Extended attributes: Linux-written file with `system.posix_acl_access` xattr; `NtQueryEaFile` returns correct ACL bytes
 - [ ] fsck: inject a cross-linked block (two inodes referencing same physical block); `chkdsk D: /ext4` → `[ext4] fsck: 1 error: cross-linked block %u`
-- [ ] Commit: `"fs/ext4: complete ext4 R/W driver — superblock, extents, htree, JBD2, write, create, xattrs, fsck"`
+- [ ] Commit: `"fs/ext4: complete ext4 R/W driver -- superblock, extents, htree, JBD2, write, create, xattrs, fsck"`

@@ -1,5 +1,5 @@
 /* ============================================================================
- * gfx_core.c — 2D Compositing Library: Core Surface and Primitives
+ * gfx_core.c -- 2D Compositing Library: Core Surface and Primitives
  *
  * All drawing functions operate on gfx_surface_t, a hardware-independent
  * pixel buffer.  The surface can wrap the framebuffer back buffer or any
@@ -117,12 +117,12 @@ void gfx_blend_pixel(gfx_surface_t *s, int32_t x, int32_t y, gfx_color_t color)
 
     sa = GFX_ALPHA(color);
     if (sa == 0xFF) {
-        /* Fully opaque — just overwrite */
+        /* Fully opaque -- just overwrite */
         s->pixels[(uint32_t)y * s->stride + (uint32_t)x] = color;
         return;
     }
     if (sa == 0x00)
-        return;  /* Fully transparent — skip */
+        return;  /* Fully transparent -- skip */
 
     sr = GFX_RED(color);
     sg = GFX_GREEN(color);
@@ -307,7 +307,7 @@ void gfx_fill_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
 
 /* ---- Outline rounded rectangle ----
  * Draws only the border edges + rounded corners.
- * DOES NOT fill the interior — safe to use on top of acrylic. */
+ * DOES NOT fill the interior -- safe to use on top of acrylic. */
 
 void gfx_draw_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
                             uint32_t w, uint32_t h, uint32_t radius,
@@ -423,7 +423,7 @@ void gfx_draw_line(gfx_surface_t *s, int32_t x0, int32_t y0,
     int32_t e2;
 
     if (thickness <= 1) {
-        /* Standard Bresenham — single pixel width */
+        /* Standard Bresenham -- single pixel width */
         for (;;) {
             gfx_put_pixel(s, x0, y0, color);
             if (x0 == x1 && y0 == y1) break;

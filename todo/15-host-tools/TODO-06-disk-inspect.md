@@ -1,4 +1,4 @@
-# TODO-06 — disk-inspect (Disk Image Browser)
+# TODO-06 -- disk-inspect (Disk Image Browser)
 
 > **Goal:** Interactively browse GPT partition tables, IXFS superblocks, inode tables, extent maps, and raw sectors from a disk image or physical drive. The `fdisk -l` + `debugfs` equivalent for Impossible OS formats.
 
@@ -36,7 +36,7 @@ $ disk-inspect build/system-disk.img
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | GPT partition table parser                     | —          |  [ ]   |
+| 💎  |   1   | GPT partition table parser                     | --          |  [ ]   |
 | 💎  |   2   | IXFS superblock + inode inspector              | §1         |  [ ]   |
 | 💎  |   3   | Directory listing (ls, tree)                   | §2         |  [ ]   |
 | 💎  |   4   | Hex dump and raw sector read                   | §1         |  [ ]   |
@@ -63,18 +63,18 @@ Parse IXFS metadata and display detailed inode information.
 ## 3. Directory Listing
 Browse the IXFS directory tree.
 
-- [ ] `ls /path` — list directory entries with type, inode, size
-- [ ] `tree /path` — recursive directory tree
-- [ ] `cat /path/file` — display file contents (text mode)
-- [ ] `stat /path` — detailed inode info for a path
+- [ ] `ls /path` -- list directory entries with type, inode, size
+- [ ] `tree /path` -- recursive directory tree
+- [ ] `cat /path/file` -- display file contents (text mode)
+- [ ] `stat /path` -- detailed inode info for a path
 
 ## 4. Hex Dump and Raw Sector Read
 Low-level inspection of raw disk data.
 
-- [ ] `hexdump inode offset length` — hex dump of file data
-- [ ] `sector LBA count` — raw sector hex dump
-- [ ] `block N` — IXFS block hex dump
-- [ ] `bitmap` — display block allocation bitmap (visual)
+- [ ] `hexdump inode offset length` -- hex dump of file data
+- [ ] `sector LBA count` -- raw sector hex dump
+- [ ] `block N` -- IXFS block hex dump
+- [ ] `bitmap` -- display block allocation bitmap (visual)
 
 ## 5. Interactive Shell
 REPL for browsing without restarting the tool.

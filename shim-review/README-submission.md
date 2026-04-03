@@ -1,9 +1,9 @@
-# Impossible OS — shim-review submission
+# Impossible OS -- shim-review submission
 # Branch: rizonesoft-shim-x86_64-20260314
 
 This is the shim-review submission for **Impossible OS**, a custom x86-64 operating
 system built entirely from scratch (custom UEFI bootloader, 64-bit kernel, graphical
-desktop — no Linux, no GRUB).
+desktop -- no Linux, no GRUB).
 
 - **Bootloader repo:** https://github.com/rizonesoft/impossible-os-bootloader
 - **Shim fork:** https://github.com/rizonesoft/impossible-os-shim
@@ -13,9 +13,9 @@ desktop — no Linux, no GRUB).
 - [x] completed README.md file with the necessary information
 - [x] shim.efi to be signed (`shimx64.efi`)
 - [x] public portion of certificate embedded in shim (`MOK.cer`, passed as `VENDOR_CERT_FILE`)
-- [x] binaries for vendor_db — **N/A** (we do not use vendor_db)
-- [x] any extra patches to shim — **none** (unmodified upstream rhboot/shim)
-- [x] any extra patches to grub — **N/A** (we do not use GRUB)
+- [x] binaries for vendor_db -- **N/A** (we do not use vendor_db)
+- [x] any extra patches to shim -- **none** (unmodified upstream rhboot/shim)
+- [x] any extra patches to grub -- **N/A** (we do not use GRUB)
 - [x] build logs (`build.log`)
 - [x] Dockerfile to reproduce the build (`Dockerfile`)
 
@@ -31,11 +31,11 @@ d7e21770b1c8f2b977db1d533f7bba3d0de3d212e83ffd35c2509de970d6bd2f  shimx64.efi
 
 ## What is the link to your previous shim review request (if any)?
 
-N/A — this is our first submission.
+N/A -- this is our first submission.
 
 ## If no security contacts have changed since verification, what is the link?
 
-N/A — first submission, no prior verified contacts.
+N/A -- first submission, no prior verified contacts.
 
 ---
 
@@ -54,7 +54,7 @@ UEFI hardware with Secure Boot support. The shim is needed so our signed UEFI
 bootloader (`grubx64.efi`) is trusted without requiring manual MOK enrollment
 on every machine.
 
-This is a **legitimate OS project** — not a tool to bypass Secure Boot restrictions.
+This is a **legitimate OS project** -- not a tool to bypass Secure Boot restrictions.
 Our bootloader loads our own kernel and nothing else.
 
 ## Shim Version

@@ -1,5 +1,5 @@
 @echo off
-:: run-qemu-kvm.bat — Launch Impossible OS in QEMU with WHPX acceleration
+:: run-qemu-kvm.bat -- Launch Impossible OS in QEMU with WHPX acceleration
 ::
 :: WHPX (Windows Hypervisor Platform) provides near-native speed.
 :: Requires: Hyper-V enabled in Windows Features + QEMU for Windows.

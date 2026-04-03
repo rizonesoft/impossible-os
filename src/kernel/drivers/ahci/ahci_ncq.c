@@ -1,5 +1,5 @@
 /* ============================================================================
- * ahci_ncq.c — NCQ (Native Command Queuing) tag management and I/O
+ * ahci_ncq.c -- NCQ (Native Command Queuing) tag management and I/O
  * ============================================================================ */
 
 #include "kernel/drivers/ahci_internal.h"

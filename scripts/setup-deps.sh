@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# setup-deps.sh — Install all system dependencies for building Impossible OS
+# setup-deps.sh -- Install all system dependencies for building Impossible OS
 #
 # Detects the Linux distribution and installs the required packages.
 # Idempotent: running twice changes nothing.
@@ -39,7 +39,7 @@ detect_distro() {
 
 DISTRO=$(detect_distro)
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Impossible OS — Dependency Installer${NC}"
+echo -e "${CYAN}  Impossible OS -- Dependency Installer${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
 
@@ -72,7 +72,7 @@ case "$DISTRO" in
             "xorriso:xorriso"
             "mtools:mtools"
             "qemu-system-x86_64:qemu-system-x86"
-            # OVMF is a data package — check for file instead
+            # OVMF is a data package -- check for file instead
             "/usr/share/OVMF/OVMF_CODE_4M.fd:ovmf"
             "python3:python3"
             "pip:python3-pip"

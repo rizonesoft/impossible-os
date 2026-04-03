@@ -1,5 +1,5 @@
 @echo off
-:: write-usb.bat — Write Impossible OS to a USB flash drive
+:: write-usb.bat -- Write Impossible OS to a USB flash drive
 :: Right-click -> "Run as administrator"
 
 :: Elevate to admin if not already

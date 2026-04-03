@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_ops.c — VFS file and directory operations
+ * ixfs_ops.c -- VFS file and directory operations
  * ============================================================================ */
 
 #include "ixfs_internal.h"
@@ -112,7 +112,7 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
         uint32_t end = offset + size;
 
         if (end <= IXFS_INLINE_MAX) {
-            /* Still fits inline — write directly to i_extents[] */
+            /* Still fits inline -- write directly to i_extents[] */
             uint8_t *dst = (uint8_t *)v->inode.i_extents;
             uint32_t i;
             for (i = 0; i < size; i++)
@@ -126,7 +126,7 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
             return (int)size;
         }
 
-        /* Promotion: data exceeds 48 bytes — move to extent-based.
+        /* Promotion: data exceeds 48 bytes -- move to extent-based.
          * 1. Save current inline data
          * 2. Clear inline flag and extent area
          * 3. Allocate a block, write old data + first block of new data
@@ -576,7 +576,7 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
     }
 
     if (found_slot < 0) {
-        /* Append at end — may need to grow the directory */
+        /* Append at end -- may need to grow the directory */
         uint32_t byte_off = total_entries * sizeof(struct ixfs_dir_entry);
         uint32_t bi = byte_off / IXFS_BLOCK_SIZE;
         uint32_t bo = byte_off % IXFS_BLOCK_SIZE;
@@ -614,7 +614,7 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
     ixfs_flush_bitmap(vol);
     ixfs_flush_superblock(vol);
 
-    /* Invalidate hash index — will rebuild on next finddir */
+    /* Invalidate hash index -- will rebuild on next finddir */
     ixfs_hash_free(pv);
 
     kfree(data_buf);
@@ -728,7 +728,7 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
             ixfs_flush_bitmap(vol);
             ixfs_flush_superblock(vol);
 
-            /* Invalidate hash index — will rebuild on next finddir */
+            /* Invalidate hash index -- will rebuild on next finddir */
             ixfs_hash_free(pv);
 
             kfree(data_buf);
@@ -773,7 +773,7 @@ int ixfs_rename(struct vfs_node *parent, const char *old_name,
         de = (struct ixfs_dir_entry *)(data_buf + bo);
 
         if (de->d_inode != 0 && ixfs_strcmp(de->d_name, old_name)) {
-            /* Found — update the name */
+            /* Found -- update the name */
             ixfs_strcpy(de->d_name, new_name, IXFS_MAX_NAME);
             ixfs_write_block(vol, dir_block, data_buf);
 

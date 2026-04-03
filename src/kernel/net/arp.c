@@ -1,5 +1,5 @@
 /* ============================================================================
- * arp.c — Address Resolution Protocol
+ * arp.c -- Address Resolution Protocol
  *
  * Maintains an ARP table cache. Handles ARP requests/replies.
  * ============================================================================ */
@@ -118,7 +118,7 @@ void arp_handle(const void *data, uint32_t len)
     uint16_t op = ntohs(pkt->opcode);
 
     if (op == ARP_OP_REQUEST) {
-        /* Someone is asking for our MAC — reply if it's for us */
+        /* Someone is asking for our MAC -- reply if it's for us */
         if (pkt->target_ip == net_cfg.ip && net_cfg.configured) {
             reply.hw_type = htons(ARP_HW_ETHER);
             reply.proto_type = htons(ETHERTYPE_IPV4);
@@ -133,7 +133,7 @@ void arp_handle(const void *data, uint32_t len)
             eth_send(pkt->sender_mac, ETHERTYPE_ARP, &reply, sizeof(reply));
         }
     } else if (op == ARP_OP_REPLY) {
-        /* Already learned above — just log */
+        /* Already learned above -- just log */
         klog(LOG_DEBUG, "net", "Reply: %u.%u.%u.%u",
                (uint64_t)(pkt->sender_ip & 0xFF),
                (uint64_t)((pkt->sender_ip >> 8) & 0xFF),

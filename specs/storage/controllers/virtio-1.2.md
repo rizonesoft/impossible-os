@@ -1,8 +1,8 @@
-# VirtIO 1.2 Block Device — Technical Specification for OS Implementation
+# VirtIO 1.2 Block Device -- Technical Specification for OS Implementation
 
 ## Overview and Architectural Context
 
-The Virtual I/O Device (VirtIO) specification defines a standard interface for paravirtualized devices in virtual machines, enabling efficient communication between guest operating systems and hypervisors. Ratified as an OASIS standard, VirtIO 1.2 (published July 2022) consolidates and extends the VirtIO 1.0 (2016) and VirtIO 1.1 (2019) specifications while maintaining full backward compatibility. The specification covers a family of device types — network, block, console, GPU, input, and more — but this document focuses exclusively on the **VirtIO Block Device (device type 2)** and the **PCI transport** mechanisms required to implement a production-quality block driver in a custom operating system kernel.
+The Virtual I/O Device (VirtIO) specification defines a standard interface for paravirtualized devices in virtual machines, enabling efficient communication between guest operating systems and hypervisors. Ratified as an OASIS standard, VirtIO 1.2 (published July 2022) consolidates and extends the VirtIO 1.0 (2016) and VirtIO 1.1 (2019) specifications while maintaining full backward compatibility. The specification covers a family of device types -- network, block, console, GPU, input, and more -- but this document focuses exclusively on the **VirtIO Block Device (device type 2)** and the **PCI transport** mechanisms required to implement a production-quality block driver in a custom operating system kernel.
 
 VirtIO achieves near-native I/O performance by eliminating the complex emulation overhead of traditional device models. Rather than emulating real hardware (e.g., an Intel ICH9 AHCI controller), VirtIO defines a minimal, purpose-built protocol where the guest driver and the hypervisor cooperate through shared memory structures called **virtqueues**. The host can DMA directly to/from guest memory, avoiding costly VM exits for each I/O operation.
 
@@ -177,7 +177,7 @@ struct virtq_avail {
     uint16_t flags;        /* VIRTQ_AVAIL_F_NO_INTERRUPT = 0x01 */
     uint16_t idx;          /* Next slot to write (wraps modulo queue_size) */
     uint16_t ring[];       /* Array of queue_size descriptor head indices */
-    /* uint16_t used_event; — only if VIRTIO_F_EVENT_IDX negotiated */
+    /* uint16_t used_event; -- only if VIRTIO_F_EVENT_IDX negotiated */
 };
 ```
 
@@ -202,7 +202,7 @@ struct virtq_used {
     uint16_t flags;          /* VIRTQ_USED_F_NO_NOTIFY = 0x01 */
     uint16_t idx;            /* Next slot the device will write */
     struct virtq_used_elem ring[];  /* Array of queue_size elements */
-    /* uint16_t avail_event; — only if VIRTIO_F_EVENT_IDX negotiated */
+    /* uint16_t avail_event; -- only if VIRTIO_F_EVENT_IDX negotiated */
 };
 ```
 
@@ -262,15 +262,15 @@ The VirtIO specification mandates a strict initialization protocol (§3.1.1). Th
 ### Initialization Steps
 
 ```
-1. RESET        — Write 0 to device_status → device resets all state
-2. ACKNOWLEDGE  — Set ACKNOWLEDGE bit → "I found you"
-3. DRIVER       — Set DRIVER bit → "I know what you are"
-4. FEATURES     — Read device_feature (pages 0 and 1)
+1. RESET        -- Write 0 to device_status → device resets all state
+2. ACKNOWLEDGE  -- Set ACKNOWLEDGE bit → "I found you"
+3. DRIVER       -- Set DRIVER bit → "I know what you are"
+4. FEATURES     -- Read device_feature (pages 0 and 1)
                    Write driver_feature (accept subset)
-5. FEATURES_OK  — Set FEATURES_OK bit
-                   Re-read device_status — if FEATURES_OK is cleared,
+5. FEATURES_OK  -- Set FEATURES_OK bit
+                   Re-read device_status -- if FEATURES_OK is cleared,
                    the device rejected the feature set → FAILED
-6. QUEUE SETUP  — For each virtqueue (block device has 1 request queue):
+6. QUEUE SETUP  -- For each virtqueue (block device has 1 request queue):
                    a. Write queue_select = queue_index
                    b. Read queue_size (max descriptors supported)
                    c. Optionally write a smaller queue_size
@@ -278,7 +278,7 @@ The VirtIO specification mandates a strict initialization protocol (§3.1.1). Th
                    e. Write physical addresses to queue_desc, queue_driver, queue_device
                    f. Write queue_enable = 1
                    g. Optionally assign MSI-X vector via queue_msix_vector
-7. DRIVER_OK    — Set DRIVER_OK bit → device is now live
+7. DRIVER_OK    -- Set DRIVER_OK bit → device is now live
 ```
 
 > [!CAUTION]
@@ -331,20 +331,20 @@ Feature bits are the extensibility mechanism of VirtIO. The device advertises al
 A functional block driver should negotiate at minimum:
 
 ```
-Required:   VIRTIO_F_VERSION_1          — modern transport
+Required:   VIRTIO_F_VERSION_1          -- modern transport
 Strongly recommended:
-            VIRTIO_BLK_F_BLK_SIZE       — correct sector size
-            VIRTIO_BLK_F_SEG_MAX        — scatter-gather limits
-            VIRTIO_BLK_F_SIZE_MAX       — max segment size
-            VIRTIO_BLK_F_FLUSH          — write durability
-            VIRTIO_BLK_F_TOPOLOGY       — optimal I/O alignment
+            VIRTIO_BLK_F_BLK_SIZE       -- correct sector size
+            VIRTIO_BLK_F_SEG_MAX        -- scatter-gather limits
+            VIRTIO_BLK_F_SIZE_MAX       -- max segment size
+            VIRTIO_BLK_F_FLUSH          -- write durability
+            VIRTIO_BLK_F_TOPOLOGY       -- optimal I/O alignment
 
 Production enhancements:
-            VIRTIO_BLK_F_MQ             — per-CPU request queues
-            VIRTIO_BLK_F_DISCARD        — SSD TRIM support
-            VIRTIO_BLK_F_WRITE_ZEROES   — efficient zeroing
-            VIRTIO_F_RING_INDIRECT_DESC — large scatter-gather
-            VIRTIO_F_RING_EVENT_IDX     — interrupt coalescing
+            VIRTIO_BLK_F_MQ             -- per-CPU request queues
+            VIRTIO_BLK_F_DISCARD        -- SSD TRIM support
+            VIRTIO_BLK_F_WRITE_ZEROES   -- efficient zeroing
+            VIRTIO_F_RING_INDIRECT_DESC -- large scatter-gather
+            VIRTIO_F_RING_EVENT_IDX     -- interrupt coalescing
 ```
 
 ---
@@ -426,7 +426,7 @@ struct virtio_blk_req {
 | `VIRTIO_BLK_T_OUT`         | `0x00000001`   | Write sectors from buffer to device                 | Always           |
 | `VIRTIO_BLK_T_FLUSH`       | `0x00000004`   | Flush volatile write cache to persistent storage    | `F_FLUSH`        |
 | `VIRTIO_BLK_T_GET_ID`      | `0x00000008`   | Get device serial number (20 bytes ASCII)           | Always           |
-| `VIRTIO_BLK_T_DISCARD`     | `0x0000000B`   | Discard (TRIM) sectors — hint to reclaim space      | `F_DISCARD`      |
+| `VIRTIO_BLK_T_DISCARD`     | `0x0000000B`   | Discard (TRIM) sectors -- hint to reclaim space      | `F_DISCARD`      |
 | `VIRTIO_BLK_T_WRITE_ZEROES`| `0x0000000D`   | Write zeros to sectors without data transfer        | `F_WRITE_ZEROES` |
 | `VIRTIO_BLK_T_SECURE_ERASE`| `0x0000000E`   | Cryptographically erase sectors (VirtIO 1.2+)       | `F_SECURE_ERASE` |
 
@@ -469,7 +469,7 @@ Descriptor 2: { addr = &status_byte, len = 1,   flags = WRITE }
 
 ### Flush Request
 
-Flush has no data buffer — the `sector` field is ignored:
+Flush has no data buffer -- the `sector` field is ignored:
 
 ```
 Descriptor 0: { addr = &req_header, len = 16, flags = NEXT }
@@ -525,7 +525,7 @@ Queue N-1: Request queue (CPU N-1)
 
 **Implementation strategy:**
 - Assign one request queue per CPU core
-- Each CPU submits I/O to its local queue — no locking required
+- Each CPU submits I/O to its local queue -- no locking required
 - Each queue gets its own MSI-X interrupt vector
 - The device processes all queues in parallel
 
@@ -546,7 +546,7 @@ Benefits:
 4. If bit 1 set: re-read device configuration
 
 > [!WARNING]
-> Legacy INTx uses shared interrupt lines and requires masking/unmasking via the PIC or IOAPIC. This is the simplest path but has the worst performance. Per `rules.md`, Impossible OS routes all hardware interrupts via LAPIC/IOAPIC — legacy PIC masking must not be used.
+> Legacy INTx uses shared interrupt lines and requires masking/unmasking via the PIC or IOAPIC. This is the simplest path but has the worst performance. Per `rules.md`, Impossible OS routes all hardware interrupts via LAPIC/IOAPIC -- legacy PIC masking must not be used.
 
 ### MSI-X (Recommended)
 
@@ -555,7 +555,7 @@ Benefits:
 3. Program MSI-X table entries with LAPIC address/data
 4. Assign vectors: `queue_msix_vector` for each queue, `config_msix_vector` for config
 5. Enable MSI-X in PCI Message Control register
-6. Each vector triggers a dedicated ISR — no disambiguation needed
+6. Each vector triggers a dedicated ISR -- no disambiguation needed
 
 ### Polling (Fallback)
 
@@ -650,17 +650,17 @@ Based on the gap analysis of the current `virtio_blk.c` driver:
 
 | Priority | Enhancement                                     | Impact                                                             |
 | -------- | ----------------------------------------------- | ------------------------------------------------------------------ |
-| 🔴 P0   | Fix PIC IRQ routing → use IOAPIC/MSI-X          | Rules compliance — current driver violates APIC-only mandate       |
-| 🔴 P0   | Negotiate `F_FLUSH` + implement flush request    | Data integrity — FAT32/IXFS need write barriers                    |
-| 🟠 P1   | Negotiate `F_BLK_SIZE` + read `blk_size` config | Correctness — 4K-sector drives will break without this             |
-| 🟠 P1   | Negotiate `F_SEG_MAX` / `F_SIZE_MAX`            | Correctness — driver currently assumes unlimited segment size      |
-| 🟠 P1   | Negotiate `F_TOPOLOGY` + respect `opt_io_size`  | Performance — aligned I/O is significantly faster                  |
-| 🟠 P1   | Implement `VIRTIO_BLK_T_GET_ID`                 | Feature — device serial number for blkdev identification           |
-| 🟡 P2   | Asynchronous I/O (interrupt-driven, not polling) | Performance — unblocks CPU during disk I/O                         |
-| 🟡 P2   | Negotiate `F_DISCARD` + implement TRIM           | SSD optimization — reclaim unused blocks                           |
-| 🟡 P2   | Negotiate `F_WRITE_ZEROES`                       | Performance — efficient large zeroing                              |
-| 🟢 P3   | Multi-queue support (`F_MQ`)                     | Scalability — per-CPU request queues                               |
-| 🟢 P3   | Indirect descriptors (`F_RING_INDIRECT_DESC`)    | Scalability — large scatter-gather lists                           |
-| 🟢 P3   | Event index (`F_RING_EVENT_IDX`)                 | Performance — interrupt coalescing                                 |
-| 🔵 P4   | Packed virtqueue (`F_RING_PACKED`)               | Performance — better cache utilization                             |
-| 🔵 P4   | Secure erase (`F_SECURE_ERASE`)                  | Feature — cryptographic data erasure                               |
+| 🔴 P0   | Fix PIC IRQ routing → use IOAPIC/MSI-X          | Rules compliance -- current driver violates APIC-only mandate       |
+| 🔴 P0   | Negotiate `F_FLUSH` + implement flush request    | Data integrity -- FAT32/IXFS need write barriers                    |
+| 🟠 P1   | Negotiate `F_BLK_SIZE` + read `blk_size` config | Correctness -- 4K-sector drives will break without this             |
+| 🟠 P1   | Negotiate `F_SEG_MAX` / `F_SIZE_MAX`            | Correctness -- driver currently assumes unlimited segment size      |
+| 🟠 P1   | Negotiate `F_TOPOLOGY` + respect `opt_io_size`  | Performance -- aligned I/O is significantly faster                  |
+| 🟠 P1   | Implement `VIRTIO_BLK_T_GET_ID`                 | Feature -- device serial number for blkdev identification           |
+| 🟡 P2   | Asynchronous I/O (interrupt-driven, not polling) | Performance -- unblocks CPU during disk I/O                         |
+| 🟡 P2   | Negotiate `F_DISCARD` + implement TRIM           | SSD optimization -- reclaim unused blocks                           |
+| 🟡 P2   | Negotiate `F_WRITE_ZEROES`                       | Performance -- efficient large zeroing                              |
+| 🟢 P3   | Multi-queue support (`F_MQ`)                     | Scalability -- per-CPU request queues                               |
+| 🟢 P3   | Indirect descriptors (`F_RING_INDIRECT_DESC`)    | Scalability -- large scatter-gather lists                           |
+| 🟢 P3   | Event index (`F_RING_EVENT_IDX`)                 | Performance -- interrupt coalescing                                 |
+| 🔵 P4   | Packed virtqueue (`F_RING_PACKED`)               | Performance -- better cache utilization                             |
+| 🔵 P4   | Secure erase (`F_SECURE_ERASE`)                  | Feature -- cryptographic data erasure                               |

@@ -1,5 +1,5 @@
 /* ============================================================================
- * ctype.c — Character classification and conversion
+ * ctype.c -- Character classification and conversion
  * ============================================================================ */
 
 #include "ctype.h"

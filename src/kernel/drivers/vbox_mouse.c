@@ -1,5 +1,5 @@
 /* ============================================================================
- * vbox_mouse.c — VirtualBox VMMDev absolute mouse driver
+ * vbox_mouse.c -- VirtualBox VMMDev absolute mouse driver
  *
  * Discovers the VirtualBox Guest PCI device (0x80EE:0xCAFE), initializes
  * VMMDev protocol v1.03, and enables absolute mouse coordinates.
@@ -12,7 +12,7 @@
  *   5. Poll GetMouse packet each frame for absolute X, Y (0–0xFFFF)
  *   6. Scale to framebuffer resolution
  *
- * Buttons are NOT provided by VMMDev — read from PS/2 mouse state internally.
+ * Buttons are NOT provided by VMMDev -- read from PS/2 mouse state internally.
  *
  * Reference: https://wiki.osdev.org/VirtualBox_Guest_Additions
  * ============================================================================ */
@@ -101,7 +101,7 @@ static uint16_t io_port;           /* BAR0: I/O port base */
 static volatile uint32_t *vmmdev_mem;  /* BAR1: MMIO region */
 static uint8_t  irq_line;         /* PCI IRQ line */
 
-/* Packets — physically contiguous, page-aligned (identity-mapped via PMM) */
+/* Packets -- physically contiguous, page-aligned (identity-mapped via PMM) */
 static struct vbox_mouse_absolute *mouse_pkt;
 static uintptr_t mouse_pkt_phys;
 
@@ -140,7 +140,7 @@ static int32_t scale_abs(int32_t val, int32_t screen_max)
 }
 
 /* Poll for latest mouse position from VMMDev.
- * Called ONLY from the IRQ handler — the device only fills in
+ * Called ONLY from the IRQ handler -- the device only fills in
  * coordinates when there is a pending mouse event. */
 static void vbox_mouse_poll(void)
 {
@@ -332,7 +332,7 @@ struct mouse_state vbox_mouse_get_state(void)
 
     s.x = abs_x;
     s.y = abs_y;
-    /* VMMDev does NOT provide buttons — read from PS/2 mouse internally
+    /* VMMDev does NOT provide buttons -- read from PS/2 mouse internally
      * so the compositor doesn't need to merge two drivers. */
     {
         struct mouse_state ps = mouse_get_state();

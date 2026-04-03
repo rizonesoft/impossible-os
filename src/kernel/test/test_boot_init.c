@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_boot_init.c — Boot init sequencing unit tests
+ * test_boot_init.c -- Boot init sequencing unit tests
  *
  * Tests boot_result_t values, subsystem readiness tracking, BOOT_REQUIRE
  * macro, boot_progress() null safety, and POST code uniqueness.
@@ -67,7 +67,7 @@ static void test_boot_require_fails_when_not_ready(void)
     bool saved = kernel_subsystem_ready(SUBSYS_PMM);
 
     /* Note: BOOT_REQUIRE writes "[BOOT] REQUIRE failed: SUBSYS_PMM not ready"
-     * directly to serial — this is expected test output, not a real failure. */
+     * directly to serial -- this is expected test output, not a real failure. */
     kernel_subsystem_set_ready(SUBSYS_PMM, false);
     boot_result_t r = require_pmm_wrapper();
     TEST_ASSERT(r == BOOT_FATAL,
@@ -92,7 +92,7 @@ static void test_boot_require_passes_when_ready(void)
 
 static void test_boot_progress_null_step(void)
 {
-    /* Must not crash — just call it and survive */
+    /* Must not crash -- just call it and survive */
     boot_progress(0, (const char *)0, 0x0000);
     TEST_ASSERT(1, "boot_progress(NULL step) does not crash");
 }
@@ -135,7 +135,7 @@ static void test_boot_defer_register(void)
     /* boot_defer returns 0 on success.
      * Note: this adds to the real deferred array, but boot_run_deferred()
      * has already run by the time tests execute, so these entries won't
-     * cause problems — they'd run only if boot_run_deferred() is called
+     * cause problems -- they'd run only if boot_run_deferred() is called
      * again (which it won't be). */
     int r = boot_defer("test_deferred", deferred_test_fn);
     TEST_ASSERT_EQ(r, 0, "boot_defer returns 0 on success");

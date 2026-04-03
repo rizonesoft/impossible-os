@@ -1,5 +1,5 @@
 /* ============================================================================
- * gdt.c — Global Descriptor Table (x86-64 Long Mode)
+ * gdt.c -- Global Descriptor Table (x86-64 Long Mode)
  *
  * Sets up the GDT with:
  *   [0] Null descriptor
@@ -62,7 +62,7 @@ static void gdt_set_entry(uint32_t index, uint32_t base, uint32_t limit,
 /* --- Helper: set the 64-bit TSS descriptor (spans 2 GDT slots) --- */
 static void gdt_set_tss(uint32_t index, uint64_t base, uint32_t limit)
 {
-    /* First 8 bytes — standard descriptor format */
+    /* First 8 bytes -- standard descriptor format */
     gdt[index].limit_low   = (uint16_t)(limit & 0xFFFF);
     gdt[index].base_low    = (uint16_t)(base & 0xFFFF);
     gdt[index].base_mid    = (uint8_t)((base >> 16) & 0xFF);
@@ -70,7 +70,7 @@ static void gdt_set_tss(uint32_t index, uint64_t base, uint32_t limit)
     gdt[index].granularity  = (uint8_t)(((limit >> 16) & 0x0F));
     gdt[index].base_high   = (uint8_t)((base >> 24) & 0xFF);
 
-    /* Second 8 bytes — upper 32 bits of base address + reserved */
+    /* Second 8 bytes -- upper 32 bits of base address + reserved */
     /* We treat gdt[index+1] as raw bytes for the upper base */
     uint32_t *upper = (uint32_t *)&gdt[index + 1];
     upper[0] = (uint32_t)(base >> 32);  /* base[63:32] */
@@ -98,8 +98,8 @@ void gdt_init(void)
 
     /* IST stacks for critical exceptions: #DF, NMI, MCE.
      * Allocated from PMM (identity-mapped, phys = virt).
-     * PMM is initialized in Phase 0, GDT in Phase 1 — always available.
-     * Each stack is 4 KiB — IST points to the TOP (highest address). */
+     * PMM is initialized in Phase 0, GDT in Phase 1 -- always available.
+     * Each stack is 4 KiB -- IST points to the TOP (highest address). */
     POST16(0xD200);
     {
         uintptr_t ist1_page = pmm_alloc_frame();  /* #DF stack */

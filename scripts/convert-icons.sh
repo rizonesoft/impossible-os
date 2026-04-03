@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# convert-icons.sh — Convert SVG icons to PNG at all required sizes
+# convert-icons.sh -- Convert SVG icons to PNG at all required sizes
 #
 # Usage:
 #   bash scripts/convert-icons.sh [svg_dir]

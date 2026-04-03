@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# test-fs.sh — Automated filesystem test suite
+# test-fs.sh -- Automated filesystem test suite
 #
 # Generates test disk images, boots each in QEMU headless mode with the
 # test disk on AHCI port 1, captures serial output, and checks for
@@ -39,7 +39,7 @@ DIM='\033[0;90m'
 NC='\033[0m'
 
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Impossible OS — Filesystem Test Suite${NC}"
+echo -e "${CYAN}  Impossible OS -- Filesystem Test Suite${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
 
@@ -243,7 +243,7 @@ if [ "$FAILED" -gt 0 ]; then
     for entry in "${RESULTS[@]}"; do
         IFS=':' read -r name result reason <<< "$entry"
         if [ "$result" != "PASS" ]; then
-            echo -e "  ${RED}✗${NC} $name — $result${reason:+ ($reason)}"
+            echo -e "  ${RED}✗${NC} $name -- $result${reason:+ ($reason)}"
             echo -e "    ${DIM}Log: $LOG_DIR/$name.log${NC}"
         fi
     done

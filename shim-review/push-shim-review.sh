@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# push-shim-review.sh — Push the shim-review submission branch to GitHub.
+# push-shim-review.sh -- Push the shim-review submission branch to GitHub.
 #
 # Prerequisites:
 #   1. Fork https://github.com/rhboot/shim-review into rizonesoft/shim-review on GitHub (manual, one-time)

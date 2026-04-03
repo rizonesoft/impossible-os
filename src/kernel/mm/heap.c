@@ -1,5 +1,5 @@
 /* ============================================================================
- * heap.c — Kernel Heap Allocator
+ * heap.c -- Kernel Heap Allocator
  *
  * First-fit free-list allocator with coalescing of adjacent free blocks.
  *
@@ -21,7 +21,7 @@
 #define HEAP_INITIAL_PAGES  512      /* 512 pages = 2 MiB */
 #define HEAP_PAGE_SIZE      4096
 
-/* Block header — sits before every allocation */
+/* Block header -- sits before every allocation */
 struct block_header {
     uint64_t size;             /* size of the data area (not including header) */
     uint8_t  is_free;          /* 1 = free, 0 = allocated */
@@ -84,7 +84,7 @@ void heap_init(void)
         return;
     }
 
-    /* Allocate remaining pages — they must be contiguous for a simple heap.
+    /* Allocate remaining pages -- they must be contiguous for a simple heap.
      * PMM allocates linearly from the bitmap, so consecutive calls give
      * consecutive frames (as long as the region is free). */
     for (i = 1; i < HEAP_INITIAL_PAGES; i++) {
@@ -96,7 +96,7 @@ void heap_init(void)
         }
         /* Verify contiguity */
         if (frame != heap_base + i * HEAP_PAGE_SIZE) {
-            /* Non-contiguous — still usable but we stop here */
+            /* Non-contiguous -- still usable but we stop here */
             pmm_free_frame(frame);
             break;
         }

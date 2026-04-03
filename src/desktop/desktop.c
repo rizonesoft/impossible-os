@@ -1,5 +1,5 @@
 /* ============================================================================
- * desktop.c — Desktop shell (wallpaper, taskbar, start menu)
+ * desktop.c -- Desktop shell (wallpaper, taskbar, start menu)
  *
  * - Loads JPEG/PNG wallpaper from C:\ via image_load() + image_scale()
  * - Reads wallpaper path and fit mode from Registry (HKLM\SYSTEM\Theme)
@@ -10,8 +10,8 @@
 #include "desktop/desktop.h"
 #include "gfx.h"
 #include "kernel/drivers/framebuffer.h"
-#include "desktop/font.h"       /* bitmap font — kept for early boot fallback */
-#include "font_mgr.h"            /* TrueType fonts — primary rendering */
+#include "desktop/font.h"       /* bitmap font -- kept for early boot fallback */
+#include "font_mgr.h"            /* TrueType fonts -- primary rendering */
 #include "kernel/fs/vfs.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/rtc.h"
@@ -28,7 +28,7 @@
 #include "gfx.h"                 /* Alpha blending for icon compositing */
 #include <kernel/os_logo.h>      /* Pre-built OS logo arrays (all sizes, no scaling needed) */
 
-/* Integer square root — local copy matching gfx_core.c (isqrt is static) */
+/* Integer square root -- local copy matching gfx_core.c (isqrt is static) */
 static uint32_t isqrt_u(uint32_t n)
 {
     uint32_t x, x1;
@@ -55,7 +55,7 @@ static uint8_t   wallpaper_loaded;    /* 1 if wallpaper was loaded successfully 
 #define SM_PAD             14   /* inner padding (more air)    */
 #define SM_RADIUS          8    /* rounded corner radius       */
 #define SM_ACRYLIC_TINT    0xFF202020  /* neutral dark gray (matches taskbar) */
-#define SM_ACRYLIC_OP      200  /* acrylic opacity — matches taskbar (78% tint) */
+#define SM_ACRYLIC_OP      200  /* acrylic opacity -- matches taskbar (78% tint) */
 #define SM_BG_RIGHT        0xE6282828  /* right column (slightly lighter gray) */
 #define SM_DIVIDER         0xFF3A3A3A  /* column divider              */
 #define SM_SEPARATOR       0xFF353535  /* thin separator line         */
@@ -111,7 +111,7 @@ static const sm_right_item_t sm_right_items[] = {
 /* ---- Forward declarations ---- */
 static void load_wallpaper(void);
 
-/* TrueType text helpers — wrap screen back buffer as gfx_surface_t */
+/* TrueType text helpers -- wrap screen back buffer as gfx_surface_t */
 static void ttf_screen_text(int32_t x, int32_t y, const char *text,
                             int font_slot, int px_size, gfx_color_t color);
 static int  ttf_screen_width(const char *text, int font_slot, int px_size);
@@ -198,7 +198,7 @@ static void load_wallpaper(void)
     /* Scale to screen resolution if needed */
     if (decoded.width == screen_w && decoded.height == screen_h &&
         fit_mode == IMAGE_FIT_STRETCH) {
-        /* Already exact match — use decoded image directly */
+        /* Already exact match -- use decoded image directly */
         wallpaper_img = decoded;
     } else {
         if (image_scale(&wallpaper_img, &decoded,
@@ -223,7 +223,7 @@ static void ttf_screen_text(int32_t x, int32_t y, const char *text,
 {
     gfx_surface_t scr;
     ttf_font_t *f = ttf_get(font_slot, px_size);
-    if (!f) return;  /* TTF not loaded — silent skip */
+    if (!f) return;  /* TTF not loaded -- silent skip */
     gfx_surface_init(&scr, fb_get_backbuffer(),
                      fb_get_width(), fb_get_height(), fb_get_stride());
     ttf_draw_string(&scr, f, x, y, text, color);
@@ -440,7 +440,7 @@ void desktop_draw_taskbar(void)
     uint32_t i;
 
     /* Taskbar: apply acrylic frosted glass directly over the wallpaper
-     * pixels in the back buffer (no solid fill first — acrylic needs
+     * pixels in the back buffer (no solid fill first -- acrylic needs
      * the wallpaper to blur, then tints with TASKBAR_COLOR). */
     {
         gfx_surface_t scr;
@@ -470,7 +470,7 @@ void desktop_draw_taskbar(void)
         /* Subtle highlight on top edge for 3D effect */
         fb_fill_rect(btn_x + 1, btn_y + 1, START_BTN_WIDTH - 2, 1, 0xFF454545);
 
-        /* Draw OS logo — 1:1 pixel-perfect blit from the 32x32 prebuilt array */
+        /* Draw OS logo -- 1:1 pixel-perfect blit from the 32x32 prebuilt array */
         {
             uint32_t icon_x = btn_x + (START_BTN_WIDTH - START_ICON_SIZE) / 2;
             uint32_t icon_y = btn_y + (btn_h - START_ICON_SIZE) / 2;
@@ -579,7 +579,7 @@ void desktop_draw_start_menu(void)
 
     /* ---- Save corner regions from backbuffer BEFORE acrylic ----
      * When a window is behind the start menu, the backbuffer contains
-     * composited window content — not raw wallpaper.  We must restore
+     * composited window content -- not raw wallpaper.  We must restore
      * these pixels (not wallpaper) when clipping corners at the end. */
     uint32_t corner_save[4][SM_RADIUS * SM_RADIUS];  /* TL, TR, BL, BR */
     {
@@ -646,7 +646,7 @@ void desktop_draw_start_menu(void)
                    1, menu_h - SM_PAD * 2, SM_DIVIDER);
 
     /* ================================================================
-     *  LEFT COLUMN — Search bar + alphabetical pinned programs
+     *  LEFT COLUMN -- Search bar + alphabetical pinned programs
      * ================================================================ */
     {
         int32_t y = menu_y + SM_PAD;
@@ -709,7 +709,7 @@ void desktop_draw_start_menu(void)
     }
 
     /* ================================================================
-     *  RIGHT COLUMN — Quick access links + bottom buttons
+     *  RIGHT COLUMN -- Quick access links + bottom buttons
      * ================================================================ */
     {
         int32_t rx = right_x + 1; /* past divider */
@@ -972,12 +972,12 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
                             wm_focus_window(h);
                         }
                     }
-                    /* "All Programs" — no-op for now */
+                    /* "All Programs" -- no-op for now */
                     return 1;
                 }
             }
 
-            /* Right column — power button click */
+            /* Right column -- power button click */
             if (rel_x >= (int32_t)SM_LEFT_W) {
                 int32_t btn_y = (int32_t)menu_h - (int32_t)SM_BTN_SZ - SM_PAD;
                 int32_t rx = (int32_t)SM_LEFT_W + 1;
@@ -992,7 +992,7 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
                         acpi_shutdown();
                         return 1;
                     }
-                    /* Settings button — placeholder */
+                    /* Settings button -- placeholder */
                     if (rel_x >= settings_x && rel_x < settings_x + (int32_t)SM_BTN_SZ) {
                         start_menu_open = 0;
                         wm_mark_dirty();
@@ -1001,14 +1001,14 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
                 }
             }
 
-            /* Click inside menu but not on an action — consume it */
+            /* Click inside menu but not on an action -- consume it */
             return 1;
         }
 
-        /* Clicked outside the menu — close it */
+        /* Clicked outside the menu -- close it */
         start_menu_open = 0;
         wm_mark_dirty();
-        /* Don't consume the click — let WM handle it */
+        /* Don't consume the click -- let WM handle it */
         return 0;
     }
 
@@ -1048,7 +1048,7 @@ uint32_t desktop_get_usable_height(void)
 }
 
 /* ============================================================================
- * Cursor context — determine cursor shape for desktop elements
+ * Cursor context -- determine cursor shape for desktop elements
  * ============================================================================ */
 
 #include "cursor.h"

@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_file.c — File object type: callbacks, handle-based open/read
+ * ob_file.c -- File object type: callbacks, handle-based open/read
  *
  * Implements TODO-03 §5/§6: ObpFileType with VFS node wrapper and pipe support.
  * ============================================================================ */
@@ -14,7 +14,7 @@
 /* --- Callbacks ----------------------------------------------------------- */
 
 /*
- * file_on_close — called when the last handle to the file is closed.
+ * file_on_close -- called when the last handle to the file is closed.
  * Closes the underlying VFS node or pipe end.
  */
 static void file_on_close(void *body, uint32_t handle_count)
@@ -33,7 +33,7 @@ static void file_on_close(void *body, uint32_t handle_count)
 }
 
 /*
- * file_on_delete — safety net when ref_count hits 0.
+ * file_on_delete -- safety net when ref_count hits 0.
  * If the resource was never closed via on_close, close it here.
  */
 static void file_on_delete(void *body)
@@ -96,7 +96,7 @@ HANDLE ob_create_file_handle(const char *path, uint32_t access)
     fo->pipe_end = 0;
 
     h = ObpAllocateHandle(&task_current()->handle_table, fo, access, 0);
-    /* Drop the creation ref — the handle holds its own */
+    /* Drop the creation ref -- the handle holds its own */
     ObDereferenceObject(fo);
 
     if (h == INVALID_HANDLE_VALUE) {

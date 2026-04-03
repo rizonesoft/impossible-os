@@ -1,6 +1,6 @@
 # Impossible OS Documentation
 
-Welcome to the Impossible OS documentation — a 64-bit operating system built from scratch for modern x86-64 hardware.
+Welcome to the Impossible OS documentation -- a 64-bit operating system built from scratch for modern x86-64 hardware.
 
 ## 📖 Categories
 

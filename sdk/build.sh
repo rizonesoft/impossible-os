@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sdk/build.sh — Build all SDK tools with progress bar, timing, and error extraction.
+# sdk/build.sh -- Build all SDK tools with progress bar, timing, and error extraction.
 #
 # Usage:
 #   bash sdk/build.sh          Build all SDK tools (incremental)
@@ -62,13 +62,13 @@ fi
 
 # ── Check optional dependencies ───────────────────────────────────────────
 check_dependencies() {
-    # libfuse3 — needed by ixfs-mount on Linux
+    # libfuse3 -- needed by ixfs-mount on Linux
     if pkg-config --exists fuse3 2>/dev/null; then
         printf '%b  INFO %b libfuse3 found (pkg-config)\n' "$DIM" "$RESET"
     elif dpkg -s libfuse3-dev &>/dev/null 2>&1; then
         printf '%b  INFO %b libfuse3-dev found (dpkg)\n' "$DIM" "$RESET"
     else
-        printf '%b  WARN %b MISSING: libfuse3-dev — install with: sudo apt install libfuse3-dev\n' "$YELLOW" "$RESET"
+        printf '%b  WARN %b MISSING: libfuse3-dev -- install with: sudo apt install libfuse3-dev\n' "$YELLOW" "$RESET"
         printf '%b       %b Tools requiring libfuse3 may fail to build\n' "$DIM" "$RESET"
     fi
 }
@@ -185,13 +185,13 @@ divider
 TOTAL_ELAPSED=$(elapsed "$BUILD_START")
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    printf '  %b SDK BUILD OK %b — %d tools built in %ss\n' "$GREEN" "$RESET" "$TOOL_COUNT" "$TOTAL_ELAPSED"
+    printf '  %b SDK BUILD OK %b -- %d tools built in %ss\n' "$GREEN" "$RESET" "$TOOL_COUNT" "$TOTAL_ELAPSED"
     header
     echo "=== SDK BUILD OK ==="
     exit 0
 else
     PASS_COUNT=$((TOOL_COUNT - FAIL_COUNT))
-    printf '  %b SDK BUILD FAILED %b — %d/%d tools failed (%ss)\n' "$RED" "$RESET" "$FAIL_COUNT" "$TOOL_COUNT" "$TOTAL_ELAPSED"
+    printf '  %b SDK BUILD FAILED %b -- %d/%d tools failed (%ss)\n' "$RED" "$RESET" "$FAIL_COUNT" "$TOOL_COUNT" "$TOTAL_ELAPSED"
     header
     echo "=== SDK BUILD FAILED ==="
     exit 1

@@ -1,6 +1,6 @@
 ---
 name: implement-unit-tests
-description: Implement the Unit Tests section of a TODO file — create the test file, register it in the test runner, build, and mark the section complete with notes. Use when a TODO has a Unit Tests section ready to implement.
+description: Implement the Unit Tests section of a TODO file -- create the test file, register it in the test runner, build, and mark the section complete with notes. Use when a TODO has a Unit Tests section ready to implement.
 ---
 
 # Implement Unit Tests
@@ -58,15 +58,15 @@ TEST_SKIP(msg)                    // skip this check (counted separately)
 - On pass: increments `passed` counter, logs `[ OK ] TEST: suite :: msg` (unless quiet mode)
 - On fail: increments `failed` counter, logs `[FAIL] TEST: suite :: msg (file:line)` with got/expected for EQ/NEQ
 - On skip: increments `skipped` counter, logs `[WARN] TEST: suite :: SKIP: msg`
-- There are no `TEST_PASS` or `TEST_FAIL` macros — success is implicit when assertions pass
+- There are no `TEST_PASS` or `TEST_FAIL` macros -- success is implicit when assertions pass
 
 ### Registration API
 
 ```c
-// Preferred — register with a specific category
+// Preferred -- register with a specific category
 void test_suite_register_cat(const char *name, test_fn_t fn, test_category_t cat);
 
-// Legacy — registers with TEST_CAT_ALL (runs under any filter)
+// Legacy -- registers with TEST_CAT_ALL (runs under any filter)
 void test_suite_register(const char *name, test_fn_t fn);
 ```
 
@@ -84,7 +84,7 @@ Read the exact `## Unit Tests` section in the target TODO file. It specifies:
 ### 2. Explore the code under test
 
 Before writing any test code:
-- Read the header file for the API being tested — get exact function signatures, enum values, macro definitions
+- Read the header file for the API being tested -- get exact function signatures, enum values, macro definitions
 - Read the implementation to understand edge cases (NULL handling, out-of-range, etc.)
 - Read an existing test file to match the exact pattern
 
@@ -94,7 +94,7 @@ Create `src/kernel/test/test_<name>.c` following this pattern:
 
 ```c
 /* ============================================================================
- * test_<name>.c — <Subsystem> unit tests
+ * test_<name>.c -- <Subsystem> unit tests
  *
  * Tests <what is being tested>.
  * ============================================================================ */
@@ -143,7 +143,7 @@ void test_register_<name>(void)
 - Always use `test_suite_register_cat()` with the correct `TEST_CAT_*`
 - Save and restore global state if tests modify shared kernel state
 - If a macro uses `return` (like `BOOT_REQUIRE`), test it via a wrapper function with the matching return type
-- The registration function `test_register_<name>()` is NOT static — it's `extern`'d from `test_runner.c`
+- The registration function `test_register_<name>()` is NOT static -- it's `extern`'d from `test_runner.c`
 - Max 64 suites total across all test files (`TEST_MAX_SUITES`)
 
 ### 4. Register in the test runner
@@ -201,7 +201,7 @@ tail -1 build/build.log  # must show === BUILD OK ===
 
 The test file is auto-discovered by the Makefile (`find ... -name '*.c'`), so **no Makefile changes needed**.
 
-`-DKERNEL_TESTS` is always in CFLAGS — test code compiles unconditionally. Tests only _run_ when `test=1` or `debug=1` in boot.conf.
+`-DKERNEL_TESTS` is always in CFLAGS -- test code compiles unconditionally. Tests only _run_ when `test=1` or `debug=1` in boot.conf.
 
 ### 6. Run the tests
 
@@ -220,7 +220,7 @@ Update the TODO file's `## Unit Tests` section:
 - Mark all `[ ]` checkboxes as `[x]`
 - Add a note:
   ```
-  > **Done:** N suites, M assertions — registered in `test_runner_init()` (YYYY-MM-DD)
+  > **Done:** N suites, M assertions -- registered in `test_runner_init()` (YYYY-MM-DD)
   ```
 
 If the TODO has an **Implementation Order table** with a row for unit tests, update its Status to `[x]`.
@@ -239,15 +239,15 @@ If the existing categories don't fit, add a new one:
 
 1. **`include/kernel/test/test.h`**: Add `TEST_CAT_<NAME>` to the enum before `TEST_CAT_COUNT`
 2. **`src/kernel/test/test_runner.c`**: Add entries to both `cat_names[]` and `cat_labels[]` at the matching index
-3. **`src/boot/uefi/bootx64.c`**: The bootloader parses `test_suite=<name>` strings to category indices — add the new short name to the parser if you want `SUITE=<name>` to work from the command line
+3. **`src/boot/uefi/bootx64.c`**: The bootloader parses `test_suite=<name>` strings to category indices -- add the new short name to the parser if you want `SUITE=<name>` to work from the command line
 4. **`Makefile`**: Add a `test-<name>:` phony target: `@bash scripts/test.sh SUITE=<name>`
 
 ## Guardrails
 
-- Only implement tests listed in the `## Unit Tests` section — do not invent additional tests
+- Only implement tests listed in the `## Unit Tests` section -- do not invent additional tests
 - Do not modify the code under test unless a bug is found during testing
 - Do not change other TODO sections
-- Do not skip assertions listed in the TODO — implement all of them
+- Do not skip assertions listed in the TODO -- implement all of them
 - If an assertion cannot be tested (e.g., requires hardware), note it in the TODO and mark it `[x]` with `(skipped: reason)`
 
 ## Existing Test Files (Reference)

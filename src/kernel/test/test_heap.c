@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_heap.c — Kernel heap (kmalloc/kfree) unit tests
+ * test_heap.c -- Kernel heap (kmalloc/kfree) unit tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

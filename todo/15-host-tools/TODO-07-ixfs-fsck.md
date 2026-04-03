@@ -1,4 +1,4 @@
-# TODO-07 — ixfs-fsck (Filesystem Consistency Checker)
+# TODO-07 -- ixfs-fsck (Filesystem Consistency Checker)
 
 > **Goal:** Verify IXFS filesystem integrity: superblock validity, inode consistency, extent coverage, block bitmap accuracy, orphan detection, and optional repair. Run after a crash or before any disk image release.
 
@@ -6,7 +6,7 @@
 
 ```
 $ ixfs-fsck build/system-disk.img 3
-  IXFS v2 "Impossible OS" — checking partition 3...
+  IXFS v2 "Impossible OS" -- checking partition 3...
 
   [1/6] Superblock.............. OK (v2, 110331 blocks, 128 inodes)
   [2/6] Block bitmap............ OK (105382 free, 4949 used)
@@ -15,7 +15,7 @@ $ ixfs-fsck build/system-disk.img 3
   [5/6] Directory structure..... OK (no orphan inodes)
   [6/6] Cross-reference......... OK (bitmap matches extent usage)
 
-  CLEAN — no errors found (0.3s)
+  CLEAN -- no errors found (0.3s)
 ```
 
 ```
@@ -25,14 +25,14 @@ $ ixfs-fsck --repair build/system-disk.img 3
   [5/6] Directory structure..... WARN: inode 37 not referenced by any directory
         REPAIR: moved to /lost+found/inode_37
 
-  REPAIRED — 1 error fixed, 1 orphan recovered
+  REPAIRED -- 1 error fixed, 1 orphan recovered
 ```
 
 ## Implementation Order
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Superblock validation                          | —          |  [ ]   |
+| 💎  |   1   | Superblock validation                          | --          |  [ ]   |
 | 💎  |   2   | Block bitmap verification                      | §1         |  [ ]   |
 | 💎  |   3   | Inode table scan                               | §1         |  [ ]   |
 | 💎  |   4   | Extent integrity check                         | §3         |  [ ]   |
@@ -54,7 +54,7 @@ Verify superblock magic, version, sizes, and field consistency.
 ## 2. Block Bitmap Verification
 Scan the block allocation bitmap for consistency.
 
-- [ ] Count set bits — must match `total - free` from superblock
+- [ ] Count set bits -- must match `total - free` from superblock
 - [ ] No bits set beyond total block count
 - [ ] Superblock, inode table, bitmap blocks marked as used
 
@@ -77,7 +77,7 @@ Verify all extent entries point to valid blocks.
 ## 5. Directory Structure + Orphan Detection
 Walk the directory tree from root and find unreachable inodes.
 
-- [ ] BFS/DFS from root inode — mark all reachable inodes
+- [ ] BFS/DFS from root inode -- mark all reachable inodes
 - [ ] Inodes marked used but not reachable = orphans
 - [ ] Directory entries point to valid inodes
 - [ ] No directory cycles (parent loops)

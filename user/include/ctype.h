@@ -1,5 +1,5 @@
 /* ============================================================================
- * ctype.h — Character classification and conversion
+ * ctype.h -- Character classification and conversion
  * ============================================================================ */
 
 #pragma once

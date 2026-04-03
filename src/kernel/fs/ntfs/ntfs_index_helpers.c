@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_index_helpers.c — B+ Tree Index Mutation Helpers (§14.1)
+ * ntfs_index_helpers.c -- B+ Tree Index Mutation Helpers (§14.1)
  *
  * Low-level primitives shared by ntfs_index_insert.c and ntfs_index_delete.c:
  *   - ntfs_write_indx()       Write an INDX buffer to disk (USA + blkdev_write)
@@ -25,11 +25,11 @@
 /* Node header offset within INDX buffer (after the INDX record header) */
 #define INDX_NODE_HDR_OFF    0x18
 
-/* Sentinel that means "no child VCN" — used throughout B+ tree traversal */
+/* Sentinel that means "no child VCN" -- used throughout B+ tree traversal */
 #define VCN_NONE  ((uint64_t)-1)
 
 /* ============================================================================
- * ntfs_write_indx — Write INDX buffer to disk at a given VCN
+ * ntfs_write_indx -- Write INDX buffer to disk at a given VCN
  *
  * Counterpart to ntfs_read_indx().  Applies USA regeneration before writing
  * so the on-disk page has correct sector-end stamps.
@@ -97,7 +97,7 @@ int ntfs_write_indx(struct ntfs_volume *vol,
 }
 
 /* ============================================================================
- * ntfs_index_compare — Case-insensitive UTF-16LE name comparison
+ * ntfs_index_compare -- Case-insensitive UTF-16LE name comparison
  *
  * Compares two UTF-16LE names using vol->upcase_table (from $UpCase).
  * Falls back to ASCII toupper if table is not loaded.
@@ -130,7 +130,7 @@ int ntfs_index_compare(const struct ntfs_volume *vol,
 }
 
 /* ============================================================================
- * ntfs_index_find_pos — Find position within a node's entry array
+ * ntfs_index_find_pos -- Find position within a node's entry array
  *
  * Scans entries in the node (entries_base, total_entries_size) to find
  * where `name` sorts.
@@ -161,7 +161,7 @@ void ntfs_index_find_pos(const struct ntfs_volume *vol,
 
         if (e_len < 0x10) break; /* Corrupt */
 
-        /* Sentinel — insert / stop before it */
+        /* Sentinel -- insert / stop before it */
         if (e_flags & NTFS_INDEX_ENTRY_LAST) {
             if (e_flags & NTFS_INDEX_ENTRY_SUBNODE)
                 *out_child_vcn = ntfs_le64(entries_base + pos + e_len - 8);
@@ -186,7 +186,7 @@ void ntfs_index_find_pos(const struct ntfs_volume *vol,
                 return;
             }
             if (cmp < 0) {
-                /* New entry sorts before this one — insert here */
+                /* New entry sorts before this one -- insert here */
                 if (e_flags & NTFS_INDEX_ENTRY_SUBNODE)
                     *out_child_vcn = ntfs_le64(entries_base + pos + e_len - 8);
                 *out_offset = pos;
@@ -201,7 +201,7 @@ void ntfs_index_find_pos(const struct ntfs_volume *vol,
 }
 
 /* ============================================================================
- * ntfs_build_indx_buf — Initialise a blank INDX buffer in-memory
+ * ntfs_build_indx_buf -- Initialise a blank INDX buffer in-memory
  *
  * Sets INDX magic, LSN=0, VCN, USA (size 9 for 4096-byte record / 512-byte
  * sectors = 8 sectors + 1 header word), and an empty node with sentinel.
@@ -255,7 +255,7 @@ void ntfs_build_indx_buf(uint8_t *buf, uint32_t record_size,
 }
 
 /* ============================================================================
- * ntfs_indx_get_ia_runs — Load $INDEX_ALLOCATION and $BITMAP runs for dir
+ * ntfs_indx_get_ia_runs -- Load $INDEX_ALLOCATION and $BITMAP runs for dir
  *
  * Reads the directory's MFT record (already in 'rec'), finds the
  * $INDEX_ALLOCATION ($I30) and $BITMAP ($I30) attributes, decodes their
@@ -289,14 +289,14 @@ int ntfs_indx_get_ia_runs(const uint8_t *rec,
 
     bm_attr = ntfs_attr_find_named(rec, hdr, NTFS_ATTR_BITMAP, "$I30", &bm_ah);
     if (!bm_attr)
-        return NTFS_OK; /* No bitmap yet — ok for leaf-only directories */
+        return NTFS_OK; /* No bitmap yet -- ok for leaf-only directories */
 
     if (bm_ah.non_resident) {
         *bm_run_count = ntfs_decode_data_runs(bm_attr, bm_runs,
                                                NTFS_INDEX_MAX_RUNS, NULL);
         if (*bm_run_count < 0) *bm_run_count = 0;
     } else {
-        /* Resident $BITMAP — small dirs — copy content */
+        /* Resident $BITMAP -- small dirs -- copy content */
         uint32_t len = bm_ah.content_length;
         if (len > 64) len = 64; /* Safety cap */
         ntfs_memcpy(bm_resident_data, bm_attr + bm_ah.content_offset, len);
@@ -308,7 +308,7 @@ int ntfs_indx_get_ia_runs(const uint8_t *rec,
 }
 
 /* ============================================================================
- * ntfs_indx_vcn_is_active — Check if a VCN slot is active in $I30 $BITMAP
+ * ntfs_indx_vcn_is_active -- Check if a VCN slot is active in $I30 $BITMAP
  *
  * Each bit in the bitmap corresponds to one $INDEX_ALLOCATION VCN.
  * Returns 1 if active, 0 if free.

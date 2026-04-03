@@ -1,5 +1,5 @@
 /* ============================================================================
- * terminal.h — Graphical terminal emulator window
+ * terminal.h -- Graphical terminal emulator window
  *
  * Provides a text-mode terminal inside a WM window.  Shell I/O is routed
  * through this module: sys_write calls terminal_puts() to render text,

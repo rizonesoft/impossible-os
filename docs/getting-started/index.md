@@ -11,5 +11,5 @@ Setup guides and emulator configuration for running Impossible OS.
 
 ## See Also
 
-- [Infrastructure → Development Tooling](../infrastructure/development-tooling.md) — build system and `build.sh run`
-- [TODO-008 Hyper-V Runner](../../todo/000-Infrastructure/TODO-008-Hyper-V-Runner.md) — Hyper-V Gen 2 support (planned)
+- [Infrastructure → Development Tooling](../infrastructure/development-tooling.md) -- build system and `build.sh run`
+- [TODO-008 Hyper-V Runner](../../todo/000-Infrastructure/TODO-008-Hyper-V-Runner.md) -- Hyper-V Gen 2 support (planned)

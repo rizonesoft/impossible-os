@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_ipc.c — IPC & threading unit tests
+ * test_ipc.c -- IPC & threading unit tests
  *
  * Tests kernel threads, mutex, semaphore, pipe, and shared memory.
  * Uses test helper functions from test_threads.c.

@@ -2985,7 +2985,7 @@ static void test_ads_enumerate(struct ntfs_volume *vol)
     {
         uint64_t test_inode;
         if (ntfs_lookup(vol, NTFS_ROOT_INODE, "test.txt", &test_inode) != NTFS_OK) {
-            /* test.txt not on disk — accept gracefully */
+            /* test.txt not on disk -- accept gracefully */
             pmm_free_frame(rec_phys);
             test_pass("ads_enumerate"); return;
         }
@@ -3090,7 +3090,7 @@ static void test_ads_none(struct ntfs_volume *vol)
     {
         uint64_t empty_inode;
         if (ntfs_lookup(vol, NTFS_ROOT_INODE, "empty.txt", &empty_inode) != NTFS_OK) {
-            /* empty.txt not on disk — accept gracefully */
+            /* empty.txt not on disk -- accept gracefully */
             pmm_free_frame(rec_phys);
             test_pass("ads_none"); return;
         }

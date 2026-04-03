@@ -1,6 +1,6 @@
 # GitHub Repository Setup
 
-> Professional GitHub repository infrastructure for Impossible OS — CI/CD, templates, security policies, and community assets.
+> Professional GitHub repository infrastructure for Impossible OS -- CI/CD, templates, security policies, and community assets.
 
 ## Overview
 
@@ -38,7 +38,7 @@ graph TD
 | Repository                            | Visibility | Purpose                                    |
 | ------------------------------------- | ---------- | ------------------------------------------ |
 | `rizonesoft/impossible-os`            | Private    | Kernel, bootloader, desktop, drivers, apps |
-| `rizonesoft/impossible-os-bootloader` | Public     | Archived — no longer maintained separately |
+| `rizonesoft/impossible-os-bootloader` | Public     | Archived -- no longer maintained separately |
 
 ---
 
@@ -46,7 +46,7 @@ graph TD
 
 ### Professional README
 
-`README.md` — the project's public face. Features:
+`README.md` -- the project's public face. Features:
 
 | Section           | Content                                                             |
 | ----------------- | ------------------------------------------------------------------- |
@@ -62,12 +62,12 @@ graph TD
 
 | Badge         | Status                                              |             |
 | ------------- | --------------------------------------------------- | ----------- |
-| Build Status  | Deferred — links to CI workflow when available      |             |
+| Build Status  | Deferred -- links to CI workflow when available      |             |
 | License       | `GPL-3.0`                                           |             |
 | Platform      | `x86_64`                                            |             |
 | Boot          | `UEFI`                                              |             |
 | Language      | `C                                                  | x86-64 ASM` |
-| Lines of Code | `84k+` — auto-tracked via COUNT.md post-commit hook |             |
+| Lines of Code | `84k+` -- auto-tracked via COUNT.md post-commit hook |             |
 
 ### CONTRIBUTING.md
 
@@ -77,7 +77,7 @@ Contributor guidelines (160+ lines):
 | ----------------- | ------------------------------------------------------------------ |
 | Quick Start       | `setup.sh` + git hooks setup                                       |
 | Code Style        | snake_case, UPPER_CASE macros, `#pragma once`, ≤120 chars, <50 LOC |
-| Commit Format     | `"scope: description"` — 10+ scopes with examples                  |
+| Commit Format     | `"scope: description"` -- 10+ scopes with examples                  |
 | PR Process        | Fork → branch → implement → test → PR (6-step checklist)           |
 | Finding Work      | `todo/TODO-00-INDEX.md` + "Good First Issues" suggestions         |
 | Memory Allocation | kmalloc ≤4 KB vs PMM table + CAUTION callout                       |
@@ -148,7 +148,7 @@ Tags are annotated: `git tag -a v26.3.18 -m "Release v26.3.18"`
 
 ### Changelog Generation
 
-`scripts/generate-changelog.sh` — 175 lines, 20+ category mappings.
+`scripts/generate-changelog.sh` -- 175 lines, 20+ category mappings.
 
 - Parses `git log` between tags
 - Groups by commit prefix: Features, Fixes, Build, Drivers, Desktop, Kernel
@@ -178,16 +178,16 @@ graph LR
 | ------------- | ----------------------------------------------------------- |
 | Runner        | `ubuntu-latest`, 15-minute timeout                          |
 | Cache key     | `llvm-19-Linux-v1` (bump suffix to invalidate)              |
-| Disk artifact | `system-disk.img` — 14-day retention                        |
-| Log artifact  | `build.log` — 7-day retention, always uploaded              |
-| Smoke test    | Commented out — uncomment after `test-smoke.sh` integration |
+| Disk artifact | `system-disk.img` -- 14-day retention                        |
+| Log artifact  | `build.log` -- 7-day retention, always uploaded              |
+| Smoke test    | Commented out -- uncomment after `test-smoke.sh` integration |
 
 **Dependencies installed:**
 - `clang-19`, `lld-19` (from `apt.llvm.org` snapshot repo)
 - `nasm`, `mtools`, `dosfstools`, `ovmf`, `gcc`, `qemu-system-x86`
 
 > [!NOTE]
-> LLVM 19 is not in ubuntu-latest by default — installed from `apt.llvm.org`. `gcc` is HOST_CC for host tools (`mkfs-ixfs`, `make-system-disk`). `dosfstools` provides `mkfs.fat`, `mtools` provides `mcopy`.
+> LLVM 19 is not in ubuntu-latest by default -- installed from `apt.llvm.org`. `gcc` is HOST_CC for host tools (`mkfs-ixfs`, `make-system-disk`). `dosfstools` provides `mkfs.fat`, `mtools` provides `mcopy`.
 
 ### Automated Release (`release.yml`)
 
@@ -262,7 +262,7 @@ Located in `.github/ISSUE_TEMPLATE/`:
 | Feature Request | `feature-request.yml` | `enhancement`     | Description, use case, implementation, component, roadmap check  |
 | Hardware Report | `hardware-report.yml` | `hardware-compat` | Model, CPU, RAM, GPU, storage, boot result, boot log             |
 
-**`config.yml`:** Blank issues disabled — directs to Discussions + TODO roadmap.
+**`config.yml`:** Blank issues disabled -- directs to Discussions + TODO roadmap.
 
 **Environment dropdown options:** QEMU, VirtualBox, Hyper-V, VMware, Real Hardware
 
@@ -270,7 +270,7 @@ Located in `.github/ISSUE_TEMPLATE/`:
 
 ### PR Template
 
-`.github/PULL_REQUEST_TEMPLATE.md` — includes:
+`.github/PULL_REQUEST_TEMPLATE.md` -- includes:
 - Description section
 - Related TODO reference
 - Testing checklist (build.sh clean + run + serial check)
@@ -327,7 +327,7 @@ Located in `.github/ISSUE_TEMPLATE/`:
 
 ### GitHub Project Board
 
-"Impossible OS Development" — GitHub Projects v2.
+"Impossible OS Development" -- GitHub Projects v2.
 
 | Column      | Purpose                       |
 | ----------- | ----------------------------- |
@@ -373,21 +373,21 @@ Located in `.github/ISSUE_TEMPLATE/`:
 
 ### CODEOWNERS
 
-`.github/CODEOWNERS` — `@derickpayne` as default owner.
+`.github/CODEOWNERS` -- `@derickpayne` as default owner.
 
 Critical path explicit ownership:
-- `src/boot/` — bootloader
-- `src/kernel/memory/` — memory management
-- `src/kernel/sched/` — scheduler
-- `linker.ld` — linker scripts
-- `Makefile` — build system
-- `scripts/build.sh` — build script
+- `src/boot/` -- bootloader
+- `src/kernel/memory/` -- memory management
+- `src/kernel/sched/` -- scheduler
+- `linker.ld` -- linker scripts
+- `Makefile` -- build system
+- `scripts/build.sh` -- build script
 
 ---
 
 ## GitHub Pages
 
-`gh-pages` branch — one-page landing site.
+`gh-pages` branch -- one-page landing site.
 
 | Feature         | Detail                                        |
 | --------------- | --------------------------------------------- |
@@ -431,13 +431,13 @@ Critical path explicit ownership:
 > **MOK key in version control.** The `MOK.key` private key must NEVER be committed. Store in encrypted vault or hardware token.
 
 > [!WARNING]
-> **LLVM-19 not in ubuntu-latest.** CI must install from `apt.llvm.org` snapshot repo. Cache key `llvm-19-Linux-v1` — bump suffix to invalidate.
+> **LLVM-19 not in ubuntu-latest.** CI must install from `apt.llvm.org` snapshot repo. Cache key `llvm-19-Linux-v1` -- bump suffix to invalidate.
 
 > [!WARNING]
 > **VBoxManage in CI.** Release workflow installs the `virtualbox` package for VDI conversion. This adds ~2 min to CI runtime.
 
 > [!NOTE]
-> **Build CI smoke test.** Currently commented out in `build.yml` — uncomment when `scripts/test-smoke.sh` is integrated into CI pipeline.
+> **Build CI smoke test.** Currently commented out in `build.yml` -- uncomment when `scripts/test-smoke.sh` is integrated into CI pipeline.
 
 > [!NOTE]
 > **License change.** License was changed from MIT to GPL-3.0 (commit `474abac`). All badges and documentation reflect GPL-3.0.
@@ -460,7 +460,7 @@ Critical path explicit ownership:
 | CODEOWNERS                   | ✅ MAINTAINERS file      | ⚠️ Implied            | ✅ Critical path ownership               |
 | CONTRIBUTING.md              | ✅ Extensive             | ✅ Detailed            | ✅ 160+ lines with memory rules          |
 | SECURITY.md                  | ✅ security@kernel.org   | ⚠️ No formal policy   | ✅ 48h ack + MOK procedure               |
-| Hardware compat reports      | ❌ Separate DB           | ❌ None                | ✅ **Unique — structured YAML form**     |
+| Hardware compat reports      | ❌ Separate DB           | ❌ None                | ✅ **Unique -- structured YAML form**     |
 | Stale issue bot              | ❌ N/A (mailing list)    | ⚠️ Manual             | ✅ 60d/14d auto-cleanup                  |
 | Auto-label by path           | ❌ N/A                   | ⚠️ Manual labels      | ✅ 6 labels via glob patterns            |
 | Project website              | ✅ kernel.org            | ✅ serenityos.org      | ✅ GitHub Pages landing page             |

@@ -1,7 +1,7 @@
-# TODO-01 — ARM64 & RISC-V Architecture Port
+# TODO-01 -- ARM64 & RISC-V Architecture Port
 
 > **Goal:** Research spike to scope the effort of porting Impossible OS to AArch64
-> (ARM64) and RISC-V (RV64GC) — audit every x86-64-specific construct, write a minimal
+> (ARM64) and RISC-V (RV64GC) -- audit every x86-64-specific construct, write a minimal
 > AArch64 proof-of-concept kernel, define the multi-arch layer, assess RISC-V delta,
 > plan the build system changes, document ABI implications, and produce an effort
 > estimate before committing to a full port.
@@ -10,7 +10,7 @@
 > This is a **research and planning spike** only. §7 (research deliverables) is the
 > primary output: a `docs/architecture/multi-arch-port-plan.md` document with effort
 > estimates, dependency trees, and recommended port order. No changes to the main kernel
-> tree are made during the research phase — the §2 minimal AArch64 kernel prototype
+> tree are made during the research phase -- the §2 minimal AArch64 kernel prototype
 > lives in a throwaway branch (`arch/arm64-spike`) only.
 >
 > **SIMD / SSE in the kernel**: the main build uses `-mno-sse -mno-sse2 -mno-mmx` so
@@ -24,19 +24,19 @@
 
 ## Inputs
 
-- `src/boot/entry.asm` + `src/kernel/smp/ap_trampoline.asm` — x86-specific assembly entry, real-mode → long-mode trampoline, SIPI sequence
-- `src/kernel/idt.c`, `src/kernel/irq.c` — IDT, IRETQ, LAPIC/IOAPIC, `__asm__ volatile` interrupt handling
-- `src/kernel/main.c` — LSTAR/STAR/SFMASK MSR writes for syscall setup; `RDRAND`; `CPUID`
-- `src/kernel/boot_timing.c` — TSC reads via `RDTSC`
-- `src/kernel/smp/smp.c` — APIC-based SMP bringup (INIT-SIPI-SIPI sequence)
-- `src/kernel/gfx/gfx_simd.c`, `src/kernel/gfx/gfx_text.c` — SSE2/AVX paths (confirm scope with build flags)
-- `src/kernel/panic.c`, `src/kernel/hw_dump.c` — x86 register names (RAX, RBX, …, RIP, RFLAGS)
-- `src/kernel/drivers/pit.c`, `src/kernel/drivers/pic.c` — x86 port I/O (`inb`/`outb`), PIT, i8259 PIC
-- `src/boot/linker.ld`, `scripts/build.sh` — linker script and compiler flags (`-mcmodel=kernel`, `-mno-red-zone`, target triple `x86_64-elf`) — §5 multi-arch build changes here
-- `include/kernel/types.h`, `include/kernel/boot_info.h` — check for `uint64_t` / struct layout assumptions
-- `02-kernel-core/TODO-19-x86-64-architecture.md` (→ XREF) — x86-64 hardware spec reference for the gap analysis
-- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) — hypervisor detection (`HV_TSC_ENLIGHTENMENT`); ARM64 hypervisors use a different SMCCC-based detection path
-- `02-kernel-core/TODO-17-kernel-security-hardening.md` (→ XREF) — SMEP/SMAP/CET are x86 features; AArch64 equivalents are PAN/UAO/BTI/PAC
+- `src/boot/entry.asm` + `src/kernel/smp/ap_trampoline.asm` -- x86-specific assembly entry, real-mode → long-mode trampoline, SIPI sequence
+- `src/kernel/idt.c`, `src/kernel/irq.c` -- IDT, IRETQ, LAPIC/IOAPIC, `__asm__ volatile` interrupt handling
+- `src/kernel/main.c` -- LSTAR/STAR/SFMASK MSR writes for syscall setup; `RDRAND`; `CPUID`
+- `src/kernel/boot_timing.c` -- TSC reads via `RDTSC`
+- `src/kernel/smp/smp.c` -- APIC-based SMP bringup (INIT-SIPI-SIPI sequence)
+- `src/kernel/gfx/gfx_simd.c`, `src/kernel/gfx/gfx_text.c` -- SSE2/AVX paths (confirm scope with build flags)
+- `src/kernel/panic.c`, `src/kernel/hw_dump.c` -- x86 register names (RAX, RBX, …, RIP, RFLAGS)
+- `src/kernel/drivers/pit.c`, `src/kernel/drivers/pic.c` -- x86 port I/O (`inb`/`outb`), PIT, i8259 PIC
+- `src/boot/linker.ld`, `scripts/build.sh` -- linker script and compiler flags (`-mcmodel=kernel`, `-mno-red-zone`, target triple `x86_64-elf`) -- §5 multi-arch build changes here
+- `include/kernel/types.h`, `include/kernel/boot_info.h` -- check for `uint64_t` / struct layout assumptions
+- `02-kernel-core/TODO-19-x86-64-architecture.md` (→ XREF) -- x86-64 hardware spec reference for the gap analysis
+- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) -- hypervisor detection (`HV_TSC_ENLIGHTENMENT`); ARM64 hypervisors use a different SMCCC-based detection path
+- `02-kernel-core/TODO-17-kernel-security-hardening.md` (→ XREF) -- SMEP/SMAP/CET are x86 features; AArch64 equivalents are PAN/UAO/BTI/PAC
 
 ---
 
@@ -91,8 +91,8 @@ the toolchain and UEFI boot path work.
   | `hlt` | `wfi` (Wait For Interrupt) | `wfi` |
   | `RDRAND` | `RNDR` system register (ARMv8.5-RNG) or SMCCC TRNG | RISC-V entropy extension (`seed` CSR) |
   | `CPUID` | `MIDR_EL1` + feature registers (`ID_AA64ISAR0_EL1`, etc.) | `misa` CSR + RISC-V priv spec |
-  | Port I/O (`inb`/`outb`) | No port I/O — everything MMIO | No port I/O — everything MMIO |
-  | GDT/TSS | No GDT — exception levels replace privilege rings | No GDT — CSR privilege modes |
+  | Port I/O (`inb`/`outb`) | No port I/O -- everything MMIO | No port I/O -- everything MMIO |
+  | GDT/TSS | No GDT -- exception levels replace privilege rings | No GDT -- CSR privilege modes |
   | `CR0`/`CR3`/`CR4` (page tables, paging control) | `TTBR0_EL1`/`TTBR1_EL1` + `TCR_EL1` + `SCTLR_EL1` | `satp` CSR (ASID + page table base) |
   | SMEP/SMAP/CET | PAN (Privileged Access Never) / UAO / BTI / PAC | not directly equivalent |
   | SSE2 intrinsics (`_mm_*`) | NEON (`vld1q_u8`, `vaddq_u8`, etc.) | Vector extension (RVV 1.0) |
@@ -102,10 +102,10 @@ the toolchain and UEFI boot path work.
   rg -l "(wrmsr|rdmsr|LSTAR|iretq|APIC|lapic|asm volatile)" src/ include/ | xargs wc -l | tail -1
   wc -l $(find src/ include/ -name "*.c" -o -name "*.h" -o -name "*.asm") | tail -1
   ```
-- [ ] **Arch-specific file inventory** (expected high-isolation files — confirm against audit):
+- [ ] **Arch-specific file inventory** (expected high-isolation files -- confirm against audit):
   - **Fully arch-specific** (must be rewritten per-arch): `src/boot/entry.asm`, `src/kernel/smp/ap_trampoline.asm`, `src/kernel/idt.c`, `src/kernel/irq.c`, `src/kernel/drivers/pit.c`, `src/kernel/drivers/pic.c`
   - **Mostly arch-specific** (needs `#ifdef ARCH_X86_64` guards): `src/kernel/main.c` (syscall MSR setup), `src/kernel/smp/smp.c` (APIC SMP), `src/kernel/boot_timing.c` (TSC), `src/kernel/panic.c` (register dump), `src/kernel/hw_dump.c`
-  - **Minor arch touch** (one or two `asm volatile` lines only): `src/boot/uefi/bootx64.c` (CPUID, RDRAND), `src/kernel/gfx/gfx_simd.c` (SSE2 — confirm build flags)
+  - **Minor arch touch** (one or two `asm volatile` lines only): `src/boot/uefi/bootx64.c` (CPUID, RDRAND), `src/kernel/gfx/gfx_simd.c` (SSE2 -- confirm build flags)
   - **Arch-neutral** (should compile unchanged): `src/kernel/mm/`, `src/kernel/fs/`, `src/kernel/net/`, `src/kernel/ipc/`, `src/kernel/sched/` (except context switch), `src/desktop/`, `src/kernel/gfx/` (except `gfx_simd.c`)
 
 ---
@@ -124,8 +124,8 @@ the toolchain and UEFI boot path work.
   esac
   CC="clang-19 --target=$TARGET"
   ```
-- [ ] **Arch-specific linker scripts**: `src/boot/linker-arm64.ld` and `src/boot/linker-riscv64.ld` — kernel load address, section layout, arm64 `.text` alignment (4 B minimum, 4 KiB page-aligned sections)
-- [ ] **`include/arch/` abstraction header** (research deliverable — does not change kernel code):
+- [ ] **Arch-specific linker scripts**: `src/boot/linker-arm64.ld` and `src/boot/linker-riscv64.ld` -- kernel load address, section layout, arm64 `.text` alignment (4 B minimum, 4 KiB page-aligned sections)
+- [ ] **`include/arch/` abstraction header** (research deliverable -- does not change kernel code):
   ```c
   // include/arch/x86_64/arch.h
   #define arch_wfi()           __asm__ volatile("hlt")
@@ -139,20 +139,20 @@ the toolchain and UEFI boot path work.
   #define arch_cpu_relax()     __asm__ volatile("yield")
   ```
   `include/kernel/arch.h` selects the correct arch header via `#if defined(ARCH_X86_64) / ARCH_ARM64 / ARCH_RISCV64`
-- [ ] **CI multi-arch compile matrix** (`.github/workflows/multi-arch-build.yml`): compile for all three arches on every push to `main`; x86_64 builds to bootable image; arm64/riscv64 compiles kernel only (no image — boot test when port is functional); fail if any arch fails to compile
+- [ ] **CI multi-arch compile matrix** (`.github/workflows/multi-arch-build.yml`): compile for all three arches on every push to `main`; x86_64 builds to bootable image; arm64/riscv64 compiles kernel only (no image -- boot test when port is functional); fail if any arch fails to compile
 
 ---
 
 ## 3. AArch64 Boot Path (Minimal Kernel Prototype) `[Opus]`
 
 > Novel: first hardware-interface code targeting AArch64. Exception vector table at
-> `VBAR_EL1`, `mrs`/`msr` system register access, EL1 setup — no prior Impossible OS
+> `VBAR_EL1`, `mrs`/`msr` system register access, EL1 setup -- no prior Impossible OS
 > AArch64 code. Lives in branch `arch/arm64-spike` only; not merged to main.
 
 **Source:** `arch/arm64-spike/` (throwaway branch, never merged to `main`)
 
 - [ ] **Target**: `qemu-system-aarch64 -machine virt -cpu cortex-a72 -nographic -serial stdio -bios QEMU_EFI.fd -kernel kernel-arm64.elf`; prints `"Impossible OS ARM64 spike OK"` via PL011 UART, then `wfi` loop
-- [ ] **UEFI boot path** (identical protocol to x86 — PE/COFF `BOOTX64.EFI` → `BOOTAA64.EFI`):
+- [ ] **UEFI boot path** (identical protocol to x86 -- PE/COFF `BOOTX64.EFI` → `BOOTAA64.EFI`):
   - Compile `src/boot/uefi/bootx64.c` with `--target=aarch64-elf` and AArch64-specific PE header; remove x86 inline asm (CPUID → use `MIDR_EL1` for CPU ID, `RNDR` for random); map same UEFI GOP + ELF loader
   - The bootloader already handles `ExitBootServices()` + page table setup; on ARM64: replace x86 PML4 setup with 4-level AArch64 tables (`TTBR1_EL1`, `TCR_EL1`, 4 KiB granule)
 - [ ] **Minimal AArch64 kernel entry** (`arch/arm64-spike/entry.asm` in AArch64 assembly):
@@ -189,7 +189,7 @@ the toolchain and UEFI boot path work.
   |--------|---------|-------------|
   | Ring 0 (kernel) | EL1 | S-mode (Supervisor) |
   | Ring 3 (user) | EL0 | U-mode (User) |
-  | SMM | EL3 | M-mode (Machine) — usually firmware |
+  | SMM | EL3 | M-mode (Machine) -- usually firmware |
   | VM hypervisor | EL2 | H-extension (Hypervisor) |
   | `syscall` instruction | `svc #0` | `ecall` |
   | `iret` | `eret` | `sret` |
@@ -199,14 +199,14 @@ the toolchain and UEFI boot path work.
   | RDTSC | `CNTVCT_EL0` | `rdtime` pseudo-instruction |
 
 - [ ] **RISC-V-specific considerations**:
-  - No UEFI standard on most RISC-V boards — use **OpenSBI** (M-mode firmware) + **U-Boot** + kernel or TianoCore EDK2 on supported boards; QEMU `virt` machine supports UEFI via EDK2 RV64 port
+  - No UEFI standard on most RISC-V boards -- use **OpenSBI** (M-mode firmware) + **U-Boot** + kernel or TianoCore EDK2 on supported boards; QEMU `virt` machine supports UEFI via EDK2 RV64 port
   - Page table: Sv48 (4-level, identical concept to x86 PML4 but `satp` register); page size 4 KiB; 2 MiB `megapages` equivalent to x86 huge pages
-  - Interrupt architecture: PLIC assigns priorities and enables; CLINT for timer interrupts (hart-local); no MMIO port I/O — clean slate (easier than x86)
+  - Interrupt architecture: PLIC assigns priorities and enables; CLINT for timer interrupts (hart-local); no MMIO port I/O -- clean slate (easier than x86)
   - **`ecall` ABI** for SBI calls: set `a7` = SBI extension ID, `a6` = function ID, `a0–a5` = args; `ecall`; result in `a0`/`a1`
-- [ ] **RISC-V prototype viability check**: can `clang-19 --target=riscv64-elf` compile a minimal kernel that boots under `qemu-system-riscv64 -machine virt -cpu rv64`? Run: `echo 'void _start() { for(;;); }' | clang-19 --target=riscv64-elf -O2 -ffreestanding -nostdlib -x c - -o test.elf && qemu-system-riscv64 -machine virt -cpu rv64 -kernel test.elf -nographic -serial stdio` — verify no toolchain errors
+- [ ] **RISC-V prototype viability check**: can `clang-19 --target=riscv64-elf` compile a minimal kernel that boots under `qemu-system-riscv64 -machine virt -cpu rv64`? Run: `echo 'void _start() { for(;;); }' | clang-19 --target=riscv64-elf -O2 -ffreestanding -nostdlib -x c - -o test.elf && qemu-system-riscv64 -machine virt -cpu rv64 -kernel test.elf -nographic -serial stdio` -- verify no toolchain errors
 - [ ] **RISC-V vs ARM64 strategic assessment** (for §7 deliverable):
-  - ARM64: Apple Silicon, Snapdragon laptops, Raspberry Pi, AWS Graviton — large install base
-  - RISC-V: StarFive VisionFive2, Milk-V Pioneer, SiFive — growing but niche; excellent for education
+  - ARM64: Apple Silicon, Snapdragon laptops, Raspberry Pi, AWS Graviton -- large install base
+  - RISC-V: StarFive VisionFive2, Milk-V Pioneer, SiFive -- growing but niche; excellent for education
   - Recommendation: ARM64 first; RISC-V as second port sharing the arch abstraction layer
 
 ---
@@ -217,7 +217,7 @@ the toolchain and UEFI boot path work.
 > ABI-conditional headers so the same Win32 API surface works on both.
 
 - [ ] **x86-64 Win64 calling convention** (existing): integer args in `RCX, RDX, R8, R9`; 32 B shadow space; callee-saved `RBX, RBP, RDI, RSI, R12-R15`; `RAX` return; `__attribute__((ms_abi))` in Clang
-- [ ] **AArch64 Microsoft ARM64 ABI** (Windows 11 on ARM, same as Impossible OS ARM64): integer args in `X0–X7`; no shadow space; callee-saved `X19–X28, X29 (FP), X30 (LR)`; `X0` return; this is the standard AAPCS64 — **no `__attribute__` needed on ARM64** as AAPCS64 is already the system ABI
+- [ ] **AArch64 Microsoft ARM64 ABI** (Windows 11 on ARM, same as Impossible OS ARM64): integer args in `X0–X7`; no shadow space; callee-saved `X19–X28, X29 (FP), X30 (LR)`; `X0` return; this is the standard AAPCS64 -- **no `__attribute__` needed on ARM64** as AAPCS64 is already the system ABI
 - [ ] **RISC-V LP64D ABI** (`-mabi=lp64d`): integer args in `a0–a7`; callee-saved `s0–s11`; `a0/a1` return
 - [ ] **Win32 header macros** (`include/win32/types.h` additions):
   ```c
@@ -234,7 +234,7 @@ the toolchain and UEFI boot path work.
   ```
 - [ ] **Struct alignment audit**: Win32 structs use packed/aligned fields; check all `#pragma pack` and `__attribute__((packed))` uses in `include/win32/` for ARM64 alignment traps (unaligned 64-bit accesses fault on AArch64 by default unless `SCTLR_EL1.A = 0`)
 - [ ] **ARM64 PE32+ binary format**: Microsoft ARM64 PE binaries use `IMAGE_FILE_MACHINE_ARM64 (0xAA64)` in PE header; PE loader (`TODO-07`) needs `#ifdef ARCH_ARM64` branch to set correct machine type and import table RVAs
-- [ ] **Win32 varargs ABI**: `va_list` implementation differs between x86-64 (`va_list = char*`) and AArch64 (`va_list = __va_list` with stack/register spill areas); kernel `kprintf` and all variadic functions need `#include <stdarg.h>` equivalent — audit all `...` function signatures in kernel
+- [ ] **Win32 varargs ABI**: `va_list` implementation differs between x86-64 (`va_list = char*`) and AArch64 (`va_list = __va_list` with stack/register spill areas); kernel `kprintf` and all variadic functions need `#include <stdarg.h>` equivalent -- audit all `...` function signatures in kernel
 
 ---
 
@@ -268,11 +268,11 @@ the toolchain and UEFI boot path work.
       ├── smp.c                  (SBI HSM sbi_hart_start)
       └── syscall.asm            (stvec trap handler, sret)
   ```
-- [ ] **Kernel core refactoring required** (doc only — no code changes in research phase):
+- [ ] **Kernel core refactoring required** (doc only -- no code changes in research phase):
   - `src/kernel/main.c`: extract syscall MSR setup into `arch_syscall_init()` (called by `arch/x86_64/syscall.asm`'s C companion); ARM64 version installs `VBAR_EL1` instead
   - `src/kernel/smp/smp.c`: extract `smp_send_ipi()` into arch function; ARM64 uses GIC SGI (Software Generated Interrupt) instead of APIC IPI
-  - `src/kernel/sched/task.c`: context switch is fully arch-specific; `task_context_switch()` is already a naked ASM function — add `src/arch/arm64/context_switch.asm` (save X19-X28 + LR + SP, restore)
-  - `src/kernel/mm/vmm.c`: page table walking uses x86-specific 9-9-9-9-12 index layout; ARM64 is identical concept with `TTBR1_EL1` as root — minimal changes needed (change `CR3` references to `TTBR1_EL1` write)
+  - `src/kernel/sched/task.c`: context switch is fully arch-specific; `task_context_switch()` is already a naked ASM function -- add `src/arch/arm64/context_switch.asm` (save X19-X28 + LR + SP, restore)
+  - `src/kernel/mm/vmm.c`: page table walking uses x86-specific 9-9-9-9-12 index layout; ARM64 is identical concept with `TTBR1_EL1` as root -- minimal changes needed (change `CR3` references to `TTBR1_EL1` write)
 - [ ] **GIC (Generic Interrupt Controller) driver plan**: GICD (Distributor) at `0x08000000` + GICC (CPU Interface) at `0x08010000` on QEMU `virt`; init: enable GICD, set priority mask on GICC; routing: SGIs (0–15) for IPI, PPIs (16–31) for timer, SPIs (32–1019) for external IRQs; each arch function maps to `irq_controller_ops_t` vtable (`enable_irq`, `disable_irq`, `send_ipi`, `ack_irq`, `eoi_irq`)
 - [ ] **PSCI SMP bringup plan**: `CPU_ON` PSCI call (`0xC4000003`): `x0 = PSCI_CPU_ON`, `x1 = MPIDR` (CPU affinity), `x2 = entry_point_address`, `x3 = context_id`; entry point must be in physical memory; AP starts at EL1 if `PSCI_SECONDARY_CPU_EL2_DISABLE` is set; replaces x86 INIT-SIPI-SIPI trampoline entirely
 
@@ -280,10 +280,10 @@ the toolchain and UEFI boot path work.
 
 ## 7. Research Deliverables `[Sonnet]`
 
-> Output of the entire research spike — no code merged to main.
+> Output of the entire research spike -- no code merged to main.
 
 - [ ] **`docs/architecture/x86-arch-inventory.md`**: complete table from §1 audit (`File | Line | Construct | Category | ARM64 equivalent | RISC-V equivalent | Effort`); total x86-specific LOC count; % of codebase
-- [ ] **`docs/architecture/multi-arch-port-plan.md`** — the primary deliverable; sections:
+- [ ] **`docs/architecture/multi-arch-port-plan.md`** -- the primary deliverable; sections:
   - **Executive summary**: is the port feasible? LOC delta; estimated person-months for ARM64; for RISC-V
   - **Architecture abstraction layer**: proposed `src/arch/` layout from §6; which kernel files need guards vs. which are clean
   - **ARM64 port plan**: ordered work items (bootloader → entry + vectors → GIC driver → Generic Timer → PSCI SMP → context switch → syscall → vmm page tables → GFX NEON); estimated LOC per item; blocking issues
@@ -294,7 +294,7 @@ the toolchain and UEFI boot path work.
   - **Recommended port order**: ARM64 first (larger market), RISC-V second (shared arch layer already built)
   - **Blocking issues**: list any design decisions that would require significant kernel restructuring (e.g., if context switch is deeply embedded in scheduler, if TSC calibration is baked into timer HAL with no HAL interface)
   - **Effort estimate**: ARM64 port: `[X person-weeks]`; RISC-V second port (incremental): `[Y person-weeks]`; total new file count; revised x86-specific LOC %
-- [ ] **AArch64 spike results**: document the §3 prototype experiment — did `BOOTAA64.EFI` load? did PL011 print? any unexpected blockers? include QEMU command that boots the prototype
+- [ ] **AArch64 spike results**: document the §3 prototype experiment -- did `BOOTAA64.EFI` load? did PL011 print? any unexpected blockers? include QEMU command that boots the prototype
 - [ ] **Prototype branch archived**: push `arch/arm64-spike` branch to GitHub with a README explaining it is a research spike, not a stable port; open tracking issue "ARM64 port" in GitHub Issues linking to `multi-arch-port-plan.md`
 
 ---
@@ -304,15 +304,15 @@ the toolchain and UEFI boot path work.
 
 | ⭐ | Feature                               | 🪟 Win11                                 | 🐧 Linux                                        | 🚀 Impossible OS                                                        |
 |----|---------------------------------------|---------------------------------------|----------------------------------------------|----------------------------------------------------------------------|
-| 💎 | ARM64 (AArch64) port                  | ✅ Windows 11 ARM runs natively       | ✅ Linux ARM64 is tier-1; ships              | ⬜ §3 — §6; research spike first; ARM64                              |
-| 💎 | RISC-V port                           | ✅ Windows on RISC-V: announced but   | ✅ Linux RISC-V is tier-2; mainline          | ⬜ §4 — RV64GC second port; shared arch                              |
-| ⭐ | Formal arch gap analysis document     | ❌ Not public                         | ✅ Linux `Documentation/arch/` per-arch docs | ⬜ §7 — `x86-arch-inventory.md` + `multi-arch-port-plan.md`          |
-| ⭐ | Multi-arch CI compile gate from day 1 | ❌ N/A (Windows is commercial)        | ✅ Linux CI builds on arm64,                 | ⬜ §2 — `multi-arch-build.yml`; compile-only initially, boot test    |
-| 💎 | Arch abstraction layer                | ✅ Windows HAL; arch-specific drivers | ✅ `arch/` directory per ISA in              | ⬜ §6 — `src/arch/x86_64/` + `src/arch/arm64/` + `src/arch/riscv64/` |
-| 💎 | PSCI / SBI SMP bringup                | ✅ Windows ARM64 uses PSCI            | ✅ Linux uses PSCI + SBI                     | ⬜ §6 — PSCI `CPU_ON` replacing INIT-SIPI-SIPI; SBI                  |
+| 💎 | ARM64 (AArch64) port                  | ✅ Windows 11 ARM runs natively       | ✅ Linux ARM64 is tier-1; ships              | ⬜ §3 -- §6; research spike first; ARM64                              |
+| 💎 | RISC-V port                           | ✅ Windows on RISC-V: announced but   | ✅ Linux RISC-V is tier-2; mainline          | ⬜ §4 -- RV64GC second port; shared arch                              |
+| ⭐ | Formal arch gap analysis document     | ❌ Not public                         | ✅ Linux `Documentation/arch/` per-arch docs | ⬜ §7 -- `x86-arch-inventory.md` + `multi-arch-port-plan.md`          |
+| ⭐ | Multi-arch CI compile gate from day 1 | ❌ N/A (Windows is commercial)        | ✅ Linux CI builds on arm64,                 | ⬜ §2 -- `multi-arch-build.yml`; compile-only initially, boot test    |
+| 💎 | Arch abstraction layer                | ✅ Windows HAL; arch-specific drivers | ✅ `arch/` directory per ISA in              | ⬜ §6 -- `src/arch/x86_64/` + `src/arch/arm64/` + `src/arch/riscv64/` |
+| 💎 | PSCI / SBI SMP bringup                | ✅ Windows ARM64 uses PSCI            | ✅ Linux uses PSCI + SBI                     | ⬜ §6 -- PSCI `CPU_ON` replacing INIT-SIPI-SIPI; SBI                  |
 
 Impossible OS's `⭐` advantage: the arch abstraction layer design starts from a greenfield
-clean state — all the x86 hardware cruft (i8259 PIC, PIT, real-mode trampoline) is
+clean state -- all the x86 hardware cruft (i8259 PIC, PIT, real-mode trampoline) is
 already isolated in a handful of files and can move cleanly into `src/arch/x86_64/`
 without touching the scheduler, memory manager, filesystem, or networking. The public
 gap analysis document (`x86-arch-inventory.md`) gives the community transparency into
@@ -323,7 +323,7 @@ publishes in structured machine-readable form.
 
 ## Verification
 
-- [ ] **Gap analysis completeness**: `rg "(wrmsr|LSTAR|iretq|APIC|asm volatile)" src/ --glob "*.{c,h}" | wc -l` matches row count in `x86-arch-inventory.md`; no x86-specific construct in `src/kernel/mm/`, `src/kernel/fs/`, `src/kernel/net/` (these should be arch-neutral — confirm)
+- [ ] **Gap analysis completeness**: `rg "(wrmsr|LSTAR|iretq|APIC|asm volatile)" src/ --glob "*.{c,h}" | wc -l` matches row count in `x86-arch-inventory.md`; no x86-specific construct in `src/kernel/mm/`, `src/kernel/fs/`, `src/kernel/net/` (these should be arch-neutral -- confirm)
 - [ ] **Multi-arch compile**: `ARCH=arm64 bash scripts/build.sh` (compile-only, no boot) → `clang-19 --target=aarch64-elf` compiles all arch-neutral files without error; x86-specific files skipped via `#ifdef ARCH_X86_64` guards; `ARCH=riscv64 bash scripts/build.sh` same for RISC-V
 - [ ] **AArch64 prototype boots**: `qemu-system-aarch64 -machine virt -cpu cortex-a72 -nographic -serial stdio -kernel arch/arm64-spike/kernel-arm64.elf` → serial output shows `"Impossible OS ARM64 spike OK"`; no QEMU crash
 - [ ] **RISC-V toolchain validates**: `clang-19 --target=riscv64-elf -O2 -ffreestanding -nostdlib -x c /dev/null -o /dev/null` exits 0; confirms toolchain available for CI matrix

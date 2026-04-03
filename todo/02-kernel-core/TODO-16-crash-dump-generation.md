@@ -1,4 +1,4 @@
-# TODO-16 — Crash Dump Generation
+# TODO-16 -- Crash Dump Generation
 
 > **Goal:** Replace the current text-only `crashdump.log` with a complete
 > binary crash-dump system: Windows-style STOP codes (`KeBugCheckEx`), FPU/XMM/XSAVE state capture, a kernel module registry, WinDbg-compatible MDMP binary format (Minidump / Kernel / Full variants), a raw-partition dump sink that bypasses the VFS (so a filesystem panic can still produce a dump), and a post-boot `dmpanalyze.exe` crash analyzer. When complete, any crash on real hardware produces a `.dmp` file that a developer can open directly in WinDbg or analyze with the built-in tool.
@@ -10,24 +10,24 @@
 > list, no binary MDMP format, no raw-partition dump sink (VFS path fails if the FS is the crash cause), no dump-type variants, no post-boot recovery dialog, and no analysis tool.
 
 > [!CAUTION]
-> **Memory rule:** The dump writer runs after a kernel panic — `kmalloc` may
+> **Memory rule:** The dump writer runs after a kernel panic -- `kmalloc` may
 > be unavailable (heap could be corrupt). All dump buffers must use `pmm_alloc_contiguous()` or statically allocated scratch pages reserved at boot. Never call `kmalloc` from the dump path.
 
 ---
 
 ## Inputs
 
-- `src/kernel/panic.c` — current text-dump writer; extend, do not replace
-- `include/kernel/panic.h` — `panic_screen` declaration
-- `include/kernel/idt.h` — `struct interrupt_frame` (15 GPRs + int_no + err_code + CPU-pushed RIP/CS/RFLAGS/RSP/SS)
-- `include/kernel/symtab.h` — `symtab_resolve(addr, offset)`
-- `src/kernel/mm/pmm.c` — `pmm_used_page_count()`, `pmm_for_each_used_page()` needed for Full dump page walk
-- → XREF: `TODO-02-system-logging.md §2` — structured crash event written to per-subsystem crash log at panic time; `dmpanalyze.exe` (§9) reads these log entries too
-- → XREF: `TODO-02-system-logging.md §6` — structured JSON crash event (§6) should include bugcheck code, params, and RIP in `events.jsonl` at panic time; note: the raw-partition dump workspace (§7) must not use physical page `0x80000` — choose a different address or probe PMM for a contiguous free region (this constraint is a local §7 design note, not defined in TODO-02 §6)
-- → XREF: `TODO-02-system-logging.md §9` — crash-persistent ring buffer capture to reserved physical memory; complementary to binary dump — §9 captures text log, this TODO captures CPU/memory state
-- → XREF: `TODO-08-binary-system.md §6` — `exec_register_module()` populates the global `LOADED_MODULE` crash registry; §3 of this TODO consumes it for the ModuleList stream
-- → XREF: `TODO-10-exception-dispatch-seh.md §1` — `EXCEPTION_RECORD` and `CONTEXT` types defined there; §4 of this TODO embeds them verbatim in the MDMP Exception stream
-- → XREF: `TODO-15-power-management.md §4` — S4 hibernate partition GPT GUID reused as the raw dump partition backing store (§7); both share the same raw-write path
+- `src/kernel/panic.c` -- current text-dump writer; extend, do not replace
+- `include/kernel/panic.h` -- `panic_screen` declaration
+- `include/kernel/idt.h` -- `struct interrupt_frame` (15 GPRs + int_no + err_code + CPU-pushed RIP/CS/RFLAGS/RSP/SS)
+- `include/kernel/symtab.h` -- `symtab_resolve(addr, offset)`
+- `src/kernel/mm/pmm.c` -- `pmm_used_page_count()`, `pmm_for_each_used_page()` needed for Full dump page walk
+- → XREF: `TODO-02-system-logging.md §2` -- structured crash event written to per-subsystem crash log at panic time; `dmpanalyze.exe` (§9) reads these log entries too
+- → XREF: `TODO-02-system-logging.md §6` -- structured JSON crash event (§6) should include bugcheck code, params, and RIP in `events.jsonl` at panic time; note: the raw-partition dump workspace (§7) must not use physical page `0x80000` -- choose a different address or probe PMM for a contiguous free region (this constraint is a local §7 design note, not defined in TODO-02 §6)
+- → XREF: `TODO-02-system-logging.md §9` -- crash-persistent ring buffer capture to reserved physical memory; complementary to binary dump -- §9 captures text log, this TODO captures CPU/memory state
+- → XREF: `TODO-08-binary-system.md §6` -- `exec_register_module()` populates the global `LOADED_MODULE` crash registry; §3 of this TODO consumes it for the ModuleList stream
+- → XREF: `TODO-10-exception-dispatch-seh.md §1` -- `EXCEPTION_RECORD` and `CONTEXT` types defined there; §4 of this TODO embeds them verbatim in the MDMP Exception stream
+- → XREF: `TODO-15-power-management.md §4` -- S4 hibernate partition GPT GUID reused as the raw dump partition backing store (§7); both share the same raw-write path
 
 ---
 
@@ -50,7 +50,7 @@
 
 | ⭐  | Order | Deliverable                                            | Depends On              | Status |
 | --- | :---: | ------------------------------------------------------ | ----------------------- | :----: |
-| 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                        | —                       |  [ ]   |
+| 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                        | --                       |  [ ]   |
 | 💎  |   2   | FPU/XMM/XSAVE state capture                           | 1                       |  [ ]   |
 | 💎  |   3   | Kernel module registry (`LOADED_MODULE` list)          | TODO-08-binary-system.md §1              |  [ ]   |
 | 💎  |   4   | MDMP binary format: header, directory & stream types   | 1, 2, 3, TODO-10-exception-dispatch-seh.md §1     |  [ ]   |
@@ -60,8 +60,8 @@
 | 💎  |   8   | Post-boot crash recovery: copy dump + "unexpected shutdown" dialog | 7, TODO-01-kernel-init-sequencing.md §4 |  [ ]   |
 | ⭐  |   9   | `dmpanalyze.exe` crash analyzer                        | 4, 8                    |  [ ]   |
 
-> 💎 = parity work — matches what Windows 11 and Linux already do.
-> ⭐ = exclusive work — Impossible OS is superior or first.
+> 💎 = parity work -- matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work -- Impossible OS is superior or first.
 
 ---
 
@@ -91,7 +91,7 @@
   #define BUGCHECK_IMPOSSIBLE_VMM_CORRUPT      0xE0000003
   #define BUGCHECK_IMPOSSIBLE_HIBERNATE_CORRUPT 0xE0000004
   ```
-- [ ] `const char *bugcheck_name(BUGCHECK_CODE code)` — returns string like `"PAGE_FAULT_IN_NONPAGED_AREA"` for display on BSOD and in dump analysis
+- [ ] `const char *bugcheck_name(BUGCHECK_CODE code)` -- returns string like `"PAGE_FAULT_IN_NONPAGED_AREA"` for display on BSOD and in dump analysis
 
 ### 1.2 KeBugCheckEx
 
@@ -112,11 +112,11 @@
 
 ### 2.1 XSAVE area
 
-- [ ] Allocate a single static `xsave_area_t` scratch buffer in `panic.c` at compile time — 4 KiB is sufficient for `XSAVE` up to AVX-512:
+- [ ] Allocate a single static `xsave_area_t` scratch buffer in `panic.c` at compile time -- 4 KiB is sufficient for `XSAVE` up to AVX-512:
   ```c
   static uint8_t g_panic_xsave_buf[4096] __attribute__((aligned(64)));
   ```
-- [ ] `panic_capture_fpu_state()` — called at the very top of `panic_screen()` before any other work:
+- [ ] `panic_capture_fpu_state()` -- called at the very top of `panic_screen()` before any other work:
   ```c
   __asm__ volatile (
       "xsave64 %0"
@@ -149,7 +149,7 @@
       uint64_t LastExceptionToRip, LastExceptionFromRip;
   } CONTEXT;
   ```
-- [ ] `panic_build_context(frame, ctx)` — populate `CONTEXT` from `interrupt_frame` + `g_panic_xsave_buf`; `ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT`
+- [ ] `panic_build_context(frame, ctx)` -- populate `CONTEXT` from `interrupt_frame` + `g_panic_xsave_buf`; `ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT`
 
 ### 2.3 Commit
 
@@ -176,13 +176,13 @@
 
   #define MODULE_LIST_MAX 64
   ```
-- [ ] Static `LOADED_MODULE g_module_list[MODULE_LIST_MAX]` and `uint32_t g_module_count`; no dynamic allocation — written during boot and driver load
+- [ ] Static `LOADED_MODULE g_module_list[MODULE_LIST_MAX]` and `uint32_t g_module_count`; no dynamic allocation -- written during boot and driver load
 
 ### 3.2 Registration API
 
-- [ ] `modules_register(base, size, entry, name, path, flags)` — fills next free slot; returns `MODULE_HANDLE` (slot index + 1, 0=error)
-- [ ] `modules_unregister(handle)` — zeroes the slot (for driver hot-unload)
-- [ ] `modules_find_by_address(va)` → `LOADED_MODULE*` — scan list for entry where `base ≤ va < base + size`; used by `symtab_resolve` and the dump writer to annotate stack frames with module names
+- [ ] `modules_register(base, size, entry, name, path, flags)` -- fills next free slot; returns `MODULE_HANDLE` (slot index + 1, 0=error)
+- [ ] `modules_unregister(handle)` -- zeroes the slot (for driver hot-unload)
+- [ ] `modules_find_by_address(va)` → `LOADED_MODULE*` -- scan list for entry where `base ≤ va < base + size`; used by `symtab_resolve` and the dump writer to annotate stack frames with module names
 
 ### 3.3 Boot-time registration
 
@@ -325,7 +325,7 @@
 - [ ] Crashing thread's kernel stack: 8 pages (32 KiB) around `RSP`
 - [ ] User-space stack (if crash was in user context): 16 pages around user RSP from `interrupt_frame.rsp`
 - [ ] Code page at `RIP`: 1 page
-- [ ] Any memory addresses appearing as arguments in the top 8 stack frames (heuristic: values in `[0x1000, KERNEL_BASE)` for user, or `[KERNEL_BASE, KERNEL_END)` for kernel) — include the page they point to
+- [ ] Any memory addresses appearing as arguments in the top 8 stack frames (heuristic: values in `[0x1000, KERNEL_BASE)` for user, or `[KERNEL_BASE, KERNEL_END)` for kernel) -- include the page they point to
 
 ### 5.3 Minidump write engine
 
@@ -350,8 +350,8 @@
 - [ ] `dump_classify_page(pa)` → `PAGE_CLASS`:
   - `PAGE_CLASS_KERNEL`: physical page mapped in the kernel's address range (upper half, `va ≥ 0xFFFF800000000000`)
   - `PAGE_CLASS_USER`: mapped in user space (`va < 0x0000800000000000`)
-  - `PAGE_CLASS_HARDWARE`: MMIO / framebuffer / LAPIC ranges — skip in kernel dump, include description in `ImpossibleOSInfoStream`
-  - `PAGE_CLASS_FREE`: not in PMM used list — skip always
+  - `PAGE_CLASS_HARDWARE`: MMIO / framebuffer / LAPIC ranges -- skip in kernel dump, include description in `ImpossibleOSInfoStream`
+  - `PAGE_CLASS_FREE`: not in PMM used list -- skip always
 
 ### 6.2 Kernel dump
 
@@ -381,15 +381,15 @@
 
 ### 7.1 Dump partition
 
-- [ ] Dedicated GPT partition identified by type GUID `{IMPOSSIBLE-DUMP-GUID}` — the same raw-block mechanism used by S4 hibernate (→ XREF `TODO-15-power-management.md §4`); if that GUID is present the partition doubles as the dump sink; if absent, fall back to the VFS text path
-- [ ] At kernel init (Phase 1 — before VFS): call `dump_sink_probe()` — scan GPT via `blkdev_open_by_gpt_type(DUMP_GUID)`; cache the raw block device handle in a static `g_dump_blkdev`; this works before any filesystem driver is mounted
+- [ ] Dedicated GPT partition identified by type GUID `{IMPOSSIBLE-DUMP-GUID}` -- the same raw-block mechanism used by S4 hibernate (→ XREF `TODO-15-power-management.md §4`); if that GUID is present the partition doubles as the dump sink; if absent, fall back to the VFS text path
+- [ ] At kernel init (Phase 1 -- before VFS): call `dump_sink_probe()` -- scan GPT via `blkdev_open_by_gpt_type(DUMP_GUID)`; cache the raw block device handle in a static `g_dump_blkdev`; this works before any filesystem driver is mounted
 
 ### 7.2 Write state machine
 
-- [ ] `dump_sink_write(buf, size)` — streaming write engine:
+- [ ] `dump_sink_write(buf, size)` -- streaming write engine:
   - Maintains a 512-byte sector-aligned write position `g_dump_offset`
   - Pads the buffer to the next 512-byte boundary with zeros
-  - Issues synchronous DMA writes via `blkdev_write_raw(g_dump_blkdev, g_dump_offset, buf, aligned_size)` — must not use IRQs or wait queues (panic context); busy-poll DMA completion status register directly
+  - Issues synchronous DMA writes via `blkdev_write_raw(g_dump_blkdev, g_dump_offset, buf, aligned_size)` -- must not use IRQs or wait queues (panic context); busy-poll DMA completion status register directly
   - If `g_dump_blkdev` is NULL (no dump partition): fall back to the existing VFS text-dump path from `panic.c`
 
 ### 7.3 Dump partition header at sector 0
@@ -405,7 +405,7 @@
   } DUMP_PARTITION_HEADER;
   ```
 - [ ] After writing the full dump body, `dump_sink_finalize()` writes the header to sector 0 with `DumpPresent = 1`
-- [ ] `dump_sink_clear()` — sets `DumpPresent = 0` after the dump has been safely moved to the filesystem (called by §8)
+- [ ] `dump_sink_clear()` -- sets `DumpPresent = 0` after the dump has been safely moved to the filesystem (called by §8)
 
 ### 7.4 Commit
 
@@ -418,11 +418,11 @@
 ### 8.1 Kernel init check for pending dump
 
 - [ ] In kernel init Phase 2 (→ XREF `TODO-01-kernel-init-sequencing.md §4`), after VFS mounts but before the desktop starts: call `dump_recovery_check()`:
-  1. `dump_sink_probe()` — open dump partition
+  1. `dump_sink_probe()` -- open dump partition
   2. Read sector 0; check `DUMP_PARTITION_HEADER.DumpPresent == 1`
   3. If present: read `DumpSize` bytes; write to `C:\Impossible\System\CrashDumps\{timestamp}.dmp` (create directory if absent; timestamp from `DumpPartitionHeader` or system RTC if unavailable)
-  4. Also write a companion `.txt` file with the text dump (same content as the current `crashdump.log` — keep the existing text path as a supplementary artifact)
-  5. Call `dump_sink_clear()` — zero the `DumpPresent` flag
+  4. Also write a companion `.txt` file with the text dump (same content as the current `crashdump.log` -- keep the existing text path as a supplementary artifact)
+  5. Call `dump_sink_clear()` -- zero the `DumpPresent` flag
   6. Set Registry `HKLM\SYSTEM\LastCrashDump` = the `.dmp` path and `HKLM\SYSTEM\CrashPending = 1`
 
 ### 8.2 "System shut down unexpectedly" dialog
@@ -450,7 +450,7 @@
 
 ### 9.1 MDMP parser
 
-- [ ] `src/apps/dmpanalyze/dmpanalyze.c` — standalone command-line app:
+- [ ] `src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app:
   - Open `.dmp` file; validate `MINIDUMP_HEADER.Signature == MDMP_SIGNATURE`
   - Parse `MINIDUMP_DIRECTORY` to locate all streams by `StreamType`
   - Extract `ExceptionStream`, `ModuleListStream`, `ThreadListStream`, `SystemInfoStream`, and `ImpossibleOSInfoStream`
@@ -489,12 +489,12 @@
 ### 9.3 WinDbg compatibility
 
 - [ ] The `.dmp` file produced by the dump writer (§5) uses the standard MDMP format (`MDMP` magic, standard stream types, standard CONTEXT layout)
-  — a Windows developer can open it directly in WinDbg 10+ and run `!analyze -v`; module names and addresses from `ModuleListStream` appear in the module list; the `CONTEXT` record allows stack unwinding via PDB symbols if available
+  -- a Windows developer can open it directly in WinDbg 10+ and run `!analyze -v`; module names and addresses from `ModuleListStream` appear in the module list; the `CONTEXT` record allows stack unwinding via PDB symbols if available
 - [ ] Note: WinDbg needs matching PDB symbols for deep analysis; for kernel-only debugging, the MDMP alone is sufficient for `!analyze -v`
 
 ### 9.4 `dmpanalyze /compare` ⭐
 
-- [ ] `dmpanalyze /compare <dump1.dmp> <dump2.dmp>` — diff two crash dumps:
+- [ ] `dmpanalyze /compare <dump1.dmp> <dump2.dmp>` -- diff two crash dumps:
   - Compare bugcheck code, faulting module, top-5 stack frames
   - Output: `SAME_STOP_CODE`, `SAME_FAULTING_MODULE`, `LIKELY_SAME_BUG` / `DIFFERENT_CRASH` classification
   - Useful for identifying duplicate crashes in a fleet of machines
@@ -510,7 +510,7 @@
 
 | ⭐ | Feature                                   | 🪟 Win11                            | 🐧 Linux                              | 🚀 Impossible OS             |
 |----|-------------------------------------------|----------------------------------|------------------------------------|---------------------------|
-| 💎 | Text crash log on panic                   | ✅ Event Viewer                  | ✅ `dmesg` / `journalctl`          | ✅ Done — `crashdump.log` |
+| 💎 | Text crash log on panic                   | ✅ Event Viewer                  | ✅ `dmesg` / `journalctl`          | ✅ Done -- `crashdump.log` |
 | 💎 | Windows STOP code taxonomy                | ✅ Full (`0xXXXXXXXX`)           | ❌ Kernel OOPS (different)         | ⬜ §1                     |
 | 💎 | FPU/XMM/XSAVE state in dump               | ✅ Full CONTEXT record           | ✅ `PTRACE_GETFPREGS` in coredump  | ⬜ §2                     |
 | 💎 | Loaded module list                        | ✅ Full (`lm` in WinDbg)         | ✅ `/proc/modules`, `kcore`        | ⬜ §3                     |
@@ -519,12 +519,12 @@
 | 💎 | Full memory dump                          | ✅ Full memory dump option       | ✅ `makedumpfile -d 0`             | ⬜ §6                     |
 | 💎 | VFS-bypass raw partition dump sink        | ✅ Writes to pagefile before VFS | ✅ Kdump to dedicated partition    | ⬜ §7                     |
 | 💎 | Post-boot dump recovery & notification    | ✅ WER dialog                    | ✅ `apport` / `systemd-coredump`   | ⬜ §8                     |
-| 💎 | Crash dump archive rotation               | ✅ `%Minidump%\*.dmp` (last 5)   | ⚠️ manual / distro-specific        | ⬜ §8 — .3                |
+| 💎 | Crash dump archive rotation               | ✅ `%Minidump%\*.dmp` (last 5)   | ⚠️ manual / distro-specific        | ⬜ §8 -- .3                |
 | 💎 | WinDbg-compatible dump file               | ✅ Native                        | ❌ ELF coredump (not WinDbg)       | ⬜ §4–§5                  |
-| 💎 | LZ4 dump compression                      | ⚠️ Xpress only (no LZ4)          | ✅ `makedumpfile` LZO/snappy       | ⬜ §6 — (LZ4)             |
-| ⭐ | Custom `ImpossibleOSInfoStream` in MDMP   | ❌ No vendor extension           | ❌ No equivalent                   | ⬜ §4 — .4 🚀             |
-| ⭐ | `dmpanalyze /compare` crash deduplication | ❌ Needs WER portal              | ❌ Not available                   | ⬜ §9 — .4 🚀             |
-| ⭐ | Built-in `dmpanalyze.exe` on-device       | ❌ Requires WinDbg install       | ❌ Requires `crash` tool install   | ⬜ §9 — 🚀                |
+| 💎 | LZ4 dump compression                      | ⚠️ Xpress only (no LZ4)          | ✅ `makedumpfile` LZO/snappy       | ⬜ §6 -- (LZ4)             |
+| ⭐ | Custom `ImpossibleOSInfoStream` in MDMP   | ❌ No vendor extension           | ❌ No equivalent                   | ⬜ §4 -- .4 🚀             |
+| ⭐ | `dmpanalyze /compare` crash deduplication | ❌ Needs WER portal              | ❌ Not available                   | ⬜ §9 -- .4 🚀             |
+| ⭐ | Built-in `dmpanalyze.exe` on-device       | ❌ Requires WinDbg install       | ❌ Requires `crash` tool install   | ⬜ §9 -- 🚀                |
 
 After §1–8, Impossible OS reaches full Windows 11 crash-dump parity: WinDbg-compatible binary MDMP files, VFS-bypass raw-partition sink, post-boot recovery dialog, and archive rotation. Linux's ELF coredump format is not WinDbg-compatible and requires external `makedumpfile`/`crash` tooling. The built-in `dmpanalyze.exe` (§9), the custom `ImpossibleOSInfoStream` with OS-specific metadata, and the `/compare` deduplication command are exclusive features that make post-mortem crash analysis practical without requiring an external debugger.
 
@@ -554,9 +554,9 @@ After §1–8, Impossible OS reaches full Windows 11 crash-dump parity: WinDbg-c
 - [ ] **STOP code**: trigger `KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH, 1, 2, 3, 4)` from a shell command; BSOD screen shows `STOP: 0x000000E2 (0x1, 0x2, 0x3, 0x4)`; Registry `HKLM\SYSTEM\LastBugCheck\Code` == `0xE2`.
 - [ ] **XSAVE**: verify `g_panic_xsave_buf` is non-zero after a panic (FPU was in use); confirm `CONTEXT.MxCsr` is non-default.
 - [ ] **Module list**: `modules_find_by_address(kernel_entry)` returns the `kernel.exe` `LOADED_MODULE`; `modules_find_by_address(0)` returns NULL.
-- [ ] **Minidump validity**: trigger a test panic; recover `.dmp` from `C:\Impossible\System\CrashDumps\`; open with `dmpanalyze.exe` — output must include STOP code, faulting function name, and at least 3 stack frames.
-- [ ] **WinDbg round-trip**: copy the `.dmp` to a Windows machine; open in WinDbg 10+; `!analyze -v` must complete without errors (symbol names optional — raw addresses are sufficient for format validation).
+- [ ] **Minidump validity**: trigger a test panic; recover `.dmp` from `C:\Impossible\System\CrashDumps\`; open with `dmpanalyze.exe` -- output must include STOP code, faulting function name, and at least 3 stack frames.
+- [ ] **WinDbg round-trip**: copy the `.dmp` to a Windows machine; open in WinDbg 10+; `!analyze -v` must complete without errors (symbol names optional -- raw addresses are sufficient for format validation).
 - [ ] **VFS-bypass**: deliberately trigger a panic after VFS unmount; verify the dump partition header shows `DumpPresent = 1` at sector 0.
-- [ ] **Full dump CRC**: write a full dump; `dmpanalyze.exe` reads and validates `MINIDUMP_HEADER.Checksum` CRC32C — must match.
+- [ ] **Full dump CRC**: write a full dump; `dmpanalyze.exe` reads and validates `MINIDUMP_HEADER.Checksum` CRC32C -- must match.
 - [ ] **Remaining limits**: `dmpanalyze /compare` is a convenience feature; full `!analyze -v` symbol resolution requires `kernel.sym` on the analysis machine; the `[Submit Report]` WER upload path requires the HTTP client from `06-networking` to be complete before it is wired up.
 - [ ] Commit: `"kernel/crashdump: KeBugCheckEx, MDMP minidump/kernel/full dump, raw-partition sink, dmpanalyze"`

@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_mutex.c — Mutex (Mutant) object type: callbacks, NtCreateMutex stub
+ * ob_mutex.c -- Mutex (Mutant) object type: callbacks, NtCreateMutex stub
  *
  * Implements TODO-03 §6: ObpMutexType wrapping mutex_t.
  * If the owning thread dies without releasing, the mutex is marked abandoned.

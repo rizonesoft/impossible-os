@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_bitmap.c — Cluster Allocator (§12.1)
+ * ntfs_bitmap.c -- Cluster Allocator (§12.1)
  *
  * Uses $Bitmap (inode 6) to track cluster allocation.
  * One bit per cluster: 0 = free, 1 = allocated.
@@ -48,7 +48,7 @@ static int bitmap_offset_to_lba(struct ntfs_volume *vol,
             /* Found the run containing this offset */
             uint64_t lcn = vol->bitmap_runs[i].lcn;
             if (lcn == NTFS_LCN_SPARSE)
-                return -1;  /* Sparse run — should not happen for $Bitmap */
+                return -1;  /* Sparse run -- should not happen for $Bitmap */
             uint64_t disk_cluster = lcn + (cluster_off - vcn);
             uint64_t disk_byte = disk_cluster * vol->cluster_size + in_cluster;
             *out_lba = disk_byte / vol->bytes_per_sector;
@@ -217,7 +217,7 @@ static uint64_t find_contiguous_free(struct ntfs_volume *vol,
             if (run_len >= count)
                 return run_start;
         } else {
-            /* Cluster is allocated — reset run */
+            /* Cluster is allocated -- reset run */
             run_len = 0;
         }
 

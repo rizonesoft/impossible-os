@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_event.c — Event object type: callbacks, NtCreateEvent stub
+ * ob_event.c -- Event object type: callbacks, NtCreateEvent stub
  *
  * Implements TODO-03 §6: ObpEventType wrapping event_t.
  * ============================================================================ */

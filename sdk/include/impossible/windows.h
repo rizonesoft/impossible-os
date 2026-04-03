@@ -22,7 +22,7 @@
 #pragma once
 
 /* ── Freestanding type definitions ────────────────────────────────────────── */
-/* SDK headers are standalone — no dependency on system headers.              */
+/* SDK headers are standalone -- no dependency on system headers.              */
 
 typedef unsigned char       uint8_t;
 typedef unsigned short      uint16_t;

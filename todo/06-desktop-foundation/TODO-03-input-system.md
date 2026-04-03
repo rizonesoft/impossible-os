@@ -1,12 +1,12 @@
-# TODO-03 — Input System
+# TODO-03 -- Input System
 
-> **Goal:** Build a proper input routing system: modifier key tracking (Shift, Ctrl, Alt, Win), keyboard focus with Tab navigation between controls, and a global hotkey dispatch table. Currently input is ad-hoc — mouse clicks route through `wm_handle_mouse()` and keyboard goes directly to the terminal.
+> **Goal:** Build a proper input routing system: modifier key tracking (Shift, Ctrl, Alt, Win), keyboard focus with Tab navigation between controls, and a global hotkey dispatch table. Currently input is ad-hoc -- mouse clicks route through `wm_handle_mouse()` and keyboard goes directly to the terminal.
 
 ## Inputs
 
-- [`src/desktop/wm.c`](../../src/desktop/wm.c) — `wm_handle_mouse()`, basic focus
-- [`src/desktop/controls.c`](../../src/desktop/controls.c) — `ctrl_handle_key()`, `ctrl_handle_mouse()`
-- [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c) — PS/2 keyboard driver, scancode to ASCII
+- [`src/desktop/wm.c`](../../src/desktop/wm.c) -- `wm_handle_mouse()`, basic focus
+- [`src/desktop/controls.c`](../../src/desktop/controls.c) -- `ctrl_handle_key()`, `ctrl_handle_mouse()`
+- [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c) -- PS/2 keyboard driver, scancode to ASCII
 
 ## Outcome
 
@@ -20,7 +20,7 @@
 
 | ⭐  | Order | Deliverable                               | Depends On | Status |
 | --- | :---: | ----------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Modifier key tracking                     | —          |  [ ]   |
+| 💎  |   1   | Modifier key tracking                     | --          |  [ ]   |
 | 💎  |   2   | Key event struct + dispatch pipeline      | §1         |  [ ]   |
 | 💎  |   3   | Focus model and Tab navigation            | §2         |  [ ]   |
 | 💎  |   4   | Global hotkey dispatch table              | §2         |  [ ]   |
@@ -35,11 +35,11 @@ Track press/release state of Shift, Ctrl, Alt, Win keys.
 
 - [ ] `g_modifiers` bitmap: `MOD_LSHIFT`, `MOD_RSHIFT`, `MOD_LCTRL`, `MOD_RCTRL`, `MOD_LALT`, `MOD_RALT`, `MOD_LWIN`, `MOD_RWIN`
 - [ ] Update on key press (scancode make) and release (scancode break)
-- [ ] `input_get_modifiers()` — query current modifier state
+- [ ] `input_get_modifiers()` -- query current modifier state
 - [ ] Handle key repeat: modifier keys don't repeat
 - [ ] Commit
 
-**Test checkpoint:** Hold Shift, type 'a' — terminal shows 'A'. Release Shift — lowercase again.
+**Test checkpoint:** Hold Shift, type 'a' -- terminal shows 'A'. Release Shift -- lowercase again.
 
 ## 2. Key Event Struct + Dispatch Pipeline
 Route keyboard events through a unified pipeline: global hotkeys → focused window → focused control.
@@ -74,8 +74,8 @@ Register system-wide hotkeys that intercept before window routing.
 **Files:** `src/desktop/wm.c`, `include/desktop/wm.h`
 
 - [ ] `struct hotkey { uint8_t scancode; uint16_t modifiers; void (*handler)(void); }`
-- [ ] `wm_register_hotkey(scancode, modifiers, handler)` — add to table
-- [ ] Table checked first in `input_dispatch()` — if match, call handler and consume event
+- [ ] `wm_register_hotkey(scancode, modifiers, handler)` -- add to table
+- [ ] Table checked first in `input_dispatch()` -- if match, call handler and consume event
 - [ ] Register defaults: Alt+Tab, Alt+F4, Win+D, Win+L, PrintScreen
 - [ ] Commit
 
@@ -89,10 +89,10 @@ Fix two input issues observed on bare metal (i5-4210U laptop, 2026-03-31):
 ### Bug A: Mouse pointer jumps when crossing window boundaries
 The cursor visibly jumps or moves irregularly when it moves over a window. Likely cause: compositor hit-test or coordinate translation has an off-by-one or stale-rect issue at window edges. The WM may be switching between "window drag" and "desktop" coordinate spaces incorrectly.
 
-- [ ] Audit `wm_handle_mouse()` — check hit-test at window boundary transitions
+- [ ] Audit `wm_handle_mouse()` -- check hit-test at window boundary transitions
 - [ ] Check if mouse delta is being applied twice (raw + compositor) during window crossings
 - [ ] Verify cursor coordinates are clamped to screen bounds during fast movement
-- [ ] Test: move mouse smoothly across window edges — no jumps
+- [ ] Test: move mouse smoothly across window edges -- no jumps
 
 ### Bug B: Keyboard input delayed or requires click on Command Prompt
 When the terminal window is visually focused, typing either appears after a 1-2 second delay, or doesn't appear until the user clicks on the terminal. Likely cause: keyboard events are not being routed to the terminal because the WM focus state doesn't match the visual state, or the terminal's key handler isn't being called on every key event.
@@ -101,13 +101,13 @@ When the terminal window is visually focused, typing either appears after a 1-2 
 - [ ] Check if `wm_get_focused()` returns the terminal after it's created (may lose focus to gallery)
 - [ ] Check if terminal has a key event handler registered with the WM
 - [ ] Verify no event queue overflow or stale event coalescing drops keystrokes
-- [ ] Test: type immediately after boot without clicking — text appears instantly
+- [ ] Test: type immediately after boot without clicking -- text appears instantly
 
-- [ ] Commit: `"desktop: fix bare-metal input bugs — mouse jump + keyboard focus"`
+- [ ] Commit: `"desktop: fix bare-metal input bugs -- mouse jump + keyboard focus"`
 
 **Test checkpoint:** Mouse moves smoothly across window edges on bare metal. Typing in terminal works immediately without clicking. Test on: bare metal i5-4210U, QEMU.
 
-**Regression risk:** LOW — input routing changes. If focus breaks, windows stop receiving events. Rollback: revert to current ad-hoc routing.
+**Regression risk:** LOW -- input routing changes. If focus breaks, windows stop receiving events. Rollback: revert to current ad-hoc routing.
 
 ---
 

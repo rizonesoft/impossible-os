@@ -1,4 +1,4 @@
-# TODO-04 — Secure Boot, TPM 2.0 & Measured Boot
+# TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot
 
 > **Goal:** Research spike for the enterprise-grade security chain: UEFI Secure Boot
 > PK/KEK/db key hierarchy, TPM 2.0 measured boot chain (PCR 8–10), AES-256-XTS full
@@ -15,31 +15,31 @@
 > `GetRandom`) is owned by `04-drivers-hardware/TODO-11 §4`. An existing
 > `src/kernel/tpm.c` (312 lines) already parses UEFI PCR event logs. §2 here
 > cross-references `TODO-11 §4` and adds the **CSPRNG entropy integration** and
-> QEMU `swtpm` development setup — do not re-specify TPM driver internals.
+> QEMU `swtpm` development setup -- do not re-specify TPM driver internals.
 >
 > **AES-256-GCM, SHA-256, `cng_sha256`** are owned by `08-desktop-shell/TODO-07 §1`;
 > §4 FDE uses `cng_sha256` for PCR sealing policy and relies on AES-256-XTS
-> (add to `TODO-07 §1` if not already present — XTS mode for disk encryption is
+> (add to `TODO-07 §1` if not already present -- XTS mode for disk encryption is
 > adjacent to existing GCM mode). **Argon2i** for password-based key derivation is
 > already in monocypher (`crypto_argon2i()`).
 >
 > **vTPM for ImpossibleHV** (§5 here) complements
 > `13-future-research/TODO-02 §7` (hypervisor deliverables); the two TODOs are
-> designed together. This is research-level only — no production vTPM code until
+> designed together. This is research-level only -- no production vTPM code until
 > ImpossibleHV Phase 2 lands.
 
 ---
 
 ## Inputs
 
-- `01-boot-platform/TODO-01-uefi-hardening-secureboot.md` (→ XREF) — shim chain-loading; MOK key pair; `boot_info.secure_boot_enabled`; §1 here adds PK/KEK/db layer above shim
-- `04-drivers-hardware/TODO-11-security-hardware.md §4` (→ XREF) — TPM 2.0 command driver (CRB/FIFO, STARTUP, PCR_Read/Extend, GetRandom, PCR[10] kernel integrity); §2 here adds CSPRNG feed + QEMU swtpm
-- `08-desktop-shell/TODO-07-cng-crypto.md §1` (→ XREF) — `cng_sha256()`, AES-256-GCM, `csprng_read()`; §4 FDE adds AES-256-XTS (XTS mode extension to §1) + Argon2i KDF
-- `11-user-platform-sdk/TODO-01` (→ XREF, if CSPRNG integration) — entropy pool that `tpm2_get_random()` feeds into — §2 CSPRNG integration
-- `13-future-research/TODO-02-hypervisor.md` (→ XREF) — ImpossibleHV Phase 2 multi-vCPU; §5 vTPM is a companion feature for that phase
-- `src/kernel/tpm.c` — existing 312-line PCR event log parser; §2 extends it with command driver (cross-ref `TODO-11 §4`)
-- `include/libs/monocypher.h` — `crypto_argon2i()` for password-based key derivation in §4 FDE recovery key
-- `src/boot/uefi/bootx64.c` — bootloader; §1 and §3 add signature verification + PCR extension calls here
+- `01-boot-platform/TODO-01-uefi-hardening-secureboot.md` (→ XREF) -- shim chain-loading; MOK key pair; `boot_info.secure_boot_enabled`; §1 here adds PK/KEK/db layer above shim
+- `04-drivers-hardware/TODO-11-security-hardware.md §4` (→ XREF) -- TPM 2.0 command driver (CRB/FIFO, STARTUP, PCR_Read/Extend, GetRandom, PCR[10] kernel integrity); §2 here adds CSPRNG feed + QEMU swtpm
+- `08-desktop-shell/TODO-07-cng-crypto.md §1` (→ XREF) -- `cng_sha256()`, AES-256-GCM, `csprng_read()`; §4 FDE adds AES-256-XTS (XTS mode extension to §1) + Argon2i KDF
+- `11-user-platform-sdk/TODO-01` (→ XREF, if CSPRNG integration) -- entropy pool that `tpm2_get_random()` feeds into -- §2 CSPRNG integration
+- `13-future-research/TODO-02-hypervisor.md` (→ XREF) -- ImpossibleHV Phase 2 multi-vCPU; §5 vTPM is a companion feature for that phase
+- `src/kernel/tpm.c` -- existing 312-line PCR event log parser; §2 extends it with command driver (cross-ref `TODO-11 §4`)
+- `include/libs/monocypher.h` -- `crypto_argon2i()` for password-based key derivation in §4 FDE recovery key
+- `src/boot/uefi/bootx64.c` -- bootloader; §1 and §3 add signature verification + PCR extension calls here
 
 ---
 
@@ -70,7 +70,7 @@ bare-metal deployment.
 ## 1. TPM 2.0 CSPRNG Integration + `swtpm` Dev Setup `[Opus]`
 
 > Security-critical: feeds hardware entropy from TPM RNG into the kernel CSPRNG pool.
-> QEMU `swtpm` setup validates the driver before bare-metal. Extends `TODO-11 §4` —
+> QEMU `swtpm` setup validates the driver before bare-metal. Extends `TODO-11 §4` --
 > this section documents the integration design without duplicating driver internals.
 
 - [ ] **Dependency on `TODO-11 §4`**: the TPM command driver (`tpm2_startup`, `tpm2_get_random`, `tpm2_pcr_read/extend`) is implemented there; this section adds the CSPRNG entropy feed and the development environment
@@ -78,7 +78,7 @@ bare-metal deployment.
   - On TPM init (after `tpm2_startup(TPM2_SU_CLEAR)`): call `tpm2_get_random(rng_buf, 32)` → feed 32 bytes into kernel entropy pool via `csprng_add_entropy(rng_buf, 32)` (function in entropy pool subsystem, cross-ref `TODO-11 §1`)
   - Repeat entropy injection every 30 minutes from a background `sched_task` (guards against entropy exhaustion after long uptime)
   - Log: `"[TPM] 32 B hardware entropy injected into CSPRNG"`
-  - Fallback: if `tpm2_get_random()` fails (no TPM, or TPM not ready): `csprng_read` continues with RDRAND-only path (already defined in `TODO-11 §1`) — no boot failure
+  - Fallback: if `tpm2_get_random()` fails (no TPM, or TPM not ready): `csprng_read` continues with RDRAND-only path (already defined in `TODO-11 §1`) -- no boot failure
 - [ ] **QEMU `swtpm` development setup**:
   - QEMU supports software TPM: `qemu-system-x86_64 ... -chardev socket,id=chrtpm,path=/tmp/swtpm-sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0`
   - Host: `swtpm socket --tpmstate dir=/tmp/tpm-state --ctrl type=unixio,path=/tmp/swtpm-sock --tpm2 &`
@@ -106,23 +106,23 @@ bare-metal deployment.
   | 9 | Kernel | SHA-256 of each `.kmod` loaded | In `kmod_load()` before `init_fn()` |
   | 10 | Kernel | SHA-256 of first user-process image | On first `task_create()` with user ELF |
 
-- [ ] **PCR 8 — kernel hash extension** (in `src/boot/uefi/bootx64.c`):
+- [ ] **PCR 8 -- kernel hash extension** (in `src/boot/uefi/bootx64.c`):
   - After loading `kernel.exe` ELF into memory, before `ExitBootServices()`:
-  - `cng_sha256(kernel_elf_buf, kernel_elf_size, digest32)` — compute SHA-256 over loaded ELF bytes
-  - `tpm2_pcr_extend(8, digest32)` — extend PCR 8 with kernel hash
-  - `tpm2_pcr_read(8, pcr8_out)` — read back PCR 8; log `"[TPM] PCR[8] = {hex}"` to boot serial
+  - `cng_sha256(kernel_elf_buf, kernel_elf_size, digest32)` -- compute SHA-256 over loaded ELF bytes
+  - `tpm2_pcr_extend(8, digest32)` -- extend PCR 8 with kernel hash
+  - `tpm2_pcr_read(8, pcr8_out)` -- read back PCR 8; log `"[TPM] PCR[8] = {hex}"` to boot serial
   - If Secure Boot enforcement is on (`HKLM\SYSTEM\SecureBoot\Enforce = 1`) and TPM PCR 8 doesn't match stored expected value: refuse to boot
-- [ ] **PCR 9 — kmod hash extension** (in `src/kernel/kmod.c`, cross-ref `11-user-platform-sdk/TODO-03 §3`):
+- [ ] **PCR 9 -- kmod hash extension** (in `src/kernel/kmod.c`, cross-ref `11-user-platform-sdk/TODO-03 §3`):
   - In `kmod_load()`, after ELF validation but before `init_fn()`:
   - `cng_sha256(kmod_buf, kmod_size, digest32)` + `tpm2_pcr_extend(9, digest32)`
   - Log `"[TPM] PCR[9] extended with kmod={name}, digest={hex[:8]}..."`
-- [ ] **PCR 10 — first user process hash** (in `src/kernel/sched/task.c`):
+- [ ] **PCR 10 -- first user process hash** (in `src/kernel/sched/task.c`):
   - On first `task_create()` with `is_user = 1`: hash the process image; `tpm2_pcr_extend(10, digest32)`
   - Log `"[TPM] PCR[10] = first user process measured"`
 - [ ] **TPM Quote (remote attestation)** (`tpm2_quote(pcr_mask, nonce, sig_out, sig_len)`):
   - `TPM2_CC_Quote` command: selects PCRs by bitmask (`pcr_mask`); signs PCR digest with TPM's AIK (Attestation Identity Key) using ECDSA or RSASSA
   - Returns signed quote blob → can be verified by remote verifier that holds the TPM's public AIK
-  - `HKLM\SYSTEM\SecureBoot\ExpectedPCRs\PCR{N}` — store expected PCR values at time of "known-good" installation; `tpm2_local_attest()` compares live PCR reads against stored values; return `ATTEST_OK` / `ATTEST_DEGRADED` / `ATTEST_COMPROMISED`
+  - `HKLM\SYSTEM\SecureBoot\ExpectedPCRs\PCR{N}` -- store expected PCR values at time of "known-good" installation; `tpm2_local_attest()` compares live PCR reads against stored values; return `ATTEST_OK` / `ATTEST_DEGRADED` / `ATTEST_COMPROMISED`
   - `attest.exe` shell command: `attest status` → print all PCR[0–10] values + comparison; `attest quote <nonce_hex>` → print base64 quote blob
 
 ---
@@ -154,14 +154,14 @@ bare-metal deployment.
   - Convert certs to EFI signature list format via `cert-to-efi-sig-list` tool
   - `efi-updatevar -e -f db.esl db` → enroll db
   - `efi-updatevar -e -f KEK.esl KEK` → enroll KEK
-  - `efi-updatevar -f PK.auth PK` → set PK (final step — Secure Boot activates)
+  - `efi-updatevar -f PK.auth PK` → set PK (final step -- Secure Boot activates)
   - QEMU test: `qemu-system-x86_64 -drive if=pflash,file=OVMF_CODE.fd,readonly=on -drive if=pflash,file=OVMF_VARS.fd` + enroll keys into OVMF_VARS.fd via script
 - [ ] **Bootloader signature chain** (in `src/boot/uefi/bootx64.c`):
   - On boot: call UEFI `SECURITY_PROTOCOL2->FileAuthenticationState()` to verify `kernel.exe` against db
   - If verification fails and `HKLM\SYSTEM\SecureBoot\Enforce = 1`: `Print(L"[SECURITY] Kernel signature invalid"); return EFI_ABORTED`
   - If `Enforce = 0`: log warning but continue (development mode)
   - Store result in `boot_info.secure_boot_enforced` and `boot_info.kernel_sig_valid`
-- [ ] **Long-term: shim-review submission** (stretch): submit shim binary to Microsoft shim-review process; enables Impossible OS to boot on retail hardware with Secure Boot on without user enrolling keys — reference `TODO-01` shim cross-link
+- [ ] **Long-term: shim-review submission** (stretch): submit shim binary to Microsoft shim-review process; enables Impossible OS to boot on retail hardware with Secure Boot on without user enrolling keys -- reference `TODO-01` shim cross-link
 
 ---
 
@@ -181,7 +181,7 @@ bare-metal deployment.
   - `cng_aes256xts_encrypt(key1, key2, sector_no, plaintext, ciphertext, sector_count)`
   - `cng_aes256xts_decrypt(key1, key2, sector_no, ciphertext, plaintext, sector_count)`
 - [ ] **Volume key management**:
-  - `volume_key[64]` = 512-bit random key from `csprng_read(64)` — never stored in plaintext
+  - `volume_key[64]` = 512-bit random key from `csprng_read(64)` -- never stored in plaintext
   - **TPM-sealed copy** (`tpm2_seal_key`): `TPM2_CC_Create` with PCR policy `{PCR 0,1,2,3,7,8}` (firmware + bootloader + kernel hash); returns sealed blob (encrypted by TPM's Storage Root Key, only unlockable if PCR values match); store blob in IXFS partition header reserved area (512 B at offset 0x200)
   - **Recovery key** (password-based): `recovery_key_blob = AES_256_GCM_encrypt(key=argon2i(user_password, salt), plaintext=volume_key)`; store recovery blob in `HKLM\SYSTEM\FDE\RecoveryKey` and optionally export to USB
   - **Unlock at boot** (in `kmod_load` or kernel init pre-IXFS mount):
@@ -192,7 +192,7 @@ bare-metal deployment.
   - Register `fde_blkdev_t` wrapping the underlying IXFS blkdev
   - `fde_read_sectors(dev, lba, count, buf)`: `blkdev_read(dev->underlying, lba, count, cipher_buf)` + `cng_aes256xts_decrypt(key1, key2, lba, cipher_buf, buf, count)`
   - `fde_write_sectors(dev, lba, count, buf)`: `cng_aes256xts_encrypt(...)` then `blkdev_write(dev->underlying, lba, enc_buf, count)`
-  - VFS mounts through `fde_blkdev_t` — all higher-level FS code is unaware of encryption
+  - VFS mounts through `fde_blkdev_t` -- all higher-level FS code is unaware of encryption
 - [ ] **`bitlocker.cpl`** Control Panel applet:
   - **Enable FDE**: generate `volume_key`, seal to TPM, encrypt with recovery password, reformat IXFS partition with FDE header; require reboot
   - **Suspend FDE**: `HKLM\SYSTEM\FDE\Suspended = 1`; boot skips PCR policy check once; resumes on next boot (used for firmware updates that change PCR values)
@@ -213,8 +213,8 @@ bare-metal deployment.
   - Guest TPM commands (via virtio-tpm MMIO or direct CRB emulation at guest `0xFED40000`) are intercepted by VM exit handler → forwarded to VMM's `vtpm_handle_command(vtpm, cmd_buf, cmd_len, rsp_buf, rsp_len)`
 - [ ] **`libtpms` integration** (software TPM emulator):
   - `libtpms` (BSD-3-Clause): software implementation of TPM 2.0 spec; ~400 K LOC; used by `swtpm`
-  - Porting assessment: `libtpms` uses `openssl` and `stdlib` — needs shims; alternative: use `swtpm` as a co-process (host-side) forwarding commands via socket, same as QEMU's `chardev socket` approach
-  - Recommended for research phase: **co-process model** (vTPM requests forwarded from VMM to host `swtpm` via Unix socket) — avoids porting `libtpms` into the kernel
+  - Porting assessment: `libtpms` uses `openssl` and `stdlib` -- needs shims; alternative: use `swtpm` as a co-process (host-side) forwarding commands via socket, same as QEMU's `chardev socket` approach
+  - Recommended for research phase: **co-process model** (vTPM requests forwarded from VMM to host `swtpm` via Unix socket) -- avoids porting `libtpms` into the kernel
 - [ ] **vTPM isolation**: each VM's `vtpm_t` has independent PCR state; a compromised guest cannot read another guest's sealed material; PCR values persist across VM save/restore via §4 snapshot mechanism (→ XREF `TODO-02 §5`)
 - [ ] **Use case**: guest Impossible OS instance runs FDE (§4 here); seals its volume key to guest TPM PCRs; live migration (§5 of `TODO-02`) migrates both guest RAM + `vtpm_t` PCR state → FDE unlocks on destination host without user intervention
 
@@ -224,7 +224,7 @@ bare-metal deployment.
 
 **Source:** `docs/architecture/secure-boot-tpm-plan.md`
 
-- [ ] **`docs/architecture/secure-boot-tpm-plan.md`** — sections:
+- [ ] **`docs/architecture/secure-boot-tpm-plan.md`** -- sections:
   - **Secure Boot key hierarchy diagram**: PK → KEK → db → `BOOTX64.EFI` → `kernel.exe` chain; MOK shim layer from `TODO-01`; enrollment scripts
   - **TPM 2.0 command table** (which commands needed + byte-level encoding reference):
 
@@ -241,7 +241,7 @@ bare-metal deployment.
   - **Measured boot PCR assignment table**: PCR 0–10, owner, content, when extended (from §2)
   - **FDE architecture diagram**: boot flow (TPM unseal → volume key → FDE blkdev → VFS); recovery key path; `bitlocker.cpl` UI
   - **vTPM per-VM architecture**: `vtpm_t` isolation; co-process vs. in-kernel `libtpms` trade-offs
-  - **Blocking dependencies**: ACPI `\_SB.TPM` device enumeration (for real hardware — `swtpm` bypasses); AES-256-XTS in `TODO-07 §1`; `kmod_load` PCR extend requires `TODO-11 §4` complete
+  - **Blocking dependencies**: ACPI `\_SB.TPM` device enumeration (for real hardware -- `swtpm` bypasses); AES-256-XTS in `TODO-07 §1`; `kmod_load` PCR extend requires `TODO-11 §4` complete
   - **Effort estimate**: TPM + measured boot: `[X person-weeks]`; FDE: `[Y person-weeks]`; vTPM: `[Z person-weeks]` (post-ImpossibleHV Phase 2)
 - [ ] **`swtpm` QEMU prototype**: `scripts/start-swtpm.sh` + patched `scripts/build.sh run` with TPM args; serial shows `tpm2_startup() OK`, `tpm2_get_random(32)` returns 32 non-zero bytes, PCR[8] logged with kernel hash; proves driver works before any bare-metal TPM testing
 - [ ] **Tracking GitHub Issues**: "Secure Boot PK/KEK/db enrollment" (blocks enterprise deployment); "AES-256-XTS FDE" (major security feature); both link to `secure-boot-tpm-plan.md`
@@ -253,15 +253,15 @@ bare-metal deployment.
 
 | ⭐ | Feature                                   | 🪟 Win11                                       | 🐧 Linux                                           | 🚀 Impossible OS                                                                |
 |----|-------------------------------------------|---------------------------------------------|-------------------------------------------------|------------------------------------------------------------------------------|
-| 💎 | UEFI Secure Boot chain of trust           | ✅ Required for Win11; PK/KEK/db +          | ✅ shim + MOK (distro-signed); grub2            | ⬜ §3 — PK/KEK/db hierarchy; `sbsign`; `TODO-01` shim                        |
-| 💎 | TPM 2.0 measured boot                     | ✅ Bitlocker PCR policy; Windows VSB        | ✅ IMA (Integrity Measurement Architecture) PCR | ⬜ §2 — PCR 8–10 extended by bootloader                                      |
-| 💎 | Full disk encryption sealed to TPM PCR    | ✅ BitLocker TPM 2.0 PCR policy             | ✅ `cryptsetup` LUKS2 with `clevis-tpm2` TPM    | ⬜ §4 — AES-256-XTS; TPM2 `CC_Create` PCR policy                             |
-| 💎 | Remote attestation via TPM Quote          | ✅ Windows Health Attestation Service; WDAC | ✅ `tpm2-quote` + Keylime remote attestation    | ⬜ §2 — `tpm2_quote()` + `attest.exe`; `HKLM\SYSTEM\SecureBoot\ExpectedPCRs` |
-| ⭐ | Hardware entropy from TPM fed into CSPRNG | ✅ Windows uses TPM RNG in                  | ✅ Linux: `hwrng` → `/dev/random`; `tpm_core`   | ⬜ §1 — `tpm2_get_random()` → `csprng_add_entropy()` every 30                |
-| 💎 | vTPM per VM guest                         | ✅ Hyper-V vTPM (1.2 + 2.0                  | ✅ QEMU `swtpm` + `libtpms` per-VM              | ⬜ §5 — `vtpm_t` per ImpossibleHV VM; co-process                             |
+| 💎 | UEFI Secure Boot chain of trust           | ✅ Required for Win11; PK/KEK/db +          | ✅ shim + MOK (distro-signed); grub2            | ⬜ §3 -- PK/KEK/db hierarchy; `sbsign`; `TODO-01` shim                        |
+| 💎 | TPM 2.0 measured boot                     | ✅ Bitlocker PCR policy; Windows VSB        | ✅ IMA (Integrity Measurement Architecture) PCR | ⬜ §2 -- PCR 8–10 extended by bootloader                                      |
+| 💎 | Full disk encryption sealed to TPM PCR    | ✅ BitLocker TPM 2.0 PCR policy             | ✅ `cryptsetup` LUKS2 with `clevis-tpm2` TPM    | ⬜ §4 -- AES-256-XTS; TPM2 `CC_Create` PCR policy                             |
+| 💎 | Remote attestation via TPM Quote          | ✅ Windows Health Attestation Service; WDAC | ✅ `tpm2-quote` + Keylime remote attestation    | ⬜ §2 -- `tpm2_quote()` + `attest.exe`; `HKLM\SYSTEM\SecureBoot\ExpectedPCRs` |
+| ⭐ | Hardware entropy from TPM fed into CSPRNG | ✅ Windows uses TPM RNG in                  | ✅ Linux: `hwrng` → `/dev/random`; `tpm_core`   | ⬜ §1 -- `tpm2_get_random()` → `csprng_add_entropy()` every 30                |
+| 💎 | vTPM per VM guest                         | ✅ Hyper-V vTPM (1.2 + 2.0                  | ✅ QEMU `swtpm` + `libtpms` per-VM              | ⬜ §5 -- `vtpm_t` per ImpossibleHV VM; co-process                             |
 
 Impossible OS's `⭐` advantage: the `tpm2_get_random()` → CSPRNG entropy feed runs
-on a background task every 30 minutes — not just at boot — so entropy quality improves
+on a background task every 30 minutes -- not just at boot -- so entropy quality improves
 throughout uptime even on systems where RDRAND is unavailable or distrusted. The
 `bitlocker.cpl` FDE UI deliberately mirrors BitLocker's UX (Enable, Suspend, Backup
 recovery key) so enterprise administrators already trained on Windows can manage

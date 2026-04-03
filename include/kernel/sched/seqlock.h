@@ -1,13 +1,13 @@
 /* ============================================================================
- * seqlock.h — Sequence lock (seqlock) for read-mostly shared data
+ * seqlock.h -- Sequence lock (seqlock) for read-mostly shared data
  *
  * Seqlocks provide extremely fast reads with zero locking overhead.  The
  * sequence counter protocol:
  *
  *   Writers:
- *     seqlock_write_lock(sl)   — acquire spinlock, increment counter (→ odd)
+ *     seqlock_write_lock(sl)   -- acquire spinlock, increment counter (→ odd)
  *     < modify shared data >
- *     seqlock_write_unlock(sl) — increment counter again (→ even), release lock
+ *     seqlock_write_unlock(sl) -- increment counter again (→ even), release lock
  *
  *   Readers (lock-free, retry on conflict):
  *     do {
@@ -18,9 +18,9 @@
  * Properties:
  *   - Reads never block writers and take no lock at all.
  *   - Writes are serialized by the internal spinlock (only one writer at a time).
- *   - An odd sequence counter means a write is in progress — readers spin and
+ *   - An odd sequence counter means a write is in progress -- readers spin and
  *     retry rather than reading partially-updated data.
- *   - A changed (even) counter means a write happened mid-read — readers retry.
+ *   - A changed (even) counter means a write happened mid-read -- readers retry.
  *   - Read retries are extremely rare for slowly-changing data (clock, uptime).
  *
  * Equivalent to Linux seqlock_t / seqcount_t.
@@ -35,8 +35,8 @@
  *   ✗ Very large structures (long reader critical section → many retries)
  *
  * IRQ safety:
- *   seqlock_write_lock uses spin_lock_irqsave — safe from any context.
- *   seqlock_read_begin / seqlock_read_retry are reader-side and take no lock —
+ *   seqlock_write_lock uses spin_lock_irqsave -- safe from any context.
+ *   seqlock_read_begin / seqlock_read_retry are reader-side and take no lock --
  *   safe to call from IRQ context.
  * ============================================================================ */
 
@@ -47,7 +47,7 @@
 #include "kernel/sched/spinlock.h"
 
 /* ---------------------------------------------------------------------------
- * seqlock_t — spinlock + sequence counter.
+ * seqlock_t -- spinlock + sequence counter.
  * seq is EVEN when no write is in progress, ODD during a write.
  * ------------------------------------------------------------------------- */
 typedef struct {
@@ -62,15 +62,15 @@ typedef struct {
 #define DEFINE_SEQLOCK(name)  seqlock_t name = SEQLOCK_INIT
 
 /* ---------------------------------------------------------------------------
- * seqlock_init(sl) — runtime initializer (use SEQLOCK_INIT for statics).
+ * seqlock_init(sl) -- runtime initializer (use SEQLOCK_INIT for statics).
  * ------------------------------------------------------------------------- */
 void seqlock_init(seqlock_t *sl);
 
 /* ---------------------------------------------------------------------------
- * Writer API — serialize with spinlock, bracket data update with seq inc.
+ * Writer API -- serialize with spinlock, bracket data update with seq inc.
  *
- * seqlock_write_lock(sl)   — acquire write-side spinlock, increment seq → odd
- * seqlock_write_unlock(sl) — increment seq → even (signals write complete),
+ * seqlock_write_lock(sl)   -- acquire write-side spinlock, increment seq → odd
+ * seqlock_write_unlock(sl) -- increment seq → even (signals write complete),
  *                            release spinlock
  *
  * IRQ safe: seqlock_write_lock saves/restores RFLAGS.
@@ -80,7 +80,7 @@ void seqlock_write_lock(seqlock_t *sl);
 void seqlock_write_unlock(seqlock_t *sl);
 
 /* ---------------------------------------------------------------------------
- * Reader API — lock-free retry loop.
+ * Reader API -- lock-free retry loop.
  *
  * seqlock_read_begin(sl)
  *   Returns the current sequence number.  Spins if a write is in progress
@@ -89,7 +89,7 @@ void seqlock_write_unlock(seqlock_t *sl);
  *   cannot hoist data reads before the seq read.
  *
  * seqlock_read_retry(sl, seq)
- *   Returns 1 (true) if the sequence counter changed since seq was sampled —
+ *   Returns 1 (true) if the sequence counter changed since seq was sampled --
  *   meaning a write occurred during the read and the data may be inconsistent.
  *   The reader MUST retry the entire read if this returns true.
  *   Inserts a read memory barrier before comparing so all data reads

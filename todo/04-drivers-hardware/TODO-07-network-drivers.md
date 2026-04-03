@@ -1,17 +1,17 @@
-# TODO-07 — Network Drivers
+# TODO-07 -- Network Drivers
 
 > **Goal:** Expand the Impossible OS wired NIC roster beyond the working RTL8139 by delivering Intel e1000, VirtIO-net, RTL8169/8111, Intel igc (2.5 GbE), and RTL8125 (2.5 GbE) as loadable `.kmod` modules, add a WiFi 802.11 MAC-layer stub plus Intel iwlwifi and Realtek rtw89 device stubs, and maintain a complete license-tracking record for all ported files.
 
 > [!IMPORTANT]
-> **Already complete:** RTL8139 built-in driver (`src/kernel/drivers/rtl8139.c`) — functional, uses port I/O, registers with `ethernet_receive()`. The kernel module loader from `04-drivers-hardware/TODO-01-kernel-module-system.md` is a prerequisite for all loadable-module sections below. WiFi stubs (§7–9) are **P4 stretch** — placeholder infrastructure only; no firmware or WPA supplicant implementation is expected here.
+> **Already complete:** RTL8139 built-in driver (`src/kernel/drivers/rtl8139.c`) -- functional, uses port I/O, registers with `ethernet_receive()`. The kernel module loader from `04-drivers-hardware/TODO-01-kernel-module-system.md` is a prerequisite for all loadable-module sections below. WiFi stubs (§7–9) are **P4 stretch** -- placeholder infrastructure only; no firmware or WPA supplicant implementation is expected here.
 
 ## Inputs
 
-- [`src/kernel/drivers/rtl8139.c`](../../src/kernel/drivers/rtl8139.c) — reference for the existing NIC registration and `ethernet_receive()` call pattern
-- [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) — VirtIO transport (reused by VirtIO-net)
-- → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md` — kernel module loader, `EXPORT_SYMBOL`, `blkdev_register`/`net_ops` HAL vtables; must be complete before §1–6
-- → XREF: `06-networking` domain — `ethernet_receive(buf, len)` is the hook into the protocol stack; NIC modules call this on RX; no networking protocol changes needed here
-- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §5` — MSI/MSI-X interrupt support used by e1000, igc, and RTL8125 for high-performance interrupt delivery
+- [`src/kernel/drivers/rtl8139.c`](../../src/kernel/drivers/rtl8139.c) -- reference for the existing NIC registration and `ethernet_receive()` call pattern
+- [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO transport (reused by VirtIO-net)
+- → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md` -- kernel module loader, `EXPORT_SYMBOL`, `blkdev_register`/`net_ops` HAL vtables; must be complete before §1–6
+- → XREF: `06-networking` domain -- `ethernet_receive(buf, len)` is the hook into the protocol stack; NIC modules call this on RX; no networking protocol changes needed here
+- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §5` -- MSI/MSI-X interrupt support used by e1000, igc, and RTL8125 for high-performance interrupt delivery
 
 ## Outcome
 
@@ -26,7 +26,7 @@
 
 | ⭐  | Order | Deliverable                                                     | Depends On                              | Status |
 | --- | :---: | --------------------------------------------------------------- | --------------------------------------- | :----: |
-| 💎  |   1   | §10 License tracking — `LICENSES/`, `NOTICE.md`                | none (create before porting begins)     |  [ ]   |
+| 💎  |   1   | §10 License tracking -- `LICENSES/`, `NOTICE.md`                | none (create before porting begins)     |  [ ]   |
 | 💎  |   2   | §1 Intel e1000 module                                           | TODO-01 module loader, §10              |  [ ]   |
 | 💎  |   3   | §2 VirtIO-net module                                            | TODO-01 module loader, VirtIO core      |  [ ]   |
 | 💎  |   4   | §3 RTL8169/RTL8111 gigabit module                               | TODO-01 module loader, §10              |  [ ]   |
@@ -60,7 +60,7 @@ Port the Intel e1000 driver (BSD-2 source; SerenityOS reference) as a loadable `
 - [ ] Register `net_ops_t e1000_ops = { .send = e1000_send, .get_mac = e1000_get_mac }` via kernel module HAL
 - [ ] Boot log: `[e1000] MAC %02x:%02x:... @ BAR0 0x%lx`
 - [ ] Add to `NOTICE.md`: ported from SerenityOS `Kernel/Net/Intel/E1000NetworkAdapter.cpp` (BSD-2)
-- [ ] Commit: `"modules: Intel e1000 — 16-entry TX/RX rings, IRQ drain, VirtualBox default NIC"`
+- [ ] Commit: `"modules: Intel e1000 -- 16-entry TX/RX rings, IRQ drain, VirtualBox default NIC"`
 
 ## 2. VirtIO-net Module `[Sonnet]`
 
@@ -69,7 +69,7 @@ Port VirtIO-net as a loadable module reusing the existing VirtIO transport (`vir
 **Files:** `src/modules/virtio_net/virtio_net.c` (new), `include/kernel/drivers/virtio_net.h` (new)
 
 > [!NOTE]
-> → XREF: `04-drivers-hardware/TODO-06-hypervisor-abstraction.md §7` — VirtIO GPU (§7 there) uses the same VirtIO transport pattern. VirtIO-net uses the same `virtio_init_device()`, `virtq_add_buf()`, `virtq_kick()` primitives from `virtio.c`.
+> → XREF: `04-drivers-hardware/TODO-06-hypervisor-abstraction.md §7` -- VirtIO GPU (§7 there) uses the same VirtIO transport pattern. VirtIO-net uses the same `virtio_init_device()`, `virtq_add_buf()`, `virtq_kick()` primitives from `virtio.c`.
 
 - [ ] PCI match: `{ 0x1AF4, 0x1000 }` (legacy), `{ 0x1AF4, 0x1041 }` (modern virtio 1.0)
 - [ ] Negotiate features: `VIRTIO_NET_F_MAC` (bit 5), `VIRTIO_NET_F_STATUS` (bit 16)
@@ -79,7 +79,7 @@ Port VirtIO-net as a loadable module reusing the existing VirtIO transport (`vir
 - [ ] TX queue (queue 1): `virtio_net_send(buf, len)`: prepend zeroed `virtio_net_hdr_t`; add to available ring; kick queue 1; wait for used-ring notification (or poll timeout)
 - [ ] Register `net_ops_t virtio_net_ops` via module HAL
 - [ ] Boot log: `[virtio-net] MAC %02x:%02x:... (modern=%d)`
-- [ ] Commit: `"modules: VirtIO-net — RX pre-fill, TX kick, VIRTIO_NET_F_MAC, QEMU test"`
+- [ ] Commit: `"modules: VirtIO-net -- RX pre-fill, TX kick, VIRTIO_NET_F_MAC, QEMU test"`
 
 ## 3. RTL8169 / RTL8111 Gigabit Module `[Sonnet]`
 
@@ -97,7 +97,7 @@ Port the RTL8169 gigabit driver as a loadable module using FreeBSD `re(4)` (BSD-
 - [ ] ISR: check `IntrStatus`; ACK by writing back; process RX ring (OWN bit clear → `ethernet_receive`); recycle RX descriptors
 - [ ] Register `net_ops_t rtl8169_ops`; add to `NOTICE.md` (FreeBSD `re(4)`, BSD-2)
 - [ ] Boot log: `[rtl8169] MAC %02x:%02x:... PCI %04x:%04x`
-- [ ] Commit: `"modules: RTL8169/8111 — DMA rings, ISR RX drain, FreeBSD re(4) port"`
+- [ ] Commit: `"modules: RTL8169/8111 -- DMA rings, ISR RX drain, FreeBSD re(4) port"`
 
 ## 4. Intel igc (I225 / I226 2.5 GbE) Module `[Sonnet]`
 
@@ -107,13 +107,13 @@ Port the igc driver for Intel I225-V and I226-V (2.5 GbE) NICs, common on modern
 
 - [ ] PCI match: `{ 0x8086, 0x15F2 }` (I225-V), `{ 0x8086, 0x15F3 }` (I225-LM), `{ 0x8086, 0x125B }` (I226-V), `{ 0x8086, 0x125C }` (I226-LM)
 - [ ] BAR0 MMIO; MAC from RAL0/RAH0 (same register layout as e1000 family); EEPROM fallback
-- [ ] 16-entry TX + RX descriptor rings (igc uses advanced descriptors — 32-byte TX, 32-byte RX); allocate with `pmm_alloc_contiguous()`
+- [ ] 16-entry TX + RX descriptor rings (igc uses advanced descriptors -- 32-byte TX, 32-byte RX); allocate with `pmm_alloc_contiguous()`
 - [ ] RX advanced descriptor: `pkt_addr` (8B), `hdr_addr` (8B), rsvd (8B), status/error/length (8B); check `DD` + `EOP` bits
 - [ ] TX advanced descriptor: `buf_addr` (8B), `cmd_type_len` (4B), `olinfo_status` (4B), padding (16B); set `DCMD_EOP|DCMD_RS|DCMD_IFCS`
 - [ ] `igc_send`, IRQ handler following e1000 pattern; register `net_ops_t igc_ops`
 - [ ] Add to `NOTICE.md` (FreeBSD `igc(4)`, BSD-2)
 - [ ] Boot log: `[igc] I225/I226 2.5GbE MAC %02x:%02x:...`
-- [ ] Commit: `"modules: Intel igc — I225/I226 2.5GbE, advanced TX/RX descriptors, FreeBSD igc(4) port"`
+- [ ] Commit: `"modules: Intel igc -- I225/I226 2.5GbE, advanced TX/RX descriptors, FreeBSD igc(4) port"`
 
 ## 5. RTL8125 2.5 GbE Module `[Sonnet]`
 
@@ -129,7 +129,7 @@ Port RTL8125 2.5 GbE as a loadable module. Common on AM5 and Intel 12th-gen+ mot
 - [ ] MAC init sequence: issue software reset (`CR` bit 4), wait for reset complete, apply power-on sequence (`ERI` / `CSI` indirect access registers for PHY setup)
 - [ ] Register `net_ops_t rtl8125_ops`; add to `NOTICE.md`
 - [ ] Boot log: `[rtl8125] RTL8125 2.5GbE MAC %02x:%02x:...`
-- [ ] Commit: `"modules: RTL8125 2.5GbE — 32-byte descriptors, single TX queue, FreeBSD re(4) port"`
+- [ ] Commit: `"modules: RTL8125 2.5GbE -- 32-byte descriptors, single TX queue, FreeBSD re(4) port"`
 
 ## 6. Network Driver Test Suite `[Sonnet]`
 
@@ -143,11 +143,11 @@ Verify all five NIC modules end-to-end: each NIC sends an ARP request and receiv
 - [ ] igc / RTL8125: real hardware only (no QEMU emulation); document bare-metal test procedure
 - [ ] VirtualBox test: set VM NIC to `Intel PRO/1000 MT Desktop`; boot; e1000 module loads; `ping` succeeds
 - [ ] Document `NOTICE.md` verification: every ported file listed with SPDX identifier and upstream source
-- [ ] Commit: `"docs: network driver test guide — e1000, virtio-net, rtl8169 QEMU/VBox test commands"`
+- [ ] Commit: `"docs: network driver test guide -- e1000, virtio-net, rtl8169 QEMU/VBox test commands"`
 
 ## 7. WiFi 802.11 MAC Layer Stub `[Opus]`
 
-Define the `wifi_mac_t` abstraction and station-mode state machine (DISCONNECTED → SCANNING → ASSOCIATING → ASSOCIATED). Provide WPA2-PSK handshake stubs. No firmware or supplicant implementation — stub hooks only.
+Define the `wifi_mac_t` abstraction and station-mode state machine (DISCONNECTED → SCANNING → ASSOCIATING → ASSOCIATED). Provide WPA2-PSK handshake stubs. No firmware or supplicant implementation -- stub hooks only.
 
 **Files:** `include/kernel/net/wifi_mac.h` (new), `src/kernel/net/wifi_mac.c` (new)
 
@@ -156,15 +156,15 @@ Define the `wifi_mac_t` abstraction and station-mode state machine (DISCONNECTED
 
 - [ ] `wifi_mac_t { void (*scan)(void); int (*associate)(const char *ssid, const char *psk); void (*deassociate)(void); int (*send_frame)(uint8_t *frame, size_t len); }`
 - [ ] `wifi_state_t` enum: `WIFI_DISCONNECTED`, `WIFI_SCANNING`, `WIFI_ASSOCIATING`, `WIFI_ASSOCIATED`
-- [ ] `wifi_register_device(wifi_mac_t *ops)` — register a WiFi backend; stored in `g_wifi_dev`
+- [ ] `wifi_register_device(wifi_mac_t *ops)` -- register a WiFi backend; stored in `g_wifi_dev`
 - [ ] Station state machine: `wifi_scan()` transitions `DISCONNECTED→SCANNING`; `wifi_associate(ssid, psk)` transitions `SCANNING→ASSOCIATING`; on success callback → `ASSOCIATED`
 - [ ] WPA2-PSK stubs: `wifi_pmk_derive(psk, ssid)` → 256-bit PMK stub (returns zeros); `wifi_4way_handshake()` → `STATUS_NOT_IMPLEMENTED`
 - [ ] Registry: `HKLM\SYSTEM\Network\WiFi\SSID` (`REG_SZ`), `HKLM\SYSTEM\Network\WiFi\PSK` (`REG_SZ`, stored; full encryption P1)
-- [ ] Commit: `"net: WiFi 802.11 MAC stub — wifi_mac_t, station state machine, WPA2-PSK hooks"`
+- [ ] Commit: `"net: WiFi 802.11 MAC stub -- wifi_mac_t, station state machine, WPA2-PSK hooks"`
 
 ## 8. Intel iwlwifi Stub (P4 Stretch) `[Sonnet]`
 
-Register an iwlwifi PCI device stub against the WiFi MAC layer. Clean-room implementation from Intel firmware interface public spec — **not** derived from the Linux GPL driver.
+Register an iwlwifi PCI device stub against the WiFi MAC layer. Clean-room implementation from Intel firmware interface public spec -- **not** derived from the Linux GPL driver.
 
 **Files:** `src/modules/iwlwifi/iwlwifi_stub.c` (new)
 
@@ -172,10 +172,10 @@ Register an iwlwifi PCI device stub against the WiFi MAC layer. Clean-room imple
 > **P4 stretch goal.** This section creates the PCI detection and stub registration only. No firmware loading, no 802.11 MLME, no TX/RX. A real iwlwifi driver requires the Intel iwlwifi open firmware (`.ucode` files, MIT/ISC-licensed) and a clean-room reimplementation of the firmware host-command interface. That work belongs in a later TODO.
 
 - [ ] PCI match table for AX200 (`{ 0x8086, 0x2723 }`), AX201 (`{ 0x8086, 0x02F0 }`), AX210 (`{ 0x8086, 0x2725 }`)
-- [ ] On PCI match: log `[iwlwifi] Intel WiFi %04x detected (stub — no firmware loaded)`; return stub `wifi_mac_t` with all ops returning `STATUS_NOT_IMPLEMENTED`
+- [ ] On PCI match: log `[iwlwifi] Intel WiFi %04x detected (stub -- no firmware loaded)`; return stub `wifi_mac_t` with all ops returning `STATUS_NOT_IMPLEMENTED`
 - [ ] `wifi_register_device(&iwlwifi_stub_ops)`
 - [ ] Add stub source origin to `NOTICE.md` (clean-room, no upstream copy)
-- [ ] Commit: `"modules: iwlwifi stub — AX200/201/210 PCI detection, wifi_mac_t registration (P4)"`
+- [ ] Commit: `"modules: iwlwifi stub -- AX200/201/210 PCI detection, wifi_mac_t registration (P4)"`
 
 ## 9. Realtek rtw89 Stub (P4 Stretch) `[Sonnet]`
 
@@ -187,10 +187,10 @@ Register an rtw89 PCI device stub against the WiFi MAC layer. Clean-room. Covers
 > **P4 stretch goal.** Same constraints as §8: PCI detection + stub registration only. No firmware loading or 802.11 MLME. Real rtw89 requires Realtek's open firmware blobs and a clean-room host-command driver.
 
 - [ ] PCI match: `{ 0x10EC, 0x8852 }` (RTL8852AE), `{ 0x10EC, 0xB852 }` (RTL8852BE)
-- [ ] On match: log `[rtw89] Realtek WiFi %04x detected (stub — no firmware loaded)`; return stub `wifi_mac_t`
+- [ ] On match: log `[rtw89] Realtek WiFi %04x detected (stub -- no firmware loaded)`; return stub `wifi_mac_t`
 - [ ] `wifi_register_device(&rtw89_stub_ops)`
 - [ ] Add to `NOTICE.md` (clean-room)
-- [ ] Commit: `"modules: rtw89 stub — RTL8852AE/BE PCI detection, wifi_mac_t registration (P4)"`
+- [ ] Commit: `"modules: rtw89 stub -- RTL8852AE/BE PCI detection, wifi_mac_t registration (P4)"`
 
 ## 10. License Tracking `[Sonnet]`
 
@@ -198,13 +198,13 @@ Create `LICENSES/` with the BSD-2-Clause and MIT license texts, and `NOTICE.md` 
 
 **Files:** `LICENSES/BSD-2-Clause.txt` (new), `LICENSES/MIT.txt` (new), `NOTICE.md` (new or update if exists)
 
-- [ ] `LICENSES/BSD-2-Clause.txt` — canonical SPDX BSD-2-Clause text
-- [ ] `LICENSES/MIT.txt` — canonical SPDX MIT text
+- [ ] `LICENSES/BSD-2-Clause.txt` -- canonical SPDX BSD-2-Clause text
+- [ ] `LICENSES/MIT.txt` -- canonical SPDX MIT text
 - [ ] `NOTICE.md` header: `# Third-Party Notices`; table columns: `File | Upstream Source | License | SPDX ID | Notes`
 - [ ] Initial rows (filled in as porting proceeds): e1000 → SerenityOS `E1000NetworkAdapter.cpp` BSD-2; RTL8169 → FreeBSD `re(4)` BSD-2; igc → FreeBSD `igc(4)` BSD-2; RTL8125 → FreeBSD `re(4)` extended BSD-2
 - [ ] VirtIO-net, iwlwifi stub, rtw89 stub: clean-room rows with `N/A` upstream, `GPL-compatible` note
 - [ ] Ensure every `src/modules/*/` file contains `// SPDX-License-Identifier: BSD-2-Clause` (or MIT) header comment where applicable
-- [ ] Commit: `"legal: LICENSES/ + NOTICE.md — BSD-2-Clause, MIT, ported file inventory"`
+- [ ] Commit: `"legal: LICENSES/ + NOTICE.md -- BSD-2-Clause, MIT, ported file inventory"`
 
 ---
 
@@ -213,17 +213,17 @@ Create `LICENSES/` with the BSD-2-Clause and MIT license texts, and `NOTICE.md` 
 
 | ⭐ | Feature                                       | 🪟 Win11                                             | 🐧 Linux                                                               | 🚀 Impossible OS                                                        |
 |----|-----------------------------------------------|---------------------------------------------------|---------------------------------------------------------------------|----------------------------------------------------------------------|
-| 💎 | Intel e1000 / e1000e wired NIC                | ✅ `e1000e.sys` inbox NDIS driver                 | ✅ `drivers/net/ethernet/intel/e1000/`                              | ⬜ §1 — loadable `.kmod`, VirtualBox default NIC,                    |
-| 💎 | VirtIO-net paravirtual NIC                    | ✅ `netkvm.sys` (Red Hat VirtIO drivers           | ✅ `drivers/net/virtio_net.c`; widely used in QEMU/KVM              | ⬜ §2 — loadable `.kmod`, reuses VirtIO transport                    |
-| 💎 | RTL8169 / RTL8111 gigabit NIC                 | ✅ `rtwlane.sys` and variants; or third-party     | ✅ `drivers/net/ethernet/realtek/r8169.c`                           | ⬜ §3 — loadable `.kmod`, 256-entry DMA rings,                       |
-| 💎 | Intel igc (I225 / I226) 2.5 GbE               | ✅ `igc.sys` (Windows Update driver)              | ✅ `drivers/net/ethernet/intel/igc/`; mainline since 5.6            | ⬜ §4 — loadable `.kmod`, 32-byte advanced descriptors,              |
-| 💎 | RTL8125 2.5 GbE                               | ✅ Realtek inbox driver via Windows               | ✅ `drivers/net/ethernet/realtek/r8169.c` (8125 support merged 5.9) | ⬜ §5 — loadable `.kmod`, 32-byte descriptors, FreeBSD               |
-| 💎 | WiFi 802.11 MAC layer + station state machine | ✅ `wlan.sys` WLAN API; native 802.11             | ✅ `net/mac80211/`; full MLME, `cfg80211`                           | ⬜ §7 — `wifi_mac_t` stub, DISCONNECTED→SCANNING→ASSOC state machine |
-| 💎 | Intel Wi-Fi 6                                 | ✅ `iwifi65.sys` inbox driver                     | ✅ `drivers/net/wireless/intel/iwlwifi/`; open firmware + GPL       | ⬜ §8 — PCI detection stub (P4); full                                |
-| 💎 | Realtek Wi-Fi 6                               | ✅ `rtwlane6.sys` inbox driver                    | ✅ `drivers/net/wireless/realtek/rtw89/`; open firmware + GPL       | ⬜ §9 — PCI detection stub (P4); full                                |
-| ⭐ | License tracking                              | ❌ Closed-source; no per-driver attribution table | ⚠️ `LICENSES/` directory exists; no per-file                        | ⬜ §10 — `NOTICES.md` table with file, upstream,                     |
+| 💎 | Intel e1000 / e1000e wired NIC                | ✅ `e1000e.sys` inbox NDIS driver                 | ✅ `drivers/net/ethernet/intel/e1000/`                              | ⬜ §1 -- loadable `.kmod`, VirtualBox default NIC,                    |
+| 💎 | VirtIO-net paravirtual NIC                    | ✅ `netkvm.sys` (Red Hat VirtIO drivers           | ✅ `drivers/net/virtio_net.c`; widely used in QEMU/KVM              | ⬜ §2 -- loadable `.kmod`, reuses VirtIO transport                    |
+| 💎 | RTL8169 / RTL8111 gigabit NIC                 | ✅ `rtwlane.sys` and variants; or third-party     | ✅ `drivers/net/ethernet/realtek/r8169.c`                           | ⬜ §3 -- loadable `.kmod`, 256-entry DMA rings,                       |
+| 💎 | Intel igc (I225 / I226) 2.5 GbE               | ✅ `igc.sys` (Windows Update driver)              | ✅ `drivers/net/ethernet/intel/igc/`; mainline since 5.6            | ⬜ §4 -- loadable `.kmod`, 32-byte advanced descriptors,              |
+| 💎 | RTL8125 2.5 GbE                               | ✅ Realtek inbox driver via Windows               | ✅ `drivers/net/ethernet/realtek/r8169.c` (8125 support merged 5.9) | ⬜ §5 -- loadable `.kmod`, 32-byte descriptors, FreeBSD               |
+| 💎 | WiFi 802.11 MAC layer + station state machine | ✅ `wlan.sys` WLAN API; native 802.11             | ✅ `net/mac80211/`; full MLME, `cfg80211`                           | ⬜ §7 -- `wifi_mac_t` stub, DISCONNECTED→SCANNING→ASSOC state machine |
+| 💎 | Intel Wi-Fi 6                                 | ✅ `iwifi65.sys` inbox driver                     | ✅ `drivers/net/wireless/intel/iwlwifi/`; open firmware + GPL       | ⬜ §8 -- PCI detection stub (P4); full                                |
+| 💎 | Realtek Wi-Fi 6                               | ✅ `rtwlane6.sys` inbox driver                    | ✅ `drivers/net/wireless/realtek/rtw89/`; open firmware + GPL       | ⬜ §9 -- PCI detection stub (P4); full                                |
+| ⭐ | License tracking                              | ❌ Closed-source; no per-driver attribution table | ⚠️ `LICENSES/` directory exists; no per-file                        | ⬜ §10 -- `NOTICES.md` table with file, upstream,                     |
 
-> **After §1–10:** Impossible OS covers five wired NIC families spanning the three most common PC environments (VirtualBox, QEMU, bare metal) and a WiFi stub infrastructure that positions the OS for future AX200/rtw89 support. The `NOTICE.md` per-file attribution table (§10, `⭐`) is Impossible OS's strongest open-source governance commitment — more granular than Linux's `LICENSES/` directory and filling the gap entirely absent from Windows.
+> **After §1–10:** Impossible OS covers five wired NIC families spanning the three most common PC environments (VirtualBox, QEMU, bare metal) and a WiFi stub infrastructure that positions the OS for future AX200/rtw89 support. The `NOTICE.md` per-file attribution table (§10, `⭐`) is Impossible OS's strongest open-source governance commitment -- more granular than Linux's `LICENSES/` directory and filling the gap entirely absent from Windows.
 
 ## Verification
 
@@ -237,4 +237,4 @@ Create `LICENSES/` with the BSD-2-Clause and MIT license texts, and `NOTICE.md` 
 - [ ] iwlwifi stub: QEMU passthrough or bare-metal AX200; boot log `[iwlwifi] Intel WiFi 2723 detected (stub)`
 - [ ] rtw89 stub: bare-metal RTL8852AE; boot log `[rtw89] Realtek WiFi 8852 detected (stub)`
 - [ ] `NOTICE.md` present with rows for all five wired ports; `LICENSES/BSD-2-Clause.txt` readable; each ported source file has `// SPDX-License-Identifier:` header
-- [ ] Commit: `"modules: network drivers — e1000, virtio-net, rtl8169, igc, rtl8125, WiFi stub, NOTICE.md"`
+- [ ] Commit: `"modules: network drivers -- e1000, virtio-net, rtl8169, igc, rtl8125, WiFi stub, NOTICE.md"`

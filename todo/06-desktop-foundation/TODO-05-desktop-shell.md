@@ -1,13 +1,13 @@
-# TODO-05 — Desktop Shell Completion
+# TODO-05 -- Desktop Shell Completion
 
-> **Goal:** Make the desktop shell functional: desktop icon clicks launch apps, right-click menu works, taskbar reflects window state (minimize/restore on click), start menu items launch programs, and power button triggers shutdown. The visual elements exist — this wires them to actions.
+> **Goal:** Make the desktop shell functional: desktop icon clicks launch apps, right-click menu works, taskbar reflects window state (minimize/restore on click), start menu items launch programs, and power button triggers shutdown. The visual elements exist -- this wires them to actions.
 
 ## Inputs
 
-- [`src/desktop/desktop.c`](../../src/desktop/desktop.c) — taskbar, start menu, desktop icons (visual only)
-- [`src/desktop/wm.c`](../../src/desktop/wm.c) — window lifecycle, minimize/maximize (from TODO-01)
-- → XREF: `06-desktop-foundation/TODO-01-wm-completion.md` — minimize/maximize must be implemented first
-- → XREF: `06-desktop-foundation/TODO-04-control-library.md §5` — context menu engine needed for right-click
+- [`src/desktop/desktop.c`](../../src/desktop/desktop.c) -- taskbar, start menu, desktop icons (visual only)
+- [`src/desktop/wm.c`](../../src/desktop/wm.c) -- window lifecycle, minimize/maximize (from TODO-01)
+- → XREF: `06-desktop-foundation/TODO-01-wm-completion.md` -- minimize/maximize must be implemented first
+- → XREF: `06-desktop-foundation/TODO-04-control-library.md §5` -- context menu engine needed for right-click
 
 ## Outcome
 
@@ -22,11 +22,11 @@
 
 | ⭐  | Order | Deliverable                             | Depends On        | Status |
 | --- | :---: | --------------------------------------- | ------------------ | :----: |
-| 💎  |   1   | Desktop icon click actions              | —                  |  [ ]   |
+| 💎  |   1   | Desktop icon click actions              | --                  |  [ ]   |
 | 💎  |   2   | Desktop right-click context menu        | D06/TODO-04 §5     |  [ ]   |
 | 💎  |   3   | Taskbar window state sync               | D06/TODO-01 §1     |  [ ]   |
-| 💎  |   4   | Start menu program launch               | —                  |  [ ]   |
-| 💎  |   5   | Power and settings buttons              | —                  |  [ ]   |
+| 💎  |   4   | Start menu program launch               | --                  |  [ ]   |
+| 💎  |   5   | Power and settings buttons              | --                  |  [ ]   |
 
 ---
 
@@ -42,7 +42,7 @@ Wire desktop icon clicks to launch associated windows/apps.
 - [ ] Single-click: select icon (highlight with selection rect)
 - [ ] Commit
 
-**Test checkpoint:** Double-click "Computer" icon — placeholder dialog opens. Single-click — icon highlights.
+**Test checkpoint:** Double-click "Computer" icon -- placeholder dialog opens. Single-click -- icon highlights.
 
 ## 2. Desktop Right-Click Context Menu
 Show a context menu when right-clicking on the desktop background.
@@ -76,7 +76,7 @@ Taskbar entries reflect actual window state and allow minimize/restore.
 - [ ] Window create → add entry to taskbar
 - [ ] Commit
 
-**Test checkpoint:** Open terminal + gallery. Click terminal taskbar entry — minimizes. Click again — restores. Click gallery entry — focuses gallery.
+**Test checkpoint:** Open terminal + gallery. Click terminal taskbar entry -- minimizes. Click again -- restores. Click gallery entry -- focuses gallery.
 
 ## 4. Start Menu Program Launch
 Start menu items launch actual programs/windows.

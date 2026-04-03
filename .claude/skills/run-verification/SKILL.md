@@ -16,7 +16,7 @@ description: Verify a TODO's Verification section against a serial log (pasted o
 
 The skill needs two things:
 1. **A TODO file** with a `## Verification` section
-2. **A serial log** — either:
+2. **A serial log** -- either:
    - Pasted directly in the conversation
    - A file path (e.g., `build/serial.log`, `build/test.log`)
    - Named with platform for tracking (e.g., "WHPX log from 2026-04-01")
@@ -48,12 +48,12 @@ For each verification item:
 
 ### 4. Update the Verification section
 
-Format rules — append result to each item, do NOT rewrite the original text:
+Format rules -- append result to each item, do NOT rewrite the original text:
 
 ```markdown
-- [x] Item text — PASS: <evidence> (platform, YYYY-MM-DD)
-- [ ] Item text — FAIL: <what's missing or wrong>
-- [ ] Item text — (not verifiable from serial log)
+- [x] Item text -- PASS: <evidence> (platform, YYYY-MM-DD)
+- [ ] Item text -- FAIL: <what's missing or wrong>
+- [ ] Item text -- (not verifiable from serial log)
 ```
 
 Include the **platform name** in PASS annotations when provided (e.g., "WHPX", "TCG", "bare metal", "VBox").
@@ -67,26 +67,26 @@ Verification: TODO-XX (platform: WHPX, 2026-04-01)
   Not verifiable: K items
 
 Failed items:
-  - <item> — FAIL: <reason>
+  - <item> -- FAIL: <reason>
 ```
 
 ## Regression Mode
 
 When the user provides a log and says "check for regressions" or "compare with previous":
 
-1. Read the Verification section — items already marked `[x]` with PASS are the baseline
+1. Read the Verification section -- items already marked `[x]` with PASS are the baseline
 2. Re-check every previously-passing item against the new log
 3. If a previously-passing item now fails: mark it `REGRESSION:` instead of `FAIL:`
 
 ```markdown
-- [ ] Item text — REGRESSION: was passing on WHPX (2026-04-01), now missing from log
+- [ ] Item text -- REGRESSION: was passing on WHPX (2026-04-01), now missing from log
 ```
 
 ## Guardrails
 
-- Do NOT attempt to boot QEMU or run builds — only analyze provided logs
+- Do NOT attempt to boot QEMU or run builds -- only analyze provided logs
 - Do NOT mark items `[x]` without evidence from the log
-- Do NOT remove existing PASS/FAIL annotations — append new results or update dates
+- Do NOT remove existing PASS/FAIL annotations -- append new results or update dates
 - If the log is truncated (boot didn't complete), note which phases are missing
 - Always report how far the boot got (last PHASE marker seen)
 

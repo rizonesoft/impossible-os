@@ -1,8 +1,8 @@
 /* ============================================================================
- * shmem.c — Named shared memory regions
+ * shmem.c -- Named shared memory regions
  *
  * Global table of named memory regions backed by kmalloc.
- * Reference counted — freed when the last user unmaps.
+ * Reference counted -- freed when the last user unmaps.
  * ============================================================================ */
 
 #include "kernel/ipc/shmem.h"

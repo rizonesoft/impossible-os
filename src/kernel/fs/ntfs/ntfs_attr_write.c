@@ -1,14 +1,14 @@
 /* ============================================================================
- * ntfs_attr_write.c — Attribute Writer (§12.4)
+ * ntfs_attr_write.c -- Attribute Writer (§12.4)
  *
  * Provides functions to add, update, and remove attributes in MFT records,
  * and to encode data runs (reverse of §4.1 decoder).
  *
  * Key operations:
- *   ntfs_encode_data_runs()  — Encode run array → on-disk byte format
- *   ntfs_attr_add()          — Insert new attribute (resident or non-resident)
- *   ntfs_attr_update()       — Modify existing attribute content
- *   ntfs_attr_remove()       — Delete attribute and free clusters
+ *   ntfs_encode_data_runs()  -- Encode run array → on-disk byte format
+ *   ntfs_attr_add()          -- Insert new attribute (resident or non-resident)
+ *   ntfs_attr_update()       -- Modify existing attribute content
+ *   ntfs_attr_remove()       -- Delete attribute and free clusters
  * ============================================================================ */
 
 #include "kernel/fs/ntfs.h"
@@ -18,7 +18,7 @@
 #include "kernel/klog.h"
 
 /* ============================================================================
- * Data Run Encoder — reverse of ntfs_runlist.c
+ * Data Run Encoder -- reverse of ntfs_runlist.c
  *
  * On-disk format per run: [header:1] [length:N] [offset:M]
  *   header = (off_size << 4) | len_size
@@ -43,7 +43,7 @@ static int unsigned_size(uint64_t val)
 }
 
 /* Determine the minimum number of bytes to represent a signed value.
- * Must use sign-extended encoding — high bit of last byte is the sign. */
+ * Must use sign-extended encoding -- high bit of last byte is the sign. */
 static int signed_size(int64_t val)
 {
     if (val >= -0x80 && val <= 0x7F) return 1;
@@ -91,7 +91,7 @@ int ntfs_encode_data_runs(const struct ntfs_data_run *runs, int count,
         len_size = unsigned_size(runs[i].length);
 
         if (runs[i].lcn == NTFS_LCN_SPARSE) {
-            /* Sparse run — no offset field */
+            /* Sparse run -- no offset field */
             off_size = 0;
         } else {
             offset = (int64_t)runs[i].lcn - prev_lcn;
@@ -194,11 +194,11 @@ uint32_t shift_attrs(uint8_t *rec, uint32_t frs_size,
     bytes_to_move = old_used - from_off;
 
     if (delta > 0) {
-        /* Shift right — move from end to avoid overlap */
+        /* Shift right -- move from end to avoid overlap */
         for (i = bytes_to_move; i > 0; i--)
             rec[from_off + (uint32_t)delta + i - 1] = rec[from_off + i - 1];
     } else if (delta < 0) {
-        /* Shift left — move from start */
+        /* Shift left -- move from start */
         uint32_t abs_delta = (uint32_t)(-delta);
         for (i = 0; i < bytes_to_move; i++)
             rec[from_off - abs_delta + i] = rec[from_off + i];
@@ -375,7 +375,7 @@ uint32_t build_nonresident_attr(uint8_t *out, uint32_t type,
 }
 
 /* ============================================================================
- * ntfs_attr_add — Add a new attribute to an MFT record
+ * ntfs_attr_add -- Add a new attribute to an MFT record
  *
  * Inserts a new attribute at the correct sorted position.
  * If data fits within the record, creates a resident attribute.
@@ -424,7 +424,7 @@ int ntfs_attr_add(struct ntfs_volume *vol, uint8_t *rec,
     }
 
     if (attr_len <= free_space) {
-        /* Fits as resident — insert inline */
+        /* Fits as resident -- insert inline */
         uint8_t attr_buf[1024];
 
         attr_len = build_resident_attr(attr_buf, type, name, name_len,
@@ -449,7 +449,7 @@ int ntfs_attr_add(struct ntfs_volume *vol, uint8_t *rec,
         return NTFS_OK;
     }
 
-    /* Data too large for resident — create non-resident */
+    /* Data too large for resident -- create non-resident */
     if (!vol)
         return NTFS_ERR_IO;  /* Need volume for cluster allocation */
 
@@ -529,7 +529,7 @@ int ntfs_attr_add(struct ntfs_volume *vol, uint8_t *rec,
 }
 
 /* ============================================================================
- * ntfs_attr_update — Update an existing attribute's content
+ * ntfs_attr_update -- Update an existing attribute's content
  *
  * For resident: updates content in-place, adjusting lengths if needed.
  * For non-resident: writes data to existing clusters (extends if needed).
@@ -639,7 +639,7 @@ int ntfs_attr_update(struct ntfs_volume *vol, uint8_t *rec,
             return NTFS_ERR_BAD_MAGIC;
 
         if (data_len <= old_alloc) {
-            /* Data fits in existing allocation — just write to clusters */
+            /* Data fits in existing allocation -- just write to clusters */
             uint32_t bytes_left = data_len;
             const uint8_t *src = (const uint8_t *)data;
             int ri;
@@ -685,7 +685,7 @@ int ntfs_attr_update(struct ntfs_volume *vol, uint8_t *rec,
             ntfs_le64_write(rec + attr_off + 0x38, (uint64_t)data_len);
             reparse_header(rec, hdr);
         } else {
-            /* Need more clusters — remove and re-add with new allocation */
+            /* Need more clusters -- remove and re-add with new allocation */
             int rc = ntfs_attr_remove(vol, rec, hdr, frs_size, type, name);
             if (rc != NTFS_OK)
                 return rc;
@@ -700,7 +700,7 @@ int ntfs_attr_update(struct ntfs_volume *vol, uint8_t *rec,
 }
 
 /* ============================================================================
- * ntfs_attr_remove — Remove an attribute from an MFT record
+ * ntfs_attr_remove -- Remove an attribute from an MFT record
  *
  * Frees allocated clusters for non-resident attributes, shifts subsequent
  * attributes left to close the gap, and updates used_size.

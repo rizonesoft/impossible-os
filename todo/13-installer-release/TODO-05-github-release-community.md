@@ -1,7 +1,7 @@
-# TODO-05 — GitHub Releases & Community Launch
+# TODO-05 -- GitHub Releases & Community Launch
 
 > **Goal:** Transform Impossible OS from an internal project into a public open-source
-> product — GitHub release workflow, changelog discipline, contribution guide overhaul,
+> product -- GitHub release workflow, changelog discipline, contribution guide overhaul,
 > issue and PR template redesign, README rewrite, project website, community channels
 > (GitHub Discussions + Discord), and a public-facing roadmap with GitHub Milestones
 > sync.
@@ -13,7 +13,7 @@
 > here **orchestrates** those scripts; do not re-specify artifact upload logic.
 >
 > **`gen-changelog.sh`** is specced in `12-installer-release/TODO-03 §3`; §2 here
-> consumes it to draft the `CHANGELOG.md` update — do not re-specify the script.
+> consumes it to draft the `CHANGELOG.md` update -- do not re-specify the script.
 >
 > **`scripts/promote-release.sh`** (stable promotion, git tag push) is specced in
 > `12-installer-release/TODO-03 §3`; `create-release.sh` (§1 here) runs after
@@ -30,14 +30,14 @@
 
 ## Inputs
 
-- `12-installer-release/TODO-03-update-server.md §2 §3` (→ XREF) — `upload-release.sh`; `promote-release.sh`; `gen-changelog.sh`; §1 §2 orchestration
-- `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) — `OS_VERSION_STRING`; signed artifacts; §1 release workflow
-- `12-installer-release/TODO-04-release-qa.md §7` (→ XREF) — `release-checklist.md` PR template; §1 sign-off gate before `create-release.sh`
-- `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) — `release-sdk.sh`; SDK ZIP artifact; §1 coordinate
-- `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) — `compat-check.sh` score; §5 §8 roadmap metric
-- `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md` — existing files to overhaul
-- `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` — existing templates to replace
-- `scripts/build.sh` — quick-start commands; §3 §5
+- `12-installer-release/TODO-03-update-server.md §2 §3` (→ XREF) -- `upload-release.sh`; `promote-release.sh`; `gen-changelog.sh`; §1 §2 orchestration
+- `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`; signed artifacts; §1 release workflow
+- `12-installer-release/TODO-04-release-qa.md §7` (→ XREF) -- `release-checklist.md` PR template; §1 sign-off gate before `create-release.sh`
+- `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; SDK ZIP artifact; §1 coordinate
+- `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `compat-check.sh` score; §5 §8 roadmap metric
+- `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md` -- existing files to overhaul
+- `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` -- existing templates to replace
+- `scripts/build.sh` -- quick-start commands; §3 §5
 
 ---
 
@@ -90,7 +90,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 **Source:** `CHANGELOG.md` (overhaul existing); `scripts/gen-changelog.sh` (from `TODO-03 §3`)
 
-- [ ] **`CHANGELOG.md` format** — [Keep a Changelog](https://keepachangelog.com/) style:
+- [ ] **`CHANGELOG.md` format** -- [Keep a Changelog](https://keepachangelog.com/) style:
   ```markdown
   # Changelog
 
@@ -100,7 +100,7 @@ outsiders can track progress without reading 100+ TODO files.
   ## [Unreleased]
   ...
 
-  ## [1.0.22100] — 2026-03-26
+  ## [1.0.22100] -- 2026-03-26
   ### Added
   - Answer file support for unattended installation (#123)
   ### Fixed
@@ -115,7 +115,7 @@ outsiders can track progress without reading 100+ TODO files.
   ```
 - [ ] **PR requirement**: every PR must add an entry to `## [Unreleased]`; PR template (§4) checklist includes `[ ] CHANGELOG.md updated`; CI linter checks that `## [Unreleased]` section is non-empty on PRs that add/change code
 - [ ] **`scripts/gen-changelog.sh <old-tag> <new-tag>`** (specced in `TODO-03 §3`; used here): `gh pr list --state merged --base main --search "merged:{old-date}..{new-date}" --json title,number,url` → group by PR label (`kernel`/`boot`/`desktop`/`drivers`/etc.) → output draft `docs/changelog/{version}.md`; maintainer reviews + promotes to `CHANGELOG.md`
-- [ ] **Changelog lint in CI** (`.github/workflows/pr-check.yml`): `python scripts/lint-changelog.py` — check `CHANGELOG.md` parses; warn if `## [Unreleased]` is empty on code-change PRs; error on version entry missing comparison link
+- [ ] **Changelog lint in CI** (`.github/workflows/pr-check.yml`): `python scripts/lint-changelog.py` -- check `CHANGELOG.md` parses; warn if `## [Unreleased]` is empty on code-change PRs; error on version entry missing comparison link
 
 ---
 
@@ -128,7 +128,7 @@ outsiders can track progress without reading 100+ TODO files.
   - **Build commands**: table (`bash scripts/build.sh`, `clean`, `run`, `clean run`, `qa`); verify with `tail -1 build/build.log`
   - **QEMU test run**: `bash scripts/run-tests.sh` for regression suite; `bash scripts/build.sh run` for interactive
   - **Code style**: line length ≤ 120, function length < 50 lines, `snake_case` functions + vars, `UPPER_CASE` macros, `#pragma once`, no angle-bracket includes; link to `CONTRIBUTING.md §Coding Conventions`
-  - **Commit message format**: conventional commits — `scope: short description`; common scopes table (kernel, boot, desktop, drivers, gfx, fs, net, build, docs, agent)
+  - **Commit message format**: conventional commits -- `scope: short description`; common scopes table (kernel, boot, desktop, drivers, gfx, fs, net, build, docs, agent)
   - **PR process**: feature branch → PR → CI green → code review → squash-merge; PR title must follow conventional commit format; no direct pushes to `main`
   - **DCO sign-off**: `Signed-off-by: Name <email>` in each commit; `git commit -s` adds automatically; DCO bot checks PRs
   - **Issue labels** table: `P0` (blocker), `P1` (important), `P2` (nice-to-have), `P3` (stretch), `bug`, `enhancement`, `good-first-issue`, `help-wanted`, `kernel`, `desktop`, `drivers`, `docs`
@@ -187,7 +187,7 @@ outsiders can track progress without reading 100+ TODO files.
   - [ ] `bash scripts/build.sh clean` passes
   - [ ] `bash scripts/run-tests.sh` passes (no new test failures)
   - [ ] `CHANGELOG.md` updated under `## [Unreleased]`
-  - [ ] project conventions consulted — no violations
+  - [ ] project conventions consulted -- no violations
   - [ ] New TODO files created with `create-todo` skill (if applicable)
   - [ ] No angle-bracket includes added
   - [ ] `Signed-off-by:` present in all commits
@@ -205,7 +205,7 @@ outsiders can track progress without reading 100+ TODO files.
   # Impossible OS
 
   > A production-quality 64-bit OS built from scratch.
-  > Custom UEFI bootloader, kernel, and compositing desktop — no Linux, no Windows.
+  > Custom UEFI bootloader, kernel, and compositing desktop -- no Linux, no Windows.
 
   [![CI](badge)] [![License: GPL-3.0](badge)] [![Release](badge)]
 
@@ -242,11 +242,11 @@ outsiders can track progress without reading 100+ TODO files.
 
   ## License
 
-  GPL-3.0 — Copyright © 2026 [Rizonesoft](https://github.com/rizonesoft)
+  GPL-3.0 -- Copyright © 2026 [Rizonesoft](https://github.com/rizonesoft)
   ```
 - [ ] **Desktop screenshot**: capture QEMU framebuffer at `1280×720` showing desktop with taskbar, wallpaper, and at least one open window; save as `docs/screenshots/desktop-v{version}.png`; script `scripts/take-screenshot.sh` (QEMU `-screenshot` option on a specific frame or `sendkey` sequence to open a window)
-- [ ] **CI status badge**: `[![CI](https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg)](...)` — auto-shows green/red from GHA
-- [ ] **Auto-update download table**: `scripts/update-readme-links.sh` — reads `build/release-{version}.json`; replaces `{latest}` placeholders in README with current version + URLs; called by `create-release.sh` (§1)
+- [ ] **CI status badge**: `[![CI](https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg)](...)` -- auto-shows green/red from GHA
+- [ ] **Auto-update download table**: `scripts/update-readme-links.sh` -- reads `build/release-{version}.json`; replaces `{latest}` placeholders in README with current version + URLs; called by `create-release.sh` (§1)
 - [ ] **README status sync**: feature status table in README stays current; `scripts/sync-readme-status.sh` generates README table from source to avoid drift
 
 ---
@@ -279,10 +279,10 @@ outsiders can track progress without reading 100+ TODO files.
 **Sources:** GitHub repository settings; Discord server; `CODE_OF_CONDUCT.md` (enhance existing)
 
 - [ ] **GitHub Discussions**: enable in repo settings; configure categories:
-  - `Q&A` — how-to questions; maintainers answer; resolved threads auto-lock after 30 days
-  - `Ideas` — feature proposals; labelled `good-idea` by maintainer if accepted → converts to issue
-  - `Show and Tell` — screenshots, videos, apps built for Impossible OS
-  - `General` — anything else; contribution discussions
+  - `Q&A` -- how-to questions; maintainers answer; resolved threads auto-lock after 30 days
+  - `Ideas` -- feature proposals; labelled `good-idea` by maintainer if accepted → converts to issue
+  - `Show and Tell` -- screenshots, videos, apps built for Impossible OS
+  - `General` -- anything else; contribution discussions
 - [ ] **Discord server**:
   - Channels: `#announcements` (read-only), `#releases` (webhook-only), `#general`, `#kernel-dev`, `#userland`, `#hardware`, `#help`, `#good-first-issues` (bot auto-posts new `good-first-issue` GitHub issues)
   - Server invite linked in `README.md` + `CONTRIBUTING.md` + website footer
@@ -290,7 +290,7 @@ outsiders can track progress without reading 100+ TODO files.
 - [ ] **Discord release webhook**: `DISCORD_RELEASES_WEBHOOK` secret; `create-release.sh §1` POSTs on each release:
   ```
   🚀 **Impossible OS v{version}** is out!
-  {type} release — {N} new changes
+  {type} release -- {N} new changes
   Download: https://github.com/rizonesoft/impossible-os/releases/tag/v{version}
   Changelog: https://impossible-os.dev/changelog#{version}
   ```
@@ -304,8 +304,8 @@ outsiders can track progress without reading 100+ TODO files.
 **Source:** `docs/roadmap.md`; `scripts/sync-milestones.sh`; `scripts/sync-issues.sh`
 
 - [ ] **`docs/roadmap.md`** (public-facing, non-technical):
-  - **Current milestone (v1.0)**: what is included — kernel, storage, networking, compositing desktop, Win32 API foundations, installer, release pipeline, SDK; link to `v1.0-kernel` + `v1.0-desktop` GitHub Milestones
-  - **Next milestone (v1.1)**: planned improvements — full Win32 compat Tier 1–7, unattended deployment, audio system, enterprise features; link to `v1.1-compat` + `v1.1-enterprise` Milestones
+  - **Current milestone (v1.0)**: what is included -- kernel, storage, networking, compositing desktop, Win32 API foundations, installer, release pipeline, SDK; link to `v1.0-kernel` + `v1.0-desktop` GitHub Milestones
+  - **Next milestone (v1.1)**: planned improvements -- full Win32 compat Tier 1–7, unattended deployment, audio system, enterprise features; link to `v1.1-compat` + `v1.1-enterprise` Milestones
   - **Long-term vision (v2.0)**: Win32 compat Tier 8, Linux compatibility layer, touch + gamepad input, software OpenGL, multi-user sessions
   - **Compat progress bar**: embed `Win32 compat score: {N}%` (from `scripts/compat-check.sh` last run output stored in `build/compat-score.txt`); updated by CI
 - [ ] **GitHub Milestones → TODO domain mapping**:
@@ -317,7 +317,7 @@ outsiders can track progress without reading 100+ TODO files.
   v1.1-compat       → 11-user-platform-sdk
   ```
 - [ ] **`scripts/sync-milestones.sh`**: for each milestone, `gh milestone create` (if not exists) with description = domain `INDEX.md` first paragraph + due date; `gh milestone edit` if exists; idempotent (safe to run repeatedly)
-- [ ] **`scripts/sync-issues.sh`** (lightweight — P0/P1 only):
+- [ ] **`scripts/sync-issues.sh`** (lightweight -- P0/P1 only):
   - Scan all `todo/**/*.md` for `- [ ]` items with adjacent priority tag `🔴` (P0) or `🟠` (P1)
   - For each such item: if no existing GitHub Issue with matching title: `gh issue create --title "{item text}" --label "P{N}" --milestone "v{...}" --body "Source: {file} §{section}"`
   - Guard: dry-run mode by default; `--apply` flag required to actually create issues; prevents issue spam
@@ -330,17 +330,17 @@ outsiders can track progress without reading 100+ TODO files.
 
 | ⭐ | Feature                                                             | 🪟 Win11                                            | 🐧 Linux                                                       | 🚀 Impossible OS                                                        |
 |----|---------------------------------------------------------------------|--------------------------------------------------|-------------------------------------------------------------|----------------------------------------------------------------------|
-| 💎 | Automated release workflow                                          | ✅ Internal pipeline; not public                 | ✅ `make release` + distro infra;                           | ⬜ §1 — `create-release.sh`; GHA on `v*` tag                         |
-| 💎 | Keep-a-Changelog + changelog lint in CI                             | ✅ Windows Blog; no structured changelog         | ✅ kernel.org `CHANGES`; distro changelogs                  | ⬜ §2 — `CHANGELOG.md` Keep-a-Changelog; lint-changelog.py in CI     |
-| 💎 | Structured contribution guide + DCO                                 | ✅ `CONTRIBUTING.md` on GitHub repos; not        | ✅ `Documentation/process/` in kernel; `CONTRIBUTING.md` in | ⬜ §3 — overhaul `CONTRIBUTING.md`; setup, style, DCO,               |
-| ⭐ | Structured YAML issue forms + PR checklist                          | ✅ GitHub YAML forms on MS                       | ✅ Many kernel/distro repos use forms                       | ⬜ §4 — YAML `bug_report.yml` + `feature_request.yml`; PR            |
-| ⭐ | README with live download CTA                                       | ❌ N/A (Windows is not on                        | ✅ Distro READMEs; no dynamic download                      | ⬜ §5 — README download table; `main.js` fetches                     |
-| ⭐ | Static project website with dynamic version CTA                     | ✅ `microsoft.com` — commercial; not open-source | ✅ `kernel.org`, distro websites                            | ⬜ §6 — `docs/website/`; GitHub Pages; Cloudflare CNAME              |
-| 💎 | Discord + GitHub Discussions community                              | ✅ Windows Insider Hub; not Discord              | ✅ Kernel mailing list; many distros                        | ⬜ §7 — Discussions categories; Discord server +                     |
-| ⭐ | Public roadmap with auto-sync from TODO system to GitHub Milestones | ✅ Windows Roadmap on Learn.microsoft.com; no    | ✅ kernel.org merge window schedule; no                     | ⬜ §8 — `docs/roadmap.md`; `sync-milestones.sh`; compat progress bar |
+| 💎 | Automated release workflow                                          | ✅ Internal pipeline; not public                 | ✅ `make release` + distro infra;                           | ⬜ §1 -- `create-release.sh`; GHA on `v*` tag                         |
+| 💎 | Keep-a-Changelog + changelog lint in CI                             | ✅ Windows Blog; no structured changelog         | ✅ kernel.org `CHANGES`; distro changelogs                  | ⬜ §2 -- `CHANGELOG.md` Keep-a-Changelog; lint-changelog.py in CI     |
+| 💎 | Structured contribution guide + DCO                                 | ✅ `CONTRIBUTING.md` on GitHub repos; not        | ✅ `Documentation/process/` in kernel; `CONTRIBUTING.md` in | ⬜ §3 -- overhaul `CONTRIBUTING.md`; setup, style, DCO,               |
+| ⭐ | Structured YAML issue forms + PR checklist                          | ✅ GitHub YAML forms on MS                       | ✅ Many kernel/distro repos use forms                       | ⬜ §4 -- YAML `bug_report.yml` + `feature_request.yml`; PR            |
+| ⭐ | README with live download CTA                                       | ❌ N/A (Windows is not on                        | ✅ Distro READMEs; no dynamic download                      | ⬜ §5 -- README download table; `main.js` fetches                     |
+| ⭐ | Static project website with dynamic version CTA                     | ✅ `microsoft.com` -- commercial; not open-source | ✅ `kernel.org`, distro websites                            | ⬜ §6 -- `docs/website/`; GitHub Pages; Cloudflare CNAME              |
+| 💎 | Discord + GitHub Discussions community                              | ✅ Windows Insider Hub; not Discord              | ✅ Kernel mailing list; many distros                        | ⬜ §7 -- Discussions categories; Discord server +                     |
+| ⭐ | Public roadmap with auto-sync from TODO system to GitHub Milestones | ✅ Windows Roadmap on Learn.microsoft.com; no    | ✅ kernel.org merge window schedule; no                     | ⬜ §8 -- `docs/roadmap.md`; `sync-milestones.sh`; compat progress bar |
 
 Impossible OS's `⭐` advantage: the release workflow, changelog, README, and roadmap are
-all connected — `create-release.sh` updates the README download table, posts to Discord,
+all connected -- `create-release.sh` updates the README download table, posts to Discord,
 and the public roadmap shows live Win32 compat progress as a percentage bar sourced
 directly from CI. A new contributor can go from `git clone` to a running OS in 3
 commands, and the `#good-first-issues` Discord bot means help-wanted items surface

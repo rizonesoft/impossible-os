@@ -1,5 +1,5 @@
 /* ============================================================================
- * uefi_runtime.h — UEFI Runtime Services kernel interface
+ * uefi_runtime.h -- UEFI Runtime Services kernel interface
  *
  * After ExitBootServices(), the UEFI firmware still provides runtime
  * services (GetTime, GetVariable, ResetSystem, etc.) through function
@@ -16,7 +16,7 @@
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
 
-/* UEFI calling convention — Microsoft x64 ABI (rcx, rdx, r8, r9) */
+/* UEFI calling convention -- Microsoft x64 ABI (rcx, rdx, r8, r9) */
 #define UEFI_EFIAPI __attribute__((ms_abi))
 
 /* ---- EFI status codes (for kernel callers) ---- */
@@ -39,7 +39,7 @@
 #define EFI_RT_SUPPORTED_QUERY_CAPSULE_CAP       0x1000
 #define EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO     0x2000
 
-/* EFI_RT_PROPERTIES_TABLE — found via Configuration Table GUID lookup */
+/* EFI_RT_PROPERTIES_TABLE -- found via Configuration Table GUID lookup */
 struct uefi_rt_properties_table {
     uint16_t version;
     uint16_t length;
@@ -140,7 +140,7 @@ static inline void uefi_shutdown(void) { uefi_reset(EFI_RESET_SHUTDOWN); }
 
 /* ---- RTC Time Services API ---- */
 
-/* EFI_TIME structure — returned by GetTime() */
+/* EFI_TIME structure -- returned by GetTime() */
 struct efi_time {
     uint16_t year;        /* 1900–9999 */
     uint8_t  month;       /* 1–12 */
@@ -155,7 +155,7 @@ struct efi_time {
     uint8_t  pad2;
 };
 
-/* EFI_TIME_CAPABILITIES — RTC resolution and accuracy */
+/* EFI_TIME_CAPABILITIES -- RTC resolution and accuracy */
 struct efi_time_capabilities {
     uint32_t resolution;  /* ticks per second (1 = 1-sec resolution) */
     uint32_t accuracy;    /* error in parts per million */
@@ -212,7 +212,7 @@ int uefi_secureboot_kek_present(void);
 
 /* ---- Secure Boot Key Management API (§5.2) ---- */
 
-/* Security database GUID — used for db, dbx, dbt variables */
+/* Security database GUID -- used for db, dbx, dbt variables */
 #define EFI_IMAGE_SECURITY_DATABASE_GUID \
     ((struct boot_uefi_guid){ 0xd719b2cb, 0x3d3a, 0x4596, \
         { 0xa3, 0xbc, 0xda, 0xd0, 0x0e, 0x67, 0x65, 0x6f } })
@@ -254,14 +254,14 @@ struct secureboot_db_info {
     uint32_t dbx_sha256_count; /* SHA-256 hashes in dbx */
 };
 
-/* Initialize Secure Boot key enumeration — read and parse db/dbx/dbt.
+/* Initialize Secure Boot key enumeration -- read and parse db/dbx/dbt.
  * Must be called after uefi_secureboot_init(). */
 void secureboot_keys_init(void);
 
 /* Returns parsed database summary (valid after secureboot_keys_init). */
 const struct secureboot_db_info *secureboot_get_db_info(void);
 
-/* ---- Crypto Agility API (§5.3 — UEFI 2.10) ----
+/* ---- Crypto Agility API (§5.3 -- UEFI 2.10) ----
  *
  * UEFI 2.10 introduces three variables for dynamic algorithm negotiation:
  *   - CryptoIndicationsSupported (firmware-owned): bitmask of all algorithms
@@ -302,7 +302,7 @@ struct crypto_agility_info {
     uint8_t  pad[3];
 };
 
-/* Initialize crypto agility — read all three CryptoIndication variables.
+/* Initialize crypto agility -- read all three CryptoIndication variables.
  * Must be called after uefi_runtime_init(). Graceful if firmware lacks
  * UEFI 2.10 support (available=0). */
 void uefi_crypto_agility_init(void);
@@ -330,7 +330,7 @@ const struct crypto_agility_info *uefi_crypto_agility_info(void);
  * ║    6. User must explicitly confirm ("This will update firmware")   ║
  * ║    7. A full crypto stack (PKCS#7/CMS) must exist in the kernel    ║
  * ║                                                                    ║
- * ║  This API exposes ONLY QueryCapsuleCapabilities() — read-only.    ║
+ * ║  This API exposes ONLY QueryCapsuleCapabilities() -- read-only.    ║
  * ║  UpdateCapsule() is intentionally NOT exposed.                     ║
  * ╚══════════════════════════════════════════════════════════════════════╝
  * ---- */
@@ -356,7 +356,7 @@ struct capsule_capability_info {
     uint8_t  pad[3];
 };
 
-/* Initialize capsule subsystem — query firmware capabilities.
+/* Initialize capsule subsystem -- query firmware capabilities.
  * Read-only: does NOT call UpdateCapsule() or modify firmware.
  * Must be called after uefi_runtime_init(). */
 void uefi_capsule_init(void);

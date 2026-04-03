@@ -1,5 +1,5 @@
 /* ============================================================================
- * stb_truetype_impl.c — stb_truetype implementation unit
+ * stb_truetype_impl.c -- stb_truetype implementation unit
  *
  * THIS FILE IS COMPILED WITH -msse2 (separate from rest of kernel) to
  * support the floating-point math needed by stb_truetype.

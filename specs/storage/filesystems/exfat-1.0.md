@@ -4,7 +4,7 @@
 
 The Extensible File Allocation Table (exFAT) file system represents a significant evolutionary leap from its predecessor, FAT32, engineered specifically to address the escalating capacity requirements of modern digital media, embedded systems, and high-density flash storage devices. Introduced by Microsoft in 2006 alongside Windows Embedded CE 6.0, exFAT dismantles the restrictive 32-bit limits of standard FAT32 volumes. Where the legacy FAT32 architecture was strictly bound to a 4 GB maximum file size and a practical 2 TB maximum volume limit, exFAT achieves extraordinary scalability, supporting a theoretical maximum file size of 16 Exabytes (16 × 2⁶⁰ bytes minus 1 byte) and a recommended maximum volume size of 512 Terabytes, with absolute theoretical limits reaching 128 Petabytes.
 
-For over a decade, exFAT remained a proprietary, patent-encumbered technology, strictly licensed by Microsoft for implementation in consumer electronics, cameras, mobile devices, and automotive systems. This proprietary status forced open-source operating systems, particularly Linux distributions, to rely on userspace FUSE (Filesystem in Userspace) implementations—such as the relan/exfat repository—to achieve read and write interoperability without violating intellectual property laws. While functional, FUSE-based drivers inherently suffer from context-switching latency between kernel space and userspace, creating I/O bottlenecks unsuitable for high-performance enterprise or mobile environments.
+For over a decade, exFAT remained a proprietary, patent-encumbered technology, strictly licensed by Microsoft for implementation in consumer electronics, cameras, mobile devices, and automotive systems. This proprietary status forced open-source operating systems, particularly Linux distributions, to rely on userspace FUSE (Filesystem in Userspace) implementations--such as the relan/exfat repository--to achieve read and write interoperability without violating intellectual property laws. While functional, FUSE-based drivers inherently suffer from context-switching latency between kernel space and userspace, creating I/O bottlenecks unsuitable for high-performance enterprise or mobile environments.
 
 However, a paradigm shift occurred in August 2019 when Microsoft officially published the exFAT 1.00 specification and subsequently contributed the exFAT patents to the Open Invention Network (OIN). This unprecedented move shielded Linux developers from patent litigation and facilitated the integration of native, in-kernel exFAT drivers. Samsung's highly optimized exFAT driver, previously utilized in Android devices, was backported and eventually mainlined into the Linux kernel starting with version 5.4, reaching full maturity in version 5.7.
 
@@ -130,7 +130,7 @@ If the computed checksum does not match the repeating pattern stored in Sector 1
 
 ## File Allocation Table Mechanics and The "NoFatChain" Paradigm
 
-Despite its nomenclature, exFAT dramatically reduces the filesystem's operational reliance on the File Allocation Table compared to its predecessors. The FAT Region contains a linear, flat array of 32-bit entries. `FatEntry[0]` contains the media type in its first (lowest-order) byte—which should be `0xF8`—and `0xFF` in the remaining three bytes, yielding the 32-bit value `0xFFFFFFF8`. `FatEntry[1]` is strictly reserved and must contain `0xFFFFFFFF`. The usable user clusters map sequentially to indices starting at `FatEntry[2]`.
+Despite its nomenclature, exFAT dramatically reduces the filesystem's operational reliance on the File Allocation Table compared to its predecessors. The FAT Region contains a linear, flat array of 32-bit entries. `FatEntry[0]` contains the media type in its first (lowest-order) byte--which should be `0xF8`--and `0xFF` in the remaining three bytes, yielding the 32-bit value `0xFFFFFFF8`. `FatEntry[1]` is strictly reserved and must contain `0xFFFFFFFF`. The usable user clusters map sequentially to indices starting at `FatEntry[2]`.
 
 The standard cluster state values recognized by the exFAT parser are rigidly defined:
 
@@ -174,7 +174,7 @@ When a driver attempts to open a file or traverse a path, it must extract the ta
 
 ### Up-case Table Compression Algorithm
 
-A raw, uncompressed UTF-16 mapping table consumes exactly 128 KB of disk space (65536 × 2 bytes). Because the vast majority of Unicode characters—such as Asian ideograms, complex scripts, symbols, and mathematical operators—do not possess upper/lower case variants, their mapping translates strictly to themselves (an identity mapping, e.g., `0x0041` 'A' maps to `0x0041` 'A', and `0x4E00` '一' maps to `0x4E00` '一').
+A raw, uncompressed UTF-16 mapping table consumes exactly 128 KB of disk space (65536 × 2 bytes). Because the vast majority of Unicode characters--such as Asian ideograms, complex scripts, symbols, and mathematical operators--do not possess upper/lower case variants, their mapping translates strictly to themselves (an identity mapping, e.g., `0x0041` 'A' maps to `0x0041` 'A', and `0x4E00` '一' maps to `0x4E00` '一').
 
 Microsoft designed an aggressive, highly specific compression format specifically to collapse these identity runs. Whenever the table generation algorithm encounters a continuous sequence of identity mappings, it ceases writing literal mappings and instead inserts the reserved token `0xFFFF`, immediately followed by a 16-bit integer representing the discrete number of identity mappings in that specific run.
 
@@ -272,7 +272,7 @@ The checksum algorithm executes a byte-by-byte right rotation (identical to the 
 
 The Volume Label directory entry (EntryType `0x83`) operates as a standalone Critical Primary entry within the root directory. The size of this entry is fixed at 32 bytes. Offset 1 dictates the CharacterCount (allowing a maximum of 11 characters), while Offset 2 contains the 22-byte Unicode string payload (11 UTF-16LE characters × 2 bytes). The valid number of Volume Label directory entries in the root directory ranges from 0 to 1. If an OS attempts to format a drive without a label, the entry need not exist at all; if previously present, the InUse bit of the EntryType is flipped to 0 (resulting in an effective EntryType of `0x03`).
 
-Furthermore, exFAT embraces forward-compatibility through **Vendor Extension Directory Entries** (EntryType `0xE0` / TypeCode 0). These Benign Secondary entries allow hardware vendors to append custom metadata—such as digital rights management (DRM) keys, access control lists (ACLs for Windows CE), or specialized indexing flags for automotive media players—directly to the file sets. Because the "Importance" bit is set to Benign (1), standard OS drivers or third-party implementations simply ignore these unknown `0xE0` entries rather than faulting the directory read, ensuring cross-platform stability.
+Furthermore, exFAT embraces forward-compatibility through **Vendor Extension Directory Entries** (EntryType `0xE0` / TypeCode 0). These Benign Secondary entries allow hardware vendors to append custom metadata--such as digital rights management (DRM) keys, access control lists (ACLs for Windows CE), or specialized indexing flags for automotive media players--directly to the file sets. Because the "Importance" bit is set to Benign (1), standard OS drivers or third-party implementations simply ignore these unknown `0xE0` entries rather than faulting the directory read, ensuring cross-platform stability.
 
 ## Implementation Architecture for OS Developers
 
@@ -290,7 +290,7 @@ This implementation separates core responsibilities into discrete, maintainable 
 
 ### The Native In-Kernel Architecture (Linux 5.7+)
 
-For high-performance scenarios—such as Android smartphones processing 4K video or automotive embedded systems streaming vast navigation databases—context-switching between kernel space and FUSE userspace incurs unacceptable CPU overhead and I/O latency. The linux-exfat-oot repository (Samsung's backport) and the mainline Linux implementations integrate directly into the kernel's `fs/` subsystem, providing bare-metal performance.
+For high-performance scenarios--such as Android smartphones processing 4K video or automotive embedded systems streaming vast navigation databases--context-switching between kernel space and FUSE userspace incurs unacceptable CPU overhead and I/O latency. The linux-exfat-oot repository (Samsung's backport) and the mainline Linux implementations integrate directly into the kernel's `fs/` subsystem, providing bare-metal performance.
 
 In the native kernel implementation, structural definitions are strictly bounded by headers like `exfat_fs.h` and `exfat_raw.h`.
 
@@ -300,28 +300,28 @@ In the native kernel implementation, structural definitions are strictly bounded
 
 ## Resilient Write Sequencing and Atomicity
 
-To prevent catastrophic metadata corruption on removable media—which is frequently subjected to unceremonious physical removal—OS developers must implement a defensible write-ordering sequence. The official Microsoft exFAT specification defines two distinct sequences.
+To prevent catastrophic metadata corruption on removable media--which is frequently subjected to unceremonious physical removal--OS developers must implement a defensible write-ordering sequence. The official Microsoft exFAT specification defines two distinct sequences.
 
 **When creating new directory entries or modifying cluster allocations:**
 
-1. **Set VolumeDirty** to 1 — guarantees that if the device is pulled, the next system will know to run fsck.
-2. **Update the active FAT** — write the corresponding cluster chain pointers into the FAT Region, if necessary.
-3. **Update the active Allocation Bitmap** — set bits to 1 for the required clusters to reserve space.
-4. **Create or update the directory entry** — write the `0xC1` File Name entries, the `0xC0` Stream Extension, and the `0x85` File Directory entry with its SetChecksum.
-5. **Clear VolumeDirty** to 0 — only if its value prior to step 1 was 0.
+1. **Set VolumeDirty** to 1 -- guarantees that if the device is pulled, the next system will know to run fsck.
+2. **Update the active FAT** -- write the corresponding cluster chain pointers into the FAT Region, if necessary.
+3. **Update the active Allocation Bitmap** -- set bits to 1 for the required clusters to reserve space.
+4. **Create or update the directory entry** -- write the `0xC1` File Name entries, the `0xC0` Stream Extension, and the `0x85` File Directory entry with its SetChecksum.
+5. **Clear VolumeDirty** to 0 -- only if its value prior to step 1 was 0.
 
 **When deleting directory entries or freeing cluster allocations:**
 
 1. **Set VolumeDirty** to 1.
-2. **Delete or update the directory entry** — clear the InUse bit on the `0x85`/`0xC0`/`0xC1` entries.
-3. **Update the active FAT** — free the cluster chain pointers, if necessary.
-4. **Update the active Allocation Bitmap** — clear bits to 0 for the freed clusters.
-5. **Clear VolumeDirty** to 0 — only if its value prior to step 1 was 0.
+2. **Delete or update the directory entry** -- clear the InUse bit on the `0x85`/`0xC0`/`0xC1` entries.
+3. **Update the active FAT** -- free the cluster chain pointers, if necessary.
+4. **Update the active Allocation Bitmap** -- clear bits to 0 for the freed clusters.
+5. **Clear VolumeDirty** to 0 -- only if its value prior to step 1 was 0.
 
 > [!IMPORTANT]
 > The order is intentionally different between creation and deletion. During creation, the FAT
 > is updated before the bitmap, and the directory entry is written last (making it invisible
 > until committed). During deletion, the directory entry is invalidated first, then the FAT,
-> then the bitmap—ensuring stale references are removed before freeing underlying storage.
+> then the bitmap--ensuring stale references are removed before freeing underlying storage.
 
 By strictly adhering to these operational sequencing paradigms, mathematical block alignments, and rigorous structural schemas, operating system developers can effectively harness the exFAT specification to deliver highly robust, terabyte-scale, flash-optimized storage solutions within any modern computing infrastructure.

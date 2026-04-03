@@ -1,5 +1,5 @@
 /* ============================================================================
- * fat32_dir.c — Directory operations
+ * fat32_dir.c -- Directory operations
  *
  * 8.3 short name generation, directory reading (with LFN support),
  * directory entry manipulation (find free slot, write entry),

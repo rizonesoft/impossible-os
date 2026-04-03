@@ -1,5 +1,5 @@
 @echo off
-:: run-qemu-1cpu.bat — Launch Impossible OS in QEMU with 1 CPU
+:: run-qemu-1cpu.bat -- Launch Impossible OS in QEMU with 1 CPU
 ::
 :: Use this to bisect SMP bugs: if something crashes on 2 CPUs
 :: but works here, it's a concurrency issue.

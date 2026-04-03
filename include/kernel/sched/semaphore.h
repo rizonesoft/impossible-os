@@ -1,5 +1,5 @@
 /* ============================================================================
- * semaphore.h — Kernel counting semaphore
+ * semaphore.h -- Kernel counting semaphore
  *
  * Classic Dijkstra counting semaphore. Threads call sem_wait() to decrement
  * the count (blocking if it would go negative) and sem_signal() to increment

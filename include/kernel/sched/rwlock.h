@@ -1,5 +1,5 @@
 /* ============================================================================
- * rwlock.h — Kernel read-write lock
+ * rwlock.h -- Kernel read-write lock
  *
  * Allows multiple concurrent readers OR a single exclusive writer.
  * More efficient than a plain mutex for read-heavy kernel data structures
@@ -28,7 +28,7 @@
 #define RWLOCK_MAX_WAITERS  16
 
 typedef struct rwlock {
-    /* Core lock state — accessed atomically from reader and writer paths. */
+    /* Core lock state -- accessed atomically from reader and writer paths. */
     atomic_t  reader_count;    /* number of active readers */
     atomic_t  writer_held;     /* 1 = writer holds the lock, 0 = free */
     atomic_t  writer_pending;  /* 1 = a writer is waiting (blocks new readers) */
@@ -46,7 +46,7 @@ typedef struct rwlock {
     const char *name;   /* debug name */
 } rwlock_t;
 
-/* Static initializer — atomic_t fields are zero-initialized via ATOMIC_INIT(0) */
+/* Static initializer -- atomic_t fields are zero-initialized via ATOMIC_INIT(0) */
 #define RWLOCK_INIT  { ATOMIC_INIT(0), ATOMIC_INIT(0), ATOMIC_INIT(0), {0}, {0}, 0, {0}, {0}, 0, NULL }
 
 /* --- API --- */

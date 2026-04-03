@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_runlist.c — Data Run Decoder (§4.1)
+ * ntfs_runlist.c -- Data Run Decoder (§4.1)
  *
  * Decodes the variable-length run-list encoding used by non-resident
  * NTFS attributes. Each run maps a range of Virtual Cluster Numbers (VCNs)
@@ -94,7 +94,7 @@ int ntfs_decode_data_runs(const uint8_t *attr, struct ntfs_data_run *runs,
         run_length = read_unsigned(p, len_size);
         p += len_size;
 
-        /* Read run offset (signed, relative) — or sparse if off_size == 0 */
+        /* Read run offset (signed, relative) -- or sparse if off_size == 0 */
         if (off_size > 0) {
             run_offset = read_signed(p, off_size);
             p += off_size;
@@ -102,7 +102,7 @@ int ntfs_decode_data_runs(const uint8_t *attr, struct ntfs_data_run *runs,
             prev_lcn += run_offset;
             runs[count].lcn = (uint64_t)prev_lcn;
         } else {
-            /* Sparse run — no disk location, reads as zeros */
+            /* Sparse run -- no disk location, reads as zeros */
             runs[count].lcn = NTFS_LCN_SPARSE;
         }
 

@@ -1,5 +1,5 @@
 /* ============================================================================
- * syscall.c — System call dispatcher and implementations
+ * syscall.c -- System call dispatcher and implementations
  *
  * Handles INT 0x80 from user-mode code.
  * Syscall number in RAX, arguments in RDI, RSI, RDX.
@@ -65,7 +65,7 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
             break;
         /* Echo to serial for debugging */
         serial_putchar(str[i]);
-        /* Buffer into terminal window — sets term_dirty=1.
+        /* Buffer into terminal window -- sets term_dirty=1.
          * Do NOT call terminal_render() here: rendering happens in the
          * main compositor loop (main.c) which calls terminal_render()
          * before wm_composite() + fb_swap().  Calling terminal_render()
@@ -167,7 +167,7 @@ static int64_t sys_readdir(uint64_t buf_ptr, uint64_t buf_size,
     return 0;
 }
 
-/* Process info structure — must match user/include/syscall.h */
+/* Process info structure -- must match user/include/syscall.h */
 struct proc_info {
     uint32_t pid;
     uint32_t state;

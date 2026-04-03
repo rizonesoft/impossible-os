@@ -1,5 +1,5 @@
 /* ============================================================================
- * icon_store.c — Hybrid Icon Store (font glyphs + IRES color icons)
+ * icon_store.c -- Hybrid Icon Store (font glyphs + IRES color icons)
  *
  * THIS FILE IS COMPILED WITH -msse2 (stb_truetype needs floating point).
  *
@@ -136,7 +136,7 @@ static int ires_load(const char *path)
         return -2;
     }
 
-    /* Allocate via PMM — IRES can be several MB */
+    /* Allocate via PMM -- IRES can be several MB */
     frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
     data = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(frames);
     if (!data) {
@@ -175,7 +175,7 @@ static int ires_load(const char *path)
         cursor += 2;
     }
 
-    /* Parse index entries — resolve icon IDs by name, not by hardcoded number.
+    /* Parse index entries -- resolve icon IDs by name, not by hardcoded number.
      * This decouples irespack from the kernel's enum numbering. */
     memset(ires_icons, 0, sizeof(ires_icons));
 
@@ -315,7 +315,7 @@ static int load_icon_font(int variant, const char *filename)
         return -2;  /* Invalid size */
     }
 
-    /* Use PMM for font data — fonts can be 1–3 MB, way too big for
+    /* Use PMM for font data -- fonts can be 1–3 MB, way too big for
      * the 2 MiB kernel heap. See rules.md: PMM for large allocs. */
     frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
     data = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(frames);
@@ -470,7 +470,7 @@ static icon_bitmap_t *ires_get_bitmap(system_icon_t id, uint32_t size)
     if (best_si < 0) return (icon_bitmap_t *)0;
     is = &ires_icons[color_idx].sizes[best_si];
 
-    /* Store in cache (pixels point into IRES file buffer — no alloc needed) */
+    /* Store in cache (pixels point into IRES file buffer -- no alloc needed) */
     entry = cache_alloc();
     if (!entry) return (icon_bitmap_t *)0;
 
@@ -480,7 +480,7 @@ static icon_bitmap_t *ires_get_bitmap(system_icon_t id, uint32_t size)
     entry->bitmap.pixels        = is->pixels;
     entry->bitmap.width         = is->width;
     entry->bitmap.height        = is->height;
-    entry->bitmap.alloc_size    = 0;  /* Don't free — points into IRES buffer */
+    entry->bitmap.alloc_size    = 0;  /* Don't free -- points into IRES buffer */
     entry->bitmap.from_pmm      = 0;
     entry->last_access          = ++cache_access_counter;
     entry->valid                = 1;
@@ -557,7 +557,7 @@ static icon_bitmap_t *rasterize_glyph(system_icon_t id, uint32_t size,
     /* Store in cache */
     entry = cache_alloc();
     if (!entry) {
-        /* Cache full — shouldn't happen with LRU but handle gracefully */
+        /* Cache full -- shouldn't happen with LRU but handle gracefully */
         if (from_pmm) {
             uint64_t frames = (byte_count + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
             uint64_t fi;

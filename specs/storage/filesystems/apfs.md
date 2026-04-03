@@ -1,4 +1,4 @@
-# APFS — Technical Specification for OS Implementation
+# APFS -- Technical Specification for OS Implementation
 
 ## Overview and Architectural Context
 
@@ -9,14 +9,14 @@ share a single pool of free space, eliminating rigid per-volume partition bounda
 
 Key architectural features:
 
-- **64-bit inode namespace** — supports up to 2^63 files per volume
-- **Nanosecond timestamp precision** — replaces HFS+'s one-second resolution
-- **Copy-on-Write (CoW)** — modified blocks are written to new locations, never overwritten in place
-- **Native encryption** — AES-XTS whole-volume and per-file encryption with hierarchical key management
-- **Instant cloning** — zero-cost file and directory clones via metadata-only operations
-- **Point-in-time snapshots** — read-only volume snapshots without data duplication
-- **Transparent compression** — LZVN, LZFSE, and Deflate via the `decmpfs` framework
-- **Dynamic space sharing** — volumes within a container share free space on demand
+- **64-bit inode namespace** -- supports up to 2^63 files per volume
+- **Nanosecond timestamp precision** -- replaces HFS+'s one-second resolution
+- **Copy-on-Write (CoW)** -- modified blocks are written to new locations, never overwritten in place
+- **Native encryption** -- AES-XTS whole-volume and per-file encryption with hierarchical key management
+- **Instant cloning** -- zero-cost file and directory clones via metadata-only operations
+- **Point-in-time snapshots** -- read-only volume snapshots without data duplication
+- **Transparent compression** -- LZVN, LZFSE, and Deflate via the `decmpfs` framework
+- **Dynamic space sharing** -- volumes within a container share free space on demand
 
 All multi-byte fields are stored in **little-endian** byte order unless explicitly noted otherwise.
 
@@ -83,7 +83,7 @@ typedef struct obj_phys {
 | ---------- | ------ | ---- | ----------------------------------------------------------------- |
 | `o_cksum`  | 0x00   | 8    | Fletcher-64 checksum of bytes 0x08 through end of block           |
 | `o_oid`    | 0x08   | 8    | Virtual OID (sequence number) or physical block address           |
-| `o_xid`    | 0x10   | 8    | Transaction ID — monotonically increasing per commit              |
+| `o_xid`    | 0x10   | 8    | Transaction ID -- monotonically increasing per commit              |
 | `o_type`   | 0x18   | 4    | Bits 15:0 = base type; bits 31:16 = storage type flags            |
 | `o_subtype`| 0x1C   | 4    | Payload subtype for B-tree nodes (e.g., catalog vs OMAP records)  |
 
@@ -114,9 +114,9 @@ Apply `OBJECT_TYPE_MASK` (`0x0000FFFF`) to extract the base type from `o_type`:
 | `OBJECT_TYPE_BTREE`            | `0x0002` | `btree_node_phys_t`    | B-tree root node                   |
 | `OBJECT_TYPE_BTREE_NODE`       | `0x0003` | `btree_node_phys_t`    | B-tree internal or leaf node       |
 | `OBJECT_TYPE_SPACEMAN`         | `0x0005` | `spaceman_phys_t`      | Space Manager                      |
-| `OBJECT_TYPE_CAB`              | `0x0006` | —                      | Chunk-Info Address Block           |
-| `OBJECT_TYPE_CIB`              | `0x0007` | —                      | Chunk-Info Block                   |
-| `OBJECT_TYPE_SPACEMAN_FREE_QUEUE` | `0x0008` | —                   | Free-space queue                   |
+| `OBJECT_TYPE_CAB`              | `0x0006` | --                      | Chunk-Info Address Block           |
+| `OBJECT_TYPE_CIB`              | `0x0007` | --                      | Chunk-Info Block                   |
+| `OBJECT_TYPE_SPACEMAN_FREE_QUEUE` | `0x0008` | --                   | Free-space queue                   |
 | `OBJECT_TYPE_OMAP`             | `0x000B` | `omap_phys_t`          | Object Map                         |
 | `OBJECT_TYPE_CHECKPOINT_MAP`   | `0x000C` | `checkpoint_map_phys_t`| Checkpoint mapping                 |
 | `OBJECT_TYPE_FS`               | `0x000D` | `apfs_superblock_t`    | Volume Superblock                  |
@@ -124,7 +124,7 @@ Apply `OBJECT_TYPE_MASK` (`0x0000FFFF`) to extract the base type from `o_type`:
 | `OBJECT_TYPE_BLOCKREFTREE`     | `0x000F` | `btree_node_phys_t`    | Extent reference tree (subtype)    |
 | `OBJECT_TYPE_SNAPMETATREE`     | `0x0010` | `btree_node_phys_t`    | Snapshot metadata tree (subtype)   |
 | `OBJECT_TYPE_REAPER`           | `0x0011` | `reaper_phys_t`        | Object Reaper                      |
-| `OBJECT_TYPE_REAP_LIST`        | `0x0012` | —                      | Reaper list                        |
+| `OBJECT_TYPE_REAP_LIST`        | `0x0012` | --                      | Reaper list                        |
 
 ### Object Storage Types
 
@@ -146,7 +146,7 @@ Apply `OBJECT_TYPE_FLAGS_MASK` (`0xFFFF0000`) to extract the storage type from `
 ## Container Superblock (`nx_superblock_t`)
 
 The Container Superblock (CSB) is the absolute entry point for the file system. It resides at
-**block 0** of the APFS partition but serves only as a bootstrap — the driver must scan the
+**block 0** of the APFS partition but serves only as a bootstrap -- the driver must scan the
 checkpoint area to find the latest valid superblock.
 
 ```c
@@ -700,9 +700,9 @@ User Password / Recovery Key / Hardware UID
 
 | Flag                      | Value        | Mode                                    |
 | ------------------------- | ------------ | --------------------------------------- |
-| `APFS_FS_UNENCRYPTED`     | `0x00000001` | No encryption — plaintext               |
+| `APFS_FS_UNENCRYPTED`     | `0x00000001` | No encryption -- plaintext               |
 | `APFS_FS_ONEKEY`          | `0x00000008` | Single VEK for entire volume            |
-| Per-file (default on iOS) | —            | Each file has its own crypto state (type `0x7`) |
+| Per-file (default on iOS) | --            | Each file has its own crypto state (type `0x7`) |
 
 > [!NOTE]
 > For a bare-metal OS that only needs read access to unencrypted APFS volumes, the entire
@@ -720,8 +720,8 @@ the compression metadata in an extended attribute named `com.apple.decmpfs`.
 | Algorithm | Description                                        | Max Block Size |
 | --------- | -------------------------------------------------- | -------------- |
 | LZVN      | Apple-proprietary LZ variant; fast decompression   | 65,536 bytes   |
-| LZFSE     | Finite State Entropy coding; 2-3x faster than zlib | —              |
-| Deflate   | Standard zlib/RFC 1951; legacy fallback            | —              |
+| LZFSE     | Finite State Entropy coding; 2-3x faster than zlib | --              |
+| Deflate   | Standard zlib/RFC 1951; legacy fallback            | --              |
 
 ### Decompression Detection
 

@@ -1,19 +1,19 @@
 /* ============================================================================
- * ata.c — ATA PIO Disk Driver
+ * ata.c -- ATA PIO Disk Driver
  *
  * Detects ATA drives on the primary bus and provides PIO-mode sector
  * read/write using LBA28 addressing.
  *
  * Primary bus I/O ports:
- *   0x1F0 — Data register (16-bit)
- *   0x1F1 — Error / Features
- *   0x1F2 — Sector count
- *   0x1F3 — LBA low (bits 0-7)
- *   0x1F4 — LBA mid (bits 8-15)
- *   0x1F5 — LBA high (bits 16-23)
- *   0x1F6 — Drive/Head (bits 24-27 of LBA + drive select)
- *   0x1F7 — Status (read) / Command (write)
- *   0x3F6 — Alternate status / Device control
+ *   0x1F0 -- Data register (16-bit)
+ *   0x1F1 -- Error / Features
+ *   0x1F2 -- Sector count
+ *   0x1F3 -- LBA low (bits 0-7)
+ *   0x1F4 -- LBA mid (bits 8-15)
+ *   0x1F5 -- LBA high (bits 16-23)
+ *   0x1F6 -- Drive/Head (bits 24-27 of LBA + drive select)
+ *   0x1F7 -- Status (read) / Command (write)
+ *   0x3F6 -- Alternate status / Device control
  * ============================================================================ */
 
 #include "kernel/drivers/ata.h"
@@ -145,7 +145,7 @@ static void ata_identify_drive(uint8_t drive_num)
 
     /* Wait for BSY to clear */
     if (ata_wait_bsy() < 0)
-        return;  /* timeout — no IDE controller */
+        return;  /* timeout -- no IDE controller */
 
     /* Check for non-ATA drives (ATAPI, SATA, etc.) */
     if (inb(ATA_LBA_MID) != 0 || inb(ATA_LBA_HI) != 0)

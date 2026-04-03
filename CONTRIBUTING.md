@@ -32,7 +32,7 @@ bash scripts/install-hooks.sh             # Pre-push: run tests before push (opt
 ```
 
 The post-commit hook keeps `COUNT.md` up to date. The pre-push hook runs
-`make test` before every push — if tests fail, the push is blocked. The
+`make test` before every push -- if tests fail, the push is blocked. The
 pre-push hook requires KVM access (`sudo usermod -aG kvm $USER`) for fast
 QEMU execution. To remove: `bash scripts/install-hooks.sh --remove`.
 
@@ -62,7 +62,7 @@ conventions to keep the codebase consistent.
 ### Headers
 
 - One header per source file (e.g., `pmm.c` → `include/mm/pmm.h`)
-- All headers live in `include/` — never in `src/`
+- All headers live in `include/` -- never in `src/`
 - Only freestanding headers allowed: `<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<stdarg.h>`
 - **Never** include `<stdio.h>`, `<stdlib.h>`, `<string.h>`, or any user-space headers
 
@@ -71,7 +71,7 @@ conventions to keep the codebase consistent.
 Comment all non-obvious port I/O, MMIO, and register manipulation:
 
 ```c
-// Send EOI to Local APIC — must be done AFTER reading the ISR,
+// Send EOI to Local APIC -- must be done AFTER reading the ISR,
 // otherwise the interrupt may fire again before we handle it
 lapic_write(LAPIC_EOI, 0);
 ```
@@ -155,7 +155,7 @@ docs: professional README with feature table
 ### PR Checklist
 
 - [ ] Code compiles without warnings (`-Wall -Wextra -Werror`)
-- [ ] Tested in QEMU — boots and runs correctly
+- [ ] Tested in QEMU -- boots and runs correctly
 - [ ] No new `kmalloc()` calls for buffers > 4 KB
 - [ ] Serial output checked for new warnings/errors
 - [ ] Commit message follows `"scope: description"` format
@@ -166,7 +166,7 @@ docs: professional README with feature table
 
 All development is tracked in the TODO system:
 
-- **Start here:** [`todo/TODO-00-INDEX.md`](todo/TODO-00-INDEX.md) — master index of all work
+- **Start here:** [`todo/TODO-00-INDEX.md`](todo/TODO-00-INDEX.md) -- master index of all work
 - **Each TODO file** contains detailed sections with implementation prompts
 - **Status markers:** `[ ]` uncompleted, `[/]` in progress, `[x]` completed
 - **Look for** sections marked with priority: 🔴 P0, 🟠 P1, 🟡 P2, 🟢 P3
@@ -183,11 +183,11 @@ If you're new to OS development, look for:
 
 ## ⚠️ Important Rules
 
-1. **Always use `bash scripts/build.sh`** — never raw `make` commands
-2. **APIC-only interrupts** — do NOT write 8259 PIC routing code
-3. **DMA-only storage** — do NOT use legacy IDE/ATA PIO polling
-4. **UEFI GOP framebuffer** — do NOT write VGA text mode (0xB8000) code
-5. **No standard library** — this is a freestanding kernel, not user-space
+1. **Always use `bash scripts/build.sh`** -- never raw `make` commands
+2. **APIC-only interrupts** -- do NOT write 8259 PIC routing code
+3. **DMA-only storage** -- do NOT use legacy IDE/ATA PIO polling
+4. **UEFI GOP framebuffer** -- do NOT write VGA text mode (0xB8000) code
+5. **No standard library** -- this is a freestanding kernel, not user-space
 6. **Use `printk()`** for output, not `printf()`
 
 ---

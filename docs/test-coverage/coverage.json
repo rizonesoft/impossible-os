@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-04-02T19:53:42Z",
+  "timestamp": "2026-04-03T07:28:11Z",
   "total_suites": 0,
-  "total_assertions": 19,
+  "total_assertions": 23,
   "files": [
     {"file": "test_boot_init.c", "suites": 0
-0, "assertions": 19}
+0, "assertions": 23}
   ]
 }

@@ -1,5 +1,5 @@
 /* ============================================================================
- * irq.c — Dynamic IRQ Registration
+ * irq.c -- Dynamic IRQ Registration
  *
  * Provides runtime interrupt handler registration, dynamic vector allocation,
  * and per-vector statistics.  Built on top of the IDT dispatch table.
@@ -7,10 +7,10 @@
  * Architecture:
  *   irq_register() installs a wrapper into the IDT handlers[] table.
  *   The wrapper calls irq_eoi(), then the user callback.
- *   This keeps drivers clean — they just get (vector, ctx).
+ *   This keeps drivers clean -- they just get (vector, ctx).
  *
- * Vectors 0x20–0x2F (32–47): ISA IRQs — registered by PIT, kbd, mouse
- * Vectors 0x30–0xEF (48–239): dynamic — MSI/MSI-X, VMBus, STIMER
+ * Vectors 0x20–0x2F (32–47): ISA IRQs -- registered by PIT, kbd, mouse
+ * Vectors 0x30–0xEF (48–239): dynamic -- MSI/MSI-X, VMBus, STIMER
  * Vectors 0xF0–0xFF: reserved (LAPIC timer, spurious, IPI)
  * ============================================================================ */
 
@@ -56,7 +56,7 @@ int irq_register(uint8_t vector, irq_handler_t handler, void *ctx,
                  const char *name)
 {
     if (vector < 32)
-        return IRQ_ERR_RANGE;   /* CPU exceptions — use idt_register_handler */
+        return IRQ_ERR_RANGE;   /* CPU exceptions -- use idt_register_handler */
 
     if (irq_table[vector].handler)
         return IRQ_ERR_BUSY;    /* already claimed */
@@ -128,7 +128,7 @@ uint64_t irq_get_count(uint8_t vector)
 
 const uint64_t *irq_get_counts(void)
 {
-    /* Return pointer to first count field — but entries are structs,
+    /* Return pointer to first count field -- but entries are structs,
      * so callers should use irq_get_count() per-vector instead.
      * This is a convenience for bulk stats. */
     static uint64_t count_snapshot[256];

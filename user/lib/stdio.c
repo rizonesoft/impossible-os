@@ -1,5 +1,5 @@
 /* ============================================================================
- * stdio.c — Standard I/O functions
+ * stdio.c -- Standard I/O functions
  *
  * printf supports: %d, %i, %u, %x, %X, %p, %s, %c, %ld, %li, %lu, %lx, %%
  * ============================================================================ */
@@ -164,7 +164,7 @@ static int do_vprintf(struct fmt_state *st, const char *fmt, va_list ap)
             goto done;
 
         default:
-            /* Unknown format — print as-is */
+            /* Unknown format -- print as-is */
             fmt_putchar(st, '%');
             if (is_long)
                 fmt_putchar(st, 'l');

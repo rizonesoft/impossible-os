@@ -25,7 +25,7 @@ description: Create lean project TODO files under todo/, choose the correct doma
      - Use `symbols_in_file(path, project)` to enumerate all symbols in relevant source files.
      - Use `get_callers`, `get_callees`, and `get_dependents` to trace integration points and impact boundaries.
      - Use `whats_changed(project)` to discover recent work that may already cover planned scope.
-     - Let Srclight discovery drive what goes into Inputs, XREFs, and dependency rows — only fall back to direct file reads when Srclight results are insufficient.
+     - Let Srclight discovery drive what goes into Inputs, XREFs, and dependency rows -- only fall back to direct file reads when Srclight results are insufficient.
 3. Choose the next local filename.
    - Follow the live domain naming pattern such as `todo/00-infrastructure/TODO-03-short-name.md`.
    - Do not revive legacy `TODO-NNN.NN-*` naming from `todo-old/`.
@@ -34,11 +34,11 @@ description: Create lean project TODO files under todo/, choose the correct doma
    - Create a parent TODO only when the topic truly needs multiple child files or shared verification.
 5. Set up execution order at creation time.
    - Use `Implementation Order`, not `Phase-by-Phase`.
-   - Mark every row with `💎` (parity — matches Windows/Linux) or `⭐` (exclusive — Impossible OS superior).
+   - Mark every row with `💎` (parity -- matches Windows/Linux) or `⭐` (exclusive -- Impossible OS superior).
    - Add dependencies, overlap notes, handoffs, and `→ XREF:` links while creating the file.
 6. Assign a model tag to every section heading.
    - Append `` `[Sonnet]` `` or `` `[Opus]` `` directly to each `## N. Title` heading.
-   - Format: `## 1. Section Title \`[Sonnet]\`` — no column, no table, inline only.
+   - Format: `## 1. Section Title \`[Sonnet]\`` -- no column, no table, inline only.
    - Use **`[Sonnet]`** for: well-scoped type/struct definitions, straightforward API wiring, data migration and porting tasks, log/error handling plumbing, and any section with a clear Windows reference spec.
    - Use **`[Opus]`** for: novel architectural design (no prior Impossible OS precedent), security-critical code (ring transitions, privilege, code signing, capabilities), subtle concurrency (per-CPU state, lock-free queues, spinlock transitions), hardware-interface primitives (MSR writes, `swapgs`, interrupt entry/exit, calibration), and complex algorithm design (ASLR entropy, DPC fairness, clock drift correction).
 7. Add an OS Comparison table.

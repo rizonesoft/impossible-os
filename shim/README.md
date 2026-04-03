@@ -1,4 +1,4 @@
-# shim/ — Impossible OS Shim Binaries
+# shim/ -- Impossible OS Shim Binaries
 
 Pre-built shim binaries from [rhboot/shim](https://github.com/rhboot/shim) v16.1.
 
@@ -10,7 +10,7 @@ trusts our signed bootloader without requiring MOK enrollment on every machine.
 | File | Role | On ESP |
 |------|------|--------|
 | `shimx64.efi` | First-stage UEFI loader, trusted by UEFI firmware | `EFI/BOOT/BOOTX64.EFI` |
-| `mmx64.efi`   | MokManager — first-boot key enrollment UI | `EFI/BOOT/mmx64.efi` |
+| `mmx64.efi`   | MokManager -- first-boot key enrollment UI | `EFI/BOOT/mmx64.efi` |
 
 ## EFI Partition Layout (with shim)
 
@@ -44,4 +44,4 @@ This will clone `rhboot/shim`, init the `gnu-efi` submodule, build with
 - **rhboot/shim v16.1**
 - Built: 2026-03-14
 - VENDOR_CERT_FILE: `keys/MOK.cer` (SHA-256: `D3:6B:BA:F0:...`)
-- Status: Self-signed (pending Microsoft shim-review — see TODO §3.4)
+- Status: Self-signed (pending Microsoft shim-review -- see TODO §3.4)

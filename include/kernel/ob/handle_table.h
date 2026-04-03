@@ -1,5 +1,5 @@
 /* ============================================================================
- * handle_table.h — Per-process handle table
+ * handle_table.h -- Per-process handle table
  *
  * Maps opaque HANDLE integers to (object pointer, granted access, flags).
  * HANDLE values are slot index * 4 (low 2 bits reserved).
@@ -18,7 +18,7 @@
 #define CURRENT_PROCESS       ((int32_t)-2)
 #define CURRENT_THREAD        ((int32_t)-3)
 
-/* HANDLE type — always a multiple of 4 */
+/* HANDLE type -- always a multiple of 4 */
 typedef int32_t HANDLE;
 
 /* Initial and maximum capacity */

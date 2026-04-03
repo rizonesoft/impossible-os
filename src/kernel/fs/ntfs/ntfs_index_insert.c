@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_index_insert.c — B+ Tree Directory Index Insert (§14.1)
+ * ntfs_index_insert.c -- B+ Tree Directory Index Insert (§14.1)
  *
  * Implements ntfs_index_insert():
  *   1. Navigate B+ tree to correct leaf position
@@ -45,7 +45,7 @@ extern void ntfs_build_indx_buf(uint8_t *buf, uint32_t record_size,
 
 /* ============================================================================
  * Internal: build_leaf_entry
- * Build a raw on-disk index entry (no child VCN — leaf node entry).
+ * Build a raw on-disk index entry (no child VCN -- leaf node entry).
  * Returns entry length (8-byte aligned).
  * ============================================================================ */
 static uint32_t build_leaf_entry(uint8_t *buf, uint64_t mft_ref,
@@ -141,7 +141,7 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
             if (old_count < 0) old_count = 0;
         }
 
-        /* Append new run — or coalesce with last run if contiguous.
+        /* Append new run -- or coalesce with last run if contiguous.
          * Merging contiguous runs keeps the run list compact and prevents
          * the non-resident header from growing beyond MFT capacity. */
         ntfs_memcpy(new_runs, old_runs,
@@ -149,11 +149,11 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
 
         if (old_count > 0 &&
             new_runs[old_count - 1].lcn + new_runs[old_count - 1].length == lcn) {
-            /* Contiguous with last run — just extend it */
+            /* Contiguous with last run -- just extend it */
             new_runs[old_count - 1].length += clusters_per_indx;
             new_count = old_count;
         } else {
-            /* Non-contiguous — append as a new run */
+            /* Non-contiguous -- append as a new run */
             new_runs[old_count].vcn_start = new_vcn;
             new_runs[old_count].lcn       = lcn;
             new_runs[old_count].length    = clusters_per_indx;
@@ -161,18 +161,18 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
         }
 
         /* Remove old IA, rebuild as proper non-resident attribute.
-         * $INDEX_ALLOCATION MUST be non-resident — it contains INDX
+         * $INDEX_ALLOCATION MUST be non-resident -- it contains INDX
          * buffers on disk, referenced by the run list.  ntfs_attr_add()
          * would create a resident attribute for small data, which is
          * invalid for type 0xA0.
          *
-         * Pass NULL for vol to SKIP freeing the old attribute's clusters —
+         * Pass NULL for vol to SKIP freeing the old attribute's clusters --
          * those clusters are still in use and will be re-injected into the
          * rebuilt attribute via old_runs[]. */
         ntfs_attr_remove(NULL, rec, &hdr, vol->frs_size,
                           NTFS_ATTR_INDEX_ALLOCATION, "$I30");
 
-        /* Re-read MFT header — ntfs_attr_remove updated used_size in rec */
+        /* Re-read MFT header -- ntfs_attr_remove updated used_size in rec */
         hdr.used_size  = ntfs_le32(rec + 0x18);
 
         /* Calculate total allocation size across all runs */
@@ -242,7 +242,7 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
         bm_attr = ntfs_attr_find_named(rec, &hdr, NTFS_ATTR_BITMAP,
                                        "$I30", &bm_ah);
         if (bm_attr && !bm_ah.non_resident) {
-            /* Resident bitmap — copy, set bit, re-add */
+            /* Resident bitmap -- copy, set bit, re-add */
             bm_buf_len = bm_ah.content_length;
             if (bm_buf_len > 64) bm_buf_len = 64;
             ntfs_memcpy(bm_buf, bm_attr + bm_ah.content_offset, bm_buf_len);
@@ -259,7 +259,7 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
                            NTFS_ATTR_BITMAP, "$I30",
                            bm_buf, bm_buf_len);
         } else if (!bm_attr) {
-            /* No bitmap yet — create one */
+            /* No bitmap yet -- create one */
             ntfs_memset(bm_buf, 0, sizeof(bm_buf));
             bm_buf_len = (uint32_t)(byte_idx + 1);
             if (bm_buf_len > 64) bm_buf_len = 64;
@@ -283,7 +283,7 @@ static int allocate_indx_vcn(struct ntfs_volume *vol,
 }
 
 /* ============================================================================
- * ntfs_index_insert — Full B+ tree insert with split support
+ * ntfs_index_insert -- Full B+ tree insert with split support
  * ============================================================================ */
 int ntfs_index_insert(struct ntfs_volume *vol,
                       uint64_t dir_inode,
@@ -325,7 +325,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
 
     /* Start journal transaction */
     txn = ntfs_txn_begin(vol);
-    /* txn may be NULL if journal not loaded — continue without journaling */
+    /* txn may be NULL if journal not loaded -- continue without journaling */
 
     /* ---- Step 1: Read directory MFT record, find $INDEX_ROOT ---- */
     rec = (uint8_t *)kmalloc(vol->frs_size);
@@ -505,7 +505,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     (void)alloc_sz_raw;
 
                     /* Check if MFT record can accommodate the grown root.
-                     * $INDEX_ROOT is resident and resizable — the node header's
+                     * $INDEX_ROOT is resident and resizable -- the node header's
                      * alloc_sz is NOT the constraint; MFT free space is. */
                     int fits = ((uint32_t)(root_ah.total_length + cur_len) <=
                                 hdr.alloc_size - hdr.used_size + root_ah.total_length);
@@ -536,7 +536,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                         /* If this insert was a promoted separator from a child
                          * split, update the NEXT entry's child_vcn to point to
                          * the right sibling.  The next entry (at ins_off + cur_len)
-                         * is the entry whose subtree was split — its child
+                         * is the entry whose subtree was split -- its child
                          * pointer used to point to the pre-split node, and now
                          * must point to the new right sibling. */
                         if (promote_right_vcn != VCN_NONE) {
@@ -569,7 +569,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                         break; /* Done */
                     }
 
-                    /* Root overflows — need to push root contents to a new INDX,
+                    /* Root overflows -- need to push root contents to a new INDX,
                      * then make root a single-separator internal node.
                      *
                      * KEY: We must shrink $INDEX_ROOT BEFORE calling
@@ -581,7 +581,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                      *   1. Save old root entries + new entry into temp buffer
                      *   2. Shrink $INDEX_ROOT to an empty stub (frees ~700 bytes)
                      *   3. Write MFT to persist the shrunk root
-                     *   4. Call allocate_indx_vcn() — now has room for IA+bitmap
+                     *   4. Call allocate_indx_vcn() -- now has room for IA+bitmap
                      *   5. Build INDX buffer from saved entries, write it
                      *   6. Update $INDEX_ROOT with child VCN pointer
                      */
@@ -752,7 +752,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                 }
 
                 if (i_total + cur_len <= i_alloc) {
-                    /* Fits — simple insert */
+                    /* Fits -- simple insert */
                     ntfs_memmove(ieb + ins_off + cur_len,
                                  ieb + ins_off,
                                  i_total - ins_off);
@@ -764,7 +764,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     /* If this entry was promoted from a child split, update
                      * the NEXT entry's child_vcn to the right sibling VCN.
                      * The next entry (at ins_off + cur_len) is the one whose
-                     * subtree was split — it must now point to the right half. */
+                     * subtree was split -- it must now point to the right half. */
                     if (promote_right_vcn != VCN_NONE) {
                         uint8_t *next_e = ieb + ins_off + cur_len;
                         uint16_t ne_len = ntfs_le16(next_e + 0x08);
@@ -852,7 +852,7 @@ int ntfs_index_insert(struct ntfs_volume *vol,
                     }
                 }
 
-                /* Left data: entries [0, median_off) — only real entries */
+                /* Left data: entries [0, median_off) -- only real entries */
                 uint32_t left_data_sz = (median_off <= data_end) ? median_off : data_end;
                 /* Right data: entries [median_off + med_len, data_end) */
                 uint32_t right_data_start = median_off + med_len;

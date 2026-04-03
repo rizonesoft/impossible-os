@@ -49,7 +49,7 @@ graph TD
 | Host compiler | `gcc`                                         | Build tools only (jpg2raw, irespack, etc.) |
 
 > [!NOTE]
-> Migrated from GCC to Clang-19/LLD-19 for 8% smaller kernel binary (2,649,920 bytes vs 2,880,648 bytes GCC) and slightly faster builds (6.8s vs 8.0s clean at -j12). NASM pipeline is untouched — assembly files remain compiled by NASM.
+> Migrated from GCC to Clang-19/LLD-19 for 8% smaller kernel binary (2,649,920 bytes vs 2,880,648 bytes GCC) and slightly faster builds (6.8s vs 8.0s clean at -j12). NASM pipeline is untouched -- assembly files remain compiled by NASM.
 
 ### Compiler Flags
 
@@ -61,13 +61,13 @@ CFLAGS := -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
 ```
 
 Key flags:
-- `-MMD -MP` — generates `.d` dependency files for incremental builds
-- `--target=x86_64-elf` — cross-compilation target
-- `-ffreestanding -nostdlib -nostdinc` — no standard library, no host headers
+- `-MMD -MP` -- generates `.d` dependency files for incremental builds
+- `--target=x86_64-elf` -- cross-compilation target
+- `-ffreestanding -nostdlib -nostdinc` -- no standard library, no host headers
 
 ### Build Script
 
-All builds go through `scripts/build.sh` — never raw `make` commands.
+All builds go through `scripts/build.sh` -- never raw `make` commands.
 
 | Command                           | Description         |
 | --------------------------------- | ------------------- |
@@ -167,7 +167,7 @@ Migrated from GCC to Clang-19/LLD-19:
 
 ### System Dependency Installer
 
-`scripts/setup-deps.sh` — detects distro and installs all build dependencies:
+`scripts/setup-deps.sh` -- detects distro and installs all build dependencies:
 
 | Distro        | Package Manager |
 | ------------- | --------------- |
@@ -181,7 +181,7 @@ Migrated from GCC to Clang-19/LLD-19:
 - Test: `qemu-system-x86`, `ovmf`
 - Tools: `python3`, `python3-pil`, `bear`, `clangd-19`, `cppcheck`
 
-Idempotent — checks `command -v` before installing. Colored output with ✓/·/✗ status.
+Idempotent -- checks `command -v` before installing. Colored output with ✓/·/✗ status.
 
 ### One-Command Setup
 
@@ -200,7 +200,7 @@ bash scripts/build.sh run
 
 ### QEMU Test Runner
 
-`scripts/run-qemu.sh` — primary test environment.
+`scripts/run-qemu.sh` -- primary test environment.
 
 | Feature       | Flag/Setting                              |
 | ------------- | ----------------------------------------- |
@@ -213,7 +213,7 @@ bash scripts/build.sh run
 
 ### VirtualBox Test Runner
 
-`scripts/machines/run-vbox.sh` — cross-platform VirtualBox launcher.
+`scripts/machines/run-vbox.sh` -- cross-platform VirtualBox launcher.
 
 | Setting  | Value                     |
 | -------- | ------------------------- |
@@ -233,7 +233,7 @@ bash scripts/build.sh run
 
 ### Hyper-V Test Runner
 
-See [TODO-008-Hyper-V-Runner](../../todo/000-Infrastructure/TODO-008-Hyper-V-Runner.md) — dedicated runner with VMBus, synthetic devices, and Gen 2 VM support.
+See [TODO-008-Hyper-V-Runner](../../todo/000-Infrastructure/TODO-008-Hyper-V-Runner.md) -- dedicated runner with VMBus, synthetic devices, and Gen 2 VM support.
 
 ---
 
@@ -241,13 +241,13 @@ See [TODO-008-Hyper-V-Runner](../../todo/000-Infrastructure/TODO-008-Hyper-V-Run
 
 ### USB Write (Windows)
 
-`scripts/deploy/write-usb.ps1` — GPT-partitioned USB via PowerShell.
+`scripts/deploy/write-usb.ps1` -- GPT-partitioned USB via PowerShell.
 
 Creates EFI (FAT32) + System (FAT32) + Logs (FAT32) partitions. Auto-detects USB drive with safety prompts.
 
 ### USB Write (Linux)
 
-`scripts/deploy/write-usb.sh` — raw `dd` write with double confirmation.
+`scripts/deploy/write-usb.sh` -- raw `dd` write with double confirmation.
 
 ```mermaid
 graph LR
@@ -260,15 +260,15 @@ graph LR
 ```
 
 > [!CAUTION]
-> Requires root (`sudo`). The image already contains GPT + all partitions — no `parted`/`mkfs` needed. Double confirmation prevents accidents.
+> Requires root (`sudo`). The image already contains GPT + all partitions -- no `parted`/`mkfs` needed. Double confirmation prevents accidents.
 
 ### USB Log Reader
 
-`scripts/deploy/read-usb-log.sh` — retrieves debug logs from USB boot.
+`scripts/deploy/read-usb-log.sh` -- retrieves debug logs from USB boot.
 
 | Feature   | Description                                                    |
 | --------- | -------------------------------------------------------------- |
-| Mount     | Read-only (`-o ro`) — safe for forensic collection             |
+| Mount     | Read-only (`-o ro`) -- safe for forensic collection             |
 | Detection | Auto-detects third partition (`/dev/sdX3` or `/dev/nvme0n1p3`) |
 | Output    | Copies to `build/logs/<timestamp>/`                            |
 | Scanning  | Highlights panic/BSOD/fault keywords in red                    |
@@ -298,7 +298,7 @@ Header: `include/kernel/test/test.h`, implementation: `src/kernel/test/test_runn
 ```
 
 > [!IMPORTANT]
-> All test code is inside `#ifdef KERNEL_TESTS`. `-DKERNEL_TESTS` is always in CFLAGS — test code compiles unconditionally but only runs when `test=1` or `debug=1` is set in boot.conf.
+> All test code is inside `#ifdef KERNEL_TESTS`. `-DKERNEL_TESTS` is always in CFLAGS -- test code compiles unconditionally but only runs when `test=1` or `debug=1` is set in boot.conf.
 
 ### Core Subsystem Tests
 
@@ -321,7 +321,7 @@ Header: `include/kernel/test/test.h`, implementation: `src/kernel/test/test_runn
 
 ### Make Test Target
 
-`make test` — single command to build, boot QEMU headless, run all unit tests, and report pass/fail:
+`make test` -- single command to build, boot QEMU headless, run all unit tests, and report pass/fail:
 
 ```bash
 make test                  # run all suites
@@ -352,7 +352,7 @@ graph LR
 
 ### Automated QEMU Smoke Test
 
-`scripts/test-smoke.sh` — headless boot verification (legacy, superseded by `make test`).
+`scripts/test-smoke.sh` -- headless boot verification (legacy, superseded by `make test`).
 
 ```mermaid
 graph LR
@@ -371,7 +371,7 @@ graph LR
 
 ### Filesystem Test Suite
 
-`scripts/test-fs.sh` — tests filesystem drivers against real disk images.
+`scripts/test-fs.sh` -- tests filesystem drivers against real disk images.
 
 | Image Source               | Filesystems                                               |
 | -------------------------- | --------------------------------------------------------- |
@@ -396,20 +396,20 @@ graph LR
     C --> D["kernel.sym (KSYM binary)"]
     D --> E["Copied to C:\\Impossible\\System\\kernel.sym"]
     E --> F["symtab_init() loads at boot"]
-    F --> G["symtab_resolve() — O(log n) binary search"]
+    F --> G["symtab_resolve() -- O(log n) binary search"]
 ```
 
 | Detail     | Value                                            |
 | ---------- | ------------------------------------------------ |
 | Format     | KSYM: 8-byte addr + 32-byte name (packed)        |
 | Size       | ~40 KB for ~1000 symbols                         |
-| Lookup     | O(log n) binary search — safe in panic context   |
+| Lookup     | O(log n) binary search -- safe in panic context   |
 | Allocation | PMM (not kmalloc)                                |
 | Filters    | Only T/t/D/d symbols, skips `.` and `$` prefixes |
 
 ### Code Size Tracking
 
-`scripts/size-report.sh` — tracks binary sizes across builds.
+`scripts/size-report.sh` -- tracks binary sizes across builds.
 
 | Metric            | Current | Threshold    |
 | ----------------- | ------- | ------------ |
@@ -420,7 +420,7 @@ Features: top 10 largest `.o` files, section breakdown via `llvm-size-19`, delta
 
 ### Code Style Linter
 
-`scripts/lint.sh` — 6 automated style checks.
+`scripts/lint.sh` -- 6 automated style checks.
 
 | Check                  | Type    | Notes                                         |
 | ---------------------- | ------- | --------------------------------------------- |
@@ -428,7 +428,7 @@ Features: top 10 largest `.o` files, section breakdown via `llvm-size-19`, delta
 | UPPER_CASE macros      | Error   | Flags pure lowercase `#define`                |
 | `#pragma once`         | Error   | Required in every `.h`                        |
 | Lines ≤ 120 chars      | Error   | Excludes comment lines                        |
-| No trailing whitespace | Error   | —                                             |
+| No trailing whitespace | Error   | --                                             |
 | Functions ≤ 50 lines   | Warning | Doesn't fail build                            |
 
 Excludes auto-generated files (`build_info.h`, `os_logo.h`, etc.) and third-party code (`stb_truetype`, `stb_image`).
@@ -437,7 +437,7 @@ Supports path filtering: `bash scripts/lint.sh src/kernel/mm/`
 
 ### GDB Debug Script
 
-`scripts/debug.sh` — enhanced GDB debugging.
+`scripts/debug.sh` -- enhanced GDB debugging.
 
 | Feature             | Flag                                   |
 | ------------------- | -------------------------------------- |
@@ -458,7 +458,7 @@ Provides deep C code intelligence for editors.
 | Editor    | VS Code + clangd extension | `clangd.path` → `/usr/bin/clangd-19`                 |
 
 > [!WARNING]
-> **clangd is LSP, not MCP.** Attempting to add clangd as an MCP server causes it to hang — the protocols are incompatible. Use clangd via the VS Code/Cursor clangd extension (LSP).
+> **clangd is LSP, not MCP.** Attempting to add clangd as an MCP server causes it to hang -- the protocols are incompatible. Use clangd via the VS Code/Cursor clangd extension (LSP).
 
 > [!NOTE]
 > Bear only wraps the kernel build step (not userland/host tools) to avoid PIPESTATUS issues. Uses `bear --append --` to accumulate entries. `.clangd` uses `Index.Background: Build` for faster indexing.
@@ -482,7 +482,7 @@ Provides deep C code intelligence for editors.
 | `sysroot-icons`      | `resources/icons/color/`               | `sysroot/Impossible/Icons/icons.ires` |
 
 > [!NOTE]
-> Cursors are Adwaita XCursor format (not BMP) — the kernel's cursor driver reads XCursor natively. Icon packing uses the `irespack` host tool to create IRES bundles.
+> Cursors are Adwaita XCursor format (not BMP) -- the kernel's cursor driver reads XCursor natively. Icon packing uses the `irespack` host tool to create IRES bundles.
 
 ### Asset Validation
 
@@ -503,7 +503,7 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 ### Pre-Commit Lint Hook
 
-`.githooks/pre-commit` — opt-in lint checking on commit.
+`.githooks/pre-commit` -- opt-in lint checking on commit.
 
 **Setup:** `git config core.hooksPath .githooks`
 
@@ -517,14 +517,14 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 ### Pre-Push Test Hook
 
-`scripts/hooks/pre-push` — opt-in test run before push.
+`scripts/hooks/pre-push` -- opt-in test run before push.
 
 **Setup:** `bash scripts/install-hooks.sh` (remove: `bash scripts/install-hooks.sh --remove`)
 
 | Behavior        | Detail                                      |
 | --------------- | ------------------------------------------- |
-| Build check     | `bash scripts/build.sh` — fast fail on error |
-| Test run        | `bash scripts/test.sh` — full unit tests    |
+| Build check     | `bash scripts/build.sh` -- fast fail on error |
+| Test run        | `bash scripts/test.sh` -- full unit tests    |
 | On failure      | Push blocked with "run `make test` to see details" |
 | KVM requirement | Needs `/dev/kvm` access for fast QEMU       |
 
@@ -534,7 +534,7 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 ```
 scripts/
-├── build.sh                 ← Core build (daily) — auto-updates coverage
+├── build.sh                 ← Core build (daily) -- auto-updates coverage
 ├── run-qemu.sh              ← QEMU launcher (daily)
 ├── debug.sh                 ← GDB debug (daily)
 ├── setup.sh                 ← One-command setup
@@ -626,7 +626,7 @@ scripts/
 | Parallel compilation           | ✅ `/MP` flag                | ✅ `make -j$(nproc)`           | ✅ `-j$(nproc)` default + `--jobs=N`            |
 | Build version metadata         | ✅ Resource files (.rc)      | ✅ `uname -r` + git describe   | ✅ `include/build_info.h` (auto-generated)      |
 | Compiler toolchain             | ✅ MSVC (WDK)                | ✅ GCC (Kbuild)                | ✅ Clang-19/LLD-19 (`--target=x86_64-elf`)      |
-| One-command dev setup          | ❌ Manual VS + WDK install   | ⚠️ `make defconfig && make`    | ✅ `bash scripts/setup.sh` — **beats both**     |
+| One-command dev setup          | ❌ Manual VS + WDK install   | ⚠️ `make defconfig && make`    | ✅ `bash scripts/setup.sh` -- **beats both**     |
 | Automated smoke test           | ✅ HCK/HLK test framework    | ✅ kselftest + CI bots         | ✅ `scripts/test-smoke.sh` (headless QEMU)      |
 | Unit test framework (kernel)   | ✅ WDK test framework        | ✅ KUnit                       | ✅ `test.h` + `test_runner.c` (38 suites, 96 assertions) |
 | CI/CD build on push            | ✅ Azure DevOps              | ✅ GitHub Actions + kernel.org | ✅ [GitHub Actions](github-setup.md#build--smoke-test-buildyml) |
@@ -636,8 +636,8 @@ scripts/
 | Language server (code intel)   | ✅ IntelliSense (MSVC)       | ✅ clangd + compile_commands   | ✅ clangd-19 + Bear (200 entries)               |
 | Asset pipeline                 | ✅ MSBuild resource compiler | ⚠️ Manual `make` targets       | ✅ `make assets` (7 sub-targets + stamps)       |
 | Asset validation               | ❌ Runtime discovery         | ❌ No built-in                 | ✅ 37 assets validated at build time            |
-| **Zero-install build wrapper** | ❌ Requires VS + WDK         | ❌ Requires toolchain install  | ✅ **build.sh — single script, no IDE**         |
-| **QEMU auto-test loop**        | ❌ Manual VM setup           | ✅ virtme + kselftest          | ✅ **build.sh run — build + boot + verify**     |
+| **Zero-install build wrapper** | ❌ Requires VS + WDK         | ❌ Requires toolchain install  | ✅ **build.sh -- single script, no IDE**         |
+| **QEMU auto-test loop**        | ❌ Manual VM setup           | ✅ virtme + kselftest          | ✅ **build.sh run -- build + boot + verify**     |
 
 ---
 

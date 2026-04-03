@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# lint.sh — Code style linter for Impossible OS
+# lint.sh -- Code style linter for Impossible OS
 #
 # Checks all C source and header files against the project's coding standards.
 # Uses grep and awk for pattern matching (no external dependencies).
@@ -72,7 +72,7 @@ if [ ${#FILES[@]} -eq 0 ]; then
 fi
 
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Impossible OS — Code Style Linter${NC}"
+echo -e "${CYAN}  Impossible OS -- Code Style Linter${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo -e "  ${DIM}Checking ${#FILES[@]} files...${NC}"
 echo ""
@@ -251,7 +251,7 @@ echo ""
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 TOTAL=$((ERRORS + WARNINGS))
 if [ "$ERRORS" -eq 0 ] && [ "$WARNINGS" -eq 0 ]; then
-    echo -e "  ${CYAN}LINT CLEAN${NC} — no violations found"
+    echo -e "  ${CYAN}LINT CLEAN${NC} -- no violations found"
 elif [ "$ERRORS" -eq 0 ]; then
     echo -e "  ${YELLOW}$WARNINGS warning(s)${NC}, 0 errors"
 else

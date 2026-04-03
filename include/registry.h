@@ -1,5 +1,5 @@
 /* ============================================================================
- * registry.h — Windows-Compatible Registry System
+ * registry.h -- Windows-Compatible Registry System
  *
  * Replaces the Codex system with a Win32-compatible hierarchical registry.
  * Uses the same API naming as Win32 (RegOpenKeyEx, RegSetValueEx, etc.),
@@ -107,7 +107,7 @@ typedef reg_handle_t *HKEY;
 
 /* ---- Predefined root key handles ---- */
 
-/* Sentinel addresses — never dereferenced directly.  The API functions
+/* Sentinel addresses -- never dereferenced directly.  The API functions
  * detect these and map them to the corresponding root reg_key_t. */
 #define HKEY_CLASSES_ROOT      ((HKEY)(uintptr_t)0x80000000)
 #define HKEY_CURRENT_USER      ((HKEY)(uintptr_t)0x80000001)

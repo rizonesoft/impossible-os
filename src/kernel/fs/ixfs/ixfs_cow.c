@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_cow.c — Copy-on-Write, refcounts, snapshots, and stat
+ * ixfs_cow.c -- Copy-on-Write, refcounts, snapshots, and stat
  * ============================================================================ */
 
 #include "ixfs_internal.h"
@@ -146,7 +146,7 @@ uint32_t ixfs_cow_block(struct ixfs_volume *vol,
     if (vol->refcount_table[old_disk_block] <= 1)
         return old_disk_block;  /* not shared, no CoW needed */
 
-    /* Shared block — copy on write */
+    /* Shared block -- copy on write */
     new_blk = ixfs_alloc_block(vol);
     if (new_blk == 0)
         return old_disk_block;  /* allocation failed, write in-place */
@@ -213,7 +213,7 @@ uint32_t ixfs_cow_block(struct ixfs_volume *vol,
                     inode->i_extent_count++;
                 }
             } else {
-                /* Middle: simplified — just update the start for now.
+                /* Middle: simplified -- just update the start for now.
                  * Full split would require 3 extents; for simplicity
                  * we update the block reference directly. */
                 inode->i_extents[i].e_start = (uint64_t)new_blk;

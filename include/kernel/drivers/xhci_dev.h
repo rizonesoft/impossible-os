@@ -1,5 +1,5 @@
 /* ============================================================================
- * xhci_dev.h — USB device enumeration for xHCI
+ * xhci_dev.h -- USB device enumeration for xHCI
  *
  * PORTSC register bits, USB descriptor structures, xHCI device context
  * layout, and enumeration API.
@@ -36,10 +36,10 @@ struct xhci_controller;
 
 /* ---- USB speed constants (xHCI PORTSC encoding) -------------------------- */
 
-#define USB_SPEED_FULL      1   /* Full Speed (12 Mbps)    — max pkt  64 */
-#define USB_SPEED_LOW       2   /* Low Speed (1.5 Mbps)    — max pkt   8 */
-#define USB_SPEED_HIGH      3   /* High Speed (480 Mbps)   — max pkt  64 */
-#define USB_SPEED_SUPER     4   /* SuperSpeed (5 Gbps)     — max pkt 512 */
+#define USB_SPEED_FULL      1   /* Full Speed (12 Mbps)    -- max pkt  64 */
+#define USB_SPEED_LOW       2   /* Low Speed (1.5 Mbps)    -- max pkt   8 */
+#define USB_SPEED_HIGH      3   /* High Speed (480 Mbps)   -- max pkt  64 */
+#define USB_SPEED_SUPER     4   /* SuperSpeed (5 Gbps)     -- max pkt 512 */
 
 /* ---- USB Descriptor types ------------------------------------------------ */
 

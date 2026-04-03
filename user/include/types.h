@@ -1,5 +1,5 @@
 /* ============================================================================
- * types.h — Basic integer types for userland programs
+ * types.h -- Basic integer types for userland programs
  * ============================================================================ */
 
 #pragma once

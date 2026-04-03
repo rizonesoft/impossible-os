@@ -1,5 +1,5 @@
 /* ============================================================================
- * ahci.h — AHCI (SATA) Disk Driver
+ * ahci.h -- AHCI (SATA) Disk Driver
  *
  * Advanced Host Controller Interface for SATA drives.
  * Detected via PCI class 0x01 (storage), subclass 0x06 (AHCI).
@@ -130,8 +130,8 @@
 #define AHCI_SIG_PM         0x96690101  /* Port multiplier */
 
 /* ---- FIS types ---- */
-#define FIS_TYPE_REG_H2D    0x27   /* Register FIS — Host to Device */
-#define FIS_TYPE_REG_D2H    0x34   /* Register FIS — Device to Host */
+#define FIS_TYPE_REG_H2D    0x27   /* Register FIS -- Host to Device */
+#define FIS_TYPE_REG_D2H    0x34   /* Register FIS -- Device to Host */
 #define FIS_TYPE_DMA_ACT    0x39   /* DMA Activate FIS */
 #define FIS_TYPE_DMA_SETUP  0x41   /* DMA Setup FIS */
 #define FIS_TYPE_DATA       0x46   /* Data FIS */
@@ -155,7 +155,7 @@
 #define SCSI_READ_CAPACITY    0x25   /* READ CAPACITY (10) */
 #define SCSI_READ_10          0x28   /* READ (10) */
 #define SCSI_GET_CONFIGURATION 0x46  /* GET CONFIGURATION (MMC) */
-#define SCSI_READ_12          0xA8   /* READ (12) — for >65535 block transfers */
+#define SCSI_READ_12          0xA8   /* READ (12) -- for >65535 block transfers */
 
 /* ---- SCSI Sense Keys ---- */
 #define SCSI_SK_NO_SENSE        0x00
@@ -401,7 +401,7 @@ void ahci_flush_error_counters(void);
  * Notifies SSDs that deleted blocks can be erased internally. */
 int ahci_trim(int port_idx, uint64_t lba, uint32_t count);
 
-/* Write with Force Unit Access — data committed to non-volatile media.
+/* Write with Force Unit Access -- data committed to non-volatile media.
  * Falls back to normal write + FLUSH CACHE EXT if FUA not supported. */
 int ahci_write_fua(int port_idx, uint64_t lba, uint32_t count,
                    const void *buffer);
@@ -411,14 +411,14 @@ int ahci_flush(int port_idx);
 
 /* ---- API: NCQ (Native Command Queuing) ---- */
 
-/* Synchronous NCQ read — falls back to DMA if NCQ not supported. */
+/* Synchronous NCQ read -- falls back to DMA if NCQ not supported. */
 int ahci_ncq_read(int port_idx, uint64_t lba, uint32_t count, void *buffer);
 
-/* Synchronous NCQ write — falls back to DMA if NCQ not supported. */
+/* Synchronous NCQ write -- falls back to DMA if NCQ not supported. */
 int ahci_ncq_write(int port_idx, uint64_t lba, uint32_t count,
                    const void *buffer);
 
-/* Asynchronous NCQ submit — returns tag (0–31) or -1 on error.
+/* Asynchronous NCQ submit -- returns tag (0–31) or -1 on error.
  * Callback is called from ISR context on completion. */
 int ahci_submit(int port_idx, uint64_t lba, uint32_t count, void *buffer,
                 int is_write, ahci_callback_t callback, void *ctx);

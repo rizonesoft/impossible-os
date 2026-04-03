@@ -50,7 +50,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/kmath.h"
 
-/* <stdio.h> — sprintf/sscanf */
+/* <stdio.h> -- sprintf/sscanf */
 #define sscanf(...)  0  /* cJSON sscanf used only in parse_number locale path */
 static inline int sprintf(char *buf, const char *fmt, ...)
 {
@@ -61,7 +61,7 @@ static inline int sprintf(char *buf, const char *fmt, ...)
     return ret;
 }
 
-/* <stdlib.h> — malloc/free/realloc/strtod */
+/* <stdlib.h> -- malloc/free/realloc/strtod */
 static inline void *cjson_malloc(size_t sz) { return kmalloc((uint32_t)sz); }
 static inline void  cjson_free(void *p) { kfree(p); }
 static inline void *cjson_realloc(void *p, size_t sz) { return krealloc(p, (uint32_t)sz); }
@@ -116,7 +116,7 @@ static inline int isalpha(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' &&
 #define DBL_MAX     1.7976931348623157e+308
 #define DBL_EPSILON 2.2204460492503131e-16
 
-/* <math.h> — floor/fabs/pow */
+/* <math.h> -- floor/fabs/pow */
 #define floor(x)   kmath_floor(x)
 #define fabs(x)    kmath_fabs(x)
 #define pow(x, y)  kmath_pow(x, y)

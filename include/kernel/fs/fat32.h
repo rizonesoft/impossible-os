@@ -1,5 +1,5 @@
 /* ============================================================================
- * fat32.h — FAT32 Filesystem Driver (Multi-Volume)
+ * fat32.h -- FAT32 Filesystem Driver (Multi-Volume)
  *
  * Parses FAT32 volumes via the block device abstraction layer, provides
  * VFS operations for directory listing and file reading. Supports both
@@ -18,7 +18,7 @@
 struct blkdev;
 struct fat32_volume;
 
-/* FAT32 BPB (BIOS Parameter Block) — parsed from boot sector */
+/* FAT32 BPB (BIOS Parameter Block) -- parsed from boot sector */
 struct fat32_bpb {
     uint16_t bytes_per_sector;
     uint8_t  sectors_per_cluster;
@@ -70,7 +70,7 @@ int fat32_create_file(uint32_t dir_cluster, const char *name);
  * Returns 0 on success, -1 on failure. */
 int fat32_create_dir(uint32_t parent_cluster, const char *name);
 
-/* Write data to a file (overwrite mode — replaces existing content).
+/* Write data to a file (overwrite mode -- replaces existing content).
  * Returns 0 on success, -1 on failure. */
 int fat32_write_file(uint32_t dir_cluster, const char *name,
                      const void *data, uint32_t size);

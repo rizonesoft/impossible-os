@@ -1,23 +1,23 @@
-# TODO-01 — Web Browser
+# TODO-01 -- Web Browser
 
 **Domain:** `10-apps`
-**Goal:** Deliver the flagship browser app for Impossible OS — from a ~500-line text-only HTML fetcher to a full tab-based browser with HTML/CSS rendering, browser chrome, and settings — demonstrating the complete networking stack end-to-end.
+**Goal:** Deliver the flagship browser app for Impossible OS -- from a ~500-line text-only HTML fetcher to a full tab-based browser with HTML/CSS rendering, browser chrome, and settings -- demonstrating the complete networking stack end-to-end.
 
 > [!IMPORTANT]
-> **Depends on:** `06-networking/TODO-03-http-tls.md` — `http_get(url, buf, max)`, `https_get()`, `http_post()`, TLS 1.2/1.3 (Mbed TLS) must be working. `ttf_draw_string()`/`ttf_measure_width()` from `include/font_mgr.h`. `image_load_mem()` from `include/kernel/image.h`. `CTRL_TABSTRIP` from `07-graphics-ui/TODO-04 §6`.
+> **Depends on:** `06-networking/TODO-03-http-tls.md` -- `http_get(url, buf, max)`, `https_get()`, `http_post()`, TLS 1.2/1.3 (Mbed TLS) must be working. `ttf_draw_string()`/`ttf_measure_width()` from `include/font_mgr.h`. `image_load_mem()` from `include/kernel/image.h`. `CTRL_TABSTRIP` from `07-graphics-ui/TODO-04 §6`.
 > **Alternative path:** §6 tracks NetSurf / Dillo as a faster-path drop-in; evaluate before starting §2 (HTML parser). A port may save thousands of lines.
 
 ---
 
 ## Important Notes
 
-- `http_get(url, buf, max)` and `https_get()` exist in `06-networking/TODO-03` — these are the only network primitives the browser calls directly; no raw socket work needed here.
-- `ttf_draw_string()`, `ttf_draw_char()`, and `ttf_measure_width()` exist in `include/font_mgr.h` — the layout engine uses `ttf_measure_width` for per-word inline flow, no custom glyph shaping needed.
-- `image_load_mem(img, data, size)` in `include/kernel/image.h` decodes JPEG/PNG from a memory buffer — `<img src>` fetches via `http_get` into a buffer then calls this.
+- `http_get(url, buf, max)` and `https_get()` exist in `06-networking/TODO-03` -- these are the only network primitives the browser calls directly; no raw socket work needed here.
+- `ttf_draw_string()`, `ttf_draw_char()`, and `ttf_measure_width()` exist in `include/font_mgr.h` -- the layout engine uses `ttf_measure_width` for per-word inline flow, no custom glyph shaping needed.
+- `image_load_mem(img, data, size)` in `include/kernel/image.h` decodes JPEG/PNG from a memory buffer -- `<img src>` fetches via `http_get` into a buffer then calls this.
 - `CTRL_TABSTRIP` (max 16 tabs) is defined in `07-graphics-ui/TODO-04 §6`; each tab owns an independent `browser_tab_t` struct with its own URL, DOM, and scroll position.
-- The CSS parser (§4) and JavaScript engine (§5) are stretch goals — do not let them block §1–3 or §7–8.
-- NetSurf/Dillo (§6) must be evaluated before investing in a custom HTML parser — porting either saves ~10–15 K lines of bespoke work.
-- Browser settings are stored under `HKCU\Software\Impossible\Browser\` — the same registry used by other OS apps.
+- The CSS parser (§4) and JavaScript engine (§5) are stretch goals -- do not let them block §1–3 or §7–8.
+- NetSurf/Dillo (§6) must be evaluated before investing in a custom HTML parser -- porting either saves ~10–15 K lines of bespoke work.
+- Browser settings are stored under `HKCU\Software\Impossible\Browser\` -- the same registry used by other OS apps.
 - No cookie jar in Phase 1; add it in §8 (settings) alongside history/cache/bookmark persistence.
 
 ---
@@ -28,21 +28,21 @@
 |------|---------|
 | `06-networking/TODO-03-http-tls.md` | `http_get`, `https_get`, `http_post`, redirect + chunked TE |
 | `include/font_mgr.h` | `ttf_draw_string`, `ttf_measure_width`, `ttf_draw_char` |
-| `include/kernel/image.h` | `image_load_mem()` — decode JPEG/PNG from HTTP response |
+| `include/kernel/image.h` | `image_load_mem()` -- decode JPEG/PNG from HTTP response |
 | `include/desktop/wm.h` | `wm_create_window`, `wm_destroy_window` |
 | `include/desktop/controls.h` | `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR` |
 | `07-graphics-ui/TODO-04 §6` | `CTRL_TABSTRIP` (16 tabs, accent underline) |
-| `include/registry.h` | `registry_get/set()` — homepage, search engine, bookmarks |
-| → XREF: `06-networking/TODO-03` | HTTP/HTTPS client — mandatory prerequisite |
-| → XREF: `07-graphics-ui/TODO-04 §6` | `CTRL_TABSTRIP` — browser tabs widget |
+| `include/registry.h` | `registry_get/set()` -- homepage, search engine, bookmarks |
+| → XREF: `06-networking/TODO-03` | HTTP/HTTPS client -- mandatory prerequisite |
+| → XREF: `07-graphics-ui/TODO-04 §6` | `CTRL_TABSTRIP` -- browser tabs widget |
 | → XREF: `09-services-security/TODO-08 §10–11` | IxUI `user32`/`gdi32` for window + rendering in user-mode |
 
 ---
 
 ## Outcome
 
-- Phase 1: Text-only browser navigates HTTP/HTTPS URLs, strips HTML, displays plain text + numbered link list, back/forward history, address bar — ~500 lines, proven in QEMU.
-- Phase 2: Full HTML renderer — tokenizer → DOM tree → block/inline layout engine with 14 tag types, images, tables, word-wrap.
+- Phase 1: Text-only browser navigates HTTP/HTTPS URLs, strips HTML, displays plain text + numbered link list, back/forward history, address bar -- ~500 lines, proven in QEMU.
+- Phase 2: Full HTML renderer -- tokenizer → DOM tree → block/inline layout engine with 14 tag types, images, tables, word-wrap.
 - Phase 3: CSS box model, selectors, cascade.
 - Phase 4 (long-term): JavaScript via QuickJS or Duktape.
 - Browser chrome: multi-tab (`CTRL_TABSTRIP`), toolbar (←/→/↺/Home + address bar + 🔒), bookmarks bar, right-click context menu.
@@ -58,7 +58,7 @@
 | 2 | HTML tokenizer + DOM tree | `[Opus]` | §1 | 💎 |
 | 3 | Layout engine (block + inline flow) | `[Opus]` | §2 | 💎 |
 | 4 | CSS parser + cascade (stretch) | `[Opus]` | §3 | 💎 |
-| 5 | JavaScript engine — QuickJS/Duktape (long-term) | `[Opus]` | §3 | 💎 |
+| 5 | JavaScript engine -- QuickJS/Duktape (long-term) | `[Opus]` | §3 | 💎 |
 | 6 | Alternative: NetSurf / Dillo port evaluation | `[Sonnet]` | §1 | 💎 |
 | 7 | Browser chrome (tabs, toolbar, bookmarks, context menu) | `[Sonnet]` | §1 or §6, XREF: 07-gfx/TODO-04 §6 | ⭐ |
 | 8 | Browser settings + history + cookie jar | `[Sonnet]` | §7 | 💎 |
@@ -91,12 +91,12 @@
 
 Tokenize raw HTML into a `dom_node` tree. This is the foundation for both §3 (layout) and §4 (CSS).
 
-- [ ] Tokenizer — char-by-char state machine (`src/apps/browser/html_tokenizer.c`):
+- [ ] Tokenizer -- char-by-char state machine (`src/apps/browser/html_tokenizer.c`):
   - States: `DATA`, `TAG_OPEN`, `TAG_NAME`, `ATTR_NAME`, `ATTR_VALUE_UNQUOTED`, `ATTR_VALUE_SINGLE`, `ATTR_VALUE_DOUBLE`, `SELF_CLOSE`, `COMMENT_START`, `COMMENT`
   - Emit tokens: `TOKEN_DOCTYPE`, `TOKEN_START_TAG(name, attrs[])`, `TOKEN_END_TAG(name)`, `TOKEN_TEXT(data)`, `TOKEN_COMMENT`
   - HTML entity decoder: `&lt;`→`<`, `&gt;`→`>`, `&amp;`→`&`, `&nbsp;`→` `, `&quot;`→`"`, numeric `&#N;` and `&#xN;`
 - [ ] DOM tree builder (`src/apps/browser/dom.c`):
-  - `struct dom_node { uint8_t type; /* ELEMENT / TEXT / COMMENT */ char tag[32]; dom_attr_t attrs[16]; struct dom_node *parent, *first_child, *next_sibling; char *text; }` — all allocations via `kmalloc`/`kfree`
+  - `struct dom_node { uint8_t type; /* ELEMENT / TEXT / COMMENT */ char tag[32]; dom_attr_t attrs[16]; struct dom_node *parent, *first_child, *next_sibling; char *text; }` -- all allocations via `kmalloc`/`kfree`
   - `dom_parse(html, len)` → run tokenizer; push/pop element stack; build tree; return root `<html>` node
   - `dom_find(node, tag)` → first descendant with matching tag name
   - `dom_get_attr(node, name)` → attribute value string or NULL
@@ -111,7 +111,7 @@ Tokenize raw HTML into a `dom_node` tree. This is the foundation for both §3 (l
 
 Converts the DOM tree into a rendered page on a `gfx_surface_t`. Core of a real browser.
 
-- [ ] `struct layout_box { int32_t x, y, w, h; dom_node_t *node; struct layout_box *children; }` — one box per block/inline element
+- [ ] `struct layout_box { int32_t x, y, w, h; dom_node_t *node; struct layout_box *children; }` -- one box per block/inline element
 - [ ] **Block formatting context** (top-to-bottom, each block on new line):
   - Block elements: `h1`–`h6`, `p`, `div`, `ul`, `ol`, `li`, `table`, `hr`, `pre`
   - Each advances `cursor_y` by its height + margin; margin: `p` = 12 px top+bottom; `h1` = 20 px; `h2`–`h6` scaled proportionally
@@ -135,7 +135,7 @@ Converts the DOM tree into a rendered page on a `gfx_surface_t`. Core of a real 
 
 ## 4. CSS Parser + Cascade (Stretch) `[Opus]`
 
-Adds styling to the layout engine. Stretch goal — only start after §3 is complete and stable.
+Adds styling to the layout engine. Stretch goal -- only start after §3 is complete and stable.
 
 - [ ] CSS tokenizer: extract `selector { property: value; ... }` rules from `<style>` blocks and inline `style=""` attributes
 - [ ] Selector matching: element name (`p`), class (`.foo` matches `class="foo"`), ID (`#bar` matches `id="bar"`); no compound selectors initially
@@ -153,7 +153,7 @@ Adds styling to the layout engine. Stretch goal — only start after §3 is comp
 
 ## 5. JavaScript Engine (Long-Term Stretch) `[Opus]`
 
-> Long-term. Do not start until §3 is complete and §6 (NetSurf/Dillo) evaluation is done — a port may include a JS engine.
+> Long-term. Do not start until §3 is complete and §6 (NetSurf/Dillo) evaluation is done -- a port may include a JS engine.
 
 - [ ] Evaluate **QuickJS** (MIT, ~35 K lines, ES2020) vs **Duktape** (MIT, ~60 K lines, ES5.1): QuickJS is preferred for ES2020 compliance; Duktape for smaller footprint
 - [ ] Port selected engine: replace `malloc`/`free` → `kmalloc`/`kfree`; replace POSIX I/O; replace `printf` → `serial_write`; compile under `-ffreestanding -nostdinc`
@@ -174,9 +174,9 @@ Adds styling to the layout engine. Stretch goal — only start after §3 is comp
 
 Evaluate before investing in §2–§5. A port may deliver a full browser faster than building from scratch.
 
-- [ ] **NetSurf** (GPL, ~200 K lines): has a custom layout engine (Hubbub HTML parser + LibCSS), Amiga/RISC OS/framebuffer backends already exist — the framebuffer backend maps closely to Impossible OS `gfx_surface_t`
+- [ ] **NetSurf** (GPL, ~200 K lines): has a custom layout engine (Hubbub HTML parser + LibCSS), Amiga/RISC OS/framebuffer backends already exist -- the framebuffer backend maps closely to Impossible OS `gfx_surface_t`
   - Prerequisites already met: TCP, DNS, TLS, framebuffer, TTF fonts
-  - Evaluate: `#include` audit (POSIX deps: `stdio.h`, `string.h`, `stdlib.h` — all need kernel substitutes)
+  - Evaluate: `#include` audit (POSIX deps: `stdio.h`, `string.h`, `stdlib.h` -- all need kernel substitutes)
   - Estimate port effort: ~2–4 weeks of include + libc replacement
 - [ ] **Dillo** (GPL, ~30 K lines): minimal HTML/CSS, FLTK UI (must be replaced with IxUI); simpler but fewer features
 - [ ] Decision gate: if NetSurf port is feasible → pursue §6 as primary path and reduce §2–§5 scope; if not → continue custom path
@@ -188,7 +188,7 @@ Evaluate before investing in §2–§5. A port may deliver a full browser faster
 
 Multi-tab UI, toolbar, bookmarks bar, and context menu. Built on top of §1 (text browser) or §6 (port).
 
-- [ ] **Tab bar**: `CTRL_TABSTRIP` (from `07-graphics-ui/TODO-04 §6`, max 16 tabs); each tab has: `{ char title[64]; char url[512]; dom_node_t *dom_root; int32_t scroll_y; }` — switching tabs restores DOM + scroll position without re-fetching
+- [ ] **Tab bar**: `CTRL_TABSTRIP` (from `07-graphics-ui/TODO-04 §6`, max 16 tabs); each tab has: `{ char title[64]; char url[512]; dom_node_t *dom_root; int32_t scroll_y; }` -- switching tabs restores DOM + scroll position without re-fetching
 - [ ] New tab button `[+]`: opens `browser_new_tab()` → blank page; `browser_navigate(url)` fetches into active tab
 - [ ] Close tab `×` on each tab header; last tab close → exit app or show new-tab page
 - [ ] **Toolbar** (fixed strip below tab bar, height 40 px):
@@ -218,8 +218,8 @@ Settings page (`browser://settings`) and privacy controls. All state in `HKCU\So
 
 - [ ] **Registry keys**:
   - `HomePage` (REG_SZ, default `"about:blank"`)
-  - `SearchEngine` (REG_SZ, default `"https://google.com/search?q=%s"`) — address bar non-URL input → substitute `%s` + navigate
-  - `BlockPopups` (REG_DWORD, default 1) — block `window.open()` calls in JS
+  - `SearchEngine` (REG_SZ, default `"https://google.com/search?q=%s"`) -- address bar non-URL input → substitute `%s` + navigate
+  - `BlockPopups` (REG_DWORD, default 1) -- block `window.open()` calls in JS
   - `ClearHistoryOnExit` (REG_DWORD, default 0)
   - `DownloadPath` (REG_SZ, default `"C:\\Users\\Default\\Downloads\\"`)
   - `Bookmarks` (REG_MULTI_SZ, `"title|url"` per entry)
@@ -242,8 +242,8 @@ Settings page (`browser://settings`) and privacy controls. All state in `HKCU\So
 |----|---------------------------------------------|-------------------------------------|----------------------------------|-----------------------------------------|
 | 💎 | HTTP/HTTPS page fetch                       | ✅ Edge/WebView2                    | ✅ Firefox/Chrome                | ⬜ `https_get()`                        |
 | 💎 | HTML renderer                               | ✅ Blink engine                     | ✅ Gecko/Blink                   | ⬜ custom or NetSurf port               |
-| 💎 | CSS box model + selectors                   | ✅ Blink                            | ✅ Gecko/Blink                   | ⬜ §4 — (stretch )                      |
-| 💎 | JavaScript engine                           | ✅ V8                               | ✅ V8/SpiderMonkey               | ⬜ §5 — (long-term , QuickJS/Duktape)   |
+| 💎 | CSS box model + selectors                   | ✅ Blink                            | ✅ Gecko/Blink                   | ⬜ §4 -- (stretch )                      |
+| 💎 | JavaScript engine                           | ✅ V8                               | ✅ V8/SpiderMonkey               | ⬜ §5 -- (long-term , QuickJS/Duktape)   |
 | 💎 | Multi-tab browser                           | ✅ Edge tabs                        | ✅ Firefox tabs                  | ⬜ `CTRL_TABSTRIP` (16 tabs)            |
 | 💎 | HTTPS 🔒 padlock indicator                  | ✅ Edge                             | ✅ Firefox                       | ⬜ Fluent `lock_closed` icon            |
 | 💎 | Bookmarks + history                         | ✅ Edge                             | ✅ Firefox                       | ⬜ Registry-backed                      |
@@ -253,7 +253,7 @@ Settings page (`browser://settings`) and privacy controls. All state in `HKCU\So
 | ⭐ | Entire browser built on OS's own HTTP stack | ❌ Chromium ships own network layer | ❌ Gecko ships own network layer | ⬜ reuses kernel `http_get`/`https_get` |
 | ⭐ | Settings, bookmarks, history in OS Registry | ❌ Separate profile format          | ❌ SQLite profile                | ⬜ `HKCU\Software\Impossible\Browser\`  |
 
-**Impossible OS advantage:** The browser is the first app that exercises every major OS subsystem simultaneously — networking, TLS, TTF rendering, image decoding, IxUI windows, registry, and clipboard. Phase 1 delivers a working browser in ~500 lines by reusing the kernel's `https_get()` directly, with no Chromium or Firefox dependency. All state lives in the OS Registry, making profiles trivially inspectable and portable.
+**Impossible OS advantage:** The browser is the first app that exercises every major OS subsystem simultaneously -- networking, TLS, TTF rendering, image decoding, IxUI windows, registry, and clipboard. Phase 1 delivers a working browser in ~500 lines by reusing the kernel's `https_get()` directly, with no Chromium or Firefox dependency. All state lives in the OS Registry, making profiles trivially inspectable and portable.
 
 ---
 

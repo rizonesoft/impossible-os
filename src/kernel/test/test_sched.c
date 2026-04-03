@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_sched.c — Scheduler / threading unit tests
+ * test_sched.c -- Scheduler / threading unit tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

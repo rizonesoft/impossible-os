@@ -1,5 +1,5 @@
 /* ============================================================================
- * smbios.h — SMBIOS System Information Parser
+ * smbios.h -- SMBIOS System Information Parser
  *
  * Parses SMBIOS tables found via UEFI Configuration Table.
  * Extracts system manufacturer, product name, BIOS version, CPU info,
@@ -40,23 +40,23 @@ struct smbios_dimm_info {
 
 /* System information extracted from SMBIOS tables */
 struct smbios_system_info {
-    /* Type 0 — BIOS Information */
+    /* Type 0 -- BIOS Information */
     char bios_vendor[SMBIOS_STRING_MAX];
     char bios_version[SMBIOS_STRING_MAX];
     char bios_date[SMBIOS_STRING_MAX];
 
-    /* Type 1 — System Information */
+    /* Type 1 -- System Information */
     char    sys_manufacturer[SMBIOS_STRING_MAX];
     char    sys_product[SMBIOS_STRING_MAX];
     char    sys_version[SMBIOS_STRING_MAX];
     char    sys_serial[SMBIOS_STRING_MAX];
     uint8_t sys_uuid[16];   /* raw UUID bytes in SMBIOS wire order */
 
-    /* Type 2 — Baseboard */
+    /* Type 2 -- Baseboard */
     char board_manufacturer[SMBIOS_STRING_MAX];
     char board_product[SMBIOS_STRING_MAX];
 
-    /* Type 4 — Processor (per socket; legacy single-socket summary kept) */
+    /* Type 4 -- Processor (per socket; legacy single-socket summary kept) */
     char     cpu_manufacturer[SMBIOS_STRING_MAX];
     char     cpu_socket[SMBIOS_STRING_MAX];
     uint16_t cpu_max_speed_mhz;
@@ -67,7 +67,7 @@ struct smbios_system_info {
     struct smbios_cpu_info  cpus[SMBIOS_CPU_MAX];
     uint8_t                 cpu_count;
 
-    /* Type 17 — Memory (aggregate summary kept for legacy callers) */
+    /* Type 17 -- Memory (aggregate summary kept for legacy callers) */
     uint32_t ram_total_mb;
     uint16_t ram_speed_mhz;
     uint8_t  ram_type;
@@ -90,7 +90,7 @@ struct smbios_system_info {
 #define SMBIOS_MEM_DDR5   34
 #define SMBIOS_MEM_LPDDR5 35
 
-/* Initialize SMBIOS — find tables via config table, parse, log summary.
+/* Initialize SMBIOS -- find tables via config table, parse, log summary.
  * Must be called after uefi_config_init(). */
 void smbios_init(void);
 

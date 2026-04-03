@@ -1,5 +1,5 @@
 /* ============================================================================
- * pci.c — PCI bus driver
+ * pci.c -- PCI bus driver
  *
  * Configuration space access via I/O ports 0xCF8/0xCFC.
  * Scans all bus/device/function combinations and logs found devices.

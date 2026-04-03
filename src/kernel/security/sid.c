@@ -1,5 +1,5 @@
 /* ============================================================================
- * sid.c — SID primitives, well-known SID table, and utility functions
+ * sid.c -- SID primitives, well-known SID table, and utility functions
  *
  * Implements TODO-11 §1.1: SID type and helpers.
  * ============================================================================ */

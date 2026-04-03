@@ -1,5 +1,5 @@
 /* ============================================================================
- * blk_internal.h — VirtIO Block Driver Internal Shared State
+ * blk_internal.h -- VirtIO Block Driver Internal Shared State
  *
  * Shared between blk_*.c files. NOT part of the public API.
  * One file (blk_core.c) defines BLK_DEFINE_GLOBALS to instantiate storage.

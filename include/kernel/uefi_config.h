@@ -1,5 +1,5 @@
 /* ============================================================================
- * uefi_config.h — UEFI Configuration Table Walker
+ * uefi_config.h -- UEFI Configuration Table Walker
  *
  * Searches the UEFI configuration table (copied into boot_info by the
  * bootloader) for entries identified by GUID.  Provides uefi_find_config_table()
@@ -75,7 +75,7 @@ struct esrt_entry {
 
 #define ESRT_MAX_ENTRIES 16
 
-/* Initialize ESRT — parse EFI_SYSTEM_RESOURCE_TABLE from config table.
+/* Initialize ESRT -- parse EFI_SYSTEM_RESOURCE_TABLE from config table.
  * Must be called after uefi_config_init(). */
 void esrt_init(void);
 
@@ -101,7 +101,7 @@ struct efi_memory_attributes_table {
     /* followed by number_of_entries × EFI_MEMORY_DESCRIPTOR */
 };
 
-/* Initialize Memory Attributes Table — parse and log W^X status.
+/* Initialize Memory Attributes Table -- parse and log W^X status.
  * Must be called after uefi_config_init(). */
 void mat_init(void);
 

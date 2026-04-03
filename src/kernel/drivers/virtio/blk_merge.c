@@ -1,15 +1,15 @@
 /* ============================================================================
- * blk_merge.c — I/O Request Coalescing Layer
+ * blk_merge.c -- I/O Request Coalescing Layer
  *
- * §18.1 — 🚀 Impossible OS Exclusive
+ * §18.1 -- 🚀 Impossible OS Exclusive
  *
  * Neither Windows viostor nor Linux virtio-blk merge adjacent I/O requests
- * at the VirtIO driver level — Linux relies on blk-mq merge logic (above
+ * at the VirtIO driver level -- Linux relies on blk-mq merge logic (above
  * the driver), Windows viostor submits requests individually.
  *
  * This module implements lightweight request coalescing directly in the
  * block driver. When consecutive reads/writes target contiguous LBA ranges,
- * they are combined into a single larger device request — reducing queue
+ * they are combined into a single larger device request -- reducing queue
  * entries consumed, submission overhead, and host-side context switches.
  *
  * Design:
@@ -140,9 +140,9 @@ int merge_try_coalesce(uint32_t type, uint64_t sector, uint32_t count,
     (void)buffer;  /* Used for future write merging */
 
     if (!mg.enabled)
-        return 0;  /* No merge — submit as-is */
+        return 0;  /* No merge -- submit as-is */
 
-    /* Only merge reads and writes — bypass flush, discard, etc. */
+    /* Only merge reads and writes -- bypass flush, discard, etc. */
     if (type != VIRTIO_BLK_T_IN && type != VIRTIO_BLK_T_OUT) {
         mg.bypassed++;
         mg.has_last = 0;
@@ -153,7 +153,7 @@ int merge_try_coalesce(uint32_t type, uint64_t sector, uint32_t count,
 
     /* Check if this request is contiguous with the last one */
     if (!mg.has_last || mg.last_type != type) {
-        /* No previous request or direction changed — just record */
+        /* No previous request or direction changed -- just record */
         mg.last_sector = sector;
         mg.last_count  = count;
         mg.last_type   = type;
@@ -166,7 +166,7 @@ int merge_try_coalesce(uint32_t type, uint64_t sector, uint32_t count,
     if (tsc_per_us > 0) {
         delta_us = (now_tsc - mg.last_tsc) / tsc_per_us;
         if (delta_us > mg.delay_us) {
-            /* Outside merge window — reset and submit normally */
+            /* Outside merge window -- reset and submit normally */
             mg.last_sector = sector;
             mg.last_count  = count;
             mg.last_tsc    = now_tsc;
@@ -191,7 +191,7 @@ int merge_try_coalesce(uint32_t type, uint64_t sector, uint32_t count,
         mg.merges_total++;
         mg.merged_sectors += combined;
         mg.has_last = 0;  /* Reset after merge */
-        return 1;  /* Merged — forward */
+        return 1;  /* Merged -- forward */
     }
 
     /* Backward merge: new request extends beginning of previous */
@@ -210,11 +210,11 @@ int merge_try_coalesce(uint32_t type, uint64_t sector, uint32_t count,
         mg.merges_total++;
         mg.merged_sectors += combined;
         mg.has_last = 0;
-        return 2;  /* Merged — backward */
+        return 2;  /* Merged -- backward */
     }
 
 no_merge:
-    /* Not contiguous — update tracking for next call */
+    /* Not contiguous -- update tracking for next call */
     mg.last_sector = sector;
     mg.last_count  = count;
     mg.last_tsc    = now_tsc;
@@ -281,7 +281,7 @@ int merge_execute_read(int merge_dir, uint64_t original_sector,
 /* Execute a merged write: gather into combined buffer, write combined range.
  *
  * merge_dir: 1 = forward, 2 = backward
- * For writes, we need the previous request's buffer too — but we don't
+ * For writes, we need the previous request's buffer too -- but we don't
  * have it (it was already submitted). So write merging is simulated:
  * we track the merge opportunity and report it in stats, but the actual
  * I/O is submitted as individual requests. Future: add deferred write queue.

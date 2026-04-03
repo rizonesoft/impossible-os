@@ -1,4 +1,4 @@
-# run-nvme-test.ps1 — Launch Impossible OS with an emulated NVMe drive
+# run-nvme-test.ps1 -- Launch Impossible OS with an emulated NVMe drive
 #
 # Attaches a 128 MiB raw NVMe drive alongside the regular AHCI system disk.
 # Use this to develop and test the NVMe storage driver (TODO-08).
@@ -20,7 +20,7 @@ Param(
     # TCG required: QEMU's WHPX backend processes NVMe doorbell MMIO writes
     # asynchronously through its event loop. The vCPU polls the CQ before
     # the main thread processes the command, causing intermittent timeouts.
-    # Not a driver bug — real hardware and KVM handle this synchronously.
+    # Not a driver bug -- real hardware and KVM handle this synchronously.
     [string]$Accel = 'tcg',
     [switch]$Build = $false
 )

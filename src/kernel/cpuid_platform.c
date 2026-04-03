@@ -1,5 +1,5 @@
 /* ============================================================================
- * cpuid_platform.c — CPUID-based Platform Detection
+ * cpuid_platform.c -- CPUID-based Platform Detection
  *
  * Detects hypervisor (or bare metal) by reading CPUID leaves at boot.
  * Called by the Unified Timer Subsystem to choose the right backend.
@@ -16,7 +16,7 @@
  *   4. No HV bit → PLATFORM_BARE_METAL
  *   5. Unknown HV → PLATFORM_UNKNOWN_HV
  *
- * Reference: Intel SDM Vol. 2A — CPUID instruction
+ * Reference: Intel SDM Vol. 2A -- CPUID instruction
  * ============================================================================ */
 
 #include "kernel/cpuid_platform.h"
@@ -62,24 +62,24 @@ platform_id_t platform_detect(void)
 
     detected = 1;
 
-    /* Step 1: Check CPUID.01H:ECX bit 31 — hypervisor present bit */
+    /* Step 1: Check CPUID.01H:ECX bit 31 -- hypervisor present bit */
     cpuid(0x01, &eax, &ebx, &ecx, &edx);
 
     if (!(ecx & (1u << 31))) {
-        /* No hypervisor — bare metal */
+        /* No hypervisor -- bare metal */
         cached_platform = PLATFORM_BARE_METAL;
         klog(LOG_INFO, "platform", "Detected: Bare Metal (no hypervisor bit)");
         return cached_platform;
     }
 
-    /* Step 2: Read CPUID leaf 0x40000000 — hypervisor vendor string.
+    /* Step 2: Read CPUID leaf 0x40000000 -- hypervisor vendor string.
      * EBX:ECX:EDX = 12-byte ASCII vendor ID (not null-terminated). */
     cpuid(0x40000000, &eax, &ebx, &ecx, &edx);
 
     /* Step 3: Match vendor strings.
      * EBX=chars[0..3], ECX=chars[4..7], EDX=chars[8..11] */
 
-    /* "Microsoft Hv" — Hyper-V (Gen 1 and Gen 2) */
+    /* "Microsoft Hv" -- Hyper-V (Gen 1 and Gen 2) */
     if (u32_eq(ebx, "Micr") && u32_eq(ecx, "osof") && u32_eq(edx, "t Hv")) {
         cached_platform = PLATFORM_HYPERV;
         g_boot_info.hv_flags = HV_FLAG_TSC_ENLIGHTENMENT |
@@ -96,7 +96,7 @@ platform_id_t platform_detect(void)
         return cached_platform;
     }
 
-    /* "VMwareVMware" — VMware Workstation / Fusion / ESXi */
+    /* "VMwareVMware" -- VMware Workstation / Fusion / ESXi */
     if (u32_eq(ebx, "VMwa") && u32_eq(ecx, "reVM") && u32_eq(edx, "ware")) {
         cached_platform = PLATFORM_VMWARE;
         g_boot_info.hv_flags = HV_FLAG_VMWARE_BACKDOOR | HV_FLAG_APIC_FREQ_MSR;
@@ -110,7 +110,7 @@ platform_id_t platform_detect(void)
         return cached_platform;
     }
 
-    /* "VBoxVBoxVBox" — Oracle VirtualBox */
+    /* "VBoxVBoxVBox" -- Oracle VirtualBox */
     if (u32_eq(ebx, "VBox") && u32_eq(ecx, "VBox") && u32_eq(edx, "VBox")) {
         cached_platform = PLATFORM_VIRTUALBOX;
         {
@@ -123,7 +123,7 @@ platform_id_t platform_detect(void)
         return cached_platform;
     }
 
-    /* "KVMKVMKVM\0\0\0" — KVM (Linux host, hardware virtualization) */
+    /* "KVMKVMKVM\0\0\0" -- KVM (Linux host, hardware virtualization) */
     if (u32_eq(ebx, "KVMK") && u32_eq(ecx, "VMKV") && u32_eq(edx, "M\0\0\0")) {
         cached_platform = PLATFORM_QEMU_KVM;
         g_boot_info.hv_flags = HV_FLAG_KVM_STEAL_TIME;
@@ -138,14 +138,14 @@ platform_id_t platform_detect(void)
         return cached_platform;
     }
 
-    /* "TCGTCGTCGTCG" — QEMU TCG (software emulation, no hardware virt) */
+    /* "TCGTCGTCGTCG" -- QEMU TCG (software emulation, no hardware virt) */
     if (u32_eq(ebx, "TCGT") && u32_eq(ecx, "CGTC") && u32_eq(edx, "GTCG")) {
         cached_platform = PLATFORM_QEMU_TCG;
         klog(LOG_INFO, "platform", "Detected: QEMU/TCG (CPUID 0x40000000)");
         return cached_platform;
     }
 
-    /* Unknown hypervisor — log the raw bytes for debugging */
+    /* Unknown hypervisor -- log the raw bytes for debugging */
     cached_platform = PLATFORM_UNKNOWN_HV;
     klog(LOG_WARN, "platform",
          "Unknown hypervisor: CPUID 0x40000000 = 0x%x-%x-%x",

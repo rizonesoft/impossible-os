@@ -13,24 +13,24 @@ description: Validate a TODO file for structural completeness, Implementation Or
      ```
      rg '^ {2,}[a-zA-Z`'"'"'"]' <file>
      ```
-     Fix **every** match before moving on. Re-run the same grep after fixes — proceed only when it returns zero matches.
-   - **List items** (`- [ ]`, `- [x]`, `- bullet`): remove blank lines between consecutive items in the same group — items must appear one directly after the other with no intervening blank line. Sub-bullets must immediately follow their parent item with no blank line.
+     Fix **every** match before moving on. Re-run the same grep after fixes -- proceed only when it returns zero matches.
+   - **List items** (`- [ ]`, `- [x]`, `- bullet`): remove blank lines between consecutive items in the same group -- items must appear one directly after the other with no intervening blank line. Sub-bullets must immediately follow their parent item with no blank line.
    - **Prose blocks** (Goal block, Prompt text, XREF notes, callout bodies, section intro paragraphs): join hard-wrapped mid-sentence line breaks into a single flowing line. A prose paragraph is one unbroken line unless it is genuinely a new paragraph.
-   - **Callout blocks** (`> [!NOTE]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!TIP]`, `> [!CAUTION]`): no blank lines inside a single callout — the whole callout is one contiguous `>` block.
+   - **Callout blocks** (`> [!NOTE]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!TIP]`, `> [!CAUTION]`): no blank lines inside a single callout -- the whole callout is one contiguous `>` block.
    - **Tables**: no blank lines between rows; keep the header and separator rows but nothing else between data rows.
    - **Preserve** blank lines between: section headings and their first content line, visually distinct list groups covering different subjects, `---` horizontal separators, and code block fences (` ``` `).
    - Do NOT add new line breaks; only remove spurious ones.
 3. **Remove model tags from section headings.**
    - Strip `` `[Opus]` `` and `` `[Sonnet]` `` postfixes from all `## N. Title` headings.
-   - These tags are legacy — model selection is handled by the harness, not the TODO.
+   - These tags are legacy -- model selection is handled by the harness, not the TODO.
 4. Anchor-check the Inputs section.
    - For each file path listed in Inputs, use Glob to confirm it exists on disk.
    - Flag any path that does not exist as a broken anchor; suggest the correct path or note it as planned.
-   - Do not read the files — existence check only.
+   - Do not read the files -- existence check only.
 5. Read the domain `INDEX.md` and all other TODO files in the same domain folder.
    - Use Grep to search for deliverable names and feature keywords across domain TODOs to detect scope overlap.
    - Scan for scope overlap: flag any deliverable claimed by this TODO that is also claimed by another TODO in the domain.
-   - Scan for duplicate XREFs pointing at the same target section — two TODOs depending on the same section is fine; two TODOs both *implementing* it is a conflict.
+   - Scan for duplicate XREFs pointing at the same target section -- two TODOs depending on the same section is fine; two TODOs both *implementing* it is a conflict.
 6. Validate the current lean TODO structure.
    - Check required sections, numbering, checklist shape, references, and exit criteria.
    - Use `Implementation Order`, not legacy phase-table rules.
@@ -39,7 +39,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
      - Keep cells short: status emoji + max 5 words per cell. No full sentences.
      - Pad columns so pipe characters align vertically within the table.
      - If the table is wider than ~100 characters per row, shorten cell text further.
-7. **Win11/Linux parity and competitive edge scan (critical — do not skip).**
+7. **Win11/Linux parity and competitive edge scan (critical -- do not skip).**
    - This step is the core differentiator for Impossible OS. Every validation MUST include this analysis.
    - **Parity gap check:** For each feature where BOTH Win11 and Linux show ✅ but Impossible OS shows ⬜ or is missing entirely:
      - If covered by a section in this TODO: verify the section exists and is actionable (not deferred indefinitely).
@@ -49,7 +49,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
      - Add a row to the OS Comparison table marked ⭐ with ⬜ Planned.
      - Suggest a concrete implementation (section name, scope, key deliverable).
      - Focus on features that are visible to developers/users, not internal plumbing.
-   - **Report findings explicitly** — list discovered gaps and suggested features in the validation output even if no table changes are needed. The user must see what was checked.
+   - **Report findings explicitly** -- list discovered gaps and suggested features in the validation output even if no table changes are needed. The user must see what was checked.
 8. **Validate execution coverage and close loose ends.**
    - Check dependency order, `→ XREF:` lines, overlap notes, handoffs, and adjacent-file continuity.
    - For each `→ XREF: TODO-XX §N`, confirm the target TODO file exists **and** the referenced section number is present in that file.
@@ -57,17 +57,17 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - **Loose end check:** For every "blocked by TODO-XX §N" or "deferred to TODO-XX" note in this file:
      1. Open the referenced TODO and verify the back-reference exists (the other TODO should point back here).
      2. If no back-reference: add one. Both sides must know about the dependency.
-     3. If this TODO creates something that unblocks work in another TODO, the deliverable section must explicitly say "after this, re-enable X in TODO-YY §M" — not just a vague XREF.
+     3. If this TODO creates something that unblocks work in another TODO, the deliverable section must explicitly say "after this, re-enable X in TODO-YY §M" -- not just a vague XREF.
      4. If this TODO defers an item, the item must say WHERE it's deferred to (specific TODO + section) or WHY it's deferred (with a condition for when to revisit). Never just "deferred."
-   - **Internal §N cross-reference check:** For every `§N` reference in prose, checklist items, and callouts within each section, verify that `N` refers to the correct section in THIS file. A section cannot reference itself as if it were a different section (e.g., §1 saying "this unblocks §1" is a bug). Cross-check each §N against the `## N.` headings and the Implementation Order table to ensure the reference makes semantic sense — the referenced section should actually deliver what the prose claims.
+   - **Internal §N cross-reference check:** For every `§N` reference in prose, checklist items, and callouts within each section, verify that `N` refers to the correct section in THIS file. A section cannot reference itself as if it were a different section (e.g., §1 saying "this unblocks §1" is a bug). Cross-check each §N against the `## N.` headings and the Implementation Order table to ensure the reference makes semantic sense -- the referenced section should actually deliver what the prose claims.
    - Fix stale planning text, broken links, and roadmap inconsistencies.
 9. **Self-contained execution check (critical).**
    - The TODO must be executable from §1 to the last section WITHOUT being blocked by unimplemented sections in other TODOs.
    - For each `Depends On` entry in the Implementation Order table that references an EXTERNAL TODO (not a section within this file):
-     1. **Section-level specificity check:** The reference MUST include specific section numbers (e.g., `T11 §1,§3`), not just a bare TODO number (e.g., `T11`). A bare TODO reference is ambiguous — flag it and resolve which sections are actually needed.
+     1. **Section-level specificity check:** The reference MUST include specific section numbers (e.g., `T11 §1,§3`), not just a bare TODO number (e.g., `T11`). A bare TODO reference is ambiguous -- flag it and resolve which sections are actually needed.
      2. Check if that external section is already implemented (`[x]`). If yes, no action needed.
-     3. If NOT implemented (`[ ]`): the TODO is **blocked**. Fix it by adding a new section to THIS TODO that implements the minimal prerequisite — just enough to unblock the dependent section, not the full scope of the other TODO.
-     3. The new section should be clearly marked: `> [!NOTE] Minimal prerequisite — full implementation in TODO-XX §N`
+     3. If NOT implemented (`[ ]`): the TODO is **blocked**. Fix it by adding a new section to THIS TODO that implements the minimal prerequisite -- just enough to unblock the dependent section, not the full scope of the other TODO.
+     3. The new section should be clearly marked: `> [!NOTE] Minimal prerequisite -- full implementation in TODO-XX §N`
      4. Update the Implementation Order to reference the new local section instead of the external one.
    - **Principle:** When you follow a TODO from §1 to the last section, you must have a fully working base system at the end. External TODOs enhance it later, but never block it.
    - Flag any section where the `Depends On` column references something that doesn't exist yet and no local fallback is provided.
@@ -79,27 +79,27 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - **Bare metal is the acceptance criteria.** "Verified on QEMU" is necessary but NOT sufficient. Every section that touches hardware must include bare-metal verification.
     - Every TODO that touches hardware, interrupts, page tables, timers, or drivers MUST list which platforms each section has been verified on.
     - Required platforms: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-    - If the Test Checkpoint only mentions VMs, flag it and add: "Verify on bare metal — VM behavior differs."
+    - If the Test Checkpoint only mentions VMs, flag it and add: "Verify on bare metal -- VM behavior differs."
     - When writing hardware-touching code, ask: "does this work without a hypervisor?"
 12. **Regression risk scan.**
     - For each section, identify what existing working functionality it could break.
-    - Flag high-risk sections — those that touch:
-      - **Interrupt path** (IDT, ISR stubs, LAPIC, IOAPIC, EOI) — one wrong bit = triple fault
-      - **Page tables** (PTE flags, CR3, TLB flush) — breaks all memory access
-      - **GDT/TSS** (segment selectors, RSP0, IST) — breaks privilege transitions
-      - **Timer** (LAPIC timer, PIT, calibration) — breaks scheduler, compositor, sleep
-      - **Boot order** (Phase 0/1/2/3 sequencing) — breaks everything downstream
+    - Flag high-risk sections -- those that touch:
+      - **Interrupt path** (IDT, ISR stubs, LAPIC, IOAPIC, EOI) -- one wrong bit = triple fault
+      - **Page tables** (PTE flags, CR3, TLB flush) -- breaks all memory access
+      - **GDT/TSS** (segment selectors, RSP0, IST) -- breaks privilege transitions
+      - **Timer** (LAPIC timer, PIT, calibration) -- breaks scheduler, compositor, sleep
+      - **Boot order** (Phase 0/1/2/3 sequencing) -- breaks everything downstream
     - For each high-risk section, require:
       - A rollback note: "If this breaks, revert [specific change] and fall back to [known-good behavior]"
       - An incremental test: verify the change works BEFORE proceeding to the next section
 13. **Boot-path impact analysis.**
     - Trace the boot execution path from `kernel_main()` through Phase 0 → 1 → 2 → 3 → compositor.
     - For each section in the TODO, identify exactly WHERE in the boot path its changes take effect.
-    - Flag any section that modifies code running BEFORE `sti` (interrupts enabled) — these are the most dangerous because errors cause silent triple faults with no diagnostic output.
-    - Flag any section that modifies the interrupt handler path — errors here crash on every interrupt, not just the subsystem being changed.
+    - Flag any section that modifies code running BEFORE `sti` (interrupts enabled) -- these are the most dangerous because errors cause silent triple faults with no diagnostic output.
+    - Flag any section that modifies the interrupt handler path -- errors here crash on every interrupt, not just the subsystem being changed.
 14. **Test checkpoint enforcement.**
     - Every section MUST have a `**Test checkpoint:**` block at the end.
-    - Each checkpoint must have concrete pass/fail criteria — not "verify it works" but specific observable outcomes:
+    - Each checkpoint must have concrete pass/fail criteria -- not "verify it works" but specific observable outcomes:
       - Serial log output: exact string to grep for
       - POST code: exact hex value
       - Screen output: what the user should see
@@ -112,17 +112,17 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - **Before the change:** `POST16(0xDDNN)` where `DD` = section number, `NN` = 00 (entry). Example: §5 entry = `POST16(0xD500)`.
     - **After the change:** `POST16(0xDDNN)` where `NN` = 01 (exit). Example: §5 exit = `POST16(0xD501)`.
     - **Around risky sub-steps:** add intermediate POST codes (0xD502, 0xD503, ...) inside the section's code to narrow down the exact failure point.
-    - The test checkpoint should reference these POST codes: "If crash, check last POST code on VPD/serial — 0xD500 = never entered, 0xD502 = failed at sub-step 2."
+    - The test checkpoint should reference these POST codes: "If crash, check last POST code on VPD/serial -- 0xD500 = never entered, 0xD502 = failed at sub-step 2."
     - These diagnostic POST codes use the `0xD000–0xDFFF` range (reserved for development/debug) and should be removed after the section is verified on all platforms. They do not conflict with production POST codes (`0x00xx`–`0x3Fxx` for phases, `0xB0xx` for bootloader, `0xFF00` for boot OK).
     - **Conflict check:** Before assigning debug POST codes, grep `include/kernel/boot_init.h` for all `#define POST16_` entries AND grep the codebase for any existing `POST16(0xD` calls. Verify the chosen codes don't collide with existing production or debug codes. Flag any duplicates.
-    - **Rationale:** On bare metal, there is no debugger. A crash with no POST code means hours of bisecting. A crash at POST 0xD503 means "§5, sub-step 3 failed" — fixable in minutes.
+    - **Rationale:** On bare metal, there is no debugger. A crash with no POST code means hours of bisecting. A crash at POST 0xD503 means "§5, sub-step 3 failed" -- fixable in minutes.
 16. **Unit Tests section enforcement.**
     - Every TODO file MUST have a `## Unit Tests` section after the last numbered implementation section.
     - The section must wire into the kernel test framework via `test_runner_init()` (→ XREF: `00-infrastructure/TODO-03 §1`).
     - Required structure:
       - A `>` callout stating how the tests register (e.g., `test_register_<feature>()`) and when they run (`debug=1` or `test=1` in boot.conf).
       - A `- [ ] Create src/kernel/test/test_<feature>.c with:` checklist item containing concrete test cases as sub-bullets.
-      - Each test case must be a specific assertion — function call + expected return value or observable state. No vague "test that X works" items.
+      - Each test case must be a specific assertion -- function call + expected return value or observable state. No vague "test that X works" items.
       - A `- [ ] Register in test_runner_init(): test_register_<feature>()` checklist item.
       - A `- [ ] Commit: "test: add <feature> test suite"` checklist item.
     - **Test case quality check:** Each sub-bullet must test one specific behavior with a concrete expected outcome. Flag any test that lacks an expected value (e.g., "call `foo()`" without stating what it should return or what state it should produce).
@@ -134,7 +134,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
 - Do not implement code.
 - Do not mark TODO work done based on code inspection alone.
 - Do not turn this into a formatting-only cleanup pass; structural clarity is the goal.
-- Inputs path checks are existence-only — do not read or analyse the referenced source files.
+- Inputs path checks are existence-only -- do not read or analyse the referenced source files.
 
 ## Additional Resources
 

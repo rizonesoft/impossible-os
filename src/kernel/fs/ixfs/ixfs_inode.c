@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_inode.c — Inode I/O, vnode management, directory hash index
+ * ixfs_inode.c -- Inode I/O, vnode management, directory hash index
  * ============================================================================ */
 
 #include "ixfs_internal.h"
@@ -105,7 +105,7 @@ void ixfs_hash_build(struct ixfs_volume *vol, struct ixfs_vnode *v)
     for (b = 0; b < IXFS_HASH_BUCKETS; b++)
         dh->bucket[b] = IXFS_HASH_CHAIN_END;
 
-    /* Allocate chain nodes — one per active entry */
+    /* Allocate chain nodes -- one per active entry */
     dh->nodes = (struct ixfs_hash_node *)kmalloc(
         total_entries * sizeof(struct ixfs_hash_node));
     if (!dh->nodes) {

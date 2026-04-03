@@ -1,5 +1,5 @@
 /* ============================================================================
- * rtc.h — CMOS Real-Time Clock driver
+ * rtc.h -- CMOS Real-Time Clock driver
  *
  * Reads the current date and time from the CMOS RTC chip via I/O ports
  * 0x70 (index) and 0x71 (data).  The RTC keeps time even when the system

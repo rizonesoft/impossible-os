@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_timer.h — Timer object type for the Object Manager
+ * ob_timer.h -- Timer object type for the Object Manager
  *
  * TIMER_OBJECT holds a signalling event and timer state.  Named timers
  * are inserted into \BaseNamedObjects.
@@ -25,7 +25,7 @@ typedef struct timer_object {
 void ob_timer_type_init(void);
 
 /*
- * NtCreateTimer stub — create or open a named/unnamed timer.
+ * NtCreateTimer stub -- create or open a named/unnamed timer.
  *
  * name: NULL for unnamed, or a name in \BaseNamedObjects.
  *

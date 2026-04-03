@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_alloc.c — Bitmap operations, block groups, alloc/free, flush
+ * ixfs_alloc.c -- Bitmap operations, block groups, alloc/free, flush
  * ============================================================================ */
 
 #include "ixfs_internal.h"

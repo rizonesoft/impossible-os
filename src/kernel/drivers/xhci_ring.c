@@ -1,5 +1,5 @@
 /* ============================================================================
- * xhci_ring.c — xHCI TRB Ring allocation and management
+ * xhci_ring.c -- xHCI TRB Ring allocation and management
  *
  * Allocates Command Ring, Event Ring, and ERST.  Provides functions to
  * submit commands and poll for events.
@@ -13,7 +13,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
 
-/* ---- MMIO helpers (shared with xhci.c — keep static to avoid linker dup) - */
+/* ---- MMIO helpers (shared with xhci.c -- keep static to avoid linker dup) - */
 
 static inline uint32_t ring_read32(volatile uint8_t *base, uint32_t offset)
 {
@@ -71,7 +71,7 @@ static int cmd_ring_init(struct xhci_controller *hc)
     uintptr_t phys;
     uint32_t ring_bytes = XHCI_RING_SIZE * sizeof(struct xhci_trb);
 
-    /* Allocate — 256 TRBs × 16 B = 4096 B = exactly 1 page */
+    /* Allocate -- 256 TRBs × 16 B = 4096 B = exactly 1 page */
     phys = pmm_alloc_contiguous(1);
     if (phys == 0) {
         klog(LOG_ERROR, "xhci", "Failed to allocate Command Ring");
@@ -88,7 +88,7 @@ static int cmd_ring_init(struct xhci_controller *hc)
 
     ring_zero(ring->trbs, ring_bytes);
 
-    /* Set Link TRB at last slot — points back to ring start, toggles cycle */
+    /* Set Link TRB at last slot -- points back to ring start, toggles cycle */
     link = &ring->trbs[XHCI_RING_SIZE - 1];
     link->parameter = ring->phys;
     link->status    = 0;
@@ -96,7 +96,7 @@ static int cmd_ring_init(struct xhci_controller *hc)
                     | XHCI_TRB_TOGGLE_CYCLE
                     | XHCI_TRB_CYCLE;  /* initial cycle = 1 */
 
-    /* Write CRCR — physical address of ring | cycle bit */
+    /* Write CRCR -- physical address of ring | cycle bit */
     ring_write64(hc->op_base, XHCI_OP_CRCR, ring->phys | ring->cycle);
 
     klog(LOG_DEBUG, "xhci", "Command Ring at 0x%x, %u TRBs",
@@ -115,7 +115,7 @@ static int event_ring_init(struct xhci_controller *hc)
     uint32_t ring_bytes = XHCI_RING_SIZE * sizeof(struct xhci_trb);
     volatile uint8_t *ir = ir0_base(hc);
 
-    /* Allocate Event Ring segment — 256 TRBs × 16 B = 4096 B = 1 page */
+    /* Allocate Event Ring segment -- 256 TRBs × 16 B = 4096 B = 1 page */
     evt_phys = pmm_alloc_contiguous(1);
     if (evt_phys == 0) {
         klog(LOG_ERROR, "xhci", "Failed to allocate Event Ring");
@@ -132,7 +132,7 @@ static int event_ring_init(struct xhci_controller *hc)
 
     ring_zero(ring->trbs, ring_bytes);
 
-    /* Allocate ERST — 1 entry × 16 B, fits in one page (over-allocated
+    /* Allocate ERST -- 1 entry × 16 B, fits in one page (over-allocated
      * but pmm_alloc_contiguous minimum is 1 page) */
     erst_phys = pmm_alloc_contiguous(1);
     if (erst_phys == 0) {
@@ -197,7 +197,7 @@ int xhci_cmd_submit(struct xhci_controller *hc, struct xhci_trb *trb)
 
     /* Check for full ring (enqueue catches up to Link TRB slot) */
     if (ring->enqueue >= ring->size - 1) {
-        /* This shouldn't happen — Link TRB is at size-1, we wrap before */
+        /* This shouldn't happen -- Link TRB is at size-1, we wrap before */
         klog(LOG_ERROR, "xhci", "Command Ring overflow");
         return -1;
     }
@@ -212,7 +212,7 @@ int xhci_cmd_submit(struct xhci_controller *hc, struct xhci_trb *trb)
     /* Advance enqueue pointer */
     next = ring->enqueue + 1;
     if (next >= ring->size - 1) {
-        /* Reached Link TRB — update its cycle bit and wrap */
+        /* Reached Link TRB -- update its cycle bit and wrap */
         struct xhci_trb *link = &ring->trbs[ring->size - 1];
         link->control = (link->control & ~XHCI_TRB_CYCLE)
                       | (ring->cycle ? XHCI_TRB_CYCLE : 0);
@@ -221,7 +221,7 @@ int xhci_cmd_submit(struct xhci_controller *hc, struct xhci_trb *trb)
     }
     ring->enqueue = next;
 
-    /* Memory barrier — ensure TRB write is visible before doorbell */
+    /* Memory barrier -- ensure TRB write is visible before doorbell */
     __asm__ volatile("mfence" ::: "memory");
 
     /* Ring doorbell 0 (Host Controller Command) with target = 0 */
@@ -238,7 +238,7 @@ int xhci_event_poll(struct xhci_controller *hc, struct xhci_trb *out)
 
     evt = &ring->trbs[ring->dequeue];
 
-    /* Check cycle bit — if it matches our expected cycle, event is valid */
+    /* Check cycle bit -- if it matches our expected cycle, event is valid */
     evt_cycle = (evt->control & XHCI_TRB_CYCLE) ? 1 : 0;
     if (evt_cycle != ring->cycle)
         return 0;  /* No event available */
@@ -255,13 +255,13 @@ int xhci_event_poll(struct xhci_controller *hc, struct xhci_trb *out)
         ring->cycle ^= 1;  /* Toggle consumer cycle on wrap */
     }
 
-    /* Write ERDP — tell controller we've consumed this event.
-     * Bit 3 (EHB — Event Handler Busy) must be set to clear it. */
+    /* Write ERDP -- tell controller we've consumed this event.
+     * Bit 3 (EHB -- Event Handler Busy) must be set to clear it. */
     {
         volatile uint8_t *ir = ir0_base(hc);
         uint64_t erdp = ring->phys
                       + (ring->dequeue * sizeof(struct xhci_trb));
-        erdp |= (1 << 3);  /* EHB — clear Event Handler Busy */
+        erdp |= (1 << 3);  /* EHB -- clear Event Handler Busy */
         ring_write64(ir, XHCI_IR_ERDP, erdp);
     }
 

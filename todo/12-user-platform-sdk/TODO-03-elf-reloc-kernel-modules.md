@@ -1,8 +1,8 @@
-# TODO-03 — ELF Relocations & Kernel Module System
+# TODO-03 -- ELF Relocations & Kernel Module System
 
 > **Goal:** Build the ELF relocation engine powering two subsystems: loadable kernel
 > modules (`.kmod` drivers) and the Linux ELF compatibility layer's `dlopen`/`dlsym`.
-> The native user-mode binary format is PE (`.exe`/`.dll`) — `LoadLibrary`/`GetProcAddress`
+> The native user-mode binary format is PE (`.exe`/`.dll`) -- `LoadLibrary`/`GetProcAddress`
 > is the native DLL path (→ XREF `09-services-security/TODO-08 §7`). ELF supports only
 > ring-0 `.kmod` drivers and Linux compat `.so` shared libraries.
 
@@ -10,7 +10,7 @@
 > `include/kernel/elf.h` already defines `ET_EXEC`, `ET_DYN`, `EM_X86_64`,
 > `struct elf64_header`, and `struct elf64_phdr` for `task_exec`. This TODO extends
 > `elf.h` with the section-header types (`ET_REL`, `SHT_SYMTAB`, `SHT_RELA`, `Elf64_Sym`,
-> `Elf64_Rela`) and all `R_X86_64_*` relocation constants — do not duplicate the existing
+> `Elf64_Rela`) and all `R_X86_64_*` relocation constants -- do not duplicate the existing
 > definitions.
 >
 > **dlopen / dlsym** (§5): the Linux ELF compat stretch goal is specced in
@@ -28,16 +28,16 @@
 
 ## Inputs
 
-- `include/kernel/elf.h` — extend with `ET_REL`, `SHT_SYMTAB`, `SHT_RELA`, `Elf64_Shdr`, `Elf64_Sym`, `Elf64_Rela`, `R_X86_64_*` constants — §1
-- `include/kernel/mm/pmm.h` — `pmm_alloc_contiguous(count)` — §1 §3 module image allocation
-- `include/kernel/mm/vmm.h` — `vmm_map_page(virt, phys, flags)` — §3 exec+rw page mapping
-- `include/kernel/fs/vfs.h` — `vfs_open`, `vfs_read`, `vfs_stat` — §3 §5 kmod load from disk
-- `include/kernel/sched/task.h` — `task_exec`, `struct task` — §5 per-process loaded-module list
-- `include/kernel/syscall.h` — add `SYS_DLOPEN`/`SYS_DLSYM`/`SYS_DLCLOSE` — §5
-- `src/kernel/elf.c` (existing `task_exec` ELF loader) — reuse section-scan helpers — §1
-- `09-services-security/TODO-08-win32-api-surface.md §7` (→ XREF) — PE DLL `LoadLibrary` (native path; not ELF)
-- `09-services-security/TODO-10-linux-compat.md §11` (→ XREF) — dynamic ELF `dlopen` consumer
-- `scripts/linker-kernel.ld` (kernel linker script) — add `__ksymtab` section — §4
+- `include/kernel/elf.h` -- extend with `ET_REL`, `SHT_SYMTAB`, `SHT_RELA`, `Elf64_Shdr`, `Elf64_Sym`, `Elf64_Rela`, `R_X86_64_*` constants -- §1
+- `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous(count)` -- §1 §3 module image allocation
+- `include/kernel/mm/vmm.h` -- `vmm_map_page(virt, phys, flags)` -- §3 exec+rw page mapping
+- `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_stat` -- §3 §5 kmod load from disk
+- `include/kernel/sched/task.h` -- `task_exec`, `struct task` -- §5 per-process loaded-module list
+- `include/kernel/syscall.h` -- add `SYS_DLOPEN`/`SYS_DLSYM`/`SYS_DLCLOSE` -- §5
+- `src/kernel/elf.c` (existing `task_exec` ELF loader) -- reuse section-scan helpers -- §1
+- `09-services-security/TODO-08-win32-api-surface.md §7` (→ XREF) -- PE DLL `LoadLibrary` (native path; not ELF)
+- `09-services-security/TODO-10-linux-compat.md §11` (→ XREF) -- dynamic ELF `dlopen` consumer
+- `scripts/linker-kernel.ld` (kernel linker script) -- add `__ksymtab` section -- §4
 
 ---
 
@@ -185,7 +185,7 @@ binding engine is available for the Linux ELF compat `dlopen` path.
   2. Validate: `ELF_MAGIC`, `ELFCLASS64`, `ELFDATA2LSB`, `e_type == ET_REL`, `e_machine == EM_X86_64`; return `-EINVAL` on any mismatch
   3. Parse section headers (`Elf64_Shdr`); compute total `SHF_ALLOC` size; allocate second buffer (exec+rw via `pmm_alloc_contiguous` + `vmm_map_page` with `PAGE_RW | PAGE_EXEC`)
   4. Copy `SHF_ALLOC` sections to load buffer at their aligned offsets; record each section's load address
-  5. Find `.kmod_info` section; validate `struct kmod_info` magic; read `depends[]` — recursively call `kmod_load` for any unloaded dependencies
+  5. Find `.kmod_info` section; validate `struct kmod_info` magic; read `depends[]` -- recursively call `kmod_load` for any unloaded dependencies
   6. Find `SHT_RELA`/`SHT_REL` sections; call `elf_apply_rela/rel` for each; use `elf_resolve_symbol` for `SHN_UNDEF` symbols
   7. If any symbol unresolved → `klog(ERROR, "kmod", "unresolved symbol: %s in %s", name, path)`; free buffers; return `-ENOSYM`
   8. Add to `g_loaded_kmods[]`; call `info->init_fn()`
@@ -221,7 +221,7 @@ binding engine is available for the Linux ELF compat `dlopen` path.
   ```
 - [ ] **`ksym_lookup(const char *name)`** in `src/kernel/ksym.c`:
   - Binary search `__ksymtab_start`…`__ksymtab_end` (entries must be sorted at link time)
-  - Sort requirement: the linker naturally places entries in link order; add a **post-build sort** in `scripts/build.sh` using `llvm-nm-19` to emit a sorted `__ksymtab` section replacement (or implement a one-time `ksym_sort_once()` at boot using insertion sort — O(n²) is acceptable for ≤ 512 exports)
+  - Sort requirement: the linker naturally places entries in link order; add a **post-build sort** in `scripts/build.sh` using `llvm-nm-19` to emit a sorted `__ksymtab` section replacement (or implement a one-time `ksym_sort_once()` at boot using insertion sort -- O(n²) is acceptable for ≤ 512 exports)
   - Return `addr` on match; `NULL` on miss
 - [ ] **Export key kernel APIs** (`EXPORT_SYMBOL` annotations in their `.c` files):
   - `pmm_alloc_contiguous`, `pmm_free_contiguous`
@@ -289,7 +289,7 @@ binding engine is available for the Linux ELF compat `dlopen` path.
   - Look up symbol name from `.rela.plt` entry `slot_idx` → symbol name from `.dynsym` + `.dynstr`
   - Call `dlsym(RTLD_DEFAULT, name)`; if NULL: `klog(ERROR)` + return 0
   - Patch `mod->got[3 + slot_idx] = resolved_addr` (atomically with `__atomic_store_n`)
-  - Return `resolved_addr` — the PLT trampoline returns here and jumps to it
+  - Return `resolved_addr` -- the PLT trampoline returns here and jumps to it
 - [ ] **`RTLD_NOW`** path: at `dlopen` time, iterate all `SHT_RELA` `.rela.plt` entries; call `dlsym` for each; write resolved address directly into GOT; no PLT trampoline needed
 
 ---
@@ -337,19 +337,19 @@ binding engine is available for the Linux ELF compat `dlopen` path.
 
 | ⭐ | Feature                                            | 🪟 Win11                                   | 🐧 Linux                                  | 🚀 Impossible OS                                             |
 |----|----------------------------------------------------|-----------------------------------------|----------------------------------------|-----------------------------------------------------------|
-| 💎 | ELF `R_X86_64_*` relocation engine                 | ❌ PE/COFF only in ntoskrnl             | ✅ `arch/x86/kernel/module.c`          | ⬜ §1 — `elf_apply_rela/rel` for all 9 reloc              |
-| ⭐ | `.kmod` ELF relocatable kernel modules             | ✅ Windows drivers (PE `.sys`)          | ✅ Linux `ko` (ELF `ET_REL`)           | ⬜ §2 — §3; ELF format + `kmod_load/unload`               |
-| 💎 | Kernel symbol export                               | ✅ `ntoskrnl.exe` export table          | ✅ `EXPORT_SYMBOL` / `kallsyms`        | ⬜ §4 — linker-script `__ksymtab` section + `ksym_lookup` |
-| 💎 | `dlopen`/`dlsym`/`dlclose` for Linux compat `.so`  | ❌ Not applicable (PE native)           | ✅ glibc `ld-linux.so`                 | ⬜ §5 — kernel-side ELF dynamic loader for                |
-| 💎 | GOT/PLT lazy binding on first call                 | ❌ PE import by address (no             | ✅ ld.so lazy PLT binding              | ⬜ §6 — PLT trampoline → GOT patch                        |
-| ⭐ | Module hot-swap without reboot                     | ✅ Partial (driver update via WU,       | ✅ `rmmod`+`insmod` (limited)          | ⬜ §7 — (Stretch) — ; `kmod_reload` with                  |
-| 💎 | `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands | ✅ `sc.exe` / `devcon.exe` (PE drivers) | ✅ `lsmod`/`insmod`/`rmmod`/`modprobe` | ⬜ §8 — full command suite with dependency                |
+| 💎 | ELF `R_X86_64_*` relocation engine                 | ❌ PE/COFF only in ntoskrnl             | ✅ `arch/x86/kernel/module.c`          | ⬜ §1 -- `elf_apply_rela/rel` for all 9 reloc              |
+| ⭐ | `.kmod` ELF relocatable kernel modules             | ✅ Windows drivers (PE `.sys`)          | ✅ Linux `ko` (ELF `ET_REL`)           | ⬜ §2 -- §3; ELF format + `kmod_load/unload`               |
+| 💎 | Kernel symbol export                               | ✅ `ntoskrnl.exe` export table          | ✅ `EXPORT_SYMBOL` / `kallsyms`        | ⬜ §4 -- linker-script `__ksymtab` section + `ksym_lookup` |
+| 💎 | `dlopen`/`dlsym`/`dlclose` for Linux compat `.so`  | ❌ Not applicable (PE native)           | ✅ glibc `ld-linux.so`                 | ⬜ §5 -- kernel-side ELF dynamic loader for                |
+| 💎 | GOT/PLT lazy binding on first call                 | ❌ PE import by address (no             | ✅ ld.so lazy PLT binding              | ⬜ §6 -- PLT trampoline → GOT patch                        |
+| ⭐ | Module hot-swap without reboot                     | ✅ Partial (driver update via WU,       | ✅ `rmmod`+`insmod` (limited)          | ⬜ §7 -- (Stretch) -- ; `kmod_reload` with                  |
+| 💎 | `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands | ✅ `sc.exe` / `devcon.exe` (PE drivers) | ✅ `lsmod`/`insmod`/`rmmod`/`modprobe` | ⬜ §8 -- full command suite with dependency                |
 
 Impossible OS kernel modules use **ELF `ET_REL` format** (the same format the Linux kernel
 uses for `.ko` files), giving access to the entire LLVM/Clang toolchain for driver
 development, while the native user-mode binary format remains PE for Win32 compatibility.
 The `EXPORT_SYMBOL` + `__ksymtab` model explicitly bounds the attack surface: a malicious
-module cannot call arbitrary kernel addresses — only the kernel's published symbol table.
+module cannot call arbitrary kernel addresses -- only the kernel's published symbol table.
 
 ---
 

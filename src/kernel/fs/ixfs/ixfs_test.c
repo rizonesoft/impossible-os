@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_test.c — IXFS performance and feature tests
+ * ixfs_test.c -- IXFS performance and feature tests
  * ============================================================================ */
 
 #include "ixfs_internal.h"
@@ -83,7 +83,7 @@ void ixfs_test_performance(void)
                 write_buf[i] = (uint8_t)(i & 0xFF);
             ixfs_write_block(vol, test_blk, write_buf);
 
-            /* Two reads — both should come from cache */
+            /* Two reads -- both should come from cache */
             ixfs_read_block(vol, test_blk, read_buf1);
             ixfs_read_block(vol, test_blk, read_buf2);
 
@@ -153,7 +153,7 @@ void ixfs_test_performance(void)
                        created >= 65 ? "OK" : "FAIL",
                        (uint64_t)created, (uint64_t)IXFS_HASH_THRESHOLD);
 
-                /* Lookup 7 files (every 10th) — triggers hash build */
+                /* Lookup 7 files (every 10th) -- triggers hash build */
                 for (i = 0; i < 70; i += 10) {
                     fname[0] = 'h'; fname[1] = 'f'; fname[2] = '_';
                     fname[3] = (char)('0' + (i / 10));
@@ -431,7 +431,7 @@ void ixfs_test_performance(void)
     if (vfs_is_mounted('C')) {
         struct vfs_node *c_root = vfs_get_drive_root('C');
         if (c_root && c_root->ops && c_root->ops->create) {
-            /* Create a test file — should start inline */
+            /* Create a test file -- should start inline */
             c_root->ops->create(c_root, "_inline_test.txt", VFS_FILE);
             {
                 struct vfs_node *inf = vfs_open("C:\\_inline_test.txt", VFS_O_WRITE);
@@ -440,7 +440,7 @@ void ixfs_test_performance(void)
                     uint32_t small_len = 13;
                     struct ixfs_vnode *iv;
 
-                    /* Subtest 1: write small data — should stay inline */
+                    /* Subtest 1: write small data -- should stay inline */
                     vfs_write(inf, 0, small_len, (const uint8_t *)small);
                     vfs_close(inf);
 
@@ -474,7 +474,7 @@ void ixfs_test_performance(void)
                         }
                         vfs_close(inf);
 
-                        /* Subtest 3: write >48 bytes — triggers promotion */
+                        /* Subtest 3: write >48 bytes -- triggers promotion */
                         inf = vfs_open("C:\\_inline_test.txt", VFS_O_WRITE);
                         if (inf) {
                             const char *big = "This string is definitely longer than forty-eight bytes of data!";

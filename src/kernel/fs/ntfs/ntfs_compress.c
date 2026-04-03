@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_compress.c — LZNT1 Decompression for Compressed NTFS Files
+ * ntfs_compress.c -- LZNT1 Decompression for Compressed NTFS Files
  *
  * NTFS transparent compression uses LZNT1 (LZ77 variant), applied to
  * "compression units" of 2^N clusters (typically N=4, so 16 clusters = 64 KB).
@@ -87,7 +87,7 @@ static int lznt1_decompress_block(const uint8_t *src, int src_len,
         if (src_pos >= src_len)
             break;
 
-        /* Read flag byte — controls the next 8 tokens */
+        /* Read flag byte -- controls the next 8 tokens */
         flags = src[src_pos++];
 
         for (bit = 0; bit < 8 && src_pos < src_len &&
@@ -107,7 +107,7 @@ static int lznt1_decompress_block(const uint8_t *src, int src_len,
                 int j;
 
                 if (src_pos + 2 > src_len)
-                    return dst_pos;  /* Truncated — return what we have */
+                    return dst_pos;  /* Truncated -- return what we have */
 
                 ref = (uint16_t)src[src_pos] |
                       ((uint16_t)src[src_pos + 1] << 8);
@@ -170,7 +170,7 @@ int ntfs_lznt1_decompress(const uint8_t *src, uint32_t src_len,
             break;  /* Truncated stream */
 
         if (is_compressed) {
-            /* Compressed sub-block — decompress via LZNT1 */
+            /* Compressed sub-block -- decompress via LZNT1 */
             uint8_t temp[LZNT1_BLOCK_SIZE];
 
             decomp_result = lznt1_decompress_block(src + src_pos,
@@ -188,7 +188,7 @@ int ntfs_lznt1_decompress(const uint8_t *src, uint32_t src_len,
                 dst_pos += to_copy;
             }
         } else {
-            /* Uncompressed sub-block — raw data */
+            /* Uncompressed sub-block -- raw data */
             uint32_t to_copy = block_size;
             if (dst_pos + to_copy > dst_len)
                 to_copy = dst_len - dst_pos;
@@ -289,7 +289,7 @@ int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
                 uint64_t overlap = overlap_end - overlap_start;
 
                 if (cu_is_sparse) {
-                    /* First non-sparse run — record its LCN */
+                    /* First non-sparse run -- record its LCN */
                     uint64_t vcn_offset = overlap_start - run_start;
                     cu_first_lcn = runs[ri].lcn + vcn_offset;
                     cu_is_sparse = 0;
@@ -299,10 +299,10 @@ int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
         }
 
         if (cu_is_sparse) {
-            /* Entire CU is sparse — fill with zeros */
+            /* Entire CU is sparse -- fill with zeros */
             ntfs_memset(buf + bytes_read, 0, chunk);
         } else if (cu_disk_clusters >= cu_clusters) {
-            /* Full CU stored uncompressed — read directly */
+            /* Full CU stored uncompressed -- read directly */
             int64_t direct_read = ntfs_read_data(vol, runs, run_count,
                                                   real_size, abs_pos,
                                                   chunk, buf + bytes_read);
@@ -310,7 +310,7 @@ int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
                 return -1;
             chunk = (uint64_t)direct_read;
         } else {
-            /* Compressed CU — disk clusters < unit size */
+            /* Compressed CU -- disk clusters < unit size */
             uint32_t comp_bytes = (uint32_t)(cu_disk_clusters * cluster_size);
             uint8_t *comp_buf;
             uint8_t *decomp_buf;
@@ -362,7 +362,7 @@ int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
 
             /* Copy requested range from decompressed buffer.
              * Use cu_bytes (not decomp_result) as the available size because
-             * the buffer was pre-zeroed to cu_bytes — any bytes beyond
+             * the buffer was pre-zeroed to cu_bytes -- any bytes beyond
              * decomp_result are valid zeros (sub-block padding). */
             {
                 uint32_t to_copy = (uint32_t)chunk;
@@ -379,7 +379,7 @@ int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
 
         bytes_read += chunk;
         if (chunk == 0)
-            break;  /* No progress — prevent infinite loop */
+            break;  /* No progress -- prevent infinite loop */
     }
 
     return (int64_t)bytes_read;
@@ -399,7 +399,7 @@ int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
  * ============================================================================ */
 
 #define LZNT1_MAX_RUNS_PER_FILE  64  /* Max data runs tracked per write (matches ntfs_data_write.c) */
-#define LZNT1_HASH_BITS  8          /* 256 buckets — small, fits on stack */
+#define LZNT1_HASH_BITS  8          /* 256 buckets -- small, fits on stack */
 #define LZNT1_HASH_SIZE  (1 << LZNT1_HASH_BITS)
 #define LZNT1_CHAIN_DEPTH  16       /* Max steps in the hash chain per byte */
 
@@ -423,7 +423,7 @@ static int lznt1_compress_block(const uint8_t *src, int src_len,
     /* Linked list: prev[i] = previous position that shares the same hash */
     int prev[LZNT1_BLOCK_SIZE];
 
-    /* Output buffer — skip 2 bytes for the header we'll fill at the end */
+    /* Output buffer -- skip 2 bytes for the header we'll fill at the end */
     uint8_t out[LZNT1_BLOCK_SIZE + 16];   /* +16 headroom */
     int out_pos = 0;
 
@@ -472,7 +472,7 @@ static int lznt1_compress_block(const uint8_t *src, int src_len,
             while (j >= 0 && steps < LZNT1_CHAIN_DEPTH) {
                 int disp = src_pos - j;
                 if (disp > max_disp)
-                    break;  /* Too far back — chain sorted by position */
+                    break;  /* Too far back -- chain sorted by position */
 
                 /* Measure match length */
                 {
@@ -699,7 +699,7 @@ static int write_one_compressed_cu(struct ntfs_volume *vol,
             uint64_t rstart = runs[src].vcn_start;
             uint64_t rend   = rstart + runs[src].length;
             if (rend > cu_start_vcn && rstart < cu_end_vcn) {
-                /* Overlap — free the clusters */
+                /* Overlap -- free the clusters */
                 if (runs[src].lcn != NTFS_LCN_SPARSE)
                     ntfs_free_clusters(vol, runs[src].lcn, runs[src].length);
                 runs[src].length = 0;   /* Mark for removal */
@@ -715,7 +715,7 @@ static int write_one_compressed_cu(struct ntfs_volume *vol,
         *run_count = dst;
     }
 
-    /* Case 1: All-zero — sparse run (no disk allocation) */
+    /* Case 1: All-zero -- sparse run (no disk allocation) */
     if (buf_is_all_zero(cu_data, (uint32_t)cu_bytes)) {
         if (*run_count >= LZNT1_MAX_RUNS_PER_FILE - 1)
             return NTFS_ERR_IO;
@@ -744,7 +744,7 @@ static int write_one_compressed_cu(struct ntfs_volume *vol,
                                         comp_buf, comp_max);
 
         if (comp_len <= 0 || (uint64_t)comp_len >= cu_bytes) {
-            /* Compression didn't help — store uncompressed (full CU) */
+            /* Compression didn't help -- store uncompressed (full CU) */
             kfree(comp_buf);
             goto store_uncompressed;
         }
@@ -803,7 +803,7 @@ static int write_one_compressed_cu(struct ntfs_volume *vol,
         runs[*run_count].length    = comp_clusters;
         (*run_count)++;
 
-        /* The remaining (cu_clusters − comp_clusters) VCNs have no LCN —
+        /* The remaining (cu_clusters − comp_clusters) VCNs have no LCN --
          * this is what signals NTFS that the CU is compressed (§9.1 read path). */
         runs[*run_count].vcn_start = cu_start_vcn + comp_clusters;
         runs[*run_count].lcn       = NTFS_LCN_SPARSE;
@@ -902,7 +902,7 @@ int ntfs_write_compressed_data(struct ntfs_volume *vol, uint64_t inode,
     }
 
     if (nrhdr.compression_unit == 0) {
-        /* Not a compressed attribute — fall through to normal write */
+        /* Not a compressed attribute -- fall through to normal write */
         kfree(rec);
         return NTFS_ERR_IO;
     }
@@ -946,7 +946,7 @@ int ntfs_write_compressed_data(struct ntfs_volume *vol, uint64_t inode,
                                                     cu_start, cu_bytes,
                                                     cu_plain);
             if (rr < 0) {
-                /* No existing data (e.g. new file) — treat as zeroes */
+                /* No existing data (e.g. new file) -- treat as zeroes */
                 ntfs_memset(cu_plain, 0, cu_bytes);
             }
         }

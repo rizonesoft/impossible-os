@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_mutex.h — Mutex (Mutant) object type for the Object Manager
+ * ob_mutex.h -- Mutex (Mutant) object type for the Object Manager
  *
  * MUTEX_OBJECT wraps an embedded mutex_t.  Named mutexes are inserted into
  * \BaseNamedObjects for cross-process sharing.
@@ -26,7 +26,7 @@ typedef struct mutex_object {
 void ob_mutex_type_init(void);
 
 /*
- * NtCreateMutex stub — create or open a named/unnamed mutex.
+ * NtCreateMutex stub -- create or open a named/unnamed mutex.
  *
  * name:          NULL for unnamed, or a name in \BaseNamedObjects.
  * initial_owner: if 1, the calling thread immediately owns the mutex.

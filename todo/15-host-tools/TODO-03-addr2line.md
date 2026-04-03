@@ -1,13 +1,13 @@
-# TODO-03 — ixfs-addr2line (Enhanced Address Resolver)
+# TODO-03 -- ixfs-addr2line (Enhanced Address Resolver)
 
 > **Goal:** Replace `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` with a purpose-built tool that resolves crash addresses to function + file + line + source context, decodes error codes, and maps CR2 to known memory regions. One command for full crash analysis.
 
 ## Inputs
 
-- [`build/kernel.sym`](../../build/kernel.sym) — symbol map (nm output, address → name)
-- [`build/kernel.map`](../../build/kernel.map) — linker map (section layout)
-- [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h) — POST code definitions
-- Kernel source tree (`src/`) — for source context display
+- [`build/kernel.sym`](../../build/kernel.sym) -- symbol map (nm output, address → name)
+- [`build/kernel.map`](../../build/kernel.map) -- linker map (section layout)
+- [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h) -- POST code definitions
+- Kernel source tree (`src/`) -- for source context display
 
 ## Outcome
 
@@ -34,9 +34,9 @@ $ ixfs-addr2line --crash RIP=0x800000 CR2=0x800000 ERR=0x15
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Symbol map parser (kernel.sym + kernel.map)    | —          |  [ ]   |
+| 💎  |   1   | Symbol map parser (kernel.sym + kernel.map)    | --          |  [ ]   |
 | ⭐  |   2   | Source context display (show surrounding lines) | §1         |  [ ]   |
-| ⭐  |   3   | Error code decoder (PF, GP, DF, MCE)           | —          |  [ ]   |
+| ⭐  |   3   | Error code decoder (PF, GP, DF, MCE)           | --          |  [ ]   |
 | ⭐  |   4   | Memory region mapper (CR2 → what was accessed) | §1         |  [ ]   |
 | ⭐  |   5   | Full crash decode mode (--crash flag)           | §1-§4     |  [ ]   |
 
@@ -74,7 +74,7 @@ Decode x86-64 exception error codes into human-readable descriptions.
 - [ ] General Protection: segment selector, IDT/GDT/LDT source
 - [ ] Double Fault: always 0
 - [ ] POST code lookup: parse boot_init.h `#define POST16_*` constants
-- [ ] Commit: `"sdk: addr2line error code decoder — PF, GP, DF, POST"`
+- [ ] Commit: `"sdk: addr2line error code decoder -- PF, GP, DF, POST"`
 
 ## 4. Memory Region Mapper
 Map a CR2 or address to known memory regions (kernel text, heap, user ELF, framebuffer, MMIO).
@@ -99,6 +99,6 @@ Single command that decodes an entire BSOD register dump.
 
 ## Verification
 
-- [ ] `ixfs-addr2line 0x001234` — shows function + file + source context
-- [ ] `ixfs-addr2line --crash RIP=0x800000 CR2=0x800000 ERR=0x15` — full decode
+- [ ] `ixfs-addr2line 0x001234` -- shows function + file + source context
+- [ ] `ixfs-addr2line --crash RIP=0x800000 CR2=0x800000 ERR=0x15` -- full decode
 - [ ] Works on both Linux and Windows

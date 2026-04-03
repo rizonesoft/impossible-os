@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_internal.h — Shared internal types, structs, and function declarations
+ * ixfs_internal.h -- Shared internal types, structs, and function declarations
  *
  * Included by all IXFS module files. NOT part of the public API.
  * ============================================================================ */
@@ -57,7 +57,7 @@ struct ixfs_vnode {
     struct ixfs_volume *vol;      /* back-pointer to owning volume */
 };
 
-/* Per-volume state — one for each mounted IXFS partition */
+/* Per-volume state -- one for each mounted IXFS partition */
 struct ixfs_volume {
     int                      in_use;
     const struct blkdev     *dev;
@@ -96,7 +96,7 @@ struct ixfs_volume {
     uint32_t                 checksum_count;   /* total blocks tracked */
 };
 
-/* On-disk journal header — stored at journal block 0 */
+/* On-disk journal header -- stored at journal block 0 */
 struct ixfs_journal_header {
     uint32_t jh_magic;               /* IXFS_JOURNAL_MAGIC */
     uint32_t jh_head;                /* next free entry (1-based offset) */
@@ -104,7 +104,7 @@ struct ixfs_journal_header {
     uint32_t jh_seq;                 /* current sequence number */
 } __attribute__((packed));
 
-/* On-disk journal entry — one per journal block (16-byte header + 4080 data) */
+/* On-disk journal entry -- one per journal block (16-byte header + 4080 data) */
 struct ixfs_journal_entry {
     uint32_t je_txn_id;              /* transaction ID that owns this entry */
     uint32_t je_type;                /* IXFS_JE_DATA or IXFS_JE_COMMIT */

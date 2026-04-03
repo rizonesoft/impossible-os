@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_runner.c — Kernel unit test runner
+ * test_runner.c -- Kernel unit test runner
  *
  * Runs all registered test suites and prints pass/fail summary to serial.
  * Supports category filtering (test_suite= in boot.conf) and quiet mode

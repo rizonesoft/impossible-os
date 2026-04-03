@@ -1,18 +1,18 @@
-# TODO-08 — exFAT Read/Write Driver
+# TODO-08 -- exFAT Read/Write Driver
 
-> **Goal:** Implement a complete exFAT read/write driver — VBR parser + boot checksum, Allocation Bitmap, Up-Case Table, directory entry sets (File/Stream/Filename), directory read, file read (FAT-chain and NoFatChain fast path), file write, create/delete/rename, timestamp encoding, VFS registration with `vfs_probe()`, fsck, and 64-bit large file support. Without this, the OS cannot use the majority of USB drives and SD cards sold today.
+> **Goal:** Implement a complete exFAT read/write driver -- VBR parser + boot checksum, Allocation Bitmap, Up-Case Table, directory entry sets (File/Stream/Filename), directory read, file read (FAT-chain and NoFatChain fast path), file write, create/delete/rename, timestamp encoding, VFS registration with `vfs_probe()`, fsck, and 64-bit large file support. Without this, the OS cannot use the majority of USB drives and SD cards sold today.
 
 > [!IMPORTANT]
-> exFAT is the SD Association–mandated format for SDXC cards (> 32 GB) and the default Windows format for USB drives > 32 GB. Microsoft open-sourced the exFAT specification in 2019, making a clean-room implementation legal and straightforward. No exFAT code exists in the repo — this is a blank-slate driver. §1–§3 (VBR, Bitmap, Up-Case) are the mandatory foundation; §4–§6 (entry sets, directory read, file read) form the read path; §7–§8 (write, create/delete/rename) complete the write path. §10 (VFS registration) must be done last — it calls `vfs_probe()` which requires §1–§9 all working. Wire exFAT into `vfs_probe()` at priority step 4 (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1`).
+> exFAT is the SD Association–mandated format for SDXC cards (> 32 GB) and the default Windows format for USB drives > 32 GB. Microsoft open-sourced the exFAT specification in 2019, making a clean-room implementation legal and straightforward. No exFAT code exists in the repo -- this is a blank-slate driver. §1–§3 (VBR, Bitmap, Up-Case) are the mandatory foundation; §4–§6 (entry sets, directory read, file read) form the read path; §7–§8 (write, create/delete/rename) complete the write path. §10 (VFS registration) must be done last -- it calls `vfs_probe()` which requires §1–§9 all working. Wire exFAT into `vfs_probe()` at priority step 4 (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1`).
 
 ## Inputs
 
-- `src/kernel/fs/fat32/` — reference implementation for cluster chain traversal pattern and directory scan loop; do not share code, but follow the same structural patterns
-- `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` — `vfs_mount()`, `vfs_fs_driver`, `vfs_node_t` interface all drivers implement
-- `src/kernel/fs/partition.c` — `partition_mount_filesystems()` will be replaced by `vfs_probe()` (TODO-03 §1), which calls `exfat_probe()`; the exFAT probe must detect `"EXFAT   "` OEM ID at sector offset 3
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` — `vfs_probe()` calls `exfat_probe()` at step 4 in the probe priority chain; §10 of this TODO must return the correct `fs_identify_result_t` with label, total bytes, free bytes
-- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §7` — `vfs_path_fold()` applies ASCII case-fold before passing name components to `exfat_dir_lookup()`; exFAT also uses the Up-Case Table for its own name hash, so there are two levels of folding
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` — `CreateFile` with an exFAT drive letter calls `NtCreateFile` → `vfs_open` → `exfat_ops.finddir`; ensure `exfat_ops` exposes the full 14-entry `vfs_fs_driver` vtable
+- `src/kernel/fs/fat32/` -- reference implementation for cluster chain traversal pattern and directory scan loop; do not share code, but follow the same structural patterns
+- `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, `vfs_node_t` interface all drivers implement
+- `src/kernel/fs/partition.c` -- `partition_mount_filesystems()` will be replaced by `vfs_probe()` (TODO-03 §1), which calls `exfat_probe()`; the exFAT probe must detect `"EXFAT   "` OEM ID at sector offset 3
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `exfat_probe()` at step 4 in the probe priority chain; §10 of this TODO must return the correct `fs_identify_result_t` with label, total bytes, free bytes
+- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §7` -- `vfs_path_fold()` applies ASCII case-fold before passing name components to `exfat_dir_lookup()`; exFAT also uses the Up-Case Table for its own name hash, so there are two levels of folding
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` -- `CreateFile` with an exFAT drive letter calls `NtCreateFile` → `vfs_open` → `exfat_ops.finddir`; ensure `exfat_ops` exposes the full 14-entry `vfs_fs_driver` vtable
 
 ## Outcome
 
@@ -32,20 +32,20 @@
 
 | ⭐  | Order | Deliverable                                                                           | Depends On                                                   | Status |
 | --- | :---: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------ | :----: |
-| 💎  |   1   | §1 VBR parser + boot checksum — OEM ID, geometry fields, backup VBR fallback         | Block device I/O working                                     |  [ ]   |
-| 💎  |   2   | §2 Allocation Bitmap — bitmap cache, `exfat_alloc_cluster`, `exfat_free_cluster`     | §1 (VBR fields: `ClusterHeapOffset`, `ClusterCount`)         |  [ ]   |
-| 💎  |   3   | §3 Up-Case Table — verify checksum, cache, `exfat_upcase()`, name hash               | §1 (root directory cluster to find UpCase entry)             |  [ ]   |
-| 💎  |   4   | §4 Directory entry sets — File/Stream/Filename parse, UTF-16 decode, SetChecksum     | §3 (Up-Case needed for name hash validation)                 |  [ ]   |
-| 💎  |   5   | §5 Directory read — cluster chain walk, entry-set assembly, `vfs_dirent` output      | §4 (entry set parser), §2 (FAT chain for multi-cluster dirs) |  [ ]   |
-| 💎  |   6   | §6 File read — FAT-chain path + `NoFatChain` fast path                               | §5 (inode has cluster + DataLength from entry set)           |  [ ]   |
-| 💎  |   7   | §7 File write — within-cluster, cluster append, truncation, timestamps, SetChecksum  | §6 (read path proven; write mirrors it), §2 (alloc needed)  |  [ ]   |
-| 💎  |   8   | §8 File create / delete / rename — entry-set write, bitmap+FAT cleanup               | §7 (write path stable), §5 (directory cluster chain write)   |  [ ]   |
-| 💎  |   9   | §9 Timestamp encoding — `FILETIME`↔exFAT binary, 10 ms precision, UTC offset        | §8 (create/write paths call the encoder)                     |  [ ]   |
+| 💎  |   1   | §1 VBR parser + boot checksum -- OEM ID, geometry fields, backup VBR fallback         | Block device I/O working                                     |  [ ]   |
+| 💎  |   2   | §2 Allocation Bitmap -- bitmap cache, `exfat_alloc_cluster`, `exfat_free_cluster`     | §1 (VBR fields: `ClusterHeapOffset`, `ClusterCount`)         |  [ ]   |
+| 💎  |   3   | §3 Up-Case Table -- verify checksum, cache, `exfat_upcase()`, name hash               | §1 (root directory cluster to find UpCase entry)             |  [ ]   |
+| 💎  |   4   | §4 Directory entry sets -- File/Stream/Filename parse, UTF-16 decode, SetChecksum     | §3 (Up-Case needed for name hash validation)                 |  [ ]   |
+| 💎  |   5   | §5 Directory read -- cluster chain walk, entry-set assembly, `vfs_dirent` output      | §4 (entry set parser), §2 (FAT chain for multi-cluster dirs) |  [ ]   |
+| 💎  |   6   | §6 File read -- FAT-chain path + `NoFatChain` fast path                               | §5 (inode has cluster + DataLength from entry set)           |  [ ]   |
+| 💎  |   7   | §7 File write -- within-cluster, cluster append, truncation, timestamps, SetChecksum  | §6 (read path proven; write mirrors it), §2 (alloc needed)  |  [ ]   |
+| 💎  |   8   | §8 File create / delete / rename -- entry-set write, bitmap+FAT cleanup               | §7 (write path stable), §5 (directory cluster chain write)   |  [ ]   |
+| 💎  |   9   | §9 Timestamp encoding -- `FILETIME`↔exFAT binary, 10 ms precision, UTC offset        | §8 (create/write paths call the encoder)                     |  [ ]   |
 | 💎  |  10   | §10 VFS registration + probe + dirty-volume fsck + `chkdsk` shell command            | §1–§9 all complete                                           |  [ ]   |
-| 💎  |  11   | §11 Unicode edge cases — 255-char names, emoji/CJK round-trip, illegal char reject   | §4 (name parsing complete)                                   |  [ ]   |
-| 💎  |  12   | §12 Large file support (> 4 GiB) — 64-bit `DataLength`, `ValidDataLength` tracking  | §7 (write path complete)                                     |  [ ]   |
+| 💎  |  11   | §11 Unicode edge cases -- 255-char names, emoji/CJK round-trip, illegal char reject   | §4 (name parsing complete)                                   |  [ ]   |
+| 💎  |  12   | §12 Large file support (> 4 GiB) -- 64-bit `DataLength`, `ValidDataLength` tracking  | §7 (write path complete)                                     |  [ ]   |
 
-> All sections are `💎` parity — exFAT is a mandatory interoperability feature with no OS-differentiation claim. The goal is spec-correct conformance with the published Microsoft exFAT specification (2019) to achieve full interoperability with Windows-formatted drives.
+> All sections are `💎` parity -- exFAT is a mandatory interoperability feature with no OS-differentiation claim. The goal is spec-correct conformance with the published Microsoft exFAT specification (2019) to achieve full interoperability with Windows-formatted drives.
 
 ---
 
@@ -65,7 +65,7 @@ Parse the exFAT Volume Boot Record. Verify the 11-sector boot checksum. Fall bac
 - [ ] `exfat_fat_set(vol, cluster, value)` → write FAT sector entry; write mirror FAT if `NumberOfFATs == 2`
 - [ ] `vol->dirty`: if `VolumeFlags & VOLUME_IS_DIRTY (bit 1)`: set `vol->dirty = 1`; schedule fsck after mount
 - [ ] Log: `[exFAT] Mounted %c: vol=%s cluster_size=%u sectors=%llu`
-- [ ] Commit: `"fs/exfat: VBR parser — geometry, boot checksum, backup VBR fallback, dirty flag"`
+- [ ] Commit: `"fs/exfat: VBR parser -- geometry, boot checksum, backup VBR fallback, dirty flag"`
 
 ## 2. Allocation Bitmap `[Sonnet]`
 
@@ -82,7 +82,7 @@ Load the Allocation Bitmap cluster into memory. Implement `exfat_alloc_cluster(n
 - [ ] `exfat_free_cluster(vol, start, count)`: clear bitmap bits; update `vol->free_clusters`; `vol->bitmap_dirty = 1`
 - [ ] `exfat_bitmap_flush(vol)`: write all dirty bitmap sectors to disk via `exfat_write_sector()`
 - [ ] `exfat_fat_chain_len(vol, first_cluster)` → count FAT entries until end-of-chain (`>= 0xFFFFFFF8`)
-- [ ] Commit: `"fs/exfat: Allocation Bitmap — load, alloc/free contiguous, dirty flush, free_clusters tracking"`
+- [ ] Commit: `"fs/exfat: Allocation Bitmap -- load, alloc/free contiguous, dirty flush, free_clusters tracking"`
 
 ## 3. Up-Case Table `[Sonnet]`
 
@@ -91,13 +91,13 @@ Load and verify the Up-Case Table. Cache in memory. Implement `exfat_upcase(code
 **Files:** `src/kernel/fs/exfat/exfat_upcase.c` (new)
 
 > [!NOTE]
-> The Up-Case Table is found via a directory entry in the root directory (Type `0x82`, `DataLength = 128 * 1024` = 128 KiB for the full table, 2 bytes per Unicode codepoint × 65 536 codepoints). The table may be compressed — the spec allows a 5 740-entry table for the ASCII range if the upper range follows identity mapping. Table checksum: CRC32 of the table data (excluding sync bits). `exfat_name_hash(name_utf16, len)`: compute hash as per spec: `hash = ((hash << 15) | (hash >> 1)) + upcase(codepoint)` for each UTF-16LE codepoint, initial value 0. Case-fold in `exfat_dir_lookup` uses `exfat_upcase()`.
+> The Up-Case Table is found via a directory entry in the root directory (Type `0x82`, `DataLength = 128 * 1024` = 128 KiB for the full table, 2 bytes per Unicode codepoint × 65 536 codepoints). The table may be compressed -- the spec allows a 5 740-entry table for the ASCII range if the upper range follows identity mapping. Table checksum: CRC32 of the table data (excluding sync bits). `exfat_name_hash(name_utf16, len)`: compute hash as per spec: `hash = ((hash << 15) | (hash >> 1)) + upcase(codepoint)` for each UTF-16LE codepoint, initial value 0. Case-fold in `exfat_dir_lookup` uses `exfat_upcase()`.
 
 - [ ] `exfat_upcase_load(vol)`: find UpCase entry in root dir; read cluster chain; verify CRC32; `vol->upcase = kmalloc(128*1024)`; if compressed: expand to full 65 536-entry table
 - [ ] `exfat_upcase(vol, codepoint)` → `vol->upcase[codepoint]`; if `codepoint >= 0xFFFF` return `codepoint` (identity)
 - [ ] `exfat_name_hash(vol, name_utf16, name_len)` → per-spec hash using `exfat_upcase()`; must match `NameHash` field in Stream Extension
 - [ ] `exfat_name_cmp(vol, a_utf16, a_len, b_utf16, b_len)` → upcase both; compare; return 0 if equal (case-insensitive)
-- [ ] Commit: `"fs/exfat: Up-Case Table — load+verify CRC32, exfat_upcase(), exfat_name_hash(), case-insensitive cmp"`
+- [ ] Commit: `"fs/exfat: Up-Case Table -- load+verify CRC32, exfat_upcase(), exfat_name_hash(), case-insensitive cmp"`
 
 ## 4. Directory Entry Sets `[Opus]`
 
@@ -108,13 +108,13 @@ Parse File Entry (type `0x85`), Stream Extension (type `0xC0`), and Filename Ext
 > [!NOTE]
 > Entry set rules: a valid file entry set consists of exactly one File Entry (`0x85`) followed by one Stream Extension (`0xC0`) and 1–17 Filename Extension entries (`0xC1`). All entries in the set must be in consecutive directory slots (no gaps). `SecondaryCount` in the File Entry gives the total number of secondary entries (Stream + Filename extensions). `SetChecksum`: sum of all bytes in all entries, excluding bytes 2–3 of the File Entry (the checksum field itself); algorithm: `checksum = ((checksum << 15) | (checksum >> 1)) + byte` for each byte. The entry set is valid only if `SetChecksum` in the File Entry matches the recomputed value.
 
-- [ ] `struct exfat_file_entry_raw` + `struct exfat_stream_ext_raw` + `struct exfat_fname_ext_raw` — exact on-disk layout (32 bytes each)
+- [ ] `struct exfat_file_entry_raw` + `struct exfat_stream_ext_raw` + `struct exfat_fname_ext_raw` -- exact on-disk layout (32 bytes each)
 - [ ] `exfat_inode_t { uint32_t first_cluster; uint64_t data_length; uint64_t valid_data_length; uint16_t attributes; uint32_t file_entry_sector; uint32_t file_entry_offset; exfat_timestamp_t create_time, modified_time, access_time; char name_utf8[768]; uint16_t name_utf16[256]; uint8_t name_len; }`
 - [ ] `exfat_parse_entry_set(vol, buf, offset, &inode)`: read File Entry at `offset`; validate type `0x85`; read `SecondaryCount` secondary entries; assemble Stream + Filename entries; decode UTF-16LE name (concat all `0xC1` entries); verify `SetChecksum`; populate `exfat_inode_t`
 - [ ] `exfat_compute_set_checksum(entry_set_buf, total_entries)` → recompute and compare
 - [ ] Deleted entry detection: if `entry_type & 0x80 == 0` → skip (deleted); continue scan
 - [ ] UTF-16LE → UTF-8 decode: `exfat_utf16_to_utf8(name_utf16, name_len, name_utf8, 768)`; handle surrogate pairs for emoji (U+1F000+)
-- [ ] Commit: `"fs/exfat: directory entry sets — File/Stream/Filename parse, UTF-16 decode, SetChecksum verify"`
+- [ ] Commit: `"fs/exfat: directory entry sets -- File/Stream/Filename parse, UTF-16 decode, SetChecksum verify"`
 
 ## 5. Directory Read `[Sonnet]`
 
@@ -130,7 +130,7 @@ Walk directory cluster chains. Assemble entry sets. Emit `vfs_dirent` per valid 
 - [ ] `exfat_dir_lookup(vol, dir_inode, name_utf8, &result)`: `exfat_readdir()` with a name-compare callback using `exfat_name_cmp()`; return the first matching `exfat_inode_t`
 - [ ] VFS `finddir` callback: `exfat_vfs_finddir(vfs_node, name)` → `exfat_dir_lookup()` → return `vfs_node_t*`
 - [ ] VFS `readdir` callback: `exfat_vfs_readdir(vfs_node, index)` → walk to `index`-th entry; return `vfs_dirent`
-- [ ] Commit: `"fs/exfat: directory read — cluster chain walk, entry set scan, finddir, readdir VFS callbacks"`
+- [ ] Commit: `"fs/exfat: directory read -- cluster chain walk, entry set scan, finddir, readdir VFS callbacks"`
 
 ## 6. File Read `[Sonnet]`
 
@@ -139,7 +139,7 @@ Read file data via FAT cluster chain. Add `NoFatChain` fast path (contiguous all
 **Files:** `src/kernel/fs/exfat/exfat_io.c` (new)
 
 > [!NOTE]
-> `NoFatChain` flag: bit 1 of `GeneralSecondaryFlags` in the Stream Extension. When set, the file's data clusters are contiguous — to reach cluster N, compute `first_cluster + N` directly, skipping FAT traversal entirely. This is set by default for newly allocated contiguous files. FAT-chain path: walk `exfat_fat_entry(cluster)` until end-of-chain. Both paths must handle reads spanning cluster boundaries correctly.
+> `NoFatChain` flag: bit 1 of `GeneralSecondaryFlags` in the Stream Extension. When set, the file's data clusters are contiguous -- to reach cluster N, compute `first_cluster + N` directly, skipping FAT traversal entirely. This is set by default for newly allocated contiguous files. FAT-chain path: walk `exfat_fat_entry(cluster)` until end-of-chain. Both paths must handle reads spanning cluster boundaries correctly.
 
 - [ ] `exfat_file_read(vol, inode, offset, buf, len)`:
   - Compute starting cluster index: `cluster_idx = offset / bytes_per_cluster`
@@ -148,7 +148,7 @@ Read file data via FAT cluster chain. Add `NoFatChain` fast path (contiguous all
   - Read sectors within cluster; advance to next cluster; repeat until `len` bytes read or `offset + n >= valid_data_length`
 - [ ] Handle `ValidDataLength < DataLength`: bytes in `[ValidDataLength, DataLength)` return zero without disk I/O
 - [ ] VFS `read` callback: `exfat_vfs_read(vfs_node, buf, offset, len)` → `exfat_file_read()`
-- [ ] Commit: `"fs/exfat: file read — FAT-chain + NoFatChain fast path, ValidDataLength zero-fill, VFS read callback"`
+- [ ] Commit: `"fs/exfat: file read -- FAT-chain + NoFatChain fast path, ValidDataLength zero-fill, VFS read callback"`
 
 ## 7. File Write `[Opus]`
 
@@ -157,7 +157,7 @@ Within-cluster update, cluster append (alloc + extend FAT chain), truncation (fr
 **Files:** `src/kernel/fs/exfat/exfat_io.c` (extend), `src/kernel/fs/exfat/exfat_dir.c` (extend)
 
 > [!NOTE]
-> Cluster append: when write extends beyond current `DataLength`, call `exfat_alloc_cluster_near(vol, last_cluster, n, &new_cluster)`, link into FAT chain (or extend contiguous range for NoFatChain files — if not contiguous any more, clear NoFatChain flag and build FAT chain from scratch). Update `DataLength` and `ValidDataLength` in the Stream Extension; recompute `SetChecksum` for the entire entry set; write the updated entry set back to its directory sector. Truncation: free tail clusters from FAT, clear bitmap bits, update `DataLength`.
+> Cluster append: when write extends beyond current `DataLength`, call `exfat_alloc_cluster_near(vol, last_cluster, n, &new_cluster)`, link into FAT chain (or extend contiguous range for NoFatChain files -- if not contiguous any more, clear NoFatChain flag and build FAT chain from scratch). Update `DataLength` and `ValidDataLength` in the Stream Extension; recompute `SetChecksum` for the entire entry set; write the updated entry set back to its directory sector. Truncation: free tail clusters from FAT, clear bitmap bits, update `DataLength`.
 
 - [ ] `exfat_file_write(vol, inode, offset, buf, len)`: within-cluster: read-modify-write; beyond-end: allocate new clusters; update `DataLength` and `ValidDataLength`; recompute entry-set `SetChecksum`; write updated directory entry
 - [ ] `exfat_file_truncate(vol, inode, new_length)`: if shorter → free tail cluster chain from FAT + bitmap; update `DataLength`
@@ -165,7 +165,7 @@ Within-cluster update, cluster append (alloc + extend FAT chain), truncation (fr
 - [ ] FAT chain extension: `exfat_fat_chain_append(vol, inode, new_cluster)`: set `FAT[old_last] = new_cluster`; `FAT[new_cluster] = 0xFFFFFFFF`
 - [ ] NoFatChain promotion: if new cluster is not contiguous with the previous last cluster: clear `EXFAT_FLAG_NOFATCHAIN`; rebuild FAT chain for the entire extent list; update Stream Extension flags
 - [ ] VFS `write` callback: `exfat_vfs_write(vfs_node, buf, offset, len)` → `exfat_file_write()`
-- [ ] Commit: `"fs/exfat: file write — within-cluster, cluster append, truncate, DataLength/SetChecksum update"`
+- [ ] Commit: `"fs/exfat: file write -- within-cluster, cluster append, truncate, DataLength/SetChecksum update"`
 
 ## 8. File Create / Delete / Rename `[Sonnet]`
 
@@ -181,7 +181,7 @@ Write a complete File/Stream/Filename entry set in the parent directory. Free cl
 - [ ] `exfat_dir_delete_entry(vol, dir_inode, inode)`: mark all entries in set as deleted; `exfat_free_cluster(vol, inode->first_cluster, chain_len)`; `exfat_bitmap_flush(vol)`
 - [ ] `exfat_dir_rename(vol, old_dir, old_inode, new_dir, new_name)`: delete old entry set; write new entry set in `new_dir` with `new_name`; copy `first_cluster` and size fields from old inode
 - [ ] VFS callbacks: `exfat_vfs_create`, `exfat_vfs_unlink`, `exfat_vfs_rename` → call the above
-- [ ] Commit: `"fs/exfat: create/delete/rename — entry set write, SetChecksum, bitmap cleanup, VFS callbacks"`
+- [ ] Commit: `"fs/exfat: create/delete/rename -- entry set write, SetChecksum, bitmap cleanup, VFS callbacks"`
 
 ## 9. Timestamp Encoding `[Sonnet]`
 
@@ -195,7 +195,7 @@ Convert between `FILETIME` (100 ns ticks since 1601 UTC) and exFAT binary timest
 - [ ] `exfat_encode_timestamp(filetime_utc, &ts4, &ms10, &utc_off)`: convert `FILETIME` → exFAT 4-byte field + 10 ms increment + UTC offset; read timezone bias from `HKLM\SYSTEM\TimeZone\BiasMinutes`; clamp year > 2107
 - [ ] `exfat_decode_timestamp(ts4, ms10, utc_off)` → `FILETIME` (UTC); handle `UtcOffset` bit 7 presence/absence; convert to 100 ns FILETIME ticks
 - [ ] Wire into §7 (`exfat_update_dir_entry`): update `LastModifiedTime` on write; `LastAccessedTime` on read (date only, not time); `CreateTime` on create
-- [ ] Commit: `"fs/exfat: timestamp encoding — FILETIME↔exFAT binary, 10ms precision, UTC offset, year-2107 clamp"`
+- [ ] Commit: `"fs/exfat: timestamp encoding -- FILETIME↔exFAT binary, 10ms precision, UTC offset, year-2107 clamp"`
 
 ## 10. VFS Registration + Probe + fsck `[Sonnet]`
 
@@ -209,13 +209,13 @@ Register exFAT with `vfs_probe()`. Wire dirty-volume auto-fsck. Implement `exfat
 - [ ] `exfat_probe(blkdev_t *dev)` → read sector 0; return 1 if `buf[3..10] == "EXFAT   "`, 0 otherwise
 - [ ] `exfat_init(blkdev_t *dev)` → `exfat_vbr_parse()` + `exfat_bitmap_load()` + `exfat_upcase_load()` + root dir scan for special entries; return `exfat_volume_t*`
 - [ ] `exfat_get_driver()` / `exfat_get_root()` → for use by `vfs_probe()` (same pattern as `fat32_get_driver()`/`fat32_get_root()`)
-- [ ] VFS driver vtable: `open`, `close`, `read`, `write`, `finddir`, `readdir`, `create`, `unlink`, `rename`, `mkdir`, `rmdir`, `stat`, `flush`, `setattr` — all delegating to `exfat_*` functions
+- [ ] VFS driver vtable: `open`, `close`, `read`, `write`, `finddir`, `readdir`, `create`, `unlink`, `rename`, `mkdir`, `rmdir`, `stat`, `flush`, `setattr` -- all delegating to `exfat_*` functions
 - [ ] `exfat_fsck(vol, fix)`: `visited[]` bitset; walk all directories; collect cluster chains; compare against bitmap; cross-link detection; orphan detection; if `fix`: clear orphaned bits in bitmap; report `[exFAT] fsck: %u errors, %u orphaned clusters`
 - [ ] `chkdsk D: /exfat` → call `exfat_fsck(vol, fix=0)`; `/fix` flag calls with `fix=1`
 - [ ] Clean unmount: `exfat_unmount()` → `exfat_bitmap_flush()` → clear `VolumeFlags.VolumeDirty` bit in VBR + backup VBR
 - [ ] Add to `vfs_probe()` probe chain at step 4 (after FAT32, before ext4)
 - [ ] Log: `[exFAT] Mounted %c: "%s", %llu clusters, cluster_size=%u`
-- [ ] Commit: `"fs/exfat: VFS registration — probe, mount, dirty-volume fsck, chkdsk /exfat, clean unmount"`
+- [ ] Commit: `"fs/exfat: VFS registration -- probe, mount, dirty-volume fsck, chkdsk /exfat, clean unmount"`
 
 ## 11. Unicode Edge Cases `[Sonnet]`
 
@@ -230,7 +230,7 @@ Filenames up to 255 UTF-16 characters. Emoji and CJK round-trip correctly. `Name
 - [ ] `exfat_utf8_to_utf16(name_utf8, buf_utf16, max_codepoints)`: handle surrogate pairs for U+10000+; return codepoint count or -EILSEQ on invalid UTF-8
 - [ ] Verify `exfat_name_hash()` produces correct result for names with CJK and emoji characters; compare against Windows-computed hash for the same name
 - [ ] 255-char name test: create file with 255 Japanese characters; read back; verify round-trip
-- [ ] Commit: `"fs/exfat: Unicode — 255-char names, emoji/CJK round-trip, surrogate pairs, illegal char reject"`
+- [ ] Commit: `"fs/exfat: Unicode -- 255-char names, emoji/CJK round-trip, surrogate pairs, illegal char reject"`
 
 ## 12. Large File Support (> 4 GiB) `[Sonnet]`
 
@@ -245,7 +245,7 @@ Verify 64-bit `DataLength` and `ValidDataLength` in the Stream Extension are han
 - [ ] `exfat_file_extend(vol, inode, new_length)`: extend `DataLength` without allocating clusters (sparse); set `ValidDataLength` to current write position; write zeros for unallocated ranges on read
 - [ ] Test: `exfat_test_large_file()`: create file; extend to 5 GiB (`DataLength = 5 * 1024^3`); write 4 KiB at offset 0, 4 KiB at offset 4 GiB; read back both; verify zeros in unwritten ranges; `DataLength == 5 GiB` in directory entry
 - [ ] Ensure `GetFileSizeEx()` on exFAT file > 4 GiB returns correct 64-bit size
-- [ ] Commit: `"fs/exfat: large file support — 64-bit DataLength/ValidDataLength, 5 GiB sparse test"`
+- [ ] Commit: `"fs/exfat: large file support -- 64-bit DataLength/ValidDataLength, 5 GiB sparse test"`
 
 ---
 
@@ -254,20 +254,20 @@ Verify 64-bit `DataLength` and `ValidDataLength` in the Stream Extension are han
 
 | ⭐ | Feature                                              | 🪟 Win11                                                   | 🐧 Linux                                                                    | 🚀 Impossible OS                                                              |
 |----|------------------------------------------------------|---------------------------------------------------------|--------------------------------------------------------------------------|----------------------------------------------------------------------------|
-| 💎 | VBR parse + boot checksum + backup VBR fallback      | ✅ `exfatfs.sys`; full VBR + 11-sector                  | ✅ `exfat.ko` (Linux 5.7+); VBR parse                                    | ⬜ §1 — CRC32 11-sector checksum, backup VBR                               |
-| 💎 | Allocation Bitmap                                    | ✅ `exfatfs.sys`; bitmap maintained in sync             | ✅ `exfat.ko`; bitmap alloc + free                                       | ⬜ §2 — `exfat_alloc_cluster()`, first-fit scan, `vol->bitmap_dirty` flush |
-| 💎 | Up-Case Table                                        | ✅ `exfatfs.sys`; Up-Case table verified +              | ✅ `exfat.ko`; Up-Case table loaded; `exfat_utf16_cmp()`                 | ⬜ §3 — CRC32 verify, 65 536-entry cache,                                  |
-| 💎 | Directory entry sets                                 | ✅ `exfatfs.sys`; full entry set atomicity;             | ✅ `exfat.ko`; entry set parse; `exfat_build_inode()`                    | ⬜ §4 — 3-type entry set, SetChecksum compute/verify,                      |
-| 💎 | Directory read                                       | ✅ Full `FindFirstFileW` support over exFAT             | ✅ `exfat.ko`; `exfat_iterate()` readdir                                 | ⬜ §5 — FAT-chain dir walk, entry-set assembly,                            |
-| 💎 | File read                                            | ✅ `exfatfs.sys`; `NoFatChain` respected for sequential | ✅ `exfat.ko`; `EXFAT_FLAG_CONTIGUOUS`; fast path for                    | ⬜ §6 — dual path: FAT-chain walk vs.                                      |
-| 💎 | File write                                           | ✅ `exfatfs.sys`; full write path; `ValidDataLength`    | ✅ `exfat.ko`; `exfat_write_begin/end()`; cluster chain extend           | ⬜ §7 — cluster append + FAT extend,                                       |
-| 💎 | File create/delete/rename                            | ✅ `exfatfs.sys`; full CRUD; transactional-ish (no      | ✅ `exfat.ko`; `exfat_create()`, `exfat_unlink()`, `exfat_rename()`      | ⬜ §8 — consecutive free-slot search, entry-set write,                     |
-| 💎 | Timestamps                                           | ✅ `exfatfs.sys`; 10 ms + UTC                           | ✅ `exfat.ko`; `exfat_set_time()` / `exfat_get_inode_time()`; UTC        | ⬜ §9 — `exfat_encode/decode_timestamp()`, UTC offset, 10 ms               |
-| 💎 | VFS registration + dirty auto-fsck + `chkdsk /exfat` | ✅ `exfatfs.sys`; dirty flag auto-repair at             | ✅ `exfat.ko`; `EXFAT_SB_DIRTY` check on mount;                          | ⬜ §10 — `exfat_probe()` in `vfs_probe()`, dirty auto-fsck,                |
-| 💎 | Unicode                                              | ✅ Full Unicode; all cases handled                      | ✅ `exfat.ko`; full UTF-8/UTF-16 conversion; `exfat_validate_filename()` | ⬜ §11 — surrogate-pair decode, CJK identity upcase,                       |
-| 💎 | Large files > 4 GiB                                  | ✅ `exfatfs.sys`; 64-bit sizes; primary advantage       | ✅ `exfat.ko`; `i_size` is 64-bit; `ValidDataLength`                     | ⬜ §12 — all offsets `uint64_t`, 5 GiB                                     |
+| 💎 | VBR parse + boot checksum + backup VBR fallback      | ✅ `exfatfs.sys`; full VBR + 11-sector                  | ✅ `exfat.ko` (Linux 5.7+); VBR parse                                    | ⬜ §1 -- CRC32 11-sector checksum, backup VBR                               |
+| 💎 | Allocation Bitmap                                    | ✅ `exfatfs.sys`; bitmap maintained in sync             | ✅ `exfat.ko`; bitmap alloc + free                                       | ⬜ §2 -- `exfat_alloc_cluster()`, first-fit scan, `vol->bitmap_dirty` flush |
+| 💎 | Up-Case Table                                        | ✅ `exfatfs.sys`; Up-Case table verified +              | ✅ `exfat.ko`; Up-Case table loaded; `exfat_utf16_cmp()`                 | ⬜ §3 -- CRC32 verify, 65 536-entry cache,                                  |
+| 💎 | Directory entry sets                                 | ✅ `exfatfs.sys`; full entry set atomicity;             | ✅ `exfat.ko`; entry set parse; `exfat_build_inode()`                    | ⬜ §4 -- 3-type entry set, SetChecksum compute/verify,                      |
+| 💎 | Directory read                                       | ✅ Full `FindFirstFileW` support over exFAT             | ✅ `exfat.ko`; `exfat_iterate()` readdir                                 | ⬜ §5 -- FAT-chain dir walk, entry-set assembly,                            |
+| 💎 | File read                                            | ✅ `exfatfs.sys`; `NoFatChain` respected for sequential | ✅ `exfat.ko`; `EXFAT_FLAG_CONTIGUOUS`; fast path for                    | ⬜ §6 -- dual path: FAT-chain walk vs.                                      |
+| 💎 | File write                                           | ✅ `exfatfs.sys`; full write path; `ValidDataLength`    | ✅ `exfat.ko`; `exfat_write_begin/end()`; cluster chain extend           | ⬜ §7 -- cluster append + FAT extend,                                       |
+| 💎 | File create/delete/rename                            | ✅ `exfatfs.sys`; full CRUD; transactional-ish (no      | ✅ `exfat.ko`; `exfat_create()`, `exfat_unlink()`, `exfat_rename()`      | ⬜ §8 -- consecutive free-slot search, entry-set write,                     |
+| 💎 | Timestamps                                           | ✅ `exfatfs.sys`; 10 ms + UTC                           | ✅ `exfat.ko`; `exfat_set_time()` / `exfat_get_inode_time()`; UTC        | ⬜ §9 -- `exfat_encode/decode_timestamp()`, UTC offset, 10 ms               |
+| 💎 | VFS registration + dirty auto-fsck + `chkdsk /exfat` | ✅ `exfatfs.sys`; dirty flag auto-repair at             | ✅ `exfat.ko`; `EXFAT_SB_DIRTY` check on mount;                          | ⬜ §10 -- `exfat_probe()` in `vfs_probe()`, dirty auto-fsck,                |
+| 💎 | Unicode                                              | ✅ Full Unicode; all cases handled                      | ✅ `exfat.ko`; full UTF-8/UTF-16 conversion; `exfat_validate_filename()` | ⬜ §11 -- surrogate-pair decode, CJK identity upcase,                       |
+| 💎 | Large files > 4 GiB                                  | ✅ `exfatfs.sys`; 64-bit sizes; primary advantage       | ✅ `exfat.ko`; `i_size` is 64-bit; `ValidDataLength`                     | ⬜ §12 -- all offsets `uint64_t`, 5 GiB                                     |
 
-> **After §1–12:** Impossible OS achieves full interoperability with every Windows-formatted exFAT USB drive and SDXC card. There is no architectural differentiation claim here — the goal is spec-correct conformance with the published Microsoft exFAT specification (open-sourced 2019). The clean-room implementation using only the public spec is legally clean and functionally equivalent to the proprietary `exfatfs.sys` / `exfat.ko` implementations for all standard use cases.
+> **After §1–12:** Impossible OS achieves full interoperability with every Windows-formatted exFAT USB drive and SDXC card. There is no architectural differentiation claim here -- the goal is spec-correct conformance with the published Microsoft exFAT specification (open-sourced 2019). The clean-room implementation using only the public spec is legally clean and functionally equivalent to the proprietary `exfatfs.sys` / `exfat.ko` implementations for all standard use cases.
 
 ## Verification
 
@@ -284,4 +284,4 @@ Verify 64-bit `DataLength` and `ValidDataLength` in the Stream Extension are han
 - [ ] `chkdsk E: /exfat` on clean volume → `0 errors`; inject cross-linked chain → reports error; `/fix` resolves
 - [ ] Unicode: create file named `"🎮テスト.txt"`; `FindFirstFileW` returns correct name; read/write data; no corruption
 - [ ] Large file: `exfat_file_extend(vol, inode, 5GB)`; write at offset 0 and offset 4 GiB; read back; zeros between; `GetFileSizeEx` → 5 GiB
-- [ ] Commit: `"fs/exfat: complete exFAT R/W driver — VBR, bitmap, upcase, entry sets, read, write, CRUD, Unicode, large files"`
+- [ ] Commit: `"fs/exfat: complete exFAT R/W driver -- VBR, bitmap, upcase, entry sets, read, write, CRUD, Unicode, large files"`

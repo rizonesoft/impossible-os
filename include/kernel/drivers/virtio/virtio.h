@@ -1,5 +1,5 @@
 /* ============================================================================
- * virtio.h — VirtIO PCI modern transport
+ * virtio.h -- VirtIO PCI modern transport
  *
  * Implements split virtqueues over PCI MMIO (modern interface).
  * QEMU virtio-tablet-pci uses device ID 0x1052 (modern, non-transitional)

@@ -1,16 +1,16 @@
 /* ============================================================================
- * image_scale.c — Image scaling with bilinear interpolation & box filtering
+ * image_scale.c -- Image scaling with bilinear interpolation & box filtering
  *
  * Scaling strategy:
  *   - Upscale or downscale ≤2x: bilinear interpolation (smooth)
  *   - Downscale >2x: box filter (averages source pixels -> sharper results)
  *
  * Fit modes:
- *   STRETCH — distort to fill exact target dimensions
- *   FILL    — scale to cover target, center-crop excess
- *   FIT     — scale to fit inside target, letterbox with black
- *   CENTER  — no scaling, center source on target canvas
- *   TILE    — repeat source to fill target
+ *   STRETCH -- distort to fill exact target dimensions
+ *   FILL    -- scale to cover target, center-crop excess
+ *   FIT     -- scale to fit inside target, letterbox with black
+ *   CENTER  -- no scaling, center source on target canvas
+ *   TILE    -- repeat source to fill target
  *
  * All math is integer-only (fixed-point 16.16).
  * Memory: uses the same tiered allocator as image.c (PMM for > 64 KB).
@@ -62,7 +62,7 @@ static int alloc_image(image_t *img, uint32_t w, uint32_t h)
     img->alloc_size = size;
 
     if (size > 64 * 1024) {
-        /* Large — use PMM */
+        /* Large -- use PMM */
         uint64_t frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
         uintptr_t phys = pmm_alloc_contiguous(frames);
         if (phys == 0) {

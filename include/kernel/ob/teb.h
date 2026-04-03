@@ -1,5 +1,5 @@
 /* ============================================================================
- * teb.h — Thread Environment Block (TEB)
+ * teb.h -- Thread Environment Block (TEB)
  *
  * Windows x64-compatible TEB layout at exact offsets so ntdll inline macros
  * (NtCurrentTeb() = mov rax, gs:[0x30]) work without patching.
@@ -22,24 +22,24 @@ struct peb;
 /* Offset 0x40 in TEB. Two 64-bit fields on x64. */
 
 typedef struct client_id {
-    uint64_t UniqueProcess;                /* offset 0x00 — PID */
-    uint64_t UniqueThread;                 /* offset 0x08 — TID */
+    uint64_t UniqueProcess;                /* offset 0x00 -- PID */
+    uint64_t UniqueThread;                 /* offset 0x08 -- TID */
 } CLIENT_ID;
 
 /* ---- NT_TIB (Thread Information Block) ---------------------------------- */
 /* Offset 0x00 in TEB. 56 bytes (7 pointers) on x64. */
 
 typedef struct nt_tib {
-    void     *ExceptionList;               /* offset 0x00 — SEH chain head */
-    void     *StackBase;                   /* offset 0x08 — top of stack */
-    void     *StackLimit;                  /* offset 0x10 — bottom of stack */
-    void     *SubSystemTib;                /* offset 0x18 — subsystem-specific */
+    void     *ExceptionList;               /* offset 0x00 -- SEH chain head */
+    void     *StackBase;                   /* offset 0x08 -- top of stack */
+    void     *StackLimit;                  /* offset 0x10 -- bottom of stack */
+    void     *SubSystemTib;                /* offset 0x18 -- subsystem-specific */
     union {
-        void     *FiberData;               /* offset 0x20 — fiber context */
-        uint32_t  Version;                 /* offset 0x20 — version (alt) */
+        void     *FiberData;               /* offset 0x20 -- fiber context */
+        uint32_t  Version;                 /* offset 0x20 -- version (alt) */
     };
-    void     *ArbitraryUserPointer;        /* offset 0x28 — user-settable */
-    struct nt_tib *Self;                   /* offset 0x30 — TEB self-pointer */
+    void     *ArbitraryUserPointer;        /* offset 0x28 -- user-settable */
+    struct nt_tib *Self;                   /* offset 0x30 -- TEB self-pointer */
 } NT_TIB;                                  /* sizeof = 0x38 (56 bytes) */
 
 /* ---- TEB ---------------------------------------------------------------- */

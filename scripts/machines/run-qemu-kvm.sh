@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-qemu-kvm.sh — Launch Impossible OS under QEMU with KVM acceleration
+# run-qemu-kvm.sh -- Launch Impossible OS under QEMU with KVM acceleration
 #
 # Purpose: Forces QEMU to use KVM hardware acceleration. This makes the
 #          OS detect a KVM hypervisor via CPUID and select LAPIC as
@@ -35,7 +35,7 @@ OVMF_VARS_CP="/tmp/OVMF_VARS_4M_kvm.fd"
 
 # Preflight: check KVM availability
 if [ ! -e /dev/kvm ]; then
-    echo "ERROR: /dev/kvm not found — KVM is not available"
+    echo "ERROR: /dev/kvm not found -- KVM is not available"
     echo ""
     echo "Possible fixes:"
     echo "  1. Load KVM module: sudo modprobe kvm-intel (or kvm-amd)"
@@ -70,7 +70,7 @@ fi
 cp "$OVMF_VARS" "$OVMF_VARS_CP"
 
 echo "══════════════════════════════════════════════════"
-echo "  Impossible OS — QEMU KVM (Hardware Accelerated)"
+echo "  Impossible OS -- QEMU KVM (Hardware Accelerated)"
 echo "══════════════════════════════════════════════════"
 echo "  Accelerator : KVM"
 echo "  Resolution  : ${XRES}×${YRES}"

@@ -1,7 +1,7 @@
 /* ============================================================================
- * ahci_internal.h — AHCI driver internal shared state
+ * ahci_internal.h -- AHCI driver internal shared state
  *
- * NOT for external consumers — use "kernel/drivers/ahci.h" for the public API.
+ * NOT for external consumers -- use "kernel/drivers/ahci.h" for the public API.
  * This header exposes driver-internal state and helpers shared across the
  * split AHCI source files (ahci_core.c, ahci_rw.c, ahci_ncq.c, etc.).
  * ============================================================================ */

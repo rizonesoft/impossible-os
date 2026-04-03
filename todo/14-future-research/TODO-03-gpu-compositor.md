@@ -1,4 +1,4 @@
-# TODO-03 — GPU-Accelerated Compositor
+# TODO-03 -- GPU-Accelerated Compositor
 
 > **Goal:** Research spike to select a GPU acceleration strategy for the Impossible OS
 > compositor, design the Vulkan kernel driver architecture, assess Mesa lavapipe
@@ -13,11 +13,11 @@
 >
 > **TinyGL software OpenGL** (~5 K lines, zlib) is specced in
 > `09-services-security/TODO-12 §8`; §2 here assesses the *upgrade path* from TinyGL
-> to Mesa lavapipe (CPU Vulkan) — it does not re-specify the TinyGL port itself.
+> to Mesa lavapipe (CPU Vulkan) -- it does not re-specify the TinyGL port itself.
 >
 > **IOMMU driver** is a hard prerequisite for DMA-safe GPU memory (§3) and is documented
 > as a blocker in `13-future-research/TODO-02 §6`; the VirtIO-GPU path (§1 Option A)
-> avoids IOMMU by using the hypervisor as a DMA safety boundary — the recommended
+> avoids IOMMU by using the hypervisor as a DMA safety boundary -- the recommended
 > first step precisely because it sidesteps this blocker.
 >
 > No production GPU code is written during the research phase. The §6 deliverable
@@ -28,16 +28,16 @@
 
 ## Inputs
 
-- `include/desktop/wm.h` — `window_t.acrylic_cache`, `wm_composite()`, dirty-rect flags — §4 GPU path replaces these
-- `include/desktop/desktop.h` — `desktop_get_wallpaper_surface()` — §4 wallpaper texture upload
-- `include/kernel/drivers/framebuffer.h` — framebuffer flip / dirty-rect API — §4 DMA flip target
-- `include/kernel/mm/pmm.h` — `pmm_alloc_contiguous()` — §3 GPU-visible memory allocator
-- `include/kernel/mm/vmm.h` — `vmm_map_page()` — §3 IOMMU-safe GPU buffer mapping
-- `include/kernel/sched/syscall.h` — next free syscall number — §3 `SYS_GPU_*` additions
-- `09-services-security/TODO-12-long-term-features.md §8` (→ XREF) — TinyGL port; §2 here assesses upgrade to Mesa lavapipe from TinyGL baseline
-- `13-future-research/TODO-02-hypervisor.md §4 §6` (→ XREF) — virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §3 here build on that analysis
-- `src/kernel/drivers/virtio/virtio.c` — existing guest-side VirtIO transport; §1 VirtIO-GPU driver extends this
-- `src/kernel/gfx/` — `gfx_simd.c`, `arc_ring.c`, `gfx_text.c` — current CPU compositor internals
+- `include/desktop/wm.h` -- `window_t.acrylic_cache`, `wm_composite()`, dirty-rect flags -- §4 GPU path replaces these
+- `include/desktop/desktop.h` -- `desktop_get_wallpaper_surface()` -- §4 wallpaper texture upload
+- `include/kernel/drivers/framebuffer.h` -- framebuffer flip / dirty-rect API -- §4 DMA flip target
+- `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()` -- §3 GPU-visible memory allocator
+- `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §3 IOMMU-safe GPU buffer mapping
+- `include/kernel/sched/syscall.h` -- next free syscall number -- §3 `SYS_GPU_*` additions
+- `09-services-security/TODO-12-long-term-features.md §8` (→ XREF) -- TinyGL port; §2 here assesses upgrade to Mesa lavapipe from TinyGL baseline
+- `13-future-research/TODO-02-hypervisor.md §4 §6` (→ XREF) -- virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §3 here build on that analysis
+- `src/kernel/drivers/virtio/virtio.c` -- existing guest-side VirtIO transport; §1 VirtIO-GPU driver extends this
+- `src/kernel/gfx/` -- `gfx_simd.c`, `arc_ring.c`, `gfx_text.c` -- current CPU compositor internals
 
 ---
 
@@ -68,32 +68,32 @@ compositor to 4K 120 Hz.
 
 > Survey three access paths; recommend the one feasible within 12 months.
 
-- [ ] **Option A — VirtIO-GPU (recommended first step)**:
+- [ ] **Option A -- VirtIO-GPU (recommended first step)**:
   - QEMU `virtio-gpu-gl` exposes host GPU's OpenGL/Vulkan via a virtio MMIO device; Impossible OS needs a guest-side `virtio-gpu` driver
   - VirtIO-GPU protocol: `VIRTIO_GPU_CMD_GET_DISPLAY_INFO`, `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`, `VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D`, `VIRTIO_GPU_CMD_SET_SCANOUT`, `VIRTIO_GPU_CMD_RESOURCE_FLUSH`
   - Extend existing `src/kernel/drivers/virtio/` with `gpu.c` driver; uses same split-ring transport already implemented
   - **Feasibility**: ✅ works in QEMU today with `-device virtio-gpu-gl -display gtk,gl=on`; no IOMMU required; host handles DMA; OVMF firmware already used for x86 UEFI boot
   - **Limitation**: requires hypervisor (QEMU); no path to bare-metal from this driver alone
 
-- [ ] **Option B — Direct bare-metal GPU (AMD RDNA / Intel Arc)**:
+- [ ] **Option B -- Direct bare-metal GPU (AMD RDNA / Intel Arc)**:
   - Requires: full PCIe BAR enumeration + MMIO mapping, GPU command ring allocation + submission, display engine programming (CRTC/plane/encoder), firmware blob loading (for AMD GFX firmware, Intel DMC)
   - **Feasibility**: 12–18+ months; blocked by: IOMMU driver (DMA safety), PCIe hot-plug/reset, firmware blob delivery mechanism
   - **Recommended**: Phase 2 after VirtIO-GPU path validates the compositor GPU architecture
 
-- [ ] **Option C — DRM/KMS-style modesetting (Linux-inspired)**:
+- [ ] **Option C -- DRM/KMS-style modesetting (Linux-inspired)**:
   - Implement a kernel display subsystem with CRTC objects, plane objects (primary/overlay/cursor), encoder + connector pipeline
   - `drm_mode_set()` equivalent; atomic KMS (`atomic_commit`); DPCD AUX channel for DisplayPort
   - **Feasibility**: architecturally sound but requires bare-metal GPU (same blockers as Option B)
-  - **Value**: the abstraction layer is worth building even if bare-metal comes later — defines `display_plane_ops_t` vtable that both VirtIO-GPU and bare-metal can implement
+  - **Value**: the abstraction layer is worth building even if bare-metal comes later -- defines `display_plane_ops_t` vtable that both VirtIO-GPU and bare-metal can implement
 
 - [ ] **Option comparison table**:
 
   | Option | Works in QEMU | Bare-metal | LOC estimate | Timeline | IOMMU required |
   |--------|--------------|-----------|--------------|----------|----------------|
-  | A — VirtIO-GPU | ✅ now | ❌ | ~2 K LOC driver | 4–6 weeks | No |
-  | B — Bare-metal AMD/Intel | ✅ (pass-through) | ✅ | ~30–50 K LOC | 12–18 months | Yes |
-  | C — DRM/KMS layer | N/A | ✅ | ~10 K LOC (layer only) | 3–4 months | Depends on GPU |
-  | **Recommended** | **A first, then C+B** | — | — | — | — |
+  | A -- VirtIO-GPU | ✅ now | ❌ | ~2 K LOC driver | 4–6 weeks | No |
+  | B -- Bare-metal AMD/Intel | ✅ (pass-through) | ✅ | ~30–50 K LOC | 12–18 months | Yes |
+  | C -- DRM/KMS layer | N/A | ✅ | ~10 K LOC (layer only) | 3–4 months | Depends on GPU |
+  | **Recommended** | **A first, then C+B** | -- | -- | -- | -- |
 
 ---
 
@@ -107,9 +107,9 @@ compositor to 4K 120 Hz.
   - Mesa is ~10M LOC total; `lavapipe` (CPU Vulkan, `LLVMpipe` backend) is the isolated target
   - Key isolatable modules: `src/gallium/drivers/llvmpipe/` (~80 K LOC), `src/gallium/auxiliary/` (shared utils), `include/vulkan/vulkan.h` (Khronos headers)
   - **Porting blockers for Impossible OS**:
-    - Mesa uses `stdlib`, `stdio`, `pthread`, `mmap` — all need kernel shims or elimination
+    - Mesa uses `stdlib`, `stdio`, `pthread`, `mmap` -- all need kernel shims or elimination
     - LLVM backend (~2 M LOC) needed for `llvmpipe` JIT; alternative: `softpipe` (non-JIT, pure C, ~40 K LOC) is more portable
-    - `lavapipe` requires `dlfcn.h` for ICD loading — needs `dlopen` from `TODO-03 §5` (`11-user-platform-sdk/TODO-03`)
+    - `lavapipe` requires `dlfcn.h` for ICD loading -- needs `dlopen` from `TODO-03 §5` (`11-user-platform-sdk/TODO-03`)
   - **`softpipe` as intermediate target** (Mesa's non-JIT Gallium driver, ~40 K LOC):
     - Portable C, no LLVM dependency
     - Provides full Gallium3D state tracker → Vulkan via `zink` layer
@@ -133,12 +133,12 @@ compositor to 4K 120 Hz.
 > Documentation-only section. Surveys required firmware, register access patterns, and
 > open-source reference for eventual bare-metal GPU display programming.
 
-- [ ] **AMD Display Core Next (DCN) — RDNA 2+ (RX 6000+)**:
+- [ ] **AMD Display Core Next (DCN) -- RDNA 2+ (RX 6000+)**:
   - DCN version: DCN 3.x (RDNA 3/RX 7000), DCN 2.x (RDNA 2/RX 6000)
   - Required firmware blobs: `amdgpu/dcn_x_y_dmcu.bin` (Display Micro-Controller Unit); loaded to GPU SRAM via command ring; available at `linux-firmware` repo (GPL redistributable)
-  - Key register accesses: DCE IPP (Input Pixel Processing), DCE OPP (Output Pixel Processing), DC_STREAM (display stream), HUBP (Hubpreq — display engine DMA to scanout), DPPCLK/DISPCLK programming
+  - Key register accesses: DCE IPP (Input Pixel Processing), DCE OPP (Output Pixel Processing), DC_STREAM (display stream), HUBP (Hubpreq -- display engine DMA to scanout), DPPCLK/DISPCLK programming
   - DisplayPort: DPCD AUX channel via `AUX_CONTROL_REG`; read EDID via `EDID_AUX_READ`
-  - Open reference: `amdgpu` Linux driver, `drivers/gpu/drm/amd/display/dc/` — ~500 K LOC of display code; architecture well-documented in AMD public datasheet
+  - Open reference: `amdgpu` Linux driver, `drivers/gpu/drm/amd/display/dc/` -- ~500 K LOC of display code; architecture well-documented in AMD public datasheet
   - **Blocking items**: PCIe BAR MMIO mapping (need full PCIe driver), GPU command ring initialization before any display engine access, SMU (System Management Unit) power-on sequence for display rails
 
 - [ ] **Intel Arc (Xe DG2) Display Engine**:
@@ -146,8 +146,8 @@ compositor to 4K 120 Hz.
   - Required firmware: `i915/dmc_xe2hpd_*.bin` (Display Micro-Controller, loaded via command stream); `intel-ucode` for compute microcode
   - Key register groups: `PIPE_*` (display pipe), `TRANSCODER_*` (encoder), `DDI_*` (Digital Display Interface), `DPLL_*` (DisplayPort PLL), `DE_*` (display engine enable/disable)
   - HDMI: HDMI audio DP-AUX, `HDMI_PHY_CONTROL`, panel power sequencing via `PCH_PP_CONTROL`
-  - Open reference: `i915` + `xe` Linux drivers, `drivers/gpu/drm/i915/display/` — well-documented; IGT GPU tools test cases serve as behavioral spec
-  - **Blocking items**: same as AMD — PCIe MMIO mapping, GuC/HuC firmware loading, ring buffer initialization
+  - Open reference: `i915` + `xe` Linux drivers, `drivers/gpu/drm/i915/display/` -- well-documented; IGT GPU tools test cases serve as behavioral spec
+  - **Blocking items**: same as AMD -- PCIe MMIO mapping, GuC/HuC firmware loading, ring buffer initialization
 
 - [ ] **Common display programming prerequisites** (shared between AMD and Intel):
   - PCIe driver that exposes BAR0 MMIO region via `vmm_map_page(bar0_phys, virt, VMM_PAGE_MMIO)`
@@ -166,12 +166,12 @@ compositor to 4K 120 Hz.
 **Source:** `src/kernel/gpu/` (new directory, gated `#ifdef ENABLE_GPU`)
 
 - [ ] **GPU-visible memory allocator** (`src/kernel/gpu/gpu_mem.c`):
-  - GPU RAM is distinct from system RAM — on discrete GPUs, video RAM is accessible only via PCIe BAR1 MMIO (VRAM); on integrated GPUs and VirtIO-GPU, system RAM is GPU-visible via IOMMU mapping
+  - GPU RAM is distinct from system RAM -- on discrete GPUs, video RAM is accessible only via PCIe BAR1 MMIO (VRAM); on integrated GPUs and VirtIO-GPU, system RAM is GPU-visible via IOMMU mapping
   - `gpu_alloc(size, flags)` → returns `gpu_buf_t {phys, virt, gpu_va, size, flags}`:
-    - VirtIO-GPU path: `pmm_alloc_contiguous(pages)` + `vmm_map_page()` — host maps the pages into GPU address space automatically
+    - VirtIO-GPU path: `pmm_alloc_contiguous(pages)` + `vmm_map_page()` -- host maps the pages into GPU address space automatically
     - Bare-metal discrete GPU: allocate from VRAM BAR1 region (separate free list from PMM)
-  - `gpu_free(gpu_buf_t *)` — return pages/VRAM back to respective pool
-  - **IOMMU mapping** (bare-metal path only): `iommu_map(domain, gpu_va, hpa, size)` — create GPU DMA → host physical mapping; prevents GPU from accessing arbitrary host memory; blocked until IOMMU driver available
+  - `gpu_free(gpu_buf_t *)` -- return pages/VRAM back to respective pool
+  - **IOMMU mapping** (bare-metal path only): `iommu_map(domain, gpu_va, hpa, size)` -- create GPU DMA → host physical mapping; prevents GPU from accessing arbitrary host memory; blocked until IOMMU driver available
 - [ ] **GPU command submission syscalls** (add to `include/kernel/sched/syscall.h`):
   ```c
   SYS_GPU_MAP       = 90    // map a GPU buffer into process address space
@@ -210,7 +210,7 @@ compositor to 4K 120 Hz.
   2. **Wallpaper texture**: `desktop_get_wallpaper_surface()` → upload to GPU resource `wallpaper_tex` once (re-upload only on wallpaper change)
   3. **Acrylic/blur**: GPU blur pass on `wallpaper_tex` → `blur_tex`; replaces current CPU PMM blur in `wm.h`; GPU blur via fragment shader or `VIRTIO_GPU_BLOB_MEM_HOST3D` command
   4. **Composite pass**: GPU renders all window quads from back to front (z-order) in a single draw: wallpaper → blur layer → window textures → cursor; single `VIRTIO_GPU_CMD_RESOURCE_FLUSH` to present
-  5. **DMA flip**: `VIRTIO_GPU_CMD_SET_SCANOUT` + `RESOURCE_FLUSH` — no CPU memcpy to framebuffer; host GPU writes directly to display scanout
+  5. **DMA flip**: `VIRTIO_GPU_CMD_SET_SCANOUT` + `RESOURCE_FLUSH` -- no CPU memcpy to framebuffer; host GPU writes directly to display scanout
 - [ ] **Expected performance gains**:
 
   | Operation | CPU compositor | GPU compositor target |
@@ -229,7 +229,7 @@ compositor to 4K 120 Hz.
       int (*update_region)(uintptr_t fb_id, rect_t dirty); // partial upload
   } display_plane_ops_t;
   ```
-  VirtIO-GPU implements this vtable; bare-metal AMD/Intel will implement the same vtable — compositor calls only through `display_plane_ops_t`, never VirtIO-specific functions directly
+  VirtIO-GPU implements this vtable; bare-metal AMD/Intel will implement the same vtable -- compositor calls only through `display_plane_ops_t`, never VirtIO-specific functions directly
 
 ---
 
@@ -237,7 +237,7 @@ compositor to 4K 120 Hz.
 
 **Source:** `docs/architecture/gpu-compositor-plan.md`
 
-- [ ] **`docs/architecture/gpu-compositor-plan.md`** — sections:
+- [ ] **`docs/architecture/gpu-compositor-plan.md`** -- sections:
   - **Option comparison table** (from §1): VirtIO-GPU vs. bare-metal AMD vs. Intel vs. DRM/KMS layer; LOC, timeline, IOMMU requirement, feasibility verdict
   - **Recommended path and rationale**: VirtIO-GPU (Phase 1), Mesa softpipe (Phase 2), bare-metal DRM/KMS + AMD/Intel (Phase 3), lavapipe + vkd3d-proton (Phase 4)
   - **Vulkan kernel driver API** (from §4): `SYS_GPU_*` syscall table; `gpu_buf_t` struct; fence API; `display_plane_ops_t` vtable
@@ -263,15 +263,15 @@ compositor to 4K 120 Hz.
 
 | ⭐ | Feature                                   | 🪟 Win11                                     | 🐧 Linux                                           | 🚀 Impossible OS                                                |
 |----|-------------------------------------------|-------------------------------------------|-------------------------------------------------|--------------------------------------------------------------|
-| 💎 | GPU-accelerated compositor                | ✅ DWM (DirectCompose; D3D11; GPU flip    | ✅ Mutter/KWin (OpenGL/Vulkan; KMS; GPU planes; | ⬜ §5 — VirtIO-GPU Phase 1; DMA flip                         |
-| 💎 | CPU Vulkan                                | ✅ WARPDevice (D3D12 software rasterizer) | ✅ Mesa lavapipe (CPU Vulkan 1.3)               | ⬜ §2 — Mesa softpipe Phase 2; lavapipe                      |
-| 💎 | Kernel-mode GPU memory + fence API        | ✅ D3DKMT / `dxgkrnl.sys` (`SYS_*` GPU    | ✅ DRM GEM/TTM + syncobj fences                 | ⬜ §4 — `SYS_GPU_MAP/SUBMIT/WAIT/QUERY`; GPU fence waitqueue |
-| 💎 | DRM/KMS-style display plane abstraction   | ✅ Windows DDI (DXGK display miniport;    | ✅ Linux DRM atomic KMS (CRTC                   | ⬜ §1 — §5; `display_plane_ops_t` vtable; VirtIO-GPU +       |
-| 💎 | DirectX / Vulkan on GPU                   | ✅ WDDM 3.x; D3D12; Vulkan via            | ✅ Mesa AMDGPU/RADV/ANV; AMDKFD; i915/xe kernel | ⬜ §3 — §4; blocked by IOMMU +                               |
-| ⭐ | Zero-CPU-copy 4K 120 Hz compositor target | ✅ Windows 11 DWM: GPU flip               | ✅ KWin/Mutter: DRM page-flip, atomic commit    | ⬜ §5 — VirtIO-GPU `RESOURCE_FLUSH` DMA flip; 4K             |
+| 💎 | GPU-accelerated compositor                | ✅ DWM (DirectCompose; D3D11; GPU flip    | ✅ Mutter/KWin (OpenGL/Vulkan; KMS; GPU planes; | ⬜ §5 -- VirtIO-GPU Phase 1; DMA flip                         |
+| 💎 | CPU Vulkan                                | ✅ WARPDevice (D3D12 software rasterizer) | ✅ Mesa lavapipe (CPU Vulkan 1.3)               | ⬜ §2 -- Mesa softpipe Phase 2; lavapipe                      |
+| 💎 | Kernel-mode GPU memory + fence API        | ✅ D3DKMT / `dxgkrnl.sys` (`SYS_*` GPU    | ✅ DRM GEM/TTM + syncobj fences                 | ⬜ §4 -- `SYS_GPU_MAP/SUBMIT/WAIT/QUERY`; GPU fence waitqueue |
+| 💎 | DRM/KMS-style display plane abstraction   | ✅ Windows DDI (DXGK display miniport;    | ✅ Linux DRM atomic KMS (CRTC                   | ⬜ §1 -- §5; `display_plane_ops_t` vtable; VirtIO-GPU +       |
+| 💎 | DirectX / Vulkan on GPU                   | ✅ WDDM 3.x; D3D12; Vulkan via            | ✅ Mesa AMDGPU/RADV/ANV; AMDKFD; i915/xe kernel | ⬜ §3 -- §4; blocked by IOMMU +                               |
+| ⭐ | Zero-CPU-copy 4K 120 Hz compositor target | ✅ Windows 11 DWM: GPU flip               | ✅ KWin/Mutter: DRM page-flip, atomic commit    | ⬜ §5 -- VirtIO-GPU `RESOURCE_FLUSH` DMA flip; 4K             |
 
 Impossible OS's `⭐` advantage: the `display_plane_ops_t` abstraction layer means VirtIO-GPU
-in QEMU and bare-metal AMD/Intel share the same compositor call path from day one —
+in QEMU and bare-metal AMD/Intel share the same compositor call path from day one --
 switching from VirtIO-GPU to native AMD RDNA is a driver swap, not a compositor
 rewrite. The GPU path is purely additive (full CPU fallback preserved), so the research
 spike produces zero regression risk while delivering the architectural foundation for
@@ -289,4 +289,4 @@ spike produces zero regression risk while delivering the architectural foundatio
 - [ ] **DMA flip (no CPU memcpy)**: enable GPU compositor; use performance counter to verify `memcpy` call count per frame drops to 0 during compositing (only dirty-region `TRANSFER_TO_HOST` for window content)
 - [ ] **CPU fallback**: boot without `-device virtio-gpu` → compositor falls back to `wm_composite()` CPU path; no crash; full desktop functional
 - [ ] **`gpu-compositor-plan.md` deliverable**: document exists; contains option comparison table, LOC estimates for all 4 phases, dependency tree, `display_plane_ops_t` vtable definition, Mesa porting assessment
-- [ ] Commit: `"research: GPU compositor spike — VirtIO-GPU driver, Vulkan kernel API, compositor GPU path design, Mesa lavapipe assessment, display engine research"`
+- [ ] Commit: `"research: GPU compositor spike -- VirtIO-GPU driver, Vulkan kernel API, compositor GPU path design, Mesa lavapipe assessment, display engine research"`

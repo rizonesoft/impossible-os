@@ -137,9 +137,9 @@ To support timestamps beyond the year 2038 limitation of 32-bit integers, ext4 i
 
 The ext4 specification relies heavily on feature flags to maintain backward compatibility while continuously introducing modern capabilities. These flags are divided into three distinct 32-bit bitmasks:
 
-- **Compatible Features** (`s_feature_compat` at offset `0x5C`) — May be ignored; filesystem still usable
-- **Incompatible Features** (`s_feature_incompat` at offset `0x60`) — **Must be supported or mount rejected**
-- **Read-Only Compatible Features** (`s_feature_ro_compat` at offset `0x64`) — Mount as read-only if unsupported
+- **Compatible Features** (`s_feature_compat` at offset `0x5C`) -- May be ignored; filesystem still usable
+- **Incompatible Features** (`s_feature_incompat` at offset `0x60`) -- **Must be supported or mount rejected**
+- **Read-Only Compatible Features** (`s_feature_ro_compat` at offset `0x64`) -- Mount as read-only if unsupported
 
 ### Incompatible Feature Flags
 
@@ -158,7 +158,7 @@ The ext4 specification relies heavily on feature flags to maintain backward comp
 | `INCOMPAT_FLEX_BG`       | `0x0200`   | Flexible Block Groups                                                               |
 | `INCOMPAT_EA_INODE`      | `0x0400`   | Extended attributes stored in dedicated inodes                                      |
 | `INCOMPAT_DIRDATA`       | `0x1000`   | Directory entries contain extra data                                                |
-| `INCOMPAT_CSUM_SEED`     | `0x2000`   | Checksum seed in Superblock — allows UUID changes without recalculating checksums   |
+| `INCOMPAT_CSUM_SEED`     | `0x2000`   | Checksum seed in Superblock -- allows UUID changes without recalculating checksums   |
 | `INCOMPAT_LARGEDIR`      | `0x4000`   | Directories support 3-level HTree depth (> 2 GiB directory sizes)                   |
 | `INCOMPAT_INLINE_DATA`   | `0x8000`   | Small files store payload directly within the inode's `i_block` array               |
 | `INCOMPAT_ENCRYPT`       | `0x10000`  | Filesystem contains encrypted inodes                                                |
@@ -204,7 +204,7 @@ If unrecognized flags are present in `s_feature_ro_compat`, the OS may mount the
 
 ## 5. Block Group Descriptors and Advanced Grouping Dynamics
 
-Immediately following the Superblock—and any associated boot padding—the filesystem stores the **Group Descriptor Table (GDT)**. The GDT is an array of `ext4_group_desc` structures, sequentially detailing the physical state and logical layout of every single Block Group.
+Immediately following the Superblock--and any associated boot padding--the filesystem stores the **Group Descriptor Table (GDT)**. The GDT is an array of `ext4_group_desc` structures, sequentially detailing the physical state and logical layout of every single Block Group.
 
 ### Group Descriptor Structure
 
@@ -244,7 +244,7 @@ A custom OS driver must seamlessly concatenate the `_lo` and `_hi` halves to for
 
 ### Flexible Block Group Mechanism (flex_bg)
 
-When `INCOMPAT_FLEX_BG` is enabled, the filesystem aggregates the metadata structures—Block Bitmaps, Inode Bitmaps, and Inode Tables—from multiple sequential Block Groups and stores them contiguously in the first Block Group of that "flex sequence".
+When `INCOMPAT_FLEX_BG` is enabled, the filesystem aggregates the metadata structures--Block Bitmaps, Inode Bitmaps, and Inode Tables--from multiple sequential Block Groups and stores them contiguously in the first Block Group of that "flex sequence".
 
 The number of block groups clustered into a single flex group is determined by:
 
@@ -270,7 +270,7 @@ When `bigalloc` is activated, each bitmap bit represents a "cluster" of blocks (
 
 ## 6. The Inode Table and Metadata Encapsulation
 
-The inode (`struct ext4_inode`) is the core metadata encapsulation for any filesystem object—regular files, directories, symbolic links, named pipes, sockets, and device nodes.
+The inode (`struct ext4_inode`) is the core metadata encapsulation for any filesystem object--regular files, directories, symbolic links, named pipes, sockets, and device nodes.
 
 ### Locating Inodes Algorithmically
 
@@ -356,7 +356,7 @@ The functionality of this 60-byte region is determined dynamically by inode flag
 | Inode | Purpose |
 |-------|---------|
 | 1 | Defective block list |
-| 2 | **Root directory (`/`)** — entry point for all path resolution |
+| 2 | **Root directory (`/`)** -- entry point for all path resolution |
 | 3 | User quota file |
 | 4 | Group quota file |
 | 5 | Boot loader inode |
@@ -455,7 +455,7 @@ For highly fragmented files resulting in deep extent trees, iteratively reading 
 
 ## 8. Directory Indexing: From Linear Entries to HTree Hashes
 
-In ext4, a directory is technically a standard file—with its own inode and extent tree—whose data blocks contain a map linking filenames to inode numbers.
+In ext4, a directory is technically a standard file--with its own inode and extent tree--whose data blocks contain a map linking filenames to inode numbers.
 
 ### Linear Directory Entries (`ext4_dir_entry_2`)
 
@@ -490,12 +490,12 @@ When a file is deleted, its directory entry is not zeroed. The `rec_len` of the 
 
 When a directory outgrows a single block, it transitions to an indexed HTree if `EXT4_INDEX_FL` (`0x1000`) is set on the directory's inode. The HTree is a constant-depth B-tree keyed by 32-bit hashes of filenames.
 
-**Root node structure (`dx_root`)** — located in the first logical data block:
+**Root node structure (`dx_root`)** -- located in the first logical data block:
 
 | Offset | Size | Description |
 |--------|------|-------------|
-| `0x00` | 4 | Fake inode (0 — backward compat with ext2) |
-| `0x04` | 2 | Fake rec_len (12 — hides HTree from legacy) |
+| `0x00` | 4 | Fake inode (0 -- backward compat with ext2) |
+| `0x04` | 2 | Fake rec_len (12 -- hides HTree from legacy) |
 | `0x06` | 1 | Fake name_len (0) |
 | `0x07` | 1 | Fake file_type (0) |
 | `0x08` | 4 | Dot entry (. → self inode) |
@@ -567,7 +567,7 @@ struct journal_header_t {
 
 | Type | Value | Description |
 |------|-------|-------------|
-| Descriptor | 1 | Contains array of `journal_block_tag_t` — maps journal blocks to destination blocks |
+| Descriptor | 1 | Contains array of `journal_block_tag_t` -- maps journal blocks to destination blocks |
 | Commit | 2 | Marks atomic completion of a transaction (32 bytes with timestamp + checksum) |
 | Superblock v1 | 3 | Journal superblock (legacy) |
 | Superblock v2 | 4 | Journal superblock (modern, with feature flags) |
@@ -630,19 +630,19 @@ Instead of logging entire 4 KiB metadata blocks, Fast Commits log precise deltas
 | `EXT4_FC_TAG_PAD` | Padding (no-op) |
 | `EXT4_FC_TAG_TAIL` | End of fast commit block (with CRC32C) |
 
-Fast commits are **idempotent** — they can be safely replayed multiple times. A traditional full commit is forced when the fast commit area fills, a timer expires, or an operation is too complex for TLV representation.
+Fast commits are **idempotent** -- they can be safely replayed multiple times. A traditional full commit is forced when the fast commit area fills, a timer expires, or an operation is too complex for TLV representation.
 
 ### Recovery Algorithm
 
 When an unclean filesystem is mounted, the driver must invoke recovery:
 
-**Pass 1 — Scan Phase:**
+**Pass 1 -- Scan Phase:**
 The kernel iterates from the journal's `j_tail` block. It verifies checksums of all Descriptor and Commit blocks to identify the highest valid transaction ID, mapping the exact boundaries of the recoverable log.
 
-**Pass 2 — Revoke Phase:**
+**Pass 2 -- Revoke Phase:**
 The log is scanned again to parse all Revocation Blocks. The driver builds an in-memory hash table tracking block numbers that have been revoked in subsequent transactions.
 
-**Pass 3 — Replay Phase:**
+**Pass 3 -- Replay Phase:**
 The log is traversed a final time. Any data block mapped by a valid Descriptor tag is checkpointed to its filesystem destination, *unless* its target block number exists in the Revocation hash table. Once replay hits the final valid Commit Block, the filesystem is restored to a consistent state.
 
 ---
@@ -724,7 +724,7 @@ Total:                                                  ≈   4.004 TiB
 
 ### Phase 1: Minimal Read-Only Architecture
 
-1. **Mount Verification:** Read block 0 (or 1), verify `0xEF53` magic at offset `0x38`. Read `s_feature_incompat` — reject mount if unsupported flags are present.
+1. **Mount Verification:** Read block 0 (or 1), verify `0xEF53` magic at offset `0x38`. Read `s_feature_incompat` -- reject mount if unsupported flags are present.
 
 2. **Geometry Calculation:** Compute block size via `1024 << s_log_block_size`. Parse Superblock for GDT location and `s_desc_size`.
 

@@ -1,8 +1,8 @@
 /* ============================================================================
- * cmd.c — Impossible OS Command Prompt (cmd.exe)
+ * cmd.c -- Impossible OS Command Prompt (cmd.exe)
  *
  * User-mode REPL with line editing, command parsing, and built-in commands.
- * Equivalent to Windows cmd.exe — linked against libc.a.
+ * Equivalent to Windows cmd.exe -- linked against libc.a.
  * ============================================================================ */
 
 #include "stdio.h"

@@ -1,11 +1,11 @@
 /* ============================================================================
- * blk_prefetch.c — Predictive Sequential Read-Ahead
+ * blk_prefetch.c -- Predictive Sequential Read-Ahead
  *
- * §17.1 — 🚀 Impossible OS Exclusive
+ * §17.1 -- 🚀 Impossible OS Exclusive
  *
  * Detects sequential read patterns and speculatively prefetches ahead.
  * Neither Windows viostor nor Linux virtio-blk implement driver-level
- * read-ahead — they rely on the filesystem/block layer above.
+ * read-ahead -- they rely on the filesystem/block layer above.
  *
  * Design:
  *   - Track last 4 read (sector, count) pairs in a ring buffer
@@ -103,7 +103,7 @@ static uint64_t pf_detect_sequential(void)
         if (prev->sector + prev->count == curr->sector) {
             seq_count++;
         } else {
-            seq_count = 0;  /* Break in pattern — reset counter */
+            seq_count = 0;  /* Break in pattern -- reset counter */
         }
     }
 
@@ -332,7 +332,7 @@ int prefetch_try_read(uint64_t sector, uint32_t count, void *buffer)
     buf_end = pf.buf_sector + pf.buf_count;
 
     if (sector >= pf.buf_sector && req_end <= buf_end) {
-        /* HIT — copy from prefetch buffer */
+        /* HIT -- copy from prefetch buffer */
         offset_sectors = sector - pf.buf_sector;
         src = (uint8_t *)pf.buffer + (offset_sectors * topo.blk_size);
 

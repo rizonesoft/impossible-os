@@ -1,5 +1,5 @@
 /* ============================================================================
- * swap.h — Swap / Page File Support
+ * swap.h -- Swap / Page File Support
  *
  * Virtual memory swap subsystem. When physical memory is low, pages can be
  * "swapped out" to a backing store and retrieved on demand via page faults.
@@ -77,7 +77,7 @@ int swap_out(uintptr_t virt_addr);
  * Returns 0 on success, -1 on failure. */
 int swap_in(uint32_t swap_id, uintptr_t virt_addr);
 
-/* Handle a page fault — check if the faulting address is swapped.
+/* Handle a page fault -- check if the faulting address is swapped.
  * Returns 1 if handled (page was swapped in), 0 if not a swap fault. */
 int swap_handle_fault(uintptr_t fault_addr, uint64_t error_code);
 

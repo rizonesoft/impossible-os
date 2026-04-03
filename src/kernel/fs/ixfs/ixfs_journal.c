@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_journal.c — Write-Ahead Log (Journal)
+ * ixfs_journal.c -- Write-Ahead Log (Journal)
  * ============================================================================ */
 
 #include "ixfs_internal.h"
@@ -85,7 +85,7 @@ int ixfs_journal_recover(struct ixfs_volume *vol)
     jh = (struct ixfs_journal_header *)hdr_buf;
 
     if (jh->jh_magic != IXFS_JOURNAL_MAGIC) {
-        /* No valid journal — skip recovery */
+        /* No valid journal -- skip recovery */
         vol->j_head = 1;
         vol->txn.active = 0;
         vol->txn.count = 0;
@@ -106,7 +106,7 @@ int ixfs_journal_recover(struct ixfs_volume *vol)
         je = (struct ixfs_journal_entry *)entry_buf;
 
         if (je->je_type == IXFS_JE_COMMIT) {
-            /* Transaction was committed — previous DATA entries are valid.
+            /* Transaction was committed -- previous DATA entries are valid.
              * In our simple journal, data was already written to final
              * locations during commit. This COMMIT record confirms it. */
         } else if (je->je_type == IXFS_JE_DATA && je->je_target != 0) {

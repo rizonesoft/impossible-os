@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_semaphore.c — Semaphore object type: callbacks, NtCreateSemaphore stub
+ * ob_semaphore.c -- Semaphore object type: callbacks, NtCreateSemaphore stub
  *
  * Implements TODO-03 §6: ObpSemaphoreType wrapping semaphore_t.
  * ============================================================================ */

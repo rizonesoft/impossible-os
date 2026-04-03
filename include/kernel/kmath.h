@@ -1,10 +1,10 @@
 /* ============================================================================
- * kmath.h — Kernel math functions (floating-point, freestanding)
+ * kmath.h -- Kernel math functions (floating-point, freestanding)
  *
  * Provides the subset of <math.h> needed by stb_truetype in a freestanding
- * kernel environment.  Uses software implementations — no libm dependency.
+ * kernel environment.  Uses software implementations -- no libm dependency.
  *
- * These are NOT high-precision — they're sufficient for TrueType rasterization.
+ * These are NOT high-precision -- they're sufficient for TrueType rasterization.
  * ============================================================================ */
 
 #pragma once

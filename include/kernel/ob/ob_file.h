@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_file.h — File object type for the Object Manager
+ * ob_file.h -- File object type for the Object Manager
  *
  * FILE_OBJECT wraps a VFS node pointer with open-state fields (offset,
  * access flags).  Handle-based file I/O routes through these objects.
@@ -26,13 +26,13 @@ typedef struct file_object {
 /* --- API ----------------------------------------------------------------- */
 
 /*
- * ob_file_type_init — register ObpFileType with proper body size and callbacks.
+ * ob_file_type_init -- register ObpFileType with proper body size and callbacks.
  * Called from ob_init() during boot_phase2.
  */
 void ob_file_type_init(void);
 
 /*
- * ob_create_file_handle — open a file by path and return a process HANDLE.
+ * ob_create_file_handle -- open a file by path and return a process HANDLE.
  *
  * Calls vfs_open(), wraps the result in a FILE_OBJECT, and allocates a
  * handle in the current task's handle table.
@@ -41,21 +41,21 @@ void ob_file_type_init(void);
 HANDLE ob_create_file_handle(const char *path, uint32_t access);
 
 /*
- * ob_file_read — read from a file handle, advancing the file offset.
+ * ob_file_read -- read from a file handle, advancing the file offset.
  *
  * Returns bytes read, or -1 on error (bad handle, type mismatch, etc.).
  */
 int64_t ob_file_read(HANDLE_TABLE *ht, HANDLE h, void *buf, uint32_t size);
 
 /*
- * ob_file_write — write to a file handle (pipes only for now).
+ * ob_file_write -- write to a file handle (pipes only for now).
  *
  * Returns bytes written, or -1 on error.
  */
 int64_t ob_file_write(HANDLE_TABLE *ht, HANDLE h, const void *buf, uint32_t size);
 
 /*
- * ob_create_pipe_handles — create a pipe and return two HANDLEs.
+ * ob_create_pipe_handles -- create a pipe and return two HANDLEs.
  *
  * handles[0] = read end, handles[1] = write end.
  * Returns 0 on success, -1 on failure.

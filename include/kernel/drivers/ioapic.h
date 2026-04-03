@@ -1,5 +1,5 @@
 /* ============================================================================
- * ioapic.h — I/O APIC driver (system-level interrupt routing)
+ * ioapic.h -- I/O APIC driver (system-level interrupt routing)
  *
  * The I/O APIC replaces the legacy 8259 PIC for routing hardware interrupts
  * (IRQs) to Local APICs on individual CPUs. Each I/O APIC has 24 redirection
@@ -14,14 +14,14 @@
  * (e.g., PIT IRQ 0 → GSI 2 is extremely common on ACPI systems).
  *
  * MMIO registers:
- *   IOREGSEL (0x00) — write the register index here
- *   IOWIN    (0x10) — read/write the selected register value
+ *   IOREGSEL (0x00) -- write the register index here
+ *   IOWIN    (0x10) -- read/write the selected register value
  *
  * Register indices:
- *   0x00       IOAPICID   — I/O APIC ID
- *   0x01       IOAPICVER  — version + max redirection entry count
- *   0x10+2*N   REDTBLn    — redirection table entry N (low 32 bits)
- *   0x11+2*N   REDTBLn    — redirection table entry N (high 32 bits)
+ *   0x00       IOAPICID   -- I/O APIC ID
+ *   0x01       IOAPICVER  -- version + max redirection entry count
+ *   0x10+2*N   REDTBLn    -- redirection table entry N (low 32 bits)
+ *   0x11+2*N   REDTBLn    -- redirection table entry N (high 32 bits)
  * ============================================================================ */
 
 #pragma once

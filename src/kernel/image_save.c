@@ -1,5 +1,5 @@
 /* ============================================================================
- * image_save.c — Image saving (BMP/PNG via stb_image_write)
+ * image_save.c -- Image saving (BMP/PNG via stb_image_write)
  *
  * THIS FILE IS COMPILED WITH -msse2 (separate from rest of kernel).
  *
@@ -31,7 +31,7 @@
 /* No stdio in freestanding kernel */
 #define STBI_WRITE_NO_STDIO
 
-/* Provide memcpy/memset — these are already available as builtins */
+/* Provide memcpy/memset -- these are already available as builtins */
 #define STBIW_MEMCPY   __builtin_memcpy
 #define STBIW_MEMMOVE  __builtin_memmove
 

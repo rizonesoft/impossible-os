@@ -7,7 +7,7 @@ description: Implement and wire a range of SSDT entries (main or shadow table). 
 
 ## Input
 
-The user provides an SSDT range block — either pasted from TODO-05 (main SSDT, 0x0000+) or TODO-12 (shadow SSDT, 0x1000+). The block contains:
+The user provides an SSDT range block -- either pasted from TODO-05 (main SSDT, 0x0000+) or TODO-12 (shadow SSDT, 0x1000+). The block contains:
 - Range header (e.g., `**0x1020–0x102F: GDI Text and Font**`)
 - Table rows with: Index, Function name, Section reference, Owner, Done status
 
@@ -23,9 +23,9 @@ The user provides an SSDT range block — either pasted from TODO-05 (main SSDT,
   - **Main SSDT:** `include/kernel/nt/ssdt.h` must define `SSDT_TABLE` and `SSDT_HANDLER`. `syscall_dispatch()` must exist. If not, implement TODO-05 §4 first.
   - **Shadow SSDT:** `include/kernel/nt/win32k_ssdt.h` must exist. `syscall_dispatch` must route `0x1000+` to Table 1. If not, implement TODO-12 §1 first.
 - For each function in the range, grep the codebase for:
-  - **Existing implementation** (e.g., `NtClose` in ob.c, `NtCreateEvent` in ob_event.c) — wrap it, don't rewrite.
-  - **Underlying primitive** (e.g., `gfx_draw_line` for `NtGdiLineTo`, `vfs_read` for `NtReadFile`) — the NtXxx function wraps this.
-  - **Missing prerequisites** — stop and report if a dependency is not yet implemented.
+  - **Existing implementation** (e.g., `NtClose` in ob.c, `NtCreateEvent` in ob_event.c) -- wrap it, don't rewrite.
+  - **Underlying primitive** (e.g., `gfx_draw_line` for `NtGdiLineTo`, `vfs_read` for `NtReadFile`) -- the NtXxx function wraps this.
+  - **Missing prerequisites** -- stop and report if a dependency is not yet implemented.
 
 ### 3. Implement each function
 For each SSDT entry in the range:
@@ -36,7 +36,7 @@ a. **Create or locate the implementation file:**
    - Shadow SSDT NtUserXxx: `src/kernel/win32k/user_<category>.c` (e.g., `user_window.c`, `user_msg.c`)
 
 b. **Write the function:**
-   - Signature: `NTSTATUS NtXxxFunction(uint64_t a1, uint64_t a2, ...)` — args passed as raw uint64_t from SSDT dispatcher
+   - Signature: `NTSTATUS NtXxxFunction(uint64_t a1, uint64_t a2, ...)` -- args passed as raw uint64_t from SSDT dispatcher
    - Cast arguments to correct types inside the function
    - Validate user-mode pointers with `ProbeForRead`/`ProbeForWrite` if CPL=3 (→ XREF TODO-05 §12)
    - Call the underlying primitive (gfx_*, vfs_*, wm_*, ob_*, etc.)
@@ -90,8 +90,8 @@ For each successfully implemented and wired entry:
 - Update the OS Comparison table if applicable.
 
 ### 8. Commit and push
-- Commit message format: `"kernel: nt — wire SSDT 0xNNNN–0xNNNN (<category name>)"`
-  - Example: `"kernel: win32k — wire shadow SSDT 0x1020–0x1027 (GDI text and font)"`
+- Commit message format: `"kernel: nt -- wire SSDT 0xNNNN–0xNNNN (<category name>)"`
+  - Example: `"kernel: win32k -- wire shadow SSDT 0x1020–0x1027 (GDI text and font)"`
 - Stage: implementation files, headers, SSDT registration, updated TODO file, test changes.
 - Push to `origin/main` immediately.
 - Mark the section's `- [ ] Commit: "..."` checklist item `[x]`.
@@ -113,9 +113,9 @@ After completing the range, verify:
 
 ## Guardrails
 
-- Only implement functions listed in the provided range — do not expand scope.
-- If a function requires a prerequisite that doesn't exist (e.g., SSDT dispatcher, a specific Ob type), stop and report — do not stub it with `return STATUS_NOT_IMPLEMENTED`.
+- Only implement functions listed in the provided range -- do not expand scope.
+- If a function requires a prerequisite that doesn't exist (e.g., SSDT dispatcher, a specific Ob type), stop and report -- do not stub it with `return STATUS_NOT_IMPLEMENTED`.
 - The goal is **real working code**, not stubs. Each function must do something meaningful.
-- If an underlying primitive doesn't exist yet (e.g., `gfx_ellipse` for `NtGdiEllipse`), implement a minimal version or report the gap — do not skip the entry.
+- If an underlying primitive doesn't exist yet (e.g., `gfx_ellipse` for `NtGdiEllipse`), implement a minimal version or report the gap -- do not skip the entry.
 - Do not mark Done `[x]` unless the function is both implemented AND wired. Code existing in a `.c` file but not registered in the SSDT is NOT done.
 - Follow freestanding kernel rules from CLAUDE.md: no stdlib, NASM assembly, Win32 native API surface.

@@ -40,7 +40,7 @@ The universal addressing and sorting mechanism within Btrfs is the `btrfs_disk_k
 | `0x08` | 1            | UINT | The `type`. Determines the specific structure of the payload.    |
 | `0x09` | 8            | UINT | The `offset`. Provides contextual meaning based on the type.     |
 
-The `objectid` identifies the logical entity to which the item belongs. For file system trees, this corresponds to the inode number. All items belonging to a specific inode—whether they are extent pointers, directory entries, or extended attributes—will share the same `objectid`, forcing the B-tree sorting algorithm to group them contiguously within the leaf nodes.
+The `objectid` identifies the logical entity to which the item belongs. For file system trees, this corresponds to the inode number. All items belonging to a specific inode--whether they are extent pointers, directory entries, or extended attributes--will share the same `objectid`, forcing the B-tree sorting algorithm to group them contiguously within the leaf nodes.
 
 > [!NOTE]
 > The values are unsigned; an `objectid` of `-1` is treated as `0xFFFFFFFFFFFFFFFF` and will be sorted to the absolute end of the tree.
@@ -121,8 +121,8 @@ The superblock is the primary entry point and the ultimate source of truth for t
 | `0x58` | 8            | Logical address of the Chunk Tree root node.                      |
 | `0x60` | 8            | Logical address of the Log Tree root node.                        |
 | `0x68` | 8            | `log_root_transid` (deprecated, always 0).                        |
-| `0x70` | 8            | `total_bytes` — total size of the file system.                    |
-| `0x78` | 8            | `bytes_used` — total bytes allocated.                             |
+| `0x70` | 8            | `total_bytes` -- total size of the file system.                    |
+| `0x78` | 8            | `bytes_used` -- total bytes allocated.                             |
 | `0x80` | 8            | `root_dir_objectid` (usually 6).                                  |
 | `0x88` | 8            | `num_devices`.                                                    |
 | `0x90` | 4            | `sectorsize`.                                                     |
@@ -250,7 +250,7 @@ When mounting a specific subvolume, the OS must query the Root Tree for the `btr
 
 ### 5.2 Inode Item (`btrfs_inode_item`)
 
-Btrfs allocates inodes dynamically—an inode only exists as a `btrfs_inode_item` inserted into the B-tree at the exact moment a file is created. This allows for a virtually unlimited number of files, bound only by available metadata space.
+Btrfs allocates inodes dynamically--an inode only exists as a `btrfs_inode_item` inserted into the B-tree at the exact moment a file is created. This allows for a virtually unlimited number of files, bound only by available metadata space.
 
 > [!NOTE]
 > Standard Unix tools like `df -i` report zero available inodes on Btrfs volumes because inodes are dynamic. The OS must account for this when building user-facing utilities.
@@ -453,7 +453,7 @@ When a user application executes a `write()` system call, the OS must **not** im
 
 ### Phase 1: Minimal Read-Only Architecture
 
-1. **Superblock Parsing:** Read the primary superblock at offset `0x10000`. Validate the magic number (`_BHRfS_M`). Parse `incompat_flags` — reject mount if unsupported flags are present.
+1. **Superblock Parsing:** Read the primary superblock at offset `0x10000`. Validate the magic number (`_BHRfS_M`). Parse `incompat_flags` -- reject mount if unsupported flags are present.
 2. **Chunk Tree Bootstrap:** Parse the superblock's inline chunk map to bootstrap logical-to-physical address translation.
 3. **Root Tree Traversal:** Read the Root Tree root node. Locate the FS Tree root item for the default subvolume (ID 5 or as specified at mount time).
 4. **Inode Lookup:** Traverse the FS Tree to locate the root directory inode. Parse `btrfs_inode_item` for attributes.

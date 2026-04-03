@@ -1,5 +1,5 @@
 /* ============================================================================
- * xhci.h — xHCI (USB 3.x) Host Controller driver
+ * xhci.h -- xHCI (USB 3.x) Host Controller driver
  *
  * Extensible Host Controller Interface for USB 3.x/2.0/1.1 devices.
  * This header defines PCI identification constants, MMIO capability register
@@ -37,9 +37,9 @@
 #define XHCI_HCS1_MAX_PORTS_SHIFT  24
 
 /* HCSPARAMS2 field masks (scratchpad buffer count) */
-#define XHCI_HCS2_SPB_HI_MASK     0xF8000000  /* bits 31:27 — high 5 bits */
+#define XHCI_HCS2_SPB_HI_MASK     0xF8000000  /* bits 31:27 -- high 5 bits */
 #define XHCI_HCS2_SPB_HI_SHIFT    27
-#define XHCI_HCS2_SPB_LO_MASK     0x03E00000  /* bits 25:21 — low 5 bits  */
+#define XHCI_HCS2_SPB_LO_MASK     0x03E00000  /* bits 25:21 -- low 5 bits  */
 #define XHCI_HCS2_SPB_LO_SHIFT    21
 
 /* HCCPARAMS1 field masks */
@@ -69,8 +69,8 @@
 #define XHCI_PORTSC_STRIDE  0x10    /* Each port occupies 16 bytes */
 
 /* ---- Timeout constants --------------------------------------------------- */
-#define XHCI_HALT_TIMEOUT_US   16000   /* 16 ms — max time to halt */
-#define XHCI_RESET_TIMEOUT_US  100000  /* 100 ms — max time to reset */
+#define XHCI_HALT_TIMEOUT_US   16000   /* 16 ms -- max time to halt */
+#define XHCI_RESET_TIMEOUT_US  100000  /* 100 ms -- max time to reset */
 #define XHCI_POLL_INTERVAL_US  100     /* Poll interval during waits */
 
 /* ---- Controller state ---------------------------------------------------- */
@@ -106,7 +106,7 @@ struct xhci_controller {
     volatile uint8_t *rt_base;      /* Runtime registers */
     volatile uint8_t *db_base;      /* Doorbell array */
 
-    /* DCBAA — Device Context Base Address Array */
+    /* DCBAA -- Device Context Base Address Array */
     uint64_t *dcbaa;                /* Virtual address of DCBAA */
     uint64_t  dcbaa_phys;           /* Physical address of DCBAA */
 
@@ -132,7 +132,7 @@ int xhci_init(void);
 /* Get a controller by index (read-only). Returns NULL if index out of range. */
 const struct xhci_controller *xhci_get_controller(int index);
 
-/* Get a controller by index (mutable — for enumeration/device management).
+/* Get a controller by index (mutable -- for enumeration/device management).
  * Returns NULL if index out of range. */
 struct xhci_controller *xhci_get_controller_mut(int index);
 

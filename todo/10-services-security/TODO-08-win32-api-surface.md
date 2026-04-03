@@ -1,24 +1,24 @@
-# TODO-08 — Win32 API Surface Completion
+# TODO-08 -- Win32 API Surface Completion
 
 **Domain:** `09-services-security`
-**Goal:** Complete the Win32 API surface so unmodified Win32 programs compiled with MinGW run on Impossible OS — console apps, GUI apps, process/memory/sync APIs, DLL loading, the IxUI toolkit, and the developer SDK.
+**Goal:** Complete the Win32 API surface so unmodified Win32 programs compiled with MinGW run on Impossible OS -- console apps, GUI apps, process/memory/sync APIs, DLL loading, the IxUI toolkit, and the developer SDK.
 
 > [!IMPORTANT]
-> **Depends on:** `TODO-07 §1–9` — ring-3 execution, `SYSCALL`/`SYSRET`, and the PE loader must be working before this TODO begins.
+> **Depends on:** `TODO-07 §1–9` -- ring-3 execution, `SYSCALL`/`SYSRET`, and the PE loader must be working before this TODO begins.
 > **Continues from:** `todo-old/510-Long-Term-Stretch/TODO-510-Native-Win32.md` §5–9 (migrated and expanded).
 
 ---
 
 ## Important Notes
 
-- Registry API (`RegOpenKeyExA/W`, `RegQueryValueExA/W`, `RegSetValueExA/W`, `RegCloseKey`, `RegCreateKeyExA/W`, `RegEnumKeyExA/W`) is **already implemented** via the native Registry API — expose as pass-throughs only.
-- Kernel already has `mutex_t` (`include/kernel/sched/mutex.h`), `semaphore_t` (`include/kernel/sched/semaphore.h`), `event_t` (`include/kernel/sched/event.h`) — Win32 sync primitives wrap these directly.
+- Registry API (`RegOpenKeyExA/W`, `RegQueryValueExA/W`, `RegSetValueExA/W`, `RegCloseKey`, `RegCreateKeyExA/W`, `RegEnumKeyExA/W`) is **already implemented** via the native Registry API -- expose as pass-throughs only.
+- Kernel already has `mutex_t` (`include/kernel/sched/mutex.h`), `semaphore_t` (`include/kernel/sched/semaphore.h`), `event_t` (`include/kernel/sched/event.h`) -- Win32 sync primitives wrap these directly.
 - `wm_create_window()` and `wm_destroy_window()` exist in `include/desktop/wm.h`; `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR` exist in `include/desktop/controls.h`. Win32 window/control classes map to these.
 - `kmalloc`/`kfree` in `include/kernel/mm/heap.h` are the backing store for `HeapAlloc`/`HeapFree`. User-mode `VirtualAlloc` maps to `vmm_alloc_user()` (defined in `TODO-07`).
-- File I/O exports (`CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, etc.) are **native** Impossible OS API — `kernel32.dll` simply re-exports the same function pointers.
+- File I/O exports (`CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, etc.) are **native** Impossible OS API -- `kernel32.dll` simply re-exports the same function pointers.
 - `GetLastError`/`SetLastError` store the error code in `TEB.LastErrorValue` (per-thread, set up in `TODO-07 §7`).
 - `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP`, `CTRL_CHECKBOX`, `CTRL_RADIO` widgets are defined in `TODO-04` (07-graphics-ui domain); this TODO may reference but not implement them.
-- The IxUI toolkit (`sdk/include/ixui.h`) is the **native** Impossible OS GUI framework — it wraps `wm_create_window()` and the compositor directly, not a Win32 emulation layer.
+- The IxUI toolkit (`sdk/include/ixui.h`) is the **native** Impossible OS GUI framework -- it wraps `wm_create_window()` and the compositor directly, not a Win32 emulation layer.
 
 ---
 
@@ -77,7 +77,7 @@
 
 ## 1. Win32 Type Definitions `[Sonnet]`
 
-Create `include/win32/types.h` (included by `include/win32.h`). All Windows types map to Impossible OS primitives — no stdlib required.
+Create `include/win32/types.h` (included by `include/win32.h`). All Windows types map to Impossible OS primitives -- no stdlib required.
 
 - [ ] Create `include/win32/types.h`:
   - `HANDLE = void*`, `DWORD = uint32_t`, `BOOL = int`, `WORD = uint16_t`, `BYTE = uint8_t`
@@ -90,7 +90,7 @@ Create `include/win32/types.h` (included by `include/win32.h`). All Windows type
   - `INVALID_HANDLE_VALUE = (HANDLE)(uintptr_t)-1`, `TRUE = 1`, `FALSE = 0`
   - `STD_INPUT_HANDLE = -10`, `STD_OUTPUT_HANDLE = -11`, `STD_ERROR_HANDLE = -12`
   - `WINAPI`, `CALLBACK`, `APIENTRY` → all `__attribute__((ms_abi))`
-- [ ] Create `include/win32.h` — umbrella header (`#include "win32/types.h"` + forward-declares all DLL APIs)
+- [ ] Create `include/win32.h` -- umbrella header (`#include "win32/types.h"` + forward-declares all DLL APIs)
 - [ ] Commit: `"win32: type definitions and umbrella header"`
 
 ---
@@ -203,7 +203,7 @@ Add to `src/win32/kernel32.c` and extend `src/win32/pe_loader.c`. Enables loadin
 - [ ] `GetProcAddress(hModule, lpProcName)` → walk PE export directory (`IMAGE_DIRECTORY_ENTRY_EXPORT`): if `lpProcName` is ordinal (high bit set) → look up by ordinal; else → binary search `AddressOfNames[]`; return function pointer; return NULL + `SetLastError(ERROR_PROC_NOT_FOUND)` on miss
 - [ ] `FreeLibrary(hModule)` → decrement reference count in loaded-modules list; if ref == 0: call `DllMain(DLL_PROCESS_DETACH)`, unmap image pages, remove from list
 - [ ] Per-process loaded-modules list in PEB: `struct ldr_module { void *base; char name[64]; uint32_t ref_count; }` array (max 64 entries)
-- [ ] Built-in DLLs (`kernel32.dll`, `user32.dll`, `gdi32.dll`, `ntdll.dll`, `msvcrt.dll`) registered at process init with their stub export tables — `GetProcAddress` hits these without disk I/O
+- [ ] Built-in DLLs (`kernel32.dll`, `user32.dll`, `gdi32.dll`, `ntdll.dll`, `msvcrt.dll`) registered at process init with their stub export tables -- `GetProcAddress` hits these without disk I/O
 - [ ] Commit: `"win32: LoadLibrary + GetProcAddress DLL loading"`
 
 ---
@@ -339,14 +339,14 @@ Add to `src/win32/shell32.c`. Enables `ShellExecute` and file-association-aware 
 
 Provides the cross-compilation toolchain for targeting Impossible OS from a host Linux system.
 
-- [ ] Create `sdk/include/windows.h` — aggregates all Win32 headers:
+- [ ] Create `sdk/include/windows.h` -- aggregates all Win32 headers:
   - File I/O, process, memory, sync, console, registry declarations
   - GUI: `CreateWindowEx`, `RegisterClassEx`, `GetMessage`, `DispatchMessage`, `MessageBox`
   - Wraps IxUI: `#include "ixui.h"` for native `IxCreate*` extensions
-- [ ] Create `sdk/include/impossible.h` — Impossible OS extensions: `GetImpossibleVersion()`, `IxUI types`, `IRES icon handles`, OS feature flags
-- [ ] Create `sdk/lib/kernel32.lib` — import library (`__imp__*` symbols) for PE linker
-- [ ] Create `sdk/lib/user32.lib`, `sdk/lib/gdi32.lib`, `sdk/lib/shell32.lib`, `sdk/lib/msvcrt.lib` — import libraries
-- [ ] Create `sdk/lib/libixui.a` — static IxUI library (from §13)
+- [ ] Create `sdk/include/impossible.h` -- Impossible OS extensions: `GetImpossibleVersion()`, `IxUI types`, `IRES icon handles`, OS feature flags
+- [ ] Create `sdk/lib/kernel32.lib` -- import library (`__imp__*` symbols) for PE linker
+- [ ] Create `sdk/lib/user32.lib`, `sdk/lib/gdi32.lib`, `sdk/lib/shell32.lib`, `sdk/lib/msvcrt.lib` -- import libraries
+- [ ] Create `sdk/lib/libixui.a` -- static IxUI library (from §13)
 - [ ] Create `tools/impossible-cc` wrapper script:
   - `x86_64-w64-mingw32-gcc -I$SDK/include -L$SDK/lib -lkernel32 -luser32 "$@"`
   - Auto-selects CRT (`-lmsvcrt`) and sets correct subsystem (`-Wl,--subsystem,console` or `windows`)
@@ -376,7 +376,7 @@ Provides the cross-compilation toolchain for targeting Impossible OS from a host
 | ⭐ | Unimplemented function logger with call-count telemetry | ❌ Crashes or silent     | ❌ Crashes                    | ⬜ safe stubs + serial diagnostics             |
 | ⭐ | Developer SDK                                           | ❌ Windows only          | ❌ No Win32 SDK               | ⬜ MinGW cross-compiler + native headers       |
 
-**Impossible OS advantage:** Win32 is implemented natively in the kernel — no translation layer, no Wine, no DLL emulation. IxUI is a first-class toolkit that gives Win32 programs a native compositor-backed window system with zero overhead. The unimplemented-function logger gives a unique observability story not available on any other platform.
+**Impossible OS advantage:** Win32 is implemented natively in the kernel -- no translation layer, no Wine, no DLL emulation. IxUI is a first-class toolkit that gives Win32 programs a native compositor-backed window system with zero overhead. The unimplemented-function logger gives a unique observability story not available on any other platform.
 
 ---
 

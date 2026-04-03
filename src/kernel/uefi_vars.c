@@ -1,5 +1,5 @@
 /* ============================================================================
- * uefi_vars.c — NTSTATUS-returning UEFI variable services
+ * uefi_vars.c -- NTSTATUS-returning UEFI variable services
  *
  * Wraps the raw EFI-status-returning primitives from uefi_runtime.c with
  * NTSTATUS translation so kernel subsystems use a consistent error type.
@@ -31,7 +31,7 @@ NTSTATUS uefi_var_get(const uint16_t *name, const efi_guid_t *guid,
 
     uint64_t status = uefi_get_variable(guid, name, &attrs, &sz, buf);
 
-    /* Always update size — firmware sets it even on BUFFER_TOO_SMALL */
+    /* Always update size -- firmware sets it even on BUFFER_TOO_SMALL */
     *size = (size_t)sz;
 
     return efi_to_ntstatus(status);

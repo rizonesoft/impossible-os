@@ -1,17 +1,17 @@
-# TODO-01 — TCP Protocol & Network Infrastructure
+# TODO-01 -- TCP Protocol & Network Infrastructure
 
 > **Goal:** Build TCP on top of the working Ethernet/ARP/IPv4/UDP/DHCP stack, introduce a `net_interface` manager to replace the single global `net_cfg`, add a loopback interface, and implement stateful connection tracking as the backing layer for the network firewall. TCP is the foundation every higher-level protocol (HTTP, DNS, SSH, TLS) depends on.
 
 > [!IMPORTANT]
-> Ethernet, ARP, IPv4 (`ipv4_send`/`ipv4_handle`/`ipv4_checksum`), ICMP, UDP, and DHCP are complete in `src/kernel/net/`. `IP_PROTO_TCP=6` is already defined in `include/kernel/net/net.h`. The current stack uses a single global `struct net_config net_cfg` — §5 replaces this with `struct net_interface` / `netif_*` API while keeping backward compatibility for existing callers via a `netif_get_default()` shim. §5 (netif) must land before §6 (loopback) and §7 (connection tracking) because both register as interfaces. The TCP implementation in §1–§4 builds on `ipv4_send()` directly; the pseudo-header checksum follows the same pattern as the existing UDP checksum in `src/kernel/net/udp.c`.
+> Ethernet, ARP, IPv4 (`ipv4_send`/`ipv4_handle`/`ipv4_checksum`), ICMP, UDP, and DHCP are complete in `src/kernel/net/`. `IP_PROTO_TCP=6` is already defined in `include/kernel/net/net.h`. The current stack uses a single global `struct net_config net_cfg` -- §5 replaces this with `struct net_interface` / `netif_*` API while keeping backward compatibility for existing callers via a `netif_get_default()` shim. §5 (netif) must land before §6 (loopback) and §7 (connection tracking) because both register as interfaces. The TCP implementation in §1–§4 builds on `ipv4_send()` directly; the pseudo-header checksum follows the same pattern as the existing UDP checksum in `src/kernel/net/udp.c`.
 
 ## Inputs
 
-- `src/kernel/net/udp.c` + `include/kernel/net/net.h` — `udp_send()`, `udp_handle()`, pseudo-header checksum pattern; `ipv4_send()` / `ipv4_handle()` for the TX/RX path; `net_cfg` for current IP/MAC — all used by §1
-- `src/kernel/net/ip.c` — `ipv4_handle()` dispatches on `protocol` field; add `case IP_PROTO_TCP: tcp_handle(...)` here for §1
-- `include/kernel/net/net.h` — `struct net_config` → replaced/extended by `struct net_interface` in §5; all existing callers shim through `netif_get_default()`
-- → XREF: `06-networking/TODO-02-*` (future DNS/TLS/HTTP TODOs) — those callers use `tcp_connect()` / `tcp_send()` / `tcp_recv()` from this TODO
-- → XREF: `09-services-security/TODO-xx-firewall` — connection tracking hash table (§7) is the backing store for the stateful firewall "allow established" rule
+- `src/kernel/net/udp.c` + `include/kernel/net/net.h` -- `udp_send()`, `udp_handle()`, pseudo-header checksum pattern; `ipv4_send()` / `ipv4_handle()` for the TX/RX path; `net_cfg` for current IP/MAC -- all used by §1
+- `src/kernel/net/ip.c` -- `ipv4_handle()` dispatches on `protocol` field; add `case IP_PROTO_TCP: tcp_handle(...)` here for §1
+- `include/kernel/net/net.h` -- `struct net_config` → replaced/extended by `struct net_interface` in §5; all existing callers shim through `netif_get_default()`
+- → XREF: `06-networking/TODO-02-*` (future DNS/TLS/HTTP TODOs) -- those callers use `tcp_connect()` / `tcp_send()` / `tcp_recv()` from this TODO
+- → XREF: `09-services-security/TODO-xx-firewall` -- connection tracking hash table (§7) is the backing store for the stateful firewall "allow established" rule
 
 ## Outcome
 
@@ -25,13 +25,13 @@
 
 | ⭐  | Order | Deliverable                                                                           | Depends On                                                       | Status |
 | --- | :---: | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | :----: |
-| 💎  |   1   | §5 `net_interface` manager — `struct net_interface`, `netif_register/get_default`, `net_cfg` shim | Existing `net_cfg`; `eth_send()`; RTL8139 driver registered at boot |  [ ]   |
-| 💎  |   2   | §6 Loopback interface — `lo`, 127/8 detection in `ipv4_send()`, short-circuit RX    | §5 (`netif_register()` needed to add `lo`)                       |  [ ]   |
-| 💎  |   3   | §1 TCP header + checksum — `tcp_header`, TCP flags, pseudo-header CRC, `ip_receive` routing | §5 (`netif_get_default()` for source IP in pseudo-header)        |  [ ]   |
-| 💎  |   4   | §2 TCP state machine — `tcp_connection`, 32-slot table, 11 RFC 793 states, transitions | §3 (TCP header parser needed before state machine can fire)      |  [ ]   |
-| 💎  |   5   | §3 TCP API — `tcp_connect`, `tcp_send`, `tcp_recv`, `tcp_close`, ephemeral ports     | §4 (state machine must be complete before API calls are safe)    |  [ ]   |
-| 💎  |   6   | §4 TCP robustness — retransmit timer, window validation, Nagle, slow-start, OOO hold | §5 (API layer provides the send path robustness hooks)           |  [ ]   |
-| 💎  |   7   | §7 Connection tracking — 4-tuple hash table, create on SYN/UDP, expire on FIN/RST   | §4 (TCP state machine fires CT creates/deletes)                  |  [ ]   |
+| 💎  |   1   | §5 `net_interface` manager -- `struct net_interface`, `netif_register/get_default`, `net_cfg` shim | Existing `net_cfg`; `eth_send()`; RTL8139 driver registered at boot |  [ ]   |
+| 💎  |   2   | §6 Loopback interface -- `lo`, 127/8 detection in `ipv4_send()`, short-circuit RX    | §5 (`netif_register()` needed to add `lo`)                       |  [ ]   |
+| 💎  |   3   | §1 TCP header + checksum -- `tcp_header`, TCP flags, pseudo-header CRC, `ip_receive` routing | §5 (`netif_get_default()` for source IP in pseudo-header)        |  [ ]   |
+| 💎  |   4   | §2 TCP state machine -- `tcp_connection`, 32-slot table, 11 RFC 793 states, transitions | §3 (TCP header parser needed before state machine can fire)      |  [ ]   |
+| 💎  |   5   | §3 TCP API -- `tcp_connect`, `tcp_send`, `tcp_recv`, `tcp_close`, ephemeral ports     | §4 (state machine must be complete before API calls are safe)    |  [ ]   |
+| 💎  |   6   | §4 TCP robustness -- retransmit timer, window validation, Nagle, slow-start, OOO hold | §5 (API layer provides the send path robustness hooks)           |  [ ]   |
+| 💎  |   7   | §7 Connection tracking -- 4-tuple hash table, create on SYN/UDP, expire on FIN/RST   | §4 (TCP state machine fires CT creates/deletes)                  |  [ ]   |
 
 ---
 
@@ -42,7 +42,7 @@ Define `struct tcp_header`. Declare TCP flag constants. Implement the TCP pseudo
 **Files:** `src/kernel/net/tcp.c` (new), `include/kernel/net/net.h` (extend)
 
 > [!NOTE]
-> TCP header (20 bytes minimum, no options for the initial implementation): `src_port (2, BE)`, `dst_port (2, BE)`, `seq_num (4, BE)`, `ack_num (4, BE)`, `data_offset_flags (2, BE)` (upper 4 bits = data offset in 32-bit words, lower 12 = flags), `window (2, BE)`, `checksum (2, BE)`, `urgent_ptr (2, BE)`. Flag bits: `FIN=0x001`, `SYN=0x002`, `RST=0x004`, `PSH=0x008`, `ACK=0x010`, `URG=0x020`. TCP pseudo-header checksum: same structure as UDP's — `src_ip (4)`, `dst_ip (4)`, `zero (1)`, `protocol=6 (1)`, `tcp_length (2)` prepended before the TCP header + data. Checksum function is identical to `ipv4_checksum()` — call it on the pseudo-header + TCP segment concatenated. Route: in `ipv4_handle()`, add `case IP_PROTO_TCP: tcp_handle(src_ip, data, len); break;`.
+> TCP header (20 bytes minimum, no options for the initial implementation): `src_port (2, BE)`, `dst_port (2, BE)`, `seq_num (4, BE)`, `ack_num (4, BE)`, `data_offset_flags (2, BE)` (upper 4 bits = data offset in 32-bit words, lower 12 = flags), `window (2, BE)`, `checksum (2, BE)`, `urgent_ptr (2, BE)`. Flag bits: `FIN=0x001`, `SYN=0x002`, `RST=0x004`, `PSH=0x008`, `ACK=0x010`, `URG=0x020`. TCP pseudo-header checksum: same structure as UDP's -- `src_ip (4)`, `dst_ip (4)`, `zero (1)`, `protocol=6 (1)`, `tcp_length (2)` prepended before the TCP header + data. Checksum function is identical to `ipv4_checksum()` -- call it on the pseudo-header + TCP segment concatenated. Route: in `ipv4_handle()`, add `case IP_PROTO_TCP: tcp_handle(src_ip, data, len); break;`.
 
 - [ ] `struct tcp_header` in `net.h` (20 bytes, `__attribute__((packed))`)
 - [ ] `TCP_FLAG_FIN`, `TCP_FLAG_SYN`, `TCP_FLAG_RST`, `TCP_FLAG_PSH`, `TCP_FLAG_ACK`, `TCP_FLAG_URG` constants
@@ -59,7 +59,7 @@ Implement `struct tcp_connection` with a 32-connection table. Drive all 11 RFC 7
 **Files:** `src/kernel/net/tcp.c` (extend), `include/kernel/net/net.h` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — the state machine has subtle concurrency requirements (interrupt context fires `tcp_handle()` which updates connection state; task context calls `tcp_send()`/`tcp_recv()`) and asymmetric open/close paths that are a common source of protocol bugs. States: `TCP_CLOSED`, `TCP_LISTEN`, `TCP_SYN_SENT`, `TCP_SYN_RECEIVED`, `TCP_ESTABLISHED`, `TCP_FIN_WAIT_1`, `TCP_FIN_WAIT_2`, `TCP_CLOSE_WAIT`, `TCP_CLOSING`, `TCP_LAST_ACK`, `TCP_TIME_WAIT`. State transitions: active open: `CLOSED→SYN_SENT` (send SYN); receive SYN+ACK → `ESTABLISHED` (send ACK). Passive open: `LISTEN→SYN_RECEIVED` (receive SYN, send SYN+ACK); receive ACK → `ESTABLISHED`. Active close: `ESTABLISHED→FIN_WAIT_1` (send FIN); receive ACK → `FIN_WAIT_2`; receive FIN → `TIME_WAIT` (send ACK); TIME_WAIT timer (2×MSL=120 s) → `CLOSED`. Passive close: `ESTABLISHED→CLOSE_WAIT` (receive FIN, send ACK); `CLOSE_WAIT→LAST_ACK` (application calls close, send FIN); receive ACK → `CLOSED`. RST: any state except CLOSED/LISTEN → `CLOSED`; log and free connection.
+> This is `[Opus]` -- the state machine has subtle concurrency requirements (interrupt context fires `tcp_handle()` which updates connection state; task context calls `tcp_send()`/`tcp_recv()`) and asymmetric open/close paths that are a common source of protocol bugs. States: `TCP_CLOSED`, `TCP_LISTEN`, `TCP_SYN_SENT`, `TCP_SYN_RECEIVED`, `TCP_ESTABLISHED`, `TCP_FIN_WAIT_1`, `TCP_FIN_WAIT_2`, `TCP_CLOSE_WAIT`, `TCP_CLOSING`, `TCP_LAST_ACK`, `TCP_TIME_WAIT`. State transitions: active open: `CLOSED→SYN_SENT` (send SYN); receive SYN+ACK → `ESTABLISHED` (send ACK). Passive open: `LISTEN→SYN_RECEIVED` (receive SYN, send SYN+ACK); receive ACK → `ESTABLISHED`. Active close: `ESTABLISHED→FIN_WAIT_1` (send FIN); receive ACK → `FIN_WAIT_2`; receive FIN → `TIME_WAIT` (send ACK); TIME_WAIT timer (2×MSL=120 s) → `CLOSED`. Passive close: `ESTABLISHED→CLOSE_WAIT` (receive FIN, send ACK); `CLOSE_WAIT→LAST_ACK` (application calls close, send FIN); receive ACK → `CLOSED`. RST: any state except CLOSED/LISTEN → `CLOSED`; log and free connection.
 
 - [ ] `tcp_state_t` enum (11 values)
 - [ ] `struct tcp_connection { uint32_t local_ip, remote_ip; uint16_t local_port, remote_port; tcp_state_t state; uint32_t snd_seq, snd_ack, rcv_nxt; uint16_t snd_win, rcv_win; uint8_t recv_buf[4096]; uint16_t recv_head, recv_tail; uint32_t retransmit_deadline; uint8_t retransmit_count; uint32_t cwnd, ssthresh; uint8_t used; }`
@@ -76,7 +76,7 @@ Expose `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()`. Allocate ephe
 **Files:** `src/kernel/net/tcp.c` (extend), `include/kernel/net/net.h` (extend)
 
 > [!NOTE]
-> `tcp_connect(dst_ip, dst_port)` must block (spin-poll with a 5-second timeout) until the state machine reaches `ESTABLISHED` or returns an error. Blocking in kernel context: `tcp_connect()` sends the initial SYN, then spin-polls `conn->state == TCP_ESTABLISHED` with `ksleep(1)` between polls, up to 5000 iterations. `tcp_recv()` similarly spin-polls until `recv_head != recv_tail` (data available) or connection closes. `tcp_send()` may need to fragment — if `data_len > conn->snd_win`: send `snd_win` bytes in this segment, the remainder in subsequent calls. Ephemeral port allocator: static `next_ephemeral_port` starting at 49152; increment modulo (65535 - 49152); check no collision in `tcp_conn_table`.
+> `tcp_connect(dst_ip, dst_port)` must block (spin-poll with a 5-second timeout) until the state machine reaches `ESTABLISHED` or returns an error. Blocking in kernel context: `tcp_connect()` sends the initial SYN, then spin-polls `conn->state == TCP_ESTABLISHED` with `ksleep(1)` between polls, up to 5000 iterations. `tcp_recv()` similarly spin-polls until `recv_head != recv_tail` (data available) or connection closes. `tcp_send()` may need to fragment -- if `data_len > conn->snd_win`: send `snd_win` bytes in this segment, the remainder in subsequent calls. Ephemeral port allocator: static `next_ephemeral_port` starting at 49152; increment modulo (65535 - 49152); check no collision in `tcp_conn_table`.
 
 - [ ] `tcp_connect(dst_ip, dst_port)` → `tcp_connection*`: `tcp_alloc_conn()`; set remote ip/port, local ip = `netif_get_default()->ip`, local port = `tcp_alloc_ephemeral()`; send SYN; spin-poll 5 s; return conn or NULL
 - [ ] `tcp_send(conn, data, len)` → bytes_sent: validate `conn->state == ESTABLISHED`; fragment if `len > conn->snd_win`; `tcp_send_segment(conn, PSH|ACK, data, len)`; advance `snd_seq`
@@ -94,7 +94,7 @@ Retransmission timer (1 s, exponential backoff, 3 retries). Sequence window vali
 **Files:** `src/kernel/net/tcp.c` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — Nagle + slow-start interact with each other in subtle ways that require careful ordering of the send decision logic. Retransmission: each `tcp_send_segment()` saves the last-sent segment in `conn->retransmit_buf[1460]`; sets `conn->retransmit_deadline = now_ms() + 1000 << conn->retransmit_count`; on next tick, if `now_ms() > deadline && state != ESTABLISHED_FULLY_ACKED`: resend; increment `retransmit_count`; if `>3`: send RST and close. Sequence window: incoming segment is valid only if `rcv_nxt <= seg_seq < rcv_nxt + rcv_win`; drop silently if outside window; send ACK for duplicates. Nagle: hold outgoing data in a coalesce buffer if `len < MSS && unacknowledged data exists`; flush after 200 ms or when buffer reaches MSS. Slow-start: `cwnd = 1 MSS` at connection open; on each ACK: `cwnd += 1 MSS` until `cwnd >= ssthresh (64 KiB)`; on loss (retransmit): `ssthresh = cwnd / 2; cwnd = 1 MSS`. OOO hold queue: 4-slot ring of `{seq, data, len}` tuples; on receive of future-sequence segment: buffer it; when `rcv_nxt` advances to match: inject from hold queue.
+> This is `[Opus]` -- Nagle + slow-start interact with each other in subtle ways that require careful ordering of the send decision logic. Retransmission: each `tcp_send_segment()` saves the last-sent segment in `conn->retransmit_buf[1460]`; sets `conn->retransmit_deadline = now_ms() + 1000 << conn->retransmit_count`; on next tick, if `now_ms() > deadline && state != ESTABLISHED_FULLY_ACKED`: resend; increment `retransmit_count`; if `>3`: send RST and close. Sequence window: incoming segment is valid only if `rcv_nxt <= seg_seq < rcv_nxt + rcv_win`; drop silently if outside window; send ACK for duplicates. Nagle: hold outgoing data in a coalesce buffer if `len < MSS && unacknowledged data exists`; flush after 200 ms or when buffer reaches MSS. Slow-start: `cwnd = 1 MSS` at connection open; on each ACK: `cwnd += 1 MSS` until `cwnd >= ssthresh (64 KiB)`; on loss (retransmit): `ssthresh = cwnd / 2; cwnd = 1 MSS`. OOO hold queue: 4-slot ring of `{seq, data, len}` tuples; on receive of future-sequence segment: buffer it; when `rcv_nxt` advances to match: inject from hold queue.
 
 - [ ] `tcp_tick()`: called from a 100 ms kernel timer; iterates `tcp_conn_table`; for each connection: check retransmit deadline; check TIME_WAIT expiry; flush Nagle buffer if 200 ms elapsed
 - [ ] Retransmit timer: `conn->retransmit_buf[1460]`, `retransmit_len`, `retransmit_deadline`, `retransmit_count`; on `tcp_send_segment()`: copy segment to `retransmit_buf`; set deadline; on ACK received: clear buffer; reset count
@@ -122,7 +122,7 @@ Replace the single global `net_cfg` with `struct net_interface` and `netif_regis
 - [ ] Shim: `net_cfg` now backed by `g_netif_table[0]`; `net_cfg.ip` stays in sync via `netif_set_ip()`; existing `net_cfg.configured` reads still work
 - [ ] Update `ipv4_send()`: replace `net_cfg.mac` / direct NIC call with `netif_get_default()->tx(frame, len)`
 - [ ] RTL8139 init: call `netif_register("eth0", mac, 1500, rtl8139_send_frame)` during driver init
-- [ ] Commit: `"net: netif manager — struct net_interface, register/get_default, net_cfg shim, ipv4_send decoupled"`
+- [ ] Commit: `"net: netif manager -- struct net_interface, register/get_default, net_cfg shim, ipv4_send decoupled"`
 
 ## 6. Loopback Interface `[Sonnet]`
 
@@ -135,10 +135,10 @@ Register a virtual `lo` interface. Detect `127.0.0.0/8` in `ipv4_send()` and sho
 
 - [ ] `netif_init_loopback()`: `netif_register("lo", zero_mac, 65535, loopback_tx_fn)`; `netif_set_ip(lo, 0x7F000001, 0xFF000000, 0, 0)` (127.0.0.1/8)
 - [ ] `loopback_tx_fn(data, len)`: receives a complete Ethernet frame (or raw IP if we skip eth wrapping for lo); strip Ethernet header if present; call `ipv4_handle(data, len)` directly
-- [ ] Detection in `ipv4_send()`: before ARP lookup — `if ((dst_ip >> 24) == 0x7F)`: build IP header with `src=127.0.0.1`; call `ipv4_handle()` directly; return
+- [ ] Detection in `ipv4_send()`: before ARP lookup -- `if ((dst_ip >> 24) == 0x7F)`: build IP header with `src=127.0.0.1`; call `ipv4_handle()` directly; return
 - [ ] `netif_init_loopback()` called from `net_init()` before NIC registration
 - [ ] `ping 127.0.0.1` in shell → round-trip via loopback, no NIC traffic; `[ICMP] echo reply from 127.0.0.1` in serial log
-- [ ] Commit: `"net: loopback interface lo — 127/8 short-circuit in ipv4_send, loopback_tx → ipv4_handle direct"`
+- [ ] Commit: `"net: loopback interface lo -- 127/8 short-circuit in ipv4_send, loopback_tx → ipv4_handle direct"`
 
 ## 7. Stateful Connection Tracking `[Opus]`
 
@@ -147,10 +147,10 @@ Hash table keyed on `(src_ip, src_port, dst_ip, dst_port)`. Create entries on ou
 **Files:** `src/kernel/net/conntrack.c` (new), `include/kernel/net/net.h` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — connection tracking must be updated from two concurrent contexts (TX path: connection created on outbound SYN; RX path: connection matched/expired on inbound packet) with no locks in the critical path (interrupt context). Strategy: mark entries as `state = CT_DELETING` from the RX path; actual free happens from a cleanup task called from `tcp_tick()` — never free from interrupt context. Hash function: `hash = (src_ip ^ dst_ip ^ ((uint32_t)src_port << 16 | dst_port)) % CT_TABLE_SIZE`; collision resolution: open addressing with linear probing (table size = power of 2, load factor < 75%). The firewall rule "allow inbound if ESTABLISHED" queries `conntrack_lookup(src_ip, src_port, dst_ip, dst_port)` — must be O(1).
+> This is `[Opus]` -- connection tracking must be updated from two concurrent contexts (TX path: connection created on outbound SYN; RX path: connection matched/expired on inbound packet) with no locks in the critical path (interrupt context). Strategy: mark entries as `state = CT_DELETING` from the RX path; actual free happens from a cleanup task called from `tcp_tick()` -- never free from interrupt context. Hash function: `hash = (src_ip ^ dst_ip ^ ((uint32_t)src_port << 16 | dst_port)) % CT_TABLE_SIZE`; collision resolution: open addressing with linear probing (table size = power of 2, load factor < 75%). The firewall rule "allow inbound if ESTABLISHED" queries `conntrack_lookup(src_ip, src_port, dst_ip, dst_port)` -- must be O(1).
 
 - [ ] `ct_state_t` enum: `CT_FREE`, `CT_SYN_SENT`, `CT_ESTABLISHED`, `CT_TIME_WAIT`, `CT_UDP`, `CT_DELETING`
-- [ ] `struct ct_entry { uint32_t src_ip, dst_ip; uint16_t src_port, dst_port; ct_state_t state; uint32_t expire_ms; uint8_t proto; }` — 32-byte aligned
+- [ ] `struct ct_entry { uint32_t src_ip, dst_ip; uint16_t src_port, dst_port; ct_state_t state; uint32_t expire_ms; uint8_t proto; }` -- 32-byte aligned
 - [ ] `ct_table[256]` (open-addressing hash table, power-of-2 for fast modulo); `ct_count` active entries
 - [ ] `conntrack_hash(src_ip, src_port, dst_ip, dst_port)` → index
 - [ ] `conntrack_create(src_ip, src_port, dst_ip, dst_port, proto)`: create entry; for TCP: `state = CT_SYN_SENT`, expire = `now_ms() + 300000`; for UDP: `state = CT_UDP`, expire = `now_ms() + 60000`
@@ -160,7 +160,7 @@ Hash table keyed on `(src_ip, src_port, dst_ip, dst_port)`. Create entries on ou
 - [ ] Hook into TCP state machine (§2): on outbound SYN: `conntrack_create()`; on state transitions: `conntrack_update()`
 - [ ] Hook into UDP send: on `udp_send()`: `conntrack_create()` for UDP 4-tuple
 - [ ] `conntrack_lookup()` declared in `net.h` for use by firewall layer
-- [ ] Commit: `"net: stateful connection tracking — 256-slot hash table, TCP/UDP entries, SYN/FIN/RST hooks, 60/300s expire"`
+- [ ] Commit: `"net: stateful connection tracking -- 256-slot hash table, TCP/UDP entries, SYN/FIN/RST hooks, 60/300s expire"`
 
 ---
 
@@ -169,15 +169,15 @@ Hash table keyed on `(src_ip, src_port, dst_ip, dst_port)`. Create entries on ou
 
 | ⭐ | Feature                                                         | 🪟 Win11                                        | 🐧 Linux                                              | 🚀 Impossible OS                                              |
 |----|-----------------------------------------------------------------|----------------------------------------------|----------------------------------------------------|------------------------------------------------------------|
-| 💎 | TCP header + pseudo-header checksum, IP_PROTO_TCP routing       | ✅ `tcpip.sys`; full TCP/IP stack            | ✅ `net/ipv4/tcp.c`; full TCP stack                | ⬜ §1 — 20-byte header, flags, pseudo-CRC, ipv4_handle     |
-| 💎 | TCP 11-state RFC 793 machine                                    | ✅ `tcpip.sys`; RFC 793 + RFC                | ✅ Linux TCP; RFC 793 +                            | ⬜ §2 — 32-slot table, all 11 states,                      |
-| 💎 | `tcp_connect/send/recv/close` + listen/accept + ephemeral ports | ✅ Winsock2 API wraps `tcpip.sys`            | ✅ BSD socket API over `net/ipv4/tcp.c`            | ⬜ §3 — direct kernel API; ephemeral 49152–65535           |
-| 💎 | TCP robustness                                                  | ✅ `tcpip.sys`; full RFC 5681 +              | ✅ Linux TCP; SACK, cubic congestion               | ⬜ §4 — basic Nagle + slow-start sufficient                |
-| 💎 | `net_interface` manager                                         | ✅ `tcpip.sys` / NDIS NIC abstraction        | ✅ `net_device` + `netif_*` infrastructure         | ⬜ §5 — 8-slot table; `net_cfg` shim; RTL8139              |
-| 💎 | Loopback `lo`                                                   | ✅ `tcpip.sys`; loopback fully optimized (no | ✅ `drivers/net/loopback.c`; `dev_loopback_xmit()` | ⬜ §6 — detection in `ipv4_send()`, direct `ipv4_handle()` |
-| 💎 | Stateful connection tracking                                    | ✅ `tcpip.sys`; full stateful NAT +          | ✅ `nf_conntrack`; nftables / iptables backing;    | ⬜ §7 — 256-slot open-addressing table; firewall "allow    |
+| 💎 | TCP header + pseudo-header checksum, IP_PROTO_TCP routing       | ✅ `tcpip.sys`; full TCP/IP stack            | ✅ `net/ipv4/tcp.c`; full TCP stack                | ⬜ §1 -- 20-byte header, flags, pseudo-CRC, ipv4_handle     |
+| 💎 | TCP 11-state RFC 793 machine                                    | ✅ `tcpip.sys`; RFC 793 + RFC                | ✅ Linux TCP; RFC 793 +                            | ⬜ §2 -- 32-slot table, all 11 states,                      |
+| 💎 | `tcp_connect/send/recv/close` + listen/accept + ephemeral ports | ✅ Winsock2 API wraps `tcpip.sys`            | ✅ BSD socket API over `net/ipv4/tcp.c`            | ⬜ §3 -- direct kernel API; ephemeral 49152–65535           |
+| 💎 | TCP robustness                                                  | ✅ `tcpip.sys`; full RFC 5681 +              | ✅ Linux TCP; SACK, cubic congestion               | ⬜ §4 -- basic Nagle + slow-start sufficient                |
+| 💎 | `net_interface` manager                                         | ✅ `tcpip.sys` / NDIS NIC abstraction        | ✅ `net_device` + `netif_*` infrastructure         | ⬜ §5 -- 8-slot table; `net_cfg` shim; RTL8139              |
+| 💎 | Loopback `lo`                                                   | ✅ `tcpip.sys`; loopback fully optimized (no | ✅ `drivers/net/loopback.c`; `dev_loopback_xmit()` | ⬜ §6 -- detection in `ipv4_send()`, direct `ipv4_handle()` |
+| 💎 | Stateful connection tracking                                    | ✅ `tcpip.sys`; full stateful NAT +          | ✅ `nf_conntrack`; nftables / iptables backing;    | ⬜ §7 -- 256-slot open-addressing table; firewall "allow    |
 
-> **After §1–§7:** Impossible OS has a complete, standards-correct TCP stack with a multi-NIC interface abstraction and a stateful firewall backing layer — all built in kernel space without any userspace networking daemon. Every higher-level protocol (DNS, TLS, HTTP, SSH) can be built directly on the `tcp_connect`/`tcp_send`/`tcp_recv` API from this TODO.
+> **After §1–§7:** Impossible OS has a complete, standards-correct TCP stack with a multi-NIC interface abstraction and a stateful firewall backing layer -- all built in kernel space without any userspace networking daemon. Every higher-level protocol (DNS, TLS, HTTP, SSH) can be built directly on the `tcp_connect`/`tcp_send`/`tcp_recv` API from this TODO.
 
 ## Verification
 
@@ -192,4 +192,4 @@ Hash table keyed on `(src_ip, src_port, dst_ip, dst_port)`. Create entries on ou
 - [ ] Checksum: corrupt 1 byte in a received TCP segment; `tcp_handle()` logs `[TCP] bad checksum` and drops without state change
 - [ ] Connection tracking: `tcp_connect()` → `conntrack_lookup(src, src_port, dst, 1234)` returns non-NULL with `CT_ESTABLISHED`; `tcp_close()` → `CT_DELETING`; after expire tick → entry freed
 - [ ] UDP tracking: `udp_send(dst, src_port, dst_port, ...)` → `conntrack_lookup()` returns UDP entry; expires after 60 s idle
-- [ ] Commit: `"net/tcp: complete TCP stack — header, state machine, API, robustness, netif, loopback, conntrack"`
+- [ ] Commit: `"net/tcp: complete TCP stack -- header, state machine, API, robustness, netif, loopback, conntrack"`

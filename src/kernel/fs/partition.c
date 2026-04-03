@@ -1,5 +1,5 @@
 /* ============================================================================
- * partition.c — Partition Scanner & Sub-Block-Device Layer
+ * partition.c -- Partition Scanner & Sub-Block-Device Layer
  *
  * Scans all block devices for GPT (preferred) or MBR partition tables.
  * For each discovered partition, a sub-block-device is registered that
@@ -278,7 +278,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
 
     mtbl = mbr_parse(sect);
     if (!mtbl.valid) {
-        /* No partition table — try "super-floppy" mode:
+        /* No partition table -- try "super-floppy" mode:
          * treat the entire device as a single raw partition.
          * This handles bare FAT32/exFAT/ext2 images without MBR/GPT. */
         int fs = probe_filesystem(dev);
@@ -307,7 +307,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
                                   gtbl.parts[gi].name);
             }
         }
-        return;  /* GPT found — skip MBR */
+        return;  /* GPT found -- skip MBR */
     }
 
     /* MBR partitions */
@@ -394,7 +394,7 @@ void partition_mount_filesystems(void)
             && pi->fs_type != PART_FS_NTFS)
             continue;
 
-        /* Skip EFI System Partition — no drive letter (like Windows) */
+        /* Skip EFI System Partition -- no drive letter (like Windows) */
         if (pi->is_efi)
             continue;
 

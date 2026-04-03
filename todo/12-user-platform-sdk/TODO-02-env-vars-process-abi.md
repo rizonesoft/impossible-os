@@ -1,9 +1,9 @@
-# TODO-02 — Environment Variables & Process ABI
+# TODO-02 -- Environment Variables & Process ABI
 
 > **Goal:** Wire the per-process environment, `%VAR%` expansion, file-association command
 > template substitution, and the argv/argc ABI that every user-mode program depends on.
 > The kernel-side implementation lives in `02-kernel-core/TODO-14`; this TODO is the
-> **SDK/user-mode companion** — it owns the developer-facing API contract, `env_expand_path`
+> **SDK/user-mode companion** -- it owns the developer-facing API contract, `env_expand_path`
 > for shell/exec command templates, `cmd_tokenize` quoted-arg rules, and the Win32 function
 > prototypes apps call.
 
@@ -16,7 +16,7 @@
 > `GetEnvironmentStringsW`, `GetCommandLineA/W`), PATH lookup, `SET`/`ECHO` shell commands,
 > and `.profile` startup. **Do not re-implement any of those in this TODO.**
 >
-> **Initial user stack frame** (`exec_build_stack` — argc/argv/envp pushed before `iretq`) is
+> **Initial user stack frame** (`exec_build_stack` -- argc/argv/envp pushed before `iretq`) is
 > specified in `02-kernel-core/TODO-04-peb-teb-user-abi.md §7`. Implement that first.
 >
 > This TODO adds the parts unique to the **SDK/user-platform domain:**
@@ -29,15 +29,15 @@
 
 ## Inputs
 
-- `include/kernel/env.h` (→ XREF `02-kernel-core/TODO-14 §1`) — `env_get`, `env_set`, `env_unset`, `env_expand`, `env_init_defaults`
-- `include/kernel/sched/task.h` (→ XREF `02-kernel-core/TODO-14 §1`) — `struct task { char **environ; char **argv; int argc; }`
-- `include/registry.h` — `reg_get_string`, `reg_enum_values` — §2 system defaults, §7 profile bypass flag
-- `include/kernel/fs/vfs.h` — `vfs_open`, `vfs_read`, `vfs_stat` — §5 PATH stat, §7 `.profile` read
-- `src/desktop/terminal.c` — shell command dispatch; `cmd_tokenize` lives here (→ §6)
-- `02-kernel-core/TODO-14-environment-variables.md` (→ XREF) — full kernel env implementation
-- `02-kernel-core/TODO-04-peb-teb-user-abi.md §7` (→ XREF) — `exec_build_stack`, PEB layout, initial ring-3 stack
-- `08-desktop-shell/TODO-02-file-associations-resources.md §1` (→ XREF) — `%1` command template consumer
-- `include/kernel/syscall.h` — syscall number table; `SYS_GETENV`/`SYS_SETENV`/`SYS_UNSETENV` numbers
+- `include/kernel/env.h` (→ XREF `02-kernel-core/TODO-14 §1`) -- `env_get`, `env_set`, `env_unset`, `env_expand`, `env_init_defaults`
+- `include/kernel/sched/task.h` (→ XREF `02-kernel-core/TODO-14 §1`) -- `struct task { char **environ; char **argv; int argc; }`
+- `include/registry.h` -- `reg_get_string`, `reg_enum_values` -- §2 system defaults, §7 profile bypass flag
+- `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_stat` -- §5 PATH stat, §7 `.profile` read
+- `src/desktop/terminal.c` -- shell command dispatch; `cmd_tokenize` lives here (→ §6)
+- `02-kernel-core/TODO-14-environment-variables.md` (→ XREF) -- full kernel env implementation
+- `02-kernel-core/TODO-04-peb-teb-user-abi.md §7` (→ XREF) -- `exec_build_stack`, PEB layout, initial ring-3 stack
+- `08-desktop-shell/TODO-02-file-associations-resources.md §1` (→ XREF) -- `%1` command template consumer
+- `include/kernel/syscall.h` -- syscall number table; `SYS_GETENV`/`SYS_SETENV`/`SYS_UNSETENV` numbers
 
 ---
 
@@ -68,10 +68,10 @@ available. `.profile` is sourced on startup and persists env changes across rebo
 
 ## 1. Per-Process Environ Storage (SDK Contract) `[Sonnet]`
 
-> Implementation: `02-kernel-core/TODO-14 §1`. This section defines the **SDK contract** —
+> Implementation: `02-kernel-core/TODO-14 §1`. This section defines the **SDK contract** --
 > the stable API surface that apps and SDK headers depend on.
 
-**Header `include/kernel/env.h`** — public API contract:
+**Header `include/kernel/env.h`** -- public API contract:
 
 ```c
 const char *env_get(struct task *t, const char *name);          /* case-insensitive key match */
@@ -123,7 +123,7 @@ int         env_expand_path(struct task *t, const char *templ,
 ## 3. `%VAR%` Expansion + `env_expand_path` `[Sonnet]`
 
 > `env_expand` (depth-limited `%VAR%` substitution) is implemented in `02-kernel-core/TODO-14 §3`.
-> `env_expand_path` is **new** — not in TODO-14 — and is specified here.
+> `env_expand_path` is **new** -- not in TODO-14 -- and is specified here.
 
 **Source file:** `src/kernel/env_path.c` (extends `src/kernel/env.c`)
 
@@ -150,9 +150,9 @@ int         env_expand_path(struct task *t, const char *templ,
 > This section documents the **user-mode syscall numbers** and the user32/kernel32 wrappers.
 
 - [ ] Confirm syscall numbers added to `include/kernel/syscall.h`:
-  - `SYS_GETENV` = `{N}` — `sys_getenv(const char *name, char *buf, size_t max)` → returns length or -1
-  - `SYS_SETENV` = `{N+1}` — `sys_setenv(const char *name, const char *value)` → 0 on success
-  - `SYS_UNSETENV` = `{N+2}` — `sys_unsetenv(const char *name)` → 0 on success
+  - `SYS_GETENV` = `{N}` -- `sys_getenv(const char *name, char *buf, size_t max)` → returns length or -1
+  - `SYS_SETENV` = `{N+1}` -- `sys_setenv(const char *name, const char *value)` → 0 on success
+  - `SYS_UNSETENV` = `{N+2}` -- `sys_unsetenv(const char *name)` → 0 on success
 - [ ] User-mode `GetEnvironmentVariableA(name, buf, size)` → calls `NtQueryEnvironmentVariable` (which internally calls `env_get`)
 - [ ] User-mode `SetEnvironmentVariableA(name, value)` → calls `NtSetEnvironmentVariable`; `value == NULL` → unset
 - [ ] `ExpandEnvironmentStringsA(src, dst, size)` → calls `RtlExpandEnvironmentStrings_U` → `env_expand`
@@ -164,9 +164,9 @@ int         env_expand_path(struct task *t, const char *templ,
 
 > Core PATH iteration: `02-kernel-core/TODO-14 §7`. This section adds the **session cache**.
 
-- [ ] **Session cache**: `static struct { char name[64]; char path[256]; } cmd_cache[8]` in `shell.c` — after each successful `shell_find_command`, store name → path pair; on next lookup, check cache first (LRU evict oldest when full); cache invalidated when `PATH` changes via `SYS_SETENV`
+- [ ] **Session cache**: `static struct { char name[64]; char path[256]; } cmd_cache[8]` in `shell.c` -- after each successful `shell_find_command`, store name → path pair; on next lookup, check cache first (LRU evict oldest when full); cache invalidated when `PATH` changes via `SYS_SETENV`
 - [ ] **`where <command>` command**: iterate all PATH directories (no cache shortcut); print every matching path (multiple hits possible); format: one `full_path\n` per match; no match → print `"INFO: Could not find files for the given pattern(s)."` (Windows `where.exe` phrasing)
-- [ ] **Executable check**: when probing `dir\name.exe`, use `vfs_stat(path)` — only report match if file exists and has nonzero size; never execute a 0-byte file
+- [ ] **Executable check**: when probing `dir\name.exe`, use `vfs_stat(path)` -- only report match if file exists and has nonzero size; never execute a 0-byte file
 - [ ] **Extension precedence**: if `name` has no extension, probe `.exe` only; if name has `.exe` extension, probe as-is; no implicit `.COM`/`.BAT` extensions
 
 ---
@@ -174,7 +174,7 @@ int         env_expand_path(struct task *t, const char *templ,
 ## 6. argv / argc Process ABI + `cmd_tokenize` `[Sonnet]`
 
 > Initial user stack layout (argc / argv / envp pushed before `iretq`): `02-kernel-core/TODO-04 §7`.
-> This section specifies **`cmd_tokenize`** — the command-line tokenizer that produces the
+> This section specifies **`cmd_tokenize`** -- the command-line tokenizer that produces the
 > `argv[]` the kernel pushes, and the Win32 contract apps read via `GetCommandLineA`.
 
 **Source file:** `src/desktop/terminal.c` → `cmd_tokenize()`
@@ -182,7 +182,7 @@ int         env_expand_path(struct task *t, const char *templ,
 - [ ] **`cmd_tokenize(const char *cmdline, char **argv_out, int max_argc)`**:
   - Rule set (Win32 `CommandLineToArgvW` compatible):
     - Whitespace (space, tab) outside quotes → token boundary
-    - `"..."` — double-quoted region; spaces inside do not split; quotes stripped from token
+    - `"..."` -- double-quoted region; spaces inside do not split; quotes stripped from token
     - `\"` inside a quoted region → literal `"`
     - `\\` → literal `\` (only when preceding a `"` or `\\`)
     - `%VAR%` references: call `env_expand(current_task, token, expanded)` on each token after splitting; tokens that are entirely `%MISSING%` remain as `%MISSING%` literal (Windows behavior)
@@ -239,19 +239,19 @@ int         env_expand_path(struct task *t, const char *templ,
 
 | ⭐ | Feature                                                      | 🪟 Win11                                                          | 🐧 Linux                                      | 🚀 Impossible OS                                   |
 |----|--------------------------------------------------------------|----------------------------------------------------------------|--------------------------------------------|-------------------------------------------------|
-| 💎 | Per-process `KEY=VALUE` environ array                        | ✅ `PEB->ProcessParameters->Environment` UTF-16 block          | ✅ `execve` `envp[]`; `environ` global     | ⬜ §1 — `TODO-14 `; `struct task` environ       |
-| 💎 | System default variables                                     | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 — `TODO-14 `; same dual-hive Registry     |
-| 💎 | `%VAR%` expansion                                            | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings`                    | ✅ `$VAR` / `${VAR}` (shell-level)         | ⬜ §3 — `TODO-14 `; depth-4 cap prevents        |
-| ⭐ | `env_expand_path` `%1`–`%9` file-assoc template substitution | ✅ `ShellExecute` HKCR command template (`%1`                  | ⚠️ `xdg-open` delegates to desktop; no     | ⬜ §3 — (this TODO); quote-wraps filepath; also |
-| 💎 | `SYS_GETENV` / `SYS_SETENV` syscalls                         | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable`   | ✅ `getenv`/`setenv` via CRT (no direct    | ⬜ §5 — `TODO-14 `; SSDT + user-mode            |
-| 💎 | PATH lookup + executable-not-found error                     | ✅ `SearchPath`; `where.exe` utility                           | ✅ `execvp` + shell `type`/`which`         | ⬜ §7 — `TODO-14 ` + §5 (session                |
-| 💎 | `cmd_tokenize` with Win32 quote/escape rules                 | ✅ `CommandLineToArgvW`                                        | ✅ POSIX shell word-splitting              | ⬜ §6 — `\"` inside quotes, `\\` before         |
-| 💎 | `CommandLineToArgvW` Win32 stub                              | ✅ `shell32.dll` `CommandLineToArgvW`                          | ❌ Not applicable (different model)        | ⬜ §6 — adapter over `cmd_tokenize`             |
-| 💎 | `.profile` sourced on shell startup                          | ✅ `HKCU\...\Run` / PowerShell profile                         | ✅ `~/.profile` / `~/.bashrc`              | ⬜ §8 — `TODO-14 ` + §7; default                |
-| 💎 | `set`/`echo`/`env`/`where` shell built-ins                   | ✅ CMD `set`/`echo`/`where`                                    | ✅ `export`/`echo`/`env`/`which`           | ⬜ §8 — `echo.` blank-line idiom + `set         |
+| 💎 | Per-process `KEY=VALUE` environ array                        | ✅ `PEB->ProcessParameters->Environment` UTF-16 block          | ✅ `execve` `envp[]`; `environ` global     | ⬜ §1 -- `TODO-14 `; `struct task` environ       |
+| 💎 | System default variables                                     | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 -- `TODO-14 `; same dual-hive Registry     |
+| 💎 | `%VAR%` expansion                                            | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings`                    | ✅ `$VAR` / `${VAR}` (shell-level)         | ⬜ §3 -- `TODO-14 `; depth-4 cap prevents        |
+| ⭐ | `env_expand_path` `%1`–`%9` file-assoc template substitution | ✅ `ShellExecute` HKCR command template (`%1`                  | ⚠️ `xdg-open` delegates to desktop; no     | ⬜ §3 -- (this TODO); quote-wraps filepath; also |
+| 💎 | `SYS_GETENV` / `SYS_SETENV` syscalls                         | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable`   | ✅ `getenv`/`setenv` via CRT (no direct    | ⬜ §5 -- `TODO-14 `; SSDT + user-mode            |
+| 💎 | PATH lookup + executable-not-found error                     | ✅ `SearchPath`; `where.exe` utility                           | ✅ `execvp` + shell `type`/`which`         | ⬜ §7 -- `TODO-14 ` + §5 (session                |
+| 💎 | `cmd_tokenize` with Win32 quote/escape rules                 | ✅ `CommandLineToArgvW`                                        | ✅ POSIX shell word-splitting              | ⬜ §6 -- `\"` inside quotes, `\\` before         |
+| 💎 | `CommandLineToArgvW` Win32 stub                              | ✅ `shell32.dll` `CommandLineToArgvW`                          | ❌ Not applicable (different model)        | ⬜ §6 -- adapter over `cmd_tokenize`             |
+| 💎 | `.profile` sourced on shell startup                          | ✅ `HKCU\...\Run` / PowerShell profile                         | ✅ `~/.profile` / `~/.bashrc`              | ⬜ §8 -- `TODO-14 ` + §7; default                |
+| 💎 | `set`/`echo`/`env`/`where` shell built-ins                   | ✅ CMD `set`/`echo`/`where`                                    | ✅ `export`/`echo`/`env`/`which`           | ⬜ §8 -- `echo.` blank-line idiom + `set         |
 
 Impossible OS merges the Windows `%1`–`%9` file-association template model with `env_expand`
-into a single `env_expand_path` pass — so a command template like `"player.exe %1 /fullscreen"`
+into a single `env_expand_path` pass -- so a command template like `"player.exe %1 /fullscreen"`
 both substitutes the filepath **and** resolves any `%VAR%` references in the path, in one
 function call, without the shell or file manager needing separate expansion steps.
 

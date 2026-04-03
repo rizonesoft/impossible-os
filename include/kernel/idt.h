@@ -1,5 +1,5 @@
 /* ============================================================================
- * idt.h — Interrupt Descriptor Table (x86-64 Long Mode)
+ * idt.h -- Interrupt Descriptor Table (x86-64 Long Mode)
  *
  * 256 entries: ISRs 0-31 (CPU exceptions), IRQs 32-47 (hardware), rest unused.
  * ============================================================================ */
@@ -29,7 +29,7 @@ struct interrupt_frame {
 /* Initialize all 256 IDT entries and load with lidt */
 void idt_init(void);
 
-/* Interrupt handler type — returns stack frame pointer (for preemptive switching).
+/* Interrupt handler type -- returns stack frame pointer (for preemptive switching).
  * Most handlers return the same frame; the scheduler may return a different
  * task's frame pointer to switch contexts. */
 typedef uint64_t (*interrupt_handler_t)(struct interrupt_frame *frame);

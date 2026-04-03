@@ -1,6 +1,6 @@
-# TODO-04 — NTDLL & User-Mode Runtime
+# TODO-04 -- NTDLL & User-Mode Runtime
 
-> **Goal:** Build `ntdll.dll` — the user-mode runtime sitting between every Win32 program
+> **Goal:** Build `ntdll.dll` -- the user-mode runtime sitting between every Win32 program
 > and the kernel. Provides the process heap (`RtlHeap`), PE DLL loader (`LdrLoadDll`), TLS,
 > vectored exception handling, process CRT startup, and the fiber API. The stubs already
 > placed in `TODO-08 §4` become real implementations here; `HeapAlloc`/`LoadLibrary` in
@@ -8,39 +8,39 @@
 
 > [!IMPORTANT]
 > **Prerequisites complete before starting:**
-> - `09-services-security/TODO-07 §7` — `pe_exec()` with minimal TEB (`stack_base/limit/self`,
+> - `09-services-security/TODO-07 §7` -- `pe_exec()` with minimal TEB (`stack_base/limit/self`,
 >   `FS_BASE` MSR) and minimal PEB (`ImageBaseAddress`, `ProcessParameters.CommandLine`).
 >   This TODO **extends** TEB with `TlsSlots[64]`, `ExceptionList`, VEH chain head, and
 >   `Tib.FiberData`; and extends PEB with `ProcessHeap`, `Ldr` (module list), `TlsBitmap`.
-> - `09-services-security/TODO-08 §4` — `ntdll.dll` minimal stubs
+> - `09-services-security/TODO-08 §4` -- `ntdll.dll` minimal stubs
 >   (`RtlInitUnicodeString`, `NtCurrentTeb`, `RtlGetVersion`, `NtAllocateVirtualMemory`).
 >   Stubs are replaced/completed here without breaking their export table entries.
-> - `09-services-security/TODO-08 §5` — `VirtualAlloc`/`VirtualFree` already wired;
+> - `09-services-security/TODO-08 §5` -- `VirtualAlloc`/`VirtualFree` already wired;
 >   `HeapAlloc`/`HeapFree`/`GetProcessHeap` call through to `RtlAllocateHeap` (§2 here).
-> - `09-services-security/TODO-08 §7` — `LoadLibrary`/`GetProcAddress`/`FreeLibrary`
+> - `09-services-security/TODO-08 §7` -- `LoadLibrary`/`GetProcAddress`/`FreeLibrary`
 >   already wired; they forward to `LdrLoadDll`/`LdrGetProcedureAddress` (§3 here).
 >
 > **`ntdll.dll` is always mapped at `0x7FF00000000`** (fixed VA, set in PE optional header
-> `ImageBase`). It has **no import dependencies** — it is the lowest user-mode layer.
+> `ImageBase`). It has **no import dependencies** -- it is the lowest user-mode layer.
 > All Nt* functions issue raw `SYSCALL`; all Rtl*/Ldr* functions are pure user-mode logic.
 >
-> **VEH (§5) interacts with SEH frames** — after exhausting the VEH list, dispatch falls
+> **VEH (§5) interacts with SEH frames** -- after exhausting the VEH list, dispatch falls
 > back to the SEH chain at `TEB.ExceptionList` (→ XREF `02-kernel-core/TODO-10 §3`).
 
 ---
 
 ## Inputs
 
-- `include/kernel/sched/task.h` — `struct task`, `TEB`, `PEB` fields; extend in this TODO
-- `include/win32/types.h` — `HANDLE`, `DWORD`, `BOOL`, `NTSTATUS` — `TODO-08 §1`
-- `include/pe.h` — `IMAGE_TLS_DIRECTORY`, `IMAGE_DATA_DIRECTORY` — `TODO-07 §3`
-- `include/kernel/mm/vmm.h` — `vmm_alloc_user()`, `VirtualAlloc`/`VirtualFree` — `TODO-08 §5`
-- `include/kernel/syscall.h` — syscall numbers for `SYS_VIRTUALALLOC`, `SYS_VIRTUALFREE`
-- `src/win32/ntdll.c` — existing minimal stubs from `TODO-08 §4` (extend, do not duplicate)
-- `09-services-security/TODO-07-win32-pe-loader.md §7` (→ XREF) — TEB/PEB minimal setup
-- `09-services-security/TODO-08-win32-api-surface.md §4 §5 §7` (→ XREF) — stubs + VirtualAlloc + LoadLibrary forwards
-- `02-kernel-core/TODO-10-exception-handling.md §3` (→ XREF) — SEH frame walk; VEH fallback
-- `user/lib/crt0_pe.asm` — existing from `TODO-07 §9`; extend for static initializers (§6)
+- `include/kernel/sched/task.h` -- `struct task`, `TEB`, `PEB` fields; extend in this TODO
+- `include/win32/types.h` -- `HANDLE`, `DWORD`, `BOOL`, `NTSTATUS` -- `TODO-08 §1`
+- `include/pe.h` -- `IMAGE_TLS_DIRECTORY`, `IMAGE_DATA_DIRECTORY` -- `TODO-07 §3`
+- `include/kernel/mm/vmm.h` -- `vmm_alloc_user()`, `VirtualAlloc`/`VirtualFree` -- `TODO-08 §5`
+- `include/kernel/syscall.h` -- syscall numbers for `SYS_VIRTUALALLOC`, `SYS_VIRTUALFREE`
+- `src/win32/ntdll.c` -- existing minimal stubs from `TODO-08 §4` (extend, do not duplicate)
+- `09-services-security/TODO-07-win32-pe-loader.md §7` (→ XREF) -- TEB/PEB minimal setup
+- `09-services-security/TODO-08-win32-api-surface.md §4 §5 §7` (→ XREF) -- stubs + VirtualAlloc + LoadLibrary forwards
+- `02-kernel-core/TODO-10-exception-handling.md §3` (→ XREF) -- SEH frame walk; VEH fallback
+- `user/lib/crt0_pe.asm` -- existing from `TODO-07 §9`; extend for static initializers (§6)
 
 ---
 
@@ -72,14 +72,14 @@ are available via `CreateFiber`/`SwitchToFiber`.
 ## 1. ntdll.dll Structure + TEB / PEB Extensions `[Sonnet]`
 
 **Source layout:** `src/user/ntdll/` split into:
-- `ntdll_syscalls.asm` — thin `SYSCALL` wrappers for all `Nt*` functions
-- `ntdll_heap.c` — `RtlHeap` (§2)
-- `ntdll_loader.c` — `LdrLoadDll` (§3)
-- `ntdll_tls.c` — TLS (§4)
-- `ntdll_except.c` — VEH (§5)
-- `ntdll_sync.c` — critical sections (`InitializeCriticalSection`, `Enter/LeaveCriticalSection`)
-- `ntdll_crt.c` — process startup helpers (§6)
-- `ntdll_fiber.c` — fiber API (§8)
+- `ntdll_syscalls.asm` -- thin `SYSCALL` wrappers for all `Nt*` functions
+- `ntdll_heap.c` -- `RtlHeap` (§2)
+- `ntdll_loader.c` -- `LdrLoadDll` (§3)
+- `ntdll_tls.c` -- TLS (§4)
+- `ntdll_except.c` -- VEH (§5)
+- `ntdll_sync.c` -- critical sections (`InitializeCriticalSection`, `Enter/LeaveCriticalSection`)
+- `ntdll_crt.c` -- process startup helpers (§6)
+- `ntdll_fiber.c` -- fiber API (§8)
 
 **Header:** `include/win32/ntdll.h`
 
@@ -102,7 +102,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
       /* TLS */
       void     *TlsSlots[64];         /* +0x1480  TlsSetValue/GetValue */
       /* VEH head (Impossible OS extension at non-standard offset) */
-      void     *VehListHead;          /* +0x??? — append after standard fields */
+      void     *VehListHead;          /* +0x??? -- append after standard fields */
   } TEB;
   ```
 - [ ] **Extend `PEB` struct** in `include/win32/peb.h`:
@@ -198,7 +198,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 - [ ] **`NTSTATUS LdrLoadDll(path, flags, basename, HMODULE *out)`**:
   1. Scan `PEB.Ldr->InLoadOrderModuleList` by `BaseDllName` (case-insensitive); if found: increment `LDR_DATA_TABLE_ENTRY.LoadCount`; `*out = DllBase`; return `STATUS_SUCCESS`
   2. Resolve full path via search order above; `NtOpenFile` + `NtReadFile` into `VirtualAlloc` buffer
-  3. Call `pe_load(data, size, &image_base)` (existing); `pe_apply_relocations()`; `pe_resolve_imports()` — `pe_resolve_imports` calls back into `LdrLoadDll` recursively for each import DLL
+  3. Call `pe_load(data, size, &image_base)` (existing); `pe_apply_relocations()`; `pe_resolve_imports()` -- `pe_resolve_imports` calls back into `LdrLoadDll` recursively for each import DLL
   4. Allocate `LDR_DATA_TABLE_ENTRY`; populate `DllBase`, `EntryPoint`, `SizeOfImage`, `BaseDllName`, `FullDllName`; insert at head of all three `PEB.Ldr` lists (`InLoadOrder`, `InMemoryOrder`, `InInitializationOrder`)
   5. If PE has `DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS]`: call `LdrpHandleTlsData(entry)` (§4)
   6. Call `DllMain(hmod, DLL_PROCESS_ATTACH, NULL)` if `EntryPoint != NULL`
@@ -283,7 +283,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 - [ ] **Static C++ initializers**: LLVM/Clang emits function pointers in `.ctors` section (NULL-terminated); `crt0_pe.asm` walks from `__CTOR_LIST__` to `NULL` sentinel calling each; same for `.dtors` at exit
 - [ ] **`crt_parse_cmdline(wchar_t *cmdline, int *argc_out, char ***argv_out)`**: Win32 command-line tokenization (quote-aware); allocate `argv[]` on heap; `argv[0]` = executable path from `ProcessParameters.ImagePathName`
 - [ ] **`ExitProcess(exitcode)`**: call `.dtors` destructors; call `DLL_PROCESS_DETACH` on all loaded DLLs in reverse load order; `NtTerminateProcess(NtCurrentProcess(), exitcode)`
-- [ ] **`TerminateProcess(hproc, exitcode)`**: `NtTerminateProcess(hproc, exitcode)` — skips cleanup; for external kill
+- [ ] **`TerminateProcess(hproc, exitcode)`**: `NtTerminateProcess(hproc, exitcode)` -- skips cleanup; for external kill
 
 ---
 
@@ -305,7 +305,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 - [ ] **`exit(n)`** → `ExitProcess(n)`
 - [ ] **`abort()`** → `RaiseException(STATUS_FAIL_FAST_EXCEPTION, EXCEPTION_NONCONTINUABLE, 0, NULL)`
 - [ ] **`getenv(name)`** → `GetEnvironmentVariableA(name, buf, 256)`; return static buffer or NULL
-- [ ] **`memset/memcpy/strlen/strcmp/strcpy/strcat/sprintf/snprintf`**: link against `src/libs/libc/string.c` (→ XREF `11-user-platform-sdk/TODO-01 §1`) — do not re-implement
+- [ ] **`memset/memcpy/strlen/strcmp/strcpy/strcat/sprintf/snprintf`**: link against `src/libs/libc/string.c` (→ XREF `11-user-platform-sdk/TODO-01 §1`) -- do not re-implement
 - [ ] **`user/lib/libc.lib`** build rule in Makefile: compile all shims; `llvm-ar-19 rcs libc.lib *.o`
 
 ---
@@ -336,11 +336,11 @@ are available via `CreateFiber`/`SwitchToFiber`.
   - Set up initial stack frame: push `fiber_start_trampoline` address as initial RSP; `FIBER.rsp = stack_top - 8`
   - `fiber_start_trampoline`: calls `fiber->fn(fiber->param)`; then `ExitFiber()` (terminates fiber, switches back to calling fiber)
   - Return `FIBER *` cast to `PVOID`
-- [ ] **`VOID SwitchToFiber(fiber)`** (implemented in NASM — cannot use C calling convention):
+- [ ] **`VOID SwitchToFiber(fiber)`** (implemented in NASM -- cannot use C calling convention):
   1. Save all non-volatile registers (RBX, RBP, RDI, RSI, R12–R15) + RSP into `TEB.FiberData`'s `FIBER` struct (current fiber)
   2. Restore registers from target `FIBER`
   3. Load target `FIBER.rsp` into RSP
-  4. `ret` — returns to where target fiber was last suspended (or `fiber_start_trampoline` on first call)
+  4. `ret` -- returns to where target fiber was last suspended (or `fiber_start_trampoline` on first call)
   - `TEB.FiberData` tracks the currently running fiber on this thread
 - [ ] **`PVOID ConvertThreadToFiber(param)`**: allocate `FIBER` for the current thread; `FIBER.is_thread = 1`; `TEB.FiberData = fiber`; return fiber handle; subsequent `SwitchToFiber` calls return to this fiber
 - [ ] **`VOID DeleteFiber(fiber)`**: `VirtualFree(stack_base, 0, MEM_RELEASE)`; `RtlFreeHeap(fiber)`; if `fiber == TEB.FiberData`: call `ExitThread(0)` (current fiber cannot delete itself except via exit)
@@ -352,16 +352,16 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 | ⭐ | Feature                          | 🪟 Win11                                                       | 🐧 Linux                                                       | 🚀 Impossible OS                                                       |
 |----|----------------------------------|-------------------------------------------------------------|-------------------------------------------------------------|---------------------------------------------------------------------|
-| 💎 | User-mode heap                   | ✅ `ntdll!RtlAllocateHeap`; LFH + segment heap              | ✅ glibc `malloc` (ptmalloc)                                | ⬜ §2 — free-list best-fit with coalescing; `HEAP_ZERO_MEMORY`      |
-| 💎 | PE DLL loader in user-mode ntdll | ✅ `ntdll!LdrLoadDll`; full PEB LDR chain                   | ❌ Not applicable (ELF native)                              | ⬜ §3 — full PEB LDR list; recursive                                |
-| 💎 | Thread-local storage             | ✅ Full TLS + `__declspec(thread)`                          | ✅ `pthread_key_create` + `__thread`                        | ⬜ §4 — `TEB.TlsSlots[64]`, `TlsBitmapBits`, PE TLS callbacks,      |
-| 💎 | Vectored Exception Handling      | ✅ `AddVectoredExceptionHandler`; KiUserExceptionDispatcher | ✅ POSIX signals (`sigaction`)                              | ⬜ §5 — VEH list → SEH fallback                                     |
-| 💎 | Process CRT startup              | ✅ `ntdll!LdrpInitialize`; `.ctors`/`atexit`; Win32 entry   | ✅ glibc `__libc_start_main`                                | ⬜ §6 — heap+Ldr+TLS init → `.ctors` walk                           |
-| 💎 | User-mode libc shims             | ✅ `msvcrt.dll` / `ucrt.dll`                                | ✅ glibc                                                    | ⬜ §7 — `libc.lib` thin wrappers over Win32                         |
-| ⭐ | Fiber API                        | ✅ Windows fibers                                           | ⚠️ `makecontext`/`swapcontext` (POSIX; deprecated in glibc) | ⬜ §8 — `SwitchToFiber` NASM context switch; `ConvertThreadToFiber` |
+| 💎 | User-mode heap                   | ✅ `ntdll!RtlAllocateHeap`; LFH + segment heap              | ✅ glibc `malloc` (ptmalloc)                                | ⬜ §2 -- free-list best-fit with coalescing; `HEAP_ZERO_MEMORY`      |
+| 💎 | PE DLL loader in user-mode ntdll | ✅ `ntdll!LdrLoadDll`; full PEB LDR chain                   | ❌ Not applicable (ELF native)                              | ⬜ §3 -- full PEB LDR list; recursive                                |
+| 💎 | Thread-local storage             | ✅ Full TLS + `__declspec(thread)`                          | ✅ `pthread_key_create` + `__thread`                        | ⬜ §4 -- `TEB.TlsSlots[64]`, `TlsBitmapBits`, PE TLS callbacks,      |
+| 💎 | Vectored Exception Handling      | ✅ `AddVectoredExceptionHandler`; KiUserExceptionDispatcher | ✅ POSIX signals (`sigaction`)                              | ⬜ §5 -- VEH list → SEH fallback                                     |
+| 💎 | Process CRT startup              | ✅ `ntdll!LdrpInitialize`; `.ctors`/`atexit`; Win32 entry   | ✅ glibc `__libc_start_main`                                | ⬜ §6 -- heap+Ldr+TLS init → `.ctors` walk                           |
+| 💎 | User-mode libc shims             | ✅ `msvcrt.dll` / `ucrt.dll`                                | ✅ glibc                                                    | ⬜ §7 -- `libc.lib` thin wrappers over Win32                         |
+| ⭐ | Fiber API                        | ✅ Windows fibers                                           | ⚠️ `makecontext`/`swapcontext` (POSIX; deprecated in glibc) | ⬜ §8 -- `SwitchToFiber` NASM context switch; `ConvertThreadToFiber` |
 
 Impossible OS `ntdll.dll` maps at a fixed VA (`0x7FF000000000`) with **zero import dependencies**
-and issues raw `SYSCALL` instructions for all `Nt*` functions — identical to Windows NT's design.
+and issues raw `SYSCALL` instructions for all `Nt*` functions -- identical to Windows NT's design.
 The heap and Ldr are built on `VirtualAlloc` (no kernel-heap backing), giving the same
 performance profile as Windows. The `⭐` edge: the fiber API will serve as the foundation
 for a future async I/O runtime (completion-port + fiber-yield model) with no POSIX

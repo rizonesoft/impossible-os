@@ -1,5 +1,5 @@
 /* ============================================================================
- * pmm.c — Physical Memory Manager (Bitmap Allocator)
+ * pmm.c -- Physical Memory Manager (Bitmap Allocator)
  *
  * Uses a bitmap where each bit represents a 4 KiB physical frame.
  *   0 = free, 1 = used/reserved
@@ -90,7 +90,7 @@ void pmm_init(void)
      *
      * Only consider memory types that represent actual RAM (conventional,
      * loader, boot-services).  MMIO and runtime-services regions can have
-     * addresses well above physical RAM (e.g. 0xFED40000) — including
+     * addresses well above physical RAM (e.g. 0xFED40000) -- including
      * them would make the bitmap cover the MMIO hole and pmm_alloc would
      * hand out non-existent pages.
      */
@@ -133,18 +133,18 @@ void pmm_init(void)
     /* Step 4: Walk memory map and free usable regions using UEFI memory types.
      *
      * Free (usable by OS):
-     *   - EfiConventionalMemory  (7) — free RAM
-     *   - EfiLoaderCode/Data     (1,2) — bootloader memory, reclaimable after boot
-     *   - EfiBootServicesCode/Data (3,4) — reclaimable after ExitBootServices()
+     *   - EfiConventionalMemory  (7) -- free RAM
+     *   - EfiLoaderCode/Data     (1,2) -- bootloader memory, reclaimable after boot
+     *   - EfiBootServicesCode/Data (3,4) -- reclaimable after ExitBootServices()
      *
      * Reserved (stays used):
-     *   - EfiRuntimeServicesCode/Data (5,6) — must preserve for runtime services
-     *   - EfiACPIReclaimMemory   (9) — ACPI tables (keep for now)
-     *   - EfiACPIMemoryNVS      (10) — ACPI firmware working memory
-     *   - EfiMemoryMappedIO     (11) — device MMIO
-     *   - EfiMemoryMappedIOPort (12) — device MMIO port space
-     *   - EfiReservedMemoryType  (0) — firmware reserved
-     *   - EfiUnusableMemory      (8) — bad RAM
+     *   - EfiRuntimeServicesCode/Data (5,6) -- must preserve for runtime services
+     *   - EfiACPIReclaimMemory   (9) -- ACPI tables (keep for now)
+     *   - EfiACPIMemoryNVS      (10) -- ACPI firmware working memory
+     *   - EfiMemoryMappedIO     (11) -- device MMIO
+     *   - EfiMemoryMappedIOPort (12) -- device MMIO port space
+     *   - EfiReservedMemoryType  (0) -- firmware reserved
+     *   - EfiUnusableMemory      (8) -- bad RAM
      */
     for (i = 0; i < g_boot_info.mmap_count; i++) {
         uint32_t utype = g_boot_info.mmap[i].uefi_memory_type;
@@ -252,13 +252,13 @@ uintptr_t pmm_alloc_contiguous(uint64_t count)
 
     for (f = 0; f < total_frames; f++) {
         if (bitmap_test(f)) {
-            /* Used frame — reset run */
+            /* Used frame -- reset run */
             run_len = 0;
             run_start = f + 1;
         } else {
             run_len++;
             if (run_len >= count) {
-                /* Found enough contiguous free frames — mark them used */
+                /* Found enough contiguous free frames -- mark them used */
                 uint64_t i;
                 for (i = 0; i < count; i++) {
                     bitmap_set(run_start + i);

@@ -1,4 +1,4 @@
-# run-fs-test.ps1 — Launch Impossible OS with a filesystem test disk
+# run-fs-test.ps1 -- Launch Impossible OS with a filesystem test disk
 #
 # Attaches a test disk image on AHCI port 1 alongside the system disk
 # on port 0. The kernel auto-detects the filesystem and runs self-tests

@@ -1,4 +1,4 @@
-/* blk_flush.c — Cache flush (2-descriptor chain) */
+/* blk_flush.c -- Cache flush (2-descriptor chain) */
 
 #include "kernel/drivers/virtio/blk_internal.h"
 
@@ -16,7 +16,7 @@ int virtio_blk_do_flush(void)
     if (!blk_initialized)
         return -1;
 
-    /* Build flush request header — sector field is ignored */
+    /* Build flush request header -- sector field is ignored */
     req.type     = VIRTIO_BLK_T_FLUSH;
     req.reserved = 0;
     req.sector   = 0;
@@ -118,7 +118,7 @@ int virtio_blk_do_flush(void)
     blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
     blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
-    /* Descriptor 1: status byte (device-writable) — no data descriptor */
+    /* Descriptor 1: status byte (device-writable) -- no data descriptor */
     d1 = blk_vqs[qi].free_head;
     blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
     blk_vqs[qi].num_free--;
@@ -148,9 +148,9 @@ int virtio_blk_do_flush(void)
     /* Notify device */
     virtq_kick(&blk_vqs[qi]);
 
-    /* Wait for completion — event-driven or polling fallback */
+    /* Wait for completion -- event-driven or polling fallback */
     if (blk_use_events) {
-        /* Flush may take longer — 10s timeout */
+        /* Flush may take longer -- 10s timeout */
         if (!event_wait_timeout(&io_completions[qi], 10000)) {
             klog(LOG_DEBUG, "virtio", "Flush timeout (event)");
             if (!(rflags & (1 << 9)))

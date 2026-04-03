@@ -1,5 +1,5 @@
 ; =============================================================================
-; switch_context.asm — Cooperative context switch (x86-64)
+; switch_context.asm -- Cooperative context switch (x86-64)
 ;
 ; void switch_context(uint64_t *old_rsp, uint64_t new_rsp)
 ;   rdi = pointer to old task's saved RSP (write current RSP here)
@@ -40,5 +40,5 @@ switch_context:
     pop rbx
 
     ; The return address is now at the top of the new stack.
-    ; 'ret' pops it and jumps there — resuming the new task.
+    ; 'ret' pops it and jumps there -- resuming the new task.
     ret

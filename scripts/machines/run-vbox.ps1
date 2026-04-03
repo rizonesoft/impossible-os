@@ -1,4 +1,4 @@
-# run-vbox.ps1 — Launch Impossible OS in VirtualBox on Windows
+# run-vbox.ps1 -- Launch Impossible OS in VirtualBox on Windows
 #
 # Prerequisites:
 #   1. Install VirtualBox: https://www.virtualbox.org/
@@ -129,7 +129,7 @@ if ($vmExists) {
     --boot3 none `
     --boot4 none
 
-# Disable mouse integration — without Guest Additions, VirtualBox's
+# Disable mouse integration -- without Guest Additions, VirtualBox's
 # absolute-to-relative coordinate conversion causes:
 #   1. Pointer jumping 100-200px
 #   2. Mouse hitting a "wall" at ~40% of desktop

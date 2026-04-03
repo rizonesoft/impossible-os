@@ -1,7 +1,7 @@
 /* ============================================================================
- * smp.h — Symmetric Multi-Processing (SMP) support
+ * smp.h -- Symmetric Multi-Processing (SMP) support
  *
- * Discovers and starts secondary CPUs (Application Processors — APs) using
+ * Discovers and starts secondary CPUs (Application Processors -- APs) using
  * the ACPI MADT and LAPIC INIT/SIPI IPI sequence.
  *
  * AP startup sequence:
@@ -58,7 +58,7 @@ struct per_cpu_data {
 
 /* Initialize SMP: copy trampoline, start all APs discovered in MADT.
  * Must be called after acpi_init() and lapic_init(). */
-/* Early BSP per-CPU init — sets GS_BASE so smp_this_cpu() works.
+/* Early BSP per-CPU init -- sets GS_BASE so smp_this_cpu() works.
  * Must be called in Phase 0 before any interrupts fire. */
 void smp_early_bsp_init(void);
 

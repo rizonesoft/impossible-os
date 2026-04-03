@@ -1,5 +1,5 @@
 /* ============================================================================
- * token.h — ACCESS_TOKEN kernel object
+ * token.h -- ACCESS_TOKEN kernel object
  *
  * The token represents the security context of a process or thread:
  * who the user is (SID), what groups they belong to, what privileges
@@ -87,14 +87,14 @@ void ob_token_type_init(void);
 /* --- Token creation ------------------------------------------------------ */
 
 /*
- * SeCreateSystemToken — create the initial SYSTEM token (Phase 0).
+ * SeCreateSystemToken -- create the initial SYSTEM token (Phase 0).
  * UserSid = SeLocalSystemSid, all privileges enabled, IL = System.
  * Returns an Ob-allocated ACCESS_TOKEN body pointer, or NULL.
  */
 ACCESS_TOKEN *SeCreateSystemToken(void);
 
 /*
- * SeCreateUserToken — create a primary token for interactive logon.
+ * SeCreateUserToken -- create a primary token for interactive logon.
  * user_sid: the user's SID.
  * admin:    if non-zero, creates a High IL admin token; otherwise Medium IL.
  * Returns an Ob-allocated ACCESS_TOKEN body pointer, or NULL.
@@ -106,7 +106,7 @@ ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin);
 #define STATUS_NOT_ALL_ASSIGNED ((int32_t)0x00000106)
 
 /*
- * NtDuplicateToken — deep-copy token, allocate new TokenId.
+ * NtDuplicateToken -- deep-copy token, allocate new TokenId.
  * If effective_only is set, disabled privileges and groups are stripped.
  */
 ACCESS_TOKEN *NtDuplicateToken(const ACCESS_TOKEN *existing,
@@ -115,7 +115,7 @@ ACCESS_TOKEN *NtDuplicateToken(const ACCESS_TOKEN *existing,
                                TOKEN_TYPE new_type);
 
 /*
- * NtAdjustPrivilegesToken — enable/disable/remove privileges.
+ * NtAdjustPrivilegesToken -- enable/disable/remove privileges.
  * If disable_all, disables every privilege. Otherwise walks new_state.
  * Returns STATUS_NOT_ALL_ASSIGNED if any LUID not found in the token.
  * previous_state receives the old state (can be NULL).
@@ -127,7 +127,7 @@ int32_t NtAdjustPrivilegesToken(ACCESS_TOKEN *token, int disable_all,
                                 uint32_t *prev_count);
 
 /*
- * NtAdjustGroupsToken — enable/disable group SIDs.
+ * NtAdjustGroupsToken -- enable/disable group SIDs.
  * Cannot re-enable a SE_GROUP_USE_FOR_DENY_ONLY group.
  * If reset_to_default, restores all groups to enabled-by-default state.
  */

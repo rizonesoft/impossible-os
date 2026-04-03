@@ -1,5 +1,5 @@
 /* ============================================================================
- * fat32_ops.c — VFS operations, stat, init, driver registration
+ * fat32_ops.c -- VFS operations, stat, init, driver registration
  *
  * VFS ops tables (file + directory), all VFS wrapper functions,
  * fat32_stat (path-based metadata lookup), fat32_init, fat32_get_root,
@@ -702,7 +702,7 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
         return (struct fat32_volume *)0;
     }
 
-    /* Allocate volume via PMM — ~40 KB, too large for kmalloc */
+    /* Allocate volume via PMM -- ~40 KB, too large for kmalloc */
     pages_needed = (sizeof(struct fat32_volume) + 4095) / 4096;
     vol = (struct fat32_volume *)pmm_alloc_contiguous(pages_needed);
     if (!vol) {

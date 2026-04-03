@@ -1,14 +1,14 @@
-# TODO-01 — Window Manager Completion
+# TODO-01 -- Window Manager Completion
 
-> **Goal:** Complete the window manager so windows can be minimized, maximized, restored, snapped to edges, and resized by dragging edges. Add Alt+Tab task switcher and global hotkeys. The WM prototype works — this hardens it into a production desktop.
+> **Goal:** Complete the window manager so windows can be minimized, maximized, restored, snapped to edges, and resized by dragging edges. Add Alt+Tab task switcher and global hotkeys. The WM prototype works -- this hardens it into a production desktop.
 
 > [!IMPORTANT]
 > The existing `wm.c` (1143 lines) has window create/destroy/move/focus/z-order and title bar decorations with Mica effect. What's missing: minimize, maximize, restore, resize-by-edge, snap layouts, and system hotkeys. The `TODO: wm_minimize()` and `TODO: wm_maximize()` stubs are already in the code.
 
 ## Inputs
 
-- [`src/desktop/wm.c`](../../src/desktop/wm.c) — existing WM with drag, focus, decorations
-- [`include/desktop/wm.h`](../../include/desktop/wm.h) — window struct, flags, API
+- [`src/desktop/wm.c`](../../src/desktop/wm.c) -- existing WM with drag, focus, decorations
+- [`include/desktop/wm.h`](../../include/desktop/wm.h) -- window struct, flags, API
 
 ## Outcome
 
@@ -22,8 +22,8 @@
 
 | ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Minimize, maximize, restore              | —          |  [ ]   |
-| 💎  |   2   | Resize by dragging window edges          | —          |  [ ]   |
+| 💎  |   1   | Minimize, maximize, restore              | --          |  [ ]   |
+| 💎  |   2   | Resize by dragging window edges          | --          |  [ ]   |
 | 💎  |   3   | Snap to left/right half, top=maximize    | §1, §2     |  [ ]   |
 | 💎  |   4   | Global hotkeys (Alt+Tab, Alt+F4, Win+D)  | §1         |  [ ]   |
 
@@ -36,16 +36,16 @@ Wire the existing caption button hit detection to actual window state changes.
 
 - [ ] Add `WM_FLAG_MINIMIZED` and `WM_FLAG_MAXIMIZED` to window flags
 - [ ] Add `saved_rect` (x, y, w, h) to window struct for restore geometry
-- [ ] `wm_minimize(handle)` — hide window, clear VISIBLE, set MINIMIZED
-- [ ] `wm_maximize(handle)` — save rect, resize to screen minus taskbar, set MAXIMIZED
-- [ ] `wm_restore(handle)` — restore saved_rect, clear MINIMIZED/MAXIMIZED
+- [ ] `wm_minimize(handle)` -- hide window, clear VISIBLE, set MINIMIZED
+- [ ] `wm_maximize(handle)` -- save rect, resize to screen minus taskbar, set MAXIMIZED
+- [ ] `wm_restore(handle)` -- restore saved_rect, clear MINIMIZED/MAXIMIZED
 - [ ] Caption button close → `wm_destroy_window()`
 - [ ] Caption button maximize → toggle maximize/restore
 - [ ] Caption button minimize → `wm_minimize()`
 - [ ] Taskbar click on minimized window → `wm_restore()` + focus
 - [ ] Commit
 
-**Test checkpoint:** Click minimize — window disappears. Click taskbar entry — window restores. Click maximize — fills screen. Click maximize again — restores to original size.
+**Test checkpoint:** Click minimize -- window disappears. Click taskbar entry -- window restores. Click maximize -- fills screen. Click maximize again -- restores to original size.
 
 ## 2. Resize by Dragging Window Edges
 Detect mouse near window edges (8px border zone) and allow resize dragging.
@@ -56,10 +56,10 @@ Detect mouse near window edges (8px border zone) and allow resize dragging.
 - [ ] Set cursor shape based on edge: `↔` `↕` `⤢` `⤡`
 - [ ] On drag: resize window, reallocate framebuffer if needed
 - [ ] Minimum window size: 200x100
-- [ ] Respect `WM_FLAG_RESIZABLE` — only allow resize if flag set
+- [ ] Respect `WM_FLAG_RESIZABLE` -- only allow resize if flag set
 - [ ] Commit
 
-**Test checkpoint:** Drag bottom-right corner of terminal window — it resizes. Cursor changes to resize arrows when hovering edges.
+**Test checkpoint:** Drag bottom-right corner of terminal window -- it resizes. Cursor changes to resize arrows when hovering edges.
 
 ## 3. Snap to Left/Right Half
 Drag window to screen edge to snap it to half-screen or full-screen.
@@ -73,7 +73,7 @@ Drag window to screen edge to snap it to half-screen or full-screen.
 - [ ] Visual indicator: translucent overlay showing snap target zone
 - [ ] Commit
 
-**Test checkpoint:** Drag window to left edge — snaps to left half. Drag to right — right half. Drag to top — maximizes. Drag title bar away — restores.
+**Test checkpoint:** Drag window to left edge -- snaps to left half. Drag to right -- right half. Drag to top -- maximizes. Drag title bar away -- restores.
 
 ## 4. Global Hotkeys
 System-wide keyboard shortcuts that work regardless of focused window.
@@ -84,7 +84,7 @@ System-wide keyboard shortcuts that work regardless of focused window.
 - [ ] Alt+Tab: cycle focus to next window (reverse z-order)
 - [ ] Alt+F4: close focused window (`wm_destroy_window`)
 - [ ] Win+D: minimize all windows (show desktop) / restore all
-- [ ] Win+L: lock screen (placeholder — just shows message)
+- [ ] Win+L: lock screen (placeholder -- just shows message)
 - [ ] Requires modifier key tracking (see TODO-03 Input System)
 - [ ] Commit
 

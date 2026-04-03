@@ -1,5 +1,5 @@
 /* ============================================================================
- * rtl8139.c — RTL8139 NIC driver
+ * rtl8139.c -- RTL8139 NIC driver
  *
  * Simple network interface controller driver for the Realtek RTL8139.
  * Uses PCI I/O space (BAR0) for register access.
@@ -126,15 +126,15 @@ static uint8_t  irq_line;            /* PCI IRQ line */
 static volatile uint32_t rx_ready;   /* Packets waiting flag */
 
 /* Spinlocks protecting shared NIC state.
- * nic_rx_lock: rx_offset + rx_ready — shared between IRQ handler and
+ * nic_rx_lock: rx_offset + rx_ready -- shared between IRQ handler and
  *              rtl8139_receive() called from network thread.
- * nic_tx_lock: tx_cur — shared between rtl8139_send() callers.
+ * nic_tx_lock: tx_cur -- shared between rtl8139_send() callers.
  * Both use irqsave/irqrestore so they are safe in any call context. */
 static spinlock_t nic_rx_lock = SPINLOCK_INIT;
 static spinlock_t nic_tx_lock = SPINLOCK_INIT;
 
 /* ---------------------------------------------------------------------------
- * Deferred Rx work — packet data is copied here by the IRQ handler and then
+ * Deferred Rx work -- packet data is copied here by the IRQ handler and then
  * net_rx() is called from the sys_wq worker thread in normal context.
  * ------------------------------------------------------------------------- */
 struct nic_rx_work {
@@ -371,7 +371,7 @@ uint32_t rtl8139_receive(void *buf, uint32_t buf_size)
 
     /* Validate status */
     if (!(hdr->status & RX_ROK)) {
-        /* Bad packet — skip it */
+        /* Bad packet -- skip it */
         klog(LOG_DEBUG, "net", "Bad Rx packet, status=0x%x",
                (uint64_t)hdr->status);
         /* Reset read pointer */

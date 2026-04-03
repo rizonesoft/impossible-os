@@ -1,5 +1,5 @@
 /* ============================================================================
- * sid.h — Security Identifier (SID) type and utilities
+ * sid.h -- Security Identifier (SID) type and utilities
  *
  * A SID uniquely identifies a security principal (user, group, service,
  * machine).  Format: S-1-<Authority>-<Sub1>-<Sub2>-...
@@ -25,7 +25,7 @@ typedef struct {
     uint32_t SubAuthority[];             /* variable-length */
 } SID;
 
-/* SID_AND_ATTRIBUTES — used in token group lists */
+/* SID_AND_ATTRIBUTES -- used in token group lists */
 #define SE_GROUP_MANDATORY          0x00000001
 #define SE_GROUP_ENABLED_BY_DEFAULT 0x00000002
 #define SE_GROUP_ENABLED            0x00000004

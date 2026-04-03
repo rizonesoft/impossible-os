@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_semaphore.h — Semaphore object type for the Object Manager
+ * ob_semaphore.h -- Semaphore object type for the Object Manager
  *
  * SEMAPHORE_OBJECT wraps an embedded semaphore_t.  Named semaphores are
  * inserted into \BaseNamedObjects for cross-process sharing.
@@ -23,7 +23,7 @@ typedef struct semaphore_object {
 void ob_semaphore_type_init(void);
 
 /*
- * NtCreateSemaphore stub — create or open a named/unnamed semaphore.
+ * NtCreateSemaphore stub -- create or open a named/unnamed semaphore.
  *
  * name:          NULL for unnamed, or a name in \BaseNamedObjects.
  * initial_count: starting count.

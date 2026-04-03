@@ -1,10 +1,10 @@
 /* ============================================================================
- * test_peb_teb.c — PEB / TEB user-mode ABI unit tests
+ * test_peb_teb.c -- PEB / TEB user-mode ABI unit tests
  *
  * Tests PEB/TEB struct offsets (compile-time), PEB population after
  * task_exec, OS version fields, and RTL_USER_PROCESS_PARAMETERS content.
  * TEB runtime tests (GS self-pointer, ClientId) need a user-mode test
- * binary — kernel GS points to per-CPU data, not TEB.
+ * binary -- kernel GS points to per-CPU data, not TEB.
  *
  * XREF: 02-kernel-core/TODO-04-peb-teb-user-abi.md §Unit Tests
  * ============================================================================ */
@@ -61,7 +61,7 @@ static void test_peb_os_version(void)
 
     /* Check if PEB page is mapped (non-zero content) */
     if (peb->OSMajorVersion == 0 && peb->OSBuildNumber == 0) {
-        /* PEB not yet populated — skip gracefully */
+        /* PEB not yet populated -- skip gracefully */
         TEST_ASSERT(1, "PEB not yet allocated (no user task exec'd)");
         return;
     }

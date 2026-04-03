@@ -1,5 +1,5 @@
 /* ============================================================================
- * multiboot2_parse.c — Parse the Multiboot2 info structure
+ * multiboot2_parse.c -- Parse the Multiboot2 info structure
  *
  * Iterates over all Multiboot2 tags and extracts:
  *   - Memory map (type 6)
@@ -14,7 +14,7 @@
 #include "kernel/multiboot2.h"
 #include "kernel/boot_info.h"
 
-/* Global boot info — zero-initialized by BSS */
+/* Global boot info -- zero-initialized by BSS */
 struct boot_info g_boot_info;
 
 /* Helper: align address up to 8-byte boundary (Multiboot2 tags are 8-aligned) */

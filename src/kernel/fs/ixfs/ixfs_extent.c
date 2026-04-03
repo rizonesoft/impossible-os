@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_extent.c — Extent-based block lookup and allocation
+ * ixfs_extent.c -- Extent-based block lookup and allocation
  * ============================================================================ */
 
 #include "ixfs_internal.h"
@@ -13,7 +13,7 @@ uint32_t ixfs_get_block(struct ixfs_volume *vol, const struct ixfs_inode *inode,
 
     (void)vol;  /* not needed for inline extents */
 
-    /* Inline files have no disk blocks — data lives in i_extents[] */
+    /* Inline files have no disk blocks -- data lives in i_extents[] */
     if (inode->i_extent_flags & IXFS_INLINE)
         return 0;
 
@@ -57,7 +57,7 @@ uint32_t ixfs_add_block_to_extent(struct ixfs_volume *vol,
 
     /* Try to merge with the last extent */
     if (ec > 0 && new_blk == last_end) {
-        /* Contiguous — extend the last extent */
+        /* Contiguous -- extend the last extent */
         inode->i_extents[ec - 1].e_count++;
         inode->i_blocks++;
         return new_blk;
@@ -72,7 +72,7 @@ uint32_t ixfs_add_block_to_extent(struct ixfs_volume *vol,
         return new_blk;
     }
 
-    /* Out of inline extents — would need overflow block (future) */
+    /* Out of inline extents -- would need overflow block (future) */
     ixfs_free_block(vol, new_blk);
     return 0;
 }
@@ -83,7 +83,7 @@ void ixfs_free_all_extents(struct ixfs_volume *vol,
 {
     uint32_t i, j;
 
-    /* Inline files have no disk blocks — just zero the data area */
+    /* Inline files have no disk blocks -- just zero the data area */
     if (inode->i_extent_flags & IXFS_INLINE) {
         uint8_t *data = (uint8_t *)inode->i_extents;
         for (i = 0; i < IXFS_INLINE_MAX; i++)

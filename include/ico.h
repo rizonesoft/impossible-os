@@ -1,5 +1,5 @@
 /* ============================================================================
- * ico.h — ICO file loader for Impossible OS
+ * ico.h -- ICO file loader for Impossible OS
  *
  * Parses Windows .ico files containing multiple sizes as embedded PNG or BMP
  * data. Returns an ico_file_t with up to ICO_MAX_ENTRIES decoded bitmaps.

@@ -1,5 +1,5 @@
 /* ============================================================================
- * heap.h — Kernel Heap Allocator
+ * heap.h -- Kernel Heap Allocator
  *
  * First-fit free-list allocator with block coalescing.
  * Backs onto the VMM/PMM for page allocation.

@@ -1,14 +1,14 @@
 /* ============================================================================
- * ntfs_mft_alloc.c — MFT Record Allocator (§12.3)
+ * ntfs_mft_alloc.c -- MFT Record Allocator (§12.3)
  *
  * Manages allocation and deallocation of MFT records (inodes).
  * Uses $MFT's own $BITMAP attribute (NOT inode 6/$Bitmap) to track
  * which MFT records are in use.
  *
  * Key operations:
- *   ntfs_mft_alloc_load()   — Load $MFT bitmap + data runs at mount time
- *   ntfs_alloc_mft_record() — Find free inode, init record, write to disk
- *   ntfs_free_mft_record()  — Clear in-use flag, free bitmap bit
+ *   ntfs_mft_alloc_load()   -- Load $MFT bitmap + data runs at mount time
+ *   ntfs_alloc_mft_record() -- Find free inode, init record, write to disk
+ *   ntfs_free_mft_record()  -- Clear in-use flag, free bitmap bit
  * ============================================================================ */
 
 #include "kernel/fs/ntfs.h"
@@ -25,7 +25,7 @@
 #define MFT_MAX_RUNS  256
 
 /* ============================================================================
- * Internal helpers — MFT bitmap I/O
+ * Internal helpers -- MFT bitmap I/O
  *
  * Identical pattern to ntfs_bitmap.c but operates on $MFT's $BITMAP
  * attribute (mft_bitmap_runs) instead of inode 6's $Bitmap.
@@ -132,11 +132,11 @@ int ntfs_mft_inode_to_lba(struct ntfs_volume *vol, uint64_t inode,
 }
 
 /* ============================================================================
- * ntfs_mft_alloc_load — Load $MFT's $BITMAP and $DATA runs
+ * ntfs_mft_alloc_load -- Load $MFT's $BITMAP and $DATA runs
  *
  * Reads $MFT's own MFT record (inode 0) to extract:
- *   - $DATA (type 0x80) runs — where MFT records live on disk
- *   - $BITMAP (type 0xB0) runs — which records are allocated
+ *   - $DATA (type 0x80) runs -- where MFT records live on disk
+ *   - $BITMAP (type 0xB0) runs -- which records are allocated
  * ============================================================================ */
 
 int ntfs_mft_alloc_load(struct ntfs_volume *vol)
@@ -204,7 +204,7 @@ int ntfs_mft_alloc_load(struct ntfs_volume *vol)
     }
 
     if (ah.non_resident == 0) {
-        /* Resident $BITMAP — small MFT, bitmap fits in the record.
+        /* Resident $BITMAP -- small MFT, bitmap fits in the record.
          * This is unusual but valid for very small volumes. */
         const uint8_t *data = attr + ah.content_offset;
         uint32_t bm_size = ah.content_length;
@@ -218,7 +218,7 @@ int ntfs_mft_alloc_load(struct ntfs_volume *vol)
              (uint64_t)bm_size, vol->mft_total_records);
         (void)data;  /* Resident path handled by direct record access */
     } else {
-        /* Non-resident $BITMAP — typical for real volumes */
+        /* Non-resident $BITMAP -- typical for real volumes */
         run_count = ntfs_decode_data_runs(attr, temp_runs,
                                            MFT_MAX_RUNS, &nrhdr);
         if (run_count <= 0) {
@@ -256,7 +256,7 @@ int ntfs_mft_alloc_load(struct ntfs_volume *vol)
 }
 
 /* ============================================================================
- * ntfs_mft_extend — Grow $MFT by allocating new clusters
+ * ntfs_mft_extend -- Grow $MFT by allocating new clusters
  *
  * Called when ntfs_alloc_mft_record() can't find any free MFT records.
  * Allocates MFT_EXTEND_CLUSTERS from the volume (preferring MFT zone),
@@ -397,7 +397,7 @@ static int ntfs_mft_extend(struct ntfs_volume *vol)
         struct ntfs_data_run *last = &vol->mft_data_runs[
             vol->mft_data_run_count - 1];
         if (last->lcn + last->length == new_lcn) {
-            /* Adjacent — just extend the last run */
+            /* Adjacent -- just extend the last run */
             last->length += new_clusters;
             goto update_sizes;
         }
@@ -521,7 +521,7 @@ update_sizes:
 }
 
 /* ============================================================================
- * ntfs_alloc_mft_record — Allocate a new MFT record
+ * ntfs_alloc_mft_record -- Allocate a new MFT record
  *
  * 1. Scan $MFT's $BITMAP for the first free bit (starting at inode 24)
  * 2. Set the bit in the MFT bitmap
@@ -557,7 +557,7 @@ retry_scan:
     /* Step 1: Scan MFT bitmap for first free bit (skip system inodes 0-23) */
     total_bytes = vol->mft_bitmap_size;
 
-    /* Cap scan to actual MFT records — the bitmap file may be larger than
+    /* Cap scan to actual MFT records -- the bitmap file may be larger than
      * what $MFT's $DATA runs can hold (padding for future growth). */
     {
         uint64_t needed_bytes = (vol->mft_total_records + 7) / 8;
@@ -610,14 +610,14 @@ retry_scan:
                 goto retry_scan;
             }
 
-            /* Extension failed — truly full */
+            /* Extension failed -- truly full */
             klog(LOG_ERROR, "ntfs",
                  "MFT full: no free records and extension failed "
                  "(total=%llu)", vol->mft_total_records);
             return 0;
         }
 
-        /* Already extended once, still no space — shouldn't happen */
+        /* Already extended once, still no space -- shouldn't happen */
         spin_unlock_irqrestore(&vol->mft_alloc_lock, flags);
         klog(LOG_ERROR, "ntfs",
              "MFT full after extension (total=%llu)",
@@ -690,39 +690,39 @@ retry_scan:
     /* 0x00: Magic "FILE" */
     rec[0] = 'F'; rec[1] = 'I'; rec[2] = 'L'; rec[3] = 'E';
 
-    /* 0x04: USA offset — standard is 0x30 for 1024-byte records */
+    /* 0x04: USA offset -- standard is 0x30 for 1024-byte records */
     usa_offset = 0x30;
     ntfs_le16_write(rec + 0x04, usa_offset);
 
-    /* 0x06: USA size in words — 1 (USN) + (frs_size / sector_size) entries */
+    /* 0x06: USA size in words -- 1 (USN) + (frs_size / sector_size) entries */
     usa_size_words = (uint16_t)(1 + vol->frs_size / vol->bytes_per_sector);
     ntfs_le16_write(rec + 0x06, usa_size_words);
 
-    /* 0x08: LSN — set to 0 (no journal yet) */
+    /* 0x08: LSN -- set to 0 (no journal yet) */
     /* already zeroed */
 
-    /* 0x10: Sequence number — increment previous occupant's seq */
+    /* 0x10: Sequence number -- increment previous occupant's seq */
     old_seq++;
     if (old_seq == 0)
         old_seq = 1;  /* Sequence 0 is invalid */
     ntfs_le16_write(rec + 0x10, old_seq);
 
-    /* 0x12: Hard link count — 0 (caller will set this) */
+    /* 0x12: Hard link count -- 0 (caller will set this) */
     /* already zeroed */
 
-    /* 0x14: First attribute offset — after USA */
+    /* 0x14: First attribute offset -- after USA */
     first_attr_off = (uint32_t)usa_offset + (uint32_t)usa_size_words * 2;
     /* Align to 8-byte boundary (NTFS requirement) */
     first_attr_off = (first_attr_off + 7) & ~7u;
     ntfs_le16_write(rec + 0x14, (uint16_t)first_attr_off);
 
-    /* 0x16: Flags — in-use (+ directory if requested) */
+    /* 0x16: Flags -- in-use (+ directory if requested) */
     new_flags = NTFS_MFT_FLAG_IN_USE;
     if (is_directory)
         new_flags |= NTFS_MFT_FLAG_DIRECTORY;
     ntfs_le16_write(rec + 0x16, new_flags);
 
-    /* 0x18: Used size — header + $END marker (4 bytes) */
+    /* 0x18: Used size -- header + $END marker (4 bytes) */
     {
         uint32_t used = first_attr_off + 4;  /* $END is 4 bytes (0xFFFFFFFF) */
         ntfs_le16_write(rec + 0x18, (uint16_t)(used & 0xFFFF));
@@ -736,7 +736,7 @@ retry_scan:
         ntfs_le16_write(rec + 0x1E, (uint16_t)(alloc >> 16));
     }
 
-    /* 0x20: Base record reference — 0 (this IS the base record) */
+    /* 0x20: Base record reference -- 0 (this IS the base record) */
     /* already zeroed */
 
     /* Write $END terminator at first attribute offset */
@@ -786,10 +786,10 @@ retry_scan:
 }
 
 /* ============================================================================
- * ntfs_free_mft_record — Free an MFT record
+ * ntfs_free_mft_record -- Free an MFT record
  *
  * 1. Read the record from disk
- * 2. Clear the in-use flag (bit 0) — do NOT zero the record
+ * 2. Clear the in-use flag (bit 0) -- do NOT zero the record
  * 3. Increment sequence number (stale reference detection)
  * 4. Apply USA regeneration and write back
  * 5. Clear the bit in $MFT's $BITMAP
@@ -852,7 +852,7 @@ int ntfs_free_mft_record(struct ntfs_volume *vol, uint64_t inode)
         return NTFS_ERR_FIXUP;
     }
 
-    /* Clear in-use flag (bit 0) — do NOT zero the record */
+    /* Clear in-use flag (bit 0) -- do NOT zero the record */
     old_flags = ntfs_le16(rec + 0x16);
     old_flags &= (uint16_t)~NTFS_MFT_FLAG_IN_USE;
     ntfs_le16_write(rec + 0x16, old_flags);

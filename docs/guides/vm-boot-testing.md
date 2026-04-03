@@ -21,7 +21,7 @@ of which partition table points to its volume.
 | GPT | Type GUID `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7` (Microsoft Basic Data) |
 
 Windows has used NTFS on MBR disks since Windows NT 3.1 (1993). The filesystem
-driver reads its superblock — it never inspects which partition table was used
+driver reads its superblock -- it never inspects which partition table was used
 to locate the volume.
 
 ### IXFS supports both MBR and GPT
@@ -39,7 +39,7 @@ table pointed to it.
 
 > [!IMPORTANT]
 > **All filesystems are partition-table-agnostic.** FAT32, NTFS, ext4, exFAT,
-> IXFS — none of them care which partition table (MBR or GPT) is used. The
+> IXFS -- none of them care which partition table (MBR or GPT) is used. The
 > partition table only defines *where* the volume starts and ends on disk.
 > The filesystem driver reads its own superblock/BPB to identify the format.
 
@@ -98,7 +98,7 @@ UEFI Firmware
 > **IXFS is never involved in the boot chain.** The UEFI firmware only reads
 > the FAT32-formatted ESP. The Limine bootloader then reads the IXFS partition
 > to load the kernel binary. If the kernel fails to boot, the issue is in the
-> UEFI/GPT/ESP/Limine layer — not in IXFS.
+> UEFI/GPT/ESP/Limine layer -- not in IXFS.
 
 ---
 

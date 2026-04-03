@@ -43,14 +43,14 @@
 
 /* ---- Deferred init wrappers --------------------------------------------- */
 
-/* Network: rtl8139 + net stack + DHCP — not needed for desktop */
+/* Network: rtl8139 + net stack + DHCP -- not needed for desktop */
 static boot_result_t deferred_net_init(void)
 {
     POST16(POST16_DEFERRED_NET);
     int nic = rtl8139_init();
     if (nic < 0) {
         POST16(POST16_DEFERRED_NET_OK);
-        return BOOT_DEGRADED;  /* no NIC found — not fatal */
+        return BOOT_DEGRADED;  /* no NIC found -- not fatal */
     }
     net_init();
     dhcp_discover();
@@ -58,7 +58,7 @@ static boot_result_t deferred_net_init(void)
     return BOOT_OK;
 }
 
-/* Optional input: VirtIO tablet + VBox absolute mouse — PS/2 is sufficient */
+/* Optional input: VirtIO tablet + VBox absolute mouse -- PS/2 is sufficient */
 static boot_result_t deferred_input_init(void)
 {
     POST16(POST16_DEFERRED_INPUT);
@@ -121,12 +121,12 @@ void boot_phase2(void)
     POST16(POST16_AHCI);
     ahci_init();
     POST16(POST16_AHCI_OK);
-    /* Bare metal AHCI skip REMOVED — root cause was clac #UD, fixed 2026-03-29. */
+    /* Bare metal AHCI skip REMOVED -- root cause was clac #UD, fixed 2026-03-29. */
     POST16(POST16_NVME);
     nvme_init();
     POST16(POST16_NVME_OK);
     ahci_setup_interrupts();
-    xhci_setup_interrupts();  /* After enumeration — ISR would steal events from polling loops */
+    xhci_setup_interrupts();  /* After enumeration -- ISR would steal events from polling loops */
     blkdev_register_all();
     boot_progress(2, "STORAGE_DRV", POST16_AHCI_OK);
 

@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_klog.c — Kernel logging unit tests
+ * test_klog.c -- Kernel logging unit tests
  *
  * Tests ring buffer, per-subsystem filtering, rate limiting, and drop counts.
  *
@@ -35,7 +35,7 @@ static void test_klog_level_drop(void)
     uint32_t count_before, head_before;
     uint32_t count_after, head_after;
 
-    /* Set "mm" subsystem to WARN — DEBUG entries should be dropped */
+    /* Set "mm" subsystem to WARN -- DEBUG entries should be dropped */
     klog_set_level("mm", LOG_WARN);
 
     klog_get_ring(&count_before, &head_before);
@@ -54,7 +54,7 @@ static void test_klog_level_pass(void)
     uint32_t count_before, head_before;
     uint32_t count_after, head_after;
 
-    /* Set "mm" to WARN — WARN entries should pass through.
+    /* Set "mm" to WARN -- WARN entries should pass through.
      * Use TEST tag so the WARN line appears as cyan test output,
      * not as a scary yellow warning in the boot log. */
     klog_set_level("TEST", LOG_WARN);
@@ -76,7 +76,7 @@ static void test_klog_global_level(void)
 {
     uint32_t head_before, head_after, dummy;
 
-    /* Set global to ERROR — INFO and WARN should be dropped */
+    /* Set global to ERROR -- INFO and WARN should be dropped */
     klog_set_level((const char *)0, LOG_ERROR);
 
     klog_get_ring(&dummy, &head_before);

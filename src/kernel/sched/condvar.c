@@ -1,11 +1,11 @@
 /* ============================================================================
- * condvar.c — Kernel condition variable
+ * condvar.c -- Kernel condition variable
  *
  * cond_wait() sequence:
  *   1. Enqueue calling thread in condvar's wait queue
  *   2. Set thread state to THREAD_BLOCKED
  *   3. Release the mutex (mutex_unlock)
- *   4. yield() — scheduler skips this thread until it is woken
+ *   4. yield() -- scheduler skips this thread until it is woken
  *   5. On return from yield(): re-acquire the mutex (mutex_lock)
  *
  * cond_signal() sequence:
@@ -16,7 +16,7 @@
  * cond_broadcast() sequence:
  *   1. Wake ALL waiters simultaneously
  *   2. Clear the wait queue
- *   (All woken threads will compete to re-acquire the mutex — first wins)
+ *   (All woken threads will compete to re-acquire the mutex -- first wins)
  * ============================================================================ */
 
 #include "kernel/sched/condvar.h"
@@ -57,14 +57,14 @@ void cond_wait(condvar_t *cond, mutex_t *mutex)
     /* Atomically release the mutex before sleeping */
     mutex_unlock(mutex);
 
-    /* Sleep — scheduler will skip this thread until woken by signal/broadcast */
+    /* Sleep -- scheduler will skip this thread until woken by signal/broadcast */
     yield();
 
-    /* Woken up — re-acquire the mutex before returning to caller */
+    /* Woken up -- re-acquire the mutex before returning to caller */
     mutex_lock(mutex);
 
     /* Remove ourselves from the wait queue (we may still be in it if we were
-     * woken by a spurious wake-up or broadcast — scan and remove our entry) */
+     * woken by a spurious wake-up or broadcast -- scan and remove our entry) */
     for (i = 0; i < cond->num_waiters; i++) {
         if (cond->waiter_tasks[i]   == cur->pid &&
             cond->waiter_threads[i] == (thr ? thr->id : 0))
@@ -113,6 +113,6 @@ void cond_broadcast(condvar_t *cond)
             wt->threads[cond->waiter_threads[i]].state = THREAD_READY;
     }
 
-    /* Clear the wait queue — all waiters will compete for the mutex */
+    /* Clear the wait queue -- all waiters will compete for the mutex */
     cond->num_waiters = 0;
 }

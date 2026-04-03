@@ -1,4 +1,4 @@
-/* Freestanding <stdarg.h> shim — uses GCC builtins */
+/* Freestanding <stdarg.h> shim -- uses GCC builtins */
 #ifndef _FREESTANDING_STDARG_H
 #define _FREESTANDING_STDARG_H
 typedef __builtin_va_list va_list;

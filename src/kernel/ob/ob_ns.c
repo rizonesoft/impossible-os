@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_ns.c — Object namespace: directories, symlinks, path resolution
+ * ob_ns.c -- Object namespace: directories, symlinks, path resolution
  *
  * Implements the hierarchical in-memory namespace (TODO-03 §4).
  * ============================================================================ */
@@ -156,7 +156,7 @@ void *ObpLookupDirectory(const char *path, const char **remaining)
         entry = dir_find(dir, seg_start, seg_len);
 
         if (!entry) {
-            /* No match — return current dir with remaining path */
+            /* No match -- return current dir with remaining path */
             if (remaining) *remaining = seg_start;
             return cur_dir;
         }
@@ -190,7 +190,7 @@ void *ObpLookupDirectory(const char *path, const char **remaining)
 
         /* Must be a directory to continue walking */
         if (hdr->type != ObpDirectoryType) {
-            /* Non-directory found — return parent dir with remaining */
+            /* Non-directory found -- return parent dir with remaining */
             if (remaining) *remaining = seg_start;
             return cur_dir;
         }
@@ -231,7 +231,7 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
 
     /* If fully resolved, the path names a directory itself */
     if (!remaining || !*remaining) {
-        /* The path resolved to a directory — check type match */
+        /* The path resolved to a directory -- check type match */
         hdr = OB_HEADER_FROM_BODY(dir);
         if (type && hdr->type != type)
             return -1;
@@ -317,7 +317,7 @@ void ob_ns_init(void)
     dos_devices_dir    = ns_mkdir(ObpRootDirectory, "DosDevices");
     bno_dir            = ns_mkdir(ObpRootDirectory, "BaseNamedObjects");
 
-    /* \Sessions\0\BaseNamedObjects — alias for user-mode named objects */
+    /* \Sessions\0\BaseNamedObjects -- alias for user-mode named objects */
     sessions_dir = ns_mkdir(ObpRootDirectory, "Sessions");
     if (sessions_dir) {
         s0_dir = ns_mkdir(sessions_dir, "0");

@@ -1,5 +1,5 @@
 /* ============================================================================
- * keyboard.c — PS/2 Keyboard driver
+ * keyboard.c -- PS/2 Keyboard driver
  *
  * Handles IRQ 1 (interrupt vector 33 after PIC remap).
  * Reads scan codes from port 0x60, translates to ASCII using a
@@ -44,7 +44,7 @@ static spinlock_t kb_lock = SPINLOCK_INIT;
 
 static void kb_buffer_push(char c)
 {
-    /* Called from IRQ context — use irqsave (IRQs are already off here,
+    /* Called from IRQ context -- use irqsave (IRQs are already off here,
      * so irqrestore will NOT blindly re-enable them). */
     uint64_t flags;
     spin_lock_irqsave(&kb_lock, &flags);

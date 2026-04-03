@@ -1,5 +1,5 @@
 /* ============================================================================
- * mouse.h — PS/2 Mouse driver
+ * mouse.h -- PS/2 Mouse driver
  *
  * Handles IRQ 12, parses 3-byte mouse packets, and tracks cursor position.
  * Cursor rendering is handled by the cursor manager (cursor.h).
@@ -30,5 +30,5 @@ uint32_t mouse_get_irq_count(void);
 void mouse_set_position(int32_t x, int32_t y);
 
 /* Inject absolute mouse state (used by Hyper-V synthetic mouse).
- * Sets position and button state directly — no PS/2 parsing. */
+ * Sets position and button state directly -- no PS/2 parsing. */
 void mouse_inject_state(int32_t x, int32_t y, uint8_t buttons);

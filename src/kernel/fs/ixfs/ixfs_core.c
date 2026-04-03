@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_core.c — String helpers, raw disk I/O, and buffer cache
+ * ixfs_core.c -- String helpers, raw disk I/O, and buffer cache
  * ============================================================================ */
 
 #include "ixfs_internal.h"
@@ -126,7 +126,7 @@ int ixfs_read_block(struct ixfs_volume *vol, uint32_t block, void *buf)
         return 0;
     }
 
-    /* Cache miss — find slot (evict LRU if needed) */
+    /* Cache miss -- find slot (evict LRU if needed) */
     ce = ixfs_cache_lru(vol);
 
     /* Flush dirty evictee */
@@ -156,7 +156,7 @@ int ixfs_read_block(struct ixfs_volume *vol, uint32_t block, void *buf)
     return 0;
 }
 
-/* Write a block via the cache (deferred — only marks dirty). */
+/* Write a block via the cache (deferred -- only marks dirty). */
 int ixfs_write_block(struct ixfs_volume *vol, uint32_t block, const void *buf)
 {
     struct ixfs_cache_entry *ce;
@@ -166,7 +166,7 @@ int ixfs_write_block(struct ixfs_volume *vol, uint32_t block, const void *buf)
     /* Check if already cached */
     ce = ixfs_cache_find(vol, block);
     if (!ce) {
-        /* Not cached — get a slot */
+        /* Not cached -- get a slot */
         ce = ixfs_cache_lru(vol);
         if (ce->block != 0xFFFFFFFF && ce->dirty) {
             ixfs_disk_write(vol, ce->block, ce->data);
@@ -186,7 +186,7 @@ int ixfs_write_block(struct ixfs_volume *vol, uint32_t block, const void *buf)
     return 0;
 }
 
-/* Zero a block (via cache — deferred to disk) */
+/* Zero a block (via cache -- deferred to disk) */
 int ixfs_zero_block(struct ixfs_volume *vol, uint32_t block)
 {
     uint32_t i;
@@ -310,7 +310,7 @@ int ixfs_checksum_verify(struct ixfs_volume *vol, uint32_t block,
     uint32_t stored, computed;
 
     if (!vol->checksum_table || block >= vol->checksum_count)
-        return 0;  /* no table — skip check */
+        return 0;  /* no table -- skip check */
 
     /* Skip metadata blocks: superblock, bitmap, checksum table, inode table,
      * journal, refcount table, snapshot table. These are managed by subsystems
@@ -320,7 +320,7 @@ int ixfs_checksum_verify(struct ixfs_volume *vol, uint32_t block,
 
     stored = vol->checksum_table[block];
     if (stored == 0)
-        return 0;  /* uninitialized entry — skip */
+        return 0;  /* uninitialized entry -- skip */
 
     computed = ixfs_crc32c(data, IXFS_BLOCK_SIZE);
     if (computed != stored) {

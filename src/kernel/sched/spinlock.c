@@ -1,9 +1,9 @@
 /* ============================================================================
- * spinlock.c — IRQ-safe spinlock primitives
+ * spinlock.c -- IRQ-safe spinlock primitives
  *
  * All four functions manipulate CPU interrupt state:
- *   spin_lock / spin_unlock      — unconditional cli/sti
- *   spin_lock_irqsave / spin_unlock_irqrestore — save/restore RFLAGS.IF + IRQL
+ *   spin_lock / spin_unlock      -- unconditional cli/sti
+ *   spin_lock_irqsave / spin_unlock_irqrestore -- save/restore RFLAGS.IF + IRQL
  *
  * IRQL integration:
  *   spin_lock_irqsave raises the per-CPU IRQL to DISPATCH_LEVEL (the minimum
@@ -27,7 +27,7 @@
 #include "kernel/smp.h"
 
 /* ---------------------------------------------------------------------------
- * irq_disable / irq_restore — thin wrappers around CLI and STI / POPFQ
+ * irq_disable / irq_restore -- thin wrappers around CLI and STI / POPFQ
  * ------------------------------------------------------------------------- */
 
 static inline void irq_disable(void)
@@ -68,7 +68,7 @@ static inline void irq_restore(uint64_t flags)
 }
 
 /* ---------------------------------------------------------------------------
- * cas_acquire — atomic compare-and-swap on a uint32_t.
+ * cas_acquire -- atomic compare-and-swap on a uint32_t.
  * Returns 1 on success (lock was 0, now 1), 0 on failure.
  *
  * Uses GCC __atomic_compare_exchange_n with ACQ_REL ordering so GCC knows
@@ -86,7 +86,7 @@ static inline int cas_acquire(volatile uint32_t *ptr,
 }
 
 /* ---------------------------------------------------------------------------
- * spin_lock(s) — disable interrupts then spin until lock acquired
+ * spin_lock(s) -- disable interrupts then spin until lock acquired
  *
  * IRQ safety: CLI before the spin means we cannot be preempted by an IRQ
  * that might try to acquire the same lock (which would deadlock).
@@ -103,7 +103,7 @@ void spin_lock(spinlock_t *s)
 }
 
 /* ---------------------------------------------------------------------------
- * spin_unlock(s) — release flag then restore interrupts
+ * spin_unlock(s) -- release flag then restore interrupts
  * ------------------------------------------------------------------------- */
 void spin_unlock(spinlock_t *s)
 {
@@ -113,7 +113,7 @@ void spin_unlock(spinlock_t *s)
 }
 
 /* ---------------------------------------------------------------------------
- * spin_lock_irqsave(s, flags) — save RFLAGS + IRQL, raise to DISPATCH, acquire
+ * spin_lock_irqsave(s, flags) -- save RFLAGS + IRQL, raise to DISPATCH, acquire
  *
  * Saves the full RFLAGS register (including IF bit) before disabling IRQs,
  * and packs the previous IRQL into bits 56-63 of the saved flags (these bits
@@ -152,7 +152,7 @@ void spin_lock_irqsave(spinlock_t *s, uint64_t *flags)
 }
 
 /* ---------------------------------------------------------------------------
- * spin_unlock_irqrestore(s, flags) — release, restore IRQL, restore RFLAGS
+ * spin_unlock_irqrestore(s, flags) -- release, restore IRQL, restore RFLAGS
  * ------------------------------------------------------------------------- */
 void spin_unlock_irqrestore(spinlock_t *s, uint64_t flags)
 {
@@ -173,9 +173,9 @@ void spin_unlock_irqrestore(spinlock_t *s, uint64_t flags)
 }
 
 /* ---------------------------------------------------------------------------
- * spin_trylock(s) — non-blocking attempt, returns 1 on success
+ * spin_trylock(s) -- non-blocking attempt, returns 1 on success
  *
- * Does NOT disable interrupts — caller is responsible for IRQ safety if
+ * Does NOT disable interrupts -- caller is responsible for IRQ safety if
  * called from interrupt context.  Typically used in trylock patterns from
  * thread context where IRQs can legally fire.
  * ------------------------------------------------------------------------- */

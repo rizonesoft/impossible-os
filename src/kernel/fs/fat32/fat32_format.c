@@ -1,10 +1,10 @@
 /* ============================================================================
- * fat32_format.c — FAT32 formatting
+ * fat32_format.c -- FAT32 formatting
  *
  * Formats a raw block device as FAT32: writes boot sector (BPB), FSInfo,
  * both FAT copies, and an empty root directory cluster.
  *
- * This module is standalone — it operates directly on the blkdev and does
+ * This module is standalone -- it operates directly on the blkdev and does
  * not use the per-volume globals (bpb, fat32_dev, etc.).
  * ============================================================================ */
 

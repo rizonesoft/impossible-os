@@ -1,5 +1,5 @@
 /* ============================================================================
- * version.h — Kernel version information
+ * version.h -- Kernel version information
  *
  * Version numbers come from the auto-generated include/build_info.h header,
  * which is created by the Makefile's build-info target before compilation.

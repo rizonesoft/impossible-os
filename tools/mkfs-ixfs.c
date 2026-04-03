@@ -1,5 +1,5 @@
 /* ============================================================================
- * mkfs-ixfs.c — Host-side IXFS v2 image formatter
+ * mkfs-ixfs.c -- Host-side IXFS v2 image formatter
  *
  * Standalone tool (runs on Linux/macOS) to create IXFS disk images.
  *
@@ -480,7 +480,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("mkfs-ixfs: %s — %u blocks (%llu bytes)\n",
+    printf("mkfs-ixfs: %s -- %u blocks (%llu bytes)\n",
            output, total_blocks, (unsigned long long)g_disk_size);
 
     /* Build superblock */
@@ -615,7 +615,7 @@ int main(int argc, char *argv[])
     }
 
     fclose(fp);
-    printf("mkfs-ixfs: done — %u/%u blocks used, %u inodes, "
+    printf("mkfs-ixfs: done -- %u/%u blocks used, %u inodes, "
            "label=\"%s\"\n",
            (uint32_t)(total_blocks - g_sb.s_free_blocks),
            total_blocks, g_sb.s_total_inodes, label);

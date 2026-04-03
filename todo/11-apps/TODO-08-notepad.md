@@ -1,18 +1,18 @@
-# TODO-08 — Notepad
+# TODO-08 -- Notepad
 
-> **Goal:** Ship `notepad.exe` — Impossible OS's primary text editor, covering the gap buffer
+> **Goal:** Ship `notepad.exe` -- Impossible OS's primary text editor, covering the gap buffer
 > text engine, full keyboard/mouse editing, file operations, Find & Replace, undo/redo, and
 > file associations for `.txt`, `.log`, `.ini`, and `.conf` files.
 
 > [!IMPORTANT]
-> **Canonical implementation spec:** `08-desktop-shell/TODO-10-notepad.md` — that TODO contains
+> **Canonical implementation spec:** `08-desktop-shell/TODO-10-notepad.md` -- that TODO contains
 > the full implementation detail for all sections below (gap buffer §1, text rendering §2,
 > undo/redo §3, file menu §4, editing features §5, find & replace §6, stretch §7). This TODO
 > is the app-layer companion that extends the spec with file-type associations not covered
 > there, adds explicit CRLF/LF detection and encoding-display requirements, and acts as the
 > migration target for `todo-old/310-Core-Apps/TODO-330-Notepad.md`.
 >
-> Clipboard APIs: `clipboard_set/get(CLIP_TEXT, data, size)` — `SYS_CLIPBOARD_SET=56`,
+> Clipboard APIs: `clipboard_set/get(CLIP_TEXT, data, size)` -- `SYS_CLIPBOARD_SET=56`,
 > `SYS_CLIPBOARD_GET=57` from `08-desktop-shell/TODO-01-clipboard.md §1`.
 > File dialog: `dialog_file_open()` / `dialog_file_save()` from `07-graphics-ui/TODO-05 §4`.
 
@@ -20,15 +20,15 @@
 
 ## Inputs
 
-- `08-desktop-shell/TODO-10-notepad.md` — canonical implementation spec (gap buffer, rendering, editing, file ops, find/replace, undo/redo, stretch)
-- `include/font_mgr.h` — `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_measure_width()` — §2 rendering
-- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) — `clipboard_set(CLIP_TEXT, ...)`, `clipboard_get(CLIP_TEXT, ...)` — §4 cut/copy/paste
-- `include/kernel/vfs.h` — `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat` — §3 file ops
-- `07-graphics-ui/TODO-05-widget-dialogs.md §4` — `dialog_file_open()`, `dialog_file_save()` — §3 open/save
-- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) — `file_assoc_set(ext, prog_id, path)` — §5
-- `include/registry.h` — `reg_get_string`, `reg_set_string` — font, word-wrap, encoding prefs
-- `include/desktop/controls.h` — `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_STATUSBAR`, `CTRL_MENUBAR`
-- `include/desktop/wm.h` — `wm_create_window()`
+- `08-desktop-shell/TODO-10-notepad.md` -- canonical implementation spec (gap buffer, rendering, editing, file ops, find/replace, undo/redo, stretch)
+- `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_measure_width()` -- §2 rendering
+- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, ...)`, `clipboard_get(CLIP_TEXT, ...)` -- §4 cut/copy/paste
+- `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat` -- §3 file ops
+- `07-graphics-ui/TODO-05-widget-dialogs.md §4` -- `dialog_file_open()`, `dialog_file_save()` -- §3 open/save
+- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §5
+- `include/registry.h` -- `reg_get_string`, `reg_set_string` -- font, word-wrap, encoding prefs
+- `include/desktop/controls.h` -- `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_STATUSBAR`, `CTRL_MENUBAR`
+- `include/desktop/wm.h` -- `wm_create_window()`
 
 ---
 
@@ -55,13 +55,13 @@
 
 ## 1. Gap Buffer Text Engine `[Opus]`
 
-> → XREF: `08-desktop-shell/TODO-10-notepad.md §1` — complete implementation spec.
+> → XREF: `08-desktop-shell/TODO-10-notepad.md §1` -- complete implementation spec.
 > `[Opus]` justified: gap buffer is a novel data structure with no prior Impossible OS precedent;
 > the grow-by-doubling realloc path with `pmm_alloc_contiguous` is an unusual allocation pattern.
 
 **Source file:** `src/apps/notepad/text_buffer.c`; header `include/apps/notepad/text_buffer.h`
 
-- [ ] `struct text_buffer { uint8_t *buf; size_t buf_size; size_t gap_start; size_t gap_end; }` — initial size 65536 bytes via `pmm_alloc_contiguous(16)` (16 pages)
+- [ ] `struct text_buffer { uint8_t *buf; size_t buf_size; size_t gap_start; size_t gap_end; }` -- initial size 65536 bytes via `pmm_alloc_contiguous(16)` (16 pages)
 - [ ] `text_insert(buf, ch)` → drop into gap (`buf[gap_start++] = ch`; gap shrinks); if `gap_start == gap_end` → grow buffer (double via new `pmm_alloc_contiguous`, copy pre-gap + post-gap, free old)
 - [ ] `text_delete_before(buf)` → expand gap leftward (`gap_start--`)
 - [ ] `text_delete_after(buf)` → expand gap rightward (`gap_end++`)
@@ -94,11 +94,11 @@
 
 **Source file:** `src/apps/notepad/notepad_file.c`
 
-- [ ] **New**: if `modified` → `dialog_confirm("Save changes to {filename}?", MB_YESNOCANCEL)` → save or discard; clear buffer; reset `filepath = ""`; window title = `"Untitled — Notepad"`
+- [ ] **New**: if `modified` → `dialog_confirm("Save changes to {filename}?", MB_YESNOCANCEL)` → save or discard; clear buffer; reset `filepath = ""`; window title = `"Untitled -- Notepad"`
 - [ ] **Open**: save-changes check if modified; `dialog_file_open("Open", "Text Files|*.txt;*.log;*.ini;*.conf|All Files|*.*")` → `vfs_open` + `vfs_read` into `text_buffer`; detect encoding (UTF-8 BOM `EF BB BF` → strip BOM; else assume UTF-8); detect CRLF/LF; set window title; `modified = 0`
 - [ ] **Save**: if `filepath == ""` → Save As; else `vfs_open(WRITE)` + `vfs_write(buf_contents)` (normalize line endings per `text_detect_line_ending` on original); `modified = 0`; update title (remove `*`)
 - [ ] **Save As**: `dialog_file_save("Save As", "Text Files|*.txt|All Files|*.*")` → get path; auto-append `.txt` if no extension; save; update `filepath` + title
-- [ ] **Window title**: `"{filename} — Notepad"` (no asterisk) or `"*{filename} — Notepad"` (modified); `"Untitled — Notepad"` for new unsaved file
+- [ ] **Window title**: `"{filename} -- Notepad"` (no asterisk) or `"*{filename} -- Notepad"` (modified); `"Untitled -- Notepad"` for new unsaved file
 - [ ] **Drag-and-drop**: handle `WM_DROPFILES` message → extract path → open (save-changes check first)
 - [ ] **Command-line arg**: `notepad.exe C:\path\file.txt` → open immediately; `notepad.exe` → open with empty Untitled buffer
 
@@ -143,17 +143,17 @@
 
 | ⭐ | Feature                                              | 🪟 Win11                                  | 🐧 Linux                           | 🚀 Impossible OS                                                        |
 |----|------------------------------------------------------|----------------------------------------|---------------------------------|----------------------------------------------------------------------|
-| 💎 | Gap buffer O(1) insert/delete                        | ✅ Notepad (rope-based in modern; gap  | ✅ gedit / Kate (GtkTextBuffer) | ⬜ §1 — `pmm_alloc_contiguous`, grow-by-doubling                     |
-| 💎 | TTF text rendering + blinking I-beam                 | ✅ Notepad (DirectWrite)               | ✅ gedit (Pango/Cairo)          | ⬜ §2 — `ttf_draw_string()` per visible line                         |
-| 💎 | CRLF/LF detection + status bar encoding display      | ✅ Notepad (bottom status bar: Ln/Col, | ✅ gedit (status bar)           | ⬜ §2 — status bar + §1 `text_detect_line_ending()`                  |
-| 💎 | File open/save + unsaved-changes prompt              | ✅ Notepad                             | ✅ gedit                        | ⬜ §3 — `dialog_file_open/save`, title asterisk, save-changes dialog |
-| 💎 | Click/drag selection + clipboard                     | ✅ Notepad                             | ✅ gedit                        | ⬜ §4 — `clipboard_set/get(CLIP_TEXT)`                               |
-| 💎 | 200-step undo/redo                                   | ✅ Notepad (unlimited undo since Win10 | ✅ gedit / Kate                 | ⬜ §4 — 200-entry ring, coalesced single-char inserts                |
-| 💎 | Find + Replace                                       | ✅ Notepad (with regex in Win11)       | ✅ gedit                        | ⬜ §4 — + `08-desktop-shell/TODO-10 §6`                              |
-| ⭐ | `.txt`, `.log`, `.ini`, `.conf`, `.md` all → Notepad | ✅ Notepad (`.txt`); `.ini` → Notepad; | ⚠️ `xdg-open` varies by distro  | ⬜ §5 — 5× `file_assoc_set` calls, "Open with                        |
+| 💎 | Gap buffer O(1) insert/delete                        | ✅ Notepad (rope-based in modern; gap  | ✅ gedit / Kate (GtkTextBuffer) | ⬜ §1 -- `pmm_alloc_contiguous`, grow-by-doubling                     |
+| 💎 | TTF text rendering + blinking I-beam                 | ✅ Notepad (DirectWrite)               | ✅ gedit (Pango/Cairo)          | ⬜ §2 -- `ttf_draw_string()` per visible line                         |
+| 💎 | CRLF/LF detection + status bar encoding display      | ✅ Notepad (bottom status bar: Ln/Col, | ✅ gedit (status bar)           | ⬜ §2 -- status bar + §1 `text_detect_line_ending()`                  |
+| 💎 | File open/save + unsaved-changes prompt              | ✅ Notepad                             | ✅ gedit                        | ⬜ §3 -- `dialog_file_open/save`, title asterisk, save-changes dialog |
+| 💎 | Click/drag selection + clipboard                     | ✅ Notepad                             | ✅ gedit                        | ⬜ §4 -- `clipboard_set/get(CLIP_TEXT)`                               |
+| 💎 | 200-step undo/redo                                   | ✅ Notepad (unlimited undo since Win10 | ✅ gedit / Kate                 | ⬜ §4 -- 200-entry ring, coalesced single-char inserts                |
+| 💎 | Find + Replace                                       | ✅ Notepad (with regex in Win11)       | ✅ gedit                        | ⬜ §4 -- + `08-desktop-shell/TODO-10 §6`                              |
+| ⭐ | `.txt`, `.log`, `.ini`, `.conf`, `.md` all → Notepad | ✅ Notepad (`.txt`); `.ini` → Notepad; | ⚠️ `xdg-open` varies by distro  | ⬜ §5 -- 5× `file_assoc_set` calls, "Open with                        |
 
-Impossible OS Notepad handles every plain-text file type the OS produces out-of-the-box —
-including `.ini` config files and `.log` system logs — with one consistent editor, no
+Impossible OS Notepad handles every plain-text file type the OS produces out-of-the-box --
+including `.ini` config files and `.log` system logs -- with one consistent editor, no
 third-party plugin or format association needed.
 
 ---
@@ -165,9 +165,9 @@ Run `bash scripts/build.sh run` for each verification step.
 - [ ] **Gap buffer:** insert 10000 characters at random positions; `text_line_count` returns correct count; buffer grows correctly (no crash, no data corruption); cursor position preserved after grow
 - [ ] **CRLF detection:** open a Windows-format file (with `\r\n`); status bar shows `CRLF`; open a Unix file (`\n`); shows `LF`; save preserves original ending
 - [ ] **Rendering:** open a 200-line file; scroll to bottom; all lines visible; cursor blinks; status bar shows correct Ln/Col; word wrap wraps visually without inserting `\n`
-- [ ] **File ops:** New → `*Untitled` in title; type text; close → "Save changes?" dialog appears; Save As to `C:\Temp\test.txt`; title updates to `test.txt — Notepad`; reopen confirms content
+- [ ] **File ops:** New → `*Untitled` in title; type text; close → "Save changes?" dialog appears; Save As to `C:\Temp\test.txt`; title updates to `test.txt -- Notepad`; reopen confirms content
 - [ ] **Clipboard:** type `hello world`; Ctrl+A → selects all (inverted highlight); Ctrl+C; open second notepad.exe; Ctrl+V → `hello world` pasted
 - [ ] **Undo/Redo:** type 10 chars; Ctrl+Z × 10 → buffer empty; Ctrl+Y × 10 → all chars back; undo merges consecutive single-char inserts into one step
 - [ ] **Find/Replace:** open file with repeated word; Ctrl+F → type word → all occurrences highlighted; F3 cycles; Ctrl+H → Replace All "foo" with "bar" → reports count; all instances replaced
 - [ ] **File assoc:** File Manager double-click on `.log` → `notepad.exe` opens file; right-click any file → `Open with Notepad` present
-- [ ] Commit: `"apps: Notepad — gap buffer, rendering, file ops, editing, find/replace, file assoc"`
+- [ ] Commit: `"apps: Notepad -- gap buffer, rendering, file ops, editing, find/replace, file assoc"`

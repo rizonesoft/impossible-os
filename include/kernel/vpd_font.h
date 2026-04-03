@@ -3,7 +3,7 @@
  *
  * Zero dependencies: no heap, no PMM, no klog, no framebuffer driver.
  * Writes directly to a raw framebuffer pointer.  All functions are static
- * inline — no .c file, no linker dependency.
+ * inline -- no .c file, no linker dependency.
  *
  * Glyphs cover printable ASCII 0x20–0x7E (95 chars).
  * Each glyph is 5 pixels wide × 7 pixels tall, packed as 7 bytes

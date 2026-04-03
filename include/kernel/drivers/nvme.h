@@ -1,5 +1,5 @@
 /* ============================================================================
- * nvme.h — NVMe storage driver
+ * nvme.h -- NVMe storage driver
  *
  * NVMe controller discovery, BAR0 MMIO mapping, and register definitions.
  * ============================================================================ */
@@ -25,27 +25,27 @@
 #define NVME_REG_ACQ            0x30    /* Admin Completion Queue Base (64-bit) */
 
 /* ---- CAP register fields (64-bit at offset 0x00) ---- */
-#define NVME_CAP_MQES_MASK      0xFFFF              /* bits 15:0  — Max Queue Entries Supported (0-based) */
-#define NVME_CAP_TO_SHIFT       24                  /* bits 31:24 — Timeout (in 500ms units) */
+#define NVME_CAP_MQES_MASK      0xFFFF              /* bits 15:0  -- Max Queue Entries Supported (0-based) */
+#define NVME_CAP_TO_SHIFT       24                  /* bits 31:24 -- Timeout (in 500ms units) */
 #define NVME_CAP_TO_MASK        0xFF
-#define NVME_CAP_DSTRD_SHIFT    32                  /* bits 35:32 — Doorbell Stride (2^(2+DSTRD) bytes) */
+#define NVME_CAP_DSTRD_SHIFT    32                  /* bits 35:32 -- Doorbell Stride (2^(2+DSTRD) bytes) */
 #define NVME_CAP_DSTRD_MASK     0x0F
-#define NVME_CAP_CSS_SHIFT      37                  /* bits 44:37 — Command Sets Supported */
+#define NVME_CAP_CSS_SHIFT      37                  /* bits 44:37 -- Command Sets Supported */
 #define NVME_CAP_CSS_MASK       0xFF
 #define NVME_CAP_CSS_NVM        (1 << 0)            /* NVM command set supported */
-#define NVME_CAP_MPSMIN_SHIFT   48                  /* bits 51:48 — Memory Page Size Minimum (2^(12+MPSMIN)) */
+#define NVME_CAP_MPSMIN_SHIFT   48                  /* bits 51:48 -- Memory Page Size Minimum (2^(12+MPSMIN)) */
 #define NVME_CAP_MPSMIN_MASK    0x0F
-#define NVME_CAP_MPSMAX_SHIFT   52                  /* bits 55:52 — Memory Page Size Maximum */
+#define NVME_CAP_MPSMAX_SHIFT   52                  /* bits 55:52 -- Memory Page Size Maximum */
 #define NVME_CAP_MPSMAX_MASK    0x0F
 
 /* ---- CC register fields (32-bit at offset 0x14) ---- */
 #define NVME_CC_EN              (1 << 0)            /* Enable */
-#define NVME_CC_CSS_SHIFT       4                   /* bits 6:4  — I/O Command Set Selected */
+#define NVME_CC_CSS_SHIFT       4                   /* bits 6:4  -- I/O Command Set Selected */
 #define NVME_CC_CSS_NVM         (0 << 4)            /* NVM command set */
-#define NVME_CC_MPS_SHIFT       7                   /* bits 10:7 — Memory Page Size (2^(12+MPS)) */
-#define NVME_CC_AMS_SHIFT       11                  /* bits 13:11 — Arbitration Mechanism */
-#define NVME_CC_IOSQES_SHIFT    16                  /* bits 19:16 — I/O SQ Entry Size (2^N) */
-#define NVME_CC_IOCQES_SHIFT    20                  /* bits 23:20 — I/O CQ Entry Size (2^N) */
+#define NVME_CC_MPS_SHIFT       7                   /* bits 10:7 -- Memory Page Size (2^(12+MPS)) */
+#define NVME_CC_AMS_SHIFT       11                  /* bits 13:11 -- Arbitration Mechanism */
+#define NVME_CC_IOSQES_SHIFT    16                  /* bits 19:16 -- I/O SQ Entry Size (2^N) */
+#define NVME_CC_IOCQES_SHIFT    20                  /* bits 23:20 -- I/O CQ Entry Size (2^N) */
 
 /* ---- CSTS register fields (32-bit at offset 0x1C) ---- */
 #define NVME_CSTS_RDY           (1 << 0)            /* Ready */

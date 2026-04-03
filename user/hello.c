@@ -1,5 +1,5 @@
 /* ============================================================================
- * hello.c — User-mode test program
+ * hello.c -- User-mode test program
  *
  * Linked against libc.a. Uses printf() and main() convention.
  * crt0.asm calls main() and passes the return value to sys_exit().

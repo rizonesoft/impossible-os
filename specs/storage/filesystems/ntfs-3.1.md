@@ -14,7 +14,7 @@ To build a functional NTFS driver, the implementation must be meticulously phase
 
 ## 2. The Partition Boot Sector and BIOS Parameter Block (BPB)
 
-The absolute first step for any NTFS file system driver is to mount the volume and determine its fundamental geometric properties. Regardless of whether the host system utilizes a legacy Master Boot Record (MBR) partitioning scheme or a modern GUID Partition Table (GPT), the first sector of the NTFS partition—designated as Logical Sector 0—contains the **Volume Boot Record (VBR)** and the **BIOS Parameter Block (BPB)**. Even on modern Unified Extensible Firmware Interface (UEFI) systems where legacy BIOS boot code is entirely unnecessary for system initialization, this first sector is strictly reserved and formatted by the NTFS format utility to maintain the file system's metadata anchors and backward compatibility. Reserving this space ensures that the file system can operate within logical partitions and provides the necessary offsets for the file system driver to orient itself.
+The absolute first step for any NTFS file system driver is to mount the volume and determine its fundamental geometric properties. Regardless of whether the host system utilizes a legacy Master Boot Record (MBR) partitioning scheme or a modern GUID Partition Table (GPT), the first sector of the NTFS partition--designated as Logical Sector 0--contains the **Volume Boot Record (VBR)** and the **BIOS Parameter Block (BPB)**. Even on modern Unified Extensible Firmware Interface (UEFI) systems where legacy BIOS boot code is entirely unnecessary for system initialization, this first sector is strictly reserved and formatted by the NTFS format utility to maintain the file system's metadata anchors and backward compatibility. Reserving this space ensures that the file system can operate within logical partitions and provides the necessary offsets for the file system driver to orient itself.
 
 The Boot Sector is exactly 512 bytes in length (or the size of one physical disk sector) and contains the foundational constants required to calculate all subsequent physical and logical disk offsets.
 
@@ -73,7 +73,7 @@ With the absolute byte offset and the exact record size calculated, the operatin
 
 ## 3. The Master File Table (MFT) Architecture and System Files
 
-The Master File Table is the undisputed heart of the NTFS file system. It is structured as an array of **File Record Segments (FRS)**, which, as calculated above, are conventionally 1024 bytes each. There is exactly one entry in the MFT for every single file and directory that exists on the volume. If a file is extremely small, its entire data payload may fit within the 1024-byte record itself; this is known as a **"resident" file**. If the file's data payload is larger than the available space within the record, the record instead contains pointers—known as **Data Runs**—to the physical clusters on the disk where the actual data resides; this is known as a **"non-resident" file**.
+The Master File Table is the undisputed heart of the NTFS file system. It is structured as an array of **File Record Segments (FRS)**, which, as calculated above, are conventionally 1024 bytes each. There is exactly one entry in the MFT for every single file and directory that exists on the volume. If a file is extremely small, its entire data payload may fit within the 1024-byte record itself; this is known as a **"resident" file**. If the file's data payload is larger than the available space within the record, the record instead contains pointers--known as **Data Runs**--to the physical clusters on the disk where the actual data resides; this is known as a **"non-resident" file**.
 
 As new files are created, the NTFS file system appends new entries to the MFT, causing the table to grow in size. Conversely, when files are deleted, their corresponding MFT entries are flagged as free and made available for immediate reuse. However, it is a crucial characteristic of NTFS that the disk space allocated for the MFT itself is never truncated or reallocated; **the physical size of the MFT never decreases**, even if millions of files are deleted.
 
@@ -196,7 +196,7 @@ Attributes are identified by a 32-bit integer type code. An OS driver parsing an
 A critical concept for an OS driver developer is understanding **Residency**. Because the MFT record is strictly limited to 1024 bytes, not all data can fit within it.
 
 - **Resident Attributes:** The entire content and payload of the attribute fits within the physical 1024-byte MFT record.
-- **Non-Resident Attributes:** The content is too large. The attribute header inside the MFT record instead contains a mapping structure—known as **Data Runs**—that points to standard physical disk clusters located elsewhere on the volume where the actual payload is stored.
+- **Non-Resident Attributes:** The content is too large. The attribute header inside the MFT record instead contains a mapping structure--known as **Data Runs**--that points to standard physical disk clusters located elsewhere on the volume where the actual payload is stored.
 
 Certain attributes, such as `$STANDARD_INFORMATION` and `$INDEX_ROOT`, are strictly required by the NTFS specification to be resident at all times. Conversely, attributes like `$INDEX_ALLOCATION` are inherently designed to be strictly non-resident. The `$DATA` attribute is flexible and can be either resident or non-resident depending on the file size.
 
@@ -239,10 +239,10 @@ This attribute is always resident and contains the core metadata governing file 
 
 | Offset | Size    | Description and Operational Metrics                                                                              |
 | ------ | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| `0x00` | 8 Bytes | **C Time** — File Creation Time.                                                                                 |
-| `0x08` | 8 Bytes | **A Time** — File Altered Time. When the file content (`$DATA`) was last modified.                               |
-| `0x10` | 8 Bytes | **M Time** — MFT Changed Time. When the metadata within the MFT record itself was last updated.                 |
-| `0x18` | 8 Bytes | **R Time** — File Read Time. Last access time (often disabled in modern Windows to improve performance).         |
+| `0x00` | 8 Bytes | **C Time** -- File Creation Time.                                                                                 |
+| `0x08` | 8 Bytes | **A Time** -- File Altered Time. When the file content (`$DATA`) was last modified.                               |
+| `0x10` | 8 Bytes | **M Time** -- MFT Changed Time. When the metadata within the MFT record itself was last updated.                 |
+| `0x18` | 8 Bytes | **R Time** -- File Read Time. Last access time (often disabled in modern Windows to improve performance).         |
 | `0x20` | 4 Bytes | DOS File Permissions (flags bitmask).                                                                            |
 | `0x24` | 4 Bytes | Maximum Number of Versions.                                                                                      |
 | `0x28` | 4 Bytes | Version Number.                                                                                                  |
@@ -299,10 +299,10 @@ This duplication is a profound optimization for directory listings. When an oper
 
 **Filename Namespaces:** The single byte at offset `0x41` dictates the parsing rules and allowable character set:
 
-- `0x00` — **POSIX** namespace (case-sensitive, maximum 255 characters, allowing any character except NULL and `/`).
-- `0x01` — **Win32** namespace (case-insensitive, restricting characters like `"`, `*`, `?`, `<`, `>`, `|`, `:`, `\`, `/`).
-- `0x02` — **DOS** namespace (strictly enforcing the legacy 8.3 short filename format, uppercase only).
-- `0x03` — **Win32 & DOS** namespace, indicating that the filename naturally complies with both and does not require a secondary short name to be generated.
+- `0x00` -- **POSIX** namespace (case-sensitive, maximum 255 characters, allowing any character except NULL and `/`).
+- `0x01` -- **Win32** namespace (case-insensitive, restricting characters like `"`, `*`, `?`, `<`, `>`, `|`, `:`, `\`, `/`).
+- `0x02` -- **DOS** namespace (strictly enforcing the legacy 8.3 short filename format, uppercase only).
+- `0x03` -- **Win32 & DOS** namespace, indicating that the filename naturally complies with both and does not require a secondary short name to be generated.
 
 Hard links in NTFS are implemented by assigning **multiple `$FILE_NAME` attributes** to a single MFT record, with each attribute potentially pointing to a different parent directory reference.
 
@@ -331,7 +331,7 @@ The structural layout of each entry within the attribute list is as follows:
 
 When the `$DATA` attribute is marked as Non-Resident (Non-Resident Flag at `0x08 == 0x01`), the attribute header is immediately followed by an array of **Data Runs** (also referred to as Run-lists). The implementation of a highly robust, mathematically precise Data Run decoder is absolutely mandatory for any OS driver, as this mechanism dictates precisely how the physical clusters of a file are reassembled from the disparate sectors of the hard disk.
 
-A Data Run translates **Virtual Cluster Numbers (VCNs)**—the logical, sequential layout of data inside the file as the user perceives it—into **Logical Cluster Numbers (LCNs)**—the actual, scattered physical clusters on the disk platter. To conserve precious bytes within the MFT record, NTFS utilizes a tightly packed, variable-length, relative-offset encoding structure.
+A Data Run translates **Virtual Cluster Numbers (VCNs)**--the logical, sequential layout of data inside the file as the user perceives it--into **Logical Cluster Numbers (LCNs)**--the actual, scattered physical clusters on the disk platter. To conserve precious bytes within the MFT record, NTFS utilizes a tightly packed, variable-length, relative-offset encoding structure.
 
 ### 8.1 Data Run Decoding Algorithm
 
@@ -361,7 +361,7 @@ The run-list consists of sequential elements. Each element begins with a single 
 
 ### 8.2 Handling Sparse Files and Compressed Units
 
-The OS driver must be programmed to handle highly specific edge cases where the **F value** (the offset size) in the header byte equals 0. If F=0, the offset field is entirely omitted from the byte stream. This explicitly defines a **Sparse Run**—a block of Virtual Clusters that are entirely filled with zeros and occupy absolutely no physical space on the hard disk. When the driver encounters a sparse run, it must not attempt disk I/O; instead, it should simply return a memory buffer populated with zeros for the length of the run.
+The OS driver must be programmed to handle highly specific edge cases where the **F value** (the offset size) in the header byte equals 0. If F=0, the offset field is entirely omitted from the byte stream. This explicitly defines a **Sparse Run**--a block of Virtual Clusters that are entirely filled with zeros and occupy absolutely no physical space on the hard disk. When the driver encounters a sparse run, it must not attempt disk I/O; instead, it should simply return a memory buffer populated with zeros for the length of the run.
 
 Similarly, for files where the transparent compression flag is set (typically utilizing the LZNT1 algorithm, a variant of LZ77), the data is divided into logical **compression units** consisting of exactly 16 clusters. If a chunk of data successfully compresses down to N clusters (where N is less than 16), the run-list will first contain a standard run of length N pointing to the physically compressed clusters on the disk. This is immediately followed by a sparse run (F=0) with a length of `16 - N` to mathematically pad the unit back to the required 16 clusters. The custom OS driver's decompression logic must identify this highly specific **N followed by 16-N sparse** pattern to buffer and properly decompress the LZNT1 payload.
 
@@ -373,7 +373,7 @@ Similarly, for files where the transparent compression flag is set (typically ut
 
 ## 9. Directory Structure and B+ Tree Indexing
 
-In early iterations of the FAT file system, or in basic Unix file systems, a directory is essentially a simple, linear flat file containing an unsorted list of filenames. NTFS comprehensively rejects this inefficient model in favor of highly optimized **B+ trees**. While significantly more complex to implement at the driver level, B+ trees allow the file system to perform search, insertion, and deletion of file entries in logarithmic time (`O(log n)`)—a critical architectural advantage that prevents massive performance degradation in directories containing hundreds of thousands of files.
+In early iterations of the FAT file system, or in basic Unix file systems, a directory is essentially a simple, linear flat file containing an unsorted list of filenames. NTFS comprehensively rejects this inefficient model in favor of highly optimized **B+ trees**. While significantly more complex to implement at the driver level, B+ trees allow the file system to perform search, insertion, and deletion of file entries in logarithmic time (`O(log n)`)--a critical architectural advantage that prevents massive performance degradation in directories containing hundreds of thousands of files.
 
 From the perspective of NTFS, a directory is a specific kind of file that serves as an index of file names, but crucially, it contains **no `$DATA` attribute**. Instead, it utilizes three distinct attributes to build and manage the B+ tree:
 
@@ -447,6 +447,6 @@ To resolve a file path (e.g., `C:\Windows\System32\kernel32.dll`), the OS driver
 
 ## 11. Concluding Architectural Considerations
 
-Implementing a custom NTFS driver from scratch demands meticulous adherence to the data structures, nested pointer logic, and byte-level constraints defined in this specification. By approaching the volume hierarchically—first extracting the BIOS Parameter Block for geometric dimensions, mathematically mapping the Master File Table, rigorously applying the Update Sequence Array for sector integrity, and subsequently developing bulletproof bitwise decoding logic for Data Runs and B+ Tree traversals—an operating system developer can accurately and safely read NTFS files.
+Implementing a custom NTFS driver from scratch demands meticulous adherence to the data structures, nested pointer logic, and byte-level constraints defined in this specification. By approaching the volume hierarchically--first extracting the BIOS Parameter Block for geometric dimensions, mathematically mapping the Master File Table, rigorously applying the Update Sequence Array for sector integrity, and subsequently developing bulletproof bitwise decoding logic for Data Runs and B+ Tree traversals--an operating system developer can accurately and safely read NTFS files.
 
 While advanced features such as EFS transparent encryption, transactional `$LogFile` journaling, and `$REPARSE_POINT` resolution require additional layers of cryptographic and logical complexity, the core mechanics of LCN calculation, attribute parsing, and cluster extraction outlined in this document form the absolute, uncompromising baseline required to construct a highly robust, enterprise-grade read-access driver.

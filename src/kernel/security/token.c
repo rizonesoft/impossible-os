@@ -1,5 +1,5 @@
 /* ============================================================================
- * token.c — ACCESS_TOKEN Ob type registration and token creation
+ * token.c -- ACCESS_TOKEN Ob type registration and token creation
  *
  * Implements TODO-11 §4.1 + §4.2.
  * ============================================================================ */
@@ -257,7 +257,7 @@ ACCESS_TOKEN *NtDuplicateToken(const ACCESS_TOKEN *existing,
     dup->RestrictedSidCount = existing->RestrictedSidCount;
     dup->Flags            = existing->Flags;
 
-    /* Copy groups — strip disabled if effective_only */
+    /* Copy groups -- strip disabled if effective_only */
     j = 0;
     for (i = 0; i < existing->GroupCount && j < TOKEN_MAX_GROUPS; i++) {
         if (effective_only &&
@@ -268,7 +268,7 @@ ACCESS_TOKEN *NtDuplicateToken(const ACCESS_TOKEN *existing,
     }
     dup->GroupCount = j;
 
-    /* Copy privileges — strip disabled if effective_only */
+    /* Copy privileges -- strip disabled if effective_only */
     j = 0;
     for (i = 0; i < existing->PrivilegeCount && j < TOKEN_MAX_PRIVS; i++) {
         if (effective_only &&

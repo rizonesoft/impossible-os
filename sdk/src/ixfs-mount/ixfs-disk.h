@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs-disk.h — Platform-abstracted raw disk/image I/O with GPT parsing
+ * ixfs-disk.h -- Platform-abstracted raw disk/image I/O with GPT parsing
  *
  * Opens a disk image or device, parses GPT to find a partition by index,
  * and provides sector-level read/write within that partition.

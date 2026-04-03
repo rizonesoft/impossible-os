@@ -5,8 +5,8 @@
 - Run `rg '^ {2,}[a-zA-Z`'"'"'"]' <file>` first to get the complete continuation-line list; fix every match; re-run to confirm zero results before proceeding.
 - No blank lines between consecutive list items in the same group (`- [ ]`, `- [x]`, `- bullet`); items must appear one directly after the other.
 - Sub-bullets must immediately follow their parent item with no blank line between them.
-- No mid-sentence or mid-paragraph hard line breaks in prose (Goal block, Prompt text, XREF notes, section intro paragraphs) — each prose paragraph is one unbroken line.
-- No blank lines inside a callout block (`> [!NOTE]`, `> [!WARNING]`, `> [!IMPORTANT]`, `> [!TIP]`, `> [!CAUTION]`) — each callout is one contiguous `>` block.
+- No mid-sentence or mid-paragraph hard line breaks in prose (Goal block, Prompt text, XREF notes, section intro paragraphs) -- each prose paragraph is one unbroken line.
+- No blank lines inside a callout block (`> [!NOTE]`, `> [!WARNING]`, `> [!IMPORTANT]`, `> [!TIP]`, `> [!CAUTION]`) -- each callout is one contiguous `>` block.
 - No blank lines between table rows; header row and separator row only, then data rows run uninterrupted.
 - Blank lines ARE correct: between a section heading and its first content line, between visually distinct list groups covering different subjects, before and after `---` separators, and before/after code block fences (` ``` `).
 
@@ -21,7 +21,7 @@
 ## Inputs Anchor Checks
 
 - Every file path in the Inputs section exists on disk.
-- Paths that do not exist are flagged: either broken (file was moved/deleted) or planned (not yet created — note it as such).
+- Paths that do not exist are flagged: either broken (file was moved/deleted) or planned (not yet created -- note it as such).
 - Do not read the files; existence check only.
 
 ## Cross-TODO Scope Overlap Checks

@@ -37,8 +37,8 @@ void cpu_verify_hardening(void);
 
 /* ---- SMAP user-space access brackets ---- */
 
-/* STAC: Set AC flag — allows kernel to access user pages (SMAP bypass).
- * CLAC: Clear AC flag — re-enables SMAP protection.
+/* STAC: Set AC flag -- allows kernel to access user pages (SMAP bypass).
+ * CLAC: Clear AC flag -- re-enables SMAP protection.
  * No-ops if SMAP is not active on this platform. */
 static inline void stac(void) { __asm__ volatile ("stac" ::: "memory"); }
 static inline void clac(void) { __asm__ volatile ("clac" ::: "memory"); }

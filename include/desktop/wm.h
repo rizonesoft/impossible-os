@@ -1,5 +1,5 @@
 /* ============================================================================
- * wm.h — Stacking window manager
+ * wm.h -- Stacking window manager
  *
  * Manages overlapping windows with per-window framebuffers, title bars,
  * decorations, z-order stacking, dragging, and painter's-algorithm
@@ -37,7 +37,7 @@
 
 /* ---- Color palette for decorations ---- */
 
-/* Windows 11 Dark Theme — neutral grays */
+/* Windows 11 Dark Theme -- neutral grays */
 #define WM_COLOR_TITLEBAR_ACTIVE   0xFF202020   /* active fallback (Mica overrides) */
 #define WM_COLOR_TITLEBAR_INACTIVE 0xFF383838   /* inactive: flat gray, no Mica    */
 #define WM_COLOR_TITLE_TEXT        0xFFFFFFFF   /* active title text         */
@@ -137,7 +137,7 @@ void wm_fill_rect(int handle, uint32_t x, uint32_t y,
 
 /* ---- Input dispatching ---- */
 
-/* Process mouse input — handles dragging, focus, button clicks.
+/* Process mouse input -- handles dragging, focus, button clicks.
  * Call once per frame with current mouse state. */
 void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons);
 

@@ -1,5 +1,5 @@
 /* ============================================================================
- * klog_disk.c — Unified disk logging (replaces klog_flush.c + klog_live.c)
+ * klog_disk.c -- Unified disk logging (replaces klog_flush.c + klog_live.c)
  *
  * Handles all disk-based log output:
  *   - Batch flush to C:\Impossible\System\Logs\kernel.log (IXFS, appendable)
@@ -422,7 +422,7 @@ static int log_date_cmp(uint8_t ya, uint8_t ma, uint8_t da, uint8_t sa,
 /* Scan C:\Impossible\System\Logs\ for log files, pick today's next sequence, enforce 100-file cap. */
 static void pick_log_number(void)
 {
-    struct vfs_node *x_root;  /* legacy name — actually the Logs directory */
+    struct vfs_node *x_root;  /* legacy name -- actually the Logs directory */
     uint8_t today_yy, today_mm, today_dd;
     uint8_t max_seq_today = 0;
     uint32_t count = 0;
@@ -843,7 +843,7 @@ void klog_disk_flush(void)
             }
         }
     } else if (vfs_is_mounted('C') && !fat32_buf) {
-        /* No PMM buffer — allocate on demand and do a ring-buffer dump */
+        /* No PMM buffer -- allocate on demand and do a ring-buffer dump */
         uint32_t buf_pages = 64;
         uint8_t *tmp_buf = (uint8_t *)pmm_alloc_contiguous(buf_pages);
         uint32_t tmp_size = buf_pages * 4096;

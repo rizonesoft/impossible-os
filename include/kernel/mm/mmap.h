@@ -1,18 +1,18 @@
 /* ============================================================================
- * mmap.h — Memory-mapped file support
+ * mmap.h -- Memory-mapped file support
  *
  * Maps files (or anonymous memory) into the virtual address space.
  * Pages are loaded on demand from the backing file via the page fault handler.
  *
  * Supported flags:
- *   MAP_PRIVATE  — copy-on-write: writes go to a private copy, not the file
- *   MAP_SHARED   — writes are visible to other mappings and flushed to disk
- *   MAP_ANON     — anonymous mapping (no file, zero-filled pages)
+ *   MAP_PRIVATE  -- copy-on-write: writes go to a private copy, not the file
+ *   MAP_SHARED   -- writes are visible to other mappings and flushed to disk
+ *   MAP_ANON     -- anonymous mapping (no file, zero-filled pages)
  *
  * Protection:
- *   PROT_READ    — pages are readable
- *   PROT_WRITE   — pages are writable
- *   PROT_EXEC    — pages are executable (no NX bit)
+ *   PROT_READ    -- pages are readable
+ *   PROT_WRITE   -- pages are writable
+ *   PROT_EXEC    -- pages are executable (no NX bit)
  * ============================================================================ */
 
 #pragma once

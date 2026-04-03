@@ -1,6 +1,6 @@
-# TODO-04 — Release QA & Platform Certification
+# TODO-04 -- Release QA & Platform Certification
 
-> **Goal:** Build the structured QA process that gates every public release — automated
+> **Goal:** Build the structured QA process that gates every public release -- automated
 > regression test suite, QEMU headless validation, Hyper-V and VirtualBox certification
 > runs, real hardware test checklist, performance benchmarks, release readiness sign-off,
 > and pre-release crash analytics review.
@@ -11,7 +11,7 @@
 >
 > **KASAN / stack guard pages / heap canaries** are implemented by
 > `03-memory-concurrency/TODO-09`; §8 here enables those flags in the QA build profile
-> and uses them — it does not re-specify the sanitiser internals.
+> and uses them -- it does not re-specify the sanitiser internals.
 >
 > **Hyper-V hypervisor detection** (`boot_info.hv_flags`, MSR clock) is implemented in
 > `01-boot-platform/TODO-04 §3`; the Hyper-V cert run (§3 here) depends on that detection
@@ -21,23 +21,23 @@
 > `09-services-security/TODO-11 §8`; §3 here checks it passes on the Hyper-V VM.
 >
 > **Win32 compat CI gate** (`scripts/compat-check.sh`) is owned by
-> `11-user-platform-sdk/TODO-07 §12`; §7 here lists it as a sign-off gating condition —
+> `11-user-platform-sdk/TODO-07 §12`; §7 here lists it as a sign-off gating condition --
 > do not re-specify the compat gate runner.
 
 ---
 
 ## Inputs
 
-- `02-kernel-core/TODO-16-crash-dump-generation.md` (→ XREF) — `C:\Impossible\System\CrashDumps\`; minidump format; §8 crash triage
-- `03-memory-concurrency/TODO-09-concurrency-diagnostics.md` (→ XREF) — `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §8 QA build profile
-- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) — `HV_TSC_ENLIGHTENMENT` detection; `boot_info.hv_flags`; §3 Hyper-V boot dependency
-- `01-boot-platform/TODO-07-boot-diagnostics.md` (→ XREF) — `[READY]` serial marker; `boot_stage_history[]`; §1 §2 serial output parsing
-- `09-services-security/TODO-11-installer-iso.md §8` (→ XREF) — post-install first boot + OOBE trigger verification; §3 Hyper-V certification baseline test
-- `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) — `scripts/compat-check.sh` Tier 1–7 gate; §7 sign-off gating condition
-- `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) — `OS_VERSION_STRING`, `increment-build.sh`, code signing; §7 checklist items
-- `12-installer-release/TODO-03-update-server.md §3` (→ XREF) — `promote-release.sh` stable promotion; §7 final step
-- `scripts/build.sh` — `bash scripts/build.sh run` for QEMU; QA build flags; §1 §2 §6
-- `include/kernel/drivers/` — driver coverage for §5 hardware checklist
+- `02-kernel-core/TODO-16-crash-dump-generation.md` (→ XREF) -- `C:\Impossible\System\CrashDumps\`; minidump format; §8 crash triage
+- `03-memory-concurrency/TODO-09-concurrency-diagnostics.md` (→ XREF) -- `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §8 QA build profile
+- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) -- `HV_TSC_ENLIGHTENMENT` detection; `boot_info.hv_flags`; §3 Hyper-V boot dependency
+- `01-boot-platform/TODO-07-boot-diagnostics.md` (→ XREF) -- `[READY]` serial marker; `boot_stage_history[]`; §1 §2 serial output parsing
+- `09-services-security/TODO-11-installer-iso.md §8` (→ XREF) -- post-install first boot + OOBE trigger verification; §3 Hyper-V certification baseline test
+- `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `scripts/compat-check.sh` Tier 1–7 gate; §7 sign-off gating condition
+- `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`, code signing; §7 checklist items
+- `12-installer-release/TODO-03-update-server.md §3` (→ XREF) -- `promote-release.sh` stable promotion; §7 final step
+- `scripts/build.sh` -- `bash scripts/build.sh run` for QEMU; QA build flags; §1 §2 §6
+- `include/kernel/drivers/` -- driver coverage for §5 hardware checklist
 
 ---
 
@@ -71,7 +71,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 - [ ] **`scripts/run-tests.sh [--qemu-args <extra>]`**:
   - Boot OS in QEMU headless: `qemu-system-x86_64 -nographic -serial stdio -drive file=build/system-disk.img,format=raw -m 512 -bios OVMF.fd <extra_args>`
-  - Wait for serial `[READY]` marker (emitted by kernel init after desktop subsystem init completes — coordinate with `01-boot-platform/TODO-07` boot progress API); timeout 60 s
+  - Wait for serial `[READY]` marker (emitted by kernel init after desktop subsystem init completes -- coordinate with `01-boot-platform/TODO-07` boot progress API); timeout 60 s
   - After `[READY]`: send test commands via QEMU monitor or serial input; collect all output to `build/test-{timestamp}.log`
   - Parse `build/test-{timestamp}.log` for `TEST <name> PASS [<ms>ms]` / `TEST <name> FAIL [<ms>ms]` lines; exit code 0 if all PASS; exit code 1 on any FAIL
 - [ ] **Test matrix** (each test emits `TEST <name> PASS|FAIL [<ms>ms]`):
@@ -137,7 +137,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   6. Mouse integration: mouse pointer movement via Hyper-V VMBus mouse; pointer follows in desktop
   7. Screen resize: resize VM window; framebuffer re-initializes to new resolution without panic
   8. ACPI shutdown from Hyper-V Manager: VM powers off cleanly within 15 s
-- [ ] **Known-issues document**: `docs/guides/hyperv-known-issues.md` — table of any Hyper-V-specific bugs or limitations found during certification; updated each release cycle
+- [ ] **Known-issues document**: `docs/guides/hyperv-known-issues.md` -- table of any Hyper-V-specific bugs or limitations found during certification; updated each release cycle
 
 ---
 
@@ -164,7 +164,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   5. Keyboard input: all keys register correctly (some VirtualBox USB HID emulation quirks)
   6. ACPI shutdown from VirtualBox Manager: VM powers off cleanly
 - [ ] **Known-issues document**: `docs/guides/virtualbox-known-issues.md`
-- [ ] **OVA import test**: `VBoxManage import impossible-os-{ver}.ova` (from `TODO-01 §7`); boot imported VM; verify `[READY]` — validates the OVA artifact format
+- [ ] **OVA import test**: `VBoxManage import impossible-os-{ver}.ova` (from `TODO-01 §7`); boot imported VM; verify `[READY]` -- validates the OVA artifact format
 
 ---
 
@@ -174,7 +174,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 - [ ] **Checklist structure** (template filled in by human tester per physical machine):
   ```markdown
-  ## Hardware: {Make/Model} — Tested by: {Tester} — Date: {YYYY-MM-DD}
+  ## Hardware: {Make/Model} -- Tested by: {Tester} -- Date: {YYYY-MM-DD}
 
   | Component | Test | Pass/Fail | Notes |
   |-----------|------|-----------|-------|
@@ -197,7 +197,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   | SMP             | All CPU cores detected in `sysinfo.exe` | | |
   ```
 - [ ] **Minimum coverage before stable release**: results from ≥ 3 distinct physical machines (different manufacturers/chipsets); all `Pass` in critical rows (UEFI, Display, Keyboard, Mouse, Storage, NIC, ACPI Shutdown/Reboot)
-- [ ] **Results archive**: store completed checklists in `docs/guides/hardware-test-results/v{version}/` — one file per machine tested; linked from release notes
+- [ ] **Results archive**: store completed checklists in `docs/guides/hardware-test-results/v{version}/` -- one file per machine tested; linked from release notes
 - [ ] **Driver coverage target**: identify any untested NIC/storage chipset combinations; create issues for any `Fail` rows before stable promotion
 
 ---
@@ -249,13 +249,13 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 - [ ] **Checklist** (PR template filled before tagging stable; all items must be `[x]`):
   ```markdown
-  ## Release {version} — Readiness Checklist
+  ## Release {version} -- Readiness Checklist
 
   ### Automated Gates (must all be green in CI)
   - [ ] All regression tests pass (`scripts/run-tests.sh`)
-  - [ ] QEMU validation pass — cold boot, warm reboot, ACPI shutdown, soak test (`scripts/qemu-test.sh`)
-  - [ ] Win32 compat gate — Tier 1–7 all pass (`scripts/compat-check.sh`, → XREF TODO-07 §12)
-  - [ ] Performance benchmarks — no regression > 25% (`scripts/benchmark.sh`)
+  - [ ] QEMU validation pass -- cold boot, warm reboot, ACPI shutdown, soak test (`scripts/qemu-test.sh`)
+  - [ ] Win32 compat gate -- Tier 1–7 all pass (`scripts/compat-check.sh`, → XREF TODO-07 §12)
+  - [ ] Performance benchmarks -- no regression > 25% (`scripts/benchmark.sh`)
   - [ ] Build is reproducible (`make verify-reproducible`, → XREF TODO-01 §8)
 
   ### VM Certification (must be run manually this release cycle)
@@ -265,7 +265,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
   ### Human Sign-Offs
   - [ ] No P0 open bugs in GitHub Issues (`label:P0 state:open` count = 0)
-  - [ ] Crash analytics reviewed — 0 kernel panics in 30-min soak test (§8)
+  - [ ] Crash analytics reviewed -- 0 kernel panics in 30-min soak test (§8)
   - [ ] ≥ 3 physical hardware machines tested (`docs/guides/hardware-test-results/`)
   - [ ] Changelog written and reviewed (`docs/changelog/{version}.md`)
   - [ ] Version number bumped (`OS_VERSION_STRING`, → XREF TODO-01 §1)
@@ -291,7 +291,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   - Enable `KASAN=1`, `LOCKDEP=1` flags (→ XREF `TODO-09`): compile with `-DKASAN=1 -DLOCKDEP=1`
   - Enable PMM sentinel pages: allocate 1-page guard at each end of every `pmm_alloc_contiguous()` region (write-protected via `vmm_set_page_flags(addr, VMM_PAGE_PRESENT)` without `VMM_PAGE_WRITE`); any write to sentinel triggers page fault → logged as `[SENTINEL] corruption at {addr}`
   - Enable heap canaries (→ XREF `TODO-09 §3`): already gated on `KASAN=1`
-  - QA build does NOT go into releases — it is strictly for the pre-release soak run
+  - QA build does NOT go into releases -- it is strictly for the pre-release soak run
 - [ ] **Crash dump triage procedure**:
   1. Collect all `C:\Impossible\System\CrashDumps\*.dmp` generated during QA testing
   2. For each dump: load in `debugger.exe`; identify panic PC + call stack; classify as: `KNOWN` (already has a tracking issue), `FIXED` (issue closed), `NEW` (create GitHub Issue with `label:P0` + attach dump)
@@ -312,17 +312,17 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 | ⭐ | Feature                                         | 🪟 Win11                                        | 🐧 Linux                                                 | 🚀 Impossible OS                                                     |
 |----|-------------------------------------------------|----------------------------------------------|-------------------------------------------------------|-------------------------------------------------------------------|
-| 💎 | Automated regression tests in CI                | ✅ Internal Windows Test Lab (WTL);          | ✅ `kselftest`, LTP, KUnit; open public               | ⬜ §1 — `run-tests.sh` 11-test matrix; `TEST PASS/FAIL`           |
-| 💎 | Hyper-V certification run                       | ✅ Internal HCK/HLK; WinHEC compliance       | ✅ `kvm_unit_tests`; virt-io CI                       | ⬜ §3 — `hyperv-test.ps1`; Gen2 VM; 8 required                    |
-| 💎 | VirtualBox certification run                    | ✅ WHQL; VirtualBox Guest Additions official | ✅ VirtualBox Guest Additions for Linux               | ⬜ §4 — `vbox-test.sh`; OVA import test; guest                    |
-| 💎 | Real hardware test checklist                    | ✅ HCK/HLK hardware logo program             | ✅ Fedora/Ubuntu hardware certification (SoC vendors) | ⬜ §5 — `hardware-test-checklist.md`; ≥ 3 machines; results       |
-| ⭐ | Performance benchmark JSON with regression gate | ✅ Internal PerfLab; private; no public      | ✅ `phoronix-test-suite`; public LWN perf reports     | ⬜ §6 — `benchmark-{version}.json`; 9 metrics; 10%/25% regression |
-| ⭐ | Public release readiness checklist              | ✅ Internal release process; not public      | ✅ Distro RC process (kernel.org rc1–rc8);            | ⬜ §7 — `release-checklist.md`; PR template; merge blocked        |
-| 💎 | Pre-release crash analytics + KASAN QA soak     | ✅ WER crash analysis; internal crash        | ✅ `kdump` + crash triage; KASAN                      | ⬜ §8 — KASAN=1 + sentinel pages QA                               |
+| 💎 | Automated regression tests in CI                | ✅ Internal Windows Test Lab (WTL);          | ✅ `kselftest`, LTP, KUnit; open public               | ⬜ §1 -- `run-tests.sh` 11-test matrix; `TEST PASS/FAIL`           |
+| 💎 | Hyper-V certification run                       | ✅ Internal HCK/HLK; WinHEC compliance       | ✅ `kvm_unit_tests`; virt-io CI                       | ⬜ §3 -- `hyperv-test.ps1`; Gen2 VM; 8 required                    |
+| 💎 | VirtualBox certification run                    | ✅ WHQL; VirtualBox Guest Additions official | ✅ VirtualBox Guest Additions for Linux               | ⬜ §4 -- `vbox-test.sh`; OVA import test; guest                    |
+| 💎 | Real hardware test checklist                    | ✅ HCK/HLK hardware logo program             | ✅ Fedora/Ubuntu hardware certification (SoC vendors) | ⬜ §5 -- `hardware-test-checklist.md`; ≥ 3 machines; results       |
+| ⭐ | Performance benchmark JSON with regression gate | ✅ Internal PerfLab; private; no public      | ✅ `phoronix-test-suite`; public LWN perf reports     | ⬜ §6 -- `benchmark-{version}.json`; 9 metrics; 10%/25% regression |
+| ⭐ | Public release readiness checklist              | ✅ Internal release process; not public      | ✅ Distro RC process (kernel.org rc1–rc8);            | ⬜ §7 -- `release-checklist.md`; PR template; merge blocked        |
+| 💎 | Pre-release crash analytics + KASAN QA soak     | ✅ WER crash analysis; internal crash        | ✅ `kdump` + crash triage; KASAN                      | ⬜ §8 -- KASAN=1 + sentinel pages QA                               |
 
 Impossible OS's `⭐` advantage: the benchmark JSON (`build/benchmark-{version}.json`) is
 committed to the repo and published with every release, giving the community verifiable,
-reproducible performance data — something neither Windows nor Linux provides publicly
+reproducible performance data -- something neither Windows nor Linux provides publicly
 in a machine-readable per-release format. The release checklist is enforced as a PR
 template so no stable release can be tagged without every item signed off, combining
 automated CI gates with human sign-off in a single auditable record.

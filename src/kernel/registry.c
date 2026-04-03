@@ -1,5 +1,5 @@
 /* ============================================================================
- * registry.c — Windows-Compatible Registry System: Core Data Structures
+ * registry.c -- Windows-Compatible Registry System: Core Data Structures
  *
  * Static pool allocators, FNV-1a hashing for child key lookup, and
  * predefined root key initialization.
@@ -99,7 +99,7 @@ static uint32_t reg_bucket(const char *name)
 
 /* ---- Pool allocators ---- */
 
-/* Forward declare — defined in value type helpers section below */
+/* Forward declare -- defined in value type helpers section below */
 static int reg_stricmp(const char *a, const char *b);
 
 static reg_key_t *reg_alloc_key(const char *name)
@@ -300,7 +300,7 @@ void registry_init(void)
     sw = reg_create_child(reg_root_hklm, "SOFTWARE");
     reg_create_child(reg_root_hklm, "HARDWARE");
 
-    /* HKLM\SOFTWARE\Classes — the primary HKCR backing store */
+    /* HKLM\SOFTWARE\Classes -- the primary HKCR backing store */
     if (sw)
         reg_create_child(sw, "Classes");
 
@@ -373,7 +373,7 @@ static int reg_stricmp(const char *a, const char *b)
 /* Look up an environment variable in the registry.
  * Searches HKLM\System\Environment for a value matching 'var_name'.
  * Returns pointer to string data, or NULL if not found.
- * Note: this does NOT use RegOpenKeyEx (not yet implemented) — it walks
+ * Note: this does NOT use RegOpenKeyEx (not yet implemented) -- it walks
  * the tree directly using the root key pointers. */
 static const char *reg_lookup_env_var(const char *var_name)
 {
@@ -434,7 +434,7 @@ uint32_t reg_expand_sz(const char *src, char *dst, uint32_t dst_size)
             while (*end && *end != '%') end++;
 
             if (*end == '%' && end > start) {
-                /* Found %VARNAME% — extract and look up */
+                /* Found %VARNAME% -- extract and look up */
                 char var_name[REG_MAX_VALUE_NAME + 1];
                 uint32_t vlen = (uint32_t)(end - start);
                 uint32_t vi;
@@ -451,7 +451,7 @@ uint32_t reg_expand_sz(const char *src, char *dst, uint32_t dst_size)
                         while (*val && di < dst_size - 1)
                             dst[di++] = *val++;
                     } else {
-                        /* Variable not found — keep original %VARNAME% */
+                        /* Variable not found -- keep original %VARNAME% */
                         const char *orig = p;
                         while (orig <= end && di < dst_size - 1)
                             dst[di++] = *orig++;
@@ -459,7 +459,7 @@ uint32_t reg_expand_sz(const char *src, char *dst, uint32_t dst_size)
                 }
                 p = end + 1;
             } else {
-                /* No closing % — copy literal */
+                /* No closing % -- copy literal */
                 dst[di++] = *p++;
             }
         } else {
@@ -1084,7 +1084,7 @@ long RegQueryValueEx(HKEY hKey, const char *lpValueName,
         reg_memcpy(lpData, v->data, v->data_size);
         *lpcbData = v->data_size;
     } else if (lpData) {
-        /* No size pointer but data pointer — copy what we can */
+        /* No size pointer but data pointer -- copy what we can */
         reg_memcpy(lpData, v->data, v->data_size);
     }
 
@@ -1719,7 +1719,7 @@ void registry_populate_defaults(void)
 }
 
 /* ============================================================================
- * §4.1  Hive File Format — Disk Persistence
+ * §4.1  Hive File Format -- Disk Persistence
  *
  * Each root tree (SYSTEM, HARDWARE, etc.) is stored as a separate .hive file.
  * Format: [4096-byte header] [key/value records in depth-first order]
@@ -1965,7 +1965,7 @@ int hive_save(reg_key_t *root, const char *filepath)
         buf_size = HIVE_HEADER_SIZE + 4096;
     buf_pages = (buf_size + 4095) / 4096;
 
-    /* Allocate buffer from PMM (not kmalloc — can be large) */
+    /* Allocate buffer from PMM (not kmalloc -- can be large) */
     buf_phys = pmm_alloc_contiguous(buf_pages);
     if (!buf_phys) {
         klog(LOG_ERROR, "hive", "Failed to alloc %u pages for hive save", (uint64_t)buf_pages);
@@ -2115,7 +2115,7 @@ static const char *hive_best_source(const char *filepath,
     hive_str_append(log_path, 160, filepath, ".log");
     hive_str_append(bak_path, 160, filepath, ".bak");
 
-    /* 1. Check journal — if valid, a crash happened mid-write */
+    /* 1. Check journal -- if valid, a crash happened mid-write */
     if (hive_validate_file(log_path) == 0) {
         klog(LOG_WARN, "hive", "Recovering from journal: %s", log_path);
         /* Copy journal to main hive to complete the interrupted write */
@@ -2221,7 +2221,7 @@ int hive_load(const char *filepath, reg_key_t *root)
 
     /* Open the hive file */
     f = vfs_open(filepath, HIVE_VFS_O_READ);
-    if (!f) return -1;  /* File doesn't exist — not an error, just no saved data */
+    if (!f) return -1;  /* File doesn't exist -- not an error, just no saved data */
 
     /* Read header */
     rc = vfs_read(f, 0, HIVE_HEADER_SIZE, (uint8_t *)hdr);
@@ -2295,7 +2295,7 @@ int hive_load(const char *filepath, reg_key_t *root)
     deser.pos = 0;
     deser.cap = hdr->data_size;
 
-    /* The root key itself is the first record — but we already have the root,
+    /* The root key itself is the first record -- but we already have the root,
      * so we deserialize as if root's children start from the file. */
     {
         uint16_t root_name_len, root_val_count, root_child_count;
@@ -2431,7 +2431,7 @@ void registry_mark_dirty(reg_key_t *key)
     while (cur && cur->parent && cur->parent->parent)
         cur = cur->parent;
 
-    /* cur is now a direct child of a root key — match it to a hive */
+    /* cur is now a direct child of a root key -- match it to a hive */
     for (i = 0; i < REG_HIVE_COUNT; i++) {
         reg_key_t *sub = hive_get_subkey(i);
         if (sub && sub == cur) {
@@ -2521,7 +2521,7 @@ void registry_load_hives(void)
 
         /* Journal recovery: find best valid source */
         src = hive_best_source(hive_table[i].path, log_path, bak_path);
-        if (!src) continue;  /* No valid hive — use defaults */
+        if (!src) continue;  /* No valid hive -- use defaults */
 
         rc = hive_load(src, sub);
         if (rc > 0) {

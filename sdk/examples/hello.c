@@ -1,5 +1,5 @@
 /**
- * hello.c — Minimal Impossible OS application
+ * hello.c -- Minimal Impossible OS application
  *
  * Build:
  *   clang-19 --target=x86_64-elf -I sdk/include -ffreestanding -nostdlib \

@@ -150,8 +150,8 @@ void boot_phase3(void)
     /* Run deferred non-critical inits now that the desktop is visible */
     boot_run_deferred();
 
-    /* NVRAM write: Phase 3 complete — boot succeeded.
-     * Must be here, not later — on bare metal the compositor may crash
+    /* NVRAM write: Phase 3 complete -- boot succeeded.
+     * Must be here, not later -- on bare metal the compositor may crash
      * (timer interrupt issue), and we need this written before that. */
     boot_post_nvram_write16(POST16_BOOT_OK);
 

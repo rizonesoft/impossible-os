@@ -1,4 +1,4 @@
-# keys/ — Impossible OS Secure Boot Keys
+# keys/ -- Impossible OS Secure Boot Keys
 
 > ⚠️ **NEVER commit `MOK.key` to any repository.** It is gitignored.
 > If the private key is ever compromised, an attacker can sign malware
@@ -10,9 +10,9 @@
 
 | File | Format | Purpose | Committed? |
 |------|--------|---------|------------|
-| `MOK.key` | PEM (PKCS#8) | RSA-2048 private key — signs `BOOTX64.EFI` at build time | ❌ **Never** |
-| `MOK.cer` | PEM (X.509) | Public certificate — embedded in shim as `VENDOR_CERT_FILE` | ✅ Yes |
-| `MOK.der` | DER (X.509) | Binary form of `MOK.cer` — required for UEFI enrollment | ✅ Yes |
+| `MOK.key` | PEM (PKCS#8) | RSA-2048 private key -- signs `BOOTX64.EFI` at build time | ❌ **Never** |
+| `MOK.cer` | PEM (X.509) | Public certificate -- embedded in shim as `VENDOR_CERT_FILE` | ✅ Yes |
+| `MOK.der` | DER (X.509) | Binary form of `MOK.cer` -- required for UEFI enrollment | ✅ Yes |
 
 **Key details:**
 - Algorithm: RSA-2048
@@ -33,7 +33,7 @@ UEFI Firmware
 
 1. At build time: `sbsign --key keys/MOK.key --cert keys/MOK.cer --output BOOTX64.EFI BOOTX64.EFI`
 2. At install time: the shim (containing `MOK.cer`) is placed on the ESP
-3. On boot: shim verifies our `BOOTX64.EFI` against the embedded cert — no user interaction needed
+3. On boot: shim verifies our `BOOTX64.EFI` against the embedded cert -- no user interaction needed
 
 ---
 
@@ -61,6 +61,6 @@ After rotating the key:
 
 ## Storage recommendations
 
-- `MOK.key` — store an encrypted backup in a password manager or hardware token (YubiKey)
+- `MOK.key` -- store an encrypted backup in a password manager or hardware token (YubiKey)
 - Never commit, never email, never share
-- The build system loads it from `keys/MOK.key` at build time — it must exist locally
+- The build system loads it from `keys/MOK.key` at build time -- it must exist locally

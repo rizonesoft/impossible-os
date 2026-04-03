@@ -1,7 +1,7 @@
 /* ============================================================================
- * efi.h — Minimal UEFI type definitions and protocol GUIDs
+ * efi.h -- Minimal UEFI type definitions and protocol GUIDs
  *
- * Freestanding — no gnu-efi dependency. Only the types we actually use.
+ * Freestanding -- no gnu-efi dependency. Only the types we actually use.
  * Based on UEFI Specification 2.9.
  *
  * All UEFI function pointers use the Microsoft x64 calling convention
@@ -11,7 +11,7 @@
 #ifndef UEFI_EFI_H
 #define UEFI_EFI_H
 
-/* UEFI calling convention — Microsoft x64 ABI (rcx, rdx, r8, r9) */
+/* UEFI calling convention -- Microsoft x64 ABI (rcx, rdx, r8, r9) */
 #define EFIAPI __attribute__((ms_abi))
 
 /* --- Base types --- */
@@ -308,7 +308,7 @@ typedef struct {
     UINT64  Size;
     UINT64  FileSize;
     UINT64  PhysicalSize;
-    /* Time fields omitted — we only need Size/FileSize */
+    /* Time fields omitted -- we only need Size/FileSize */
 } EFI_FILE_INFO;
 
 struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
@@ -521,7 +521,7 @@ typedef struct {
     { 0xeb9d2d30, 0x2d88, 0x11d3, \
       { 0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } }
 
-/* --- EDID Active Protocol — provides raw EDID block from firmware --- */
+/* --- EDID Active Protocol -- provides raw EDID block from firmware --- */
 /* Bytes 54–71 of EDID: preferred timing descriptor.
  *   H-active: byte[56] | (byte[58] >> 4) << 8
  *   V-active: byte[59] | (byte[61] >> 4) << 8  */
@@ -584,7 +584,7 @@ typedef struct EFI_TCG2_PROTOCOL {
     VOID                        *HashLogExtendEventEx; /* not used */
 } EFI_TCG2_PROTOCOL;
 
-/* --- USB I/O Protocol (per USB device — available before ExitBootServices) --- */
+/* --- USB I/O Protocol (per USB device -- available before ExitBootServices) --- */
 
 #define EFI_USB_IO_PROTOCOL_GUID \
     { 0x2B2F68D6, 0x0CD2, 0x44cf, \

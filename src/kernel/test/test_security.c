@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_security.c — Security subsystem unit tests
+ * test_security.c -- Security subsystem unit tests
  *
  * Tests SID comparison/formatting, ACL creation, token creation with
  * privilege verification.

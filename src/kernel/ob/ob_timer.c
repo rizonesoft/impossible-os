@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_timer.c — Timer object type: callbacks, NtCreateTimer stub
+ * ob_timer.c -- Timer object type: callbacks, NtCreateTimer stub
  *
  * Implements TODO-03 §6: ObpTimerType with event signalling.
  * ============================================================================ */

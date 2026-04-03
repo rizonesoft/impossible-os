@@ -1,5 +1,5 @@
 /* ============================================================================
- * gfx_effects.c — Material effects: Acrylic, Mica, Drop Shadow, Reveal
+ * gfx_effects.c -- Material effects: Acrylic, Mica, Drop Shadow, Reveal
  *
  * Windows 11-style material effects built on top of gfx_blur:
  *

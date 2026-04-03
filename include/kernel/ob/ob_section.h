@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_section.h — Section (shared memory) object type for the Object Manager
+ * ob_section.h -- Section (shared memory) object type for the Object Manager
  *
  * SECTION_OBJECT represents a mappable memory region backed by contiguous
  * physical pages.  Foundation for MapViewOfFile and cross-process shared
@@ -48,7 +48,7 @@ typedef struct section_object {
 void ob_section_type_init(void);
 
 /*
- * ObCreateSection — allocate a section backed by contiguous physical pages.
+ * ObCreateSection -- allocate a section backed by contiguous physical pages.
  *
  * size:    section size in bytes (rounded up to page boundary).
  * protect: SECTION_MAP_* protection flags.
@@ -60,7 +60,7 @@ HANDLE ObCreateSection(HANDLE_TABLE *ht, uint32_t size, uint32_t protect,
                        const char *name);
 
 /*
- * ObMapViewOfSection — map section pages into a task's address space.
+ * ObMapViewOfSection -- map section pages into a task's address space.
  *
  * Currently returns the identity-mapped physical address since all tasks
  * share the kernel address space.  When per-process address spaces are
@@ -72,7 +72,7 @@ HANDLE ObCreateSection(HANDLE_TABLE *ht, uint32_t size, uint32_t protect,
 uintptr_t ObMapViewOfSection(HANDLE_TABLE *ht, HANDLE section_handle);
 
 /*
- * ObUnmapViewOfSection — remove a view mapping.
+ * ObUnmapViewOfSection -- remove a view mapping.
  *
  * section_handle: HANDLE to the section object.
  * base_address:   virtual address returned by ObMapViewOfSection.

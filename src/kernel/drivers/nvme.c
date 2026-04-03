@@ -1,5 +1,5 @@
 /* ============================================================================
- * nvme.c — NVMe storage driver
+ * nvme.c -- NVMe storage driver
  *
  * §1: PCI scan, BAR0 UC mapping, CAP/VS read, controller disable/enable.
  * §2: Admin Queue setup, Identify Controller + Identify Namespace.
@@ -595,7 +595,7 @@ int nvme_init(void)
                 if (func == 0) {
                     hdr = pci_read8(bus, dev, func, PCI_HEADER_TYPE);
                     if (!(hdr & 0x80)) {
-                        /* Single-function — check func 0 only, then break */
+                        /* Single-function -- check func 0 only, then break */
                         uint8_t cls = pci_read8(bus, dev, 0, PCI_CLASS);
                         uint8_t sub = pci_read8(bus, dev, 0, PCI_SUBCLASS);
                         uint8_t pi  = pci_read8(bus, dev, 0, PCI_PROG_IF);

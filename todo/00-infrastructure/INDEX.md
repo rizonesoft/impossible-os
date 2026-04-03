@@ -28,7 +28,7 @@ This domain tracks the tooling and workflow work that supports the whole project
 - [TODO-01 CI Notifications & Build Status](./TODO-01-ci-notifications.md) - Branch
   protection, build badge, failure notifications, nightly builds, PR comment bot.
 - [TODO-02 User-Mode Test Framework](./TODO-02-usermode-test-framework.md) - Test binaries
-  for syscalls, libc, IPC, process lifecycle, file I/O, Win32 API — real user-mode programs
+  for syscalls, libc, IPC, process lifecycle, file I/O, Win32 API -- real user-mode programs
   exercising the real syscall interface.
 - [TODO-03 Desktop & UI Test Framework](./TODO-03-desktop-ui-test-framework.md) - Framebuffer
   snapshots, input injection, terminal verification, visual regression CI, WM state introspection.

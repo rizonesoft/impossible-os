@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_splash.h — Persistent boot splash screen (Windows 11-style)
+ * boot_splash.h -- Persistent boot splash screen (Windows 11-style)
  *
  * Shows centered icon + progressive arc spinner + status text
  * on a black background. Persists from fb_init() until desktop_init().
@@ -22,7 +22,7 @@ void boot_splash_start_animation(void);
 void boot_splash_status(const char *msg);
 
 /* Update the diagnostic line below the status text (debug=1 only).
- * Persists until explicitly cleared — not overwritten by boot_splash_status(). */
+ * Persists until explicitly cleared -- not overwritten by boot_splash_status(). */
 void boot_splash_diag(const char *msg);
 
 /* Pause for N seconds while keeping the spinner animated. */

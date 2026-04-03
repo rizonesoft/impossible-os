@@ -1,9 +1,9 @@
 /* ============================================================================
- * controls.h — Common Controls library
+ * controls.h -- Common Controls library
  *
  * Reusable GUI controls (Button, Label, TextBox, ScrollBar) that draw into
  * per-window framebuffers via the window manager.  Modelled after Windows
- * Common Controls — each control has a type, position, size, and state.
+ * Common Controls -- each control has a type, position, size, and state.
  *
  * Usage:
  *   1. Create a window via wm_create_window()
@@ -52,7 +52,7 @@ typedef void (*ctrl_click_fn)(int ctrl_id, int window_handle);
 
 /* ---- Control color scheme ---- */
 
-/* Windows 11 Dark Theme — neutral grays, accent blue */
+/* Windows 11 Dark Theme -- neutral grays, accent blue */
 #define CTRL_COLOR_BG          0xFF2D2D2D   /* button/control surface    */
 #define CTRL_COLOR_BG_HOVER    0xFF3D3D3D   /* hover lift                */
 #define CTRL_COLOR_BG_PRESSED  0xFF1A1A1A   /* pressed dim               */
@@ -124,7 +124,7 @@ struct ctrl_window {
 /* Initialize the controls subsystem (call once at boot) */
 void ctrl_init(void);
 
-/* Create controls — returns control ID (>= 0) or -1 on failure */
+/* Create controls -- returns control ID (>= 0) or -1 on failure */
 int ctrl_create_button(int window_handle, uint32_t x, uint32_t y,
                        uint32_t w, uint32_t h, const char *text,
                        ctrl_click_fn on_click);

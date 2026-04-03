@@ -1,22 +1,22 @@
-# TODO-09 — C/C++ Compiler & SDK
+# TODO-09 -- C/C++ Compiler & SDK
 
 **Domain:** `09-services-security`
-**Goal:** Port TCC to run natively on Impossible OS so developers can compile and run native PE apps on the OS itself, and publish a complete developer SDK — the moment the OS can develop its own software.
+**Goal:** Port TCC to run natively on Impossible OS so developers can compile and run native PE apps on the OS itself, and publish a complete developer SDK -- the moment the OS can develop its own software.
 
 > [!IMPORTANT]
-> **Depends on:** `TODO-07 §1–9` — ring-3 PE execution; `TODO-08 §1–15` — Win32 API surface (console, process, memory, file I/O, IxUI) must be working before TCC can run natively.
+> **Depends on:** `TODO-07 §1–9` -- ring-3 PE execution; `TODO-08 §1–15` -- Win32 API surface (console, process, memory, file I/O, IxUI) must be working before TCC can run natively.
 > **Continues from:** `todo-old/510-Long-Term-Stretch/TODO-530-Compiler.md` and `TODO-535-SDK.md` (migrated and consolidated).
 
 ---
 
 ## Important Notes
 
-- `SYS_FORK=5`, `SYS_EXEC=6`, `SYS_MMAP=37` already defined in `include/kernel/sched/syscall.h`. `mmap_region_t` exists in `include/kernel/mm/mmap.h`. `thread_create()` exists in `include/kernel/sched/task.h`. TCC only requires `CreateFile`/`ReadFile`/`WriteFile` + `VirtualAlloc` for its core operation — far lighter than GCC.
-- `sdk/include/impossible/windows.h` already exists; `sdk/docs/api-reference.md` and `sdk/examples/hello.c` are present — build on these rather than replacing.
-- TCC already supports PE output natively with `-m64` — minimal patching needed (include paths + temp dir).
-- GCC/Clang (§8) is a **long-term** goal requiring `fork()`/`exec()` process spawning, large virtual memory, and `libgmp`/`libmpfr`/`libmpc` prerequisites — tracked here but not a blocker for TCC milestones.
+- `SYS_FORK=5`, `SYS_EXEC=6`, `SYS_MMAP=37` already defined in `include/kernel/sched/syscall.h`. `mmap_region_t` exists in `include/kernel/mm/mmap.h`. `thread_create()` exists in `include/kernel/sched/task.h`. TCC only requires `CreateFile`/`ReadFile`/`WriteFile` + `VirtualAlloc` for its core operation -- far lighter than GCC.
+- `sdk/include/impossible/windows.h` already exists; `sdk/docs/api-reference.md` and `sdk/examples/hello.c` are present -- build on these rather than replacing.
+- TCC already supports PE output natively with `-m64` -- minimal patching needed (include paths + temp dir).
+- GCC/Clang (§8) is a **long-term** goal requiring `fork()`/`exec()` process spawning, large virtual memory, and `libgmp`/`libmpfr`/`libmpc` prerequisites -- tracked here but not a blocker for TCC milestones.
 - SDK headers (`§1–2`) overlap with `TODO-08 §1` (Win32 types) and `TODO-08 §15` (SDK); this TODO focuses on the **on-OS** headers installed at `C:\Impossible\Include\` and the TCC build pipeline; `TODO-08 §15` covers the host cross-compile SDK (`impossible-cc`).
-- Import libraries (`§3`) are COFF `.lib` stub files for the PE linker — distinct from `libixui.a` (static library produced in `TODO-08 §13`).
+- Import libraries (`§3`) are COFF `.lib` stub files for the PE linker -- distinct from `libixui.a` (static library produced in `TODO-08 §13`).
 
 ---
 
@@ -71,20 +71,20 @@
 
 ## 1. SDK C Headers `[Sonnet]`
 
-Create the canonical on-OS C header set at `sdk/include/` (installed to `C:\Impossible\Include\` on disk). Compatible with TCC and MinGW cross-compiler. No stdlib — freestanding only.
+Create the canonical on-OS C header set at `sdk/include/` (installed to `C:\Impossible\Include\` on disk). Compatible with TCC and MinGW cross-compiler. No stdlib -- freestanding only.
 
-- [ ] Create `sdk/include/impossible.h` — master umbrella include: pulls in all subsystem headers below; guarded with `#pragma once`; defines `IOS_SDK_VERSION_MAJOR/MINOR/PATCH`
-- [ ] `sdk/include/impossible/types.h` — `uint8_t`…`uint64_t`, `size_t`, `ptrdiff_t`, `bool`, `true`/`false`, `NULL`; `HANDLE`, `DWORD`, `BOOL` (if not already from `windows.h`)
-- [ ] `sdk/include/impossible/errors.h` — `IOS_OK=0`, `IOS_ERR_NOT_FOUND`, `IOS_ERR_ACCESS_DENIED`, `IOS_ERR_INVALID_HANDLE`, `IOS_ERR_OUT_OF_MEMORY`, `IOS_ERR_INVALID_PARAM`, `IOS_ERR_NOT_SUPPORTED`; `GetLastError()` / `SetLastError()` declarations
-- [ ] `sdk/include/impossible/memory.h` — `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `HeapAlloc`, `HeapFree`, `GetProcessHeap`; `MEM_COMMIT`, `MEM_RESERVE`, `MEM_RELEASE`, `PAGE_*` constants
-- [ ] `sdk/include/impossible/process.h` — `CreateProcessA/W`, `ExitProcess`, `GetCurrentProcessId`, `WaitForSingleObject`, `TerminateProcess`, `OpenProcess`, `GetExitCodeProcess`; `PROCESS_INFORMATION`, `STARTUPINFO` structs
-- [ ] `sdk/include/impossible/thread.h` — `CreateThread(attr, stackSize, startAddr, param, flags, threadId)` → `thread_create()` wrapper; `ExitThread(code)`, `GetCurrentThreadId()`, `Sleep(ms)` → `SYS_SLEEP`; `THREAD_PRIORITY_*` constants
-- [ ] `sdk/include/impossible/sync.h` — `CreateMutex`, `CreateSemaphore`, `CreateEvent`, `WaitForSingleObject`, `WaitForMultipleObjects`, `ReleaseMutex`, `ReleaseSemaphore`, `SetEvent`, `ResetEvent`; `InitializeCriticalSection`, `EnterCriticalSection`, `LeaveCriticalSection`; `Interlocked*` intrinsics
-- [ ] `sdk/include/impossible/file.h` — `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, `SetFilePointer`, `GetFileSize`, `FlushFileBuffers`; `GENERIC_READ`, `GENERIC_WRITE`, `FILE_SHARE_*`, `CREATE_*`, `OPEN_*` constants
-- [ ] `sdk/include/impossible/filesystem.h` — `CreateDirectoryA`, `RemoveDirectoryA`, `DeleteFileA`, `MoveFileA`, `CopyFileA`, `GetFileAttributesA`, `FindFirstFileA`, `FindNextFileA`, `FindClose`; `WIN32_FIND_DATA` struct; `FILE_ATTRIBUTE_*` constants
-- [ ] `sdk/include/impossible/string.h` — `strlen`, `strcpy`, `strncpy`, `strcmp`, `strncmp`, `strcat`, `strchr`, `strstr`, `memcpy`, `memmove`, `memset`, `memcmp`; `sprintf`, `snprintf`, `vsprintf`, `vsnprintf`; `atoi`, `atol`, `strtol`, `strtoul`
-- [ ] `sdk/include/impossible/io.h` — `printf`, `fprintf`, `puts`, `fputs`, `fopen`, `fclose`, `fread`, `fwrite`, `fseek`, `ftell`, `feof`; `stdin`/`stdout`/`stderr` as `HANDLE` aliases; `SEEK_SET`, `SEEK_CUR`, `SEEK_END`
-- [ ] `sdk/include/impossible/time.h` — `GetSystemTime(lpst)` fills `SYSTEMTIME` struct; `GetLocalTime(lpst)`; `GetTickCount()` → milliseconds since boot; `QueryPerformanceCounter(lpFrequency)` / `QueryPerformanceFrequency(lpFrequency)`; `SYSTEMTIME` struct (`wYear`, `wMonth`, `wDay`, `wHour`, `wMinute`, `wSecond`, `wMilliseconds`)
+- [ ] Create `sdk/include/impossible.h` -- master umbrella include: pulls in all subsystem headers below; guarded with `#pragma once`; defines `IOS_SDK_VERSION_MAJOR/MINOR/PATCH`
+- [ ] `sdk/include/impossible/types.h` -- `uint8_t`…`uint64_t`, `size_t`, `ptrdiff_t`, `bool`, `true`/`false`, `NULL`; `HANDLE`, `DWORD`, `BOOL` (if not already from `windows.h`)
+- [ ] `sdk/include/impossible/errors.h` -- `IOS_OK=0`, `IOS_ERR_NOT_FOUND`, `IOS_ERR_ACCESS_DENIED`, `IOS_ERR_INVALID_HANDLE`, `IOS_ERR_OUT_OF_MEMORY`, `IOS_ERR_INVALID_PARAM`, `IOS_ERR_NOT_SUPPORTED`; `GetLastError()` / `SetLastError()` declarations
+- [ ] `sdk/include/impossible/memory.h` -- `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `HeapAlloc`, `HeapFree`, `GetProcessHeap`; `MEM_COMMIT`, `MEM_RESERVE`, `MEM_RELEASE`, `PAGE_*` constants
+- [ ] `sdk/include/impossible/process.h` -- `CreateProcessA/W`, `ExitProcess`, `GetCurrentProcessId`, `WaitForSingleObject`, `TerminateProcess`, `OpenProcess`, `GetExitCodeProcess`; `PROCESS_INFORMATION`, `STARTUPINFO` structs
+- [ ] `sdk/include/impossible/thread.h` -- `CreateThread(attr, stackSize, startAddr, param, flags, threadId)` → `thread_create()` wrapper; `ExitThread(code)`, `GetCurrentThreadId()`, `Sleep(ms)` → `SYS_SLEEP`; `THREAD_PRIORITY_*` constants
+- [ ] `sdk/include/impossible/sync.h` -- `CreateMutex`, `CreateSemaphore`, `CreateEvent`, `WaitForSingleObject`, `WaitForMultipleObjects`, `ReleaseMutex`, `ReleaseSemaphore`, `SetEvent`, `ResetEvent`; `InitializeCriticalSection`, `EnterCriticalSection`, `LeaveCriticalSection`; `Interlocked*` intrinsics
+- [ ] `sdk/include/impossible/file.h` -- `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, `SetFilePointer`, `GetFileSize`, `FlushFileBuffers`; `GENERIC_READ`, `GENERIC_WRITE`, `FILE_SHARE_*`, `CREATE_*`, `OPEN_*` constants
+- [ ] `sdk/include/impossible/filesystem.h` -- `CreateDirectoryA`, `RemoveDirectoryA`, `DeleteFileA`, `MoveFileA`, `CopyFileA`, `GetFileAttributesA`, `FindFirstFileA`, `FindNextFileA`, `FindClose`; `WIN32_FIND_DATA` struct; `FILE_ATTRIBUTE_*` constants
+- [ ] `sdk/include/impossible/string.h` -- `strlen`, `strcpy`, `strncpy`, `strcmp`, `strncmp`, `strcat`, `strchr`, `strstr`, `memcpy`, `memmove`, `memset`, `memcmp`; `sprintf`, `snprintf`, `vsprintf`, `vsnprintf`; `atoi`, `atol`, `strtol`, `strtoul`
+- [ ] `sdk/include/impossible/io.h` -- `printf`, `fprintf`, `puts`, `fputs`, `fopen`, `fclose`, `fread`, `fwrite`, `fseek`, `ftell`, `feof`; `stdin`/`stdout`/`stderr` as `HANDLE` aliases; `SEEK_SET`, `SEEK_CUR`, `SEEK_END`
+- [ ] `sdk/include/impossible/time.h` -- `GetSystemTime(lpst)` fills `SYSTEMTIME` struct; `GetLocalTime(lpst)`; `GetTickCount()` → milliseconds since boot; `QueryPerformanceCounter(lpFrequency)` / `QueryPerformanceFrequency(lpFrequency)`; `SYSTEMTIME` struct (`wYear`, `wMonth`, `wDay`, `wHour`, `wMinute`, `wSecond`, `wMilliseconds`)
 - [ ] Update `sdk/include/impossible/windows.h` → include all subsystem headers above so `#include <windows.h>` is a full Win32-compat header
 - [ ] Commit: `"sdk: C header set (types, process, thread, file, sync, io, time)"`
 
@@ -94,16 +94,16 @@ Create the canonical on-OS C header set at `sdk/include/` (installed to `C:\Impo
 
 GUI-facing headers for Win32 window/GDI programs and IxUI native apps. These complement the C headers and are pulled in when `<windows.h>` is included.
 
-- [ ] `sdk/include/impossible/window.h` — `CreateWindowExA/W`, `DestroyWindow`, `ShowWindow`, `SetWindowTextA/W`, `GetClientRect`, `MoveWindow`; `SW_*`, `WS_*`, `WS_EX_*` style constants; `WNDCLASSEX` struct; `RegisterClassExA/W`, `UnregisterClassA/W`
-- [ ] `sdk/include/impossible/message.h` — `MSG` struct; `GetMessage`, `PeekMessage`, `TranslateMessage`, `DispatchMessage`, `PostQuitMessage`, `PostMessage`, `SendMessage`, `DefWindowProc`; `WM_CREATE`, `WM_DESTROY`, `WM_PAINT`, `WM_CLOSE`, `WM_QUIT`, `WM_COMMAND`, `WM_KEYDOWN`, `WM_KEYUP`, `WM_CHAR`, `WM_LBUTTONDOWN`, `WM_MOUSEMOVE`, `WM_SIZE` constants
-- [ ] `sdk/include/impossible/paint.h` — `PAINTSTRUCT` struct; `BeginPaint`, `EndPaint`, `InvalidateRect`, `UpdateWindow`, `GetUpdateRect`
-- [ ] `sdk/include/impossible/gdi.h` — `HDC`; `GetDC`, `ReleaseDC`, `CreateCompatibleDC`, `DeleteDC`; `BitBlt`, `TextOutA/W`, `DrawTextA/W`, `FillRect`, `SetPixel`, `GetPixel`, `MoveToEx`, `LineTo`; `SetTextColor`, `SetBkColor`, `SetBkMode`; `CreateSolidBrush`, `DeleteObject`, `SelectObject`, `GetStockObject`; `TRANSPARENT`, `OPAQUE` bk-mode constants
-- [ ] `sdk/include/impossible/input.h` — `GetAsyncKeyState(vKey)`, `GetKeyState(vKey)`, `GetCursorPos(lpPoint)`, `SetCursorPos(x, y)`, `POINT` struct; `VK_*` virtual key constants (at minimum: `VK_RETURN`, `VK_ESCAPE`, `VK_BACK`, `VK_TAB`, arrow keys, F1–F12)
-- [ ] `sdk/include/impossible/dialog.h` — `MessageBoxA/W`, `MessageBoxExA/W`; `MB_OK`, `MB_OKCANCEL`, `MB_YESNO`, `MB_ICONERROR`, `MB_ICONWARNING`, `MB_ICONINFORMATION` constants; `IDOK`, `IDCANCEL`, `IDYES`, `IDNO` return values; `OPENFILENAME` struct + `GetOpenFileNameA`, `GetSaveFileNameA` stubs
-- [ ] `sdk/include/impossible/menu.h` — `CreateMenu`, `CreatePopupMenu`, `AppendMenuA/W`, `DestroyMenu`, `TrackPopupMenu`; `SetMenu(hWnd, hMenu)`; `MF_STRING`, `MF_SEPARATOR`, `MF_POPUP`, `MF_GRAYED` constants
-- [ ] `sdk/include/impossible/controls.h` (SDK-facing) — `CreateWindowExA` shorthand macros for built-in classes: `IxCreateButton(parent, id, label, x, y, w, h)`, `IxCreateEdit(parent, id, text, x, y, w, h)`, `IxCreateStatic(parent, id, label, x, y, w, h)`, `IxCreateListBox(parent, id, x, y, w, h)`, `IxCreateComboBox(parent, id, x, y, w, h)`, `IxCreateScrollBar(parent, id, x, y, w, h, horiz)`
-- [ ] `sdk/include/impossible/font.h` — `LOGFONT` struct; `CreateFontA/W(h, w, esc, orient, weight, italic, ...)`, `DeleteObject`; `GetTextExtentPoint32A/W(hDC, str, len, lpSize)` → measure text; `SIZE` struct
-- [ ] `sdk/include/impossible/bitmap.h` — `BITMAP`, `BITMAPINFO`, `BITMAPINFOHEADER` structs; `LoadBitmapA`, `CreateBitmap`, `CreateCompatibleBitmap`, `DeleteObject`; `HBITMAP`
+- [ ] `sdk/include/impossible/window.h` -- `CreateWindowExA/W`, `DestroyWindow`, `ShowWindow`, `SetWindowTextA/W`, `GetClientRect`, `MoveWindow`; `SW_*`, `WS_*`, `WS_EX_*` style constants; `WNDCLASSEX` struct; `RegisterClassExA/W`, `UnregisterClassA/W`
+- [ ] `sdk/include/impossible/message.h` -- `MSG` struct; `GetMessage`, `PeekMessage`, `TranslateMessage`, `DispatchMessage`, `PostQuitMessage`, `PostMessage`, `SendMessage`, `DefWindowProc`; `WM_CREATE`, `WM_DESTROY`, `WM_PAINT`, `WM_CLOSE`, `WM_QUIT`, `WM_COMMAND`, `WM_KEYDOWN`, `WM_KEYUP`, `WM_CHAR`, `WM_LBUTTONDOWN`, `WM_MOUSEMOVE`, `WM_SIZE` constants
+- [ ] `sdk/include/impossible/paint.h` -- `PAINTSTRUCT` struct; `BeginPaint`, `EndPaint`, `InvalidateRect`, `UpdateWindow`, `GetUpdateRect`
+- [ ] `sdk/include/impossible/gdi.h` -- `HDC`; `GetDC`, `ReleaseDC`, `CreateCompatibleDC`, `DeleteDC`; `BitBlt`, `TextOutA/W`, `DrawTextA/W`, `FillRect`, `SetPixel`, `GetPixel`, `MoveToEx`, `LineTo`; `SetTextColor`, `SetBkColor`, `SetBkMode`; `CreateSolidBrush`, `DeleteObject`, `SelectObject`, `GetStockObject`; `TRANSPARENT`, `OPAQUE` bk-mode constants
+- [ ] `sdk/include/impossible/input.h` -- `GetAsyncKeyState(vKey)`, `GetKeyState(vKey)`, `GetCursorPos(lpPoint)`, `SetCursorPos(x, y)`, `POINT` struct; `VK_*` virtual key constants (at minimum: `VK_RETURN`, `VK_ESCAPE`, `VK_BACK`, `VK_TAB`, arrow keys, F1–F12)
+- [ ] `sdk/include/impossible/dialog.h` -- `MessageBoxA/W`, `MessageBoxExA/W`; `MB_OK`, `MB_OKCANCEL`, `MB_YESNO`, `MB_ICONERROR`, `MB_ICONWARNING`, `MB_ICONINFORMATION` constants; `IDOK`, `IDCANCEL`, `IDYES`, `IDNO` return values; `OPENFILENAME` struct + `GetOpenFileNameA`, `GetSaveFileNameA` stubs
+- [ ] `sdk/include/impossible/menu.h` -- `CreateMenu`, `CreatePopupMenu`, `AppendMenuA/W`, `DestroyMenu`, `TrackPopupMenu`; `SetMenu(hWnd, hMenu)`; `MF_STRING`, `MF_SEPARATOR`, `MF_POPUP`, `MF_GRAYED` constants
+- [ ] `sdk/include/impossible/controls.h` (SDK-facing) -- `CreateWindowExA` shorthand macros for built-in classes: `IxCreateButton(parent, id, label, x, y, w, h)`, `IxCreateEdit(parent, id, text, x, y, w, h)`, `IxCreateStatic(parent, id, label, x, y, w, h)`, `IxCreateListBox(parent, id, x, y, w, h)`, `IxCreateComboBox(parent, id, x, y, w, h)`, `IxCreateScrollBar(parent, id, x, y, w, h, horiz)`
+- [ ] `sdk/include/impossible/font.h` -- `LOGFONT` struct; `CreateFontA/W(h, w, esc, orient, weight, italic, ...)`, `DeleteObject`; `GetTextExtentPoint32A/W(hDC, str, len, lpSize)` → measure text; `SIZE` struct
+- [ ] `sdk/include/impossible/bitmap.h` -- `BITMAP`, `BITMAPINFO`, `BITMAPINFOHEADER` structs; `LoadBitmapA`, `CreateBitmap`, `CreateCompatibleBitmap`, `DeleteObject`; `HBITMAP`
 - [ ] Commit: `"sdk: GUI header set (window, message, paint, GDI, input, dialog, menu, controls, font, bitmap)"`
 
 ---
@@ -112,7 +112,7 @@ GUI-facing headers for Win32 window/GDI programs and IxUI native apps. These com
 
 Build COFF `.lib` import stub libraries for the PE linker. These let MinGW-compiled and TCC-compiled programs link against Impossible OS DLL stubs.
 
-- [ ] Create `tools/mkimportlib.c` — host tool that generates a COFF `.lib` from a symbol list file (`dll_name: symbol1 symbol2 ...`); emits `__imp__*` indirection stubs compatible with `ld.lld` and TCC's linker
+- [ ] Create `tools/mkimportlib.c` -- host tool that generates a COFF `.lib` from a symbol list file (`dll_name: symbol1 symbol2 ...`); emits `__imp__*` indirection stubs compatible with `ld.lld` and TCC's linker
 - [ ] Generate `sdk/lib/kernel32.lib` from `kernel32` symbol list (all exports from `TODO-08 §2,5,6,8`)
 - [ ] Generate `sdk/lib/user32.lib` from `user32` symbol list (all exports from `TODO-08 §10`)
 - [ ] Generate `sdk/lib/gdi32.lib` from `gdi32` symbol list (all exports from `TODO-08 §11`)
@@ -170,8 +170,8 @@ Run all TCC tests natively inside QEMU after §5. Each test validates a differen
 - [ ] `hello.exe` → prints "Hello from TCC on Impossible OS!" to console (via `WriteConsoleA`)
 - [ ] `tcc -run hello.c` → JIT-compile and execute without writing a file
 - [ ] Separate compilation: `tcc -c math.c -o math.o && tcc main.c math.o -o app.exe` → links .o files
-- [ ] `#include <impossible.h>` resolves from `C:\Impossible\Include\` — no path error
-- [ ] `#include <windows.h>` resolves from `C:\Impossible\Include\` — no path error
+- [ ] `#include <impossible.h>` resolves from `C:\Impossible\Include\` -- no path error
+- [ ] `#include <windows.h>` resolves from `C:\Impossible\Include\` -- no path error
 - [ ] `tcc tcc.c -o tcc2.exe` → TCC compiles itself (self-hosting milestone)
 - [ ] Run `tcc2.exe hello.c -o hello2.exe && hello2.exe` → second-generation compiler works
 - [ ] Commit: `"userland: TCC self-test + self-hosting milestone"`
@@ -183,10 +183,10 @@ Run all TCC tests natively inside QEMU after §5. Each test validates a differen
 Enables on-OS GUI app development with TCC and the IxUI toolkit.
 
 - [ ] Verify `ixui.h` installed at `C:\Impossible\Include\` and `libixui.a` at `C:\Impossible\Lib\` (§5)
-- [ ] `sdk/examples/gui_hello.c` — `#include <ixui.h>` + `IxCreateWindow` + `WM_PAINT` draws "Hello, IxUI!" label
+- [ ] `sdk/examples/gui_hello.c` -- `#include <ixui.h>` + `IxCreateWindow` + `WM_PAINT` draws "Hello, IxUI!" label
 - [ ] Test: `tcc gui_hello.c -lixui -o gui_hello.exe` → compiles without errors
 - [ ] Test: `gui_hello.exe` → window appears on the desktop with label text
-- [ ] `sdk/examples/button_app.c` — window with a BUTTON that counts clicks; `WM_COMMAND` handler updates `STATIC` label
+- [ ] `sdk/examples/button_app.c` -- window with a BUTTON that counts clicks; `WM_COMMAND` handler updates `STATIC` label
 - [ ] Test: `tcc button_app.c -lixui -o button_app.exe && button_app.exe` → button click increments counter
 - [ ] Commit: `"userland: TCC + IxUI GUI integration"`
 
@@ -198,7 +198,7 @@ Integrates TCC into `cmd.exe` for a first-class developer experience on Impossib
 
 - [ ] `cc` alias in `cmd.exe` built-in alias table → `C:\Impossible\Bin\tcc.exe`
 - [ ] `run <file.c>` shell built-in → shortcut for `tcc -run <file.c>`; no intermediate file
-- [ ] Create `user/make/make.c` — minimal `make` utility:
+- [ ] Create `user/make/make.c` -- minimal `make` utility:
   - Parse `Makefile` line-by-line: variable assignment (`VAR = value`), rules (`target: deps`), recipes (tab-indented commands)
   - Variable substitution (`$(VAR)` in rules and recipes)
   - Dependency tracking: compare file modification timestamps via `GetFileAttributesEx`
@@ -215,11 +215,11 @@ Integrates TCC into `cmd.exe` for a first-class developer experience on Impossib
 
 Packages the SDK for host cross-compilation and pre-installs it on the OS disk image.
 
-- [ ] Create `sdk/package.sh` — assembles `impossible-os-sdk-vX.Y.Z.tar.gz` containing: `include/`, `lib/`, `examples/`, `docs/`, `cmake/ImpossibleOS.cmake` toolchain file
-- [ ] `cmake/ImpossibleOS.cmake` — CMake toolchain: sets `CMAKE_C_COMPILER` to `x86_64-w64-mingw32-gcc`, adds `-I$(SDK)/include -L$(SDK)/lib`, targets PE subsystem
-- [ ] Create `sdk/setup.sh` — installs SDK to `~/.impossible-os-sdk/`, adds `impossible-cc` wrapper to PATH
+- [ ] Create `sdk/package.sh` -- assembles `impossible-os-sdk-vX.Y.Z.tar.gz` containing: `include/`, `lib/`, `examples/`, `docs/`, `cmake/ImpossibleOS.cmake` toolchain file
+- [ ] `cmake/ImpossibleOS.cmake` -- CMake toolchain: sets `CMAKE_C_COMPILER` to `x86_64-w64-mingw32-gcc`, adds `-I$(SDK)/include -L$(SDK)/lib`, targets PE subsystem
+- [ ] Create `sdk/setup.sh` -- installs SDK to `~/.impossible-os-sdk/`, adds `impossible-cc` wrapper to PATH
 - [ ] Pre-install on disk image: `make install-sdk` (from §3) copies all headers + libs into the IXFS partition during build
-- [ ] `C:\Impossible\SDK\Examples\` — sample projects pre-loaded: `hello_console/`, `hello_window/`, `notepad_clone/` (each with `Makefile` + source)
+- [ ] `C:\Impossible\SDK\Examples\` -- sample projects pre-loaded: `hello_console/`, `hello_window/`, `notepad_clone/` (each with `Makefile` + source)
 - [ ] GitHub Actions step: build `impossible-os-sdk-*.tar.gz` and attach to release tags
 - [ ] Commit: `"sdk: installer package + on-OS pre-install"`
 
@@ -227,18 +227,18 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 
 ## 10. SDK Documentation `[Sonnet]`
 
-- [ ] Update `sdk/docs/api-reference.md` — full API reference for all headers (§1–2): function signatures, parameter descriptions, return values, error codes
-- [ ] Create `sdk/docs/getting-started.md` — "Hello World" tutorial: install SDK, cross-compile, copy to QEMU, run; covers both console and GUI app paths
-- [ ] Create `sdk/docs/porting-guide.md` — how to port an existing Win32 program to Impossible OS: include path changes, unsupported APIs, `WINAPI` ABI note
-- [ ] Update `sdk/README.md` — quick-start snippet: three commands from zero to running `hello.exe`
-- [ ] Create `sdk/docs/contributing.md` — guidelines for contributing to the public `impossible-os-sdk` GitHub repo
+- [ ] Update `sdk/docs/api-reference.md` -- full API reference for all headers (§1–2): function signatures, parameter descriptions, return values, error codes
+- [ ] Create `sdk/docs/getting-started.md` -- "Hello World" tutorial: install SDK, cross-compile, copy to QEMU, run; covers both console and GUI app paths
+- [ ] Create `sdk/docs/porting-guide.md` -- how to port an existing Win32 program to Impossible OS: include path changes, unsupported APIs, `WINAPI` ABI note
+- [ ] Update `sdk/README.md` -- quick-start snippet: three commands from zero to running `hello.exe`
+- [ ] Create `sdk/docs/contributing.md` -- guidelines for contributing to the public `impossible-os-sdk` GitHub repo
 - [ ] Commit: `"docs: SDK documentation (getting started, API reference, porting guide)"`
 
 ---
 
 ## 11. GCC/Clang (Long-Term C++ Support) `[Opus]`
 
-> Long-term goal. Requires a mature userland environment. TCC milestones (§4–8) are the prerequisite — do not start §11 until TCC is self-hosting.
+> Long-term goal. Requires a mature userland environment. TCC milestones (§4–8) are the prerequisite -- do not start §11 until TCC is self-hosting.
 
 **Additional prerequisites beyond TCC:**
 
@@ -270,17 +270,17 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 | ⭐ | Feature                                              | 🪟 Win11                            | 🐧 Linux                       | 🚀 Impossible OS                                 |
 |----|------------------------------------------------------|----------------------------------|-----------------------------|-----------------------------------------------|
 | 💎 | Native C compiler on OS                              | ✅ MSVC                          | ✅ GCC/Clang                | ⬜ TCC natively, self-hosting                 |
-| 💎 | GCC/Clang C++ compiler                               | ✅ MSVC C++                      | ✅ GCC/Clang                | ⬜ §11 — (long-term, )                        |
+| 💎 | GCC/Clang C++ compiler                               | ✅ MSVC C++                      | ✅ GCC/Clang                | ⬜ §11 -- (long-term, )                        |
 | 💎 | SDK headers                                          | ✅ Windows SDK                   | ✅ glibc headers            | ⬜ `impossible.h` + subsystem headers         |
 | 💎 | Import libraries for linker                          | ✅ Windows SDK                   | ✅ `.so` stubs              | ⬜ COFF `.lib` from `mkimportlib`             |
-| 💎 | Cross-compilation toolchain                          | ✅ VS Build Tools                | ✅ `gcc`/`clang`            | ⬜ §15 — MinGW wrapper (`TODO-08 `)           |
+| 💎 | Cross-compilation toolchain                          | ✅ VS Build Tools                | ✅ `gcc`/`clang`            | ⬜ §15 -- MinGW wrapper (`TODO-08 `)           |
 | 💎 | `make` build utility                                 | ✅ nmake/MSBuild                 | ✅ GNU make                 | ⬜ lightweight Makefile parser                |
 | ⭐ | Self-hosting TCC on OS                               | ❌ Can't run TCC on Windows      | ❌ TCC runs but targets ELF | ⬜ TCC outputs PE on Impossible               |
 | ⭐ | SDK pre-installed out-of-the-box on OS image         | ❌ Separate SDK install required | ❌ distro-specific headers  | ⬜ headers + libs at `C:\Impossible\Include\` |
 | ⭐ | `cc`/`run` shell built-ins for instant C compilation | ❌ No equivalent                 | ❌ No equivalent            | ⬜ `run hello.c` compiles and executes        |
 | ⭐ | IxUI GUI framework compilable natively with TCC      | ❌ Requires full Win32 SDK       | ❌ No native Win32          | ⬜ `tcc gui.c -lixui -o app.exe`              |
 
-**Impossible OS advantage:** The SDK ships pre-installed on the OS — a developer can boot Impossible OS, type `run hello.c`, and their program runs, with zero additional setup. TCC self-hosting on a custom OS is a milestone that neither Windows nor Linux achieve with their native formats. The `run` shell built-in makes C feel like a scripting language.
+**Impossible OS advantage:** The SDK ships pre-installed on the OS -- a developer can boot Impossible OS, type `run hello.c`, and their program runs, with zero additional setup. TCC self-hosting on a custom OS is a milestone that neither Windows nor Linux achieve with their native formats. The `run` shell built-in makes C feel like a scripting language.
 
 ---
 

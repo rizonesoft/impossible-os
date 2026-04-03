@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_mft.c — MFT Record Reader & Update Sequence Array Fixup
+ * ntfs_mft.c -- MFT Record Reader & Update Sequence Array Fixup
  *
  * Reads individual MFT records by inode number and implements the
  * USA fixup algorithm to detect sector tears.
@@ -11,7 +11,7 @@
 #include "kernel/klog.h"
 
 /* ============================================================================
- * ntfs_read_mft_record_raw — Read and parse a single MFT record (uncached).
+ * ntfs_read_mft_record_raw -- Read and parse a single MFT record (uncached).
  *
  * Calculates byte offset: mft_byte_offset + (inode × frs_size)
  * Converts to LBA and reads frs_size/sector_size sectors.
@@ -37,12 +37,12 @@ int ntfs_read_mft_record_raw(struct ntfs_volume *vol, uint64_t inode,
      *
      * After ntfs_mft_alloc_load() runs, vol->mft_data_runs describes
      * where the MFT's data extents live on disk.  A fragmented MFT
-     * (e.g. after extension) has multiple runs — we MUST walk them.
+     * (e.g. after extension) has multiple runs -- we MUST walk them.
      *
      * Before mft_alloc_load (early boot: reading inode 0 itself),
      * fall back to the simple linear calculation. */
     if (vol->mft_data_run_count > 0) {
-        /* Data runs loaded — use run-aware translation */
+        /* Data runs loaded -- use run-aware translation */
         if (ntfs_mft_inode_to_lba(vol, inode, &lba) < 0) {
             klog(LOG_DEBUG, "ntfs",
                  "MFT read failed: inode %llu beyond data runs",
@@ -50,7 +50,7 @@ int ntfs_read_mft_record_raw(struct ntfs_volume *vol, uint64_t inode,
             return NTFS_ERR_IO;
         }
     } else {
-        /* Early boot — linear fallback (single-run MFT) */
+        /* Early boot -- linear fallback (single-run MFT) */
         byte_offset = vol->mft_byte_offset + (inode * (uint64_t)vol->frs_size);
         lba = byte_offset / (uint64_t)vol->bytes_per_sector;
     }
@@ -113,7 +113,7 @@ int ntfs_read_mft_record_raw(struct ntfs_volume *vol, uint64_t inode,
 }
 
 /* ============================================================================
- * ntfs_apply_fixup — Update Sequence Array fixup
+ * ntfs_apply_fixup -- Update Sequence Array fixup
  *
  * NTFS writes a 2-byte "Update Sequence Number" (USN) over the last 2 bytes
  * of each sector in a multi-sector record (FILE, INDX).  The original bytes
@@ -191,7 +191,7 @@ int ntfs_apply_fixup(uint8_t *buf, uint32_t record_size, uint16_t sector_size)
 }
 
 /* ============================================================================
- * ntfs_regenerate_fixup — Regenerate Update Sequence Array for writing
+ * ntfs_regenerate_fixup -- Regenerate Update Sequence Array for writing
  *
  * This is the REVERSE of ntfs_apply_fixup().  Before writing a multi-sector
  * record (FILE, INDX) back to disk, we must:

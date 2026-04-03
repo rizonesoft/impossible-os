@@ -1,5 +1,5 @@
 /* ============================================================================
- * wm.c — Stacking window manager
+ * wm.c -- Stacking window manager
  *
  * Manages overlapping windows with per-window framebuffers.  Each window has
  * its own pixel buffer for its client area.  The compositor paints all windows
@@ -8,7 +8,7 @@
  *
  * Always-full-redraw compositing: every frame redraws the entire screen
  * (wallpaper → windows → taskbar → start menu).  VBE page flipping ensures
- * tear-free presentation.  This is correct by construction — no partial-
+ * tear-free presentation.  This is correct by construction -- no partial-
  * repaint edge cases that cause wallpaper bleed-through.
  *
  * Features:
@@ -39,7 +39,7 @@ static uint8_t wm_ready = 0;
 /* Previous mouse button state for edge detection */
 static uint8_t prev_buttons = 0;
 
-/* Dirty flag — when set, the compositor will redraw on next call */
+/* Dirty flag -- when set, the compositor will redraw on next call */
 static volatile uint8_t needs_redraw = 1;
 
 /* ---- Drag dirty-rect tracking ---- */
@@ -189,7 +189,7 @@ void wm_init(void)
     needs_redraw = 1;
     wm_ready = 1;
 
-    /* Lock the framebuffer console — all text output now goes to serial only.
+    /* Lock the framebuffer console -- all text output now goes to serial only.
      * The compositor exclusively owns the back buffer from this point. */
     fb_lock_compositor();
 }
@@ -496,7 +496,7 @@ void wm_fill_rect(int handle, uint32_t x, uint32_t y,
  * Rendering order matters:
  *   1. Shadow (behind everything)
  *   2. Border fill (full rounded rect in border color)
- *   3. Body fill (inset 1px — covers interior, leaves 1px border visible)
+ *   3. Body fill (inset 1px -- covers interior, leaves 1px border visible)
  *   4. Title bar (painted over top portion of body)
  *   5. Title text
  *   6. Caption buttons
@@ -551,14 +551,14 @@ static void draw_decorations(const struct wm_window *w)
                               inner_r, WM_COLOR_CLIENT_BG);
     }
 
-    /* ---- 4. Title bar — Win11-style Mica ----
+    /* ---- 4. Title bar -- Win11-style Mica ----
      *
      * Active:   wallpaper sample → 50% desaturate → scale luminance to 38.
      *           Proportional scaling preserves the hue while guaranteeing
      *           the bar is always dark and the tint is always visible.
      *
      * Inactive: flat neutral gray (WM_COLOR_TITLEBAR_INACTIVE), no Mica.
-     *           Always lighter than the active bar — no wallpaper tint.
+     *           Always lighter than the active bar -- no wallpaper tint.
      */
     {
         uint32_t inner_r = (WM_CORNER_RADIUS > 1) ? WM_CORNER_RADIUS - 1 : 0;
@@ -587,7 +587,7 @@ static void draw_decorations(const struct wm_window *w)
                 }
                 if (cnt > 0) {
                     sr /= cnt; sg /= cnt; sb /= cnt;
-                    /* 65% desaturation — 35% of original hue preserved */
+                    /* 65% desaturation -- 35% of original hue preserved */
                     uint32_t gray = (77 * sr + 150 * sg + 29 * sb) >> 8;
                     sr = (sr * 89 + gray * 166) / 255;
                     sg = (sg * 89 + gray * 166) / 255;
@@ -620,7 +620,7 @@ static void draw_decorations(const struct wm_window *w)
                 if (mg > 255) mg = 255;
                 if (mb > 255) mb = 255;
             } else {
-                /* Near-black wallpaper — neutral dark fallback */
+                /* Near-black wallpaper -- neutral dark fallback */
                 mr = mg = mb = target;
             }
             tb_color = 0xFF000000 | (mr << 16) | (mg << 8) | mb;
@@ -653,7 +653,7 @@ static void draw_decorations(const struct wm_window *w)
                                            : WM_COLOR_TITLE_INACTIVE;
             int32_t tw = ttf_measure_width(tf, w->title);
             int32_t tx = w->x + ((int32_t)ow - tw) / 2;
-            /* Don't overlap buttons — dialogs have 1 button, normal have 3 */
+            /* Don't overlap buttons -- dialogs have 1 button, normal have 3 */
             int32_t num_btns = (w->flags & WM_FLAG_DIALOG) ? 1 : 3;
             int32_t max_x = w->x + (int32_t)ow - num_btns * (int32_t)WM_BTN_WIDTH - 4;
             if (tx + tw > max_x)
@@ -672,7 +672,7 @@ static void draw_decorations(const struct wm_window *w)
         uint32_t glyph_color = focused ? WM_COLOR_BTN_GLYPH
                                         : WM_COLOR_BTN_GLYPH_DIM;
 
-        /* Close button (rightmost) — flat rect, red hover */
+        /* Close button (rightmost) -- flat rect, red hover */
         {
             int32_t bx = w->x + (int32_t)ow - (int32_t)WM_BTN_WIDTH;
 
@@ -705,7 +705,7 @@ static void draw_decorations(const struct wm_window *w)
 
         glyph_color = focused ? WM_COLOR_BTN_GLYPH : WM_COLOR_BTN_GLYPH_DIM;
 
-        /* Maximize button — skip for dialogs */
+        /* Maximize button -- skip for dialogs */
         if (!(w->flags & WM_FLAG_DIALOG)) {
             int32_t bx = w->x + (int32_t)ow - 2 * (int32_t)WM_BTN_WIDTH;
 
@@ -726,7 +726,7 @@ static void draw_decorations(const struct wm_window *w)
             }
         }
 
-        /* Minimize button — skip for dialogs */
+        /* Minimize button -- skip for dialogs */
         if (!(w->flags & WM_FLAG_DIALOG)) {
             int32_t bx = w->x + (int32_t)ow - 3 * (int32_t)WM_BTN_WIDTH;
 
@@ -768,7 +768,7 @@ static void blit_client(const struct wm_window *w)
             w->framebuffer, w->width, blit_h, w->fb_pitch);
 }
 
-/* Sort order for compositing — sort active windows by z_order, ascending */
+/* Sort order for compositing -- sort active windows by z_order, ascending */
 static void get_sorted_order(int *order, int *count)
 {
     int n = 0;
@@ -826,7 +826,7 @@ void wm_composite(void)
     /* Draw desktop icons (Computer, Recycle Bin, Control Deck) */
     desktop_draw_icons();
 
-    /* Paint each window (painter's algorithm — back to front) */
+    /* Paint each window (painter's algorithm -- back to front) */
     for (i = 0; i < count; i++) {
         struct wm_window *w = &windows[order[i]];
 
@@ -946,7 +946,7 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
 
                 /* Recalculate drag offset after clamping.
                  * Without this, dragging into an edge makes the offset
-                 * stale — when the cursor reverses direction the window
+                 * stale -- when the cursor reverses direction the window
                  * jumps by the accumulated clamped distance. */
                 windows[i].drag_offset_x = mx - new_x;
                 windows[i].drag_offset_y = my - new_y;
@@ -1011,13 +1011,13 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 return;
             }
 
-            /* Minimize button click (no-op for now — will hide window) */
+            /* Minimize button click (no-op for now -- will hide window) */
             if (in_min_button(w, mx, my)) {
                 /* TODO: wm_minimize(handle); */
                 return;
             }
 
-            /* Maximize button click (no-op for now — will toggle maximize) */
+            /* Maximize button click (no-op for now -- will toggle maximize) */
             if (in_max_button(w, mx, my)) {
                 /* TODO: wm_maximize(handle); */
                 return;
@@ -1031,7 +1031,7 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 return;
             }
 
-            /* Client area click — dispatch to controls */
+            /* Client area click -- dispatch to controls */
             {
                 int32_t cx = mx - (w->x + (int32_t)WM_BORDER_WIDTH);
                 int32_t cy = my - (w->y + (int32_t)WM_TITLEBAR_HEIGHT);
@@ -1062,7 +1062,7 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
 }
 
 /* ============================================================================
- * Cursor context — determine cursor shape from pointer position
+ * Cursor context -- determine cursor shape from pointer position
  * ============================================================================ */
 
 #include "cursor.h"
@@ -1113,11 +1113,11 @@ cursor_shape_t wm_get_cursor_context(int32_t mx, int32_t my)
         if (near_left || near_right)   return CURSOR_RESIZE_EW;
     }
 
-    /* Title bar (not close button — already checked above) */
+    /* Title bar (not close button -- already checked above) */
     if (in_titlebar(w, mx, my))
         return CURSOR_ARROW;
 
-    /* Client area — default arrow (widgets can override in future) */
+    /* Client area -- default arrow (widgets can override in future) */
     return CURSOR_ARROW;
 }
 

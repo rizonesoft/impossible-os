@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_tests.c — Boot-time verification tests
+ * boot_tests.c -- Boot-time verification tests
  *
  * Dispatches to the test_runner framework for unit tests, then runs
  * debug=1-only integration tests (IXFS perf, directory dump, timer).

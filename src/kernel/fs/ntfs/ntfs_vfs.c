@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_vfs.c — NTFS VFS Driver (Read-Only)
+ * ntfs_vfs.c -- NTFS VFS Driver (Read-Only)
  *
  * Wires the NTFS read-path functions into the VFS abstraction layer.
  * Provides open/close/read/readdir/finddir/stat callbacks.
@@ -407,7 +407,7 @@ static int ntfs_vfs_stat(struct vfs_node *node, struct vfs_stat *st)
 }
 
 /* ============================================================================
- * ntfs_readdir_entry — enumerate a directory by index
+ * ntfs_readdir_entry -- enumerate a directory by index
  *
  * Uses ntfs_readdir() callback internally, counting entries until the
  * target index is reached.  Inherits $BITMAP support from ntfs_readdir().

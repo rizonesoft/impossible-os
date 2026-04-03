@@ -1,6 +1,6 @@
-# TODO-01 — VMM Memory Protection & Diagnostics
+# TODO-01 -- VMM Memory Protection & Diagnostics
 
-> **Goal:** PMM, VMM, heap, swap, and mmap are complete. This TODO hardens and extends the memory model: Win32-compatible `mprotect` / `VirtualAlloc` / `VirtualFree`, demand paging (reserve vs. commit), W^X enforcement, `NtQueryVirtualMemory`, and a full allocator safety tier — build-time lint, canaries, leak detector, and PMM statistics.
+> **Goal:** PMM, VMM, heap, swap, and mmap are complete. This TODO hardens and extends the memory model: Win32-compatible `mprotect` / `VirtualAlloc` / `VirtualFree`, demand paging (reserve vs. commit), W^X enforcement, `NtQueryVirtualMemory`, and a full allocator safety tier -- build-time lint, canaries, leak detector, and PMM statistics.
 
 > [!IMPORTANT]
 > **Memory rule:** `kmalloc` is for small kernel structs ≤ 4 KB only. Use `pmm_alloc_contiguous()` for every buffer that can exceed 4 KB (fonts, images, file data, DMA regions, network reassembly). Violating this crashes the 2 MiB heap silently. See [`freestanding-kernel-code.mdc`](../../.cursor/rules/freestanding-kernel-code.mdc).
@@ -15,10 +15,10 @@
 - [`src/kernel/mm/heap.c`](../../src/kernel/mm/heap.c)
 - [`src/kernel/sched/syscall.c`](../../src/kernel/sched/syscall.c)
 - [`scripts/build.sh`](../../scripts/build.sh)
-- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` — EFER.NXE and CR4 hardening must be active before §1–§3 can rely on NX bits
-- → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` — TEB and stack bounds required for §1 guard page placement
-- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
-- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §10` — UEFI W^X (firmware runtime pages); §3 policy applies there too
+- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` -- EFER.NXE and CR4 hardening must be active before §1–§3 can rely on NX bits
+- → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` -- TEB and stack bounds required for §1 guard page placement
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` -- syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
+- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §10` -- UEFI W^X (firmware runtime pages); §3 policy applies there too
 
 ## Outcome
 
@@ -38,43 +38,43 @@
 | --- | :---: | --------------------------------------------------------- | ----------------------------- | :----: |
 | 💎  |   1   | `mprotect` / `NtProtectVirtualMemory` + guard pages       | TODO-04-cpu §2, TODO-04 §6    |  [ ]   |
 | 💎  |   2   | W^X enforcement in VMM                                    | §1                            |  [ ]   |
-| 💎  |   3   | Demand paging — MEM_RESERVE / MEM_COMMIT                  | §1                            |  [ ]   |
-| 💎  |   4   | `NtQueryVirtualMemory` — `MEMORY_BASIC_INFORMATION`       | §1, §2, §3                    |  [ ]   |
+| 💎  |   3   | Demand paging -- MEM_RESERVE / MEM_COMMIT                  | §1                            |  [ ]   |
+| 💎  |   4   | `NtQueryVirtualMemory` -- `MEMORY_BASIC_INFORMATION`       | §1, §2, §3                    |  [ ]   |
 | 💎  |   5   | `VirtualAlloc` / `VirtualFree` / `VirtualProtect` wrappers | §3, §4                       |  [ ]   |
-| ⭐  |   6   | kmalloc size audit — migrate oversized call-sites         | —                             |  [ ]   |
+| ⭐  |   6   | kmalloc size audit -- migrate oversized call-sites         | --                             |  [ ]   |
 | ⭐  |   7   | Build-time kmalloc lint                                   | §6                            |  [ ]   |
-| 💎  |   8   | PMM statistics — `mm_stats_t` + `meminfo`                 | —                             |  [ ]   |
-| 💎  |   9   | Heap canaries + double-free detection                     | —                             |  [ ]   |
+| 💎  |   8   | PMM statistics -- `mm_stats_t` + `meminfo`                 | --                             |  [ ]   |
+| 💎  |   9   | Heap canaries + double-free detection                     | --                             |  [ ]   |
 | 💎  |  10   | Kernel memory leak detector                               | §9                            |  [ ]   |
-| 💎  |  11   | MMIO mapping with UC attributes + HPET validation         | —                             |  [ ]   |
+| 💎  |  11   | MMIO mapping with UC attributes + HPET validation         | --                             |  [ ]   |
 
-> 💎 = parity — Windows and Linux both implement these memory management features; Impossible OS must match.
-> ⭐ = exclusive — build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.
+> 💎 = parity -- Windows and Linux both implement these memory management features; Impossible OS must match.
+> ⭐ = exclusive -- build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.
 
 ---
 
 ## 1. `mprotect` / `NtProtectVirtualMemory` `[Opus]`
 
-Change page permissions on an existing mapping — essential for W^X policy, JIT compilers, and stack guards. The VMM updates PTE R/W and NX bits for the specified range without remapping pages.
+Change page permissions on an existing mapping -- essential for W^X policy, JIT compilers, and stack guards. The VMM updates PTE R/W and NX bits for the specified range without remapping pages.
 
 **Files:** `include/kernel/mm/vmm.h`, `src/kernel/mm/vmm.c`, `src/kernel/sched/syscall.c`
 
 > [!IMPORTANT]
-> → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` — EFER.NXE must be set and `CR4.SMEP`/`CR4.SMAP` active before this section is implemented; NX-based protection has no effect without it.
-> → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` — TEB allocation is where the guard page below the stack is placed; coordinate guard page size and offset there.
+> → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` -- EFER.NXE must be set and `CR4.SMEP`/`CR4.SMAP` active before this section is implemented; NX-based protection has no effect without it.
+> → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` -- TEB allocation is where the guard page below the stack is placed; coordinate guard page size and offset there.
 
 - [ ] Define `PROT_NONE`, `PROT_READ`, `PROT_WRITE`, `PROT_EXEC` constants in `include/kernel/mm/vmm.h`
-- [ ] Implement `vmm_protect(virt, size, prot)` — walk PTEs for range; map `PROT_WRITE` → R/W=1, `PROT_EXEC` → NX=0, `PROT_NONE` → Present=0 (access fault on touch)
+- [ ] Implement `vmm_protect(virt, size, prot)` -- walk PTEs for range; map `PROT_WRITE` → R/W=1, `PROT_EXEC` → NX=0, `PROT_NONE` → Present=0 (access fault on touch)
 - [ ] `invlpg` on every modified PTE address to invalidate TLB; on SMP, IPI shootdown for other CPUs
 - [ ] Wire `mprotect(addr, len, prot)` POSIX syscall → `vmm_protect()`
 - [ ] Wire `NtProtectVirtualMemory(handle, &base, &size, new_protect, &old_protect)` → `vmm_protect()` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 - [ ] Allocate one PROT_NONE guard page below each thread's initial stack in `thread_create()`; page fault on guard page → deliver `EXCEPTION_STACK_OVERFLOW`
-- [ ] Update `pmm_init()`, `vmm_init()`, `heap_init()` to return `boot_result_t` instead of `void` — moved from TODO-01 §8
+- [ ] Update `pmm_init()`, `vmm_init()`, `heap_init()` to return `boot_result_t` instead of `void` -- moved from TODO-01 §8
 - [ ] Commit: `"mm: mprotect / NtProtectVirtualMemory + stack guard pages"`
 
 ## 2. W^X Enforcement `[Opus]`
 
-Disallow write-and-execute simultaneously on any mapping. Enforced in the VMM so no user-mode or kernel path can bypass it — a hard kernel-level security invariant.
+Disallow write-and-execute simultaneously on any mapping. Enforced in the VMM so no user-mode or kernel path can bypass it -- a hard kernel-level security invariant.
 
 **Files:** `src/kernel/mm/vmm.c`, `include/kernel/mm/vmm.h`
 
@@ -82,11 +82,11 @@ Disallow write-and-execute simultaneously on any mapping. Enforced in the VMM so
 - [ ] Apply same guard in `vmm_alloc_region()` and in the `NtAllocateVirtualMemory` protect parameter path
 - [ ] Reject `PAGE_EXECUTE_READWRITE` at the Win32 wrapper layer (§5) before it reaches the NT layer
 - [ ] Serial log at VMM init: `[VMM] W^X policy: active`
-- [ ] Commit: `"mm: W^X enforcement — hard reject write+exec on any mapping"`
+- [ ] Commit: `"mm: W^X enforcement -- hard reject write+exec on any mapping"`
 
-## 3. Demand Paging — MEM_RESERVE / MEM_COMMIT `[Opus]`
+## 3. Demand Paging -- MEM_RESERVE / MEM_COMMIT `[Opus]`
 
-Reserve virtual address space without backing frames; commit pages on-demand with zero-fill on first access — the core of the Win32 `VirtualAlloc` model and a prerequisite for large address space consumers.
+Reserve virtual address space without backing frames; commit pages on-demand with zero-fill on first access -- the core of the Win32 `VirtualAlloc` model and a prerequisite for large address space consumers.
 
 **Files:** `include/kernel/mm/vmm.h`, `src/kernel/mm/vmm.c`, `src/kernel/sched/syscall.c`
 
@@ -96,7 +96,7 @@ Reserve virtual address space without backing frames; commit pages on-demand wit
 - [ ] `MEM_RESERVE` path: record region; page faults in a reserved-but-not-committed range → `EXCEPTION_ACCESS_VIOLATION` (not a silent commit)
 - [ ] Wire `NtAllocateVirtualMemory(handle, &base, zero_bits, &size, type, protect)` accepting `MEM_RESERVE`, `MEM_COMMIT`, and `MEM_RESERVE|MEM_COMMIT` (→ XREF `02-kernel-core/TODO-05-native-api-ssdt.md`)
 - [ ] Wire `NtFreeVirtualMemory(handle, &base, &size, MEM_RELEASE)` → unmap committed pages and remove reservation
-- [ ] Commit: `"mm: demand paging — MEM_RESERVE / MEM_COMMIT / NtAllocateVirtualMemory"`
+- [ ] Commit: `"mm: demand paging -- MEM_RESERVE / MEM_COMMIT / NtAllocateVirtualMemory"`
 
 ## 4. `NtQueryVirtualMemory` `[Sonnet]`
 
@@ -105,10 +105,10 @@ Expose the VMM region state to user-mode so Win32 apps can walk their own addres
 **Files:** `include/kernel/mm/vmm.h`, `src/kernel/mm/vmm.c`, `src/kernel/sched/syscall.c`
 
 - [ ] Define `MEMORY_BASIC_INFORMATION`: `BaseAddress`, `AllocationBase`, `AllocationProtect`, `RegionSize`, `State` (`MEM_FREE` / `MEM_RESERVE` / `MEM_COMMIT`), `Protect`, `Type` (`MEM_PRIVATE` / `MEM_MAPPED` / `MEM_IMAGE`)
-- [ ] Implement `vmm_query_region(virt, out_mbi)` — find VMA containing `virt`, populate `MEMORY_BASIC_INFORMATION`; for unmapped addresses return `State=MEM_FREE`, `RegionSize` = gap to next VMA
+- [ ] Implement `vmm_query_region(virt, out_mbi)` -- find VMA containing `virt`, populate `MEMORY_BASIC_INFORMATION`; for unmapped addresses return `State=MEM_FREE`, `RegionSize` = gap to next VMA
 - [ ] Wire `NtQueryVirtualMemory(handle, base, MemoryBasicInformation, buf, buf_size, &ret_len)`; return `STATUS_NOT_IMPLEMENTED` for other info classes
 - [ ] Support Win32 range-walk: successive calls with `base = prev.BaseAddress + prev.RegionSize` must cover the full user address space without gaps
-- [ ] Commit: `"mm: NtQueryVirtualMemory — MEMORY_BASIC_INFORMATION"`
+- [ ] Commit: `"mm: NtQueryVirtualMemory -- MEMORY_BASIC_INFORMATION"`
 
 ## 5. `VirtualAlloc` / `VirtualFree` / `VirtualProtect` Win32 Wrappers `[Sonnet]`
 
@@ -117,7 +117,7 @@ Thin Win32 shim layer over the NT memory API so user-mode code can use the stand
 **Files:** `include/kernel/win32/memory.h`, `src/kernel/sched/syscall.c`
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — Win32 memory API surface; confirm function signatures and `PAGE_*` constant values match Windows documentation before implementing.
+> → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` -- Win32 memory API surface; confirm function signatures and `PAGE_*` constant values match Windows documentation before implementing.
 
 - [ ] Define `PAGE_NOACCESS`, `PAGE_READONLY`, `PAGE_READWRITE`, `PAGE_EXECUTE`, `PAGE_EXECUTE_READ`, `PAGE_EXECUTE_READWRITE` constants; map each to `PROT_*` combinations
 - [ ] `VirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect)` → `NtAllocateVirtualMemory()`; translate `MEM_RESERVE` / `MEM_COMMIT` / `MEM_RESERVE|MEM_COMMIT` and `PAGE_*` protect flags
@@ -134,13 +134,13 @@ Audit all `kmalloc` calls across the kernel and migrate any allocation that can 
 **Files:** all `*.c` under `src/`, `include/kernel/mm/heap.h`
 
 - [ ] Run: `rg 'kmalloc' src/ --include='*.c' -l` and classify each call site
-- [ ] `src/kernel/gfx/`: font data, glyph cache, pixel buffers — migrate oversized to `pmm_alloc_contiguous()`
-- [ ] `src/desktop/`: icon bitmaps, wallpaper scratch buffers — migrate oversized
-- [ ] `src/kernel/net/`: packet reassembly buffers that can exceed 4 KB — migrate
-- [ ] `src/kernel/fs/`: directory read buffers, inode caches — migrate if dynamically large
+- [ ] `src/kernel/gfx/`: font data, glyph cache, pixel buffers -- migrate oversized to `pmm_alloc_contiguous()`
+- [ ] `src/desktop/`: icon bitmaps, wallpaper scratch buffers -- migrate oversized
+- [ ] `src/kernel/net/`: packet reassembly buffers that can exceed 4 KB -- migrate
+- [ ] `src/kernel/fs/`: directory read buffers, inode caches -- migrate if dynamically large
 - [ ] `src/kernel/drivers/`: all DMA staging buffers must use PMM (require contiguous physical pages)
 - [ ] Add `/* kmalloc OK: <reason> */` comment to every remaining legitimate call-site (e.g., `/* kmalloc OK: task_t is ~256 B */`)
-- [ ] Commit: `"mm: kmalloc size audit — migrate oversized allocations to pmm_alloc_contiguous"`
+- [ ] Commit: `"mm: kmalloc size audit -- migrate oversized allocations to pmm_alloc_contiguous"`
 
 ## 7. Build-Time kmalloc Lint `[Sonnet]`
 
@@ -151,7 +151,7 @@ Fail the build on any `kmalloc` call that lacks a `/* kmalloc OK: */` whitelist 
 - [ ] Create `scripts/lint-alloc.sh`: `rg 'kmalloc' src/ --include='*.c'`; skip lines matching `/* kmalloc OK:`; print `file:line` for each violation; exit non-zero on any hit
 - [ ] Integrate `bash scripts/lint-alloc.sh` into `scripts/build.sh` before the compilation stage
 - [ ] Verify: add a bare `kmalloc` call → build fails with clear message; add `/* kmalloc OK: test */` → build passes
-- [ ] Commit: `"build: kmalloc lint — build fails on unannotated kmalloc call"`
+- [ ] Commit: `"build: kmalloc lint -- build fails on unannotated kmalloc call"`
 
 ## 8. PMM Statistics `[Sonnet]`
 
@@ -160,11 +160,11 @@ Surface physical memory utilization so `meminfo`, Task Manager, and diagnostics 
 **Files:** `include/kernel/mm/pmm.h`, `src/kernel/mm/pmm.c`, `src/kernel/sched/syscall.c`
 
 - [ ] Define `mm_stats_t`: `total_frames`, `free_frames`, `used_frames`, `largest_free_block_frames`, `alloc_count`
-- [ ] Implement `pmm_stats(mm_stats_t *out)` — populate from PMM internal state without side effects
+- [ ] Implement `pmm_stats(mm_stats_t *out)` -- populate from PMM internal state without side effects
 - [ ] `meminfo` shell command: print human-readable table (physical totals, heap usage, PMM region count)
 - [ ] Expose via `SYS_MMSTATS` syscall for the Task Manager memory tab
 - [ ] Verify boot serial log already shows `[PMM] X MiB free of Y MiB`; align format with `mm_stats_t` output
-- [ ] Commit: `"mm: PMM statistics — mm_stats_t + meminfo shell command"`
+- [ ] Commit: `"mm: PMM statistics -- mm_stats_t + meminfo shell command"`
 
 ## 9. Heap Canaries + Double-Free Detection `[Sonnet]`
 
@@ -179,42 +179,42 @@ Catch heap buffer overruns at `kfree` time and detect double-free without any in
 
 ## 10. Kernel Memory Leak Detector `[Sonnet]`
 
-Debug-mode allocation tracker with zero overhead in release builds — enabled by a boot param or compile flag so developers can catch leaks without a full debug recompile.
+Debug-mode allocation tracker with zero overhead in release builds -- enabled by a boot param or compile flag so developers can catch leaks without a full debug recompile.
 
 **Files:** `src/kernel/mm/heap.c`, `include/kernel/mm/heap.h`
 
-- [ ] Define `KMALLOC_DEBUG` compile-time flag; wrap `kmalloc`/`kfree` with macros capturing `__FILE__`, `__LINE__`, `__builtin_return_address(0)`, size — compiled out entirely when flag is absent
+- [ ] Define `KMALLOC_DEBUG` compile-time flag; wrap `kmalloc`/`kfree` with macros capturing `__FILE__`, `__LINE__`, `__builtin_return_address(0)`, size -- compiled out entirely when flag is absent
 - [ ] Store allocation records in a fixed-size static table (separate debug pool, not `kmalloc` itself)
-- [ ] Implement `kmalloc_dump_leaks()` — called at shutdown; prints all un-freed table entries with caller context
+- [ ] Implement `kmalloc_dump_leaks()` -- called at shutdown; prints all un-freed table entries with caller context
 - [ ] `memleak` shell command → `kmalloc_dump_leaks()`
-- [ ] Implement `kmalloc_stats(mm_stats_t *out)` — current used bytes, peak used bytes, live allocation count (feeds §8 `SYS_MMSTATS`)
-- [ ] Boot param `kmalloc_debug=1` enables tracking at runtime without recompile (→ XREF `TODO-02-boot-diagnostics.md §1` — boot param API)
+- [ ] Implement `kmalloc_stats(mm_stats_t *out)` -- current used bytes, peak used bytes, live allocation count (feeds §8 `SYS_MMSTATS`)
+- [ ] Boot param `kmalloc_debug=1` enables tracking at runtime without recompile (→ XREF `TODO-02-boot-diagnostics.md §1` -- boot param API)
 - [ ] Commit: `"mm: kmalloc leak detector (debug build) + kmalloc_stats"`
 
 ## 11. MMIO Mapping with UC Attributes + HPET Validation `[Opus]`
 
-Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mappings for device MMIO regions. The boot identity map uses write-back (WB) caching on all 2 MiB pages — directly accessing MMIO through WB pages causes stale reads, data corruption, or machine check exceptions (MCE) on real hardware. Every MMIO access in the kernel (HPET, ECAM, NVMe BARs, future GPU BARs) must go through this function.
+Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mappings for device MMIO regions. The boot identity map uses write-back (WB) caching on all 2 MiB pages -- directly accessing MMIO through WB pages causes stale reads, data corruption, or machine check exceptions (MCE) on real hardware. Every MMIO access in the kernel (HPET, ECAM, NVMe BARs, future GPU BARs) must go through this function.
 
 **Files:** `include/kernel/mm/vmm.h`, `src/kernel/mm/vmm.c`, `src/kernel/drivers/lapic.c`, `src/kernel/drivers/hpet.c` (new)
 
 > [!IMPORTANT]
-> → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §2` — HPET timer driver consumes `vmm_map_mmio()` for register access.
-> → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §3` — PCIe ECAM needs `vmm_map_mmio()` with UC for config space.
-> → XREF: `04-drivers-hardware/TODO-03-apic-interrupt-routing.md` — LAPIC/IOAPIC MMIO should use UC mappings (currently works via MTRR override).
-> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §5` — PAT configuration for WC (framebuffer) and UC (MMIO) page types.
+> → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §2` -- HPET timer driver consumes `vmm_map_mmio()` for register access.
+> → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §3` -- PCIe ECAM needs `vmm_map_mmio()` with UC for config space.
+> → XREF: `04-drivers-hardware/TODO-03-apic-interrupt-routing.md` -- LAPIC/IOAPIC MMIO should use UC mappings (currently works via MTRR override).
+> → XREF: `02-kernel-core/TODO-19-x86-64-architecture.md §5` -- PAT configuration for WC (framebuffer) and UC (MMIO) page types.
 
-> **Current state (2026-03-28):** The bootloader maps all 4 GiB with `0x87` (Present+Writable+User+PS) — no PCD/PWT bits, so all pages are WB cached. LAPIC/IOAPIC work because MTRRs override those specific ranges to UC. HPET, ECAM, and other MMIO devices have no MTRR entries and crash on bare metal when accessed through WB pages. The HPET calibration path in `lapic.c` currently has a probe guard but should use a proper UC mapping instead.
+> **Current state (2026-03-28):** The bootloader maps all 4 GiB with `0x87` (Present+Writable+User+PS) -- no PCD/PWT bits, so all pages are WB cached. LAPIC/IOAPIC work because MTRRs override those specific ranges to UC. HPET, ECAM, and other MMIO devices have no MTRR entries and crash on bare metal when accessed through WB pages. The HPET calibration path in `lapic.c` currently has a probe guard but should use a proper UC mapping instead.
 
-- [ ] Implement `vmm_map_mmio(phys_base, size)` — allocate 4 KiB PTEs, set `PCD=1` + `PWT=1` (UC memory type), return virtual address. Use a dedicated kernel VA region above the identity map to avoid conflicts.
-- [ ] Implement `vmm_unmap_mmio(virt, size)` — unmap and free PTEs.
-- [ ] Implement `MmMapIoSpace(phys, size, cache_type)` Win32 wrapper — routes to `vmm_map_mmio()` with cache type translation (`MmNonCached` → UC, `MmWriteCombined` → WC via PAT).
+- [ ] Implement `vmm_map_mmio(phys_base, size)` -- allocate 4 KiB PTEs, set `PCD=1` + `PWT=1` (UC memory type), return virtual address. Use a dedicated kernel VA region above the identity map to avoid conflicts.
+- [ ] Implement `vmm_unmap_mmio(virt, size)` -- unmap and free PTEs.
+- [ ] Implement `MmMapIoSpace(phys, size, cache_type)` Win32 wrapper -- routes to `vmm_map_mmio()` with cache type translation (`MmNonCached` → UC, `MmWriteCombined` → WC via PAT).
 - [ ] HPET validation: read General Capabilities register via UC mapping; reject if `REV_ID == 0`, `COUNTER_CLK_PERIOD == 0`, or `COUNTER_CLK_PERIOD > 100000000` (>100ns/tick).
 - [ ] HPET quirk table: static table of `{ vendor_id, device_id, quirk_flags }` for known-broken HPET implementations (AMD SB700/SB800 HPET counter freeze, Intel ICH9 64-bit read errata). Check against HPET's `VENDOR_ID` field in the capabilities register.
 - [ ] Migrate HPET calibration in `lapic.c` from raw identity-mapped MMIO to `vmm_map_mmio()`.
 - [ ] Migrate AHCI ABAR access to `vmm_map_mmio()` (currently identity-mapped).
-- [ ] Audit all `volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)phys_addr` patterns in drivers — each is a candidate for `vmm_map_mmio()`.
+- [ ] Audit all `volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)phys_addr` patterns in drivers -- each is a candidate for `vmm_map_mmio()`.
 - [ ] Boot log: `[VMM] MMIO: mapped 0x%lx (%u bytes) as UC at 0x%lx`
-- [ ] Commit: `"mm: vmm_map_mmio / MmMapIoSpace — UC MMIO mappings + HPET validation"`
+- [ ] Commit: `"mm: vmm_map_mmio / MmMapIoSpace -- UC MMIO mappings + HPET validation"`
 
 ---
 
@@ -223,18 +223,18 @@ Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mapping
 
 | ⭐ | Feature                                     | 🪟 Win11                                                  | 🐧 Linux                                           | 🚀 Impossible OS                                      |
 |----|---------------------------------------------|--------------------------------------------------------|-------------------------------------------------|----------------------------------------------------|
-| 💎 | `VirtualProtect` / `mprotect` + guard pages | ✅ `VirtualProtect`; guard page per thread             | ✅ `mprotect(2)`; guard via `sigaltstack` +     | ⬜ §1 — `vmm_protect()` + PROT_NONE page per       |
-| 💎 | W^X enforcement on all mappings             | ⚠️ DEP (NX) enforced; `PAGE_EXECUTE_READWRITE` allowed | ✅ NX enforced; `READ_IMPLIES_EXEC` deprecated  | ⬜ §2 — hard reject at PTE update,                 |
-| 💎 | MEM_RESERVE / MEM_COMMIT demand paging      | ✅ Core Win32 contract; `VirtualAlloc(MEM_RESERVE)`    | ✅ Overcommit + anonymous zero-fill on          | ⬜ §3 — VMM region states + zero-fill              |
-| 💎 | `NtQueryVirtualMemory` / `/proc/maps`       | ✅ `VirtualQuery` → `MEMORY_BASIC_INFORMATION`         | ✅ `/proc/self/maps` text dump of VMAs          | ⬜ §4 — `NtQueryVirtualMemory` structured query    |
-| 💎 | `VirtualAlloc` / `VirtualFree` Win32 API    | ✅ Native Win32 memory management surface              | ✅ `mmap(2)` / `munmap(2)` POSIX equivalent     | ⬜ §5 — Win32 shim → `NtAllocateVirtualMemory`     |
-| ⭐ | Build-time allocator lint                   | ❌ Driver Verifier is runtime only                     | ❌ `sparse`/`smatch` external; no build-fail on | ⬜ §7 — build fails on unannotated `kmalloc`       |
-| 💎 | PMM / physical memory statistics            | ✅ `!poolused` (WinDbg), Task Manager                  | ✅ `/proc/meminfo`, `free(1)`                   | ⬜ §8 — `mm_stats_t` + `meminfo` shell command     |
-| 💎 | Heap canaries + double-free detection       | ✅ Debug heap (user-mode); kernel via                  | ✅ SLUB debug allocator (`CONFIG_SLUB_DEBUG`)   | ⬜ §9 — tail canary on every `kmalloc`             |
-| 💎 | Kernel memory leak detector                 | ✅ Driver Verifier LEAK tracking                       | ✅ `kmemleak` kernel debug option               | ⬜ §10 — allocation table, `memleak` shell command |
-| 💎 | UC MMIO mapping                             | ✅ `MmMapIoSpace` with cache type                      | ✅ `ioremap()` / `ioremap_uc()` for device      | ⬜ §11 — `vmm_map_mmio()` + HPET quirk table       |
+| 💎 | `VirtualProtect` / `mprotect` + guard pages | ✅ `VirtualProtect`; guard page per thread             | ✅ `mprotect(2)`; guard via `sigaltstack` +     | ⬜ §1 -- `vmm_protect()` + PROT_NONE page per       |
+| 💎 | W^X enforcement on all mappings             | ⚠️ DEP (NX) enforced; `PAGE_EXECUTE_READWRITE` allowed | ✅ NX enforced; `READ_IMPLIES_EXEC` deprecated  | ⬜ §2 -- hard reject at PTE update,                 |
+| 💎 | MEM_RESERVE / MEM_COMMIT demand paging      | ✅ Core Win32 contract; `VirtualAlloc(MEM_RESERVE)`    | ✅ Overcommit + anonymous zero-fill on          | ⬜ §3 -- VMM region states + zero-fill              |
+| 💎 | `NtQueryVirtualMemory` / `/proc/maps`       | ✅ `VirtualQuery` → `MEMORY_BASIC_INFORMATION`         | ✅ `/proc/self/maps` text dump of VMAs          | ⬜ §4 -- `NtQueryVirtualMemory` structured query    |
+| 💎 | `VirtualAlloc` / `VirtualFree` Win32 API    | ✅ Native Win32 memory management surface              | ✅ `mmap(2)` / `munmap(2)` POSIX equivalent     | ⬜ §5 -- Win32 shim → `NtAllocateVirtualMemory`     |
+| ⭐ | Build-time allocator lint                   | ❌ Driver Verifier is runtime only                     | ❌ `sparse`/`smatch` external; no build-fail on | ⬜ §7 -- build fails on unannotated `kmalloc`       |
+| 💎 | PMM / physical memory statistics            | ✅ `!poolused` (WinDbg), Task Manager                  | ✅ `/proc/meminfo`, `free(1)`                   | ⬜ §8 -- `mm_stats_t` + `meminfo` shell command     |
+| 💎 | Heap canaries + double-free detection       | ✅ Debug heap (user-mode); kernel via                  | ✅ SLUB debug allocator (`CONFIG_SLUB_DEBUG`)   | ⬜ §9 -- tail canary on every `kmalloc`             |
+| 💎 | Kernel memory leak detector                 | ✅ Driver Verifier LEAK tracking                       | ✅ `kmemleak` kernel debug option               | ⬜ §10 -- allocation table, `memleak` shell command |
+| 💎 | UC MMIO mapping                             | ✅ `MmMapIoSpace` with cache type                      | ✅ `ioremap()` / `ioremap_uc()` for device      | ⬜ §11 -- `vmm_map_mmio()` + HPET quirk table       |
 
-> **After parity items:** Impossible OS matches Windows and Linux on VirtualProtect/mprotect, demand paging, VirtualAlloc, NtQueryVirtualMemory, PMM stats, heap canaries, and leak detection. The W^X enforcement is stronger than Windows — `PAGE_EXECUTE_READWRITE` is a hard kernel reject with no bypass path. The build-time kmalloc lint enforces correct allocator discipline at compile time rather than catching violations at runtime.
+> **After parity items:** Impossible OS matches Windows and Linux on VirtualProtect/mprotect, demand paging, VirtualAlloc, NtQueryVirtualMemory, PMM stats, heap canaries, and leak detection. The W^X enforcement is stronger than Windows -- `PAGE_EXECUTE_READWRITE` is a hard kernel reject with no bypass path. The build-time kmalloc lint enforces correct allocator discipline at compile time rather than catching violations at runtime.
 
 ## Verification
 

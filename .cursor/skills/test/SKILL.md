@@ -59,8 +59,8 @@ make test-storage  # Storage Drivers
 
 ### Exit Codes
 
-- `0` — all tests passed
-- `1` — one or more tests failed, timeout, or build failure
+- `0` -- all tests passed
+- `1` -- one or more tests failed, timeout, or build failure
 
 ## Test Categories
 
@@ -77,14 +77,14 @@ Categories are defined in `include/kernel/test/test.h` as `test_category_t`:
 | `TEST_CAT_BOOT`     | `boot`     | Boot & Logging     | `make test-boot` |
 | `TEST_CAT_ABI`      | `abi`      | ABI Compatibility  | `make test-abi` |
 | `TEST_CAT_STORAGE`  | `storage`  | Storage Drivers    | `make test-storage` |
-| `TEST_CAT_ALL`      | —          | Runs under any filter | — |
+| `TEST_CAT_ALL`      | --          | Runs under any filter | -- |
 
 ## Boot Flow
 
 `boot.conf` keys:
-- `test=1` — enables unit test runner
-- `test_suite=mm` — category filter (short name from table above)
-- `test_quiet=1` — suppress per-assertion PASS lines
+- `test=1` -- enables unit test runner
+- `test_suite=mm` -- category filter (short name from table above)
+- `test_quiet=1` -- suppress per-assertion PASS lines
 
 Kernel dispatch (`src/kernel/main/boot_tests.c`):
 1. `boot_phase3()` in `boot_desktop.c` calls `boot_tests_run()`
@@ -94,11 +94,11 @@ Kernel dispatch (`src/kernel/main/boot_tests.c`):
 
 ## Interpreting Results
 
-- `=== N tests passed, 0 failed ===` — ALL PASS
-- `=== N passed, M FAILED (of T) ===` — FAILURES, report which suites failed
-- No test output / empty log — boot crashed before tests ran (check build)
-- `KERNEL PANIC` or `triple fault` — boot failure, not test failure
-- Timeout with partial output — boot too slow (TCG) or hung (kernel bug)
+- `=== N tests passed, 0 failed ===` -- ALL PASS
+- `=== N passed, M FAILED (of T) ===` -- FAILURES, report which suites failed
+- No test output / empty log -- boot crashed before tests ran (check build)
+- `KERNEL PANIC` or `triple fault` -- boot failure, not test failure
+- Timeout with partial output -- boot too slow (TCG) or hung (kernel bug)
 
 ## Manual Path (if script unavailable)
 
@@ -130,6 +130,6 @@ If KVM is unavailable, replace `-accel kvm -cpu host` with `-accel tcg -cpu Hasw
 
 ## What NOT to Do
 
-- Do NOT set `debug=1` for automated testing — it runs integration tests and doesn't shutdown
+- Do NOT set `debug=1` for automated testing -- it runs integration tests and doesn't shutdown
 - Do NOT forget to restore boot.conf (`patch-boot-conf.sh reset`) when running manually
-- Do NOT use `bash scripts/build.sh clean` for test runs unless needed — incremental is faster
+- Do NOT use `bash scripts/build.sh clean` for test runs unless needed -- incremental is faster

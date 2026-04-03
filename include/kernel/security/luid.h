@@ -1,5 +1,5 @@
 /* ============================================================================
- * luid.h — Locally Unique Identifier (LUID)
+ * luid.h -- Locally Unique Identifier (LUID)
  *
  * A 64-bit opaque identifier guaranteed unique on this machine for the
  * lifetime of the boot.  Used to identify privileges, logon sessions,
@@ -32,7 +32,7 @@ static inline int RtlIsZeroLuid(const LUID *l)
 /* --- API ----------------------------------------------------------------- */
 
 /*
- * NtAllocateLocallyUniqueId — return the next unique LUID.
+ * NtAllocateLocallyUniqueId -- return the next unique LUID.
  * Monotonically incrementing, SMP-safe (atomic counter).
  */
 LUID NtAllocateLocallyUniqueId(void);

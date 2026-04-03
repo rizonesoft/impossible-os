@@ -1,5 +1,5 @@
 /* ============================================================================
- * ahci_error.c — AHCI error counter flush to Registry
+ * ahci_error.c -- AHCI error counter flush to Registry
  * ============================================================================ */
 
 #include "kernel/drivers/ahci_internal.h"

@@ -1,4 +1,4 @@
-# NVMe 2.1 — Technical Specification for OS Implementation
+# NVMe 2.1 -- Technical Specification for OS Implementation
 
 ## Overview and Architectural Context
 
@@ -69,7 +69,7 @@ Linux kernel as `PCI_CLASS_STORAGE_EXPRESS`.
 
 > [!CAUTION]
 > Do not confuse the NVMe programming interface `0x02` with other NVM subclass values. The subclass
-> `0x08` alone is not sufficient — the programming interface distinguishes NVMe I/O controllers from
+> `0x08` alone is not sufficient -- the programming interface distinguishes NVMe I/O controllers from
 > NVMe administrative controllers (`0x03`).
 
 ### BAR0 Memory Mapping
@@ -107,7 +107,7 @@ and doorbell registers (starting at offset `0x1000`).
 | `0x0C`   | 4 B    | **INTMS** (Interrupt Mask Set)        | WO     | Set bits to mask interrupt vectors                        |
 | `0x10`   | 4 B    | **INTMC** (Interrupt Mask Clear)      | WO     | Set bits to unmask interrupt vectors                      |
 | `0x14`   | 4 B    | **CC** (Controller Configuration)     | RW     | Enable, I/O command set, MPS, arbitration, SQ/CQ sizes   |
-| `0x18`   | 4 B    | Reserved                              | —      | —                                                        |
+| `0x18`   | 4 B    | Reserved                              | --      | --                                                        |
 | `0x1C`   | 4 B    | **CSTS** (Controller Status)          | RO     | Ready, fatal, shutdown status, processing paused          |
 | `0x20`   | 4 B    | **NSSR** (NVM Subsystem Reset)        | RW     | Optional: write `0x4E564D65` ("NVMe") to trigger reset   |
 | `0x24`   | 4 B    | **AQA** (Admin Queue Attributes)      | RW     | Admin SQ size (bits 27:16), Admin CQ size (bits 11:0)    |
@@ -118,7 +118,7 @@ and doorbell registers (starting at offset `0x1000`).
 
 | Bits     | Field      | Description                                                                 |
 | -------- | ---------- | --------------------------------------------------------------------------- |
-| 63:56    | Reserved   | —                                                                           |
+| 63:56    | Reserved   | --                                                                           |
 | 55:52    | `MPSMAX`   | Maximum host memory page size supported (2^(12+MPSMAX) bytes)               |
 | 51:48    | `MPSMIN`   | Minimum host memory page size supported (2^(12+MPSMIN) bytes)               |
 | 47:45    | `BPS`      | Boot Partition Support (NVMe 1.3+)                                          |
@@ -126,7 +126,7 @@ and doorbell registers (starting at offset `0x1000`).
 | 36       | `NSSRS`    | NVM Subsystem Reset Supported                                               |
 | 35:32    | `DSTRD`    | Doorbell Stride: stride = 2^(2+DSTRD) bytes between doorbell registers      |
 | 31:24    | `TO`       | Timeout: worst-case time for CSTS.RDY transition (in 500 ms units)          |
-| 23:19    | Reserved   | —                                                                           |
+| 23:19    | Reserved   | --                                                                           |
 | 18:17    | `AMS`      | Arbitration Mechanism Supported (bit 0 = weighted round robin)              |
 | 16       | `CQR`      | Contiguous Queues Required                                                  |
 | 15:0     | `MQES`     | Maximum Queue Entries Supported (0-based, actual max = MQES+1)              |
@@ -139,21 +139,21 @@ and doorbell registers (starting at offset `0x1000`).
 
 | Bits     | Field    | Description                                                                   |
 | -------- | -------- | ----------------------------------------------------------------------------- |
-| 31:24    | Reserved | —                                                                             |
+| 31:24    | Reserved | --                                                                             |
 | 23:20    | `IOCQES` | I/O Completion Queue Entry Size (2^IOCQES bytes, must be ≥ 4 = 16 bytes)     |
 | 19:16    | `IOSQES` | I/O Submission Queue Entry Size (2^IOSQES bytes, must be ≥ 6 = 64 bytes)     |
 | 15:14    | `SHN`    | Shutdown Notification (00=none, 01=normal, 10=abrupt)                         |
 | 13:11    | `AMS`    | Arbitration Mechanism Selected                                                |
 | 10:7     | `MPS`    | Memory Page Size (host page = 2^(12+MPS) bytes)                              |
 | 6:4      | `CSS`    | I/O Command Set Selected (000 = NVM command set)                              |
-| 3:1      | Reserved | —                                                                             |
+| 3:1      | Reserved | --                                                                             |
 | 0        | `EN`     | Enable: set to 1 to activate controller, 0 to disable                        |
 
 ### CSTS Register Bit Fields (Offset `0x1C`, 32 bits)
 
 | Bits     | Field    | Description                                                                   |
 | -------- | -------- | ----------------------------------------------------------------------------- |
-| 31:6     | Reserved | —                                                                             |
+| 31:6     | Reserved | --                                                                             |
 | 5        | `PP`     | Processing Paused                                                             |
 | 4        | `NSSRO`  | NVM Subsystem Reset Occurred                                                  |
 | 3:2      | `SHST`   | Shutdown Status (00=normal, 01=in progress, 10=complete)                      |
@@ -263,7 +263,7 @@ circular buffer. The host uses this bit to detect new completions without zeroin
 - On the second pass (after wrap-around), the controller writes CQEs with P=0.
 - The host knows a CQE is new when the P bit differs from the expected value.
 
-### Submission Queue Entry (SQE) Format — 64 Bytes
+### Submission Queue Entry (SQE) Format -- 64 Bytes
 
 ```c
 typedef struct nvme_sqe {
@@ -282,7 +282,7 @@ typedef struct nvme_sqe {
 } __attribute__((packed)) nvme_sqe_t;
 ```
 
-### Completion Queue Entry (CQE) Format — 16 Bytes
+### Completion Queue Entry (CQE) Format -- 16 Bytes
 
 ```c
 typedef struct nvme_cqe {
@@ -368,7 +368,7 @@ points to one page of data. If the list itself spans more than one page, the las
 page points to the next page of the PRP List (chaining).
 
 ```c
-/* PRP List entry layout — each entry is 8 bytes */
+/* PRP List entry layout -- each entry is 8 bytes */
 typedef struct nvme_prp_list {
     uint64_t entries[512];  /* For 4K pages: 512 entries × 8 bytes = 4096 bytes */
 } __attribute__((packed)) nvme_prp_list_t;
@@ -500,14 +500,14 @@ Each LBA Format (LBAF) entry is 4 bytes:
 | Bits     | Field  | Description                                                           |
 | -------- | ------ | --------------------------------------------------------------------- |
 | 31:26    | `RP`   | Relative Performance (00=best, 01=better, 10=good, 11=degraded)       |
-| 25:24    | Reserved | —                                                                   |
+| 25:24    | Reserved | --                                                                   |
 | 23:16    | `LBADS`| LBA Data Size: sector size = 2^LBADS bytes (e.g., 9=512B, 12=4096B)  |
 | 15:0     | `MS`   | Metadata Size in bytes                                                |
 
 > [!IMPORTANT]
 > Modern NVMe SSDs commonly support both 512-byte (LBADS=9) and 4096-byte (LBADS=12) sector
 > formats. The active format is determined by `FLBAS` bits 3:0, indexing into the `LBAF[]` array.
-> **Always read the Identify Namespace to determine the actual sector size** — do not assume 512.
+> **Always read the Identify Namespace to determine the actual sector size** -- do not assume 512.
 
 ---
 
@@ -533,7 +533,7 @@ Each MSI-X Table Entry is 16 bytes:
 
 | Offset | Size | Field                                                                  |
 | ------ | ---- | ---------------------------------------------------------------------- |
-| +0     | 4 B  | Message Address (lower 32 bits — LAPIC address)                        |
+| +0     | 4 B  | Message Address (lower 32 bits -- LAPIC address)                        |
 | +4     | 4 B  | Message Upper Address (upper 32 bits, usually 0 for x86-64)            |
 | +8     | 4 B  | Message Data (interrupt vector number)                                 |
 | +12    | 4 B  | Vector Control (bit 0 = mask)                                          |
@@ -571,7 +571,7 @@ Retrieved via the Get Log Page admin command (opcode `0x02`) with Log Identifier
 | `3`        | 1 B     | `avail_spare`                | Available spare capacity (0–100%)              |
 | `4`        | 1 B     | `avail_spare_thresh`         | Spare threshold (triggers warning when below)  |
 | `5`        | 1 B     | `percent_used`               | Estimated percent of life consumed             |
-| `6`–`31`   | 26 B    | Reserved                     | —                                              |
+| `6`–`31`   | 26 B    | Reserved                     | --                                              |
 | `32`–`47`  | 16 B    | `data_units_read`            | 128-bit count, in units of 1000 × 512 bytes    |
 | `48`–`63`  | 16 B    | `data_units_written`         | 128-bit count, in units of 1000 × 512 bytes    |
 | `64`–`79`  | 16 B    | `host_read_commands`         | 128-bit count of read commands issued          |
@@ -770,7 +770,7 @@ qemu-system-x86_64 \
 | 🔴 P0    | Identify Controller + Namespace            | 1.0          | Parse MDTS, sector size, capacity             |
 | 🔴 P0    | Single I/O Queue pair                      | 1.0          | One SQ + one CQ, interrupt-driven             |
 | 🔴 P0    | PRP-based read/write                       | 1.0          | Single-page and PRP List transfers            |
-| 🔴 P0    | `blkdev` integration                       | —            | Implement `block_device_t` interface          |
+| 🔴 P0    | `blkdev` integration                       | --            | Implement `block_device_t` interface          |
 | 🟠 P1    | MSI-X interrupt configuration              | 1.0          | Replace INTx with MSI-X vectors               |
 | 🟠 P1    | Multi-queue (per-core queue pairs)         | 1.0          | Scale with CPU topology                       |
 | 🟠 P1    | Dataset Management / Deallocate (TRIM)     | 1.0          | Required for SSD health                       |
@@ -781,6 +781,6 @@ qemu-system-x86_64 \
 | 🟢 P3    | Sanitize command (Crypto Erase)            | 1.3          | Secure data destruction                       |
 | 🟢 P3    | Flush command                              | 1.0          | Volatile write cache commit                   |
 | 🔵 P4    | Namespace management                       | 1.1          | Create/delete namespaces                      |
-| 🔵 P4    | TCG Opal 2.0 SED support                   | —            | Full-disk encryption management               |
+| 🔵 P4    | TCG Opal 2.0 SED support                   | --            | Full-disk encryption management               |
 | 🔵 P4    | Zoned Namespaces (ZNS)                     | 1.4+         | Advanced flash management                     |
 | 🔵 P4    | NVMe over Fabrics (NVMe-oF)               | 1.0+         | Network-attached NVMe                         |

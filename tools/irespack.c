@@ -1,5 +1,5 @@
 /* ============================================================================
- * irespack.c — IRES (Icon Resource) packer for Impossible OS
+ * irespack.c -- IRES (Icon Resource) packer for Impossible OS
  *
  * Host-side build tool. Reads PNG files from resources/icons/color/{size}/
  * directories and packs them into a single icons.ires binary.
@@ -70,7 +70,7 @@ typedef struct {
 
 /* ---- Icon name validation (accept any known PNG) ---- */
 /* The kernel resolves icon names → system_icon_t IDs at load time via
- * the name table.  No hardcoded enum values here — this decouples the
+ * the name table.  No hardcoded enum values here -- this decouples the
  * build tool from the kernel's icon_store.h enum numbering. */
 
 static const char *accepted_icons[] = {
@@ -142,7 +142,7 @@ int main(int argc, char **argv)
         snprintf(dir_path, sizeof(dir_path), "%s/%d", icon_dir, supported_sizes[si]);
 
         DIR *d = opendir(dir_path);
-        if (!d) continue;  /* Size dir doesn't exist — skip */
+        if (!d) continue;  /* Size dir doesn't exist -- skip */
 
         struct dirent *ent;
         while ((ent = readdir(d)) != NULL) {

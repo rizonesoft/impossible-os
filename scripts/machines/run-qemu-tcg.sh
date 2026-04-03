@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-qemu-tcg.sh — Launch Impossible OS under QEMU TCG (software emulation)
+# run-qemu-tcg.sh -- Launch Impossible OS under QEMU TCG (software emulation)
 #
 # Purpose: Forces QEMU to use TCG (software CPU emulation) instead of
 #          KVM/WHPX hardware acceleration. This makes the OS select PIT
@@ -58,7 +58,7 @@ fi
 cp "$OVMF_VARS" "$OVMF_VARS_CP"
 
 echo "══════════════════════════════════════════════════"
-echo "  Impossible OS — QEMU TCG (Software Emulation)"
+echo "  Impossible OS -- QEMU TCG (Software Emulation)"
 echo "══════════════════════════════════════════════════"
 echo "  Accelerator : TCG (no KVM/WHPX)"
 echo "  Resolution  : ${XRES}×${YRES}"

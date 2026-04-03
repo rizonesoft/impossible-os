@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# test.sh — Build, boot QEMU headless, run kernel unit tests, report results
+# test.sh -- Build, boot QEMU headless, run kernel unit tests, report results
 #
 # Usage:
 #   bash scripts/test.sh              # run all test suites
@@ -75,12 +75,12 @@ if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
 else
     ACCEL_ARGS="-accel tcg -cpu Haswell"
     ACCEL_NAME="TCG (slow)"
-    echo -e "${YELLOW}[TEST]${RESET} KVM not available — using TCG (add user to kvm group for 10x speedup)"
+    echo -e "${YELLOW}[TEST]${RESET} KVM not available -- using TCG (add user to kvm group for 10x speedup)"
 fi
 
 echo -e "${CYAN}[TEST]${RESET} Booting QEMU headless (${ACCEL_NAME}, ${TIMEOUT}s timeout)..."
 
-# Launch QEMU in background — kernel continues to desktop after tests,
+# Launch QEMU in background -- kernel continues to desktop after tests,
 # so we poll for the summary line and kill QEMU once we have results.
 qemu-system-x86_64 \
     $ACCEL_ARGS \

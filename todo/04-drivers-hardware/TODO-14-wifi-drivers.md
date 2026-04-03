@@ -1,18 +1,18 @@
-# TODO-14 — WiFi Hardware Drivers
+# TODO-14 -- WiFi Hardware Drivers
 
-> **Goal:** Implement the complete WiFi hardware driver layer — a `wifi_device_t` vtable abstraction, four real-hardware drivers (RTL8188/8192 USB, RTL8821CE/8822BE PCIe, Intel AX200/AX210 iwlwifi, MediaTek MT7921/MT7922), a WPA2-PSK EAPOL supplicant with CCMP decryption, 802.11 frame layer, scan/association state machine, power management, and `netsh wlan` + `ncpa.cpl` WiFi UI integration — making Impossible OS functional on any laptop or device that lacks Ethernet.
+> **Goal:** Implement the complete WiFi hardware driver layer -- a `wifi_device_t` vtable abstraction, four real-hardware drivers (RTL8188/8192 USB, RTL8821CE/8822BE PCIe, Intel AX200/AX210 iwlwifi, MediaTek MT7921/MT7922), a WPA2-PSK EAPOL supplicant with CCMP decryption, 802.11 frame layer, scan/association state machine, power management, and `netsh wlan` + `ncpa.cpl` WiFi UI integration -- making Impossible OS functional on any laptop or device that lacks Ethernet.
 
 > [!IMPORTANT]
-> **No WiFi infrastructure exists.** The networking stack (`src/kernel/net/`) handles Ethernet frames via `net_receive_ethernet()`; WiFi feeds into the same hook after stripping the 802.11 header and LLC/SNAP. The WiFi driver layer is architecturally independent of the Ethernet NIC drivers (`04-drivers-hardware/TODO-07`). The WPA2-PSK supplicant (§6) is the most security-critical piece — it must use constant-time comparison for MIC verification to prevent timing side-channels. WiFi UI (`ncpa.cpl` §10) and connection manager live here; the `ncpa.cpl` base infrastructure belongs to `09-services-security/TODO-02 §6`.
+> **No WiFi infrastructure exists.** The networking stack (`src/kernel/net/`) handles Ethernet frames via `net_receive_ethernet()`; WiFi feeds into the same hook after stripping the 802.11 header and LLC/SNAP. The WiFi driver layer is architecturally independent of the Ethernet NIC drivers (`04-drivers-hardware/TODO-07`). The WPA2-PSK supplicant (§6) is the most security-critical piece -- it must use constant-time comparison for MIC verification to prevent timing side-channels. WiFi UI (`ncpa.cpl` §10) and connection manager live here; the `ncpa.cpl` base infrastructure belongs to `09-services-security/TODO-02 §6`.
 
 ## Inputs
 
-- [`src/kernel/net/ethernet.c`](../../src/kernel/net/ethernet.c) — `net_receive_ethernet(buf, len)` hook; WiFi data frames deliver here after 802.11 header strip (§7)
-- [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) — VirtIO transport pattern (reference only; WiFi uses its own DMA rings)
-- → XREF: `04-drivers-hardware/TODO-07-network-drivers.md §7` — WiFi 802.11 MAC stub (`wifi_mac_t`) defined there; this TODO supersedes those stubs with full implementations; the vtable names must be reconciled
-- → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §1` — `hwrng_read()` required by WPA2 supplicant for `SNonce` generation (§6) and CCMP nonce (§6); must be available before §6
-- → XREF: `09-services-security/TODO-02` — `ncpa.cpl` base window (§10) is defined there; WiFi tab (§10 here) extends it; coordinate to avoid duplicate window registration
-- → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` — Wake-on-WLAN (§9) triggers S3 resume; integrate with ACPI power button SCI path
+- [`src/kernel/net/ethernet.c`](../../src/kernel/net/ethernet.c) -- `net_receive_ethernet(buf, len)` hook; WiFi data frames deliver here after 802.11 header strip (§7)
+- [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO transport pattern (reference only; WiFi uses its own DMA rings)
+- → XREF: `04-drivers-hardware/TODO-07-network-drivers.md §7` -- WiFi 802.11 MAC stub (`wifi_mac_t`) defined there; this TODO supersedes those stubs with full implementations; the vtable names must be reconciled
+- → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §1` -- `hwrng_read()` required by WPA2 supplicant for `SNonce` generation (§6) and CCMP nonce (§6); must be available before §6
+- → XREF: `09-services-security/TODO-02` -- `ncpa.cpl` base window (§10) is defined there; WiFi tab (§10 here) extends it; coordinate to avoid duplicate window registration
+- → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §7` -- Wake-on-WLAN (§9) triggers S3 resume; integrate with ACPI power button SCI path
 
 ## Outcome
 
@@ -29,18 +29,18 @@
 
 | ⭐  | Order | Deliverable                                                                    | Depends On                                         | Status |
 | --- | :---: | ------------------------------------------------------------------------------- | -------------------------------------------------- | :----: |
-| ⭐  |   1   | §1 WiFi driver abstraction layer — `wifi_device_t`, `wifi_manager.c`, syscalls  | none                                               |  [ ]   |
-| 💎  |   2   | §7 802.11 frame layer — header parse/build, LLC/SNAP, `net_receive_ethernet`   | §1 (vtable), `ethernet.c`                          |  [ ]   |
+| ⭐  |   1   | §1 WiFi driver abstraction layer -- `wifi_device_t`, `wifi_manager.c`, syscalls  | none                                               |  [ ]   |
+| 💎  |   2   | §7 802.11 frame layer -- header parse/build, LLC/SNAP, `net_receive_ethernet`   | §1 (vtable), `ethernet.c`                          |  [ ]   |
 | 💎  |   3   | §8 WiFi scan & association state machine                                       | §2 (frame layer), §1 (state in manager)            |  [ ]   |
 | 💎  |   4   | §2 RTL8188/8192 USB WiFi driver                                                | §1 (vtable), §2 (frame layer), TODO-09 USB stack   |  [ ]   |
-| 💎  |   5   | §6 WPA2-PSK supplicant — EAPOL 4-way handshake, CCMP decrypt                  | §3 (association path), hwrng (TODO-11 §1)          |  [ ]   |
+| 💎  |   5   | §6 WPA2-PSK supplicant -- EAPOL 4-way handshake, CCMP decrypt                  | §3 (association path), hwrng (TODO-11 §1)          |  [ ]   |
 | 💎  |   6   | §3 RTL8821CE/8822BE PCIe driver                                                | §1, §2, §5 (WPA2 shared path)                      |  [ ]   |
 | 💎  |   7   | §4 Intel AX200/AX210 iwlwifi PCIe driver                                      | §1, §2, §5                                         |  [ ]   |
 | 💎  |   8   | §5 MediaTek MT7921/MT7922 PCIe driver                                          | §1, §2, §5                                         |  [ ]   |
-| 💎  |   9   | §9 WiFi power management — PS-Poll, wake-on-WLAN                              | §3 (associated), TODO-04 §7 ACPI S3                |  [ ]   |
+| 💎  |   9   | §9 WiFi power management -- PS-Poll, wake-on-WLAN                              | §3 (associated), TODO-04 §7 ACPI S3                |  [ ]   |
 | 💎  |  10   | §10 `ncpa.cpl` WiFi tab + `netsh wlan` commands                               | §3 (scan/connect API), §5 (WPA2)                   |  [ ]   |
 
-> §1 `wifi_device_t` is `⭐` exclusive by architecture: Windows uses NDIS 6.x miniport with a fixed DDI; Linux uses `mac80211` + `cfg80211`. Impossible OS defines a lean 7-function vtable that any driver can satisfy, with `wifi_manager.c` as the single ownership point for scan results, preferred networks, and syscall dispatch — no kernel socket layer or `wpa_supplicant` daemon required.
+> §1 `wifi_device_t` is `⭐` exclusive by architecture: Windows uses NDIS 6.x miniport with a fixed DDI; Linux uses `mac80211` + `cfg80211`. Impossible OS defines a lean 7-function vtable that any driver can satisfy, with `wifi_manager.c` as the single ownership point for scan results, preferred networks, and syscall dispatch -- no kernel socket layer or `wpa_supplicant` daemon required.
 
 ---
 
@@ -51,7 +51,7 @@ Define `wifi_device_t` vtable and `wifi_manager.c` singleton. Expose `SYS_WIFI_S
 **Files:** `include/kernel/net/wifi_device.h` (new), `src/kernel/net/wifi_manager.c` (new)
 
 > [!NOTE]
-> `wifi_manager.c` is the single source of truth for WiFi state. It owns the `wifi_scan_results[]` list, the current `wifi_state_t` FSM state, and the `active_device` pointer. No other code modifies WiFi state directly — all changes go through `wifi_manager_*` functions. This is the equivalent of Windows `WLAN AutoConfig Service` but in-kernel without a service daemon.
+> `wifi_manager.c` is the single source of truth for WiFi state. It owns the `wifi_scan_results[]` list, the current `wifi_state_t` FSM state, and the `active_device` pointer. No other code modifies WiFi state directly -- all changes go through `wifi_manager_*` functions. This is the equivalent of Windows `WLAN AutoConfig Service` but in-kernel without a service daemon.
 
 - [ ] Define:
   ```c
@@ -65,13 +65,13 @@ Define `wifi_device_t` vtable and `wifi_manager.c` singleton. Expose `SYS_WIFI_S
       void (*rx_poll)(void);
   } wifi_device_t;
   ```
-- [ ] `wifi_manager_register(wifi_device_t *dev)` — set active device; called from driver probe
+- [ ] `wifi_manager_register(wifi_device_t *dev)` -- set active device; called from driver probe
 - [ ] `wifi_state_t` enum: `WIFI_DISCONNECTED`, `WIFI_SCANNING`, `WIFI_AUTHENTICATING`, `WIFI_ASSOCIATING`, `WIFI_4WAY_HANDSHAKE`, `WIFI_CONNECTED`
-- [ ] `wifi_scan_result_t { char ssid[33]; uint8_t bssid[6]; int8_t rssi; uint8_t channel; wifi_security_t security; }` — up to 32 results in `g_scan_results[]`
+- [ ] `wifi_scan_result_t { char ssid[33]; uint8_t bssid[6]; int8_t rssi; uint8_t channel; wifi_security_t security; }` -- up to 32 results in `g_scan_results[]`
 - [ ] Registry: `HKLM\SYSTEM\Network\WiFi\AutoConnect (REG_DWORD)`, `HKLM\SYSTEM\Network\WiFi\PreferredNetworks` (multi-string: `SSID\0passphrase\0...`)
 - [ ] Syscalls: `SYS_WIFI_SCAN(callback_fn)`, `SYS_WIFI_CONNECT(ssid, passphrase, security)`, `SYS_WIFI_DISCONNECT()`, `SYS_WIFI_STATUS(out_buf)` → fills `wifi_status_t { state, ssid, bssid, rssi, channel, ip }`
 - [ ] Auto-connect on boot: after scan completes, compare `ssid` against `PreferredNetworks` list; if match and `AutoConnect=1`, call `wifi_manager_connect()`
-- [ ] Commit: `"net: wifi_device_t abstraction — vtable, wifi_manager.c, SYS_WIFI_* syscalls, preferred networks"`
+- [ ] Commit: `"net: wifi_device_t abstraction -- vtable, wifi_manager.c, SYS_WIFI_* syscalls, preferred networks"`
 
 ## 2. RTL8188 / RTL8192 USB WiFi Driver `[Opus]`
 
@@ -90,11 +90,11 @@ Implement USB WiFi for Realtek RTL8188EUS/RTL8192EU/RTL8812AU. Upload embedded f
 - [ ] Channel set: write `REG_CCK_CHECK (0x454)` RF channel frequency via `rtl8188_rf_write(path, reg, val)` (3-wire SPI via registers `RF_DATA/RF_CTRL`)
 - [ ] Register `wifi_device_t rtl8188_ops` via `wifi_manager_register()`
 - [ ] Boot log: `[RTL8188] USB WiFi %04x:%04x FW ready, MAC %02x:%02x:...`
-- [ ] Commit: `"drivers: RTL8188EUS USB WiFi — firmware upload, bulk RX/TX, channel set, MAC read"`
+- [ ] Commit: `"drivers: RTL8188EUS USB WiFi -- firmware upload, bulk RX/TX, channel set, MAC read"`
 
 ## 3. RTL8821CE / RTL8822BE PCIe WiFi Driver `[Opus]`
 
-Implement PCIe WiFi for RTL8821CE and RTL8822BE — the most common WiFi chipset in 2018–2023 laptops. BAR0 MMIO. Load firmware from VFS. DMA descriptor rings for RX/TX. PCIe MSI IRQ for RX.
+Implement PCIe WiFi for RTL8821CE and RTL8822BE -- the most common WiFi chipset in 2018–2023 laptops. BAR0 MMIO. Load firmware from VFS. DMA descriptor rings for RX/TX. PCIe MSI IRQ for RX.
 
 **Files:** `src/kernel/drivers/rtl8821ce.c` (new), `include/kernel/drivers/rtl8821ce.h` (new)
 
@@ -110,16 +110,16 @@ Implement PCIe WiFi for RTL8821CE and RTL8822BE — the most common WiFi chipset
 - [ ] Channel/RF: write channel frequency to `REG_RFPGA0_ANALOGPARAMETER4` and related RF registers (RTL8821C RF table from datasheet)
 - [ ] Register `wifi_device_t rtl8821ce_ops`
 - [ ] Boot log: `[RTL8821CE] PCIe WiFi BAR0 0x%lx FW ready, MAC %02x:%02x:...`
-- [ ] Commit: `"drivers: RTL8821CE PCIe WiFi — MMIO, firmware load from VFS, DMA rings, MSI IRQ"`
+- [ ] Commit: `"drivers: RTL8821CE PCIe WiFi -- MMIO, firmware load from VFS, DMA rings, MSI IRQ"`
 
 ## 4. Intel AX200 / AX210 iwlwifi PCIe Driver `[Opus]`
 
-Implement Intel iwlwifi for AX200 and AX210 — the most prevalent WiFi chipset in modern x86-64 laptops (>40% market share). BAR0 MMIO transport layer. Load `iwlwifi-cc-a0-72.ucode` (BSD-licensed) from VFS. Firmware command/response protocol.
+Implement Intel iwlwifi for AX200 and AX210 -- the most prevalent WiFi chipset in modern x86-64 laptops (>40% market share). BAR0 MMIO transport layer. Load `iwlwifi-cc-a0-72.ucode` (BSD-licensed) from VFS. Firmware command/response protocol.
 
 **Files:** `src/kernel/drivers/iwlwifi.c` (new), `include/kernel/drivers/iwlwifi.h` (new)
 
 > [!IMPORTANT]
-> Intel iwlwifi firmware is BSD-2-Clause licensed (redistributable). Source: Intel Linux firmware repository `git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git`. Firmware file: `iwlwifi-cc-a0-72.ucode` (AX200) or `iwlwifi-ty-a0-gf-a0-72.ucode` (AX210). The host-command interface is derived from public Intel driver documentation (iwlwifi transport spec) — **not** from the GPL `drivers/net/wireless/intel/iwlwifi/` source. Add to `NOTICE.md`: firmware BSD-2, driver clean-room.
+> Intel iwlwifi firmware is BSD-2-Clause licensed (redistributable). Source: Intel Linux firmware repository `git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git`. Firmware file: `iwlwifi-cc-a0-72.ucode` (AX200) or `iwlwifi-ty-a0-gf-a0-72.ucode` (AX210). The host-command interface is derived from public Intel driver documentation (iwlwifi transport spec) -- **not** from the GPL `drivers/net/wireless/intel/iwlwifi/` source. Add to `NOTICE.md`: firmware BSD-2, driver clean-room.
 
 - [ ] PCI match: `{ 0x8086, 0x2723 }` (AX200), `{ 0x8086, 0x51F0 }` (AX211), `{ 0x8086, 0x2725 }` (AX210); class `0x0280`
 - [ ] BAR0 MMIO; `iwl_write32(offset, val)` / `iwl_read32(offset)` wrappers
@@ -127,16 +127,16 @@ Implement Intel iwlwifi for AX200 and AX210 — the most prevalent WiFi chipset 
 - [ ] Transport init: write firmware to DMA buffer; `iwl_write32(CSR_RESET, CSR_RESET_REG_FLAG_SW_RESET)`; wait `HW_IF_CONFIG_REG.NIC_READY`; raise `INTERRUPT_ENABLE` register
 - [ ] Host command ring (TXQ 0): 256-entry TX descriptors for `WIDE_ID` commands; `iwl_send_cmd(opcode, params, len)` enqueues command TRB; waits for RX response ring notification
 - [ ] Key commands: `MVM_ALIVE` (verify firmware alive); `PHY_CONFIGURATION_CMD` (set channel/band); `SCAN_OFFLOAD_REQUEST_CMD` (passive/active scan); `MAC_CONTEXT_CMD` (BSSID association); `ADD_STA_CMD` (peer station for AP)
-- [ ] RX ring: 512-entry descriptors; `iwl_rx_handler`: demux by `pkt_type` — `FRAME_RELEASE` → call `wifi_rx_frame()`, `SCAN_COMPLETE` → notify scan callback
+- [ ] RX ring: 512-entry descriptors; `iwl_rx_handler`: demux by `pkt_type` -- `FRAME_RELEASE` → call `wifi_rx_frame()`, `SCAN_COMPLETE` → notify scan callback
 - [ ] No QEMU native emulation → document USB WiFi passthrough as the test path: `qemu -usb -device usb-host,vendorid=0x8086,productid=0x2723`
 - [ ] Register `wifi_device_t iwlwifi_ops`
 - [ ] Add to `NOTICE.md`: firmware BSD-2 (Intel), driver clean-room
 - [ ] Boot log: `[iwlwifi] AX200/AX210 FW v%u.%u, MAC %02x:%02x:...`
-- [ ] Commit: `"drivers: iwlwifi — AX200/AX210 transport, ucode load, host command ring, RX demux"`
+- [ ] Commit: `"drivers: iwlwifi -- AX200/AX210 transport, ucode load, host command ring, RX demux"`
 
 ## 5. MediaTek MT7921 / MT7922 PCIe WiFi Driver `[Sonnet]`
 
-Implement PCIe WiFi for MT7921/MT7922 — common in AMD Ryzen laptops (ASUS, MSI, Lenovo). WFDMA (WiFi DMA) TX/RX rings. Load firmware from MediaTek open-source firmware project.
+Implement PCIe WiFi for MT7921/MT7922 -- common in AMD Ryzen laptops (ASUS, MSI, Lenovo). WFDMA (WiFi DMA) TX/RX rings. Load firmware from MediaTek open-source firmware project.
 
 **Files:** `src/kernel/drivers/mt7921.c` (new), `include/kernel/drivers/mt7921.h` (new)
 
@@ -153,16 +153,16 @@ Implement PCIe WiFi for MT7921/MT7922 — common in AMD Ryzen laptops (ASUS, MSI
 - [ ] Channel set via `MT_CHANNEL_FREQ_SEL` register and band select
 - [ ] Register `wifi_device_t mt7921_ops`; add firmware to `NOTICE.md` (MIT)
 - [ ] Boot log: `[MT7921] PCIe WiFi FW ready, MAC %02x:%02x:...`
-- [ ] Commit: `"drivers: MT7921/MT7922 PCIe WiFi — WFDMA rings, MediaTek open firmware, MIT license"`
+- [ ] Commit: `"drivers: MT7921/MT7922 PCIe WiFi -- WFDMA rings, MediaTek open firmware, MIT license"`
 
-## 6. WPA2-PSK Supplicant — EAPOL 4-Way Handshake + CCMP `[Opus]`
+## 6. WPA2-PSK Supplicant -- EAPOL 4-Way Handshake + CCMP `[Opus]`
 
 Implement the WPA2-PSK 4-way EAPOL handshake and AES-128-CCM (CCMP) per-frame decryption. Security-critical code: constant-time MIC comparison, no timing side-channels in key derivation.
 
 **Files:** `src/kernel/net/wpa2.c` (new), `include/kernel/net/wpa2.h` (new), `src/kernel/crypto/aes_ccm.c` (new), `src/kernel/crypto/pbkdf2.c` (new), `src/kernel/crypto/hmac_sha1.c` (new)
 
 > [!IMPORTANT]
-> All cryptographic comparisons (MIC verification, PTK comparison) **must** use `memcmp_constant_time(a, b, len)` — a volatile byte-by-byte loop that cannot be optimised away. Use `hwrng_read()` (TODO-11 §1) for `SNonce` generation. Do not use any GPL-licensed crypto implementation — implement from NIST FIPS publications (PBKDF2 = RFC 2898, HMAC-SHA1 = RFC 2202, AES-CCM = NIST SP 800-38C).
+> All cryptographic comparisons (MIC verification, PTK comparison) **must** use `memcmp_constant_time(a, b, len)` -- a volatile byte-by-byte loop that cannot be optimised away. Use `hwrng_read()` (TODO-11 §1) for `SNonce` generation. Do not use any GPL-licensed crypto implementation -- implement from NIST FIPS publications (PBKDF2 = RFC 2898, HMAC-SHA1 = RFC 2202, AES-CCM = NIST SP 800-38C).
 
 - [ ] `wpa2_derive_pmk(passphrase, ssid, pmk_out[32])`: PBKDF2-SHA1 with 4096 iterations; output 256-bit PMK
 - [ ] `wpa2_derive_ptk(pmk, aa, spa, anonce, snonce, ptk_out[64])`: PRF-512 = `HMAC-SHA1(PMK, "Pairwise key expansion" || min(AA,SPA) || max(AA,SPA) || ANonce || SNonce)` iterated; KCK=ptk[0:16], KEK=ptk[16:32], TK=ptk[32:48]
@@ -175,7 +175,7 @@ Implement the WPA2-PSK 4-way EAPOL handshake and AES-128-CCM (CCMP) per-frame de
 - [ ] `aes_ccm_encrypt(TK, PN, AAD, plaintext, ciphertext, len)` for TX
 - [ ] `detect_eapol(frame)`: check LLC/SNAP ethertype `0x888E`; dispatch to `wpa2_handle_eapol(frame, len)`
 - [ ] Key installation: `wifi_install_keys(bssid, ptk, gtk)` writes TK to hardware key table via driver-specific register (or software decrypt path if no hardware offload)
-- [ ] Commit: `"net: WPA2-PSK supplicant — PBKDF2/HMAC-SHA1 PMK/PTK, EAPOL 4-way, AES-128-CCM CCMP"`
+- [ ] Commit: `"net: WPA2-PSK supplicant -- PBKDF2/HMAC-SHA1 PMK/PTK, EAPOL 4-way, AES-128-CCM CCMP"`
 
 ## 7. 802.11 Frame Layer `[Sonnet]`
 
@@ -193,7 +193,7 @@ Parse and build IEEE 802.11 data frames. Strip the 802.11 header + LLC/SNAP on R
 - [ ] Management frames: `wifi_send_probe_request(ssid, ssid_len)`: FC=`0x0040` (PROBE_REQ); Addr1=broadcast, Addr2=own, Addr3=broadcast; body = SSID IE + supported rates IE
 - [ ] `wifi_send_auth(bssid)`: FC=`0x00B0`; algo=0 (open), seq=1, status=0
 - [ ] `wifi_send_assoc_req(bssid, ssid, ssid_len, rsn_ie)`: FC=`0x0000`; capability=`0x0431`; SSID IE + supported rates IE + RSN IE
-- [ ] Commit: `"net: 802.11 frame layer — RX strip/deliver, TX header build, LLC/SNAP, mgmt frames"`
+- [ ] Commit: `"net: 802.11 frame layer -- RX strip/deliver, TX header build, LLC/SNAP, mgmt frames"`
 
 ## 8. WiFi Scan & Association State Machine `[Opus]`
 
@@ -211,7 +211,7 @@ Implement `wifi_scan()` (channel sweep with probe requests) and `wifi_connect()`
 - [ ] Retry: on any state timeout (2 s), retry up to 3×; on 3× failure: `DISCONNECTED`; log `[WiFi] Connect failed: %s`
 - [ ] Auto-reconnect: if `AutoConnect=1` and SSID in `PreferredNetworks`, schedule reconnect after 10 s disconnect
 - [ ] Boot log: `[WiFi] Scanning... found %u networks`; `[WiFi] Connected to %s (ch %u, RSSI %d dBm)`
-- [ ] Commit: `"net: WiFi scan+association SM — channel sweep, auth/assoc/WPA2/DHCP, retry, auto-reconnect"`
+- [ ] Commit: `"net: WiFi scan+association SM -- channel sweep, auth/assoc/WPA2/DHCP, retry, auto-reconnect"`
 
 ## 9. WiFi Power Management `[Sonnet]`
 
@@ -220,7 +220,7 @@ Implement 802.11 Power Save Poll (PS-Poll) after association: set the Power Mana
 **Files:** `src/kernel/net/wifi_manager.c` (extend), `src/kernel/drivers/rtl8821ce.c` / `iwlwifi.c` / `mt7921.c` (extend)
 
 > [!NOTE]
-> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §2` — ACPI S3 suspend/resume is the platform suspend path; Wake-on-WLAN requires configuring the NIC to assert a wake signal on a matching Magic Packet while the system is in S3. Each NIC driver must save/restore register state across S3.
+> → XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md §2` -- ACPI S3 suspend/resume is the platform suspend path; Wake-on-WLAN requires configuring the NIC to assert a wake signal on a matching Magic Packet while the system is in S3. Each NIC driver must save/restore register state across S3.
 
 - [ ] `wifi_set_powersave(enable)`: if `enable`: set `FC.PM=1` on all subsequent data/null frames; send `NULL_FUNC` frame with `PM=1` to notify AP; AP starts buffering
 - [ ] PS-Poll wake: on DTIM beacon received (AP signals buffered frames via TIM IE), send `PS_POLL` control frame to retrieve buffered frame; repeat until TIM cleared
@@ -228,7 +228,7 @@ Implement 802.11 Power Save Poll (PS-Poll) after association: set the Power Mana
 - [ ] `wifi_resume()`: called from ACPI S3 resume; restore NIC register state; re-send `NULL_FUNC` with `PM=0`; re-associate if `DEAUTH` was received during sleep
 - [ ] Per-driver `wifi_device_t.suspend/resume` ops added: `int (*suspend)(void)`, `void (*resume)(void)`
 - [ ] `wifi_set_powersave` Registry key: `HKLM\SYSTEM\Network\WiFi\PowerSave (REG_DWORD, default 1)`
-- [ ] Commit: `"net: WiFi power management — PS-Poll, wake-on-WLAN, S3 register save/restore"`
+- [ ] Commit: `"net: WiFi power management -- PS-Poll, wake-on-WLAN, S3 register save/restore"`
 
 ## 10. `ncpa.cpl` WiFi Tab + `netsh wlan` Commands `[Sonnet]`
 
@@ -237,7 +237,7 @@ Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/D
 **Files:** `src/desktop/ncpa_cpl.c` (extend or new WiFi tab), `src/shell/cmd_netsh.c` (extend)
 
 > [!NOTE]
-> → XREF: `09-services-security/TODO-02` — `ncpa.cpl` base window infrastructure is defined there; this section adds the WiFi tab. The WiFi tab only appears if `wifi_manager_get_device() != NULL` (WiFi hardware present). Signal strength bars: map RSSI dBm to 0–4 bars: `< -80 dBm = 0`, `-80..-70 = 1`, `-70..-60 = 2`, `-60..-50 = 3`, `>= -50 = 4`.
+> → XREF: `09-services-security/TODO-02` -- `ncpa.cpl` base window infrastructure is defined there; this section adds the WiFi tab. The WiFi tab only appears if `wifi_manager_get_device() != NULL` (WiFi hardware present). Signal strength bars: map RSSI dBm to 0–4 bars: `< -80 dBm = 0`, `-80..-70 = 1`, `-70..-60 = 2`, `-60..-50 = 3`, `>= -50 = 4`.
 
 - [ ] WiFi tab: scan-results list box with columns `SSID | Security | Signal (bars) | Channel`; auto-refresh scan every 30 s
 - [ ] "Connect" button: if security != OPEN, show passphrase input dialog; call `SYS_WIFI_CONNECT(ssid, passphrase, security)`; poll `SYS_WIFI_STATUS` every 500 ms; show progress: "Connecting…" → "Obtaining IP…" → "Connected"
@@ -249,7 +249,7 @@ Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/D
 - [ ] `netsh wlan connect ssid="..." key="..."`: call `SYS_WIFI_CONNECT`; poll status; print `Connection request was completed successfully.`
 - [ ] `netsh wlan disconnect`: call `SYS_WIFI_DISCONNECT`
 - [ ] `netsh wlan show profiles`: list `PreferredNetworks` Registry entries
-- [ ] Commit: `"desktop: ncpa.cpl WiFi tab + netsh wlan — scan list, connect dialog, signal bars, profiles"`
+- [ ] Commit: `"desktop: ncpa.cpl WiFi tab + netsh wlan -- scan list, connect dialog, signal bars, profiles"`
 
 ---
 
@@ -258,18 +258,18 @@ Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/D
 
 | ⭐ | Feature                                        | 🪟 Win11                                                              | 🐧 Linux                                               | 🚀 Impossible OS                                                              |
 |----|------------------------------------------------|--------------------------------------------------------------------|-----------------------------------------------------|----------------------------------------------------------------------------|
-| ⭐ | WiFi driver vtable                             | ❌ NDIS 6.x miniport DDI —                                         | ❌ `mac80211` + `cfg80211` — two-layer              | ⬜ §1 — 7-function vtable, `wifi_manager.c` singleton, no                  |
-| 💎 | Realtek RTL8188/8192 USB WiFi                  | ✅ `rtwlane.sys` inbox; some via WU                                | ✅ `rtl8xxxu.c`; embedded firmware; USB bulk        | ⬜ §2 — firmware embed, USB control upload,                                |
-| 💎 | Realtek RTL8821CE/8822BE PCIe WiFi             | ✅ `rtwlane6.sys` inbox                                            | ✅ `rtw88_8821ce.c`; DMA rings; MSI IRQ;            | ⬜ §3 — MMIO, VFS firmware load, DMA                                       |
-| 💎 | Intel AX200/AX210 WiFi 6                       | ✅ `iwifi65.sys` inbox driver                                      | ✅ `iwlwifi` GPL + BSD ucode;                       | ⬜ §4 — BSD ucode, clean-room transport, host                              |
-| 💎 | MediaTek MT7921/MT7922                         | ✅ `netvwifibus.inf` via WU                                        | ✅ `mt7921e.c`; WFDMA rings; MIT firmware           | ⬜ §5 — WFDMA rings, MIT firmware, PCIe                                    |
-| 💎 | WPA2-PSK 4-way handshake + CCMP decrypt        | ✅ `dot11krnl.sys`; WPA2 in kernel; `wlansvc`                      | ✅ `mac80211` CCMP; `wpa_supplicant` user-space for | ⬜ §6 — PBKDF2+HMAC-SHA1+AES-CCM all in kernel; no                         |
-| 💎 | 802.11 frame layer                             | ✅ `dot11krnl.sys` 802.11 frame processing                         | ✅ `ieee80211_rx_napi()` in `mac80211`              | ⬜ §7 — `ieee80211_hdr_t`, LLC/SNAP strip, `net_receive_ethernet` delivery |
-| 💎 | WiFi scan + association state machine          | ✅ `wlansvc` AutoConfig; `WLAN_CONNECTION_NOTIFICATION`            | ✅ `wpa_supplicant`; `cfg80211` scan; `iw` commands | ⬜ §8 — channel sweep, auth/assoc/WPA2/DHCP SM, auto-reconnect,            |
-| 💎 | 802.11 PS-Poll power management + wake-on-WLAN | ✅ NDIS selective suspend; `NdisMIndicateStatus(WLAN_POWER_STATE)` | ✅ `mac80211` PS mode; `rfkill`; wake-on-WLAN       | ⬜ §9 — PS-Poll PM bit, DTIM wake,                                         |
-| 💎 | WiFi UI                                        | ✅ WiFi tray flyout; Settings WiFi                                 | ✅ `nm-applet`; `nmcli`; GNOME WiFi settings        | ⬜ §10 — `ncpa.cpl` WiFi tab, passphrase dialog,                           |
+| ⭐ | WiFi driver vtable                             | ❌ NDIS 6.x miniport DDI --                                         | ❌ `mac80211` + `cfg80211` -- two-layer              | ⬜ §1 -- 7-function vtable, `wifi_manager.c` singleton, no                  |
+| 💎 | Realtek RTL8188/8192 USB WiFi                  | ✅ `rtwlane.sys` inbox; some via WU                                | ✅ `rtl8xxxu.c`; embedded firmware; USB bulk        | ⬜ §2 -- firmware embed, USB control upload,                                |
+| 💎 | Realtek RTL8821CE/8822BE PCIe WiFi             | ✅ `rtwlane6.sys` inbox                                            | ✅ `rtw88_8821ce.c`; DMA rings; MSI IRQ;            | ⬜ §3 -- MMIO, VFS firmware load, DMA                                       |
+| 💎 | Intel AX200/AX210 WiFi 6                       | ✅ `iwifi65.sys` inbox driver                                      | ✅ `iwlwifi` GPL + BSD ucode;                       | ⬜ §4 -- BSD ucode, clean-room transport, host                              |
+| 💎 | MediaTek MT7921/MT7922                         | ✅ `netvwifibus.inf` via WU                                        | ✅ `mt7921e.c`; WFDMA rings; MIT firmware           | ⬜ §5 -- WFDMA rings, MIT firmware, PCIe                                    |
+| 💎 | WPA2-PSK 4-way handshake + CCMP decrypt        | ✅ `dot11krnl.sys`; WPA2 in kernel; `wlansvc`                      | ✅ `mac80211` CCMP; `wpa_supplicant` user-space for | ⬜ §6 -- PBKDF2+HMAC-SHA1+AES-CCM all in kernel; no                         |
+| 💎 | 802.11 frame layer                             | ✅ `dot11krnl.sys` 802.11 frame processing                         | ✅ `ieee80211_rx_napi()` in `mac80211`              | ⬜ §7 -- `ieee80211_hdr_t`, LLC/SNAP strip, `net_receive_ethernet` delivery |
+| 💎 | WiFi scan + association state machine          | ✅ `wlansvc` AutoConfig; `WLAN_CONNECTION_NOTIFICATION`            | ✅ `wpa_supplicant`; `cfg80211` scan; `iw` commands | ⬜ §8 -- channel sweep, auth/assoc/WPA2/DHCP SM, auto-reconnect,            |
+| 💎 | 802.11 PS-Poll power management + wake-on-WLAN | ✅ NDIS selective suspend; `NdisMIndicateStatus(WLAN_POWER_STATE)` | ✅ `mac80211` PS mode; `rfkill`; wake-on-WLAN       | ⬜ §9 -- PS-Poll PM bit, DTIM wake,                                         |
+| 💎 | WiFi UI                                        | ✅ WiFi tray flyout; Settings WiFi                                 | ✅ `nm-applet`; `nmcli`; GNOME WiFi settings        | ⬜ §10 -- `ncpa.cpl` WiFi tab, passphrase dialog,                           |
 
-> **After §1–10:** Impossible OS covers the four most prevalent laptop WiFi chipsets (Realtek USB, Realtek PCIe, Intel AX200/AX210, MediaTek MT7921) plus complete WPA2-PSK in kernel. The `wifi_device_t` vtable (`⭐`) is the differentiating architecture: the entire WiFi stack — scan, association, 4-way handshake, CCMP decryption, DHCP — runs in the kernel without a `wpa_supplicant` daemon or NDIS intermediate driver. This eliminates the 50–200 ms handshake delays caused by user-space daemon round-trips in Linux and the NDIS miniport marshalling overhead in Windows.
+> **After §1–10:** Impossible OS covers the four most prevalent laptop WiFi chipsets (Realtek USB, Realtek PCIe, Intel AX200/AX210, MediaTek MT7921) plus complete WPA2-PSK in kernel. The `wifi_device_t` vtable (`⭐`) is the differentiating architecture: the entire WiFi stack -- scan, association, 4-way handshake, CCMP decryption, DHCP -- runs in the kernel without a `wpa_supplicant` daemon or NDIS intermediate driver. This eliminates the 50–200 ms handshake delays caused by user-space daemon round-trips in Linux and the NDIS miniport marshalling overhead in Windows.
 
 ## Verification
 
@@ -283,4 +283,4 @@ Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/D
 - [ ] PS-Poll: `wifi_set_powersave(true)` → `NULL_FUNC PM=1` sent; AP buffers; DTIM wakes station; frames delivered
 - [ ] `ncpa.cpl`: WiFi tab visible; scan shows SSIDs with signal bars; Connect → passphrase → progress → Connected; Forget removes from PreferredNetworks
 - [ ] `netsh wlan show profiles`: lists saved network SSID
-- [ ] Commit: `"drivers+net: WiFi hardware layer — RTL8188/8821CE, iwlwifi, MT7921, WPA2, scan/connect SM"`
+- [ ] Commit: `"drivers+net: WiFi hardware layer -- RTL8188/8821CE, iwlwifi, MT7921, WPA2, scan/connect SM"`

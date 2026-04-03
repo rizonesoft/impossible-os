@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# write-usb.sh — Write Impossible OS to a USB flash drive (Linux/WSL)
+# write-usb.sh -- Write Impossible OS to a USB flash drive (Linux/WSL)
 #
 # Writes the raw system-disk.img directly to a USB block device.
 # The image already contains a GPT partition table with EFI + System + Logs.
@@ -44,7 +44,7 @@ IMG_SIZE=$(stat -c%s "$DISK_IMG")
 IMG_SIZE_MB=$((IMG_SIZE / 1048576))
 
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Impossible OS — USB Writer (Linux)${NC}"
+echo -e "${CYAN}  Impossible OS -- USB Writer (Linux)${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  ${DIM}Image: $DISK_IMG (${IMG_SIZE_MB} MB)${NC}"
@@ -73,7 +73,7 @@ while IFS= read -r line; do
         USB_DEVS+=("/dev/$dev")
         USB_NAMES+=("$model")
         USB_SIZES+=("$size")
-        echo -e "  ${CYAN}[$FOUND]${NC} /dev/$dev — $model ($size)"
+        echo -e "  ${CYAN}[$FOUND]${NC} /dev/$dev -- $model ($size)"
     fi
 done < <(lsblk -d -n -o NAME,SIZE,TRAN,RM,MODEL 2>/dev/null | grep -v "^loop\|^sr\|^ram")
 
@@ -116,7 +116,7 @@ echo -e "${RED}  ║  WARNING: ALL DATA ON THIS DRIVE WILL BE    ║${NC}"
 echo -e "${RED}  ║           PERMANENTLY DESTROYED!             ║${NC}"
 echo -e "${RED}  ╚══════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${YELLOW}Target: $TARGET_DEV — $TARGET_NAME ($TARGET_SIZE)${NC}"
+echo -e "  ${YELLOW}Target: $TARGET_DEV -- $TARGET_NAME ($TARGET_SIZE)${NC}"
 echo -e "  ${DIM}Image:  ${IMG_SIZE_MB} MB${NC}"
 echo ""
 
@@ -129,7 +129,7 @@ fi
 dev_basename=$(basename "$TARGET_DEV")
 read -rp "  Type the device name '$dev_basename' to confirm: " confirm2
 if [ "$confirm2" != "$dev_basename" ]; then
-    echo -e "${YELLOW}Cancelled — device name mismatch.${NC}"
+    echo -e "${YELLOW}Cancelled -- device name mismatch.${NC}"
     exit 0
 fi
 

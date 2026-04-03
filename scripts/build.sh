@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh — Build wrapper with progress bar, timing, and error extraction.
+# build.sh -- Build wrapper with progress bar, timing, and error extraction.
 #
 # Usage:
 #   bash scripts/build.sh              Incremental build (only changed files)
@@ -183,7 +183,7 @@ run_kernel_step() {
                 draw_progress "$compiled" "$src_total" "$fname"
                 ;;
             "[LD]"*|"[KERNEL]"*)
-                # Linker/kernel steps — show at 100% without incrementing count
+                # Linker/kernel steps -- show at 100% without incrementing count
                 draw_progress "$src_total" "$src_total" "Linking..."
                 ;;
             *)
@@ -243,7 +243,7 @@ BUILD_START=$(date +%s.%N)
 
 # Header
 echo "" > "$LOG"
-printf '\n%b Impossible OS — Build System%b\n' "${BOLD}${CYAN}" "$RESET" | tee -a "$LOG"
+printf '\n%b Impossible OS -- Build System%b\n' "${BOLD}${CYAN}" "$RESET" | tee -a "$LOG"
 printf ' %b%s  (%d parallel jobs)%b\n\n' "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$JOBS" "$RESET" | tee -a "$LOG"
 
 # Step counter
@@ -258,7 +258,7 @@ fi
 if $DO_CLEAN; then
     STEP=$((STEP + 1))
     run_step $STEP $TOTAL "Clean" "clean" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
-    # make clean removes build/ — re-create it for the log file
+    # make clean removes build/ -- re-create it for the log file
     mkdir -p build
     echo "" > "$LOG"
 fi

@@ -1,19 +1,19 @@
-# TODO-03 — Boot Device Discovery & Fallback Chain
+# TODO-03 -- Boot Device Discovery & Fallback Chain
 
-> **Goal:** The bootloader must correctly identify which device it booted from, load the kernel from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. Current code uses `LocateProtocol()` which returns an arbitrary filesystem — on multi-disk systems this loads the kernel from the wrong device. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search. This TODO implements proper boot device identification and a fallback chain so the OS boots reliably on any hardware configuration.
+> **Goal:** The bootloader must correctly identify which device it booted from, load the kernel from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. Current code uses `LocateProtocol()` which returns an arbitrary filesystem -- on multi-disk systems this loads the kernel from the wrong device. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search. This TODO implements proper boot device identification and a fallback chain so the OS boots reliably on any hardware configuration.
 
 > [!IMPORTANT]
-> **Current state:** `load_kernel()` calls `LocateProtocol(SIMPLE_FILE_SYSTEM)` which returns the FIRST filesystem protocol handle registered by firmware — not necessarily the boot device. On systems with multiple disks (SATA + USB), the kernel may be loaded from the wrong partition. `parse_boot_conf()` has the same issue. No boot device priority, no fallback if primary device fails.
+> **Current state:** `load_kernel()` calls `LocateProtocol(SIMPLE_FILE_SYSTEM)` which returns the FIRST filesystem protocol handle registered by firmware -- not necessarily the boot device. On systems with multiple disks (SATA + USB), the kernel may be loaded from the wrong partition. `parse_boot_conf()` has the same issue. No boot device priority, no fallback if primary device fails.
 
 ---
 
 ## Inputs
 
-- `src/boot/uefi/bootx64.c` — `load_kernel()` and `parse_boot_conf()` filesystem access
-- `include/kernel/boot_info.h` — boot_info struct (needs boot device info)
-- → XREF: `TODO-01-uefi-hardening-secureboot.md §8` — multi-OS detection and boot menu
-- → XREF: `TODO-02-bootloader-error-recovery.md §3` — fallback kernel search paths
-- → XREF: `TODO-10-xhci-usb-boot.md §5` — USB device handover
+- `src/boot/uefi/bootx64.c` -- `load_kernel()` and `parse_boot_conf()` filesystem access
+- `include/kernel/boot_info.h` -- boot_info struct (needs boot device info)
+- → XREF: `TODO-01-uefi-hardening-secureboot.md §8` -- multi-OS detection and boot menu
+- → XREF: `TODO-02-bootloader-error-recovery.md §3` -- fallback kernel search paths
+- → XREF: `TODO-10-xhci-usb-boot.md §5` -- USB device handover
 
 ---
 
@@ -31,15 +31,15 @@
 
 | ⭐  | Order | Deliverable                                       | Depends On    | Status |
 | --- | :---: | ------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   | Boot device identification via LoadedImage         | —             |  [ ]   |
+| 💎  |   1   | Boot device identification via LoadedImage         | --             |  [ ]   |
 | 💎  |   2   | Filesystem access scoped to boot device            | §1            |  [ ]   |
 | 💎  |   3   | Boot device info in boot_info struct               | §1            |  [ ]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3            |  [ ]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4        |  [ ]   |
 | ⭐  |   6   | Boot device logging and diagnostics                | §1–§5         |  [ ]   |
 
-> 💎 = parity — Windows (BCD + device path) and Linux (GRUB device search) both do this.
-> ⭐ = exclusive — detailed boot device diagnostics logged to serial showing full enumeration.
+> 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
+> ⭐ = exclusive -- detailed boot device diagnostics logged to serial showing full enumeration.
 
 ---
 
@@ -48,7 +48,7 @@
 Use UEFI `EFI_LOADED_IMAGE_PROTOCOL` to find which device the bootloader was loaded from.
 
 - [ ] After `efi_main()` entry: call `HandleProtocol(ImageHandle, EFI_LOADED_IMAGE_PROTOCOL_GUID, &loaded_image)`
-- [ ] Extract `loaded_image->DeviceHandle` — this is the handle of the device the bootloader was loaded from
+- [ ] Extract `loaded_image->DeviceHandle` -- this is the handle of the device the bootloader was loaded from
 - [ ] Store `DeviceHandle` for use by `parse_boot_conf()` and `load_kernel()`
 - [ ] Log: `"[BOOT] Boot device: handle=0x%x"` on serial
 - [ ] Commit: `"boot: identify boot device via EFI_LOADED_IMAGE_PROTOCOL"`
@@ -62,14 +62,14 @@ Use UEFI `EFI_LOADED_IMAGE_PROTOCOL` to find which device the bootloader was loa
 Replace `LocateProtocol(SIMPLE_FILE_SYSTEM)` with `HandleProtocol(DeviceHandle, SIMPLE_FILE_SYSTEM)`.
 
 - [ ] In `parse_boot_conf()`: open filesystem from boot `DeviceHandle`, not global `LocateProtocol`
-- [ ] In `load_kernel()`: same change — use boot device filesystem
+- [ ] In `load_kernel()`: same change -- use boot device filesystem
 - [ ] If `DeviceHandle` doesn't have `SIMPLE_FILE_SYSTEM_PROTOCOL`: fall back to `LocateProtocol` with warning
 - [ ] Log: `"[BOOT] Using boot device filesystem"` or `"[WARN] Boot device has no filesystem, using fallback"`
-- [ ] Commit: `"boot: scope filesystem access to boot device — no more random disk"`
+- [ ] Commit: `"boot: scope filesystem access to boot device -- no more random disk"`
 
 **Test checkpoint:** On QEMU with single disk, behavior unchanged. On multi-disk (SATA + NVMe test), kernel loads from correct device.
 
-**Regression risk:** MEDIUM — changes how filesystem is located. If `DeviceHandle` is wrong, falls back to old behavior.
+**Regression risk:** MEDIUM -- changes how filesystem is located. If `DeviceHandle` is wrong, falls back to old behavior.
 
 ---
 
@@ -78,7 +78,7 @@ Replace `LocateProtocol(SIMPLE_FILE_SYSTEM)` with `HandleProtocol(DeviceHandle, 
 Pass boot device information to the kernel so it knows which device it booted from.
 
 - [ ] Add to `boot_info`: `uint8_t boot_device_type` (0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network)
-- [ ] Add to `boot_info`: `uint8_t boot_device_path[128]` — UEFI device path as text string
+- [ ] Add to `boot_info`: `uint8_t boot_device_path[128]` -- UEFI device path as text string
 - [ ] Populate from `DevicePathToText()` UEFI protocol (if available)
 - [ ] Kernel logs: `"[BOOT] Booted from: %s (type=%u)"` during boot_info parsing
 - [ ] Commit: `"boot: pass boot device type and path in boot_info"`
@@ -109,11 +109,11 @@ If the boot device's kernel is missing or corrupt, try other devices in priority
 - [ ] Priority order: boot device first → SATA/NVMe → USB → other
 - [ ] If kernel found on non-boot device: `"[WARN] Kernel not on boot device, using %s"` with device path
 - [ ] If no device has kernel: trigger boot failure screen (→ XREF: TODO-02 §9)
-- [ ] Commit: `"boot: device fallback chain — search all filesystems for kernel"`
+- [ ] Commit: `"boot: device fallback chain -- search all filesystems for kernel"`
 
 **Test checkpoint:** Remove kernel from SATA disk, leave it on USB. Boot from SATA → bootloader finds kernel on USB with warning.
 
-**Regression risk:** MEDIUM — iterates all filesystem handles. If enumeration is slow on firmware, adds boot time.
+**Regression risk:** MEDIUM -- iterates all filesystem handles. If enumeration is slow on firmware, adds boot time.
 
 ---
 
@@ -149,9 +149,9 @@ Log the full boot device enumeration to serial for debugging.
 > Kernel-side boot_info fields can be validated via kernel unit tests.
 
 - [ ] Add smoke test patterns to `scripts/test-smoke.sh`:
-  - Serial line `"[BOOT] Boot device: handle="` present (§1 — LoadedImage identification)
-  - Serial line `"[BOOT] Using boot device filesystem"` present (§2 — scoped filesystem access)
-  - Serial line `"[BOOT] Booted from:"` present (§3 — device path in boot_info)
+  - Serial line `"[BOOT] Boot device: handle="` present (§1 -- LoadedImage identification)
+  - Serial line `"[BOOT] Using boot device filesystem"` present (§2 -- scoped filesystem access)
+  - Serial line `"[BOOT] Booted from:"` present (§3 -- device path in boot_info)
 - [ ] Create `src/kernel/test/test_boot_device.c` with:
   - `boot_info.boot_device_type` is a valid enum value (0-4, not out of range)
   - `boot_info.boot_device_path` is non-empty (at least 1 character)
@@ -161,8 +161,8 @@ Log the full boot device enumeration to serial for debugging.
 
 ## Verification
 
-- [ ] **Multi-disk test**: QEMU with SATA + NVMe — kernel loads from correct device.
-- [ ] **USB boot test**: kernel on USB only — bootloader finds it, logs device type.
-- [ ] **Fallback test**: kernel missing from boot device — fallback finds it on another device.
+- [ ] **Multi-disk test**: QEMU with SATA + NVMe -- kernel loads from correct device.
+- [ ] **USB boot test**: kernel on USB only -- bootloader finds it, logs device type.
+- [ ] **Fallback test**: kernel missing from boot device -- fallback finds it on another device.
 - [ ] **Normal boot regression**: all platforms boot cleanly with new diagnostics in serial.
-- [ ] Commit: `"boot: boot device discovery complete — correct device, fallback chain, diagnostics"`
+- [ ] Commit: `"boot: boot device discovery complete -- correct device, fallback chain, diagnostics"`

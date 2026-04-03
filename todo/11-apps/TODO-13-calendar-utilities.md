@@ -1,4 +1,4 @@
-# TODO-13 — Calendar, Sticky Notes & Utility Apps
+# TODO-13 -- Calendar, Sticky Notes & Utility Apps
 
 > **Goal:** Deliver the remaining accessory suite: Calendar app with recurring events and
 > `.ics` export, Sticky Notes, standalone `sysinfo.exe`, On-Screen Keyboard, system-wide
@@ -9,10 +9,10 @@
 > **Source migration:** §5 (Calendar), §6 (System Info), §7 (On-Screen Keyboard),
 > §8 (Font Manager, Color Picker, Sticky Notes), §9 (Help/About) from
 > `todo-old/310-Core-Apps/TODO-370-Utility-Apps.md`.
-> **Delete `todo-old/310-Core-Apps/TODO-370-Utility-Apps.md` after creating this TODO** —
+> **Delete `todo-old/310-Core-Apps/TODO-370-Utility-Apps.md` after creating this TODO** --
 > all its sections are now migrated (§1 → TODO-11, §3–§4 → TODO-12, §5–§9 → here).
 >
-> **Scope overlaps — cross-reference, do not re-specify:**
+> **Scope overlaps -- cross-reference, do not re-specify:**
 > - Calendar base (Zeller grid, events pane, add-event dialog, taskbar flyout) →
 >   `08-desktop-shell/TODO-12-utilities.md §8`; this TODO adds **recurring events** and
 >   **`.ics` export** only.
@@ -27,26 +27,26 @@
 
 ## Inputs
 
-- `include/registry.h` — `reg_get/set_string`, `reg_delete_key`, `reg_enum_subkeys` — §1 events, §2 sticky persist, §5 color history
-- `include/kernel/time.h` — `time_now()`, `time_to_datetime()`, `time_format()` — §1 ICS timestamps, §2 auto-save
-- `include/desktop/wm.h` — `wm_create_window()`, `wm_set_flag(WM_FLAG_NO_FOCUS)`, `wm_set_flag(WM_FLAG_ALWAYS_ON_TOP)`, `wm_set_fullscreen()` — §2 §4 §5
-- `include/desktop/controls.h` — `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_STATUSBAR` — §2 §3 §4 §6 §7
-- `include/gfx.h` — `gfx_fill_rect()`, `gfx_draw_line()`, `gfx_blit()` — §1 grid, §5 magnifier loupe
-- `include/kernel/drivers/keyboard.h` — `keyboard_inject_scancode()` — §4 OSK keypress injection
-- `include/kernel/drivers/framebuffer.h` — `fb_get_backbuffer()`, `fb_get_width/height()` — §5 color picker pixel read
-- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) — `clipboard_set(CLIP_TEXT, ...)` — §5 HEX copy
-- `include/kernel/cpuid.h` — `cpuid_get()` → `brand`, `vendor`, `model`, `cores`, `threads` — §3
-- `include/kernel/acpi.h` — `acpi_get_cpu_count()`, `acpi_get_cpu_info()` — §3
-- `include/kernel/smbios.h` — `struct smbios_system_info`, `smbios_get_system_info()` — §3
-- `include/kernel/mm/pmm.h` — `pmm_get_total_frames()`, `pmm_get_free_frames()` — §3
-- `include/kernel/drivers/blkdev.h` — `blkdev_count()`, `blkdev_list()` — §3 disk list
-- `include/font_mgr.h` — `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_measure_width()` — §6 font preview
-- `include/kernel/fs/vfs.h` — `vfs_readdir`, `vfs_open`, `vfs_read`, `vfs_write`, `vfs_stat` — §1 ICS save, §3 export, §6 font listing
-- `07-graphics-ui/TODO-09-startmenu-tray-notifications.md §5` (→ XREF) — `notify_send()` — §6 install toast
-- `08-desktop-shell/TODO-03-service-manager.md §7` (→ XREF) — `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` autostart — §2 sticky notes startup
-- `07-graphics-ui/TODO-06-window-manager.md §5` (→ XREF) — `hotkey_table[]`, `MOD_WIN|MOD_SHIFT`, `MOD_WIN|MOD_CTRL` — §4 OSK hotkey, §5 color picker hotkey
-- `08-desktop-shell/TODO-12-utilities.md §8` (→ XREF) — `calendar_open_at_date()`, Zeller formula, add-event dialog — §1 base
-- `08-desktop-shell/TODO-02-file-associations-resources.md §8` (→ XREF) — `fontmgr.exe`, `ttf_mgr_reload()` — §6 base
+- `include/registry.h` -- `reg_get/set_string`, `reg_delete_key`, `reg_enum_subkeys` -- §1 events, §2 sticky persist, §5 color history
+- `include/kernel/time.h` -- `time_now()`, `time_to_datetime()`, `time_format()` -- §1 ICS timestamps, §2 auto-save
+- `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_flag(WM_FLAG_NO_FOCUS)`, `wm_set_flag(WM_FLAG_ALWAYS_ON_TOP)`, `wm_set_fullscreen()` -- §2 §4 §5
+- `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_STATUSBAR` -- §2 §3 §4 §6 §7
+- `include/gfx.h` -- `gfx_fill_rect()`, `gfx_draw_line()`, `gfx_blit()` -- §1 grid, §5 magnifier loupe
+- `include/kernel/drivers/keyboard.h` -- `keyboard_inject_scancode()` -- §4 OSK keypress injection
+- `include/kernel/drivers/framebuffer.h` -- `fb_get_backbuffer()`, `fb_get_width/height()` -- §5 color picker pixel read
+- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, ...)` -- §5 HEX copy
+- `include/kernel/cpuid.h` -- `cpuid_get()` → `brand`, `vendor`, `model`, `cores`, `threads` -- §3
+- `include/kernel/acpi.h` -- `acpi_get_cpu_count()`, `acpi_get_cpu_info()` -- §3
+- `include/kernel/smbios.h` -- `struct smbios_system_info`, `smbios_get_system_info()` -- §3
+- `include/kernel/mm/pmm.h` -- `pmm_get_total_frames()`, `pmm_get_free_frames()` -- §3
+- `include/kernel/drivers/blkdev.h` -- `blkdev_count()`, `blkdev_list()` -- §3 disk list
+- `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_measure_width()` -- §6 font preview
+- `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_open`, `vfs_read`, `vfs_write`, `vfs_stat` -- §1 ICS save, §3 export, §6 font listing
+- `07-graphics-ui/TODO-09-startmenu-tray-notifications.md §5` (→ XREF) -- `notify_send()` -- §6 install toast
+- `08-desktop-shell/TODO-03-service-manager.md §7` (→ XREF) -- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` autostart -- §2 sticky notes startup
+- `07-graphics-ui/TODO-06-window-manager.md §5` (→ XREF) -- `hotkey_table[]`, `MOD_WIN|MOD_SHIFT`, `MOD_WIN|MOD_CTRL` -- §4 OSK hotkey, §5 color picker hotkey
+- `08-desktop-shell/TODO-12-utilities.md §8` (→ XREF) -- `calendar_open_at_date()`, Zeller formula, add-event dialog -- §1 base
+- `08-desktop-shell/TODO-02-file-associations-resources.md §8` (→ XREF) -- `fontmgr.exe`, `ttf_mgr_reload()` -- §6 base
 
 ---
 
@@ -73,7 +73,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 ## 1. Calendar App (Recurring Events + ICS Export) `[Sonnet]`
 
 > Base calendar grid, add-event dialog, and taskbar flyout are specified in
-> `08-desktop-shell/TODO-12-utilities.md §8` — implement those first.
+> `08-desktop-shell/TODO-12-utilities.md §8` -- implement those first.
 > This section adds **recurring events** and **`.ics` export** only.
 
 **Source file:** `src/apps/calendar/calendar_recur.c` (extension of `calendar.c`)
@@ -119,12 +119,12 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ## 3. System Information (`sysinfo.exe`) `[Sonnet]`
 
-> → XREF: `08-desktop-shell/TODO-12-utilities.md §9` — `msinfo32.cpl` tabbed CPL; share the
+> → XREF: `08-desktop-shell/TODO-12-utilities.md §9` -- `msinfo32.cpl` tabbed CPL; share the
 > data-aggregation layer (`sysinfo_gather()`) between `sysinfo.exe` and `sysdm.cpl`.
 
 **Source file:** `src/apps/sysinfo/sysinfo.c`; header `include/apps/sysinfo/sysinfo.h`
 
-- [ ] **Data gathering** (`sysinfo_gather(struct sys_summary *out)` — shared with `sysdm.cpl`):
+- [ ] **Data gathering** (`sysinfo_gather(struct sys_summary *out)` -- shared with `sysdm.cpl`):
   - [ ] CPU: `cpuid_get()->brand` (model name), `cpuid_get()->vendor`, physical cores = `acpi_get_cpu_count()`, logical threads = `cpuid_get()->threads_per_core * cores`
   - [ ] RAM: `pmm_get_total_frames() * 4096 / (1024*1024)` → total MiB; `pmm_get_free_frames()` → free MiB
   - [ ] Framebuffer: `fb_get_width()` × `fb_get_height()` (GOP resolution); `fb_get_bpp()` if available
@@ -147,7 +147,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 **Source file:** `src/apps/osk/osk.c`; binary: `osk.exe`
 
-- [ ] **Non-focusable window**: `wm_create_window("On-Screen Keyboard", x, y, 780, 200, WM_FLAG_NO_FOCUS | WM_FLAG_ALWAYS_ON_TOP | WM_FLAG_NO_TASKBAR)` — clicking any key does not steal focus from target window
+- [ ] **Non-focusable window**: `wm_create_window("On-Screen Keyboard", x, y, 780, 200, WM_FLAG_NO_FOCUS | WM_FLAG_ALWAYS_ON_TOP | WM_FLAG_NO_TASKBAR)` -- clicking any key does not steal focus from target window
 - [ ] **QWERTY button grid** (3 rows + function + number rows):
   - [ ] Row 0 (Esc + F1–F12): 14 buttons, 42 px wide × 36 px tall
   - [ ] Row 1 (`` ` ``1234567890-= Backspace): 14 buttons
@@ -162,8 +162,8 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
   - [ ] CapsLock: toggle sticky; update key label case
   - [ ] Ctrl, Alt: sticky toggle; modifier scancode injected before character key and released after
 - [ ] **Special keys**: Backspace (scancode `0x0E`), Enter (`0x1C`), Tab (`0x0F`), Esc (`0x01`), Space (`0x39`)
-- [ ] **Win+Ctrl+O hotkey**: `hotkey_table[N] = { MOD_WIN|MOD_CTRL, KEY_O, osk_toggle }` — toggle show/hide
-- [ ] **Auto-show in touch mode** (stretch): `wm_set_touch_mode_osk_callback(osk_show)` — called when any `CTRL_TEXTBOX` gains focus in touch mode (requires WM touch-mode flag)
+- [ ] **Win+Ctrl+O hotkey**: `hotkey_table[N] = { MOD_WIN|MOD_CTRL, KEY_O, osk_toggle }` -- toggle show/hide
+- [ ] **Auto-show in touch mode** (stretch): `wm_set_touch_mode_osk_callback(osk_show)` -- called when any `CTRL_TEXTBOX` gains focus in touch mode (requires WM touch-mode flag)
 - [ ] **Position persistence**: `HKCU\Software\Impossible\OSK\{X,Y}` saved on window move; restored on launch
 
 ---
@@ -182,7 +182,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
   - [ ] Extract BGRA: `b = pixel & 0xFF`, `g = (pixel>>8) & 0xFF`, `r = (pixel>>16) & 0xFF`
   - [ ] Convert to HSL: standard RGB→HSL formulae (`H = 0–360`, `S = 0–100`, `L = 0–100`)
   - [ ] Convert to HEX string: `"#RRGGBB"` snprintf
-  - [ ] `clipboard_set(CLIP_TEXT, hex_string)` — auto-copy HEX
+  - [ ] `clipboard_set(CLIP_TEXT, hex_string)` -- auto-copy HEX
   - [ ] Exit eyedropper mode; restore cursor
 - [ ] **Result popup** (`wm_create_window("Color Picker", 240, 220, WM_FIXED)`):
   - [ ] 60×60 solid color swatch at top center
@@ -195,7 +195,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 ## 6. Font Manager (OS/2 + Unicode Coverage) `[Sonnet]`
 
 > Base font manager UI (list, 4-size preview, install/remove, `ttf_mgr_reload()`) is specified
-> in `08-desktop-shell/TODO-02-file-associations-resources.md §8` — implement that first.
+> in `08-desktop-shell/TODO-02-file-associations-resources.md §8` -- implement that first.
 > This section adds **OS/2 table parsing** for Unicode coverage and detailed font metadata.
 
 **Source file:** `src/apps/fontmgr/fontmgr_os2.c` (extension of `fontmgr.c`)
@@ -221,10 +221,10 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
   - [ ] `wm_create_window("About {name}", 360, 220, WM_FIXED | WM_MODAL)` with `[OK]` button
   - [ ] Layout: 48×48 app icon (left, `icon_draw_scaled(icon_id, 48)`); bold large app name; version below; horizontal rule; copyright text (word-wrapped); website as underlined text (`gfx_draw_string` in accent color; click → no-op for now, stretch: `browser.exe {url}`)
   - [ ] `[OK]` or Escape → close
-- [ ] **Every app wires `Help→About`**: `notes.exe`, `calc.exe`, `wordpad.exe`, `photos.exe`, `player.exe`, `archiver.exe`, `sniptool.exe`, `sysinfo.exe`, `osk.exe`, `colorpick.exe`, `fontmgr.exe`, `calendar.exe`, `sticky.exe` — each passes its own name, version, icon, and copyright string
+- [ ] **Every app wires `Help→About`**: `notes.exe`, `calc.exe`, `wordpad.exe`, `photos.exe`, `player.exe`, `archiver.exe`, `sniptool.exe`, `sysinfo.exe`, `osk.exe`, `colorpick.exe`, `fontmgr.exe`, `calendar.exe`, `sticky.exe` -- each passes its own name, version, icon, and copyright string
 - [ ] **`include/desktop/ui_dialogs.h`** also declares:
-  - [ ] `void ui_dialog_progress(const char *title, const char *message, int percent)` — reusable modal progress dialog (used by Archive Manager §4, installer, etc.)
-  - [ ] `int ui_dialog_confirm(const char *message)` → returns 1 (OK) / 0 (Cancel) — thin wrapper around `MessageBox(MB_OKCANCEL)`
+  - [ ] `void ui_dialog_progress(const char *title, const char *message, int percent)` -- reusable modal progress dialog (used by Archive Manager §4, installer, etc.)
+  - [ ] `int ui_dialog_confirm(const char *message)` → returns 1 (OK) / 0 (Cancel) -- thin wrapper around `MessageBox(MB_OKCANCEL)`
 
 ---
 
@@ -233,16 +233,16 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 | ⭐ | Feature                                           | 🪟 Win11                                          | 🐧 Linux                               | 🚀 Impossible OS                                                    |
 |----|---------------------------------------------------|------------------------------------------------|-------------------------------------|------------------------------------------------------------------|
-| 💎 | Calendar with recurring events + ICS export       | ✅ Outlook/Calendar (RRULE, ICS import/export) | ✅ GNOME Calendar / KOrganizer      | ⬜ §1 — daily/weekly/monthly/yearly RRULE, RFC 5545 ICS          |
-| 💎 | Sticky Notes with always-on-top restore           | ✅ Sticky Notes (syncs OneDrive)               | ✅ KNotes / GNOME Notes             | ⬜ §2 — colored WM_FLAG_ALWAYS_ON_TOP windows, Registry persist, |
-| 💎 | System Information read-only summary table        | ✅ `msinfo32.exe` (full detail)                | ✅ `inxi` / GNOME System Info       | ⬜ §3 — `sysinfo_gather()` shared with `sysdm.cpl`; Copy         |
-| 💎 | On-Screen Keyboard injecting hardware scancodes   | ✅ `osk.exe` (Win+Ctrl+O)                      | ✅ Onboard / GNOME OSK              | ⬜ §4 — `keyboard_inject_scancode`, WM_FLAG_NO_FOCUS, Win+Ctrl+O |
-| ⭐ | System-wide color picker with loupe + RGB/HSL/HEX | ✅ PowerToys Color Picker (not inbox)          | ✅ gpick / KColorChooser            | ⬜ §5 — inbox Win+Shift+C, 9×9 loupe, 10-color                   |
-| ⭐ | Font Manager with OS/2 Unicode coverage tag pills | ✅ Font Settings (basic list)                  | ✅ Font Manager / GNOME Fonts       | ⬜ §6 — OS/2 table `ulUnicodeRange1–4` block-name display,       |
-| 💎 | Shared Help→About dialog across all apps          | ✅ Each app has own About                      | ✅ gtk_about_dialog() shared widget | ⬜ §7 — `ui_dialog_about()` single impl called by                |
+| 💎 | Calendar with recurring events + ICS export       | ✅ Outlook/Calendar (RRULE, ICS import/export) | ✅ GNOME Calendar / KOrganizer      | ⬜ §1 -- daily/weekly/monthly/yearly RRULE, RFC 5545 ICS          |
+| 💎 | Sticky Notes with always-on-top restore           | ✅ Sticky Notes (syncs OneDrive)               | ✅ KNotes / GNOME Notes             | ⬜ §2 -- colored WM_FLAG_ALWAYS_ON_TOP windows, Registry persist, |
+| 💎 | System Information read-only summary table        | ✅ `msinfo32.exe` (full detail)                | ✅ `inxi` / GNOME System Info       | ⬜ §3 -- `sysinfo_gather()` shared with `sysdm.cpl`; Copy         |
+| 💎 | On-Screen Keyboard injecting hardware scancodes   | ✅ `osk.exe` (Win+Ctrl+O)                      | ✅ Onboard / GNOME OSK              | ⬜ §4 -- `keyboard_inject_scancode`, WM_FLAG_NO_FOCUS, Win+Ctrl+O |
+| ⭐ | System-wide color picker with loupe + RGB/HSL/HEX | ✅ PowerToys Color Picker (not inbox)          | ✅ gpick / KColorChooser            | ⬜ §5 -- inbox Win+Shift+C, 9×9 loupe, 10-color                   |
+| ⭐ | Font Manager with OS/2 Unicode coverage tag pills | ✅ Font Settings (basic list)                  | ✅ Font Manager / GNOME Fonts       | ⬜ §6 -- OS/2 table `ulUnicodeRange1–4` block-name display,       |
+| 💎 | Shared Help→About dialog across all apps          | ✅ Each app has own About                      | ✅ gtk_about_dialog() shared widget | ⬜ §7 -- `ui_dialog_about()` single impl called by                |
 
 Impossible OS ships the Color Picker as an **inbox OS feature** (Win+Shift+C hotkey baked into
-the global hotkey table) — unlike Windows where it requires PowerToys installation. The loupe
+the global hotkey table) -- unlike Windows where it requires PowerToys installation. The loupe
 reads directly from the compositor's back-buffer rather than going through a screen-capture
 round-trip. The Font Manager's Unicode coverage display (OS/2 `ulUnicodeRange` bits decoded
 into named block pills) gives users richer font introspection than either platform provides by

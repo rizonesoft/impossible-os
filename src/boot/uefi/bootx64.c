@@ -68,7 +68,7 @@ struct boot_config {
     UINT8   diag_delay;        /* seconds to pause on each diag screen (0 = skip) */
     UINT8   diag_splash;       /* 1 = show diag on splash (bare metal, no serial) */
     UINT8   deferred;          /* 1 = defer non-critical inits (default), 0 = all in-phase */
-    UINT8   _reserved[17];     /* future fields — zero-filled by defaults */
+    UINT8   _reserved[17];     /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
@@ -84,7 +84,7 @@ struct boot_rt_mem_entry {
     UINT32 reserved;
 };
 
-/* UEFI Runtime Service function pointers — must match kernel/boot_info.h */
+/* UEFI Runtime Service function pointers -- must match kernel/boot_info.h */
 struct boot_uefi_runtime {
     UINT64 get_time;
     UINT64 set_time;
@@ -113,7 +113,7 @@ struct boot_uefi_config_entry {
     UINT64  table_addr;
 };
 
-/* USB device structures — must match kernel/boot_info.h */
+/* USB device structures -- must match kernel/boot_info.h */
 #define BOOT_USB_MAX_DEVICES     16
 #define BOOT_USB_MAX_ENDPOINTS    4
 
@@ -144,7 +144,7 @@ struct boot_usb_device {
     struct boot_usb_endpoint endpoints[BOOT_USB_MAX_ENDPOINTS];
 };
 
-/* xHCI controller DMA state — must match kernel/boot_info.h */
+/* xHCI controller DMA state -- must match kernel/boot_info.h */
 #define BOOT_USB_MAX_SCRATCHPADS 16
 #define BOOT_USB_MAX_DMA_PAGES   16
 
@@ -522,7 +522,7 @@ static void efi_print_hex(UINT64 val)
  *
  * Resolution selection strategy (gop_negotiate_mode):
  *
- *   1. boot.conf Resolution=WxH — scan all 32bpp modes for exact match.
+ *   1. boot.conf Resolution=WxH -- scan all 32bpp modes for exact match.
  *      If found, SetMode to that mode.
  *
  *   2. Auto (no boot.conf override or Resolution=auto):
@@ -579,7 +579,7 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
     if (found && best_idx != gop->Mode->Mode) {
         EFI_STATUS s = gop->SetMode(gop, best_idx);
         if (EFI_ERROR(s) || gop->Mode->FrameBufferBase == 0) {
-            /* SetMode failed — keep current firmware mode */
+            /* SetMode failed -- keep current firmware mode */
             serial_early_print("[BOOT] GOP: using firmware default ");
             serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
             serial_early_print("x");
@@ -726,7 +726,7 @@ static void boot_config_defaults(struct boot_config *cfg)
     cfg->splash_timeout = 3;    /* 3 seconds */
     cfg->heartbeat      = 1;    /* auto */
     cfg->postcode       = 1;    /* auto */
-    cfg->postbars       = 0;    /* off — normal splash, no VPD */
+    cfg->postbars       = 0;    /* off -- normal splash, no VPD */
     cfg->test_suite     = 0xFF; /* all categories */
     cfg->test_quiet     = 0;    /* verbose (show PASS lines) */
     cfg->deferred       = 1;    /* defer non-critical inits by default */
@@ -1598,7 +1598,7 @@ static void discover_usb_devices(void)
         serial_early_print("[BOOT] USB: no USB devices found (");
         serial_early_print_uint((UINT32)(status & 0xFFFFFFFF));
         serial_early_print(")\n");
-        g_boot_info_ptr->usb_discovery_ok = 1;  /* success — just no devices */
+        g_boot_info_ptr->usb_discovery_ok = 1;  /* success -- just no devices */
         return;
     }
 
@@ -1833,12 +1833,12 @@ found_xhci:
     bar0 = bl_pci_read32((UINT8)bus, dev, func, 0x10);
     bar1 = bl_pci_read32((UINT8)bus, dev, func, 0x14);
     if (bar0 & 0x01) {
-        serial_early_print("[BOOT] xHCI DMA: BAR0 is I/O — skipping\n");
+        serial_early_print("[BOOT] xHCI DMA: BAR0 is I/O -- skipping\n");
         return;
     }
     mmio = (UINT64)(bar0 & 0xFFFFFFF0) | ((UINT64)bar1 << 32);
     if (mmio == 0) {
-        serial_early_print("[BOOT] xHCI DMA: BAR0 is zero — skipping\n");
+        serial_early_print("[BOOT] xHCI DMA: BAR0 is zero -- skipping\n");
         return;
     }
     ctrl->mmio_phys = mmio;
@@ -1982,7 +1982,7 @@ static inline void bl_mmio_write32(UINT64 base, UINT32 off, UINT32 val)
 
 static inline void bl_mmio_write64(UINT64 base, UINT32 off, UINT64 val)
 {
-    /* Two 32-bit writes — some xHCI controllers don't support 64-bit MMIO */
+    /* Two 32-bit writes -- some xHCI controllers don't support 64-bit MMIO */
     *(volatile UINT32 *)((UINTN)base + off)     = (UINT32)(val & 0xFFFFFFFF);
     *(volatile UINT32 *)((UINTN)base + off + 4) = (UINT32)(val >> 32);
 }
@@ -2016,7 +2016,7 @@ static void bl_usblegsup_handoff(UINT64 mmio, UINT32 hccparams1)
                 return;
             }
 
-            serial_early_print("[BOOT] xHCI takeover: USBLEGSUP — requesting ownership\n");
+            serial_early_print("[BOOT] xHCI takeover: USBLEGSUP -- requesting ownership\n");
             bl_mmio_write32(mmio, xecp_off, cap | (1 << 24));
 
             /* Wait up to 1s for BIOS to release */
@@ -2034,8 +2034,8 @@ static void bl_usblegsup_handoff(UINT64 mmio, UINT32 hccparams1)
                 }
             }
 
-            /* Timeout — force */
-            serial_early_print("[BOOT] xHCI takeover: BIOS timeout — forcing\n");
+            /* Timeout -- force */
+            serial_early_print("[BOOT] xHCI takeover: BIOS timeout -- forcing\n");
             cap |= (1 << 24);
             cap &= ~(1 << 16);
             bl_mmio_write32(mmio, xecp_off, cap);
@@ -2061,7 +2061,7 @@ static void xhci_controller_takeover(void)
     UINT32 hccparams1;
 
     if (!ctrl->active) {
-        serial_early_print("[BOOT] xHCI takeover: no controller — skipping\n");
+        serial_early_print("[BOOT] xHCI takeover: no controller -- skipping\n");
         return;
     }
 
@@ -2088,7 +2088,7 @@ static void xhci_controller_takeover(void)
         timeout -= 100;
     }
     if (!(bl_mmio_read32(op_base, 0x04) & (1 << 0))) {
-        serial_early_print("[BOOT] xHCI takeover: halt timeout — aborting\n");
+        serial_early_print("[BOOT] xHCI takeover: halt timeout -- aborting\n");
         ctrl->active = 0;
         return;
     }
@@ -2108,7 +2108,7 @@ static void xhci_controller_takeover(void)
     }
     if ((bl_mmio_read32(op_base, 0x00) & (1 << 1)) ||
         (bl_mmio_read32(op_base, 0x04) & (1 << 11))) {
-        serial_early_print("[BOOT] xHCI takeover: reset timeout — aborting\n");
+        serial_early_print("[BOOT] xHCI takeover: reset timeout -- aborting\n");
         ctrl->active = 0;
         return;
     }
@@ -2167,7 +2167,7 @@ static void xhci_controller_takeover(void)
         timeout -= 100;
     }
     if (bl_mmio_read32(op_base, 0x04) & (1 << 0)) {
-        serial_early_print("[BOOT] xHCI takeover: start timeout — aborting\n");
+        serial_early_print("[BOOT] xHCI takeover: start timeout -- aborting\n");
         ctrl->active = 0;
         return;
     }
@@ -2242,7 +2242,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     gBS = SystemTable->BootServices;
     gImageHandle = ImageHandle;
 
-    /* Clear the UEFI text console immediately — firmware (BdsDxe, QEMU MMIO
+    /* Clear the UEFI text console immediately -- firmware (BdsDxe, QEMU MMIO
      * warnings) may have left text on screen before our image was launched. */
     if (SystemTable->ConOut)
         SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
@@ -2263,7 +2263,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Record bootloader entry time */
     g_boot_info_ptr->timing.bl_entry = boot_rdtsc();
 
-    /* Step 1b: Parse boot.conf first — Resolution= key needed by init_gop */
+    /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();
     parse_boot_conf();
     g_boot_info_ptr->timing.conf_end = boot_rdtsc();

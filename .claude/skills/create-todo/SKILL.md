@@ -29,11 +29,11 @@ description: Create lean project TODO files under todo/, choose the correct doma
    - Create a parent TODO only when the topic truly needs multiple child files or shared verification.
 5. Set up execution order at creation time.
    - Use `Implementation Order`, not `Phase-by-Phase`.
-   - Mark every row with `💎` (parity — matches Windows/Linux) or `⭐` (exclusive — Impossible OS superior).
+   - Mark every row with `💎` (parity -- matches Windows/Linux) or `⭐` (exclusive -- Impossible OS superior).
    - Add dependencies, overlap notes, handoffs, and `→ XREF:` links while creating the file.
 6. Do NOT add model tags to section headings.
-   - No `[Opus]` or `[Sonnet]` postfixes — model selection is handled by the harness, not the TODO.
-   - Section headings should be clean: `## 1. Section Title` — no tags, no annotations.
+   - No `[Opus]` or `[Sonnet]` postfixes -- model selection is handled by the harness, not the TODO.
+   - Section headings should be clean: `## 1. Section Title` -- no tags, no annotations.
 7. Add an OS Comparison table (compact format).
    - Every TODO must include an `## OS Comparison` section before Verification.
    - Columns: `⭐ | Feature | Win11 | Linux | Impossible OS`

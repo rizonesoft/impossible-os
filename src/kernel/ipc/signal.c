@@ -1,5 +1,5 @@
 /* ============================================================================
- * signal.c — Kernel signal delivery
+ * signal.c -- Kernel signal delivery
  *
  * Signal dispatch:
  *   1. signal_send() sets a bit in the target task's pending mask
@@ -91,7 +91,7 @@ static void signal_default_action(struct task *t, int sig)
         break;
 
     default:
-        /* Unknown signal — terminate */
+        /* Unknown signal -- terminate */
         printk("[SIG] PID %u: unhandled signal %d\n",
                (uint64_t)t->pid, (uint64_t)(uint32_t)sig);
         t->state = TASK_DEAD;
@@ -117,7 +117,7 @@ void signal_check(void)
         /* Clear the pending bit */
         t->signals.pending &= ~(1U << (uint32_t)sig);
 
-        /* SIGKILL is always forced — no handler */
+        /* SIGKILL is always forced -- no handler */
         if (sig == SIGKILL) {
             signal_default_action(t, sig);
             continue;

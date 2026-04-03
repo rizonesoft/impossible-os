@@ -1,4 +1,4 @@
-# TODO-05 — Win32 Subsystem Server (CSRSS)
+# TODO-05 -- Win32 Subsystem Server (CSRSS)
 
 > **Goal:** Build the Win32 subsystem server that bridges user-mode processes and the
 > kernel WM, providing the per-thread message queue, window class registry, WndProc
@@ -32,18 +32,18 @@
 
 ## Inputs
 
-- `include/desktop/wm.h` — `wm_create_window`, `wm_destroy_window`, `WM_FLAG_*` — §2 §3
-- `include/desktop/controls.h` — `CTRL_BUTTON`/`CTRL_EDIT`/`CTRL_LISTBOX`/`CTRL_COMBOBOX`/`CTRL_SCROLLBAR` — §2 built-in classes
-- `include/kernel/ipc/pipe.h` — `pipe_create/write/read` — §7 cross-process messaging
-- `include/kernel/ipc/` — `SYS_SHMEM_CREATE=35`, `SYS_SHMEM_MAP=36` — §7 `WM_COPYDATA`
-- `include/kernel/sched/syscall.h` — extend with `SYS_GETMESSAGE=74`, `SYS_WAIT_MESSAGE=75`, `SYS_REGISTERCLASS=76`, `SYS_FINDWINDOW=77`
-- `include/kernel/sched/task.h` — per-task message queue pointer — §1
-- `07-graphics-ui/TODO-11-win32-gdi-user32-stubs.md §2` (→ XREF) — GDI object table, HDC→`gfx_surface_t` mapping
-- `07-graphics-ui/TODO-04-ui-controls.md` (→ XREF) — `CTRL_*` implementations backing built-in window classes (§2)
-- `07-graphics-ui/TODO-05-widget-dialogs.md §8` (→ XREF) — `dialog_color` + file dialogs backing `ChooseColor`/`ChooseFont` (§8)
-- `09-services-security/TODO-08-win32-api-surface.md §10 §11` (→ XREF) — `user32.dll` / `gdi32.dll` stubs that delegate to subsystem (do not duplicate)
-- `09-services-security/TODO-07-win32-pe-loader.md §2` (→ XREF) — Win32 syscall range `SYS_CREATEFILE=60`…`SYS_POSTMESSAGE=73`
-- `include/kernel/drivers/framebuffer.h` — `fb_lock_compositor`, dirty-rect API — §4
+- `include/desktop/wm.h` -- `wm_create_window`, `wm_destroy_window`, `WM_FLAG_*` -- §2 §3
+- `include/desktop/controls.h` -- `CTRL_BUTTON`/`CTRL_EDIT`/`CTRL_LISTBOX`/`CTRL_COMBOBOX`/`CTRL_SCROLLBAR` -- §2 built-in classes
+- `include/kernel/ipc/pipe.h` -- `pipe_create/write/read` -- §7 cross-process messaging
+- `include/kernel/ipc/` -- `SYS_SHMEM_CREATE=35`, `SYS_SHMEM_MAP=36` -- §7 `WM_COPYDATA`
+- `include/kernel/sched/syscall.h` -- extend with `SYS_GETMESSAGE=74`, `SYS_WAIT_MESSAGE=75`, `SYS_REGISTERCLASS=76`, `SYS_FINDWINDOW=77`
+- `include/kernel/sched/task.h` -- per-task message queue pointer -- §1
+- `07-graphics-ui/TODO-11-win32-gdi-user32-stubs.md §2` (→ XREF) -- GDI object table, HDC→`gfx_surface_t` mapping
+- `07-graphics-ui/TODO-04-ui-controls.md` (→ XREF) -- `CTRL_*` implementations backing built-in window classes (§2)
+- `07-graphics-ui/TODO-05-widget-dialogs.md §8` (→ XREF) -- `dialog_color` + file dialogs backing `ChooseColor`/`ChooseFont` (§8)
+- `09-services-security/TODO-08-win32-api-surface.md §10 §11` (→ XREF) -- `user32.dll` / `gdi32.dll` stubs that delegate to subsystem (do not duplicate)
+- `09-services-security/TODO-07-win32-pe-loader.md §2` (→ XREF) -- Win32 syscall range `SYS_CREATEFILE=60`…`SYS_POSTMESSAGE=73`
+- `include/kernel/drivers/framebuffer.h` -- `fb_lock_compositor`, dirty-rect API -- §4
 
 ---
 
@@ -308,7 +308,7 @@ process in future iteration)
   3. Calling thread blocks on reply pipe read (`pipe_read`); timeout after 5000 ms → `SetLastError(ERROR_TIMEOUT)`; return 0
   4. Return `reply_slot` value; free shared buffer
 - [ ] **`WM_COPYDATA` (`COPYDATASTRUCT` serialization)**:
-  - Sender: `shmem_create(size)` → copy data; `SendMessage(target, WM_COPYDATA, (WPARAM)hwnd_sender, (LPARAM)&cds)` — CDS embedded in shmem
+  - Sender: `shmem_create(size)` → copy data; `SendMessage(target, WM_COPYDATA, (WPARAM)hwnd_sender, (LPARAM)&cds)` -- CDS embedded in shmem
   - Target receives `WM_COPYDATA`; `lParam` = valid pointer to `COPYDATASTRUCT` in mapped shmem; **read-only** for target; kernel unmaps after WndProc returns
   - `cbData` limit: 64 KB; larger transfers → `ERROR_NOT_ENOUGH_MEMORY` + return 0
 - [ ] **`BroadcastSystemMessage(flags, recipients, msg, w, l)`**:
@@ -325,7 +325,7 @@ process in future iteration)
 **Source:** `src/user/csrss/comdlg.c`; header `include/win32/comdlg.h`
 
 > Delegates to `07-graphics-ui/TODO-05 §8` dialog implementations via function pointers
-> registered at subsystem init. No UI logic here — this is the Win32 API wrapper layer.
+> registered at subsystem init. No UI logic here -- this is the Win32 API wrapper layer.
 
 - [ ] **`BOOL ChooseColorA(CHOOSECOLOR *cc)`**:
   - Show `dialog_color()` (→ XREF `07-graphics-ui/TODO-05 §8`) modal dialog with initial color `cc->rgbResult`
@@ -348,20 +348,20 @@ process in future iteration)
 
 | ⭐ | Feature                                       | 🪟 Win11                                                          | 🐧 Linux                                           | 🚀 Impossible OS                                                                                   |
 |----|-----------------------------------------------|----------------------------------------------------------------|-------------------------------------------------|-------------------------------------------------------------------------------------------------|
-| 💎 | Per-thread MSG ring-buffer queue              | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking    | ❌ No equivalent (event loops are               | ⬜ §1 — `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE`                                   |
-| 💎 | Window class registry                         | ✅ Win32k system + app classes;                                | ❌ No concept (toolkit-specific)                | ⬜ §2 — 256 global + 64 per-process                                                             |
-| 💎 | `DefWindowProc` default message handling      | ✅ `user32!DefWindowProcW`; full WM_* set                      | ❌ Not applicable                               | ⬜ §3 — `WM_CLOSE→DestroyWindow`, `WM_DESTROY→PostQuitMessage`, `WM_SYSCOMMAND`, `WM_NCHITTEST` |
-| 💎 | HDC → compositor surface mapping + dirty rect | ✅ Win32k HDC; GDI `SURFOBJ`; dirty-rect                       | ✅ X11 expose events; Wayland damage            | ⬜ §4 — HDC → `gfx_surface_t *`; `InvalidateRect`                                               |
-| 💎 | Accelerator tables                            | ✅ `user32!TranslateAccelerator`; PE `RT_ACCELERATOR` resource | ✅ GDK accelerators; X11 keysym matching        | ⬜ §5 — PE resource-loaded ACCEL array; `FALT/FSHIFT/FCONTROL/FVIRTKEY`                         |
-| 💎 | Window subclassing                            | ✅ Full subclassing + property store                           | ✅ GTK subclass; X11 `XChangeProperty`          | ⬜ §6 — `GWLP_WNDPROC` chain; `SetProp/GetProp/RemoveProp`; `CallWindowProc` forwarding         |
-| 💎 | Cross-process `SendMessage` + `WM_COPYDATA`   | ✅ Win32k cross-process; `WM_COPYDATA` kernel-mapped           | ❌ No standard; X11 `XSendEvent` (unsafe)       | ⬜ §7 — IPC pipe + shmem; 5s                                                                    |
-| 💎 | `ChooseColor`/`ChooseFont` common dialogs     | ✅ `comdlg32.dll`                                              | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ §8 — thin Win32 struct adapter over                                                          |
+| 💎 | Per-thread MSG ring-buffer queue              | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking    | ❌ No equivalent (event loops are               | ⬜ §1 -- `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE`                                   |
+| 💎 | Window class registry                         | ✅ Win32k system + app classes;                                | ❌ No concept (toolkit-specific)                | ⬜ §2 -- 256 global + 64 per-process                                                             |
+| 💎 | `DefWindowProc` default message handling      | ✅ `user32!DefWindowProcW`; full WM_* set                      | ❌ Not applicable                               | ⬜ §3 -- `WM_CLOSE→DestroyWindow`, `WM_DESTROY→PostQuitMessage`, `WM_SYSCOMMAND`, `WM_NCHITTEST` |
+| 💎 | HDC → compositor surface mapping + dirty rect | ✅ Win32k HDC; GDI `SURFOBJ`; dirty-rect                       | ✅ X11 expose events; Wayland damage            | ⬜ §4 -- HDC → `gfx_surface_t *`; `InvalidateRect`                                               |
+| 💎 | Accelerator tables                            | ✅ `user32!TranslateAccelerator`; PE `RT_ACCELERATOR` resource | ✅ GDK accelerators; X11 keysym matching        | ⬜ §5 -- PE resource-loaded ACCEL array; `FALT/FSHIFT/FCONTROL/FVIRTKEY`                         |
+| 💎 | Window subclassing                            | ✅ Full subclassing + property store                           | ✅ GTK subclass; X11 `XChangeProperty`          | ⬜ §6 -- `GWLP_WNDPROC` chain; `SetProp/GetProp/RemoveProp`; `CallWindowProc` forwarding         |
+| 💎 | Cross-process `SendMessage` + `WM_COPYDATA`   | ✅ Win32k cross-process; `WM_COPYDATA` kernel-mapped           | ❌ No standard; X11 `XSendEvent` (unsafe)       | ⬜ §7 -- IPC pipe + shmem; 5s                                                                    |
+| 💎 | `ChooseColor`/`ChooseFont` common dialogs     | ✅ `comdlg32.dll`                                              | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ §8 -- thin Win32 struct adapter over                                                          |
 
-Impossible OS CSRSS delivers a **native kernel-backed Win32 message loop** — not a
+Impossible OS CSRSS delivers a **native kernel-backed Win32 message loop** -- not a
 user-space emulation layer. The MSG ring buffer is allocated and managed in kernel memory;
 `SYS_WAIT_MESSAGE` uses the real scheduler (`sched_sleep`/`sched_wake`) so a thread
 waiting for messages consumes zero CPU. The HDC→`gfx_surface_t` mapping means GDI calls
-translate directly to the same `gfx_*` primitives used by the compositor — no format
+translate directly to the same `gfx_*` primitives used by the compositor -- no format
 conversion overhead.
 
 ---

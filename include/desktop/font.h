@@ -1,12 +1,12 @@
 /* ============================================================================
- * font.h — Desktop bitmap font renderer
+ * font.h -- Desktop bitmap font renderer
  *
  * Position-based text rendering API for the GUI layer.  Draws characters and
  * strings at arbitrary (x, y) pixel positions on the framebuffer using an
  * embedded 8×16 bitmap font.
  *
  * Unlike the kernel console (fb_putchar/fb_write), this module does NOT manage
- * a text cursor or scrolling — that is the window manager's job.
+ * a text cursor or scrolling -- that is the window manager's job.
  * ============================================================================ */
 
 #pragma once
@@ -38,7 +38,7 @@ uint32_t font_draw_string_n(uint32_t x, uint32_t y, const char *str,
 /* ---- Measurement ---- */
 
 /* Return the width in pixels of a null-terminated string.
- * Does NOT account for newlines — measures as if on one line. */
+ * Does NOT account for newlines -- measures as if on one line. */
 uint32_t font_text_width(const char *str);
 
 /* Return the width in pixels of a string with a given length. */

@@ -1,5 +1,5 @@
 /* ============================================================================
- * image.h — Runtime image decoding and scaling API
+ * image.h -- Runtime image decoding and scaling API
  *
  * Decodes JPEG, PNG, BMP, GIF, and TGA images at runtime using stb_image.
  * Images are decoded to BGRA (0xAARRGGBB) format matching gfx_color_t.

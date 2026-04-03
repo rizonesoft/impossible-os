@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs-fuse-linux.c — Linux FUSE3 read-only mount for IXFS partitions
+ * ixfs-fuse-linux.c -- Linux FUSE3 read-only mount for IXFS partitions
  *
  * Usage:
  *   ixfs-mount <image>:<partition> <mountpoint>
@@ -23,7 +23,7 @@
 #include "ixfs-core.h"
 #include "ixfs-disk.h"
 
-/* Global volume — single-mount, single-volume */
+/* Global volume -- single-mount, single-volume */
 static ixfs_vol_t *g_vol;
 
 /* --- Path resolution --- */

@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_storage.c — Storage driver unit tests (AHCI, VirtIO-blk)
+ * test_storage.c -- Storage driver unit tests (AHCI, VirtIO-blk)
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

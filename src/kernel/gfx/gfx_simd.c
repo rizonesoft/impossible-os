@@ -1,5 +1,5 @@
 /* ============================================================================
- * gfx_simd.c — SSE2 / AVX2 SIMD acceleration for GFX primitives
+ * gfx_simd.c -- SSE2 / AVX2 SIMD acceleration for GFX primitives
  *
  * THIS FILE IS COMPILED WITH -msse2 (separate from the rest of the kernel).
  * All SSE2 intrinsics are used via inline assembly to avoid needing
@@ -285,7 +285,7 @@ void simd_blur_accum_sse2(const uint32_t *src, uint32_t count,
 }
 
 /* ============================================================================
- * AVX2 SIMD — 8 pixels per iteration using 256-bit YMM registers
+ * AVX2 SIMD -- 8 pixels per iteration using 256-bit YMM registers
  *
  * All AVX2 functions use inline assembly (not intrinsics) to work with
  * the -msse2 compile flag.  Each function ends with VZEROUPPER to avoid

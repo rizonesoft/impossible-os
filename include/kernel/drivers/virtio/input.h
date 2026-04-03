@@ -1,5 +1,5 @@
 /* ============================================================================
- * virtio_input.h — VirtIO Input device driver (tablet mode)
+ * virtio_input.h -- VirtIO Input device driver (tablet mode)
  *
  * Provides absolute mouse coordinates via VirtIO PCI, bypassing the
  * PS/2 mouse grab mechanism.  Used with QEMU's -device virtio-tablet-pci.

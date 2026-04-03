@@ -1,5 +1,5 @@
 /* ============================================================================
- * default_sds.c — Static default security descriptors for kernel objects
+ * default_sds.c -- Static default security descriptors for kernel objects
  *
  * Implements TODO-11 §3.4: pre-built self-relative SDs for each object type.
  * Built once at boot via se_default_sds_init().

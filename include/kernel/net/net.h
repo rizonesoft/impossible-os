@@ -1,5 +1,5 @@
 /* ============================================================================
- * net.h — Common network definitions
+ * net.h -- Common network definitions
  *
  * Byte-order helpers, MAC/IP types, Ethernet/ARP/IPv4/ICMP/UDP headers.
  * ============================================================================ */

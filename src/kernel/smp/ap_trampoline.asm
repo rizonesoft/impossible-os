@@ -1,5 +1,5 @@
 ; =============================================================================
-; ap_trampoline.asm — AP startup trampoline (assembled as flat binary)
+; ap_trampoline.asm -- AP startup trampoline (assembled as flat binary)
 ;
 ; This code is assembled as a flat binary with -f bin, then converted to an
 ; ELF object via objcopy. The BSP copies it to physical address 0x8000
@@ -56,7 +56,7 @@ global_start:
     mov cr0, eax
 
     ; Far jump to 32-bit code using TEMPORARY selector 0x08
-    ; (32-bit code segment: L=0, D=1 — correct for protected mode)
+    ; (32-bit code segment: L=0, D=1 -- correct for protected mode)
     jmp 0x08:pm_entry
 
 [BITS 32]
@@ -81,9 +81,9 @@ pm_entry:
     ; ---- Enable Long Mode + NX + SYSCALL (IA32_EFER) ----
     mov ecx, 0xC0000080
     rdmsr
-    or eax, (1 << 0)   ; SCE  — SYSCALL/SYSRET enable
-    or eax, (1 << 8)   ; LME  — Long Mode Enable
-    or eax, (1 << 11)  ; NXE  — No-Execute Enable (must be set before paging)
+    or eax, (1 << 0)   ; SCE  -- SYSCALL/SYSRET enable
+    or eax, (1 << 8)   ; LME  -- Long Mode Enable
+    or eax, (1 << 11)  ; NXE  -- No-Execute Enable (must be set before paging)
     wrmsr
 
     ; ---- Enable paging ----
@@ -92,7 +92,7 @@ pm_entry:
     mov cr0, eax
 
     ; ---- Far jump to 64-bit using temporary selector 0x18 ----
-    ; (64-bit code segment: L=1, D=0 — correct for long mode)
+    ; (64-bit code segment: L=1, D=0 -- correct for long mode)
     jmp 0x18:lm_entry
 
 [BITS 64]
@@ -137,14 +137,14 @@ lm_entry:
     jmp .halt
 
 ; =============================================================================
-; Temporary GDT — used only during real → protected → long mode transition.
+; Temporary GDT -- used only during real → protected → long mode transition.
 ; After entering long mode, we switch to the BSP's GDT.
 ;
 ; Layout:
 ;   0x00: Null descriptor
-;   0x08: 32-bit code (Ring 0) — for protected mode transition
-;   0x10: Data segment  (Ring 0) — flat, used in both 32-bit and 64-bit
-;   0x18: 64-bit code (Ring 0) — for far jump into long mode
+;   0x08: 32-bit code (Ring 0) -- for protected mode transition
+;   0x10: Data segment  (Ring 0) -- flat, used in both 32-bit and 64-bit
+;   0x18: 64-bit code (Ring 0) -- for far jump into long mode
 ; =============================================================================
 
 ALIGN 8

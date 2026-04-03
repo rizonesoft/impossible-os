@@ -1,5 +1,5 @@
 /* ============================================================================
- * fat32_internal.h — Shared internal types, structs, and function declarations
+ * fat32_internal.h -- Shared internal types, structs, and function declarations
  *
  * Included by all FAT32 module files. NOT part of the public API.
  * Each mounted FAT32 partition gets its own fat32_volume context.
@@ -96,7 +96,7 @@ struct fat32_file {
     struct fat32_volume *volume;   /* back-pointer to owning volume */
 };
 
-/* Per-volume state — one for each mounted FAT32 partition.
+/* Per-volume state -- one for each mounted FAT32 partition.
  * Allocated via PMM (~40 KB). */
 struct fat32_volume {
     struct fat32_bpb    bpb;
@@ -120,7 +120,7 @@ struct fat32_volume {
 
 /* ---- fat32_core.c: String helpers, sector I/O, cache, FAT ops ---- */
 
-/* String helpers (stateless — no vol needed) */
+/* String helpers (stateless -- no vol needed) */
 void     fat32_strcpy(char *dst, const char *src, uint32_t max);
 int      fat32_strcasecmp(const char *a, const char *b);
 void     fat32_short_name_to_str(const uint8_t *raw, char *out);

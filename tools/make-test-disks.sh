@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# make-test-disks.sh — Generate test disk images for filesystem driver testing
+# make-test-disks.sh -- Generate test disk images for filesystem driver testing
 #
 # Creates small (4–16 MiB) disk images with various filesystems, each
 # populated with sample files for kernel FS driver development.
@@ -9,10 +9,10 @@
 #   ./tools/make-test-disks.sh <output_dir> <build_dir>
 #
 # Each image is populated with:
-#   test.txt         — small text file
-#   subdir/nested.txt — file in a subdirectory
-#   empty.txt        — zero-byte file
-#   large.bin        — 64 KiB file with pattern data
+#   test.txt         -- small text file
+#   subdir/nested.txt -- file in a subdirectory
+#   empty.txt        -- zero-byte file
+#   large.bin        -- 64 KiB file with pattern data
 # ============================================================================
 
 set -e
@@ -63,7 +63,7 @@ if [ ! -f "$IMG" ]; then
         mcopy -i "$IMG" "$SAMPLE_DIR/subdir/nested.txt" ::subdir/nested.txt
         CREATED=$((CREATED + 1))
     else
-        warn "fat32.img — mkfs.fat or mcopy not found"
+        warn "fat32.img -- mkfs.fat or mcopy not found"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -83,7 +83,7 @@ if [ ! -f "$IMG" ]; then
         # (file population requires mount, which needs root)
         CREATED=$((CREATED + 1))
     else
-        warn "exfat.img — mkfs.exfat not found (install exfatprogs)"
+        warn "exfat.img -- mkfs.exfat not found (install exfatprogs)"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -107,7 +107,7 @@ if [ ! -f "$IMG" ]; then
         debugfs -w "$IMG" -R "cd subdir" -R "write $SAMPLE_DIR/subdir/nested.txt nested.txt" 2>/dev/null
         CREATED=$((CREATED + 1))
     else
-        warn "ext2.img — mkfs.ext2 or debugfs not found"
+        warn "ext2.img -- mkfs.ext2 or debugfs not found"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -130,7 +130,7 @@ if [ ! -f "$IMG" ]; then
         debugfs -w "$IMG" -R "cd subdir" -R "write $SAMPLE_DIR/subdir/nested.txt nested.txt" 2>/dev/null
         CREATED=$((CREATED + 1))
     else
-        warn "ext3.img — mkfs.ext3 or debugfs not found"
+        warn "ext3.img -- mkfs.ext3 or debugfs not found"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -153,7 +153,7 @@ if [ ! -f "$IMG" ]; then
         debugfs -w "$IMG" -R "cd subdir" -R "write $SAMPLE_DIR/subdir/nested.txt nested.txt" 2>/dev/null
         CREATED=$((CREATED + 1))
     else
-        warn "ext4.img — mkfs.ext4 or debugfs not found"
+        warn "ext4.img -- mkfs.ext4 or debugfs not found"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -161,7 +161,7 @@ else
 fi
 
 # ============================================================================
-# 6. NTFS (32 MiB — comprehensive test image)
+# 6. NTFS (32 MiB -- comprehensive test image)
 # ============================================================================
 IMG="$OUT/ntfs.img"
 if [ ! -f "$IMG" ]; then
@@ -169,7 +169,7 @@ if [ ! -f "$IMG" ]; then
     if [ -f "$IMG" ]; then
         CREATED=$((CREATED + 1))
     else
-        warn "ntfs.img — NTFS test image creation failed"
+        warn "ntfs.img -- NTFS test image creation failed"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -193,7 +193,7 @@ if [ ! -f "$IMG" ]; then
         rm -rf "$IXFS_POP"
         CREATED=$((CREATED + 1))
     else
-        warn "ixfs.img — $MKFS_IXFS not found (build first: make system-disk)"
+        warn "ixfs.img -- $MKFS_IXFS not found (build first: make system-disk)"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -265,7 +265,7 @@ if [ ! -f "$IMG" ]; then
         xorriso -as mkisofs -o "$IMG" -V "TEST_ISO9660" "$OPT_CONTENT" 2>/dev/null
         CREATED=$((CREATED + 1))
     else
-        warn "iso9660.iso — genisoimage or xorriso not found"
+        warn "iso9660.iso -- genisoimage or xorriso not found"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -286,7 +286,7 @@ if [ ! -f "$IMG" ]; then
         xorriso -as mkisofs -J -o "$IMG" -V "TEST_JOLIET" "$OPT_CONTENT" 2>/dev/null
         CREATED=$((CREATED + 1))
     else
-        warn "joliet.iso — genisoimage or xorriso not found"
+        warn "joliet.iso -- genisoimage or xorriso not found"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -308,7 +308,7 @@ if [ ! -f "$IMG" ]; then
         mkudffs --media-type=dvd --vid="TEST_UDF" "$IMG" >/dev/null 2>&1 || true
         CREATED=$((CREATED + 1))
     else
-        warn "udf.iso — genisoimage or mkudffs not found (install genisoimage or udftools)"
+        warn "udf.iso -- genisoimage or mkudffs not found (install genisoimage or udftools)"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -326,7 +326,7 @@ if [ ! -f "$IMG" ]; then
         mkudffs --udfrev=0x0250 --media-type=dvd --vid="TEST_UDF250" "$IMG" >/dev/null 2>&1 || true
         CREATED=$((CREATED + 1))
     else
-        warn "udf250.iso — mkudffs not found (install udftools)"
+        warn "udf250.iso -- mkudffs not found (install udftools)"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
@@ -347,7 +347,7 @@ if [ ! -f "$IMG" ]; then
         xorriso -as mkisofs -J -udf -o "$IMG" -V "TEST_MIXED" "$OPT_CONTENT" 2>/dev/null
         CREATED=$((CREATED + 1))
     else
-        warn "mixed.iso — genisoimage or xorriso not found"
+        warn "mixed.iso -- genisoimage or xorriso not found"
         SKIPPED=$((SKIPPED + 1))
     fi
 else

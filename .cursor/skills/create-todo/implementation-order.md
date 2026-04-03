@@ -13,15 +13,15 @@ Use this format:
 ```markdown
 | ⭐  | Order | Deliverable             | Depends On | Status |
 | --- | :---: | ----------------------- | ---------- | :----: |
-| 💎  |   1   | Foundation / parity     | —          |  [ ]   |
+| 💎  |   1   | Foundation / parity     | --          |  [ ]   |
 | ⭐  |   2   | Exclusive differentiator | 1          |  [ ]   |
 ```
 
-- `💎` = parity work — this is what Windows 11 and Linux already do; Impossible OS must match it.
-- `⭐` = exclusive work — Impossible OS is superior or first; this is a differentiating feature.
+- `💎` = parity work -- this is what Windows 11 and Linux already do; Impossible OS must match it.
+- `⭐` = exclusive work -- Impossible OS is superior or first; this is a differentiating feature.
 - Every row must carry one of these two markers. Never leave the first column blank or use numbers there.
 - `Depends On` stays compact. If it gets wordy, move detail into a short note block below the table.
-- **Cross-TODO references MUST include specific section numbers** (e.g., `T11 §1,§3`). Never use a bare TODO number without sections — it's ambiguous and blocks planning.
+- **Cross-TODO references MUST include specific section numbers** (e.g., `T11 §1,§3`). Never use a bare TODO number without sections -- it's ambiguous and blocks planning.
 - Do not create a later formatting-only cleanup step; the table must be correct at creation time.
 
 ## OS Comparison Table
@@ -33,8 +33,8 @@ Every TODO must include an `## OS Comparison` section. Use this format:
 
 | ⭐  | Feature          | 🪟 Windows 11 | 🐧 Linux | 🚀 Impossible OS                |
 | --- | ---------------- | ------------- | -------- | ------------------------------- |
-| 💎  | Core feature     | ✅            | ✅       | ⬜ Planned — §1.1               |
-| ⭐  | Exclusive feature | ❌           | ❌       | ⬜ **Planned — world-first** 🚀 |
+| 💎  | Core feature     | ✅            | ✅       | ⬜ Planned -- §1.1               |
+| ⭐  | Exclusive feature | ❌           | ❌       | ⬜ **Planned -- world-first** 🚀 |
 ```
 
 - `💎` rows = parity features; Impossible OS must reach the same level as Windows and Linux.

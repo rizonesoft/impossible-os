@@ -1,4 +1,4 @@
-# TODO-05 — serial-analyze (Boot Log Analyzer)
+# TODO-05 -- serial-analyze (Boot Log Analyzer)
 
 > **Goal:** Parse serial boot logs to extract timing, highlight warnings/errors, detect anomalies, compare boot runs, and generate visual reports. Replaces manually scanning hundreds of log lines.
 
@@ -31,7 +31,7 @@ $ serial-analyze --compare boot1.log boot2.log
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Log parser (timestamps, phases, subsystems)    | —          |  [ ]   |
+| 💎  |   1   | Log parser (timestamps, phases, subsystems)    | --          |  [ ]   |
 | ⭐  |   2   | Timing analysis (per-phase, per-subsystem)     | §1         |  [ ]   |
 | ⭐  |   3   | Warning/error highlighter                      | §1         |  [ ]   |
 | ⭐  |   4   | Boot comparison (two logs, find regressions)   | §2         |  [ ]   |

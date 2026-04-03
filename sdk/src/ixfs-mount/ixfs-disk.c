@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs-disk.c — Platform-abstracted raw disk/image I/O with GPT parsing
+ * ixfs-disk.c -- Platform-abstracted raw disk/image I/O with GPT parsing
  *
  * Linux: open() + pread() / pwrite()
  * ============================================================================ */

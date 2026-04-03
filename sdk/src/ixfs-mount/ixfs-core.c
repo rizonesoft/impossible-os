@@ -1,8 +1,8 @@
 /* ============================================================================
- * ixfs-core.c — Shared IXFS parser for host tools
+ * ixfs-core.c -- Shared IXFS parser for host tools
  *
  * Ported from kernel: ixfs_core.c, ixfs_inode.c, ixfs_extent.c, ixfs_ops.c
- * No kernel dependencies — uses <stdint.h>, <stdio.h>, <stdlib.h>, <string.h>.
+ * No kernel dependencies -- uses <stdint.h>, <stdio.h>, <stdlib.h>, <string.h>.
  * ============================================================================ */
 
 #define _POSIX_C_SOURCE 200809L
@@ -240,7 +240,7 @@ int64_t ixfs_read_data(ixfs_vol_t *vol, const struct ixfs_inode *inode,
 
         disk_block = ixfs_extent_lookup(inode, file_block);
         if (disk_block == 0) {
-            /* Hole — zero fill */
+            /* Hole -- zero fill */
             memset(dst, 0, chunk);
         } else {
             if (ixfs_disk_read_block(vol->disk, disk_block, block_buf) != 0)
@@ -258,7 +258,7 @@ int64_t ixfs_read_data(ixfs_vol_t *vol, const struct ixfs_inode *inode,
 }
 
 /* ========================================================================
- * Write support — bitmap, block alloc, inode write, dir ops, flush
+ * Write support -- bitmap, block alloc, inode write, dir ops, flush
  * ======================================================================== */
 
 /* --- Bitmap --- */

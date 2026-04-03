@@ -1,5 +1,5 @@
 /* ============================================================================
- * privileges.h — Privilege LUID constants, LUID_AND_ATTRIBUTES, PRIVILEGE_SET
+ * privileges.h -- Privilege LUID constants, LUID_AND_ATTRIBUTES, PRIVILEGE_SET
  *
  * Each privilege is identified by a well-known LUID (HighPart=0,
  * LowPart=<n>).  These match the Windows NT privilege numbering so
@@ -102,7 +102,7 @@ typedef struct {
 /* --- Debug helper -------------------------------------------------------- */
 
 /*
- * RtlPrivilegeSetToString — format a PRIVILEGE_SET as a human-readable
+ * RtlPrivilegeSetToString -- format a PRIVILEGE_SET as a human-readable
  * string: "SeShutdownPrivilege(E) SeDebugPrivilege(D) ..."
  * E=Enabled, D=Disabled, R=Removed.
  * Returns chars written (excluding NUL), or -1 on error.
@@ -110,7 +110,7 @@ typedef struct {
 int RtlPrivilegeSetToString(const PRIVILEGE_SET *ps, char *buf, uint32_t len);
 
 /*
- * RtlPrivilegeLuidToName — return the name string for a well-known
+ * RtlPrivilegeLuidToName -- return the name string for a well-known
  * privilege LUID, or NULL if not recognized.
  */
 const char *RtlPrivilegeLuidToName(const LUID *luid);

@@ -1,5 +1,5 @@
 /* ============================================================================
- * keyboard.h — PS/2 Keyboard driver
+ * keyboard.h -- PS/2 Keyboard driver
  *
  * Handles IRQ 1, translates scan codes to ASCII (US QWERTY layout),
  * supports Shift, Caps Lock, Ctrl, Alt modifiers.

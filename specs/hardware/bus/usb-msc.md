@@ -1,4 +1,4 @@
-# USB Mass Storage Class — Technical Specification for OS Implementation
+# USB Mass Storage Class -- Technical Specification for OS Implementation
 
 ## Overview and Architectural Context
 
@@ -181,7 +181,7 @@ All fields are **little-endian**. The `control` field layout:
 | 0      | Cycle (C)  | Producer/consumer ownership toggle                        |
 | 1      | ENT        | Evaluate Next TRB (for multi-TRB operations)              |
 | 4      | Chain (CH) | Links this TRB to the next as part of the same TD         |
-| 5      | IOC        | Interrupt On Completion — generate event when done        |
+| 5      | IOC        | Interrupt On Completion -- generate event when done        |
 | 15:10  | TRB Type   | Identifies the TRB kind (see table below)                 |
 
 ### TRB Type Codes
@@ -231,24 +231,24 @@ The following steps must be executed **in order** to bring the xHCI controller t
 operational state:
 
 1. **Discover controller** via PCI enumeration (Class `0x0C`, Subclass `0x03`, PI `0x30`).
-2. **Map MMIO space** — read `BAR0`/`BAR1`, map as uncacheable pages.
-3. **Read capabilities** — parse `CAPLENGTH`, `HCSPARAMS1`, `HCCPARAMS1` to determine
+2. **Map MMIO space** -- read `BAR0`/`BAR1`, map as uncacheable pages.
+3. **Read capabilities** -- parse `CAPLENGTH`, `HCSPARAMS1`, `HCCPARAMS1` to determine
    max slots, max ports, 64-bit support, and context size.
-4. **Halt controller** — set `USBCMD.RS = 0`, wait for `USBSTS.HCH = 1`.
-5. **Reset controller** — set `USBCMD.HCRST = 1`, wait for `USBCMD.HCRST = 0` AND
+4. **Halt controller** -- set `USBCMD.RS = 0`, wait for `USBSTS.HCH = 1`.
+5. **Reset controller** -- set `USBCMD.HCRST = 1`, wait for `USBCMD.HCRST = 0` AND
    `USBSTS.CNR = 0`.
-6. **Configure max slots** — write `CONFIG.MaxSlotsEn` with desired device count.
-7. **Allocate DCBAA** — allocate 64-byte-aligned, physically contiguous array of
+6. **Configure max slots** -- write `CONFIG.MaxSlotsEn` with desired device count.
+7. **Allocate DCBAA** -- allocate 64-byte-aligned, physically contiguous array of
    `(MaxSlots + 1)` entries. Write physical address to `DCBAAP`.
-8. **Allocate scratchpad buffers** — if `HCSPARAMS2` indicates scratchpad count > 0,
+8. **Allocate scratchpad buffers** -- if `HCSPARAMS2` indicates scratchpad count > 0,
    allocate page-aligned buffers and store pointers at `DCBAA[0]`.
-9. **Allocate Command Ring** — allocate 64-byte-aligned TRB ring. Write physical address
+9. **Allocate Command Ring** -- allocate 64-byte-aligned TRB ring. Write physical address
    to `CRCR` (with cycle bit in bit 0).
-10. **Allocate Event Ring** — allocate ERST entries and event ring segments. Write to
+10. **Allocate Event Ring** -- allocate ERST entries and event ring segments. Write to
     `ERSTSZ`, `ERSTBA`, and initialize `ERDP`.
-11. **Enable interrupts** — set `USBCMD.INTE = 1` and `IMAN.IE = 1` for interrupter 0.
+11. **Enable interrupts** -- set `USBCMD.INTE = 1` and `IMAN.IE = 1` for interrupter 0.
     Configure MSI/MSI-X via PCI capability structures.
-12. **Start controller** — set `USBCMD.RS = 1`, wait for `USBSTS.HCH = 0`.
+12. **Start controller** -- set `USBCMD.RS = 1`, wait for `USBSTS.HCH = 0`.
 
 ---
 
@@ -259,16 +259,16 @@ Event TRB. The driver must then perform the USB enumeration sequence to identify
 
 ### Enumeration Sequence
 
-1. **Detect port event** — read Port Status Change Event from Event Ring.
-2. **Reset port** — set `PORTSC.PR = 1`, wait for Port Reset Change.
-3. **Enable Slot** — submit Enable Slot Command TRB on Command Ring.
-4. **Address Device** — submit Address Device Command with Input Context containing
+1. **Detect port event** -- read Port Status Change Event from Event Ring.
+2. **Reset port** -- set `PORTSC.PR = 1`, wait for Port Reset Change.
+3. **Enable Slot** -- submit Enable Slot Command TRB on Command Ring.
+4. **Address Device** -- submit Address Device Command with Input Context containing
    Slot Context and Endpoint 0 Context (max packet size from port speed).
-5. **GET_DESCRIPTOR (Device)** — control transfer on EP0 to read 18-byte Device Descriptor.
-6. **GET_DESCRIPTOR (Configuration)** — two-stage: first read 9-byte header to get
+5. **GET_DESCRIPTOR (Device)** -- control transfer on EP0 to read 18-byte Device Descriptor.
+6. **GET_DESCRIPTOR (Configuration)** -- two-stage: first read 9-byte header to get
    `wTotalLength`, then allocate and read full descriptor tree.
-7. **SET_CONFIGURATION** — select the desired configuration.
-8. **Configure Endpoint** — submit Configure Endpoint Command with all discovered endpoints.
+7. **SET_CONFIGURATION** -- select the desired configuration.
+8. **Configure Endpoint** -- submit Configure Endpoint Command with all discovered endpoints.
 
 ### USB Descriptor Structures
 
@@ -421,7 +421,7 @@ Host ↔ Device:  Data Phase (optional)            [Bulk-IN or Bulk-OUT]
 Device → Host:  Command Status Wrapper (CSW)     [13 bytes, Bulk-IN]
 ```
 
-### Command Block Wrapper (CBW) — 31 bytes
+### Command Block Wrapper (CBW) -- 31 bytes
 
 All multi-byte fields are **little-endian**.
 
@@ -439,7 +439,7 @@ struct usb_msc_cbw {
 
 | Offset | Size | Field                    | Description                                |
 | ------ | ---- | ------------------------ | ------------------------------------------ |
-| `0x00` | 4    | `dCBWSignature`          | `0x43425355` — identifies packet as CBW    |
+| `0x00` | 4    | `dCBWSignature`          | `0x43425355` -- identifies packet as CBW    |
 | `0x04` | 4    | `dCBWTag`                | Unique tag, echoed in CSW for correlation  |
 | `0x08` | 4    | `dCBWDataTransferLength` | Bytes expected in Data Phase (0 = no data) |
 | `0x0C` | 1    | `bmCBWFlags`             | Bit 7: direction. `0x80`=IN, `0x00`=OUT    |
@@ -447,7 +447,7 @@ struct usb_msc_cbw {
 | `0x0E` | 1    | `bCBWCBLength`           | Length of SCSI CDB (1–16 bytes)            |
 | `0x0F` | 16   | `CBWCB`                  | SCSI Command Descriptor Block payload      |
 
-### Command Status Wrapper (CSW) — 13 bytes
+### Command Status Wrapper (CSW) -- 13 bytes
 
 All multi-byte fields are **little-endian**.
 
@@ -462,7 +462,7 @@ struct usb_msc_csw {
 
 | Offset | Size | Field              | Description                                      |
 | ------ | ---- | ------------------ | ------------------------------------------------ |
-| `0x00` | 4    | `dCSWSignature`    | `0x53425355` — identifies packet as CSW          |
+| `0x00` | 4    | `dCSWSignature`    | `0x53425355` -- identifies packet as CSW          |
 | `0x04` | 4    | `dCSWTag`          | Must match the `dCBWTag` of the originating CBW  |
 | `0x08` | 4    | `dCSWDataResidue`  | `dCBWDataTransferLength` minus bytes processed   |
 | `0x0C` | 1    | `bCSWStatus`       | Final command status (see table below)           |
@@ -472,8 +472,8 @@ struct usb_msc_csw {
 | Value  | Name          | Meaning                                                   |
 | ------ | ------------- | --------------------------------------------------------- |
 | `0x00` | Command Passed| Command executed successfully                             |
-| `0x01` | Command Failed| Logical failure — issue REQUEST SENSE for details         |
-| `0x02` | Phase Error   | Protocol desync — immediate Reset Recovery required       |
+| `0x01` | Command Failed| Logical failure -- issue REQUEST SENSE for details         |
+| `0x02` | Phase Error   | Protocol desync -- immediate Reset Recovery required       |
 
 ### CSW Validation Rules
 
@@ -483,7 +483,7 @@ Before accepting a CSW, the driver **must** verify:
 2. `dCSWTag` matches the `dCBWTag` of the active pending request
 3. CSW is exactly 13 bytes
 
-If any check fails, the CSW is invalid — initiate Reset Recovery.
+If any check fails, the CSW is invalid -- initiate Reset Recovery.
 
 ### The Thirteen Cases: Host/Device Expectation Matrix
 
@@ -521,7 +521,7 @@ embedded in the `CBWCB` field.
 
 ### Mandatory SCSI Commands
 
-#### INQUIRY (`0x12`) — 6-byte CDB
+#### INQUIRY (`0x12`) -- 6-byte CDB
 
 Identifies the device type and vendor/product strings.
 
@@ -549,7 +549,7 @@ Standard INQUIRY response (first 36 bytes):
 | 16–31  | 16   | Product Identification | ASCII, space-padded                       |
 | 32–35  | 4    | Product Rev Level      | ASCII, space-padded                       |
 
-#### TEST UNIT READY (`0x00`) — 6-byte CDB
+#### TEST UNIT READY (`0x00`) -- 6-byte CDB
 
 Polls the device to check if the medium is inserted and ready.
 
@@ -564,7 +564,7 @@ CBW parameters: `bmCBWFlags = 0x00`, `dCBWDataTransferLength = 0`, `bCBWCBLength
 No data phase. If `bCSWStatus = 0x01`, issue REQUEST SENSE to determine the reason
 (e.g., medium not present, device busy spinning up).
 
-#### READ CAPACITY (10) (`0x25`) — 10-byte CDB
+#### READ CAPACITY (10) (`0x25`) -- 10-byte CDB
 
 Returns the disk geometry: last LBA and block size.
 
@@ -593,7 +593,7 @@ Total capacity = `(Last_LBA + 1) × Block_Length`.
 > Common sector sizes: 512, 1024, 2048, 4096 bytes. Always read this value from the device;
 > never hardcode 512.
 
-#### READ (10) (`0x28`) — 10-byte CDB
+#### READ (10) (`0x28`) -- 10-byte CDB
 
 Reads contiguous blocks from the storage medium.
 
@@ -609,7 +609,7 @@ Reads contiguous blocks from the storage medium.
 CBW parameters: `bmCBWFlags = 0x80` (Data-In),
 `dCBWDataTransferLength = transfer_length × block_size`, `bCBWCBLength = 10`.
 
-#### WRITE (10) (`0x2A`) — 10-byte CDB
+#### WRITE (10) (`0x2A`) -- 10-byte CDB
 
 Writes contiguous blocks to the storage medium.
 
@@ -625,7 +625,7 @@ Writes contiguous blocks to the storage medium.
 CBW parameters: `bmCBWFlags = 0x00` (Data-Out),
 `dCBWDataTransferLength = transfer_length × block_size`, `bCBWCBLength = 10`.
 
-#### REQUEST SENSE (`0x03`) — 6-byte CDB
+#### REQUEST SENSE (`0x03`) -- 6-byte CDB
 
 Retrieves error details after a `bCSWStatus = 0x01` (Command Failed).
 
@@ -662,9 +662,9 @@ Fixed Format Sense Data (18+ bytes, **big-endian** where multi-byte):
 | `0x05`      | `0x20` | `0x00` | Invalid Command Operation Code      |
 | `0x05`      | `0x24` | `0x00` | Invalid Field in CDB                |
 
-#### START STOP UNIT (`0x1B`) — 6-byte CDB
+#### START STOP UNIT (`0x1B`) -- 6-byte CDB
 
-Used for safe eject — spins down platters or places flash in quiescent state.
+Used for safe eject -- spins down platters or places flash in quiescent state.
 
 | Byte | Field           | Value / Description                           |
 | ---- | --------------- | --------------------------------------------- |
@@ -779,14 +779,14 @@ The ISR must:
 
 When a device is physically disconnected mid-operation:
 
-1. **Quarantine** — mark device as offline immediately. Reject all pending I/O with
+1. **Quarantine** -- mark device as offline immediately. Reject all pending I/O with
    `ENODEV` error.
-2. **Abort transfers** — walk Transfer Rings, abort all pending TRBs for the disconnected
+2. **Abort transfers** -- walk Transfer Rings, abort all pending TRBs for the disconnected
    device's endpoints.
-3. **Halt endpoints** — issue Stop Endpoint Commands via the xHCI Command Ring.
-4. **Free slot** — issue Disable Slot Command to release the device slot.
-5. **Notify VFS** — trigger unmount of associated filesystems.
-6. **Deallocate** — once all file handles are closed (refcount → 0), free DMA buffers,
+3. **Halt endpoints** -- issue Stop Endpoint Commands via the xHCI Command Ring.
+4. **Free slot** -- issue Disable Slot Command to release the device slot.
+5. **Notify VFS** -- trigger unmount of associated filesystems.
+6. **Deallocate** -- once all file handles are closed (refcount → 0), free DMA buffers,
    endpoint contexts, and device tracking structures.
 
 > [!WARNING]
@@ -824,7 +824,7 @@ can feed the host:
 ### Two-Stage Configuration Descriptor Read
 
 1. First control transfer: request only 9 bytes (Configuration Descriptor header).
-2. Parse `wTotalLength` — validate it against a sane maximum (e.g., 4096 bytes).
+2. Parse `wTotalLength` -- validate it against a sane maximum (e.g., 4096 bytes).
 3. Allocate buffer of `wTotalLength` bytes.
 4. Second control transfer: request full `wTotalLength` bytes.
 5. Verify actual bytes received ≤ allocated buffer size.
@@ -956,8 +956,8 @@ device_del hotusb
 ### Current Codebase State
 
 No USB or xHCI code exists in the Impossible OS codebase. The implementation will build on:
-- **PCI subsystem** (`src/kernel/drivers/pci.c`) — for xHCI controller discovery
-- **PMM** (`src/kernel/mm/pmm.c`) — for DMA-safe physically contiguous allocation
-- **VMM** (`src/kernel/mm/vmm.c`) — for uncacheable MMIO page mapping
-- **VFS** (`src/kernel/fs/vfs.c`) — for block device registration
-- **Interrupt subsystem** — for MSI/MSI-X vector mapping
+- **PCI subsystem** (`src/kernel/drivers/pci.c`) -- for xHCI controller discovery
+- **PMM** (`src/kernel/mm/pmm.c`) -- for DMA-safe physically contiguous allocation
+- **VMM** (`src/kernel/mm/vmm.c`) -- for uncacheable MMIO page mapping
+- **VFS** (`src/kernel/fs/vfs.c`) -- for block device registration
+- **Interrupt subsystem** -- for MSI/MSI-X vector mapping

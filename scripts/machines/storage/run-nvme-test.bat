@@ -1,5 +1,5 @@
 @echo off
-:: run-nvme-test.bat — Test NVMe storage driver in QEMU
+:: run-nvme-test.bat -- Test NVMe storage driver in QEMU
 ::
 :: Double-click to boot with a 128 MiB NVMe drive alongside the AHCI system disk.
 

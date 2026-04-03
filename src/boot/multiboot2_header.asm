@@ -1,5 +1,5 @@
 ; =============================================================================
-; Multiboot2 Header — Required for GRUB to recognize the kernel
+; Multiboot2 Header -- Required for GRUB to recognize the kernel
 ; =============================================================================
 
 section .multiboot2

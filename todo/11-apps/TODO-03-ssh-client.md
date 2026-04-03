@@ -1,6 +1,6 @@
-# TODO-03 — SSH Client
+# TODO-03 -- SSH Client
 
-> **Goal:** Build `ssh.exe` — a complete SSH2 client for Impossible OS, delivering secure remote
+> **Goal:** Build `ssh.exe` -- a complete SSH2 client for Impossible OS, delivering secure remote
 > shell access, file transfer (SCP/SFTP), TOFU host verification, and a Windows-style SSH config
 > file. All sections build on the monocypher crypto primitives and TCP sockets established in
 > lower layers.
@@ -11,21 +11,21 @@
 > that with the richer wire-format details from the prompt spec, Registry-backed TOFU/known-hosts,
 > Windows-style SSH config file parsing, SCP protocol flow, and sftp interactive UI.
 > Implement §1–§3 here in parallel with or after TODO-08 §4–§6; do not re-implement what
-> TODO-08 already specifies — use XREFs to stay aligned.
+> TODO-08 already specifies -- use XREFs to stay aligned.
 >
 > Monocypher (Curve25519 / ChaCha20-Poly1305 / Ed25519) **must** be ported before any crypto
-> work begins — `→ XREF: 11-user-platform-sdk/TODO-01 §4`.
+> work begins -- `→ XREF: 11-user-platform-sdk/TODO-01 §4`.
 
 ---
 
 ## Inputs
 
-- `include/desktop/terminal.h` — `terminal_open()`, `terminal_puts()`, `terminal_trygetchar()`, `TERM_COLS`, `TERM_ROWS`
-- `06-networking/TODO-08-ssh-ftp-clients.md §4–§9` — SSH protocol reference spec
-- `06-networking/TODO-02-dns-sockets.md §5` — `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close`, `dns_resolve`
-- `11-user-platform-sdk/TODO-01-kernel-libraries.md §4` — monocypher: `crypto_x25519_*`, `crypto_chacha20_*`, `crypto_poly1305_*`, `crypto_ed25519_*`, `crypto_blake2b_*`, `csprng_fill`
-- `include/registry.h` — `reg_set_string`, `reg_get_string`, `reg_create_key`
-- `10-apps/TODO-02-ftp-wget-wifi.md §2` — `progress_bar_print(done, total, elapsed_ms)` helper
+- `include/desktop/terminal.h` -- `terminal_open()`, `terminal_puts()`, `terminal_trygetchar()`, `TERM_COLS`, `TERM_ROWS`
+- `06-networking/TODO-08-ssh-ftp-clients.md §4–§9` -- SSH protocol reference spec
+- `06-networking/TODO-02-dns-sockets.md §5` -- `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close`, `dns_resolve`
+- `11-user-platform-sdk/TODO-01-kernel-libraries.md §4` -- monocypher: `crypto_x25519_*`, `crypto_chacha20_*`, `crypto_poly1305_*`, `crypto_ed25519_*`, `crypto_blake2b_*`, `csprng_fill`
+- `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_create_key`
+- `10-apps/TODO-02-ftp-wget-wifi.md §2` -- `progress_bar_print(done, total, elapsed_ms)` helper
 
 ---
 
@@ -51,7 +51,7 @@
 
 ## 1. SSH2 Transport Layer `[Opus]`
 
-> → XREF: `06-networking/TODO-08-ssh-ftp-clients.md §4` — base implementation spec.
+> → XREF: `06-networking/TODO-08-ssh-ftp-clients.md §4` -- base implementation spec.
 > This section specifies the HKDF-SHA256 key derivation, ChaCha20-Poly1305 packet framing, and
 > sequence-number tracking details that §4 of TODO-08 leaves implicit.
 
@@ -64,7 +64,7 @@
 - [ ] Recv `SSH_MSG_KEX_ECDH_REPLY` (byte 31): parse server host key blob (type + key bytes); parse server ephemeral pubkey `server_pub[32]`; parse server signature over exchange hash H
 - [ ] Compute shared secret: `crypto_x25519(shared, client_priv, server_pub)` → `shared[32]`
 - [ ] Derive session keys via HKDF-SHA256:
-  - `H = Blake2b(V_C || V_S || I_C || I_S || K_S || Q_C || Q_S || K)` — exchange hash
+  - `H = Blake2b(V_C || V_S || I_C || I_S || K_S || Q_C || Q_S || K)` -- exchange hash
   - `session_id = H` (first key exchange only)
   - `enc_key_c2s[32] = HKDF-SHA256(K || H, "C", session_id)`; `enc_key_s2c[32]` with "D"
   - `mac_key_c2s[32]` with "E"; `mac_key_s2c[32]` with "F"
@@ -90,7 +90,7 @@
   - [ ] Send `SSH_MSG_USERAUTH_REQUEST`: service `"ssh-connection"`, method `"password"`, `FALSE`, password string (all encrypted inside established AEAD channel)
   - [ ] On `SSH_MSG_USERAUTH_FAILURE`: retry up to 3 times, then print `"Permission denied (password)."` and exit
   - [ ] On `SSH_MSG_USERAUTH_SUCCESS`: proceed to §3
-- [ ] Stretch — public key auth (Ed25519):
+- [ ] Stretch -- public key auth (Ed25519):
   - [ ] Keypair path: `C:\Users\{name}\AppData\ssh\id_ed25519` (private, 64 bytes) + `id_ed25519.pub` (public, 32 bytes)
   - [ ] Auto-generate on first use: `csprng_fill(seed, 32)` → `crypto_ed25519_key_pair(pub, priv, seed)` → write both files; print `"Generating new Ed25519 key pair... done."`
   - [ ] `SSH_MSG_USERAUTH_REQUEST` with method `"publickey"`, algorithm `"ssh-ed25519"`, public key blob; query only (no sig) first
@@ -108,8 +108,8 @@
 - [ ] PTY request: `SSH_MSG_CHANNEL_REQUEST` type=`"pty-req"`, `TERM="xterm-256color"`, cols=`TERM_COLS`, rows=`TERM_ROWS`, pixel-width=0, pixel-height=0, empty mode string; `want_reply=1` → recv `SSH_MSG_CHANNEL_SUCCESS`
 - [ ] Shell request: `SSH_MSG_CHANNEL_REQUEST` type=`"shell"`, `want_reply=1` → recv `SSH_MSG_CHANNEL_SUCCESS`
 - [ ] Relay loop (runs until channel closes):
-  - [ ] `ch = terminal_trygetchar()` — if char available: send `SSH_MSG_CHANNEL_DATA` with that byte; decrement `remote_window` by 1; if `remote_window < 1024`: send `SSH_MSG_CHANNEL_WINDOW_ADJUST` requesting 65536 bytes
-  - [ ] `ssh_recv_packet_nonblock()` — if `SSH_MSG_CHANNEL_DATA`: call `terminal_puts(data, data_len)`; increment `local_window` consumed; if consumed > 32768: send `SSH_MSG_CHANNEL_WINDOW_ADJUST` +131072
+  - [ ] `ch = terminal_trygetchar()` -- if char available: send `SSH_MSG_CHANNEL_DATA` with that byte; decrement `remote_window` by 1; if `remote_window < 1024`: send `SSH_MSG_CHANNEL_WINDOW_ADJUST` requesting 65536 bytes
+  - [ ] `ssh_recv_packet_nonblock()` -- if `SSH_MSG_CHANNEL_DATA`: call `terminal_puts(data, data_len)`; increment `local_window` consumed; if consumed > 32768: send `SSH_MSG_CHANNEL_WINDOW_ADJUST` +131072
   - [ ] If `SSH_MSG_CHANNEL_WINDOW_ADJUST`: add `bytes_to_add` to `remote_window`
   - [ ] If `SSH_MSG_CHANNEL_EOF` or `SSH_MSG_CHANNEL_CLOSE`: send `SSH_MSG_CHANNEL_CLOSE`; break
   - [ ] `ksleep(1)` to avoid busy-wait
@@ -123,7 +123,7 @@
 
 **Source file:** `src/apps/ssh/ssh_main.c`; shell command registration in `src/shell/cmd_ssh.c`
 
-- [ ] `ssh [user@]host [-p port] [-i keyfile]` — parse args: extract user (before `@`), host (after `@`), optional `-p port`, optional `-i keyfile`
+- [ ] `ssh [user@]host [-p port] [-i keyfile]` -- parse args: extract user (before `@`), host (after `@`), optional `-p port`, optional `-i keyfile`
 - [ ] `dns_resolve(host, &ip)` → fail with `"ssh: could not resolve host: {host}"`
 - [ ] Opens new terminal window for the SSH session (or reuses current if launched from terminal)
 - [ ] Default user: if no `user@`, check `HKCU\Software\Impossible\SSH\DefaultUser`; fallback to current session username
@@ -139,12 +139,12 @@
 
 **Source file:** `src/apps/ssh/scp.c`; shell command `src/shell/cmd_scp.c`
 
-- [ ] `scp [user@]host:/remote/path C:\local\path` — download mode
-- [ ] `scp C:\local\file [user@]host:/remote/path` — upload mode
-- [ ] `scp [-r] [-P port] [-i keyfile] source dest` — optional flags
+- [ ] `scp [user@]host:/remote/path C:\local\path` -- download mode
+- [ ] `scp C:\local\file [user@]host:/remote/path` -- upload mode
+- [ ] `scp [-r] [-P port] [-i keyfile] source dest` -- optional flags
 - [ ] Establish SSH connection and authenticate (reuse §1–§2)
 - [ ] Download: `ssh_channel_open("session")` → `ssh_channel_exec("scp -f /remote/path")`
-  - [ ] Recv: `C{mode} {size} {filename}\n` — parse mode (e.g. `0644`), size (uint64_t), filename
+  - [ ] Recv: `C{mode} {size} {filename}\n` -- parse mode (e.g. `0644`), size (uint64_t), filename
   - [ ] Send `\0` ACK byte
   - [ ] Read `{size}` bytes from channel in 64 KiB chunks → write to VFS file via `vfs_open`/`vfs_write`
   - [ ] Send `\0` ACK byte → recv `\0` final ACK
@@ -154,13 +154,13 @@
   - [ ] Send file bytes in 64 KiB chunks from VFS → `kern_send()`
   - [ ] Send `\0` ACK byte → recv `\0` final ACK
 - [ ] Progress: `progress_bar_print(bytes_done, file_size, elapsed_ms)` with `\r` in-place update (KB/s + ETA)
-- [ ] Stretch: `scp -r` recursive directory copy — `D{mode} 0 {dirname}\n` for dirs, `E\n` for end-of-dir
+- [ ] Stretch: `scp -r` recursive directory copy -- `D{mode} 0 {dirname}\n` for dirs, `E\n` for end-of-dir
 
 ---
 
 ## 6. SSH Config File `[Sonnet]`
 
-> → XREF: `09-services-security/TODO-08 §2` — `GetEnvironmentVariableA` for username resolution
+> → XREF: `09-services-security/TODO-08 §2` -- `GetEnvironmentVariableA` for username resolution
 
 **Source file:** `src/apps/ssh/ssh_config.c`
 
@@ -188,13 +188,13 @@
 
 ## 7. sftp Command (Stretch) `[Sonnet]`
 
-> → XREF: `06-networking/TODO-08-ssh-ftp-clients.md §9` — SFTP subsystem protocol spec
+> → XREF: `06-networking/TODO-08-ssh-ftp-clients.md §9` -- SFTP subsystem protocol spec
 
 **Source file:** `src/apps/ssh/sftp.c`; shell command `src/shell/cmd_sftp.c`
 
-- [ ] `sftp [user@]host` — establish SSH connection + auth (§1–§2)
+- [ ] `sftp [user@]host` -- establish SSH connection + auth (§1–§2)
 - [ ] `SSH_MSG_CHANNEL_REQUEST "subsystem" "sftp"` → `SSH2_FXP_INIT` (version=3) → recv `SSH2_FXP_VERSION`
-- [ ] Interactive prompt: `sftp> ` — read line from terminal, parse subcommand
+- [ ] Interactive prompt: `sftp> ` -- read line from terminal, parse subcommand
 - [ ] Subcommands:
   - [ ] `ls [path]` → `SSH2_FXP_OPENDIR` + `SSH2_FXP_READDIR` → format and print entries with permissions, size, date
   - [ ] `cd <dir>` → `SSH2_FXP_REALPATH` → update remote `cwd`
@@ -204,7 +204,7 @@
   - [ ] `rm <file>` → `SSH2_FXP_REMOVE`
   - [ ] `mkdir <dir>` → `SSH2_FXP_MKDIR`
   - [ ] `bye` / `exit` → `SSH2_FXP_CLOSE` all handles → close channel
-- [ ] Stretch: `sftp -b <batchfile>` — read commands from VFS file, execute non-interactively
+- [ ] Stretch: `sftp -b <batchfile>` -- read commands from VFS file, execute non-interactively
 
 ---
 
@@ -213,16 +213,16 @@
 
 | ⭐ | Feature                                          | 🪟 Win11                                            | 🐧 Linux                     | 🚀 Impossible OS                                               |
 |----|--------------------------------------------------|--------------------------------------------------|---------------------------|-------------------------------------------------------------|
-| 💎 | SSH2 transport — ChaCha20-Poly1305 + HKDF-SHA256 | ✅ OpenSSH via `ssh.exe`                         | ✅ OpenSSH                | ⬜ §1 — monocypher crypto; HKDF-SHA256 key derivation       |
-| 💎 | Password + pubkey (Ed25519) auth                 | ✅ OpenSSH                                       | ✅ OpenSSH                | ⬜ §2 — Ed25519 auto-generate on first use                  |
-| 💎 | Interactive PTY relay + ANSI rendering           | ✅ OpenSSH + Windows Terminal                    | ✅ OpenSSH + any terminal | ⬜ §3 — relay via `terminal_puts()`/`terminal_trygetchar()` |
-| ⭐ | TOFU fingerprint stored in Registry              | ✅ OpenSSH uses `%USERPROFILE%\.ssh\known_hosts` | ✅ `~/.ssh/known_hosts`   | ⬜ §4 — `HKCU\Software\Impossible\SSH\KnownHosts\{host}`    |
-| 💎 | SCP file transfer with progress                  | ✅ OpenSSH `scp.exe`                             | ✅ OpenSSH `scp`          | ⬜ §5 — SCP C-mode protocol, 64 KiB                         |
-| ⭐ | Windows-style SSH config                         | ✅ `%USERPROFILE%\.ssh\config`                   | ✅ `~/.ssh/config`        | ⬜ §6 — IxUI Registry fallback + auto-create                |
-| 💎 | Interactive SFTP subsystem                       | ✅ OpenSSH `sftp.exe`                            | ✅ OpenSSH `sftp`         | ⬜ §7 — (Stretch) — ; `SSH2_FXP_*` protocol                 |
+| 💎 | SSH2 transport -- ChaCha20-Poly1305 + HKDF-SHA256 | ✅ OpenSSH via `ssh.exe`                         | ✅ OpenSSH                | ⬜ §1 -- monocypher crypto; HKDF-SHA256 key derivation       |
+| 💎 | Password + pubkey (Ed25519) auth                 | ✅ OpenSSH                                       | ✅ OpenSSH                | ⬜ §2 -- Ed25519 auto-generate on first use                  |
+| 💎 | Interactive PTY relay + ANSI rendering           | ✅ OpenSSH + Windows Terminal                    | ✅ OpenSSH + any terminal | ⬜ §3 -- relay via `terminal_puts()`/`terminal_trygetchar()` |
+| ⭐ | TOFU fingerprint stored in Registry              | ✅ OpenSSH uses `%USERPROFILE%\.ssh\known_hosts` | ✅ `~/.ssh/known_hosts`   | ⬜ §4 -- `HKCU\Software\Impossible\SSH\KnownHosts\{host}`    |
+| 💎 | SCP file transfer with progress                  | ✅ OpenSSH `scp.exe`                             | ✅ OpenSSH `scp`          | ⬜ §5 -- SCP C-mode protocol, 64 KiB                         |
+| ⭐ | Windows-style SSH config                         | ✅ `%USERPROFILE%\.ssh\config`                   | ✅ `~/.ssh/config`        | ⬜ §6 -- IxUI Registry fallback + auto-create                |
+| 💎 | Interactive SFTP subsystem                       | ✅ OpenSSH `sftp.exe`                            | ✅ OpenSSH `sftp`         | ⬜ §7 -- (Stretch) -- ; `SSH2_FXP_*` protocol                 |
 
 Impossible OS stores known hosts natively in the Registry (no hidden dotfiles), auto-generates
-Ed25519 keys on first use, and routes PTY I/O directly through the native terminal API — no POSIX
+Ed25519 keys on first use, and routes PTY I/O directly through the native terminal API -- no POSIX
 pty layer, no ConPTY shim.
 
 ---
@@ -240,4 +240,4 @@ Run `bash scripts/build.sh run` for each verification step.
 - [ ] **SCP upload:** `scp C:\Temp\hello.txt root@10.0.2.2:/tmp/hello.txt` → `ssh root@host "cat /tmp/hello.txt"` shows correct content
 - [ ] **SSH config:** create `C:\Users\default\AppData\ssh\config` with `Host dev` stanza; `ssh dev` resolves and connects
 - [ ] **sftp (stretch):** `sftp root@10.0.2.2` → `ls /etc` lists files; `get /etc/hostname C:\Temp\hostname` downloads correctly; `bye` exits cleanly
-- [ ] Commit: `"apps: SSH2 client — transport, auth, PTY relay, TOFU, SCP, config, sftp"`
+- [ ] Commit: `"apps: SSH2 client -- transport, auth, PTY relay, TOFU, SCP, config, sftp"`

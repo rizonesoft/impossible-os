@@ -1,5 +1,5 @@
 /* ============================================================================
- * system_state.h — Global kernel system state flags
+ * system_state.h -- Global kernel system state flags
  *
  * Lightweight flags set by subsystems at init time and read by the desktop
  * shell, tray renderer, and diagnostic tools.  Each field is set once during

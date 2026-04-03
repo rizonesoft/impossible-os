@@ -1,8 +1,8 @@
 /* ============================================================================
- * ixfs-structs.h — IXFS on-disk structures for host tools
+ * ixfs-structs.h -- IXFS on-disk structures for host tools
  *
  * COPY of on-disk structures from include/kernel/fs/ixfs.h, using <stdint.h>
- * instead of kernel types. Keep in sync manually — any IXFS format change
+ * instead of kernel types. Keep in sync manually -- any IXFS format change
  * must be reflected here.
  * ============================================================================ */
 

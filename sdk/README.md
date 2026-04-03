@@ -73,7 +73,7 @@ Each function maps to a kernel VFS operation internally.
 |-----------|-----------|--------|
 | `FindFirstFile()` | `vfs_readdir()` | ✅ Declared |
 | `FindNextFile()` | `vfs_readdir()` | ✅ Declared |
-| `FindClose()` | — | ✅ Declared |
+| `FindClose()` | -- | ✅ Declared |
 | `CreateDirectory()` | `vfs_create(VFS_DIRECTORY)` | ✅ Declared |
 | `RemoveDirectory()` | `vfs_unlink()` | ✅ Declared |
 
@@ -101,4 +101,4 @@ Drive letters A–Z are supported (VFS mount points).
 
 ## License
 
-GPL-3.0 — see [LICENSE](../LICENSE)
+GPL-3.0 -- see [LICENSE](../LICENSE)

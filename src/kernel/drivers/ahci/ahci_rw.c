@@ -1,5 +1,5 @@
 /* ============================================================================
- * ahci_rw.c — AHCI DMA read/write, IDENTIFY, TRIM, FUA, flush
+ * ahci_rw.c -- AHCI DMA read/write, IDENTIFY, TRIM, FUA, flush
  * ============================================================================ */
 
 #include "kernel/drivers/ahci_internal.h"

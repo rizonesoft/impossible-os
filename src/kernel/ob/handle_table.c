@@ -1,5 +1,5 @@
 /* ============================================================================
- * handle_table.c — Per-process handle table (TODO-03 §3)
+ * handle_table.c -- Per-process handle table (TODO-03 §3)
  *
  * HANDLE values = slot_index * 4 (low 2 bits reserved for future use).
  * The table grows by doubling when full, up to HANDLE_TABLE_MAX_CAP.
@@ -117,7 +117,7 @@ HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
             goto found;
     }
 
-    /* Table full — try to grow */
+    /* Table full -- try to grow */
     if (handle_table_grow(table) < 0)
         return INVALID_HANDLE_VALUE;
 
@@ -216,7 +216,7 @@ uint32_t ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
     /* Grow child table to match parent capacity if needed */
     while (child->capacity < parent->capacity) {
         if (handle_table_grow(child) < 0)
-            break;  /* can't grow further — inherit what fits */
+            break;  /* can't grow further -- inherit what fits */
     }
 
     for (i = 0; i < parent->capacity && i < child->capacity; i++) {

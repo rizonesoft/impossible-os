@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# read-usb-log.sh — Read boot logs from Impossible OS USB drive
+# read-usb-log.sh -- Read boot logs from Impossible OS USB drive
 #
 # After booting on real hardware, the Logs partition (3rd partition)
 # contains debug.log and hardware information. This script mounts it
@@ -32,7 +32,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Impossible OS — USB Log Reader${NC}"
+echo -e "${CYAN}  Impossible OS -- USB Log Reader${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
 
@@ -64,7 +64,7 @@ else
         if [ "$rm_flag" = "1" ] || [ "$tran" = "usb" ]; then
             FOUND=$((FOUND + 1))
             USB_DEVS+=("/dev/$dev")
-            echo -e "  ${CYAN}[$FOUND]${NC} /dev/$dev — $model ($size)"
+            echo -e "  ${CYAN}[$FOUND]${NC} /dev/$dev -- $model ($size)"
         fi
     done < <(lsblk -d -n -o NAME,SIZE,TRAN,RM,MODEL 2>/dev/null | grep -v "^loop\|^sr\|^ram")
 

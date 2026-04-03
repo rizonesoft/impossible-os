@@ -1,7 +1,7 @@
-# TODO-03 — Update Server Infrastructure
+# TODO-03 -- Update Server Infrastructure
 
 > **Goal:** Build the server-side infrastructure that delivers updates to Impossible OS
-> systems — version manifest JSON API, IPKG package repository, CDN hosting strategy,
+> systems -- version manifest JSON API, IPKG package repository, CDN hosting strategy,
 > release promotion pipeline, delta packages, telemetry aggregation backend, and public
 > status page. No kernel code lives here; this TODO is CI scripts, JSON schemas, GitHub
 > Actions, and Cloudflare Workers.
@@ -9,7 +9,7 @@
 > [!IMPORTANT]
 > **Update client** (`update_check/download/verify/apply`, `wuapp.cpl`, IPKG
 > installer wizard) is owned by `09-services-security/TODO-03`; §1 here adds a small
-> migration note — the existing `update_check()` parses an INI endpoint; this TODO
+> migration note -- the existing `update_check()` parses an INI endpoint; this TODO
 > **upgrades the endpoint to JSON** and notes the matching client-side parse change
 > required in `TODO-03 §1`.
 >
@@ -19,19 +19,19 @@
 >
 > **Release artifacts** (disk image, ISO, code signing, `release-{ver}.json` manifest)
 > are owned by `12-installer-release/TODO-01`; §4 here wires those artifacts into CDN
-> upload scripts — the artifact manifest is the source of record for artifact URLs.
+> upload scripts -- the artifact manifest is the source of record for artifact URLs.
 
 ---
 
 ## Inputs
 
-- `09-services-security/TODO-03-updates-packages.md §1` (→ XREF) — `update_check()` INI client; §1 here changes the endpoint to JSON and notes the parse upgrade required there
-- `09-services-security/TODO-12-long-term-features.md §9` (→ XREF) — `telemetry_record_event()`; HTTP POST stretch; §7 here builds the receiving server
-- `12-installer-release/TODO-01-release-artifacts.md §6` (→ XREF) — `release-{version}.json` artifact manifest; §4 here consumes it for CDN upload
-- `12-installer-release/TODO-01-release-artifacts.md §1` (→ XREF) — `OS_VERSION_STRING`, `increment-build.sh`; §5 promotion pipeline increments and tags versions
-- `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) — `release-sdk.sh`; §5 promotion coordinates SDK + OS release
-- `scripts/build.sh`, `scripts/make-iso.sh`, `scripts/sign-release.sh` — build pipeline inputs for §4 and §5
-- `include/kernel/net/http.h` — `http_get()` format change note for §1 (client parse)
+- `09-services-security/TODO-03-updates-packages.md §1` (→ XREF) -- `update_check()` INI client; §1 here changes the endpoint to JSON and notes the parse upgrade required there
+- `09-services-security/TODO-12-long-term-features.md §9` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §7 here builds the receiving server
+- `12-installer-release/TODO-01-release-artifacts.md §6` (→ XREF) -- `release-{version}.json` artifact manifest; §4 here consumes it for CDN upload
+- `12-installer-release/TODO-01-release-artifacts.md §1` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`; §5 promotion pipeline increments and tags versions
+- `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; §5 promotion coordinates SDK + OS release
+- `scripts/build.sh`, `scripts/make-iso.sh`, `scripts/sign-release.sh` -- build pipeline inputs for §4 and §5
+- `include/kernel/net/http.h` -- `http_get()` format change note for §1 (client parse)
 
 ---
 
@@ -42,7 +42,7 @@ A released build of Impossible OS calls `update_check()` → hits
 manifest → downloads the delta or full update → verifies SHA-256 → applies. Package
 installation calls `ipkg install <name>` → hits the package index JSON → downloads and
 verifies the `.ipkg`. All server endpoints are static JSON files hosted on GitHub Pages
-and Cloudflare R2 — no live server to maintain.
+and Cloudflare R2 -- no live server to maintain.
 
 ---
 
@@ -87,7 +87,7 @@ and Cloudflare R2 — no live server to maintain.
 - [ ] **Channels**: three static files: `api/version/stable.json`, `api/version/beta.json`, `api/version/dev.json`; served via GitHub Pages CNAME redirect so `?channel=stable` maps to `stable.json`; CF Workers or Netlify redirect handles query-string routing (one-line Workers script)
 - [ ] **Changelog endpoint**: `GET /changelog/{version}` → Markdown file in `docs/changelog/1.0.22100.md`; generated from git log by `scripts/gen-changelog.sh`
 - [ ] **Client parse upgrade** (note for `09-services-security/TODO-03 §1`): change `update_check()` to `http_get()` the JSON endpoint and parse with a minimal JSON key-value extractor (no stdlib; 50-line `update_json_get_string/int` helpers); map fields to existing `struct update_info`; add `delta_url[256]` + `delta_sha256[65]` + `delta_size` fields to `struct update_info`
-- [ ] **SSL**: Let's Encrypt via GitHub Pages custom domain or Cloudflare proxy — no configuration beyond CNAME
+- [ ] **SSL**: Let's Encrypt via GitHub Pages custom domain or Cloudflare proxy -- no configuration beyond CNAME
 - [ ] **Rate limiting**: static file; no server to rate-limit; Cloudflare's default DDoS protection covers it
 
 ---
@@ -123,10 +123,10 @@ and Cloudflare R2 — no live server to maintain.
   5. `git tag "release/{to}/{version}"` + `git push origin gh-pages --tags`
   6. Print promotion summary: version, channel, artifact URLs from manifest
 - [ ] **`scripts/rollback-release.sh <channel> <previous-version>`**:
-  1. `git log --oneline api/version/{channel}.json` — find previous commit hash for that channel file
+  1. `git log --oneline api/version/{channel}.json` -- find previous commit hash for that channel file
   2. `git show {commit}:api/version/{channel}.json > api/version/{channel}.json` (restore previous manifest)
   3. Commit + push; print `"Rolled back {channel} to {previous-version}"`
-- [ ] **Sign-off checklist** (`docs/release-checklist.md`): before stable promotion — build passes on clean run, all Tier 1–5 compat tests green (TODO-07 §12 CI gate), release ISO boots in QEMU, SHA-256 sidecar files present, code signing verified, changelog written
+- [ ] **Sign-off checklist** (`docs/release-checklist.md`): before stable promotion -- build passes on clean run, all Tier 1–5 compat tests green (TODO-07 §12 CI gate), release ISO boots in QEMU, SHA-256 sidecar files present, code signing verified, changelog written
 - [ ] **`scripts/gen-changelog.sh <old-version> <new-version>`**: `git log v{old}..v{new} --oneline --no-merges`; group by conventional-commit scope (kernel/boot/desktop/drivers/etc.); output `docs/changelog/{new-version}.md` in Markdown
 
 ---
@@ -135,7 +135,7 @@ and Cloudflare R2 — no live server to maintain.
 
 **URL:** `GET https://pkg.impossible-os.dev/index.json`
 
-- [ ] **Package index schema** (`index.json` — array of package descriptors):
+- [ ] **Package index schema** (`index.json` -- array of package descriptors):
   ```json
   [
     {
@@ -153,12 +153,12 @@ and Cloudflare R2 — no live server to maintain.
   - Valid categories: `System Tools`, `Development`, `Multimedia`, `Internet`, `Productivity`, `Games`
   - `index.json` is rebuilt by CI on every package submission approval (see §5)
 - [ ] **New shell commands** (extend `09-services-security/TODO-03` IPKG client):
-  - `ipkg search <query>` — `http_get("https://pkg.impossible-os.dev/index.json", ...)` → cache to `C:\Temp\ipkg-index.json`; filter entries where `name` or `description` contains `query` (case-insensitive); print table: `Name | Version | Category | Size | Description`
-  - `ipkg install <name>` — look up name in cached index; if not found: `ipkg update` + retry; download `.ipkg` from `url`; verify SHA-256 via `cng_sha256()`; call existing `ipkg_install(path)` from `TODO-03 §4`
-  - `ipkg list` — scan `HKLM\SOFTWARE\Installed\*` subkeys (set by `TODO-03 §4` installer); print `Name | Version | Install Date`
-  - `ipkg update` — re-download `index.json` to `C:\Temp\ipkg-index.json`; print `"Package index updated: {count} packages"`
-  - `ipkg upgrade` — for each installed package (`HKLM\SOFTWARE\Installed\*`): compare installed version vs. index version; if newer available: `ipkg install <name>` silently; print summary of upgraded packages
-  - `ipkg remove <name>` — delegate to existing `TODO-03 §5` uninstaller
+  - `ipkg search <query>` -- `http_get("https://pkg.impossible-os.dev/index.json", ...)` → cache to `C:\Temp\ipkg-index.json`; filter entries where `name` or `description` contains `query` (case-insensitive); print table: `Name | Version | Category | Size | Description`
+  - `ipkg install <name>` -- look up name in cached index; if not found: `ipkg update` + retry; download `.ipkg` from `url`; verify SHA-256 via `cng_sha256()`; call existing `ipkg_install(path)` from `TODO-03 §4`
+  - `ipkg list` -- scan `HKLM\SOFTWARE\Installed\*` subkeys (set by `TODO-03 §4` installer); print `Name | Version | Install Date`
+  - `ipkg update` -- re-download `index.json` to `C:\Temp\ipkg-index.json`; print `"Package index updated: {count} packages"`
+  - `ipkg upgrade` -- for each installed package (`HKLM\SOFTWARE\Installed\*`): compare installed version vs. index version; if newer available: `ipkg install <name>` silently; print summary of upgraded packages
+  - `ipkg remove <name>` -- delegate to existing `TODO-03 §5` uninstaller
 - [ ] **Index cache**: stored at `C:\Temp\ipkg-index.json`; cache TTL: 1 hour (check `LastModified` header via `http_get` response); `ipkg update` always forces refresh
 - [ ] **`HKCU\Software\Impossible\PackageManager\RepoURL`** (default `https://pkg.impossible-os.dev/`): user-configurable; all `ipkg` commands use this registry value instead of hardcoded URL
 
@@ -171,14 +171,14 @@ and Cloudflare R2 — no live server to maintain.
 - [ ] **`ipkg-sign <package.ipkg> <private_key_path>`** (host tool `tools/ipkg_sign.c`):
   - Ed25519 sign the SHA-256 hash of the `.ipkg` file content using `monocypher` (same infrastructure as `TODO-01 §5`)
   - Embed signature in `manifest.ini` inside the `.ipkg` ZIP as `Signature=<hex>` under `[Security]`
-  - Print `"Signed: {filename} — sig={hex[:16]}..."`
+  - Print `"Signed: {filename} -- sig={hex[:16]}..."`
 - [ ] **`ipkg-verify <package.ipkg>`** (host tool, also callable from IPKG installer):
   - Extract `manifest.ini` → read `Signature` + `PublicKey` (or use embedded repo public key from `tools/repo_pubkey.h`)
   - `crypto_eddsa_check()` (monocypher) over SHA-256 of package content; print PASS/FAIL
 - [ ] **GitHub Actions CI on PR** (`.github/workflows/package-review.yml`):
-  1. **Signature check**: `ipkg-verify <package.ipkg>` — fail PR if unsigned or signature mismatch
+  1. **Signature check**: `ipkg-verify <package.ipkg>` -- fail PR if unsigned or signature mismatch
   2. **Manifest validation**: check required `manifest.ini` fields present (`Name`, `Version`, `Description`, `Category`, `EntryPoint`), version format matches `MAJOR.MINOR.PATCH`, no path traversal in `install.ini` file paths
-  3. **Malware scan stub**: run `clamscan` (if installed) or print `"[warn] ClamAV not available — manual review required"` and block auto-merge; maintainer must manually approve
+  3. **Malware scan stub**: run `clamscan` (if installed) or print `"[warn] ClamAV not available -- manual review required"` and block auto-merge; maintainer must manually approve
   4. **Install + uninstall test**: boot QEMU with base Impossible OS image; `ipkg install <package.ipkg>`; check exit code 0; `ipkg remove <name>`; check Registry `HKLM\SOFTWARE\Installed\<name>` absent; print PASS/FAIL
   5. On all PASS: auto-update `index.json`, upload `.ipkg` to R2, open "approved" label; maintainer merges
 - [ ] **Package categories enforced**: PR CI rejects unknown `Category` values; prints list of valid categories
@@ -227,8 +227,8 @@ and Cloudflare R2 — no live server to maintain.
 - [ ] **Cloudflare Worker** (`workers/telemetry-receiver.js`):
   - `POST https://telemetry.impossible-os.dev/api/v1/report`
   - Accept JSON body: `{"os_version": "1.0.22100", "build": "22100", "event_type": "boot|crash|update|install", "timestamp": 1743000000}`
-  - Validate: required fields present; `os_version` matches `MAJOR.MINOR.BUILD`; `event_type` in allowlist; reject all other fields (no PII accepted — log and discard unrecognised keys)
-  - Write to **Cloudflare D1** (SQLite): table `events(id, os_version, build, event_type, timestamp, region)` — `region` from CF's `request.cf.country` header
+  - Validate: required fields present; `os_version` matches `MAJOR.MINOR.BUILD`; `event_type` in allowlist; reject all other fields (no PII accepted -- log and discard unrecognised keys)
+  - Write to **Cloudflare D1** (SQLite): table `events(id, os_version, build, event_type, timestamp, region)` -- `region` from CF's `request.cf.country` header
   - Rate limiting: 1 request per IP per 5 minutes (CF Worker rate-limit binding); return 429 on excess
   - **GDPR**: EU countries (`request.cf.continent == "EU"`) → insert with `region = "EU-ANON"` (no country stored); non-EU: store 2-letter country code; no IP stored at any point
   - Opt-out respected on-device (sender doesn't call HTTP POST if `Telemetry=0`); server has no opt-out concept (stateless)
@@ -241,7 +241,7 @@ and Cloudflare R2 — no live server to maintain.
 
 ## 8. Status Page `[Sonnet]`
 
-**URL:** `https://status.impossible-os.dev/` — static site, GitHub Pages
+**URL:** `https://status.impossible-os.dev/` -- static site, GitHub Pages
 
 - [ ] **GitHub Actions health check workflow** (`.github/workflows/health-check.yml`):
   - Schedule: every 5 minutes (`cron: '*/5 * * * *'`)
@@ -265,16 +265,16 @@ and Cloudflare R2 — no live server to maintain.
 
 | ⭐ | Feature                                            | 🪟 Win11                                          | 🐧 Linux                                             | 🚀 Impossible OS                                                           |
 |----|----------------------------------------------------|------------------------------------------------|---------------------------------------------------|-------------------------------------------------------------------------|
-| 💎 | Update manifest API with channels                  | ✅ Windows Update; WUfB; WSUS; channel         | ✅ APT/DNF repos; Flatpak remote; snap            | ⬜ §1 — static JSON on GitHub Pages                                     |
-| 💎 | Package repository with install/search/upgrade     | ✅ MS Store; winget repo; Chocolatey           | ✅ APT/DNF/pacman/AUR; Flathub                    | ⬜ §4 — `index.json` on R2; `ipkg search/install/update/upgrade`        |
-| ⭐ | Package CI submission pipeline                     | ✅ MS Store review (opaque); winget            | ✅ Debian NEW queue; AUR PRs;                     | ⬜ §5 — GitHub PR + automated QEMU                                      |
-| ⭐ | Update delta packages                              | ✅ Express updates (CBS differential); WUfB    | ✅ apt delta (binary xdelta); rpm-ostree          | ⬜ §6 — BLAKE2b-160 file diff; `make-delta.sh`; client                  |
-| ⭐ | Opt-in telemetry → public Grafana dashboard        | ⚠️ Windows: opt-out telemetry; non-public data | ✅ Ubuntu Popularity Contest (opt-in; public      | ⬜ §7 — CF Worker + D1; `stats.impossible-os.dev`                       |
-| ⭐ | Transparent public status page with auto-incidents | ✅ `windowsupdate.microsoft.com/` — minimal    | ✅ Varies (Canonical status.ubuntu.com, etc.)     | ⬜ §8 — GitHub Actions every 5 min                                      |
-| 💎 | Release promotion pipeline                         | ✅ Windows Insider rings; WUfB rings           | ✅ Debian unstable→testing→stable; Fedora Rawhide | ⬜ §3 — `promote-release.sh`; `rollback-release.sh`; sign-off checklist |
+| 💎 | Update manifest API with channels                  | ✅ Windows Update; WUfB; WSUS; channel         | ✅ APT/DNF repos; Flatpak remote; snap            | ⬜ §1 -- static JSON on GitHub Pages                                     |
+| 💎 | Package repository with install/search/upgrade     | ✅ MS Store; winget repo; Chocolatey           | ✅ APT/DNF/pacman/AUR; Flathub                    | ⬜ §4 -- `index.json` on R2; `ipkg search/install/update/upgrade`        |
+| ⭐ | Package CI submission pipeline                     | ✅ MS Store review (opaque); winget            | ✅ Debian NEW queue; AUR PRs;                     | ⬜ §5 -- GitHub PR + automated QEMU                                      |
+| ⭐ | Update delta packages                              | ✅ Express updates (CBS differential); WUfB    | ✅ apt delta (binary xdelta); rpm-ostree          | ⬜ §6 -- BLAKE2b-160 file diff; `make-delta.sh`; client                  |
+| ⭐ | Opt-in telemetry → public Grafana dashboard        | ⚠️ Windows: opt-out telemetry; non-public data | ✅ Ubuntu Popularity Contest (opt-in; public      | ⬜ §7 -- CF Worker + D1; `stats.impossible-os.dev`                       |
+| ⭐ | Transparent public status page with auto-incidents | ✅ `windowsupdate.microsoft.com/` -- minimal    | ✅ Varies (Canonical status.ubuntu.com, etc.)     | ⬜ §8 -- GitHub Actions every 5 min                                      |
+| 💎 | Release promotion pipeline                         | ✅ Windows Insider rings; WUfB rings           | ✅ Debian unstable→testing→stable; Fedora Rawhide | ⬜ §3 -- `promote-release.sh`; `rollback-release.sh`; sign-off checklist |
 
-Impossible OS's `⭐` advantage: the entire update delivery chain — manifest, CDN, package
-repo, delta generation, telemetry, and status page — runs on free-tier GitHub Pages,
+Impossible OS's `⭐` advantage: the entire update delivery chain -- manifest, CDN, package
+repo, delta generation, telemetry, and status page -- runs on free-tier GitHub Pages,
 GitHub Releases, and Cloudflare (R2 + Workers + D1) with zero server bills. The public
 Grafana telemetry dashboard (`stats.impossible-os.dev`) gives the community real OS
 adoption numbers from day one, something Windows 11 has never offered publicly. Delta
@@ -292,4 +292,4 @@ updates using the same BLAKE2b-160 hash already in the kernel keep minor updates
 - [ ] **Delta generation**: `scripts/make-delta.sh 1.0.21000 1.0.22100` → `delta-*.zip` created; verify `delta_size < full_size / 5`; `update_apply_delta()` applies all changed files with correct hashes; tampered delta file → error logged, full-update fallback triggered
 - [ ] **Telemetry receiver**: POST valid event to `https://telemetry.impossible-os.dev/api/v1/report` → HTTP 200; POST with extra PII field → field discarded silently; POST from EU IP → country stored as `EU-ANON`; burst >1 req/5min from same IP → 429
 - [ ] **Status page**: health-check workflow runs; all green → `status.json` shows 3× ✅; kill CDN DNS (simulate outage) → workflow creates GitHub Issue + webhook fires; restore → issue closed
-- [ ] Commit: `"release: update server infrastructure — version manifest API, IPKG repo, CDN upload, promotion pipeline, delta packages, telemetry backend, status page"`
+- [ ] Commit: `"release: update server infrastructure -- version manifest API, IPKG repo, CDN upload, promotion pipeline, delta packages, telemetry backend, status page"`

@@ -1,5 +1,5 @@
 /* ============================================================================
- * gallery.c — Control Gallery dialog
+ * gallery.c -- Control Gallery dialog
  *
  * Showcase window displaying all implemented controls for testing:
  *   - Buttons (normal, hover, disabled states)
@@ -37,7 +37,7 @@ static int lbl_status;
 
 /* ---- Card drawing helpers ---- */
 
-#define CARD_BG      0xFF202020   /* same as client bg — border-only cards */
+#define CARD_BG      0xFF202020   /* same as client bg -- border-only cards */
 #define CARD_BORDER  0xFF454545   /* subtle border                */
 #define CARD_HEADER  0xFF60CDFF   /* accent blue section header   */
 #define CARD_PAD     12

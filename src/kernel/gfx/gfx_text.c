@@ -1,5 +1,5 @@
 /* ============================================================================
- * gfx_text.c — TrueType font manager + glyph cache + text rendering
+ * gfx_text.c -- TrueType font manager + glyph cache + text rendering
  *
  * THIS FILE IS COMPILED WITH -msse2 (floating point needed for stb_truetype).
  *
@@ -12,7 +12,7 @@
  *   - Each entry stores a persistent bitmap + metrics (no per-frame alloc)
  *   - Uncached glyphs (non-ASCII or unusual sizes) fall through to stb_truetype
  *
- * ⚠️  ALLOCATION RULES — READ BEFORE MODIFYING ⚠️
+ * ⚠️  ALLOCATION RULES -- READ BEFORE MODIFYING ⚠️
  *
  *   The kernel heap is only 2 MiB.  Font files and glyph bitmaps are
  *   LONG-LIVED allocations that persist for the entire kernel lifetime.
@@ -136,12 +136,12 @@ static int ttf_mgr_ready = 0;
  * Primary:  Selawik (UI), Cascadia Code (mono)
  * Fallback: Inter (UI alternative), Selawik (mono fallback) */
 static const char *ttf_filenames[FONT_MAX_SLOTS] = {
-    "selawk.ttf",              /* FONT_UI — Selawik Regular */
-    "selawksb.ttf",            /* FONT_UI_BOLD — Selawik Semibold */
-    "CascadiaCode-Regular.ttf",/* FONT_MONO — Cascadia Code Regular */
-    "CascadiaCode-Bold.ttf",   /* FONT_MONO_BOLD — Cascadia Code Bold */
-    "selawkb.ttf",             /* FONT_UI_HEAVY — Selawik Bold */
-    NULL,                      /* FONT_FLUENT_ICONS — loaded via PMM later */
+    "selawk.ttf",              /* FONT_UI -- Selawik Regular */
+    "selawksb.ttf",            /* FONT_UI_BOLD -- Selawik Semibold */
+    "CascadiaCode-Regular.ttf",/* FONT_MONO -- Cascadia Code Regular */
+    "CascadiaCode-Bold.ttf",   /* FONT_MONO_BOLD -- Cascadia Code Bold */
+    "selawkb.ttf",             /* FONT_UI_HEAVY -- Selawik Bold */
+    NULL,                      /* FONT_FLUENT_ICONS -- loaded via PMM later */
     NULL, NULL
 };
 
@@ -157,14 +157,14 @@ static const char *ttf_fallbacks[FONT_MAX_SLOTS] = {
 
 /* ---- Glyph cache ---- */
 
-/* Pixel sizes to cache at boot — 3 sizes covers 90%+ of UI text.
+/* Pixel sizes to cache at boot -- 3 sizes covers 90%+ of UI text.
  * 12px and 24px fall to the LRU path on first use (see GLYPH_CACHE_SIZES in font_mgr.h). */
 static const int cache_sizes[GLYPH_CACHE_SIZES] = { 14, 16, 20 };
 
 /* The cache: [slot][size_index][glyph_index] */
 static glyph_entry_t glyph_cache[FONT_MAX_SLOTS][GLYPH_CACHE_SIZES][GLYPH_CACHE_COUNT];
 
-/* Pre-computed scaled ascent for each (slot, size_index) — avoids FPU at draw time */
+/* Pre-computed scaled ascent for each (slot, size_index) -- avoids FPU at draw time */
 static int32_t cached_ascent[FONT_MAX_SLOTS][GLYPH_CACHE_SIZES];
 
 /* Map a pixel size to a cache size index, or -1 if not cached */
@@ -266,7 +266,7 @@ static int load_ttf_file(const char *path, uint8_t **out_data, uint32_t *out_siz
         return -1;
     }
 
-    /* Allocate via PMM — font data is read-only after init and can be
+    /* Allocate via PMM -- font data is read-only after init and can be
      * 50 KB to 3 MB.  NEVER use kmalloc for this (see rules.md). */
     pages = (size + 4095) / 4096;
     phys = pmm_alloc_contiguous(pages);
@@ -281,7 +281,7 @@ static int load_ttf_file(const char *path, uint8_t **out_data, uint32_t *out_siz
     {
         int32_t bytes_read = vfs_read(f, 0, size, buf);
         if (bytes_read <= 0) {
-            /* PMM pages not freed — acceptable for boot-time assets */
+            /* PMM pages not freed -- acceptable for boot-time assets */
             vfs_close(f);
             return -1;
         }
@@ -507,7 +507,7 @@ static void blit_cached_glyph(gfx_surface_t *s, const glyph_atlas_t *atlas,
             if (alpha == 255) {
                 dst_row[col] = color;
             } else {
-                /* Inline alpha blend — avoids gfx_blend_pixel call overhead */
+                /* Inline alpha blend -- avoids gfx_blend_pixel call overhead */
                 uint32_t inv = 255 - alpha;
                 uint32_t d = dst_row[col];
                 uint32_t dr = (d >> 16) & 0xFF;
@@ -562,7 +562,7 @@ int ttf_draw_char(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
         lru_glyph_t *lhit = lru_find(lk);
 
         if (lhit) {
-            /* LRU hit — blit directly, no FPU needed */
+            /* LRU hit -- blit directly, no FPU needed */
             int32_t base_y = y + cached_ascent[slot][cache_size_index(f->pixel_size) >= 0
                 ? cache_size_index(f->pixel_size) : 0];
             glyph_entry_t tmp_ge;
@@ -580,7 +580,7 @@ int ttf_draw_char(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
             return lhit->advance;
         }
 
-        /* LRU miss — rasterize via stb_truetype */
+        /* LRU miss -- rasterize via stb_truetype */
         {
             int width, height, xoff, yoff;
             int advance, lsb;
@@ -636,7 +636,7 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
 
     size_idx = cache_size_index(f->pixel_size);
 
-    /* Fast path: all ASCII at a cached size — single FPU bracket for kerning */
+    /* Fast path: all ASCII at a cached size -- single FPU bracket for kerning */
     if (size_idx >= 0 && slot >= 0 && slot < FONT_MAX_SLOTS) {
         ttf_internal_t *fi = (ttf_internal_t *)f;
         const glyph_atlas_t *atlas = &glyph_atlases[slot][size_idx];
@@ -649,7 +649,7 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
             int cp = (unsigned char)text[i];
 
             if (cp >= GLYPH_CACHE_FIRST && cp <= GLYPH_CACHE_LAST) {
-                /* Cached glyph — blit from atlas */
+                /* Cached glyph -- blit from atlas */
                 const glyph_entry_t *ge = &glyph_cache[slot][size_idx][cp - GLYPH_CACHE_FIRST];
 
                 if (atlas->pixels && ge->width > 0 && ge->height > 0) {
@@ -663,7 +663,7 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
                     lru_glyph_t *lhit = lru_find(lk);
 
                     if (lhit) {
-                        /* LRU hit — blit from cache (no FPU needed) */
+                        /* LRU hit -- blit from cache (no FPU needed) */
                         glyph_entry_t tmp_ge;
                         glyph_atlas_t tmp_atlas;
                         tmp_ge.atlas_x = 0;
@@ -679,7 +679,7 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
                                           cr, cg, cb, color);
                         cursor_x += lhit->advance;
                     } else {
-                        /* LRU miss — rasterize */
+                        /* LRU miss -- rasterize */
                         int width, height, xoff, yoff;
                         int advance, lsb;
                         unsigned char *bitmap;
@@ -733,7 +733,7 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
         return (int)(cursor_x - x);
     }
 
-    /* Slow path: uncached size — full stb_truetype rendering */
+    /* Slow path: uncached size -- full stb_truetype rendering */
     {
         ttf_internal_t *fi = (ttf_internal_t *)f;
 
@@ -860,7 +860,7 @@ int ttf_line_height(ttf_font_t *f)
 }
 
 /* ============================================================================
- * Boot splash font API — used before font_mgr_init()
+ * Boot splash font API -- used before font_mgr_init()
  *
  * These functions use an embedded TTF font (Selawik Regular, 44 KB) and
  * render anti-aliased text directly to the framebuffer via fb_put_pixel().
@@ -875,7 +875,7 @@ int ttf_line_height(ttf_font_t *f)
 
 /* ---- Boot splash pre-baked glyph atlas ----------------------------------- *
  * Built once by boot_font_init() via stbtt_BakeFontBitmap().
- * boot_font_render() blits from this atlas — zero FPU, zero heap, zero stbtt.
+ * boot_font_render() blits from this atlas -- zero FPU, zero heap, zero stbtt.
  * --------------------------------------------------------------------------- */
 
 #define BOOT_ATLAS_W    256
@@ -938,7 +938,7 @@ int boot_font_init(int pixel_size)
     if (bake_result <= 0) {
         klog(LOG_WARN, "GFX", "boot_font BakeFontBitmap: %d chars fit (result=%d)",
                (uint64_t)-bake_result, (uint64_t)bake_result);
-        /* Negative means some glyphs didn't fit — still usable */
+        /* Negative means some glyphs didn't fit -- still usable */
     }
 
     boot_font_ready = 1;
@@ -956,7 +956,7 @@ int boot_font_measure(const char *text)
     if (!boot_font_ready || !text)
         return 0;
 
-    /* Sum advance widths from pre-baked chardata — no FPU needed */
+    /* Sum advance widths from pre-baked chardata -- no FPU needed */
     for (i = 0; text[i]; i++) {
         int cp = (unsigned char)text[i];
         if (cp >= BOOT_GLYPH_FIRST && cp < BOOT_GLYPH_FIRST + BOOT_GLYPH_COUNT) {
@@ -984,7 +984,7 @@ void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t color)
     cb = (uint8_t)(color);
 
     /* Render each character from the pre-baked atlas.
-     * No FPU, no heap allocations, no stbtt calls — pure integer blit. */
+     * No FPU, no heap allocations, no stbtt calls -- pure integer blit. */
     for (i = 0; text[i]; i++) {
         int cp = (unsigned char)text[i];
         int gi = cp - BOOT_GLYPH_FIRST;
@@ -1007,7 +1007,7 @@ void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t color)
         glyph_x = cursor_x + (int)(bc->xoff + 0.5f);
         glyph_y = y + boot_font_ascent_px + (int)(bc->yoff + 0.5f);
 
-        /* Blit from atlas — integer arithmetic only */
+        /* Blit from atlas -- integer arithmetic only */
         for (row = 0; row < glyph_h; row++) {
             int32_t py = glyph_y + row;
             if (py < 0 || (uint32_t)py >= scr_h) continue;

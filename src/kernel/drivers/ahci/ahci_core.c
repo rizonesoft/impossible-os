@@ -474,7 +474,7 @@ retry:
 
         signalled = event_wait_timeout(&p->completion, 5000);
         if (!signalled) {
-            /* Event-based I/O timed out — MSI likely not working
+            /* Event-based I/O timed out -- MSI likely not working
              * (common on VirtualBox).  Fall back to polling permanently
              * and retry this command in polling mode. */
             klog(LOG_WARN, "ahci",
@@ -494,7 +494,7 @@ retry:
                 }
             }
 
-            /* Command still pending — poll for completion */
+            /* Command still pending -- poll for completion */
             {
                 uint32_t poll_timeout = 5000000;
                 while (poll_timeout--) {

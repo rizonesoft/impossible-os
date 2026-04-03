@@ -1,5 +1,5 @@
 /* ============================================================================
- * task.h — Kernel task/process and thread management
+ * task.h -- Kernel task/process and thread management
  *
  * Provides kernel and user-mode threads with cooperative and preemptive
  * scheduling. Supports fork, exec, waitpid, process cleanup, and
@@ -50,7 +50,7 @@
 #define THREAD_PRIO_LOW      8   /* below-normal */
 #define THREAD_PRIO_NORMAL  16   /* default for all new threads */
 #define THREAD_PRIO_HIGH    24   /* above-normal */
-#define THREAD_PRIO_REALTIME 31  /* top — interrupt-like priority */
+#define THREAD_PRIO_REALTIME 31  /* top -- interrupt-like priority */
 
 /* Saved CPU context (callee-saved registers only for cooperative switch) */
 struct task_context {
@@ -66,7 +66,7 @@ struct task_context {
 /* Thread entry function type */
 typedef void (*thread_entry_t)(void *arg);
 
-/* Thread Control Block — schedulable unit within a task */
+/* Thread Control Block -- schedulable unit within a task */
 struct thread {
     uint32_t    id;             /* thread ID (unique within parent task) */
     uint32_t    state;          /* THREAD_RUNNING, THREAD_READY, etc. */
@@ -130,7 +130,7 @@ int task_create(task_entry_t entry, const char *name);
  * The entry function runs in ring 3 with its own user stack. */
 int task_create_user(task_entry_t entry, const char *name);
 
-/* Allocate the XSAVE area for a task (lazy — called on first FPU use). */
+/* Allocate the XSAVE area for a task (lazy -- called on first FPU use). */
 void task_alloc_xsave(struct task *t);
 
 /* Voluntarily yield the CPU to the next ready task. */
@@ -149,7 +149,7 @@ struct task *task_get_by_pid(uint32_t pid);
 void scheduler_enable(void);
 void scheduler_disable(void);
 
-/* Called from PIT IRQ handler — preemptive round-robin.
+/* Called from PIT IRQ handler -- preemptive round-robin.
  * Returns the (possibly new) interrupt frame pointer to restore. */
 struct interrupt_frame;
 uint64_t schedule(struct interrupt_frame *frame);
@@ -190,7 +190,7 @@ void thread_exit(int32_t status);
 int32_t thread_join(uint32_t thread_id);
 
 /* Voluntarily yield the CPU to the next ready thread.
- * (This is the same as yield() — threads and tasks share the scheduler.) */
+ * (This is the same as yield() -- threads and tasks share the scheduler.) */
 void thread_yield(void);
 
 /* Get the current thread within the current task.

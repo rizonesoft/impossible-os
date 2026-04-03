@@ -1,10 +1,10 @@
 /* ============================================================================
- * pit.h — Programmable Interval Timer (8253/8254) driver
+ * pit.h -- Programmable Interval Timer (8253/8254) driver
  *
  * Programs PIT channel 0 to fire IRQ 0 at ~100 Hz for system timekeeping.
  *
  * NOTE: For sleep_ms(), uptime(), and system_get_ticks(), use
- *       #include "kernel/timer.h" — the unified timer HAL.
+ *       #include "kernel/timer.h" -- the unified timer HAL.
  *       This header is for PIT-specific internals only.
  * ============================================================================ */
 
@@ -12,7 +12,7 @@
 
 #include "kernel/types.h"
 
-/* Forward declaration — full definition in timer.h */
+/* Forward declaration -- full definition in timer.h */
 struct timer_driver;
 typedef struct timer_driver timer_driver_t;
 

@@ -1,4 +1,4 @@
-# Joliet and Universal Disk Format (UDF) — Technical Specification for OS Implementation
+# Joliet and Universal Disk Format (UDF) -- Technical Specification for OS Implementation
 
 ## Overview and Architectural Context
 
@@ -257,10 +257,10 @@ The driver must scan VRS descriptors for the following magic identifiers:
 
 | Identifier | Meaning                                                        |
 | ---------- | -------------------------------------------------------------- |
-| `"BEA01"`  | Beginning Extended Area Descriptor — marks start of VRS        |
-| `"NSR02"`  | ECMA-167 2nd Edition — confirms UDF revision ≤ 2.00           |
-| `"NSR03"`  | ECMA-167 3rd Edition — confirms UDF revision ≥ 2.01           |
-| `"TEA01"`  | Terminating Extended Area Descriptor — marks end of VRS        |
+| `"BEA01"`  | Beginning Extended Area Descriptor -- marks start of VRS        |
+| `"NSR02"`  | ECMA-167 2nd Edition -- confirms UDF revision ≤ 2.00           |
+| `"NSR03"`  | ECMA-167 3rd Edition -- confirms UDF revision ≥ 2.01           |
+| `"TEA01"`  | Terminating Extended Area Descriptor -- marks end of VRS        |
 
 > [!IMPORTANT]
 > The presence of `"NSR02"` or `"NSR03"` in the VRS is the **definitive** confirmation that a
@@ -364,7 +364,7 @@ root directory:
 ```
 AVDP (sector 256)
   └─→ Volume Descriptor Sequence (VDS)
-        ├─→ Partition Descriptor (Tag 0x0005) — physical partition mapping
+        ├─→ Partition Descriptor (Tag 0x0005) -- physical partition mapping
         └─→ Logical Volume Descriptor (Tag 0x0006)
               └─→ File Set Descriptor (Tag 0x0100)
                     └─→ Root Directory File Entry (Tag 0x0105)
@@ -406,7 +406,7 @@ The driver must locate two critical records:
 ### File Set Descriptor (Tag `0x0100`)
 
 The FSD serves as the true root of the UDF file system tree. Its critical field is the
-**Root Directory ICB** — a Long Allocation Descriptor that points to the root directory's
+**Root Directory ICB** -- a Long Allocation Descriptor that points to the root directory's
 File Entry.
 
 | Offset | Size | Field                       | Description                              |
@@ -422,7 +422,7 @@ Every file, directory, and named stream in UDF is represented by an **Informatio
 Block** (ICB), which manifests as either a **File Entry** (Tag `0x0105`) or an **Extended
 File Entry** (Tag `0x010A`, UDF ≥ 2.00).
 
-### File Entry Structure (Tag `0x0105`) — Key Fields
+### File Entry Structure (Tag `0x0105`) -- Key Fields
 
 | Offset | Size | Field                  | Description                                    |
 | ------ | ---- | ---------------------- | ---------------------------------------------- |
@@ -442,7 +442,7 @@ File Entry** (Tag `0x010A`, UDF ≥ 2.00).
 The allocation descriptors follow immediately after the fixed fields and map to the actual
 file data on disk.
 
-### ICB Tag — File Type Values
+### ICB Tag -- File Type Values
 
 The `FileType` field within the ICB Tag (offset `0x1B` within the ICB Tag) identifies the
 entry type:

@@ -1,5 +1,5 @@
 /* ============================================================================
- * panic.c — Styled kernel panic screen
+ * panic.c -- Styled kernel panic screen
  *
  * Renders a Windows-style blue screen with:
  *   - Sad face emoticon
@@ -577,7 +577,7 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
         }
     }
 
-    /* No auto-restart — halt permanently */
+    /* No auto-restart -- halt permanently */
     fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
     printk("\n    System halted. Press reset to restart.\n");
     fb_swap();

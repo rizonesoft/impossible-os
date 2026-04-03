@@ -1,5 +1,5 @@
 /* ============================================================================
- * symtab.c — Kernel symbol table loader and resolver
+ * symtab.c -- Kernel symbol table loader and resolver
  *
  * Loads a packed binary symbol table (KSYM format) from the boot filesystem
  * and provides O(log n) address→name resolution via binary search.

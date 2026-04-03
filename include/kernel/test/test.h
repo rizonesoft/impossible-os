@@ -1,5 +1,5 @@
 /* ============================================================================
- * test.h — Minimal kernel unit test framework
+ * test.h -- Minimal kernel unit test framework
  *
  * Provides test_assert(), test suite registration, and a test runner.
  * Output goes to serial (via log subsystem) for host-side capture.
@@ -74,7 +74,7 @@ extern test_state_t g_test_state;
 /* Register a test suite with category (preferred) */
 void test_suite_register_cat(const char *name, test_fn_t fn, test_category_t cat);
 
-/* Register a test suite (backward compat — defaults to TEST_CAT_ALL) */
+/* Register a test suite (backward compat -- defaults to TEST_CAT_ALL) */
 void test_suite_register(const char *name, test_fn_t fn);
 
 /* Set category filter: only suites matching this category will run.
@@ -99,7 +99,7 @@ void _test_skip(const char *msg, const char *file, int line);
 /* Category name lookup */
 const char *test_category_name(test_category_t cat);
 
-/* Category from short string (e.g. "mm", "fs", "ob") — returns TEST_CAT_ALL on no match */
+/* Category from short string (e.g. "mm", "fs", "ob") -- returns TEST_CAT_ALL on no match */
 test_category_t test_category_from_string(const char *str);
 
 /* ---- Assertion macros ---- */

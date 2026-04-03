@@ -1,5 +1,5 @@
 /* ============================================================================
- * serial.c — COM1 serial port driver
+ * serial.c -- COM1 serial port driver
  *
  * Extracted from main.c for reuse by printk and other subsystems.
  * ============================================================================ */
@@ -25,7 +25,7 @@ static inline uint8_t inb(uint16_t port)
     return ret;
 }
 
-/* Raw unlocked UART write — caller must hold g_serial_lock */
+/* Raw unlocked UART write -- caller must hold g_serial_lock */
 static inline void serial_putchar_raw(char c)
 {
     while ((inb(SERIAL_PORT + 5) & 0x20) == 0)

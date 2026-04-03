@@ -1,8 +1,8 @@
 /* ============================================================================
- * boot_halt.c — Pre-framebuffer fatal halt with diagnostic error screen
+ * boot_halt.c -- Pre-framebuffer fatal halt with diagnostic error screen
  *
  * Draws a solid red banner across the top 40 px of the framebuffer (via
- * boot_info.fb.addr — available before fb_init()) and renders the reason
+ * boot_info.fb.addr -- available before fb_init()) and renders the reason
  * string using an inline 8×8 bitmap font.  Always prints to serial too.
  * Does not return.
  *
@@ -265,7 +265,7 @@ void boot_halt(const char *reason)
     serial_write("System halted. Check serial log for details.\n");
     serial_write("Recovery: https://impossible-os.dev/recovery\n");
 
-    /* Framebuffer diagnostics — only when fb is accessible */
+    /* Framebuffer diagnostics -- only when fb is accessible */
     if (g_boot_info.fb_available && g_boot_info.fb.addr &&
         g_boot_info.fb.width > 0 && g_boot_info.fb.height > 0) {
 

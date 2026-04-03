@@ -1,5 +1,5 @@
 /* ============================================================================
- * printk.c — Kernel printf
+ * printk.c -- Kernel printf
  *
  * Outputs formatted text to BOTH the framebuffer console and serial port.
  * Supports: %d, %u, %x, %p, %s, %c, %%

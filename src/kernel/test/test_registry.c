@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_registry.c — Win32-style Registry unit tests
+ * test_registry.c -- Win32-style Registry unit tests
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
@@ -14,7 +14,7 @@ static void test_registry_dword(void)
     HKEY hKey;
     long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\Test", 0, 0, &hKey);
     if (rc != 0) {
-        /* Key doesn't exist — create it */
+        /* Key doesn't exist -- create it */
         rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\Test", 0, NULL, 0, 0, NULL, &hKey, NULL);
         TEST_ASSERT(rc == 0, "RegCreateKeyEx succeeds");
         if (rc != 0) return;

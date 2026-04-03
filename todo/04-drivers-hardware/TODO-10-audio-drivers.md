@@ -1,17 +1,17 @@
-# TODO-10 — Audio Drivers
+# TODO-10 -- Audio Drivers
 
-> **Goal:** Deliver hardware-level PCM playback drivers behind a clean `audio_device_t` vtable that the audio mixing subsystem (a separate desktop-domain TODO) will build on top of — covering AC97, Intel HDA, VirtIO Sound, and USB Audio Class 1.0 playback, plus hot-plug device switching and a path to convert all drivers to loadable `.kmod` modules.
+> **Goal:** Deliver hardware-level PCM playback drivers behind a clean `audio_device_t` vtable that the audio mixing subsystem (a separate desktop-domain TODO) will build on top of -- covering AC97, Intel HDA, VirtIO Sound, and USB Audio Class 1.0 playback, plus hot-plug device switching and a path to convert all drivers to loadable `.kmod` modules.
 
 > [!IMPORTANT]
-> **No audio exists today.** This TODO is a greenfield driver layer. The `audio_device_t` vtable (§1) is the architectural contract: every driver section registers against it, and the desktop audio subsystem (→ XREF `08-desktop-shell`) calls only `audio_device_t` functions — never driver internals. All drivers are initially built-in (to verify correctness), then converted to `.kmod` in §6 once the module system (→ XREF `04-drivers-hardware/TODO-01`) is complete.
+> **No audio exists today.** This TODO is a greenfield driver layer. The `audio_device_t` vtable (§1) is the architectural contract: every driver section registers against it, and the desktop audio subsystem (→ XREF `08-desktop-shell`) calls only `audio_device_t` functions -- never driver internals. All drivers are initially built-in (to verify correctness), then converted to `.kmod` in §6 once the module system (→ XREF `04-drivers-hardware/TODO-01`) is complete.
 
 ## Inputs
 
-- No existing audio code — greenfield.
-- [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) — VirtIO transport reused by §4 (VirtIO Sound)
-- → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md` — module loader required for §6 (kmod conversion); §6 is blocked on TODO-01
-- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md §1` — USB isochronous endpoint setup needed by §5 (USB Audio UAC1); note that xHCI isochronous endpoints are not covered in TODO-09 (which only does interrupt + bulk); §5 must add isochronous endpoint support to `xhci_dev.c`
-- → XREF: `08-desktop-shell` domain — the desktop audio mixer/session manager calls `audio_device_t.write()` and `audio_device_t.set_volume()`; it is a consumer of the HAL defined in §1
+- No existing audio code -- greenfield.
+- [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO transport reused by §4 (VirtIO Sound)
+- → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md` -- module loader required for §6 (kmod conversion); §6 is blocked on TODO-01
+- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md §1` -- USB isochronous endpoint setup needed by §5 (USB Audio UAC1); note that xHCI isochronous endpoints are not covered in TODO-09 (which only does interrupt + bulk); §5 must add isochronous endpoint support to `xhci_dev.c`
+- → XREF: `08-desktop-shell` domain -- the desktop audio mixer/session manager calls `audio_device_t.write()` and `audio_device_t.set_volume()`; it is a consumer of the HAL defined in §1
 
 ## Outcome
 
@@ -28,18 +28,18 @@
 | ⭐  | Order | Deliverable                                                       | Depends On                                   | Status |
 | --- | :---: | ------------------------------------------------------------------ | -------------------------------------------- | :----: |
 | ⭐  |   1   | §1 `audio_device_t` HAL vtable                                    | none                                         |  [ ]   |
-| 💎  |   2   | §2 AC97 driver — BDL DMA ring, IRQ refill, QEMU AC97              | §1 (vtable)                                  |  [ ]   |
-| 💎  |   3   | §3 Intel HDA driver — CORB/RIRB, widget tree, DMA stream          | §1 (vtable)                                  |  [ ]   |
-| 💎  |   4   | §4 VirtIO Sound module — control/tx/rx virtqueues, mic             | §1 (vtable), VirtIO core                     |  [ ]   |
-| 💎  |   5   | §5 USB Audio UAC1 — isochronous OUT, `SET_CUR` volume             | §1 (vtable), xHCI iso endpoint (TODO-09 ext) |  [ ]   |
-| 💎  |   6   | §7 Audio device hot-plug — active device switch, Registry persist  | §2–5 (drivers registered)                   |  [ ]   |
+| 💎  |   2   | §2 AC97 driver -- BDL DMA ring, IRQ refill, QEMU AC97              | §1 (vtable)                                  |  [ ]   |
+| 💎  |   3   | §3 Intel HDA driver -- CORB/RIRB, widget tree, DMA stream          | §1 (vtable)                                  |  [ ]   |
+| 💎  |   4   | §4 VirtIO Sound module -- control/tx/rx virtqueues, mic             | §1 (vtable), VirtIO core                     |  [ ]   |
+| 💎  |   5   | §5 USB Audio UAC1 -- isochronous OUT, `SET_CUR` volume             | §1 (vtable), xHCI iso endpoint (TODO-09 ext) |  [ ]   |
+| 💎  |   6   | §7 Audio device hot-plug -- active device switch, Registry persist  | §2–5 (drivers registered)                   |  [ ]   |
 | 💎  |   7   | §6 Convert all drivers to `.kmod`                                 | §2–5, TODO-01 module loader                  |  [ ]   |
 
-> §1 `audio_device_t` is `⭐` exclusive by design: Windows WaveRT/WASAPI and Linux ALSA both have multi-layer audio stacks; Impossible OS exposes a single kernel-level HAL vtable that any driver can satisfy in under 300 lines. The desktop mixer sits on top — clean separation, no in-kernel mixing.
+> §1 `audio_device_t` is `⭐` exclusive by design: Windows WaveRT/WASAPI and Linux ALSA both have multi-layer audio stacks; Impossible OS exposes a single kernel-level HAL vtable that any driver can satisfy in under 300 lines. The desktop mixer sits on top -- clean separation, no in-kernel mixing.
 
 ---
 
-## 1. Audio HAL — `audio_device_t` Vtable `[Opus]`
+## 1. Audio HAL -- `audio_device_t` Vtable `[Opus]`
 
 Define the `audio_device_t` abstraction. All audio drivers register against it; the desktop audio subsystem calls only these functions. Priority-sorted registration mirrors `display_device_t` from `TODO-08`.
 
@@ -60,12 +60,12 @@ Define the `audio_device_t` abstraction. All audio drivers register against it; 
       void  (*stop)(void);
   } audio_device_t;
   ```
-- [ ] `audio_register(audio_device_t *dev)` — insert into priority-sorted list; call `dev->init(44100, 2, 16)` to activate
-- [ ] `audio_get_active()` — return highest-priority registered device
+- [ ] `audio_register(audio_device_t *dev)` -- insert into priority-sorted list; call `dev->init(44100, 2, 16)` to activate
+- [ ] `audio_get_active()` -- return highest-priority registered device
 - [ ] `AUDIO_PRIORITY_VIRTIO = 100`, `AUDIO_PRIORITY_HDA = 80`, `AUDIO_PRIORITY_AC97 = 50`, `AUDIO_PRIORITY_USB = 60`
-- [ ] `audio_write(pcm, frames)` / `audio_set_volume(pct)` / `audio_stop()` — inline helpers that delegate to `audio_get_active()`
-- [ ] `audio_switch_device(audio_device_t *dev)` — force-select a specific device (used by hot-plug §7 and user preference)
-- [ ] Commit: `"kernel: audio_device_t HAL — register/get_active, priority system, write/volume/stop"`
+- [ ] `audio_write(pcm, frames)` / `audio_set_volume(pct)` / `audio_stop()` -- inline helpers that delegate to `audio_get_active()`
+- [ ] `audio_switch_device(audio_device_t *dev)` -- force-select a specific device (used by hot-plug §7 and user preference)
+- [ ] Commit: `"kernel: audio_device_t HAL -- register/get_active, priority system, write/volume/stop"`
 
 ## 2. AC97 Sound Driver `[Opus]`
 
@@ -89,7 +89,7 @@ Implement the AC97 driver against the Intel ICH AC97 specification. Cold reset s
 - [ ] `ac97_set_volume(pct)`: map 0–100 → `NAM_MASTER_VOLUME` attenuation (0 dB at 100, –46.5 dB at 0); write both channels
 - [ ] Register `audio_device_t ac97_dev`; priority = `AUDIO_PRIORITY_AC97`
 - [ ] Boot log: `[AC97] Codec ready, PCM Out DMA initialized, %u Hz`
-- [ ] Commit: `"drivers: AC97 — cold reset, NAM codec, 32-entry BDL DMA ring, IRQ refill, volume"`
+- [ ] Commit: `"drivers: AC97 -- cold reset, NAM codec, 32-entry BDL DMA ring, IRQ refill, volume"`
 
 ## 3. Intel HDA Driver `[Opus]`
 
@@ -113,7 +113,7 @@ Implement the Intel High Definition Audio driver. CORB/RIRB for codec verb commu
 - [ ] `hda_set_volume(pct)`: send `SET_AMPLIFIER_GAIN_MUTE(DAC, OUTPUT, pct)` verb; map 0–100 → 0–0x7F gain steps
 - [ ] Register `audio_device_t hda_dev`; priority = `AUDIO_PRIORITY_HDA`
 - [ ] Boot log: `[HDA] Codec %u: widget[%u..%u], DAC node %u → PIN node %u, stream 0 armed`
-- [ ] Commit: `"drivers: Intel HDA — CORB/RIRB, widget tree walk, DMA stream descriptor, PCM playback"`
+- [ ] Commit: `"drivers: Intel HDA -- CORB/RIRB, widget tree walk, DMA stream descriptor, PCM playback"`
 
 ## 4. VirtIO Sound Module `[Sonnet]`
 
@@ -134,27 +134,27 @@ Implement VirtIO Sound (`PCI 1AF4:1059`) using the VirtIO transport from `virtio
 - [ ] Volume: issue `VIRTIO_SND_R_CHMAP_INFO` + `SET_VOLUME` CTL command (if feature negotiated); fallback to software volume scaling
 - [ ] Register `audio_device_t virtio_snd_dev`; priority = `AUDIO_PRIORITY_VIRTIO`; `read` = capture path
 - [ ] Boot log: `[virtio-snd] PCM streams: %u playback, %u capture`
-- [ ] Commit: `"drivers: VirtIO Sound — controlq PCM params/start/stop, txq write, rxq capture"`
+- [ ] Commit: `"drivers: VirtIO Sound -- controlq PCM params/start/stop, txq write, rxq capture"`
 
 ## 5. USB Audio Class 1.0 (UAC1) Playback `[Opus]`
 
 Detect USB Audio Class 1.0 devices (interface class `0x01`). Configure an isochronous OUT endpoint for PCM playback. Issue `SET_CUR` for volume and mute on the feature unit. Extends `xhci_dev.c` with isochronous endpoint setup (not covered in TODO-09).
 
-**Files:** `src/kernel/drivers/usb_audio.c` (new), `include/kernel/drivers/usb_audio.h` (new), `src/kernel/drivers/xhci_dev.c` (extend — isochronous endpoint)
+**Files:** `src/kernel/drivers/usb_audio.c` (new), `include/kernel/drivers/usb_audio.h` (new), `src/kernel/drivers/xhci_dev.c` (extend -- isochronous endpoint)
 
 > [!IMPORTANT]
 > xHCI isochronous endpoints use endpoint type `0x1` (ISOCH_OUT) or `0x5` (ISOCH_IN) in the endpoint context. The transfer ring uses Isoch TRBs (type `0x5`) rather than Normal TRBs. Each Isoch TRB carries one USB microframe of audio data. For 44100 Hz stereo 16-bit at 1 ms frames: 44 frames × 4 bytes = 176 bytes per TRB, plus 1 byte every ~11 frames to handle the fractional rate (`44100/1000 = 44.1`).
 
 - [ ] Parse USB AudioControl interface (class `0x01`, subclass `0x01`): find `Feature Unit` descriptor; record feature unit ID, channel config, and supported controls bitmap (mute=bit0, volume=bit1)
 - [ ] Parse USB AudioStreaming interface (class `0x01`, subclass `0x02`): find isochronous OUT endpoint; read `wMaxPacketSize` and `bInterval`
-- [ ] Extend `xhci_dev.c`: `xhci_configure_isoch_ep(dev, ep_addr, max_pkt, interval, esit_payload)` — endpoint context type `ISOCH_OUT (0x1)`; `Max Esit Payload = max_pkt * burst`; submit Configure Endpoint
+- [ ] Extend `xhci_dev.c`: `xhci_configure_isoch_ep(dev, ep_addr, max_pkt, interval, esit_payload)` -- endpoint context type `ISOCH_OUT (0x1)`; `Max Esit Payload = max_pkt * burst`; submit Configure Endpoint
 - [ ] `xhci_submit_isoch_transfer(dev, ep_addr, buf, len, frame_id)`: enqueue Isoch TRB with `Frame_ID` and `SIA=1` (start ASAP); `IOC=1`; ring doorbell
 - [ ] `SET_INTERFACE(alt_setting=1)` control transfer to activate streaming interface (alt 0 = zero bandwidth, alt 1 = PCM streaming)
 - [ ] `usb_audio_set_volume(feature_unit, channel, db_hundredths)`: `SET_CUR(VOLUME_CONTROL)` class request (bmRequestType=`0x21`, bRequest=`0x01`, value=`0x0100|channel`, index=`feature_unit<<8|interface`)
 - [ ] `usb_audio_write(pcm, frames)`: split frames into isochronous packets; handle 44.1/48 kHz fractional packet sizes; submit Isoch TRBs; refill on completion
 - [ ] Register `audio_device_t usb_audio_dev`; priority = `AUDIO_PRIORITY_USB`
 - [ ] Boot log: `[USB-AUDIO] UAC1 device, isochronous OUT, %u Hz %u-bit %u-ch`
-- [ ] Commit: `"drivers: USB Audio UAC1 — xHCI isoch endpoint, SET_CUR volume, fractional packet fill"`
+- [ ] Commit: `"drivers: USB Audio UAC1 -- xHCI isoch endpoint, SET_CUR volume, fractional packet fill"`
 
 ## 6. Convert All Audio Drivers to `.kmod` `[Sonnet]`
 
@@ -163,14 +163,14 @@ Move AC97, HDA, VirtIO Sound, and USB Audio out of the built-in kernel and into 
 **Files:** `src/modules/ac97/ac97.c`, `src/modules/hda/hda.c`, `src/modules/virtio_sound/virtio_sound.c`, `src/modules/usb_audio/usb_audio.c` (all moved)
 
 > [!NOTE]
-> → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md` — module loader, `EXPORT_SYMBOL`, and driver model HAL vtables must be complete before this section. The `audio_device_t` struct pointer and `audio_register()` function must be exported via `EXPORT_SYMBOL` so module code can call them.
+> → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md` -- module loader, `EXPORT_SYMBOL`, and driver model HAL vtables must be complete before this section. The `audio_device_t` struct pointer and `audio_register()` function must be exported via `EXPORT_SYMBOL` so module code can call them.
 
 - [ ] `EXPORT_SYMBOL(audio_register)` and `EXPORT_SYMBOL(audio_get_active)` in `audio_device.c`
 - [ ] Move each driver source to `src/modules/<name>/`; add `module_init()` / `module_exit()` entry points calling `audio_register()` / cleanup
 - [ ] Add `Makefile` rules under `src/modules/<name>/` following the module build system pattern from TODO-01
 - [ ] Remove the four drivers from the built-in kernel `Makefile` object list; confirm boot still reaches audio with modules auto-loaded from `C:\Impossible\System\Drivers\`
 - [ ] Update `NOTICE.md` if any ported code was moved
-- [ ] Commit: `"modules: audio drivers as .kmod — ac97, hda, virtio_sound, usb_audio module_init/exit"`
+- [ ] Commit: `"modules: audio drivers as .kmod -- ac97, hda, virtio_sound, usb_audio module_init/exit"`
 
 ## 7. Audio Device Hot-Plug `[Sonnet]`
 
@@ -179,14 +179,14 @@ Notify the audio subsystem when a new audio device appears or disappears. Switch
 **Files:** `src/kernel/drivers/audio_device.c`, `src/kernel/drivers/usb_audio.c`, `src/kernel/drivers/virtio_sound.c`
 
 > [!NOTE]
-> → XREF: `08-desktop-shell` domain — the desktop audio mixer needs a `WM_AUDIO_DEVICE_CHANGED` message (or similar compositor notification) to update its device selector UI when hot-plug occurs. This section posts that message; the shell handles the UI response.
+> → XREF: `08-desktop-shell` domain -- the desktop audio mixer needs a `WM_AUDIO_DEVICE_CHANGED` message (or similar compositor notification) to update its device selector UI when hot-plug occurs. This section posts that message; the shell handles the UI response.
 
 - [ ] `audio_notify_attach(audio_device_t *dev)`: call `audio_register(dev)`; if new device has higher priority than current active, call `audio_switch_device(dev)`; post `WM_AUDIO_DEVICE_CHANGED(new_dev_name)` to compositor
 - [ ] `audio_notify_detach(audio_device_t *dev)`: remove from registered list; if detached device was active, select next highest-priority device; call `audio_switch_device(next)` or stop audio if none; post `WM_AUDIO_DEVICE_CHANGED(NULL)` to compositor
 - [ ] USB Audio (§5): call `audio_notify_attach()` from `usb_audio_probe()`; call `audio_notify_detach()` from `usb_audio_disconnect()`
 - [ ] Registry: `audio_switch_device()` writes `HKLM\SYSTEM\Audio\DefaultDevice` (`REG_SZ`, device name); on boot, `audio_register()` checks if new device name matches Registry preference and forces it active if so
 - [ ] Boot log: `[AUDIO] Active device: %s (priority %d)`; on hot-plug: `[AUDIO] Device %s attached/detached, new active: %s`
-- [ ] Commit: `"drivers: audio hot-plug — notify_attach/detach, priority switch, DefaultDevice Registry"`
+- [ ] Commit: `"drivers: audio hot-plug -- notify_attach/detach, priority switch, DefaultDevice Registry"`
 
 ---
 
@@ -195,15 +195,15 @@ Notify the audio subsystem when a new audio device appears or disappears. Switch
 
 | ⭐ | Feature                                      | 🪟 Win11                                                 | 🐧 Linux                                               | 🚀 Impossible OS                                                                  |
 |----|----------------------------------------------|-------------------------------------------------------|-----------------------------------------------------|--------------------------------------------------------------------------------|
-| ⭐ | Single `audio_device_t` HAL vtable           | ❌ WaveRT→WASAPI multi-layer stack; KMixer in         | ❌ ALSA PCM + mixer layers;                         | ⬜ §1 — 6-function vtable, passthrough only, desktop                           |
-| 💎 | AC97 PCM playback                            | ✅ `msac97.sys` inbox AC97 WDM audio                  | ✅ `snd_intel8x0` ALSA driver; BDL DMA;             | ⬜ §2 — cold reset, NAM/NAB I/O, 32-entry                                      |
-| 💎 | Intel HDA                                    | ✅ `hdaudio.sys` + `HDAudBus.sys`; codec enumeration; | ✅ `snd_hda_intel`; CORB/RIRB; codec parser; widget | ⬜ §3 — CORB/RIRB verbs, AFG widget walk,                                      |
-| 💎 | VirtIO Sound PCM playback + capture          | ✅ VirtIO drivers for Windows (Red                    | ✅ `snd_virtio` ALSA driver; v1.2 spec;             | ⬜ §4 — controlq PCM params, txq write,                                        |
-| 💎 | USB Audio Class 1.0 (UAC1) PCM playback      | ✅ `usbaudio.sys` inbox UAC1/UAC2 driver              | ✅ `snd_usb_audio`; UAC1 + UAC2; isochronous;       | ⬜ §5 — xHCI isoch endpoint, fractional packet                                 |
-| 💎 | Audio drivers as loadable `.kmod` modules    | ✅ All WDM audio drivers are                          | ✅ All ALSA drivers are loadable                    | ⬜ §6 — `module_init/exit`, `src/modules/ac97/` etc., after TODO-01            |
-| 💎 | Audio device hot-plug + active device switch | ✅ Windows Audio Session API; device                  | ✅ `udev` + PulseAudio/PipeWire; `PA_SINK_ADDED` /  | ⬜ §7 — `audio_notify_attach/detach`, `WM_AUDIO_DEVICE_CHANGED`, Registry pref |
+| ⭐ | Single `audio_device_t` HAL vtable           | ❌ WaveRT→WASAPI multi-layer stack; KMixer in         | ❌ ALSA PCM + mixer layers;                         | ⬜ §1 -- 6-function vtable, passthrough only, desktop                           |
+| 💎 | AC97 PCM playback                            | ✅ `msac97.sys` inbox AC97 WDM audio                  | ✅ `snd_intel8x0` ALSA driver; BDL DMA;             | ⬜ §2 -- cold reset, NAM/NAB I/O, 32-entry                                      |
+| 💎 | Intel HDA                                    | ✅ `hdaudio.sys` + `HDAudBus.sys`; codec enumeration; | ✅ `snd_hda_intel`; CORB/RIRB; codec parser; widget | ⬜ §3 -- CORB/RIRB verbs, AFG widget walk,                                      |
+| 💎 | VirtIO Sound PCM playback + capture          | ✅ VirtIO drivers for Windows (Red                    | ✅ `snd_virtio` ALSA driver; v1.2 spec;             | ⬜ §4 -- controlq PCM params, txq write,                                        |
+| 💎 | USB Audio Class 1.0 (UAC1) PCM playback      | ✅ `usbaudio.sys` inbox UAC1/UAC2 driver              | ✅ `snd_usb_audio`; UAC1 + UAC2; isochronous;       | ⬜ §5 -- xHCI isoch endpoint, fractional packet                                 |
+| 💎 | Audio drivers as loadable `.kmod` modules    | ✅ All WDM audio drivers are                          | ✅ All ALSA drivers are loadable                    | ⬜ §6 -- `module_init/exit`, `src/modules/ac97/` etc., after TODO-01            |
+| 💎 | Audio device hot-plug + active device switch | ✅ Windows Audio Session API; device                  | ✅ `udev` + PulseAudio/PipeWire; `PA_SINK_ADDED` /  | ⬜ §7 -- `audio_notify_attach/detach`, `WM_AUDIO_DEVICE_CHANGED`, Registry pref |
 
-> **After §1–7:** Impossible OS has PCM playback across all four common audio surfaces (AC97, HDA, VirtIO, USB). The `audio_device_t` vtable (`⭐`) is the OS's architectural differentiator: Windows ships `KMixer` in the kernel and a 5-layer audio stack; Linux ships `dmix` as an ALSA plugin. Impossible OS keeps all mixing, resampling, and effects above the kernel boundary — the driver layer is a thin, auditable PCM pipe that any device can implement in under 300 lines.
+> **After §1–7:** Impossible OS has PCM playback across all four common audio surfaces (AC97, HDA, VirtIO, USB). The `audio_device_t` vtable (`⭐`) is the OS's architectural differentiator: Windows ships `KMixer` in the kernel and a 5-layer audio stack; Linux ships `dmix` as an ALSA plugin. Impossible OS keeps all mixing, resampling, and effects above the kernel boundary -- the driver layer is a thin, auditable PCM pipe that any device can implement in under 300 lines.
 
 ## Verification
 
@@ -215,4 +215,4 @@ Notify the audio subsystem when a new audio device appears or disappears. Switch
 - [ ] Priority: attach VirtIO + AC97 simultaneously → `audio_get_active()` returns VirtIO (priority 100 > 50)
 - [ ] Hot-plug: disconnect USB Audio device → `[AUDIO] Device USB-Audio detached, new active: HDA`; compositor receives `WM_AUDIO_DEVICE_CHANGED`; Registry `DefaultDevice` updated
 - [ ] Module conversion (§6): confirm AC97 is not in built-in kernel; `[MODULE] Loaded ac97.kmod`; audio still works
-- [ ] Commit: `"drivers: audio — AC97, HDA, VirtIO Sound, USB UAC1, hot-plug, kmod conversion"`
+- [ ] Commit: `"drivers: audio -- AC97, HDA, VirtIO Sound, USB UAC1, hot-plug, kmod conversion"`

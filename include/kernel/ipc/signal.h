@@ -1,5 +1,5 @@
 /* ============================================================================
- * signal.h — Kernel signal delivery
+ * signal.h -- Kernel signal delivery
  *
  * POSIX-inspired process signals for Impossible OS. Signals can be sent
  * between processes or from the kernel (e.g., Ctrl+C → SIGINT).
@@ -16,9 +16,9 @@
 #include "kernel/types.h"
 
 /* Signal numbers (POSIX-compatible values) */
-#define SIGINT   2    /* interrupt — Ctrl+C */
-#define SIGKILL  9    /* kill — cannot be caught */
-#define SIGTERM  15   /* terminate — clean exit */
+#define SIGINT   2    /* interrupt -- Ctrl+C */
+#define SIGKILL  9    /* kill -- cannot be caught */
+#define SIGTERM  15   /* terminate -- clean exit */
 #define SIGCHLD  17   /* child process exited */
 
 /* Maximum signal number */

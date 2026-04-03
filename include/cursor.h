@@ -1,5 +1,5 @@
 /* ============================================================================
- * cursor.h — Cursor manager with Adwaita X11 cursor support
+ * cursor.h -- Cursor manager with Adwaita X11 cursor support
  *
  * Loads cursor shapes from Xcur binary files at boot, supports 11 shapes
  * with alpha blending, and provides save/restore rendering for the
@@ -36,7 +36,7 @@ typedef enum {
 #define CURSOR_MAX_SIZES 8
 
 /* --------------------------------------------------------------------
- * Cursor image — one size variant of a cursor shape
+ * Cursor image -- one size variant of a cursor shape
  * -------------------------------------------------------------------- */
 
 typedef struct {
@@ -48,7 +48,7 @@ typedef struct {
 } cursor_image_t;
 
 /* --------------------------------------------------------------------
- * Cursor sprite — all size variants for one shape
+ * Cursor sprite -- all size variants for one shape
  * -------------------------------------------------------------------- */
 
 typedef struct {

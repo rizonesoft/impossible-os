@@ -1,4 +1,4 @@
-/* blk_discard.c — Discard (TRIM) and write-zeroes */
+/* blk_discard.c -- Discard (TRIM) and write-zeroes */
 
 #include "kernel/drivers/virtio/blk_internal.h"
 
@@ -20,7 +20,7 @@ int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     if (!blk_initialized)
         return -1;
 
-    /* Build request header — sector field is ignored for discard */
+    /* Build request header -- sector field is ignored for discard */
     req.type     = VIRTIO_BLK_T_DISCARD;
     req.reserved = 0;
     req.sector   = 0;
@@ -132,7 +132,7 @@ int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
     blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
-    /* Descriptor 1: discard segment data (device-readable — NOT F_WRITE!) */
+    /* Descriptor 1: discard segment data (device-readable -- NOT F_WRITE!) */
     d1 = blk_vqs[qi].free_head;
     blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
     blk_vqs[qi].num_free--;
@@ -225,7 +225,7 @@ int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     return VIRTIO_IO_IOERR;
 }
 
-/* Public discard API — splits large requests to fit max_discard_sectors */
+/* Public discard API -- splits large requests to fit max_discard_sectors */
 int virtio_blk_discard(uint64_t sector, uint32_t num_sectors)
 {
     int ret;
@@ -235,14 +235,14 @@ int virtio_blk_discard(uint64_t sector, uint32_t num_sectors)
     if (!blk_initialized)
         return -1;
     if (!has_discard)
-        return 1;  /* Not supported — same convention as flush */
+        return 1;  /* Not supported -- same convention as flush */
     if (is_read_only)
-        return 0;  /* RO device — discard is a no-op */
+        return 0;  /* RO device -- discard is a no-op */
 
     /* Determine max sectors per discard command */
     max_per_cmd = topo.max_discard_sectors;
     if (max_per_cmd == 0)
-        max_per_cmd = num_sectors;  /* No limit — send all at once */
+        max_per_cmd = num_sectors;  /* No limit -- send all at once */
 
     /* Split large discards into max_per_cmd-sized chunks */
     while (num_sectors > 0) {
@@ -289,7 +289,7 @@ int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     if (!blk_initialized)
         return -1;
 
-    /* Build request header — sector field is ignored for write-zeroes */
+    /* Build request header -- sector field is ignored for write-zeroes */
     req.type     = VIRTIO_BLK_T_WRITE_ZEROES;
     req.reserved = 0;
     req.sector   = 0;
@@ -401,7 +401,7 @@ int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
     blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
-    /* Descriptor 1: write-zeroes segment data (device-readable — NOT F_WRITE!) */
+    /* Descriptor 1: write-zeroes segment data (device-readable -- NOT F_WRITE!) */
     d1 = blk_vqs[qi].free_head;
     blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
     blk_vqs[qi].num_free--;
@@ -494,7 +494,7 @@ int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     return VIRTIO_IO_IOERR;
 }
 
-/* Public write-zeroes API — splits large requests to fit max_wz_sectors */
+/* Public write-zeroes API -- splits large requests to fit max_wz_sectors */
 int virtio_blk_write_zeroes(uint64_t sector, uint32_t num_sectors, int unmap)
 {
     int ret;
@@ -507,7 +507,7 @@ int virtio_blk_write_zeroes(uint64_t sector, uint32_t num_sectors, int unmap)
     if (!has_write_zeroes)
         return 1;  /* Not supported */
     if (is_read_only)
-        return 0;  /* RO device — write-zeroes is a no-op */
+        return 0;  /* RO device -- write-zeroes is a no-op */
 
     /* Only set unmap flag if device allows it */
     flags = (unmap && topo.wz_may_unmap) ? 1u : 0u;
@@ -515,7 +515,7 @@ int virtio_blk_write_zeroes(uint64_t sector, uint32_t num_sectors, int unmap)
     /* Determine max sectors per write-zeroes command */
     max_per_cmd = topo.max_wz_sectors;
     if (max_per_cmd == 0)
-        max_per_cmd = num_sectors;  /* No limit — send all at once */
+        max_per_cmd = num_sectors;  /* No limit -- send all at once */
 
     /* Split large requests into max_per_cmd-sized chunks */
     while (num_sectors > 0) {
@@ -565,7 +565,7 @@ int virtio_blk_do_secure_erase(uint64_t sector, uint32_t num_sectors)
     /* Build request header */
     req.type     = VIRTIO_BLK_T_SECURE_ERASE;
     req.reserved = 0;
-    req.sector   = 0;  /* sector field ignored — segment carries range */
+    req.sector   = 0;  /* sector field ignored -- segment carries range */
 
     /* Build segment descriptor (same format as discard) */
     seg.sector      = sector;
@@ -587,7 +587,7 @@ int virtio_blk_do_secure_erase(uint64_t sector, uint32_t num_sectors)
     blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
     blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
-    /* Descriptor 1: segment data (device-readable — NOT F_WRITE!) */
+    /* Descriptor 1: segment data (device-readable -- NOT F_WRITE!) */
     d1 = blk_vqs[qi].free_head;
     blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
     blk_vqs[qi].num_free--;
@@ -680,7 +680,7 @@ int virtio_blk_do_secure_erase(uint64_t sector, uint32_t num_sectors)
     return VIRTIO_IO_IOERR;
 }
 
-/* Public secure erase API — splits large requests to fit max_serase_sectors */
+/* Public secure erase API -- splits large requests to fit max_serase_sectors */
 int virtio_blk_secure_erase(uint64_t sector, uint32_t num_sectors)
 {
     int ret;

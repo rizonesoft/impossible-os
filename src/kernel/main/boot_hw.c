@@ -1,8 +1,8 @@
 /* ============================================================================
- * boot_hw.c — Phase 0: Critical Init (Interrupts Disabled)
+ * boot_hw.c -- Phase 0: Critical Init (Interrupts Disabled)
  *
  * Runs with interrupts off. Only serial, memory, and logging. No drivers,
- * VFS, or network. Any failure in Phase 0 calls boot_halt() on serial —
+ * VFS, or network. Any failure in Phase 0 calls boot_halt() on serial --
  * framebuffer is not yet available.
  *
  * Provides: boot_phase0() and the legacy boot_hw_init() wrapper.
@@ -89,7 +89,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     }
 
     /* --- Read prior boot POST code, then mark "booting" in NVRAM ---
-     * Read MUST happen before the first NVRAM write — otherwise we read
+     * Read MUST happen before the first NVRAM write -- otherwise we read
      * our own value.  NVRAM writes per boot (5 total, flash-safe):
      *   1. Here: mark "booting" (POST16_SERIAL = 0x0010)
      *   2. Phase 0 complete (POST16_SIMD_OK)
@@ -112,7 +112,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         boot_progress(0, "post-code-log", 0x11);
     }
 
-    /* Initialize VPD Tier 1 — after crash banner so s_banner_shown is set */
+    /* Initialize VPD Tier 1 -- after crash banner so s_banner_shown is set */
     {
         extern void vpd_init(void);
         vpd_init();

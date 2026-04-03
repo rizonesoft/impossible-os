@@ -1,6 +1,6 @@
-# TODO-06 — User-Mode Test Framework
+# TODO-06 -- User-Mode Test Framework
 
-> **Goal:** A test harness for user-mode code: syscalls, libc functions, Win32 API stubs, ELF/PE/EIF loading, process lifecycle, and IPC. Test programs are compiled as regular user-mode binaries (`test_*.exe`), deployed to the IXFS system disk, and executed by the kernel after boot. Each test binary exercises one subsystem, writes pass/fail results to stdout (SYS_WRITE), and exits with 0 (pass) or non-zero (fail). The kernel test runner launches each binary, captures its output and exit code, and reports results to serial. This is how Windows HLK and Linux kselftest work — real user-mode programs exercising the real syscall interface.
+> **Goal:** A test harness for user-mode code: syscalls, libc functions, Win32 API stubs, ELF/PE/EIF loading, process lifecycle, and IPC. Test programs are compiled as regular user-mode binaries (`test_*.exe`), deployed to the IXFS system disk, and executed by the kernel after boot. Each test binary exercises one subsystem, writes pass/fail results to stdout (SYS_WRITE), and exits with 0 (pass) or non-zero (fail). The kernel test runner launches each binary, captures its output and exit code, and reports results to serial. This is how Windows HLK and Linux kselftest work -- real user-mode programs exercising the real syscall interface.
 
 > [!IMPORTANT]
 > **Current state:** One user-mode binary exists: `hello.exe` (prints a message, exercises SYS_WRITE + SYS_EXIT). No test binaries. No mechanism to launch multiple user-mode programs in sequence and collect results. The shell can run `exec <name>` but there's no automated test launcher. User-mode libc (`src/libc/`) has basic string functions but no tests.
@@ -9,14 +9,14 @@
 
 ## Inputs
 
-- `user/` — user-mode source directory (hello.c, user.ld, include/)
-- `user/include/syscall.h` — user-mode syscall wrappers
-- `src/libc/` — kernel libc (string, printf — shared with user mode)
-- `src/kernel/sched/task.c` — task_create_user, task_exec
-- `src/kernel/sched/syscall.c` — syscall dispatcher
-- → XREF: `TODO-03-kernel-test-framework.md §2` — `make test` target (local headless QEMU, no CI QEMU)
-- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` — NtXxx syscalls tested here
-- → XREF: `02-kernel-core/TODO-08-binary-system.md` — ELF/PE/EIF loader tested here
+- `user/` -- user-mode source directory (hello.c, user.ld, include/)
+- `user/include/syscall.h` -- user-mode syscall wrappers
+- `src/libc/` -- kernel libc (string, printf -- shared with user mode)
+- `src/kernel/sched/task.c` -- task_create_user, task_exec
+- `src/kernel/sched/syscall.c` -- syscall dispatcher
+- → XREF: `TODO-03-kernel-test-framework.md §2` -- `make test` target (local headless QEMU, no CI QEMU)
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` -- NtXxx syscalls tested here
+- → XREF: `02-kernel-core/TODO-08-binary-system.md` -- ELF/PE/EIF loader tested here
 
 ---
 
@@ -27,7 +27,7 @@
 - Kernel test launcher: after boot, runs each `test_*.exe` in sequence, collects exit codes.
 - Serial output shows per-binary pass/fail summary.
 - `make test` includes user-mode tests (builds test binaries, deploys to disk, boots, runs).
-- Adding a new user-mode test: create `user/test/test_foo.c`, add to Makefile — done.
+- Adding a new user-mode test: create `user/test/test_foo.c`, add to Makefile -- done.
 
 ---
 
@@ -35,7 +35,7 @@
 
 | ⭐  | Order | Deliverable                                     | Depends On     | Status |
 | --- | :---: | ----------------------------------------------- | -------------- | :----: |
-| 💎  |   1   | User-mode test assertion macro and harness       | —              |  [ ]   |
+| 💎  |   1   | User-mode test assertion macro and harness       | --              |  [ ]   |
 | 💎  |   2   | Kernel test launcher (run test_*.exe in sequence) | §1            |  [ ]   |
 | 💎  |   3   | Syscall test binary (test_syscall.exe)           | §1, §2         |  [ ]   |
 | 💎  |   4   | Libc test binary (test_libc.exe)                 | §1, §2         |  [ ]   |
@@ -43,16 +43,16 @@
 | 💎  |   6   | Process lifecycle test (test_process.exe)         | §1, §2         |  [ ]   |
 | 💎  |   7   | File I/O test (test_fileio.exe)                  | §1, §2         |  [ ]   |
 | ⭐  |   8   | Win32 API test binary (test_win32.exe)            | §1, §2, T05 §5 |  [ ]   |
-| 💎  |   9   | Build integration — `make test` includes user tests | §2          |  [ ]   |
+| 💎  |   9   | Build integration -- `make test` includes user tests | §2          |  [ ]   |
 
-> 💎 = parity — Linux kselftest and Windows HLK both use user-mode test binaries.
-> ⭐ = exclusive — testing Win32 API surface from user-mode on a non-Windows kernel.
+> 💎 = parity -- Linux kselftest and Windows HLK both use user-mode test binaries.
+> ⭐ = exclusive -- testing Win32 API surface from user-mode on a non-Windows kernel.
 
 ---
 
 ## 1. User-Mode Test Assertion Macro
 
-Minimal test harness for user-mode binaries — no kernel dependencies.
+Minimal test harness for user-mode binaries -- no kernel dependencies.
 
 - [ ] Create `user/include/test.h`:
   ```c
@@ -61,11 +61,11 @@ Minimal test harness for user-mode binaries — no kernel dependencies.
       else { sys_write(1, "[FAIL] ", 7); sys_write(1, msg, strlen(msg)); sys_write(1, "\n", 1); g_fail++; } \
   } while(0)
   ```
-- [ ] `g_fail` counter — exit with `sys_exit(g_fail)` at end of main
-- [ ] `UTEST_BEGIN(name)` / `UTEST_END()` — print suite header/footer
+- [ ] `g_fail` counter -- exit with `sys_exit(g_fail)` at end of main
+- [ ] `UTEST_BEGIN(name)` / `UTEST_END()` -- print suite header/footer
 - [ ] Commit: `"test: user-mode test assertion macro (user/include/test.h)"`
 
-**Test checkpoint:** Compile a trivial test binary using UTEST_ASSERT — runs and exits cleanly.
+**Test checkpoint:** Compile a trivial test binary using UTEST_ASSERT -- runs and exits cleanly.
 
 ---
 
@@ -78,7 +78,7 @@ Kernel-side mechanism to run user-mode test binaries and collect results.
 - [ ] Log: `"[UTEST] test_syscall.exe: %s (exit=%d)"` with PASS/FAIL based on exit code
 - [ ] Summary: `"[UTEST] %u passed, %u failed of %u user-mode tests"`
 - [ ] Triggered by `test=1` in boot.conf (same gate as kernel unit tests)
-- [ ] Commit: `"test: kernel test launcher — run user-mode test_*.exe and collect results"`
+- [ ] Commit: `"test: kernel test launcher -- run user-mode test_*.exe and collect results"`
 
 **Test checkpoint:** Deploy `test_syscall.exe` to disk image. Boot with `test=1` → serial shows `[UTEST] test_syscall.exe: PASS`.
 
@@ -183,7 +183,7 @@ Wire user-mode test binaries into `make test`.
 - [ ] Disk image build: copy test binaries to `C:\Impossible\System32\`
 - [ ] `make test` target: include user-mode tests after kernel unit tests
 - [ ] `scripts/test.sh`: parse serial for `[UTEST]` lines alongside `[TEST]` kernel lines
-- [ ] Commit: `"test: build integration — user-mode tests in make test and CI"`
+- [ ] Commit: `"test: build integration -- user-mode tests in make test and CI"`
 
 ---
 

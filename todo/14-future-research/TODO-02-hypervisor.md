@@ -1,46 +1,46 @@
-# TODO-02 — Type-1 Hypervisor (ImpossibleHV)
+# TODO-02 -- Type-1 Hypervisor (ImpossibleHV)
 
 > **Goal:** Research spike to design and prove out a built-in Type-1.5 hypervisor
 > (ImpossibleHV) that runs Windows, Linux, and other OS guests inside Impossible OS.
 > Scope: Intel VT-x/AMD-V feasibility analysis, minimal VMCS-based VMM design, a
 > Linux guest boot proof-of-concept, virtio device emulation plan, snapshot/migration
-> research, and GPU passthrough feasibility — all gated by `#ifdef ENABLE_HYPERVISOR`.
+> research, and GPU passthrough feasibility -- all gated by `#ifdef ENABLE_HYPERVISOR`.
 
 > [!IMPORTANT]
 > **Type-1.5 design**: Impossible OS kernel runs in VMX root mode; guests run in VMX
 > non-root mode. No separate hypervisor binary. This is the same model used by KVM
-> (Linux) and Hyper-V — the host OS kernel *is* the VMM.
+> (Linux) and Hyper-V -- the host OS kernel *is* the VMM.
 >
 > **Existing VirtIO drivers** (`src/kernel/drivers/virtio/blk_core.c`, `virtio.c`, etc.)
 > are **guest-side** drivers (Impossible OS running inside QEMU/Hyper-V). §4 here adds
 > the **host-side** virtio device *emulation* (Impossible OS acting as VMM for its
-> guests). These are different code paths — do not conflate them.
+> guests). These are different code paths -- do not conflate them.
 >
 > **Hypervisor detection** (CPUID `0x40000000`, `boot_info.hv_flags`) is owned by
 > `01-boot-platform/TODO-04 §3`; §1 here uses `cpu_data.cpuid_features` to detect
-> `VMXE` / `SVM` support — it reads that data, does not re-specify detection.
+> `VMXE` / `SVM` support -- it reads that data, does not re-specify detection.
 >
 > **PMM and VMM APIs** (`pmm_alloc_contiguous`, `vmm_map_page`) already exist and are
 > used for VMCS region allocation (§2) and EPT page table setup (§3).
 >
 > Prototype code lives in `src/kernel/hypervisor/` gated by `#ifdef ENABLE_HYPERVISOR`
 > and a `HYPERVISOR=1` build flag. This is **not production code** during the research
-> phase — it is a proof-of-concept only.
+> phase -- it is a proof-of-concept only.
 
 ---
 
 ## Inputs
 
-- `include/kernel/mm/pmm.h` — `pmm_alloc_contiguous(count)` — §2 §3 VMCS + EPT allocation (4 KB aligned physical pages)
-- `include/kernel/mm/vmm.h` — `vmm_map_page(virt, phys, flags)` — §3 EPT setup, guest memory mapping
-- `include/kernel/sched/task.h` — `task_t` (per-vCPU state), `task_create` — §2 vCPU scheduling
-- `include/kernel/drivers/lapic.h` — LAPIC IPI for inter-vCPU signalling — §2 §3
-- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) — CPUID feature flags (`cpu_data.cpuid_features`); `VMXE` bit detection uses data collected there
-- `02-kernel-core/TODO-17-kernel-security-hardening.md` (→ XREF) — SMEP/SMAP/CET on VMX host; must stay active in host CR4 across VM entries/exits
-- `02-kernel-core/TODO-19-x86-64-architecture.md` (→ XREF) — MSR read/write infrastructure (`rdmsr_safe`, `wrmsr`); used by VMXON and VMCS field access
-- `src/kernel/drivers/virtio/virtio.c` — guest-side VirtIO transport (reference for §4 host-side emulation design; understand the split-ring format from the guest's perspective)
-- Intel SDM Vol. 3C (VMX chapter) — VMCS layout, VM entry/exit, EPT, VPID
-- AMD APM Vol. 2 (SVM chapter) — VMCB (VM Control Block), nested paging, VMSAVE/VMLOAD
+- `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous(count)` -- §2 §3 VMCS + EPT allocation (4 KB aligned physical pages)
+- `include/kernel/mm/vmm.h` -- `vmm_map_page(virt, phys, flags)` -- §3 EPT setup, guest memory mapping
+- `include/kernel/sched/task.h` -- `task_t` (per-vCPU state), `task_create` -- §2 vCPU scheduling
+- `include/kernel/drivers/lapic.h` -- LAPIC IPI for inter-vCPU signalling -- §2 §3
+- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) -- CPUID feature flags (`cpu_data.cpuid_features`); `VMXE` bit detection uses data collected there
+- `02-kernel-core/TODO-17-kernel-security-hardening.md` (→ XREF) -- SMEP/SMAP/CET on VMX host; must stay active in host CR4 across VM entries/exits
+- `02-kernel-core/TODO-19-x86-64-architecture.md` (→ XREF) -- MSR read/write infrastructure (`rdmsr_safe`, `wrmsr`); used by VMXON and VMCS field access
+- `src/kernel/drivers/virtio/virtio.c` -- guest-side VirtIO transport (reference for §4 host-side emulation design; understand the split-ring format from the guest's perspective)
+- Intel SDM Vol. 3C (VMX chapter) -- VMCS layout, VM entry/exit, EPT, VPID
+- AMD APM Vol. 2 (SVM chapter) -- VMCB (VM Control Block), nested paging, VMSAVE/VMLOAD
 
 ---
 
@@ -86,12 +86,12 @@ loop works end-to-end before committing to full implementation.
   | Guest state | `GUEST_CR0`, `GUEST_CR3`, `GUEST_CR4`, `GUEST_EFER` | Guest paging control |
   | Guest state | `GUEST_CS_*`, `GUEST_SS_*`, `GUEST_DS_*` (selector/base/limit/access) | Segment registers |
   | Host state | `HOST_RIP`, `HOST_RSP`, `HOST_CR0`, `HOST_CR3`, `HOST_CR4` | Restored on VM exit |
-  | Control | `PRIMARY_VM_EXEC_CTRL` — I/O bitmaps, HLT exit, RDTSC exit | Exit triggers |
-  | Control | `SECONDARY_VM_EXEC_CTRL` — EPT enable, VPID enable, RDTSCP | EPT + TLB tagging |
-  | Control | `EPT_POINTER` — physical address of EPT PML4 | Nested paging root |
-  | Control | `VPID` — 16-bit TLB tag per VM | TLB isolation |
-  | Control | `IO_BITMAP_A_ADDR`, `IO_BITMAP_B_ADDR` — 4 KB each | Port I/O exit control |
-  | Control | `MSR_BITMAP_ADDR` — 4 KB bitmap | MSR intercept control |
+  | Control | `PRIMARY_VM_EXEC_CTRL` -- I/O bitmaps, HLT exit, RDTSC exit | Exit triggers |
+  | Control | `SECONDARY_VM_EXEC_CTRL` -- EPT enable, VPID enable, RDTSCP | EPT + TLB tagging |
+  | Control | `EPT_POINTER` -- physical address of EPT PML4 | Nested paging root |
+  | Control | `VPID` -- 16-bit TLB tag per VM | TLB isolation |
+  | Control | `IO_BITMAP_A_ADDR`, `IO_BITMAP_B_ADDR` -- 4 KB each | Port I/O exit control |
+  | Control | `MSR_BITMAP_ADDR` -- 4 KB bitmap | MSR intercept control |
   | VM-exit info | `VM_EXIT_REASON`, `EXIT_QUALIFICATION`, `GUEST_PHYSICAL_ADDRESS` | Exit classification |
   | VM-exit info | `VM_EXIT_INSTR_LEN`, `VM_EXIT_INSTR_INFO` | Faulting instruction |
 
@@ -129,7 +129,7 @@ loop works end-to-end before committing to full implementation.
   2. Set `CR4.VMXE` (bit 13) via `__asm__ volatile("mov %%cr4, %0" / "or $0x2000, %0" / "mov %0, %%cr4")`
   3. Set `IA32_FEATURE_CONTROL` MSR: bit 0 (lock) + bit 2 (VMXON outside SMX)
   4. Allocate VMXON region: `pmm_alloc_contiguous(1)` (4 KB physical page, 4 KB aligned); write `IA32_VMX_BASIC` MSR revision ID to first 4 bytes
-  5. `VMXON [vmxon_region_phys]` — enter VMX root mode; check RFLAGS.CF=0 (success)
+  5. `VMXON [vmxon_region_phys]` -- enter VMX root mode; check RFLAGS.CF=0 (success)
   6. Log `"[HV] VMX root mode active on CPU %d"`
 - [ ] **`struct vmcs_region`**: 4 KB physical page; first 4 bytes = `IA32_VMX_BASIC.revision_id`; allocated via `pmm_alloc_contiguous(1)` per vCPU
 - [ ] **VMCS field access helpers**:
@@ -168,7 +168,7 @@ loop works end-to-end before committing to full implementation.
       int         vcpu_count;
   } vm_t;
   ```
-- [ ] **VMCS initialization** (`vmcs_setup(vcpu, vm)`): VMPTR load (`VMPTRLD`); write guest state fields, host state fields (mirror of current kernel CR0/CR3/CR4, host RIP = `vmx_exit_handler`), control fields (EPT pointer, VPID, I/O bitmaps); `VMCS_HOST_RIP = &vmx_exit_handler` — the C function that runs on every VM exit
+- [ ] **VMCS initialization** (`vmcs_setup(vcpu, vm)`): VMPTR load (`VMPTRLD`); write guest state fields, host state fields (mirror of current kernel CR0/CR3/CR4, host RIP = `vmx_exit_handler`), control fields (EPT pointer, VPID, I/O bitmaps); `VMCS_HOST_RIP = &vmx_exit_handler` -- the C function that runs on every VM exit
 - [ ] **Host state discipline**: host CR4 must retain SMEP/SMAP (→ XREF `TODO-17`); restore `XSS_MSR` and `FS_BASE` on VM exit; `SWAPGS` if needed for `GS_BASE` isolation between host and guest
 
 ---
@@ -176,7 +176,7 @@ loop works end-to-end before committing to full implementation.
 ## 3. Minimal Linux Guest Proof-of-Concept `[Opus]`
 
 > Novel: VMLAUNCH with EPT setup, Linux boot protocol, and VM exit dispatch loop.
-> Hardware-interface primitives throughout. Prototype only — not production quality.
+> Hardware-interface primitives throughout. Prototype only -- not production quality.
 
 **Source:** `src/kernel/hypervisor/guest_linux.c` (gated `#ifdef ENABLE_HYPERVISOR`)
 
@@ -227,7 +227,7 @@ loop works end-to-end before committing to full implementation.
 
 > Novel: host-side virtio ring emulation. The existing `src/kernel/drivers/virtio/`
 > code implements the *guest driver* (consuming virtio devices). This section designs
-> the *host VMM side* — responding to guest driver requests via VM exits.
+> the *host VMM side* -- responding to guest driver requests via VM exits.
 
 **Source:** `src/kernel/hypervisor/virtio_mmio.c` (gated `#ifdef ENABLE_HYPERVISOR`)
 
@@ -253,7 +253,7 @@ loop works end-to-end before committing to full implementation.
 
 > Complex algorithm: dirty page tracking via EPT write bits while vCPU runs; concurrent
 > memory copy; brief pause to copy final pages. No prior Impossible OS VM migration.
-> This section is research and design only — not prototype code.
+> This section is research and design only -- not prototype code.
 
 - [ ] **VM snapshot design** (pause-and-copy):
   1. **Pause vCPU**: set `vcpu->paused = 1`; send IPI to vCPU's host CPU; host CPU exits VM via `VM_EXIT_PAUSE` (or inject NMI); wait for vCPU thread to ack pause
@@ -266,7 +266,7 @@ loop works end-to-end before committing to full implementation.
   1. Enable EPT dirty tracking: set `SECONDARY_EXEC_CTRL.EPT_AD = 1`; EPT entries gain Accessed (bit 8) and Dirty (bit 9) bits
   2. **Pre-copy phase**: scan all EPT entries; copy each 4 KB page with Dirty=1 to destination; clear Dirty bit; repeat until dirty set < threshold (e.g., < 50 pages changed per 100 ms)
   3. **Stop-and-copy phase**: pause vCPU; copy remaining dirty pages (small set); serialize VMCS + device state
-  4. **Resume on destination**: requires distributed kernel support — destination host must run Impossible OS kernel and accept VM state via `SYS_VM_RECEIVE` (new syscall); this is a **hard prerequisite not yet available**
+  4. **Resume on destination**: requires distributed kernel support -- destination host must run Impossible OS kernel and accept VM state via `SYS_VM_RECEIVE` (new syscall); this is a **hard prerequisite not yet available**
   5. **Blocking issue**: live migration requires a network channel between two Impossible OS instances and a kernel VM receive path. Defer to post-`TODO-07` (distributed kernel, stretch goal)
 - [ ] **Snapshot format reference**: KVM uses `kvmtool` savevm format; Linux QEMU uses `QEMUSaveVM` format; Impossible OS snapshot format is simpler (single flat file, no migration wire format needed for pause-and-copy)
 
@@ -279,8 +279,8 @@ loop works end-to-end before committing to full implementation.
 
 - [ ] **IOMMU basics**: Intel VT-d (Virtualization Technology for Directed I/O) maps guest physical addresses to device DMA addresses; AMD-Vi is the equivalent; prevents guest DMA attacks by isolating device DMA to a specific physical address range
 - [ ] **Prerequisite analysis** (all blocking, none yet implemented):
-  1. **IOMMU driver** (`src/kernel/drivers/iommu.c`): parse DMAR ACPI table (Intel); configure remapping hardware; `iommu_map(domain, gpa, hpa, size)` — not yet implemented
-  2. **PCIe hot-plug support**: unbind device from host OS PCI driver; rebind to VM passthrough domain — PCIe hot-plug events not yet handled
+  1. **IOMMU driver** (`src/kernel/drivers/iommu.c`): parse DMAR ACPI table (Intel); configure remapping hardware; `iommu_map(domain, gpa, hpa, size)` -- not yet implemented
+  2. **PCIe hot-plug support**: unbind device from host OS PCI driver; rebind to VM passthrough domain -- PCIe hot-plug events not yet handled
   3. **VFIO-style device isolation**: host OS must not touch the device after passthrough (no shared DMA); requires per-device IOMMU domain
   4. **GPU interrupt routing**: MSI/MSI-X interrupt remapping through IOMMU interrupt remapping tables
 - [ ] **SR-IOV path** (alternative to full passthrough):
@@ -297,7 +297,7 @@ loop works end-to-end before committing to full implementation.
 > in `src/kernel/hypervisor/` gated by `#ifdef ENABLE_HYPERVISOR`. No changes to kernel
 > outside `src/kernel/hypervisor/` during research phase.
 
-- [ ] **`docs/architecture/hypervisor-design.md`** — sections:
+- [ ] **`docs/architecture/hypervisor-design.md`** -- sections:
   - **CPU feature requirements**: Intel `VMXE` + `IA32_FEATURE_CONTROL`; AMD `SVM`; minimum Intel microarch: Haswell (EPT + VPID + INVEPT + INVVPID); minimum AMD microarch: Zen (NPT + AVIC)
   - **VMCS field layout** (from §1 table): categorised by control / guest state / host state / VM-exit info; annotated with Impossible OS usage
   - **VMM architecture**: Type-1.5 diagram (host kernel in VMX root, guest in VMX non-root, EPT separating guest physical from host physical)
@@ -327,19 +327,19 @@ loop works end-to-end before committing to full implementation.
 
 | ⭐ | Feature                                    | 🪟 Win11                                                 | 🐧 Linux                                         | 🚀 Impossible OS                                                 |
 |----|--------------------------------------------|-------------------------------------------------------|-----------------------------------------------|---------------------------------------------------------------|
-| 💎 | Type-1 / Type-1.5 hypervisor built into OS | ✅ Hyper-V (Type-1, HVCI, VBS, Hyper-V                | ✅ KVM (Type-2 module in Linux                | ⬜ §2 — §3; Type-1.5 ImpossibleHV in `src/kernel/hypervisor/` |
-| 💎 | EPT (Extended Page Tables) nested paging   | ✅ Hyper-V second-level address translation           | ✅ KVM EPT + shadow page                      | ⬜ §3 — 4-level EPT; 2 MiB large                              |
-| 💎 | virtio device emulation for guests         | ✅ Hyper-V synthetic VMBus devices (no                | ✅ QEMU virtio-blk/net/gpu + KVM acceleration | ⬜ §4 — host-side virtio MMIO + split-ring                    |
-| 💎 | VM snapshot + pause-and-copy               | ✅ Hyper-V checkpoints; VMMS snapshot API             | ✅ QEMU savevm / libvirt snapshot             | ⬜ §5 — VMCS + memory serialisation to                        |
-| 💎 | Live migration research                    | ✅ Hyper-V live migration (RDMA or                    | ✅ KVM live migration (iterative dirty        | ⬜ §5 — research; EPT dirty bits; blocking:                   |
-| ⭐ | GPU passthrough                            | ✅ Hyper-V DDA (Discrete Device Assignment),          | ✅ VFIO passthrough + IOMMU groups            | ⬜ §6 — research only; blocking: IOMMU driver                 |
-| ⭐ | Public hypervisor design doc + phased plan | ✅ Hyper-V: architecture docs on Learn.microsoft.com; | ✅ KVM: open source; architecture in          | ⬜ §7 — `hypervisor-design.md` with VMCS layout, guest        |
+| 💎 | Type-1 / Type-1.5 hypervisor built into OS | ✅ Hyper-V (Type-1, HVCI, VBS, Hyper-V                | ✅ KVM (Type-2 module in Linux                | ⬜ §2 -- §3; Type-1.5 ImpossibleHV in `src/kernel/hypervisor/` |
+| 💎 | EPT (Extended Page Tables) nested paging   | ✅ Hyper-V second-level address translation           | ✅ KVM EPT + shadow page                      | ⬜ §3 -- 4-level EPT; 2 MiB large                              |
+| 💎 | virtio device emulation for guests         | ✅ Hyper-V synthetic VMBus devices (no                | ✅ QEMU virtio-blk/net/gpu + KVM acceleration | ⬜ §4 -- host-side virtio MMIO + split-ring                    |
+| 💎 | VM snapshot + pause-and-copy               | ✅ Hyper-V checkpoints; VMMS snapshot API             | ✅ QEMU savevm / libvirt snapshot             | ⬜ §5 -- VMCS + memory serialisation to                        |
+| 💎 | Live migration research                    | ✅ Hyper-V live migration (RDMA or                    | ✅ KVM live migration (iterative dirty        | ⬜ §5 -- research; EPT dirty bits; blocking:                   |
+| ⭐ | GPU passthrough                            | ✅ Hyper-V DDA (Discrete Device Assignment),          | ✅ VFIO passthrough + IOMMU groups            | ⬜ §6 -- research only; blocking: IOMMU driver                 |
+| ⭐ | Public hypervisor design doc + phased plan | ✅ Hyper-V: architecture docs on Learn.microsoft.com; | ✅ KVM: open source; architecture in          | ⬜ §7 -- `hypervisor-design.md` with VMCS layout, guest        |
 
 Impossible OS's `⭐` advantage: ImpossibleHV is designed as an integral kernel subsystem
-from the start — not a separate binary (unlike Hyper-V), not a loadable module requiring
+from the start -- not a separate binary (unlike Hyper-V), not a loadable module requiring
 a frontend (unlike KVM + QEMU). The `#ifdef ENABLE_HYPERVISOR` gate means the hypervisor
 adds zero binary size or boot overhead to normal builds. The phase plan targets
-Impossible OS as a *guest of itself* in Phase 2 — enabling nested virtualization for
+Impossible OS as a *guest of itself* in Phase 2 -- enabling nested virtualization for
 CI test isolation without any external hypervisor dependency.
 
 ---
@@ -354,4 +354,4 @@ CI test isolation without any external hypervisor dependency.
 - [ ] **HLT exit**: guest executes `hlt` (idle) → `EXIT_REASON_HLT` logged; vCPU re-entered on next interrupt; no busy-spin
 - [ ] **Snapshot**: `vm_snapshot(vm, "test.vmsnapshot")` → file created; VMCS region serialized; `ls -la test.vmsnapshot` shows non-zero size; restore: `vm_restore("test.vmsnapshot")` → VMLAUNCH succeeds (same guest state as before snapshot)
 - [ ] **Zero overhead on normal build**: `bash scripts/build.sh` (without `HYPERVISOR=1`) → no hypervisor symbols in `nm build/kernel.elf | grep hv_`; binary size unchanged
-- [ ] Commit: `"hypervisor: ImpossibleHV VMX spike — VMXON, VMCS setup, EPT, Linux guest boot POC, virtio design, snapshot plan"`
+- [ ] Commit: `"hypervisor: ImpossibleHV VMX spike -- VMXON, VMCS setup, EPT, Linux guest boot POC, virtio design, snapshot plan"`

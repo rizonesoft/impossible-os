@@ -1,5 +1,5 @@
 /* ============================================================================
- * gfx_simd.h — SSE2 / AVX2 SIMD acceleration for GFX primitives
+ * gfx_simd.h -- SSE2 / AVX2 SIMD acceleration for GFX primitives
  *
  * When SSE2 is available, the gfx library dispatches hot-path operations
  * (alpha blending, gradient fill, blur) through these vectorized routines.
@@ -16,7 +16,7 @@
 
 /* ---- FPU / SSE state save/restore ---- */
 
-/* 512-byte FXSAVE area — must be 16-byte aligned.
+/* 512-byte FXSAVE area -- must be 16-byte aligned.
  * Also large enough for XSAVE (x87+SSE+AVX = ~832 bytes). */
 typedef struct __attribute__((aligned(64))) {
     uint8_t data[1024];

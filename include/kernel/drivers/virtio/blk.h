@@ -1,5 +1,5 @@
 /* ============================================================================
- * virtio_blk.h — VirtIO Block Device Driver
+ * virtio_blk.h -- VirtIO Block Device Driver
  *
  * VirtIO 1.0 modern PCI transport block device driver.
  * Uses the generic virtio.c infrastructure for PCI capability walking,
@@ -25,7 +25,7 @@
 #define VIRTIO_BLK_T_OUT      1     /* write */
 #define VIRTIO_BLK_T_FLUSH    4     /* flush volatile cache to persistent storage */
 #define VIRTIO_BLK_T_GET_ID   8     /* retrieve device serial number (20 bytes) */
-#define VIRTIO_BLK_T_DISCARD  11    /* discard (TRIM) — unmap sectors (§5.2.6.1) */
+#define VIRTIO_BLK_T_DISCARD  11    /* discard (TRIM) -- unmap sectors (§5.2.6.1) */
 #define VIRTIO_BLK_T_WRITE_ZEROES 13 /* write zeroes (§5.2.6.1) */
 #define VIRTIO_BLK_T_GET_LIFETIME 10 /* get device lifetime metrics (§5.2.6) */
 #define VIRTIO_BLK_T_SECURE_ERASE 14 /* secure erase (crypto wipe) sectors */
@@ -56,7 +56,7 @@
 #define VIRTIO_BLK_S_IOERR     1
 #define VIRTIO_BLK_S_UNSUPP    2
 
-/* VirtIO block feature bits — bit INDICES per VirtIO 1.2 §5.2.3
+/* VirtIO block feature bits -- bit INDICES per VirtIO 1.2 §5.2.3
  * Usage: (1 << VIRTIO_BLK_F_xxx) to get the bit mask
  * Note: bits 3, 8 are unused / reserved by the spec */
 #define VIRTIO_BLK_F_SIZE_MAX    0   /* Max segment size in config */
@@ -83,7 +83,7 @@
 #define VIRTIO_BLK_MAX_QUEUES   8
 
 /* VirtIO block device config offsets (within device_cfg MMIO region)
- * See VirtIO 1.2 §5.2.4 — offsets within DEVICE_CFG capability */
+ * See VirtIO 1.2 §5.2.4 -- offsets within DEVICE_CFG capability */
 #define VIRTIO_BLK_CFG_CAPACITY        0x00  /* uint64_t: total 512-byte sectors */
 #define VIRTIO_BLK_CFG_SIZE_MAX        0x08  /* uint32_t: max bytes per segment */
 #define VIRTIO_BLK_CFG_SEG_MAX         0x0C  /* uint32_t: max segments per request */
@@ -202,7 +202,7 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer);
  * Returns 0 on success, -1 on error. */
 int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer);
 
-/* Force Unit Access write — data guaranteed on stable storage on return.
+/* Force Unit Access write -- data guaranteed on stable storage on return.
  * Uses F_FUA if negotiated, otherwise falls back to T_OUT + T_FLUSH. */
 int virtio_blk_write_fua(uint64_t lba, uint32_t count, const void *buffer);
 

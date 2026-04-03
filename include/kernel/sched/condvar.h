@@ -1,5 +1,5 @@
 /* ============================================================================
- * condvar.h — Kernel condition variable
+ * condvar.h -- Kernel condition variable
  *
  * Condition variables allow a thread to atomically release a mutex and sleep
  * until another thread signals a condition. On wake, the mutex is re-acquired

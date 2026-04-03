@@ -1,19 +1,19 @@
-# TODO-02 — DNS Resolver & BSD Sockets API
+# TODO-02 -- DNS Resolver & BSD Sockets API
 
 > **Goal:** Build the DNS resolver (query builder, response parser, 64-entry LRU cache, AAAA support) and a BSD-compatible kernel socket layer (`SOCK_STREAM`/`SOCK_DGRAM`, `socket`/`connect`/`send`/`recv`/`bind`/`listen`/`accept`/`select`), expose them via 8 new syscalls, and provide thin user-mode wrappers. DNS and sockets turn raw IP+port into the hostname-based, file-descriptor API every application uses.
 
 > [!IMPORTANT]
-> TCP (`tcp_connect`/`tcp_send`/`tcp_recv`/`tcp_close`) must be complete (→ XREF: `06-networking/TODO-01-tcp-network-infrastructure.md`) before the `SOCK_STREAM` socket type can be wired. DNS sends queries via `udp_send()` (already working) and receives responses via a `udp_register_handler()` callback. Existing syscall numbers 1–17 and 33–38 are occupied; socket syscalls start at **39** (`SYS_SOCKET=39` through `SYS_SELECT=46`) leaving room below 39 for future kernel syscalls. The 64-bit `select()` event bitmask is capped at 64 sockets — sufficient for the initial implementation; `poll()` parity is deferred.
+> TCP (`tcp_connect`/`tcp_send`/`tcp_recv`/`tcp_close`) must be complete (→ XREF: `06-networking/TODO-01-tcp-network-infrastructure.md`) before the `SOCK_STREAM` socket type can be wired. DNS sends queries via `udp_send()` (already working) and receives responses via a `udp_register_handler()` callback. Existing syscall numbers 1–17 and 33–38 are occupied; socket syscalls start at **39** (`SYS_SOCKET=39` through `SYS_SELECT=46`) leaving room below 39 for future kernel syscalls. The 64-bit `select()` event bitmask is capped at 64 sockets -- sufficient for the initial implementation; `poll()` parity is deferred.
 
 ## Inputs
 
-- `src/kernel/net/udp.c` + `include/kernel/net/net.h` — `udp_send()` for DNS query TX; add `udp_register_handler(port, cb)` to receive DNS responses on port 53 reply (ephemeral port)
-- `src/kernel/net/tcp.c` — `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()`, `tcp_listen()`, `tcp_accept()` from TODO-01; socket layer wraps these
-- `include/kernel/sched/syscall.h` — add `SYS_SOCKET=39` through `SYS_SELECT=46`; next free slot after existing `SYS_MUNMAP=38`
-- `src/kernel/sched/syscall.c` — add 8 new dispatch entries in the syscall handler
-- `user/lib/` — `socket.c` thin wrappers called from user-mode programs
-- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` — TCP API (§3) and `netif_get_default()` (§5) are prerequisites for `SOCK_STREAM` and `getaddrinfo`
-- → XREF: `06-networking/TODO-04-*` (future IPv6) — §4 AAAA query stub is the hook point for dual-stack; `dns_resolve6()` is left as a stub returning -ENOTSUP until IPv6 is complete
+- `src/kernel/net/udp.c` + `include/kernel/net/net.h` -- `udp_send()` for DNS query TX; add `udp_register_handler(port, cb)` to receive DNS responses on port 53 reply (ephemeral port)
+- `src/kernel/net/tcp.c` -- `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()`, `tcp_listen()`, `tcp_accept()` from TODO-01; socket layer wraps these
+- `include/kernel/sched/syscall.h` -- add `SYS_SOCKET=39` through `SYS_SELECT=46`; next free slot after existing `SYS_MUNMAP=38`
+- `src/kernel/sched/syscall.c` -- add 8 new dispatch entries in the syscall handler
+- `user/lib/` -- `socket.c` thin wrappers called from user-mode programs
+- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- TCP API (§3) and `netif_get_default()` (§5) are prerequisites for `SOCK_STREAM` and `getaddrinfo`
+- → XREF: `06-networking/TODO-04-*` (future IPv6) -- §4 AAAA query stub is the hook point for dual-stack; `dns_resolve6()` is left as a stub returning -ENOTSUP until IPv6 is complete
 
 ## Outcome
 
@@ -29,14 +29,14 @@
 
 | ⭐  | Order | Deliverable                                                                          | Depends On                                                              | Status |
 | --- | :---: | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 DNS query builder — `dns_header`, hostname encoding, A-record query, `udp_send`  | `udp_send()` working; `udp_register_handler()` for reply RX             |  [ ]   |
-| 💎  |   2   | §2 DNS response parser — ID verify, RCODE, compression pointers, A-record extract   | §1 (query must be sent before response can be validated)                |  [ ]   |
-| 💎  |   3   | §3 DNS cache — 64-entry LRU, TTL expiry, `nslookup` shell command                   | §2 (populate cache on successful resolve)                               |  [ ]   |
-| 💎  |   4   | §4 AAAA query stub — parallel A+AAAA, prefer AAAA, fall back to A                   | §1–§3 (A-record path must be proven before AAAA is added)               |  [ ]   |
-| 💎  |   5   | §5 Kernel socket layer — `socket/connect/send/recv/close`, `SOCK_STREAM`/`DGRAM`    | TCP API from TODO-01; `dns_resolve()` for connect-by-hostname           |  [ ]   |
-| 💎  |   6   | §6 Server sockets — `bind/listen/accept`, backlog queue                             | §5 (socket fd table must exist before bind/listen/accept can be added)  |  [ ]   |
-| 💎  |   7   | §7 Socket options + syscalls — `setsockopt/getsockopt`, 8 new `SYS_*` numbers      | §5, §6 (all socket operations must be complete before syscall dispatch)  |  [ ]   |
-| 💎  |   8   | §8 `select()` — 64-fd event bitmask, data-ready + writable, ms timeout              | §5 (socket fd table); §6 (server sockets contribute ACCEPT readiness)   |  [ ]   |
+| 💎  |   1   | §1 DNS query builder -- `dns_header`, hostname encoding, A-record query, `udp_send`  | `udp_send()` working; `udp_register_handler()` for reply RX             |  [ ]   |
+| 💎  |   2   | §2 DNS response parser -- ID verify, RCODE, compression pointers, A-record extract   | §1 (query must be sent before response can be validated)                |  [ ]   |
+| 💎  |   3   | §3 DNS cache -- 64-entry LRU, TTL expiry, `nslookup` shell command                   | §2 (populate cache on successful resolve)                               |  [ ]   |
+| 💎  |   4   | §4 AAAA query stub -- parallel A+AAAA, prefer AAAA, fall back to A                   | §1–§3 (A-record path must be proven before AAAA is added)               |  [ ]   |
+| 💎  |   5   | §5 Kernel socket layer -- `socket/connect/send/recv/close`, `SOCK_STREAM`/`DGRAM`    | TCP API from TODO-01; `dns_resolve()` for connect-by-hostname           |  [ ]   |
+| 💎  |   6   | §6 Server sockets -- `bind/listen/accept`, backlog queue                             | §5 (socket fd table must exist before bind/listen/accept can be added)  |  [ ]   |
+| 💎  |   7   | §7 Socket options + syscalls -- `setsockopt/getsockopt`, 8 new `SYS_*` numbers      | §5, §6 (all socket operations must be complete before syscall dispatch)  |  [ ]   |
+| 💎  |   8   | §8 `select()` -- 64-fd event bitmask, data-ready + writable, ms timeout              | §5 (socket fd table); §6 (server sockets contribute ACCEPT readiness)   |  [ ]   |
 
 ---
 
@@ -55,7 +55,7 @@ Define `struct dns_header`. Encode a hostname as a DNS label sequence. Build a s
 - [ ] `dns_query_send(hostname, id)`: compute `reply_port`; `udp_register_handler(reply_port, dns_rx_cb)`; `udp_send(dns_server_ip, reply_port, 53, query_buf, query_len)`
 - [ ] `udp_register_handler(port, cb)`: add to UDP demultiplexer (extend `udp_handle()` to dispatch by dst_port to registered callbacks); at most 16 concurrent handlers
 - [ ] Log: `[DNS] Query id=%04x type=A %s → server %u.%u.%u.%u`
-- [ ] Commit: `"net/dns: query builder — dns_header, hostname label encode, A-record query, udp_send to port 53"`
+- [ ] Commit: `"net/dns: query builder -- dns_header, hostname label encode, A-record query, udp_send to port 53"`
 
 ## 2. DNS Response Parser `[Sonnet]`
 
@@ -69,10 +69,10 @@ Verify transaction ID, RCODE == 0, and `ancount > 0`. Skip the question section.
 - [ ] `dns_skip_name(buf, offset, len)` → new offset: advance past a DNS-encoded name, handling `0xC0` pointer jumps; return offset after the name
 - [ ] `dns_parse_response(buf, len, expected_id, &ip_out, &ttl_out)` → 0 or -1: full parse as described above; validate all bounds before reading
 - [ ] `dns_rx_cb(src_ip, src_port, data, len)`: check `src_port == 53`; call `dns_parse_response()`; store result in `dns_pending.ip` and `dns_pending.ttl`; set `dns_pending.done = 1`
-- [ ] `dns_pending_t { uint16_t id; uint32_t ip; uint32_t ttl; uint8_t done; uint8_t error; }` — static for simplicity (single outstanding query at a time for the initial implementation)
+- [ ] `dns_pending_t { uint16_t id; uint32_t ip; uint32_t ttl; uint8_t done; uint8_t error; }` -- static for simplicity (single outstanding query at a time for the initial implementation)
 - [ ] RCODE mapping: `RCODE=1` = format error; `RCODE=3` = NXDOMAIN; return distinct error codes
 - [ ] Log: `[DNS] Response id=%04x ip=%u.%u.%u.%u ttl=%u` or `[DNS] NXDOMAIN for id=%04x`
-- [ ] Commit: `"net/dns: response parser — RCODE check, compression pointer, A-record extract, TTL"`
+- [ ] Commit: `"net/dns: response parser -- RCODE check, compression pointer, A-record extract, TTL"`
 
 ## 3. DNS Cache `[Sonnet]`
 
@@ -114,7 +114,7 @@ Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRA
 **Files:** `src/kernel/net/socket.c` (new), `include/kernel/net/socket.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` — the socket layer introduces a new concurrency domain: task-context `recv()` blocks waiting for data that arrives from interrupt-context `tcp_handle()` / `udp_handle()`. The spin-poll approach from TODO-01's `tcp_recv()` is acceptable here too, but the socket layer must ensure no fd alias bugs (two tasks with the same fd pointing to different connections after fork) and correct reference-counted cleanup on `close()`. Socket fd table: per-process (stored in `task_t`), 64 entries, index 3–66 (0=stdin, 1=stdout, 2=stderr reserved). `socket_t` struct: type, state, underlying TCP connection or UDP port, receive buffer, `so_rcvtimeo` (0=blocking), `so_reuseaddr`, `so_sndbuf`.
+> This is `[Opus]` -- the socket layer introduces a new concurrency domain: task-context `recv()` blocks waiting for data that arrives from interrupt-context `tcp_handle()` / `udp_handle()`. The spin-poll approach from TODO-01's `tcp_recv()` is acceptable here too, but the socket layer must ensure no fd alias bugs (two tasks with the same fd pointing to different connections after fork) and correct reference-counted cleanup on `close()`. Socket fd table: per-process (stored in `task_t`), 64 entries, index 3–66 (0=stdin, 1=stdout, 2=stderr reserved). `socket_t` struct: type, state, underlying TCP connection or UDP port, receive buffer, `so_rcvtimeo` (0=blocking), `so_reuseaddr`, `so_sndbuf`.
 
 - [ ] `socket_t { uint8_t type; uint8_t state; tcp_connection *tcp_conn; uint16_t udp_port; uint32_t so_rcvtimeo_ms; uint8_t so_reuseaddr; uint32_t so_sndbuf; uint8_t used; }`
 - [ ] `sock_table[64]` in `task_t` (or global for initial kernel-only implementation); `sock_alloc()` → fd (3–66); `sock_free(fd)`
@@ -124,7 +124,7 @@ Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRA
 - [ ] `kern_recv(fd, buf, max_len)` → bytes: `SOCK_STREAM`: `tcp_recv(sock->tcp_conn, buf, max_len)` with `so_rcvtimeo_ms` timeout; `SOCK_DGRAM`: spin-poll for incoming UDP on `sock->udp_port`
 - [ ] `kern_close(fd)`: `SOCK_STREAM`: `tcp_close(sock->tcp_conn)`; `SOCK_DGRAM`: `udp_unregister_handler(sock->udp_port)`; `sock_free(fd)`
 - [ ] `AF_INET`, `SOCK_STREAM`, `SOCK_DGRAM`, `IPPROTO_TCP`, `IPPROTO_UDP` constants in `socket.h`
-- [ ] Commit: `"net/socket: kernel socket layer — AF_INET STREAM/DGRAM, connect/send/recv/close, 64-fd table"`
+- [ ] Commit: `"net/socket: kernel socket layer -- AF_INET STREAM/DGRAM, connect/send/recv/close, 64-fd table"`
 
 ## 6. Server Sockets `[Sonnet]`
 
@@ -140,7 +140,7 @@ Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRA
 - [ ] `kern_accept(fd, &remote_ip_out, &remote_port_out)` → new_fd or -errno: spin-poll `tcp_accept(listener)` up to `so_rcvtimeo_ms`; on ESTABLISHED conn: `sock_alloc()` new fd; populate with new TCP conn; fill `remote_ip/port`; return new fd
 - [ ] Backlog integration: when a SYN arrives for a LISTEN-state `tcp_connection`, the state machine (TODO-01 §2) completes the handshake automatically; `kern_accept()` picks up the ESTABLISHED connection from `tcp_accept()`
 - [ ] `SOMAXCONN = 16` constant; `backlog` parameter clamped to `SOMAXCONN`
-- [ ] Commit: `"net/socket: server sockets — bind/listen/accept, backlog queue, SO_REUSEADDR, accept fd lifecycle"`
+- [ ] Commit: `"net/socket: server sockets -- bind/listen/accept, backlog queue, SO_REUSEADDR, accept fd lifecycle"`
 
 ## 7. Socket Options + Syscalls `[Sonnet]`
 
@@ -155,7 +155,7 @@ Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRA
 - [ ] `kern_getsockopt(fd, level, optname, optval_out, &optlen_out)`: reverse of above
 - [ ] Add to `syscall.h`: `SYS_SOCKET=39` through `SYS_DNS=47`; add `SYS_SETSOCKOPT=48`, `SYS_GETSOCKOPT=49`
 - [ ] Dispatch in `syscall.c`: 9 new `case` entries; validate fd range; call `kern_*()` functions; marshal return value
-- [ ] `user/lib/socket.c`: `socket()`, `connect()`, `send()`, `recv()`, `bind()`, `listen()`, `accept()`, `close()` — each a single `syscall(SYS_*, ...)` inline; `getaddrinfo(hostname, service, hints, &res)` wraps `SYS_DNS` + fills `addrinfo` struct; `htons()`/`ntohs()`/`htonl()`/`ntohl()` inline byte-swap helpers
+- [ ] `user/lib/socket.c`: `socket()`, `connect()`, `send()`, `recv()`, `bind()`, `listen()`, `accept()`, `close()` -- each a single `syscall(SYS_*, ...)` inline; `getaddrinfo(hostname, service, hints, &res)` wraps `SYS_DNS` + fills `addrinfo` struct; `htons()`/`ntohs()`/`htonl()`/`ntohl()` inline byte-swap helpers
 - [ ] `user/include/socket.h`: `AF_INET`, `SOCK_STREAM`, `SOCK_DGRAM`, `SOL_SOCKET`, `SO_*`, `struct sockaddr_in { sin_family, sin_port, sin_addr }`, `struct addrinfo { ai_family, ai_socktype, ai_addr, ai_addrlen, *ai_next }`
 - [ ] Commit: `"net/socket: setsockopt/getsockopt, syscalls 39–49, user/lib/socket.c wrappers, getaddrinfo"`
 
@@ -166,7 +166,7 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
 **Files:** `src/kernel/net/socket.c` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — `select()` requires a novel wait mechanism: the call must atomically check all fds, then sleep, then re-check on any network event. Strategy: introduce a per-socket `data_ready` flag (set by `tcp_handle()`/`udp_handle()` when data arrives); `kern_select()` scans all fds in the input set, builds a ready bitmask, returns it immediately if any are ready; otherwise calls `ksleep(1)` and re-scans, up to `timeout_ms` iterations. Wakeup on write-readiness: a `SOCK_STREAM` fd is write-ready when `tcp_conn->state == ESTABLISHED` and `cwnd > 0`. Error condition: fd is in error set if `tcp_conn->state == CLOSED` and no data was received cleanly.
+> This is `[Opus]` -- `select()` requires a novel wait mechanism: the call must atomically check all fds, then sleep, then re-check on any network event. Strategy: introduce a per-socket `data_ready` flag (set by `tcp_handle()`/`udp_handle()` when data arrives); `kern_select()` scans all fds in the input set, builds a ready bitmask, returns it immediately if any are ready; otherwise calls `ksleep(1)` and re-scans, up to `timeout_ms` iterations. Wakeup on write-readiness: a `SOCK_STREAM` fd is write-ready when `tcp_conn->state == ESTABLISHED` and `cwnd > 0`. Error condition: fd is in error set if `tcp_conn->state == CLOSED` and no data was received cleanly.
 
 - [ ] `kern_select(nfds, read_fds, write_fds, except_fds, timeout_ms)` → ready count or -errno:
   - Validate all fd bits ≤ 63; validate `nfds ≤ 64`
@@ -178,7 +178,7 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
 - [ ] `data_ready` flag in `socket_t`: set by `tcp_handle()` when data pushed to recv buffer; cleared by `kern_recv()`
 - [ ] `SYS_SELECT` syscall (number 46): args `(nfds, read_ptr, write_ptr, except_ptr, timeout_ms)`; pointers validated before dereference
 - [ ] User-mode `select()` wrapper in `user/lib/socket.c`: thin `syscall(SYS_SELECT, ...)`
-- [ ] Commit: `"net/socket: select() — 64-fd bitmask, data-ready + writable scan, ms timeout, FD_SET macros"`
+- [ ] Commit: `"net/socket: select() -- 64-fd bitmask, data-ready + writable scan, ms timeout, FD_SET macros"`
 
 ---
 
@@ -187,14 +187,14 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
 
 | ⭐ | Feature                                                              | 🪟 Win11                                              | 🐧 Linux                                                   | 🚀 Impossible OS                                                              |
 |----|----------------------------------------------------------------------|----------------------------------------------------|---------------------------------------------------------|----------------------------------------------------------------------------|
-| 💎 | DNS query builder                                                    | ✅ `dnsapi.dll` + `dns.exe` resolver; kernel       | ✅ `net/dns/` in kernel; `glibc` resolver               | ⬜ §1 — kernel-native `dns_build_query()` + `udp_register_handler()` reply |
-| 💎 | DNS response parser                                                  | ✅ Full RFC 1035 + EDNS0                           | ✅ `net/dns_resolve.c`; compression pointer handling    | ⬜ §2 — pointer depth cap 8; RCODE                                         |
-| 💎 | DNS LRU cache                                                        | ✅ DNS Client Service cache; configurable          | ✅ `nscd` or `systemd-resolved` (userspace); no         | ⬜ §3 — in-kernel 64-entry LRU; `nslookup` shell                           |
-| 💎 | AAAA query + dual A+AAAA resolve, AAAA preference                    | ✅ Full IPv6 DNS in `dnsapi.dll`;                  | ✅ `getaddrinfo()` prefers AAAA; kernel resolves        | ⬜ §4 — AAAA query stub; dual resolve                                      |
-| 💎 | Kernel socket layer                                                  | ✅ `afd.sys` (Ancillary Function Driver); Winsock2 | ✅ `net/socket.c`; full BSD socket API                  | ⬜ §5 — direct kernel functions; 64-fd table                               |
-| 💎 | Server sockets                                                       | ✅ `afd.sys`; full Winsock server socket           | ✅ `net/socket.c`; `SOMAXCONN`, backlog, `SO_REUSEADDR` | ⬜ §6 — backlog ring buffer; `SOMAXCONN=16`; `kern_accept()`               |
-| 💎 | Socket syscalls 39–49 + `user/lib/socket.c` wrappers + `getaddrinfo` | ✅ Winsock2 `WSA*` functions (kernel +             | ✅ glibc `socket()` → `syscall(SYS_socket, ...)`        | ⬜ §7 — `INT 0x80` socket syscalls; `user/lib/socket.c`                    |
-| 💎 | `select()`                                                           | ✅ `select()` + `WSAPoll()` in Winsock2;           | ✅ `select()` + `poll()` + `epoll()`                    | ⬜ §8 — 64-fd `uint64_t` bitmask; 1 ms                                     |
+| 💎 | DNS query builder                                                    | ✅ `dnsapi.dll` + `dns.exe` resolver; kernel       | ✅ `net/dns/` in kernel; `glibc` resolver               | ⬜ §1 -- kernel-native `dns_build_query()` + `udp_register_handler()` reply |
+| 💎 | DNS response parser                                                  | ✅ Full RFC 1035 + EDNS0                           | ✅ `net/dns_resolve.c`; compression pointer handling    | ⬜ §2 -- pointer depth cap 8; RCODE                                         |
+| 💎 | DNS LRU cache                                                        | ✅ DNS Client Service cache; configurable          | ✅ `nscd` or `systemd-resolved` (userspace); no         | ⬜ §3 -- in-kernel 64-entry LRU; `nslookup` shell                           |
+| 💎 | AAAA query + dual A+AAAA resolve, AAAA preference                    | ✅ Full IPv6 DNS in `dnsapi.dll`;                  | ✅ `getaddrinfo()` prefers AAAA; kernel resolves        | ⬜ §4 -- AAAA query stub; dual resolve                                      |
+| 💎 | Kernel socket layer                                                  | ✅ `afd.sys` (Ancillary Function Driver); Winsock2 | ✅ `net/socket.c`; full BSD socket API                  | ⬜ §5 -- direct kernel functions; 64-fd table                               |
+| 💎 | Server sockets                                                       | ✅ `afd.sys`; full Winsock server socket           | ✅ `net/socket.c`; `SOMAXCONN`, backlog, `SO_REUSEADDR` | ⬜ §6 -- backlog ring buffer; `SOMAXCONN=16`; `kern_accept()`               |
+| 💎 | Socket syscalls 39–49 + `user/lib/socket.c` wrappers + `getaddrinfo` | ✅ Winsock2 `WSA*` functions (kernel +             | ✅ glibc `socket()` → `syscall(SYS_socket, ...)`        | ⬜ §7 -- `INT 0x80` socket syscalls; `user/lib/socket.c`                    |
+| 💎 | `select()`                                                           | ✅ `select()` + `WSAPoll()` in Winsock2;           | ✅ `select()` + `poll()` + `epoll()`                    | ⬜ §8 -- 64-fd `uint64_t` bitmask; 1 ms                                     |
 
 > **After §1–§8:** Impossible OS has a hostname-based, file-descriptor–driven networking API sufficient for every application protocol: DNS resolution, TCP clients and servers, UDP sockets, and multiplexed I/O via `select()`. Every higher-level TODO (TLS, HTTP, SSH) is unblocked. The in-kernel DNS LRU cache (§3) is a `⭐` advantage over Linux which handles DNS caching only in userspace daemons.
 
@@ -209,6 +209,6 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
 - [ ] `SOCK_DGRAM`: `fd = socket(AF_INET, SOCK_DGRAM, 0); bind(fd, 5000); send(fd, ...)` → packet delivered; `recv()` returns data
 - [ ] Server socket: `bind(fd, 1234); listen(fd, 5); accept(fd, &ip, &port)` blocks until QEMU `nc` connects; new_fd received and usable for `send()`/`recv()`
 - [ ] `SO_RCVTIMEO`: `setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, 500)` → `recv()` on idle connection returns -ETIMEDOUT after 500 ms
-- [ ] `select()`: two sockets — one with data, one idle; `select(64, read_set, ...)` returns 1 and sets bit for the data socket only
+- [ ] `select()`: two sockets -- one with data, one idle; `select(64, read_set, ...)` returns 1 and sets bit for the data socket only
 - [ ] Syscall: user-mode `hello.exe` calls `socket(AF_INET, SOCK_STREAM, 0)` via `INT 0x80` `SYS_SOCKET=39`; returns fd ≥ 3; subsequent `connect(fd, ip, port)` succeeds
-- [ ] Commit: `"net: complete DNS resolver + BSD socket API — dns_resolve, socket/connect/send/recv, select, syscalls 39–49"`
+- [ ] Commit: `"net: complete DNS resolver + BSD socket API -- dns_resolve, socket/connect/send/recv, select, syscalls 39–49"`

@@ -1,5 +1,5 @@
 /* ============================================================================
- * Linker Script — 64-bit kernel memory layout
+ * Linker Script -- 64-bit kernel memory layout
  *
  * GRUB loads the ELF at 1 MiB. The Multiboot2 header must come first.
  * BSS boundaries are exported for zeroing in entry.asm.
@@ -39,7 +39,7 @@ SECTIONS
         *(.data)
     }
 
-    /* Uninitialized data (BSS) — zeroed by entry.asm */
+    /* Uninitialized data (BSS) -- zeroed by entry.asm */
     .bss ALIGN(4K) :
     {
         __bss_start = .;
@@ -48,7 +48,7 @@ SECTIONS
         __bss_end = .;
     }
 
-    /* End of kernel — PMM bitmap is placed here */
+    /* End of kernel -- PMM bitmap is placed here */
     . = ALIGN(4K);
     __kernel_end = .;
 }

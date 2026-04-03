@@ -1,5 +1,5 @@
 /* ============================================================================
- * cpuid.h — Centralized CPUID Feature Detection
+ * cpuid.h -- Centralized CPUID Feature Detection
  *
  * Call cpuid_init() once at boot (after heap_init) to probe all processor
  * capabilities. Use cpu_has(CPU_FEATURE_XXX) to check features anywhere
@@ -116,7 +116,7 @@ struct cpu_features {
     uint64_t xcr0_supported;      /* supported XCR0 bits (from CPUID leaf 0x0D) */
     uint64_t xcr0_active;         /* actually enabled XCR0 bits (after cpu_configure_xcr0) */
 
-    /* Feature flags — one bit per CPU_FEATURE_* */
+    /* Feature flags -- one bit per CPU_FEATURE_* */
     uint64_t flags;
 
     /* Address sizes (from leaf 0x80000008) */

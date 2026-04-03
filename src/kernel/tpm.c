@@ -1,5 +1,5 @@
 /* ============================================================================
- * tpm.c — TPM Measured Boot event log parser
+ * tpm.c -- TPM Measured Boot event log parser
  *
  * Reads the TCG event log that the bootloader retrieved from the
  * EFI_TCG2_PROTOCOL before ExitBootServices().  Parses the log to
@@ -79,7 +79,7 @@ boot_result_t tpm_init(void)
         return BOOT_DEGRADED;
     }
 
-    /* Parse the first entry — must be EV_NO_ACTION with spec ID event */
+    /* Parse the first entry -- must be EV_NO_ACTION with spec ID event */
     const struct tcg_pcr_event *first =
         (const struct tcg_pcr_event *)log;
 
@@ -92,7 +92,7 @@ boot_result_t tpm_init(void)
     }
 
     /* For TPM 2.0 crypto-agile logs, parse the spec ID event to get
-     * hash algorithm sizes — needed to walk TCG_PCR_EVENT2 entries */
+     * hash algorithm sizes -- needed to walk TCG_PCR_EVENT2 entries */
     uint32_t total_digest_size = 20;  /* default: SHA-1 only */
     (void)total_digest_size;  /* used for future PCR replay verification */
     uint32_t num_algs = 0;
@@ -153,7 +153,7 @@ boot_result_t tpm_init(void)
                 else if (alg_id == TPM_ALG_SHA256) dsz = 32;
                 else if (alg_id == TPM_ALG_SHA384) dsz = 48;
                 else if (alg_id == TPM_ALG_SHA512) dsz = 64;
-                else dsz = 32;  /* unknown — guess SHA-256 */
+                else dsz = 32;  /* unknown -- guess SHA-256 */
                 digests_size += 2 + dsz;
                 dptr += 2 + dsz;
             }
@@ -171,7 +171,7 @@ boot_result_t tpm_init(void)
             offset += entry_size;
         }
     } else {
-        /* TCG 1.2 format — all entries are TCG_PCR_EVENT */
+        /* TCG 1.2 format -- all entries are TCG_PCR_EVENT */
         while (offset + 32 < log_size) {
             uint32_t ev_data_size = *(const uint32_t *)(log + offset + 28);
             uint32_t entry_size = 32 + ev_data_size;
@@ -208,13 +208,13 @@ uint32_t tpm_event_count(void)
 /* ============================================================================
  * Boot Integrity Verification (§9.2)
  *
- * Stub implementation — provides the framework and data structures for
+ * Stub implementation -- provides the framework and data structures for
  * boot chain verification.  Currently reports status as BOOT_INTEGRITY_NO_CRYPTO
  * because we lack the crypto primitives to replay PCR calculations.
  *
  * Full implementation roadmap:
  *
- *   Phase 1: PCR Event Log Summary (THIS — done)
+ *   Phase 1: PCR Event Log Summary (THIS -- done)
  *     - Build a boot_integrity_report from parsed event log data
  *     - Report TPM availability, version, event count, Secure Boot state
  *     - Mark all PCRs as NO_CRYPTO since we can't verify them yet
@@ -252,7 +252,7 @@ boot_result_t tpm_integrity_init(void)
     s_integrity_report.tpm_version = (uint8_t)s_version;
 
     /* Check Secure Boot state (from §5.1) */
-    /* Forward declaration not needed — we call uefi_secureboot_enabled()
+    /* Forward declaration not needed -- we call uefi_secureboot_enabled()
      * via its extern linkage.  But since we don't include uefi_runtime.h
      * here to avoid circular deps, we just check boot_info. */
     s_integrity_report.secure_boot = 0;  /* Updated below if SB detection ran */

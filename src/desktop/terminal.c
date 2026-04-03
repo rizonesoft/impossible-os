@@ -1,5 +1,5 @@
 /* ============================================================================
- * terminal.c — Graphical Command Prompt window
+ * terminal.c -- Graphical Command Prompt window
  *
  * Kernel-side terminal that renders cmd.exe text output into a WM window and
  * provides a keyboard input ring buffer for sys_read consumption.

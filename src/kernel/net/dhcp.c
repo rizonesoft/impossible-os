@@ -1,5 +1,5 @@
 /* ============================================================================
- * dhcp.c — DHCP client
+ * dhcp.c -- DHCP client
  *
  * Performs DHCP discover/offer/request/ack to obtain IP configuration.
  * ============================================================================ */

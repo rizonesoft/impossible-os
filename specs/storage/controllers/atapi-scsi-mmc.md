@@ -4,11 +4,11 @@
 
 ## 1. Introduction to the AT Attachment Packet Interface (ATAPI)
 
-The development of a custom operating system demands the implementation of robust, resilient storage drivers capable of interacting with a highly diverse array of hardware components. Historically, the AT Attachment (ATA) specification—originally synonymous with Integrated Drive Electronics (IDE)—was engineered strictly for magnetic hard disk drives. These devices operated on a rigid cylinder-head-sector (CHS) or Logical Block Addressing (LBA) paradigm, executing native ATA commands directly against the disk controller to read and write magnetic media sectors.
+The development of a custom operating system demands the implementation of robust, resilient storage drivers capable of interacting with a highly diverse array of hardware components. Historically, the AT Attachment (ATA) specification--originally synonymous with Integrated Drive Electronics (IDE)--was engineered strictly for magnetic hard disk drives. These devices operated on a rigid cylinder-head-sector (CHS) or Logical Block Addressing (LBA) paradigm, executing native ATA commands directly against the disk controller to read and write magnetic media sectors.
 
 However, as optical media formats such as CD-ROMs, CD-RWs, and DVDs, alongside sequential magnetic tape drives, gained market dominance, the native ATA command set proved fundamentally insufficient. Optical media requires a complex vocabulary for operations like ejecting trays, reading multi-session tables of contents, playing audio tracks, and handling removable media events. The Small Computer Systems Interface (SCSI) already possessed a highly mature, heavily standardized command architecture for handling these complex, removable media operations. Rather than creating an entirely new physical bus or drastically expanding the parallel ATA command set to duplicate existing SCSI functionality, the industry introduced the **AT Attachment Packet Interface (ATAPI)**.
 
-Maintained by the **INCITS T13** (ATA) and **T10** (SCSI) technical committees, ATAPI serves as a highly efficient bridging protocol. It allows peripheral devices connected to a standard ATA bus—or subsequently, a Serial ATA (SATA) link—to receive and process Small Computer Systems Interface (SCSI) Command Descriptor Blocks (CDBs). This tunneling mechanism is defined within the **SFF-8020i** specification, the **ATA/ATAPI-6** specification, and subsequent revisions. It standardizes the **PACKET command (operation code `0xA0`)** as the primary vehicle for encapsulating and tunneling SCSI commands over the ATA hardware transport layer.
+Maintained by the **INCITS T13** (ATA) and **T10** (SCSI) technical committees, ATAPI serves as a highly efficient bridging protocol. It allows peripheral devices connected to a standard ATA bus--or subsequently, a Serial ATA (SATA) link--to receive and process Small Computer Systems Interface (SCSI) Command Descriptor Blocks (CDBs). This tunneling mechanism is defined within the **SFF-8020i** specification, the **ATA/ATAPI-6** specification, and subsequent revisions. It standardizes the **PACKET command (operation code `0xA0`)** as the primary vehicle for encapsulating and tunneling SCSI commands over the ATA hardware transport layer.
 
 The architectural implementation of an ATAPI driver within a monolithic or microkernel operating system requires an exhaustive understanding of three distinct but interlocking technical domains:
 
@@ -64,7 +64,7 @@ Regardless of whether the underlying transport mechanism is legacy PATA or AHCI 
 
 ### 3.1 Evaluating Hardware Signatures
 
-Upon a hardware power-on reset, a software reset (triggered by setting the SRST bit in the Device Control Register), or the execution of an EXECUTE DEVICE DIAGNOSTIC command, standard ATA and ATAPI devices will place a specific **hardware signature** into the task file registers—specifically the Sector Count, LBA Low, LBA Mid, and LBA High registers.
+Upon a hardware power-on reset, a software reset (triggered by setting the SRST bit in the Device Control Register), or the execution of an EXECUTE DEVICE DIAGNOSTIC command, standard ATA and ATAPI devices will place a specific **hardware signature** into the task file registers--specifically the Sector Count, LBA Low, LBA Mid, and LBA High registers.
 
 The evaluation of this hardware signature is the **only standardized, safe method** to differentiate between device types prior to issuing an identification command. Older heuristics, such as checking for the presence of a device by looking at the status register alone, often fail on modern hardware.
 
@@ -187,7 +187,7 @@ Upon transferring the final byte, the device:
 
 ### 5.2 Bus Master Direct Memory Access (DMA)
 
-Because PIO polling completely monopolizes the CPU—stalling all other thread execution while waiting for the optical drive—high-performance operating systems must utilize **DMA** for ATAPI transfers. The legacy IDE Bus Master interface relies on a **Physical Region Descriptor Table (PRDT)** to manage memory.
+Because PIO polling completely monopolizes the CPU--stalling all other thread execution while waiting for the optical drive--high-performance operating systems must utilize **DMA** for ATAPI transfers. The legacy IDE Bus Master interface relies on a **Physical Region Descriptor Table (PRDT)** to manage memory.
 
 To execute an ATAPI DMA command, the OS must first allocate and construct a PRDT in contiguous, unpaged system RAM. The PRDT is an array of **8-byte descriptors**. Each descriptor contains:
 
@@ -262,7 +262,7 @@ Optical media commands present several structural differences compared to magnet
 - Addressing via **Logical Block Addresses (LBA)** or **Minute-Second-Frame (MSF)** formatting
 
 > [!IMPORTANT]
-> **Packet Padding:** According to the ATAPI and SFF-8020i specifications, all commands **must be padded** out to the exact size specified in Word 0 of the IDENTIFY PACKET DEVICE response—almost universally **12 bytes** for modern hardware. If an OS wishes to send a standard 10-byte SCSI command like READ CAPACITY (10), the remaining two bytes must be padded with zeros. Failure to pad the packet will result in the hardware hanging, as it expects exactly 6 words to be written to the data port.
+> **Packet Padding:** According to the ATAPI and SFF-8020i specifications, all commands **must be padded** out to the exact size specified in Word 0 of the IDENTIFY PACKET DEVICE response--almost universally **12 bytes** for modern hardware. If an OS wishes to send a standard 10-byte SCSI command like READ CAPACITY (10), the remaining two bytes must be padded with zeros. Failure to pad the packet will result in the hardware hanging, as it expects exactly 6 words to be written to the data port.
 
 ### 7.1 Critical ATAPI SCSI Commands
 
@@ -332,11 +332,11 @@ Optical media uniquely relies on a **Table of Contents (TOC)** to dictate sessio
 
 ## 8. Exception Handling and Sense Data Extraction
 
-Unlike legacy ATA commands—which typically signal an error via a single bit in the status register and a hardware-specific error code in the Error register—SCSI errors tunneled over ATAPI require a secondary, explicit polling mechanism known as **"Sense Data"**.
+Unlike legacy ATA commands--which typically signal an error via a single bit in the status register and a hardware-specific error code in the Error register--SCSI errors tunneled over ATAPI require a secondary, explicit polling mechanism known as **"Sense Data"**.
 
 ### 8.1 The CHECK CONDITION Status
 
-If an ATAPI command fails—for instance, if the OS attempts a READ on an empty drive, or seeks past the edge of the disk—the device will:
+If an ATAPI command fails--for instance, if the OS attempts a READ on an empty drive, or seeks past the edge of the disk--the device will:
 
 1. Terminate the transfer prematurely
 2. Set the **Error (ERR) bit** in the ATA Status Register
@@ -359,8 +359,8 @@ CDB Format (12 bytes, padded):
 The returned 18-byte buffer contains a hierarchical explanation of the fault. The operating system must parse three specific fields:
 
 - **Sense Key** (Byte 2, Bits 3–0): Broad categorization of the error class
-- **Additional Sense Code — ASC** (Byte 12): Deeper granularity into the specific fault
-- **Additional Sense Code Qualifier — ASCQ** (Byte 13): Exact, hardware-specific sub-details
+- **Additional Sense Code -- ASC** (Byte 12): Deeper granularity into the specific fault
+- **Additional Sense Code Qualifier -- ASCQ** (Byte 13): Exact, hardware-specific sub-details
 
 #### Table 3: Common SCSI Sense Keys and ASC/ASCQ Values
 
@@ -416,7 +416,7 @@ This strict separation of concerns guarantees that the exact same ATAPI SCSI log
 
 ### 9.2 Asynchronous Execution and Concurrency
 
-Because optical drives possess significantly higher mechanical latency than solid-state drives—often taking several seconds just to spin up to read speed—ATAPI drivers **must be designed completely asynchronously**. Blocking the entire kernel while an optical drive seeks creates unacceptable system latency and unresponsiveness.
+Because optical drives possess significantly higher mechanical latency than solid-state drives--often taking several seconds just to spin up to read speed--ATAPI drivers **must be designed completely asynchronously**. Blocking the entire kernel while an optical drive seeks creates unacceptable system latency and unresponsiveness.
 
 Under AHCI, this asynchronous behavior is managed natively by mapping command slots to specific processes and relying on Message Signaled Interrupts (MSI) to awaken blocked threads upon completion.
 

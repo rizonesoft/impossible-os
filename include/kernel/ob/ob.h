@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob.h — Object Manager core: OBJECT_HEADER, flags, macros, API
+ * ob.h -- Object Manager core: OBJECT_HEADER, flags, macros, API
  *
  * Every kernel object body is preceded in memory by an OBJECT_HEADER.
  * ob_alloc_object() returns a pointer to the body; the header is at
@@ -14,7 +14,7 @@
 #include "kernel/ob/ob_type.h"
 #include "kernel/ob/handle_table.h"
 
-/* Forward-declare — implemented in §8 (security descriptor integration) */
+/* Forward-declare -- implemented in §8 (security descriptor integration) */
 typedef struct security_descriptor SECURITY_DESCRIPTOR;
 
 /* --- Object flags -------------------------------------------------------- */
@@ -67,7 +67,7 @@ extern const OBJECT_TYPE *ObpTebType;
 /* --- API ----------------------------------------------------------------- */
 
 /*
- * ob_create_type — register a new object type
+ * ob_create_type -- register a new object type
  *
  * Copies *tmpl into the global type table.  Returns a pointer to the
  * internal copy, or NULL if the table is full (OB_MAX_TYPES reached).
@@ -75,7 +75,7 @@ extern const OBJECT_TYPE *ObpTebType;
 const OBJECT_TYPE *ob_create_type(const OBJECT_TYPE *tmpl);
 
 /*
- * ob_alloc_object — allocate header + body as a single block
+ * ob_alloc_object -- allocate header + body as a single block
  *
  * Uses kmalloc for total sizes ≤ 4096, pmm_alloc_contiguous otherwise.
  * The block is zero-filled; ref_count is initialised to 1; type is set.
@@ -84,12 +84,12 @@ const OBJECT_TYPE *ob_create_type(const OBJECT_TYPE *tmpl);
 void *ob_alloc_object(const OBJECT_TYPE *type);
 
 /*
- * ObReferenceObject — increment the reference count on an object body
+ * ObReferenceObject -- increment the reference count on an object body
  */
 void ObReferenceObject(void *body);
 
 /*
- * ObDereferenceObject — decrement the reference count
+ * ObDereferenceObject -- decrement the reference count
  *
  * When the count reaches 0 and OB_FLAG_PERMANENT is not set:
  *   1. Calls type->on_delete(body) if non-NULL
@@ -99,7 +99,7 @@ void ObReferenceObject(void *body);
 int32_t ObDereferenceObject(void *body);
 
 /*
- * ObReferenceObjectByPointer — validate type, then increment ref count
+ * ObReferenceObjectByPointer -- validate type, then increment ref count
  *
  * Returns 0 on success, -1 if the object's type does not match the
  * expected type (body is not referenced in that case).
@@ -108,13 +108,13 @@ int ObReferenceObjectByPointer(void *body, const OBJECT_TYPE *expected_type,
                                uint32_t access);
 
 /*
- * ObMakeTemporaryObject — clear OB_FLAG_PERMANENT so the object can be
+ * ObMakeTemporaryObject -- clear OB_FLAG_PERMANENT so the object can be
  * deleted when its reference count reaches 0.
  */
 void ObMakeTemporaryObject(void *body);
 
 /*
- * ObSetSecurityDescriptor — attach a self-relative SD to an object.
+ * ObSetSecurityDescriptor -- attach a self-relative SD to an object.
  * The SD is stored as a pointer in the object header.  The caller
  * retains ownership of the memory (use static blobs from default_sds
  * or kmalloc'd copies).
@@ -122,7 +122,7 @@ void ObMakeTemporaryObject(void *body);
 void ObSetSecurityDescriptor(void *body, SECURITY_DESCRIPTOR *sd);
 
 /*
- * ObGetSecurityDescriptor — return the SD attached to an object.
+ * ObGetSecurityDescriptor -- return the SD attached to an object.
  * Returns NULL if no SD is set.
  */
 SECURITY_DESCRIPTOR *ObGetSecurityDescriptor(void *body);
@@ -139,16 +139,16 @@ typedef enum {
     ObjectTypeInformation  = 2,
 } OBJECT_INFORMATION_CLASS;
 
-/* NtClose — close a handle in the current process */
+/* NtClose -- close a handle in the current process */
 int NtClose(HANDLE_TABLE *ht, HANDLE handle);
 
-/* NtDuplicateObject — duplicate a handle between processes */
+/* NtDuplicateObject -- duplicate a handle between processes */
 int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
                       HANDLE_TABLE *dst_ht, HANDLE *dst_handle,
                       uint32_t desired_access, uint32_t attrs,
                       uint32_t options);
 
-/* NtQueryObject — query object metadata by handle */
+/* NtQueryObject -- query object metadata by handle */
 int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
                   OBJECT_INFORMATION_CLASS info_class,
                   void *buffer, uint32_t size, uint32_t *return_length);
@@ -161,12 +161,12 @@ typedef struct {
     char type_name[32];  /* object type name ("File", "Process", etc.) */
 } OBJECT_DIRECTORY_INFORMATION;
 
-/* NtOpenDirectoryObject — open a namespace directory by path.
+/* NtOpenDirectoryObject -- open a namespace directory by path.
  * Returns 0 on success (*out_handle set), -1 on failure. */
 int NtOpenDirectoryObject(HANDLE_TABLE *ht, const char *name,
                           uint32_t access, HANDLE *out_handle);
 
-/* NtQueryDirectoryObject — enumerate entries in an opened directory.
+/* NtQueryDirectoryObject -- enumerate entries in an opened directory.
  * buffer: array of OBJECT_DIRECTORY_INFORMATION to fill.
  * buffer_count: max entries to return.
  * context: in/out iteration state (0 = start from beginning).
@@ -179,7 +179,7 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
                            uint32_t *return_count);
 
 /*
- * ob_init — initialise the Object Manager subsystem
+ * ob_init -- initialise the Object Manager subsystem
  *
  * Registers all built-in type singletons.  Called during boot_phase2,
  * before registry_init.  Requires SUBSYS_HEAP.

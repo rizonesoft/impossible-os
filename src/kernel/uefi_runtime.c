@@ -273,10 +273,10 @@ uint32_t uefi_rt_supported(void)
  *
  * GetVariable, SetVariable, GetNextVariableName wrappers.
  * All calls are serialized via s_rt_lock (firmware is not reentrant).
- * LAPIC timer masked during all calls — firmware SMI may enable interrupts.
+ * LAPIC timer masked during all calls -- firmware SMI may enable interrupts.
  * ============================================================================ */
 
-/* Mask LAPIC timer during UEFI runtime calls — firmware may enable
+/* Mask LAPIC timer during UEFI runtime calls -- firmware may enable
  * interrupts internally via SMI, causing timer to fire into wrong context. */
 static uint32_t rt_mask_timer(void)
 {
@@ -706,7 +706,7 @@ boot_result_t uefi_secureboot_init(void)
     return BOOT_OK;
 }
 
-/* Called from registry_populate_defaults() after registry_init() — writes
+/* Called from registry_populate_defaults() after registry_init() -- writes
  * HKLM\SYSTEM\SecureBoot\State once the registry tree is ready. */
 void uefi_secureboot_populate_registry(void)
 {

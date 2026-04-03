@@ -1,5 +1,5 @@
 /* ============================================================================
- * blkdev_adapters.c — Block device adapter wrappers + directory dump
+ * blkdev_adapters.c -- Block device adapter wrappers + directory dump
  *
  * Thin wrappers adapting driver-specific APIs to the blkdev function
  * pointer signature:  int fn(uint64_t lba, uint32_t count, void *buf,

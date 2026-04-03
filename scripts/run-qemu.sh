@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# scripts/run-qemu.sh — Launch Impossible OS in QEMU (UEFI boot via OVMF)
+# scripts/run-qemu.sh -- Launch Impossible OS in QEMU (UEFI boot via OVMF)
 #
 # Usage:
 #   ./scripts/run-qemu.sh                  # Normal boot (2 CPUs)

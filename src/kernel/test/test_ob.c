@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_ob.c — Object Manager unit tests
+ * test_ob.c -- Object Manager unit tests
  *
  * Tests object allocation, reference counting, handle table, namespace
  * lookup, handle duplication, inheritance, and directory enumeration.

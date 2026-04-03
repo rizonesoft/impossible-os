@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs_format.c — Format, init, public API, FS driver descriptor
+ * ixfs_format.c -- Format, init, public API, FS driver descriptor
  * ============================================================================ */
 
 #include "ixfs_internal.h"
@@ -431,7 +431,7 @@ int ixfs_scrub(void)
         uint32_t stored, computed;
 
         /* Skip metadata blocks (superblock, bitmap, checksum table,
-         * inode table, journal, refcount, snapshot) — these are managed
+         * inode table, journal, refcount, snapshot) -- these are managed
          * by subsystems that use direct I/O and bypass checksums */
         if (i < vol->sb.s_data_start)
             continue;

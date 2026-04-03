@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_splash.c — Persistent boot splash screen (Windows 11-style)
+ * boot_splash.c -- Persistent boot splash screen (Windows 11-style)
  *
  * Displays:
  *   1. Black background
@@ -51,10 +51,10 @@ static uint32_t spinner_cx, spinner_cy; /* center of spinner ring */
 static uint32_t text_y;            /* top of status text */
 static uint32_t diag_y;            /* top of diagnostic line (below status) */
 
-/* HiDPI scale factor (1, 2, or 3) — computed in boot_splash_init() */
+/* HiDPI scale factor (1, 2, or 3) -- computed in boot_splash_init() */
 static uint32_t g_scale;
 
-/* Scaled layout values — all computed in boot_splash_init() */
+/* Scaled layout values -- all computed in boot_splash_init() */
 static uint32_t g_spinner_y_offset; /* spinner center below icon bottom */
 static uint32_t g_text_y_offset;   /* text below spinner center */
 static uint32_t g_text_area_w;     /* width of status text clear area */
@@ -128,19 +128,19 @@ void boot_splash_init(void)
      * Integer scale: 1× ≤1080p,  2× ≤2160p,  3× >2160p. */
     g_scale = (scr_h > 2160) ? 3 : (scr_h > 1080) ? 2 : 1;
 
-    /* ---- Icon: pick exact prebuilt size — no runtime scaling ----------- */
+    /* ---- Icon: pick exact prebuilt size -- no runtime scaling ----------- */
     icon_size   = OS_LOGO_SIZE_FOR_HEIGHT(scr_h);
     icon_pixels = OS_LOGO_FOR_HEIGHT(scr_h);
 
     /* ---- Spinner geometry (replaces dot geometry) ----------------------
      * Ring radius/stroke scale with screen height.
-     * Font size is decoupled — proportional to screen height. */
+     * Font size is decoupled -- proportional to screen height. */
     struct arc_ring_size ring = arc_ring_size_for_height(scr_h);
     g_spinner_y_offset = icon_size * 58 / 100;     /* same as old DOT_Y_OFFSET */
     g_text_y_offset    = (uint32_t)ring.radius + 20; /* text below spinner */
     g_text_area_w      = icon_size * 56 / 10;      /* ~716px @ 128px icon */
 
-    /* Font size: fixed tiers per resolution — small enough for fast TTF init */
+    /* Font size: fixed tiers per resolution -- small enough for fast TTF init */
     if      (scr_h >= 2160) g_font_size = 36;
     else if (scr_h >= 1440) g_font_size = 26;
     else if (scr_h >= 1080) g_font_size = 20;

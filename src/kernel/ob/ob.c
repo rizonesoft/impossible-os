@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob.c — Object Manager: type registration, object allocation, init
+ * ob.c -- Object Manager: type registration, object allocation, init
  *
  * Implements the core Object Manager infrastructure (TODO-03 §1-§2, §4).
  * ============================================================================ */
@@ -313,7 +313,7 @@ int NtOpenDirectoryObject(HANDLE_TABLE *ht, const char *name,
         return -1;
 
     h = ObpAllocateHandle(ht, body, access, 0);
-    ObDereferenceObject(body);  /* drop lookup ref — handle holds its own */
+    ObDereferenceObject(body);  /* drop lookup ref -- handle holds its own */
 
     if (h == INVALID_HANDLE_VALUE)
         return -1;
@@ -406,7 +406,7 @@ boot_result_t ob_init(void)
     ob_timer_type_init();
     ob_token_type_init();
 
-    /* PEB and TEB types — exposed in \KernelObjects\Process<PID>\ */
+    /* PEB and TEB types -- exposed in \KernelObjects\Process<PID>\ */
     ObpPebType = ob_create_type(&(OBJECT_TYPE){
         .name = "Peb", .body_size = 4096
     });
@@ -420,7 +420,7 @@ boot_result_t ob_init(void)
     /* Create the root namespace tree */
     ob_ns_init();
 
-    /* PID 0 was created before ob_init — register it retroactively */
+    /* PID 0 was created before ob_init -- register it retroactively */
     {
         struct task *t0 = task_get_by_pid(0);
         if (t0) {

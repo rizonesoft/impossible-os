@@ -1,4 +1,4 @@
-# TODO-10 — xHCI, USB Storage & USB HID (Boot-Critical)
+# TODO-10 -- xHCI, USB Storage & USB HID (Boot-Critical)
 
 > **Goal:** USB boot that works on 95%+ of hardware with zero delay. The bootloader discovers USB devices via UEFI firmware BEFORE ExitBootServices (like Windows), passes device state to the kernel, and the kernel inherits it instantly. Hot-plug via xHCI interrupts after boot.
 
@@ -10,15 +10,15 @@
 
 ## Inputs
 
-- [`src/kernel/drivers/xhci.c`](../../src/kernel/drivers/xhci.c) — xHCI controller driver (partial)
-- [`src/kernel/drivers/xhci_dev.c`](../../src/kernel/drivers/xhci_dev.c) — device enumeration (partial)
-- [`src/kernel/drivers/xhci_ring.c`](../../src/kernel/drivers/xhci_ring.c) — TRB ring management
-- [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c) — PS/2 keyboard (injection target for USB HID)
-- [`src/kernel/drivers/mouse.c`](../../src/kernel/drivers/mouse.c) — PS/2 mouse (injection target for USB HID)
-- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md` — advanced USB features (hub, hot-plug, EHCI, BT, CDC)
-- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §5` — MSI/MSI-X (xHCI uses MSI)
-- → XREF: `01-boot-platform/TODO-12-usb-hid-keyboard-mouse.md` — USB HID keyboard and mouse (boot protocol, coexistence)
-- → XREF: `01-boot-platform/TODO-13-usb-zero-delay-handover.md` — true zero-delay handover (persistent DMA in bootloader)
+- [`src/kernel/drivers/xhci.c`](../../src/kernel/drivers/xhci.c) -- xHCI controller driver (partial)
+- [`src/kernel/drivers/xhci_dev.c`](../../src/kernel/drivers/xhci_dev.c) -- device enumeration (partial)
+- [`src/kernel/drivers/xhci_ring.c`](../../src/kernel/drivers/xhci_ring.c) -- TRB ring management
+- [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c) -- PS/2 keyboard (injection target for USB HID)
+- [`src/kernel/drivers/mouse.c`](../../src/kernel/drivers/mouse.c) -- PS/2 mouse (injection target for USB HID)
+- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md` -- advanced USB features (hub, hot-plug, EHCI, BT, CDC)
+- → XREF: `04-drivers-hardware/TODO-02-core-driver-enhancements.md §5` -- MSI/MSI-X (xHCI uses MSI)
+- → XREF: `01-boot-platform/TODO-12-usb-hid-keyboard-mouse.md` -- USB HID keyboard and mouse (boot protocol, coexistence)
+- → XREF: `01-boot-platform/TODO-13-usb-zero-delay-handover.md` -- true zero-delay handover (persistent DMA in bootloader)
 
 ## Outcome
 
@@ -30,7 +30,7 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | xHCI controller bring-up and port scan         | —          |  [x]   |
+| 💎  |   1   | xHCI controller bring-up and port scan         | --          |  [x]   |
 | 💎  |   2   | USB device enumeration and configuration       | §1         |  [x]   |
 | 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [x]   |
 | 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
@@ -45,7 +45,7 @@ Verify and fix the existing xHCI controller initialization. Currently logs "No x
 **Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/pci.c`
 
 - [x] Verify PCI discovery finds xHCI (class 0x0C, subclass 0x03, prog-if 0x30)
-- [x] Controller halt, reset, DCBAA allocation, command ring, event ring — audit existing code
+- [x] Controller halt, reset, DCBAA allocation, command ring, event ring -- audit existing code
 - [x] Port scan: detect attached USB devices, log port status
 - [x] Map xHCI BAR0 via `vmm_map_mmio_uc()` (MMIO registers need UC mapping)
 - [x] Commit: `"drivers: xHCI controller bring-up verified on QEMU + bare metal"`
@@ -57,12 +57,12 @@ Complete the device enumeration path: slot enable → Address Device → GET_DES
 
 **Files:** `src/kernel/drivers/xhci_dev.c`
 
-- [x] Audit existing `xhci_dev_enumerate()` — full 9-step enumeration implemented and verified
+- [x] Audit existing `xhci_dev_enumerate()` -- full 9-step enumeration implemented and verified
 - [x] Parse device descriptor: class, subclass, protocol, VID:PID
-- [x] Parse configuration descriptor: find MSC interface (class 0x08) — HID (class 0x03) deferred to HID driver section
-- [x] Configure Endpoint for bulk-IN/OUT (MSC) — transfer rings allocated, Configure Endpoint command issued
+- [x] Parse configuration descriptor: find MSC interface (class 0x08) -- HID (class 0x03) deferred to HID driver section
+- [x] Configure Endpoint for bulk-IN/OUT (MSC) -- transfer rings allocated, Configure Endpoint command issued
 - [x] Log: `usb: Device 46f4:0001 enumerated on port 1 (slot 1) [MSC]`
-- [x] Commit: `"drivers: USB device enumeration — MSC interfaces detected"`
+- [x] Commit: `"drivers: USB device enumeration -- MSC interfaces detected"`
 
 **Test checkpoint:** Serial shows detected USB devices with class info. POST code 0xD701. Test on: QEMU `run-usb`, bare metal.
 
@@ -72,12 +72,12 @@ Implement the SCSI-over-USB transport layer: CBW/CSW framing, INQUIRY, READ CAPA
 **Files:** `src/kernel/drivers/usb_msc.c` (new), `include/kernel/drivers/usb_msc.h` (new)
 
 - [x] CBW (Command Block Wrapper) and CSW (Command Status Wrapper) structures
-- [x] `usb_msc_inquiry()` — identify device type and name
-- [x] `usb_msc_read_capacity()` — get sector count and sector size
-- [x] `usb_msc_read_sectors(lba, count, buf)` — READ(10) via bulk-OUT CBW + bulk-IN data + bulk-IN CSW
-- [x] `usb_msc_write_sectors(lba, count, buf)` — WRITE(10) via bulk-OUT CBW + bulk-OUT data + bulk-IN CSW
+- [x] `usb_msc_inquiry()` -- identify device type and name
+- [x] `usb_msc_read_capacity()` -- get sector count and sector size
+- [x] `usb_msc_read_sectors(lba, count, buf)` -- READ(10) via bulk-OUT CBW + bulk-IN data + bulk-IN CSW
+- [x] `usb_msc_write_sectors(lba, count, buf)` -- WRITE(10) via bulk-OUT CBW + bulk-OUT data + bulk-IN CSW
 - [x] Error handling: CSW status check, tag validation, TEST UNIT READY with retries
-- [x] Commit: `"drivers: USB MSC BOT — SCSI READ/WRITE over bulk endpoints"`
+- [x] Commit: `"drivers: USB MSC BOT -- SCSI READ/WRITE over bulk endpoints"`
 
 **Test checkpoint:** `usb_msc_read_capacity()` returns correct sector count. Read sector 0 matches expected MBR/GPT. POST code 0xD702. Test on: QEMU `run-usb`, bare metal.
 
@@ -86,13 +86,13 @@ Register USB MSC devices as block devices so VFS can mount filesystems from USB 
 
 **Files:** `src/kernel/main/boot_storage.c`, `src/kernel/drivers/blkdev.c`
 
-- [x] USB MSC adapter in `blkdev_adapters.c` — register each MSC device as "usb0", "usb1", etc.
+- [x] USB MSC adapter in `blkdev_adapters.c` -- register each MSC device as "usb0", "usb1", etc.
 - [x] `xhci_get_device()`, `xhci_msc_device_count()`, `xhci_msc_device_index()` accessors
 - [x] Adapter callbacks: `blkdev_usb_msc_read/write` route to `usb_msc_read/write_sectors`
 - [x] Automatic: partition scan + filesystem mount via existing `partition_scan_all()`
-- [x] Commit: `"drivers: USB MSC block device registration — USB drives mountable"`
+- [x] Commit: `"drivers: USB MSC block device registration -- USB drives mountable"`
 
-**Test checkpoint:** `bash scripts/build.sh run-usb` — USB drive visible, partition scanned, filesystem mounted. Bare metal: boot from USB, C:\ accessible. POST code 0xD703.
+**Test checkpoint:** `bash scripts/build.sh run-usb` -- USB drive visible, partition scanned, filesystem mounted. Bare metal: boot from USB, C:\ accessible. POST code 0xD703.
 
 ## 5. Pre-ExitBootServices USB Handover (Windows-Style)
 Discover USB devices using UEFI firmware's own USB stack BEFORE ExitBootServices, then seamlessly hand over to our kernel xHCI driver. This eliminates the 500ms port routing delay, Intel-specific hacks, and the entire re-enumeration-from-scratch problem.
@@ -106,56 +106,56 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
 - [x] For each USB device: read device descriptor (VID, PID, class, endpoints)
 - [x] Identify MSC devices (class 0x08, subclass 0x06, protocol 0x50)
 - [x] For MSC devices: read the disk geometry (sector count, sector size) via `EFI_BLOCK_IO_PROTOCOL`
-- [x] Record xHCI controller PCI location — not needed here (kernel PCI scan); deferred to `TODO-13 §1`
+- [x] Record xHCI controller PCI location -- not needed here (kernel PCI scan); deferred to `TODO-13 §1`
 - [x] Record each USB device: port, speed, slot, endpoints, MSC geometry
 - [x] Store all info in `boot_info.usb_devices[]` array passed to kernel
 - [x] `POST16(0xB080)` entry, `POST16(0xB081)` exit (bootloader range)
 
 ### Phase B: Kernel takes over xHCI controller with BIOS handoff
-- [x] Read `boot_info.usb_devices[]` — log pre-enumerated device inventory
+- [x] Read `boot_info.usb_devices[]` -- log pre-enumerated device inventory
 - [x] Map xHCI BAR0 via `vmm_map_mmio_uc()` (same as now)
-- [x] BIOS/OS handoff via USBLEGSUP (xHCI spec §4.22.1) — happens BEFORE halt/reset:
+- [x] BIOS/OS handoff via USBLEGSUP (xHCI spec §4.22.1) -- happens BEFORE halt/reset:
   - [x] Walk extended capabilities list (HCCPARAMS1 bits 31:16) for cap ID 1
   - [x] Set HC OS Owned Semaphore bit, wait for BIOS Owned Semaphore to clear
-  - [x] Timeout after 1s — if BIOS doesn't release, force-clear and proceed
+  - [x] Timeout after 1s -- if BIOS doesn't release, force-clear and proceed
   - [x] Clear USBLEGCTLSTS (legacy SMI enables) after handoff
-- [x] Skip Intel 500ms delay when XUSB2PR didn't change (ports already routed — true on 100-series+ without EHCI)
-- [x] Register MSC from boot_info geometry — deferred to `TODO-13 §6` (saves ~5ms, not worth intercepting usb_msc_init here)
+- [x] Skip Intel 500ms delay when XUSB2PR didn't change (ports already routed -- true on 100-series+ without EHCI)
+- [x] Register MSC from boot_info geometry -- deferred to `TODO-13 §6` (saves ~5ms, not worth intercepting usb_msc_init here)
 - [x] `POST16(0xD750)` entry, `POST16(0xD751)` exit
-- [x] Result: ~500ms saved on modern Intel (no EHCI = skip XUSB2PR + delay) — verified on i5-11600K
+- [x] Result: ~500ms saved on modern Intel (no EHCI = skip XUSB2PR + delay) -- verified on i5-11600K
 
 > [!IMPORTANT]
-> **Rollback:** If USBLEGSUP handoff fails or controller state is corrupt after takeover, fall back to the current halt/reset/re-enumerate path (§1-§4). The §1-§4 path is proven on bare metal — never remove it until §5 is verified on all platforms.
+> **Rollback:** If USBLEGSUP handoff fails or controller state is corrupt after takeover, fall back to the current halt/reset/re-enumerate path (§1-§4). The §1-§4 path is proven on bare metal -- never remove it until §5 is verified on all platforms.
 
 ### Phase C: Interrupt-driven hot-plug (post-boot)
 - [x] Register xHCI MSI interrupt handler (inline MSI setup, following AHCI pattern)
 - [x] If MSI not available: graceful fallback to event ring polling (no crash)
 - [x] ISR reads Event Ring for Port Status Change Events (TRB type 34)
 - [x] New device connected after boot → full enumeration (slot enable, address, etc.)
-- [ ] Device removed → clean up slot, unregister block device — deferred to `04-drivers-hardware/TODO-09-usb-stack.md §4` (hot-plug lifecycle)
+- [ ] Device removed → clean up slot, unregister block device -- deferred to `04-drivers-hardware/TODO-09-usb-stack.md §4` (hot-plug lifecycle)
 - [x] `POST16(0xD752)` entry, `POST16(0xD753)` exit
 - [x] Commit: `"drivers: xHCI interrupt-driven hot-plug via MSI"`
 
-**Test checkpoint:** Boot from USB — C:\ mounted within 10ms of kernel start (no 500ms delay). Hot-plug: plug USB drive after boot, device appears within 100ms. POST codes: 0xB080/0xB081 (bootloader), 0xD750/0xD751 (kernel takeover), 0xD752/0xD753 (hot-plug). If crash, check last POST — 0xD750 = USBLEGSUP handoff failed, fall back to §1-§4 path. Test on: bare metal, QEMU `run-usb`. No Intel-specific port routing code needed (firmware already routed ports correctly).
+**Test checkpoint:** Boot from USB -- C:\ mounted within 10ms of kernel start (no 500ms delay). Hot-plug: plug USB drive after boot, device appears within 100ms. POST codes: 0xB080/0xB081 (bootloader), 0xD750/0xD751 (kernel takeover), 0xD752/0xD753 (hot-plug). If crash, check last POST -- 0xD750 = USBLEGSUP handoff failed, fall back to §1-§4 path. Test on: bare metal, QEMU `run-usb`. No Intel-specific port routing code needed (firmware already routed ports correctly).
 
-## 6. Hardware Compatibility — 95%+ of Systems
+## 6. Hardware Compatibility -- 95%+ of Systems
 Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI controllers, EHCI fallback, USB hubs, and BIOS/OS handoff. Currently only Intel with specific port routing is tested.
 
 **Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/ehci.c` (new)
 
 ### BIOS/OS Handoff
-- [ ] Core USBLEGSUP handoff implemented in §5 Phase B — reuse for all controller types
+- [ ] Core USBLEGSUP handoff implemented in §5 Phase B -- reuse for all controller types
 - [ ] Verify USBLEGSUP works identically on AMD, ASMedia, Renesas, VIA (same xHCI spec §4.22.1)
-- [ ] EHCI variant: USBLEGSUP is a PCI capability (not xHCI extended cap) — same semaphore concept, different register offset
+- [ ] EHCI variant: USBLEGSUP is a PCI capability (not xHCI extended cap) -- same semaphore concept, different register offset
 
 ### AMD xHCI Support
-- [ ] AMD chipsets (vendor 0x1022) route all ports to xHCI by default — no XUSB2PR needed
+- [ ] AMD chipsets (vendor 0x1022) route all ports to xHCI by default -- no XUSB2PR needed
 - [ ] Verify BIOS handoff works on AMD (same USBLEGSUP mechanism)
 - [ ] Test on AMD system if available
 
 ### Third-Party xHCI Controllers (ASMedia, Renesas, VIA)
 - [ ] ASMedia (vendor 0x1B21): no port routing, just BIOS handoff + standard init
-- [ ] Renesas (vendor 0x1912): may need firmware upload — detect and skip if unsupported
+- [ ] Renesas (vendor 0x1912): may need firmware upload -- detect and skip if unsupported
 - [ ] VIA (vendor 0x1106): standard xHCI, BIOS handoff only
 - [ ] Generic path: if vendor != Intel, skip port routing, rely on BIOS handoff + CCS
 
@@ -166,16 +166,16 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 - [ ] Async schedule: QH + qTD for control and bulk transfers
 - [ ] Port reset + device enumeration (same USB protocol, different transport)
 - [ ] Register as block device via same `usb_msc` layer
-- [ ] This is a significant driver (~1000-2000 lines) — only implement if xHCI is absent
+- [ ] This is a significant driver (~1000-2000 lines) -- only implement if xHCI is absent
 
 ### UHCI/OHCI Legacy Controllers (pre-2008 hardware)
-- [ ] UHCI (prog-if 0x00): Intel/VIA USB 1.x — Frame List + Transfer Descriptors
-- [ ] OHCI (prog-if 0x10): AMD/NEC/others USB 1.x — HCCA + Endpoint Descriptors
-- [ ] Both are USB 1.1 (12 Mbps max) — sufficient for keyboards, mice, and slow storage
+- [ ] UHCI (prog-if 0x00): Intel/VIA USB 1.x -- Frame List + Transfer Descriptors
+- [ ] OHCI (prog-if 0x10): AMD/NEC/others USB 1.x -- HCCA + Endpoint Descriptors
+- [ ] Both are USB 1.1 (12 Mbps max) -- sufficient for keyboards, mice, and slow storage
 - [ ] Detect at PCI scan: if no xHCI and no EHCI, try UHCI/OHCI
 - [ ] Shared USB device layer: same `usb_msc` + `usb_hid` code on top, different transport
-- [ ] Priority: LOW — only needed for hardware older than ~2008. Log warning if only UHCI/OHCI found.
-- [ ] If not implemented: log `"USB: only UHCI/OHCI found — USB not supported on this hardware"`
+- [ ] Priority: LOW -- only needed for hardware older than ~2008. Log warning if only UHCI/OHCI found.
+- [ ] If not implemented: log `"USB: only UHCI/OHCI found -- USB not supported on this hardware"`
 
 ### USB Hub Support
 - [ ] Detect hub devices (class 0x09) during enumeration
@@ -189,10 +189,10 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 - [ ] Bulk reset recovery on stall (BOT spec §5.3.4: clear HALT + reset endpoint)
 - [ ] Handle controller errors: Host System Error (HSE), event ring full
 - [ ] Graceful degradation: if xHCI init fails, log and continue (don't hang boot)
-- [ ] Commit: `"drivers: xHCI hardware compatibility — BIOS handoff, AMD, EHCI fallback"`
+- [ ] Commit: `"drivers: xHCI hardware compatibility -- BIOS handoff, AMD, EHCI fallback"`
 
-**Test checkpoint:** POST codes: `POST16(0xD7A0)` entry, `POST16(0xD7A1)` exit. If crash at 0xD7A0: BIOS handoff or vendor-specific init failed — check serial for vendor ID. Test matrix (diagnostic splash shows `USB:XX` prog-if codes):
-- `USB:30` Intel (i5-11600K): ✅ verified — §5 handover replaces port routing hack
+**Test checkpoint:** POST codes: `POST16(0xD7A0)` entry, `POST16(0xD7A1)` exit. If crash at 0xD7A0: BIOS handoff or vendor-specific init failed -- check serial for vendor ID. Test matrix (diagnostic splash shows `USB:XX` prog-if codes):
+- `USB:30` Intel (i5-11600K): ✅ verified -- §5 handover replaces port routing hack
 - `USB:30` AMD: BIOS handoff only, no port routing needed
 - `USB:30,20` Intel (xHCI+EHCI): port routing moves EHCI ports to xHCI
 - `USB:20` EHCI only: EHCI fallback driver handles enumeration
@@ -241,6 +241,6 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 
 ## Verification
 
-- [ ] `bash scripts/build.sh run-usb` — USB drive mounted, files readable
+- [ ] `bash scripts/build.sh run-usb` -- USB drive mounted, files readable
 - [ ] Bare metal USB boot: C:\ accessible, klog writes to disk
 - [ ] PS/2-only system: still works (no regression)

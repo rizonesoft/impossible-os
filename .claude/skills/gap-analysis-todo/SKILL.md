@@ -1,6 +1,6 @@
 ---
 name: gap-analysis-todo
-description: Deep gap analysis of a TODO file against all overlapping TODOs — find scope conflicts, stale sections, missing coverage, and unclear ownership. Use after creating or majorly editing a TODO, or when planning cross-domain work.
+description: Deep gap analysis of a TODO file against all overlapping TODOs -- find scope conflicts, stale sections, missing coverage, and unclear ownership. Use after creating or majorly editing a TODO, or when planning cross-domain work.
 ---
 
 # Gap Analysis TODO
@@ -14,13 +14,13 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs — 
 
 ## Workflow
 
-### Phase 1 — Understand the TODO
+### Phase 1 -- Understand the TODO
 
 1. **Read the full TODO file.** Understand its goal, scope, every section, every XREF, and the OS Comparison table.
 2. **Extract the domain topic.** Identify the specific kernel/OS area this TODO covers (e.g., "UEFI boot hardening", "Object Manager", "NVMe storage driver", "desktop compositor"). This topic drives all subsequent research.
 3. **Read the domain INDEX.md and sibling TODOs.** Understand what's already covered nearby to avoid duplicate work.
 
-### Phase 2 — Internet Research (critical — do not skip)
+### Phase 2 -- Internet Research (critical -- do not skip)
 
 4. **Research Windows 11 features in this domain.**
    - Use WebSearch with queries like: `"Windows 11 <topic> internals"`, `"Windows NT <topic> architecture"`, `"Win32 <topic> API"`, `"Windows <topic> features 2025 2026"`.
@@ -31,15 +31,15 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs — 
 5. **Research Linux features in this domain.**
    - Use WebSearch with queries like: `"Linux kernel <topic>"`, `"Linux <topic> subsystem"`, `"Linux <topic> implementation"`, `"Linux <topic> features 2025 2026"`.
    - Run at least 3 targeted searches. Follow promising results with WebFetch.
-   - Build a feature inventory for Linux — same level of detail as Win11.
+   - Build a feature inventory for Linux -- same level of detail as Win11.
    - Note where Linux does something differently or better than Windows.
 
 6. **Research emerging and state-of-art features.**
    - Use WebSearch for: `"modern OS <topic> best practices"`, `"<topic> innovations operating system"`, `"<topic> security hardening OS"`.
-   - Look for features that NEITHER Win11 nor Linux implements well — these are competitive edge opportunities for Impossible OS.
+   - Look for features that NEITHER Win11 nor Linux implements well -- these are competitive edge opportunities for Impossible OS.
    - Look for common pain points developers/users have with Win11 and Linux in this domain.
 
-### Phase 3 — Feature Inventory and Gap Detection
+### Phase 3 -- Feature Inventory and Gap Detection
 
 7. **Compile the complete feature inventory.**
    - Merge all research into a single list organized by category.
@@ -59,13 +59,13 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs — 
 9. **Cross-TODO overlap check.**
    - Use Grep to search ALL domains for keywords from the TODO's section titles and deliverables.
    - For each match, classify the relationship:
-     - **SUPERSEDES** — this TODO replaces the other section entirely.
-     - **COMPLEMENT** — both contribute different aspects. Ensure bidirectional `→ XREF:`.
-     - **CONFLICT** — both claim to implement the same thing. Resolve: pick one owner, add scope boundary note.
-     - **FOUNDATION** — the other TODO provides infrastructure this one consumes. Add dependency XREF.
-   - Check for stale sections in overlapping TODOs — if a section was made obsolete by recent work, add a supersession note.
+     - **SUPERSEDES** -- this TODO replaces the other section entirely.
+     - **COMPLEMENT** -- both contribute different aspects. Ensure bidirectional `→ XREF:`.
+     - **CONFLICT** -- both claim to implement the same thing. Resolve: pick one owner, add scope boundary note.
+     - **FOUNDATION** -- the other TODO provides infrastructure this one consumes. Add dependency XREF.
+   - Check for stale sections in overlapping TODOs -- if a section was made obsolete by recent work, add a supersession note.
 
-### Phase 4 — Add Missing Sections
+### Phase 4 -- Add Missing Sections
 
 10. **Draft new sections for each significant gap.**
     - For each parity gap (💎): create a full section with:
@@ -85,7 +85,7 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs — 
 12. **Update the Implementation Order table.**
     - Add rows for every new section.
     - Mark each new row `💎` (parity) or `⭐` (exclusive).
-    - Set `Depends On` correctly — new sections should depend on existing foundation sections where applicable.
+    - Set `Depends On` correctly -- new sections should depend on existing foundation sections where applicable.
     - Keep existing section dependencies correct after renumbering.
     - Renumber all Order values sequentially.
 
@@ -97,13 +97,13 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs — 
 
 14. **Update the Outcome section.**
     - Add bullet points for any new major deliverables introduced by the new sections.
-    - Keep the Outcome section concise — one bullet per major capability, not per section.
+    - Keep the Outcome section concise -- one bullet per major capability, not per section.
 
 15. **Update the Inputs section.**
     - If new sections reference source files not listed in Inputs, add them.
     - If new sections create dependencies on other TODOs, add `→ XREF:` lines.
 
-### Phase 5 — Report
+### Phase 5 -- Report
 
 16. **Output a gap analysis report to the user.**
     - List every gap found, with its classification (parity/edge/deferred/N-A).
@@ -116,16 +116,16 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs — 
 
 - **Minimum 6 web searches** per analysis (3 Win11 + 3 Linux). More for complex domains.
 - **Follow at least 2 links** with WebFetch to get detailed feature descriptions, not just search summaries.
-- **Cite sources** in the report — include URLs for key findings so the user can verify.
+- **Cite sources** in the report -- include URLs for key findings so the user can verify.
 - **Distinguish fact from inference.** If a feature's existence is inferred from documentation rather than confirmed, note it as "likely" rather than "confirmed."
 - **Current information only.** Search for 2025/2026 content to avoid citing deprecated features. Windows 11 24H2+ and Linux 6.x+ are the comparison baseline.
 
 ## Guardrails
 
-- Do NOT implement kernel code — this skill creates TODO sections, not source files.
-- Do NOT delete existing sections — only add new ones and renumber.
+- Do NOT implement kernel code -- this skill creates TODO sections, not source files.
+- Do NOT delete existing sections -- only add new ones and renumber.
 - Do NOT mark existing checklist items as done.
-- Do NOT remove features from the TODO — only add missing ones.
+- Do NOT remove features from the TODO -- only add missing ones.
 - If a feature is out of scope for this TODO, note it as `→ XREF:` to the appropriate TODO or as explicitly deferred with a reason.
-- Keep new sections lean and actionable. No multi-paragraph prose blocks — use checklist items with concrete deliverables.
+- Keep new sections lean and actionable. No multi-paragraph prose blocks -- use checklist items with concrete deliverables.
 - When research is ambiguous (e.g., Windows internal feature with no public docs), note the uncertainty rather than guessing.

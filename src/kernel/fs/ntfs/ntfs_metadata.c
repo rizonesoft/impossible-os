@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_metadata.c — $STANDARD_INFORMATION, $SECURITY_DESCRIPTOR, $REPARSE_POINT
+ * ntfs_metadata.c -- $STANDARD_INFORMATION, $SECURITY_DESCRIPTOR, $REPARSE_POINT
  *
  * Decoders for NTFS metadata attributes:
  *   - $STANDARD_INFORMATION (type 0x10): timestamps, DOS flags, NTFS 3.0+ fields
@@ -12,10 +12,10 @@
 #include "kernel/klog.h"
 
 /* ============================================================================
- * $STANDARD_INFORMATION Decoder — attribute type 0x10
+ * $STANDARD_INFORMATION Decoder -- attribute type 0x10
  *
  * Every MFT record has exactly one $STANDARD_INFORMATION attribute.
- * It is always resident (content is small — 48 or 72 bytes).
+ * It is always resident (content is small -- 48 or 72 bytes).
  *
  * Content layout:
  *   0x00  Creation time         (8 bytes, FILETIME)
@@ -23,8 +23,8 @@
  *   0x10  MFT change time       (8 bytes, FILETIME)
  *   0x18  Last access time      (8 bytes, FILETIME)
  *   0x20  DOS permissions/flags (4 bytes)
- *   (0x24+ : Max versions, version number, class ID — NTFS 3.0+)
- *   (0x30+ : Owner ID, Security ID, Quota, USN — NTFS 3.0+)
+ *   (0x24+ : Max versions, version number, class ID -- NTFS 3.0+)
+ *   (0x30+ : Owner ID, Security ID, Quota, USN -- NTFS 3.0+)
  *
  * FILETIME = 100-nanosecond intervals since January 1, 1601 00:00:00 UTC.
  * To convert to Unix: subtract 11644473600 seconds, divide by 10,000,000.
@@ -119,7 +119,7 @@ int ntfs_decode_std_info(const uint8_t *record,
 }
 
 /* ============================================================================
- * $SECURITY_DESCRIPTOR Parser — §3.5 (attribute type 0x50)
+ * $SECURITY_DESCRIPTOR Parser -- §3.5 (attribute type 0x50)
  * ============================================================================ */
 
 /* Parse a SID from raw bytes. Returns bytes consumed, or 0 on error. */
@@ -304,7 +304,7 @@ int ntfs_decode_security(const uint8_t *record,
         return ntfs_parse_security_desc(sd_data, ah.content_length, out);
     }
 
-    /* Inline descriptor not found — try $Secure via security_id */
+    /* Inline descriptor not found -- try $Secure via security_id */
     if (vol) {
         struct ntfs_std_info si;
         int rc = ntfs_decode_std_info(record, hdr, &si);
@@ -406,7 +406,7 @@ int ntfs_format_sid(const struct ntfs_sid *sid, char *buf, int buf_len)
 }
 
 /* ============================================================================
- * $REPARSE_POINT Parser — §3.6 (attribute type 0xC0)
+ * $REPARSE_POINT Parser -- §3.6 (attribute type 0xC0)
  * ============================================================================ */
 
 /* Decode a UTF-16LE path to ASCII (lossy: non-ASCII chars become '?') */
@@ -427,7 +427,7 @@ static void decode_utf16_path(const uint8_t *utf16, uint16_t byte_len,
     out[pos] = '\0';
 }
 
-/* Strip `\??\` prefix from a substitute name — it means "NT native path" */
+/* Strip `\??\` prefix from a substitute name -- it means "NT native path" */
 static void strip_nt_prefix(char *path)
 {
     /* Check for `\??\` (4 chars) */
@@ -512,7 +512,7 @@ int ntfs_decode_reparse(const uint8_t *record,
         }
 
     } else if (tag == NTFS_REPARSE_TAG_SYMLINK) {
-        /* Symbolic link — same layout but with flags at 0x10 */
+        /* Symbolic link -- same layout but with flags at 0x10 */
         uint16_t sub_off, sub_len, print_off, print_len;
         uint32_t flags;
         uint32_t path_buf_start;
@@ -547,7 +547,7 @@ int ntfs_decode_reparse(const uint8_t *record,
         }
 
     } else {
-        /* Unknown reparse tag — store tag but can't decode paths */
+        /* Unknown reparse tag -- store tag but can't decode paths */
         out->type = NTFS_REPARSE_OTHER;
     }
 

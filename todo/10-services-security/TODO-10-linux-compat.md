@@ -1,10 +1,10 @@
-# TODO-10 — Linux ELF Compatibility Layer
+# TODO-10 -- Linux ELF Compatibility Layer
 
 **Domain:** `09-services-security`
-**Goal:** Add a secondary ELF/POSIX compatibility layer so statically-linked Linux x86-64 binaries (busybox, coreutils, musl-static apps) run unmodified on Impossible OS — "WSL in reverse", without modifying the host binary.
+**Goal:** Add a secondary ELF/POSIX compatibility layer so statically-linked Linux x86-64 binaries (busybox, coreutils, musl-static apps) run unmodified on Impossible OS -- "WSL in reverse", without modifying the host binary.
 
 > [!IMPORTANT]
-> **Depends on:** `TODO-07 §1–8` — ring-3 execution, `SYSCALL`/`SYSRET`, `exec_load()` PE-first format probe. The Linux compat layer registers as the ELF fallback path in `exec_load()`.
+> **Depends on:** `TODO-07 §1–8` -- ring-3 execution, `SYSCALL`/`SYSRET`, `exec_load()` PE-first format probe. The Linux compat layer registers as the ELF fallback path in `exec_load()`.
 > **Not a prerequisite for Win32:** This layer is purely additive. PE/Win32 remains the native format; Linux ELF support is a secondary compatibility shim.
 > **Continues from:** `todo-old/510-Long-Term-Stretch/TODO-540-Linux.md` (migrated).
 
@@ -12,13 +12,13 @@
 
 ## Important Notes
 
-- `elf_load()` already exists in `src/kernel/elf.c` and parses ELF64 headers + maps `PT_LOAD` segments (`include/kernel/elf.h`). It **does not** set up the SYSV user stack (auxv, `argv`, `envp`) required for a Linux process start — that is new work in §2.
+- `elf_load()` already exists in `src/kernel/elf.c` and parses ELF64 headers + maps `PT_LOAD` segments (`include/kernel/elf.h`). It **does not** set up the SYSV user stack (auxv, `argv`, `envp`) required for a Linux process start -- that is new work in §2.
 - The existing `elf_load()` is also used for the **kernel ELF** (`kernel.exe`) loaded by the bootloader; modifications must not break kernel loading. The Linux compat layer needs a separate `elf_linux_load()` path.
-- `exec_load()` (defined in `TODO-07 §8`) already probes PE first, ELF second — the Linux handler hooks into the ELF branch by setting a `task->is_linux_elf` flag.
-- `SYS_FORK=5`, `SYS_EXEC=6`, `SYS_MMAP=37` are already defined in `include/kernel/sched/syscall.h`. Linux syscall numbers are entirely different (Linux `read=0`, `write=1`, etc.) — the compat layer maintains its own translation table.
-- The Linux SYSV calling convention uses `RDI`, `RSI`, `RDX`, `R10`, `R8`, `R9` for args — the **opposite** register order from the Win32 ABI (`RCX`, `RDX`, `R8`, `R9`). The syscall entry dispatcher must branch on `task->is_linux_elf` before touching registers.
-- No dynamic ELF support in this TODO — static binaries only. `PT_INTERP` (dynamic linker) → return `ENOEXEC`. This is tracked in §8 as a future stretch.
-- Per-process Linux fd table (int → `HANDLE`) is distinct from the Win32 `handle_table[]` in `struct task` — it is a parallel structure only present when `is_linux_elf` is set.
+- `exec_load()` (defined in `TODO-07 §8`) already probes PE first, ELF second -- the Linux handler hooks into the ELF branch by setting a `task->is_linux_elf` flag.
+- `SYS_FORK=5`, `SYS_EXEC=6`, `SYS_MMAP=37` are already defined in `include/kernel/sched/syscall.h`. Linux syscall numbers are entirely different (Linux `read=0`, `write=1`, etc.) -- the compat layer maintains its own translation table.
+- The Linux SYSV calling convention uses `RDI`, `RSI`, `RDX`, `R10`, `R8`, `R9` for args -- the **opposite** register order from the Win32 ABI (`RCX`, `RDX`, `R8`, `R9`). The syscall entry dispatcher must branch on `task->is_linux_elf` before touching registers.
+- No dynamic ELF support in this TODO -- static binaries only. `PT_INTERP` (dynamic linker) → return `ENOEXEC`. This is tracked in §8 as a future stretch.
+- Per-process Linux fd table (int → `HANDLE`) is distinct from the Win32 `handle_table[]` in `struct task` -- it is a parallel structure only present when `is_linux_elf` is set.
 
 ---
 
@@ -28,11 +28,11 @@
 |------|---------|
 | `include/kernel/elf.h` | Existing ELF types: `ET_EXEC`, `ET_DYN`, `EM_X86_64`, `PT_LOAD`, `elf_load()`, `elf_load_result` |
 | `src/kernel/elf.c` | Existing ELF loader (extend for SYSV stack setup) |
-| `include/kernel/sched/task.h` | `task_t`, `task_create_user()` — add `is_linux_elf` flag + `fd_table[]` |
+| `include/kernel/sched/task.h` | `task_t`, `task_create_user()` -- add `is_linux_elf` flag + `fd_table[]` |
 | `include/kernel/sched/syscall.h` | `SYS_FORK`, `SYS_EXEC`, `SYS_MMAP` numbers; existing syscall dispatch |
-| `include/kernel/mm/mmap.h` | `mmap_region_t`, kernel `mmap()`/`munmap()` — back `sys_mmap`/`sys_munmap` |
+| `include/kernel/mm/mmap.h` | `mmap_region_t`, kernel `mmap()`/`munmap()` -- back `sys_mmap`/`sys_munmap` |
 | `include/kernel/mm/heap.h` | `kmalloc`/`kfree` for compat structs |
-| `include/kernel/fs/vfs.h` | `vfs_open`, `vfs_read`, `vfs_stat`, `vfs_readdir` — back POSIX file ops |
+| `include/kernel/fs/vfs.h` | `vfs_open`, `vfs_read`, `vfs_stat`, `vfs_readdir` -- back POSIX file ops |
 | → XREF: `TODO-07 §1,8` | Ring-3 `SYSCALL`/`SYSRET` entry; `exec_load()` format probe (ELF branch) |
 | → XREF: `TODO-08 §2,5` | `CreateFile`/`ReadFile`/`WriteFile` Win32 wrappers; `VirtualAlloc`/`VirtualFree` |
 | → XREF: `02-kernel-core/TODO-07-threads-sched.md` | Task flags, scheduler integration for `SIGCHLD` delivery |
@@ -121,7 +121,7 @@ Create `src/compat/linux/elf_linux.c` with `elf_linux_load()`. Unlike the kernel
 
 ## 3. Syscall Entry Dispatch (`is_linux_elf` Branch) `[Opus]`
 
-Extend the `syscall_entry.asm` handler from `TODO-07 §1` to branch to the Linux translation layer when the current task has `is_linux_elf = 1`. This is a security-critical dispatch path — the wrong branch would allow Linux binaries to call Win32 syscalls with SYSV register layout.
+Extend the `syscall_entry.asm` handler from `TODO-07 §1` to branch to the Linux translation layer when the current task has `is_linux_elf = 1`. This is a security-critical dispatch path -- the wrong branch would allow Linux binaries to call Win32 syscalls with SYSV register layout.
 
 - [ ] In `syscall_entry.asm`, after SWAPGS and saving registers:
   - Read `current_task->is_linux_elf` (GS-relative access or kernel stack pointer dereference)
@@ -241,14 +241,14 @@ Add `opendir`/`readdir`/`closedir`/`getdents64` emulation using `FindFirstFile`/
 - [ ] `getdents64(217)` → fill `linux_dirent64` structs from `FindNextFileA()`; `d_type`: `DT_DIR` or `DT_REG`; `d_name` from `cFileName`; return bytes filled
 - [ ] `getcwd(79, buf, size)` → `GetCurrentDirectoryA(size, win32_buf)` → `win32_path_to_linux(win32_buf, buf)` → return buf pointer in RAX
 - [ ] `chdir(80, path)` → `linux_path_to_win32(path)` → `SetCurrentDirectoryA()` → 0 on success
-- [ ] `mkdir(83)` / `rmdir(84)` / `unlink(87)` / `rename(82)` already implemented in §4 — verify VFS backing works for translated paths
+- [ ] `mkdir(83)` / `rmdir(84)` / `unlink(87)` / `rename(82)` already implemented in §4 -- verify VFS backing works for translated paths
 - [ ] Commit: `"compat: POSIX opendir/readdir/getcwd/chdir stubs"`
 
 ---
 
 ## 8. Signal Stubs `[Opus]`
 
-Basic signal delivery for foreground process control. Full POSIX signal semantics are not required — only the subset needed by static Linux apps (busybox, musl programs).
+Basic signal delivery for foreground process control. Full POSIX signal semantics are not required -- only the subset needed by static Linux apps (busybox, musl programs).
 
 - [ ] `rt_sigaction(13, sig, act, oldact, sigsetsize)` → if `act != NULL`: copy `sa_handler`, `sa_mask`, `sa_flags` into `task->linux_sighandlers[sig]`; if `oldact != NULL`: copy previous handler out; return 0
 - [ ] `rt_sigprocmask(14)` → store `sigset_t` in task; no actual blocking of kernel-level interrupts needed for static single-threaded apps; return 0
@@ -315,9 +315,9 @@ Basic signal delivery for foreground process control. Full POSIX signal semantic
 | ⭐ | Zero-VM Linux compat                             | ❌ WSL2 requires Hyper-V | ❌ N/A        | ⬜ compat layer in kernel, ~500  |
 | ⭐ | PE-native + ELF-compat in same process namespace | ❌ Separate WSL env      | ❌ N/A        | ⬜ both formats in `exec_load()` |
 | ⭐ | `[Linux]` tag in process list for ELF processes  | ❌ No tagging            | ❌ No tagging | ⬜ `tasklist` shows format       |
-| ❌ | Dynamic ELF / `dlopen` / `libc.so`               | ✅ WSL2                  | ✅ Native     | ⬜ §11 — Future only             |
+| ❌ | Dynamic ELF / `dlopen` / `libc.so`               | ✅ WSL2                  | ✅ Native     | ⬜ §11 -- Future only             |
 
-**Impossible OS advantage:** Linux ELF compat runs in-kernel with no hypervisor, no separate VHD, and no process namespace boundary — a static Linux binary simply runs in ring-3 alongside PE binaries using the same scheduler, memory manager, and VFS. This is architecturally lighter than WSL2 and unique among OS designs.
+**Impossible OS advantage:** Linux ELF compat runs in-kernel with no hypervisor, no separate VHD, and no process namespace boundary -- a static Linux binary simply runs in ring-3 alongside PE binaries using the same scheduler, memory manager, and VFS. This is architecturally lighter than WSL2 and unique among OS designs.
 
 ---
 

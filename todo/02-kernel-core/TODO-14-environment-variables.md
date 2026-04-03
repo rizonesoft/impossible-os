@@ -1,4 +1,4 @@
-# TODO-14 — Environment Variables & Process Arguments
+# TODO-14 -- Environment Variables & Process Arguments
 
 > **Goal:** Implement per-process environment variable storage, `%VAR%`
 > expansion, `PATH`-based command lookup, `argv`/`argc` kernel preparation, the Win32 `GetEnvironmentVariable`/`SetEnvironmentVariable` API surface, and the `.profile` shell startup script. No env API exists at all today: there is no `env_get`, no `SYS_GETENV`, no `PATH` lookup, and no argv array in `struct task`. Without this, every user-mode program launches with no arguments, no environment, and no way to find executables on disk.
@@ -13,16 +13,16 @@
 
 ## Inputs
 
-- `src/kernel/sched/task.c` — `struct task` (environ and argv fields must be added)
-- `include/kernel/sched/task.h` — task struct header
-- `src/kernel/sched/syscall.c` — syscall dispatch table
-- `src/kernel/registry.c` — `reg_get_dword`, `reg_get_string` (used to read default env vars at boot)
-- `src/desktop/terminal.c` — terminal/shell command dispatch
-- → XREF: `TODO-04-peb-teb-user-abi.md §2` — `RTL_USER_PROCESS_PARAMETERS.Environment` points to the UTF-16 env block built by §5 of this TODO
-- → XREF: `TODO-04-peb-teb-user-abi.md §7` — initial stack frame pushes `argc`/`argv[]`/`envp[]`; requires `task->argv` and `task->environ` to be populated first
-- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT slots for `NtSetEnvironmentVariable` and `NtQueryEnvironmentVariable`
-- → XREF: `TODO-09-process-model-extensions.md §1` — `NtCreateProcess` must deep-copy `task->environ` and `task->argv` from parent to child
-- → XREF: `TODO-13-registry-completion.md §1` — system defaults read from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` and `HKCU\Environment`
+- `src/kernel/sched/task.c` -- `struct task` (environ and argv fields must be added)
+- `include/kernel/sched/task.h` -- task struct header
+- `src/kernel/sched/syscall.c` -- syscall dispatch table
+- `src/kernel/registry.c` -- `reg_get_dword`, `reg_get_string` (used to read default env vars at boot)
+- `src/desktop/terminal.c` -- terminal/shell command dispatch
+- → XREF: `TODO-04-peb-teb-user-abi.md §2` -- `RTL_USER_PROCESS_PARAMETERS.Environment` points to the UTF-16 env block built by §5 of this TODO
+- → XREF: `TODO-04-peb-teb-user-abi.md §7` -- initial stack frame pushes `argc`/`argv[]`/`envp[]`; requires `task->argv` and `task->environ` to be populated first
+- → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT slots for `NtSetEnvironmentVariable` and `NtQueryEnvironmentVariable`
+- → XREF: `TODO-09-process-model-extensions.md §1` -- `NtCreateProcess` must deep-copy `task->environ` and `task->argv` from parent to child
+- → XREF: `TODO-13-registry-completion.md §1` -- system defaults read from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` and `HKCU\Environment`
 
 ---
 
@@ -52,8 +52,8 @@
 | 💎  |   8   | `.profile` startup script                           | 7                   |  [ ]   |
 | ⭐  |   9   | Environment change notifications & `sysdm.cpl` tab  | 6, 8                |  [ ]   |
 
-> 💎 = parity work — matches what Windows 11 and Linux already do.
-> ⭐ = exclusive work — Impossible OS is superior or first.
+> 💎 = parity work -- matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work -- Impossible OS is superior or first.
 
 ---
 
@@ -96,7 +96,7 @@
 
 ### 2.1 System-wide defaults
 
-- [ ] `env_init_defaults(task)` — called once for every newly created process:
+- [ ] `env_init_defaults(task)` -- called once for every newly created process:
   1. Read system env vars from Registry key `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` (→ XREF `TODO-13-registry-completion.md §1`); enumerate all values; call `env_set` for each
   2. Read user env vars from `HKCU\Environment`; set for each (user vars override system vars with the same name)
   3. Synthesise computed variables that cannot come from Registry:
@@ -136,7 +136,7 @@
 
 ### 3.1 env_expand
 
-- [ ] `env_expand(task, input, output, max_len)` — walk `input` byte by byte:
+- [ ] `env_expand(task, input, output, max_len)` -- walk `input` byte by byte:
   - On `%`: record start; scan forward for closing `%`; if found, extract name (`%NAME%`); call `env_get(task, name)`; if found, append value to output; if not found, append the literal `%NAME%` unchanged
   - On `%%`: emit a single literal `%` (Windows escape)
   - All other chars: copy verbatim
@@ -174,7 +174,7 @@
 
 ### 4.2 Shell command-line tokenizer
 
-- [ ] `cmd_tokenize(cmdline, argv_out, max_argc)` — split a shell command line into argv tokens:
+- [ ] `cmd_tokenize(cmdline, argv_out, max_argc)` -- split a shell command line into argv tokens:
   - Split on whitespace (space, tab)
   - `"quoted argument"` → single token with quotes stripped; spaces inside quotes are preserved
   - `"embedded ""double"" quotes"` → produce a single `"` character
@@ -188,8 +188,8 @@
 - [ ] `SYS_EXEC(path, argv[], envp[])` syscall (extends existing exec syscall):
   - Validate `argv[]` pointer array with `ProbeForRead` (→ XREF `TODO-10-exception-dispatch-seh.md §13`)
   - Validate each `argv[i]` string pointer
-  - Call `task_set_argv(new_task, argc, argv)` — deep copy into kernel
-  - Call `env_copy(new_task, ...)` from `envp[]` — deep copy env
+  - Call `task_set_argv(new_task, argc, argv)` -- deep copy into kernel
+  - Call `env_copy(new_task, ...)` from `envp[]` -- deep copy env
   - Proceed to binary loader → `TODO-04-peb-teb-user-abi.md §7` reads `task->argv` and `task->environ` to build the stack frame
 - [ ] `GetCommandLineW()` Win32 wrapper (§6): returns `PEB->ProcessParameters->CommandLine`, which TODO-04 §7 builds from `task->argv[0]` + the joined argv string
 
@@ -237,7 +237,7 @@
 - [ ] `GetEnvironmentVariableA(lpName, lpBuffer, nSize)`:
   - Convert `lpName` to UTF-16; call `NtQueryEnvironmentVariable`; convert UTF-16 result back to UTF-8 into `lpBuffer`
   - Return character count on success; if `nSize` too small, return required size and `SetLastError(ERROR_INSUFFICIENT_BUFFER)`
-- [ ] `GetEnvironmentVariableW(lpName, lpBuffer, nSize)` — calls `NtQueryEnvironmentVariable` directly with UTF-16 `lpBuffer`
+- [ ] `GetEnvironmentVariableW(lpName, lpBuffer, nSize)` -- calls `NtQueryEnvironmentVariable` directly with UTF-16 `lpBuffer`
 - [ ] `SetEnvironmentVariableA/W(lpName, lpValue)`:
   - `lpValue == NULL` → delete the variable
   - Call `NtSetEnvironmentVariable`; map `STATUS_*` to `ERROR_*` via `RtlNtStatusToDosError`; return `TRUE` / `FALSE`
@@ -247,14 +247,14 @@
 - [ ] `ExpandEnvironmentStringsA(lpSrc, lpDst, nSize)`:
   - Convert `lpSrc` to UTF-16; call `RtlExpandEnvironmentStrings_U` (§3.2); convert UTF-16 result to UTF-8 into `lpDst`
   - Return bytes written (including null); if `nSize` too small, return required size (caller must retry)
-- [ ] `ExpandEnvironmentStringsW(lpSrc, lpDst, nSize)` — calls `RtlExpandEnvironmentStrings_U` directly
+- [ ] `ExpandEnvironmentStringsW(lpSrc, lpDst, nSize)` -- calls `RtlExpandEnvironmentStrings_U` directly
 
 ### 6.3 GetEnvironmentStrings / FreeEnvironmentStrings
 
 - [ ] `GetEnvironmentStringsW()`:
   - Walk `current_task->environ[]`; convert each `"KEY=VALUE"` to UTF-16; pack into a contiguous buffer as null-separated entries with a double-null at the end (matches the Win32 format); allocate with `LocalAlloc`
   - Return pointer; caller must call `FreeEnvironmentStringsW` when done
-- [ ] `GetEnvironmentStringsA()` — UTF-8 variant; same format in ANSI
+- [ ] `GetEnvironmentStringsA()` -- UTF-8 variant; same format in ANSI
 - [ ] `FreeEnvironmentStringsW(pEnvBlock)` → `LocalFree(pEnvBlock)`
 
 ### 6.4 GetCommandLine
@@ -306,7 +306,7 @@
 
 - [ ] On shell startup (after default env is initialized):
   1. Compute profile path: `env_expand(..., "%USERPROFILE%\\.profile", ...)`
-  2. `vfs_stat(profile_path)` — if not found, skip silently; no error
+  2. `vfs_stat(profile_path)` -- if not found, skip silently; no error
   3. If found: `vfs_open` + read line-by-line (max 4 KiB buffer per line)
   4. Execute each non-blank, non-comment line as a shell command (same code path as user-typed input); errors are logged to serial but do not abort the rest of the script
 - [ ] Comment lines: any line beginning with `#` (after optional leading whitespace) is skipped
@@ -327,7 +327,7 @@
 
 ### 8.3 `source` shell command
 
-- [ ] `source <file>` (or `.  <file>` POSIX synonym) — execute a script file in the current shell's context (not a child process); env changes in the script affect the current shell session
+- [ ] `source <file>` (or `.  <file>` POSIX synonym) -- execute a script file in the current shell's context (not a child process); env changes in the script affect the current shell session
 - [ ] Used to manually reload `.profile` after editing: `source C:\Users\Default\.profile`
 
 ### 8.4 Commit
@@ -353,9 +353,9 @@
 
 ### 9.3 `setx` shell command ⭐
 
-- [ ] `setx VAR VALUE` — set an environment variable **persistently** (writes to `HKCU\Environment` via Registry API + triggers `WM_SETTINGCHANGE`); current session not affected (matches Windows `setx.exe` behaviour)
-- [ ] `setx VAR VALUE /M` — write to system-wide `HKLM\...\Session Manager\Environment`; requires admin token (→ XREF `TODO-11-security-reference-monitor.md §8`)
-- [ ] `setx /?` — print usage
+- [ ] `setx VAR VALUE` -- set an environment variable **persistently** (writes to `HKCU\Environment` via Registry API + triggers `WM_SETTINGCHANGE`); current session not affected (matches Windows `setx.exe` behaviour)
+- [ ] `setx VAR VALUE /M` -- write to system-wide `HKLM\...\Session Manager\Environment`; requires admin token (→ XREF `TODO-11-security-reference-monitor.md §8`)
+- [ ] `setx /?` -- print usage
 
 ### 9.4 Commit
 
@@ -369,9 +369,9 @@
 | ⭐ | Feature                                 | 🪟 Win11                                  | 🐧 Linux                              | 🚀 Impossible OS                     |
 |----|-----------------------------------------|----------------------------------------|------------------------------------|-----------------------------------|
 | 💎 | Per-process env var storage             | ✅ UTF-16 env block in PEB             | ✅ POSIX `environ[]` (UTF-8)       | ⬜ §1                             |
-| 💎 | `%VAR%` / `$VAR` expansion              | ✅ `%VAR%` in cmd.exe                  | ✅ `$VAR` in bash                  | ⬜ §3 — (`%VAR%` Win-style)       |
-| 💎 | System defaults from persistent store   | ✅ Registry `Session Manager\Env`      | ✅ `/etc/environment`              | ⬜ §2 — (Registry-backed)         |
-| 💎 | argv / argc to child process            | ✅ command-line string → CRT parses    | ✅ `execve` argv[]                 | ⬜ §4 — (System V ABI via TODO-04 |
+| 💎 | `%VAR%` / `$VAR` expansion              | ✅ `%VAR%` in cmd.exe                  | ✅ `$VAR` in bash                  | ⬜ §3 -- (`%VAR%` Win-style)       |
+| 💎 | System defaults from persistent store   | ✅ Registry `Session Manager\Env`      | ✅ `/etc/environment`              | ⬜ §2 -- (Registry-backed)         |
+| 💎 | argv / argc to child process            | ✅ command-line string → CRT parses    | ✅ `execve` argv[]                 | ⬜ §4 -- (System V ABI via TODO-04 |
 | 💎 | `NtSetEnvironmentVariable` syscall      | ✅ Native                              | ✅ `SYS_setenv` (glibc internal)   | ⬜ §5                             |
 | 💎 | `GetEnvironmentVariable` Win32 API      | ✅ Full A/W                            | ⚠️ Via Wine only                   | ⬜ §6                             |
 | 💎 | `ExpandEnvironmentStrings` Win32 API    | ✅ Full A/W                            | ⚠️ Via Wine only                   | ⬜ §6                             |
@@ -380,10 +380,10 @@
 | 💎 | `SET` interactive shell command         | ✅ cmd.exe built-in                    | ✅ `export` / `env`                | ⬜ §7                             |
 | 💎 | Shell startup config                    | ✅ `HKCU\Environment` at logon         | ✅ `~/.profile` / `~/.bashrc`      | ⬜ §8                             |
 | 💎 | Env change notification to running apps | ✅ `WM_SETTINGCHANGE` broadcast        | ⚠️ `inotify` on `/etc/environment` | ⬜ §9                             |
-| 💎 | Persistent env var writer               | ✅ `setx.exe` built-in                 | ⚠️ Manual `.bashrc` edit           | ⬜ §9 — .3                        |
-| ⭐ | System Properties Environment tab       | ✅ `sysdm.cpl` → Environment Variables | ❌ Not available (GNOME Settings)  | ⬜ §9 — .2                        |
-| ⭐ | `SET /A` arithmetic expansion           | ✅ cmd.exe only                        | ✅ `$((expr))` bash                | ⬜ §7 — .3                        |
-| ⭐ | `source` / `.` command                  | ❌ Not in cmd.exe (PowerShell only)    | ✅ POSIX `.`                       | ⬜ §8 — .3 🚀                     |
+| 💎 | Persistent env var writer               | ✅ `setx.exe` built-in                 | ⚠️ Manual `.bashrc` edit           | ⬜ §9 -- .3                        |
+| ⭐ | System Properties Environment tab       | ✅ `sysdm.cpl` → Environment Variables | ❌ Not available (GNOME Settings)  | ⬜ §9 -- .2                        |
+| ⭐ | `SET /A` arithmetic expansion           | ✅ cmd.exe only                        | ✅ `$((expr))` bash                | ⬜ §7 -- .3                        |
+| ⭐ | `source` / `.` command                  | ❌ Not in cmd.exe (PowerShell only)    | ✅ POSIX `.`                       | ⬜ §8 -- .3 🚀                     |
 
 After §1–8, Impossible OS reaches full Windows 11 and Linux parity for every environment variable feature: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` /
 `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.
@@ -412,7 +412,7 @@ The `source` / `.` command (§8.3) is a genuine differentiator over Windows cmd.
 
 ## Verification
 
-- [ ] **env_get/set**: kernel unit test — create a task with empty environ; `env_set(t, "GREETING", "hello")`; `env_get(t, "GREETING")` → `"hello"`; `env_unset(t, "GREETING")`; `env_get(t, "GREETING")` → `NULL`.
+- [ ] **env_get/set**: kernel unit test -- create a task with empty environ; `env_set(t, "GREETING", "hello")`; `env_get(t, "GREETING")` → `"hello"`; `env_unset(t, "GREETING")`; `env_get(t, "GREETING")` → `NULL`.
 - [ ] **env_expand**: `env_set(t, "NAME", "World")`; `env_expand(t, "Hello %NAME%!", buf, ...)` → `"Hello World!"`; `env_expand(t, "%%", buf, ...)` → `"%"`.
 - [ ] **Default vars**: boot to shell; run `SET` with no args; output must include `PATH=`, `SYSTEMROOT=`, `TEMP=`, `USERNAME=`, `COMPUTERNAME=`.
 - [ ] **PATH lookup**: place a test binary in `C:\Impossible\Bin\`; type just its name without path in the shell; it must launch.
@@ -420,5 +420,5 @@ The `source` / `.` command (§8.3) is a genuine differentiator over Windows cmd.
 - [ ] **NtQueryEnvironmentVariable**: user-mode test calls `NtQueryEnvironmentVariable` with `"PATH"` → returns the PATH string.
 - [ ] **GetEnvironmentVariableW**: `GetEnvironmentVariableW(L"SYSTEMROOT", buf, MAX_PATH)` → `L"C:\\Impossible"`.
 - [ ] **.profile**: create `C:\Users\Default\.profile` with `SET TEST_VAR=from_profile`; restart shell; run `ECHO %TEST_VAR%` → `"from_profile"`.
-- [ ] **Remaining limits**: `ExpandEnvironmentStringsW` with deeply nested `%A%%B%%C%` (> 4 levels) must return the partially expanded string rather than hanging; `WM_SETTINGCHANGE` broadcast requires the window manager to be running (§9.1) — skip in headless QEMU test.
+- [ ] **Remaining limits**: `ExpandEnvironmentStringsW` with deeply nested `%A%%B%%C%` (> 4 levels) must return the partially expanded string rather than hanging; `WM_SETTINGCHANGE` broadcast requires the window manager to be running (§9.1) -- skip in headless QEMU test.
 - [ ] Commit: `"kernel/env: environment variables, argv, Win32 GetEnvironmentVariable, PATH lookup, .profile"`

@@ -20,7 +20,7 @@ A fully initialized FAT32 logical volume is divided sequentially into distinct, 
 
 ## Sub-Type Determination and Volumetric Constraints
 
-A critical architectural mandate is that the specific file system sub-type—whether FAT12, FAT16, or FAT32—is determined **exclusively** by the total count of addressable clusters in the Data Region. An operating system driver must never trust descriptive strings (such as `"FAT32   "` or `"FAT16   "`) found in the Boot Sector to determine the FAT type. The string fields are purely cosmetic and unreliable. The dynamic calculation of the cluster count isolates the true file system type based on the following rigid mathematical boundaries:
+A critical architectural mandate is that the specific file system sub-type--whether FAT12, FAT16, or FAT32--is determined **exclusively** by the total count of addressable clusters in the Data Region. An operating system driver must never trust descriptive strings (such as `"FAT32   "` or `"FAT16   "`) found in the Boot Sector to determine the FAT type. The string fields are purely cosmetic and unreliable. The dynamic calculation of the cluster count isolates the true file system type based on the following rigid mathematical boundaries:
 
 - **FAT12 Definition:** A volume with a total data cluster count less than or equal to 4,085 is strictly categorized as FAT12.
 - **FAT16 Definition:** A volume containing between 4,086 and 65,525 clusters inclusive is strictly categorized as FAT16.
@@ -74,7 +74,7 @@ Beginning at offset `0x24`, the parameter block structure permanently diverges f
 | `0x24`       | 36           | 4              | BPB_FATSz32      | 32-bit unsigned integer: exact count of sectors occupied by ONE single FAT data structure.                                                                                                                                                                 |
 | `0x28`       | 40           | 2              | BPB_ExtFlags     | Extended flags. Bit 7: if 0, FAT is mirrored to all copies simultaneously; if 1, only active FAT is updated (bits 0–3 = active FAT index).                                                                                                                |
 | `0x2A`       | 42           | 2              | BPB_FSVer        | File system version. Must be `0x0000`. Any other value triggers mount rejection.                                                                                                                                                                            |
-| `0x2C`       | 44           | 4              | BPB_RootClus     | Cluster number of the FAT32 root directory start. Typically cluster 2, but **must not be assumed — read this field**.                                                                                                                                       |
+| `0x2C`       | 44           | 4              | BPB_RootClus     | Cluster number of the FAT32 root directory start. Typically cluster 2, but **must not be assumed -- read this field**.                                                                                                                                       |
 | `0x30`       | 48           | 2              | BPB_FSInfo       | Sector number of the FSInfo structure (relative to reserved area). Typically 1.                                                                                                                                                                              |
 | `0x32`       | 50           | 2              | BPB_BkBootSec    | Sector number of the backup boot sector (relative to reserved area). Typically 6.                                                                                                                                                                           |
 | `0x34`       | 52           | 12             | BPB_Reserved     | Reserved bytes, initialized to zero upon formatting.                                                                                                                                                                                                        |
@@ -89,7 +89,7 @@ The Boot Sector structure is finalized with executable bootloader code padding u
 
 ## The File System Information (FSInfo) Sector
 
-A notable architectural limitation of FAT16 was the necessity to sequentially scan the entire FAT upon mounting to calculate free disk space — an O(N) operation unacceptably slow at multi-gigabyte scale.
+A notable architectural limitation of FAT16 was the necessity to sequentially scan the entire FAT upon mounting to calculate free disk space -- an O(N) operation unacceptably slow at multi-gigabyte scale.
 
 FAT32 introduces a caching mechanism via the FSInfo sector. Typically located at sector 1 within the Reserved Region, it provides a fast-path for free space queries and cluster allocation hints. The structure is protected by three independent 32-bit signatures.
 
@@ -168,7 +168,7 @@ The masked 28-bit value classifies the cluster:
 - `0x00000001`: Internally reserved, not available for file data.
 - `0x00000002` to `0x0FFFFFEF`: Allocated cluster. The value is the index of the next cluster in the chain.
 - `0x0FFFFFF0` to `0x0FFFFFF6`: Reserved values. Must not be used as cluster pointers.
-- `0x0FFFFFF7`: Bad cluster. Permanently quarantined — physically damaged sectors.
+- `0x0FFFFFF7`: Bad cluster. Permanently quarantined -- physically damaged sectors.
 - `0x0FFFFFF8` to `0x0FFFFFFF`: End of File (EOF) marker. Final cluster of the file's data chain.
 
 ### Special Reserved Entries: FAT[0] and FAT[1]
@@ -203,7 +203,7 @@ The physical sector to read: `FatStartSector + FATSectorOffset`. The 32-bit entr
 
 ## Directory Entries and File Metadata Architecture
 
-Within the payload data clusters, directories are formatted as sequential arrays of uniformly sized 32-byte entries. A directory is conceptually identical to a standard file — it occupies a cluster chain, but its payload is formatted as metadata records rather than raw data.
+Within the payload data clusters, directories are formatted as sequential arrays of uniformly sized 32-byte entries. A directory is conceptually identical to a standard file -- it occupies a cluster chain, but its payload is formatted as metadata records rather than raw data.
 
 ### Standard Short File Name (SFN) Directory Entry
 
@@ -236,7 +236,7 @@ FAT dates and times are compressed into 16-bit integers:
 
 **FAT Date Structure (16-bit):**
 
-- Bits 9–15 (7 bits): Year — offset from 1980 (range 0–127, years 1980–2107)
+- Bits 9–15 (7 bits): Year -- offset from 1980 (range 0–127, years 1980–2107)
 - Bits 5–8 (4 bits): Month (1–12)
 - Bits 0–4 (5 bits): Day (1–31)
 
@@ -267,7 +267,7 @@ In standard FAT logic, `0x0F` represents the contradictory combination of Volume
 
 ### LFN Component Structure and Checksum Linking
 
-Each 32-byte LFN entry stores exactly **13 UTF-16 (UCS-2) characters**, scattered across three separated arrays within the block. Entries are stacked in **reverse sequential order** — the end of the filename appears first on disk.
+Each 32-byte LFN entry stores exactly **13 UTF-16 (UCS-2) characters**, scattered across three separated arrays within the block. Entries are stacked in **reverse sequential order** -- the end of the filename appears first on disk.
 
 | Offset (Hex) | Length (Bytes) | Field Name   | Description                                                                                                                    |
 | ------------ | -------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -298,7 +298,7 @@ The OS must compute this checksum from the SFN and verify it against the checksu
 
 ## Algorithmic Computation of FAT Size for Disk Formatting
 
-When formatting raw storage into a FAT32 volume, the driver must calculate the exact number of sectors for the FAT (`FATSz32`). Because the FAT size determines the Data Region boundary, which determines the cluster count, which determines the required FAT size — a circular dependency forms.
+When formatting raw storage into a FAT32 volume, the driver must calculate the exact number of sectors for the FAT (`FATSz32`). Because the FAT size determines the Data Region boundary, which determines the cluster count, which determines the required FAT size -- a circular dependency forms.
 
 The Microsoft specification uses a reliable approximation algorithm to break this cycle. The result may overshoot by up to 8 sectors but guarantees sufficient capacity:
 

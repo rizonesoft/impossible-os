@@ -1,5 +1,5 @@
 /* ============================================================================
- * mbr.h — MBR Partition Table Parser
+ * mbr.h -- MBR Partition Table Parser
  *
  * Parses the Master Boot Record (sector 0) to discover partitions.
  * Decodes the complete 512-byte MBR layout:
@@ -123,7 +123,7 @@ struct mbr_table {
 struct mbr_table mbr_parse(const void *sector0);
 
 /* Return human-readable name for a partition type ID.
- * Returns static string — never returns NULL. */
+ * Returns static string -- never returns NULL. */
 const char *mbr_type_name(uint8_t type);
 
 /* Check if a partition type ID is an extended container (0x05/0x0F/0x85). */

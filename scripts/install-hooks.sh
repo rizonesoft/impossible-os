@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# install-hooks.sh — Install or remove git hooks
+# install-hooks.sh -- Install or remove git hooks
 #
 # Usage:
 #   bash scripts/install-hooks.sh           # install hooks
@@ -39,7 +39,7 @@ for hook in "$HOOKS_SRC"/*; do
 
     # Don't overwrite non-symlink hooks (user's own hooks)
     if [ -e "$target" ] && [ ! -L "$target" ]; then
-        echo "SKIP: $name (existing non-symlink hook — won't overwrite)"
+        echo "SKIP: $name (existing non-symlink hook -- won't overwrite)"
         continue
     fi
 

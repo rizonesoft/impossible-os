@@ -78,7 +78,7 @@ Close any open handle. Maps to `vfs_close()`.
 |----------|-----------|-------------|
 | `FindFirstFile` | `HANDLE FindFirstFile(LPCSTR, WIN32_FIND_DATA*)` | `vfs_readdir()` |
 | `FindNextFile` | `BOOL FindNextFile(HANDLE, WIN32_FIND_DATA*)` | `vfs_readdir()` |
-| `FindClose` | `BOOL FindClose(HANDLE)` | — |
+| `FindClose` | `BOOL FindClose(HANDLE)` | -- |
 | `CreateDirectory` | `BOOL CreateDirectory(LPCSTR, ...)` | `vfs_create(VFS_DIRECTORY)` |
 | `RemoveDirectory` | `BOOL RemoveDirectory(LPCSTR)` | `vfs_unlink()` |
 

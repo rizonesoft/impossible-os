@@ -1,5 +1,5 @@
 /* ============================================================================
- * rwlock.c — Kernel read-write lock
+ * rwlock.c -- Kernel read-write lock
  *
  * Allows multiple concurrent readers OR a single exclusive writer.
  *
@@ -68,7 +68,7 @@ static void enqueue_and_block(uint32_t *wtasks, uint32_t *wthreads,
         wthreads[*num_waiters] = thr ? thr->id : 0;
         (*num_waiters)++;
     }
-    /* else: queue full — fall through to yield as spin-fallback */
+    /* else: queue full -- fall through to yield as spin-fallback */
 
     if (thr)
         thr->state = THREAD_BLOCKED;
@@ -96,7 +96,7 @@ void rwlock_read_lock(rwlock_t *rw)
     /*
      * Block if:
      *   - A writer currently holds the lock, OR
-     *   - A writer is pending (starvation guard — writer gets priority)
+     *   - A writer is pending (starvation guard -- writer gets priority)
      */
     while (atomic_read(&rw->writer_held) || atomic_read(&rw->writer_pending)) {
         enqueue_and_block(rw->r_waiter_tasks, rw->r_waiter_threads,
@@ -131,7 +131,7 @@ void rwlock_read_unlock(rwlock_t *rw)
 
 void rwlock_write_lock(rwlock_t *rw)
 {
-    /* Signal intent — prevents new readers from acquiring */
+    /* Signal intent -- prevents new readers from acquiring */
     atomic_set(&rw->writer_pending, 1);
 
     /* Block until no readers and no other writer */
@@ -142,7 +142,7 @@ void rwlock_write_lock(rwlock_t *rw)
 
     /* Acquire */
     atomic_set(&rw->writer_held,    1);
-    atomic_set(&rw->writer_pending, 0);  /* we hold it now — clear pending */
+    atomic_set(&rw->writer_pending, 0);  /* we hold it now -- clear pending */
 }
 
 void rwlock_write_unlock(rwlock_t *rw)
@@ -157,7 +157,7 @@ void rwlock_write_unlock(rwlock_t *rw)
 
     if (rw->w_num_waiters > 0) {
         /*
-         * Another writer is waiting — hand the lock to it directly.
+         * Another writer is waiting -- hand the lock to it directly.
          * Set writer_pending so new readers don't sneak in before
          * the woken writer gets scheduled.
          */
@@ -165,7 +165,7 @@ void rwlock_write_unlock(rwlock_t *rw)
         wake_first_waiter(rw->w_waiter_tasks, rw->w_waiter_threads,
                           &rw->w_num_waiters);
     } else {
-        /* No writers waiting — wake all pending readers */
+        /* No writers waiting -- wake all pending readers */
         atomic_set(&rw->writer_pending, 0);
         wake_all_waiters(rw->r_waiter_tasks, rw->r_waiter_threads,
                          &rw->r_num_waiters);

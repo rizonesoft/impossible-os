@@ -1,7 +1,7 @@
 /* ============================================================================
- * blk_packed.c — Packed Virtqueue Support
+ * blk_packed.c -- Packed Virtqueue Support
  *
- * §8.1 — 💎 Impossible OS Exclusive
+ * §8.1 -- 💎 Impossible OS Exclusive
  *
  * The packed virtqueue (VirtIO 1.1 §2.7) replaces the split layout's three
  * separate memory regions (descriptor table, available ring, used ring) with
@@ -143,7 +143,7 @@ int packed_vq_init(struct virtio_pci_dev *pdev, uint16_t queue_idx)
     pvq.driver_event->flags = 1;  /* DISABLE */
     pvq.device_event->flags = 1;  /* DISABLE */
 
-    /* Write ring address to device — packed VQ uses the descriptor table
+    /* Write ring address to device -- packed VQ uses the descriptor table
      * address field for the unified ring */
     mmio_write64(pdev->common_cfg, VIRTIO_COMMON_Q_DESC,
                  (uint64_t)(uintptr_t)pvq.ring);
@@ -216,7 +216,7 @@ int packed_vq_submit(struct virtio_blk_req *header, void *data,
     uint16_t f0, f1, f2;
     int wrap;
 
-    /* Need 3 free descriptors — but in packed VQ there's no free list,
+    /* Need 3 free descriptors -- but in packed VQ there's no free list,
      * we just need 3 slots ahead of next_avail that haven't been used.
      * For simplicity, check if next 3 entries are available. */
 

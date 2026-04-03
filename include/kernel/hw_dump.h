@@ -1,5 +1,5 @@
 /* ============================================================================
- * hw_dump.h — Structured hardware information dump
+ * hw_dump.h -- Structured hardware information dump
  *
  * Writes a hardware inventory to the kernel log via klog().
  * Extracted from klog_live.c to separate concerns.

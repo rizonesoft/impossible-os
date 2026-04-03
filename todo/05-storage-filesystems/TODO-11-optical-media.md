@@ -1,18 +1,18 @@
-# TODO-11 — Optical Media: ISO 9660, Joliet & UDF
+# TODO-11 -- Optical Media: ISO 9660, Joliet & UDF
 
 > **Goal:** Complete the ATAPI/SCSI command layer for optical drives (READ TOC, DISC INFO, TRACK INFO), then build read-only filesystem drivers for ISO 9660 (base + Rock Ridge), Joliet (UCS-2BE names), and UDF (DVD/Blu-ray). Add an auto-probe chain that selects the richest format (UDF > Joliet > ISO 9660). Expose disc metadata via `GetVolumeInformationW`. All three formats are physically read-only. Audio CD raw-sector read is included as a foundation for a future CD ripping feature.
 
 > [!IMPORTANT]
-> The low-level ATAPI transport is already working: `atapi_dma_command()`, `atapi_do_read()`/`atapi_do_read12()`, `atapi_read_capacity()`, `atapi_get_configuration()`, `atapi_request_sense()`, `atapi_test_unit_ready()`, and `atapi_inquiry()` all exist in `src/kernel/drivers/ahci/ahci_atapi.c`. This TODO starts at the **SCSI MMC layer** (READ TOC, DISC INFORMATION, READ TRACK INFO) — §1 — and builds up through the three filesystem layers. ISO 9660 §2 is the mandatory base for §3 (Rock Ridge) and §4 (Joliet); UDF §5 is independent and shares only the ATAPI read helper from §1. Wire `optical_probe()` into `vfs_probe()` at step 7 (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` optical drive handling).
+> The low-level ATAPI transport is already working: `atapi_dma_command()`, `atapi_do_read()`/`atapi_do_read12()`, `atapi_read_capacity()`, `atapi_get_configuration()`, `atapi_request_sense()`, `atapi_test_unit_ready()`, and `atapi_inquiry()` all exist in `src/kernel/drivers/ahci/ahci_atapi.c`. This TODO starts at the **SCSI MMC layer** (READ TOC, DISC INFORMATION, READ TRACK INFO) -- §1 -- and builds up through the three filesystem layers. ISO 9660 §2 is the mandatory base for §3 (Rock Ridge) and §4 (Joliet); UDF §5 is independent and shares only the ATAPI read helper from §1. Wire `optical_probe()` into `vfs_probe()` at step 7 (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` optical drive handling).
 
 ## Inputs
 
-- `src/kernel/drivers/ahci/ahci_atapi.c` + `include/kernel/drivers/ahci_internal.h` — existing ATAPI transport; `atapi_dma_command(port, cdb, cdb_len, buf, buf_len, dir)` is the CDB issuing primitive for §1; `atapi_do_read(port, lba, count, buf)` is the cooked-sector read primitive for §2–§5
-- `include/kernel/drivers/ahci.h` — `ahci_atapi_read(atapi_idx, lba, count, buf)` public API; `ahci_atapi_capacity(atapi_idx)` for disc capacity
-- `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` — `vfs_mount()`, `vfs_fs_driver`, read-only mount via `VFS_READONLY`
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §7` — optical drive handling; `optical_probe()` is step 7 in `vfs_probe()`; tray-open command and autorun stub are owned there; this TODO provides the FS-level mount for `vfs_probe()` to call
-- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` — `CreateFile` on an optical drive letter calls `NtCreateFile` → `vfs_open` → optical fs vtable; ensure all three vtables expose the full read-only 14-entry `vfs_fs_driver`
-- → XREF: `04-drivers-hardware/TODO-xx-ahci-driver` — AHCI ATAPI port detection (`AHCI_SIG_ATAPI`, `is_atapi` flag, `ahci_atapi_count()`) provides the `atapi_idx` used throughout §1
+- `src/kernel/drivers/ahci/ahci_atapi.c` + `include/kernel/drivers/ahci_internal.h` -- existing ATAPI transport; `atapi_dma_command(port, cdb, cdb_len, buf, buf_len, dir)` is the CDB issuing primitive for §1; `atapi_do_read(port, lba, count, buf)` is the cooked-sector read primitive for §2–§5
+- `include/kernel/drivers/ahci.h` -- `ahci_atapi_read(atapi_idx, lba, count, buf)` public API; `ahci_atapi_capacity(atapi_idx)` for disc capacity
+- `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, read-only mount via `VFS_READONLY`
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §7` -- optical drive handling; `optical_probe()` is step 7 in `vfs_probe()`; tray-open command and autorun stub are owned there; this TODO provides the FS-level mount for `vfs_probe()` to call
+- → XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §4` -- `CreateFile` on an optical drive letter calls `NtCreateFile` → `vfs_open` → optical fs vtable; ensure all three vtables expose the full read-only 14-entry `vfs_fs_driver`
+- → XREF: `04-drivers-hardware/TODO-xx-ahci-driver` -- AHCI ATAPI port detection (`AHCI_SIG_ATAPI`, `is_atapi` flag, `ahci_atapi_count()`) provides the `atapi_idx` used throughout §1
 
 ## Outcome
 
@@ -29,20 +29,20 @@
 
 | ⭐  | Order | Deliverable                                                                           | Depends On                                                         | Status |
 | --- | :---: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | :----: |
-| 💎  |   1   | §1 SCSI MMC layer — READ TOC, DISC INFO, TRACK INFO, `atapi_disc_info_t`             | Existing `atapi_dma_command()` transport                           |  [ ]   |
-| 💎  |   2   | §2 ISO 9660 base — PVD parse, directory records, file read, VFS mount               | §1 (`atapi_do_read` for cooked 2 KiB sectors)                      |  [ ]   |
-| 💎  |   3   | §3 Rock Ridge extensions — SUSP walker, PX/SL/NM/TF/CL/RE entries                   | §2 (Rock Ridge SUSP data appended to ISO 9660 directory records)   |  [ ]   |
-| 💎  |   4   | §4 Joliet — SVD `%/E` detection, UCS-2BE→UTF-8 decode, El Torito skip               | §2 (Joliet SVD shares the same VDS scan loop as PVD)               |  [ ]   |
-| 💎  |   5   | §5 UDF — AVDP, VDS, Partition+LV descriptors, ICB, directory + file read            | §1 (raw sector reads needed for AVDP at sector 256)                |  [ ]   |
-| ⭐  |   6   | §6 Auto-probe priority — UDF > Joliet > ISO 9660 selection + unified VFS mount       | §2, §4, §5 (all three format probes must exist before priority)    |  [ ]   |
-| 💎  |   7   | §7 Disc label + metadata — `GetVolumeInformationW`, `GetDriveTypeW`, serial CRC      | §6 (format selected; label source depends on winner)               |  [ ]   |
-| 💎  |   8   | §8 Audio CD raw reads — TOC audio track detection, READ CD 2352-byte sectors        | §1 (TOC parse identifies audio tracks), §2 (disc already probed)   |  [ ]   |
+| 💎  |   1   | §1 SCSI MMC layer -- READ TOC, DISC INFO, TRACK INFO, `atapi_disc_info_t`             | Existing `atapi_dma_command()` transport                           |  [ ]   |
+| 💎  |   2   | §2 ISO 9660 base -- PVD parse, directory records, file read, VFS mount               | §1 (`atapi_do_read` for cooked 2 KiB sectors)                      |  [ ]   |
+| 💎  |   3   | §3 Rock Ridge extensions -- SUSP walker, PX/SL/NM/TF/CL/RE entries                   | §2 (Rock Ridge SUSP data appended to ISO 9660 directory records)   |  [ ]   |
+| 💎  |   4   | §4 Joliet -- SVD `%/E` detection, UCS-2BE→UTF-8 decode, El Torito skip               | §2 (Joliet SVD shares the same VDS scan loop as PVD)               |  [ ]   |
+| 💎  |   5   | §5 UDF -- AVDP, VDS, Partition+LV descriptors, ICB, directory + file read            | §1 (raw sector reads needed for AVDP at sector 256)                |  [ ]   |
+| ⭐  |   6   | §6 Auto-probe priority -- UDF > Joliet > ISO 9660 selection + unified VFS mount       | §2, §4, §5 (all three format probes must exist before priority)    |  [ ]   |
+| 💎  |   7   | §7 Disc label + metadata -- `GetVolumeInformationW`, `GetDriveTypeW`, serial CRC      | §6 (format selected; label source depends on winner)               |  [ ]   |
+| 💎  |   8   | §8 Audio CD raw reads -- TOC audio track detection, READ CD 2352-byte sectors        | §1 (TOC parse identifies audio tracks), §2 (disc already probed)   |  [ ]   |
 
-> §1–§5 and §7–§8 are `💎` parity — every modern OS supports optical media. §6 is `⭐` exclusive: the unified in-kernel probe chain (UDF > Joliet > ISO) with automatic best-format selection is a level of optical drive intelligence that Linux leaves to userspace (`udisks2`) and Windows exposes only through the shell (not the kernel API). Impossible OS makes the right choice at mount time without any userspace daemon.
+> §1–§5 and §7–§8 are `💎` parity -- every modern OS supports optical media. §6 is `⭐` exclusive: the unified in-kernel probe chain (UDF > Joliet > ISO) with automatic best-format selection is a level of optical drive intelligence that Linux leaves to userspace (`udisks2`) and Windows exposes only through the shell (not the kernel API). Impossible OS makes the right choice at mount time without any userspace daemon.
 
 ---
 
-## 1. SCSI MMC Layer — READ TOC, DISC INFO, TRACK INFO `[Sonnet]`
+## 1. SCSI MMC Layer -- READ TOC, DISC INFO, TRACK INFO `[Sonnet]`
 
 Extend `ahci_atapi.c` with READ TOC (CDB `0x43`), DISC INFORMATION (`0x51`), and READ TRACK INFO (`0x52`). Expose results in `atapi_disc_info_t`. Replace the bare `atapi_do_read()` call sites in the filesystem layers with the higher-level `atapi_read_cd()` cooked-sector helper.
 
@@ -87,7 +87,7 @@ Walk the System Use Sharing Protocol (SUSP) area appended to each directory reco
 **Files:** `src/kernel/fs/optical/iso9660.c` (extend), `src/kernel/fs/optical/rockridge.c` (new)
 
 > [!NOTE]
-> SUSP area: starts at offset `33 + LEN_FI + (1 if LEN_FI is even else 0)` within the directory record (padding for even alignment). `RR` indicator entry at the start (signature `"RR"`) signals Rock Ridge extensions are present — but many discs omit it; scan for known signatures regardless. Each SUSP entry: `signature[2]`, `length(1)`, `version(1)`, `data[length-4]`. Key entries: `PX` (POSIX attrs): `mode(4)`, `nlinks(4)`, `uid(4)`, `gid(4)`, `ino(4)`; `SL` (symlink): continuation flag + component records (`flags(1)`, `length(1)`, `data[length]`; flags: `0x02`=current, `0x04`=parent, `0x08`=root); `NM` (alternate name): flags + name bytes; may span multiple `NM` entries (continuation flag bit 0); `TF` (timestamps): short form (7 bytes, ISO date) or long form (17 bytes, ISO 8601); flags byte selects which timestamps are present; `CL` (child link): relocated directory's real location; `RE` (relocated entry): marks the directory as relocated (skip in parent listing, use `CL` location instead).
+> SUSP area: starts at offset `33 + LEN_FI + (1 if LEN_FI is even else 0)` within the directory record (padding for even alignment). `RR` indicator entry at the start (signature `"RR"`) signals Rock Ridge extensions are present -- but many discs omit it; scan for known signatures regardless. Each SUSP entry: `signature[2]`, `length(1)`, `version(1)`, `data[length-4]`. Key entries: `PX` (POSIX attrs): `mode(4)`, `nlinks(4)`, `uid(4)`, `gid(4)`, `ino(4)`; `SL` (symlink): continuation flag + component records (`flags(1)`, `length(1)`, `data[length]`; flags: `0x02`=current, `0x04`=parent, `0x08`=root); `NM` (alternate name): flags + name bytes; may span multiple `NM` entries (continuation flag bit 0); `TF` (timestamps): short form (7 bytes, ISO date) or long form (17 bytes, ISO 8601); flags byte selects which timestamps are present; `CL` (child link): relocated directory's real location; `RE` (relocated entry): marks the directory as relocated (skip in parent listing, use `CL` location instead).
 
 - [ ] `rrip_parse_susp(record_buf, record_len, &rrip_out)`: scan SUSP area; decode all known signatures; populate `rrip_entry_t { char nm[256]; mode_t mode; uid_t uid; gid_t gid; uint64_t ino; char sl_target[1024]; int has_px, has_nm, has_sl, has_tf; time_t mtime, atime, ctime; uint32_t cl_lba; int is_re; }`
 - [ ] NM assembly: concatenate multiple `NM` continuation entries into `nm` buffer (up to 255 bytes)
@@ -96,7 +96,7 @@ Walk the System Use Sharing Protocol (SUSP) area appended to each directory reco
 - [ ] CL/RE: when `is_re` is set on a directory record → skip it in the listing; the parent's directory entry with `CL` points to the real location
 - [ ] Integrate into `iso9660_readdir()`: after parsing a directory record, call `rrip_parse_susp()`; if `has_nm`: use `rrip.nm` as the filename; if `has_px`: set VFS node mode; if `has_sl`: expose as symlink VFS node
 - [ ] VFS `readlink` callback: `iso9660_vfs_readlink(vfs_node, buf, len)` → stored `sl_target` from RRIP
-- [ ] Commit: `"fs/iso9660: Rock Ridge SUSP — PX/NM/SL/TF/CL/RE decode, long filenames, symlinks, POSIX attrs"`
+- [ ] Commit: `"fs/iso9660: Rock Ridge SUSP -- PX/NM/SL/TF/CL/RE decode, long filenames, symlinks, POSIX attrs"`
 
 ## 4. Joliet `[Sonnet]`
 
@@ -105,7 +105,7 @@ Detect a Supplementary Volume Descriptor with `%/E` escape sequence (Joliet Leve
 **Files:** `src/kernel/fs/optical/joliet.c` (new)
 
 > [!NOTE]
-> VDS scan: scan sectors 16+ for all Volume Descriptor records until the set terminator. SVD: type `0x02`. Joliet SVD: `EscapeSequences[32]` at offset 88 contains `"%/E"` (Joliet Level 3 — up to 64 UCS-2 characters = 128 bytes per filename), `"%/C"` (Level 1 — 16 chars), or `"%/G"` (Level 2 — 31 chars); check for `%/E` first. Joliet directory records are identical in structure to ISO 9660 records except the `File Identifier` field contains UCS-2BE (big-endian UTF-16) characters. File identifier length is in bytes (2 bytes per character). `joliet_to_utf8(ucs2be, byte_len, utf8_out, out_max)`: iterate pairs; for BMP codepoints: standard 1/2/3 byte UTF-8; for surrogate pairs (rare on disc): decode to 4-byte UTF-8. El Torito: VD type `0x00` with standard identifier `"CD001"` and system identifier `"EL TORITO SPECIFICATION"` — read the record, log `[optical] El Torito boot record detected (skipped)`, continue VDS scan without mounting.
+> VDS scan: scan sectors 16+ for all Volume Descriptor records until the set terminator. SVD: type `0x02`. Joliet SVD: `EscapeSequences[32]` at offset 88 contains `"%/E"` (Joliet Level 3 -- up to 64 UCS-2 characters = 128 bytes per filename), `"%/C"` (Level 1 -- 16 chars), or `"%/G"` (Level 2 -- 31 chars); check for `%/E` first. Joliet directory records are identical in structure to ISO 9660 records except the `File Identifier` field contains UCS-2BE (big-endian UTF-16) characters. File identifier length is in bytes (2 bytes per character). `joliet_to_utf8(ucs2be, byte_len, utf8_out, out_max)`: iterate pairs; for BMP codepoints: standard 1/2/3 byte UTF-8; for surrogate pairs (rare on disc): decode to 4-byte UTF-8. El Torito: VD type `0x00` with standard identifier `"CD001"` and system identifier `"EL TORITO SPECIFICATION"` -- read the record, log `[optical] El Torito boot record detected (skipped)`, continue VDS scan without mounting.
 
 - [ ] `joliet_vol_t` struct: same as `iso9660_vol_t` but with UCS-2 decoding flag; shares most code with ISO 9660
 - [ ] `joliet_scan_vds(atapi_idx, &pvd_vol, &joliet_vol, &el_torito_present)`: scan all VD records; if SVD with `%/E`/`%/C`/`%/G`: populate `joliet_vol`; if El Torito: set `el_torito_present`; if PVD: populate `pvd_vol`
@@ -122,7 +122,7 @@ Read the AVDP at sector 256. Parse the Volume Descriptor Sequence (Partition + L
 **Files:** `src/kernel/fs/optical/udf.c` (new), `include/kernel/fs/udf_internal.h` (new)
 
 > [!NOTE]
-> AVDP (Anchor Volume Descriptor Pointer) at sector 256: 16-byte CRC tag (descriptor tag: `TagIdentifier=0x0002`, `TagLocation=256`, CRC), then `MainVDSExtent { ExtentLength(4), ExtentLocation(4) }` and `ReserveVDSExtent`. VDS scan: read `ceil(MainVDSExtent.ExtentLength / sectorsize)` sectors starting at `MainVDSExtent.ExtentLocation`; iterate descriptors by descriptor tag (`TagIdentifier`): `0x0001` = PVD (skip), `0x0004` = Implementation Use VD (skip), `0x0005` = Partition Descriptor (extract `pStartingLocation`, `pAccessType`; type 1=read-only, 3=rewritable), `0x0006` = Logical Volume Descriptor (extract `LogicalBlockSize`, `LogicalVolumeIdentifier` as CS0-encoded label, `IntegritySequenceExtent`, `MapTableLength` / `PartitionMaps`), `0x0009` = File Set Descriptor (from ICB in LVD's `LogicalVolumeContentsUse`; contains `rootICBLocation` → root directory File Entry ICB), `0x0008` = Terminating Descriptor (stop). Volume Integrity Descriptor: at `IntegritySequenceExtent`; `IntegrityType` 0=open (dirty), 1=close (clean); if open → mount read-only and log warning. ICB Tag: `FileType` 0=unspecified, 4=directory, 5=file, 12=symlink. Allocation Descriptor types (AD): Short AD (8 bytes: `ExtentLength(4)`, `ExtentPosition(4)` — partition-relative), Long AD (16 bytes: `ExtentLength(4)`, `ExtentLocation { LogicalBlockNumber(4), PartitionReferenceNumber(2) }`, `ImplementationUse(6)`), Extended AD (20 bytes). `ExtentLength` high 2 bits = extent type: 0=recorded, 1=unallocated (sparse), 2=allocated but not recorded.
+> AVDP (Anchor Volume Descriptor Pointer) at sector 256: 16-byte CRC tag (descriptor tag: `TagIdentifier=0x0002`, `TagLocation=256`, CRC), then `MainVDSExtent { ExtentLength(4), ExtentLocation(4) }` and `ReserveVDSExtent`. VDS scan: read `ceil(MainVDSExtent.ExtentLength / sectorsize)` sectors starting at `MainVDSExtent.ExtentLocation`; iterate descriptors by descriptor tag (`TagIdentifier`): `0x0001` = PVD (skip), `0x0004` = Implementation Use VD (skip), `0x0005` = Partition Descriptor (extract `pStartingLocation`, `pAccessType`; type 1=read-only, 3=rewritable), `0x0006` = Logical Volume Descriptor (extract `LogicalBlockSize`, `LogicalVolumeIdentifier` as CS0-encoded label, `IntegritySequenceExtent`, `MapTableLength` / `PartitionMaps`), `0x0009` = File Set Descriptor (from ICB in LVD's `LogicalVolumeContentsUse`; contains `rootICBLocation` → root directory File Entry ICB), `0x0008` = Terminating Descriptor (stop). Volume Integrity Descriptor: at `IntegritySequenceExtent`; `IntegrityType` 0=open (dirty), 1=close (clean); if open → mount read-only and log warning. ICB Tag: `FileType` 0=unspecified, 4=directory, 5=file, 12=symlink. Allocation Descriptor types (AD): Short AD (8 bytes: `ExtentLength(4)`, `ExtentPosition(4)` -- partition-relative), Long AD (16 bytes: `ExtentLength(4)`, `ExtentLocation { LogicalBlockNumber(4), PartitionReferenceNumber(2) }`, `ImplementationUse(6)`), Extended AD (20 bytes). `ExtentLength` high 2 bits = extent type: 0=recorded, 1=unallocated (sparse), 2=allocated but not recorded.
 
 - [ ] `udf_vol_t` struct: `partition_start_sector`, `partition_len`, `lv_block_size`, `label_cs0[128]`, `root_icb_lba`, `root_icb_part`, `integrity_open`
 - [ ] `udf_descriptor_tag_t` struct + `udf_tag_verify(buf)`: verify CRC-ITU-T of tag (first 16 bytes) and data; return 0 on success
@@ -144,7 +144,7 @@ In `vfs_probe()`, for optical drives call the three probes in order: UDF > Jolie
 **Files:** `src/kernel/fs/optical/optical_probe.c` (new), `src/kernel/fs/partition.c` (extend)
 
 > [!NOTE]
-> Priority logic: call `udf_probe(atapi_idx)` first; if 1 → `udf_mount()`; else call `joliet_probe(atapi_idx)` (which internally detects the SVD); if Joliet SVD present → `joliet_mount()`; else call `iso9660_probe(atapi_idx)`; if 1 → `iso9660_mount()` (with Rock Ridge enabled automatically — it degrades gracefully if no SUSP area is found). A single disc can contain all three simultaneously (this is common for commercially pressed DVDs); the priority ensures the richest name and metadata set is presented. If none of the three probes succeed: the disc is not a data disc (may be audio-only); set `vol->audio_only = 1` and skip filesystem mount.
+> Priority logic: call `udf_probe(atapi_idx)` first; if 1 → `udf_mount()`; else call `joliet_probe(atapi_idx)` (which internally detects the SVD); if Joliet SVD present → `joliet_mount()`; else call `iso9660_probe(atapi_idx)`; if 1 → `iso9660_mount()` (with Rock Ridge enabled automatically -- it degrades gracefully if no SUSP area is found). A single disc can contain all three simultaneously (this is common for commercially pressed DVDs); the priority ensures the richest name and metadata set is presented. If none of the three probes succeed: the disc is not a data disc (may be audio-only); set `vol->audio_only = 1` and skip filesystem mount.
 
 - [ ] `optical_probe_and_mount(atapi_idx, letter)`: try UDF → Joliet → ISO 9660; log `[optical] %c: format=%s` with the winner; on all-fail: log `[optical] %c: no data filesystem (audio disc?)` and set audio-only flag
 - [ ] `optical_umount(letter)`: teardown whichever driver was mounted; free cached volume struct
@@ -166,7 +166,7 @@ Implement `GetVolumeInformationW` for optical drives. Return the disc volume ide
 - [ ] `optical_get_max_component_len(atapi_idx)` → 255 (UDF/Joliet L3), 64 (Joliet L2), 31 (Joliet L1), 31 (ISO base), 255 (Rock Ridge)
 - [ ] Wire into Win32 `GetVolumeInformationW` dispatch (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §5`)
 - [ ] `GetDriveTypeW` for any optical letter returns `DRIVE_CDROM` unconditionally (set in volume mount metadata at §6)
-- [ ] Commit: `"fs/optical: GetVolumeInformationW — disc label, filesystem name, serial CRC32, GetDriveTypeW=CDROM"`
+- [ ] Commit: `"fs/optical: GetVolumeInformationW -- disc label, filesystem name, serial CRC32, GetDriveTypeW=CDROM"`
 
 ## 8. Audio CD Raw Reads `[Sonnet]`
 
@@ -175,14 +175,14 @@ Detect audio tracks from the TOC. Issue READ CD (CDB `0xBE`) for raw 2 352-byte 
 **Files:** `src/kernel/drivers/ahci/ahci_atapi.c` (extend), `include/kernel/drivers/ahci.h` (extend)
 
 > [!NOTE]
-> READ CD: CDB[0]=`0xBE`, CDB[1]=`SectorType << 2` (`0x04` = CD-DA sectors, i.e. `SectorType=1`), CDB[2:5]=Starting LBA (big-endian), CDB[6:8]=Transfer length (big-endian, number of sectors), CDB[9]=`0xF0` (request raw 2352-byte sectors including sync, header, user data, EDC/ECC, subcode — `SyncData|Header|UserData|EDCandECC`), CDB[10]=SubChannelDataSelection=0 (no subchannel), CDB[11]=Control=0. Each sector read is 2 352 bytes: 12-byte sync, 4-byte header, 2 048 bytes user data, 288 bytes EDC/ECC. Audio data (16-bit stereo PCM, 44 100 Hz, big-endian) occupies bytes 16–2 063 within the raw sector. TOC audio track: `atapi_disc_info_t.tracks[i].audio == 1`.
+> READ CD: CDB[0]=`0xBE`, CDB[1]=`SectorType << 2` (`0x04` = CD-DA sectors, i.e. `SectorType=1`), CDB[2:5]=Starting LBA (big-endian), CDB[6:8]=Transfer length (big-endian, number of sectors), CDB[9]=`0xF0` (request raw 2352-byte sectors including sync, header, user data, EDC/ECC, subcode -- `SyncData|Header|UserData|EDCandECC`), CDB[10]=SubChannelDataSelection=0 (no subchannel), CDB[11]=Control=0. Each sector read is 2 352 bytes: 12-byte sync, 4-byte header, 2 048 bytes user data, 288 bytes EDC/ECC. Audio data (16-bit stereo PCM, 44 100 Hz, big-endian) occupies bytes 16–2 063 within the raw sector. TOC audio track: `atapi_disc_info_t.tracks[i].audio == 1`.
 
 - [ ] `atapi_read_cd_audio(atapi_idx, lba, count, buf)`: issue READ CD with `SectorType=0x01` (CD-DA); buffer must be `count * 2352` bytes; return 0 or error
 - [ ] `atapi_is_audio_disc(atapi_idx)`: call `atapi_get_disc_info()`; return 1 if any track has `audio == 1`
 - [ ] Log: `[ATAPI] %c: audio disc with %u audio track(s)` when audio tracks detected
 - [ ] Mark hook point for future CD ripping: `// TODO: route to audio ripping API when media player is implemented (→ 10-apps/TODO-xx-media-player)`; this TODO does not implement the ripping UI
 - [ ] `ahci_atapi_read_audio(atapi_idx, lba, count, buf)` public API added to `ahci.h`
-- [ ] Commit: `"drivers/atapi: READ CD audio — 2352-byte raw sectors, audio track detection, ripping hook comment"`
+- [ ] Commit: `"drivers/atapi: READ CD audio -- 2352-byte raw sectors, audio track detection, ripping hook comment"`
 
 ---
 
@@ -191,16 +191,16 @@ Detect audio tracks from the TOC. Issue READ CD (CDB `0xBE`) for raw 2 352-byte 
 
 | ⭐ | Feature                                             | 🪟 Win11                                                    | 🐧 Linux                                                      | 🚀 Impossible OS                                                   |
 |----|-----------------------------------------------------|----------------------------------------------------------|------------------------------------------------------------|-----------------------------------------------------------------|
-| 💎 | READ TOC + DISC INFO + TRACK INFO SCSI MMC commands | ✅ `cdrom.sys`; full MMC support; `IOCTL_CDROM_READ_TOC` | ✅ `cdrom.ko`; `cdrom_read_toc()`, `cdrom_get_disc_info()` | ⚠️ §1 — In progress — ; `atapi_dma_command`                     |
-| 💎 | ISO 9660 base                                       | ✅ `cdfs.sys`; full ISO 9660 R/O                         | ✅ `isofs.ko`; full ISO 9660 R/O                           | ⬜ §2 — PVD scan, directory record walk,                        |
-| 💎 | Rock Ridge SUSP                                     | ❌ `cdfs.sys` does not support Rock                      | ✅ `isofs.ko`; full Rock Ridge RRIP                        | ⬜ §3 — all 6 SUSP entry types                                  |
-| 💎 | Joliet UCS-2BE names                                | ✅ `cdfs.sys`; Joliet Level 1–3; preferred               | ✅ `isofs.ko`; Joliet with `-o iocharset`                  | ⬜ §4 — `joliet_to_utf8()`, `%/E` detection, El Torito          |
-| 💎 | UDF                                                 | ✅ `udfs.sys`; full UDF 1.5–2.6 R/W                      | ✅ `udf.ko`; UDF 1.5–2.6 R/O +                             | ⬜ §5 — UDF 1.5/2.0/2.01 R/O; AVDP→VDS→FSD→ICB chain            |
-| ⭐ | Auto-probe priority                                 | ✅ Windows mounts the "best" format                      | ✅ Linux uses `mount -t udf/iso9660`                       | ⬜ §6 — single in-kernel `optical_probe_and_mount()`; no daemon |
-| 💎 | `GetVolumeInformationW`                             | ✅ Full Win32 optical volume API                         | ✅ Via `libblkid` / `udisks2` (userspace);                 | ⬜ §7 — in-kernel; label from PVD/LVD/SVD; CRC32                |
-| 💎 | Audio CD raw READ CD                                | ✅ `cdaudio.sys` + `IOCTL_CDROM_READ_TOC`; Windows Media | ✅ `cdrom.ko`; `cdparanoia`/`cdda2wav` use raw READ        | ⬜ §8 — `atapi_read_cd_audio()`, audio track detection from     |
+| 💎 | READ TOC + DISC INFO + TRACK INFO SCSI MMC commands | ✅ `cdrom.sys`; full MMC support; `IOCTL_CDROM_READ_TOC` | ✅ `cdrom.ko`; `cdrom_read_toc()`, `cdrom_get_disc_info()` | ⚠️ §1 -- In progress -- ; `atapi_dma_command`                     |
+| 💎 | ISO 9660 base                                       | ✅ `cdfs.sys`; full ISO 9660 R/O                         | ✅ `isofs.ko`; full ISO 9660 R/O                           | ⬜ §2 -- PVD scan, directory record walk,                        |
+| 💎 | Rock Ridge SUSP                                     | ❌ `cdfs.sys` does not support Rock                      | ✅ `isofs.ko`; full Rock Ridge RRIP                        | ⬜ §3 -- all 6 SUSP entry types                                  |
+| 💎 | Joliet UCS-2BE names                                | ✅ `cdfs.sys`; Joliet Level 1–3; preferred               | ✅ `isofs.ko`; Joliet with `-o iocharset`                  | ⬜ §4 -- `joliet_to_utf8()`, `%/E` detection, El Torito          |
+| 💎 | UDF                                                 | ✅ `udfs.sys`; full UDF 1.5–2.6 R/W                      | ✅ `udf.ko`; UDF 1.5–2.6 R/O +                             | ⬜ §5 -- UDF 1.5/2.0/2.01 R/O; AVDP→VDS→FSD→ICB chain            |
+| ⭐ | Auto-probe priority                                 | ✅ Windows mounts the "best" format                      | ✅ Linux uses `mount -t udf/iso9660`                       | ⬜ §6 -- single in-kernel `optical_probe_and_mount()`; no daemon |
+| 💎 | `GetVolumeInformationW`                             | ✅ Full Win32 optical volume API                         | ✅ Via `libblkid` / `udisks2` (userspace);                 | ⬜ §7 -- in-kernel; label from PVD/LVD/SVD; CRC32                |
+| 💎 | Audio CD raw READ CD                                | ✅ `cdaudio.sys` + `IOCTL_CDROM_READ_TOC`; Windows Media | ✅ `cdrom.ko`; `cdparanoia`/`cdda2wav` use raw READ        | ⬜ §8 -- `atapi_read_cd_audio()`, audio track detection from     |
 
-> **After §1–§8:** Impossible OS handles every common optical disc format — including Rock Ridge (which Windows 11 does not support), UDF for DVD/Blu-ray, and audio CDs — all resolved in-kernel without a userspace daemon. The in-kernel auto-probe chain with graceful audio-disc detection is a level of optical intelligence that neither Windows nor Linux achieves in the kernel alone.
+> **After §1–§8:** Impossible OS handles every common optical disc format -- including Rock Ridge (which Windows 11 does not support), UDF for DVD/Blu-ray, and audio CDs -- all resolved in-kernel without a userspace daemon. The in-kernel auto-probe chain with graceful audio-disc detection is a level of optical intelligence that neither Windows nor Linux achieves in the kernel alone.
 
 ## Verification
 
@@ -214,5 +214,5 @@ Detect audio tracks from the TOC. Issue READ CD (CDB `0xBE`) for raw 2 352-byte 
 - [ ] Disc label: `GetVolumeInformationW("D:", ...)` returns correct label for ISO, Joliet, and UDF volumes; `GetDriveTypeW("D:")` returns `DRIVE_CDROM (5)`
 - [ ] Write protection: `WriteFile` to any optical drive letter → `ERROR_WRITE_PROTECT`; no crash
 - [ ] Audio CD: audio-only ISO image (tracks with `audio=1` in TOC); log `[optical] D: audio disc with N audio track(s)`; `ahci_atapi_read_audio(idx, lba, 1, buf)` returns 2352 bytes without error; sector 0 starts with 12-byte sync header `0x00 0xFF...0xFF 0x00`
-- [ ] Open UDF integrity: UDF volume with `IntegrityType=0` (open/dirty); mount → `[UDF] volume integrity open — mounting read-only`; `WriteFile` returns `ERROR_WRITE_PROTECT`
+- [ ] Open UDF integrity: UDF volume with `IntegrityType=0` (open/dirty); mount → `[UDF] volume integrity open -- mounting read-only`; `WriteFile` returns `ERROR_WRITE_PROTECT`
 - [ ] Commit: `"fs/optical: complete ISO9660 + Rock Ridge + Joliet + UDF + auto-probe + audio CD read"`

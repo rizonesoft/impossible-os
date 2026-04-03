@@ -1,11 +1,11 @@
 @echo off
-:: run-all-fs-tests.bat — Run all filesystem tests sequentially
+:: run-all-fs-tests.bat -- Run all filesystem tests sequentially
 ::
 :: Tests each filesystem type one at a time. You'll need to close
 :: QEMU (or let the OS shut down) between each test.
 
 echo ==============================
-echo  Impossible OS — FS Test Suite
+echo  Impossible OS -- FS Test Suite
 echo ==============================
 echo.
 

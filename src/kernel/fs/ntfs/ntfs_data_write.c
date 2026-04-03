@@ -1,11 +1,11 @@
 /* ============================================================================
- * ntfs_data_write.c — File Write Engine (§16.1)
+ * ntfs_data_write.c -- File Write Engine (§16.1)
  *
  * Implements write operations for NTFS files:
- *   ntfs_write_data()          — Write bytes to a file (resident or non-resident)
- *   ntfs_truncate()            — Set file size (shrink or grow)
- *   ntfs_set_file_attributes() — Update DOS attribute flags
- *   ntfs_set_file_time()       — Set file timestamps (Unix → FILETIME)
+ *   ntfs_write_data()          -- Write bytes to a file (resident or non-resident)
+ *   ntfs_truncate()            -- Set file size (shrink or grow)
+ *   ntfs_set_file_attributes() -- Update DOS attribute flags
+ *   ntfs_set_file_time()       -- Set file timestamps (Unix → FILETIME)
  *
  * Builds on §12.1–§12.4 infrastructure:
  *   ntfs_attr_find / ntfs_attr_update / ntfs_attr_add / ntfs_attr_remove
@@ -192,7 +192,7 @@ static int rewrite_nonres_attr(uint8_t *rec, uint32_t attr_off,
 }
 
 /* ============================================================================
- * ntfs_write_data — Write bytes to a file
+ * ntfs_write_data -- Write bytes to a file
  * ============================================================================ */
 
 int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
@@ -226,7 +226,7 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
     }
 
     txn = ntfs_txn_begin(vol);
-    /* txn may be NULL if journal not loaded — continue without journaling */
+    /* txn may be NULL if journal not loaded -- continue without journaling */
 
     now_ft = unix_to_filetime(0); /* 0 → uses FILETIME_BASE_2026 equivalent */
 
@@ -398,7 +398,7 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
 }
 
 /* ============================================================================
- * ntfs_truncate — Set file data size
+ * ntfs_truncate -- Set file data size
  * ============================================================================ */
 
 int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
@@ -431,7 +431,7 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
     }
 
     txn = ntfs_txn_begin(vol);
-    /* txn may be NULL if journal not loaded — continue without journaling */
+    /* txn may be NULL if journal not loaded -- continue without journaling */
 
     now_ft = unix_to_filetime(0);
 
@@ -529,12 +529,12 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
             for (i = 0; i < run_count; i++) {
                 uint64_t run_end = vcn + runs[i].length;
                 if (vcn >= new_clusters) {
-                    /* This whole run is beyond new_size — free it */
+                    /* This whole run is beyond new_size -- free it */
                     if (runs[i].lcn != NTFS_LCN_SPARSE)
                         ntfs_free_clusters(vol, runs[i].lcn, runs[i].length);
                     runs[i].length = 0;
                 } else if (run_end > new_clusters) {
-                    /* Run straddles the cut point — trim it */
+                    /* Run straddles the cut point -- trim it */
                     uint64_t keep  = new_clusters - vcn;
                     uint64_t freed = runs[i].length - keep;
                     if (runs[i].lcn != NTFS_LCN_SPARSE)
@@ -629,7 +629,7 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
 }
 
 /* ============================================================================
- * ntfs_set_file_attributes — Update DOS attribute flags
+ * ntfs_set_file_attributes -- Update DOS attribute flags
  * ============================================================================ */
 
 int ntfs_set_file_attributes(struct ntfs_volume *vol, uint64_t inode,
@@ -664,7 +664,7 @@ int ntfs_set_file_attributes(struct ntfs_volume *vol, uint64_t inode,
     }
 
     txn = ntfs_txn_begin(vol);
-    /* txn may be NULL if journal not loaded — continue without journaling */
+    /* txn may be NULL if journal not loaded -- continue without journaling */
 
     attr_off    = (uint32_t)(si_attr - rec);
     content_off = attr_off + ah.content_offset;
@@ -691,7 +691,7 @@ int ntfs_set_file_attributes(struct ntfs_volume *vol, uint64_t inode,
 }
 
 /* ============================================================================
- * ntfs_set_file_time — Set file timestamps (Unix → FILETIME)
+ * ntfs_set_file_time -- Set file timestamps (Unix → FILETIME)
  * ============================================================================ */
 
 int ntfs_set_file_time(struct ntfs_volume *vol, uint64_t inode,
@@ -728,7 +728,7 @@ int ntfs_set_file_time(struct ntfs_volume *vol, uint64_t inode,
     }
 
     txn = ntfs_txn_begin(vol);
-    /* txn may be NULL if journal not loaded — continue without journaling */
+    /* txn may be NULL if journal not loaded -- continue without journaling */
 
     attr_off    = (uint32_t)(si_attr - rec);
     content_off = attr_off + ah.content_offset;

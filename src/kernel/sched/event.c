@@ -1,11 +1,11 @@
 /* ============================================================================
- * event.c — Kernel wait/event objects
+ * event.c -- Kernel wait/event objects
  *
  * Implements:
- *   EVENT_MANUAL_RESET — stays signalled until event_reset(); wakes ALL waiters
- *   EVENT_AUTO_RESET   — clears on first wake; wakes exactly ONE waiter
+ *   EVENT_MANUAL_RESET -- stays signalled until event_reset(); wakes ALL waiters
+ *   EVENT_AUTO_RESET   -- clears on first wake; wakes exactly ONE waiter
  *
- * event_set() is safe to call from IRQ context — it only writes flags and
+ * event_set() is safe to call from IRQ context -- it only writes flags and
  * sets thread state to THREAD_READY.  event_wait() must be from thread
  * context only (it calls yield()).
  * ============================================================================ */
@@ -70,7 +70,7 @@ static void enqueue_and_block(event_t *ev)
         ev->waiter_threads[ev->num_waiters] = thr ? thr->id : 0;
         ev->num_waiters++;
     }
-    /* else: queue full — fall through to yield as spin-fallback */
+    /* else: queue full -- fall through to yield as spin-fallback */
 
     if (thr)
         thr->state = THREAD_BLOCKED;
@@ -90,7 +90,7 @@ void event_init(event_t *ev, const char *name,
 }
 
 /* ---------------------------------------------------------------------------
- * event_wait — block until event is signalled
+ * event_wait -- block until event is signalled
  *
  * MANUAL_RESET: woken along with all other waiters; event stays set.
  * AUTO_RESET:   woken alone; caller atomically "consumes" the signal.
@@ -103,17 +103,17 @@ void event_wait(event_t *ev)
 
     while (!atomic_read(&ev->state)) {
         enqueue_and_block(ev);
-        /* Re-check on wake — could have been a spurious wakeup due to
+        /* Re-check on wake -- could have been a spurious wakeup due to
          * wait-queue overflow or scheduler reschedule. */
     }
 
-    /* AUTO_RESET: consume the signal — clear before returning. */
+    /* AUTO_RESET: consume the signal -- clear before returning. */
     if (ev->type == EVENT_AUTO_RESET)
         atomic_set(&ev->state, 0);
 }
 
 /* ---------------------------------------------------------------------------
- * event_set — signal the event
+ * event_set -- signal the event
  *
  * MANUAL_RESET: set state, wake ALL waiters.
  * AUTO_RESET:   if waiters exist, wake ONE and leave state=0;
@@ -129,7 +129,7 @@ void event_set(event_t *ev)
     } else {
         /* AUTO_RESET */
         if (ev->num_waiters > 0) {
-            /* Don't set state — wake one waiter, let event_wait clear it */
+            /* Don't set state -- wake one waiter, let event_wait clear it */
             atomic_set(&ev->state, 1);
             wake_first_waiter(ev);
         } else {
@@ -141,7 +141,7 @@ void event_set(event_t *ev)
 }
 
 /* ---------------------------------------------------------------------------
- * event_reset — clear a MANUAL_RESET event
+ * event_reset -- clear a MANUAL_RESET event
  * ------------------------------------------------------------------------- */
 void event_reset(event_t *ev)
 {
@@ -149,7 +149,7 @@ void event_reset(event_t *ev)
 }
 
 /* ---------------------------------------------------------------------------
- * event_wait_timeout — wait with a deadline in milliseconds
+ * event_wait_timeout -- wait with a deadline in milliseconds
  *
  * Returns 1 if the event was signalled before timeout, 0 on timeout.
  * Must be called from thread context only.
@@ -171,7 +171,7 @@ int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
          * the thread is NEVER rescheduled unless event_set() fires from
          * an IRQ handler.  If the IRQ never fires (e.g. VirtualBox AHCI
          * MSI not delivered), the thread stays blocked forever and the
-         * timeout check above never runs — a permanent hang.
+         * timeout check above never runs -- a permanent hang.
          *
          * Instead, use plain yield() which keeps the thread READY.
          * The scheduler will reschedule us, and we'll re-check the
@@ -188,7 +188,7 @@ int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
 }
 
 /* ---------------------------------------------------------------------------
- * event_is_set — non-blocking state query
+ * event_is_set -- non-blocking state query
  * ------------------------------------------------------------------------- */
 int event_is_set(const event_t *ev)
 {

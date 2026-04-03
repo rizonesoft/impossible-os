@@ -1,5 +1,5 @@
 /* ============================================================================
- * gfx.h — 2D Compositing Library: Core Types and Primitives
+ * gfx.h -- 2D Compositing Library: Core Types and Primitives
  *
  * Provides a hardware-independent surface abstraction for 2D rendering.
  * All drawing operations target a `gfx_surface_t` which can represent

@@ -1,6 +1,6 @@
-# TODO-05 — Native API Layer (Nt/Zw)
+# TODO-05 -- Native API Layer (Nt/Zw)
 
-> **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a complete NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT) with 470 service entries, and the `NtCurrentTeb()` / `NtCurrentPeb()` inline contract. This is the exact interface that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel. This TODO is the **master registry** for all NT syscall endpoints — some are implemented here, others are implemented by domain-specific TODOs but get their SSDT slots reserved and documented here.
+> **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a complete NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT) with 470 service entries, and the `NtCurrentTeb()` / `NtCurrentPeb()` inline contract. This is the exact interface that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel. This TODO is the **master registry** for all NT syscall endpoints -- some are implemented here, others are implemented by domain-specific TODOs but get their SSDT slots reserved and documented here.
 
 > [!IMPORTANT]
 > **Current state:** `syscall.c` dispatches via `INT 0x80` with Linux-style `SYS_WRITE=1`, `SYS_READ=2`, … `SYS_MUNMAP=38`. Return value is a plain `int64_t`. No `NTSTATUS`, no `NtXxx`/`ZwXxx` entry points, no `SYSCALL`/`SYSRET` MSR setup, no SSDT. The existing 22 syscalls are the migration starting point; none are deleted here.
@@ -9,25 +9,25 @@
 
 - [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h)
 - [`src/kernel/sched/syscall.c`](../../src/kernel/sched/syscall.c)
-- [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) — `task_exec`, ring-3 entry frame
-- [`src/kernel/smp/smp.c`](../../src/kernel/smp/smp.c) — MSR_GS_BASE, per-CPU data
-- [`include/kernel/msr.h`](../../include/kernel/msr.h) — MSR_IA32_STAR, MSR_IA32_LSTAR, MSR_IA32_FMASK already defined
-- [`include/kernel/gdt.h`](../../include/kernel/gdt.h) — GDT_KERNEL_CODE, GDT_USER_CODE selectors
-- → XREF: `TODO-03-object-manager.md` — Ob-routed NtXxx functions (NtClose, NtDuplicateObject, NtQueryObject, NtOpenDirectoryObject, NtQueryDirectoryObject already implemented); SSDT entries for file/process/sync depend on TODO-03 §3–§10
-- → XREF: `TODO-04-peb-teb-user-abi.md §3–§4` — `swapgs` in syscall entry/exit uses the TEB GS contract; KERNEL_GS_BASE per-task
-- → XREF: `TODO-01-kernel-init-sequencing.md §3` — syscall fast path init belongs in Phase 1 (after GDT/IDT, before scheduler)
-- → XREF: `TODO-07-time-filetime-management.md §8–§9` — NtSetTimerResolution/NtQueryTimerResolution (§8), NtQuerySystemTime/NtSetSystemTime/NtQueryPerformanceCounter (§9); service numbers reserved in §4
-- → XREF: `TODO-10-exception-dispatch-seh.md §5` — NtRaiseException and NtContinue; SSDT indices reserved in §4
-- → XREF: `TODO-11-security-reference-monitor.md §5,§12` — §5 SeAccessCheck bypasses for kernel-mode (ZwXxx) callers; §12 wires NtAccessCheck, NtOpenProcessToken, etc. to SSDT
-- → XREF: `TODO-12-alpc-message-ports.md §8` — ALPC port syscalls (NtCreatePort, NtAlpcSendWaitReceivePort, etc.); SSDT indices reserved in §4
-- → XREF: `TODO-13-registry-completion.md §4` — Registry syscalls (NtCreateKey, NtOpenKey, NtSetValueKey, etc.); SSDT indices reserved in §4
-- → XREF: `TODO-15-power-management.md §12` — NtSetSystemPowerState, NtInitiatePowerAction; SSDT indices reserved in §4
-- → XREF: `TODO-18-kernel-debugger-kd-protocol.md §13` — NtDebugActiveProcess, NtWaitForDebugEvent; SSDT indices reserved in §4
-- → XREF: `TODO-10-exception-dispatch-seh.md §13` — ProbeForRead/ProbeForWrite safe probing used by §12 and all NtXxx handlers
-- → XREF: `TODO-17-kernel-security-hardening.md` — SSDT integrity protection (§26) complements KASLR and SMEP/SMAP
-- → XREF: `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §8` — Win32k user-mode callback dispatch via §25 KeUserModeCallback; shadow SSDT stub registered in §4
-- → XREF: `TODO-06-irql-model-dpcs.md §11,§12` — KAPC object type and APC delivery mechanism; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume KeInitializeApc/KeInsertQueueApc
-- → XREF: `TODO-09-process-model-extensions.md §4,§5,§8,§10,§11,§13` — §4 priority class, §5 scheduling policy, §8 accounting fields, §10 CPU affinity, §11 mitigation policy all flow through `NtSetInformationProcess`/`NtQueryInformationProcess` (§10 of this TODO); §13 wires Job Object SSDT entries 0x0160–0x0167; §12 pledge check integrates into the SSDT dispatcher alongside §24 syscall filter
+- [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) -- `task_exec`, ring-3 entry frame
+- [`src/kernel/smp/smp.c`](../../src/kernel/smp/smp.c) -- MSR_GS_BASE, per-CPU data
+- [`include/kernel/msr.h`](../../include/kernel/msr.h) -- MSR_IA32_STAR, MSR_IA32_LSTAR, MSR_IA32_FMASK already defined
+- [`include/kernel/gdt.h`](../../include/kernel/gdt.h) -- GDT_KERNEL_CODE, GDT_USER_CODE selectors
+- → XREF: `TODO-03-object-manager.md` -- Ob-routed NtXxx functions (NtClose, NtDuplicateObject, NtQueryObject, NtOpenDirectoryObject, NtQueryDirectoryObject already implemented); SSDT entries for file/process/sync depend on TODO-03 §3–§10
+- → XREF: `TODO-04-peb-teb-user-abi.md §3–§4` -- `swapgs` in syscall entry/exit uses the TEB GS contract; KERNEL_GS_BASE per-task
+- → XREF: `TODO-01-kernel-init-sequencing.md §3` -- syscall fast path init belongs in Phase 1 (after GDT/IDT, before scheduler)
+- → XREF: `TODO-07-time-filetime-management.md §8–§9` -- NtSetTimerResolution/NtQueryTimerResolution (§8), NtQuerySystemTime/NtSetSystemTime/NtQueryPerformanceCounter (§9); service numbers reserved in §4
+- → XREF: `TODO-10-exception-dispatch-seh.md §5` -- NtRaiseException and NtContinue; SSDT indices reserved in §4
+- → XREF: `TODO-11-security-reference-monitor.md §5,§12` -- §5 SeAccessCheck bypasses for kernel-mode (ZwXxx) callers; §12 wires NtAccessCheck, NtOpenProcessToken, etc. to SSDT
+- → XREF: `TODO-12-alpc-message-ports.md §8` -- ALPC port syscalls (NtCreatePort, NtAlpcSendWaitReceivePort, etc.); SSDT indices reserved in §4
+- → XREF: `TODO-13-registry-completion.md §4` -- Registry syscalls (NtCreateKey, NtOpenKey, NtSetValueKey, etc.); SSDT indices reserved in §4
+- → XREF: `TODO-15-power-management.md §12` -- NtSetSystemPowerState, NtInitiatePowerAction; SSDT indices reserved in §4
+- → XREF: `TODO-18-kernel-debugger-kd-protocol.md §13` -- NtDebugActiveProcess, NtWaitForDebugEvent; SSDT indices reserved in §4
+- → XREF: `TODO-10-exception-dispatch-seh.md §13` -- ProbeForRead/ProbeForWrite safe probing used by §12 and all NtXxx handlers
+- → XREF: `TODO-17-kernel-security-hardening.md` -- SSDT integrity protection (§26) complements KASLR and SMEP/SMAP
+- → XREF: `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §8` -- Win32k user-mode callback dispatch via §25 KeUserModeCallback; shadow SSDT stub registered in §4
+- → XREF: `TODO-06-irql-model-dpcs.md §11,§12` -- KAPC object type and APC delivery mechanism; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume KeInitializeApc/KeInsertQueueApc
+- → XREF: `TODO-09-process-model-extensions.md §4,§5,§8,§10,§11,§13` -- §4 priority class, §5 scheduling policy, §8 accounting fields, §10 CPU affinity, §11 mitigation policy all flow through `NtSetInformationProcess`/`NtQueryInformationProcess` (§10 of this TODO); §13 wires Job Object SSDT entries 0x0160–0x0167; §12 pledge check integrates into the SSDT dispatcher alongside §24 syscall filter
 
 ## Outcome
 
@@ -38,18 +38,18 @@
 - The existing 22 `SYS_*` calls are migrated to `Nt`-named equivalents at stable indices.
 - `NtCurrentTeb()` (`mov rax, gs:[0x30]`) and `NtCurrentPeb()` (`mov rax, gs:[0x60]`) return correct values per TODO-04.
 - All endpoint categories covered: file I/O, process/thread, memory, sync, registry, security/token, sections, timers, ALPC ports, debug, power, namespace, system info, atoms.
-- Per-process syscall filtering allows processes to restrict which syscalls their children can invoke — parity with Win11 SystemCallDisablePolicy and Linux seccomp-bpf.
+- Per-process syscall filtering allows processes to restrict which syscalls their children can invoke -- parity with Win11 SystemCallDisablePolicy and Linux seccomp-bpf.
 - `KeUserModeCallback()` enables the kernel to call user-mode functions (window procedures, hooks) and await their return via `NtCallbackReturn`.
-- SSDT pages are hardware write-protected after init — simpler and more secure than PatchGuard periodic checksums.
+- SSDT pages are hardware write-protected after init -- simpler and more secure than PatchGuard periodic checksums.
 
 ## Implementation Order
 
 | ⭐  | Order | Deliverable                                                    | Depends On      | Status |
 | --- | :---: | -------------------------------------------------------------- | --------------- | :----: |
-| 💎  |   1   | NTSTATUS type and canonical status codes                       | —               |  [ ]   |
+| 💎  |   1   | NTSTATUS type and canonical status codes                       | --               |  [ ]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [ ]   |
 | 💎  |   3   | INT 0x2E compatibility path                                    | §2              |  [ ]   |
-| 💎  |   4   | System Service Descriptor Table (SSDT) — 470 entries           | §1              |  [ ]   |
+| 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries           | §1              |  [ ]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4          |  [ ]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3  |  [ ]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5  |  [ ]   |
@@ -73,11 +73,11 @@
 | 💎  |  25   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-04 §5  |  [ ]   |
 | ⭐  |  26   | SSDT integrity protection (hardware write-protect)             | §4              |  [ ]   |
 
-> 💎 = parity — Windows NT and Linux both have equivalents for these categories.
-> ⭐ = exclusive — the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
+> 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
+> ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
 
 > [!IMPORTANT]
-> **Self-contained execution model:** §1–§5 (NTSTATUS, SYSCALL/SYSRET, INT 0x2E, SSDT, migration) are fully self-contained — no external blockers. §9–§12, §22–§26 are also unblocked. Sections §6–§8, §13–§21 wire domain-specific syscalls through the SSDT and depend on their respective domain TODOs (Object Manager, Registry, SRM, ALPC, etc.). This is by design — this TODO is the **master registry** for all NT syscall endpoints. Domain TODOs implement the logic; this TODO provides the SSDT wiring. The unblocked core (§1–§5 + §9–§12 + §22–§26) delivers a fully functional SYSCALL/SYSRET fast path with 470 SSDT slots, NTSTATUS return values, and the audit/filter/integrity infrastructure. Domain-specific NtXxx wrappers activate as their domain TODOs complete.
+> **Self-contained execution model:** §1–§5 (NTSTATUS, SYSCALL/SYSRET, INT 0x2E, SSDT, migration) are fully self-contained -- no external blockers. §9–§12, §22–§26 are also unblocked. Sections §6–§8, §13–§21 wire domain-specific syscalls through the SSDT and depend on their respective domain TODOs (Object Manager, Registry, SRM, ALPC, etc.). This is by design -- this TODO is the **master registry** for all NT syscall endpoints. Domain TODOs implement the logic; this TODO provides the SSDT wiring. The unblocked core (§1–§5 + §9–§12 + §22–§26) delivers a fully functional SYSCALL/SYSRET fast path with 470 SSDT slots, NTSTATUS return values, and the audit/filter/integrity infrastructure. Domain-specific NtXxx wrappers activate as their domain TODOs complete.
 
 ---
 
@@ -90,16 +90,16 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
   - **Success / informational:**
     - `STATUS_SUCCESS                    0x00000000`
     - `STATUS_PENDING                    0x00000103`
-    - `STATUS_BUFFER_OVERFLOW            0x80000005` — data truncated; partial result returned
-    - `STATUS_NO_MORE_FILES              0x80000006` — directory enumeration exhausted
-    - `STATUS_NO_MORE_ENTRIES            0x8000001A` — registry/object enumeration exhausted
-    - `STATUS_ALERTED                    0x00000101` — thread was alerted during wait
-    - `STATUS_TIMEOUT                    0x00000102` — wait timed out (not an error)
-  - **Error codes — object / handle:**
+    - `STATUS_BUFFER_OVERFLOW            0x80000005` -- data truncated; partial result returned
+    - `STATUS_NO_MORE_FILES              0x80000006` -- directory enumeration exhausted
+    - `STATUS_NO_MORE_ENTRIES            0x8000001A` -- registry/object enumeration exhausted
+    - `STATUS_ALERTED                    0x00000101` -- thread was alerted during wait
+    - `STATUS_TIMEOUT                    0x00000102` -- wait timed out (not an error)
+  - **Error codes -- object / handle:**
     - `STATUS_UNSUCCESSFUL               0xC0000001`
     - `STATUS_NOT_IMPLEMENTED            0xC0000002`
     - `STATUS_INVALID_INFO_CLASS         0xC0000003`
-    - `STATUS_ACCESS_VIOLATION           0xC0000005` — user-buffer probe failed
+    - `STATUS_ACCESS_VIOLATION           0xC0000005` -- user-buffer probe failed
     - `STATUS_INVALID_HANDLE             0xC0000008`
     - `STATUS_INVALID_PARAMETER          0xC000000D`
     - `STATUS_NO_MEMORY                  0xC0000017`
@@ -111,10 +111,10 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
     - `STATUS_PORT_DISCONNECTED          0xC0000037`
     - `STATUS_OBJECT_PATH_NOT_FOUND      0xC000003A`
     - `STATUS_PORT_CONNECTION_REFUSED    0xC0000041`
-  - **Error codes — sync:**
+  - **Error codes -- sync:**
     - `STATUS_SEMAPHORE_LIMIT_EXCEEDED   0xC0000044`
     - `STATUS_MUTANT_NOT_OWNED           0xC0000046`
-  - **Error codes — file I/O:**
+  - **Error codes -- file I/O:**
     - `STATUS_END_OF_FILE                0xC0000011`
     - `STATUS_FILE_LOCK_CONFLICT         0xC0000054`
     - `STATUS_RANGE_NOT_LOCKED           0xC000007E`
@@ -123,70 +123,70 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
     - `STATUS_DIRECTORY_NOT_EMPTY        0xC0000101`
     - `STATUS_NOT_A_DIRECTORY            0xC0000103`
     - `STATUS_FILE_IS_A_DIRECTORY        0xC00000BA`
-  - **Error codes — process / thread:**
+  - **Error codes -- process / thread:**
     - `STATUS_PROCESS_IS_TERMINATING     0xC000010A`
     - `STATUS_THREAD_IS_TERMINATING      0xC000004B`
     - `STATUS_THREAD_NOT_IN_PROCESS      0xC000012A`
     - `STATUS_SUSPEND_COUNT_EXCEEDED     0xC000004A`
-  - **Error codes — memory:**
+  - **Error codes -- memory:**
     - `STATUS_CONFLICTING_ADDRESSES      0xC0000018`
     - `STATUS_SECTION_NOT_EXTENDED       0xC0000087`
     - `STATUS_INVALID_PAGE_PROTECTION    0xC0000045`
     - `STATUS_ALREADY_COMMITTED          0xC0000021`
     - `STATUS_MEMORY_NOT_ALLOCATED       0xC00000A0`
-  - **Error codes — registry:**
+  - **Error codes -- registry:**
     - `STATUS_KEY_DELETED                0xC000017C`
     - `STATUS_KEY_HAS_CHILDREN           0xC0000180`
     - `STATUS_CHILD_MUST_BE_VOLATILE     0xC0000181`
-  - **Error codes — security:**
+  - **Error codes -- security:**
     - `STATUS_PRIVILEGE_NOT_HELD         0xC0000061`
     - `STATUS_BAD_IMPERSONATION_LEVEL    0xC00000A5`
-  - **Error codes — debug:**
+  - **Error codes -- debug:**
     - `STATUS_DEBUGGER_INACTIVE          0xC0000354`
     - `STATUS_PORT_NOT_SET               0xC0000353`
-  - **Error codes — power / misc:**
+  - **Error codes -- power / misc:**
     - `STATUS_NOT_SUPPORTED              0xC00000BB`
     - `STATUS_INVALID_DEVICE_REQUEST     0xC0000010`
     - `STATUS_DEVICE_NOT_READY           0xC00000A3`
 - [ ] Create `include/kernel/nt/nt_types.h` with foundational NT types:
-  - `HANDLE` — already `typedef int32_t HANDLE` in `include/kernel/ob/handle_table.h`; re-export, do not redefine
-  - `IO_STATUS_BLOCK` — `NTSTATUS Status`, `uint64_t Information`
-  - `UNICODE_STRING` — re-export from `include/kernel/ob/peb.h` (already defined per TODO-04)
-  - `OBJECT_ATTRIBUTES` — `uint64_t Length`, `HANDLE RootDirectory`, `UNICODE_STRING *ObjectName`, `uint32_t Attributes` (`OBJ_CASE_INSENSITIVE = 0x40`, `OBJ_KERNEL_HANDLE = 0x200`, `OBJ_INHERIT = 0x02`, `OBJ_OPENIF = 0x80`)
-  - `LARGE_INTEGER` — re-export from `include/kernel/ob/peb.h` (already defined per TODO-04)
+  - `HANDLE` -- already `typedef int32_t HANDLE` in `include/kernel/ob/handle_table.h`; re-export, do not redefine
+  - `IO_STATUS_BLOCK` -- `NTSTATUS Status`, `uint64_t Information`
+  - `UNICODE_STRING` -- re-export from `include/kernel/ob/peb.h` (already defined per TODO-04)
+  - `OBJECT_ATTRIBUTES` -- `uint64_t Length`, `HANDLE RootDirectory`, `UNICODE_STRING *ObjectName`, `uint32_t Attributes` (`OBJ_CASE_INSENSITIVE = 0x40`, `OBJ_KERNEL_HANDLE = 0x200`, `OBJ_INHERIT = 0x02`, `OBJ_OPENIF = 0x80`)
+  - `LARGE_INTEGER` -- re-export from `include/kernel/ob/peb.h` (already defined per TODO-04)
   - `ACCESS_MASK` = `uint32_t`; `GENERIC_READ = 0x80000000`, `GENERIC_WRITE = 0x40000000`, `GENERIC_EXECUTE = 0x20000000`, `GENERIC_ALL = 0x10000000`
-  - `CLIENT_ID` — `uint64_t UniqueProcess`, `uint64_t UniqueThread`
-  - `CONTEXT` — forward-declare; full definition in TODO-10
-- [ ] Annotate each `NTSTATUS` code with the condition that triggers it — serves as inline documentation
-- [ ] Commit: `"kernel: nt — NTSTATUS type and canonical status codes"`
+  - `CLIENT_ID` -- `uint64_t UniqueProcess`, `uint64_t UniqueThread`
+  - `CONTEXT` -- forward-declare; full definition in TODO-10
+- [ ] Annotate each `NTSTATUS` code with the condition that triggers it -- serves as inline documentation
+- [ ] Commit: `"kernel: nt -- NTSTATUS type and canonical status codes"`
 
 **Test checkpoint:** `bash scripts/build.sh` → `=== BUILD OK ===`. `NT_SUCCESS(0)` == true, `NT_ERROR(0xC0000001)` == true, `NT_WARNING(0x80000005)` == true, `NT_INFORMATION(0x00000101)` == true verified by unit test.
 
 ## 2. SYSCALL/SYSRET Fast Path
 
 > [!WARNING]
-> **High-risk section.** Writing wrong values to IA32_STAR, IA32_LSTAR, IA32_FMASK, or EFER will triple-fault on the next `syscall` instruction with no diagnostic output. A bug in the assembly entry point (`swapgs` sequence, stack switch, callee-save frame) corrupts every subsequent syscall. **Rollback:** If this breaks, revert the MSR writes and keep the existing `INT 0x80` handler — it remains registered until §3 completes. Test each MSR write individually before enabling EFER_SCE.
+> **High-risk section.** Writing wrong values to IA32_STAR, IA32_LSTAR, IA32_FMASK, or EFER will triple-fault on the next `syscall` instruction with no diagnostic output. A bug in the assembly entry point (`swapgs` sequence, stack switch, callee-save frame) corrupts every subsequent syscall. **Rollback:** If this breaks, revert the MSR writes and keep the existing `INT 0x80` handler -- it remains registered until §3 completes. Test each MSR write individually before enabling EFER_SCE.
 
 Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSCALL`: CPU saves RIP→RCX, RFLAGS→R11; jumps to `IA32_LSTAR`. On `SYSRET`: restores RIP from RCX, RFLAGS from R11; returns to ring 3.
 
 - [ ] Use existing MSR constants from `include/kernel/msr.h`:
-  - `MSR_IA32_STAR    0xC0000081` — CS/SS selectors for SYSCALL/SYSRET
-  - `MSR_IA32_LSTAR   0xC0000082` — 64-bit SYSCALL entry point address
-  - `MSR_IA32_FMASK   0xC0000084` — RFLAGS mask to clear on SYSCALL entry
+  - `MSR_IA32_STAR    0xC0000081` -- CS/SS selectors for SYSCALL/SYSRET
+  - `MSR_IA32_LSTAR   0xC0000082` -- 64-bit SYSCALL entry point address
+  - `MSR_IA32_FMASK   0xC0000084` -- RFLAGS mask to clear on SYSCALL entry
 - [ ] Write `syscall_entry` in `src/kernel/sched/syscall_entry.asm`:
-  - `swapgs` (exchange user GS/TEB → kernel GS/per-CPU) — requires TODO-04 §3 to be done first
+  - `swapgs` (exchange user GS/TEB → kernel GS/per-CPU) -- requires TODO-04 §3 to be done first
   - Save user RSP; load kernel RSP from `IA32_KERNEL_GS_BASE` or per-CPU TSS RSP0
-  - Push minimal callee-save frame (do not push RCX/R11 — they are the saved user RIP/RFLAGS)
-  - `call syscall_dispatch` — C handler taking `(syscall_number, arg1..arg5)`
+  - Push minimal callee-save frame (do not push RCX/R11 -- they are the saved user RIP/RFLAGS)
+  - `call syscall_dispatch` -- C handler taking `(syscall_number, arg1..arg5)`
   - Restore frame; `swapgs`; `sysretq`
 - [ ] In Phase 1 init (after GDT/IDT, before scheduler): call `syscall_init_fast()`:
-  - `wrmsr(MSR_IA32_STAR,  (GDT_KERNEL_CODE << 32) | ((GDT_USER_CODE - 16) << 48))` — ring-0 CS on SYSCALL, ring-3 CS on SYSRET (SYSRET loads CS from STAR[63:48]+16)
-  - `wrmsr(MSR_IA32_LSTAR, (uint64_t)syscall_entry)` — entry point
-  - `wrmsr(MSR_IA32_FMASK, 0x200)` — clear IF (interrupts off on entry)
+  - `wrmsr(MSR_IA32_STAR,  (GDT_KERNEL_CODE << 32) | ((GDT_USER_CODE - 16) << 48))` -- ring-0 CS on SYSCALL, ring-3 CS on SYSRET (SYSRET loads CS from STAR[63:48]+16)
+  - `wrmsr(MSR_IA32_LSTAR, (uint64_t)syscall_entry)` -- entry point
+  - `wrmsr(MSR_IA32_FMASK, 0x200)` -- clear IF (interrupts off on entry)
   - Set `EFER_SCE` bit in `MSR_IA32_EFER` (`0xC0000080`) to enable `SYSCALL`/`SYSRET`
-- [ ] `syscall_dispatch(uint64_t number, uint64_t a1..a5)` — calls into SSDT (§4)
+- [ ] `syscall_dispatch(uint64_t number, uint64_t a1..a5)` -- calls into SSDT (§4)
 - [ ] Keep `INT 0x80` registered in IDT for the transition period; remove after §3 INT 0x2E is up
-- [ ] Commit: `"kernel: nt — SYSCALL/SYSRET fast path init"`
+- [ ] Commit: `"kernel: nt -- SYSCALL/SYSRET fast path init"`
 
 **Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 1. `POST16(0xDA00)` entry, `POST16(0xDA01)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. (Note: 0xD200/0xD201 are taken by `gdt.c`.)
 
@@ -200,22 +200,22 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
   - `swapgs` on return; `iretq`
 - [ ] The INT 0x2E handler shares `syscall_dispatch`; no separate dispatch logic
 - [ ] After INT 0x2E is verified working, keep INT 0x80 as a second alias until all existing user-mode test binaries are updated to use the new calling convention
-- [ ] Commit: `"kernel: nt — INT 0x2E syscall compatibility path"`
+- [ ] Commit: `"kernel: nt -- INT 0x2E syscall compatibility path"`
 
 **Test checkpoint:** Ring-3 `int 0x2E` with RAX=0x0015 reaches `NtClose` handler. Same register mapping as SYSCALL path. `POST16(0xD300)` entry, `POST16(0xD301)` exit. Verify on all 4 platforms.
 
 ## 4. System Service Descriptor Table (SSDT)
 
-The SSDT is a flat array of function pointers indexed by the 12-bit service number in RAX. `ntdll` stubs do `mov rax, <service_number>; syscall`. This section defines the complete service number allocation for all 470 NT API endpoints. Numbers are stable — changing them is an ABI break.
+The SSDT is a flat array of function pointers indexed by the 12-bit service number in RAX. `ntdll` stubs do `mov rax, <service_number>; syscall`. This section defines the complete service number allocation for all 470 NT API endpoints. Numbers are stable -- changing them is an ABI break.
 
 - [ ] Define `SSDT_ENTRY` and `SSDT_TABLE` in `include/kernel/nt/ssdt.h`:
   - `typedef NTSTATUS (*SSDT_HANDLER)(uint64_t a1, a2, a3, a4, a5, a6)`
-  - `SSDT_TABLE` — array of `SSDT_HANDLER` + count + table name string
-- [ ] Allocate Win32k shadow SSDT stub (table 1) as empty placeholder — filled by `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md` (108 NtGdiXxx/NtUserXxx entries at 0x1000+)
+  - `SSDT_TABLE` -- array of `SSDT_HANDLER` + count + table name string
+- [ ] Allocate Win32k shadow SSDT stub (table 1) as empty placeholder -- filled by `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md` (108 NtGdiXxx/NtUserXxx entries at 0x1000+)
 - [ ] Define complete service index assignments in `include/kernel/nt/service_numbers.h`:
 - [ ] Implement `syscall_dispatch`: index RAX into active SSDT; call handler; return `NTSTATUS` in RAX
 - [ ] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` rather than crashing
-- [ ] Commit: `"kernel: nt — SSDT and service number table"`
+- [ ] Commit: `"kernel: nt -- SSDT and service number table"`
 
 ### SSDT Master Table
 
@@ -691,7 +691,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0271 | NtGetPlugPlayEvent               | §22 | T01-drv §1               | [ ]  |
 | 0x0272 | NtSerializeBoot                  | §22 | T05                      | [ ]  |
 
-**0x0280–0x029F: I/O Ring (Fast Async I/O — Win11+)**
+**0x0280–0x029F: I/O Ring (Fast Async I/O -- Win11+)**
 
 | Index  | Function                         | §   | Owner                    | Done |
 |--------|----------------------------------|-----|--------------------------|------|
@@ -861,7 +861,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x03D6 | NtQueryDriverList                    | §10 | T05 (loaded drivers)   | [ ]  |
 | 0x03D7 | NtQueryTaskList                      | §10 | T05 (sched tasks)      | [ ]  |
 
-> **Total: 470 service entries** across 30 functional ranges — full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
+> **Total: 470 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 
 **Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.
 
@@ -883,9 +883,9 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 - [ ] Add `NtCreateSection` / `NtMapViewOfSection` wrapping shmem → SSDT 0x005C/0x005E (→ XREF TODO-03 §7)
 - [ ] Keep `SYS_*` macros as compile-time aliases pointing to the same SSDT indices for transition
 - [ ] Change all `sys_*` implementations to return `NTSTATUS`; convert error paths to `STATUS_*` codes
-- [ ] Commit: `"kernel: nt — migrate existing syscalls to NtXxx naming and NTSTATUS"`
+- [ ] Commit: `"kernel: nt -- migrate existing syscalls to NtXxx naming and NTSTATUS"`
 
-**Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression. Verify on QEMU WHPX, TCG, VirtualBox, bare metal — this is the most dangerous migration; a return-type mismatch silently corrupts all user-mode callers.
+**Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- this is the most dangerous migration; a return-type mismatch silently corrupts all user-mode callers.
 
 ## 6. NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile
 Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
@@ -901,7 +901,7 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
 - [ ] `NtReadFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, Buffer, Length, ByteOffset, Key)`: look up File object via handle table; call `vfs_read`; fill IOSB
 - [ ] `NtWriteFile(...)`: symmetric with NtReadFile
 - [ ] `NtCreateNamedPipeFile(...)`: create a named pipe File object
-- [ ] Commit: `"kernel: nt — NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
+- [ ] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 
 **Test checkpoint:** `NtCreateFile` on `C:\Impossible\System\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
 
@@ -944,7 +944,7 @@ Process and thread creation, suspension, termination, and thread context access 
 - [ ] `NtTestAlert()`: consume pending alert for current thread
 - [ ] `NtQueueApcThread(ThreadHandle, ApcRoutine, ApcArgument1/2/3)`: queue user-mode APC
 - [ ] `NtDelayExecution(Alertable, DelayInterval)`: thread sleep with optional alert wake
-- [ ] Commit: `"kernel: nt — NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
+- [ ] Commit: `"kernel: nt -- NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
 
 **Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread` returns valid RIP for a suspended thread. `NtDelayExecution` sleeps for the correct interval.
 
@@ -979,12 +979,12 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-03 §6). I
 - [ ] `NtOpenKeyedEvent(...)`: open by name
 - [ ] `NtWaitForKeyedEvent(KeyedEventHandle, KeyValue, Alertable, Timeout)`: wait on a specific key
 - [ ] `NtReleaseKeyedEvent(KeyedEventHandle, KeyValue, Alertable, Timeout)`: release a specific key
-- [ ] Commit: `"kernel: nt — sync objects, NtWaitForMultipleObjects, keyed events"`
+- [ ] Commit: `"kernel: nt -- sync objects, NtWaitForMultipleObjects, keyed events"`
 
 **Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`. Keyed event wait/release pair succeeds between two threads.
 
 ## 9. Virtual Memory (Alloc, Free, Protect, Lock, Cross-Process)
-Virtual memory management entry points — covers the full NT virtual memory API surface.
+Virtual memory management entry points -- covers the full NT virtual memory API surface.
 
 - [ ] `NtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect)`:
   - `AllocationType`: `MEM_COMMIT = 0x1000`, `MEM_RESERVE = 0x2000`, `MEM_RESET = 0x80000`
@@ -1008,7 +1008,7 @@ Virtual memory management entry points — covers the full NT virtual memory API
 - [ ] `NtAllocateUserPhysicalPages(ProcessHandle, NumberOfPages, UserPfnArray)`: AWE-style allocation
 - [ ] `NtFreeUserPhysicalPages(ProcessHandle, NumberOfPages, UserPfnArray)`: AWE free
 - [ ] `NtMapUserPhysicalPages(VirtualAddress, NumberOfPages, UserPfnArray)`: AWE map
-- [ ] Commit: `"kernel: nt — NtAllocate/Free/Protect/Lock/Read/WriteVirtualMemory"`
+- [ ] Commit: `"kernel: nt -- NtAllocate/Free/Protect/Lock/Read/WriteVirtualMemory"`
 
 **Test checkpoint:** `NtAllocateVirtualMemory` with `MEM_COMMIT | PAGE_READWRITE` returns usable address; write+read round-trip. `NtProtectVirtualMemory` changes RW→RO; write attempt faults. `NtFreeVirtualMemory` with `MEM_RELEASE` returns `STATUS_SUCCESS`. `NtReadVirtualMemory` from kernel to user address space succeeds.
 
@@ -1019,7 +1019,7 @@ Provides OS version, process list, performance counters, and detailed process in
   - `SystemBasicInformation (0)`: number of processors, page size, min/max user address, allocation granularity
   - `SystemPerformanceInformation (2)`: available pages, commit total, commit limit (from PMM stats)
   - `SystemTimeOfDayInformation (3)`: boot time, current time, time zone bias
-  - `SystemProcessInformation (5)`: linked list of `SYSTEM_PROCESS_INFORMATION` — PID, name, thread count, handle count, memory usage
+  - `SystemProcessInformation (5)`: linked list of `SYSTEM_PROCESS_INFORMATION` -- PID, name, thread count, handle count, memory usage
   - `SystemProcessorInformation (1)`: processor architecture, level, revision
   - `SystemModuleInformation (11)`: loaded kernel modules
   - `SystemHandleInformation (16)`: system-wide handle table dump
@@ -1031,7 +1031,7 @@ Provides OS version, process list, performance counters, and detailed process in
   - Unimplemented classes return `STATUS_NOT_IMPLEMENTED`
 - [ ] `NtSetSystemInformation(SystemInformationClass, Buffer, Length)`:
   - `SystemTimeSlipNotification (46)`: register time slip callback
-  - Privileged operation — requires `SeSystemtimePrivilege` for time-related classes
+  - Privileged operation -- requires `SeSystemtimePrivilege` for time-related classes
 - [ ] `NtQueryInformationProcess(ProcessHandle, ProcessInformationClass, Buffer, Length)`:
   - `ProcessBasicInformation (0)`: PEB address, PID, parent PID, exit status, affinity mask
   - `ProcessImageFileName (27)`: full path of the executable
@@ -1040,7 +1040,7 @@ Provides OS version, process list, performance counters, and detailed process in
   - `ProcessHandleCount (20)`: number of open handles
   - `ProcessSessionInformation (24)`: session ID
   - `ProcessTimes (4)`: creation, exit, kernel, user times
-- [ ] Commit: `"kernel: nt — NtQuerySystemInformation and NtQueryInformationProcess"`
+- [ ] Commit: `"kernel: nt -- NtQuerySystemInformation and NtQueryInformationProcess"`
 
 **Test checkpoint:** `NtQuerySystemInformation(SystemBasicInformation)` returns correct page size (4096) and processor count. `NtQueryInformationProcess(ProcessBasicInformation)` returns valid PEB address (0x7FFDE000). `SystemProcessInformation` enumerates all running processes.
 
@@ -1050,8 +1050,8 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [ ] All file I/O `NtXxx` functions write final `NTSTATUS` into `IoStatusBlock->Status` and byte count / disposition into `IoStatusBlock->Information`
 - [ ] On every `NTSTATUS` return from a syscall: if `NT_ERROR(status)`, also write the Win32 error translation into `TEB->LastErrorValue` (at `gs:[0x68]`) using a compact `RtlNtStatusToDosError` table for common codes
 - [ ] `RtlNtStatusToDosError` minimal table: `STATUS_ACCESS_DENIED→5`, `STATUS_NO_MEMORY→8`, `STATUS_INVALID_HANDLE→6`, `STATUS_OBJECT_NAME_NOT_FOUND→2`, `STATUS_NOT_IMPLEMENTED→50`, `STATUS_INVALID_PARAMETER→87`, `STATUS_BUFFER_TOO_SMALL→122`, `STATUS_ACCESS_VIOLATION→998`, `STATUS_PRIVILEGE_NOT_HELD→1314`
-- [ ] This is the only place `TEB->LastErrorValue` is written by kernel code — usermode `SetLastError` writes it directly via GS offset without a syscall
-- [ ] Commit: `"kernel: nt — IOSB and TEB LastErrorValue propagation"`
+- [ ] This is the only place `TEB->LastErrorValue` is written by kernel code -- usermode `SetLastError` writes it directly via GS offset without a syscall
+- [ ] Commit: `"kernel: nt -- IOSB and TEB LastErrorValue propagation"`
 
 **Test checkpoint:** After a failing `NtOpenFile` (non-existent path), `gs:[0x68]` == Win32 error code (2 = FILE_NOT_FOUND). After `NtReadFile`, IOSB `Status == STATUS_SUCCESS`, `Information == bytes_read`.
 
@@ -1061,10 +1061,10 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 
 - [ ] Add a `ZwXxx` header `include/kernel/nt/zw.h` that declares each `ZwXxx` as an alias for the same SSDT entry point
 - [ ] In the SSDT dispatcher: if caller is CPL=0, skip user-buffer probe and pointer validation; if CPL=3, validate all user-space buffer pointers before use (probe for read/write)
-- [ ] Add `ProbeForRead(Address, Length, Alignment)` and `ProbeForWrite(Address, Length, Alignment)` helper functions — verify address range is user-mode accessible
+- [ ] Add `ProbeForRead(Address, Length, Alignment)` and `ProbeForWrite(Address, Length, Alignment)` helper functions -- verify address range is user-mode accessible
 - [ ] Add a `ASSERT_KERNEL_CALLER()` macro that fires `STATUS_PRIVILEGE_NOT_HELD` if a kernel-only API is called from user mode
 - [ ] Document the convention: kernel components call `Zw` variants; user-mode calls `Nt` variants; both resolve to the same implementation, differentiated only by CPL check
-- [ ] Commit: `"kernel: nt — ZwXxx kernel-mode alias layer with CPL probe bypass"`
+- [ ] Commit: `"kernel: nt -- ZwXxx kernel-mode alias layer with CPL probe bypass"`
 
 **Test checkpoint:** `ZwClose` from CPL=0 succeeds without user-buffer probe. CPL=3 call with kernel-space pointer returns `STATUS_ACCESS_VIOLATION`. `ASSERT_KERNEL_CALLER()` fires `STATUS_PRIVILEGE_NOT_HELD` from ring 3.
 
@@ -1110,7 +1110,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [ ] `NtRemoveIoCompletion(IoCompletionHandle, KeyContext, ApcContext, IoStatusBlock, Timeout)`: dequeue completion
 - [ ] `NtCreateMailslotFile(...)`: one-way IPC mailslot
 - [ ] `NtReadFileScatter(...)` / `NtWriteFileGather(...)`: scatter/gather I/O
-- [ ] Commit: `"kernel: nt — file metadata, device control, I/O completion ports"`
+- [ ] Commit: `"kernel: nt -- file metadata, device control, I/O completion ports"`
 
 **Test checkpoint:** `NtQueryInformationFile(FileBasicInformation)` returns valid timestamps. `NtSetInformationFile(FileDispositionInformation)` marks file for delete; file removed after close. `NtDeviceIoControlFile` reaches driver dispatch. I/O completion port post + dequeue round-trip succeeds.
 
@@ -1136,7 +1136,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [ ] `NtRestoreKey(KeyHandle, FileHandle, Flags)` → SSDT 0x00A2
 - [ ] `NtLoadKey(ObjectAttributes, ObjectAttributes)` / `NtLoadKeyEx(...)` → SSDT 0x00A3/0x00A4
 - [ ] `NtUnloadKey(ObjectAttributes)` / `NtUnloadKeyEx(...)` → SSDT 0x00A5/0x00A6
-- [ ] Commit: `"kernel: nt — registry syscalls wired to SSDT"`
+- [ ] Commit: `"kernel: nt -- registry syscalls wired to SSDT"`
 
 **Test checkpoint:** `NtCreateKey` under `\Registry\Machine\Software\Test` returns `STATUS_SUCCESS`. `NtSetValueKey` + `NtQueryValueKey` round-trip succeeds. `NtDeleteKey` removes the key. `NtEnumerateKey` iterates subkeys correctly.
 
@@ -1163,12 +1163,12 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [ ] `NtSetSecurityObject(Handle, SecurityInformation, SecurityDescriptor)` → SSDT 0x00C1
 - [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SecurityDescriptor, Length, LengthNeeded)` → SSDT 0x00C2
 - [ ] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3
-- [ ] Commit: `"kernel: nt — token and access control syscalls"`
+- [ ] Commit: `"kernel: nt -- token and access control syscalls"`
 
 **Test checkpoint:** `NtOpenProcessToken` returns valid token handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAccessCheck` against an object with DACL returns correct granted access. `NtAdjustPrivilegesToken` enables/disables a privilege.
 
 ## 16. Directory and Symbolic Link Object Syscalls
-Namespace manipulation — create, open, and query Ob directory objects and symbolic links from user mode.
+Namespace manipulation -- create, open, and query Ob directory objects and symbolic links from user mode.
 
 - [ ] `NtCreateDirectoryObject(DirectoryHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0120
 - [ ] `NtOpenDirectoryObject(DirectoryHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0121 (already implemented in ob.c)
@@ -1180,7 +1180,7 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
 - [ ] `NtMakePermanentObject(Handle)` → SSDT 0x0004: set OB_FLAG_PERMANENT (kernel-only)
 - [ ] `NtSetInformationObject(Handle, ObjectInformationClass, Buffer, Length)` → SSDT 0x0005
 - [ ] `NtCompareObjects(FirstObjectHandle, SecondObjectHandle)` → SSDT 0x0009: test if two handles refer to the same object
-- [ ] Commit: `"kernel: nt — directory, symbolic link, and object management syscalls"`
+- [ ] Commit: `"kernel: nt -- directory, symbolic link, and object management syscalls"`
 
 **Test checkpoint:** `NtCreateDirectoryObject` creates `\Test`; `NtOpenDirectoryObject` opens it. `NtCreateSymbolicLinkObject` creates `\TestLink → \Test`; `NtQuerySymbolicLinkObject` returns `\Test`. `NtCompareObjects` returns `STATUS_SUCCESS` for two handles to the same object.
 
@@ -1200,7 +1200,7 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
   - `SectionBasicInformation (0)`: base address, size, attributes
   - `SectionImageInformation (1)`: entry point, image base, stack info (for PE sections)
 - [ ] `NtAreMappedFilesTheSame(File1MappedAsAnImage, File2MappedAsFile)` → SSDT 0x0062
-- [ ] Commit: `"kernel: nt — section and memory-mapped file syscalls"`
+- [ ] Commit: `"kernel: nt -- section and memory-mapped file syscalls"`
 
 **Test checkpoint:** `NtCreateSection` with `SEC_COMMIT` creates pagefile-backed section. `NtMapViewOfSection` maps into current process; write/read round-trip. `NtUnmapViewOfSection` unmaps. File-backed section maps file contents correctly.
 
@@ -1223,7 +1223,7 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
 - [ ] `NtQueryPerformanceCounter(PerformanceCounter, PerformanceFrequency)` → SSDT 0x00F2 (→ XREF TODO-07 §9)
 - [ ] `NtQueryTimerResolution(MaximumTime, MinimumTime, CurrentTime)` → SSDT 0x00F3 (→ XREF TODO-07 §8)
 - [ ] `NtSetTimerResolution(DesiredTime, SetResolution, ActualTime)` → SSDT 0x00F4 (→ XREF TODO-07 §8)
-- [ ] Commit: `"kernel: nt — timer control and time query syscalls"`
+- [ ] Commit: `"kernel: nt -- timer control and time query syscalls"`
 
 **Test checkpoint:** `NtCreateTimer` + `NtSetTimer` with relative 100ms due time fires. `NtCancelTimer` cancels before fire returns `STATUS_SUCCESS`. `NtQueryPerformanceCounter` returns monotonically increasing value. `NtQueryTimerResolution` reports correct LAPIC timer resolution.
 
@@ -1264,7 +1264,7 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
 - [ ] `NtAlpcQueryInformation(PortHandle, PortInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011C
 - [ ] `NtAlpcSetInformation(PortHandle, PortInformationClass, Buffer, Length)` → SSDT 0x011D
 - [ ] `NtAlpcQueryInformationMessage(PortHandle, PortMessage, MessageInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x011E
-- [ ] Commit: `"kernel: nt — ALPC and LPC port syscalls wired to SSDT"`
+- [ ] Commit: `"kernel: nt -- ALPC and LPC port syscalls wired to SSDT"`
 
 **Test checkpoint:** LPC `NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort` message round-trip. ALPC `NtAlpcCreatePort` + `NtAlpcConnectPort` + `NtAlpcSendWaitReceivePort` round-trip. Port visible in `\RPC Control\` namespace.
 
@@ -1287,7 +1287,7 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
 - [ ] `NtDebugContinue(DebugObjectHandle, ClientId, ContinueStatus)` → SSDT 0x0133:
   - Continue after debug event with `DBG_CONTINUE` or `DBG_EXCEPTION_NOT_HANDLED`
 - [ ] `NtSetInformationDebugObject(DebugObjectHandle, DebugObjectInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0137
-- [ ] Commit: `"kernel: nt — exception and debug syscalls"`
+- [ ] Commit: `"kernel: nt -- exception and debug syscalls"`
 
 **Test checkpoint:** `NtRaiseException` with `STATUS_BREAKPOINT` reaches SEH handler. `NtCreateDebugObject` + `NtDebugActiveProcess` on a child process captures breakpoint events via `NtWaitForDebugEvent`. `NtDebugContinue(DBG_CONTINUE)` resumes the debuggee.
 
@@ -1311,7 +1311,7 @@ Namespace manipulation — create, open, and query Ob directory objects and symb
 - [ ] `NtSetThreadExecutionState(NewFlags, PreviousFlags)` → SSDT 0x0144:
   - `ES_SYSTEM_REQUIRED`, `ES_DISPLAY_REQUIRED`, `ES_CONTINUOUS`
   - Prevents sleep/screen-off while active
-- [ ] Commit: `"kernel: nt — power and system control syscalls"`
+- [ ] Commit: `"kernel: nt -- power and system control syscalls"`
 
 **Test checkpoint:** `NtShutdownSystem(ShutdownReboot)` triggers ACPI reset. `NtPowerInformation(SystemPowerCapabilities)` returns valid S-state support mask. `NtSetThreadExecutionState` prevents idle sleep during long operation.
 
@@ -1331,7 +1331,7 @@ Catch-all for global atom table, locale management, environment variables, and d
 - [ ] `NtSetSystemEnvironmentValue(VariableName, VariableValue)` → SSDT 0x00D3
 - [ ] `NtDisplayString(String)` → SSDT 0x00D8: blue-screen-style text output during boot
 - [ ] `NtRaiseHardError(ErrorStatus, NumberOfParameters, UnicodeStringParameterMask, Parameters, ValidResponseOptions, Response)` → SSDT 0x00D9: system-modal error dialog
-- [ ] Commit: `"kernel: nt — atom table, locale, environment, misc syscalls"`
+- [ ] Commit: `"kernel: nt -- atom table, locale, environment, misc syscalls"`
 
 **Test checkpoint:** `NtAddAtom("TestAtom")` returns atom ID > 0. `NtFindAtom("TestAtom")` returns same ID. `NtDeleteAtom` removes it; subsequent `NtFindAtom` returns `STATUS_OBJECT_NAME_NOT_FOUND`. `NtQueryDefaultLocale` returns valid LCID.
 
@@ -1342,7 +1342,7 @@ Catch-all for global atom table, locale management, environment variables, and d
 
 - [ ] `NtRegisterSyscallAuditHook(HookHandle, AuditRoutine, Context, Flags)` → SSDT 0x0150:
   - `Flags`: `AUDIT_PRE_CALL = 1` (before handler), `AUDIT_POST_CALL = 2` (after handler), `AUDIT_BOTH = 3`
-  - `AuditRoutine(ServiceNumber, Args, Context, Phase)` — called in kernel context
+  - `AuditRoutine(ServiceNumber, Args, Context, Phase)` -- called in kernel context
   - Hook can inspect arguments, log, or deny (return `STATUS_ACCESS_DENIED` from pre-call to block)
 - [ ] `NtUnregisterSyscallAuditHook(HookHandle)` → SSDT 0x0151
 - [ ] `NtQuerySyscallAuditState(Buffer, Length, ReturnLength)` → SSDT 0x0152:
@@ -1351,21 +1351,21 @@ Catch-all for global atom table, locale management, environment variables, and d
   - Fast path: single atomic read of hook pointer; NULL = no hooks, no overhead
   - Hook list is RCU-protected for lock-free read in the hot path
 - [ ] Requires `SeAuditPrivilege` to register hooks
-- [ ] Commit: `"kernel: nt — syscall audit and tracing hook (SSDT pre/post)"`
+- [ ] Commit: `"kernel: nt -- syscall audit and tracing hook (SSDT pre/post)"`
 
 **Test checkpoint:** Register pre-call audit hook; every syscall logs service number to ring buffer. Register post-call hook; verify NTSTATUS is captured. Pre-call hook returning `STATUS_ACCESS_DENIED` blocks the syscall. Unregister hook; verify zero overhead (no measurable latency increase).
 
 ## 24. Per-Process Syscall Filtering
 
 > [!NOTE]
-> → XREF: `TODO-09-process-model-extensions.md §12` — scope overlap: TODO-09 §12 adds pledge/unveil-style category-based restriction (`NtPledge`/`NtUnveil`). This section adds per-index bitmap filtering. Both run in the SSDT dispatcher; bitmap filter runs FIRST (per-index), then pledge category check. Both must pass for the syscall to proceed.
+> → XREF: `TODO-09-process-model-extensions.md §12` -- scope overlap: TODO-09 §12 adds pledge/unveil-style category-based restriction (`NtPledge`/`NtUnveil`). This section adds per-index bitmap filtering. Both run in the SSDT dispatcher; bitmap filter runs FIRST (per-index), then pledge category check. Both must pass for the syscall to proceed.
 
 Per-process syscall restrictions allow a process to lock down which system services its children (or itself) can invoke. Windows has `PROCESS_MITIGATION_SYSTEM_CALL_DISABLE_POLICY` (DisallowWin32kSystemCalls, DisallowFsctlSystemCalls) stored in EPROCESS MitigationFlags. Linux has seccomp-bpf with per-process BPF programs and constant-action bitmap caching. Impossible OS provides a first-class bitmap-based filter with optional BPF programs for argument inspection.
 
 - [ ] Define `SYSCALL_FILTER` struct in `include/kernel/nt/syscall_filter.h`:
-  - `uint64_t allow_bitmap[SSDT_MAX_ENTRIES / 64]` — one bit per SSDT index; 1 = allowed, 0 = blocked
-  - `uint64_t allow_shadow_bitmap[WIN32K_MAX_ENTRIES / 64]` — same for shadow SSDT (Win32k)
-  - `uint32_t flags` — `SYSCALL_FILTER_INHERIT = 1` (child inherits), `SYSCALL_FILTER_LOCKED = 2` (cannot relax)
+  - `uint64_t allow_bitmap[SSDT_MAX_ENTRIES / 64]` -- one bit per SSDT index; 1 = allowed, 0 = blocked
+  - `uint64_t allow_shadow_bitmap[WIN32K_MAX_ENTRIES / 64]` -- same for shadow SSDT (Win32k)
+  - `uint32_t flags` -- `SYSCALL_FILTER_INHERIT = 1` (child inherits), `SYSCALL_FILTER_LOCKED = 2` (cannot relax)
 - [ ] Add `SYSCALL_FILTER *syscall_filter` field to `task_t` (NULL = no filter, all syscalls allowed)
 - [ ] Add `ProcessSystemCallFilterPolicy` info class to `NtSetInformationProcess` (§7, SSDT 0x0035):
   - `DisallowWin32kSystemCalls`: clear all shadow SSDT bits in filter bitmap
@@ -1373,18 +1373,18 @@ Per-process syscall restrictions allow a process to lock down which system servi
   - `CustomBitmap`: install a caller-supplied allow/deny bitmap
   - Filter can only be tightened (bits cleared), never relaxed once `SYSCALL_FILTER_LOCKED` is set
 - [ ] SSDT dispatcher integration: after index lookup, before handler call, check `current_task->syscall_filter`:
-  - If filter is NULL, skip (zero overhead — single pointer test)
+  - If filter is NULL, skip (zero overhead -- single pointer test)
   - If filter exists, test bitmap bit for the service index; if blocked, return `STATUS_ACCESS_DENIED`
 - [ ] Filter inheritance: `NtCreateProcess` / `NtCreateUserProcess` copies parent's filter to child if `SYSCALL_FILTER_INHERIT` is set
-- [ ] Audit mode: `SYSCALL_FILTER_AUDIT = 4` — log blocked syscalls to klog instead of denying
-- [ ] Commit: `"kernel: nt — per-process syscall filter bitmap (seccomp/SystemCallDisable parity)"`
+- [ ] Audit mode: `SYSCALL_FILTER_AUDIT = 4` -- log blocked syscalls to klog instead of denying
+- [ ] Commit: `"kernel: nt -- per-process syscall filter bitmap (seccomp/SystemCallDisable parity)"`
 
 **Test checkpoint:** Set filter blocking `NtWriteFile` on child process; child's `NtWriteFile` returns `STATUS_ACCESS_DENIED`. Parent's `NtWriteFile` still works. `DisallowWin32kSystemCalls` blocks shadow SSDT calls. Filter inheritance: grandchild also blocked. Locked filter cannot be relaxed. Audit mode logs but doesn't block.
 
 ## 25. Kernel-to-User Mode Callback Dispatch
-Windows NT allows the kernel to call user-mode functions (window procedures, clipboard callbacks, hooks) via `KeUserModeCallback`. The kernel pushes a callback frame, returns to user mode at `KiUserCallbackDispatcher` in ntdll, which indexes the `PEB.KernelCallbackTable` array and calls the registered function. The user-mode function then calls `NtCallbackReturn` (SSDT 0x0300) to return the result to the kernel. This mechanism is critical for Win32k — every `DispatchMessage` / `SendMessage` uses it.
+Windows NT allows the kernel to call user-mode functions (window procedures, clipboard callbacks, hooks) via `KeUserModeCallback`. The kernel pushes a callback frame, returns to user mode at `KiUserCallbackDispatcher` in ntdll, which indexes the `PEB.KernelCallbackTable` array and calls the registered function. The user-mode function then calls `NtCallbackReturn` (SSDT 0x0300) to return the result to the kernel. This mechanism is critical for Win32k -- every `DispatchMessage` / `SendMessage` uses it.
 
-- [ ] Add `PEB.KernelCallbackTable` field at offset 0x058 (Windows x64 layout) — pointer to an array of callback function pointers, populated by ntdll/user32 init
+- [ ] Add `PEB.KernelCallbackTable` field at offset 0x058 (Windows x64 layout) -- pointer to an array of callback function pointers, populated by ntdll/user32 init
 - [ ] Implement `KeUserModeCallback(ApiNumber, InputBuffer, InputLength, OutputBuffer, OutputLength)` in `src/kernel/nt/callback.c`:
   - Save current kernel stack frame (RSP, RBP, return address) in a per-thread callback stack
   - Build a user-mode trap frame pointing to `KiUserCallbackDispatcher` in ntdll
@@ -1398,7 +1398,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 - [ ] Per-thread callback depth counter: limit to `CALLBACK_MAX_DEPTH = 64` to prevent stack exhaustion
 - [ ] Re-entrant syscalls: user-mode callback code can itself call syscalls; the SSDT dispatcher must handle nested kernel entry correctly
 - [ ] Add `KiUserCallbackDispatcher` export address to ntdll (→ XREF: 12-user-platform-sdk/TODO-04-ntdll-user-runtime.md)
-- [ ] Commit: `"kernel: nt — KeUserModeCallback and kernel-to-user callback dispatch"`
+- [ ] Commit: `"kernel: nt -- KeUserModeCallback and kernel-to-user callback dispatch"`
 
 > [!NOTE]
 > This mechanism is consumed by Win32k (→ XREF: 08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §8) for `NtUserDispatchMessage` and `NtUserSendMessage`. Until this section is implemented, Win32k cannot call user-mode window procedures.
@@ -1408,19 +1408,19 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 ## 26. SSDT Integrity Protection
 
 > [!TIP]
-> **Impossible OS competitive edge.** Windows uses PatchGuard/KPP — a complex, opaque system that periodically checksums kernel structures and BSODs on tampering. It's a cat-and-mouse arms race with rootkits. Linux has no SSDT integrity protection at all (`sys_call_table` is `const` but not hardware-enforced). Impossible OS uses hardware write-protection: mark the SSDT pages as read-only via PTE after initialization. Any write attempt triggers a #PF that the kernel catches and escalates to `KeBugCheck(CRITICAL_STRUCTURE_CORRUPTION)`. Zero runtime overhead, no periodic polling, no timing-based detection — just hardware-enforced immutability.
+> **Impossible OS competitive edge.** Windows uses PatchGuard/KPP -- a complex, opaque system that periodically checksums kernel structures and BSODs on tampering. It's a cat-and-mouse arms race with rootkits. Linux has no SSDT integrity protection at all (`sys_call_table` is `const` but not hardware-enforced). Impossible OS uses hardware write-protection: mark the SSDT pages as read-only via PTE after initialization. Any write attempt triggers a #PF that the kernel catches and escalates to `KeBugCheck(CRITICAL_STRUCTURE_CORRUPTION)`. Zero runtime overhead, no periodic polling, no timing-based detection -- just hardware-enforced immutability.
 
 - [ ] After `ssdt_init()` completes and all 470 handlers are registered, mark SSDT pages as read-only via PTE manipulation (clear R/W bit, flush TLB for affected pages)
 
 > [!NOTE]
-> `vmm_protect()` is planned in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` but does not yet exist. Until it lands, use direct PTE writes: `pte &= ~PTE_WRITE; invlpg(addr)`. This is self-contained — no external dependency blocks §26.
+> `vmm_protect()` is planned in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` but does not yet exist. Until it lands, use direct PTE writes: `pte &= ~PTE_WRITE; invlpg(addr)`. This is self-contained -- no external dependency blocks §26.
 - [ ] Same for shadow SSDT pages after `win32k_init()` (→ XREF: 08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §1)
-- [ ] In the #PF handler: if faulting address is within SSDT page range AND fault was a write, call `KeBugCheck(0x00000109)` — `CRITICAL_STRUCTURE_CORRUPTION`
+- [ ] In the #PF handler: if faulting address is within SSDT page range AND fault was a write, call `KeBugCheck(0x00000109)` -- `CRITICAL_STRUCTURE_CORRUPTION`
 - [ ] Provide `ssdt_register_late(index, handler)` for drivers that need to register handlers after init:
   - Temporarily mark SSDT page writable, write the handler, re-mark read-only
   - Requires `SeLoadDriverPrivilege`; logs to klog
 - [ ] Compile-time: declare SSDT arrays as `const` where possible; the runtime write-protect is the enforcement layer
-- [ ] Commit: `"kernel: nt — SSDT hardware write-protection (integrity enforcement)"`
+- [ ] Commit: `"kernel: nt -- SSDT hardware write-protection (integrity enforcement)"`
 
 **Test checkpoint:** After init, writing to SSDT address triggers #PF → BugCheck. `ssdt_register_late` succeeds with correct privilege. `ssdt_register_late` without privilege returns `STATUS_PRIVILEGE_NOT_HELD`. SSDT dispatch still works normally after write-protect (read-only doesn't block reads).
 
@@ -1432,7 +1432,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 |----|----------------------------|------------------------------|----------------------------|------------------------------|
 | 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | ⬜ §2                       |
 | 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ⬜ §1                       |
-| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ⬜ §4 — 470 entries         |
+| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ⬜ §4 -- 470 entries         |
 | 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ⬜ §3                       |
 | 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only           | ⬜ §11                      |
 | 💎 | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat    | ⬜ §13                      |
@@ -1456,19 +1456,19 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §20 + TODO-18            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | ⬜ §21 + TODO-15            |
 | 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ⬜ §22                      |
-| ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ⬜ §12 — explicit, public   |
-| ⭐ | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API    | ⬜ §4+§12 — numbered+public |
-| ⭐ | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex    | ⬜ §23 — first-class API    |
-| 💎 | Per-process syscall filter | ✅ SystemCallDisablePolicy  | ✅ seccomp-bpf + Landlock  | ⬜ §24 — bitmap + BPF       |
+| ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ⬜ §12 -- explicit, public   |
+| ⭐ | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API    | ⬜ §4+§12 -- numbered+public |
+| ⭐ | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex    | ⬜ §23 -- first-class API    |
+| 💎 | Per-process syscall filter | ✅ SystemCallDisablePolicy  | ✅ seccomp-bpf + Landlock  | ⬜ §24 -- bitmap + BPF       |
 | 💎 | Kernel→user callbacks      | ✅ KeUserModeCallback       | ⚠️ Signals only            | ⬜ §25                      |
-| ⭐ | SSDT integrity protection  | ⚠️ PatchGuard (periodic)    | ❌ No protection           | ⬜ §26 — HW write-protect   |
+| ⭐ | SSDT integrity protection  | ⚠️ PatchGuard (periodic)    | ❌ No protection           | ⬜ §26 -- HW write-protect   |
 
-> **After §1–§22:** Impossible OS has complete NT native API coverage — 470 syscall endpoints across file I/O, process/thread, memory, sync, registry, security, sections, timers, ALPC, debug, power, namespace, atoms, and system info. Real `ntdll.dll` stubs can call into the kernel.
-> **§12** makes the `ZwXxx` layer an explicit, documented public contract — Windows keeps it internal/undocumented and Linux has no equivalent.
-> **§23** provides first-class syscall auditing — no ETW complexity, no BPF programs, just a kernel callback with near-zero idle overhead.
-> **§24** closes the per-process syscall filtering parity gap — both Win11 and Linux restrict per-process syscall access; Impossible OS uses a fast bitmap with optional BPF programs.
-> **§25** enables kernel→user callbacks required by Win32k for window procedure dispatch — without it, `SendMessage` and `DispatchMessage` cannot work.
-> **§26** provides hardware-enforced SSDT immutability — simpler and more secure than PatchGuard's periodic checksums.
+> **After §1–§22:** Impossible OS has complete NT native API coverage -- 470 syscall endpoints across file I/O, process/thread, memory, sync, registry, security, sections, timers, ALPC, debug, power, namespace, atoms, and system info. Real `ntdll.dll` stubs can call into the kernel.
+> **§12** makes the `ZwXxx` layer an explicit, documented public contract -- Windows keeps it internal/undocumented and Linux has no equivalent.
+> **§23** provides first-class syscall auditing -- no ETW complexity, no BPF programs, just a kernel callback with near-zero idle overhead.
+> **§24** closes the per-process syscall filtering parity gap -- both Win11 and Linux restrict per-process syscall access; Impossible OS uses a fast bitmap with optional BPF programs.
+> **§25** enables kernel→user callbacks required by Win32k for window procedure dispatch -- without it, `SendMessage` and `DispatchMessage` cannot work.
+> **§26** provides hardware-enforced SSDT immutability -- simpler and more secure than PatchGuard's periodic checksums.
 
 ## Unit Tests
 
@@ -1556,4 +1556,4 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 - [ ] `KeUserModeCallback` → user-mode callback → `NtCallbackReturn` round-trip succeeds
 - [ ] SSDT page write after init triggers `CRITICAL_STRUCTURE_CORRUPTION` BugCheck
 - [ ] All 4 platforms: QEMU WHPX, QEMU TCG, VirtualBox, bare metal
-- [ ] Commit: `"kernel: nt — native API layer complete"`
+- [ ] Commit: `"kernel: nt -- native API layer complete"`

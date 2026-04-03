@@ -1,5 +1,5 @@
 /* ============================================================================
- * workqueue.c — Kernel work queue implementation
+ * workqueue.c -- Kernel work queue implementation
  *
  * Each work queue has:
  *   - A static pool of work_item_t nodes  (no kmalloc in IRQ path)
@@ -31,7 +31,7 @@
 #include "kernel/barrier.h"
 
 /* ---------------------------------------------------------------------------
- * System work queue — created at boot
+ * System work queue -- created at boot
  * ------------------------------------------------------------------------- */
 workqueue_t *sys_wq = (workqueue_t *)0;
 
@@ -97,7 +97,7 @@ static void worker_thread_fn(void)
         spin_unlock_irqrestore((spinlock_t *)&wq->lock_flag, irq_flags);
 
         if (!item)
-            continue;   /* race — sem_count was bumped but head was null */
+            continue;   /* race -- sem_count was bumped but head was null */
 
         /* Execute the work item in thread context (can yield, alloc, etc.) */
         if (item->fn)
@@ -114,7 +114,7 @@ static void worker_thread_fn(void)
 }
 
 /* ---------------------------------------------------------------------------
- * workqueue_create — allocate and initialize a work queue, spawn its thread
+ * workqueue_create -- allocate and initialize a work queue, spawn its thread
  * ------------------------------------------------------------------------- */
 workqueue_t *workqueue_create(const char *name)
 {
@@ -133,7 +133,7 @@ workqueue_t *workqueue_create(const char *name)
         return (workqueue_t *)0;
     }
 
-    /* Initialize pool — link all nodes into the free list */
+    /* Initialize pool -- link all nodes into the free list */
     for (i = 0; i < WQ_POOL_SIZE - 1; i++)
         wq->pool[i].next = &wq->pool[i + 1];
     wq->pool[WQ_POOL_SIZE - 1].next = (work_item_t *)0;
@@ -168,7 +168,7 @@ workqueue_t *workqueue_create(const char *name)
 }
 
 /* ---------------------------------------------------------------------------
- * workqueue_enqueue — IRQ-safe enqueue of a work item
+ * workqueue_enqueue -- IRQ-safe enqueue of a work item
  * ------------------------------------------------------------------------- */
 int workqueue_enqueue(workqueue_t *wq, work_fn_t fn, void *arg)
 {
@@ -183,7 +183,7 @@ int workqueue_enqueue(workqueue_t *wq, work_fn_t fn, void *arg)
     /* Grab a free node from the pool */
     item = wq->free_head;
     if (!item) {
-        /* Pool exhausted — this is a programming error or runaway enqueue */
+        /* Pool exhausted -- this is a programming error or runaway enqueue */
         spin_unlock_irqrestore((spinlock_t *)&wq->lock_flag, irq_flags);
         return 0;
     }
@@ -210,7 +210,7 @@ int workqueue_enqueue(workqueue_t *wq, work_fn_t fn, void *arg)
 }
 
 /* ---------------------------------------------------------------------------
- * workqueue_flush — block until the queue is empty
+ * workqueue_flush -- block until the queue is empty
  * ------------------------------------------------------------------------- */
 void workqueue_flush(workqueue_t *wq)
 {
@@ -224,7 +224,7 @@ void workqueue_flush(workqueue_t *wq)
 }
 
 /* ---------------------------------------------------------------------------
- * workqueue_destroy — flush then free
+ * workqueue_destroy -- flush then free
  * Simplified: we don't kill the worker task (it loops forever by design).
  * In a more complete implementation we'd signal the worker to exit.
  * ------------------------------------------------------------------------- */

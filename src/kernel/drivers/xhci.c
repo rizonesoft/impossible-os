@@ -1,5 +1,5 @@
 /* ============================================================================
- * xhci.c — xHCI (USB 3.x) Host Controller driver
+ * xhci.c -- xHCI (USB 3.x) Host Controller driver
  *
  * PCI discovery, MMIO BAR mapping, controller halt/reset, DCBAA,
  * scratchpad buffer allocation, TRB ring setup, and controller start.
@@ -49,7 +49,7 @@ static inline void xhci_write32(volatile uint8_t *base, uint32_t offset,
 static inline void xhci_write64(volatile uint8_t *base, uint32_t offset,
                                 uint64_t value)
 {
-    /* Write as two 32-bit halves — some xHCI controllers don't support
+    /* Write as two 32-bit halves -- some xHCI controllers don't support
      * 64-bit MMIO writes.  Low word first per xHCI spec §5.4.6. */
     *(volatile uint32_t *)(base + offset)     = (uint32_t)(value & 0xFFFFFFFF);
     *(volatile uint32_t *)(base + offset + 4) = (uint32_t)(value >> 32);
@@ -122,7 +122,7 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
                 timeout--;
             }
 
-            /* Timeout — force-clear BIOS bit and proceed */
+            /* Timeout -- force-clear BIOS bit and proceed */
             klog(LOG_WARN, "xhci", "BIOS handoff timeout -- forcing ownership");
             cap |= (1 << 24);         /* OS owned */
             cap &= ~(1 << 16);        /* Clear BIOS owned */
@@ -237,14 +237,14 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
          "Found controller at PCI %02x:%02x.%x, MMIO @ 0x%x",
          (uint64_t)bus, (uint64_t)dev, (uint64_t)func, mmio_phys);
 
-    /* ---- BIOS/OS handoff — BEFORE halt/reset (xHCI spec §4.22.1) ---- */
+    /* ---- BIOS/OS handoff -- BEFORE halt/reset (xHCI spec §4.22.1) ---- */
     POST16(0xD750);
     xhci_bios_handoff(hc);
 
     /* ---- TODO-09 §5: Inherit controller from bootloader (zero-delay) ---- */
     /* If the bootloader allocated persistent DMA and took over the controller
      * (usb_handover_complete=1), skip ALL kernel init (halt/reset/DCBAA/rings).
-     * The controller is still running with our DMA structures — we just need
+     * The controller is still running with our DMA structures -- we just need
      * to point kernel data structures at the bootloader's physical addresses
      * and go straight to port enumeration. */
     if (g_boot_info.usb_handover_complete &&
@@ -269,7 +269,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         hc->erst      = (struct xhci_erst_entry *)(uintptr_t)bc->erst_phys;
         hc->erst_phys = bc->erst_phys;
 
-        /* Halt controller to sync ring state (no reset — preserves DCBAA) */
+        /* Halt controller to sync ring state (no reset -- preserves DCBAA) */
         {
             uint32_t cmd = xhci_read32(hc->op_base, XHCI_OP_USBCMD);
             uint32_t sts = xhci_read32(hc->op_base, XHCI_OP_USBSTS);
@@ -367,7 +367,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     if (g_boot_info.usb_discovery_ok && g_boot_info.usb_device_count > 0) {
         uint32_t bi;
         klog(LOG_INFO, "xhci",
-             "Bootloader found %u USB device(s) (handover not active — full init)",
+             "Bootloader found %u USB device(s) (handover not active -- full init)",
              (uint64_t)g_boot_info.usb_device_count);
         for (bi = 0; bi < g_boot_info.usb_device_count; bi++) {
             const struct boot_usb_device *bd = &g_boot_info.usb_devices[bi];
@@ -419,7 +419,7 @@ full_init:
     klog(LOG_DEBUG, "xhci", "Controller halted");
 
     /* Step 4: Reset controller (USBCMD.HCRST = 1, wait HCRST=0 AND CNR=0)
-     * Always reset — halt-without-reset leaves command ring in unknown state
+     * Always reset -- halt-without-reset leaves command ring in unknown state
      * and Enable Slot commands fail.  Reset clears port CCS, but that's OK
      * because we optimize the port routing delay below instead. */
     {
@@ -443,7 +443,7 @@ full_init:
     /* Step 5: Configure MaxSlotsEn */
     xhci_write32(hc->op_base, XHCI_OP_CONFIG, hc->max_slots);
 
-    /* Step 6: Allocate DCBAA — (MaxSlots + 1) × 8 bytes, 64-byte aligned.
+    /* Step 6: Allocate DCBAA -- (MaxSlots + 1) × 8 bytes, 64-byte aligned.
      * pmm_alloc_contiguous returns page-aligned memory (4 KiB), which
      * exceeds the 64-byte alignment requirement. */
     {
@@ -557,7 +557,7 @@ full_init:
                             pci_read8(bus, d, f, PCI_PROG_IF)  == 0x20) {
                             ehci_found = 1;
                             klog(LOG_INFO, "xhci",
-                                 "EHCI found at %u:%u.%u — XUSB2PR routing needed",
+                                 "EHCI found at %u:%u.%u -- XUSB2PR routing needed",
                                  (uint64_t)bus, (uint64_t)d, (uint64_t)f);
                         }
                     }
@@ -582,7 +582,7 @@ full_init:
                 xhci_delay_us(500000);
             } else {
                 klog(LOG_INFO, "xhci",
-                     "No EHCI on bus %u — skipping XUSB2PR + 500ms (modern Intel)",
+                     "No EHCI on bus %u -- skipping XUSB2PR + 500ms (modern Intel)",
                      (uint64_t)bus);
             }
         }
@@ -641,7 +641,7 @@ int xhci_init(void)
 static uint8_t xhci_irq_vector = 0;
 
 /* Process Port Status Change events from the event ring.
- * Called from ISR context — must not block. */
+ * Called from ISR context -- must not block. */
 static void xhci_process_port_events(struct xhci_controller *hc)
 {
     struct xhci_trb evt;
@@ -670,20 +670,20 @@ static void xhci_process_port_events(struct xhci_controller *hc)
             portsc = xhci_read32(hc->op_base, portsc_offset);
 
             if (portsc & XHCI_PORTSC_CCS) {
-                /* Device connected — enumerate it */
+                /* Device connected -- enumerate it */
                 uint8_t speed = (portsc & XHCI_PORTSC_SPEED_MASK) >> XHCI_PORTSC_SPEED_SHIFT;
                 klog(LOG_INFO, "xhci", "Hot-plug: device connected on port %u (speed=%u)",
                      (uint64_t)port_id, (uint64_t)speed);
                 xhci_enumerate_device(hc, port_id, speed);
             } else {
-                /* Device disconnected — log for now (slot cleanup requires
+                /* Device disconnected -- log for now (slot cleanup requires
                  * Disable Slot command which is deferred to TODO-07 §5C full) */
                 klog(LOG_INFO, "xhci", "Hot-unplug: device removed from port %u",
                      (uint64_t)port_id);
             }
         }
         /* Command Completion and Transfer events are handled by polling
-         * loops in xhci_dev.c — they don't arrive unsolicited. */
+         * loops in xhci_dev.c -- they don't arrive unsolicited. */
     }
 }
 
@@ -792,7 +792,7 @@ void xhci_setup_interrupts(void)
             return;
         }
 
-        /* MSI-X (cap ID 0x11) — try if MSI not found */
+        /* MSI-X (cap ID 0x11) -- try if MSI not found */
         if (cap_id == 0x11) {
             /* MSI-X is more complex; defer to TODO-02 §5 pci_enable_msix() */
             klog(LOG_DEBUG, "xhci", "MSI-X capability found -- deferring to pci_enable_msix()");
@@ -801,7 +801,7 @@ void xhci_setup_interrupts(void)
         cap_off = pci_read8(bus, dev, func, cap_off + 1) & 0xFC;
     }
 
-    /* No MSI found — hot-plug events still work via event ring polling
+    /* No MSI found -- hot-plug events still work via event ring polling
      * (existing xhci_wait_command/xhci_wait_transfer consume them).
      * Port status changes won't fire interrupts but boot-time devices
      * are already enumerated. */

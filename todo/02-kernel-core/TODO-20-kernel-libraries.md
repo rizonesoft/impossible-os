@@ -1,9 +1,9 @@
-# TODO-20 — Kernel Embedded Libraries
+# TODO-20 -- Kernel Embedded Libraries
 
-> **Goal:** Build the complete freestanding library layer that every other kernel subsystem depends on but cannot yet use: a safe `snprintf`/`vsnprintf` (currently absent — `panic.c` explicitly works around this), a full floating-point math library extending the stb_truetype-only `kmath.h`, an LZ4 block compressor (already assumed by TODO-15 hibernation and TODO-16 crash dump but not yet present), a miniz deflate/ZIP library for IXFS compression and HTTP gzip, the Monocypher cryptographic primitives with a kernel CSPRNG, a cJSON DOM parser for config and theme files, and Mbed TLS as a freestanding TLS record layer for HTTPS/FTPS. All libraries compile with `-ffreestanding -nostdlib` and redirect heap allocation through `kmalloc`/`kfree` with correct `pmm_alloc_contiguous` escalation for buffers > 4 KiB.
+> **Goal:** Build the complete freestanding library layer that every other kernel subsystem depends on but cannot yet use: a safe `snprintf`/`vsnprintf` (currently absent -- `panic.c` explicitly works around this), a full floating-point math library extending the stb_truetype-only `kmath.h`, an LZ4 block compressor (already assumed by TODO-15 hibernation and TODO-16 crash dump but not yet present), a miniz deflate/ZIP library for IXFS compression and HTTP gzip, the Monocypher cryptographic primitives with a kernel CSPRNG, a cJSON DOM parser for config and theme files, and Mbed TLS as a freestanding TLS record layer for HTTPS/FTPS. All libraries compile with `-ffreestanding -nostdlib` and redirect heap allocation through `kmalloc`/`kfree` with correct `pmm_alloc_contiguous` escalation for buffers > 4 KiB.
 
 > [!IMPORTANT]
-> **Already done — do NOT re-implement:**
+> **Already done -- do NOT re-implement:**
 > - `stb_truetype` → `src/kernel/gfx/stb_truetype_impl.c` ✅
 > - `stb_image` → `include/stb_image.h` + `src/kernel/image.c` ✅
 > - `kmath.h` → exists with `fabs`, `floor`, `ceil`, `fmod`, `sqrt` ✅
@@ -15,7 +15,7 @@
 > - TLS session management, certificate validation, HTTPS client logic →
 >   networking domain (`06-networking`); §7 of this TODO only ports Mbed TLS
 >   as a freestanding library.
-> - IXFS compression, HTTP gzip, package format — they *use* these libraries;
+> - IXFS compression, HTTP gzip, package format -- they *use* these libraries;
 >   they're out of scope here.
 
 > [!CAUTION]
@@ -25,17 +25,17 @@
 
 ## Inputs
 
-- `include/kernel/kmath.h` — existing math helpers (fabs/floor/ceil/fmod/sqrt); extend in §2
-- `src/kernel/panic.c` — explicitly comments "no snprintf in freestanding"; fixed by §1
-- `src/kernel/gfx/stb_truetype_impl.c` — example of a correctly integrated freestanding stb library; use as the pattern for all new ports
-- `src/kernel/image.c` — example of tiered kmalloc/pmm allocator delegation for stb_image; replicate the pattern for miniz/monocypher/Mbed TLS
-- → XREF: `TODO-15-power-management.md §4` — S4 hibernation image write uses LZ4 block compression; requires §3 of this TODO to be complete first
-- → XREF: `TODO-16-crash-dump-generation.md §5–§6` — crash dump minidump/kernel dump use LZ4 compression; requires §3
-- → XREF: `TODO-17-kernel-security-hardening.md §9` — `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
-- → XREF: `TODO-11-security-reference-monitor.md §4` — token/SID hashing uses Blake2b from Monocypher (§5)
-- → XREF: `TODO-13-registry-completion.md §4` — registry hive WAJ uses CRC32C; separate from Monocypher but benefits from a consistent hash dispatch layer (§5)
-- → XREF: `TODO-02-system-logging.md §11` — HMAC-Blake2b chain for tamper-evident `events.jsonl`; requires Monocypher Blake2b + kernel CSPRNG (§5)
-- → XREF: `06-networking/TODO-03-http-tls.md §5` — Mbed TLS Kernel Port in networking depends on this §7 freestanding port being complete first
+- `include/kernel/kmath.h` -- existing math helpers (fabs/floor/ceil/fmod/sqrt); extend in §2
+- `src/kernel/panic.c` -- explicitly comments "no snprintf in freestanding"; fixed by §1
+- `src/kernel/gfx/stb_truetype_impl.c` -- example of a correctly integrated freestanding stb library; use as the pattern for all new ports
+- `src/kernel/image.c` -- example of tiered kmalloc/pmm allocator delegation for stb_image; replicate the pattern for miniz/monocypher/Mbed TLS
+- → XREF: `TODO-15-power-management.md §4` -- S4 hibernation image write uses LZ4 block compression; requires §3 of this TODO to be complete first
+- → XREF: `TODO-16-crash-dump-generation.md §5–§6` -- crash dump minidump/kernel dump use LZ4 compression; requires §3
+- → XREF: `TODO-17-kernel-security-hardening.md §9` -- `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
+- → XREF: `TODO-11-security-reference-monitor.md §4` -- token/SID hashing uses Blake2b from Monocypher (§5)
+- → XREF: `TODO-13-registry-completion.md §4` -- registry hive WAJ uses CRC32C; separate from Monocypher but benefits from a consistent hash dispatch layer (§5)
+- → XREF: `TODO-02-system-logging.md §11` -- HMAC-Blake2b chain for tamper-evident `events.jsonl`; requires Monocypher Blake2b + kernel CSPRNG (§5)
+- → XREF: `06-networking/TODO-03-http-tls.md §5` -- Mbed TLS Kernel Port in networking depends on this §7 freestanding port being complete first
 
 ---
 
@@ -55,16 +55,16 @@
 
 | ⭐  | Order | Deliverable                                          | Depends On          | Status |
 | --- | :---: | ---------------------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | Freestanding string library (`snprintf`/`vsnprintf`) | —                   |  [ ]   |
-| 💎  |   2   | Complete floating-point math library                 | —                   |  [ ]   |
-| 💎  |   3   | LZ4 block compressor                                 | —                   |  [ ]   |
+| 💎  |   1   | Freestanding string library (`snprintf`/`vsnprintf`) | --                   |  [ ]   |
+| 💎  |   2   | Complete floating-point math library                 | --                   |  [ ]   |
+| 💎  |   3   | LZ4 block compressor                                 | --                   |  [ ]   |
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | 1                   |  [ ]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | 1                   |  [ ]   |
 | 💎  |   6   | cJSON DOM parser                                     | 1                   |  [ ]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | 1, 2, 5             |  [ ]   |
 
-> 💎 = parity work — matches what Windows 11 and Linux already do.
-> ⭐ = exclusive work — Impossible OS is superior or first.
+> 💎 = parity work -- matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work -- Impossible OS is superior or first.
 
 ---
 
@@ -73,21 +73,21 @@
 ### 1.1 Audit existing string functions
 
 - [x] Grep the entire kernel source for `memcpy`, `memset`, `strlen`, `strcmp`, `snprintf` etc.; document which are provided by compiler builtins (`__builtin_memcpy`) vs. missing vs. hand-rolled in callers
-- [x] Map against the functions `panic.c`, `printk.h`, VFS, and drivers call — the gap list drives the implementation priority
+- [x] Map against the functions `panic.c`, `printk.h`, VFS, and drivers call -- the gap list drives the implementation priority
 
 > **Gap analysis results (2026-03-27):**
 >
 > **Provided (weak symbols in `image.c` + `stb_truetype_impl.c` + `freestanding/string.h`):**
-> - `memcpy`, `memset`, `memmove`, `memcmp`, `strlen` — 2 duplicate implementations (image.c + stb_truetype_impl.c); should consolidate into `libc/string.c`
+> - `memcpy`, `memset`, `memmove`, `memcmp`, `strlen` -- 2 duplicate implementations (image.c + stb_truetype_impl.c); should consolidate into `libc/string.c`
 >
 > **Compiler builtins used:**
-> - `__builtin_memcpy`, `__builtin_memset` — only in `image_save.c` (4 uses)
+> - `__builtin_memcpy`, `__builtin_memset` -- only in `image_save.c` (4 uses)
 >
 > **Missing entirely (no implementation, no builtin):**
-> - `strcmp`, `strncmp`, `strcpy`, `strncpy`, `strcat`, `strncat` — 0 actual calls, but hand-rolled `str_eq()` in 5 files (klog.c, klog_disk.c, icon_store.c, ipc/shmem.c, blkdev.c)
-> - `snprintf` / `vsnprintf` — not available; `panic.c` has a comment noting "no snprintf in freestanding"; `klog.c` has `vformat_buf()` (private, supports %d %u %x %p %s %c only)
-> - `atoi`, `strtol`, `strtoul` — not available
-> - `memchr`, `strstr`, `strchr`, `strrchr` — not available
+> - `strcmp`, `strncmp`, `strcpy`, `strncpy`, `strcat`, `strncat` -- 0 actual calls, but hand-rolled `str_eq()` in 5 files (klog.c, klog_disk.c, icon_store.c, ipc/shmem.c, blkdev.c)
+> - `snprintf` / `vsnprintf` -- not available; `panic.c` has a comment noting "no snprintf in freestanding"; `klog.c` has `vformat_buf()` (private, supports %d %u %x %p %s %c only)
+> - `atoi`, `strtol`, `strtoul` -- not available
+> - `memchr`, `strstr`, `strchr`, `strrchr` -- not available
 >
 > **Priority for §1.2:**
 > 1. Consolidate `memcpy`/`memset`/`memmove`/`memcmp`/`strlen` into `libc/string.c` (eliminate 2 duplicate weak symbol sets)
@@ -99,21 +99,21 @@
 ### 1.2 Core memory and string functions
 
 - [x] Create `src/libc/string.c` and `include/libc/string.h`; compile with `-ffreestanding -nostdlib -O2`
-- [x] Memory operations: `memcpy`, `memmove`, `memset`, `memcmp`, `memchr` — all implemented
-- [x] String operations: `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strcmp`, `strncmp`, `strchr`, `strrchr`, `strstr`, `strtol`, `strtoul`, `atoi` — all implemented
-- [x] BSD safe: `strlcpy`, `strlcat` — always NUL-terminate
+- [x] Memory operations: `memcpy`, `memmove`, `memset`, `memcmp`, `memchr` -- all implemented
+- [x] String operations: `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strcmp`, `strncmp`, `strchr`, `strrchr`, `strstr`, `strtol`, `strtoul`, `atoi` -- all implemented
+- [x] BSD safe: `strlcpy`, `strlcat` -- always NUL-terminate
 - [x] Removed duplicate weak symbols from `image.c` and `stb_truetype_impl.c`; updated `freestanding/string.h` to redirect to `libc/string.h`
 
 ### 1.3 snprintf / vsnprintf
 
-- [x] `int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)` — full implementation with: `%d`/`%i`, `%u`, `%x`/`%X`, `%o`, `%s`, `%c`, `%p`, `%%`, length modifiers (`l`/`ll`/`h`/`hh`/`z`), width, precision (`.*`), zero-padding, left-align (`-`), sign flags (`+`/` `). Returns total chars that *would* have been written.
-- [x] `int snprintf(char *buf, size_t size, const char *fmt, ...)` — thin varargs wrapper
-- [ ] Update `panic.c` to use `snprintf` — deferred (current hand-rolled formatter works; changing it during active development risks boot regression)
-- [ ] Update `klog` / `printk` to use `vsnprintf` internally — deferred (same reason; `vformat_buf` is battle-tested)
+- [x] `int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)` -- full implementation with: `%d`/`%i`, `%u`, `%x`/`%X`, `%o`, `%s`, `%c`, `%p`, `%%`, length modifiers (`l`/`ll`/`h`/`hh`/`z`), width, precision (`.*`), zero-padding, left-align (`-`), sign flags (`+`/` `). Returns total chars that *would* have been written.
+- [x] `int snprintf(char *buf, size_t size, const char *fmt, ...)` -- thin varargs wrapper
+- [ ] Update `panic.c` to use `snprintf` -- deferred (current hand-rolled formatter works; changing it during active development risks boot regression)
+- [ ] Update `klog` / `printk` to use `vsnprintf` internally -- deferred (same reason; `vformat_buf` is battle-tested)
 
 ### 1.4 Commit
 
-- [x] Commit: `"libc: freestanding string library — memcpy/memset/str*, snprintf/vsnprintf"`
+- [x] Commit: `"libc: freestanding string library -- memcpy/memset/str*, snprintf/vsnprintf"`
 
 ---
 
@@ -127,32 +127,32 @@
 ### 2.2 Trig functions
 
 - [ ] Add to `src/libc/math.c` and expose in `include/libc/math.h`; use polynomial approximations accurate to ≤ 1 ULP for the double range `[-π, π]`:
-  - `double kmath_sin(double x)` — Taylor series with range reduction
-  - `double kmath_cos(double x)` — `sin(π/2 - x)` or paired Clenshaw
-  - `double kmath_tan(double x)` — `sin/cos` with infinity guard
-  - `double kmath_asin(double x)` — valid for `|x| ≤ 1`
-  - `double kmath_acos(double x)` — `π/2 - asin(x)`
-  - `double kmath_atan(double x)` — Padé approximation
-  - `double kmath_atan2(double y, double x)` — four-quadrant atan
-- [ ] `float` variants (`kmath_sinf`, etc.) — cast to double, compute, cast back; sufficient for all current kernel uses
+  - `double kmath_sin(double x)` -- Taylor series with range reduction
+  - `double kmath_cos(double x)` -- `sin(π/2 - x)` or paired Clenshaw
+  - `double kmath_tan(double x)` -- `sin/cos` with infinity guard
+  - `double kmath_asin(double x)` -- valid for `|x| ≤ 1`
+  - `double kmath_acos(double x)` -- `π/2 - asin(x)`
+  - `double kmath_atan(double x)` -- Padé approximation
+  - `double kmath_atan2(double y, double x)` -- four-quadrant atan
+- [ ] `float` variants (`kmath_sinf`, etc.) -- cast to double, compute, cast back; sufficient for all current kernel uses
 
 ### 2.3 Exponential and logarithm
 
-- [ ] `double kmath_exp(double x)` — `e^x` via Horner polynomial + range reduction by `ln2`
-- [ ] `double kmath_log(double x)` — natural log via `atanh` identity
-- [ ] `double kmath_log2(double x)` — `log(x) / log(2)`
-- [ ] `double kmath_log10(double x)` — `log(x) / log(10)`
-- [ ] `double kmath_pow(double base, double exp)` — `exp(exp * log(base))` with special-case handling for integer exponents
+- [ ] `double kmath_exp(double x)` -- `e^x` via Horner polynomial + range reduction by `ln2`
+- [ ] `double kmath_log(double x)` -- natural log via `atanh` identity
+- [ ] `double kmath_log2(double x)` -- `log(x) / log(2)`
+- [ ] `double kmath_log10(double x)` -- `log(x) / log(10)`
+- [ ] `double kmath_pow(double base, double exp)` -- `exp(exp * log(base))` with special-case handling for integer exponents
 
 ### 2.4 Rounding and miscellaneous
 
-- [ ] `double kmath_round(double x)` — round half-away-from-zero
-- [ ] `double kmath_trunc(double x)` — truncate toward zero
-- [ ] `double kmath_cbrt(double x)` — cube root via Newton-Raphson
+- [ ] `double kmath_round(double x)` -- round half-away-from-zero
+- [ ] `double kmath_trunc(double x)` -- truncate toward zero
+- [ ] `double kmath_cbrt(double x)` -- cube root via Newton-Raphson
 
 ### 2.5 Commit
 
-- [ ] Commit: `"libc: floating-point math — sin/cos/tan/atan2/exp/log/pow, float variants"`
+- [ ] Commit: `"libc: floating-point math -- sin/cos/tan/atan2/exp/log/pow, float variants"`
 
 ---
 
@@ -161,7 +161,7 @@
 ### 3.1 LZ4 port
 
 - [ ] Vendor `lz4.c` + `lz4.h` from the official LZ4 repository (BSD-2 license, ~2000 lines) into `src/libs/lz4/`
-- [ ] Compile with `-ffreestanding -nostdlib`; LZ4 has no `malloc` calls in its core API — it operates entirely on caller-provided buffers
+- [ ] Compile with `-ffreestanding -nostdlib`; LZ4 has no `malloc` calls in its core API -- it operates entirely on caller-provided buffers
 - [ ] Expose the block API:
   ```c
   int lz4_compress(const void *src, int src_size,
@@ -191,7 +191,7 @@
 
 - [ ] Vendor `miniz.h` / `miniz.c` (MIT, ~6000 lines) into `src/libs/miniz/`
 - [ ] Compile with `-ffreestanding -nostdlib -msse2`
-- [ ] Redirect `malloc`/`free` → `kmalloc`/`kfree` via `#define` overrides for the internal `tinfl` decompressor state struct (≤ 4 KiB — kmalloc safe)
+- [ ] Redirect `malloc`/`free` → `kmalloc`/`kfree` via `#define` overrides for the internal `tinfl` decompressor state struct (≤ 4 KiB -- kmalloc safe)
 - [ ] For decompression output buffers > 4 KiB: override the output buffer allocation callback to use `pmm_alloc_contiguous()`
 - [ ] Core API exposed:
   ```c
@@ -226,15 +226,15 @@
 ### 5.1 Monocypher port
 
 - [ ] Vendor `monocypher.c` + `monocypher.h` (BSD-2, ~3000 lines) into `src/libs/monocypher/`
-- [ ] Compile with `-ffreestanding -nostdlib`; Monocypher uses zero heap allocation — all state is on the caller-provided stack or caller-provided buffers; no `malloc` redirects needed
+- [ ] Compile with `-ffreestanding -nostdlib`; Monocypher uses zero heap allocation -- all state is on the caller-provided stack or caller-provided buffers; no `malloc` redirects needed
 - [ ] Expose the following primitives (keep names unchanged):
-  - **ChaCha20** — `crypto_chacha20_djb()` / `crypto_chacha20_x()` stream cipher; 256-bit key, 64-bit nonce
-  - **Poly1305** — `crypto_poly1305()` MAC; pairs with ChaCha20 for AEAD
-  - **ChaCha20-Poly1305** — `crypto_aead_lock()` / `crypto_aead_unlock()` authenticated encryption
-  - **Blake2b** — `crypto_blake2b()` cryptographic hash; 256 or 512-bit output
-  - **Argon2id** — `crypto_argon2()` memory-hard password hash; used by login auth (→ XREF `TODO-11-security-reference-monitor.md §4`)
-  - **X25519** — `crypto_x25519()` Diffie-Hellman key exchange
-  - **Ed25519** — `crypto_eddsa_sign()` / `crypto_eddsa_check()` signatures; used for EIF code signing (→ XREF `TODO-08-binary-system.md §12`)
+  - **ChaCha20** -- `crypto_chacha20_djb()` / `crypto_chacha20_x()` stream cipher; 256-bit key, 64-bit nonce
+  - **Poly1305** -- `crypto_poly1305()` MAC; pairs with ChaCha20 for AEAD
+  - **ChaCha20-Poly1305** -- `crypto_aead_lock()` / `crypto_aead_unlock()` authenticated encryption
+  - **Blake2b** -- `crypto_blake2b()` cryptographic hash; 256 or 512-bit output
+  - **Argon2id** -- `crypto_argon2()` memory-hard password hash; used by login auth (→ XREF `TODO-11-security-reference-monitor.md §4`)
+  - **X25519** -- `crypto_x25519()` Diffie-Hellman key exchange
+  - **Ed25519** -- `crypto_eddsa_sign()` / `crypto_eddsa_check()` signatures; used for EIF code signing (→ XREF `TODO-08-binary-system.md §12`)
 
 ### 5.2 Kernel CSPRNG
 
@@ -242,7 +242,7 @@
   ```c
   void     csprng_init(void);              /* called from Phase 1 init */
   void     csprng_fill(void *buf, size_t len); /* fills with random bytes */
-  uint64_t csprng_u64(void);               /* convenience — random uint64_t */
+  uint64_t csprng_u64(void);               /* convenience -- random uint64_t */
   ```
 - [ ] `csprng_init()` seeds from multiple entropy sources:
   1. Three `RDRAND` retries (Intel/AMD hardware RNG); if any succeed use the 64-bit value
@@ -296,18 +296,18 @@
 ## 7. Mbed TLS Freestanding Port `[Opus]`
 
 > [!IMPORTANT]
-> **Scope overlap — `06-networking/TODO-03-http-tls.md §5`** also claims "Mbed TLS Kernel Port". This §7 is the canonical freestanding port; `TODO-03 §5` must depend on this section being complete and should not re-implement the library itself. When TODO-03 is next validated, update its §5 to reference this TODO-20 §7 as its prerequisite.
+> **Scope overlap -- `06-networking/TODO-03-http-tls.md §5`** also claims "Mbed TLS Kernel Port". This §7 is the canonical freestanding port; `TODO-03 §5` must depend on this section being complete and should not re-implement the library itself. When TODO-03 is next validated, update its §5 to reference this TODO-20 §7 as its prerequisite.
 
 ### 7.1 Minimal build configuration
 
 - [ ] Clone Mbed TLS 3.x source into `src/libs/mbedtls/` (Apache-2.0); create a `mbedtls_config.h` that enables only the required subset:
-  - `MBEDTLS_AES_C` + `MBEDTLS_GCM_C` — AES-128-GCM / AES-256-GCM
-  - `MBEDTLS_SHA256_C` + `MBEDTLS_SHA512_C` — hash primitives
-  - `MBEDTLS_RSA_C` + `MBEDTLS_PKCS1_V21` — RSA-OAEP for certificate public key operations
-  - `MBEDTLS_ECDSA_C` + `MBEDTLS_ECP_DP_SECP256R1_ENABLED` — ECDSA P-256
-  - `MBEDTLS_SSL_TLS_C` + `MBEDTLS_SSL_PROTO_TLS1_3` — TLS 1.3 record layer
+  - `MBEDTLS_AES_C` + `MBEDTLS_GCM_C` -- AES-128-GCM / AES-256-GCM
+  - `MBEDTLS_SHA256_C` + `MBEDTLS_SHA512_C` -- hash primitives
+  - `MBEDTLS_RSA_C` + `MBEDTLS_PKCS1_V21` -- RSA-OAEP for certificate public key operations
+  - `MBEDTLS_ECDSA_C` + `MBEDTLS_ECP_DP_SECP256R1_ENABLED` -- ECDSA P-256
+  - `MBEDTLS_SSL_TLS_C` + `MBEDTLS_SSL_PROTO_TLS1_3` -- TLS 1.3 record layer
   - `MBEDTLS_CTR_DRBG_C` backed by the kernel CSPRNG (§5.2)
-  - **Disable:** `MBEDTLS_NET_C`, `MBEDTLS_TIMING_C`, `MBEDTLS_FS_IO` — all OS-dependent components
+  - **Disable:** `MBEDTLS_NET_C`, `MBEDTLS_TIMING_C`, `MBEDTLS_FS_IO` -- all OS-dependent components
 - [ ] Platform abstraction layer (`include/libs/mbedtls/mbedtls_platform.h`):
   - `mbedtls_calloc` → `kmalloc` (zero-initialised, ≤ 4 KiB)
   - `mbedtls_free` → `kfree`
@@ -317,8 +317,8 @@
 
 ### 7.2 Integration test
 
-- [ ] Build the minimal Mbed TLS subset with the kernel flags: `-ffreestanding -nostdlib -fno-stack-protector -mno-red-zone -O2 -g` — confirm zero link errors
-- [ ] Implement `tls_selftest()`: run `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` — pass means AES and SHA-256 are functionally correct in freestanding mode
+- [ ] Build the minimal Mbed TLS subset with the kernel flags: `-ffreestanding -nostdlib -fno-stack-protector -mno-red-zone -O2 -g` -- confirm zero link errors
+- [ ] Implement `tls_selftest()`: run `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` -- pass means AES and SHA-256 are functionally correct in freestanding mode
 - [ ] The full TLS session layer (handshake, certificates, SNI) is implemented in `06-networking`; this section only validates the port
 
 ### 7.3 Commit
@@ -332,24 +332,24 @@
 
 | ⭐ | Feature                    | 🪟 Win11                                            | 🐧 Linux                            | 🚀 Impossible OS                              |
 |----|----------------------------|--------------------------------------------------|----------------------------------|--------------------------------------------|
-| 💎 | `snprintf` / `vsnprintf`   | ✅ `RtlStringCbPrintf*` (safe)                   | ✅ `lib/vsprintf.c` (600+ lines) | ⬜ §1 — (absent; panic.c worksaround)      |
-| 💎 | Core string ops            | ✅ `RtlCopyMemory`, `RtlZeroMemory`              | ✅ `lib/string.c`                | ⚠️ §1 — Partial — (compiler builtins only) |
-| 💎 | Floating-point math        | ✅ `rtlmath` + CRT                               | ✅ `lib/math/` + libgcc          | ⚠️ §2 — Partial — (kmath.h, no trig/log)   |
-| 💎 | LZ4 fast compression       | ⚠️ Xpress (proprietary format)                   | ✅ `lib/lz4/` in-tree            | ⬜ §3 — (assumed by TODO-15/16)            |
-| 💎 | Deflate / zlib compression | ✅ `RtlDecompressBuffer` (LZNT1)                 | ✅ `lib/zlib_deflate/` in-tree   | ⬜ §4 — (miniz)                            |
-| 💎 | ZIP archive reading        | ✅ Shell extension / Expand.exe                  | ✅ `unzip` user-mode             | ⬜ §4 — (miniz ZIP API)                    |
-| 💎 | ChaCha20 / Poly1305 AEAD   | ✅ BCrypt (`BCRYPT_CHACHA20_POLY1305_ALGORITHM`) | ✅ `crypto/chacha20poly1305.c`   | ⬜ §5 — (Monocypher)                       |
+| 💎 | `snprintf` / `vsnprintf`   | ✅ `RtlStringCbPrintf*` (safe)                   | ✅ `lib/vsprintf.c` (600+ lines) | ⬜ §1 -- (absent; panic.c worksaround)      |
+| 💎 | Core string ops            | ✅ `RtlCopyMemory`, `RtlZeroMemory`              | ✅ `lib/string.c`                | ⚠️ §1 -- Partial -- (compiler builtins only) |
+| 💎 | Floating-point math        | ✅ `rtlmath` + CRT                               | ✅ `lib/math/` + libgcc          | ⚠️ §2 -- Partial -- (kmath.h, no trig/log)   |
+| 💎 | LZ4 fast compression       | ⚠️ Xpress (proprietary format)                   | ✅ `lib/lz4/` in-tree            | ⬜ §3 -- (assumed by TODO-15/16)            |
+| 💎 | Deflate / zlib compression | ✅ `RtlDecompressBuffer` (LZNT1)                 | ✅ `lib/zlib_deflate/` in-tree   | ⬜ §4 -- (miniz)                            |
+| 💎 | ZIP archive reading        | ✅ Shell extension / Expand.exe                  | ✅ `unzip` user-mode             | ⬜ §4 -- (miniz ZIP API)                    |
+| 💎 | ChaCha20 / Poly1305 AEAD   | ✅ BCrypt (`BCRYPT_CHACHA20_POLY1305_ALGORITHM`) | ✅ `crypto/chacha20poly1305.c`   | ⬜ §5 -- (Monocypher)                       |
 | 💎 | Blake2b hash               | ✅ BCrypt SHA-2 (no Blake2b)                     | ✅ `crypto/blake2b_generic.c`    | ⬜ §5                                      |
 | 💎 | Argon2id password hash     | ✅ BCrypt `BCRYPT_KDF_SP800_108`                 | ✅ `crypto/argon2.c`             | ⬜ §5                                      |
-| 💎 | X25519 key exchange        | ✅ BCrypt ECDH curve25519                        | ✅ `crypto/ecdh.c`               | ⬜ §5 — (Monocypher)                       |
-| 💎 | Ed25519 signatures         | ✅ BCrypt EdDSA                                  | ✅ `crypto/eddsa.c`              | ⬜ §5 — (Monocypher)                       |
-| 💎 | Kernel CSPRNG              | ✅ `KeQuerySystemEntropy` / BCrypt               | ✅ `drivers/char/random.c`       | ⬜ §5 — (RDRAND + Blake2b)                 |
-| 💎 | JSON parser in-kernel      | ❌ COM-based, user-mode only                     | ❌ Not in mainline kernel        | ⬜ §6 — (cJSON) 🚀                         |
-| 💎 | TLS record layer           | ✅ SChannel (kernel + user)                      | ✅ `net/tls/` in-tree            | ⬜ §7 — (Mbed TLS port)                    |
+| 💎 | X25519 key exchange        | ✅ BCrypt ECDH curve25519                        | ✅ `crypto/ecdh.c`               | ⬜ §5 -- (Monocypher)                       |
+| 💎 | Ed25519 signatures         | ✅ BCrypt EdDSA                                  | ✅ `crypto/eddsa.c`              | ⬜ §5 -- (Monocypher)                       |
+| 💎 | Kernel CSPRNG              | ✅ `KeQuerySystemEntropy` / BCrypt               | ✅ `drivers/char/random.c`       | ⬜ §5 -- (RDRAND + Blake2b)                 |
+| 💎 | JSON parser in-kernel      | ❌ COM-based, user-mode only                     | ❌ Not in mainline kernel        | ⬜ §6 -- (cJSON) 🚀                         |
+| 💎 | TLS record layer           | ✅ SChannel (kernel + user)                      | ✅ `net/tls/` in-tree            | ⬜ §7 -- (Mbed TLS port)                    |
 
 After §1–6, Impossible OS reaches full parity with Windows and Linux on every
 in-kernel library primitive. The in-kernel JSON parser (§6) is unique among
-production OS kernels — Windows requires COM marshalling and user-mode JSON
+production OS kernels -- Windows requires COM marshalling and user-mode JSON
 parsing for all configuration; Linux has no standard in-kernel JSON. Having
 cJSON available at boot allows theme files, update manifests, and NTP server
 lists to be loaded directly by the kernel without a separate user-mode service.
@@ -390,7 +390,7 @@ hardware RNG, while remaining safe on hardware without RDRAND.
 - [ ] **LZ4**: compress a 64 KiB zeroed buffer; verify compressed size < original; decompress; byte-for-byte equal; `lz4_compress_bound(65536)` is the upper bound on compressed size.
 - [ ] **miniz deflate**: compress 8 KiB string; decompress; verify identity.
 - [ ] **miniz ZIP**: open a 3-file ZIP from memory; enumerate entries; extract one file; verify content.
-- [ ] **Monocypher AEAD**: encrypt `"hello kernel"` with a random key; decrypt; verify plaintext matches; flip one byte in ciphertext — `crypto_aead_unlock` must return -1 (authentication failure).
+- [ ] **Monocypher AEAD**: encrypt `"hello kernel"` with a random key; decrypt; verify plaintext matches; flip one byte in ciphertext -- `crypto_aead_unlock` must return -1 (authentication failure).
 - [ ] **CSPRNG**: `csprng_fill(buf1, 32)` and `csprng_fill(buf2, 32)` must produce different outputs; `csprng_u64()` called 1000 times must show no repeated values (birthday bound test).
 - [ ] **cJSON**: parse `{"build": 1024, "name": "Impossible OS", "debug": false}`; `json_int(json_get(root, "build")) == 1024`; `strcmp(json_str(json_get(root, "name")), "Impossible OS") == 0`.
 - [ ] **Mbed TLS selftest**: `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` both return 0 in the boot log.

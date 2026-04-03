@@ -1,5 +1,5 @@
 /* ============================================================================
- * gfx_blur.c — Box blur (2-pass, O(n) per pixel)
+ * gfx_blur.c -- Box blur (2-pass, O(n) per pixel)
  *
  * Implements a separable box blur: one horizontal pass and one vertical pass.
  * Each pass runs in O(width) or O(height) per scanline using a running sum,

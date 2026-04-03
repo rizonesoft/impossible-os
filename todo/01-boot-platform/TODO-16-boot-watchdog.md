@@ -1,4 +1,4 @@
-# TODO-16 — Boot Watchdog & Hang Detection
+# TODO-16 -- Boot Watchdog & Hang Detection
 
 > **Goal:** Detect and recover from boot hangs automatically. If any boot phase takes longer than its expected maximum, a hardware or software watchdog triggers a reboot. Combined with A/B rollback (TODO-14), this means a hung boot = automatic reboot = automatic rollback to working version. No infinite hang, no user intervention. Models: embedded systems watchdog best practices, systemd watchdog integration.
 
@@ -9,12 +9,12 @@
 
 ## Inputs
 
-- `src/kernel/main/boot_storage.c` — Phase 2 boot (storage, VFS, subsystems)
-- `src/kernel/main/boot_desktop.c` — Phase 3 boot (scheduler, desktop)
-- `src/kernel/drivers/lapic.c` — LAPIC timer (software watchdog source)
-- `include/kernel/boot_init.h` — boot phases and subsystem tracking
-- → XREF: `TODO-14-ab-boot-rollback.md §4` — failure counting + rollback on hang
-- → XREF: `TODO-02-bootloader-error-recovery.md §9` — boot failure screen
+- `src/kernel/main/boot_storage.c` -- Phase 2 boot (storage, VFS, subsystems)
+- `src/kernel/main/boot_desktop.c` -- Phase 3 boot (scheduler, desktop)
+- `src/kernel/drivers/lapic.c` -- LAPIC timer (software watchdog source)
+- `include/kernel/boot_init.h` -- boot phases and subsystem tracking
+- → XREF: `TODO-14-ab-boot-rollback.md §4` -- failure counting + rollback on hang
+- → XREF: `TODO-02-bootloader-error-recovery.md §9` -- boot failure screen
 
 ---
 
@@ -22,7 +22,7 @@
 
 - Software watchdog: LAPIC NMI timer fires if boot phase exceeds timeout → logs hang location → reboots.
 - Each boot phase has an expected max duration (Phase 0: 2s, Phase 1: 5s, Phase 2: 30s, Phase 3: 60s).
-- Watchdog is petted (reset) at each boot_progress() call — stalled subsystem triggers NMI.
+- Watchdog is petted (reset) at each boot_progress() call -- stalled subsystem triggers NMI.
 - Combined with A/B boot: hang → watchdog reboot → try counter increments → 3 hangs → rollback.
 - Optional: ACPI hardware watchdog (TCO timer on Intel) for full hardware-level reset.
 
@@ -32,15 +32,15 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Software watchdog via LAPIC NMI timer           | —          |  [ ]   |
+| 💎  |   1   | Software watchdog via LAPIC NMI timer           | --          |  [ ]   |
 | 💎  |   2   | Per-phase timeout configuration                 | §1         |  [ ]   |
 | 💎  |   3   | Watchdog pet at each boot_progress() call       | §1, §2     |  [ ]   |
 | 💎  |   4   | Watchdog-triggered reboot with diagnostics      | §3, T14 §4 |  [ ]   |
-| 💎  |   5   | ACPI TCO hardware watchdog (Intel platforms)     | —          |  [ ]   |
+| 💎  |   5   | ACPI TCO hardware watchdog (Intel platforms)     | --          |  [ ]   |
 | ⭐  |   6   | Watchdog status in VPD display                  | §1–§5      |  [ ]   |
 
-> 💎 = parity — Windows boot watchdog and Linux systemd watchdog both detect hung boots.
-> ⭐ = exclusive — watchdog countdown visible in VPD during boot.
+> 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
+> ⭐ = exclusive -- watchdog countdown visible in VPD during boot.
 
 ---
 
@@ -53,11 +53,11 @@ Use the LAPIC timer in NMI mode to detect hangs even when interrupts are disable
 - [ ] After logging: trigger ACPI reboot (`acpi_reboot()`)
 - [ ] NMI handler is minimal: write to serial, set NVRAM "watchdog_triggered" flag, reboot
 - [ ] If LAPIC not available: fall back to PIT-based software watchdog (less reliable, maskable)
-- [ ] Commit: `"boot: software watchdog via LAPIC NMI — detect hung boot phases"`
+- [ ] Commit: `"boot: software watchdog via LAPIC NMI -- detect hung boot phases"`
 
 **Test checkpoint:** Add `for(;;){}` in boot_phase2 (debug build only). Watchdog fires → serial shows `"WATCHDOG: boot hung at POST 0xNNNN, RIP=0xNNNN"` → system reboots.
 
-**Regression risk:** HIGH — NMI watchdog fires during normal boot if timeout too aggressive. Start with generous timeouts (2x expected max).
+**Regression risk:** HIGH -- NMI watchdog fires during normal boot if timeout too aggressive. Start with generous timeouts (2x expected max).
 
 ---
 
@@ -65,12 +65,12 @@ Use the LAPIC timer in NMI mode to detect hangs even when interrupts are disable
 
 Each boot phase gets a maximum allowed duration.
 
-- [ ] Phase 0 (early init): 2 seconds (CPU, memory, serial — should complete in <500ms)
+- [ ] Phase 0 (early init): 2 seconds (CPU, memory, serial -- should complete in <500ms)
 - [ ] Phase 1 (interrupts, timer): 5 seconds (LAPIC calibration can take 1–2s on some hardware)
 - [ ] Phase 2 (storage, VFS, SMP): 30 seconds (AHCI spin-up, USB enumeration, filesystem mount)
 - [ ] Phase 3 (scheduler, desktop): 60 seconds (font loading, icon store, wallpaper decode)
-- [ ] Timeouts stored in `boot_watchdog_timeouts[]` — configurable via boot.conf `watchdog_timeout=`
-- [ ] Commit: `"boot: per-phase watchdog timeouts — 2s/5s/30s/60s defaults"`
+- [ ] Timeouts stored in `boot_watchdog_timeouts[]` -- configurable via boot.conf `watchdog_timeout=`
+- [ ] Commit: `"boot: per-phase watchdog timeouts -- 2s/5s/30s/60s defaults"`
 
 **Test checkpoint:** Normal boot completes well within all timeouts. Serial shows `"Watchdog: Phase 2 timeout=30s"` at phase entry.
 
@@ -80,11 +80,11 @@ Each boot phase gets a maximum allowed duration.
 
 Every `boot_progress()` / `POST16()` call resets the watchdog countdown.
 
-- [ ] `watchdog_pet()` — reload LAPIC NMI timer with current phase's timeout
+- [ ] `watchdog_pet()` -- reload LAPIC NMI timer with current phase's timeout
 - [ ] Called automatically from `boot_progress()` macro
 - [ ] If a subsystem hangs between two progress calls: watchdog fires
 - [ ] The more granular the POST codes, the faster hangs are detected
-- [ ] Commit: `"boot: watchdog pet at every boot_progress — reset countdown on progress"`
+- [ ] Commit: `"boot: watchdog pet at every boot_progress -- reset countdown on progress"`
 
 **Test checkpoint:** Add POST codes around a slow operation. Watchdog doesn't fire (pet keeps resetting it).
 
@@ -99,7 +99,7 @@ When watchdog fires, produce useful diagnostics before rebooting.
 - [ ] On next boot: bootloader reads NVRAM flag → `"[WARN] Previous boot hung at POST 0xNNNN"` on serial
 - [ ] Increment A/B try counter (→ XREF: TODO-14 §4) so 3 hangs → rollback
 - [ ] Boot failure screen (→ XREF: TODO-02 §9) shows hang location if available
-- [ ] Commit: `"boot: watchdog reboot with diagnostics — POST code, RIP, NVRAM flag"`
+- [ ] Commit: `"boot: watchdog reboot with diagnostics -- POST code, RIP, NVRAM flag"`
 
 **Test checkpoint:** Intentional hang → watchdog fires → reboot → serial shows previous hang location → A/B counter incremented.
 
@@ -111,10 +111,10 @@ Intel TCO (Total Cost of Ownership) timer provides hardware-level reboot even if
 
 - [ ] Detect TCO timer via ACPI FADT / Intel chipset PCI registers
 - [ ] If present: configure with boot-phase timeout, pet alongside LAPIC NMI watchdog
-- [ ] TCO fires a hardware reboot signal — survives complete CPU lockup (unlike NMI which needs CPU)
+- [ ] TCO fires a hardware reboot signal -- survives complete CPU lockup (unlike NMI which needs CPU)
 - [ ] If not present: LAPIC NMI watchdog is sufficient
 - [ ] Log: `"[BOOT] TCO watchdog: %s (%u seconds)"` with enabled/not-available
-- [ ] Commit: `"boot: ACPI TCO hardware watchdog — hardware-level reboot on total lockup"`
+- [ ] Commit: `"boot: ACPI TCO hardware watchdog -- hardware-level reboot on total lockup"`
 
 **Test checkpoint:** On Intel bare metal (i5-11600K): TCO watchdog detected and configured. On QEMU: `"TCO: not available"` (expected).
 
@@ -129,7 +129,7 @@ Show watchdog countdown in the VPD display during boot.
 - [ ] Countdown updates every second (from LAPIC timer tick)
 - [ ] Commit: `"boot: watchdog countdown in VPD display"`
 
-**Test checkpoint:** Boot with `postbars=2` (diagnostic mode) — watchdog countdown visible.
+**Test checkpoint:** Boot with `postbars=2` (diagnostic mode) -- watchdog countdown visible.
 
 ---
 
@@ -159,7 +159,7 @@ Show watchdog countdown in the VPD display during boot.
 - [ ] Create `scripts/test-boot-watchdog.sh`:
   - Build a debug kernel with `WATCHDOG_TEST_HANG=1` (intentional `for(;;){}` in Phase 2)
   - Boot QEMU headless with 45s timeout
-  - Assert serial contains `"WATCHDOG: boot hung at POST"` (§4 — NMI fired with diagnostics)
+  - Assert serial contains `"WATCHDOG: boot hung at POST"` (§4 -- NMI fired with diagnostics)
   - Assert QEMU exits (reboot triggered, `-no-reboot` causes shutdown)
 - [ ] Add smoke test pattern to `scripts/test-smoke.sh`: absence of `"WATCHDOG"` on normal boot (no false triggers)
 - [ ] Commit: `"test: add boot watchdog test suite with intentional-hang smoke test"`
@@ -169,5 +169,5 @@ Show watchdog countdown in the VPD display during boot.
 - [ ] **Hang detection**: intentional infinite loop in Phase 2 → watchdog fires, system reboots.
 - [ ] **Normal boot**: all phases complete within timeouts, no false watchdog triggers.
 - [ ] **Hang + rollback**: 3 watchdog reboots → A/B rollback to working slot.
-- [ ] **TCO test**: Intel bare metal — TCO watchdog detected and configured.
-- [ ] Commit: `"boot: watchdog system complete — no more infinite hangs"`
+- [ ] **TCO test**: Intel bare metal -- TCO watchdog detected and configured.
+- [ ] Commit: `"boot: watchdog system complete -- no more infinite hangs"`

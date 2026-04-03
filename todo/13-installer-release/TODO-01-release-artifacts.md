@@ -1,7 +1,7 @@
-# TODO-01 — Disk Image, USB & Release Artifacts
+# TODO-01 -- Disk Image, USB & Release Artifacts
 
 > **Goal:** Turn development build outputs into versioned, signed, distributable release
-> artifacts — compressed disk images, bootable ISOs, USB writer, VM image variants, code-
+> artifacts -- compressed disk images, bootable ISOs, USB writer, VM image variants, code-
 > signed binaries, an artifact manifest, and reproducible builds. This is the difference
 > between a development build and a product release.
 
@@ -15,12 +15,12 @@
 > **ISO script already specced**: `09-services-security/TODO-11-installer-iso.md §1`
 > owns `scripts/make-iso.sh` (El Torito + EFI, no GRUB, `make iso` target,
 > `sha256sum`). §4 here extends it with Joliet+Rock Ridge, versioned filename, and
-> `README.txt` — do not duplicate the base ISO build.
+> `README.txt` -- do not duplicate the base ISO build.
 >
 > **Code signing already specced**: `08-desktop-shell/TODO-07-cng-crypto.md §7` owns
 > Ed25519 PE32+ COSI-trailer signing + `codesign_sign/verify()` + optional enforcement
 > in `task_create_user()`. §5 here adds the **release script** that calls those functions
-> and the **bootloader-side kernel verification** path — do not re-specify the crypto or
+> and the **bootloader-side kernel verification** path -- do not re-specify the crypto or
 > the PE trailer format.
 >
 > **Artifact manifest consumer**: `09-services-security/TODO-03` update check API parses
@@ -30,15 +30,15 @@
 
 ## Inputs
 
-- `include/kernel/version.h` + `include/build_info.h` — existing version scheme; extend in §1
-- `scripts/build.sh` — existing build script; extend with `make release` / `make iso` hooks
-- `scripts/make-iso.sh` (from `TODO-11 §1`) — base ISO build; extend in §4
-- `08-desktop-shell/TODO-07-cng-crypto.md §7` (→ XREF) — `codesign_sign(path, priv_key)` / `codesign_verify(path)`; used in §5
-- `09-services-security/TODO-11-installer-iso.md §1` (→ XREF) — `make iso` target; §4 extends it
-- `09-services-security/TODO-03-update-delivery.md` (→ XREF) — consumes `release-{version}.json` from §6
-- `src/boot/uefi/bootx64.c` — bootloader source; extend with optional kernel signature check in §5
-- `include/kernel/uefi_runtime.h` — UEFI variable access for Secure Boot toggle check — §5
-- `tools/` (host-side build tools pattern) — `usb_creator.c` follows same pattern — §3
+- `include/kernel/version.h` + `include/build_info.h` -- existing version scheme; extend in §1
+- `scripts/build.sh` -- existing build script; extend with `make release` / `make iso` hooks
+- `scripts/make-iso.sh` (from `TODO-11 §1`) -- base ISO build; extend in §4
+- `08-desktop-shell/TODO-07-cng-crypto.md §7` (→ XREF) -- `codesign_sign(path, priv_key)` / `codesign_verify(path)`; used in §5
+- `09-services-security/TODO-11-installer-iso.md §1` (→ XREF) -- `make iso` target; §4 extends it
+- `09-services-security/TODO-03-update-delivery.md` (→ XREF) -- consumes `release-{version}.json` from §6
+- `src/boot/uefi/bootx64.c` -- bootloader source; extend with optional kernel signature check in §5
+- `include/kernel/uefi_runtime.h` -- UEFI variable access for Secure Boot toggle check -- §5
+- `tools/` (host-side build tools pattern) -- `usb_creator.c` follows same pattern -- §3
 
 ---
 
@@ -116,7 +116,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
   3. Decompress if passed `.img.zst`: `zstd -d "$IMG" -o /tmp/impossible-os-usb.img`
   4. Write: `dd if=/tmp/impossible-os-usb.img of=$1 bs=4M conv=fsync status=progress`
   5. Verify: `dd if=$1 bs=512 count=1 | cmp - <(dd if=/tmp/impossible-os-usb.img bs=512 count=1)` → print `Verify: OK` or `Verify: FAILED`
-  6. `sync && eject $1` — safely eject
+  6. `sync && eject $1` -- safely eject
 - [ ] **`tools/usb-creator/usb_creator.c`** (Windows host tool, compiled with `gcc -mwindows`):
   - List removable drives: `SetupDiGetClassDevs` + `GUID_DEVCLASS_DISKDRIVE`; filter `BusType == BusTypeUsb`; display as `Removable: E:\ (SanDisk 32GB)`
   - Browse for `.img.zst` or `.img` via `GetOpenFileNameA`
@@ -128,7 +128,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ## 4. Bootable ISO (Joliet + Rock Ridge) `[Sonnet]`
 
-> Extends `09-services-security/TODO-11-installer-iso.md §1` — adds Joliet+Rock Ridge
+> Extends `09-services-security/TODO-11-installer-iso.md §1` -- adds Joliet+Rock Ridge
 > extensions, versioned output filename, and `README.txt` at ISO root.
 
 **Modification to `scripts/make-iso.sh`**
@@ -169,9 +169,9 @@ shows `Impossible OS 1.0 (Build 22000)`.
 **Source:** `scripts/sign-release.sh`; modification to `src/boot/uefi/bootx64.c`
 
 - [ ] **`scripts/sign-release.sh`**:
-  1. Read Ed25519 private key from environment: `CODESIGN_PRIV_KEY` (base64-encoded 64 bytes; set as GitHub Actions secret); fail if not set with `"CODESIGN_PRIV_KEY not set — cannot sign release"`
+  1. Read Ed25519 private key from environment: `CODESIGN_PRIV_KEY` (base64-encoded 64 bytes; set as GitHub Actions secret); fail if not set with `"CODESIGN_PRIV_KEY not set -- cannot sign release"`
   2. Decode key: `echo "$CODESIGN_PRIV_KEY" | base64 -d > /tmp/priv.key` (0600 permissions); trap EXIT to `rm -f /tmp/priv.key`
-  3. Call `codesign_sign` for each binary (via a thin host wrapper `tools/codesign_host.c` — same Ed25519 COSI logic compiled for the host, operating on raw files):
+  3. Call `codesign_sign` for each binary (via a thin host wrapper `tools/codesign_host.c` -- same Ed25519 COSI logic compiled for the host, operating on raw files):
      - `tools/codesign_host build/os/kernel.exe /tmp/priv.key`
      - `tools/codesign_host build/esp/EFI/BOOT/BOOTX64.EFI /tmp/priv.key`
   4. **GPG-sign artifacts** for release integrity:
@@ -300,14 +300,14 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 | ⭐ | Feature                                                 | 🪟 Win11                                                                | 🐧 Linux                                           | 🚀 Impossible OS                                                                            |
 |----|---------------------------------------------------------|----------------------------------------------------------------------|-------------------------------------------------|------------------------------------------------------------------------------------------|
-| 💎 | `MAJOR.MINOR.BUILD` versioning baked into OS + registry | ✅ `10.0.22000`; `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` | ✅ `/etc/os-release`; kernel `uname -r`         | ⬜ §1 — `OS_VERSION_STRING`; `winver.exe`; baked into `HKLM\SOFTWARE\Impossible\Version` |
-| 💎 | Compressed disk image with SHA-256                      | ✅ Windows ISO (no zstd); WinGet                                     | ✅ `xz`/`zstd` compressed images (Fedora, Arch) | ⬜ §2 — `zstd -T0 -9` + SHA-256                                                          |
-| 💎 | Verified USB writer + cross-platform creator tool       | ✅ Rufus (3rd party); Windows Media                                  | ✅ `dd`; Etcher; Fedora Media Writer            | ⬜ §3 — `make-usb.sh` with removable-only guard; `usb_creator.exe`                       |
-| 💎 | Joliet+Rock Ridge ISO                                   | ✅ Windows ISO uses Joliet                                           | ✅ Most distros use `-R -J`                     | ⬜ §4 — extends `TODO-11 §1`; versioned filename                                         |
-| 💎 | Ed25519 code signing + bootloader verification          | ✅ Authenticode RSA; Secure Boot UEFI                                | ✅ GRUB + shim + kernel                         | ⬜ §5 — `codesign_sign` on `kernel.exe`+`BOOTX64.EFI`; bootloader verify                 |
-| ⭐ | Artifact manifest JSON                                  | ✅ Windows Update XML feeds (private)                                | ✅ Flatpak/Snap manifests; APT Packages         | ⬜ §6 — `release-{ver}.json`; consumed by `TODO-03` update                               |
-| 💎 | VM image variants                                       | ✅ Hyper-V VHD; VMware tools                                         | ✅ cloud images (QCOW2, VMDK, AMI)              | ⬜ §7 — `qemu-img convert` to VMDK/VHD/VHDX; `.ovf`                                      |
-| ⭐ | Byte-reproducible builds                                | ❌ Windows builds are not reproducible                               | ✅ Debian/NixOS reproducible builds             | ⬜ §8 — `make verify-reproducible`; `llvm-ar rcsD`; documented                           |
+| 💎 | `MAJOR.MINOR.BUILD` versioning baked into OS + registry | ✅ `10.0.22000`; `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` | ✅ `/etc/os-release`; kernel `uname -r`         | ⬜ §1 -- `OS_VERSION_STRING`; `winver.exe`; baked into `HKLM\SOFTWARE\Impossible\Version` |
+| 💎 | Compressed disk image with SHA-256                      | ✅ Windows ISO (no zstd); WinGet                                     | ✅ `xz`/`zstd` compressed images (Fedora, Arch) | ⬜ §2 -- `zstd -T0 -9` + SHA-256                                                          |
+| 💎 | Verified USB writer + cross-platform creator tool       | ✅ Rufus (3rd party); Windows Media                                  | ✅ `dd`; Etcher; Fedora Media Writer            | ⬜ §3 -- `make-usb.sh` with removable-only guard; `usb_creator.exe`                       |
+| 💎 | Joliet+Rock Ridge ISO                                   | ✅ Windows ISO uses Joliet                                           | ✅ Most distros use `-R -J`                     | ⬜ §4 -- extends `TODO-11 §1`; versioned filename                                         |
+| 💎 | Ed25519 code signing + bootloader verification          | ✅ Authenticode RSA; Secure Boot UEFI                                | ✅ GRUB + shim + kernel                         | ⬜ §5 -- `codesign_sign` on `kernel.exe`+`BOOTX64.EFI`; bootloader verify                 |
+| ⭐ | Artifact manifest JSON                                  | ✅ Windows Update XML feeds (private)                                | ✅ Flatpak/Snap manifests; APT Packages         | ⬜ §6 -- `release-{ver}.json`; consumed by `TODO-03` update                               |
+| 💎 | VM image variants                                       | ✅ Hyper-V VHD; VMware tools                                         | ✅ cloud images (QCOW2, VMDK, AMI)              | ⬜ §7 -- `qemu-img convert` to VMDK/VHD/VHDX; `.ovf`                                      |
+| ⭐ | Byte-reproducible builds                                | ❌ Windows builds are not reproducible                               | ✅ Debian/NixOS reproducible builds             | ⬜ §8 -- `make verify-reproducible`; `llvm-ar rcsD`; documented                           |
 
 Impossible OS's `⭐` advantages: the **artifact manifest JSON** closes the loop to the
 on-OS update check (no separate update metadata infrastructure needed), **Ed25519 code

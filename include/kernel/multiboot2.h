@@ -1,5 +1,5 @@
 /* ============================================================================
- * multiboot2.h — Multiboot2 tag structures and constants
+ * multiboot2.h -- Multiboot2 tag structures and constants
  *
  * Reference: https://www.gnu.org/software/grub/manual/multiboot2/
  * ============================================================================ */

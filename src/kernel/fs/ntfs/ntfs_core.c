@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_core.c — NTFS Boot Sector / BPB Parsing
+ * ntfs_core.c -- NTFS Boot Sector / BPB Parsing
  *
  * Reads the first sector (LBA 0) of an NTFS partition, validates the
  * OEM ID ("NTFS    "), extracts all critical BPB fields, and locates
@@ -97,7 +97,7 @@ struct ntfs_volume *ntfs_init(const struct blkdev *dev)
         return NULL;
     }
 
-    /* Allocate volume context — kmalloc does NOT zero memory, so we must
+    /* Allocate volume context -- kmalloc does NOT zero memory, so we must
      * memset to ensure spinlocks (bitmap_lock, mft_alloc_lock) start
      * unlocked (0) and all pointers/flags start NULL/false. */
     vol = (struct ntfs_volume *)kmalloc(sizeof(struct ntfs_volume));

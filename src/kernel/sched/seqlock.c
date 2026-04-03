@@ -1,5 +1,5 @@
 /* ============================================================================
- * seqlock.c — Sequence lock implementation
+ * seqlock.c -- Sequence lock implementation
  *
  * See seqlock.h for the full protocol description and usage examples.
  *
@@ -77,7 +77,7 @@ void seqlock_write_unlock(seqlock_t *sl)
 
 /* Begin a read-side critical section.
  * Spins until the sequence counter is even (no write in progress).
- * Returns the (even) sequence number — pass this to seqlock_read_retry. */
+ * Returns the (even) sequence number -- pass this to seqlock_read_retry. */
 uint64_t seqlock_read_begin(const seqlock_t *sl)
 {
     uint64_t seq;

@@ -1,5 +1,5 @@
 /* ============================================================================
- * partition.h — Partition Scanner & Sub-Block-Device Layer
+ * partition.h -- Partition Scanner & Sub-Block-Device Layer
  *
  * Scans all registered block devices for partition tables (GPT first,
  * MBR fallback), creates sub-block-devices for each discovered partition

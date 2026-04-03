@@ -1,22 +1,23 @@
-# TODO-05 — Win32 File I/O API & IRP Layer
+# TODO-05 -- Win32 File I/O API & IRP Layer
 
-> **Goal:** Build the complete Win32 I/O subsystem from scratch — IRP engine, MDL, file handle table, `CreateFile`/`ReadFile`/`WriteFile`, directory APIs, file management, metadata, async I/O + APC, filter manager stub, file change notifications, and `GetDiskFreeSpaceEx` — then migrate all kernel and shell internal files from raw `vfs_open`/`vfs_read`/`vfs_write` calls to the new Win32 layer. This is the **P0 blocker for all user-mode programs**.
+> **Goal:** Build the complete Win32 I/O subsystem from scratch -- IRP engine, MDL, file handle table, `CreateFile`/`ReadFile`/`WriteFile`, directory APIs, file management, metadata, async I/O + APC, filter manager stub, file change notifications, and `GetDiskFreeSpaceEx` -- then migrate all kernel and shell internal files from raw `vfs_open`/`vfs_read`/`vfs_write` calls to the new Win32 layer. This is the **P0 blocker for all user-mode programs**.
 
 > [!IMPORTANT]
-> No Win32 file API exists yet. The current syscall layer (`SYS_READFILE`, `SYS_READDIR`) is a primitive stub. Raw `vfs_open`/`vfs_read`/`vfs_write` calls are scattered across ~15 kernel and desktop source files that §11 migrates. Execution order is strict: §1 (IRP) → §2 (MDL) → §3 (handle table) → §4 (CreateFile) → §5 (ReadFile/WriteFile) → §6 (directories) → §7 (file management) → §8 (metadata) → §9 (async) → §10 (filter manager) → §11 (migration) → §12 (change notifications) → §13 (disk free space). Do not start §4 before §3; do not start §11 before §5. The handle table in §3 **extends** the Object Manager (→ XREF: `09-services-security` Object Manager TODO) — coordinate on the `HANDLE` type, reference counting, and `ObReferenceObjectByHandle`.
+> No Win32 file API exists yet. The current syscall layer (`SYS_READFILE`, `SYS_READDIR`) is a primitive stub. Raw `vfs_open`/`vfs_read`/`vfs_write` calls are scattered across ~15 kernel and desktop source files that §11 migrates. Execution order is strict: §1 (IRP) → §2 (MDL) → §3 (handle table) → §4 (CreateFile) → §5 (ReadFile/WriteFile) → §6 (directories) → §7 (file management) → §8 (metadata) → §9 (async) → §10 (filter manager) → §11 (migration) → §12 (change notifications) → §13 (disk free space). Do not start §4 before §3; do not start §11 before §5. The handle table in §3 **extends** the Object Manager (→ XREF: `09-services-security` Object Manager TODO) -- coordinate on the `HANDLE` type, reference counting, and `ObReferenceObjectByHandle`.
 
 ## Inputs
 
-- `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` — `vfs_open`/`vfs_read`/`vfs_write`/`vfs_close`; the IRP dispatch in §1 calls into this layer; NOT replaced — VFS remains the kernel-internal API; Win32 wraps it
-- `src/kernel/sched/syscall.c` — `SYS_READFILE`/`SYS_READDIR` stubs; §3 + §4 + §5 replace them with `NtCreateFile`/`NtReadFile`/`NtWriteFile` syscall numbers
-- `src/kernel/sched/` — process task struct; §3 adds per-process handle table; §6 adds per-process CWD
-- `src/desktop/`, `src/kernel/gfx/gfx_text.c`, `src/kernel/panic.c`, `src/kernel/klog_disk.c`, `src/kernel/registry.c`, `src/kernel/image.c`, `src/kernel/mm/swap.c`, `src/kernel/mm/mmap.c`, `src/kernel/symtab.c`, `src/kernel/ico.c`, `src/kernel/icon_store.c`, `src/kernel/image_save.c`, `src/kernel/drivers/cursor.c` — raw `vfs_open` callers migrated in §11
-- → XREF: `09-services-security` Object Manager TODO — `HANDLE`, reference counting, `ObReferenceObjectByHandle`, `OBJ_INHERIT` flag; handle table in §3 must use the same type definitions
-- → XREF: `09-services-security` Process Object TODO — per-process handle table lives in the process object; coordinate on layout
-- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §8–10` — share-mode, delete-on-close, byte-range locks are VFS-layer; `NtCreateFile` in §4 passes these flags down to `vfs_open()`
-- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §6` — `GetDiskFreeSpaceEx` and `GetVolumeInformation` (§13) depend on Registry volume entries from `vfs_probe()`
-- → XREF: `11-user-platform-sdk` Win32 API TODO — `CreateFile`/`ReadFile`/`WriteFile` defined here are the kernel implementations; the SDK exposes them as user-mode wrappers
-- → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §11,§12` — KAPC object and KiDeliverApc; §9 async I/O completion queues a user-mode APC to the issuing thread via KeInsertQueueApc
+- `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_open`/`vfs_read`/`vfs_write`/`vfs_close`; the IRP dispatch in §1 calls into this layer; NOT replaced -- VFS remains the kernel-internal API; Win32 wraps it
+- `src/kernel/sched/syscall.c` -- `SYS_READFILE`/`SYS_READDIR` stubs; §3 + §4 + §5 replace them with `NtCreateFile`/`NtReadFile`/`NtWriteFile` syscall numbers
+- `src/kernel/sched/` -- process task struct; §3 adds per-process handle table; §6 adds per-process CWD
+- `src/desktop/`, `src/kernel/gfx/gfx_text.c`, `src/kernel/panic.c`, `src/kernel/klog_disk.c`, `src/kernel/registry.c`, `src/kernel/image.c`, `src/kernel/mm/swap.c`, `src/kernel/mm/mmap.c`, `src/kernel/symtab.c`, `src/kernel/ico.c`, `src/kernel/icon_store.c`, `src/kernel/image_save.c`, `src/kernel/drivers/cursor.c` -- raw `vfs_open` callers migrated in §11
+- → XREF: `09-services-security` Object Manager TODO -- `HANDLE`, reference counting, `ObReferenceObjectByHandle`, `OBJ_INHERIT` flag; handle table in §3 must use the same type definitions
+- → XREF: `09-services-security` Process Object TODO -- per-process handle table lives in the process object; coordinate on layout
+- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §8–10` -- share-mode, delete-on-close, byte-range locks are VFS-layer; `NtCreateFile` in §4 passes these flags down to `vfs_open()`
+- → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §6` -- `GetDiskFreeSpaceEx` and `GetVolumeInformation` (§13) depend on Registry volume entries from `vfs_probe()`
+- → XREF: `11-user-platform-sdk` Win32 API TODO -- `CreateFile`/`ReadFile`/`WriteFile` defined here are the kernel implementations; the SDK exposes them as user-mode wrappers
+- → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md §11,§12` -- KAPC object and KiDeliverApc; §9 async I/O completion queues a user-mode APC to the issuing thread via KeInsertQueueApc
+- → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md §5` -- `SeAccessCheck` enforcement; `NtCreateFile` in §3 must call `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access against the file object's DACL
 
 ## Outcome
 
@@ -38,21 +39,21 @@
 
 | ⭐  | Order | Deliverable                                                                              | Depends On                                                     | Status |
 | --- | :---: | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 IRP engine — `struct IRP`, allocate/complete, synchronous dispatch, 7 major functions  | `vfs.c` (IRP calls into it)                                    |  [ ]   |
-| 💎  |   2   | §2 MDL — `MmCreateMdl`, probe+lock, `MmGetSystemAddressForMdl`, unlock+free             | §1 (IRP carries MDL pointer)                                   |  [ ]   |
-| 💎  |   3   | §3 File handle table — per-process `HANDLE`→`FILE_OBJECT*`, `NtCreateFile`, `NtClose`  | §1 + §2, Object Manager handle type                            |  [ ]   |
-| 💎  |   4   | §4 `CreateFile`/`CloseHandle` — dispositions, flags, Win32 wrapper over `NtCreateFile`  | §3 (handle table)                                              |  [ ]   |
-| 💎  |   5   | §5 `ReadFile`/`WriteFile`/`SetFilePointerEx` — sync + overlapped via IRP               | §4 (`FILE_OBJECT.CurrentByteOffset`)                           |  [ ]   |
-| 💎  |   6   | §6 Directory APIs — `FindFirstFileW`/`FindNextFileW`/`FindClose`, `CreateDirectoryW`, CWD | §5 (file path open proven)                                   |  [ ]   |
-| 💎  |   7   | §7 File management — `DeleteFileW`, `MoveFileExW`, `CopyFileW`                          | §6 (directory context for rename), §5 (copy uses read/write)   |  [ ]   |
-| 💎  |   8   | §8 File metadata — `GetFileAttributesW`, `GetFileSizeEx`, `GetFileTime`/`SetFileTime`   | §3 (handle → file object), §5 (offset for size)                |  [ ]   |
-| 💎  |   9   | §9 Async I/O + APC — `OVERLAPPED`, `GetOverlappedResult`, completion APC to caller      | §5 (async IRP dispatch path)                                   |  [ ]   |
-| 💎  |  10   | §10 Filter manager stub — `FltRegisterFilter`/`FltUnregisterFilter`, pass-through       | §1 (IRP pre/post hook points)                                  |  [ ]   |
-| ⭐  |  11   | §11 Internal migration — all `vfs_open` callers → `CreateFile`/`ReadFile`/`WriteFile`  | §5 + §8 (full read/write + metadata available)                  |  [ ]   |
-| 💎  |  12   | §12 File change notifications — `FindFirstChangeNotification`/`ReadDirectoryChangesW`   | §6 (directory watch list), §3 (handle for notification object) |  [ ]   |
-| 💎  |  13   | §13 `GetDiskFreeSpaceEx` / `GetVolumeInformation` — VFS query + Win32 surface            | TODO-03 §6 (Registry volume entries exist)                     |  [ ]   |
+| 💎  |   1   | §1 IRP engine -- `struct IRP`, allocate/complete, synchronous dispatch, 7 major functions  | `vfs.c` (IRP calls into it)                                    |  [ ]   |
+| 💎  |   2   | §2 MDL -- `MmCreateMdl`, probe+lock, `MmGetSystemAddressForMdl`, unlock+free             | §1 (IRP carries MDL pointer)                                   |  [ ]   |
+| 💎  |   3   | §3 File handle table -- per-process `HANDLE`→`FILE_OBJECT*`, `NtCreateFile`, `NtClose`  | §1 + §2, Object Manager handle type                            |  [ ]   |
+| 💎  |   4   | §4 `CreateFile`/`CloseHandle` -- dispositions, flags, Win32 wrapper over `NtCreateFile`  | §3 (handle table)                                              |  [ ]   |
+| 💎  |   5   | §5 `ReadFile`/`WriteFile`/`SetFilePointerEx` -- sync + overlapped via IRP               | §4 (`FILE_OBJECT.CurrentByteOffset`)                           |  [ ]   |
+| 💎  |   6   | §6 Directory APIs -- `FindFirstFileW`/`FindNextFileW`/`FindClose`, `CreateDirectoryW`, CWD | §5 (file path open proven)                                   |  [ ]   |
+| 💎  |   7   | §7 File management -- `DeleteFileW`, `MoveFileExW`, `CopyFileW`                          | §6 (directory context for rename), §5 (copy uses read/write)   |  [ ]   |
+| 💎  |   8   | §8 File metadata -- `GetFileAttributesW`, `GetFileSizeEx`, `GetFileTime`/`SetFileTime`   | §3 (handle → file object), §5 (offset for size)                |  [ ]   |
+| 💎  |   9   | §9 Async I/O + APC -- `OVERLAPPED`, `GetOverlappedResult`, completion APC to caller      | §5 (async IRP dispatch path)                                   |  [ ]   |
+| 💎  |  10   | §10 Filter manager stub -- `FltRegisterFilter`/`FltUnregisterFilter`, pass-through       | §1 (IRP pre/post hook points)                                  |  [ ]   |
+| ⭐  |  11   | §11 Internal migration -- all `vfs_open` callers → `CreateFile`/`ReadFile`/`WriteFile`  | §5 + §8 (full read/write + metadata available)                  |  [ ]   |
+| 💎  |  12   | §12 File change notifications -- `FindFirstChangeNotification`/`ReadDirectoryChangesW`   | §6 (directory watch list), §3 (handle for notification object) |  [ ]   |
+| 💎  |  13   | §13 `GetDiskFreeSpaceEx` / `GetVolumeInformation` -- VFS query + Win32 surface            | TODO-03 §6 (Registry volume entries exist)                     |  [ ]   |
 
-> §11 (internal migration) is `⭐` exclusive in scope: Windows was built Win32-first and never needed a migration pass; Linux never migrates anything to Win32. Impossible OS performs a clean architectural cut — kernel-internal code uses `vfs_*` (fast, no handle overhead), while everything visible to user-mode programs uses `CreateFile`/`ReadFile`/`WriteFile` (full Win32 semantics). This gives user-mode programs an unmodified Win32 file API while keeping the kernel core free of handle-table overhead for internal operations.
+> §11 (internal migration) is `⭐` exclusive in scope: Windows was built Win32-first and never needed a migration pass; Linux never migrates anything to Win32. Impossible OS performs a clean architectural cut -- kernel-internal code uses `vfs_*` (fast, no handle overhead), while everything visible to user-mode programs uses `CreateFile`/`ReadFile`/`WriteFile` (full Win32 semantics). This gives user-mode programs an unmodified Win32 file API while keeping the kernel core free of handle-table overhead for internal operations.
 
 ---
 
@@ -70,18 +71,18 @@ Define `struct IRP` and implement the core dispatch lifecycle: `IoAllocateIrp`, 
 - [ ] `IoFreeIrp(irp)` → `kfree(irp)`
 - [ ] `IoCompleteRequest(irp, priority_boost)`: call `irp->CompletionRoutine(irp, irp->CompletionContext)` if non-NULL; set completion event if synchronous wait pending
 - [ ] `IoCallDriver(device_obj, irp)`: look up `device_obj->DriverObject->MajorFunction[irp->MajorFunction]`; call it; return NTSTATUS
-- [ ] FS driver adapter: `vfs_irp_dispatch(irp)` — switch on `MajorFunction`; `CREATE` → `vfs_open()`; `READ` → `vfs_read()`; `WRITE` → `vfs_write()`; `CLOSE` → `vfs_close()`; `QUERY_INFORMATION` → `vfs_stat()`; `DIR_CONTROL` → `vfs_readdir()`; call `IoCompleteRequest()` in each
+- [ ] FS driver adapter: `vfs_irp_dispatch(irp)` -- switch on `MajorFunction`; `CREATE` → `vfs_open()`; `READ` → `vfs_read()`; `WRITE` → `vfs_write()`; `CLOSE` → `vfs_close()`; `QUERY_INFORMATION` → `vfs_stat()`; `DIR_CONTROL` → `vfs_readdir()`; call `IoCompleteRequest()` in each
 - [ ] Log: `[IRP] %s MajorFn=0x%02x → NTSTATUS 0x%x` (debug only, gated by `klog_level >= LOG_DEBUG`)
-- [ ] Commit: `"io: IRP engine — struct IRP, IoAllocateIrp/Complete/CallDriver, vfs_irp_dispatch"`
+- [ ] Commit: `"io: IRP engine -- struct IRP, IoAllocateIrp/Complete/CallDriver, vfs_irp_dispatch"`
 
-## 2. MDL — Memory Descriptor List `[Opus]`
+## 2. MDL -- Memory Descriptor List `[Opus]`
 
 Implement MDL to safely copy user buffers into kernel space for IRP READ/WRITE operations. Required before any user-mode read/write path can pass buffers through the IRP.
 
 **Files:** `src/kernel/io/mdl.c` (new), `include/kernel/io/mdl.h` (new)
 
 > [!NOTE]
-> MDL layout: `void *StartVa` (user virtual address); `ULONG ByteCount`; `ULONG ByteOffset` (offset within first page); `ULONG MdlFlags`; `void *MappedSystemVa` (kernel mapping of pages). `MmProbeAndLockPages`: validate user VA range is mapped and readable/writable (check page table entries); record physical pages. `MmGetSystemAddressForMdl`: map the physical pages into the kernel's address space (use `vmm_map_pages()` at a kernel VA); return `MappedSystemVa`. For the initial implementation in a single-address-space kernel, this can be a direct pointer — but the structure and API must be in place for future ring-3 isolation.
+> MDL layout: `void *StartVa` (user virtual address); `ULONG ByteCount`; `ULONG ByteOffset` (offset within first page); `ULONG MdlFlags`; `void *MappedSystemVa` (kernel mapping of pages). `MmProbeAndLockPages`: validate user VA range is mapped and readable/writable (check page table entries); record physical pages. `MmGetSystemAddressForMdl`: map the physical pages into the kernel's address space (use `vmm_map_pages()` at a kernel VA); return `MappedSystemVa`. For the initial implementation in a single-address-space kernel, this can be a direct pointer -- but the structure and API must be in place for future ring-3 isolation.
 
 - [ ] `struct MDL { void *StartVa; uint32_t ByteCount; uint32_t ByteOffset; uint32_t Flags; void *MappedSystemVa; uint64_t Pages[MDL_MAX_PAGES]; uint32_t PageCount; }`
 - [ ] `MmCreateMdl(vaddr, length)` → allocate MDL; set `StartVa`, `ByteCount`, `ByteOffset = vaddr & 0xFFF`; return pointer
@@ -89,7 +90,7 @@ Implement MDL to safely copy user buffers into kernel space for IRP READ/WRITE o
 - [ ] `MmGetSystemAddressForMdl(mdl)`: if `MappedSystemVa` already set: return it; else map pages at a kernel VA via `vmm_alloc_kernel_va()`; set `MDL_MAPPED_TO_SYSTEM_VA`; return `MappedSystemVa`
 - [ ] `MmUnlockPages(mdl)`: release page locks; clear `MDL_PAGES_LOCKED`
 - [ ] `MmFreeMdl(mdl)`: if `MDL_MAPPED_TO_SYSTEM_VA`: unmap kernel VA; `kfree(mdl)`
-- [ ] Commit: `"io: MDL — MmCreateMdl/ProbeAndLock/GetSystemAddress/Unlock/Free"`
+- [ ] Commit: `"io: MDL -- MmCreateMdl/ProbeAndLock/GetSystemAddress/Unlock/Free"`
 
 ## 3. File Handle Table `[Opus]`
 
@@ -107,7 +108,7 @@ Add a per-process `HANDLE`→`FILE_OBJECT*` table to the process struct. Impleme
 - [ ] `NtClose(handle)`: `ObReferenceObjectByHandle` to get `FILE_OBJECT`; call `file_object_release()`; `handle_free()`
 - [ ] Inherit handles: `handle_duplicate(src_task, dst_task, handle)` for `OBJ_INHERIT` during `CreateProcess`
 - [ ] Register `NtCreateFile`/`NtClose` in `syscall.c` dispatch table
-- [ ] Commit: `"io: file handle table — FILE_OBJECT, per-process HANDLE table, NtCreateFile, NtClose, ObRefByHandle"`
+- [ ] Commit: `"io: file handle table -- FILE_OBJECT, per-process HANDLE table, NtCreateFile, NtClose, ObRefByHandle"`
 
 ## 4. `CreateFile` / `CloseHandle` `[Sonnet]`
 
@@ -122,7 +123,7 @@ Implement Win32 `CreateFile`/`CreateFileW` as wrappers over `NtCreateFile`. Hand
 - [ ] `CreateFileA(lpFileName, ...)` → convert ASCII to `UNICODE_STRING`; call `CreateFileW`
 - [ ] `CloseHandle(hObject)` → `NtClose(hObject)`; return TRUE/FALSE; `SetLastError` on failure
 - [ ] Verify path prefix: strip `\\?\` and `\\.\` prefixes if present; map drive letter to VFS root
-- [ ] Commit: `"win32: CreateFile/CloseHandle — all dispositions, FILE_FLAG_*, share mode, NtCreateFile wrapper"`
+- [ ] Commit: `"win32: CreateFile/CloseHandle -- all dispositions, FILE_FLAG_*, share mode, NtCreateFile wrapper"`
 
 ## 5. `ReadFile` / `WriteFile` / `SetFilePointerEx` `[Opus]`
 
@@ -139,7 +140,7 @@ Implement `NtReadFile`/`NtWriteFile` via synchronous IRP dispatch. Add `SetFileP
 - [ ] `ReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped)` → `NtReadFile`; set `*lpNumberOfBytesRead = io_status.Information`; return TRUE/FALSE
 - [ ] `WriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten, lpOverlapped)` → `NtWriteFile`
 - [ ] Register `NtReadFile`/`NtWriteFile`/`NtSetInformationFile` in syscall dispatch; retire `SYS_READFILE` primitive
-- [ ] Commit: `"win32: ReadFile/WriteFile/SetFilePointerEx — IRP dispatch, MDL, offset tracking, sync path"`
+- [ ] Commit: `"win32: ReadFile/WriteFile/SetFilePointerEx -- IRP dispatch, MDL, offset tracking, sync path"`
 
 ## 6. Directory APIs + Per-Process CWD `[Sonnet]`
 
@@ -148,7 +149,7 @@ Implement `FindFirstFileW`/`FindNextFileW`/`FindClose`, `CreateDirectoryW`/`Remo
 **Files:** `src/kernel/win32/findfile.c` (new), `src/kernel/win32/directory.c` (new), `src/kernel/sched/task.c` (extend)
 
 > [!NOTE]
-> `FindFirstFileW` opens the parent directory, issues `IRP_MJ_DIRECTORY_CONTROL` (sub-function `IRP_MN_QUERY_DIRECTORY`) with a wildcard mask, fills a `WIN32_FIND_DATAW` struct, and returns a find handle (stored in process handle table as a `FIND_OBJECT`). `FindNextFileW` continues from the saved directory position. `FIND_OBJECT` fields: `HANDLE dir_handle`; `uint32_t entry_index`; `UNICODE_STRING mask`. `RemoveDirectoryW` requires the directory to be empty — if not, return `ERROR_DIR_NOT_EMPTY`.
+> `FindFirstFileW` opens the parent directory, issues `IRP_MJ_DIRECTORY_CONTROL` (sub-function `IRP_MN_QUERY_DIRECTORY`) with a wildcard mask, fills a `WIN32_FIND_DATAW` struct, and returns a find handle (stored in process handle table as a `FIND_OBJECT`). `FindNextFileW` continues from the saved directory position. `FIND_OBJECT` fields: `HANDLE dir_handle`; `uint32_t entry_index`; `UNICODE_STRING mask`. `RemoveDirectoryW` requires the directory to be empty -- if not, return `ERROR_DIR_NOT_EMPTY`.
 
 - [ ] `FindFirstFileW(lpFileName, lpFindFileData)`: split path into directory + mask; `CreateFileW(directory, LIST_DIR)`; allocate `FIND_OBJECT`; call `IRP_MJ_DIRECTORY_CONTROL` for first entry matching mask; fill `WIN32_FIND_DATAW`; alloc handle; return handle
 - [ ] `FindNextFileW(hFindFile, lpFindFileData)`: `ObReferenceObjectByHandle` → `FIND_OBJECT`; continue directory query from saved index; fill data; return TRUE or FALSE + `ERROR_NO_MORE_FILES`
@@ -159,7 +160,7 @@ Implement `FindFirstFileW`/`FindNextFileW`/`FindClose`, `CreateDirectoryW`/`Remo
 - [ ] Per-process CWD: add `char cwd[256]` to `task_t`; init to `"C:\\"` at process create; `GetCurrentDirectoryW(nBufLen, lpBuf)` → copy `cwd` → WCHAR; `SetCurrentDirectoryW(lpPathName)` → resolve + validate path → update `cwd`
 - [ ] Commit: `"win32: FindFirstFile/FindNextFile/FindClose, CreateDirectory/RemoveDirectory, per-process CWD"`
 
-## 7. File Management — Delete, Move, Copy `[Sonnet]`
+## 7. File Management -- Delete, Move, Copy `[Sonnet]`
 
 Implement `DeleteFileW`, `MoveFileExW` (within-volume rename and cross-volume copy+delete), and `CopyFileW` (chunked read/write + timestamp preserve).
 
@@ -189,7 +190,7 @@ Implement `GetFileAttributesW`/`SetFileAttributesW`, `GetFileSizeEx`, `GetFileTi
 - [ ] `GetFileTime(hFile, lpCreation, lpLastAccess, lpLastWrite)` → `NtQueryInformationFile(FileBasicInformation)` → convert NTFS/FAT32 times to `FILETIME` fields
 - [ ] `SetFileTime(hFile, lpCreation, lpLastAccess, lpLastWrite)` → `NtSetInformationFile(FileBasicInformation)` with encoded times
 - [ ] `GetFileInformationByHandle(hFile, lpFileInfo)` → assemble `BY_HANDLE_FILE_INFORMATION` from `vfs_stat()` + volume serial from Registry
-- [ ] Commit: `"win32: file metadata — GetFileAttributes, GetFileSizeEx, GetFileTime/SetFileTime, FILETIME encode"`
+- [ ] Commit: `"win32: file metadata -- GetFileAttributes, GetFileSizeEx, GetFileTime/SetFileTime, FILETIME encode"`
 
 ## 9. Async I/O + APC `[Opus]`
 
@@ -205,7 +206,7 @@ Implement `OVERLAPPED` struct, `GetOverlappedResult`, and user-mode APC queued t
 - [ ] `GetOverlappedResult(hFile, lpOverlapped, lpBytesTransferred, bWait)`: check `Internal != STATUS_PENDING`; if still pending and `bWait`: `WaitForSingleObject(hEvent, INFINITE)`; set `*lpBytesTransferred = InternalHigh`; return TRUE/FALSE
 - [ ] `KeInsertQueueApc(thread, apc, ctx, status)`: add to thread's APC queue; when thread enters alertable wait (`WaitForSingleObjectEx(INFINITE, bAlertable=TRUE)`): dequeue and call `apc(ctx, 0, status)`
 - [ ] `GetOverlappedResultEx(hFile, lpOverlapped, lpBytes, dwMs, bAlertable)`: waits up to `dwMs` ms; if `bAlertable` drains APC queue
-- [ ] Commit: `"win32: OVERLAPPED async I/O — IRP overlapped completion, hEvent signal, user-mode APC queue"`
+- [ ] Commit: `"win32: OVERLAPPED async I/O -- IRP overlapped completion, hEvent signal, user-mode APC queue"`
 
 ## 10. Filter Manager Stub `[Sonnet]`
 
@@ -222,16 +223,16 @@ Register and unregister mini-filters via `FltRegisterFilter`/`FltUnregisterFilte
 - [ ] `FltStartFiltering(FilterHandle)`: no-op initially (pass-through); mark filter as active
 - [ ] Pre-op dispatch in `IoCallDriver`: before calling FS driver, iterate `g_filter_list` ascending; call `PreOperation(cbd, CompletionContext)`; if returns `FLT_PREOP_COMPLETE`: skip FS driver, skip post-ops
 - [ ] Post-op dispatch: after FS driver returns, iterate list descending; call `PostOperation`
-- [ ] Commit: `"io: FltMgr stub — FltRegisterFilter/Unregister/StartFiltering, pre/post op dispatch hooks"`
+- [ ] Commit: `"io: FltMgr stub -- FltRegisterFilter/Unregister/StartFiltering, pre/post op dispatch hooks"`
 
-## 11. Internal Migration — `vfs_open` → `CreateFile` `[Sonnet]`
+## 11. Internal Migration -- `vfs_open` → `CreateFile` `[Sonnet]`
 
 Migrate all ~15 kernel and desktop source files that currently call `vfs_open`/`vfs_read`/`vfs_write`/`vfs_close` directly to use `CreateFile`/`ReadFile`/`WriteFile`/`CloseHandle`.
 
 **Files:** `src/kernel/gfx/gfx_text.c`, `src/kernel/panic.c`, `src/kernel/klog_disk.c`, `src/kernel/registry.c`, `src/kernel/image.c`, `src/kernel/mm/swap.c`, `src/kernel/mm/mmap.c`, `src/kernel/symtab.c`, `src/kernel/ico.c`, `src/kernel/icon_store.c`, `src/kernel/image_save.c`, `src/kernel/drivers/cursor.c`, `src/kernel/sched/syscall.c`, `src/desktop/desktop.c`, `src/desktop/terminal.c`
 
 > [!NOTE]
-> Migration pattern: `vfs_open(path, VFS_O_READ)` → `CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL)`; `vfs_read(node, buf, size)` → `ReadFile(handle, buf, size, &read, NULL)`; `vfs_write(node, buf, size)` → `WriteFile(...)`; `vfs_close(node)` → `CloseHandle(handle)`. Kernel-internal modules (like `klog_disk.c`, `registry.c`) may keep using `vfs_*` directly if they run before the handle table is initialised — document these with a `/* kernel-internal: pre-handle-table path */` comment. Do NOT migrate `src/kernel/fs/` itself — the VFS layer stays on `vfs_*`.
+> Migration pattern: `vfs_open(path, VFS_O_READ)` → `CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL)`; `vfs_read(node, buf, size)` → `ReadFile(handle, buf, size, &read, NULL)`; `vfs_write(node, buf, size)` → `WriteFile(...)`; `vfs_close(node)` → `CloseHandle(handle)`. Kernel-internal modules (like `klog_disk.c`, `registry.c`) may keep using `vfs_*` directly if they run before the handle table is initialised -- document these with a `/* kernel-internal: pre-handle-table path */` comment. Do NOT migrate `src/kernel/fs/` itself -- the VFS layer stays on `vfs_*`.
 
 - [ ] For each file in the list: search for `vfs_open`/`vfs_read`/`vfs_write`/`vfs_close` calls; replace with Win32 equivalents; verify compile; test read/write correctness
 - [ ] `syscall.c`: retire `SYS_READFILE` / `SYS_READDIR`; replace with `NtCreateFile` / `NtReadFile` / `NtWriteFile` / `NtClose` syscall numbers
@@ -247,14 +248,14 @@ Implement `FindFirstChangeNotificationW`/`FindNextChangeNotification`/`FindClose
 > [!NOTE]
 > `FindFirstChangeNotification` filter flags: `FILE_NOTIFY_CHANGE_FILE_NAME (0x1)`, `FILE_NOTIFY_CHANGE_DIR_NAME (0x2)`, `FILE_NOTIFY_CHANGE_SIZE (0x8)`, `FILE_NOTIFY_CHANGE_LAST_WRITE (0x10)`. The notification object is a manual-reset event handle signalled when a matching change occurs in the watched directory (or subtree if `bWatchSubtree`). `ReadDirectoryChangesW` returns a buffer of `FILE_NOTIFY_INFORMATION` records. VFS integration: `vfs_create`, `vfs_delete`, `vfs_rename`, `vfs_write` must call `vfs_notify_change(dir_node, action, filename)` after mutating the directory.
 
-- [ ] `NOTIFY_WATCHER { HANDLE event; char path[256]; DWORD filter; BOOL subtree; FILE_NOTIFY_INFORMATION *buf; DWORD buf_size; }` — linked list of active watchers
+- [ ] `NOTIFY_WATCHER { HANDLE event; char path[256]; DWORD filter; BOOL subtree; FILE_NOTIFY_INFORMATION *buf; DWORD buf_size; }` -- linked list of active watchers
 - [ ] `FindFirstChangeNotificationW(lpPath, bSubtree, dwFilter)`: create watcher; create event; return event handle (watchers indexed by path)
 - [ ] `FindNextChangeNotification(hChange)`: reset the event (re-arm); return TRUE
 - [ ] `FindCloseChangeNotification(hChange)`: free watcher entry
 - [ ] `ReadDirectoryChangesW(hDir, lpBuf, nBufLen, bSubtree, dwFilter, lpBytesReturned, lpOverlapped, lpApc)`: store watcher; fill `FILE_NOTIFY_INFORMATION` records on next change or wait synchronously
 - [ ] `vfs_notify_change(vfs_node_t *dir, DWORD action, const char *filename)`: iterate watcher list; if path matches: append `FILE_NOTIFY_INFORMATION` record; signal event; if overlapped: complete IRP
 - [ ] Hook `vfs_notify_change()` into `vfs_create`, `vfs_delete`, `vfs_rename`, `vfs_write_complete`
-- [ ] Commit: `"win32: file change notifications — FindFirstChangeNotification, ReadDirectoryChangesW, vfs hooks"`
+- [ ] Commit: `"win32: file change notifications -- FindFirstChangeNotification, ReadDirectoryChangesW, vfs hooks"`
 
 ## 13. `GetDiskFreeSpaceEx` / `GetVolumeInformation` `[Sonnet]`
 
@@ -269,7 +270,7 @@ Implement `GetDiskFreeSpaceExW`/`GetDiskFreeSpaceW` and the remaining `GetVolume
 - [ ] `GetDiskFreeSpaceExW(lpDir, lpFreeAvail, lpTotal, lpTotalFree)`: drive letter from `lpDir`; compute from `vfs_get_free_space()`; all three outputs use `ULARGE_INTEGER`
 - [ ] `GetDiskFreeSpaceW(lpRoot, &spc, &bps, &free_c, &total_c)`: return cluster geometry from filesystem BPB + free count
 - [ ] Verify `GetVolumeInformationW` (TODO-03 §6) includes volume serial (CRC32 of device path), max component = 255, correct `FileSystemFlags` per type; extend here if missing
-- [ ] Commit: `"win32: GetDiskFreeSpaceEx/GetDiskFreeSpace — VFS free-space query, cluster geometry"`
+- [ ] Commit: `"win32: GetDiskFreeSpaceEx/GetDiskFreeSpace -- VFS free-space query, cluster geometry"`
 
 ---
 
@@ -278,21 +279,21 @@ Implement `GetDiskFreeSpaceExW`/`GetDiskFreeSpaceW` and the remaining `GetVolume
 
 | ⭐ | Feature                                                                | 🪟 Win11                                                                          | 🐧 Linux                                                         | 🚀 Impossible OS                                                                         |
 |----|------------------------------------------------------------------------|--------------------------------------------------------------------------------|---------------------------------------------------------------|---------------------------------------------------------------------------------------|
-| 💎 | IRP engine                                                             | ✅ `ntoskrnl.exe`; full IRP + stack                                            | ❌ VFS `file_operations` vtable; no IRP                       | ⬜ §1 — `IoAllocateIrp/Complete/CallDriver`, 7 major functions, VFS                   |
-| 💎 | MDL — safe user↔kernel buffer mapping                                  | ✅ `ntoskrnl.exe`; full MDL with physical                                      | ❌ `copy_to/from_user()`; no MDL                              | ⬜ §2 — `MmCreateMdl/ProbeAndLock/GetSystemAddressForMdl`                             |
-| 💎 | Per-process `HANDLE` table                                             | ✅ `ntoskrnl.exe`; `HANDLE` table in `EPROCESS`;                               | ❌ fd table (integer index, not                               | ⬜ §3 — `handle_table[256]` in `task_t`, `FILE_OBJECT`, `NtCreateFile/NtClose`        |
-| 💎 | `CreateFile`/`CloseHandle`                                             | ✅ Full Win32; `CREATE_NEW/ALWAYS/OPEN_EXISTING/OPEN_ALWAYS/TRUNCATE_EXISTING` | ❌ `open()`/`close()` POSIX; no create-disposition concept    | ⬜ §4 — full Win32 dispositions, `FILE_FLAG_OVERLAPPED/DELETE_ON_CLOSE/WRITE_THROUGH` |
-| 💎 | `ReadFile`/`WriteFile`/`SetFilePointerEx`                              | ✅ Win32 sync + async; IRP                                                     | ❌ `read()`/`write()`/`lseek()` POSIX; `io_uring` for async   | ⬜ §5 — IRP-based sync read/write, `CurrentByteOffset`, overlapped                    |
-| 💎 | `FindFirstFileW`/`FindNextFileW` + `CreateDirectory` + per-process CWD | ✅ Full Win32 directory API; per-process                                       | ❌ `opendir()`/`readdir()`/`mkdir()` POSIX                    | ⬜ §6 — `FIND_OBJECT`, `WIN32_FIND_DATAW`, `cwd` in `task_t`                          |
-| 💎 | `DeleteFileW`, `MoveFileExW`, `CopyFileW`                              | ✅ Full Win32 file management; atomic                                          | ❌ `unlink()`/`rename()`/no `CopyFile` syscall; shell `cp`    | ⬜ §7 — `vfs_rename` for same-volume, copy+delete for                                 |
-| 💎 | File metadata                                                          | ✅ `GetFileAttributesW`, `GetFileTime`, etc.; NTFS `$STANDARD_INFORMATION`     | ❌ `stat()`/`utimes()`/`chmod()` POSIX; no `FILETIME`         | ⬜ §8 — `NtQueryInformationFile`, `FILETIME` encode, full attribute                   |
-| 💎 | Async I/O + `OVERLAPPED` + user-mode APC                               | ✅ Win32 `OVERLAPPED`; IOCP; `ReadFileEx` APC;                                 | ❌ `aio_read()`/`io_uring`; POSIX signal-based completion; no | ⬜ §9 — `OVERLAPPED`, `hEvent` signal, APC queue                                      |
-| 💎 | Filter manager                                                         | ✅ `fltmgr.sys`; full mini-filter model; antivirus/backup                      | ❌ `inotify`/`fanotify`; no filter manager abstraction        | ⬜ §10 — `FltRegisterFilter`, altitude-sorted list, pre/post op                       |
-| ⭐ | Internal migration                                                     | ✅ Always was Win32-based (no migration                                        | ❌ Not applicable (no Win32)                                  | ⬜ §11 — clean cut: kernel-internal stays `vfs_*`                                     |
-| 💎 | File change notifications                                              | ✅ `ReadDirectoryChangesW`; `IRPStack` `IRP_MJ_DIRECTORY_CONTROL`              | ❌ `inotify`; different model (`IN_CREATE`/`IN_DELETE`/etc.)  | ⬜ §12 — `vfs_notify_change()` hooked into VFS mutations,                             |
-| 💎 | `GetDiskFreeSpaceEx` / `GetVolumeInformation`                          | ✅ Full Win32; backed by filesystem                                            | ❌ `statvfs()` POSIX                                          | ⬜ §13 — VFS free-space query, cluster geometry,                                      |
+| 💎 | IRP engine                                                             | ✅ `ntoskrnl.exe`; full IRP + stack                                            | ❌ VFS `file_operations` vtable; no IRP                       | ⬜ §1 -- `IoAllocateIrp/Complete/CallDriver`, 7 major functions, VFS                   |
+| 💎 | MDL -- safe user↔kernel buffer mapping                                  | ✅ `ntoskrnl.exe`; full MDL with physical                                      | ❌ `copy_to/from_user()`; no MDL                              | ⬜ §2 -- `MmCreateMdl/ProbeAndLock/GetSystemAddressForMdl`                             |
+| 💎 | Per-process `HANDLE` table                                             | ✅ `ntoskrnl.exe`; `HANDLE` table in `EPROCESS`;                               | ❌ fd table (integer index, not                               | ⬜ §3 -- `handle_table[256]` in `task_t`, `FILE_OBJECT`, `NtCreateFile/NtClose`        |
+| 💎 | `CreateFile`/`CloseHandle`                                             | ✅ Full Win32; `CREATE_NEW/ALWAYS/OPEN_EXISTING/OPEN_ALWAYS/TRUNCATE_EXISTING` | ❌ `open()`/`close()` POSIX; no create-disposition concept    | ⬜ §4 -- full Win32 dispositions, `FILE_FLAG_OVERLAPPED/DELETE_ON_CLOSE/WRITE_THROUGH` |
+| 💎 | `ReadFile`/`WriteFile`/`SetFilePointerEx`                              | ✅ Win32 sync + async; IRP                                                     | ❌ `read()`/`write()`/`lseek()` POSIX; `io_uring` for async   | ⬜ §5 -- IRP-based sync read/write, `CurrentByteOffset`, overlapped                    |
+| 💎 | `FindFirstFileW`/`FindNextFileW` + `CreateDirectory` + per-process CWD | ✅ Full Win32 directory API; per-process                                       | ❌ `opendir()`/`readdir()`/`mkdir()` POSIX                    | ⬜ §6 -- `FIND_OBJECT`, `WIN32_FIND_DATAW`, `cwd` in `task_t`                          |
+| 💎 | `DeleteFileW`, `MoveFileExW`, `CopyFileW`                              | ✅ Full Win32 file management; atomic                                          | ❌ `unlink()`/`rename()`/no `CopyFile` syscall; shell `cp`    | ⬜ §7 -- `vfs_rename` for same-volume, copy+delete for                                 |
+| 💎 | File metadata                                                          | ✅ `GetFileAttributesW`, `GetFileTime`, etc.; NTFS `$STANDARD_INFORMATION`     | ❌ `stat()`/`utimes()`/`chmod()` POSIX; no `FILETIME`         | ⬜ §8 -- `NtQueryInformationFile`, `FILETIME` encode, full attribute                   |
+| 💎 | Async I/O + `OVERLAPPED` + user-mode APC                               | ✅ Win32 `OVERLAPPED`; IOCP; `ReadFileEx` APC;                                 | ❌ `aio_read()`/`io_uring`; POSIX signal-based completion; no | ⬜ §9 -- `OVERLAPPED`, `hEvent` signal, APC queue                                      |
+| 💎 | Filter manager                                                         | ✅ `fltmgr.sys`; full mini-filter model; antivirus/backup                      | ❌ `inotify`/`fanotify`; no filter manager abstraction        | ⬜ §10 -- `FltRegisterFilter`, altitude-sorted list, pre/post op                       |
+| ⭐ | Internal migration                                                     | ✅ Always was Win32-based (no migration                                        | ❌ Not applicable (no Win32)                                  | ⬜ §11 -- clean cut: kernel-internal stays `vfs_*`                                     |
+| 💎 | File change notifications                                              | ✅ `ReadDirectoryChangesW`; `IRPStack` `IRP_MJ_DIRECTORY_CONTROL`              | ❌ `inotify`; different model (`IN_CREATE`/`IN_DELETE`/etc.)  | ⬜ §12 -- `vfs_notify_change()` hooked into VFS mutations,                             |
+| 💎 | `GetDiskFreeSpaceEx` / `GetVolumeInformation`                          | ✅ Full Win32; backed by filesystem                                            | ❌ `statvfs()` POSIX                                          | ⬜ §13 -- VFS free-space query, cluster geometry,                                      |
 
-> **After §1–13:** Impossible OS presents an unmodified Win32 file I/O surface to user-mode programs: a binary compiled against `kernel32.dll` `CreateFile`/`ReadFile`/`WriteFile` will work without modification. The `⭐` architectural insight is the clean layering in §11: kernel-internal code (klog, registry, mmap) retains lightweight `vfs_*` calls with zero handle overhead, while every user-visible API path uses the full IRP+MDL+handle Win32 model. This mirrors Windows' own layered architecture — `ntoskrnl` internal paths bypass the object manager for performance, while all user-mode-facing paths go through `FILE_OBJECT` + `HANDLE`.
+> **After §1–13:** Impossible OS presents an unmodified Win32 file I/O surface to user-mode programs: a binary compiled against `kernel32.dll` `CreateFile`/`ReadFile`/`WriteFile` will work without modification. The `⭐` architectural insight is the clean layering in §11: kernel-internal code (klog, registry, mmap) retains lightweight `vfs_*` calls with zero handle overhead, while every user-visible API path uses the full IRP+MDL+handle Win32 model. This mirrors Windows' own layered architecture -- `ntoskrnl` internal paths bypass the object manager for performance, while all user-mode-facing paths go through `FILE_OBJECT` + `HANDLE`.
 
 ## Verification
 
@@ -311,4 +312,4 @@ Implement `GetDiskFreeSpaceExW`/`GetDiskFreeSpaceW` and the remaining `GetVolume
 - [ ] `ReadDirectoryChangesW("C:\\TestDir", ...)` → create file in dir → notification fires with `FILE_ACTION_ADDED`
 - [ ] `GetDiskFreeSpaceExW("C:\\", &avail, &total, &totalFree)` → non-zero values; `total >= avail`
 - [ ] Migration: `gfx_text.c` opens fonts via `CreateFile`; `registry.c` still uses `vfs_open` (annotated); build passes without `vfs_open` in migrated files
-- [ ] Commit: `"win32: complete file I/O API — IRP, MDL, handles, CreateFile/ReadFile/WriteFile, dirs, async, notifications"`
+- [ ] Commit: `"win32: complete file I/O API -- IRP, MDL, handles, CreateFile/ReadFile/WriteFile, dirs, async, notifications"`

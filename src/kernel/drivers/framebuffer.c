@@ -315,7 +315,7 @@ void fb_swap(void)
 
     __asm__ volatile ("sfence" ::: "memory");
 
-    /* Save/restore interrupt state instead of cli/sti — fb_swap may be
+    /* Save/restore interrupt state instead of cli/sti -- fb_swap may be
      * called from ISR context (indirectly via alive_blink_tick).
      * Bare cli/sti re-enables interrupts inside the ISR, causing
      * recursive timer interrupts and stack overflow on bare metal. */
@@ -418,7 +418,7 @@ void fb_swap_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 
     __asm__ volatile ("sfence" ::: "memory");
 
-    /* Save interrupt state — fb_swap_rect may be called from ISR context
+    /* Save interrupt state -- fb_swap_rect may be called from ISR context
      * (e.g., alive_blink_tick in timer handler).  Using cli/sti would
      * re-enable interrupts inside the ISR, causing recursive timer
      * interrupts and stack overflow on bare metal. */

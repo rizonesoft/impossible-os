@@ -1,12 +1,12 @@
 /* ============================================================================
- * boot_timing.c — Boot performance timeline
+ * boot_timing.c -- Boot performance timeline
  *
  * Reads TSC timestamps captured by the bootloader at each phase boundary,
  * converts them to milliseconds using the calibrated TSC frequency, and
  * logs a detailed boot performance summary.
  *
  * Also parses FPDT (Firmware Performance Data Table) timestamps if
- * available — these give firmware-phase durations (SEC, PEI, DXE, BDS).
+ * available -- these give firmware-phase durations (SEC, PEI, DXE, BDS).
  * ============================================================================ */
 
 #include "kernel/boot_timing.h"
@@ -16,7 +16,7 @@
 
 static uint64_t s_tsc_freq;
 
-/* Forward declaration — defined after boot_timing_init below. */
+/* Forward declaration -- defined after boot_timing_init below. */
 static uint32_t tsc_to_ms(uint64_t ticks);
 
 /* ---- Boot step timeline -------------------------------------------------- */

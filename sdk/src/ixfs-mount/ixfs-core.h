@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs-core.h — Shared IXFS parser API for host tools
+ * ixfs-core.h -- Shared IXFS parser API for host tools
  *
  * No kernel dependencies. Uses <stdint.h>, <stdio.h>, <string.h>.
  * ============================================================================ */
@@ -10,14 +10,14 @@
 #include "ixfs-structs.h"
 #include <stdio.h>
 
-/* Disk context — abstracts raw sector I/O from a file or device */
+/* Disk context -- abstracts raw sector I/O from a file or device */
 typedef struct ixfs_disk_ctx {
     FILE *fp;                           /* file handle */
     uint64_t part_offset;               /* byte offset to partition start */
     uint64_t part_size;                 /* partition size in bytes */
 } ixfs_disk_ctx_t;
 
-/* Volume context — holds parsed superblock, bitmap, and disk context */
+/* Volume context -- holds parsed superblock, bitmap, and disk context */
 typedef struct ixfs_vol {
     ixfs_disk_ctx_t *disk;
     struct ixfs_superblock sb;
@@ -26,7 +26,7 @@ typedef struct ixfs_vol {
     int dirty;                  /* 1 if any write occurred */
 } ixfs_vol_t;
 
-/* Directory entry callback — return 0 to continue, non-zero to stop */
+/* Directory entry callback -- return 0 to continue, non-zero to stop */
 typedef int (*ixfs_readdir_cb)(const struct ixfs_dir_entry *de,
                                const struct ixfs_inode *inode, void *ctx);
 

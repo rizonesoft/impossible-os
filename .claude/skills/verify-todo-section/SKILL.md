@@ -13,7 +13,7 @@ description: Verify whether a TODO section marked done or in progress matches ac
    - Build and test commands
    - Runtime evidence if the section depends on execution
 3. Collect evidence with supported tools.
-   - Build: `bash scripts/build.sh` — check `tail -1 build/build.log` for `=== BUILD OK ===`.
+   - Build: `bash scripts/build.sh` -- check `tail -1 build/build.log` for `=== BUILD OK ===`.
    - Runtime: `bash scripts/build.sh run` for headless QEMU + serial output.
    - Crash debug: `llvm-addr2line-19 -e build/kernel.exe -f <RIP>`.
 4. Classify each item conservatively.

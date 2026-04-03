@@ -1,5 +1,5 @@
 /* ============================================================================
- * fat32_core.c — String helpers, sector cache, sector I/O, FAT operations
+ * fat32_core.c -- String helpers, sector cache, sector I/O, FAT operations
  *
  * Contains the low-level building blocks used by all other FAT32 modules:
  * string utilities, LRU sector cache, block device I/O wrappers, FAT entry

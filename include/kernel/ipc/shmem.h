@@ -1,5 +1,5 @@
 /* ============================================================================
- * shmem.h — Named shared memory regions
+ * shmem.h -- Named shared memory regions
  *
  * Allows multiple tasks to share a memory region by name.
  * The first task calls shmem_create() to allocate and name the region.

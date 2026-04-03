@@ -1,21 +1,21 @@
 /* ============================================================================
- * pipe.c — Kernel IPC pipes
+ * pipe.c -- Kernel IPC pipes
  *
  * 4 KiB ring buffer pipes with blocking read/write using mutex + semaphores.
  *
  * Write path:
- *   1. sem_wait(writable) — block if buffer full
+ *   1. sem_wait(writable) -- block if buffer full
  *   2. mutex_lock(lock)
  *   3. Copy byte to ring buffer, advance write_pos
  *   4. mutex_unlock(lock)
- *   5. sem_signal(readable) — wake a blocked reader
+ *   5. sem_signal(readable) -- wake a blocked reader
  *
  * Read path:
- *   1. sem_wait(readable) — block if buffer empty
+ *   1. sem_wait(readable) -- block if buffer empty
  *   2. mutex_lock(lock)
  *   3. Copy byte from ring buffer, advance read_pos
  *   4. mutex_unlock(lock)
- *   5. sem_signal(writable) — wake a blocked writer
+ *   5. sem_signal(writable) -- wake a blocked writer
  * ============================================================================ */
 
 #include "kernel/ipc/pipe.h"
@@ -86,7 +86,7 @@ int32_t pipe_write(int pipe_id, const void *data, uint32_t len)
     if (!p->in_use || !p->write_open)
         return -1;
 
-    /* Check if read end is closed — broken pipe */
+    /* Check if read end is closed -- broken pipe */
     if (!p->read_open) {
         klog(LOG_DEBUG, "ipc", "Broken pipe (write to closed read end)");
         return -1;  /* SIGPIPE equivalent */

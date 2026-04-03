@@ -1,16 +1,16 @@
-# TODO-04 — CI Notifications & Build Status
+# TODO-04 -- CI Notifications & Build Status
 
-> **Goal:** Never miss a broken build. When CI fails — build error, test failure, boot crash — the developer gets notified immediately. GitHub PR status checks block merge on failure. Email or webhook notifications on `main` branch failures. Build badge in README shows current status. The developer should never have to manually check CI — failures come to them.
+> **Goal:** Never miss a broken build. When CI fails -- build error, test failure, boot crash -- the developer gets notified immediately. GitHub PR status checks block merge on failure. Email or webhook notifications on `main` branch failures. Build badge in README shows current status. The developer should never have to manually check CI -- failures come to them.
 
 > [!IMPORTANT]
-> **Current state (2026-04-02):** GitHub Actions builds on push. No build badge in README. No branch protection rules enforcing status checks. CI QEMU tests removed (see 00-infrastructure/TODO-03-kernel-test-framework.md) (unreliable under nested virt) — CI only verifies build, not boot. Local testing via `make test`.
+> **Current state (2026-04-02):** GitHub Actions builds on push. No build badge in README. No branch protection rules enforcing status checks. CI QEMU tests removed (see 00-infrastructure/TODO-03-kernel-test-framework.md) (unreliable under nested virt) -- CI only verifies build, not boot. Local testing via `make test`.
 
 ---
 
 ## Inputs
 
-- `.github/workflows/build.yml` — existing CI pipeline
-- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` — `make test` for local verification (CI QEMU tests removed)
+- `.github/workflows/build.yml` -- existing CI pipeline
+- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` -- `make test` for local verification (CI QEMU tests removed)
 - → XREF: `TODO-02-developer-tooling-stack.md
 
 ---
@@ -29,15 +29,15 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Branch protection rules for `main`              | —          |  [ ]   |
-| 💎  |   2   | Build status badge in README.md                 | —          |  [ ]   |
-| 💎  |   3   | Workflow failure notification (email/webhook)    | —          |  [ ]   |
-| 💎  |   4   | Nightly scheduled build                         | —          |  [ ]   |
+| 💎  |   1   | Branch protection rules for `main`              | --          |  [ ]   |
+| 💎  |   2   | Build status badge in README.md                 | --          |  [ ]   |
+| 💎  |   3   | Workflow failure notification (email/webhook)    | --          |  [ ]   |
+| 💎  |   4   | Nightly scheduled build                         | --          |  [ ]   |
 | ⭐  |   5   | PR comment bot with build results               | §1         |  [ ]   |
 | ⭐  |   6   | Build time trend tracking                       | §4         |  [ ]   |
 
-> 💎 = parity — standard CI/CD practice for any serious project.
-> ⭐ = exclusive — automated PR comment with per-suite test table, build time trends.
+> 💎 = parity -- standard CI/CD practice for any serious project.
+> ⭐ = exclusive -- automated PR comment with per-suite test table, build time trends.
 
 ---
 
@@ -49,7 +49,7 @@ Configure GitHub to require passing CI before merge to `main`.
 - [ ] Only the build check is required (CI QEMU tests removed (see 00-infrastructure/TODO-03-kernel-test-framework.md))
 - [ ] Require branches to be up to date before merging
 - [ ] Document in CONTRIBUTING.md
-- [ ] Commit: `"ci: branch protection — require passing CI for merge to main"`
+- [ ] Commit: `"ci: branch protection -- require passing CI for merge to main"`
 
 **Test checkpoint:** Open a PR → GitHub shows "Required: Build Impossible OS" status check → PR cannot merge without it passing → direct push to `main` is blocked for non-admins.
 
@@ -87,7 +87,7 @@ Get notified when `main` breaks.
           labels: ['ci-failure']
         })
   ```
-- [ ] Commit: `"ci: failure notification — issue created on main branch build failure"`
+- [ ] Commit: `"ci: failure notification -- issue created on main branch build failure"`
 
 **Test checkpoint:** Push a deliberate build failure to `main` → GitHub issue created with `ci-failure` label within 5 minutes → issue body contains link to failed Actions run.
 
@@ -98,7 +98,7 @@ Get notified when `main` breaks.
 Catch drift and flaky tests even without pushes.
 
 - [ ] Add `schedule` trigger to build.yml: `cron: '0 2 * * *'` (2 AM UTC daily)
-- [ ] Runs build-only (CI QEMU tests removed — local `make test` covers runtime verification)
+- [ ] Runs build-only (CI QEMU tests removed -- local `make test` covers runtime verification)
 - [ ] Upload all artifacts regardless of pass/fail
 - [ ] Commit: `"ci: nightly scheduled build with full test suite"`
 
@@ -113,7 +113,7 @@ Automatically post test results as a PR comment.
 - [ ] After test steps: use `actions/github-script` to post a comment with test summary
 - [ ] Include: build time, boot time, test pass/fail counts, failed test names
 - [ ] Update existing comment on re-push (don't spam with new comments)
-- [ ] Commit: `"ci: PR comment bot — automated test result summary on every PR"`
+- [ ] Commit: `"ci: PR comment bot -- automated test result summary on every PR"`
 
 > [!NOTE]
 > §5 posts build pass/fail from CI. Runtime test results are local-only (`make test`) since CI QEMU was removed.
@@ -128,9 +128,9 @@ Track build and boot times per commit to catch performance regressions.
 
 - [ ] Record build wall-clock time in CI step summary: `echo "Build time: ${SECONDS}s" >> $GITHUB_STEP_SUMMARY`
 - [ ] Store timing data as workflow artifact: `build/build-timing.json` with `{commit, build_seconds, timestamp}`
-- [ ] Script: `scripts/build-timing-report.sh` — reads last N runs, outputs trend table (commit, time, delta)
+- [ ] Script: `scripts/build-timing-report.sh` -- reads last N runs, outputs trend table (commit, time, delta)
 - [ ] Add trend summary to nightly build output: flag any commit that increased build time by >10%
-- [ ] Commit: `"ci: build time trend tracking — catch build performance regressions"`
+- [ ] Commit: `"ci: build time trend tracking -- catch build performance regressions"`
 
 **Test checkpoint:** After 3+ CI runs → `build-timing-report.sh` outputs table showing commit hash, build time, and delta from previous → >10% increase flagged with warning.
 
@@ -152,7 +152,7 @@ Track build and boot times per commit to catch performance regressions.
 ## Unit Tests
 
 > [!NOTE]
-> This TODO produces GitHub Actions workflow configuration and repository settings — no kernel code. There are no kernel-level unit tests to wire into `test_runner_init()`. Acceptance testing is covered by the Verification section below (push broken code → observe notification, badge, protection behavior).
+> This TODO produces GitHub Actions workflow configuration and repository settings -- no kernel code. There are no kernel-level unit tests to wire into `test_runner_init()`. Acceptance testing is covered by the Verification section below (push broken code → observe notification, badge, protection behavior).
 
 ---
 
@@ -161,4 +161,4 @@ Track build and boot times per commit to catch performance regressions.
 - [ ] Push broken code → CI fails → notification received → PR blocked from merge.
 - [ ] README badge shows green after successful build.
 - [ ] Nightly build runs without manual trigger.
-- [ ] Commit: `"infra: CI notifications complete — never miss a broken build"`
+- [ ] Commit: `"infra: CI notifications complete -- never miss a broken build"`

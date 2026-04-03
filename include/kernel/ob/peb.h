@@ -1,12 +1,12 @@
 /* ============================================================================
- * peb.h — Process Environment Block (PEB)
+ * peb.h -- Process Environment Block (PEB)
  *
  * Windows x64-compatible PEB layout at exact offsets so ntdll startup code
  * can walk PEB->ProcessParameters, PEB->Ldr, and PEB->OS version fields
  * without patching.
  *
  * Also defines RTL_USER_PROCESS_PARAMETERS, UNICODE_STRING, PEB_LDR_DATA,
- * LDR_DATA_TABLE_ENTRY, LIST_ENTRY, and LARGE_INTEGER — all at Windows-
+ * LDR_DATA_TABLE_ENTRY, LIST_ENTRY, and LARGE_INTEGER -- all at Windows-
  * compatible sizes and alignments.
  *
  * Reference: Windows x64 PEB offsets from winternl.h / NtInternals
@@ -51,7 +51,7 @@ typedef struct {
     uint32_t DebugFlags;       /* offset 0x0C */
     void    *ConsoleHandle;    /* offset 0x10 */
     uint32_t ConsoleFlags;     /* offset 0x18 */
-    uint32_t _pad0;            /* offset 0x1C — align to 8 */
+    uint32_t _pad0;            /* offset 0x1C -- align to 8 */
     UHANDLE  StandardInput;    /* offset 0x20 */
     UHANDLE  StandardOutput;   /* offset 0x28 */
     UHANDLE  StandardError;    /* offset 0x30 */
@@ -63,10 +63,10 @@ typedef struct {
     UNICODE_STRING DllPath;        /* offset 0x50 */
     UNICODE_STRING ImagePathName;  /* offset 0x60 */
     UNICODE_STRING CommandLine;    /* offset 0x70 */
-    void          *Environment;    /* offset 0x80 — UTF-16 env block */
+    void          *Environment;    /* offset 0x80 -- UTF-16 env block */
 } RTL_USER_PROCESS_PARAMETERS;
 
-/* ---- PEB_LDR_DATA (stub — full implementation in §8) -------------------- */
+/* ---- PEB_LDR_DATA (stub -- full implementation in §8) -------------------- */
 
 typedef struct peb_ldr_data {
     uint32_t   Length;                            /* offset 0x00 */
@@ -115,7 +115,7 @@ typedef struct peb {
     /* 0x20 */ RTL_USER_PROCESS_PARAMETERS *ProcessParameters;
 
     /* 0x28 – 0xA3: SubSystemData, ProcessHeap, FastPebLock, etc.
-     * Reserved — pad to preserve offsets for version fields. */
+     * Reserved -- pad to preserve offsets for version fields. */
     uint8_t  _reserved_0028[0xA4 - 0x28];
 
     /* 0xA4 */ uint32_t  OSMajorVersion;
@@ -138,7 +138,7 @@ typedef struct peb {
     /* 0xE8 */ uint64_t  HeapDeCommitFreeBlockThreshold;
 
     /* 0xF0 – 0x22F: many more Windows-internal fields.
-     * Reserved — pad to preserve TLS bitmap offset. */
+     * Reserved -- pad to preserve TLS bitmap offset. */
     uint8_t  _reserved_00F0[0x230 - 0xF0];
 
     /* 0x230 */ uint64_t  TlsBitmap;

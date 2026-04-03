@@ -1,5 +1,5 @@
 /* ============================================================================
- * blkdev.h — Block Device Abstraction Layer
+ * blkdev.h -- Block Device Abstraction Layer
  *
  * Provides a unified interface for all block devices (ATA, VirtIO-blk, AHCI).
  * Each driver registers its device(s) at init time. Filesystem code uses

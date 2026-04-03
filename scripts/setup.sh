@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# setup.sh — One-command development environment setup
+# setup.sh -- One-command development environment setup
 #
 # Clone the repo, run this script, and you're ready to build.
 #
@@ -18,7 +18,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Impossible OS — Development Environment Setup${NC}"
+echo -e "${CYAN}  Impossible OS -- Development Environment Setup${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
 

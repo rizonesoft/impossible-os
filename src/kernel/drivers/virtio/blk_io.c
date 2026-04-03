@@ -1,4 +1,4 @@
-/* blk_io.c — Block read/write I/O (3-descriptor chain) */
+/* blk_io.c -- Block read/write I/O (3-descriptor chain) */
 
 #include "kernel/drivers/virtio/blk_internal.h"
 
@@ -82,7 +82,7 @@ int virtio_blk_do_io(uint32_t type, uint64_t sector,
         blk_vqs[qi].avail->idx++;
         mb();
 
-        /* Wait for completion — adaptive strategy */
+        /* Wait for completion -- adaptive strategy */
         __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
         virtio_irq_flags[qi] = 0;
         __asm__ volatile ("sti");
@@ -250,7 +250,7 @@ int virtio_blk_do_io(uint32_t type, uint64_t sector,
         /* Notify device (modern MMIO notification) */
         virtq_kick(&blk_vqs[qi]);
 
-        /* Wait for completion — mode-dependent strategy */
+        /* Wait for completion -- mode-dependent strategy */
         if (!blk_use_events) {
             /* Pre-scheduler: always poll (no events available) */
             timeout = 5000000;
@@ -296,7 +296,7 @@ int virtio_blk_do_io(uint32_t type, uint64_t sector,
         } else if (current_mode == VIRTIO_IO_MODE_HYBRID) {
             /* Hybrid: brief rdtsc spin, then fallback to ISR */
             if (!hybrid_spin_poll(&blk_vqs[qi], adaptive.spin_us)) {
-                /* Spin didn't catch it — fall back to ISR wait */
+                /* Spin didn't catch it -- fall back to ISR wait */
                 if (!event_wait_timeout(&io_completions[qi], 5000)) {
                     klog(LOG_DEBUG, "virtio",
                            "I/O timeout (hybrid, avail=%u, used=%u)",

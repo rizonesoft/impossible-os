@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_ns.h — Object namespace: directories and symbolic links
+ * ob_ns.h -- Object namespace: directories and symbolic links
  *
  * Provides a hierarchical in-memory namespace rooted at `\`.
  * Directories hold named entries; symbolic links redirect lookups.
@@ -9,7 +9,7 @@
 
 #include "kernel/types.h"
 
-/* Forward declarations — full defs need ob.h which includes us */
+/* Forward declarations -- full defs need ob.h which includes us */
 struct object_header;
 struct object_type;
 
@@ -45,13 +45,13 @@ typedef struct object_symbolic_link {
 
 /* --- Root namespace ------------------------------------------------------ */
 
-/* The global root directory `\` — set during ob_init */
+/* The global root directory `\` -- set during ob_init */
 extern void *ObpRootDirectory;
 
 /* --- Namespace API ------------------------------------------------------- */
 
 /*
- * ObpLookupDirectory — walk a path and find the deepest matching directory.
+ * ObpLookupDirectory -- walk a path and find the deepest matching directory.
  *
  * Starting from root `\`, splits on `\` and descends through directories.
  * On return, *remaining points to the unresolved tail of the path.
@@ -60,7 +60,7 @@ extern void *ObpRootDirectory;
 void *ObpLookupDirectory(const char *path, const char **remaining);
 
 /*
- * ObInsertObject — insert a named object into a directory.
+ * ObInsertObject -- insert a named object into a directory.
  *
  * Sets OB_FLAG_NAMED on the object's header and stores the name pointer.
  * Returns 0 on success, -1 if the name already exists or the directory is full.
@@ -68,7 +68,7 @@ void *ObpLookupDirectory(const char *path, const char **remaining);
 int ObInsertObject(void *object, const char *name, void *directory);
 
 /*
- * ObLookupObjectByName — resolve a full path to an object.
+ * ObLookupObjectByName -- resolve a full path to an object.
  *
  * Walks the namespace, follows symlinks, calls type->on_parse for
  * namespace-extending objects.  Calls ObReferenceObject on the result.
@@ -78,7 +78,7 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
                          uint32_t access, void **result);
 
 /*
- * ob_ns_create_directory — allocate and return a new directory object body.
+ * ob_ns_create_directory -- allocate and return a new directory object body.
  *
  * The directory is permanent and named.  Caller should insert it
  * into a parent directory with ObInsertObject.
@@ -86,14 +86,14 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
 void *ob_ns_create_directory(void *parent);
 
 /*
- * ob_ns_create_symlink — allocate a symbolic link object body.
+ * ob_ns_create_symlink -- allocate a symbolic link object body.
  *
  * Target is copied into the body.  Caller should insert it with ObInsertObject.
  */
 void *ob_ns_create_symlink(const char *target);
 
 /*
- * ob_ns_init — create the root namespace tree.
+ * ob_ns_init -- create the root namespace tree.
  *
  * Called from ob_init after directory and symlink types are registered.
  */

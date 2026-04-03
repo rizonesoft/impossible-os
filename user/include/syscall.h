@@ -1,5 +1,5 @@
 /* ============================================================================
- * syscall.h — Userland system call wrappers
+ * syscall.h -- Userland system call wrappers
  *
  * Inline INT 0x80 wrappers matching the kernel ABI:
  *   RAX = syscall number

@@ -1,5 +1,5 @@
 /* ============================================================================
- * atomic.h — Atomic operation primitives
+ * atomic.h -- Atomic operation primitives
  *
  * Wraps GCC __atomic_* builtins in thin kernel-friendly inline functions.
  * All operations carry the minimum necessary memory ordering:
@@ -21,7 +21,7 @@
 #include "kernel/barrier.h"   /* barrier(), mb(), smp_mb() */
 
 /* ---------------------------------------------------------------------------
- * atomic_t — 32-bit atomic integer
+ * atomic_t -- 32-bit atomic integer
  * Use atomic64_t for 64-bit values (e.g. tick counters, byte offsets).
  * ------------------------------------------------------------------------- */
 typedef struct { volatile int32_t val; } atomic_t;
@@ -57,7 +57,7 @@ static inline void atomic64_set(atomic64_t *a, int64_t v) {
  * atomic_inc / atomic_dec / atomic_dec_and_test
  *
  * Used for reference counting.  atomic_dec_and_test() returns 1 (true) when
- * the counter reaches zero — the caller is responsible for freeing the object.
+ * the counter reaches zero -- the caller is responsible for freeing the object.
  * Uses __ATOMIC_ACQ_REL so the decrement is visible before any subsequent
  * free().
  * ------------------------------------------------------------------------- */
@@ -74,7 +74,7 @@ static inline int atomic_dec_and_test(atomic_t *a) {
 }
 
 /* ---------------------------------------------------------------------------
- * atomic_cmpxchg — Compare-and-swap (CAS)
+ * atomic_cmpxchg -- Compare-and-swap (CAS)
  *
  * Atomically: if *a == old, write new and return old; otherwise return the
  * current value.  This is the primitive used by spinlocks (§6) and
@@ -92,7 +92,7 @@ static inline int32_t atomic_cmpxchg(atomic_t *a, int32_t old_val, int32_t new_v
 }
 
 /* ---------------------------------------------------------------------------
- * atomic_fetch_add — Atomic add, returns old value
+ * atomic_fetch_add -- Atomic add, returns old value
  *
  * Used by ticket locks (§23): each waiter atomically fetches-and-increments
  * `next_ticket` to obtain its unique ticket number.

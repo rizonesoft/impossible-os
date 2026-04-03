@@ -1,5 +1,5 @@
 /* ============================================================================
- * fat32_write.c — Write API
+ * fat32_write.c -- Write API
  *
  * File creation, writing, deletion, renaming, truncation, rmdir,
  * attribute setting, and timestamp setting.
@@ -11,7 +11,7 @@
 
 int fat32_create_file(uint32_t dir_cluster, const char *name)
 {
-    /* Legacy wrapper — not used in multi-volume path.
+    /* Legacy wrapper -- not used in multi-volume path.
      * VFS ops extract vol from node->fs_data and call internal functions. */
     (void)dir_cluster;
     (void)name;

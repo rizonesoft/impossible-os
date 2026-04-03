@@ -1,5 +1,5 @@
 /* ============================================================================
- * vmm.c — Virtual Memory Manager (x86-64 4-level paging)
+ * vmm.c -- Virtual Memory Manager (x86-64 4-level paging)
  *
  * Takes over the boot-time page tables from entry.asm and provides
  * fine-grained 4 KiB page mapping via the PML4 → PDPT → PD → PT hierarchy.
@@ -23,7 +23,7 @@
 #include "kernel/mm/mmap.h"
 #include "kernel/panic.h"
 
-/* Page table entry — 64-bit */
+/* Page table entry -- 64-bit */
 typedef uint64_t pte_t;
 
 /* Number of entries per page table level */
@@ -32,7 +32,7 @@ typedef uint64_t pte_t;
 /* Mask for extracting physical address from a PTE (bits 12-51) */
 #define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
 
-/* Kernel PML4 — read from CR3 at init */
+/* Kernel PML4 -- read from CR3 at init */
 static pte_t *kernel_pml4;
 
 /* --- Address decomposition --- */
@@ -120,7 +120,7 @@ static pte_t *get_or_create_table(pte_t *table, uint64_t index, int create)
         return (pte_t *)(entry & PTE_ADDR_MASK);
     }
 
-    /* Not present — create if requested */
+    /* Not present -- create if requested */
     if (!create)
         return (pte_t *)0;
 
@@ -164,7 +164,7 @@ int vmm_map_page(uintptr_t virt, uintptr_t phys, uint64_t flags)
 
     /* Walk/create PD → PT
      * Note: if PD[pdi] is a 2 MiB huge page, we can't create a PT here.
-     * In that case we'd need to split the huge page — for now, fail. */
+     * In that case we'd need to split the huge page -- for now, fail. */
     pt = get_or_create_table(pd, pdi, 1);
     if (!pt) return -1;
 
@@ -258,17 +258,17 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
 {
     uintptr_t fault_addr = read_cr2();
 
-    /* Try swap handler first — if the page was swapped, bring it back */
+    /* Try swap handler first -- if the page was swapped, bring it back */
     if (swap_handle_fault(fault_addr, frame->err_code)) {
         return (uint64_t)frame;  /* page swapped in, retry instruction */
     }
 
-    /* Try mmap handler — if the page is in an mmap'd region, load it */
+    /* Try mmap handler -- if the page is in an mmap'd region, load it */
     if (mmap_handle_fault(fault_addr, frame->err_code)) {
         return (uint64_t)frame;  /* page loaded from file, retry instruction */
     }
 
-    /* Unhandled page fault — show styled panic screen */
+    /* Unhandled page fault -- show styled panic screen */
     panic_screen(frame, frame->err_code, "PAGE_FAULT", "vmm.c", 0);
 
     return (uint64_t)frame;  /* unreachable */
@@ -310,7 +310,7 @@ uintptr_t vmm_create_user_pml4(void)
     kern_pd   = (pte_t *)(kern_pdpt[0] & PTE_ADDR_MASK);
 
     /* Clone kernel PD entries into the new PD (all 512 entries).
-     * These are 2 MiB huge pages — kernel-only, no User bit. */
+     * These are 2 MiB huge pages -- kernel-only, no User bit. */
     for (i = 0; i < PT_ENTRIES; i++)
         pd[i] = kern_pd[i] & ~((pte_t)VMM_FLAG_USER);
 
@@ -399,13 +399,13 @@ uintptr_t vmm_get_kernel_cr3(void)
     return (uintptr_t)kernel_pml4;
 }
 
-/* --- MMIO mapping (UC — Uncacheable) ------------------------------------ */
+/* --- MMIO mapping (UC -- Uncacheable) ------------------------------------ */
 
 /* Bump allocator for MMIO virtual addresses.
  * Starts at 4 GiB (above the identity map) and grows upward.
  * Each mapping is page-aligned. */
 #define MMIO_VA_BASE  0x100000000ULL  /* 4 GiB */
-#define MMIO_VA_LIMIT 0x140000000ULL  /* 5 GiB — 1 GiB for MMIO */
+#define MMIO_VA_LIMIT 0x140000000ULL  /* 5 GiB -- 1 GiB for MMIO */
 
 static uintptr_t s_mmio_next_va = MMIO_VA_BASE;
 
@@ -487,7 +487,7 @@ void vmm_apply_nx_policy(void)
     /* Only apply NX to the kernel's own address range (1 MiB .. __kernel_end).
      * Skip firmware regions, MMIO, UEFI runtime, and high memory to avoid
      * breaking WHPX synthetic pages and UEFI callbacks. */
-    uintptr_t kernel_base = 0x100000;  /* 1 MiB — kernel load address */
+    uintptr_t kernel_base = 0x100000;  /* 1 MiB -- kernel load address */
     extern char __kernel_end[];
     uintptr_t kernel_top = (uintptr_t)__kernel_end;
 
@@ -508,7 +508,7 @@ void vmm_apply_nx_policy(void)
             if (!(pdpte & VMM_FLAG_PRESENT))
                 continue;
 
-            /* 1 GiB huge page — skip (too coarse for NX policy) */
+            /* 1 GiB huge page -- skip (too coarse for NX policy) */
             if (pdpte & VMM_FLAG_HUGE)
                 continue;
 
@@ -521,7 +521,7 @@ void vmm_apply_nx_policy(void)
                 if (!(pde & VMM_FLAG_PRESENT))
                     continue;
 
-                /* 2 MiB huge page — the common case for boot mappings */
+                /* 2 MiB huge page -- the common case for boot mappings */
                 if (pde & VMM_FLAG_HUGE) {
                     page_base     = (pml4i << 39) | (pdpti << 30) | (pdi << 21);
                     page_end_addr = page_base + (1UL << 21);
@@ -539,7 +539,7 @@ void vmm_apply_nx_policy(void)
                     continue;
                 }
 
-                /* 4 KiB page table — walk PT entries */
+                /* 4 KiB page table -- walk PT entries */
                 {
                     pte_t *pt = (pte_t *)(pde & PTE_ADDR_MASK);
                     uint32_t pti;
@@ -552,7 +552,7 @@ void vmm_apply_nx_policy(void)
                         if (va < kernel_base || va >= kernel_top)
                             continue;  /* outside kernel range */
                         if (va >= text_start && va < text_end)
-                            continue;  /* text — must execute */
+                            continue;  /* text -- must execute */
                         pt[pti] |= VMM_FLAG_NX;
                         nx_count++;
                     }

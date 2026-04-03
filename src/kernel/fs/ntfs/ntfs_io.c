@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_io.c — File Data Reader, Index Parsing, Directory Operations
+ * ntfs_io.c -- File Data Reader, Index Parsing, Directory Operations
  *
  * Contains:
  *   - File data reader (resident + non-resident via data runs)
@@ -18,7 +18,7 @@
 #include "kernel/klog.h"
 
 /* ============================================================================
- * File Data Reader — §4.2
+ * File Data Reader -- §4.2
  *
  * Reads actual file content via two paths:
  *   1. Resident: small files stored inline in the MFT record attribute
@@ -101,7 +101,7 @@ int64_t ntfs_read_data(struct ntfs_volume *vol,
                 break;
         }
         if (i >= run_count)
-            break;  /* VCN not covered by any run — truncated file? */
+            break;  /* VCN not covered by any run -- truncated file? */
 
         vcn_in_run = vcn - runs[i].vcn_start;
         clusters_in_run = runs[i].length - vcn_in_run;
@@ -112,13 +112,13 @@ int64_t ntfs_read_data(struct ntfs_volume *vol,
             chunk = remaining;
 
         if (runs[i].lcn == NTFS_LCN_SPARSE) {
-            /* Sparse run — fill with zeros */
+            /* Sparse run -- fill with zeros */
             ntfs_memset(buf + bytes_read, 0, chunk);
         } else {
             uint64_t disk_lcn = runs[i].lcn + vcn_in_run;
 
             if (cluster_off == 0 && chunk >= cluster_size) {
-                /* Aligned, full-cluster read — fast path */
+                /* Aligned, full-cluster read -- fast path */
                 uint64_t full_clusters = chunk / cluster_size;
                 uint64_t full_bytes = full_clusters * cluster_size;
                 uint64_t lba = disk_lcn * vol->sectors_per_cluster;
@@ -151,7 +151,7 @@ int64_t ntfs_read_data(struct ntfs_volume *vol,
                     pmm_free_frame(bounce_phys);
                 }
             } else {
-                /* Partial cluster read — use bounce buffer */
+                /* Partial cluster read -- use bounce buffer */
                 uintptr_t bounce_phys = pmm_alloc_contiguous(1);
                 uint8_t *bounce = (uint8_t *)(uintptr_t)bounce_phys;
                 uint64_t pos = 0;
@@ -213,7 +213,7 @@ int64_t ntfs_read_file_data(const uint8_t *record,
     if (!attr)
         return -1;
 
-    /* Skip named $DATA attributes (ADS — alternate data streams) */
+    /* Skip named $DATA attributes (ADS -- alternate data streams) */
     while (attr && ah.name_length > 0) {
         attr = ntfs_attr_next(attr, record, hdr->used_size);
         if (attr) {
@@ -228,10 +228,10 @@ int64_t ntfs_read_file_data(const uint8_t *record,
         return -1;
 
     if (ah.non_resident == 0) {
-        /* Resident — direct copy from attribute content */
+        /* Resident -- direct copy from attribute content */
         return ntfs_read_resident_data(attr, file_offset, length, buffer);
     } else {
-        /* Non-resident — decode runs and read from disk */
+        /* Non-resident -- decode runs and read from disk */
         struct ntfs_data_run runs[NTFS_MAX_DATA_RUNS];
         struct ntfs_nonres_header nrhdr;
         int run_count;
@@ -250,7 +250,7 @@ int64_t ntfs_read_file_data(const uint8_t *record,
                                               file_offset, length, buffer);
         }
 
-        /* Check for encrypted attribute (flag 0x4000) — EFS §9.3 */
+        /* Check for encrypted attribute (flag 0x4000) -- EFS §9.3 */
         if (ah.flags & NTFS_ATTR_FLAG_ENCRYPTED) {
             /* Mutual exclusion: cannot be both compressed and encrypted */
             if (ah.flags & NTFS_ATTR_FLAG_COMPRESSED)
@@ -267,7 +267,7 @@ int64_t ntfs_read_file_data(const uint8_t *record,
 }
 
 /* ============================================================================
- * $INDEX_ROOT Parser — §5.1 (attribute type 0x90)
+ * $INDEX_ROOT Parser -- §5.1 (attribute type 0x90)
  * ============================================================================ */
 
 /* Parse a single index entry at 'entry' into 'out'.
@@ -302,7 +302,7 @@ static int ntfs_parse_index_entry(const uint8_t *entry,
 
     /* Decode embedded $FILE_NAME payload if not the last (sentinel) entry */
     if (!(out->flags & NTFS_INDEX_ENTRY_LAST) && out->stream_length > 0) {
-        /* parse_fn_content is in ntfs_filename.c — we decode inline here
+        /* parse_fn_content is in ntfs_filename.c -- we decode inline here
          * using the same layout since $FILE_NAME content is at entry+0x10 */
         const uint8_t *fn_data = entry + 0x10;
         uint32_t fn_len = out->stream_length;
@@ -339,7 +339,7 @@ static int ntfs_parse_index_entry(const uint8_t *entry,
             out->fn.name_length = 0;
         }
     } else {
-        /* Sentinel entry — clear filename */
+        /* Sentinel entry -- clear filename */
         out->fn.name[0] = '\0';
         out->fn.name_length = 0;
     }
@@ -447,7 +447,7 @@ const uint8_t *ntfs_index_entry_next(const uint8_t *entry,
 }
 
 /* ============================================================================
- * INDX Buffer Reader — §5.2 (attribute type 0xA0)
+ * INDX Buffer Reader -- §5.2 (attribute type 0xA0)
  * ============================================================================ */
 
 int ntfs_read_indx(struct ntfs_volume *vol,
@@ -492,7 +492,7 @@ int ntfs_read_indx(struct ntfs_volume *vol,
         return NTFS_ERR_IO;  /* VCN not found in runs */
 
     if (index_runs[i].lcn == NTFS_LCN_SPARSE) {
-        /* Sparse INDX — shouldn't happen but handle gracefully */
+        /* Sparse INDX -- shouldn't happen but handle gracefully */
         ntfs_memset(buffer, 0, index_record_size);
         return NTFS_ERR_BAD_MAGIC;
     }
@@ -512,7 +512,7 @@ int ntfs_read_indx(struct ntfs_volume *vol,
     if (magic != NTFS_INDX_MAGIC)
         return NTFS_ERR_BAD_MAGIC;
 
-    /* Apply fixup (USA) — same as FILE records */
+    /* Apply fixup (USA) -- same as FILE records */
     rc = ntfs_apply_fixup(buffer, index_record_size, vol->bytes_per_sector);
     if (rc != NTFS_OK)
         return rc;
@@ -544,7 +544,7 @@ int ntfs_parse_indx_entries(const uint8_t *buffer,
 }
 
 /* ============================================================================
- * Directory Lookup — §5.3
+ * Directory Lookup -- §5.3
  * ============================================================================ */
 
 /* Maximum B+ tree depth to prevent infinite loops on corrupt volumes */
@@ -707,7 +707,7 @@ int ntfs_lookup(struct ntfs_volume *vol, uint64_t dir_inode,
         return NTFS_ERR_NOT_FOUND;
     }
 
-    /* Need to descend into INDX buffers — get $INDEX_ALLOCATION data runs.
+    /* Need to descend into INDX buffers -- get $INDEX_ALLOCATION data runs.
      * Use _ext variant to follow $ATTRIBUTE_LIST when the IA attribute
      * has been pushed to an extension MFT record (common for large dirs). */
     {
@@ -828,7 +828,7 @@ int ntfs_resolve_path(struct ntfs_volume *vol, const char *path,
 }
 
 /* ============================================================================
- * Directory Enumeration — §5.4
+ * Directory Enumeration -- §5.4
  * ============================================================================ */
 
 /* Helper: fill ntfs_dir_entry from a parsed ntfs_index_entry */
@@ -865,7 +865,7 @@ static int walk_node_entries(const uint8_t *entries_base,
     entry = ntfs_index_entry_first(entries_base, nh, &ie);
     while (entry) {
         if (ie.flags & NTFS_INDEX_ENTRY_LAST)
-            break;  /* Sentinel — no filename */
+            break;  /* Sentinel -- no filename */
 
         /* Skip DOS-only namespace (0x02) */
         if (ie.fn.name_space != 0x02) {
@@ -924,13 +924,13 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
     /* Walk entries in $INDEX_ROOT */
     rc = walk_node_entries(entries_base, &node_hdr, callback, user_data);
     if (rc != NTFS_OK && rc != NTFS_ERR_NOT_FOUND) {
-        /* Callback signalled stop (positive rc) — not an error */
+        /* Callback signalled stop (positive rc) -- not an error */
         pmm_free_frame(rec_phys);
         return NTFS_OK;
     }
 
     /* If index root has children, walk INDX buffers.
-     * Use _ext variants to follow $ATTRIBUTE_LIST — large directories
+     * Use _ext variants to follow $ATTRIBUTE_LIST -- large directories
      * push $INDEX_ALLOCATION and $BITMAP to extension MFT records. */
     if (node_hdr.flags & 0x01) {
         struct ntfs_attr_header ia_ah;
@@ -947,7 +947,7 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
             int ia_run_count;
 
             /* Decode data runs from the IA attribute (may be in ext record).
-             * After this, ia_runs[] is self-contained — free ext record. */
+             * After this, ia_runs[] is self-contained -- free ext record. */
             ia_run_count = ntfs_decode_data_runs(ia_attr, ia_runs, 64,
                                                   &ia_nrhdr);
             if (ia_ext_phys) {
@@ -977,11 +977,11 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
                                                     &bm_ext_phys, NULL);
                 if (bm_attr) {
                     if (bm_ah.non_resident == 0) {
-                        /* Resident bitmap — inline data */
+                        /* Resident bitmap -- inline data */
                         bitmap = bm_attr + bm_ah.content_offset;
                         bitmap_len = bm_ah.content_length;
                     } else {
-                        /* Non-resident bitmap — read from disk */
+                        /* Non-resident bitmap -- read from disk */
                         struct ntfs_data_run bm_runs[16];
                         struct ntfs_nonres_header bm_nrhdr;
                         int bm_run_count;
@@ -1069,7 +1069,7 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
 
                             if (byte_idx < bitmap_len &&
                                 !(bitmap[byte_idx] & bit_mask)) {
-                                /* This INDX VCN is not in-use — skip */
+                                /* This INDX VCN is not in-use -- skip */
                                 klog(LOG_DEBUG, "ntfs",
                                      "readdir: VCN %u skipped (bitmap)",
                                      (uint64_t)vcn);

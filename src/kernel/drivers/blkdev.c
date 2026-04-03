@@ -1,5 +1,5 @@
 /* ============================================================================
- * blkdev.c — Block Device Abstraction Layer
+ * blkdev.c -- Block Device Abstraction Layer
  *
  * Manages a global registry of block devices. Each hardware driver
  * (ATA, VirtIO-blk, AHCI) registers its device(s) at init time.
@@ -114,7 +114,7 @@ int blkdev_sync(const struct blkdev *dev)
 {
     if (!dev || !dev->active)
         return -1;
-    /* If no flush callback, device has no cache — success by default */
+    /* If no flush callback, device has no cache -- success by default */
     if (!dev->flush)
         return 0;
     return dev->flush(dev->driver_data);
@@ -124,7 +124,7 @@ int blkdev_discard(const struct blkdev *dev, uint64_t lba, uint32_t count)
 {
     if (!dev || !dev->active)
         return -1;
-    /* If no discard callback, device doesn't support TRIM — success (no-op) */
+    /* If no discard callback, device doesn't support TRIM -- success (no-op) */
     if (!dev->discard)
         return 0;
     return dev->discard(lba, count, dev->driver_data);

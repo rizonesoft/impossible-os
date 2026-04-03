@@ -1,5 +1,5 @@
 ; =============================================================================
-; gdt_asm.asm — GDT and TSS loading helpers (x86-64)
+; gdt_asm.asm -- GDT and TSS loading helpers (x86-64)
 ;
 ; Called from gdt.c after populating the GDT in memory.
 ; =============================================================================

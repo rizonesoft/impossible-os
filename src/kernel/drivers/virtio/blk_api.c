@@ -1,4 +1,4 @@
-/* blk_api.c — Public API: read, write, flush, capacity, serial, lifetime */
+/* blk_api.c -- Public API: read, write, flush, capacity, serial, lifetime */
 
 #include "kernel/drivers/virtio/blk_internal.h"
 
@@ -9,7 +9,7 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
     int ret;
     int retry;
 
-    /* Check prefetch buffer first — sub-microsecond if hit */
+    /* Check prefetch buffer first -- sub-microsecond if hit */
     if (prefetch_try_read(lba, count, buffer))
         return 0;
 
@@ -27,7 +27,7 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
                 prefetch_after_read(lba, count);
                 return 0;
             }
-            /* Merge read failed — fall through to normal path */
+            /* Merge read failed -- fall through to normal path */
         }
     }
 
@@ -49,7 +49,7 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
             virtio_blk_reset();
             return -1;
         }
-        /* IOERR — retry */
+        /* IOERR -- retry */
         if (retry < VIRTIO_BLK_MAX_RETRIES) {
             klog(LOG_DEBUG, "virtio", "Read: I/O error, retry %u/%u (lba=%u)",
                    (uint64_t)(retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES,
@@ -108,7 +108,7 @@ int virtio_blk_write_fua(uint64_t lba, uint32_t count, const void *buffer)
         return -1;
 
     if (!fua_enabled) {
-        /* FUA disabled — normal write, no flush */
+        /* FUA disabled -- normal write, no flush */
         return virtio_blk_write(lba, count, buffer);
     }
 
@@ -116,7 +116,7 @@ int virtio_blk_write_fua(uint64_t lba, uint32_t count, const void *buffer)
     prefetch_invalidate(lba, count);
 
     if (has_fua) {
-        /* Device supports per-request FUA — set FUA flag in type field */
+        /* Device supports per-request FUA -- set FUA flag in type field */
         ret = virtio_blk_do_io(VIRTIO_BLK_T_OUT | VIRTIO_BLK_T_FUA_FLAG,
                                lba, count * topo.blk_size, (void *)buffer);
         if (ret == VIRTIO_IO_OK) {
@@ -194,11 +194,11 @@ int virtio_blk_get_id(char *buf, uint32_t len)
     if (!blk_initialized || !buf || len == 0)
         return -1;
 
-    /* Zero the temp buffer — device may not write all 20 bytes */
+    /* Zero the temp buffer -- device may not write all 20 bytes */
     for (i = 0; i < VIRTIO_BLK_ID_BYTES; i++)
         tmp[i] = 0;
 
-    /* GET_ID: 3-descriptor chain — header (type=8, sector=0) +
+    /* GET_ID: 3-descriptor chain -- header (type=8, sector=0) +
      * 20-byte device-writable buffer + status byte.
      * do_io sets F_WRITE on data descriptor for all non-OUT types. */
     ret = virtio_blk_do_io(VIRTIO_BLK_T_GET_ID, 0, VIRTIO_BLK_ID_BYTES, tmp);
@@ -229,7 +229,7 @@ int virtio_blk_get_lifetime(struct virtio_blk_lifetime *out)
     for (i = 0; i < sizeof(tmp); i++)
         tmp[i] = 0;
 
-    /* GET_LIFETIME: 3-descriptor chain — header (type=10, sector=0) +
+    /* GET_LIFETIME: 3-descriptor chain -- header (type=10, sector=0) +
      * 6-byte device-writable buffer + status byte.
      * do_io sets F_WRITE on data descriptor for all non-OUT types. */
     ret = virtio_blk_do_io(VIRTIO_BLK_T_GET_LIFETIME, 0, sizeof(tmp), tmp);

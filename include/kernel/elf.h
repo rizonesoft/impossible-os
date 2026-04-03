@@ -1,5 +1,5 @@
 /* ============================================================================
- * elf.h — ELF64 binary format definitions
+ * elf.h -- ELF64 binary format definitions
  *
  * Structures and constants for loading 64-bit ELF executables.
  * ============================================================================ */

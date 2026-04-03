@@ -1,5 +1,5 @@
 /* ============================================================================
- * types.h — Basic integer types for freestanding 64-bit environment
+ * types.h -- Basic integer types for freestanding 64-bit environment
  * ============================================================================ */
 
 #pragma once

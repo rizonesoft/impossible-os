@@ -1,12 +1,12 @@
 /* ============================================================================
- * klog.h — Unified kernel logging
+ * klog.h -- Unified kernel logging
  *
  * Levels:
- *   LOG_DEBUG  [INFO] — serial only (suppressed from framebuffer)
- *   LOG_INFO   [ OK ] — serial + framebuffer (green prefix)
- *   LOG_WARN   [WARN] — serial + framebuffer (yellow prefix)
- *   LOG_ERROR  [FAIL] — serial + framebuffer (red prefix)
- *   LOG_FATAL  [CRIT] — serial + framebuffer (red prefix), then halt
+ *   LOG_DEBUG  [INFO] -- serial only (suppressed from framebuffer)
+ *   LOG_INFO   [ OK ] -- serial + framebuffer (green prefix)
+ *   LOG_WARN   [WARN] -- serial + framebuffer (yellow prefix)
+ *   LOG_ERROR  [FAIL] -- serial + framebuffer (red prefix)
+ *   LOG_FATAL  [CRIT] -- serial + framebuffer (red prefix), then halt
  *
  * Usage:
  *   klog(LOG_INFO, "drv", "PS/2 mouse initialized (IRQ %u)", 12);
@@ -25,7 +25,7 @@ typedef enum {
     LOG_FATAL = 4,   /* [CRIT] serial + framebuffer, then halt */
 } log_level_t;
 
-/* Central log directory — all log files write here.
+/* Central log directory -- all log files write here.
  * Must end with backslash. Created at first boot if it doesn't exist. */
 #define KLOG_DIR "C:\\Impossible\\System\\Logs\\"
 
@@ -64,8 +64,8 @@ void klog_set_level(const char *subsystem, log_level_t min_level);
 void klog_load_levels_from_registry(void);
 
 /* ---- Split init (Phase 0 / Phase 2) ----
- * klog_early_init(): Phase 0 safe — ring buffer + serial only, no VFS.
- * klog_disk_enable(): Phase 2 safe — opens log files, starts disk flushing. */
+ * klog_early_init(): Phase 0 safe -- ring buffer + serial only, no VFS.
+ * klog_disk_enable(): Phase 2 safe -- opens log files, starts disk flushing. */
 void klog_early_init(void);            /* Phase 0: ring buffer ready */
 void klog_disk_enable(void);           /* Phase 2: VFS-backed disk logging */
 

@@ -1,5 +1,5 @@
 /* ============================================================================
- * acl.c — ACL construction and debug helpers
+ * acl.c -- ACL construction and debug helpers
  *
  * Implements TODO-11 §3.2: RtlCreateAcl, RtlAddAccessAllowedAce,
  * RtlAddAccessDeniedAce, RtlAddMandatoryAce, RtlGetAce, RtlAclToCStr.
@@ -378,7 +378,7 @@ static const char *sid_to_alias(const SID *sid)
         sid->SubAuthority[0] == 0)
         return "CO";  /* Creator Owner */
 
-    return (const char *)0;  /* no alias — caller must format full SID */
+    return (const char *)0;  /* no alias -- caller must format full SID */
 }
 
 int RtlAclToCStr(const ACL *acl, char *buf, uint32_t len)

@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_index_delete.c — B+ Tree Directory Index Delete (§14.1)
+ * ntfs_index_delete.c -- B+ Tree Directory Index Delete (§14.1)
  *
  * Implements ntfs_index_delete():
  *   1. Navigate B+ tree to find the target entry
@@ -78,7 +78,7 @@ static int find_entry_in_entries_bytes(const struct ntfs_volume *vol,
         if (e_flags & NTFS_INDEX_ENTRY_LAST) {
             if (e_flags & NTFS_INDEX_ENTRY_SUBNODE)
                 *out_child_vcn = ntfs_le64(entries_base + pos + e_len - 8);
-            return 0; /* Sentinel — not found */
+            return 0; /* Sentinel -- not found */
         }
 
         {
@@ -106,7 +106,7 @@ static int find_entry_in_entries_bytes(const struct ntfs_volume *vol,
                 return 1;
             }
             if (cmp < 0) {
-                /* Entry not here — will be in child */
+                /* Entry not here -- will be in child */
                 if (e_flags & NTFS_INDEX_ENTRY_SUBNODE)
                     *out_child_vcn = ntfs_le64(entries_base + pos + e_len - 8);
                 return 0;
@@ -171,7 +171,7 @@ static int get_rightmost_leaf_entry(struct ntfs_volume *vol,
 
         if (!found_any) return NTFS_ERR_NOT_FOUND;
 
-        /* If this entry has no subnode — it's a leaf */
+        /* If this entry has no subnode -- it's a leaf */
         if (!(last_flags & NTFS_INDEX_ENTRY_SUBNODE)) {
             ntfs_memcpy(out_entry, eb + last_pos, last_len);
             *out_len      = last_len;
@@ -240,7 +240,7 @@ static void free_indx_vcn(struct ntfs_volume *vol,
 }
 
 /* ============================================================================
- * ntfs_index_delete — Full B+ tree delete with merge/redistribute
+ * ntfs_index_delete -- Full B+ tree delete with merge/redistribute
  * ============================================================================ */
 int ntfs_index_delete(struct ntfs_volume *vol,
                       uint64_t dir_inode,

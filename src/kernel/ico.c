@@ -1,5 +1,5 @@
 /* ============================================================================
- * ico.c — ICO file loader for Impossible OS
+ * ico.c -- ICO file loader for Impossible OS
  *
  * Parses Windows .ico containers. Each entry can hold either:
  *   - PNG data (detected by 0x89504E47 magic) → decoded via image_load_mem()
@@ -116,7 +116,7 @@ static int decode_bmp_dib(icon_bitmap_t *out, const uint8_t *data,
     row_stride = ((w * bpp / 8) + 3) & ~3u;  /* BMP rows are 4-byte aligned */
 
     if (bpp == 32) {
-        /* 32bpp BGRA — already in our format, but BMP rows are bottom-up */
+        /* 32bpp BGRA -- already in our format, but BMP rows are bottom-up */
         for (y = 0; y < h; y++) {
             const uint8_t *row = src + (h - 1 - y) * row_stride;
             for (x = 0; x < w; x++) {
@@ -131,7 +131,7 @@ static int decode_bmp_dib(icon_bitmap_t *out, const uint8_t *data,
             }
         }
     } else {
-        /* 24bpp BGR — no alpha channel, use AND mask or default opaque */
+        /* 24bpp BGR -- no alpha channel, use AND mask or default opaque */
         for (y = 0; y < h; y++) {
             const uint8_t *row = src + (h - 1 - y) * row_stride;
             for (x = 0; x < w; x++) {
@@ -247,7 +247,7 @@ int ico_load(ico_file_t *ico, const char *path)
         /* Check for PNG magic */
         uint32_t magic = *(const uint32_t *)img_data;
         if (magic == PNG_MAGIC) {
-            /* PNG data — use image_load_mem() */
+            /* PNG data -- use image_load_mem() */
             image_t img;
             if (image_load_mem(&img, img_data, dsize) == 0) {
                 ico->entries[decoded].bitmap.pixels     = img.pixels;
@@ -304,7 +304,7 @@ icon_bitmap_t *ico_get_best(const ico_file_t *ico, uint32_t target_size)
 
     if (best < 0) return (icon_bitmap_t *)0;
 
-    /* Cast away const — caller should not modify pixels */
+    /* Cast away const -- caller should not modify pixels */
     return (icon_bitmap_t *)&ico->entries[best].bitmap;
 }
 

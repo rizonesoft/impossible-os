@@ -1,4 +1,4 @@
-# TODO-04 — crash-decode (Post-Mortem Crash Analyzer)
+# TODO-04 -- crash-decode (Post-Mortem Crash Analyzer)
 
 > **Goal:** Paste a BSOD screenshot or serial dump, get a complete crash analysis: stack trace with source lines, root cause hypothesis, affected subsystem, and suggested fix. The tool every OS developer wishes existed.
 
@@ -24,7 +24,7 @@ $ crash-decode serial.log
 
   === STACK TRACE ===
   #0 0x800000  _start          user/hello.c:1
-  (no further frames — user-mode entry point)
+  (no further frames -- user-mode entry point)
 
   === TIMELINE ===
   Boot succeeded through Phase 3 in 9.7s
@@ -35,7 +35,7 @@ $ crash-decode serial.log
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Serial log parser (extract BSOD block)         | —          |  [ ]   |
+| 💎  |   1   | Serial log parser (extract BSOD block)         | --          |  [ ]   |
 | ⭐  |   2   | Register dump decoder (integrate addr2line)    | TODO-03    |  [ ]   |
 | ⭐  |   3   | Timeline extraction (boot phases + crash point)| §1         |  [ ]   |
 | ⭐  |   4   | Root cause hypothesis engine                   | §2, §3     |  [ ]   |
@@ -57,7 +57,7 @@ Decode all registers using addr2line (TODO-03) integration.
 - [ ] CR2 → memory region (user ELF, kernel heap, framebuffer, MMIO)
 - [ ] CR3 → identify PML4 (kernel boot PML4 vs per-process)
 - [ ] CS → ring level (0 = kernel, 3 = user)
-- [ ] RFLAGS → IF, AC, direction, carry — highlight anomalies
+- [ ] RFLAGS → IF, AC, direction, carry -- highlight anomalies
 - [ ] Error code → full bit decode per exception type
 
 ## 3. Timeline Extraction
@@ -74,7 +74,7 @@ Based on error patterns, suggest likely causes.
 - [ ] Page fault + User + not-present + CR2 in ELF range → "User page missing User bit"
 - [ ] Page fault + kernel + write + NX range → "Write to read-only kernel page"
 - [ ] Double fault → "Stack overflow or corrupted IDT"
-- [ ] Triple fault (no BSOD) → "IST stack also failed — check IST allocation"
+- [ ] Triple fault (no BSOD) → "IST stack also failed -- check IST allocation"
 - [ ] GP fault + CS=kernel → "Invalid segment selector or privileged instruction"
 - [ ] Pattern database: extensible, add new patterns as bugs are found
 

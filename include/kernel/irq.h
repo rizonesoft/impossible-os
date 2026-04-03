@@ -1,5 +1,5 @@
 /* ============================================================================
- * irq.h — Dynamic IRQ Registration API
+ * irq.h -- Dynamic IRQ Registration API
  *
  * Allows drivers to register/unregister interrupt handlers at runtime.
  * Built on top of the IDT dispatch table (idt_register_handler).

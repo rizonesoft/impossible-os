@@ -1,8 +1,8 @@
 /* ============================================================================
- * arc_ring.c — Anti-aliased arc ring drawing primitive
+ * arc_ring.c -- Anti-aliased arc ring drawing primitive
  *
  * Draws a stroked arc (partial ring) to a pixel buffer using integer-only
- * math.  No FPU, no SSE — safe for timer ISR context.
+ * math.  No FPU, no SSE -- safe for timer ISR context.
  *
  * Algorithm:
  *   For each pixel in the arc's bounding box, compute:
@@ -38,7 +38,7 @@ struct arc_ring_size arc_ring_size_for_height(uint32_t scr_h)
  *   192 = up     (12 o'clock, cos=0, sin=-1)
  *
  * Uses quadrant decomposition + linear atan approximation.
- * Max error: ~1 LUT step (~1.4°) — invisible at spinner scale. */
+ * Max error: ~1 LUT step (~1.4°) -- invisible at spinner scale. */
 
 static uint8_t angle256(int32_t dx, int32_t dy)
 {
@@ -215,7 +215,7 @@ void arc_ring_draw(uint32_t *buf, uint32_t buf_w, uint32_t buf_h,
 
     /* Rounded end caps: small filled circles at arc start and end points.
      * Cap radius = stroke/2 (centered on the ring's mid-radius).
-     * Skip caps for thin strokes (stroke <= 4) — cap_r would be ≤ 2px,
+     * Skip caps for thin strokes (stroke <= 4) -- cap_r would be ≤ 2px,
      * producing pixelated single-pixel dots. Angular AA handles endpoints. */
     if (stroke <= 4)
         return;

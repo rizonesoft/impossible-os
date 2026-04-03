@@ -1,7 +1,7 @@
 /* ============================================================================
- * idt.c — Interrupt Descriptor Table (x86-64 Long Mode)
+ * idt.c -- Interrupt Descriptor Table (x86-64 Long Mode)
  *
- * Sets up 256 IDT entries for ALL vectors — CPU exceptions, hardware IRQs,
+ * Sets up 256 IDT entries for ALL vectors -- CPU exceptions, hardware IRQs,
  * software interrupts, and dynamic/synthetic vectors.
  *
  * Every vector has a valid ISR stub.  This prevents #GP faults when hardware
@@ -37,7 +37,7 @@ struct idt_pointer {
     uint64_t base;
 } __attribute__((packed));
 
-/* The IDT — 256 entries */
+/* The IDT -- 256 entries */
 static struct idt_entry idt[256];
 static struct idt_pointer idtr;
 
@@ -71,8 +71,8 @@ extern void irq12(void); extern void irq13(void); extern void irq14(void);
 extern void irq15(void);
 
 /* ---- External assembly: software interrupt stubs ---- */
-extern void isr128(void);  /* syscall — INT 0x80 (user → kernel) */
-extern void isr129(void);  /* yield() — cooperative task switch (INT 0x81) */
+extern void isr128(void);  /* syscall -- INT 0x80 (user → kernel) */
+extern void isr129(void);  /* yield() -- cooperative task switch (INT 0x81) */
 
 /* ---- External assembly: dynamic/synthetic stubs 48-255 ---- */
 extern void isr48(void);  extern void isr49(void);  extern void isr50(void);
@@ -198,7 +198,7 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
  *   2. Call handler (which manages its own EOI)
  *   3. On exit: restore prior IRQL
  *
- * IRQL tracking is software-only — we do NOT write LAPIC TPR here.
+ * IRQL tracking is software-only -- we do NOT write LAPIC TPR here.
  * The LAPIC hardware already masks lower-priority vectors via the ISR/PPR
  * mechanism during interrupt delivery.  Explicit TPR writes are reserved
  * for KeRaiseIrql/KeLowerIrql when kernel code intentionally changes level.
@@ -206,7 +206,7 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
  * For nested interrupts, the saved IRQL is per-invocation on the stack,
  * so LIFO unwinding is automatic.
  *
- * CPU exceptions (0-31) do NOT raise IRQL — they are synchronous faults
+ * CPU exceptions (0-31) do NOT raise IRQL -- they are synchronous faults
  * and execute at the IRQL of the faulting code.
  *
  * Returns the stack frame pointer to restore. Usually the same frame,
@@ -218,7 +218,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 
     /* ---- IRQL raise for hardware interrupts (vectors 32+) ----
      * CPU exceptions (0-31) are synchronous faults and run at the
-     * IRQL of the faulting code — do not raise. */
+     * IRQL of the faulting code -- do not raise. */
     struct per_cpu_data *pcpu = smp_this_cpu();
     KIRQL prev_irql = pcpu->current_irql;
 
@@ -234,7 +234,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         goto irql_restore;
     }
 
-    /* ---- Default: CPU exceptions (0-31) — panic ---- */
+    /* ---- Default: CPU exceptions (0-31) -- panic ---- */
     if (vec < 32) {
         panic_screen(frame, frame->err_code, exception_names[vec],
                      "idt.c", 0);
@@ -271,7 +271,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
                  (uint64_t)vec, (uint64_t)vec, count);
         }
 
-        /* EOI — idempotent, prevents ISR bit getting stuck */
+        /* EOI -- idempotent, prevents ISR bit getting stuck */
         lapic_eoi();
     }
 
@@ -400,7 +400,7 @@ void idt_init(void)
                       0, 0x8E);
     }
 
-    /* IST overrides for critical exceptions — use dedicated stacks
+    /* IST overrides for critical exceptions -- use dedicated stacks
      * so these handlers work even when the kernel stack is corrupted.
      * IST indices match TSS ist1-ist3 set in gdt_init(). */
     idt[2].ist  = 2;   /* NMI → IST2 */
@@ -408,7 +408,7 @@ void idt_init(void)
     idt[18].ist = 3;   /* MCE → IST3 */
 
     /* Override DPL for software interrupts callable from ring 3 */
-    /* INT 0x80: syscall — DPL=3 (0xEE) so ring 3 can trigger it */
+    /* INT 0x80: syscall -- DPL=3 (0xEE) so ring 3 can trigger it */
     idt[128].type_attr = 0xEE;
 
     /* Load the IDT */

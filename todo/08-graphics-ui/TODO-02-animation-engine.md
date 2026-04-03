@@ -1,20 +1,20 @@
-# TODO-02 — Animation Engine
+# TODO-02 -- Animation Engine
 
 > **Goal:** Build a time-based tween engine with 16.16 fixed-point easing functions, a global animation manager ticked inside `wm_composite()`, per-window transition animations (open/close/minimize/restore/maximize/snap/menu popup), Registry-driven speed and reduce-motion controls, and integer spring physics for natural elastic effects. Animations are the prerequisite for every animated desktop surface: Start Menu slide, notification slide-in, context menu pop, and window open/close all depend on this tick being live inside the compositor loop.
 
 > [!IMPORTANT]
-> `PIT_TARGET_FREQ = 100` Hz (from `include/kernel/drivers/pit.h`) → `delta_ms = (current_ticks - last_ticks) × 10`; cap at 33 ms per frame to prevent jump-cuts after preemption. `system_get_ticks()` from `include/kernel/timer.h` is the monotonic tick source. `wm_composite()` in `include/desktop/wm.h` is the compositor entry point — `anim_mgr_tick()` is called at its top. `wm_mark_dirty()` forces a redraw. All tween arithmetic uses 16.16 fixed-point integers; no `float` or `double` anywhere. `theme_get()` (TODO-01) must be live before §4 window transitions so themed titlebar colors are available when windows animate open. Complete sections in order: tween → easing → manager → registry → window transitions → spring → compositor integration.
+> `PIT_TARGET_FREQ = 100` Hz (from `include/kernel/drivers/pit.h`) → `delta_ms = (current_ticks - last_ticks) × 10`; cap at 33 ms per frame to prevent jump-cuts after preemption. `system_get_ticks()` from `include/kernel/timer.h` is the monotonic tick source. `wm_composite()` in `include/desktop/wm.h` is the compositor entry point -- `anim_mgr_tick()` is called at its top. `wm_mark_dirty()` forces a redraw. All tween arithmetic uses 16.16 fixed-point integers; no `float` or `double` anywhere. `theme_get()` (TODO-01) must be live before §4 window transitions so themed titlebar colors are available when windows animate open. Complete sections in order: tween → easing → manager → registry → window transitions → spring → compositor integration.
 
 ## Inputs
 
-- `include/kernel/drivers/pit.h` — `PIT_TARGET_FREQ = 100` (Hz); `pit_get_ticks()` for raw tick counter
-- `include/kernel/timer.h` — `system_get_ticks()` for monotonic counter used in delta_ms calculation
-- `include/desktop/wm.h` — `wm_composite()` (compositor entry point), `wm_mark_dirty()`, `wm_move_window()`, `wm_resize_window()`, `struct wm_window { int32_t x, y; uint32_t width, height; }` — extended in §4 to hold `wm_anim_state_t`
-- `include/registry.h` — `RegGetValue()`, `HKCU` — used in §5 to read `EnableAnimations` + `AnimationSpeed`
-- `include/desktop/theme.h` (TODO-01) — `theme_get()` must be available before §4 window transitions
-- → XREF: `07-graphics-ui/TODO-01-theme-system.md` — prerequisite; `theme_get()` must be live before animated windows can paint correctly
-- → XREF: `08-desktop-shell/TODO-01-*` (Start Menu) — depends on §3 animation manager being live; Start Menu slide-up uses `gfx_tween_start()`
-- → XREF: `08-desktop-shell/TODO-02-*` (Notifications) — slide-in notifications depend on §1 tween + §3 manager
+- `include/kernel/drivers/pit.h` -- `PIT_TARGET_FREQ = 100` (Hz); `pit_get_ticks()` for raw tick counter
+- `include/kernel/timer.h` -- `system_get_ticks()` for monotonic counter used in delta_ms calculation
+- `include/desktop/wm.h` -- `wm_composite()` (compositor entry point), `wm_mark_dirty()`, `wm_move_window()`, `wm_resize_window()`, `struct wm_window { int32_t x, y; uint32_t width, height; }` -- extended in §4 to hold `wm_anim_state_t`
+- `include/registry.h` -- `RegGetValue()`, `HKCU` -- used in §5 to read `EnableAnimations` + `AnimationSpeed`
+- `include/desktop/theme.h` (TODO-01) -- `theme_get()` must be available before §4 window transitions
+- → XREF: `07-graphics-ui/TODO-01-theme-system.md` -- prerequisite; `theme_get()` must be live before animated windows can paint correctly
+- → XREF: `08-desktop-shell/TODO-01-*` (Start Menu) -- depends on §3 animation manager being live; Start Menu slide-up uses `gfx_tween_start()`
+- → XREF: `08-desktop-shell/TODO-02-*` (Notifications) -- slide-in notifications depend on §1 tween + §3 manager
 
 ## Outcome
 
@@ -29,13 +29,13 @@
 
 | ⭐  | Order | Deliverable                                                                                           | Depends On                                                                | Status |
 | --- | :---: | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Core tween engine — `gfx_tween_t`, `tween_start/update/value`, 16.16 fixed-point                 | Nothing; standalone                                                       |  [ ]   |
-| 💎  |   2   | §2 Easing functions — LINEAR, IN/OUT/IN_OUT QUAD+CUBIC, BOUNCE, BACK                                | §1 (easing_fn pointer type defined in `gfx_animate.h`)                    |  [ ]   |
-| 💎  |   3   | §3 Global animation manager — 64-slot table, `add/cancel/tick`, compositor wiring, delta cap        | §1 + §2 (manages `gfx_tween_t*`, dispatches easing fns)                   |  [ ]   |
-| 💎  |   4   | §5 Registry controls — `EnableAnimations` + `AnimationSpeed` DWORDs, reduce-motion path            | §3 (`anim_mgr_add` must check flag; `AnimationSpeed` scales duration)      |  [ ]   |
-| 💎  |   5   | §4 Window transition animations — `wm_anim_state_t`, open/close/minimize/restore/maximize/snap/menu | §3 manager + §4 registry (speed multiplier needed before wiring transitions) |  [ ]   |
-| ⭐  |   6   | §6 Spring physics — `spring_t`, Hooke's law integer ODE, `spring_settled()`                         | §3 (springs registered with manager; settled check drives `wm_mark_dirty`) |  [ ]   |
-| 💎  |   7   | §7 Compositor integration checklist — dirty-frame gating, VSync delta cap, reduce-motion audit      | §5 + §6 (all animation types must be wired before integration audit)       |  [ ]   |
+| 💎  |   1   | §1 Core tween engine -- `gfx_tween_t`, `tween_start/update/value`, 16.16 fixed-point                 | Nothing; standalone                                                       |  [ ]   |
+| 💎  |   2   | §2 Easing functions -- LINEAR, IN/OUT/IN_OUT QUAD+CUBIC, BOUNCE, BACK                                | §1 (easing_fn pointer type defined in `gfx_animate.h`)                    |  [ ]   |
+| 💎  |   3   | §3 Global animation manager -- 64-slot table, `add/cancel/tick`, compositor wiring, delta cap        | §1 + §2 (manages `gfx_tween_t*`, dispatches easing fns)                   |  [ ]   |
+| 💎  |   4   | §5 Registry controls -- `EnableAnimations` + `AnimationSpeed` DWORDs, reduce-motion path            | §3 (`anim_mgr_add` must check flag; `AnimationSpeed` scales duration)      |  [ ]   |
+| 💎  |   5   | §4 Window transition animations -- `wm_anim_state_t`, open/close/minimize/restore/maximize/snap/menu | §3 manager + §4 registry (speed multiplier needed before wiring transitions) |  [ ]   |
+| ⭐  |   6   | §6 Spring physics -- `spring_t`, Hooke's law integer ODE, `spring_settled()`                         | §3 (springs registered with manager; settled check drives `wm_mark_dirty`) |  [ ]   |
+| 💎  |   7   | §7 Compositor integration checklist -- dirty-frame gating, VSync delta cap, reduce-motion audit      | §5 + §6 (all animation types must be wired before integration audit)       |  [ ]   |
 
 ---
 
@@ -50,11 +50,11 @@
 
 - [ ] `typedef int32_t (*gfx_ease_fn)(int32_t t);` in `include/kernel/gfx/gfx_animate.h`
 - [ ] `typedef struct { int32_t from, to, current; uint32_t duration_ms, elapsed_ms; gfx_ease_fn easing; void (*on_complete)(void *ud); void *userdata; uint8_t active; } gfx_tween_t;`
-- [ ] `void gfx_tween_start(gfx_tween_t *tw, int32_t from, int32_t to, uint32_t duration_ms, gfx_ease_fn easing)` — initialize all fields; `active = 1`; `elapsed = 0`; `current = from`
-- [ ] `void gfx_tween_update(gfx_tween_t *tw, uint32_t delta_ms)` — if `!tw->active`: return; advance `elapsed` by `delta_ms`; clamp to `duration`; compute `t = (elapsed << 16) / duration`; `eased = tw->easing(t)`; `current = from + (int32_t)(((int64_t)(to-from) * eased) >> 16)`; if `elapsed >= duration`: `current = to`; call `on_complete` if non-NULL; `active = 0`
+- [ ] `void gfx_tween_start(gfx_tween_t *tw, int32_t from, int32_t to, uint32_t duration_ms, gfx_ease_fn easing)` -- initialize all fields; `active = 1`; `elapsed = 0`; `current = from`
+- [ ] `void gfx_tween_update(gfx_tween_t *tw, uint32_t delta_ms)` -- if `!tw->active`: return; advance `elapsed` by `delta_ms`; clamp to `duration`; compute `t = (elapsed << 16) / duration`; `eased = tw->easing(t)`; `current = from + (int32_t)(((int64_t)(to-from) * eased) >> 16)`; if `elapsed >= duration`: `current = to`; call `on_complete` if non-NULL; `active = 0`
 - [ ] `int32_t gfx_tween_value(const gfx_tween_t *tw)` → `tw->current`
 - [ ] `int gfx_tween_active(const gfx_tween_t *tw)` → `tw->active`
-- [ ] Commit: `"gfx/anim: gfx_tween_t — start/update/value, 16.16 fixed-point, on_complete callback"`
+- [ ] Commit: `"gfx/anim: gfx_tween_t -- start/update/value, 16.16 fixed-point, on_complete callback"`
 
 ## 2. Easing Functions `[Sonnet]`
 
@@ -72,16 +72,16 @@
 > - **OUT_CUBIC**: `t2 = t - 65536; -(t2*t2>>16)*t2>>16 + 65536` (note: result must clamp to 65536)
 > - **IN_OUT_CUBIC**: same pattern as IN_OUT_QUAD but cubed
 > - **BOUNCE** (ease-out): multi-segment parabola approximation: 4 bounce regions, constants `a=0x1.5625 × 65536`, `b=0.75 × 65536` etc.; implement via if-else integer segments
-> - **BACK** (slight overshoot): `s = 1.70158 × 65536`; `t2 = t - 65536`; standard back-ease formula mapped to fixed-point; output can exceed 65536 briefly (overshoot is intentional — tween clamps final value to `to` at completion)
+> - **BACK** (slight overshoot): `s = 1.70158 × 65536`; `t2 = t - 65536`; standard back-ease formula mapped to fixed-point; output can exceed 65536 briefly (overshoot is intentional -- tween clamps final value to `to` at completion)
 
-- [ ] `int32_t gfx_ease_linear(int32_t t)` — identity
+- [ ] `int32_t gfx_ease_linear(int32_t t)` -- identity
 - [ ] `int32_t gfx_ease_in_quad(int32_t t)`, `gfx_ease_out_quad(int32_t t)`, `gfx_ease_in_out_quad(int32_t t)`
 - [ ] `int32_t gfx_ease_in_cubic(int32_t t)`, `gfx_ease_out_cubic(int32_t t)`, `gfx_ease_in_out_cubic(int32_t t)`
-- [ ] `int32_t gfx_ease_bounce(int32_t t)` — ease-out bounce; 4 parabolic segments; no float
-- [ ] `int32_t gfx_ease_back(int32_t t)` — ease-out with `s = 1.70158`; integer overshoot (output may briefly exceed 65536); clamp applied by caller at completion
+- [ ] `int32_t gfx_ease_bounce(int32_t t)` -- ease-out bounce; 4 parabolic segments; no float
+- [ ] `int32_t gfx_ease_back(int32_t t)` -- ease-out with `s = 1.70158`; integer overshoot (output may briefly exceed 65536); clamp applied by caller at completion
 - [ ] Named constants in `gfx_animate.h`: `#define GFX_EASE_LINEAR gfx_ease_linear` (and similarly for all 9)
 - [ ] Unit-testable: `gfx_ease_out_cubic(0) == 0`, `gfx_ease_out_cubic(65536) == 65536`, `gfx_ease_bounce(65536) == 65536`; log these in a `gfx_anim_self_test()` function called once at init
-- [ ] Commit: `"gfx/anim: 9 easing functions — quad/cubic/bounce/back in 16.16 fixed-point"`
+- [ ] Commit: `"gfx/anim: 9 easing functions -- quad/cubic/bounce/back in 16.16 fixed-point"`
 
 ## 3. Global Animation Manager `[Sonnet]`
 
@@ -90,19 +90,19 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
 **Files:** `src/kernel/gfx/anim_mgr.c` (new), `include/kernel/gfx/anim_mgr.h` (new)
 
 > [!NOTE]
-> `delta_ms = (current_ticks - last_ticks) * 1000 / PIT_TARGET_FREQ` where `PIT_TARGET_FREQ = 100`. At 100 Hz each tick is 10 ms; typical frame at 60 FPS ≈ 16.7 ms ≈ 1–2 ticks. Cap: if `delta_ms > 33`: `delta_ms = 33` (prevents a ≥3-tick gap — e.g., after a long kernel operation — from teleporting animations). Store `last_ticks` as a `static uint64_t` in `anim_mgr.c`. The manager does not allocate: it stores raw pointers; ownership stays with the caller (usually a `wm_anim_state_t` field). If table is full and `anim_mgr_add()` is called: log warning and return -1; caller may snap to final value directly.
+> `delta_ms = (current_ticks - last_ticks) * 1000 / PIT_TARGET_FREQ` where `PIT_TARGET_FREQ = 100`. At 100 Hz each tick is 10 ms; typical frame at 60 FPS ≈ 16.7 ms ≈ 1–2 ticks. Cap: if `delta_ms > 33`: `delta_ms = 33` (prevents a ≥3-tick gap -- e.g., after a long kernel operation -- from teleporting animations). Store `last_ticks` as a `static uint64_t` in `anim_mgr.c`. The manager does not allocate: it stores raw pointers; ownership stays with the caller (usually a `wm_anim_state_t` field). If table is full and `anim_mgr_add()` is called: log warning and return -1; caller may snap to final value directly.
 
 - [ ] `#define ANIM_MAX 64` in `include/kernel/gfx/anim_mgr.h`
 - [ ] `static gfx_tween_t* anim_table[ANIM_MAX]` and `static int anim_count` in `anim_mgr.c`
 - [ ] `static uint64_t anim_last_ticks` in `anim_mgr.c`
-- [ ] `void anim_mgr_init(void)` — zero table; `anim_last_ticks = system_get_ticks()`; call `gfx_anim_self_test()`; called from `desktop_init()`
+- [ ] `void anim_mgr_init(void)` -- zero table; `anim_last_ticks = system_get_ticks()`; call `gfx_anim_self_test()`; called from `desktop_init()`
 - [ ] `int anim_mgr_add(gfx_tween_t *tw)` → 0 or -1: scan for NULL slot; store pointer; increment count
-- [ ] `void anim_mgr_cancel(gfx_tween_t *tw)` — find and NULL the slot; `tw->active = 0`; decrement count
-- [ ] `void anim_mgr_tick(void)` — compute `delta_ms`; cap at 33; iterate table; call `gfx_tween_update(tw, delta_ms)` for each non-NULL active entry; if `!tw->active` after update: NULL the slot; decrement count
-- [ ] `int anim_mgr_any_active(void)` → `anim_count > 0` — used by compositor to decide if redraw is needed
+- [ ] `void anim_mgr_cancel(gfx_tween_t *tw)` -- find and NULL the slot; `tw->active = 0`; decrement count
+- [ ] `void anim_mgr_tick(void)` -- compute `delta_ms`; cap at 33; iterate table; call `gfx_tween_update(tw, delta_ms)` for each non-NULL active entry; if `!tw->active` after update: NULL the slot; decrement count
+- [ ] `int anim_mgr_any_active(void)` → `anim_count > 0` -- used by compositor to decide if redraw is needed
 - [ ] Wire in `wm_composite()`: call `anim_mgr_tick()` as the first statement; after tick: if `anim_mgr_any_active()`: `wm_mark_dirty()`
-- [ ] Log: `[anim] init; self-test passed` at startup; `[anim] table full — drop tween` if add fails
-- [ ] Commit: `"gfx/anim: anim_mgr — 64-slot table, tick/add/cancel, wired into wm_composite()"`
+- [ ] Log: `[anim] init; self-test passed` at startup; `[anim] table full -- drop tween` if add fails
+- [ ] Commit: `"gfx/anim: anim_mgr -- 64-slot table, tick/add/cancel, wired into wm_composite()"`
 
 ## 4. Registry Controls `[Sonnet]`
 
@@ -118,9 +118,9 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
 - [ ] Call `anim_mgr_load_settings()` from `anim_mgr_init()` and on `WM_THEME_CHANGED`
 - [ ] `anim_mgr_add()`: if `!g_anim_enabled`: snap + return without table insert
 - [ ] `gfx_tween_start()`: if `g_anim_speed != 100`: apply speed multiplier to `duration_ms` before storing
-- [ ] `int anim_mgr_enabled(void)` → `g_anim_enabled` — for callers that want to skip tween setup entirely
+- [ ] `int anim_mgr_enabled(void)` → `g_anim_enabled` -- for callers that want to skip tween setup entirely
 - [ ] Log: `[anim] settings: enabled=%d speed=%u%%`
-- [ ] Commit: `"gfx/anim: registry controls — EnableAnimations + AnimationSpeed, snap reduce-motion path"`
+- [ ] Commit: `"gfx/anim: registry controls -- EnableAnimations + AnimationSpeed, snap reduce-motion path"`
 
 ## 5. Window Transition Animations `[Opus]`
 
@@ -129,7 +129,7 @@ Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.1
 **Files:** `src/desktop/wm_anim.c` (new), `include/desktop/wm_anim.h` (new), `include/desktop/wm.h` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — window animations are novel for Impossible OS: they require the compositor to render windows at interpolated geometry and opacity each frame, which is not currently implemented. **Scale rendering**: the compositor must read `win->anim.scale` (16.16 percent) and call the blitter with a scaled source; when `scale == 65536` (100%): use the normal blit path. **Opacity**: `win->anim.opacity` (0–255); when 255: normal blit; otherwise: blend with alpha `opacity/255`. **Minimize target**: the taskbar button rect for this window must be known at minimize time; store as `wm_anim_state_t.taskbar_rect`; if unknown (taskbar not yet implemented): animate to screen bottom-center. **Close animation**: when the close tween completes: the `on_complete` callback calls `wm_destroy_window(handle)`. **Compositor changes**: in `wm_composite()`, for each window: if `win->anim.scale != 65536`: render scaled; if `win->anim.opacity != 255`: render with alpha blend. Both branches fall back to fast path when at nominal values.
+> This is `[Opus]` -- window animations are novel for Impossible OS: they require the compositor to render windows at interpolated geometry and opacity each frame, which is not currently implemented. **Scale rendering**: the compositor must read `win->anim.scale` (16.16 percent) and call the blitter with a scaled source; when `scale == 65536` (100%): use the normal blit path. **Opacity**: `win->anim.opacity` (0–255); when 255: normal blit; otherwise: blend with alpha `opacity/255`. **Minimize target**: the taskbar button rect for this window must be known at minimize time; store as `wm_anim_state_t.taskbar_rect`; if unknown (taskbar not yet implemented): animate to screen bottom-center. **Close animation**: when the close tween completes: the `on_complete` callback calls `wm_destroy_window(handle)`. **Compositor changes**: in `wm_composite()`, for each window: if `win->anim.scale != 65536`: render scaled; if `win->anim.opacity != 255`: render with alpha blend. Both branches fall back to fast path when at nominal values.
 
 - [ ] `typedef struct { gfx_tween_t x, y, w, h; gfx_tween_t opacity; gfx_tween_t scale; int32_t taskbar_rx, taskbar_ry, taskbar_rw, taskbar_rh; uint8_t closing; } wm_anim_state_t;` in `include/desktop/wm_anim.h`
 - [ ] Embed `wm_anim_state_t anim` field into `struct wm_window` in `include/desktop/wm.h`
@@ -151,15 +151,15 @@ Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.1
 **Files:** `src/kernel/gfx/gfx_spring.c` (new), `include/kernel/gfx/gfx_spring.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` — integer spring ODE requires careful scaling to avoid overflow and instability. All values in 16.16 fixed-point. Hooke's law Euler step: `force = -k × (pos - target) - d × velocity` (all 16.16); `velocity += force × delta_ms / 1000`; `pos += velocity × delta_ms / 1000`; use `int64_t` intermediates for multiply. Stability constraint: for `k=65536` (1.0) and `d=98304` (1.5): the system is critically damped; default recommended values. Delta_ms cap: use 16 ms max in spring step to prevent instability (subcycle: if `delta_ms > 16`: split into 16 ms substeps). `spring_settled`: `|velocity| < 128` (< 0.002 in 16.16) AND `|pos - target| < 256` (< 0.004 px in 16.16). Spring is not managed by `anim_mgr` (different update loop — call `spring_update()` directly from the owning subsystem); however, owning code must call `wm_mark_dirty()` while `!spring_settled()`.
+> This is `[Opus]` -- integer spring ODE requires careful scaling to avoid overflow and instability. All values in 16.16 fixed-point. Hooke's law Euler step: `force = -k × (pos - target) - d × velocity` (all 16.16); `velocity += force × delta_ms / 1000`; `pos += velocity × delta_ms / 1000`; use `int64_t` intermediates for multiply. Stability constraint: for `k=65536` (1.0) and `d=98304` (1.5): the system is critically damped; default recommended values. Delta_ms cap: use 16 ms max in spring step to prevent instability (subcycle: if `delta_ms > 16`: split into 16 ms substeps). `spring_settled`: `|velocity| < 128` (< 0.002 in 16.16) AND `|pos - target| < 256` (< 0.004 px in 16.16). Spring is not managed by `anim_mgr` (different update loop -- call `spring_update()` directly from the owning subsystem); however, owning code must call `wm_mark_dirty()` while `!spring_settled()`.
 
 - [ ] `typedef struct { int32_t pos, vel, target, k, d; } spring_t;` in `include/kernel/gfx/gfx_spring.h`
-- [ ] `void spring_init(spring_t *sp, int32_t initial_pos, int32_t target, int32_t k, int32_t d)` — default k=65536, d=98304 (critically damped in 16.16)
-- [ ] `void spring_update(spring_t *sp, uint32_t delta_ms)` — if `delta_ms > 16`: iterate in 16 ms substeps; each step: `force = -(sp->k * (sp->pos - sp->target) >> 16) - (sp->d * sp->vel >> 16)`; `sp->vel += force × 16 >> 10`; `sp->pos += sp->vel × 16 >> 10` (division by 1000 approximated as `>> 10` for 16 ms: `16/1024 ≈ 0.0156 ≈ 16/1000`; document approximation)
+- [ ] `void spring_init(spring_t *sp, int32_t initial_pos, int32_t target, int32_t k, int32_t d)` -- default k=65536, d=98304 (critically damped in 16.16)
+- [ ] `void spring_update(spring_t *sp, uint32_t delta_ms)` -- if `delta_ms > 16`: iterate in 16 ms substeps; each step: `force = -(sp->k * (sp->pos - sp->target) >> 16) - (sp->d * sp->vel >> 16)`; `sp->vel += force × 16 >> 10`; `sp->pos += sp->vel × 16 >> 10` (division by 1000 approximated as `>> 10` for 16 ms: `16/1024 ≈ 0.0156 ≈ 16/1000`; document approximation)
 - [ ] `int spring_settled(const spring_t *sp)` → `abs(sp->vel) < 128 && abs(sp->pos - sp->target) < 256`
-- [ ] `void spring_set_target(spring_t *sp, int32_t new_target)` — change target mid-flight without resetting velocity (natural direction change)
+- [ ] `void spring_set_target(spring_t *sp, int32_t new_target)` -- change target mid-flight without resetting velocity (natural direction change)
 - [ ] Apply to: scroll overshoot in scroll view (future `controls.c` scrollbar); window restore bounce: after `wm_anim_restore()` completes, run a spring with k=131072 (2.0), d=65536 (1.0) for a subtle bounce overshoot on y
-- [ ] Commit: `"gfx/spring: integer Hooke's law spring — critically-damped default, spring_settled, substep"`
+- [ ] Commit: `"gfx/spring: integer Hooke's law spring -- critically-damped default, spring_settled, substep"`
 
 ## 7. Compositor Integration `[Sonnet]`
 
@@ -168,15 +168,15 @@ Non-animating frames skip compositor redraw when no dirty rects. Animating windo
 **Files:** `src/desktop/wm.c` (extend)
 
 > [!NOTE]
-> The existing dirty rect system (`wm_mark_dirty()` + dirty flag in compositor) already gates redraws. The integration requirement is: when `anim_mgr_any_active()` returns true, call `wm_mark_dirty()` before the dirty-rect check so the compositor does not skip animating frames. This is already specified in §3; this section is the integration audit and any remaining wiring. VSync delta cap: `delta_ms = min(delta_ms, 33)` in `anim_mgr_tick()` (already in §3 design). Reduce-motion audit: grep for every `wm_anim_*` and `anim_mgr_add()` call site and confirm each goes through the `g_anim_enabled` snap path — no animation runs when reduce-motion is active.
+> The existing dirty rect system (`wm_mark_dirty()` + dirty flag in compositor) already gates redraws. The integration requirement is: when `anim_mgr_any_active()` returns true, call `wm_mark_dirty()` before the dirty-rect check so the compositor does not skip animating frames. This is already specified in §3; this section is the integration audit and any remaining wiring. VSync delta cap: `delta_ms = min(delta_ms, 33)` in `anim_mgr_tick()` (already in §3 design). Reduce-motion audit: grep for every `wm_anim_*` and `anim_mgr_add()` call site and confirm each goes through the `g_anim_enabled` snap path -- no animation runs when reduce-motion is active.
 
-- [ ] Confirm `anim_mgr_tick()` is the first call in `wm_composite()` — before dirty rect check
+- [ ] Confirm `anim_mgr_tick()` is the first call in `wm_composite()` -- before dirty rect check
 - [ ] `if (anim_mgr_any_active()) wm_mark_dirty();` placed immediately after `anim_mgr_tick()` in `wm_composite()`
 - [ ] Delta cap: `if (delta_ms > 33) delta_ms = 33;` in `anim_mgr_tick()` (verify present from §3)
 - [ ] Reduce-motion audit: all `wm_anim_open/close/minimize/restore/maximize/snap/menu_open` call `anim_mgr_add()` which checks `g_anim_enabled`; no animation code bypasses this check
-- [ ] Non-animating idle: `wm_composite()` early-returns if `!dirty && !anim_mgr_any_active()` — confirm this path works correctly with QEMU (idle desktop should show near-zero CPU in `top`)
+- [ ] Non-animating idle: `wm_composite()` early-returns if `!dirty && !anim_mgr_any_active()` -- confirm this path works correctly with QEMU (idle desktop should show near-zero CPU in `top`)
 - [ ] Boot log: `[wm] compositor: animation tick integrated, reduce-motion=%s` at startup
-- [ ] Commit: `"desktop/wm: compositor integration — anim tick, dirty gating, reduce-motion audit"`
+- [ ] Commit: `"desktop/wm: compositor integration -- anim tick, dirty gating, reduce-motion audit"`
 
 ---
 
@@ -185,21 +185,21 @@ Non-animating frames skip compositor redraw when no dirty rects. Animating windo
 
 | ⭐ | Feature                                | 🪟 Win11                                                                 | 🐧 Linux                                                                            | 🚀 Impossible OS                                                                         |
 |----|----------------------------------------|-----------------------------------------------------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
-| 💎 | Core tween engine                      | ✅ DWM storyboard animations; WinUI3 `AnimationInterpolation`         | ✅ GTK `GskRenderNode` + CSS transitions;                                        | ⬜ §1 — 16.16 fixed-point; no float; `int64_t`                                        |
-| 💎 | Easing functions                       | ✅ WinUI3 `EasingFunctionBase` hierarchy; bounce/back in              | ✅ GTK CSS `cubic-bezier`; GNOME Shell                                           | ⬜ §2 — 9 functions; all integer; `gfx_ease_bounce`                                   |
-| 💎 | Global animation manager               | ✅ DWM internal scheduler; WinUI3 `CompositionAnimationGroup`         | ✅ Mutter animation scheduler; GNOME Shell                                       | ⬜ §3 — in-kernel 64-slot table; zero GObject/JS                                      |
-| 💎 | Window transitions                     | ✅ DWM animates all window state                                      | ✅ Mutter/KWin window animation plugin system                                    | ⬜ §5 — `wm_anim_open/close/minimize/restore` with correct easing per                 |
-| 💎 | Reduce-motion / Registry speed control | ✅ Settings → Accessibility → Visual                                  | ✅ GNOME `org.gnome.desktop.interface.enable-animations`; KDE disable animations | ⬜ §4 — `HKCU\Software\Impossible\Theme\EnableAnimations + AnimationSpeed`; snap path |
-| ⭐ | Spring physics                         | ⚠️ WinUI3 `SpringVector3NaturalMotionAnimation` (high-level only; DWM | ❌ Mutter/GTK use easing curves only;                                            | ⬜ §6 — `⭐` kernel-level integer spring; `spring_set_target()`                       |
-| 💎 | Compositor dirty-frame gating          | ✅ DWM skips redraws on idle;                                         | ✅ Mutter/KWin damage tracking                                                   | ⬜ §7 — `anim_mgr_any_active()` drives `wm_mark_dirty()`; idle desktop                |
+| 💎 | Core tween engine                      | ✅ DWM storyboard animations; WinUI3 `AnimationInterpolation`         | ✅ GTK `GskRenderNode` + CSS transitions;                                        | ⬜ §1 -- 16.16 fixed-point; no float; `int64_t`                                        |
+| 💎 | Easing functions                       | ✅ WinUI3 `EasingFunctionBase` hierarchy; bounce/back in              | ✅ GTK CSS `cubic-bezier`; GNOME Shell                                           | ⬜ §2 -- 9 functions; all integer; `gfx_ease_bounce`                                   |
+| 💎 | Global animation manager               | ✅ DWM internal scheduler; WinUI3 `CompositionAnimationGroup`         | ✅ Mutter animation scheduler; GNOME Shell                                       | ⬜ §3 -- in-kernel 64-slot table; zero GObject/JS                                      |
+| 💎 | Window transitions                     | ✅ DWM animates all window state                                      | ✅ Mutter/KWin window animation plugin system                                    | ⬜ §5 -- `wm_anim_open/close/minimize/restore` with correct easing per                 |
+| 💎 | Reduce-motion / Registry speed control | ✅ Settings → Accessibility → Visual                                  | ✅ GNOME `org.gnome.desktop.interface.enable-animations`; KDE disable animations | ⬜ §4 -- `HKCU\Software\Impossible\Theme\EnableAnimations + AnimationSpeed`; snap path |
+| ⭐ | Spring physics                         | ⚠️ WinUI3 `SpringVector3NaturalMotionAnimation` (high-level only; DWM | ❌ Mutter/GTK use easing curves only;                                            | ⬜ §6 -- `⭐` kernel-level integer spring; `spring_set_target()`                       |
+| 💎 | Compositor dirty-frame gating          | ✅ DWM skips redraws on idle;                                         | ✅ Mutter/KWin damage tracking                                                   | ⬜ §7 -- `anim_mgr_any_active()` drives `wm_mark_dirty()`; idle desktop                |
 
-> **After §1–§7:** Impossible OS has a fully kernel-native animation engine — no GObject, no JS engine, no D3D dependency. The `⭐` spring physics differentiator goes beyond WinUI3's high-level spring API: the kernel-level `spring_set_target()` allows mid-flight direction changes with preserved velocity, which means dragging a window and releasing it snaps back with physically correct momentum rather than resetting. GTK/Mutter have no built-in spring physics at all.
+> **After §1–§7:** Impossible OS has a fully kernel-native animation engine -- no GObject, no JS engine, no D3D dependency. The `⭐` spring physics differentiator goes beyond WinUI3's high-level spring API: the kernel-level `spring_set_target()` allows mid-flight direction changes with preserved velocity, which means dragging a window and releasing it snaps back with physically correct momentum rather than resetting. GTK/Mutter have no built-in spring physics at all.
 
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
 - [ ] `gfx_anim_self_test()` log at boot: `[anim] init; self-test passed`
-- [ ] Easing: `gfx_ease_linear(32768) == 32768`; `gfx_ease_in_quad(32768) == 16384`; `gfx_ease_out_cubic(65536) == 65536`; `gfx_ease_bounce(65536) == 65536` — verify via serial log
+- [ ] Easing: `gfx_ease_linear(32768) == 32768`; `gfx_ease_in_quad(32768) == 16384`; `gfx_ease_out_cubic(65536) == 65536`; `gfx_ease_bounce(65536) == 65536` -- verify via serial log
 - [ ] `anim_mgr_tick()` called first in `wm_composite()`; serial log confirms on first compositor frame
 - [ ] Window open animation visible in QEMU: new window scales 90→100% + fades in over ~200 ms
 - [ ] Window close animation: scales down + fades out before buffer freed; window destroyed in `on_complete`
@@ -208,4 +208,4 @@ Non-animating frames skip compositor redraw when no dirty rects. Animating windo
 - [ ] `AnimationSpeed = 200`: all animations run at 2× duration (200 ms open → 400 ms); `AnimationSpeed = 50`: half duration
 - [ ] Spring: `spring_settled()` returns true after ~500 ms of decay from `pos=65536*10, target=0, k=65536, d=98304`; verified via serial log in a test init call
 - [ ] Idle CPU: desktop with no open windows and no animations running → compositor early-returns dirty check; CPU usage near baseline
-- [ ] Commit: `"gfx/anim: complete animation engine — tween, easing, manager, window transitions, spring, compositor"`
+- [ ] Commit: `"gfx/anim: complete animation engine -- tween, easing, manager, window transitions, spring, compositor"`

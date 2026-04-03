@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# generate-changelog.sh — Generate CHANGELOG.md from git history
+# generate-changelog.sh -- Generate CHANGELOG.md from git history
 #
 # Usage:
 #   bash scripts/generate-changelog.sh              # Full history (all tags)
@@ -175,7 +175,7 @@ echo "Generating changelog..."
         first_commit=$(git rev-list --max-parents=0 HEAD)
         generate_section "$first_commit" "$oldest_tag" "## ${oldest_tag} (${tag_date})"
     else
-        # No tags — generate full history
+        # No tags -- generate full history
         current_date=$(date '+%Y-%m-%d')
         first_commit=$(git rev-list --max-parents=0 HEAD)
         generate_section "$first_commit" "HEAD" "## Development (${current_date})"

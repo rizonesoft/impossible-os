@@ -7,8 +7,8 @@ UEFI mode and a VDI disk image (included in releases).
 
 ## Prerequisites
 
-- **VirtualBox 7.0+** — [Download](https://www.virtualbox.org/wiki/Downloads)
-- **VirtualBox Extension Pack** (recommended) — USB 2.0/3.0 support
+- **VirtualBox 7.0+** -- [Download](https://www.virtualbox.org/wiki/Downloads)
+- **VirtualBox Extension Pack** (recommended) -- USB 2.0/3.0 support
 
 ---
 
@@ -43,7 +43,7 @@ VBoxManage convertfromraw system-disk.img system-disk.vdi --format VDI
 2. **Memory:** 256 MB minimum (512 MB recommended)
 3. **Hard Disk:** "Use an existing virtual hard disk file" → select `system-disk.vdi`
 4. **Settings → System:**
-   - ✅ **Enable EFI** (required — Impossible OS does not boot in legacy BIOS)
+   - ✅ **Enable EFI** (required -- Impossible OS does not boot in legacy BIOS)
    - Uncheck "Floppy" from boot order
 5. **Settings → Storage:**
    - Controller should be **AHCI** (default for SATA)
@@ -87,7 +87,7 @@ VBoxManage startvm "Impossible OS"
 
 | Setting | Value | Why |
 |---------|-------|-----|
-| Firmware | **EFI** | UEFI required — legacy BIOS will NOT boot |
+| Firmware | **EFI** | UEFI required -- legacy BIOS will NOT boot |
 | RAM | 256–512 MB | 256 MB minimum for desktop |
 | VRAM | 64 MB | Recommended for 1280×720 framebuffer |
 | Storage | AHCI/SATA | Impossible OS uses AHCI DMA drivers |

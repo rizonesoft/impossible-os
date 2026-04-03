@@ -1,5 +1,5 @@
 /* ============================================================================
- * timer.h — Unified Timer Subsystem (UTS) HAL
+ * timer.h -- Unified Timer Subsystem (UTS) HAL
  *
  * Single source of truth for all kernel timekeeping.  Every subsystem
  * (UI, scheduler, VFS, drivers) calls the hardware-agnostic API below.
@@ -8,7 +8,7 @@
  *
  * The global pointer `g_system_timer` is set once during early boot by
  * timer_hal_init() (§6.4) and never changes.  Before it is set, the
- * functions below are safe to call — they return immediately / return 0.
+ * functions below are safe to call -- they return immediately / return 0.
  * ============================================================================ */
 
 #pragma once
@@ -58,7 +58,7 @@ uint64_t uptime_ns(void);
 /* ---- Timer tick callback (ISR-context) ----
  * One global callback invoked from the active timer ISR at configurable
  * frequency.  Used for animation (spinner), heartbeat LED, etc.
- * The callback runs in interrupt context — keep it short, no sleeping. */
+ * The callback runs in interrupt context -- keep it short, no sleeping. */
 
 /* Register a periodic callback called every `every_n_ticks` timer ticks.
  * At 100 Hz timer, every_n_ticks=10 gives ~10 fps. */

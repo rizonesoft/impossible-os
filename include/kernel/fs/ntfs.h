@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs.h — NTFS Filesystem Driver (Read-Only)
+ * ntfs.h -- NTFS Filesystem Driver (Read-Only)
  *
  * Parses NTFS volumes via the block device abstraction layer.
  * Reads the Boot Sector / BPB, locates the $MFT, and provides
@@ -21,7 +21,7 @@ struct ntfs_mft_cache_entry;
 /* Maximum data runs we store per cached non-resident attribute */
 #define NTFS_MAX_BITMAP_RUNS  256
 
-/* NTFS volume context — parsed from boot sector BPB */
+/* NTFS volume context -- parsed from boot sector BPB */
 struct ntfs_volume {
     const struct blkdev *dev;       /* Underlying block device */
 
@@ -52,7 +52,7 @@ struct ntfs_volume {
     uint8_t *bitmap_data;          /* PMM-allocated in-memory copy of entire $Bitmap */
     uint32_t bitmap_data_pages;    /* Number of PMM pages allocated for bitmap_data */
 
-    /* MFT Zone — reserved for MFT growth (first 12.5% of volume) */
+    /* MFT Zone -- reserved for MFT growth (first 12.5% of volume) */
     uint64_t mft_zone_start;       /* First LCN of MFT zone */
     uint64_t mft_zone_end;         /* Last LCN + 1 of MFT zone */
 
@@ -103,15 +103,15 @@ struct ntfs_volume {
 };
 
 /* Well-known NTFS system inode numbers */
-#define NTFS_INODE_MFT       0   /* $MFT — Master File Table */
-#define NTFS_INODE_MFTMIRR   1   /* $MFTMirr — MFT mirror (first 4 records) */
-#define NTFS_INODE_LOGFILE   2   /* $LogFile — Transaction journal */
-#define NTFS_INODE_VOLUME    3   /* $Volume — Volume name and flags */
-#define NTFS_INODE_ATTRDEF   4   /* $AttrDef — Attribute definitions */
-#define NTFS_INODE_BITMAP    6   /* $Bitmap — Cluster allocation bitmap */
-#define NTFS_INODE_BOOT      7   /* $Boot — Boot sector backup */
-#define NTFS_INODE_BADCLUS   8   /* $BadClus — Bad cluster list */
-#define NTFS_INODE_UPCASE   10   /* $UpCase — Unicode uppercase table */
+#define NTFS_INODE_MFT       0   /* $MFT -- Master File Table */
+#define NTFS_INODE_MFTMIRR   1   /* $MFTMirr -- MFT mirror (first 4 records) */
+#define NTFS_INODE_LOGFILE   2   /* $LogFile -- Transaction journal */
+#define NTFS_INODE_VOLUME    3   /* $Volume -- Volume name and flags */
+#define NTFS_INODE_ATTRDEF   4   /* $AttrDef -- Attribute definitions */
+#define NTFS_INODE_BITMAP    6   /* $Bitmap -- Cluster allocation bitmap */
+#define NTFS_INODE_BOOT      7   /* $Boot -- Boot sector backup */
+#define NTFS_INODE_BADCLUS   8   /* $BadClus -- Bad cluster list */
+#define NTFS_INODE_UPCASE   10   /* $UpCase -- Unicode uppercase table */
 
 /* ---- API ---- */
 
@@ -153,17 +153,17 @@ uint16_t ntfs_upcase_char(const struct ntfs_volume *vol, uint16_t ch);
 /* Error codes for ntfs_read_mft_record() */
 #define NTFS_OK              0
 #define NTFS_ERR_IO         -1  /* Block device read failed */
-#define NTFS_ERR_BAD_RECORD -2  /* Magic is "BAAD" — corrupt record */
+#define NTFS_ERR_BAD_RECORD -2  /* Magic is "BAAD" -- corrupt record */
 #define NTFS_ERR_BAD_MAGIC  -3  /* Magic is unrecognized */
 #define NTFS_ERR_FREE       -4  /* Record is not in-use (deleted) */
-#define NTFS_ERR_FIXUP      -5  /* USA fixup failed — sector tear */
+#define NTFS_ERR_FIXUP      -5  /* USA fixup failed -- sector tear */
 #define NTFS_ERR_NOT_FOUND  -6  /* File not found in directory */
 #define NTFS_ERR_READ_ONLY     -7  /* Write operation on read-only driver */
-#define NTFS_ERR_FULL          -8  /* Disk full — no free clusters or MFT records */
+#define NTFS_ERR_FULL          -8  /* Disk full -- no free clusters or MFT records */
 #define NTFS_ERR_ACCESS_DENIED -9  /* EFS: user's cert not in $EFS DDF list */
 #define NTFS_ERR_NOT_READY    -10  /* EFS: CNG key store not initialized */
 
-/* Parsed MFT record header — matches on-disk layout at documented offsets */
+/* Parsed MFT record header -- matches on-disk layout at documented offsets */
 struct ntfs_mft_header {
     uint32_t magic;              /* 0x00: "FILE" or "BAAD" */
     uint16_t usa_offset;         /* 0x04: Offset to Update Sequence Array */
@@ -256,7 +256,7 @@ int ntfs_regenerate_fixup(uint8_t *buf, uint32_t record_size,
 #define NTFS_ATTR_FLAG_ENCRYPTED   0x4000
 #define NTFS_ATTR_FLAG_SPARSE      0x8000
 
-/* Parsed attribute common header — works for both resident and non-resident.
+/* Parsed attribute common header -- works for both resident and non-resident.
  * The iterator fills this from raw record bytes at each position. */
 struct ntfs_attr_header {
     /* Common header (all attributes) */
@@ -300,7 +300,7 @@ const uint8_t *ntfs_attr_find(const uint8_t *record,
                               struct ntfs_attr_header *out);
 
 /* Find a named attribute (type + UTF-16LE name match).
- * name is a kernel ASCII string — compared against UTF-16LE attr name.
+ * name is a kernel ASCII string -- compared against UTF-16LE attr name.
  * Returns the raw pointer, or NULL if not found. */
 const uint8_t *ntfs_attr_find_named(const uint8_t *record,
                                     const struct ntfs_mft_header *hdr,
@@ -373,7 +373,7 @@ const uint8_t *ntfs_attr_find_named_ext(struct ntfs_volume *vol,
 struct ntfs_file_name {
     /* Parent directory reference */
     uint64_t parent_inode;       /* Low 48 bits of parent MFT ref */
-    uint16_t parent_seq;         /* High 16 bits — sequence number */
+    uint16_t parent_seq;         /* High 16 bits -- sequence number */
 
     /* Duplicated timestamps (100-ns intervals since 1601-01-01) */
     uint64_t creation_time;      /* 0x08 */
@@ -404,7 +404,7 @@ int ntfs_decode_file_name(const uint8_t *record,
 
 /* ---- Data Run Decoder (§4.1) ---- */
 
-/* Sentinel LCN value for sparse (unallocated) runs — reads as all zeros */
+/* Sentinel LCN value for sparse (unallocated) runs -- reads as all zeros */
 #define NTFS_LCN_SPARSE  ((uint64_t)-1)
 
 /* Attribute flags (at offset 0x0C in attribute header) */
@@ -458,7 +458,7 @@ int ntfs_decode_data_runs(const uint8_t *attr, struct ntfs_data_run *runs,
 
 /* Parsed $STANDARD_INFORMATION attribute content */
 struct ntfs_std_info {
-    /* Timestamps — raw FILETIME (100-ns intervals since 1601-01-01) */
+    /* Timestamps -- raw FILETIME (100-ns intervals since 1601-01-01) */
     uint64_t creation_time;      /* 0x00 */
     uint64_t modification_time;  /* 0x08 */
     uint64_t mft_change_time;    /* 0x10 */
@@ -665,14 +665,14 @@ int ntfs_free_clusters(struct ntfs_volume *vol,
                         uint64_t lcn, uint64_t count);
 
 /* Count free clusters in the $Bitmap.
- * Performs a full scan of the bitmap — O(total_clusters/8). */
+ * Performs a full scan of the bitmap -- O(total_clusters/8). */
 uint64_t ntfs_get_free_space(struct ntfs_volume *vol);
 
 /* ---- MFT Record Allocator (§12.3) ---- */
 
 /* Load $MFT's own $BITMAP and $DATA runs into vol->mft_bitmap_runs
  * and vol->mft_data_runs. Must be called during mount, after MFT is
- * accessible. This is NOT inode 6 ($Bitmap) — it's $MFT's internal
+ * accessible. This is NOT inode 6 ($Bitmap) -- it's $MFT's internal
  * bitmap attribute that tracks which MFT records are allocated. */
 int ntfs_mft_alloc_load(struct ntfs_volume *vol);
 
@@ -1221,13 +1221,13 @@ void ntfs_journal_shutdown(struct ntfs_volume *vol);
 
 /* Replay the $LogFile to restore consistency on a dirty mount.
  * Three-phase ARIES recovery:
- *   1. Analysis — scan log, build transaction table
- *   2. Redo — replay committed operations
- *   3. Undo — roll back uncommitted operations
+ *   1. Analysis -- scan log, build transaction table
+ *   2. Redo -- replay committed operations
+ *   3. Undo -- roll back uncommitted operations
  * Clears the dirty flag and resets $LogFile after recovery. */
 int ntfs_recovery_replay(struct ntfs_volume *vol);
 
-/* ---- EFS — Encrypting File System (§9.3) ---- */
+/* ---- EFS -- Encrypting File System (§9.3) ---- */
 
 /* EFS uses the $LOGGED_UTILITY_STREAM attribute (type 0x100) named "$EFS".
  * The attribute contains Data Decryption Fields (DDFs), each holding an

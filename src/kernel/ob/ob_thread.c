@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_thread.c — Thread object type: callbacks, namespace integration
+ * ob_thread.c -- Thread object type: callbacks, namespace integration
  *
  * Implements TODO-03 §5: ObpThreadType wrapping thread sub-struct.
  * Each thread is inserted into \KernelObjects\Thread<PID>.<TID>.
@@ -15,7 +15,7 @@ extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 /* --- Callbacks ----------------------------------------------------------- */
 
 /*
- * thread_on_delete — called when ref_count hits 0 after ObMakeTemporaryObject.
+ * thread_on_delete -- called when ref_count hits 0 after ObMakeTemporaryObject.
  * Thread memory lives in the task's threads[] array; just NULL the pointer.
  */
 static void thread_on_delete(void *body)
@@ -82,7 +82,7 @@ void ob_thread_create(struct thread *thr, uint32_t task_pid)
              (uint64_t)task_pid, (uint64_t)thr->id);
     }
 
-    /* Drop the creation ref — namespace holds its own */
+    /* Drop the creation ref -- namespace holds its own */
     ObDereferenceObject(to);
 }
 

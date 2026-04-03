@@ -1,5 +1,5 @@
 /* ============================================================================
- * mutex.h — Kernel mutex synchronization
+ * mutex.h -- Kernel mutex synchronization
  *
  * Provides mutual exclusion primitives for kernel threads. Mutexes support
  * blocking lock (yield-based sleep), non-blocking trylock, and basic

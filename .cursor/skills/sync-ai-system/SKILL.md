@@ -9,8 +9,8 @@ description: Update AI-facing project guidance when shared conventions change, k
 
 Cursor and Claude Code are **independent systems** with no shared layer:
 
-- **Cursor** owns `.cursor/rules/` and `.cursor/skills/` — self-contained, uses Srclight MCP.
-- **Claude Code** owns `CLAUDE.md` and `.claude/skills/` — self-contained, uses Grep/Glob.
+- **Cursor** owns `.cursor/rules/` and `.cursor/skills/` -- self-contained, uses Srclight MCP.
+- **Claude Code** owns `CLAUDE.md` and `.claude/skills/` -- self-contained, uses Grep/Glob.
 - **`.cursorignore`** prevents Cursor from indexing `.claude/`.
 
 Both systems enforce the same project conventions but through their own tool-native mechanisms.
@@ -35,7 +35,7 @@ Both systems enforce the same project conventions but through their own tool-nat
 - Do not treat untracked local state as canonical project behavior.
 - Do not perform TODO roadmap sync or checkbox-vs-code audits here.
 - Do not weaken safety, build, or tooling expectations for convenience.
-- Do not add cross-references between `.cursor/` and `.claude/` — they are independent.
+- Do not add cross-references between `.cursor/` and `.claude/` -- they are independent.
 
 ## Additional Resources
 

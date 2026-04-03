@@ -1,5 +1,5 @@
 /* ============================================================================
- * test_vmm.c — VMM unit tests (map, read, unmap round-trip)
+ * test_vmm.c -- VMM unit tests (map, read, unmap round-trip)
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
@@ -16,7 +16,7 @@ static void test_vmm_map_roundtrip(void)
         return;
     }
 
-    /* Use 8 GiB — above the bootloader's 4 GiB identity-map */
+    /* Use 8 GiB -- above the bootloader's 4 GiB identity-map */
     uintptr_t test_virt = 0x0000000200000000ULL;
 
     if (vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW) != 0) {

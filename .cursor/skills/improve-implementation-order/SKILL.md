@@ -1,6 +1,6 @@
 ---
 name: improve-implementation-order
-description: Audit and rewrite the Implementation Order table in a TODO file — verify execution order is correct and gap-free, compress verbose cross-domain references into compact notation (D=domain, T=TODO, §=section), and ensure every body section maps to a table row. Use when asked to improve, fix, audit, or review an Implementation Order table in a TODO file.
+description: Audit and rewrite the Implementation Order table in a TODO file -- verify execution order is correct and gap-free, compress verbose cross-domain references into compact notation (D=domain, T=TODO, §=section), and ensure every body section maps to a table row. Use when asked to improve, fix, audit, or review an Implementation Order table in a TODO file.
 ---
 
 # Improve Implementation Order Table
@@ -11,7 +11,7 @@ All dependency cells use compact notation only. Never write full file paths in t
 
 | Dependency type | Format | Example |
 |-----------------|--------|---------|
-| No dependency | `—` | `—` |
+| No dependency | `--` | `--` |
 | Internal row reference | `§N` | `§2` |
 | Multiple internal refs | `§N, §M` | `§1, §3` |
 | Boot phase | `P0` / `P1` | `P0` |
@@ -24,7 +24,7 @@ Domain numbers are the two-digit prefix of the folder (e.g. `02` for `02-kernel-
 
 Use `&` to join tightly-coupled deps that must both be satisfied at the same call site. Use `,` to separate independent prerequisites.
 
-**Section-level specificity is mandatory.** Every cross-TODO reference MUST include the specific section numbers needed (e.g., `T11 §1,§3`). A bare TODO number without sections (e.g., `T11`) is ambiguous and must be resolved — open the referenced TODO and identify exactly which sections are prerequisites.
+**Section-level specificity is mandatory.** Every cross-TODO reference MUST include the specific section numbers needed (e.g., `T11 §1,§3`). A bare TODO number without sections (e.g., `T11`) is ambiguous and must be resolved -- open the referenced TODO and identify exactly which sections are prerequisites.
 
 ## Workflow
 
@@ -36,12 +36,12 @@ Use `&` to join tightly-coupled deps that must both be satisfied at the same cal
    - Flag any table row that has no corresponding body section (orphan row).
 3. **Verify execution order.**
    - For each row N, confirm every `§M` dep has M < N.
-   - Flag any row whose internal dep references a later row number — ordering error.
+   - Flag any row whose internal dep references a later row number -- ordering error.
 4. **Convert verbose references to compact notation.**
    - Replace full paths with `DNN TNN §N` compact form.
    - Same-domain refs → `TNN §N`.
 5. **Check status column accuracy.**
-   - Do not change status without code evidence — flag inconsistencies for `verify-todo-section`.
+   - Do not change status without code evidence -- flag inconsistencies for `verify-todo-section`.
 6. **Rewrite the table** with corrected order, compact notation, and aligned columns.
 
 ## Table Format
@@ -49,14 +49,14 @@ Use `&` to join tightly-coupled deps that must both be satisfied at the same cal
 ```
 | ⭐  | Order | Deliverable                  | Depends On              | Status |
 | --- | :---: | ---------------------------- | ----------------------- | :----: |
-| 💎  |   1   | Short deliverable name       | —                       |  [ ]   |
+| 💎  |   1   | Short deliverable name       | --                       |  [ ]   |
 | 💎  |   2   | Short deliverable name       | §1                      |  [ ]   |
 | ⭐  |   3   | Exclusive deliverable name   | §1, D02 T19 §11         |  [ ]   |
 ```
 
 ## Guardrails
 
-- Do not change the content or scope of deliverables — only order, notation, and formatting.
+- Do not change the content or scope of deliverables -- only order, notation, and formatting.
 - Do not mark rows complete based on code inspection; flag for `verify-todo-section` instead.
 - Do not reorder rows if doing so would change the meaning of the plan.
 - If a dep chain is circular, flag it explicitly rather than silently reordering.

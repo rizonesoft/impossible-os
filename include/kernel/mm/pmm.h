@@ -1,5 +1,5 @@
 /* ============================================================================
- * pmm.h — Physical Memory Manager
+ * pmm.h -- Physical Memory Manager
  *
  * Bitmap-based allocator: 1 bit per 4 KiB physical frame.
  * Parses the UEFI memory map (with full type annotations) to discover

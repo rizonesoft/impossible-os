@@ -1,5 +1,5 @@
 /* ============================================================================
- * symtab.h — Kernel symbol table for address→name resolution
+ * symtab.h -- Kernel symbol table for address→name resolution
  *
  * Provides symbolic stack traces in panics/BSODs.
  * The symbol table is loaded at boot from C:\Impossible\System\kernel.sym

@@ -1,25 +1,25 @@
-# TODO-12 — Long-Term Features
+# TODO-12 -- Long-Term Features
 
 **Domain:** `09-services-security`
-**Goal:** Track the advanced features that elevate Impossible OS to a mature production platform — developer tools, kernel/user-mode debugger, touch/gamepad input, print, TTS, software OpenGL, multi-user sessions, telemetry, and parental controls.
+**Goal:** Track the advanced features that elevate Impossible OS to a mature production platform -- developer tools, kernel/user-mode debugger, touch/gamepad input, print, TTS, software OpenGL, multi-user sessions, telemetry, and parental controls.
 
 > [!IMPORTANT]
-> **Depends on:** Core OS complete — ring-3 PE execution (`TODO-07`), Win32 API surface (`TODO-08`), audio system (`09-services-security/TODO-01`), user accounts (`09-services-security/TODO-03 §*`), IxUI (`TODO-08 §13`). No section here is a prerequisite for any other active TODO.
+> **Depends on:** Core OS complete -- ring-3 PE execution (`TODO-07`), Win32 API surface (`TODO-08`), audio system (`09-services-security/TODO-01`), user accounts (`09-services-security/TODO-03 §*`), IxUI (`TODO-08 §13`). No section here is a prerequisite for any other active TODO.
 > **Long-term scope:** Nothing in this TODO is P0 or P1. All sections are P2–P4 power-user and ecosystem features. Each section is independently implementable.
 
 ---
 
 ## Important Notes
 
-- `serial_write()` / `serial_putchar()` exist in `include/kernel/drivers/serial.h` — the GDB remote stub (§1) and debug console (§2) both output over COM1.
-- No existing `kdb_*`, `tts_*`, `session_*`, or `parental_*` APIs — all new.
-- The GDB remote stub (§1) uses the **GDB RSP (Remote Serial Protocol)** — a well-documented text protocol; QEMU connects with `-gdb tcp::1234 -S`.
-- The user-mode debugger (§2) uses hardware debug registers (`DR0`–`DR7`) for hardware breakpoints and `INT3` patching for software breakpoints — both require ring-0 kernel support with a `DR`-read/write syscall.
+- `serial_write()` / `serial_putchar()` exist in `include/kernel/drivers/serial.h` -- the GDB remote stub (§1) and debug console (§2) both output over COM1.
+- No existing `kdb_*`, `tts_*`, `session_*`, or `parental_*` APIs -- all new.
+- The GDB remote stub (§1) uses the **GDB RSP (Remote Serial Protocol)** -- a well-documented text protocol; QEMU connects with `-gdb tcp::1234 -S`.
+- The user-mode debugger (§2) uses hardware debug registers (`DR0`–`DR7`) for hardware breakpoints and `INT3` patching for software breakpoints -- both require ring-0 kernel support with a `DR`-read/write syscall.
 - TTS engine: prompt specifies **eSpeak-NG** (LGPL); the old TODO used **SAM** (public domain, ~2 K lines). Use SAM as the initial port (simpler), with eSpeak-NG as the upgrade path.
-- OpenGL: prompt specifies **TinyGL** (~5 K lines, zlib license) — already named in `todo-old`. No existing OpenGL infrastructure.
-- Multi-user sessions (§8) depend on user accounts and a per-session compositor surface; overlaps with `09-services-security/TODO-03` (accounts) and `07-graphics-ui/TODO-02` (compositor) — cross-link, don't duplicate.
+- OpenGL: prompt specifies **TinyGL** (~5 K lines, zlib license) -- already named in `todo-old`. No existing OpenGL infrastructure.
+- Multi-user sessions (§8) depend on user accounts and a per-session compositor surface; overlaps with `09-services-security/TODO-03` (accounts) and `07-graphics-ui/TODO-02` (compositor) -- cross-link, don't duplicate.
 - Telemetry (§9) is **opt-in only**, zero by default. `HKLM\SYSTEM\Privacy\Telemetry = 0`.
-- Parental controls (§10) hook into `SYS_CREATEPROCESS` to block apps — that hook point is in the kernel process creation path (`TODO-07 §7`).
+- Parental controls (§10) hook into `SYS_CREATEPROCESS` to block apps -- that hook point is in the kernel process creation path (`TODO-07 §7`).
 
 ---
 
@@ -27,16 +27,16 @@
 
 | Path | Purpose |
 |------|---------|
-| `include/kernel/drivers/serial.h` | `serial_write()`, `serial_putchar()` — GDB stub + debug console output |
-| `include/kernel/sched/task.h` | `task_t`, `task_create_user()`, `thread_create()` — debugger + session attach |
-| `include/kernel/sched/syscall.h` | Syscall dispatch — add `SYS_TTS_SPEAK`, `SYS_GAMEPAD_POLL`, debug regs |
-| `include/kernel/mm/vmm.h` | `vmm_read_user()`, `vmm_write_user()` — `ReadProcessMemory`/`WriteProcessMemory` |
-| `include/registry.h` | `registry_get/set()` — debug console, telemetry, parental controls flags |
-| `include/desktop/wm.h` | `wm_create_window()` — debug overlay, session compositor surface |
-| → XREF: `09-services-security/TODO-01` | `audio_play()` — TTS PCM output |
-| → XREF: `09-services-security/TODO-08 §10–13` | IxUI windows — debug console, parcon.cpl, gamepad settings |
-| → XREF: `04-drivers-hardware/TODO-09` | USB HID — touch digitizer and gamepad hardware input |
-| → XREF: `07-graphics-ui/TODO-02` | Compositor — per-session backbuffer for multi-user |
+| `include/kernel/drivers/serial.h` | `serial_write()`, `serial_putchar()` -- GDB stub + debug console output |
+| `include/kernel/sched/task.h` | `task_t`, `task_create_user()`, `thread_create()` -- debugger + session attach |
+| `include/kernel/sched/syscall.h` | Syscall dispatch -- add `SYS_TTS_SPEAK`, `SYS_GAMEPAD_POLL`, debug regs |
+| `include/kernel/mm/vmm.h` | `vmm_read_user()`, `vmm_write_user()` -- `ReadProcessMemory`/`WriteProcessMemory` |
+| `include/registry.h` | `registry_get/set()` -- debug console, telemetry, parental controls flags |
+| `include/desktop/wm.h` | `wm_create_window()` -- debug overlay, session compositor surface |
+| → XREF: `09-services-security/TODO-01` | `audio_play()` -- TTS PCM output |
+| → XREF: `09-services-security/TODO-08 §10–13` | IxUI windows -- debug console, parcon.cpl, gamepad settings |
+| → XREF: `04-drivers-hardware/TODO-09` | USB HID -- touch digitizer and gamepad hardware input |
+| → XREF: `07-graphics-ui/TODO-02` | Compositor -- per-session backbuffer for multi-user |
 | → XREF: `09-services-security/TODO-03 §*` | User accounts and per-user registry hives (parental controls) |
 
 ---
@@ -111,7 +111,7 @@ Win32-compatible debug API + `debugger.exe` GUI application. Hooks into the kern
 - [ ] `SYS_GET_THREAD_CONTEXT(tid, ctx)` / `SYS_SET_THREAD_CONTEXT(tid, ctx)` → read/write `CONTEXT` struct (registers of paused thread)
 - [ ] `SYS_DEBUG_WAIT_EVENT(pid, event_buf, timeout)` → block until debuggee raises an event (exception, process/thread create/exit); populate `DEBUG_EVENT`
 - [ ] `SYS_DEBUG_CONTINUE(pid, thread_id, status)` → resume after debug event (`DBG_CONTINUE` or `DBG_EXCEPTION_NOT_HANDLED`)
-- [ ] Hardware debug register control: `DR0`–`DR3` (address), `DR7` (enable/condition) — write via privileged kernel call only
+- [ ] Hardware debug register control: `DR0`–`DR3` (address), `DR7` (enable/condition) -- write via privileged kernel call only
 
 **Win32 debug API wrappers (in `src/win32/kernel32.c`):**
 - [ ] `DebugActiveProcess(pid)` → `SYS_DEBUG_ATTACH`
@@ -136,8 +136,8 @@ Win32-compatible debug API + `debugger.exe` GUI application. Hooks into the kern
 
 F12 debug overlay and shell diagnostics. All gated by registry flags (disabled by default).
 
-- [ ] `HKLM\SYSTEM\Developer\DebugConsole = 0` — F12 console toggle
-- [ ] `HKLM\SYSTEM\Developer\ShowFPS = 0` — FPS overlay toggle
+- [ ] `HKLM\SYSTEM\Developer\DebugConsole = 0` -- F12 console toggle
+- [ ] `HKLM\SYSTEM\Developer\ShowFPS = 0` -- FPS overlay toggle
 - [ ] **F12 debug console overlay** (`src/kernel/debug/debug_console.c`):
   - Semi-transparent panel (bottom 30% of screen); `gfx_fill_rect` + `gfx_blend_alpha`
   - Four tabs: **[Kernel]** (live `klog` stream + subsystem filter), **[Memory]** (PMM map), **[Network]** (packet counters), **[Syscalls]** (live syscall stream)
@@ -242,7 +242,7 @@ Port TinyGL (~5 K lines, zlib license) to render to the Impossible OS framebuffe
 - [ ] Obtain TinyGL source (`github.com/C-Chads/tinygl` or similar zlib-licensed fork)
 - [ ] Replace platform I/O: `malloc`/`free` → `kmalloc`/`kfree`; `memcpy`/`memset` → kernel versions
 - [ ] Framebuffer target: `glFlush()` → `gfx_blit(tinygl_color_buf, x, y, w, h)` to compositor surface
-- [ ] Create `include/gl/gl.h`: subset of OpenGL 1.1 — `glBegin`/`glEnd`, `glVertex3f`, `glColor3f`, `glTexImage2D`, `glBindTexture`, `glEnable`/`glDisable`, `glMatrixMode`, `glLoadIdentity`, `glTranslatef`, `glRotatef`, `glScalef`, `glFrustum`, `glOrtho`, `glViewport`, `glClear`, `glClearColor`, `glFlush`
+- [ ] Create `include/gl/gl.h`: subset of OpenGL 1.1 -- `glBegin`/`glEnd`, `glVertex3f`, `glColor3f`, `glTexImage2D`, `glBindTexture`, `glEnable`/`glDisable`, `glMatrixMode`, `glLoadIdentity`, `glTranslatef`, `glRotatef`, `glScalef`, `glFrustum`, `glOrtho`, `glViewport`, `glClear`, `glClearColor`, `glFlush`
 - [ ] Z-buffer: 16-bit or 32-bit float depth buffer allocated via `vmm_alloc_user()` or `kmalloc`
 - [ ] `gl_init(width, height)` → allocate color + depth buffers; set default viewport
 - [ ] Test: rotating textured cube at 30+ FPS in QEMU (software rasterizer expected to be slow)
@@ -274,13 +274,13 @@ Per-user sessions with isolated compositor surfaces. Depends on user accounts (`
 
 Privacy-first, zero-by-default telemetry. All collection requires explicit user consent.
 
-- [ ] `HKLM\SYSTEM\Privacy\Telemetry = 0` (0 = off, 1 = basic, 2 = full) — set during OOBE; default 0
+- [ ] `HKLM\SYSTEM\Privacy\Telemetry = 0` (0 = off, 1 = basic, 2 = full) -- set during OOBE; default 0
 - [ ] Create `src/kernel/telemetry.c` + `include/telemetry.h`:
   - `telemetry_init()` → read registry; if 0 → no-op
   - `telemetry_record_event(type, data)` → if enabled: append JSON line to `C:\Impossible\System\Diagnostics\telemetry.log` (rotating, max 1 MiB)
-  - Event types: `BOOT_TIME(ms)`, `CRASH_DUMP(anonymized_hash)`, `FEATURE_USE(feature_name)`, `HW_INFO(cpu_model, ram_gb)` — no filenames, passwords, or user-identifying data ever
+  - Event types: `BOOT_TIME(ms)`, `CRASH_DUMP(anonymized_hash)`, `FEATURE_USE(feature_name)`, `HW_INFO(cpu_model, ram_gb)` -- no filenames, passwords, or user-identifying data ever
   - `telemetry_generate_report(path)` → export collected log as structured JSON
-- [ ] Upload (stretch): HTTP POST to `https://telemetry.impossible-os.dev/api/v1/report` — only on explicit `[Send Report]` button click; never automatic
+- [ ] Upload (stretch): HTTP POST to `https://telemetry.impossible-os.dev/api/v1/report` -- only on explicit `[Send Report]` button click; never automatic
 - [ ] `privacy.cpl` Control Panel applet:
   - Telemetry level radio group (Off / Basic / Full)
   - `[View collected data]` → opens `telemetry.log` in Notepad
@@ -341,7 +341,7 @@ Per-user time limits, app blocking, and activity logging. Admin password require
 | ⭐ | F12 in-kernel debug console                | ❌ DevTools are apps | ❌ External tools      | ⬜ composited overlay, zero process overhead |
 | ⭐ | Kernel GDB stub + user debugger in same OS | ❌ Separate KD + VS  | ❌ KGDB + GDB separate | ⬜ unified debug story                       |
 
-**Impossible OS advantage:** The F12 debug console is implemented in-kernel with zero process overhead — it reads live kernel state without IPC, making it faster than any userland tool. The GDB stub and user-mode debugger share the same OS, giving a unified debugging story from kernel panic to user-mode INT3 that no other OS provides out of the box.
+**Impossible OS advantage:** The F12 debug console is implemented in-kernel with zero process overhead -- it reads live kernel state without IPC, making it faster than any userland tool. The GDB stub and user-mode debugger share the same OS, giving a unified debugging story from kernel panic to user-mode INT3 that no other OS provides out of the box.
 
 ---
 

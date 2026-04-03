@@ -1,21 +1,21 @@
-# TODO-03 — Boot Splash & F8 Recovery
+# TODO-03 -- Boot Splash & F8 Recovery
 
 > **Goal:** Complete the graphical boot experience and the F8 recovery path. BSOD core (panic, crash dump, auto-restart) is done. This TODO adds: `boot_splash_progress(pct)` thin progress bar + 8-step fade-to-black in `boot_splash_finish()`, a logo build pipeline (`tools/png2bootsplash.py`), boot progress milestone constants wired into subsystem inits, an early-boot F8 text menu (PS/2 raw polling before keyboard IRQ), Registry-based crash loop protection, and a BSOD auto-restart validation test plan.
 
 > [!IMPORTANT]
-> **Already implemented** — do not re-implement: arc ring spinner (`include/kernel/spinner.h`, `include/kernel/gfx/arc_ring.h`), `boot_font_render()` TTF status text, `boot_splash_init/status/tick/finish/abort/active` stubs, `boot_splash_start_animation()`. **Missing from `boot_splash.c`**: `boot_splash_progress(pct)` (no thin progress bar yet), milestone constants, fade-to-black (stub exists but fade loop not implemented), logo build pipeline, F8 boot menu, crash loop protection. `klog(level, subsystem, fmt)` from `include/kernel/klog.h` is the serial logging function. `uefi_reboot()` from `include/kernel/uefi_runtime.h` is the reboot call. `keyboard_inject_scancode()` in `include/kernel/drivers/keyboard.h` exists, but F8 polling at early boot requires direct PS/2 port reads (IRQ not yet live). Complete sections in order: build pipeline → splash renderer → spinner confirm → milestones → F8 menu → crash loop → BSOD validation.
+> **Already implemented** -- do not re-implement: arc ring spinner (`include/kernel/spinner.h`, `include/kernel/gfx/arc_ring.h`), `boot_font_render()` TTF status text, `boot_splash_init/status/tick/finish/abort/active` stubs, `boot_splash_start_animation()`. **Missing from `boot_splash.c`**: `boot_splash_progress(pct)` (no thin progress bar yet), milestone constants, fade-to-black (stub exists but fade loop not implemented), logo build pipeline, F8 boot menu, crash loop protection. `klog(level, subsystem, fmt)` from `include/kernel/klog.h` is the serial logging function. `uefi_reboot()` from `include/kernel/uefi_runtime.h` is the reboot call. `keyboard_inject_scancode()` in `include/kernel/drivers/keyboard.h` exists, but F8 polling at early boot requires direct PS/2 port reads (IRQ not yet live). Complete sections in order: build pipeline → splash renderer → spinner confirm → milestones → F8 menu → crash loop → BSOD validation.
 
 ## Inputs
 
-- `src/kernel/boot_splash.c` + `include/kernel/boot_splash.h` — extend with `boot_splash_progress()` and full fade-to-black in §1
-- `include/kernel/spinner.h` — `spinner_draw_faded(uint8_t fade)` used during §2 fade path; `spinner_is_active()`, `spinner_stop()`
-- `include/kernel/gfx/arc_ring.h` — arc ring sizing constants already used by `boot_splash.c`
-- `include/kernel/klog.h` — `klog(LOG_INFO, "boot", msg)` called from `boot_splash_milestone()` so serial output continues during graphical boot
-- `include/kernel/uefi_runtime.h` — `uefi_reboot()` called by crash loop protection when auto-restart is enabled
-- `include/registry.h` — `RegGetValue()`/`RegSetValueEx()` for §6 crash counter and §7 validation
-- `tools/` directory — §3 adds `tools/png2bootsplash.py` alongside existing `tools/convert_boot_font.py`, `tools/convert_bsod_icon.py`
-- → XREF: `01-boot-platform/TODO-07-boot-diagnostics.md` — serial boot log behavior; `boot_splash_status()` must call `klog()` to keep serial output uninterrupted
-- → XREF: `02-kernel-core/TODO-16-crash-dump-generation.md` — BSOD core (done); §7 validates the auto-restart flow end-to-end
+- `src/kernel/boot_splash.c` + `include/kernel/boot_splash.h` -- extend with `boot_splash_progress()` and full fade-to-black in §1
+- `include/kernel/spinner.h` -- `spinner_draw_faded(uint8_t fade)` used during §2 fade path; `spinner_is_active()`, `spinner_stop()`
+- `include/kernel/gfx/arc_ring.h` -- arc ring sizing constants already used by `boot_splash.c`
+- `include/kernel/klog.h` -- `klog(LOG_INFO, "boot", msg)` called from `boot_splash_milestone()` so serial output continues during graphical boot
+- `include/kernel/uefi_runtime.h` -- `uefi_reboot()` called by crash loop protection when auto-restart is enabled
+- `include/registry.h` -- `RegGetValue()`/`RegSetValueEx()` for §6 crash counter and §7 validation
+- `tools/` directory -- §3 adds `tools/png2bootsplash.py` alongside existing `tools/convert_boot_font.py`, `tools/convert_bsod_icon.py`
+- → XREF: `01-boot-platform/TODO-07-boot-diagnostics.md` -- serial boot log behavior; `boot_splash_status()` must call `klog()` to keep serial output uninterrupted
+- → XREF: `02-kernel-core/TODO-16-crash-dump-generation.md` -- BSOD core (done); §7 validates the auto-restart flow end-to-end
 
 ## Outcome
 
@@ -30,13 +30,13 @@
 
 | ⭐  | Order | Deliverable                                                                                         | Depends On                                                                           | Status |
 | --- | :---: | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | :----: |
-| 💎  |   1   | §3 Build pipeline — `tools/png2bootsplash.py`, `assets/logo/`, `make splash-logo` Makefile rule   | Nothing; standalone host-side tool                                                   |  [ ]   |
-| 💎  |   2   | §1 Boot splash renderer — `boot_splash_progress(pct)`, thin bar, fade-to-black in `boot_splash_finish()` | §3 (logo C array must exist before splash can show it at runtime)            |  [ ]   |
-| 💎  |   3   | §2 Loading spinner — confirm `spinner_draw_faded()` integrated into fade path; no re-implementation | §1 (fade loop calls `spinner_draw_faded()` at each of 8 steps)                       |  [ ]   |
-| 💎  |   4   | §4 Boot progress milestones — `BOOT_MILESTONE_*` constants + `boot_splash_milestone()` call sites | §1 (`boot_splash_progress()` must exist before milestones can drive it)               |  [ ]   |
-| ⭐  |   5   | §5 F8 boot menu — early PS/2 polling, text-mode menu, `boot_mode_t`, boot flag propagation        | §1 (splash must be functional so F8 path can abort it cleanly)                       |  [ ]   |
-| 💎  |   6   | §6 Crash loop protection — `ConsecutiveCrashes` Registry key, increment/reset, ≥3 halt message   | §5 (needs to know if booting from recovery or normal boot before incrementing)       |  [ ]   |
-| 💎  |   7   | §7 BSOD auto-restart validation — QEMU test plan for countdown, reboot, crash loop, `AutoRestart=0` | §6 (crash loop protection must be live before testing consecutive crash scenarios)   |  [ ]   |
+| 💎  |   1   | §3 Build pipeline -- `tools/png2bootsplash.py`, `assets/logo/`, `make splash-logo` Makefile rule   | Nothing; standalone host-side tool                                                   |  [ ]   |
+| 💎  |   2   | §1 Boot splash renderer -- `boot_splash_progress(pct)`, thin bar, fade-to-black in `boot_splash_finish()` | §3 (logo C array must exist before splash can show it at runtime)            |  [ ]   |
+| 💎  |   3   | §2 Loading spinner -- confirm `spinner_draw_faded()` integrated into fade path; no re-implementation | §1 (fade loop calls `spinner_draw_faded()` at each of 8 steps)                       |  [ ]   |
+| 💎  |   4   | §4 Boot progress milestones -- `BOOT_MILESTONE_*` constants + `boot_splash_milestone()` call sites | §1 (`boot_splash_progress()` must exist before milestones can drive it)               |  [ ]   |
+| ⭐  |   5   | §5 F8 boot menu -- early PS/2 polling, text-mode menu, `boot_mode_t`, boot flag propagation        | §1 (splash must be functional so F8 path can abort it cleanly)                       |  [ ]   |
+| 💎  |   6   | §6 Crash loop protection -- `ConsecutiveCrashes` Registry key, increment/reset, ≥3 halt message   | §5 (needs to know if booting from recovery or normal boot before incrementing)       |  [ ]   |
+| 💎  |   7   | §7 BSOD auto-restart validation -- QEMU test plan for countdown, reboot, crash loop, `AutoRestart=0` | §6 (crash loop protection must be live before testing consecutive crash scenarios)   |  [ ]   |
 
 ---
 
@@ -63,11 +63,11 @@ The arc ring spinner is fully implemented via `spinner.c` + `arc_ring.h`. This s
 **Files:** `src/kernel/boot_splash.c` (confirm/extend)
 
 > [!NOTE]
-> `spinner_draw_faded(fade)` in `include/kernel/spinner.h` renders the arc ring at reduced opacity — `fade=255` is full brightness, `fade=0` is invisible. It is called in the fade loop from `boot_splash_finish()` (§1 above) to make the spinner fade out simultaneously with the background. No new spinner implementation is needed. If `spinner_draw_faded()` is not yet implemented in `spinner.c` (verify): implement it as `spinner_advance()` with the ring color alpha-scaled by `fade/255` using `gfx_color_t` alpha manipulation. This section is done when the fade-out in §1 makes the spinner smoothly disappear over the 8 frames.
+> `spinner_draw_faded(fade)` in `include/kernel/spinner.h` renders the arc ring at reduced opacity -- `fade=255` is full brightness, `fade=0` is invisible. It is called in the fade loop from `boot_splash_finish()` (§1 above) to make the spinner fade out simultaneously with the background. No new spinner implementation is needed. If `spinner_draw_faded()` is not yet implemented in `spinner.c` (verify): implement it as `spinner_advance()` with the ring color alpha-scaled by `fade/255` using `gfx_color_t` alpha manipulation. This section is done when the fade-out in §1 makes the spinner smoothly disappear over the 8 frames.
 
 - [ ] Verify `spinner_draw_faded()` is implemented in `src/kernel/spinner.c`; if stub only: implement alpha-scaled arc ring render
 - [ ] Confirm `boot_splash_finish()` fade loop (from §1) calls `spinner_draw_faded(255 - step*32)` at each of 8 steps
-- [ ] Add a comment in `boot_splash.h`: `/* spinner_draw_faded() defined in spinner.h — used by boot_splash_finish() fade loop */`
+- [ ] Add a comment in `boot_splash.h`: `/* spinner_draw_faded() defined in spinner.h -- used by boot_splash_finish() fade loop */`
 - [ ] QEMU: splash fades to black smoothly over ~128 ms; arc ring fades with background
 - [ ] Commit: `"boot/splash: confirm spinner_draw_faded integrated into fade-out path"`
 
@@ -78,14 +78,14 @@ The arc ring spinner is fully implemented via `spinner.c` + `arc_ring.h`. This s
 **Files:** `tools/png2bootsplash.py` (new), `assets/logo/impossible_os_logo.png` (placeholder), Makefile (extend)
 
 > [!NOTE]
-> The tool follows the same pattern as `tools/convert_bsod_icon.py` (which generates `bsod_icon.h`). Output format: `static const uint32_t boot_splash_logo_pixels[256*256] = { 0xAARRGGBB, ... };` and `static const uint32_t boot_splash_logo_width = 256;` and `static const uint32_t boot_splash_logo_height = 256;`. Python: `from PIL import Image; img = Image.open(path).convert("RGBA").resize((256,256))`; iterate pixels: ARGB32 = `(a<<24)|(r<<16)|(g<<8)|b`. Placeholder: create a solid `#0078D4` 256×256 PNG as `assets/logo/impossible_os_logo.png` — satisfies the build dependency so the OS compiles without final artwork. Makefile rule: `.PHONY: splash-logo` → `python3 tools/png2bootsplash.py assets/logo/impossible_os_logo.png src/kernel/boot_splash_logo.h`.
+> The tool follows the same pattern as `tools/convert_bsod_icon.py` (which generates `bsod_icon.h`). Output format: `static const uint32_t boot_splash_logo_pixels[256*256] = { 0xAARRGGBB, ... };` and `static const uint32_t boot_splash_logo_width = 256;` and `static const uint32_t boot_splash_logo_height = 256;`. Python: `from PIL import Image; img = Image.open(path).convert("RGBA").resize((256,256))`; iterate pixels: ARGB32 = `(a<<24)|(r<<16)|(g<<8)|b`. Placeholder: create a solid `#0078D4` 256×256 PNG as `assets/logo/impossible_os_logo.png` -- satisfies the build dependency so the OS compiles without final artwork. Makefile rule: `.PHONY: splash-logo` → `python3 tools/png2bootsplash.py assets/logo/impossible_os_logo.png src/kernel/boot_splash_logo.h`.
 
 - [ ] Create `assets/logo/` directory and add `impossible_os_logo.png` placeholder (256×256, `#0078D4` solid blue)
 - [ ] `tools/png2bootsplash.py`: read PNG → resize 256×256 → RGBA → emit C array `boot_splash_logo.h` in same format as `bsod_icon.h`
 - [ ] Add `splash-logo` target to `Makefile`: `$(PYTHON) tools/png2bootsplash.py assets/logo/impossible_os_logo.png src/kernel/boot_splash_logo.h`
 - [ ] Add `src/kernel/boot_splash_logo.h` to `.gitignore` (generated file); add `impossible_os_logo.png` to git
 - [ ] `bash scripts/build.sh clean` with placeholder → `=== BUILD OK ===`
-- [ ] Commit: `"build: splash logo pipeline — png2bootsplash.py, placeholder logo, make splash-logo target"`
+- [ ] Commit: `"build: splash logo pipeline -- png2bootsplash.py, placeholder logo, make splash-logo target"`
 
 ## 4. Boot Progress Milestones `[Sonnet]`
 
@@ -110,11 +110,11 @@ Poll PS/2 keyboard data port (0x60) for 2 seconds during early boot. F8 key dete
 **Files:** `src/kernel/boot_f8.c` (new), `include/kernel/boot_f8.h` (new), `src/kernel/main/boot_hw.c` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — early-boot keyboard polling runs before PS/2 IRQ (IRQ 1) is live and before the keyboard driver is initialized. Use direct PS/2 port I/O: `while (inb(0x64) & 1) { scan = inb(0x60); ... }` (status port 0x64, data port 0x60). F8 scan code: `0x42` (make), `0xC2` (break). Poll loop: `uint64_t start = system_get_ticks(); while ((system_get_ticks() - start) < 20) { /* 20 ticks = 200 ms at 100 Hz; do 10 × 200 ms = 2 s total */ ... }`. Text-mode menu: uses `boot_font_render()` to draw numbered options directly to framebuffer (no gfx lib); draw dark background (`gfx_fill_rect` if gfx is available, else manual scanline) then menu lines. **Boot mode flags**: `typedef enum { BOOT_MODE_NORMAL=0, BOOT_MODE_SAFE, BOOT_MODE_RECOVERY, BOOT_MODE_LAST_KNOWN_GOOD } boot_mode_t;` in `boot_f8.h`; `extern boot_mode_t g_boot_mode;` — checked by all subsequent init functions. Safe mode: `BOOT_MODE_SAFE` skips network init, skips desktop, boots to terminal only, draws "Safe Mode" watermark text in all four screen corners. Recovery Shell: `BOOT_MODE_RECOVERY` skips registry + filesystem init, goes directly to serial-attached `recovery_shell()`. Last Known Good: before normal init, copy `HKLM.backup` over `HKLM` Registry hive file.
+> This is `[Opus]` -- early-boot keyboard polling runs before PS/2 IRQ (IRQ 1) is live and before the keyboard driver is initialized. Use direct PS/2 port I/O: `while (inb(0x64) & 1) { scan = inb(0x60); ... }` (status port 0x64, data port 0x60). F8 scan code: `0x42` (make), `0xC2` (break). Poll loop: `uint64_t start = system_get_ticks(); while ((system_get_ticks() - start) < 20) { /* 20 ticks = 200 ms at 100 Hz; do 10 × 200 ms = 2 s total */ ... }`. Text-mode menu: uses `boot_font_render()` to draw numbered options directly to framebuffer (no gfx lib); draw dark background (`gfx_fill_rect` if gfx is available, else manual scanline) then menu lines. **Boot mode flags**: `typedef enum { BOOT_MODE_NORMAL=0, BOOT_MODE_SAFE, BOOT_MODE_RECOVERY, BOOT_MODE_LAST_KNOWN_GOOD } boot_mode_t;` in `boot_f8.h`; `extern boot_mode_t g_boot_mode;` -- checked by all subsequent init functions. Safe mode: `BOOT_MODE_SAFE` skips network init, skips desktop, boots to terminal only, draws "Safe Mode" watermark text in all four screen corners. Recovery Shell: `BOOT_MODE_RECOVERY` skips registry + filesystem init, goes directly to serial-attached `recovery_shell()`. Last Known Good: before normal init, copy `HKLM.backup` over `HKLM` Registry hive file.
 
 - [ ] `boot_mode_t` enum + `extern boot_mode_t g_boot_mode;` in `include/kernel/boot_f8.h`
 - [ ] `void boot_f8_poll(void)` in `src/kernel/boot_f8.c`: 10-iteration loop; each: scan PS/2 status+data ports; if F8 scan code `0x42` detected: call `boot_f8_show_menu()`; if no F8 in 2 s: `g_boot_mode = BOOT_MODE_NORMAL`; return
-- [ ] `void boot_f8_show_menu(void)` — clear framebuffer to `0xFF1A1A28`; use `boot_font_render()` to draw header "Impossible OS Recovery" and 4 numbered options; poll for `1`–`4` or arrow key + Enter; set `g_boot_mode`
+- [ ] `void boot_f8_show_menu(void)` -- clear framebuffer to `0xFF1A1A28`; use `boot_font_render()` to draw header "Impossible OS Recovery" and 4 numbered options; poll for `1`–`4` or arrow key + Enter; set `g_boot_mode`
 - [ ] Number key scancodes for early polling: `0x02`=1, `0x03`=2, `0x04`=3, `0x05`=4
 - [ ] `boot_f8_apply_mode()`: check `g_boot_mode`; if `LAST_KNOWN_GOOD`: `vfs_copy("C:\\HKLM.backup", "C:\\HKLM")` before registry_init; if `RECOVERY`: skip to recovery shell after minimal init; if `SAFE`: set `g_skip_network=1`, `g_skip_desktop=1`
 - [ ] Call `boot_f8_poll()` from `kernel_main()` immediately after `fb_init()` (framebuffer must be live) but before `boot_splash_init()` (so F8 menu can own the screen)
@@ -128,14 +128,14 @@ Track `HKLM\SYSTEM\Recovery\ConsecutiveCrashes` DWORD: increment at panic time (
 **Files:** `src/kernel/panic.c` (extend), `src/kernel/main/boot_desktop.c` (extend)
 
 > [!NOTE]
-> Increment in `panic()` (in `src/kernel/panic.c`) before calling `uefi_reboot()` — this is the same place auto-restart countdown runs. The increment must happen after Registry is accessible; if Registry is not yet initialized (early panic): skip the increment (log to serial only). Reset to 0 from `boot_desktop.c` after `desktop_init()` returns successfully — i.e., once the desktop is live. `LastBootTime`: write current `system_get_ticks()` as a DWORD at the start of `kernel_main()` (before any other init). Halt message: draw centered text on the BSOD screen: `"Your PC has crashed multiple times. Automatic restart has been disabled."` in white on the existing BSOD background; then call `cpu_halt()` (infinite HLT loop). Registry key path: `HKLM\SYSTEM\Recovery\ConsecutiveCrashes`.
+> Increment in `panic()` (in `src/kernel/panic.c`) before calling `uefi_reboot()` -- this is the same place auto-restart countdown runs. The increment must happen after Registry is accessible; if Registry is not yet initialized (early panic): skip the increment (log to serial only). Reset to 0 from `boot_desktop.c` after `desktop_init()` returns successfully -- i.e., once the desktop is live. `LastBootTime`: write current `system_get_ticks()` as a DWORD at the start of `kernel_main()` (before any other init). Halt message: draw centered text on the BSOD screen: `"Your PC has crashed multiple times. Automatic restart has been disabled."` in white on the existing BSOD background; then call `cpu_halt()` (infinite HLT loop). Registry key path: `HKLM\SYSTEM\Recovery\ConsecutiveCrashes`.
 
 - [ ] In `panic()`: `if (registry_available()) { RegGetValue(HKLM, key, "ConsecutiveCrashes", …, &count); RegSetValueEx(HKLM, key, "ConsecutiveCrashes", REG_DWORD, &count+1, 4); }`
 - [ ] In `panic()`: read `ConsecutiveCrashes`; if `count >= 3`: render halt message on BSOD screen; call `cpu_halt()` instead of `uefi_reboot()`
 - [ ] In `boot_desktop.c` after successful `desktop_init()`: `RegSetValueEx(HKLM, key, "ConsecutiveCrashes", REG_DWORD, &zero, 4);`
-- [ ] `LastBootTime`: in `kernel_main()` early: `uint64_t ts = system_get_ticks(); RegSetValueEx(HKLM, …, "LastBootTime", REG_DWORD, &ts, 4);` — skip if registry not yet ready (write after `registry_init()`)
+- [ ] `LastBootTime`: in `kernel_main()` early: `uint64_t ts = system_get_ticks(); RegSetValueEx(HKLM, …, "LastBootTime", REG_DWORD, &ts, 4);` -- skip if registry not yet ready (write after `registry_init()`)
 - [ ] Log: `[recovery] ConsecutiveCrashes=%u` at both increment and reset sites
-- [ ] Commit: `"panic: crash loop protection — ConsecutiveCrashes Registry counter, >=3 disables restart"`
+- [ ] Commit: `"panic: crash loop protection -- ConsecutiveCrashes Registry counter, >=3 disables restart"`
 
 ## 7. BSOD Auto-Restart Validation `[Sonnet]`
 
@@ -144,15 +144,15 @@ Test plan: enable `BSOD_TEST` compile flag, boot in QEMU, verify BSOD → countd
 **Files:** (test-only; no new source files required)
 
 > [!NOTE]
-> This section is a QEMU test plan — all implementation is complete in prior sections and in the already-done BSOD core. `BSOD_TEST` flag: already defined in `src/kernel/panic.c` (confirm); triggers a panic after desktop init to test the full flow. Test the crash loop: trigger `BSOD_TEST` 3 times in succession; on the 3rd crash the halt message must appear and the system must not reboot. `AutoRestart` Registry key: `HKLM\SYSTEM\CrashControl\AutoRestart` (same as Windows). Test plan is documentation; create it as comments in a new file `docs/testing/bsod-validation.md`.
+> This section is a QEMU test plan -- all implementation is complete in prior sections and in the already-done BSOD core. `BSOD_TEST` flag: already defined in `src/kernel/panic.c` (confirm); triggers a panic after desktop init to test the full flow. Test the crash loop: trigger `BSOD_TEST` 3 times in succession; on the 3rd crash the halt message must appear and the system must not reboot. `AutoRestart` Registry key: `HKLM\SYSTEM\CrashControl\AutoRestart` (same as Windows). Test plan is documentation; create it as comments in a new file `docs/testing/bsod-validation.md`.
 
 - [ ] Locate `BSOD_TEST` flag in `panic.c`; document how to enable it (comment block or `#define BSOD_TEST 0` guard)
-- [ ] Test 1 — normal auto-restart: enable `BSOD_TEST`; `bash scripts/build.sh run`; verify BSOD screen appears, countdown runs (default 10 s), system reboots, next boot is normal
-- [ ] Test 2 — `AutoRestart=0`: set `HKLM\SYSTEM\CrashControl\AutoRestart=0` in pre-built disk; boot; verify BSOD halts (no reboot)
-- [ ] Test 3 — custom countdown: `AutoRestart=10` (10 s); verify countdown matches
-- [ ] Test 4 — crash dump: verify `C:\Impossible\System\Logs\crash.dmp` written before reboot; check magic header
-- [ ] Test 5 — crash loop: enable `BSOD_TEST`, boot 3 times in succession; on 3rd crash: halt message displayed; `ConsecutiveCrashes` = 3 in Registry
-- [ ] Test 6 — successful boot resets counter: after a clean boot to desktop, verify `ConsecutiveCrashes = 0`
+- [ ] Test 1 -- normal auto-restart: enable `BSOD_TEST`; `bash scripts/build.sh run`; verify BSOD screen appears, countdown runs (default 10 s), system reboots, next boot is normal
+- [ ] Test 2 -- `AutoRestart=0`: set `HKLM\SYSTEM\CrashControl\AutoRestart=0` in pre-built disk; boot; verify BSOD halts (no reboot)
+- [ ] Test 3 -- custom countdown: `AutoRestart=10` (10 s); verify countdown matches
+- [ ] Test 4 -- crash dump: verify `C:\Impossible\System\Logs\crash.dmp` written before reboot; check magic header
+- [ ] Test 5 -- crash loop: enable `BSOD_TEST`, boot 3 times in succession; on 3rd crash: halt message displayed; `ConsecutiveCrashes` = 3 in Registry
+- [ ] Test 6 -- successful boot resets counter: after a clean boot to desktop, verify `ConsecutiveCrashes = 0`
 - [ ] Document results in `docs/testing/bsod-validation.md` with pass/fail per test
 - [ ] Commit: `"docs/testing: BSOD auto-restart validation test plan + results"`
 
@@ -163,16 +163,16 @@ Test plan: enable `BSOD_TEST` compile flag, boot in QEMU, verify BSOD → countd
 
 | ⭐ | Feature                      | 🪟 Win11                                              | 🐧 Linux                                                                                       | 🚀 Impossible OS                                                  |
 |----|------------------------------|----------------------------------------------------|---------------------------------------------------------------------------------------------|----------------------------------------------------------------|
-| 💎 | Graphical boot splash        | ✅ `winload.exe` boot animation; progress spinner; | ✅ Plymouth daemon; themed spinner; distro                                                  | ⬜ §1 — arc ring spinner + `boot_splash_progress(pct)`         |
-| ⭐ | Build pipeline               | ✅ Logo baked into `winload.exe` binary            | ✅ Plymouth compiles SVG/PNG into initrd                                                    | ⬜ §3 — `⭐` `tools/png2bootsplash.py` same pattern as         |
-| 💎 | Boot progress milestones     | ✅ Progress ring advances on milestones;           | ✅ Plymouth `plymouth-update` from init scripts;                                            | ⬜ §4 — `boot_splash_milestone(id)` called from each subsystem |
-| 💎 | F8 boot menu                 | ✅ F8 shows Advanced Startup menu                  | ✅ GRUB recovery entries; systemd rescue/emergency                                          | ⬜ §5 — raw PS/2 port poll before                              |
-| 💎 | Safe Mode                    | ✅ Safe Mode with Networking /                     | ✅ systemd rescue.target; init=/bin/bash; GRUB recovery                                     | ⬜ §5 — `BOOT_MODE_SAFE` skips network + desktop               |
-| 💎 | Last Known Good              | ✅ Last Known Good Configuration; restores         | ✅ No native equivalent; manual `/etc`                                                      | ⬜ §5 — `HKLM.backup` copied over `HKLM` before                |
-| 💎 | Crash loop protection        | ✅ `WinRE` automatic repair after 2                | ✅ systemd `FailureAction=reboot-force`; `MaxStartBurst=3`; `StartLimitAction=reboot-force` | ⬜ §6 — `HKLM\SYSTEM\Recovery\ConsecutiveCrashes ≥ 3` → halt   |
-| 💎 | BSOD auto-restart validation | ✅ Internal Microsoft validation suites; WER       | ✅ `kdump` test; `crash` utility; kernel                                                    | ⬜ §7 — 6-test QEMU plan documented in                         |
+| 💎 | Graphical boot splash        | ✅ `winload.exe` boot animation; progress spinner; | ✅ Plymouth daemon; themed spinner; distro                                                  | ⬜ §1 -- arc ring spinner + `boot_splash_progress(pct)`         |
+| ⭐ | Build pipeline               | ✅ Logo baked into `winload.exe` binary            | ✅ Plymouth compiles SVG/PNG into initrd                                                    | ⬜ §3 -- `⭐` `tools/png2bootsplash.py` same pattern as         |
+| 💎 | Boot progress milestones     | ✅ Progress ring advances on milestones;           | ✅ Plymouth `plymouth-update` from init scripts;                                            | ⬜ §4 -- `boot_splash_milestone(id)` called from each subsystem |
+| 💎 | F8 boot menu                 | ✅ F8 shows Advanced Startup menu                  | ✅ GRUB recovery entries; systemd rescue/emergency                                          | ⬜ §5 -- raw PS/2 port poll before                              |
+| 💎 | Safe Mode                    | ✅ Safe Mode with Networking /                     | ✅ systemd rescue.target; init=/bin/bash; GRUB recovery                                     | ⬜ §5 -- `BOOT_MODE_SAFE` skips network + desktop               |
+| 💎 | Last Known Good              | ✅ Last Known Good Configuration; restores         | ✅ No native equivalent; manual `/etc`                                                      | ⬜ §5 -- `HKLM.backup` copied over `HKLM` before                |
+| 💎 | Crash loop protection        | ✅ `WinRE` automatic repair after 2                | ✅ systemd `FailureAction=reboot-force`; `MaxStartBurst=3`; `StartLimitAction=reboot-force` | ⬜ §6 -- `HKLM\SYSTEM\Recovery\ConsecutiveCrashes ≥ 3` → halt   |
+| 💎 | BSOD auto-restart validation | ✅ Internal Microsoft validation suites; WER       | ✅ `kdump` test; `crash` utility; kernel                                                    | ⬜ §7 -- 6-test QEMU plan documented in                         |
 
-> **After §1–§7:** Impossible OS has a production-quality boot experience: a kernel-native splash with a logo build pipeline identical to the BSOD icon pipeline (`bsod_icon.h`), a zero-filesystem-I/O splash that shows the logo from a compiled-in C array, a raw PS/2 F8 menu that works before any driver is initialized, and a Registry-backed crash loop counter that prevents infinite reboot loops. The `⭐` logo build pipeline advantage is that it requires zero changes to the boot sequence — the logo is a C array included at compile time, just like Windows bakes its logo into `winload.exe`, but implementable in a single 30-line Python script.
+> **After §1–§7:** Impossible OS has a production-quality boot experience: a kernel-native splash with a logo build pipeline identical to the BSOD icon pipeline (`bsod_icon.h`), a zero-filesystem-I/O splash that shows the logo from a compiled-in C array, a raw PS/2 F8 menu that works before any driver is initialized, and a Registry-backed crash loop counter that prevents infinite reboot loops. The `⭐` logo build pipeline advantage is that it requires zero changes to the boot sequence -- the logo is a C array included at compile time, just like Windows bakes its logo into `winload.exe`, but implementable in a single 30-line Python script.
 
 ## Verification
 
@@ -186,4 +186,4 @@ Test plan: enable `BSOD_TEST` compile flag, boot in QEMU, verify BSOD → countd
 - [ ] `BSOD_TEST` enabled: BSOD screen → countdown → auto-reboot → clean boot; `ConsecutiveCrashes` reset to 0
 - [ ] 3 consecutive `BSOD_TEST` crashes: 3rd crash shows halt message; system does not reboot; serial log shows `[recovery] ConsecutiveCrashes=3`
 - [ ] `AutoRestart=0` Registry: BSOD halts; no reboot
-- [ ] Commit: `"boot: complete boot splash, F8 recovery menu, crash loop protection — all tests pass"`
+- [ ] Commit: `"boot: complete boot splash, F8 recovery menu, crash loop protection -- all tests pass"`

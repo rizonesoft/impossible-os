@@ -17,8 +17,8 @@ System diagnostic tools, namespace browsers, and administrative utilities that s
 
 ## Active TODOs
 
-- [TODO-01 ObBrowse — Object Namespace Browser](./TODO-01-obbrowse-namespace-browser.md) — User-mode GUI for browsing the kernel object namespace (`\Device`, `\BaseNamedObjects`, etc.)
-- [TODO-02 Event Viewer](./TODO-02-event-viewer.md) — Colour-coded JSONL log viewer for `events.jsonl` with level/subsystem filtering and live tail.
+- [TODO-01 ObBrowse -- Object Namespace Browser](./TODO-01-obbrowse-namespace-browser.md) -- User-mode GUI for browsing the kernel object namespace (`\Device`, `\BaseNamedObjects`, etc.)
+- [TODO-02 Event Viewer](./TODO-02-event-viewer.md) -- Colour-coded JSONL log viewer for `events.jsonl` with level/subsystem filtering and live tail.
 
 ## Completed / Doc-converted
 

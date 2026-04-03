@@ -1,4 +1,4 @@
-# Copilot Instructions — Impossible OS
+# Copilot Instructions -- Impossible OS
 
 > Impossible OS is a production-grade 64-bit OS for x86-64. Custom UEFI bootloader, kernel, compositing desktop, and Win32-compatible API surface.
 
@@ -14,7 +14,7 @@ bash scripts/build.sh run       # build + QEMU
 - Verify: `tail -1 build/build.log` must show `=== BUILD OK ===`
 
 ### Kernel C Code
-- `-nostdinc` is active — no `<stdint.h>`, `<string.h>`, or any angle-bracket headers
+- `-nostdinc` is active -- no `<stdint.h>`, `<string.h>`, or any angle-bracket headers
 - Use `#include "kernel/types.h"` for all integer types and `size_t`
 - No `malloc()` → use `kmalloc()` (≤ 4 KB) or `pmm_alloc_contiguous()` (larger)
 - No `printf()` → use `printk()` or `klog()`
@@ -24,7 +24,7 @@ bash scripts/build.sh run       # build + QEMU
 - No BIOS interrupts, no VGA text mode, no PIC assumptions
 
 ### API Surface
-- Win32 is the native API — POSIX only via Linux compat layer
+- Win32 is the native API -- POSIX only via Linux compat layer
 - Use Windows-style paths: `C:\Impossible\System32\` with backslashes
 
 ### Safety
@@ -37,7 +37,7 @@ bash scripts/build.sh run       # build + QEMU
 #include "kernel/types.h"
 #include "kernel/mm/pmm.h"
 
-// WRONG — stripped by -nostdinc
+// WRONG -- stripped by -nostdinc
 #include <stdint.h>
 ```
 
@@ -59,9 +59,9 @@ bash scripts/build.sh run       # build + QEMU
 ## Repository Structure
 
 Key directories:
-- `src/kernel/` — kernel core
-- `src/boot/uefi/` — UEFI bootloader
-- `include/` — all headers
-- `todo/` — development roadmap
-- `.cursor/` — Cursor AI rules and skills
-- `.claude/` — Claude Code AI skills
+- `src/kernel/` -- kernel core
+- `src/boot/uefi/` -- UEFI bootloader
+- `include/` -- all headers
+- `todo/` -- development roadmap
+- `.cursor/` -- Cursor AI rules and skills
+- `.claude/` -- Claude Code AI skills

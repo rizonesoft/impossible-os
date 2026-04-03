@@ -1,5 +1,5 @@
 /* ============================================================================
- * mouse.c — PS/2 Mouse driver
+ * mouse.c -- PS/2 Mouse driver
  *
  * Handles IRQ 12 (interrupt vector 44 after PIC remap).
  * Initializes the PS/2 auxiliary device, parses 3-byte mouse packets,
@@ -88,7 +88,7 @@ static volatile uint8_t mouse_buttons;
 static volatile uint8_t  mouse_cycle;
 static volatile uint8_t  mouse_packet[3];
 
-/* Debug counter — how many IRQ 12 interrupts we've received */
+/* Debug counter -- how many IRQ 12 interrupts we've received */
 static volatile uint32_t mouse_irq_count;
 
 /* ---- IRQ 12 handler (via irq_register API) ---- */
@@ -211,13 +211,13 @@ void mouse_init(void)
 
     /* Probe: reset mouse and check for ACK (0xFA).  If the auxiliary
      * port has no device (laptop touchpad via USB/I2C), the read
-     * returns garbage after timeout — skip full init. */
+     * returns garbage after timeout -- skip full init. */
     mouse_write(0xFF);  /* reset */
     {
         uint8_t ack = mouse_read();
         if (ack != 0xFA) {
             klog(LOG_INFO, "input",
-                 "PS/2 mouse: no ACK on reset (0x%x) — skipping",
+                 "PS/2 mouse: no ACK on reset (0x%x) -- skipping",
                  (uint64_t)ack);
             return;
         }
@@ -245,7 +245,7 @@ void mouse_init(void)
     mouse_write(0xF4);
     mouse_read();
 
-    /* Flush — timeout prevents hang on platforms without i8042 */
+    /* Flush -- timeout prevents hang on platforms without i8042 */
     {
         uint32_t timeout = 1024;
         while ((inb(PS2_STATUS_PORT) & 0x01) && --timeout)

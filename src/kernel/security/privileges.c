@@ -1,5 +1,5 @@
 /* ============================================================================
- * privileges.c — Privilege LUID table and debug helpers
+ * privileges.c -- Privilege LUID table and debug helpers
  *
  * Implements TODO-11 §2: privilege constants and PRIVILEGE_SET utilities.
  * ============================================================================ */

@@ -3,7 +3,7 @@
 The Unified Extensible Firmware Interface (UEFI) Specification Release 2.10,
 formally published in August 2022, represents a foundational architectural
 realignment for the global computing ecosystem. Maintained by the UEFI
-Forum—a consortium of industry-leading hardware and software vendors—the
+Forum--a consortium of industry-leading hardware and software vendors--the
 UEFI standard fundamentally defines the critical software interface between
 a computing platform's operating system (OS) and its underlying hardware
 firmware. Originating as the Intel Extensible Firmware Interface (EFI) 1.10
@@ -62,7 +62,7 @@ and network stacks, regardless of whether the physical hardware actually
 required them. As UEFI adoption expanded into non-traditional, highly
 constrained environments, firmware developers in the embedded, IoT, and
 automotive sectors found the burden of implementing these unused
-interfaces—and managing the associated massive codebase footprints—to
+interfaces--and managing the associated massive codebase footprints--to
 be economically and technically unviable.
 
 ### 1.1 The EFI_CONFORMANCE_PROFILE_TABLE Framework
@@ -158,9 +158,9 @@ the UEFI firmware intercepts and verifies the cryptographic signature of
 every subsequent piece of boot software, encompassing UEFI option ROMs,
 EFI applications, and the OS bootloader.
 
-However, the foundational Secure Boot certificates—originally issued by
+However, the foundational Secure Boot certificates--originally issued by
 Microsoft in 2011 and which underpin the root of trust for an
-overwhelming majority of the world's x86 hardware—are slated to begin
+overwhelming majority of the world's x86 hardware--are slated to begin
 expiring in June 2026 (the Microsoft Corporation KEK CA 2011 expires on
 June 24, 2026; the Windows Production PCA 2011 expires in October 2026).
 If devices do not receive updated UEFI firmware containing the new
@@ -199,9 +199,9 @@ machine involving three distinct UEFI variables:
   strictly read-only for the Operating System. This prevents a
   compromised OS from permanently masking hardware capabilities.
 - **CryptoIndications (OS-Owned):** When the OS identifies a critical
-  need to shift cryptographic algorithms—for example, deprecating an
+  need to shift cryptographic algorithms--for example, deprecating an
   older, vulnerable hashing standard in favor of a newer one due to
-  emerging threat models or expiring keys—it constructs a formal request
+  emerging threat models or expiring keys--it constructs a formal request
   and submits it to the firmware via a standard `SetVariable()` runtime
   service call.
 - **CryptoIndicationsActivated (Firmware-Owned):** Upon receiving the
@@ -304,7 +304,7 @@ expiration date, provided it has not been actively revoked in the dbx.
 |                      | firmware relationship.               | Clear PK: reverts to Setup Mode.    |
 | **KEK**              | OS vendor ↔ firmware trust.          | Required for db/dbx updates.        |
 | **db (Authorized)**  | Hashes/keys of authorized binaries.  | Must match here to execute.         |
-| **dbx (Forbidden)**  | Revocation list of revoked binaries. | Match overrides db — exec denied.   |
+| **dbx (Forbidden)**  | Revocation list of revoked binaries. | Match overrides db -- exec denied.   |
 
 UEFI 2.10 also introduces support for the Device Authentication Signature
 Database, further expanding the variables and protocols required to
@@ -379,7 +379,7 @@ or vendor-specific drivers:
   extensively by OS loaders to measure Portable Executable/Common Object
   File Format (PE/COFF) image binaries before execution. It allows the
   caller to hash an image, extend that measurement into the secure
-  hardware register, and log the event securely—all without needing to
+  hardware register, and log the event securely--all without needing to
   understand the underlying CC vendor's specific, proprietary command
   syntax.
 - **MapPcrToMrIndex:** Because standard OS software and legacy
@@ -397,8 +397,8 @@ TCG Platform Firmware Profile, specifically adhering to the
 `EFI_TCG2_EVENT_LOG_FORMAT_TCG_2` structure. This ensures immediate
 structural compatibility with existing fleet management and log analysis
 tools, easing enterprise adoption. Events that are generated late in the
-boot sequence—specifically, any events occurring after the initial
-`GetEventLog` function has been invoked by the OS—are securely stored in
+boot sequence--specifically, any events occurring after the initial
+`GetEventLog` function has been invoked by the OS--are securely stored in
 a segregated `EFI_CONFIGURATION_TABLE` identified by the
 `EFI_CC_FINAL_EVENTS_TABLE_GUID`. This table explicitly records the
 version, the total number of recorded events, and a sequential list of
@@ -412,13 +412,13 @@ equivalent cryptographic data in the correct TDX register:
 
 | Legacy TPM PCR Index | TDX MR Index | Intel TDX Hardware Register Function                |
 | -------------------- | ------------ | --------------------------------------------------- |
-| 0                    | 0            | MRTD — Core initialization and early hypervisor     |
+| 0                    | 0            | MRTD -- Core initialization and early hypervisor     |
 |                      |              | state.                                              |
-| 1, 7                 | 1            | RTMR — Platform configuration and early OS loader   |
+| 1, 7                 | 1            | RTMR -- Platform configuration and early OS loader   |
 |                      |              | data.                                               |
-| 2 through 6          | 2            | RTMR — Operational state measurements and           |
+| 2 through 6          | 2            | RTMR -- Operational state measurements and           |
 |                      |              | transitional firmware states.                       |
-| 8 through 15         | 3            | RTMR — OS-defined measurements, user-space app      |
+| 8 through 15         | 3            | RTMR -- OS-defined measurements, user-space app      |
 |                      |              | logic, and late-stage runtime configurations.       |
 
 ## 4. Advanced Memory Protection and W^X Paradigms
@@ -436,8 +436,8 @@ controls.
 A highly visible and structurally significant change in UEFI 2.10 is the
 formal, absolute deprecation of the `EFI_PROPERTIES_TABLE` (Section
 4.6.3). This legacy structure previously attempted to manage runtime
-memory protection by indicating—via a simplistic bitmask like
-`EFI_PROPERTIES_RUNTIME_MEMORY_PROTECTION_NON_EXECUTABLE_PE_DATA`—whether
+memory protection by indicating--via a simplistic bitmask like
+`EFI_PROPERTIES_RUNTIME_MEMORY_PROTECTION_NON_EXECUTABLE_PE_DATA`--whether
 runtime code and runtime data sections were separated.
 
 However, this legacy approach proved structurally inflexible and prone to
@@ -473,8 +473,8 @@ will be unpacked must be aggressively writeable to allow the
 decompression algorithm to extract the raw binary data. However,
 immediately after extraction, leaving that region writeable while
 executing it constitutes a massive security vulnerability. The region
-must be instantly locked down—transitioned from writeable to
-executable—to safely execute the code.
+must be instantly locked down--transitioned from writeable to
+executable--to safely execute the code.
 
 The `EFI_MEMORY_ATTRIBUTE_PROTOCOL` provides the standardized,
 architecture-agnostic API to execute these transitions securely via its
@@ -486,7 +486,7 @@ precise manipulation of the page tables.
 Furthermore, standardizing on the UEFI 2.10 memory models enables
 operating systems and platform vendors (such as Microsoft's Project Mu)
 to enforce rigorous Enhanced Memory Protections. The overarching security
-paradigm is **W^X (Write XOR Execute)**—a strict mandate ensuring that
+paradigm is **W^X (Write XOR Execute)**--a strict mandate ensuring that
 absolutely no address range in the system memory map can be
 simultaneously readable, writable, and executable.
 
@@ -525,8 +525,8 @@ return-oriented programming (ROP) attacks.
 ## 5. Expansion of Processor Architecture Bindings
 
 As the global semiconductor industry rapidly diversifies beyond the
-traditional x86 and ARM duopoly—driven by geopolitical pressures,
-open-source initiatives, and specialized computing needs—UEFI must
+traditional x86 and ARM duopoly--driven by geopolitical pressures,
+open-source initiatives, and specialized computing needs--UEFI must
 evolve to provide standardized initialization frameworks for emerging
 Instruction Set Architectures (ISAs). Version 2.10 achieves this by
 introducing comprehensive, native architectural bindings for both RISC-V
@@ -567,9 +567,9 @@ standard architectural registers:
   execution flow if the binary intends to exit and return control to the
   boot manager.
 
-Because RISC-V systems are frequently heterogeneous—featuring highly
+Because RISC-V systems are frequently heterogeneous--featuring highly
 asymmetric core designs and varied capabilities across different
-harts—the firmware is mandated to convey this complex topology to the
+harts--the firmware is mandated to convey this complex topology to the
 OS accurately. If the target bootable image demands it, the firmware must
 expose detailed hardware capabilities via SMBIOS (specifically utilizing
 record type 44) or by publishing a Flattened Device Tree Blob (DTB)
@@ -658,9 +658,9 @@ structures that can theoretically appear on any byte boundary in memory,
 the specification demands that all code interacting with these new
 NVMe-oF paths must assume the fields are strictly unaligned. This
 design constraint ensures that the UEFI boot manager can sequentially
-traverse and decode the device nodes—jumping from the local PCI root,
+traverse and decode the device nodes--jumping from the local PCI root,
 through the NIC, across the IPv4 configuration, to the remote storage
-target—without triggering fatal hardware alignment faults during the
+target--without triggering fatal hardware alignment faults during the
 fragile pre-boot phase.
 
 ### 6.2 Advanced Network Protocol Bindings
@@ -716,8 +716,8 @@ Real-Time Clock via `GetTime` and `SetTime`), Capsule Update mechanisms
 (`UpdateCapsule` for flashing the BIOS from the OS), and Virtual Memory
 Services.
 
-However, UEFI 2.10 acknowledges that not all platforms—especially highly
-constrained IoT profiles defined in the Conformance Profiles section—can
+However, UEFI 2.10 acknowledges that not all platforms--especially highly
+constrained IoT profiles defined in the Conformance Profiles section--can
 or should support every single Runtime Service after the OS assumes
 control. Implementing full NVRAM writing capabilities on a simple sensor,
 for example, is unnecessary and increases the attack surface.
@@ -764,7 +764,7 @@ the monolithic bloat that plagued legacy BIOS systems. Simultaneously,
 the profound, uncompromising enhancements to Cryptographic Agility and
 the introduction of the hardware-backed Confidential Computing extension
 address the existential threats facing modern enterprise
-architecture—namely, the advent of quantum decryption capabilities and
+architecture--namely, the advent of quantum decryption capabilities and
 the collapse of the traditional datacenter security perimeter. As the
 global industry approaches the critical June 2026 expiration of legacy
 Secure Boot certificates, the highly structured, agile frameworks

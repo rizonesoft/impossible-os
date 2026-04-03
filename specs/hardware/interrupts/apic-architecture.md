@@ -59,7 +59,7 @@ Historically, the Local APIC registers are exposed to the operating system via m
 
 Executing the `rdmsr` instruction against the `IA32_APIC_BASE` index yields a 64-bit value in the `EDX:EAX` register pair. Bits 12 through 31 (and extending into the upper 32 bits on processors supporting physical addresses beyond the 4-gigabyte boundary) dictate the exact physical base frame of the LAPIC. It is crucial for developers to note that the value read from these bits represents the physical page address and must not be bit-shifted; if the MSR returns a base address component of `0xFEE00`, the true physical address in memory is exactly `0xFEE00000`.
 
-Furthermore, **Bit 8** of this MSR acts as a hardware indicator that the current processor is the **Bootstrap Processor (BSP)** — the specific CPU responsible for the initial system boot and execution of the OS kernel initialization sequence. **Bit 11** acts as the **APIC Global Enable** flag. If Bit 11 is explicitly cleared, the Local APIC is entirely disabled for that core, and the CPU reverts to a legacy state. For the APIC to function correctly, the memory management unit of the operating system must create a virtual memory page mapping to this physical base address using **"Strong Uncacheable" (UC)** memory page attributes. Utilizing UC attributes guarantees that read and write instructions executed by the CPU bypass the L1/L2/L3 cache hierarchy entirely, ensuring that data is written directly to the APIC silicon and that the OS never reads stale interrupt status values from cache lines.
+Furthermore, **Bit 8** of this MSR acts as a hardware indicator that the current processor is the **Bootstrap Processor (BSP)** -- the specific CPU responsible for the initial system boot and execution of the OS kernel initialization sequence. **Bit 11** acts as the **APIC Global Enable** flag. If Bit 11 is explicitly cleared, the Local APIC is entirely disabled for that core, and the CPU reverts to a legacy state. For the APIC to function correctly, the memory management unit of the operating system must create a virtual memory page mapping to this physical base address using **"Strong Uncacheable" (UC)** memory page attributes. Utilizing UC attributes guarantees that read and write instructions executed by the CPU bypass the L1/L2/L3 cache hierarchy entirely, ensuring that data is written directly to the APIC silicon and that the OS never reads stale interrupt status values from cache lines.
 
 When configuring these memory mappings, developers must also consider architectural memory boundaries and remapping features. Intel chipsets allow for DRAM remapping, where memory physically obscured by legacy hardware mappings (such as the PCIEXBAR or Graphics Translation Table) is remapped above the Top of Low Usable DRAM (TOLUD). The APIC MMIO addresses typically reside just below the 4 GB boundary, strategically placed above the TOLUD to avoid conflicts with physical system RAM.
 
@@ -69,7 +69,7 @@ Modern Intel and AMD processors support two distinct operational modes for the L
 
 To accommodate high-core-count enterprise servers, compute clusters, and massively parallel workloads, Intel introduced the **x2APIC mode**. Transitioning an operating system to x2APIC mode fundamentally alters how the kernel interacts with the APIC by completely eliminating the reliance on MMIO. Instead, the architecture maps all APIC configuration registers directly into the CPU's Model-Specific Register (MSR) address space. This dramatically reduces the latency of accessing APIC registers by removing the overhead of navigating the memory bus and page tables.
 
-In x2APIC mode, the archaic 8-bit limit is removed. The Local APIC ID register is replaced with a **32-bit, read-only hardware identifier**, which can be retrieved via the `CPUID` instruction (Leaf `0x0B`) or by reading MSR `0x802`. The MSR address for any given APIC register in x2APIC mode is calculated using a deterministic formula: the legacy MMIO offset is shifted right by 4 bits, and a base offset of `0x800` is added. For example, the Spurious Interrupt Vector Register, located at legacy MMIO offset `0xF0`, becomes MSR `0x80F` (`0xF0 >> 4 = 0x0F`; `0x800 + 0x0F = 0x80F`). System software transitions the APIC into x2APIC mode by setting both **Bit 11 (EN — APIC Global Enable)** and **Bit 10 (EXTD — Extended Mode Enable)** within the `IA32_APIC_BASE` MSR. Once the APIC is transitioned into x2APIC mode, it cannot revert to xAPIC mode without first fully disabling the APIC (clearing both EN and EXTD); attempting to clear only EXTD while EN remains set will cause a general protection fault. The state of extended fields in legacy APIC registers is not architecturally defined after transition, and the OS must explicitly reinitialize programmable registers. Additionally, in x2APIC mode, attempts to write non-zero values to reserved bits within the MSRs will raise a **general protection fault exception**.
+In x2APIC mode, the archaic 8-bit limit is removed. The Local APIC ID register is replaced with a **32-bit, read-only hardware identifier**, which can be retrieved via the `CPUID` instruction (Leaf `0x0B`) or by reading MSR `0x802`. The MSR address for any given APIC register in x2APIC mode is calculated using a deterministic formula: the legacy MMIO offset is shifted right by 4 bits, and a base offset of `0x800` is added. For example, the Spurious Interrupt Vector Register, located at legacy MMIO offset `0xF0`, becomes MSR `0x80F` (`0xF0 >> 4 = 0x0F`; `0x800 + 0x0F = 0x80F`). System software transitions the APIC into x2APIC mode by setting both **Bit 11 (EN -- APIC Global Enable)** and **Bit 10 (EXTD -- Extended Mode Enable)** within the `IA32_APIC_BASE` MSR. Once the APIC is transitioned into x2APIC mode, it cannot revert to xAPIC mode without first fully disabling the APIC (clearing both EN and EXTD); attempting to clear only EXTD while EN remains set will cause a general protection fault. The state of extended fields in legacy APIC registers is not architecturally defined after transition, and the OS must explicitly reinitialize programmable registers. Additionally, in x2APIC mode, attempts to write non-zero values to reserved bits within the MSRs will raise a **general protection fault exception**.
 
 ---
 
@@ -81,7 +81,7 @@ The lower 8 bits (Bits 0–7) of the SVR define the exact vector number that the
 
 Crucially, the SVR also acts as the **primary power switch** for the subsystem. It contains the **APIC Software Enable** bit located at **Bit 8** (`0x100`). Even if the APIC is globally enabled via the `IA32_APIC_BASE` MSR, the APIC remains entirely dormant and will not accept interrupts until this software enable bit is explicitly set to `1` by the OS.
 
-Advanced processors may also implement a feature known as **Directed EOI**, which is controlled by **Bit 12** of the SVR. When supported — which the OS can verify by checking if Bit 24 of the APIC Version Register is set to `1` — setting Bit 12 of the SVR suppresses the automatic broadcast of EOI messages across the system bus for level-triggered interrupts. In a traditional configuration, sending an EOI to the Local APIC causes it to broadcast a message to the IOAPIC to clear the remote IRR bit. With Directed EOI enabled, the OS takes manual responsibility for directing the EOI explicitly to the specific IOAPIC responsible for the interrupt, reducing unnecessary bus traffic in high-throughput environments.
+Advanced processors may also implement a feature known as **Directed EOI**, which is controlled by **Bit 12** of the SVR. When supported -- which the OS can verify by checking if Bit 24 of the APIC Version Register is set to `1` -- setting Bit 12 of the SVR suppresses the automatic broadcast of EOI messages across the system bus for level-triggered interrupts. In a traditional configuration, sending an EOI to the Local APIC causes it to broadcast a message to the IOAPIC to clear the remote IRR bit. With Directed EOI enabled, the OS takes manual responsibility for directing the EOI explicitly to the specific IOAPIC responsible for the interrupt, reducing unnecessary bus traffic in high-throughput environments.
 
 ---
 
@@ -103,7 +103,7 @@ Each LVT register, with the exception of the Timer, follows a strict, standardiz
 
 - **Bits 0–7**: Define the **Interrupt Vector** that will be pushed to the CPU execution pipeline. This vector corresponds directly to an entry within the Interrupt Descriptor Table (IDT), which contains the memory pointer to the kernel's execution handler. The APIC hardware rejects vectors below `0x10` (reporting an Illegal Vector error in the ESR), and vectors `0x10`–`0x1F` are architecturally reserved for CPU exceptions. Therefore, operating systems should assign LVT vectors in the range `0x20`–`0xFE` to avoid conflicts with the 32 Intel-reserved exception vectors.
 
-- **Bits 8–10**: Designate the **Delivery Mode**, which defines how the CPU treats the incoming signal. Allowed LVT delivery modes include `000b` for Fixed (standard interrupts sent directly to the core), `010b` for System Management Interrupt (SMI), `100b` for Non-Maskable Interrupt (NMI), `101b` for INIT (used during MP bootstrapping), and `111b` for ExtINT (used to route legacy PIC interrupts through the APIC subsystem). Note that Lowest Priority (`001b`) is **not** valid for LVT entries — it is only supported by the ICR and I/O APIC redirection table.
+- **Bits 8–10**: Designate the **Delivery Mode**, which defines how the CPU treats the incoming signal. Allowed LVT delivery modes include `000b` for Fixed (standard interrupts sent directly to the core), `010b` for System Management Interrupt (SMI), `100b` for Non-Maskable Interrupt (NMI), `101b` for INIT (used during MP bootstrapping), and `111b` for ExtINT (used to route legacy PIC interrupts through the APIC subsystem). Note that Lowest Priority (`001b`) is **not** valid for LVT entries -- it is only supported by the ICR and I/O APIC redirection table.
 
 - **Bit 12**: Represents the **Delivery Status**; it is a read-only bit that returns `1` if the interrupt has been dispatched by the controller but has not yet been accepted by the CPU core due to masking or higher-priority tasks.
 
@@ -119,7 +119,7 @@ Each LVT register, with the exception of the Timer, follows a strict, standardiz
 
 ## 6. The Local APIC Timer: Calibration and Usage
 
-One of the most valuable features of the APIC architecture for operating system design — specifically regarding thread scheduling and preemption — is the **Local APIC Timer**. Unlike the legacy Programmable Interval Timer (PIT), which is a centralized external circuit located on the motherboard and shared across the entire system, the APIC timer is hardwired directly into the silicon of each individual CPU core. This localized architecture fundamentally eliminates bus contention for timekeeping and provides a highly granular, per-core interrupt mechanism ideal for implementing preemptive multitasking schedulers.
+One of the most valuable features of the APIC architecture for operating system design -- specifically regarding thread scheduling and preemption -- is the **Local APIC Timer**. Unlike the legacy Programmable Interval Timer (PIT), which is a centralized external circuit located on the motherboard and shared across the entire system, the APIC timer is hardwired directly into the silicon of each individual CPU core. This localized architecture fundamentally eliminates bus contention for timekeeping and provides a highly granular, per-core interrupt mechanism ideal for implementing preemptive multitasking schedulers.
 
 ### 6.1 Timer Operation
 
@@ -195,8 +195,8 @@ Unlike the Local APIC, which maps dozens of discrete registers directly into MMI
 
 | Register     | Offset from Base | Purpose                                                                       |
 | ------------ | :--------------: | ----------------------------------------------------------------------------- |
-| **IOREGSEL** | `+0x00`          | I/O Register Select — write the index of the target internal register here.   |
-| **IOREGWIN** | `+0x10`          | I/O Window Register — read or write the data payload of the selected register.|
+| **IOREGSEL** | `+0x00`          | I/O Register Select -- write the index of the target internal register here.   |
+| **IOREGWIN** | `+0x10`          | I/O Window Register -- read or write the data payload of the selected register.|
 
 By default, the first IOAPIC in a system is mapped to `0xFEC00000`.
 
@@ -269,31 +269,31 @@ When the kernel programs the IOREDTBL for the overridden pin, it must carefully 
 
 To integrate Advanced Programmable Interrupt Controller support safely and effectively, a custom operating system should enforce a rigid, algorithmically sound, step-by-step initialization sequence during the kernel bootstrap phase.
 
-### Step 1 — Mask All Legacy Controllers
+### Step 1 -- Mask All Legacy Controllers
 
 Immediately upon entering protected mode or long mode, and prior to querying ACPI, the OS must issue `0xFF` to both the Master and Slave PIC data ports (`0x21` and `0xA1`) to mask all incoming legacy interrupts. This guarantees the CPU is not interrupted by legacy hardware during the fragile APIC setup phase.
 
-### Step 2 — ACPI Traversal
+### Step 2 -- ACPI Traversal
 
 The OS navigates from the RSDP to the RSDT or XSDT, identifies the MADT via the `'APIC'` signature, and validates the table checksums to ensure memory integrity.
 
-### Step 3 — Topology Construction
+### Step 3 -- Topology Construction
 
 The variable-length records of the MADT are parsed sequentially using the length offsets. The OS builds an internal registry of active Local APIC IDs (parsing Entry Type 0) and records the Physical Base Addresses and GSI ranges of all discovered I/O APICs (parsing Entry Type 1).
 
-### Step 4 — Local APIC Bootstrapping
+### Step 4 -- Local APIC Bootstrapping
 
 Executing exclusively on the Bootstrap Processor (BSP), the kernel reads the `IA32_APIC_BASE` MSR, strips the status bits, and maps the resulting physical address into virtual memory with Strong Uncacheable (UC) attributes. The OS explicitly programs the Spurious Interrupt Vector Register with a high dummy vector (e.g., `0xFF`) and sets the Software Enable bit to `1`, bringing the processor's core logic online. The Task Priority Register (TPR) is deliberately cleared to `0` to ensure all interrupt priorities are accepted by the core without arbitration blocking.
 
-### Step 5 — Timer Calibration
+### Step 5 -- Timer Calibration
 
 The kernel utilizes the legacy PIT to calibrate the Local APIC timer frequency using the empirical methodology defined previously. It configures the Divide Configuration Register, samples the tick rate over a 10-millisecond interval, and establishes the precise Initial Count value required to drive the OS scheduler's quantum.
 
-### Step 6 — I/O APIC Initialization
+### Step 6 -- I/O APIC Initialization
 
 The kernel iterates through its list of discovered IOAPICs, maps their MMIO spaces, and systematically loops through every available pin (discovered via the `IOAPICVER` register). The kernel masks every single pin by setting Bit 16 in their respective IOREDTBL entries. This operation creates a pristine, blank hardware slate where no external peripheral can trigger errant interrupts.
 
-### Step 7 — Interrupt Routing Resolution
+### Step 7 -- Interrupt Routing Resolution
 
 The OS parses the Interrupt Source Overrides (MADT Entry Type 2). For explicitly required legacy peripherals (such as the PS/2 keyboard or RTC), the OS:
 

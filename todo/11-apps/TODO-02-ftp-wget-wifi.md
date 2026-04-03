@@ -1,10 +1,10 @@
-# TODO-02 — FTP Client, wget/curl & WiFi
+# TODO-02 -- FTP Client, wget/curl & WiFi
 
 **Domain:** `10-apps`
 **Goal:** Deliver the file-transfer and command-line download toolbox (FTP, wget, curl) that complete the networking app layer, plus a WiFi framework (stretch) for wireless hardware support.
 
 > [!IMPORTANT]
-> **Depends on:** `06-networking/TODO-03-http-tls.md` — `http_get()`, `https_get()`, `http_post()`, `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`, `dns_resolve()` must all be complete before any section here begins.
+> **Depends on:** `06-networking/TODO-03-http-tls.md` -- `http_get()`, `https_get()`, `http_post()`, `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`, `dns_resolve()` must all be complete before any section here begins.
 > **Migration:** Consolidates `TODO-420-FTP.md` (all sections) + `TODO-400-Networking.md` §4.4 (wget/curl) + §9.5 (WiFi) into one file. All other sections of `TODO-400-Networking.md` live in `06-networking`.
 
 ---
@@ -12,13 +12,13 @@
 ## Important Notes
 
 - FTP uses **two TCP connections**: control (port 21, ASCII commands) and data (negotiated via `PASV`). Both use `kern_connect()`/`kern_send()`/`kern_recv()` from `06-networking/TODO-02`.
-- `https_get()` / `http_get()` from `06-networking/TODO-03` are the only network primitives `wget` and `curl` call — no raw socket work needed in those tools.
+- `https_get()` / `http_get()` from `06-networking/TODO-03` are the only network primitives `wget` and `curl` call -- no raw socket work needed in those tools.
 - `vfs_open()`, `vfs_write()`, `vfs_read()`, `vfs_stat()` from `include/kernel/fs/vfs.h` are used for file I/O in download and upload operations.
-- `CTRL_LISTVIEW` and `CTRL_PROGRESSBAR` are defined in `07-graphics-ui/TODO-05` — the FTP GUI (§3) and WiFi settings (§6) depend on them.
+- `CTRL_LISTVIEW` and `CTRL_PROGRESSBAR` are defined in `07-graphics-ui/TODO-05` -- the FTP GUI (§3) and WiFi settings (§6) depend on them.
 - WiFi (§6) is a **stretch goal** with a hardware dependency (USB RTL8188 or QEMU virtio-wifi). Do not start §6 until §1–5 are complete and working.
-- `wget -r` (recursive crawl) depends on `TODO-01 §2` (HTML link extractor) for `<a href>` extraction — cross-link only, don't duplicate.
+- `wget -r` (recursive crawl) depends on `TODO-01 §2` (HTML link extractor) for `<a href>` extraction -- cross-link only, don't duplicate.
 - Anonymous FTP uses `USER anonymous` / `PASS user@host` by convention.
-- Progress display (bytes / total / KB/s / ETA) is common to `ftp_download`, `wget`, and `curl` — extract into a shared `progress_bar_print(done, total, elapsed_ms)` helper.
+- Progress display (bytes / total / KB/s / ETA) is common to `ftp_download`, `wget`, and `curl` -- extract into a shared `progress_bar_print(done, total, elapsed_ms)` helper.
 
 ---
 
@@ -26,14 +26,14 @@
 
 | Path | Purpose |
 |------|---------|
-| `include/kernel/fs/vfs.h` | `vfs_open`, `vfs_write`, `vfs_read`, `vfs_stat` — local file I/O |
-| `06-networking/TODO-03-http-tls.md` | `http_get`, `https_get`, `http_post` — wget/curl network ops |
-| `06-networking/TODO-02-dns-sockets.md` | `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close` — FTP raw TCP |
-| `include/registry.h` | `registry_get/set()` — WiFi credentials, ncpa.cpl settings |
-| `07-graphics-ui/TODO-05 §*` | `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR` — FTP GUI + WiFi settings panel |
-| → XREF: `06-networking/TODO-03` | HTTP/HTTPS client — mandatory for wget/curl |
+| `include/kernel/fs/vfs.h` | `vfs_open`, `vfs_write`, `vfs_read`, `vfs_stat` -- local file I/O |
+| `06-networking/TODO-03-http-tls.md` | `http_get`, `https_get`, `http_post` -- wget/curl network ops |
+| `06-networking/TODO-02-dns-sockets.md` | `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close` -- FTP raw TCP |
+| `include/registry.h` | `registry_get/set()` -- WiFi credentials, ncpa.cpl settings |
+| `07-graphics-ui/TODO-05 §*` | `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR` -- FTP GUI + WiFi settings panel |
+| → XREF: `06-networking/TODO-03` | HTTP/HTTPS client -- mandatory for wget/curl |
 | → XREF: `10-apps/TODO-01 §2` | HTML link extractor for `wget -r` recursive crawl |
-| → XREF: `04-drivers-hardware/TODO-09` | USB HID stack — USB WiFi adapter driver prerequisite |
+| → XREF: `04-drivers-hardware/TODO-09` | USB HID stack -- USB WiFi adapter driver prerequisite |
 
 ---
 
@@ -62,7 +62,7 @@
 
 ## 1. FTP Protocol Core `[Sonnet]`
 
-Create `src/apps/ftp/ftp.c` + `include/apps/ftp.h`. Pure protocol layer — no UI, no shell integration.
+Create `src/apps/ftp/ftp.c` + `include/apps/ftp.h`. Pure protocol layer -- no UI, no shell integration.
 
 - [ ] `struct ftp_session { int ctrl_sock; char host[256]; char cwd[512]; uint8_t logged_in; }`
 - [ ] `ftp_connect(host, user, pass)`:
@@ -148,7 +148,7 @@ Implements the full `wget` command-line tool backed by `http_get()`/`https_get()
 - [ ] `curl -H "Header: value" <url>` → inject custom header (repeatable; accumulated into header list)
 - [ ] `curl -s <url>` → silent: suppress progress and informational messages
 - [ ] `curl -I <url>` → send `HEAD` request; print response headers only
-- [ ] `curl -L <url>` → follow `Location:` redirects (up to 10 hops; `http_get` already follows 5 — extend limit)
+- [ ] `curl -L <url>` → follow `Location:` redirects (up to 10 hops; `http_get` already follows 5 -- extend limit)
 - [ ] `curl -u user:pass <url>` → HTTP Basic Auth: set `Authorization: Basic base64(user:pass)` header
 - [ ] `curl -v <url>` → verbose: print `> request headers` and `< response headers` to stderr, body to stdout
 - [ ] `curl -k <url>` → insecure: skip TLS cert verification
@@ -202,7 +202,7 @@ Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_L
   - Click network → `[Connect]` → password dialog (`CTRL_TEXTBOX`, type=password) → `wifi_connect(ssid, pass)`
   - `[Forget]` → delete stored passphrase from `HKLM\SYSTEM\Network\WiFi\{ssid}\Passphrase`
   - Connected network shown with ✓ and current IP address
-- [ ] Store passphrase (encrypted with kernel key) in `HKLM\SYSTEM\Network\WiFi\{ssid}\Passphrase` — auto-reconnect on boot
+- [ ] Store passphrase (encrypted with kernel key) in `HKLM\SYSTEM\Network\WiFi\{ssid}\Passphrase` -- auto-reconnect on boot
 - [ ] Commit: `"drivers: WiFi framework (RTL8188, WPA2 4-way handshake, ncpa.cpl WiFi tab)"`
 
 ---
@@ -216,13 +216,13 @@ Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_L
 | 💎 | `wget` file downloader                         | ❌ Not built-in (requires install) | ✅ Built-in                | ⬜ built-in with `-O/-q/-c/-r` flags    |
 | 💎 | `curl` HTTP tool                               | ✅ Built-in (Windows 10+)          | ✅ Built-in                | ⬜ `-X/-d/-H/-I/-L/-u/-v/-k` flags      |
 | 💎 | FTP GUI dual-pane client                       | ✅ FileZilla (3rd party)           | ✅ FileZilla/gFTP          | ⬜ `ftpgui.exe` native dual-pane        |
-| 💎 | WiFi connection management                     | ✅ Windows WiFi                    | ✅ NetworkManager          | ⬜ §6 — (stretch ) — WPA2 +             |
-| 💎 | WPA2/WPA3 association                          | ✅ wpa_supplicant via WlanAPI      | ✅ wpa_supplicant          | ⬜ §6 — (stretch ) — 4-way handshake    |
+| 💎 | WiFi connection management                     | ✅ Windows WiFi                    | ✅ NetworkManager          | ⬜ §6 -- (stretch ) -- WPA2 +             |
+| 💎 | WPA2/WPA3 association                          | ✅ wpa_supplicant via WlanAPI      | ✅ wpa_supplicant          | ⬜ §6 -- (stretch ) -- 4-way handshake    |
 | ⭐ | `wget` + `curl` built in from first boot       | ❌ `wget` requires manual install  | ✅ Built-in                | ⬜ both ship with OS                    |
 | ⭐ | Progress bar shared across `ftp`/`wget`/`curl` | ❌ Inconsistent per tool           | ❌ Inconsistent per tool   | ⬜ `progress_bar_print()` shared helper |
 | ⭐ | FTP GUI file manager with native IxUI          | ❌ Requires FileZilla              | ❌ Requires FileZilla/gFTP | ⬜ `ftpgui.exe` built in                |
 
-**Impossible OS advantage:** `wget` and `curl` ship out-of-the-box on first boot — no installation needed. A consistent `progress_bar_print()` helper gives every download tool the same KB/s + ETA display. The FTP GUI is a native IxUI dual-pane app with no third-party dependency.
+**Impossible OS advantage:** `wget` and `curl` ship out-of-the-box on first boot -- no installation needed. A consistent `progress_bar_print()` helper gives every download tool the same KB/s + ETA display. The FTP GUI is a native IxUI dual-pane app with no third-party dependency.
 
 ---
 

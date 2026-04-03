@@ -1,23 +1,23 @@
-# TODO-12 — Win32k Shadow SSDT (NtGdi / NtUser)
+# TODO-12 -- Win32k Shadow SSDT (NtGdi / NtUser)
 
-> **Goal:** Build the Win32k shadow System Service Descriptor Table (SSDT Table 1) — the kernel-mode dispatch layer for all GDI and USER32 syscalls. In Windows, `win32k.sys` handles ~1300 `NtGdiXxx` and `NtUserXxx` entries. User-mode `gdi32.dll` and `user32.dll` call into this table via `syscall` with service numbers starting at `0x1000`. This TODO is the **master registry** for all Win32k shadow SSDT entries — some are implemented here, others are implemented by domain-specific TODOs but get their slots reserved and documented here. Starting with 108 core entries covering the most critical GDI and USER32 functions.
+> **Goal:** Build the Win32k shadow System Service Descriptor Table (SSDT Table 1) -- the kernel-mode dispatch layer for all GDI and USER32 syscalls. In Windows, `win32k.sys` handles ~1300 `NtGdiXxx` and `NtUserXxx` entries. User-mode `gdi32.dll` and `user32.dll` call into this table via `syscall` with service numbers starting at `0x1000`. This TODO is the **master registry** for all Win32k shadow SSDT entries -- some are implemented here, others are implemented by domain-specific TODOs but get their slots reserved and documented here. Starting with 108 core entries covering the most critical GDI and USER32 functions.
 
 > [!IMPORTANT]
 > **Current state:** The compositor, window manager, GDI primitives (`gfx_*`), font system (`ttf_*`), cursor shapes, and icon store all exist as kernel-mode C APIs. There is NO shadow SSDT, no `NtGdiXxx`/`NtUserXxx` dispatch, and no user-mode thunking. Win32 apps currently cannot call GDI/USER32 functions via syscall. The existing `SYS_WAIT_MESSAGE=75`, `SYS_GETMESSAGE=74`, `SYS_REGISTERCLASS=76`, `SYS_FINDWINDOW=77` in TODO-05-win32-subsystem are placeholders that need migration to the shadow SSDT.
 
 ## Inputs
 
-- [`include/gfx.h`](../../include/gfx.h) — `gfx_draw_line`, `gfx_fill_rect`, `gfx_blit_alpha`, `gfx_surface_create/destroy`
-- [`include/font_mgr.h`](../../include/font_mgr.h) — `ttf_get`, `ttf_draw_string`, `ttf_line_height`
-- [`include/desktop/wm.h`](../../include/desktop/wm.h) — `wm_create_window`, `wm_destroy_window`, `wm_move_window`, `wm_focus_window`, `wm_mark_dirty`
-- [`include/cursor.h`](../../include/cursor.h) — `cursor_set_shape`, `cursor_shape_t`
-- [`include/icon_store.h`](../../include/icon_store.h) — `icon_get`, `icon_for_extension`
-- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` — main SSDT infrastructure; shadow SSDT (Table 1) placeholder allocated there; service numbers 0x1000+ dispatched to this table
-- → XREF: `08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md` — user-mode GDI/USER32 stub layer; this TODO provides the kernel-mode dispatch those stubs call into
-- → XREF: `12-user-platform-sdk/TODO-05-win32-subsystem.md` — CSRSS loads win32k; message queue infrastructure (SYS_WAIT_MESSAGE etc.) migrates to this shadow SSDT
-- → XREF: `08-graphics-ui/TODO-06-window-manager.md` — `wm_minimize/maximize/restore/set_title` wrapped by NtUserXxx
-- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §25` — KeUserModeCallback dispatch infrastructure; NtUserDispatchMessage and NtUserSendMessage call KeUserModeCallback to invoke user-mode window procedures
-- → XREF: `08-graphics-ui/TODO-04-widget-library-core.md` — control painting routed through GDI DC
+- [`include/gfx.h`](../../include/gfx.h) -- `gfx_draw_line`, `gfx_fill_rect`, `gfx_blit_alpha`, `gfx_surface_create/destroy`
+- [`include/font_mgr.h`](../../include/font_mgr.h) -- `ttf_get`, `ttf_draw_string`, `ttf_line_height`
+- [`include/desktop/wm.h`](../../include/desktop/wm.h) -- `wm_create_window`, `wm_destroy_window`, `wm_move_window`, `wm_focus_window`, `wm_mark_dirty`
+- [`include/cursor.h`](../../include/cursor.h) -- `cursor_set_shape`, `cursor_shape_t`
+- [`include/icon_store.h`](../../include/icon_store.h) -- `icon_get`, `icon_for_extension`
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` -- main SSDT infrastructure; shadow SSDT (Table 1) placeholder allocated there; service numbers 0x1000+ dispatched to this table
+- → XREF: `08-graphics-ui/TODO-11-win32-gdi-user32-stubs.md` -- user-mode GDI/USER32 stub layer; this TODO provides the kernel-mode dispatch those stubs call into
+- → XREF: `12-user-platform-sdk/TODO-05-win32-subsystem.md` -- CSRSS loads win32k; message queue infrastructure (SYS_WAIT_MESSAGE etc.) migrates to this shadow SSDT
+- → XREF: `08-graphics-ui/TODO-06-window-manager.md` -- `wm_minimize/maximize/restore/set_title` wrapped by NtUserXxx
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §25` -- KeUserModeCallback dispatch infrastructure; NtUserDispatchMessage and NtUserSendMessage call KeUserModeCallback to invoke user-mode window procedures
+- → XREF: `08-graphics-ui/TODO-04-widget-library-core.md` -- control painting routed through GDI DC
 
 ## Outcome
 
@@ -59,8 +59,8 @@
 | 💎  |  26   | GDI/USER DirectX and DXGI kernel integration       | §1, TODO-08-gpu     |  [ ]   |
 | ⭐  |  27   | Impossible OS exclusive graphics extensions        | §2, §7, §8          |  [ ]   |
 
-> 💎 = parity — Windows GDI32/USER32 and Linux Xlib/Wayland both provide equivalent functionality.
-> ⭐ = exclusive — clean migration path from legacy SYS_* to proper shadow SSDT.
+> 💎 = parity -- Windows GDI32/USER32 and Linux Xlib/Wayland both provide equivalent functionality.
+> ⭐ = exclusive -- clean migration path from legacy SYS_* to proper shadow SSDT.
 
 ---
 
@@ -68,14 +68,14 @@
 Register the Win32k shadow SSDT as Table 1 in the SSDT dispatcher. Service numbers `0x1000–0x1FFF` are routed to this table. (→ XREF: TODO-05-native-api-ssdt.md §4)
 
 - [ ] Create `include/kernel/nt/win32k_ssdt.h`:
-  - `WIN32K_SSDT_TABLE` — same structure as main SSDT but separate function pointer array
-  - `WIN32K_SERVICE_BASE = 0x1000` — offset for shadow table indices
+  - `WIN32K_SSDT_TABLE` -- same structure as main SSDT but separate function pointer array
+  - `WIN32K_SERVICE_BASE = 0x1000` -- offset for shadow table indices
 - [ ] In `syscall_dispatch`: if `(service_number & 0x1000)`, dispatch to shadow SSDT at `index = service_number & 0x0FFF`
 - [ ] Create `src/kernel/win32k/win32k_init.c`:
-  - `win32k_init()` — register all NtGdiXxx and NtUserXxx handlers in shadow SSDT
+  - `win32k_init()` -- register all NtGdiXxx and NtUserXxx handlers in shadow SSDT
   - Called during Phase 3 init (after compositor is ready)
 - [ ] Unimplemented shadow slots return `STATUS_NOT_IMPLEMENTED`
-- [ ] Commit: `"kernel: win32k — shadow SSDT Table 1 dispatch infrastructure"`
+- [ ] Commit: `"kernel: win32k -- shadow SSDT Table 1 dispatch infrastructure"`
 
 **Test checkpoint:** `syscall_dispatch(0x1000)` routes to shadow SSDT, not main SSDT. Unimplemented shadow slot returns `STATUS_NOT_IMPLEMENTED`. Serial: `"win32k: shadow SSDT registered, 108 entries"`.
 
@@ -91,7 +91,7 @@ The HDC is a kernel-side handle to a drawing surface. All GDI drawing goes throu
 - [ ] `NtGdiGetDC(hwnd)` → shadow SSDT 0x1003: get DC for a window (wraps `wm_get_surface`)
 - [ ] `NtGdiReleaseDC(hwnd, hdc)` → shadow SSDT 0x1004: release window DC
 - [ ] `NtGdiSaveDC(hdc)` / `NtGdiRestoreDC(hdc, nSavedDC)` → shadow SSDT 0x1005/0x1006
-- [ ] Commit: `"kernel: win32k — GDI DC object table, CreateCompatibleDC, GetDC/ReleaseDC"`
+- [ ] Commit: `"kernel: win32k -- GDI DC object table, CreateCompatibleDC, GetDC/ReleaseDC"`
 
 **Test checkpoint:** `NtGdiGetDC(hwnd)` returns valid HDC backed by window surface. `NtGdiSelectObject` swaps pen into DC. `NtGdiDeleteObjectApp` frees the object.
 
@@ -112,7 +112,7 @@ Core 2D drawing operations that wrap `gfx_*` primitives.
 - [ ] `NtGdiPolygon(hdc, points, count)` → shadow SSDT 0x101B: draw filled polygon
 - [ ] `NtGdiSetBkColor(hdc, color)` / `NtGdiSetTextColor(hdc, color)` → shadow SSDT 0x101C/0x101D
 - [ ] `NtGdiSetBkMode(hdc, mode)` → shadow SSDT 0x101E: TRANSPARENT or OPAQUE background
-- [ ] Commit: `"kernel: win32k — GDI drawing syscalls (SetPixel through Polygon)"`
+- [ ] Commit: `"kernel: win32k -- GDI drawing syscalls (SetPixel through Polygon)"`
 
 **Test checkpoint:** `NtGdiGetDC` + `NtGdiRectangle` draws visible rectangle on window. `NtGdiBitBlt` copies region between DCs. `NtGdiSetTextColor` changes subsequent text color.
 
@@ -127,7 +127,7 @@ Text rendering that wraps `ttf_*` primitives.
 - [ ] `NtGdiGetTextExtentPoint(hdc, string, count, size)` → shadow SSDT 0x1025: measure string pixel dimensions
 - [ ] `NtGdiGetTextFace(hdc, count, faceName)` → shadow SSDT 0x1026: get current font face name
 - [ ] `NtGdiSetTextAlign(hdc, align)` → shadow SSDT 0x1027: TA_LEFT/TA_CENTER/TA_RIGHT/TA_TOP/TA_BOTTOM
-- [ ] Commit: `"kernel: win32k — GDI text and font syscalls (CreateFont through SetTextAlign)"`
+- [ ] Commit: `"kernel: win32k -- GDI text and font syscalls (CreateFont through SetTextAlign)"`
 
 **Test checkpoint:** `NtGdiCreateFont` + `NtGdiSelectObject` + `NtGdiTextOut` renders text on window DC. `NtGdiGetTextMetrics` returns correct line height. `NtGdiGetTextExtentPoint` returns correct string width.
 
@@ -141,7 +141,7 @@ Bitmap creation, DIB (device-independent bitmap) operations.
 - [ ] `NtGdiSetDIBitsToDevice(hdc, xDest, yDest, w, h, xSrc, ySrc, startScan, lines, bits, bmi, usage)` → shadow SSDT 0x1034
 - [ ] `NtGdiStretchDIBits(hdc, xD, yD, wD, hD, xS, yS, wS, hS, bits, bmi, usage, rop)` → shadow SSDT 0x1035
 - [ ] `NtGdiGetObject(handle, count, buffer)` → shadow SSDT 0x1036: get GDI object properties (BITMAP, LOGFONT, etc.)
-- [ ] Commit: `"kernel: win32k — GDI bitmap and DIB syscalls"`
+- [ ] Commit: `"kernel: win32k -- GDI bitmap and DIB syscalls"`
 
 **Test checkpoint:** `NtGdiCreateCompatibleBitmap` + `NtGdiSelectObject` into memory DC + `NtGdiBitBlt` renders offscreen buffer. `NtGdiCreateDIBSection` returns direct pixel pointer. `NtGdiGetDIBits` reads correct pixel data.
 
@@ -158,12 +158,12 @@ Drawing tool creation and region management.
 - [ ] `NtGdiSelectClipRgn(hdc, hrgn)` → shadow SSDT 0x1047: set DC clipping region
 - [ ] `NtGdiOffsetRgn(hrgn, x, y)` → shadow SSDT 0x1048
 - [ ] `NtGdiPtInRegion(hrgn, x, y)` → shadow SSDT 0x1049
-- [ ] Commit: `"kernel: win32k — GDI pen, brush, and region syscalls"`
+- [ ] Commit: `"kernel: win32k -- GDI pen, brush, and region syscalls"`
 
 **Test checkpoint:** `NtGdiCreatePen(PS_SOLID, 2, red)` + `NtGdiSelectObject` + `NtGdiLineTo` draws red 2px line. `NtGdiCreateRectRgn` + `NtGdiSelectClipRgn` clips drawing to region. `NtGdiGetStockObject(WHITE_BRUSH)` returns valid handle.
 
 ## 7. USER Window Management Syscalls
-Window creation, positioning, and properties — wraps `wm_*` APIs.
+Window creation, positioning, and properties -- wraps `wm_*` APIs.
 
 - [ ] `NtUserCreateWindowEx(dwExStyle, className, windowName, dwStyle, x, y, w, h, hwndParent, hMenu, hInstance, lpParam)` → shadow SSDT 0x1050: create window (wraps `wm_create_window`)
 - [ ] `NtUserDestroyWindow(hwnd)` → shadow SSDT 0x1051: destroy window (wraps `wm_destroy_window`)
@@ -181,12 +181,12 @@ Window creation, positioning, and properties — wraps `wm_*` APIs.
 - [ ] `NtUserGetFocus()` → shadow SSDT 0x105D
 - [ ] `NtUserIsWindow(hwnd)` → shadow SSDT 0x105E
 - [ ] `NtUserIsWindowVisible(hwnd)` → shadow SSDT 0x105F
-- [ ] Commit: `"kernel: win32k — USER window management syscalls (CreateWindowEx through IsWindowVisible)"`
+- [ ] Commit: `"kernel: win32k -- USER window management syscalls (CreateWindowEx through IsWindowVisible)"`
 
 **Test checkpoint:** `NtUserCreateWindowEx` returns valid HWND. `NtUserShowWindow(SW_SHOW)` makes window visible. `NtUserBeginPaint` + `NtGdiRectangle` + `NtUserEndPaint` draws on window. `NtUserDestroyWindow` removes it.
 
 ## 8. USER Message Queue Syscalls
-Windows message loop — the heart of Win32 UI. Wraps the kernel message queue infrastructure.
+Windows message loop -- the heart of Win32 UI. Wraps the kernel message queue infrastructure.
 
 - [ ] `NtUserGetMessage(msg, hwnd, msgFilterMin, msgFilterMax)` → shadow SSDT 0x1060: block until message available (migrates SYS_GETMESSAGE=74)
 - [ ] `NtUserPeekMessage(msg, hwnd, msgFilterMin, msgFilterMax, removeMsg)` → shadow SSDT 0x1061: non-blocking check
@@ -201,7 +201,7 @@ Windows message loop — the heart of Win32 UI. Wraps the kernel message queue i
 - [ ] `NtUserDefWindowProc(hwnd, msg, wParam, lParam)` → shadow SSDT 0x106A: default message handling
 - [ ] `NtUserSetTimer(hwnd, idEvent, elapse, timerFunc)` → shadow SSDT 0x106B: WM_TIMER messages
 - [ ] `NtUserKillTimer(hwnd, idEvent)` → shadow SSDT 0x106C
-- [ ] Commit: `"kernel: win32k — USER message queue syscalls (GetMessage through KillTimer)"`
+- [ ] Commit: `"kernel: win32k -- USER message queue syscalls (GetMessage through KillTimer)"`
 
 **Test checkpoint:** `NtUserRegisterClassEx` + `NtUserCreateWindowEx` + `NtUserGetMessage` loop processes WM_PAINT. `NtUserPostMessage(WM_QUIT)` exits the loop. `NtUserSendMessage` cross-thread delivers and returns result. `NtUserSetTimer` fires WM_TIMER at correct interval.
 
@@ -219,7 +219,7 @@ Keyboard and mouse input, cursor management.
 - [ ] `NtUserReleaseCapture()` → shadow SSDT 0x1079
 - [ ] `NtUserLoadIcon(hInstance, iconName)` → shadow SSDT 0x107A: wraps `icon_get`
 - [ ] `NtUserGetSystemMetrics(index)` → shadow SSDT 0x107B: SM_CXSCREEN, SM_CYSCREEN, SM_CXICON, etc.
-- [ ] Commit: `"kernel: win32k — USER input and cursor syscalls"`
+- [ ] Commit: `"kernel: win32k -- USER input and cursor syscalls"`
 
 **Test checkpoint:** `NtUserGetCursorPos` returns current mouse position. `NtUserSetCursor` changes cursor shape. `NtUserGetKeyState(VK_SHIFT)` returns correct state. `NtUserGetSystemMetrics(SM_CXSCREEN)` returns framebuffer width.
 
@@ -236,7 +236,7 @@ Menu creation and keyboard accelerators.
 - [ ] `NtUserCreateAcceleratorTable(accel, count)` → shadow SSDT 0x1087
 - [ ] `NtUserTranslateAccelerator(hwnd, hAccTable, msg)` → shadow SSDT 0x1088
 - [ ] `NtUserDestroyAcceleratorTable(hAccTable)` → shadow SSDT 0x1089
-- [ ] Commit: `"kernel: win32k — USER menu and accelerator syscalls"`
+- [ ] Commit: `"kernel: win32k -- USER menu and accelerator syscalls"`
 
 **Test checkpoint:** `NtUserCreateMenu` + `NtUserAppendMenu` + `NtUserSetMenu` shows menu bar on window. `NtUserTrackPopupMenu` displays context menu at cursor. `NtUserCreateAcceleratorTable` with Ctrl+S fires WM_COMMAND.
 
@@ -253,7 +253,7 @@ Clipboard data exchange between applications.
 - [ ] `NtUserEnumClipboardFormats(format)` → shadow SSDT 0x1097
 - [ ] `NtUserRegisterClipboardFormat(formatName)` → shadow SSDT 0x1098
 - [ ] `NtUserAddClipboardFormatListener(hwnd)` → shadow SSDT 0x1099
-- [ ] Commit: `"kernel: win32k — USER clipboard syscalls"`
+- [ ] Commit: `"kernel: win32k -- USER clipboard syscalls"`
 
 **Test checkpoint:** `NtUserOpenClipboard` + `NtUserSetClipboardData(CF_TEXT, "hello")` + `NtUserCloseClipboard` stores text. Another process `NtUserGetClipboardData(CF_TEXT)` retrieves "hello". `NtUserAddClipboardFormatListener` receives WM_CLIPBOARDUPDATE.
 
@@ -266,7 +266,7 @@ Migrate the 4 existing Win32 UI syscalls from the main SSDT placeholder to prope
 - [ ] Remove `SYS_FINDWINDOW=77` from main SSDT; replace with `NtUserFindWindow` → shadow SSDT 0x1068
 - [ ] Update `12-user-platform-sdk/TODO-05-win32-subsystem.md` to reference shadow SSDT indices
 - [ ] Keep `SYS_*` macros as aliases for transition period
-- [ ] Commit: `"kernel: win32k — migrate SYS_GETMESSAGE/WAIT_MESSAGE/REGISTERCLASS/FINDWINDOW to shadow SSDT"`
+- [ ] Commit: `"kernel: win32k -- migrate SYS_GETMESSAGE/WAIT_MESSAGE/REGISTERCLASS/FINDWINDOW to shadow SSDT"`
 
 **Test checkpoint:** Existing desktop shell still works after migration. `syscall` with RAX=0x1060 reaches `NtUserGetMessage`. Old `SYS_GETMESSAGE=74` alias still works during transition.
 
@@ -281,7 +281,7 @@ Path operations (BeginPath/EndPath/StrokePath), arcs, Bezier curves, gradient fi
 - [ ] `NtGdiTransparentBlt` (0x10C2): blit with color key transparency
 - [ ] `NtGdiRoundRect` (0x10B7): rectangle with rounded corners
 - [ ] `NtGdiSetROP2` / `NtGdiGetROP2`: raster operation mode (R2_COPYPEN, R2_XORPEN, etc.)
-- [ ] Commit: `"kernel: win32k — GDI path, curve, and extended drawing (0x10A0–0x10CF)"`
+- [ ] Commit: `"kernel: win32k -- GDI path, curve, and extended drawing (0x10A0–0x10CF)"`
 
 **Test checkpoint:** `NtGdiBeginPath` + `NtGdiMoveTo` + `NtGdiLineTo` × 3 + `NtGdiCloseFigure` + `NtGdiEndPath` + `NtGdiStrokePath` draws a triangle. `NtGdiGradientFill` produces visible gradient. `NtGdiAlphaBlend` produces translucent overlay.
 
@@ -291,9 +291,9 @@ Coordinate transforms (viewport/window origin, world transform matrix), color pa
 - [ ] Implement 3×2 world transform matrix in `GDI_DC` for `SetWorldTransform`/`ModifyWorldTransform`
 - [ ] `DPtoLP`/`LPtoDP`: device-to-logical and logical-to-device point conversion using current map mode
 - [ ] Implement palette object: 256-entry `PALETTEENTRY` array for legacy 8-bit color support
-- [ ] ICM stubs: `SetICMMode`/`SetICMProfile` — store mode flag, actual color matching deferred
+- [ ] ICM stubs: `SetICMMode`/`SetICMProfile` -- store mode flag, actual color matching deferred
 - [ ] `NtGdiSetLayout` (0x10FF): RTL mirroring for bidirectional text support
-- [ ] Commit: `"kernel: win32k — GDI transform, palette, and color management (0x10D0–0x10FF)"`
+- [ ] Commit: `"kernel: win32k -- GDI transform, palette, and color management (0x10D0–0x10FF)"`
 
 **Test checkpoint:** `NtGdiSetWorldTransform` with rotation matrix + `NtGdiLineTo` draws rotated line. `NtGdiCreatePalette` + `NtGdiSelectPalette` + `NtGdiRealizePalette` activates palette.
 
@@ -304,7 +304,7 @@ Printer DC, document lifecycle (StartDoc/EndDoc/StartPage/EndPage), Enhanced Met
 - [ ] `NtGdiGetDeviceCaps` (0x1109): return framebuffer capabilities (HORZRES, VERTRES, BITSPIXEL, PLANES, etc.)
 - [ ] Implement Enhanced Metafile as in-memory GDI command list: `CreateEnhMetaFile` records, `CloseEnhMetaFile` returns handle, `PlayEnhMetaFile` replays
 - [ ] `NtGdiGdiComment` (0x1119): embed application data in metafile stream
-- [ ] Commit: `"kernel: win32k — GDI print and metafile (0x1100–0x1119)"`
+- [ ] Commit: `"kernel: win32k -- GDI print and metafile (0x1100–0x1119)"`
 
 **Test checkpoint:** `NtGdiGetDeviceCaps(HORZRES)` returns framebuffer width. `NtGdiCreateEnhMetaFile` + draw operations + `NtGdiCloseEnhMetaFile` + `NtGdiPlayEnhMetaFile` replays correctly.
 
@@ -319,7 +319,7 @@ Font enumeration, glyph metrics, kerning, character placement, and font resource
 - [ ] `NtGdiAddFontResource` / `NtGdiRemoveFontResource`: dynamic font install/uninstall
 - [ ] `NtGdiAddFontMemResourceEx` (0x1144): load font from memory buffer (PE resource embedding)
 - [ ] `NtGdiGetCharacterPlacement` (0x114A): complex script glyph shaping (basic LTR; bidi deferred)
-- [ ] Commit: `"kernel: win32k — GDI font advanced (0x1130–0x1151)"`
+- [ ] Commit: `"kernel: win32k -- GDI font advanced (0x1130–0x1151)"`
 
 **Test checkpoint:** `NtGdiEnumFontFamiliesEx` returns at least 1 font family. `NtGdiGetCharABCWidths('A')` returns non-zero B width. `NtGdiAddFontMemResourceEx` loads embedded font; `NtGdiTextOut` renders with it.
 
@@ -331,7 +331,7 @@ Extended pens (geometric with join/cap styles), indirect brush creation, bitmap 
 - [ ] Region constructors: `CreateRoundRectRgn`, `CreateEllipticRgn`, `CreatePolygonRgn`
 - [ ] `NtGdiGetRegionData` (0x1178): return region as array of rectangles
 - [ ] `NtGdiGetBitmapBits` / `NtGdiSetBitmapBits`: raw pixel access for DDB bitmaps
-- [ ] Commit: `"kernel: win32k — GDI extended object management (0x1160–0x117F)"`
+- [ ] Commit: `"kernel: win32k -- GDI extended object management (0x1160–0x117F)"`
 
 **Test checkpoint:** `NtGdiExtCreatePen` with PS_JOIN_ROUND + `NtGdiPolyline` draws smooth-joined polyline. `NtGdiCreatePolygonRgn` + `NtGdiPtInRegion` correctly tests point containment.
 
@@ -347,7 +347,7 @@ Window long values (GWL_STYLE, GWL_EXSTYLE), class properties, per-window user d
 - [ ] `NtUserScrollWindowEx` (0x11B9): scroll window content with built-in invalidation
 - [ ] `NtUserFlashWindowEx` (0x11BF): taskbar flash notification
 - [ ] `NtUserAnimateWindow` (0x11C0): show/hide with animation (slide, fade, roll)
-- [ ] Commit: `"kernel: win32k — USER window properties, styles, enumeration (0x1180–0x11CD)"`
+- [ ] Commit: `"kernel: win32k -- USER window properties, styles, enumeration (0x1180–0x11CD)"`
 
 **Test checkpoint:** `NtUserSetWindowLong(GWL_STYLE)` changes window style. `NtUserEnumWindows` iterates all top-level windows. `NtUserWindowFromPoint` returns correct HWND at cursor. `NtUserSetLayeredWindowAttributes(alpha=128)` makes window translucent.
 
@@ -360,12 +360,12 @@ Dialog box creation/management, caret (text cursor), and drawing utility functio
 - [ ] `NtUserDrawEdge` / `NtUserDrawFrameControl` (0x11F6-0x11F7): 3D edge and frame control rendering
 - [ ] `NtUserDrawCaption` (0x11F4): render window title bar
 - [ ] Scrollbar: `NtUserSetScrollInfo` / `NtUserGetScrollInfo` (0x11FE-0x1207)
-- [ ] Commit: `"kernel: win32k — USER dialog, caret, and drawing helpers (0x11D0–0x1207)"`
+- [ ] Commit: `"kernel: win32k -- USER dialog, caret, and drawing helpers (0x11D0–0x1207)"`
 
 **Test checkpoint:** `NtUserDialogBoxParam` shows modal dialog; `NtUserEndDialog` closes it. `NtUserCreateCaret` + `NtUserShowCaret` shows blinking caret in focused window. `NtUserSetScrollInfo` updates scrollbar thumb position.
 
 ## 20. USER Scrollbar
-Scrollbar control syscalls — dedicated section because scrollbar is a core UI primitive.
+Scrollbar control syscalls -- dedicated section because scrollbar is a core UI primitive.
 
 > [!NOTE]
 > Scrollbar entries 0x11FE–0x1207 are listed in the §19 Dialog table but implemented here as a distinct unit.
@@ -374,7 +374,7 @@ Scrollbar control syscalls — dedicated section because scrollbar is a core UI 
 - [ ] `NtUserGetScrollInfo(hwnd, fnBar, lpsi)`: get current scrollbar state
 - [ ] `NtUserShowScrollBar(hwnd, wBar, bShow)`: show/hide horizontal, vertical, or both
 - [ ] `NtUserEnableScrollBar(hwnd, wSBflags, wArrows)`: enable/disable scrollbar arrows
-- [ ] Commit: `"kernel: win32k — USER scrollbar (0x11FE–0x1207)"`
+- [ ] Commit: `"kernel: win32k -- USER scrollbar (0x11FE–0x1207)"`
 
 **Test checkpoint:** Window with `WS_VSCROLL` style shows vertical scrollbar. `NtUserSetScrollInfo` changes thumb position. `NtUserGetScrollInfo` returns correct range/page/pos.
 
@@ -387,7 +387,7 @@ Keyboard state, virtual key mapping, input method (IME) context, window hooks (W
 - [ ] `NtUserSetWindowsHookEx` / `NtUserCallNextHookEx` (0x1223-0x1225): hook chain for WH_KEYBOARD_LL, WH_MOUSE_LL, WH_CBT, WH_SHELL
 - [ ] `NtUserRegisterHotKey` / `NtUserUnregisterHotKey` (0x1229-0x122A): system-wide hotkeys
 - [ ] IME context management: `NtUserImmGetContext` / `NtUserImmReleaseContext` (0x122C-0x122D) + composition window/string
-- [ ] Commit: `"kernel: win32k — USER keyboard, IME, and hook (0x1210–0x123D)"`
+- [ ] Commit: `"kernel: win32k -- USER keyboard, IME, and hook (0x1210–0x123D)"`
 
 **Test checkpoint:** `NtUserGetKeyboardState` returns current key state array. `NtUserSetWindowsHookEx(WH_KEYBOARD_LL)` intercepts keystrokes. `NtUserRegisterHotKey(MOD_CONTROL, 'S')` fires WM_HOTKEY.
 
@@ -399,7 +399,7 @@ DPI awareness, system-wide parameters (SystemParametersInfo), color scheme, inpu
 - [ ] `NtUserGetSysColor` / `NtUserSetSysColors` / `NtUserGetSysColorBrush` (0x1257-0x1259): system color scheme
 - [ ] `NtUserMsgWaitForMultipleObjects` (0x1262): wait for kernel objects OR messages (Win32 modal loop pattern)
 - [ ] `NtUserGetMessagePos` / `NtUserGetMessageTime` (0x1266-0x1267): cursor position and timestamp of last message
-- [ ] Commit: `"kernel: win32k — USER DPI, accessibility, and system parameters (0x1240–0x1267)"`
+- [ ] Commit: `"kernel: win32k -- USER DPI, accessibility, and system parameters (0x1240–0x1267)"`
 
 **Test checkpoint:** `NtUserSystemParametersInfo(SPI_GETWORKAREA)` returns desktop rect minus taskbar. `NtUserGetDpiForWindow` returns 96 (100%) or scaled value. `NtUserGetSysColor(COLOR_WINDOW)` returns theme-appropriate color.
 
@@ -411,7 +411,7 @@ Raw HID input, multi-touch, pointer input, gesture recognition, deferred window 
 - [ ] `NtUserGetPointerInfo` / `NtUserGetPointerType` (0x127D-0x1282): unified pointer model (Win8+)
 - [ ] `NtUserSetGestureConfig` / `NtUserGetGestureInfo` (0x1283-0x1287): pinch/zoom/rotate/pan gestures
 - [ ] `NtUserBeginDeferWindowPos` / `NtUserDeferWindowPos` / `NtUserEndDeferWindowPos` (0x1288-0x128A): batch window positioning
-- [ ] Commit: `"kernel: win32k — USER raw input, touch, and gesture (0x1270–0x128A)"`
+- [ ] Commit: `"kernel: win32k -- USER raw input, touch, and gesture (0x1270–0x128A)"`
 
 **Test checkpoint:** `NtUserRegisterRawInputDevices(MOUSE)` + `NtUserGetRawInputData` receives raw mouse delta. `NtUserBeginDeferWindowPos(4)` + 4× `NtUserDeferWindowPos` + `NtUserEndDeferWindowPos` moves 4 windows atomically.
 
@@ -423,7 +423,7 @@ Monitor enumeration, display mode changes, gamma ramp, display configuration.
 - [ ] `NtUserEnumDisplaySettings` / `NtUserChangeDisplaySettings` (0x1296-0x1299): resolution/refresh rate changes
 - [ ] `NtGdiGetDeviceGammaRamp` / `NtGdiSetDeviceGammaRamp` (0x129B-0x129C): night light color temperature
 - [ ] `NtUserSetDisplayConfig` / `NtUserQueryDisplayConfig` (0x129D-0x129F): Windows CCD display topology
-- [ ] Commit: `"kernel: win32k — USER multi-monitor and display (0x1290–0x129F)"`
+- [ ] Commit: `"kernel: win32k -- USER multi-monitor and display (0x1290–0x129F)"`
 
 **Test checkpoint:** `NtUserEnumDisplayMonitors` returns at least 1 monitor. `NtUserGetMonitorInfo` returns correct work area. `NtGdiSetDeviceGammaRamp` shifts display to warm tones.
 
@@ -436,12 +436,12 @@ Shell hook windows, broadcast system messages, message timeouts, power/suspend n
 - [ ] `NtUserSetCoalescableTimer` (0x12AF): power-efficient timer with coalescing tolerance
 - [ ] `NtUserRegisterPowerSettingNotification` (0x12B0): receive power state change notifications
 - [ ] `NtUserChangeWindowMessageFilterEx` (0x12B5): UIPI message filter for UAC elevation scenarios
-- [ ] Commit: `"kernel: win32k — USER shell integration (0x12A0–0x12B5)"`
+- [ ] Commit: `"kernel: win32k -- USER shell integration (0x12A0–0x12B5)"`
 
 **Test checkpoint:** `NtUserRegisterShellHookWindow` receives HSHELL_WINDOWCREATED when new window opens. `NtUserBroadcastSystemMessage(WM_SETTINGCHANGE)` reaches all top-level windows. `NtUserSendMessageTimeout` returns `STATUS_TIMEOUT` for hung window.
 
 ## 26. GDI/USER DirectX and DXGI Kernel Integration
-Direct3D kernel thunks (DXGK) — the kernel-mode interface between user-mode DirectX runtime and the GPU driver. Wraps WDDM display miniport driver calls.
+Direct3D kernel thunks (DXGK) -- the kernel-mode interface between user-mode DirectX runtime and the GPU driver. Wraps WDDM display miniport driver calls.
 
 > [!NOTE]
 > These are co-owned with `04-drivers-hardware/TODO-08-gpu-display-drivers.md`. The shadow SSDT dispatch is in this TODO; the GPU driver backend is in TODO-08-gpu.
@@ -456,12 +456,12 @@ Direct3D kernel thunks (DXGK) — the kernel-mode interface between user-mode Di
 - [ ] Overlay: `CreateOverlay`, `FlipOverlay`, `UpdateOverlay` (0x12E0-0x12E3): hardware overlay planes
 - [ ] Swap chain: `NtGdiDdDDICreateSwapChain` (0x12E4): direct flip swap chain for full-screen rendering
 - [ ] Output duplication: `NtGdiDdDDIOutputDuplPresent` (0x12E9): desktop duplication API for screen capture
-- [ ] Commit: `"kernel: win32k — GDI/USER DirectX and DXGI kernel integration (0x12C0–0x12F4)"`
+- [ ] Commit: `"kernel: win32k -- GDI/USER DirectX and DXGI kernel integration (0x12C0–0x12F4)"`
 
 **Test checkpoint:** `NtGdiDdDDIEnumAdapters` returns at least 1 adapter (software rasterizer). `NtGdiDdDDICreateDevice` returns valid device handle. `NtGdiDdDDIQueryAdapterInfo` returns framebuffer size.
 
 ## 27. Impossible OS Exclusive Graphics Extensions
-Desktop compositor stats, Acrylic/Mica effects, virtual desktops, snap layouts, taskbar control, toast notifications, theme management, font cache, wallpaper, screen capture — all as first-class kernel APIs.
+Desktop compositor stats, Acrylic/Mica effects, virtual desktops, snap layouts, taskbar control, toast notifications, theme management, font cache, wallpaper, screen capture -- all as first-class kernel APIs.
 
 > [!IMPORTANT]
 > **These have NO Windows or Linux equivalent as kernel syscalls.** Windows exposes these through COM/UWP APIs; Linux has no unified equivalent. Impossible OS makes them zero-overhead kernel calls.
@@ -479,7 +479,7 @@ Desktop compositor stats, Acrylic/Mica effects, virtual desktops, snap layouts, 
 - [ ] Screen capture: `NtGdiScreenCapture` / `NtGdiWindowCapture` (0x132F-0x1330)
 - [ ] Start menu: `NtUserQueryStartMenuPins` / `NtUserSetStartMenuPin` (0x1331-0x1333)
 - [ ] Jump lists: `NtUserQueryJumpList` / `NtUserAddJumpListItem` (0x1334-0x1336)
-- [ ] Commit: `"kernel: win32k — Impossible OS exclusive graphics extensions (0x1300–0x1336)"`
+- [ ] Commit: `"kernel: win32k -- Impossible OS exclusive graphics extensions (0x1300–0x1336)"`
 
 **Test checkpoint:** `NtGdiQueryCompositorStats` returns valid frame rate. `NtGdiSetAcrylicBlur(hwnd, 20)` makes window background blurry. `NtUserCreateVirtualDesktop` creates desktop 2; `NtUserSwitchVirtualDesktop(2)` switches to it. `NtUserSendToast("Hello")` shows notification.
 
@@ -1934,7 +1934,7 @@ Desktop compositor stats, Acrylic/Mica effects, virtual desktops, snap layouts, 
 | 0x15A1 | NtUserSetSystemMenu2                 | §10 | T12   | [ ]  |
 | 0x15A2 | NtUserSetThreadDesktop2              | §25 | T12   | [ ]  |
 
-> **Total: 1300 shadow SSDT entries** across 28 functional ranges — full Windows 11 win32k.sys parity plus 55 Impossible OS exclusive graphics extensions. All entries initially return `STATUS_NOT_IMPLEMENTED` until their owning section is implemented.
+> **Total: 1300 shadow SSDT entries** across 28 functional ranges -- full Windows 11 win32k.sys parity plus 55 Impossible OS exclusive graphics extensions. All entries initially return `STATUS_NOT_IMPLEMENTED` until their owning section is implemented.
 
 ---
 
@@ -1942,29 +1942,29 @@ Desktop compositor stats, Acrylic/Mica effects, virtual desktops, snap layouts, 
 
 | ⭐ | Feature                    | 🪟 Win11                      | 🐧 Linux                      | 🚀 Impossible OS              |
 |----|----------------------------|-------------------------------|-------------------------------|-------------------------------|
-| 💎 | Kernel GDI dispatch        | ✅ win32k.sys NtGdiXxx        | ❌ No kernel GDI (Mesa UMD)   | ⬜ §2–§6,§13–§17 — GDI entries|
-| 💎 | Kernel USER dispatch       | ✅ win32k.sys NtUserXxx       | ❌ No kernel USER (Wayland)   | ⬜ §7–§12,§18–§25 — USER      |
-| 💎 | Shadow SSDT (Table 1)      | ✅ ~1300 entries               | ❌ No SSDT concept            | ⬜ §1 — 1300 entries (parity) |
-| 💎 | DC-based drawing model     | ✅ HDC + GDI objects           | ❌ Direct framebuffer/Vulkan  | ⬜ §2 — DC wraps gfx_surface  |
-| 💎 | Message queue syscalls     | ✅ NtUserGetMessage            | ❌ Wayland fd polling         | ⬜ §8 — kernel msg queue      |
-| 💎 | Clipboard syscalls         | ✅ NtUserGet/SetClipboardData  | ❌ Wayland clipboard protocol | ⬜ §11 — kernel clipboard     |
-| 💎 | Menu/accelerator syscalls  | ✅ NtUserCreateMenu            | ❌ Toolkit-level only         | ⬜ §10 — kernel menus         |
+| 💎 | Kernel GDI dispatch        | ✅ win32k.sys NtGdiXxx        | ❌ No kernel GDI (Mesa UMD)   | ⬜ §2–§6,§13–§17 -- GDI entries|
+| 💎 | Kernel USER dispatch       | ✅ win32k.sys NtUserXxx       | ❌ No kernel USER (Wayland)   | ⬜ §7–§12,§18–§25 -- USER      |
+| 💎 | Shadow SSDT (Table 1)      | ✅ ~1300 entries               | ❌ No SSDT concept            | ⬜ §1 -- 1300 entries (parity) |
+| 💎 | DC-based drawing model     | ✅ HDC + GDI objects           | ❌ Direct framebuffer/Vulkan  | ⬜ §2 -- DC wraps gfx_surface  |
+| 💎 | Message queue syscalls     | ✅ NtUserGetMessage            | ❌ Wayland fd polling         | ⬜ §8 -- kernel msg queue      |
+| 💎 | Clipboard syscalls         | ✅ NtUserGet/SetClipboardData  | ❌ Wayland clipboard protocol | ⬜ §11 -- kernel clipboard     |
+| 💎 | Menu/accelerator syscalls  | ✅ NtUserCreateMenu            | ❌ Toolkit-level only         | ⬜ §10 -- kernel menus         |
 | ⭐ | Unified kernel GDI+USER    | ⚠️ win32k.sys (legacy monolith)| ❌ No equivalent              | ⬜ Clean modular impl         |
-| 💎 | GDI path/curve ops         | ✅ BeginPath/EndPath          | ❌ Cairo (userspace)          | ⬜ §13 — kernel paths         |
-| 💎 | GDI transforms             | ✅ WorldTransform matrix      | ❌ Cairo matrix               | ⬜ §14 — kernel transforms    |
-| 💎 | GDI print/metafile         | ✅ Print spooler + EMF        | ✅ CUPS/PostScript             | ⬜ §15 — EMF record/playback  |
-| 💎 | Font enumeration           | ✅ EnumFontFamiliesEx         | ✅ fontconfig                  | ⬜ §16 — kernel font enum     |
-| 💎 | Dialog boxes               | ✅ DialogBox/EndDialog        | ❌ Toolkit-level only         | ⬜ §19 — kernel dialogs       |
-| 💎 | Keyboard hooks             | ✅ WH_KEYBOARD_LL             | ✅ XInput/libinput             | ⬜ §21 — kernel hook chain    |
-| 💎 | DPI awareness              | ✅ Per-Monitor DPI v2         | ⚠️ Wayland basic               | ⬜ §22 — per-monitor DPI      |
-| 💎 | Multi-touch/gesture        | ✅ WM_TOUCH/WM_GESTURE       | ✅ libinput gestures           | ⬜ §23 — kernel touch/gesture |
-| 💎 | Multi-monitor              | ✅ EnumDisplayMonitors        | ✅ xrandr/wlr-output           | ⬜ §24 — kernel monitor enum  |
-| 💎 | DXGI/DirectX kernel thunks | ✅ DXGK ~50 calls             | ❌ Mesa/DRM userspace         | ⬜ §26 — DXGK dispatch        |
+| 💎 | GDI path/curve ops         | ✅ BeginPath/EndPath          | ❌ Cairo (userspace)          | ⬜ §13 -- kernel paths         |
+| 💎 | GDI transforms             | ✅ WorldTransform matrix      | ❌ Cairo matrix               | ⬜ §14 -- kernel transforms    |
+| 💎 | GDI print/metafile         | ✅ Print spooler + EMF        | ✅ CUPS/PostScript             | ⬜ §15 -- EMF record/playback  |
+| 💎 | Font enumeration           | ✅ EnumFontFamiliesEx         | ✅ fontconfig                  | ⬜ §16 -- kernel font enum     |
+| 💎 | Dialog boxes               | ✅ DialogBox/EndDialog        | ❌ Toolkit-level only         | ⬜ §19 -- kernel dialogs       |
+| 💎 | Keyboard hooks             | ✅ WH_KEYBOARD_LL             | ✅ XInput/libinput             | ⬜ §21 -- kernel hook chain    |
+| 💎 | DPI awareness              | ✅ Per-Monitor DPI v2         | ⚠️ Wayland basic               | ⬜ §22 -- per-monitor DPI      |
+| 💎 | Multi-touch/gesture        | ✅ WM_TOUCH/WM_GESTURE       | ✅ libinput gestures           | ⬜ §23 -- kernel touch/gesture |
+| 💎 | Multi-monitor              | ✅ EnumDisplayMonitors        | ✅ xrandr/wlr-output           | ⬜ §24 -- kernel monitor enum  |
+| 💎 | DXGI/DirectX kernel thunks | ✅ DXGK ~50 calls             | ❌ Mesa/DRM userspace         | ⬜ §26 -- DXGK dispatch        |
 | ⭐ | Direct gfx_* wrapping      | ❌ GDI → DirectX translation  | ❌ Mesa userspace             | ⬜ Zero-overhead kernel path  |
-| ⭐ | Virtual desktop syscalls   | ❌ COM API only               | ❌ No standard                | ⬜ §27 — kernel VD control    |
-| ⭐ | Compositor stats syscall   | ❌ No public API              | ❌ No equivalent              | ⬜ §27 — NtGdiQueryStats      |
-| ⭐ | Acrylic/Mica as syscall    | ❌ DWM internal only          | ❌ No equivalent              | ⬜ §27 — NtGdiSetAcrylicBlur  |
-| ⭐ | Toast notifications kernel | ❌ COM/UWP only               | ❌ D-Bus notify               | ⬜ §27 — NtUserSendToast      |
+| ⭐ | Virtual desktop syscalls   | ❌ COM API only               | ❌ No standard                | ⬜ §27 -- kernel VD control    |
+| ⭐ | Compositor stats syscall   | ❌ No public API              | ❌ No equivalent              | ⬜ §27 -- NtGdiQueryStats      |
+| ⭐ | Acrylic/Mica as syscall    | ❌ DWM internal only          | ❌ No equivalent              | ⬜ §27 -- NtGdiSetAcrylicBlur  |
+| ⭐ | Toast notifications kernel | ❌ COM/UWP only               | ❌ D-Bus notify               | ⬜ §27 -- NtUserSendToast      |
 
 > **After §1–§27:** Full Windows 11 win32k.sys parity (1300 shadow SSDT entries) plus 55 Impossible OS exclusive graphics extensions. Win32 PE applications call GDI32/USER32 via shadow SSDT syscalls wrapping the compositor/gfx/font primitives directly. No translation layer.
 
@@ -2002,4 +2002,4 @@ Desktop compositor stats, Acrylic/Mica effects, virtual desktops, snap layouts, 
 - [ ] Legacy `SYS_GETMESSAGE=74` still works during transition
 - [ ] Shadow SSDT slot for unimplemented index returns `STATUS_NOT_IMPLEMENTED`
 - [ ] All 4 platforms: QEMU WHPX, QEMU TCG, VirtualBox, bare metal
-- [ ] Commit: `"kernel: win32k — shadow SSDT complete (1300 entries)"`
+- [ ] Commit: `"kernel: win32k -- shadow SSDT complete (1300 entries)"`

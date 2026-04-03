@@ -1,5 +1,5 @@
 @echo off
-:: run-ntfs-test.bat — Test NTFS driver in QEMU
+:: run-ntfs-test.bat -- Test NTFS driver in QEMU
 ::
 :: Double-click to:
 ::   1. Generate NTFS test disk (32 MiB with comprehensive test files)

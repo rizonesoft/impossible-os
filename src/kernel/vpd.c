@@ -51,7 +51,7 @@ static inline uint64_t vpd_rdtsc(void)
 
 /* ---- Layout constants ---------------------------------------------------- */
 
-#define VPD_CHAR_W        VPD_CELL_W  /* 6px per char — native 1× */
+#define VPD_CHAR_W        VPD_CELL_W  /* 6px per char -- native 1× */
 #define VPD_LEFT_MARGIN    8
 #define VPD_TOP_MARGIN    10
 #define VPD_ROW_HEIGHT    (VPD_GLYPH_H + 3)  /* 10px: 7px text + 3px gap */
@@ -114,7 +114,7 @@ static void vpd_draw_check(uint32_t x, uint32_t y, uint32_t color)
     }
 }
 
-/* 1× native text rendering — one font pixel = one screen pixel */
+/* 1× native text rendering -- one font pixel = one screen pixel */
 static void vpd_puts_scaled(uint32_t x, uint32_t y, const char *s,
                               uint32_t color)
 {
@@ -483,7 +483,7 @@ void vpd_init(void)
         s_active = 0;
         return;
     }
-    /* If config not parsed yet but postbars defaults to 0, still init —
+    /* If config not parsed yet but postbars defaults to 0, still init --
      * bare-metal diagnostics need VPD before config is available.
      * vpd_stop_tier1() will clean up if postbars ends up being 0. */
 
@@ -500,7 +500,7 @@ void vpd_init(void)
     s_has_current = 0;
     s_active   = 1;
 
-    /* Render info header — boot table starts below it */
+    /* Render info header -- boot table starts below it */
     vpd_render_info_header();
 }
 
@@ -565,7 +565,7 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
 
 void vpd_update_progress(uint8_t percent)
 {
-    (void)percent; /* progress bar removed — too much visual clutter */
+    (void)percent; /* progress bar removed -- too much visual clutter */
 }
 
 void vpd_stage_done(void)

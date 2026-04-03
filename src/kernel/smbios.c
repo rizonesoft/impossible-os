@@ -215,7 +215,7 @@ static void parse_type17(const struct smbios_header *hdr)
         dimm->speed_mhz = (uint16_t)(d[0x15] | ((uint16_t)d[0x16] << 8));
 
     /* String fields: device locator (d[0x10]), bank locator (d[0x11]),
-     * manufacturer (d[0x17]), part number (d[0x1A]) — SMBIOS 2.3+ */
+     * manufacturer (d[0x17]), part number (d[0x1A]) -- SMBIOS 2.3+ */
     str_copy(dimm->device_locator, smbios_get_string(hdr, d[0x10]),
              SMBIOS_STRING_MAX);
     str_copy(dimm->bank_locator,   smbios_get_string(hdr, d[0x11]),
@@ -447,7 +447,7 @@ void smbios_populate_registry(void)
         RegCloseKey(hKey);
     }
 
-    /* ── HKLM\HARDWARE\CPU\{idx} — per socket ────────────────────────── */
+    /* ── HKLM\HARDWARE\CPU\{idx} -- per socket ────────────────────────── */
     for (i = 0; i < (uint32_t)s_info.cpu_count; i++) {
         const struct smbios_cpu_info *cpu = &s_info.cpus[i];
         if (!cpu->valid) continue;
@@ -473,7 +473,7 @@ void smbios_populate_registry(void)
         }
     }
 
-    /* ── HKLM\HARDWARE\Memory\{idx} — per DIMM ──────────────────────── */
+    /* ── HKLM\HARDWARE\Memory\{idx} -- per DIMM ──────────────────────── */
     for (i = 0; i < (uint32_t)s_info.dimm_count; i++) {
         const struct smbios_dimm_info *dimm = &s_info.dimms[i];
         if (!dimm->valid) continue;

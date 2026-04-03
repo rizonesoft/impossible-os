@@ -1,5 +1,5 @@
 /* ============================================================================
- * cpuid.c — Centralized CPUID Feature Detection
+ * cpuid.c -- Centralized CPUID Feature Detection
  *
  * Probes all relevant CPUID leaves at boot and stores results in a global
  * struct cpu_features. Replaces ad-hoc inline asm CPUID scattered across
@@ -12,7 +12,7 @@
 #include "kernel/klog.h"
 #include "kernel/msr.h"
 
-/* Global CPU features — zero-initialized at startup */
+/* Global CPU features -- zero-initialized at startup */
 struct cpu_features g_cpu;
 
 /* --- Low-level CPUID wrapper --- */
@@ -80,7 +80,7 @@ void cpuid_init(void)
     if (g_cpu.max_leaf >= 0x01) {
         cpuid_raw(0x01, 0, &eax, &ebx, &ecx, &edx);
 
-        /* Family/Model/Stepping — Intel display model algorithm */
+        /* Family/Model/Stepping -- Intel display model algorithm */
         {
             uint32_t base_family  = (eax >> 8) & 0xF;
             uint32_t ext_family   = (eax >> 20) & 0xFF;
@@ -188,14 +188,14 @@ void cpuid_init(void)
     if (g_cpu.max_ext_leaf >= 0x80000001) {
         cpuid_raw(0x80000001, 0, &eax, &ebx, &ecx, &edx);
 
-        /* EDX — common extended features */
+        /* EDX -- common extended features */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_NX,      edx, 20);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_PAGE1GB,  edx, 26);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_RDTSCP,   edx, 27);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_LM,      edx, 29);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SYSCALL,  edx, 11);
 
-        /* ECX — AMD extended features */
+        /* ECX -- AMD extended features */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SVM,      ecx,  2);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_OSVW,     ecx,  9);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_IBS,      ecx, 10);
@@ -247,7 +247,7 @@ void cpuid_init(void)
              (uint64_t)g_cpu.family, (uint64_t)g_cpu.model,
              (uint64_t)g_cpu.stepping);
 
-        /* Log feature summary — build a compact feature string */
+        /* Log feature summary -- build a compact feature string */
         klog(LOG_INFO, "cpu", "Features: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
              cpu_has(CPU_FEATURE_SSE2)    ? "SSE2 "    : "",
              cpu_has(CPU_FEATURE_SSE4_2)  ? "SSE4.2 "  : "",
@@ -346,7 +346,7 @@ void cpu_configure_xcr0(void)
     }
 
     if (cpu_has(CPU_FEATURE_UMIP)) {
-        /* PKRU (bit 9) — enable if PKU is supported */
+        /* PKRU (bit 9) -- enable if PKU is supported */
         if (g_cpu.xcr0_supported & (1UL << 9))
             mask |= (1UL << 9);
     }

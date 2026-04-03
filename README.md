@@ -26,9 +26,9 @@
 
 ---
 
-*"It always seems impossible until it's done."* — Nelson Mandela
+*"It always seems impossible until it's done."* -- Nelson Mandela
 
-They said building a fully functional, feature-rich operating system from scratch was impossible — so we named it after the challenge. Impossible OS is written entirely from the ground up: a custom UEFI bootloader, a 64-bit kernel, a graphical desktop, and everything in between. No Linux kernel, no borrowed foundations, no legacy code. Just bare metal x86-64 and the stubborn belief that impossible is just a word.
+They said building a fully functional, feature-rich operating system from scratch was impossible -- so we named it after the challenge. Impossible OS is written entirely from the ground up: a custom UEFI bootloader, a 64-bit kernel, a graphical desktop, and everything in between. No Linux kernel, no borrowed foundations, no legacy code. Just bare metal x86-64 and the stubborn belief that impossible is just a word.
 
 <!-- TODO: Add screenshot here once desktop polish is complete -->
 <!-- ![Impossible OS Desktop](resources/screenshots/desktop.png) -->
@@ -39,7 +39,7 @@ They said building a fully functional, feature-rich operating system from scratc
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Custom UEFI bootloader | ✅ | Hand-written PE/COFF application — no GRUB, no shims |
+| Custom UEFI bootloader | ✅ | Hand-written PE/COFF application -- no GRUB, no shims |
 | Secure Boot | ✅ | Shim chain-loading with embedded vendor certificate (`MOK.cer`) |
 | 64-bit Long Mode kernel | ✅ | Identity-mapped page tables, GDT/IDT, APIC timers |
 | Preemptive multitasking | ✅ | Round-robin scheduler, kernel threads, mutexes, semaphores, seqlocks |
@@ -79,21 +79,21 @@ bash scripts/build.sh run      # Build + boot in QEMU
 
 | Command | Description |
 |---------|-------------|
-| `bash scripts/build.sh` | Incremental build (fast — only changed files) |
+| `bash scripts/build.sh` | Incremental build (fast -- only changed files) |
 | `bash scripts/build.sh clean` | Full clean build |
 | `bash scripts/build.sh run` | Incremental build + launch QEMU |
 | `bash scripts/build.sh clean run` | Clean build + launch QEMU |
 
 > [!NOTE]
-> Always use `bash scripts/build.sh` — never raw `make` commands.
+> Always use `bash scripts/build.sh` -- never raw `make` commands.
 > Verify success: `tail -1 build/build.log` → must show `=== BUILD OK ===`
 
 ### Downloads
 
 Pre-built disk images are available on the [**Releases**](https://github.com/rizonesoft/impossible-os/releases) page. Each release includes:
 
-- **`system-disk.img`** — raw GPT image for QEMU or USB boot
-- **`system-disk.vdi`** — VirtualBox native format
+- **`system-disk.img`** -- raw GPT image for QEMU or USB boot
+- **`system-disk.vdi`** -- VirtualBox native format
 - **Setup guides** for QEMU and VirtualBox
 
 ---
@@ -160,7 +160,7 @@ todo/              Development roadmap (100+ TODO items across 50+ files)
 
 | Platform | Method |
 |----------|--------|
-| **QEMU** | `bash scripts/build.sh run` — default, fastest iteration |
+| **QEMU** | `bash scripts/build.sh run` -- default, fastest iteration |
 | **VirtualBox** | `scripts/machines/run-vbox.bat` (Windows) or configure a 64-bit EFI VM |
 | **Hyper-V** | Gen 2 VM, Secure Boot disabled, UEFI boot from `.vhdx` |
 | **Real hardware** | Write `build/system-disk.img` to USB with `dd` or Rufus |
@@ -196,7 +196,7 @@ No. We just have a severe, incurable allergy to people telling us something is "
 
 ## 🗺️ Roadmap
 
-Development is tracked in [`todo/TODO-00-INDEX.md`](todo/TODO-00-INDEX.md) — a comprehensive 10-layer roadmap covering everything from kernel foundations to a full application suite.
+Development is tracked in [`todo/TODO-00-INDEX.md`](todo/TODO-00-INDEX.md) -- a comprehensive 10-layer roadmap covering everything from kernel foundations to a full application suite.
 
 | Layer | Status |
 |-------|--------|
@@ -217,18 +217,18 @@ Development is tracked in [`todo/TODO-00-INDEX.md`](todo/TODO-00-INDEX.md) — a
 
 Impossible OS wouldn't be possible (ironic, we know) without these amazing projects:
 
-- **[stb_truetype](https://github.com/nothings/stb)** — TrueType font rasterization (public domain)
-- **[stb_image](https://github.com/nothings/stb)** — JPEG/PNG/BMP decoding (public domain)
-- **[OVMF/EDK2](https://github.com/tianocore/edk2)** — UEFI firmware for testing (BSD-2-Clause)
-- **[SerenityOS](https://github.com/SerenityOS/serenity)** — Inspiration for what a solo OS project can become
-- **[OSDev Wiki](https://wiki.osdev.org/)** — The encyclopedia of OS development
-- **[Adwaita](https://gitlab.gnome.org/GNOME/adwaita-icon-theme)** — Cursor theme (LGPL/CC-BY-SA)
-- **[Inter](https://rsms.me/inter/)** & **[FluentSystemIcons](https://github.com/microsoft/fluentui-system-icons)** — Fonts and icons
+- **[stb_truetype](https://github.com/nothings/stb)** -- TrueType font rasterization (public domain)
+- **[stb_image](https://github.com/nothings/stb)** -- JPEG/PNG/BMP decoding (public domain)
+- **[OVMF/EDK2](https://github.com/tianocore/edk2)** -- UEFI firmware for testing (BSD-2-Clause)
+- **[SerenityOS](https://github.com/SerenityOS/serenity)** -- Inspiration for what a solo OS project can become
+- **[OSDev Wiki](https://wiki.osdev.org/)** -- The encyclopedia of OS development
+- **[Adwaita](https://gitlab.gnome.org/GNOME/adwaita-icon-theme)** -- Cursor theme (LGPL/CC-BY-SA)
+- **[Inter](https://rsms.me/inter/)** & **[FluentSystemIcons](https://github.com/microsoft/fluentui-system-icons)** -- Fonts and icons
 
 ---
 
 ## 📄 License
 
-GPL-3.0 License — see [LICENSE](LICENSE) for details.
+GPL-3.0 License -- see [LICENSE](LICENSE) for details.
 
 Copyright © 2026 [Rizonesoft](https://github.com/rizonesoft)

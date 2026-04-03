@@ -1,19 +1,19 @@
-# TODO-07 — Win32 Compatibility Matrix & Bring-Up Ladder
+# TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder
 
 > **Goal:** Create the compatibility tracking system and progressive test-program
-> bring-up ladder that validates Win32 compatibility systematically — from the first
+> bring-up ladder that validates Win32 compatibility systematically -- from the first
 > `ExitProcess` call to running real unmodified Windows programs. The north star:
 > **when a Win32 PE program calls any standard function, it just works.**
 
 > [!IMPORTANT]
-> This TODO owns **tracking and testing infrastructure only** — it does not implement
+> This TODO owns **tracking and testing infrastructure only** -- it does not implement
 > any Win32 API functions. Implementation of each API lives in its owning TODO
 > (`09-services-security/TODO-07` through `TODO-08`, `11-user-platform-sdk/TODO-04`
 > through `TODO-05`). Gate conditions reference those TODOs.
 >
 > **`win32_unimpl_stub`** (in-kernel call-count table + `win32log` shell command) is
 > already specced in `09-services-security/TODO-08 §9`. This TODO extends it with a
-> shared-memory counter map for user-mode access and the `win32compat.exe` report tool —
+> shared-memory counter map for user-mode access and the `win32compat.exe` report tool --
 > do not re-specify the base stub infrastructure.
 >
 > **Tier gate rule**: a tier is declared ✅ complete **only** when all native test
@@ -24,16 +24,16 @@
 
 ## Inputs
 
-- `09-services-security/TODO-07-win32-pe-loader.md` (→ XREF) — gate TODO for Tiers 1–3
-- `09-services-security/TODO-08-win32-api-surface.md §9` (→ XREF) — `win32_unimpl_stub` call-count table; extend here with shmem map
-- `09-services-security/TODO-08-win32-api-surface.md §1 §2 §5 §6 §7 §10` (→ XREF) — gate TODOs for Tiers 2–7
-- `11-user-platform-sdk/TODO-04-ntdll-user-runtime.md §2 §3` (→ XREF) — gate TODO for Tiers 5–7
-- `11-user-platform-sdk/TODO-05-win32-subsystem.md §1–4` (→ XREF) — gate TODO for Tiers 6–7
-- `02-kernel-core/TODO-13-registry.md` (→ XREF) — gate TODO for Tier 4 (RegOpenKey etc.)
-- `include/kernel/ipc/` — `SYS_SHMEM_CREATE=35`, `SYS_SHMEM_MAP=36` for stub counter shared memory
-- `user/` — `hello.c`, `cmd.c` as reference user-mode program patterns
-- `scripts/build.sh` — QEMU headless run pattern (`-serial stdio`); `build/serial.log`
-- `sdk/docs/` — `win32-compat.md` lives here (§1)
+- `09-services-security/TODO-07-win32-pe-loader.md` (→ XREF) -- gate TODO for Tiers 1–3
+- `09-services-security/TODO-08-win32-api-surface.md §9` (→ XREF) -- `win32_unimpl_stub` call-count table; extend here with shmem map
+- `09-services-security/TODO-08-win32-api-surface.md §1 §2 §5 §6 §7 §10` (→ XREF) -- gate TODOs for Tiers 2–7
+- `11-user-platform-sdk/TODO-04-ntdll-user-runtime.md §2 §3` (→ XREF) -- gate TODO for Tiers 5–7
+- `11-user-platform-sdk/TODO-05-win32-subsystem.md §1–4` (→ XREF) -- gate TODO for Tiers 6–7
+- `02-kernel-core/TODO-13-registry.md` (→ XREF) -- gate TODO for Tier 4 (RegOpenKey etc.)
+- `include/kernel/ipc/` -- `SYS_SHMEM_CREATE=35`, `SYS_SHMEM_MAP=36` for stub counter shared memory
+- `user/` -- `hello.c`, `cmd.c` as reference user-mode program patterns
+- `scripts/build.sh` -- QEMU headless run pattern (`-serial stdio`); `build/serial.log`
+- `sdk/docs/` -- `win32-compat.md` lives here (§1)
 
 ---
 
@@ -52,14 +52,14 @@ runs, Win32 compatibility is excellent.
 |------|---------|-------|-------------------|
 | 1 | API coverage tracker + `compat_stub` extension | ⭐ | `TODO-08 §9` base stub; `SYS_SHMEM_CREATE/MAP` |
 | 2 | Bring-up ladder framework | ⭐ | §1; `sdk/compat/` test program structure |
-| 3 | Tier 1 — Process exit | 💎 | Gate: `TODO-07 §1` |
-| 4 | Tier 2 — Console I/O | 💎 | Gate: `TODO-08 §1 §2` |
-| 5 | Tier 3 — File I/O | 💎 | Gate: `TODO-07 §6`, `TODO-08 §3` partial |
-| 6 | Tier 4 — Process & Registry | 💎 | Gate: `TODO-08 §2`, `TODO-13` |
-| 7 | Tier 5 — Memory & Sync | 💎 | Gate: `TODO-08 §5 §6` |
-| 8 | Tier 6 — MessageBox & Basic GUI | 💎 | Gate: `TODO-05 §1–3`, `TODO-08 §10` |
-| 9 | Tier 7 — Full Win32 Window + Controls | 💎 | Gate: `TODO-05 §2–4`, `TODO-08 §7 §10 §11` |
-| 10 | Tier 8 — Extended Win32 surface | 💎 | Gate: all Tiers 1–7; `advapi32`/`shell32` |
+| 3 | Tier 1 -- Process exit | 💎 | Gate: `TODO-07 §1` |
+| 4 | Tier 2 -- Console I/O | 💎 | Gate: `TODO-08 §1 §2` |
+| 5 | Tier 3 -- File I/O | 💎 | Gate: `TODO-07 §6`, `TODO-08 §3` partial |
+| 6 | Tier 4 -- Process & Registry | 💎 | Gate: `TODO-08 §2`, `TODO-13` |
+| 7 | Tier 5 -- Memory & Sync | 💎 | Gate: `TODO-08 §5 §6` |
+| 8 | Tier 6 -- MessageBox & Basic GUI | 💎 | Gate: `TODO-05 §1–3`, `TODO-08 §10` |
+| 9 | Tier 7 -- Full Win32 Window + Controls | 💎 | Gate: `TODO-05 §2–4`, `TODO-08 §7 §10 §11` |
+| 10 | Tier 8 -- Extended Win32 surface | 💎 | Gate: all Tiers 1–7; `advapi32`/`shell32` |
 | 11 | Stub call log analysis (`win32compat.exe log`) | ⭐ | §1 shmem counters; `win32_unimpl_stub` |
 | 12 | CI compat gate (`scripts/compat-check.sh`) | ⭐ | §3–9 native programs; QEMU headless |
 
@@ -77,7 +77,7 @@ runs, Win32 compatibility is excellent.
   - Tier: 1–8 from bring-up ladder (§2)
 - [ ] **`compat_stub(dll, name)` macro extension** (extends `TODO-08 §9` base):
   ```c
-  /* In sdk/compat/compat_stub.h — shared between kernel and compat tools */
+  /* In sdk/compat/compat_stub.h -- shared between kernel and compat tools */
   #define COMPAT_STUB_COUNT 512
 
   typedef struct {
@@ -89,7 +89,7 @@ runs, Win32 compatibility is excellent.
   /* Shared memory segment name: "Win32CompatCounters" */
   extern compat_stub_entry_t *g_compat_stubs; /* shmem-mapped in user mode */
   ```
-  - Extend `win32_unimpl_stub(dll, fn)` from `TODO-08 §9`: additionally write to shmem counter map (if `g_compat_stubs != NULL` — kernel mode sets to NULL, user-mode `win32compat.exe` maps the shmem)
+  - Extend `win32_unimpl_stub(dll, fn)` from `TODO-08 §9`: additionally write to shmem counter map (if `g_compat_stubs != NULL` -- kernel mode sets to NULL, user-mode `win32compat.exe` maps the shmem)
   - Shmem key: `SYS_SHMEM_CREATE("Win32CompatCounters", sizeof(compat_stub_entry_t) * 512)`; created once at process start; `win32compat.exe` maps it via `SYS_SHMEM_MAP`
 - [ ] **`win32compat.exe` tool** (`src/tools/win32compat.c`):
   - `win32compat report`: map shmem → sort by `hit_count` desc → print top 40 entries
@@ -104,7 +104,7 @@ runs, Win32 compatibility is excellent.
 
 ## 2. Bring-Up Ladder Framework `[Sonnet]`
 
-**Directory:** `sdk/compat/` — one subdirectory per tier
+**Directory:** `sdk/compat/` -- one subdirectory per tier
 
 - [ ] **Directory structure**:
   ```
@@ -130,13 +130,13 @@ runs, Win32 compatibility is excellent.
 
 ---
 
-## 3. Tier 1 — Process Exit Only `[Sonnet]`
+## 3. Tier 1 -- Process Exit Only `[Sonnet]`
 
 > Gate: `09-services-security/TODO-07 §1` (ring-3 fix + `SYS_EXITPROCESS`)
 
 **~2 functions:** `ExitProcess`, `GetLastError`
 
-- [ ] **`tier1/tier1_exit.c`**: `#include <windows.h>` — `void WinMainCRTStartup(void) { ExitProcess(0); }` — hand-assembled minimal PE; no CRT; no imports except `kernel32.dll!ExitProcess`
+- [ ] **`tier1/tier1_exit.c`**: `#include <windows.h>` -- `void WinMainCRTStartup(void) { ExitProcess(0); }` -- hand-assembled minimal PE; no CRT; no imports except `kernel32.dll!ExitProcess`
   - Expected serial output: `[sched] task {pid} exited with code 0`
   - Expected shell output: `Exit code: 0`
 - [ ] **Tier 1 pass criteria**: process terminates cleanly; shell returns to prompt; ring-3 transition and `SYS_EXITPROCESS` confirmed working
@@ -145,7 +145,7 @@ runs, Win32 compatibility is excellent.
 
 ---
 
-## 4. Tier 2 — Console I/O `[Sonnet]`
+## 4. Tier 2 -- Console I/O `[Sonnet]`
 
 > Gate: `09-services-security/TODO-08 §1 §8`
 
@@ -163,7 +163,7 @@ runs, Win32 compatibility is excellent.
 
 ---
 
-## 5. Tier 3 — File I/O `[Sonnet]`
+## 5. Tier 3 -- File I/O `[Sonnet]`
 
 > Gate: `09-services-security/TODO-07 §6`, `TODO-08 §3` partial
 
@@ -182,7 +182,7 @@ runs, Win32 compatibility is excellent.
 
 ---
 
-## 6. Tier 4 — Process & Registry `[Sonnet]`
+## 6. Tier 4 -- Process & Registry `[Sonnet]`
 
 > Gate: `09-services-security/TODO-08 §2`, `02-kernel-core/TODO-13-registry.md`
 
@@ -201,7 +201,7 @@ runs, Win32 compatibility is excellent.
 
 ---
 
-## 7. Tier 5 — Memory & Sync `[Sonnet]`
+## 7. Tier 5 -- Memory & Sync `[Sonnet]`
 
 > Gate: `09-services-security/TODO-08 §5 §6`, `11-user-platform-sdk/TODO-04 §2`
 
@@ -214,13 +214,13 @@ runs, Win32 compatibility is excellent.
 - [ ] **`tier5/tier5_virtual.c`**: `VirtualAlloc(NULL, 65536, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)` → write → `VirtualProtect(PAGE_READONLY)` → attempt write → catch access violation → `VirtualFree`
   - Expected: `VirtualAlloc/Protect test passed`
 - [ ] **Real Windows binary targets**:
-  - **SQLite3 shell for Windows** (`sqlite3.exe` static): `.version` command prints version string; `CREATE TABLE; INSERT; SELECT` — all execute correctly
+  - **SQLite3 shell for Windows** (`sqlite3.exe` static): `.version` command prints version string; `CREATE TABLE; INSERT; SELECT` -- all execute correctly
   - **Lua interpreter** (`lua54.exe` static): `lua -e "print('hello from Lua')"` → prints output
   - Pass criteria: SQLite `.version` + basic SQL works; Lua `print` works
 
 ---
 
-## 8. Tier 6 — MessageBox & Basic GUI `[Sonnet]`
+## 8. Tier 6 -- MessageBox & Basic GUI `[Sonnet]`
 
 > Gate: `11-user-platform-sdk/TODO-05 §1–3`, `09-services-security/TODO-08 §10`
 
@@ -237,7 +237,7 @@ runs, Win32 compatibility is excellent.
 
 ---
 
-## 9. Tier 7 — Full Win32 Window + Controls `[Sonnet]`
+## 9. Tier 7 -- Full Win32 Window + Controls `[Sonnet]`
 
 > Gate: `11-user-platform-sdk/TODO-05 §2–4`, `09-services-security/TODO-08 §7 §10 §11`
 
@@ -254,7 +254,7 @@ runs, Win32 compatibility is excellent.
 
 ---
 
-## 10. Tier 8 — Extended Win32 Surface `[Sonnet]`
+## 10. Tier 8 -- Extended Win32 Surface `[Sonnet]`
 
 > Gate: all Tiers 1–7; `advapi32.dll` security functions; `shell32.dll`; GDI+ subset
 
@@ -278,9 +278,9 @@ runs, Win32 compatibility is excellent.
 **Source:** extends `src/tools/win32compat.c` (§1)
 
 - [ ] **`win32compat log <program.exe>`**:
-  1. `win32compat reset` — zero shmem counters
+  1. `win32compat reset` -- zero shmem counters
   2. Launch `program.exe` (via `CreateProcess`)
-  3. `WaitForSingleObject(hProc, 30000)` — 30 s timeout
+  3. `WaitForSingleObject(hProc, 30000)` -- 30 s timeout
   4. Read shmem counter map; filter to `hit_count > 0` + `last_errno == ERROR_CALL_NOT_IMPLEMENTED`
   5. Sort by `hit_count` desc; print top 10:
      ```
@@ -316,7 +316,7 @@ runs, Win32 compatibility is excellent.
      Tier 1 (Process exit):    [PASS] 1/1
      Tier 2 (Console I/O):     [PASS] 3/3
      Tier 3 (File I/O):        [PASS] 3/3
-     Tier 4 (Process/Reg):     [FAIL] 2/3 — tier4_regread: timeout
+     Tier 4 (Process/Reg):     [FAIL] 2/3 -- tier4_regread: timeout
      Tier 5 (Memory/Sync):     [SKIP] gate TODO-08 §6 not done
      ...
      
@@ -338,19 +338,19 @@ runs, Win32 compatibility is excellent.
 
 | ⭐ | Feature                                        | 🪟 Win11                                               | 🐧 Linux                                        | 🚀 Impossible OS                                                                 |
 |----|------------------------------------------------|-----------------------------------------------------|----------------------------------------------|-------------------------------------------------------------------------------|
-| ⭐ | Win32 API coverage tracker                     | ✅ MSDN + Windows App Compat                        | ✅ Wine AppDB; ReactOS compat table          | ⬜ §1 — `sdk/docs/win32-compat.md` with per-function status; `compat-scan.sh` |
-| ⭐ | `compat_stub` shmem counter + live report tool | ✅ ETW provider; `win32u!NtUser*` logging; AppVerif | ✅ Wine `WINEDEBUG=+relay`; strace           | ⬜ §1 — shmem counter map; `win32compat report`                               |
-| ⭐ | 8-tier progressive bring-up ladder             | ❌ No public bring-up ladder                        | ✅ ReactOS internal bring-up milestones      | ⬜ §2 — –10; explicit gate conditions +                                       |
+| ⭐ | Win32 API coverage tracker                     | ✅ MSDN + Windows App Compat                        | ✅ Wine AppDB; ReactOS compat table          | ⬜ §1 -- `sdk/docs/win32-compat.md` with per-function status; `compat-scan.sh` |
+| ⭐ | `compat_stub` shmem counter + live report tool | ✅ ETW provider; `win32u!NtUser*` logging; AppVerif | ✅ Wine `WINEDEBUG=+relay`; strace           | ⬜ §1 -- shmem counter map; `win32compat report`                               |
+| ⭐ | 8-tier progressive bring-up ladder             | ❌ No public bring-up ladder                        | ✅ ReactOS internal bring-up milestones      | ⬜ §2 -- –10; explicit gate conditions +                                       |
 | 💎 | Runs XP `cmd.exe`                              | ✅ Native                                           | ✅ Wine runs XP cmd.exe                      | ⬜ §4                                                                         |
-| 💎 | Runs Busybox, SQLite, Lua                      | ✅ Native                                           | ✅ Native Linux; Wine also runs              | ⬜ §5 — §6 §7                                                                 |
+| 💎 | Runs Busybox, SQLite, Lua                      | ✅ Native                                           | ✅ Native Linux; Wine also runs              | ⬜ §5 -- §6 §7                                                                 |
 | 💎 | Runs PuTTY                                     | ✅ Native                                           | ✅ Wine runs PuTTY                           | ⬜ §9                                                                         |
-| ⭐ | Stub call log analysis                         | ❌ No equivalent (Windows is the                    | ✅ `wine --log-file` + `winetricks diagnose` | ⬜ §11 — pinpoints exactly which stubs blocked                                |
-| ⭐ | CI compat gate with % score in sysinfo         | ❌ Not applicable                                   | ✅ ReactOS TestBot; Wine CI                  | ⬜ §12 — `make compat-check`; score in `HKLM\SYSTEM\Win32Compat\Score`        |
+| ⭐ | Stub call log analysis                         | ❌ No equivalent (Windows is the                    | ✅ `wine --log-file` + `winetricks diagnose` | ⬜ §11 -- pinpoints exactly which stubs blocked                                |
+| ⭐ | CI compat gate with % score in sysinfo         | ❌ Not applicable                                   | ✅ ReactOS TestBot; Wine CI                  | ⬜ §12 -- `make compat-check`; score in `HKLM\SYSTEM\Win32Compat\Score`        |
 
 Impossible OS's `⭐` advantage over Wine/ReactOS: the compat tracking is **kernel-native**
 (stub counters in shmem, score in Registry, visible in System Information), the bring-up
 ladder is **prescriptive** (explicit gate conditions tied to TODO numbers), and the stub
-log analysis **automatically updates the compat matrix** — closing the loop between
+log analysis **automatically updates the compat matrix** -- closing the loop between
 running a binary and knowing exactly what to implement next.
 
 ---

@@ -1,5 +1,5 @@
 /* ============================================================================
- * icon_store.h — Hybrid Icon Store API
+ * icon_store.h -- Hybrid Icon Store API
  *
  * Centralized icon system with two rendering backends:
  *
@@ -144,13 +144,13 @@ void icon_store_init(void);
  * For monochrome icons: rasterizes from icon font with default theme color.
  * For color icons: returns the closest available IRES size.
  * Returns NULL if the icon is not available.
- * The returned pointer is cached — do NOT free it. */
+ * The returned pointer is cached -- do NOT free it. */
 icon_bitmap_t *icon_get(system_icon_t id, uint32_t size);
 
 /* Get an icon bitmap with a custom foreground color (monochrome icons only).
  * Color icons ignore the tint parameter and return their original colors.
  * Returns NULL if the icon is not available.
- * The returned pointer is cached — do NOT free it. */
+ * The returned pointer is cached -- do NOT free it. */
 icon_bitmap_t *icon_get_colored(system_icon_t id, uint32_t size,
                                  gfx_color_t color);
 

@@ -1,4 +1,4 @@
-# TODO-09 — Process Model Extensions
+# TODO-09 -- Process Model Extensions
 
 > **Goal:** Extend the kernel process model with the per-process state fields and syscalls that don't belong to the scheduler, VMM, or Object Manager individually: current working directory, standard handle pre-wiring, user-mode program break (Linux compat heap), process priority classes mapped to Win32 `SetPriorityClass`, scheduling policy per-task (`SCHED_FIFO`/`SCHED_IDLE`), and a process capability/privilege bitmask. All of these hang off `struct task` and are needed before any non-trivial user-mode program can run correctly.
 
@@ -7,19 +7,20 @@
 
 ## Inputs
 
-- [`include/kernel/sched/task.h`](../../include/kernel/sched/task.h) — `struct task`, `struct thread`, priority constants
-- [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) — `task_create`, `task_fork`, `task_exec`, `task_exit`, scheduler loop
-- [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) — `vfs_open`, relative path lookup entry point
-- [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) — `vmm_map_page` (singular) for program-break page allocation; call in a loop for multi-page `brk` extensions
-- → XREF: `TODO-03-object-manager.md §3` — `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
-- → XREF: `TODO-04-peb-teb-user-abi.md §5` — `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
-- → XREF: `TODO-05-native-api-ssdt.md §9` — `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
-- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x0160–0x0167 reserved for Job Object syscalls
-- → XREF: `TODO-07-time-filetime-management.md §6` — `KeDelayExecutionThread` is the sleep implementation; `NtDelayExecution` syscall wiring belongs there
-- → XREF: `TODO-08-binary-system.md §1` — `exec_load()` dispatcher sets `brk` to end of BSS at load time
-- → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §4,§6` — `SCHED_FIFO`/`SCHED_RR` classes (§4) and CPU affinity (§6) are implemented in the scheduler; §5 and §10 here define the process-level policy fields and `NtSetInformationProcess` API; actual scheduler loop changes are authoritative THERE
-- → XREF: `TODO-17-kernel-security-hardening.md §1` — NX/DEP is consumed by §11 per-process mitigation policy flags
-- → XREF: `TODO-05-native-api-ssdt.md §10` — `NtQueryInformationProcess` wires the syscall; §8 here adds the accounting fields that populate `ProcessTimes`, `ProcessIoCounters`, `ProcessVmCounters` responses
+- [`include/kernel/sched/task.h`](../../include/kernel/sched/task.h) -- `struct task`, `struct thread`, priority constants
+- [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) -- `task_create`, `task_fork`, `task_exec`, `task_exit`, scheduler loop
+- [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) -- `vfs_open`, relative path lookup entry point
+- [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) -- `vmm_map_page` (singular) for program-break page allocation; call in a loop for multi-page `brk` extensions
+- → XREF: `TODO-03-object-manager.md §3` -- `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
+- → XREF: `TODO-04-peb-teb-user-abi.md §5` -- `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
+- → XREF: `TODO-05-native-api-ssdt.md §9` -- `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
+- → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x0160–0x0167 reserved for Job Object syscalls
+- → XREF: `TODO-07-time-filetime-management.md §6` -- `KeDelayExecutionThread` is the sleep implementation; `NtDelayExecution` syscall wiring belongs there
+- → XREF: `TODO-08-binary-system.md §1` -- `exec_load()` dispatcher sets `brk` to end of BSS at load time
+- → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §4,§6` -- `SCHED_FIFO`/`SCHED_RR` classes (§4) and CPU affinity (§6) are implemented in the scheduler; §5 and §10 here define the process-level policy fields and `NtSetInformationProcess` API; actual scheduler loop changes are authoritative THERE
+- → XREF: `TODO-17-kernel-security-hardening.md §1` -- NX/DEP is consumed by §11 per-process mitigation policy flags
+- → XREF: `TODO-05-native-api-ssdt.md §10` -- `NtQueryInformationProcess` wires the syscall; §8 here adds the accounting fields that populate `ProcessTimes`, `ProcessIoCounters`, `ProcessVmCounters` responses
+- → XREF: `TODO-11-security-reference-monitor.md §7` -- token duplication at process spawn; TODO-11 §7 hooks into `task_exec()` to attach a copy of the parent's ACCESS_TOKEN to the child task
 
 ## Outcome
 
@@ -32,7 +33,7 @@
 - A `capabilities` bitmask on `struct task` gates privileged kernel operations; user processes receive a restricted default set; capabilities are inherited and can only be dropped, never gained.
 - Process accounting fields populate `NtQueryInformationProcess` responses for `ProcessTimes`, `ProcessIoCounters`, and `ProcessVmCounters`.
 - Per-process resource limits (`rlimit_t` soft/hard pairs) enforce `RLIMIT_AS`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, `RLIMIT_STACK`, `RLIMIT_NPROC`, and `RLIMIT_FSIZE`.
-- `NtPledge()` / `NtUnveil()` provide irreversible syscall-category restriction and filesystem visibility scoping — simpler and stronger than seccomp or Capsicum.
+- `NtPledge()` / `NtUnveil()` provide irreversible syscall-category restriction and filesystem visibility scoping -- simpler and stronger than seccomp or Capsicum.
 
 ## Implementation Order
 
@@ -43,7 +44,7 @@
 | 💎  |   3   | User-mode program break (brk/sbrk Linux compat)     | VMM, TODO-08 §1               |  [ ]   |
 | 💎  |   4   | Process priority class (Win32 `SetPriorityClass`)    | sched (exists)                |  [ ]   |
 | 💎  |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)     | 4                             |  [ ]   |
-| 💎  |   6   | Process capabilities and privilege bitmask           | —                             |  [ ]   |
+| 💎  |   6   | Process capabilities and privilege bitmask           | --                             |  [ ]   |
 | ⭐  |   7   | Capability inheritance and drop-only policy          | 6                             |  [ ]   |
 | 💎  |   8   | Process accounting fields (times, I/O, VM counters)  | 1                             |  [ ]   |
 | 💎  |   9   | Per-process resource limits (rlimits)                | 3, 6                          |  [ ]   |
@@ -52,8 +53,8 @@
 | ⭐  |  12   | Pledge/unveil-style process restriction              | 6, 7                          |  [ ]   |
 | 💎  |  13   | Job Object syscalls wired to SSDT                    | 6, TODO-05 §4                 |  [ ]   |
 
-> 💎 = parity — Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
-> ⭐ = exclusive — strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
+> 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
+> ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
 
 ---
 
@@ -62,14 +63,14 @@
 `struct task` has no `cwd` field. All VFS paths are currently treated as absolute. Relative path resolution must be added before any shell navigation or portable app path handling works.
 
 - [ ] Add `char cwd[MAX_PATH]` to `struct task`; initialize to `"C:\\"` at `task_init()` and `task_create()`
-- [ ] Inherit CWD from parent at `task_fork()` — copy the string
+- [ ] Inherit CWD from parent at `task_fork()` -- copy the string
 - [ ] In `task_exec()` / `exec_load()`: preserve CWD from the calling process (do not reset on exec)
 - [ ] Add VFS relative-path resolver: if the path does not begin with a drive letter (`X:\`), prepend `task->cwd` before passing to VFS lookup
 - [ ] `NtSetCurrentDirectory(UNICODE_STRING *path)`: validate path exists via VFS, update `task->cwd`
 - [ ] `NtQueryCurrentDirectory(buffer, length)`: copy `task->cwd` to user buffer
 - [ ] Register both in SSDT (→ XREF TODO-05 §4)
 - [ ] Win32 wrappers: `SetCurrentDirectory` → `NtSetCurrentDirectory`; `GetCurrentDirectory` → `NtQueryCurrentDirectory`
-- [ ] Commit: `"kernel: task — working directory field and Nt API wiring"`
+- [ ] Commit: `"kernel: task -- working directory field and Nt API wiring"`
 
 **Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns `"C:\\Impossible"`. `NtSetCurrentDirectory` on non-existent path returns error (CWD unchanged). Relative path `"System\\Logs"` resolves to `"C:\\System\\Logs"` when CWD is `"C:\\"`. `task_fork()` child inherits parent CWD. `POST16(0xD010)` on entry, `POST16(0xD011)` after VFS resolver wired. Range `0xD01x` confirmed free. Test on: QEMU WHPX + TCG.
 
@@ -84,11 +85,11 @@ When a process is created, `STD_INPUT_HANDLE` (0), `STD_OUTPUT_HANDLE` (1), and 
 - [ ] `GetStdHandle(nStdHandle)` → look up the pre-wired slot; `SetStdHandle(nStdHandle, handle)` → replace it
 - [ ] `DuplicateHandle`: duplicate a handle slot into the child process at `NtCreateProcess` time for I/O redirection (`cmd > file` pipes the child stdout to a file handle before execution)
 - [ ] Inherit standard handles into child at `task_fork()` if `HANDLE_FLAG_INHERIT` is set (TODO-03 §10)
-- [ ] Commit: `"kernel: task — STD handle pre-wiring at process creation"`
+- [ ] Commit: `"kernel: task -- STD handle pre-wiring at process creation"`
 
 **Test checkpoint:** After `task_create()`, `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE` are valid handles in the process handle table. `WriteFile(STD_OUTPUT_HANDLE, ...)` produces console output. `DuplicateHandle` into child works for I/O redirection. `POST16(0xD020)` on entry, `POST16(0xD021)` after handles wired. Range `0xD02x` confirmed free. Test on: QEMU WHPX + TCG.
 
-## 3. User-Mode Program Break (brk/sbrk — Linux Compat)
+## 3. User-Mode Program Break (brk/sbrk -- Linux Compat)
 
 Win32 programs use `NtAllocateVirtualMemory` (TODO-05 §9) for heap. Linux-compat programs call `brk(2)` / `sbrk(2)` which the kernel must handle by growing user-space pages.
 
@@ -99,9 +100,9 @@ Win32 programs use `NtAllocateVirtualMemory` (TODO-05 §9) for heap. Linux-compa
 - [ ] `sys_brk(addr)`: if `addr == 0`, return current break; if `addr > program_break`, allocate VMM pages to cover the new range; update `program_break`; reject addresses below BSS end
 - [ ] `sys_sbrk(increment)`: return old break; advance by `increment` bytes via `sys_brk`
 - [ ] Reject `increment < 0` if it would shrink below BSS end (simplification; full shrink support is optional)
-- [ ] Add `SYS_BRK` to the Linux-compat syscall table (keep separate from SSDT — POSIX compat only)
+- [ ] Add `SYS_BRK` to the Linux-compat syscall table (keep separate from SSDT -- POSIX compat only)
 - [ ] Verify: user-mode `malloc` backed by a musl-style `sbrk` wrapper can allocate and free without crashing
-- [ ] Commit: `"kernel: task — program break (brk/sbrk) for Linux compat heap"`
+- [ ] Commit: `"kernel: task -- program break (brk/sbrk) for Linux compat heap"`
 
 **Test checkpoint:** `sys_brk(0)` returns current break (non-zero). `sys_sbrk(4096)` returns old break; new address is 4096 bytes higher; memory at new address is writable. `sys_sbrk` below BSS end rejected. Serial log shows `"task: brk extended to 0x<addr>"`. `POST16(0xD030)` on entry, `POST16(0xD031)` after VMM pages allocated. Range `0xD03x` confirmed free. Test on: QEMU WHPX + TCG.
 
@@ -121,90 +122,90 @@ Thread priority already exists. This section adds the Win32 `PROCESS_PRIORITY_CL
 - [ ] Changing `priority_class` adjusts all thread `base_priority` values but does not override active PI boosts
 - [ ] Compositor and audio: spawned at `PROCESS_PRIORITY_HIGH`; background tasks at `PROCESS_PRIORITY_IDLE`
 - [ ] Register `NtSetInformationProcess` and `NtQueryInformationProcess` in SSDT (→ XREF `TODO-05 §4`)
-- [ ] Commit: `"kernel: task — process priority class and NtSetInformationProcess"`
+- [ ] Commit: `"kernel: task -- process priority class and NtSetInformationProcess"`
 
 **Test checkpoint:** `NtSetInformationProcess(ProcessPriorityClass, PROCESS_PRIORITY_HIGH)` updates all thread base priorities to `THREAD_PRIO_HIGH`. `PROCESS_PRIORITY_REALTIME` without `CAP_REALTIME` returns `STATUS_PRIVILEGE_NOT_HELD`. `NtQueryInformationProcess(ProcessPriorityClass)` returns current class. Serial log shows `"task: priority class set to <class>"`. `POST16(0xD040)` on entry, `POST16(0xD041)` after threads updated. Range `0xD04x` confirmed free. Test on: QEMU WHPX + TCG.
 
 ## 5. Per-Task Scheduling Policy
 
 > [!NOTE]
-> → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §4` — scope overlap: the scheduler TODO implements `SCHED_FIFO`/`SCHED_RR`/`SCHED_DEADLINE` classes with RT run queues, priority levels, and the actual `schedule()` loop changes. This section defines only the process-level `sched_policy` field on `struct task` and the `NtSetInformationProcess` API surface. Scheduler loop changes are authoritative in TODO-05-sched.
+> → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §4` -- scope overlap: the scheduler TODO implements `SCHED_FIFO`/`SCHED_RR`/`SCHED_DEADLINE` classes with RT run queues, priority levels, and the actual `schedule()` loop changes. This section defines only the process-level `sched_policy` field on `struct task` and the `NtSetInformationProcess` API surface. Scheduler loop changes are authoritative in TODO-05-sched.
 
 Add a per-task `sched_policy` field for tasks that need non-time-sliced execution.
 
 - [ ] Add `uint8_t sched_policy` to `struct task` with values:
-  - `SCHED_POLICY_NORMAL = 0` — default round-robin with `SCHED_QUANTUM` time slice
-  - `SCHED_POLICY_FIFO   = 1` — run until block or yield; no preemptive time-slice; requires `CAP_SCHED_FIFO`
-  - `SCHED_POLICY_IDLE   = 2` — only scheduled when no `SCHED_POLICY_NORMAL` or `SCHED_POLICY_FIFO` task is runnable
+  - `SCHED_POLICY_NORMAL = 0` -- default round-robin with `SCHED_QUANTUM` time slice
+  - `SCHED_POLICY_FIFO   = 1` -- run until block or yield; no preemptive time-slice; requires `CAP_SCHED_FIFO`
+  - `SCHED_POLICY_IDLE   = 2` -- only scheduled when no `SCHED_POLICY_NORMAL` or `SCHED_POLICY_FIFO` task is runnable
 - [ ] Update `schedule()` in `task.c`: skip `SCHED_POLICY_FIFO` tasks for quantum-based preemption; skip `SCHED_POLICY_IDLE` tasks when higher-policy tasks are runnable
 - [ ] `NtSetInformationProcess(ProcessHandle, ProcessSchedulingPolicy, ...)`: validate `CAP_SCHED_FIFO` for FIFO; update field
 - [ ] Kernel-internal convenience: `task_set_sched_policy(pid, SCHED_POLICY_FIFO)` callable from boot paths
 - [ ] `NtSetInformationProcess(ProcessSchedulingPolicy)` registered in SSDT shares the entry with §4 (→ XREF `TODO-05 §4`)
-- [ ] Commit: `"kernel: sched — per-task scheduling policy (FIFO, IDLE)"`
+- [ ] Commit: `"kernel: sched -- per-task scheduling policy (FIFO, IDLE)"`
 
-**Test checkpoint:** `SCHED_POLICY_FIFO` task runs without quantum preemption until yield. `SCHED_POLICY_IDLE` task only runs when no NORMAL/FIFO tasks are runnable. `SCHED_POLICY_FIFO` without `CAP_SCHED_FIFO` returns `STATUS_PRIVILEGE_NOT_HELD`. Serial log shows `"sched: policy set to FIFO for pid <N>"`. `POST16(0xD050)` on entry, `POST16(0xD051)` after field set, `POST16(0xD052)` after `schedule()` modification verified. Range `0xD05x` confirmed free. If crash, check last POST — 0xD050 = never entered, 0xD052 = schedule() modification broke quantum preemption. Test on: QEMU WHPX + TCG. Verify on bare metal — scheduler changes may expose timing differences.
+**Test checkpoint:** `SCHED_POLICY_FIFO` task runs without quantum preemption until yield. `SCHED_POLICY_IDLE` task only runs when no NORMAL/FIFO tasks are runnable. `SCHED_POLICY_FIFO` without `CAP_SCHED_FIFO` returns `STATUS_PRIVILEGE_NOT_HELD`. Serial log shows `"sched: policy set to FIFO for pid <N>"`. `POST16(0xD050)` on entry, `POST16(0xD051)` after field set, `POST16(0xD052)` after `schedule()` modification verified. Range `0xD05x` confirmed free. If crash, check last POST -- 0xD050 = never entered, 0xD052 = schedule() modification broke quantum preemption. Test on: QEMU WHPX + TCG. Verify on bare metal -- scheduler changes may expose timing differences.
 
 ## 6. Process Capabilities and Privilege Bitmask
 
 Every process carries a `capabilities` bitmask. Privileged syscalls check it before executing. Capabilities flow from parent to child and can only be dropped.
 
 - [ ] Define capability constants in `include/kernel/security/capabilities.h`:
-  - `CAP_SYS_ADMIN       (1ULL << 0)` — general admin (mount, kmod, etc.)
-  - `CAP_RAW_IO          (1ULL << 1)` — direct disk / port I/O
-  - `CAP_NET_ADMIN       (1ULL << 2)` — raw socket / network config
-  - `CAP_LOAD_DRIVER     (1ULL << 3)` — load kernel-mode drivers
-  - `CAP_KILL_ALL        (1ULL << 4)` — signal any process
-  - `CAP_SET_TIME        (1ULL << 5)` — call `NtSetSystemTime` (→ XREF TODO-07 §9)
-  - `CAP_REALTIME        (1ULL << 6)` — set `PROCESS_PRIORITY_REALTIME`
-  - `CAP_SCHED_FIFO      (1ULL << 7)` — use `SCHED_POLICY_FIFO`
-  - `CAP_DEBUG           (1ULL << 8)` — attach debugger to another process
+  - `CAP_SYS_ADMIN       (1ULL << 0)` -- general admin (mount, kmod, etc.)
+  - `CAP_RAW_IO          (1ULL << 1)` -- direct disk / port I/O
+  - `CAP_NET_ADMIN       (1ULL << 2)` -- raw socket / network config
+  - `CAP_LOAD_DRIVER     (1ULL << 3)` -- load kernel-mode drivers
+  - `CAP_KILL_ALL        (1ULL << 4)` -- signal any process
+  - `CAP_SET_TIME        (1ULL << 5)` -- call `NtSetSystemTime` (→ XREF TODO-07 §9)
+  - `CAP_REALTIME        (1ULL << 6)` -- set `PROCESS_PRIORITY_REALTIME`
+  - `CAP_SCHED_FIFO      (1ULL << 7)` -- use `SCHED_POLICY_FIFO`
+  - `CAP_DEBUG           (1ULL << 8)` -- attach debugger to another process
 - [ ] Add `uint64_t capabilities` to `struct task`; system processes get `CAP_ALL = ~0ULL` at kernel init
 - [ ] `CAP_DEFAULT_USER`: mask granting no privileged capabilities to user processes
-- [ ] `capability_check(uint64_t cap)` — returns `STATUS_SUCCESS` if `task_current()->capabilities & cap`, else `STATUS_PRIVILEGE_NOT_HELD`
+- [ ] `capability_check(uint64_t cap)` -- returns `STATUS_SUCCESS` if `task_current()->capabilities & cap`, else `STATUS_PRIVILEGE_NOT_HELD`
 - [ ] Gate privileged paths: `CAP_SET_TIME` in `KeSetSystemTime`, `CAP_RAW_IO` in raw disk syscalls, `CAP_LOAD_DRIVER` in driver load path, `CAP_REALTIME` in priority-class enforcement
-- [ ] Commit: `"kernel: security — process capabilities bitmask"`
+- [ ] Commit: `"kernel: security -- process capabilities bitmask"`
 
-**Test checkpoint:** System process has `CAP_ALL`; `capability_check(CAP_RAW_IO)` returns `STATUS_SUCCESS`. User process has `CAP_DEFAULT_USER`; `capability_check(CAP_RAW_IO)` returns `STATUS_PRIVILEGE_NOT_HELD`. `CAP_SET_TIME` gates `KeSetSystemTime`. Serial log shows `"security: capability check — cap=<N> result=<status>"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** System process has `CAP_ALL`; `capability_check(CAP_RAW_IO)` returns `STATUS_SUCCESS`. User process has `CAP_DEFAULT_USER`; `capability_check(CAP_RAW_IO)` returns `STATUS_PRIVILEGE_NOT_HELD`. `CAP_SET_TIME` gates `KeSetSystemTime`. Serial log shows `"security: capability check -- cap=<N> result=<status>"`. Test on: QEMU WHPX + TCG.
 
 ## 7. Capability Inheritance and Drop-Only Policy
 
 Capabilities can be inherited across `fork` / `exec` but can only be dropped, never gained. This makes privilege de-escalation auditable and prevents accidental escalation.
 
 - [ ] At `task_fork()`: child inherits parent `capabilities` exactly
-- [ ] At `task_exec()` via `exec_load()`: on EIF binaries, apply capability mask from EIF header flags; strip any bits not in the parent's set; never add new capabilities on exec (→ XREF `TODO-08 §4` — EIF capabilities field is not yet defined in the spec; extend `eif_header_t` there before implementing here)
+- [ ] At `task_exec()` via `exec_load()`: on EIF binaries, apply capability mask from EIF header flags; strip any bits not in the parent's set; never add new capabilities on exec (→ XREF `TODO-08 §4` -- EIF capabilities field is not yet defined in the spec; extend `eif_header_t` there before implementing here)
 - [ ] `NtDropCapability(cap_mask)`: clear one or more capability bits from the calling process; irreversible for the lifetime of the process; register in SSDT (→ XREF `TODO-05 §4`)
-- [ ] No syscall or path grants new capabilities — escalation requires a restart or a privileged parent spawning with a specific mask
+- [ ] No syscall or path grants new capabilities -- escalation requires a restart or a privileged parent spawning with a specific mask
 - [ ] Document the invariant: `child->capabilities ⊆ parent->capabilities` is enforced at fork and exec
-- [ ] Commit: `"kernel: security — capability inheritance and drop-only policy"`
+- [ ] Commit: `"kernel: security -- capability inheritance and drop-only policy"`
 
-**Test checkpoint:** `task_fork()` child inherits exact parent capabilities. `NtDropCapability(CAP_RAW_IO)` clears the bit; subsequent `capability_check(CAP_RAW_IO)` fails. Child drop does not affect parent. `NtDropCapability` is irreversible — re-granting returns error. Serial log shows `"security: capability dropped — cap=<N> remaining=0x<mask>"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `task_fork()` child inherits exact parent capabilities. `NtDropCapability(CAP_RAW_IO)` clears the bit; subsequent `capability_check(CAP_RAW_IO)` fails. Child drop does not affect parent. `NtDropCapability` is irreversible -- re-granting returns error. Serial log shows `"security: capability dropped -- cap=<N> remaining=0x<mask>"`. Test on: QEMU WHPX + TCG.
 
 ## 8. Process Accounting Fields (Times, I/O Counters, VM Counters)
 
 Both Win11 (`NtQueryInformationProcess` with `ProcessTimes`, `ProcessIoCounters`, `ProcessVmCounters`) and Linux (`getrusage`, `times(2)`, `/proc/[pid]/stat`) track per-process resource usage. These fields must exist in `struct task` before TODO-05 §10 can return meaningful data.
 
 - [ ] Add to `struct task`:
-  - `uint64_t create_time_ns` — set once at `task_create()` from `uptime_ns()`
-  - `uint64_t user_time_ns` — accumulated in scheduler tick handler when running in ring 3
-  - `uint64_t kernel_time_ns` — accumulated in scheduler tick handler when running in ring 0
-  - `uint64_t io_read_count`, `io_read_bytes` — incremented in VFS read path
-  - `uint64_t io_write_count`, `io_write_bytes` — incremented in VFS write path
-  - `uint64_t page_fault_count` — incremented in `#PF` handler
-  - `uint64_t peak_working_set` — updated on page allocation; tracks high-water mark
+  - `uint64_t create_time_ns` -- set once at `task_create()` from `uptime_ns()`
+  - `uint64_t user_time_ns` -- accumulated in scheduler tick handler when running in ring 3
+  - `uint64_t kernel_time_ns` -- accumulated in scheduler tick handler when running in ring 0
+  - `uint64_t io_read_count`, `io_read_bytes` -- incremented in VFS read path
+  - `uint64_t io_write_count`, `io_write_bytes` -- incremented in VFS write path
+  - `uint64_t page_fault_count` -- incremented in `#PF` handler
+  - `uint64_t peak_working_set` -- updated on page allocation; tracks high-water mark
 - [ ] In the scheduler tick ISR: determine ring from saved CS on interrupt frame; add tick duration to `user_time_ns` or `kernel_time_ns`
 - [ ] In VFS `vfs_read()` / `vfs_write()`: increment `io_read_count`/`io_write_count` and byte counters on the current task
 - [ ] In `#PF` handler: increment `task_current()->page_fault_count`
 - [ ] `getrusage(RUSAGE_SELF)` Linux-compat wrapper: populate `struct rusage` from task accounting fields
-- [ ] Commit: `"kernel: task — process accounting fields for times, I/O, and VM counters"`
+- [ ] Commit: `"kernel: task -- process accounting fields for times, I/O, and VM counters"`
 
-**Test checkpoint:** After running a process, `NtQueryInformationProcess(ProcessTimes)` returns non-zero `KernelTime` and `UserTime`. `ProcessVmCounters` returns non-zero `PageFaultCount`. `ProcessIoCounters` returns non-zero `ReadOperationCount` after a file read. Serial log shows `"task: accounting — user=<N>ns kernel=<M>ns faults=<F>"` at process exit. `POST16(0xD080)` on entry, `POST16(0xD081)` after struct fields added, `POST16(0xD082)` after scheduler tick ISR instrumented, `POST16(0xD083)` after `#PF` handler instrumented. Range `0xD08x` confirmed free. If crash at 0xD082: scheduler tick ISR modification broke — revert ISR change and fall back to un-instrumented tick. Test on: QEMU WHPX + TCG. Verify on bare metal — ISR timing may differ.
+**Test checkpoint:** After running a process, `NtQueryInformationProcess(ProcessTimes)` returns non-zero `KernelTime` and `UserTime`. `ProcessVmCounters` returns non-zero `PageFaultCount`. `ProcessIoCounters` returns non-zero `ReadOperationCount` after a file read. Serial log shows `"task: accounting -- user=<N>ns kernel=<M>ns faults=<F>"` at process exit. `POST16(0xD080)` on entry, `POST16(0xD081)` after struct fields added, `POST16(0xD082)` after scheduler tick ISR instrumented, `POST16(0xD083)` after `#PF` handler instrumented. Range `0xD08x` confirmed free. If crash at 0xD082: scheduler tick ISR modification broke -- revert ISR change and fall back to un-instrumented tick. Test on: QEMU WHPX + TCG. Verify on bare metal -- ISR timing may differ.
 
 ## 9. Per-Process Resource Limits (rlimits)
 
 Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) and Linux (`getrlimit`/`setrlimit`/`prlimit`) enforce per-process resource limits. This prevents runaway processes from exhausting system resources.
 
 - [ ] Define `rlimit_t` in `include/kernel/task_limits.h`: `{ uint64_t rlim_cur; uint64_t rlim_max; }` with `RLIM_INFINITY = UINT64_MAX`
-- [ ] Define limit indices: `RLIMIT_AS` (address space), `RLIMIT_NOFILE` (open files — coordinates with TODO-03 §14), `RLIMIT_CPU` (CPU seconds), `RLIMIT_STACK` (stack size), `RLIMIT_NPROC` (child processes), `RLIMIT_FSIZE` (file write size), `RLIMIT_COUNT`
+- [ ] Define limit indices: `RLIMIT_AS` (address space), `RLIMIT_NOFILE` (open files -- coordinates with TODO-03 §14), `RLIMIT_CPU` (CPU seconds), `RLIMIT_STACK` (stack size), `RLIMIT_NPROC` (child processes), `RLIMIT_FSIZE` (file write size), `RLIMIT_COUNT`
 - [ ] Add `rlimit_t rlimits[RLIMIT_COUNT]` to `struct task`; populate with sane defaults at `task_create()` (e.g., `RLIMIT_NOFILE.rlim_cur = 256`, `RLIMIT_AS.rlim_cur = RLIM_INFINITY`)
 - [ ] Inherit rlimits from parent at `task_fork()`
 - [ ] `sys_getrlimit(resource, &rlimit)` / `sys_setrlimit(resource, &rlimit)`: unprivileged process can lower `rlim_max` (irreversible) or set `rlim_cur` within `[0, rlim_max]`; raising `rlim_max` requires `CAP_SYS_ADMIN`
@@ -212,14 +213,14 @@ Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) 
 - [ ] Enforce `RLIMIT_AS` in VMM `vmm_map_page()` / `sys_brk()`: reject if total mapped pages would exceed limit
 - [ ] Enforce `RLIMIT_CPU`: in scheduler tick, check `user_time_ns + kernel_time_ns > rlim_cur * 1e9`; send `SIGXCPU` (or terminate) if exceeded
 - [ ] Register as Linux-compat syscalls; `NtQueryInformationProcess(ProcessQuotaLimits)` returns `QUOTA_LIMITS_EX` populated from rlimits
-- [ ] Commit: `"kernel: task — per-process resource limits (rlimits)"`
+- [ ] Commit: `"kernel: task -- per-process resource limits (rlimits)"`
 
-**Test checkpoint:** `sys_setrlimit(RLIMIT_AS, 64MB)` then `sys_brk()` beyond 64 MB returns `ENOMEM`. `sys_setrlimit(RLIMIT_CPU, 2)` causes process termination after 2 seconds of CPU time. Unprivileged `sys_setrlimit` raising `rlim_max` returns `EPERM`. Serial log shows `"task: rlimit RLIMIT_AS enforced — rejected allocation"`. `POST16(0xD090)` on entry, `POST16(0xD091)` after struct/defaults set, `POST16(0xD092)` after `vmm_map_page()` enforcement wired. Range `0xD09x` confirmed free. If crash at 0xD092: VMM enforcement check broke page allocation — revert the `vmm_map_page` guard. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `sys_setrlimit(RLIMIT_AS, 64MB)` then `sys_brk()` beyond 64 MB returns `ENOMEM`. `sys_setrlimit(RLIMIT_CPU, 2)` causes process termination after 2 seconds of CPU time. Unprivileged `sys_setrlimit` raising `rlim_max` returns `EPERM`. Serial log shows `"task: rlimit RLIMIT_AS enforced -- rejected allocation"`. `POST16(0xD090)` on entry, `POST16(0xD091)` after struct/defaults set, `POST16(0xD092)` after `vmm_map_page()` enforcement wired. Range `0xD09x` confirmed free. If crash at 0xD092: VMM enforcement check broke page allocation -- revert the `vmm_map_page` guard. Test on: QEMU WHPX + TCG.
 
 ## 10. CPU Affinity per Process
 
 > [!NOTE]
-> → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §6` — thread-level CPU affinity (`affinity_mask` in `task_t`, `NtSetInformationThread(ThreadAffinityMask)`) is implemented there. This section adds the process-level API: `SetProcessAffinityMask` / `NtSetInformationProcess(ProcessAffinityMask)` which sets the affinity for all threads in the process.
+> → XREF: `03-memory-concurrency/TODO-05-scheduler-enhancement.md §6` -- thread-level CPU affinity (`affinity_mask` in `task_t`, `NtSetInformationThread(ThreadAffinityMask)`) is implemented there. This section adds the process-level API: `SetProcessAffinityMask` / `NtSetInformationProcess(ProcessAffinityMask)` which sets the affinity for all threads in the process.
 
 > [!WARNING]
 > Thread-level `affinity_mask` field on `struct thread` does not exist yet (→ TODO-05-sched §6, `[ ]`). If TODO-05-sched §6 has not landed, add `uint64_t affinity_mask` to `struct thread` here with a default of `~0ULL` (all CPUs). The scheduler does not need to consume the mask until TODO-05-sched §6 adds the per-CPU run queue logic.
@@ -229,9 +230,9 @@ Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) 
 - [ ] `NtQueryInformationProcess(ProcessHandle, ProcessAffinityMask, ...)`: return the process-level mask
 - [ ] Win32 wrappers: `SetProcessAffinityMask(hProcess, dwMask)` → `NtSetInformationProcess`; `GetProcessAffinityMask(hProcess, &procMask, &sysMask)` → returns process mask and system mask (all CPUs)
 - [ ] New threads inherit the process affinity mask at creation
-- [ ] Commit: `"kernel: task — per-process CPU affinity (SetProcessAffinityMask)"`
+- [ ] Commit: `"kernel: task -- per-process CPU affinity (SetProcessAffinityMask)"`
 
-**Test checkpoint:** `SetProcessAffinityMask(current, 0x3)` restricts process to CPUs 0-1. `GetProcessAffinityMask` returns `0x3`. New thread created after affinity change has `affinity_mask = 0x3`. Serial log shows `"task: process affinity set to 0x<mask>"`. Test on: QEMU WHPX + TCG (2+ vCPUs). Verify on bare metal — SMP affinity behavior differs.
+**Test checkpoint:** `SetProcessAffinityMask(current, 0x3)` restricts process to CPUs 0-1. `GetProcessAffinityMask` returns `0x3`. New thread created after affinity change has `affinity_mask = 0x3`. Serial log shows `"task: process affinity set to 0x<mask>"`. Test on: QEMU WHPX + TCG (2+ vCPUs). Verify on bare metal -- SMP affinity behavior differs.
 
 ## 11. Per-Process Mitigation Policy
 
@@ -241,19 +242,19 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > → XREF: `TODO-17-kernel-security-hardening.md §1` (NX/DEP), `TODO-08-binary-system.md §15` (ASLR), `TODO-08 §12` (CFG), `TODO-05-native-api-ssdt.md §24` (syscall filtering). This section defines the per-process flags and API surface; enforcement is authoritative in those TODOs.
 
 - [ ] Add `uint64_t mitigation_flags` to `struct task` with bit definitions:
-  - `MIT_DEP_ENABLE (1 << 0)` — permanent DEP/NX for the process
-  - `MIT_ASLR_FORCE (1 << 1)` — force ASLR even for non-PIE binaries
-  - `MIT_CFG_STRICT (1 << 2)` — CFG strict mode (no suppressed exports)
-  - `MIT_NO_CHILD_PROCESS (1 << 3)` — process cannot create child processes
-  - `MIT_NO_REMOTE_IMAGES (1 << 4)` — process cannot load images from network paths
-  - `MIT_NO_LOW_INTEGRITY_IMAGES (1 << 5)` — reject low-integrity DLLs
-  - `MIT_NO_NEW_PRIVS (1 << 6)` — Linux `PR_SET_NO_NEW_PRIVS` equivalent; exec cannot gain capabilities
+  - `MIT_DEP_ENABLE (1 << 0)` -- permanent DEP/NX for the process
+  - `MIT_ASLR_FORCE (1 << 1)` -- force ASLR even for non-PIE binaries
+  - `MIT_CFG_STRICT (1 << 2)` -- CFG strict mode (no suppressed exports)
+  - `MIT_NO_CHILD_PROCESS (1 << 3)` -- process cannot create child processes
+  - `MIT_NO_REMOTE_IMAGES (1 << 4)` -- process cannot load images from network paths
+  - `MIT_NO_LOW_INTEGRITY_IMAGES (1 << 5)` -- reject low-integrity DLLs
+  - `MIT_NO_NEW_PRIVS (1 << 6)` -- Linux `PR_SET_NO_NEW_PRIVS` equivalent; exec cannot gain capabilities
 - [ ] `NtSetInformationProcess(ProcessHandle, ProcessMitigationPolicy, &policy, size)`: set mitigation bits; once set, bits cannot be cleared (monotonically increasing restriction)
 - [ ] `NtQueryInformationProcess(ProcessHandle, ProcessMitigationPolicy, ...)`: return current flags
 - [ ] Win32 wrapper: `SetProcessMitigationPolicy(MitigationType, &info, size)` → `NtSetInformationProcess`
 - [ ] Enforce `MIT_NO_CHILD_PROCESS` in `NtCreateProcess` / `task_fork()` path
-- [ ] Inherit mitigation flags from parent at `task_fork()` — child gets at least the parent's flags
-- [ ] Commit: `"kernel: task — per-process mitigation policy flags"`
+- [ ] Inherit mitigation flags from parent at `task_fork()` -- child gets at least the parent's flags
+- [ ] Commit: `"kernel: task -- per-process mitigation policy flags"`
 
 **Test checkpoint:** `SetProcessMitigationPolicy(DEP_ENABLE)` sets the bit; subsequent query returns it set. Attempting to clear the bit returns `STATUS_ACCESS_DENIED`. Process with `MIT_NO_CHILD_PROCESS` calling `NtCreateProcess` returns `STATUS_CHILD_PROCESS_BLOCKED`. Serial log shows `"task: mitigation flags updated: 0x<flags>"`. Test on: QEMU WHPX + TCG.
 
@@ -264,14 +265,14 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 
 - [ ] `NtPledge(const char *promises)`: restrict the calling process to a set of named syscall categories. Categories: `"stdio"` (read/write/close), `"rpath"` (read-only file access), `"wpath"` (write file access), `"cpath"` (create/delete files), `"inet"` (network sockets), `"proc"` (fork/exec), `"exec"` (exec only), `"dns"` (DNS resolution), `"tty"` (terminal I/O). Once pledged, attempting a syscall outside the pledged set terminates the process with `STATUS_PLEDGE_VIOLATION`.
 - [ ] Add `uint64_t pledge_mask` to `struct task`; `0` = not pledged (all allowed); non-zero = bitmask of allowed categories
-- [ ] In SSDT dispatcher: if `task->pledge_mask != 0`, check if the invoked syscall's category bit is set; if not, terminate with `STATUS_PLEDGE_VIOLATION` and log the violation (→ XREF: `TODO-05-native-api-ssdt.md §24` — per-index bitmap filter runs in the same dispatcher path; pledge category check runs AFTER the bitmap filter; both must pass for the syscall to proceed)
-- [ ] `NtUnveil(const char *path, const char *permissions)`: restrict filesystem visibility. After the first `NtUnveil` call, only unveiled paths are accessible. `permissions` is a subset of `"rwxc"` (read, write, execute, create). Calling `NtUnveil(NULL, NULL)` locks the unveil set — no further calls allowed.
+- [ ] In SSDT dispatcher: if `task->pledge_mask != 0`, check if the invoked syscall's category bit is set; if not, terminate with `STATUS_PLEDGE_VIOLATION` and log the violation (→ XREF: `TODO-05-native-api-ssdt.md §24` -- per-index bitmap filter runs in the same dispatcher path; pledge category check runs AFTER the bitmap filter; both must pass for the syscall to proceed)
+- [ ] `NtUnveil(const char *path, const char *permissions)`: restrict filesystem visibility. After the first `NtUnveil` call, only unveiled paths are accessible. `permissions` is a subset of `"rwxc"` (read, write, execute, create). Calling `NtUnveil(NULL, NULL)` locks the unveil set -- no further calls allowed.
 - [ ] Add `unveil_entry_t *unveil_list` to `struct task`; VFS path resolution checks against this list if non-NULL
-- [ ] Both `NtPledge` and `NtUnveil` are irreversible — once applied, restrictions can only be tightened, never loosened
+- [ ] Both `NtPledge` and `NtUnveil` are irreversible -- once applied, restrictions can only be tightened, never loosened
 - [ ] Register both in SSDT (→ XREF TODO-05 §4)
-- [ ] Commit: `"kernel: task — pledge/unveil process restriction (OpenBSD-inspired)"`
+- [ ] Commit: `"kernel: task -- pledge/unveil process restriction (OpenBSD-inspired)"`
 
-**Test checkpoint:** After `NtPledge("stdio rpath")`, calling `NtCreateFile` for write returns `STATUS_PLEDGE_VIOLATION` and process terminates. After `NtUnveil("/C:\\Impossible\\System", "rx")`, reading from `C:\Impossible\System\shell.exe` succeeds; reading from `C:\Users\` returns `STATUS_ACCESS_DENIED`. Serial log shows `"task: pledge violation — syscall <N> not in pledge set"`. `POST16(0xD0C0)` on entry, `POST16(0xD0C1)` after pledge_mask set, `POST16(0xD0C2)` after SSDT dispatcher check wired. Range `0xD0Cx` confirmed free. If crash at 0xD0C2: SSDT dispatcher modification broke — revert the dispatch check and fall back to un-pledged execution. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** After `NtPledge("stdio rpath")`, calling `NtCreateFile` for write returns `STATUS_PLEDGE_VIOLATION` and process terminates. After `NtUnveil("/C:\\Impossible\\System", "rx")`, reading from `C:\Impossible\System\shell.exe` succeeds; reading from `C:\Users\` returns `STATUS_ACCESS_DENIED`. Serial log shows `"task: pledge violation -- syscall <N> not in pledge set"`. `POST16(0xD0C0)` on entry, `POST16(0xD0C1)` after pledge_mask set, `POST16(0xD0C2)` after SSDT dispatcher check wired. Range `0xD0Cx` confirmed free. If crash at 0xD0C2: SSDT dispatcher modification broke -- revert the dispatch check and fall back to un-pledged execution. Test on: QEMU WHPX + TCG.
 
 ---
 
@@ -310,18 +311,18 @@ Register Job Object management syscalls in the SSDT for process-group resource c
 | 💎 | Per-process mitigation policy | ✅ SetProcessMitigationPolicy| ⚠️ prctl + seccomp           | ⬜ §11                       |
 | 💎 | Job Objects / cgroups         | ✅ NtCreateJobObject         | ✅ cgroups v2                | ⬜ §13                       |
 | 💎 | Per-process I/O priority      | ✅ ProcessIoPriority          | ✅ ioprio_set/get             | ⬜ Deferred (→ TODO-05 §10)  |
-| ⭐ | Drop-only cap inheritance     | ⚠️ Token elevation           | ⚠️ setcap raises ambient     | ⬜ §7 — monotonic decrease   |
-| ⭐ | Pledge/unveil restriction     | ❌ None                      | ❌ No simple equivalent      | ⬜ §12 — OpenBSD-inspired    |
+| ⭐ | Drop-only cap inheritance     | ⚠️ Token elevation           | ⚠️ setcap raises ambient     | ⬜ §7 -- monotonic decrease   |
+| ⭐ | Pledge/unveil restriction     | ❌ None                      | ❌ No simple equivalent      | ⬜ §12 -- OpenBSD-inspired    |
 
 > **After §1–§6:** Impossible OS matches Windows NT and Linux on all core per-process state APIs.
-> **§7** enforces a strictly drop-only capability model — neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.
+> **§7** enforces a strictly drop-only capability model -- neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.
 > **§8–§10** close parity gaps: process accounting, resource limits, and CPU affinity are foundational for `NtQueryInformationProcess`, `getrusage`, and performance-critical workloads.
 > **§11** unifies Win11 `SetProcessMitigationPolicy` and Linux `prctl` under a single per-process flags field.
-> **§12** is the most auditable process restriction API in any production OS — simpler than seccomp, stronger than Capsicum.
+> **§12** is the most auditable process restriction API in any production OS -- simpler than seccomp, stronger than Capsicum.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_proc_ext()` — register in `src/kernel/test/test_runner.c`.
+> Wire into `test_runner_init()` via `test_register_proc_ext()` -- register in `src/kernel/test/test_runner.c`.
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_proc_ext.c` with:
@@ -348,7 +349,7 @@ Register Job Object management syscalls in the SSDT for process-group resource c
   - `sys_setrlimit` raising `rlim_max` without `CAP_SYS_ADMIN` returns `EPERM` (§9)
   - `SetProcessAffinityMask(current, 0x1)` restricts to CPU 0; new thread inherits mask (§10)
   - `SetProcessMitigationPolicy(MIT_NO_CHILD_PROCESS)` blocks subsequent `NtCreateProcess` (§11)
-  - Mitigation bit once set cannot be cleared — returns `STATUS_ACCESS_DENIED` (§11)
+  - Mitigation bit once set cannot be cleared -- returns `STATUS_ACCESS_DENIED` (§11)
   - `NtPledge("stdio rpath")` then `NtCreateFile(WRITE)` terminates with `STATUS_PLEDGE_VIOLATION` (§12)
   - `NtUnveil("/C:\\Tmp", "rw")` then `NtUnveil(NULL, NULL)` locks; access to `/C:\\Users` fails (§12)
   - `NtCreateJobObject` creates a job; `NtAssignProcessToJobObject` assigns child (§13)
@@ -376,4 +377,4 @@ Register Job Object management syscalls in the SSDT for process-group resource c
 - [ ] After `NtPledge("stdio rpath")`, write syscall terminates process with `STATUS_PLEDGE_VIOLATION`
 - [ ] After `NtUnveil("/C:\\System", "rx")` and lock, access to `C:\Users` returns `STATUS_ACCESS_DENIED`
 - [ ] `NtCreateJobObject` creates a job; `NtAssignProcessToJobObject` assigns a child; `NtTerminateJobObject` kills all
-- [ ] Commit: `"kernel: task — process model extensions complete"`
+- [ ] Commit: `"kernel: task -- process model extensions complete"`

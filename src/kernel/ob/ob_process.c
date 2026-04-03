@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_process.c — Process object type: callbacks, namespace integration
+ * ob_process.c -- Process object type: callbacks, namespace integration
  *
  * Implements TODO-03 §5: ObpProcessType wrapping task_t.
  * Each process is inserted into \KernelObjects\Process<PID>.
@@ -15,7 +15,7 @@ extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 /* --- Callbacks ----------------------------------------------------------- */
 
 /*
- * process_on_delete — called when ref_count hits 0 after ObMakeTemporaryObject.
+ * process_on_delete -- called when ref_count hits 0 after ObMakeTemporaryObject.
  * Task memory is already freed by task_cleanup(); just NULL the pointer.
  */
 static void process_on_delete(void *body)
@@ -81,7 +81,7 @@ void ob_process_create(struct task *t)
              (uint64_t)t->pid);
     }
 
-    /* Drop the creation ref — namespace holds its own */
+    /* Drop the creation ref -- namespace holds its own */
     ObDereferenceObject(po);
 }
 

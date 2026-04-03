@@ -1,5 +1,5 @@
 /* ============================================================================
- * syscall.h — System call interface
+ * syscall.h -- System call interface
  *
  * User-mode programs invoke system calls via INT 0x80.
  * Syscall number in RAX, arguments in RDI, RSI, RDX.

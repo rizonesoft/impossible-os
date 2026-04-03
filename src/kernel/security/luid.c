@@ -1,5 +1,5 @@
 /* ============================================================================
- * luid.c — LUID allocator
+ * luid.c -- LUID allocator
  *
  * Implements TODO-11 §1.2: monotonically incrementing LUID counter.
  * ============================================================================ */

@@ -1,5 +1,5 @@
 /* ============================================================================
- * desktop.h — Desktop shell (wallpaper, taskbar, start menu)
+ * desktop.h -- Desktop shell (wallpaper, taskbar, start menu)
  *
  * Manages the desktop background wallpaper, a taskbar at the bottom of the
  * screen with a start button, window list, and uptime clock, plus a simple

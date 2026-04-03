@@ -1,5 +1,5 @@
 /* ============================================================================
- * cursor.c — Cursor manager with Adwaita X11 cursor (Xcur) support
+ * cursor.c -- Cursor manager with Adwaita X11 cursor (Xcur) support
  *
  * Parses Xcur binary files at boot, stores decoded BGRA cursor images,
  * supports 11 cursor shapes, and renders with ARGB alpha blending.
@@ -639,7 +639,7 @@ void cursor_draw(int32_t x, int32_t y)
                 continue;
 
             if (sa == 255) {
-                /* Fully opaque — no blending needed */
+                /* Fully opaque -- no blending needed */
                 fb_put_pixel((uint32_t)sx, (uint32_t)sy, src_pixel);
             } else {
                 /* Alpha blend: out = src*a + dst*(255-a) / 255 */

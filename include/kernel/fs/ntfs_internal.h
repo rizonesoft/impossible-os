@@ -1,8 +1,8 @@
 /* ============================================================================
- * ntfs_internal.h — Shared inline helpers for NTFS driver sub-modules
+ * ntfs_internal.h -- Shared inline helpers for NTFS driver sub-modules
  *
  * Little-endian field readers, memory helpers, and simple comparisons.
- * Included by each ntfs_*.c file — all functions are static inline to
+ * Included by each ntfs_*.c file -- all functions are static inline to
  * avoid duplicate-symbol linker errors.
  * ============================================================================ */
 

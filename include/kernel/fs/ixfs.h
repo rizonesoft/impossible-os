@@ -1,5 +1,5 @@
 /* ============================================================================
- * ixfs.h — Impossible X FileSystem (IXFS) On-Disk Layout
+ * ixfs.h -- Impossible X FileSystem (IXFS) On-Disk Layout
  *
  * Custom filesystem for Impossible OS root partition (C:\).
  *
@@ -50,7 +50,7 @@ struct ixfs_block_group {
  * With overflow tree: effectively unlimited */
 #define IXFS_MAX_FILE_BLOCKS 0xFFFFFFFF  /* 4 KiB × 2^32 = 16 TiB (per extent) */
 
-/* Extent — describes a contiguous run of blocks (12 bytes) */
+/* Extent -- describes a contiguous run of blocks (12 bytes) */
 struct ixfs_extent {
     uint64_t e_start;            /* first block number (64-bit for 64 TiB) */
     uint32_t e_count;            /* number of contiguous blocks (0 = unused) */
@@ -99,7 +99,7 @@ struct ixfs_extent {
 #define IXFS_REFCOUNT_BLOCKS 2           /* blocks for refcount table (8192 entries) */
 #define IXFS_SNAPSHOT_BLOCKS 1           /* block for snapshot table */
 
-/* On-disk snapshot entry (64 bytes) — 64 per block */
+/* On-disk snapshot entry (64 bytes) -- 64 per block */
 struct ixfs_snapshot_entry {
     char     se_name[IXFS_SNAP_NAME_LEN]; /* snapshot name */
     uint32_t se_timestamp;               /* creation time */
@@ -111,7 +111,7 @@ struct ixfs_snapshot_entry {
 
 /* --- On-Disk Structures --- */
 
-/* Superblock — always in block 0 (first 4 KiB of the partition) */
+/* Superblock -- always in block 0 (first 4 KiB of the partition) */
 struct ixfs_superblock {
     uint32_t s_magic;              /* IXFS_MAGIC */
     uint32_t s_version;            /* filesystem version */
@@ -140,7 +140,7 @@ struct ixfs_superblock {
     uint8_t  s_reserved[380];      /* pad to 512 bytes */
 } __attribute__((packed));
 
-/* Inode — 128 bytes each (32 inodes per block) */
+/* Inode -- 128 bytes each (32 inodes per block) */
 struct ixfs_inode {
     uint16_t i_mode;               /* type (upper 4) + permissions (lower 9) */
     uint16_t i_links;              /* hard link count */
@@ -160,7 +160,7 @@ struct ixfs_inode {
 
 #define IXFS_INODES_PER_BLOCK  (IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode))
 
-/* Directory entry — 64 bytes each (64 entries per block) */
+/* Directory entry -- 64 bytes each (64 entries per block) */
 struct ixfs_dir_entry {
     uint32_t d_inode;              /* inode number (0 = deleted/free) */
     char     d_name[IXFS_MAX_NAME]; /* filename (null-terminated) */

@@ -184,11 +184,11 @@ static const char *level_prefix[] = {
  * This matches dmesg/journalctl behavior: low-priority lines don't distract,
  * warnings/errors make the entire line stand out instantly in a wall of text.
  *
- *   LOG_DEBUG  [INFO]  dark-grey, badge only  — background chatter
- *   LOG_INFO   [ OK ]  green,     badge only  — happy-path confirmation
- *   LOG_WARN   [WARN]  yellow,    full line   — degraded / non-fatal
- *   LOG_ERROR  [FAIL]  red,       full line   — recoverable error
- *   LOG_FATAL  [CRIT]  bold+red,  full line   — fatal halt
+ *   LOG_DEBUG  [INFO]  dark-grey, badge only  -- background chatter
+ *   LOG_INFO   [ OK ]  green,     badge only  -- happy-path confirmation
+ *   LOG_WARN   [WARN]  yellow,    full line   -- degraded / non-fatal
+ *   LOG_ERROR  [FAIL]  red,       full line   -- recoverable error
+ *   LOG_FATAL  [CRIT]  bold+red,  full line   -- fatal halt
  */
 #define ANSI_RESET    "\033[0m"
 #define ANSI_DGREY    "\033[90m"
@@ -496,7 +496,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         /* Colored level prefix + subsystem + pre-formatted message.
          * For badge-only levels: reset after [LEVEL], rest is default.
          * For full-line levels:  reset after message, whole tail colored.
-         * Special: "TEST" subsystem — badge keeps level color,
+         * Special: "TEST" subsystem -- badge keeps level color,
          *          subsystem + message text is cyan. */
         {
             int is_test = (subsystem && subsystem[0] == 'T' &&

@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_init.h — Kernel boot infrastructure: result types, subsystem readiness
+ * boot_init.h -- Kernel boot infrastructure: result types, subsystem readiness
  *               oracle, POST code constants, and phase macros.
  *
  * Included by every boot phase file and any driver init function that
@@ -10,7 +10,7 @@
 
 #include "kernel/types.h"
 
-/* --- Boolean (freestanding — no stdbool.h) -------------------------------- */
+/* --- Boolean (freestanding -- no stdbool.h) -------------------------------- */
 #ifndef __BOOT_INIT_BOOL_DEFINED
 #define __BOOT_INIT_BOOL_DEFINED
 typedef uint8_t bool;
@@ -30,7 +30,7 @@ typedef enum {
 /* --- Subsystem identifiers ------------------------------------------------ */
 /*
  * One entry per logical subsystem. Ordered roughly by init sequence so
- * early-phase subsystems have low numbers — makes the readiness dump easy
+ * early-phase subsystems have low numbers -- makes the readiness dump easy
  * to read.  Add new entries *before* SUBSYS_COUNT; never reorder existing
  * entries (stable ABI for crash-dump analysis).
  */
@@ -56,7 +56,7 @@ typedef enum {
     SUBSYS_EXEC     = 18,
     SUBSYS_DESKTOP  = 19,
     SUBSYS_OB       = 20,
-    SUBSYS_COUNT    = 21,  /* sentinel — keep last */
+    SUBSYS_COUNT    = 21,  /* sentinel -- keep last */
 } kernel_subsys_t;
 
 /* --- POST code constants --------------------------------------------------
@@ -124,7 +124,7 @@ typedef enum {
 #define POST16_USB_DISC         0xB080  /* USB device discovery (before ExitBS) */
 #define POST16_USB_DISC_OK      0xB081
 
-/* Phase 0 — Critical Init (0x0000–0x0FFF) */
+/* Phase 0 -- Critical Init (0x0000–0x0FFF) */
 #define POST16_SERIAL           0x0010
 #define POST16_SERIAL_OK        0x0011
 #define POST16_UEFI_RT          0x0012  /* UEFI runtime services init */
@@ -152,7 +152,7 @@ typedef enum {
 #define POST16_SIMD             0x0090
 #define POST16_SIMD_OK          0x0091
 
-/* Phase 1 — Platform Services (0x1000–0x1FFF) */
+/* Phase 1 -- Platform Services (0x1000–0x1FFF) */
 #define POST16_GDT              0x1000
 #define POST16_GDT_OK           0x1001
 #define POST16_IDT              0x1010
@@ -182,7 +182,7 @@ typedef enum {
 #define POST16_BOOT_TIMING      0x10B0
 #define POST16_BOOT_TIMING_OK   0x10B1
 
-/* Phase 2 — System Services (0x2000–0x2FFF) */
+/* Phase 2 -- System Services (0x2000–0x2FFF) */
 #define POST16_PCI              0x2000
 #define POST16_PCI_OK           0x2001
 #define POST16_XHCI             0x2010
@@ -216,7 +216,7 @@ typedef enum {
 #define POST16_OB               0x20B0
 #define POST16_OB_OK            0x20B1
 
-/* Phase 3 — Desktop (0x3000–0x3FFF) */
+/* Phase 3 -- Desktop (0x3000–0x3FFF) */
 #define POST16_SCHED            0x3000
 #define POST16_SCHED_OK         0x3001
 #define POST16_WQ               0x3010
@@ -233,7 +233,7 @@ typedef enum {
 #define POST16_DESKTOP_OK       0x3031
 #define POST16_COMPOSITOR       0x3040
 
-/* Deferred Init (0xD000–0xD00F) — post-desktop non-critical subsystems */
+/* Deferred Init (0xD000–0xD00F) -- post-desktop non-critical subsystems */
 #define POST16_DEFERRED         0xD000
 #define POST16_DEFERRED_OK      0xD001
 #define POST16_DEFERRED_NET     0xD002  /* network: rtl8139 + net + dhcp */
@@ -289,7 +289,7 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
 /* --- Macros --------------------------------------------------------------- */
 
 /*
- * BOOT_REQUIRE(subsys) — prerequisite guard
+ * BOOT_REQUIRE(subsys) -- prerequisite guard
  *
  * Placed at the top of an init function body.  If the required subsystem is
  * not ready, logs the failure and returns BOOT_FATAL to the caller.
@@ -304,11 +304,11 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
     } while (0)
 
 /*
- * BOOT_STEP(subsys, fn) — call an init function and record its result
+ * BOOT_STEP(subsys, fn) -- call an init function and record its result
  *
  * fn must have signature: boot_result_t fn(void)
  * Sets the subsystem ready if fn returns BOOT_OK or BOOT_DEGRADED.
- * Does NOT call boot_progress — the caller is responsible for that.
+ * Does NOT call boot_progress -- the caller is responsible for that.
  */
 #define BOOT_STEP(subsys, fn) \
     do { \
@@ -317,14 +317,14 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
     } while (0)
 
 /*
- * BOOT_TRY(subsys, fn, name) — non-critical subsystem init wrapper
+ * BOOT_TRY(subsys, fn, name) -- non-critical subsystem init wrapper
  *
  * fn must have signature: boot_result_t fn(void) or void fn(void).
  * For void functions, wrap: BOOT_TRY(SUBSYS_X, (fn(), BOOT_OK), "name")
  *
  * On success: sets subsystem ready, logs normally.
  * On BOOT_DEGRADED/BOOT_FATAL: logs warning, sets degraded_mask bit,
- * continues boot — never halts for non-critical subsystems.
+ * continues boot -- never halts for non-critical subsystems.
  */
 #define BOOT_TRY(subsys, fn_call, name) \
     do { \
@@ -339,7 +339,7 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
     } while (0)
 
 /*
- * BOOT_ASSERT(condition, msg) — impossible-state check
+ * BOOT_ASSERT(condition, msg) -- impossible-state check
  *
  * If condition is false, logs the message and halts. Use for invariants
  * that should never be violated (e.g., "IDT must be ready before timer").
@@ -354,7 +354,7 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
 
 /* --- Deferred init -------------------------------------------------------- */
 
-/* Maximum number of deferred init slots.  16 is generous — currently only
+/* Maximum number of deferred init slots.  16 is generous -- currently only
  * network (rtl8139+net+dhcp) and optional input (virtio+vbox) are deferred. */
 #define BOOT_DEFERRED_MAX 16
 
@@ -366,5 +366,5 @@ int boot_defer(const char *name, boot_result_t (*fn)(void));
  * but before compositor_run().  Logs [DEFERRED] name +NNNms for each. */
 void boot_run_deferred(void);
 
-/* Internal helper used by BOOT_REQUIRE — logs via serial (klog optional). */
+/* Internal helper used by BOOT_REQUIRE -- logs via serial (klog optional). */
 void _boot_require_failed(const char *subsys_name);

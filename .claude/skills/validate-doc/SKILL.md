@@ -1,6 +1,6 @@
 ---
 name: validate-doc
-description: Fact-check a documentation file against the codebase — verify function signatures, file paths, counts, commands, and completeness. Ensure it has charts, tables, OS Comparison, and meets the quality standard. Use when reviewing or auditing docs.
+description: Fact-check a documentation file against the codebase -- verify function signatures, file paths, counts, commands, and completeness. Ensure it has charts, tables, OS Comparison, and meets the quality standard. Use when reviewing or auditing docs.
 ---
 
 # Validate Documentation
@@ -40,10 +40,10 @@ For each claim, verify against actual source:
 | Config struct | Read the header definition |
 
 **Mark each claim:**
-- CORRECT — matches codebase
-- STALE — was true but code has changed
-- WRONG — never matched or has a typo
-- UNVERIFIABLE — can't check from code alone (runtime behavior)
+- CORRECT -- matches codebase
+- STALE -- was true but code has changed
+- WRONG -- never matched or has a typo
+- UNVERIFIABLE -- can't check from code alone (runtime behavior)
 
 ### 3. Check document completeness
 
@@ -64,11 +64,11 @@ Every doc should have these sections (quality standard from `docs/infrastructure
 ### 4. Check for missing content
 
 Look for gaps:
-- **Missing diagrams** — any complex flow or architecture without a Mermaid chart?
-- **Missing tables** — any list of items that would be clearer as a table?
-- **Missing OS Comparison rows** — any feature mentioned in the doc that's not in the comparison?
-- **Missing gotchas** — any `> [!CAUTION]` or `> [!WARNING]` items from CLAUDE.md or session memories that should be documented?
-- **Stale screenshots or counts** — numbers that were correct when written but have changed?
+- **Missing diagrams** -- any complex flow or architecture without a Mermaid chart?
+- **Missing tables** -- any list of items that would be clearer as a table?
+- **Missing OS Comparison rows** -- any feature mentioned in the doc that's not in the comparison?
+- **Missing gotchas** -- any `> [!CAUTION]` or `> [!WARNING]` items from CLAUDE.md or session memories that should be documented?
+- **Stale screenshots or counts** -- numbers that were correct when written but have changed?
 
 ### 5. Check for planning artifacts
 
@@ -90,9 +90,9 @@ Document: docs/<path>
 Fact Check:
   CORRECT: N claims verified
   STALE: M claims need updating
-    - <claim> — was X, now Y
+    - <claim> -- was X, now Y
   WRONG: K claims are incorrect
-    - <claim> — says X, actually Y
+    - <claim> -- says X, actually Y
 
 Completeness:
   [x] Title + summary
@@ -123,7 +123,7 @@ If the user asks to fix the issues, make the edits:
 ## Guardrails
 
 - Do NOT change docs without reporting findings first (unless the user asked to "fix")
-- Do NOT add speculative content — only document what exists in the codebase
-- Do NOT remove content that's correct — only fix what's wrong
+- Do NOT add speculative content -- only document what exists in the codebase
+- Do NOT remove content that's correct -- only fix what's wrong
 - If a claim can't be verified, mark it UNVERIFIABLE, don't mark it WRONG
 - Always verify against the CURRENT codebase, not memory of what it used to be

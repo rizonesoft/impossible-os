@@ -1,5 +1,5 @@
 /* ============================================================================
- * vfs.c — Virtual Filesystem with Windows-style Drive Letters
+ * vfs.c -- Virtual Filesystem with Windows-style Drive Letters
  *
  * Implements a VFS layer that:
  *   - Mounts filesystem drivers at drive letters (A:\, C:\, D:\, etc.)
@@ -7,9 +7,9 @@
  *   - Dispatches file operations to the appropriate FS driver
  *
  * Drive letter assignment convention:
- *   A:\ — EFI System Partition (FAT32, read-only after boot)
- *   C:\ — Root OS partition (IXFS)
- *   D:\, E:\… — Additional drives / USB
+ *   A:\ -- EFI System Partition (FAT32, read-only after boot)
+ *   C:\ -- Root OS partition (IXFS)
+ *   D:\, E:\… -- Additional drives / USB
  * ============================================================================ */
 
 #include "kernel/fs/vfs.h"

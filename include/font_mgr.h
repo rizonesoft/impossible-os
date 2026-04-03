@@ -1,13 +1,13 @@
 /* ============================================================================
- * font_mgr.h — TrueType Font Manager API
+ * font_mgr.h -- TrueType Font Manager API
  *
  * Loads TrueType fonts from C:\Impossible\Fonts\ at boot time and provides
  * a simple API for text rendering on gfx_surface_t.
  *
  * Bundled fonts:
- *   Selawik Regular + Semibold + Bold (MIT) — UI font
- *   Cascadia Code Regular + Bold (OFL 1.1)  — Monospace font
- *   Inter Regular + Bold (OFL 1.1)          — Alternative UI font (fallback)
+ *   Selawik Regular + Semibold + Bold (MIT) -- UI font
+ *   Cascadia Code Regular + Bold (OFL 1.1)  -- Monospace font
+ *   Inter Regular + Bold (OFL 1.1)          -- Alternative UI font (fallback)
  *
  * Usage:
  *   ttf_mgr_init();                            // load fonts + build cache
@@ -22,12 +22,12 @@
 
 /* --- Font slots --- */
 
-#define FONT_UI           0   /* UI font — Selawik Regular */
-#define FONT_UI_BOLD      1   /* UI font bold — Selawik Semibold */
-#define FONT_MONO         2   /* Monospace — Cascadia Code Regular */
-#define FONT_MONO_BOLD    3   /* Monospace bold — Cascadia Code Bold */
-#define FONT_UI_HEAVY     4   /* UI font heavy — Selawik Bold */
-#define FONT_FLUENT_ICONS 5   /* Fluent System Icons — Regular */
+#define FONT_UI           0   /* UI font -- Selawik Regular */
+#define FONT_UI_BOLD      1   /* UI font bold -- Selawik Semibold */
+#define FONT_MONO         2   /* Monospace -- Cascadia Code Regular */
+#define FONT_MONO_BOLD    3   /* Monospace bold -- Cascadia Code Bold */
+#define FONT_UI_HEAVY     4   /* UI font heavy -- Selawik Bold */
+#define FONT_FLUENT_ICONS 5   /* Fluent System Icons -- Regular */
 #define FONT_MAX_SLOTS    8   /* Maximum loaded fonts */
 
 /* Backwards-compatible aliases */
@@ -42,11 +42,11 @@
 #define GLYPH_CACHE_LAST   126   /* Last cached codepoint (tilde) */
 #define GLYPH_CACHE_COUNT   95   /* LAST - FIRST + 1 */
 
-/* Common pixel sizes to pre-rasterize at boot — 3 covers 90%+ of UI text.
+/* Common pixel sizes to pre-rasterize at boot -- 3 covers 90%+ of UI text.
  * Other sizes (12, 24, 32...) go through the LRU cache on first use.
  * Fewer sizes = fewer stbtt_BakeFontBitmap calls at desktop init. */
 #define GLYPH_CACHE_SIZES    3
-/* Actual sizes: 14, 16, 20 — defined in gfx_text.c */
+/* Actual sizes: 14, 16, 20 -- defined in gfx_text.c */
 
 /* --- Glyph cache entry --- */
 
@@ -85,7 +85,7 @@ typedef struct ttf_font {
 
 /* --- API --- */
 
-/* Initialize the font manager — load fonts from C:\Impossible\Fonts\
+/* Initialize the font manager -- load fonts from C:\Impossible\Fonts\
  * and pre-rasterize glyph cache for common sizes. */
 void ttf_mgr_init(void);
 

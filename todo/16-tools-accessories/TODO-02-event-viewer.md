@@ -1,6 +1,6 @@
-# TODO-02 — Event Viewer (Log Viewer)
+# TODO-02 -- Event Viewer (Log Viewer)
 
-> **Goal:** A user-mode GUI tool (`eventview.exe`) that reads `C:\Impossible\System\Logs\events.jsonl` and displays kernel events in a colour-coded, filterable table — like Windows Event Viewer. Shows timestamp, level, subsystem, and message. Filter by level (INFO/WARN/ERROR), subsystem tag, and text search. Essential for diagnosing boot issues, driver failures, and runtime errors without parsing serial logs.
+> **Goal:** A user-mode GUI tool (`eventview.exe`) that reads `C:\Impossible\System\Logs\events.jsonl` and displays kernel events in a colour-coded, filterable table -- like Windows Event Viewer. Shows timestamp, level, subsystem, and message. Filter by level (INFO/WARN/ERROR), subsystem tag, and text search. Essential for diagnosing boot issues, driver failures, and runtime errors without parsing serial logs.
 
 > [!IMPORTANT]
 > **Current state:** `events.jsonl` is written by klog during boot (one JSON object per line). No user-mode tool to read it. Logs are only visible via serial output or raw file inspection. The klog ring buffer holds 1000 entries in memory; `events.jsonl` on disk is the persistent record.
@@ -9,11 +9,11 @@
 
 ## Inputs
 
-- `src/kernel/klog_disk.c` — writes `events.jsonl` (JSONL format: `{"ts":N,"level":"INFO","tag":"net","msg":"..."}`)
-- `include/kernel/klog.h` — `log_level_t` enum (DEBUG=0, INFO=1, WARN=2, ERROR=3, FATAL=4)
-- `C:\Impossible\System\Logs\events.jsonl` — on-disk event log
-- → XREF: `TODO-02-system-logging.md` — JSON Lines event format (was TODO-02 §6)
-- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` — unit test wiring
+- `src/kernel/klog_disk.c` -- writes `events.jsonl` (JSONL format: `{"ts":N,"level":"INFO","tag":"net","msg":"..."}`)
+- `include/kernel/klog.h` -- `log_level_t` enum (DEBUG=0, INFO=1, WARN=2, ERROR=3, FATAL=4)
+- `C:\Impossible\System\Logs\events.jsonl` -- on-disk event log
+- → XREF: `TODO-02-system-logging.md` -- JSON Lines event format (was TODO-02 §6)
+- → XREF: `00-infrastructure/TODO-03-kernel-test-framework.md` -- unit test wiring
 
 ---
 
@@ -32,18 +32,18 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Console-mode log viewer (text table to stdout)  | —          |  [ ]   |
+| 💎  |   1   | Console-mode log viewer (text table to stdout)  | --          |  [ ]   |
 | ⭐  |   2   | GUI Event Viewer with filterable table          | §1         |  [ ]   |
 | ⭐  |   3   | Live tail mode and auto-refresh                 | §2         |  [ ]   |
 
-> 💎 = parity — Windows ships Event Viewer; Linux has journalctl.
-> ⭐ = exclusive — colour-coded JSONL viewer integrated into the OS.
+> 💎 = parity -- Windows ships Event Viewer; Linux has journalctl.
+> ⭐ = exclusive -- colour-coded JSONL viewer integrated into the OS.
 
 ---
 
 ## 1. Console-Mode Log Viewer
 
-Text-based event log reader — works before GUI is needed.
+Text-based event log reader -- works before GUI is needed.
 
 - [ ] Create `user/apps/eventview.c`
 - [ ] Open and parse `C:\Impossible\System\Logs\events.jsonl` line by line
@@ -51,7 +51,7 @@ Text-based event log reader — works before GUI is needed.
 - [ ] Print formatted table: `[HH:MM:SS] [LEVEL] [tag] message`
 - [ ] Colour output: green for INFO, yellow for WARN, red for ERROR/FATAL
 - [ ] Optional filter args: `eventview --level WARN` shows WARN+ only, `eventview --tag net` filters by subsystem
-- [ ] Commit: `"tools: console-mode eventview.exe — JSONL log viewer"`
+- [ ] Commit: `"tools: console-mode eventview.exe -- JSONL log viewer"`
 
 ---
 
@@ -65,7 +65,7 @@ Graphical version with filterable table.
 - [ ] Filter bar: level dropdown (All/INFO/WARN/ERROR), subsystem dropdown, text search field
 - [ ] Sort by any column (click header)
 - [ ] Status bar: total entries, filtered count
-- [ ] Commit: `"tools: GUI eventview.exe — filterable colour-coded event table"`
+- [ ] Commit: `"tools: GUI eventview.exe -- filterable colour-coded event table"`
 
 ---
 
@@ -111,4 +111,4 @@ Watch for new events and update the display.
 - [ ] QEMU WHPX: `eventview --level WARN` filters correctly
 - [ ] GUI version shows table with working filters
 - [ ] Bare metal: eventview reads IXFS-backed events.jsonl correctly
-- [ ] Commit: `"tools: eventview.exe verified — JSONL log viewer complete"`
+- [ ] Commit: `"tools: eventview.exe verified -- JSONL log viewer complete"`

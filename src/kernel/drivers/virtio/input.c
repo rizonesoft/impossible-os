@@ -1,5 +1,5 @@
 /* ============================================================================
- * virtio_input.c — VirtIO Input device driver (tablet / absolute mouse)
+ * virtio_input.c -- VirtIO Input device driver (tablet / absolute mouse)
  *
  * Discovers a virtio-input PCI device (vendor 0x1AF4, device 0x1052),
  * initialises the event virtqueue via the modern PCI transport, and
@@ -9,8 +9,8 @@
  * framebuffer resolution.
  *
  * The device has two virtqueues:
- *   VQ 0 — eventq:  device → driver (input events)
- *   VQ 1 — statusq: driver → device (LED status, unused here)
+ *   VQ 0 -- eventq:  device → driver (input events)
+ *   VQ 1 -- statusq: driver → device (LED status, unused here)
  *
  * We pre-fill eventq with receive buffers. The device writes events into
  * them and returns them via the used ring. We process the events and
@@ -249,7 +249,7 @@ int virtio_input_init(void)
     idt_register_handler(PIC1_OFFSET + irq_line, virtio_input_irq);
     pic_unmask_irq(irq_line);
 
-    /* 9. Set DRIVER_OK — device is live */
+    /* 9. Set DRIVER_OK -- device is live */
     virtio_set_status(&pci_dev,
                       VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
                       VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);

@@ -1,5 +1,5 @@
 /* ============================================================================
- * xhci_ring.h — xHCI TRB Ring Architecture
+ * xhci_ring.h -- xHCI TRB Ring Architecture
  *
  * Transfer Request Block (TRB) structures, Command Ring, Event Ring,
  * Event Ring Segment Table (ERST), and ring management functions.
@@ -17,13 +17,13 @@ struct xhci_controller;
 /* ---- TRB structure (16 bytes) -------------------------------------------- */
 
 struct xhci_trb {
-    uint64_t parameter;     /* Parameter — address or inline data */
-    uint32_t status;        /* Status — transfer length, completion code */
-    uint32_t control;       /* Control — TRB type, cycle bit, flags */
+    uint64_t parameter;     /* Parameter -- address or inline data */
+    uint32_t status;        /* Status -- transfer length, completion code */
+    uint32_t control;       /* Control -- TRB type, cycle bit, flags */
 } __attribute__((packed));
 
 /* TRB control field layout */
-#define XHCI_TRB_CYCLE          (1 << 0)    /* Cycle bit — ownership toggle */
+#define XHCI_TRB_CYCLE          (1 << 0)    /* Cycle bit -- ownership toggle */
 #define XHCI_TRB_TOGGLE_CYCLE   (1 << 1)    /* Toggle Cycle (Link TRB only) */
 #define XHCI_TRB_CHAIN          (1 << 4)    /* Chain bit */
 #define XHCI_TRB_IOC            (1 << 5)    /* Interrupt On Completion */
@@ -41,7 +41,7 @@ struct xhci_trb {
 #define XHCI_TRB_SETUP_STAGE    2   /* Setup Stage */
 #define XHCI_TRB_DATA_STAGE     3   /* Data Stage */
 #define XHCI_TRB_STATUS_STAGE   4   /* Status Stage */
-#define XHCI_TRB_LINK           6   /* Link — wraps ring back to start */
+#define XHCI_TRB_LINK           6   /* Link -- wraps ring back to start */
 #define XHCI_TRB_ENABLE_SLOT    9   /* Enable Slot Command */
 #define XHCI_TRB_DISABLE_SLOT   10  /* Disable Slot Command */
 #define XHCI_TRB_ADDRESS_DEV    11  /* Address Device Command */

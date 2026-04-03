@@ -1,4 +1,4 @@
-# run-usb-test.ps1 — Launch Impossible OS with xHCI + USB mass storage test disk
+# run-usb-test.ps1 -- Launch Impossible OS with xHCI + USB mass storage test disk
 #
 # Attaches a 64 MiB FAT32 USB disk via an emulated xHCI controller alongside
 # the regular AHCI system disk. Use this to develop and test the xHCI + USB MSC

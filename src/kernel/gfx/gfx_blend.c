@@ -1,5 +1,5 @@
 /* ============================================================================
- * gfx_blend.c — Alpha blending and compositing
+ * gfx_blend.c -- Alpha blending and compositing
  *
  * Per-pixel alpha blitting, global-alpha blit, and alpha-filled rectangles.
  *
@@ -84,10 +84,10 @@ void gfx_blit(gfx_surface_t *dst, int32_t dx, int32_t dy,
             uint32_t sa = (s >> 24) & 0xFF;
 
             if (sa == 0xFF) {
-                /* Fully opaque — direct copy (fast path) */
+                /* Fully opaque -- direct copy (fast path) */
                 dp[col] = s;
             } else if (sa == 0x00) {
-                /* Fully transparent — skip */
+                /* Fully transparent -- skip */
             } else {
                 /* Alpha blend: out = src + dst * (1 - src_a) */
                 uint32_t d = dp[col];
@@ -158,7 +158,7 @@ void gfx_blit_alpha(gfx_surface_t *dst, int32_t dx, int32_t dy,
         int32_t col;
 
         if (alpha == 0xFF) {
-            /* Global alpha is opaque — use per-pixel alpha only */
+            /* Global alpha is opaque -- use per-pixel alpha only */
             for (col = 0; col < copy_w; col++) {
                 uint32_t s = sp[col];
                 uint32_t sa = (s >> 24) & 0xFF;
@@ -229,10 +229,10 @@ void gfx_fill_rect_alpha(gfx_surface_t *s, int32_t x, int32_t y,
 
     sa = GFX_ALPHA(color);
     if (sa == 0)
-        return;  /* Transparent — nothing to draw */
+        return;  /* Transparent -- nothing to draw */
 
     if (sa == 0xFF) {
-        /* Fully opaque — use fast solid fill */
+        /* Fully opaque -- use fast solid fill */
         gfx_fill_rect(s, x, y, w, h, color);
         return;
     }

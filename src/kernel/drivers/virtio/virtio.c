@@ -1,5 +1,5 @@
 /* ============================================================================
- * virtio.c — VirtIO PCI modern transport
+ * virtio.c -- VirtIO PCI modern transport
  *
  * Split virtqueue management for VirtIO modern PCI devices.
  * Discovers config regions via PCI capabilities and uses MMIO access.
@@ -167,7 +167,7 @@ int virtio_pci_init(struct virtio_pci_dev *dev,
             uint64_t bar_addr;
 
             if (bar_val & 0x01) {
-                /* I/O space BAR — shouldn't happen for modern transport */
+                /* I/O space BAR -- shouldn't happen for modern transport */
                 klog(LOG_DEBUG, "virtio", "Unexpected I/O BAR %u for cap type %u",
                        (uint64_t)bar, (uint64_t)cap_type);
                 goto next_cap;
@@ -282,7 +282,7 @@ int virtq_init(struct virtqueue *vq, struct virtio_pci_dev *dev,
     used_sz  = vq_align(6 + (uint64_t)qsz * 8, 4);    /* used ring */
     total    = desc_sz + avail_sz + used_sz;
 
-    /* Use PMM — virtqueue buffers can be large with multi-queue,
+    /* Use PMM -- virtqueue buffers can be large with multi-queue,
      * and the kernel heap is only 2 MiB (rules.md Known Gotchas). */
     uint64_t pages_needed = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
     uintptr_t phys = pmm_alloc_contiguous(pages_needed);
@@ -354,7 +354,7 @@ int virtq_add_buf(struct virtqueue *vq, void *buf, uint32_t len,
     uint16_t avail_idx = vq->avail->idx % vq->size;
     vq->avail->ring[avail_idx] = idx;
 
-    /* Memory barrier — ensure descriptor is written before idx update */
+    /* Memory barrier -- ensure descriptor is written before idx update */
     __asm__ volatile("mfence" ::: "memory");
 
     vq->avail->idx++;
@@ -364,7 +364,7 @@ int virtq_add_buf(struct virtqueue *vq, void *buf, uint32_t len,
 
 void virtq_kick(struct virtqueue *vq)
 {
-    /* Memory barrier before notify — ensure avail->idx is visible */
+    /* Memory barrier before notify -- ensure avail->idx is visible */
     __asm__ volatile("mfence" ::: "memory");
 
     /* Calculate notification register address */
@@ -413,7 +413,7 @@ int virtq_get_buf(struct virtqueue *vq, uint32_t *len)
     uint16_t used_idx;
     uint32_t desc_idx;
 
-    /* Memory barrier — read used->idx after device writes */
+    /* Memory barrier -- read used->idx after device writes */
     __asm__ volatile("mfence" ::: "memory");
 
     if (vq->last_used == vq->used->idx)

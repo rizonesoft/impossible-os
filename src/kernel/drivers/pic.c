@@ -1,5 +1,5 @@
 /* ============================================================================
- * pic.c — 8259 Programmable Interrupt Controller driver
+ * pic.c -- 8259 Programmable Interrupt Controller driver
  *
  * Initializes the PIC in cascade mode and remaps IRQs:
  *   Master (PIC1): IRQ 0-7  -> interrupt vectors 32-39
@@ -12,7 +12,7 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/klog.h"
-/* PIC state — set by pic_init(), cleared by pic_disable() */
+/* PIC state -- set by pic_init(), cleared by pic_disable() */
 static int pic_ready = 0;
 
 /* Inline port I/O helpers */
@@ -113,7 +113,7 @@ void pic_mask_irq(uint8_t irq)
     uint8_t val;
 
     if (!pic_ready)
-        return;  /* No PIC — IOAPIC handles masking */
+        return;  /* No PIC -- IOAPIC handles masking */
 
     if (irq < 8) {
         port = PIC1_DATA;
@@ -132,7 +132,7 @@ void pic_unmask_irq(uint8_t irq)
     uint8_t val;
 
     if (!pic_ready)
-        return;  /* No PIC — IOAPIC handles unmasking */
+        return;  /* No PIC -- IOAPIC handles unmasking */
 
     if (irq < 8) {
         port = PIC1_DATA;
@@ -156,7 +156,7 @@ void irq_eoi(uint8_t irq)
 {
     /* Use LAPIC EOI only when the full APIC system is active (IOAPIC routing
      * interrupts AND PIC disabled).  If only the LAPIC is present but the PIC
-     * is still routing (no IOAPIC), we MUST send EOI to the PIC — otherwise
+     * is still routing (no IOAPIC), we MUST send EOI to the PIC -- otherwise
      * the PIC blocks all further interrupts of that priority level. */
     if (ioapic_available()) {
         lapic_eoi();

@@ -1,5 +1,5 @@
 /* ============================================================================
- * panic.h — Kernel panic screen
+ * panic.h -- Kernel panic screen
  *
  * Provides a styled graphical panic screen (blue screen of death) with:
  *   - Exception name and stop code

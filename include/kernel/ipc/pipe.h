@@ -1,5 +1,5 @@
 /* ============================================================================
- * pipe.h — Kernel IPC pipes
+ * pipe.h -- Kernel IPC pipes
  *
  * Unidirectional byte-stream pipe with a 4 KiB ring buffer.
  * Synchronized with mutex (buffer access) and semaphores (blocking).

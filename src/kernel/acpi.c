@@ -662,12 +662,12 @@ int acpi_hw_reduced(void)
 }
 
 /* ---- FADT IAPC_BOOT_ARCH flags (offset 109, 16-bit) ----
- * Bit 0: LEGACY_DEVICES — 8042 required
- * Bit 1: 8042 — i8042 controller present
- * Bit 2: VGA_NOT_PRESENT — do not probe VGA
- * Bit 3: MSI_NOT_SUPPORTED — do not enable MSI
- * Bit 4: PCIe_ASPM — PCIe ASPM must not be disabled
- * Bit 5: CMOS_RTC_NOT_PRESENT — do not access CMOS RTC */
+ * Bit 0: LEGACY_DEVICES -- 8042 required
+ * Bit 1: 8042 -- i8042 controller present
+ * Bit 2: VGA_NOT_PRESENT -- do not probe VGA
+ * Bit 3: MSI_NOT_SUPPORTED -- do not enable MSI
+ * Bit 4: PCIe_ASPM -- PCIe ASPM must not be disabled
+ * Bit 5: CMOS_RTC_NOT_PRESENT -- do not access CMOS RTC */
 
 int acpi_has_8042(void)
 {
@@ -675,7 +675,7 @@ int acpi_has_8042(void)
         return 1;  /* assume present if no FADT */
     /* FADT length must be >= 113 for boot_arch_flags to be valid */
     if (fadt_ptr->header.length < 113)
-        return 1;  /* too short — assume present */
+        return 1;  /* too short -- assume present */
     return (fadt_ptr->boot_arch_flags & (1u << 1)) ? 1 : 0;
 }
 
@@ -685,7 +685,7 @@ int acpi_has_cmos_rtc(void)
         return 1;
     if (fadt_ptr->header.length < 113)
         return 1;
-    /* Bit 5: CMOS_RTC_NOT_PRESENT — inverted: 0=present, 1=absent */
+    /* Bit 5: CMOS_RTC_NOT_PRESENT -- inverted: 0=present, 1=absent */
     return (fadt_ptr->boot_arch_flags & (1u << 5)) ? 0 : 1;
 }
 
@@ -695,7 +695,7 @@ int acpi_msi_supported(void)
         return 1;
     if (fadt_ptr->header.length < 113)
         return 1;
-    /* Bit 3: MSI_NOT_SUPPORTED — inverted: 0=supported, 1=not supported */
+    /* Bit 3: MSI_NOT_SUPPORTED -- inverted: 0=supported, 1=not supported */
     return (fadt_ptr->boot_arch_flags & (1u << 3)) ? 0 : 1;
 }
 
@@ -705,6 +705,6 @@ int acpi_has_vga(void)
         return 1;
     if (fadt_ptr->header.length < 113)
         return 1;
-    /* Bit 2: VGA_NOT_PRESENT — inverted: 0=present, 1=absent */
+    /* Bit 2: VGA_NOT_PRESENT -- inverted: 0=present, 1=absent */
     return (fadt_ptr->boot_arch_flags & (1u << 2)) ? 0 : 1;
 }

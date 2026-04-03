@@ -1,5 +1,5 @@
 /* ============================================================================
- * gdt.h — Global Descriptor Table (x86-64 Long Mode)
+ * gdt.h -- Global Descriptor Table (x86-64 Long Mode)
  *
  * Segments: null, kernel code, kernel data, user code, user data, TSS
  * ============================================================================ */
@@ -14,7 +14,7 @@
 #define GDT_KERNEL_DATA  0x10    /* Ring 0 data */
 #define GDT_USER_CODE    0x18    /* Ring 3 code */
 #define GDT_USER_DATA    0x20    /* Ring 3 data */
-#define GDT_TSS_SEG      0x28    /* TSS (16 bytes — two GDT slots) */
+#define GDT_TSS_SEG      0x28    /* TSS (16 bytes -- two GDT slots) */
 
 /* Number of GDT entries (TSS takes 2 slots in 64-bit mode) */
 #define GDT_NUM_ENTRIES  7

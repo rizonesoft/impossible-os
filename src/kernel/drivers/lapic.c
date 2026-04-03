@@ -442,7 +442,7 @@ static int cal_try_cpuid_15h(void)
 
 /* ---- Tier 1b: TSC-referenced calibration ----
  * Uses the bootloader's measured TSC frequency to time a 10ms window.
- * No MMIO, no I/O ports — just TSC reads + LAPIC register reads.
+ * No MMIO, no I/O ports -- just TSC reads + LAPIC register reads.
  * Works on any platform where TSC frequency is known. */
 static int cal_try_tsc_reference(void) __attribute__((unused));
 static int cal_try_tsc_reference(void)
@@ -476,7 +476,7 @@ static int cal_try_tsc_reference(void)
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
 
     if (lapic_elapsed < 1000)
-        return 0;  /* Too few ticks — unreliable */
+        return 0;  /* Too few ticks -- unreliable */
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
 
@@ -536,7 +536,7 @@ static inline void hpet_write32(uint64_t base, uint32_t offset, uint32_t val)
 }
 
 /* HPET-based calibration: map HPET as UC, read counter, measure LAPIC ticks.
- * Requires vmm_map_mmio_uc() — HPET MMIO through WB pages causes MCE. */
+ * Requires vmm_map_mmio_uc() -- HPET MMIO through WB pages causes MCE. */
 static int cal_try_hpet(void)
 {
     uint64_t hpet_phys;
@@ -555,7 +555,7 @@ static int cal_try_hpet(void)
     if (hpet_phys < 0x100000 || (hpet_phys & 0xFFF) != 0)
         return 0;
 
-    /* Map HPET MMIO as UC — 4 KiB is enough for all HPET registers */
+    /* Map HPET MMIO as UC -- 4 KiB is enough for all HPET registers */
     POST16(0xD102);
     hpet_uc = vmm_map_mmio_uc(hpet_phys, VMM_PAGE_SIZE);
     if (!hpet_uc) {
@@ -563,7 +563,7 @@ static int cal_try_hpet(void)
         return 0;
     }
 
-    /* Probe with a 32-bit read — reject if non-functional */
+    /* Probe with a 32-bit read -- reject if non-functional */
     {
         uint32_t probe = hpet_read32((uint64_t)(uintptr_t)hpet_uc, HPET_CAP_REG);
         if (probe == 0xFFFFFFFF || probe == 0x00000000) {
@@ -573,7 +573,7 @@ static int cal_try_hpet(void)
     }
     POST16(0xD103);
 
-    /* Read capabilities — upper 32 bits = period in femtoseconds */
+    /* Read capabilities -- upper 32 bits = period in femtoseconds */
     cap = hpet_read64((uint64_t)(uintptr_t)hpet_uc, HPET_CAP_REG);
     period_fs = (uint32_t)(cap >> 32);
     if (period_fs == 0 || period_fs > 100000000) {
@@ -724,7 +724,7 @@ void lapic_timer_calibrate(void)
         return;
     }
 
-    /* Tier 1b: TSC-referenced calibration — DISABLED.
+    /* Tier 1b: TSC-referenced calibration -- DISABLED.
      * TSC frequency != LAPIC timer frequency on many platforms (VMs, AMD,
      * turbo boost). Linux and Windows don't use TSC for LAPIC calibration.
      * PM Timer and HPET give reliable results on all hardware. */

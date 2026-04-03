@@ -1,28 +1,28 @@
-# TODO-06 — NTP, Network Status & Win32 Winsock
+# TODO-06 -- NTP, Network Status & Win32 Winsock
 
 > **Goal:** Close out the kernel networking layer with nine deliverables: DHCP lease renewal daemon, NTP time-sync client (slew mode, Registry persistence), `ifconfig` multi-NIC display + manual config, network statistics API + system-tray icon, extended `ping` (IPv6/flags), `traceroute`, `netstat`, `/sys/net` VFS aggregation file, and `ws2_32.dll` Winsock compatibility stubs. Together these give Impossible OS a complete, observable, Win32-compatible network stack.
 
 > [!IMPORTANT]
-> DNS (`dns_resolve()`) and UDP (`udp_send()`) must be working before NTP can query `pool.ntp.org`. The `net_interface` manager from TODO-01 §5 is the foundation for multi-NIC `ifconfig` output and per-interface stats. The BSD socket layer from TODO-02 §5–§8 must be complete before `ws2_32.dll` stubs can map to it. ICMPv6 (TODO-04 §3) provides the Echo Request/Reply types needed by the IPv6 `ping` extension. The `/sys/net` VFS file (§8) aggregates outputs from firewall counters (TODO-05 §9), DNS cache (TODO-02 §3), and ARP/NDP tables (TODO-04 §5) — implement it last. FILETIME epoch conversion uses the existing `FILETIME` type from `include/kernel/fs/ntfs.h` (100-ns units since 1601-01-01); `uefi_set_time()` is available in `include/kernel/uefi_runtime.h`.
+> DNS (`dns_resolve()`) and UDP (`udp_send()`) must be working before NTP can query `pool.ntp.org`. The `net_interface` manager from TODO-01 §5 is the foundation for multi-NIC `ifconfig` output and per-interface stats. The BSD socket layer from TODO-02 §5–§8 must be complete before `ws2_32.dll` stubs can map to it. ICMPv6 (TODO-04 §3) provides the Echo Request/Reply types needed by the IPv6 `ping` extension. The `/sys/net` VFS file (§8) aggregates outputs from firewall counters (TODO-05 §9), DNS cache (TODO-02 §3), and ARP/NDP tables (TODO-04 §5) -- implement it last. FILETIME epoch conversion uses the existing `FILETIME` type from `include/kernel/fs/ntfs.h` (100-ns units since 1601-01-01); `uefi_set_time()` is available in `include/kernel/uefi_runtime.h`.
 
 ## Inputs
 
-- `src/kernel/net/dhcp.c` — existing DISCOVER/REQUEST/ACK; add option 51 (lease time) parse + T1/T2 renewal states + renewal daemon thread
-- `src/kernel/net/udp.c` + `src/kernel/net/dns.c` — `udp_send()` + `dns_resolve()` for NTP query to `pool.ntp.org:123`
-- `src/kernel/net/icmp.c` — existing IPv4 ping (`icmp_ping_got_reply`, `icmp_send_echo_request`); extend with ICMPv6 echo and CLI flags
-- `src/kernel/net/icmp6.c` — ICMPv6 Echo Request (type 128) / Echo Reply (type 129) from TODO-04 §3
-- `src/kernel/sched/syscall.c` — `SYS_PING=15` already dispatches to `icmp_send_echo_request()`; extend for IPv6
-- `include/kernel/uefi_runtime.h` — `uefi_set_time()` for hard clock set after NTP response
-- `include/kernel/fs/ntfs.h` — `FILETIME` type (100-ns since 1601); NTP-to-FILETIME conversion utility
-- `include/registry.h` — `RegSetValueEx`/`RegGetValue`/`HKLM` for NTP Registry keys; also firewall and net config keys
-- `include/kernel/net/net.h` + `net_interface` from TODO-01 §5 — per-interface `rx_bytes`/`tx_bytes`/`rx_packets`/`tx_packets`/`rx_errors`/`tx_errors` counter fields
-- `src/kernel/fs/sysfs.c` — `/sys/` VFS mount point for `/sys/net` synthetic file (§8)
-- `user/lib/socket.c` + `include/kernel/net/socket.h` — BSD socket syscalls from TODO-02; `ws2_32.dll` maps to these
-- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` — `net_interface` manager (§5) extended with stat counters here
-- → XREF: `06-networking/TODO-02-dns-sockets.md` — `dns_resolve()` for NTP hostname; BSD socket syscalls for `ws2_32.dll` mapping
-- → XREF: `06-networking/TODO-04-ipv6-dual-stack.md` — ICMPv6 Echo Request/Reply (§3) needed by §4 IPv6 ping; NDP cache for `ndp -an` in `/sys/net`
-- → XREF: `06-networking/TODO-05-firewall.md` — `/sys/firewall` counters included in `/sys/net` §8 summary
-- → XREF: `02-kernel-core/TODO-07` — NTP sets system time via `NtSetSystemTime`; coordinate epoch with the kernel time service
+- `src/kernel/net/dhcp.c` -- existing DISCOVER/REQUEST/ACK; add option 51 (lease time) parse + T1/T2 renewal states + renewal daemon thread
+- `src/kernel/net/udp.c` + `src/kernel/net/dns.c` -- `udp_send()` + `dns_resolve()` for NTP query to `pool.ntp.org:123`
+- `src/kernel/net/icmp.c` -- existing IPv4 ping (`icmp_ping_got_reply`, `icmp_send_echo_request`); extend with ICMPv6 echo and CLI flags
+- `src/kernel/net/icmp6.c` -- ICMPv6 Echo Request (type 128) / Echo Reply (type 129) from TODO-04 §3
+- `src/kernel/sched/syscall.c` -- `SYS_PING=15` already dispatches to `icmp_send_echo_request()`; extend for IPv6
+- `include/kernel/uefi_runtime.h` -- `uefi_set_time()` for hard clock set after NTP response
+- `include/kernel/fs/ntfs.h` -- `FILETIME` type (100-ns since 1601); NTP-to-FILETIME conversion utility
+- `include/registry.h` -- `RegSetValueEx`/`RegGetValue`/`HKLM` for NTP Registry keys; also firewall and net config keys
+- `include/kernel/net/net.h` + `net_interface` from TODO-01 §5 -- per-interface `rx_bytes`/`tx_bytes`/`rx_packets`/`tx_packets`/`rx_errors`/`tx_errors` counter fields
+- `src/kernel/fs/sysfs.c` -- `/sys/` VFS mount point for `/sys/net` synthetic file (§8)
+- `user/lib/socket.c` + `include/kernel/net/socket.h` -- BSD socket syscalls from TODO-02; `ws2_32.dll` maps to these
+- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- `net_interface` manager (§5) extended with stat counters here
+- → XREF: `06-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for NTP hostname; BSD socket syscalls for `ws2_32.dll` mapping
+- → XREF: `06-networking/TODO-04-ipv6-dual-stack.md` -- ICMPv6 Echo Request/Reply (§3) needed by §4 IPv6 ping; NDP cache for `ndp -an` in `/sys/net`
+- → XREF: `06-networking/TODO-05-firewall.md` -- `/sys/firewall` counters included in `/sys/net` §8 summary
+- → XREF: `02-kernel-core/TODO-07` -- NTP sets system time via `NtSetSystemTime`; coordinate epoch with the kernel time service
 
 ## Outcome
 
@@ -40,15 +40,15 @@
 
 | ⭐  | Order | Deliverable                                                                                        | Depends On                                                                        | Status |
 | --- | :---: | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §9 DHCP renewal daemon — lease time opt 51, T1/T2 states, background renewal thread               | `dhcp.c` existing ACK state; no new net primitives needed                         |  [ ]   |
-| 💎  |   2   | §1 NTP client — 48-byte packet, `pool.ntp.org:123`, FILETIME convert, slew/hard-set, 24 h thread | `dns_resolve()` + `udp_send()` (TODO-02 §1); `uefi_set_time()` for hard set       |  [ ]   |
-| 💎  |   3   | §7 Network statistics API — per-interface counters in `net_interface`, `net_stats()`, tray icon   | `net_interface` from TODO-01 §5; compositor desktop for tray icon rendering        |  [ ]   |
-| 💎  |   4   | §3 `ifconfig` command — multi-NIC display, IPv4/IPv6/MTU/stats, manual IP/up/down config         | §7 (stats counters must exist to display); `net_interface` manager                |  [ ]   |
-| 💎  |   5   | §4 `ping` improvements — ICMPv6 echo, `-6/-4/-c/-t` flags                                        | ICMPv6 Echo from TODO-04 §3; existing `icmp_send_echo_request()`                  |  [ ]   |
-| 💎  |   6   | §5 `traceroute` — UDP TTL 1→30, ICMP Time Exceeded, reverse DNS, IPv4+IPv6                       | ICMP Time Exceeded handling (IPv4 `icmp.c`); `dns_resolve()` for reverse lookup   |  [ ]   |
-| 💎  |   7   | §6 `netstat` — TCP connections, UDP sockets, listening sockets from kernel socket table           | BSD socket table from TODO-02 §5–§6                                                |  [ ]   |
-| ⭐  |   8   | §8 `/sys/net` VFS file — per-interface stats, ARP, NDP, DNS cache, FW counters                   | §3 stats; §6 `netstat`; TODO-04 §5 NDP cache; TODO-05 §9 FW counters              |  [ ]   |
-| 💎  |   9   | §2 `ws2_32.dll` Winsock stubs — `WSAStartup`, socket/connect/send/recv, `getaddrinfo`, `select`  | BSD socket syscalls from TODO-02 §7; DLL stub table mechanism                      |  [ ]   |
+| 💎  |   1   | §9 DHCP renewal daemon -- lease time opt 51, T1/T2 states, background renewal thread               | `dhcp.c` existing ACK state; no new net primitives needed                         |  [ ]   |
+| 💎  |   2   | §1 NTP client -- 48-byte packet, `pool.ntp.org:123`, FILETIME convert, slew/hard-set, 24 h thread | `dns_resolve()` + `udp_send()` (TODO-02 §1); `uefi_set_time()` for hard set       |  [ ]   |
+| 💎  |   3   | §7 Network statistics API -- per-interface counters in `net_interface`, `net_stats()`, tray icon   | `net_interface` from TODO-01 §5; compositor desktop for tray icon rendering        |  [ ]   |
+| 💎  |   4   | §3 `ifconfig` command -- multi-NIC display, IPv4/IPv6/MTU/stats, manual IP/up/down config         | §7 (stats counters must exist to display); `net_interface` manager                |  [ ]   |
+| 💎  |   5   | §4 `ping` improvements -- ICMPv6 echo, `-6/-4/-c/-t` flags                                        | ICMPv6 Echo from TODO-04 §3; existing `icmp_send_echo_request()`                  |  [ ]   |
+| 💎  |   6   | §5 `traceroute` -- UDP TTL 1→30, ICMP Time Exceeded, reverse DNS, IPv4+IPv6                       | ICMP Time Exceeded handling (IPv4 `icmp.c`); `dns_resolve()` for reverse lookup   |  [ ]   |
+| 💎  |   7   | §6 `netstat` -- TCP connections, UDP sockets, listening sockets from kernel socket table           | BSD socket table from TODO-02 §5–§6                                                |  [ ]   |
+| ⭐  |   8   | §8 `/sys/net` VFS file -- per-interface stats, ARP, NDP, DNS cache, FW counters                   | §3 stats; §6 `netstat`; TODO-04 §5 NDP cache; TODO-05 §9 FW counters              |  [ ]   |
+| 💎  |   9   | §2 `ws2_32.dll` Winsock stubs -- `WSAStartup`, socket/connect/send/recv, `getaddrinfo`, `select`  | BSD socket syscalls from TODO-02 §7; DLL stub table mechanism                      |  [ ]   |
 
 ---
 
@@ -67,7 +67,7 @@ Parse DHCP option 51 (lease time) in ACK. Derive T1 (50% of lease) and T2 (87.5%
 - [ ] `dhcp_renew_thread()`: loop every 1 s; check `elapsed = uptime_ms() - lease_start_ms`; at T1: send unicast REQUEST (RENEWING); at T2: send broadcast REQUEST (REBINDING); at expiry: restart DISCOVER; on new ACK: update `netif->ip4`, `netif->gateway`, `netif->dns`; reset T1/T2 timers
 - [ ] On renewal ACK: call `dns_set_server(netif->dns)` to update DNS resolver with new DNS IP
 - [ ] Log: `[DHCP] Lease T1=%us T2=%us expire=%us`, `[DHCP] Renewing (unicast)`, `[DHCP] Rebinding (broadcast)`, `[DHCP] Renewed IP=%u.%u.%u.%u`
-- [ ] Commit: `"net/dhcp: lease renewal daemon — opt51/58/59, T1 unicast, T2 broadcast, rebind, netif update"`
+- [ ] Commit: `"net/dhcp: lease renewal daemon -- opt51/58/59, T1 unicast, T2 broadcast, rebind, netif update"`
 
 ## 2. NTP Client `[Opus]`
 
@@ -76,7 +76,7 @@ Parse DHCP option 51 (lease time) in ACK. Derive T1 (50% of lease) and T2 (87.5%
 **Files:** `src/kernel/net/ntp.c` (new), `include/kernel/net/ntp.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` — NTP timestamp conversion and slew-mode clock adjustment are subtle algorithm design problems with no prior implementation in Impossible OS. **NTP packet** (RFC 5905 §7.3): 48 bytes; byte 0 = `(LI<<6) | (VN<<3) | Mode` = `0x1B` (LI=0, VN=3, Mode=3 client); bytes 1–3 = stratum/poll/precision = 0/6/0xEC; bytes 4–47 = 0. **Transmit Timestamp** offset 40: two uint32_t (big-endian): NTP seconds since 1900-01-01 + fractional seconds. **NTP→FILETIME conversion**: NTP epoch offset = `2208988800` seconds (difference between 1900 and 1970 epochs); FILETIME = (NTP_seconds - 2208988800 + 11644473600) × 10,000,000 (100-ns intervals from 1601). **Slew mode**: if |delta| < 128 ms: adjust kernel tick rate (`tsc_freq_hz += delta_tsc_correction`) — compute correction as `delta_ms * tsc_freq / 1000` and apply as a linear drift correction factor over 60 s; else: hard `uefi_set_time()`. **DNS for NTP**: `dns_resolve("pool.ntp.org", &ntp_ip)` — use one NTP server from the pool; rotate to backup `0.pool.ntp.org` on timeout.
+> This is `[Opus]` -- NTP timestamp conversion and slew-mode clock adjustment are subtle algorithm design problems with no prior implementation in Impossible OS. **NTP packet** (RFC 5905 §7.3): 48 bytes; byte 0 = `(LI<<6) | (VN<<3) | Mode` = `0x1B` (LI=0, VN=3, Mode=3 client); bytes 1–3 = stratum/poll/precision = 0/6/0xEC; bytes 4–47 = 0. **Transmit Timestamp** offset 40: two uint32_t (big-endian): NTP seconds since 1900-01-01 + fractional seconds. **NTP→FILETIME conversion**: NTP epoch offset = `2208988800` seconds (difference between 1900 and 1970 epochs); FILETIME = (NTP_seconds - 2208988800 + 11644473600) × 10,000,000 (100-ns intervals from 1601). **Slew mode**: if |delta| < 128 ms: adjust kernel tick rate (`tsc_freq_hz += delta_tsc_correction`) -- compute correction as `delta_ms * tsc_freq / 1000` and apply as a linear drift correction factor over 60 s; else: hard `uefi_set_time()`. **DNS for NTP**: `dns_resolve("pool.ntp.org", &ntp_ip)` -- use one NTP server from the pool; rotate to backup `0.pool.ntp.org` on timeout.
 
 - [ ] `struct ntp_packet { uint8_t flags; uint8_t stratum; uint8_t poll; uint8_t precision; uint32_t root_delay; uint32_t root_disp; uint32_t ref_id; uint32_t ref_ts_s, ref_ts_f; uint32_t orig_ts_s, orig_ts_f; uint32_t rx_ts_s, rx_ts_f; uint32_t tx_ts_s, tx_ts_f; } __attribute__((packed));` in `ntp.h`
 - [ ] `ntp_build_request(buf)`: set `flags=0x1B`; all other fields 0; 48 bytes
@@ -87,7 +87,7 @@ Parse DHCP option 51 (lease time) in ACK. Derive T1 (50% of lease) and T2 (87.5%
 - [ ] Registry writes: `RegSetValueEx(HKLM, "SYSTEM\\Time\\LastNTPSync", ...)` (DWORD Unix timestamp); `RegSetValueEx(HKLM, "SYSTEM\\Time\\NTPServer", ...)` (SZ "pool.ntp.org"); `RegSetValueEx(HKLM, "SYSTEM\\Time\\TimeZone", ...)` (SZ "UTC")
 - [ ] `ntp_sync_thread()`: `ntp_sync()` at boot; `ksleep(86400000)` (24 h); loop
 - [ ] Log: `[NTP] Synced to %u.%u.%u.%u: delta=%+d ms (slew=%d)` or `[NTP] Hard set to %04u-%02u-%02u %02u:%02u:%02u UTC`
-- [ ] Commit: `"net/ntp: NTP v4 client — 48-byte packet, pool.ntp.org, FILETIME convert, slew/hard-set, 24h thread"`
+- [ ] Commit: `"net/ntp: NTP v4 client -- 48-byte packet, pool.ntp.org, FILETIME convert, slew/hard-set, 24h thread"`
 
 ## 3. Network Statistics API `[Sonnet]`
 
@@ -96,13 +96,13 @@ Add per-interface RX/TX byte/packet/error counters to `net_interface`. `net_stat
 **Files:** `include/kernel/net/net.h` (extend), `src/kernel/net/ip.c` + `udp.c` (extend), `src/desktop/taskbar.c` (extend)
 
 > [!NOTE]
-> Counter placement: increment `netif->rx_bytes` and `netif->rx_packets` in `ipv4_handle()` (and `ipv6_receive()` after TODO-04) after header validation; increment `netif->tx_bytes` and `netif->tx_packets` in `eth_send()` (or `ipv4_send()` after payload length is known); increment `netif->rx_errors` on checksum failure or malformed header; increment `netif->tx_errors` if `eth_send()` fails. `net_status_t { uint8_t connected; uint32_t link_speed_mbps; }` — determine `connected` by checking `netif->ip4 != 0`; `link_speed_mbps` from driver capability (RTL8139 = 100, VirtIO = 1000). Tray icon: rendered in `taskbar.c`; refreshed every 2 s via a timer; tooltip string = `"eth0: 192.168.x.x\nRX: N KB/s  TX: N KB/s"` computed from counter delta.
+> Counter placement: increment `netif->rx_bytes` and `netif->rx_packets` in `ipv4_handle()` (and `ipv6_receive()` after TODO-04) after header validation; increment `netif->tx_bytes` and `netif->tx_packets` in `eth_send()` (or `ipv4_send()` after payload length is known); increment `netif->rx_errors` on checksum failure or malformed header; increment `netif->tx_errors` if `eth_send()` fails. `net_status_t { uint8_t connected; uint32_t link_speed_mbps; }` -- determine `connected` by checking `netif->ip4 != 0`; `link_speed_mbps` from driver capability (RTL8139 = 100, VirtIO = 1000). Tray icon: rendered in `taskbar.c`; refreshed every 2 s via a timer; tooltip string = `"eth0: 192.168.x.x\nRX: N KB/s  TX: N KB/s"` computed from counter delta.
 
 - [ ] Extend `net_interface` in `net.h`: add `uint64_t rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors`
 - [ ] `net_status(netif, &status)`: set `connected = (netif->ip4 != 0)`; set `link_speed_mbps` from driver (constant 100 for RTL8139, 1000 for VirtIO; stored in `netif->link_speed_mbps`)
 - [ ] `net_stats(netif, &stats_out)`: copy counter fields from `net_interface` into caller struct
 - [ ] Counter increments: `ip.c` `ipv4_handle()` → `netif->rx_bytes += len; netif->rx_packets++`; `eth_send()` → `netif->tx_bytes += len; netif->tx_packets++`
-- [ ] Tray icon in `taskbar.c`: `net_draw_tray_icon()` — if connected: draw 🌐 glyph (blue globe or bar icon from IRES); if disconnected: draw ⚠ icon; tooltip popup on hover
+- [ ] Tray icon in `taskbar.c`: `net_draw_tray_icon()` -- if connected: draw 🌐 glyph (blue globe or bar icon from IRES); if disconnected: draw ⚠ icon; tooltip popup on hover
 - [ ] `net_tray_refresh_timer()`: called every 2 s; compute `rx_kbps = (rx_bytes_delta * 1000) / (2000ms)`; update tooltip string
 - [ ] Task Manager hook: expose `net_stats()` result in `/sys/net` (§8); Task Manager reads that file for the network graph
 - [ ] Commit: `"net/stats: per-interface RX/TX counters, net_stats() API, tray icon with IP tooltip, 2s refresh"`
@@ -114,7 +114,7 @@ Display all interfaces: name, MAC, IPv4 (addr/mask/gateway), IPv6 (link-local + 
 **Files:** `src/shell/cmd_ifconfig.c` (new or extend from TODO-04 §10)
 
 > [!NOTE]
-> `ifconfig` with no arguments: iterate all registered `net_interface` entries; for each: print `<name>: flags=<UP|DOWN> mtu=<MTU>`; print `ether <MAC>` on the next line; print `inet <ip> netmask <mask> broadcast <bcast>` if IPv4 configured; print `inet6 <fe80::link-local>/10` and `inet6 <global>/<prefix>` if IPv6 configured (from TODO-04 §4/§6); print `RX packets <n> bytes <n> errors <n>` and `TX packets <n> bytes <n> errors <n>`. Manual config: `ifconfig eth0 192.168.1.10 255.255.255.0` → set `netif->ip4` + `netif->subnet`; `ifconfig eth0 up/down` → set `netif->flags`. This extends the `ifconfig` stub started in TODO-04 §10 — if that section is complete, this section only adds stats rows and manual config.
+> `ifconfig` with no arguments: iterate all registered `net_interface` entries; for each: print `<name>: flags=<UP|DOWN> mtu=<MTU>`; print `ether <MAC>` on the next line; print `inet <ip> netmask <mask> broadcast <bcast>` if IPv4 configured; print `inet6 <fe80::link-local>/10` and `inet6 <global>/<prefix>` if IPv6 configured (from TODO-04 §4/§6); print `RX packets <n> bytes <n> errors <n>` and `TX packets <n> bytes <n> errors <n>`. Manual config: `ifconfig eth0 192.168.1.10 255.255.255.0` → set `netif->ip4` + `netif->subnet`; `ifconfig eth0 up/down` → set `netif->flags`. This extends the `ifconfig` stub started in TODO-04 §10 -- if that section is complete, this section only adds stats rows and manual config.
 
 - [ ] `ifconfig_print_iface(netif)`: format all rows as described above; use `%d.%d.%d.%d` IPv4 formatting; `ipv6_ntop()` for IPv6 (from TODO-04 §10)
 - [ ] `cmd_ifconfig(argc, argv)`: no args → iterate `netif_all()` + print each; with args: parse `<iface> <verb> [params]`
@@ -147,7 +147,7 @@ Send UDP packets with TTL 1→30. Collect ICMP Time Exceeded (type 11) responses
 **Files:** `src/shell/cmd_traceroute.c` (new), `src/kernel/net/icmp.c` (extend)
 
 > [!NOTE]
-> This is `[Opus]` — `traceroute` requires a novel mechanism: deliberate TTL-expiry probing and correlation of asynchronous ICMP Time Exceeded replies back to the correct probe sequence. Implementation: for each TTL from 1 to 30: set `IP TTL` field in the IPv4 header (extend `ipv4_send()` to accept a TTL parameter; currently it hard-codes TTL=64); send 3 UDP probes to an unlikely destination port (33434–33464, as per traditional `traceroute`); register an ICMP Time Exceeded (type=11, code=0) handler that captures the source IP of the ICMP response; correlate by sequence (use a static `tracert_pending_ip` and `tracert_pending_ttl`); wait up to 2 s per hop; if no reply: print `* * *`. IPv4 only for the initial implementation; IPv6 uses ICMPv6 Time Exceeded (type=3) as a stub that prints `[IPv6 traceroute not yet implemented]`.
+> This is `[Opus]` -- `traceroute` requires a novel mechanism: deliberate TTL-expiry probing and correlation of asynchronous ICMP Time Exceeded replies back to the correct probe sequence. Implementation: for each TTL from 1 to 30: set `IP TTL` field in the IPv4 header (extend `ipv4_send()` to accept a TTL parameter; currently it hard-codes TTL=64); send 3 UDP probes to an unlikely destination port (33434–33464, as per traditional `traceroute`); register an ICMP Time Exceeded (type=11, code=0) handler that captures the source IP of the ICMP response; correlate by sequence (use a static `tracert_pending_ip` and `tracert_pending_ttl`); wait up to 2 s per hop; if no reply: print `* * *`. IPv4 only for the initial implementation; IPv6 uses ICMPv6 Time Exceeded (type=3) as a stub that prints `[IPv6 traceroute not yet implemented]`.
 
 - [ ] Extend `ipv4_send()`: add `uint8_t ttl` parameter (use `IPV4_TTL_DEFAULT=64` for all existing callers via a compatibility macro); set `hdr->ttl = ttl` in the IPv4 header build
 - [ ] `icmp_set_ttl_exceeded_cb(cb)`: register a callback invoked by `icmp_handle()` when ICMP type=11 received; callback receives `src_ip` (the router that sent the TTL-exceeded), `orig_dest_ip`, and `orig_ttl`
@@ -189,7 +189,7 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 - [ ] `ndp_cache_dump(buf, max)` → bytes: add to `ndp_cache.c` (TODO-04 §5); format `ip6 → MAC (state)` per entry; skip if IPv6 not yet implemented (return 0)
 - [ ] Register `/sys/net`: `sysfs_register("net", net_sysfs_read_cb, NULL)`; `net_sysfs_read_cb` calls `net_sysfs_dump()`
 - [ ] `cat /sys/net` accessible from shell; also readable by Task Manager network graph
-- [ ] Commit: `"sysfs: /sys/net — per-interface stats, ARP, NDP, DNS cache, firewall summary in one VFS file"`
+- [ ] Commit: `"sysfs: /sys/net -- per-interface stats, ARP, NDP, DNS cache, firewall summary in one VFS file"`
 
 ## 9. `ws2_32.dll` Winsock Stubs `[Sonnet]`
 
@@ -198,7 +198,7 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 **Files:** `src/kernel/sched/dll_stubs.c` (new or extend), `include/kernel/sched/dll_stubs.h` (new or extend)
 
 > [!NOTE]
-> `ws2_32.dll` is the Win32 Winsock DLL. For user-mode programs that import from `ws2_32.dll`, the PE loader's IAT resolver must find these exports. Approach: the built-in DLL stub table (already planned for Win32 compatibility) maps `dll_name + export_name → function_ptr`. `WSAStartup(wVersionRequired, lpWSAData)`: write `wVersion=0x0202` to `lpWSAData`; return 0. `WSACleanup()`: return 0. `socket(af, type, protocol)`: call `kern_socket()` via `SYS_SOCKET` syscall; return fd. `closesocket(fd)`: map to `SYS_CLOSE(fd)` (add `SYS_CLOSE` syscall if not present — close a socket fd). `WSAGetLastError()`: read thread-local `wsa_last_error`; map from `errno`: `ECONNREFUSED→WSAECONNREFUSED=10061`, `ETIMEDOUT→WSAETIMEDOUT=10060`, `EADDRINUSE→WSAEADDRINUSE=10048`, `ENOTSUP→WSAEOPNOTSUPP=10045`, etc. `gethostbyname(name)`: call `dns_resolve(name, &ip)`; fill `hostent` struct (static): `h_name=name`, `h_addrtype=AF_INET`, `h_length=4`, `h_addr_list[0]=&ip`.
+> `ws2_32.dll` is the Win32 Winsock DLL. For user-mode programs that import from `ws2_32.dll`, the PE loader's IAT resolver must find these exports. Approach: the built-in DLL stub table (already planned for Win32 compatibility) maps `dll_name + export_name → function_ptr`. `WSAStartup(wVersionRequired, lpWSAData)`: write `wVersion=0x0202` to `lpWSAData`; return 0. `WSACleanup()`: return 0. `socket(af, type, protocol)`: call `kern_socket()` via `SYS_SOCKET` syscall; return fd. `closesocket(fd)`: map to `SYS_CLOSE(fd)` (add `SYS_CLOSE` syscall if not present -- close a socket fd). `WSAGetLastError()`: read thread-local `wsa_last_error`; map from `errno`: `ECONNREFUSED→WSAECONNREFUSED=10061`, `ETIMEDOUT→WSAETIMEDOUT=10060`, `EADDRINUSE→WSAEADDRINUSE=10048`, `ENOTSUP→WSAEOPNOTSUPP=10045`, etc. `gethostbyname(name)`: call `dns_resolve(name, &ip)`; fill `hostent` struct (static): `h_name=name`, `h_addrtype=AF_INET`, `h_length=4`, `h_addr_list[0]=&ip`.
 
 - [ ] `dll_stub_register("ws2_32.dll", export_name, fn_ptr)` mechanism: add to IAT resolver lookup table; if not present yet, create it
 - [ ] `WSAStartup`, `WSACleanup` → register as no-ops returning 0
@@ -213,7 +213,7 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 - [ ] `htons`/`ntohs`/`htonl`/`ntohl` → inline byte-swap (already in `user/include/socket.h` from TODO-02; re-export from `ws2_32.dll`)
 - [ ] `inet_addr(str)` → parse dotted-decimal to uint32_t; `inet_ntoa(addr)` → static buffer formatted string
 - [ ] Register all exports in DLL stub table; test with a user-mode program that calls `WSAStartup` → `socket` → `connect` → `send` → `recv` → `closesocket`
-- [ ] Commit: `"win32/ws2_32: Winsock stubs — WSAStartup, socket/connect/send/recv, getaddrinfo, WSAGetLastError"`
+- [ ] Commit: `"win32/ws2_32: Winsock stubs -- WSAStartup, socket/connect/send/recv, getaddrinfo, WSAGetLastError"`
 
 ---
 
@@ -222,15 +222,15 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 
 | ⭐ | Feature                                                  | 🪟 Win11                                                | 🐧 Linux                                                                  | 🚀 Impossible OS                                    |
 |----|----------------------------------------------------------|------------------------------------------------------|------------------------------------------------------------------------|--------------------------------------------------|
-| 💎 | DHCP lease renewal                                       | ✅ `dhcpcsvc.dll` T1/T2 RFC 2131-compliant renewal;  | ✅ `dhclient`/`systemd-networkd` T1/T2; in-kernel DHCP not             | ⬜ §1 — in-kernel daemon; `ksleep` 1 s           |
-| 💎 | NTP v4 client                                            | ✅ `w32tm.exe` Windows Time Service; slew            | ✅ `ntpd`/`chronyd`/`systemd-timesyncd` (userspace); `adjtimex()` slew | ⬜ §2 — `⭐` in-kernel (no userspace daemon)     |
-| 💎 | `ifconfig` multi-NIC, RX/TX stats, manual IP/up/down     | ✅ `ipconfig /all`; `netsh interface ip              | ✅ `ifconfig` + `ip link`/`ip addr`;                                   | ⬜ §4 — extends TODO-04 §10; adds stats          |
-| 💎 | Network stats API + system-tray icon + Task Manager hook | ✅ `GetAdaptersInfo()`; tray in `explorer.exe`; Task | ✅ `/proc/net/dev`; `NetworkManager` tray; `gnome-task-manager`        | ⬜ §3 — `net_stats()` kernel API; tray icon      |
-| 💎 | `ping` IPv6 ICMPv6 echo, `-6/-4/-c/-t` flags             | ✅ `ping -6 <host>`; `-n count`;                     | ✅ `ping6`/`ping -6`; `-c count`; `-i                                  | ⬜ §5 — ICMPv6 type-128 echo; unified `ping`     |
-| 💎 | `traceroute`                                             | ✅ `tracert.exe` (ICMP-based, not UDP)               | ✅ `traceroute` (UDP-based by default); `tracepath`;                   | ⬜ §6 — UDP-based; ICMP Time Exceeded cb         |
-| 💎 | `netstat`                                                | ✅ `netstat.exe`; `-a/-n/-o/-p` flags                | ✅ `netstat`/`ss`; reads `/proc/net/tcp6`                              | ⬜ §7 — reads kernel `sock_table`; `-n/-a` flags |
-| ⭐ | `/sys/net`                                               | ✅ `netsh`, `ipconfig`, `arp -a` (separate           | ✅ `/proc/net/dev`, `/proc/net/arp`, `/proc/net/tcp` (separate files)  | ⬜ §8 — `⭐` single `/sys/net` file aggregates   |
-| 💎 | `ws2_32.dll` Winsock stubs                               | ✅ Full `ws2_32.dll` (kernel `afd.sys` +             | ✅ glibc `socket()`/`connect()`; no `ws2_32.dll` (POSIX                | ⬜ §9 — DLL stub table maps Win32                |
+| 💎 | DHCP lease renewal                                       | ✅ `dhcpcsvc.dll` T1/T2 RFC 2131-compliant renewal;  | ✅ `dhclient`/`systemd-networkd` T1/T2; in-kernel DHCP not             | ⬜ §1 -- in-kernel daemon; `ksleep` 1 s           |
+| 💎 | NTP v4 client                                            | ✅ `w32tm.exe` Windows Time Service; slew            | ✅ `ntpd`/`chronyd`/`systemd-timesyncd` (userspace); `adjtimex()` slew | ⬜ §2 -- `⭐` in-kernel (no userspace daemon)     |
+| 💎 | `ifconfig` multi-NIC, RX/TX stats, manual IP/up/down     | ✅ `ipconfig /all`; `netsh interface ip              | ✅ `ifconfig` + `ip link`/`ip addr`;                                   | ⬜ §4 -- extends TODO-04 §10; adds stats          |
+| 💎 | Network stats API + system-tray icon + Task Manager hook | ✅ `GetAdaptersInfo()`; tray in `explorer.exe`; Task | ✅ `/proc/net/dev`; `NetworkManager` tray; `gnome-task-manager`        | ⬜ §3 -- `net_stats()` kernel API; tray icon      |
+| 💎 | `ping` IPv6 ICMPv6 echo, `-6/-4/-c/-t` flags             | ✅ `ping -6 <host>`; `-n count`;                     | ✅ `ping6`/`ping -6`; `-c count`; `-i                                  | ⬜ §5 -- ICMPv6 type-128 echo; unified `ping`     |
+| 💎 | `traceroute`                                             | ✅ `tracert.exe` (ICMP-based, not UDP)               | ✅ `traceroute` (UDP-based by default); `tracepath`;                   | ⬜ §6 -- UDP-based; ICMP Time Exceeded cb         |
+| 💎 | `netstat`                                                | ✅ `netstat.exe`; `-a/-n/-o/-p` flags                | ✅ `netstat`/`ss`; reads `/proc/net/tcp6`                              | ⬜ §7 -- reads kernel `sock_table`; `-n/-a` flags |
+| ⭐ | `/sys/net`                                               | ✅ `netsh`, `ipconfig`, `arp -a` (separate           | ✅ `/proc/net/dev`, `/proc/net/arp`, `/proc/net/tcp` (separate files)  | ⬜ §8 -- `⭐` single `/sys/net` file aggregates   |
+| 💎 | `ws2_32.dll` Winsock stubs                               | ✅ Full `ws2_32.dll` (kernel `afd.sys` +             | ✅ glibc `socket()`/`connect()`; no `ws2_32.dll` (POSIX                | ⬜ §9 -- DLL stub table maps Win32                |
 
 > **After §1–§9:** The networking layer is fully closed out. Impossible OS has an in-kernel NTP client without a userspace daemon (`⭐`), a unified `/sys/net` observability file (`⭐`), and `ws2_32.dll` Winsock stubs that let Win32 applications use the network stack without modification. Every higher-level networking TODO (browser, email, SSH, OS updates) is unblocked.
 
@@ -247,4 +247,4 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 - [ ] `netstat -a`: shows at least one LISTEN entry after `kern_listen()`; shows ESTABLISHED after connecting TCP socket
 - [ ] `cat /sys/net`: readable; shows 5 section headers; interface counters non-zero after network activity; ARP table shows QEMU router
 - [ ] `ws2_32.dll`: user-mode test program calling `WSAStartup(0x0202, &wsa)` returns 0; `socket(AF_INET, SOCK_STREAM, 0)` returns fd ≥ 3; `connect` + `send` + `recv` + `closesocket` completes an HTTP GET
-- [ ] Commit: `"net: close networking layer — DHCP renewal, NTP, ifconfig++, ping6, traceroute, netstat, /sys/net, ws2_32"`
+- [ ] Commit: `"net: close networking layer -- DHCP renewal, NTP, ifconfig++, ping6, traceroute, netstat, /sys/net, ws2_32"`

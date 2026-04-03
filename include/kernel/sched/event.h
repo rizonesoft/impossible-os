@@ -1,12 +1,12 @@
 /* ============================================================================
- * event.h — Kernel wait/event objects
+ * event.h -- Kernel wait/event objects
  *
  * Two variants:
- *   EVENT_MANUAL_RESET — event_set() wakes ALL waiters and the event stays
+ *   EVENT_MANUAL_RESET -- event_set() wakes ALL waiters and the event stays
  *                        set until event_reset() is called explicitly.
  *                        Equivalent to Windows manual-reset KEVENT.
  *
- *   EVENT_AUTO_RESET   — event_set() wakes exactly ONE waiter and
+ *   EVENT_AUTO_RESET   -- event_set() wakes exactly ONE waiter and
  *                        automatically clears itself.  If there are no
  *                        waiters the event stays set until the next
  *                        event_wait() call consumes it.
@@ -28,7 +28,7 @@
  * IRQ safety:
  *   event_set() may be called from IRQ context (e.g. vsync from PIT
  *   callback).  The function only sets a flag and calls thread_ready()
- *   — both are safe from IRQ context.
+ *   -- both are safe from IRQ context.
  *   event_wait() MUST be called from thread context only (it calls yield()).
  * ============================================================================ */
 
@@ -57,7 +57,7 @@ typedef struct event {
     atomic_t      state;       /* 1 = signalled, 0 = not signalled */
     event_type_t  type;        /* MANUAL_RESET or AUTO_RESET */
 
-    /* Wait queue — tasks/threads sleeping in event_wait() */
+    /* Wait queue -- tasks/threads sleeping in event_wait() */
     uint32_t  waiter_tasks[EVENT_MAX_WAITERS];
     uint32_t  waiter_threads[EVENT_MAX_WAITERS];
     uint32_t  num_waiters;

@@ -1,5 +1,5 @@
 ; =============================================================================
-; isr_stubs.asm — ISR and IRQ entry stubs (x86-64)
+; isr_stubs.asm -- ISR and IRQ entry stubs (x86-64)
 ;
 ; CPU exceptions (0-31): some push error codes, some don't.
 ; Hardware IRQs (32-47): remapped by PIC to interrupts 32-47.
@@ -17,10 +17,10 @@ section .text
 extern isr_handler
 
 ; =============================================================================
-; Common interrupt handler — saves state, calls C, restores state
+; Common interrupt handler -- saves state, calls C, restores state
 ; =============================================================================
 isr_common_stub:
-    ; NOTE: clac (SMAP) removed — causes #UD on CPUs without SMAP CPUID
+    ; NOTE: clac (SMAP) removed -- causes #UD on CPUs without SMAP CPUID
     ; support (e.g. QEMU TCG). Re-add via alternatives patching when SMAP
     ; is actually enabled (requires per-process page tables, TODO-06 §8).
 
@@ -206,8 +206,8 @@ IRQ 15, 47           ; Secondary ATA
 ; =============================================================================
 ; Software interrupt stubs
 ; =============================================================================
-ISR_NOERRCODE 128     ; syscall — INT 0x80 (user → kernel)
-ISR_NOERRCODE 129     ; yield() — cooperative task switch (INT 0x81)
+ISR_NOERRCODE 128     ; syscall -- INT 0x80 (user → kernel)
+ISR_NOERRCODE 129     ; yield() -- cooperative task switch (INT 0x81)
 
 ; =============================================================================
 ; Dynamic / Synthetic interrupt stubs (vectors 48–255)
@@ -216,7 +216,7 @@ ISR_NOERRCODE 129     ; yield() — cooperative task switch (INT 0x81)
 ; vector Hyper-V or hardware may deliver.  Without these, any interrupt
 ; on an unpopulated IDT entry causes #GP (null descriptor).
 ;
-; Vectors 128-129 are skipped — already defined above.
+; Vectors 128-129 are skipped -- already defined above.
 ; =============================================================================
 %assign i 48
 %rep (256 - 48)

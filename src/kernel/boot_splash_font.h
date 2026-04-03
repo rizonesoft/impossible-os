@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_splash_font.h — Embedded TTF font for boot splash text
+ * boot_splash_font.h -- Embedded TTF font for boot splash text
  *
  * Contains:
  *   - boot_font_data[]: raw Selawik Regular TTF bytes (44 KB)

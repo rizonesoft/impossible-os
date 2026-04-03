@@ -1,5 +1,5 @@
 /* ============================================================================
- * rtc.c — CMOS Real-Time Clock driver
+ * rtc.c -- CMOS Real-Time Clock driver
  *
  * Reads the date/time from the MC146818-compatible CMOS RTC chip.
  * The CMOS is accessed via two I/O ports:
@@ -103,7 +103,7 @@ void rtc_read(struct rtc_time *t)
     status_b = cmos_read(RTC_REG_STATUS_B);
 
     if (!(status_b & 0x04)) {
-        /* BCD mode — convert to binary */
+        /* BCD mode -- convert to binary */
         sec  = bcd_to_bin(sec);
         min  = bcd_to_bin(min);
         hr   = bcd_to_bin((uint8_t)(hr & 0x7F));  /* mask 12h/24h bit */

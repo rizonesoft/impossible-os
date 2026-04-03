@@ -1,5 +1,5 @@
 /* ============================================================================
- * lapic.h — Local APIC driver (per-CPU interrupt controller)
+ * lapic.h -- Local APIC driver (per-CPU interrupt controller)
  *
  * Each CPU has its own Local APIC for receiving interrupts. On x86-64, the
  * LAPIC is accessed via MMIO at a physical address discovered from the ACPI
@@ -9,17 +9,17 @@
  * and adds support for inter-processor interrupts (IPI) needed by SMP.
  *
  * Key registers (offset from LAPIC base):
- *   0x020  LAPIC ID        — identifies this CPU
- *   0x030  LAPIC Version   — hardware version + max LVT entry
- *   0x080  Task Priority   — interrupt priority threshold
- *   0x0B0  EOI             — write 0 to acknowledge interrupt
- *   0x0F0  Spurious Vector — enable LAPIC + set spurious interrupt vector
- *   0x300  ICR Low         — Interrupt Command Register (IPI destination)
- *   0x310  ICR High        — IPI target APIC ID
- *   0x320  LVT Timer       — local timer configuration
- *   0x380  Timer Initial   — timer countdown start value
- *   0x390  Timer Current   — timer current countdown value
- *   0x3E0  Timer Divide    — clock divider for timer
+ *   0x020  LAPIC ID        -- identifies this CPU
+ *   0x030  LAPIC Version   -- hardware version + max LVT entry
+ *   0x080  Task Priority   -- interrupt priority threshold
+ *   0x0B0  EOI             -- write 0 to acknowledge interrupt
+ *   0x0F0  Spurious Vector -- enable LAPIC + set spurious interrupt vector
+ *   0x300  ICR Low         -- Interrupt Command Register (IPI destination)
+ *   0x310  ICR High        -- IPI target APIC ID
+ *   0x320  LVT Timer       -- local timer configuration
+ *   0x380  Timer Initial   -- timer countdown start value
+ *   0x390  Timer Current   -- timer current countdown value
+ *   0x3E0  Timer Divide    -- clock divider for timer
  * ============================================================================ */
 
 #pragma once
@@ -113,12 +113,12 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page);
 /* ---- LAPIC Timer ---- */
 
 /* Dedicated vector for LAPIC timer.
- * Uses vector 34 (IRQ 2 cascade — doesn't exist on APIC systems).
+ * Uses vector 34 (IRQ 2 cascade -- doesn't exist on APIC systems).
  * Must be within 32-47 (the IDT-stub-covered hardware IRQ range). */
 #define LAPIC_TIMER_VECTOR    34
 
 /* Calibrate the LAPIC timer via a 3-tier waterfall:
- *   Tier 1: MSR/CPUID (instant, no PIT) — Hyper-V, VMware, KVM, CPUID 0x15
+ *   Tier 1: MSR/CPUID (instant, no PIT) -- Hyper-V, VMware, KVM, CPUID 0x15
  *   Tier 2: HPET / ACPI PM Timer (10ms delay, no PIT)
  *   Tier 3: PIT channel 2 (10ms delay, only if PCAT_COMPAT && !HW_REDUCED)
  * Falls back to a hardcoded conservative estimate if all tiers fail. */
@@ -137,7 +137,7 @@ int lapic_available(void);
 
 /* ---- UTS driver vtable ---- */
 
-/* Forward declaration — full definition in timer.h */
+/* Forward declaration -- full definition in timer.h */
 struct timer_driver;
 typedef struct timer_driver timer_driver_t;
 

@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_halt.h — Pre-framebuffer fatal halt with diagnostic error screen
+ * boot_halt.h -- Pre-framebuffer fatal halt with diagnostic error screen
  * ============================================================================ */
 
 #pragma once

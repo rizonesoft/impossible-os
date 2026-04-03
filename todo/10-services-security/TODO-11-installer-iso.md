@@ -1,23 +1,23 @@
-# TODO-11 — OS Installer & ISO Build
+# TODO-11 -- OS Installer & ISO Build
 
 **Domain:** `09-services-security`
-**Goal:** Deliver a bootable ISO and graphical installer that make Impossible OS distributable and installable on real hardware — the capstone that transforms the OS from a QEMU-only raw disk image into a product that ships.
+**Goal:** Deliver a bootable ISO and graphical installer that make Impossible OS distributable and installable on real hardware -- the capstone that transforms the OS from a QEMU-only raw disk image into a product that ships.
 
 > [!IMPORTANT]
 > **Depends on:** `TODO-07 §7` (ring-3 PE execution) and `TODO-08 §10–13` (IxUI windows, user32, gdi32) for the installer GUI. GPT + FAT32 + IXFS format APIs must be available: `fat32_format()` (`include/kernel/fs/fat32.h`), `ixfs_format()` (`include/kernel/fs/ixfs.h`), `gpt_parse()` (`include/kernel/fs/gpt.h`), `blkdev_count()` (`include/kernel/drivers/blkdev.h`).
-> **Overlap:** §3 (first-boot wizard) XREFs `TODO-04-restore-recovery §7` (OOBE wizard in 09-services-security); do not duplicate that wizard — trigger it from here.
+> **Overlap:** §3 (first-boot wizard) XREFs `TODO-04-restore-recovery §7` (OOBE wizard in 09-services-security); do not duplicate that wizard -- trigger it from here.
 
 ---
 
 ## Important Notes
 
-- `fat32_format(dev, label)` exists in `include/kernel/fs/fat32.h`. `ixfs_format(dev, volume_name)` exists in `include/kernel/fs/ixfs.h`. `gpt_parse()` exists but **GPT write** (`gpt_create`/`gpt_commit`) does not appear to exist — §4 must implement it.
+- `fat32_format(dev, label)` exists in `include/kernel/fs/fat32.h`. `ixfs_format(dev, volume_name)` exists in `include/kernel/fs/ixfs.h`. `gpt_parse()` exists but **GPT write** (`gpt_create`/`gpt_commit`) does not appear to exist -- §4 must implement it.
 - `blkdev_count()` and `blkdev_list()` exist in `include/kernel/drivers/blkdev.h` for device enumeration.
-- `uefi_set_variable()` / `uefi_get_variable()` exist in `include/kernel/uefi_runtime.h` — use these to write UEFI `BootNNNN` + `BootOrder` NVRAM entries on real hardware.
-- The ISO does **not** use GRUB to boot — it boots via the existing `BOOTX64.EFI` (our custom UEFI bootloader). `xorriso` creates the El Torito + EFI-bootable hybrid image; `BOOTX64.EFI` goes into `EFI/BOOT/` on the ISO filesystem.
+- `uefi_set_variable()` / `uefi_get_variable()` exist in `include/kernel/uefi_runtime.h` -- use these to write UEFI `BootNNNN` + `BootOrder` NVRAM entries on real hardware.
+- The ISO does **not** use GRUB to boot -- it boots via the existing `BOOTX64.EFI` (our custom UEFI bootloader). `xorriso` creates the El Torito + EFI-bootable hybrid image; `BOOTX64.EFI` goes into `EFI/BOOT/` on the ISO filesystem.
 - The installer runs as a **user-mode PE process** (`installer.exe`) via the ring-3 execution path. The kernel detects `HKLM\SYSTEM\InstallerMode=1` in the registry (seeded on the ISO disk image) and launches `installer.exe` instead of `explorer.exe`.
 - File copy (§5) copies from the **ISO's read-only VFS** (mounted at boot) to the **target IXFS partition**; the copy list is generated at build time from the Makefile.
-- NTFS is not the initial target for the system partition — IXFS is the native filesystem. NTFS format support (`ntfs_format()`) is not yet available in the kernel; use `ixfs_format()`.
+- NTFS is not the initial target for the system partition -- IXFS is the native filesystem. NTFS format support (`ntfs_format()`) is not yet available in the kernel; use `ixfs_format()`.
 
 ---
 
@@ -27,13 +27,13 @@
 |------|---------|
 | `include/kernel/fs/fat32.h` | `fat32_format(dev, label)` for ESP formatting |
 | `include/kernel/fs/ixfs.h` | `ixfs_format(dev, volume_name)` for system partition |
-| `include/kernel/fs/gpt.h` | `gpt_parse()` — extend with GPT write |
+| `include/kernel/fs/gpt.h` | `gpt_parse()` -- extend with GPT write |
 | `include/kernel/drivers/blkdev.h` | `blkdev_count()`, `blkdev_list()`, `blkdev_write()` |
 | `include/kernel/uefi_runtime.h` | `uefi_set_variable()` for NVRAM boot entry |
 | `include/registry.h` | `registry_set()` for `InstallerMode`, `FirstBoot` flags |
-| `src/boot/uefi/bootx64.c` | Existing bootloader — copy to ISO `EFI/BOOT/BOOTX64.EFI` |
+| `src/boot/uefi/bootx64.c` | Existing bootloader -- copy to ISO `EFI/BOOT/BOOTX64.EFI` |
 | `scripts/build.sh` | Add `make iso` target here |
-| → XREF: `09-services-security/TODO-04 §7` | OOBE first-boot wizard (do not re-implement — trigger only) |
+| → XREF: `09-services-security/TODO-04 §7` | OOBE first-boot wizard (do not re-implement -- trigger only) |
 | → XREF: `05-storage-filesystems/TODO-08 §1` | GPT partition table write (reuse if available) |
 | → XREF: `TODO-08 §10–13` | IxUI window/message/GDI stack for installer GUI |
 
@@ -69,16 +69,16 @@
 
 ## 1. ISO Build Script `[Sonnet]`
 
-Create `scripts/make-iso.sh` to produce a hybrid El Torito + EFI-bootable ISO from the existing build output. Does not require GRUB — uses `BOOTX64.EFI` directly.
+Create `scripts/make-iso.sh` to produce a hybrid El Torito + EFI-bootable ISO from the existing build output. Does not require GRUB -- uses `BOOTX64.EFI` directly.
 
 - [ ] ISO directory structure assembled at `build/iso-root/`:
-  - `EFI/BOOT/BOOTX64.EFI` — copy from `build/bootx64.efi`
-  - `boot/kernel.exe` — copy from `build/kernel.elf`
-  - `boot/fonts/`, `boot/icons/`, `boot/wallpaper/` — from `resources/`
-  - `Impossible/System32/` — system DLLs and apps (from `build/user/`)
-  - `Impossible/Fonts/` — TTF fonts from `resources/fonts/`
-  - `installer.exe` — installer PE (from `build/user/installer.exe`)
-  - `EFI/BOOT/startup.nsh` — optional UEFI shell script: `\EFI\BOOT\BOOTX64.EFI`
+  - `EFI/BOOT/BOOTX64.EFI` -- copy from `build/bootx64.efi`
+  - `boot/kernel.exe` -- copy from `build/kernel.elf`
+  - `boot/fonts/`, `boot/icons/`, `boot/wallpaper/` -- from `resources/`
+  - `Impossible/System32/` -- system DLLs and apps (from `build/user/`)
+  - `Impossible/Fonts/` -- TTF fonts from `resources/fonts/`
+  - `installer.exe` -- installer PE (from `build/user/installer.exe`)
+  - `EFI/BOOT/startup.nsh` -- optional UEFI shell script: `\EFI\BOOT\BOOTX64.EFI`
 - [ ] `xorriso -as mkisofs` command:
   - `-R -J -joliet-long` (Rock Ridge + Joliet for long filenames)
   - `-e EFI/BOOT/BOOTX64.EFI -no-emul-boot` (EFI El Torito boot entry)
@@ -98,7 +98,7 @@ The installer runs as a user-mode PE process rather than a special kernel mode. 
 
 - [ ] Pre-bake `HKLM\SYSTEM\InstallerMode = 1` (REG_DWORD) into the registry hive on the ISO image (set during `make-iso.sh` via a host-side registry tool or by including a pre-built hive)
 - [ ] In `src/kernel/main/kernel_main.c` (or desktop init path): after mounting root VFS, read `HKLM\SYSTEM\InstallerMode`; if `1` → launch `installer.exe` via `pe_exec("C:\\installer.exe")` instead of `explorer.exe`
-- [ ] Create `src/installer/installer.c` — PE `main()` entry point; initializes IxUI message loop; allocates installer state struct; calls §3 wizard
+- [ ] Create `src/installer/installer.c` -- PE `main()` entry point; initializes IxUI message loop; allocates installer state struct; calls §3 wizard
 - [ ] Installer state struct: `installer_state_t { int screen; char target_disk[64]; uint64_t target_lba_start; uint64_t target_size_sectors; int partition_mode; /* AUTO=0, MANUAL=1 */ }`
 - [ ] Serial log on entry: `"installer: started, mode=%d"` (InstallerMode value)
 - [ ] Commit: `"installer: init process and InstallerMode flag"`
@@ -109,40 +109,40 @@ The installer runs as a user-mode PE process rather than a special kernel mode. 
 
 Seven IxUI wizard screens. Each screen occupies the full window (800×600). Navigation: `[Back]` / `[Next]` / `[Install]` / `[Reboot]` buttons in a fixed bottom strip.
 
-**Screen A — Welcome:**
+**Screen A -- Welcome:**
 - [ ] Title: "Install Impossible OS v1.0" (large `ttf_draw_string`)
 - [ ] Subtitle: "This wizard will guide you through installing Impossible OS on your computer."
 - [ ] Language selector: `CTRL_LISTBOX` with "English (US)" only (future: add more); selection stored in `installer_state.lang`
 - [ ] `[Next →]` button advances to Screen B
 
-**Screen B — License Agreement:**
+**Screen B -- License Agreement:**
 - [ ] Full license text in a `CTRL_SCROLLBAR`-wrapped `CTRL_LABEL` (read from `C:\Impossible\license.txt`)
 - [ ] `CTRL_CHECKBOX` "I accept the terms of the license agreement"
 - [ ] `[Next →]` disabled until checkbox checked
 
-**Screen C — Disk Selection:**
+**Screen C -- Disk Selection:**
 - [ ] Call `blkdev_count()` + enumerate block devices; show `CTRL_LISTBOX` with: drive index, model string (from AHCI/VirtIO identity), size in GiB
-- [ ] Warn if selected disk < 2 GiB: "Disk too small — minimum 2 GiB required"
+- [ ] Warn if selected disk < 2 GiB: "Disk too small -- minimum 2 GiB required"
 - [ ] Store selection in `installer_state.target_disk`
 
-**Screen D — Partitioning:**
+**Screen D -- Partitioning:**
 - [ ] Two radio buttons: "Automatic (recommended)" and "Manual"
-- [ ] Automatic: preview layout — "ESP: 512 MiB (FAT32) + System: N GiB (IXFS)"
+- [ ] Automatic: preview layout -- "ESP: 512 MiB (FAT32) + System: N GiB (IXFS)"
 - [ ] Manual: launches diskpart-style modal dialog: list partitions, `[New]` / `[Delete]` / `[Format]` buttons; user must manually create ESP (type `EF00`) and system partition before confirming
 - [ ] Store `partition_mode` in installer state
 
-**Screen E — Review:**
+**Screen E -- Review:**
 - [ ] Summary table: target disk name + size, partitioning plan, filesystem types
 - [ ] Warning: "All data on the selected disk will be erased"
 - [ ] `[⚠ Install]` button (red accent) → triggers §4–7 in sequence
 
-**Screen F — Progress:**
+**Screen F -- Progress:**
 - [ ] `CTRL_LABEL` status line: "Partitioning disk…" / "Formatting ESP…" / "Copying files…" / "Installing bootloader…"
 - [ ] `CTRL_PROGRESSBAR` (or custom filled rect) updated per-file during copy (§6)
 - [ ] Errors displayed inline: "Error: disk write failed" with `[Abort]` button
 - [ ] No `[Back]` during progress (installation in flight)
 
-**Screen G — Complete:**
+**Screen G -- Complete:**
 - [ ] "Installation successful! Remove the installation media and reboot."
 - [ ] `[Reboot Now]` button → `ExitProcess()` with a special code that triggers kernel reboot via ACPI; alternatively write `HKLM\SYSTEM\RebootPending=1` and exit
 
@@ -152,7 +152,7 @@ Seven IxUI wizard screens. Each screen occupies the full window (800×600). Navi
 
 ## 4. GPT Partition Write `[Opus]`
 
-Implement `gpt_create()` and `gpt_commit()` in `src/kernel/fs/gpt.c` (header: `include/kernel/fs/gpt.h`). This is a security-critical disk write path — incorrect GPT CRC or LBA placement corrupts the target disk.
+Implement `gpt_create()` and `gpt_commit()` in `src/kernel/fs/gpt.c` (header: `include/kernel/fs/gpt.h`). This is a security-critical disk write path -- incorrect GPT CRC or LBA placement corrupts the target disk.
 
 - [ ] `gpt_new(dev)` → allocate and zero `struct gpt_table`; generate random disk GUID (`getrandom()` or kernel RNG); set `disk_guid`
 - [ ] `gpt_add_partition(table, name, type_guid, lba_start, lba_end, attributes)` → append entry to `table->entries[]`; validate no overlaps; return partition index or error
@@ -213,14 +213,14 @@ Copy all OS files from the ISO's read-only VFS to the installed IXFS partition. 
 
 Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware boots Impossible OS first.
 
-- [ ] Copy `BOOTX64.EFI` to ESP: `EFI\BOOT\BOOTX64.EFI` (fallback path — all UEFI firmware boots this automatically, no NVRAM required for the fallback case)
+- [ ] Copy `BOOTX64.EFI` to ESP: `EFI\BOOT\BOOTX64.EFI` (fallback path -- all UEFI firmware boots this automatically, no NVRAM required for the fallback case)
 - [ ] Copy `BOOTX64.EFI` to ESP: `EFI\ImpossibleOS\BOOTX64.EFI` (named path for NVRAM entry)
 - [ ] Write UEFI NVRAM boot entry via `uefi_set_variable()`:
   - Scan existing `BootNNNN` variables to find a free slot (try `Boot0001` through `Boot00FF`)
   - Construct `EFI_LOAD_OPTION` struct: `Attributes = LOAD_OPTION_ACTIVE (0x1)`, `FilePathList` = `MEDIA_FILEPATH_DP` pointing to `\EFI\ImpossibleOS\BOOTX64.EFI` on the ESP partition (identified by partition GUID from GPT), description = `"Impossible OS"`
   - `uefi_set_variable(EFI_GLOBAL_GUID, "BootNNNN", EFI_VARIABLE_NV | EFI_VARIABLE_BS | EFI_VARIABLE_RT, entry_data, entry_size)`
   - Update `BootOrder` variable: prepend our `BootNNNN` number to existing order array
-- [ ] QEMU/VM fallback: if `uefi_set_variable()` returns error (firmware read-only in some VMs), log warning and rely on fallback path `EFI/BOOT/BOOTX64.EFI` — this is sufficient for QEMU + Hyper-V + VirtualBox
+- [ ] QEMU/VM fallback: if `uefi_set_variable()` returns error (firmware read-only in some VMs), log warning and rely on fallback path `EFI/BOOT/BOOTX64.EFI` -- this is sufficient for QEMU + Hyper-V + VirtualBox
 - [ ] Verify: after install, `BOOTX64.EFI` file exists on mounted ESP at correct path; serial log shows NVRAM write result
 - [ ] Commit: `"installer: UEFI bootloader install + NVRAM boot entry"`
 
@@ -284,12 +284,12 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 | 💎 | UEFI NVRAM boot entry registration  | ✅ Windows Setup  | ✅ grub-install         | ⬜ `uefi_set_variable()`              |
 | 💎 | File copy progress bar              | ✅ Windows Setup  | ✅ distro installers    | ⬜ per-file `progress_cb`             |
 | 💎 | Post-install OOBE first-boot wizard | ✅ Windows OOBE   | ✅ distro firstboot     | ⬜ `HKLM\SYSTEM\FirstBoot=1`          |
-| 💎 | Hyper-V + VirtualBox + QEMU compat  | ✅ Windows        | ✅ Linux                | ⬜ §9 — validation suite              |
+| 💎 | Hyper-V + VirtualBox + QEMU compat  | ✅ Windows        | ✅ Linux                | ⬜ §9 -- validation suite              |
 | ⭐ | Custom UEFI bootloader              | ❌ Bootmgr only   | ❌ Requires GRUB        | ⬜ `BOOTX64.EFI` direct boot from ISO |
 | ⭐ | Build-time install manifest         | ❌ Black-box WIM  | ❌ Varies per distro    | ⬜ transparent, diff-able file list   |
 | ⭐ | `InstallerMode` registry flag       | ❌ Separate WinPE | ❌ Separate initramfs   | ⬜ same kernel, flag-switched path    |
 
-**Impossible OS advantage:** The installer uses the **exact same kernel** as the installed OS — there is no separate WinPE or initramfs environment. A single registry flag (`InstallerMode=1`) switches the boot into installer mode. The bootloader is our own `BOOTX64.EFI` with no GRUB dependency, and the install manifest is a human-readable build artifact that makes the file copy process fully transparent.
+**Impossible OS advantage:** The installer uses the **exact same kernel** as the installed OS -- there is no separate WinPE or initramfs environment. A single registry flag (`InstallerMode=1`) switches the boot into installer mode. The bootloader is our own `BOOTX64.EFI` with no GRUB dependency, and the install manifest is a human-readable build artifact that makes the file copy process fully transparent.
 
 ---
 

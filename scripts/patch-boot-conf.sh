@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# patch-boot-conf.sh — Patch boot.conf in the system disk image
+# patch-boot-conf.sh -- Patch boot.conf in the system disk image
 #
 # Modifies a specific key=value in the EFI partition's boot.conf without
 # rebuilding the entire disk image. Used by `make run-debug` and `make test`.
@@ -20,7 +20,7 @@ DISK="$PROJECT/build/system-disk.img"
 BOOT_CONF="$PROJECT/resources/boot/boot.conf"
 TEMP_CONF="$PROJECT/build/boot.conf.tmp"
 
-# EFI partition offset — must match Makefile EFI_OFFSET
+# EFI partition offset -- must match Makefile EFI_OFFSET
 EFI_OFFSET=$(grep -oP 'EFI_OFFSET\s*:=\s*\K\d+' "$PROJECT/Makefile" 2>/dev/null || echo "1048576")
 
 if [ ! -f "$DISK" ]; then

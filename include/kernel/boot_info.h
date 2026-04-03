@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_info.h — Parsed boot information passed to the kernel
+ * boot_info.h -- Parsed boot information passed to the kernel
  * ============================================================================ */
 
 #pragma once
@@ -84,7 +84,7 @@ struct boot_uefi_config_entry {
     ((struct boot_uefi_guid){ 0x564b1aaa, 0xafe3, 0x4b6c, \
         { 0x83, 0xa9, 0x27, 0x00, 0x80, 0x50, 0x01, 0x00 } })
 
-/* UEFI memory attribute flag — marks regions that survive ExitBootServices */
+/* UEFI memory attribute flag -- marks regions that survive ExitBootServices */
 #define UEFI_MEMORY_ATTR_RUNTIME  0x8000000000000000ULL
 
 /* Runtime memory region descriptor (for SetVirtualAddressMap) */
@@ -97,7 +97,7 @@ struct boot_rt_mem_entry {
     uint32_t reserved;    /* alignment padding */
 };
 
-/* UEFI Runtime Service function pointers — copied individually from
+/* UEFI Runtime Service function pointers -- copied individually from
  * EFI_RUNTIME_SERVICES before ExitBootServices.  Stored as uintptr_t
  * because the bootloader (PE/COFF ms_abi) and kernel (ELF sysv) use
  * different calling conventions; the kernel casts at use time. */
@@ -169,15 +169,15 @@ struct boot_config {
     uint8_t  diag_splash;      /* 1 = show diag on splash (bare metal, no serial) */
     /* Deferred init */
     uint8_t  deferred;         /* 1 = defer non-critical inits (default), 0 = all in-phase */
-    /* Reserved — new config fields go here without shifting cmdline.
+    /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
     uint8_t  _reserved[17];
-    /* Command line (offset 32 — stable across versions) */
+    /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
     uint8_t  config_found;     /* 1 if boot.conf was successfully parsed */
-    /* Pad to 512 bytes total — sector-aligned, matches Windows convention.
+    /* Pad to 512 bytes total -- sector-aligned, matches Windows convention.
      * 11 (fields) + 21 (reserved) + 256 (cmdline) + 1 (config_found) = 289.
      * 512 - 289 = 223 bytes tail padding. */
     uint8_t  _pad[223];
@@ -233,7 +233,7 @@ struct boot_usb_controller {
     uint8_t  pci_func;
     uint8_t  active;             /* 1 if controller was found and configured */
 
-    /* MMIO base (physical — kernel must remap via vmm_map_mmio_uc) */
+    /* MMIO base (physical -- kernel must remap via vmm_map_mmio_uc) */
     uint64_t mmio_phys;
     uint32_t mmio_size;
 
@@ -362,5 +362,5 @@ struct boot_info {
     char     hv_vendor[16];         /* hypervisor vendor string (null-terminated) */
 };
 
-/* Global boot info — populated by multiboot2_parse() or UEFI bootloader */
+/* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

@@ -1,16 +1,16 @@
 /* ============================================================================
- * xhci_dev.c — USB device enumeration for xHCI
+ * xhci_dev.c -- USB device enumeration for xHCI
  *
  * Implements the full USB enumeration sequence:
- *   1. Port scanning — detect connected devices via PORTSC
- *   2. Port reset — assert PR, wait for PRC
- *   3. Enable Slot — Command TRB type 9
- *   4. Build Input Context — Slot Context + EP0 Context
- *   5. Address Device — Command TRB type 11
- *   6. GET_DESCRIPTOR (Device) — 18-byte device descriptor
- *   7. GET_DESCRIPTOR (Configuration) — two-stage: 9B header + full
+ *   1. Port scanning -- detect connected devices via PORTSC
+ *   2. Port reset -- assert PR, wait for PRC
+ *   3. Enable Slot -- Command TRB type 9
+ *   4. Build Input Context -- Slot Context + EP0 Context
+ *   5. Address Device -- Command TRB type 11
+ *   6. GET_DESCRIPTOR (Device) -- 18-byte device descriptor
+ *   7. GET_DESCRIPTOR (Configuration) -- two-stage: 9B header + full
  *   8. SET_CONFIGURATION
- *   9. Configure Endpoint — Command TRB type 12
+ *   9. Configure Endpoint -- Command TRB type 12
  *
  * Reference: xHCI spec 1.2 §4.3, USB 2.0 spec §9.1 (Device Enumeration)
  * ============================================================================ */
@@ -185,7 +185,7 @@ static int ep0_ring_init(struct xhci_ring *ring)
 
     dev_zero(ring->trbs, ring_bytes);
 
-    /* Link TRB at last slot — wraps back to start, toggles cycle */
+    /* Link TRB at last slot -- wraps back to start, toggles cycle */
     link = &ring->trbs[XHCI_RING_SIZE - 1];
     link->parameter = ring->phys;
     link->status    = 0;
@@ -196,7 +196,7 @@ static int ep0_ring_init(struct xhci_ring *ring)
     return 0;
 }
 
-/* Enqueue a TRB on a Transfer Ring (no doorbell — caller must ring it). */
+/* Enqueue a TRB on a Transfer Ring (no doorbell -- caller must ring it). */
 static int ep0_ring_enqueue(struct xhci_ring *ring, struct xhci_trb *trb)
 {
     struct xhci_trb *dest;
@@ -215,7 +215,7 @@ static int ep0_ring_enqueue(struct xhci_ring *ring, struct xhci_trb *trb)
 
     next = ring->enqueue + 1;
     if (next >= ring->size - 1) {
-        /* Reached Link TRB — update its cycle bit and wrap */
+        /* Reached Link TRB -- update its cycle bit and wrap */
         struct xhci_trb *link = &ring->trbs[ring->size - 1];
         link->control = (link->control & ~XHCI_TRB_CYCLE)
                       | (ring->cycle ? XHCI_TRB_CYCLE : 0);
@@ -224,7 +224,7 @@ static int ep0_ring_enqueue(struct xhci_ring *ring, struct xhci_trb *trb)
     }
     ring->enqueue = next;
 
-    /* Memory barrier — ensure TRB is visible before doorbell */
+    /* Memory barrier -- ensure TRB is visible before doorbell */
     __asm__ volatile("mfence" ::: "memory");
 
     return 0;
@@ -254,7 +254,7 @@ static int xhci_control_transfer(struct xhci_controller *hc,
     dev_copy(&trb.parameter, setup, 8);
     trb.status  = 8;  /* TRB Transfer Length = 8 */
     trb.control = (XHCI_TRB_SETUP_STAGE << XHCI_TRB_TYPE_SHIFT)
-                | XHCI_TRB_IDT;  /* Immediate Data — setup bytes inline */
+                | XHCI_TRB_IDT;  /* Immediate Data -- setup bytes inline */
     if (has_data)
         trb.control |= (dir_in ? XHCI_TRB_TRT_IN : XHCI_TRB_TRT_OUT);
     else
@@ -263,14 +263,14 @@ static int xhci_control_transfer(struct xhci_controller *hc,
     if (ep0_ring_enqueue(ring, &trb) != 0)
         return -1;
 
-    /* ---- Data Stage TRB (type 3) — optional ---- */
+    /* ---- Data Stage TRB (type 3) -- optional ---- */
     if (has_data) {
         trb.parameter = (uint64_t)(uintptr_t)data;  /* DMA buffer address */
         trb.status    = data_len;
         trb.control   = (XHCI_TRB_DATA_STAGE << XHCI_TRB_TYPE_SHIFT);
         if (dir_in)
             trb.control |= XHCI_TRB_DIR_IN;
-        /* No IOC on data stage — wait for status stage */
+        /* No IOC on data stage -- wait for status stage */
         if (ep0_ring_enqueue(ring, &trb) != 0)
             return -1;
     }
@@ -375,7 +375,7 @@ static uint32_t ctx_size(struct xhci_controller *hc)
 /* ---- Device enumeration -------------------------------------------------- */
 
 /* Enumerate a single USB device on the given port.
- * port is 1-based (per xHCI spec — Port 1 = PORTSC offset 0x400).
+ * port is 1-based (per xHCI spec -- Port 1 = PORTSC offset 0x400).
  * speed is the USB_SPEED_* constant read from PORTSC.
  * Returns 0 on success, -1 on failure. */
 int xhci_enumerate_device(struct xhci_controller *hc,
@@ -402,7 +402,7 @@ int xhci_enumerate_device(struct xhci_controller *hc,
     portsc = (portsc & XHCI_PORTSC_PRESERVE_MASK) | XHCI_PORTSC_PR;
     dev_write32(hc->op_base, portsc_offset, portsc);
 
-    /* Wait for Port Reset Change (PRC) — indicates reset complete */
+    /* Wait for Port Reset Change (PRC) -- indicates reset complete */
     {
         uint32_t timeout = 500000; /* 500 ms */
         while (timeout > 0) {
@@ -513,7 +513,7 @@ int xhci_enumerate_device(struct xhci_controller *hc,
     }
     input_ctx = (uint8_t *)input_ctx_phys;
 
-    /* Input Control Context — add Slot (A0) and EP0 (A1) */
+    /* Input Control Context -- add Slot (A0) and EP0 (A1) */
     input_ctrl = (struct xhci_input_ctrl_ctx *)input_ctx;
     input_ctrl->add_flags = XHCI_INPUT_ADD_SLOT | XHCI_INPUT_ADD_EP0;
     input_ctrl->drop_flags = 0;
@@ -565,7 +565,7 @@ int xhci_enumerate_device(struct xhci_controller *hc,
 
     /* ---- Step 6: GET_DESCRIPTOR (Device, 18 bytes) ---- */
     {
-        /* DMA buffer for device descriptor — must be physically contiguous
+        /* DMA buffer for device descriptor -- must be physically contiguous
          * and not on the stack (stack pages may not be identity-mapped).
          * Use a page from PMM (overkill but safe). */
         uintptr_t desc_phys = pmm_alloc_contiguous(1);
@@ -621,7 +621,7 @@ int xhci_enumerate_device(struct xhci_controller *hc,
              (uint64_t)desc->bNumConfigurations);
     }
 
-    /* ---- Step 7: GET_DESCRIPTOR (Configuration) — two-stage ---- */
+    /* ---- Step 7: GET_DESCRIPTOR (Configuration) -- two-stage ---- */
     {
         uintptr_t cfg_phys = pmm_alloc_contiguous(1);
         struct usb_config_descriptor *cfg_hdr;
@@ -653,7 +653,7 @@ int xhci_enumerate_device(struct xhci_controller *hc,
         cfg_hdr = (struct usb_config_descriptor *)cfg_phys;
         total_len = cfg_hdr->wTotalLength;
 
-        /* Validate wTotalLength — cap at 4096 to protect against malicious devices */
+        /* Validate wTotalLength -- cap at 4096 to protect against malicious devices */
         if (total_len < 9) {
             klog(LOG_ERROR, "usb", "Config descriptor wTotalLength too small (%u)",
                  (uint64_t)total_len);
@@ -786,12 +786,12 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
                 found_bulk_in  = 0;
                 found_bulk_out = 0;
             } else {
-                /* Not MSC — if we already found one, stop looking
+                /* Not MSC -- if we already found one, stop looking
                  * (next interface descriptor means end of previous) */
                 if (found_msc && found_bulk_in && found_bulk_out)
                     break;
                 if (found_msc) {
-                    /* MSC interface without both endpoints — bogus device */
+                    /* MSC interface without both endpoints -- bogus device */
                     found_msc = 0;
                 }
             }
@@ -819,7 +819,7 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
                     found_bulk_out = 1;
                 }
             }
-            /* Ignore interrupt endpoints (xfer_type != BULK) — per BOT spec */
+            /* Ignore interrupt endpoints (xfer_type != BULK) -- per BOT spec */
         }
 
         offset += desc_len;

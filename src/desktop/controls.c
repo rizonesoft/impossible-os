@@ -1,5 +1,5 @@
 /* ============================================================================
- * controls.c — Common Controls library
+ * controls.c -- Common Controls library
  *
  * Implements reusable GUI controls: Button, Label, TextBox, ScrollBar.
  * Each control draws into a per-window framebuffer via the WM drawing API.
@@ -11,8 +11,8 @@
 
 #include "desktop/controls.h"
 #include "desktop/wm.h"
-#include "desktop/font.h"       /* bitmap font — kept as fallback */
-#include "font_mgr.h"            /* TrueType fonts — primary rendering */
+#include "desktop/font.h"       /* bitmap font -- kept as fallback */
+#include "font_mgr.h"            /* TrueType fonts -- primary rendering */
 #include "kernel/drivers/framebuffer.h"
 
 /* ---- Per-window control storage ---- */
@@ -326,7 +326,7 @@ void ctrl_destroy_all(int window_handle)
 }
 
 /* ============================================================================
- * Drawing — each control type has its own draw function
+ * Drawing -- each control type has its own draw function
  * ============================================================================ */
 
 static void draw_button(struct control *c)
@@ -891,7 +891,7 @@ int ctrl_handle_mouse(int window_handle, int32_t cx, int32_t cy,
                 }
             }
         } else {
-            /* Mouse not over this control — clear hover */
+            /* Mouse not over this control -- clear hover */
             if (c->state & CTRL_STATE_HOVERED) {
                 c->state &= ~CTRL_STATE_HOVERED;
                 c->state &= ~CTRL_STATE_PRESSED;

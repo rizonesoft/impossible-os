@@ -1,37 +1,37 @@
-# TODO-10 — WordPad (Rich Text Editor)
+# TODO-10 -- WordPad (Rich Text Editor)
 
-> **Goal:** Build `wordpad.exe` — a rich text editor bridging Notepad and a full word processor.
+> **Goal:** Build `wordpad.exe` -- a rich text editor bridging Notepad and a full word processor.
 > Paragraph-based document model with per-run character formatting, a simplified RTF 1.5
 > reader/writer, a multi-run layout engine with a horizontal ruler, a format toolbar, and
 > print-to-PDF stretch.
 
 > [!IMPORTANT]
 > Notepad (§1 gap buffer, §3 file ops, §4 clipboard, §5 find) is already specified in
-> `08-desktop-shell/TODO-10-notepad.md` — WordPad does **not** share its text engine; the
+> `08-desktop-shell/TODO-10-notepad.md` -- WordPad does **not** share its text engine; the
 > paragraph+run model here is purpose-built for mixed formatting and must be implemented from
 > scratch.
 >
 > `CTRL_COMBOBOX` (font family + size combo-boxes in §4) is planned in
-> `07-graphics-ui/TODO-05-widget-dialogs.md` — do not build a custom combo widget here; add
+> `07-graphics-ui/TODO-05-widget-dialogs.md` -- do not build a custom combo widget here; add
 > `CTRL_COMBOBOX` to TODO-05 if it is not yet present when §4 is implemented.
 >
-> Print (§7) depends on `pdf_begin/draw_text/end` from `09-services-security/TODO-12 §6` —
+> Print (§7) depends on `pdf_begin/draw_text/end` from `09-services-security/TODO-12 §6` --
 > implement §7 only after the print subsystem is available.
 
 ---
 
 ## Inputs
 
-- `include/font_mgr.h` — `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_draw_char()`, `ttf_measure_width()` — §3 layout + rendering
-- `include/gfx.h` — `gfx_fill_rect()`, `gfx_draw_rect()`, `gfx_surface_create()`, `gfx_draw_line()` — §3 selection + ruler
-- `include/desktop/wm.h` — `wm_create_window()`, `wm_mark_dirty()`
-- `include/desktop/controls.h` — `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_SCROLLBAR_HORIZ`, `CTRL_COMBOBOX` (→ `07-graphics-ui/TODO-05`)
-- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) — `clipboard_set/get(CLIP_TEXT, ...)` — §5 cut/copy/paste
-- `07-graphics-ui/TODO-05-widget-dialogs.md §4` — `dialog_file_open()`, `dialog_file_save()`, `dialog_color()` — §4 color picker, §6 file ops
-- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) — `file_assoc_set(ext, prog_id, path)` — §6
-- `include/registry.h` — `reg_get_string`, `reg_set_string` — §6 recent files
-- `include/kernel/vfs.h` — `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat`
-- `09-services-security/TODO-12-long-term-features.md §6` — `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` — §7 print stretch
+- `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_draw_char()`, `ttf_measure_width()` -- §3 layout + rendering
+- `include/gfx.h` -- `gfx_fill_rect()`, `gfx_draw_rect()`, `gfx_surface_create()`, `gfx_draw_line()` -- §3 selection + ruler
+- `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`
+- `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_SCROLLBAR_HORIZ`, `CTRL_COMBOBOX` (→ `07-graphics-ui/TODO-05`)
+- `include/kernel/clipboard.h` (→ XREF `08-desktop-shell/TODO-01 §1`) -- `clipboard_set/get(CLIP_TEXT, ...)` -- §5 cut/copy/paste
+- `07-graphics-ui/TODO-05-widget-dialogs.md §4` -- `dialog_file_open()`, `dialog_file_save()`, `dialog_color()` -- §4 color picker, §6 file ops
+- `include/desktop/file_assoc.h` (→ XREF `08-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §6
+- `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §6 recent files
+- `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat`
+- `09-services-security/TODO-12-long-term-features.md §6` -- `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` -- §7 print stretch
 
 ---
 
@@ -88,20 +88,20 @@
   - [ ] **Font table** `{\fonttbl {\f0\froman\fcharset0 Selawik;}...}` → `g_font_table[32]` maps `\fN` index to font name
   - [ ] **Color table** `{\colortbl ;\red255\green0\blue0;...}` → `g_color_table[32]` maps index to ARGB
   - [ ] **Control words** (apply to current state):
-    - `\b` `\b0` — bold on/off
-    - `\i` `\i0` — italic on/off
-    - `\ul` `\ulnone` — underline on/off
-    - `\strike` `\strike0` — strikethrough on/off
-    - `\fsN` — font size in half-points (`/2` to get pt)
-    - `\fN` — font index → look up `g_font_table`
-    - `\cfN` — foreground color index → look up `g_color_table`
-    - `\highlightN` — background color index
-    - `\par` — emit current run; create new paragraph inheriting default para_fmt
-    - `\pard` — reset para_fmt to defaults
-    - `\qc` `\qr` `\qj` — alignment (default = left)
-    - `\liN` `\riN` `\fiN` — left/right/first-line indent in twips (`/ 1440 × 72` for pt)
-    - `\sbN` `\saN` — space-before / space-after in twips
-    - `\tabN` — tab stop in twips
+    - `\b` `\b0` -- bold on/off
+    - `\i` `\i0` -- italic on/off
+    - `\ul` `\ulnone` -- underline on/off
+    - `\strike` `\strike0` -- strikethrough on/off
+    - `\fsN` -- font size in half-points (`/2` to get pt)
+    - `\fN` -- font index → look up `g_font_table`
+    - `\cfN` -- foreground color index → look up `g_color_table`
+    - `\highlightN` -- background color index
+    - `\par` -- emit current run; create new paragraph inheriting default para_fmt
+    - `\pard` -- reset para_fmt to defaults
+    - `\qc` `\qr` `\qj` -- alignment (default = left)
+    - `\liN` `\riN` `\fiN` -- left/right/first-line indent in twips (`/ 1440 × 72` for pt)
+    - `\sbN` `\saN` -- space-before / space-after in twips
+    - `\tabN` -- tab stop in twips
   - [ ] Unrecognized control words: skip word + optional parameter; do not abort
   - [ ] Plain text bytes (not control) → append to current run buffer
 - [ ] **RTF writer** (`rtf_save(path, doc)`): emit minimal valid RTF:
@@ -152,10 +152,10 @@
 - [ ] **Format toolbar** (40 px fixed height):
   - [ ] Font family `CTRL_COMBOBOX` (120 px wide): lists all loaded TTF fonts from `font_mgr_list()`; change → `doc_apply_char_fmt(doc, sel, {.font_name=selected}, MASK_FONT)`
   - [ ] Font size `CTRL_COMBOBOX` (60 px): common sizes 8/9/10/11/12/14/16/18/20/24/28/36/48/72 + typed; change → apply `font_size_pt`
-  - [ ] `[B]` (Ctrl+B), `[I]` (Ctrl+I), `[U]` (Ctrl+U), `[S]` (Ctrl+S for strikethrough) toggle buttons — show pressed state when cursor is in formatted run; click → toggle on selection
+  - [ ] `[B]` (Ctrl+B), `[I]` (Ctrl+I), `[U]` (Ctrl+U), `[S]` (Ctrl+S for strikethrough) toggle buttons -- show pressed state when cursor is in formatted run; click → toggle on selection
   - [ ] `[A▾]` text color button: click → `dialog_color()` → apply `fg_color`; color swatch shows current selection color
   - [ ] `[🖊▾]` highlight color: click → `dialog_color()` → apply `bg_color`
-  - [ ] Alignment buttons: `[≡]` `[≡]` `[≡]` `[≡]` (left/center/right/justify) — only one active at a time; click → `doc_apply_para_fmt`
+  - [ ] Alignment buttons: `[≡]` `[≡]` `[≡]` `[≡]` (left/center/right/justify) -- only one active at a time; click → `doc_apply_para_fmt`
   - [ ] `[→]` indent / `[←]` outdent: increment/decrement `left_indent_pt` by 720 (½ inch in twips)
 - [ ] **Menu bar**: `File  Edit  View  Insert  Format  Help`
   - [ ] `File`: New, Open, Save, Save As, Recent Files, Print (§7), Exit
@@ -186,23 +186,23 @@
 - [ ] **File→Open**: `dialog_file_open("Rich Text|*.rtf|Text Files|*.txt|All Files|*.*")` → `rtf_load(path, doc)` or plain-text load; update window title; `modified=0`
 - [ ] **File→Save**: if `filepath==""` → Save As; else `rtf_save(filepath, doc)` (always saves as RTF); `modified=0`
 - [ ] **File→Save As**: `dialog_file_save("RTF Document|*.rtf|Plain Text|*.txt")` → if `.txt` selected: strip formatting, `vfs_write` plain text; if `.rtf`: `rtf_save`; update `filepath` + title
-- [ ] **Modified flag + title**: `"*{filename} — WordPad"` when unsaved; save-changes dialog on New/Open/Close
+- [ ] **Modified flag + title**: `"*{filename} -- WordPad"` when unsaved; save-changes dialog on New/Open/Close
 - [ ] **Drag-and-drop**: `WM_DROPFILES` → open dropped file (save-changes check first)
 - [ ] **CLI arg**: `wordpad.exe C:\path\doc.rtf` → open immediately
 - [ ] **Recent files**: `HKCU\Software\Impossible\WordPad\RecentFiles\{0..9}` (10 MRU entries)
 - [ ] **File associations**:
   - [ ] `file_assoc_set(".rtf", "ImpossibleOS.WordPad", "C:\\Impossible\\System32\\wordpad.exe")`
-  - [ ] `file_assoc_set(".doc", "ImpossibleOS.WordPad", "C:\\Impossible\\System32\\wordpad.exe")` — opens as RTF (best-effort; `.doc` binary format fallback to RTF header detection)
+  - [ ] `file_assoc_set(".doc", "ImpossibleOS.WordPad", "C:\\Impossible\\System32\\wordpad.exe")` -- opens as RTF (best-effort; `.doc` binary format fallback to RTF header detection)
 - [ ] **"Open with WordPad" context verb** registered for any file type
 
 ---
 
 ## 7. Print (Stretch) `[Sonnet]`
 
-> → XREF: `09-services-security/TODO-12-long-term-features.md §6` — `pdf_begin/draw_text/end`.
+> → XREF: `09-services-security/TODO-12-long-term-features.md §6` -- `pdf_begin/draw_text/end`.
 
 - [ ] **Pagination**: compute page height in points (A4 = 841.89 pt or Letter = 792 pt); walk layout lines (§3); break when accumulated height exceeds page height minus margins
-- [ ] **Print preview window**: `wm_create_window("Print Preview", 800, 600)` — renders each page as a thumbnail bitmap; `[← Prev]` `[Next →]` navigation; `[Close Preview]`
+- [ ] **Print preview window**: `wm_create_window("Print Preview", 800, 600)` -- renders each page as a thumbnail bitmap; `[← Prev]` `[Next →]` navigation; `[Close Preview]`
 - [ ] **File→Print**: call `pdf_begin(out_path, page_width_pt, page_height_pt)` from TODO-12 §6; for each page: `pdf_begin_page()` → for each layout line on page: `pdf_draw_text(x, y, text, font_name, size_pt, color)` → for each decorated run: `pdf_draw_rect` for background fills, underlines; `pdf_end_page()`; `pdf_end()`
 - [ ] **Print dialog**: `dialog_confirm("Print to PDF?\nOutput: C:\\Users\\{name}\\Documents\\{filename}.pdf", MB_OKCANCEL)` → on OK: run pagination + PDF export; toast `"Document exported to {path}"`
 - [ ] **Page Setup**: paper size dropdown (A4/Letter/A5), margin inputs (top/bottom/left/right in mm); stored in `HKCU\Software\Impossible\WordPad\PageSetup\*`
@@ -214,18 +214,18 @@
 
 | ⭐ | Feature                                             | 🪟 Win11                             | 🐧 Linux                                   | 🚀 Impossible OS                                                     |
 |----|-----------------------------------------------------|-----------------------------------|-----------------------------------------|-------------------------------------------------------------------|
-| 💎 | Paragraph + run rich text document model            | ✅ WordPad (internal; RTF-backed) | ✅ AbiWord / LibreOffice Writer         | ⬜ §1 — doubly-linked para list, per-run char_fmt,                |
-| 💎 | RTF 1.5 reader                                      | ✅ WordPad (full RTF 1.5)         | ✅ AbiWord (RTF import)                 | ⬜ §2 — stack-based control word parser, font                     |
-| 💎 | RTF writer                                          | ✅ WordPad                        | ✅ AbiWord                              | ⬜ §2 — minimal valid RTF emission                                |
-| 💎 | Multi-run layout engine                             | ✅ WordPad (RichEdit control)     | ✅ GTK TextView / Pango                 | ⬜ §3 — `ttf_measure_width` word-break, JUSTIFY, per-run baseline |
-| 💎 | Horizontal ruler with draggable indent + tab stops  | ✅ WordPad                        | ✅ AbiWord                              | ⬜ §3 — ruler strip, drag-update para_fmt, tab                    |
-| 💎 | Format toolbar                                      | ✅ WordPad                        | ✅ AbiWord / LibreOffice                | ⬜ §4 — `CTRL_COMBOBOX` font/size, toggle buttons, `dialog_color` |
-| 💎 | Paragraph split/merge, Tab, Ctrl+B/I/U interactions | ✅ WordPad                        | ✅ AbiWord                              | ⬜ §5 — run boundary split/merge, tab-stop advance                |
-| 💎 | `.rtf` + `.doc` file associations                   | ✅ WordPad (`.rtf` default)       | ⚠️ AbiWord (`.rtf`; no built-in `.doc`) | ⬜ §6 — `file_assoc_set` for both                                 |
-| 💎 | Print preview + PDF export                          | ✅ WordPad (Print dialog → PDF    | ✅ AbiWord (PDF via evince/cups)        | ⬜ §7 — (Stretch) — ; `pdf_begin/draw_text/end` TODO-12           |
+| 💎 | Paragraph + run rich text document model            | ✅ WordPad (internal; RTF-backed) | ✅ AbiWord / LibreOffice Writer         | ⬜ §1 -- doubly-linked para list, per-run char_fmt,                |
+| 💎 | RTF 1.5 reader                                      | ✅ WordPad (full RTF 1.5)         | ✅ AbiWord (RTF import)                 | ⬜ §2 -- stack-based control word parser, font                     |
+| 💎 | RTF writer                                          | ✅ WordPad                        | ✅ AbiWord                              | ⬜ §2 -- minimal valid RTF emission                                |
+| 💎 | Multi-run layout engine                             | ✅ WordPad (RichEdit control)     | ✅ GTK TextView / Pango                 | ⬜ §3 -- `ttf_measure_width` word-break, JUSTIFY, per-run baseline |
+| 💎 | Horizontal ruler with draggable indent + tab stops  | ✅ WordPad                        | ✅ AbiWord                              | ⬜ §3 -- ruler strip, drag-update para_fmt, tab                    |
+| 💎 | Format toolbar                                      | ✅ WordPad                        | ✅ AbiWord / LibreOffice                | ⬜ §4 -- `CTRL_COMBOBOX` font/size, toggle buttons, `dialog_color` |
+| 💎 | Paragraph split/merge, Tab, Ctrl+B/I/U interactions | ✅ WordPad                        | ✅ AbiWord                              | ⬜ §5 -- run boundary split/merge, tab-stop advance                |
+| 💎 | `.rtf` + `.doc` file associations                   | ✅ WordPad (`.rtf` default)       | ⚠️ AbiWord (`.rtf`; no built-in `.doc`) | ⬜ §6 -- `file_assoc_set` for both                                 |
+| 💎 | Print preview + PDF export                          | ✅ WordPad (Print dialog → PDF    | ✅ AbiWord (PDF via evince/cups)        | ⬜ §7 -- (Stretch) -- ; `pdf_begin/draw_text/end` TODO-12           |
 
-Impossible OS WordPad uses the same native TTF stack as every other desktop component —
-no RichEdit COM object, no GTK, no external layout engine — giving consistent glyph metrics
+Impossible OS WordPad uses the same native TTF stack as every other desktop component --
+no RichEdit COM object, no GTK, no external layout engine -- giving consistent glyph metrics
 and a zero-dependency rich-text editing surface from day one.
 
 ---
@@ -246,4 +246,4 @@ Run `bash scripts/build.sh run` for each verification step.
 - [ ] **File ops:** save as `.rtf`; title removes `*`; reopen → formatting intact; `.doc` file → opens (best-effort RTF detection or plain text fallback)
 - [ ] **File assoc:** `.rtf` double-click in File Manager → `wordpad.exe` opens file
 - [ ] **Print preview (stretch):** A4 document → print preview shows correct page breaks; "Print to PDF" → PDF file created at correct path with formatted text
-- [ ] Commit: `"apps: WordPad — RTF model, layout engine, ruler, toolbar, file ops, print stretch"`
+- [ ] Commit: `"apps: WordPad -- RTF model, layout engine, ruler, toolbar, file ops, print stretch"`

@@ -1,7 +1,7 @@
 /* ============================================================================
- * blk_zoned.c — Zoned Block Device (ZBD/ZNS) Support
+ * blk_zoned.c -- Zoned Block Device (ZBD/ZNS) Support
  *
- * §11.1 — 💎 Impossible OS Exclusive
+ * §11.1 -- 💎 Impossible OS Exclusive
  *
  * Zoned block devices divide the disk into sequential-write-only zones,
  * matching SMR (Shingled Magnetic Recording) drives and ZNS (Zoned Namespace)
@@ -19,12 +19,12 @@
  *   OPEN/CLOSED → FULL (on finish or when capacity reached)
  *
  * Commands:
- *   ZONE_REPORT  — enumerate zone descriptors
- *   ZONE_OPEN    — explicitly open a zone for writing
- *   ZONE_CLOSE   — close an open zone
- *   ZONE_FINISH  — fill remaining capacity, transition to full
- *   ZONE_RESET   — reset zone write pointer to start (erase)
- *   ZONE_APPEND  — append data at write pointer, device returns actual LBA
+ *   ZONE_REPORT  -- enumerate zone descriptors
+ *   ZONE_OPEN    -- explicitly open a zone for writing
+ *   ZONE_CLOSE   -- close an open zone
+ *   ZONE_FINISH  -- fill remaining capacity, transition to full
+ *   ZONE_RESET   -- reset zone write pointer to start (erase)
+ *   ZONE_APPEND  -- append data at write pointer, device returns actual LBA
  * ============================================================================ */
 
 #include "kernel/drivers/virtio/blk_internal.h"
@@ -65,7 +65,7 @@ static int zone_mgmt_cmd(uint32_t type, uint64_t zone_start_sector)
     if (!blk_initialized)
         return -1;
 
-    /* Build request header — sector = zone start LBA */
+    /* Build request header -- sector = zone start LBA */
     req.type     = type;
     req.reserved = 0;
     req.sector   = zone_start_sector;
@@ -432,7 +432,7 @@ int virtio_blk_zone_append(uint64_t zone_start, const void *data,
     if (!blk_initialized || !has_zoned)
         return 1;
 
-    /* Build request header — sector = zone start */
+    /* Build request header -- sector = zone start */
     req.type     = VIRTIO_BLK_T_ZONE_APPEND;
     req.reserved = 0;
     req.sector   = zone_start;
@@ -452,7 +452,7 @@ int virtio_blk_zone_append(uint64_t zone_start, const void *data,
     blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
     blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
-    /* Descriptor 1: data buffer (device-readable — append data) */
+    /* Descriptor 1: data buffer (device-readable -- append data) */
     d1 = blk_vqs[qi].free_head;
     blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
     blk_vqs[qi].num_free--;
@@ -553,7 +553,7 @@ int virtio_blk_zone_append(uint64_t zone_start, const void *data,
 
 /* ---- Zone Initialization ---- */
 
-/* Initialize zone config — called from blk_init after feature negotiation.
+/* Initialize zone config -- called from blk_init after feature negotiation.
  * Reads zone parameters from device config space. */
 void zone_init(void)
 {

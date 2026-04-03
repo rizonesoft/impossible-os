@@ -23,5 +23,5 @@
 - Production-grade posture and "Nothing is impossible" standard
 - Srclight-only supported MCP baseline for Cursor unless explicitly changed
 - Repo-truth-over-local-state ownership model
-- Independence of Cursor and Claude Code systems — no cross-references
+- Independence of Cursor and Claude Code systems -- no cross-references
 - Supported tooling awareness from `todo/00-infrastructure/TODO-02-developer-tooling-stack.md`

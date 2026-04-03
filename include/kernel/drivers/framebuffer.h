@@ -1,5 +1,5 @@
 /* ============================================================================
- * framebuffer.h — Framebuffer graphics driver
+ * framebuffer.h -- Framebuffer graphics driver
  *
  * Renders text and graphics on the GOP framebuffer using an embedded bitmap
  * font.  Supports double buffering, drawing primitives, and block copy.

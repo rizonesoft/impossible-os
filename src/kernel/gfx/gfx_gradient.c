@@ -1,8 +1,8 @@
 /* ============================================================================
- * gfx_gradient.c — Gradient fill operations
+ * gfx_gradient.c -- Gradient fill operations
  *
  * Linear gradients (horizontal + vertical) and radial gradients rendered
- * scanline-by-scanline.  All math is integer-only — colors are interpolated
+ * scanline-by-scanline.  All math is integer-only -- colors are interpolated
  * using fixed-point 8.8 arithmetic.
  *
  * Gradient struct stores start/end colors and direction.  Rounded-corner

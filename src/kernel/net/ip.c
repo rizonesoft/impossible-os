@@ -1,5 +1,5 @@
 /* ============================================================================
- * ip.c — IPv4 send/receive
+ * ip.c -- IPv4 send/receive
  *
  * Builds IP datagrams, computes header checksums, dispatches by protocol.
  * ============================================================================ */
@@ -94,7 +94,7 @@ void ipv4_send(uint32_t dst_ip, uint8_t protocol,
 
     /* Resolve MAC via ARP */
     if (arp_resolve(resolve_ip, dst_mac) < 0) {
-        /* ARP miss — send ARP request and drop this packet */
+        /* ARP miss -- send ARP request and drop this packet */
         arp_request(resolve_ip);
         return;
     }
@@ -136,7 +136,7 @@ void ipv4_handle(const void *data, uint32_t len)
         udp_handle(hdr->src_ip, payload, payload_len);
         break;
     case IP_PROTO_TCP:
-        /* TCP not implemented — silently drop */
+        /* TCP not implemented -- silently drop */
         break;
     default:
         break;

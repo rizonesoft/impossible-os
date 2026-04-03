@@ -1,4 +1,4 @@
-/* tools/jpg2raw.c — Convert JPEG/PNG to raw BGRA pixel data
+/* tools/jpg2raw.c -- Convert JPEG/PNG to raw BGRA pixel data
  *
  * Build: gcc -O2 -o build/tools/jpg2raw tools/jpg2raw.c -lm
  * Usage: ./build/tools/jpg2raw input.{jpg,png} output.raw width height

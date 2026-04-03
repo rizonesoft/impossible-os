@@ -1,8 +1,8 @@
-# TODO-05 — AI/ML Native Inference Runtime
+# TODO-05 -- AI/ML Native Inference Runtime
 
 > **Goal:** Research spike to determine how to run ONNX models and small LLMs
 > (Phi-3-mini, LLaMA 7B Q4, Whisper) natively on Impossible OS without a Linux kernel
-> — assessing ggml/llama.cpp portability, designing user-mode AVX2 SIMD enablement,
+> -- assessing ggml/llama.cpp portability, designing user-mode AVX2 SIMD enablement,
 > specifying GGUF model loading, defining the `SYS_AI_INFER` syscall, and producing
 > a bench-backed plan for native on-device inference.
 
@@ -11,7 +11,7 @@
 > `02-kernel-core/TODO-19 §1` (XSAVE design) and `01-boot-platform/TODO-04 §5`
 > (Phase 1 XSAVE & PCID activation window). §3 here adds the **per-thread user-mode
 > XSAVE context** (YMM/ZMM save area in TEB, context-switch XSAVE/XRSTOR discipline)
-> on top of those foundations — do not re-specify kernel XSAVE initialization.
+> on top of those foundations -- do not re-specify kernel XSAVE initialization.
 >
 > **C++ support** (for `ggml` C++ bindings and `llama.cpp`) depends on
 > `09-services-security/TODO-09 §11` (GCC/G++ long-term). The ggml C99 core
@@ -30,15 +30,15 @@
 
 ## Inputs
 
-- `02-kernel-core/TODO-19-x86-64-architecture.md §1` (→ XREF) — XSAVE design; `CR4.OSXSAVE`; `XSETBV(XCR0, AVX_MASK)` — §3 per-thread XSAVE context builds on this
-- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §5` (→ XREF) — Phase 1 XSAVE & PCID activation window; §3 adds per-thread TEB XSAVE area after §5 activates OSXSAVE
-- `09-services-security/TODO-09-compiler-sdk.md §11` (→ XREF) — GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
-- `include/kernel/mm/pmm.h` — `pmm_alloc_contiguous(count)` — §4 model tensor allocation (128 MB–4 GB contiguous regions)
-- `include/kernel/mm/vmm.h` — `vmm_map_page()` — §4 user-mode tensor memory mapping
-- `include/kernel/sched/task.h` — `task_t`, `TEB` — §3 XSAVE area in TEB per thread
-- `include/kernel/sched/syscall.h` — next free syscall number — §5 `SYS_AI_INFER` addition
-- `include/kernel/fs/vfs.h` — `vfs_open/read/close` — §4 GGUF model loading from VFS
-- `src/kernel/gfx/gfx_simd.c` — reference for existing SSE2 usage pattern in GFX paths; §3 extends to AVX2 user-mode
+- `02-kernel-core/TODO-19-x86-64-architecture.md §1` (→ XREF) -- XSAVE design; `CR4.OSXSAVE`; `XSETBV(XCR0, AVX_MASK)` -- §3 per-thread XSAVE context builds on this
+- `01-boot-platform/TODO-04-cpu-boot-sequencing.md §5` (→ XREF) -- Phase 1 XSAVE & PCID activation window; §3 adds per-thread TEB XSAVE area after §5 activates OSXSAVE
+- `09-services-security/TODO-09-compiler-sdk.md §11` (→ XREF) -- GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
+- `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous(count)` -- §4 model tensor allocation (128 MB–4 GB contiguous regions)
+- `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §4 user-mode tensor memory mapping
+- `include/kernel/sched/task.h` -- `task_t`, `TEB` -- §3 XSAVE area in TEB per thread
+- `include/kernel/sched/syscall.h` -- next free syscall number -- §5 `SYS_AI_INFER` addition
+- `include/kernel/fs/vfs.h` -- `vfs_open/read/close` -- §4 GGUF model loading from VFS
+- `src/kernel/gfx/gfx_simd.c` -- reference for existing SSE2 usage pattern in GFX paths; §3 extends to AVX2 user-mode
 
 ---
 
@@ -70,19 +70,19 @@ the ggml port and XSAVE context switch work end-to-end.
 
 > Compare three options; determine which is achievable within 6 months post-compiler.
 
-- [ ] **Option A — ggml/llama.cpp** (MIT, ~100 K LOC C/C++):
+- [ ] **Option A -- ggml/llama.cpp** (MIT, ~100 K LOC C/C++):
   - C99 core `src/ggml.c` (~40 K LOC) compiles with `-ffreestanding` after POSIX shims
   - Supports GGUF models (LLaMA, Phi, Mistral, Whisper) with Q4–Q8 quantization
   - CPU backends: pure C scalar + AVX2 SIMD kernels (4×4 tile matrix multiply using `_mm256_*`)
   - POSIX dependencies to replace: `malloc/free` → `kmalloc/kfree` + PMM; `pthread_*` → kernel threads; `mmap` → `vmm_alloc`; `FILE*` I/O → removed (model pre-loaded by §4); `clock_gettime` → `system_get_ticks()`
   - **Feasibility**: ✅ achievable in 6 months; C99 core ports without C++ compiler; AVX2 kernels work after §2 SIMD enablement
 
-- [ ] **Option B — ONNX Runtime** (MIT, ~500 K LOC C++):
+- [ ] **Option B -- ONNX Runtime** (MIT, ~500 K LOC C++):
   - Full ONNX graph execution; ONNX operator set ~170 ops; supports vision + NLP models
-  - C++ STL dependency (vectors, maps, strings, exceptions, RTTI) — requires `TODO-09 §11` GCC/G++ first
+  - C++ STL dependency (vectors, maps, strings, exceptions, RTTI) -- requires `TODO-09 §11` GCC/G++ first
   - **Feasibility**: ❌ not achievable within 6 months; blocked by C++ compiler + STL port; defer to Phase 2
 
-- [ ] **Option C — Minimal custom runtime** (~5 K LOC):
+- [ ] **Option C -- Minimal custom runtime** (~5 K LOC):
   - Implement only: `matmul(A, B, C, m, n, k)` (dense GEMM), `relu(x)`, `gelu(x)`, `softmax(x)`, `rms_norm(x)`, `embed_lookup(idx)`, attention QKV projection
   - Enough for transformer inference (LLaMA/Phi architecture)
   - **Feasibility**: ✅ achievable in 2–3 months; significantly lower throughput than ggml (no AVX2 tiling); good for validating the end-to-end pipeline before full ggml port
@@ -94,9 +94,9 @@ the ggml port and XSAVE context switch work end-to-end.
 
   | Option | LOC | C++ required | AVX2 | Models | Timeline |
   |--------|-----|-------------|------|--------|----------|
-  | C — Custom minimal | ~5 K | No | Manually | GGUF subset | 2–3 months |
-  | A — ggml | ~40 K C core | No (C99 core) | Yes | GGUF full | 4–6 months |
-  | B — ONNX Runtime | ~500 K | Yes (STL) | Via EP | ONNX full | 12+ months |
+  | C -- Custom minimal | ~5 K | No | Manually | GGUF subset | 2–3 months |
+  | A -- ggml | ~40 K C core | No (C99 core) | Yes | GGUF full | 4–6 months |
+  | B -- ONNX Runtime | ~500 K | Yes (STL) | Via EP | ONNX full | 12+ months |
 
 ---
 
@@ -104,11 +104,11 @@ the ggml port and XSAVE context switch work end-to-end.
 
 > Hardware-interface primitives: `CR4.OSXSAVE`, `XSETBV(XCR0, ...)`, per-thread XSAVE
 > area in TEB, XSAVE/XRSTOR on context switch. Security-critical: corrupting a thread's
-> YMM state is a silent correctness bug. Extends `TODO-19 §1` + `TODO-04 §5` —
+> YMM state is a silent correctness bug. Extends `TODO-19 §1` + `TODO-04 §5` --
 > kernel OSXSAVE activation is done there; this section adds the per-thread user layer.
 
 - [ ] **XCR0 AVX enable mask** (in kernel after XSAVE activation from `TODO-19 §1` + `TODO-04 §5`):
-  - `XSETBV(0, XCR0_X87 | XCR0_SSE | XCR0_AVX)` — enables x87, XMM, and YMM state in XSAVE area for user mode
+  - `XSETBV(0, XCR0_X87 | XCR0_SSE | XCR0_AVX)` -- enables x87, XMM, and YMM state in XSAVE area for user mode
   - AVX-512 (ZMM, opmask): enable `XCR0_ZMM_HI256 | XCR0_HI16_ZMM | XCR0_OPMASK` if `cpuid.AVX512F` present
   - Kernel code continues to NOT use AVX (`-mno-sse -mno-sse2 -mno-avx` flags remain for kernel compilation); only user-mode threads may use AVX2/AVX-512
 
@@ -166,11 +166,11 @@ the ggml port and XSAVE context switch work end-to-end.
   | `pthread_mutex_lock/unlock` | `spinlock_acquire/release` or `mutex_lock/unlock` | Existing kernel sync |
   | `pthread_cond_wait/signal` | `sched_sleep_wait` / `sched_wake` | Existing kernel primitives |
   | `mmap(NULL, size, ...)` | `vmm_alloc_range(size)` + PMM backing | Large tensor buffers |
-  | `FILE*` model I/O | **removed** — model loaded by §4 before ggml init | Caller pre-loads data |
+  | `FILE*` model I/O | **removed** -- model loaded by §4 before ggml init | Caller pre-loads data |
   | `clock_gettime(CLOCK_MONOTONIC)` | `system_get_ticks()` | Timer shim |
   | `assert(x)` | `KERNEL_ASSERT(x, "ggml")` | Debug mode only |
   | `CPU_FEATURE_AVX2` via `__builtin_cpu_supports` | `cpu_data[0].cpuid_features & CPU_FEATURE_AVX2` | From `cpu_data` |
-  | `_mm256_*` intrinsics (AVX2) | Unchanged — user-mode inference threads have AVX2 after §2 | ✅ no change |
+  | `_mm256_*` intrinsics (AVX2) | Unchanged -- user-mode inference threads have AVX2 after §2 | ✅ no change |
 
 - [ ] **Thread pool implementation** (`src/libs/ggml/ggml_threadpool.c`):
   - `ggml_n_threads` → configurable via `HKLM\SYSTEM\AI\InferenceThreads` Registry key (default: `cpu_count / 2`)
@@ -179,13 +179,13 @@ the ggml port and XSAVE context switch work end-to-end.
   - `ggml_set_n_threads(n)`: dynamically adjusts active worker count
 
 - [ ] **AVX2 kernel selection** (keep verbatim from ggml upstream):
-  - `ggml_vec_dot_f32_avx2()`, `ggml_vec_mad_f32_avx2()` — 256-bit YMM dot products; used for Q4×F32 quantized matrix multiply
-  - `ggml_vec_dot_q4_0_q8_0_avx2()` — Q4_0 × Q8_0 mixed-precision; the hot path for 4-bit quantized inference
+  - `ggml_vec_dot_f32_avx2()`, `ggml_vec_mad_f32_avx2()` -- 256-bit YMM dot products; used for Q4×F32 quantized matrix multiply
+  - `ggml_vec_dot_q4_0_q8_0_avx2()` -- Q4_0 × Q8_0 mixed-precision; the hot path for 4-bit quantized inference
   - These compile with `-mavx2` flag on the ggml source files only (not all kernel files); `Makefile` adds `GGML_CFLAGS = -mavx2 -mfma` for `src/libs/ggml/*.c`
 
-- [ ] **ggml context** (`ggml_context`): allocate context buffer from `pmm_alloc_contiguous(ceil(ctx_size / 4096))`; context is a simple bump allocator over the PMM buffer — no free within a context; `ggml_free_context()` returns entire PMM region at once
+- [ ] **ggml context** (`ggml_context`): allocate context buffer from `pmm_alloc_contiguous(ceil(ctx_size / 4096))`; context is a simple bump allocator over the PMM buffer -- no free within a context; `ggml_free_context()` returns entire PMM region at once
 
-- [ ] **Porting scope**: target `ggml.c` + `ggml-cpu.c` only; exclude `ggml-cuda.c`, `ggml-metal.c`, `ggml-vulkan.c` (GPU backends — §6 research), `ggml-opencl.c`; build with `GGML_BACKEND_CPU=1 GGML_NO_ACCELERATE=1 GGML_NO_OPENMP=1`
+- [ ] **Porting scope**: target `ggml.c` + `ggml-cpu.c` only; exclude `ggml-cuda.c`, `ggml-metal.c`, `ggml-vulkan.c` (GPU backends -- §6 research), `ggml-opencl.c`; build with `GGML_BACKEND_CPU=1 GGML_NO_ACCELERATE=1 GGML_NO_OPENMP=1`
 
 ---
 
@@ -250,10 +250,10 @@ the ggml port and XSAVE context switch work end-to-end.
   - Voice input: `portaudio` → PCM buffer → Whisper.cpp `whisper_full()` → transcript text
   - LLM inference: transcript → `SYS_AI_INFER` → response text
   - UI: `CTRL_TEXTBOX` transcript + response; Win+A hotkey to toggle visibility
-  - Model: `Phi-3-mini-4k-instruct.Q4_K_M.gguf` (2.2 GB) — fits in 4 GB RAM
+  - Model: `Phi-3-mini-4k-instruct.Q4_K_M.gguf` (2.2 GB) -- fits in 4 GB RAM
 
 - [ ] **Start Menu semantic search** (embed in `src/desktop/start_menu.c`):
-  - Embedding model: `all-MiniLM-L6-v2.Q4_0.gguf` (~25 MB) — always resident in RAM after first use
+  - Embedding model: `all-MiniLM-L6-v2.Q4_0.gguf` (~25 MB) -- always resident in RAM after first use
   - On keypress in Start Menu search box: if query > 3 words → `SYS_AI_INFER` with embedding model → 384-dim vector → cosine similarity vs. pre-computed app embedding index → boost semantically similar results above exact string matches
   - Pre-compute app embeddings at install time; store in `HKLM\SOFTWARE\Installed\{name}\Embedding` as 384×4 bytes (F32)
 
@@ -283,7 +283,7 @@ the ggml port and XSAVE context switch work end-to-end.
 - [ ] **Memory architecture**: GPU inference requires tensors in GPU-visible memory; `SYS_GPU_MAP` (from `TODO-03 §4`) maps tensor PMM buffers to GPU address space; no copy needed if VirtIO-GPU uses shared memory model
 - [ ] **Whisper.cpp GPU acceleration**: Whisper large-v3 runs in real-time on GPU; on CPU it needs ~5× audio duration; GPU backend unlocks real-time transcription in `ai_assistant.exe`
 - [ ] **Blocking dependencies for GPU inference**:
-  1. VirtIO-GPU Vulkan ICD (TODO-03 §4) — minimum requirement
+  1. VirtIO-GPU Vulkan ICD (TODO-03 §4) -- minimum requirement
   2. `SYS_GPU_MAP` syscall (TODO-03 §4)
   3. ggml Vulkan backend compile with Impossible OS headers (needs C++ or rewritten in C)
   4. Large model VRAM budget: 7B Q4 needs ~4 GB VRAM; VirtIO-GPU shares host GPU VRAM
@@ -294,7 +294,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 **Source:** `docs/architecture/ai-ml-runtime-plan.md`
 
-- [ ] **`docs/architecture/ai-ml-runtime-plan.md`** — sections:
+- [ ] **`docs/architecture/ai-ml-runtime-plan.md`** -- sections:
   - **Option comparison table** (from §1): ggml vs. ONNX Runtime vs. custom minimal; LOC, C++ need, timeline, feasibility verdict
   - **SIMD enablement design** (from §2): XSAVE area layout diagram (x87 0–511, XMM 512–1023, YMM_Hi 1024–1535, ZMM_Hi 1536–2695 bytes); `CR4.OSXSAVE` → `XSETBV` activation sequence; context switch XSAVEOPT/XRSTOR pseudocode; per-thread `TEB.XSaveArea` pointer
   - **ggml dependency map** (from §3): complete table of POSIX → kernel replacements; which ggml files to exclude (CUDA/Metal/Vulkan backends); `GGML_CFLAGS = -mavx2 -mfma` Makefile pattern
@@ -321,20 +321,20 @@ the ggml port and XSAVE context switch work end-to-end.
 
 | ⭐ | Feature                                           | 🪟 Win11                                                 | 🐧 Linux                                              | 🚀 Impossible OS                                                          |
 |----|---------------------------------------------------|-------------------------------------------------------|----------------------------------------------------|------------------------------------------------------------------------|
-| ⭐ | Native on-device LLM inference                    | ✅ Copilot+ (NPU/ONNX Runtime); DirectML; llama.cpp   | ✅ llama.cpp natively; ONNX Runtime; CPU/GPU       | ⬜ §3 — ggml C99 port; AVX2 user-mode                                  |
-| ⭐ | AVX2 user-mode SIMD with per-thread XSAVE context | ✅ Windows handles XSAVE/XRSTOR automatically (FXSAVE | ✅ Linux XSAVE per-task (`task_struct.thread.fpu`) | ⬜ §2 — `TEB.XSaveArea`; XSAVEOPT on context switch                    |
-| 💎 | GGUF model loading                                | ✅ llama.cpp + GGUF on Windows                        | ✅ llama.cpp native GGUF on Linux                  | ⬜ §4 — `gguf_load()` via VFS; PMM large-alloc                         |
-| ⭐ | `SYS_AI_INFER` background inference syscall       | ✅ WinRT `IntelligenceInterface`; ML.NET; no single   | ✅ No dedicated kernel AI syscall;                 | ⬜ §5 — `SYS_AI_INFER=95`/`SYS_AI_MODEL_LOAD=96`; semaphore completion |
-| ⭐ | Start Menu semantic search                        | ✅ Windows Search AI (Copilot+, NPU,                  | ✅ GNOME/KDE: no on-device semantic search         | ⬜ §5 — `all-MiniLM-L6-v2` 25 MB resident; cosine                      |
-| 💎 | GPU inference via Vulkan compute                  | ✅ DirectML Vulkan; CUDA; ROCm                        | ✅ Vulkan compute (`kompute`, `ggml-vulkan`)       | ⬜ §6 — (stretch); `ggml-vulkan.c` backend; blocked by                 |
+| ⭐ | Native on-device LLM inference                    | ✅ Copilot+ (NPU/ONNX Runtime); DirectML; llama.cpp   | ✅ llama.cpp natively; ONNX Runtime; CPU/GPU       | ⬜ §3 -- ggml C99 port; AVX2 user-mode                                  |
+| ⭐ | AVX2 user-mode SIMD with per-thread XSAVE context | ✅ Windows handles XSAVE/XRSTOR automatically (FXSAVE | ✅ Linux XSAVE per-task (`task_struct.thread.fpu`) | ⬜ §2 -- `TEB.XSaveArea`; XSAVEOPT on context switch                    |
+| 💎 | GGUF model loading                                | ✅ llama.cpp + GGUF on Windows                        | ✅ llama.cpp native GGUF on Linux                  | ⬜ §4 -- `gguf_load()` via VFS; PMM large-alloc                         |
+| ⭐ | `SYS_AI_INFER` background inference syscall       | ✅ WinRT `IntelligenceInterface`; ML.NET; no single   | ✅ No dedicated kernel AI syscall;                 | ⬜ §5 -- `SYS_AI_INFER=95`/`SYS_AI_MODEL_LOAD=96`; semaphore completion |
+| ⭐ | Start Menu semantic search                        | ✅ Windows Search AI (Copilot+, NPU,                  | ✅ GNOME/KDE: no on-device semantic search         | ⬜ §5 -- `all-MiniLM-L6-v2` 25 MB resident; cosine                      |
+| 💎 | GPU inference via Vulkan compute                  | ✅ DirectML Vulkan; CUDA; ROCm                        | ✅ Vulkan compute (`kompute`, `ggml-vulkan`)       | ⬜ §6 -- (stretch); `ggml-vulkan.c` backend; blocked by                 |
 
 Impossible OS's `⭐` advantage: `SYS_AI_INFER` makes inference a first-class kernel
-primitive — the OS schedules inference workloads alongside threads, applies power
+primitive -- the OS schedules inference workloads alongside threads, applies power
 management policies to AI background tasks, and allows the scheduler to pre-empt
 inference workers in favor of user-interactive tasks. No other OS exposes inference
 at the syscall level; Windows Copilot+ and Linux both delegate entirely to user-mode
 libraries. The Start Menu semantic search (`all-MiniLM-L6-v2`, 25 MB, always resident)
-also sets a standard — a local-first AI search feature that works offline without
+also sets a standard -- a local-first AI search feature that works offline without
 cloud calls or NPU hardware.
 
 ---

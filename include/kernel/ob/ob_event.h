@@ -1,5 +1,5 @@
 /* ============================================================================
- * ob_event.h — Event object type for the Object Manager
+ * ob_event.h -- Event object type for the Object Manager
  *
  * EVENT_OBJECT wraps an embedded event_t.  Named events are inserted into
  * \BaseNamedObjects for cross-process sharing.
@@ -22,7 +22,7 @@ typedef struct event_object {
 void ob_event_type_init(void);
 
 /*
- * NtCreateEvent stub — create or open a named/unnamed event.
+ * NtCreateEvent stub -- create or open a named/unnamed event.
  *
  * name:          NULL for unnamed, or a name in \BaseNamedObjects.
  * type:          EVENT_MANUAL_RESET or EVENT_AUTO_RESET.

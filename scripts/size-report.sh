@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# size-report.sh — Kernel and build artifact size tracking
+# size-report.sh -- Kernel and build artifact size tracking
 #
 # Reports sizes of the kernel binary, top object files, and system disk image.
 # Tracks history in build/size-history.csv for regression detection.
@@ -20,8 +20,8 @@ HISTORY="$BUILD/size-history.csv"
 SYMMAP="$BUILD/kernel.sym"
 
 # ---- Thresholds ----
-KERNEL_WARN_KB=8192      # 8 MB — kernel shouldn't exceed this
-DISK_WARN_MB=1024        # 1 GB — system disk shouldn't exceed this
+KERNEL_WARN_KB=8192      # 8 MB -- kernel shouldn't exceed this
+DISK_WARN_MB=1024        # 1 GB -- system disk shouldn't exceed this
 
 # ---- Colors ----
 RED='\033[0;31m'
@@ -69,7 +69,7 @@ if [ ! -f "$KERNEL" ]; then
 fi
 
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Impossible OS — Size Report${NC}"
+echo -e "${CYAN}  Impossible OS -- Size Report${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
 

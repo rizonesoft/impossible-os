@@ -1,4 +1,4 @@
-# TODO-11 — USB Boot Hardening & Fail-Safe Pipeline
+# TODO-11 -- USB Boot Hardening & Fail-Safe Pipeline
 
 > **Goal:** Make USB boot bulletproof. The current USB boot path has a 2-second sleep hack masking a timing race, REQUEST SENSE retry logic that's partially wired, klog_disk_flush that hangs 10+ minutes on USB 2.0, and no EHCI/UHCI fallback for legacy hardware. This TODO is the single fail-safe pipeline for all USB boot fragility: proper SCSI retry, bounded klog flush with single-pass routing and deferred mode, boot media speed detection, slow-media-aware IXFS tests, EHCI fallback, and flush progress display. Works on USB 2.0 (EHCI), 3.0 (xHCI), 3.1, and 3.2 with zero sleep hacks and zero hangs.
 
@@ -9,16 +9,16 @@
 
 ## Inputs
 
-- `src/kernel/drivers/xhci.c` — xHCI controller init, DCBAA, port scan
-- `src/kernel/drivers/xhci_dev.c` — USB device enumeration, MSC identification
-- `src/kernel/drivers/usb_msc.c` — BOT SCSI transport (CBW/CSW/data)
-- `src/kernel/klog_disk.c` — disk flush (hangs on USB 2.0)
-- `src/kernel/main/boot_storage.c` — `sleep_ms(2000)` hack location
-- [`src/kernel/klog.c`](../../src/kernel/klog.c) — `klog_disk_enable()` calls `klog_disk_init()` + `klog_disk_flush()`
-- [`src/kernel/main/boot_tests.c`](../../src/kernel/main/boot_tests.c) — IXFS CRUD, VFS read, performance tests
-- [`src/kernel/fs/ixfs/ixfs_test.c`](../../src/kernel/fs/ixfs/ixfs_test.c) — `ixfs_test_performance()`: hash index, extents, journal, snapshots
-- → XREF: `TODO-10-xhci-usb-boot.md §6` — EHCI/UHCI/OHCI fallback
-- → XREF: `TODO-13-usb-zero-delay-handover.md §7` — corrupt state fallback
+- `src/kernel/drivers/xhci.c` -- xHCI controller init, DCBAA, port scan
+- `src/kernel/drivers/xhci_dev.c` -- USB device enumeration, MSC identification
+- `src/kernel/drivers/usb_msc.c` -- BOT SCSI transport (CBW/CSW/data)
+- `src/kernel/klog_disk.c` -- disk flush (hangs on USB 2.0)
+- `src/kernel/main/boot_storage.c` -- `sleep_ms(2000)` hack location
+- [`src/kernel/klog.c`](../../src/kernel/klog.c) -- `klog_disk_enable()` calls `klog_disk_init()` + `klog_disk_flush()`
+- [`src/kernel/main/boot_tests.c`](../../src/kernel/main/boot_tests.c) -- IXFS CRUD, VFS read, performance tests
+- [`src/kernel/fs/ixfs/ixfs_test.c`](../../src/kernel/fs/ixfs/ixfs_test.c) -- `ixfs_test_performance()`: hash index, extents, journal, snapshots
+- → XREF: `TODO-10-xhci-usb-boot.md §6` -- EHCI/UHCI/OHCI fallback
+- → XREF: `TODO-13-usb-zero-delay-handover.md §7` -- corrupt state fallback
 
 ---
 
@@ -26,7 +26,7 @@
 
 - USB boot works reliably on USB 2.0 (EHCI), 3.0, 3.1, 3.2 (xHCI) with zero sleep hacks.
 - SCSI UNIT ATTENTION and NOT READY are handled via proper REQUEST SENSE + TEST UNIT READY retry.
-- klog_disk_flush never hangs — bounded loop with progress reporting.
+- klog_disk_flush never hangs -- bounded loop with progress reporting.
 - EHCI/UHCI fallback for systems without xHCI (pre-2012 hardware).
 - XUSB2PR port-ready polling replaces fixed delays on Intel EHCI→xHCI routing.
 - Boot from USB is as reliable as boot from SATA.
@@ -40,22 +40,22 @@
 
 | ⭐  | Order | Deliverable                                       | Depends On    | Status |
 | --- | :---: | ------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   | SCSI REQUEST SENSE and error classification        | —             |  [ ]   |
+| 💎  |   1   | SCSI REQUEST SENSE and error classification        | --             |  [ ]   |
 | 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [ ]   |
 | 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2        |  [ ]   |
 | 💎  |   4   | Remove sleep_ms(2000) hack                         | §2, §3        |  [ ]   |
 | 💎  |   5   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [ ]   |
-| 💎  |   6   | klog_disk_flush bounded loop                       | —             |  [ ]   |
+| 💎  |   6   | klog_disk_flush bounded loop                       | --             |  [ ]   |
 | 💎  |   7   | klog deferred flush mode (batch to RAM)             | §6            |  [ ]   |
 | 💎  |   8   | Boot media speed detection                         | §6            |  [ ]   |
-| 💎  |   9   | EHCI/UHCI companion controller fallback            | —             |  [ ]   |
+| 💎  |   9   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
 | ⭐  |  10   | USB boot diagnostic report                         | §1–§9         |  [ ]   |
 | 💎  |  11   | Single-pass per-subsystem log routing              | §6            |  [ ]   |
 | 💎  |  12   | IXFS boot tests: slow-media-aware                  | §8            |  [ ]   |
 | ⭐  |  13   | Flush progress on splash diagnostic line           | §7            |  [ ]   |
 
-> 💎 = parity — Windows usbstor.sys and Linux usb-storage both handle SCSI retry and EHCI fallback.
-> ⭐ = exclusive — comprehensive USB boot diagnostic report and splash flush progress.
+> 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry and EHCI fallback.
+> ⭐ = exclusive -- comprehensive USB boot diagnostic report and splash flush progress.
 
 ---
 
@@ -63,7 +63,7 @@
 
 Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 
-- [ ] Add `msc_request_sense(dev, sense_data)` to `usb_msc.c` — sends REQUEST SENSE CDB (0x03)
+- [ ] Add `msc_request_sense(dev, sense_data)` to `usb_msc.c` -- sends REQUEST SENSE CDB (0x03)
 - [ ] Parse sense data: sense key (byte 2), ASC (byte 12), ASCQ (byte 13)
 - [ ] Classify errors: `UNIT_ATTENTION` (key=6) → retry after reset, `NOT_READY` (key=2) → wait + retry, `MEDIUM_ERROR` (key=3) → unrecoverable
 - [ ] Log: `"[USB] Sense: key=%u ASC=%u ASCQ=%u (%s)"` with human-readable description
@@ -77,11 +77,11 @@ Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 
 After BOT init, poll TEST UNIT READY until the device reports ready instead of sleeping.
 
-- [ ] Add `msc_test_unit_ready(dev)` — sends TEST UNIT READY CDB (0x00)
+- [ ] Add `msc_test_unit_ready(dev)` -- sends TEST UNIT READY CDB (0x00)
 - [ ] Poll loop: send TUR → if error, `REQUEST SENSE` → if NOT_READY or UNIT_ATTENTION, wait 50ms + retry
-- [ ] Maximum 40 attempts (2 seconds total) — same window as the current sleep hack but event-driven
+- [ ] Maximum 40 attempts (2 seconds total) -- same window as the current sleep hack but event-driven
 - [ ] If all attempts fail: log `"[WARN] USB drive not ready after 2s"` but continue (device may respond later)
-- [ ] Commit: `"drivers: TEST UNIT READY poll loop — replace sleep hack with SCSI readiness"`
+- [ ] Commit: `"drivers: TEST UNIT READY poll loop -- replace sleep hack with SCSI readiness"`
 
 **Test checkpoint:** USB 2.0 drive on i5-4210U bare metal boots without the sleep hack. Serial shows TUR poll count.
 
@@ -99,7 +99,7 @@ Wrap `msc_bot_command()` with automatic retry for transient SCSI errors.
 - [ ] Log: `"[USB] Retry %u/3: sense key=%u"` on each retry
 - [ ] Commit: `"drivers: USB MSC BOT automatic retry for transient SCSI errors"`
 
-**Test checkpoint:** Normal USB boot — no retries needed, zero performance impact. Bare metal with slow USB 2.0 — retries handle UNIT ATTENTION transparently.
+**Test checkpoint:** Normal USB boot -- no retries needed, zero performance impact. Bare metal with slow USB 2.0 -- retries handle UNIT ATTENTION transparently.
 
 ---
 
@@ -110,26 +110,26 @@ With proper SCSI retry (§1–§3), the 2-second sleep after xhci_init is no lon
 - [ ] Remove `sleep_ms(2000)` from `boot_storage.c` (or wherever it currently lives)
 - [ ] Verify USB boot works on: QEMU TCG, bare metal i5-11600K, bare metal i5-4210U
 - [ ] If any platform fails without the sleep: investigate root cause, don't add the sleep back
-- [ ] Commit: `"drivers: remove USB 2-second sleep hack — SCSI retry handles readiness"`
+- [ ] Commit: `"drivers: remove USB 2-second sleep hack -- SCSI retry handles readiness"`
 
 **Test checkpoint:** USB boot works on all tested platforms without the delay. Boot time improves by ~2 seconds.
 
-**Regression risk:** HIGH — this is the moment of truth. If retry logic isn't sufficient, USB boot breaks on slow hardware. Rollback: temporarily re-add `sleep_ms(500)` as a smaller delay while investigating.
+**Regression risk:** HIGH -- this is the moment of truth. If retry logic isn't sufficient, USB boot breaks on slow hardware. Rollback: temporarily re-add `sleep_ms(500)` as a smaller delay while investigating.
 
 ---
 
 ## 5. XUSB2PR Port-Ready Polling (Intel EHCI→xHCI)
 
-On Intel chipsets, USB 2.0 ports are routed from EHCI to xHCI via the XUSB2PR PCI register. The port switch takes time — currently masked by the 2-second sleep.
+On Intel chipsets, USB 2.0 ports are routed from EHCI to xHCI via the XUSB2PR PCI register. The port switch takes time -- currently masked by the 2-second sleep.
 
 - [ ] After writing XUSB2PR: poll port status registers until ports report connected/enabled
 - [ ] Maximum wait: 500ms (real hardware typically takes <100ms)
 - [ ] Log: `"[USB] XUSB2PR port routing complete (%u ms)"` with actual time
-- [ ] If timeout: `"[WARN] XUSB2PR port routing timeout — some USB 2.0 ports may not work"`
+- [ ] If timeout: `"[WARN] XUSB2PR port routing timeout -- some USB 2.0 ports may not work"`
 - [ ] Only applies to Intel chipsets with XUSB2PR capability (detect via PCI vendor/device)
-- [ ] Commit: `"drivers: XUSB2PR port-ready polling — replace fixed delay with event-driven wait"`
+- [ ] Commit: `"drivers: XUSB2PR port-ready polling -- replace fixed delay with event-driven wait"`
 
-**Test checkpoint:** i5-4210U bare metal with USB 2.0 drive — port routing completes with logged time. Non-Intel systems skip this entirely.
+**Test checkpoint:** i5-4210U bare metal with USB 2.0 drive -- port routing completes with logged time. Non-Intel systems skip this entirely.
 
 ---
 
@@ -137,13 +137,13 @@ On Intel chipsets, USB 2.0 ports are routed from EHCI to xHCI via the XUSB2PR PC
 
 Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 
-- [ ] At `klog_disk_flush()` entry: snapshot `ring_count` — flush exactly that many entries, no more
+- [ ] At `klog_disk_flush()` entry: snapshot `ring_count` -- flush exactly that many entries, no more
 - [ ] If new entries arrive during flush (from flush-triggered logging): ignore them until next flush call
 - [ ] Add progress: `"[KLOG] Flushing %u entries to disk..."` at start, `"done (%u ms)"` at end
-- [ ] If flush takes > 5 seconds: `"[WARN] Slow media detected — switching to deferred flush"`
-- [ ] Commit: `"kernel: bounded klog_disk_flush — snapshot ring count, no unbounded loop"`
+- [ ] If flush takes > 5 seconds: `"[WARN] Slow media detected -- switching to deferred flush"`
+- [ ] Commit: `"kernel: bounded klog_disk_flush -- snapshot ring count, no unbounded loop"`
 
-**Test checkpoint:** USB 2.0 boot on bare metal — flush completes in seconds, not minutes. Serial shows flush count and duration.
+**Test checkpoint:** USB 2.0 boot on bare metal -- flush completes in seconds, not minutes. Serial shows flush count and duration.
 
 ---
 
@@ -151,14 +151,14 @@ Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 
 For slow media, batch log entries in RAM and write once at boot end instead of per-subsystem.
 
-- [ ] Add `klog_set_deferred(int enabled)` — switches to RAM-only buffering
+- [ ] Add `klog_set_deferred(int enabled)` -- switches to RAM-only buffering
 - [ ] During deferred mode: entries accumulate in ring buffer, `klog_disk_flush()` is a no-op
 - [ ] At boot complete: single `klog_disk_flush_all()` writes everything at once
 - [ ] Combine multiple entries into larger VFS writes (fewer USB transfers)
 - [ ] Automatically enable deferred mode if §6 detects slow media (>5s for first flush)
-- [ ] Commit: `"kernel: klog deferred flush — batch to RAM, single write at boot end"`
+- [ ] Commit: `"kernel: klog deferred flush -- batch to RAM, single write at boot end"`
 
-**Test checkpoint:** USB 2.0 boot — all log entries appear in disk log file, written in one batch. Boot time comparable to no-disk-log scenario.
+**Test checkpoint:** USB 2.0 boot -- all log entries appear in disk log file, written in one batch. Boot time comparable to no-disk-log scenario.
 
 ---
 
@@ -166,11 +166,11 @@ For slow media, batch log entries in RAM and write once at boot end instead of p
 
 Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and adjust behavior.
 
-- [ ] At first disk I/O: time a 4 KiB read — classify as fast (<1ms), medium (1–10ms), slow (>10ms)
+- [ ] At first disk I/O: time a 4 KiB read -- classify as fast (<1ms), medium (1–10ms), slow (>10ms)
 - [ ] Store in `boot_info.boot_media_speed` (0=unknown, 1=fast, 2=medium, 3=slow)
 - [ ] Kernel uses this to: enable deferred klog (slow), skip non-critical boot tests (slow), adjust timeouts
 - [ ] Log: `"[BOOT] Boot media speed: %s (%u µs/4KiB)"` with classification
-- [ ] Commit: `"kernel: boot media speed detection — adjust behavior for slow USB"`
+- [ ] Commit: `"kernel: boot media speed detection -- adjust behavior for slow USB"`
 
 **Test checkpoint:** SATA SSD → "fast", USB 3.0 stick → "medium", USB 2.0 stick → "slow".
 
@@ -181,15 +181,15 @@ Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and
 For pre-2012 hardware without xHCI, provide basic USB storage via EHCI.
 
 - [ ] Detect EHCI controller: PCI class 0x0C/0x03/0x20
-- [ ] Minimal EHCI driver: port reset, bulk transfer, BOT SCSI — enough for MSC storage
+- [ ] Minimal EHCI driver: port reset, bulk transfer, BOT SCSI -- enough for MSC storage
 - [ ] If xHCI not found: try EHCI; if EHCI not found: try UHCI (PCI class 0x0C/0x03/0x00)
-- [ ] Share the `usb_msc.c` BOT layer — only the host controller interface differs
+- [ ] Share the `usb_msc.c` BOT layer -- only the host controller interface differs
 - [ ] Log: `"[USB] Using %s controller (xHCI not available)"` with EHCI/UHCI
 - [ ] Commit: `"drivers: EHCI fallback for USB storage on pre-xHCI hardware"`
 
-**Test checkpoint:** VirtualBox (which emulates EHCI by default) — USB storage works via EHCI fallback. Serial shows `"Using EHCI controller"`.
+**Test checkpoint:** VirtualBox (which emulates EHCI by default) -- USB storage works via EHCI fallback. Serial shows `"Using EHCI controller"`.
 
-**Regression risk:** HIGH — new driver code. If EHCI driver corrupts USB state, system hangs. Test on VirtualBox first.
+**Regression risk:** HIGH -- new driver code. If EHCI driver corrupts USB state, system hangs. Test on VirtualBox first.
 
 ---
 
@@ -203,7 +203,7 @@ At end of USB enumeration, produce a comprehensive diagnostic summary.
 - [ ] Log SCSI retry statistics: total retries, sense keys encountered
 - [ ] Log boot media speed classification
 - [ ] Format: `"[USB] === USB Boot Report ==="` section in serial log
-- [ ] Commit: `"drivers: USB boot diagnostic report — full enumeration summary"`
+- [ ] Commit: `"drivers: USB boot diagnostic report -- full enumeration summary"`
 
 **Test checkpoint:** Serial output contains `"=== USB Boot Report ==="` with device list and statistics.
 
@@ -217,13 +217,13 @@ Replace the 6-pass per-subsystem loop (one full ring scan per file) with a singl
 
 - [ ] Allocate the existing 32 KB batch buffer, divided into 6 slots (`batch_size / SUBSYS_LOG_COUNT` each)
 - [ ] Single loop through the ring: for each entry, match `dispatch_filename()` to the subsystem index, append to that slot's buffer region
-- [ ] After the loop, write only non-empty slots — skip `vfs_open/write/close` for subsystems with zero entries
+- [ ] After the loop, write only non-empty slots -- skip `vfs_open/write/close` for subsystems with zero entries
 - [ ] Track per-slot position in a `uint32_t sub_pos[SUBSYS_LOG_COUNT]` array
-- [ ] Commit: `"klog: single-pass subsystem routing — 6 ring scans → 1"`
+- [ ] Commit: `"klog: single-pass subsystem routing -- 6 ring scans → 1"`
 
 **Test checkpoint:** With 6 subsystem files and 200 ring entries, flush does 1 ring scan instead of 6. Files with no matching entries are never opened. Serial log shows reduced flush time. Test on: QEMU (fast), bare metal i5-4210U USB (slow), bare metal i5-11600K SATA.
 
-**Regression risk:** LOW — same data written, same files, fewer I/O operations. Rollback: restore the per-subsystem loop.
+**Regression risk:** LOW -- same data written, same files, fewer I/O operations. Rollback: restore the per-subsystem loop.
 
 ---
 
@@ -235,14 +235,14 @@ Make boot tests detect slow media (USB) and skip or simplify I/O-heavy tests aut
 
 - [ ] At the start of `boot_tests_run()`, query `blkdev_boot_media_type()`
 - [ ] If `MEDIA_USB`: skip `ixfs_test_performance()` entirely (hash index + snapshot + scrub = hundreds of writes)
-- [ ] If `MEDIA_USB`: simplify IXFS CRUD test — create + write + read only, skip delete test (delete triggers bitmap + inode writes)
+- [ ] If `MEDIA_USB`: simplify IXFS CRUD test -- create + write + read only, skip delete test (delete triggers bitmap + inode writes)
 - [ ] If `MEDIA_SATA` or `MEDIA_NVME`: run full test suite (all tests complete in <5 seconds on fast media)
 - [ ] Log: `test: IXFS tests: full suite (SATA)` or `test: IXFS tests: reduced (USB boot media)`
 - [ ] Commit: `"boot: IXFS tests auto-skip heavy I/O on USB boot media"`
 
 **Test checkpoint:** On USB boot: serial shows `test: IXFS tests: reduced (USB boot media)`, no freeze. On SATA/NVMe: serial shows `test: IXFS tests: full suite (SATA)`, all tests pass. Test on: bare metal i5-4210U USB, QEMU AHCI, bare metal i5-11600K SATA.
 
-**Regression risk:** LOW — tests are skipped not broken. Full suite still runs on fast media. Rollback: remove the media check, run all tests unconditionally.
+**Regression risk:** LOW -- tests are skipped not broken. Full suite still runs on fast media. Rollback: remove the media check, run all tests unconditionally.
 
 ---
 
@@ -252,14 +252,14 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 
 **Files:** `src/kernel/klog_disk.c`, `src/kernel/main/boot_storage.c`
 
-- [ ] Add optional progress callback to `klog_disk_flush()` — called periodically with entries written / total entries
+- [ ] Add optional progress callback to `klog_disk_flush()` -- called periodically with entries written / total entries
 - [ ] In boot_storage.c, pass a callback that updates `boot_splash_diagnostic()` with: `"Writing boot log... 150/400 entries"`
 - [ ] Update after every 50 entries or every file write, whichever comes first
 - [ ] Commit: `"boot: klog flush progress on splash diagnostic line"`
 
 **Test checkpoint:** On USB 2.0 with deferred mode, single flush shows progress: `"Writing boot log... 50/400 entries"` → `"200/400"` → `"400/400"`. Diagnostic line updates smoothly. Test on: bare metal USB.
 
-**Regression risk:** LOW — optional callback, no behavior change without it.
+**Regression risk:** LOW -- optional callback, no behavior change without it.
 
 ---
 
@@ -298,17 +298,17 @@ After §1–§9, USB boot is as reliable as Windows and Linux across all USB gen
   - `blkdev_boot_media_type()` returns valid enum value (not out of range)
 - [ ] Register in `test_runner_init()`: `test_register_usb_boot()`
 - [ ] Add smoke test patterns to `scripts/test-smoke.sh` for QEMU `run-usb`:
-  - Serial line `"[USB] === USB Boot Report ==="` present (§10 — diagnostic report)
+  - Serial line `"[USB] === USB Boot Report ==="` present (§10 -- diagnostic report)
   - Absence of `"WATCHDOG"` or `"KERNEL PANIC"` during USB boot
 - [ ] Commit: `"test: add USB boot hardening test suite"`
 
 ## Verification
 
-- [ ] **USB 2.0 bare metal**: boot from USB 2.0 on i5-4210U — no sleep hack, SCSI retries handle readiness, klog flush completes in seconds.
-- [ ] **USB 3.0 QEMU**: boot from USB 3.0 via xHCI on TCG — works as before, no regressions.
-- [ ] **EHCI fallback**: boot from USB on VirtualBox (EHCI) — MSC storage works via EHCI driver.
+- [ ] **USB 2.0 bare metal**: boot from USB 2.0 on i5-4210U -- no sleep hack, SCSI retries handle readiness, klog flush completes in seconds.
+- [ ] **USB 3.0 QEMU**: boot from USB 3.0 via xHCI on TCG -- works as before, no regressions.
+- [ ] **EHCI fallback**: boot from USB on VirtualBox (EHCI) -- MSC storage works via EHCI driver.
 - [ ] **Normal SATA boot regression**: SATA boot on all 4 platforms unaffected.
 - [ ] **klog flush**: all log entries appear in disk log file, flush completes in bounded time.
 - [ ] **IXFS slow media**: on USB boot, serial shows `test: IXFS tests: reduced (USB boot media)`. On SATA/NVMe, full suite runs.
 - [ ] **Flush progress**: on USB 2.0 with deferred mode, splash diagnostic shows `"Writing boot log... N/M entries"`.
-- [ ] Commit: `"boot: USB boot hardening complete — fail-safe pipeline across all USB generations"`
+- [ ] Commit: `"boot: USB boot hardening complete -- fail-safe pipeline across all USB generations"`

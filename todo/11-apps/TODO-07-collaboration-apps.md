@@ -1,4 +1,4 @@
-# TODO-07 — Collaboration & Network Client Apps
+# TODO-07 -- Collaboration & Network Client Apps
 
 > **Goal:** Deliver the remaining network client apps needed for Windows 11 / Linux parity:
 > a VNC viewer (with RDP stretch), a minimal IRC chat client, and an RSS/news reader. Also
@@ -7,26 +7,26 @@
 
 > [!IMPORTANT]
 > `ping`, `traceroute`, `ifconfig`, `netstat`, and `nslookup` are already fully specified in
-> `06-networking/TODO-06-ntp-status-winsock.md §4–§7` — do not re-implement. §4 and §5 here
+> `06-networking/TODO-06-ntp-status-winsock.md §4–§7` -- do not re-implement. §4 and §5 here
 > cover only the gaps (`arp -a`, `route print`) and act as cross-references.
 > RSS fetching depends on `http_get`/`https_get` from `06-networking/TODO-03`.
 > IRC TLS uses `tls_connect`/`tls_send`/`tls_recv` from `06-networking/TODO-03`.
-> VNC auth (DES challenge-response) is security-critical — marked `[Opus]`.
+> VNC auth (DES challenge-response) is security-critical -- marked `[Opus]`.
 
 ---
 
 ## Inputs
 
-- `06-networking/TODO-06-ntp-status-winsock.md §4–§7` — `ping`, `traceroute`, `ifconfig`, `netstat`, `nslookup`, `arp_cache_dump()` already specified there
-- `include/kernel/net/net.h` — `icmp_send_echo()`, `SYS_PING=15`, `dns_resolve()`, `dns_resolve_reverse()`
-- `06-networking/TODO-03-http-tls.md` — `http_get()`, `https_get()`, `tls_connect()`, `tls_send()`, `tls_recv()`
-- `06-networking/TODO-02-dns-sockets.md §5` — `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`
-- `include/desktop/controls.h` — `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_LISTVIEW`, `CTRL_SCROLLBAR_VERT`
-- `include/desktop/wm.h` — `wm_create_window()`, `wm_mark_dirty()`
-- `include/gfx.h` — `gfx_blit()`, `gfx_fill_rect()`, `gfx_surface_create()`
-- `include/registry.h` — `reg_set_string`, `reg_get_string`, `reg_enum_keys`
-- `include/kernel/scheduler_tasks.h` — `sched_task_add()` (→ XREF `08-desktop-shell/TODO-04 §6`)
-- `include/kernel/vfs.h` — `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`
+- `06-networking/TODO-06-ntp-status-winsock.md §4–§7` -- `ping`, `traceroute`, `ifconfig`, `netstat`, `nslookup`, `arp_cache_dump()` already specified there
+- `include/kernel/net/net.h` -- `icmp_send_echo()`, `SYS_PING=15`, `dns_resolve()`, `dns_resolve_reverse()`
+- `06-networking/TODO-03-http-tls.md` -- `http_get()`, `https_get()`, `tls_connect()`, `tls_send()`, `tls_recv()`
+- `06-networking/TODO-02-dns-sockets.md §5` -- `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`
+- `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_LISTVIEW`, `CTRL_SCROLLBAR_VERT`
+- `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`
+- `include/gfx.h` -- `gfx_blit()`, `gfx_fill_rect()`, `gfx_surface_create()`
+- `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_enum_keys`
+- `include/kernel/scheduler_tasks.h` -- `sched_task_add()` (→ XREF `08-desktop-shell/TODO-04 §6`)
+- `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`
 - `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `07-graphics-ui/TODO-09 §5`)
 
 ---
@@ -82,9 +82,9 @@
   - [ ] `KeyEvent`: translate kernel scancode → XKeysym (lookup table in `vnc_keysym.h`); send `0x04 down_flag padding padding keysym`
   - [ ] `PointerEvent`: send `0x05 button_mask x_hi x_lo y_hi y_lo` on every mouse move / click in viewer window
   - [ ] Ctrl+Alt+Del toolbar button → send `KeyEvent` for Ctrl, Alt, Delete (pressed then released)
-- [ ] **Viewer window**: `wm_create_window("VNC — {server_name}", W, H)` with scrollbars if desktop larger than window; toolbar: `[Ctrl+Alt+Del]` `[Disconnect]` `[Fit to window]`; status bar: `"{host}:{port} — {WxH}"`
+- [ ] **Viewer window**: `wm_create_window("VNC -- {server_name}", W, H)` with scrollbars if desktop larger than window; toolbar: `[Ctrl+Alt+Del]` `[Disconnect]` `[Fit to window]`; status bar: `"{host}:{port} -- {WxH}"`
 - [ ] **Registry**: `HKCU\Software\Impossible\VNC\LastHost`, `LastPort`, `LastPassword` (encrypted via CNG key store); connection dialog pre-fills from Registry
-- [ ] **Stretch — RDP client**: note in code comments that RDP requires NLA auth (NTLM/Kerberos), SSL, and bitmap compression (RDP4/5 bitstream) — defer to FreeRDP port when Win32 layer is complete
+- [ ] **Stretch -- RDP client**: note in code comments that RDP requires NLA auth (NTLM/Kerberos), SSL, and bitmap compression (RDP4/5 bitstream) -- defer to FreeRDP port when Win32 layer is complete
 
 ---
 
@@ -104,7 +104,7 @@
   - [ ] `PING :token` → immediately send `PONG :{token}\r\n` (keep-alive)
   - [ ] `432`/`433` (nick collision) → append `_` to nick, retry `NICK`
 - [ ] **UI layout**:
-  - [ ] Left sidebar (160 px): `CTRL_LISTVIEW` — server node + channel nodes; click channel → switch to that scrollback
+  - [ ] Left sidebar (160 px): `CTRL_LISTVIEW` -- server node + channel nodes; click channel → switch to that scrollback
   - [ ] Message area (scrollable `CTRL_SCROLLBAR_VERT`): each line prefixed with `[HH:MM] <nick>` or `* nick action`; username color set by `hash(nick) % palette_size` (8 pastel colors)
   - [ ] Input field (`CTRL_TEXTBOX`, bottom): Enter → send `PRIVMSG {channel} :{text}\r\n`; up-arrow history (last 16 lines)
   - [ ] Tab completion: press Tab → scan user list for `nick` prefix match → cycle through completions; first Tab: append `: ` after nick
@@ -117,7 +117,7 @@
   - [ ] `/me <action>` → `PRIVMSG {channel} :\x01ACTION {action}\x01\r\n` (CTCP ACTION)
 - [ ] **Registry**: `HKCU\Software\Impossible\Chat\{network}\Server`, `Nick`, `AutoJoin`, `UseTLS`; on connect pre-fill from Registry; save on successful connect
 - [ ] **Notifications**: `notify_send("IRC", "{nick} in #{channel}: {text}", ICON_CHAT, 4000)` on PRIVMSG when window is not focused
-- [ ] **Stretch — Matrix client**: note that Matrix uses HTTP+JSON (can reuse `https_get`/POST) + Olm E2E encryption (monocypher Curve25519 + AES-GCM); defer full implementation to `09-services-security` domain when Win32/SDK is stable
+- [ ] **Stretch -- Matrix client**: note that Matrix uses HTTP+JSON (can reuse `https_get`/POST) + Olm E2E encryption (monocypher Curve25519 + AES-GCM); defer full implementation to `09-services-security` domain when Win32/SDK is stable
 
 ---
 
@@ -126,11 +126,11 @@
 **Source file:** `src/apps/news/news.c`; `src/apps/news/rss_parse.c`; header `include/apps/news/news.h`
 
 - [ ] **Feed fetch**: `news_fetch_feed(url, buf, max_len)` → `https_get(url, buf, max_len)` or `http_get()`; accept `application/rss+xml`, `application/atom+xml`, `text/xml`
-- [ ] **Minimal XML parser** (`xml_parse.c`): recursive descent without a full DOM tree; tokenize `<tag attr="val">`, `</tag>`, `text content`, CDATA `<![CDATA[...]]>` (pass through raw); callback-based: `on_start_tag(name, attrs)`, `on_end_tag(name)`, `on_text(content)` — no allocation needed beyond a small stack
+- [ ] **Minimal XML parser** (`xml_parse.c`): recursive descent without a full DOM tree; tokenize `<tag attr="val">`, `</tag>`, `text content`, CDATA `<![CDATA[...]]>` (pass through raw); callback-based: `on_start_tag(name, attrs)`, `on_end_tag(name)`, `on_text(content)` -- no allocation needed beyond a small stack
 - [ ] **RSS 2.0 parser**: on `<item>` → collect `<title>`, `<link>`, `<pubDate>`, `<description>`, `<guid>`; emit `struct news_item { title[256], link[512], pub_date_str[64], description[2048], guid[256], read }`
 - [ ] **Atom 1.0 parser**: map `<entry>` → same `news_item`; `<title>` → title; `<id>` → guid; `<updated>` → pub_date; `<summary>` or `<content>` → description; `<link href="...">` → link
 - [ ] **Storage**: items saved to `C:\Users\{name}\AppData\News\{feed_hash}\{guid_hash}.dat` (VFS write); `feed_hash = crc32(url) % 10000`; `guid_hash = crc32(guid) % 1000000`; `read` flag persisted in filename suffix `_r` (read) vs no suffix (unread)
-- [ ] **Feed registry**: `HKCU\Software\Impossible\News\Feeds\{n}\{URL,Title,LastFetch}` — enumerate to build feed list
+- [ ] **Feed registry**: `HKCU\Software\Impossible\News\Feeds\{n}\{URL,Title,LastFetch}` -- enumerate to build feed list
 - [ ] **UI layout**:
   - [ ] Left sidebar (200 px): `CTRL_LISTVIEW` showing feed name + unread count badge; `[+ Add Feed]` button at top → dialog prompts URL → `news_fetch_feed` once → extract channel/feed title → save to Registry
   - [ ] Item list (middle, `CTRL_LISTVIEW`): title (bold if unread) + date; click → open in reading pane
@@ -144,8 +144,8 @@
 
 ## 4. `ping` + `traceroute` Commands `[Sonnet]`
 
-> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §5` — `ping` (IPv4 + IPv6 + flags).
-> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §6` — `traceroute` (TTL probe + rDNS).
+> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §5` -- `ping` (IPv4 + IPv6 + flags).
+> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §6` -- `traceroute` (TTL probe + rDNS).
 >
 > Both commands are fully specified in TODO-06. This section registers them as shell commands
 > in `src/shell/` and ensures the `tracert` alias is wired. No new protocol code here.
@@ -158,15 +158,15 @@
 
 ## 5. Network Diagnostic Tools: `arp -a` + `route print` `[Sonnet]`
 
-> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §4` — `ifconfig` (fully specified).
-> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §7` — `netstat` (fully specified).
-> → XREF: `06-networking/TODO-02-dns-sockets.md` — `nslookup` (specified in DNS TODO).
+> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §4` -- `ifconfig` (fully specified).
+> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §7` -- `netstat` (fully specified).
+> → XREF: `06-networking/TODO-02-dns-sockets.md` -- `nslookup` (specified in DNS TODO).
 > This section adds only the two gap commands not covered in TODO-06: `arp -a` and `route print`.
 
 **Source file:** `src/shell/cmd_arp.c`; `src/shell/cmd_route.c`
 
 - [ ] **`arp -a`**: call `arp_cache_dump(buf, sizeof(buf))` (added to `src/kernel/net/arp.c` in TODO-06 §8); print each entry as `  {IP}    {MAC}    {age_ms}ms` with column alignment; no-entries case: print `ARP cache is empty`
-- [ ] **`arp -d <ip>`**: remove specific entry — `arp_cache_delete(ip)` (new function in `arp.c`); print `Entry for {ip} deleted`
+- [ ] **`arp -d <ip>`**: remove specific entry -- `arp_cache_delete(ip)` (new function in `arp.c`); print `Entry for {ip} deleted`
 - [ ] **`route print`**: enumerate the kernel routing table (`struct route_entry[] g_routes` in `src/kernel/net/ip.c`):
   - [ ] Columns: `Destination`, `Netmask`, `Gateway`, `Interface`, `Metric`
   - [ ] Print in same format as Windows `route print` output (two sections: IPv4 Route Table, then Active Routes header)
@@ -187,7 +187,7 @@
 - [ ] **Listen**: `kern_socket(AF_INET, SOCK_STREAM, 0)` + `kern_bind(fd, 0, 5900)` + `kern_listen(fd, 2)` + `kern_accept()` → one client at a time (single-viewer server)
 - [ ] **RFB handshake** (server side): send `"RFB 003.008\n"`; recv client version; send `SecurityTypes=[2]` (VNC auth); recv client selection; send 16-byte random challenge; recv 16-byte DES response; verify against stored password hash (same `des_ecb_encrypt` from §1); send `SecurityResult=0`
 - [ ] **ServerInit**: send compositor framebuffer dimensions (`fb_width`, `fb_height`), pixel format (32 bpp, 24 depth, little-endian, true-color, RGB max=255 each, R-shift=16, G-shift=8, B-shift=0), name `"Impossible OS"`
-- [ ] **Framebuffer capture**: `vncsrv_get_framebuffer(dirty_rect)` → pointer into compositor output surface (read-only); dirty tracking: maintain `uint8_t dirty_tiles[fb_w/16][fb_h/16]` — set on each WM composite call via `wm_register_dirty_cb(vncsrv_dirty_cb)`
+- [ ] **Framebuffer capture**: `vncsrv_get_framebuffer(dirty_rect)` → pointer into compositor output surface (read-only); dirty tracking: maintain `uint8_t dirty_tiles[fb_w/16][fb_h/16]` -- set on each WM composite call via `wm_register_dirty_cb(vncsrv_dirty_cb)`
 - [ ] **FramebufferUpdateRequest handler**: client sends request → build `FramebufferUpdate` message from dirty tiles; encode as `Raw` (simple, correct); send `NumRects` + each dirty rect header + pixel data; clear dirty flags
 - [ ] **Input injection**:
   - [ ] `KeyEvent` → translate XKeysym back to scan code via reverse `vnc_keysym.h` table → `wm_inject_keyevent(scancode, down)`
@@ -203,17 +203,17 @@
 
 | ⭐ | Feature                                          | 🪟 Win11                              | 🐧 Linux                             | 🚀 Impossible OS                                         |
 |----|--------------------------------------------------|------------------------------------|-----------------------------------|-------------------------------------------------------|
-| 💎 | VNC viewer                                       | ✅ no built-in; TightVNC / RealVNC | ✅ Remmina / TigerVNC             | ⬜ §1 — DES auth, keyboard/mouse forward, viewer      |
-| 💎 | IRC client                                       | ✅ no built-in; HexChat / mIRC     | ✅ HexChat / irssi / WeeChat      | ⬜ §2 — nick completion, colored usernames, PING/PONG |
-| ⭐ | IRC nick-tab-completion + hash-colored usernames | ❌ no built-in IRC                 | ✅ HexChat built-in               | ⬜ §2 — `hash(nick) % 8` palette                      |
-| 💎 | RSS 2.0 + Atom 1.0 feed reader                   | ✅ no built-in (removed in Win10)  | ✅ Liferea / Newsboat             | ⬜ §3 — callback XML parser, 30-min auto-refresh,     |
-| ⭐ | RSS auto-refresh + toast notification            | ❌ removed from Windows            | ⚠️ Liferea plugin                 | ⬜ §3 — `sched_task_add(1800)` + `notify_send`        |
-| 💎 | `ping` + `traceroute` commands                   | ✅ built-in                        | ✅ built-in                       | ⬜ §5–§6 — → XREF TODO-06 ; shell                     |
-| 💎 | `arp -a` + `route print`                         | ✅ `arp -a`, `route print`         | ✅ `arp -n`, `ip route`           | ⬜ §5 — `arp_cache_dump` wrapper + routing table      |
-| ⭐ | VNC server for headless remote access            | ❌ no built-in VNC server          | ⚠️ `x11vnc` / `wayvnc` (external) | ⬜ §6 — (Stretch) — ; compositor fb                   |
+| 💎 | VNC viewer                                       | ✅ no built-in; TightVNC / RealVNC | ✅ Remmina / TigerVNC             | ⬜ §1 -- DES auth, keyboard/mouse forward, viewer      |
+| 💎 | IRC client                                       | ✅ no built-in; HexChat / mIRC     | ✅ HexChat / irssi / WeeChat      | ⬜ §2 -- nick completion, colored usernames, PING/PONG |
+| ⭐ | IRC nick-tab-completion + hash-colored usernames | ❌ no built-in IRC                 | ✅ HexChat built-in               | ⬜ §2 -- `hash(nick) % 8` palette                      |
+| 💎 | RSS 2.0 + Atom 1.0 feed reader                   | ✅ no built-in (removed in Win10)  | ✅ Liferea / Newsboat             | ⬜ §3 -- callback XML parser, 30-min auto-refresh,     |
+| ⭐ | RSS auto-refresh + toast notification            | ❌ removed from Windows            | ⚠️ Liferea plugin                 | ⬜ §3 -- `sched_task_add(1800)` + `notify_send`        |
+| 💎 | `ping` + `traceroute` commands                   | ✅ built-in                        | ✅ built-in                       | ⬜ §5–§6 -- → XREF TODO-06 ; shell                     |
+| 💎 | `arp -a` + `route print`                         | ✅ `arp -a`, `route print`         | ✅ `arp -n`, `ip route`           | ⬜ §5 -- `arp_cache_dump` wrapper + routing table      |
+| ⭐ | VNC server for headless remote access            | ❌ no built-in VNC server          | ⚠️ `x11vnc` / `wayvnc` (external) | ⬜ §6 -- (Stretch) -- ; compositor fb                   |
 
-Impossible OS ships RSS news reader and IRC client out of the box — features Windows 11 dropped
-years ago — plus a built-in VNC server enabling zero-install remote desktop for QEMU testing,
+Impossible OS ships RSS news reader and IRC client out of the box -- features Windows 11 dropped
+years ago -- plus a built-in VNC server enabling zero-install remote desktop for QEMU testing,
 all without any external dependencies beyond the existing TCP/TLS stack.
 
 ---

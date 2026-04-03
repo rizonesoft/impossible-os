@@ -1,5 +1,5 @@
 /* ============================================================================
- * icmp.c — ICMP echo (ping) handler
+ * icmp.c -- ICMP echo (ping) handler
  *
  * Responds to echo requests and can send echo requests for ping.
  * ============================================================================ */

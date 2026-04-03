@@ -1,5 +1,5 @@
 /* ============================================================================
- * mmap.c — Memory-mapped file support
+ * mmap.c -- Memory-mapped file support
  *
  * Eager-loaded file mapping. Pages are read from the backing file into
  * physical frames during the mmap() call (not demand-paged from the fault
@@ -124,7 +124,7 @@ void *mmap(void *addr, uint64_t length, uint32_t prot, uint32_t flags,
             uint64_t vmm_flags;
 
             if (!frame_addr) {
-                /* Out of memory — unmap what we've done */
+                /* Out of memory -- unmap what we've done */
                 uintptr_t undo;
                 for (undo = base; undo < va; undo += VMM_PAGE_SIZE)
                     vmm_unmap_page(undo, 1);
@@ -149,7 +149,7 @@ void *mmap(void *addr, uint64_t length, uint32_t prot, uint32_t flags,
             /* Set page flags */
             vmm_flags = VMM_FLAG_PRESENT;
             if (flags & MAP_PRIVATE) {
-                /* MAP_PRIVATE: map read-only — COW fault handler upgrades on write */
+                /* MAP_PRIVATE: map read-only -- COW fault handler upgrades on write */
                 if (!(prot & PROT_WRITE)) {
                     /* read-only mapping, no writable flag */
                 } else {
@@ -255,7 +255,7 @@ int mmap_handle_fault(uintptr_t fault_addr, uint64_t error_code)
 
     old_phys = vmm_get_physical(page_addr);
     if (!old_phys)
-        return 0;  /* page not loaded — shouldn't happen with eager load */
+        return 0;  /* page not loaded -- shouldn't happen with eager load */
 
     /* Copy-on-write: allocate new frame, copy data, remap writable */
     frame = pmm_alloc_frame();
@@ -274,6 +274,6 @@ int mmap_handle_fault(uintptr_t fault_addr, uint64_t error_code)
     /* Remap with write permission */
     vmm_unmap_page(page_addr, 1);
     vmm_map_page(page_addr, frame, VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE);
-    return 1;  /* handled — retry instruction */
+    return 1;  /* handled -- retry instruction */
 }
 

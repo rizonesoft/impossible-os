@@ -1,33 +1,33 @@
-# TODO-17 — Kernel Security Hardening
+# TODO-17 -- Kernel Security Hardening
 
 > **Goal:** Activate every CPU security feature that `cpuid.c` already
-> detects but currently never enables: NX (EFER.NXE + PTE NX bits), SMEP, SMAP, KPTI (separate user/kernel page tables + PCID), Spectre mitigations (IBRS/retpoline/IBPB), CET shadow stack, CET indirect branch tracking, and KASLR. Couple this with kernel-side hardening that does not require CPU support: heap magic cookies, redzone detection, stack canaries (`-fstack-protector-strong` + RDRAND-seeded `__stack_chk_guard`), and guard pages below kernel stacks. Without these, Impossible OS is exploitable via any 2018-era hardware vulnerability and trivially attackable by user-mode code — unacceptable for a production OS in 2026.
+> detects but currently never enables: NX (EFER.NXE + PTE NX bits), SMEP, SMAP, KPTI (separate user/kernel page tables + PCID), Spectre mitigations (IBRS/retpoline/IBPB), CET shadow stack, CET indirect branch tracking, and KASLR. Couple this with kernel-side hardening that does not require CPU support: heap magic cookies, redzone detection, stack canaries (`-fstack-protector-strong` + RDRAND-seeded `__stack_chk_guard`), and guard pages below kernel stacks. Without these, Impossible OS is exploitable via any 2018-era hardware vulnerability and trivially attackable by user-mode code -- unacceptable for a production OS in 2026.
 
 > [!IMPORTANT]
 > **Current state:** `cpuid.c` detects and logs SMEP, SMAP, NX, CET_SS,
-> CET_IBT, IBRS, PCID, INVPCID (`CPU_FEATURE_*` flags) but **nothing activates them**. CR4 is only written in `gfx_simd.c` (for SSE) and `ap_trampoline.asm` (for PAE/PSE). IA32_EFER.NXE is never set — no PTE has the NX bit. No per-process user page table exists (KPTI absent). No MSR_IA32_SPEC_CTRL write anywhere. No heap cookies, no stack canaries in the build flags, no guard pages below kernel stacks.
+> CET_IBT, IBRS, PCID, INVPCID (`CPU_FEATURE_*` flags) but **nothing activates them**. CR4 is only written in `gfx_simd.c` (for SSE) and `ap_trampoline.asm` (for PAE/PSE). IA32_EFER.NXE is never set -- no PTE has the NX bit. No per-process user page table exists (KPTI absent). No MSR_IA32_SPEC_CTRL write anywhere. No heap cookies, no stack canaries in the build flags, no guard pages below kernel stacks.
 
 ---
 
 ## Inputs
 
-- `src/kernel/cpuid.c` — `cpu_has(CPU_FEATURE_*)` detection already complete
-- `src/kernel/mm/vmm.c` — `write_cr3`, `vmm_flush_tlb`, PTE format
-- `src/kernel/smp/smp.c` — `wrmsr`/`rdmsr` helpers already present
-- `src/kernel/smp/ap_trampoline.asm` — AP startup; must enable same CR4/MSR features on every CPU, not only the BSP
-- `src/kernel/mm/heap.c` — `kmalloc`/`kfree` (heap hardening §8)
-- `include/kernel/idt.h` — `struct interrupt_frame` (syscall/exception entry)
-- `scripts/build.sh` / `Makefile` — compiler flag changes for §9 (canaries)
-- → XREF: `TODO-04-peb-teb-user-abi.md §3` — `swapgs` on INT 0x80 entry/exit path; must also emit IBRS save and STAC/CLAC inline ASM for SMAP compliance (§3 of this TODO)
-- → XREF: `TODO-05-native-api-ssdt.md §2` — SYSCALL/SYSRET fast path is where the CR3 swap for KPTI (§4) is inserted and IBRS enable (§5) happens on kernel entry; §3 (INT 0x2E path) also needs the same CR3 swap
-- → XREF: `TODO-11-security-reference-monitor.md §6` — MIC Low-IL processes are the primary beneficiaries of SMEP/SMAP (user code cannot exec kernel pages or read kernel memory)
-- → XREF: `TODO-16-crash-dump-generation.md §1` — `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE` is the stop code emitted by §9 (`__stack_chk_fail`) and §8 (cookie mismatch)
-- → XREF: `TODO-04-peb-teb-user-abi.md §13` — AT_RANDOM in the ELF auxv provides user-mode stack canary seed bytes, complementing §9's kernel-side `__stack_chk_guard` via shared RDRAND path
-- → XREF: `TODO-05-native-api-ssdt.md §4` — SSDT indices 0x01F0–0x01F4 and 0x02A2–0x02A4 reserved for Enclave and signing-level syscalls
-- → XREF: `TODO-05-native-api-ssdt.md §26` — SSDT hardware write-protection complements KASLR and SMEP/SMAP; #PF on SSDT write → CRITICAL_STRUCTURE_CORRUPTION BugCheck
-- → XREF: `TODO-08-binary-system.md §3,§12` — ELF `PT_GNU_PROPERTY` (§3) and PE `IMAGE_LOAD_CONFIG_DIRECTORY64` (§12) carry per-binary CET IBT/SHSTK and CFG flags; this TODO's §6 (CET shadow stack) and §7 (CET IBT) consume those flags to decide enforcement
-- → XREF: `TODO-09-process-model-extensions.md §11` — per-process mitigation flags (`MIT_DEP_ENABLE`, `MIT_ASLR_FORCE`, etc.) consume §1 NX/DEP enforcement; mitigation API surface is authoritative in TODO-09
-- → XREF: `TODO-10-exception-dispatch-seh.md §3` — `#CP` (vector 21, CET shadow-stack violation) exception handler; §6 of this TODO enables CET SS, §3 of TODO-10 routes the resulting `#CP` faults through `ki_dispatch_exception()`
+- `src/kernel/cpuid.c` -- `cpu_has(CPU_FEATURE_*)` detection already complete
+- `src/kernel/mm/vmm.c` -- `write_cr3`, `vmm_flush_tlb`, PTE format
+- `src/kernel/smp/smp.c` -- `wrmsr`/`rdmsr` helpers already present
+- `src/kernel/smp/ap_trampoline.asm` -- AP startup; must enable same CR4/MSR features on every CPU, not only the BSP
+- `src/kernel/mm/heap.c` -- `kmalloc`/`kfree` (heap hardening §8)
+- `include/kernel/idt.h` -- `struct interrupt_frame` (syscall/exception entry)
+- `scripts/build.sh` / `Makefile` -- compiler flag changes for §9 (canaries)
+- → XREF: `TODO-04-peb-teb-user-abi.md §3` -- `swapgs` on INT 0x80 entry/exit path; must also emit IBRS save and STAC/CLAC inline ASM for SMAP compliance (§3 of this TODO)
+- → XREF: `TODO-05-native-api-ssdt.md §2` -- SYSCALL/SYSRET fast path is where the CR3 swap for KPTI (§4) is inserted and IBRS enable (§5) happens on kernel entry; §3 (INT 0x2E path) also needs the same CR3 swap
+- → XREF: `TODO-11-security-reference-monitor.md §6` -- MIC Low-IL processes are the primary beneficiaries of SMEP/SMAP (user code cannot exec kernel pages or read kernel memory)
+- → XREF: `TODO-16-crash-dump-generation.md §1` -- `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE` is the stop code emitted by §9 (`__stack_chk_fail`) and §8 (cookie mismatch)
+- → XREF: `TODO-04-peb-teb-user-abi.md §13` -- AT_RANDOM in the ELF auxv provides user-mode stack canary seed bytes, complementing §9's kernel-side `__stack_chk_guard` via shared RDRAND path
+- → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x01F0–0x01F4 and 0x02A2–0x02A4 reserved for Enclave and signing-level syscalls
+- → XREF: `TODO-05-native-api-ssdt.md §26` -- SSDT hardware write-protection complements KASLR and SMEP/SMAP; #PF on SSDT write → CRITICAL_STRUCTURE_CORRUPTION BugCheck
+- → XREF: `TODO-08-binary-system.md §3,§12` -- ELF `PT_GNU_PROPERTY` (§3) and PE `IMAGE_LOAD_CONFIG_DIRECTORY64` (§12) carry per-binary CET IBT/SHSTK and CFG flags; this TODO's §6 (CET shadow stack) and §7 (CET IBT) consume those flags to decide enforcement
+- → XREF: `TODO-09-process-model-extensions.md §11` -- per-process mitigation flags (`MIT_DEP_ENABLE`, `MIT_ASLR_FORCE`, etc.) consume §1 NX/DEP enforcement; mitigation API surface is authoritative in TODO-09
+- → XREF: `TODO-10-exception-dispatch-seh.md §3` -- `#CP` (vector 21, CET shadow-stack violation) exception handler; §6 of this TODO enables CET SS, §3 of TODO-10 routes the resulting `#CP` faults through `ki_dispatch_exception()`
 
 ---
 
@@ -49,7 +49,7 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On                   | Status |
 | --- | :---: | -------------------------------------------------- | ---------------------- | :----: |
-| 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings | —                      |  [x]   |
+| 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings | --                      |  [x]   |
 | 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers   | §1                     |  [x]   |
 | 💎  |   3   | KPTI: per-process user page table + CR3 swap       | §1, T04 §3, T05 §2     |  [ ]   |
 | 💎  |   4   | PCID: TLB tagging for KPTI (no-flush CR3 switch)   | §3                     |  [ ]   |
@@ -62,8 +62,8 @@
 | ⭐  |  11   | KASLR (RDRAND kernel load address)                 | §1, §3                 |  [ ]   |
 | 💎  |  12   | Enclave and signing syscalls wired to SSDT         | §11, TODO-05 §4        |  [ ]   |
 
-> 💎 = parity work — matches what Windows 11 and Linux already do.
-> ⭐ = exclusive work — Impossible OS is superior or first.
+> 💎 = parity work -- matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work -- Impossible OS is superior or first.
 
 ---
 
@@ -74,13 +74,13 @@
 - [x] EFER bit definitions (`EFER_SCE`, `EFER_LME`, `EFER_LMA`, `EFER_NXE`) added to `kernel/msr.h`
 - [x] `cpu_enable_nx()` in `cpu_security.c`: checks `cpu_has(CPU_FEATURE_NX)`, sets `EFER_NXE` via `msr_write()`
 - [x] Called on BSP in Phase 0 after `cpuid_init()` via `cpu_harden()`; called on each AP in `ap_entry()`
-- [x] `ap_trampoline.asm`: EFER set to LME + NXE + SCE before paging is enabled — no privilege gap between long mode entry and `cpu_harden()`
+- [x] `ap_trampoline.asm`: EFER set to LME + NXE + SCE before paging is enabled -- no privilege gap between long mode entry and `cpu_harden()`
 
 ### 1.2 PTE NX bit definition
 
 - [x] `VMM_FLAG_NX (1ULL << 63)` already defined in `vmm.h`
 - [x] `vmm_map_page()` applies flags to leaf PTE only; intermediates get `PRESENT | WRITABLE` (correct per x86-64)
-- [x] NX gated: `vmm_map_page()` strips `VMM_FLAG_NX` if `!cpu_has(CPU_FEATURE_NX)` — safe on older hardware
+- [x] NX gated: `vmm_map_page()` strips `VMM_FLAG_NX` if `!cpu_has(CPU_FEATURE_NX)` -- safe on older hardware
 
 ### 1.3 Apply NX to all existing mappings
 
@@ -106,9 +106,9 @@
 
 - [x] `stac()`/`clac()` inlines + `KERNEL_ACCESS_USER_BEGIN()`/`KERNEL_ACCESS_USER_END()` macros in `cpu_security.h`; no-op if `!cpu_has(CPU_FEATURE_SMAP)`
 - [x] `copy_from_user()` / `copy_to_user()` added in `cpu_security.c` with SMAP brackets
-- [ ] Migrate existing syscall argument dereferences to use `copy_from_user` — deferred to syscall TODO
-- [ ] `ProbeForRead` / `ProbeForWrite` — deferred to TODO-10 (SEH)
-- [x] IDT `isr_common_stub` emits `clac` on kernel entry — AC=0 guaranteed at top of every interrupt/exception handler
+- [ ] Migrate existing syscall argument dereferences to use `copy_from_user` -- deferred to syscall TODO
+- [ ] `ProbeForRead` / `ProbeForWrite` -- deferred to TODO-10 (SEH)
+- [x] IDT `isr_common_stub` emits `clac` on kernel entry -- AC=0 guaranteed at top of every interrupt/exception handler
 
 ### 2.3 Commit
 
@@ -126,15 +126,15 @@
     - The process's own user-space pages (`[0, 0x800000000000)`)
     - The syscall entry trampoline stub page (one 4 KiB page containing the `syscall` entry `SWAPGS` + CR3 swap code; must be mapped NX=0 at the same VA in both tables)
     - The GDT/TSS page (CPU needs these in both tables)
-  - Kernel text, data, heap, stacks, and other processes are **absent** from `user_cr3` — this is the Meltdown fix
+  - Kernel text, data, heap, stacks, and other processes are **absent** from `user_cr3` -- this is the Meltdown fix
 
 ### 3.2 User CR3 construction
 
 - [ ] `vmm_create_user_cr3(task)`:
-  1. `pmm_alloc_contiguous(1)` — allocate a fresh PML4 page, zero it
+  1. `pmm_alloc_contiguous(1)` -- allocate a fresh PML4 page, zero it
   2. Copy user-space PML4 entries (`pml4[0..255]`) from the kernel CR3 into the new PML4 (user half of VA space)
   3. Map only the KPTI trampoline stub and GDT/TSS into the upper-half entries that the user CR3 needs; all other kernel PML4 entries remain absent
-- [ ] `vmm_sync_user_cr3(task)` — called whenever a user-space page is mapped/unmapped: sync the corresponding PML4 entry in `task->user_cr3`
+- [ ] `vmm_sync_user_cr3(task)` -- called whenever a user-space page is mapped/unmapped: sync the corresponding PML4 entry in `task->user_cr3`
 
 ### 3.3 CR3 swap at ring transitions
 
@@ -149,7 +149,7 @@
   mov cr3, rax                    ; switch back to user CR3
   ```
 - [ ] Interrupt/exception entry (all 256 IDT stubs): same CR3 swap pattern; the KPTI trampoline stub is the first code that runs in user CR3 context and immediately swaps to the kernel CR3
-- [ ] Per-CPU `pcpu_kernel_cr3` and `pcpu_user_cr3` fields in `cpu_data` struct (→ XREF `src/kernel/smp/smp.c` — `cpu_data` per-CPU struct, already implemented); updated on every scheduler context switch
+- [ ] Per-CPU `pcpu_kernel_cr3` and `pcpu_user_cr3` fields in `cpu_data` struct (→ XREF `src/kernel/smp/smp.c` -- `cpu_data` per-CPU struct, already implemented); updated on every scheduler context switch
 
 ### 3.4 Commit
 
@@ -201,13 +201,13 @@
           wrmsr(MSR_IA32_SPEC_CTRL, 0);
   }
   ```
-- [ ] Insert `cpu_spec_ctrl_enter_kernel()` at kernel entry (syscall entry stub and every ISR common stub) and `cpu_spec_ctrl_exit_kernel()` at kernel exit (SYSRETQ / IRETQ); the MSR writes have ~20 cycle overhead — acceptable for syscall paths
+- [ ] Insert `cpu_spec_ctrl_enter_kernel()` at kernel entry (syscall entry stub and every ISR common stub) and `cpu_spec_ctrl_exit_kernel()` at kernel exit (SYSRETQ / IRETQ); the MSR writes have ~20 cycle overhead -- acceptable for syscall paths
 - [ ] If `cpu_has(CPU_FEATURE_ENHANCED_IBRS)` (CPUID leaf 7 EDX bit 29): set IBRS once at boot and never clear it (Enhanced IBRS is always-on and has no exit overhead)
 
 ### 5.2 IBPB at context switch
 
 - [ ] `MSR_IA32_PRED_CMD = 0x49`; `PRED_CMD_IBPB = 1`
-- [ ] `cpu_issue_ibpb()` — write 1 to `MSR_IA32_PRED_CMD` to flush the branch predictor on context switch; call in `sched_switch_task()` when switching between processes with different security domains (UIDs / token user SIDs differ); skip if same UID to reduce overhead
+- [ ] `cpu_issue_ibpb()` -- write 1 to `MSR_IA32_PRED_CMD` to flush the branch predictor on context switch; call in `sched_switch_task()` when switching between processes with different security domains (UIDs / token user SIDs differ); skip if same UID to reduce overhead
 
 ### 5.3 Retpoline
 
@@ -224,7 +224,7 @@
       mov [rsp], rax
       ret
   ```
-- [ ] Verify no `jmp *reg` or `call *reg` remains in kernel assembly after the build: `objdump -d build/kernel.elf | grep -E "jmp.*%r|call.*%r"` — must be empty
+- [ ] Verify no `jmp *reg` or `call *reg` remains in kernel assembly after the build: `objdump -d build/kernel.elf | grep -E "jmp.*%r|call.*%r"` -- must be empty
 
 ### 5.4 Commit
 
@@ -246,25 +246,25 @@
   #define S_CET_ENDBR_EN           (1ULL << 2)  /* IBT control (§7) */
   ```
 - [ ] `cpu_enable_cet_ss()`:
-  1. `cpu_set_cr4_bit(CR4_CET)` — enable CET in CR4
+  1. `cpu_set_cr4_bit(CR4_CET)` -- enable CET in CR4
   2. `wrmsr(MSR_IA32_S_CET, S_CET_SH_STK_EN | S_CET_WR_SHSTK_EN)`
   3. Ensure `MSR_IA32_PL0_SSP` is set to the initial kernel shadow stack page's last 8 bytes (top of the shadow stack)
 
 ### 6.2 Shadow stack page allocation
 
-- [ ] Each kernel thread needs a shadow stack: one 4 KiB page per thread, marked `PTE_USER=0`, `PTE_NX=1`, and the special **supervisor shadow stack token** format (bit 1 of the 8-byte token set — indicates this is the bottom of the shadow stack)
-- [ ] `cet_alloc_shadow_stack(thread)` — `pmm_alloc_contiguous(1)`; write token at the end of the page; `vmm_map_page(shadow_stack_va, pa, PTE_SUPERVISOR_SHADOW_STACK)` — PTE bit 5 = 1 marks shadow-stack pages; processor enforces SHSTK semantics (only `RSTORSSP`/`SAVEPREVSSP` can write)
+- [ ] Each kernel thread needs a shadow stack: one 4 KiB page per thread, marked `PTE_USER=0`, `PTE_NX=1`, and the special **supervisor shadow stack token** format (bit 1 of the 8-byte token set -- indicates this is the bottom of the shadow stack)
+- [ ] `cet_alloc_shadow_stack(thread)` -- `pmm_alloc_contiguous(1)`; write token at the end of the page; `vmm_map_page(shadow_stack_va, pa, PTE_SUPERVISOR_SHADOW_STACK)` -- PTE bit 5 = 1 marks shadow-stack pages; processor enforces SHSTK semantics (only `RSTORSSP`/`SAVEPREVSSP` can write)
 - [ ] On kernel thread creation in `src/kernel/sched/task.c` (`task_create()`): allocate shadow stack; set `task->shadow_stack_top`
 - [ ] Context switch: save/restore `MSR_IA32_PL0_SSP` per thread
 
 ### 6.3 Exception / interrupt shadow stacks (IST)
 
 - [ ] Windows uses IST entries in the TSS for critical exceptions (#DF, #PF, NMI); each IST entry must also get a shadow stack in the `MSR_IA32_INTERRUPT_SSP_TABLE` (8-entry table, one VA per IST slot)
-- [ ] `cet_init_interrupt_ssp_table()` — allocate 8 shadow stack pages; write their top VAs into the 64-byte `INTERRUPT_SSP_TABLE` structure; write the table physical address to `MSR_IA32_INTERRUPT_SSP_TABLE`
+- [ ] `cet_init_interrupt_ssp_table()` -- allocate 8 shadow stack pages; write their top VAs into the 64-byte `INTERRUPT_SSP_TABLE` structure; write the table physical address to `MSR_IA32_INTERRUPT_SSP_TABLE`
 
 ### 6.4 Commit
 
-- [ ] Commit: `"kernel/security: CET shadow stack — CR4.CET, S_CET MSR, per-thread SSP allocation"`
+- [ ] Commit: `"kernel/security: CET shadow stack -- CR4.CET, S_CET MSR, per-thread SSP allocation"`
 
 ---
 
@@ -273,18 +273,18 @@
 ### 7.1 Build system: `-fcf-protection=branch`
 
 - [ ] Add `-fcf-protection=branch` to kernel `CFLAGS` (Clang 19 supports this); the compiler emits `ENDBR64` at the start of every function and every valid indirect call/jump target
-- [ ] Verify: `objdump -d build/kernel.elf | grep endbr64 | wc -l` — must be > 0 (non-zero); count should match approximate function count
+- [ ] Verify: `objdump -d build/kernel.elf | grep endbr64 | wc -l` -- must be > 0 (non-zero); count should match approximate function count
 - [ ] Assembly files (`src/kernel/smp/ap_trampoline.asm`, ISR stubs, IDT stubs): manually add `endbr64` at each entry point that is reached via an indirect branch; NASM opcode: `db 0xF3, 0x0F, 0x1E, 0xFA`
 
 ### 7.2 Enable IBT in S_CET
 
-- [ ] `cpu_enable_cet_ibt()` — add to `cpu_enable_cet_ss()` call sequence: `wrmsr(MSR_IA32_S_CET, rdmsr(MSR_IA32_S_CET) | S_CET_ENDBR_EN)`
+- [ ] `cpu_enable_cet_ibt()` -- add to `cpu_enable_cet_ss()` call sequence: `wrmsr(MSR_IA32_S_CET, rdmsr(MSR_IA32_S_CET) | S_CET_ENDBR_EN)`
 - [ ] Legacy code mode: if a code region is loaded that does not have `ENDBR64` instructions (e.g., a legacy driver), temporarily disable IBT via `MSR_IA32_S_CET.NO_TRACK_EN` for that execution context; re-enable after (requires driver annotation `MODULE_FLAG_NO_IBT`)
 - [ ] `ENDBR_EN` should be enabled after all kernel code is loaded and verified; setting it before loading a module without ENDBR64 would immediately fault
 
 ### 7.3 Commit
 
-- [ ] Commit: `"kernel/security: CET IBT — ENDBR64 in kernel build, S_CET.ENDBR_EN activation"`
+- [ ] Commit: `"kernel/security: CET IBT -- ENDBR64 in kernel build, S_CET.ENDBR_EN activation"`
 
 ---
 
@@ -299,9 +299,9 @@
   typedef struct {
       uint64_t  cookie;        /* HEAP_COOKIE_MAGIC ^ (uint64_t)block_ptr */
       uint32_t  size;          /* requested allocation size */
-      uint32_t  redzone_front; /* 0xFEFEFEFE — detect underflow */
+      uint32_t  redzone_front; /* 0xFEFEFEFE -- detect underflow */
       /* user data follows */
-      /* uint8_t redzone_back[8] after user data — detect overflow */
+      /* uint8_t redzone_back[8] after user data -- detect overflow */
   } kmalloc_header_t;
   ```
 - [ ] `kmalloc(size)`:
@@ -309,14 +309,14 @@
   - Write `cookie = HEAP_COOKIE_MAGIC ^ (uint64_t)header_ptr`
   - Write `redzone_front = 0xFEFEFEFEFEFEFEFEULL`
   - Write redzone_back 8 bytes after user data = `0xBDBDBDBDBDBDBDBDULL`
-  - Return `(header + 1)` — pointer to user data portion
+  - Return `(header + 1)` -- pointer to user data portion
 - [ ] `kfree(ptr)`:
   - Recover header = `(kmalloc_header_t *)ptr - 1`
   - Validate `cookie == HEAP_COOKIE_MAGIC ^ (uint64_t)header`: if mismatch → `KeBugCheckEx(BUGCHECK_HEAP_CORRUPTION, ...)` (→ XREF `TODO-16-crash-dump-generation.md §1`)
-  - Validate `redzone_front == 0xFEFEFEFEFEFEFEFEULL` — detect underflow
-  - Validate redzone_back == `0xBDBDBDBDBDBDBDBDULL` — detect overflow
+  - Validate `redzone_front == 0xFEFEFEFEFEFEFEFEULL` -- detect underflow
+  - Validate redzone_back == `0xBDBDBDBDBDBDBDBDULL` -- detect overflow
   - Zero the user data before returning to pool (`explicit_bzero`)
-- [ ] `kmalloc_zeroed(size)` — like `kmalloc` but zeroes the user region immediately (for security-sensitive allocations like token structs, security descriptors)
+- [ ] `kmalloc_zeroed(size)` -- like `kmalloc` but zeroes the user region immediately (for security-sensitive allocations like token structs, security descriptors)
 
 ### 8.2 POOL_TAG tagging (debug)
 
@@ -334,7 +334,7 @@
 ### 9.1 Build system change
 
 - [ ] Remove `-fno-stack-protector` from `CFLAGS` in `Makefile`
-- [ ] Add `-fstack-protector-strong` — protects functions that have:
+- [ ] Add `-fstack-protector-strong` -- protects functions that have:
   - local arrays or structs
   - address-taken local variables
   - calls to `alloca` Clang 19 supports this exactly
@@ -394,7 +394,7 @@
 
 ### 10.1 Guard page below each kernel stack
 
-- [ ] Every kernel thread stack is allocated as `STACK_SIZE + PAGE_SIZE` pages; the first page (bottom of the stack, lowest address) is mapped with `PTE_PRESENT=0` — an unmapped guard page:
+- [ ] Every kernel thread stack is allocated as `STACK_SIZE + PAGE_SIZE` pages; the first page (bottom of the stack, lowest address) is mapped with `PTE_PRESENT=0` -- an unmapped guard page:
   ```c
   void stack_alloc_with_guard(task_t *t) {
       uintptr_t pa = pmm_alloc_contiguous(KERNEL_STACK_PAGES + 1);
@@ -443,7 +443,7 @@
 
 ### 11.4 Commit
 
-- [ ] Commit: `"kernel/security: KASLR — bootloader RDRAND slide, ELF relocation, kaslr_slide in boot_info"`
+- [ ] Commit: `"kernel/security: KASLR -- bootloader RDRAND slide, ELF relocation, kaslr_slide in boot_info"`
 
 ---
 
@@ -484,8 +484,8 @@ Register VBS/SGX enclave management and code signing verification syscalls in th
 | 💎 | Stack canaries                           | ✅ `/GS` compiler switch         | ✅ `-fstack-protector-strong`       | ⬜ §9                                           |
 | 💎 | Kernel stack guard pages                 | ✅ Full (kernel stack expansion) | ✅ `THREAD_SIZE` guard page         | ⬜ §10                                          |
 | 💎 | KASLR                                    | ✅ KVA shadow + PatchGuard       | ✅ `CONFIG_RANDOMIZE_BASE`          | ⬜ §11                                          |
-| ⭐ | Hardware RNG (RDRAND) for canary & KASLR | ✅ (internal, no disclosure)     | ✅ (entropy pool, no guarantee)     | ⬜ §9+§11 — (RDRAND-first) 🚀                   |
-| ⭐ | Canary fallback visible in crash dump    | ❌ Opaque                        | ❌ Opaque                           | ⬜ §9 — +TODO-16-crash-dump-generation.md §4 🚀 |
+| ⭐ | Hardware RNG (RDRAND) for canary & KASLR | ✅ (internal, no disclosure)     | ✅ (entropy pool, no guarantee)     | ⬜ §9+§11 -- (RDRAND-first) 🚀                   |
+| ⭐ | Canary fallback visible in crash dump    | ❌ Opaque                        | ❌ Opaque                           | ⬜ §9 -- +TODO-16-crash-dump-generation.md §4 🚀 |
 
 After §1–10, Impossible OS reaches full Windows 11 / Linux security-hardening parity for
 2026. Linux without CONFIG_RANDOMIZE_BASE, CET, or IBRS (common in embedded/legacy
@@ -524,7 +524,7 @@ KASLR slide (for post-mortem analysis) are minor implementation-quality exclusiv
 - [ ] **SMAP**: dereference a user-space pointer from kernel context without `STAC`; must raise `#PF` with bit 5 (Protection Key Violation) set.
 - [ ] **KPTI**: in user mode, attempt to read a known kernel VA (`0xFFFF800000000000`) via a side channel; must receive `#PF` with no data leak.
 - [ ] **IBRS**: verify `rdmsr(MSR_IA32_SPEC_CTRL) & 1` is `1` during kernel execution, `0` after SYSRETQ.
-- [ ] **Retpoline**: `objdump -d build/kernel.elf | grep -E 'jmp\s+\*%|call\s+\*%'` — must produce zero lines (all indirect branches replaced).
+- [ ] **Retpoline**: `objdump -d build/kernel.elf | grep -E 'jmp\s+\*%|call\s+\*%'` -- must produce zero lines (all indirect branches replaced).
 - [ ] **CET SS**: corrupt a return address on the kernel stack; return must cause `#CP (Control Protection)` exception, not jump to the corrupted address.
 - [ ] **Heap cookie**: call `kfree(ptr)` after zeroing the cookie field; must trigger `BUGCHECK_HEAP_CORRUPTION` BSOD.
 - [ ] **Stack canary**: overflow a local array past the canary slot and return; must trigger `__stack_chk_fail` → `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE`.

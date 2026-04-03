@@ -1,5 +1,5 @@
 /* ============================================================================
- * pic.h — 8259 Programmable Interrupt Controller driver
+ * pic.h -- 8259 Programmable Interrupt Controller driver
  *
  * Remaps PIC1 (master) to IRQ 32–39, PIC2 (slave) to IRQ 40–47.
  * ============================================================================ */

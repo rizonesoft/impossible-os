@@ -1,5 +1,5 @@
 /* ============================================================================
- * uefi_vars.h — NTSTATUS-returning UEFI variable services for kernel use
+ * uefi_vars.h -- NTSTATUS-returning UEFI variable services for kernel use
  *
  * Thin abstraction layer over uefi_runtime.c primitives.  Translates EFI
  * status codes to NTSTATUS so kernel subsystems consume a consistent error
@@ -54,12 +54,12 @@ typedef struct boot_uefi_guid efi_guid_t;
 /* Impossible OS vendor GUID: {6F35D3A4-C0E6-4A82-B5D8-7C9D2E4F8A13}
  * Used for all OS-owned NVRAM variables (A/B slot state, boot counters,
  * OS-specific settings).  Reserve this namespace exclusively for
- * Impossible OS use — never share it with third-party code. */
+ * Impossible OS use -- never share it with third-party code. */
 #define IMPOSSIBLE_OS_VENDOR_GUID_INIT \
     ((efi_guid_t){ 0x6f35d3a4, 0xc0e6, 0x4a82, \
         { 0xb5, 0xd8, 0x7c, 0x9d, 0x2e, 0x4f, 0x8a, 0x13 } })
 
-/* Convenience shorthand — combined attribute set for persistent OS variables */
+/* Convenience shorthand -- combined attribute set for persistent OS variables */
 #define UEFI_VAR_NV_BOOT_RUNTIME \
     (EFI_VARIABLE_NON_VOLATILE | \
      EFI_VARIABLE_BOOTSERVICE_ACCESS | \
@@ -73,15 +73,15 @@ typedef struct boot_uefi_guid efi_guid_t;
  * name:  UCS-2 (UTF-16LE) variable name.
  * guid:  namespace GUID.
  * buf:   output buffer (may be NULL to query required size).
- * size:  in/out — caller sets to buffer capacity; firmware sets to actual
+ * size:  in/out -- caller sets to buffer capacity; firmware sets to actual
  *        data size.  Updated even on STATUS_BUFFER_TOO_SMALL.
  *
  * Returns:
- *   STATUS_SUCCESS           — data copied into buf, *size updated.
- *   STATUS_NOT_FOUND         — variable does not exist.
- *   STATUS_BUFFER_TOO_SMALL  — buf too small; *size holds required bytes.
- *   STATUS_NOT_IMPLEMENTED   — runtime services unavailable.
- *   STATUS_UNSUCCESSFUL      — firmware error. */
+ *   STATUS_SUCCESS           -- data copied into buf, *size updated.
+ *   STATUS_NOT_FOUND         -- variable does not exist.
+ *   STATUS_BUFFER_TOO_SMALL  -- buf too small; *size holds required bytes.
+ *   STATUS_NOT_IMPLEMENTED   -- runtime services unavailable.
+ *   STATUS_UNSUCCESSFUL      -- firmware error. */
 NTSTATUS uefi_var_get(const uint16_t *name, const efi_guid_t *guid,
                       void *buf, size_t *size);
 
@@ -91,9 +91,9 @@ NTSTATUS uefi_var_get(const uint16_t *name, const efi_guid_t *guid,
  *        Use UEFI_VAR_NV_BOOT_RUNTIME for persistent OS variables.
  *
  * Returns:
- *   STATUS_SUCCESS         — variable written.
- *   STATUS_NOT_IMPLEMENTED — runtime services unavailable or unsupported.
- *   STATUS_UNSUCCESSFUL    — firmware error. */
+ *   STATUS_SUCCESS         -- variable written.
+ *   STATUS_NOT_IMPLEMENTED -- runtime services unavailable or unsupported.
+ *   STATUS_UNSUCCESSFUL    -- firmware error. */
 NTSTATUS uefi_var_set(const uint16_t *name, const efi_guid_t *guid,
                       const void *buf, size_t size, uint32_t attrs);
 

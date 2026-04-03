@@ -1,5 +1,5 @@
 /* ============================================================================
- * font.c — Desktop bitmap font renderer
+ * font.c -- Desktop bitmap font renderer
  *
  * Position-based text rendering for the GUI layer.  Uses the same 8×16 VGA
  * bitmap font as the kernel console, but renders at arbitrary pixel positions

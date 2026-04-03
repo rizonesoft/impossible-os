@@ -1,11 +1,11 @@
 /* ============================================================================
- * task.c — Kernel thread scheduler (cooperative + preemptive)
+ * task.c -- Kernel thread scheduler (cooperative + preemptive)
  *
  * Round-robin scheduling with fixed time quantum. The PIT timer IRQ
  * calls schedule() to preempt tasks automatically. Tasks can also
  * call yield() for cooperative switching.
  *
- * Task 0 is the boot/main thread — it uses the existing kernel stack
+ * Task 0 is the boot/main thread -- it uses the existing kernel stack
  * and is created implicitly by task_init().
  * ============================================================================ */
 
@@ -58,13 +58,13 @@ static void task_wrapper(void)
 
     entry();
 
-    /* Task finished — mark as dead */
+    /* Task finished -- mark as dead */
     tasks[current_task].state = TASK_DEAD;
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited",
            (uint64_t)tasks[current_task].pid,
            tasks[current_task].name ? tasks[current_task].name : "?");
 
-    /* Yield forever — yield() via INT 0x81 always works,
+    /* Yield forever -- yield() via INT 0x81 always works,
      * whether preemptive scheduler is enabled or not. */
     for (;;)
         yield();
@@ -123,7 +123,7 @@ static uint32_t find_next_task(uint32_t from_task, uint32_t from_thread,
     }
 
     if (!found) {
-        /* Nothing else runnable — stay on current */
+        /* Nothing else runnable -- stay on current */
         *out_thread = from_thread;
         return from_task;
     }
@@ -143,7 +143,7 @@ static uint64_t nm_handler(struct interrupt_frame *frame)
 
     t = &tasks[current_task];
     if (!t->fpu_used) {
-        /* First FPU use — allocate page-aligned XSAVE area */
+        /* First FPU use -- allocate page-aligned XSAVE area */
         task_alloc_xsave(t);
         t->fpu_used = 1;
     }
@@ -164,7 +164,7 @@ void task_alloc_xsave(struct task *t)
     size = g_cpu.xsave_size_max;
     if (size == 0) size = 512;  /* fallback: legacy FXSAVE size */
 
-    /* Round up to page boundary — XSAVE requires 64-byte alignment;
+    /* Round up to page boundary -- XSAVE requires 64-byte alignment;
      * PMM always returns page-aligned (4096) which satisfies this. */
     pages = (size + 4095) / 4096;
     t->xsave_area = (void *)pmm_alloc_contiguous(pages);
@@ -225,7 +225,7 @@ void task_init(void)
     }
 
     /* Task 0: the current boot/main thread.
-     * Its stack is the existing kernel boot stack — we don't allocate one.
+     * Its stack is the existing kernel boot stack -- we don't allocate one.
      * RSP will be saved by switch_context/schedule when it first yields. */
     tasks[0].pid = 0;
     tasks[0].state = TASK_RUNNING;
@@ -299,7 +299,7 @@ int task_create(task_entry_t entry, const char *name)
     sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
 
     /* Reserve space for a secondary stack area that iretq will set RSP to.
-     * iretq pops RIP, CS, RFLAGS, RSP, SS — the RSP in the frame tells
+     * iretq pops RIP, CS, RFLAGS, RSP, SS -- the RSP in the frame tells
      * the CPU where to set the stack AFTER returning. */
     {
         uint64_t new_rsp = (uint64_t)sp;  /* stack top after iretq */
@@ -518,7 +518,7 @@ uint64_t schedule_now(struct interrupt_frame *frame)
         return (uint64_t)frame;
 
     /* Save current task/thread's interrupt frame pointer
-     * (skip if exec_pending — don't overwrite the exec'd frame) */
+     * (skip if exec_pending -- don't overwrite the exec'd frame) */
     if (!tasks[prev_task].exec_pending) {
         /* Save to thread if multi-threaded, otherwise to task */
         if (prev_thread > 0)
@@ -594,7 +594,7 @@ uint64_t schedule(struct interrupt_frame *frame)
     if (sched_ticks < SCHED_QUANTUM)
         return (uint64_t)frame;
 
-    /* Time quantum expired — switch */
+    /* Time quantum expired -- switch */
     sched_ticks = 0;
     prev_task = current_task;
     prev_thread = current_thread;
@@ -604,7 +604,7 @@ uint64_t schedule(struct interrupt_frame *frame)
         return (uint64_t)frame;
 
     /* Save current task/thread's interrupt frame pointer
-     * (skip if exec_pending — don't overwrite the exec'd frame) */
+     * (skip if exec_pending -- don't overwrite the exec'd frame) */
     if (!tasks[prev_task].exec_pending) {
         if (prev_thread > 0)
             tasks[prev_task].threads[prev_thread].rsp = (uint64_t)frame;
@@ -791,7 +791,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].wait_pid = -1;
     tasks[child_pid].exec_pending = 0;
     ob_handle_table_init(&tasks[child_pid].handle_table);
-    /* Copy parent's KERNEL_GS_BASE (TEB address) — §6 will allocate
+    /* Copy parent's KERNEL_GS_BASE (TEB address) -- §6 will allocate
      * a new TEB for the child and update this field. */
     tasks[child_pid].kernel_gs_base = tasks[parent_pid_val].kernel_gs_base;
     num_tasks++;
@@ -927,7 +927,7 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
         *ep++ = 0;
     }
 
-    /* ---- PEB Ldr — minimal module list with main executable ----
+    /* ---- PEB Ldr -- minimal module list with main executable ----
      * Place PEB_LDR_DATA + LDR_DATA_TABLE_ENTRY in the PEB page after
      * the PEB struct (offset 0x240+). Plenty of room in the 4 KB page. */
     {
@@ -1000,7 +1000,7 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
 
 /* ---- TEB allocation ----------------------------------------------------- */
 
-/* Base address for TEB pages — one page per thread, growing downward */
+/* Base address for TEB pages -- one page per thread, growing downward */
 #define TEB_USER_BASE   0x7FFDB000ULL  /* below env block at 0x7FFDC000 */
 
 /* Allocate and populate a TEB for a user-mode thread.
@@ -1036,10 +1036,10 @@ static TEB *teb_alloc_for_task(uint32_t pid, uint32_t tid,
     teb->ClientId.UniqueProcess = (uint64_t)pid;
     teb->ClientId.UniqueThread = (uint64_t)tid;
 
-    /* PEB pointer — gs:[0x60] */
+    /* PEB pointer -- gs:[0x60] */
     teb->ProcessEnvironmentBlock = (struct peb *)peb_addr;
 
-    /* LastErrorValue — gs:[0x68] */
+    /* LastErrorValue -- gs:[0x68] */
     teb->LastErrorValue = 0;
 
     return teb;
@@ -1084,7 +1084,7 @@ int task_exec(const uint8_t *data, uint64_t size)
      *   [rsp+0]   argc        (uint64_t)
      *   [rsp+8]   argv[0]     (pointer to program name string)
      *   [rsp+16]  NULL        (argv terminator)
-     *   [rsp+24]  NULL        (envp terminator — no env on stack)
+     *   [rsp+24]  NULL        (envp terminator -- no env on stack)
      *   [rsp+32]  AT_ENTRY    auxv[0].type
      *   [rsp+40]  entry       auxv[0].value
      *   [rsp+48]  AT_PAGESZ   auxv[1].type
@@ -1165,7 +1165,7 @@ int task_exec(const uint8_t *data, uint64_t size)
         /* RCX = PEB address (Win64 first arg for ntdll/LdrpInitialize).
          * ELF crt0.asm ignores RCX, so this is safe for both formats.
          * When PE32+ loading lands (TODO-08), ntdll will find PEB in RCX
-         * and parse ProcessParameters for argv — no stack changes needed. */
+         * and parse ProcessParameters for argv -- no stack changes needed. */
         sp[12] = tasks[pid].peb
                      ? (uint64_t)(uintptr_t)tasks[pid].peb
                      : 0;                          /* rcx = PEB */
@@ -1216,7 +1216,7 @@ int task_exec(const uint8_t *data, uint64_t size)
     /* ---- §10: Register PEB/TEB in Ob namespace ----
      * Insert as named objects under \KernelObjects\Process<PID>\ so
      * user-mode tools can enumerate all processes via NtQueryDirectoryObject.
-     * This is an Impossible OS exclusive — neither Windows nor Linux
+     * This is an Impossible OS exclusive -- neither Windows nor Linux
      * expose PEB/TEB as public named objects. */
     {
         void *ko_dir = (void *)0;
@@ -1238,7 +1238,7 @@ int task_exec(const uint8_t *data, uint64_t size)
                 ObInsertObject(proc_dir, pdir_name, ko_dir);
 
                 /* Insert PEB and TEB as named objects.
-                 * These are raw pointers — the OB body IS the PEB/TEB. */
+                 * These are raw pointers -- the OB body IS the PEB/TEB. */
                 if (tasks[pid].peb)
                     ObInsertObject(tasks[pid].peb, "Peb", proc_dir);
                 if (tasks[pid].teb)
@@ -1316,7 +1316,7 @@ int32_t task_waitpid(uint32_t child_pid)
     tasks[current_task].state = TASK_WAITING;
     tasks[current_task].wait_pid = (int32_t)child_pid;
 
-    /* Yield away — scheduler will skip us since we're TASK_WAITING */
+    /* Yield away -- scheduler will skip us since we're TASK_WAITING */
     yield();
 
     /* When we wake up, child has exited */
@@ -1355,7 +1355,7 @@ void task_cleanup(uint32_t pid)
 }
 
 /* ============================================================================
- * Thread functions — per-task kernel threads
+ * Thread functions -- per-task kernel threads
  *
  * Threads share the same PID and address space as the parent task.
  * Each thread has its own stack. The scheduler treats threads as
@@ -1365,7 +1365,7 @@ void task_cleanup(uint32_t pid)
  * The scheduler gives time slices to ALL threads across ALL tasks.
  * ============================================================================ */
 
-/* Thread entry wrapper — sets up the thread function call and handles exit.
+/* Thread entry wrapper -- sets up the thread function call and handles exit.
  * Thread entry pointer is in r12, argument pointer is in r13 (set by thread_create). */
 static void thread_wrapper(void)
 {
@@ -1377,7 +1377,7 @@ static void thread_wrapper(void)
 
     entry(arg);
 
-    /* Thread returned — exit cleanly */
+    /* Thread returned -- exit cleanly */
     thread_exit(0);
 }
 
@@ -1578,7 +1578,7 @@ int32_t thread_join(uint32_t thread_id)
     t->threads[current_thread].state = THREAD_BLOCKED;
     t->threads[current_thread].join_tid = (int32_t)thread_id;
 
-    /* Yield away — scheduler will skip us since we're THREAD_BLOCKED */
+    /* Yield away -- scheduler will skip us since we're THREAD_BLOCKED */
     yield();
 
     /* When we wake up, target thread has exited */
@@ -1597,7 +1597,7 @@ int32_t thread_join(uint32_t thread_id)
 
 void thread_yield(void)
 {
-    yield();  /* Same mechanism — INT 0x81 */
+    yield();  /* Same mechanism -- INT 0x81 */
 }
 
 struct thread *thread_current(void)

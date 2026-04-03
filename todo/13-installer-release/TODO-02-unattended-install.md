@@ -1,19 +1,19 @@
-# TODO-02 — Unattended Installation & Deployment
+# TODO-02 -- Unattended Installation & Deployment
 
 > **Goal:** Add unattended installation (answer files), sysprep/generalize, OEM
 > preload support, WIM image capture, PXE network boot, and VM provisioning templates
-> on top of the interactive installer — covering every automated deployment scenario
+> on top of the interactive installer -- covering every automated deployment scenario
 > from CI/CD to hardware partner imaging.
 
 > [!IMPORTANT]
-> **Prerequisite**: `09-services-security/TODO-11` — interactive installer wizard,
+> **Prerequisite**: `09-services-security/TODO-11` -- interactive installer wizard,
 > `gpt_create`/`ixfs_format`/`fat32_format`, `installer_copy_files`, `InstallerMode`
 > Registry flag, `setup.log`. This TODO adds the unattended execution path through the
-> same pipeline — do not re-specify partitioning, format, or file-copy logic.
+> same pipeline -- do not re-specify partitioning, format, or file-copy logic.
 >
 > **OOBE trigger** (`HKLM\SYSTEM\FirstBoot=1`) and first-boot wizard are owned by
 > `09-services-security/TODO-04 §7`; `auth_create_user()` is owned by `TODO-06`.
-> Answer-file user creation (§2) calls these existing APIs — do not re-specify them.
+> Answer-file user creation (§2) calls these existing APIs -- do not re-specify them.
 >
 > **Kernel cmdline** is available via `boot_info->cmdline[BOOT_CONF_CMDLINE_MAX]`
 > (from `include/kernel/boot_info.h`); installer reads `answer=<path>` token from it.
@@ -25,23 +25,23 @@
 
 ## Inputs
 
-- `09-services-security/TODO-11-installer-iso.md` (→ XREF) — `installer_copy_files`, `gpt_create`, `ixfs_format`, `InstallerMode`, `setup.log`; unattended path (§2) runs through same pipeline
-- `09-services-security/TODO-04-restore-recovery.md §7` (→ XREF) — OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
-- `09-services-security/TODO-06-auth-security.md` (→ XREF) — `auth_create_user(username, password, privilege)` — §2 §3
-- `11-user-platform-sdk/TODO-06-sdk-distribution.md §1` (→ XREF) — `ipkg_create.exe` for OEM package format — §4
-- `include/kernel/boot_info.h` — `boot_info->cmdline` — §2 `answer=<path>` kernel cmdline token
-- `include/kernel/fs/vfs.h` — `vfs_open`, `vfs_read`, `vfs_readdir`, `vfs_unlink` — §1 §2 §4 §5
-- `include/kernel/ipc/` — `SYS_SHMEM_CREATE/MAP` — §6 TFTP/DHCP server IPC
-- `include/libs/monocypher.h` — `csprng_fill()` for machine SID generation — §3
-- `include/kernel/net/` — UDP socket for TFTP server (§6)
+- `09-services-security/TODO-11-installer-iso.md` (→ XREF) -- `installer_copy_files`, `gpt_create`, `ixfs_format`, `InstallerMode`, `setup.log`; unattended path (§2) runs through same pipeline
+- `09-services-security/TODO-04-restore-recovery.md §7` (→ XREF) -- OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
+- `09-services-security/TODO-06-auth-security.md` (→ XREF) -- `auth_create_user(username, password, privilege)` -- §2 §3
+- `11-user-platform-sdk/TODO-06-sdk-distribution.md §1` (→ XREF) -- `ipkg_create.exe` for OEM package format -- §4
+- `include/kernel/boot_info.h` -- `boot_info->cmdline` -- §2 `answer=<path>` kernel cmdline token
+- `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_readdir`, `vfs_unlink` -- §1 §2 §4 §5
+- `include/kernel/ipc/` -- `SYS_SHMEM_CREATE/MAP` -- §6 TFTP/DHCP server IPC
+- `include/libs/monocypher.h` -- `csprng_fill()` for machine SID generation -- §3
+- `include/kernel/net/` -- UDP socket for TFTP server (§6)
 
 ---
 
 ## Outcome
 
 A machine booted from the release ISO with an `answer.ini` on the same media installs
-Impossible OS fully unattended — partitions, formats, copies files, creates user, sets
-hostname, reboots — without a single keypress. `sysprep /generalize` creates a clean
+Impossible OS fully unattended -- partitions, formats, copies files, creates user, sets
+hostname, reboots -- without a single keypress. `sysprep /generalize` creates a clean
 deployment image. OEM partners place `$OEM$\` content on the media and it flows into
 the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
@@ -66,7 +66,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 **Source:** `src/installer/answer.c`; header `include/installer/answer.h`
 
-- [ ] **`answer.ini` INI format** — parsed by `answer_parse(path)`:
+- [ ] **`answer.ini` INI format** -- parsed by `answer_parse(path)`:
   ```ini
   [Setup]
   Language     = en-US
@@ -78,7 +78,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
   DiskIndex    = 0             ; 0 = first detected disk
   PartitionScheme = GPT
   EFISize      = 512           ; MB
-  SystemFS     = IXFS          ; IXFS | NTFS (NTFS not yet supported — reserved)
+  SystemFS     = IXFS          ; IXFS | NTFS (NTFS not yet supported -- reserved)
 
   [User]
   Username     = admin
@@ -104,7 +104,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
   - Simple line-by-line parser: skip `#` + `;` comments; parse `[Section]` headers; split `Key=Value` on first `=`; strip leading/trailing whitespace
   - Return 0 on success; `-ENOENT` if file not found; `-EINVAL` if required key missing
 - [ ] **Answer file discovery** (in priority order):
-  1. `boot_info->cmdline` token `answer=<path>` — e.g., `answer=\answer.ini`
+  1. `boot_info->cmdline` token `answer=<path>` -- e.g., `answer=\answer.ini`
   2. `\answer.ini` at root of installation media (scan by VFS path)
   3. `HKLM\SYSTEM\UnattendedSetup\AnswerFile` Registry string value
   - If `InstallMode=Interactive` in answer file: treat as if no answer file (force wizard)
@@ -125,15 +125,15 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
   2. Partition: call `gpt_create()` + `gpt_add_partition(EFI, efi_size_mb)` + `gpt_add_partition(SYSTEM, remaining)`; log partition layout
   3. Format: `fat32_format(esp, "ESP")` + `ixfs_format(sys, "Impossible")`; log
   4. Copy files: `installer_copy_files(manifest, unattended_progress_cb)` where `unattended_progress_cb` logs `"[setup] Copying: {file} ({pct}%)"` to `setup.log` every 5%
-  5. User creation: `auth_create_user(answer.user.username, answer.user.password_hash, answer.user.privilege)` — passes pre-hashed password directly (skip re-hash if `PasswordHash=` key present)
+  5. User creation: `auth_create_user(answer.user.username, answer.user.password_hash, answer.user.privilege)` -- passes pre-hashed password directly (skip re-hash if `PasswordHash=` key present)
   6. Network: if `DHCP=0`: write static IP to `HKLM\SYSTEM\Network\StaticIP` etc.; if `DHCP=1`: write `HKLM\SYSTEM\Network\DHCP=1` (DHCP configured at next boot)
   7. AutoLogin: if `AutoLogin=1`: `reg_set_string(HKLM, "SOFTWARE\\Impossible\\AutoLogin", answer.user.username)`
   8. OEM setup: call `oem_apply(answer)` (§4)
   9. Packages: for each path in `InstallList`: `ipkg_install(path)` (calls `ipkg_create.exe` extract logic)
-  10. Set `HKLM\SYSTEM\FirstBoot=0` (unattended already configured user — skip OOBE); or `=1` if `[User]` section absent
+  10. Set `HKLM\SYSTEM\FirstBoot=0` (unattended already configured user -- skip OOBE); or `=1` if `[User]` section absent
   11. Write `HKLM\SYSTEM\InstallerMode=0`; auto-restart: `reg_set_string(HKLM, "SYSTEM\\PendingReboot", "1")` + `EFI_ResetSystem(RESET_WARM)`
 - [ ] **`setup.log`** at `C:\Impossible\System\Logs\setup.log`: append timestamped lines; each step logs start + completion + any error; readable after first boot
-- [ ] **Error handling**: on any step failure: log error to `setup.log` + serial; halt with `"[setup] FATAL: {step} failed — installation aborted"` + print to console; do NOT auto-restart on error (leaves system in diagnosable state)
+- [ ] **Error handling**: on any step failure: log error to `setup.log` + serial; halt with `"[setup] FATAL: {step} failed -- installation aborted"` + print to console; do NOT auto-restart on error (leaves system in diagnosable state)
 
 ---
 
@@ -145,19 +145,19 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 **Source:** `src/tools/sysprep/sysprep.c`
 
 - [ ] **`sysprep.exe /generalize /oobe /shutdown`** command-line interface:
-  - Parse flags: `/generalize` (machine-specific data removal); `/oobe` (set FirstBoot); `/shutdown` or `/reboot` (post-sysprep action); `/audit` (skip /oobe — boot to admin session)
+  - Parse flags: `/generalize` (machine-specific data removal); `/oobe` (set FirstBoot); `/shutdown` or `/reboot` (post-sysprep action); `/audit` (skip /oobe -- boot to admin session)
   - Require Administrator privilege: check `HKCU\...\Privilege == Admin`; refuse with error if not
-- [ ] **`/generalize` — machine-specific data removal**:
+- [ ] **`/generalize` -- machine-specific data removal**:
   - **Machine SID**: generate new 96-bit random SID via `csprng_fill(sid_bytes, 12)`; encode as `S-1-5-21-{rand1}-{rand2}-{rand3}`; write to `HKLM\SYSTEM\MachineGUID` (GUID format) + `HKLM\SAM\SID`; old SID is discarded
   - **Hostname**: clear `HKLM\SYSTEM\ComputerName` → set to `"IMPOSSIBLEOS"` (default); will be set at OOBE or by admin after install
   - **Hardware fingerprint**: clear `HKLM\SYSTEM\HardwareID` (computed from SMBIOS UUID + disk serial at first boot); regenerated on next boot
-  - **Network adapter GUIDs**: clear `HKLM\SYSTEM\Network\Adapters\*` — regenerated at next boot when NICs are re-enumerated
+  - **Network adapter GUIDs**: clear `HKLM\SYSTEM\Network\Adapters\*` -- regenerated at next boot when NICs are re-enumerated
   - **Cached credentials**: `auth_clear_all_sessions()`; clear `HKCU\Security\SessionTokens\*`
   - **Event logs**: truncate `C:\Impossible\System\Logs\*.log` to zero bytes; clear `HKLM\SYSTEM\EventLog\*` ring entries
   - **Temp/cache**: `vfs_unlink_tree("C:\\Temp\\")` + recreate empty `C:\Temp\`; clear `C:\Users\*\AppData\Temp\`
   - Log all cleared items to `C:\Impossible\System\Logs\sysprep.log`
-- [ ] **`/oobe`**: `reg_set_dword(HKLM, "SYSTEM\\FirstBoot", 1)` — OOBE triggers on next boot
-- [ ] **`/audit`**: set `HKLM\SYSTEM\AuditMode=1` — boot to admin desktop instead of OOBE; used by OEMs to install drivers before sealing
+- [ ] **`/oobe`**: `reg_set_dword(HKLM, "SYSTEM\\FirstBoot", 1)` -- OOBE triggers on next boot
+- [ ] **`/audit`**: set `HKLM\SYSTEM\AuditMode=1` -- boot to admin desktop instead of OOBE; used by OEMs to install drivers before sealing
 - [ ] **`/shutdown`** / **`/reboot`**: after all steps: print summary + `EFI_ResetSystem(RESET_SHUTDOWN)` or `RESET_WARM`
 - [ ] **`sysprep.cpl`** Control Panel entry: simple dialog with "Generalize + OOBE + Shutdown" button + checkbox options; calls `CreateProcess("sysprep.exe /generalize /oobe /shutdown")`
 
@@ -184,7 +184,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
   5. Copy `\$OEM$\$1\` tree to `C:\` (mirrors recursively via `vfs_copy_tree`)
   6. Apply `\$OEM$\$1\registry.reg` if present: parse `.reg` text format (lines: `[KEY]`, `"Name"="Value"`, `"Name"=dword:XXXXXXXX`); call `reg_set_string/dword` for each entry
   7. Install `\$OEM$\Packages\*.ipkg` via `ipkg_install(path)` for each
-- [ ] **OEM info shown in System Properties**: `sysdm.cpl` reads `HKLM\SYSTEM\OEM\{Name, SupportURL, Logo}` and displays in "Manufacturer" / "Support" rows — shown when OEM info is present, hidden when blank
+- [ ] **OEM info shown in System Properties**: `sysdm.cpl` reads `HKLM\SYSTEM\OEM\{Name, SupportURL, Logo}` and displays in "Manufacturer" / "Support" rows -- shown when OEM info is present, hidden when blank
 
 ---
 
@@ -201,7 +201,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
   - Directory tree stored separately (metadata only); file data in deduplicated blob pool
   - Header: magic `"IIMF"` (4 bytes), version, image count, metadata offset, blob pool offset
   - Metadata: recursive directory tree (dir entries with file hash + size + attributes)
-  - Blob pool: SHA-1 (via `cng_sha256` fallback using BLAKE2b truncated — note: true SHA-1 needs adding to `TODO-07 §2` if WIM compatibility required; use BLAKE2b-160 as Impossible OS native)
+  - Blob pool: SHA-1 (via `cng_sha256` fallback using BLAKE2b truncated -- note: true SHA-1 needs adding to `TODO-07 §2` if WIM compatibility required; use BLAKE2b-160 as Impossible OS native)
 - [ ] **`imagex.exe /capture <src> <dst.iim> <name> [/compress fast|max|none]`**:
   1. Walk `src` directory tree via `vfs_readdir` recursively; build in-memory dir tree
   2. For each file: read content; compute BLAKE2b-160 hash; check blob pool map for existing entry
@@ -235,7 +235,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 - [ ] **DHCP proxy** (PXE boot extension):
   - Listen on UDP port 67 (broadcast); detect DHCP `DISCOVER` packets with option 60 (`PXEClient` vendor string)
   - Respond with `DHCPOFFER` containing: option 43 (PXE-specific), option 54 (server IP), option 60 (`PXEClient`), `siaddr` = TFTP server IP, `file` field = `EFI/BOOT/BOOTX64.EFI`
-  - Does NOT replace the real DHCP server — only adds PXE options (proxy mode)
+  - Does NOT replace the real DHCP server -- only adds PXE options (proxy mode)
   - Requires a real DHCP server on the same segment for IP assignment
 - [ ] **`pxesrv start/stop/status` shell command**:
   - `pxesrv start`: initialize TFTP + DHCP proxy; log `"PXE server started: TFTP root={path}, IP={local_ip}"`
@@ -288,7 +288,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
   - **§6 OEM customization hooks**: `$OEM$` directory layout, `registry.reg` format, driver pre-loading, wallpaper + branding
   - **§7 QEMU farm example**: provision 10 VMs in parallel using `provision-qemu.sh` + `xargs`; CI/CD integration
   - **§8 Hyper-V cluster example**: PowerShell script for 20-node Hyper-V deployment; WDS alternative discussion
-- [ ] **Answer file template**: `docs/guides/answer-template.ini` — fully commented template with all keys and their defaults; linked from README
+- [ ] **Answer file template**: `docs/guides/answer-template.ini` -- fully commented template with all keys and their defaults; linked from README
 - [ ] **Troubleshooting table**: common errors (disk index out of range, hash mismatch, driver load failure, TFTP timeout) with resolution steps
 
 ---
@@ -298,16 +298,16 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 | ⭐ | Feature                                  | 🪟 Win11                                               | 🐧 Linux                                             | 🚀 Impossible OS                                                                    |
 |----|------------------------------------------|-----------------------------------------------------|---------------------------------------------------|----------------------------------------------------------------------------------|
-| 💎 | Unattended install via answer file       | ✅ `unattend.xml`; Windows SIM; WDS                 | ✅ Kickstart (RHEL); `preseed` (Debian); AutoYaST | ⬜ §1 — §2; `answer.ini` INI format; auto-proceed                                |
-| 💎 | `sysprep /generalize`                    | ✅ `sysprep.exe /generalize`; full SID regeneration | ✅ `virt-sysprep`; cloud-init; `cloud-utils`      | ⬜ §3 — CSPRNG 96-bit SID; hostname/GUID/credential/log clear                    |
-| ⭐ | OEM `$OEM$` customization layer          | ✅ OEM `$OEM$` dirs; `setupcomplete.cmd`            | ✅ Kickstart `%post`; OEM preseed                 | ⬜ §4 — `$OEM$\Drivers\*.kmod` auto-load; `registry.reg` injection; `ipkg`       |
-| 💎 | WIM/image capture with single-instancing | ✅ WIM (wimlib, DISM); DISM `/add-package`          | ✅ `squashfs`; `dd`; Clonezilla                   | ⬜ §5 — `.iim` BLAKE2b-160 deduplication; `imagex /capture`                      |
-| 💎 | PXE + TFTP server for netboot            | ✅ WDS (Windows Deployment Services)                | ✅ `dnsmasq` + TFTP; PXElinux; iPXE               | ⬜ §6 — DHCP proxy + TFTP server                                                 |
-| ⭐ | VM provisioning scripts                  | ✅ Hyper-V PowerShell; Azure ARM templates          | ✅ `virt-install`; Vagrant; Packer                | ⬜ §7 — `provision-qemu.sh` + `provision-hyperv.ps1`; CI-ready `ci-provision.sh` |
-| 💎 | Enterprise deployment documentation      | ✅ MSDN WDS/MDT/SCCM docs                           | ✅ Anaconda/Kickstart/AutoYaST docs               | ⬜ §8 — `docs/guides/enterprise-deployment.md`; full answer file reference       |
+| 💎 | Unattended install via answer file       | ✅ `unattend.xml`; Windows SIM; WDS                 | ✅ Kickstart (RHEL); `preseed` (Debian); AutoYaST | ⬜ §1 -- §2; `answer.ini` INI format; auto-proceed                                |
+| 💎 | `sysprep /generalize`                    | ✅ `sysprep.exe /generalize`; full SID regeneration | ✅ `virt-sysprep`; cloud-init; `cloud-utils`      | ⬜ §3 -- CSPRNG 96-bit SID; hostname/GUID/credential/log clear                    |
+| ⭐ | OEM `$OEM$` customization layer          | ✅ OEM `$OEM$` dirs; `setupcomplete.cmd`            | ✅ Kickstart `%post`; OEM preseed                 | ⬜ §4 -- `$OEM$\Drivers\*.kmod` auto-load; `registry.reg` injection; `ipkg`       |
+| 💎 | WIM/image capture with single-instancing | ✅ WIM (wimlib, DISM); DISM `/add-package`          | ✅ `squashfs`; `dd`; Clonezilla                   | ⬜ §5 -- `.iim` BLAKE2b-160 deduplication; `imagex /capture`                      |
+| 💎 | PXE + TFTP server for netboot            | ✅ WDS (Windows Deployment Services)                | ✅ `dnsmasq` + TFTP; PXElinux; iPXE               | ⬜ §6 -- DHCP proxy + TFTP server                                                 |
+| ⭐ | VM provisioning scripts                  | ✅ Hyper-V PowerShell; Azure ARM templates          | ✅ `virt-install`; Vagrant; Packer                | ⬜ §7 -- `provision-qemu.sh` + `provision-hyperv.ps1`; CI-ready `ci-provision.sh` |
+| 💎 | Enterprise deployment documentation      | ✅ MSDN WDS/MDT/SCCM docs                           | ✅ Anaconda/Kickstart/AutoYaST docs               | ⬜ §8 -- `docs/guides/enterprise-deployment.md`; full answer file reference       |
 
-Impossible OS's `⭐` advantage: the entire deployment pipeline — answer file, sysprep,
-OEM customization, PXE, and VM provisioning — is built into the OS itself with no
+Impossible OS's `⭐` advantage: the entire deployment pipeline -- answer file, sysprep,
+OEM customization, PXE, and VM provisioning -- is built into the OS itself with no
 external tools (no MDT, no WDS, no Packer). The `$OEM$` layout directly mirrors
 Windows OEM conventions so hardware partners need zero re-training, and BLAKE2b-160
 single-instancing in `.iim` is faster than SHA-1 WIM while using the same monocypher

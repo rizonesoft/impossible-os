@@ -1,4 +1,4 @@
-/* blk_telemetry.c — Latency histogram engine, adaptive polling, public stats API */
+/* blk_telemetry.c -- Latency histogram engine, adaptive polling, public stats API */
 
 #include "kernel/drivers/virtio/blk_internal.h"
 
@@ -141,7 +141,7 @@ void adaptive_check_window(void)
     if ((now - adaptive.window_start) < adaptive.window_ticks)
         return;  /* Window not yet elapsed */
 
-    /* Window complete — compute IOPS */
+    /* Window complete -- compute IOPS */
     elapsed_iops = adaptive.io_count * 10;  /* 100ms → multiply by 10 for per-second */
     adaptive.last_iops = elapsed_iops;
     adaptive.io_count = 0;
@@ -231,6 +231,6 @@ int hybrid_spin_poll(struct virtqueue *vq, uint32_t spin_us)
             return 1;  /* Completed during spin */
         __asm__ volatile ("pause");  /* Reduce power + SMT contention */
     }
-    return 0;  /* Spin window expired — fall back to ISR */
+    return 0;  /* Spin window expired -- fall back to ISR */
 }
 

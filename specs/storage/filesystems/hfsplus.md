@@ -1,4 +1,4 @@
-# HFS Plus (Mac OS Extended) — Technical Specification for OS Implementation
+# HFS Plus (Mac OS Extended) -- Technical Specification for OS Implementation
 
 ## Overview and Architectural Context
 
@@ -44,7 +44,7 @@ An OS developer needs HFS+ support for:
 
 > [!NOTE]
 > The `version` field in `HFSPlusVolumeHeader` is `4` (`kHFSPlusVersion`) for all standard HFS+
-> volumes. HFSX volumes use version `5` (`kHFSXVersion`). There is no "HFS+ version 5" — the
+> volumes. HFSX volumes use version `5` (`kHFSXVersion`). There is no "HFS+ version 5" -- the
 > version change coincides with the signature change to `0x4858`.
 
 ---
@@ -216,7 +216,7 @@ struct HFSPlusVolumeHeader {
 
 | Bit | Constant                         | Description                                     |
 | --- | -------------------------------- | ----------------------------------------------- |
-| 0–6 | —                                | Reserved                                         |
+| 0–6 | --                                | Reserved                                         |
 | 7   | `kHFSVolumeHardwareLockBit`      | Hardware write-protect detected                  |
 | 8   | `kHFSVolumeUnmountedBit`         | Volume was cleanly unmounted                     |
 | 9   | `kHFSVolumeSparedBlocksBit`      | Bad block file contains entries                  |
@@ -224,9 +224,9 @@ struct HFSPlusVolumeHeader {
 | 11  | `kHFSBootVolumeInconsistentBit`  | Boot volume consistency check needed             |
 | 12  | `kHFSCatalogNodeIDsReusedBit`    | CNIDs have wrapped around and been reused        |
 | 13  | `kHFSVolumeJournaledBit`         | Volume has an active journal                     |
-| 14  | —                                | Reserved                                         |
+| 14  | --                                | Reserved                                         |
 | 15  | `kHFSVolumeSoftwareLockBit`      | Software write-protect flag                      |
-| 16–31| —                               | Reserved                                         |
+| 16–31| --                               | Reserved                                         |
 
 > [!CAUTION]
 > When `kHFSVolumeJournaledBit` (bit 13) is set, the driver **must** replay the journal before
@@ -404,7 +404,7 @@ struct BTHeaderRec {
 ```
 
 > [!CAUTION]
-> The `clumpSize` field at offset `0x20` in `BTHeaderRec` is **misaligned** — it is a 32-bit
+> The `clumpSize` field at offset `0x20` in `BTHeaderRec` is **misaligned** -- it is a 32-bit
 > integer at a 2-byte-aligned offset. The driver must use unaligned access or manual byte assembly.
 
 ### B-tree Types
@@ -456,7 +456,7 @@ The first 16 CNIDs are reserved by Apple:
 
 | CNID | Constant                    | Purpose                                     |
 | ---- | --------------------------- | ------------------------------------------- |
-| 0    | —                           | Nil value (never used)                       |
+| 0    | --                           | Nil value (never used)                       |
 | 1    | `kHFSRootParentID`          | Parent of the root folder                    |
 | 2    | `kHFSRootFolderID`          | Root folder of the volume                    |
 | 3    | `kHFSExtentsFileID`         | Extents overflow file                        |
@@ -561,7 +561,7 @@ struct HFSPlusCatalogFile {
 
 ### `HFSPlusCatalogThread`
 
-Thread records allow reverse lookups — finding a file/folder record given only its CNID.
+Thread records allow reverse lookups -- finding a file/folder record given only its CNID.
 
 ```c
 struct HFSPlusCatalogThread {
@@ -590,7 +590,7 @@ To look up a file by CNID alone:
 
 ---
 
-## POSIX Permissions — `HFSPlusBSDInfo`
+## POSIX Permissions -- `HFSPlusBSDInfo`
 
 ```c
 struct HFSPlusBSDInfo {
@@ -678,7 +678,7 @@ volume. Bit N corresponds to allocation block N.
 - Bit value `0` = block is free
 
 The allocation file's location and size are described by `allocationFile` fork data in the volume
-header. Unlike the other special files, the allocation file is not a B-tree — it is a flat bitmap.
+header. Unlike the other special files, the allocation file is not a B-tree -- it is a flat bitmap.
 
 > [!NOTE]
 > The allocation file's size in bits equals `totalBlocks` from the volume header. The size in
@@ -689,7 +689,7 @@ header. Unlike the other special files, the allocation file is not a B-tree — 
 ## Attributes File
 
 The attributes file is a B-tree that stores extended attributes and named forks. It may not exist
-on all volumes — if the first extent in the volume header's `attributesFile` has zero allocation
+on all volumes -- if the first extent in the volume header's `attributesFile` has zero allocation
 blocks, no attributes file exists.
 
 ### Attribute Record Types
@@ -746,7 +746,7 @@ For standard HFS+ volumes (not case-sensitive HFSX), catalog key comparison:
 > [!CAUTION]
 > If the VFS layer accepts user-space path lookups in NFC (composed) form and passes them directly
 > to the catalog B-tree without NFD decomposition, lookups for filenames containing diacritical
-> marks will fail — the file will appear to not exist even though it is present on disk.
+> marks will fail -- the file will appear to not exist even though it is present on disk.
 
 ### Case-Sensitive Comparison (HFSX)
 
@@ -867,7 +867,7 @@ with the original `checksum` value.
 1. Read `JournalInfoBlock` from the allocation block specified in the volume header
 2. Read `journal_header` from the byte offset in `JournalInfoBlock.offset`
 3. Verify `magic` == `0x4A4E4C78` and `endian` == `0x12345678`
-4. If `start == end`, journal is clean — no replay needed
+4. If `start == end`, journal is clean -- no replay needed
 5. Otherwise, starting at byte offset `start`:
    a. Read `block_list_header`
    b. Verify its checksum

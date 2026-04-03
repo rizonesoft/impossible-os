@@ -1,5 +1,5 @@
 /* ============================================================================
- * ethernet.c — Ethernet frame handling
+ * ethernet.c -- Ethernet frame handling
  *
  * Builds outgoing frames and dispatches incoming frames by EtherType.
  * ============================================================================ */

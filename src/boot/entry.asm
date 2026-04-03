@@ -1,5 +1,5 @@
 ; =============================================================================
-; Kernel Entry Point — 32-bit → 64-bit Long Mode Transition
+; Kernel Entry Point -- 32-bit → 64-bit Long Mode Transition
 ;
 ; On entry from GRUB (Multiboot2):
 ;   eax = 0x36D76289 (Multiboot2 magic)
@@ -46,18 +46,18 @@ gdt64_start:
     ; Null descriptor (index 0)
     dq 0x0000000000000000
 
-    ; Code segment descriptor (index 1) — 64-bit, execute/read
+    ; Code segment descriptor (index 1) -- 64-bit, execute/read
     ; Bits: Present=1, DPL=0, S=1, Type=Execute/Read, L=1 (Long Mode), D=0
     dq 0x00AF9A000000FFFF
 
-    ; Data segment descriptor (index 2) — read/write
+    ; Data segment descriptor (index 2) -- read/write
     ; Bits: Present=1, DPL=0, S=1, Type=Read/Write
     dq 0x00CF92000000FFFF
 gdt64_end:
 
 gdt64_pointer:
     dw gdt64_end - gdt64_start - 1     ; limit (2 bytes)
-    dd gdt64_start                       ; base (4 bytes — works in 32-bit lgdt)
+    dd gdt64_start                       ; base (4 bytes -- works in 32-bit lgdt)
     dd 0                                 ; high 32 bits (for 64-bit lgdt reload)
 
 ; GDT segment selectors
@@ -211,7 +211,7 @@ _start:
     ; -----------------------------------------------------------------
     lgdt [gdt64_pointer]
 
-    ; Far jump to 64-bit code segment — this switches to Long Mode!
+    ; Far jump to 64-bit code segment -- this switches to Long Mode!
     jmp CODE64_SEG:.long_mode_entry
 
     ; =================================================================

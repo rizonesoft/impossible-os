@@ -4,7 +4,7 @@
 
 - Use `bash scripts/build.sh` for the normal incremental build.
 - Use `bash scripts/build.sh clean` only when stale-state symptoms justify it.
-- Treat `tail -1 build/build.log` as the authoritative build result — must show `=== BUILD OK ===`.
+- Treat `tail -1 build/build.log` as the authoritative build result -- must show `=== BUILD OK ===`.
 
 ## Runtime Verification
 

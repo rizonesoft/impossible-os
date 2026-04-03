@@ -1,5 +1,5 @@
 /* ============================================================================
- * compositor.c — Main desktop compositor event loop
+ * compositor.c -- Main desktop compositor event loop
  *
  * Never returns.  Runs as the idle/main kernel thread after all boot
  * phases complete.  Handles mouse input, composites windows, flips the
@@ -39,9 +39,9 @@ void compositor_run(void)
         uint8_t mb;
 
         /* Get mouse state from the best available source:
-         *   1. VirtIO tablet (QEMU) — absolute coordinates
-         *   2. VBox VMMDev mouse (VirtualBox) — absolute coordinates
-         *   3. PS/2 mouse (fallback) — relative deltas */
+         *   1. VirtIO tablet (QEMU) -- absolute coordinates
+         *   2. VBox VMMDev mouse (VirtualBox) -- absolute coordinates
+         *   3. PS/2 mouse (fallback) -- relative deltas */
         if (virtio_input_available()) {
             struct virtio_input_state vis = virtio_input_get_state();
             mx = vis.x;
@@ -187,7 +187,7 @@ void compositor_run(void)
             prev_mb = mb;
             first_frame = 0;
         } else if (cursor_moved) {
-            /* Cursor-only move (no buttons held) —
+            /* Cursor-only move (no buttons held) --
              * swap just the union of old + new cursor rects */
             scheduler_disable();
 

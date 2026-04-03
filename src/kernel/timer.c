@@ -103,7 +103,7 @@ void timer_hal_init(void)
 {
     platform_detect();
 
-    /* Bare metal timer workaround REMOVED — root cause was clac (#UD on
+    /* Bare metal timer workaround REMOVED -- root cause was clac (#UD on
      * CPUs without SMAP CPUID support) in isr_common_stub, fixed 2026-03-29.
      * Hardware interrupts now work on bare metal. */
 

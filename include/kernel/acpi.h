@@ -1,5 +1,5 @@
 /* ============================================================================
- * acpi.h — ACPI table parsing and power management
+ * acpi.h -- ACPI table parsing and power management
  *
  * Parses the RSDP → RSDT/XSDT → FADT chain to locate the PM1a control
  * register needed for clean shutdown.  Also supports reboot via the
@@ -12,7 +12,7 @@
 
 /* ---- ACPI table structures ---- */
 
-/* Root System Description Pointer (RSDP) — ACPI 1.0 */
+/* Root System Description Pointer (RSDP) -- ACPI 1.0 */
 struct acpi_rsdp {
     char     signature[8];   /* "RSD PTR " */
     uint8_t  checksum;
@@ -21,7 +21,7 @@ struct acpi_rsdp {
     uint32_t rsdt_addr;      /* Physical address of RSDT */
 } __attribute__((packed));
 
-/* Extended RSDP — ACPI 2.0+ */
+/* Extended RSDP -- ACPI 2.0+ */
 struct acpi_rsdp2 {
     struct acpi_rsdp v1;
     uint32_t length;
@@ -43,19 +43,19 @@ struct acpi_sdt_header {
     uint32_t creator_revision;
 } __attribute__((packed));
 
-/* Root System Description Table (RSDT) — 32-bit pointers */
+/* Root System Description Table (RSDT) -- 32-bit pointers */
 struct acpi_rsdt {
     struct acpi_sdt_header header;
     uint32_t entries[];      /* Array of 32-bit physical addresses */
 } __attribute__((packed));
 
-/* Extended System Description Table (XSDT) — 64-bit pointers */
+/* Extended System Description Table (XSDT) -- 64-bit pointers */
 struct acpi_xsdt {
     struct acpi_sdt_header header;
     uint64_t entries[];
 } __attribute__((packed));
 
-/* Generic Address Structure (GAS) — ACPI 2.0+ */
+/* Generic Address Structure (GAS) -- ACPI 2.0+ */
 struct acpi_gas {
     uint8_t  address_space;  /* 0=system memory, 1=system I/O */
     uint8_t  bit_width;
@@ -79,7 +79,7 @@ struct acpi_fadt {
     uint8_t  pstate_control;
     uint32_t pm1a_event_block;
     uint32_t pm1b_event_block;
-    uint32_t pm1a_control_block;   /* PM1a_CNT — used for shutdown */
+    uint32_t pm1a_control_block;   /* PM1a_CNT -- used for shutdown */
     uint32_t pm1b_control_block;
     uint32_t pm2_control_block;
     uint32_t pm_timer_block;
@@ -111,11 +111,11 @@ struct acpi_fadt {
     uint8_t  fadt_minor_version;
 } __attribute__((packed));
 
-/* ---- MADT (Multiple APIC Description Table) — for SMP ---- */
+/* ---- MADT (Multiple APIC Description Table) -- for SMP ---- */
 
 #define MAX_CPUS  16   /* maximum supported CPUs */
 
-/* MADT header — signature "APIC" */
+/* MADT header -- signature "APIC" */
 struct acpi_madt {
     struct acpi_sdt_header header;
     uint32_t lapic_addr;        /* Physical address of Local APIC */
@@ -180,7 +180,7 @@ struct cpu_info {
 
 /* ---- API ---- */
 
-/* Initialize ACPI — parse RSDP → RSDT → FADT → MADT.
+/* Initialize ACPI -- parse RSDP → RSDT → FADT → MADT.
  * Returns 0 on success, -1 if ACPI tables not found. */
 int  acpi_init(void);
 

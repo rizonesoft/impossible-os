@@ -1,13 +1,13 @@
-# TODO-06 — Desktop Icon System
+# TODO-06 -- Desktop Icon System
 
-> **Goal:** A complete desktop icon system: special folder icons, user-created shortcuts, file type icons, grid layout, drag-to-reposition, rename, delete, and right-click context menu per icon. The current desktop has 3 hardcoded icons (Computer, Recycle Bin, Control Panel) — this makes icons a real, dynamic system.
+> **Goal:** A complete desktop icon system: special folder icons, user-created shortcuts, file type icons, grid layout, drag-to-reposition, rename, delete, and right-click context menu per icon. The current desktop has 3 hardcoded icons (Computer, Recycle Bin, Control Panel) -- this makes icons a real, dynamic system.
 
 ## Inputs
 
-- [`src/desktop/desktop.c`](../../src/desktop/desktop.c) — existing 3 hardcoded icons with alpha-blended rendering
-- [`include/desktop/desktop.h`](../../include/desktop/desktop.h) — icon constants, draw functions
-- → XREF: `06-desktop-foundation/TODO-04-control-library.md §5` — context menu engine (right-click on icon)
-- → XREF: `06-desktop-foundation/TODO-05-desktop-shell.md §1` — icon click actions (launch apps)
+- [`src/desktop/desktop.c`](../../src/desktop/desktop.c) -- existing 3 hardcoded icons with alpha-blended rendering
+- [`include/desktop/desktop.h`](../../include/desktop/desktop.h) -- icon constants, draw functions
+- → XREF: `06-desktop-foundation/TODO-04-control-library.md §5` -- context menu engine (right-click on icon)
+- → XREF: `06-desktop-foundation/TODO-05-desktop-shell.md §1` -- icon click actions (launch apps)
 
 ## Outcome
 
@@ -24,7 +24,7 @@
 
 | ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Icon data model and grid layout          | —          |  [ ]   |
+| 💎  |   1   | Icon data model and grid layout          | --          |  [ ]   |
 | 💎  |   2   | Special folder icons (always present)    | §1         |  [ ]   |
 | 💎  |   3   | Dynamic icons from Desktop directory     | §1         |  [ ]   |
 | 💎  |   4   | Icon interaction (select, drag, rename)  | §1         |  [ ]   |
@@ -41,26 +41,26 @@ Replace hardcoded icons with a dynamic icon list and grid-based positioning.
 
 - [ ] `struct desktop_icon { char name[64]; char target[256]; int grid_x, grid_y; uint8_t type; uint8_t selected; icon_handle_t icon; }`
 - [ ] Icon types: `ICON_SPECIAL_FOLDER`, `ICON_SHORTCUT`, `ICON_FILE`, `ICON_DIRECTORY`
-- [ ] `desktop_icons[64]` — max 64 icons on desktop
+- [ ] `desktop_icons[64]` -- max 64 icons on desktop
 - [ ] Grid: 80px wide x 96px tall cells, column-first layout (top to bottom, left to right)
-- [ ] `desktop_add_icon(name, target, type, icon)` — add icon at next free grid position
-- [ ] `desktop_remove_icon(index)` — remove icon, compact grid
+- [ ] `desktop_add_icon(name, target, type, icon)` -- add icon at next free grid position
+- [ ] `desktop_remove_icon(index)` -- remove icon, compact grid
 - [ ] Draw all icons from the dynamic list instead of hardcoded positions
 - [ ] Commit
 
 **Test checkpoint:** Desktop shows icons from dynamic list. Same visual as before but data-driven.
 
 ## 2. Special Folder Icons (Always Present)
-Computer, Recycle Bin, Network, User's Files — pinned to top of icon grid, can't be deleted.
+Computer, Recycle Bin, Network, User's Files -- pinned to top of icon grid, can't be deleted.
 
 **Files:** `src/desktop/desktop.c`
 
-- [ ] `desktop_init_special_icons()` — create the 4 special icons at boot
+- [ ] `desktop_init_special_icons()` -- create the 4 special icons at boot
 - [ ] Computer: opens file manager at `C:\` (or placeholder)
 - [ ] Recycle Bin: opens recycle bin window (or placeholder)
 - [ ] Network: opens network browser (or placeholder)
 - [ ] User's Files: opens file manager at `C:\Users\Default\`
-- [ ] Special icons have `ICON_SPECIAL_FOLDER` type — cannot be renamed or deleted
+- [ ] Special icons have `ICON_SPECIAL_FOLDER` type -- cannot be renamed or deleted
 - [ ] Icons use IRES icon store (48px, already loaded)
 - [ ] Commit
 
@@ -71,7 +71,7 @@ Scan `C:\Users\Default\Desktop\` and create icons for each file/folder found.
 
 **Files:** `src/desktop/desktop.c`
 
-- [ ] `desktop_scan_directory()` — scan Desktop directory via VFS
+- [ ] `desktop_scan_directory()` -- scan Desktop directory via VFS
 - [ ] For each file: create icon with filename as label
 - [ ] For each subdirectory: create folder icon
 - [ ] `.lnk` files: parse shortcut (§5), show target's icon
@@ -79,7 +79,7 @@ Scan `C:\Users\Default\Desktop\` and create icons for each file/folder found.
 - [ ] Re-scan on refresh (context menu "Refresh" or F5)
 - [ ] Commit
 
-**Test checkpoint:** Create `C:\Users\Default\Desktop\test.txt` — icon appears on desktop after refresh.
+**Test checkpoint:** Create `C:\Users\Default\Desktop\test.txt` -- icon appears on desktop after refresh.
 
 ## 4. Icon Interaction (Select, Drag, Rename)
 Click to select, drag to reposition, F2 or slow double-click to rename.
@@ -95,7 +95,7 @@ Click to select, drag to reposition, F2 or slow double-click to rename.
 - [ ] Rubber-band selection: drag on empty desktop area draws selection rectangle
 - [ ] Commit
 
-**Test checkpoint:** Click icon — highlights. Drag icon — repositions. F2 — rename inline. Delete — icon removed.
+**Test checkpoint:** Click icon -- highlights. Drag icon -- repositions. F2 -- rename inline. Delete -- icon removed.
 
 ## 5. Shortcut (.lnk) File Support
 Simple shortcut format: target path + optional icon override.
@@ -103,13 +103,13 @@ Simple shortcut format: target path + optional icon override.
 **Files:** `src/desktop/desktop.c`, new `include/desktop/shortcut.h`
 
 - [ ] `.lnk` file format: plain text, line 1 = target path, line 2 = icon name (optional)
-- [ ] `shortcut_parse(path, target_out, icon_out)` — read .lnk file
+- [ ] `shortcut_parse(path, target_out, icon_out)` -- read .lnk file
 - [ ] Desktop shows shortcut icon with small arrow overlay (bottom-left)
 - [ ] Double-click shortcut: launch the target
 - [ ] "Create Shortcut" in context menu: create .lnk pointing to selected file
 - [ ] Commit
 
-**Test checkpoint:** Create `test.lnk` with target `C:\cmd.exe` — shows on desktop with arrow overlay. Double-click launches cmd.
+**Test checkpoint:** Create `test.lnk` with target `C:\cmd.exe` -- shows on desktop with arrow overlay. Double-click launches cmd.
 
 ## 6. File Type Icon Association
 Show correct icon based on file extension.
@@ -119,7 +119,7 @@ Show correct icon based on file extension.
 - [ ] Default icons by extension: `.exe` = application, `.txt` = text, `.jpg/.png` = image, `.conf` = config
 - [ ] Folder icon for directories
 - [ ] Unknown extension: generic file icon
-- [ ] Icon lookup: `desktop_icon_for_extension(ext)` — returns IRES icon handle
+- [ ] Icon lookup: `desktop_icon_for_extension(ext)` -- returns IRES icon handle
 - [ ] Future: read icon from `.exe` PE resources (deferred)
 - [ ] Commit
 
@@ -140,7 +140,7 @@ Per-icon context menu with standard actions.
 - [ ] Right-click on empty desktop: different menu (handled by TODO-05 §2)
 - [ ] Commit
 
-**Test checkpoint:** Right-click icon — context menu. Click "Rename" — inline rename. Click "Delete" — icon removed.
+**Test checkpoint:** Right-click icon -- context menu. Click "Rename" -- inline rename. Click "Delete" -- icon removed.
 
 ---
 

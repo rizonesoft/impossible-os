@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_attr.c — Attribute Iterator & $ATTRIBUTE_LIST Handler
+ * ntfs_attr.c -- Attribute Iterator & $ATTRIBUTE_LIST Handler
  *
  * Provides functions to walk the attribute sequence in MFT records,
  * parse attribute headers, and handle $ATTRIBUTE_LIST for records
@@ -23,7 +23,7 @@
  * Layout per attribute:
  *   [type:4][length:4][non_res:1][name_len:1][name_off:2][flags:2][id:2]
  *   For resident:   [content_len:4][content_off:2][indexed:2]
- *   For non-resident: (run-list fields — decoded in §4)
+ *   For non-resident: (run-list fields -- decoded in §4)
  * ============================================================================ */
 
 const uint8_t *ntfs_attr_first(const uint8_t *record,
@@ -176,7 +176,7 @@ const uint8_t *ntfs_attr_find_named(const uint8_t *record,
 }
 
 /* ============================================================================
- * $ATTRIBUTE_LIST Handler — §3.4
+ * $ATTRIBUTE_LIST Handler -- §3.4
  *
  * When a file's attributes overflow a single 1024-byte MFT record, NTFS
  * creates extension records. The base record contains a $ATTRIBUTE_LIST
@@ -187,7 +187,7 @@ const uint8_t *ntfs_attr_find_named(const uint8_t *record,
  *   0x04  Entry length            (2 bytes, LE)
  *   0x06  Name length             (1 byte, UTF-16 chars)
  *   0x07  Name offset             (1 byte, from entry start)
- *   0x08  Starting VCN            (8 bytes, LE) — for split non-res attrs
+ *   0x08  Starting VCN            (8 bytes, LE) -- for split non-res attrs
  *   0x10  MFT Reference           (8 bytes, LE: low 48 = inode, high 16 = seq)
  *   0x18  Attribute Instance ID   (2 bytes, LE)
  *
@@ -258,12 +258,12 @@ static const uint8_t *attrlist_search(const uint8_t *attrlist_data,
                 /* Caller wants named, entry is unnamed */
                 name_ok = (name[0] == '\0') ? 1 : 0;
             } else if (!name && ale.name_length > 0) {
-                /* Caller wants unnamed, entry is named — skip */
+                /* Caller wants unnamed, entry is named -- skip */
                 name_ok = 0;
             }
 
             if (name_ok && ale.mft_inode != base_inode) {
-                /* Attribute lives in an extension record — read it */
+                /* Attribute lives in an extension record -- read it */
                 uintptr_t rec_phys = pmm_alloc_contiguous(1);
                 if (!rec_phys)
                     return NULL;
@@ -322,12 +322,12 @@ static const uint8_t *read_attrlist_content(struct ntfs_volume *vol,
     *alloc_phys = 0;
 
     if (al_ah->non_resident == 0) {
-        /* Resident — data is inline */
+        /* Resident -- data is inline */
         *data_len = al_ah->content_length;
         return al_attr + al_ah->content_offset;
     }
 
-    /* Non-resident $ATTRIBUTE_LIST — decode data runs and read from disk */
+    /* Non-resident $ATTRIBUTE_LIST -- decode data runs and read from disk */
     {
         struct ntfs_data_run runs[32];
         struct ntfs_nonres_header nrhdr;
@@ -358,7 +358,7 @@ static const uint8_t *read_attrlist_content(struct ntfs_volume *vol,
             uint32_t to_read;
 
             if (runs[ri].lcn == NTFS_LCN_SPARSE)
-                continue;  /* Sparse run — skip */
+                continue;  /* Sparse run -- skip */
 
             if (byte_len > total_len - buf_off)
                 byte_len = total_len - buf_off;
@@ -400,7 +400,7 @@ const uint8_t *ntfs_attr_find_ext(struct ntfs_volume *vol,
     if (found)
         return found;
 
-    /* Not in base record — check for $ATTRIBUTE_LIST */
+    /* Not in base record -- check for $ATTRIBUTE_LIST */
     {
         struct ntfs_attr_header al_ah;
         const uint8_t *al_attr;
@@ -408,7 +408,7 @@ const uint8_t *ntfs_attr_find_ext(struct ntfs_volume *vol,
         al_attr = ntfs_attr_find(record, hdr,
                                   NTFS_ATTR_ATTRIBUTE_LIST, &al_ah);
         if (!al_attr)
-            return NULL;  /* No $ATTRIBUTE_LIST — attribute doesn't exist */
+            return NULL;  /* No $ATTRIBUTE_LIST -- attribute doesn't exist */
 
         {
             const uint8_t *al_data;
@@ -459,7 +459,7 @@ const uint8_t *ntfs_attr_find_named_ext(struct ntfs_volume *vol,
     if (found)
         return found;
 
-    /* Not in base record — check for $ATTRIBUTE_LIST */
+    /* Not in base record -- check for $ATTRIBUTE_LIST */
     {
         struct ntfs_attr_header al_ah;
         const uint8_t *al_attr;

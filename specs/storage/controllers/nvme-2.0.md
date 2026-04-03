@@ -1,4 +1,4 @@
-# NVMe 2.0 — Technical Specification for OS Implementation
+# NVMe 2.0 -- Technical Specification for OS Implementation
 
 ## Overview and Architectural Context
 
@@ -16,11 +16,11 @@ millions of IOPS and microsecond-class latencies on modern hardware.
 The NVMe 2.0 revision (released June 2021) refactored the previously monolithic specification into
 modular documents:
 
-- **NVM Express Base Specification** — controller registers, queue mechanics, admin commands
-- **NVM Command Set Specification** — read/write/flush/trim for block storage
-- **Zoned Namespaces (ZNS) Command Set** — zone-based storage for SSDs
-- **Key Value (KV) Command Set** — key-value pair storage
-- **Transport Specifications** — PCIe, RDMA (RoCE/iWARP), TCP transports
+- **NVM Express Base Specification** -- controller registers, queue mechanics, admin commands
+- **NVM Command Set Specification** -- read/write/flush/trim for block storage
+- **Zoned Namespaces (ZNS) Command Set** -- zone-based storage for SSDs
+- **Key Value (KV) Command Set** -- key-value pair storage
+- **Transport Specifications** -- PCIe, RDMA (RoCE/iWARP), TCP transports
 
 This specification covers the PCIe transport with the NVM Command Set, which is the mandatory
 baseline for all NVMe controllers.
@@ -151,7 +151,7 @@ multi-byte registers are **little-endian**.
 
 ---
 
-## Controller Capabilities Register (CAP) — Offset 0x0000
+## Controller Capabilities Register (CAP) -- Offset 0x0000
 
 The CAP register is a **64-bit read-only** register that defines the hardware limits of the
 controller. The driver **must** parse this register before any configuration.
@@ -198,7 +198,7 @@ uint8_t  mpsmax    = (cap >> 52) & 0x0F;           /* max page size exponent    
 
 ---
 
-## Controller Configuration Register (CC) — Offset 0x0014
+## Controller Configuration Register (CC) -- Offset 0x0014
 
 The CC register is a **32-bit read/write** register used to configure the controller before
 enabling it. Most fields can only be modified when `CC.EN = 0`.
@@ -225,7 +225,7 @@ enabling it. Most fields can only be modified when `CC.EN = 0`.
 
 ---
 
-## Controller Status Register (CSTS) — Offset 0x001C
+## Controller Status Register (CSTS) -- Offset 0x001C
 
 The CSTS register is a **32-bit read-only** register indicating the current controller state.
 
@@ -245,7 +245,7 @@ The CSTS register is a **32-bit read-only** register indicating the current cont
 
 ---
 
-## Admin Queue Attributes Register (AQA) — Offset 0x0024
+## Admin Queue Attributes Register (AQA) -- Offset 0x0024
 
 The AQA register is a **32-bit read/write** register that specifies the sizes of the Admin
 Submission Queue and Admin Completion Queue. Must be configured before setting `CC.EN = 1`.
@@ -263,12 +263,12 @@ Submission Queue and Admin Completion Queue. Must be configured before setting `
 
 ## Admin Queue Base Address Registers
 
-### ASQ — Offset 0x0028 (Admin Submission Queue Base Address)
+### ASQ -- Offset 0x0028 (Admin Submission Queue Base Address)
 
 A **64-bit read/write** register containing the physical memory address of the Admin
 Submission Queue. The address must be **page-aligned** (aligned to `CC.MPS`).
 
-### ACQ — Offset 0x0030 (Admin Completion Queue Base Address)
+### ACQ -- Offset 0x0030 (Admin Completion Queue Base Address)
 
 A **64-bit read/write** register containing the physical memory address of the Admin
 Completion Queue. The address must be **page-aligned** (aligned to `CC.MPS`).
@@ -279,7 +279,7 @@ Completion Queue. The address must be **page-aligned** (aligned to `CC.MPS`).
 
 ---
 
-## Doorbell Registers — Offset 0x1000+
+## Doorbell Registers -- Offset 0x1000+
 
 Doorbell registers are the mechanism by which the host notifies the controller of new
 submissions and completed completions. Each queue gets two doorbells.
@@ -350,7 +350,7 @@ locality and avoids completion queue contention.
 
 ---
 
-## Submission Queue Entry (SQE) — 64 Bytes
+## Submission Queue Entry (SQE) -- 64 Bytes
 
 The SQE is the fixed-size command structure written by the host into Submission Queues.
 All fields are **little-endian**.
@@ -371,10 +371,10 @@ typedef struct {
     uint32_t cdw2;             /* command-specific                  */
     uint32_t cdw3;             /* command-specific                  */
 
-    /* Metadata Pointer (MPTR) — Dwords 4–5 */
+    /* Metadata Pointer (MPTR) -- Dwords 4–5 */
     uint64_t mptr;             /* metadata pointer                  */
 
-    /* Data Pointer (DPTR) — Dwords 6–9 */
+    /* Data Pointer (DPTR) -- Dwords 6–9 */
     uint64_t prp1;             /* PRP Entry 1 or SGL first segment  */
     uint64_t prp2;             /* PRP Entry 2 or SGL second segment */
 
@@ -408,7 +408,7 @@ typedef struct {
 
 ---
 
-## Completion Queue Entry (CQE) — 16 Bytes
+## Completion Queue Entry (CQE) -- 16 Bytes
 
 When the controller completes a command, it posts a CQE to the associated Completion Queue
 via DMA write. All fields are **little-endian**.
@@ -430,21 +430,21 @@ typedef struct {
 | -------- | ------ | ---- | -------------------------------------------------------------- |
 | CDW0     | 0x00   | 4    | Command-specific result (e.g., created queue ID)               |
 | Reserved | 0x04   | 4    | Reserved                                                        |
-| SQHD     | 0x08   | 2    | SQ Head Pointer — how far the controller has consumed the SQ   |
+| SQHD     | 0x08   | 2    | SQ Head Pointer -- how far the controller has consumed the SQ   |
 | SQID     | 0x0A   | 2    | Submission Queue ID this completion belongs to                  |
-| CID      | 0x0C   | 2    | Command ID — matches the CID from the original SQE              |
+| CID      | 0x0C   | 2    | Command ID -- matches the CID from the original SQE              |
 | Status   | 0x0E   | 2    | Phase tag (bit 0), Status Code Type (11:9), Status Code (15:1) |
 
 ### Status Field Layout (16 bits)
 
 | Bits  | Field | Description                                                          |
 | ----- | ----- | -------------------------------------------------------------------- |
-| 0     | P     | Phase Tag — toggles each time the CQ wraps around                    |
+| 0     | P     | Phase Tag -- toggles each time the CQ wraps around                    |
 | 1     | SC.0  | Status Code bit 0                                                    |
 | 8:1   | SC    | Status Code (8 bits)                                                 |
 | 11:9  | SCT   | Status Code Type (`0` = Generic, `1` = Command Specific, `2` = Media)|
 | 12    | CRD   | Command Retry Delay                                                  |
-| 13    | M     | More — additional status in Error Information log                    |
+| 13    | M     | More -- additional status in Error Information log                    |
 | 14    | DNR   | Do Not Retry (`1` = retrying will not succeed)                       |
 | 15    | Rsvd  | Reserved                                                              |
 
@@ -466,7 +466,7 @@ The phase tag eliminates the need for the host to read MMIO registers to detect 
 1. Host initializes all CQ entries to zero (all phase bits = 0)
 2. Host sets expected phase = 1
 3. Controller writes CQE with phase = 1 when completing a command
-4. Host polls `cqe[head].status & 0x01` — if it matches expected phase, it is a new entry
+4. Host polls `cqe[head].status & 0x01` -- if it matches expected phase, it is a new entry
 5. Host processes the CQE and advances the head pointer
 6. When head wraps to index 0, host flips expected phase (1 → 0, 0 → 1)
 7. Host writes new head to CQ Head Doorbell to free consumed slots
@@ -507,11 +507,11 @@ is a 64-bit physical memory address.
 | Crosses 1 page boundary       | First page address      | Second page address               |
 | Spans > 2 pages               | First page address      | Pointer to PRP List in host RAM   |
 
-**PRP List** — a physically contiguous array of 64-bit PRP entries pointing to subsequent
+**PRP List** -- a physically contiguous array of 64-bit PRP entries pointing to subsequent
 data pages. The list itself must be page-aligned and physically contiguous.
 
 > [!CAUTION]
-> PRP1 does **not** need to be page-aligned — the offset within the page determines the
+> PRP1 does **not** need to be page-aligned -- the offset within the page determines the
 > starting byte. However, all subsequent PRP entries (in PRP2 or the PRP List) **must** be
 > page-aligned.
 
@@ -544,8 +544,8 @@ an operational state.
 | Step | Action                                                                        |
 | ---- | ----------------------------------------------------------------------------- |
 | 1    | Map BAR0/BAR1 MMIO region into kernel virtual address space (uncached)        |
-| 2    | Read `CAP` register — record MQES, TO, DSTRD, MPSMIN, MPSMAX, CSS            |
-| 3    | Read `VS` register — verify controller NVMe version                           |
+| 2    | Read `CAP` register -- record MQES, TO, DSTRD, MPSMIN, MPSMAX, CSS            |
+| 3    | Read `VS` register -- verify controller NVMe version                           |
 | 4    | Disable controller: write `CC.EN = 0`                                         |
 | 5    | Wait for `CSTS.RDY = 0` (poll, timeout = `CAP.TO × 500 ms`)                  |
 | 6    | Configure `CC`: set MPS, CSS=0 (NVM), AMS=0 (Round Robin), IOSQES=6, IOCQES=4|
@@ -555,13 +555,13 @@ an operational state.
 | 10   | Write queue sizes to `AQA` register (ASQS and ACQS fields)                    |
 | 11   | Enable controller: set `CC.EN = 1`                                            |
 | 12   | Wait for `CSTS.RDY = 1` (poll, timeout = `CAP.TO × 500 ms`)                  |
-| 13   | If `CSTS.CFS = 1` after enable, controller is faulty — abort initialization  |
+| 13   | If `CSTS.CFS = 1` after enable, controller is faulty -- abort initialization  |
 | 14   | Issue Identify Controller (opcode 0x06, CNS=1) to get controller capabilities |
 | 15   | Parse MDTS, SQES, CQES, NN (number of namespaces) from Identify data         |
 | 16   | Issue Identify Namespace List (opcode 0x06, CNS=2) to enumerate namespaces    |
 | 17   | Configure MSI-X interrupt vectors (1 per planned I/O CQ + 1 for Admin CQ)    |
-| 18   | Create I/O CQs (Admin opcode 0x05) — one per CPU core                        |
-| 19   | Create I/O SQs (Admin opcode 0x01) — one per CPU core, bound to its CQ       |
+| 18   | Create I/O CQs (Admin opcode 0x05) -- one per CPU core                        |
+| 19   | Create I/O SQs (Admin opcode 0x01) -- one per CPU core, bound to its CQ       |
 | 20   | Read namespace capacity via Identify Namespace (CNS=0) for each active NSID   |
 
 > [!CAUTION]
@@ -626,23 +626,23 @@ configuration, namespace topology, and health monitoring.
 
 | CDW   | Bits   | Field                                                             |
 | ----- | ------ | ----------------------------------------------------------------- |
-| CDW10 | 15:0   | Queue Identifier (QID) — unique ID for this CQ                   |
-| CDW10 | 31:16  | Queue Size (QSIZE) — 0-based (0 = 1 entry, 0xFFFF = 65,536)     |
-| CDW11 | 0      | Physically Contiguous (PC) — `1` if CQ memory is contiguous      |
-| CDW11 | 1      | Interrupts Enabled (IEN) — `1` to enable interrupts for this CQ  |
-| CDW11 | 31:16  | Interrupt Vector (IV) — MSI-X vector assigned to this CQ         |
+| CDW10 | 15:0   | Queue Identifier (QID) -- unique ID for this CQ                   |
+| CDW10 | 31:16  | Queue Size (QSIZE) -- 0-based (0 = 1 entry, 0xFFFF = 65,536)     |
+| CDW11 | 0      | Physically Contiguous (PC) -- `1` if CQ memory is contiguous      |
+| CDW11 | 1      | Interrupts Enabled (IEN) -- `1` to enable interrupts for this CQ  |
+| CDW11 | 31:16  | Interrupt Vector (IV) -- MSI-X vector assigned to this CQ         |
 | PRP1  |        | Physical address of the CQ memory                                 |
 
 ### Create I/O Submission Queue (Opcode 0x01)
 
 | CDW   | Bits   | Field                                                             |
 | ----- | ------ | ----------------------------------------------------------------- |
-| CDW10 | 15:0   | Queue Identifier (QID) — unique ID for this SQ                   |
-| CDW10 | 31:16  | Queue Size (QSIZE) — 0-based                                     |
-| CDW11 | 0      | Physically Contiguous (PC) — `1` if SQ memory is contiguous      |
-| CDW11 | 2:1    | Queue Priority (QPRIO) — `00b` Urgent, `01b` High, `10b`        |
+| CDW10 | 15:0   | Queue Identifier (QID) -- unique ID for this SQ                   |
+| CDW10 | 31:16  | Queue Size (QSIZE) -- 0-based                                     |
+| CDW11 | 0      | Physically Contiguous (PC) -- `1` if SQ memory is contiguous      |
+| CDW11 | 2:1    | Queue Priority (QPRIO) -- `00b` Urgent, `01b` High, `10b`        |
 |       |        | Medium, `11b` Low                                                 |
-| CDW11 | 31:16  | Completion Queue Identifier (CQID) — which CQ receives results   |
+| CDW11 | 31:16  | Completion Queue Identifier (CQID) -- which CQ receives results   |
 | PRP1  |        | Physical address of the SQ memory                                 |
 
 > [!IMPORTANT]
@@ -717,19 +717,19 @@ NVM I/O commands operate on I/O Queues (Queue IDs 1+) and perform actual data tr
 | `0x15` | Reservation Release   | Release a previously acquired reservation              |
 | `0x19` | Copy                  | Copy data within a namespace (added in NVMe 2.0)       |
 
-### Read Command (Opcode 0x02) — CDW Layout
+### Read Command (Opcode 0x02) -- CDW Layout
 
 | CDW   | Bits   | Field                                                             |
 | ----- | ------ | ----------------------------------------------------------------- |
 | CDW10 | 31:0   | Starting LBA (lower 32 bits)                                     |
 | CDW11 | 31:0   | Starting LBA (upper 32 bits)                                     |
-| CDW12 | 15:0   | Number of Logical Blocks (NLB) — 0-based (0 = 1 block)           |
-| CDW12 | 25     | Limited Retry (LR) — `1` = limited retries on media error        |
-| CDW12 | 26     | Force Unit Access (FUA) — `1` = read from NVM, bypass cache      |
+| CDW12 | 15:0   | Number of Logical Blocks (NLB) -- 0-based (0 = 1 block)           |
+| CDW12 | 25     | Limited Retry (LR) -- `1` = limited retries on media error        |
+| CDW12 | 26     | Force Unit Access (FUA) -- `1` = read from NVM, bypass cache      |
 | PRP1  |        | Physical address of read destination buffer                       |
 | PRP2  |        | Second PRP entry or PRP List pointer (for multi-page reads)       |
 
-### Write Command (Opcode 0x01) — CDW Layout
+### Write Command (Opcode 0x01) -- CDW Layout
 
 Identical to Read except data flows from host memory to NVM. Same CDW10–CDW12 layout.
 
@@ -769,7 +769,7 @@ The driver retrieves diagnostic data using the Get Log Page admin command (opcod
 | `0x02`      | SMART / Health Information | Lifetime statistics, temperature, spare blocks   |
 | `0x03`      | Firmware Slot Information  | Active firmware version, available update slots  |
 
-### SMART / Health Information (Log Page 0x02) — Key Fields
+### SMART / Health Information (Log Page 0x02) -- Key Fields
 
 | Offset | Size | Field                       | Description                                |
 | ------ | ---- | --------------------------- | ------------------------------------------ |
@@ -810,9 +810,9 @@ without requiring constant log page polling.
 
 | Type | Meaning                                                                   |
 | ---- | ------------------------------------------------------------------------- |
-| 0    | Error Status — unrecoverable error occurred                               |
-| 1    | SMART / Health Status — threshold exceeded, temperature warning, etc.     |
-| 2    | Notice — namespace attribute changed, firmware activation, etc.           |
+| 0    | Error Status -- unrecoverable error occurred                               |
+| 1    | SMART / Health Status -- threshold exceeded, temperature warning, etc.     |
+| 2    | Notice -- namespace attribute changed, firmware activation, etc.           |
 | 6    | I/O Command Set Specific                                                   |
 | 7    | Vendor Specific                                                            |
 
@@ -865,16 +865,16 @@ identified by a Namespace Identifier (NSID, 1-based).
 - Namespaces provide isolation for multi-tenancy
 - A controller exposes at least 1 namespace (the `NN` field in Identify Controller)
 
-### Multipath I/O (Asymmetric Namespace Access — ANA)
+### Multipath I/O (Asymmetric Namespace Access -- ANA)
 
 In enterprise configurations, a single namespace may be accessible through multiple
 controllers (dual-port SSDs, NVMe-oF). ANA reports the optimal path:
 
 | ANA State        | Meaning                                                         |
 | ---------------- | --------------------------------------------------------------- |
-| Optimized        | Primary path — lowest latency, full bandwidth                   |
-| Non-Optimized    | Secondary path — functional but higher latency                  |
-| Inaccessible     | Path unavailable — failover required                            |
+| Optimized        | Primary path -- lowest latency, full bandwidth                   |
+| Non-Optimized    | Secondary path -- functional but higher latency                  |
+| Inaccessible     | Path unavailable -- failover required                            |
 | Persistent Loss  | Path permanently failed                                         |
 
 ### NVMe Reservations

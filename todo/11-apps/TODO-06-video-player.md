@@ -1,15 +1,15 @@
-# TODO-06 — Video Player
+# TODO-06 -- Video Player
 
-> **Goal:** Build `player.exe` — a video player for Impossible OS backed by **pl_mpeg** (public
+> **Goal:** Build `player.exe` -- a video player for Impossible OS backed by **pl_mpeg** (public
 > domain, single-header MPEG-1/MPEG audio decoder). Decodes MPEG-1 video frames, converts YCbCr
 > to RGB via an SSE2-optimised path, synchronises A/V streams against a wall-clock baseline,
 > and presents a clean windowed UI with seek, zoom, fullscreen, playlist, and SRT subtitles.
 
 > [!IMPORTANT]
 > Audio subsystem (`audio_mixer_stream_add`, `audio_mixer_stream_stop`) from
-> `09-services-security/TODO-01-audio-system.md §2` **must** be complete before §3 A/V sync —
+> `09-services-security/TODO-01-audio-system.md §2` **must** be complete before §3 A/V sync --
 > `→ XREF: 09-services-security/TODO-01 §2`.
-> All video frame buffers and PCM decode buffers are large (frame = width × height × 4 bytes) —
+> All video frame buffers and PCM decode buffers are large (frame = width × height × 4 bytes) --
 > **always use `pmm_alloc_contiguous()` for these**; `kmalloc` heap is only 2 MiB.
 > SSE2 is available (`-msse2` is already in the kernel build flags) but the kernel uses
 > `-mno-sse` / `-mno-sse2` by default; the player app compiles separately as a user-mode EIF
@@ -19,14 +19,14 @@
 
 ## Inputs
 
-- `09-services-security/TODO-01-audio-system.md §2` — `audio_mixer_stream_add(pcm, samples, vol)`, `audio_mixer_stream_stop(handle)` from `include/audio_mixer.h`
-- `include/kernel/timer.h` — `system_get_ticks()` (monotonic ms counter), `sleep_ms(ms)`
-- `include/gfx.h` — `gfx_surface_create()`, `gfx_fill_rect()`, `gfx_blit()`, `gfx_scale_blit()`
-- `include/desktop/controls.h` — `CTRL_BUTTON`, `CTRL_SCROLLBAR` (seek bar via `CTRL_SCROLLBAR_HORIZ`), `CTRL_TEXTBOX`
-- `include/desktop/wm.h` — `wm_create_window()`, `wm_set_fullscreen()`, `wm_mark_dirty()`
-- `include/desktop/file_assoc.h` — `file_assoc_set(ext, prog_id, path)` (→ XREF `08-desktop-shell/TODO-02 §1`)
-- `include/registry.h` — `reg_set_string`, `reg_get_string`, `reg_enum_keys`
-- `include/kernel/vfs.h` — `vfs_open`, `vfs_read`, `vfs_stat` — file I/O for pl_mpeg + SRT
+- `09-services-security/TODO-01-audio-system.md §2` -- `audio_mixer_stream_add(pcm, samples, vol)`, `audio_mixer_stream_stop(handle)` from `include/audio_mixer.h`
+- `include/kernel/timer.h` -- `system_get_ticks()` (monotonic ms counter), `sleep_ms(ms)`
+- `include/gfx.h` -- `gfx_surface_create()`, `gfx_fill_rect()`, `gfx_blit()`, `gfx_scale_blit()`
+- `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_SCROLLBAR` (seek bar via `CTRL_SCROLLBAR_HORIZ`), `CTRL_TEXTBOX`
+- `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_fullscreen()`, `wm_mark_dirty()`
+- `include/desktop/file_assoc.h` -- `file_assoc_set(ext, prog_id, path)` (→ XREF `08-desktop-shell/TODO-02 §1`)
+- `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_enum_keys`
+- `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_stat` -- file I/O for pl_mpeg + SRT
 
 ---
 
@@ -63,7 +63,7 @@
   #define PLMPEG_REALLOC(p,o,n)  plmpeg_realloc_shim(p, o, n)
   ```
   where `PAGES(sz) = (sz + 4095) / 4096`; implement `plmpeg_realloc_shim` as alloc-copy-free
-- [ ] File I/O callbacks: pl_mpeg needs `load_buffer_cb(plm, buffer, len, user)` and `seek_cb(plm, pos, user)` — wire to `vfs_read` / `vfs_seek` using the open fd passed as `user`
+- [ ] File I/O callbacks: pl_mpeg needs `load_buffer_cb(plm, buffer, len, user)` and `seek_cb(plm, pos, user)` -- wire to `vfs_read` / `vfs_seek` using the open fd passed as `user`
 - [ ] `plm_t *plm = plm_create_with_callbacks(load_cb, seek_cb, buf_size=8192, FALSE, fd)`
 - [ ] `plm_get_width(plm)`, `plm_get_height(plm)` → allocate output `gfx_surface_t` via `gfx_surface_create(w, h)`
 - [ ] `plm_get_framerate(plm)` → compute `frame_period_ms = 1000.0 / fps`
@@ -151,7 +151,7 @@
 
 **Source file:** `src/apps/player/player_ui.c`
 
-- [ ] **Window**: `wm_create_window("Impossible Player — {filename}", 800, 520)` (resizable)
+- [ ] **Window**: `wm_create_window("Impossible Player -- {filename}", 800, 520)` (resizable)
 - [ ] **Video canvas** (fills window above controls bar):
   - [ ] Compute aspect-ratio-correct letterbox: `scale = min(canvas_w / vid_w, canvas_h / vid_h)`; `dst_w = vid_w × scale`, `dst_h = vid_h × scale`; offset `x = (canvas_w - dst_w)/2`, `y = (canvas_h - dst_h)/2`
   - [ ] Black `gfx_fill_rect` for letterbox bars
@@ -163,7 +163,7 @@
   - [ ] Volume slider: `CTRL_SCROLLBAR_HORIZ` (range 0–100); change → `audio_mixer_set_stream_volume(handle, val × 255 / 100)`
   - [ ] 🔊 mute toggle button
 - [ ] **Fullscreen** (F11 or double-click canvas):
-  - [ ] `wm_set_fullscreen(win, TRUE)` — hides title bar
+  - [ ] `wm_set_fullscreen(win, TRUE)` -- hides title bar
   - [ ] Controls bar hidden; auto-show on mouse move; auto-hide after 3 s of no mouse activity (`hide_timer_ms`)
   - [ ] Cursor hidden after 3 s in fullscreen; restored on mouse move
   - [ ] F11 or Escape exits fullscreen
@@ -175,7 +175,7 @@
 
 **Source file:** `src/apps/player/player_files.c`
 
-- [ ] **CLI**: `player.exe C:\path\video.mpg` — open and begin playback immediately
+- [ ] **CLI**: `player.exe C:\path\video.mpg` -- open and begin playback immediately
 - [ ] **Without args**: show open-file dialog (`dialog_file_open()`) filtered to `*.mpg;*.mpeg;*.avi`
 - [ ] **File→Open**: `CTRL_TEXTBOX`-based open dialog → load and play
 - [ ] **Drag file onto window**: `WM_DROPFILES` message → extract path → `vp_destroy` current + `vp_create` + `vp_play`
@@ -197,9 +197,9 @@
 - [ ] **Add / Remove**: right-click context menu on playlist item: `Remove`, `Move Up`, `Move Down`; drag-to-reorder (stretch)
 - [ ] **Next / Previous**: `[⏭]`/ `[⏮]` toolbar buttons advance/rewind playlist; also `Media → Next Track` / `Prev Track` menu items; end of file → auto-advance to next playlist item
 - [ ] **Loop modes** (cycle with `L` key):
-  - `NO_LOOP` — stop at end of playlist
-  - `LOOP_TRACK` — replay current item
-  - `LOOP_PLAYLIST` — wrap around to first item after last
+  - `NO_LOOP` -- stop at end of playlist
+  - `LOOP_TRACK` -- replay current item
+  - `LOOP_PLAYLIST` -- wrap around to first item after last
   - Loop icon in controls bar changes per mode: `➡` / `🔁` / `🔂`
 - [ ] **Shuffle** (`Z` key toggle): randomise playback order (Fisher-Yates shuffle of index array); re-shuffle on full cycle
 - [ ] **Persist**: on exit, save playlist to `HKCU\Software\Impossible\Player\Playlist\{n}` (up to 256 entries); restore on next launch; clear on `File → Clear Playlist`
@@ -222,7 +222,7 @@
 
 ## 8. Format Support Roadmap `[Sonnet]`
 
-> Planning section — no new code; defines the codec extension path.
+> Planning section -- no new code; defines the codec extension path.
 
 - [ ] **Phase 1 (this TODO):** MPEG-1 video + MPEG audio Layers 1/2 via `pl_mpeg` → `.mpg`, `.mpeg` playback
 - [ ] **Phase 2 (stretch):** H.264 / AVC baseline via **h264bsd** (BSD, ~25K lines of C89):
@@ -243,18 +243,18 @@
 
 | ⭐ | Feature                                  | 🪟 Win11                       | 🐧 Linux                 | 🚀 Impossible OS                                       |
 |----|------------------------------------------|-----------------------------|-----------------------|-----------------------------------------------------|
-| 💎 | MPEG-1 video decode                      | ✅ Windows Media Player     | ✅ VLC / mpv          | ⬜ §1 — pl_mpeg single-header port                  |
-| 💎 | YCbCr → RGB                              | ✅ WMP (GPU)                | ✅ VLC (libyuv)       | ⬜ §2 — SSE2 4-pixel-at-a-time                      |
-| 💎 | A/V synchronisation + drift correction   | ✅ WMP                      | ✅ mpv (audio-driven) | ⬜ §3 — 3-frame ring buffer, ±200 ms                |
-| 💎 | Seek bar + time display + volume         | ✅ WMP                      | ✅ VLC                | ⬜ §4 — CTRL_SCROLLBAR seek, OSD                    |
-| ⭐ | Fullscreen with 3 s auto-hiding controls | ✅ WMP / films app          | ✅ VLC / mpv          | ⬜ §4 — `wm_set_fullscreen`, hide_timer_ms          |
-| 💎 | Playlist with loop + shuffle             | ✅ WMP                      | ✅ VLC                | ⬜ §6 — CTRL_LISTVIEW sidebar, Fisher-Yates shuffle |
-| ⭐ | SRT subtitle overlay with TTF text       | ✅ WMP (limited) / films ✅ | ✅ VLC (built-in)     | ⬜ §7 — (Stretch) — ; `ttf_draw_string` +           |
-| 💎 | File associations                        | ✅ WMP default              | ✅ `xdg-open`         | ⬜ §5 — `file_assoc_set`                            |
-| 💎 | H.264 / MP4 support                      | ✅ WMP / HEVC codec         | ✅ VLC / mpv          | ⬜ §8 — (Phase 2) — ; h264bsd                       |
+| 💎 | MPEG-1 video decode                      | ✅ Windows Media Player     | ✅ VLC / mpv          | ⬜ §1 -- pl_mpeg single-header port                  |
+| 💎 | YCbCr → RGB                              | ✅ WMP (GPU)                | ✅ VLC (libyuv)       | ⬜ §2 -- SSE2 4-pixel-at-a-time                      |
+| 💎 | A/V synchronisation + drift correction   | ✅ WMP                      | ✅ mpv (audio-driven) | ⬜ §3 -- 3-frame ring buffer, ±200 ms                |
+| 💎 | Seek bar + time display + volume         | ✅ WMP                      | ✅ VLC                | ⬜ §4 -- CTRL_SCROLLBAR seek, OSD                    |
+| ⭐ | Fullscreen with 3 s auto-hiding controls | ✅ WMP / films app          | ✅ VLC / mpv          | ⬜ §4 -- `wm_set_fullscreen`, hide_timer_ms          |
+| 💎 | Playlist with loop + shuffle             | ✅ WMP                      | ✅ VLC                | ⬜ §6 -- CTRL_LISTVIEW sidebar, Fisher-Yates shuffle |
+| ⭐ | SRT subtitle overlay with TTF text       | ✅ WMP (limited) / films ✅ | ✅ VLC (built-in)     | ⬜ §7 -- (Stretch) -- ; `ttf_draw_string` +           |
+| 💎 | File associations                        | ✅ WMP default              | ✅ `xdg-open`         | ⬜ §5 -- `file_assoc_set`                            |
+| 💎 | H.264 / MP4 support                      | ✅ WMP / HEVC codec         | ✅ VLC / mpv          | ⬜ §8 -- (Phase 2) -- ; h264bsd                       |
 
 Impossible OS ships a fully native, zero-dependency video player backed by a public-domain
-single-header codec — no COM, no DirectShow, no GStreamer pipeline. The SSE2 YCbCr converter
+single-header codec -- no COM, no DirectShow, no GStreamer pipeline. The SSE2 YCbCr converter
 and 3-frame ring buffer with drift correction give smooth playback on commodity hardware from
 day one.
 
@@ -265,7 +265,7 @@ day one.
 Run `bash scripts/build.sh run` for each verification step.
 
 - [ ] **pl_mpeg port:** `vp_create(fd)` on `test.mpg`; serial log shows width/height/fps/duration; no allocation panics
-- [ ] **YCbCr scalar:** call `yuv420_to_rgb` on first frame; dump pixel `[0,0]` — must be within ±3 of reference value; no visible colour-channel swap
+- [ ] **YCbCr scalar:** call `yuv420_to_rgb` on first frame; dump pixel `[0,0]` -- must be within ±3 of reference value; no visible colour-channel swap
 - [ ] **YCbCr SSE2:** pixel values identical to scalar path for same frame; serial log shows `yuv_convert: {w}×{h} in < {frame_period_ms} ms`
 - [ ] **A/V sync:** play 30 s of `test.mpg` with audio; no visible audio/video drift; serial log shows drift < 50 ms throughout
 - [ ] **Seek:** drag seek bar to 50%; playback resumes from correct position; audio restarts in sync
@@ -275,4 +275,4 @@ Run `bash scripts/build.sh run` for each verification step.
 - [ ] **Playlist:** add 3 files; play first; auto-advances to second at end; loop-playlist wraps back to first
 - [ ] **File assoc:** `.mpg` double-click in File Manager → `player.exe` opens and begins playback
 - [ ] **Subtitles (stretch):** place `test.srt` next to `test.mpg`; open video → subtitles auto-load; correct text overlaid at correct timestamps; `S` toggles off/on
-- [ ] Commit: `"apps: video player — pl_mpeg, YCbCr/SSE2, A/V sync, UI, playlist, subtitles"`
+- [ ] Commit: `"apps: video player -- pl_mpeg, YCbCr/SSE2, A/V sync, UI, playlist, subtitles"`

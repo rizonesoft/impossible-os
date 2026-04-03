@@ -1,5 +1,5 @@
 /* ============================================================================
- * vfs.h — Virtual Filesystem with Windows-style Drive Letters
+ * vfs.h -- Virtual Filesystem with Windows-style Drive Letters
  *
  * Drive letter mounting: A:\, C:\, D:\ etc.
  * Backslash path parsing: C:\Users\Default\file.txt
@@ -52,7 +52,7 @@ typedef struct {
     uint32_t seconds;    /* seconds since boot */
 } filetime_t;
 
-/* Filesystem driver operations — implemented by each FS (IXFS, FAT32, etc.) */
+/* Filesystem driver operations -- implemented by each FS (IXFS, FAT32, etc.) */
 struct vfs_ops {
     int      (*open)(struct vfs_node *node, uint32_t flags);
     int      (*close)(struct vfs_node *node);
@@ -74,7 +74,7 @@ struct vfs_ops {
     int      (*flush)(struct vfs_node *node);
 };
 
-/* VFS node — represents a file, directory, or mountpoint */
+/* VFS node -- represents a file, directory, or mountpoint */
 struct vfs_node {
     char             name[VFS_MAX_NAME];
     uint8_t          type;       /* VFS_FILE, VFS_DIRECTORY, VFS_MOUNTPOINT */
@@ -87,7 +87,7 @@ struct vfs_node {
     struct vfs_node *parent;     /* parent directory */
 };
 
-/* Filesystem driver descriptor — registered by each FS implementation */
+/* Filesystem driver descriptor -- registered by each FS implementation */
 struct vfs_fs_driver {
     const char      *name;       /* "IXFS", "FAT32" */
     struct vfs_ops  *ops;        /* filesystem operations */

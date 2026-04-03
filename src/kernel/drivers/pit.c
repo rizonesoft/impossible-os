@@ -1,5 +1,5 @@
 /* ============================================================================
- * pit.c — Programmable Interval Timer (8253/8254) driver
+ * pit.c -- Programmable Interval Timer (8253/8254) driver
  *
  * Programs PIT channel 0 in rate generator mode (mode 2) to fire
  * IRQ 0 at ~100 Hz. Each tick increments a global counter used for
@@ -32,7 +32,7 @@ static spinlock_t pit_lock = SPINLOCK_INIT;
 /* PIT command byte:
  * Bits 7-6: Channel 0 (00)
  * Bits 5-4: Access mode lo/hi byte (11)
- * Bits 3-1: Mode 2 — rate generator (010)
+ * Bits 3-1: Mode 2 -- rate generator (010)
  * Bit 0:    Binary counting (0)
  * = 0b00110100 = 0x34 */
 #define PIT_CMD_CH0_RATE  0x34
@@ -43,7 +43,7 @@ static inline void outb(uint16_t port, uint8_t val)
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
-/* Global tick counter (volatile — modified in interrupt context) */
+/* Global tick counter (volatile -- modified in interrupt context) */
 static volatile uint64_t tick_count = 0;
 
 /* Computed divisor and actual frequency */
@@ -91,7 +91,7 @@ void pit_stop(void)
     outb(PIT_CHANNEL0, 0);
 }
 
-/* IRQ 0 handler — called on every PIT tick.
+/* IRQ 0 handler -- called on every PIT tick.
  * Handles tick counting and spinner callback only.
  * Preemptive scheduling is driven by the LAPIC timer handler.
  * Returns the same frame (no context switch from PIT). */
@@ -159,7 +159,7 @@ uint32_t pit_get_freq(void)
     return pit_actual_freq;
 }
 
-/* Wrapper to match timer_driver_t.init signature (PIT ignores hz — always PIT_TARGET_FREQ) */
+/* Wrapper to match timer_driver_t.init signature (PIT ignores hz -- always PIT_TARGET_FREQ) */
 static void pit_init_wrapper(uint32_t hz)
 {
     (void)hz;

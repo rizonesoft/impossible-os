@@ -1,12 +1,12 @@
 /* ============================================================================
- * image.c — Runtime image decoding (stb_image wrapper)
+ * image.c -- Runtime image decoding (stb_image wrapper)
  *
  * THIS FILE IS COMPILED WITH -msse2 (separate from rest of kernel).
  *
  * Uses stb_image to decode JPEG, PNG, BMP, GIF, TGA from memory.
  * Output is BGRA (0xAARRGGBB, same as gfx_color_t / framebuffer format).
  *
- * Memory strategy — tiered allocator:
+ * Memory strategy -- tiered allocator:
  *   Allocations <= 64 KB  → kmalloc  (stb_image work buffers)
  *   Allocations >  64 KB  → pmm_alloc_contiguous (decoded pixel data)
  *
@@ -25,7 +25,7 @@
 
 /* Allocations ≤ 4 KB go to kmalloc (heap); > 4 KB go to PMM.
  *
- * Why 4 KB? PMM allocates in 4 KB page granularity — anything smaller wastes
+ * Why 4 KB? PMM allocates in 4 KB page granularity -- anything smaller wastes
  * a full page. stb_image's small work buffers (Huffman tables, ~100-500 bytes)
  * total only a few KB and are safe on the heap. The big allocations (decoded
  * pixel buffer = w*h*4 = 3.6 MB, component buffers) go to PMM.
@@ -36,7 +36,7 @@
 
 /*
  * Track PMM allocations so we know the size for free/realloc.
- * 64 slots is plenty — stb_image typically has < 10 large allocations at once.
+ * 64 slots is plenty -- stb_image typically has < 10 large allocations at once.
  */
 #define PMM_TRACK_MAX  64
 
@@ -57,7 +57,7 @@ static void pmm_track_add(void *ptr, uint32_t size)
             return;
         }
     }
-    /* Table full — this is a bug, log it */
+    /* Table full -- this is a bug, log it */
     klog(LOG_ERROR, "IMG", "PMM track table full! (%u slots)", (uint32_t)PMM_TRACK_MAX);
 }
 
@@ -72,7 +72,7 @@ static uint32_t pmm_track_remove(void *ptr)
             return size;
         }
     }
-    return 0;  /* Not found — must be a kmalloc allocation */
+    return 0;  /* Not found -- must be a kmalloc allocation */
 }
 
 static int pmm_track_is_pmm(void *ptr)
@@ -140,7 +140,7 @@ static void *stbi_realloc_wrapper(void *ptr, uint32_t new_size)
 
     if (!ptr) return stbi_malloc_wrapper(new_size);
 
-    /* Look up old size — check PMM track table first */
+    /* Look up old size -- check PMM track table first */
     old_size = pmm_track_size(ptr);
 
     /* Allocate new buffer */
@@ -264,7 +264,7 @@ int image_load(image_t *img, const char *path)
         return -1;
     }
 
-    /* Allocate file read buffer — use PMM for large files (>64KB)
+    /* Allocate file read buffer -- use PMM for large files (>64KB)
      * to avoid exhausting the 2 MiB kernel heap. */
     if (file_size > LARGE_ALLOC_THRESHOLD) {
         uint64_t frames = (file_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;

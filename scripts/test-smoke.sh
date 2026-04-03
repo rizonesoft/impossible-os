@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# test-smoke.sh — Automated QEMU smoke test for CI/CD
+# test-smoke.sh -- Automated QEMU smoke test for CI/CD
 #
 # Builds the OS, boots in QEMU headless mode, captures serial output,
 # and checks for expected boot messages / absence of panics.
@@ -46,7 +46,7 @@ FAIL_PATTERNS=(
 )
 
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Impossible OS — Smoke Test${NC}"
+echo -e "${CYAN}  Impossible OS -- Smoke Test${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
 

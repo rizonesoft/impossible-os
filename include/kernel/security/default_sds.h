@@ -1,5 +1,5 @@
 /* ============================================================================
- * default_sds.h — Default security descriptors for kernel object types
+ * default_sds.h -- Default security descriptors for kernel object types
  *
  * SeCreateDefaultSD() returns a pointer to a static self-relative SD
  * blob appropriate for the given object type name.
@@ -16,20 +16,20 @@
 #define SE_SD_TYPE_REGISTRY_KEY  3   /* regkey: SY+BA=Full, BU=Read */
 
 /*
- * SeCreateDefaultSD — return a pointer to a static self-relative SD
+ * SeCreateDefaultSD -- return a pointer to a static self-relative SD
  * for the given object type.  Returns NULL for unknown types.
- * The returned pointer is to read-only static data — do not free.
+ * The returned pointer is to read-only static data -- do not free.
  */
 const void *SeCreateDefaultSD(uint32_t type);
 
 /*
- * SeGetDefaultSDSize — return the byte size of the SD returned by
+ * SeGetDefaultSDSize -- return the byte size of the SD returned by
  * SeCreateDefaultSD() for the given type.  Returns 0 for unknown types.
  */
 uint32_t SeGetDefaultSDSize(uint32_t type);
 
 /*
- * se_default_sds_init — pre-build the static SD blobs at boot time.
+ * se_default_sds_init -- pre-build the static SD blobs at boot time.
  * Called once from ob_init() or security subsystem init.
  */
 void se_default_sds_init(void);
@@ -38,7 +38,7 @@ void se_default_sds_init(void);
 #include "kernel/security/acl.h"
 
 /*
- * SeCreateCreatorSD — build an absolute SD owned by creator_sid with
+ * SeCreateCreatorSD -- build an absolute SD owned by creator_sid with
  * DACL: (A;;GA;;;creator)(A;;GA;;;SY)(A;;GR;;;WD).
  * Writes into sd_out (caller provides storage).
  * dacl_buf/dacl_buf_size: workspace for the DACL.

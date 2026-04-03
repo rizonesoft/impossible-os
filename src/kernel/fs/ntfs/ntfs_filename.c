@@ -1,5 +1,5 @@
 /* ============================================================================
- * ntfs_filename.c — $FILE_NAME Decoder (attribute type 0x30)
+ * ntfs_filename.c -- $FILE_NAME Decoder (attribute type 0x30)
  *
  * Parses $FILE_NAME attributes from MFT records, extracting parent
  * directory reference, timestamps, sizes, flags, and the filename

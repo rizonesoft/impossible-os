@@ -55,8 +55,8 @@ qemu-system-x86_64 \
 | Setting | Value | Why |
 |---------|-------|-----|
 | RAM | `-m 256M` | Minimum. 512M recommended for desktop |
-| Storage | AHCI (`-device ahci`) | Impossible OS uses AHCI DMA — no IDE/PIO |
-| Firmware | OVMF (`-bios`) | UEFI required — legacy BIOS will NOT boot |
+| Storage | AHCI (`-device ahci`) | Impossible OS uses AHCI DMA -- no IDE/PIO |
+| Firmware | OVMF (`-bios`) | UEFI required -- legacy BIOS will NOT boot |
 | Display | Default SDL or `-display gtk` | VGA framebuffer via GOP |
 | Serial | `-serial file:serial.log` | Captures boot log for debugging |
 | Network | `-netdev user,id=net0 -device rtl8139,netdev=net0` | RTL8139 NIC driver |

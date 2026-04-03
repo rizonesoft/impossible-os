@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# run-vbox.sh — Launch Impossible OS in VirtualBox (Linux/WSL)
+# run-vbox.sh -- Launch Impossible OS in VirtualBox (Linux/WSL)
 #
 # Prerequisites:
 #   1. Install VirtualBox: https://www.virtualbox.org/

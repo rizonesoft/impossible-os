@@ -1,5 +1,5 @@
 /* ============================================================================
- * ata.h — ATA PIO Disk Driver
+ * ata.h -- ATA PIO Disk Driver
  *
  * Supports primary ATA bus (ports 0x1F0–0x1F7, control 0x3F6).
  * Uses PIO (Programmed I/O) mode for sector read/write.

@@ -1,5 +1,5 @@
 /* ============================================================================
- * rtl8139.h — RTL8139 NIC driver
+ * rtl8139.h -- RTL8139 NIC driver
  *
  * Supports basic packet send/receive for the RTL8139 network card.
  * Requires PCI bus driver for device detection and BAR retrieval.

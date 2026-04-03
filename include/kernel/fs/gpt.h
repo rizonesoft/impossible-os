@@ -1,5 +1,5 @@
 /* ============================================================================
- * gpt.h — GUID Partition Table (GPT) Parser
+ * gpt.h -- GUID Partition Table (GPT) Parser
  *
  * Parses the GPT header (LBA 1) and partition entry array (LBA 2+) after
  * detecting a protective MBR with type 0xEE at LBA 0.
@@ -8,7 +8,7 @@
  * single-byte type IDs. The header and partition array are both protected
  * by CRC32 checksums.
  *
- * Full type GUID registry (36+ types) — see gpt.c for definitions.
+ * Full type GUID registry (36+ types) -- see gpt.c for definitions.
  * ============================================================================ */
 
 #pragma once

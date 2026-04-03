@@ -1,5 +1,5 @@
 /* ============================================================================
- * vmm.h — Virtual Memory Manager (x86-64 4-level paging)
+ * vmm.h -- Virtual Memory Manager (x86-64 4-level paging)
  *
  * Manages the kernel's PML4 page tables. Provides fine-grained 4 KiB
  * page mapping on top of the boot-time 2 MiB identity mapping.

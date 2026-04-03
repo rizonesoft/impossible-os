@@ -1,5 +1,5 @@
 /* ============================================================================
- * gallery.h — Control Gallery dialog
+ * gallery.h -- Control Gallery dialog
  *
  * A showcase window displaying all implemented controls (Button, Label,
  * TextBox, ScrollBar) for visual testing and demonstration.
@@ -11,7 +11,7 @@
 
 /* Open the Control Gallery window.
  * Creates a window with all available controls arranged in sections.
- * Safe to call multiple times — reopens if previously closed. */
+ * Safe to call multiple times -- reopens if previously closed. */
 void gallery_open(void);
 
 /* Render the gallery controls into its window buffer.

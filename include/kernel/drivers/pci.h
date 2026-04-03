@@ -1,5 +1,5 @@
 /* ============================================================================
- * pci.h — PCI bus driver
+ * pci.h -- PCI bus driver
  *
  * Configuration space access via I/O ports 0xCF8 (address) / 0xCFC (data).
  * Supports bus enumeration and device lookup by vendor/device ID.

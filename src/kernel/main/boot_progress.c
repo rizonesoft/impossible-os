@@ -73,7 +73,7 @@ static void serial_write_dec(uint32_t val)
 
 /* 8x8 hex font: 0-9, A-F (16 glyphs x 8 bytes = 128 bytes) */
 /* Thin 1-pixel stroke hex font (6×7 in an 8×8 cell, right-aligned).
- * Designed for subtle diagnostic display — not bold like the old font. */
+ * Designed for subtle diagnostic display -- not bold like the old font. */
 static const uint8_t s_hex_font[16][8] = {
     { 0x1C,0x22,0x22,0x22,0x22,0x22,0x1C,0x00 }, /* 0 */
     { 0x08,0x18,0x08,0x08,0x08,0x08,0x1C,0x00 }, /* 1 */
@@ -103,8 +103,8 @@ static const uint8_t s_hex_font[16][8] = {
 
 /* ---- 16-bit POST display (4 hex digits, thin font, 1×1 native) ----------- */
 
-#define POST16_GLYPH_W   8   /* 8 px wide — native 1× */
-#define POST16_GLYPH_H   8   /* 8 px tall — native 1× */
+#define POST16_GLYPH_W   8   /* 8 px wide -- native 1× */
+#define POST16_GLYPH_H   8   /* 8 px tall -- native 1× */
 #define POST16_GAP        2
 #define POST16_MARGIN     6
 #define POST16_TOP        6
@@ -127,7 +127,7 @@ void post_display16(uint16_t code)
         return;
 
     /* Respect boot.conf postcode=0 once config is parsed.
-     * Before config parse (g_boot_info zeroed), always show —
+     * Before config parse (g_boot_info zeroed), always show --
      * early POST codes are the most important for diagnostics. */
     if (g_boot_info.config.config_found && !g_boot_info.config.postcode)
         return;
@@ -149,7 +149,7 @@ void post_display16(uint16_t code)
 
     if (use_fb_driver) {
         /* Post-fb_init: use framebuffer driver (handles page flip + back buffer).
-         * Clear + draw + swap in one batch — no intermediate fb_swap between
+         * Clear + draw + swap in one batch -- no intermediate fb_swap between
          * clear and draw, so there's no visible flash frame. */
         fb_fill_rect(x0, y0, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
         for (d = 0; d < 4; d++) {

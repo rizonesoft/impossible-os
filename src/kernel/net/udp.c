@@ -1,5 +1,5 @@
 /* ============================================================================
- * udp.c — UDP send/receive
+ * udp.c -- UDP send/receive
  *
  * Builds/parses UDP datagrams. Dispatches to DHCP on port 68.
  * ============================================================================ */
@@ -37,7 +37,7 @@ void udp_handle(uint32_t src_ip, const void *data, uint32_t len)
         dhcp_handle(payload, payload_len);
         break;
     default:
-        /* No handler — silently drop */
+        /* No handler -- silently drop */
         break;
     }
 }
@@ -56,7 +56,7 @@ void udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
     hdr->src_port = htons(src_port);
     hdr->dst_port = htons(dst_port);
     hdr->length = htons((uint16_t)udp_len);
-    hdr->checksum = 0;  /* Optional for IPv4 — skip for simplicity */
+    hdr->checksum = 0;  /* Optional for IPv4 -- skip for simplicity */
 
     udp_memcpy(buf + UDP_HEADER_SIZE, payload, payload_len);
 

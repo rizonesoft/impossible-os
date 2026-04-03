@@ -1,5 +1,5 @@
 /* ============================================================================
- * spinner.c — Progressive arc-ring spinner (breathing animation engine)
+ * spinner.c -- Progressive arc-ring spinner (breathing animation engine)
  *
  * Windows 11-style Fluent 2 spinner: a dynamic arc that rotates while its
  * length oscillates.  Animation is driven by sleep_ms() polling loop
@@ -11,7 +11,7 @@
  *
  * Easing uses the Smoothstep polynomial (3x² - 2x³), which is the exact
  * closed-form simplification of the Fluent EasyEase cubic-bezier
- * (0.33, 0.0, 0.67, 1.0).  All math is integer-only — no FPU/SSE.
+ * (0.33, 0.0, 0.67, 1.0).  All math is integer-only -- no FPU/SSE.
  *
  * Part of the Progressive Spinner component (TODO-010.97 §2).
  * ============================================================================ */
@@ -28,8 +28,8 @@
 #define SPINNER_HALF_CYCLE   10  /* expand phase = contract phase */
 
 /* Arc sweep limits (in 0–255 angle units, mapping to 0–360°) */
-#define SPINNER_MIN_SWEEP    11  /* ~15° — forms a dot with rounded tips */
-#define SPINNER_MAX_SWEEP    192 /* ~270° — 3/4 of a circle */
+#define SPINNER_MIN_SWEEP    11  /* ~15° -- forms a dot with rounded tips */
+#define SPINNER_MAX_SWEEP    192 /* ~270° -- 3/4 of a circle */
 #define SPINNER_DELTA        (SPINNER_MAX_SWEEP - SPINNER_MIN_SWEEP) /* 181 */
 
 /* Start at 12 o'clock: -90° = 192 in uint8 (256 * 270/360) */
@@ -60,7 +60,7 @@ static uint32_t s_color;             /* accent color (0x00RRGGBB) */
 static uint32_t smoothstep256(uint32_t x)
 {
     if (x >= 256) return 256;
-    /* x² max = 65536, x³ max = 16777216 — fits uint32_t */
+    /* x² max = 65536, x³ max = 16777216 -- fits uint32_t */
     uint32_t x2 = x * x;
     uint32_t x3 = x2 * x;
     return (3 * x2 / 256) - (2 * x3 / 65536);
@@ -186,9 +186,9 @@ void spinner_init(int32_t cx, int32_t cy,
     s_active = 0;
 }
 
-/* Non-blocking start — registers a periodic timer tick callback.
+/* Non-blocking start -- registers a periodic timer tick callback.
  * The timer ISR drives animation at ~10fps (100Hz / 10).
- * spinner_advance() runs in interrupt context — keep it fast. */
+ * spinner_advance() runs in interrupt context -- keep it fast. */
 void spinner_start(void)
 {
     if (s_active) return;
@@ -199,7 +199,7 @@ void spinner_start(void)
 
 /* Advance one animation frame.  Called from timer tick ISR callback.
  * Renders the current frame and swaps the spinner bounding rect.
- * Runs in interrupt context — no sleeping, no locks. */
+ * Runs in interrupt context -- no sleeping, no locks. */
 void spinner_advance(void)
 {
     if (!s_active) return;

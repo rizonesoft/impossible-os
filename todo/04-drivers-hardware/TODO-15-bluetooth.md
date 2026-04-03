@@ -1,17 +1,17 @@
-# TODO-15 — Bluetooth Full Stack
+# TODO-15 -- Bluetooth Full Stack
 
-> **Goal:** Build the complete Bluetooth stack — HCI transport layer, chipset firmware loading (Intel AX200-BT, Realtek RTL8761B), L2CAP, SDP, HID profile, A2DP/SBC audio streaming with AVRCP, RFCOMM/SPP, BLE/GATT, pairing manager, and system UI (`bluetooth.cpl`, `btctl` shell) — enabling wireless keyboards, mice, headphones, and game controllers essential on every modern laptop.
+> **Goal:** Build the complete Bluetooth stack -- HCI transport layer, chipset firmware loading (Intel AX200-BT, Realtek RTL8761B), L2CAP, SDP, HID profile, A2DP/SBC audio streaming with AVRCP, RFCOMM/SPP, BLE/GATT, pairing manager, and system UI (`bluetooth.cpl`, `btctl` shell) -- enabling wireless keyboards, mice, headphones, and game controllers essential on every modern laptop.
 
 > [!IMPORTANT]
-> **Partial foundation:** `04-drivers-hardware/TODO-09-usb-stack.md §8` defines `bt_hci_usb.c` with `hci_send_command()` / `hci_recv_event()` / `hci_send_acl()` / `hci_recv_acl()` and `bt_hci_ops_t` registration. This TODO builds the full protocol stack on top of that transport stub. The `bt_hci_usb.c` stub must be completed before §1 here can proceed — verify it is in place. All cryptographic operations (SSP pairing, §5 and §9) must use constant-time comparison to prevent timing side-channels.
+> **Partial foundation:** `04-drivers-hardware/TODO-09-usb-stack.md §8` defines `bt_hci_usb.c` with `hci_send_command()` / `hci_recv_event()` / `hci_send_acl()` / `hci_recv_acl()` and `bt_hci_ops_t` registration. This TODO builds the full protocol stack on top of that transport stub. The `bt_hci_usb.c` stub must be completed before §1 here can proceed -- verify it is in place. All cryptographic operations (SSP pairing, §5 and §9) must use constant-time comparison to prevent timing side-channels.
 
 ## Inputs
 
-- `src/kernel/drivers/bt_hci_usb.c` (→ XREF: `04-drivers-hardware/TODO-09-usb-stack.md §8`) — USB HCI transport: `hci_send_command()`, `hci_recv_event()`, `hci_send_acl()`, `hci_recv_acl()`; `bt_hci_ops_t` registration point
-- `src/kernel/drivers/hid_parser.c` (→ XREF: `04-drivers-hardware/TODO-13-i2c-touchpad.md §4`) — HID report descriptor parser reused by Bluetooth HID profile (§5)
-- → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §1` — `hwrng_read()` required for SSP pairing nonce (§9) and A2DP SBC bitpool random seed
-- → XREF: `10-apps` domain — audio routing: when A2DP headphones connect (§6), the audio subsystem switches `audio_get_active()` to the BT A2DP device; coordinate with the audio mixer TODO
-- → XREF: `08-desktop-shell` domain — `bluetooth.cpl` (§9) is a control-panel applet; system tray Bluetooth icon is a shell component consuming `bt_manager_get_state()`
+- `src/kernel/drivers/bt_hci_usb.c` (→ XREF: `04-drivers-hardware/TODO-09-usb-stack.md §8`) -- USB HCI transport: `hci_send_command()`, `hci_recv_event()`, `hci_send_acl()`, `hci_recv_acl()`; `bt_hci_ops_t` registration point
+- `src/kernel/drivers/hid_parser.c` (→ XREF: `04-drivers-hardware/TODO-13-i2c-touchpad.md §4`) -- HID report descriptor parser reused by Bluetooth HID profile (§5)
+- → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §1` -- `hwrng_read()` required for SSP pairing nonce (§9) and A2DP SBC bitpool random seed
+- → XREF: `10-apps` domain -- audio routing: when A2DP headphones connect (§6), the audio subsystem switches `audio_get_active()` to the BT A2DP device; coordinate with the audio mixer TODO
+- → XREF: `08-desktop-shell` domain -- `bluetooth.cpl` (§9) is a control-panel applet; system tray Bluetooth icon is a shell component consuming `bt_manager_get_state()`
 
 ## Outcome
 
@@ -28,18 +28,18 @@
 
 | ⭐  | Order | Deliverable                                                                  | Depends On                                      | Status |
 | --- | :---: | ---------------------------------------------------------------------------- | ----------------------------------------------- | :----: |
-| 💎  |   1   | §1 HCI transport layer — commands, events, ACL, `hci_conn` table            | `bt_hci_ops_t` stub (TODO-09 §8)                |  [ ]   |
-| 💎  |   2   | §2 HCI firmware loading — Intel AX200-BT + Realtek RTL8761B                 | §1 (HCI commands available)                     |  [ ]   |
-| 💎  |   3   | §3 L2CAP — channel multiplexing, signalling, MTU negotiation                | §1 (ACL data path)                              |  [ ]   |
-| 💎  |   4   | §4 SDP — `ServiceSearchAttributeRequest`, PSM/channel discovery, local server | §3 (L2CAP channels)                           |  [ ]   |
-| 💎  |   5   | §5 HID Profile — L2CAP PSM 0x11/0x13, report descriptor, input injection   | §3, §4 (SDP PSM lookup), `hid_parser.c`         |  [ ]   |
-| 💎  |   6   | §8 BLE — LE scan, `LE_CREATE_CONNECTION`, ATT/GATT Battery + DevInfo        | §1 (LE HCI commands), §3 (LE L2CAP CIDs)       |  [ ]   |
-| 💎  |   7   | §7 RFCOMM & SPP — L2CAP PSM 0x03, SABM/UA frames, `/dev/rfcomm0`           | §3, §4 (RFCOMM channel via SDP)                 |  [ ]   |
+| 💎  |   1   | §1 HCI transport layer -- commands, events, ACL, `hci_conn` table            | `bt_hci_ops_t` stub (TODO-09 §8)                |  [ ]   |
+| 💎  |   2   | §2 HCI firmware loading -- Intel AX200-BT + Realtek RTL8761B                 | §1 (HCI commands available)                     |  [ ]   |
+| 💎  |   3   | §3 L2CAP -- channel multiplexing, signalling, MTU negotiation                | §1 (ACL data path)                              |  [ ]   |
+| 💎  |   4   | §4 SDP -- `ServiceSearchAttributeRequest`, PSM/channel discovery, local server | §3 (L2CAP channels)                           |  [ ]   |
+| 💎  |   5   | §5 HID Profile -- L2CAP PSM 0x11/0x13, report descriptor, input injection   | §3, §4 (SDP PSM lookup), `hid_parser.c`         |  [ ]   |
+| 💎  |   6   | §8 BLE -- LE scan, `LE_CREATE_CONNECTION`, ATT/GATT Battery + DevInfo        | §1 (LE HCI commands), §3 (LE L2CAP CIDs)       |  [ ]   |
+| 💎  |   7   | §7 RFCOMM & SPP -- L2CAP PSM 0x03, SABM/UA frames, `/dev/rfcomm0`           | §3, §4 (RFCOMM channel via SDP)                 |  [ ]   |
 | 💎  |   8   | §6 A2DP + SBC encoder + AVRCP                                               | §3 (L2CAP PSM 0x19), §4 (AVDTP discovery)      |  [ ]   |
 | ⭐  |   9   | §9 Bluetooth manager + pairing UI + `bluetooth.cpl`                         | §1–8 (all profiles), `hwrng` (pairing nonce)    |  [ ]   |
 | 💎  |  10   | §10 `btctl` shell command                                                   | §9 (manager API)                                |  [ ]   |
 
-> §9 Bluetooth manager is `⭐` exclusive by architecture: Windows uses `bthserv` (user-space Bluetooth service) + `btpan.sys`; Linux uses `bluetoothd` (BlueZ user-space daemon). Impossible OS runs the full Bluetooth protocol stack in the kernel with no daemon — pairing, profile negotiation, and audio routing happen inside the kernel without IPC round-trips to a user-space service.
+> §9 Bluetooth manager is `⭐` exclusive by architecture: Windows uses `bthserv` (user-space Bluetooth service) + `btpan.sys`; Linux uses `bluetoothd` (BlueZ user-space daemon). Impossible OS runs the full Bluetooth protocol stack in the kernel with no daemon -- pairing, profile negotiation, and audio routing happen inside the kernel without IPC round-trips to a user-space service.
 
 ---
 
@@ -60,10 +60,10 @@ Build the HCI command/event/ACL layer on top of the `bt_hci_ops_t` stub from TOD
   - `0x02 INQUIRY_RESULT` / `0x22 INQUIRY_RESULT_WITH_RSSI`: append to scan results list
   - `0x3E LE_META_EVENT`: dispatch to BLE handler (§8)
   - `0x0E COMMAND_COMPLETE`: wake waiting command sender
-- [ ] `hci_conn_t { uint8_t bd_addr[6]; uint16_t handle; uint8_t state; uint8_t type; }` — 16-entry static table; `hci_find_conn_by_handle()` / `hci_find_conn_by_addr()`
+- [ ] `hci_conn_t { uint8_t bd_addr[6]; uint16_t handle; uint8_t state; uint8_t type; }` -- 16-entry static table; `hci_find_conn_by_handle()` / `hci_find_conn_by_addr()`
 - [ ] ACL send/recv: `hci_acl_send(handle, pb, data, len)` builds `HCI_ACL_DATA_PKT`; `hci_acl_recv_cb` registered with `bt_hci_ops->recv_acl`; dispatches to L2CAP (§3)
 - [ ] Boot log: `[BT-HCI] BD_ADDR %02x:%02x:... LMP version %u.%u`
-- [ ] Commit: `"drivers: BT HCI layer — RESET/BD_ADDR/SCAN_ENABLE, event dispatch, hci_conn table, ACL"`
+- [ ] Commit: `"drivers: BT HCI layer -- RESET/BD_ADDR/SCAN_ENABLE, event dispatch, hci_conn table, ACL"`
 
 ## 2. HCI Firmware Loading `[Sonnet]`
 
@@ -81,9 +81,9 @@ Bluetooth chipsets require firmware upload on each power-on. Implement vendor-sp
 - [ ] Add firmware files to build: copy `resources/firmware/bt/*.bin` to `C:\Impossible\System\Firmware\bt\` in disk image
 - [ ] Add to `NOTICE.md`: Intel BT firmware BSD-2, Realtek BT firmware BSD-2 (from linux-firmware)
 - [ ] Boot log: `[BT] Intel/Realtek firmware loaded, version %s`
-- [ ] Commit: `"drivers: BT firmware — Intel AX200-BT TLV download, Realtek RTL8761B vendor opcodes"`
+- [ ] Commit: `"drivers: BT firmware -- Intel AX200-BT TLV download, Realtek RTL8761B vendor opcodes"`
 
-## 3. L2CAP — Logical Link Control and Adaptation Protocol `[Opus]`
+## 3. L2CAP -- Logical Link Control and Adaptation Protocol `[Opus]`
 
 Implement L2CAP channel-based multiplexing over HCI ACL data. Handle the signalling channel (CID 0x0001): Connection Request/Response, Configuration Request/Response, Disconnection. Provide `l2cap_send()` / `l2cap_recv()` per channel.
 
@@ -92,7 +92,7 @@ Implement L2CAP channel-based multiplexing over HCI ACL data. Handle the signall
 > [!NOTE]
 > L2CAP PDU: `len(2) + CID(2) + payload`. Classic channels: CID 0x0001=signalling, 0x0040–0x007F=dynamic (allocated per connection). BLE channels: CID 0x0004=ATT, 0x0005=LE signalling, 0x0006=SM. Signalling codes: `CONNECTION_REQ (0x02)`, `CONNECTION_RSP (0x03)`, `CONFIGURATION_REQ (0x04)`, `CONFIGURATION_RSP (0x05)`, `DISCONNECTION_REQ (0x06)`, `DISCONNECTION_RSP (0x07)`, `INFORMATION_REQ (0x0A)`, `INFORMATION_RSP (0x0B)`.
 
-- [ ] `l2cap_chan_t { uint16_t local_cid, remote_cid; uint16_t psm; uint16_t mtu; uint16_t handle; l2cap_state_t state; void (*recv_cb)(l2cap_chan_t*, uint8_t*, uint16_t); }` — 32-entry channel table
+- [ ] `l2cap_chan_t { uint16_t local_cid, remote_cid; uint16_t psm; uint16_t mtu; uint16_t handle; l2cap_state_t state; void (*recv_cb)(l2cap_chan_t*, uint8_t*, uint16_t); }` -- 32-entry channel table
 - [ ] `hci_acl_recv` → `l2cap_rx(handle, payload, len)`: demux by CID; if 0x0001 → `l2cap_sig_handle()`; else → dispatch to registered channel `recv_cb`
 - [ ] `l2cap_sig_handle(handle, sig_buf, len)`: parse signalling code:
   - `CONNECTION_REQ`: allocate local CID (next free 0x0040–0x007F); send `CONNECTION_RSP (PENDING)`; accept; send `CONNECTION_RSP (SUCCESS, local_cid, remote_cid)`
@@ -101,9 +101,9 @@ Implement L2CAP channel-based multiplexing over HCI ACL data. Handle the signall
 - [ ] `l2cap_connect(handle, psm, recv_cb)` → send `CONNECTION_REQ`; wait for `CONNECTION_RSP`; send `CONFIGURATION_REQ (MTU=672)`; wait `CONFIGURATION_RSP`; return channel
 - [ ] `l2cap_send(chan, data, len)`: build L2CAP PDU; call `hci_acl_send(chan->handle, ...)`
 - [ ] `l2cap_disconnect(chan)`: send `DISCONNECTION_REQ`; free channel entry
-- [ ] Commit: `"drivers: L2CAP — channel multiplexing, sig handle, connect/config/disconnect, l2cap_send"`
+- [ ] Commit: `"drivers: L2CAP -- channel multiplexing, sig handle, connect/config/disconnect, l2cap_send"`
 
-## 4. SDP — Service Discovery Protocol `[Sonnet]`
+## 4. SDP -- Service Discovery Protocol `[Sonnet]`
 
 Issue `SDP_ServiceSearchAttributeRequest` to remote devices to discover PSM/channel for HID, A2DP, and RFCOMM. Build a minimal local SDP server with records for local services.
 
@@ -114,12 +114,12 @@ Issue `SDP_ServiceSearchAttributeRequest` to remote devices to discover PSM/chan
 
 - [ ] `sdp_query(handle, uuid, attribute_ids[], id_count, result_cb)`: open L2CAP channel to PSM 0x0001; send `ServiceSearchAttributeRequest`; parse response; extract `ProtocolDescriptorList` → find L2CAP PSM and RFCOMM channel; call `result_cb`
 - [ ] Parse `ServiceClassIDList`: UUID16 comparison for `HID (0x1124)`, `AudioSink (0x110B)`, `SerialPort (0x1101)`, `HandsFree (0x111E)`
-- [ ] Local SDP server: register records for local services — `HIDHost (0x1131)`, `A2DP Source (0x110A)` (if supporting audio source), `RFCOMM`; respond to remote `ServiceSearchAttributeRequest` queries on PSM 0x0001
+- [ ] Local SDP server: register records for local services -- `HIDHost (0x1131)`, `A2DP Source (0x110A)` (if supporting audio source), `RFCOMM`; respond to remote `ServiceSearchAttributeRequest` queries on PSM 0x0001
 - [ ] `sdp_find_hid_psm(handle, &control_psm, &interrupt_psm)` convenience wrapper → query UUID `0x1124`, extract L2CAP PSMs from ProtocolDescriptorList
 - [ ] `sdp_find_rfcomm_channel(handle, uuid, &channel)` → query given UUID, find RFCOMM channel number
-- [ ] Commit: `"drivers: SDP — ServiceSearchAttributeRequest, PSM discovery, local SDP server records"`
+- [ ] Commit: `"drivers: SDP -- ServiceSearchAttributeRequest, PSM discovery, local SDP server records"`
 
-## 5. HID Profile — Bluetooth HID `[Sonnet]`
+## 5. HID Profile -- Bluetooth HID `[Sonnet]`
 
 Establish L2CAP control (PSM 0x0011) + interrupt (PSM 0x0013) channels. Receive HID INPUT reports on the interrupt channel. Reuse the HID report descriptor parser from TODO-13 §4. Register with the keyboard/mouse input pipeline identically to USB HID.
 
@@ -135,7 +135,7 @@ Establish L2CAP control (PSM 0x0011) + interrupt (PSM 0x0013) channels. Receive 
 - [ ] Hot-connect: in `hci_event_dispatch()`: on `CONNECTION_COMPLETE`, if `remote_class & 0x0500` (peripheral), call `bt_hid_probe()`
 - [ ] SSP Just-Works pairing for HID: `IO_CAPABILITY_RESPONSE` with `NoInputNoOutput`; auto-accept `USER_CONFIRMATION_REQUEST` event (§9)
 - [ ] Boot log: `[BT-HID] Keyboard/Mouse paired: %s BD_ADDR %02x:%02x:...`
-- [ ] Commit: `"drivers: BT HID — L2CAP ctrl/intr channels, SDP descriptor, boot-protocol, input injection"`
+- [ ] Commit: `"drivers: BT HID -- L2CAP ctrl/intr channels, SDP descriptor, boot-protocol, input injection"`
 
 ## 6. A2DP + SBC Encoder + AVRCP `[Opus]`
 
@@ -157,7 +157,7 @@ Implement A2DP audio streaming via AVDTP on L2CAP PSM 0x0019: SEP discovery, SBC
 - [ ] AVRCP: open L2CAP PSM 0x0017; AV/C command frame: `PLAY (0x44)`, `PAUSE (0x46)`, `STOP (0x45)`, `FORWARD (0x4B)`, `BACKWARD (0x4C)`; `VOLUME (0x48)` → forward to `audio_set_volume()`
 - [ ] A2DP hot-connect: on `CONNECTION_COMPLETE` for device class `0x0400` (Audio), call `bt_a2dp_probe()`; on connect: `audio_notify_attach(&bt_a2dp_device)`
 - [ ] Boot log: `[BT-A2DP] Headphones connected: %s, SBC bitpool=53`
-- [ ] Commit: `"drivers: BT A2DP — AVDTP SEP discovery/config/start, SBC encoder, RTP, AVRCP control"`
+- [ ] Commit: `"drivers: BT A2DP -- AVDTP SEP discovery/config/start, SBC encoder, RTP, AVRCP control"`
 
 ## 7. RFCOMM & Serial Port Profile (SPP) `[Sonnet]`
 
@@ -173,11 +173,11 @@ Implement RFCOMM multiplexed serial over L2CAP PSM 0x0003. Support SABM/UA/DM/DI
 - [ ] `rfcomm_write(handle, buf, len)`: send `UIH(dlci, data)` frames; credit-based flow control (`UIH EA=1, C/R=1, credits`)
 - [ ] `rfcomm_read(handle, buf, max)`: drain received `UIH` frames for DLCI; copy to buf
 - [ ] `rfcomm_close(handle)`: send `DISC(dlci)`; wait `UA`/`DM`
-- [ ] VFS node: `vfs_register_device("rfcomm0", &rfcomm_vfs_ops)` — `open/read/write/close` backed by `rfcomm_open/read/write/close`; device appears at `\Device\Serial\rfcomm0`
+- [ ] VFS node: `vfs_register_device("rfcomm0", &rfcomm_vfs_ops)` -- `open/read/write/close` backed by `rfcomm_open/read/write/close`; device appears at `\Device\Serial\rfcomm0`
 - [ ] `sdp_find_rfcomm_channel(handle, SPP_UUID, &ch)` → `rfcomm_open(handle, ch)` in SPP connect flow
-- [ ] Commit: `"drivers: BT RFCOMM/SPP — SABM/UA/UIH frames, port negotiation, /dev/rfcomm0 VFS node"`
+- [ ] Commit: `"drivers: BT RFCOMM/SPP -- SABM/UA/UIH frames, port negotiation, /dev/rfcomm0 VFS node"`
 
-## 8. BLE — Bluetooth Low Energy `[Opus]`
+## 8. BLE -- Bluetooth Low Energy `[Opus]`
 
 Implement BLE scanning (LE_SET_SCAN_PARAMETERS + LE_SET_SCAN_ENABLE), LE connection creation, ATT protocol over L2CAP CID 0x0004, and GATT profiles for Battery Service (0x180F) and Device Information (0x180A). Used for modern BLE mice, keyboards, and peripherals.
 
@@ -194,7 +194,7 @@ Implement BLE scanning (LE_SET_SCAN_PARAMETERS + LE_SET_SCAN_ENABLE), LE connect
 - [ ] GATT Device Information `0x180A`: read `Manufacturer Name (0x2A29)`, `Model Number (0x2A24)`; stored in `bt_ble_device_t.manufacturer`, `.model`
 - [ ] BLE HID: if advertising data includes `HID (0x1812)` UUID, connect and call `bt_hid_probe()` (§5 via L2CAP LE credit-based channels)
 - [ ] Boot log: `[BLE] Scan enabled; device found: %s RSSI %d dBm`
-- [ ] Commit: `"drivers: BLE — LE scan, LE_CREATE_CONNECTION, ATT, GATT Battery/DevInfo, BLE HID probe"`
+- [ ] Commit: `"drivers: BLE -- LE scan, LE_CREATE_CONNECTION, ATT, GATT Battery/DevInfo, BLE HID probe"`
 
 ## 9. Bluetooth Manager + Pairing UI + `bluetooth.cpl` `[Opus]`
 
@@ -212,7 +212,7 @@ Implement `bt_manager.c` as the central Bluetooth state controller. Handle SSP J
 - [ ] System tray icon: Bluetooth symbol; click → fly-out showing state (`Off / Ready / Connected: DeviceName`); right-click → `Open bluetooth.cpl`
 - [ ] `bluetooth.cpl` applet: sections: **Scan** (5 s inquiry, results list: name + type icon + RSSI), **Pair** button → SSP flow, **Connected devices** list with disconnect/forget, **Settings**: discoverable toggle, auto-connect, adapter name
 - [ ] Boot log: `[BT-MGR] Bluetooth ready, %u paired devices loaded from Registry`
-- [ ] Commit: `"desktop: BT manager — SSP pairing, link key Registry, auto-reconnect, bluetooth.cpl applet"`
+- [ ] Commit: `"desktop: BT manager -- SSP pairing, link key Registry, auto-reconnect, bluetooth.cpl applet"`
 
 ## 10. `btctl` Shell Command `[Sonnet]`
 
@@ -220,17 +220,17 @@ Implement `btctl` as a built-in shell command matching Linux `bluetoothctl` synt
 
 **Files:** `src/shell/cmd_btctl.c` (new)
 
-- [ ] `btctl scan` — 5 s BR/EDR inquiry + BLE scan; print: `[NEW] Device AA:BB:CC:DD:EE:FF "DeviceName" class=0x0540 rssi=-65`
-- [ ] `btctl scan le` — BLE-only scan; print advertising data: `[LE] AA:BB:CC... "BLE Mouse" battery=82%`
-- [ ] `btctl pair <addr>` — initiate pairing; print pairing progress; confirm numeric comparison if needed
-- [ ] `btctl connect <addr>` — connect to paired device; print `[CONNECTED] ...`
-- [ ] `btctl disconnect <addr>` — send `HCI_DISCONNECT`; print `[DISCONNECTED] ...`
-- [ ] `btctl devices` — list paired devices with name, class, AutoConnect flag
-- [ ] `btctl info <addr>` — print: BD_ADDR, name, class, link key presence, GATT Battery level (if BLE), services (from SDP)
-- [ ] `btctl remove <addr>` — delete from Registry (forget device)
-- [ ] `btctl power on/off` — `WRITE_SCAN_ENABLE(0x03)` / `WRITE_SCAN_ENABLE(0x00)` + RF kill if supported
+- [ ] `btctl scan` -- 5 s BR/EDR inquiry + BLE scan; print: `[NEW] Device AA:BB:CC:DD:EE:FF "DeviceName" class=0x0540 rssi=-65`
+- [ ] `btctl scan le` -- BLE-only scan; print advertising data: `[LE] AA:BB:CC... "BLE Mouse" battery=82%`
+- [ ] `btctl pair <addr>` -- initiate pairing; print pairing progress; confirm numeric comparison if needed
+- [ ] `btctl connect <addr>` -- connect to paired device; print `[CONNECTED] ...`
+- [ ] `btctl disconnect <addr>` -- send `HCI_DISCONNECT`; print `[DISCONNECTED] ...`
+- [ ] `btctl devices` -- list paired devices with name, class, AutoConnect flag
+- [ ] `btctl info <addr>` -- print: BD_ADDR, name, class, link key presence, GATT Battery level (if BLE), services (from SDP)
+- [ ] `btctl remove <addr>` -- delete from Registry (forget device)
+- [ ] `btctl power on/off` -- `WRITE_SCAN_ENABLE(0x03)` / `WRITE_SCAN_ENABLE(0x00)` + RF kill if supported
 - [ ] Register in `src/shell/shell.c` dispatch table
-- [ ] Commit: `"shell: btctl — scan/pair/connect/disconnect/devices/info, bluetoothctl-compatible syntax"`
+- [ ] Commit: `"shell: btctl -- scan/pair/connect/disconnect/devices/info, bluetoothctl-compatible syntax"`
 
 ---
 
@@ -239,18 +239,18 @@ Implement `btctl` as a built-in shell command matching Linux `bluetoothctl` synt
 
 | ⭐ | Feature                                      | 🪟 Win11                                                    | 🐧 Linux                                                            | 🚀 Impossible OS                                                                     |
 |----|----------------------------------------------|----------------------------------------------------------|------------------------------------------------------------------|-----------------------------------------------------------------------------------|
-| ⚠️ | HCI transport (USB) — commands, events, ACL  | ✅ `BTHUSB.sys`; full HCI over USB                       | ✅ `btusb.c`; full HCI; `hci_register_dev()`                     | ⚠️ §8 — Partial — `bt_hci_usb.c` stub (TODO-09                                    |
-| 💎 | Chipset firmware loading                     | ✅ Firmware embedded in `ibtusb.sys` /                   | ✅ `btintel.c`/`btrtl.c`; firmware from `linux-firmware`; loaded | ⬜ §2 — Intel TLV vendor opcode download,                                         |
-| 💎 | L2CAP channel multiplexing + MTU negotiation | ✅ `bthport.sys`; L2CAP in-kernel                        | ✅ `l2cap_core.c`; in-kernel; `l2cap_sock`                       | ⬜ §3 — 32-channel table, sig handle, `l2cap_connect/send/disconnect`             |
-| 💎 | SDP service discovery + local SDP server     | ✅ `bthserv.dll`; SDP in user-space via                  | ✅ `sdp.c` in BlueZ user-space (`bluetoothd`)                    | ⬜ §4 — `ServiceSearchAttributeRequest`, PSM/channel extraction, local records    |
-| 💎 | Bluetooth HID                                | ✅ `hidbth.sys`; HID profile; `HIDCLASS` integration     | ✅ `hidp.c` in-kernel; L2CAP PSM 0x11/0x13;                      | ⬜ §5 — L2CAP ctrl/intr, SDP descriptor, `hid_parser.c`                           |
-| 💎 | A2DP audio streaming                         | ✅ `bthA2dp.sys`; AVDTP; SBC; `Waveout` integration      | ✅ BlueZ A2DP + `pulseaudio-module-bluetooth`; SBC               | ⬜ §6 — AVDTP in-kernel, SBC encoder, RTP,                                        |
-| 💎 | RFCOMM / SPP                                 | ✅ `rfcomm.sys`; `bthport` RFCOMM; COM port              | ✅ `rfcomm.c` in-kernel; `/dev/rfcomm0`; `ttyBT` interface       | ⬜ §7 — SABM/UA/UIH, RPN/MSC, VFS `\Device\Serial\rfcomm0`                        |
-| 💎 | BLE scanning + GATT Battery/DevInfo profiles | ✅ `bthport.sys` BLE; WinRT Bluetooth API;               | ✅ `hci_le.c` + `att.c` in BlueZ;                                | ⬜ §8 — LE scan, ATT read-by-type, GATT                                           |
-| ⭐ | In-kernel BT stack (no daemon)               | ⚠️ `bthserv.exe` user-space service for pairing/profiles | ❌ BlueZ `bluetoothd` user-space daemon —                        | ⬜ §9 — `bt_manager.c` in kernel, SSP Just-Works,                                 |
-| 💎 | `btctl` CLI — scan/pair/connect/info         | ❌ No inbox `btctl`; PowerShell `Get-PnpDevice`          | ✅ `bluetoothctl`; `btmgmt`; `hcitool`; standard diagnostic      | ⬜ §10 — `btctl scan/pair/connect/devices/info`, `bluetoothctl`-compatible syntax |
+| ⚠️ | HCI transport (USB) -- commands, events, ACL  | ✅ `BTHUSB.sys`; full HCI over USB                       | ✅ `btusb.c`; full HCI; `hci_register_dev()`                     | ⚠️ §8 -- Partial -- `bt_hci_usb.c` stub (TODO-09                                    |
+| 💎 | Chipset firmware loading                     | ✅ Firmware embedded in `ibtusb.sys` /                   | ✅ `btintel.c`/`btrtl.c`; firmware from `linux-firmware`; loaded | ⬜ §2 -- Intel TLV vendor opcode download,                                         |
+| 💎 | L2CAP channel multiplexing + MTU negotiation | ✅ `bthport.sys`; L2CAP in-kernel                        | ✅ `l2cap_core.c`; in-kernel; `l2cap_sock`                       | ⬜ §3 -- 32-channel table, sig handle, `l2cap_connect/send/disconnect`             |
+| 💎 | SDP service discovery + local SDP server     | ✅ `bthserv.dll`; SDP in user-space via                  | ✅ `sdp.c` in BlueZ user-space (`bluetoothd`)                    | ⬜ §4 -- `ServiceSearchAttributeRequest`, PSM/channel extraction, local records    |
+| 💎 | Bluetooth HID                                | ✅ `hidbth.sys`; HID profile; `HIDCLASS` integration     | ✅ `hidp.c` in-kernel; L2CAP PSM 0x11/0x13;                      | ⬜ §5 -- L2CAP ctrl/intr, SDP descriptor, `hid_parser.c`                           |
+| 💎 | A2DP audio streaming                         | ✅ `bthA2dp.sys`; AVDTP; SBC; `Waveout` integration      | ✅ BlueZ A2DP + `pulseaudio-module-bluetooth`; SBC               | ⬜ §6 -- AVDTP in-kernel, SBC encoder, RTP,                                        |
+| 💎 | RFCOMM / SPP                                 | ✅ `rfcomm.sys`; `bthport` RFCOMM; COM port              | ✅ `rfcomm.c` in-kernel; `/dev/rfcomm0`; `ttyBT` interface       | ⬜ §7 -- SABM/UA/UIH, RPN/MSC, VFS `\Device\Serial\rfcomm0`                        |
+| 💎 | BLE scanning + GATT Battery/DevInfo profiles | ✅ `bthport.sys` BLE; WinRT Bluetooth API;               | ✅ `hci_le.c` + `att.c` in BlueZ;                                | ⬜ §8 -- LE scan, ATT read-by-type, GATT                                           |
+| ⭐ | In-kernel BT stack (no daemon)               | ⚠️ `bthserv.exe` user-space service for pairing/profiles | ❌ BlueZ `bluetoothd` user-space daemon --                        | ⬜ §9 -- `bt_manager.c` in kernel, SSP Just-Works,                                 |
+| 💎 | `btctl` CLI -- scan/pair/connect/info         | ❌ No inbox `btctl`; PowerShell `Get-PnpDevice`          | ✅ `bluetoothctl`; `btmgmt`; `hcitool`; standard diagnostic      | ⬜ §10 -- `btctl scan/pair/connect/devices/info`, `bluetoothctl`-compatible syntax |
 
-> **After §1–10:** Impossible OS ships a complete Bluetooth stack covering all essential modern use cases — BT HID, A2DP headphones, BLE peripherals, and serial devices. The `⭐` architectural differentiator is §9: the entire stack, including SDP, profiles, pairing, and auto-reconnect, runs in the kernel without a `bluetoothd`-equivalent daemon. Windows runs `bthserv.exe` in user space; Linux runs all of BlueZ in user space via D-Bus. Impossible OS eliminates the IPC round-trip for every HCI event, reducing BT HID input latency and A2DP underrun frequency on loaded systems.
+> **After §1–10:** Impossible OS ships a complete Bluetooth stack covering all essential modern use cases -- BT HID, A2DP headphones, BLE peripherals, and serial devices. The `⭐` architectural differentiator is §9: the entire stack, including SDP, profiles, pairing, and auto-reconnect, runs in the kernel without a `bluetoothd`-equivalent daemon. Windows runs `bthserv.exe` in user space; Linux runs all of BlueZ in user space via D-Bus. Impossible OS eliminates the IPC round-trip for every HCI event, reducing BT HID input latency and A2DP underrun frequency on loaded systems.
 
 ## Verification
 
@@ -265,4 +265,4 @@ Implement `btctl` as a built-in shell command matching Linux `bluetoothctl` synt
 - [ ] Auto-reconnect: restart with BT keyboard in paired list and `AutoConnect=1` → keyboard reconnects automatically
 - [ ] `bluetooth.cpl`: scan shows nearby devices; pair dialog appears for new device; paired device list shows Forget/Disconnect
 - [ ] `btctl info <addr>`: prints name, class, services (HID/A2DP), battery (BLE)
-- [ ] Commit: `"drivers: BT full stack — HCI, firmware, L2CAP, SDP, HID, A2DP/SBC, RFCOMM, BLE/GATT, manager, btctl"`
+- [ ] Commit: `"drivers: BT full stack -- HCI, firmware, L2CAP, SDP, HID, A2DP/SBC, RFCOMM, BLE/GATT, manager, btctl"`
