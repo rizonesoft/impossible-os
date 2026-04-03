@@ -109,13 +109,15 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 **Files:** `src/kernel/pe.c` (new), `include/kernel/pe_loader.h` (new)
 
 > [!NOTE]
+> **VMM prerequisite (2026-04-04):** `vmm_set_user_page()` auto-splits 2 MiB huge pages on demand, so PE sections can be mapped at any `ImageBase` address. However, per-process PML4s still share physical frames (identity-mapped clones) -- true process isolation requires unique physical backing per process (D3/T1§3). Also, `vmm_destroy_user_pml4()` must be updated to free dynamically split PT frames on process exit.
+
+> [!NOTE]
 > `pe_load(const uint8_t *data, uint64_t size, uint64_t *entry_va_out)`: (1) validate: `dos->e_magic == PE_DOS_MAGIC`; `*(uint32_t*)(data + dos->e_lfanew) == PE_SIGNATURE`; `coff->machine == PE_MACHINE_AMD64`; `opt64->magic == PE32PLUS_MAGIC`; return `PE_ERR_*` on any failure. (2) `alloc_base = vmm_alloc_user(opt->size_of_image)` -- try preferred `opt->image_base` first; if `vmm_map_user(opt->image_base, ...)` fails → fall back to `vmm_alloc_user(opt->size_of_image)` at any address. (3) per section: `dest = alloc_base + sec->virtual_address`; `src = data + sec->raw_offset`; `kmemcpy(dest, src, min(sec->raw_size, sec->virtual_size))`; if `sec->virtual_size > sec->raw_size`: `kmemset(dest + sec->raw_size, 0, sec->virtual_size - sec->raw_size)` (BSS zero-fill). (4) `*entry_va_out = alloc_base + opt->entry_point_rva`. **Error codes**: `PE_OK=0`, `PE_ERR_BAD_DOS=-1`, `PE_ERR_BAD_SIG=-2`, `PE_ERR_NOT_AMD64=-3`, `PE_ERR_NOT_PE32PLUS=-4`, `PE_ERR_ALLOC=-5`. Log each error via `klog_err("pe_load: %s", pe_strerror(err))`.
 
 - [ ] `include/kernel/pe_loader.h`: `pe_load()`, `pe_apply_relocations()`, `pe_resolve_imports()`, `pe_exec()` prototypes; `PE_OK/PE_ERR_*` codes
 - [ ] `pe_load()`: header validation chain; `vmm_alloc_user()` at preferred or any base; per-section `kmemcpy` + BSS zero
 - [ ] `pe_strerror(int err)` -- human-readable error string for klog
 - [ ] Handle `SizeOfImage` > VMM user space guard: `klog_err()` + return `PE_ERR_ALLOC`
-- [ ] `vmm_set_user_page()` auto-splits huge pages on demand (done 2026-04-04) -- PE sections can be mapped at any address via `vmm_set_user_page()` without being restricted to the pre-split ELF range. Per-process physical isolation (unique frames, not identity-mapped clones) is still required -- see D3/T1§3.
 - [ ] Handle section `raw_size=0` (BSS-only sections): just zero `virtual_size` bytes
 - [ ] Test: load `hello.exe` PE32+ binary → `entry_va_out` points within mapped image; no crash on validation
 - [ ] Commit: `"kernel: pe_load -- header validation, section mapping, BSS zero, vmm_alloc_user at ImageBase"`

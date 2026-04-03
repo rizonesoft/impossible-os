@@ -396,6 +396,11 @@ uintptr_t vmm_create_user_pml4(void)
     return pml4_phys;
 }
 
+/* SMP note: per-process PML4s are task-local -- only the owning task's
+ * create/exec path touches them, and those run on a single CPU with
+ * interrupts disabled or the scheduler in a known state.  No lock needed
+ * currently.  If future multi-threaded process creation calls this from
+ * multiple CPUs, add a per-process PML4 spinlock. */
 void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
 {
     pte_t *pml4, *pdpt, *pd, *pt;
@@ -448,6 +453,7 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
 void vmm_destroy_user_pml4(uintptr_t pml4_phys)
 {
     pte_t *pml4, *pdpt, *pd;
+    uint32_t i;
 
     if (!pml4_phys) return;
 
@@ -456,10 +462,20 @@ void vmm_destroy_user_pml4(uintptr_t pml4_phys)
     if (pdpt) {
         pd = (pte_t *)(pdpt[0] & PTE_ADDR_MASK);
         if (pd) {
-            /* Free the PT for the user region */
-            pte_t *pt = (pte_t *)(pd[USER_PD_INDEX] & PTE_ADDR_MASK);
-            if (pt && !(pd[USER_PD_INDEX] & VMM_FLAG_HUGE))
-                pmm_free_frame((uintptr_t)pt);
+            /* Free ALL split PTs (not just USER_PD_INDEX).
+             * vmm_set_user_page() auto-splits any PD entry on demand,
+             * so we must scan all 512 PD entries for non-huge PTs. */
+            for (i = 0; i < PT_ENTRIES; i++) {
+                if ((pd[i] & VMM_FLAG_PRESENT) && !(pd[i] & VMM_FLAG_HUGE)) {
+                    uintptr_t pt_phys = pd[i] & PTE_ADDR_MASK;
+                    /* Only free PTs that we allocated (not the kernel's).
+                     * Kernel PD entries are huge pages -- anything split
+                     * into a PT was allocated by vmm_create_user_pml4 or
+                     * vmm_set_user_page and must be freed. */
+                    if (pt_phys)
+                        pmm_free_frame(pt_phys);
+                }
+            }
             pmm_free_frame((uintptr_t)pd);
         }
         pmm_free_frame((uintptr_t)pdpt);
