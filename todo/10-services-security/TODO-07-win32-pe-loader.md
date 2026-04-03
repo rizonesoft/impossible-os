@@ -115,6 +115,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] `pe_load()`: header validation chain; `vmm_alloc_user()` at preferred or any base; per-section `kmemcpy` + BSS zero
 - [ ] `pe_strerror(int err)` -- human-readable error string for klog
 - [ ] Handle `SizeOfImage` > VMM user space guard: `klog_err()` + return `PE_ERR_ALLOC`
+- [ ] `vmm_set_user_page()` auto-splits huge pages on demand (done 2026-04-04) -- PE sections can be mapped at any address via `vmm_set_user_page()` without being restricted to the pre-split ELF range. Per-process physical isolation (unique frames, not identity-mapped clones) is still required -- see D3/T1§3.
 - [ ] Handle section `raw_size=0` (BSS-only sections): just zero `virtual_size` bytes
 - [ ] Test: load `hello.exe` PE32+ binary → `entry_va_out` points within mapped image; no crash on validation
 - [ ] Commit: `"kernel: pe_load -- header validation, section mapping, BSS zero, vmm_alloc_user at ImageBase"`

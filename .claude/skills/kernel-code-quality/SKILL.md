@@ -124,7 +124,7 @@ static void test_my_invariant(void) {
 - [ ] **No CPUID-gated instructions without checking.** Before using `clac`/`stac` (SMAP), `xsave`/`xrstor` (XSAVE), or AVX instructions, check `cpu_has(CPU_FEATURE_XX)`. TCG and some bare metal CPUs lack these.
 - [ ] **GS_BASE is set.** Any code that reads `gs:N` (per-CPU data) must run AFTER `smp_early_bsp_init()`. If unsure, check `smp_this_cpu() != NULL`.
 - [ ] **No LAPIC TPR writes in ISR path.** IRQL tracking is software-only. The LAPIC handles hardware priority via ISR/PPR.
-- [ ] **User-mode memory must be in USER_ELF_BASE..USER_ELF_END.** `vmm_set_user_page()` only works on split 4 KiB PD entries (the user ELF range). Heap addresses (`kmalloc`) are 2 MiB huge pages where User bit cannot be set. User stacks, data, and code must all be within 0x800000--0x900000. `vmm_set_user_page()` now logs FATAL on huge page hit.
+- [ ] **User-mode pages need User bit at all 4 levels.** `vmm_set_user_page()` auto-splits 2 MiB huge pages on demand and sets User at PML4/PDPT/PD/PT. Works for any address. Note: per-process pages currently share physical frames (identity-mapped) -- true isolation requires unique physical backing per process (planned for Win32 PE loader).
 - [ ] **Framebuffer 5-rule checklist (TODO-22 §15).** When touching framebuffer/GOP/display code: (1) Pixel format checked at runtime, never assumed. (2) Stride from `PixelsPerScanLine`, not width. (3) VRAM remapped WC via `vmm_map_mmio_wc()` after page table takeover. (4) All GOP `SetMode()` calls before `ExitBootServices()`. (5) Back-buffer for double buffering.
 
 <!-- Updated 2026-04-04: added framebuffer 5-rule checklist after WC remap implementation -->

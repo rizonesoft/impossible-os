@@ -54,7 +54,9 @@ void vmm_flush_tlb_all(void);
  * of the new PML4, or 0 on failure. */
 uintptr_t vmm_create_user_pml4(void);
 
-/* Set User bit on a specific 4 KiB page in a per-process PML4. */
+/* Set User bit on a specific 4 KiB page in a per-process PML4.
+ * Auto-splits 2 MiB huge pages on demand and propagates User bit
+ * at all 4 levels (PML4, PDPT, PD, PT).  Works for ANY address. */
 void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt);
 
 /* Free a per-process PML4 and all intermediate tables (not physical data pages). */

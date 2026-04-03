@@ -89,6 +89,9 @@ Disallow write-and-execute simultaneously on any mapping. Enforced in the VMM so
 
 Reserve virtual address space without backing frames; commit pages on-demand with zero-fill on first access -- the core of the Win32 `VirtualAlloc` model and a prerequisite for large address space consumers.
 
+> [!NOTE]
+> **Current VMM state (2026-04-04):** `vmm_set_user_page()` now auto-splits 2 MiB huge pages on demand and propagates User bit at all 4 levels, so user-mode memory can be at ANY address. However, per-process PML4s currently share the kernel's physical frames (identity-mapped clones). True process isolation requires `NtAllocateVirtualMemory` to allocate unique physical pages per process and map them into the per-process PML4. This section must implement that physical isolation -- without it, all processes see each other's data at the same virtual addresses.
+
 **Files:** `include/kernel/mm/vmm.h`, `src/kernel/mm/vmm.c`, `src/kernel/sched/syscall.c`
 
 - [ ] Add `VMM_STATE_RESERVED` region state: VMA entry exists in the region tree but no PTEs allocated; `State = MEM_RESERVE` in `NtQueryVirtualMemory` results

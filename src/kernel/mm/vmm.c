@@ -412,14 +412,30 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
     pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
     if (!pd) return;
 
-    /* PD entry must be a PT (not a huge page).
-     * If this fires, the caller passed an address outside the split user
-     * range (e.g. a kmalloc heap address).  User stacks and ELF pages MUST
-     * be within USER_ELF_BASE..USER_ELF_END where PD is split into 4 KiB. */
+    /* Ensure User bit is set at all upper levels (PML4, PDPT, PD).
+     * x86-64 requires User bit at EVERY level for ring-3 access. */
+    pml4[pml4i] |= VMM_FLAG_USER;
+    pdpt[pdpti] |= VMM_FLAG_USER;
+
+    /* If PD entry is a 2 MiB huge page, split it into 4 KiB PTEs so we
+     * can set the User bit on individual pages.  This makes vmm_set_user_page
+     * work for ANY address in the per-process PML4, not just the pre-split
+     * user ELF range.  Required for future Win32 PE loading, VirtualAlloc,
+     * and per-process heap at arbitrary addresses. */
     if (pd[pdi] & VMM_FLAG_HUGE) {
-        klog(LOG_FATAL, "mm", "vmm_set_user_page: virt %p is in a 2 MiB huge page (PD[%u]) -- cannot set User bit",
-             virt, (uint64_t)pdi);
-        return;
+        uintptr_t huge_phys = pd[pdi] & PTE_ADDR_MASK;
+        uint64_t  old_flags = pd[pdi] & ~(PTE_ADDR_MASK | VMM_FLAG_HUGE);
+        uintptr_t pt_frame  = pmm_alloc_frame();
+        uint32_t  j;
+        if (!pt_frame) {
+            klog(LOG_ERROR, "mm", "vmm_set_user_page: cannot split PD[%u] (OOM)",
+                 (uint64_t)pdi);
+            return;
+        }
+        pt = (pte_t *)pt_frame;
+        for (j = 0; j < PT_ENTRIES; j++)
+            pt[j] = (huge_phys + (uintptr_t)j * VMM_PAGE_SIZE) | old_flags;
+        pd[pdi] = pt_frame | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER;
     }
 
     pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);

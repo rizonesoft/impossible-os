@@ -240,6 +240,7 @@ Protect critical memory boundaries with unmapped guard pages that trigger #PF on
 - [x] Heap overflow guard: `heap_init()` allocates one extra frame after heap end, installs guard if contiguous. Non-fatal degradation if non-contiguous.
 - [x] AP stack guard pages: `smp.c` allocates 5 pages (4 stack + 1 guard) per AP. Guard at bottom.
 - [x] IST stack guard pages: `gdt.c` allocates 2 pages per IST (1 guard + 1 stack) for #DF, NMI, MCE.
+- [x] `vmm_set_user_page()` auto-splits huge pages on demand: if PD entry is 2 MiB, allocates a PT frame and splits it into 4 KiB PTEs. Also propagates User bit at PML4/PDPT/PD levels. Works for ANY address, not just the pre-split ELF range. Forward-compatible with Win32 PE loading and VirtualAlloc at arbitrary addresses.
 - [x] Unit test: `test_vmm_split_huge_page()` (split + idempotent + identity preserved) and `test_vmm_guard_page_install()` (not-present + adjacent page intact) in `test_vmm.c`.
 - [x] Documentation: guard page map in CLAUDE.md Safety Gates section
 - [ ] Commit: `"bulletproof: memory layout guard pages -- stack, heap, user range"`
