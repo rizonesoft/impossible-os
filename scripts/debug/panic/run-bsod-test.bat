@@ -1,11 +1,11 @@
 @echo off
-:: run-bsod-test.bat -- Trigger deliberate BSOD to test panic screen rendering
-:: Requires: build with -DBSOD_TEST in CFLAGS (uncomment in Makefile)
-:: The kernel will panic at boot_desktop.c with "BSOD_TEST: Deliberate panic"
-:: After crash, reboot to verify crash recovery log on serial output.
-echo.
-echo  WARNING: This triggers a deliberate kernel panic (BSOD).
-echo  Build with -DBSOD_TEST first, then run this.
-echo.
+:: run-bsod-test.bat -- Trigger deliberate BSOD to test panic screen
+:: Patches crash_test=1 into boot.conf, boots QEMU. Kernel panics after
+:: desktop init with "CRASH_TEST: Deliberate panic for testing".
+:: After BSOD renders, close QEMU and run run-crash-recovery-test.bat.
+echo Patching boot.conf: crash_test=1
+wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh crash_test 1"
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx
+echo Resetting boot.conf
+wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset"
 pause

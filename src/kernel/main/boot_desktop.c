@@ -96,17 +96,17 @@ void boot_phase3(void)
     boot_splash_status("Flushing boot log...");
     klog_disk_flush();
 
-#ifdef BSOD_TEST
-    {
+    /* Runtime crash test -- triggered by crash_test=1 in boot.conf */
+    if (g_boot_info.config.crash_test) {
         extern void panic_screen(struct interrupt_frame *frame,
                                  uint64_t error_code,
                                  const char *description,
                                  const char *file, uint32_t line);
+        klog(LOG_WARN, "boot", "crash_test=1 -- triggering deliberate BSOD");
         panic_screen((struct interrupt_frame *)0, 0xDEAD,
-                     "BSOD_TEST: Deliberate panic for testing",
+                     "CRASH_TEST: Deliberate panic for testing",
                      __FILE__, __LINE__);
     }
-#endif
 
     boot_splash_tick();
     boot_splash_status("Loading fonts...");
