@@ -3,7 +3,7 @@
 > **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.
 
 > [!IMPORTANT]
-> **Current state:** `klog.c` (541 lines) + `klog_disk.c` (912 lines). §1-§6 are complete: per-subsystem splitting, verbosity control, rotation, rate limiting, and JSON Lines events all working. §7 (remote syslog) moved to networking. §8 (ETW tracing), §9 (crash-persistent log), §10 (per-entry context), §11 (log integrity) remain.
+> **Current state:** `klog.c` (541 lines) + `klog_disk.c` (912 lines). §1-§6 complete, §8 complete (crash-persistent log). Remaining: §7 (ETW tracing, blocked on TODO-05), §9 (per-entry context), §10 (log integrity). Remote syslog moved to `07-networking/TODO-11`.
 
 ## Inputs
 
@@ -16,15 +16,15 @@
 - → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
 - → XREF: `01-boot-platform/TODO-11-usb-boot-hardening.md` -- USB boot hardening (klog_disk_flush bounded loop, deferred flush mode); both TODOs modify klog_disk.c
 - → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §8 of this TODO wires them into the SSDT
-- → XREF: `TODO-16-crash-dump-generation.md §2,§7` -- crash dump raw-partition sink bypasses VFS; §9 of this TODO captures ring buffer to reserved physical memory on panic (complementary -- TODO-16 captures binary state, §9 captures text log)
-- → XREF: `TODO-20-kernel-libraries.md §5` -- Monocypher Blake2b + kernel CSPRNG required by §11 (HMAC-chain log integrity)
+- → XREF: `TODO-16-crash-dump-generation.md §2,§7` -- crash dump raw-partition sink bypasses VFS; §8 of this TODO captures ring buffer to reserved physical memory on panic (complementary -- TODO-16 captures binary state, §8 captures text log)
+- → XREF: `TODO-20-kernel-libraries.md §5` -- Monocypher Blake2b + kernel CSPRNG required by §10 (HMAC-chain log integrity)
 
 ## Outcome
 
 - All kernel subsystems write to dedicated log files (`network.log`, `boot.log`, `fs.log`, `mm.log`).
 - Log files rotate automatically; disk never fills from logging alone.
 - `events.jsonl` provides structured, human-readable log events readable by any editor.
-- Remote syslog forwarding enables enterprise and headless debug scenarios.
+- Remote syslog forwarding (-> `07-networking/TODO-11`) enables enterprise and headless debug scenarios.
 - The klog lifecycle is gated correctly on VFS readiness per TODO-01 Phase 0/Phase 2 contract.
 - On panic, the last N ring buffer entries survive reboot via reserved physical memory and are recovered into `crash_recovery.log`.
 - Every log entry carries CPU number, PID, and TID for SMP and multi-process debugging.
@@ -40,11 +40,10 @@
 | 💎  |   4   | Log rotation                        | §2             |  [x]   |
 | 💎  |   5   | Rate limiting                       | §2             |  [x]   |
 | ⭐  |   6   | Structured JSON log events          | §4             |  [x]   |
-| 💎  |   7   | Remote syslog forwarding (RFC 5424) | → T11-net      |  [/]   |
-| 💎  |   8   | ETW tracing syscalls wired to SSDT  | §4, T05 §4     |  [ ]   |
-| 💎  |   9   | Crash-persistent log capture        | §1             |  [x]   |
-| 💎  |  10   | Per-entry context metadata          | §2             |  [ ]   |
-| ⭐  |  11   | Log integrity verification (HMAC)   | §6, T20 §5     |  [ ]   |
+| 💎  |   7   | ETW tracing syscalls wired to SSDT  | §4, T05 §4     |  [ ]   |
+| 💎  |   8   | Crash-persistent log capture        | §1             |  [x]   |
+| 💎  |   9   | Per-entry context metadata          | §2             |  [ ]   |
+| ⭐  |  10   | Log integrity verification (HMAC)   | §6, T20 §5     |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -146,15 +145,11 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 - [/] Event viewer reads `events.jsonl` for colour-coded filtering -- see [16-tools-accessories/TODO-02](../16-tools-accessories/TODO-02-event-viewer.md)
 - [x] Commit: `"kernel: structured JSON log events"`
 
-## 7. Remote Syslog Forwarding (RFC 5424)
-
-Moved to [07-networking/TODO-11](../07-networking/TODO-11-syslog-forwarding.md) -- syslog is a networking feature that depends on UDP stack readiness.
-
-## 8. ETW Tracing Syscalls Wired to SSDT
+## 7. ETW Tracing Syscalls Wired to SSDT
 Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. This section wires the tracing control syscalls into the SSDT. (→ XREF: TODO-05-native-api-ssdt.md §4, §22)
 
 > [!IMPORTANT]
-> **Blocked:** Requires SSDT infrastructure from TODO-05 §4 and `NTSTATUS` type from TODO-05 §1. Neither exists in the codebase yet (`include/kernel/nt/ntstatus.h` is planned). Implement §9-§10 first; return to §8 after TODO-05 §1+§4 are complete.
+> **Blocked:** Requires SSDT infrastructure from TODO-05 §4 and `NTSTATUS` type from TODO-05 §1. Neither exists in the codebase yet (`include/kernel/nt/ntstatus.h` is planned). Implement §8-§9 first; return to §7 after TODO-05 §1+§4 are complete.
 
 - [ ] `NtTraceEvent(TraceHandle, Flags, FieldSize, Fields)` → SSDT 0x01D0: write a trace event to a session
 - [ ] `NtTraceControl(FunctionCode, InBuffer, InLen, OutBuffer, OutLen, RetLen)` → SSDT 0x01D1: control trace sessions (start/stop/query/update/flush)
@@ -168,7 +163,7 @@ Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. T
 
 **Test checkpoint:** `NtCreateTrace` returns valid session handle. `NtTraceEvent` writes event visible via `NtTraceControl` query. `NtStopTrace` + `NtFlushTrace` drain the buffer. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
-## 9. Crash-Persistent Log Capture
+## 8. Crash-Persistent Log Capture
 
 Reserve a physical memory region at boot so the ring buffer survives a kernel panic. On next boot, recover entries and write them to `crash_recovery.log`. Linux has pstore/ramoops; Windows writes minidumps with log context. Without this, any crash before `klog_disk_flush()` loses the most recent ring buffer entries -- the entries most likely to contain the crash cause.
 
@@ -184,14 +179,14 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
 - [x] Clears magic cookie after successful recovery; zeros fresh region for new boot
 - [x] POST codes: `POST16(0xDE00)` entry, `POST16(0xDE01)` region allocated, `POST16(0xDE02)` recovery check, `POST16(0xDE03)` done
 - [x] 3 unit tests: KLOG_CRASH_MAGIC value, header size bounds, POST code uniqueness
-- [ ] Commit: `"kernel: crash-persistent klog capture via reserved physical memory"`
+- [x] Commit: `"kernel: crash-persistent klog capture via reserved physical memory"`
 
 > [!NOTE]
-> Complementary to TODO-16 crash dumps: TODO-16 captures binary CPU/memory state for WinDbg. §9 captures the text log ring buffer -- the human-readable context most useful for first-pass triage. Both write to physical memory without VFS dependency.
+> Complementary to TODO-16 crash dumps: TODO-16 captures binary CPU/memory state for WinDbg. §8 captures the text log ring buffer -- the human-readable context most useful for first-pass triage. Both write to physical memory without VFS dependency.
 
 **Test checkpoint:** Force a panic with `test=1 crash_test=1` in boot.conf; on next boot, serial shows `[CRASH-PREV]` entries from the previous crash. `crash_recovery.log` contains recovered entries with timestamps. CRC32 mismatch on corrupted region produces `[CRASH-PREV] recovery failed: CRC32 mismatch` on serial. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-## 10. Per-Entry Context Metadata
+## 9. Per-Entry Context Metadata
 
 Add CPU number, process ID, and thread ID to every klog entry. Windows ETW includes `ProcessId`, `ThreadId`, `ProcessorNumber` on every event. Linux journald stores `_PID`, `_UID`, `_COMM`, `_SYSTEMD_UNIT`. Impossible OS's `klog_entry_t` currently has only `level`, `subsystem`, `timestamp`, `message` -- no process/CPU context. This metadata is essential for diagnosing SMP races and multi-process issues.
 
@@ -203,13 +198,13 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 - [ ] In `klog()`: populate `pid`/`tid` from `task_current()->pid` / thread index if `kernel_subsystem_ready(SUBSYS_SCHEDULER)`; default to 0/0 during boot
 - [ ] Update JSON Lines serialization in `klog_disk.c`: add `"cpu":N,"pid":N,"tid":N` fields to each JSON object in `events.jsonl`
 - [ ] Update serial output format: append `[cpu:N]` after the timestamp when `cpu_id > 0` (skip during single-CPU early boot for readability)
-- [ ] Update `klog_crash_persist()` (§9) to include the new fields in the crash-persistent region
+- [ ] Update `klog_crash_persist()` (§8) to include the new fields in the crash-persistent region
 - [ ] Add debug POST codes: `POST16(0xDE10)` entry, `POST16(0xDE11)` struct extended, `POST16(0xDE12)` serial format updated, `POST16(0xDE13)` JSON format updated -- range `0xDE1x` confirmed free
 - [ ] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
 **Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":0` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.
 
-## 11. Log Integrity Verification
+## 10. Log Integrity Verification
 
 HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Linux journald has optional Forward Secure Sealing (FSS) but it's rarely enabled and uses a binary format unreadable by standard tools. Windows Event Log has no built-in cryptographic integrity. Impossible OS can be the first OS with kernel-level tamper-evident structured logging in a human-readable format.
 
@@ -217,14 +212,14 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 > Neither Win11 nor Linux provides out-of-the-box tamper-evident text-format logging. Win11 Event Log is binary XML with no cryptographic sealing. Linux journald's FSS is optional, complex to set up, and uses a binary journal format. Impossible OS's HMAC-chained JSON Lines is human-readable AND cryptographically verifiable -- readable by `jq`, verifiable by `klog_verify_chain()`.
 
 > [!IMPORTANT]
-> **Blocked:** Requires both `crypto_blake2b()` (HMAC computation) and `csprng_fill()` (key generation) from TODO-20 §5 (Monocypher). Neither exists in the codebase. No cryptographic hash is available -- CRC32 in `gpt.c`/`ixfs_core.c` is not cryptographically secure and would be trivially forgeable. Implement §9-§10 first; return to §11 after TODO-20 §5 is complete.
+> **Blocked:** Requires both `crypto_blake2b()` (HMAC computation) and `csprng_fill()` (key generation) from TODO-20 §5 (Monocypher). Neither exists in the codebase. No cryptographic hash is available -- CRC32 in `gpt.c`/`ixfs_core.c` is not cryptographically secure and would be trivially forgeable. Implement §8-§9 first; return to §10 after TODO-20 §5 is complete.
 
 - [ ] Define `klog_integrity_ctx_t`: previous HMAC (32 bytes), session key (32 bytes), initialized flag
 - [ ] At `klog_disk_enable()`: initialize session HMAC key from `csprng_fill()` (→ XREF: TODO-20 §5 Monocypher CSPRNG); store in `klog_integrity_ctx_t`
 - [ ] In JSON Lines flush: compute HMAC-Blake2b(key, previous_hmac || entry_json) for each entry; append `"hmac":"<64-hex-chars>"` field
 - [ ] Store session key in Registry `HKLM\SYSTEM\Logs\IntegrityKey` (write-once per boot session) for post-boot verification
 - [ ] Implement `klog_verify_chain(const char *jsonl_path)`: reads `events.jsonl` line by line, verifies each HMAC against the chain; returns first corrupted line number or 0 if all valid
-- [ ] Wire into `dmpanalyze.exe` (→ XREF: TODO-16 §9): `dmpanalyze /verifylog` reads key from Registry and verifies the chain
+- [ ] Wire into `dmpanalyze.exe` (-> XREF: TODO-16 §9): `dmpanalyze /verifylog` reads key from Registry and verifies the chain
 - [ ] Gate behind `boot.conf` option `log_integrity=1` (default: enabled in release, can be disabled for performance-sensitive debug runs)
 - [ ] Add debug POST codes: `POST16(0xDE20)` entry, `POST16(0xDE21)` HMAC key generated, `POST16(0xDE22)` first entry sealed, `POST16(0xDE23)` verification API ready -- range `0xDE2x` confirmed free
 - [ ] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
@@ -237,27 +232,27 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 | ⭐ | Feature               | Win11               | Linux                 | Impossible OS               |
 |----|-----------------------|---------------------|-----------------------|-----------------------------|
-| 💎 | Unified kernel log    | ✅ Event Log        | ✅ journald/syslog   | ✅ klog ring buffer         |
-| 💎 | Log levels            | ✅ 5 levels         | ✅ 8 POSIX levels    | ✅ 5 levels                 |
-| 💎 | Serial debug output   | ⚠️ Needs WinDbg     | ✅ earlyprintk       | ✅ All entries to serial    |
-| ⭐ | Per-boot log files    | ❌ Not built-in     | ❌ Not built-in      | ✅ BOOT_NNN.LOG on FAT32    |
-| 💎 | User-mode log API     | ✅ ReportEvent/ETW  | ✅ syslog()          | ✅ SYS_LOG syscall #17      |
-| 💎 | Boot-phase init       | ✅ Phase 0/1        | ✅ early_printk      | ✅ §1 -- done                |
-| 💎 | Subsystem splitting   | ✅ Event channels   | ✅ syslog facilities | ✅ §2 -- done                |
-| 💎 | Subsystem verbosity   | ✅ ETW filters      | ✅ per-facility      | ✅ §3 -- done                |
-| 💎 | Log rotation          | ✅ Size-limited     | ✅ logrotate         | ✅ §4 -- done                |
-| 💎 | Rate limiting         | ✅ ETW built-in     | ⚠️ rsyslog only      | ✅ §5 -- done                |
-| ⭐ | Human-readable struct | ❌ XML verbose      | ❌ Binary journal    | ✅ §6 -- JSON Lines          |
-| 💎 | Remote forwarding     | ✅ WEF              | ✅ rsyslog UDP       | ⬜ §7 -- syslog RFC 5424     |
-| 💎 | ETW tracing API       | ✅ NtTraceEvent     | ✅ ftrace/perf_event | ⬜ §8 -- SSDT wired          |
-| ⭐ | Serial timestamps     | ❌ Not standard     | ❌ Not standard      | ✅ Every entry              |
-| 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §9 NVRAM + reserved RAM   |
-| 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ⬜ §10 -- klog_entry_t       |
-| ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §11 -- HMAC-chain         |
+| 💎 | Unified kernel log    | ✅ Event Log        | ✅ journald/syslog   | ✅ klog ring buffer        |
+| 💎 | Log levels            | ✅ 5 levels         | ✅ 8 POSIX levels    | ✅ 5 levels                |
+| 💎 | Serial debug output   | ⚠️ Needs WinDbg     | ✅ earlyprintk       | ✅ All entries to serial   |
+| ⭐ | Per-boot log files    | ❌ Not built-in     | ❌ Not built-in      | ✅ BOOT_NNN.LOG on FAT32   |
+| 💎 | User-mode log API     | ✅ ReportEvent/ETW  | ✅ syslog()          | ✅ SYS_LOG syscall #17     |
+| 💎 | Boot-phase init       | ✅ Phase 0/1        | ✅ early_printk      | ✅ §1 -- done              |
+| 💎 | Subsystem splitting   | ✅ Event channels   | ✅ syslog facilities | ✅ §2 -- done              |
+| 💎 | Subsystem verbosity   | ✅ ETW filters      | ✅ per-facility      | ✅ §3 -- done              |
+| 💎 | Log rotation          | ✅ Size-limited     | ✅ logrotate         | ✅ §4 -- done              |
+| 💎 | Rate limiting         | ✅ ETW built-in     | ⚠️ rsyslog only      | ✅ §5 -- done              |
+| ⭐ | Human-readable struct | ❌ XML verbose      | ❌ Binary journal    | ✅ §6 -- JSON Lines        |
+| 💎 | Remote forwarding     | ✅ WEF              | ✅ rsyslog UDP       | ⬜ → net/TODO-11            |
+| 💎 | ETW tracing API       | ✅ NtTraceEvent     | ✅ ftrace/perf_event | ⬜ §7 -- SSDT wired        |
+| ⭐ | Serial timestamps     | ❌ Not standard     | ❌ Not standard      | ✅ Every entry             |
+| 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §8 NVRAM + reserved RAM |
+| 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ⬜ §9 -- klog_entry_t      |
+| ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §10 -- HMAC-chain       |
 
-> After §1-§6, Impossible OS matches or exceeds Windows and Linux on core logging.
+> After §1-§6 + §8, Impossible OS matches or exceeds Windows and Linux on core logging.
 > §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges.
-> §9-§10 close the remaining parity gaps. §11 (HMAC-chain) is a unique competitive advantage -- no other OS ships tamper-evident text-format logging out of the box.
+> §9 closes the per-entry context parity gap. §10 (HMAC-chain) is a unique competitive advantage -- no other OS ships tamper-evident text-format logging out of the box.
 
 ## Unit Tests
 
@@ -280,18 +275,18 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 > **Done:** 6 suites, 8 assertions -- registered in `test_runner_init()` (2026-04-02). Subsystem dispatch tests skipped: `dispatch_filename()` is static in klog_disk.c, no public API to test tag-to-filename mapping.
 
-- [ ] Add crash-persistent log tests to `test_klog.c` (§9):
+- [ ] Add crash-persistent log tests to `test_klog.c` (§8):
   - `klog_crash_persist()` writes valid header with magic `0x4B4C4F47` and correct `entry_count` to reserved region
   - CRC32 in crash header matches recomputed CRC32 of the persisted ring buffer entries
   - Recovery on next boot: simulated valid crash region → `klog_crash_recover()` returns entry count > 0
   - Recovery with corrupted CRC32: `klog_crash_recover()` returns 0 and logs `"CRC32 mismatch"` to serial
   - Recovery clears magic cookie after successful recovery (second call returns 0)
-- [ ] Add per-entry context metadata tests to `test_klog.c` (§10):
+- [ ] Add per-entry context metadata tests to `test_klog.c` (§9):
   - `klog(LOG_INFO, "test", "ctx")` produces entry with `cpu_id == 0` (BSP)
   - Entry logged before scheduler has `pid == 0` and `tid == 0`
   - Entry logged after scheduler start has `pid != 0` (at least kernel idle task)
   - JSON serialization of entry includes `"cpu":0,"pid":N,"tid":N` fields (verify via ring buffer inspection since JSON write is to disk)
-- [ ] Add log integrity verification tests to `test_klog.c` (§11):
+- [ ] Add log integrity verification tests to `test_klog.c` (§10):
   - `klog_verify_chain()` returns 0 (valid) on a freshly written `events.jsonl` with HMAC fields
   - `klog_verify_chain()` returns corrupted line number when one entry's `"hmac"` field is overwritten with zeros
   - HMAC field is absent when `log_integrity=0` is set in boot.conf
