@@ -270,7 +270,9 @@ void keyboard_init(void)
         pic_unmask_irq(IRQ_KEYBOARD);
     }
 
-    klog(LOG_DEBUG, "input", "PS/2 keyboard initialized (US QWERTY)");
+    klog(LOG_INFO, "input", "PS/2 keyboard initialized (US QWERTY, IRQ %u)",
+         ioapic_available() ? (uint32_t)ioapic_isa_to_gsi(IRQ_KEYBOARD)
+                            : (uint32_t)IRQ_KEYBOARD);
 }
 
 char keyboard_getchar(void)

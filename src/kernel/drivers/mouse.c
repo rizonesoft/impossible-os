@@ -268,7 +268,9 @@ void mouse_init(void)
     }
 
     POST16(0xD504);
-    klog(LOG_DEBUG, "input", "PS/2 mouse initialized (IRQ 12)");
+    klog(LOG_INFO, "input", "PS/2 mouse initialized (IRQ %u, 100 samples/sec, 4 counts/mm)",
+         ioapic_available() ? (uint32_t)ioapic_isa_to_gsi(IRQ_MOUSE)
+                            : (uint32_t)IRQ_MOUSE);
 }
 
 /* ============================================================================

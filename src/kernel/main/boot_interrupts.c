@@ -178,11 +178,12 @@ void boot_phase1(void)
     boot_progress(1, "RTC", POST16_RTC_OK);
 
     /* --- Input devices --- */
-    boot_splash_status("Initializing input...");
+    boot_splash_status("Detecting PS/2 keyboard...");
     POST16(POST16_KBD);
     keyboard_init();
     POST16(POST16_KBD_OK);
     boot_progress(1, "KEYBOARD", POST16_KBD_OK);
+    boot_splash_status("Detecting PS/2 mouse...");
     POST16(POST16_MOUSE);
     mouse_init();
     POST16(POST16_MOUSE_OK);
