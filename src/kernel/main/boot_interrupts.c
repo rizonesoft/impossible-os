@@ -193,25 +193,7 @@ void boot_phase1(void)
     boot_splash_init();
     POST16(POST16_SPLASH_OK);
 
-    /* Drive splash spinner from timer interrupt so it stays alive during
-     * long busy-waits (e.g., PS/2 mouse reset). Tick every 5 ticks = 50ms
-     * at 100 Hz = 20 FPS spinner. Unregistered when splash finishes. */
-    {
-        extern void boot_splash_tick(void);
-        timer_register_tick_callback(boot_splash_tick, 5);
-    }
-
-    /* --- Input devices (after splash so status messages are visible) --- */
-    boot_splash_status("Detecting PS/2 keyboard...");
-    POST16(POST16_KBD);
-    keyboard_init();
-    POST16(POST16_KBD_OK);
-    boot_progress(1, "KEYBOARD", POST16_KBD_OK);
-    boot_splash_status("Detecting PS/2 mouse...");
-    POST16(POST16_MOUSE);
-    mouse_init();
-    POST16(POST16_MOUSE_OK);
-    boot_progress(1, "MOUSE", POST16_MOUSE_OK);
+    /* Input devices moved after timer+sti so splash spinner is alive */
 
     /* --- Phase 1 info gathering --- */
     uefi_config_init();
@@ -257,6 +239,26 @@ void boot_phase1(void)
 
     __asm__ volatile ("sti");
     boot_splash_start_animation();
+
+    /* Drive splash spinner from timer interrupt so it stays alive during
+     * long busy-waits (e.g., PS/2 mouse reset). */
+    {
+        extern void boot_splash_tick(void);
+        timer_register_tick_callback(boot_splash_tick, 5);
+    }
+
+    /* --- Input devices (after timer+sti so splash spinner is alive) --- */
+    boot_splash_status("Detecting PS/2 keyboard...");
+    POST16(POST16_KBD);
+    keyboard_init();
+    POST16(POST16_KBD_OK);
+    boot_progress(1, "KEYBOARD", POST16_KBD_OK);
+    boot_splash_status("Detecting PS/2 mouse...");
+    POST16(POST16_MOUSE);
+    mouse_init();
+    POST16(POST16_MOUSE_OK);
+    boot_progress(1, "MOUSE", POST16_MOUSE_OK);
+
     boot_splash_status("Setting up hardware...");
 
     klog(LOG_DEBUG, "", "");
