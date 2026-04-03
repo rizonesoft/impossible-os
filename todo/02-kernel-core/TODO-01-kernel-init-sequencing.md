@@ -292,7 +292,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 **Files:** `src/kernel/main/boot_init.c`, `include/kernel/boot_init.h`
 
-- [x] SMP moved before storage drivers in Phase 2 so APs are online for async dispatch
+- [/] SMP stays at original position (after system summary) -- moving before storage breaks TCG cmd.exe load; async dispatch deferred until root cause found
 - [x] `boot_async_init()` registers IPI handler (vector 0xFC) for AP work dispatch
 - [x] `boot_async_group(name, steps, count)` dispatches steps across APs via IPI; BSP runs step 0, APs run step 1+; includes 10s timeout barrier
 - [x] Storage drivers (ATA, AHCI, NVMe, VirtIO-blk) wired as async group when `async_init=1`; Groups B/C (input, network) already deferred to post-desktop via §11
@@ -301,7 +301,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 - [x] Logs `[ASYNC] <step> started on CPU<n>` and `[ASYNC] <step> completed on CPU<n> in <N>ms`
 - [x] POST codes: `POST16(0xDD00)` dispatch, `POST16(0xDD01)` AP entry, `POST16(0xDD02)` barrier, `POST16(0xDD03)` done
 - [x] 2 unit tests: async POST code uniqueness, IPI vector value (0xFC) and no collision with 0xFD/0xFE
-- [ ] Commit: `"kernel: async subsystem init -- SMP parallel Phase 2"`
+- [x] Commit: `"kernel: async subsystem init -- SMP parallel Phase 2"`
 
 **Test checkpoint:** Boot with `async_init=1` → storage/input/network init on different CPUs → serial log shows `[ASYNC]` entries with different CPU numbers. Total Phase 2 time decreases vs sequential. Boot with `async_init=0` → sequential behavior unchanged. Verify on QEMU WHPX (2+ vCPUs), TCG, VirtualBox, bare metal. Bare metal is critical -- per-AP fault isolation must work on real hardware.
 

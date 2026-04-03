@@ -137,19 +137,6 @@ void boot_phase2(void)
         boot_progress(2, "DHCP", POST16_NET_OK);
     }
 
-    /* --- SMP: moved before storage so async init can use APs --- */
-    if (g_boot_info.acpi_available) {
-        boot_splash_status("Initializing SMP...");
-        POST16(POST16_SMP);
-        smp_init();
-        POST16(POST16_SMP_OK);
-        kernel_subsystem_set_ready(SUBSYS_SMP, true);
-        boot_progress(2, "SMP", POST16_SMP_OK);
-    }
-
-    /* Register async init IPI handler (safe even with 1 CPU) */
-    boot_async_init();
-
     /* --- Disk drivers --- */
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
     boot_splash_status("Initializing storage...");
@@ -372,7 +359,19 @@ void boot_phase2(void)
          (uint64_t)(total_ram / (1024 * 1024)),
          (uint64_t)g_boot_info.mmap_count);
 
-    /* (SMP moved earlier -- before disk drivers for async init support) */
+    /* --- SMP: bringup APs --- */
+    if (g_boot_info.acpi_available) {
+        boot_splash_status("Initializing SMP...");
+        POST16(POST16_SMP);
+        smp_init();
+        POST16(POST16_SMP_OK);
+        kernel_subsystem_set_ready(SUBSYS_SMP, true);
+        boot_progress(2, "SMP", POST16_SMP_OK);
+    }
+
+    /* Register async init IPI handler (for future async_init=1 use) */
+    if (smp_cpu_count() > 1)
+        boot_async_init();
 
     /* Hardware dump (only in live debug mode) */
     if (klog_disk_live_active()) {
