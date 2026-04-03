@@ -79,3 +79,30 @@ void klog_disk_set_live(int on);       /* Enable/disable per-entry live mode */
 int  klog_disk_live_active(void);      /* Returns 1 if live mode is on */
 void klog_disk_append(const klog_entry_t *e);  /* Append entry to FAT32 buffer */
 
+/* ---- Crash-persistent log capture (klog.c) ---- */
+
+#define KLOG_CRASH_MAGIC    0x4B4C4F47  /* "KLOG" */
+#define KLOG_CRASH_PAGES    32          /* 128 KiB reserved region */
+
+/* Header at start of crash persistence region (physical memory) */
+typedef struct {
+    uint32_t magic;             /* KLOG_CRASH_MAGIC */
+    uint32_t entry_count;       /* number of ring entries saved */
+    uint32_t crc32;             /* IEEE CRC32 of entries after header */
+    uint32_t ring_head;         /* ring head at time of crash */
+    uint64_t boot_timestamp;    /* PIT ticks at crash time */
+} klog_crash_header_t;
+
+/* Persist ring buffer to reserved physical memory (no kmalloc, no VFS).
+ * Called from panic_screen() after BSOD render, before halt. */
+void klog_crash_persist(void);
+
+/* Check reserved region for valid crash data from previous boot.
+ * If found, replays to serial with [CRASH-PREV] prefix.
+ * Called early in klog_early_init(). */
+void klog_crash_recover(void);
+
+/* Write recovered crash entries to disk log file.
+ * Called after VFS mount in klog_disk_enable(). */
+void klog_crash_write_to_disk(void);
+

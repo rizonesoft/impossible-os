@@ -10,6 +10,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/klog.h"
+#include "kernel/boot_init.h"
 
 /* ---- Ring buffer: klog writes to ring and head advances ---- */
 
@@ -132,6 +133,34 @@ static void test_klog_ring_wrap(void)
                 "ring head is within bounds");
 }
 
+/* ---- Crash persistence types ---- */
+
+static void test_klog_crash_magic(void)
+{
+    TEST_ASSERT_EQ(KLOG_CRASH_MAGIC, 0x4B4C4F47, "KLOG_CRASH_MAGIC == 'KLOG'");
+}
+
+static void test_klog_crash_header_size(void)
+{
+    /* Header must be stable for cross-boot physical memory layout */
+    TEST_ASSERT(sizeof(klog_crash_header_t) <= 32,
+                "klog_crash_header_t fits in 32 bytes");
+    TEST_ASSERT(sizeof(klog_crash_header_t) >= 20,
+                "klog_crash_header_t has all required fields");
+}
+
+static void test_klog_crash_post_codes(void)
+{
+    TEST_ASSERT(POST16_CRASHLOG != 0, "POST16_CRASHLOG is non-zero");
+    TEST_ASSERT(POST16_CRASHLOG_DONE != 0, "POST16_CRASHLOG_DONE is non-zero");
+    TEST_ASSERT(POST16_CRASHLOG != POST16_CRASHLOG_ALLOC,
+                "CRASHLOG != CRASHLOG_ALLOC");
+    TEST_ASSERT(POST16_CRASHLOG != POST16_DEFERRED,
+                "CRASHLOG != DEFERRED (no overlap)");
+    TEST_ASSERT(POST16_CRASHLOG != POST16_BOOTPERF,
+                "CRASHLOG != BOOTPERF (no overlap)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_klog(void)
@@ -142,6 +171,9 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: global level", test_klog_global_level, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: rate limit API", test_klog_rate_limit_api, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring wrap", test_klog_ring_wrap, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: crash magic", test_klog_crash_magic, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -513,6 +513,10 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
 
     /* === Write crash dump to disk === */
     write_crash_dump(frame, description, file, line);
+
+    /* === Persist klog ring buffer to reserved physical memory === */
+    klog_crash_persist();
+
     {
         fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
         if (vfs_is_mounted('C'))

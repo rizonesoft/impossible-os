@@ -116,6 +116,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* Read previous boot perf data from NVRAM (before we overwrite it) */
     boot_perf_read_prev();
 
+    /* Recover crash log from previous boot (reads NVRAM + checks physical memory) */
+    klog_crash_recover();
+
     /* Initialize VPD Tier 1 -- after crash banner so s_banner_shown is set */
     {
         extern void vpd_init(void);

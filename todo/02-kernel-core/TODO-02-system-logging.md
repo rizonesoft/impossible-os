@@ -40,9 +40,9 @@
 | 💎  |   4   | Log rotation                        | §2             |  [x]   |
 | 💎  |   5   | Rate limiting                       | §2             |  [x]   |
 | ⭐  |   6   | Structured JSON log events          | §4             |  [x]   |
-| 💎  |   7   | Remote syslog forwarding (RFC 5424) | → T11-net      |  [ ]   |
+| 💎  |   7   | Remote syslog forwarding (RFC 5424) | → T11-net      |  [/]   |
 | 💎  |   8   | ETW tracing syscalls wired to SSDT  | §4, T05 §4     |  [ ]   |
-| 💎  |   9   | Crash-persistent log capture        | §1             |  [ ]   |
+| 💎  |   9   | Crash-persistent log capture        | §1             |  [x]   |
 | 💎  |  10   | Per-entry context metadata          | §2             |  [ ]   |
 | ⭐  |  11   | Log integrity verification (HMAC)   | §6, T20 §5     |  [ ]   |
 
@@ -143,7 +143,7 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 - [x] `events.jsonl` created at first flush; file size tracked for rotation
 - [x] §4 log rotation applied to `events.jsonl` via `rotate_log_file()`
 - [x] `"dropped"` field included from §5 rate limiter via `klog_get_dropped()` public API
-- [ ] Event viewer reads `events.jsonl` for colour-coded filtering -- see [16-tools-accessories/TODO-02](../16-tools-accessories/TODO-02-event-viewer.md)
+- [/] Event viewer reads `events.jsonl` for colour-coded filtering -- see [16-tools-accessories/TODO-02](../16-tools-accessories/TODO-02-event-viewer.md)
 - [x] Commit: `"kernel: structured JSON log events"`
 
 ## 7. Remote Syslog Forwarding (RFC 5424)
@@ -175,14 +175,15 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
 > [!WARNING]
 > **High-risk:** Modifies `panic_screen()` (boot-critical path) and `klog_early_init()` (Phase 0). If this breaks, revert the `klog_crash_persist()` call in `panic_screen()` -- the BSOD still renders without crash log persistence. Verify `panic_screen()` still works after adding the call.
 
-- [ ] Reserve 128 KiB physical region via `pmm_alloc_contiguous(32)` in `klog_early_init()` for crash log persistence; store the physical address in a static `klog_crash_region` pointer
-- [ ] Define `klog_crash_header_t`: magic cookie `0x4B4C4F47` ("KLOG"), `uint32_t entry_count`, `uint32_t crc32`, `uint64_t boot_timestamp`
-- [ ] Implement `klog_crash_persist()`: copies `klog_ring[]` + header to reserved region with CRC32 checksum; called from `panic_screen()` after BSOD render but before halt
-- [ ] `klog_crash_persist()` must NOT use `kmalloc` or VFS -- direct physical memory write only; uses pre-reserved region from `klog_early_init()`
-- [ ] In `klog_early_init()`: check reserved region for valid magic + CRC32; if valid, replay all recovered entries to serial with `[CRASH-PREV]` prefix
-- [ ] In `klog_disk_enable()`: write recovered crash entries to `C:\Impossible\System\Logs\crash_recovery.log` on disk; append boot timestamp and recovered entry count
-- [ ] Clear crash persistence region after successful recovery (zero magic cookie)
-- [ ] Add debug POST codes: `POST16(0xDE00)` entry, `POST16(0xDE01)` region reserved, `POST16(0xDE02)` recovery check, `POST16(0xDE03)` recovery complete -- range `0xDExx` confirmed free
+- [x] Reserve 128 KiB physical region via `pmm_alloc_contiguous(32)` in `klog_crash_recover()` for crash log persistence; physical address stored in UEFI NVRAM `ImpossibleCrashLog` variable so next boot can find it
+- [x] Define `klog_crash_header_t`: magic `0x4B4C4F47` ("KLOG"), entry_count, crc32, ring_head, boot_timestamp
+- [x] `klog_crash_persist()`: serializes ring entries (no pointers -- subsystem copied as char[16]) + CRC32 to reserved region; called from `panic_screen()` after crash dump write
+- [x] No `kmalloc` or VFS in crash persist path -- direct physical memory write only
+- [x] `klog_crash_recover()`: reads region address from NVRAM, validates magic + CRC32, replays to serial with `[CRASH-PREV]` prefix; called in Phase 0 after UEFI runtime init
+- [x] `klog_crash_write_to_disk()`: writes recovered entries to `crash_recovery.log` on C:\; called from `klog_disk_enable()` in Phase 2
+- [x] Clears magic cookie after successful recovery; zeros fresh region for new boot
+- [x] POST codes: `POST16(0xDE00)` entry, `POST16(0xDE01)` region allocated, `POST16(0xDE02)` recovery check, `POST16(0xDE03)` done
+- [x] 3 unit tests: KLOG_CRASH_MAGIC value, header size bounds, POST code uniqueness
 - [ ] Commit: `"kernel: crash-persistent klog capture via reserved physical memory"`
 
 > [!NOTE]
@@ -250,7 +251,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 | 💎 | Remote forwarding     | ✅ WEF              | ✅ rsyslog UDP       | ⬜ §7 -- syslog RFC 5424     |
 | 💎 | ETW tracing API       | ✅ NtTraceEvent     | ✅ ftrace/perf_event | ⬜ §8 -- SSDT wired          |
 | ⭐ | Serial timestamps     | ❌ Not standard     | ❌ Not standard      | ✅ Every entry              |
-| 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ⬜ §9 -- reserved RAM        |
+| 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §9 NVRAM + reserved RAM   |
 | 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ⬜ §10 -- klog_entry_t       |
 | ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §11 -- HMAC-chain         |
 

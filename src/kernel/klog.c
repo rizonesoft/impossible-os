@@ -238,7 +238,289 @@ void klog_disk_enable(void)
     /* Phase 2 disk init: allocate FAT32 buffer and open log files.
      * Triggers the first flush of accumulated ring entries to disk. */
     klog_disk_init();
+    klog_crash_write_to_disk();
     klog_disk_flush();
+}
+
+/* ---- Crash-persistent log capture ---------------------------------------- */
+
+#include "kernel/boot_init.h"
+#include "kernel/mm/pmm.h"
+
+/* Serialized entry: no pointers, fixed-size for physical memory layout */
+typedef struct {
+    uint32_t level;
+    uint32_t timestamp;
+    char     subsystem[16];
+    char     message[128];
+} klog_crash_entry_t;  /* 148 bytes */
+
+/* Reserved physical memory region for crash log persistence */
+static uint8_t *s_crash_region;       /* phys addr, identity-mapped */
+static uint32_t s_crash_region_size;  /* KLOG_CRASH_PAGES * 4096 */
+
+/* Recovered entries from previous crash (held in static buffer until disk write) */
+static klog_crash_entry_t s_recovered[KLOG_RING_SIZE];
+static uint32_t           s_recovered_count;
+
+/* Simple inline CRC32 (IEEE 802.3, polynomial 0xEDB88320) */
+static uint32_t crash_crc32(const void *data, uint32_t len)
+{
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t crc = 0xFFFFFFFF;
+    uint32_t i, j;
+    for (i = 0; i < len; i++) {
+        crc ^= p[i];
+        for (j = 0; j < 8; j++) {
+            if (crc & 1)
+                crc = (crc >> 1) ^ 0xEDB88320;
+            else
+                crc >>= 1;
+        }
+    }
+    return crc ^ 0xFFFFFFFF;
+}
+
+static void str_copy_n(char *dst, const char *src, uint32_t max)
+{
+    uint32_t i = 0;
+    if (src) {
+        while (i + 1 < max && src[i]) { dst[i] = src[i]; i++; }
+    }
+    dst[i] = '\0';
+}
+
+void klog_crash_persist(void)
+{
+    /* Called from panic_screen() -- no kmalloc, no VFS, no locks.
+     * Direct physical memory write to pre-reserved region. */
+    if (!s_crash_region || s_crash_region_size == 0)
+        return;
+
+    klog_crash_header_t *hdr = (klog_crash_header_t *)s_crash_region;
+    klog_crash_entry_t  *dst = (klog_crash_entry_t *)(s_crash_region + sizeof(klog_crash_header_t));
+
+    /* How many entries fit after the header? */
+    uint32_t max_entries = (s_crash_region_size - sizeof(klog_crash_header_t)) /
+                           sizeof(klog_crash_entry_t);
+    uint32_t count = klog_ring_count < KLOG_RING_SIZE ? klog_ring_count : KLOG_RING_SIZE;
+    if (count > max_entries)
+        count = max_entries;
+
+    /* Serialize ring entries (oldest first) */
+    uint32_t start = 0;
+    if (klog_ring_count >= KLOG_RING_SIZE)
+        start = klog_ring_head;  /* ring wrapped -- oldest is at head */
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t idx = (start + i) % KLOG_RING_SIZE;
+        dst[i].level     = (uint32_t)klog_ring[idx].level;
+        dst[i].timestamp = klog_ring[idx].timestamp;
+        str_copy_n(dst[i].subsystem, klog_ring[idx].subsystem, 16);
+        str_copy_n(dst[i].message, klog_ring[idx].message, 128);
+    }
+
+    /* Write header */
+    hdr->magic          = KLOG_CRASH_MAGIC;
+    hdr->entry_count    = count;
+    hdr->ring_head      = klog_ring_head;
+    hdr->boot_timestamp = system_get_ticks();
+    hdr->crc32          = 0;  /* zero before computing */
+
+    /* CRC32 over all serialized entries */
+    hdr->crc32 = crash_crc32(dst, count * sizeof(klog_crash_entry_t));
+
+    /* POST code: crash log persisted */
+    POST16(POST16_CRASHLOG);
+}
+
+/* UEFI NVRAM variable for crash region address -- same GUID as ImpossiblePOST */
+#include "kernel/uefi_runtime.h"
+
+static const struct boot_uefi_guid s_crash_guid = {
+    0x494D504F, 0x5354, 0x4F53,
+    { 0x50, 0x4F, 0x53, 0x54, 0x47, 0x55, 0x49, 0x44 }
+};
+static const uint16_t s_crash_varname[] = {
+    'I','m','p','o','s','s','i','b','l','e',
+    'C','r','a','s','h','L','o','g', 0
+};
+
+#define CRASH_NVRAM_ATTRS (EFI_VARIABLE_NON_VOLATILE | \
+                           EFI_VARIABLE_BOOTSERVICE_ACCESS | \
+                           EFI_VARIABLE_RUNTIME_ACCESS)
+
+void klog_crash_recover(void)
+{
+    s_recovered_count = 0;
+
+    POST16(POST16_CRASHLOG);
+
+    /* Step 1: Read previous crash region address from NVRAM */
+    uint64_t prev_phys = 0;
+    {
+        uint64_t sz = sizeof(prev_phys);
+        uint32_t attrs = 0;
+        uint64_t status = uefi_get_variable(&s_crash_guid, s_crash_varname,
+                                            &attrs, &sz, &prev_phys);
+        if (status == 0 && sz == sizeof(prev_phys) && prev_phys != 0) {
+            /* Check for crash data at the previous region */
+            POST16(POST16_CRASHLOG_CHECK);
+            klog_crash_header_t *prev_hdr = (klog_crash_header_t *)(uintptr_t)prev_phys;
+
+            if (prev_hdr->magic == KLOG_CRASH_MAGIC) {
+                uint32_t count = prev_hdr->entry_count;
+                if (count > 0 && count <= KLOG_RING_SIZE) {
+                    klog_crash_entry_t *src = (klog_crash_entry_t *)
+                        ((uint8_t *)(uintptr_t)prev_phys + sizeof(klog_crash_header_t));
+                    uint32_t expected_crc = prev_hdr->crc32;
+                    uint32_t actual_crc = crash_crc32(src, count * sizeof(klog_crash_entry_t));
+
+                    if (actual_crc == expected_crc) {
+                        /* Valid crash data -- replay to serial */
+                        serial_write("[CRASH-PREV] === Recovered ");
+                        {
+                            char num[12]; uint32_t n = count, pos = 0;
+                            if (n == 0) { num[pos++] = '0'; }
+                            else { char tmp[12]; uint32_t t = 0;
+                                   while (n) { tmp[t++] = '0' + (n % 10); n /= 10; }
+                                   while (t) num[pos++] = tmp[--t]; }
+                            num[pos] = '\0';
+                            serial_write(num);
+                        }
+                        serial_write(" entries from previous crash ===\n");
+
+                        for (uint32_t i = 0; i < count; i++) {
+                            serial_write("[CRASH-PREV] ");
+                            serial_write(src[i].subsystem);
+                            serial_write(": ");
+                            serial_write(src[i].message);
+                            serial_write("\n");
+                            if (s_recovered_count < KLOG_RING_SIZE)
+                                s_recovered[s_recovered_count++] = src[i];
+                        }
+                    } else {
+                        serial_write("[CRASH-PREV] recovery failed: CRC32 mismatch\n");
+                    }
+                }
+                /* Clear magic so it doesn't replay again */
+                prev_hdr->magic = 0;
+            }
+        }
+    }
+
+    /* Step 2: Allocate fresh crash persistence region for THIS boot */
+    uint64_t phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
+    if (!phys) {
+        serial_write("[CRASH] Failed to allocate crash log region\n");
+        POST16(POST16_CRASHLOG_ALLOC);
+        POST16(POST16_CRASHLOG_DONE);
+        return;
+    }
+    s_crash_region = (uint8_t *)(uintptr_t)phys;
+    s_crash_region_size = KLOG_CRASH_PAGES * 4096;
+
+    /* Zero the new region */
+    for (uint32_t i = 0; i < s_crash_region_size; i++)
+        s_crash_region[i] = 0;
+
+    /* Save this region's address to NVRAM so next boot can find it */
+    uefi_set_variable(&s_crash_guid, s_crash_varname,
+                      CRASH_NVRAM_ATTRS, sizeof(phys), &phys);
+
+    POST16(POST16_CRASHLOG_ALLOC);
+    POST16(POST16_CRASHLOG_DONE);
+}
+
+void klog_crash_write_to_disk(void)
+{
+    extern struct vfs_node *vfs_open(const char *, uint32_t);
+    extern int32_t vfs_write(struct vfs_node *, uint64_t, uint32_t, const uint8_t *);
+    extern void vfs_close(struct vfs_node *);
+    extern int vfs_is_mounted(char drive);
+
+    if (s_recovered_count == 0)
+        return;
+
+    if (!vfs_is_mounted('C')) {
+        klog(LOG_WARN, "CRASH", "Cannot write crash_recovery.log -- C: not mounted");
+        return;
+    }
+
+    #define VFS_O_WRITE  0x02
+    #define VFS_O_CREATE 0x04
+    #define VFS_O_TRUNC  0x08
+
+    struct vfs_node *file = vfs_open(
+        KLOG_DIR "crash_recovery.log",
+        VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (!file) {
+        klog(LOG_WARN, "CRASH", "Cannot create crash_recovery.log");
+        return;
+    }
+
+    /* Write header */
+    static const char file_hdr[] = "# Impossible OS Crash Recovery Log\n"
+                                    "# Entries recovered from previous boot crash\n\n";
+    uint32_t offset = 0;
+    vfs_write(file, offset, sizeof(file_hdr) - 1, (const uint8_t *)file_hdr);
+    offset += sizeof(file_hdr) - 1;
+
+    /* Write each recovered entry */
+    for (uint32_t i = 0; i < s_recovered_count; i++) {
+        char line[192];
+        uint32_t pos = 0;
+
+        /* [timestamp] LEVEL subsystem: message\n */
+        line[pos++] = '[';
+        /* Simple decimal for timestamp */
+        {
+            uint32_t ts = s_recovered[i].timestamp;
+            char tmp[12]; uint32_t t = 0;
+            if (ts == 0) { tmp[t++] = '0'; }
+            else { while (ts) { tmp[t++] = '0' + (ts % 10); ts /= 10; } }
+            while (t) line[pos++] = tmp[--t];
+        }
+        line[pos++] = ']'; line[pos++] = ' ';
+
+        /* Level */
+        {
+            static const char *lvl_names[] = { "DEBUG", "INFO", "WARN", "ERROR", "FATAL" };
+            uint32_t lv = s_recovered[i].level;
+            if (lv > 4) lv = 4;
+            const char *ln = lvl_names[lv];
+            while (*ln) line[pos++] = *ln++;
+        }
+        line[pos++] = ' ';
+
+        /* Subsystem */
+        {
+            const char *s = s_recovered[i].subsystem;
+            while (*s && pos < 180) line[pos++] = *s++;
+        }
+        line[pos++] = ':'; line[pos++] = ' ';
+
+        /* Message */
+        {
+            const char *m = s_recovered[i].message;
+            while (*m && pos < 190) line[pos++] = *m++;
+        }
+        line[pos++] = '\n';
+
+        vfs_write(file, offset, pos, (const uint8_t *)line);
+        offset += pos;
+    }
+
+    vfs_close(file);
+    klog(LOG_INFO, "CRASH", "Crash recovery log: %u entries written to %scrash_recovery.log",
+         (uint64_t)s_recovered_count, KLOG_DIR);
+
+    /* Clear recovered buffer */
+    s_recovered_count = 0;
+
+    #undef VFS_O_WRITE
+    #undef VFS_O_CREATE
+    #undef VFS_O_TRUNC
 }
 
 /* ---- Per-subsystem verbosity ---- */
