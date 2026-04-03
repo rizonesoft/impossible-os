@@ -257,9 +257,10 @@ void task_init(void)
     /* Register the yield software interrupt handler (INT 0x81) */
     idt_register_handler(YIELD_INT_VECTOR, yield_irq_handler);
 
-    /* Register #NM handler for lazy FPU (vector 7 = Device Not Available) */
-    if (cpu_has(CPU_FEATURE_XSAVE))
-        idt_register_handler(7, nm_handler);
+    /* Register #NM handler for lazy FPU (vector 7 = Device Not Available).
+     * Must be unconditional -- schedule() sets CR0.TS on all platforms,
+     * including TCG where XSAVE is absent but SSE2 SIMD is used. */
+    idt_register_handler(7, nm_handler);
 }
 
 int task_create(task_entry_t entry, const char *name)

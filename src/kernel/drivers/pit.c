@@ -92,14 +92,15 @@ void pit_stop(void)
 }
 
 /* IRQ 0 handler -- called on every PIT tick.
- * Handles tick counting and spinner callback only.
- * Preemptive scheduling is driven by the LAPIC timer handler.
- * Returns the same frame (no context switch from PIT). */
+ * Drives preemptive scheduling on TCG (where LAPIC timer is not the
+ * tick source). Without this, compositor_run() starves all other tasks
+ * because the PIT never calls schedule(). */
 static uint64_t pit_irq_handler(struct interrupt_frame *frame)
 {
+    extern uint64_t schedule(struct interrupt_frame *frame);
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
-    return (uint64_t)frame;
+    return schedule(frame);
 }
 
 void pit_init(void)
