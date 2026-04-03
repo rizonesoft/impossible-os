@@ -861,8 +861,8 @@ static void parse_boot_conf(void)
         return;
     }
 
-    /* Read entire file (boot.conf should be < 1 KB) */
-    char buf[1024];
+    /* Read entire file (boot.conf can exceed 1 KB with comments) */
+    char buf[2048];
     UINTN buf_size = sizeof(buf) - 1;
     status = conf_file->Read(conf_file, &buf_size, buf);
     conf_file->Close(conf_file);
