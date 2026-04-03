@@ -150,6 +150,10 @@ if ($PatchArgs.Count -gt 0) {
     }) -join ''
     Write-Host "  Mode:   $($ModeLabel.Trim())" -ForegroundColor Cyan
     & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh $PatchStr"
+} else {
+    # No test flags -- reset boot.conf to defaults in case a previous
+    # test run was interrupted before its finally{} block could restore it.
+    & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset" 2>$null
 }
 
 try {
