@@ -26,7 +26,7 @@
 #include "kernel/types.h"
 
 /* ---- Maximum limits ---- */
-#define TEST_MAX_SUITES     64
+#define TEST_MAX_SUITES     128
 #define TEST_MAX_NAME_LEN   32
 
 /* ---- Test categories for selective execution ---- */
