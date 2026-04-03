@@ -25,7 +25,23 @@
  * Shared data lives INSIDE the trampoline page at offset 0xE00 (phys 0x8E00).
  * Any separate low-memory region (0x6000, 0x7E00, etc.) will be stomped by
  * VBox EFI AP parking firmware, so all data MUST share the trampoline page.
- * Must match the offsets in ap_trampoline.asm. */
+ *
+ * WARNING: ap_trampoline.asm uses hardcoded `AP_DATA + 0xNN` offsets.
+ * Do NOT change these values without updating the assembly to match.
+ * Static asserts below catch C-side drift at compile time, but assembly
+ * must be checked manually.
+ *
+ * Data area offset table (phys base = AP_DATA_BASE = 0x8E00):
+ *   Offset  Size  Field        Used by
+ *   ------  ----  -----------  -----------------------------------
+ *   +0x00     8   CR3          pm_entry: mov eax, [AP_DATA+0x00]
+ *   +0x08     8   STACK        lm_entry: mov rsp, [AP_DATA+0x08]
+ *   +0x10    10   GDT_PTR      lm_entry: lgdt [AP_DATA+0x10]
+ *   +0x20     8   ENTRY        lm_entry: mov rax, [AP_DATA+0x20]
+ *   +0x28     4   CPUID        lm_entry: mov edi, [AP_DATA+0x28]
+ *   +0x30    10   IDT_PTR      lm_entry: lidt [AP_DATA+0x30]
+ *   +0x38     4   CANARY       smp_init: 0xDEADC0DE magic verify
+ */
 #define AP_TRAMPOLINE_ADDR     0x8000   /* where trampoline code is loaded */
 #define AP_DATA_BASE           0x8E00   /* shared data at trampoline+0xE00 */
 
@@ -35,9 +51,23 @@
 #define AP_OFF_ENTRY           0x20     /* uint64_t: C entry point */
 #define AP_OFF_CPUID           0x28     /* uint32_t: logical CPU index */
 #define AP_OFF_IDT_PTR         0x30     /* 10 bytes: IDTR */
+#define AP_OFF_CANARY          0x38     /* uint32_t: magic 0xDEADC0DE */
+
+#define AP_CANARY_MAGIC        0xDEADC0DE
 
 /* Per-AP kernel stack size (16 KiB, same as BSP) */
 #define AP_STACK_SIZE          16384
+
+/* Compile-time enforcement: AP trampoline data area offsets.
+ * If these fire, you changed a C #define without updating the assembly. */
+_Static_assert(AP_OFF_CR3     == 0x00, "AP trampoline: CR3 must be at +0x00 -- asm uses [AP_DATA+0x00]");
+_Static_assert(AP_OFF_STACK   == 0x08, "AP trampoline: STACK must be at +0x08 -- asm uses [AP_DATA+0x08]");
+_Static_assert(AP_OFF_GDT_PTR == 0x10, "AP trampoline: GDT_PTR must be at +0x10 -- asm uses [AP_DATA+0x10]");
+_Static_assert(AP_OFF_ENTRY   == 0x20, "AP trampoline: ENTRY must be at +0x20 -- asm uses [AP_DATA+0x20]");
+_Static_assert(AP_OFF_CPUID   == 0x28, "AP trampoline: CPUID must be at +0x28 -- asm uses [AP_DATA+0x28]");
+_Static_assert(AP_OFF_IDT_PTR == 0x30, "AP trampoline: IDT_PTR must be at +0x30 -- asm uses [AP_DATA+0x30]");
+_Static_assert(AP_DATA_BASE   == AP_TRAMPOLINE_ADDR + 0xE00,
+    "AP data base must be trampoline + 0xE00 (phys 0x8E00)");
 
 /* ---- Per-CPU data ----
  *

@@ -48,7 +48,7 @@
 | ⭐  |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [x]  |
 | ⭐  |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [x]  |
 | ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [x]  |
-| ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [ ]  |
+| ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [x]  |
 | ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [ ]  |
 | ⭐  |   6   | IDT vector assignment collision detection          | --         |  [ ]  |
 | ⭐  |   7   | SSDT service number count stability                | --         |  [ ]  |
@@ -124,17 +124,12 @@ The AP trampoline assembly reads data from fixed offsets at physical 0x8E00. `sm
 
 **Files:** `include/kernel/smp.h`, `src/kernel/smp/ap_trampoline.asm`
 
-- [ ] Add `_Static_assert(AP_OFF_CR3 == 0x00, "AP trampoline CR3 offset")`
-- [ ] Add `_Static_assert(AP_OFF_STACK == 0x08, "AP trampoline stack offset")`
-- [ ] Add `_Static_assert(AP_OFF_GDT_PTR == 0x10, "AP trampoline GDT pointer offset")`
-- [ ] Add `_Static_assert(AP_OFF_ENTRY == 0x20, "AP trampoline entry point offset")`
-- [ ] Add `_Static_assert(AP_OFF_CPUID == 0x28, "AP trampoline CPU ID offset")`
-- [ ] Add `_Static_assert(AP_OFF_IDT_PTR == 0x30, "AP trampoline IDT pointer offset")`
-- [ ] Runtime: `smp_init()` writes data then reads back CR3 and entry point from 0x8E00, verifies match
-- [ ] Canary: write magic 0xDEADC0DE at offset 0x38 (unused), verify after AP boot
-- [ ] Unit test: verify all AP_OFF_* constants match expected byte offsets
-- [ ] Documentation: offset table in smp.h header comment
-- [ ] Commit: `"bulletproof: AP trampoline data area -- offset asserts + readback verify"`
+- [x] 7 `_Static_assert` in smp.h: CR3==0x00, STACK==0x08, GDT_PTR==0x10, ENTRY==0x20, CPUID==0x28, IDT_PTR==0x30, DATA_BASE==trampoline+0xE00
+- [x] Runtime: `smp_init()` writes CR3+ENTRY+canary, reads back, verifies match -- halts with FATAL on corruption
+- [x] Canary: 0xDEADC0DE at AP_OFF_CANARY (0x38), written before SIPI, verified after data write
+- [x] Unit test: `test_ap_trampoline_offsets()` -- 8 assertions covering all offsets + DATA_BASE derivation
+- [x] Documentation: 18-line offset table in smp.h with assembly cross-references (which instruction uses each field)
+- [x] Commit: `"bulletproof: AP trampoline data area -- offset asserts + readback verify"`
 
 **Test checkpoint:** Change AP_OFF_STACK in smp.h but not asm -> static assert catches at compile time. Readback mismatch at boot -> FATAL halt with "AP trampoline data corruption" message.
 

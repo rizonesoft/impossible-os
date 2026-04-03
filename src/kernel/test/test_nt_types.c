@@ -218,6 +218,30 @@ static void test_user_elf_range(void)
                    "User ELF range within single 2 MiB PD entry");
 }
 
+/* ---- AP trampoline data area offsets ---- */
+
+static void test_ap_trampoline_offsets(void)
+{
+    /* ap_trampoline.asm uses hardcoded [AP_DATA + 0xNN] offsets.
+     * If these C defines diverge, APs read garbage and crash on SIPI. */
+    TEST_ASSERT_EQ(AP_OFF_CR3, 0x00,
+                   "AP_OFF_CR3 == 0x00");
+    TEST_ASSERT_EQ(AP_OFF_STACK, 0x08,
+                   "AP_OFF_STACK == 0x08");
+    TEST_ASSERT_EQ(AP_OFF_GDT_PTR, 0x10,
+                   "AP_OFF_GDT_PTR == 0x10");
+    TEST_ASSERT_EQ(AP_OFF_ENTRY, 0x20,
+                   "AP_OFF_ENTRY == 0x20");
+    TEST_ASSERT_EQ(AP_OFF_CPUID, 0x28,
+                   "AP_OFF_CPUID == 0x28");
+    TEST_ASSERT_EQ(AP_OFF_IDT_PTR, 0x30,
+                   "AP_OFF_IDT_PTR == 0x30");
+    TEST_ASSERT_EQ(AP_OFF_CANARY, 0x38,
+                   "AP_OFF_CANARY == 0x38");
+    TEST_ASSERT_EQ(AP_DATA_BASE, AP_TRAMPOLINE_ADDR + 0xE00,
+                   "AP_DATA_BASE == trampoline + 0xE00");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -236,6 +260,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: per_cpu_data offsets", test_per_cpu_offsets, TEST_CAT_ABI);
     test_suite_register_cat("NT: boot_config layout", test_boot_config_layout, TEST_CAT_ABI);
     test_suite_register_cat("NT: user ELF range sync", test_user_elf_range, TEST_CAT_ABI);
+    test_suite_register_cat("NT: AP trampoline offsets", test_ap_trampoline_offsets, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

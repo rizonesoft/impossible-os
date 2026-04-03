@@ -235,6 +235,38 @@ void smp_init(void)
         /* C entry point */
         *(volatile uint64_t *)(data + AP_OFF_ENTRY) =
             (uint64_t)(uintptr_t)ap_entry;
+
+        /* Canary at offset 0x38 (unused by trampoline) */
+        *(volatile uint32_t *)(data + AP_OFF_CANARY) = AP_CANARY_MAGIC;
+    }
+
+    /* Runtime verify: read back CR3 and entry point from the data area.
+     * If the values don't match what we wrote, the trampoline page was
+     * stomped (VBox AP parking firmware, DMA, etc.) or offsets are wrong. */
+    {
+        volatile uint8_t *data = (volatile uint8_t *)(uintptr_t)AP_DATA_BASE;
+        uint64_t rb_cr3   = *(volatile uint64_t *)(data + AP_OFF_CR3);
+        uint64_t rb_entry = *(volatile uint64_t *)(data + AP_OFF_ENTRY);
+        uint32_t rb_canary = *(volatile uint32_t *)(data + AP_OFF_CANARY);
+
+        if (rb_cr3 != cr3) {
+            klog(LOG_FATAL, "smp",
+                 "AP trampoline data corruption: CR3 wrote 0x%x, read back 0x%x",
+                 cr3, rb_cr3);
+            return;
+        }
+        if (rb_entry != (uint64_t)(uintptr_t)ap_entry) {
+            klog(LOG_FATAL, "smp",
+                 "AP trampoline data corruption: ENTRY wrote 0x%x, read back 0x%x",
+                 (uint64_t)(uintptr_t)ap_entry, rb_entry);
+            return;
+        }
+        if (rb_canary != AP_CANARY_MAGIC) {
+            klog(LOG_FATAL, "smp",
+                 "AP trampoline canary corrupted: expected 0xDEADC0DE, got 0x%x",
+                 (uint64_t)rb_canary);
+            return;
+        }
     }
 
     /* Start each AP */
