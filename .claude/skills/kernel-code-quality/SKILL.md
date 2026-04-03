@@ -117,6 +117,19 @@ static void test_my_invariant(void) {
 - [ ] **GS_BASE is set.** Any code that reads `gs:N` (per-CPU data) must run AFTER `smp_early_bsp_init()`. If unsure, check `smp_this_cpu() != NULL`.
 - [ ] **No LAPIC TPR writes in ISR path.** IRQL tracking is software-only. The LAPIC handles hardware priority via ISR/PPR.
 
+### Gate 10: Architecture Neutrality
+
+> Impossible OS targets ARM64 in addition to x86-64 (domain 16). Code outside `arch/` must compile for both. When the HAL exists, use it. Until then, don't make things worse.
+
+- [ ] **No arch headers in neutral code.** Files in `fs/`, `ob/`, `ipc/`, `nt/`, `registry.c`, `klog.c`, desktop/, shell/ must NOT include: `kernel/gdt.h`, `kernel/idt.h`, `kernel/msr.h`, `kernel/cpuid.h`, `kernel/drivers/lapic.h`, `kernel/drivers/ioapic.h`, `kernel/drivers/pit.h`, `kernel/drivers/pic.h`, `kernel/cpu_security.h`.
+- [ ] **No inline x86 asm in neutral code.** Don't write `__asm__ volatile("cli")` or `rdtsc` or `invlpg` in filesystem, object manager, IPC, or registry code. If you need interrupt control, use the future `arch_interrupts_disable()` HAL, or for now, call an existing wrapper.
+- [ ] **No GDT selectors in neutral logic.** `GDT_KERNEL_CODE`, `GDT_USER_CODE`, `0x08`, `0x20|3` are x86 segment concepts. They belong in `task.c` context frame setup (which will move to `arch/x86_64/`) -- never in VFS, OB, or IPC code.
+- [ ] **No x86 register names in neutral code.** `CR0`, `CR3`, `CR4`, `EFER`, `MSR_IA32_*` are x86-only. ARM uses `TTBR0_EL1`, `SCTLR_EL1`, etc. Keep these in arch-specific files.
+- [ ] **Known arch-specific files (acceptable).** These files ARE x86-specific and will move to `arch/x86_64/` during the port: `gdt.c`, `idt.c`, `isr_stubs.asm`, `syscall_entry.asm`, `syscall_fast.c`, `lapic.c`, `ioapic.c`, `pit.c`, `cpuid.c`, `msr.c`, `cpu_security.c`, `smp.c`, `ap_trampoline.asm`. Arch includes in these files are expected.
+- [ ] **Borderline files.** `task.c`, `vmm.c`, `panic.c`, `irql.c`, `spinlock.c` mix neutral logic with arch-specific mechanics. When modifying these, keep new code arch-neutral where possible and mark arch-specific sections with `/* ARCH: x86-64 -- will move to arch/ */`.
+
+<!-- Updated 2026-04-03: added Gate 10 for ARM64 port preparation -->
+
 ### Gate 7: Unit Tests
 
 - [ ] **New public function?** Add at least one test assertion in the appropriate `test_*.c` file.
@@ -193,3 +206,6 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | Magic number in source | Extract to `#define` in a header |
 | Test failing | Fix the code, never skip the test |
 | Emulator-specific behavior | Write to the hardware spec, not the emulator |
+| Arch header in fs/ob/ipc/nt code | Don't include it -- find an arch-neutral way |
+| Inline asm in neutral code | Use a wrapper or HAL call, not raw asm |
+| GDT/IDT concept in neutral logic | Keep in arch-specific files (task.c context setup) |

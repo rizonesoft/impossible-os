@@ -464,6 +464,10 @@ int guid_from_string(const char *str, struct gpt_guid *g)
 
 /* ---- GUID v4 Generation (random) ---- */
 
+/* ARCH: x86-64 specific -- uses RDRAND instruction and cpuid.h.
+ * When the kernel CSPRNG lands (TODO-20 §6), replace rdrand_fill()
+ * with kernel_random_bytes() and remove this arch dependency.
+ * -> XREF: 16-architecture-ports/TODO-01 §1 -- HAL random source */
 #include "kernel/cpuid.h"
 
 /* Try RDRAND to fill 'n' bytes. Returns 1 on success, 0 if unavailable. */
