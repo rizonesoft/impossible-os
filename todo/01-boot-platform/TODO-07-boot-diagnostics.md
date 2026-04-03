@@ -23,6 +23,8 @@
 - → XREF: `02-kernel-core/TODO-13-registry-completion.md` -- `HKLM\SYSTEM\Boot\AliveBlink`, `VitalSigns` registry keys (visual POST / debug bar: [TODO-08 -- Visual POST Display](TODO-08-visual-post-display.md))
 - → XREF: `TODO-01-uefi-hardening-secureboot.md §7` -- boot UX polish calls `boot_splash_status()` via the §2 API
 - → XREF: `07-graphics-ui/TODO-06-window-manager.md §8` -- compositor frame loop must call `spinner_tick()` on every active `g_active_spinners[]` entry per frame; TODO-06 §8 (Compositor Performance) is the natural owner for this per-frame integration
+- → XREF: `TODO-02-bootloader-error-recovery.md §13` -- bootloader-stage NVRAM error codes; §5 here persists kernel-stage panic evidence, §13 there persists UEFI-stage boot error codes -- complementary
+- → XREF: `TODO-02-bootloader-error-recovery.md §14` -- bootloader QR code on UEFI error screen; §6 here does the same for kernel-stage panic BSOD -- share QR encoder if both are implemented
 
 ## Outcome
 

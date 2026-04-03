@@ -15,6 +15,7 @@
 - `include/kernel/boot_init.h` -- boot phases and subsystem tracking
 - → XREF: `TODO-14-ab-boot-rollback.md §4` -- failure counting + rollback on hang
 - → XREF: `TODO-02-bootloader-error-recovery.md §9` -- boot failure screen
+- → XREF: `TODO-02-bootloader-error-recovery.md §11` -- UEFI-stage watchdog before ExitBootServices; §1 here covers kernel-stage LAPIC NMI watchdog after ExitBootServices -- complementary coverage
 
 ---
 

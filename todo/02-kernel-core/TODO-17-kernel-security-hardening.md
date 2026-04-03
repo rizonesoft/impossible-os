@@ -28,6 +28,8 @@
 - → XREF: `TODO-08-binary-system.md §3,§12` -- ELF `PT_GNU_PROPERTY` (§3) and PE `IMAGE_LOAD_CONFIG_DIRECTORY64` (§12) carry per-binary CET IBT/SHSTK and CFG flags; this TODO's §6 (CET shadow stack) and §7 (CET IBT) consume those flags to decide enforcement
 - → XREF: `TODO-09-process-model-extensions.md §11` -- per-process mitigation flags (`MIT_DEP_ENABLE`, `MIT_ASLR_FORCE`, etc.) consume §1 NX/DEP enforcement; mitigation API surface is authoritative in TODO-09
 - → XREF: `TODO-10-exception-dispatch-seh.md §3` -- `#CP` (vector 21, CET shadow-stack violation) exception handler; §6 of this TODO enables CET SS, §3 of TODO-10 routes the resulting `#CP` faults through `ki_dispatch_exception()`
+- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §13` -- `SecureBootEnforce=1` in boot.conf triggers the kernel lockdown path implemented here; this TODO enforces the restrictions (restrict `/dev/mem`, block unsigned kmod loading, etc.)
+- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2, §4` -- Phase 0 activation order (§2) calls `cpu_efer_harden()`/`cpu_cr4_harden()` from this TODO; AP hardening (§4) replicates the same features on each AP via `ap_cpu_harden()`
 
 ---
 

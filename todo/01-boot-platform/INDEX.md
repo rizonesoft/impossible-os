@@ -27,8 +27,8 @@ This domain covers the path from firmware entry through kernel handoff and early
 
 - [TODO-01 -- UEFI Bootloader Hardening & Secure Boot](TODO-01-uefi-hardening-secureboot.md) -- Secure Boot shim, UEFI runtime, GOP resolution, SMBIOS, boot menu, capsule update, W^X
 - [TODO-02 -- Bootloader Error Recovery & ELF Hardening](TODO-02-bootloader-error-recovery.md) -- Eliminate silent failures: ELF bounds checking, ExitBootServices retry, fallback kernel search, boot failure error screen
-- [TODO-03 -- Boot Device Discovery & Fallback Chain](TODO-03-boot-device-discovery.md) -- Boot device identification via LoadedImage, multi-device fallback, device type detection
-- [TODO-04 -- CPU Boot Sequencing & AP Hardening](TODO-04-cpu-boot-sequencing.md) -- Phase 0 activation order (EFER→CR4 before VMM), hypervisor detection before UTS, AP hardening replication
+- [TODO-03 -- Boot Device Discovery & Fallback Chain](TODO-03-boot-device-discovery.md) -- Boot device identification via LoadedImage, multi-device fallback, device type detection, UEFI boot variables, partition GUID validation, removable media, Registry population, disk health check
+- [TODO-04 -- CPU Boot Sequencing & AP Hardening](TODO-04-cpu-boot-sequencing.md) -- Phase 0 activation order (EFER->CR4 before VMM), hypervisor detection before UTS, AP hardening replication, AP feature consistency validation, CR4 bit pinning, MTRR/PAT AP sync, CPU register audit trail
 - [TODO-05 -- Bare Metal Boot Hardening](TODO-05-bare-metal-hardening.md) -- IST stacks, ACPI-gated hardware access, graceful degradation, hw interrupt fix, UC MMIO, CPU feature verification
 - [TODO-06 -- Interrupt Architecture & Unified Timer Subsystem](TODO-06-interrupt-timer-arch.md) -- MADT, LAPIC/IOAPIC order, full IDT, dynamic IRQ API, UTS HPET/LAPIC/PIT HAL, LAPIC calibration
 - [TODO-07 -- Boot Diagnostics, Heartbeat & Spinner](TODO-07-boot-diagnostics.md) -- POST codes, named-stage API, panic forensics, QR code, vital signs, multi-instance spinner

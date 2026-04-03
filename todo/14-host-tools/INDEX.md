@@ -1,4 +1,4 @@
-# 14 SDK Tools
+# 14 Host Tools & SDK
 
 This domain covers SDK tools that run on the **host OS** (Windows, Linux) -- both for Impossible OS development and for third-party developers working with Impossible OS formats.
 

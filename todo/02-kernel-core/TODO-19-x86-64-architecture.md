@@ -28,6 +28,7 @@
 - → XREF: `TODO-07-time-filetime-management.md §2` -- RDTSCP in scheduler timing; §9 of this TODO programmes `IA32_TSC_AUX`
 - → XREF: `TODO-15-power-management.md §9` -- Driver Power Callbacks & Resume Ordering; CPU topology (§7) feeds the scheduler policy deferred to `03-memory-concurrency`
 - → XREF: `TODO-17-kernel-security-hardening.md §1–§7` -- NX, SMEP/SMAP, KPTI, PCID, IBRS, CET are already scoped there; this TODO does not touch those
+- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §1, §3, §5` -- CPUID detection call site (§1), hypervisor pre-detection (§3), XSAVE/PCID Phase 1 activation window (§5) consume features defined here
 
 ---
 

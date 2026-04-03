@@ -42,6 +42,7 @@
 - → XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` -- NX/SMEP/SMAP implementation (this TODO does NOT reimplement; handles bare-metal quirks like shared page tables)
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` -- boot_progress() infrastructure (this TODO consumes it)
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` -- UC MMIO mapping for HPET/AHCI
+- → XREF: `TODO-02-bootloader-error-recovery.md §4` -- serial port probe and COM2 fallback; §7 here provides graceful degradation when serial is absent, §4 there detects serial presence in the bootloader
 
 ## Outcome
 

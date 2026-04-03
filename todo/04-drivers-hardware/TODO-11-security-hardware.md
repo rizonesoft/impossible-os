@@ -14,6 +14,7 @@
 - → XREF: `04-drivers-hardware/TODO-03-apic-interrupt-routing.md` -- IOMMU interrupt remapping (§2) requires the interrupt allocation infrastructure from the APIC TODO
 - → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md` -- Secure Boot UEFI variable read (§5) is a runtime-services call at the end of the UEFI handoff; coordinate with the boot-platform hardening work
 - → XREF: `02-kernel-core` domain -- `hwrng_read()` (§1) should feed into the kernel entropy pool; any KASLR or stack-canary seeding should call `hwrng_read()` before it is available from user mode
+- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §4, §6, §7` -- AP hardening boot sequencing (§4), AP feature consistency (§6), and CR4 pinning (§7) own the activation order and consistency enforcement; §7 here owns the SMEP/SMAP CR4 write implementation and copy_from/to_user wrappers
 
 ## Outcome
 

@@ -1,4 +1,4 @@
-# 12 Installer Release
+# 15 Installer & Release
 
 This domain tracks how the OS is installed, packaged, delivered, and prepared for release.
 

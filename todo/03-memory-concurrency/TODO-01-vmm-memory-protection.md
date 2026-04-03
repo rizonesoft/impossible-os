@@ -16,6 +16,7 @@
 - [`src/kernel/sched/syscall.c`](../../src/kernel/sched/syscall.c)
 - [`scripts/build.sh`](../../scripts/build.sh)
 - → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` -- EFER.NXE and CR4 hardening must be active before §1–§3 can rely on NX bits
+- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §8` -- PAT MSR AP synchronization; vmm_map_mmio_uc() cache policy depends on consistent PAT MSR across all CPUs
 - → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` -- TEB and stack bounds required for §1 guard page placement
 - → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` -- syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
 - → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §10` -- UEFI W^X (firmware runtime pages); §3 policy applies there too

@@ -29,10 +29,12 @@ This tree is the live planning scaffold for active work.
 | 11 | [10 Services Security](./10-services-security/INDEX.md) | Shared system services, security policy, accounts, crypto, and orchestration. |
 | 12 | [11 Apps](./11-apps/INDEX.md) | Built-in applications, CLI tools, and user-facing product features. |
 | 13 | [12 User Platform SDK](./12-user-platform-sdk/INDEX.md) | User-mode ABI, compatibility surface, SDK assets, and developer-facing contracts. |
-| 14 | [13 Installer Release](./13-installer-release/INDEX.md) | Installer flow, deployable media, packaging, and release readiness. |
-| 15 | [14 Future Research](./14-future-research/INDEX.md) | Long-range research, stretch goals, and ideas not yet ready for active execution. |
-| 16 | [15 SDK Tools](./15-host-tools/INDEX.md) | SDK tools running on the host OS (Linux) for development and third-party use. |
-| 17 | [16 Tools & Accessories](./16-tools-accessories/INDEX.md) | System diagnostic tools, namespace browsers, and administrative utilities. |
+| 14 | [13 Tools & Accessories](./13-tools-accessories/INDEX.md) | System diagnostic tools, namespace browsers, and administrative utilities. |
+| 15 | [14 Host Tools & SDK](./14-host-tools/INDEX.md) | SDK tools running on the host OS (Linux) for development and third-party use. |
+| 16 | [15 Installer & Release](./15-installer-release/INDEX.md) | Installer flow, deployable media, packaging, and release readiness. |
+| 17 | [16 Architecture Ports](./16-architecture-ports/INDEX.md) | ARM64 port, arch abstraction layer (HAL), multi-arch build system. |
+| 18 | [17 Polish & Hardening](./17-polish-hardening/INDEX.md) | Discovered bugs, regression fixes, performance tuning, UX polish. |
+| 19 | [18 Future Research](./18-future-research/INDEX.md) | Long-range research, stretch goals, and ideas not yet ready for active execution. |
 
 ## Active Epics
 

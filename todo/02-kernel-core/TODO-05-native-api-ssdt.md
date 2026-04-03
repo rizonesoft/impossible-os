@@ -47,7 +47,7 @@
 | ⭐  | Order | Deliverable                                                    | Depends On      | Status |
 | --- | :---: | -------------------------------------------------------------- | --------------- | :----: |
 | 💎  |   1   | NTSTATUS type and canonical status codes                       | --               |  [x]   |
-| 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [/]   |
+| 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [x]   |
 | 💎  |   3   | INT 0x2E compatibility path                                    | §2              |  [x]   |
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries           | §1              |  [x]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4          |  [ ]   |
@@ -174,11 +174,11 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
 - [x] MSR constants verified in `include/kernel/msr.h`: STAR, LSTAR, FMASK, EFER_SCE all present
 - [x] `syscall_entry` written in `src/kernel/sched/syscall_entry.asm` -- swapgs, per-CPU scratch for user RSP, callee-save frame, calls `syscall_dispatch_fast()`
 - [x] `syscall_init_fast()` in `src/kernel/sched/syscall_fast.c` -- detects GDT order incompatibility and safely defers activation
-- [/] **BLOCKED:** SYSRET requires GDT order `UDATA` before `UCODE` (STAR[63:48]+8=SS, +16=CS). Current GDT: UCODE=0x18, UDATA=0x20 (reversed). MSR writes and EFER_SCE are gated on `GDT_USER_DATA == GDT_USER_CODE + 8` check. Fix: swap GDT entries 0x18/0x20, update all ring-3 transitions.
+- [x] GDT reordered: UDATA=0x18, UCODE=0x20 (SYSRET-compatible). All code uses macros, no hardcoded selectors. MSRs written, EFER_SCE enabled.
 - [x] `syscall_dispatch_fast()` -- C dispatcher routing to SSDT via `ssdt_dispatch()`
 - [x] `per_cpu_data.syscall_rsp0` + `user_rsp_scratch` fields added; updated in scheduler context switch
 - [x] INT 0x80 remains active as fallback (syscall_init() still called)
-- [ ] Commit: `"kernel: nt -- SYSCALL/SYSRET fast path init"`
+- [x] Commit: `"kernel: nt -- SYSCALL/SYSRET fast path init"` + GDT swap commit
 
 **Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 1. `POST16(0xDA00)` entry, `POST16(0xDA01)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. (Note: 0xD200/0xD201 are taken by `gdt.c`.)
 
@@ -1421,7 +1421,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 
 | ⭐ | Feature                    | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS            |
 |----|----------------------------|------------------------------|----------------------------|------------------------------|
-| 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | 🔄 §2 blocked on GDT order  |
+| 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | ✅ §2 LSTAR + SYSRET enabled |
 | 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ✅ §1 NTSTATUS + 50 codes   |
 | 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ✅ §4 SSDT 470 + shadow stub |
 | 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ✅ §3 INT 0x2E + 0x80       |

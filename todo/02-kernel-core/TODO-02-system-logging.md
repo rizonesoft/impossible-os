@@ -142,7 +142,7 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 - [x] `events.jsonl` created at first flush; file size tracked for rotation
 - [x] §4 log rotation applied to `events.jsonl` via `rotate_log_file()`
 - [x] `"dropped"` field included from §5 rate limiter via `klog_get_dropped()` public API
-- [/] Event viewer reads `events.jsonl` for colour-coded filtering -- see [16-tools-accessories/TODO-02](../16-tools-accessories/TODO-02-event-viewer.md)
+- [/] Event viewer reads `events.jsonl` for colour-coded filtering -- see [13-tools-accessories/TODO-02](../13-tools-accessories/TODO-02-event-viewer.md)
 - [x] Commit: `"kernel: structured JSON log events"`
 
 ## 7. ETW Tracing Syscalls Wired to SSDT

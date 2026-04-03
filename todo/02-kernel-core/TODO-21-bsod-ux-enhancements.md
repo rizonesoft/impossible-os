@@ -22,7 +22,7 @@
 - -> XREF: `TODO-01-kernel-init-sequencing.md section 9` -- degraded-boot recovery screen (related but separate: recovery screen is for non-fatal degraded boot, BSOD is for fatal panics)
 - -> XREF: `TODO-10-exception-dispatch-seh.md` -- exception dispatch routes faults to panic_screen(); STOP code taxonomy depends on this TODO's KeBugCheckEx implementation
 - -> XREF: `TODO-18-kernel-debugger-kd-protocol.md` -- debugger first-chance notification happens before panic; BSOD only shows if debugger is not attached
-- -> XREF: `15-host-tools/TODO-04-crash-decode.md` -- host-side crash dump decoder; QR code data format must be compatible
+- -> XREF: `14-host-tools/TODO-04-crash-decode.md` -- host-side crash dump decoder; QR code data format must be compatible
 - -> XREF: `10-services-security/TODO-04-restore-recovery.md` -- safe mode and recovery environment integration
 
 ---

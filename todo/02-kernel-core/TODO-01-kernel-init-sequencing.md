@@ -23,6 +23,7 @@
 - → XREF: `TODO-07-time-filetime-management.md §5` -- `wall_clock_init()` belongs in Phase 2, after UEFI runtime services; NTP wall clock adjustment (§17) belongs in Phase 3
 - → XREF: `01-boot-platform/TODO-16-boot-watchdog.md` -- watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
 - → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §4` -- TPM2 `PCR_Extend` for measured boot; extends the PCR event log parsed in Phase 0
+- → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §2` -- CPU security activation order (EFER/CR4 hardening) slots into Phase 0 between serial init and PMM
 
 ## Outcome
 
