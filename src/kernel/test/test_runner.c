@@ -190,6 +190,7 @@ extern void test_register_peb_teb(void);
 extern void test_register_nt_types(void);
 extern void test_register_ipc(void);
 extern void test_register_storage(void);
+extern void test_register_ixfs(void);
 
 void test_runner_init(void)
 {
@@ -204,6 +205,7 @@ void test_runner_init(void)
 
     /* FS */
     test_register_vfs();
+    test_register_ixfs();
 
     /* Sched */
     test_register_sched();

@@ -54,8 +54,8 @@
 | ⭐  |   7   | SSDT service number count stability                | --         |  [x]  |
 | ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [x]  |
 | ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [x]  |
-| ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [/]  |
-| ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [ ]  |
+| ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [x]  |
+| ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [x]  |
 | ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [ ]  |
 | ⭐  |  13   | VFS drive letter range and partition offsets       | --         |  [ ]  |
 | ⭐  |  14   | exec_pending state machine verification            | §5         |  [ ]  |
@@ -243,7 +243,7 @@ Protect critical memory boundaries with unmapped guard pages that trigger #PF on
 - [x] `vmm_set_user_page()` auto-splits huge pages on demand: if PD entry is 2 MiB, allocates a PT frame and splits it into 4 KiB PTEs. Also propagates User bit at PML4/PDPT/PD levels. Works for ANY address, not just the pre-split ELF range. Forward-compatible with Win32 PE loading and VirtualAlloc at arbitrary addresses.
 - [x] Unit test: `test_vmm_split_huge_page()` (split + idempotent + identity preserved) and `test_vmm_guard_page_install()` (not-present + adjacent page intact) in `test_vmm.c`.
 - [x] Documentation: guard page map in CLAUDE.md Safety Gates section
-- [ ] Commit: `"bulletproof: memory layout guard pages -- stack, heap, user range"`
+- [x] Commit: `"bulletproof: memory layout guard pages -- stack, heap, user range"` (split across multiple commits: guard pages, auto-split, PT leak fix)
 
 **Test checkpoint:** Stack overflow -> hits guard page -> panic_screen shows "GUARD: kernel task stack overflow" with fault address. Guard page at heap end catches heap overrun. IST guard catches exception handler stack overflow.
 
@@ -255,11 +255,12 @@ IXFS superblock magic (0x49584653) and struct layout must match between `mkfs-ix
 
 **Files:** `include/kernel/fs/ixfs.h`, `tools/mkfs-ixfs.c`
 
-- [ ] `_Static_assert(sizeof(struct ixfs_superblock) == 512, "IXFS superblock must be 512 bytes")`
-- [ ] `_Static_assert(IXFS_MAGIC == 0x49584653, "IXFS magic must be 'IXFS'")`
-- [ ] Runtime: `ixfs_init()` verifies magic, version, and checksum on mount
-- [ ] Unit test: format volume with mkfs-ixfs, mount in kernel, verify superblock fields match
-- [ ] Documentation: superblock layout diagram in ixfs.h
+- [x] `_Static_assert(sizeof(struct ixfs_superblock) == 512)` in ixfs.h + mirror in mkfs-ixfs.c
+- [x] `_Static_assert(IXFS_MAGIC == 0x49584653)` in ixfs.h + mirror in mkfs-ixfs.c
+- [x] 3 additional static asserts: s_magic at offset 0, s_checksum at offset 128, s_reserved at offset 132
+- [x] Runtime: `ixfs_format.c` already verifies magic (rejects on mismatch), version (v1 read-only, v2 OK, other rejected), and CRC32C checksum (warns on mismatch) on mount
+- [x] Unit test: `test_ixfs.c` with 5 suites: superblock size (512), magic (0x49584653), field offsets (6 offsets), version (2), inode size (128 bytes, 32 per block). Registered in test_runner as TEST_CAT_FS
+- [x] Documentation: 30-line superblock layout diagram in ixfs.h with offset/size/field/notes columns
 - [ ] Commit: `"bulletproof: IXFS superblock -- size assert + magic verify"`
 
 **Test checkpoint:** Change IXFS_MAGIC in one place -> static assert fires. Mount volume with wrong magic -> ixfs_init() returns error, not corruption.

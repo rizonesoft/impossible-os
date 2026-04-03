@@ -111,7 +111,41 @@ struct ixfs_snapshot_entry {
 
 /* --- On-Disk Structures --- */
 
-/* Superblock -- always in block 0 (first 4 KiB of the partition) */
+/* Superblock -- always in block 0 (first 4 KiB of the partition)
+ *
+ * Layout (512 bytes, packed):
+ *   Offset  Size  Field              Notes
+ *   ------  ----  -----------------  -----------------------------------
+ *     0       4   s_magic            0x49584653 "IXFS"
+ *     4       4   s_version          Currently 2
+ *     8       4   s_block_size       4096
+ *    12       8   s_total_blocks     64-bit block count
+ *    20       8   s_free_blocks      64-bit free count
+ *    28       4   s_total_inodes
+ *    32       4   s_free_inodes
+ *    36       4   s_bitmap_start
+ *    40       4   s_bitmap_blocks
+ *    44       4   s_inode_start
+ *    48       4   s_inode_blocks
+ *    52       4   s_data_start
+ *    56       4   s_root_inode       Always 1
+ *    60      32   s_volume_name      Null-terminated label
+ *    92       4   s_journal_start
+ *    96       4   s_journal_blocks
+ *   100       4   s_journal_seq
+ *   104       4   s_refcount_start
+ *   108       4   s_refcount_blocks
+ *   112       4   s_snapshot_start
+ *   116       4   s_snapshot_count
+ *   120       4   s_checksum_start
+ *   124       4   s_checksum_blocks
+ *   128       4   s_checksum         CRC32C of bytes [0..111]
+ *   132     380   s_reserved         Pad to 512 bytes
+ *
+ * WARNING: mkfs-ixfs.c has a mirror copy of this struct.  Both must
+ * match exactly.  The _Static_asserts below catch size/magic drift
+ * at compile time.
+ */
 struct ixfs_superblock {
     uint32_t s_magic;              /* IXFS_MAGIC */
     uint32_t s_version;            /* filesystem version */
@@ -139,6 +173,19 @@ struct ixfs_superblock {
     uint32_t s_checksum;           /* CRC32C of superblock bytes [0..111] */
     uint8_t  s_reserved[380];      /* pad to 512 bytes */
 } __attribute__((packed));
+
+/* Bulletproofing: superblock layout must not drift between kernel and mkfs-ixfs.
+ * Size must be exactly 512 bytes (one disk sector).  Magic must be "IXFS". */
+_Static_assert(sizeof(struct ixfs_superblock) == 512,
+    "IXFS superblock must be exactly 512 bytes (sector-aligned)");
+_Static_assert(IXFS_MAGIC == 0x49584653,
+    "IXFS magic must be 0x49584653 ('IXFS')");
+_Static_assert(__builtin_offsetof(struct ixfs_superblock, s_magic) == 0,
+    "s_magic must be at offset 0");
+_Static_assert(__builtin_offsetof(struct ixfs_superblock, s_checksum) == 128,
+    "s_checksum must be at offset 128 (outside CRC32C range [0..111])");
+_Static_assert(__builtin_offsetof(struct ixfs_superblock, s_reserved) == 132,
+    "s_reserved must be at offset 132 (512 - 380 = 132)");
 
 /* Inode -- 128 bytes each (32 inodes per block) */
 struct ixfs_inode {

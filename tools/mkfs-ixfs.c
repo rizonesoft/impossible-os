@@ -82,6 +82,12 @@ struct ixfs_superblock {
     uint8_t  s_reserved[380];
 };
 
+/* Mirror asserts -- must match kernel include/kernel/fs/ixfs.h exactly */
+_Static_assert(sizeof(struct ixfs_superblock) == 512,
+    "IXFS superblock must be exactly 512 bytes (matches kernel)");
+_Static_assert(IXFS_MAGIC == 0x49584653,
+    "IXFS magic must be 0x49584653 ('IXFS')");
+
 struct ixfs_inode {
     uint16_t i_mode;
     uint16_t i_links;
