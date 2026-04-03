@@ -567,7 +567,11 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
                 break;  /* exact match found, no need to scan further */
             }
         } else {
-            /* Auto: prefer highest total pixel count */
+            /* Auto: prefer best fit up to 1920x1080 to avoid
+             * VirtualBox VMSVGA selecting 7680x4320 (8K) which
+             * allocates a 129 MB framebuffer and crashes on exit.
+             * For higher resolutions, use explicit Resolution= in boot.conf. */
+            if (w > 1920 || h > 1080) continue;
             if (!found || w * h > best_w * best_h) {
                 best_idx = i; best_w = w; best_h = h;
                 found = 1;
