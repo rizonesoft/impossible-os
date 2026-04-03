@@ -69,6 +69,18 @@ _Static_assert(AP_OFF_IDT_PTR == 0x30, "AP trampoline: IDT_PTR must be at +0x30 
 _Static_assert(AP_DATA_BASE   == AP_TRAMPOLINE_ADDR + 0xE00,
     "AP data base must be trampoline + 0xE00 (phys 0x8E00)");
 
+/* Non-overlap verification: each field must not stomp its neighbors.
+ * IDT_PTR is 10 bytes (IDTR = 2B limit + 8B base), so it spans
+ * AP_OFF_IDT_PTR .. AP_OFF_IDT_PTR+9. Canary must start AFTER. */
+_Static_assert(AP_OFF_CANARY >= AP_OFF_IDT_PTR + 10,
+    "AP canary must not overlap IDT_PTR (10-byte IDTR span)");
+_Static_assert(AP_OFF_ENTRY >= AP_OFF_GDT_PTR + 10,
+    "AP entry must not overlap GDT_PTR (10-byte GDTR span)");
+_Static_assert(AP_OFF_CPUID >= AP_OFF_ENTRY + 8,
+    "AP cpuid must not overlap entry (8-byte uint64_t)");
+_Static_assert(AP_OFF_IDT_PTR >= AP_OFF_CPUID + 4,
+    "AP IDT_PTR must not overlap cpuid (4-byte uint32_t)");
+
 /* ---- Per-CPU data ----
  *
  * WARNING: Assembly code reads hardcoded offsets into this struct via GS.

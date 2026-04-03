@@ -52,8 +52,16 @@ _Static_assert(sizeof(struct my_struct) == EXPECTED_SIZE,
     "description of size contract");
 _Static_assert(MY_CONSTANT == EXPECTED_VALUE,
     "description of value contract");
+/* For packed data areas with variable-size fields (GDT_PTR=10 bytes,
+ * IDT_PTR=10 bytes), assert NON-OVERLAP between adjacent fields: */
+_Static_assert(FIELD_B_OFFSET >= FIELD_A_OFFSET + FIELD_A_SIZE,
+    "field B must not overlap field A");
 ```
 Use `__builtin_offsetof` (not `offsetof`) because we're freestanding.
+
+**CRITICAL: Value asserts are not enough.** Asserting `CANARY == 0x38` only verifies you typed `0x38` -- it does NOT verify that 0x38 is a safe offset. Always add **non-overlap asserts** for packed data areas where fields have variable sizes (e.g., IDTR is 10 bytes, not 8). Lesson learned 2026-04-03: canary at 0x38 stomped IDT_PTR (0x30 + 10 bytes = 0x3A), crashing AP boot.
+
+<!-- Updated 2026-04-03: added non-overlap assert rule after AP trampoline canary stomped IDT_PTR -->
 
 **Layer 2 -- Runtime Verification (at init, nanoseconds):**
 ```c
@@ -209,3 +217,4 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | Arch header in fs/ob/ipc/nt code | Don't include it -- find an arch-neutral way |
 | Inline asm in neutral code | Use a wrapper or HAL call, not raw asm |
 | GDT/IDT concept in neutral logic | Keep in arch-specific files (task.c context setup) |
+| Packed data area with variable-size fields | Assert non-overlap, not just value correctness |
