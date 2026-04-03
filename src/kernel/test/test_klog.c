@@ -60,7 +60,7 @@ static void test_klog_level_pass(void)
     klog_set_level("TEST", LOG_WARN);
 
     klog_get_ring(&count_before, &head_before);
-    klog(LOG_WARN, "TEST", "(level pass test — expected WARN)");
+    klog(LOG_WARN, "TEST", "(level pass test -- expected WARN)");
     klog_get_ring(&count_after, &head_after);
 
     TEST_ASSERT(head_after != head_before,

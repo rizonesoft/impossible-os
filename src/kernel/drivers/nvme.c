@@ -407,7 +407,7 @@ static int nvme_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
     mmio_phys = (uint64_t)(bar0 & 0xFFFFFFF0) | ((uint64_t)bar1 << 32);
     if (mmio_phys == 0) {
-        klog(LOG_ERROR, "nvme", "BAR0 is zero — no MMIO base");
+        klog(LOG_ERROR, "nvme", "BAR0 is zero -- no MMIO base");
         return -1;
     }
 

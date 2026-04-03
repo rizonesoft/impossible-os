@@ -78,7 +78,7 @@ void ob_thread_create(struct thread *thr, uint32_t task_pid)
         ObInsertObject(to, name_buf, ko_dir);
         ObDereferenceObject(ko_dir);
     } else {
-        klog(LOG_WARN, "ob", "\\KernelObjects not found — Thread%u.%u not inserted",
+        klog(LOG_WARN, "ob", "\\KernelObjects not found -- Thread%u.%u not inserted",
              (uint64_t)task_pid, (uint64_t)thr->id);
     }
 

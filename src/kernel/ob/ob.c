@@ -50,7 +50,7 @@ const OBJECT_TYPE *ObpTebType       = NULL;
 const OBJECT_TYPE *ob_create_type(const OBJECT_TYPE *tmpl)
 {
     if (g_ob_type_count >= OB_MAX_TYPES) {
-        klog(LOG_ERROR, "ob", "type table full (%u/%u) — cannot register '%s'",
+        klog(LOG_ERROR, "ob", "type table full (%u/%u) -- cannot register '%s'",
              (uint64_t)g_ob_type_count, (uint64_t)OB_MAX_TYPES,
              tmpl->name ? tmpl->name : "?");
         return NULL;

@@ -77,7 +77,7 @@ void ob_process_create(struct task *t)
         ObInsertObject(po, name_buf, ko_dir);
         ObDereferenceObject(ko_dir);
     } else {
-        klog(LOG_WARN, "ob", "\\KernelObjects not found — Process%u not inserted",
+        klog(LOG_WARN, "ob", "\\KernelObjects not found -- Process%u not inserted",
              (uint64_t)t->pid);
     }
 

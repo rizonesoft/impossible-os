@@ -81,7 +81,7 @@ static void test_peb_populated(void)
     PEB *peb = (PEB *)0x7FFDE000ULL;
 
     if (peb->OSMajorVersion == 0) {
-        TEST_ASSERT(1, "PEB not yet allocated — skip");
+        TEST_ASSERT(1, "PEB not yet allocated -- skip");
         return;
     }
 
@@ -102,7 +102,7 @@ static void test_rtlpp_content(void)
     PEB *peb = (PEB *)0x7FFDE000ULL;
 
     if (peb->OSMajorVersion == 0 || !peb->ProcessParameters) {
-        TEST_ASSERT(1, "PEB/RTLPP not yet allocated — skip");
+        TEST_ASSERT(1, "PEB/RTLPP not yet allocated -- skip");
         return;
     }
 

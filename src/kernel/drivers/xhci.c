@@ -84,7 +84,7 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
     uint32_t xecp_off = ((hccparams1 >> 16) & 0xFFFF) << 2;  /* dword → byte offset */
 
     if (xecp_off == 0) {
-        klog(LOG_DEBUG, "xhci", "No extended capabilities — skipping BIOS handoff");
+        klog(LOG_DEBUG, "xhci", "No extended capabilities -- skipping BIOS handoff");
         return;
     }
 
@@ -98,11 +98,11 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
         if (cap_id == 1) {  /* USB Legacy Support (USBLEGSUP) */
             /* Check if BIOS owns the controller (bit 16 = HC BIOS Owned Semaphore) */
             if (!(cap & (1 << 16))) {
-                klog(LOG_DEBUG, "xhci", "BIOS does not own controller — no handoff needed");
+                klog(LOG_DEBUG, "xhci", "BIOS does not own controller -- no handoff needed");
                 return;
             }
 
-            klog(LOG_DEBUG, "xhci", "USBLEGSUP at offset 0x%x — requesting ownership",
+            klog(LOG_DEBUG, "xhci", "USBLEGSUP at offset 0x%x -- requesting ownership",
                  (uint64_t)xecp_off);
 
             /* Set HC OS Owned Semaphore (bit 24) */
@@ -123,7 +123,7 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
             }
 
             /* Timeout — force-clear BIOS bit and proceed */
-            klog(LOG_WARN, "xhci", "BIOS handoff timeout — forcing ownership");
+            klog(LOG_WARN, "xhci", "BIOS handoff timeout -- forcing ownership");
             cap |= (1 << 24);         /* OS owned */
             cap &= ~(1 << 16);        /* Clear BIOS owned */
             xhci_write32(hc->mmio_base, xecp_off, cap);
@@ -137,7 +137,7 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
         xecp_off += (uint32_t)next_ptr << 2;
     }
 
-    klog(LOG_DEBUG, "xhci", "USBLEGSUP not found — no BIOS handoff needed");
+    klog(LOG_DEBUG, "xhci", "USBLEGSUP not found -- no BIOS handoff needed");
 }
 
 /* ---- PCI discovery ------------------------------------------------------- */
@@ -179,7 +179,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     mmio_phys = (uint64_t)(bar0 & 0xFFFFFFF0) | ((uint64_t)bar1 << 32);
 
     if (mmio_phys == 0) {
-        klog(LOG_ERROR, "xhci", "BAR0 is zero — no MMIO base");
+        klog(LOG_ERROR, "xhci", "BAR0 is zero -- no MMIO base");
         return -1;
     }
 
@@ -283,7 +283,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                 }
             }
             if (!(xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH)) {
-                klog(LOG_WARN, "xhci", "Handover halt timeout — falling back");
+                klog(LOG_WARN, "xhci", "Handover halt timeout -- falling back");
                 goto full_init;
             }
         }
@@ -299,7 +299,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         hc->evt_ring.phys = bc->evt_ring_phys;
 
         if (xhci_rings_init(hc) != 0) {
-            klog(LOG_WARN, "xhci", "Handover ring init failed — falling back");
+            klog(LOG_WARN, "xhci", "Handover ring init failed -- falling back");
             goto full_init;
         }
 
@@ -311,7 +311,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
             uint32_t timeout = XHCI_HALT_TIMEOUT_US / XHCI_POLL_INTERVAL_US;
             while (xhci_read32(hc->op_base, XHCI_OP_USBSTS) & XHCI_STS_HCH) {
                 if (--timeout == 0) {
-                    klog(LOG_WARN, "xhci", "Handover restart failed — falling back");
+                    klog(LOG_WARN, "xhci", "Handover restart failed -- falling back");
                     goto full_init;
                 }
                 xhci_delay_us(XHCI_POLL_INTERVAL_US);
@@ -322,7 +322,7 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
         num_controllers++;
 
         klog(LOG_INFO, "xhci",
-             "xHCI v%u.%u handover OK — %u slots, %u ports (DMA inherited)",
+             "xHCI v%u.%u handover OK -- %u slots, %u ports (DMA inherited)",
              (uint64_t)((hc->hci_version >> 8) & 0xFF),
              (uint64_t)(hc->hci_version & 0xFF),
              (uint64_t)hc->max_slots,
@@ -347,14 +347,14 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
                     }
                 }
                 if (ehci_found) {
-                    klog(LOG_INFO, "xhci", "Handover: EHCI found — routing ports + 500ms");
+                    klog(LOG_INFO, "xhci", "Handover: EHCI found -- routing ports + 500ms");
                     pci_write32(bus, dev, func, 0xD0,
                                 pci_read32(bus, dev, func, 0xD0) | 0xFFFFFFFF);
                     pci_write32(bus, dev, func, 0xD8,
                                 pci_read32(bus, dev, func, 0xD8) | 0xFFFFFFFF);
                     xhci_delay_us(500000);
                 } else {
-                    klog(LOG_INFO, "xhci", "Handover: no EHCI — skipping routing");
+                    klog(LOG_INFO, "xhci", "Handover: no EHCI -- skipping routing");
                 }
             }
         }
@@ -738,7 +738,7 @@ void xhci_setup_interrupts(void)
     /* Check PCI Status bit 4 (Capabilities List) */
     status = pci_read16(bus, dev, func, PCI_STATUS);
     if (!(status & (1 << 4))) {
-        klog(LOG_WARN, "xhci", "No PCI capabilities — interrupt-driven hot-plug unavailable");
+        klog(LOG_WARN, "xhci", "No PCI capabilities -- interrupt-driven hot-plug unavailable");
         POST16(0xD753);
         return;
     }
@@ -795,7 +795,7 @@ void xhci_setup_interrupts(void)
         /* MSI-X (cap ID 0x11) — try if MSI not found */
         if (cap_id == 0x11) {
             /* MSI-X is more complex; defer to TODO-02 §5 pci_enable_msix() */
-            klog(LOG_DEBUG, "xhci", "MSI-X capability found — deferring to pci_enable_msix()");
+            klog(LOG_DEBUG, "xhci", "MSI-X capability found -- deferring to pci_enable_msix()");
         }
 
         cap_off = pci_read8(bus, dev, func, cap_off + 1) & 0xFC;
@@ -805,7 +805,7 @@ void xhci_setup_interrupts(void)
      * (existing xhci_wait_command/xhci_wait_transfer consume them).
      * Port status changes won't fire interrupts but boot-time devices
      * are already enumerated. */
-    klog(LOG_INFO, "xhci", "No MSI — hot-plug via event ring polling only");
+    klog(LOG_INFO, "xhci", "No MSI -- hot-plug via event ring polling only");
     POST16(0xD753);
 }
 
