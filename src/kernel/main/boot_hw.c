@@ -72,6 +72,23 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     }
     boot_progress(0, "BOOT_INFO", 0x0026);
 
+    /* boot_config sanity check: verify the struct wasn't corrupted in transit.
+     * The bootloader fills boot_config at a fixed layout; if cmdline contains
+     * non-printable garbage in the first 4 bytes, the struct shifted. */
+    {
+        const char *cmd = g_boot_info.config.cmdline;
+        int i;
+        for (i = 0; i < 4 && cmd[i] != '\0'; i++) {
+            if (cmd[i] < 0x20 || cmd[i] > 0x7E) {
+                klog(LOG_FATAL, "CONF",
+                     "boot_config.cmdline contains non-ASCII at byte %d "
+                     "(0x%02X) -- struct layout mismatch?",
+                     (uint64_t)i, (uint64_t)(uint8_t)cmd[i]);
+                boot_halt("boot_config struct layout corrupted");
+            }
+        }
+    }
+
     /* boot_config_parse: boot.conf is parsed by the UEFI bootloader before
      * kernel entry and delivered in g_boot_info.config.  Log the values. */
     klog(LOG_INFO, "CONF",

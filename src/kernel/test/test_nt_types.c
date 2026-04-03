@@ -16,6 +16,7 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/gdt.h"
 #include "kernel/smp.h"
+#include "kernel/boot_info.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -177,6 +178,25 @@ static void test_per_cpu_offsets(void)
                    "per_cpu_data.rsp0 at gs:16");
 }
 
+/* ---- boot_config struct layout ---- */
+
+static void test_boot_config_layout(void)
+{
+    /* boot_config is shared between UEFI bootloader (PE/COFF) and kernel (ELF).
+     * Both compile from separate struct definitions that must stay in sync.
+     * cmdline at offset 32 is the ABI contract -- stable across versions. */
+    TEST_ASSERT_EQ(sizeof(struct boot_config), 512,
+                   "boot_config is 512 bytes (sector-aligned)");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct boot_config, cmdline), 32,
+                   "boot_config.cmdline at offset 32");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct boot_config, config_found), 288,
+                   "boot_config.config_found at offset 288");
+
+    /* Verify config_found was set by bootloader (canary for struct corruption) */
+    TEST_ASSERT_EQ(g_boot_info.config.config_found, 1,
+                   "boot_config.config_found == 1 (bootloader set it)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -193,6 +213,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: SSDT main count", test_ssdt_main_count, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT register+dispatch", test_ssdt_register_and_dispatch, TEST_CAT_ABI);
     test_suite_register_cat("NT: per_cpu_data offsets", test_per_cpu_offsets, TEST_CAT_ABI);
+    test_suite_register_cat("NT: boot_config layout", test_boot_config_layout, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

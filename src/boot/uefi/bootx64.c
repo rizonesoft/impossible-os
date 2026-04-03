@@ -76,6 +76,13 @@ struct boot_config {
     UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
 };
 
+/* Mirror of kernel/boot_info.h static asserts -- catches drift between
+ * bootloader and kernel struct definitions at compile time. */
+_Static_assert(__builtin_offsetof(struct boot_config, cmdline) == 32,
+    "cmdline must be at byte offset 32 -- kernel ABI contract");
+_Static_assert(sizeof(struct boot_config) == 512,
+    "boot_config must be exactly 512 bytes (sector-aligned)");
+
 #define BOOT_CONFIG_TABLE_MAX 32
 #define BOOT_RT_MMAP_MAX      64
 

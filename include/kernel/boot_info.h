@@ -148,6 +148,37 @@ struct boot_gop_mode {
 /* Boot configuration from \EFI\ImpossibleOS\boot.conf */
 #define BOOT_CONF_CMDLINE_MAX 256
 
+/* Boot configuration layout (shared between UEFI bootloader and kernel).
+ *
+ * WARNING: The UEFI bootloader (bootx64.c) has a MIRROR of this struct
+ * using UEFI types. Both definitions MUST stay in sync field-for-field.
+ *
+ * Field offset table (assembly/ABI contract):
+ *   Offset  Size  Field
+ *   ------  ----  ---------------
+ *     0       1   debug
+ *     1       1   verbose
+ *     2       1   serial_debug
+ *     3       1   boot_mode
+ *     4       2   splash_timeout
+ *     6       1   heartbeat
+ *     7       1   postcode
+ *     8       1   postbars
+ *     9       1   test
+ *    10       1   test_suite
+ *    11       1   test_quiet
+ *    12       1   diag_delay
+ *    13       1   diag_splash
+ *    14       1   deferred
+ *    15       1   async_init
+ *    16       1   crash_test
+ *    17      15   _reserved[]
+ *    32     256   cmdline          <-- STABLE ABI offset
+ *   288       1   config_found
+ *   289     223   _pad[]
+ *   ---     ---
+ *   512 total (sector-aligned)
+ */
 struct boot_config {
     /* Core */
     uint8_t  debug;            /* 1 = debug mode on (live flush to B:\) */
@@ -181,11 +212,18 @@ struct boot_config {
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
     uint8_t  config_found;     /* 1 if boot.conf was successfully parsed */
-    /* Pad to 512 bytes total -- sector-aligned, matches Windows convention.
-     * 11 (fields) + 21 (reserved) + 256 (cmdline) + 1 (config_found) = 289.
-     * 512 - 289 = 223 bytes tail padding. */
+    /* Pad to 512 bytes total (sector-aligned). */
     uint8_t  _pad[223];
 };
+
+/* Compile-time enforcement of bootloader ABI contract.
+ * If you add a field, shrink _reserved[] to keep cmdline at offset 32. */
+_Static_assert(__builtin_offsetof(struct boot_config, cmdline) == 32,
+    "cmdline must be at byte offset 32 -- bootloader ABI contract");
+_Static_assert(__builtin_offsetof(struct boot_config, config_found) == 288,
+    "config_found must be at byte offset 288 -- after cmdline[256]");
+_Static_assert(sizeof(struct boot_config) == 512,
+    "boot_config must be exactly 512 bytes (sector-aligned)");
 
 /* USB device discovered by UEFI firmware before ExitBootServices.
  * The bootloader uses EFI_USB_IO_PROTOCOL to enumerate all USB devices while

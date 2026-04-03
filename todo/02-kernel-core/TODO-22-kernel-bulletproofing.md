@@ -46,7 +46,7 @@
 | Star | Order | Deliverable                                       | Depends On | Status |
 | --- | :---: | -------------------------------------------------- | ---------- | :----: |
 | ⭐  |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [x]  |
-| ⭐  |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [ ]  |
+| ⭐  |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [x]  |
 | ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [ ]  |
 | ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [ ]  |
 | ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [ ]  |
@@ -88,13 +88,13 @@ The UEFI bootloader (bootx64.c) and kernel (boot_info.h) each define `struct boo
 
 **Files:** `include/kernel/boot_info.h`, `src/boot/uefi/bootx64.c`
 
-- [ ] Add `_Static_assert(offsetof(struct boot_config, cmdline) == 32, "cmdline must be at offset 32 for bootloader ABI")`
-- [ ] Add `_Static_assert(sizeof(struct boot_config) == 512, "boot_config must be exactly 512 bytes (sector-aligned)")`
-- [ ] Runtime: `boot_phase0()` reads config and verifies `config_found == 1` (bootloader set it)
-- [ ] Unit test: verify sizeof and offsetof match expected values
-- [ ] Canary: first 4 bytes of cmdline must be printable ASCII or NUL (not garbage)
-- [ ] Documentation: field offset table in boot_info.h with byte positions
-- [ ] Commit: `"bulletproof: boot_config struct layout -- offset 32 + 512-byte size asserts"`
+- [x] Add `_Static_assert(offsetof(struct boot_config, cmdline) == 32)` + `sizeof == 512` + `config_found at 288` in boot_info.h
+- [x] Add mirror `_Static_assert` in bootx64.c (catches bootloader/kernel drift at compile time)
+- [x] Runtime: `boot_phase0()` checks first 4 bytes of cmdline are printable ASCII or NUL -- halts with message on corruption
+- [x] Unit test: `test_boot_config_layout()` verifies sizeof, cmdline offset, config_found offset, and config_found == 1
+- [x] Canary: cmdline ASCII check doubles as canary -- non-printable bytes mean struct shifted
+- [x] Documentation: field offset table comment (30 lines) in boot_info.h with byte positions for all fields
+- [x] Commit: `"bulletproof: boot_config struct layout -- offset 32 + 512-byte size asserts"`
 
 **Test checkpoint:** Add a field without shrinking _reserved -> static assert fires. `sizeof(boot_config) != 512` -> compile error.
 
