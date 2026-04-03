@@ -1115,12 +1115,17 @@ int task_exec(const uint8_t *data, uint64_t size)
         return -1;
     }
 
-    /* Allocate a FRESH kernel stack - we cannot reuse the current one
-     * because the calling function (exec_loader_func) is still on it. */
-    new_kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
-    if (!new_kstack) {
-        klog(LOG_DEBUG, "sched", "Cannot allocate kernel stack");
-        return -1;
+    /* Allocate a FRESH kernel stack with guard page - we cannot reuse the
+     * current one because the calling function (exec_loader_func) is still on it. */
+    {
+        uint32_t stack_pages = TASK_STACK_SIZE / 4096;
+        uintptr_t stack_base = pmm_alloc_contiguous(stack_pages + 1);
+        if (!stack_base) {
+            klog(LOG_DEBUG, "sched", "Cannot allocate kernel stack");
+            return -1;
+        }
+        vmm_install_guard_page(stack_base, "GUARD: kernel task stack overflow");
+        new_kstack = (uint8_t *)(stack_base + 4096);
     }
 
     /* Free old user stack and allocate a fresh one */
@@ -1130,8 +1135,32 @@ int task_exec(const uint8_t *data, uint64_t size)
     tasks[pid].user_stack_base = (uint8_t *)kmalloc(USER_STACK_SIZE);
     if (!tasks[pid].user_stack_base) {
         klog(LOG_DEBUG, "sched", "Cannot allocate user stack");
-        kfree(new_kstack);
         return -1;
+    }
+
+    /* Recreate per-process PML4: mark ELF pages + new user stack as User.
+     * The old PML4 had User bits on the previous stack range which is now
+     * freed.  The new kmalloc'd stack is at a different address. */
+    {
+        uintptr_t user_cr3 = vmm_create_user_pml4();
+        if (user_cr3) {
+            uintptr_t addr;
+            /* Destroy old PML4 if present */
+            if (tasks[pid].cr3)
+                vmm_destroy_user_pml4(tasks[pid].cr3);
+            /* Mark ELF pages as User */
+            for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
+                vmm_set_user_page(user_cr3, addr);
+            /* Mark user stack pages as User */
+            for (addr = (uintptr_t)tasks[pid].user_stack_base;
+                 addr < (uintptr_t)tasks[pid].user_stack_base + USER_STACK_SIZE;
+                 addr += 4096)
+                vmm_set_user_page(user_cr3, addr);
+            tasks[pid].cr3 = user_cr3;
+        } else {
+            klog(LOG_WARN, "sched", "task_exec: PML4 creation failed for PID %u",
+                 (uint64_t)pid);
+        }
     }
 
     /* ---- Build Linux x86-64 initial user stack frame ----
