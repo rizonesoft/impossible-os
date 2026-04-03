@@ -133,7 +133,8 @@ void boot_phase3(void)
     desktop_init();
     POST16(POST16_DESKTOP_OK);
 
-    /* Finish boot splash */
+    /* Finish boot splash and stop timer-driven spinner */
+    timer_unregister_tick_callback();
     boot_splash_finish();
 
     /* Boot complete timing */
