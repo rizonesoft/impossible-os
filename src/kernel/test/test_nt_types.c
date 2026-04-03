@@ -19,6 +19,7 @@
 #include "kernel/vectors.h"
 #include "kernel/smp.h"
 #include "kernel/boot_info.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/mm/user_range.h"
 
 /* ---- NTSTATUS severity macros ---- */
@@ -317,6 +318,26 @@ static void test_vector_uniqueness(void)
                 "async init and reschedule IPI differ");
 }
 
+/* ---- XSAVE/FXSAVE alignment ---- */
+
+static void test_xsave_alignment(void)
+{
+    /* XSAVE requires 64-byte alignment, FXSAVE requires 16-byte.
+     * PMM returns page-aligned (4096) which satisfies both. Verify
+     * the invariant holds by allocating a frame and checking. */
+    uintptr_t frame = pmm_alloc_frame();
+    TEST_ASSERT(frame != 0, "pmm_alloc_frame for XSAVE test");
+    if (frame) {
+        TEST_ASSERT_EQ(frame & 63, 0,
+                       "PMM frame is 64-byte aligned (XSAVE safe)");
+        TEST_ASSERT_EQ(frame & 15, 0,
+                       "PMM frame is 16-byte aligned (FXSAVE safe)");
+        TEST_ASSERT_EQ(frame & 4095, 0,
+                       "PMM frame is page-aligned");
+        pmm_free_frame(frame);
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -338,6 +359,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: AP trampoline offsets", test_ap_trampoline_offsets, TEST_CAT_ABI);
     test_suite_register_cat("NT: interrupt frame layout", test_interrupt_frame_layout, TEST_CAT_ABI);
     test_suite_register_cat("NT: IDT vector uniqueness", test_vector_uniqueness, TEST_CAT_ABI);
+    test_suite_register_cat("NT: XSAVE alignment", test_xsave_alignment, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

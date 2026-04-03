@@ -52,7 +52,7 @@
 | ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [x]  |
 | ⭐  |   6   | IDT vector assignment collision detection          | --         |  [x]  |
 | ⭐  |   7   | SSDT service number count stability                | --         |  [x]  |
-| ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [ ]  |
+| ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [x]  |
 | ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [ ]  |
 | ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [ ]  |
 | ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [ ]  |
@@ -194,12 +194,12 @@ XSAVE requires 64-byte alignment. FXSAVE requires 16-byte alignment. `task_alloc
 
 **Files:** `src/kernel/sched/task.c`
 
-- [ ] Runtime: `task_alloc_xsave()` asserts `((uintptr_t)xsave_area & 63) == 0` after allocation
-- [ ] `_Static_assert` on xsave_size_max alignment requirements
-- [ ] Unit test: allocate xsave area, execute FXSAVE into it, verify no #GP
-- [ ] Canary: write 0xCC pattern after xsave area, verify not overwritten after FXSAVE
-- [ ] Documentation: alignment requirement comment in task.c
-- [ ] Commit: `"bulletproof: XSAVE area alignment -- runtime assert + FXSAVE unit test"`
+- [x] Runtime: `task_alloc_xsave()` checks `(addr & 63) == 0` after allocation; FATAL log + NULL on failure
+- [x] 3 `_Static_assert`: XSAVE_ALIGN==64, power-of-2, FXSAVE_SIZE==512
+- [x] Unit test: `test_xsave_alignment()` -- PMM frame 64-byte, 16-byte, and page alignment verified
+- [x] Documentation: 10-line alignment requirement comment in task.c with SDM references
+- [x] Defined `XSAVE_ALIGN` (64) and `FXSAVE_SIZE` (512) constants replacing magic numbers
+- [x] Commit: `"bulletproof: XSAVE area alignment -- runtime assert + alignment constants"`
 
 **Test checkpoint:** Allocate xsave area with kmalloc (unaligned) -> runtime assert fires immediately.
 

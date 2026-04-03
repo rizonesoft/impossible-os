@@ -154,7 +154,22 @@ static uint64_t nm_handler(struct interrupt_frame *frame)
     return (uint64_t)frame;
 }
 
-/* --- XSAVE area allocation (lazy, on first FPU use) --- */
+/* --- XSAVE area allocation (lazy, on first FPU use) ---
+ *
+ * Alignment requirements (x86-64 SDM):
+ *   XSAVE/XRSTOR:   64-byte aligned (else #GP)
+ *   FXSAVE/FXRSTOR: 16-byte aligned (else #GP)
+ *   XSAVEOPT:       64-byte aligned (else #GP)
+ *
+ * Current allocation uses pmm_alloc_contiguous() which returns
+ * page-aligned (4096-byte) addresses, satisfying all requirements.
+ * If allocation ever changes to kmalloc or slab, the 64-byte
+ * alignment invariant MUST be preserved -- the runtime assert
+ * below catches any future violation immediately.
+ */
+
+#define XSAVE_ALIGN     64   /* XSAVE/XRSTOR minimum alignment */
+#define FXSAVE_SIZE     512  /* legacy FXSAVE area size */
 
 void task_alloc_xsave(struct task *t)
 {
@@ -165,28 +180,44 @@ void task_alloc_xsave(struct task *t)
         return;  /* already allocated */
 
     size = g_cpu.xsave_size_max;
-    if (size == 0) size = 512;  /* fallback: legacy FXSAVE size */
+    if (size == 0) size = FXSAVE_SIZE;  /* fallback: legacy FXSAVE size */
 
-    /* Round up to page boundary -- XSAVE requires 64-byte alignment;
-     * PMM always returns page-aligned (4096) which satisfies this. */
+    /* Round up to page boundary -- PMM returns page-aligned (4096),
+     * which satisfies the 64-byte XSAVE alignment requirement. */
     pages = (size + 4095) / 4096;
     t->xsave_area = (void *)pmm_alloc_contiguous(pages);
 
     if (t->xsave_area) {
+        /* Runtime alignment verify: #GP if this invariant is broken.
+         * Catches future allocation changes (kmalloc, slab) that
+         * might not guarantee 64-byte alignment. */
+        if ((uintptr_t)t->xsave_area & (XSAVE_ALIGN - 1)) {
+            klog(LOG_FATAL, "sched",
+                 "XSAVE area at %p not 64-byte aligned -- #GP on save/restore",
+                 (uint64_t)(uintptr_t)t->xsave_area);
+            t->xsave_area = (void *)0;
+            return;
+        }
+
         /* Zero the buffer */
         uint8_t *p = (uint8_t *)t->xsave_area;
         uint32_t i;
-        for (i = 0; i < size; i++)
+        for (i = 0; i < pages * 4096; i++)
             p[i] = 0;
 
         /* Set XSTATE_BV header: bit 0 = x87 initial state present */
-        if (size >= 576) {
+        if (size >= FXSAVE_SIZE + 64) {
             /* XSAVE header at offset 512, 64 bytes.
              * XSTATE_BV (offset 512, 8 bytes) = 0x01 (x87 state valid) */
-            p[512] = 0x01;
+            p[FXSAVE_SIZE] = 0x01;
         }
     }
 }
+
+/* Compile-time: XSAVE alignment must be power of 2 and >= 64 */
+_Static_assert(XSAVE_ALIGN == 64, "XSAVE requires 64-byte alignment (x86-64 SDM)");
+_Static_assert((XSAVE_ALIGN & (XSAVE_ALIGN - 1)) == 0, "XSAVE_ALIGN must be power of 2");
+_Static_assert(FXSAVE_SIZE == 512, "FXSAVE area is 512 bytes (x86-64 SDM)");
 
 /* --- Public API --- */
 
