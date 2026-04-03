@@ -74,7 +74,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     /* boot_config_parse: boot.conf is parsed by the UEFI bootloader before
      * kernel entry and delivered in g_boot_info.config.  Log the values. */
-    klog(LOG_INFO, "CONF", "boot.conf: debug=%d verbose=%d serial=%d mode=%d splash=%ds heartbeat=%d postcode=%d test=%d%s",
+    klog(LOG_INFO, "CONF",
+         "boot.conf: debug=%d verbose=%d serial=%d mode=%d "
+         "splash=%ds heartbeat=%d postcode=%d test=%d%s",
            g_boot_info.config.debug, g_boot_info.config.verbose,
            g_boot_info.config.serial_debug, g_boot_info.config.boot_mode,
            g_boot_info.config.splash_timeout, g_boot_info.config.heartbeat,
@@ -115,9 +117,6 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     /* Read previous boot perf data from NVRAM (before we overwrite it) */
     boot_perf_read_prev();
-
-    /* Recover crash log from previous boot (reads NVRAM + checks physical memory) */
-    klog_crash_recover();
 
     /* Initialize VPD Tier 1 -- after crash banner so s_banner_shown is set */
     {
@@ -195,6 +194,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     POST16(POST16_KLOG_OK);
     kernel_subsystem_set_ready(SUBSYS_KLOG, true);
     boot_progress(0, "KLOG", POST16_KLOG_OK);
+
+    /* Recover crash log from previous boot (needs PMM + UEFI runtime) */
+    klog_crash_recover();
 
     /* --- CPUID: probe CPU features --- */
     POST16(POST16_CPUID);
