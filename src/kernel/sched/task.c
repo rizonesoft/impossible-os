@@ -1128,19 +1128,20 @@ int task_exec(const uint8_t *data, uint64_t size)
         new_kstack = (uint8_t *)(stack_base + 4096);
     }
 
-    /* Free old user stack and allocate a fresh one */
-    if (tasks[pid].user_stack_base) {
+    /* User stack: use the fixed user range address (same as task_create_user).
+     * The user ELF range (0x800000-0x900000) is split into 4 KiB pages in the
+     * per-process PML4 -- vmm_set_user_page only works on split PD entries.
+     * kmalloc addresses are in the kernel heap (huge pages) where User bit
+     * cannot be set.  The old kmalloc'd stack (if any) is freed. */
+    if (tasks[pid].user_stack_base &&
+        (uintptr_t)tasks[pid].user_stack_base < USER_ELF_BASE) {
+        /* Old stack was kmalloc'd (heap address) -- free it */
         kfree(tasks[pid].user_stack_base);
     }
-    tasks[pid].user_stack_base = (uint8_t *)kmalloc(USER_STACK_SIZE);
-    if (!tasks[pid].user_stack_base) {
-        klog(LOG_DEBUG, "sched", "Cannot allocate user stack");
-        return -1;
-    }
+    tasks[pid].user_stack_base = (uint8_t *)(USER_ELF_END - USER_STACK_SIZE);
 
-    /* Recreate per-process PML4: mark ELF pages + new user stack as User.
-     * The old PML4 had User bits on the previous stack range which is now
-     * freed.  The new kmalloc'd stack is at a different address. */
+    /* Recreate per-process PML4: mark ELF pages + user stack as User.
+     * vmm_create_user_pml4 splits PD[USER_PD_INDEX] into 4 KiB pages. */
     {
         uintptr_t user_cr3 = vmm_create_user_pml4();
         if (user_cr3) {
@@ -1150,11 +1151,6 @@ int task_exec(const uint8_t *data, uint64_t size)
                 vmm_destroy_user_pml4(tasks[pid].cr3);
             /* Mark ELF pages as User */
             for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
-                vmm_set_user_page(user_cr3, addr);
-            /* Mark user stack pages as User */
-            for (addr = (uintptr_t)tasks[pid].user_stack_base;
-                 addr < (uintptr_t)tasks[pid].user_stack_base + USER_STACK_SIZE;
-                 addr += 4096)
                 vmm_set_user_page(user_cr3, addr);
             tasks[pid].cr3 = user_cr3;
         } else {
