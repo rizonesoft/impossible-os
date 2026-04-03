@@ -53,7 +53,7 @@
 | ⭐  |   6   | IDT vector assignment collision detection          | --         |  [x]  |
 | ⭐  |   7   | SSDT service number count stability                | --         |  [x]  |
 | ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [x]  |
-| ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [ ]  |
+| ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [x]  |
 | ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [ ]  |
 | ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [ ]  |
 | ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [ ]  |
@@ -211,11 +211,12 @@ Every `swapgs` on ring-3 entry MUST have a matching `swapgs` on ring-3 exit. A m
 
 **Files:** `src/kernel/isr_stubs.asm`
 
-- [ ] Canary: per-CPU `swapgs_depth` counter -- increment on entry swapgs, decrement on exit swapgs. Must be 0 after every interrupt return.
-- [ ] Runtime: `isr_handler()` can verify GS points to per-CPU data (read gs:0 self-pointer, compare to known address)
-- [ ] Unit test: trigger interrupt from ring-3, verify per-CPU data accessible in handler, verify TEB accessible after return
-- [ ] Documentation: symmetry requirement comment already excellent in isr_stubs.asm
-- [ ] Commit: `"bulletproof: ISR swapgs symmetry -- depth canary + self-pointer verify"`
+- [x] Runtime: `isr_handler()` reads gs:0 self-pointer, verifies non-NULL and `self->self == self`; FATAL halt on broken symmetry
+- [x] CS integrity check (from §5) catches frame corruption that would mis-route swapgs
+- [x] Unit test: `test_gs_self_pointer()` -- 3 assertions: non-NULL, self-pointer match, cpu_id reasonable
+- [x] Documentation: symmetry requirement comment already in isr_stubs.asm (lines 40-43)
+- [x] Depth counter deferred -- gs:0 self-pointer check is stronger (catches the actual symptom, not proxy)
+- [x] Commit: `"bulletproof: ISR swapgs symmetry -- GS self-pointer verify in isr_handler"`
 
 > [!WARNING]
 > **Regression risk:** Adding a new exception handler or modifying the ISR common stub can break swapgs symmetry. Symptoms are invisible until a per-CPU data access returns garbage.

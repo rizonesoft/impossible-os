@@ -338,6 +338,25 @@ static void test_xsave_alignment(void)
     }
 }
 
+/* ---- swapgs symmetry (GS self-pointer valid in kernel context) ---- */
+
+static void test_gs_self_pointer(void)
+{
+    /* If swapgs symmetry is broken, gs:0 reads TEB or garbage instead
+     * of the per_cpu_data self-pointer. This test runs in kernel context
+     * (ring 0) where GS should always point to per-CPU data.
+     * The fact that we got here means hundreds of interrupts already
+     * verified swapgs symmetry, but test it explicitly. */
+    struct per_cpu_data *gs_self;
+    __asm__ volatile("mov %%gs:0, %0" : "=r"(gs_self));
+    TEST_ASSERT(gs_self != (void *)0,
+                "gs:0 is non-NULL (GS_BASE set)");
+    TEST_ASSERT(gs_self->self == gs_self,
+                "gs:0 self-pointer matches (swapgs symmetry intact)");
+    TEST_ASSERT(gs_self->cpu_id < 64,
+                "gs:0->cpu_id is reasonable (< 64)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -360,6 +379,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: interrupt frame layout", test_interrupt_frame_layout, TEST_CAT_ABI);
     test_suite_register_cat("NT: IDT vector uniqueness", test_vector_uniqueness, TEST_CAT_ABI);
     test_suite_register_cat("NT: XSAVE alignment", test_xsave_alignment, TEST_CAT_ABI);
+    test_suite_register_cat("NT: GS self-pointer (swapgs)", test_gs_self_pointer, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

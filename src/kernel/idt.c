@@ -229,6 +229,20 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         }
     }
 
+    /* ---- swapgs symmetry verify ----
+     * If we came from ring 3 (CS & 3 != 0), entry swapgs swapped GS
+     * from TEB to per-CPU. Verify GS:0 self-pointer is valid -- if
+     * swapgs was missed or doubled, gs:0 reads TEB or garbage. */
+    {
+        struct per_cpu_data *gs_self;
+        __asm__ volatile("mov %%gs:0, %0" : "=r"(gs_self));
+        if (!gs_self || gs_self->self != gs_self) {
+            extern void serial_write(const char *s);
+            serial_write("[FATAL] isr_handler: GS self-pointer invalid -- swapgs symmetry broken\n");
+            for (;;) __asm__ volatile("cli; hlt");
+        }
+    }
+
     /* ---- IRQL raise for hardware interrupts (vectors 32+) ----
      * CPU exceptions (0-31) are synchronous faults and run at the
      * IRQL of the faulting code -- do not raise. */
