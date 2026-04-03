@@ -277,7 +277,7 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 - [ ] Add `bootperf` shell command -- deferred until NtQuerySystemInformation syscall provides NVRAM access to user-mode
 - [x] Add debug POST codes: `POST16(0xDC00)` entry, `POST16(0xDC01)` NVRAM read, `POST16(0xDC02)` comparison done, `POST16(0xDC03)` NVRAM write
 - [x] Add 3 unit tests: perf record size (24 bytes), BOOT_PERF_MAGIC value, bootperf POST code uniqueness
-- [ ] Commit: `"kernel: boot performance regression detection via UEFI NVRAM"`
+- [x] Commit: `"kernel: boot performance regression detection via UEFI NVRAM"`
 
 **Test checkpoint:** Boot twice → second boot serial log shows `[PERF]` comparison lines. Inject a `sleep_ms(1000)` in a subsystem init → second boot shows `[PERF] WARNING` for that subsystem. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. On bare metal, verify NVRAM read/write works with real UEFI firmware.
 
@@ -346,7 +346,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
   - `boot_progress()` does not crash with NULL step name
   - POST code constants are non-zero and unique across phases
 - [x] Register in `test_runner_init()`: `test_register_boot_init()`
-- [ ] Commit: `"test: add boot-init sequencing test suite"`
+- [x] Commit: `"test: add boot-init sequencing test suite"` (included in earlier commits)
 - [x] Add deferred init tests (§11):
   - `BOOT_DEFERRED == 3` value assertion
   - `boot_defer("test_deferred", fn)` returns 0 on success
@@ -362,8 +362,8 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 - [x] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===` -- PASS: clean build succeeded (2026-04-02)
 - [x] QEMU WHPX: serial log shows `[PHASE0]`…`[PHASE3]` markers in dependency order -- PASS: all 4 phases present, dependency order correct (SERIAL→PMM→VMM→…→SCHED→DESKTOP_READY), 2 CPUs, boot complete 33.5s (WHPX, 2026-04-02)
-- [ ] QEMU TCG: same as WHPX -- (not tested in this log, WHPX only)
-- [ ] VirtualBox: boot completes with all phases logged -- (manual: requires VirtualBox)
+- [x] QEMU TCG: 135 tests passed, 0 failed, 1 skipped (VirtIO-blk), boot 4.45s, 1 CPU, perf NVRAM round-trip OK (2026-04-03)
+- [x] VirtualBox: boot completes with all phases logged, 1920x1080 VMSVGA, 4 CPUs, C:\ mounted, IXFS OK, perf NVRAM saved (2026-04-03)
 - [x] Serial log contains no `HV_BAR` or raw pixel-write output -- PASS: neither string found in WHPX serial log (2026-04-02)
 - [x] Serial log shows `kernel_subsystem_dump()` output before any halt -- PASS: code verified -- `boot_halt()` calls `kernel_subsystem_dump()` at boot_halt.c:263 before any framebuffer writes (2026-04-01)
 - [x] Forcing PMM failure causes `boot_halt()` on serial -- no framebuffer writes attempted -- PASS: code verified -- boot_hw.c:146 checks `SUBSYS_PMM` ready, calls `boot_halt()` which writes serial first, only touches fb if `fb_available` (2026-04-01)
