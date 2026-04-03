@@ -59,33 +59,16 @@ typedef struct {
 
 /* ---- OBJECT_ATTRIBUTES --------------------------------------------------- */
 
-/* OBJ_INHERIT may already be defined in handle_table.h with a different
- * value (bit 0 = internal flag). The NT-compatible values below are the
- * canonical OBJECT_ATTRIBUTES flags used by NtXxx APIs. Guard each. */
-#ifndef OBJ_INHERIT
-#define OBJ_INHERIT                 0x00000002
-#endif
-#ifndef OBJ_PERMANENT
+/* OBJ_INHERIT and OBJ_PROTECT_CLOSE are defined in handle_table.h with
+ * Windows-compatible values. The remaining OBJ_* flags are OBJECT_ATTRIBUTES
+ * flags used by NtCreateXxx APIs -- defined here as the canonical location. */
 #define OBJ_PERMANENT               0x00000010
-#endif
-#ifndef OBJ_EXCLUSIVE
 #define OBJ_EXCLUSIVE               0x00000020
-#endif
-#ifndef OBJ_CASE_INSENSITIVE
 #define OBJ_CASE_INSENSITIVE        0x00000040
-#endif
-#ifndef OBJ_OPENIF
 #define OBJ_OPENIF                  0x00000080
-#endif
-#ifndef OBJ_OPENLINK
 #define OBJ_OPENLINK                0x00000100
-#endif
-#ifndef OBJ_KERNEL_HANDLE
 #define OBJ_KERNEL_HANDLE           0x00000200
-#endif
-#ifndef OBJ_FORCE_ACCESS_CHECK
 #define OBJ_FORCE_ACCESS_CHECK      0x00000400
-#endif
 #define OBJ_VALID_ATTRIBUTES        0x000007F2
 
 typedef struct {

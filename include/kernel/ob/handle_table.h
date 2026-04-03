@@ -9,9 +9,9 @@
 
 #include "kernel/types.h"
 
-/* Handle attribute flags */
-#define OBJ_INHERIT        (1u << 0)  /* handle is inheritable across CreateProcess */
-#define OBJ_PROTECT_CLOSE  (1u << 1)  /* NtClose fails unless protection is cleared */
+/* Handle attribute flags (Windows-compatible values from OBJECT_ATTRIBUTES) */
+#define OBJ_INHERIT        0x00000002  /* handle is inheritable across CreateProcess */
+#define OBJ_PROTECT_CLOSE  0x00000001  /* NtClose fails unless protection is cleared */
 
 /* Special pseudo-handles (resolved without a table entry) */
 #define INVALID_HANDLE_VALUE  ((int32_t)-1)
