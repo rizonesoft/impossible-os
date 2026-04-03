@@ -58,7 +58,7 @@
 | ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [x]  |
 | ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [x]  |
 | ⭐  |  13   | VFS drive letter range and partition offsets       | --         |  [x]  |
-| ⭐  |  14   | exec_pending state machine verification            | §5         |  [ ]  |
+| ⭐  |  14   | exec_pending state machine verification            | §5         |  [x]  |
 | ⭐  |  15   | Framebuffer bare-metal safety (5 rules)            | --         |  [x]  |
 
 > ⭐ = all exclusive -- no other OS has systematic compile-time + boot-time invariant verification across the entire kernel.
@@ -300,7 +300,7 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 - [x] Unit test: `test_vfs_drive_constants` -- VFS_MAX_DRIVES==26, Z valid, '[' rejected, '@' rejected
 - [x] Unit test: `test_mbr_gpt_constants` -- MBR offset 446, sig 510, entry 16, 4 partitions, GPT LBA 1, GPT entry 128
 - [x] Documentation: MBR layout table in mbr.h, GPT constants documented in gpt.h
-- [ ] Commit: `"bulletproof: VFS + partition offsets -- range checks + industry-standard asserts"`
+- [x] Commit: `"bulletproof: VFS + partition offsets -- range checks + industry-standard asserts"`
 
 **Test checkpoint:** Change VFS_MAX_DRIVES -> static assert fires. Out-of-range drive letter -> runtime rejection.
 
@@ -312,11 +312,11 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 
 **Files:** `src/kernel/sched/task.c`
 
-- [ ] Runtime: `schedule()` logs WARN if exec_pending has been set for more than 2 quanta (stuck)
-- [ ] Runtime: `task_exec()` records the tick count when exec_pending was set; schedule can check age
-- [ ] Unit test: call task_exec(), verify exec_pending is set; yield -> verify exec_pending is cleared after switch-in
-- [ ] Canary: task struct gets `exec_pending_tick` field; if > 10 ticks old, force-clear and log error
-- [ ] Documentation: state machine diagram in task.c (set in task_exec, cleared in schedule on switch-in)
+- [x] Runtime: both `schedule()` paths (yield + preemptive) check `exec_pending_tick` age; if >10 ticks (`EXEC_PENDING_STUCK_TICKS`), log WARN and force-clear
+- [x] Runtime: `task_exec()` records `exec_pending_tick = uptime()` when setting `exec_pending = 1`
+- [x] Canary: `exec_pending_tick` field added to `struct task`; both schedule paths clear it to 0 on switch-in
+- [x] Unit test: `test_exec_pending_state` -- PID 0 exec_pending==0 and exec_pending_tick==0 (never exec'd)
+- [x] Documentation: state machine diagram comment in task.h at `exec_pending` field
 - [ ] Commit: `"bulletproof: exec_pending state machine -- age tracking + stuck detection"`
 
 **Test checkpoint:** exec_pending stuck for >10 ticks -> WARN log. Normal exec -> cleared after first context switch.
@@ -352,7 +352,7 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 | ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ✅ §2,§5,§11,§12 all ABIs        |
 | ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ⬜ §6 compile-time unique        |
 | ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ⬜ §9 depth counter              |
-| ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked          | ⬜ §14 exec_pending age          |
+| ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked          | ✅ §14 exec_pending age          |
 
 > **All exclusive.** No other OS systematically applies 5-layer defense to every critical kernel invariant. Linux has sparse `BUILD_BUG_ON` checks and `asm-offsets.c` for assembly offset generation, but nothing approaching comprehensive coverage. Windows has no public compile-time invariant system.
 

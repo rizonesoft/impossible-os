@@ -93,7 +93,13 @@ struct task {
     uint32_t    parent_pid;     /* PID of parent (0 for init) */
     int32_t     exit_status;    /* exit code (set on TASK_DEAD) */
     int32_t     wait_pid;       /* PID we're waiting on (-1 = none) */
-    uint32_t    exec_pending;   /* 1 = exec'd frame pending, skip save on switch-out */
+    /* exec_pending state machine (bulletproofing §14):
+     *   task_exec():  exec_pending = 1, exec_pending_tick = uptime()
+     *   schedule():   exec_pending = 0 on switch-in (frame consumed)
+     *   Stuck:        if exec_pending && (uptime() - exec_pending_tick) > 10 -> force-clear + WARN
+     * A stuck exec_pending means the task was never scheduled in -- frame is lost. */
+    uint32_t    exec_pending;       /* 1 = exec'd frame pending, skip save on switch-out */
+    uint64_t    exec_pending_tick;  /* tick when exec_pending was set (0 = not pending) */
     uintptr_t   cr3;            /* per-process PML4 phys addr (0 = kernel PML4) */
     /* --- Per-task thread list --- */
     struct thread threads[THREAD_MAX];   /* thread pool for this task */

@@ -30,6 +30,7 @@
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
 #include "kernel/acpi.h"
+#include "kernel/timer.h"
 #include "kernel/vectors.h"
 
 /* Use VECTOR_YIELD from vectors.h (single source of truth) */
@@ -48,6 +49,12 @@ static volatile uint32_t sched_ticks = 0;    /* ticks since last switch */
 /* Forward declarations */
 static uint64_t yield_irq_handler(struct interrupt_frame *frame);
 uint64_t schedule_now(struct interrupt_frame *frame);
+
+/* exec_pending stuck detection threshold (ticks).
+ * If exec_pending has been set for more than this many ticks without the
+ * task being scheduled in, the frame is stuck and will never be consumed.
+ * Force-clear and log error so the task doesn't block forever. */
+#define EXEC_PENDING_STUCK_TICKS 10
 
 /* --- Task wrapper ---
  * New tasks start execution here. When the entry function returns,
@@ -576,7 +583,17 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     /* Switch to next task/thread */
     tasks[next_task].state = TASK_RUNNING;
     tasks[next_task].threads[next_thread].state = THREAD_RUNNING;
+
+    /* exec_pending stuck detection: if set for too long, frame was never consumed */
+    if (tasks[next_task].exec_pending &&
+        tasks[next_task].exec_pending_tick &&
+        (uptime() - tasks[next_task].exec_pending_tick) > EXEC_PENDING_STUCK_TICKS) {
+        klog(LOG_WARN, "sched", "PID %u: exec_pending stuck for %u ticks -- force-clearing",
+             (uint64_t)next_task,
+             (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
+    }
     tasks[next_task].exec_pending = 0;  /* clear on switch-in */
+    tasks[next_task].exec_pending_tick = 0;
     current_task = next_task;
     current_thread = next_thread;
     sched_ticks = 0;
@@ -705,7 +722,17 @@ uint64_t schedule(struct interrupt_frame *frame)
     /* Switch to next task/thread */
     tasks[next_task].state = TASK_RUNNING;
     tasks[next_task].threads[next_thread].state = THREAD_RUNNING;
+
+    /* exec_pending stuck detection (same as yield path) */
+    if (tasks[next_task].exec_pending &&
+        tasks[next_task].exec_pending_tick &&
+        (uptime() - tasks[next_task].exec_pending_tick) > EXEC_PENDING_STUCK_TICKS) {
+        klog(LOG_WARN, "sched", "PID %u: exec_pending stuck for %u ticks -- force-clearing",
+             (uint64_t)next_task,
+             (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
+    }
     tasks[next_task].exec_pending = 0;
+    tasks[next_task].exec_pending_tick = 0;
     current_task = next_task;
     current_thread = next_thread;
 
@@ -1266,6 +1293,7 @@ int task_exec(const uint8_t *data, uint64_t size)
     tasks[pid].stack_base = new_kstack;
     tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
     tasks[pid].exec_pending = 1;  /* prevent scheduler from overwriting this frame */
+    tasks[pid].exec_pending_tick = uptime();  /* for stuck detection */
 
     /* Allocate PEB in user address space */
     tasks[pid].peb = (void *)peb_alloc_for_task(
