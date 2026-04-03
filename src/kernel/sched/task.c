@@ -12,6 +12,7 @@
 #include "kernel/sched/task.h"
 #include "kernel/idt.h"
 #include "kernel/gdt.h"
+#include "kernel/smp.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
@@ -540,9 +541,11 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     current_thread = next_thread;
     sched_ticks = 0;
 
-    /* Update TSS rsp0 so ring 3->0 transitions use the correct kernel stack */
-    if (tasks[next_task].kernel_rsp)
+    /* Update TSS rsp0 + per-CPU syscall_rsp0 for the correct kernel stack */
+    if (tasks[next_task].kernel_rsp) {
         tss_set_kernel_stack(tasks[next_task].kernel_rsp);
+        smp_this_cpu()->syscall_rsp0 = tasks[next_task].kernel_rsp;
+    }
 
     /* CR3 switch: load per-process page tables if different from current */
     {
@@ -666,9 +669,11 @@ uint64_t schedule(struct interrupt_frame *frame)
     current_task = next_task;
     current_thread = next_thread;
 
-    /* Update TSS rsp0 so ring 3->0 transitions use the correct kernel stack */
-    if (tasks[next_task].kernel_rsp)
+    /* Update TSS rsp0 + per-CPU syscall_rsp0 for the correct kernel stack */
+    if (tasks[next_task].kernel_rsp) {
         tss_set_kernel_stack(tasks[next_task].kernel_rsp);
+        smp_this_cpu()->syscall_rsp0 = tasks[next_task].kernel_rsp;
+    }
 
     /* CR3 switch: load per-process page tables if different from current */
     {

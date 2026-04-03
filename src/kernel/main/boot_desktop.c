@@ -82,7 +82,11 @@ void boot_phase3(void)
     /* --- Syscall handler + SSDT --- */
     boot_splash_status("Initializing syscalls...");
     ssdt_init();
-    syscall_init();
+    {
+        extern void syscall_init_fast(void);
+        syscall_init_fast();  /* attempt SYSCALL/SYSRET; falls back if GDT incompatible */
+    }
+    syscall_init();  /* keep INT 0x80 path active */
 
     /* --- Exec loader (ELF/PE format handlers) --- */
     kernel_subsystem_set_ready(SUBSYS_EXEC, true);

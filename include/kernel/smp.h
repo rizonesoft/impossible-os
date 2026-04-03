@@ -46,6 +46,8 @@ struct per_cpu_data {
     uint32_t cpu_id;            /* logical CPU index (0 = BSP) */
     uint32_t lapic_id;          /* hardware LAPIC ID */
     uint64_t rsp0;              /* kernel stack top (for TSS) */
+    uint64_t syscall_rsp0;      /* SYSCALL entry kernel stack (gs:24) */
+    uint64_t user_rsp_scratch;  /* scratch for saving user RSP during SYSCALL (gs:32) */
     uint64_t irq_count;         /* total interrupts handled */
     uint32_t preempt_count;     /* preemption nesting counter */
     KIRQL    current_irql;      /* current IRQL (0 = PASSIVE_LEVEL) */

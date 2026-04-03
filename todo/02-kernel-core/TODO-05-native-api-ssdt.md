@@ -47,7 +47,7 @@
 | ⭐  | Order | Deliverable                                                    | Depends On      | Status |
 | --- | :---: | -------------------------------------------------------------- | --------------- | :----: |
 | 💎  |   1   | NTSTATUS type and canonical status codes                       | --               |  [x]   |
-| 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [ ]   |
+| 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [/]   |
 | 💎  |   3   | INT 0x2E compatibility path                                    | §2              |  [ ]   |
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries           | §1              |  [x]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4          |  [ ]   |
@@ -171,23 +171,13 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
 
 Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSCALL`: CPU saves RIP→RCX, RFLAGS→R11; jumps to `IA32_LSTAR`. On `SYSRET`: restores RIP from RCX, RFLAGS from R11; returns to ring 3.
 
-- [ ] Use existing MSR constants from `include/kernel/msr.h`:
-  - `MSR_IA32_STAR    0xC0000081` -- CS/SS selectors for SYSCALL/SYSRET
-  - `MSR_IA32_LSTAR   0xC0000082` -- 64-bit SYSCALL entry point address
-  - `MSR_IA32_FMASK   0xC0000084` -- RFLAGS mask to clear on SYSCALL entry
-- [ ] Write `syscall_entry` in `src/kernel/sched/syscall_entry.asm`:
-  - `swapgs` (exchange user GS/TEB → kernel GS/per-CPU) -- requires TODO-04 §3 to be done first
-  - Save user RSP; load kernel RSP from `IA32_KERNEL_GS_BASE` or per-CPU TSS RSP0
-  - Push minimal callee-save frame (do not push RCX/R11 -- they are the saved user RIP/RFLAGS)
-  - `call syscall_dispatch` -- C handler taking `(syscall_number, arg1..arg5)`
-  - Restore frame; `swapgs`; `sysretq`
-- [ ] In Phase 1 init (after GDT/IDT, before scheduler): call `syscall_init_fast()`:
-  - `wrmsr(MSR_IA32_STAR,  (GDT_KERNEL_CODE << 32) | ((GDT_USER_CODE - 16) << 48))` -- ring-0 CS on SYSCALL, ring-3 CS on SYSRET (SYSRET loads CS from STAR[63:48]+16)
-  - `wrmsr(MSR_IA32_LSTAR, (uint64_t)syscall_entry)` -- entry point
-  - `wrmsr(MSR_IA32_FMASK, 0x200)` -- clear IF (interrupts off on entry)
-  - Set `EFER_SCE` bit in `MSR_IA32_EFER` (`0xC0000080`) to enable `SYSCALL`/`SYSRET`
-- [ ] `syscall_dispatch(uint64_t number, uint64_t a1..a5)` -- calls into SSDT (§4)
-- [ ] Keep `INT 0x80` registered in IDT for the transition period; remove after §3 INT 0x2E is up
+- [x] MSR constants verified in `include/kernel/msr.h`: STAR, LSTAR, FMASK, EFER_SCE all present
+- [x] `syscall_entry` written in `src/kernel/sched/syscall_entry.asm` -- swapgs, per-CPU scratch for user RSP, callee-save frame, calls `syscall_dispatch_fast()`
+- [x] `syscall_init_fast()` in `src/kernel/sched/syscall_fast.c` -- detects GDT order incompatibility and safely defers activation
+- [/] **BLOCKED:** SYSRET requires GDT order `UDATA` before `UCODE` (STAR[63:48]+8=SS, +16=CS). Current GDT: UCODE=0x18, UDATA=0x20 (reversed). MSR writes and EFER_SCE are gated on `GDT_USER_DATA == GDT_USER_CODE + 8` check. Fix: swap GDT entries 0x18/0x20, update all ring-3 transitions.
+- [x] `syscall_dispatch_fast()` -- C dispatcher routing to SSDT via `ssdt_dispatch()`
+- [x] `per_cpu_data.syscall_rsp0` + `user_rsp_scratch` fields added; updated in scheduler context switch
+- [x] INT 0x80 remains active as fallback (syscall_init() still called)
 - [ ] Commit: `"kernel: nt -- SYSCALL/SYSRET fast path init"`
 
 **Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 1. `POST16(0xDA00)` entry, `POST16(0xDA01)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. (Note: 0xD200/0xD201 are taken by `gdt.c`.)
@@ -218,7 +208,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 - [x] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` via `ssdt_stub_not_implemented()`
 - [x] `ssdt_init()` called in Phase 3 before `syscall_init()`
 - [x] 4 unit tests: unimplemented stub, invalid table, main count=470, register+dispatch
-- [ ] Commit: `"kernel: nt -- SSDT and service number table"`
+- [x] Commit: `"kernel: nt -- SSDT and service number table"`
 
 ### SSDT Master Table
 
@@ -1434,7 +1424,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 
 | ⭐ | Feature                    | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS            |
 |----|----------------------------|------------------------------|----------------------------|------------------------------|
-| 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | ⬜ §2                       |
+| 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | 🔄 §2 blocked on GDT order  |
 | 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ✅ §1 NTSTATUS + 50 codes   |
 | 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ✅ §4 SSDT 470 + shadow stub |
 | 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ⬜ §3                       |
