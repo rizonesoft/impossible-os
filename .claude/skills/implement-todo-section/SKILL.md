@@ -41,7 +41,8 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
    - Add or update test assertions in the relevant `test_*.c` file for the functionality just implemented.
    - If tests already exist but skip (e.g., "not yet allocated"), update them to verify the new state.
    - Run `bash scripts/build.sh` to confirm tests compile.
-10. Commit and push after the section is complete and the build passes.
+10. **Commit and push IMMEDIATELY after the section is complete and the build passes.**
+   - **CRITICAL: Never batch multiple sections or features into one commit.** Each completed implementation gets its own commit+push before starting the next task. This keeps COUNT.md current, git history granular, and rollback possible.
    - Use the section's `Commit:` line as the commit message.
    - Stage all changed source files, headers, the updated TODO file, and any test changes together.
    - Always push to `origin/main` immediately after a successful commit.
@@ -49,6 +50,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 
 ## Guardrails
 
+- **Commit after each implementation.** Do not accumulate multiple implementations before committing. The post-commit hook updates COUNT.md and the user expects incremental progress.
 - Do not create new TODO files here.
 - Do not turn this into a broad file-wide roadmap cleanup pass.
 - Do not silently widen scope when requirements, repo state, or verification evidence conflict.

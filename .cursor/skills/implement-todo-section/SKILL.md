@@ -43,6 +43,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 
 ## Guardrails
 
+- **Commit after each implementation.** Do not accumulate multiple implementations before committing. The post-commit hook updates COUNT.md and the user expects incremental progress.
 - Do not create new TODO files here.
 - Do not turn this into a broad file-wide roadmap cleanup pass.
 - Do not silently widen scope when requirements, repo state, or verification evidence conflict.
