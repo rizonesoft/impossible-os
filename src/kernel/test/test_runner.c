@@ -187,6 +187,7 @@ extern void test_register_klog(void);
 extern void test_register_ob(void);
 extern void test_register_security(void);
 extern void test_register_peb_teb(void);
+extern void test_register_nt_types(void);
 extern void test_register_ipc(void);
 extern void test_register_storage(void);
 
@@ -222,6 +223,7 @@ void test_runner_init(void)
 
     /* ABI */
     test_register_peb_teb();
+    test_register_nt_types();
 
     /* IPC */
     test_register_ipc();

@@ -21,19 +21,8 @@
 #include "kernel/boot_info.h"
 #include "kernel/uefi_runtime.h"
 
-/* ---- NTSTATUS type ---- */
-
-typedef int32_t NTSTATUS;
-
-#define STATUS_SUCCESS              ((NTSTATUS)0x00000000)
-#define STATUS_UNSUCCESSFUL         ((NTSTATUS)0xC0000001)
-#define STATUS_NOT_IMPLEMENTED      ((NTSTATUS)0xC0000002)
-#define STATUS_INVALID_PARAMETER    ((NTSTATUS)0xC000000D)
-#define STATUS_BUFFER_TOO_SMALL     ((NTSTATUS)0xC0000023)
-#define STATUS_NOT_FOUND            ((NTSTATUS)0xC0000225)
-
-/* Returns non-zero when status indicates success (high bit clear). */
-#define NT_SUCCESS(s)   (((NTSTATUS)(s)) >= 0)
+/* ---- NTSTATUS type (canonical: kernel/nt/ntstatus.h) ---- */
+#include "kernel/nt/ntstatus.h"
 
 /* ---- EFI GUID type alias ---- */
 

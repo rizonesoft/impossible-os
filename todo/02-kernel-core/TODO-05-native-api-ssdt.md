@@ -46,7 +46,7 @@
 
 | ⭐  | Order | Deliverable                                                    | Depends On      | Status |
 | --- | :---: | -------------------------------------------------------------- | --------------- | :----: |
-| 💎  |   1   | NTSTATUS type and canonical status codes                       | --               |  [ ]   |
+| 💎  |   1   | NTSTATUS type and canonical status codes                       | --               |  [x]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [ ]   |
 | 💎  |   3   | INT 0x2E compatibility path                                    | §2              |  [ ]   |
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries           | §1              |  [ ]   |
@@ -84,7 +84,7 @@
 ## 1. NTSTATUS Type and Canonical Status Codes
 Define the NT status type and the full set of codes needed across all 200+ syscall endpoints.
 
-- [ ] Create `include/kernel/nt/ntstatus.h`:
+- [x] Create `include/kernel/nt/ntstatus.h`:
   - `typedef uint32_t NTSTATUS`
   - Severity macros: `NT_SUCCESS(s)` = `((s) >> 30) == 0`, `NT_INFORMATION(s)` = `((s) >> 30) == 1`, `NT_WARNING(s)` = `((s) >> 30) == 2`, `NT_ERROR(s)` = `((s) >> 30) == 3`
   - **Success / informational:**
@@ -148,7 +148,7 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
     - `STATUS_NOT_SUPPORTED              0xC00000BB`
     - `STATUS_INVALID_DEVICE_REQUEST     0xC0000010`
     - `STATUS_DEVICE_NOT_READY           0xC00000A3`
-- [ ] Create `include/kernel/nt/nt_types.h` with foundational NT types:
+- [x] Create `include/kernel/nt/nt_types.h` with foundational NT types:
   - `HANDLE` -- already `typedef int32_t HANDLE` in `include/kernel/ob/handle_table.h`; re-export, do not redefine
   - `IO_STATUS_BLOCK` -- `NTSTATUS Status`, `uint64_t Information`
   - `UNICODE_STRING` -- re-export from `include/kernel/ob/peb.h` (already defined per TODO-04)
@@ -157,7 +157,9 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
   - `ACCESS_MASK` = `uint32_t`; `GENERIC_READ = 0x80000000`, `GENERIC_WRITE = 0x40000000`, `GENERIC_EXECUTE = 0x20000000`, `GENERIC_ALL = 0x10000000`
   - `CLIENT_ID` -- `uint64_t UniqueProcess`, `uint64_t UniqueThread`
   - `CONTEXT` -- forward-declare; full definition in TODO-10
-- [ ] Annotate each `NTSTATUS` code with the condition that triggers it -- serves as inline documentation
+- [x] Annotate each `NTSTATUS` code with inline comment describing trigger condition
+- [x] uefi_vars.h updated to forward-include from canonical `kernel/nt/ntstatus.h`
+- [x] 6 unit tests: NT_SUCCESS, NT_ERROR, NT_WARNING, NT_INFORMATION, type sizes, OBJECT_ATTRIBUTES size
 - [ ] Commit: `"kernel: nt -- NTSTATUS type and canonical status codes"`
 
 **Test checkpoint:** `bash scripts/build.sh` → `=== BUILD OK ===`. `NT_SUCCESS(0)` == true, `NT_ERROR(0xC0000001)` == true, `NT_WARNING(0x80000005)` == true, `NT_INFORMATION(0x00000101)` == true verified by unit test.
@@ -1432,7 +1434,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | ⭐ | Feature                    | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS            |
 |----|----------------------------|------------------------------|----------------------------|------------------------------|
 | 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | ⬜ §2                       |
-| 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ⬜ §1                       |
+| 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ✅ §1 NTSTATUS + 50 codes   |
 | 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ⬜ §4 -- 470 entries         |
 | 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ⬜ §3                       |
 | 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only           | ⬜ §11                      |
