@@ -238,10 +238,18 @@ void keyboard_init(void)
 {
     POST16(0xD502);
 
-    /* Gate: skip all PS/2 port I/O if ACPI says no i8042 controller */
+    /* Gate: skip if no i8042 controller present.
+     * FADT IAPC_BOOT_ARCH.8042 is unreliable -- QEMU WHPX reports 0 even
+     * though the i8042 is emulated and functional. Probe port 0x64 directly:
+     * 0xFF means no controller (floating bus), anything else means alive. */
     if (!acpi_has_8042()) {
-        klog(LOG_INFO, "input", "PS/2 keyboard: skipped (no i8042 in FADT)");
-        return;
+        uint8_t probe = inb(KB_STATUS_PORT);
+        if (probe == 0xFF) {
+            klog(LOG_INFO, "input", "PS/2 keyboard: skipped (no i8042 -- port 0x64 reads 0xFF)");
+            return;
+        }
+        klog(LOG_INFO, "input", "PS/2 keyboard: FADT says no i8042 but port probe OK (0x%x)",
+             (uint32_t)probe);
     }
 
     /* Flush any pending data in the keyboard buffer.

@@ -177,10 +177,16 @@ void mouse_init(void)
 
     POST16(0xD503);
 
-    /* Gate: skip all PS/2 port I/O if ACPI says no i8042 controller */
+    /* Gate: skip if no i8042 controller present.
+     * Probe port 0x64 directly -- FADT is unreliable on QEMU WHPX. */
     if (!acpi_has_8042()) {
-        klog(LOG_INFO, "input", "PS/2 mouse: skipped (no i8042 in FADT)");
-        return;
+        uint8_t probe = inb(0x64);
+        if (probe == 0xFF) {
+            klog(LOG_INFO, "input", "PS/2 mouse: skipped (no i8042 -- port 0x64 reads 0xFF)");
+            return;
+        }
+        klog(LOG_INFO, "input", "PS/2 mouse: FADT says no i8042 but port probe OK (0x%x)",
+             (uint32_t)probe);
     }
 
     /* Start cursor at screen center */
