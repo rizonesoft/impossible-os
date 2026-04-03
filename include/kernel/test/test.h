@@ -25,8 +25,12 @@
 
 #include "kernel/types.h"
 
-/* ---- Maximum limits ---- */
-#define TEST_MAX_SUITES     128
+/* ---- Maximum limits ----
+ * When suite_count approaches TEST_MAX_SUITES, revisit the testing
+ * infrastructure: consider kunit-style conditional compilation,
+ * parallel execution on SMP, or splitting into loadable test modules.
+ * Current growth rate: ~5 suites per TODO section. */
+#define TEST_MAX_SUITES     512
 #define TEST_MAX_NAME_LEN   32
 
 /* ---- Test categories for selective execution ---- */
