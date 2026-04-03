@@ -274,7 +274,7 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 - [x] On next boot, `boot_perf_read_prev()` reads `ImpossibleBootPerf` from NVRAM into `s_prev_records[]` (called in Phase 0 after uefi_runtime_init)
 - [x] `boot_perf_compare()` compares current vs previous: if >200% OR >500ms regression, logs `[PERF] WARNING: <step> init regressed: <prev>ms -> <cur>ms`
 - [x] `boot_perf_dump()` prints all step durations as a sorted-by-time table to serial
-- [ ] Add `bootperf` shell command -- deferred until NtQuerySystemInformation syscall provides NVRAM access to user-mode
+- [/] Add `bootperf` shell command -- deferred until `TODO-05-native-api-ssdt.md §10` implements `NtQuerySystemInformation(SystemBootPerformanceInformation)` for user-mode NVRAM access
 - [x] Add debug POST codes: `POST16(0xDC00)` entry, `POST16(0xDC01)` NVRAM read, `POST16(0xDC02)` comparison done, `POST16(0xDC03)` NVRAM write
 - [x] Add 3 unit tests: perf record size (24 bytes), BOOT_PERF_MAGIC value, bootperf POST code uniqueness
 - [x] Commit: `"kernel: boot performance regression detection via UEFI NVRAM"`

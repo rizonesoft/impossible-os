@@ -1028,6 +1028,7 @@ Provides OS version, process list, performance counters, and detailed process in
   - `SystemExceptionInformation (33)`: exception statistics
   - `SystemRegistryQuotaInformation (37)`: registry size limits
   - `SystemProcessorPerformanceInformation (8)`: per-CPU idle/kernel/user times
+  - `SystemBootPerformanceInformation (custom)`: read `ImpossibleBootPerf` NVRAM data -- enables `bootperf` shell command (→ XREF: `TODO-01-kernel-init-sequencing.md §12`)
   - Unimplemented classes return `STATUS_NOT_IMPLEMENTED`
 - [ ] `NtSetSystemInformation(SystemInformationClass, Buffer, Length)`:
   - `SystemTimeSlipNotification (46)`: register time slip callback
