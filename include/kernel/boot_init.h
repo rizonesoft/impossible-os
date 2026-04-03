@@ -247,6 +247,15 @@ typedef enum {
 #define POST16_BOOTPERF_CMP     0xDC02  /* comparison done */
 #define POST16_BOOTPERF_WRITE   0xDC03  /* NVRAM write of current boot */
 
+/* Async Subsystem Init (0xDD00–0xDD03) */
+#define POST16_ASYNC            0xDD00  /* async dispatch start */
+#define POST16_ASYNC_AP         0xDD01  /* per-AP entry */
+#define POST16_ASYNC_BARRIER    0xDD02  /* barrier wait */
+#define POST16_ASYNC_DONE       0xDD03  /* all complete */
+
+/* IPI vector for async boot init work dispatch */
+#define IPI_VECTOR_ASYNC_INIT   0xFC
+
 /* Sentinels (0xF000–0xFFFE) */
 #define POST16_BOOT_OK          0xFF00
 #define POST16_BOOT_FAILED      0xFFFE
@@ -371,6 +380,26 @@ int boot_defer(const char *name, boot_result_t (*fn)(void));
 /* Run all deferred inits sequentially.  Call in Phase 3 after desktop_init()
  * but before compositor_run().  Logs [DEFERRED] name +NNNms for each. */
 void boot_run_deferred(void);
+
+/* --- Async subsystem init (SMP parallel) --------------------------------- */
+
+#define BOOT_ASYNC_MAX_STEPS 8
+
+/* A step in an async init group */
+typedef struct {
+    const char    *name;
+    boot_result_t (*fn)(void);
+} boot_async_step_t;
+
+/* Initialize the async init subsystem: register IPI handler.
+ * Call after IDT and LAPIC are ready. */
+void boot_async_init(void);
+
+/* Dispatch an async init group across available APs.
+ * Steps run in parallel on different CPUs. BSP runs one step too.
+ * Blocks until all steps complete. Returns worst boot_result_t. */
+boot_result_t boot_async_group(const char *group_name,
+                               boot_async_step_t *steps, uint32_t count);
 
 /* Internal helper used by BOOT_REQUIRE -- logs via serial (klog optional). */
 void _boot_require_failed(const char *subsys_name);

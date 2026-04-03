@@ -132,6 +132,179 @@ void boot_run_deferred(void)
     boot_progress(3, "DEFERRED", POST16_DEFERRED_OK);
 }
 
+/* ---- Async subsystem init (SMP parallel) -------------------------------- */
+
+#include "kernel/smp.h"
+#include "kernel/idt.h"
+#include "kernel/timer.h"
+#include "kernel/barrier.h"
+
+/* IPI handler: runs on AP when it receives IPI_VECTOR_ASYNC_INIT.
+ * Reads the work function from per-CPU data, executes it, writes result. */
+static uint64_t async_ipi_handler(struct interrupt_frame *frame)
+{
+    struct per_cpu_data *pcpu = smp_this_cpu();
+
+    if (!pcpu || !pcpu->async_fn) {
+        /* Spurious -- no work assigned */
+        extern void lapic_eoi(void);
+        lapic_eoi();
+        return (uint64_t)frame;
+    }
+
+    pcpu->in_async_work = 1;
+    smp_mb();
+
+    boot_result_t (*fn)(void) = (boot_result_t (*)(void))pcpu->async_fn;
+    const char *name = pcpu->async_name ? pcpu->async_name : "?";
+
+    klog(LOG_INFO, "ASYNC", "[ASYNC] %s started on CPU%u", name, pcpu->cpu_id);
+    POST16(POST16_ASYNC_AP);
+
+    uint64_t t0 = system_get_ticks();
+    boot_result_t r = fn();
+    uint64_t elapsed_ms = (system_get_ticks() - t0) * 10;
+
+    pcpu->async_result = (uint8_t)r;
+    pcpu->in_async_work = 0;
+    smp_mb();
+    pcpu->async_done = 1;
+    smp_mb();
+
+    if (r == BOOT_OK || r == BOOT_DEGRADED) {
+        klog(LOG_INFO, "ASYNC", "[ASYNC] %s completed on CPU%u in %ums",
+             name, pcpu->cpu_id, (uint32_t)elapsed_ms);
+    } else {
+        klog(LOG_WARN, "ASYNC", "[ASYNC] %s FAILED on CPU%u in %ums",
+             name, pcpu->cpu_id, (uint32_t)elapsed_ms);
+    }
+
+    extern void lapic_eoi(void);
+    lapic_eoi();
+    return (uint64_t)frame;
+}
+
+void boot_async_init(void)
+{
+    idt_register_handler(IPI_VECTOR_ASYNC_INIT, async_ipi_handler);
+    klog(LOG_DEBUG, "ASYNC", "Async init IPI handler registered (vector 0x%x)",
+         (uint32_t)IPI_VECTOR_ASYNC_INIT);
+}
+
+boot_result_t boot_async_group(const char *group_name,
+                               boot_async_step_t *steps, uint32_t count)
+{
+    extern void lapic_send_ipi(uint8_t target_apic_id, uint8_t vector);
+
+    if (count == 0) return BOOT_OK;
+
+    uint32_t ncpus = smp_cpu_count();
+    uint32_t bsp_id = smp_cpu_id();
+
+    POST16(POST16_ASYNC);
+    klog(LOG_INFO, "ASYNC", "--- Async group '%s': %u step(s) on %u CPU(s) ---",
+         group_name, count, ncpus);
+
+    /* If only 1 CPU, run everything sequentially on BSP */
+    if (ncpus <= 1) {
+        boot_result_t worst = BOOT_OK;
+        for (uint32_t i = 0; i < count; i++) {
+            klog(LOG_INFO, "ASYNC", "[ASYNC] %s (sequential, 1 CPU)",
+                 steps[i].name);
+            uint64_t t0 = system_get_ticks();
+            boot_result_t r = steps[i].fn();
+            uint64_t elapsed_ms = (system_get_ticks() - t0) * 10;
+            klog(LOG_INFO, "ASYNC", "[ASYNC] %s completed in %ums",
+                 steps[i].name, (uint32_t)elapsed_ms);
+            if (r > worst) worst = r;
+        }
+        POST16(POST16_ASYNC_DONE);
+        return worst;
+    }
+
+    /* Dispatch steps across APs, BSP takes one step too.
+     * Round-robin: step 0 -> BSP, step 1 -> AP1, step 2 -> AP2, etc. */
+    /* Clear async state on all APs */
+    for (uint32_t i = 0; i < ncpus; i++) {
+        struct per_cpu_data *pcpu = smp_get_cpu(i);
+        if (pcpu) {
+            pcpu->async_done = 0;
+            pcpu->async_result = (uint8_t)BOOT_OK;
+            pcpu->async_fn = (void *)0;
+            pcpu->async_name = (void *)0;
+            pcpu->in_async_work = 0;
+        }
+    }
+    smp_mb();
+
+    /* Assign work to APs first (skip BSP = cpu 0) */
+    uint32_t ap_idx = 1;  /* start with AP1 */
+    for (uint32_t i = 1; i < count && ap_idx < ncpus; i++, ap_idx++) {
+        struct per_cpu_data *ap = smp_get_cpu(ap_idx);
+        if (!ap || !ap->is_online) continue;
+
+        ap->async_name = steps[i].name;
+        ap->async_fn   = (void *)steps[i].fn;
+        smp_mb();
+
+        /* Send IPI to wake the AP */
+        lapic_send_ipi(ap->lapic_id, IPI_VECTOR_ASYNC_INIT);
+    }
+
+    /* BSP runs step 0 directly */
+    klog(LOG_INFO, "ASYNC", "[ASYNC] %s started on CPU%u (BSP)",
+         steps[0].name, bsp_id);
+    uint64_t t0 = system_get_ticks();
+    boot_result_t bsp_result = steps[0].fn();
+    uint64_t bsp_ms = (system_get_ticks() - t0) * 10;
+    klog(LOG_INFO, "ASYNC", "[ASYNC] %s completed on CPU%u (BSP) in %ums",
+         steps[0].name, bsp_id, (uint32_t)bsp_ms);
+
+    /* If more steps than CPUs, BSP runs the remaining ones sequentially */
+    for (uint32_t i = ncpus; i < count; i++) {
+        klog(LOG_INFO, "ASYNC", "[ASYNC] %s (overflow, BSP)", steps[i].name);
+        boot_result_t r = steps[i].fn();
+        if (r > bsp_result) bsp_result = r;
+    }
+
+    /* Barrier: wait for all APs to complete */
+    POST16(POST16_ASYNC_BARRIER);
+    uint32_t timeout_ms = 10000;  /* 10 second timeout */
+    uint64_t deadline = system_get_ticks() + timeout_ms / 10;
+
+    for (uint32_t i = 1; i < count && i < ncpus; i++) {
+        struct per_cpu_data *ap = smp_get_cpu(i);
+        if (!ap) continue;
+
+        while (!ap->async_done) {
+            if (system_get_ticks() > deadline) {
+                klog(LOG_WARN, "ASYNC",
+                     "[ASYNC] TIMEOUT: %s on CPU%u did not complete in %ums",
+                     ap->async_name ? ap->async_name : "?",
+                     ap->cpu_id, timeout_ms);
+                ap->async_result = (uint8_t)BOOT_FATAL;
+                ap->async_done = 1;
+                break;
+            }
+            __asm__ volatile("pause");
+        }
+    }
+
+    /* Collect results */
+    boot_result_t worst = bsp_result;
+    for (uint32_t i = 1; i < count && i < ncpus; i++) {
+        struct per_cpu_data *ap = smp_get_cpu(i);
+        if (ap && (boot_result_t)ap->async_result > worst)
+            worst = (boot_result_t)ap->async_result;
+    }
+
+    POST16(POST16_ASYNC_DONE);
+    klog(LOG_INFO, "ASYNC", "--- Async group '%s' complete (worst=%u) ---",
+         group_name, (uint32_t)worst);
+
+    return worst;
+}
+
 /* ---- UEFI NVRAM POST code persistence ----------------------------------- */
 
 /* Impossible OS POST GUID: {494D504F-5354-4F53-504F-535447554944} */

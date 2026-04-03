@@ -183,6 +183,33 @@ static void test_bootperf_post_codes(void)
                 "BOOTPERF != DEFERRED");
 }
 
+/* ---- Async init POST codes and IPI vector ---- */
+
+static void test_async_post_codes(void)
+{
+    TEST_ASSERT(POST16_ASYNC != 0, "POST16_ASYNC is non-zero");
+    TEST_ASSERT(POST16_ASYNC_DONE != 0, "POST16_ASYNC_DONE is non-zero");
+    TEST_ASSERT(POST16_ASYNC != POST16_ASYNC_AP,
+                "ASYNC != ASYNC_AP");
+    TEST_ASSERT(POST16_ASYNC_BARRIER != POST16_ASYNC_DONE,
+                "ASYNC_BARRIER != ASYNC_DONE");
+    /* No overlap with other debug ranges */
+    TEST_ASSERT(POST16_ASYNC != POST16_DEFERRED,
+                "ASYNC != DEFERRED");
+    TEST_ASSERT(POST16_ASYNC != POST16_BOOTPERF,
+                "ASYNC != BOOTPERF");
+}
+
+static void test_async_ipi_vector(void)
+{
+    TEST_ASSERT_EQ(IPI_VECTOR_ASYNC_INIT, 0xFC, "IPI_VECTOR_ASYNC_INIT == 0xFC");
+    /* Must not collide with existing IPI vectors */
+    TEST_ASSERT(IPI_VECTOR_ASYNC_INIT != 0xFD,
+                "ASYNC_INIT != RESCHEDULE (0xFD)");
+    TEST_ASSERT(IPI_VECTOR_ASYNC_INIT != 0xFE,
+                "ASYNC_INIT != TLB_SHOOTDOWN (0xFE)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_init(void)
@@ -201,6 +228,8 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: perf record size", test_boot_perf_record_size, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: perf magic", test_boot_perf_header_magic, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: bootperf POST codes", test_bootperf_post_codes, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: async POST codes", test_async_post_codes, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: async IPI vector", test_async_ipi_vector, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

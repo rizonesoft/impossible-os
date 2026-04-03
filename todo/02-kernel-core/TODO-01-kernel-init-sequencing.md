@@ -53,7 +53,7 @@
 | ⭐  |  10   | POST code + UEFI variable log              | §1         |  [x]   |
 | 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [x]   |
 | ⭐  |  12   | Boot performance regression detection      | §10        |  [x]   |
-| ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [ ]   |
+| ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [x]   |
 
 > 💎 = parity -- Windows NT and Linux both have formal init phase models; Impossible OS must match them.
 > ⭐ = exclusive -- degraded-boot recovery UI, UEFI NVRAM POST log, boot perf regression detection, and SMP parallel init.
@@ -292,18 +292,15 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 **Files:** `src/kernel/main/boot_init.c`, `include/kernel/boot_init.h`
 
-- [ ] BOOT_REQUIRE(SUBSYS_SMP) -- APs must be online before async dispatch; `smp_start_aps()` runs in Phase 2 §4
-- [ ] Add `BOOT_STEP_ASYNC(subsys, fn)` macro -- spawns `fn` on an idle AP via a lightweight kernel thread (no scheduler needed yet, direct AP dispatch)
-- [ ] Add `boot_async_barrier()` -- BSP spins until all async init threads complete, collecting their `boot_result_t` values
-- [ ] Identify Phase 2 parallelizable groups:
-  - Group A (storage): `ata_init()`, `virtio_blk_init()`, `ahci_init()` -- independent of each other, all depend on PCI
-  - Group B (input): `xhci_init()`, `virtio_input_init()`, `vbox_mouse_init()` -- independent of each other
-  - Group C (network): `rtl8139_init()`, `net_init()` -- sequential within group, parallel with A/B
-- [ ] Implement `boot_async_group(const char *name, boot_step_t *steps, int count)` -- dispatches `count` init functions across available APs
-- [ ] Add `async_init=1` boot.conf option -- disabled by default; enable after stability testing. Rollback: if parallel init causes crashes on any platform, revert to sequential by removing `async_init` from boot.conf -- no code change needed
-- [ ] Add per-AP init error isolation: if an AP faults during async init, capture the fault on that AP and report BOOT_FATAL for just that subsystem, don't crash BSP
-- [ ] Log `[ASYNC] <subsys> started on CPU<n>` and `[ASYNC] <subsys> completed in <N>ms` for each parallel init
-- [ ] Add debug POST codes: `POST16(0xDD00)` async dispatch start, `POST16(0xDD01)` per-AP entry, `POST16(0xDD02)` barrier wait, `POST16(0xDD03)` all complete -- range `0xDDxx` confirmed free
+- [x] SMP moved before storage drivers in Phase 2 so APs are online for async dispatch
+- [x] `boot_async_init()` registers IPI handler (vector 0xFC) for AP work dispatch
+- [x] `boot_async_group(name, steps, count)` dispatches steps across APs via IPI; BSP runs step 0, APs run step 1+; includes 10s timeout barrier
+- [x] Storage drivers (ATA, AHCI, NVMe, VirtIO-blk) wired as async group when `async_init=1`; Groups B/C (input, network) already deferred to post-desktop via §11
+- [x] `async_init=0` in boot.conf (default) -- sequential behavior unchanged; `async_init=1` enables parallel
+- [x] Per-AP fault isolation in `panic_screen()` -- if AP faults during async work, records BOOT_FATAL and parks AP without crashing BSP
+- [x] Logs `[ASYNC] <step> started on CPU<n>` and `[ASYNC] <step> completed on CPU<n> in <N>ms`
+- [x] POST codes: `POST16(0xDD00)` dispatch, `POST16(0xDD01)` AP entry, `POST16(0xDD02)` barrier, `POST16(0xDD03)` done
+- [x] 2 unit tests: async POST code uniqueness, IPI vector value (0xFC) and no collision with 0xFD/0xFE
 - [ ] Commit: `"kernel: async subsystem init -- SMP parallel Phase 2"`
 
 **Test checkpoint:** Boot with `async_init=1` → storage/input/network init on different CPUs → serial log shows `[ASYNC]` entries with different CPU numbers. Total Phase 2 time decreases vs sequential. Boot with `async_init=0` → sequential behavior unchanged. Verify on QEMU WHPX (2+ vCPUs), TCG, VirtualBox, bare metal. Bare metal is critical -- per-AP fault isolation must work on real hardware.
@@ -326,7 +323,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 | ⭐ | Readiness oracle API | ⚠️ Private internal| ⚠️ system_state only  | ✅ §1 public API         |
 | 💎 | Deferred init        | ✅ Delayed services| ✅ deferred_initcall  | ✅ §11 boot_defer()      |
 | ⭐ | Boot perf regression | ❌ Manual ETW      | ❌ Manual bootchart   | ✅ §12 auto NVRAM diff   |
-| ⭐ | Parallel kernel init | ⚠️ DLL load only   | ⚠️ async_schedule     | ⬜ §13 SMP phase init    |
+| ⭐ | Parallel kernel init | ⚠️ DLL load only   | ⚠️ async_schedule     | ✅ §13 IPI async group   |
 
 > After parity items, Impossible OS matches Windows NT and Linux on phased init.
 > Exclusive: graphical recovery UI, UEFI NVRAM POST codes, public readiness oracle, auto boot perf regression, SMP parallel init.
@@ -356,7 +353,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
   - `BOOT_PERF_MAGIC == 0x50455246` ("PERF")
   - Bootperf POST codes non-zero, unique, no overlap with deferred range
 
-> **Done:** 14 suites, 30 assertions -- registered in `test_runner_init()` (2026-04-03). Added 3 perf regression tests for §12.
+> **Done:** 16 suites, 38 assertions -- registered in `test_runner_init()` (2026-04-03). Added 2 async init tests for §13.
 
 ## Verification
 

@@ -169,10 +169,12 @@ struct boot_config {
     uint8_t  diag_splash;      /* 1 = show diag on splash (bare metal, no serial) */
     /* Deferred init */
     uint8_t  deferred;         /* 1 = defer non-critical inits (default), 0 = all in-phase */
+    /* Async init */
+    uint8_t  async_init;       /* 1 = parallel subsystem init on APs, 0 = sequential (default) */
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[17];
+    uint8_t  _reserved[16];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

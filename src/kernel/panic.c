@@ -29,6 +29,8 @@
 #include "kernel/symtab.h"
 #include "kernel/boot_init.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/smp.h"
+#include "kernel/barrier.h"
 
 /* --- Constants --- */
 
@@ -324,6 +326,29 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
 
     /* Disable interrupts to prevent further exceptions */
     __asm__ volatile ("cli");
+
+    /* --- Async init fault isolation ---
+     * If this CPU is executing an async boot init step, don't crash the
+     * whole system. Record BOOT_FATAL for this step and park the AP.
+     * The BSP's barrier will detect the failure via async_done/async_result. */
+    {
+        struct per_cpu_data *pcpu = smp_this_cpu();
+        if (pcpu && pcpu->in_async_work) {
+            klog(LOG_ERROR, "ASYNC",
+                 "[ASYNC] FAULT on CPU%u during '%s': %s (err=0x%x, RIP=0x%x)",
+                 pcpu->cpu_id,
+                 pcpu->async_name ? pcpu->async_name : "?",
+                 description ? description : "unknown",
+                 error_code, frame ? frame->rip : 0);
+            pcpu->async_result = (uint8_t)2;  /* BOOT_FATAL */
+            pcpu->in_async_work = 0;
+            smp_mb();
+            pcpu->async_done = 1;
+            smp_mb();
+            /* Park this AP permanently -- BSP will handle the failure */
+            for (;;) __asm__ volatile("hlt");
+        }
+    }
 
     /* Mark current VPD stage as failed (red) before BSOD overwrites screen */
     {

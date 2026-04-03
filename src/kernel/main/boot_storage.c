@@ -68,6 +68,32 @@ static boot_result_t deferred_input_init(void)
     return BOOT_OK;
 }
 
+/* ---- Async init wrappers (boot_result_t) -------------------------------- */
+
+static boot_result_t async_ata_init(void)
+{
+    ata_init();
+    return BOOT_OK;
+}
+
+static boot_result_t async_ahci_init(void)
+{
+    ahci_init();
+    return BOOT_OK;
+}
+
+static boot_result_t async_nvme_init(void)
+{
+    nvme_init();
+    return BOOT_OK;
+}
+
+static boot_result_t async_virtio_blk_init(void)
+{
+    virtio_blk_init();
+    return BOOT_OK;
+}
+
 /* ---- Phase 2 ------------------------------------------------------------ */
 
 void boot_phase2(void)
@@ -111,20 +137,46 @@ void boot_phase2(void)
         boot_progress(2, "DHCP", POST16_NET_OK);
     }
 
-    /* --- Disk drivers (moved from Phase 0) --- */
+    /* --- SMP: moved before storage so async init can use APs --- */
+    if (g_boot_info.acpi_available) {
+        boot_splash_status("Initializing SMP...");
+        POST16(POST16_SMP);
+        smp_init();
+        POST16(POST16_SMP_OK);
+        kernel_subsystem_set_ready(SUBSYS_SMP, true);
+        boot_progress(2, "SMP", POST16_SMP_OK);
+    }
+
+    /* Register async init IPI handler (safe even with 1 CPU) */
+    boot_async_init();
+
+    /* --- Disk drivers --- */
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
     boot_splash_status("Initializing storage...");
-    POST16(POST16_ATA);
-    ata_init();
-    POST16(POST16_ATA_OK);
-    virtio_blk_init();
-    POST16(POST16_AHCI);
-    ahci_init();
-    POST16(POST16_AHCI_OK);
-    /* Bare metal AHCI skip REMOVED -- root cause was clac #UD, fixed 2026-03-29. */
-    POST16(POST16_NVME);
-    nvme_init();
-    POST16(POST16_NVME_OK);
+
+    if (g_boot_info.config.async_init && smp_cpu_count() > 1) {
+        /* Async: probe storage drivers in parallel across CPUs */
+        boot_async_step_t storage_steps[] = {
+            { "ATA",       async_ata_init },
+            { "AHCI",      async_ahci_init },
+            { "NVMe",      async_nvme_init },
+            { "VirtIO-blk", async_virtio_blk_init },
+        };
+        boot_async_group("storage", storage_steps, 4);
+    } else {
+        /* Sequential: original order */
+        POST16(POST16_ATA);
+        ata_init();
+        POST16(POST16_ATA_OK);
+        virtio_blk_init();
+        POST16(POST16_AHCI);
+        ahci_init();
+        POST16(POST16_AHCI_OK);
+        POST16(POST16_NVME);
+        nvme_init();
+        POST16(POST16_NVME_OK);
+    }
+
     ahci_setup_interrupts();
     xhci_setup_interrupts();  /* After enumeration -- ISR would steal events from polling loops */
     blkdev_register_all();
@@ -320,15 +372,7 @@ void boot_phase2(void)
          (uint64_t)(total_ram / (1024 * 1024)),
          (uint64_t)g_boot_info.mmap_count);
 
-    /* --- SMP: bringup APs --- */
-    if (g_boot_info.acpi_available) {
-        boot_splash_status("Initializing SMP...");
-        POST16(POST16_SMP);
-        smp_init();
-        POST16(POST16_SMP_OK);
-        kernel_subsystem_set_ready(SUBSYS_SMP, true);
-        boot_progress(2, "SMP", POST16_SMP_OK);
-    }
+    /* (SMP moved earlier -- before disk drivers for async init support) */
 
     /* Hardware dump (only in live debug mode) */
     if (klog_disk_live_active()) {

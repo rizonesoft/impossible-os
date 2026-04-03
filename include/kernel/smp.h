@@ -52,6 +52,14 @@ struct per_cpu_data {
     uint8_t  _irql_pad[3];     /* pad to 4-byte alignment */
     uint32_t is_online;         /* 1 when AP has finished init */
     void    *current_task;      /* pointer to current thread (future) */
+
+    /* Async boot init work dispatch (§13) */
+    volatile uint8_t  in_async_work;    /* 1 while AP is executing async init */
+    volatile uint8_t  async_done;       /* 1 when async work completed */
+    volatile uint8_t  async_result;     /* boot_result_t from async work */
+    uint8_t           _async_pad;
+    const char       *async_name;       /* step name for logging */
+    void             *async_fn;         /* boot_result_t (*fn)(void) */
 };
 
 /* ---- API ---- */
