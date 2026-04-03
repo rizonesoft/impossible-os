@@ -135,6 +135,19 @@ static void test_ssdt_invalid_table_returns_error(void)
 static void test_ssdt_main_count(void)
 {
     TEST_ASSERT_EQ(SSDT_MAIN_COUNT, 470, "SSDT_MAIN_COUNT == 470");
+    TEST_ASSERT_EQ(SSDT_LAST_MAIN_INDEX, 0x03D7,
+                   "SSDT_LAST_MAIN_INDEX == 0x03D7");
+    TEST_ASSERT(SSDT_LAST_MAIN_INDEX < SSDT_MAIN_MAX,
+                "last index within table capacity");
+
+    /* Verify ssdt_get_table returns correct count */
+    {
+        const SSDT_TABLE *t = ssdt_get_table(SSDT_TABLE_MAIN);
+        TEST_ASSERT(t != (void *)0, "ssdt_get_table(MAIN) non-NULL");
+        if (t)
+            TEST_ASSERT_EQ(t->count, SSDT_MAIN_COUNT,
+                           "table->count matches SSDT_MAIN_COUNT");
+    }
 }
 
 static NTSTATUS test_ssdt_handler(uint64_t a1, uint64_t a2, uint64_t a3,

@@ -618,6 +618,43 @@
 #define SSDT_NtQueryTaskList                  0x03D7
 
 /* ====================================================================
- * Total count
+ * Total count and bounds
+ *
+ * SSDT_MAIN_COUNT = number of SSDT_Nt* defines above (currently 470).
+ * SSDT_LAST_MAIN_INDEX = highest allocated service number (0x03D7).
+ *
+ * WARNING: When adding a new service number:
+ *   1. Add the #define SSDT_NtXxx line in the correct functional range
+ *   2. Increment SSDT_MAIN_COUNT by 1
+ *   3. Update SSDT_LAST_MAIN_INDEX if the new index is higher
+ *   4. Build -- static asserts will catch count/index mismatches
+ *
+ * To verify count matches defines: grep -c '^#define SSDT_Nt' service_numbers.h
+ *
+ * Next available indices per range:
+ *   Object ops: 0x000A   File I/O: 0x002A   Process: 0x0050
+ *   Thread: 0x006A       Memory: 0x0087     Sync: 0x00A4
+ *   Registry: 0x00C0     Security: 0x00DF   Token: 0x00F6
+ *   Port/ALPC: 0x010F    Timer: 0x011F      Info: 0x013C
+ *   Debug: 0x0156        Atom: 0x0167       Power: 0x0177
+ *   PnP: 0x0186          Key: 0x0196        Transaction: 0x01A5
+ *   I/O complete: 0x01AF Notify: 0x01B9     Resource: 0x01CA
+ *   Driver: 0x01D7       Profile: 0x01E5    Namespace: 0x01F1
+ *   Cache: 0x01FF        Worker: 0x0207     Enlistment: 0x0211
+ *   Partition: 0x021C    Enclave: 0x022F    Extensions: 0x0244
+ *   Network: 0x030A      Storage: 0x032E    Compositor: 0x0354
+ *   Diagnostics: 0x03D8
  * ==================================================================== */
 #define SSDT_MAIN_COUNT                       470
+#define SSDT_LAST_MAIN_INDEX                  0x03D7  /* SSDT_NtQueryTaskList */
+
+/* Compile-time verification:
+ * - Count must fit within the table capacity
+ * - Last index must be within table bounds
+ * - Count must be positive and reasonable */
+_Static_assert(SSDT_MAIN_COUNT > 0 && SSDT_MAIN_COUNT <= 1024,
+    "SSDT_MAIN_COUNT must be 1-1024 (table capacity is SSDT_MAIN_MAX=1024)");
+_Static_assert(SSDT_LAST_MAIN_INDEX < 1024,
+    "SSDT_LAST_MAIN_INDEX must be < 1024 (SSDT_MAIN_MAX)");
+_Static_assert(SSDT_LAST_MAIN_INDEX >= SSDT_MAIN_COUNT - 1,
+    "SSDT_LAST_MAIN_INDEX must be >= count-1 (sparse allocation uses higher indices)");

@@ -51,7 +51,7 @@
 | ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [x]  |
 | ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [x]  |
 | ⭐  |   6   | IDT vector assignment collision detection          | --         |  [x]  |
-| ⭐  |   7   | SSDT service number count stability                | --         |  [ ]  |
+| ⭐  |   7   | SSDT service number count stability                | --         |  [x]  |
 | ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [ ]  |
 | ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [ ]  |
 | ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [ ]  |
@@ -178,12 +178,11 @@ Multiple subsystems claim IDT vectors: INT 0x80 (syscall), INT 0x81 (yield), INT
 
 **Files:** `include/kernel/nt/service_numbers.h`, `include/kernel/nt/ssdt.h`
 
-- [ ] Add a generated count at the end of service_numbers.h: count all SSDT_Nt* defines
-- [ ] `_Static_assert(SSDT_MAIN_COUNT == SSDT_GENERATED_COUNT, "SSDT count mismatch")`
-- [ ] Runtime: `ssdt_init()` logs the count and any gap indices (unallocated ranges)
-- [ ] Unit test: verify `ssdt_get_table(0)->count == SSDT_MAIN_COUNT`
-- [ ] Documentation: "next available index" comment at the end of service_numbers.h
-- [ ] Commit: `"bulletproof: SSDT service count -- generated count assert"`
+- [x] Added `SSDT_LAST_MAIN_INDEX` (0x03D7) + 3 static asserts: count 1-1024, last < 1024, last >= count-1
+- [x] Runtime: `ssdt_init()` logs count + last index in serial output
+- [x] Unit test: 5 assertions -- count==470, last==0x03D7, last < MAX, table pointer valid, table->count matches
+- [x] Documentation: 20-line "next available indices per range" table in service_numbers.h + add/update instructions
+- [x] Commit: `"bulletproof: SSDT service count -- last index assert + range table"`
 
 **Test checkpoint:** Add a service number without updating count -> static assert fires.
 

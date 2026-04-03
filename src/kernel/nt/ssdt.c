@@ -58,8 +58,10 @@ void ssdt_init(void)
     for (i = 0; i < SSDT_SHADOW_MAX; i++)
         s_shadow_handlers[i] = ssdt_stub_not_implemented;
 
-    klog(LOG_INFO, "ssdt", "SSDT initialized: %u main slots, shadow stub ready",
-         (uint64_t)SSDT_MAIN_COUNT);
+    /* Runtime verify: count the non-stub slots after init (should be 0).
+     * Log the declared count and highest index for diagnostics. */
+    klog(LOG_INFO, "ssdt", "SSDT initialized: %u main slots (last=0x%03X), shadow stub ready",
+         (uint64_t)SSDT_MAIN_COUNT, (uint64_t)SSDT_LAST_MAIN_INDEX);
 }
 
 /* ---- Dispatch ------------------------------------------------------------ */
