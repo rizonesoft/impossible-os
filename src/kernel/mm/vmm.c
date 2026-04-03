@@ -15,6 +15,7 @@
 
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/user_range.h"
 #include "kernel/cpuid.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
@@ -276,8 +277,7 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
 
 /* --- Per-process page tables -------------------------------------------- */
 
-/* User ELF PD index: 0x800000 >> 21 = 4 (each PD entry covers 2 MiB) */
-#define USER_PD_INDEX  4
+/* USER_PD_INDEX provided by kernel/mm/user_range.h (single source of truth) */
 
 uintptr_t vmm_create_user_pml4(void)
 {
@@ -314,15 +314,20 @@ uintptr_t vmm_create_user_pml4(void)
     for (i = 0; i < PT_ENTRIES; i++)
         pd[i] = kern_pd[i] & ~((pte_t)VMM_FLAG_USER);
 
-    /* Split PD[USER_PD_INDEX] (0x800000–0x9FFFFF) from a 2 MiB huge page
+    /* Split PD[USER_PD_INDEX] (0x800000-0x9FFFFF) from a 2 MiB huge page
      * into 512 x 4 KiB pages. This lets us set User bit on individual pages. */
     {
         uintptr_t base_phys = (uintptr_t)USER_PD_INDEX << 21;
+        uint32_t guard_idx = (USER_ELF_END - base_phys) / VMM_PAGE_SIZE;
         for (i = 0; i < PT_ENTRIES; i++) {
             uintptr_t page_phys = base_phys + (uintptr_t)i * VMM_PAGE_SIZE;
             /* Default: kernel-only (Present + Writable, no User) */
             pt[i] = page_phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
         }
+        /* Guard page at USER_ELF_END (0x900000): clear Present bit entirely.
+         * This catches both user-mode AND kernel-mode overflow past the user
+         * range -- any access triggers #PF regardless of CPL. */
+        pt[guard_idx] = 0;
     }
 
     /* Replace the huge page PD entry with the fine-grained PT */

@@ -16,6 +16,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
+#include "kernel/mm/user_range.h"
 #include "kernel/cpuid.h"
 #include "kernel/klog.h"
 #include "kernel/elf.h"
@@ -389,11 +390,11 @@ int task_create_user(task_entry_t entry, const char *name)
         return -1;
     }
 
-    /* User stack: placed at the top of the user region (0x800000-0x9FFFFF)
-     * which is identity-mapped in the split PD[4] PT. These physical pages
-     * are already reserved by pmm_mark_region_used(0x800000, 0x100000).
-     * Stack top at 0x900000, grows down. */
-    ustack = (uint8_t *)(0x900000 - USER_STACK_SIZE);
+    /* User stack: placed at the top of the user region (USER_ELF_BASE..USER_ELF_END)
+     * which is identity-mapped in the split PD[USER_PD_INDEX] PT. Physical pages
+     * are reserved by pmm_mark_region_used(USER_ELF_BASE, USER_ELF_SIZE).
+     * Stack top at USER_ELF_END, grows down. */
+    ustack = (uint8_t *)(USER_ELF_END - USER_STACK_SIZE);
 
     /* Build initial interrupt frame on the KERNEL stack.
      * The ISR restore does: pop regs, add rsp 16, iretq.
@@ -450,8 +451,8 @@ int task_create_user(task_entry_t entry, const char *name)
         uintptr_t user_cr3 = vmm_create_user_pml4();
         if (user_cr3) {
             uintptr_t addr;
-            /* Mark ELF pages (0x800000 range) as User */
-            for (addr = 0x800000; addr < 0x900000; addr += 4096)
+            /* Mark ELF pages (USER_ELF_BASE range) as User */
+            for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
                 vmm_set_user_page(user_cr3, addr);
             /* Mark user stack pages as User */
             for (addr = (uintptr_t)ustack;

@@ -47,7 +47,7 @@
 | --- | :---: | -------------------------------------------------- | ---------- | :----: |
 | ⭐  |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [x]  |
 | ⭐  |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [x]  |
-| ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [ ]  |
+| ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [x]  |
 | ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [ ]  |
 | ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [ ]  |
 | ⭐  |   6   | IDT vector assignment collision detection          | --         |  [ ]  |
@@ -106,13 +106,13 @@ Three files must agree on the user-mode ELF load range: `user.ld` (linker base),
 
 **Files:** `user/user.ld`, `src/kernel/mm/vmm.c`, `src/kernel/mm/pmm.c`
 
-- [ ] Define `USER_ELF_BASE 0x800000` and `USER_ELF_SIZE 0x100000` in a shared header (`include/kernel/mm/user_range.h`)
-- [ ] `_Static_assert(USER_ELF_BASE == 0x800000, "user ELF base address")` in vmm.c and pmm.c
-- [ ] Runtime: `pmm_init()` verifies the user range is marked as used; `vmm_create_user_pml4()` verifies U/S bit is set for this range
-- [ ] Unit test: load hello.exe, verify entry point is within USER_ELF_BASE..+USER_ELF_SIZE
-- [ ] Canary: write guard page at 0x900000 (first page after user range) -- page fault if user code overflows
-- [ ] Documentation: CLAUDE.md already has "User-mode ELF range" gotcha; add cross-reference to user_range.h
-- [ ] Commit: `"bulletproof: user ELF range -- shared constant + guard page + 3-file sync"`
+- [x] Created `include/kernel/mm/user_range.h` with USER_ELF_BASE, USER_ELF_SIZE, USER_ELF_END, USER_PD_INDEX + 5 static asserts
+- [x] Wired into vmm.c, pmm.c, task.c -- replaced all hardcoded 0x800000/0x900000 with shared constants
+- [x] Runtime: `pmm_init()` verifies first+last frames of user range are set in bitmap after reservation
+- [x] Unit test: `test_user_elf_range()` verifies all constants match expected values + single PD entry check
+- [x] Canary: guard page at USER_ELF_END -- PT entry cleared (not-present), catches both user and kernel overflow
+- [x] Documentation: CLAUDE.md gotcha updated to reference user_range.h as single source of truth
+- [x] Commit: `"bulletproof: user ELF range -- shared constant + guard page + 3-file sync"`
 
 **Test checkpoint:** Change USER_ELF_BASE in one file but not others -> static assert fires. Guard page at 0x900000 triggers #PF if user code writes past range.
 

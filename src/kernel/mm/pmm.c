@@ -15,6 +15,7 @@
  * ============================================================================ */
 
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/user_range.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 /* Linker symbols */
@@ -172,13 +173,24 @@ void pmm_init(void)
     /* Bitmap itself */
     pmm_mark_region_used(kernel_end_phys, bitmap_end - kernel_end_phys);
 
-    /* User-mode ELF load area (0x800000 – 0x900000).
+    /* User-mode ELF load area (USER_ELF_BASE .. USER_ELF_END).
      * User programs are loaded at fixed virtual addresses starting at
-     * 0x800000 (defined in user/user.ld).  Since the kernel uses identity
-     * mapping (no per-process page tables), this physical region must be
-     * reserved at init so pmm_alloc_contiguous never hands it out to
-     * wallpaper, framebuffer, or font allocations. */
-    pmm_mark_region_used(0x800000, 0x100000);
+     * USER_ELF_BASE (defined in kernel/mm/user_range.h, must match user.ld).
+     * Since the kernel uses identity mapping, this physical region must be
+     * reserved at init so pmm_alloc_contiguous never hands it out. */
+    pmm_mark_region_used(USER_ELF_BASE, USER_ELF_SIZE);
+
+    /* Runtime verify: confirm first and last frames of user range are reserved.
+     * If these aren't set, pmm_alloc_contiguous could hand out user memory. */
+    {
+        uint64_t first_frame = USER_ELF_BASE / PMM_FRAME_SIZE;
+        uint64_t last_frame  = (USER_ELF_END - PMM_FRAME_SIZE) / PMM_FRAME_SIZE;
+        if (!bitmap_test(first_frame) || !bitmap_test(last_frame)) {
+            klog(LOG_FATAL, "PMM",
+                 "User ELF range 0x%x-0x%x not reserved in bitmap!",
+                 (uint64_t)USER_ELF_BASE, (uint64_t)USER_ELF_END);
+        }
+    }
 
     /* USB xHCI DMA pages (allocated by bootloader in EfiLoaderData).
      * EfiLoaderData is normally marked free above, so these pages would be

@@ -17,6 +17,7 @@
 #include "kernel/gdt.h"
 #include "kernel/smp.h"
 #include "kernel/boot_info.h"
+#include "kernel/mm/user_range.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -197,6 +198,26 @@ static void test_boot_config_layout(void)
                    "boot_config.config_found == 1 (bootloader set it)");
 }
 
+/* ---- User ELF range 3-file sync ---- */
+
+static void test_user_elf_range(void)
+{
+    /* Three files must agree: user_range.h, vmm.c, pmm.c, user.ld.
+     * The linker script can't #include the header, so verify the constants
+     * match the expected values that user.ld uses. */
+    TEST_ASSERT_EQ(USER_ELF_BASE, 0x800000UL,
+                   "USER_ELF_BASE == 0x800000");
+    TEST_ASSERT_EQ(USER_ELF_SIZE, 0x100000UL,
+                   "USER_ELF_SIZE == 0x100000 (1 MiB)");
+    TEST_ASSERT_EQ(USER_ELF_END, 0x900000UL,
+                   "USER_ELF_END == 0x900000");
+    TEST_ASSERT_EQ(USER_PD_INDEX, 4,
+                   "USER_PD_INDEX == 4 (0x800000 >> 21)");
+    /* Verify range fits within one 2 MiB PD entry */
+    TEST_ASSERT_EQ(USER_ELF_BASE >> 21, (USER_ELF_END - 1) >> 21,
+                   "User ELF range within single 2 MiB PD entry");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -214,6 +235,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: SSDT register+dispatch", test_ssdt_register_and_dispatch, TEST_CAT_ABI);
     test_suite_register_cat("NT: per_cpu_data offsets", test_per_cpu_offsets, TEST_CAT_ABI);
     test_suite_register_cat("NT: boot_config layout", test_boot_config_layout, TEST_CAT_ABI);
+    test_suite_register_cat("NT: user ELF range sync", test_user_elf_range, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
