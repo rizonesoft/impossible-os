@@ -408,6 +408,15 @@ void boot_perf_save(void)
     POST16(POST16_BOOTPERF_WRITE);
 }
 
+/* Pad a string to exactly `width` chars in `buf`, space-filled on right */
+static void pad_right(char *buf, const char *src, uint32_t width)
+{
+    uint32_t i = 0;
+    while (i < width && src && src[i]) { buf[i] = src[i]; i++; }
+    while (i < width) buf[i++] = ' ';
+    buf[width] = '\0';
+}
+
 void boot_perf_dump(void)
 {
     if (s_tsc_freq == 0 || s_step_count == 0) return;
@@ -443,15 +452,14 @@ void boot_perf_dump(void)
     }
 
     klog(LOG_INFO, "PERF", "--- Boot step durations (sorted by time) ---");
-    klog(LOG_INFO, "PERF", "  %-16s %6s %6s %s", "Step", "+ms", "dur", "Phase");
 
     for (uint32_t i = 0; i < n; i++) {
         uint32_t idx = indices[i];
         if (durations[idx] == 0 && idx == n - 1) continue;  /* skip last */
-        klog(LOG_INFO, "PERF", "  %-16s %5ums %5ums P%u",
-             s_steps[idx].step,
-             ms_vals[idx],
-             durations[idx],
+        char padded[20];
+        pad_right(padded, s_steps[idx].step, 18);
+        klog(LOG_INFO, "PERF", "  %s %5ums  %5ums  P%u",
+             padded, ms_vals[idx], durations[idx],
              (uint32_t)s_steps[idx].phase);
     }
 }
