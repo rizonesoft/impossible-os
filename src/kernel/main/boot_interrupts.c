@@ -177,19 +177,7 @@ void boot_phase1(void)
     kernel_subsystem_set_ready(SUBSYS_RTC, true);
     boot_progress(1, "RTC", POST16_RTC_OK);
 
-    /* --- Input devices --- */
-    boot_splash_status("Detecting PS/2 keyboard...");
-    POST16(POST16_KBD);
-    keyboard_init();
-    POST16(POST16_KBD_OK);
-    boot_progress(1, "KEYBOARD", POST16_KBD_OK);
-    boot_splash_status("Detecting PS/2 mouse...");
-    POST16(POST16_MOUSE);
-    mouse_init();
-    POST16(POST16_MOUSE_OK);
-    boot_progress(1, "MOUSE", POST16_MOUSE_OK);
-
-    /* --- Framebuffer + boot splash --- */
+    /* --- Framebuffer + boot splash (before input so splash messages are visible) --- */
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
 
     POST16(POST16_FB);
@@ -204,6 +192,18 @@ void boot_phase1(void)
     }
     boot_splash_init();
     POST16(POST16_SPLASH_OK);
+
+    /* --- Input devices (after splash so status messages are visible) --- */
+    boot_splash_status("Detecting PS/2 keyboard...");
+    POST16(POST16_KBD);
+    keyboard_init();
+    POST16(POST16_KBD_OK);
+    boot_progress(1, "KEYBOARD", POST16_KBD_OK);
+    boot_splash_status("Detecting PS/2 mouse...");
+    POST16(POST16_MOUSE);
+    mouse_init();
+    POST16(POST16_MOUSE_OK);
+    boot_progress(1, "MOUSE", POST16_MOUSE_OK);
 
     /* --- Phase 1 info gathering --- */
     uefi_config_init();

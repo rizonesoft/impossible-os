@@ -41,7 +41,7 @@ static inline void outb(uint16_t port, uint8_t val)
 
 static void ps2_wait_input(void)
 {
-    uint32_t timeout = 1000000;
+    uint32_t timeout = 100000;  /* ~100ms on trapped I/O */
     while (--timeout) {
         uint8_t s = inb(PS2_STATUS_PORT);
         if (s == 0xFF) break;       /* controller absent */
@@ -51,7 +51,7 @@ static void ps2_wait_input(void)
 
 static void ps2_wait_output(void)
 {
-    uint32_t timeout = 1000000;
+    uint32_t timeout = 100000;  /* ~100ms on trapped I/O */
     while (--timeout) {
         uint8_t s = inb(PS2_STATUS_PORT);
         if (s == 0xFF) break;       /* controller absent */
