@@ -412,8 +412,15 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
     pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
     if (!pd) return;
 
-    /* PD entry must be a PT (not a huge page) */
-    if (pd[pdi] & VMM_FLAG_HUGE) return;
+    /* PD entry must be a PT (not a huge page).
+     * If this fires, the caller passed an address outside the split user
+     * range (e.g. a kmalloc heap address).  User stacks and ELF pages MUST
+     * be within USER_ELF_BASE..USER_ELF_END where PD is split into 4 KiB. */
+    if (pd[pdi] & VMM_FLAG_HUGE) {
+        klog(LOG_FATAL, "mm", "vmm_set_user_page: virt %p is in a 2 MiB huge page (PD[%u]) -- cannot set User bit",
+             virt, (uint64_t)pdi);
+        return;
+    }
 
     pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
     if (!pt) return;
