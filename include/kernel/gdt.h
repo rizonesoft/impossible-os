@@ -8,16 +8,37 @@
 
 #include "kernel/types.h"
 
-/* GDT segment selectors (byte offsets into the GDT)
- * User data MUST be before user code for SYSRET compatibility:
- * SYSRET CS = STAR[63:48]+16, SS = STAR[63:48]+8.
- * With STAR[63:48] = 0x10: SS=0x18 (user data), CS=0x20 (user code). */
+/* =========================================================================
+ * WARNING: GDT SEGMENT ORDER IS CRITICAL FOR SYSRET CORRECTNESS
+ *
+ * SYSRET in 64-bit mode computes user-mode selectors as:
+ *   CS = STAR[63:48] + 16    (user code)
+ *   SS = STAR[63:48] + 8     (user data)
+ *
+ * This means GDT_USER_DATA MUST be at a LOWER selector than
+ * GDT_USER_CODE, exactly 8 bytes apart. Specifically:
+ *   GDT_USER_CODE == GDT_USER_DATA + 8
+ *
+ * If you swap these, SYSRET will load wrong selectors on every
+ * ring-3 return -- triple fault on WHPX, silent corruption on TCG.
+ *
+ * The _Static_assert below enforces this at compile time.
+ * ========================================================================= */
 #define GDT_NULL_SEG     0x00
 #define GDT_KERNEL_CODE  0x08    /* Ring 0 code */
 #define GDT_KERNEL_DATA  0x10    /* Ring 0 data */
-#define GDT_USER_DATA    0x18    /* Ring 3 data (before code for SYSRET) */
-#define GDT_USER_CODE    0x20    /* Ring 3 code */
+#define GDT_USER_DATA    0x18    /* Ring 3 data -- MUST be before code */
+#define GDT_USER_CODE    0x20    /* Ring 3 code -- MUST be after data */
 #define GDT_TSS_SEG      0x28    /* TSS (16 bytes -- two GDT slots) */
+
+/* Compile-time enforcement of SYSRET GDT ordering constraint */
+_Static_assert(GDT_USER_CODE == GDT_USER_DATA + 8,
+    "SYSRET requires GDT_USER_CODE == GDT_USER_DATA + 8 "
+    "(user data selector must be 8 bytes before user code)");
+_Static_assert(GDT_KERNEL_CODE == 0x08,
+    "GDT_KERNEL_CODE must be 0x08 (first non-null entry)");
+_Static_assert(GDT_KERNEL_DATA == 0x10,
+    "GDT_KERNEL_DATA must be 0x10 (second entry)");
 
 /* Number of GDT entries (TSS takes 2 slots in 64-bit mode) */
 #define GDT_NUM_ENTRIES  7

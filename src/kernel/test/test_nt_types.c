@@ -14,6 +14,7 @@
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
+#include "kernel/gdt.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -89,6 +90,24 @@ static void test_object_attributes_size(void)
                 "OBJECT_ATTRIBUTES <= 64 bytes");
 }
 
+/* ---- GDT SYSRET ordering ---- */
+
+static void test_gdt_sysret_order(void)
+{
+    TEST_ASSERT_EQ(GDT_USER_CODE, GDT_USER_DATA + 8,
+                   "GDT_USER_CODE == GDT_USER_DATA + 8 (SYSRET constraint)");
+    TEST_ASSERT(GDT_USER_DATA < GDT_USER_CODE,
+                "GDT_USER_DATA < GDT_USER_CODE (data before code)");
+    TEST_ASSERT_EQ(GDT_KERNEL_CODE, 0x08,
+                   "GDT_KERNEL_CODE == 0x08");
+    TEST_ASSERT_EQ(GDT_KERNEL_DATA, 0x10,
+                   "GDT_KERNEL_DATA == 0x10");
+    TEST_ASSERT_EQ(GDT_USER_DATA, 0x18,
+                   "GDT_USER_DATA == 0x18");
+    TEST_ASSERT_EQ(GDT_USER_CODE, 0x20,
+                   "GDT_USER_CODE == 0x20");
+}
+
 /* ---- SSDT dispatch ---- */
 
 static void test_ssdt_unimplemented_returns_not_implemented(void)
@@ -144,6 +163,7 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: NTSTATUS information", test_ntstatus_information, TEST_CAT_ABI);
     test_suite_register_cat("NT: type sizes", test_nt_type_sizes, TEST_CAT_ABI);
     test_suite_register_cat("NT: OBJECT_ATTRIBUTES size", test_object_attributes_size, TEST_CAT_ABI);
+    test_suite_register_cat("NT: GDT SYSRET order", test_gdt_sysret_order, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT unimplemented stub", test_ssdt_unimplemented_returns_not_implemented, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT invalid table", test_ssdt_invalid_table_returns_error, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT main count", test_ssdt_main_count, TEST_CAT_ABI);

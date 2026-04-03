@@ -55,6 +55,50 @@ void syscall_init_fast(void)
     efer |= EFER_SCE;
     msr_write(MSR_IA32_EFER, efer);
 
+    /* --- MSR readback verification (canary) ---
+     * Read back all written MSRs and verify. If any mismatch,
+     * disable EFER_SCE and fall back to INT 0x80. */
+    {
+        uint64_t rb_star  = msr_read(MSR_IA32_STAR);
+        uint64_t rb_lstar = msr_read(MSR_IA32_LSTAR);
+        uint64_t rb_fmask = msr_read(MSR_IA32_FMASK);
+        uint64_t rb_efer  = msr_read(MSR_IA32_EFER);
+        int ok = 1;
+
+        if (rb_star != star) {
+            klog(LOG_ERROR, "syscall",
+                 "STAR readback mismatch: wrote 0x%x, read 0x%x",
+                 star, rb_star);
+            ok = 0;
+        }
+        if (rb_lstar != (uint64_t)(uintptr_t)syscall_entry) {
+            klog(LOG_ERROR, "syscall",
+                 "LSTAR readback mismatch: wrote 0x%x, read 0x%x",
+                 (uint64_t)(uintptr_t)syscall_entry, rb_lstar);
+            ok = 0;
+        }
+        if (rb_fmask != 0x200) {
+            klog(LOG_ERROR, "syscall",
+                 "FMASK readback mismatch: wrote 0x200, read 0x%x",
+                 rb_fmask);
+            ok = 0;
+        }
+        if (!(rb_efer & EFER_SCE)) {
+            klog(LOG_ERROR, "syscall", "EFER.SCE not set after write");
+            ok = 0;
+        }
+
+        if (!ok) {
+            /* Disable SYSCALL and fall back to INT 0x80 */
+            efer = msr_read(MSR_IA32_EFER);
+            efer &= ~EFER_SCE;
+            msr_write(MSR_IA32_EFER, efer);
+            klog(LOG_WARN, "syscall",
+                 "SYSCALL/SYSRET DISABLED due to MSR readback failure -- using INT 0x80");
+            return;
+        }
+    }
+
     klog(LOG_INFO, "syscall",
          "SYSCALL/SYSRET enabled: LSTAR=0x%x, STAR=0x%x, FMASK=0x200",
          (uint64_t)(uintptr_t)syscall_entry, star);

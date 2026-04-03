@@ -75,6 +75,8 @@ These are hard-won lessons from real hardware debugging. Violating any of these 
 
 ## Safety Gates
 
+- **GDT user segment order is SYSRET-critical.** `GDT_USER_DATA` (0x18) MUST be before `GDT_USER_CODE` (0x20). SYSRET computes CS=STAR[63:48]+16 and SS=STAR[63:48]+8 with fixed offsets. Swapping these selectors corrupts every ring-3 return. Enforced by `_Static_assert` in `gdt.h`, runtime verification in `gdt_init()`, and unit test. Never reorder without understanding the SYSRET constraint.
+
 Stop and ask before: security-sensitive changes, destructive operations, ABI changes, dependency additions, large refactors.
 
 ## Doc Sync

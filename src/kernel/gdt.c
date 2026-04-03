@@ -153,6 +153,33 @@ void gdt_init(void)
     gdt_flush((uint64_t)(uintptr_t)&gdtr);
     tss_flush(GDT_TSS_SEG);
 
+    /* --- Runtime verification of SYSRET-critical GDT ordering ---
+     * Read back the access bytes from the populated entries and verify
+     * user data is at index 3 (0x18) and user code is at index 4 (0x20).
+     * A mismatch here means gdt_set_entry() calls are in the wrong order. */
+    {
+        uint8_t udata_access = gdt[GDT_USER_DATA / 8].access;
+        uint8_t ucode_access = gdt[GDT_USER_CODE / 8].access;
+
+        /* User data: Present=1, DPL=11, S=1, Type=Read/Write = 0xF2 */
+        if (udata_access != 0xF2) {
+            klog(LOG_FATAL, "GDT",
+                 "FATAL: GDT[0x%x] access=0x%x, expected 0xF2 (user data). "
+                 "SYSRET will triple-fault!",
+                 (uint32_t)GDT_USER_DATA, (uint32_t)udata_access);
+            for (;;) __asm__ volatile("cli; hlt");
+        }
+
+        /* User code: Present=1, DPL=11, S=1, Type=Execute/Read = 0xFA */
+        if (ucode_access != 0xFA) {
+            klog(LOG_FATAL, "GDT",
+                 "FATAL: GDT[0x%x] access=0x%x, expected 0xFA (user code). "
+                 "SYSRET will triple-fault!",
+                 (uint32_t)GDT_USER_CODE, (uint32_t)ucode_access);
+            for (;;) __asm__ volatile("cli; hlt");
+        }
+    }
+
     klog(LOG_INFO, "cpu", "GDT loaded (%u entries, TSS at %p)",
            (uint64_t)GDT_NUM_ENTRIES, tss_base);
 }
