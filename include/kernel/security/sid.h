@@ -18,12 +18,26 @@
 #define SID_MAX_SUB_AUTHORITIES 15
 #define SID_MAX_SIZE            (8 + 4 * SID_MAX_SUB_AUTHORITIES)  /* 68 bytes */
 
+/* Windows ABI: SID base is 8 bytes (Revision + SubAuthorityCount +
+ * IdentifierAuthority).  Each SubAuthority adds 4 bytes.  Total length
+ * for N sub-authorities = 8 + 4*N.  Max = 8 + 4*15 = 68 bytes.
+ * Binary layout must match Windows exactly for ABI compatibility. */
 typedef struct {
     uint8_t  Revision;                   /* always SID_REVISION (1) */
     uint8_t  SubAuthorityCount;          /* 0–15 */
     uint8_t  IdentifierAuthority[6];     /* big-endian 48-bit authority */
     uint32_t SubAuthority[];             /* variable-length */
 } SID;
+
+/* Bulletproofing: SID layout must match Windows ABI exactly */
+_Static_assert(sizeof(SID) == 8,
+    "SID base size must be 8 bytes (Windows ABI)");
+_Static_assert(__builtin_offsetof(SID, Revision) == 0,
+    "SID.Revision must be at offset 0");
+_Static_assert(__builtin_offsetof(SID, SubAuthorityCount) == 1,
+    "SID.SubAuthorityCount must be at offset 1");
+_Static_assert(__builtin_offsetof(SID, IdentifierAuthority) == 2,
+    "SID.IdentifierAuthority must be at offset 2");
 
 /* SID_AND_ATTRIBUTES -- used in token group lists */
 #define SE_GROUP_MANDATORY          0x00000001

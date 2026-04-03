@@ -56,7 +56,7 @@
 | ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [x]  |
 | ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [x]  |
 | ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [x]  |
-| ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [ ]  |
+| ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [x]  |
 | ⭐  |  13   | VFS drive letter range and partition offsets       | --         |  [ ]  |
 | ⭐  |  14   | exec_pending state machine verification            | §5         |  [ ]  |
 | ⭐  |  15   | Framebuffer bare-metal safety (5 rules)            | --         |  [x]  |
@@ -261,7 +261,7 @@ IXFS superblock magic (0x49584653) and struct layout must match between `mkfs-ix
 - [x] Runtime: `ixfs_format.c` already verifies magic (rejects on mismatch), version (v1 read-only, v2 OK, other rejected), and CRC32C checksum (warns on mismatch) on mount
 - [x] Unit test: `test_ixfs.c` with 5 suites: superblock size (512), magic (0x49584653), field offsets (6 offsets), version (2), inode size (128 bytes, 32 per block). Registered in test_runner as TEST_CAT_FS
 - [x] Documentation: 30-line superblock layout diagram in ixfs.h with offset/size/field/notes columns
-- [ ] Commit: `"bulletproof: IXFS superblock -- size assert + magic verify"`
+- [x] Commit: `"bulletproof: IXFS superblock -- size assert + magic verify"`
 
 **Test checkpoint:** Change IXFS_MAGIC in one place -> static assert fires. Mount volume with wrong magic -> ixfs_init() returns error, not corruption.
 
@@ -273,13 +273,14 @@ Windows security structs have exact binary layouts for ABI compatibility. If siz
 
 **Files:** `include/kernel/security/sid.h`, `include/kernel/security/token.h`, `include/kernel/security/acl.h`
 
-- [ ] `_Static_assert(sizeof(ACL) == 8, "ACL header must be 8 bytes (Windows ABI)")`
-- [ ] `_Static_assert(sizeof(ACE_HEADER) == 4, "ACE_HEADER must be 4 bytes")`
-- [ ] `_Static_assert(sizeof(ACCESS_ALLOWED_ACE) >= 8, "ACCESS_ALLOWED_ACE minimum size")`
-- [ ] `_Static_assert` on SID field offsets matching Windows layout
-- [ ] Unit test: create well-known SID (S-1-5-18), verify binary format matches Windows
-- [ ] Unit test: create ACL with 3 ACEs, walk ACL, verify all ACEs found at correct offsets
-- [ ] Documentation: Windows ABI compatibility notes in each struct header
+- [x] `_Static_assert(sizeof(ACL) == 8)` in acl.h
+- [x] `_Static_assert(sizeof(ACE_HEADER) == 4)` in acl.h
+- [x] `_Static_assert(sizeof(ACCESS_ALLOWED_ACE) == 12)`, `ACCESS_DENIED_ACE == 12`, `SYSTEM_MANDATORY_LABEL_ACE == 12` in acl.h
+- [x] `_Static_assert(sizeof(SID) == 8)` + 3 offset asserts (Revision=0, SubAuthorityCount=1, IdentifierAuthority=2) in sid.h
+- [x] Unit test: `test_sid_binary_format` -- S-1-5-18 binary: Revision=1, SubAuthorityCount=1, Authority=5, SubAuthority[0]=18, length=12
+- [x] Unit test: `test_acl_3ace_walk` -- 3 ACEs (2 allowed + 1 denied), walk all 3, verify types, OOB returns error
+- [x] Unit test: `test_security_struct_sizes` -- runtime verification of all sizes (ACL=8, ACE_HEADER=4, ACCESS_ALLOWED_ACE=12, SID=8)
+- [x] Documentation: Windows ABI compatibility comments in sid.h and acl.h
 - [ ] Commit: `"bulletproof: security structs -- SID/ACL/ACE size asserts + ABI unit tests"`
 
 **Test checkpoint:** Resize ACL struct -> static assert fires. Create SID with wrong SubAuthorityCount -> runtime check catches.
@@ -347,7 +348,7 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 | ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ⬜ §1-§14 every init       |
 | ⭐ | Assembly offset asserts     | ❌ Manual sync         | ⚠️ asm-offsets.c        | ⬜ §1,§4,§5 static assert  |
 | ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard     | ✅ §10 stack+heap+IST+AP   |
-| ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ⬜ §2,§5,§11,§12 all ABIs  |
+| ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ✅ §2,§5,§11,§12 all ABIs  |
 | ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ⬜ §6 compile-time unique  |
 | ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ⬜ §9 depth counter        |
 | ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked          | ⬜ §14 exec_pending age    |

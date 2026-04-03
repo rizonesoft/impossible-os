@@ -64,6 +64,9 @@ struct acl {
     uint16_t Sbz2;         /* padding */
 };
 
+/* Bulletproofing: ACL must be exactly 8 bytes (Windows ABI) */
+_Static_assert(sizeof(ACL) == 8, "ACL header must be 8 bytes (Windows ABI)");
+
 /* ---- ACE types --------------------------------------------------------- */
 
 #define ACCESS_ALLOWED_ACE_TYPE          0x00
@@ -89,6 +92,9 @@ typedef struct {
     uint8_t  AceFlags;
     uint16_t AceSize;      /* total size of ACE (header + body) */
 } ACE_HEADER;
+
+/* Bulletproofing: ACE_HEADER must be 4 bytes (Windows ABI) */
+_Static_assert(sizeof(ACE_HEADER) == 4, "ACE_HEADER must be 4 bytes (Windows ABI)");
 
 /* ---- Concrete ACE types ------------------------------------------------ */
 
@@ -119,6 +125,14 @@ typedef struct {
     uint32_t   Mask;       /* SYSTEM_MANDATORY_LABEL_NO_WRITE_UP etc. */
     uint32_t   SidStart;   /* integrity level SID (S-1-16-XXXX) */
 } SYSTEM_MANDATORY_LABEL_ACE;
+
+/* Bulletproofing: ACE struct sizes (Windows ABI) */
+_Static_assert(sizeof(ACCESS_ALLOWED_ACE) == 12,
+    "ACCESS_ALLOWED_ACE must be 12 bytes (4 header + 4 mask + 4 SidStart)");
+_Static_assert(sizeof(ACCESS_DENIED_ACE) == 12,
+    "ACCESS_DENIED_ACE must be 12 bytes");
+_Static_assert(sizeof(SYSTEM_MANDATORY_LABEL_ACE) == 12,
+    "SYSTEM_MANDATORY_LABEL_ACE must be 12 bytes");
 
 /* ---- Mandatory label policy masks -------------------------------------- */
 
