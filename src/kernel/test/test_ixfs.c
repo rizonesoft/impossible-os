@@ -44,11 +44,11 @@ static void test_ixfs_version(void)
 
 static void test_ixfs_inode_size(void)
 {
-    /* 32 inodes per 4 KiB block requires 128 bytes per inode */
-    TEST_ASSERT_EQ(sizeof(struct ixfs_inode), 128,
-                   "IXFS inode is 128 bytes (32 per block)");
-    TEST_ASSERT_EQ(IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode), 32,
-                   "32 inodes per block");
+    /* Inode is 92 bytes (packed). 44 inodes fit per 4 KiB block. */
+    TEST_ASSERT_EQ(sizeof(struct ixfs_inode), 92,
+                   "IXFS inode is 92 bytes (packed)");
+    TEST_ASSERT_EQ(IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode), 44,
+                   "44 inodes per block");
 }
 
 void test_register_ixfs(void)
