@@ -10,7 +10,7 @@
 - No existing audio code -- greenfield.
 - [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO transport reused by §4 (VirtIO Sound)
 - → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md` -- module loader required for §6 (kmod conversion); §6 is blocked on TODO-01
-- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md §1` -- USB isochronous endpoint setup needed by §5 (USB Audio UAC1); note that xHCI isochronous endpoints are not covered in TODO-09 (which only does interrupt + bulk); §5 must add isochronous endpoint support to `xhci_dev.c`
+- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md §3` -- xHCI isochronous endpoint support (`xhci_configure_isoch_ep`, `xhci_submit_isoch_transfer`) is now defined in TODO-09 §3; §5 here consumes it via `usb_submit_isoch()` from the USB core API (TODO-09 §1)
 - → XREF: `08-desktop-shell` domain -- the desktop audio mixer/session manager calls `audio_device_t.write()` and `audio_device_t.set_volume()`; it is a consumer of the HAL defined in §1
 
 ## Outcome
@@ -31,7 +31,7 @@
 | 💎  |   2   | §2 AC97 driver -- BDL DMA ring, IRQ refill, QEMU AC97              | §1 (vtable)                                  |  [ ]   |
 | 💎  |   3   | §3 Intel HDA driver -- CORB/RIRB, widget tree, DMA stream          | §1 (vtable)                                  |  [ ]   |
 | 💎  |   4   | §4 VirtIO Sound module -- control/tx/rx virtqueues, mic             | §1 (vtable), VirtIO core                     |  [ ]   |
-| 💎  |   5   | §5 USB Audio UAC1 -- isochronous OUT, `SET_CUR` volume             | §1 (vtable), xHCI iso endpoint (TODO-09 ext) |  [ ]   |
+| 💎  |   5   | §5 USB Audio UAC1 -- isochronous OUT, `SET_CUR` volume             | §1 (vtable), TODO-09 §3 (isoch endpoint)     |  [ ]   |
 | 💎  |   6   | §7 Audio device hot-plug -- active device switch, Registry persist  | §2–5 (drivers registered)                   |  [ ]   |
 | 💎  |   7   | §6 Convert all drivers to `.kmod`                                 | §2–5, TODO-01 module loader                  |  [ ]   |
 
@@ -138,17 +138,16 @@ Implement VirtIO Sound (`PCI 1AF4:1059`) using the VirtIO transport from `virtio
 
 ## 5. USB Audio Class 1.0 (UAC1) Playback `[Opus]`
 
-Detect USB Audio Class 1.0 devices (interface class `0x01`). Configure an isochronous OUT endpoint for PCM playback. Issue `SET_CUR` for volume and mute on the feature unit. Extends `xhci_dev.c` with isochronous endpoint setup (not covered in TODO-09).
+Detect USB Audio Class 1.0 devices (interface class `0x01`). Configure an isochronous OUT endpoint for PCM playback using the USB core isochronous API (→ XREF `04-drivers-hardware/TODO-09-usb-stack.md §3`). Issue `SET_CUR` for volume and mute on the feature unit.
 
-**Files:** `src/kernel/drivers/usb_audio.c` (new), `include/kernel/drivers/usb_audio.h` (new), `src/kernel/drivers/xhci_dev.c` (extend -- isochronous endpoint)
+**Files:** `src/kernel/drivers/usb_audio.c` (new), `include/kernel/drivers/usb_audio.h` (new)
 
-> [!IMPORTANT]
-> xHCI isochronous endpoints use endpoint type `0x1` (ISOCH_OUT) or `0x5` (ISOCH_IN) in the endpoint context. The transfer ring uses Isoch TRBs (type `0x5`) rather than Normal TRBs. Each Isoch TRB carries one USB microframe of audio data. For 44100 Hz stereo 16-bit at 1 ms frames: 44 frames × 4 bytes = 176 bytes per TRB, plus 1 byte every ~11 frames to handle the fractional rate (`44100/1000 = 44.1`).
+> [!NOTE]
+> Isochronous endpoint infrastructure (`xhci_configure_isoch_ep`, `xhci_submit_isoch_transfer`, `usb_submit_isoch()`) is defined in `04-drivers-hardware/TODO-09-usb-stack.md §3`. This section uses that API. For 44100 Hz stereo 16-bit at 1 ms frames: 44 frames x 4 bytes = 176 bytes per isochronous packet, plus 1 byte every ~11 frames to handle the fractional rate (`44100/1000 = 44.1`).
 
 - [ ] Parse USB AudioControl interface (class `0x01`, subclass `0x01`): find `Feature Unit` descriptor; record feature unit ID, channel config, and supported controls bitmap (mute=bit0, volume=bit1)
 - [ ] Parse USB AudioStreaming interface (class `0x01`, subclass `0x02`): find isochronous OUT endpoint; read `wMaxPacketSize` and `bInterval`
-- [ ] Extend `xhci_dev.c`: `xhci_configure_isoch_ep(dev, ep_addr, max_pkt, interval, esit_payload)` -- endpoint context type `ISOCH_OUT (0x1)`; `Max Esit Payload = max_pkt * burst`; submit Configure Endpoint
-- [ ] `xhci_submit_isoch_transfer(dev, ep_addr, buf, len, frame_id)`: enqueue Isoch TRB with `Frame_ID` and `SIA=1` (start ASAP); `IOC=1`; ring doorbell
+- [ ] Configure isochronous endpoint via `usb_submit_isoch()` from USB core API (TODO-09 §1 + §3)
 - [ ] `SET_INTERFACE(alt_setting=1)` control transfer to activate streaming interface (alt 0 = zero bandwidth, alt 1 = PCM streaming)
 - [ ] `usb_audio_set_volume(feature_unit, channel, db_hundredths)`: `SET_CUR(VOLUME_CONTROL)` class request (bmRequestType=`0x21`, bRequest=`0x01`, value=`0x0100|channel`, index=`feature_unit<<8|interface`)
 - [ ] `usb_audio_write(pcm, frames)`: split frames into isochronous packets; handle 44.1/48 kHz fractional packet sizes; submit Isoch TRBs; refill on completion

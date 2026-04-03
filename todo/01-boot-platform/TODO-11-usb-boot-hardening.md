@@ -1,9 +1,9 @@
 # TODO-11 -- USB Boot Hardening & Fail-Safe Pipeline
 
-> **Goal:** Make USB boot bulletproof. The current USB boot path has a 2-second sleep hack masking a timing race, REQUEST SENSE retry logic that's partially wired, klog_disk_flush that hangs 10+ minutes on USB 2.0, and no EHCI/UHCI fallback for legacy hardware. This TODO is the single fail-safe pipeline for all USB boot fragility: proper SCSI retry, bounded klog flush with single-pass routing and deferred mode, boot media speed detection, slow-media-aware IXFS tests, EHCI fallback, and flush progress display. Works on USB 2.0 (EHCI), 3.0 (xHCI), 3.1, and 3.2 with zero sleep hacks and zero hangs.
+> **Goal:** Make USB boot bulletproof. The current USB boot path has a 2-second sleep hack masking a timing race, REQUEST SENSE retry logic that's partially wired, klog_disk_flush that hangs 10+ minutes on USB 2.0, no USB transport error recovery (stall/halt handling), no bulk transfer timeouts, and no EHCI/UHCI fallback for legacy hardware. This TODO is the single fail-safe pipeline for all USB boot fragility: proper SCSI retry, USB transport stall recovery, bounded bulk transfer timeouts, bounded klog flush with single-pass routing and deferred mode, boot media speed detection, slow-media-aware IXFS tests, EHCI fallback, and flush progress display. Works on USB 2.0 (EHCI), 3.0 (xHCI), 3.1, and 3.2 with zero sleep hacks and zero hangs.
 
 > [!IMPORTANT]
-> **Current state:** USB boot works on modern xHCI hardware (i5-11600K) but has known issues: (1) 2-second `sleep_ms(2000)` after xhci_init masks a SCSI UNIT ATTENTION race on EHCI→xHCI routed ports, (2) klog_disk_flush hangs 10+ min on USB 2.0 due to unbounded loop, (3) no EHCI/UHCI/OHCI fallback for systems without xHCI, (4) no retry on transient USB MSC errors, (5) XUSB2PR port-ready polling not implemented.
+> **Current state:** USB boot works on modern xHCI hardware (i5-11600K) but has known issues: (1) 2-second `sleep_ms(2000)` after xhci_init masks a SCSI UNIT ATTENTION race on EHCI→xHCI routed ports, (2) klog_disk_flush hangs 10+ min on USB 2.0 due to unbounded loop, (3) no EHCI/UHCI/OHCI fallback for systems without xHCI, (4) no retry on transient USB MSC errors, (5) XUSB2PR port-ready polling not implemented, (6) no USB transport-level stall/halt recovery -- a stalled endpoint hangs the entire USB boot, (7) no bulk transfer timeouts -- a non-responsive device blocks the kernel indefinitely.
 
 ---
 
@@ -26,6 +26,8 @@
 
 - USB boot works reliably on USB 2.0 (EHCI), 3.0, 3.1, 3.2 (xHCI) with zero sleep hacks.
 - SCSI UNIT ATTENTION and NOT READY are handled via proper REQUEST SENSE + TEST UNIT READY retry.
+- USB transport stalls recovered automatically: CLEAR_FEATURE(ENDPOINT_HALT), xHCI Reset Endpoint, Set TR Dequeue Pointer, BOT device reset.
+- Bulk transfers have bounded timeouts -- a non-responsive device never hangs the kernel.
 - klog_disk_flush never hangs -- bounded loop with progress reporting.
 - EHCI/UHCI fallback for systems without xHCI (pre-2012 hardware).
 - XUSB2PR port-ready polling replaces fixed delays on Intel EHCI→xHCI routing.
@@ -43,18 +45,20 @@
 | 💎  |   1   | SCSI REQUEST SENSE and error classification        | --             |  [ ]   |
 | 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [ ]   |
 | 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2        |  [ ]   |
-| 💎  |   4   | Remove sleep_ms(2000) hack                         | §2, §3        |  [ ]   |
-| 💎  |   5   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [ ]   |
-| 💎  |   6   | klog_disk_flush bounded loop                       | --             |  [ ]   |
-| 💎  |   7   | klog deferred flush mode (batch to RAM)             | §6            |  [ ]   |
-| 💎  |   8   | Boot media speed detection                         | §6            |  [ ]   |
-| 💎  |   9   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
-| ⭐  |  10   | USB boot diagnostic report                         | §1–§9         |  [ ]   |
-| 💎  |  11   | Single-pass per-subsystem log routing              | §6            |  [ ]   |
-| 💎  |  12   | IXFS boot tests: slow-media-aware                  | §8            |  [ ]   |
-| ⭐  |  13   | Flush progress on splash diagnostic line           | §7            |  [ ]   |
+| 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [ ]   |
+| 💎  |   5   | Bulk transfer timeouts                             | §4            |  [ ]   |
+| 💎  |   6   | Remove sleep_ms(2000) hack                         | §2, §3, §4    |  [ ]   |
+| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §6            |  [ ]   |
+| 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [ ]   |
+| 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [ ]   |
+| 💎  |  10   | Boot media speed detection                         | §8            |  [ ]   |
+| 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
+| ⭐  |  12   | USB boot diagnostic report                         | §1–§11        |  [ ]   |
+| 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [ ]   |
+| 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [ ]   |
+| ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [ ]   |
 
-> 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry and EHCI fallback.
+> 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry, stall recovery, transfer timeouts, and EHCI fallback.
 > ⭐ = exclusive -- comprehensive USB boot diagnostic report and splash flush progress.
 
 ---
@@ -103,14 +107,65 @@ Wrap `msc_bot_command()` with automatic retry for transient SCSI errors.
 
 ---
 
-## 4. Remove sleep_ms(2000) Hack
+## 4. USB Transport Error Recovery (Stall/Halt Handling)
 
-With proper SCSI retry (§1–§3), the 2-second sleep after xhci_init is no longer needed.
+Handle USB transport-level stalls -- a separate layer from SCSI sense errors. A bulk endpoint can stall due to data toggle mismatch, babble, or controller error even when the SCSI command is valid. Without this, a single stalled endpoint hangs the entire USB boot.
+
+**Files:** `src/kernel/drivers/xhci_dev.c` (extend), `src/kernel/drivers/usb_msc.c` (extend)
+
+> [!NOTE]
+> xHCI Transfer Event TRB completion codes: `STALL_ERROR (6)` = endpoint halted by device, `USB_TRANSACTION_ERROR (4)` = CRC/bitstuff/bad PID, `BABBLE_DETECTED_ERROR (3)` = device sent more data than expected, `DATA_BUFFER_ERROR (2)` = host controller data buffer overrun/underrun. All of these leave the endpoint in the Halted state. Recovery requires: (1) `CLEAR_FEATURE(ENDPOINT_HALT)` USB control transfer to the device, (2) xHCI Reset Endpoint command to transition the endpoint from Halted to Stopped, (3) xHCI Set TR Dequeue Pointer command to advance past the failed TRB, (4) re-ring the doorbell.
+
+- [ ] `xhci_endpoint_is_halted(dev, ep_id)`: check endpoint context state field -- state `2` = Halted
+- [ ] `xhci_clear_endpoint_halt(dev, ep_id)`: send `CLEAR_FEATURE(ENDPOINT_HALT)` control transfer to the device (bmRequestType=`0x02`, bRequest=`0x01` CLEAR_FEATURE, wValue=`0x00` ENDPOINT_HALT, wIndex=endpoint address)
+- [ ] `xhci_reset_endpoint(hc, slot, ep_id)`: issue Reset Endpoint command (TRB type 14); wait for Command Completion Event with CC == SUCCESS
+- [ ] `xhci_set_tr_dequeue(hc, slot, ep_id, dequeue_ptr)`: issue Set TR Dequeue Pointer command (TRB type 10) pointing past the failed TRB; advance the transfer ring's dequeue pointer
+- [ ] `xhci_recover_endpoint(dev, ep_id)`: combined recovery sequence -- clear halt, reset endpoint, set dequeue, log `"[USB] EP%u recovered from stall (slot=%u)"`
+- [ ] In `xhci_bulk_transfer()` / `xhci_control_transfer()`: on completion code `STALL_ERROR`, `USB_TRANSACTION_ERROR`, `BABBLE_DETECTED_ERROR`, or `DATA_BUFFER_ERROR`, call `xhci_recover_endpoint()` and return a retriable error code
+- [ ] `msc_bot_reset(dev)`: send BOT mass-storage reset class request (bmRequestType=`0x21`, bRequest=`0xFF`, wValue=0, wIndex=interface, wLength=0); then `CLEAR_FEATURE(ENDPOINT_HALT)` on both bulk-IN and bulk-OUT endpoints; used after CSW phase error (`bCSWStatus == 2`)
+- [ ] Integrate with §3 retry: after `xhci_recover_endpoint()`, retry the failed BOT command (up to 3 attempts)
+- [ ] Commit: `"drivers: USB transport error recovery -- stall/halt clear, endpoint reset, BOT device reset"`
+
+**Test checkpoint:** Force-stall a USB endpoint in QEMU (or encounter one naturally on bare metal USB 2.0) -- serial shows `"EP recovered from stall"`, boot continues without hang. If recovery fails after 3 retries, log error and mark device non-functional rather than hanging.
+
+**Regression risk:** MEDIUM -- modifies the transfer completion path. If the recovery sequence issues incorrect xHCI commands, the endpoint may become permanently stuck. Rollback: disable recovery, return error immediately on stall (current behavior but with a timeout instead of infinite hang).
+
+---
+
+## 5. Bulk Transfer Timeouts
+
+Add bounded timeouts to all bulk transfers. The current code polls the xHCI event ring in a tight loop with no deadline -- if a device stops responding (cable disconnect mid-transfer, firmware hang, powered hub brownout), the kernel hangs indefinitely.
+
+**Files:** `src/kernel/drivers/xhci_dev.c` (extend), `src/kernel/drivers/xhci_ring.c` (extend)
+
+> [!NOTE]
+> xHCI does not have hardware transfer timeouts -- the host controller will wait indefinitely for a device response. Software must implement timeouts by: (1) recording the TSC or LAPIC timer value at transfer submission, (2) checking elapsed time on each event ring poll iteration, (3) on timeout: issuing a Stop Endpoint command (TRB type 15) to abort the pending TRB, then recovering via the §4 stall/halt path.
+
+- [ ] Add `timeout_ms` parameter to `xhci_bulk_transfer()` and `xhci_control_transfer()` -- default 5000ms for bulk, 2000ms for control
+- [ ] At transfer submission: record `start_tsc = rdtsc()`; compute `deadline_tsc = start_tsc + ms_to_tsc(timeout_ms)` using calibrated TSC frequency
+- [ ] In event ring poll loop: after each poll iteration, check `rdtsc() > deadline_tsc`; if true, trigger timeout path
+- [ ] Timeout path: issue Stop Endpoint command (TRB type 15, slot, EP DCI); wait for Command Completion; the stopped TRB appears as a Transfer Event with CC=`STOPPED` or `STOPPED_LENGTH_INVALID`; advance dequeue past it
+- [ ] After timeout: log `"[USB] Bulk transfer timeout on slot=%u EP%u (%u ms)"` and return `USB_ERR_TIMEOUT`
+- [ ] Integrate with §3/§4 retry: `USB_ERR_TIMEOUT` is retriable -- call `xhci_recover_endpoint()`, then retry (up to 3 attempts)
+- [ ] MSC-specific: `usb_msc_read_sectors()` / `usb_msc_write_sectors()` propagate timeout error; caller sees it as a transient I/O failure
+- [ ] Configurable timeout: `USB_BULK_TIMEOUT_MS` (default 5000), `USB_CONTROL_TIMEOUT_MS` (default 2000) -- constants in header, tunable per-device if needed for slow media
+- [ ] Commit: `"drivers: USB bulk transfer timeouts -- TSC deadline, Stop Endpoint, retry integration"`
+
+**Test checkpoint:** Disconnect USB device during a bulk transfer (QEMU `device_del` mid-I/O) -- kernel logs timeout within 5 seconds instead of hanging. Boot continues if the device was not the boot drive. If boot drive times out, fall back to the no-USB boot path with a clear error message.
+
+**Regression risk:** MEDIUM -- adds overhead (TSC read per poll iteration, ~5ns). If TSC frequency calibration is wrong, timeouts fire too early or too late. Rollback: set `USB_BULK_TIMEOUT_MS` to `UINT32_MAX` to effectively disable timeouts while keeping the infrastructure.
+
+---
+
+## 6. Remove sleep_ms(2000) Hack
+
+With proper SCSI retry (§1–§3) and USB transport recovery (§4–§5), the 2-second sleep after xhci_init is no longer needed.
 
 - [ ] Remove `sleep_ms(2000)` from `boot_storage.c` (or wherever it currently lives)
 - [ ] Verify USB boot works on: QEMU TCG, bare metal i5-11600K, bare metal i5-4210U
 - [ ] If any platform fails without the sleep: investigate root cause, don't add the sleep back
-- [ ] Commit: `"drivers: remove USB 2-second sleep hack -- SCSI retry handles readiness"`
+- [ ] Verify: endpoint stalls and transfer timeouts (§4–§5) handle cases the sleep was masking
+- [ ] Commit: `"drivers: remove USB 2-second sleep hack -- SCSI retry + transport recovery handles readiness"`
 
 **Test checkpoint:** USB boot works on all tested platforms without the delay. Boot time improves by ~2 seconds.
 
@@ -118,7 +173,7 @@ With proper SCSI retry (§1–§3), the 2-second sleep after xhci_init is no lon
 
 ---
 
-## 5. XUSB2PR Port-Ready Polling (Intel EHCI→xHCI)
+## 7. XUSB2PR Port-Ready Polling (Intel EHCI→xHCI)
 
 On Intel chipsets, USB 2.0 ports are routed from EHCI to xHCI via the XUSB2PR PCI register. The port switch takes time -- currently masked by the 2-second sleep.
 
@@ -133,7 +188,7 @@ On Intel chipsets, USB 2.0 ports are routed from EHCI to xHCI via the XUSB2PR PC
 
 ---
 
-## 6. klog_disk_flush Bounded Loop
+## 8. klog_disk_flush Bounded Loop
 
 Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 
@@ -147,7 +202,7 @@ Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 
 ---
 
-## 7. klog Deferred Flush Mode
+## 9. klog Deferred Flush Mode
 
 For slow media, batch log entries in RAM and write once at boot end instead of per-subsystem.
 
@@ -155,14 +210,14 @@ For slow media, batch log entries in RAM and write once at boot end instead of p
 - [ ] During deferred mode: entries accumulate in ring buffer, `klog_disk_flush()` is a no-op
 - [ ] At boot complete: single `klog_disk_flush_all()` writes everything at once
 - [ ] Combine multiple entries into larger VFS writes (fewer USB transfers)
-- [ ] Automatically enable deferred mode if §6 detects slow media (>5s for first flush)
+- [ ] Automatically enable deferred mode if §8 detects slow media (>5s for first flush)
 - [ ] Commit: `"kernel: klog deferred flush -- batch to RAM, single write at boot end"`
 
 **Test checkpoint:** USB 2.0 boot -- all log entries appear in disk log file, written in one batch. Boot time comparable to no-disk-log scenario.
 
 ---
 
-## 8. Boot Media Speed Detection
+## 10. Boot Media Speed Detection
 
 Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and adjust behavior.
 
@@ -176,7 +231,7 @@ Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and
 
 ---
 
-## 9. EHCI/UHCI Companion Controller Fallback
+## 11. EHCI/UHCI Companion Controller Fallback
 
 For pre-2012 hardware without xHCI, provide basic USB storage via EHCI.
 
@@ -193,7 +248,7 @@ For pre-2012 hardware without xHCI, provide basic USB storage via EHCI.
 
 ---
 
-## 10. USB Boot Diagnostic Report
+## 12. USB Boot Diagnostic Report
 
 At end of USB enumeration, produce a comprehensive diagnostic summary.
 
@@ -209,7 +264,7 @@ At end of USB enumeration, produce a comprehensive diagnostic summary.
 
 ---
 
-## 11. Single-Pass Per-Subsystem Log Routing
+## 13. Single-Pass Per-Subsystem Log Routing
 
 Replace the 6-pass per-subsystem loop (one full ring scan per file) with a single pass that dispatches each entry to the correct subsystem buffer simultaneously. Only non-empty buffers trigger `vfs_open` + `vfs_write` + `vfs_close`.
 
@@ -227,7 +282,7 @@ Replace the 6-pass per-subsystem loop (one full ring scan per file) with a singl
 
 ---
 
-## 12. IXFS Boot Tests: Slow-Media-Aware
+## 14. IXFS Boot Tests: Slow-Media-Aware
 
 Make boot tests detect slow media (USB) and skip or simplify I/O-heavy tests automatically instead of hardcoded `#if 0` blocks.
 
@@ -246,7 +301,7 @@ Make boot tests detect slow media (USB) and skip or simplify I/O-heavy tests aut
 
 ---
 
-## 13. Flush Progress on Splash Diagnostic Line
+## 15. Flush Progress on Splash Diagnostic Line
 
 Show klog flush progress on the diagnostic subtitle during boot, so slow flushes don't look frozen.
 
@@ -268,16 +323,18 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 | ⭐ | Feature                      | 🪟 Win11                     | 🐧 Linux                      | 🚀 Impossible OS               |
 |----|------------------------------|---------------------------|----------------------------|-----------------------------|
 | 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ⬜ §1–§3                    |
-| 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ⬜ §4                       |
-| 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §9                       |
-| 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ⬜ §6–§7                    |
-| 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ⬜ §8                       |
-| ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ⬜ §10 🚀                   |
-| 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ⬜ §11                      |
-| 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ⬜ §12                      |
-| ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | ⬜ §13 🚀                   |
+| 💎 | USB stall/halt recovery      | ✅ usbstor.sys auto-reset | ✅ usb-storage ep reset   | ⬜ §4                       |
+| 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ⬜ §5                 |
+| 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ⬜ §6                       |
+| 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |
+| 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ⬜ §8–§9                    |
+| 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ⬜ §10                      |
+| ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ⬜ §12 🚀                   |
+| 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ⬜ §13                      |
+| 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ⬜ §14                      |
+| ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | ⬜ §15 🚀                   |
 
-After §1–§9, USB boot is as reliable as Windows and Linux across all USB generations and controller types. §10–§13 add diagnostic and I/O optimizations for slow media.
+After §1–§11, USB boot is as reliable as Windows and Linux across all USB generations and controller types -- including transport-level stall recovery and bounded timeouts that prevent hangs on flaky hardware. §12–§15 add diagnostic and I/O optimizations for slow media.
 
 ---
 
@@ -291,6 +348,8 @@ After §1–§9, USB boot is as reliable as Windows and Linux across all USB gen
   - SCSI sense classification: `NOT_READY` (key=2) classified as retriable
   - SCSI sense classification: `MEDIUM_ERROR` (key=3) classified as unrecoverable
   - Retry cap honored: mock a command that always fails NOT_READY, verify exactly 3 retries (not infinite)
+  - Stall recovery: `xhci_endpoint_is_halted()` returns true for state==2, false otherwise
+  - Bulk timeout: transfer with `timeout_ms=0` returns `USB_ERR_TIMEOUT` immediately (boundary test)
   - `boot_info.boot_media_speed` is a valid value (0-3)
   - klog bounded flush: ring snapshot count does not grow during flush
   - Single-pass routing dispatches to correct subsystem slot (fill 3 entries across 2 subsystems, verify each slot has correct entries)
@@ -298,7 +357,7 @@ After §1–§9, USB boot is as reliable as Windows and Linux across all USB gen
   - `blkdev_boot_media_type()` returns valid enum value (not out of range)
 - [ ] Register in `test_runner_init()`: `test_register_usb_boot()`
 - [ ] Add smoke test patterns to `scripts/test-smoke.sh` for QEMU `run-usb`:
-  - Serial line `"[USB] === USB Boot Report ==="` present (§10 -- diagnostic report)
+  - Serial line `"[USB] === USB Boot Report ==="` present (§12 -- diagnostic report)
   - Absence of `"WATCHDOG"` or `"KERNEL PANIC"` during USB boot
 - [ ] Commit: `"test: add USB boot hardening test suite"`
 
@@ -306,6 +365,8 @@ After §1–§9, USB boot is as reliable as Windows and Linux across all USB gen
 
 - [ ] **USB 2.0 bare metal**: boot from USB 2.0 on i5-4210U -- no sleep hack, SCSI retries handle readiness, klog flush completes in seconds.
 - [ ] **USB 3.0 QEMU**: boot from USB 3.0 via xHCI on TCG -- works as before, no regressions.
+- [ ] **Stall recovery**: force a stall condition -- serial shows `"EP recovered from stall"`, boot continues.
+- [ ] **Transfer timeout**: disconnect USB during I/O -- kernel logs timeout within 5s, does not hang.
 - [ ] **EHCI fallback**: boot from USB on VirtualBox (EHCI) -- MSC storage works via EHCI driver.
 - [ ] **Normal SATA boot regression**: SATA boot on all 4 platforms unaffected.
 - [ ] **klog flush**: all log entries appear in disk log file, flush completes in bounded time.

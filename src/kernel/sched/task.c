@@ -310,11 +310,18 @@ int task_create(task_entry_t entry, const char *name)
 
     pid = num_tasks;
 
-    /* Allocate task stack */
-    stack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
-    if (!stack) {
-        klog(LOG_ERROR, "sched", "task_create: cannot allocate stack");
-        return -1;
+    /* Allocate task stack from PMM with guard page at the bottom.
+     * Stack grows down, so guard page catches overflow before it
+     * corrupts adjacent memory.  PMM gives identity-mapped pages. */
+    {
+        uint32_t stack_pages = TASK_STACK_SIZE / 4096;
+        uintptr_t stack_base = pmm_alloc_contiguous(stack_pages + 1);
+        if (!stack_base) {
+            klog(LOG_ERROR, "sched", "task_create: cannot allocate stack");
+            return -1;
+        }
+        vmm_install_guard_page(stack_base, "GUARD: kernel task stack overflow");
+        stack = (uint8_t *)(stack_base + 4096);  /* usable stack after guard */
     }
 
     /* Set up initial stack as a full interrupt frame so the ISR stub can

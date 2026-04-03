@@ -26,6 +26,7 @@
 #include "kernel/boot_halt.h"
 #include "kernel/cpu_security.h"
 #include "kernel/smp.h"
+#include "kernel/msr.h"
 #include "main/main_internal.h"
 
 /* External: Multiboot2 parser */
@@ -253,6 +254,31 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     POST16(POST16_NX_POLICY);
     vmm_apply_nx_policy();
     POST16(POST16_NX_POLICY_OK);
+
+    /* --- PAT: reprogram entry 1 from WT to WC for framebuffer VRAM ---
+     * Intel default PAT: 0x0007040600070406
+     *   Entry 0=WB(06) 1=WT(04) 2=UC-(07) 3=UC(00) 4=WB 5=WT 6=UC- 7=UC
+     * We change entry 1 to WC(01).  PTE bits PWT=1,PCD=0 select entry 1.
+     * Nothing in the kernel uses PWT=1 alone, so this is safe.  UC (entry 3,
+     * PWT=1+PCD=1) and WB (entry 0, PWT=0+PCD=0) are unchanged. */
+    POST16(POST16_PAT);
+    {
+        uint64_t pat_old = msr_read(MSR_IA32_PAT);
+        uint64_t pat_new = 0x0007040600010406ULL;  /* entry 1: WT(04)->WC(01) */
+        msr_write(MSR_IA32_PAT, pat_new);
+
+        /* Guardrail: readback verify -- if MSR write was ignored or trapped,
+         * vmm_map_mmio_wc() will silently produce WT pages instead of WC. */
+        uint64_t pat_verify = msr_read(MSR_IA32_PAT);
+        if (pat_verify != pat_new) {
+            klog(LOG_FATAL, "mm", "PAT MSR readback mismatch: wrote 0x%016llx, read 0x%016llx",
+                 pat_new, pat_verify);
+            boot_halt("PAT MSR write failed -- WC framebuffer not possible");
+        }
+        klog(LOG_INFO, "mm", "PAT: 0x%016llx -> 0x%016llx (entry 1 = WC)",
+             pat_old, pat_new);
+    }
+    POST16(POST16_PAT_OK);
 
     /* --- Now safe to enable SMEP/SMAP (kernel pages no longer User) --- */
     cpu_harden_post_pagetable();

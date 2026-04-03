@@ -11,7 +11,7 @@
 - → XREF: `04-drivers-hardware/TODO-01-kernel-module-system.md §4` -- driver model HAL vtables (`net_ops`, `blk_ops`, `input_ops`) define the `driver_name` field used by §4 health registry; module loader must register names
 - → XREF: `04-drivers-hardware/TODO-03-apic-interrupt-routing.md §6` -- per-vector `irq_ns` timing profiler lives in the APIC TODO; §3 here adds `irq_count[]` / `irq_rate()` complementary stats; coordinate to avoid double-tracking
 - → XREF: `07-graphics-ui` domain -- Device Manager window (§6) is a compositor-managed GUI window using the same tree-view and panel widgets as other system tools; widget library must support `tree_view_t` with expand/collapse
-- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md` -- USB device tree (§8) walks the `usb_device_t` list populated by the xHCI/EHCI drivers; USB hot-plug events must trigger a Device Manager tree refresh
+- → XREF: `04-drivers-hardware/TODO-09-usb-stack.md` -- USB device tree (§8) walks the `usb_device_t` list populated by the xHCI/EHCI drivers (via §1 usb_core API); USB hot-plug events (§7) must trigger a Device Manager tree refresh; string descriptors (§2) provide device names for `lsusb`
 
 ## Outcome
 
@@ -167,13 +167,13 @@ Walk the `usb_device_t` list (populated by TODO-09 xHCI/EHCI drivers) and displa
 **Files:** `src/desktop/devmgr.c` (extend §6), `src/kernel/drivers/usb_hub.c` (extend -- expose `usb_device_list`)
 
 > [!NOTE]
-> → XREF: `04-drivers-hardware/TODO-09-usb-stack.md` -- USB device enumeration and hub topology are maintained by the xHCI/hub drivers. This section reads the existing list; it does not re-implement enumeration. USB hot-plug events from §4 of TODO-09 should post `WM_DEVMGR_REFRESH` to the Device Manager window to trigger a tree rebuild.
+> → XREF: `04-drivers-hardware/TODO-09-usb-stack.md` -- USB device enumeration and hub topology are maintained by the xHCI/hub drivers. This section reads the existing `usb_device_t` list (populated via §1 usb_core API); it does not re-implement enumeration. Device names come from §2 string descriptors. USB hot-plug events from §7 of TODO-09 should post `WM_DEVMGR_REFRESH` to the Device Manager window to trigger a tree rebuild.
 
 - [ ] `usb_device_iterate(callback)` → expose from `src/kernel/drivers/xhci_dev.c`; call `callback(usb_device_t*)` for each known USB device (root-hub ports + downstream hub ports)
 - [ ] `usb_device_t` must expose: `slot`, `port`, `parent_slot` (0=root), `speed`, `class`, `subclass`, `protocol`, `class_driver_name[32]` (set by HID/MSC/HUB probe)
 - [ ] Device Manager "Universal Serial Bus Controllers" node: root is the xHCI controller; each port below it is a device or hub; hub ports show their downstream devices as children
 - [ ] Per USB device: icon (keyboard/mouse/storage/hub/generic), `class_driver_name`, speed badge (`SS`/`HS`/`FS`/`LS`), port number
-- [ ] USB hot-plug: `xhci_handle_port_event()` (TODO-09 §4) posts `WM_DEVMGR_REFRESH` after attach/detach; Device Manager receives the message and calls `devmgr_rebuild_usb_subtree()`
+- [ ] USB hot-plug: `xhci_handle_port_event()` (TODO-09 §7) posts `WM_DEVMGR_REFRESH` after attach/detach; Device Manager receives the message and calls `devmgr_rebuild_usb_subtree()`
 - [ ] Commit: `"desktop: Device Manager USB tree -- hub topology, class driver name, hot-plug refresh"`
 
 ## 9. `lspci` / `lsusb` Shell Commands `[Sonnet]`

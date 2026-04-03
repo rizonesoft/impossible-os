@@ -3,11 +3,11 @@
 > **Goal:** Build the complete Bluetooth stack -- HCI transport layer, chipset firmware loading (Intel AX200-BT, Realtek RTL8761B), L2CAP, SDP, HID profile, A2DP/SBC audio streaming with AVRCP, RFCOMM/SPP, BLE/GATT, pairing manager, and system UI (`bluetooth.cpl`, `btctl` shell) -- enabling wireless keyboards, mice, headphones, and game controllers essential on every modern laptop.
 
 > [!IMPORTANT]
-> **Partial foundation:** `04-drivers-hardware/TODO-09-usb-stack.md §8` defines `bt_hci_usb.c` with `hci_send_command()` / `hci_recv_event()` / `hci_send_acl()` / `hci_recv_acl()` and `bt_hci_ops_t` registration. This TODO builds the full protocol stack on top of that transport stub. The `bt_hci_usb.c` stub must be completed before §1 here can proceed -- verify it is in place. All cryptographic operations (SSP pairing, §5 and §9) must use constant-time comparison to prevent timing side-channels.
+> **Partial foundation:** `04-drivers-hardware/TODO-09-usb-stack.md §11` defines `bt_hci_usb.c` with `hci_send_command()` / `hci_recv_event()` / `hci_send_acl()` / `hci_recv_acl()` and `bt_hci_ops_t` registration. This TODO builds the full protocol stack on top of that transport stub. The `bt_hci_usb.c` stub must be completed before §1 here can proceed -- verify it is in place. All cryptographic operations (SSP pairing, §5 and §9) must use constant-time comparison to prevent timing side-channels.
 
 ## Inputs
 
-- `src/kernel/drivers/bt_hci_usb.c` (→ XREF: `04-drivers-hardware/TODO-09-usb-stack.md §8`) -- USB HCI transport: `hci_send_command()`, `hci_recv_event()`, `hci_send_acl()`, `hci_recv_acl()`; `bt_hci_ops_t` registration point
+- `src/kernel/drivers/bt_hci_usb.c` (→ XREF: `04-drivers-hardware/TODO-09-usb-stack.md §11`) -- USB HCI transport: `hci_send_command()`, `hci_recv_event()`, `hci_send_acl()`, `hci_recv_acl()`; `bt_hci_ops_t` registration point
 - `src/kernel/drivers/hid_parser.c` (→ XREF: `04-drivers-hardware/TODO-13-i2c-touchpad.md §4`) -- HID report descriptor parser reused by Bluetooth HID profile (§5)
 - → XREF: `04-drivers-hardware/TODO-11-security-hardware.md §1` -- `hwrng_read()` required for SSP pairing nonce (§9) and A2DP SBC bitpool random seed
 - → XREF: `10-apps` domain -- audio routing: when A2DP headphones connect (§6), the audio subsystem switches `audio_get_active()` to the BT A2DP device; coordinate with the audio mixer TODO
@@ -28,7 +28,7 @@
 
 | ⭐  | Order | Deliverable                                                                  | Depends On                                      | Status |
 | --- | :---: | ---------------------------------------------------------------------------- | ----------------------------------------------- | :----: |
-| 💎  |   1   | §1 HCI transport layer -- commands, events, ACL, `hci_conn` table            | `bt_hci_ops_t` stub (TODO-09 §8)                |  [ ]   |
+| 💎  |   1   | §1 HCI transport layer -- commands, events, ACL, `hci_conn` table            | `bt_hci_ops_t` stub (TODO-09 §11)               |  [ ]   |
 | 💎  |   2   | §2 HCI firmware loading -- Intel AX200-BT + Realtek RTL8761B                 | §1 (HCI commands available)                     |  [ ]   |
 | 💎  |   3   | §3 L2CAP -- channel multiplexing, signalling, MTU negotiation                | §1 (ACL data path)                              |  [ ]   |
 | 💎  |   4   | §4 SDP -- `ServiceSearchAttributeRequest`, PSM/channel discovery, local server | §3 (L2CAP channels)                           |  [ ]   |
@@ -45,7 +45,7 @@
 
 ## 1. HCI Transport Layer `[Opus]`
 
-Build the HCI command/event/ACL layer on top of the `bt_hci_ops_t` stub from TODO-09 §8. Parse all required HCI events. Maintain a `hci_conn[]` table of 16 BR/EDR + BLE connections. Send the baseline HCI initialisation sequence.
+Build the HCI command/event/ACL layer on top of the `bt_hci_ops_t` stub from TODO-09 §11. Parse all required HCI events. Maintain a `hci_conn[]` table of 16 BR/EDR + BLE connections. Send the baseline HCI initialisation sequence.
 
 **Files:** `src/kernel/drivers/bt_hci.c` (new/extend), `include/kernel/drivers/bt_hci.h` (new)
 

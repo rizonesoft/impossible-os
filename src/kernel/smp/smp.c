@@ -17,6 +17,7 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/acpi.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
 #include "kernel/atomic.h"
@@ -279,13 +280,16 @@ void smp_init(void)
         if (!ci || !ci->enabled || i == bsp_index)
             continue;
 
-        /* Allocate a per-AP kernel stack from PMM (4 pages = 16 KiB) */
-        stack_phys = pmm_alloc_contiguous(AP_STACK_SIZE / 4096);
+        /* Allocate a per-AP kernel stack from PMM (4 pages + 1 guard = 5 pages).
+         * Guard page at the bottom catches stack overflow. */
+        stack_phys = pmm_alloc_contiguous(AP_STACK_SIZE / 4096 + 1);
         if (stack_phys == 0) {
             klog(LOG_ERROR, "smp", "Failed to allocate stack for AP %u",
                  (uint64_t)i);
             continue;
         }
+        vmm_install_guard_page(stack_phys, "GUARD: AP kernel stack overflow");
+        stack_phys += 4096;  /* usable stack starts after guard */
 
         /* Write per-AP shared data */
         {

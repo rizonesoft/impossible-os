@@ -120,10 +120,13 @@ static void test_my_invariant(void) {
 
 > "Works on QEMU" is necessary but not sufficient. "Works on bare metal" is the acceptance criteria.
 
-- [ ] **MMIO must use UC pages.** Any MMIO access (HPET, NVMe, GPU, ECAM) must go through `vmm_map_mmio_uc()`. The bootloader maps everything WB; MMIO through WB pages causes stale reads or bus errors on real hardware.
+- [ ] **MMIO must use UC or WC pages.** Device register MMIO (HPET, NVMe, xHCI, ECAM) must go through `vmm_map_mmio_uc()`. Framebuffer VRAM uses `vmm_map_mmio_wc()` for Write-Combining. The bootloader maps everything WB; MMIO through WB pages causes stale reads or bus errors on real hardware.
 - [ ] **No CPUID-gated instructions without checking.** Before using `clac`/`stac` (SMAP), `xsave`/`xrstor` (XSAVE), or AVX instructions, check `cpu_has(CPU_FEATURE_XX)`. TCG and some bare metal CPUs lack these.
 - [ ] **GS_BASE is set.** Any code that reads `gs:N` (per-CPU data) must run AFTER `smp_early_bsp_init()`. If unsure, check `smp_this_cpu() != NULL`.
 - [ ] **No LAPIC TPR writes in ISR path.** IRQL tracking is software-only. The LAPIC handles hardware priority via ISR/PPR.
+- [ ] **Framebuffer 5-rule checklist (TODO-22 §15).** When touching framebuffer/GOP/display code: (1) Pixel format checked at runtime, never assumed. (2) Stride from `PixelsPerScanLine`, not width. (3) VRAM remapped WC via `vmm_map_mmio_wc()` after page table takeover. (4) All GOP `SetMode()` calls before `ExitBootServices()`. (5) Back-buffer for double buffering.
+
+<!-- Updated 2026-04-04: added framebuffer 5-rule checklist after WC remap implementation -->
 
 ### Gate 10: Architecture Neutrality
 
@@ -203,7 +206,8 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | New global mutable variable | Add spinlock or make atomic or per-CPU |
 | New struct used by assembly | 5-layer defense (static assert + runtime + test + canary + doc) |
 | New init function in boot path | POST16 entry/exit + klog + error handling |
-| New MMIO access | `vmm_map_mmio_uc()` with UC attributes |
+| New MMIO access (device regs) | `vmm_map_mmio_uc()` with UC attributes |
+| Framebuffer VRAM access | `vmm_map_mmio_wc()` with Write-Combining |
 | Allocation > 4 KB | `pmm_alloc_contiguous()`, not `kmalloc()` |
 | Any allocation | Check for NULL return |
 | Cross-file constant | `_Static_assert` in every file that uses it |

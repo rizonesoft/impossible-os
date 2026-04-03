@@ -13,8 +13,10 @@ Check `tail -1 build/build.log` for result -- must show `=== BUILD OK ===`.
 
 ## Testing -- Category-Based Test Infrastructure
 
+> **Note:** QEMU is unreliable under WSL (TCG hangs, no KVM). Do NOT auto-run tests via QEMU in this environment. Tests are validated on native Windows (WHPX), VirtualBox, or bare metal. The `/test` skill has been removed.
+
 ```bash
-bash scripts/test.sh              # all suites
+bash scripts/test.sh              # all suites (native Windows / bare metal only)
 bash scripts/test.sh SUITE=mm     # Memory Management only
 bash scripts/test.sh SUITE=ob     # Object Manager only
 bash scripts/test.sh QUIET=1      # summary only (suppress PASS lines)
@@ -76,6 +78,7 @@ These are hard-won lessons from real hardware debugging. Violating any of these 
 ## Safety Gates
 
 - **GDT user segment order is SYSRET-critical.** `GDT_USER_DATA` (0x18) MUST be before `GDT_USER_CODE` (0x20). SYSRET computes CS=STAR[63:48]+16 and SS=STAR[63:48]+8 with fixed offsets. Swapping these selectors corrupts every ring-3 return. Enforced by `_Static_assert` in `gdt.h`, runtime verification in `gdt_init()`, and unit test. Never reorder without understanding the SYSRET constraint.
+- **Guard pages protect all stack and heap boundaries.** `vmm_install_guard_page()` splits 2 MiB huge pages and clears the PTE, causing #PF on access. Page fault handler checks a 32-entry guard table and shows the label (e.g. "GUARD: kernel task stack overflow") instead of generic PAGE_FAULT. Guard pages installed at: kernel task stacks (bottom), AP stacks (bottom), IST stacks (DF/NMI/MCE, bottom), heap end, user ELF range end (0x900000). When allocating new stacks, always allocate N+1 pages and guard the bottom one.
 
 Stop and ask before: security-sensitive changes, destructive operations, ABI changes, dependency additions, large refactors.
 
@@ -103,7 +106,6 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/verify-todo-section` | Verify a TODO section against code evidence |
 | `/improve-implementation-order` | Audit and fix an Implementation Order table |
 | `/sync-ai-system` | Sync AI guidance across Cursor and Claude Code |
-| `/test` | Run kernel unit tests (build, QEMU headless, parse results) |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
 | `/run-verification` | Verify a TODO against a serial log (pasted or file), mark PASS/FAIL, detect regressions |
 | `/complete-todo` | Convert a completed TODO into polished docs, update indexes, handle XREFs |

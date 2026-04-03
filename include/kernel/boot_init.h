@@ -149,6 +149,8 @@ typedef enum {
 #define POST16_CPU_HARDEN_OK    0x0071
 #define POST16_NX_POLICY        0x0080
 #define POST16_NX_POLICY_OK     0x0081
+#define POST16_PAT              0x0082  /* PAT MSR init (WC at entry 1) */
+#define POST16_PAT_OK           0x0083
 #define POST16_SIMD             0x0090
 #define POST16_SIMD_OK          0x0091
 

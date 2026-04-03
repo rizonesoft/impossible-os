@@ -15,6 +15,7 @@
 #include "kernel/gdt.h"
 #include "kernel/klog.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/boot_init.h"
 /* A single GDT entry (8 bytes) */
 struct gdt_entry {
@@ -99,18 +100,28 @@ void gdt_init(void)
     /* IST stacks for critical exceptions: #DF, NMI, MCE.
      * Allocated from PMM (identity-mapped, phys = virt).
      * PMM is initialized in Phase 0, GDT in Phase 1 -- always available.
-     * Each stack is 4 KiB -- IST points to the TOP (highest address). */
+     * Each IST gets 2 pages: guard (bottom) + stack (top).
+     * IST pointer goes to the TOP (highest address). */
     POST16(0xD200);
     {
-        uintptr_t ist1_page = pmm_alloc_frame();  /* #DF stack */
-        uintptr_t ist2_page = pmm_alloc_frame();  /* NMI stack */
-        uintptr_t ist3_page = pmm_alloc_frame();  /* MCE stack */
+        uintptr_t ist1_base = pmm_alloc_contiguous(2);  /* #DF: guard + stack */
+        uintptr_t ist2_base = pmm_alloc_contiguous(2);  /* NMI: guard + stack */
+        uintptr_t ist3_base = pmm_alloc_contiguous(2);  /* MCE: guard + stack */
 
-        if (ist1_page) kernel_tss.ist1 = ist1_page + 4096;
-        if (ist2_page) kernel_tss.ist2 = ist2_page + 4096;
-        if (ist3_page) kernel_tss.ist3 = ist3_page + 4096;
+        if (ist1_base) {
+            vmm_install_guard_page(ist1_base, "GUARD: IST #DF stack overflow");
+            kernel_tss.ist1 = ist1_base + 8192;  /* stack top = guard + 4K + 4K */
+        }
+        if (ist2_base) {
+            vmm_install_guard_page(ist2_base, "GUARD: IST NMI stack overflow");
+            kernel_tss.ist2 = ist2_base + 8192;
+        }
+        if (ist3_base) {
+            vmm_install_guard_page(ist3_base, "GUARD: IST MCE stack overflow");
+            kernel_tss.ist3 = ist3_base + 8192;
+        }
 
-        klog(LOG_INFO, "cpu", "IST stacks: DF=%p NMI=%p MCE=%p",
+        klog(LOG_INFO, "cpu", "IST stacks: DF=%p NMI=%p MCE=%p (guard pages installed)",
              kernel_tss.ist1, kernel_tss.ist2, kernel_tss.ist3);
     }
     POST16(0xD201);

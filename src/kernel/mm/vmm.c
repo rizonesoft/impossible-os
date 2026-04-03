@@ -253,13 +253,58 @@ uintptr_t vmm_get_physical(uintptr_t virt)
     return (pt[pti] & PTE_ADDR_MASK) + offset;
 }
 
+/* --- Guard page tracking -------------------------------------------------- */
+
+/* Track guard page ranges so the page fault handler can identify them.
+ * Fixed-size table -- guard pages are allocated once at boot. */
+#define MAX_GUARD_PAGES 32
+
+struct guard_page_entry {
+    uintptr_t addr;
+    const char *label;
+};
+
+static struct guard_page_entry guard_pages[MAX_GUARD_PAGES];
+static uint32_t guard_page_count;
+
+static void guard_page_register(uintptr_t addr, const char *label)
+{
+    if (guard_page_count < MAX_GUARD_PAGES) {
+        guard_pages[guard_page_count].addr = addr & ~((uintptr_t)0xFFF);
+        guard_pages[guard_page_count].label = label;
+        guard_page_count++;
+    }
+}
+
+static const char *guard_page_lookup(uintptr_t fault_addr)
+{
+    uintptr_t page = fault_addr & ~((uintptr_t)0xFFF);
+    uint32_t i;
+    for (i = 0; i < guard_page_count; i++) {
+        if (guard_pages[i].addr == page)
+            return guard_pages[i].label;
+    }
+    return (const char *)0;
+}
+
 /* --- Page Fault Handler (ISR 14) --- */
 
 static uint64_t page_fault_handler(struct interrupt_frame *frame)
 {
     uintptr_t fault_addr = read_cr2();
 
-    /* Try swap handler first -- if the page was swapped, bring it back */
+    /* Check guard pages first -- these are intentional not-present pages.
+     * A guard page hit means stack overflow, heap overflow, or buffer overrun.
+     * Report with a specific message instead of a generic page fault. */
+    {
+        const char *label = guard_page_lookup(fault_addr);
+        if (label) {
+            panic_screen(frame, frame->err_code, label, "vmm.c", 0);
+            return (uint64_t)frame;  /* unreachable */
+        }
+    }
+
+    /* Try swap handler -- if the page was swapped, bring it back */
     if (swap_handle_fault(fault_addr, frame->err_code)) {
         return (uint64_t)frame;  /* page swapped in, retry instruction */
     }
@@ -444,6 +489,37 @@ void *vmm_map_mmio_uc(uint64_t phys_base, uint32_t size)
     return (void *)va_start;
 }
 
+/* WC flags: PWT=1 (bit 3), PCD=0 -> PAT index 1 = Write-Combining.
+ * Requires PAT MSR entry 1 to be programmed as WC (boot_phase0). */
+#define VMM_MMIO_WC  (VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | \
+                      VMM_FLAG_WRITETHROUGH | VMM_FLAG_NX)
+
+void *vmm_map_mmio_wc(uint64_t phys_base, uint32_t size)
+{
+    uintptr_t va, va_start;
+    uint32_t pages, i;
+
+    if (size == 0 || (phys_base & 0xFFF) != 0)
+        return (void *)0;
+
+    pages = (size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
+    va_start = s_mmio_next_va;
+
+    if (va_start + (uint64_t)pages * VMM_PAGE_SIZE > MMIO_VA_LIMIT)
+        return (void *)0;  /* out of MMIO VA space */
+
+    for (i = 0; i < pages; i++) {
+        va = va_start + (uint64_t)i * VMM_PAGE_SIZE;
+        if (vmm_map_page(va, phys_base + (uint64_t)i * VMM_PAGE_SIZE,
+                          VMM_MMIO_WC) != 0)
+            return (void *)0;
+    }
+
+    s_mmio_next_va = va_start + (uint64_t)pages * VMM_PAGE_SIZE;
+
+    return (void *)va_start;
+}
+
 void vmm_unmap_mmio(void *virt, uint32_t size)
 {
     uintptr_t va = (uintptr_t)virt;
@@ -455,6 +531,68 @@ void vmm_unmap_mmio(void *virt, uint32_t size)
     pages = (size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
     for (i = 0; i < pages; i++)
         vmm_unmap_page(va + (uint64_t)i * VMM_PAGE_SIZE, 0);
+}
+
+/* --- Split 2 MiB huge page into 4 KiB pages ----------------------------- */
+
+int vmm_split_huge_page(uintptr_t virt)
+{
+    pte_t *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi;
+    uintptr_t huge_phys;
+    uint64_t old_flags;
+    uintptr_t pt_frame;
+    uint32_t i;
+
+    virt &= ~((uintptr_t)0x1FFFFF);  /* align to 2 MiB boundary */
+
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 0);
+    if (!pdpt) return -1;
+
+    pd = get_or_create_table(pdpt, pdpti, 0);
+    if (!pd) return -1;
+
+    /* Not a huge page -- already split or not present */
+    if (!(pd[pdi] & VMM_FLAG_HUGE))
+        return 0;  /* idempotent success */
+
+    huge_phys = pd[pdi] & PTE_ADDR_MASK;
+    old_flags = pd[pdi] & ~(PTE_ADDR_MASK | VMM_FLAG_HUGE);
+
+    /* Allocate a page table to replace the huge page */
+    pt_frame = pmm_alloc_frame();
+    if (!pt_frame) return -1;
+
+    pt = (pte_t *)pt_frame;
+
+    /* Fill 512 x 4 KiB PTEs preserving the same mapping + flags */
+    for (i = 0; i < PT_ENTRIES; i++)
+        pt[i] = (huge_phys + (uintptr_t)i * VMM_PAGE_SIZE) | old_flags;
+
+    /* Replace the huge page PDE with the new PT */
+    pd[pdi] = pt_frame | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE;
+
+    /* Flush TLB for the entire 2 MiB range */
+    vmm_flush_tlb_all();
+
+    return 0;
+}
+
+int vmm_install_guard_page(uintptr_t virt, const char *label)
+{
+    /* Split the containing 2 MiB huge page if needed */
+    if (vmm_split_huge_page(virt) != 0)
+        return -1;
+
+    /* Clear the PTE to make the page not-present */
+    vmm_unmap_page(virt, 0);
+
+    guard_page_register(virt, label);
+    return 0;
 }
 
 /* --- Initialization --- */

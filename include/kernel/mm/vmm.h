@@ -68,8 +68,24 @@ uintptr_t vmm_get_kernel_cr3(void);
  * or NULL on failure.  Uses a bump allocator above the 4 GiB identity map. */
 void *vmm_map_mmio_uc(uint64_t phys_base, uint32_t size);
 
-/* Unmap a previous vmm_map_mmio_uc() mapping. Does NOT free physical frames. */
+/* Map device MMIO as Write-Combining (PWT=1, PCD=0 -> PAT entry 1 = WC).
+ * Requires PAT MSR to have WC at entry 1 (programmed in boot_phase0).
+ * phys_base must be page-aligned.  Returns WC-mapped virtual address,
+ * or NULL on failure.  Uses same bump allocator as vmm_map_mmio_uc(). */
+void *vmm_map_mmio_wc(uint64_t phys_base, uint32_t size);
+
+/* Unmap a previous vmm_map_mmio_uc()/wc() mapping. Does NOT free physical frames. */
 void vmm_unmap_mmio(void *virt, uint32_t size);
+
+/* Split a 2 MiB huge page into 512 x 4 KiB pages (identity-preserving).
+ * Idempotent -- returns 0 if already split.  Required before unmapping
+ * individual 4 KiB pages within the boot-time identity map. */
+int vmm_split_huge_page(uintptr_t virt);
+
+/* Install a guard page: split the containing huge page, clear the PTE,
+ * and register the address for detection by the page fault handler.
+ * On hit, panic_screen shows the label instead of generic "PAGE_FAULT". */
+int vmm_install_guard_page(uintptr_t virt, const char *label);
 
 /* Apply NX policy: mark all non-text kernel pages as non-executable.
  * Call after vmm_init() and cpu_enable_nx(). */

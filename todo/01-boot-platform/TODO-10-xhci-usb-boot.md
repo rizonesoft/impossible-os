@@ -132,7 +132,7 @@ This is how Windows does it: `winload.efi` loads `usbxhci.sys` + `USBSTOR.SYS` w
 - [x] If MSI not available: graceful fallback to event ring polling (no crash)
 - [x] ISR reads Event Ring for Port Status Change Events (TRB type 34)
 - [x] New device connected after boot → full enumeration (slot enable, address, etc.)
-- [ ] Device removed → clean up slot, unregister block device -- deferred to `04-drivers-hardware/TODO-09-usb-stack.md §4` (hot-plug lifecycle)
+- [ ] Device removed → clean up slot, unregister block device -- deferred to `04-drivers-hardware/TODO-09-usb-stack.md §7` (hot-plug lifecycle)
 - [x] `POST16(0xD752)` entry, `POST16(0xD753)` exit
 - [x] Commit: `"drivers: xHCI interrupt-driven hot-plug via MSI"`
 

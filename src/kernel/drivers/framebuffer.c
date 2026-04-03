@@ -14,6 +14,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -184,12 +185,64 @@ void fb_init(void)
         return;
     }
 
-    hw_addr   = (uint32_t *)(uintptr_t)g_boot_info.fb.addr;
     fb_pitch  = g_boot_info.fb.pitch;
     fb_width  = g_boot_info.fb.width;
     fb_height = g_boot_info.fb.height;
     fb_bpp    = g_boot_info.fb.bpp;
     fb_stride = fb_width;   /* back buffer is tightly packed */
+
+    /* --- Guardrail: pixel format must be RGBX or BGRX (32-bit) ---
+     * The rendering code assumes 4 bytes/pixel throughout. BitMask and other
+     * exotic formats are rejected by the bootloader, but verify here too. */
+    if (g_boot_info.fb.pixel_format != GOP_PIXEL_BGRX &&
+        g_boot_info.fb.pixel_format != GOP_PIXEL_RGBX) {
+        klog(LOG_FATAL, "gfx", "Unsupported pixel format %u (expected RGBX=0 or BGRX=1)",
+             (uint64_t)g_boot_info.fb.pixel_format);
+        fb_ready = 0;
+        return;
+    }
+    if (fb_bpp != 32) {
+        klog(LOG_FATAL, "gfx", "Unsupported bpp %u (expected 32)", (uint64_t)fb_bpp);
+        fb_ready = 0;
+        return;
+    }
+
+    /* --- Guardrail: pitch must be aligned to pixel size and >= width ---
+     * PixelsPerScanLine may include padding beyond visible width. If pitch
+     * is not a multiple of bpp/8, stride math produces wrong values. */
+    if ((fb_pitch % (fb_bpp / 8)) != 0) {
+        klog(LOG_FATAL, "gfx", "Pitch %u not aligned to %u-byte pixels",
+             (uint64_t)fb_pitch, (uint64_t)(fb_bpp / 8));
+        fb_ready = 0;
+        return;
+    }
+    if (fb_pitch < fb_width * (fb_bpp / 8)) {
+        klog(LOG_FATAL, "gfx", "Pitch %u too small for %u pixels @ %u bpp",
+             (uint64_t)fb_pitch, (uint64_t)fb_width, (uint64_t)fb_bpp);
+        fb_ready = 0;
+        return;
+    }
+
+    /* Remap framebuffer VRAM as Write-Combining for fast sequential writes.
+     * Map 2x height for VBE page-flip second page (Bochs VGA). */
+    {
+        uint64_t fb_phys = g_boot_info.fb.addr;
+        uint32_t fb_size = fb_pitch * fb_height * 2;
+        /* Align physical base down to page boundary (should already be aligned) */
+        uint64_t fb_phys_aligned = fb_phys & ~0xFFFULL;
+        uint32_t fb_offset = (uint32_t)(fb_phys - fb_phys_aligned);
+        void *wc = vmm_map_mmio_wc(fb_phys_aligned, fb_size + fb_offset);
+        if (wc) {
+            hw_addr = (uint32_t *)((uintptr_t)wc + fb_offset);
+            klog(LOG_INFO, "gfx", "Framebuffer WC-mapped: phys %p -> VA %p (%u KiB)",
+                 fb_phys, (uint64_t)(uintptr_t)hw_addr, (uint64_t)(fb_size / 1024));
+        } else {
+            /* Guardrail: WC mapping is required for bare-metal performance.
+             * Falling back to identity map silently would hide a VMM bug. */
+            klog(LOG_ERROR, "gfx", "Framebuffer WC remap failed -- falling back to identity map");
+            hw_addr = (uint32_t *)(uintptr_t)fb_phys;
+        }
+    }
 
     max_cols  = fb_width / FONT_WIDTH;
     max_rows  = fb_height / FONT_HEIGHT;

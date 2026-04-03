@@ -35,7 +35,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-08 -- Visual POST Display (VPD)](TODO-08-visual-post-display.md) -- Two-tier boot progress visualization: pre-splash micro-font bars + splash-integrated stages, NVRAM crash persistence, configurable via `postbars`
 - [TODO-09 -- NVMe Storage Driver](TODO-09-nvme-storage.md) -- NVMe controller, Admin+I/O queues, sector read/write -- access internal NVMe storage
 - [TODO-10 -- xHCI, USB Storage & USB HID](TODO-10-xhci-usb-boot.md) -- xHCI controller, USB MSC BOT, boot handover, hardware compatibility (EHCI/hub); USB HID → [TODO-12](TODO-12-usb-hid-keyboard-mouse.md)
-- [TODO-11 -- USB Boot Hardening & Fail-Safe Pipeline](TODO-11-usb-boot-hardening.md) -- SCSI retry, sleep hack removal, EHCI fallback, bounded klog flush, media speed detection, single-pass log routing, slow-media IXFS tests
+- [TODO-11 -- USB Boot Hardening & Fail-Safe Pipeline](TODO-11-usb-boot-hardening.md) -- SCSI retry, USB transport stall recovery, bulk transfer timeouts, sleep hack removal, EHCI fallback, bounded klog flush, media speed detection, single-pass log routing, slow-media IXFS tests
 - [TODO-12 -- USB HID Boot-Protocol Keyboard & Mouse](TODO-12-usb-hid-keyboard-mouse.md) -- xHCI interrupt endpoints, HID boot-protocol keyboard/mouse, input coexistence
 - [TODO-13 -- Zero-Delay USB Boot](TODO-13-usb-zero-delay-handover.md) -- Pre-ExitBootServices xHCI driver loading with persistent DMA -- true Windows-style zero-delay USB handover
 - [TODO-14 -- A/B Dual-Slot Boot & Automatic Rollback](TODO-14-ab-boot-rollback.md) -- Never unbootable: dual root partitions, failure counting, automatic rollback

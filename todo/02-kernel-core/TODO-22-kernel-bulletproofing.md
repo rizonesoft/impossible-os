@@ -54,11 +54,12 @@
 | ⭐  |   7   | SSDT service number count stability                | --         |  [x]  |
 | ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [x]  |
 | ⭐  |   9   | ISR swapgs symmetry verification                   | §5         |  [x]  |
-| ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [ ]  |
+| ⭐  |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [/]  |
 | ⭐  |  11   | IXFS superblock layout and magic                   | --         |  [ ]  |
 | ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [ ]  |
 | ⭐  |  13   | VFS drive letter range and partition offsets       | --         |  [ ]  |
 | ⭐  |  14   | exec_pending state machine verification            | §5         |  [ ]  |
+| ⭐  |  15   | Framebuffer bare-metal safety (5 rules)            | --         |  [x]  |
 
 > ⭐ = all exclusive -- no other OS has systematic compile-time + boot-time invariant verification across the entire kernel.
 
@@ -227,20 +228,23 @@ Every `swapgs` on ring-3 entry MUST have a matching `swapgs` on ring-3 exit. A m
 
 ## 10. Memory Layout Guard Pages
 
-Protect critical memory boundaries with unmapped guard pages that trigger #PF on overflow.
+Protect critical memory boundaries with unmapped guard pages that trigger #PF on overflow. Required `vmm_split_huge_page()` to split boot-time 2 MiB identity-mapped huge pages into 4 KiB PTEs before individual pages can be unmapped.
 
-**Files:** `src/kernel/mm/pmm.c`, `src/kernel/mm/vmm.c`, `src/kernel/sched/task.c`
+**Files:** `src/kernel/mm/vmm.c`, `src/kernel/mm/heap.c`, `src/kernel/sched/task.c`, `src/kernel/gdt.c`, `src/kernel/smp/smp.c`
 
-- [ ] Kernel stack guard page: unmap page immediately below each kernel stack allocation
-- [ ] User range guard page: unmap 0x900000 (first page after user ELF range)
-- [ ] Heap overflow guard: unmap page after heap end
-- [ ] AP stack guard pages: unmap page below each AP stack
-- [ ] IST stack guard pages: unmap page below each IST stack (DF, NMI, MCE)
-- [ ] Unit test: write to guard page address -> verify #PF is triggered (not a crash, just a clean fault)
-- [ ] Documentation: guard page map in CLAUDE.md
+- [x] `vmm_split_huge_page()`: splits 2 MiB PDE into 512 x 4 KiB PTEs (identity-preserving, idempotent). Required for guard pages in the first 4 GiB identity map.
+- [x] `vmm_install_guard_page()`: split + unmap + register for fault handler detection.
+- [x] Guard page table (32 entries) with `guard_page_lookup()` in page fault handler -- on hit, `panic_screen()` shows the guard label instead of generic "PAGE_FAULT".
+- [x] Kernel task stack guard page: switched from `kmalloc()` to `pmm_alloc_contiguous(3)` (2 stack pages + 1 guard). Guard at bottom catches downward overflow.
+- [x] User range guard page: already implemented at 0x900000 in `vmm_create_user_pml4()` (§3).
+- [x] Heap overflow guard: `heap_init()` allocates one extra frame after heap end, installs guard if contiguous. Non-fatal degradation if non-contiguous.
+- [x] AP stack guard pages: `smp.c` allocates 5 pages (4 stack + 1 guard) per AP. Guard at bottom.
+- [x] IST stack guard pages: `gdt.c` allocates 2 pages per IST (1 guard + 1 stack) for #DF, NMI, MCE.
+- [x] Unit test: `test_vmm_split_huge_page()` (split + idempotent + identity preserved) and `test_vmm_guard_page_install()` (not-present + adjacent page intact) in `test_vmm.c`.
+- [x] Documentation: guard page map in CLAUDE.md Safety Gates section
 - [ ] Commit: `"bulletproof: memory layout guard pages -- stack, heap, user range"`
 
-**Test checkpoint:** Overflow kernel stack -> hits guard page -> clean #PF with "stack overflow detected" message instead of silent corruption.
+**Test checkpoint:** Stack overflow -> hits guard page -> panic_screen shows "GUARD: kernel task stack overflow" with fault address. Guard page at heap end catches heap overrun. IST guard catches exception handler stack overflow.
 
 ---
 
@@ -315,6 +319,24 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 
 ---
 
+## 15. Framebuffer Bare-Metal Safety (5 Rules)
+
+Five non-negotiable rules for correct framebuffer/GOP handling on real hardware. VMs hide violations (forgiving caching, no real scanout). Violating these causes perf degradation, display corruption, or UEFI faults on bare metal.
+
+**Files:** `src/kernel/drivers/framebuffer.c`, `src/boot/uefi/bootx64.c`, `src/kernel/mm/vmm.c`, `src/kernel/main/boot_hw.c`
+
+- [x] **Rule 1: Pixel format -- runtime reject on unsupported format.** `fb_init()` checks `pixel_format` is RGBX or BGRX and `bpp == 32`. Rejects BitMask/other with LOG_FATAL and disables framebuffer. Bootloader also filters in `gop_negotiate_mode()`.
+- [x] **Rule 2: Pitch alignment -- runtime verify pitch is sane.** `fb_init()` asserts `(pitch % (bpp/8)) == 0` and `pitch >= width * (bpp/8)`. Catches firmware that reports garbled pitch values. Back buffer uses `fb_stride = fb_width` (tightly packed); hardware access always derives `hw_stride = fb_pitch / (fb_bpp/8)`.
+- [x] **Rule 3: WC mapping -- PAT readback verify + VRAM remap.** PAT MSR entry 1 reprogrammed WT->WC in `boot_phase0()` with readback verification (`boot_halt` on mismatch). `fb_init()` calls `vmm_map_mmio_wc()` to remap VRAM at 4+ GiB VA. LOG_ERROR on WC failure (identity-map fallback).
+- [x] **Rule 4: Mode changes -- structurally enforced.** GOP protocol pointer not stored after `ExitBootServices()`. `gop_negotiate_mode()` runs during bootloader init. Post-ExitBS code has no access to GOP -- violation is a compile error, not a runtime bug.
+- [x] **Rule 5: Back-buffer -- guarded by pointer comparison.** All direct `hw_addr` writes gated by `if (back_buf != hw_addr)`. When back buffer is allocated, drawing goes to `back_buf`; only `fb_swap()`/`fb_swap_rect()` copy to VRAM.
+- [x] Documentation: rules in CLAUDE.md memory + coding skill Gate 6 + TODO-22 §15
+- [x] Commit: `"bulletproof: framebuffer 5-rule guardrails -- pixel fmt, pitch, PAT verify, WC remap"`
+
+**Test checkpoint:** Serial log shows `PAT: 0x0007040600070406 -> 0x0007040600010406 (entry 1 = WC)` and `Framebuffer WC-mapped: phys ... -> VA ...`. Change pixel_format to 2 (BitMask) -> fb_init() rejects with FATAL. Change pitch to odd value -> FATAL. PAT MSR write trapped -> boot_halt.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                     | Win11                  | Linux                    | Impossible OS               |
@@ -322,7 +344,7 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 | ⭐ | Compile-time struct asserts | ❌ Not systematic      | ⚠️ BUILD_BUG_ON sparse  | ⬜ §1-§14 all subsystems   |
 | ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ⬜ §1-§14 every init       |
 | ⭐ | Assembly offset asserts     | ❌ Manual sync         | ⚠️ asm-offsets.c        | ⬜ §1,§4,§5 static assert  |
-| ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard     | ⬜ §10 heap+stack+user     |
+| ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard     | ✅ §10 stack+heap+IST+AP   |
 | ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ⬜ §2,§5,§11,§12 all ABIs  |
 | ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ⬜ §6 compile-time unique  |
 | ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ⬜ §9 depth counter        |

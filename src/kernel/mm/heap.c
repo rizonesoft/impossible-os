@@ -16,6 +16,7 @@
 
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
 /* Heap size constants */
 #define HEAP_INITIAL_PAGES  512      /* 512 pages = 2 MiB */
@@ -118,9 +119,23 @@ void heap_init(void)
     heap_start_block->is_free = 1;
     heap_start_block->next = (struct block_header *)0;
 
-    klog(LOG_INFO, "mm", "Kernel heap: %u KiB at %p",
-           (uint64_t)(total_heap_size / 1024),
-           heap_base);
+    /* Install guard page immediately after heap end.
+     * The PMM bitmap has the next frame free, so allocate it as a sentinel.
+     * If heap_init exhausted contiguous frames, the guard may fail -- non-fatal. */
+    {
+        uintptr_t heap_end = heap_base + total_heap_size;
+        uintptr_t guard = pmm_alloc_frame();
+        if (guard == heap_end) {
+            vmm_install_guard_page(guard, "GUARD: kernel heap overflow");
+            klog(LOG_INFO, "mm", "Kernel heap: %u KiB at %p (guard at %p)",
+                   (uint64_t)(total_heap_size / 1024), heap_base, guard);
+        } else {
+            /* Non-contiguous -- free and skip guard */
+            if (guard) pmm_free_frame(guard);
+            klog(LOG_INFO, "mm", "Kernel heap: %u KiB at %p (no guard -- non-contiguous)",
+                   (uint64_t)(total_heap_size / 1024), heap_base);
+        }
+    }
 }
 
 void *kmalloc(size_t size)
