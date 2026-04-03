@@ -617,29 +617,39 @@ uint64_t schedule(struct interrupt_frame *frame)
     if (tasks[prev_task].threads[prev_thread].state == THREAD_RUNNING)
         tasks[prev_task].threads[prev_thread].state = THREAD_READY;
 
-    /* --- Lazy FPU: save prev, restore/defer next --- */
+    /* --- Lazy FPU: save prev, restore/defer next ---
+     * Use XSAVE/XRSTOR when available (AVX/AVX-512 state), fall back
+     * to FXSAVE/FXRSTOR on CPUs without XSAVE (e.g., QEMU TCG). */
     {
     extern struct cpu_features g_cpu;
+    int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
+
     if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
-        uint64_t xcr0 = g_cpu.xcr0_active;
-        uint32_t lo = (uint32_t)xcr0;
-        uint32_t hi = (uint32_t)(xcr0 >> 32);
-        /* XSAVEOPT skips saving components not modified since last XRSTOR
-         * (~30% faster than XSAVE on context-switch-heavy workloads) */
-        if (cpu_has(CPU_FEATURE_XSAVEOPT))
-            __asm__ volatile ("xsaveopt %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
-                              : "a"(lo), "d"(hi) : "memory");
-        else
-            __asm__ volatile ("xsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
-                              : "a"(lo), "d"(hi) : "memory");
+        if (have_xsave) {
+            uint64_t xcr0 = g_cpu.xcr0_active;
+            uint32_t lo = (uint32_t)xcr0;
+            uint32_t hi = (uint32_t)(xcr0 >> 32);
+            if (cpu_has(CPU_FEATURE_XSAVEOPT))
+                __asm__ volatile ("xsaveopt %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
+                                  : "a"(lo), "d"(hi) : "memory");
+            else
+                __asm__ volatile ("xsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
+                                  : "a"(lo), "d"(hi) : "memory");
+        } else {
+            __asm__ volatile ("fxsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area) : : "memory");
+        }
     }
 
     if (tasks[next_task].fpu_used && tasks[next_task].xsave_area) {
-        uint64_t xcr0 = g_cpu.xcr0_active;
-        uint32_t lo = (uint32_t)xcr0;
-        uint32_t hi = (uint32_t)(xcr0 >> 32);
-        __asm__ volatile ("xrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area),
-                          "a"(lo), "d"(hi) : "memory");
+        if (have_xsave) {
+            uint64_t xcr0 = g_cpu.xcr0_active;
+            uint32_t lo = (uint32_t)xcr0;
+            uint32_t hi = (uint32_t)(xcr0 >> 32);
+            __asm__ volatile ("xrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area),
+                              "a"(lo), "d"(hi) : "memory");
+        } else {
+            __asm__ volatile ("fxrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area) : "memory");
+        }
         __asm__ volatile ("clts");
     } else {
         uint64_t cr0;
