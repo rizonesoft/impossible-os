@@ -14,13 +14,10 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 3. Explore the codebase before editing.
    - Use Grep/Glob tools for symbol search, call-graph tracing, and cross-file discovery.
    - Read relevant source files to understand the integration surface.
-4. **Run the kernel-code-quality checklist BEFORE writing code.**
-   - Walk through every gate in `.claude/skills/kernel-code-quality/SKILL.md` that applies to the code you're about to write.
-   - Gate 1 (freestanding), Gate 2 (SMP), Gate 5 (error handling), Gate 6 (bare metal), and Gate 9 (production quality) apply to ALL kernel code changes.
-   - Gate 3 (5-layer defense) applies when adding cross-file constants or assembly-referenced structs.
-   - Gate 4 (boot path) applies when touching code that runs before `sti`.
-   - Gate 7 (unit tests) applies when adding any new public function or invariant.
-   - **Do not skip this step.** Past incidents where it was skipped: SMP race in vmm_set_user_page, PT frame leak in vmm_destroy_user_pml4, inode size test asserted wrong value.
+4. **Run the applicable code quality skill BEFORE writing code.**
+   - If touching files under `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, or `src/shell/`: the `kernel-code-quality` skill applies. Walk through its gates before writing.
+   - For non-kernel code (future user-mode libraries, tools, scripts): follow whatever quality skill applies to that domain.
+   - **Do not skip this step.** Past incidents: SMP race, memory leak, wrong test assertion -- all caused by writing code before checking the quality gates.
 5. Implement only the bounded section scope.
    - Freestanding kernel: no `<stdint.h>` / `<string.h>` -- use `#include "kernel/types.h"`.
    - No `malloc()` / `printf()` -- use `kmalloc()` (≤ 4 KB), `pmm_alloc_contiguous()` (larger), `printk()`.

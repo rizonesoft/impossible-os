@@ -15,10 +15,10 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
    - Use read-only exploration for orientation.
    - Use Plan mode for risky, ambiguous, architectural, or multi-file trade-off work.
    - Use Debug mode when runtime evidence is the real bottleneck.
-4. **Run the kernel-code-quality checklist BEFORE writing code.**
-   - Walk through every gate in `.cursor/skills/kernel-code-quality/SKILL.md` that applies.
-   - Gate 2 (SMP), Gate 5 (error handling), Gate 6 (bare metal), Gate 9 (production quality) apply to ALL kernel code.
-   - Do not skip this step -- past incidents: SMP race, memory leak, wrong test assertion.
+4. **Run the applicable code quality skill BEFORE writing code.**
+   - If touching files under `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, or `src/shell/`: the `kernel-code-quality` skill applies. Walk through its gates before writing.
+   - For non-kernel code (future user-mode libraries, tools, scripts): follow whatever quality skill applies to that domain.
+   - **Do not skip this step.** Past incidents: SMP race, memory leak, wrong test assertion.
 5. Implement only the bounded section scope.
    - Follow the active `.cursor/rules/`.
    - Use the supported tooling contract from `todo/00-infrastructure/TODO-02-developer-tooling-stack.md`.
