@@ -55,7 +55,7 @@
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [x]   |
 | 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [x]   |
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [x]   |
-| 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [ ]   |
+| 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [x]   |
 | 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [ ]   |
 | 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [ ]   |
 | 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [ ]   |
@@ -129,16 +129,15 @@ Provide the stable kernel-level time API used by everything above PASSIVE_LEVEL:
 - [x] `KeQueryTimeIncrement(increment)` -- returns 100000 (10 ms at 100 Hz in 100 ns units)
 - [x] `KeDelayExecutionThread(interval)` -- converts 100 ns units to ms, calls `sleep_ms()`
 - [x] `time_service_ready()` -- returns 1 after `wall_clock_init()`
-- [ ] Commit: `"kernel: time -- kernel time service API"`
+- [x] Commit: `"kernel: time -- kernel time service API"`
 
 ## 7. Interrupt Time and Unbiased Interrupt Time APIs
 Windows exposes interrupt time (100 ns since boot, including sleep bias) and unbiased interrupt time (excluding sleep bias) as core kernel APIs. `GetTickCount64()`, scheduler deadlines, and driver timeouts all depend on these. Linux's `CLOCK_BOOTTIME` (includes suspend) vs `CLOCK_MONOTONIC` (excludes suspend) is the equivalent split.
 
-- [ ] Implement `KeQueryInterruptTime()` -- returns 100 ns units since boot, updated each timer tick; includes suspend bias so it always advances even across S3/S4
-- [ ] Implement `KeQueryInterruptTimePrecise(uint64_t *qpc_value)` -- same but interpolated to sub-tick precision using the monotonic clock (TSC/HPET); also returns QPC value at the same instant
-- [ ] Implement `KeQueryUnbiasedInterruptTime(uint64_t *unbiased)` -- returns interrupt time minus `InterruptTimeBias`; pauses during suspend (equivalent to Linux `CLOCK_MONOTONIC`)
-- [ ] Track `g_interrupt_time` as a volatile 64-bit counter incremented by `KeTimeIncrement` in the timer ISR
-- [ ] Track `g_interrupt_time_bias` as the cumulative time added for suspend compensation (initially 0; updated by §14)
+- [x] `KeQueryInterruptTime()` -- returns `mono_filetime_units() + s_interrupt_time_bias` (includes suspend)
+- [x] `KeQueryInterruptTimePrecise(qpc_value)` -- same + returns QPC value at same instant
+- [x] `KeQueryUnbiasedInterruptTime()` -- returns `mono_filetime_units()` only (no bias)
+- [x] `s_interrupt_time_bias` tracked as volatile atomic; `ke_suspend_bias_update()` for §14 resume path
 - [ ] Commit: `"kernel: time -- interrupt time and unbiased interrupt time APIs"`
 
 ## 8. Timer Resolution Management
@@ -277,7 +276,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
 | 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ✅ §4 -- hpet.c driver    |
 | 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ✅ §5 -- wall_clock_init  |
-| 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ⬜ §7                     |
+| 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ✅ §7 -- biased+unbiased  |
 | 💎 | Timer resolution         | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ⬜ §8                     |
 | 💎 | Precise wall time        | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ⬜ §10                    |
 | 💎 | Timezone + DST           | ✅ registry TZ info      | ✅ /etc/localtime         | ⬜ §11                    |

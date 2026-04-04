@@ -163,3 +163,32 @@ int time_service_ready(void)
 {
     return s_ready;
 }
+
+/* ---- Interrupt time APIs (§7) -------------------------------------------- */
+
+static volatile uint64_t s_interrupt_time_bias;  /* cumulative suspend bias */
+
+uint64_t KeQueryInterruptTime(void)
+{
+    /* Interrupt time = monotonic ticks + suspend bias */
+    return mono_filetime_units() + s_interrupt_time_bias;
+}
+
+uint64_t KeQueryInterruptTimePrecise(uint64_t *qpc_value)
+{
+    uint64_t it = mono_filetime_units() + s_interrupt_time_bias;
+    if (qpc_value)
+        *qpc_value = mono_filetime_units();  /* QPC = raw monotonic */
+    return it;
+}
+
+uint64_t KeQueryUnbiasedInterruptTime(void)
+{
+    /* Unbiased = monotonic only (no suspend bias) */
+    return mono_filetime_units();
+}
+
+void ke_suspend_bias_update(uint64_t bias_100ns)
+{
+    __atomic_fetch_add(&s_interrupt_time_bias, bias_100ns, __ATOMIC_SEQ_CST);
+}

@@ -37,3 +37,17 @@ void KeDelayExecutionThread(FILETIME interval);
 
 /* Returns 1 when KeQuerySystemTime() is usable. */
 int time_service_ready(void);
+
+/* ---- Interrupt time APIs (§7) -------------------------------------------- */
+
+/* 100 ns since boot, including suspend bias. Monotonically increasing. */
+uint64_t KeQueryInterruptTime(void);
+
+/* Same as above but sub-tick interpolated; also returns QPC value. */
+uint64_t KeQueryInterruptTimePrecise(uint64_t *qpc_value);
+
+/* Interrupt time minus suspend bias. Pauses during S3/S4. */
+uint64_t KeQueryUnbiasedInterruptTime(void);
+
+/* Add suspend bias (called from S3/S4 resume path -- §14). */
+void ke_suspend_bias_update(uint64_t bias_100ns);
