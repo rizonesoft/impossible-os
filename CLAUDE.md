@@ -13,10 +13,10 @@ Check `tail -1 build/build.log` for result -- must show `=== BUILD OK ===`.
 
 ## Testing -- Category-Based Test Infrastructure
 
-> **Note:** QEMU is unreliable under WSL (TCG hangs, no KVM). Do NOT auto-run tests via QEMU in this environment. Tests are validated on native Windows (WHPX), VirtualBox, or bare metal. The `/test` skill has been removed.
+> **TCG works in WSL2** (~10s for build + 328 tests). A pre-push hook runs the full suite before every push. SMEP is disabled globally (boot PML4 has User bit on all pages). WHPX, VirtualBox, and bare metal remain the primary validation platforms.
 
 ```bash
-bash scripts/test.sh              # all suites (native Windows / bare metal only)
+bash scripts/test.sh              # all suites (WSL2 TCG, native Windows, bare metal)
 bash scripts/test.sh SUITE=mm     # Memory Management only
 bash scripts/test.sh SUITE=ob     # Object Manager only
 bash scripts/test.sh QUIET=1      # summary only (suppress PASS lines)
