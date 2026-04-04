@@ -36,8 +36,8 @@
 
 | ⭐  | Order | Deliverable                                     | Depends On | Status |
 | --- | :---: | ----------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | TEB struct and GS self-pointer                  | --          |  [x]   |
-| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --          |  [x]   |
+| 💎  |   1   | TEB struct and GS self-pointer                  | --         |  [x]   |
+| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --         |  [x]   |
 | 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1         |  [x]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3     |  [x]   |
 | 💎  |   5   | PEB allocation and population at task_exec      | §2, §4     |  [x]   |
@@ -46,7 +46,7 @@
 | 💎  |   8   | PEB Ldr (module list) basic population          | §5         |  [x]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)           | §6         |  [x]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6     |  [x]   |
-| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page     | §5         |  [ ]   |
+| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5         |  [x]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9         |  [ ]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7         |  [ ]   |
 
@@ -176,33 +176,20 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 ## 11. KUSER_SHARED_DATA -- Kernel-User Shared Page
 Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user read-only) and a kernel-mode writable address. This `KUSER_SHARED_DATA` structure gives every user-mode process access to system time, tick count, OS version, processor features, and QPC frequency without a syscall -- `GetTickCount()`, `QueryInterruptTime()`, and ntdll's fast-path `NtQuerySystemTime` all read from this page. Linux's vDSO serves the same purpose. Without this page, every time query requires a full syscall round-trip.
 
-> [!WARNING]
-> The kernel timer ISR must update `SystemTime`, `InterruptTime`, and `TickCount` fields on every tick. This is a hot path -- use volatile writes only, no locks. The time fields use the `KSYSTEM_TIME` triple-read protocol (High1Time, LowPart, High2Time) for lock-free 64-bit reads on 32-bit callers; 64-bit readers can use `TickCountQuad` directly. Adding `kusd_update_time()` to the timer ISR modifies the interrupt path -- test incrementally: first verify static fields only, then wire the ISR update and confirm no timer regression. Rollback: remove the ISR call and leave time fields at zero.
-
-> [!NOTE]
-> The static fields (NtSystemRoot, version, ProcessorFeatures, Cookie) can be populated at `kusd_init()` without any external dependency. The time update wiring (`kusd_update_time()` in the timer ISR) requires TODO-07 §6 (`KeQuerySystemTime`) for correct SystemTime values, but can use raw TSC/tick count as a placeholder until then. This section is NOT blocked by TODO-07 -- implement static init first, wire time updates when TODO-07 §6 lands.
-
-- [ ] Create `include/kernel/nt/kusd.h` -- `KUSER_SHARED_DATA` struct at exact Windows x64 offsets:
-  - `TickCountMultiplier` (0x004) -- fixed at boot
-  - `InterruptTime` (0x008) -- `KSYSTEM_TIME`, 100 ns since boot, updated each tick
-  - `SystemTime` (0x014) -- `KSYSTEM_TIME`, UTC in 100 ns since 1601-01-01
-  - `TimeZoneBias` (0x020) -- `KSYSTEM_TIME`
-  - `NtSystemRoot[260]` (WCHAR) -- `L"C:\\Impossible"`
-  - `NtBuildNumber` (ULONG) -- current build number
-  - `NtProductType` -- `NtProductWinNt (1)`
-  - `NtMajorVersion`, `NtMinorVersion` -- 10, 0
-  - `ProcessorFeatures[64]` (BOOLEAN array) -- populated from `cpuid.c`
-  - `QpcFrequency` (LONGLONG) -- TSC or HPET frequency
-  - `Cookie` (ULONG) -- security cookie (RDRAND-seeded)
-  - `TickCount` / `TickCountQuad` (union)
-  - `SystemCall` (ULONG) -- 0 for SYSCALL, 1 for INT 2E fallback
-  - `ActiveProcessorCount`, `NumberOfPhysicalPages`
-- [ ] `KSYSTEM_TIME` struct: `{ uint32_t LowPart; int32_t High1Time; int32_t High2Time; }` -- the triple-read protocol
-- [ ] Allocate one physical page; map at `0x7FFE0000` user-mode read-only (`VMM_USER_RO`) and at a randomized kernel VA read-write
-- [ ] `kusd_init()`: populate static fields (NtSystemRoot, version, build, processor features, QPC freq, Cookie)
-- [ ] `kusd_update_time()`: called from timer ISR -- update `InterruptTime`, `SystemTime`, `TickCount` with correct write ordering (High1Time first, then Low, then High2Time)
-- [ ] Wire `kusd_init()` into `boot_phase0()` after PEB allocation (§5) and time service init (→ XREF TODO-07 §6)
-- [ ] Add `_Static_assert` offset checks for all key fields matching Windows SDK `ntddk.h`
+- [x] `KUSER_SHARED_DATA` struct in `kusd.h` -- packed, all fields at exact Windows x64 offsets (0x000-0x340), padded to page size
+- [x] `KSYSTEM_TIME` struct with `ksystem_time_write()` inline triple-write protocol
+- [x] 16 `_Static_assert` offset checks for all key fields (TickCountMultiplier, InterruptTime, SystemTime, TimeZoneBias, NtSystemRoot, NtBuildNumber, NtProductType, NtMajorVersion, NtMinorVersion, ProcessorFeatures, NumberOfPhysicalPages, QpcFrequency, SystemCall, TickCount, Cookie, sizeof == 4096)
+- [x] Physical page allocated, mapped at `0x7FFE0000` user read-only + NX, kernel writes via identity alias
+- [x] `kusd_init()`: populates all static fields:
+  - `NtSystemRoot` = `L"C:\\Impossible"` (WCHAR), `ImageNumber` = 0x8664 (AMD64)
+  - `NtMajorVersion` = 10, `NtMinorVersion` = 0, `NtBuildNumber` from build_info.h
+  - `NtProductType` = NtProductWinNt, `NativeProcessorArchitecture` = 9 (AMD64)
+  - `ProcessorFeatures[64]` populated from cpuid.c (MMX, SSE, SSE2-4.2, AVX, AVX2, RDRAND)
+  - `QpcFrequency` = 10 MHz (fixed), `LargePageMinimum` = 2 MiB
+  - `NumberOfPhysicalPages` from PMM, `Cookie` from RDRAND (TSC fallback)
+  - `SystemCall` = 0 (SYSCALL mode)
+- [x] `kusd_update_time()`: ISR-driven, writes InterruptTime, SystemTime, TimeZoneBias, TickCount via triple-write protocol. Wired into LAPIC + PIT timer ISRs (→ XREF TODO-07 §12)
+- [x] Wired into Phase 2 boot after wall_clock_init() and timezone_init()
 - [ ] Commit: `"kernel: abi -- KUSER_SHARED_DATA shared page at 0x7FFE0000"`
 
 **Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox; bare metal follow-up (no hardware interaction, low risk).
@@ -270,7 +257,7 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 | 💎 | Initial stack frame         | ✅ RCX=PEB (Win64)        | ✅ ELF ABI layout        | ✅ §7 argc/argv/auxv    |
 | ⭐ | PEB/TEB in Ob namespace     | ❌ Private internal       | ❌ Not exposed           | ✅ §10 public API       |
 | ⭐ | Win11 version in PEB        | ✅ Internal only          | ❌ N/A                   | ✅ §5 10.0.22621        |
-| 💎 | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only   | ✅ vDSO equivalent       | ⬜ §11 shared page      |
+| 💎 | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only   | ✅ vDSO equivalent       | ✅ §11 full struct+ISR  |
 | 💎 | TLS expansion (1024 slots)  | ✅ TlsExpansionSlots      | ✅ pthread TLS unlimited | ⬜ §12 expansion bitmap |
 | 💎 | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ⬜ §13 auxv extension   |
 | 💎 | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF            | ✅ auxv standard         | ⬜ §13 ELF compat       |

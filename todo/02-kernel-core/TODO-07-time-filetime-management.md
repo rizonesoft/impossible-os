@@ -202,7 +202,7 @@ Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed value
 - [x] **NTFS**: `ntfs_data_write.c` -- `unix_to_filetime(0)` placeholder replaced with `KeQuerySystemTime()` for real UTC timestamps in `$STANDARD_INFORMATION` on all write/truncate paths
 - [x] **klog_disk**: `format_entry()` now uses ISO 8601 timestamps via `filetime_to_string()` when wall clock is ready, falls back to tick count for early boot entries
 - [x] `filetime_to_string(FILETIME ft, char *buf, uint32_t len)` -- ISO 8601 UTC format: `"2026-03-25T14:35:22.123Z"` with millisecond precision
-- [ ] Commit: `"kernel: fs -- wire FILETIME timestamps into FAT32, NTFS, and klog"`
+- [x] Commit: `"kernel: fs -- wire FILETIME timestamps into FAT32, NTFS, and klog"`
 
 ## 14. Suspend/Hibernate Time Bias Tracking
 When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrupt stops firing and `InterruptTime` freezes. On resume, the kernel must compute how long the system was asleep (from the RTC delta or UEFI time) and add that duration to `InterruptTimeBias` so that `KeQueryInterruptTime()` (which includes bias) continues to advance smoothly. `KeQueryUnbiasedInterruptTime()` deliberately excludes the bias, so it reflects actual CPU-awake time only.

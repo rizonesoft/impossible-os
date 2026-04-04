@@ -461,12 +461,12 @@ void boot_phase2(void)
         extern void mono_clock_init(void);
         extern void wall_clock_init(void);
         extern void timezone_init(void);
-        extern void kusd_page_init(void);
+        extern void kusd_init(void);
 
         mono_clock_init();
         wall_clock_init();
         timezone_init();
-        kusd_page_init();
+        kusd_init();
     }
 
     klog(LOG_DEBUG, "", "");
