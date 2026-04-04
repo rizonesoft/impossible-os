@@ -39,3 +39,4 @@ SDK tools are built separately from the kernel. Each has its own Makefile/build 
 - [TODO-05 -- serial-analyze](TODO-05-serial-analyze.md) -- Boot log analyzer: timing breakdown, warning highlight, boot comparison, HTML reports
 - [TODO-06 -- disk-inspect](TODO-06-disk-inspect.md) -- Interactive disk image browser: GPT, IXFS superblock, inodes, hex dump, directory tree
 - [TODO-07 -- ixfs-fsck](TODO-07-ixfs-fsck.md) -- IXFS filesystem consistency checker with optional repair mode
+- [TODO-08 -- BlackBox Log Extractor](TODO-08-blackbox-log-extractor.md) -- Host-side CLI (Linux + Windows) to extract, view, and filter logs from BlackBox partition in disk images
