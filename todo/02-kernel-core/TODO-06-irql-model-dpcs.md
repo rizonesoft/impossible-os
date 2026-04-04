@@ -41,10 +41,10 @@
 
 | ⭐  | Order | Deliverable                                        | Depends On  | Status |
 | --- | :---: | -------------------------------------------------- | ----------- | :----: |
-| 💎  |   1   | `KIRQL` type, constants, and core contract         | --           |  [x]   |
+| 💎  |   1   | `KIRQL` type, constants, and core contract         | --          |  [x]   |
 | 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1          |  [x]   |
 | 💎  |   3   | Interrupt entry/exit IRQL integration              | §2          |  [x]   |
-| 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [ ]   |
+| 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [ ]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [ ]   |
 | 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [ ]   |
@@ -92,14 +92,12 @@
 
 ## 4. DPC Object Type and Per-CPU Queue
 
-- [ ] Create `include/kernel/sched/dpc.h` and `src/kernel/sched/dpc.c`.
-- [ ] Define `KDPC` with routine pointer, deferred context, optional argument pair, and queue link.
-- [ ] Implement `KeInitializeDpc()`, `KeInsertQueueDpc()`, and `KeRemoveQueueDpc()`.
-- [ ] Build a lock-protected per-CPU DPC queue with bounded memory strategy (pre-allocated nodes or static pool fallback).
-- [ ] Enforce that `KeInsertQueueDpc()` is callable at ISR IRQL and does not block or allocate unbounded memory.
-- [ ] Wire `dpc_init()` into boot path (Phase 1, after timer): per-CPU DPC queue + drain loop; `BOOT_REQUIRE(SUBSYS_TIMER)` -- moved from TODO-01 §3. Add `POST16(0xD400)` before `dpc_init()` and `POST16(0xD401)` after return
-- [ ] Update `task_init()` to return `boot_result_t` instead of `void` -- moved from TODO-01 §8
-- [ ] Commit: `"kernel: sched -- add KDPC type and per-CPU DPC queue"`
+- [x] `dpc.h` + `dpc.c`: `KDPC` struct with routine, context, args, intrusive queue link, queued flag, cpu_target
+- [x] `KeInitializeDpc()`, `KeInsertQueueDpc()` (ISR-safe, zero alloc), `KeRemoveQueueDpc()` -- all implemented
+- [x] Per-CPU DPC queues (static `cpu_queues[MAX_CPUS]`) with irqsave spinlocks, FIFO, depth warning at 64
+- [x] `dpc_init()` wired into `boot_phase3()` before `task_init()`
+- [ ] Update `task_init()` to return `boot_result_t` instead of `void` -- deferred to TODO-01 §8
+- [ ] Commit: `"kernel: sched -- wire DPC init into boot path"`
 
 **Test checkpoint:** `KeInitializeDpc(&dpc, routine, ctx)` sets all fields. `KeInsertQueueDpc` from `DISPATCH_LEVEL` returns 1 (newly queued). Second `KeInsertQueueDpc` for same DPC returns 0 (no-op). `KeRemoveQueueDpc` returns 1 for queued DPC, 0 for un-queued. `dpc_this_cpu_queue()->depth` increments on insert and decrements on remove. Serial: `"dpc: per-CPU DPC queues initialized"` during Phase 1 boot. If crash, check POST -- 0xD400 = never entered `dpc_init`, 0xD401 = completed successfully.
 

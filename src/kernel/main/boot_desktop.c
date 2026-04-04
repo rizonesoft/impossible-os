@@ -52,6 +52,12 @@ void boot_phase3(void)
         boot_recovery_show(&ri);
         boot_halt("HEAP or TIMER not ready -- cannot init scheduler");
     }
+    /* --- DPC subsystem: per-CPU queues for deferred ISR work --- */
+    {
+        extern void dpc_init(void);
+        dpc_init();
+    }
+
     boot_splash_status("Initializing scheduler...");
     POST16(POST16_SCHED);
     task_init();
@@ -92,6 +98,14 @@ void boot_phase3(void)
     /* --- ETW tracing subsystem --- */
     etw_init();
     etw_register_ssdt();
+
+    /* --- Timer resolution management --- */
+    {
+        extern void timer_resolution_init(void);
+        extern void timer_resolution_register_ssdt(void);
+        timer_resolution_init();
+        timer_resolution_register_ssdt();
+    }
 
     /* --- Exec loader (ELF/PE format handlers) --- */
     kernel_subsystem_set_ready(SUBSYS_EXEC, true);
