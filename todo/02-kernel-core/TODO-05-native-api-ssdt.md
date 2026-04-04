@@ -577,17 +577,17 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x01BD | NtCommitRegistryTransaction        | §14 | T13 §4                 | [ ]  |
 | 0x01BE | NtRollbackRegistryTransaction      | §14 | T13 §4                 | [ ]  |
 
-**0x01D0–0x01DF: ETW (Event Tracing for Windows)**
+**0x01D0–0x01DF: ETW (Event Tracing for Windows)** -- **7/7 DONE** (etw.c, T02 §7)
 
 | Index  | Function                         | §   | Owner                    | Done |
 |--------|----------------------------------|-----|--------------------------|------|
-| 0x01D0 | NtTraceEvent                     | §22 | T02 (klog/ETW)           | [ ]  |
-| 0x01D1 | NtTraceControl                   | §22 | T02                      | [ ]  |
-| 0x01D2 | NtCreateTrace                    | §22 | T02                      | [ ]  |
-| 0x01D3 | NtQueryTrace                     | §22 | T02                      | [ ]  |
-| 0x01D4 | NtUpdateTrace                    | §22 | T02                      | [ ]  |
-| 0x01D5 | NtStopTrace                      | §22 | T02                      | [ ]  |
-| 0x01D6 | NtFlushTrace                     | §22 | T02                      | [ ]  |
+| 0x01D0 | NtTraceEvent                     | §22 | T02 §7 (etw.c)          | [x]  |
+| 0x01D1 | NtTraceControl                   | §22 | T02 §7 (etw.c)          | [x]  |
+| 0x01D2 | NtCreateTrace                    | §22 | T02 §7 (etw.c)          | [x]  |
+| 0x01D3 | NtQueryTrace                     | §22 | T02 §7 (etw.c)          | [x]  |
+| 0x01D4 | NtUpdateTrace                    | §22 | T02 §7 (etw.c)          | [x]  |
+| 0x01D5 | NtStopTrace                      | §22 | T02 §7 (etw.c)          | [x]  |
+| 0x01D6 | NtFlushTrace                     | §22 | T02 §7 (etw.c)          | [x]  |
 
 **0x01E0–0x01EF: WNF (Windows Notification Facility)**
 
@@ -852,6 +852,8 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x03D7 | NtQueryTaskList                      | §10 | T05 (sched tasks)      | [ ]  |
 
 > **Total: 470 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
+>
+> **Implementation progress: 7/470 wired** (1.5%) -- ETW range complete. Run `/audit-ssdt` to refresh.
 
 **Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.
 
