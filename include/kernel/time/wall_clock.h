@@ -20,6 +20,11 @@ FILETIME KeQuerySystemTime(void);
 /* Set wall time (e.g., from NTP adjustment). Seqlock write-protected. */
 void KeSetSystemTime(FILETIME new_time);
 
+/* Sub-microsecond precise wall time via TSC/HPET interpolation.
+ * Currently identical to KeQuerySystemTime() since both use mono_ns().
+ * Will diverge when §12 (KUSER_SHARED_DATA) adds a coarse tick path. */
+FILETIME KeQuerySystemTimePrecise(void);
+
 /* Returns 1 if wall clock has been initialized. */
 int wall_clock_ready(void);
 

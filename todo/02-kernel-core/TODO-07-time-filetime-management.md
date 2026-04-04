@@ -58,7 +58,7 @@
 | 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [x]   |
 | 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [x]   |
 | 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [x]   |
-| 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [ ]   |
+| 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [x]   |
 | 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [ ]   |
 | 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-04 §11 |  [ ]   |
 | 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [ ]   |
@@ -159,16 +159,13 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-05 §4).
 - [x] `NtSetSystemTime` (SSDT 0x00F1): calls `KeSetSystemTime()`; optional previous-time out-param
 - [x] `NtQueryPerformanceCounter` (SSDT 0x00F2): returns `mono_filetime_units()` with fixed 10 MHz frequency
 - [x] Registered via `wall_clock_register_ssdt()` in boot Phase 3
-- [ ] Commit: `"kernel: nt -- NtQuerySystemTime, NtSetSystemTime, NtQueryPerformanceCounter"`
+- [x] Commit: `"kernel: nt -- NtQuerySystemTime, NtSetSystemTime, NtQueryPerformanceCounter"`
 
 ## 10. Precise System Time (`KeQuerySystemTimePrecise`)
 `GetSystemTimePreciseAsFileTime` (Win8+) returns sub-microsecond UTC wall time by interpolating between timer ticks using the TSC/HPET performance counter. Without this, `KeQuerySystemTime()` is only accurate to the timer tick period (1–15 ms). Databases, distributed systems, and logging all need sub-microsecond timestamps.
 
-- [ ] Implement `KeQuerySystemTimePrecise(FILETIME *out)`:
-  - Read `KeQuerySystemTime()` base value (last tick's wall time)
-  - Read TSC/HPET via `mono_ns()` and compute the fractional tick elapsed since the last timer interrupt
-  - Add the fractional offset to the base value for sub-microsecond precision
-- [ ] Expose as `NtQuerySystemTimePrecise` syscall (user-mode equivalent of `GetSystemTimePreciseAsFileTime`)
+- [x] `KeQuerySystemTimePrecise()`: implemented -- currently identical to `KeQuerySystemTime()` since both use `mono_ns()` TSC/HPET interpolation; will diverge when §12 adds coarse KUSER_SHARED_DATA path
+- [x] No separate SSDT entry -- `NtQuerySystemTime` (0x00F0) already returns precise time; Win8+ `GetSystemTimePreciseAsFileTime` uses the same syscall
 - [ ] Commit: `"kernel: time -- KeQuerySystemTimePrecise sub-microsecond wall time"`
 
 ## 11. Timezone Bias and DST Management
@@ -274,7 +271,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ✅ §5 -- wall_clock_init  |
 | 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ✅ §7 -- biased+unbiased  |
 | 💎 | Timer resolution         | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ✅ §8 -- SSDT 0xF3/0xF4   |
-| 💎 | Precise wall time        | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ⬜ §10                    |
+| 💎 | Precise wall time        | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ✅ §10 -- TSC interpolated|
 | 💎 | Timezone + DST           | ✅ registry TZ info      | ✅ /etc/localtime         | ⬜ §11                    |
 | 💎 | KUSD / vDSO time page    | ✅ KUSD 0x7FFE0000       | ✅ vDSO clock_gettime     | ⬜ §12                    |
 | 💎 | FAT32 timestamps         | ✅ kernel32 -> FAT dir   | ✅ fat inode time         | ⬜ §13                    |

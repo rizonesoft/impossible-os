@@ -123,6 +123,14 @@ FILETIME KeQuerySystemTime(void)
     return base + (elapsed_ns / 100);  /* ns -> 100 ns FILETIME ticks */
 }
 
+FILETIME KeQuerySystemTimePrecise(void)
+{
+    /* Currently identical to KeQuerySystemTime() since both use mono_ns()
+     * for TSC/HPET interpolation. Will diverge when KUSER_SHARED_DATA (§12)
+     * adds a coarse tick-granular path for KeQuerySystemTime(). */
+    return KeQuerySystemTime();
+}
+
 void KeSetSystemTime(FILETIME new_time)
 {
     seqlock_write_lock(&s_lock);
