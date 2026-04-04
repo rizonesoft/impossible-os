@@ -45,7 +45,7 @@
 | 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [x]   |
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [x]   |
 | 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [x]   |
-| 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [ ]   |
+| 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [x]   |
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [ ]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [ ]   |
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [ ]   |
@@ -164,7 +164,7 @@ Move performance and diagnostic outputs to their BlackBox directories.
 - [x] `boot-profile.log` already at `X:\Perf\` (done in §6)
 - [x] Both wired into Phase 3 boot after `boot_timing_write_report()`
 - [x] All paths fall back to `klog_dir` (C:\ logs) when BlackBox not mounted
-- [ ] Commit: `"kernel: move diagnostic and perf output to X:\\Diag\\ and X:\\Perf\\"`
+- [x] Commit: `"kernel: move diagnostic and perf output to X:\\Diag\\ and X:\\Perf\\"`
 
 **Test checkpoint:** After boot, `X:\Diag\hwdump.txt` and `X:\Perf\boot-profile.log` exist with valid content. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -172,10 +172,10 @@ Move performance and diagnostic outputs to their BlackBox directories.
 
 Update host-side tools to locate and read the BlackBox partition from raw disk images.
 
-- [ ] Update `tools/ixfs-mount/` (or equivalent SDK tools) to recognize the 3-partition layout
-- [ ] Add a `blackbox-read` host utility or script: extracts `X:\Logs\`, `X:\Crash\`, etc. from the raw disk image
-- [ ] Calculate BlackBox byte offset from GPT entries (same approach as `mkfs-ixfs --offset`)
-- [ ] Document: how to mount BlackBox from a disk image on Linux (`mount -o loop,offset=<N>`)
+- [x] `scripts/tools/read-blackbox.sh`: extracts all BlackBox directories from raw disk image using mtools
+- [x] Uses `BB_OFFSET=68157440` (LBA 133120 * 512) matching Makefile
+- [x] Extracts Logs/, Logs/Serial/, Boot/, Crash/, Perf/, Diag/, Tools/ to `build/blackbox-extract/`
+- [x] Documents Linux mount: `sudo mount -o loop,offset=68157440,ro build/system-disk.img /mnt/blackbox`
 - [ ] Commit: `"tools: SDK reads BlackBox partition from disk images"`
 
 **Test checkpoint:** `bash scripts/tools/read-blackbox.sh build/system-disk.img` extracts logs to a local directory. `mount` on Linux at the correct offset shows FAT32 with the directory structure.
