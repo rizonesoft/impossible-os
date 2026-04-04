@@ -15,6 +15,7 @@
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §5` -- `umount` shell calls the VFS unmount path; §5 (fsck) must be callable as `chkdsk D: /fat32`
 - → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` -- Win32 `CreateFile` flags `FILE_SHARE_*` and `FILE_FLAG_DELETE_ON_CLOSE` map directly to §8 and §9
 - → XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` §12 -- BlackBox FAT32 dirty-bit check depends on §1; fsck-on-mount depends on §6
+- → XREF: `02-kernel-core/TODO-07-time-filetime-management.md` §1,§6,§11,§13 -- FILETIME type, wall clock, timezone bias, and filesystem timestamp encoding; §5 of this TODO is interim until TODO-07 §13 replaces it
 
 ## Outcome
 
@@ -41,7 +42,7 @@
 | 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [x]   |
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [x]   |
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [x]   |
-| 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4 (create path being reworked)                          |  [x]   |
+| 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4, T07 §1,§6,§11,§13                                   |  [/]   |
 | 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [ ]   |
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [ ]   |
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [ ]   |
@@ -129,13 +130,15 @@ Encode kernel FILETIME (100 ns ticks since 1601 UTC) to FAT32 date/time format. 
 > [!NOTE]
 > FAT32 time format (16 bits): bits 15–11 = hours (0–23), 10–5 = minutes (0–59), 4–0 = 2-second counts (0–29). FAT32 date format (16 bits): bits 15–9 = year since 1980 (0–127, so max year 2107), 8–5 = month (1–12), 4–0 = day (1–31). Timezone: FAT32 stores local time; apply `HKLM\SYSTEM\TimeZone\BiasMinutes` offset (FILETIME is UTC). Year 2107 boundary: if year > 2107 (i.e. after 2107-12-31), clamp to 2107/12/31 and log a warning.
 
-- [x] `fat32_stamp_create(de)`: sets CrtTime, CrtDate, WrtTime, WrtDate, LstAccDate from `system_get_ticks()` via `seconds_to_fat_datetime()`
-- [x] `fat32_stamp_modify(de)`: sets WrtTime, WrtDate from current time
-- [x] `fat32_create_file_vol()` + `fat32_create_dir_vol()`: call `fat32_stamp_create(&de)` before writing SFN entry -- all 5 timestamp fields populated
-- [x] `fat32_update_dir_size()`: calls `fat32_stamp_modify(de)` on every size update (write callback path) -- WrtTime/WrtDate updated on every write
-- [x] `fat32_set_times()` already exists with `seconds_to_fat_datetime()` -- verified compatible
-- [ ] `fat32_ops.c` read callback: LstAccDate update deferred -- FAT32 access date updates are often disabled for performance (Windows `NtfsDisableLastAccessUpdate`); revisit when needed
-- [ ] Commit: `"fs/fat32: timestamps -- CrtTime on create, WrtTime on write, stamp helpers"`
+> [!IMPORTANT]
+> **Blocked on TODO-07 §1,§6,§11,§13.** Correct FAT32 timestamps require: `FILETIME` type (§1), `KeQuerySystemTime()` for UTC wall time (§6), timezone bias for local time conversion (§11), and the filesystem encoding wiring (§13). The current `seconds_to_fat_datetime()` uses a 2025 base year with PIT ticks -- a placeholder, not spec-correct. `fat32_stamp_create()` and `fat32_stamp_modify()` exist as interim helpers that produce approximately correct timestamps for development, but must be replaced by `filetime_to_dos_datetime()` from TODO-07 §13 before release.
+
+- [/] `fat32_stamp_create(de)` / `fat32_stamp_modify(de)`: interim helpers using `system_get_ticks()` -- produce approximate timestamps; **must be replaced by TODO-07 §13 `filetime_to_dos_datetime()`**
+- [/] `fat32_create_file_vol()` + `fat32_create_dir_vol()`: call `fat32_stamp_create(&de)` -- timestamps populated but not spec-correct until TODO-07
+- [/] `fat32_update_dir_size()`: calls `fat32_stamp_modify(de)` on write -- approximate WrtTime until TODO-07
+- [ ] Replace `seconds_to_fat_datetime()` with `filetime_to_dos_datetime(KeQuerySystemTime(), tz_bias, ...)` after TODO-07 §13
+- [ ] `fat32_ops.c` read callback: LstAccDate update deferred -- often disabled for performance
+- [x] Commit: `"fs/fat32: timestamps -- CrtTime on create, WrtTime on write, stamp helpers"`
 
 ## 6. FAT32 fsck
 
@@ -310,7 +313,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
 | 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ✅ §4 -- full LFN R/W         |
-| 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ✅ §5 -- create + write stamp |
+| 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- interim, needs T07   |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ⬜ §6 -- fat32_fsck           |
 | ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ⬜ §7 -- vfs_path_fold        |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ⬜ §8 -- per-handle check     |
