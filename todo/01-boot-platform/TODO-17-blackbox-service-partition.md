@@ -12,12 +12,12 @@
 - [`src/kernel/fs/partition.c`](../../src/kernel/fs/partition.c) -- GPT partition discovery, drive letter assignment
 - [`src/kernel/klog_disk.c`](../../src/kernel/klog_disk.c) -- log file creation and flush paths
 - [`include/kernel/klog.h`](../../include/kernel/klog.h) -- `KLOG_DIR` macro (currently `C:\Impossible\System\Logs\`)
-- -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` S4 -- FAT32 LFN write (prerequisite for lowercase filenames)
+- -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` §4 -- FAT32 LFN write (prerequisite for lowercase filenames)
 - -> XREF: `01-boot-platform/TODO-03-boot-device-discovery.md` -- partition GUID validation
 - -> XREF: `02-kernel-core/TODO-02-system-logging.md` -- klog output paths, log rotation policy
 - -> XREF: `02-kernel-core/TODO-16-crash-dump-generation.md` -- MEMORY.DMP + minidump writer targets X:\Crash\
 - -> XREF: `14-host-tools/TODO-08-blackbox-log-extractor.md` -- host-side CLI to extract/view logs from disk images
-- -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` S6 -- FAT32 fsck validates BlackBox integrity
+- -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` §6 -- FAT32 fsck validates BlackBox integrity
 - -> XREF: `01-boot-platform/TODO-14-ab-boot-rollback.md` -- A/B dual-slot layout adds 2 more partitions; BlackBox must coexist
 
 ## Outcome
@@ -38,20 +38,20 @@
 | S  | Order | Deliverable                                          | Depends On        | Status |
 |----|:-----:|------------------------------------------------------|-------------------|:------:|
 | 💎 |   1   | Disk tooling -- add BlackBox partition to GPT layout  | --                |  [ ]   |
-| 💎 |   2   | Build pipeline -- format and populate BlackBox        | S1                |  [ ]   |
-| 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| S1                |  [ ]   |
-| 💎 |   4   | Directory skeleton -- create dirs on first boot       | S3                |  [ ]   |
-| 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | S3, S4            |  [ ]   |
-| 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | S3, S4            |  [ ]   |
-| 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | S3, S4            |  [ ]   |
-| 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| S3, S4           |  [ ]   |
-| 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | S1, S2            |  [ ]   |
-| 💎 |  10   | Disk space management -- log aging, quota, cleanup    | S5                |  [ ]   |
-| 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | S2                |  [ ]   |
-| 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | S3, T04 S6        |  [ ]   |
-| ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | S4, S7            |  [ ]   |
-| S  |  14   | A/B layout compatibility -- 4+ partition coexistence  | S1                |  [ ]   |
-| S  |  15   | Boot platform TODO updates -- XREFs and domain sync   | S1-S14            |  [ ]   |
+| 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [ ]   |
+| 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [ ]   |
+| 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [ ]   |
+| 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [ ]   |
+| 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [ ]   |
+| 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [ ]   |
+| 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4           |  [ ]   |
+| 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [ ]   |
+| 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [ ]   |
+| 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [ ]   |
+| 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [ ]   |
+| ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [ ]   |
+| S  |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [ ]   |
+| S  |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [ ]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
 > S = scope -- internal project hygiene.
@@ -112,7 +112,7 @@ Ensure the BlackBox directory structure exists on first boot and after format.
 - [ ] Idempotent: directories already existing is not an error
 - [ ] Commit: `"kernel: create BlackBox directory skeleton on first boot"`
 
-**Test checkpoint:** First boot after clean build: serial shows 6 `"BlackBox: created X:\..."` messages. Second boot: no creation messages (directories already exist). Verify on QEMU WHPX, TCG.
+**Test checkpoint:** First boot after clean build: serial shows 7 `"BlackBox: created X:\..."` messages (Logs, Boot, Crash, Crash\WER, Perf, Diag, Tools). Second boot: no creation messages (directories already exist). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ## 5. Klog Migration -- Move All Log Output to X:\Logs\
 
@@ -139,7 +139,7 @@ Move the per-boot numbered session logs and boot timeline JSON to `X:\Boot\`.
 - [ ] Keep the same date-stamped naming scheme: `YYMMDDN` where N increments per boot that day
 - [ ] Commit: `"kernel: move per-boot session logs to X:\\Boot\\"`
 
-**Test checkpoint:** After boot, `X:\Boot\` contains `26040501.LOG` and `26040501.json`. Serial log path shows `X:\Boot\` prefix. Verify on QEMU WHPX, TCG.
+**Test checkpoint:** After boot, `X:\Boot\` contains `26040501.LOG` and `26040501.json`. Serial log path shows `X:\Boot\` prefix. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ## 7. Crash Dump Path -- crash_recovery.log to X:\Crash\
 
@@ -150,7 +150,7 @@ Move crash-persistent log recovery output to `X:\Crash\`.
 - [ ] Fallback: if `X:\` not mounted, write to `C:\` as before
 - [ ] Commit: `"kernel: move crash recovery log to X:\\Crash\\"`
 
-**Test checkpoint:** Force panic with `crash_test=1`; on next boot, `crash_recovery.log` appears in `X:\Crash\`, not `C:\Impossible\System\Logs\`. Verify on QEMU WHPX, TCG.
+**Test checkpoint:** Force panic with `crash_test=1`; on next boot, `crash_recovery.log` appears in `X:\Crash\`, not `C:\Impossible\System\Logs\`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ## 8. Perf and Diag -- boot-profile, hwdump to X:\Perf\ and X:\Diag\
 
@@ -162,7 +162,7 @@ Move performance and diagnostic outputs to their BlackBox directories.
 - [ ] Future: ETW trace session exports will go to `X:\Perf\traces\`
 - [ ] Commit: `"kernel: move diagnostic and perf output to X:\\Diag\\ and X:\\Perf\\"`
 
-**Test checkpoint:** After boot, `X:\Diag\hwdump.txt` and `X:\Perf\boot-profile.log` exist with valid content. Verify on QEMU WHPX, TCG.
+**Test checkpoint:** After boot, `X:\Diag\hwdump.txt` and `X:\Perf\boot-profile.log` exist with valid content. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ## 9. Host Tools -- SDK Reads BlackBox from Disk Image
 
@@ -180,6 +180,7 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 
 128 MiB is generous but finite. Without space management, logs eventually fill the partition and writes fail silently. Windows limits CBS.log to ~20 MB with rotation; Linux logrotate enforces per-file and total quotas. BlackBox needs the same discipline.
 
+- [ ] Add `fat32_get_free_clusters(vol)` to `fat32_core.c` -- scan FAT table, count entries == 0 (free); cache result in `vol->free_clusters`
 - [ ] At `klog_disk_enable()` time, check BlackBox free space via `fat32_get_free_clusters(vol)`
 - [ ] If free space < 10% of partition size: run cleanup before first flush
 - [ ] Cleanup policy: delete oldest files in `Boot\` (keep last 10 boot sessions), then oldest rotated logs in `Logs\` (`.1`, `.2`, `.3`)
@@ -188,7 +189,7 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [ ] If cleanup cannot free enough space: log `LOG_ERROR` and fall back to C:\ for this boot session
 - [ ] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
 
-**Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG.
+**Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG, VirtualBox.
 
 ## 11. FAT32 Volume Label -- Set "BLACKBOX" at Format Time
 
@@ -203,11 +204,11 @@ Windows and Linux identify FAT32 volumes by their 11-character volume label (sto
 
 ## 12. Partition Health -- fsck on Mount, Dirty-Bit Check
 
-FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed mid-write, the dirty bit is set. Check it on mount and optionally run fsck. (-> XREF: TODO-04 S6 -- FAT32 fsck implementation)
+FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed mid-write, the dirty bit is set. Check it on mount and optionally run fsck. (-> XREF: TODO-04 §6 -- FAT32 fsck implementation)
 
 - [ ] At BlackBox mount time: read FAT32 dirty bit from BPB
 - [ ] If dirty: `klog(LOG_WARN, "blk", "BlackBox: partition dirty -- possible corruption from previous crash")`
-- [ ] If dirty and `fat32_fsck()` is available (TODO-04 S6): run read-only scan, log results
+- [ ] If dirty and `fat32_fsck()` is available (TODO-04 §6): run read-only scan, log results
 - [ ] Clear dirty bit after successful mount (standard FAT32 behavior)
 - [ ] Set dirty bit on mount, clear on clean unmount/shutdown
 - [ ] Commit: `"kernel: BlackBox FAT32 dirty-bit check and optional fsck on mount"`
@@ -223,14 +224,14 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 > [!TIP]
 > Neither Win11 WER nor Linux apport stages crash reports on a separate cross-platform-readable partition. BlackBox WER reports are FAT32-readable by any OS -- plug the disk into any machine and read the crash context.
 
-- [ ] Create `X:\Crash\WER\` directory in the skeleton (S4)
+- [ ] Create `X:\Crash\WER\` directory in the skeleton (§4)
 - [ ] When a user process crashes (unhandled exception): write a structured report to `X:\Crash\WER\PID_YYYYMMDD_HHMMSS.json`
 - [ ] Report format: `{"pid":N,"name":"app.exe","exception":N,"rip":"0xNNN","stack":["0xN",...],"timestamp":N}`
 - [ ] Limit: keep last 50 reports, delete oldest when exceeded
 - [ ] Future: integrate with TODO-16 minidump writer for full crash context
 - [ ] Commit: `"kernel: WER-style crash report staging in X:\\Crash\\WER\\"`
 
-**Test checkpoint:** Trigger a user-mode crash (NULL deref in cmd.exe test). `X:\Crash\WER\` contains a JSON report with PID, exception code, and stack trace. Verify on QEMU WHPX, TCG.
+**Test checkpoint:** Trigger a user-mode crash (NULL deref in cmd.exe test). `X:\Crash\WER\` contains a JSON report with PID, exception code, and stack trace. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ## 14. A/B Layout Compatibility -- 4+ Partition Coexistence
 
