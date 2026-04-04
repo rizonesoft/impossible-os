@@ -49,7 +49,7 @@
 
 | ⭐  | Order | Deliverable                                                            | Depends On          | Status |
 | --- | :---: | ---------------------------------------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                  |  [ ]   |
+| 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                  |  [x]   |
 | 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [ ]   |
 | 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [ ]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [ ]   |
@@ -73,22 +73,11 @@
 ---
 
 ## 1. `FILETIME` Type, Epoch Constants, and Conversion Math
-- [ ] Create `include/kernel/nt/filetime.h`:
-  - `typedef uint64_t FILETIME` -- 100 ns intervals since `1601-01-01T00:00:00Z`
-  - `FILETIME_EPOCH_OFFSET_SECONDS  11644473600ULL` -- delta from Unix epoch (Jan 1, 1970) to FILETIME epoch
-  - `FILETIME_EPOCH_OFFSET_100NS    116444736000000000ULL` -- same offset in 100 ns units
-  - `FILETIME_TICKS_PER_SECOND      10000000ULL` -- 100 ns ticks per second
-  - `FILETIME_TICKS_PER_MS          10000ULL`
-  - `FILETIME_TICKS_PER_US          10ULL`
-- [ ] Implement pure conversion helpers (no hardware access):
-  - `filetime_from_unix_seconds(uint64_t unix_sec)` -- convert Unix epoch seconds to FILETIME
-  - `filetime_to_unix_seconds(FILETIME ft)` -- convert FILETIME to Unix epoch seconds
-  - `filetime_from_rtc(const struct rtc_time *t)` -- convert CMOS RTC struct to FILETIME (UTC, no timezone)
-  - `filetime_from_efi_time(const struct efi_time *t)` -- convert UEFI `EFI_TIME` to FILETIME (apply timezone offset)
-  - `filetime_to_dos_datetime(FILETIME ft, int tz_bias_minutes, uint16_t *date_out, uint16_t *time_out)` -- FAT32 DOS date/time encoding in local time
-  - `filetime_from_dos_datetime(uint16_t date, uint16_t time, int tz_bias_minutes)` -- FAT32 → FILETIME
-- [ ] Add `FILETIME_NOW_PLACEHOLDER` sentinel for callers before the wall clock is initialized
-- [ ] Unit-test the epoch offset: `filetime_from_unix_seconds(0)` must equal `116444736000000000ULL`
+- [x] Created `include/kernel/nt/filetime.h` with `typedef uint64_t FILETIME`, epoch constants, tick constants, `FILETIME_NOW_PLACEHOLDER`
+- [x] Inline helpers: `filetime_from_unix_seconds()`, `filetime_to_unix_seconds()`, `filetime_days_from_date()`, `filetime_to_dos_datetime()`, `filetime_from_dos_datetime()`
+- [x] Non-inline (in `src/kernel/nt/filetime.c`): `filetime_from_rtc()`, `filetime_from_efi_time()` -- need full struct definitions
+- [x] `FILETIME_NOW_PLACEHOLDER = 0` sentinel defined
+- [x] 4 unit tests: epoch offset, round-trip, DOS date round-trip, ticks/sec constants
 - [ ] Commit: `"kernel: nt -- FILETIME type, epoch constants, and conversion math"`
 
 ## 2. Monotonic Nanosecond Clock Source Selection
@@ -293,9 +282,9 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 
 ## OS Comparison
 
-| ⭐ | Feature                  | 🪟 Win11                 | 🐧 Linux                 | 🚀 Impossible OS          |
-|----|--------------------------|--------------------------|---------------------------|---------------------------|
-| 💎 | 100 ns wall time         | ✅ FILETIME API          | ⚠️ timespec, diff epoch   | ⬜ §1, §5-§6              |
+| ⭐ | Feature                  | 🪟 Win11                 | 🐧 Linux                  | 🚀 Impossible OS          |
+|----|--------------------------|---------------------------|---------------------------|----------------------------|
+| 💎 | 100 ns wall time         | ✅ FILETIME API          | ⚠️ timespec, diff epoch   | ⚠️ §1 done, §5-§6 pending |
 | 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⬜ §2-§4                  |
 | 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |

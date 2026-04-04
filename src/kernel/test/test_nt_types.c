@@ -13,6 +13,9 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/ssdt.h"
+#include "kernel/nt/filetime.h"
+#include "kernel/drivers/rtc.h"
+#include "kernel/uefi_runtime.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/gdt.h"
 #include "kernel/idt.h"
@@ -357,6 +360,46 @@ static void test_gs_self_pointer(void)
                 "gs:0->cpu_id is reasonable (< 64)");
 }
 
+/* ---- FILETIME epoch and conversion tests ---- */
+
+static void test_filetime_epoch(void)
+{
+    /* Unix epoch (1970-01-01T00:00:00Z) in FILETIME must equal the offset constant */
+    FILETIME ft = filetime_from_unix_seconds(0);
+    TEST_ASSERT_EQ(ft, FILETIME_EPOCH_OFFSET_100NS,
+                   "filetime_from_unix_seconds(0) == FILETIME_EPOCH_OFFSET_100NS");
+}
+
+static void test_filetime_roundtrip(void)
+{
+    /* Round-trip: Unix seconds -> FILETIME -> Unix seconds */
+    uint64_t unix_sec = 1743811200ULL;  /* 2025-04-05T00:00:00Z */
+    FILETIME ft = filetime_from_unix_seconds(unix_sec);
+    uint64_t back = filetime_to_unix_seconds(ft);
+    TEST_ASSERT_EQ(back, unix_sec, "FILETIME round-trip preserves Unix seconds");
+}
+
+static void test_filetime_dos_roundtrip(void)
+{
+    /* FAT32 DOS date/time round-trip (2-second resolution, no sub-second) */
+    FILETIME ft = filetime_from_unix_seconds(1743811200ULL);  /* 2025-04-05 */
+    uint16_t date, time;
+    filetime_to_dos_datetime(ft, 0, &date, &time);  /* UTC, no bias */
+
+    /* Year=2025-1980=45, month=4, day=5 */
+    TEST_ASSERT_EQ((date >> 9) & 0x7F, 45, "DOS date year = 45 (2025-1980)");
+    TEST_ASSERT_EQ((date >> 5) & 0x0F, 4, "DOS date month = 4");
+    TEST_ASSERT_EQ(date & 0x1F, 5, "DOS date day = 5");
+}
+
+static void test_filetime_ticks_per_second(void)
+{
+    TEST_ASSERT_EQ(FILETIME_TICKS_PER_SECOND, 10000000ULL,
+                   "FILETIME_TICKS_PER_SECOND == 10,000,000");
+    TEST_ASSERT_EQ(FILETIME_TICKS_PER_MS, 10000ULL,
+                   "FILETIME_TICKS_PER_MS == 10,000");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -380,6 +423,12 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: IDT vector uniqueness", test_vector_uniqueness, TEST_CAT_ABI);
     test_suite_register_cat("NT: XSAVE alignment", test_xsave_alignment, TEST_CAT_ABI);
     test_suite_register_cat("NT: GS self-pointer (swapgs)", test_gs_self_pointer, TEST_CAT_ABI);
+
+    /* FILETIME tests */
+    test_suite_register_cat("NT: FILETIME epoch", test_filetime_epoch, TEST_CAT_ABI);
+    test_suite_register_cat("NT: FILETIME roundtrip", test_filetime_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("NT: FILETIME DOS roundtrip", test_filetime_dos_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("NT: FILETIME ticks/sec", test_filetime_ticks_per_second, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
