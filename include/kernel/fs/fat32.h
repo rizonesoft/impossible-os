@@ -88,3 +88,9 @@ int fat32_rename(uint32_t dir_cluster,
  * Writes BPB, FSInfo, both FAT copies, and empty root directory.
  * Returns 0 on success, -1 on failure. */
 int fat32_format(const struct blkdev *dev, const char *label);
+
+/* Filesystem consistency check.
+ * Validates BPB, compares FAT1/FAT2, detects cross-linked chains and
+ * lost clusters. fix=0: read-only scan. fix=1: repair (truncate cross-links,
+ * free lost clusters). Returns 0 if clean, -1 if errors found/unfixable. */
+int fat32_fsck(struct fat32_volume *vol, int fix);

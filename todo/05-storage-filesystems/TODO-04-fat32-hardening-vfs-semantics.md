@@ -43,7 +43,7 @@
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [x]   |
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [x]   |
 | 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4, T07 §1,§6,§11,§13                                   |  [/]   |
-| 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [ ]   |
+| 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [x]   |
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [ ]   |
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [ ]   |
 | 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [ ]   |
@@ -149,12 +149,13 @@ Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cros
 > [!NOTE]
 > Cross-linked chain: two directory entries whose cluster chains share a common cluster node. Detect by building a `visited[]` bitset (1 bit per cluster, allocated from `pmm_alloc_contiguous`); if a cluster is already marked, the chain is cross-linked. Lost clusters: clusters marked allocated in FAT1 but not reachable from any directory entry chain. Count them; if `fix`: chain them into `\FOUND.000\FILE0000.CHK` in the root directory (like Windows `chkdsk /f`).
 
-- [ ] `fat32_fsck(struct fat32_volume *vol, int fix)`: validate BPB via `fat32_validate_bpb()`; compare FAT1 vs FAT2 (reuse §3 logic); walk all directory entries recursively from root cluster; build `visited[]` bitset
-- [ ] Cross-link detection: on each `fat32_follow_chain()` step, check `visited[cluster]`; if already set: log `[FSCK] Cross-linked chain at cluster %u (files: %s, %s)`; if fix: truncate the second chain at the cross-link point
-- [ ] Lost cluster detection: after walk, scan all FAT entries; if FAT[cluster] != 0 and not in `visited[]`: `lost_count++`; if fix: chain lost runs into root `FOUND.000` directory
-- [ ] Report: log summary `[FSCK] %u errors, %u cross-links, %u lost clusters` + `Fixed` or `Errors remain`; return 0 (clean) or -1 (errors found or unfixable)
-- [ ] `chkdsk D: /fat32` shell: calls `fat32_fsck(vol, fix=0)` for read-only scan; `/fix` flag calls with `fix=1`
-- [ ] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster, chkdsk shell command"`
+- [x] `fat32_fsck(vol, fix)` in new `fat32_fsck.c`: validates BPB via `fat32_validate_bpb()`; compares FAT1/FAT2 via `fat32_compare_repair_fats()`; walks all directory entries recursively from root cluster; builds `visited[]` bitset (1 bit per cluster, PMM-allocated)
+- [x] Cross-link detection: walks each chain marking visited[]; if already set: logs `"cross-linked chain at cluster N"`; if fix: truncates at previous cluster
+- [x] Lost cluster detection: scans all FAT entries; if allocated but not in visited[]: `lost_count++`; if fix: frees the lost cluster
+- [x] Report: `"N errors, N cross-links, N lost clusters -- Clean/Fixed/Errors remain"`; returns 0 (clean) or -1 (errors)
+- [x] Public API: `fat32_fsck(vol, fix)` in `fat32.h`
+- [ ] `chkdsk D: /fat32` shell command: deferred -- requires kernel-mode syscall bridge for shell to invoke fsck; the kernel API is ready
+- [ ] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster detection"`
 
 ## 7. VFS Case-Insensitive Path Resolution
 
@@ -314,7 +315,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ✅ §4 -- full LFN R/W         |
 | 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- interim, needs T07   |
-| 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ⬜ §6 -- fat32_fsck           |
+| 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
 | ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ⬜ §7 -- vfs_path_fold        |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ⬜ §8 -- per-handle check     |
 | 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ⬜ §9 -- last-close unlink    |

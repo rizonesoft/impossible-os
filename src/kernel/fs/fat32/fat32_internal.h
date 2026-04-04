@@ -226,6 +226,10 @@ int      fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
 int      fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
                            const char *old_name, const char *new_name);
 
+/* ---- fat32_fsck.c: Filesystem consistency checker ---- */
+
+int      fat32_fsck(struct fat32_volume *vol, int fix);
+
 /* ---- fat32_ops.c: VFS ops tables ---- */
 
 extern struct vfs_ops fat32_file_ops;
