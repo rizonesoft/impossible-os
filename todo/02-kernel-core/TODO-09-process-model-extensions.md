@@ -196,6 +196,7 @@ Both Win11 (`NtQueryInformationProcess` with `ProcessTimes`, `ProcessIoCounters`
 - [ ] In VFS `vfs_read()` / `vfs_write()`: increment `io_read_count`/`io_write_count` and byte counters on the current task
 - [ ] In `#PF` handler: increment `task_current()->page_fault_count`
 - [ ] `getrusage(RUSAGE_SELF)` Linux-compat wrapper: populate `struct rusage` from task accounting fields
+- [ ] On process exit: release per-process timer resolution requests (-> XREF: TODO-07 §8 `KeSetTimerResolution` per-PID cleanup); bind `s_requests[].pid` to `task_current()->pid` and release on `task_exit()`
 - [ ] Commit: `"kernel: task -- process accounting fields for times, I/O, and VM counters"`
 
 **Test checkpoint:** After running a process, `NtQueryInformationProcess(ProcessTimes)` returns non-zero `KernelTime` and `UserTime`. `ProcessVmCounters` returns non-zero `PageFaultCount`. `ProcessIoCounters` returns non-zero `ReadOperationCount` after a file read. Serial log shows `"task: accounting -- user=<N>ns kernel=<M>ns faults=<F>"` at process exit. `POST16(0xD080)` on entry, `POST16(0xD081)` after struct fields added, `POST16(0xD082)` after scheduler tick ISR instrumented, `POST16(0xD083)` after `#PF` handler instrumented. Range `0xD08x` confirmed free. If crash at 0xD082: scheduler tick ISR modification broke -- revert ISR change and fall back to un-instrumented tick. Test on: QEMU WHPX + TCG. Verify on bare metal -- ISR timing may differ.
