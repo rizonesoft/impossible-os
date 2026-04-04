@@ -485,10 +485,12 @@ void klog_crash_write_to_disk(void)
     #define VFS_O_CREATE 0x04
     #define VFS_O_TRUNC  0x08
 
+    /* Write to X:\Crash\ (BlackBox) or C:\Impossible\System\Logs\ (fallback) */
+    const char *cr_dir = klog_using_blackbox ? "X:\\Crash\\" : klog_dir;
     char cr_path[64];
     {
         int cp = 0, cj;
-        for (cj = 0; klog_dir[cj]; cj++) cr_path[cp++] = klog_dir[cj];
+        for (cj = 0; cr_dir[cj]; cj++) cr_path[cp++] = cr_dir[cj];
         const char *fn = "crash_recovery.log";
         for (cj = 0; fn[cj]; cj++) cr_path[cp++] = fn[cj];
         cr_path[cp] = '\0';
@@ -554,7 +556,7 @@ void klog_crash_write_to_disk(void)
 
     vfs_close(file);
     klog(LOG_INFO, "CRASH", "Crash recovery log: %u entries written to %scrash_recovery.log",
-         (uint64_t)s_recovered_count, klog_dir);
+         (uint64_t)s_recovered_count, cr_dir);
 
     /* Clear recovered buffer */
     s_recovered_count = 0;

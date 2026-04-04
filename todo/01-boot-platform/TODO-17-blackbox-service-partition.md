@@ -43,7 +43,7 @@
 | 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [x]   |
 | 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [x]   |
 | 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [x]   |
-| 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [ ]   |
+| 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [x]   |
 | 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [ ]   |
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [ ]   |
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [ ]   |
@@ -140,7 +140,7 @@ Move the per-boot numbered session logs and boot timeline JSON to `X:\Boot\`.
 - [x] `klog_using_blackbox` flag exposed in `klog.h` for boot subsystems to select correct subdirectory
 - [x] Serial session logs remain at `X:\Logs\Serial\Serial_YYMMDDNN.log` (handled by §5)
 - [x] Stale `BOOT_NNN.LOG` comments updated
-- [ ] Commit: `"kernel: move per-boot session logs to X:\\Boot\\"`
+- [x] Commit: `"kernel: move per-boot session logs to X:\\Boot\\"`
 
 **Test checkpoint:** After boot, `X:\Boot\` contains `26040501.LOG` and `26040501.json`. Serial log path shows `X:\Boot\` prefix. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -148,9 +148,9 @@ Move the per-boot numbered session logs and boot timeline JSON to `X:\Boot\`.
 
 Move crash-persistent log recovery output to `X:\Crash\`.
 
-- [ ] Update `klog_crash_write_to_disk()` in `klog.c` to write `X:\Crash\crash_recovery.log` instead of `C:\Impossible\System\Logs\crash_recovery.log`
-- [ ] Future: `MEMORY.DMP` crash dumps (TODO-16) will also target `X:\Crash\`
-- [ ] Fallback: if `X:\` not mounted, write to `C:\` as before
+- [x] `klog_crash_write_to_disk()` writes to `X:\Crash\crash_recovery.log` when BlackBox mounted, C:\ fallback
+- [x] Future: `MEMORY.DMP` crash dumps (TODO-16) will also target `X:\Crash\`
+- [x] Fallback path uses `klog_dir` (C:\ logs directory)
 - [ ] Commit: `"kernel: move crash recovery log to X:\\Crash\\"`
 
 **Test checkpoint:** Force panic with `crash_test=1`; on next boot, `crash_recovery.log` appears in `X:\Crash\`, not `C:\Impossible\System\Logs\`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
