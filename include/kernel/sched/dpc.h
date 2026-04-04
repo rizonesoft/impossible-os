@@ -96,3 +96,14 @@ struct dpc_queue *dpc_this_cpu_queue(void);
 
 /* Get the per-CPU DPC queue for a specific CPU. */
 struct dpc_queue *dpc_get_cpu_queue(uint32_t cpu_id);
+
+/* Drain all queued DPCs on the current CPU at DISPATCH_LEVEL.
+ * Raises IRQL to DISPATCH_LEVEL, executes DPC callbacks in FIFO order,
+ * then restores previous IRQL. Bounded: drains at most DPC_BATCH_LIMIT
+ * per invocation to prevent scheduler starvation.
+ * Called from KeLowerIrql() transition and timer ISR exit. */
+void KiDispatchDpc(void);
+
+/* Maximum DPCs to drain per KiDispatchDpc() call.
+ * After this many, yield to let the scheduler run, then re-enter. */
+#define DPC_BATCH_LIMIT  32

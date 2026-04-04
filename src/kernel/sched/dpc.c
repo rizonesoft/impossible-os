@@ -21,6 +21,11 @@
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
 
+/* Forward declare -- avoid circular include with irql.h */
+extern KIRQL KeGetCurrentIrql(void);
+extern void  KeRaiseIrql(KIRQL new_irql, KIRQL *old_irql);
+extern void  KeLowerIrql(KIRQL old_irql);
+
 /* ---- Per-CPU DPC queues -------------------------------------------------- */
 
 /* One queue per CPU, indexed by cpu_id.  Static allocation avoids any
@@ -195,4 +200,77 @@ int KeRemoveQueueDpc(KDPC *dpc)
     spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
 
     return found;
+}
+
+/* ---- KiDispatchDpc -- drain DPC queue at DISPATCH_LEVEL ----------------- */
+
+void KiDispatchDpc(void)
+{
+    uint32_t cpu_id;
+    struct dpc_queue *q;
+    uint64_t irq_flags;
+    KIRQL old_irql;
+    uint32_t dispatched = 0;
+
+    struct per_cpu_data *cpu = smp_this_cpu();
+    if (!cpu) return;
+    cpu_id = cpu->cpu_id;
+    if (cpu_id >= MAX_CPUS) return;
+
+    q = &cpu_queues[cpu_id];
+
+    /* Fast check: skip if queue is empty */
+    if (!q->head)
+        return;
+
+    /* Raise to DISPATCH_LEVEL */
+    KeRaiseIrql(DISPATCH_LEVEL, &old_irql);
+
+    /* Drain DPCs in FIFO order, bounded by DPC_BATCH_LIMIT */
+    while (dispatched < DPC_BATCH_LIMIT) {
+        KDPC *dpc;
+        KDEFERRED_ROUTINE routine;
+        void *ctx, *a1, *a2;
+
+        /* Dequeue head under lock */
+        spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
+
+        dpc = q->head;
+        if (!dpc) {
+            spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+            break;
+        }
+
+        /* Unlink head */
+        q->head = dpc->next;
+        if (!q->head)
+            q->tail = (KDPC *)0;
+        q->depth--;
+
+        /* Snapshot callback + args before releasing lock */
+        routine = dpc->routine;
+        ctx     = dpc->deferred_ctx;
+        a1      = dpc->system_arg1;
+        a2      = dpc->system_arg2;
+
+        dpc->next   = (KDPC *)0;
+        dpc->queued = 0;
+
+        spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+
+        /* Execute the DPC callback at DISPATCH_LEVEL */
+        if (routine)
+            routine(dpc, ctx, a1, a2);
+
+        dispatched++;
+        q->executed++;
+    }
+
+    /* Restore IRQL */
+    KeLowerIrql(old_irql);
+
+    if (dispatched > 0) {
+        klog(LOG_DEBUG, "dpc", "dispatched %u DPCs on CPU %u",
+             (uint64_t)dispatched, (uint64_t)cpu_id);
+    }
 }
