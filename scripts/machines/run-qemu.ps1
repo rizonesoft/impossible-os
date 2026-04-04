@@ -130,7 +130,7 @@ $QemuArgs += @(
     '-device', 'ich9-ahci,id=ahci0',
     '-device', 'ide-hd,drive=disk0,bus=ahci0.0',
     '-m', '2G',
-    '-serial', 'stdio',
+    '-serial', 'SERIAL_PLACEHOLDER',
     '-vga', 'none',
     '-device', "$VgaDevice,xres=$Xres,yres=$Yres",
     '-device', 'rtl8139,netdev=net0',
@@ -168,18 +168,21 @@ if ($ExtraArgs) {
 
 $SerialLogPath = Join-Path $PROJECT "scripts\debug\serial.log"
 
+# Wire serial output: use QEMU's native chardev logfile to capture serial
+# to a file while still displaying on the terminal. This avoids PowerShell
+# pipe/Tee-Object issues with native command stderr and stdout buffering.
+$serialIdx = [array]::IndexOf($QemuArgs, 'SERIAL_PLACEHOLDER')
+if ($SerialLog -and $serialIdx -ge 0) {
+    Write-Host "  Serial: -> $SerialLogPath" -ForegroundColor DarkGray
+    # Replace: -serial PLACEHOLDER -> -chardev stdio,logfile=path -serial chardev:ser0
+    $QemuArgs[$serialIdx] = 'chardev:ser0'
+    $QemuArgs = @($QemuArgs[0..($serialIdx-1)]) + @('-chardev', "stdio,id=ser0,logfile=$SerialLogPath,logappend=off", '-serial') + @($QemuArgs[$serialIdx..($QemuArgs.Count-1)])
+} elseif ($serialIdx -ge 0) {
+    $QemuArgs[$serialIdx] = 'stdio'
+}
+
 try {
-    # Temporarily allow native command stderr (QEMU emits harmless warnings
-    # like "Ignoring request for interrupt vector 0" that PowerShell treats
-    # as terminating errors when $ErrorActionPreference is Stop).
-    $ErrorActionPreference = "SilentlyContinue"
-    if ($SerialLog) {
-        Write-Host "  Serial: -> $SerialLogPath" -ForegroundColor DarkGray
-        & $QEMU @QemuArgs 2>$null | Tee-Object -FilePath $SerialLogPath
-    } else {
-        & $QEMU @QemuArgs
-    }
-    $ErrorActionPreference = "Stop"
+    & $QEMU @QemuArgs
 } finally {
     # Always restore boot.conf to defaults
     if ($PatchArgs.Count -gt 0) {
