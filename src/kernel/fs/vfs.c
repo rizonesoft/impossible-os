@@ -16,6 +16,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "kernel/nt/ntstatus.h"
 
 /* Drive mount table: one entry per drive letter A-Z */
 struct drive_mount {
@@ -213,11 +214,68 @@ int vfs_unmount(char drive_letter)
     return 0;
 }
 
+/* --- Share-mode enforcement --- */
+
+int vfs_check_sharing(struct vfs_node *node, uint32_t access, uint32_t share)
+{
+    uint32_t i;
+    uint32_t new_access = access & (VFS_O_READ | VFS_O_WRITE);
+    uint32_t new_share  = share;
+
+    for (i = 0; i < VFS_MAX_HANDLES; i++) {
+        vfs_open_handle_t *h = &node->open_handles[i];
+        if (!h->active)
+            continue;
+
+        /* Check: does the new open conflict with existing handle? */
+        if ((new_access & ~h->share_mode) != 0)
+            return STATUS_SHARING_VIOLATION;
+        /* Check: does the existing handle conflict with new share mode? */
+        if ((h->access_mode & ~new_share) != 0)
+            return STATUS_SHARING_VIOLATION;
+    }
+
+    return 0;
+}
+
+static int vfs_add_handle(struct vfs_node *node, uint32_t access, uint32_t share)
+{
+    uint32_t i;
+    for (i = 0; i < VFS_MAX_HANDLES; i++) {
+        if (!node->open_handles[i].active) {
+            node->open_handles[i].access_mode = access & (VFS_O_READ | VFS_O_WRITE);
+            node->open_handles[i].share_mode  = share;
+            node->open_handles[i].active      = 1;
+            return 0;
+        }
+    }
+    return -1;  /* no free handle slots */
+}
+
+static void vfs_remove_handle(struct vfs_node *node, uint32_t access)
+{
+    uint32_t i;
+    /* Remove first matching handle (LIFO-ish) */
+    for (i = 0; i < VFS_MAX_HANDLES; i++) {
+        if (node->open_handles[i].active &&
+            node->open_handles[i].access_mode == (access & (VFS_O_READ | VFS_O_WRITE))) {
+            node->open_handles[i].active = 0;
+            return;
+        }
+    }
+}
+
 struct vfs_node *vfs_open(const char *path, uint32_t flags)
 {
     const char *rest;
     int idx;
     struct vfs_node *node;
+    /* Extract share mode from upper bits of flags (if provided) */
+    uint32_t share = (flags >> 8) & 0x07;  /* bits 10:8 = share mode */
+
+    /* Default share mode: share everything (compatible with existing callers) */
+    if (share == 0)
+        share = VFS_SHARE_READ | VFS_SHARE_WRITE | VFS_SHARE_DELETE;
 
     idx = parse_drive(path, &rest);
     if (idx < 0 || !mounts[idx].mounted)
@@ -228,11 +286,23 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
     if (!node)
         return (struct vfs_node *)0;
 
+    /* Share-mode check (§8): only for files, not directories */
+    if ((node->type & VFS_FILE) && node->ref_count > 0) {
+        if (vfs_check_sharing(node, flags, share) != 0)
+            return (struct vfs_node *)0;
+    }
+
+    /* Track this open handle */
+    if (node->type & VFS_FILE)
+        vfs_add_handle(node, flags, share);
+
     /* Call the FS-specific open if available */
     node->flags = flags;
     if (node->ops && node->ops->open) {
-        if (node->ops->open(node, flags) != 0)
+        if (node->ops->open(node, flags) != 0) {
+            vfs_remove_handle(node, flags);
             return (struct vfs_node *)0;
+        }
     }
 
     node->ref_count++;
@@ -246,6 +316,17 @@ int vfs_close(struct vfs_node *node)
 
     if (node->ref_count > 0)
         node->ref_count--;
+
+    /* Remove one handle tracking entry */
+    if (node->type & VFS_FILE)
+        vfs_remove_handle(node, node->flags);
+
+    /* Delete-on-close: if last handle and marked, trigger delete (§9) */
+    if (node->delete_on_close && node->ref_count == 0) {
+        if (node->parent && node->parent->ops && node->parent->ops->unlink)
+            node->parent->ops->unlink(node->parent, node->name);
+        node->delete_on_close = 0;
+    }
 
     if (node->ops && node->ops->close)
         return node->ops->close(node);

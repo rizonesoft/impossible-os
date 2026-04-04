@@ -45,7 +45,7 @@
 | 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4, T07 §1,§6,§11,§13                                   |  [/]   |
 | 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [x]   |
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [x]   |
-| 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [ ]   |
+| 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [x]   |
 | 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [ ]   |
 | 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [ ]   |
 | 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [ ]   |
@@ -171,7 +171,7 @@ Apply a unified uppercase fold in `vfs_open()` before path component lookup, so 
 - [x] `drive_index()`: already uppercases drive letter (verified, no change needed)
 - [x] Case-insensitive resolution applies to all path-taking VFS functions: `vfs_open`, `vfs_create`, `vfs_unlink`, `vfs_stat`, `vfs_truncate` (all use `walk_path` internally)
 - [x] `fat32_strcasecmp()` and `ntfs_filename_match()` both do their own case-insensitive compare in `finddir()` -- the uppercased component from VFS is compatible with both
-- [ ] Commit: `"fs: vfs_path_fold() -- unified ASCII uppercase fold in vfs_open() before finddir()"`
+- [x] Commit: `"fs: vfs_path_fold() -- unified ASCII uppercase fold in vfs_open() before finddir()"`
 
 ## 8. VFS Share-Mode Enforcement
 
@@ -182,11 +182,12 @@ Add `share_mode` and `access_mode` to the per-open-handle struct. On `vfs_open()
 > [!NOTE]
 > Windows share-mode semantics: when opening a file with `DesiredAccess=READ` and `ShareMode=FILE_SHARE_READ`, any existing handle with `DesiredAccess=WRITE` that did not grant `FILE_SHARE_WRITE` causes `STATUS_SHARING_VIOLATION`. Implement as: on `vfs_open()`, iterate all open handles for the same inode; for each existing handle `H`: if `(new_access & ~H.share_mode) != 0` OR `(H.access & ~new_share_mode) != 0`, return `STATUS_SHARING_VIOLATION`.
 
-- [ ] Add to `vfs_handle_t` (or equivalent open-handle struct): `uint32_t access_mode`, `uint32_t share_mode`
-- [ ] Per-inode open-handle list: maintain `vfs_node_t.open_handles[]` (or a global inode→handle map keyed by device+inode); populated by `vfs_open()`, cleared by `vfs_close()`
-- [ ] `vfs_open()`: after resolving the node, call `vfs_check_sharing(node, desired_access, share_mode)`; on conflict return `STATUS_SHARING_VIOLATION`
-- [ ] `vfs_check_sharing(node, access, share)`: iterate node's open handles; apply conflict rule above; return 0 (OK) or `STATUS_SHARING_VIOLATION`
-- [ ] `vfs_close()`: remove handle from node's open-handle list; if node marked delete-on-close and list is now empty: trigger delete (§9)
+- [x] `vfs_open_handle_t` with `access_mode`, `share_mode`, `active` -- 8-slot array per `vfs_node`
+- [x] `vfs_node.open_handles[VFS_MAX_HANDLES]`: populated by `vfs_open()`, cleared by `vfs_close()`
+- [x] `vfs_open()`: extracts share mode from flags bits 10:8; defaults to share-all for backward compatibility; calls `vfs_check_sharing()` on files with `ref_count > 0`
+- [x] `vfs_check_sharing(node, access, share)`: iterates open handles; applies Win32 conflict rule: `(new_access & ~H.share) || (H.access & ~new_share)` -> `STATUS_SHARING_VIOLATION`
+- [x] `vfs_close()`: removes handle from list; triggers delete-on-close if marked and last handle (§9 prep)
+- [x] `STATUS_SHARING_VIOLATION` (0xC0000043) added to `ntstatus.h`
 - [ ] Commit: `"fs: VFS share-mode -- per-handle access/share fields, conflict check, STATUS_SHARING_VIOLATION"`
 
 ## 9. Mark-for-Delete-on-Close
@@ -318,7 +319,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- interim, needs T07   |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
 | ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ✅ §7 -- walk_path folds      |
-| 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ⬜ §8 -- per-handle check     |
+| 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
 | 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ⬜ §9 -- last-close unlink    |
 | 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ⬜ §10 -- vfs_lock_file       |
 | 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ⬜ §11 -- stub returns        |

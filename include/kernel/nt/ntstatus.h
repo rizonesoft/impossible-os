@@ -63,6 +63,10 @@ typedef int32_t NTSTATUS;
 #define STATUS_SEMAPHORE_LIMIT_EXCEEDED     ((NTSTATUS)0xC0000044)  /* semaphore count exceeded max */
 #define STATUS_MUTANT_NOT_OWNED             ((NTSTATUS)0xC0000046)  /* release mutex not owned by caller */
 
+/* ---- Error codes -- sharing / lock ---------------------------------------- */
+
+#define STATUS_SHARING_VIOLATION            ((NTSTATUS)0xC0000043)  /* conflicting share mode */
+
 /* ---- Error codes -- file I/O --------------------------------------------- */
 
 #define STATUS_INVALID_DEVICE_REQUEST       ((NTSTATUS)0xC0000010)  /* IRP to wrong device type */

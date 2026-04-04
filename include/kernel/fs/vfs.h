@@ -29,6 +29,21 @@ _Static_assert(VFS_MAX_DRIVES == 26, "VFS drive letters must be A-Z (26)");
 #define VFS_O_CREATE     0x04
 #define VFS_O_APPEND     0x08
 #define VFS_O_TRUNC      0x10
+#define VFS_O_DELETE_ON_CLOSE  0x20
+
+/* Share mode flags (compatible with Win32 FILE_SHARE_*) */
+#define VFS_SHARE_READ   0x01
+#define VFS_SHARE_WRITE  0x02
+#define VFS_SHARE_DELETE 0x04
+
+/* Per-file open handle tracking (for share-mode enforcement) */
+#define VFS_MAX_HANDLES  8
+
+typedef struct {
+    uint32_t access_mode;   /* VFS_O_READ | VFS_O_WRITE */
+    uint32_t share_mode;    /* VFS_SHARE_READ | VFS_SHARE_WRITE | VFS_SHARE_DELETE */
+    uint8_t  active;        /* 1 = slot in use */
+} vfs_open_handle_t;
 
 /* Forward declarations */
 struct vfs_node;
@@ -88,6 +103,9 @@ struct vfs_node {
     struct vfs_ops  *ops;        /* filesystem operations */
     void            *fs_data;    /* filesystem-private data */
     struct vfs_node *parent;     /* parent directory */
+    /* Share-mode enforcement (§8) */
+    vfs_open_handle_t open_handles[VFS_MAX_HANDLES];
+    uint8_t          delete_on_close;  /* 1 = delete when last handle closes (§9) */
 };
 
 /* Filesystem driver descriptor -- registered by each FS implementation */
@@ -151,3 +169,8 @@ struct vfs_node *vfs_get_drive_root(char drive_letter);
 
 /* Check if a drive letter is mounted */
 int vfs_is_mounted(char drive_letter);
+
+/* Check share-mode compatibility for a new open.
+ * Returns 0 if compatible, STATUS_SHARING_VIOLATION on conflict.
+ * Called internally by vfs_open(); exposed for testing. */
+int vfs_check_sharing(struct vfs_node *node, uint32_t access, uint32_t share);
