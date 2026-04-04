@@ -293,26 +293,26 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 
 ## OS Comparison
 
-| ⭐ | Feature                                | 🪟 Win11                                       | 🐧 Linux                                         | 🚀 Impossible OS                                 |
-|----|----------------------------------------|-----------------------------------------------|--------------------------------------------------|--------------------------------------------------|
-| 💎 | 100 ns epoch-anchored wall time        | ✅ `FILETIME`, `GetSystemTimeAsFileTime()`    | ⚠️ `timespec` (ns) since 1970; different        | ⬜ §1, §5–§6                                    |
-| 💎 | High-resolution monotonic counter      | ✅ `QueryPerformanceCounter` via TSC/HPET     | ✅ `clock_gettime(CLOCK_MONOTONIC)` via vDSO    | ⬜ §2–§4                                        |
-| 💎 | Invariant TSC frequency detection      | ✅ CPUID 0x15 + TSC_INVARIANT                 | ✅ `tsc_khz` calibration at boot                | ⬜ §3                                           |
-| 💎 | Per-CPU TSC synchronization on SMP     | ✅ TSC synchronization at INIT                | ✅ `check_tsc_sync_source()` + offset           | ⬜ §3                                           |
-| 💎 | HPET driver for QPC fallback           | ✅ used when TSC unreliable                   | ✅ `hpet_clocksource`                           | ⬜ §4                                           |
-| 💎 | Wall clock from UEFI GetTime           | ✅ `EfiGetVariable` / `GetSystemTime()`       | ✅ `efi_get_time()`                             | ⬜ §5                                           |
-| 💎 | Interrupt time (biased + unbiased)     | ✅ `KeQueryInterruptTime` / `Unbiased`        | ✅ `CLOCK_BOOTTIME` / `CLOCK_MONOTONIC`         | ⬜ §7                                           |
-| 💎 | Timer resolution control               | ✅ `NtSetTimerResolution` (per-process)       | ✅ `timer_settime()` + `NO_HZ`                  | ⬜ §8                                           |
-| 💎 | Sub-microsecond precise wall time      | ✅ `GetSystemTimePreciseAsFileTime`           | ✅ `clock_gettime(CLOCK_REALTIME)` via vDSO     | ⬜ §10                                          |
-| 💎 | Timezone + DST offset management       | ✅ registry `TimeZoneInformation`             | ✅ `/etc/localtime` + kernel `sys_tz`           | ⬜ §11                                          |
-| 💎 | KUSD / vDSO time page (no syscall)     | ✅ `KUSER_SHARED_DATA` at 0x7FFE0000         | ✅ vDSO `clock_gettime`                         | ⬜ §12                                          |
-| 💎 | FAT32 local-time timestamps            | ✅ kernel32 → FAT32 dir entry                 | ✅ fat32 inode time                              | ⬜ §13                                          |
-| 💎 | NTFS UTC FILETIME timestamps           | ✅ `$STANDARD_INFORMATION` fields             | ✅ ntfs3 `current_time()` → FILETIME            | ⬜ §13                                          |
-| 💎 | Suspend/hibernate time bias            | ✅ `InterruptTimeBias` on resume              | ✅ `CLOCK_BOOTTIME` accounts for suspend        | ⬜ §14                                          |
-| 💎 | Leap second policy (not counted)       | ✅ FILETIME skips leap seconds                | ✅ POSIX mandates 86400 s/day                   | ⬜ §15                                          |
-| 💎 | NTP kernel adjustment interface        | ✅ `W32tm` → `NtSetSystemTime`                | ✅ `adjtimex()` syscall (phase + freq)          | ⬜ §17                                          |
-| ⭐ | Fixed QPC frequency (10 MHz)           | ⚠️ varies by hardware                        | ❌ no fixed-frequency monotonic API             | ⬜ §9 -- stable, hardware-independent            |
-| ⭐ | Explicit coarse time API               | ⚠️ implicit via KUSD reads                   | ⚠️ `ktime_get_coarse()` (internal only)        | ⬜ §16 -- `KeQuerySystemTimeCoarse()`            |
+| ⭐ | Feature                  | 🪟 Win11                 | 🐧 Linux                 | 🚀 Impossible OS          |
+|----|--------------------------|--------------------------|---------------------------|---------------------------|
+| 💎 | 100 ns wall time         | ✅ FILETIME API          | ⚠️ timespec, diff epoch   | ⬜ §1, §5-§6              |
+| 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⬜ §2-§4                  |
+| 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
+| 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
+| 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ⬜ §4                     |
+| 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ⬜ §5                     |
+| 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ⬜ §7                     |
+| 💎 | Timer resolution         | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ⬜ §8                     |
+| 💎 | Precise wall time        | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ⬜ §10                    |
+| 💎 | Timezone + DST           | ✅ registry TZ info      | ✅ /etc/localtime         | ⬜ §11                    |
+| 💎 | KUSD / vDSO time page    | ✅ KUSD 0x7FFE0000       | ✅ vDSO clock_gettime     | ⬜ §12                    |
+| 💎 | FAT32 timestamps         | ✅ kernel32 -> FAT dir   | ✅ fat inode time         | ⬜ §13                    |
+| 💎 | NTFS FILETIME            | ✅ $STANDARD_INFO        | ✅ ntfs3 current_time     | ⬜ §13                    |
+| 💎 | Suspend time bias        | ✅ InterruptTimeBias     | ✅ CLOCK_BOOTTIME         | ⬜ §14                    |
+| 💎 | Leap second policy       | ✅ skips leap seconds    | ✅ 86400 s/day            | ⬜ §15                    |
+| 💎 | NTP adjustment           | ✅ W32tm + SetSystemTime | ✅ adjtimex syscall       | ⬜ §17                    |
+| ⭐ | Fixed 10 MHz QPC         | ⚠️ varies by hardware    | ❌ no fixed-freq API      | ⬜ §9 -- stable freq      |
+| ⭐ | Coarse time API          | ⚠️ implicit KUSD         | ⚠️ ktime_get_coarse       | ⬜ §16 -- explicit API    |
 
 > **After §1–§15:** Impossible OS matches Windows NT exactly on FILETIME semantics, QPC, interrupt time, timer resolution, precise time, timezone handling, KUSD time updates, suspend bias, and filesystem timestamp accuracy.
 > **§9** locks `QueryPerformanceFrequency` to 10 MHz (FILETIME ticks/second), making it constant and hardware-independent -- Windows still returns variable hardware frequencies and apps must handle this; Linux has no equivalent fixed-frequency API.
