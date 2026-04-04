@@ -154,7 +154,7 @@ Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cros
 - [x] Lost cluster detection: scans all FAT entries; if allocated but not in visited[]: `lost_count++`; if fix: frees the lost cluster
 - [x] Report: `"N errors, N cross-links, N lost clusters -- Clean/Fixed/Errors remain"`; returns 0 (clean) or -1 (errors)
 - [x] Public API: `fat32_fsck(vol, fix)` in `fat32.h`
-- [ ] `chkdsk D: /fat32` shell command: deferred -- requires kernel-mode syscall bridge for shell to invoke fsck; the kernel API is ready
+- [x] `chkdsk` shell command: moved to `05-storage-filesystems/TODO-13-partition-tools-storage-suite.md §4` -- kernel `fat32_fsck()` API is ready; shell wiring is §4's scope
 - [x] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster detection"`
 
 ## 7. VFS Case-Insensitive Path Resolution
@@ -246,7 +246,7 @@ Current `fat32_make_short_name()` hardcodes `~1` when a name needs truncation. W
 - [x] `fat32_generate_sfn(vol, dir_cluster, name, sfn)`: generates 8.3 SFN; if name doesn't need LFN, uses direct conversion; else tries `~1` through `~9` (6-char base), then `~10` through `~99` (5-char base)
 - [x] `sfn_exists_in_dir()`: scans directory entries for matching SFN (case-sensitive 11-byte compare, SFNs are always uppercase)
 - [x] Replaced `fat32_make_short_name()` in both `fat32_create_file_vol()` and `fat32_create_dir_vol()` with `fat32_generate_sfn()`
-- [ ] Commit: `"fs/fat32: SFN numeric tail collision -- ~1 through ~9, 5-char ~10+"`
+- [x] Commit: `"fs/fat32: SFN numeric tail collision -- ~1 through ~9, 5-char ~10+"`
 
 **Test checkpoint:** Create 10 files with names `"LongFileName_01.txt"` through `"LongFileName_10.txt"` -- directory entries show `LONGFI~1.TXT` through `LONGFI~9.TXT` then `LONGF~10.TXT`. All 10 files readable by name. Verify on QEMU WHPX, TCG, bare metal.
 
