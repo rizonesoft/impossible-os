@@ -58,19 +58,16 @@
 
 | | Linux | Windows | Impossible OS |
 |---|---:|---:|---:|
-| **Lines of code** | ~28,000,000 | ~50,000,000 | 144054 |
+| **Lines of code** | ~28,000,000 | ~50,000,000 | 144,054 |
 | **Developers** | ~1,000 active | ~5,000 peak | 1 |
-| **Time span** | 33 years | 40 years | 28 day(s) |
-| **LOC/dev/year** | ~848 | ~250 | 1877846 |
+| **Time span** | 33 years | 40 years | 28 days |
 
-> At the industry-standard rate of 10,000 LOC/developer/year (COCOMO II, system
-> programming), this codebase represents **14.4 developer-years**
-> of work. One developer produced it in **28 day(s)** -- the mass equivalent output
-> of **187 developers**, writing **2214x** faster than a Linux
-> kernel contributor and **7511x** faster than a Windows developer.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 144,054
+> lines of kernel code would take **187 developers** working for
+> **28 days**. One developer did it.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-04 15:12 · commit `d88bddf`*
+*Last updated: 2026-04-04 15:25 · commit `b0538dd`*
