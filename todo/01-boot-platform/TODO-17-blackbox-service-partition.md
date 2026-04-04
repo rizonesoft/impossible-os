@@ -37,7 +37,7 @@
 
 | ⭐ | Order | Deliverable                                            | Depends On       | Status |
 |----|:-----:|-------------------------------------------------------|-------------------|:------:|
-| 💎 |   1   | Disk tooling -- add BlackBox partition to GPT layout  | --                |  [ ]   |
+| 💎 |   1   | Disk tooling -- add BlackBox partition to GPT layout  | --                |  [x]   |
 | 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [ ]   |
 | 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [ ]   |
 | 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [ ]   |
@@ -62,13 +62,15 @@
 
 Modify `make-system-disk.c` to create a 3-partition GPT: EFI + BlackBox + IXFS.
 
-- [ ] Add BlackBox partition entry between EFI and IXFS in the GPT partition array
-- [ ] GPT type GUID: Microsoft Basic Data (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`) -- Windows auto-mounts
-- [ ] GPT partition name: `"BlackBox"` (UTF-16LE, stored in partition entry bytes 56-127)
-- [ ] Size: 128 MiB (262144 sectors at 512 B/sec), starting at next 1 MiB-aligned LBA after EFI
-- [ ] IXFS partition shifts to start after BlackBox (reduced to ~316 MiB on a 512 MiB disk)
-- [ ] Update `GPT_NUM_ENTRIES` if needed (currently 128, sufficient)
-- [ ] Verify: backup GPT header and entry array at end of disk still correct
+- [x] Add BlackBox partition entry between EFI and IXFS in `make-system-disk.c` GPT partition array (entry 1, shifting IXFS to entry 2)
+- [x] GPT type GUID: Microsoft Basic Data (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`) -- Windows auto-mounts
+- [x] GPT partition name: `"BlackBox"` (UTF-16LE)
+- [x] Size: 128 MiB (262144 sectors), LBA 133120-395263, 1 MiB-aligned after EFI
+- [x] IXFS shifts to LBA 395264 (~319 MiB on 512 MiB disk)
+- [x] `GPT_NUM_ENTRIES` = 128 (sufficient, unchanged)
+- [x] Backup GPT header and entry array correct (verified via fdisk)
+- [x] Makefile updated: `BB_OFFSET`, `BB_SIZE`, `mkfs.fat -n BLACKBOX`, `mmd` creates 6 directories
+- [x] `.info` file includes `BB_OFFSET` and `BB_SIZE` for downstream tools
 - [ ] Commit: `"tools: add BlackBox 128 MiB FAT32 partition to GPT layout"`
 
 **Test checkpoint:** `make-system-disk` produces a 3-partition disk image. `fdisk -l build/system-disk.img` shows EFI (64 MiB) + BlackBox (128 MiB) + IXFS (~316 MiB). BlackBox partition type is Microsoft Basic Data. GPT partition name is "BlackBox".
@@ -285,16 +287,16 @@ Update cross-references across affected TODOs.
 ## OS Comparison
 
 | ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS                    |
-|----|----------------------------|----------------------------|-----------------------------|-------------------------------------|
-| 💎 | Separate log partition     | ✅ Recovery + WinRE        | ⚠️ /var/log on root        | ⬜ S1-S3 -- X:\ BlackBox FAT32      |
-| 💎 | Cross-platform readable    | ✅ NTFS (with drivers)     | ✅ ext4 (with drivers)     | ⬜ S1 -- FAT32 universal             |
-| 💎 | Crash dump isolation       | ✅ C:\Windows\MEMORY.DMP   | ✅ /var/crash              | ⬜ S7 -- X:\Crash\                   |
+|----|----------------------------|-----------------------------|----------------------------|--------------------------------------|
+| 💎 | Separate log partition     | ✅ Recovery + WinRE        | ⚠️ /var/log on root        | ⚠️ §1 done -- 3-part GPT layout     |
+| 💎 | Cross-platform readable    | ✅ NTFS (with drivers)     | ✅ ext4 (with drivers)     | ⬜ S1 -- FAT32 universal            |
+| 💎 | Crash dump isolation       | ✅ C:\Windows\MEMORY.DMP   | ✅ /var/crash              | ⬜ S7 -- X:\Crash\                  |
 | ⭐ | Per-boot log files         | ❌ Not built-in            | ❌ Not built-in            | ⬜ S6 -- X:\Boot\YYMMDDN.LOG        |
 | ⭐ | Boot timeline JSON         | ❌ Not built-in            | ❌ Not built-in            | ⬜ S6 -- X:\Boot\YYMMDDN.json       |
 | 💎 | Auto-mount on host         | ✅ Windows assigns letter  | ✅ udisks2 auto-mount      | ⬜ S1 -- Basic Data GUID            |
 | 💎 | Volume label               | ✅ NTFS volume label       | ✅ e2label / fatlabel      | ⬜ S11 -- "BLACKBOX" FAT32 label    |
 | 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ⬜ S3 -- GPT name "BlackBox"        |
-| 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ⬜ S4 -- organized Logs/Boot/Crash/  |
+| 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ⬜ S4 -- organized Logs/Boot/Crash/ |
 | 💎 | Log space management       | ✅ CBS.log 20 MB cap       | ✅ logrotate + journald    | ⬜ S10 -- aging + quota + cleanup   |
 | 💎 | Dirty-bit / fsck on mount  | ✅ chkdsk on dirty FAT32   | ✅ fsck.fat on mount       | ⬜ S12 -- dirty-bit + optional fsck |
 | ⭐ | Cross-platform WER staging | ⚠️ WER on NTFS only        | ⚠️ apport on ext4 only     | ⬜ S13 -- FAT32 WER JSON reports    |

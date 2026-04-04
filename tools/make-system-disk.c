@@ -3,7 +3,8 @@
  *
  * Creates a GPT-formatted disk with:
  *   Partition 1: EFI System Partition (FAT32) -- formatted externally via mkfs.fat
- *   Partition 2: IXFS v2 (System)             -- formatted via mkfs-ixfs at offset
+ *   Partition 2: BlackBox (FAT32, 128 MiB)    -- formatted externally via mkfs.fat
+ *   Partition 3: IXFS v2 (System)             -- formatted via mkfs-ixfs at offset
  *
  * Usage:
  *   make-system-disk -o output.img [-s SIZE] [--efi-size SIZE]
@@ -121,11 +122,13 @@ int main(int argc, char *argv[])
     const char *output = NULL;
     uint64_t disk_size = 512ULL * 1024 * 1024;  /* 512 MiB default */
     uint64_t efi_size = 64ULL * 1024 * 1024;    /* 64 MiB EFI partition */
+    uint64_t bb_size = 128ULL * 1024 * 1024;     /* 128 MiB BlackBox partition */
     uint8_t *disk;
     uint8_t *mbr, *hdr, *entries;
     uint32_t entry_crc, hdr_crc;
     uint64_t total_sectors;
     uint64_t efi_start, efi_end;
+    uint64_t bb_start, bb_end;
     uint64_t ixfs_start, ixfs_end;
     FILE *fp;
     int i;
@@ -144,9 +147,10 @@ int main(int argc, char *argv[])
                    "  -o FILE        Output image (required)\n"
                    "  -s SIZE        Total disk size (default: 512M)\n"
                    "  --efi-size SZ  EFI partition size (default: 64M)\n"
-                   "\nCreates a GPT disk with 2 partitions:\n"
-                   "  Partition 1: EFI System (FAT32) at LBA 2048\n"
-                   "  Partition 2: IXFS (System) fills remaining space\n");
+                   "\nCreates a GPT disk with 3 partitions:\n"
+                   "  Partition 1: EFI System (FAT32, 64 MiB)\n"
+                   "  Partition 2: BlackBox (FAT32, 128 MiB) -- logs, crash dumps, diagnostics\n"
+                   "  Partition 3: IXFS (System) fills remaining space\n");
             return 0;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -159,11 +163,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Ensure disk is large enough for EFI + IXFS + GPT overhead */
-    if (disk_size < efi_size + 64 * 1024 * 1024) {
-        fprintf(stderr, "make-system-disk: disk too small (%llu < EFI %llu + 64M)\n",
+    /* Ensure disk is large enough for EFI + BlackBox + IXFS + GPT overhead */
+    if (disk_size < efi_size + bb_size + 64 * 1024 * 1024) {
+        fprintf(stderr, "make-system-disk: disk too small (%llu < EFI %llu + BB %llu + 64M)\n",
                 (unsigned long long)disk_size,
-                (unsigned long long)efi_size);
+                (unsigned long long)efi_size,
+                (unsigned long long)bb_size);
         return 1;
     }
 
@@ -182,16 +187,22 @@ int main(int argc, char *argv[])
      */
     efi_start = 2048;
     efi_end = efi_start + (efi_size / SECTOR_SIZE) - 1;
-    /* Align IXFS start to 1 MiB boundary (directly after EFI) */
-    ixfs_start = ((efi_end + 1 + 2047) / 2048) * 2048;
+    /* BlackBox: 1 MiB-aligned after EFI */
+    bb_start = ((efi_end + 1 + 2047) / 2048) * 2048;
+    bb_end = bb_start + (bb_size / SECTOR_SIZE) - 1;
+    /* IXFS: 1 MiB-aligned after BlackBox */
+    ixfs_start = ((bb_end + 1 + 2047) / 2048) * 2048;
     ixfs_end = total_sectors - 34 - 1;
 
     printf("make-system-disk: %s -- %llu MiB\n", output,
            (unsigned long long)(disk_size / (1024 * 1024)));
-    printf("  Part 1 (EFI):  LBA %llu - %llu (%llu MiB)\n",
+    printf("  Part 1 (EFI):      LBA %llu - %llu (%llu MiB)\n",
            (unsigned long long)efi_start, (unsigned long long)efi_end,
            (unsigned long long)(efi_size / (1024 * 1024)));
-    printf("  Part 2 (IXFS): LBA %llu - %llu (%llu MiB)\n",
+    printf("  Part 2 (BlackBox): LBA %llu - %llu (%llu MiB)\n",
+           (unsigned long long)bb_start, (unsigned long long)bb_end,
+           (unsigned long long)(bb_size / (1024 * 1024)));
+    printf("  Part 3 (IXFS):     LBA %llu - %llu (%llu MiB)\n",
            (unsigned long long)ixfs_start, (unsigned long long)ixfs_end,
            (unsigned long long)((ixfs_end - ixfs_start + 1) * SECTOR_SIZE /
                                 (1024 * 1024)));
@@ -223,8 +234,14 @@ int main(int argc, char *argv[])
         0xC9, 0x3B,
         efi_start, efi_end, "EFI System");
 
-    /* Entry 1: IXFS System Partition */
+    /* Entry 1: BlackBox Service Partition (Microsoft Basic Data GUID) */
     write_partition_entry(entries + 1 * GPT_ENTRY_SIZE,
+        0xEBD0A0A2, 0xB9E5, 0x4433, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26,
+        0x99, 0xC7,
+        bb_start, bb_end, "BlackBox");
+
+    /* Entry 2: IXFS System Partition */
+    write_partition_entry(entries + 2 * GPT_ENTRY_SIZE,
         0xDA000000, 0x0000, 0x4978, 0x46, 0x53, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x01,
         ixfs_start, ixfs_end, "Impossible OS");
@@ -287,6 +304,10 @@ int main(int argc, char *argv[])
                     (unsigned long long)(efi_start * SECTOR_SIZE));
             fprintf(info_fp, "EFI_SIZE=%llu\n",
                     (unsigned long long)efi_size);
+            fprintf(info_fp, "BB_OFFSET=%llu\n",
+                    (unsigned long long)(bb_start * SECTOR_SIZE));
+            fprintf(info_fp, "BB_SIZE=%llu\n",
+                    (unsigned long long)bb_size);
             fprintf(info_fp, "IXFS_OFFSET=%llu\n",
                     (unsigned long long)(ixfs_start * SECTOR_SIZE));
             fprintf(info_fp, "IXFS_SIZE=%llu\n",
@@ -312,7 +333,7 @@ int main(int argc, char *argv[])
     fclose(fp);
     free(disk);
 
-    printf("make-system-disk: created %s (%llu MiB GPT: EFI + IXFS)\n",
+    printf("make-system-disk: created %s (%llu MiB GPT: EFI + BlackBox + IXFS)\n",
            output, (unsigned long long)(disk_size / (1024 * 1024)));
     return 0;
 }

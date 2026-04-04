@@ -331,11 +331,14 @@ EFI_SIZE := 64M
 # Shim binaries — built by bash scripts/secure-boot/build-shim.sh
 SHIM_DIR := shim
 # Partition offsets (must match make-system-disk defaults)
-# EFI:  LBA 2048 = byte 1048576, size 64M
-# IXFS: starts at next 1MiB boundary after EFI (LBA 133120 = byte 68157440)
+# EFI:      LBA 2048     = byte 1048576,   size 64M
+# BlackBox: LBA 133120   = byte 68157440,  size 128M
+# IXFS:     LBA 395264   = byte 202375168, fills remaining space
 EFI_OFFSET  := 1048576
-IXFS_OFFSET := 68157440
-IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 68157440 - 34*512) )) )
+BB_OFFSET   := 68157440
+BB_SIZE     := 128M
+IXFS_OFFSET := 202375168
+IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 202375168 - 34*512) )) )
 
 system-disk: $(SYSTEM_DISK)
 
@@ -346,7 +349,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
-	@# Step 1: Create GPT image with partition table (EFI + IXFS)
+	@# Step 1: Create GPT image with partition table (EFI + BlackBox + IXFS)
 	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE)
 	@# Step 2: Format EFI partition as FAT32 and copy boot files
 	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@
@@ -369,6 +372,9 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@cp resources/boot/boot.conf $(BUILD_DIR)/efi_staging/EFI/ImpossibleOS/boot.conf
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
+	@# Step 2b: Format BlackBox partition as FAT32
+	mkfs.fat -F 32 -n "BLACKBOX" --offset $$(( $(BB_OFFSET) / 512 )) $@
+	mmd -i $@@@$(BB_OFFSET) ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
 	@# Step 3: Format IXFS partition and populate with system files
 	@mkdir -p $(BUILD_DIR)/sysroot/Impossible/System/Logs/Serial
 	@cp $(BUILD_DIR)/kernel.sym $(BUILD_DIR)/sysroot/Impossible/System/kernel.sym
@@ -378,7 +384,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 		-l "Impossible OS" \
 		--offset $(IXFS_OFFSET) \
 		--populate $(BUILD_DIR)/sysroot
-	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + IXFS)"
+	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + BlackBox + IXFS)"
 
 ## run: Launch QEMU booting from system disk (UEFI via OVMF)
 run: all
