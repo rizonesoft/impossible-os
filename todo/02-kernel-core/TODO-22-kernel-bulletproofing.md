@@ -317,7 +317,7 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 - [x] Canary: `exec_pending_tick` field added to `struct task`; both schedule paths clear it to 0 on switch-in
 - [x] Unit test: `test_exec_pending_state` -- PID 0 exec_pending==0 and exec_pending_tick==0 (never exec'd)
 - [x] Documentation: state machine diagram comment in task.h at `exec_pending` field
-- [ ] Commit: `"bulletproof: exec_pending state machine -- age tracking + stuck detection"`
+- [x] Commit: `"bulletproof: exec_pending state machine -- age tracking + stuck detection"`
 
 **Test checkpoint:** exec_pending stuck for >10 ticks -> WARN log. Normal exec -> cleared after first context switch.
 
@@ -362,7 +362,7 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 
 > Wire into `test_runner_init()` via `test_register_bulletproof()`.
 
-- [ ] Create `src/kernel/test/test_bulletproof.c` with:
+- [x] Create `src/kernel/test/test_bulletproof.c` with:
   - per_cpu_data offset assertions (3 offsets: self, syscall_rsp0, user_rsp_scratch)
   - boot_config size == 512 and cmdline offset == 32
   - User ELF range constants match across defines
@@ -375,8 +375,10 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
   - IXFS_MAGIC == 0x49584653 and superblock size == 512
   - ACL size == 8, ACE_HEADER size == 4
   - VFS_MAX_DRIVES == 26
-- [ ] Register in `test_runner_init()`: `test_register_bulletproof()`
-- [ ] Commit: `"test: kernel bulletproofing -- invariant assertion suite"`
+- [x] Register in `test_runner_init()`: `test_register_bulletproof()`
+- [x] Commit: `"test: kernel bulletproofing -- invariant assertion suite"`
+
+> **Done:** 7 suites, ~35 assertions -- registered in `test_runner_init()` (2026-04-04)
 
 ---
 

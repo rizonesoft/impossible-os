@@ -191,6 +191,7 @@ extern void test_register_nt_types(void);
 extern void test_register_ipc(void);
 extern void test_register_storage(void);
 extern void test_register_ixfs(void);
+extern void test_register_bulletproof(void);
 
 void test_runner_init(void)
 {
@@ -226,6 +227,7 @@ void test_runner_init(void)
     /* ABI */
     test_register_peb_teb();
     test_register_nt_types();
+    test_register_bulletproof();
 
     /* IPC */
     test_register_ipc();
