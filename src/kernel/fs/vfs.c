@@ -211,6 +211,61 @@ int vfs_unmount(char drive_letter)
     return 0;
 }
 
+/* --- Opportunistic locks (§14) --- */
+
+int vfs_request_oplock(struct vfs_node *node, uint32_t owner_id, uint8_t level)
+{
+    if (!node) return -1;
+
+    if (level == VFS_OPLOCK_LEVEL1) {
+        /* Exclusive: only if no existing oplock */
+        if (node->oplock_level != VFS_OPLOCK_NONE)
+            return -1;
+        node->oplock_level = VFS_OPLOCK_LEVEL1;
+        node->oplock_owner = owner_id;
+        return 0;
+    }
+
+    if (level == VFS_OPLOCK_LEVEL2) {
+        /* Shared: compatible with other Level 2, not with Level 1 */
+        if (node->oplock_level == VFS_OPLOCK_LEVEL1)
+            return -1;
+        node->oplock_level = VFS_OPLOCK_LEVEL2;
+        return 0;
+    }
+
+    return -1;
+}
+
+void vfs_break_oplock(struct vfs_node *node, uint32_t access)
+{
+    if (!node || node->oplock_level == VFS_OPLOCK_NONE)
+        return;
+
+    if (node->oplock_level == VFS_OPLOCK_LEVEL1) {
+        if (access & VFS_O_WRITE) {
+            /* Write access breaks Level 1 to None */
+            klog(LOG_DEBUG, "vfs", "oplock break: L1 -> None (%s)",
+                 node->name);
+            node->oplock_level = VFS_OPLOCK_NONE;
+            node->oplock_owner = 0;
+        } else {
+            /* Read access breaks Level 1 to Level 2 */
+            klog(LOG_DEBUG, "vfs", "oplock break: L1 -> L2 (%s)",
+                 node->name);
+            node->oplock_level = VFS_OPLOCK_LEVEL2;
+            node->oplock_owner = 0;
+        }
+    } else if (node->oplock_level == VFS_OPLOCK_LEVEL2) {
+        if (access & VFS_O_WRITE) {
+            /* Write access breaks Level 2 to None */
+            klog(LOG_DEBUG, "vfs", "oplock break: L2 -> None (%s)",
+                 node->name);
+            node->oplock_level = VFS_OPLOCK_NONE;
+        }
+    }
+}
+
 /* --- Byte-range locks (§10) --- */
 
 int vfs_lock_file(struct vfs_node *node, uint32_t owner_id,
@@ -344,6 +399,10 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
     node = walk_path(mounts[idx].root, rest);
     if (!node)
         return (struct vfs_node *)0;
+
+    /* Oplock break (§14): break existing oplock before share-mode check */
+    if (node->type & VFS_FILE)
+        vfs_break_oplock(node, flags);
 
     /* Delete-on-close check (§9): reject new openers on marked nodes */
     if (node->delete_on_close && !(flags & VFS_O_DELETE_ON_CLOSE))

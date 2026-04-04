@@ -40,6 +40,11 @@ _Static_assert(VFS_MAX_DRIVES == 26, "VFS drive letters must be A-Z (26)");
 #define VFS_MAX_HANDLES  4
 #define VFS_MAX_LOCKS    4
 
+/* Oplock types (Level 1/2 legacy, Batch/Filter deferred) */
+#define VFS_OPLOCK_NONE      0
+#define VFS_OPLOCK_LEVEL1    1   /* exclusive read+write cache */
+#define VFS_OPLOCK_LEVEL2    2   /* shared read cache */
+
 /* Byte-range lock entry */
 typedef struct {
     uint64_t offset;
@@ -118,6 +123,9 @@ struct vfs_node {
     uint8_t          delete_on_close;  /* 1 = delete when last handle closes (§9) */
     /* Byte-range locks (§10) */
     vfs_lock_t       locks[VFS_MAX_LOCKS];
+    /* Opportunistic locks (§14) */
+    uint8_t          oplock_level;   /* VFS_OPLOCK_NONE/LEVEL1/LEVEL2 */
+    uint32_t         oplock_owner;   /* owner_id of exclusive oplock holder */
 };
 
 /* Filesystem driver descriptor -- registered by each FS implementation */
@@ -212,6 +220,15 @@ const void *vfs_query_security(struct vfs_node *node, uint32_t *out_size);
 /* Query reparse point status.
  * Returns STATUS_NOT_A_REPARSE_POINT for all non-reparse nodes. */
 int vfs_query_reparse(struct vfs_node *node);
+
+/* Oplock: request an opportunistic lock on a file.
+ * Returns 0 on success, -1 if incompatible with current state. */
+int vfs_request_oplock(struct vfs_node *node, uint32_t owner_id, uint8_t level);
+
+/* Oplock: break existing oplock due to a conflicting open.
+ * Called from vfs_open() before share-mode check. Downgrades Level 1 to
+ * Level 2 or None depending on the new access mode. */
+void vfs_break_oplock(struct vfs_node *node, uint32_t access);
 
 /* Byte-range lock: acquire a lock on a file range.
  * Returns 0 on success, STATUS_FILE_LOCK_CONFLICT on conflict. */

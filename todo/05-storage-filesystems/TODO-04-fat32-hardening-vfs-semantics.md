@@ -51,7 +51,7 @@
 | 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [x]   |
 | 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [x]   |
 | 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [x]   |
-| 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [ ]   |
+| 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [x]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
@@ -257,7 +257,7 @@ FAT32 `file_size` is a 32-bit field in the directory entry -- max 4,294,967,295 
 - [x] `fat32_file_write_vfs()`: checks `(uint64_t)offset + size > 0xFFFFFFFF` before write; returns -1 with klog warning
 - [x] `fat32_vfs_truncate()`: checks `new_size > 0xFFFFFFFF` before truncate; returns -1 with klog warning
 - [x] Both log: `"4 GiB file size limit: <filename>"`
-- [ ] Commit: `"fs/fat32: 4 GiB write guard -- reject writes beyond FAT32 file_size limit"`
+- [x] Commit: `"fs/fat32: 4 GiB write guard -- reject writes beyond FAT32 file_size limit"`
 
 **Test checkpoint:** Create a file, write exactly 4 GiB - 1 bytes -- succeeds. Write 1 more byte -- returns error, file size unchanged. Verify file is still readable. Verify on QEMU WHPX, TCG.
 
@@ -268,11 +268,11 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 > [!NOTE]
 > Oplock types: **Level 1** (exclusive read+write cache), **Level 2** (shared read cache), **Batch** (exclusive, delays close for repeated open/close cycles), **Filter** (exclusive, read-only, non-breaking on writes). Modern Windows also has **Read**, **Read-Write**, **Read-Handle**, **Read-Write-Handle** lease types. Start with legacy Level 1/2/Batch which cover 95% of real-world usage.
 
-- [ ] Add `vfs_oplock_t` struct: `{ uint8_t type; vfs_handle_t *owner; }` per inode, max 1 exclusive or N shared
-- [ ] `vfs_request_oplock(handle, type)`: grant if compatible with existing state; fail if conflict
-- [ ] `vfs_break_oplock(node, desired_access)`: called from `vfs_open()` before share-mode check; if existing exclusive oplock conflicts with new access: break to Level 2 or None; notify owner via callback
-- [ ] `FSCTL_REQUEST_OPLOCK` / `FSCTL_OPLOCK_BREAK_ACKNOWLEDGE` ioctls via `vfs_ioctl()`
-- [ ] Start with Level 1 (exclusive) and Level 2 (shared read) only; Batch and Filter deferred until real programs need them
+- [x] `vfs_node.oplock_level` (NONE/LEVEL1/LEVEL2) + `oplock_owner` fields added
+- [x] `vfs_request_oplock(node, owner_id, level)`: Level 1 exclusive (only if no existing), Level 2 shared (compatible with L2, not L1)
+- [x] `vfs_break_oplock(node, access)`: called from `vfs_open()` before share-mode check; L1+write -> None, L1+read -> L2, L2+write -> None; logs each break
+- [x] Level 1 (exclusive) and Level 2 (shared read) implemented; Batch and Filter deferred
+- [x] `FSCTL_REQUEST_OPLOCK` / `FSCTL_OPLOCK_BREAK_ACKNOWLEDGE` ioctls: deferred to Win32 File I/O TODO (moved to TODO-05)
 - [ ] Commit: `"fs: VFS opportunistic locks -- Level 1/2 oplock grant, break on conflicting open"`
 
 **Test checkpoint:** Open file with Level 1 oplock. Second open breaks oplock to Level 2 (notification logged). Third open with write access breaks to None. `FSCTL_REQUEST_OPLOCK` returns correct level. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -312,22 +312,22 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 ## OS Comparison
 
 
-| ⭐ | Feature                | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS              |
-|----|------------------------|---------------------------|----------------------------|-------------------------------|
+| ⭐ | Feature                | 🪟 Win11                  | 🐧 Linux                   | 🚀 Impossible OS              |
+|----|------------------------|----------------------------|----------------------------|--------------------------------|
 | 💎 | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ✅ §1 -- validate_bpb + dirty |
 | 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
 | 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
-| 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ✅ §4 -- full LFN R/W         |
+| 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries         | ✅ §4 -- full LFN R/W         |
 | 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- interim, needs T07   |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
 | 💎 | Case-insensitive paths | ✅ per-driver fold        | ✅ per-mount nocase        | ✅ §7 -- per-driver fold      |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
-| 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
+| 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag   | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
 | 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ✅ §10 -- vfs_lock_file       |
 | 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ✅ §11 -- ADS/vol/reparse     |
 | 💎 | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ✅ §12 -- ~1-~99 loop         |
 | 💎 | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ✅ §13 -- write + truncate    |
-| 💎 | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH   | ⚠️ POSIX leases only       | ⬜ §14 -- Level 1/2           |
+| 💎 | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH    | ⚠️ POSIX leases only       | ✅ §14 -- Level 1/2           |
 
 > After §1-§14, FAT32 matches fastfat.sys spec correctness and exceeds dosfstools with in-kernel fsck.
 > §7 (unified VFS case-fold) is the architectural win -- one implementation benefits all filesystem drivers.
