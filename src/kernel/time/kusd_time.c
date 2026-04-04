@@ -98,6 +98,10 @@ void kusd_init(void)
     /* Zero the frame via identity-mapped address */
     memset((void *)phys, 0, 4096);
 
+    /* Split the 2 MiB huge page containing 0x7FFE0000 so we can map
+     * a single 4 KiB page with different flags (user read-only + NX) */
+    vmm_split_huge_page(KUSD_USER_VA);
+
     /* Map at fixed user VA: read-only for user mode, NX */
     ret = vmm_map_page(KUSD_USER_VA, phys,
                        VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_NX);
