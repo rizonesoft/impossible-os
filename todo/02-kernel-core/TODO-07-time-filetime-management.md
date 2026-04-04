@@ -59,7 +59,7 @@
 | 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [x]   |
 | 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [x]   |
 | 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [x]   |
-| 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [ ]   |
+| 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [x]   |
 | 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-04 §11 |  [ ]   |
 | 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [ ]   |
 | 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-15 §3,§4   |  [ ]   |
@@ -166,20 +166,15 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-05 §4).
 
 - [x] `KeQuerySystemTimePrecise()`: implemented -- currently identical to `KeQuerySystemTime()` since both use `mono_ns()` TSC/HPET interpolation; will diverge when §12 adds coarse KUSER_SHARED_DATA path
 - [x] No separate SSDT entry -- `NtQuerySystemTime` (0x00F0) already returns precise time; Win8+ `GetSystemTimePreciseAsFileTime` uses the same syscall
-- [ ] Commit: `"kernel: time -- KeQuerySystemTimePrecise sub-microsecond wall time"`
+- [x] Commit: `"kernel: time -- KeQuerySystemTimePrecise sub-microsecond wall time"`
 
 ## 11. Timezone Bias and DST Management
 `GetLocalTime()` and FAT32 timestamps require a local-time offset. Store the bias in the registry (or a kernel global until registry is ready).
 
-- [ ] Define `struct tz_info` in `include/kernel/time/timezone.h`:
-  - `int32_t  bias_minutes` -- UTC offset in minutes (negative = west; e.g. UTC-5 = -300)
-  - `int32_t  dst_bias_minutes` -- additional DST offset (typically 60 or 0)
-  - `uint8_t  dst_active` -- 1 if DST is currently in effect
-- [ ] `timezone_init()`: read from `HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation\Bias` if registry is ready; default to UTC (bias=0) if not
-- [ ] `timezone_set(const struct tz_info *tz)` -- updates the kernel-global and persists to registry when available
-- [ ] `timezone_get(struct tz_info *out)` -- copies current settings
-- [ ] `filetime_to_local(FILETIME utc, const struct tz_info *tz)` -- applies bias + DST to produce local FILETIME
-- [ ] `filetime_from_local(FILETIME local, const struct tz_info *tz)` -- inverse
+- [x] `struct tz_info` with `bias_minutes`, `dst_bias_minutes`, `dst_active` in `timezone.h`
+- [x] `timezone_init()`: defaults to UTC; registry read deferred until registry integration
+- [x] `timezone_set()` / `timezone_get()` / `timezone_total_bias()`
+- [x] `filetime_to_local(utc)` / `filetime_from_local(local)` -- apply total bias (bias + DST)
 - [ ] Commit: `"kernel: time -- timezone bias and DST management"`
 
 ## 12. KUSER_SHARED_DATA Time Field Updates
