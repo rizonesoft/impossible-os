@@ -38,7 +38,7 @@
 | ⭐  | Order | Deliverable                                                                           | Depends On                                               | Status |
 | --- | :---: | ------------------------------------------------------------------------------------- | -------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 FAT32 BPB strict validation -- `jmpBoot`, `BytsPerSec`, `SecPerClus`, dirty marker | `fat32_init()` in fat32_core.c                           |  [x]   |
-| 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [ ]   |
+| 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [x]   |
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [ ]   |
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [ ]   |
 | 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4 (create path being reworked)                          |  [ ]   |
@@ -70,7 +70,7 @@ Validate critical BPB fields in `fat32_init()` before any further mount operatio
 - [x] Dirty marker: `fat32_read_dirty_marker()` reads FAT[1] bit 27; if clear: `vol->volume_dirty = 1`; logs `"Dirty volume -- not cleanly unmounted"`
 - [x] On clean unmount: `fat32_set_clean_marker()` sets FAT[1] bit 27 in both FAT copies; called from `fat32_flush_disk()`
 - [x] 3 unit tests: BPB struct size bounds, FSInfo signature constants, dirty bit semantics
-- [ ] Commit: `"fs/fat32: BPB strict validation -- jmpBoot, BytsPerSec, SecPerClus, RootClus, dirty marker"`
+- [x] Commit: `"fs/fat32: BPB strict validation -- jmpBoot, BytsPerSec, SecPerClus, RootClus, dirty marker"`
 
 ## 2. FSInfo Mount-Time Fallback
 
@@ -81,12 +81,12 @@ Validate FSInfo signatures on mount. Fall back to a full FAT scan when `FreeCoun
 > [!NOTE]
 > FSInfo sector layout (offset 0): `LeadSig = 0x41615252`; offset 484: `StrucSig = 0x61417272`; offset 488: `FreeCount` (0xFFFFFFFF = unknown); offset 492: `NxtFree` (0xFFFFFFFF = unknown); offset 508: `TrailSig = 0xAA550000`. Backup FSInfo at sector `BPB_BkBootSec + 1` (typically sector 7). If either signature is wrong: `vol->fsinfo_valid = 0`; proceed without FSInfo.
 
-- [ ] At mount: read `vol->fsinfo_sector`; verify `LeadSig`, `StrucSig`, `TrailSig`; if any mismatch: `vol->fsinfo_valid = 0`; log `[FAT32] FSInfo invalid -- will scan FAT`
-- [ ] If `vol->fsinfo_valid && FreeCount == 0xFFFFFFFF`: full FAT scan (`fat32_count_free_clusters(vol)`); store result in `vol->fsinfo_free_count`; set `vol->fsinfo_dirty = 1`
-- [ ] `fat32_alloc_cluster()`: after alloc, decrement `vol->fsinfo_free_count`; update `NxtFree`; set `vol->fsinfo_dirty = 1`
-- [ ] `fat32_free_chain()`: after free, increment `vol->fsinfo_free_count`; set `vol->fsinfo_dirty = 1`
-- [ ] Verify `fat32_fsinfo_flush()` already writes backup at sector+6; confirm it runs on unmount
-- [ ] Commit: `"fs/fat32: FSInfo -- signature validation, 0xFFFFFFFF full-scan fallback, alloc/free sync"`
+- [x] At mount: FSInfo signature validation already in `fat32_init()` -- checks LeadSig, StrucSig, TrailSig; sets `fsinfo_valid = 0` on mismatch with log
+- [x] If `vol->fsinfo_valid && FreeCount == 0xFFFFFFFF`: new `fat32_count_free_clusters(vol)` scans full FAT table; stores result in `vol->fsinfo_free_count`; sets dirty
+- [x] `fat32_alloc_cluster()`: already decrements `fsinfo_free_count`, updates `NxtFree`, sets dirty (verified)
+- [x] `fat32_free_chain()`: already increments `fsinfo_free_count`, sets dirty (verified)
+- [x] `fat32_fsinfo_flush()`: verified -- writes primary + backup at sector+6; runs from `fat32_flush_disk()` on unmount
+- [ ] Commit: `"fs/fat32: FSInfo -- 0xFFFFFFFF full-scan fallback via fat32_count_free_clusters()"`
 
 ## 3. Dual-FAT Compare and Repair
 
@@ -304,7 +304,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | ⭐ | Feature                | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS              |
 |----|------------------------|---------------------------|----------------------------|-------------------------------|
 | 💎 | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ✅ §1 -- validate_bpb + dirty |
-| 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ⚠️ §2 -- flush exists         |
+| 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
 | 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ⚠️ §3 -- write ok, no compare |
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ⚠️ §4 -- read only            |
 | 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- set_times partial    |

@@ -823,6 +823,15 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
         }
     }
 
+    /* FSInfo FreeCount fallback: if unknown (0xFFFFFFFF), do a full FAT scan */
+    if (vol->fsinfo_valid && vol->fsinfo_free_count == FSINFO_UNKNOWN) {
+        vol->fsinfo_free_count = fat32_count_free_clusters(vol);
+        vol->fsinfo_dirty = 1;
+        klog(LOG_INFO, "fat32",
+             "FSInfo: FreeCount was unknown -- scanned: %u free clusters",
+             (uint64_t)vol->fsinfo_free_count);
+    }
+
     return vol;
 }
 

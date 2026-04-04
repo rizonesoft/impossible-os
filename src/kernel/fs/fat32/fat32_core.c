@@ -418,6 +418,27 @@ void fat32_fsinfo_flush(struct fat32_volume *vol)
     vol->fsinfo_dirty = 0;
 }
 
+/* ---- Full FAT scan for free cluster count ---- */
+
+uint32_t fat32_count_free_clusters(struct fat32_volume *vol)
+{
+    uint32_t total_data_clusters;
+    uint32_t max_cluster;
+    uint32_t cluster;
+    uint32_t free_count = 0;
+
+    total_data_clusters = (vol->bpb.total_sectors - vol->bpb.first_data_sector)
+                        / vol->bpb.sectors_per_cluster;
+    max_cluster = total_data_clusters + 2;
+
+    for (cluster = 2; cluster < max_cluster; cluster++) {
+        if (fat32_get_fat_entry(vol, cluster) == FAT32_FREE)
+            free_count++;
+    }
+
+    return free_count;
+}
+
 /* ---- Free cluster allocation ---- */
 
 uint32_t fat32_alloc_cluster(struct fat32_volume *vol)

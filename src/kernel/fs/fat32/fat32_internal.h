@@ -157,8 +157,9 @@ int      fat32_validate_bpb(struct fat32_volume *vol);
 void     fat32_read_dirty_marker(struct fat32_volume *vol);
 void     fat32_set_clean_marker(struct fat32_volume *vol);
 
-/* FSInfo flush */
+/* FSInfo flush and free cluster scan */
 void     fat32_fsinfo_flush(struct fat32_volume *vol);
+uint32_t fat32_count_free_clusters(struct fat32_volume *vol);
 
 /* Cluster allocation */
 uint32_t fat32_alloc_cluster(struct fat32_volume *vol);
