@@ -14,6 +14,7 @@
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `fat32_init()`; BPB validation (§1) must fire inside `fat32_init()` before `vfs_probe()` returns success
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §5` -- `umount` shell calls the VFS unmount path; §5 (fsck) must be callable as `chkdsk D: /fat32`
 - → XREF: `11-user-platform-sdk` -- Win32 `CreateFile` flags `FILE_SHARE_*` and `FILE_FLAG_DELETE_ON_CLOSE` map directly to §8 and §9; coordinate with the Win32 file-handle TODO
+- → XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` §12 -- BlackBox FAT32 dirty-bit check depends on §1; fsck-on-mount depends on §6
 
 ## Outcome
 
@@ -28,6 +29,9 @@
 - `FILE_FLAG_DELETE_ON_CLOSE` defers deletion to last-handle-close.
 - `LockFile`/`UnlockFile` enforce byte-range exclusion per file.
 - ADS, ACL, reparse-point, and volume-info queries return correct stubs.
+- 8.3 SFN generation handles numeric tail collisions (`~1` through `~99`).
+- Writes beyond FAT32's 4 GiB file size limit fail gracefully, not silently corrupt.
+- Opportunistic locks (Level 1/2) enable Win32 programs to cache file data safely.
 
 ## Implementation Order
 
@@ -43,13 +47,16 @@
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION` | §7 (handle lookup uses case-folded path)                 |  [ ]   |
 | 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`            | §8 (open-handle table exists)                            |  [ ]   |
 | 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [ ]   |
-| 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries      | §7–10 (handle plumbing in place)                         |  [ ]   |
+| 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries      | §7–§10 (handle plumbing in place)                        |  [ ]   |
+| 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+          | §4 (LFN write reworks create path)                       |  [ ]   |
+| 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes      | §5 (write path stable)                                   |  [ ]   |
+| 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle         | §8 (share-mode per-handle state)                         |  [ ]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
 ---
 
-## 1. FAT32 BPB Strict Validation `[Sonnet]`
+## 1. FAT32 BPB Strict Validation
 
 Validate critical BPB fields in `fat32_init()` before any further mount operations. Detect and set the dirty volume marker on mount; auto-run fsck (§6) if dirty.
 
@@ -64,7 +71,7 @@ Validate critical BPB fields in `fat32_init()` before any further mount operatio
 - [ ] On clean unmount: set FAT[1] bit 27 (volume clean) before writing final FAT sector
 - [ ] Commit: `"fs/fat32: BPB strict validation -- jmpBoot, BytsPerSec, SecPerClus, RootClus, dirty marker"`
 
-## 2. FSInfo Mount-Time Fallback `[Sonnet]`
+## 2. FSInfo Mount-Time Fallback
 
 Validate FSInfo signatures on mount. Fall back to a full FAT scan when `FreeCount == 0xFFFFFFFF`. Write updated counts after every alloc/free.
 
@@ -80,7 +87,7 @@ Validate FSInfo signatures on mount. Fall back to a full FAT scan when `FreeCoun
 - [ ] Verify `fat32_fsinfo_flush()` already writes backup at sector+6; confirm it runs on unmount
 - [ ] Commit: `"fs/fat32: FSInfo -- signature validation, 0xFFFFFFFF full-scan fallback, alloc/free sync"`
 
-## 3. Dual-FAT Compare and Repair `[Sonnet]`
+## 3. Dual-FAT Compare and Repair
 
 On mount, compare FAT1 and FAT2 sector by sector. Log any mismatch. Use FAT1 as authoritative; repair FAT2 if they differ.
 
@@ -94,7 +101,7 @@ On mount, compare FAT1 and FAT2 sector by sector. Log any mismatch. Use FAT1 as 
 - [ ] Non-fatal: mismatch repairs do not abort mount; log summary `[FAT32] FAT compare: %u mismatched sectors repaired`
 - [ ] Commit: `"fs/fat32: dual-FAT compare-on-mount -- sector-by-sector compare, FAT2 repair"`
 
-## 4. LFN Write `[Opus]`
+## 4. LFN Write
 
 Write LFN directory entry chains before the 8.3 SFN entry. Encode names as UTF-16LE. Compute SFN checksum. Handle LFN delete (zero out slot chain).
 
@@ -110,7 +117,7 @@ Write LFN directory entry chains before the 8.3 SFN entry. Encode names as UTF-1
 - [ ] `fat32_lfn_checksum(const uint8_t sfn[11])` -- standalone helper
 - [ ] Commit: `"fs/fat32: LFN write -- slot chain, UTF-16LE encode, SFN checksum, LFN delete"`
 
-## 5. FAT32 Timestamps `[Sonnet]`
+## 5. FAT32 Timestamps
 
 Encode kernel FILETIME (100 ns ticks since 1601 UTC) to FAT32 date/time format. Set `CrtTime`/`CrtDate` on create, `WrtTime`/`WrtDate` on write, `LstAccDate` on read. Apply timezone bias.
 
@@ -126,7 +133,7 @@ Encode kernel FILETIME (100 ns ticks since 1601 UTC) to FAT32 date/time format. 
 - [ ] `fat32_set_times()` already exists -- verify it uses the new `fat32_filetime_to_fattime()` encoder
 - [ ] Commit: `"fs/fat32: timestamps -- FILETIME→FAT encode, CrtTime on create, WrtTime on write, LstAccDate on read"`
 
-## 6. FAT32 fsck `[Opus]`
+## 6. FAT32 fsck
 
 Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cross-linked chains and lost clusters. Expose as `chkdsk D: /fat32` shell command.
 
@@ -142,7 +149,7 @@ Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cros
 - [ ] `chkdsk D: /fat32` shell: calls `fat32_fsck(vol, fix=0)` for read-only scan; `/fix` flag calls with `fix=1`
 - [ ] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster, chkdsk shell command"`
 
-## 7. VFS Case-Insensitive Path Resolution `[Opus]`
+## 7. VFS Case-Insensitive Path Resolution
 
 Apply a unified uppercase fold in `vfs_open()` before path component lookup, so `C:\WINDOWS\System32` resolves identically to `c:\windows\system32` on all filesystems.
 
@@ -157,7 +164,7 @@ Apply a unified uppercase fold in `vfs_open()` before path component lookup, so 
 - [ ] `vfs_path_fold()` must handle drive letter: `c:\foo` → `C:\foo` (drive letter uppercased too)
 - [ ] Commit: `"fs: vfs_path_fold() -- unified ASCII uppercase fold in vfs_open() before finddir()"`
 
-## 8. VFS Share-Mode Enforcement `[Sonnet]`
+## 8. VFS Share-Mode Enforcement
 
 Add `share_mode` and `access_mode` to the per-open-handle struct. On `vfs_open()`, check existing handles for conflicts. Return `STATUS_SHARING_VIOLATION` on conflict.
 
@@ -173,7 +180,7 @@ Add `share_mode` and `access_mode` to the per-open-handle struct. On `vfs_open()
 - [ ] `vfs_close()`: remove handle from node's open-handle list; if node marked delete-on-close and list is now empty: trigger delete (§9)
 - [ ] Commit: `"fs: VFS share-mode -- per-handle access/share fields, conflict check, STATUS_SHARING_VIOLATION"`
 
-## 9. Mark-for-Delete-on-Close `[Sonnet]`
+## 9. Mark-for-Delete-on-Close
 
 Implement `FILE_FLAG_DELETE_ON_CLOSE`: mark the inode for deletion when the handle is opened with this flag; perform the actual deletion when the last handle closes.
 
@@ -188,7 +195,7 @@ Implement `FILE_FLAG_DELETE_ON_CLOSE`: mark the inode for deletion when the hand
 - [ ] `vfs_open()` on `delete_on_close` node: existing openers may still read/write; new openers get `STATUS_DELETE_PENDING`
 - [ ] Commit: `"fs: delete-on-close -- VFS_DELETE_ON_CLOSE flag, STATUS_DELETE_PENDING, last-close unlink"`
 
-## 10. Byte-Range Locks `[Sonnet]`
+## 10. Byte-Range Locks
 
 Implement `LockFile`/`UnlockFile`: per-file lock list with offset, length, and exclusive/shared flag. Conflict detection returns `STATUS_FILE_LOCK_CONFLICT`.
 
@@ -204,7 +211,7 @@ Implement `LockFile`/`UnlockFile`: per-file lock list with offset, length, and e
 - [ ] Win32 `LockFile(hFile, offset_low, offset_high, len_low, len_high)` → `vfs_lock_file(handle, offset, length, exclusive=TRUE)`; `UnlockFile` → `vfs_unlock_file()`
 - [ ] Commit: `"fs: byte-range locks -- vfs_lock_file/unlock_file, overlap conflict, STATUS_FILE_LOCK_CONFLICT"`
 
-## 11. VFS Feature-Spoofing Stubs `[Sonnet]`
+## 11. VFS Feature-Spoofing Stubs
 
 Return correct stub responses for Win32 queries that user-mode programs issue on every file system: ADS, ACL, volume flags, and reparse-point queries.
 
@@ -218,6 +225,45 @@ Return correct stub responses for Win32 queries that user-mode programs issue on
 - [ ] Volume flags: `NtQueryVolumeInformationFile(FileFsAttributeInformation)` → set `FileSystemAttributes` per filesystem type (see NOTE); `MaximumComponentNameLength = 255`; filesystem name string (`"NTFS"`, `"FAT32"`, `"IXFS"`)
 - [ ] Reparse point: `FSCTL_GET_REPARSE_POINT` ioctl via `vfs_ioctl()` → return `STATUS_NOT_A_REPARSE_POINT` for all nodes on non-reparse-supporting filesystems
 - [ ] Commit: `"fs: Win32 feature stubs -- ADS, ACL, volume flags, reparse-point STATUS_NOT_A_REPARSE_POINT"`
+
+## 12. SFN Numeric Tail Collision Avoidance
+
+Current `fat32_make_short_name()` hardcodes `~1` when a name needs truncation. Windows generates `~1` through `~9`, then truncates to 5 chars for `~10` through `~99`. Without collision avoidance, creating two files with similar long names produces duplicate 8.3 entries -- corrupting the directory.
+
+- [ ] `fat32_generate_sfn(vol, dir_cluster, utf8_name, sfn[11])`: generate an 8.3 SFN; if name fits 8.3 natively, use it directly; else truncate to 6 chars + `~1` and check for collisions in the directory
+- [ ] Collision loop: if `~1` exists, try `~2` through `~9`; if all taken, truncate to 5 chars + `~10` through `~99`
+- [ ] Replace `fat32_make_short_name()` call in `fat32_create_file_vol()` and `fat32_create_dir_vol()` with `fat32_generate_sfn()`
+- [ ] Case-insensitive collision check: compare uppercase SFN against existing directory entries
+- [ ] Commit: `"fs/fat32: SFN numeric tail collision -- ~1 through ~9, 5-char ~10+"`
+
+**Test checkpoint:** Create 10 files with names `"LongFileName_01.txt"` through `"LongFileName_10.txt"` -- directory entries show `LONGFI~1.TXT` through `LONGFI~9.TXT` then `LONGF~10.TXT`. All 10 files readable by name. Verify on QEMU WHPX, TCG, bare metal.
+
+## 13. FAT32 4 GiB Write Guard
+
+FAT32 `file_size` is a 32-bit field in the directory entry -- max 4,294,967,295 bytes (4 GiB - 1). Writes that would push the file past this limit must fail gracefully with `STATUS_DISK_FULL` rather than wrapping the size field and corrupting the directory entry.
+
+- [ ] In `fat32_file_write_vfs()`: before extending the file, check `(uint64_t)current_size + write_len > 0xFFFFFFFF`; if so: return `STATUS_DISK_FULL` (or appropriate VFS error code)
+- [ ] In `fat32_vfs_truncate()`: reject truncation to a size > `0xFFFFFFFF`
+- [ ] Log: `klog(LOG_WARN, "fat32", "4 GiB file size limit reached: %s", filename)`
+- [ ] Commit: `"fs/fat32: 4 GiB write guard -- reject writes beyond FAT32 file_size limit"`
+
+**Test checkpoint:** Create a file, write exactly 4 GiB - 1 bytes -- succeeds. Write 1 more byte -- returns error, file size unchanged. Verify file is still readable. Verify on QEMU WHPX, TCG.
+
+## 14. VFS Opportunistic Locks (Oplocks)
+
+Windows file system drivers support opportunistic locks that allow clients to cache file data locally for performance. `CreateFile` opens can break or request oplocks. Without oplock support, Win32 programs that request batch oplocks (e.g., compilers, editors) get `ERROR_SHARING_VIOLATION` or degraded performance.
+
+> [!NOTE]
+> Oplock types: **Level 1** (exclusive read+write cache), **Level 2** (shared read cache), **Batch** (exclusive, delays close for repeated open/close cycles), **Filter** (exclusive, read-only, non-breaking on writes). Modern Windows also has **Read**, **Read-Write**, **Read-Handle**, **Read-Write-Handle** lease types. Start with legacy Level 1/2/Batch which cover 95% of real-world usage.
+
+- [ ] Add `vfs_oplock_t` struct: `{ uint8_t type; vfs_handle_t *owner; }` per inode, max 1 exclusive or N shared
+- [ ] `vfs_request_oplock(handle, type)`: grant if compatible with existing state; fail if conflict
+- [ ] `vfs_break_oplock(node, desired_access)`: called from `vfs_open()` before share-mode check; if existing exclusive oplock conflicts with new access: break to Level 2 or None; notify owner via callback
+- [ ] `FSCTL_REQUEST_OPLOCK` / `FSCTL_OPLOCK_BREAK_ACKNOWLEDGE` ioctls via `vfs_ioctl()`
+- [ ] Start with Level 1 (exclusive) and Level 2 (shared read) only; Batch and Filter deferred until real programs need them
+- [ ] Commit: `"fs: VFS opportunistic locks -- Level 1/2 oplock grant, break on conflicting open"`
+
+**Test checkpoint:** Open file with Level 1 oplock. Second open breaks oplock to Level 2 (notification logged). Third open with write access breaks to None. `FSCTL_REQUEST_OPLOCK` returns correct level. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ---
 
@@ -237,8 +283,11 @@ Return correct stub responses for Win32 queries that user-mode programs issue on
 | 💎 | Delete-on-close                                   | ✅ `FILE_FLAG_DELETE_ON_CLOSE`; `STATUS_DELETE_PENDING`; last-handle unlink | ✅ `unlink()`-then-keep-open idiom; fd holds inode                     | ⬜ §9 -- `VFS_DELETE_ON_CLOSE` flag, `STATUS_DELETE_PENDING`, last-close unlink |
 | 💎 | Byte-range locks                                  | ✅ `LockFile`/`UnlockFile` Win32; per-FCB lock list;                        | ✅ `fcntl(F_SETLK)`; POSIX mandatory/advisory locks; `EACCES`/`EAGAIN` | ⬜ §10 -- `vfs_lock_t[]` per node, overlap conflict,                            |
 | 💎 | Win32 feature stubs                               | ✅ Full ADS, ACL, volume info,                                              | ❌ Not applicable (POSIX `xattr`, `getfacl`;                           | ⬜ §11 -- correct stub returns for `FindFirstStreamW`,                          |
+| 💎 | SFN numeric tail collision                        | ✅ `~1`-`~9`, 5-char `~10`+                                                | ✅ `fat_gen_ks_short()` with hash                                      | ⬜ §12 -- collision loop `~1`-`~99`                                             |
+| 💎 | 4 GiB file size guard                             | ✅ `fatfs.sys` rejects at limit                                             | ✅ `fat_cont_expand()` checks                                          | ⬜ §13 -- write guard + truncate guard                                          |
+| 💎 | Opportunistic locks                               | ✅ Level 1/2, Batch, R/RW/RH                                               | ⚠️ POSIX leases (limited oplock)                                       | ⬜ §14 -- Level 1/2 grant + break                                               |
 
-> **After §1–11:** Impossible OS FAT32 matches the spec correctness of `fatfs.sys` and exceeds `dosfstools` in the in-kernel fsck depth. The `⭐` architectural win is §7: a single `vfs_path_fold()` call in the VFS layer above all drivers means no filesystem driver ever needs its own case-fold path -- future filesystems (exFAT, ext4) automatically inherit correct case-insensitive behaviour without any extra work.
+> **After §1–14:** Impossible OS FAT32 matches the spec correctness of `fatfs.sys` and exceeds `dosfstools` in the in-kernel fsck depth. The `⭐` architectural win is §7: a single `vfs_path_fold()` call in the VFS layer above all drivers means no filesystem driver ever needs its own case-fold path -- future filesystems (exFAT, ext4) automatically inherit correct case-insensitive behaviour without any extra work. §12-§14 close the remaining parity gaps: SFN collision avoidance, file size guard, and oplock support.
 
 ## Verification
 
