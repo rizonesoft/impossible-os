@@ -84,6 +84,45 @@ done
 commit_hash=$(git rev-parse --short HEAD)
 commit_date=$(date '+%Y-%m-%d %H:%M')
 
+# ---- Impossibility Index ----
+# Industry standard: 10,000 LOC/developer/year for system programming (COCOMO II)
+# Linux kernel: 28M lines, 33 years, ~1,000 active devs at any time
+# Windows NT:   50M lines, 40 years, ~5,000 devs at peak
+INDUSTRY_LOC_PER_YEAR=10000
+FIRST_COMMIT_EPOCH=$(git log --reverse --format="%at" | head -1)
+NOW_EPOCH=$(date +%s)
+ELAPSED_DAYS=$(( (NOW_EPOCH - FIRST_COMMIT_EPOCH) / 86400 ))
+[ "$ELAPSED_DAYS" -lt 1 ] && ELAPSED_DAYS=1
+
+# developer-years this codebase represents at industry rate
+DEV_YEARS_X10=$(( total_lines * 10 / INDUSTRY_LOC_PER_YEAR ))
+DEV_YEARS=$(( DEV_YEARS_X10 / 10 ))
+DEV_YEARS_FRAC=$(( DEV_YEARS_X10 % 10 ))
+
+# equivalent team size = total_lines * 365 / (industry_rate * elapsed_days)
+EQUIV_DEVS=$(( total_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
+
+# LOC per dev per year for this project (1 dev)
+LOC_PER_YEAR=$(( total_lines * 365 / ELAPSED_DAYS ))
+
+# Format elapsed time as "X months, Y days" or "X days"
+ELAPSED_MONTHS=$(( ELAPSED_DAYS / 30 ))
+ELAPSED_REM_DAYS=$(( ELAPSED_DAYS % 30 ))
+if [ "$ELAPSED_MONTHS" -gt 0 ]; then
+    ELAPSED_STR="${ELAPSED_MONTHS} month(s), ${ELAPSED_REM_DAYS} day(s)"
+else
+    ELAPSED_STR="${ELAPSED_DAYS} day(s)"
+fi
+
+# Linux LOC/dev/year: 28,000,000 / 33 / 1000 = 848
+# Windows LOC/dev/year: 50,000,000 / 40 / 5000 = 250
+LINUX_LOC_RATE=848
+WINDOWS_LOC_RATE=250
+
+# Multiplier vs Linux and Windows developer productivity
+MULT_VS_LINUX=$(( LOC_PER_YEAR / LINUX_LOC_RATE ))
+MULT_VS_WINDOWS=$(( LOC_PER_YEAR / WINDOWS_LOC_RATE ))
+
 cat > "$COUNT_FILE" << EOF
 # 📊 Impossible OS — Line Count
 
@@ -133,6 +172,30 @@ cat > "$COUNT_FILE" << EOF
 | **All project code** | **${total_files}** | **${total_lines}** |
 
 > Vendored code excluded: ~${vendored_lines} lines (\`stb_image.h\`, \`stb_truetype.h\`, \`efi.h\`)
+
+---
+
+## The Impossibility Index
+
+> *According to every industry estimate ever published, what you're looking at shouldn't
+> exist. Linux took ~1,000 developers 33 years. Windows took ~5,000 developers 40 years.
+> Entire university courses teach that operating systems are a multi-decade, multi-hundred-
+> person endeavor. One developer apparently missed that lecture.*
+
+| | Linux | Windows | Impossible OS |
+|---|---:|---:|---:|
+| **Lines of code** | ~28,000,000 | ~50,000,000 | ${total_lines} |
+| **Developers** | ~1,000 active | ~5,000 peak | 1 |
+| **Time span** | 33 years | 40 years | ${ELAPSED_STR} |
+| **LOC/dev/year** | ~${LINUX_LOC_RATE} | ~${WINDOWS_LOC_RATE} | ${LOC_PER_YEAR} |
+
+> At the industry-standard rate of 10,000 LOC/developer/year (COCOMO II, system
+> programming), this codebase represents **${DEV_YEARS}.${DEV_YEARS_FRAC} developer-years**
+> of work. One developer produced it in **${ELAPSED_STR}** -- the mass equivalent output
+> of **${EQUIV_DEVS} developers**, writing **${MULT_VS_LINUX}x** faster than a Linux
+> kernel contributor and **${MULT_VS_WINDOWS}x** faster than a Windows developer.
+>
+> *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 

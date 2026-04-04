@@ -49,4 +49,28 @@
 
 ---
 
-*Last updated: 2026-04-04 14:57 · commit `d48ae2d`*
+## The Impossibility Index
+
+> *According to every industry estimate ever published, what you're looking at shouldn't
+> exist. Linux took ~1,000 developers 33 years. Windows took ~5,000 developers 40 years.
+> Entire university courses teach that operating systems are a multi-decade, multi-hundred-
+> person endeavor. One developer apparently missed that lecture.*
+
+| | Linux | Windows | Impossible OS |
+|---|---:|---:|---:|
+| **Lines of code** | ~28,000,000 | ~50,000,000 | 144054 |
+| **Developers** | ~1,000 active | ~5,000 peak | 1 |
+| **Time span** | 33 years | 40 years | 28 day(s) |
+| **LOC/dev/year** | ~848 | ~250 | 1877846 |
+
+> At the industry-standard rate of 10,000 LOC/developer/year (COCOMO II, system
+> programming), this codebase represents **14.4 developer-years**
+> of work. One developer produced it in **28 day(s)** -- the mass equivalent output
+> of **187 developers**, writing **2214x** faster than a Linux
+> kernel contributor and **7511x** faster than a Windows developer.
+>
+> *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
+
+---
+
+*Last updated: 2026-04-04 15:12 · commit `d88bddf`*
