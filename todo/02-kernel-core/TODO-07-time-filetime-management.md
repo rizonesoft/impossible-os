@@ -53,7 +53,7 @@
 | 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [x]   |
 | 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [x]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [x]   |
-| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [ ]   |
+| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [x]   |
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [ ]   |
 | 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [ ]   |
 | 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [ ]   |
@@ -108,20 +108,17 @@ The HPET provides a single 64-bit main counter that increments at a fixed freque
 - [x] Enables main counter via `ENABLE_CNF` bit; validates probe read and period range
 - [x] Wired into `mono_clock_init()` as priority 2 (TSC > HPET > LAPIC) and `mono_ns()` switch
 - [x] No timer comparators -- main counter only (comparators for scheduler timer TODO)
-- [ ] Commit: `"kernel: drivers -- HPET main counter driver"`
+- [x] Commit: `"kernel: drivers -- HPET main counter driver"`
 
 ## 5. Wall Clock Init from UEFI GetTime / RTC
 Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point paired with the monotonic counter reading at that instant.
 
-- [ ] Create `include/kernel/time/wall_clock.h` and `src/kernel/time/wall_clock.c`
-- [ ] Define `wall_clock_t` -- `FILETIME base_time` (UTC) + `uint64_t base_mono_ns` (monotonic reading at seeding)
-- [ ] `wall_clock_init()`:
-  1. Try `uefi_get_time()` -- if `UEFI_SUCCESS` and year is plausible (2000–2100), call `filetime_from_efi_time()` to get UTC FILETIME, record `base_mono_ns = mono_ns()`
-  2. Fallback: `rtc_read()` + `filetime_from_rtc()` -- assume UTC; log that UEFI time was unavailable
-  3. Log the seeded wall time and source on the serial channel
-- [ ] `KeQuerySystemTime(FILETIME *out)` -- computes `base_time + (mono_ns() - base_mono_ns) / 100` -- lock-free read
-- [ ] `KeSetSystemTime(FILETIME new_time)` -- updates `base_time` and re-latches `base_mono_ns`; acquires a seqlock write for concurrent readers
-- [ ] Protect `wall_clock_t` with `seqlock_t` (already in `include/kernel/sched/seqlock.h`) for lock-free reads and safe writes
+- [x] Created `include/kernel/time/wall_clock.h` + `src/kernel/time/wall_clock.c`
+- [x] `wall_clock_init()`: tries UEFI GetTime (year 2000-2100 plausibility check), falls back to RTC; logs seeded time with ISO-style format and source name
+- [x] `KeQuerySystemTime()`: returns `base_time + (mono_ns() - base_mono_ns) / 100` -- seqlock lock-free read
+- [x] `KeSetSystemTime(new_time)`: updates anchor + re-latches mono_ns(); seqlock write-protected
+- [x] `wall_clock_ready()`: returns 1 after init
+- [x] Protected by `seqlock_t` (SEQLOCK_INIT) for SMP-safe concurrent reads
 - [ ] Commit: `"kernel: time -- wall clock init from UEFI GetTime with RTC fallback"`
 
 ## 6. Kernel Time Service
@@ -279,7 +276,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
 | 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ✅ §4 -- hpet.c driver    |
-| 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ⬜ §5                     |
+| 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ✅ §5 -- wall_clock_init  |
 | 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ⬜ §7                     |
 | 💎 | Timer resolution         | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ⬜ §8                     |
 | 💎 | Precise wall time        | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ⬜ §10                    |
