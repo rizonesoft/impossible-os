@@ -20,15 +20,16 @@
 - → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §8 of this TODO wires them into the SSDT
 - → XREF: `TODO-16-crash-dump-generation.md §2,§7` -- crash dump raw-partition sink bypasses VFS; §8 of this TODO captures ring buffer to reserved physical memory on panic (complementary -- TODO-16 captures binary state, §8 captures text log)
 - → XREF: `TODO-20-kernel-libraries.md §5` -- Monocypher Blake2b + kernel CSPRNG required by §10 (HMAC-chain log integrity)
+- → XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` -- BlackBox X:\ partition; log paths migrate from C:\ to X:\Logs\
 
 ## Outcome
 
-- All kernel subsystems write to dedicated log files (`network.log`, `boot.log`, `fs.log`, `mm.log`).
+- All kernel subsystems write to dedicated log files on X:\Logs\ (`network.log`, `boot.log`, `fs.log`, `mm.log`).
 - Log files rotate automatically; disk never fills from logging alone.
 - `events.jsonl` provides structured, human-readable log events readable by any editor.
 - Remote syslog forwarding (-> `07-networking/TODO-11`) enables enterprise and headless debug scenarios.
 - The klog lifecycle is gated correctly on VFS readiness per TODO-01 Phase 0/Phase 2 contract.
-- On panic, the last N ring buffer entries survive reboot via reserved physical memory and are recovered into `crash_recovery.log`.
+- On panic, the last N ring buffer entries survive reboot via reserved physical memory and are recovered into `X:\Crash\crash_recovery.log`.
 - Every log entry carries CPU number, PID, and TID for SMP and multi-process debugging.
 - `events.jsonl` entries are HMAC-chained -- tampering is mathematically detectable without external tools.
 
@@ -67,7 +68,7 @@ These items are implemented and verified. Kept here for future correctness check
 
 ### Disk Logging 
 
-- [x] Batch flush to `C:\Impossible\System\Logs\kernel.log` (IXFS, appendable) -- `klog_disk.c`
+- [x] Batch flush to `X:\Logs\kernel.log` (IXFS, appendable) -- `klog_disk.c`
 - [x] Numbered boot session logs `X:\BOOT_NNN.LOG` on FAT32 partition -- one file per boot
 - [x] Live mode -- every `klog()` entry appended and flushed immediately when enabled
 - [x] 256 KB flush buffer via `pmm_alloc_contiguous()` (identity-mapped)
@@ -139,7 +140,7 @@ Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 Emit machine-parseable events alongside plain-text logs. Implemented with manual JSON string formatting in `klog_disk.c` -- no cJSON dependency.
 
 - [x] Define JSON event format: `{"ts":<ms>,"lvl":"WARN","sub":"net","msg":"DHCP timeout","dropped":0}`
-- [x] JSON Lines flush integrated into `klog_disk_flush()` -- serializes ring buffer entries to `C:\Impossible\System\Logs\events.jsonl`
+- [x] JSON Lines flush integrated into `klog_disk_flush()` -- serializes ring buffer entries to `X:\Logs\events.jsonl`
 - [x] JSON Lines format -- one JSON object per line; append-only; batched into 16 KB buffer for single `vfs_write()`
 - [x] `events.jsonl` created at first flush; file size tracked for rotation
 - [x] §4 log rotation applied to `events.jsonl` via `rotate_log_file()`
@@ -166,7 +167,7 @@ Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. T
 
 ## 8. Crash-Persistent Log Capture
 
-Reserve a physical memory region at boot so the ring buffer survives a kernel panic. On next boot, recover entries and write them to `crash_recovery.log`. Linux has pstore/ramoops; Windows writes minidumps with log context. Without this, any crash before `klog_disk_flush()` loses the most recent ring buffer entries -- the entries most likely to contain the crash cause.
+Reserve a physical memory region at boot so the ring buffer survives a kernel panic. On next boot, recover entries and write them to `X:\Crash\crash_recovery.log`. Linux has pstore/ramoops; Windows writes minidumps with log context. Without this, any crash before `klog_disk_flush()` loses the most recent ring buffer entries -- the entries most likely to contain the crash cause.
 
 > [!WARNING]
 > **High-risk:** Modifies `panic_screen()` (boot-critical path) and `klog_early_init()` (Phase 0). If this breaks, revert the `klog_crash_persist()` call in `panic_screen()` -- the BSOD still renders without crash log persistence. Verify `panic_screen()` still works after adding the call.
@@ -176,7 +177,7 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
 - [x] `klog_crash_persist()`: serializes ring entries (no pointers -- subsystem copied as char[16]) + CRC32 to reserved region; called from `panic_screen()` after crash dump write
 - [x] No `kmalloc` or VFS in crash persist path -- direct physical memory write only
 - [x] `klog_crash_recover()`: reads region address from NVRAM, validates magic + CRC32, replays to serial with `[CRASH-PREV]` prefix; called in Phase 0 after UEFI runtime init
-- [x] `klog_crash_write_to_disk()`: writes recovered entries to `crash_recovery.log` on C:\; called from `klog_disk_enable()` in Phase 2
+- [x] `klog_crash_write_to_disk()`: writes recovered entries to `X:\Crash\crash_recovery.log`; called from `klog_disk_enable()` in Phase 2
 - [x] Clears magic cookie after successful recovery; zeros fresh region for new boot
 - [x] POST codes: `POST16(0xDE00)` entry, `POST16(0xDE01)` region allocated, `POST16(0xDE02)` recovery check, `POST16(0xDE03)` done
 - [x] 3 unit tests: KLOG_CRASH_MAGIC value, header size bounds, POST code uniqueness
@@ -201,7 +202,7 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 - [x] Update serial output format: append `[cpu:N]` after the timestamp when SMP is ready or cpu_id > 0 (skipped during single-CPU early boot)
 - [x] Update `klog_crash_persist()` (§8): `klog_crash_entry_t` extended with cpu_id/pid/tid fields (160 bytes); serialization copies new fields
 - [x] Add debug POST codes: `POST16_KLOG_CTX` (0xDE10), `POST16_KLOG_CTX_STRUCT` (0xDE11), `POST16_KLOG_CTX_SERIAL` (0xDE12), `POST16_KLOG_CTX_JSON` (0xDE13) -- range 0xDE1x confirmed free
-- [ ] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
+- [x] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
 **Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":0` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.
 
@@ -225,7 +226,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [ ] Add debug POST codes: `POST16(0xDE20)` entry, `POST16(0xDE21)` HMAC key generated, `POST16(0xDE22)` first entry sealed, `POST16(0xDE23)` verification API ready -- range `0xDE2x` confirmed free
 - [ ] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
 
-**Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("C:\\Impossible\\System\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -296,11 +297,11 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 ## Verification
 
 - [x] `bash scripts/build.sh clean` → `=== BUILD OK ===` -- PASS: build 1939 booted successfully (WHPX, 2026-04-02)
-- [x] QEMU WHPX: serial log shows `klog_early_init()` in Phase 0, `klog_disk_enable()` in Phase 2 -- PASS: `[PHASE0] KLOG (0x0051)` at 0.000s, `klog: writing to C:\...\Serial_26040201.log` at 4.560s after VFS mount (WHPX, 2026-04-02)
+- [x] QEMU WHPX: serial log shows `klog_early_init()` in Phase 0, `klog_disk_enable()` in Phase 2 -- PASS: `[PHASE0] KLOG (0x0051)` at 0.000s, `klog: writing to X:\Logs\...` at 4.560s after VFS mount (WHPX, 2026-04-02)
 - [ ] QEMU TCG: same as WHPX -- (not tested in this log, WHPX only)
 - [ ] VirtualBox: boot completes, log files created -- (manual: requires VirtualBox)
-- [ ] `C:\Impossible\System\Logs\network.log` contains only `"net"` tagged entries -- (not verifiable from serial log, requires filesystem inspection)
-- [ ] `C:\Impossible\System\Logs\boot.log` contains only `"boot"` tagged entries -- (not verifiable from serial log, requires filesystem inspection)
+- [ ] `X:\Logs\network.log` contains only `"net"` tagged entries -- (not verifiable from serial log, requires filesystem inspection)
+- [ ] `X:\Logs\boot.log` contains only `"boot"` tagged entries -- (not verifiable from serial log, requires filesystem inspection)
 - [x] `klog_set_level("mm", LOG_WARN)` silences mm DEBUG entries in serial -- PASS: unit test `Klog: level drop` passed at 8.510s, confirms LOG_DEBUG dropped after set_level(mm, LOG_WARN) (WHPX, 2026-04-02)
 - [ ] Rotation: `kernel.log.1` appears when `kernel.log` exceeds MaxSize -- (not verifiable from serial log, requires filesystem inspection after multiple boots)
 - [ ] `events.jsonl` parseable by `jq` -- one JSON object per line -- (not verifiable from serial log, requires filesystem inspection)

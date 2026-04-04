@@ -180,7 +180,7 @@ An opt-in post-boot overlay bar chart showing per-stage boot duration, plus a JS
 **Files:** `src/kernel/main/boot_progress.c`, `src/shell/cmd/boot_timeline.c`
 
 - [x] Overlay bar removed (per user preference) -- JSON timeline is the diagnostic output
-- [x] `boot_timeline_dump_json()`: writes `C:\Impossible\System\Logs\boot-timeline.json` with `[{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7},...]`
+- [x] `boot_timeline_dump_json()`: writes `X:\Boot\boot-timeline.json` with `[{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7},...]`
 - [x] Called from `boot_phase3()` after `boot_timing_write_report()`
 - [ ] `boot-timeline` shell command -- deferred to shell TODO
 - [x] Commit: `"kernel: boot timeline JSON dump"`

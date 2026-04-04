@@ -176,7 +176,7 @@ runs, Win32 compatibility is excellent.
 - [ ] **`tier3/tier3_copy.c`**: `CreateFile(src, GENERIC_READ)`; `CreateFile(dst, GENERIC_WRITE, CREATE_NEW)`; copy loop; verify byte counts match; `CloseHandle` both
   - Expected: `Copied N bytes` + file exists at destination
 - [ ] **Real Windows binary target**: **Busybox for Windows** (`busybox32.exe`)
-  - `busybox cat C:\Impossible\System\Logs\boot.log` → prints log
+  - `busybox cat X:\Logs\boot.log` → prints log
   - `busybox ls C:\` → prints directory listing
   - Pass criteria: at least `cat` and `ls` commands produce correct output
 

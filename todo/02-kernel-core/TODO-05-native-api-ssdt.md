@@ -895,7 +895,7 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
 - [ ] `NtCreateNamedPipeFile(...)`: create a named pipe File object
 - [ ] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 
-**Test checkpoint:** `NtCreateFile` on `C:\Impossible\System\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
+**Test checkpoint:** `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
 
 ## 7. NtCreateProcess / NtCreateThread / Process-Thread Lifecycle
 Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-03 §5).
@@ -1529,7 +1529,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 - [ ] Serial log: `"ssdt: registered 470 services"` (or more)
 - [ ] `mov rax, 0x0000; syscall` from ring 3 reaches `NtClose` handler without a GPF
 - [ ] INT 0x2E from ring 3 reaches the same `syscall_dispatch` with correct register mapping
-- [ ] `NtCreateFile` on `C:\Impossible\System\Logs\kernel.log` returns `STATUS_SUCCESS` and a valid HANDLE
+- [ ] `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` and a valid HANDLE
 - [ ] `NtClose(handle)` returns `STATUS_SUCCESS`; calling it again returns `STATUS_INVALID_HANDLE`
 - [ ] SSDT slot for unimplemented index returns `STATUS_NOT_IMPLEMENTED`, not a crash
 - [ ] `NtWaitForMultipleObjects` with 2 events, one signalled, returns correct index

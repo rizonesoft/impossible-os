@@ -149,7 +149,7 @@ System File Checker. Build-time: generate a manifest of system files (path, CRC3
 - [ ] `Makefile` integration: add `gen_sfc_manifest` step before disk image assembly; embed `sfc_manifest.bin` into IXFS partition
 - [ ] `sfc_scan(progress_cb, &results)`: read `C:\Impossible\System\sfc_manifest.bin`; for each entry: open file, compute CRC32C, compare; collect mismatches into `sfc_result_t[]`; return mismatch count
 - [ ] `sfc_repair(results, count)`: for each mismatch: extract original from `recovery.img`; overwrite; verify CRC32C after repair; log `[SFC] Repaired %s`
-- [ ] CLI: `sfc [/scannow] [/verifyonly] [/scanonce] [/log=<path>]`; `/scannow` → scan + repair; `/verifyonly` → report only; real-time per-file progress; write detailed log to `C:\Impossible\System\Logs\CBS.log`
+- [ ] CLI: `sfc [/scannow] [/verifyonly] [/scanonce] [/log=<path>]`; `/scannow` → scan + repair; `/verifyonly` → report only; real-time per-file progress; write detailed log to `X:\Logs\CBS.log`
 - [ ] GUI dialog `dlg_sfc_open()`: `Scan Now` / `Verify Only` buttons; progress bar; results table (path, status: OK/MODIFIED/MISSING/REPAIRED); `Export Log` button; `Close`
 - [ ] Commit: `"shell: sfc CLI + GUI -- build-time CRC manifest, runtime scan+repair, recovery image, CBS.log"`
 

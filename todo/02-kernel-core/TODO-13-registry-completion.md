@@ -334,7 +334,7 @@
 ### 4.7 Rate limiting & audit ⭐
 
 - [ ] **Rate limiting** ⭐ -- per-task `reg_ops_this_sec` counter reset every 1 000 ms by scheduler tick; if > 10 000 registry ops per second: `schedule_yield()` and re-check; soft throttle prevents runaway registry hammering from buggy apps; counter tracked in `struct task`
-- [ ] **Audit log** ⭐ -- if `HKLM\SYSTEM\Registry\AuditEnabled = 1`: write a compact audit entry to `C:\Impossible\System\Logs\registry-audit.log` on each `NtSetValueKey` / `NtDeleteKey`: `{timestamp, pid, key_path, value_name, old_type, new_type, result_ntstatus}`; uses the existing `klog` ring buffer at LOG_AUDIT level; auto-rotated at 4 MiB
+- [ ] **Audit log** ⭐ -- if `HKLM\SYSTEM\Registry\AuditEnabled = 1`: write a compact audit entry to `X:\Logs\registry-audit.log` on each `NtSetValueKey` / `NtDeleteKey`: `{timestamp, pid, key_path, value_name, old_type, new_type, result_ntstatus}`; uses the existing `klog` ring buffer at LOG_AUDIT level; auto-rotated at 4 MiB
 
 ### 4.8 Commit
 

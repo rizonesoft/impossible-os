@@ -299,6 +299,8 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 ## 12. Migrate Logging from X:\ to C:\ + Remove Log Partition
 
+> **Note:** TODO-17 restores a dedicated service partition ("BlackBox") mounted as X:\. The removal described here was a transitional step; X:\ returns as a FAT32 partition for logs, crash dumps, and diagnostics.
+
 Remove the dedicated FAT32 logging partition (`X:\`) -- a development hack from when IXFS didn't support writes. All boot logs, crash dumps, and diagnostics write to `C:\Impossible\System\Logs\` on the main IXFS partition. The FAT32 partition is repurposed as EFI System Partition recovery storage.
 
 **Files:** `src/kernel/klog.c`, `src/kernel/main/boot_storage.c`, `src/kernel/boot_timing.c`, `scripts/build.sh` (disk image layout)
@@ -311,7 +313,7 @@ Remove the dedicated FAT32 logging partition (`X:\`) -- a development hack from 
 - [x] Removed FAT32 log partition from disk image (2 partitions: EFI + IXFS, IXFS gets +16 MiB)
 - [x] Commit: `"boot: migrate logging from X:\\ to C:\\Impossible\\System\\Logs\\"`
 
-**Test checkpoint:** QEMU: boot log written to `C:\Impossible\System\Logs\26032801.LOG`. No `X:\` mount in serial log. Bare metal: same path, IXFS write works. Disk image has 2 partitions (ESP + IXFS) instead of 3.
+**Test checkpoint:** QEMU: boot log written to `X:\Boot\26032801.LOG`. No `X:\` mount in serial log. Bare metal: same path, IXFS write works. Disk image has 2 partitions (ESP + IXFS) instead of 3.
 
 ## 13. CPU Feature Minimum Requirements and Verification
 
@@ -383,7 +385,7 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 | 💎 | Per-process page tables | ✅ Each process own CR3     | ✅ mm_struct per task       | ✅ §8 PML4 clone + CR3 switch   |
 | 💎 | CPU security verify     | ✅ HAL verifies CR4/EFER    | ✅ Checks feature enable    | ✅ §9 verify NX/SMEP/SMAP       |
 | 💎 | Graceful degradation    | ✅ Safe Mode + Last Known   | ✅ systemd continues        | ✅ §7 BOOT_TRY (skip list removed) |
-| 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                 | ✅ §12 KLOG_DIR on C:\          |
+| 💎 | Logging on main FS      | ✅ C:\Windows\System32      | ✅ /var/log                 | ✅ §12 KLOG_DIR on X:\ (TODO-17)|
 | 💎 | CPU feature minimums    | ✅ NX required since Vista  | ✅ Minimum checks at boot   | ✅ §13 NX+SSE2 required         |
 | ⭐ | Bare-metal test matrix  | ❌ Internal only (WHQL)     | ❌ Community-driven         | ✅ §14 4-platform matrix        |
 

@@ -57,12 +57,12 @@
 
 ## 1. Event Log `[Sonnet]`
 
-`struct kernel_event` (type INFO/WARN/ERROR/SECURITY, source[32], message[256], unix_ts). Add `LOG_SECURITY=4` to `klog.h`. `kevent_log()` appends to rolling `C:\Impossible\System\Logs\events.log` (max 1 MiB, rotate on overflow). Event Viewer applet: `CTRL_TABSTRIP` filter by type/source, date range, export.
+`struct kernel_event` (type INFO/WARN/ERROR/SECURITY, source[32], message[256], unix_ts). Add `LOG_SECURITY=4` to `klog.h`. `kevent_log()` appends to rolling `X:\Logs\events.log` (max 1 MiB, rotate on overflow). Event Viewer applet: `CTRL_TABSTRIP` filter by type/source, date range, export.
 
 **Files:** `src/kernel/event_log.c` (new), `include/kernel/event_log.h` (new), `src/apps/control/applets/eventvwr.c` (new)
 
 > [!NOTE]
-> Extend `klog.h`: add `LOG_SECURITY = 4` constant. `kevent_log(type, source, msg)`: format as `"{unix_ts}|{type}|{source}|{msg}\n"` → append to VFS file `C:\Impossible\System\Logs\events.log`. If file > 1 MiB: rotate: `vfs_rename("events.log", "events.1.log")`; optionally compress via `zip_create("events.1.log.zip")`. Log events at call sites: app install/uninstall → `kevent_log(LOG_INFO, "installer", "Installed %s %s")`. Login → `kevent_log(LOG_SECURITY, "auth", "Login: %s")`. Logout → `kevent_log(LOG_SECURITY, "auth", "Logout: %s")`. Permission denied → `kevent_log(LOG_SECURITY, "vfs", "Access denied: %s by uid %u")`. Crash/panic → `kevent_log(LOG_ERROR, "kernel", "Panic: %s at %p")`. Service start/stop → `kevent_log(LOG_INFO, "service", "%s started/stopped")`. **Rotate task**: `sched_task_add("event_rotate", event_rotate_task, 3600, 1)` (hourly check). **Event Viewer**: `eventvwr.cpl` `CTRL_TABSTRIP` tabs: All Events / Errors / Security / Info. `CTRL_LISTVIEW` (Time, Type, Source, Message). [Filter by date]: `dialog_input()` date range → filter in-memory. [Export]: `dialog_file_save("*.log")` → `vfs_write()` raw log lines. `CTRL_TEXTBOX` source filter.
+> Extend `klog.h`: add `LOG_SECURITY = 4` constant. `kevent_log(type, source, msg)`: format as `"{unix_ts}|{type}|{source}|{msg}\n"` → append to VFS file `X:\Logs\events.log`. If file > 1 MiB: rotate: `vfs_rename("events.log", "events.1.log")`; optionally compress via `zip_create("events.1.log.zip")`. Log events at call sites: app install/uninstall → `kevent_log(LOG_INFO, "installer", "Installed %s %s")`. Login → `kevent_log(LOG_SECURITY, "auth", "Login: %s")`. Logout → `kevent_log(LOG_SECURITY, "auth", "Logout: %s")`. Permission denied → `kevent_log(LOG_SECURITY, "vfs", "Access denied: %s by uid %u")`. Crash/panic → `kevent_log(LOG_ERROR, "kernel", "Panic: %s at %p")`. Service start/stop → `kevent_log(LOG_INFO, "service", "%s started/stopped")`. **Rotate task**: `sched_task_add("event_rotate", event_rotate_task, 3600, 1)` (hourly check). **Event Viewer**: `eventvwr.cpl` `CTRL_TABSTRIP` tabs: All Events / Errors / Security / Info. `CTRL_LISTVIEW` (Time, Type, Source, Message). [Filter by date]: `dialog_input()` date range → filter in-memory. [Export]: `dialog_file_save("*.log")` → `vfs_write()` raw log lines. `CTRL_TEXTBOX` source filter.
 
 - [ ] `include/kernel/event_log.h`: `struct kernel_event { log_level_t type; char source[32]; char msg[256]; uint64_t ts; }`, `kevent_log()` prototype
 - [ ] Add `LOG_SECURITY = 4` to `klog.h` enum; update klog level string table
@@ -234,7 +234,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 > - **Old restore points** (keep 3 newest): `restore_list()` → sum sizes of entries beyond 3
 > - **Cached update packages** (`C:\Temp\*.ipkg`): `vfs_readdir()` filter by `.ipkg`
 > - **Crash dumps** (`C:\Impossible\System\CrashDumps\Archived\*`): sum sizes
-> - **App logs** (`C:\Impossible\System\Logs\events.*.log`): sum rotated log files (not current)
+> - **App logs** (`X:\Logs\events.*.log`): sum rotated log files (not current)
 > Total space at bottom: "Total: {N} MB will be freed". [Clean up system files] button: for each checked category → delete files; show `CTRL_PROGRESSBAR` during deletion; refresh sizes. **Weekly task**: `sched_task_add("disk_cleanup", disk_cleanup_auto, 7*86400, 1)` -- runs silently, clears Temp + Archived CrashDumps + old logs (> 7 days); `kevent_log(LOG_INFO, "cleanup", "Auto disk cleanup: freed %llu KB")`.
 
 - [ ] `void cleanup_open(void)` -- `wm_create_window()`; scan all categories; display checkboxes + sizes

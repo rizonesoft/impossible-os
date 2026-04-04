@@ -132,7 +132,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
   9. Packages: for each path in `InstallList`: `ipkg_install(path)` (calls `ipkg_create.exe` extract logic)
   10. Set `HKLM\SYSTEM\FirstBoot=0` (unattended already configured user -- skip OOBE); or `=1` if `[User]` section absent
   11. Write `HKLM\SYSTEM\InstallerMode=0`; auto-restart: `reg_set_string(HKLM, "SYSTEM\\PendingReboot", "1")` + `EFI_ResetSystem(RESET_WARM)`
-- [ ] **`setup.log`** at `C:\Impossible\System\Logs\setup.log`: append timestamped lines; each step logs start + completion + any error; readable after first boot
+- [ ] **`setup.log`** at `X:\Logs\setup.log`: append timestamped lines; each step logs start + completion + any error; readable after first boot
 - [ ] **Error handling**: on any step failure: log error to `setup.log` + serial; halt with `"[setup] FATAL: {step} failed -- installation aborted"` + print to console; do NOT auto-restart on error (leaves system in diagnosable state)
 
 ---
@@ -153,9 +153,9 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
   - **Hardware fingerprint**: clear `HKLM\SYSTEM\HardwareID` (computed from SMBIOS UUID + disk serial at first boot); regenerated on next boot
   - **Network adapter GUIDs**: clear `HKLM\SYSTEM\Network\Adapters\*` -- regenerated at next boot when NICs are re-enumerated
   - **Cached credentials**: `auth_clear_all_sessions()`; clear `HKCU\Security\SessionTokens\*`
-  - **Event logs**: truncate `C:\Impossible\System\Logs\*.log` to zero bytes; clear `HKLM\SYSTEM\EventLog\*` ring entries
+  - **Event logs**: truncate `X:\Logs\*.log` to zero bytes; clear `HKLM\SYSTEM\EventLog\*` ring entries
   - **Temp/cache**: `vfs_unlink_tree("C:\\Temp\\")` + recreate empty `C:\Temp\`; clear `C:\Users\*\AppData\Temp\`
-  - Log all cleared items to `C:\Impossible\System\Logs\sysprep.log`
+  - Log all cleared items to `X:\Logs\sysprep.log`
 - [ ] **`/oobe`**: `reg_set_dword(HKLM, "SYSTEM\\FirstBoot", 1)` -- OOBE triggers on next boot
 - [ ] **`/audit`**: set `HKLM\SYSTEM\AuditMode=1` -- boot to admin desktop instead of OOBE; used by OEMs to install drivers before sealing
 - [ ] **`/shutdown`** / **`/reboot`**: after all steps: print summary + `EFI_ResetSystem(RESET_SHUTDOWN)` or `RESET_WARM`

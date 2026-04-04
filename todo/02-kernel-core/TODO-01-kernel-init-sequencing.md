@@ -142,7 +142,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [x] `blkdev_register_all()` -- register block devices into the blkdev layer
 - [x] `vfs_init()` -- BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_HEAP)
 - [x] `partition_scan_all()` + `partition_mount_filesystems()` -- BOOT_FATAL if no root partition mounts
-- [x] `klog_disk_enable()` -- open `C:\Impossible\System\Logs\kernel.log`; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
+- [x] `klog_disk_enable()` -- open `X:\Logs\kernel.log`; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
 - [x] `registry_init()` -- BOOT_FATAL if fails after VFS is up; BOOT_REQUIRE(SUBSYS_VFS)
 - [x] `symtab_init()` -- load symbol table from disk; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
 - [x] `mmap_init()` -- user-mode memory map subsystem; BOOT_REQUIRE(SUBSYS_VMM)
