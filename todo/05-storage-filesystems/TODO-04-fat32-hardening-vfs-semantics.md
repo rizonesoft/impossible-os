@@ -273,7 +273,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [x] `vfs_break_oplock(node, access)`: called from `vfs_open()` before share-mode check; L1+write -> None, L1+read -> L2, L2+write -> None; logs each break
 - [x] Level 1 (exclusive) and Level 2 (shared read) implemented; Batch and Filter deferred
 - [x] `FSCTL_REQUEST_OPLOCK` / `FSCTL_OPLOCK_BREAK_ACKNOWLEDGE` ioctls: deferred to Win32 File I/O TODO (moved to TODO-05)
-- [ ] Commit: `"fs: VFS opportunistic locks -- Level 1/2 oplock grant, break on conflicting open"`
+- [x] Commit: `"fs: VFS opportunistic locks -- Level 1/2 oplock grant, break on conflicting open"`
 
 **Test checkpoint:** Open file with Level 1 oplock. Second open breaks oplock to Level 2 (notification logged). Third open with write access breaks to None. `FSCTL_REQUEST_OPLOCK` returns correct level. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 

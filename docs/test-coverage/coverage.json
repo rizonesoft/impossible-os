@@ -1,9 +1,25 @@
 {
-  "timestamp": "2026-04-03T22:49:49Z",
-  "total_suites": 0,
-  "total_assertions": 36,
+  "timestamp": "2026-04-04T22:46:08Z",
+  "total_suites": 121,
+  "total_assertions": 386,
   "files": [
-    {"file": "test_boot_init.c", "suites": 0
-0, "assertions": 36}
+    {"file": "test_boot_init.c", "suites": 16, "assertions": 41},
+    {"file": "test_bulletproof.c", "suites": 7, "assertions": 39},
+    {"file": "test_heap.c", "suites": 4, "assertions": 9},
+    {"file": "test_ipc.c", "suites": 5, "assertions": 12},
+    {"file": "test_ixfs.c", "suites": 8, "assertions": 17},
+    {"file": "test_klog.c", "suites": 19, "assertions": 41},
+    {"file": "test_mmap.c", "suites": 1, "assertions": 2},
+    {"file": "test_nt_types.c", "suites": 23, "assertions": 94},
+    {"file": "test_ob.c", "suites": 7, "assertions": 23},
+    {"file": "test_peb_teb.c", "suites": 5, "assertions": 25},
+    {"file": "test_pmm.c", "suites": 2, "assertions": 5},
+    {"file": "test_registry.c", "suites": 2, "assertions": 8},
+    {"file": "test_sched.c", "suites": 2, "assertions": 3},
+    {"file": "test_security.c", "suites": 8, "assertions": 32},
+    {"file": "test_storage.c", "suites": 2, "assertions": 2},
+    {"file": "test_swap.c", "suites": 1, "assertions": 3},
+    {"file": "test_vfs.c", "suites": 5, "assertions": 19},
+    {"file": "test_vmm.c", "suites": 4, "assertions": 11}
   ]
 }

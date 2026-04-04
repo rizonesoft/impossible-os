@@ -71,7 +71,7 @@ Modify `make-system-disk.c` to create a 3-partition GPT: EFI + BlackBox + IXFS.
 - [x] Backup GPT header and entry array correct (verified via fdisk)
 - [x] Makefile updated: `BB_OFFSET`, `BB_SIZE`, `mkfs.fat -n BLACKBOX`, `mmd` creates 6 directories
 - [x] `.info` file includes `BB_OFFSET` and `BB_SIZE` for downstream tools
-- [ ] Commit: `"tools: add BlackBox 128 MiB FAT32 partition to GPT layout"`
+- [x] Commit: `"tools: add BlackBox 128 MiB FAT32 partition to GPT layout"`
 
 **Test checkpoint:** `make-system-disk` produces a 3-partition disk image. `fdisk -l build/system-disk.img` shows EFI (64 MiB) + BlackBox (128 MiB) + IXFS (~316 MiB). BlackBox partition type is Microsoft Basic Data. GPT partition name is "BlackBox".
 

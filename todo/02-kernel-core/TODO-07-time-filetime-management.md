@@ -175,7 +175,7 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-05 §4).
 - [x] `timezone_init()`: defaults to UTC; registry read deferred until registry integration
 - [x] `timezone_set()` / `timezone_get()` / `timezone_total_bias()`
 - [x] `filetime_to_local(utc)` / `filetime_from_local(local)` -- apply total bias (bias + DST)
-- [ ] Commit: `"kernel: time -- timezone bias and DST management"`
+- [x] Commit: `"kernel: time -- timezone bias and DST management"`
 
 ## 12. KUSER_SHARED_DATA Time Field Updates
 The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, InterruptTime, TickCount) on every tick so user-mode code can read time without a syscall. This is the hottest path in the entire time subsystem -- `GetTickCount64()`, ntdll's `NtQuerySystemTime` fast path, and `QueryInterruptTime` all read from this shared page. Linux's vDSO serves the same purpose.
