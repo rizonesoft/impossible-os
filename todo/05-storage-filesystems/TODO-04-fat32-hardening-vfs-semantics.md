@@ -42,11 +42,11 @@
 | 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [x]   |
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [x]   |
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [x]   |
-| 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4, T07 §1,§6,§11,§13                                   |  [/]   |
+| 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4, T07 §1,§6,§11,§13                                    |  [/]   |
 | 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [x]   |
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [x]   |
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [x]   |
-| 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [ ]   |
+| 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [x]   |
 | 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [ ]   |
 | 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [ ]   |
 | 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [ ]   |
@@ -188,7 +188,7 @@ Add `share_mode` and `access_mode` to the per-open-handle struct. On `vfs_open()
 - [x] `vfs_check_sharing(node, access, share)`: iterates open handles; applies Win32 conflict rule: `(new_access & ~H.share) || (H.access & ~new_share)` -> `STATUS_SHARING_VIOLATION`
 - [x] `vfs_close()`: removes handle from list; triggers delete-on-close if marked and last handle (§9 prep)
 - [x] `STATUS_SHARING_VIOLATION` (0xC0000043) added to `ntstatus.h`
-- [ ] Commit: `"fs: VFS share-mode -- per-handle access/share fields, conflict check, STATUS_SHARING_VIOLATION"`
+- [x] Commit: `"fs: VFS share-mode -- per-handle access/share fields, conflict check, STATUS_SHARING_VIOLATION"`
 
 ## 9. Mark-for-Delete-on-Close
 
@@ -199,11 +199,11 @@ Implement `FILE_FLAG_DELETE_ON_CLOSE`: mark the inode for deletion when the hand
 > [!NOTE]
 > Windows semantics: `NtCreateFile(DELETE_ON_CLOSE)` marks the file. Any subsequent `NtOpenFile` on the same path returns `STATUS_DELETE_PENDING`. The actual delete happens in the `NtClose()` path when the last handle referencing the file is closed. The inode must remain reachable by existing handles until last-close.
 
-- [ ] Add `uint8_t delete_on_close` flag to `vfs_node_t` (or the open-handle struct if per-handle)
-- [ ] `vfs_open()`: if `flags & VFS_DELETE_ON_CLOSE`: set `node->delete_on_close = 1`; if `node->delete_on_close` already set on a *different* open: return `STATUS_DELETE_PENDING` to new openers
-- [ ] `vfs_close()` last-handle path: if `node->delete_on_close` and `open_handle_count == 0`: call `vfs_delete(node)` (which calls the filesystem driver's `unlink()`)
-- [ ] `vfs_open()` on `delete_on_close` node: existing openers may still read/write; new openers get `STATUS_DELETE_PENDING`
-- [ ] Commit: `"fs: delete-on-close -- VFS_DELETE_ON_CLOSE flag, STATUS_DELETE_PENDING, last-close unlink"`
+- [x] `vfs_node.delete_on_close` field + `VFS_O_DELETE_ON_CLOSE` (0x20) added in §8
+- [x] `vfs_open()`: sets `node->delete_on_close = 1` when flag present; rejects new openers on already-marked nodes (returns NULL / STATUS_DELETE_PENDING)
+- [x] `vfs_close()`: triggers `parent->ops->unlink()` when `delete_on_close && ref_count == 0` (added in §8)
+- [x] Existing handles continue to work until close; only new openers are rejected
+- [ ] Commit: `"fs: delete-on-close -- VFS_O_DELETE_ON_CLOSE flag, STATUS_DELETE_PENDING, last-close unlink"`
 
 ## 10. Byte-Range Locks
 
@@ -320,7 +320,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
 | ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ✅ §7 -- walk_path folds      |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
-| 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ⬜ §9 -- last-close unlink    |
+| 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
 | 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ⬜ §10 -- vfs_lock_file       |
 | 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ⬜ §11 -- stub returns        |
 | 💎 | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ⬜ §12 -- collision loop      |

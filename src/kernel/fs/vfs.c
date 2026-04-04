@@ -286,11 +286,19 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
     if (!node)
         return (struct vfs_node *)0;
 
+    /* Delete-on-close check (§9): reject new openers on marked nodes */
+    if (node->delete_on_close && !(flags & VFS_O_DELETE_ON_CLOSE))
+        return (struct vfs_node *)0;  /* STATUS_DELETE_PENDING */
+
     /* Share-mode check (§8): only for files, not directories */
     if ((node->type & VFS_FILE) && node->ref_count > 0) {
         if (vfs_check_sharing(node, flags, share) != 0)
             return (struct vfs_node *)0;
     }
+
+    /* Mark for delete-on-close (§9) */
+    if (flags & VFS_O_DELETE_ON_CLOSE)
+        node->delete_on_close = 1;
 
     /* Track this open handle */
     if (node->type & VFS_FILE)
