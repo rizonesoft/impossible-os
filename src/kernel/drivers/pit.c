@@ -98,8 +98,10 @@ void pit_stop(void)
 static uint64_t pit_irq_handler(struct interrupt_frame *frame)
 {
     extern uint64_t schedule(struct interrupt_frame *frame);
+    extern uint32_t dpc_drain_current_cpu(void);
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
+    dpc_drain_current_cpu();
     return schedule(frame);
 }
 

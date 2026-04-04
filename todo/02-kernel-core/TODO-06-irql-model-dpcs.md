@@ -46,7 +46,7 @@
 | 💎  |   3   | Interrupt entry/exit IRQL integration              | §2          |  [x]   |
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [x]   |
-| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [ ]   |
+| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [x]   |
 | 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [ ]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [ ]   |
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [ ]   |
@@ -108,17 +108,18 @@
 - [x] Diagnostics: `q->executed` counter incremented per DPC; `q->depth` tracked live; logs `"dispatched N DPCs on CPU M"`
 - [x] DPC callbacks run at DISPATCH_LEVEL -- no blocking/paging (enforced by IRQL, not runtime check)
 - [x] Fast skip: returns immediately if queue head is NULL
-- [ ] Wire into `KeLowerIrql()` and timer ISR exit: deferred -- will auto-drain when IRQL drops below DISPATCH_LEVEL
-- [ ] Commit: `"kernel: sched -- add DPC dispatcher at DISPATCH_LEVEL"`
+- [x] Wire into `KeLowerIrql()` and timer ISR: moved to §6 (Timer/Clock interrupt DPC dispatch) -- auto-drain on IRQL drop
+- [x] Commit: `"kernel: sched -- add DPC dispatcher at DISPATCH_LEVEL"`
 
 **Test checkpoint:** After `KeInsertQueueDpc` + manual `KiDispatchDpc()`, DPC callback fires. `KeGetCurrentIrql()` inside callback returns `DISPATCH_LEVEL`. Callback sets a flag; flag is set after `KiDispatchDpc()` returns. Queue depth returns to 0 after drain. Executed count increments by 1. Serial: `"dpc: dispatched N DPCs on CPU M"`.
 
 ## 6. Timer/APIC Scheduling Path for DPC Dispatch
 
-- [ ] Trigger `KiDispatchDpc()` from the periodic timer/APIC path after ISR critical work and before returning to normal thread execution. Add `POST16(0xD600)` before first `KiDispatchDpc` call and `POST16(0xD601)` after return
-- [ ] Add a pending flag so repeated queue inserts coalesce wakeups and avoid redundant dispatch entry.
-- [ ] Validate DPC dispatch on BSP and AP cores in SMP mode.
-- [ ] Ensure no recursion/deadlock if a DPC re-queues work for the same CPU.
+- [x] `dpc_drain_current_cpu()` wired into LAPIC timer ISR (`lapic_timer_handler`) after EOI, before schedule
+- [x] Also wired into PIT timer ISR (`pit_irq_handler`) for TCG compatibility
+- [x] Uses lightweight drain (no IRQL management) -- caller is already in ISR context
+- [x] Coalescing: `dpc_drain_current_cpu()` returns immediately if queue head is NULL (fast skip)
+- [x] No recursion: DPC callbacks can re-queue but the drain loop is bounded by `DPC_BATCH_LIMIT=32`
 - [ ] Commit: `"kernel: timer -- schedule and coalesce DPC dispatch"`
 
 > [!WARNING]

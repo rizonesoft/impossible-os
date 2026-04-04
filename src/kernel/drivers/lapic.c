@@ -901,6 +901,15 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
     lapic_tick_count++;
     timer_tick_callback_fire();
     lapic_eoi();
+
+    /* Drain pending DPCs after EOI (LAPIC can accept new interrupts)
+     * but before schedule (DPC work completes before thread dispatch).
+     * Uses lightweight drain -- no IRQL raise since we're in ISR context. */
+    {
+        extern uint32_t dpc_drain_current_cpu(void);
+        dpc_drain_current_cpu();
+    }
+
     return schedule(frame);
 }
 

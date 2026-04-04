@@ -107,3 +107,8 @@ void KiDispatchDpc(void);
 /* Maximum DPCs to drain per KiDispatchDpc() call.
  * After this many, yield to let the scheduler run, then re-enter. */
 #define DPC_BATCH_LIMIT  32
+
+/* Lightweight drain for use from the timer ISR.
+ * Skips IRQL management -- caller must be at or above DISPATCH_LEVEL.
+ * Returns the number of DPCs executed. */
+uint32_t dpc_drain_current_cpu(void);
