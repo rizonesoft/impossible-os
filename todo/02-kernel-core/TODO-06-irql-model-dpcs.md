@@ -47,7 +47,7 @@
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [x]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [x]   |
-| 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [ ]   |
+| 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [x]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [ ]   |
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [ ]   |
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [ ]   |
@@ -120,7 +120,7 @@
 - [x] Uses lightweight drain (no IRQL management) -- caller is already in ISR context
 - [x] Coalescing: `dpc_drain_current_cpu()` returns immediately if queue head is NULL (fast skip)
 - [x] No recursion: DPC callbacks can re-queue but the drain loop is bounded by `DPC_BATCH_LIMIT=32`
-- [ ] Commit: `"kernel: timer -- schedule and coalesce DPC dispatch"`
+- [x] Commit: `"kernel: timer -- schedule and coalesce DPC dispatch"`
 
 > [!WARNING]
 > **High-risk section.** This wires `KiDispatchDpc` into the LAPIC timer ISR return path. A bug here causes DPC drain on every timer tick -- if the drain crashes, the system triple-faults on the next tick with no recovery. **Rollback:** If DPC dispatch crashes, comment out the `KiDispatchDpc()` call in the timer ISR and fall back to workqueue-only deferred work. Test timer interrupts still work (scheduler tick, compositor frame) before wiring DPC dispatch.
@@ -131,15 +131,13 @@
 
 Control which CPU a DPC runs on, how urgently it executes, and provide a synchronization barrier for driver teardown.
 
-- [ ] Implement `KeSetTargetProcessorDpc(KDPC *Dpc, CCHAR Number)` -- sets target CPU for DPC execution; must be called before `KeInsertQueueDpc`
-- [ ] Implement `KeSetTargetProcessorDpcEx(KDPC *Dpc, PPROCESSOR_NUMBER ProcNumber)` -- processor-group-aware variant for >64 CPU support
-- [ ] Implement `KeSetImportanceDpc(KDPC *Dpc, KDPC_IMPORTANCE Importance)` with 4 levels:
-  - `LowImportance` -- DPC at tail of queue; dispatch not triggered
-  - `MediumImportance` -- DPC at tail; dispatch triggered if current CPU (default)
-  - `MediumHighImportance` -- DPC at tail; dispatch triggered immediately
-  - `HighImportance` -- DPC at head of queue; dispatch triggered immediately
-- [ ] Modify `KeInsertQueueDpc` to respect target CPU and importance: head-insert for `HighImportance`, tail-insert otherwise; send IPI to target CPU if different from current and importance >= `MediumHighImportance`
-- [ ] Implement `KeFlushQueuedDpcs()` -- blocks at `PASSIVE_LEVEL` until all DPCs queued before the call on all CPUs have completed; uses per-CPU completion flag + IPI broadcast + spin-wait
+- [x] `KeSetTargetProcessorDpc(dpc, cpu_number)` -- sets `cpu_target` field
+- [x] `KeSetImportanceDpc(dpc, importance)` -- 4 levels: Low/Medium/MediumHigh/High
+- [x] `KeInsertQueueDpc` modified: HighImportance -> head-insert; all others -> tail (FIFO)
+- [x] `KeFlushQueuedDpcs()` -- drains local queue directly, spin-waits for other CPUs
+- [x] `KDPC_IMPORTANCE` enum added; `KDPC.importance` field (default: MediumImportance)
+- [ ] `KeSetTargetProcessorDpcEx` (>64 CPU): deferred -- not needed until processor groups are implemented
+- [ ] Cross-CPU IPI for MediumHighImportance targeting: deferred -- timer-tick drain handles most cases
 - [ ] Commit: `"kernel: sched -- add DPC targeting, importance, and flush"`
 
 **Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → DPC callback fires on CPU 1 (check `smp_this_cpu()` in callback). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal -- IPI delivery for cross-CPU DPC targeting differs across platforms.

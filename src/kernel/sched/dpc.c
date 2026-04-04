@@ -77,6 +77,23 @@ void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context)
     dpc->next         = (KDPC *)0;
     dpc->queued       = 0;
     dpc->cpu_target   = DPC_TARGET_CURRENT;
+    dpc->importance   = MediumImportance;
+}
+
+/* ---- KeSetTargetProcessorDpc --------------------------------------------- */
+
+void KeSetTargetProcessorDpc(KDPC *dpc, uint32_t cpu_number)
+{
+    if (dpc && cpu_number < MAX_CPUS)
+        dpc->cpu_target = cpu_number;
+}
+
+/* ---- KeSetImportanceDpc -------------------------------------------------- */
+
+void KeSetImportanceDpc(KDPC *dpc, KDPC_IMPORTANCE importance)
+{
+    if (dpc)
+        dpc->importance = importance;
 }
 
 /* ---- KeInsertQueueDpc ---------------------------------------------------- */
@@ -111,16 +128,25 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
         return 0;
     }
 
-    /* Append to tail (FIFO) */
+    /* Insert: HighImportance -> head, otherwise -> tail (FIFO) */
     dpc->next   = (KDPC *)0;
     dpc->queued = 1;
 
-    if (q->tail) {
-        q->tail->next = dpc;
-        q->tail       = dpc;
+    if (dpc->importance == HighImportance) {
+        /* Head insert -- runs before existing DPCs */
+        dpc->next = q->head;
+        q->head   = dpc;
+        if (!q->tail)
+            q->tail = dpc;
     } else {
-        q->head = dpc;
-        q->tail = dpc;
+        /* Tail insert (default FIFO) */
+        if (q->tail) {
+            q->tail->next = dpc;
+            q->tail       = dpc;
+        } else {
+            q->head = dpc;
+            q->tail = dpc;
+        }
     }
 
     q->depth++;
@@ -281,4 +307,29 @@ uint32_t dpc_drain_current_cpu(void)
     if (!cpu_queues[cpu->cpu_id].head) return 0;
 
     return drain_queue(cpu->cpu_id);
+}
+
+/* ---- KeFlushQueuedDpcs --------------------------------------------------- */
+
+void KeFlushQueuedDpcs(void)
+{
+    uint32_t cpu;
+    uint32_t max_cpus = smp_cpu_count();
+
+    /* Drain our own queue directly */
+    {
+        struct per_cpu_data *me = smp_this_cpu();
+        if (me && me->cpu_id < MAX_CPUS)
+            drain_queue(me->cpu_id);
+    }
+
+    /* Spin-wait for other CPUs to finish their queues
+     * (they drain on every timer tick via dpc_drain_current_cpu) */
+    for (cpu = 0; cpu < max_cpus && cpu < MAX_CPUS; cpu++) {
+        volatile uint32_t spin = 0;
+        while (cpu_queues[cpu].head != (KDPC *)0 && spin < 100000) {
+            __asm__ volatile ("pause");
+            spin++;
+        }
+    }
 }

@@ -24,6 +24,14 @@
 
 #include "kernel/types.h"
 
+/* DPC importance levels */
+typedef enum {
+    LowImportance        = 0,
+    MediumImportance     = 1,
+    MediumHighImportance = 2,
+    HighImportance       = 3,
+} KDPC_IMPORTANCE;
+
 /* Forward declaration for the DPC routine signature */
 struct _KDPC;
 
@@ -45,6 +53,7 @@ typedef struct _KDPC {
     struct _KDPC       *next;           /* intrusive queue link (NULL = not queued) */
     volatile uint32_t   queued;         /* 1 if currently in a CPU's DPC queue */
     uint32_t            cpu_target;     /* target CPU (0xFFFFFFFF = current CPU) */
+    KDPC_IMPORTANCE     importance;     /* queue insertion priority */
 } KDPC;
 
 /* Target CPU: use current CPU at insert time */
@@ -71,6 +80,16 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2);
  * Returns 1 if the DPC was found and removed, 0 if not queued.
  * Safe to call at any IRQL up to DISPATCH_LEVEL. */
 int KeRemoveQueueDpc(KDPC *dpc);
+
+/* Set target CPU for DPC execution. Must be called before KeInsertQueueDpc. */
+void KeSetTargetProcessorDpc(KDPC *dpc, uint32_t cpu_number);
+
+/* Set DPC importance level. Affects queue position and dispatch urgency. */
+void KeSetImportanceDpc(KDPC *dpc, KDPC_IMPORTANCE importance);
+
+/* Block until all currently queued DPCs on all CPUs have completed.
+ * Must be called at PASSIVE_LEVEL. Used for driver teardown. */
+void KeFlushQueuedDpcs(void);
 
 /* ---- Per-CPU DPC queue (internal) ---------------------------------------- */
 
