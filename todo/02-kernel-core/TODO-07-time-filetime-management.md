@@ -47,25 +47,25 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                            | Depends On        | Status |
-| --- | :---: | ---------------------------------------------------------------------- | ----------------- | :----: |
-| 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                 |  [ ]   |
-| 💎  |   2   | Monotonic nanosecond clock source selection                            | 1                 |  [ ]   |
-| 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | 2                 |  [ ]   |
-| 💎  |   4   | HPET standalone driver                                                 | --                 |  [ ]   |
-| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | 1, 2              |  [ ]   |
-| 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | 5                 |  [ ]   |
-| 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | 2, 6              |  [ ]   |
-| 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | 6, TODO-05 §4     |  [ ]   |
-| 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | 6, TODO-05 §4     |  [ ]   |
-| 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | 6, 2              |  [ ]   |
-| 💎  |  11   | Timezone bias and DST management                                       | 6                 |  [ ]   |
-| 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | 6, 7, TODO-04 §11 |  [ ]   |
-| 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | 6, 11             |  [ ]   |
-| 💎  |  14   | Suspend/hibernate time bias tracking                                   | 7, TODO-15 §3,§4  |  [ ]   |
-| 💎  |  15   | Leap second policy                                                     | 1                 |  [ ]   |
-| ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | 6                 |  [ ]   |
-| ⭐  |  17   | NTP clock adjustment hooks                                             | 6                 |  [ ]   |
+| ⭐  | Order | Deliverable                                                            | Depends On          | Status |
+| --- | :---: | ---------------------------------------------------------------------- | ------------------- | :----: |
+| 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                  |  [ ]   |
+| 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [ ]   |
+| 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [ ]   |
+| 💎  |   4   | HPET standalone driver                                                 | --                  |  [ ]   |
+| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [ ]   |
+| 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [ ]   |
+| 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [ ]   |
+| 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [ ]   |
+| 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [ ]   |
+| 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [ ]   |
+| 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [ ]   |
+| 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-04 §11 |  [ ]   |
+| 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [ ]   |
+| 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-15 §3,§4   |  [ ]   |
+| 💎  |  15   | Leap second policy                                                     | §1                  |  [ ]   |
+| ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [ ]   |
+| ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both provide these capabilities.
 > ⭐ = exclusive -- coarse time gives O(1) cached reads for hot-path callers without reading hardware; NTP hook API is a first-class kernel-level adjustment interface, not a userspace-only workaround.
@@ -232,6 +232,9 @@ The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, Inter
 
 ## 13. Filesystem Timestamp Encoding (FAT32 + NTFS)
 Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed values.
+
+> [!NOTE]
+> **Unblocks:** `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §5` -- FAT32 has interim `fat32_stamp_create()`/`fat32_stamp_modify()` helpers using `system_get_ticks()`. After this section, replace them with `filetime_to_dos_datetime(KeQuerySystemTime(), tz_bias, ...)` for spec-correct timestamps.
 
 - [ ] **FAT32**: DOS date/time is local time, 2-second resolution. Fix all `fat32_write` callsites:
   - Replace any `0` or placeholder timestamp with `filetime_to_dos_datetime(KeQuerySystemTime(), tz_bias, &date, &time)`
