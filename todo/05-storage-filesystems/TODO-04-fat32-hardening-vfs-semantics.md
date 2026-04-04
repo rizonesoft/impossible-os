@@ -13,7 +13,7 @@
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- no share-mode, delete-on-close, byte-range lock, or case-fold in open path; §7–11 extend it
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `fat32_init()`; BPB validation (§1) must fire inside `fat32_init()` before `vfs_probe()` returns success
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §5` -- `umount` shell calls the VFS unmount path; §5 (fsck) must be callable as `chkdsk D: /fat32`
-- → XREF: `11-user-platform-sdk` -- Win32 `CreateFile` flags `FILE_SHARE_*` and `FILE_FLAG_DELETE_ON_CLOSE` map directly to §8 and §9; coordinate with the Win32 file-handle TODO
+- → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` -- Win32 `CreateFile` flags `FILE_SHARE_*` and `FILE_FLAG_DELETE_ON_CLOSE` map directly to §8 and §9
 - → XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` §12 -- BlackBox FAT32 dirty-bit check depends on §1; fsck-on-mount depends on §6
 
 ## Outcome
@@ -40,17 +40,17 @@
 | 💎  |   1   | §1 FAT32 BPB strict validation -- `jmpBoot`, `BytsPerSec`, `SecPerClus`, dirty marker | `fat32_init()` in fat32_core.c                           |  [ ]   |
 | 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [ ]   |
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [ ]   |
-| 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete            | §3 (FAT write path stable)                               |  [ ]   |
+| 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [ ]   |
 | 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4 (create path being reworked)                          |  [ ]   |
-| 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters       | §3 + §4 + §5 (stable FAT and directory state)            |  [ ]   |
+| 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [ ]   |
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [ ]   |
-| 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION` | §7 (handle lookup uses case-folded path)                 |  [ ]   |
-| 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`            | §8 (open-handle table exists)                            |  [ ]   |
+| 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [ ]   |
+| 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [ ]   |
 | 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [ ]   |
-| 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries      | §7–§10 (handle plumbing in place)                        |  [ ]   |
-| 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+          | §4 (LFN write reworks create path)                       |  [ ]   |
-| 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes      | §5 (write path stable)                                   |  [ ]   |
-| 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle         | §8 (share-mode per-handle state)                         |  [ ]   |
+| 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [ ]   |
+| 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [ ]   |
+| 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [ ]   |
+| 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [ ]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
@@ -267,27 +267,59 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 
 ---
 
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_fat32_hardening()` and `test_register_vfs_semantics()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
+> Boot tests run with `test=1` in boot.conf. FAT32 tests require a mounted FAT32 volume (BlackBox X:\ or test volume).
+
+- [ ] Create `src/kernel/test/test_fat32_hardening.c` with:
+  - `fat32_validate_bpb()` rejects zero `BytsPerSec` (returns -1)
+  - `fat32_validate_bpb()` rejects non-power-of-two `SecPerClus` (returns -1)
+  - `fat32_validate_bpb()` accepts valid BPB from mounted volume (returns 0)
+  - FSInfo `FreeCount` matches actual free clusters after `fat32_count_free_clusters()`
+  - LFN write: create `"test_long_name.txt"`, read back name matches exactly (case-preserved)
+  - LFN delete: delete the LFN file, directory entry slots are marked `0xE5`
+  - SFN collision: create `"collision_test_1.txt"` and `"collision_test_2.txt"` -- both get unique 8.3 names
+  - 4 GiB guard: `fat32_file_write_vfs()` rejects write that would exceed `0xFFFFFFFF` bytes
+  - Timestamp encode: `fat32_filetime_to_fattime()` for 2026-04-04 12:30:00 produces correct FAT date/time fields
+- [ ] Create `src/kernel/test/test_vfs_semantics.c` with:
+  - `vfs_path_fold("c:\\foo\\Bar")` produces `"C:\\FOO\\BAR"`
+  - `vfs_path_fold("X:\\Logs\\kernel.log")` preserves drive letter and backslashes
+  - Share-mode: open with WRITE+no-share, second open returns `STATUS_SHARING_VIOLATION`
+  - Share-mode: close first handle, second open succeeds
+  - Delete-on-close: open with `VFS_DELETE_ON_CLOSE`, second open returns `STATUS_DELETE_PENDING`
+  - Delete-on-close: close handle, file no longer exists
+  - Byte-range lock: lock 0-1023 exclusive, overlapping lock 512-1535 returns `STATUS_FILE_LOCK_CONFLICT`
+  - Byte-range lock: unlock, second lock succeeds
+  - Oplock: request Level 1 on file, returns success; second open breaks to Level 2
+- [ ] Register in `test_runner_init()`: `test_register_fat32_hardening()`, `test_register_vfs_semantics()`
+- [ ] Commit: `"test: add FAT32 hardening + VFS Win32 semantics test suites"`
+
+---
+
 ## OS Comparison
 
 
-| ⭐ | Feature                                           | 🪟 Win11                                                                       | 🐧 Linux                                                                  | 🚀 Impossible OS                                                                  |
-|----|---------------------------------------------------|-----------------------------------------------------------------------------|------------------------------------------------------------------------|--------------------------------------------------------------------------------|
-| 💎 | FAT32 BPB strict validation + dirty-volume marker | ✅ `fatfs.sys`; strict BPB check at                                         | ✅ `fat/inode.c`; `fat_fill_super()` validates BPB; `FAT_STATE_DIRTY`  | ⬜ §1 -- `fat32_validate_bpb()`, dirty FAT[1] bit 27,                           |
-| 💎 | FSInfo `FreeCount`                                | ✅ `fatfs.sys`; FSInfo maintained; full scan                                | ✅ `fat/fatent.c`; `fat_count_free_clusters()` fallback                | ⚠️ §2 -- Partial -- flush exists; adds                                           |
-| 💎 | Dual-FAT mirror                                   | ✅ `fatfs.sys`; both FATs written; mismatch                                 | ✅ `fat/fatent.c`; `fat_ent_access()`; FAT2 written; no                | ⚠️ §3 -- Partial -- both written on                                              |
-| 💎 | LFN write                                         | ✅ `fatfs.sys`; full LFN read/write                                         | ✅ `fat/dir.c`; `fat_add_entries()` with LFN; full                     | ⚠️ §4 -- Partial -- LFN read works                                               |
-| 💎 | FAT32 timestamps                                  | ✅ `fatfs.sys`; FILETIME encode; UTC→local; all                             | ✅ `fat/inode.c`; `fat_time_fat2unix()` / `fat_time_unix2fat()`        | ⚠️ §5 -- Partial -- `fat32_set_times()` exists; adds                             |
-| 💎 | FAT32 fsck                                        | ✅ `chkdsk.exe`; full FAT check +                                           | ✅ `fsck.fat` (`dosfstools`); cross-link and lost                      | ⬜ §6 -- `fat32_fsck.c`, `visited[]` bitset, lost-cluster chaining,             |
-| ⭐ | Unified case-insensitive VFS                      | ⚠️ Per-driver case fold (`NTFS.sys`, `fatfs.sys`                            | ⚠️ Per-mount `nocase` option; no unified                               | ⬜ §7 -- `vfs_path_fold()` applies once in VFS,                                 |
-| 💎 | Share-mode enforcement                            | ✅ `NTFS.sys` / `fatfs.sys`; per-FCB share                                  | ✅ `fs/locks.c`; POSIX open-file description locks;                    | ⬜ §8 -- per-handle access/share fields, conflict check                         |
-| 💎 | Delete-on-close                                   | ✅ `FILE_FLAG_DELETE_ON_CLOSE`; `STATUS_DELETE_PENDING`; last-handle unlink | ✅ `unlink()`-then-keep-open idiom; fd holds inode                     | ⬜ §9 -- `VFS_DELETE_ON_CLOSE` flag, `STATUS_DELETE_PENDING`, last-close unlink |
-| 💎 | Byte-range locks                                  | ✅ `LockFile`/`UnlockFile` Win32; per-FCB lock list;                        | ✅ `fcntl(F_SETLK)`; POSIX mandatory/advisory locks; `EACCES`/`EAGAIN` | ⬜ §10 -- `vfs_lock_t[]` per node, overlap conflict,                            |
-| 💎 | Win32 feature stubs                               | ✅ Full ADS, ACL, volume info,                                              | ❌ Not applicable (POSIX `xattr`, `getfacl`;                           | ⬜ §11 -- correct stub returns for `FindFirstStreamW`,                          |
-| 💎 | SFN numeric tail collision                        | ✅ `~1`-`~9`, 5-char `~10`+                                                | ✅ `fat_gen_ks_short()` with hash                                      | ⬜ §12 -- collision loop `~1`-`~99`                                             |
-| 💎 | 4 GiB file size guard                             | ✅ `fatfs.sys` rejects at limit                                             | ✅ `fat_cont_expand()` checks                                          | ⬜ §13 -- write guard + truncate guard                                          |
-| 💎 | Opportunistic locks                               | ✅ Level 1/2, Batch, R/RW/RH                                               | ⚠️ POSIX leases (limited oplock)                                       | ⬜ §14 -- Level 1/2 grant + break                                               |
+| ⭐ | Feature                | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS              |
+|----|------------------------|---------------------------|----------------------------|-------------------------------|
+| 💎 | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ⬜ §1 -- validate_bpb         |
+| 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ⚠️ §2 -- flush exists         |
+| 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ⚠️ §3 -- write ok, no compare |
+| 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ⚠️ §4 -- read only            |
+| 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- set_times partial    |
+| 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ⬜ §6 -- fat32_fsck           |
+| ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ⬜ §7 -- vfs_path_fold        |
+| 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ⬜ §8 -- per-handle check     |
+| 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ⬜ §9 -- last-close unlink    |
+| 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ⬜ §10 -- vfs_lock_file       |
+| 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ⬜ §11 -- stub returns        |
+| 💎 | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ⬜ §12 -- collision loop      |
+| 💎 | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ⬜ §13 -- write + truncate    |
+| 💎 | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH   | ⚠️ POSIX leases only       | ⬜ §14 -- Level 1/2           |
 
-> **After §1–14:** Impossible OS FAT32 matches the spec correctness of `fatfs.sys` and exceeds `dosfstools` in the in-kernel fsck depth. The `⭐` architectural win is §7: a single `vfs_path_fold()` call in the VFS layer above all drivers means no filesystem driver ever needs its own case-fold path -- future filesystems (exFAT, ext4) automatically inherit correct case-insensitive behaviour without any extra work. §12-§14 close the remaining parity gaps: SFN collision avoidance, file size guard, and oplock support.
+> After §1-§14, FAT32 matches fastfat.sys spec correctness and exceeds dosfstools with in-kernel fsck.
+> §7 (unified VFS case-fold) is the architectural win -- one implementation benefits all filesystem drivers.
+> §12-§14 close remaining parity: SFN collision, file size guard, oplocks.
 
 ## Verification
 

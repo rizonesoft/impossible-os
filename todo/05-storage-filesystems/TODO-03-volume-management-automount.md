@@ -16,6 +16,7 @@
 - → XREF: `08-desktop-shell` domain -- §3 desktop toast and §4 tray icon safe-remove are shell-facing components; coordinate with the notification/tray TODO
 - → XREF: `10-apps` domain -- File Manager sidebar (§3 real-time update) and Task Manager disk section (§6 volume stats) consume `vfs_probe` Registry entries
 - → XREF: `01-boot-platform/TODO-03-boot-device-discovery.md §3, §4, §8` -- boot_info.boot_device_type and boot_device_removable inform C: drive assignment and cache policy in §1
+- → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §1` -- BPB validation fires inside `fat32_init()` which `vfs_probe()` calls
 
 ## Outcome
 
