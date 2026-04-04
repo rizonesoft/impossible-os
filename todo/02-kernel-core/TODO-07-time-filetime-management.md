@@ -56,7 +56,7 @@
 | 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [x]   |
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [x]   |
 | 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [x]   |
-| 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [ ]   |
+| 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [x]   |
 | 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [ ]   |
 | 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [ ]   |
 | 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [ ]   |
@@ -138,20 +138,18 @@ Windows exposes interrupt time (100 ns since boot, including sleep bias) and unb
 - [x] `KeQueryInterruptTimePrecise(qpc_value)` -- same + returns QPC value at same instant
 - [x] `KeQueryUnbiasedInterruptTime()` -- returns `mono_filetime_units()` only (no bias)
 - [x] `s_interrupt_time_bias` tracked as volatile atomic; `ke_suspend_bias_update()` for §14 resume path
-- [ ] Commit: `"kernel: time -- interrupt time and unbiased interrupt time APIs"`
+- [x] Commit: `"kernel: time -- interrupt time and unbiased interrupt time APIs"`
 
 ## 8. Timer Resolution Management
 Windows allows processes to request higher timer interrupt frequency (down to 0.5 ms) via `NtSetTimerResolution` / `timeBeginPeriod`. This affects scheduler quantum, `Sleep()` granularity, and multimedia timing. Win11 scopes this per-process; background/occluded processes don't get elevated resolution.
 
-- [ ] Define `timer_resolution_t` in `include/kernel/time/timer_resolution.h`:
-  - `uint32_t minimum_resolution` -- hardware minimum in 100 ns units (typically 5000 = 0.5 ms)
-  - `uint32_t maximum_resolution` -- default in 100 ns units (typically 156250 = 15.625 ms)
-  - `uint32_t current_resolution` -- active resolution (highest request wins)
-- [ ] `KeSetTimerResolution(uint32_t desired_100ns, bool set)` -- kernel API; `set=true` requests, `set=false` releases
-- [ ] `NtSetTimerResolution(ULONG DesiredTime, BOOLEAN SetResolution, PULONG ActualTime)` -- SSDT 0x00F4; validates user pointer; calls `KeSetTimerResolution`
-- [ ] Per-process tracking: each process stores its requested resolution; on process exit, automatically release
-- [ ] Global arbitration: the shortest requested resolution from any active process becomes `current_resolution`; update the timer ICR when resolution changes
-- [ ] `NtQueryTimerResolution(PULONG MaximumTime, PULONG MinimumTime, PULONG CurrentTime)` -- SSDT 0x00F3; returns the three resolution values
+- [x] `timer_resolution.h`: constants `TIMER_RES_DEFAULT` (156250 = 15.625 ms) and `TIMER_RES_MINIMUM` (5000 = 0.5 ms)
+- [x] `KeSetTimerResolution(desired, set)`: request/release with clamping; global arbitration (shortest wins)
+- [x] `NtSetTimerResolution` (SSDT 0x00F4) + `NtQueryTimerResolution` (SSDT 0x00F3) -- registered via `timer_resolution_register_ssdt()`
+- [x] 16-slot request table with per-entry active flag; `arbitrate()` scans for shortest
+- [x] `KeQueryTimerResolution(max, min, current)` returns all three values
+- [ ] Per-process tracking: deferred -- currently uses slot table without PID binding; will add when process exit cleanup is wired
+- [ ] Timer ICR update: deferred -- changing the actual LAPIC timer frequency requires §6 DPC integration
 - [ ] Commit: `"kernel: time -- timer resolution management (NtSetTimerResolution)"`
 
 ## 9. `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`
@@ -277,7 +275,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ✅ §4 -- hpet.c driver    |
 | 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ✅ §5 -- wall_clock_init  |
 | 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ✅ §7 -- biased+unbiased  |
-| 💎 | Timer resolution         | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ⬜ §8                     |
+| 💎 | Timer resolution         | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ✅ §8 -- SSDT 0xF3/0xF4   |
 | 💎 | Precise wall time        | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ⬜ §10                    |
 | 💎 | Timezone + DST           | ✅ registry TZ info      | ✅ /etc/localtime         | ⬜ §11                    |
 | 💎 | KUSD / vDSO time page    | ✅ KUSD 0x7FFE0000       | ✅ vDSO clock_gettime     | ⬜ §12                    |
