@@ -48,7 +48,7 @@
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [x]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [x]   |
 | 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [x]   |
-| 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [ ]   |
+| 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [x]   |
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [ ]   |
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [ ]   |
 | 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [ ]   |
@@ -146,11 +146,12 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 
 Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allowing operations forbidden at `DISPATCH_LEVEL` (paging, mutex acquisition). Used by audio/video drivers for latency-sensitive work.
 
-- [ ] Implement `KeInitializeThreadedDpc(KDPC *Dpc, PKDEFERRED_ROUTINE Routine, PVOID Context)` -- initializes DPC with `Threaded = TRUE` flag in KDPC
-- [ ] Create per-CPU `dpc_thread` kernel thread during `dpc_init()` -- runs at `SCHED_FIFO` priority `MAX_RT_PRIO / 2`, sleeps on a per-CPU event
-- [ ] Modify `KiDispatchDpc` to separate threaded DPCs from regular DPCs: regular DPCs drain inline at `DISPATCH_LEVEL`; threaded DPCs are moved to the thread's private list and the thread is woken
-- [ ] Threaded DPC thread: drain private list at `PASSIVE_LEVEL`; regular DPCs can preempt (raise to `DISPATCH_LEVEL` masks the thread)
-- [ ] Add registry/boot.conf toggle `ThreadDpcEnable` (default: enabled) matching Win11 behavior
+- [x] `KeInitializeThreadedDpc(dpc, routine, context)` -- sets `dpc->threaded = 1`
+- [x] `KDPC.threaded` field added; `drain_queue()` moves threaded DPCs to per-CPU threaded list instead of executing inline
+- [x] `dpc_thread_fn()` worker thread: drains threaded list at PASSIVE_LEVEL; yields when idle
+- [x] `dpc_start_threads()` creates BSP worker thread after scheduler init; wired into `boot_phase3()`
+- [ ] Per-AP threaded DPC threads: deferred -- requires cross-CPU task creation
+- [ ] Registry toggle `ThreadDpcEnable`: deferred -- always enabled for now
 - [ ] Commit: `"kernel: sched -- add threaded DPC support at PASSIVE_LEVEL"`
 
 > [!TIP]

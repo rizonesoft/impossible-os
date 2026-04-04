@@ -67,6 +67,12 @@ void boot_phase3(void)
 
     ahci_enable_events();  /* safe now: yield handler registered */
 
+    /* Start threaded DPC worker thread (needs scheduler) */
+    {
+        extern void dpc_start_threads(void);
+        dpc_start_threads();
+    }
+
     /* Create the system work queue (needed by NIC driver) */
     {
         extern workqueue_t *sys_wq;

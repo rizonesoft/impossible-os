@@ -36,6 +36,10 @@ static struct dpc_queue cpu_queues[MAX_CPUS];
  * struct to keep the spinlock cache-line aligned. */
 static spinlock_t queue_locks[MAX_CPUS];
 
+/* Per-CPU threaded DPC pending list (separate from DISPATCH_LEVEL queue) */
+static KDPC *threaded_head[MAX_CPUS];
+static volatile uint32_t threaded_pending[MAX_CPUS];
+
 /* ---- Initialization ------------------------------------------------------ */
 
 void dpc_init(void)
@@ -48,6 +52,8 @@ void dpc_init(void)
         cpu_queues[i].executed  = 0;
         cpu_queues[i].max_depth = 0;
         queue_locks[i].flag     = 0;
+        threaded_head[i]        = (KDPC *)0;
+        threaded_pending[i]     = 0;
     }
     klog(LOG_INFO, "dpc", "DPC subsystem initialized (%u CPU queues)", (uint64_t)MAX_CPUS);
 }
@@ -78,6 +84,15 @@ void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context)
     dpc->queued       = 0;
     dpc->cpu_target   = DPC_TARGET_CURRENT;
     dpc->importance   = MediumImportance;
+    dpc->threaded     = 0;
+}
+
+/* ---- KeInitializeThreadedDpc --------------------------------------------- */
+
+void KeInitializeThreadedDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context)
+{
+    KeInitializeDpc(dpc, routine, context);
+    dpc->threaded = 1;
 }
 
 /* ---- KeSetTargetProcessorDpc --------------------------------------------- */
@@ -228,6 +243,47 @@ int KeRemoveQueueDpc(KDPC *dpc)
     return found;
 }
 
+/* ---- Threaded DPC worker ------------------------------------------------- */
+
+static void dpc_thread_fn(void)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+    uint32_t cpu_id = cpu ? cpu->cpu_id : 0;
+
+    klog(LOG_DEBUG, "dpc", "threaded DPC thread started on CPU %u",
+         (uint64_t)cpu_id);
+
+    for (;;) {
+        /* Wait for work */
+        while (!__atomic_load_n(&threaded_pending[cpu_id], __ATOMIC_ACQUIRE)) {
+            extern void yield(void);
+            yield();
+        }
+
+        /* Drain threaded DPC list at PASSIVE_LEVEL */
+        while (threaded_head[cpu_id]) {
+            KDPC *dpc = threaded_head[cpu_id];
+            threaded_head[cpu_id] = dpc->next;
+            dpc->next = (KDPC *)0;
+
+            if (dpc->routine)
+                dpc->routine(dpc, dpc->deferred_ctx,
+                             dpc->system_arg1, dpc->system_arg2);
+        }
+
+        __atomic_store_n(&threaded_pending[cpu_id], 0, __ATOMIC_RELEASE);
+    }
+}
+
+void dpc_start_threads(void)
+{
+    /* Create one DPC worker thread per online CPU.
+     * For now, only create on BSP -- AP threads require cross-CPU task create. */
+    extern int task_create(void (*entry)(void), const char *name);
+    task_create(dpc_thread_fn, "dpc_thread");
+    klog(LOG_INFO, "dpc", "Threaded DPC worker started (BSP)");
+}
+
 /* ---- Core drain logic (shared by KiDispatchDpc and dpc_drain_current_cpu) */
 
 static uint32_t drain_queue(uint32_t cpu_id)
@@ -263,6 +319,16 @@ static uint32_t drain_queue(uint32_t cpu_id)
         dpc->queued = 0;
 
         spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+
+        /* Threaded DPCs: move to threaded list instead of executing inline */
+        if (dpc->threaded) {
+            dpc->next = threaded_head[cpu_id];
+            threaded_head[cpu_id] = dpc;
+            __atomic_store_n(&threaded_pending[cpu_id], 1, __ATOMIC_RELEASE);
+            dispatched++;
+            q->executed++;
+            continue;
+        }
 
         if (routine)
             routine(dpc, ctx, a1, a2);

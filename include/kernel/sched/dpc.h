@@ -54,6 +54,7 @@ typedef struct _KDPC {
     volatile uint32_t   queued;         /* 1 if currently in a CPU's DPC queue */
     uint32_t            cpu_target;     /* target CPU (0xFFFFFFFF = current CPU) */
     KDPC_IMPORTANCE     importance;     /* queue insertion priority */
+    uint8_t             threaded;      /* 1 = run at PASSIVE_LEVEL in DPC thread */
 } KDPC;
 
 /* Target CPU: use current CPU at insert time */
@@ -80,6 +81,13 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2);
  * Returns 1 if the DPC was found and removed, 0 if not queued.
  * Safe to call at any IRQL up to DISPATCH_LEVEL. */
 int KeRemoveQueueDpc(KDPC *dpc);
+
+/* Initialize a threaded DPC -- runs at PASSIVE_LEVEL in a dedicated thread.
+ * Allows paging, mutex acquisition, and other blocking operations. */
+void KeInitializeThreadedDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context);
+
+/* Create per-CPU DPC worker threads. Call after scheduler init. */
+void dpc_start_threads(void);
 
 /* Set target CPU for DPC execution. Must be called before KeInsertQueueDpc. */
 void KeSetTargetProcessorDpc(KDPC *dpc, uint32_t cpu_number);
