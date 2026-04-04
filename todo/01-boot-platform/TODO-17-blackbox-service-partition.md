@@ -42,7 +42,7 @@
 | 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [x]   |
 | 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [x]   |
 | 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [x]   |
-| 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [ ]   |
+| 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [x]   |
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [ ]   |
 | 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [ ]   |
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [ ]   |
@@ -125,7 +125,7 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 - [x] Fallback: if X:\ not mounted, falls back to C:\ with warning `"BlackBox not mounted, using C:\\ for logs"`
 - [x] `ensure_log_dirs()` skipped when using BlackBox (X:\Logs\ created by boot skeleton §4)
 - [x] `KLOG_SERIAL_DIR` built dynamically from `klog_dir + "Serial\\"`
-- [ ] Commit: `"kernel: migrate klog output from C:\\ to X:\\Logs\\"`
+- [x] Commit: `"kernel: migrate klog output from C:\\ to X:\\Logs\\"`
 
 **Test checkpoint:** Serial shows `"klog: writing to X:\Logs\Serial_YYMMDDN.log"`. All subsystem logs appear under `X:\Logs\`. On a disk without BlackBox, fallback message: `"klog: BlackBox not mounted, using C:\\"`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -135,10 +135,11 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 
 Move the per-boot numbered session logs and boot timeline JSON to `X:\Boot\`.
 
-- [ ] Update `klog_disk.c` FAT32 boot log path from the old `X:\BOOT_NNN.LOG` pattern to `X:\Boot\YYMMDDN.LOG`
-- [ ] Update `boot_timing_write_report()` to write `X:\Boot\YYMMDDN.json` (boot timeline)
-- [ ] Update `boot_profile_write()` to write `X:\Perf\boot-profile.log`
-- [ ] Keep the same date-stamped naming scheme: `YYMMDDN` where N increments per boot that day
+- [x] `boot-timeline.json` → `X:\Boot\boot-timeline.json` when BlackBox mounted, C:\ fallback
+- [x] `boot-profile.log` → `X:\Perf\boot-profile.log` when BlackBox mounted, C:\ fallback
+- [x] `klog_using_blackbox` flag exposed in `klog.h` for boot subsystems to select correct subdirectory
+- [x] Serial session logs remain at `X:\Logs\Serial\Serial_YYMMDDNN.log` (handled by §5)
+- [x] Stale `BOOT_NNN.LOG` comments updated
 - [ ] Commit: `"kernel: move per-boot session logs to X:\\Boot\\"`
 
 **Test checkpoint:** After boot, `X:\Boot\` contains `26040501.LOG` and `26040501.json`. Serial log path shows `X:\Boot\` prefix. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.

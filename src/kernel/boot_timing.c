@@ -191,10 +191,12 @@ void boot_timing_write_report(void)
 {
     if (s_tsc_freq == 0 || s_step_count == 0) return;
 
+    /* Write to X:\Perf\ (BlackBox) or C:\Impossible\System\Logs\ (fallback) */
+    const char *bp_dir = klog_using_blackbox ? "X:\\Perf\\" : klog_dir;
     char bp_path[64];
     {
         int bp = 0, bj;
-        for (bj = 0; klog_dir[bj]; bj++) bp_path[bp++] = klog_dir[bj];
+        for (bj = 0; bp_dir[bj]; bj++) bp_path[bp++] = bp_dir[bj];
         const char *fn = "boot-profile.log";
         for (bj = 0; fn[bj]; bj++) bp_path[bp++] = fn[bj];
         bp_path[bp] = '\0';

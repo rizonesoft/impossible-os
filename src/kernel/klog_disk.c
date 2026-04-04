@@ -3,7 +3,7 @@
  *
  * Handles all disk-based log output:
  *   - Batch flush to C:\Impossible\System\Logs\kernel.log (IXFS, appendable)
- *   - Full buffer write to X:\BOOT_NNN.LOG (FAT32, numbered per boot session)
+ *   - Full buffer write to X:\Logs\Serial\Serial_YYMMDDNN.log (per boot session)
  *   - Live mode: every klog() entry appended + flushed immediately
  *
  * Buffer: 256 KB via pmm_alloc_contiguous (identity-mapped).
@@ -24,7 +24,7 @@
 
 const char *klog_dir = KLOG_DIR_FALLBACK;  /* default until resolved */
 static char klog_serial_dir[48];           /* klog_dir + "Serial\\" */
-static int  klog_using_blackbox;           /* 1 if X:\Logs\, 0 if C:\ fallback */
+int         klog_using_blackbox;           /* 1 if X:\Logs\, 0 if C:\ fallback */
 
 static void klog_resolve_dir(void)
 {
@@ -116,7 +116,7 @@ static int       fat32_inited   = 0;
 static int       live_enabled   = 0;
 static int       flushing       = 0;  /* reentrancy guard */
 
-/* Numbered log filename: "BOOT_NNN.LOG" */
+/* Numbered serial log filename: "Serial_YYMMDDNN.log" */
 static char      log_filename[24];  /* "Serial_YYMMDDNN.log" + NUL */
 
 /* Log rotation config (loaded from Registry, or defaults) */

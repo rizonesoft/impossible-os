@@ -33,6 +33,7 @@ typedef enum {
 
 /* Runtime-resolved log directory (set by klog_disk_init) */
 extern const char *klog_dir;
+extern int klog_using_blackbox;  /* 1 if X:\Logs\, 0 if C:\ fallback */
 
 /* Log a message with level and subsystem tag.
  * fmt supports: %d, %u, %x, %p, %s, %c, %%  (same as printk) */

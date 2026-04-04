@@ -244,10 +244,12 @@ void boot_timeline_dump_json(void)
     buf[pos++] = ']';
     buf[pos++] = '\n';
 
+    /* Write to X:\Boot\ (BlackBox) or C:\Impossible\System\Logs\ (fallback) */
     {
+        const char *tl_dir = klog_using_blackbox ? "X:\\Boot\\" : klog_dir;
         char tl_path[64];
         int tp = 0, tj;
-        for (tj = 0; klog_dir[tj]; tj++) tl_path[tp++] = klog_dir[tj];
+        for (tj = 0; tl_dir[tj]; tj++) tl_path[tp++] = tl_dir[tj];
         {
             const char *fn = "boot-timeline.json";
             for (tj = 0; fn[tj]; tj++) tl_path[tp++] = fn[tj];
