@@ -40,7 +40,7 @@
 | 💎  |   1   | §1 FAT32 BPB strict validation -- `jmpBoot`, `BytsPerSec`, `SecPerClus`, dirty marker | `fat32_init()` in fat32_core.c                           |  [x]   |
 | 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [x]   |
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [x]   |
-| 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [ ]   |
+| 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [x]   |
 | 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4 (create path being reworked)                          |  [ ]   |
 | 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [ ]   |
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [ ]   |
@@ -100,7 +100,7 @@ On mount, compare FAT1 and FAT2 sector by sector. Log any mismatch. Use FAT1 as 
 - [x] `fat32_compare_repair_fats(vol)`: reads FAT1 and FAT2 sector-by-sector via `blkdev_read()`; on mismatch: copies FAT1 sector to FAT2; logs each mismatch + summary count
 - [x] Called from `fat32_init()` after dirty marker read; skips when `num_fats < 2`
 - [x] Non-fatal: repairs do not abort mount; summary: `"FAT compare: %u mismatched sectors repaired"`
-- [ ] Commit: `"fs/fat32: dual-FAT compare-on-mount -- sector-by-sector compare, FAT2 repair"`
+- [x] Commit: `"fs/fat32: dual-FAT compare-on-mount -- sector-by-sector compare, FAT2 repair"`
 
 ## 4. LFN Write
 
@@ -111,11 +111,13 @@ Write LFN directory entry chains before the 8.3 SFN entry. Encode names as UTF-1
 > [!NOTE]
 > LFN entry layout (32 bytes): `Ord (1)` = sequence number (last slot OR'd with `0x40`); `Name1 (10)` = chars 1–5 as UTF-16LE; `Attr (1)` = `0x0F`; `Type (1)` = 0; `Chksum (1)` = SFN checksum; `Name2 (12)` = chars 6–11; `FstClusLO (2)` = 0; `Name3 (4)` = chars 12–13. SFN checksum: `for i in 0..10: sum = ((sum & 1) << 7) + (sum >> 1) + sfn[i]`. Slot count: `ceil(utf16len / 13)`. Slots written in *reverse* order (highest sequence first), then the SFN entry. Max LFN length: 255 UTF-16LE codepoints = 20 slots.
 
-- [ ] `fat32_lfn_slot_count(const char *utf8_name)` → count UTF-8 codepoints; return `(count + 12) / 13`
-- [ ] `fat32_lfn_write_slots(vol, dir_cluster, sfn[11], utf8_name)`: allocate `slot_count + 1` contiguous free directory entries; write slots from last to first with correct `Ord` + `0x40` on final; pack UTF-16LE chars (stop-fill with `0xFFFF` on last partial slot, `0x0000` terminators); write SFN entry last
-- [ ] `fat32_create_file_vol()` and `fat32_create_dir_vol()`: check if name requires LFN (non-8.3 or non-ASCII); if yes call `fat32_lfn_write_slots()`; if pure 8.3 ASCII keep existing SFN-only path
-- [ ] LFN delete: `fat32_delete_file_vol()` must scan backwards from SFN entry to find and zero all preceding LFN slots (attr=`0x0F`, matching checksum) -- mark each with `Ord[0] = 0xE5`
-- [ ] `fat32_lfn_checksum(const uint8_t sfn[11])` -- standalone helper
+- [x] `fat32_lfn_slot_count(name)`: counts chars, returns `(len + 12) / 13`
+- [x] `fat32_lfn_checksum(sfn[11])`: SFN checksum per FAT spec rotate-and-add algorithm
+- [x] `fat32_needs_lfn(name)`: detects lowercase, multi-dot, long base/ext, non-ASCII, spaces
+- [x] `fat32_find_free_dir_slots(vol, dir_cluster, count, ...)`: finds N contiguous free 32-byte entries; extends directory cluster chain if needed
+- [x] `fat32_lfn_write_slots(vol, dir_cluster, sfn, name, sfn_entry)`: writes LFN slots in reverse order (highest seq first, OR'd with 0x40 on last), packs UTF-16LE with 0xFFFF fill on partial slot, writes SFN entry after all slots
+- [x] `fat32_create_file_vol()` and `fat32_create_dir_vol()`: call `fat32_needs_lfn()` -- if yes: `fat32_lfn_write_slots()`; if pure 8.3: existing SFN-only path preserved
+- [x] LFN delete: `fat32_delete_file_vol()` scans backwards from SFN entry, matches `attr==0x0F` + checksum, marks each preceding LFN slot with `0xE5`
 - [ ] Commit: `"fs/fat32: LFN write -- slot chain, UTF-16LE encode, SFN checksum, LFN delete"`
 
 ## 5. FAT32 Timestamps
@@ -306,7 +308,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ✅ §1 -- validate_bpb + dirty |
 | 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
 | 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
-| 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ⚠️ §4 -- read only            |
+| 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ✅ §4 -- full LFN R/W         |
 | 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- set_times partial    |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ⬜ §6 -- fat32_fsck           |
 | ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ⬜ §7 -- vfs_path_fold        |

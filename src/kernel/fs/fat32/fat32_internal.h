@@ -172,6 +172,20 @@ int      fat32_zero_cluster(struct fat32_volume *vol, uint32_t cluster);
 /* ---- fat32_dir.c: Directory operations ---- */
 
 void     fat32_make_short_name(const char *name, uint8_t *short_name);
+
+/* LFN helpers */
+uint8_t  fat32_lfn_checksum(const uint8_t sfn[11]);
+int      fat32_lfn_slot_count(const char *name);
+int      fat32_needs_lfn(const char *name);
+int      fat32_find_free_dir_slots(struct fat32_volume *vol,
+                                    uint32_t dir_cluster, uint32_t count,
+                                    uint32_t *out_sector, uint32_t *out_offset,
+                                    uint32_t *out_cluster);
+int      fat32_lfn_write_slots(struct fat32_volume *vol,
+                                uint32_t dir_cluster,
+                                const uint8_t sfn[11],
+                                const char *utf8_name,
+                                const struct fat32_dir_entry *sfn_entry);
 int      fat32_find_free_dir_slot(struct fat32_volume *vol,
                                    uint32_t dir_cluster,
                                    uint32_t *out_sector,

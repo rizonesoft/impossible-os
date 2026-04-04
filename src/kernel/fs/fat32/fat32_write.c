@@ -41,7 +41,6 @@ int fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
                            const char *name)
 {
     struct fat32_dir_entry de;
-    uint32_t slot_sector, slot_offset, slot_cluster;
     uint32_t first_cluster;
     int i;
 
@@ -54,12 +53,6 @@ int fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
 
     fat32_zero_cluster(vol, first_cluster);
 
-    if (fat32_find_free_dir_slot(vol, dir_cluster, &slot_sector,
-                                  &slot_offset, &slot_cluster) != 0) {
-        fat32_free_chain(vol, first_cluster);
-        return -1;
-    }
-
     for (i = 0; i < 32; i++)
         ((uint8_t *)&de)[i] = 0;
 
@@ -69,9 +62,22 @@ int fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
     de.first_cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
     de.file_size = 0;
 
-    if (fat32_write_dir_entry(vol, slot_sector, slot_offset, &de) != 0) {
-        fat32_free_chain(vol, first_cluster);
-        return -1;
+    if (fat32_needs_lfn(name)) {
+        if (fat32_lfn_write_slots(vol, dir_cluster, de.name, name, &de) != 0) {
+            fat32_free_chain(vol, first_cluster);
+            return -1;
+        }
+    } else {
+        uint32_t slot_sector, slot_offset, slot_cluster;
+        if (fat32_find_free_dir_slot(vol, dir_cluster, &slot_sector,
+                                      &slot_offset, &slot_cluster) != 0) {
+            fat32_free_chain(vol, first_cluster);
+            return -1;
+        }
+        if (fat32_write_dir_entry(vol, slot_sector, slot_offset, &de) != 0) {
+            fat32_free_chain(vol, first_cluster);
+            return -1;
+        }
     }
 
     vol->dir_file_count = 0;
@@ -82,7 +88,6 @@ int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
                           const char *name)
 {
     struct fat32_dir_entry de;
-    uint32_t slot_sector, slot_offset, slot_cluster;
     uint32_t new_cluster;
     uint8_t dot_buf[512];
     int i;
@@ -96,6 +101,7 @@ int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
 
     fat32_zero_cluster(vol, new_cluster);
 
+    /* Write . and .. entries in the new directory's first sector */
     for (i = 0; i < 512; i++)
         dot_buf[i] = 0;
 
@@ -118,12 +124,7 @@ int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
         return -1;
     }
 
-    if (fat32_find_free_dir_slot(vol, parent_cluster, &slot_sector,
-                                  &slot_offset, &slot_cluster) != 0) {
-        fat32_free_chain(vol, new_cluster);
-        return -1;
-    }
-
+    /* Build the SFN directory entry for the parent */
     for (i = 0; i < 32; i++)
         ((uint8_t *)&de)[i] = 0;
 
@@ -133,9 +134,22 @@ int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
     de.first_cluster_lo = (uint16_t)(new_cluster & 0xFFFF);
     de.file_size = 0;
 
-    if (fat32_write_dir_entry(vol, slot_sector, slot_offset, &de) != 0) {
-        fat32_free_chain(vol, new_cluster);
-        return -1;
+    if (fat32_needs_lfn(name)) {
+        if (fat32_lfn_write_slots(vol, parent_cluster, de.name, name, &de) != 0) {
+            fat32_free_chain(vol, new_cluster);
+            return -1;
+        }
+    } else {
+        uint32_t slot_sector, slot_offset, slot_cluster;
+        if (fat32_find_free_dir_slot(vol, parent_cluster, &slot_sector,
+                                      &slot_offset, &slot_cluster) != 0) {
+            fat32_free_chain(vol, new_cluster);
+            return -1;
+        }
+        if (fat32_write_dir_entry(vol, slot_sector, slot_offset, &de) != 0) {
+            fat32_free_chain(vol, new_cluster);
+            return -1;
+        }
     }
 
     vol->dir_file_count = 0;
@@ -186,7 +200,23 @@ int fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
                 if (fc >= 2)
                     fat32_free_chain(vol, fc);
 
+                /* Mark SFN entry as deleted */
                 cluster_buf[i] = 0xE5;
+
+                /* Delete preceding LFN slots (scan backwards) */
+                {
+                    uint8_t chk = fat32_lfn_checksum(de->name);
+                    int pos = (int)i - 32;
+                    while (pos >= 0) {
+                        struct fat32_lfn_entry *lfn =
+                            (struct fat32_lfn_entry *)&cluster_buf[pos];
+                        if (lfn->attr != FAT32_ATTR_LFN) break;
+                        if (lfn->checksum != chk) break;
+                        cluster_buf[pos] = 0xE5;
+                        pos -= 32;
+                    }
+                }
+
                 fat32_write_sectors_multi(vol, sector,
                                           vol->bpb.sectors_per_cluster,
                                           cluster_buf);

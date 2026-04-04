@@ -52,6 +52,246 @@ void fat32_make_short_name(const char *name, uint8_t *short_name)
     }
 }
 
+/* ---- LFN helpers ---- */
+
+uint8_t fat32_lfn_checksum(const uint8_t sfn[11])
+{
+    uint8_t sum = 0;
+    int i;
+    for (i = 0; i < 11; i++)
+        sum = (uint8_t)(((sum & 1) << 7) + (sum >> 1) + sfn[i]);
+    return sum;
+}
+
+int fat32_lfn_slot_count(const char *name)
+{
+    int len = 0;
+    while (name[len]) len++;
+    return (len + 12) / 13;
+}
+
+int fat32_needs_lfn(const char *name)
+{
+    int i, len = 0, dot_pos = -1, dot_count = 0;
+
+    for (i = 0; name[i]; i++) {
+        len++;
+        if (name[i] == '.') { dot_pos = i; dot_count++; }
+        /* Non-ASCII or special chars require LFN */
+        if ((uint8_t)name[i] > 127) return 1;
+        /* Lowercase requires LFN (8.3 is uppercase only) */
+        if (name[i] >= 'a' && name[i] <= 'z') return 1;
+        /* Spaces in name require LFN */
+        if (name[i] == ' ') return 1;
+    }
+
+    /* More than one dot requires LFN */
+    if (dot_count > 1) return 1;
+
+    /* Name part > 8 chars or extension > 3 chars */
+    if (dot_pos < 0) {
+        if (len > 8) return 1;
+    } else {
+        if (dot_pos > 8) return 1;
+        if (len - dot_pos - 1 > 3) return 1;
+    }
+
+    return 0;
+}
+
+/* Find N contiguous free directory entries. Returns sector/offset of the
+ * FIRST free slot. Extends the directory cluster chain if needed. */
+int fat32_find_free_dir_slots(struct fat32_volume *vol,
+                               uint32_t dir_cluster, uint32_t count,
+                               uint32_t *out_sector, uint32_t *out_offset,
+                               uint32_t *out_cluster)
+{
+    uint32_t bytes_per_cluster = vol->bpb.sectors_per_cluster * 512;
+    uint8_t *cluster_buf;
+    uint32_t cur_cluster = dir_cluster;
+    uint32_t run_start_sector = 0, run_start_offset = 0, run_start_cluster = 0;
+    uint32_t run_len = 0;
+    uint32_t prev_cluster = 0;
+
+    cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
+    if (!cluster_buf)
+        return -1;
+
+    while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
+        uint32_t sector = cluster_to_sector(vol, cur_cluster);
+        uint32_t i;
+
+        if (fat32_read_sectors_multi(vol, sector, vol->bpb.sectors_per_cluster,
+                                     cluster_buf) != 0) {
+            kfree(cluster_buf);
+            return -1;
+        }
+
+        for (i = 0; i < bytes_per_cluster; i += 32) {
+            uint8_t first_byte = cluster_buf[i];
+            if (first_byte == 0x00 || first_byte == 0xE5) {
+                if (run_len == 0) {
+                    run_start_sector = sector + (i / 512);
+                    run_start_offset = i % 512;
+                    run_start_cluster = cur_cluster;
+                }
+                run_len++;
+                if (run_len >= count) {
+                    *out_sector = run_start_sector;
+                    *out_offset = run_start_offset;
+                    *out_cluster = run_start_cluster;
+                    kfree(cluster_buf);
+                    return 0;
+                }
+            } else {
+                run_len = 0;
+            }
+        }
+
+        prev_cluster = cur_cluster;
+        cur_cluster = fat32_get_fat_entry(vol, cur_cluster);
+    }
+
+    /* Need to extend directory -- allocate a new cluster */
+    {
+        uint32_t new_cluster = fat32_alloc_cluster(vol);
+        if (new_cluster == 0) {
+            kfree(cluster_buf);
+            return -1;
+        }
+        if (prev_cluster)
+            fat32_set_fat_entry(vol, prev_cluster, new_cluster);
+        fat32_zero_cluster(vol, new_cluster);
+
+        /* The new cluster starts with all-zero entries (free) */
+        if (run_len == 0) {
+            *out_sector = cluster_to_sector(vol, new_cluster);
+            *out_offset = 0;
+            *out_cluster = new_cluster;
+        } else {
+            /* Continuation of run from previous cluster */
+            *out_sector = run_start_sector;
+            *out_offset = run_start_offset;
+            *out_cluster = run_start_cluster;
+        }
+    }
+
+    kfree(cluster_buf);
+    return 0;
+}
+
+/* Write LFN slot chain + SFN entry into the directory. */
+int fat32_lfn_write_slots(struct fat32_volume *vol,
+                           uint32_t dir_cluster,
+                           const uint8_t sfn[11],
+                           const char *utf8_name,
+                           const struct fat32_dir_entry *sfn_entry)
+{
+    int slots = fat32_lfn_slot_count(utf8_name);
+    int total_entries = slots + 1;  /* LFN slots + 1 SFN entry */
+    uint8_t checksum = fat32_lfn_checksum(sfn);
+    uint32_t start_sector, start_offset, start_cluster;
+    int name_len = 0;
+    int s;
+
+    while (utf8_name[name_len]) name_len++;
+
+    /* Find contiguous free entries */
+    if (fat32_find_free_dir_slots(vol, dir_cluster, (uint32_t)total_entries,
+                                   &start_sector, &start_offset,
+                                   &start_cluster) != 0)
+        return -1;
+
+    /* Write LFN slots (reverse order: last slot first) */
+    for (s = slots; s >= 1; s--) {
+        struct fat32_lfn_entry lfn;
+        uint8_t *p = (uint8_t *)&lfn;
+        int base = (s - 1) * 13;  /* character offset for this slot */
+        int ci;
+        uint32_t entry_idx = (uint32_t)(slots - s);  /* 0-based position in dir */
+        uint32_t byte_offset;
+        uint32_t wr_sector;
+        uint8_t sec_buf[512];
+
+        /* Zero the entry */
+        for (ci = 0; ci < 32; ci++) p[ci] = 0;
+
+        /* Sequence number */
+        lfn.seq = (uint8_t)s;
+        if (s == slots) lfn.seq |= LFN_LAST_ENTRY;
+
+        lfn.attr = FAT32_ATTR_LFN;
+        lfn.type = 0;
+        lfn.checksum = checksum;
+        lfn.first_cluster = 0;
+
+        /* Pack UTF-16LE chars into Name1 (5), Name2 (6), Name3 (2) */
+        for (ci = 0; ci < 5; ci++) {
+            int idx = base + ci;
+            if (idx < name_len)
+                lfn.name1[ci] = (uint16_t)(uint8_t)utf8_name[idx];
+            else if (idx == name_len)
+                lfn.name1[ci] = 0x0000;
+            else
+                lfn.name1[ci] = 0xFFFF;
+        }
+        for (ci = 0; ci < 6; ci++) {
+            int idx = base + 5 + ci;
+            if (idx < name_len)
+                lfn.name2[ci] = (uint16_t)(uint8_t)utf8_name[idx];
+            else if (idx == name_len)
+                lfn.name2[ci] = 0x0000;
+            else
+                lfn.name2[ci] = 0xFFFF;
+        }
+        for (ci = 0; ci < 2; ci++) {
+            int idx = base + 11 + ci;
+            if (idx < name_len)
+                lfn.name3[ci] = (uint16_t)(uint8_t)utf8_name[idx];
+            else if (idx == name_len)
+                lfn.name3[ci] = 0x0000;
+            else
+                lfn.name3[ci] = 0xFFFF;
+        }
+
+        /* Calculate the absolute position of this entry */
+        byte_offset = start_offset + entry_idx * 32;
+        wr_sector = start_sector + (byte_offset / 512);
+        byte_offset = byte_offset % 512;
+
+        if (fat32_read_sector(vol, wr_sector, sec_buf) != 0)
+            return -1;
+
+        for (ci = 0; ci < 32; ci++)
+            sec_buf[byte_offset + ci] = p[ci];
+
+        if (fat32_write_sector(vol, wr_sector, sec_buf) != 0)
+            return -1;
+    }
+
+    /* Write SFN entry after all LFN slots */
+    {
+        uint32_t sfn_byte_offset = start_offset + (uint32_t)slots * 32;
+        uint32_t sfn_sector = start_sector + (sfn_byte_offset / 512);
+        uint8_t sec_buf[512];
+        const uint8_t *src = (const uint8_t *)sfn_entry;
+        int ci;
+
+        sfn_byte_offset = sfn_byte_offset % 512;
+
+        if (fat32_read_sector(vol, sfn_sector, sec_buf) != 0)
+            return -1;
+
+        for (ci = 0; ci < 32; ci++)
+            sec_buf[sfn_byte_offset + ci] = src[ci];
+
+        if (fat32_write_sector(vol, sfn_sector, sec_buf) != 0)
+            return -1;
+    }
+
+    return 0;
+}
+
 /* ---- Directory entry manipulation ---- */
 
 int fat32_find_free_dir_slot(struct fat32_volume *vol,
