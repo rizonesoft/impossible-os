@@ -171,10 +171,7 @@ $SerialLogPath = Join-Path $PROJECT "scripts\debug\serial.log"
 try {
     if ($SerialLog) {
         Write-Host "  Serial: -> $SerialLogPath" -ForegroundColor DarkGray
-        $prevEAP = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        & $QEMU @QemuArgs 2>&1 | Tee-Object -FilePath $SerialLogPath
-        $ErrorActionPreference = $prevEAP
+        & $QEMU @QemuArgs 2>$null | Tee-Object -FilePath $SerialLogPath
     } else {
         & $QEMU @QemuArgs
     }
