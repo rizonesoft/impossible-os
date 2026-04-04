@@ -233,8 +233,8 @@ Return correct stub responses for Win32 queries that user-mode programs issue on
 - [x] ADS: `vfs_query_streams(node, ...)` returns 1 stream `"::$DATA"` with length = file size -- ready for NtQueryInformationFile(FileStreamInformation) when SSDT handler exists
 - [x] Volume flags: `vfs_query_volume_flags(drive, ...)` returns per-FS attribute flags (NTFS/IXFS get PERSISTENT_ACLS; FAT32 gets UNICODE+CASE_PRESERVED only) + filesystem name string
 - [x] Reparse point: `vfs_query_reparse(node)` returns `STATUS_NOT_SUPPORTED` for all nodes
-- [ ] ACL: `NtQuerySecurityObject(DACL_SECURITY_INFORMATION)` deferred -- requires security descriptor infrastructure from TODO-11 SRM
-- [ ] Commit: `"fs: Win32 feature stubs -- ADS stream query, volume flags, reparse-point stub"`
+- [x] ACL: `vfs_query_security(node, &size)` returns default SD (SY+BA=Full, WD=ReadControl) via `SeCreateDefaultSD(SE_SD_TYPE_DEFAULT)` -- infrastructure already exists in `default_sds.c`
+- [x] Commit: `"fs: Win32 feature stubs -- ADS stream query, volume flags, reparse-point stub"`
 
 ## 12. SFN Numeric Tail Collision Avoidance
 

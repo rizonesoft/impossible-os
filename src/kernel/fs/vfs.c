@@ -17,6 +17,7 @@
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/security/default_sds.h"
 
 /* Drive mount table: one entry per drive letter A-Z */
 struct drive_mount {
@@ -707,6 +708,15 @@ int vfs_query_streams(struct vfs_node *node, char *stream_name, uint32_t name_ma
     if (stream_size)
         *stream_size = node ? node->size : 0;
     return 1;  /* 1 stream */
+}
+
+const void *vfs_query_security(struct vfs_node *node, uint32_t *out_size)
+{
+    (void)node;
+    /* Return the default SD: SY+BA=Full, WD=ReadControl */
+    if (out_size)
+        *out_size = SeGetDefaultSDSize(SE_SD_TYPE_DEFAULT);
+    return SeCreateDefaultSD(SE_SD_TYPE_DEFAULT);
 }
 
 int vfs_query_reparse(struct vfs_node *node)

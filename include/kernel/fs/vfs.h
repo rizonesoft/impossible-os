@@ -204,6 +204,11 @@ uint32_t vfs_query_volume_flags(char drive_letter, char *fs_name, uint32_t name_
 int vfs_query_streams(struct vfs_node *node, char *stream_name, uint32_t name_max,
                       uint64_t *stream_size);
 
+/* Query the default security descriptor for a file.
+ * Returns a pointer to a static self-relative SD (do not free).
+ * out_size receives the SD byte size. */
+const void *vfs_query_security(struct vfs_node *node, uint32_t *out_size);
+
 /* Query reparse point status.
  * Returns STATUS_NOT_A_REPARSE_POINT for all non-reparse nodes. */
 int vfs_query_reparse(struct vfs_node *node);
