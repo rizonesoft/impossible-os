@@ -50,7 +50,7 @@
 | 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [x]   |
 | 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [x]   |
 | 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [x]   |
-| 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [ ]   |
+| 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [x]   |
 | 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [ ]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
@@ -254,9 +254,9 @@ Current `fat32_make_short_name()` hardcodes `~1` when a name needs truncation. W
 
 FAT32 `file_size` is a 32-bit field in the directory entry -- max 4,294,967,295 bytes (4 GiB - 1). Writes that would push the file past this limit must fail gracefully with `STATUS_DISK_FULL` rather than wrapping the size field and corrupting the directory entry.
 
-- [ ] In `fat32_file_write_vfs()`: before extending the file, check `(uint64_t)current_size + write_len > 0xFFFFFFFF`; if so: return `STATUS_DISK_FULL` (or appropriate VFS error code)
-- [ ] In `fat32_vfs_truncate()`: reject truncation to a size > `0xFFFFFFFF`
-- [ ] Log: `klog(LOG_WARN, "fat32", "4 GiB file size limit reached: %s", filename)`
+- [x] `fat32_file_write_vfs()`: checks `(uint64_t)offset + size > 0xFFFFFFFF` before write; returns -1 with klog warning
+- [x] `fat32_vfs_truncate()`: checks `new_size > 0xFFFFFFFF` before truncate; returns -1 with klog warning
+- [x] Both log: `"4 GiB file size limit: <filename>"`
 - [ ] Commit: `"fs/fat32: 4 GiB write guard -- reject writes beyond FAT32 file_size limit"`
 
 **Test checkpoint:** Create a file, write exactly 4 GiB - 1 bytes -- succeeds. Write 1 more byte -- returns error, file size unchanged. Verify file is still readable. Verify on QEMU WHPX, TCG.
@@ -326,7 +326,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ✅ §10 -- vfs_lock_file       |
 | 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ✅ §11 -- ADS/vol/reparse     |
 | 💎 | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ✅ §12 -- ~1-~99 loop         |
-| 💎 | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ⬜ §13 -- write + truncate    |
+| 💎 | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ✅ §13 -- write + truncate    |
 | 💎 | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH   | ⚠️ POSIX leases only       | ⬜ §14 -- Level 1/2           |
 
 > After §1-§14, FAT32 matches fastfat.sys spec correctness and exceeds dosfstools with in-kernel fsck.

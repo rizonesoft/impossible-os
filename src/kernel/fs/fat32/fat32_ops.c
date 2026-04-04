@@ -194,6 +194,12 @@ static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
     if (!f || !buffer || size == 0)
         return -1;
 
+    /* FAT32 4 GiB file size guard -- directory entry file_size is 32-bit */
+    if ((uint64_t)offset + (uint64_t)size > 0xFFFFFFFF) {
+        klog(LOG_WARN, "fat32", "4 GiB file size limit: %s", node->name);
+        return -1;
+    }
+
     vol = f->volume;
     if (!vol)
         return -1;
@@ -465,6 +471,12 @@ static int fat32_vfs_truncate(struct vfs_node *node, uint64_t new_size)
     if (!vol) return -1;
     if (node->type & VFS_DIRECTORY)
         return -1;
+
+    /* FAT32 4 GiB file size guard */
+    if (new_size > 0xFFFFFFFF) {
+        klog(LOG_WARN, "fat32", "4 GiB file size limit: %s", node->name);
+        return -1;
+    }
 
     if (node->name[0]) {
         spin_lock(&vol->lock);
