@@ -169,12 +169,17 @@ if ($ExtraArgs) {
 $SerialLogPath = Join-Path $PROJECT "scripts\debug\serial.log"
 
 try {
+    # Temporarily allow native command stderr (QEMU emits harmless warnings
+    # like "Ignoring request for interrupt vector 0" that PowerShell treats
+    # as terminating errors when $ErrorActionPreference is Stop).
+    $ErrorActionPreference = "SilentlyContinue"
     if ($SerialLog) {
         Write-Host "  Serial: -> $SerialLogPath" -ForegroundColor DarkGray
         & $QEMU @QemuArgs 2>$null | Tee-Object -FilePath $SerialLogPath
     } else {
         & $QEMU @QemuArgs
     }
+    $ErrorActionPreference = "Stop"
 } finally {
     # Always restore boot.conf to defaults
     if ($PatchArgs.Count -gt 0) {
