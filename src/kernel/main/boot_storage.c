@@ -205,6 +205,27 @@ void boot_phase2(void)
     partition_scan_all();
     boot_splash_status("Mounting filesystems...");
     partition_mount_filesystems();
+
+    /* --- BlackBox directory skeleton (X:\) --- */
+    {
+        struct vfs_node *probe = vfs_open("X:\\Logs", 0);
+        if (probe) {
+            vfs_close(probe);  /* already exists */
+        } else {
+            /* First boot or reformatted -- create directory skeleton */
+            static const char *bb_dirs[] = {
+                "X:\\Logs", "X:\\Boot", "X:\\Crash", "X:\\Crash\\WER",
+                "X:\\Perf", "X:\\Diag", "X:\\Tools"
+            };
+            uint32_t d;
+            for (d = 0; d < 7; d++) {
+                if (vfs_create(bb_dirs[d], VFS_DIRECTORY) == 0)
+                    klog(LOG_INFO, "boot", "BlackBox: created %s",
+                         bb_dirs[d]);
+            }
+        }
+    }
+
     POST16(POST16_PARTITION_OK);
 
     /* --- Debug diagnostic (shows storage state on serial + optionally splash) ---

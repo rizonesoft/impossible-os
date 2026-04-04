@@ -40,7 +40,7 @@
 | 💎 |   1   | Disk tooling -- add BlackBox partition to GPT layout  | --                |  [x]   |
 | 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [x]   |
 | 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [x]   |
-| 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [ ]   |
+| 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [x]   |
 | 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [ ]   |
 | 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [ ]   |
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [ ]   |
@@ -96,7 +96,7 @@ Update `partition.c` to recognize the "BlackBox" GPT partition name and mount it
 - [x] Sequential letter assignment skips `X` (reserved for BlackBox)
 - [x] Logs: `"BlackBox partition mounted as X:\"`
 - [x] Graceful fallback: if no "BlackBox" partition found, sequential assignment continues as before
-- [ ] Commit: `"kernel: mount BlackBox partition as X:\\ by GPT name"`
+- [x] Commit: `"kernel: mount BlackBox partition as X:\\ by GPT name"`
 
 **Test checkpoint:** Serial log shows `"BlackBox partition mounted as X:\"`. `X:\` is accessible via VFS. Other FAT32 partitions still get `D:`, `E:`, etc. On disks without BlackBox, logs go to `C:\` as before. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -106,11 +106,11 @@ Update `partition.c` to recognize the "BlackBox" GPT partition name and mount it
 
 Ensure the BlackBox directory structure exists on first boot and after format.
 
-- [ ] After `X:\` mount, check for `X:\Logs\` existence via `vfs_open("X:\\Logs", ...)`
-- [ ] If missing, create all 7 directories: `Logs`, `Boot`, `Crash`, `Crash\WER`, `Perf`, `Diag`, `Tools`
-- [ ] Use existing `vfs_create(parent, name, VFS_DIRECTORY)` -- already works on FAT32
-- [ ] Log each directory creation: `klog(LOG_INFO, "boot", "BlackBox: created X:\\%s", dir_name)`
-- [ ] Idempotent: directories already existing is not an error
+- [x] After `partition_mount_filesystems()`, probe `X:\Logs` via `vfs_open()` to detect first boot
+- [x] If missing, create all 7 directories: `Logs`, `Boot`, `Crash`, `Crash\WER`, `Perf`, `Diag`, `Tools`
+- [x] Uses `vfs_create(path, VFS_DIRECTORY)` -- works on FAT32
+- [x] Logs each creation: `"BlackBox: created X:\Logs"` etc.
+- [x] Idempotent: second boot skips creation (probe finds `X:\Logs`)
 - [ ] Commit: `"kernel: create BlackBox directory skeleton on first boot"`
 
 **Test checkpoint:** First boot after clean build: serial shows 7 `"BlackBox: created X:\..."` messages (Logs, Boot, Crash, Crash\WER, Perf, Diag, Tools). Second boot: no creation messages (directories already exist). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
