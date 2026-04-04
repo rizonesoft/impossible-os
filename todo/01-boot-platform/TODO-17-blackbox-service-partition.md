@@ -35,8 +35,8 @@
 
 ## Implementation Order
 
-| S  | Order | Deliverable                                          | Depends On        | Status |
-|----|:-----:|------------------------------------------------------|-------------------|:------:|
+| ⭐ | Order | Deliverable                                            | Depends On       | Status |
+|----|:-----:|-------------------------------------------------------|-------------------|:------:|
 | 💎 |   1   | Disk tooling -- add BlackBox partition to GPT layout  | --                |  [ ]   |
 | 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [ ]   |
 | 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [ ]   |
@@ -44,14 +44,14 @@
 | 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [ ]   |
 | 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [ ]   |
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [ ]   |
-| 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4           |  [ ]   |
+| 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [ ]   |
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [ ]   |
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [ ]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [ ]   |
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [ ]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [ ]   |
-| S  |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [ ]   |
-| S  |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [ ]   |
+| 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [ ]   |
+| 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [ ]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
 > S = scope -- internal project hygiene.
@@ -284,8 +284,8 @@ Update cross-references across affected TODOs.
 
 ## OS Comparison
 
-| S  | Feature                    | Win11                      | Linux                      | Impossible OS                       |
-|----|----------------------------|----------------------------|----------------------------|-------------------------------------|
+| ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS                    |
+|----|----------------------------|----------------------------|-----------------------------|-------------------------------------|
 | 💎 | Separate log partition     | ✅ Recovery + WinRE        | ⚠️ /var/log on root        | ⬜ S1-S3 -- X:\ BlackBox FAT32      |
 | 💎 | Cross-platform readable    | ✅ NTFS (with drivers)     | ✅ ext4 (with drivers)     | ⬜ S1 -- FAT32 universal             |
 | 💎 | Crash dump isolation       | ✅ C:\Windows\MEMORY.DMP   | ✅ /var/crash              | ⬜ S7 -- X:\Crash\                   |
@@ -293,12 +293,12 @@ Update cross-references across affected TODOs.
 | ⭐ | Boot timeline JSON         | ❌ Not built-in            | ❌ Not built-in            | ⬜ S6 -- X:\Boot\YYMMDDN.json       |
 | 💎 | Auto-mount on host         | ✅ Windows assigns letter  | ✅ udisks2 auto-mount      | ⬜ S1 -- Basic Data GUID            |
 | 💎 | Volume label               | ✅ NTFS volume label       | ✅ e2label / fatlabel      | ⬜ S11 -- "BLACKBOX" FAT32 label    |
-| S  | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ⬜ S3 -- GPT name "BlackBox"        |
+| 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ⬜ S3 -- GPT name "BlackBox"        |
 | 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ⬜ S4 -- organized Logs/Boot/Crash/  |
 | 💎 | Log space management       | ✅ CBS.log 20 MB cap       | ✅ logrotate + journald    | ⬜ S10 -- aging + quota + cleanup   |
 | 💎 | Dirty-bit / fsck on mount  | ✅ chkdsk on dirty FAT32   | ✅ fsck.fat on mount       | ⬜ S12 -- dirty-bit + optional fsck |
-| ⭐ | Cross-platform WER staging | ⚠️ WER on NTFS only        | ⚠️ apport on ext4 only    | ⬜ S13 -- FAT32 WER JSON reports    |
-| 💎 | A/B + diagnostic coexist   | ❌ Recovery only           | ⚠️ A/B without diag part  | ⬜ S14 -- 4-partition layout        |
+| ⭐ | Cross-platform WER staging | ⚠️ WER on NTFS only        | ⚠️ apport on ext4 only     | ⬜ S13 -- FAT32 WER JSON reports    |
+| 💎 | A/B + diagnostic coexist   | ❌ Recovery only           | ⚠️ A/B without diag part   | ⬜ S14 -- 4-partition layout        |
 
 > After S1-S9, Impossible OS has a dedicated diagnostic partition more organized than both Windows (scattered C:\Windows files) and Linux (everything in /var/log). FAT32 universality means any OS can read the flight recorder.
 > S10-S12 add production-grade space management and partition health -- matching Win11 chkdsk and Linux logrotate.
