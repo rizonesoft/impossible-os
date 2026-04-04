@@ -19,6 +19,7 @@
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/nt/ssdt.h"
+#include "kernel/etw.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
 #include "kernel/boot_init.h"
@@ -87,6 +88,10 @@ void boot_phase3(void)
         syscall_init_fast();  /* attempt SYSCALL/SYSRET; falls back if GDT incompatible */
     }
     syscall_init();  /* keep INT 0x80 path active */
+
+    /* --- ETW tracing subsystem --- */
+    etw_init();
+    etw_register_ssdt();
 
     /* --- Exec loader (ELF/PE format handlers) --- */
     kernel_subsystem_set_ready(SUBSYS_EXEC, true);

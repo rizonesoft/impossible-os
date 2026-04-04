@@ -3,13 +3,15 @@
 > **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.
 
 > [!IMPORTANT]
-> **Current state:** `klog.c` (541 lines) + `klog_disk.c` (912 lines). §1-§6 complete, §8 complete (crash-persistent log). Remaining: §7 (ETW tracing, blocked on TODO-05), §9 (per-entry context), §10 (log integrity). Remote syslog moved to `07-networking/TODO-11`.
+> **Current state:** `klog.c` (541 lines) + `klog_disk.c` (912 lines) + `etw.c` (new). §1-§8 complete. Remaining: §9 (per-entry context), §10 (log integrity). Remote syslog moved to `07-networking/TODO-11`.
 
 ## Inputs
 
 - [`src/kernel/klog.c`](../../src/kernel/klog.c)
 - [`src/kernel/klog_disk.c`](../../src/kernel/klog_disk.c)
 - [`include/kernel/klog.h`](../../include/kernel/klog.h)
+- [`src/kernel/etw.c`](../../src/kernel/etw.c)
+- [`include/kernel/etw.h`](../../include/kernel/etw.h)
 - ~~`src/kernel/log.c`~~ -- legacy serial-only logger (removed, superseded by klog)
 - [`todo/02-kernel-core/TODO-01-kernel-init-sequencing.md`](./TODO-01-kernel-init-sequencing.md)
 - → XREF: `TODO-20-kernel-libraries.md §6` -- cJSON DOM parser; §6 was implemented with manual JSON formatting in `klog_disk.c` (cJSON not needed for serialization, may be used by Event Viewer for parsing)
@@ -40,7 +42,7 @@
 | 💎  |   4   | Log rotation                        | §2             |  [x]   |
 | 💎  |   5   | Rate limiting                       | §2             |  [x]   |
 | ⭐  |   6   | Structured JSON log events          | §4             |  [x]   |
-| 💎  |   7   | ETW tracing syscalls wired to SSDT  | §4, T05 §4     |  [ ]   |
+| 💎  |   7   | ETW tracing syscalls wired to SSDT  | §4, T05 §4     |  [x]   |
 | 💎  |   8   | Crash-persistent log capture        | §1             |  [x]   |
 | 💎  |   9   | Per-entry context metadata          | §2             |  [ ]   |
 | ⭐  |  10   | Log integrity verification (HMAC)   | §6, T20 §5     |  [ ]   |
@@ -148,18 +150,17 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 ## 7. ETW Tracing Syscalls Wired to SSDT
 Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. This section wires the tracing control syscalls into the SSDT. (→ XREF: TODO-05-native-api-ssdt.md §4, §22)
 
-> [!IMPORTANT]
-> **Blocked:** Requires SSDT infrastructure from TODO-05 §4 and `NTSTATUS` type from TODO-05 §1. Neither exists in the codebase yet (`include/kernel/nt/ntstatus.h` is planned). Implement §8-§9 first; return to §7 after TODO-05 §1+§4 are complete.
+- [x] `NtTraceEvent(TraceHandle, Flags, FieldSize, Fields)` → SSDT 0x01D0: write a trace event to a session -- `etw.c` NtTraceEvent()
+- [x] `NtTraceControl(FunctionCode, InBuffer, InLen, OutBuffer, OutLen, RetLen)` → SSDT 0x01D1: control trace sessions (start/stop/query/update/flush) -- `etw.c` NtTraceControl()
+- [x] `NtCreateTrace(TraceHandle, DesiredAccess, ObjectAttributes, TraceGuid)` → SSDT 0x01D2: create a new trace session -- `etw.c` NtCreateTrace()
+- [x] `NtQueryTrace(TraceHandle, TraceInformationClass, Buffer, Length)` → SSDT 0x01D3 -- `etw.c` NtQueryTrace()
+- [x] `NtUpdateTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D4 -- `etw.c` NtUpdateTrace()
+- [x] `NtStopTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D5 -- `etw.c` NtStopTrace()
+- [x] `NtFlushTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D6 -- `etw.c` NtFlushTrace()
+- [x] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)
+- [ ] Commit: `"kernel: klog -- wire ETW tracing syscalls to SSDT (0x01D0-0x01D6)"`
 
-- [ ] `NtTraceEvent(TraceHandle, Flags, FieldSize, Fields)` → SSDT 0x01D0: write a trace event to a session
-- [ ] `NtTraceControl(FunctionCode, InBuffer, InLen, OutBuffer, OutLen, RetLen)` → SSDT 0x01D1: control trace sessions (start/stop/query/update/flush)
-- [ ] `NtCreateTrace(TraceHandle, DesiredAccess, ObjectAttributes, TraceGuid)` → SSDT 0x01D2: create a new trace session
-- [ ] `NtQueryTrace(TraceHandle, TraceInformationClass, Buffer, Length)` → SSDT 0x01D3
-- [ ] `NtUpdateTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D4
-- [ ] `NtStopTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D5
-- [ ] `NtFlushTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D6
-- [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)
-- [ ] Commit: `"kernel: klog -- wire ETW tracing syscalls to SSDT (0x01D0–0x01D6)"`
+> **Implementation notes:** `etw.c` + `etw.h` (new files). Up to 8 concurrent trace sessions with 4 KB circular buffers. SMP-safe via `s_etw_lock` (irqsave spinlock). Registered in `boot_desktop.c` Phase 3 after `ssdt_init()`. 7 unit tests in `test_klog.c` cover struct sizes, SSDT registration, session lifecycle, and event writing.
 
 **Test checkpoint:** `NtCreateTrace` returns valid session handle. `NtTraceEvent` writes event visible via `NtTraceControl` query. `NtStopTrace` + `NtFlushTrace` drain the buffer. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -244,14 +245,14 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 | 💎 | Rate limiting         | ✅ ETW built-in     | ⚠️ rsyslog only      | ✅ §5 -- done              |
 | ⭐ | Human-readable struct | ❌ XML verbose      | ❌ Binary journal    | ✅ §6 -- JSON Lines        |
 | 💎 | Remote forwarding     | ✅ WEF              | ✅ rsyslog UDP       | ⬜ → net/TODO-11            |
-| 💎 | ETW tracing API       | ✅ NtTraceEvent     | ✅ ftrace/perf_event | ⬜ §7 -- SSDT wired        |
+| 💎 | ETW tracing API       | ✅ NtTraceEvent     | ✅ ftrace/perf_event | ✅ §7 -- 7 NtTrace* SSDT   |
 | ⭐ | Serial timestamps     | ❌ Not standard     | ❌ Not standard      | ✅ Every entry             |
 | 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §8 NVRAM + reserved RAM |
 | 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ⬜ §9 -- klog_entry_t      |
 | ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §10 -- HMAC-chain       |
 
-> After §1-§6 + §8, Impossible OS matches or exceeds Windows and Linux on core logging.
-> §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges.
+> After §1-§8, Impossible OS matches or exceeds Windows and Linux on core logging.
+> §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges. §7 wires 7 ETW syscalls.
 > §9 closes the per-entry context parity gap. §10 (HMAC-chain) is a unique competitive advantage -- no other OS ships tamper-evident text-format logging out of the box.
 
 ## Unit Tests

@@ -11,6 +11,9 @@
 #include "kernel/test/test.h"
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
+#include "kernel/etw.h"
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/service_numbers.h"
 
 /* ---- Ring buffer: klog writes to ring and head advances ---- */
 
@@ -161,6 +164,124 @@ static void test_klog_crash_post_codes(void)
                 "CRASHLOG != BOOTPERF (no overlap)");
 }
 
+/* ---- ETW: session magic value ---- */
+
+static void test_etw_session_magic(void)
+{
+    TEST_ASSERT_EQ(ETW_SESSION_MAGIC, 0x45545753, "ETW_SESSION_MAGIC == 'ETWS'");
+}
+
+/* ---- ETW: event header size ---- */
+
+static void test_etw_event_header_size(void)
+{
+    TEST_ASSERT_EQ((uint32_t)sizeof(etw_event_header_t), 16,
+                   "etw_event_header_t is 16 bytes");
+}
+
+/* ---- ETW: basic info size ---- */
+
+static void test_etw_basic_info_size(void)
+{
+    TEST_ASSERT_EQ((uint32_t)sizeof(etw_basic_info_t), 32,
+                   "etw_basic_info_t is 32 bytes");
+}
+
+/* ---- ETW: NtCreateTrace returns valid handle via SSDT dispatch ---- */
+
+static void test_etw_create_trace(void)
+{
+    uint64_t handle = 0;
+    NTSTATUS s = ssdt_dispatch(SSDT_NtCreateTrace,
+                               (uint64_t)&handle, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtCreateTrace returns STATUS_SUCCESS");
+    TEST_ASSERT(handle != 0, "NtCreateTrace returns non-zero handle");
+
+    /* Clean up: stop and flush */
+    ssdt_dispatch(SSDT_NtStopTrace, handle, 0, 0, 0, 0, 0);
+}
+
+/* ---- ETW: NtTraceEvent writes to running session ---- */
+
+static void test_etw_trace_event(void)
+{
+    uint64_t handle = 0;
+    NTSTATUS s;
+
+    /* Create session */
+    s = ssdt_dispatch(SSDT_NtCreateTrace,
+                      (uint64_t)&handle, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "create session for event test");
+
+    /* Start session via NtTraceControl */
+    uint64_t ctrl_buf = handle;
+    s = ssdt_dispatch(SSDT_NtTraceControl,
+                      ETW_FUNC_START, (uint64_t)&ctrl_buf, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtTraceControl START succeeds");
+
+    /* Write an event */
+    uint32_t payload = 0xDEADBEEF;
+    s = ssdt_dispatch(SSDT_NtTraceEvent,
+                      handle, 0x0001, sizeof(payload),
+                      (uint64_t)&payload, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtTraceEvent writes to running session");
+
+    /* Query and verify event count */
+    etw_basic_info_t info;
+    s = ssdt_dispatch(SSDT_NtQueryTrace,
+                      handle, ETW_INFO_BASIC,
+                      (uint64_t)&info, sizeof(info), 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtQueryTrace returns STATUS_SUCCESS");
+    TEST_ASSERT_EQ(info.events_written, 1, "1 event written after NtTraceEvent");
+
+    /* Stop + flush */
+    s = ssdt_dispatch(SSDT_NtStopTrace, handle, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtStopTrace succeeds");
+
+    s = ssdt_dispatch(SSDT_NtFlushTrace, handle, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtFlushTrace drains buffer");
+}
+
+/* ---- ETW: NtTraceEvent on non-running session returns error ---- */
+
+static void test_etw_event_not_running(void)
+{
+    uint64_t handle = 0;
+    NTSTATUS s;
+
+    /* Create session (state = IDLE, not RUNNING) */
+    s = ssdt_dispatch(SSDT_NtCreateTrace,
+                      (uint64_t)&handle, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "create session for not-running test");
+
+    /* Try to write event -- should fail */
+    uint32_t payload = 0x12345678;
+    s = ssdt_dispatch(SSDT_NtTraceEvent,
+                      handle, 0, sizeof(payload),
+                      (uint64_t)&payload, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtTraceEvent fails on non-running session");
+}
+
+/* ---- ETW: SSDT slots are registered (not stub) ---- */
+
+static void test_etw_ssdt_registered(void)
+{
+    /* Dispatch NtCreateTrace with NULL out_handle -- should return
+     * STATUS_INVALID_PARAMETER (real handler), not STATUS_NOT_IMPLEMENTED (stub) */
+    NTSTATUS s = ssdt_dispatch(SSDT_NtCreateTrace, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "SSDT 0x01D2 (NtCreateTrace) is not a stub");
+
+    s = ssdt_dispatch(SSDT_NtTraceEvent, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "SSDT 0x01D0 (NtTraceEvent) is not a stub");
+
+    s = ssdt_dispatch(SSDT_NtTraceControl, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "SSDT 0x01D1 (NtTraceControl) is not a stub");
+}
+
 /* ---- Registration ---- */
 
 void test_register_klog(void)
@@ -174,6 +295,15 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: crash magic", test_klog_crash_magic, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
+
+    /* ETW tracing tests */
+    test_suite_register_cat("ETW: session magic", test_etw_session_magic, TEST_CAT_ABI);
+    test_suite_register_cat("ETW: event header size", test_etw_event_header_size, TEST_CAT_ABI);
+    test_suite_register_cat("ETW: basic info size", test_etw_basic_info_size, TEST_CAT_ABI);
+    test_suite_register_cat("ETW: SSDT registered", test_etw_ssdt_registered, TEST_CAT_ABI);
+    test_suite_register_cat("ETW: NtCreateTrace", test_etw_create_trace, TEST_CAT_ABI);
+    test_suite_register_cat("ETW: NtTraceEvent", test_etw_trace_event, TEST_CAT_ABI);
+    test_suite_register_cat("ETW: event not running", test_etw_event_not_running, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
