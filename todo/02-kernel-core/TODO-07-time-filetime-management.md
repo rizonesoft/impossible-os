@@ -60,7 +60,7 @@
 | 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [x]   |
 | 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [x]   |
 | 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [x]   |
-| 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-04 §11 |  [ ]   |
+| 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-04 §11 |  [x]   |
 | 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [ ]   |
 | 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-15 §3,§4   |  [ ]   |
 | 💎  |  15   | Leap second policy                                                     | §1                  |  [ ]   |
@@ -181,16 +181,15 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-05 §4).
 The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, InterruptTime, TickCount) on every tick so user-mode code can read time without a syscall. This is the hottest path in the entire time subsystem -- `GetTickCount64()`, ntdll's `NtQuerySystemTime` fast path, and `QueryInterruptTime` all read from this shared page. Linux's vDSO serves the same purpose.
 
 > [!NOTE]
-> The shared page structure and static field init are owned by `TODO-04-peb-teb-user-abi.md §11` (`kusd_init()`). This section provides only the ISR-driven time update function that §11 wires into the timer interrupt.
+> Full static field population (NtSystemRoot, ProcessorFeatures, Cookie, etc.) is owned by `TODO-04-peb-teb-user-abi.md §11` (`kusd_init()`). This section provides the page allocation, minimal static fields, and ISR-driven time update.
 
-- [ ] Implement `kusd_update_time()` in `src/kernel/time/kusd_time.c`:
-  - Write `InterruptTime` (0x008): `g_interrupt_time` from §7
-  - Write `SystemTime` (0x014): `KeQuerySystemTime()` result from §6
-  - Write `TickCountQuad` (0x320): `g_interrupt_time / KeTimeIncrement`
-  - Write `TimeZoneBias` (0x020): current timezone offset from §11
-  - Use the `KSYSTEM_TIME` triple-write protocol: `High1Time`, `LowPart`, `High2Time` -- for 32-bit reader compatibility
-- [ ] Call `kusd_update_time()` from the timer ISR after updating `g_interrupt_time`
-- [ ] Volatile writes only, no locks -- this runs at `CLOCK_LEVEL` IRQL
+- [x] `kusd_page_init()` in `kusd_time.c`: allocates physical frame, maps at `0x7FFE0000` user read-only, kernel writes via identity-mapped alias
+- [x] Minimal static fields: `TickCountMultiplier`, `NtMajorVersion` (10), `NtMinorVersion` (0), `NtBuildNumber`
+- [x] `KSYSTEM_TIME` triple-write protocol in `ksystem_time_write()` inline helper (High1Time, LowPart, High2Time)
+- [x] `kusd_update_time()` writes `InterruptTime` (0x008), `SystemTime` (0x014), `TimeZoneBias` (0x020), `TickCount` (0x320)
+- [x] Wired into LAPIC timer ISR (`lapic.c`) and PIT ISR (`pit.c`) -- called on every tick
+- [x] Volatile writes only, no locks -- runs at CLOCK_LEVEL IRQL
+- [x] Also wired `mono_clock_init()`, `wall_clock_init()`, `timezone_init()` into Phase 2 boot (were previously defined but never called)
 - [ ] Commit: `"kernel: time -- KUSER_SHARED_DATA time field updates from timer ISR"`
 
 ## 13. Filesystem Timestamp Encoding (FAT32 + NTFS)
@@ -268,7 +267,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Timer resolution         | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ✅ §8 -- SSDT 0xF3/0xF4   |
 | 💎 | Precise wall time        | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ✅ §10 -- TSC interpolated|
 | 💎 | Timezone + DST           | ✅ registry TZ info      | ✅ /etc/localtime         | ⬜ §11                    |
-| 💎 | KUSD / vDSO time page    | ✅ KUSD 0x7FFE0000       | ✅ vDSO clock_gettime     | ⬜ §12                    |
+| 💎 | KUSD / vDSO time page    | ✅ KUSD 0x7FFE0000       | ✅ vDSO clock_gettime     | ✅ §12 -- ISR-updated     |
 | 💎 | FAT32 timestamps         | ✅ kernel32 -> FAT dir   | ✅ fat inode time         | ⬜ §13                    |
 | 💎 | NTFS FILETIME            | ✅ $STANDARD_INFO        | ✅ ntfs3 current_time     | ⬜ §13                    |
 | 💎 | Suspend time bias        | ✅ InterruptTimeBias     | ✅ CLOCK_BOOTTIME         | ⬜ §14                    |
@@ -327,8 +326,8 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 - [ ] `NtSetTimerResolution(5000, TRUE, &actual)` returns `STATUS_SUCCESS` and `actual <= 5000`
 - [ ] `NtQueryTimerResolution` reports minimum <= current <= maximum
 - [ ] `KeQuerySystemTimePrecise()` returns sub-microsecond precision timestamps
-- [ ] KUSER_SHARED_DATA `InterruptTime` at offset 0x008 advances over time (user-mode read, no syscall)
-- [ ] KUSER_SHARED_DATA `SystemTime` at offset 0x014 matches `NtQuerySystemTime` within one tick
+- [ ] KUSER_SHARED_DATA `InterruptTime` at offset 0x008 advances over time (user-mode read, no syscall) -- page mapped, ISR updates wired
+- [ ] KUSER_SHARED_DATA `SystemTime` at offset 0x014 matches `NtQuerySystemTime` within one tick -- page mapped, ISR updates wired
 - [ ] FAT32 directory entry timestamps after file write show current date/time in local time, not zero
 - [ ] NTFS `$STANDARD_INFORMATION` timestamps after file create show current UTC FILETIME, not zero
 - [ ] klog entries carry an ISO 8601 timestamp prefix

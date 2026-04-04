@@ -15,6 +15,8 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/rtc.h"
+#include "kernel/time/wall_clock.h"
+#include "kernel/time/timezone.h"
 #include "desktop/wm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
@@ -114,7 +116,6 @@ static void load_wallpaper(void);
 /* TrueType text helpers -- wrap screen back buffer as gfx_surface_t */
 static void ttf_screen_text(int32_t x, int32_t y, const char *text,
                             int font_slot, int px_size, gfx_color_t color);
-static int  ttf_screen_width(const char *text, int font_slot, int px_size);
 
 /* ---- String helpers ---- */
 static uint32_t slen(const char *s)
@@ -232,7 +233,7 @@ static void ttf_screen_text(int32_t x, int32_t y, const char *text,
 static int ttf_screen_width(const char *text, int font_slot, int px_size)
 {
     ttf_font_t *f = ttf_get(font_slot, px_size);
-    if (!f) return (int)(slen(text) * 8);  /* fallback estimate */
+    if (!f) return (int)(slen(text) * 8);
     return ttf_measure_width(f, text);
 }
 
@@ -535,26 +536,115 @@ void desktop_draw_taskbar(void)
         }
     }
 
-    /* ---- Clock (RTC real time) ---- */
+    /* ---- Clock + Date (Win11 style, kernel FILETIME) ---- */
     {
-        struct rtc_time rtc;
-        rtc_read(&rtc);
+        uint32_t hour = 0, minute = 0;
+        uint32_t year = 1970, month = 1, day = 1;
+        int use_kernel_time = 0;
 
-        /* Format HH:MM */
-        char clock_buf[6];
-        clock_buf[0] = '0' + (char)(rtc.hour / 10);
-        clock_buf[1] = '0' + (char)(rtc.hour % 10);
-        clock_buf[2] = ':';
-        clock_buf[3] = '0' + (char)(rtc.minute / 10);
-        clock_buf[4] = '0' + (char)(rtc.minute % 10);
-        clock_buf[5] = '\0';
+        if (wall_clock_ready()) {
+            FILETIME utc = KeQuerySystemTime();
+            FILETIME local = filetime_to_local(utc);
+            uint64_t unix_sec = filetime_to_unix_seconds(local);
 
-        int clock_w = ttf_screen_width(clock_buf, FONT_UI, 14);
-        uint32_t clock_x = sw - (uint32_t)clock_w - 12;
+            /* Decompose unix seconds into date/time components */
+            uint32_t secs_in_day = (uint32_t)(unix_sec % 86400);
+            hour   = secs_in_day / 3600;
+            minute = (secs_in_day / 60) % 60;
 
-        ttf_screen_text((int32_t)clock_x,
-                        (int32_t)(ty + (TASKBAR_HEIGHT - 14) / 2),
-                        clock_buf, FONT_UI, 14, CLOCK_COLOR);
+            uint32_t days = (uint32_t)(unix_sec / 86400);
+            static const uint8_t dpm[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            uint32_t m;
+
+            year = 1970;
+            while (days >= 365) {
+                int leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+                uint32_t yd = leap ? 366 : 365;
+                if (days < yd) break;
+                days -= yd;
+                year++;
+            }
+            month = 0;
+            for (m = 0; m < 12; m++) {
+                uint32_t d = dpm[m];
+                if (m == 1 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)))
+                    d = 29;
+                if (days < d) break;
+                days -= d;
+                month++;
+            }
+            day = days + 1;
+            month += 1;
+            use_kernel_time = 1;
+        }
+
+        /* Fallback to RTC if wall clock not ready */
+        if (!use_kernel_time) {
+            struct rtc_time rtc;
+            rtc_read(&rtc);
+            hour   = rtc.hour;
+            minute = rtc.minute;
+            year   = rtc.year;
+            month  = rtc.month;
+            day    = rtc.day;
+        }
+
+        /* 12-hour format with AM/PM (Win11 style) */
+        const char *ampm = (hour < 12) ? "AM" : "PM";
+        uint32_t h12 = hour % 12;
+        if (h12 == 0) h12 = 12;
+
+        /* Format time: "H:MM AM" or "HH:MM PM" */
+        char time_buf[9];
+        int ti = 0;
+        if (h12 >= 10)
+            time_buf[ti++] = '0' + (char)(h12 / 10);
+        time_buf[ti++] = '0' + (char)(h12 % 10);
+        time_buf[ti++] = ':';
+        time_buf[ti++] = '0' + (char)(minute / 10);
+        time_buf[ti++] = '0' + (char)(minute % 10);
+        time_buf[ti++] = ' ';
+        time_buf[ti++] = ampm[0];
+        time_buf[ti++] = ampm[1];
+        time_buf[ti]   = '\0';
+
+        /* Format date: "YYYY/MM/DD" */
+        char date_buf[12];
+        int di = 0;
+        date_buf[di++] = '0' + (char)(year / 1000);
+        date_buf[di++] = '0' + (char)((year / 100) % 10);
+        date_buf[di++] = '0' + (char)((year / 10) % 10);
+        date_buf[di++] = '0' + (char)(year % 10);
+        date_buf[di++] = '/';
+        date_buf[di++] = '0' + (char)(month / 10);
+        date_buf[di++] = '0' + (char)(month % 10);
+        date_buf[di++] = '/';
+        date_buf[di++] = '0' + (char)(day / 10);
+        date_buf[di++] = '0' + (char)(day % 10);
+        date_buf[di]   = '\0';
+
+        /* Measure widths */
+        int time_sz = 15;
+        int date_sz = 15;
+        int time_w = ttf_screen_width(time_buf, FONT_UI_BOLD, time_sz);
+        int date_w = ttf_screen_width(date_buf, FONT_UI_BOLD, date_sz);
+        int line_gap = 2;  /* pixels between time and date baselines */
+
+        /* Right-align both lines to the same right edge */
+        int32_t right_edge = (int32_t)sw - 12;
+        int32_t time_x = right_edge - time_w;
+        int32_t date_x = right_edge - date_w;
+
+        /* Vertically center the two-line group in taskbar */
+        int total_h = time_sz + line_gap + date_sz;
+        int32_t group_y = (int32_t)ty + ((int32_t)TASKBAR_HEIGHT - total_h) / 2;
+        int32_t time_y = group_y;
+        int32_t date_y = group_y + time_sz + line_gap;
+
+        ttf_screen_text(time_x, time_y, time_buf, FONT_UI_BOLD, time_sz,
+                        CLOCK_COLOR);
+        ttf_screen_text(date_x, date_y, date_buf, FONT_UI_BOLD, date_sz,
+                        0xFF909090);  /* date slightly dimmer */
     }
 }
 

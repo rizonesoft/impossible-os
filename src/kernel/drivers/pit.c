@@ -99,8 +99,10 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
 {
     extern uint64_t schedule(struct interrupt_frame *frame);
     extern uint32_t dpc_drain_current_cpu(void);
+    extern void kusd_update_time(void);
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
+    kusd_update_time();
     dpc_drain_current_cpu();
     return schedule(frame);
 }

@@ -456,6 +456,19 @@ void boot_phase2(void)
     boot_splash_status("Initializing mmap...");
     mmap_init();
 
+    /* --- Time subsystem: wall clock, timezone, KUSER_SHARED_DATA --- */
+    {
+        extern void mono_clock_init(void);
+        extern void wall_clock_init(void);
+        extern void timezone_init(void);
+        extern void kusd_page_init(void);
+
+        mono_clock_init();
+        wall_clock_init();
+        timezone_init();
+        kusd_page_init();
+    }
+
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE2] complete -- VFS, registry, SMP, network ready");
 

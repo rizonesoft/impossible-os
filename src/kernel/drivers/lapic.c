@@ -902,6 +902,12 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
     timer_tick_callback_fire();
     lapic_eoi();
 
+    /* Update KUSER_SHARED_DATA time fields for user-mode readers */
+    {
+        extern void kusd_update_time(void);
+        kusd_update_time();
+    }
+
     /* Drain pending DPCs after EOI (LAPIC can accept new interrupts)
      * but before schedule (DPC work completes before thread dispatch).
      * Uses lightweight drain -- no IRQL raise since we're in ISR context. */
