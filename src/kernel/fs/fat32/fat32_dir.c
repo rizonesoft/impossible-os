@@ -511,6 +511,7 @@ int fat32_update_dir_size(struct fat32_volume *vol, uint32_t search_dir,
 
             if (fc == target_fc) {
                 de->file_size = new_size;
+                fat32_stamp_modify(de);
                 fat32_write_sectors_multi(vol, sector,
                                           vol->bpb.sectors_per_cluster, cbuf);
                 kfree(cbuf);
@@ -523,6 +524,35 @@ int fat32_update_dir_size(struct fat32_volume *vol, uint32_t search_dir,
 upd_not_found:
     kfree(cbuf);
     return -1;
+}
+
+/* ---- Current time helper ---- */
+
+static uint32_t fat32_current_seconds(void)
+{
+    /* system_get_ticks() returns PIT ticks at 100 Hz.
+     * Convert to seconds since boot epoch (2025-01-01). */
+    return (uint32_t)(system_get_ticks() / 100) * 10;
+}
+
+void fat32_stamp_create(struct fat32_dir_entry *de)
+{
+    uint16_t t, d;
+    seconds_to_fat_datetime(fat32_current_seconds(), &t, &d);
+    de->create_time = t;
+    de->create_date = d;
+    de->modify_time = t;
+    de->modify_date = d;
+    de->access_date = d;
+    de->create_time_tenth = 0;
+}
+
+void fat32_stamp_modify(struct fat32_dir_entry *de)
+{
+    uint16_t t, d;
+    seconds_to_fat_datetime(fat32_current_seconds(), &t, &d);
+    de->modify_time = t;
+    de->modify_date = d;
 }
 
 /* ---- FAT datetime conversion (stateless) ---- */

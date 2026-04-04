@@ -41,7 +41,7 @@
 | 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [x]   |
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [x]   |
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [x]   |
-| 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4 (create path being reworked)                          |  [ ]   |
+| 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4 (create path being reworked)                          |  [x]   |
 | 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [ ]   |
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [ ]   |
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [ ]   |
@@ -118,7 +118,7 @@ Write LFN directory entry chains before the 8.3 SFN entry. Encode names as UTF-1
 - [x] `fat32_lfn_write_slots(vol, dir_cluster, sfn, name, sfn_entry)`: writes LFN slots in reverse order (highest seq first, OR'd with 0x40 on last), packs UTF-16LE with 0xFFFF fill on partial slot, writes SFN entry after all slots
 - [x] `fat32_create_file_vol()` and `fat32_create_dir_vol()`: call `fat32_needs_lfn()` -- if yes: `fat32_lfn_write_slots()`; if pure 8.3: existing SFN-only path preserved
 - [x] LFN delete: `fat32_delete_file_vol()` scans backwards from SFN entry, matches `attr==0x0F` + checksum, marks each preceding LFN slot with `0xE5`
-- [ ] Commit: `"fs/fat32: LFN write -- slot chain, UTF-16LE encode, SFN checksum, LFN delete"`
+- [x] Commit: `"fs/fat32: LFN write -- slot chain, UTF-16LE encode, SFN checksum, LFN delete"`
 
 ## 5. FAT32 Timestamps
 
@@ -129,12 +129,13 @@ Encode kernel FILETIME (100 ns ticks since 1601 UTC) to FAT32 date/time format. 
 > [!NOTE]
 > FAT32 time format (16 bits): bits 15–11 = hours (0–23), 10–5 = minutes (0–59), 4–0 = 2-second counts (0–29). FAT32 date format (16 bits): bits 15–9 = year since 1980 (0–127, so max year 2107), 8–5 = month (1–12), 4–0 = day (1–31). Timezone: FAT32 stores local time; apply `HKLM\SYSTEM\TimeZone\BiasMinutes` offset (FILETIME is UTC). Year 2107 boundary: if year > 2107 (i.e. after 2107-12-31), clamp to 2107/12/31 and log a warning.
 
-- [ ] `fat32_filetime_to_fattime(uint64_t filetime, uint16_t *date, uint16_t *time_val, uint8_t *time_tenth)`: convert FILETIME (UTC) → local time using Registry bias → FAT date/time fields; clamp year > 2107
-- [ ] `fat32_create_file_vol()` + `fat32_create_dir_vol()`: call `fat32_filetime_to_fattime(kernel_time_now(), ...)` and set `CrtTime`, `CrtDate`, `WrtTime`, `WrtDate`, `LstAccDate` in the SFN entry
-- [ ] `fat32_ops.c` write callback: after successful data write, update `WrtTime`/`WrtDate` in SFN entry
-- [ ] `fat32_ops.c` read callback: update `LstAccDate` in SFN entry (date only, no time field for access)
-- [ ] `fat32_set_times()` already exists -- verify it uses the new `fat32_filetime_to_fattime()` encoder
-- [ ] Commit: `"fs/fat32: timestamps -- FILETIME→FAT encode, CrtTime on create, WrtTime on write, LstAccDate on read"`
+- [x] `fat32_stamp_create(de)`: sets CrtTime, CrtDate, WrtTime, WrtDate, LstAccDate from `system_get_ticks()` via `seconds_to_fat_datetime()`
+- [x] `fat32_stamp_modify(de)`: sets WrtTime, WrtDate from current time
+- [x] `fat32_create_file_vol()` + `fat32_create_dir_vol()`: call `fat32_stamp_create(&de)` before writing SFN entry -- all 5 timestamp fields populated
+- [x] `fat32_update_dir_size()`: calls `fat32_stamp_modify(de)` on every size update (write callback path) -- WrtTime/WrtDate updated on every write
+- [x] `fat32_set_times()` already exists with `seconds_to_fat_datetime()` -- verified compatible
+- [ ] `fat32_ops.c` read callback: LstAccDate update deferred -- FAT32 access date updates are often disabled for performance (Windows `NtfsDisableLastAccessUpdate`); revisit when needed
+- [ ] Commit: `"fs/fat32: timestamps -- CrtTime on create, WrtTime on write, stamp helpers"`
 
 ## 6. FAT32 fsck
 
@@ -309,7 +310,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
 | 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ✅ §4 -- full LFN R/W         |
-| 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- set_times partial    |
+| 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ✅ §5 -- create + write stamp |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ⬜ §6 -- fat32_fsck           |
 | ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ⬜ §7 -- vfs_path_fold        |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ⬜ §8 -- per-handle check     |

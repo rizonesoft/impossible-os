@@ -13,6 +13,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/timer.h"
 
 /* FAT32 special cluster values */
 #define FAT32_EOC       0x0FFFFFF8   /* end of chain (>= this value) */
@@ -199,6 +200,8 @@ int      fat32_update_dir_size(struct fat32_volume *vol, uint32_t search_dir,
                                 uint32_t target_fc, uint32_t new_size);
 void     seconds_to_fat_datetime(uint32_t secs, uint16_t *out_time,
                                   uint16_t *out_date);
+void     fat32_stamp_create(struct fat32_dir_entry *de);
+void     fat32_stamp_modify(struct fat32_dir_entry *de);
 
 /* ---- fat32_write.c: Write API ---- */
 

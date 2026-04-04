@@ -61,6 +61,7 @@ int fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
     de.first_cluster_hi = (uint16_t)(first_cluster >> 16);
     de.first_cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
     de.file_size = 0;
+    fat32_stamp_create(&de);
 
     if (fat32_needs_lfn(name)) {
         if (fat32_lfn_write_slots(vol, dir_cluster, de.name, name, &de) != 0) {
@@ -133,6 +134,7 @@ int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
     de.first_cluster_hi = (uint16_t)(new_cluster >> 16);
     de.first_cluster_lo = (uint16_t)(new_cluster & 0xFFFF);
     de.file_size = 0;
+    fat32_stamp_create(&de);
 
     if (fat32_needs_lfn(name)) {
         if (fat32_lfn_write_slots(vol, parent_cluster, de.name, name, &de) != 0) {
