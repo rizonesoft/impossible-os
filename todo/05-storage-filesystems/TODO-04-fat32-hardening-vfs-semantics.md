@@ -49,7 +49,7 @@
 | 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [x]   |
 | 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [x]   |
 | 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [x]   |
-| 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [ ]   |
+| 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [x]   |
 | 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [ ]   |
 | 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [ ]   |
 
@@ -243,10 +243,9 @@ Return correct stub responses for Win32 queries that user-mode programs issue on
 
 Current `fat32_make_short_name()` hardcodes `~1` when a name needs truncation. Windows generates `~1` through `~9`, then truncates to 5 chars for `~10` through `~99`. Without collision avoidance, creating two files with similar long names produces duplicate 8.3 entries -- corrupting the directory.
 
-- [ ] `fat32_generate_sfn(vol, dir_cluster, utf8_name, sfn[11])`: generate an 8.3 SFN; if name fits 8.3 natively, use it directly; else truncate to 6 chars + `~1` and check for collisions in the directory
-- [ ] Collision loop: if `~1` exists, try `~2` through `~9`; if all taken, truncate to 5 chars + `~10` through `~99`
-- [ ] Replace `fat32_make_short_name()` call in `fat32_create_file_vol()` and `fat32_create_dir_vol()` with `fat32_generate_sfn()`
-- [ ] Case-insensitive collision check: compare uppercase SFN against existing directory entries
+- [x] `fat32_generate_sfn(vol, dir_cluster, name, sfn)`: generates 8.3 SFN; if name doesn't need LFN, uses direct conversion; else tries `~1` through `~9` (6-char base), then `~10` through `~99` (5-char base)
+- [x] `sfn_exists_in_dir()`: scans directory entries for matching SFN (case-sensitive 11-byte compare, SFNs are always uppercase)
+- [x] Replaced `fat32_make_short_name()` in both `fat32_create_file_vol()` and `fat32_create_dir_vol()` with `fat32_generate_sfn()`
 - [ ] Commit: `"fs/fat32: SFN numeric tail collision -- ~1 through ~9, 5-char ~10+"`
 
 **Test checkpoint:** Create 10 files with names `"LongFileName_01.txt"` through `"LongFileName_10.txt"` -- directory entries show `LONGFI~1.TXT` through `LONGFI~9.TXT` then `LONGF~10.TXT`. All 10 files readable by name. Verify on QEMU WHPX, TCG, bare metal.
@@ -326,7 +325,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
 | 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ✅ §10 -- vfs_lock_file       |
 | 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ✅ §11 -- ADS/vol/reparse     |
-| 💎 | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ⬜ §12 -- collision loop      |
+| 💎 | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ✅ §12 -- ~1-~99 loop         |
 | 💎 | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ⬜ §13 -- write + truncate    |
 | 💎 | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH   | ⚠️ POSIX leases only       | ⬜ §14 -- Level 1/2           |
 

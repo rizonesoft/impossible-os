@@ -56,7 +56,7 @@ int fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
     for (i = 0; i < 32; i++)
         ((uint8_t *)&de)[i] = 0;
 
-    fat32_make_short_name(name, de.name);
+    fat32_generate_sfn(vol, dir_cluster, name, de.name);
     de.attr = FAT32_ATTR_ARCHIVE;
     de.first_cluster_hi = (uint16_t)(first_cluster >> 16);
     de.first_cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
@@ -129,7 +129,7 @@ int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
     for (i = 0; i < 32; i++)
         ((uint8_t *)&de)[i] = 0;
 
-    fat32_make_short_name(name, de.name);
+    fat32_generate_sfn(vol, parent_cluster, name, de.name);
     de.attr = FAT32_ATTR_DIRECTORY;
     de.first_cluster_hi = (uint16_t)(new_cluster >> 16);
     de.first_cluster_lo = (uint16_t)(new_cluster & 0xFFFF);

@@ -178,6 +178,8 @@ void     fat32_make_short_name(const char *name, uint8_t *short_name);
 uint8_t  fat32_lfn_checksum(const uint8_t sfn[11]);
 int      fat32_lfn_slot_count(const char *name);
 int      fat32_needs_lfn(const char *name);
+int      fat32_generate_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
+                            const char *name, uint8_t *sfn);
 int      fat32_find_free_dir_slots(struct fat32_volume *vol,
                                     uint32_t dir_cluster, uint32_t count,
                                     uint32_t *out_sector, uint32_t *out_offset,

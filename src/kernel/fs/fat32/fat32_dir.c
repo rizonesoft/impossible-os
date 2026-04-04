@@ -99,6 +99,88 @@ int fat32_needs_lfn(const char *name)
     return 0;
 }
 
+/* Check if an SFN already exists in the directory.
+ * Returns 1 if found, 0 if not found. */
+static int sfn_exists_in_dir(struct fat32_volume *vol, uint32_t dir_cluster,
+                              const uint8_t *sfn)
+{
+    uint32_t bytes_per_cluster = vol->bpb.sectors_per_cluster * 512;
+    uint8_t *cluster_buf;
+    uint32_t cur_cluster = dir_cluster;
+
+    cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
+    if (!cluster_buf)
+        return 0;
+
+    while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
+        uint32_t sector = cluster_to_sector(vol, cur_cluster);
+        uint32_t i;
+
+        if (fat32_read_sectors_multi(vol, sector, vol->bpb.sectors_per_cluster,
+                                     cluster_buf) != 0)
+            break;
+
+        for (i = 0; i < bytes_per_cluster; i += 32) {
+            struct fat32_dir_entry *de =
+                (struct fat32_dir_entry *)&cluster_buf[i];
+            int j, match;
+
+            if (de->name[0] == 0x00) goto not_found;
+            if (de->name[0] == 0xE5) continue;
+            if (de->attr == FAT32_ATTR_LFN) continue;
+            if (de->attr & FAT32_ATTR_VOLUME_ID) continue;
+
+            match = 1;
+            for (j = 0; j < 11; j++) {
+                if (de->name[j] != sfn[j]) { match = 0; break; }
+            }
+            if (match) {
+                kfree(cluster_buf);
+                return 1;
+            }
+        }
+
+        cur_cluster = fat32_get_fat_entry(vol, cur_cluster);
+    }
+
+not_found:
+    kfree(cluster_buf);
+    return 0;
+}
+
+int fat32_generate_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
+                        const char *name, uint8_t *sfn)
+{
+    int tail;
+
+    /* Start with the basic 8.3 conversion */
+    fat32_make_short_name(name, sfn);
+
+    /* If the name doesn't need LFN, the SFN is the direct conversion */
+    if (!fat32_needs_lfn(name))
+        return 0;
+
+    /* Try ~1 through ~9 (6-char base) */
+    for (tail = 1; tail <= 9; tail++) {
+        sfn[6] = '~';
+        sfn[7] = (uint8_t)('0' + tail);
+        if (!sfn_exists_in_dir(vol, dir_cluster, sfn))
+            return 0;
+    }
+
+    /* Try ~10 through ~99 (5-char base) */
+    for (tail = 10; tail <= 99; tail++) {
+        sfn[5] = '~';
+        sfn[6] = (uint8_t)('0' + (tail / 10));
+        sfn[7] = (uint8_t)('0' + (tail % 10));
+        if (!sfn_exists_in_dir(vol, dir_cluster, sfn))
+            return 0;
+    }
+
+    /* All 99 tails exhausted -- return the last one anyway */
+    return -1;
+}
+
 /* Find N contiguous free directory entries. Returns sector/offset of the
  * FIRST free slot. Extends the directory cluster chain if needed. */
 int fat32_find_free_dir_slots(struct fat32_volume *vol,
