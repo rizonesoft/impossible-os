@@ -37,8 +37,8 @@ _Static_assert(VFS_MAX_DRIVES == 26, "VFS drive letters must be A-Z (26)");
 #define VFS_SHARE_DELETE 0x04
 
 /* Per-file open handle tracking (for share-mode enforcement) */
-#define VFS_MAX_HANDLES  8
-#define VFS_MAX_LOCKS    16
+#define VFS_MAX_HANDLES  4
+#define VFS_MAX_LOCKS    4
 
 /* Byte-range lock entry */
 typedef struct {
