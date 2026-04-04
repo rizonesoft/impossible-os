@@ -364,6 +364,25 @@ void klog_crash_recover(void)
         uint64_t status = uefi_get_variable(&s_crash_guid, s_crash_varname,
                                             &attrs, &sz, &prev_phys);
         if (status == 0 && sz == sizeof(prev_phys) && prev_phys != 0) {
+            /* Delete NVRAM variable immediately to prevent stale-address
+             * crash loops if the stored physical address now overlaps a
+             * guard page or unmapped region (memory layout shifts between
+             * builds as BSS grows). */
+            uefi_set_variable(&s_crash_guid, s_crash_varname,
+                              CRASH_NVRAM_ATTRS, 0, (const void *)0);
+
+            /* Sanity check: crash region from pmm_alloc_contiguous is
+             * always page-aligned and above the kernel+heap+user area.
+             * Anything below USER_ELF_END (0x900000) overlaps the
+             * kernel image, heap, guard pages, or user ELF range --
+             * stale from a previous build with different memory layout. */
+            if ((prev_phys & 0xFFF) != 0 || prev_phys < 0x900000) {
+                klog(LOG_WARN, "boot",
+                     "crash recovery: stale NVRAM address %p -- skipped",
+                     prev_phys);
+                goto crash_alloc;
+            }
+
             /* Check for crash data at the previous region */
             POST16(POST16_CRASHLOG_CHECK);
             klog_crash_header_t *prev_hdr = (klog_crash_header_t *)(uintptr_t)prev_phys;
@@ -409,6 +428,8 @@ void klog_crash_recover(void)
         }
     }
 
+crash_alloc:
+    ;  /* C11 requires a statement after a label */
     /* Step 2: Allocate fresh crash persistence region for THIS boot */
     uint64_t phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
     if (!phys) {
