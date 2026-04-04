@@ -29,6 +29,7 @@ This domain tracks porting the kernel to new CPU architectures. The x86-64 kerne
 
 - [TODO-01 Architecture Abstraction Layer](./TODO-01-arch-abstraction-layer.md) -- Extract x86-64-specific code behind HAL interfaces; create `arch/x86_64/` and `arch/aarch64/` source trees; multi-arch build system.
 - [TODO-02 AArch64 Kernel Port](./TODO-02-aarch64-kernel-port.md) -- UEFI AA64 boot, exception vectors, GICv3, generic timer, PSCI SMP, TTBR page tables, SVC syscall, NEON/SVE context switch.
+- [TODO-03 SMP Scaling & Processor Groups](./TODO-03-smp-scaling-processor-groups.md) -- Scale beyond 16 CPUs: processor groups, PROCESSOR_NUMBER, KeSetTargetProcessorDpcEx, GROUP_AFFINITY, >64 LAPIC MADT parsing.
 
 ## Completed / Doc-converted
 

@@ -136,8 +136,8 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 - [x] `KeInsertQueueDpc` modified: HighImportance -> head-insert; all others -> tail (FIFO)
 - [x] `KeFlushQueuedDpcs()` -- drains local queue directly, spin-waits for other CPUs
 - [x] `KDPC_IMPORTANCE` enum added; `KDPC.importance` field (default: MediumImportance)
-- [x] `KeSetTargetProcessorDpcEx` (>64 CPU): N/A -- MAX_CPUS=16; revisit only if processor group support is added (domain 16)
-- [x] Cross-CPU IPI for MediumHighImportance: N/A -- timer-tick drain (10ms) is sufficient; revisit only if a driver needs sub-ms cross-CPU DPC latency
+- [x] `KeSetTargetProcessorDpcEx` (>64 CPU): moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §3`
+- [x] Cross-CPU IPI for MediumHighImportance: moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §3` (part of DpcEx)
 - [x] Commit: `"kernel: sched -- add DPC targeting, importance, and flush"`
 
 **Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → DPC callback fires on CPU 1 (check `smp_this_cpu()` in callback). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal -- IPI delivery for cross-CPU DPC targeting differs across platforms.
