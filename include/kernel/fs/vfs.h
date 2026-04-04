@@ -109,6 +109,10 @@ int vfs_mount(char drive_letter, struct vfs_fs_driver *driver, struct vfs_node *
 /* Unmount a drive letter */
 int vfs_unmount(char drive_letter);
 
+/* ASCII uppercase fold for case-insensitive path resolution.
+ * Copies in -> out, uppercasing a-z. Preserves \, /, :. */
+void vfs_path_fold(const char *in, char *out, uint32_t max);
+
 /* Open a file/directory by path (e.g. "C:\\Users\\file.txt") */
 struct vfs_node *vfs_open(const char *path, uint32_t flags);
 

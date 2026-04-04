@@ -91,6 +91,19 @@ static void str_copy(char *dst, const char *src, uint32_t max)
     dst[i] = '\0';
 }
 
+/* --- Public: ASCII uppercase fold for case-insensitive path resolution --- */
+
+void vfs_path_fold(const char *in, char *out, uint32_t max)
+{
+    uint32_t i;
+    for (i = 0; i < max - 1 && in[i]; i++) {
+        char c = in[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        out[i] = c;
+    }
+    out[i] = '\0';
+}
+
 /* --- Internal: walk a path from a root node --- */
 /* Splits path by backslash and walks each component via finddir */
 static struct vfs_node *walk_path(struct vfs_node *root, const char *path)
@@ -123,8 +136,12 @@ static struct vfs_node *walk_path(struct vfs_node *root, const char *path)
             if (*p == '\0')
                 break;
         } else {
-            if (ci < VFS_MAX_NAME - 1)
-                component[ci++] = *p;
+            if (ci < VFS_MAX_NAME - 1) {
+                /* ASCII uppercase fold for case-insensitive path resolution */
+                char c = *p;
+                if (c >= 'a' && c <= 'z') c -= 32;
+                component[ci++] = c;
+            }
         }
         p++;
     }

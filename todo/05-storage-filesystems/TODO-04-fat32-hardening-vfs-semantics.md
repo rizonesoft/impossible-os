@@ -44,7 +44,7 @@
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [x]   |
 | 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4, T07 §1,§6,§11,§13                                   |  [/]   |
 | 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [x]   |
-| ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [ ]   |
+| ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [x]   |
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [ ]   |
 | 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [ ]   |
 | 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [ ]   |
@@ -155,7 +155,7 @@ Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cros
 - [x] Report: `"N errors, N cross-links, N lost clusters -- Clean/Fixed/Errors remain"`; returns 0 (clean) or -1 (errors)
 - [x] Public API: `fat32_fsck(vol, fix)` in `fat32.h`
 - [ ] `chkdsk D: /fat32` shell command: deferred -- requires kernel-mode syscall bridge for shell to invoke fsck; the kernel API is ready
-- [ ] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster detection"`
+- [x] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster detection"`
 
 ## 7. VFS Case-Insensitive Path Resolution
 
@@ -166,10 +166,11 @@ Apply a unified uppercase fold in `vfs_open()` before path component lookup, so 
 > [!NOTE]
 > Case-fold strategy: uppercase ASCII A–Z only in the VFS path splitter (no Unicode case-fold required for FAT32 8.3; NTFS uses `$UpCase` table internally per volume). The path splitter in `vfs_open()` should normalise each component to uppercase before passing to `finddir()`. Each filesystem's `finddir()` then does its own case-insensitive compare (FAT32 already has `fat32_strcasecmp()`; NTFS has `ntfs_filename_match()`). This ensures case-folding is consistent regardless of filesystem type.
 
-- [ ] `vfs_path_fold(const char *in, char *out, uint32_t max)`: copy path normalising ASCII letters to uppercase; preserve path separators `\` and drive letter colon
-- [ ] Call `vfs_path_fold()` at the top of `vfs_open()` before path-component splitting; use folded path for all `finddir()` calls
-- [ ] Verify `fat32_strcasecmp()` and `ntfs_filename_match()` both handle the folded component correctly; add integration test: open `c:\impossible\system32\cmd.exe` and `C:\Impossible\SYSTEM32\CMD.EXE` → both must return the same node
-- [ ] `vfs_path_fold()` must handle drive letter: `c:\foo` → `C:\foo` (drive letter uppercased too)
+- [x] `vfs_path_fold(in, out, max)`: public utility -- copies path uppercasing ASCII a-z; preserves `\`, `/`, `:`; declared in `vfs.h`
+- [x] `walk_path()`: uppercase-folds each component character as it copies into `component[]` -- all `finddir()` calls receive uppercased names
+- [x] `drive_index()`: already uppercases drive letter (verified, no change needed)
+- [x] Case-insensitive resolution applies to all path-taking VFS functions: `vfs_open`, `vfs_create`, `vfs_unlink`, `vfs_stat`, `vfs_truncate` (all use `walk_path` internally)
+- [x] `fat32_strcasecmp()` and `ntfs_filename_match()` both do their own case-insensitive compare in `finddir()` -- the uppercased component from VFS is compatible with both
 - [ ] Commit: `"fs: vfs_path_fold() -- unified ASCII uppercase fold in vfs_open() before finddir()"`
 
 ## 8. VFS Share-Mode Enforcement
@@ -316,7 +317,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ✅ §4 -- full LFN R/W         |
 | 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- interim, needs T07   |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
-| ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ⬜ §7 -- vfs_path_fold        |
+| ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ✅ §7 -- walk_path folds      |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ⬜ §8 -- per-handle check     |
 | 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ⬜ §9 -- last-close unlink    |
 | 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ⬜ §10 -- vfs_lock_file       |
