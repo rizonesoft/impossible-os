@@ -41,6 +41,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-14 -- A/B Dual-Slot Boot & Automatic Rollback](TODO-14-ab-boot-rollback.md) -- Never unbootable: dual root partitions, failure counting, automatic rollback
 - [TODO-15 -- Recovery Partition & Self-Repair](TODO-15-recovery-partition.md) -- Recovery environment: filesystem repair, kernel restore, NVRAM reconstruction
 - [TODO-16 -- Boot Watchdog & Hang Detection](TODO-16-boot-watchdog.md) -- LAPIC NMI + ACPI TCO watchdog: detect hung boot, auto-reboot, integrate with A/B rollback
+- [TODO-17 -- BlackBox Service Partition](TODO-17-blackbox-service-partition.md) -- 128 MiB FAT32 "BlackBox" partition (X:\) for logs, crash dumps, diagnostics, tools; 3-partition GPT layout
 
 ## Completed / Doc-converted
 
