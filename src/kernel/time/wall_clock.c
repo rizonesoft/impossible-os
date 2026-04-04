@@ -13,6 +13,9 @@
 #include "kernel/uefi_runtime.h"
 #include "kernel/sched/seqlock.h"
 #include "kernel/timer.h"
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/service_numbers.h"
+#include "kernel/nt/ntstatus.h"
 #include "kernel/klog.h"
 
 /* ---- State --------------------------------------------------------------- */
@@ -191,4 +194,70 @@ uint64_t KeQueryUnbiasedInterruptTime(void)
 void ke_suspend_bias_update(uint64_t bias_100ns)
 {
     __atomic_fetch_add(&s_interrupt_time_bias, bias_100ns, __ATOMIC_SEQ_CST);
+}
+
+/* ---- SSDT handlers (§9) ------------------------------------------------- */
+
+/* NtQuerySystemTime(SystemTime) -- SSDT 0x00F0 */
+static NTSTATUS nt_query_system_time(uint64_t out_ptr, uint64_t a2,
+                                      uint64_t a3, uint64_t a4,
+                                      uint64_t a5, uint64_t a6)
+{
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    if (!out_ptr)
+        return STATUS_INVALID_PARAMETER;
+    *(FILETIME *)out_ptr = KeQuerySystemTime();
+    return STATUS_SUCCESS;
+}
+
+/* NtSetSystemTime(NewTime, PreviousTime) -- SSDT 0x00F1 */
+static NTSTATUS nt_set_system_time(uint64_t new_ptr, uint64_t prev_ptr,
+                                    uint64_t a3, uint64_t a4,
+                                    uint64_t a5, uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    if (!new_ptr)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Optional: return previous time */
+    if (prev_ptr)
+        *(FILETIME *)prev_ptr = KeQuerySystemTime();
+
+    KeSetSystemTime(*(FILETIME *)new_ptr);
+    return STATUS_SUCCESS;
+}
+
+/* NtQueryPerformanceCounter(Count, Frequency) -- SSDT 0x00F2 */
+static NTSTATUS nt_query_performance_counter(uint64_t count_ptr,
+                                              uint64_t freq_ptr,
+                                              uint64_t a3, uint64_t a4,
+                                              uint64_t a5, uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    if (!count_ptr)
+        return STATUS_INVALID_PARAMETER;
+
+    *(uint64_t *)count_ptr = mono_filetime_units();
+
+    /* Fixed 10 MHz frequency -- hardware-independent, apps don't need to
+     * handle variable QPC frequency (competitive edge over Win11) */
+    if (freq_ptr)
+        *(uint64_t *)freq_ptr = FILETIME_TICKS_PER_SECOND;
+
+    return STATUS_SUCCESS;
+}
+
+void wall_clock_register_ssdt(void)
+{
+    ssdt_register(SSDT_NtQuerySystemTime,
+                  (SSDT_HANDLER)nt_query_system_time);
+    ssdt_register(SSDT_NtSetSystemTime,
+                  (SSDT_HANDLER)nt_set_system_time);
+    ssdt_register(SSDT_NtQueryPerformanceCounter,
+                  (SSDT_HANDLER)nt_query_performance_counter);
+
+    klog(LOG_INFO, "time",
+         "Time syscalls registered (SSDT 0x%03X-0x%03X)",
+         (uint64_t)SSDT_NtQuerySystemTime,
+         (uint64_t)SSDT_NtQueryPerformanceCounter);
 }

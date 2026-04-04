@@ -113,6 +113,12 @@ void boot_phase3(void)
         timer_resolution_register_ssdt();
     }
 
+    /* --- Time syscalls --- */
+    {
+        extern void wall_clock_register_ssdt(void);
+        wall_clock_register_ssdt();
+    }
+
     /* --- Exec loader (ELF/PE format handlers) --- */
     kernel_subsystem_set_ready(SUBSYS_EXEC, true);
     boot_progress(3, "EXEC", 0x0062);

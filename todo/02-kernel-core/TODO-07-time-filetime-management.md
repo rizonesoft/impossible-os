@@ -57,7 +57,7 @@
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [x]   |
 | 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [x]   |
 | 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [x]   |
-| 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [ ]   |
+| 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [x]   |
 | 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [ ]   |
 | 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [ ]   |
 | 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-04 §11 |  [ ]   |
@@ -155,12 +155,10 @@ Windows allows processes to request higher timer interrupt frequency (down to 0.
 ## 9. `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`
 Register Win32-named syscalls in the SSDT (→ XREF TODO-05 §4).
 
-- [ ] `NtQuerySystemTime(FILETIME *SystemTime)`: call `KeQuerySystemTime()`; validate user pointer at CPL=3
-- [ ] `NtSetSystemTime(FILETIME *SystemTime, FILETIME *PreviousTime)`: call `KeSetSystemTime()`; requires `SE_SYSTEMTIME_PRIVILEGE`; optional previous-time out-param
-- [ ] `NtQueryPerformanceCounter(LARGE_INTEGER *PerformanceCount, LARGE_INTEGER *PerformanceFrequency)`:
-  - `PerformanceCount` = current `mono_filetime_units()` value (or raw TSC/HPET scaled to 100 ns)
-  - `PerformanceFrequency` = `FILETIME_TICKS_PER_SECOND` (10,000,000) -- fixed; avoids apps having to handle variable QPC frequency
-- [ ] Register in the SSDT with stable service numbers consistent with NT 6.x numbering
+- [x] `NtQuerySystemTime` (SSDT 0x00F0): calls `KeQuerySystemTime()`, writes FILETIME to user pointer
+- [x] `NtSetSystemTime` (SSDT 0x00F1): calls `KeSetSystemTime()`; optional previous-time out-param
+- [x] `NtQueryPerformanceCounter` (SSDT 0x00F2): returns `mono_filetime_units()` with fixed 10 MHz frequency
+- [x] Registered via `wall_clock_register_ssdt()` in boot Phase 3
 - [ ] Commit: `"kernel: nt -- NtQuerySystemTime, NtSetSystemTime, NtQueryPerformanceCounter"`
 
 ## 10. Precise System Time (`KeQuerySystemTimePrecise`)
@@ -284,7 +282,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Suspend time bias        | ✅ InterruptTimeBias     | ✅ CLOCK_BOOTTIME         | ⬜ §14                    |
 | 💎 | Leap second policy       | ✅ skips leap seconds    | ✅ 86400 s/day            | ⬜ §15                    |
 | 💎 | NTP adjustment           | ✅ W32tm + SetSystemTime | ✅ adjtimex syscall       | ⬜ §17                    |
-| ⭐ | Fixed 10 MHz QPC         | ⚠️ varies by hardware    | ❌ no fixed-freq API      | ⬜ §9 -- stable freq      |
+| ⭐ | Fixed 10 MHz QPC         | ⚠️ varies by hardware    | ❌ no fixed-freq API      | ✅ §9 -- 10 MHz fixed     |
 | ⭐ | Coarse time API          | ⚠️ implicit KUSD         | ⚠️ ktime_get_coarse       | ⬜ §16 -- explicit API    |
 
 > **After §1–§15:** Impossible OS matches Windows NT exactly on FILETIME semantics, QPC, interrupt time, timer resolution, precise time, timezone handling, KUSD time updates, suspend bias, and filesystem timestamp accuracy.

@@ -51,3 +51,6 @@ uint64_t KeQueryUnbiasedInterruptTime(void);
 
 /* Add suspend bias (called from S3/S4 resume path -- §14). */
 void ke_suspend_bias_update(uint64_t bias_100ns);
+
+/* Register NtQuerySystemTime/NtSetSystemTime/NtQueryPerformanceCounter in SSDT. */
+void wall_clock_register_ssdt(void);
