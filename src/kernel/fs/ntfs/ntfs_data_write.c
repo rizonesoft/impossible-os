@@ -20,6 +20,7 @@
 #include "kernel/drivers/blkdev.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
+#include "kernel/time/wall_clock.h"
 
 /* Windows FILETIME epoch offset: 100-ns intervals from 1601-01-01 to
  * 1970-01-01 = 11644473600 seconds * 10,000,000. */
@@ -228,7 +229,7 @@ int ntfs_write_data(struct ntfs_volume *vol, uint64_t inode,
     txn = ntfs_txn_begin(vol);
     /* txn may be NULL if journal not loaded -- continue without journaling */
 
-    now_ft = unix_to_filetime(0); /* 0 → uses FILETIME_BASE_2026 equivalent */
+    now_ft = (uint64_t)KeQuerySystemTime();
 
     /* ---- Resident path ---- */
     if (ah.non_resident == 0) {
@@ -433,7 +434,7 @@ int ntfs_truncate(struct ntfs_volume *vol, uint64_t inode, uint64_t new_size)
     txn = ntfs_txn_begin(vol);
     /* txn may be NULL if journal not loaded -- continue without journaling */
 
-    now_ft = unix_to_filetime(0);
+    now_ft = (uint64_t)KeQuerySystemTime();
 
     /* ---- Resident truncate ---- */
     if (ah.non_resident == 0) {

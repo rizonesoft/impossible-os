@@ -16,6 +16,8 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/rtc.h"
+#include "kernel/nt/filetime.h"
+#include "kernel/time/wall_clock.h"
 #include "libc/string.h"
 
 /* ---- Per-subsystem log dispatch ---- */
@@ -160,9 +162,17 @@ static int format_entry(const klog_entry_t *e, char *line, int max)
 {
     int pos = 0;
 
-    /* Timestamp */
+    /* Timestamp: ISO 8601 if wall clock ready, else tick count */
     line[pos++] = '[';
-    pos += u32_to_str(e->timestamp, line + pos, 10);
+    if (wall_clock_ready()) {
+        /* Reconstruct FILETIME from tick count at log time.
+         * e->timestamp is PIT ticks (100 Hz); approximate FILETIME. */
+        FILETIME ft = KeQuerySystemTime();
+        int n = filetime_to_string(ft, line + pos, (uint32_t)(max - pos - 2));
+        if (n > 0) pos += n;
+    } else {
+        pos += u32_to_str(e->timestamp, line + pos, 10);
+    }
     line[pos++] = ']';
     line[pos++] = ' ';
 

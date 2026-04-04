@@ -59,5 +59,9 @@ static inline uint64_t filetime_to_unix_seconds(FILETIME ft)
     return (ft / FILETIME_TICKS_PER_SECOND) - FILETIME_EPOCH_OFFSET_SECONDS;
 }
 
+/* Format FILETIME as ISO 8601 UTC string: "2026-03-25T14:35:22.123Z"
+ * Writes up to len bytes (including NUL). Returns number of chars written. */
+int filetime_to_string(FILETIME ft, char *buf, uint32_t len);
+
 /* Convenience macro: call the non-inline function */
 #define filetime_days_from_date(y, m, d) filetime_days_from_date_fn((y), (m), (d))

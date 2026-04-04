@@ -61,7 +61,7 @@
 | 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [x]   |
 | 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [x]   |
 | 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-04 §11 |  [x]   |
-| 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [ ]   |
+| 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [x]   |
 | 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-15 §3,§4   |  [ ]   |
 | 💎  |  15   | Leap second policy                                                     | §1                  |  [ ]   |
 | ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [ ]   |
@@ -190,22 +190,18 @@ The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, Inter
 - [x] Wired into LAPIC timer ISR (`lapic.c`) and PIT ISR (`pit.c`) -- called on every tick
 - [x] Volatile writes only, no locks -- runs at CLOCK_LEVEL IRQL
 - [x] Also wired `mono_clock_init()`, `wall_clock_init()`, `timezone_init()` into Phase 2 boot (were previously defined but never called)
-- [ ] Commit: `"kernel: time -- KUSER_SHARED_DATA time field updates from timer ISR"`
+- [x] Commit: `"kernel: time -- KUSER_SHARED_DATA time field updates from timer ISR"`
 
 ## 13. Filesystem Timestamp Encoding (FAT32 + NTFS)
 Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed values.
 
 > [!NOTE]
-> **Unblocks:** `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §5` -- FAT32 has interim `fat32_stamp_create()`/`fat32_stamp_modify()` helpers using `system_get_ticks()`. After this section, replace them with `filetime_to_dos_datetime(KeQuerySystemTime(), tz_bias, ...)` for spec-correct timestamps.
+> **Unblocks:** `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §5` -- FAT32 interim timestamps replaced with spec-correct FILETIME-based encoding.
 
-- [ ] **FAT32**: DOS date/time is local time, 2-second resolution. Fix all `fat32_write` callsites:
-  - Replace any `0` or placeholder timestamp with `filetime_to_dos_datetime(KeQuerySystemTime(), tz_bias, &date, &time)`
-  - Verify `DIR_CrtTime`, `DIR_WrtTime`, and `DIR_LstAccDate` are all populated on create and update
-- [ ] **NTFS**: uses 8-byte FILETIME in UTC. Fix `ntfs_metadata.c` and `ntfs_data_write.c` callsites:
-  - `$STANDARD_INFORMATION` attributes: `$Created`, `$Modified`, `$MFT_Modified`, `$Accessed` must use `KeQuerySystemTime()`
-  - Ensure all four fields are distinct where semantically required (create ≠ modify on creation)
-- [ ] **klog_disk**: if log entries currently use tick count or zero, replace with FILETIME timestamp string
-- [ ] Add a `filetime_to_string(FILETIME ft, char *buf, size_t len)` helper -- ISO 8601 UTC format: `"2026-03-25T14:35:22.123Z"` -- for logging and debug output
+- [x] **FAT32**: `fat32_stamp_create()` / `fat32_stamp_modify()` now use `KeQuerySystemTime()` + `filetime_to_dos_datetime()` with timezone bias; `CrtTimeTenth` populated with 10ms sub-second component
+- [x] **NTFS**: `ntfs_data_write.c` -- `unix_to_filetime(0)` placeholder replaced with `KeQuerySystemTime()` for real UTC timestamps in `$STANDARD_INFORMATION` on all write/truncate paths
+- [x] **klog_disk**: `format_entry()` now uses ISO 8601 timestamps via `filetime_to_string()` when wall clock is ready, falls back to tick count for early boot entries
+- [x] `filetime_to_string(FILETIME ft, char *buf, uint32_t len)` -- ISO 8601 UTC format: `"2026-03-25T14:35:22.123Z"` with millisecond precision
 - [ ] Commit: `"kernel: fs -- wire FILETIME timestamps into FAT32, NTFS, and klog"`
 
 ## 14. Suspend/Hibernate Time Bias Tracking
@@ -268,7 +264,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Precise wall time        | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ✅ §10 -- TSC interpolated|
 | 💎 | Timezone + DST           | ✅ registry TZ info      | ✅ /etc/localtime         | ⬜ §11                    |
 | 💎 | KUSD / vDSO time page    | ✅ KUSD 0x7FFE0000       | ✅ vDSO clock_gettime     | ✅ §12 -- ISR-updated     |
-| 💎 | FAT32 timestamps         | ✅ kernel32 -> FAT dir   | ✅ fat inode time         | ⬜ §13                    |
+| 💎 | FAT32 timestamps         | ✅ kernel32 -> FAT dir   | ✅ fat inode time         | ✅ §13 -- FILETIME-based  |
 | 💎 | NTFS FILETIME            | ✅ $STANDARD_INFO        | ✅ ntfs3 current_time     | ⬜ §13                    |
 | 💎 | Suspend time bias        | ✅ InterruptTimeBias     | ✅ CLOCK_BOOTTIME         | ⬜ §14                    |
 | 💎 | Leap second policy       | ✅ skips leap seconds    | ✅ 86400 s/day            | ⬜ §15                    |

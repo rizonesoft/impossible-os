@@ -121,3 +121,71 @@ FILETIME filetime_from_efi_time(const struct efi_time *t)
 
     return ft;
 }
+
+/* ---- String formatting -------------------------------------------------- */
+
+/* Helper: write a zero-padded decimal of width w into buf. */
+static void put_dec(char *buf, uint32_t val, int w)
+{
+    int i;
+    for (i = w - 1; i >= 0; i--) {
+        buf[i] = '0' + (char)(val % 10);
+        val /= 10;
+    }
+}
+
+int filetime_to_string(FILETIME ft, char *buf, uint32_t len)
+{
+    /* "2026-03-25T14:35:22.123Z" = 24 chars + NUL */
+    static const uint8_t dpm[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    uint64_t total_secs, sub_sec_ticks;
+    uint32_t secs_in_day, ms;
+    uint64_t total_days;
+    uint32_t year, month, day, h, mi, s, m;
+
+    if (len < 25 || !buf) {
+        if (buf && len > 0) buf[0] = '\0';
+        return 0;
+    }
+
+    total_secs = ft / FILETIME_TICKS_PER_SECOND;
+    sub_sec_ticks = ft % FILETIME_TICKS_PER_SECOND;
+    ms = (uint32_t)(sub_sec_ticks / FILETIME_TICKS_PER_MS);
+
+    secs_in_day = (uint32_t)(total_secs % 86400);
+    total_days  = total_secs / 86400;
+    h  = secs_in_day / 3600;
+    mi = (secs_in_day / 60) % 60;
+    s  = secs_in_day % 60;
+
+    year = 1601;
+    while (total_days >= 365) {
+        int leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+        uint32_t yd = leap ? 366 : 365;
+        if (total_days < yd) break;
+        total_days -= yd;
+        year++;
+    }
+    month = 0;
+    for (m = 0; m < 12; m++) {
+        uint32_t d = dpm[m];
+        if (m == 1 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)))
+            d = 29;
+        if (total_days < d) break;
+        total_days -= d;
+        month++;
+    }
+    day = (uint32_t)total_days + 1;
+    month += 1;
+
+    /* "YYYY-MM-DDTHH:MM:SS.mmmZ" */
+    put_dec(buf + 0,  year,  4); buf[4]  = '-';
+    put_dec(buf + 5,  month, 2); buf[7]  = '-';
+    put_dec(buf + 8,  day,   2); buf[10] = 'T';
+    put_dec(buf + 11, h,     2); buf[13] = ':';
+    put_dec(buf + 14, mi,    2); buf[16] = ':';
+    put_dec(buf + 17, s,     2); buf[19] = '.';
+    put_dec(buf + 20, ms,    3); buf[23] = 'Z';
+    buf[24] = '\0';
+    return 24;
+}

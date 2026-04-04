@@ -14,6 +14,9 @@
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/timer.h"
+#include "kernel/nt/filetime.h"
+#include "kernel/time/wall_clock.h"
+#include "kernel/time/timezone.h"
 
 /* FAT32 special cluster values */
 #define FAT32_EOC       0x0FFFFFF8   /* end of chain (>= this value) */

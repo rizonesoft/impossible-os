@@ -130,13 +130,13 @@ Encode kernel FILETIME (100 ns ticks since 1601 UTC) to FAT32 date/time format. 
 > [!NOTE]
 > FAT32 time format (16 bits): bits 15–11 = hours (0–23), 10–5 = minutes (0–59), 4–0 = 2-second counts (0–29). FAT32 date format (16 bits): bits 15–9 = year since 1980 (0–127, so max year 2107), 8–5 = month (1–12), 4–0 = day (1–31). Timezone: FAT32 stores local time; apply `HKLM\SYSTEM\TimeZone\BiasMinutes` offset (FILETIME is UTC). Year 2107 boundary: if year > 2107 (i.e. after 2107-12-31), clamp to 2107/12/31 and log a warning.
 
-> [!IMPORTANT]
-> **Blocked on TODO-07 §1,§6,§11,§13.** Correct FAT32 timestamps require: `FILETIME` type (§1), `KeQuerySystemTime()` for UTC wall time (§6), timezone bias for local time conversion (§11), and the filesystem encoding wiring (§13). The current `seconds_to_fat_datetime()` uses a 2025 base year with PIT ticks -- a placeholder, not spec-correct. `fat32_stamp_create()` and `fat32_stamp_modify()` exist as interim helpers that produce approximately correct timestamps for development, but must be replaced by `filetime_to_dos_datetime()` from TODO-07 §13 before release.
+> [!NOTE]
+> **Unblocked by TODO-07 §13.** FAT32 timestamps now use `KeQuerySystemTime()` + `filetime_to_dos_datetime()` with timezone bias for spec-correct local time encoding.
 
-- [/] `fat32_stamp_create(de)` / `fat32_stamp_modify(de)`: interim helpers using `system_get_ticks()` -- produce approximate timestamps; **must be replaced by TODO-07 §13 `filetime_to_dos_datetime()`**
-- [/] `fat32_create_file_vol()` + `fat32_create_dir_vol()`: call `fat32_stamp_create(&de)` -- timestamps populated but not spec-correct until TODO-07
-- [/] `fat32_update_dir_size()`: calls `fat32_stamp_modify(de)` on write -- approximate WrtTime until TODO-07
-- [ ] Replace `seconds_to_fat_datetime()` with `filetime_to_dos_datetime(KeQuerySystemTime(), tz_bias, ...)` after TODO-07 §13
+- [x] `fat32_stamp_create(de)` / `fat32_stamp_modify(de)`: use `KeQuerySystemTime()` + `filetime_to_dos_datetime()` with timezone bias -- spec-correct timestamps (replaced interim `system_get_ticks()` helpers)
+- [x] `fat32_create_file_vol()` + `fat32_create_dir_vol()`: call `fat32_stamp_create(&de)` -- CrtTime, WrtTime, LstAccDate all populated
+- [x] `fat32_update_dir_size()`: calls `fat32_stamp_modify(de)` -- correct WrtTime on write
+- [x] `seconds_to_fat_datetime()` retained only for `vfs_setattr` external timestamp path
 - [ ] `fat32_ops.c` read callback: LstAccDate update deferred -- often disabled for performance
 - [x] Commit: `"fs/fat32: timestamps -- CrtTime on create, WrtTime on write, stamp helpers"`
 

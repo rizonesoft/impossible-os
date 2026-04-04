@@ -608,31 +608,34 @@ upd_not_found:
     return -1;
 }
 
-/* ---- Current time helper ---- */
-
-static uint32_t fat32_current_seconds(void)
-{
-    /* system_get_ticks() returns PIT ticks at 100 Hz.
-     * Convert to seconds since boot epoch (2025-01-01). */
-    return (uint32_t)(system_get_ticks() / 100) * 10;
-}
+/* ---- Timestamp helpers (FILETIME-based) ---- */
 
 void fat32_stamp_create(struct fat32_dir_entry *de)
 {
+    FILETIME now = KeQuerySystemTime();
+    int tz_bias = (int)timezone_total_bias();
     uint16_t t, d;
-    seconds_to_fat_datetime(fat32_current_seconds(), &t, &d);
+
+    filetime_to_dos_datetime(now, tz_bias, &d, &t);
     de->create_time = t;
     de->create_date = d;
     de->modify_time = t;
     de->modify_date = d;
     de->access_date = d;
-    de->create_time_tenth = 0;
+    /* CrtTimeTenth: 10ms resolution sub-second component (0-199) */
+    {
+        uint64_t sub_sec = (now / FILETIME_TICKS_PER_MS) % 1000;
+        de->create_time_tenth = (uint8_t)((sub_sec / 10) * 2);
+    }
 }
 
 void fat32_stamp_modify(struct fat32_dir_entry *de)
 {
+    FILETIME now = KeQuerySystemTime();
+    int tz_bias = (int)timezone_total_bias();
     uint16_t t, d;
-    seconds_to_fat_datetime(fat32_current_seconds(), &t, &d);
+
+    filetime_to_dos_datetime(now, tz_bias, &d, &t);
     de->modify_time = t;
     de->modify_date = d;
 }
