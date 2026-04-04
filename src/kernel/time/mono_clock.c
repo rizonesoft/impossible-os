@@ -9,6 +9,7 @@
 #include "kernel/cpuid.h"
 #include "kernel/boot_timing.h"
 #include "kernel/drivers/lapic.h"
+#include "kernel/drivers/hpet.h"
 #include "kernel/smp.h"
 #include "kernel/klog.h"
 
@@ -50,11 +51,20 @@ void mono_clock_init(void)
         }
     }
 
-    /* Try 2: HPET -- not yet implemented (TODO-07 S4) */
-    /* When HPET driver is available:
-     *   s_source = MONO_SRC_HPET;
-     *   s_freq_hz = hpet_frequency();
-     *   ... */
+    /* Try 2: HPET main counter */
+    if (hpet_available()) {
+        uint64_t freq = hpet_frequency_hz();
+        if (freq > 0) {
+            s_source = MONO_SRC_HPET;
+            s_freq_hz = freq;
+            s_ns_per_tick_num = 1000000000ULL;
+            s_ns_per_tick_den = freq;
+            klog(LOG_INFO, "time",
+                 "Monotonic clock: HPET (%u MHz)",
+                 (uint64_t)(freq / 1000000));
+            return;
+        }
+    }
 
     /* Try 3: LAPIC timer ticks */
     {
@@ -170,6 +180,9 @@ uint64_t mono_ns(void)
             return whole * s_ns_per_tick_num
                  + (rem * s_ns_per_tick_num) / s_ns_per_tick_den;
         }
+
+    case MONO_SRC_HPET:
+        return hpet_ns();
 
     case MONO_SRC_LAPIC:
         /* LAPIC tick count is not directly readable as a monotonic counter.

@@ -52,7 +52,7 @@
 | 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                  |  [x]   |
 | 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [x]   |
 | 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [x]   |
-| 💎  |   4   | HPET standalone driver                                                 | --                  |  [ ]   |
+| 💎  |   4   | HPET standalone driver                                                 | --                  |  [x]   |
 | 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [ ]   |
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [ ]   |
 | 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [ ]   |
@@ -98,19 +98,16 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 - [x] Per-AP TSC sync via IPI: deferred -- modern firmware synchronizes invariant TSC at reset; offset starts at 0; IPI sync will be added if real hardware shows drift
 - [x] Fallback: if invariant TSC absent, falls through to LAPIC in `mono_clock_init()` with log warning
 - [x] `rdtsc_ns()`: fast TSC read with per-CPU offset + overflow-safe scale conversion
-- [ ] Commit: `"kernel: time -- invariant TSC detection and per-CPU offset calibration"`
+- [x] Commit: `"kernel: time -- invariant TSC detection and per-CPU offset calibration"`
 
 ## 4. HPET Standalone Driver
 The HPET provides a single 64-bit main counter that increments at a fixed frequency (typically 14–100 MHz). Used as the QPC fallback source when invariant TSC is absent.
 
-- [ ] Create `include/kernel/drivers/hpet.h` and `src/kernel/drivers/hpet.c`
-- [ ] Read HPET MMIO base from `acpi_get_hpet_base()`; map into kernel address space; log if absent
-- [ ] Read `GCAP_ID` register: extract main counter period (femtoseconds per tick) and compute frequency
-- [ ] Enable the main counter: set `ENABLE_CNF` bit in `GEN_CONF` register; `LEG_RT_CNF` only if needed
-- [ ] Implement `hpet_read_counter(void)` -- reads `MAIN_CNT_VAL` register (64-bit)
-- [ ] Implement `hpet_ns(void)` -- converts counter value to nanoseconds using precomputed scale
-- [ ] Expose `hpet_available()` and `hpet_frequency_hz()` for use by `mono_clock_init()` §2
-- [ ] Do NOT use HPET timer comparators here -- comparators are for the HPET timer TODO in `03-memory-concurrency`; this section covers the main counter only
+- [x] Created `include/kernel/drivers/hpet.h` + `src/kernel/drivers/hpet.c`: `hpet_init()`, `hpet_available()`, `hpet_frequency_hz()`, `hpet_read_counter()`, `hpet_ns()`
+- [x] Maps HPET MMIO as UC via `vmm_map_mmio_uc()`; reads `GCAP_ID` for period (fs/tick); computes frequency
+- [x] Enables main counter via `ENABLE_CNF` bit; validates probe read and period range
+- [x] Wired into `mono_clock_init()` as priority 2 (TSC > HPET > LAPIC) and `mono_ns()` switch
+- [x] No timer comparators -- main counter only (comparators for scheduler timer TODO)
 - [ ] Commit: `"kernel: drivers -- HPET main counter driver"`
 
 ## 5. Wall Clock Init from UEFI GetTime / RTC
@@ -281,7 +278,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⚠️ §2 done, §3-§4 pending |
 | 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
-| 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ⬜ §4                     |
+| 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ✅ §4 -- hpet.c driver    |
 | 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ⬜ §5                     |
 | 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ⬜ §7                     |
 | 💎 | Timer resolution         | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ⬜ §8                     |
