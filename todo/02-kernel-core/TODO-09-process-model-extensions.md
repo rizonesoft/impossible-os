@@ -52,6 +52,7 @@
 | 💎  |  11   | Per-process mitigation policy                        | 6, TODO-17 §1                 |  [ ]   |
 | ⭐  |  12   | Pledge/unveil-style process restriction              | 6, 7                          |  [ ]   |
 | 💎  |  13   | Job Object syscalls wired to SSDT                    | 6, TODO-05 §4                 |  [ ]   |
+| 💎  |  14   | Process exit cleanup -- release all per-process resources | §8, §9                    |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -196,7 +197,6 @@ Both Win11 (`NtQueryInformationProcess` with `ProcessTimes`, `ProcessIoCounters`
 - [ ] In VFS `vfs_read()` / `vfs_write()`: increment `io_read_count`/`io_write_count` and byte counters on the current task
 - [ ] In `#PF` handler: increment `task_current()->page_fault_count`
 - [ ] `getrusage(RUSAGE_SELF)` Linux-compat wrapper: populate `struct rusage` from task accounting fields
-- [ ] On process exit: release per-process timer resolution requests (-> XREF: TODO-07 §8 `KeSetTimerResolution` per-PID cleanup); bind `s_requests[].pid` to `task_current()->pid` and release on `task_exit()`
 - [ ] Commit: `"kernel: task -- process accounting fields for times, I/O, and VM counters"`
 
 **Test checkpoint:** After running a process, `NtQueryInformationProcess(ProcessTimes)` returns non-zero `KernelTime` and `UserTime`. `ProcessVmCounters` returns non-zero `PageFaultCount`. `ProcessIoCounters` returns non-zero `ReadOperationCount` after a file read. Serial log shows `"task: accounting -- user=<N>ns kernel=<M>ns faults=<F>"` at process exit. `POST16(0xD080)` on entry, `POST16(0xD081)` after struct fields added, `POST16(0xD082)` after scheduler tick ISR instrumented, `POST16(0xD083)` after `#PF` handler instrumented. Range `0xD08x` confirmed free. If crash at 0xD082: scheduler tick ISR modification broke -- revert ISR change and fall back to un-instrumented tick. Test on: QEMU WHPX + TCG. Verify on bare metal -- ISR timing may differ.
@@ -294,6 +294,25 @@ Register Job Object management syscalls in the SSDT for process-group resource c
 
 **Test checkpoint:** `NtCreateJobObject` creates a job. `NtAssignProcessToJobObject` assigns a child process. `NtQueryInformationJobObject` returns accounting data. `NtTerminateJobObject` kills all processes in the job. Serial log shows `"job: created job <handle>, assigned pid <N>"`. Test on: QEMU WHPX + TCG.
 
+## 14. Process Exit Cleanup
+
+Central cleanup point for all per-process resources when a process terminates. Windows calls this from `PspExitProcess()` -- it walks every subsystem that holds per-process state and releases it. Without this, resources leak on process exit.
+
+- [ ] In `task_exit()` (or a new `process_cleanup(struct task *t)` called from it):
+  - Release timer resolution requests held by this PID (-> XREF: TODO-07 §8 `KeSetTimerResolution`)
+  - Close all open handles in the process handle table (-> XREF: TODO-03 §3 OB handle table)
+  - Release all byte-range locks held by this process (-> XREF: TODO-04 §10 `vfs_lock_file`)
+  - Release all share-mode handle entries for open files (-> XREF: TODO-04 §8 `vfs_open_handle_t`)
+  - Trigger delete-on-close for files marked by this process (-> XREF: TODO-04 §9)
+  - Release any oplock held by this process (-> XREF: TODO-04 §14)
+  - Free per-process memory: PEB, TEB, user stack, address space (-> XREF: TODO-04-peb-teb §5)
+  - Release per-process resource limits and accounting (-> XREF: §8, §9 of this TODO)
+  - Remove from job object if assigned (-> XREF: §13)
+- [ ] Log: `klog(LOG_DEBUG, "task", "PID %u exit cleanup: %u handles, %u locks released", ...)`
+- [ ] Commit: `"kernel: task -- process exit cleanup (handles, locks, timer res, memory)"`
+
+**Test checkpoint:** Create a process that opens files with locks + timer resolution request. Kill the process. Verify: all locks released, timer resolution reverts to default, handles closed, no resource leak. Serial log shows cleanup counts. Test on QEMU WHPX, TCG.
+
 ---
 
 ## OS Comparison
@@ -311,6 +330,7 @@ Register Job Object management syscalls in the SSDT for process-group resource c
 | 💎 | Process CPU affinity          | ✅ SetProcessAffinityMask   | ✅ sched_setaffinity          | ⬜ §10                       |
 | 💎 | Per-process mitigation policy | ✅ SetProcessMitigationPolicy| ⚠️ prctl + seccomp           | ⬜ §11                       |
 | 💎 | Job Objects / cgroups         | ✅ NtCreateJobObject         | ✅ cgroups v2                | ⬜ §13                       |
+| 💎 | Process exit cleanup          | ✅ PspExitProcess            | ✅ do_exit + __put_task      | ⬜ §14                       |
 | 💎 | Per-process I/O priority      | ✅ ProcessIoPriority          | ✅ ioprio_set/get             | ⬜ Deferred (→ TODO-05 §10)  |
 | ⭐ | Drop-only cap inheritance     | ⚠️ Token elevation           | ⚠️ setcap raises ambient     | ⬜ §7 -- monotonic decrease   |
 | ⭐ | Pledge/unveil restriction     | ❌ None                      | ❌ No simple equivalent      | ⬜ §12 -- OpenBSD-inspired    |
