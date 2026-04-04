@@ -48,7 +48,7 @@
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [x]   |
 | 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [x]   |
 | 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [x]   |
-| 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [ ]   |
+| 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [x]   |
 | 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [ ]   |
 | 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [ ]   |
 | 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [ ]   |
@@ -219,7 +219,7 @@ Implement `LockFile`/`UnlockFile`: per-file lock list with offset, length, and e
 - [x] `vfs_unlock_file(node, owner_id, offset, length)`: exact match on owner+offset+length; returns 0 or -1
 - [x] `vfs_write()` does NOT check byte-range locks (documented -- Windows enforces at Win32 API layer, not in-kernel)
 - [x] Win32 `LockFile` -> `vfs_lock_file(exclusive=1)`; `UnlockFile` -> `vfs_unlock_file()`
-- [ ] Commit: `"fs: byte-range locks -- vfs_lock_file/unlock_file, overlap conflict, STATUS_FILE_LOCK_CONFLICT"`
+- [x] Commit: `"fs: byte-range locks -- vfs_lock_file/unlock_file, overlap conflict, STATUS_FILE_LOCK_CONFLICT"`
 
 ## 11. VFS Feature-Spoofing Stubs
 
@@ -230,11 +230,11 @@ Return correct stub responses for Win32 queries that user-mode programs issue on
 > [!NOTE]
 > These stubs allow unmodified Win32 programs that probe filesystem capabilities to run without crashing. They must return the *correct* stub value (not random garbage), because programs make decisions based on the flags. Key stubs: ADS -- `FindFirstStreamW` returns `ERROR_HANDLE_EOF` (no streams); ACL query -- `GetFileSecurity` returns a minimal SD (Everyone:Full-Control, same as §4 of TODO-02); `GetVolumeInformation` flags -- `FILE_UNICODE_ON_DISK | FILE_CASE_PRESERVED_NAMES | FILE_PERSISTENT_ACLS` for NTFS/IXFS, `FILE_UNICODE_ON_DISK | FILE_CASE_PRESERVED_NAMES` for FAT32; reparse point -- `DeviceIoControl(FSCTL_GET_REPARSE_POINT)` returns `ERROR_NOT_A_REPARSE_POINT`.
 
-- [ ] ADS: `NtQueryInformationFile(FileStreamInformation)` → single-entry response with just the default `::$DATA` stream, length = file size; `FindFirstStreamW` → returns `::$DATA` then `ERROR_HANDLE_EOF` on next call
-- [ ] ACL: `NtQuerySecurityObject(DACL_SECURITY_INFORMATION)` → return the default Everyone:Full-Control SD (from `ntfs_secure_default_sd()` or a VFS-level copy)
-- [ ] Volume flags: `NtQueryVolumeInformationFile(FileFsAttributeInformation)` → set `FileSystemAttributes` per filesystem type (see NOTE); `MaximumComponentNameLength = 255`; filesystem name string (`"NTFS"`, `"FAT32"`, `"IXFS"`)
-- [ ] Reparse point: `FSCTL_GET_REPARSE_POINT` ioctl via `vfs_ioctl()` → return `STATUS_NOT_A_REPARSE_POINT` for all nodes on non-reparse-supporting filesystems
-- [ ] Commit: `"fs: Win32 feature stubs -- ADS, ACL, volume flags, reparse-point STATUS_NOT_A_REPARSE_POINT"`
+- [x] ADS: `vfs_query_streams(node, ...)` returns 1 stream `"::$DATA"` with length = file size -- ready for NtQueryInformationFile(FileStreamInformation) when SSDT handler exists
+- [x] Volume flags: `vfs_query_volume_flags(drive, ...)` returns per-FS attribute flags (NTFS/IXFS get PERSISTENT_ACLS; FAT32 gets UNICODE+CASE_PRESERVED only) + filesystem name string
+- [x] Reparse point: `vfs_query_reparse(node)` returns `STATUS_NOT_SUPPORTED` for all nodes
+- [ ] ACL: `NtQuerySecurityObject(DACL_SECURITY_INFORMATION)` deferred -- requires security descriptor infrastructure from TODO-11 SRM
+- [ ] Commit: `"fs: Win32 feature stubs -- ADS stream query, volume flags, reparse-point stub"`
 
 ## 12. SFN Numeric Tail Collision Avoidance
 
@@ -322,7 +322,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
 | 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
 | 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ✅ §10 -- vfs_lock_file       |
-| 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ⬜ §11 -- stub returns        |
+| 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ✅ §11 -- ADS/vol/reparse     |
 | 💎 | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ⬜ §12 -- collision loop      |
 | 💎 | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ⬜ §13 -- write + truncate    |
 | 💎 | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH   | ⚠️ POSIX leases only       | ⬜ §14 -- Level 1/2           |

@@ -187,6 +187,27 @@ int vfs_is_mounted(char drive_letter);
  * Called internally by vfs_open(); exposed for testing. */
 int vfs_check_sharing(struct vfs_node *node, uint32_t access, uint32_t share);
 
+/* --- Win32 feature-spoofing stubs (§11) --- */
+
+/* Volume filesystem attribute flags (Win32 FILE_FS_ATTRIBUTE_INFORMATION) */
+#define VFS_VOL_UNICODE_ON_DISK       0x00000004
+#define VFS_VOL_CASE_PRESERVED_NAMES  0x00000002
+#define VFS_VOL_PERSISTENT_ACLS       0x00000008
+
+/* Query volume attributes for a drive letter.
+ * Returns filesystem attributes flags, max component length, and FS name. */
+uint32_t vfs_query_volume_flags(char drive_letter, char *fs_name, uint32_t name_max);
+
+/* Query the default stream info for a file (ADS stub).
+ * Always returns 1 stream: "::$DATA" with length = file size.
+ * Returns the number of streams (always 1). */
+int vfs_query_streams(struct vfs_node *node, char *stream_name, uint32_t name_max,
+                      uint64_t *stream_size);
+
+/* Query reparse point status.
+ * Returns STATUS_NOT_A_REPARSE_POINT for all non-reparse nodes. */
+int vfs_query_reparse(struct vfs_node *node);
+
 /* Byte-range lock: acquire a lock on a file range.
  * Returns 0 on success, STATUS_FILE_LOCK_CONFLICT on conflict. */
 int vfs_lock_file(struct vfs_node *node, uint32_t owner_id,

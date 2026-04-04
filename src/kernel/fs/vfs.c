@@ -670,3 +670,48 @@ int vfs_is_mounted(char drive_letter)
 
     return mounts[idx].mounted;
 }
+
+/* --- Win32 feature-spoofing stubs (§11) --- */
+
+uint32_t vfs_query_volume_flags(char drive_letter, char *fs_name, uint32_t name_max)
+{
+    int idx = drive_index(drive_letter);
+    uint32_t flags = VFS_VOL_UNICODE_ON_DISK | VFS_VOL_CASE_PRESERVED_NAMES;
+    const char *name = "UNKNOWN";
+
+    if (idx < 0 || !mounts[idx].mounted) {
+        if (fs_name && name_max > 0) fs_name[0] = '\0';
+        return 0;
+    }
+
+    if (mounts[idx].driver && mounts[idx].driver->name) {
+        name = mounts[idx].driver->name;
+        /* NTFS and IXFS support persistent ACLs */
+        if ((name[0] == 'N' && name[1] == 'T' && name[2] == 'F' && name[3] == 'S') ||
+            (name[0] == 'I' && name[1] == 'X' && name[2] == 'F' && name[3] == 'S'))
+            flags |= VFS_VOL_PERSISTENT_ACLS;
+    }
+
+    if (fs_name && name_max > 0)
+        str_copy(fs_name, name, name_max);
+
+    return flags;
+}
+
+int vfs_query_streams(struct vfs_node *node, char *stream_name, uint32_t name_max,
+                      uint64_t *stream_size)
+{
+    /* Every file has exactly one stream: the default ::$DATA */
+    if (stream_name && name_max > 7)
+        str_copy(stream_name, "::$DATA", name_max);
+    if (stream_size)
+        *stream_size = node ? node->size : 0;
+    return 1;  /* 1 stream */
+}
+
+int vfs_query_reparse(struct vfs_node *node)
+{
+    (void)node;
+    /* No filesystem currently supports reparse points */
+    return STATUS_NOT_SUPPORTED;
+}
