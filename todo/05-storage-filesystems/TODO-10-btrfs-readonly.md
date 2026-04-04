@@ -177,6 +177,7 @@ Walk `DIR_INDEX` items for fast readdir. Decode `DIR_ITEM` entries for name look
 - [ ] `btrfs_dir_lookup(vol, tree_root, dir_ino, name, name_len, &result_ino, &result_type)`: `btrfs_tree_search({dir_ino, DIR_ITEM, hash})`; if item found: linear scan chained `btrfs_dir_item` for exact name match; return `location.objectid` and `type`
 - [ ] `btrfs_readdir(vol, tree_root, dir_ino, callback, ctx)`: `btrfs_tree_walk` with min_key `{dir_ino, DIR_INDEX, 2}`; for each item: decode `btrfs_dir_item`; call `callback(ctx, name, name_len, child_ino, type)`; stop when objectid ≠ `dir_ino`
 - [ ] VFS `finddir` callback: `btrfs_vfs_finddir(vfs_node, name)` → `btrfs_dir_lookup()` → `btrfs_read_inode()` → `btrfs_inode_to_vfs_node()`
+  - Name comparison must be case-insensitive (ASCII fold) -- VFS passes names verbatim
 - [ ] VFS `readdir` callback: `btrfs_vfs_readdir(vfs_node, index)` → `btrfs_readdir()` counting to `index`-th DIR_INDEX entry; return `vfs_dirent`
 - [ ] Commit: `"fs/btrfs: directory reader -- DIR_INDEX walk, DIR_ITEM hash lookup, name chain scan, VFS callbacks"`
 

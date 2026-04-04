@@ -160,6 +160,7 @@ Walk `APFS_TYPE_DIR_REC` items in the fstree for a given directory OID. Decode h
 - [ ] `apfs_dir_lookup(fsvol, dir_oid, name_utf8, &result_oid, &result_type)`: build `j_drec_hashed_key_t`; `apfs_fstree_search()`; extract `file_id` and `flags` file type
 - [ ] `apfs_readdir(fsvol, dir_oid, callback, ctx)`: `apfs_fstree_walk(dir_oid, APFS_TYPE_DIR_REC, ...)`; for each item: extract name from key, apply NFD→NFC, extract `file_id`; call `callback(ctx, name, name_len, child_oid, type)`; stop when key OID ≠ `dir_oid`
 - [ ] VFS `finddir` callback: `apfs_vfs_finddir(vfs_node, name)` → `apfs_dir_lookup()` → `apfs_read_inode()` → `apfs_inode_to_vfs_node()`
+  - Name comparison must be case-insensitive (APFS uses NFD normalization + case-fold) -- VFS passes names verbatim
 - [ ] VFS `readdir` callback: `apfs_vfs_readdir(vfs_node, index)` → `apfs_readdir()` counting to `index`-th entry; return `vfs_dirent`
 - [ ] Commit: `"fs/apfs: directory reader -- j_drec_hashed_key, CRC32c hash, NFD→NFC normalization, VFS callbacks"`
 
