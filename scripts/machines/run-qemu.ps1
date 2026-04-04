@@ -15,7 +15,6 @@
 #   Double-click run-windows-1080p.bat     -> 1920x1080  scale=1x
 #   Double-click run-windows-1440p.bat     -> 2560x1440  scale=2x
 #   Double-click run-windows-4k.bat        -> 3840x2160  scale=2x
-#   -SerialLog                             -> tee serial to scripts/debug/serial.log
 #
 # Prerequisites:
 #   1. Install QEMU for Windows: https://qemu.weilnetz.de/w64/
@@ -31,8 +30,7 @@ Param(
     [string]$TestSuite = '',  # category filter: mm, fs, ob, security, ipc, sched, boot, abi, storage
     [switch]$Quiet,       # suppress PASS lines, show FAIL + summary only
     [string]$ExtraArgs = '',  # additional QEMU arguments (e.g., "-machine pc,i8042=on")
-    [switch]$CrashTest,   # boot with crash_test=1 (deliberate BSOD after desktop)
-    [switch]$SerialLog    # tee serial output to scripts/debug/serial.log
+    [switch]$CrashTest    # boot with crash_test=1 (deliberate BSOD after desktop)
 )
 
 $ErrorActionPreference = "Stop"
@@ -130,7 +128,7 @@ $QemuArgs += @(
     '-device', 'ich9-ahci,id=ahci0',
     '-device', 'ide-hd,drive=disk0,bus=ahci0.0',
     '-m', '2G',
-    # -serial wired below based on -SerialLog flag
+    '-serial', 'stdio',
     '-vga', 'none',
     '-device', "$VgaDevice,xres=$Xres,yres=$Yres",
     '-device', 'rtl8139,netdev=net0',
@@ -166,28 +164,9 @@ if ($ExtraArgs) {
     $QemuArgs += $ExtraArgs.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
 }
 
-$SerialLogPath = Join-Path $PROJECT "scripts\debug\serial.log"
-
-# Wire serial output. When -SerialLog is set, serial goes to a temp file
-# (QEMU can't write UNC paths) and is copied to scripts/debug/serial.log
-# on exit. Terminal shows no serial in this mode -- check the log file.
-# Without -SerialLog, serial goes to stdio as before.
-$TempSerialLog = Join-Path $env:TEMP "impossible-os-serial.log"
-if ($SerialLog) {
-    Write-Host "  Serial: -> $SerialLogPath (file mode, check after exit)" -ForegroundColor DarkGray
-    $QemuArgs += '-serial', "file:$TempSerialLog"
-} else {
-    $QemuArgs += '-serial', 'stdio'
-}
-
 try {
     & $QEMU @QemuArgs
 } finally {
-    # Copy serial log from temp to project
-    if ($SerialLog -and (Test-Path $TempSerialLog)) {
-        Copy-Item -Path $TempSerialLog -Destination $SerialLogPath -Force -ErrorAction SilentlyContinue
-        Write-Host "  Serial log saved: $SerialLogPath" -ForegroundColor Green
-    }
     # Always restore boot.conf to defaults
     if ($PatchArgs.Count -gt 0) {
         & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset"
