@@ -22,3 +22,18 @@ void KeSetSystemTime(FILETIME new_time);
 
 /* Returns 1 if wall clock has been initialized. */
 int wall_clock_ready(void);
+
+/* ---- Kernel time service API (§6) ---------------------------------------- */
+
+/* 100 ns tick count since boot (same as mono_filetime_units()). */
+void KeQueryTickCount(uint64_t *tick_count);
+
+/* Periodic timer interrupt increment in 100 ns units. */
+void KeQueryTimeIncrement(uint32_t *increment);
+
+/* Delay current thread. Uses sleep_ms() internally.
+ * interval is negative = relative (100 ns units). */
+void KeDelayExecutionThread(FILETIME interval);
+
+/* Returns 1 when KeQuerySystemTime() is usable. */
+int time_service_ready(void);

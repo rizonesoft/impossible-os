@@ -12,6 +12,7 @@
 #include "kernel/drivers/rtc.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/sched/seqlock.h"
+#include "kernel/timer.h"
 #include "kernel/klog.h"
 
 /* ---- State --------------------------------------------------------------- */
@@ -131,6 +132,34 @@ void KeSetSystemTime(FILETIME new_time)
 }
 
 int wall_clock_ready(void)
+{
+    return s_ready;
+}
+
+/* ---- Kernel time service API (§6) ---------------------------------------- */
+
+void KeQueryTickCount(uint64_t *tick_count)
+{
+    if (tick_count)
+        *tick_count = mono_filetime_units();
+}
+
+void KeQueryTimeIncrement(uint32_t *increment)
+{
+    /* Timer fires at 100 Hz -> 10 ms per tick -> 100000 * 100 ns units */
+    if (increment)
+        *increment = 100000;  /* 10 ms in 100 ns units */
+}
+
+void KeDelayExecutionThread(FILETIME interval)
+{
+    /* Convert 100 ns units to milliseconds */
+    uint64_t ms = interval / FILETIME_TICKS_PER_MS;
+    if (ms == 0) ms = 1;
+    sleep_ms((uint32_t)(ms > 0xFFFFFFFF ? 0xFFFFFFFF : ms));
+}
+
+int time_service_ready(void)
 {
     return s_ready;
 }

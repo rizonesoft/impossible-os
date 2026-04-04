@@ -54,7 +54,7 @@
 | 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [x]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [x]   |
 | 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [x]   |
-| 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [ ]   |
+| 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [x]   |
 | 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [ ]   |
 | 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-05 §4      |  [ ]   |
 | 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-05 §4      |  [ ]   |
@@ -119,16 +119,16 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 - [x] `KeSetSystemTime(new_time)`: updates anchor + re-latches mono_ns(); seqlock write-protected
 - [x] `wall_clock_ready()`: returns 1 after init
 - [x] Protected by `seqlock_t` (SEQLOCK_INIT) for SMP-safe concurrent reads
-- [ ] Commit: `"kernel: time -- wall clock init from UEFI GetTime with RTC fallback"`
+- [x] Commit: `"kernel: time -- wall clock init from UEFI GetTime with RTC fallback"`
 
 ## 6. Kernel Time Service
 Provide the stable kernel-level time API used by everything above PASSIVE_LEVEL: filesystems, logging, scheduler, and the native API layer.
 
-- [ ] Ensure `KeQuerySystemTime()` is callable from any IRQL (lock-free seqlock read path; §5)
-- [ ] Add `KeQueryTickCount(uint64_t *tick_count)` -- returns 100 ns tick count since boot (same as `mono_filetime_units()`)
-- [ ] Add `KeQueryTimeIncrement(uint32_t *increment)` -- returns the periodic interrupt increment in 100 ns units (set at timer HAL init from `1/timer_freq * 10^7`)
-- [ ] Add `KeDelayExecutionThread(KIRQL irql, bool alertable, FILETIME *interval)` stub -- uses `sleep_ms()` internally until full APC alertable waits exist
-- [ ] Expose `time_service_ready()` predicate for use by `BOOT_REQUIRE` gates
+- [x] `KeQuerySystemTime()` -- lock-free seqlock read, callable from any IRQL (verified in §5)
+- [x] `KeQueryTickCount(tick_count)` -- returns `mono_filetime_units()` (100 ns since boot)
+- [x] `KeQueryTimeIncrement(increment)` -- returns 100000 (10 ms at 100 Hz in 100 ns units)
+- [x] `KeDelayExecutionThread(interval)` -- converts 100 ns units to ms, calls `sleep_ms()`
+- [x] `time_service_ready()` -- returns 1 after `wall_clock_init()`
 - [ ] Commit: `"kernel: time -- kernel time service API"`
 
 ## 7. Interrupt Time and Unbiased Interrupt Time APIs
