@@ -50,7 +50,7 @@
 | ⭐  | Order | Deliverable                                                            | Depends On          | Status |
 | --- | :---: | ---------------------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                  |  [x]   |
-| 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [ ]   |
+| 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [x]   |
 | 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [ ]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [ ]   |
 | 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [ ]   |
@@ -78,20 +78,15 @@
 - [x] Non-inline (in `src/kernel/nt/filetime.c`): `filetime_from_rtc()`, `filetime_from_efi_time()` -- need full struct definitions
 - [x] `FILETIME_NOW_PLACEHOLDER = 0` sentinel defined
 - [x] 4 unit tests: epoch offset, round-trip, DOS date round-trip, ticks/sec constants
-- [ ] Commit: `"kernel: nt -- FILETIME type, epoch constants, and conversion math"`
+- [x] Commit: `"kernel: nt -- FILETIME type, epoch constants, and conversion math"`
 
 ## 2. Monotonic Nanosecond Clock Source Selection
 Select the highest-resolution monotonic source available: invariant TSC → HPET → LAPIC counter.
 
-- [ ] Create `include/kernel/time/mono_clock.h` and `src/kernel/time/mono_clock.c`:
-  - `uint64_t mono_ns(void)` -- returns nanoseconds since boot (never wraps for 584 years)
-  - `uint64_t mono_filetime_units(void)` -- returns 100 ns units since boot (for FILETIME arithmetic)
-- [ ] Selection priority at `mono_clock_init()`:
-  1. Invariant TSC (`CPU_FEATURE_RDTSCP` + `IA32_TSC_INVARIANT` CPUID bit) -- read via `RDTSC`/`RDTSCP` with known frequency from `boot_timing_tsc_freq()`
-  2. HPET (§4) -- use main counter directly if TSC fails or frequency unknown
-  3. LAPIC tick count -- last resort using `lapic_timer_ticks_per_ms()`
-- [ ] Store selected source ID, its frequency, and a scale factor (numerator/denominator pair for integer multiply-shift conversion without division in the hot path)
-- [ ] `mono_clock_source_name()` -- returns string `"TSC"`, `"HPET"`, or `"LAPIC"` for log/diagnostics
+- [x] Created `include/kernel/time/mono_clock.h` + `src/kernel/time/mono_clock.c`: `mono_ns()`, `mono_filetime_units()`, `mono_clock_source_name()`, `mono_clock_source_id()`
+- [x] Selection: invariant TSC (CPU_FEATURE_TSC_INV + boot_timing_tsc_freq) -> LAPIC fallback (system_get_ticks). HPET stub ready for §4.
+- [x] Scale factor: num/den pair for integer multiply without hot-path division; overflow-safe split for TSC
+- [x] Logs selected source: `"Monotonic clock: TSC (N MHz, invariant)"` or `"LAPIC (N ticks/ms)"`
 - [ ] Commit: `"kernel: time -- monotonic nanosecond clock source selection"`
 
 ## 3. Invariant TSC Detection and Per-CPU Offset Calibration
@@ -285,7 +280,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | ⭐ | Feature                  | 🪟 Win11                 | 🐧 Linux                  | 🚀 Impossible OS          |
 |----|--------------------------|---------------------------|---------------------------|----------------------------|
 | 💎 | 100 ns wall time         | ✅ FILETIME API          | ⚠️ timespec, diff epoch   | ⚠️ §1 done, §5-§6 pending |
-| 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⬜ §2-§4                  |
+| 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⚠️ §2 done, §3-§4 pending |
 | 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
 | 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ⬜ §4                     |
