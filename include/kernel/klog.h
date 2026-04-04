@@ -38,6 +38,10 @@ typedef struct {
     log_level_t level;
     const char *subsystem;
     uint32_t    timestamp;  /* PIT ticks */
+    uint8_t     cpu_id;     /* CPU that logged this entry (0 = BSP) */
+    uint8_t     _pad[3];    /* alignment padding */
+    uint32_t    pid;        /* process ID (0 during boot) */
+    uint32_t    tid;        /* thread ID (0 during boot) */
     char        message[128];
 } klog_entry_t;
 

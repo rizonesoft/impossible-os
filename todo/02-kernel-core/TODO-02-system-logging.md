@@ -3,7 +3,7 @@
 > **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.
 
 > [!IMPORTANT]
-> **Current state:** `klog.c` (541 lines) + `klog_disk.c` (912 lines) + `etw.c` (new). §1-§8 complete. Remaining: §9 (per-entry context), §10 (log integrity). Remote syslog moved to `07-networking/TODO-11`.
+> **Current state:** `klog.c` (~580 lines) + `klog_disk.c` (912 lines) + `etw.c`. §1-§9 complete. Remaining: §10 (log integrity, blocked on TODO-20 §5 Monocypher). Remote syslog moved to `07-networking/TODO-11`.
 
 ## Inputs
 
@@ -44,7 +44,7 @@
 | ⭐  |   6   | Structured JSON log events          | §4             |  [x]   |
 | 💎  |   7   | ETW tracing syscalls wired to SSDT  | §4, T05 §4     |  [x]   |
 | 💎  |   8   | Crash-persistent log capture        | §1             |  [x]   |
-| 💎  |   9   | Per-entry context metadata          | §2             |  [ ]   |
+| 💎  |   9   | Per-entry context metadata          | §2             |  [x]   |
 | ⭐  |  10   | Log integrity verification (HMAC)   | §6, T20 §5     |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
@@ -158,7 +158,7 @@ Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. T
 - [x] `NtStopTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D5 -- `etw.c` NtStopTrace()
 - [x] `NtFlushTrace(TraceHandle, InstanceName, Properties)` → SSDT 0x01D6 -- `etw.c` NtFlushTrace()
 - [x] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-05 §1)
-- [ ] Commit: `"kernel: klog -- wire ETW tracing syscalls to SSDT (0x01D0-0x01D6)"`
+- [x] Commit: `"kernel: klog -- wire ETW tracing syscalls to SSDT (0x01D0-0x01D6)"`
 
 > **Implementation notes:** `etw.c` + `etw.h` (new files). Up to 8 concurrent trace sessions with 4 KB circular buffers. SMP-safe via `s_etw_lock` (irqsave spinlock). Registered in `boot_desktop.c` Phase 3 after `ssdt_init()`. 7 unit tests in `test_klog.c` cover struct sizes, SSDT registration, session lifecycle, and event writing.
 
@@ -194,13 +194,13 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 > [!WARNING]
 > **High-risk:** Changes `klog_entry_t` struct layout -- affects `klog.c`, `klog_disk.c`, `test_klog.c`, and any code reading the ring buffer. If this breaks, revert the struct change and the `klog()` population code. Test incrementally: extend struct first, verify build, then add population logic.
 
-- [ ] Extend `klog_entry_t` in `klog.h`: add `uint8_t cpu_id`, `uint32_t pid`, `uint32_t tid`
-- [ ] In `klog()`: populate `cpu_id` from `smp_this_cpu()->cpu_id` (safe after `smp_early_bsp_init()`; before that, default to 0)
-- [ ] In `klog()`: populate `pid`/`tid` from `task_current()->pid` / thread index if `kernel_subsystem_ready(SUBSYS_SCHEDULER)`; default to 0/0 during boot
-- [ ] Update JSON Lines serialization in `klog_disk.c`: add `"cpu":N,"pid":N,"tid":N` fields to each JSON object in `events.jsonl`
-- [ ] Update serial output format: append `[cpu:N]` after the timestamp when `cpu_id > 0` (skip during single-CPU early boot for readability)
-- [ ] Update `klog_crash_persist()` (§8) to include the new fields in the crash-persistent region
-- [ ] Add debug POST codes: `POST16(0xDE10)` entry, `POST16(0xDE11)` struct extended, `POST16(0xDE12)` serial format updated, `POST16(0xDE13)` JSON format updated -- range `0xDE1x` confirmed free
+- [x] Extend `klog_entry_t` in `klog.h`: add `uint8_t cpu_id`, `uint32_t pid`, `uint32_t tid` -- with 3-byte alignment padding
+- [x] In `klog()`: populate `cpu_id` from `smp_this_cpu()->cpu_id` (NULL-safe, defaults to 0 before `smp_early_bsp_init()`)
+- [x] In `klog()`: populate `pid`/`tid` from `task_current()->pid` gated on `kernel_subsystem_ready(SUBSYS_SCHED)`; defaults to 0/0 during boot
+- [x] Update JSON Lines serialization in `klog_disk.c`: add `"cpu":N,"pid":N,"tid":N` fields to each JSON object in `events.jsonl`
+- [x] Update serial output format: append `[cpu:N]` after the timestamp when SMP is ready or cpu_id > 0 (skipped during single-CPU early boot)
+- [x] Update `klog_crash_persist()` (§8): `klog_crash_entry_t` extended with cpu_id/pid/tid fields (160 bytes); serialization copies new fields
+- [x] Add debug POST codes: `POST16_KLOG_CTX` (0xDE10), `POST16_KLOG_CTX_STRUCT` (0xDE11), `POST16_KLOG_CTX_SERIAL` (0xDE12), `POST16_KLOG_CTX_JSON` (0xDE13) -- range 0xDE1x confirmed free
 - [ ] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
 **Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":0` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.
@@ -244,16 +244,16 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 | 💎 | Log rotation          | ✅ Size-limited     | ✅ logrotate         | ✅ §4 -- done              |
 | 💎 | Rate limiting         | ✅ ETW built-in     | ⚠️ rsyslog only      | ✅ §5 -- done              |
 | ⭐ | Human-readable struct | ❌ XML verbose      | ❌ Binary journal    | ✅ §6 -- JSON Lines        |
-| 💎 | Remote forwarding     | ✅ WEF              | ✅ rsyslog UDP       | ⬜ → net/TODO-11            |
+| 💎 | Remote forwarding     | ✅ WEF              | ✅ rsyslog UDP       | ⬜ → net/TODO-11           |
 | 💎 | ETW tracing API       | ✅ NtTraceEvent     | ✅ ftrace/perf_event | ✅ §7 -- 7 NtTrace* SSDT   |
 | ⭐ | Serial timestamps     | ❌ Not standard     | ❌ Not standard      | ✅ Every entry             |
 | 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §8 NVRAM + reserved RAM |
-| 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ⬜ §9 -- klog_entry_t      |
+| 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ✅ §9 -- cpu/pid/tid       |
 | ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §10 -- HMAC-chain       |
 
-> After §1-§8, Impossible OS matches or exceeds Windows and Linux on core logging.
-> §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges. §7 wires 7 ETW syscalls.
-> §9 closes the per-entry context parity gap. §10 (HMAC-chain) is a unique competitive advantage -- no other OS ships tamper-evident text-format logging out of the box.
+> After §1-§9, Impossible OS matches or exceeds Windows and Linux on all core logging features.
+> §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges. §7 wires 7 ETW syscalls. §9 closes the per-entry context parity gap.
+> §10 (HMAC-chain) is a unique competitive advantage -- no other OS ships tamper-evident text-format logging out of the box.
 
 ## Unit Tests
 

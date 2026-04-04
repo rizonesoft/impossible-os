@@ -12,6 +12,9 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/timer.h"
+#include "kernel/smp.h"
+#include "kernel/sched/task.h"
+#include "kernel/boot_init.h"
 
 
 /* GCC built-in variadic args (no libc needed) */
@@ -251,9 +254,13 @@ void klog_disk_enable(void)
 typedef struct {
     uint32_t level;
     uint32_t timestamp;
+    uint8_t  cpu_id;
+    uint8_t  _pad[3];
+    uint32_t pid;
+    uint32_t tid;
     char     subsystem[16];
     char     message[128];
-} klog_crash_entry_t;  /* 148 bytes */
+} klog_crash_entry_t;  /* 160 bytes */
 
 /* Reserved physical memory region for crash log persistence */
 static uint8_t *s_crash_region;       /* phys addr, identity-mapped */
@@ -316,6 +323,12 @@ void klog_crash_persist(void)
         uint32_t idx = (start + i) % KLOG_RING_SIZE;
         dst[i].level     = (uint32_t)klog_ring[idx].level;
         dst[i].timestamp = klog_ring[idx].timestamp;
+        dst[i].cpu_id    = klog_ring[idx].cpu_id;
+        dst[i]._pad[0]   = 0;
+        dst[i]._pad[1]   = 0;
+        dst[i]._pad[2]   = 0;
+        dst[i].pid       = klog_ring[idx].pid;
+        dst[i].tid       = klog_ring[idx].tid;
         str_copy_n(dst[i].subsystem, klog_ring[idx].subsystem, 16);
         str_copy_n(dst[i].message, klog_ring[idx].message, 128);
     }
@@ -753,6 +766,25 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
     e->subsystem = subsystem;
     e->timestamp = (uint32_t)system_get_ticks();
 
+    /* Per-entry context: CPU, PID, TID */
+    {
+        struct per_cpu_data *cpu = smp_this_cpu();
+        e->cpu_id = cpu ? cpu->cpu_id : 0;
+    }
+    if (kernel_subsystem_ready(SUBSYS_SCHED)) {
+        struct task *t = task_current();
+        if (t) {
+            e->pid = t->pid;
+            e->tid = 0;  /* thread index -- single-thread per task for now */
+        } else {
+            e->pid = 0;
+            e->tid = 0;
+        }
+    } else {
+        e->pid = 0;
+        e->tid = 0;
+    }
+
     va_start(ap, fmt);
     vformat_buf(e->message, sizeof(e->message), fmt, ap);
     va_end(ap);
@@ -795,6 +827,15 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         LP('0' + (char)((fms /  10) % 10));
         LP('0' + (char)( fms        % 10));
         LP(']'); LP(' ');
+
+        /* CPU tag: [cpu:N] after timestamp on SMP (skip during single-CPU early boot) */
+        if (e->cpu_id > 0 || kernel_subsystem_ready(SUBSYS_SMP)) {
+            LP('['); LP('c'); LP('p'); LP('u'); LP(':');
+            if (e->cpu_id >= 10)
+                LP('0' + (char)((e->cpu_id / 10) % 10));
+            LP('0' + (char)(e->cpu_id % 10));
+            LP(']'); LP(' ');
+        }
 
         /* Colored level prefix + subsystem + pre-formatted message.
          * For badge-only levels: reset after [LEVEL], rest is default.

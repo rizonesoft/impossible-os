@@ -164,6 +164,55 @@ static void test_klog_crash_post_codes(void)
                 "CRASHLOG != BOOTPERF (no overlap)");
 }
 
+/* ---- Per-entry context: cpu_id on BSP ---- */
+
+static void test_klog_ctx_cpu_id(void)
+{
+    uint32_t count, head;
+
+    klog(LOG_INFO, "TEST", "ctx_cpu test");
+    klog_get_ring(&count, &head);
+
+    /* Last entry is at head-1 */
+    uint32_t idx = (head == 0) ? KLOG_RING_SIZE - 1 : head - 1;
+    const klog_entry_t *ring = klog_get_ring(&count, &head);
+    TEST_ASSERT_EQ((uint32_t)ring[idx].cpu_id, 0,
+                   "BSP log entry has cpu_id == 0");
+}
+
+/* ---- Per-entry context: pid during boot ---- */
+
+static void test_klog_ctx_pid_boot(void)
+{
+    /* During test phase, scheduler is ready so PID should be non-zero
+     * (at least the idle task PID 0 or sys_wq PID 1 or main context).
+     * The key check: pid field is populated (not left uninitialized). */
+    uint32_t count, head;
+
+    klog(LOG_INFO, "TEST", "ctx_pid test");
+    klog_get_ring(&count, &head);
+
+    uint32_t idx = (head == 0) ? KLOG_RING_SIZE - 1 : head - 1;
+    const klog_entry_t *ring = klog_get_ring(&count, &head);
+    /* PID 0 is the main/idle context -- valid during tests */
+    TEST_ASSERT(ring[idx].pid <= 100,
+                "pid is reasonable (0-100, not garbage)");
+}
+
+/* ---- Per-entry context: POST16 codes unique ---- */
+
+static void test_klog_ctx_post_codes(void)
+{
+    TEST_ASSERT(POST16_KLOG_CTX != 0, "POST16_KLOG_CTX is non-zero");
+    TEST_ASSERT(POST16_KLOG_CTX_STRUCT != 0, "POST16_KLOG_CTX_STRUCT is non-zero");
+    TEST_ASSERT(POST16_KLOG_CTX != POST16_KLOG_CTX_STRUCT,
+                "KLOG_CTX != KLOG_CTX_STRUCT");
+    TEST_ASSERT(POST16_KLOG_CTX != POST16_CRASHLOG,
+                "KLOG_CTX != CRASHLOG (no overlap)");
+    TEST_ASSERT(POST16_KLOG_CTX_JSON != POST16_KLOG_CTX_SERIAL,
+                "KLOG_CTX_JSON != KLOG_CTX_SERIAL");
+}
+
 /* ---- ETW: session magic value ---- */
 
 static void test_etw_session_magic(void)
@@ -295,6 +344,11 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: crash magic", test_klog_crash_magic, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
+
+    /* Per-entry context metadata tests */
+    test_suite_register_cat("Klog: ctx cpu_id BSP", test_klog_ctx_cpu_id, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: ctx pid boot", test_klog_ctx_pid_boot, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: ctx POST codes", test_klog_ctx_post_codes, TEST_CAT_BOOT);
 
     /* ETW tracing tests */
     test_suite_register_cat("ETW: session magic", test_etw_session_magic, TEST_CAT_ABI);

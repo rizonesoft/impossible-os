@@ -264,7 +264,13 @@ typedef enum {
 #define POST16_CRASHLOG_CHECK   0xDE02  /* recovery check */
 #define POST16_CRASHLOG_DONE    0xDE03  /* recovery complete */
 
-/* Sentinels (0xF000–0xFFFE) */
+/* Per-Entry Context Metadata (0xDE10-0xDE13) */
+#define POST16_KLOG_CTX         0xDE10  /* per-entry context init */
+#define POST16_KLOG_CTX_STRUCT  0xDE11  /* struct extended */
+#define POST16_KLOG_CTX_SERIAL  0xDE12  /* serial format updated */
+#define POST16_KLOG_CTX_JSON    0xDE13  /* JSON format updated */
+
+/* Sentinels (0xF000-0xFFFE) */
 #define POST16_BOOT_OK          0xFF00
 #define POST16_BOOT_FAILED      0xFFFE
 

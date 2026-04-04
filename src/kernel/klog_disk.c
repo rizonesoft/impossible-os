@@ -782,10 +782,14 @@ void klog_disk_flush(void)
 
                     len = snprintf(line, sizeof(line),
                         "{\"ts\":%u,\"lvl\":\"%s\",\"sub\":\"%s\","
+                        "\"cpu\":%u,\"pid\":%u,\"tid\":%u,"
                         "\"msg\":\"%s\",\"dropped\":%u}\n",
                         (unsigned)e->timestamp * 10,  /* ticks -> ms */
                         lvl,
                         e->subsystem ? e->subsystem : "",
+                        (unsigned)e->cpu_id,
+                        (unsigned)e->pid,
+                        (unsigned)e->tid,
                         e->message,
                         (unsigned)klog_get_dropped(e->subsystem));
 
