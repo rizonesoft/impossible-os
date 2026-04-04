@@ -38,6 +38,16 @@ _Static_assert(VFS_MAX_DRIVES == 26, "VFS drive letters must be A-Z (26)");
 
 /* Per-file open handle tracking (for share-mode enforcement) */
 #define VFS_MAX_HANDLES  8
+#define VFS_MAX_LOCKS    16
+
+/* Byte-range lock entry */
+typedef struct {
+    uint64_t offset;
+    uint64_t length;
+    uint32_t owner_id;      /* opaque handle identifier */
+    uint8_t  exclusive;     /* 1 = exclusive, 0 = shared */
+    uint8_t  active;        /* 1 = slot in use */
+} vfs_lock_t;
 
 typedef struct {
     uint32_t access_mode;   /* VFS_O_READ | VFS_O_WRITE */
@@ -106,6 +116,8 @@ struct vfs_node {
     /* Share-mode enforcement (§8) */
     vfs_open_handle_t open_handles[VFS_MAX_HANDLES];
     uint8_t          delete_on_close;  /* 1 = delete when last handle closes (§9) */
+    /* Byte-range locks (§10) */
+    vfs_lock_t       locks[VFS_MAX_LOCKS];
 };
 
 /* Filesystem driver descriptor -- registered by each FS implementation */
@@ -174,3 +186,13 @@ int vfs_is_mounted(char drive_letter);
  * Returns 0 if compatible, STATUS_SHARING_VIOLATION on conflict.
  * Called internally by vfs_open(); exposed for testing. */
 int vfs_check_sharing(struct vfs_node *node, uint32_t access, uint32_t share);
+
+/* Byte-range lock: acquire a lock on a file range.
+ * Returns 0 on success, STATUS_FILE_LOCK_CONFLICT on conflict. */
+int vfs_lock_file(struct vfs_node *node, uint32_t owner_id,
+                  uint64_t offset, uint64_t length, int exclusive);
+
+/* Byte-range unlock: release a lock matching owner + offset + length.
+ * Returns 0 on success, -1 if no matching lock found. */
+int vfs_unlock_file(struct vfs_node *node, uint32_t owner_id,
+                    uint64_t offset, uint64_t length);

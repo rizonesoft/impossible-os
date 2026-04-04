@@ -47,7 +47,7 @@
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [x]   |
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [x]   |
 | 💎  |   9   | §9 Mark-for-delete-on-close -- deferred deletion, `STATUS_DELETE_PENDING`             | §8 (open-handle table exists)                            |  [x]   |
-| 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [ ]   |
+| 💎  |  10   | §10 Byte-range locks -- `LockFile`/`UnlockFile`, per-file lock list, conflict detect  | §8 (per-handle file identity)                            |  [x]   |
 | 💎  |  11   | §11 VFS feature-spoofing stubs -- ADS, ACL, volume flags, reparse-point queries       | §7–§10 (handle plumbing in place)                        |  [ ]   |
 | 💎  |  12   | §12 SFN numeric tail collision -- ~1 through ~9, 5-char truncation for ~10+           | §4 (LFN write reworks create path)                       |  [ ]   |
 | 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [ ]   |
@@ -203,7 +203,7 @@ Implement `FILE_FLAG_DELETE_ON_CLOSE`: mark the inode for deletion when the hand
 - [x] `vfs_open()`: sets `node->delete_on_close = 1` when flag present; rejects new openers on already-marked nodes (returns NULL / STATUS_DELETE_PENDING)
 - [x] `vfs_close()`: triggers `parent->ops->unlink()` when `delete_on_close && ref_count == 0` (added in §8)
 - [x] Existing handles continue to work until close; only new openers are rejected
-- [ ] Commit: `"fs: delete-on-close -- VFS_O_DELETE_ON_CLOSE flag, STATUS_DELETE_PENDING, last-close unlink"`
+- [x] Commit: `"fs: delete-on-close -- VFS_O_DELETE_ON_CLOSE flag, STATUS_DELETE_PENDING, last-close unlink"`
 
 ## 10. Byte-Range Locks
 
@@ -214,11 +214,11 @@ Implement `LockFile`/`UnlockFile`: per-file lock list with offset, length, and e
 > [!NOTE]
 > Lock semantics: shared locks are compatible with other shared locks on the same range; exclusive locks conflict with any lock on any overlapping range. Overlap test: `!(new_end <= existing_start || new_start >= existing_end)`. Maximum locks per file: 64 (static array per node). `UnlockFile` must match exact offset+length of a lock owned by the same handle.
 
-- [ ] `vfs_lock_t { uint64_t offset; uint64_t length; vfs_handle_t *owner; uint8_t exclusive; }` -- static array `vfs_node_t.locks[64]`, `lock_count`
-- [ ] `vfs_lock_file(handle, offset, length, exclusive)`: check for overlapping conflicting locks; if none: add entry; return 0; if conflict: return `STATUS_FILE_LOCK_CONFLICT`
-- [ ] `vfs_unlock_file(handle, offset, length)`: find lock entry matching handle + offset + length; remove; return 0 or `STATUS_NOT_LOCKED`
-- [ ] `vfs_write()` does NOT check byte-range locks (Windows does not enforce locks in-kernel on write, only via the Win32 API layer -- document this caveat)
-- [ ] Win32 `LockFile(hFile, offset_low, offset_high, len_low, len_high)` → `vfs_lock_file(handle, offset, length, exclusive=TRUE)`; `UnlockFile` → `vfs_unlock_file()`
+- [x] `vfs_lock_t` with offset, length, owner_id, exclusive, active -- 16-slot array per `vfs_node`
+- [x] `vfs_lock_file(node, owner_id, offset, length, exclusive)`: overlap test, shared-compatible / exclusive-conflicts, returns 0 or `STATUS_FILE_LOCK_CONFLICT`
+- [x] `vfs_unlock_file(node, owner_id, offset, length)`: exact match on owner+offset+length; returns 0 or -1
+- [x] `vfs_write()` does NOT check byte-range locks (documented -- Windows enforces at Win32 API layer, not in-kernel)
+- [x] Win32 `LockFile` -> `vfs_lock_file(exclusive=1)`; `UnlockFile` -> `vfs_unlock_file()`
 - [ ] Commit: `"fs: byte-range locks -- vfs_lock_file/unlock_file, overlap conflict, STATUS_FILE_LOCK_CONFLICT"`
 
 ## 11. VFS Feature-Spoofing Stubs
@@ -321,7 +321,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ✅ §7 -- walk_path folds      |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
 | 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
-| 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ⬜ §10 -- vfs_lock_file       |
+| 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ✅ §10 -- vfs_lock_file       |
 | 💎 | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ⬜ §11 -- stub returns        |
 | 💎 | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ⬜ §12 -- collision loop      |
 | 💎 | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ⬜ §13 -- write + truncate    |

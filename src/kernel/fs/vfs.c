@@ -214,6 +214,68 @@ int vfs_unmount(char drive_letter)
     return 0;
 }
 
+/* --- Byte-range locks (§10) --- */
+
+int vfs_lock_file(struct vfs_node *node, uint32_t owner_id,
+                  uint64_t offset, uint64_t length, int exclusive)
+{
+    uint32_t i;
+    uint64_t new_end = offset + length;
+
+    if (!node || length == 0)
+        return -1;
+
+    /* Check for conflicts */
+    for (i = 0; i < VFS_MAX_LOCKS; i++) {
+        vfs_lock_t *l = &node->locks[i];
+        uint64_t ex_end;
+        if (!l->active)
+            continue;
+        ex_end = l->offset + l->length;
+        /* Overlap test */
+        if (!(new_end <= l->offset || offset >= ex_end)) {
+            /* Overlapping -- check compatibility */
+            if (exclusive || l->exclusive)
+                return STATUS_FILE_LOCK_CONFLICT;
+            /* Both shared -- compatible */
+        }
+    }
+
+    /* Find a free slot */
+    for (i = 0; i < VFS_MAX_LOCKS; i++) {
+        if (!node->locks[i].active) {
+            node->locks[i].offset    = offset;
+            node->locks[i].length    = length;
+            node->locks[i].owner_id  = owner_id;
+            node->locks[i].exclusive = (uint8_t)exclusive;
+            node->locks[i].active    = 1;
+            return 0;
+        }
+    }
+
+    return -1;  /* no free lock slots */
+}
+
+int vfs_unlock_file(struct vfs_node *node, uint32_t owner_id,
+                    uint64_t offset, uint64_t length)
+{
+    uint32_t i;
+
+    if (!node)
+        return -1;
+
+    for (i = 0; i < VFS_MAX_LOCKS; i++) {
+        vfs_lock_t *l = &node->locks[i];
+        if (l->active && l->owner_id == owner_id &&
+            l->offset == offset && l->length == length) {
+            l->active = 0;
+            return 0;
+        }
+    }
+
+    return -1;  /* STATUS_RANGE_NOT_LOCKED */
+}
+
 /* --- Share-mode enforcement --- */
 
 int vfs_check_sharing(struct vfs_node *node, uint32_t access, uint32_t share)
