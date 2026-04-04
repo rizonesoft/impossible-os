@@ -39,7 +39,7 @@
 |----|:-----:|-------------------------------------------------------|-------------------|:------:|
 | 💎 |   1   | Disk tooling -- add BlackBox partition to GPT layout  | --                |  [x]   |
 | 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [x]   |
-| 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [ ]   |
+| 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [x]   |
 | 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [ ]   |
 | 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [ ]   |
 | 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [ ]   |
@@ -91,11 +91,11 @@ Update `scripts/build.sh` and Makefile to format the BlackBox partition as FAT32
 
 Update `partition.c` to recognize the "BlackBox" GPT partition name and mount it as `X:\`.
 
-- [ ] In `partition_mount_filesystems()`: check `pi->gpt_name` for `"BlackBox"` (case-insensitive)
-- [ ] If found and `fs_type == PART_FS_FAT32`: mount as drive letter `'X'` instead of the next sequential letter
-- [ ] Skip BlackBox from the sequential `D:`, `E:`, ... letter assignment
-- [ ] Log: `klog(LOG_INFO, "blk", "BlackBox partition mounted as X:\\")`
-- [ ] Graceful fallback: if no "BlackBox" partition found, logs continue to `C:\Impossible\System\Logs\` (existing behavior)
+- [x] `part_streqi()` case-insensitive compare in `partition.c`; checks `pi->gpt_name` for `"BlackBox"`
+- [x] BlackBox FAT32 partition mounts as `X:\` instead of next sequential letter
+- [x] Sequential letter assignment skips `X` (reserved for BlackBox)
+- [x] Logs: `"BlackBox partition mounted as X:\"`
+- [x] Graceful fallback: if no "BlackBox" partition found, sequential assignment continues as before
 - [ ] Commit: `"kernel: mount BlackBox partition as X:\\ by GPT name"`
 
 **Test checkpoint:** Serial log shows `"BlackBox partition mounted as X:\"`. `X:\` is accessible via VFS. Other FAT32 partitions still get `D:`, `E:`, etc. On disks without BlackBox, logs go to `C:\` as before. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -294,7 +294,7 @@ Update cross-references across affected TODOs.
 | ⭐ | Boot timeline JSON         | ❌ Not built-in            | ❌ Not built-in            | ⬜ S6 -- X:\Boot\YYMMDDN.json       |
 | 💎 | Auto-mount on host         | ✅ Windows assigns letter  | ✅ udisks2 auto-mount      | ⬜ S1 -- Basic Data GUID            |
 | 💎 | Volume label               | ✅ NTFS volume label       | ✅ e2label / fatlabel      | ⬜ S11 -- "BLACKBOX" FAT32 label    |
-| 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ⬜ S3 -- GPT name "BlackBox"        |
+| 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ✅ §3 -- GPT name match X:\         |
 | 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ⬜ S4 -- organized Logs/Boot/Crash/ |
 | 💎 | Log space management       | ✅ CBS.log 20 MB cap       | ✅ logrotate + journald    | ⬜ S10 -- aging + quota + cleanup   |
 | 💎 | Dirty-bit / fsck on mount  | ✅ chkdsk on dirty FAT32   | ✅ fsck.fat on mount       | ⬜ S12 -- dirty-bit + optional fsck |

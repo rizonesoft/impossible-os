@@ -45,6 +45,19 @@ static int part_strlen(const char *s)
     return n;
 }
 
+/* Case-insensitive string compare */
+static int part_streqi(const char *a, const char *b)
+{
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return 0;
+        a++; b++;
+    }
+    return *a == *b;
+}
+
 /* Simple itoa for small positive numbers */
 static void part_itoa(int val, char *buf)
 {
@@ -426,11 +439,20 @@ void partition_mount_filesystems(void)
                 klog(LOG_WARN, "blk", "FAT32: failed to init %s", name);
                 continue;
             }
-            if (next_fat32_letter <= 'Z') {
+            /* BlackBox partition mounts as X:\ by GPT name */
+            if (part_streqi(pi->gpt_name, "BlackBox")) {
+                vfs_mount('X', fat32_get_driver(),
+                          fat32_get_root(fat_vol));
+                klog(LOG_INFO, "blk",
+                     "BlackBox partition mounted as X:\\");
+            } else if (next_fat32_letter <= 'Z') {
                 vfs_mount(next_fat32_letter,
                           fat32_get_driver(),
                           fat32_get_root(fat_vol));
                 next_fat32_letter++;
+                /* Skip X if we reach it (reserved for BlackBox) */
+                if (next_fat32_letter == 'X')
+                    next_fat32_letter = 'Y';
             }
         } else if (pi->fs_type == PART_FS_NTFS) {
             struct ntfs_volume *ntfs_vol = ntfs_init(sub_dev);
