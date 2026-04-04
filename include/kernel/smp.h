@@ -115,6 +115,9 @@ struct per_cpu_data {
     uint8_t           _async_pad;
     const char       *async_name;       /* step name for logging */
     void             *async_fn;         /* boot_result_t (*fn)(void) */
+
+    /* TSC offset for per-CPU correction (TODO-07 §3) */
+    int64_t           tsc_offset;       /* added to RDTSC on this core to match BSP */
 };
 
 /* Compile-time enforcement of assembly-referenced struct offsets */

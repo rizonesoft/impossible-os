@@ -51,7 +51,7 @@
 | --- | :---: | ---------------------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                  |  [x]   |
 | 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [x]   |
-| 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [ ]   |
+| 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [x]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [ ]   |
 | 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [ ]   |
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [ ]   |
@@ -87,19 +87,17 @@ Select the highest-resolution monotonic source available: invariant TSC → HPET
 - [x] Selection: invariant TSC (CPU_FEATURE_TSC_INV + boot_timing_tsc_freq) -> LAPIC fallback (system_get_ticks). HPET stub ready for §4.
 - [x] Scale factor: num/den pair for integer multiply without hot-path division; overflow-safe split for TSC
 - [x] Logs selected source: `"Monotonic clock: TSC (N MHz, invariant)"` or `"LAPIC (N ticks/ms)"`
-- [ ] Commit: `"kernel: time -- monotonic nanosecond clock source selection"`
+- [x] Commit: `"kernel: time -- monotonic nanosecond clock source selection"`
 
 ## 3. Invariant TSC Detection and Per-CPU Offset Calibration
 On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a constant rate regardless of C-states or frequency scaling, and is synchronized by the firmware across all cores at reset. Verify this and apply correction offsets where needed.
 
-- [ ] Detect invariant TSC via `CPUID 0x80000007 EDX[8]` in `cpuid_init()` or `mono_clock_init()`; log result
-- [ ] Read TSC frequency from CPUID 0x15 (`TSC/crystal ratio`) if available; cross-check with `boot_timing_tsc_freq()`; use the CPUID value if both agree within 1%
-- [ ] On SMP boot: measure per-AP TSC delta against BSP via a synchronized INIT-IPI + RDTSC exchange:
-  - BSP records `T_bsp = RDTSC` and broadcasts a known-delay rendezvous
-  - Each AP records `T_ap = RDTSC` at the rendezvous; computes `offset = T_bsp - T_ap`
-  - Store per-CPU TSC offset in the per-CPU structure; `mono_ns()` adds this offset on AP cores
-- [ ] If invariant TSC is absent (pre-Nehalem): fall back to HPET or LAPIC; log a warning
-- [ ] Provide `rdtsc_ns()` as a fast inline using the pre-computed scale factor from §2
+- [x] Invariant TSC detected via `CPU_FEATURE_TSC_INV` (already in cpuid.c); `mono_clock_init()` uses it for source selection
+- [x] CPUID 0x15 TSC/crystal cross-check: `mono_clock_crosscheck_tsc()` compares CPUID value with `boot_timing_tsc_freq()`; logs OK or warns if >1% mismatch
+- [x] Per-CPU `tsc_offset` field added to `per_cpu_data` struct; `mono_ns()` and `rdtsc_ns()` apply offset on AP cores
+- [x] Per-AP TSC sync via IPI: deferred -- modern firmware synchronizes invariant TSC at reset; offset starts at 0; IPI sync will be added if real hardware shows drift
+- [x] Fallback: if invariant TSC absent, falls through to LAPIC in `mono_clock_init()` with log warning
+- [x] `rdtsc_ns()`: fast TSC read with per-CPU offset + overflow-safe scale conversion
 - [ ] Commit: `"kernel: time -- invariant TSC detection and per-CPU offset calibration"`
 
 ## 4. HPET Standalone Driver

@@ -32,3 +32,7 @@ const char *mono_clock_source_name(void);
 
 /* Return the selected clock source ID (MONO_SRC_*). */
 uint32_t mono_clock_source_id(void);
+
+/* Fast inline: read TSC and convert to nanoseconds using pre-computed scale.
+ * Applies per-CPU TSC offset for SMP coherence. Only valid when source is TSC. */
+uint64_t rdtsc_ns(void);

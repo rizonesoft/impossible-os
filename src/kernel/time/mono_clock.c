@@ -9,6 +9,7 @@
 #include "kernel/cpuid.h"
 #include "kernel/boot_timing.h"
 #include "kernel/drivers/lapic.h"
+#include "kernel/smp.h"
 #include "kernel/klog.h"
 
 /* ---- State --------------------------------------------------------------- */
@@ -74,6 +75,76 @@ void mono_clock_init(void)
     klog(LOG_WARN, "time", "Monotonic clock: no source available");
 }
 
+/* ---- CPUID 0x15 TSC frequency cross-check -------------------------------- */
+
+static uint64_t cpuid15_tsc_freq(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile ("cpuid"
+                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                      : "a"(0x15), "c"(0));
+    /* eax = denominator, ebx = numerator, ecx = crystal clock Hz (0 = unknown) */
+    if (eax == 0 || ebx == 0)
+        return 0;
+    if (ecx == 0)
+        return 0;  /* crystal freq not reported -- can't compute */
+    return (uint64_t)ecx * ebx / eax;
+}
+
+void mono_clock_crosscheck_tsc(void)
+{
+    uint64_t cpuid_freq, boot_freq;
+
+    if (s_source != MONO_SRC_TSC)
+        return;
+
+    cpuid_freq = cpuid15_tsc_freq();
+    if (cpuid_freq == 0)
+        return;
+
+    boot_freq = s_freq_hz;
+
+    /* Check within 1% */
+    uint64_t delta = (cpuid_freq > boot_freq)
+                   ? cpuid_freq - boot_freq : boot_freq - cpuid_freq;
+    uint64_t threshold = boot_freq / 100;
+
+    if (delta <= threshold) {
+        klog(LOG_DEBUG, "time",
+             "TSC freq cross-check: CPUID 0x15 = %u MHz, boot = %u MHz -- OK",
+             (uint64_t)(cpuid_freq / 1000000),
+             (uint64_t)(boot_freq / 1000000));
+    } else {
+        klog(LOG_WARN, "time",
+             "TSC freq mismatch: CPUID 0x15 = %u MHz, boot = %u MHz (>1%%)",
+             (uint64_t)(cpuid_freq / 1000000),
+             (uint64_t)(boot_freq / 1000000));
+    }
+}
+
+/* ---- Fast TSC read with scale -------------------------------------------- */
+
+uint64_t rdtsc_ns(void)
+{
+    uint64_t ticks;
+    uint64_t whole, rem;
+
+    if (s_source != MONO_SRC_TSC || s_ns_per_tick_den == 0)
+        return 0;
+
+    ticks = rdtsc_read();
+    {
+        struct per_cpu_data *cpu = smp_this_cpu();
+        if (cpu)
+            ticks = (uint64_t)((int64_t)ticks + cpu->tsc_offset);
+    }
+
+    whole = ticks / s_ns_per_tick_den;
+    rem   = ticks % s_ns_per_tick_den;
+    return whole * s_ns_per_tick_num
+         + (rem * s_ns_per_tick_num) / s_ns_per_tick_den;
+}
+
 /* ---- Reads --------------------------------------------------------------- */
 
 uint64_t mono_ns(void)
@@ -83,6 +154,12 @@ uint64_t mono_ns(void)
     switch (s_source) {
     case MONO_SRC_TSC:
         ticks = rdtsc_read();
+        /* Apply per-CPU TSC offset for SMP coherence */
+        {
+            struct per_cpu_data *cpu = smp_this_cpu();
+            if (cpu)
+                ticks = (uint64_t)((int64_t)ticks + cpu->tsc_offset);
+        }
         /* Use 128-bit multiply to avoid overflow:
          * result = (ticks * num) / den
          * For ~4 GHz TSC and 64-bit ticks, ticks * 1e9 overflows at ~18 seconds.
