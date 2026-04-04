@@ -184,3 +184,4 @@ void cpu_verify_hardening(void)
     }
     POST16(0xD904);
 }
+/* test hook */
