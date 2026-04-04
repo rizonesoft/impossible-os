@@ -15,10 +15,10 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **C sources** (`.c`) | 216 | 102568 |
-| **Headers** (`.h`) | 162 | 33730 |
+| **C sources** (`.c`) | 216 | 102618 |
+| **Headers** (`.h`) | 162 | 33733 |
 | **Assembly** (`.asm`) | 8 | 939 |
-| **Subtotal** | **386** | **137237** |
+| **Subtotal** | **386** | **137290** |
 
 ## SDK Tools
 
@@ -43,7 +43,7 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **All project code** | **461** | **145087** |
+| **All project code** | **461** | **145140** |
 
 > Vendored code excluded: ~13785 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 
@@ -58,11 +58,11 @@
 
 | | Linux | Windows | Impossible OS |
 |---|---:|---:|---:|
-| **Lines of code** | ~28,000,000 | ~50,000,000 | 145,087 |
+| **Lines of code** | ~28,000,000 | ~50,000,000 | 145,140 |
 | **Developers** | ~1,000 active | ~5,000 peak | 1 |
 | **Time span** | 33 years | 40 years | 29 days |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 145,087
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 145,140
 > lines of kernel code would take **182 developers** working for
 > **29 days**. One developer did it.
 >
@@ -70,4 +70,4 @@
 
 ---
 
-*Last updated: 2026-04-04 21:14 · commit `0e919ab7`*
+*Last updated: 2026-04-04 21:17 · commit `7382161b`*

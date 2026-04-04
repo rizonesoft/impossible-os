@@ -39,7 +39,7 @@
 | --- | :---: | ------------------------------------------------------------------------------------- | -------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 FAT32 BPB strict validation -- `jmpBoot`, `BytsPerSec`, `SecPerClus`, dirty marker | `fat32_init()` in fat32_core.c                           |  [x]   |
 | 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [x]   |
-| 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [ ]   |
+| 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [x]   |
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [ ]   |
 | 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4 (create path being reworked)                          |  [ ]   |
 | 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [ ]   |
@@ -86,7 +86,7 @@ Validate FSInfo signatures on mount. Fall back to a full FAT scan when `FreeCoun
 - [x] `fat32_alloc_cluster()`: already decrements `fsinfo_free_count`, updates `NxtFree`, sets dirty (verified)
 - [x] `fat32_free_chain()`: already increments `fsinfo_free_count`, sets dirty (verified)
 - [x] `fat32_fsinfo_flush()`: verified -- writes primary + backup at sector+6; runs from `fat32_flush_disk()` on unmount
-- [ ] Commit: `"fs/fat32: FSInfo -- 0xFFFFFFFF full-scan fallback via fat32_count_free_clusters()"`
+- [x] Commit: `"fs/fat32: FSInfo -- 0xFFFFFFFF full-scan fallback via fat32_count_free_clusters()"`
 
 ## 3. Dual-FAT Compare and Repair
 
@@ -97,9 +97,9 @@ On mount, compare FAT1 and FAT2 sector by sector. Log any mismatch. Use FAT1 as 
 > [!NOTE]
 > `fat32_set_fat_entry()` already loops `fi < vol->bpb.num_fats` -- both FATs are written on alloc/free. The missing piece is a *mount-time compare*: read corresponding sectors of FAT1 and FAT2 and compare byte-for-byte. FAT size in sectors: `vol->bpb.fat_size_sectors`. If `NumFATs < 2`, skip the compare. Repair: copy FAT1 sectors to FAT2 sectors wherever they differ.
 
-- [ ] `fat32_compare_repair_fats(struct fat32_volume *vol)`: for each sector `s` in `0..fat_size_sectors-1`: read `FAT1[s]` and `FAT2[s]`; if different: log `[FAT32] FAT mismatch at sector %u -- repairing FAT2`; write FAT1 sector to FAT2 offset; increment mismatch counter
-- [ ] Call at end of `fat32_init()` only when `vol->bpb.num_fats == 2`; log total mismatch count at end
-- [ ] Non-fatal: mismatch repairs do not abort mount; log summary `[FAT32] FAT compare: %u mismatched sectors repaired`
+- [x] `fat32_compare_repair_fats(vol)`: reads FAT1 and FAT2 sector-by-sector via `blkdev_read()`; on mismatch: copies FAT1 sector to FAT2; logs each mismatch + summary count
+- [x] Called from `fat32_init()` after dirty marker read; skips when `num_fats < 2`
+- [x] Non-fatal: repairs do not abort mount; summary: `"FAT compare: %u mismatched sectors repaired"`
 - [ ] Commit: `"fs/fat32: dual-FAT compare-on-mount -- sector-by-sector compare, FAT2 repair"`
 
 ## 4. LFN Write
@@ -305,7 +305,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 |----|------------------------|---------------------------|----------------------------|-------------------------------|
 | 💎 | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ✅ §1 -- validate_bpb + dirty |
 | 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
-| 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ⚠️ §3 -- write ok, no compare |
+| 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ⚠️ §4 -- read only            |
 | 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- set_times partial    |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ⬜ §6 -- fat32_fsck           |

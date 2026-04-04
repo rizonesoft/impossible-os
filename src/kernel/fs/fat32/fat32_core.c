@@ -188,6 +188,53 @@ void fat32_set_clean_marker(struct fat32_volume *vol)
     }
 }
 
+/* ---- Dual-FAT compare and repair ---- */
+
+void fat32_compare_repair_fats(struct fat32_volume *vol)
+{
+    uint32_t fat_size = vol->bpb.fat_size_sectors;
+    uint32_t fat1_base = vol->bpb.first_fat_sector;
+    uint32_t fat2_base = fat1_base + fat_size;
+    uint32_t mismatch_count = 0;
+    uint32_t s;
+    uint8_t buf1[512];
+    uint8_t buf2[512];
+
+    if (vol->bpb.num_fats < 2)
+        return;
+
+    for (s = 0; s < fat_size; s++) {
+        uint32_t i;
+        int differ = 0;
+
+        if (blkdev_read(vol->dev, fat1_base + s, 1, buf1) != 0)
+            continue;
+        if (blkdev_read(vol->dev, fat2_base + s, 1, buf2) != 0)
+            continue;
+
+        for (i = 0; i < 512; i++) {
+            if (buf1[i] != buf2[i]) {
+                differ = 1;
+                break;
+            }
+        }
+
+        if (differ) {
+            mismatch_count++;
+            klog(LOG_WARN, "fat32",
+                 "FAT mismatch at sector %u -- repairing FAT2",
+                 (uint64_t)s);
+            blkdev_write(vol->dev, fat2_base + s, 1, buf1);
+        }
+    }
+
+    if (mismatch_count > 0) {
+        klog(LOG_WARN, "fat32",
+             "FAT compare: %u mismatched sectors repaired",
+             (uint64_t)mismatch_count);
+    }
+}
+
 /* ---- Sector cache (LRU with dirty tracking) ---- */
 
 static scache_entry_t *scache_lookup(struct fat32_volume *vol, uint32_t sector)

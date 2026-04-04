@@ -153,6 +153,9 @@ uint32_t cluster_to_sector(struct fat32_volume *vol, uint32_t cluster);
 /* BPB validation */
 int      fat32_validate_bpb(struct fat32_volume *vol);
 
+/* Dual-FAT compare and repair */
+void     fat32_compare_repair_fats(struct fat32_volume *vol);
+
 /* Dirty volume marker -- reads/writes FAT[1] bit 27 */
 void     fat32_read_dirty_marker(struct fat32_volume *vol);
 void     fat32_set_clean_marker(struct fat32_volume *vol);

@@ -764,6 +764,9 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
     /* Check dirty volume marker via FAT[1] bit 27 */
     fat32_read_dirty_marker(vol);
 
+    /* Compare FAT1 vs FAT2; repair FAT2 if they differ */
+    fat32_compare_repair_fats(vol);
+
     /* Set up root node */
     fat32_strcpy(vol->root_file.node.name, "A:\\", VFS_MAX_NAME);
     vol->root_file.node.type = VFS_DIRECTORY | VFS_MOUNTPOINT;
