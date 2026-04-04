@@ -228,7 +228,7 @@ _Static_assert(FXSAVE_SIZE == 512, "FXSAVE area is 512 bytes (x86-64 SDM)");
 
 /* --- Public API --- */
 
-void task_init(void)
+boot_result_t task_init(void)
 {
     uint32_t i, j;
 
@@ -302,6 +302,8 @@ void task_init(void)
      * Must be unconditional -- schedule() sets CR0.TS on all platforms,
      * including TCG where XSAVE is absent but SSE2 SIMD is used. */
     idt_register_handler(7, nm_handler);
+
+    return BOOT_OK;
 }
 
 int task_create(task_entry_t entry, const char *name)

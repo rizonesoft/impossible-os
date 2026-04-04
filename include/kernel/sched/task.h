@@ -17,6 +17,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/boot_init.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ob/handle_table.h"
 
@@ -126,8 +127,9 @@ typedef void (*task_entry_t)(void);
 
 /* --- API --- */
 
-/* Initialize the scheduler (makes the current execution context PID 0) */
-void task_init(void);
+/* Initialize the scheduler (makes the current execution context PID 0).
+ * Returns BOOT_OK on success. */
+boot_result_t task_init(void);
 
 /* Create a new kernel thread. Returns PID or -1 on failure. */
 int task_create(task_entry_t entry, const char *name);
