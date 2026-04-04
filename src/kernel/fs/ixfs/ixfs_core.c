@@ -16,8 +16,11 @@ void ixfs_strcpy(char *dst, const char *src, uint32_t max)
 
 int ixfs_strcmp(const char *a, const char *b)
 {
+    /* Case-insensitive compare (matches VFS uppercase fold in walk_path) */
     while (*a && *b) {
-        if (*a != *b) return 0;
+        char ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a;
+        char cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
+        if (ca != cb) return 0;
         a++; b++;
     }
     return *a == *b;

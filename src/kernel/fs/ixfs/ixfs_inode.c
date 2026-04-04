@@ -66,7 +66,10 @@ uint32_t ixfs_fnv1a(const char *name)
 {
     uint32_t hash = 0x811C9DC5;  /* FNV offset basis */
     while (*name) {
-        hash ^= (uint8_t)*name++;
+        /* Lowercase fold for case-insensitive hash (matches VFS walk_path fold) */
+        uint8_t c = (uint8_t)*name++;
+        if (c >= 'A' && c <= 'Z') c += 32;
+        hash ^= c;
         hash *= 0x01000193;      /* FNV prime */
     }
     return hash;
