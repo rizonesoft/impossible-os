@@ -23,6 +23,7 @@
 #include "registry.h"
 #include "kernel/drivers/ahci.h"
 #include "main/main_internal.h"
+#include "kernel/cpuid_platform.h"
 
 void compositor_run(void)
 {
@@ -64,10 +65,13 @@ void compositor_run(void)
 
         /* Batch mouse events: after reading, briefly yield to let
          * any additional IRQ deltas arrive, then re-read.
-         * This turns 5×1px moves into 1×5px = 1 composite. */
+         * This turns 5x1px moves into 1x5px = 1 composite.
+         * TCG is 10-50x slower -- batch more aggressively to avoid
+         * wasting cycles on per-pixel composites. */
         {
             int batch;
-            for (batch = 0; batch < 4; batch++) {
+            int max_batch = platform_is_tcg() ? 12 : 4;
+            for (batch = 0; batch < max_batch; batch++) {
                 int32_t nx, ny;
                 uint8_t nb;
                 /* Allow IRQs to fire */

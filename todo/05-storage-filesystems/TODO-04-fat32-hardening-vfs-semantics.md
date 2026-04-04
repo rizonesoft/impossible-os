@@ -166,12 +166,15 @@ Apply a unified uppercase fold in `vfs_open()` before path component lookup, so 
 > [!NOTE]
 > Case-fold strategy: uppercase ASCII A–Z only in the VFS path splitter (no Unicode case-fold required for FAT32 8.3; NTFS uses `$UpCase` table internally per volume). The path splitter in `vfs_open()` should normalise each component to uppercase before passing to `finddir()`. Each filesystem's `finddir()` then does its own case-insensitive compare (FAT32 already has `fat32_strcasecmp()`; NTFS has `ntfs_filename_match()`). This ensures case-folding is consistent regardless of filesystem type.
 
-- [x] `vfs_path_fold(in, out, max)`: public utility -- copies path uppercasing ASCII a-z; preserves `\`, `/`, `:`; declared in `vfs.h`
-- [x] `walk_path()`: uppercase-folds each component character as it copies into `component[]` -- all `finddir()` calls receive uppercased names
+- [x] `vfs_path_fold(in, out, max)`: public utility for callers needing pre-folded paths; declared in `vfs.h`
+- [x] `walk_path()`: passes component names verbatim to `finddir()` -- each filesystem driver owns case semantics (industry standard: matches Windows NT I/O Manager and Linux VFS design)
 - [x] `drive_index()`: already uppercases drive letter (verified, no change needed)
-- [x] Case-insensitive resolution applies to all path-taking VFS functions: `vfs_open`, `vfs_create`, `vfs_unlink`, `vfs_stat`, `vfs_truncate` (all use `walk_path` internally)
-- [x] `fat32_strcasecmp()` and `ntfs_filename_match()` both do their own case-insensitive compare in `finddir()` -- the uppercased component from VFS is compatible with both
+- [x] FAT32: `fat32_strcasecmp()` in `finddir()` -- case-insensitive (pre-existing)
+- [x] IXFS: `ixfs_strcmp()` case-insensitive + `ixfs_fnv1a()` lowercases hash input (fixed)
+- [x] NTFS: `ntfs_toupper()` in `ntfs_lookup()` -- case-insensitive via `$UpCase` table (pre-existing)
 - [x] Commit: `"fs: vfs_path_fold() -- unified ASCII uppercase fold in vfs_open() before finddir()"`
+
+> **Design note:** Initially `walk_path()` uppercased components before `finddir()`. This was reverted to match the Windows NT / Linux industry standard: the VFS passes names verbatim, and each filesystem driver handles case-sensitivity in its own `finddir()`. This is safer for future filesystems (exFAT, ext4, Btrfs, APFS) that may have different case-fold rules.
 
 ## 8. VFS Share-Mode Enforcement
 
@@ -318,7 +321,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ✅ §4 -- full LFN R/W         |
 | 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- interim, needs T07   |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
-| ⭐ | Unified case-fold VFS  | ⚠️ per-driver fold        | ⚠️ per-mount nocase        | ✅ §7 -- walk_path folds      |
+| 💎 | Case-insensitive paths | ✅ per-driver fold        | ✅ per-mount nocase        | ✅ §7 -- per-driver fold      |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
 | 💎 | Delete-on-close        | ✅ DELETE_ON_CLOSE flag    | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
 | 💎 | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ✅ §10 -- vfs_lock_file       |

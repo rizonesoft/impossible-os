@@ -138,12 +138,8 @@ static struct vfs_node *walk_path(struct vfs_node *root, const char *path)
             if (*p == '\0')
                 break;
         } else {
-            if (ci < VFS_MAX_NAME - 1) {
-                /* ASCII uppercase fold for case-insensitive path resolution */
-                char c = *p;
-                if (c >= 'a' && c <= 'z') c -= 32;
-                component[ci++] = c;
-            }
+            if (ci < VFS_MAX_NAME - 1)
+                component[ci++] = *p;
         }
         p++;
     }
