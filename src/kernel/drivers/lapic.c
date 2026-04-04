@@ -969,3 +969,20 @@ void lapic_timer_init(uint32_t hz)
          cal_ticks_per_ms > 0 ? "calibrated" : "fallback",
          (uint64_t)hz);
 }
+
+void lapic_timer_set_hz(uint32_t new_hz)
+{
+    uint32_t icr;
+
+    if (!lapic_base || cal_ticks_per_ms == 0 || new_hz == 0)
+        return;
+
+    icr = cal_ticks_per_ms * 1000 / new_hz;
+    if (icr == 0) icr = 1;
+
+    lapic_write(LAPIC_REG_TIMER_ICR, icr);
+    lapic_timer_hz = new_hz;
+
+    klog(LOG_DEBUG, "lapic", "LAPIC timer ICR updated: %u Hz (ICR=%u)",
+         (uint64_t)new_hz, (uint64_t)icr);
+}

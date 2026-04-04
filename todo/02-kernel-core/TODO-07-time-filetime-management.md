@@ -149,7 +149,7 @@ Windows allows processes to request higher timer interrupt frequency (down to 0.
 - [x] 16-slot request table with per-entry active flag; `arbitrate()` scans for shortest
 - [x] `KeQueryTimerResolution(max, min, current)` returns all three values
 - [x] Per-process tracking: moved to `TODO-09-process-model-extensions.md §14` (Process Exit Cleanup) -- releases timer resolution requests on process exit
-- [ ] Timer ICR update: deferred -- changing the actual LAPIC timer frequency requires §6 DPC integration
+- [x] Timer ICR update: `lapic_timer_set_hz()` reprograms LAPIC ICR when resolution changes; called from `arbitrate()` in timer_resolution.c
 - [x] Commit: `"kernel: time -- timer resolution management (NtSetTimerResolution)"`
 
 ## 9. `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`

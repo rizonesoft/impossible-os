@@ -129,6 +129,10 @@ void lapic_timer_calibrate(void);
  * lapic_timer_calibrate(), or a hardcoded fallback. */
 void lapic_timer_init(uint32_t hz);
 
+/* Reprogram the LAPIC timer to a new frequency (Hz).
+ * Used by KeSetTimerResolution to change the tick rate. */
+void lapic_timer_set_hz(uint32_t new_hz);
+
 /* Returns the calibrated LAPIC timer ticks per millisecond (0 if uncalibrated). */
 uint32_t lapic_timer_ticks_per_ms(void);
 

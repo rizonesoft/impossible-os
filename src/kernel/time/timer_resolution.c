@@ -9,6 +9,7 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
 
 /* ---- State --------------------------------------------------------------- */
@@ -41,8 +42,18 @@ static void arbitrate(void)
 
     if (best != s_current_resolution) {
         s_current_resolution = best;
-        klog(LOG_DEBUG, "time", "Timer resolution: %u us",
-             (uint64_t)(best / 10));
+
+        /* Reprogram LAPIC timer to match new resolution.
+         * Resolution is in 100 ns units; Hz = 10000000 / resolution */
+        {
+            uint32_t new_hz = (uint32_t)(10000000ULL / best);
+            if (new_hz > 0)
+                lapic_timer_set_hz(new_hz);
+        }
+
+        klog(LOG_INFO, "time", "Timer resolution: %u us (%u Hz)",
+             (uint64_t)(best / 10),
+             (uint64_t)(10000000ULL / best));
     }
 }
 
