@@ -130,7 +130,7 @@ $QemuArgs += @(
     '-device', 'ich9-ahci,id=ahci0',
     '-device', 'ide-hd,drive=disk0,bus=ahci0.0',
     '-m', '2G',
-    # serial wired below based on -SerialLog flag
+    # -serial wired below based on -SerialLog flag
     '-vga', 'none',
     '-device', "$VgaDevice,xres=$Xres,yres=$Yres",
     '-device', 'rtl8139,netdev=net0',
@@ -168,13 +168,14 @@ if ($ExtraArgs) {
 
 $SerialLogPath = Join-Path $PROJECT "scripts\debug\serial.log"
 
-# Wire serial: use QEMU chardev logfile to write serial to both terminal and
-# file natively. Use a local temp path (QEMU can't open UNC paths) and copy back.
+# Wire serial output. When -SerialLog is set, serial goes to a temp file
+# (QEMU can't write UNC paths) and is copied to scripts/debug/serial.log
+# on exit. Terminal shows no serial in this mode -- check the log file.
+# Without -SerialLog, serial goes to stdio as before.
 $TempSerialLog = Join-Path $env:TEMP "impossible-os-serial.log"
 if ($SerialLog) {
-    Write-Host "  Serial: -> $SerialLogPath" -ForegroundColor DarkGray
-    $QemuArgs += '-chardev', "stdio,id=ser0,logfile=$TempSerialLog"
-    $QemuArgs += '-serial', 'chardev:ser0'
+    Write-Host "  Serial: -> $SerialLogPath (file mode, check after exit)" -ForegroundColor DarkGray
+    $QemuArgs += '-serial', "file:$TempSerialLog"
 } else {
     $QemuArgs += '-serial', 'stdio'
 }
@@ -182,9 +183,10 @@ if ($SerialLog) {
 try {
     & $QEMU @QemuArgs
 } finally {
-    # Copy serial log from temp to project (UNC-safe)
+    # Copy serial log from temp to project
     if ($SerialLog -and (Test-Path $TempSerialLog)) {
         Copy-Item -Path $TempSerialLog -Destination $SerialLogPath -Force -ErrorAction SilentlyContinue
+        Write-Host "  Serial log saved: $SerialLogPath" -ForegroundColor Green
     }
     # Always restore boot.conf to defaults
     if ($PatchArgs.Count -gt 0) {
