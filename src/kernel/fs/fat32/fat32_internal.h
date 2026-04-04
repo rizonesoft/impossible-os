@@ -116,6 +116,8 @@ struct fat32_volume {
     uint32_t            fsinfo_next_free;
     int                 fsinfo_valid;
     int                 fsinfo_dirty;
+    /* Volume health */
+    uint8_t             volume_dirty;   /* 1 if FAT[1] dirty bit was clear on mount */
 };
 
 /* ---- fat32_core.c: String helpers, sector I/O, cache, FAT ops ---- */
@@ -147,6 +149,13 @@ int      fat32_set_fat_entry(struct fat32_volume *vol, uint32_t cluster,
                               uint32_t value);
 uint32_t fat32_next_cluster(struct fat32_volume *vol, uint32_t cluster);
 uint32_t cluster_to_sector(struct fat32_volume *vol, uint32_t cluster);
+
+/* BPB validation */
+int      fat32_validate_bpb(struct fat32_volume *vol);
+
+/* Dirty volume marker -- reads/writes FAT[1] bit 27 */
+void     fat32_read_dirty_marker(struct fat32_volume *vol);
+void     fat32_set_clean_marker(struct fat32_volume *vol);
 
 /* FSInfo flush */
 void     fat32_fsinfo_flush(struct fat32_volume *vol);

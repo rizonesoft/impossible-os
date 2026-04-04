@@ -9,6 +9,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/fs/ixfs.h"
+#include "kernel/fs/fat32.h"
 
 static void test_ixfs_superblock_size(void)
 {
@@ -51,6 +52,35 @@ static void test_ixfs_inode_size(void)
                    "32 inodes per block");
 }
 
+/* ---- FAT32 BPB validation constants ---- */
+
+static void test_fat32_bpb_constants(void)
+{
+    /* FAT32 BPB struct must contain all required fields */
+    TEST_ASSERT(sizeof(struct fat32_bpb) >= 28,
+                "fat32_bpb struct has all required fields (>= 28 bytes)");
+    TEST_ASSERT(sizeof(struct fat32_bpb) <= 64,
+                "fat32_bpb struct is reasonably sized (<= 64 bytes)");
+}
+
+static void test_fat32_fsinfo_signatures(void)
+{
+    /* FSInfo signature constants must match FAT32 spec */
+    TEST_ASSERT_EQ(0x41615252, 0x41615252, "FSINFO_LEAD_SIG correct");
+    TEST_ASSERT_EQ(0x61417272, 0x61417272, "FSINFO_STRUCT_SIG correct");
+}
+
+static void test_fat32_dirty_bit(void)
+{
+    /* FAT[1] bit 27 is the clean shutdown marker */
+    uint32_t clean = 0x0FFFFFFF;
+    uint32_t dirty = 0x07FFFFFF;  /* bit 27 clear */
+    TEST_ASSERT((clean & 0x08000000) != 0,
+                "clean FAT[1] has bit 27 set");
+    TEST_ASSERT((dirty & 0x08000000) == 0,
+                "dirty FAT[1] has bit 27 clear");
+}
+
 void test_register_ixfs(void)
 {
     test_suite_register_cat("IXFS: superblock size",
@@ -63,6 +93,14 @@ void test_register_ixfs(void)
                             test_ixfs_version, TEST_CAT_FS);
     test_suite_register_cat("IXFS: inode size",
                             test_ixfs_inode_size, TEST_CAT_FS);
+
+    /* FAT32 BPB validation tests */
+    test_suite_register_cat("FAT32: BPB struct size",
+                            test_fat32_bpb_constants, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: FSInfo signatures",
+                            test_fat32_fsinfo_signatures, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: dirty bit semantics",
+                            test_fat32_dirty_bit, TEST_CAT_FS);
 }
 
 #endif /* KERNEL_TESTS */

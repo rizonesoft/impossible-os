@@ -757,11 +757,12 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
                                + (vol->bpb.num_fats * vol->bpb.fat_size_sectors)
                                + root_dir_sectors;
 
-    if (vol->bpb.bytes_per_sector != 512) {
-        klog(LOG_ERROR, "fat32", "FAT32: unsupported sector size %u",
-               (uint64_t)vol->bpb.bytes_per_sector);
+    /* Strict BPB validation (Microsoft FAT spec S3) */
+    if (fat32_validate_bpb(vol) != 0)
         return (struct fat32_volume *)0;
-    }
+
+    /* Check dirty volume marker via FAT[1] bit 27 */
+    fat32_read_dirty_marker(vol);
 
     /* Set up root node */
     fat32_strcpy(vol->root_file.node.name, "A:\\", VFS_MAX_NAME);

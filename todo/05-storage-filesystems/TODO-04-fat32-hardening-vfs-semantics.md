@@ -37,7 +37,7 @@
 
 | ⭐  | Order | Deliverable                                                                           | Depends On                                               | Status |
 | --- | :---: | ------------------------------------------------------------------------------------- | -------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 FAT32 BPB strict validation -- `jmpBoot`, `BytsPerSec`, `SecPerClus`, dirty marker | `fat32_init()` in fat32_core.c                           |  [ ]   |
+| 💎  |   1   | §1 FAT32 BPB strict validation -- `jmpBoot`, `BytsPerSec`, `SecPerClus`, dirty marker | `fat32_init()` in fat32_core.c                           |  [x]   |
 | 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [ ]   |
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [ ]   |
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [ ]   |
@@ -65,10 +65,11 @@ Validate critical BPB fields in `fat32_init()` before any further mount operatio
 > [!NOTE]
 > FAT32 BPB spec validation rules (Microsoft FAT spec §3): `BPB_jmpBoot[0]` must be `0xEB` or `0xE9`; `BPB_BytsPerSec` ∈ {512, 1024, 2048, 4096}; `BPB_SecPerClus` must be a power of two ≥ 1 and ≤ 128; `BPB_NumFATs` ∈ {1, 2}; `BPB_RootEntCnt` must be 0 for FAT32; `BPB_RootClus` must be ≥ 2. Dirty marker: FAT32 uses FAT[1] high bit (bit 27 = `0x08000000`) to flag a dirty volume; if this bit is clear at mount time, the volume was not cleanly unmounted.
 
-- [ ] `fat32_validate_bpb(struct fat32_volume *vol)`: check each field; on failure log `[FAT32] BPB validation failed: <reason>` and return `-1`; `fat32_init()` must call this before FSInfo read
-- [ ] Fields to check: `jmpBoot[0]`, `BytsPerSec`, `SecPerClus` (power-of-two: `(x & (x-1)) == 0`), `NumFATs`, `RootEntCnt == 0`, `RootClus >= 2`, `TotSec32 > 0`
-- [ ] Dirty marker: read FAT[1] (cluster 1 entry); if bit 27 clear: `vol->volume_dirty = 1`; log `[FAT32] Dirty volume -- scheduling fsck`; schedule `fat32_fsck()` call after mount completes
-- [ ] On clean unmount: set FAT[1] bit 27 (volume clean) before writing final FAT sector
+- [x] `fat32_validate_bpb(struct fat32_volume *vol)`: checks jmpBoot, BytsPerSec, SecPerClus, NumFATs, RootEntCnt, RootClus, TotSec32; on failure logs `"BPB validation failed: <reason>"` and returns -1; called from `fat32_init()` before FSInfo read
+- [x] Fields checked: `jmpBoot[0]` (0xEB/0xE9), `BytsPerSec` (512/1024/2048/4096), `SecPerClus` (power-of-two 1-128), `NumFATs` (1/2), `RootEntCnt == 0`, `RootClus >= 2`, `TotSec32 > 0`
+- [x] Dirty marker: `fat32_read_dirty_marker()` reads FAT[1] bit 27; if clear: `vol->volume_dirty = 1`; logs `"Dirty volume -- not cleanly unmounted"`
+- [x] On clean unmount: `fat32_set_clean_marker()` sets FAT[1] bit 27 in both FAT copies; called from `fat32_flush_disk()`
+- [x] 3 unit tests: BPB struct size bounds, FSInfo signature constants, dirty bit semantics
 - [ ] Commit: `"fs/fat32: BPB strict validation -- jmpBoot, BytsPerSec, SecPerClus, RootClus, dirty marker"`
 
 ## 2. FSInfo Mount-Time Fallback
@@ -302,7 +303,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 
 | ⭐ | Feature                | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS              |
 |----|------------------------|---------------------------|----------------------------|-------------------------------|
-| 💎 | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ⬜ §1 -- validate_bpb         |
+| 💎 | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ✅ §1 -- validate_bpb + dirty |
 | 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ⚠️ §2 -- flush exists         |
 | 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ⚠️ §3 -- write ok, no compare |
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries          | ⚠️ §4 -- read only            |

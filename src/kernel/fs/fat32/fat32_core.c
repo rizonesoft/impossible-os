@@ -78,6 +78,116 @@ void lfn_extract_chars(const struct fat32_lfn_entry *lfn,
     }
 }
 
+/* ---- BPB strict validation (Microsoft FAT spec S3) ---- */
+
+int fat32_validate_bpb(struct fat32_volume *vol)
+{
+    uint8_t jmp  = vol->sector_buf[0];
+    uint16_t bps = vol->bpb.bytes_per_sector;
+    uint8_t spc  = vol->bpb.sectors_per_cluster;
+    uint8_t nf   = vol->bpb.num_fats;
+    uint16_t rec = *(uint16_t *)&vol->sector_buf[17];  /* RootEntCnt */
+    uint32_t rc  = vol->bpb.root_cluster;
+    uint32_t ts  = vol->bpb.total_sectors;
+
+    /* jmpBoot[0] must be 0xEB (short jump) or 0xE9 (near jump) */
+    if (jmp != 0xEB && jmp != 0xE9) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: bad jmpBoot 0x%02X",
+             (uint64_t)jmp);
+        return -1;
+    }
+
+    /* BytsPerSec must be 512, 1024, 2048, or 4096 */
+    if (bps != 512 && bps != 1024 && bps != 2048 && bps != 4096) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: bad BytsPerSec %u",
+             (uint64_t)bps);
+        return -1;
+    }
+
+    /* SecPerClus must be a power of two, 1-128 */
+    if (spc == 0 || (spc & (spc - 1)) != 0 || spc > 128) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: bad SecPerClus %u",
+             (uint64_t)spc);
+        return -1;
+    }
+
+    /* NumFATs must be 1 or 2 */
+    if (nf != 1 && nf != 2) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: bad NumFATs %u",
+             (uint64_t)nf);
+        return -1;
+    }
+
+    /* RootEntCnt must be 0 for FAT32 */
+    if (rec != 0) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: RootEntCnt %u (must be 0)",
+             (uint64_t)rec);
+        return -1;
+    }
+
+    /* RootClus must be >= 2 */
+    if (rc < 2) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: RootClus %u (must be >= 2)",
+             (uint64_t)rc);
+        return -1;
+    }
+
+    /* TotSec32 must be > 0 */
+    if (ts == 0) {
+        klog(LOG_ERROR, "fat32", "BPB validation failed: TotSec32 is 0");
+        return -1;
+    }
+
+    return 0;
+}
+
+/* ---- Dirty volume marker (FAT[1] bit 27) ---- */
+
+#define FAT32_CLEAN_SHUTDOWN_BIT  0x08000000  /* bit 27 of FAT[1] */
+
+void fat32_read_dirty_marker(struct fat32_volume *vol)
+{
+    uint32_t fat1_entry = fat32_get_fat_entry(vol, 1);
+
+    /* If bit 27 is CLEAR, the volume was not cleanly unmounted */
+    if ((fat1_entry & FAT32_CLEAN_SHUTDOWN_BIT) == 0) {
+        vol->volume_dirty = 1;
+        klog(LOG_WARN, "fat32", "Dirty volume -- not cleanly unmounted");
+    } else {
+        vol->volume_dirty = 0;
+    }
+}
+
+void fat32_set_clean_marker(struct fat32_volume *vol)
+{
+    uint32_t fat1_entry = fat32_get_fat_entry(vol, 1);
+
+    /* Set bit 27 to mark volume as cleanly unmounted */
+    fat1_entry |= FAT32_CLEAN_SHUTDOWN_BIT;
+    fat32_set_fat_entry(vol, 1, fat1_entry & 0x0FFFFFFF);
+
+    /* Note: fat32_set_fat_entry masks to 28 bits, so we need to write
+     * the full 32-bit value directly to preserve the high bits. */
+    {
+        uint32_t fat_offset = 1 * 4;  /* cluster 1 */
+        uint32_t fat_sector = vol->bpb.first_fat_sector + (fat_offset / 512);
+        uint32_t entry_offset = fat_offset % 512;
+        uint32_t fi;
+
+        for (fi = 0; fi < vol->bpb.num_fats; fi++) {
+            uint32_t sector = fat_sector + fi * vol->bpb.fat_size_sectors;
+
+            if (fat32_read_sector(vol, sector, vol->sector_buf) != 0)
+                return;
+
+            *(uint32_t *)&vol->sector_buf[entry_offset] = fat1_entry;
+
+            if (fat32_write_sector(vol, sector, vol->sector_buf) != 0)
+                return;
+        }
+    }
+}
+
 /* ---- Sector cache (LRU with dirty tracking) ---- */
 
 static scache_entry_t *scache_lookup(struct fat32_volume *vol, uint32_t sector)
@@ -386,6 +496,8 @@ int fat32_zero_cluster(struct fat32_volume *vol, uint32_t cluster)
 
 int fat32_flush_disk(struct fat32_volume *vol)
 {
+    fat32_fsinfo_flush(vol);
+    fat32_set_clean_marker(vol);
     scache_flush(vol);
     return 0;
 }
