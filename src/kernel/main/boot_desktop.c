@@ -22,6 +22,7 @@
 #include "kernel/etw.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
+#include "kernel/hw_dump.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_progress.h"
 #include "kernel/boot_halt.h"
@@ -198,7 +199,11 @@ void boot_phase3(void)
     boot_perf_compare();
     boot_perf_save();
     boot_timing_write_report();
+    boot_postcode_write_log();
     boot_timeline_dump_json();
+
+    /* Write hardware inventory to X:\Diag\hwdump.txt */
+    hw_dump_write_file();
 
     /* Report degraded subsystems */
     if (g_boot_info.degraded_mask) {

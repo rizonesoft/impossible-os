@@ -32,6 +32,9 @@ void boot_timing_print_steps(void);
  * Call at desktop-ready, after VFS is mounted on C:. */
 void boot_timing_write_report(void);
 
+/* Write POST code history to X:\Diag\postcode.log (or C:\ fallback). */
+void boot_postcode_write_log(void);
+
 /* Step entry for debug bar rendering */
 typedef struct {
     uint64_t    tsc;

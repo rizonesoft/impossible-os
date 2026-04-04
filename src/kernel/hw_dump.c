@@ -9,23 +9,17 @@
 #include "kernel/klog.h"
 #include "kernel/cpuid.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/heap.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/ahci.h"
 #include "kernel/drivers/rtl8139.h"
 #include "kernel/boot_info.h"
+#include "kernel/drivers/blkdev.h"
+#include "kernel/fs/vfs.h"
+#include "kernel/smp.h"
+#include "libc/string.h"
 
 /* ---- Hex formatting helpers ---- */
-
-static void u32_to_hex(uint32_t val, char *out)
-{
-    const char hex[] = "0123456789ABCDEF";
-    int i;
-    out[0] = '0'; out[1] = 'x';
-    for (i = 7; i >= 0; i--) {
-        out[2 + (7 - i)] = hex[(val >> (i * 4)) & 0xF];
-    }
-    out[10] = '\0';
-}
 
 static void mac_to_str(const uint8_t *mac, char *out)
 {
@@ -216,6 +210,111 @@ void hw_dump_to_log(void)
 
     /* Flush immediately so hardware info is on disk */
     klog_disk_flush();
+}
 
-    (void)u32_to_hex;  /* suppress unused warning -- kept for future use */
+/* ---- Write standalone hwdump.txt to X:\Diag\ ---- */
+
+/* Append a line to the buffer. Returns new position. */
+static uint32_t hw_line(char *buf, uint32_t pos, uint32_t max,
+                         const char *line)
+{
+    int i;
+    for (i = 0; line[i] && pos < max - 2; i++)
+        buf[pos++] = line[i];
+    buf[pos++] = '\n';
+    return pos;
+}
+
+void hw_dump_write_file(void)
+{
+    extern int klog_using_blackbox;
+    extern const char *klog_dir;
+    const char *diag_dir = klog_using_blackbox ? "X:\\Diag\\" : klog_dir;
+    char path[64];
+    int pi = 0, j;
+    struct vfs_node *f;
+    char *buf;
+    uint32_t pos = 0;
+    uint32_t max_sz = 4096;
+
+    for (j = 0; diag_dir[j]; j++) path[pi++] = diag_dir[j];
+    { const char *fn = "hwdump.txt";
+      for (j = 0; fn[j]; j++) path[pi++] = fn[j]; }
+    path[pi] = '\0';
+
+    buf = (char *)kmalloc(max_sz);
+    if (!buf) return;
+
+    pos = hw_line(buf, pos, max_sz, "Impossible OS -- Hardware Inventory");
+    pos = hw_line(buf, pos, max_sz, "===================================");
+
+    /* CPU */
+    {
+        const struct cpu_features *cpu = cpuid_get();
+        pos = hw_line(buf, pos, max_sz, "");
+        pos = hw_line(buf, pos, max_sz, "[CPU]");
+        pos = hw_line(buf, pos, max_sz, cpu->brand);
+        {
+            char line[80];
+            snprintf(line, sizeof(line), "Cores: %u, Logical: %u",
+                     cpu->num_cores, smp_cpu_count());
+            pos = hw_line(buf, pos, max_sz, line);
+        }
+        {
+            char line[80];
+            snprintf(line, sizeof(line), "Features: %s%s%s%s%s%s%s",
+                     cpu_has(CPU_FEATURE_SSE2) ? "SSE2 " : "",
+                     cpu_has(CPU_FEATURE_SSE4_2) ? "SSE4.2 " : "",
+                     cpu_has(CPU_FEATURE_AVX) ? "AVX " : "",
+                     cpu_has(CPU_FEATURE_AVX2) ? "AVX2 " : "",
+                     cpu_has(CPU_FEATURE_AES) ? "AES " : "",
+                     cpu_has(CPU_FEATURE_RDRAND) ? "RDRAND " : "",
+                     cpu_has(CPU_FEATURE_XSAVE) ? "XSAVE" : "");
+            pos = hw_line(buf, pos, max_sz, line);
+        }
+    }
+
+    /* Memory */
+    {
+        char line[80];
+        pos = hw_line(buf, pos, max_sz, "");
+        pos = hw_line(buf, pos, max_sz, "[Memory]");
+        snprintf(line, sizeof(line), "Total: %u MiB (%u frames)",
+                 (uint32_t)(pmm_get_total_frames() * 4 / 1024),
+                 (uint32_t)pmm_get_total_frames());
+        pos = hw_line(buf, pos, max_sz, line);
+    }
+
+    /* Display */
+    {
+        char line[80];
+        pos = hw_line(buf, pos, max_sz, "");
+        pos = hw_line(buf, pos, max_sz, "[Display]");
+        snprintf(line, sizeof(line), "Framebuffer: %ux%u %ubpp",
+                 g_boot_info.fb.width, g_boot_info.fb.height,
+                 g_boot_info.fb.bpp);
+        pos = hw_line(buf, pos, max_sz, line);
+    }
+
+    /* Storage */
+    {
+        pos = hw_line(buf, pos, max_sz, "");
+        pos = hw_line(buf, pos, max_sz, "[Storage]");
+        {
+            char line[80];
+            snprintf(line, sizeof(line), "Block devices: %d",
+                     blkdev_count());
+            pos = hw_line(buf, pos, max_sz, line);
+        }
+    }
+
+    /* Write file */
+    f = vfs_open(path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (f) {
+        vfs_write(f, 0, pos, (const uint8_t *)buf);
+        vfs_close(f);
+        klog(LOG_INFO, "hwdump", "Hardware inventory written to %s", path);
+    }
+
+    kfree(buf);
 }

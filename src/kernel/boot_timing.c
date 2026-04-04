@@ -14,6 +14,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
+#include "libc/string.h"
 #include "kernel/uefi_runtime.h"
 
 static uint64_t s_tsc_freq;
@@ -243,6 +244,45 @@ void boot_timing_write_report(void)
     vfs_close(file);
     klog(LOG_INFO, "BOOT", "Boot profile: %u steps written",
          (uint64_t)s_step_count);
+}
+
+/* ---- POST code history log ----------------------------------------------- */
+
+void boot_postcode_write_log(void)
+{
+    if (s_step_count == 0) return;
+
+    const char *diag_dir = klog_using_blackbox ? "X:\\Diag\\" : klog_dir;
+    char path[64];
+    int pi = 0, j;
+    for (j = 0; diag_dir[j]; j++) path[pi++] = diag_dir[j];
+    { const char *fn = "postcode.log";
+      for (j = 0; fn[j]; j++) path[pi++] = fn[j]; }
+    path[pi] = '\0';
+
+    struct vfs_node *f = vfs_open(path,
+        VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (!f) return;
+
+    char line[80];
+    uint32_t offset = 0;
+    uint64_t base = s_steps[0].tsc;
+
+    for (uint32_t i = 0; i < s_step_count; i++) {
+        uint64_t ms = (s_tsc_freq > 0) ? tsc_to_ms(s_steps[i].tsc - base) : 0;
+        int pos = snprintf(line, sizeof(line), "[%4u.%03u] POST 0x%04X  P%u  %s\n",
+                           (uint32_t)(ms / 1000), (uint32_t)(ms % 1000),
+                           s_steps[i].postcode, s_steps[i].phase,
+                           s_steps[i].step ? s_steps[i].step : "?");
+        if (pos > 0) {
+            vfs_write(f, offset, (uint32_t)pos, (const uint8_t *)line);
+            offset += (uint32_t)pos;
+        }
+    }
+
+    vfs_close(f);
+    klog(LOG_INFO, "BOOT", "POST code history: %u entries written to %s",
+         (uint64_t)s_step_count, path);
 }
 
 /* ---- Boot performance regression detection ------------------------------- */

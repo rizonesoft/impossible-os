@@ -44,7 +44,7 @@
 | 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [x]   |
 | 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [x]   |
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [x]   |
-| 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [ ]   |
+| 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [x]   |
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [ ]   |
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [ ]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [ ]   |
@@ -151,7 +151,7 @@ Move crash-persistent log recovery output to `X:\Crash\`.
 - [x] `klog_crash_write_to_disk()` writes to `X:\Crash\crash_recovery.log` when BlackBox mounted, C:\ fallback
 - [x] Future: `MEMORY.DMP` crash dumps (TODO-16) will also target `X:\Crash\`
 - [x] Fallback path uses `klog_dir` (C:\ logs directory)
-- [ ] Commit: `"kernel: move crash recovery log to X:\\Crash\\"`
+- [x] Commit: `"kernel: move crash recovery log to X:\\Crash\\"`
 
 **Test checkpoint:** Force panic with `crash_test=1`; on next boot, `crash_recovery.log` appears in `X:\Crash\`, not `C:\Impossible\System\Logs\`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -159,10 +159,11 @@ Move crash-persistent log recovery output to `X:\Crash\`.
 
 Move performance and diagnostic outputs to their BlackBox directories.
 
-- [ ] Update `hw_dump.c` output path to `X:\Diag\hwdump.txt`
-- [ ] Update POST code history log to `X:\Diag\postcode.log`
-- [ ] Update boot performance comparison to `X:\Perf\boot-profile.log`
-- [ ] Future: ETW trace session exports will go to `X:\Perf\traces\`
+- [x] `hw_dump_write_file()`: writes structured hardware inventory to `X:\Diag\hwdump.txt` (CPU, memory, display, storage)
+- [x] `boot_postcode_write_log()`: writes POST code history to `X:\Diag\postcode.log` with timestamps
+- [x] `boot-profile.log` already at `X:\Perf\` (done in §6)
+- [x] Both wired into Phase 3 boot after `boot_timing_write_report()`
+- [x] All paths fall back to `klog_dir` (C:\ logs) when BlackBox not mounted
 - [ ] Commit: `"kernel: move diagnostic and perf output to X:\\Diag\\ and X:\\Perf\\"`
 
 **Test checkpoint:** After boot, `X:\Diag\hwdump.txt` and `X:\Perf\boot-profile.log` exist with valid content. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
