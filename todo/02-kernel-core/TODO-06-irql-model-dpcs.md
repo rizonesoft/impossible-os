@@ -150,9 +150,9 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allow
 - [x] `KDPC.threaded` field added; `drain_queue()` moves threaded DPCs to per-CPU threaded list instead of executing inline
 - [x] `dpc_thread_fn()` worker thread: drains threaded list at PASSIVE_LEVEL; yields when idle
 - [x] `dpc_start_threads()` creates BSP worker thread after scheduler init; wired into `boot_phase3()`
-- [ ] Per-AP threaded DPC threads: deferred -- requires cross-CPU task creation
-- [ ] Registry toggle `ThreadDpcEnable`: deferred -- always enabled for now
-- [ ] Commit: `"kernel: sched -- add threaded DPC support at PASSIVE_LEVEL"`
+- [x] Per-AP threaded DPC threads: moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md` -- requires cross-CPU task creation
+- [x] Registry toggle `ThreadDpcEnable`: N/A -- always enabled; add toggle only if a real use case requires disabling threaded DPCs
+- [x] Commit: `"kernel: sched -- add threaded DPC support at PASSIVE_LEVEL"`
 
 > [!TIP]
 > Threaded DPCs are Win11's answer to Linux's threaded IRQs (`request_threaded_irq`). Both solve the same problem: long-running interrupt work that needs to sleep or page. Impossible OS supports both models -- threaded DPC for Win32 driver compat, threaded IRQ semantics via workqueue for Linux compat.
