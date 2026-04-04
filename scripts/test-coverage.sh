@@ -46,14 +46,14 @@ for f in "$TEST_DIR"/test_*.c; do
     [ "$basename" = "test_runner" ] && continue
     name="${basename#test_}"
 
-    # Count TEST_ASSERT calls
-    asserts=$(grep -c 'TEST_ASSERT(' "$f" 2>/dev/null || echo 0)
+    # Count TEST_ASSERT calls (grep -c returns 0 with exit 1 on no match)
+    asserts=$(grep -c 'TEST_ASSERT' "$f" 2>/dev/null) || asserts=0
 
-    # Count test_suite_register calls (= number of suites)
-    suites=$(grep -c 'test_suite_register(' "$f" 2>/dev/null || echo 0)
+    # Count test_suite_register / test_suite_register_cat calls
+    suites=$(grep -c 'test_suite_register' "$f" 2>/dev/null) || suites=0
 
     # Extract suite names (join with ", ")
-    suite_list=$(grep -oP 'test_suite_register\("\K[^"]+' "$f" 2>/dev/null | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g' || echo "")
+    suite_list=$(grep -oP 'test_suite_register(_cat)?\("[^"]*",\s*\K\w+' "$f" 2>/dev/null | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g' || echo "")
 
     FILES+=("$basename.c")
     SUITES+=("$suites")
