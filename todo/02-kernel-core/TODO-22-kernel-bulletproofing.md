@@ -345,13 +345,13 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 
 | ⭐ | Feature                     | Win11                  | Linux                    | Impossible OS                     |
 |----|-----------------------------|------------------------|--------------------------|-----------------------------------|
-| ⭐ | Compile-time struct asserts | ❌ Not systematic      | ⚠️ BUILD_BUG_ON sparse  | ⬜ §1-§14 all subsystems         |
-| ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ⬜ §1-§14 every init             |
-| ⭐ | Assembly offset asserts     | ❌ Manual sync         | ⚠️ asm-offsets.c        | ⬜ §1,§4,§5 static assert        |
+| ⭐ | Compile-time struct asserts | ❌ Not systematic      | ⚠️ BUILD_BUG_ON sparse  | ✅ §1-§14 all subsystems         |
+| ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ✅ §1-§14 every init             |
+| ⭐ | Assembly offset asserts     | ❌ Manual sync         | ⚠️ asm-offsets.c        | ✅ §1,§4,§5 static assert        |
 | ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard     | ✅ §10 stack + heap + IST + AP   |
 | ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ✅ §2,§5,§11,§12 all ABIs        |
-| ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ⬜ §6 compile-time unique        |
-| ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ⬜ §9 depth counter              |
+| ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ✅ §6 compile-time unique        |
+| ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ✅ §9 depth counter              |
 | ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked          | ✅ §14 exec_pending age          |
 
 > **All exclusive.** No other OS systematically applies 5-layer defense to every critical kernel invariant. Linux has sparse `BUILD_BUG_ON` checks and `asm-offsets.c` for assembly offset generation, but nothing approaching comprehensive coverage. Windows has no public compile-time invariant system.
