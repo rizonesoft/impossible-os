@@ -20,11 +20,40 @@
 #include "kernel/time/wall_clock.h"
 #include "libc/string.h"
 
+/* ---- Runtime log directory (BlackBox X:\ preferred, C:\ fallback) ---- */
+
+const char *klog_dir = KLOG_DIR_FALLBACK;  /* default until resolved */
+static char klog_serial_dir[48];           /* klog_dir + "Serial\\" */
+static int  klog_using_blackbox;           /* 1 if X:\Logs\, 0 if C:\ fallback */
+
+static void klog_resolve_dir(void)
+{
+    int i;
+    if (vfs_is_mounted('X')) {
+        klog_dir = KLOG_DIR_BLACKBOX;
+        klog_using_blackbox = 1;
+    } else {
+        klog_dir = KLOG_DIR_FALLBACK;
+        klog_using_blackbox = 0;
+        if (!vfs_is_mounted('C'))
+            return;
+        klog(LOG_WARN, "klog",
+             "BlackBox not mounted, using C:\\ for logs");
+    }
+    /* Build serial dir path */
+    for (i = 0; klog_dir[i] && i < 38; i++)
+        klog_serial_dir[i] = klog_dir[i];
+    klog_serial_dir[i++] = 'S'; klog_serial_dir[i++] = 'e';
+    klog_serial_dir[i++] = 'r'; klog_serial_dir[i++] = 'i';
+    klog_serial_dir[i++] = 'a'; klog_serial_dir[i++] = 'l';
+    klog_serial_dir[i++] = '\\'; klog_serial_dir[i] = '\0';
+}
+
 /* ---- Per-subsystem log dispatch ---- */
 
 typedef struct {
     const char *tag;         /* subsystem tag to match (case-sensitive) */
-    const char *filename;    /* file in C:\Impossible\System\Logs\ */
+    const char *filename;    /* file in log directory */
 } log_dispatch_entry_t;
 
 static const log_dispatch_entry_t s_dispatch[] = {
@@ -212,6 +241,12 @@ static void ensure_log_dirs(void)
 {
     struct vfs_node *root;
 
+    /* BlackBox (X:\Logs\) dirs are created by boot skeleton (TODO-17 §4).
+     * This function only creates the C:\Impossible\System\Logs\ tree
+     * for the fallback path. */
+    if (klog_using_blackbox)
+        return;
+
     if (!vfs_is_mounted('C'))
         return;
 
@@ -363,8 +398,8 @@ static void load_rotation_config(void)
  */
 
 /* Helper: build a "YYMMDDnn.LOG" filename */
-/* Serial log subdirectory within KLOG_DIR */
-#define KLOG_SERIAL_DIR  KLOG_DIR "Serial\\"
+/* Serial log subdirectory (built at runtime by klog_resolve_dir) */
+#define KLOG_SERIAL_DIR  klog_serial_dir
 
 static void make_log_filename(uint8_t yy, uint8_t mm, uint8_t dd,
                                uint8_t seq, char *out)
@@ -485,7 +520,7 @@ static void pick_log_number(void)
     /* Cap at 100 files: delete oldest when full */
     if (count >= KLOG_MAX_LOG_FILES && x_root->ops->unlink && oldest_name[0]) {
         x_root->ops->unlink(x_root, oldest_name);
-        klog(LOG_DEBUG, "klog", "deleted oldest log: %s%s (%u files)", KLOG_DIR, oldest_name, count);
+        klog(LOG_DEBUG, "klog", "deleted oldest log: %s%s (%u files)", klog_dir, oldest_name, count);
     }
 
 fallback:
@@ -495,7 +530,7 @@ fallback:
         if (next_seq > 99) next_seq = 99;  /* safety clamp */
 
         make_log_filename(today_yy, today_mm, today_dd, next_seq, log_filename);
-        klog(LOG_INFO, "klog", "writing to %s%s", KLOG_DIR, log_filename);
+        klog(LOG_INFO, "klog", "writing to %s%s", klog_dir, log_filename);
     }
 }
 
@@ -512,11 +547,14 @@ void klog_disk_init(void)
     fat32_buf_size = pages * 4096;
     fat32_pos = 0;
 
+    /* Resolve log directory: X:\Logs\ (BlackBox) or C:\ fallback */
+    klog_resolve_dir();
+
     /* Determine numbered log filename */
-    if (vfs_is_mounted('C')) {
+    if (vfs_is_mounted('X') || vfs_is_mounted('C')) {
         pick_log_number();
 
-        /* Create the log file in C:\Impossible\System\Logs\Serial\ */
+        /* Create the log file in the Serial subdirectory */
         {
             struct vfs_node *serial_dir = vfs_open(KLOG_SERIAL_DIR, VFS_O_READ);
             if (serial_dir && serial_dir->ops && serial_dir->ops->create)
@@ -593,33 +631,29 @@ void klog_disk_flush(void)
         return;
     flushing = 1;
 
-    /* ---- Flush to IXFS C: drive (append mode) ---- */
-    if (vfs_is_mounted('C')) {
+    /* ---- Flush to log directory (X:\ BlackBox or C:\ fallback) ---- */
+    if (vfs_is_mounted('X') || vfs_is_mounted('C')) {
         if (!ixfs_inited) {
             ensure_log_dirs();
             load_rotation_config();
             ixfs_inited = 1;
             ixfs_flush_index = 0;
 
-            /* Create kernel.log if needed */
-            struct vfs_node *root = vfs_get_drive_root('C');
-            if (root && root->ops && root->ops->finddir) {
-                struct vfs_node *imp = root->ops->finddir(root, "Impossible");
-                if (imp && imp->ops && imp->ops->finddir) {
-                    struct vfs_node *sys_dir = imp->ops->finddir(imp, "System");
-                    if (sys_dir && sys_dir->ops && sys_dir->ops->finddir) {
-                        struct vfs_node *logs = sys_dir->ops->finddir(sys_dir, "Logs");
-                        if (logs && logs->ops && logs->ops->create) {
-                            logs->ops->create(logs, "kernel.log", VFS_FILE);
-                        }
-                    }
-                }
+            /* Create kernel.log via klog_dir path */
+            {
+                char kl_path[64];
+                int kp = 0, kj;
+                for (kj = 0; klog_dir[kj]; kj++) kl_path[kp++] = klog_dir[kj];
+                { const char *fn = "kernel.log";
+                  for (kj = 0; fn[kj]; kj++) kl_path[kp++] = fn[kj]; }
+                kl_path[kp] = '\0';
+                vfs_create(kl_path, VFS_FILE);
             }
         }
 
         /* Rotate kernel.log if it exceeds max size */
         kernel_log_size = rotate_log_file(
-            KLOG_DIR, "kernel.log", kernel_log_size);
+            klog_dir, "kernel.log", kernel_log_size);
 
         /* Shared batch buffer for kernel.log + subsystem files */
         uint32_t batch_pages = 8;  /* 32 KB */
@@ -628,8 +662,14 @@ void klog_disk_flush(void)
 
         ring = klog_get_ring(&ring_count, &ring_head);
         if (ring && ring_count > 0 && ixfs_flush_index < ring_count) {
-            logfile = vfs_open("C:\\Impossible\\System\\Logs\\kernel.log",
-                               VFS_O_WRITE);
+            {
+                char kpath[64];
+                int kp = 0, kj;
+                for (kj = 0; klog_dir[kj]; kj++) kpath[kp++] = klog_dir[kj];
+                for (kj = 0; "kernel.log"[kj]; kj++) kpath[kp++] = "kernel.log"[kj];
+                kpath[kp] = '\0';
+                logfile = vfs_open(kpath, VFS_O_WRITE);
+            }
             if (logfile) {
                 if (batch) {
                     uint32_t batch_pos = 0;
@@ -684,7 +724,7 @@ void klog_disk_flush(void)
                     char spath[64];
                     uint32_t sp = 0;
                     struct vfs_node *sf;
-                    const char *base = KLOG_DIR;
+                    const char *base = klog_dir;
                     const char *fname = s_subsys_filenames[si];
                     int k;
                     uint32_t bp = 0;
@@ -746,9 +786,15 @@ void klog_disk_flush(void)
         }
     }
 
-    /* ---- Flush JSON Lines to C:\Impossible\System\Logs\events.jsonl ---- */
-    if (vfs_is_mounted('C') && ixfs_inited) {
-        static const char *jsonl_path = "C:\\Impossible\\System\\Logs\\events.jsonl";
+    /* ---- Flush JSON Lines to events.jsonl ---- */
+    if ((vfs_is_mounted('X') || vfs_is_mounted('C')) && ixfs_inited) {
+        static char jsonl_path[64];
+        if (!jsonl_path[0]) {
+            int jp = 0, jj;
+            for (jj = 0; klog_dir[jj]; jj++) jsonl_path[jp++] = klog_dir[jj];
+            for (jj = 0; "events.jsonl"[jj]; jj++) jsonl_path[jp++] = "events.jsonl"[jj];
+            jsonl_path[jp] = '\0';
+        }
 
         if (!jsonl_inited) {
             /* Create events.jsonl on first flush */
@@ -761,7 +807,7 @@ void klog_disk_flush(void)
 
         /* Rotate events.jsonl if needed */
         jsonl_file_size = rotate_log_file(
-            KLOG_DIR, "events.jsonl", jsonl_file_size);
+            klog_dir, "events.jsonl", jsonl_file_size);
 
         ring = klog_get_ring(&ring_count, &ring_head);
         if (ring && ring_count > 0 && jsonl_flush_index < ring_count) {
@@ -829,8 +875,8 @@ void klog_disk_flush(void)
         }
     }
 
-    /* ---- Flush to C:\Impossible\System\Logs\Serial\ (full-file overwrite) ---- */
-    if (vfs_is_mounted('C') && fat32_buf && fat32_pos > 0) {
+    /* ---- Flush serial log to Serial\ subdirectory (full-file overwrite) ---- */
+    if ((vfs_is_mounted('X') || vfs_is_mounted('C')) && fat32_buf && fat32_pos > 0) {
         /* Lazy init: if we haven't set up yet, do it now */
         if (!fat32_inited) {
             pick_log_number();
@@ -856,7 +902,7 @@ void klog_disk_flush(void)
                 vfs_close(logfile);
             }
         }
-    } else if (vfs_is_mounted('C') && !fat32_buf) {
+    } else if ((vfs_is_mounted('X') || vfs_is_mounted('C')) && !fat32_buf) {
         /* No PMM buffer -- allocate on demand and do a ring-buffer dump */
         uint32_t buf_pages = 64;
         uint8_t *tmp_buf = (uint8_t *)pmm_alloc_contiguous(buf_pages);
@@ -902,7 +948,7 @@ void klog_disk_flush(void)
         if (log_filename[0]) {
             char path[64];
             int p = 0, j;
-            for (j = 0; KLOG_DIR[j]; j++) path[p++] = KLOG_DIR[j];
+            for (j = 0; klog_dir[j]; j++) path[p++] = klog_dir[j];
             for (j = 0; log_filename[j]; j++) path[p++] = log_filename[j];
             path[p] = '\0';
 

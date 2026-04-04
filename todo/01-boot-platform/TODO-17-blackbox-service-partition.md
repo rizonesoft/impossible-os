@@ -41,7 +41,7 @@
 | 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [x]   |
 | 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [x]   |
 | 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [x]   |
-| 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [ ]   |
+| 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [x]   |
 | 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [ ]   |
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [ ]   |
 | 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [ ]   |
@@ -111,7 +111,7 @@ Ensure the BlackBox directory structure exists on first boot and after format.
 - [x] Uses `vfs_create(path, VFS_DIRECTORY)` -- works on FAT32
 - [x] Logs each creation: `"BlackBox: created X:\Logs"` etc.
 - [x] Idempotent: second boot skips creation (probe finds `X:\Logs`)
-- [ ] Commit: `"kernel: create BlackBox directory skeleton on first boot"`
+- [x] Commit: `"kernel: create BlackBox directory skeleton on first boot"`
 
 **Test checkpoint:** First boot after clean build: serial shows 7 `"BlackBox: created X:\..."` messages (Logs, Boot, Crash, Crash\WER, Perf, Diag, Tools). Second boot: no creation messages (directories already exist). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -119,11 +119,12 @@ Ensure the BlackBox directory structure exists on first boot and after format.
 
 Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 
-- [ ] Change `KLOG_DIR` in `klog.h` from `"C:\\Impossible\\System\\Logs\\"` to `"X:\\Logs\\"`
-- [ ] Update `klog_disk.c` `ensure_log_dirs()`: use new `KLOG_DIR` path
-- [ ] Update all hardcoded log paths in `klog_disk.c`: `kernel.log`, `boot.log`, `network.log`, `fs.log`, `mm.log`, `drivers.log`, `security.log`, `events.jsonl`
-- [ ] Fallback: if `X:\` not mounted (no BlackBox partition), fall back to `C:\Impossible\System\Logs\` -- check `vfs_stat("X:\\")` at `klog_disk_enable()` time
-- [ ] Update log rotation paths to use `KLOG_DIR`
+- [x] Runtime `klog_dir` global replaces compile-time `KLOG_DIR`; resolved by `klog_resolve_dir()` at `klog_disk_init()` time
+- [x] `KLOG_DIR_BLACKBOX = "X:\\Logs\\"` (primary), `KLOG_DIR_FALLBACK = "C:\\Impossible\\System\\Logs\\"` (fallback)
+- [x] All log paths (`kernel.log`, subsystem logs, `events.jsonl`, `crash_recovery.log`, `boot-profile.log`, `boot-timeline.json`) built from `klog_dir` at runtime
+- [x] Fallback: if X:\ not mounted, falls back to C:\ with warning `"BlackBox not mounted, using C:\\ for logs"`
+- [x] `ensure_log_dirs()` skipped when using BlackBox (X:\Logs\ created by boot skeleton §4)
+- [x] `KLOG_SERIAL_DIR` built dynamically from `klog_dir + "Serial\\"`
 - [ ] Commit: `"kernel: migrate klog output from C:\\ to X:\\Logs\\"`
 
 **Test checkpoint:** Serial shows `"klog: writing to X:\Logs\Serial_YYMMDDN.log"`. All subsystem logs appear under `X:\Logs\`. On a disk without BlackBox, fallback message: `"klog: BlackBox not mounted, using C:\\"`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.

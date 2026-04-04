@@ -244,8 +244,17 @@ void boot_timeline_dump_json(void)
     buf[pos++] = ']';
     buf[pos++] = '\n';
 
-    f = vfs_open(KLOG_DIR "boot-timeline.json",
-                 VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    {
+        char tl_path[64];
+        int tp = 0, tj;
+        for (tj = 0; klog_dir[tj]; tj++) tl_path[tp++] = klog_dir[tj];
+        {
+            const char *fn = "boot-timeline.json";
+            for (tj = 0; fn[tj]; tj++) tl_path[tp++] = fn[tj];
+        }
+        tl_path[tp] = '\0';
+        f = vfs_open(tl_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    }
     if (f) {
         vfs_write(f, 0, pos, buf);
         vfs_close(f);

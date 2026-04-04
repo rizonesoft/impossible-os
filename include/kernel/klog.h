@@ -25,9 +25,14 @@ typedef enum {
     LOG_FATAL = 4,   /* [CRIT] serial + framebuffer, then halt */
 } log_level_t;
 
-/* Central log directory -- all log files write here.
- * Must end with backslash. Created at first boot if it doesn't exist. */
-#define KLOG_DIR "C:\\Impossible\\System\\Logs\\"
+/* Primary log directory (BlackBox X:\Logs\) with C:\ fallback.
+ * Resolved at runtime by klog_disk_init(): prefers X:\Logs\ if BlackBox
+ * is mounted, falls back to C:\Impossible\System\Logs\ if not. */
+#define KLOG_DIR_BLACKBOX  "X:\\Logs\\"
+#define KLOG_DIR_FALLBACK  "C:\\Impossible\\System\\Logs\\"
+
+/* Runtime-resolved log directory (set by klog_disk_init) */
+extern const char *klog_dir;
 
 /* Log a message with level and subsystem tag.
  * fmt supports: %d, %u, %x, %p, %s, %c, %%  (same as printk) */
