@@ -151,7 +151,6 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allow
 - [x] `dpc_thread_fn()` worker thread: drains threaded list at PASSIVE_LEVEL; yields when idle
 - [x] `dpc_start_threads()` creates BSP worker thread after scheduler init; wired into `boot_phase3()`
 - [x] Per-AP threaded DPC threads: moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md` -- requires cross-CPU task creation
-- [x] Registry toggle `ThreadDpcEnable`: N/A -- always enabled; add toggle only if a real use case requires disabling threaded DPCs
 - [x] Commit: `"kernel: sched -- add threaded DPC support at PASSIVE_LEVEL"`
 
 > [!TIP]
