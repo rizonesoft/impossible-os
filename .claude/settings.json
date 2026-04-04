@@ -6,8 +6,24 @@
       "Bash(grep -E \"\\\\.\\(c|h\\)$\")",
       "Bash(grep -l \"## OS Comparison\" todo/**/*.md)",
       "Bash(python3 -c \":*)",
+      "Bash(TIMEOUT=30 bash scripts/test.sh QUIET=1:*)",
       "Edit(/.claude/skills/validate-todo-file/**)",
       "Edit(/.claude/skills/implement-todo-section/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys, subprocess, os\nd = json.load(sys.stdin)\ncmd = d.get('tool_input', {}).get('command', '')\nresp = str(d.get('tool_response', {}).get('stdout', ''))\nif not cmd.startswith('git commit'):\n    sys.exit(0)\nexts = ('.c', '.h', '.asm', '.ld')\nif not any(ext in resp for ext in exts):\n    sys.exit(0)\nroot = subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).decode().strip()\nresult = subprocess.run(['bash', root + '/scripts/test.sh', 'QUIET=1'], capture_output=True, text=True, timeout=60, env={**os.environ, 'TIMEOUT': '30'})\nif result.returncode == 0:\n    line = [l for l in result.stdout.splitlines() if 'PASS' in l]\n    msg = line[-1].strip() if line else 'Tests passed'\n    print(json.dumps({'systemMessage': '[smoketest] ' + msg}))\nelse:\n    fails = [l for l in result.stdout.splitlines() if 'FAIL' in l]\n    msg = fails[-1].strip() if fails else 'Tests failed'\n    print(json.dumps({'systemMessage': '[smoketest] ' + msg, 'continue': True}))\n\"",
+            "timeout": 60,
+            "if": "Bash(git commit:*)"
+          }
+        ]
+      }
     ]
   }
 }
