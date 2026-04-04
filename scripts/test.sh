@@ -65,7 +65,7 @@ fi
 bash "$PROJECT/scripts/patch-boot-conf.sh" $PATCH_ARGS > /dev/null
 
 # --- Step 3: Boot QEMU headless ---
-cp -n "$OVMF_VARS" "$OVMF_VARS_CP" 2>/dev/null || true
+cp "$OVMF_VARS" "$OVMF_VARS_CP"
 rm -f "$TEST_LOG"
 
 # Detect acceleration: KVM > TCG
@@ -163,7 +163,7 @@ if [ -n "$SUITE_FILTER" ]; then
 fi
 
 # Show suite results
-grep -E 'TEST:.*::' "$TEST_LOG" 2>/dev/null | while IFS= read -r line; do
+{ grep -E 'TEST:.*::' "$TEST_LOG" 2>/dev/null || true; } | while IFS= read -r line; do
     if [ -n "$SUITE_FILTER" ]; then
         echo "$line" | grep -qi "$SUITE_FILTER" || continue
     fi
@@ -175,7 +175,7 @@ grep -E 'TEST:.*::' "$TEST_LOG" 2>/dev/null | while IFS= read -r line; do
 done
 
 # Show any FAIL lines that aren't suite results (boot test failures)
-grep -E '\[FAIL\]' "$TEST_LOG" 2>/dev/null | grep -v '::' | while IFS= read -r line; do
+{ grep -E '\[FAIL\]' "$TEST_LOG" 2>/dev/null | grep -v '::' || true; } | while IFS= read -r line; do
     echo -e "  ${RED}FAIL${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
 done
 

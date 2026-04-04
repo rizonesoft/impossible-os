@@ -49,27 +49,12 @@ void cpu_enable_nx(void)
  * Bare metal: always supported (no VM exits). */
 static int hv_supports_cr4_smep_smap(void)
 {
-    platform_id_t p = platform_detect();
-    switch (p) {
-        case PLATFORM_BARE_METAL:
-            /* Per-process page tables exist for user tasks (TODO-06 §8),
-             * but the KERNEL (PID 0) still runs on the boot PML4 which has
-             * User bit on ALL 2 MiB pages (entry.asm flag 0x87). Enabling
-             * SMEP here would fault because kernel code pages have User bit.
-             * Need to fix boot PML4 to clear User on kernel pages first. */
-            return 0;
-        case PLATFORM_QEMU_KVM:
-        case PLATFORM_QEMU_TCG:
-        case PLATFORM_VMWARE:
-        case PLATFORM_VIRTUALBOX:
-            return 1;
-        case PLATFORM_HYPERV:
-            /* Hyper-V WHPX does not handle guest CR4.SMEP/SMAP VM exits.
-             * The host enforces these via EPT/SLAT instead. */
-            return 0;
-        default:
-            return 0;  /* unknown hypervisor -- be safe */
-    }
+    /* The boot PML4 (entry.asm flag 0x87) has User bit on ALL 2 MiB pages.
+     * Enabling SMEP faults because kernel code pages have User bit.
+     * This affects ALL platforms -- not just bare metal.
+     * Disabled globally until boot PML4 clears User on kernel pages. */
+    (void)platform_detect();
+    return 0;
 }
 
 void cpu_enable_smep(void)
