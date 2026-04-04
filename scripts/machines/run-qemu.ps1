@@ -130,7 +130,7 @@ $QemuArgs += @(
     '-device', 'ich9-ahci,id=ahci0',
     '-device', 'ide-hd,drive=disk0,bus=ahci0.0',
     '-m', '2G',
-    '-serial', 'SERIAL_PLACEHOLDER',
+    # serial wired below based on -SerialLog flag
     '-vga', 'none',
     '-device', "$VgaDevice,xres=$Xres,yres=$Yres",
     '-device', 'rtl8139,netdev=net0',
@@ -168,22 +168,24 @@ if ($ExtraArgs) {
 
 $SerialLogPath = Join-Path $PROJECT "scripts\debug\serial.log"
 
-# Wire serial output: use QEMU's native chardev logfile to capture serial
-# to a file while still displaying on the terminal. This avoids PowerShell
-# pipe/Tee-Object issues with native command stderr and stdout buffering.
-$serialIdx = [array]::IndexOf($QemuArgs, 'SERIAL_PLACEHOLDER')
-if ($SerialLog -and $serialIdx -ge 0) {
+# Wire serial: use QEMU chardev logfile to write serial to both terminal and
+# file natively. Use a local temp path (QEMU can't open UNC paths) and copy back.
+$TempSerialLog = Join-Path $env:TEMP "impossible-os-serial.log"
+if ($SerialLog) {
     Write-Host "  Serial: -> $SerialLogPath" -ForegroundColor DarkGray
-    # Replace: -serial PLACEHOLDER -> -chardev stdio,logfile=path -serial chardev:ser0
-    $QemuArgs[$serialIdx] = 'chardev:ser0'
-    $QemuArgs = @($QemuArgs[0..($serialIdx-1)]) + @('-chardev', "stdio,id=ser0,logfile=$SerialLogPath,logappend=off", '-serial') + @($QemuArgs[$serialIdx..($QemuArgs.Count-1)])
-} elseif ($serialIdx -ge 0) {
-    $QemuArgs[$serialIdx] = 'stdio'
+    $QemuArgs += '-chardev', "stdio,id=ser0,logfile=$TempSerialLog"
+    $QemuArgs += '-serial', 'chardev:ser0'
+} else {
+    $QemuArgs += '-serial', 'stdio'
 }
 
 try {
     & $QEMU @QemuArgs
 } finally {
+    # Copy serial log from temp to project (UNC-safe)
+    if ($SerialLog -and (Test-Path $TempSerialLog)) {
+        Copy-Item -Path $TempSerialLog -Destination $SerialLogPath -Force -ErrorAction SilentlyContinue
+    }
     # Always restore boot.conf to defaults
     if ($PatchArgs.Count -gt 0) {
         & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset"
