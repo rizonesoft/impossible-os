@@ -146,8 +146,8 @@ static void test_ssdt_main_count(void)
         const SSDT_TABLE *t = ssdt_get_table(SSDT_TABLE_MAIN);
         TEST_ASSERT(t != (void *)0, "ssdt_get_table(MAIN) non-NULL");
         if (t)
-            TEST_ASSERT_EQ(t->count, SSDT_MAIN_COUNT,
-                           "table->count matches SSDT_MAIN_COUNT");
+            TEST_ASSERT(t->count >= SSDT_MAIN_COUNT,
+                        "table->count >= SSDT_MAIN_COUNT (grows as handlers register)");
     }
 }
 
