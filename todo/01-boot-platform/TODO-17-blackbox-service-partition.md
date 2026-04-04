@@ -38,7 +38,7 @@
 | ⭐ | Order | Deliverable                                            | Depends On       | Status |
 |----|:-----:|-------------------------------------------------------|-------------------|:------:|
 | 💎 |   1   | Disk tooling -- add BlackBox partition to GPT layout  | --                |  [x]   |
-| 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [ ]   |
+| 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [x]   |
 | 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [ ]   |
 | 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [ ]   |
 | 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [ ]   |
@@ -79,12 +79,11 @@ Modify `make-system-disk.c` to create a 3-partition GPT: EFI + BlackBox + IXFS.
 
 Update `scripts/build.sh` and Makefile to format the BlackBox partition as FAT32 and create the initial directory structure.
 
-- [ ] After `make-system-disk` creates the image, format the BlackBox partition with `mkfs.fat -F 32`
-- [ ] Calculate correct byte offset for `mkfs.fat --offset` based on BlackBox start LBA
-- [ ] Create initial directory skeleton on the formatted partition: `Logs/`, `Boot/`, `Crash/`, `Perf/`, `Diag/`, `Tools/`
-- [ ] Use `mmd` (mtools) or a custom script to create directories on the FAT32 image
-- [ ] Verify: mount the partition in Linux and confirm all 6 directories exist
-- [ ] Commit: `"build: format BlackBox FAT32 partition and create directory skeleton"`
+- [x] `mkfs.fat -F 32 -n "BLACKBOX" --offset $(BB_OFFSET/512)` formats BlackBox after GPT creation (Makefile line 376)
+- [x] `BB_OFFSET := 68157440` (LBA 133120 * 512) calculated from make-system-disk GPT layout
+- [x] `mmd -i $@@@$(BB_OFFSET) ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools` creates all 6 directories (line 377)
+- [x] Verified: `mdir -i build/system-disk.img@@68157440 ::/` shows all 6 directories with volume label BLACKBOX
+- [x] Commit: implemented as part of `"build: add BlackBox 128 MiB FAT32 partition to GPT layout"` (TODO-17 §1)
 
 **Test checkpoint:** `bash scripts/build.sh clean` produces a disk with BlackBox formatted as FAT32. `mcopy -i build/system-disk.img@@<offset> ::/ /tmp/bb-test` lists `Logs/`, `Boot/`, `Crash/`, `Perf/`, `Diag/`, `Tools/`.
 
