@@ -30,7 +30,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 10. **Wire unit tests** -- add/update assertions in relevant `test_*.c`, confirm build passes.
 11. **Codex adversarial review** (MANDATORY) -- dispatch to the Codex rescue subagent (`Agent` tool with `subagent_type: "codex:codex-rescue"`). NOT self-review. Self-review has implementation bias; the Codex agent reads code fresh and catches things you rationalized away. Proven: section 1 Codex found 2 Critical issues (SMP race, TOCTOU) that self-review missed. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles, request severity-labeled findings.
 12. **Fix loop** (max 3 rounds) -- fix all Critical and High findings. Fix Medium unless explicitly accepted with a concrete technical reason. Rebuild after each fix round. Re-review via Codex focusing on previous findings and changed files. If unresolved Critical/High remain after round 3: do not mark section complete, keep `[/]` or `[ ]`, add follow-up items.
-13. **Final self-review** -- this catches what Codex misses at the integration level:
+13. **Final self-review** (MANDATORY) -- this catches what Codex misses at the integration level:
     - Regressions: did any existing functionality break?
     - Race conditions: any new shared mutable state without synchronization?
     - Bugs: edge cases, off-by-one, null pointer paths?
@@ -39,7 +39,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Completeness: is everything implemented that CAN be implemented? No deferred items that should have been done now?
 14. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`. This catches anything broken by the fix loop or self-review changes.
 15. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims. Re-checks cross-TODO synchronization.
-16. **Tie up loose ends** -- scan the ENTIRE TODO file and any XREF'd TODO files for:
+16. **Tie up loose ends** (MANDATORY) -- scan the ENTIRE TODO file and any XREF'd TODO files for:
     - Deferred items pointing to this section that weren't resolved in step 7.
     - Stale warning boxes that should be updated to NOTE (resolved).
     - Implementation Order rows that need status updates.
