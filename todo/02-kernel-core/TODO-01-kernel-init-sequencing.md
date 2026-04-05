@@ -18,7 +18,7 @@
 - → XREF: `TODO-02-system-logging.md` -- `klog_disk_enable()` is a Phase 2 gate; must follow VFS ready
 - → XREF: `TODO-03-object-manager.md §1` -- Object Manager init slot is Phase 2, after heap, before registry; §1 provides the `ob_init()` implementation
 - → XREF: `04-drivers-hardware/INDEX.md` -- all driver `_init()` functions must accept and return `boot_result_t`
-- → XREF: `00-infrastructure/TODO-02-developer-tooling-stack.md` -- headless QEMU serial log is the verification path
+- → XREF: `scripts/test.sh` -- headless QEMU serial log is the verification path
 - → XREF: `TODO-06-irql-model-dpcs.md §4` -- DPC subsystem init belongs in Phase 1, after timer; §4 is the DPC Object Type and Per-CPU Queue init
 - → XREF: `TODO-07-time-filetime-management.md §5` -- `wall_clock_init()` belongs in Phase 2, after UEFI runtime services; NTP wall clock adjustment (§17) belongs in Phase 3
 - → XREF: `01-boot-platform/TODO-16-boot-watchdog.md` -- watchdog timer integrates with `boot_progress()` calls; detects hung subsystem init
@@ -44,17 +44,17 @@
 | --- | :---: | ------------------------------------------ | ---------- | :----: |
 | 💎  |   1   | Boot init infrastructure                   | --         |  [x]   |
 | 💎  |   2   | Phase 0 -- critical init                   | §1         |  [x]   |
-| 💎  |   3   | Phase 1 -- platform services               | §2         |  [/]   |
-| 💎  |   4   | Phase 2 -- system services                 | §3         |  [/]   |
+| 💎  |   3   | Phase 1 -- platform services               | §2         |  [x]   |
+| 💎  |   4   | Phase 2 -- system services                 | §3         |  [x]   |
 | 💎  |   5   | Phase 3 -- user platform                   | §4         |  [x]   |
-| 💎  |   6   | Dependency gates                           | §1–§5      |  [x]   |
+| 💎  |   6   | Dependency gates                           | §1--§5      |  [x]   |
 | 💎  |   7   | Failure policy                             | §6         |  [x]   |
-| 💎  |   8   | Code cleanup                               | §2–§5      |  [/]   |
+| 💎  |   8   | Code cleanup                               | §2--§5      |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [x]   |
 | ⭐  |  10   | POST code + UEFI variable log              | §1         |  [x]   |
 | 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [x]   |
-| ⭐  |  12   | Boot performance regression detection      | §10        |  [x]   |
-| ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [x]   |
+| ⭐  |  12   | Boot performance regression detection      | §10        |  [/]   |
+| ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [/]   |
 
 > 💎 = parity -- Windows NT and Linux both have formal init phase models; Impossible OS must match them.
 > ⭐ = exclusive -- degraded-boot recovery UI, UEFI NVRAM POST log, boot perf regression detection, and SMP parallel init.
@@ -236,7 +236,7 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 
 - [x] Define UEFI variable name: `ImpossiblePOST` in namespace GUID `{494D504F-5354-4F53-504F-535447554944}`
 - [x] Implement `boot_post_write(uint8_t code)` -- calls `uefi_set_variable()` with NV+BS+RT attributes; no-ops if runtime unavailable or `postcode=0` in boot.conf
-- [x] Call `boot_post_write(postcode)` at each `boot_progress()` call site in phases 0–3 (integrated into boot_progress itself)
+- [x] Call `boot_post_write(postcode)` at each `boot_progress()` call site in phases 0--3 (integrated into boot_progress itself)
 - [x] On successful boot completion, write final code `0xFF` (`POSTCODE_BOOT_OK`) in boot_phase3()
 - [x] On `boot_halt()` / `panic()`, write `0xFE` (`POSTCODE_BOOT_FAILED`) before halting
 - [x] Implement `boot_post_read()` -- reads last stored value; returns -1 if unavailable
@@ -254,7 +254,7 @@ Move non-critical subsystem init out of the blocking boot path so the desktop ap
 - [x] Move `rtl8139_init()` + `net_init()` + `dhcp_discover()` from Phase 2 blocking path to deferred -- network is not needed for desktop; wrap in `static boot_result_t deferred_net_init(void)` since originals return `int`/`void`
 - [x] Move `virtio_input_init()` + `vbox_mouse_init()` from Phase 2 blocking path to deferred -- PS/2 mouse is sufficient for initial desktop; wrap in `static boot_result_t deferred_input_init(void)` since originals return `int`
 - [x] Add `boot_run_deferred()` call in Phase 3 after `desktop_init()` but before `compositor_run()` -- runs all deferred inits sequentially
-- [x] Each deferred init logs `[DEFERRED] name +NNNms` via klog with POST code range `POST16(0xD000)`–`POST16(0xD005)` (deferred net + input)
+- [x] Each deferred init logs `[DEFERRED] name +NNNms` via klog with POST code range `POST16(0xD000)`--`POST16(0xD005)` (deferred net + input)
 - [x] If a deferred init fails, log `klog(WARN)` -- no halt, no BSOD
 - [x] Add `deferred=0` boot.conf option to disable deferral (all subsystems init in-phase, old behavior) for debugging
 - [x] Add 3 unit tests: BOOT_DEFERRED value, boot_defer registration, deferred POST codes
@@ -286,7 +286,7 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 > UEFI NVRAM has limited write endurance (~100K cycles). `ImpossibleBootPerf` is written once per boot (end of Phase 3). Combined with `ImpossiblePOST` (2 writes/boot), total is 3 NVRAM writes per boot -- acceptable for flash endurance.
 
 ## 13. Async Subsystem Init (SMP Parallel)
-Allow independent subsystems within a phase to initialize concurrently on different CPUs. Win11 uses parallel DLL loading (1–16 worker threads). Linux has `async_schedule()` for device probing. Impossible OS can parallelize Phase 2, where many subsystems (storage, NIC, USB) have no mutual dependencies.
+Allow independent subsystems within a phase to initialize concurrently on different CPUs. Win11 uses parallel DLL loading (1--16 worker threads). Linux has `async_schedule()` for device probing. Impossible OS can parallelize Phase 2, where many subsystems (storage, NIC, USB) have no mutual dependencies.
 
 > [!TIP]
 > Win11 parallelizes DLL loading but not kernel init. Linux parallelizes device probing but not initcalls. Impossible OS can parallelize subsystem init at the kernel level with correct dependency tracking -- designed for SMP from day one.
@@ -310,7 +310,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 | ⭐ | Feature              | 🪟 Win11           | 🐧 Linux              | 🚀 Impossible OS         |
 |----|----------------------|---------------------|-----------------------|---------------------------|
-| 💎 | Formal phase model   | ✅ Phase 0/1       | ✅ initcall levels    | ✅ §2–§5 4 phases        |
+| 💎 | Formal phase model   | ✅ Phase 0/1       | ✅ initcall levels    | ✅ §2--§5 4 phases        |
 | 💎 | Interrupts-off phase | ✅ Phase 0         | ✅ early start_kernel | ✅ §2 boot_phase0        |
 | 💎 | Dependency ordering  | ✅ Boot load groups| ✅ initcall deps      | ✅ §6 gates done         |
 | 💎 | Typed init results   | ✅ NTSTATUS        | ✅ initcall_t         | ⚠️ §1 boot_result_t      |
@@ -331,7 +331,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_boot_init()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_boot_init()` (see `src/kernel/test/test_runner.c`).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [x] Create `src/kernel/test/test_boot_init.c` with:
