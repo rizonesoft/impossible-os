@@ -26,6 +26,7 @@
 | 💎  |   2   | Partial wallpaper restore                 | §1         |  [ ]   |
 | 💎  |   3   | Per-window damage and compositor loop     | §1, §2     |  [ ]   |
 | ⭐  |   4   | Frame timing and VSync                    | §3         |  [ ]   |
+| 💎  |   5   | Terminal render clipping (boot bleed fix) | §3         |  [ ]   |
 
 ---
 
@@ -82,6 +83,23 @@ Measure frame times and optionally sync to display refresh.
 - [ ] Commit
 
 **Test checkpoint:** Serial log shows frame timing. Idle: <1ms. Drag: <5ms. No visual tearing.
+
+## 5. Terminal Render Clipping (Boot Bleed Fix)
+Prevent terminal text from rendering outside its window bounds during compositor startup.
+
+> [!NOTE]
+> **Root cause:** `sys_write()` / `NtWriteFile()` on stdout calls `terminal_putchar()` which writes to the terminal back buffer. During the transition between splash screen and compositor, the terminal window may not yet have a valid screen position, so the compositor renders the terminal content at an incorrect location (top-left). The text disappears on the next compositor repaint.
+>
+> This is a cosmetic timing issue, not a data corruption bug. The terminal content is correct; it's just briefly visible at the wrong screen position.
+
+**Files:** `src/desktop/terminal.c`, `src/desktop/wm.c`
+
+- [ ] Gate `terminal_putchar()` writes: reject until the terminal's parent window has been fully composited at least once (add `terminal_ready` flag set by compositor after first paint)
+- [ ] Alternative: defer terminal rendering until compositor's first full frame is complete -- `wm_first_frame_done` flag checked in `terminal_render()`
+- [ ] Clip all window content rendering to the window's screen rect in `wm_composite()` -- no pixels outside window bounds should be written to the framebuffer
+- [ ] Commit: `"desktop: fix terminal text bleed during compositor startup"`
+
+**Test checkpoint:** Boot with `test=1` -- no text visible at top-left of screen before windows appear. Terminal content only appears inside the terminal window frame. Serial output unchanged (klog still writes to serial regardless).
 
 ---
 
