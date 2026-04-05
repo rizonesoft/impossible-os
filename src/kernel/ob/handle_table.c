@@ -11,6 +11,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
+#include "kernel/sched/task.h"
 
 extern void *memset(void *s, int c, size_t n);
 extern void *memcpy(void *dst, const void *src, size_t n);
@@ -28,6 +29,7 @@ int ob_handle_table_init(HANDLE_TABLE *table)
     memset(table->entries, 0, sz);
     table->capacity = HANDLE_TABLE_INIT_CAP;
     table->count = 0;
+    table->handle_limit = HANDLE_TABLE_DEFAULT_LIMIT;
     return 0;
 }
 
@@ -120,6 +122,15 @@ HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
             return INVALID_HANDLE_VALUE;  /* access denied */
     }
 
+    /* Per-process handle quota (S14): deny if at limit */
+    if (table->handle_limit > 0 && table->count >= table->handle_limit) {
+        struct task *cur = task_current();
+        klog(LOG_WARN, "ob", "PID %u handle quota exhausted (%u/%u)",
+             cur ? (uint64_t)cur->pid : 0,
+             (uint64_t)table->count, (uint64_t)table->handle_limit);
+        return INVALID_HANDLE_VALUE;
+    }
+
     /* Find a free slot */
     for (i = 0; i < table->capacity; i++) {
         if (!table->entries[i].object)
@@ -155,6 +166,13 @@ found:
     if (hdr->type)
         ob_invoke_post_callbacks(OB_OPERATION_HANDLE_CREATE,
                                  object, hdr->type, access);
+
+    /* Per-process cumulative handle counter (S14 diagnostics) */
+    {
+        struct task *cur = task_current();
+        if (cur)
+            cur->total_handles_created++;
+    }
 
     return (HANDLE)(i * 4);
 }
@@ -268,4 +286,15 @@ uint32_t ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
     }
 
     return count;
+}
+
+/* --- ob_handle_table_set_limit (S14) ------------------------------------- */
+
+void ob_handle_table_set_limit(HANDLE_TABLE *table, uint32_t new_limit)
+{
+    if (!table)
+        return;
+    if (new_limit > HANDLE_TABLE_ABSOLUTE_MAX)
+        new_limit = HANDLE_TABLE_ABSOLUTE_MAX;
+    table->handle_limit = new_limit;
 }

@@ -22,8 +22,12 @@
 typedef int32_t HANDLE;
 
 /* Initial and maximum capacity */
-#define HANDLE_TABLE_INIT_CAP  64
-#define HANDLE_TABLE_MAX_CAP   4096
+#define HANDLE_TABLE_INIT_CAP       64
+#define HANDLE_TABLE_MAX_CAP        4096
+
+/* Per-process handle quota (S14) */
+#define HANDLE_TABLE_DEFAULT_LIMIT  16384       /* default per-process handle limit */
+#define HANDLE_TABLE_ABSOLUTE_MAX   (1 << 20)   /* 1M handles -- absolute ceiling */
 
 /* --- HANDLE_TABLE_ENTRY -------------------------------------------------- */
 
@@ -36,9 +40,10 @@ typedef struct handle_table_entry {
 /* --- HANDLE_TABLE -------------------------------------------------------- */
 
 typedef struct handle_table {
-    HANDLE_TABLE_ENTRY *entries;   /* array of entries */
-    uint32_t            capacity;  /* current allocated slots */
-    uint32_t            count;     /* number of occupied slots */
+    HANDLE_TABLE_ENTRY *entries;      /* array of entries */
+    uint32_t            capacity;     /* current allocated slots */
+    uint32_t            count;        /* number of occupied slots */
+    uint32_t            handle_limit; /* per-process quota (S14) */
 } HANDLE_TABLE;
 
 /* --- API ----------------------------------------------------------------- */
@@ -68,3 +73,6 @@ HANDLE_TABLE_ENTRY *ObpLookupHandle(HANDLE_TABLE *table, HANDLE handle);
  * Child table must be freshly initialized (empty).
  * Returns the number of handles inherited. */
 uint32_t ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child);
+
+/* Set per-process handle limit. Clamped to HANDLE_TABLE_ABSOLUTE_MAX. */
+void ob_handle_table_set_limit(HANDLE_TABLE *table, uint32_t new_limit);

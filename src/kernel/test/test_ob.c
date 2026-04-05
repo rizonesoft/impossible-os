@@ -343,6 +343,62 @@ static void test_ob_callbacks(void)
     ObDereferenceObject(obj);
 }
 
+/* ---- Per-process handle quota (S14) ---- */
+
+static void test_ob_handle_quota(void)
+{
+    /* Create a type for quota testing */
+    static const OBJECT_TYPE quota_tmpl = {
+        .name      = "QuotaTest",
+        .body_size = 16,
+        .on_close  = (void *)0,
+        .on_delete = (void *)0,
+        .on_open   = (void *)0,
+        .on_parse  = (void *)0,
+    };
+    const OBJECT_TYPE *qtype = ob_create_type(&quota_tmpl);
+    TEST_ASSERT(qtype != (void *)0, "ob_create_type for quota test");
+
+    void *obj = ob_alloc_object(qtype);
+    TEST_ASSERT(obj != (void *)0, "alloc object for quota test");
+
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+
+    /* Set a very small limit */
+    ob_handle_table_set_limit(&ht, 3);
+    TEST_ASSERT_EQ(ht.handle_limit, 3, "handle_limit set to 3");
+
+    /* Allocate 3 handles -- should succeed */
+    HANDLE h0 = ObpAllocateHandle(&ht, obj, 0x1F0FFF, 0);
+    HANDLE h1 = ObpAllocateHandle(&ht, obj, 0x1F0FFF, 0);
+    HANDLE h2 = ObpAllocateHandle(&ht, obj, 0x1F0FFF, 0);
+    TEST_ASSERT(h0 >= 0, "handle 0 allocated within quota");
+    TEST_ASSERT(h1 >= 0, "handle 1 allocated within quota");
+    TEST_ASSERT(h2 >= 0, "handle 2 allocated within quota");
+
+    /* 4th allocation should fail -- quota exceeded */
+    HANDLE h3 = ObpAllocateHandle(&ht, obj, 0x1F0FFF, 0);
+    TEST_ASSERT_EQ(h3, INVALID_HANDLE_VALUE,
+                   "4th handle denied by quota (3/3)");
+
+    /* Free 1 handle and retry -- should succeed */
+    ObpFreeHandle(&ht, h0);
+    HANDLE h4 = ObpAllocateHandle(&ht, obj, 0x1F0FFF, 0);
+    TEST_ASSERT(h4 >= 0, "handle succeeds after freeing one within quota");
+
+    /* Clamp to absolute max */
+    ob_handle_table_set_limit(&ht, HANDLE_TABLE_ABSOLUTE_MAX + 1000);
+    TEST_ASSERT_EQ(ht.handle_limit, HANDLE_TABLE_ABSOLUTE_MAX,
+                   "handle_limit clamped to ABSOLUTE_MAX");
+
+    /* Cleanup */
+    ObpFreeHandle(&ht, h1);
+    ObpFreeHandle(&ht, h2);
+    ObpFreeHandle(&ht, h4);
+    ObDereferenceObject(obj);
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -356,6 +412,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: query directory", test_ob_query_directory, TEST_CAT_OB);
     test_suite_register_cat("OB: type stats", test_ob_type_stats, TEST_CAT_OB);
     test_suite_register_cat("OB: callbacks", test_ob_callbacks, TEST_CAT_OB);
+    test_suite_register_cat("OB: handle quota", test_ob_handle_quota, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */

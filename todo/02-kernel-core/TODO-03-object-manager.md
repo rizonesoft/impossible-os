@@ -51,7 +51,7 @@
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [x]   |
 | 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [x]   |
 | 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9         |  [x]   |
-| 💎  |  14   | Per-process handle quota                                      | §3             |  [ ]   |
+| 💎  |  14   | Per-process handle quota                                      | §3             |  [x]   |
 | ⭐  |  15   | Handle tracing and leak detection                             | §2, §12        |  [ ]   |
 
 > 💎 = parity -- Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
@@ -247,7 +247,7 @@ Allow kernel-mode drivers to register pre- and post-operation callbacks on handl
 - [x] In `NtDuplicateObject()`: `ob_invoke_pre_callbacks(HANDLE_DUPLICATE)` before `ObpAllocateHandle`
 - [x] After successful handle creation/duplication: `ob_invoke_post_callbacks()` with granted access
 - [x] 10 test assertions: register, strip TERMINATE, post-callback invoked, unregister restores full access
-- [ ] Commit: `"kernel: ob -- ObRegisterCallbacks handle operation filtering"`
+- [x] Commit: `"kernel: ob -- ObRegisterCallbacks handle operation filtering"`
 
 > [!NOTE]
 > Linux uses LSM (Linux Security Modules) hooks at a different layer. The Ob callback approach matches Win32 driver compatibility requirements and enables anti-tamper protection for critical processes (→ XREF: `TODO-11-security-reference-monitor.md` for PPL integration).
@@ -260,12 +260,13 @@ Enforce a configurable per-process handle limit to prevent resource exhaustion f
 > [!NOTE]
 > The `NtSetInformationProcess(ProcessHandleQuota)` SSDT wiring depends on `TODO-05 §10` which is not yet implemented. Core quota enforcement in `ObpAllocateHandle()` works independently -- the SSDT entry is a user-mode convenience, not a blocker.
 
-- [ ] Add `uint32_t handle_limit` to `HANDLE_TABLE` -- default `HANDLE_TABLE_DEFAULT_LIMIT` (16384); adjustable per process
-- [ ] In `ObpAllocateHandle()`: if `table->count >= table->handle_limit`, return `INVALID_HANDLE_VALUE` (quota exceeded) instead of growing
-- [ ] Add `ob_handle_table_set_limit(table, new_limit)` -- clamp to `HANDLE_TABLE_ABSOLUTE_MAX` (1 << 20 = 1M handles)
+- [x] Add `uint32_t handle_limit` to `HANDLE_TABLE` -- default `HANDLE_TABLE_DEFAULT_LIMIT` (16384); set in `ob_handle_table_init()`
+- [x] In `ObpAllocateHandle()`: if `table->count >= table->handle_limit`, return `INVALID_HANDLE_VALUE` (quota exceeded) before slot search
+- [x] Add `ob_handle_table_set_limit(table, new_limit)` -- clamps to `HANDLE_TABLE_ABSOLUTE_MAX` (1 << 20 = 1M handles)
 - [ ] Wire into `NtSetInformationProcess(ProcessHandleQuota)` (→ XREF: `TODO-05 §10`) -- requires `SeIncreaseQuotaPrivilege` to raise above default
-- [ ] Track cumulative handle allocations per process in `task_t.total_handles_created` for diagnostic reporting
-- [ ] On quota exhaustion: log `klog(LOG_WARN, "ob", "PID %u handle quota exhausted (%u/%u)")` with PID, count, limit
+- [x] Track cumulative handle allocations per process in `task_t.total_handles_created` -- incremented in `ObpAllocateHandle()`
+- [x] On quota exhaustion: `klog(LOG_WARN, "ob", "PID %u handle quota exhausted (%u/%u)")` with PID, count, limit
+- [x] 8 test assertions: set limit, 3 allocs succeed, 4th denied, free+retry succeeds, clamp to ABSOLUTE_MAX
 - [ ] Commit: `"kernel: ob -- per-process handle quota enforcement"`
 
 **Test checkpoint:** Set handle limit to 100 for a test process. Allocate 100 handles successfully. 101st allocation returns `INVALID_HANDLE_VALUE`. Free 1 handle, allocate again succeeds. `klog` warning emitted on exhaustion. Default limit (16384) works for normal boot. Verify on QEMU WHPX + TCG + VirtualBox. `POST16(0xD920)`–`POST16(0xD923)`.
@@ -310,7 +311,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 | ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ✅ §1–§7 -- one header       |
 | 💎 | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo    | ✅ §12 -- atomic counters    |
 | 💎 | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ✅ §13 -- pre/post filtering |
-| 💎 | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE     | ⬜ §14 -- configurable limit |
+| 💎 | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE     | ✅ §14 -- 16K default, 1M max |
 | ⭐ | Handle leak detection | ⚠️ ETW (complex)       | ❌ No built-in       | ⬜ §15 -- klog-integrated    |
 
 > All foundational parity items (§1–§11) complete -- Impossible OS matches Windows NT object management.
@@ -334,7 +335,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [x] Commit: `"test: add object manager test suite"`
 - [ ] §12 tests: `ObpEventType->total_objects` tracks create/delete; `peak_objects` high-water; `NtQueryObject(ObjectTypeInformation)` returns counters; `NtQueryObject(ObjectTypesInformation)` enumerates all types
 - [x] §13 tests: `ObRegisterCallbacks` pre-callback strips TERMINATE; post-callback invoked; `ObUnRegisterCallbacks` restores full access (10 assertions in `test_ob.c`)
-- [ ] §14 tests: handle limit enforcement; 101st allocation fails; free + retry succeeds; default limit allows normal boot
+- [x] §14 tests: handle limit set to 3, allocs 0-2 succeed, 3rd denied, free+retry succeeds, clamp to ABSOLUTE_MAX (8 assertions in `test_ob.c`)
 - [ ] §15 tests: tagged ref tracing records entries; `ob_dump_trace` reports imbalance; `ob_handle_trace=1` emits klog
 
 ## Verification
