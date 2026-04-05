@@ -891,3 +891,26 @@ struct fat32_volume *fat32_volume_from_root(struct vfs_node *root)
     struct fat32_file *ff = (struct fat32_file *)root->fs_data;
     return ff->volume;
 }
+
+int fat32_is_dirty(struct fat32_volume *vol)
+{
+    return vol ? vol->volume_dirty : 0;
+}
+
+void fat32_mark_dirty(struct fat32_volume *vol)
+{
+    if (vol) fat32_set_dirty_marker(vol);
+}
+
+void fat32_mark_clean(struct fat32_volume *vol)
+{
+    if (vol) {
+        fat32_set_clean_marker(vol);
+        fat32_fsinfo_flush(vol);
+    }
+}
+
+int fat32_run_fsck(struct fat32_volume *vol, int fix)
+{
+    return vol ? fat32_fsck(vol, fix) : -1;
+}

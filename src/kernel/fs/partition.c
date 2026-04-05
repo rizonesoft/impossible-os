@@ -441,6 +441,15 @@ void partition_mount_filesystems(void)
             }
             /* BlackBox partition mounts as X:\ by GPT name */
             if (part_streqi(pi->gpt_name, "BlackBox")) {
+                /* Check dirty bit -- fsck if previous crash */
+                if (fat32_is_dirty(fat_vol)) {
+                    klog(LOG_WARN, "blk",
+                         "BlackBox: partition dirty -- possible corruption");
+                    fat32_run_fsck(fat_vol, 1);  /* repair mode */
+                }
+                /* Mark dirty on mount (cleared on clean shutdown) */
+                fat32_mark_dirty(fat_vol);
+
                 vfs_mount('X', fat32_get_driver(),
                           fat32_get_root(fat_vol));
                 klog(LOG_INFO, "blk",

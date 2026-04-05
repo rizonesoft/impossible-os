@@ -158,6 +158,31 @@ void fat32_read_dirty_marker(struct fat32_volume *vol)
     }
 }
 
+void fat32_set_dirty_marker(struct fat32_volume *vol)
+{
+    uint32_t fat1_entry = fat32_get_fat_entry(vol, 1);
+
+    /* Clear bit 27 to mark volume as dirty (in-use) */
+    fat1_entry &= ~FAT32_CLEAN_SHUTDOWN_BIT;
+
+    {
+        uint32_t fat_offset = 1 * 4;
+        uint32_t fat_sector = vol->bpb.first_fat_sector + (fat_offset / 512);
+        uint32_t entry_offset = fat_offset % 512;
+        uint32_t fi;
+
+        for (fi = 0; fi < vol->bpb.num_fats; fi++) {
+            uint32_t sector = fat_sector + fi * vol->bpb.fat_size_sectors;
+            if (fat32_read_sector(vol, sector, vol->sector_buf) != 0)
+                return;
+            *(uint32_t *)&vol->sector_buf[entry_offset] = fat1_entry;
+            if (fat32_write_sector(vol, sector, vol->sector_buf) != 0)
+                return;
+        }
+    }
+    vol->volume_dirty = 1;
+}
+
 void fat32_set_clean_marker(struct fat32_volume *vol)
 {
     uint32_t fat1_entry = fat32_get_fat_entry(vol, 1);

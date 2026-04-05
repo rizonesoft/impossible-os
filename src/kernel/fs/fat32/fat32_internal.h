@@ -163,6 +163,7 @@ void     fat32_compare_repair_fats(struct fat32_volume *vol);
 
 /* Dirty volume marker -- reads/writes FAT[1] bit 27 */
 void     fat32_read_dirty_marker(struct fat32_volume *vol);
+void     fat32_set_dirty_marker(struct fat32_volume *vol);
 void     fat32_set_clean_marker(struct fat32_volume *vol);
 
 /* FSInfo flush and free cluster scan */

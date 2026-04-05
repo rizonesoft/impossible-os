@@ -48,7 +48,7 @@
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [x]   |
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [x]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [x]   |
-| 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [ ]   |
+| 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [x]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [ ]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [ ]   |
 | 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [ ]   |
@@ -202,7 +202,7 @@ Windows and Linux identify FAT32 volumes by their 11-character volume label (sto
 - [x] Verified: `mlabel` shows `BLACKBOX`
 - [x] `fat32_init()` parses BS_VolLab (BPB offset 71, 11 bytes) into `vol->label`, space-trimmed
 - [x] Log at mount: `FAT32: "BLACKBOX" 128 MiB, 8 sectors/cluster, root cluster 2`
-- [ ] Commit: `"build: set FAT32 volume label BLACKBOX at format time"`
+- [x] Commit: `"build: set FAT32 volume label BLACKBOX at format time"`
 
 **Test checkpoint:** `mlabel` shows BLACKBOX. Windows Disk Management shows "BLACKBOX (X:)" when disk is attached. Serial shows volume label on mount.
 
@@ -210,11 +210,11 @@ Windows and Linux identify FAT32 volumes by their 11-character volume label (sto
 
 FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed mid-write, the dirty bit is set. Check it on mount and optionally run fsck. (-> XREF: TODO-04 §6 -- FAT32 fsck implementation)
 
-- [ ] At BlackBox mount time: read FAT32 dirty bit from BPB
-- [ ] If dirty: `klog(LOG_WARN, "blk", "BlackBox: partition dirty -- possible corruption from previous crash")`
-- [ ] If dirty and `fat32_fsck()` is available (TODO-04 §6): run read-only scan, log results
-- [ ] Clear dirty bit after successful mount (standard FAT32 behavior)
-- [ ] Set dirty bit on mount, clear on clean unmount/shutdown
+- [x] At BlackBox mount: `fat32_is_dirty()` checks FAT[1] bit 27
+- [x] If dirty: logs warning + runs `fat32_run_fsck(vol, 1)` in repair mode
+- [x] `fat32_mark_dirty()` sets dirty on mount (new `fat32_set_dirty_marker()`)
+- [x] `fat32_mark_clean()` clears dirty in `acpi_shutdown()` before power-off
+- [x] Public API: `fat32_is_dirty/mark_dirty/mark_clean/run_fsck` in `fat32.h`
 - [ ] Commit: `"kernel: BlackBox FAT32 dirty-bit check and optional fsck on mount"`
 
 **Test checkpoint:** Force unclean shutdown (kill QEMU mid-write). Next boot: serial shows "partition dirty" warning. After clean shutdown: no warning. Verify on QEMU WHPX, TCG.
@@ -300,7 +300,7 @@ Update cross-references across affected TODOs.
 | 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ✅ §3 -- GPT name match X:\         |
 | 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ⬜ S4 -- organized Logs/Boot/Crash/ |
 | 💎 | Log space management       | ✅ CBS.log 20 MB cap       | ✅ logrotate + journald    | ⬜ S10 -- aging + quota + cleanup   |
-| 💎 | Dirty-bit / fsck on mount  | ✅ chkdsk on dirty FAT32   | ✅ fsck.fat on mount       | ⬜ S12 -- dirty-bit + optional fsck |
+| 💎 | Dirty-bit / fsck on mount  | ✅ chkdsk on dirty FAT32   | ✅ fsck.fat on mount       | ✅ §12 -- dirty+fsck on mount       |
 | ⭐ | Cross-platform WER staging | ⚠️ WER on NTFS only        | ⚠️ apport on ext4 only     | ⬜ S13 -- FAT32 WER JSON reports    |
 | 💎 | A/B + diagnostic coexist   | ❌ Recovery only           | ⚠️ A/B without diag part   | ⬜ S14 -- 4-partition layout        |
 

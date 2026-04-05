@@ -68,6 +68,17 @@ uint64_t fat32_get_free_bytes(struct fat32_volume *vol);
  * Returns NULL if node is not a FAT32 root. */
 struct fat32_volume *fat32_volume_from_root(struct vfs_node *root);
 
+/* Returns 1 if volume was not cleanly unmounted. */
+int fat32_is_dirty(struct fat32_volume *vol);
+
+/* Mark volume dirty (on mount) or clean (on unmount/shutdown). */
+void fat32_mark_dirty(struct fat32_volume *vol);
+void fat32_mark_clean(struct fat32_volume *vol);
+
+/* Run filesystem consistency check. fix=0 for read-only, fix=1 to repair.
+ * Returns 0 if clean, >0 = number of errors found/fixed, -1 on failure. */
+int fat32_run_fsck(struct fat32_volume *vol, int fix);
+
 /* ---- Write operations ---- */
 
 /* Create an empty file in the given directory cluster.

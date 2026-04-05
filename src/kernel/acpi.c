@@ -22,6 +22,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "kernel/fs/fat32.h"
 
 /* ---- I/O helpers ---- */
 
@@ -472,6 +473,19 @@ int acpi_init(void)
 void acpi_shutdown(void)
 {
     printk("[ACPI] Initiating shutdown...\n");
+
+    /* Clean unmount BlackBox (X:\) -- clears dirty bit */
+    {
+        extern int vfs_is_mounted(char letter);
+        extern struct vfs_node *vfs_get_drive_root(char letter);
+        if (vfs_is_mounted('X')) {
+            struct vfs_node *x_root = vfs_get_drive_root('X');
+            if (x_root) {
+                struct fat32_volume *vol = fat32_volume_from_root(x_root);
+                if (vol) fat32_mark_clean(vol);
+            }
+        }
+    }
 
     /* Disable interrupts -- we're going down */
     __asm__ volatile("cli");
