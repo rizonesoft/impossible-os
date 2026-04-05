@@ -193,6 +193,7 @@ extern void test_register_storage(void);
 extern void test_register_ixfs(void);
 extern void test_register_bulletproof(void);
 extern void test_register_blackbox(void);
+extern void test_register_acpi_power(void);
 
 void test_runner_init(void)
 {
@@ -236,6 +237,7 @@ void test_runner_init(void)
     /* Storage */
     test_register_storage();
     test_register_blackbox();
+    test_register_acpi_power();
 
     klog(LOG_INFO, "TEST", "%u suite(s) registered",
          (uint64_t)g_test_state.suite_count);

@@ -129,7 +129,7 @@
 
 ### 1.4 Commit
 
-- [ ] Commit: `"kernel/acpi: S1/S3/S4 sleep type parsing, PM1 state machine, fixed-event ISR"`
+- [x] Commit: `"kernel/acpi: S1/S3/S4 sleep type parsing, PM1 state machine, fixed-event ISR"`
 
 ---
 
