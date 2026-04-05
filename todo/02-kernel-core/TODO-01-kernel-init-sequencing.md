@@ -253,7 +253,7 @@ Move non-critical subsystem init out of the blocking boot path so the desktop ap
 - [x] Add `boot_defer(const char *name, boot_result_t (*fn)(void))` -- registers a subsystem for post-desktop init
 - [x] Move `rtl8139_init()` + `net_init()` + `dhcp_discover()` from Phase 2 blocking path to deferred -- network is not needed for desktop; wrap in `static boot_result_t deferred_net_init(void)` since originals return `int`/`void`
 - [x] Move `virtio_input_init()` + `vbox_mouse_init()` from Phase 2 blocking path to deferred -- PS/2 mouse is sufficient for initial desktop; wrap in `static boot_result_t deferred_input_init(void)` since originals return `int`
-- [x] Add `boot_run_deferred()` call in Phase 3 after `desktop_init()` but before `compositor_run()` -- runs all deferred inits sequentially
+- [x] Add `boot_run_deferred()` call in Phase 3 after `desktop_init()` but before `compositor_run()` -- runs inline (NOT on a thread -- compositor starves threads, breaking mouse drivers; see Codex F3 revert 2026-04-05)
 - [x] Each deferred init logs `[DEFERRED] name +NNNms` via klog with POST code range `POST16(0xD000)`--`POST16(0xD005)` (deferred net + input)
 - [x] If a deferred init fails, log `klog(WARN)` -- no halt, no BSOD
 - [x] Add `deferred=0` boot.conf option to disable deferral (all subsystems init in-phase, old behavior) for debugging
@@ -370,7 +370,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 | 3 | high | Deferred init not fault-isolated -- optional driver panic aborts Phase 3 | **Reverted** -- thread starved deferred inits (broke mouse); inline call restored; isolation deferred to TODO-10 SEH |
 | 4 | high | Recovery keyboard polling races active PS/2 IRQ handler | **Fixed** -- `kbd_poll_begin()`: cli + mask routed GSI + drain |
 | 5 | high | Recovery masks raw IRQ1 instead of ACPI-remapped GSI | **Fixed** -- uses `ioapic_isa_to_gsi(1)` for correct GSI |
-| 6 | high | Deferred thread doesn't truly contain kernel faults | **Accepted** -- per-thread exception containment requires TODO-10 SEH; thread decouples scheduling, full isolation deferred |
+| 6 | high | Deferred init not fault-contained | **Accepted** -- thread approach reverted (starved mouse drivers); inline call restored; per-thread isolation requires TODO-10 SEH |
 
 ## Verification
 

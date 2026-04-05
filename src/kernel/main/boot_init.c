@@ -121,8 +121,10 @@ void boot_run_deferred(void)
         const char *name = g_deferred[i].name ? g_deferred[i].name : "?";
         uint64_t t0 = system_get_ticks();
 
-        /* Runs on a dedicated kernel thread -- a fault here kills only
-         * this thread, not the compositor or the main boot path. */
+        /* Runs inline on the BSP boot path. A fault here halts boot.
+         * Thread isolation was attempted but starved the deferred inits
+         * (compositor event loop took the CPU). Per-thread fault isolation
+         * requires TODO-10 SEH. */
         boot_result_t r = g_deferred[i].fn();
         uint64_t elapsed_ms = (system_get_ticks() - t0) * 10;
 
