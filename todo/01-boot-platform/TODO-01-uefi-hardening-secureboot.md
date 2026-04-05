@@ -36,14 +36,14 @@
 
 | ⭐  | Order | Deliverable                              | Depends On      | Status |
 | --- | :---: | ---------------------------------------- | --------------- | :----: |
-| 💎  |   1   | UEFI runtime services preservation       | --               |  [x]   |
+| 💎  |   1   | UEFI runtime services preservation       | --              |  [x]   |
 | 💎  |   2   | UEFI variable services                   | §1              |  [x]   |
 | 💎  |   3   | GOP resolution auto-detection            | §1              |  [x]   |
 | 💎  |   4   | SMBIOS table parsing                     | §1              |  [x]   |
 | 💎  |   5   | Secure Boot state detection              | §2              |  [x]   |
 | 💎  |   6   | Secure Boot shim chain-loading           | §5              |  [x]   |
 | 💎  |   7   | Boot UX polish                           | §3, §5, T07 §2  |  [x]   |
-| ⭐  |   8   | Serial log standardization               | --               |  [x]   |
+| ⭐  |   8   | Serial log standardization               | --              |  [x]   |
 
 ---
 
@@ -66,7 +66,7 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
 - [x] Common GUIDs: EFI_GLOBAL, EFI_IMAGE_SECURITY_DATABASE, IMPOSSIBLE_OS_VENDOR
 - [x] `uefi_var_get_u32()` / `uefi_var_set_u32()` convenience wrappers
 - [x] `uefi_var_enumerate(callback)` for iterating all variables
-- [ ] Wire Win32 API: `GetFirmwareEnvironmentVariableA/W` (-> XREF: TODO-05 native API)
+- [x] Win32 API wired: `NtQuerySystemEnvironmentValue[Ex]` (0x00D2-0x00D4) and `NtSetSystemEnvironmentValue[Ex]` (0x00D3-0x00D5) registered in SSDT, mapped to `uefi_get_variable` / `uefi_set_variable`
 - [x] Commit: `"kernel: UEFI variable get/set wrappers"`
 
 ## 3. GOP Resolution Auto-Detection

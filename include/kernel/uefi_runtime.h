@@ -366,3 +366,7 @@ int uefi_capsule_supported(void);
 
 /* Returns capsule capability info (valid after uefi_capsule_init). */
 const struct capsule_capability_info *uefi_capsule_info(void);
+
+/* Register NtQuerySystemEnvironmentValue[Ex] / NtSetSystemEnvironmentValue[Ex]
+ * in the SSDT. Call after ssdt_init(). */
+void uefi_register_ssdt(void);

@@ -120,6 +120,12 @@ void boot_phase3(void)
         wall_clock_register_ssdt();
     }
 
+    /* --- UEFI firmware variable syscalls --- */
+    {
+        extern void uefi_register_ssdt(void);
+        uefi_register_ssdt();
+    }
+
     /* --- Exec loader (ELF/PE format handlers) --- */
     kernel_subsystem_set_ready(SUBSYS_EXEC, true);
     boot_progress(3, "EXEC", 0x0062);

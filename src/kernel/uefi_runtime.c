@@ -13,6 +13,9 @@
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 #include "kernel/uefi_config.h"
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/service_numbers.h"
+#include "kernel/nt/ntstatus.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
@@ -1112,4 +1115,106 @@ int uefi_capsule_supported(void)
 const struct capsule_capability_info *uefi_capsule_info(void)
 {
     return &s_capsule_info;
+}
+
+/* ---- SSDT handlers: NtQuerySystemEnvironmentValueEx / NtSetSystemEnvironmentValueEx ---- */
+
+/* Map EFI status to NTSTATUS */
+static NTSTATUS efi_to_ntstatus(uint64_t efi_status)
+{
+    if (efi_status == UEFI_SUCCESS)   return STATUS_SUCCESS;
+    if (efi_status == UEFI_NOT_FOUND) return STATUS_NOT_FOUND;
+    /* Buffer too small: high bit set, code 5 */
+    if (efi_status == (5ULL | (1ULL << 63))) return STATUS_BUFFER_TOO_SMALL;
+    return STATUS_UNSUCCESSFUL;
+}
+
+/* NtQuerySystemEnvironmentValueEx(Name, VendorGuid, Value, ValueLength, Attributes)
+ * SSDT 0x00D4 -- Win32 GetFirmwareEnvironmentVariableExW maps here */
+static NTSTATUS nt_query_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
+                                       uint64_t value_ptr, uint64_t length_ptr,
+                                       uint64_t attrs_ptr, uint64_t a6)
+{
+    const uint16_t *name;
+    const struct boot_uefi_guid *guid;
+    uint64_t data_size;
+    uint32_t attrs = 0;
+    uint64_t efi_status;
+
+    (void)a6;
+    if (!name_ptr || !guid_ptr || !value_ptr || !length_ptr)
+        return STATUS_INVALID_PARAMETER;
+
+    name = (const uint16_t *)name_ptr;
+    guid = (const struct boot_uefi_guid *)guid_ptr;
+    data_size = *(uint32_t *)length_ptr;
+
+    efi_status = uefi_get_variable(guid, name, &attrs, &data_size,
+                                    (void *)value_ptr);
+
+    *(uint32_t *)length_ptr = (uint32_t)data_size;
+    if (attrs_ptr)
+        *(uint32_t *)attrs_ptr = attrs;
+
+    return efi_to_ntstatus(efi_status);
+}
+
+/* NtSetSystemEnvironmentValueEx(Name, VendorGuid, Value, ValueLength, Attributes)
+ * SSDT 0x00D5 -- Win32 SetFirmwareEnvironmentVariableExW maps here */
+static NTSTATUS nt_set_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
+                                     uint64_t value_ptr, uint64_t length,
+                                     uint64_t attrs, uint64_t a6)
+{
+    const uint16_t *name;
+    const struct boot_uefi_guid *guid;
+    uint64_t efi_status;
+
+    (void)a6;
+    if (!name_ptr || !guid_ptr)
+        return STATUS_INVALID_PARAMETER;
+
+    name = (const uint16_t *)name_ptr;
+    guid = (const struct boot_uefi_guid *)guid_ptr;
+
+    efi_status = uefi_set_variable(guid, name, (uint32_t)attrs,
+                                    length, (const void *)value_ptr);
+
+    return efi_to_ntstatus(efi_status);
+}
+
+/* Legacy non-Ex variants: same but no attributes parameter */
+static NTSTATUS nt_query_env_value(uint64_t name_ptr, uint64_t guid_ptr,
+                                    uint64_t value_ptr, uint64_t length_ptr,
+                                    uint64_t a5, uint64_t a6)
+{
+    return nt_query_env_value_ex(name_ptr, guid_ptr, value_ptr, length_ptr,
+                                 0, a6);
+    (void)a5;
+}
+
+static NTSTATUS nt_set_env_value(uint64_t name_ptr, uint64_t guid_ptr,
+                                  uint64_t value_ptr, uint64_t length,
+                                  uint64_t a5, uint64_t a6)
+{
+    /* Legacy: use NV+BS+RT attributes */
+    return nt_set_env_value_ex(name_ptr, guid_ptr, value_ptr, length,
+                                7, a6);  /* 7 = NV|BS|RT */
+    (void)a5;
+}
+
+void uefi_register_ssdt(void)
+{
+    ssdt_register(SSDT_NtQuerySystemEnvironmentValue,
+                  (SSDT_HANDLER)nt_query_env_value);
+    ssdt_register(SSDT_NtSetSystemEnvironmentValue,
+                  (SSDT_HANDLER)nt_set_env_value);
+    ssdt_register(SSDT_NtQuerySystemEnvironmentValueEx,
+                  (SSDT_HANDLER)nt_query_env_value_ex);
+    ssdt_register(SSDT_NtSetSystemEnvironmentValueEx,
+                  (SSDT_HANDLER)nt_set_env_value_ex);
+
+    klog(LOG_INFO, "uefi",
+         "Firmware variable syscalls registered (SSDT 0x%03X-0x%03X)",
+         (uint64_t)SSDT_NtQuerySystemEnvironmentValue,
+         (uint64_t)SSDT_NtSetSystemEnvironmentValueEx);
 }
