@@ -73,8 +73,8 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run em
      - do not mark section complete,
      - keep `[/]` or `[ ]`,
      - add explicit follow-up checklist items with ownership and `→ XREF` where needed.
-13. Run section verification via `verify-todo-section` skill (required).
-   - **Use the `verify-todo-section` skill, not manual checklist review.** The skill enforces evidence collection methodology and catches stale/optimistic status claims.
+13. Run section verification via `validate-todo-section` skill (required).
+   - **Use the `validate-todo-section` skill, not manual checklist review.** The skill enforces evidence collection methodology and catches stale/optimistic status claims.
    - Verify the section end-to-end against code/build/runtime evidence before final TODO status updates.
    - Classify each checklist item conservatively:
      - `[x]` only when implemented + wired + functional normal path,
@@ -98,7 +98,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run em
 > If you find yourself about to run `git add` and you have not yet:
 > - (11) Invoked the `codex-adversarial-review-section` skill (NOT self-review) and received findings with severity labels
 > - (12) Fixed all Critical/High findings with build evidence
-> - (13) Invoked the `verify-todo-section` skill (NOT manual checklist scan) and reconciled status
+> - (13) Invoked the `validate-todo-section` skill (NOT manual checklist scan) and reconciled status
 >
 > then **STOP and go back to step 11**. The commit can wait 5 minutes. Shipping unreviewed code cannot be undone.
 >

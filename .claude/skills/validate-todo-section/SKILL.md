@@ -1,9 +1,9 @@
 ---
-name: verify-todo-section
-description: Verify whether a TODO section marked done or in progress matches actual code, build, and runtime evidence, then correct the section state conservatively. Use when auditing completed TODO work, reconciling stale checklist state, or verifying a claimed implementation.
+name: validate-todo-section
+description: Validate whether a TODO section marked done or in progress matches actual code, build, and runtime evidence, then correct the section state conservatively. Use when auditing completed TODO work, reconciling stale checklist state, or verifying a claimed implementation.
 ---
 
-# Verify TODO Section
+# Validate TODO Section
 
 ## Workflow
 
