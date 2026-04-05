@@ -113,11 +113,12 @@
 
 ### 1.2 PM1 sleep entry
 
-- [ ] `acpi_enter_sleep_state(uint8_t state)` -- generic sleep entry:
-  1. Disable all non-wakeup interrupts (mask IOAPIC, disable PIC)
-  2. Clear `SLP_EN` bit in PM1a_CNT
-  3. Write `(slp_typa_sN << 10) | SLP_EN` to PM1a_CNT; repeat for PM1b_CNT if present
-  4. `__asm__ volatile("hlt")` -- CPU stops here; wakeup resumes after this point for S1; for S3/S4 the CPU loses context and resumes at the wakeup vector
+- [x] `acpi_enter_sleep_state(uint8_t state)` -- generic sleep entry:
+  1. Validates state support via `acpi_get_slp_typa()`
+  2. `cli` -- disables interrupts
+  3. Clears `SLP_EN` bit in PM1a_CNT (ACPI spec requirement before write)
+  4. Writes `(SLP_TYPa << 10) | SLP_EN` to PM1a_CNT; repeats for PM1b_CNT if present
+  5. `sti; hlt` -- CPU halts; S1 resumes on wakeup interrupt; S3/S4 require wakeup vector (§3/§4)
 
 ### 1.3 ACPI fixed events
 

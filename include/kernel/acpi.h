@@ -188,6 +188,12 @@ int  acpi_init(void);
  * Call after acpi_init() (Phase 1) has located the DSDT. */
 void acpi_power_init(void);
 
+/* Enter a sleep state (S1-S5). Disables interrupts, writes PM1a/PM1b_CNT.
+ * For S1: returns 0 on wake. For S3/S4: does not return (resume via wakeup
+ * vector, not yet implemented). For S5: does not return (power off).
+ * Returns -1 if the state is not supported or ACPI is not ready. */
+int acpi_enter_sleep_state(uint8_t state);
+
 /* Returns 1 if sleep state N (1, 3, 4, or 5) is supported by the firmware. */
 int acpi_sleep_supported(uint8_t state);
 

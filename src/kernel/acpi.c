@@ -526,6 +526,54 @@ uint16_t acpi_get_slp_typa(uint8_t state)
     }
 }
 
+/* ---- Generic sleep state entry ------------------------------------------ */
+
+int acpi_enter_sleep_state(uint8_t state)
+{
+    uint16_t typa = acpi_get_slp_typa(state);
+    uint16_t val;
+
+    if (typa == ACPI_SLP_TYPE_INVALID) {
+        klog(LOG_ERROR, "acpi", "S%u not supported by firmware", (uint64_t)state);
+        return -1;
+    }
+
+    if (!acpi_ready || !pm1a_cnt_port) {
+        klog(LOG_ERROR, "acpi", "ACPI not ready -- cannot enter S%u",
+             (uint64_t)state);
+        return -1;
+    }
+
+    klog(LOG_INFO, "acpi", "Entering S%u (SLP_TYPa=%u)...",
+         (uint64_t)state, (uint64_t)typa);
+
+    /* Step 1: Disable interrupts */
+    __asm__ volatile ("cli");
+
+    /* Step 2: Clear SLP_EN before writing SLP_TYP (ACPI spec requirement) */
+    {
+        uint16_t cur = inw_acpi(pm1a_cnt_port);
+        outw_acpi(pm1a_cnt_port, (uint16_t)(cur & ~(1u << 13)));
+    }
+
+    /* Step 3: Write (SLP_TYPa << 10) | SLP_EN to PM1a_CNT */
+    val = (uint16_t)(typa << 10) | (1u << 13);
+    outw_acpi(pm1a_cnt_port, val);
+
+    /* Write PM1b_CNT if present */
+    if (fadt_ptr && fadt_ptr->pm1b_control_block)
+        outw_acpi((uint16_t)fadt_ptr->pm1b_control_block, val);
+
+    /* Step 4: For S1, CPU halts here and resumes on wakeup interrupt.
+     * For S3/S4, CPU loses context -- resume is via wakeup vector (not
+     * implemented yet; requires CPU state save in TODO-15 §3/§4). */
+    __asm__ volatile ("sti; hlt");
+
+    /* If we reach here, we woke up from S1 (or S3 resume vector jumped here) */
+    klog(LOG_INFO, "acpi", "Resumed from S%u", (uint64_t)state);
+    return 0;
+}
+
 void acpi_shutdown(void)
 {
     printk("[ACPI] Initiating shutdown...\n");
