@@ -47,7 +47,7 @@
 | 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [x]   |
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [x]   |
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [x]   |
-| 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [ ]   |
+| 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [x]   |
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [ ]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [ ]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [ ]   |
@@ -190,7 +190,7 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [x] MaxBootSessions = 10, MinFreeMiB = 16 (hardcoded defaults, TODO: wire to registry)
 - [x] Cleanup log: `"BlackBox: cleanup freed N KiB (N files removed)"`
 - [x] If critically low after cleanup: falls back to C:\ with LOG_ERROR
-- [ ] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
+- [x] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
 
 **Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG, VirtualBox.
 
@@ -198,9 +198,10 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 
 Windows and Linux identify FAT32 volumes by their 11-character volume label (stored in BPB and root directory). Setting it at format time ensures `vol` command and Disk Management show "BLACKBOX" instead of "NO NAME".
 
-- [ ] Pass `-n BLACKBOX` to `mkfs.fat` in `scripts/build.sh` when formatting the BlackBox partition
-- [ ] Verify: `mlabel -i build/system-disk.img@@<offset> -s ::` shows `BLACKBOX`
-- [ ] In kernel: `fat32_init()` reads volume label from BPB -- log it: `klog(LOG_INFO, "blk", "BlackBox: volume label \"%s\"", vol->label)`
+- [x] `-n BLACKBOX` already passed to `mkfs.fat` (done in §1)
+- [x] Verified: `mlabel` shows `BLACKBOX`
+- [x] `fat32_init()` parses BS_VolLab (BPB offset 71, 11 bytes) into `vol->label`, space-trimmed
+- [x] Log at mount: `FAT32: "BLACKBOX" 128 MiB, 8 sectors/cluster, root cluster 2`
 - [ ] Commit: `"build: set FAT32 volume label BLACKBOX at format time"`
 
 **Test checkpoint:** `mlabel` shows BLACKBOX. Windows Disk Management shows "BLACKBOX (X:)" when disk is attached. Serial shows volume label on mount.
@@ -295,7 +296,7 @@ Update cross-references across affected TODOs.
 | ⭐ | Per-boot log files         | ❌ Not built-in            | ❌ Not built-in            | ⬜ S6 -- X:\Boot\YYMMDDN.LOG        |
 | ⭐ | Boot timeline JSON         | ❌ Not built-in            | ❌ Not built-in            | ⬜ S6 -- X:\Boot\YYMMDDN.json       |
 | 💎 | Auto-mount on host         | ✅ Windows assigns letter  | ✅ udisks2 auto-mount      | ⬜ S1 -- Basic Data GUID            |
-| 💎 | Volume label               | ✅ NTFS volume label       | ✅ e2label / fatlabel      | ⬜ S11 -- "BLACKBOX" FAT32 label    |
+| 💎 | Volume label               | ✅ NTFS volume label       | ✅ e2label / fatlabel      | ✅ §11 -- BPB label parsed          |
 | 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ✅ §3 -- GPT name match X:\         |
 | 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ⬜ S4 -- organized Logs/Boot/Crash/ |
 | 💎 | Log space management       | ✅ CBS.log 20 MB cap       | ✅ logrotate + journald    | ⬜ S10 -- aging + quota + cleanup   |

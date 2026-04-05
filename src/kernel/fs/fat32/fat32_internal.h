@@ -104,6 +104,7 @@ struct fat32_file {
  * Allocated via PMM (~40 KB). */
 struct fat32_volume {
     struct fat32_bpb    bpb;
+    char                label[12];  /* BPB BS_VolLab (11 chars + NUL, space-trimmed) */
     const struct blkdev *dev;
     spinlock_t          lock;    /* protects writes, FAT mods, dir updates */
     struct fat32_file   root_file;

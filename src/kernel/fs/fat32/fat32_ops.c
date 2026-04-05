@@ -769,6 +769,17 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
                                + (vol->bpb.num_fats * vol->bpb.fat_size_sectors)
                                + root_dir_sectors;
 
+    /* Volume label: BPB offset 71, 11 bytes, space-padded */
+    {
+        int i, end;
+        for (i = 0; i < 11; i++)
+            vol->label[i] = (char)vol->sector_buf[71 + i];
+        vol->label[11] = '\0';
+        /* Trim trailing spaces */
+        for (end = 10; end >= 0 && vol->label[end] == ' '; end--)
+            vol->label[end] = '\0';
+    }
+
     /* Strict BPB validation (Microsoft FAT spec S3) */
     if (fat32_validate_bpb(vol) != 0)
         return (struct fat32_volume *)0;
@@ -793,8 +804,9 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
 
     {
         uint64_t vol_mb = (uint64_t)vol->bpb.total_sectors * 512 / (1024*1024);
-        klog(LOG_DEBUG, "fat32",
-             "FAT32: %u MiB, %u sectors/cluster, root cluster %u",
+        klog(LOG_INFO, "fat32",
+             "FAT32: \"%s\" %u MiB, %u sectors/cluster, root cluster %u",
+               vol->label,
                vol_mb,
                (uint64_t)vol->bpb.sectors_per_cluster,
                (uint64_t)vol->bpb.root_cluster);
