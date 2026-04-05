@@ -91,6 +91,16 @@ int vmm_split_huge_page(uintptr_t virt);
  * On hit, panic_screen shows the label instead of generic "PAGE_FAULT". */
 int vmm_install_guard_page(uintptr_t virt, const char *label);
 
+/* Change protection flags on an already-mapped page.
+ * Updates the PTE flags without changing the physical address.
+ * Flushes the TLB entry. Returns 0 on success, -1 if page not mapped. */
+int vmm_protect(uintptr_t virt, uint64_t new_flags);
+
+/* Change protection on a range of pages (page-aligned addr, byte count).
+ * Calls vmm_protect() for each page in the range.
+ * Returns 0 on success, -1 if any page is not mapped. */
+int vmm_protect_range(uintptr_t addr, uint64_t size, uint64_t new_flags);
+
 /* Apply NX policy: mark all non-text kernel pages as non-executable.
  * Call after vmm_init() and cpu_enable_nx(). */
 void vmm_apply_nx_policy(void);

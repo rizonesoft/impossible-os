@@ -219,6 +219,57 @@ void vmm_unmap_page(uintptr_t virt, int free_frame)
         pmm_free_frame(phys);
 }
 
+int vmm_protect(uintptr_t virt, uint64_t new_flags)
+{
+    pte_t *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi, pti;
+    uintptr_t phys;
+
+    virt &= ~((uintptr_t)0xFFF);
+
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+    pti   = pt_index(virt);
+
+    /* Walk without creating */
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 0);
+    if (!pdpt) return -1;
+    pd = get_or_create_table(pdpt, pdpti, 0);
+    if (!pd) return -1;
+
+    /* Cannot protect pages inside a 2 MiB huge page -- must split first */
+    if (pd[pdi] & VMM_FLAG_HUGE)
+        return -1;
+
+    pt = get_or_create_table(pd, pdi, 0);
+    if (!pt) return -1;
+    if (!(pt[pti] & VMM_FLAG_PRESENT))
+        return -1;
+
+    /* Preserve physical address, replace flags */
+    phys = pt[pti] & PTE_ADDR_MASK;
+    if (!cpu_has(CPU_FEATURE_NX))
+        new_flags &= ~VMM_FLAG_NX;
+    pt[pti] = phys | new_flags;
+    vmm_flush_tlb(virt);
+
+    return 0;
+}
+
+int vmm_protect_range(uintptr_t addr, uint64_t size, uint64_t new_flags)
+{
+    uintptr_t end;
+    addr &= ~((uintptr_t)0xFFF);
+    end = (addr + size + 0xFFF) & ~((uintptr_t)0xFFF);
+    while (addr < end) {
+        if (vmm_protect(addr, new_flags) != 0)
+            return -1;
+        addr += VMM_PAGE_SIZE;
+    }
+    return 0;
+}
+
 uintptr_t vmm_get_physical(uintptr_t virt)
 {
     pte_t *pdpt, *pd, *pt;

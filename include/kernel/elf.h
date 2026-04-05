@@ -27,11 +27,20 @@
 /* Program header types */
 #define PT_NULL         0
 #define PT_LOAD         1           /* loadable segment */
+#define PT_INTERP       3           /* path to dynamic linker */
+#define PT_GNU_STACK    0x6474E551  /* stack executability control */
+#define PT_GNU_RELRO    0x6474E552  /* read-only after relocation */
+#define PT_GNU_PROPERTY 0x6474E553  /* GNU property notes (CET flags) */
 
 /* Program header flags */
 #define PF_X            0x1         /* execute */
 #define PF_W            0x2         /* write */
 #define PF_R            0x4         /* read */
+
+/* GNU property note types (inside PT_GNU_PROPERTY) */
+#define GNU_PROPERTY_X86_FEATURE_1_AND  0xC0000002
+#define GNU_PROPERTY_X86_FEATURE_1_IBT  (1u << 0)
+#define GNU_PROPERTY_X86_FEATURE_1_SHSTK (1u << 1)
 
 /* ELF64 file header */
 struct elf64_header {
@@ -69,6 +78,13 @@ struct elf_load_result {
     uint64_t load_base;             /* lowest loaded address */
     uint64_t load_end;              /* highest loaded address + 1 */
     int      success;               /* 1 on success, 0 on failure */
+    /* --- Security metadata (§3) --- */
+    uint8_t  nx_stack;              /* 1 = stack should be non-executable */
+    uint8_t  has_relro;             /* 1 = PT_GNU_RELRO present */
+    uint8_t  cet_ibt;              /* 1 = GNU_PROPERTY requests IBT */
+    uint8_t  cet_shstk;            /* 1 = GNU_PROPERTY requests SHSTK */
+    uint64_t relro_start;           /* RELRO range start (0 if no RELRO) */
+    uint64_t relro_size;            /* RELRO range size */
 };
 
 /* Validate and load an ELF64 executable from memory.

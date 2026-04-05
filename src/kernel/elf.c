@@ -72,7 +72,14 @@ static int elf_validate(const struct elf64_header *hdr, uint64_t size)
 
 struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
 {
-    struct elf_load_result result = { 0, 0, 0, 0 };
+    struct elf_load_result result;
+    /* Zero all fields, then set defaults */
+    {
+        uint8_t *p = (uint8_t *)&result;
+        uint64_t n;
+        for (n = 0; n < sizeof(result); n++) p[n] = 0;
+    }
+    result.nx_stack = 1;  /* default: NX stack (safe, matches Linux 6.x) */
     const struct elf64_header *hdr;
     const struct elf64_phdr *phdr;
     uint16_t i;
@@ -158,6 +165,105 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     result.load_base = load_base;
     result.load_end = load_end;
     result.success = 1;
+
+    /* --- Second pass: parse GNU security segments --- */
+    {
+        int found_gnu_stack = 0;
+        result.nx_stack = 1;    /* default: NX stack (safe, matches Linux 6.x) */
+        result.has_relro = 0;
+        result.cet_ibt = 0;
+        result.cet_shstk = 0;
+        result.relro_start = 0;
+        result.relro_size = 0;
+
+        for (i = 0; i < hdr->e_phnum; i++) {
+            phdr = (const struct elf64_phdr *)(data + hdr->e_phoff +
+                                                (uint64_t)i * hdr->e_phentsize);
+
+            switch (phdr->p_type) {
+            case PT_GNU_STACK:
+                found_gnu_stack = 1;
+                if (phdr->p_flags & PF_X) {
+                    result.nx_stack = 0;
+                    klog(LOG_WARN, "elf", "Executable stack requested (legacy binary)");
+                } else {
+                    result.nx_stack = 1;
+                    klog(LOG_DEBUG, "elf", "NX stack enforced");
+                }
+                break;
+
+            case PT_GNU_RELRO:
+                result.has_relro = 1;
+                result.relro_start = phdr->p_vaddr;
+                result.relro_size = phdr->p_memsz;
+                klog(LOG_DEBUG, "elf", "RELRO range: 0x%x-0x%x (%u bytes)",
+                     phdr->p_vaddr, phdr->p_vaddr + phdr->p_memsz,
+                     phdr->p_memsz);
+                break;
+
+            case PT_GNU_PROPERTY:
+                /* Parse GNU property notes for CET flags.
+                 * Use byte reads to avoid unaligned type-pun UB. */
+                if (phdr->p_filesz >= 16 && phdr->p_offset + phdr->p_filesz <= size) {
+                    const uint8_t *note = data + phdr->p_offset;
+                    uint64_t off = 0;
+                    while (off + 12 <= phdr->p_filesz) {
+                        uint32_t namesz = (uint32_t)note[off] |
+                            ((uint32_t)note[off+1] << 8) |
+                            ((uint32_t)note[off+2] << 16) |
+                            ((uint32_t)note[off+3] << 24);
+                        uint32_t descsz = (uint32_t)note[off+4] |
+                            ((uint32_t)note[off+5] << 8) |
+                            ((uint32_t)note[off+6] << 16) |
+                            ((uint32_t)note[off+7] << 24);
+                        uint32_t ntype = (uint32_t)note[off+8] |
+                            ((uint32_t)note[off+9] << 8) |
+                            ((uint32_t)note[off+10] << 16) |
+                            ((uint32_t)note[off+11] << 24);
+                        uint32_t name_aligned = (namesz + 7) & ~(uint32_t)7;
+                        uint32_t desc_off = 12 + name_aligned;
+
+                        if (off + desc_off + descsz > phdr->p_filesz)
+                            break;
+
+                        /* NT_GNU_PROPERTY_TYPE_0: scan property entries */
+                        if (ntype == 5 && descsz >= 8) {
+                            const uint8_t *desc = note + off + desc_off;
+                            uint64_t doff = 0;
+                            while (doff + 8 <= descsz) {
+                                uint32_t ptype = (uint32_t)desc[doff] |
+                                    ((uint32_t)desc[doff+1] << 8) |
+                                    ((uint32_t)desc[doff+2] << 16) |
+                                    ((uint32_t)desc[doff+3] << 24);
+                                uint32_t psize = (uint32_t)desc[doff+4] |
+                                    ((uint32_t)desc[doff+5] << 8) |
+                                    ((uint32_t)desc[doff+6] << 16) |
+                                    ((uint32_t)desc[doff+7] << 24);
+                                if (ptype == GNU_PROPERTY_X86_FEATURE_1_AND &&
+                                    psize >= 4 && doff + 12 <= descsz) {
+                                    uint32_t features = (uint32_t)desc[doff+8] |
+                                        ((uint32_t)desc[doff+9] << 8) |
+                                        ((uint32_t)desc[doff+10] << 16) |
+                                        ((uint32_t)desc[doff+11] << 24);
+                                    result.cet_ibt = (features & GNU_PROPERTY_X86_FEATURE_1_IBT) ? 1 : 0;
+                                    result.cet_shstk = (features & GNU_PROPERTY_X86_FEATURE_1_SHSTK) ? 1 : 0;
+                                    if (result.cet_ibt || result.cet_shstk)
+                                        klog(LOG_DEBUG, "elf", "CET flags: IBT=%u SHSTK=%u",
+                                             (uint64_t)result.cet_ibt, (uint64_t)result.cet_shstk);
+                                }
+                                doff += 8 + ((psize + 7) & ~(uint32_t)7);
+                            }
+                        }
+                        off += desc_off + ((descsz + 7) & ~(uint32_t)7);
+                    }
+                }
+                break;
+            }
+        }
+
+        if (!found_gnu_stack)
+            klog(LOG_DEBUG, "elf", "No PT_GNU_STACK -- defaulting to NX stack");
+    }
 
     klog(LOG_DEBUG, "elf", "Loaded %u PT_LOAD segments at 0x%x-0x%x, entry=0x%x%s",
          (uint64_t)seg_count, result.load_base, result.load_end, result.entry,

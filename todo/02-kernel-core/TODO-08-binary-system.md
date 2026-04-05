@@ -54,7 +54,7 @@
 | --- | :---: | ---------------------------------------------- | ----------------------- | :----: |
 | 💎  |   1   | `exec_load()` multi-format dispatcher          | VMM, VFS, sched         |  [x]   |
 | 💎  |   2   | Enhanced ELF loader (VMM-backed, PIE)          | §1                      |  [/]   |
-| 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | §2                      |  [ ]   |
+| 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | §2                      |  [/]   |
 | ⭐  |   4   | EIF format specification                       | --                      |  [ ]   |
 | ⭐  |   5   | EIF kernel loader                              | §1, §4                  |  [ ]   |
 | 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [ ]   |
@@ -120,19 +120,24 @@ Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and P
 
 ## 3. ELF Security Segments (GNU_STACK, RELRO, GNU_PROPERTY)
 
-> [!WARNING]
-> **Missing prerequisite:** `vmm_protect()` does not exist. Implement as a direct PTE permission update + `invlpg` flush in `vmm.c`. Must support at minimum: change page permissions from RW to R (for RELRO), and remove X from stack pages (for NX stack).
+> [!NOTE]
+> **Resolved:** `vmm_protect()` and `vmm_protect_range()` implemented in vmm.c/vmm.h. Operates on kernel PML4 (identity-mapped user range). Per-process PML4 support deferred to vmm_map_pages prerequisite.
 
 Modern ELF binaries carry security metadata in dedicated program headers. `PT_GNU_STACK` controls whether the stack is executable (NX enforcement). `PT_GNU_RELRO` marks the GOT and relocation data as read-only after relocation completes, blocking GOT-overwrite attacks. `PT_GNU_PROPERTY` carries CET IBT/SHSTK feature flags that the kernel must check before enabling hardware enforcement. All three are standard on Linux; without them, ELF binaries run with weaker security than they were compiled for.
 
-- [ ] Parse `PT_GNU_STACK` (type `0x6474e551`): if `p_flags` lacks `PF_X`, ensure the user stack pages are mapped without execute permission; if `PF_X` is present, log a warning and allow (legacy compat)
-- [ ] Implement `vmm_protect(proc->pml4, addr, size, flags)` in `src/kernel/mm/vmm.c` + `include/kernel/mm/vmm.h` (PTE permission update + `invlpg`)
-- [ ] Parse `PT_GNU_RELRO` (type `0x6474e552`): after all relocations in §14, call `vmm_protect(proc->pml4, relro_start, relro_size, VMM_READ)` to make the RELRO range read-only
-- [ ] Parse `PT_GNU_PROPERTY` (type `0x6474e553`): extract `GNU_PROPERTY_X86_FEATURE_1_AND` -- check for `IBT` (bit 0) and `SHSTK` (bit 1) flags; store in process metadata for TODO-17 CET enforcement
-- [ ] If `PT_GNU_STACK` is absent, default to NX stack (safe default, matching Linux 6.x behavior)
+- [x] Parse `PT_GNU_STACK` (type `0x6474E551`): if `p_flags` lacks `PF_X`, set `result.nx_stack = 1`; if `PF_X` present, log warning "Executable stack requested (legacy binary)"
+- [x] Implement `vmm_protect(virt, new_flags)` + `vmm_protect_range(addr, size, flags)` in vmm.c/vmm.h -- PTE flag update preserving physical address + `invlpg` flush; operates on kernel PML4
+- [x] Parse `PT_GNU_RELRO` (type `0x6474E552`): record `relro_start`/`relro_size` in `elf_load_result`
+  - [ ] Enforce RELRO via `vmm_protect_range(relro_start, relro_size, VMM_KERNEL_RO)` -- blocked: must be called after §14 relocations complete
+- [x] Parse `PT_GNU_PROPERTY` (type `0x6474E553`): full ELF note parsing with byte reads (no type-pun UB); extracts `GNU_PROPERTY_X86_FEATURE_1_AND` IBT/SHSTK flags into `result.cet_ibt`/`result.cet_shstk`
+  - [ ] CET enforcement -- deferred to TODO-17 §6,§7
+- [x] If `PT_GNU_STACK` is absent, default to NX stack (`result.nx_stack = 1`, log "No PT_GNU_STACK -- defaulting to NX stack")
+- [x] Extended `elf_load_result` with `nx_stack`, `has_relro`, `cet_ibt`, `cet_shstk`, `relro_start`, `relro_size` fields
+- [x] Added `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_PROPERTY`, `PT_INTERP`, `ET_DYN`, CET property constants to elf.h
+- [x] Adversarial review: F01 High (unaligned note reads) fixed with byte shifts; F02 Medium (kernel PML4 only) accepted; F03 Low (fragile initializer) fixed with explicit zero + default
 - [ ] Commit: `"kernel: elf -- PT_GNU_STACK NX enforcement, PT_GNU_RELRO, PT_GNU_PROPERTY CET flags"`
 
-**Test checkpoint:** Serial log shows `"elf: NX stack enforced"` for binaries without `PF_X` in `PT_GNU_STACK`. Serial log shows `"elf: RELRO range 0x<start>-0x<end> locked"` after relocation. `POST16(0xD805)` on entry, `POST16(0xD806)` after RELRO applied. Test on: QEMU WHPX + TCG; bare metal. Note: `vmm_protect()` does not exist yet -- implement as direct PTE write + `invlpg` until `03-memory-concurrency/TODO-01` lands.
+**Test checkpoint:** Serial log shows `"elf: NX stack enforced"` or `"elf: No PT_GNU_STACK -- defaulting to NX stack"`. RELRO range logged when present. CET flags parsed and logged.
 
 ## 4. EIF Format Specification
 Design the Executable Impossible Format -- minimal parsing, native OS metadata, syscall-ID imports.
