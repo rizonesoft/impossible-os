@@ -159,7 +159,7 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     result.load_end = load_end;
     result.success = 1;
 
-    klog(LOG_INFO, "elf", "Loaded %u PT_LOAD segments at 0x%x-0x%x, entry=0x%x%s",
+    klog(LOG_DEBUG, "elf", "Loaded %u PT_LOAD segments at 0x%x-0x%x, entry=0x%x%s",
          (uint64_t)seg_count, result.load_base, result.load_end, result.entry,
          (hdr->e_type == ET_DYN) ? " (PIE)" : "");
 
