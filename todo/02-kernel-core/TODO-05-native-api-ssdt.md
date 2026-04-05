@@ -44,18 +44,18 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                    | Depends On      | Status |
-| --- | :---: | -------------------------------------------------------------- | --------------- | :----: |
-| 💎  |   1   | NTSTATUS type and canonical status codes                       | --               |  [x]   |
-| 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4   |  [x]   |
-| 💎  |   3   | INT 0x2E compatibility path                                    | §2              |  [x]   |
-| 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries           | §1              |  [x]   |
-| 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4          |  [ ]   |
-| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3  |  [ ]   |
-| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5  |  [ ]   |
-| 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6  |  [ ]   |
-| 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5              |  [ ]   |
-| 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5              |  [ ]   |
+| ⭐  | Order | Deliverable                                                    | Depends On        | Status |
+| --- | :---: | -------------------------------------------------------------- | ----------------- | :----: |
+| 💎  |   1   | NTSTATUS type and canonical status codes                       | --                |  [x]   |
+| 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-04 §3–§4     |  [x]   |
+| 💎  |   3   | INT 0x2E compatibility path                                    | §2                |  [x]   |
+| 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                |  [x]   |
+| 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
+| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3    |  [ ]   |
+| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [ ]   |
+| 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [ ]   |
+| 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [ ]   |
+| 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [ ]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [ ]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [ ]   |
 | 💎  |  13   | File metadata and device control                               | §6                |  [ ]   |
@@ -215,13 +215,13 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                | Done |
 |--------|----------------------------------|-----|----------------------|------|
-| 0x0000 | NtClose                          | §6  | T05 (ob.c exists)    | [ ]  |
+| 0x0000 | NtClose                          | §5  | T05 (§5 SSDT wrapper)| [x]  |
 | 0x0001 | NtDuplicateObject                | §6  | T05 (ob.c exists)    | [ ]  |
 | 0x0002 | NtQueryObject                    | §6  | T05 (ob.c exists)    | [ ]  |
 | 0x0003 | NtMakeTemporaryObject            | §16 | T05                  | [ ]  |
 | 0x0004 | NtMakePermanentObject            | §16 | T05                  | [ ]  |
 | 0x0005 | NtSetInformationObject           | §16 | T05                  | [ ]  |
-| 0x0006 | NtWaitForSingleObject            | §8  | T05                  | [ ]  |
+| 0x0006 | NtWaitForSingleObject            | §5  | T05 (§5 migration)   | [x]  |
 | 0x0007 | NtWaitForMultipleObjects         | §8  | T05                  | [ ]  |
 | 0x0008 | NtSignalAndWaitForSingleObject   | §8  | T05                  | [ ]  |
 | 0x0009 | NtCompareObjects                 | §16 | T05                  | [ ]  |
@@ -232,16 +232,16 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 |--------|----------------------------------|-----|---------------------------|------|
 | 0x0010 | NtCreateFile                     | §6  | T05                       | [ ]  |
 | 0x0011 | NtOpenFile                       | §6  | T05                       | [ ]  |
-| 0x0012 | NtReadFile                       | §6  | T05 (vfs exists)          | [ ]  |
-| 0x0013 | NtWriteFile                      | §6  | T05 (vfs exists)          | [ ]  |
+| 0x0012 | NtReadFile                       | §5  | T05 (§5 migration)         | [x]  |
+| 0x0013 | NtWriteFile                      | §5  | T05 (§5 migration)         | [x]  |
 | 0x0014 | NtDeleteFile                     | §13 | T05                       | [ ]  |
 | 0x0015 | NtQueryInformationFile           | §13 | T05                       | [ ]  |
 | 0x0016 | NtSetInformationFile             | §13 | T05                       | [ ]  |
-| 0x0017 | NtQueryDirectoryFile             | §13 | T05                       | [ ]  |
+| 0x0017 | NtQueryDirectoryFile             | §5  | T05 (§5 migration)         | [x]  |
 | 0x0018 | NtFlushBuffersFile               | §13 | T05                       | [ ]  |
 | 0x0019 | NtDeviceIoControlFile            | §13 | T05 (dispatch to drivers) | [ ]  |
 | 0x001A | NtFsControlFile                  | §13 | T05                       | [ ]  |
-| 0x001B | NtCreateNamedPipeFile            | §6  | T08-mem §1 (NPFS)         | [ ]  |
+| 0x001B | NtCreateNamedPipeFile            | §5  | T05 (§5 migration)         | [x]  |
 | 0x001C | NtCreateMailslotFile             | §13 | T08-mem §3 (MSFS)         | [ ]  |
 | 0x001D | NtLockFile                       | §13 | T05                       | [ ]  |
 | 0x001E | NtUnlockFile                     | §13 | T05                       | [ ]  |
@@ -264,7 +264,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0030 | NtCreateProcess                  | §7  | T05 (task.c exists)    | [ ]  |
 | 0x0031 | NtCreateProcessEx                | §7  | T09 §4                 | [ ]  |
 | 0x0032 | NtOpenProcess                    | §7  | T05                    | [ ]  |
-| 0x0033 | NtTerminateProcess               | §7  | T05 (sys_exit exists)  | [ ]  |
+| 0x0033 | NtTerminateProcess               | §5  | T05 (§5 migration)     | [x]  |
 | 0x0034 | NtQueryInformationProcess        | §10 | T05                    | [ ]  |
 | 0x0035 | NtSetInformationProcess          | §7  | T05                    | [ ]  |
 | 0x0036 | NtCreateThread                   | §7  | T05                    | [ ]  |
@@ -281,7 +281,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0041 | NtAlertResumeThread              | §7  | T05                    | [ ]  |
 | 0x0042 | NtImpersonateThread              | §15 | T11 (SRM)              | [ ]  |
 | 0x0043 | NtQueueApcThread                 | §7  | T06 §11 (APC)          | [ ]  |
-| 0x0044 | NtYieldExecution                 | §5  | T05 (sys_yield exists) | [ ]  |
+| 0x0044 | NtYieldExecution                 | §5  | T05 (§5 migration)     | [x]  |
 | 0x0045 | NtCreateUserProcess              | §7  | T09 §4                 | [ ]  |
 | 0x0046 | NtTestAlert                      | §7  | T05                    | [ ]  |
 | 0x0047 | NtDelayExecution                 | §7  | T05                    | [ ]  |
@@ -302,9 +302,9 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0059 | NtAllocateUserPhysicalPages      | §9  | T04-mem §4 (AWE)        | [ ]  |
 | 0x005A | NtFreeUserPhysicalPages          | §9  | T04-mem §4              | [ ]  |
 | 0x005B | NtMapUserPhysicalPages           | §9  | T04-mem §4              | [ ]  |
-| 0x005C | NtCreateSection                  | §17 | T05 (ob_section exists) | [ ]  |
+| 0x005C | NtCreateSection                  | §5  | T05 (§5 migration)      | [x]  |
 | 0x005D | NtOpenSection                    | §17 | T05                     | [ ]  |
-| 0x005E | NtMapViewOfSection               | §17 | T05 (ob_section exists) | [ ]  |
+| 0x005E | NtMapViewOfSection               | §5  | T05 (§5 migration)      | [x]  |
 | 0x005F | NtUnmapViewOfSection             | §17 | T05 (ob_section exists) | [ ]  |
 | 0x0060 | NtExtendSection                  | §17 | T05                     | [ ]  |
 | 0x0061 | NtQuerySection                   | §17 | T05                     | [ ]  |
@@ -407,14 +407,14 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                             | §   | Owner                  | Done |
 |--------|--------------------------------------|-----|------------------------|------|
-| 0x00D0 | NtQuerySystemInformation             | §10 | T05                    | [ ]  |
+| 0x00D0 | NtQuerySystemInformation             | §5  | T05 (§5 migration)     | [x]  |
 | 0x00D1 | NtSetSystemInformation               | §10 | T05                    | [ ]  |
 | 0x00D2 | NtQuerySystemEnvironmentValue        | §22 | T14 §5 (env vars)      | [ ]  |
 | 0x00D3 | NtSetSystemEnvironmentValue          | §22 | T14 §5                 | [ ]  |
 | 0x00D4 | NtQuerySystemEnvironmentValueEx      | §22 | T14 §5                 | [ ]  |
 | 0x00D5 | NtSetSystemEnvironmentValueEx        | §22 | T14 §5                 | [ ]  |
 | 0x00D6 | NtEnumerateSystemEnvironmentValuesEx | §22 | T14 §5                 | [ ]  |
-| 0x00D7 | NtShutdownSystem                     | §21 | T15 (power mgmt)       | [ ]  |
+| 0x00D7 | NtShutdownSystem                     | §5  | T05 (§5 migration)     | [x]  |
 | 0x00D8 | NtDisplayString                      | §22 | T05                    | [ ]  |
 | 0x00D9 | NtRaiseHardError                     | §22 | T05                    | [ ]  |
 | 0x00DA | NtQueryDefaultLocale                 | §22 | T05                    | [ ]  |
@@ -860,21 +860,24 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 ## 5. Nt/Zw Naming and Existing Syscall Migration
 Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalents, change return types to `NTSTATUS`, and register them in the SSDT at the indices defined in §4.
 
-- [ ] Add `NtWriteFile(HANDLE, PIOSB, buf, len)` wrapping `SYS_WRITE` logic → SSDT 0x0013
-- [ ] Add `NtReadFile(HANDLE, PIOSB, buf, len)` wrapping `SYS_READ` logic → SSDT 0x0012
-- [ ] Add `NtTerminateProcess(HANDLE, NTSTATUS)` replacing `SYS_EXIT` → SSDT 0x0033
-- [ ] Add `NtYieldExecution()` replacing `SYS_YIELD` → SSDT 0x0044; returns `STATUS_SUCCESS`
+- [x] Add `NtWriteFile(HANDLE, PIOSB, buf, len)` wrapping `SYS_WRITE` logic → SSDT 0x0013
+- [x] Add `NtReadFile(HANDLE, PIOSB, buf, len)` wrapping `SYS_READ` logic → SSDT 0x0012
+- [x] Add `NtTerminateProcess(HANDLE, NTSTATUS)` replacing `SYS_EXIT` → SSDT 0x0033
+- [x] Add `NtYieldExecution()` replacing `SYS_YIELD` → SSDT 0x0044; returns `STATUS_SUCCESS`
 - [ ] Add `NtCreateProcess`/`NtCreateThread` wrapping fork/exec paths → SSDT 0x0030/0x0036 (§7)
-- [ ] Add `NtWaitForSingleObject(HANDLE, timeout)` replacing `SYS_WAITPID` → SSDT 0x0006
-- [ ] Add `NtQueryDirectoryFile` wrapping `SYS_READDIR` → SSDT 0x0017
-- [ ] Add `NtQuerySystemInformation(SystemProcessInformation)` wrapping `SYS_GETPROCS` → SSDT 0x00D0
-- [ ] Add `NtTerminateProcess` for kill → SSDT 0x0033
-- [ ] Add `NtQuerySystemInformation(SystemTimeOfDayInformation)` for uptime → SSDT 0x00D0
-- [ ] Add `NtShutdownSystem(ShutdownReboot / ShutdownPowerOff)` → SSDT 0x00D7
-- [ ] Add `NtCreateNamedPipeFile` / `NtReadFile` / `NtWriteFile` wrapping pipe → SSDT 0x001B
-- [ ] Add `NtCreateSection` / `NtMapViewOfSection` wrapping shmem → SSDT 0x005C/0x005E (→ XREF TODO-03 §7)
-- [ ] Keep `SYS_*` macros as compile-time aliases pointing to the same SSDT indices for transition
-- [ ] Change all `sys_*` implementations to return `NTSTATUS`; convert error paths to `STATUS_*` codes
+- [x] Add `NtWaitForSingleObject(HANDLE, timeout)` replacing `SYS_WAITPID` → SSDT 0x0006
+- [x] Add `NtQueryDirectoryFile` wrapping `SYS_READDIR` → SSDT 0x0017
+- [x] Add `NtQuerySystemInformation(SystemProcessInformation)` wrapping `SYS_GETPROCS` → SSDT 0x00D0
+- [x] Add `NtTerminateProcess` for kill → SSDT 0x0033
+- [x] Add `NtQuerySystemInformation(SystemTimeOfDayInformation)` for uptime → SSDT 0x00D0
+- [x] Add `NtShutdownSystem(ShutdownReboot / ShutdownPowerOff)` → SSDT 0x00D7
+- [x] Add `NtCreateNamedPipeFile` / `NtReadFile` / `NtWriteFile` wrapping pipe → SSDT 0x001B
+- [x] Add `NtCreateSection` / `NtMapViewOfSection` wrapping shmem → SSDT 0x005C/0x005E (→ XREF TODO-03 §7)
+- [x] Keep `SYS_*` macros as compile-time aliases pointing to the same SSDT indices for transition
+- [x] Change all `sys_*` implementations to return `NTSTATUS`; convert error paths to `STATUS_*` codes
+- [x] Add `Nt_Close` SSDT wrapper at 0x0000 bridging to OB NtClose
+- [x] 12 NtXxx handlers registered in SSDT via `nt_syscall_register_ssdt()` in `src/kernel/nt/nt_syscall.c`
+- [x] 2 unit tests: SSDT registration verification (9 handler callability checks) + SYS_NT_* alias value validation (12 aliases)
 - [ ] Commit: `"kernel: nt -- migrate existing syscalls to NtXxx naming and NTSTATUS"`
 
 **Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- this is the most dangerous migration; a return-type mismatch silently corrupts all user-mode callers.
@@ -1438,16 +1441,16 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | ⬜ §8                       |
 | 💎 | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap    | ⬜ §9                       |
 | 💎 | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv        | ⬜ §9                       |
-| 💎 | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc         | ⬜ §10                      |
+| 💎 | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc         | ✅ §5 NtQuerySystemInfo 2 classes |
 | 💎 | LastError per-thread       | ✅ TEB→LastErrorValue       | ✅ errno via TLS           | ⬜ §11 + TODO-04 §6         |
 | 💎 | Registry syscalls          | ✅ NtCreate/Open/QueryKey   | ❌ No equivalent           | ⬜ §14 + TODO-13            |
 | 💎 | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC  | ⬜ §15 + TODO-11            |
 | 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace     | ⬜ §16                      |
-| 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | ⬜ §17 + TODO-03 §7         |
+| 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | 🔄 §5 Create+Map wired      |
 | 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ⬜ §18 + TODO-07 §8,§9      |
 | 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | ⬜ §19 + TODO-12            |
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §20 + TODO-18            |
-| 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | ⬜ §21 + TODO-15            |
+| 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | 🔄 §5 NtShutdownSystem wired |
 | 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ⬜ §22                      |
 | ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ⬜ §12 -- explicit, public   |
 | ⭐ | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API    | ⬜ §4+§12 -- numbered+public |

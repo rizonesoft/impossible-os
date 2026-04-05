@@ -104,6 +104,12 @@ void boot_phase3(void)
     }
     syscall_init();  /* keep INT 0x80 path active */
 
+    /* --- NT syscall migration (NtXxx wrappers for existing SYS_* calls) --- */
+    {
+        extern void nt_syscall_register_ssdt(void);
+        nt_syscall_register_ssdt();
+    }
+
     /* --- ETW tracing subsystem --- */
     etw_init();
     etw_register_ssdt();

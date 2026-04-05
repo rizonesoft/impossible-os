@@ -49,18 +49,24 @@ static char input_trygetchar(void)
     return c;
 }
 
-/* --- Syscall implementations --- */
+/* --- Syscall implementations (NTSTATUS return type) ---
+ * These are the legacy INT 0x80 implementations, now returning NTSTATUS.
+ * The INT 0x80 handler converts NTSTATUS + bytes_out to int64_t for
+ * backward compatibility with existing user-mode binaries. */
 
-/* SYS_WRITE: write data to a file descriptor. */
-static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
+/* SYS_WRITE: write data to a file descriptor. Returns bytes via *bytes_out. */
+static NTSTATUS sys_write(uint64_t fd, uint64_t buf, uint64_t len,
+                          uint64_t *bytes_out)
 {
     uint64_t i;
     const char *str = (const char *)buf;
 
     if (fd != STDOUT_FD)
-        return -1;
-    if (!str || len == 0)
-        return 0;
+        return STATUS_INVALID_HANDLE;
+    if (!str || len == 0) {
+        *bytes_out = 0;
+        return STATUS_SUCCESS;
+    }
 
     for (i = 0; i < len; i++) {
         if (str[i] == '\0')
@@ -78,20 +84,24 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
             terminal_putchar(str[i]);
     }
 
-    return (int64_t)i;
+    *bytes_out = i;
+    return STATUS_SUCCESS;
 }
 
-/* SYS_READ: blocking read from stdin (keyboard + serial, or terminal). */
-static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
+/* SYS_READ: blocking read from stdin. Returns bytes via *bytes_out. */
+static NTSTATUS sys_read(uint64_t fd, uint64_t buf, uint64_t len,
+                         uint64_t *bytes_out)
 {
     uint64_t i;
     char *dst = (char *)buf;
     char c;
 
     if (fd != STDIN_FD)
-        return -1;
-    if (!dst || len == 0)
-        return 0;
+        return STATUS_INVALID_HANDLE;
+    if (!dst || len == 0) {
+        *bytes_out = 0;
+        return STATUS_SUCCESS;
+    }
 
     /* Wait for the first byte */
     for (;;) {
@@ -116,7 +126,8 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
             break;
         dst[i] = c;
     }
-    return (int64_t)i;
+    *bytes_out = i;
+    return STATUS_SUCCESS;
 }
 
 /* SYS_EXIT: terminate the current task. */
@@ -125,9 +136,9 @@ static void sys_exit(uint64_t code)
     task_exit((int32_t)code);
 }
 
-/* SYS_READFILE: read a file from C:\ by name. */
-static int64_t sys_readfile(uint64_t name_ptr, uint64_t buf_ptr,
-                            uint64_t buf_size)
+/* SYS_READFILE: read a file from C:\ by name. Returns bytes via *bytes_out. */
+static NTSTATUS sys_readfile(uint64_t name_ptr, uint64_t buf_ptr,
+                             uint64_t buf_size, uint64_t *bytes_out)
 {
     const char *name = (const char *)name_ptr;
     uint8_t *buf = (uint8_t *)buf_ptr;
@@ -136,20 +147,21 @@ static int64_t sys_readfile(uint64_t name_ptr, uint64_t buf_ptr,
     uint64_t to_read;
 
     if (!root || !name || !buf || buf_size == 0)
-        return -1;
+        return STATUS_INVALID_PARAMETER;
 
     file = vfs_finddir(root, name);
     if (!file)
-        return -1;
+        return STATUS_OBJECT_NAME_NOT_FOUND;
 
     to_read = file->size < buf_size ? file->size : buf_size;
     vfs_read(file, 0, (uint32_t)to_read, buf);
-    return (int64_t)to_read;
+    *bytes_out = to_read;
+    return STATUS_SUCCESS;
 }
 
 /* SYS_READDIR: read a directory entry at index from the C:\ root. */
-static int64_t sys_readdir(uint64_t buf_ptr, uint64_t buf_size,
-                           uint64_t index)
+static NTSTATUS sys_readdir(uint64_t buf_ptr, uint64_t buf_size,
+                            uint64_t index)
 {
     char *buf = (char *)buf_ptr;
     struct vfs_node *root = vfs_get_drive_root('C');
@@ -157,16 +169,16 @@ static int64_t sys_readdir(uint64_t buf_ptr, uint64_t buf_size,
     uint64_t i;
 
     if (!root || !buf || buf_size == 0)
-        return -1;
+        return STATUS_INVALID_PARAMETER;
 
     entry = vfs_readdir(root, (uint32_t)index);
     if (!entry)
-        return -1;
+        return STATUS_NO_MORE_FILES;
 
     for (i = 0; i < buf_size - 1 && entry->name[i]; i++)
         buf[i] = entry->name[i];
     buf[i] = '\0';
-    return 0;
+    return STATUS_SUCCESS;
 }
 
 /* Process info structure -- must match user/include/syscall.h */
@@ -176,16 +188,19 @@ struct proc_info {
     char     name[32];
 };
 
-/* SYS_GETPROCS: fill buffer with process info. Returns count. */
-static int64_t sys_getprocs(uint64_t buf_ptr, uint64_t buf_size)
+/* SYS_GETPROCS: fill buffer with process info. Returns count via *count_out. */
+static NTSTATUS sys_getprocs(uint64_t buf_ptr, uint64_t buf_size,
+                             uint64_t *count_out)
 {
     struct proc_info *out = (struct proc_info *)buf_ptr;
     uint32_t count = task_count();
     uint32_t max = (uint32_t)(buf_size / sizeof(struct proc_info));
     uint32_t i, j;
 
+    *count_out = (uint64_t)count;
+
     if (!out || max == 0)
-        return (int64_t)count;
+        return STATUS_SUCCESS;
 
     for (i = 0; i < count && i < max; i++) {
         struct task *t = task_get_by_pid(i);
@@ -205,10 +220,15 @@ static int64_t sys_getprocs(uint64_t buf_ptr, uint64_t buf_size)
             out[i].name[0] = '\0';
         }
     }
-    return (int64_t)count;
+    return STATUS_SUCCESS;
 }
 
-/* --- INT 0x80 handler --- */
+/* --- INT 0x80 handler ---
+ * Preserves backward compatibility: existing user-mode binaries use
+ * int64_t returns (bytes transferred or -1 for error). The internal
+ * sys_* functions now return NTSTATUS; this handler converts:
+ *   - Functions with byte counts: return bytes_out on success, -1 on error
+ *   - Functions with 0/-1:       return 0 on NT_SUCCESS, -1 on error */
 
 static uint64_t syscall_handler(struct interrupt_frame *frame)
 {
@@ -219,12 +239,18 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     int64_t ret = -1;
 
     switch (syscall_nr) {
-    case SYS_WRITE:
-        ret = sys_write(arg1, arg2, arg3);
+    case SYS_WRITE: {
+        uint64_t bytes = 0;
+        NTSTATUS s = sys_write(arg1, arg2, arg3, &bytes);
+        ret = NT_SUCCESS(s) ? (int64_t)bytes : -1;
         break;
-    case SYS_READ:
-        ret = sys_read(arg1, arg2, arg3);
+    }
+    case SYS_READ: {
+        uint64_t bytes = 0;
+        NTSTATUS s = sys_read(arg1, arg2, arg3, &bytes);
+        ret = NT_SUCCESS(s) ? (int64_t)bytes : -1;
         break;
+    }
     case SYS_EXIT:
         sys_exit(arg1);
         break;
@@ -261,15 +287,23 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     case SYS_WAITPID:
         ret = (int64_t)task_waitpid((uint32_t)arg1);
         break;
-    case SYS_READFILE:
-        ret = sys_readfile(arg1, arg2, arg3);
+    case SYS_READFILE: {
+        uint64_t bytes = 0;
+        NTSTATUS s = sys_readfile(arg1, arg2, arg3, &bytes);
+        ret = NT_SUCCESS(s) ? (int64_t)bytes : -1;
         break;
-    case SYS_READDIR:
-        ret = sys_readdir(arg1, arg2, arg3);
+    }
+    case SYS_READDIR: {
+        NTSTATUS s = sys_readdir(arg1, arg2, arg3);
+        ret = NT_SUCCESS(s) ? 0 : -1;
         break;
-    case SYS_GETPROCS:
-        ret = sys_getprocs(arg1, arg2);
+    }
+    case SYS_GETPROCS: {
+        uint64_t count = 0;
+        sys_getprocs(arg1, arg2, &count);
+        ret = (int64_t)count;
         break;
+    }
     case SYS_KILL:
         if (arg1 > 0 && arg1 < task_count()) {
             struct task *t = task_get_by_pid((uint32_t)arg1);

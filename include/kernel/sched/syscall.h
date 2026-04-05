@@ -40,6 +40,23 @@
 #define SYS_OPENDIROBJ   42 /* NtOpenDirectoryObject(name, access, &handle) → 0 / -1 */
 #define SYS_QUERYDIROBJ  43 /* NtQueryDirectoryObject(handle, buf, count, &ctx, &ret) → 0 / -1 */
 
+/* --- SSDT index aliases for transition ---
+ * These map existing SYS_* names to their SSDT NtXxx equivalents.
+ * Use with INT 0x2E or SYSCALL instruction (not INT 0x80).
+ * INT 0x80 continues to use the legacy numbers above. */
+#define SYS_NT_WRITE        0x0013  /* SSDT_NtWriteFile */
+#define SYS_NT_READ         0x0012  /* SSDT_NtReadFile */
+#define SYS_NT_EXIT         0x0033  /* SSDT_NtTerminateProcess */
+#define SYS_NT_YIELD        0x0044  /* SSDT_NtYieldExecution */
+#define SYS_NT_WAITPID      0x0006  /* SSDT_NtWaitForSingleObject */
+#define SYS_NT_READDIR      0x0017  /* SSDT_NtQueryDirectoryFile */
+#define SYS_NT_GETPROCS     0x00D0  /* SSDT_NtQuerySystemInformation */
+#define SYS_NT_SHUTDOWN     0x00D7  /* SSDT_NtShutdownSystem */
+#define SYS_NT_PIPE         0x001B  /* SSDT_NtCreateNamedPipeFile */
+#define SYS_NT_SHMEM_CREATE 0x005C  /* SSDT_NtCreateSection */
+#define SYS_NT_SHMEM_MAP    0x005E  /* SSDT_NtMapViewOfSection */
+#define SYS_NT_CLOSE        0x0000  /* SSDT_NtClose */
+
 /* File descriptors */
 #define STDOUT_FD   1
 #define STDIN_FD    0

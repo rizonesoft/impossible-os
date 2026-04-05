@@ -24,6 +24,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/user_range.h"
+#include "kernel/sched/syscall.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -400,6 +401,92 @@ static void test_filetime_ticks_per_second(void)
                    "FILETIME_TICKS_PER_MS == 10,000");
 }
 
+/* ---- NT syscall migration SSDT registration verification ---- */
+
+static void test_nt_syscall_ssdt_registered(void)
+{
+    /* Verify that the 12 NtXxx migration handlers are registered (not stubs).
+     * After nt_syscall_register_ssdt(), each slot should dispatch to a real
+     * handler, not ssdt_stub_not_implemented. We test by checking dispatch
+     * doesn't return STATUS_NOT_IMPLEMENTED. */
+    NTSTATUS s;
+
+    /* NtYieldExecution (0x0044) -- no args, always STATUS_SUCCESS */
+    s = ssdt_dispatch(SSDT_NtYieldExecution, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "NtYieldExecution SSDT registered and callable");
+
+    /* NtShutdownSystem with invalid action -- should return INVALID_PARAMETER,
+     * NOT STATUS_NOT_IMPLEMENTED (proves handler is registered) */
+    s = ssdt_dispatch(SSDT_NtShutdownSystem, 99, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtShutdownSystem SSDT registered (invalid action)");
+
+    /* NtWriteFile with NULL buffer -- should return STATUS_SUCCESS (0 bytes) */
+    s = ssdt_dispatch(SSDT_NtWriteFile, STDOUT_FD, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "NtWriteFile SSDT registered (NULL buf = 0 bytes)");
+
+    /* NtReadFile with NULL buffer -- should return STATUS_SUCCESS (0 bytes) */
+    s = ssdt_dispatch(SSDT_NtReadFile, STDIN_FD, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "NtReadFile SSDT registered (NULL buf = 0 bytes)");
+
+    /* NtCreateNamedPipeFile with NULL handles -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtCreateNamedPipeFile, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtCreateNamedPipeFile SSDT registered (NULL handles)");
+
+    /* NtCreateSection with NULL out handle -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtCreateSection, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtCreateSection SSDT registered (NULL out)");
+
+    /* NtMapViewOfSection with NULL base_out -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtMapViewOfSection, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtMapViewOfSection SSDT registered (NULL base)");
+
+    /* NtQuerySystemInformation with invalid class -- INVALID_INFO_CLASS */
+    s = ssdt_dispatch(SSDT_NtQuerySystemInformation, 0xFF, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_INFO_CLASS,
+                   "NtQuerySystemInformation SSDT registered (bad class)");
+
+    /* NtQueryDirectoryFile with NULL buffer -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtQueryDirectoryFile, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtQueryDirectoryFile SSDT registered (NULL buf)");
+}
+
+static void test_nt_syscall_ssdt_alias_values(void)
+{
+    /* Verify SYS_NT_* aliases match SSDT_NtXxx constants */
+    TEST_ASSERT_EQ(SYS_NT_WRITE,        SSDT_NtWriteFile,
+                   "SYS_NT_WRITE == SSDT_NtWriteFile");
+    TEST_ASSERT_EQ(SYS_NT_READ,         SSDT_NtReadFile,
+                   "SYS_NT_READ == SSDT_NtReadFile");
+    TEST_ASSERT_EQ(SYS_NT_EXIT,         SSDT_NtTerminateProcess,
+                   "SYS_NT_EXIT == SSDT_NtTerminateProcess");
+    TEST_ASSERT_EQ(SYS_NT_YIELD,        SSDT_NtYieldExecution,
+                   "SYS_NT_YIELD == SSDT_NtYieldExecution");
+    TEST_ASSERT_EQ(SYS_NT_WAITPID,      SSDT_NtWaitForSingleObject,
+                   "SYS_NT_WAITPID == SSDT_NtWaitForSingleObject");
+    TEST_ASSERT_EQ(SYS_NT_READDIR,      SSDT_NtQueryDirectoryFile,
+                   "SYS_NT_READDIR == SSDT_NtQueryDirectoryFile");
+    TEST_ASSERT_EQ(SYS_NT_GETPROCS,     SSDT_NtQuerySystemInformation,
+                   "SYS_NT_GETPROCS == SSDT_NtQuerySystemInformation");
+    TEST_ASSERT_EQ(SYS_NT_SHUTDOWN,     SSDT_NtShutdownSystem,
+                   "SYS_NT_SHUTDOWN == SSDT_NtShutdownSystem");
+    TEST_ASSERT_EQ(SYS_NT_PIPE,         SSDT_NtCreateNamedPipeFile,
+                   "SYS_NT_PIPE == SSDT_NtCreateNamedPipeFile");
+    TEST_ASSERT_EQ(SYS_NT_SHMEM_CREATE, SSDT_NtCreateSection,
+                   "SYS_NT_SHMEM_CREATE == SSDT_NtCreateSection");
+    TEST_ASSERT_EQ(SYS_NT_SHMEM_MAP,    SSDT_NtMapViewOfSection,
+                   "SYS_NT_SHMEM_MAP == SSDT_NtMapViewOfSection");
+    TEST_ASSERT_EQ(SYS_NT_CLOSE,        SSDT_NtClose,
+                   "SYS_NT_CLOSE == SSDT_NtClose");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -429,6 +516,10 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: FILETIME roundtrip", test_filetime_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME DOS roundtrip", test_filetime_dos_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME ticks/sec", test_filetime_ticks_per_second, TEST_CAT_ABI);
+
+    /* NT syscall migration tests */
+    test_suite_register_cat("NT: syscall SSDT registered", test_nt_syscall_ssdt_registered, TEST_CAT_ABI);
+    test_suite_register_cat("NT: SYS_NT_* alias values", test_nt_syscall_ssdt_alias_values, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
