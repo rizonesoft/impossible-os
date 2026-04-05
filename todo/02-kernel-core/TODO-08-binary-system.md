@@ -85,7 +85,7 @@ Replace the direct `elf_load()` call in `task_exec()` (`src/kernel/sched/task.c`
 
 - [x] Create `src/kernel/exec.c` + `include/kernel/exec.h` -- dispatcher with `exec_load()`, `exec_load_path()`, `exec_register_format()`, `exec_init()`
 - [x] Define `ENOEXEC` / `ENOENT` error contract in `include/kernel/errno.h` (new file, 20 POSIX error constants)
-- [ ] Define `process_t` alias -- deferred to §2 (current API uses raw buffer, not process_t)
+- [x] Define `process_t` alias -- `typedef PROCESS_OBJECT process_t` in `include/kernel/exec.h` with `#include "kernel/ob/ob_process.h"`
 - [x] Define `exec_format_t` -- `{ magic[4], magic_len, name, loader_fn }` in exec.h; up to 8 formats
 - [x] Implement `exec_load(data, size, *err)` -- matches magic bytes against registered formats, dispatches to loader, returns entry point; unknown magic -> ENOEXEC; also `exec_load_path(path, *err)` reads via VFS with ENOENT support
 - [x] `exec_register_format(exec_format_t *)` -- register formats at boot (max 8)

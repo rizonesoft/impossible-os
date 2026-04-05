@@ -9,6 +9,13 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/ob/ob_process.h"
+
+/* process_t alias for the exec API. Wraps PROCESS_OBJECT from the Object
+ * Manager. Currently unused by exec_load (which takes raw buffers), but
+ * needed by future elf_exec(path, proc) and pe_exec(path, proc) loaders
+ * that operate on a specific process context. */
+typedef PROCESS_OBJECT process_t;
 
 /* ---- Format loader function type ----------------------------------------
  * Takes raw file data + size, returns entry point on success or 0 on failure.
