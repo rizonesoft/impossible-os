@@ -42,7 +42,12 @@ static volatile uint32_t threaded_pending[MAX_CPUS];
 
 /* ---- Initialization ------------------------------------------------------ */
 
-void dpc_init(void)
+static int s_queues_ready;
+
+/* Phase 1: initialize per-CPU queues BEFORE sti. No heap, no scheduler needed.
+ * After this, ISRs can safely call KeInsertQueueDpc (queued but not drained
+ * until dpc_drain_current_cpu runs in a timer ISR after Phase 3). */
+void dpc_init_queues(void)
 {
     uint32_t i;
     for (i = 0; i < MAX_CPUS; i++) {
@@ -55,7 +60,17 @@ void dpc_init(void)
         threaded_head[i]        = (KDPC *)0;
         threaded_pending[i]     = 0;
     }
-    klog(LOG_INFO, "dpc", "DPC subsystem initialized (%u CPU queues)", (uint64_t)MAX_CPUS);
+    s_queues_ready = 1;
+    klog(LOG_INFO, "dpc", "DPC queues initialized (%u CPUs)", (uint64_t)MAX_CPUS);
+}
+
+/* Phase 3: full init (legacy entry point). If queues already initialized
+ * by dpc_init_queues(), this is a no-op for the queue setup. */
+void dpc_init(void)
+{
+    if (!s_queues_ready)
+        dpc_init_queues();
+    klog(LOG_INFO, "dpc", "DPC subsystem ready (scheduler available)");
 }
 
 /* ---- Query --------------------------------------------------------------- */

@@ -163,7 +163,19 @@ void boot_phase2(void)
             { "NVMe",      async_nvme_init },
             { "VirtIO-blk", async_virtio_blk_init },
         };
-        boot_async_group("storage", storage_steps, 4);
+        boot_result_t async_rc = boot_async_group("storage", storage_steps, 4);
+        if (async_rc == BOOT_FATAL) {
+            klog(LOG_ERROR, "boot",
+                 "Async storage init FATAL -- falling back to sequential");
+            /* Fall through to sequential path */
+            ata_init();
+            virtio_blk_init();
+            ahci_init();
+            nvme_init();
+        } else if (async_rc == BOOT_DEGRADED) {
+            klog(LOG_WARN, "boot",
+                 "Async storage init degraded -- some drivers may be unavailable");
+        }
     } else {
         /* Sequential: original order */
         POST16(POST16_ATA);

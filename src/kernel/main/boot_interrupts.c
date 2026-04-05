@@ -237,6 +237,12 @@ void boot_phase1(void)
 
     smp_early_bsp_init();
 
+    /* DPC queues must be ready before sti -- ISRs may queue DPCs immediately */
+    {
+        extern void dpc_init_queues(void);
+        dpc_init_queues();
+    }
+
     __asm__ volatile ("sti");
     boot_splash_start_animation();
 

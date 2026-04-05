@@ -69,7 +69,7 @@ static void coalesce_free_blocks(void)
     }
 }
 
-void heap_init(void)
+int heap_init(void)
 {
     uintptr_t heap_base;
     size_t i;
@@ -82,7 +82,7 @@ void heap_init(void)
     heap_base = pmm_alloc_frame();
     if (heap_base == 0) {
         klog(LOG_ERROR, "mm", "Heap: out of physical memory");
-        return;
+        return 2;  /* BOOT_FATAL */
     }
 
     /* Allocate remaining pages -- they must be contiguous for a simple heap.
@@ -136,6 +136,8 @@ void heap_init(void)
                    (uint64_t)(total_heap_size / 1024), heap_base);
         }
     }
+
+    return (heap_start_block && total_heap_size > 0) ? 0 : 2;
 }
 
 void *kmalloc(size_t size)

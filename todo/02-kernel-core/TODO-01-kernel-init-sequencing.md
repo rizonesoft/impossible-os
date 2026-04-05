@@ -184,7 +184,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 ## 7. Failure Policy
 | Phase | Failure       | Action                                  |
 | ----- | ------------- | --------------------------------------- |
-| 0     | Any           | `boot_halt()` -- serial message + halt   |
+| 0     | Any           | `boot_halt()` -- serial message + halt  |
 | 1     | BOOT_FATAL    | BSOD + halt (FB available by end of P1) |
 | 1     | BOOT_DEGRADED | `klog(WARN)` + mark not ready, continue |
 | 2     | BOOT_FATAL    | BSOD; degraded-boot screen if VFS up    |
@@ -371,3 +371,42 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 - [ ] Bare metal: all phases complete, POST codes visible on VPD -- (manual: requires physical hardware)
 - [ ] Commit: `"kernel: init-sequencing verified -- phases, readiness oracle, dependency gates"`
 
+
+## Codex Adversarial Review
+
+**Target:** working tree diff
+**Verdict:** needs-attention
+
+No-ship. The init sequencing still has failure-path holes and phase-ordering contradictions large enough to hide boot failures or trigger interrupt-time breakage.
+
+### Findings:
+
+**[high] Async storage init drops failure results and proceeds as if the phase succeeded** 
+
+(src/kernel/main/boot_storage.c:158-166)
+
+boot_async_group() returns the worst boot_result_t, including BOOT_FATAL on AP timeout, but boot_phase2() ignores that return value and continues into interrupt setup, block-device registration, and VFS bring-up. In the failure case, the kernel can advance with only a partial storage stack, so the real error is delayed until a later mount or probe path and the documented Phase 2 failure policy is bypassed. This is especially risky because the async path is exactly where timeouts and partial bring-up are expected under SMP or real hardware variance.
+
+**Recommendation:** Capture the return from boot_async_group() and translate it into the same fatal/degraded policy used by the sequential path. At minimum, abort before blkdev_register_all()/vfs_init() on BOOT_FATAL, and log or fall back to sequential probing on BOOT_DEGRADED.
+
+**[high] DPC initialization still happens in Phase 3 after interrupts are already live** 
+
+(src/kernel/main/boot_desktop.c:56-59)
+
+dpc_init() is only called at the start of boot_phase3(), even though this subsystem is described as the per-CPU queueing path for deferred ISR work. By this point Phase 1 has already calibrated the timer and executed sti, so any interrupt path that expects DPC infrastructure before the scheduler starts has a boot window where deferred work is unavailable. The current split only makes sense if no ISR can ever queue DPCs before Phase 3, and there is no guard here that enforces that invariant.
+
+**Recommendation:** Move DPC queue/object initialization into Phase 1 before sti, and leave only worker-thread startup in Phase 3 after the scheduler is running. If early interrupts truly must not use DPCs, add an explicit guard/assert so the dependency is enforced instead of assumed.
+
+**[medium] Critical readiness bits are still set unconditionally after void initializers** 
+
+(src/kernel/main/boot_hw.c:162-206)
+
+Phase 0 marks PMM, VMM, and HEAP ready immediately after calling pmm_init(), vmm_init(), and heap_init(), but those APIs still return void. That means the dependency oracle cannot distinguish success from silent partial failure; once the function returns, the subsystem is treated as healthy and later gates trust it. This undermines the core design claim that boot ordering is enforced by typed results rather than hopeful sequencing, and the same pattern exists elsewhere in the boot path.
+
+**Recommendation:** Do not set SUBSYS_* ready from void init calls. Convert these critical initializers to return boot_result_t before relying on them in the readiness model, or add fail-closed validation wrappers that can prove initialization succeeded before marking readiness.
+
+### Next steps:
+
+- [ ] Wire async Phase 2 failures into the boot failure policy before shipping async_init=1.
+- [ ] Split DPC bootstrapping into early queue initialization and late worker startup.
+- [ ] Finish the typed-result conversion for critical boot initializers before treating kernel_subsystem_ready() as authoritative.

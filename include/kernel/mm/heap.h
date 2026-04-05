@@ -9,8 +9,9 @@
 
 #include "kernel/types.h"
 
-/* Initialize the kernel heap (call after VMM is ready) */
-void heap_init(void);
+/* Initialize the kernel heap (call after VMM is ready).
+ * Returns 0 (BOOT_OK) on success, 2 (BOOT_FATAL) on failure. */
+int heap_init(void);
 
 /* Allocate 'size' bytes of kernel memory. Returns NULL on failure */
 void *kmalloc(size_t size);

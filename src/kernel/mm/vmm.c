@@ -636,7 +636,7 @@ int vmm_install_guard_page(uintptr_t virt, const char *label)
 
 /* --- Initialization --- */
 
-void vmm_init(void)
+int vmm_init(void)
 {
     /* Take over the PML4 created by entry.asm */
     kernel_pml4 = (pte_t *)(read_cr3() & PTE_ADDR_MASK);
@@ -646,6 +646,8 @@ void vmm_init(void)
 
     klog(LOG_INFO, "mm", "VMM initialized (PML4 at %p, page fault handler registered)",
            (uint64_t)(uintptr_t)kernel_pml4);
+
+    return kernel_pml4 ? 0 : 2;  /* BOOT_OK / BOOT_FATAL */
 }
 
 /* ---- NX policy: mark all non-text pages as non-executable --------------- */

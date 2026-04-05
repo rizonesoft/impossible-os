@@ -115,7 +115,12 @@ struct dpc_queue {
     uint32_t        max_depth;      /* high-water mark (stats) */
 };
 
-/* Initialize the DPC subsystem (called once during boot). */
+/* Phase 1: initialize per-CPU DPC queues before sti.
+ * After this, ISRs can safely queue DPCs (drained later by timer ISR). */
+void dpc_init_queues(void);
+
+/* Phase 3: full DPC subsystem init (scheduler available for worker threads).
+ * Calls dpc_init_queues() if not already done. */
 void dpc_init(void);
 
 /* Get the per-CPU DPC queue for the current CPU. */
