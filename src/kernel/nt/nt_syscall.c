@@ -423,25 +423,7 @@ static NTSTATUS NtYieldExecution(uint64_t a1, uint64_t a2, uint64_t a3,
     return STATUS_SUCCESS;
 }
 
-/* ---- NtWaitForSingleObject ----------------------------------------------
- * SSDT 0x0006 -- wraps SYS_WAITPID.
- * a1 = HANDLE (child PID for now), a2 = alertable (ignored),
- * a3 = timeout pointer (NULL = infinite).
- * ----------------------------------------------------------------------- */
-static NTSTATUS NtWaitForSingleObject(uint64_t a1, uint64_t a2, uint64_t a3,
-                                      uint64_t a4, uint64_t a5, uint64_t a6)
-{
-    HANDLE handle = (HANDLE)(int32_t)a1;
-    int32_t result;
-
-    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
-
-    /* Currently only supports waiting on a child process (PID handle) */
-    result = task_waitpid((uint32_t)(uint64_t)handle);
-    if (result < 0)
-        return STATUS_INVALID_HANDLE;
-    return STATUS_SUCCESS;
-}
+/* NtWaitForSingleObject moved to nt_sync.c (§8) -- now handles all object types */
 
 /* ---- NtQueryDirectoryFile -----------------------------------------------
  * SSDT 0x0017 -- wraps SYS_READDIR.
@@ -707,9 +689,8 @@ void nt_syscall_register_ssdt(void)
     ssdt_register(SSDT_NtQueryDirectoryFile,    (SSDT_HANDLER)NtQueryDirectoryFile);
     ssdt_register(SSDT_NtCreateNamedPipeFile,   (SSDT_HANDLER)NtCreateNamedPipeFile);
 
-    /* Core object operations */
+    /* Core object operations (NtWaitForSingleObject moved to nt_sync.c §8) */
     ssdt_register(SSDT_NtClose,                 (SSDT_HANDLER)Nt_Close);
-    ssdt_register(SSDT_NtWaitForSingleObject,   (SSDT_HANDLER)NtWaitForSingleObject);
 
     /* Process and thread (NtTerminateProcess moved to nt_process.c §7) */
     ssdt_register(SSDT_NtYieldExecution,        (SSDT_HANDLER)NtYieldExecution);

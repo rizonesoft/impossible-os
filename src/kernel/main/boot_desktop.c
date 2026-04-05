@@ -108,8 +108,10 @@ void boot_phase3(void)
     {
         extern void nt_syscall_register_ssdt(void);
         extern void nt_process_register_ssdt(void);
+        extern void nt_sync_register_ssdt(void);
         nt_syscall_register_ssdt();
         nt_process_register_ssdt();
+        nt_sync_register_ssdt();
     }
 
     /* --- ETW tracing subsystem --- */

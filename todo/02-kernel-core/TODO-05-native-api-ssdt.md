@@ -53,7 +53,7 @@
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3    |  [x]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [x]   |
-| 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [ ]   |
+| 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [x]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [ ]   |
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [ ]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [ ]   |
@@ -221,9 +221,9 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0003 | NtMakeTemporaryObject            | §16 | T05                   | [ ]  |
 | 0x0004 | NtMakePermanentObject            | §16 | T05                   | [ ]  |
 | 0x0005 | NtSetInformationObject           | §16 | T05                   | [ ]  |
-| 0x0006 | NtWaitForSingleObject            | §5  | T05 (§5 migration)    | [x]  |
-| 0x0007 | NtWaitForMultipleObjects         | §8  | T05                   | [ ]  |
-| 0x0008 | NtSignalAndWaitForSingleObject   | §8  | T05                   | [ ]  |
+| 0x0006 | NtWaitForSingleObject            | §8  | T05 (§8 upgraded)     | [x]  |
+| 0x0007 | NtWaitForMultipleObjects         | §8  | T05 (§8 implemented)  | [x]  |
+| 0x0008 | NtSignalAndWaitForSingleObject   | §8  | T05 (§8 implemented)  | [x]  |
 | 0x0009 | NtCompareObjects                 | §16 | T05                   | [ ]  |
 
 **0x0010–0x002F: File I/O**
@@ -314,30 +314,30 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                    | Done |
 |--------|----------------------------------|-----|--------------------------|------|
-| 0x0070 | NtCreateEvent                    | §8  | T05 (ob_event exists)    | [ ]  |
-| 0x0071 | NtOpenEvent                      | §8  | T05                      | [ ]  |
-| 0x0072 | NtSetEvent                       | §8  | T05                      | [ ]  |
-| 0x0073 | NtResetEvent                     | §8  | T05                      | [ ]  |
-| 0x0074 | NtPulseEvent                     | §8  | T05                      | [ ]  |
-| 0x0075 | NtQueryEvent                     | §8  | T05                      | [ ]  |
-| 0x0076 | NtCreateMutant                   | §8  | T05 (ob_mutex exists)    | [ ]  |
-| 0x0077 | NtOpenMutant                     | §8  | T05                      | [ ]  |
-| 0x0078 | NtReleaseMutant                  | §8  | T05                      | [ ]  |
-| 0x0079 | NtQueryMutant                    | §8  | T05                      | [ ]  |
-| 0x007A | NtCreateSemaphore                | §8  | T05 (ob_sem exists)      | [ ]  |
-| 0x007B | NtOpenSemaphore                  | §8  | T05                      | [ ]  |
-| 0x007C | NtReleaseSemaphore               | §8  | T05                      | [ ]  |
-| 0x007D | NtQuerySemaphore                 | §8  | T05                      | [ ]  |
+| 0x0070 | NtCreateEvent                    | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0071 | NtOpenEvent                      | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0072 | NtSetEvent                       | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0073 | NtResetEvent                     | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0074 | NtPulseEvent                     | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0075 | NtQueryEvent                     | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0076 | NtCreateMutant                   | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0077 | NtOpenMutant                     | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0078 | NtReleaseMutant                  | §8  | T05 (§8 implemented)     | [x]  |
+| 0x0079 | NtQueryMutant                    | §8  | T05 (§8 implemented)     | [x]  |
+| 0x007A | NtCreateSemaphore                | §8  | T05 (§8 implemented)     | [x]  |
+| 0x007B | NtOpenSemaphore                  | §8  | T05 (§8 implemented)     | [x]  |
+| 0x007C | NtReleaseSemaphore               | §8  | T05 (§8 implemented)     | [x]  |
+| 0x007D | NtQuerySemaphore                 | §8  | T05 (§8 implemented)     | [x]  |
 | 0x007E | NtCreateTimer                    | §18 | T05 (ob_timer exists)    | [ ]  |
 | 0x007F | NtOpenTimer                      | §18 | T05 §18                  | [ ]  |
 | 0x0080 | NtSetTimer                       | §18 | T05 §18                  | [ ]  |
 | 0x0081 | NtCancelTimer                    | §18 | T05 §18                  | [ ]  |
 | 0x0082 | NtQueryTimer                     | §18 | T05 §18                  | [ ]  |
 | 0x0083 | NtSetTimerEx                     | §18 | T05 §18                  | [ ]  |
-| 0x0084 | NtCreateKeyedEvent               | §8  | T07-mem §4 (futex)       | [ ]  |
-| 0x0085 | NtOpenKeyedEvent                 | §8  | T07-mem §4               | [ ]  |
-| 0x0086 | NtWaitForKeyedEvent              | §8  | T07-mem §4               | [ ]  |
-| 0x0087 | NtReleaseKeyedEvent              | §8  | T07-mem §4               | [ ]  |
+| 0x0084 | NtCreateKeyedEvent               | §8  | T07-mem §4 (stub)        | [x]  |
+| 0x0085 | NtOpenKeyedEvent                 | §8  | T07-mem §4 (stub)        | [x]  |
+| 0x0086 | NtWaitForKeyedEvent              | §8  | T07-mem §4 (stub)        | [x]  |
+| 0x0087 | NtReleaseKeyedEvent              | §8  | T07-mem §4 (stub)        | [x]  |
 | 0x0088 | NtCreateIoCompletion             | §13 | T08-mem §4 (IOCP)        | [ ]  |
 | 0x0089 | NtSetIoCompletion                | §13 | T08-mem §4               | [ ]  |
 | 0x008A | NtRemoveIoCompletion             | §13 | T08-mem §4               | [ ]  |
@@ -941,34 +941,31 @@ Process and thread creation, suspension, termination, and thread context access 
 ## 8. Synchronisation Objects + NtWaitForMultipleObjects
 Synchronisation objects through Ob-managed named types (→ XREF TODO-03 §6). Includes multi-wait and keyed event support.
 
-- [ ] `NtCreateEvent(EventHandle, DesiredAccess, ObjectAttributes, EventType, InitialState)`:
-  - `EventType`: `NotificationEvent (0)` = manual-reset, `SynchronizationEvent (1)` = auto-reset
-  - Route through `ObpEventType`; name in `\BaseNamedObjects\` if `ObjectAttributes->ObjectName` set
-- [ ] `NtOpenEvent(EventHandle, DesiredAccess, ObjectAttributes)`: open by name
-- [ ] `NtSetEvent(EventHandle, PreviousState)`: signal the event; wake waiting threads
-- [ ] `NtResetEvent(EventHandle, PreviousState)`: clear the event
-- [ ] `NtPulseEvent(EventHandle, PreviousState)`: set + reset atomically (wakes one waiter)
-- [ ] `NtQueryEvent(EventHandle, EventBasicInformation, Buffer, Length)`: get event type + state
-- [ ] `NtWaitForSingleObject(Handle, Alertable, Timeout)`: block until object is signalled or timeout
-- [ ] `NtWaitForMultipleObjects(Count, Handles, WaitType, Alertable, Timeout)`:
-  - `WaitType`: `WaitAll (0)` = all objects must be signalled, `WaitAny (1)` = any one
-  - Returns index of the satisfied object (for `WaitAny`) or `STATUS_WAIT_0`
-  - Maximum 64 handles per call (`MAXIMUM_WAIT_OBJECTS = 64`)
-- [ ] `NtSignalAndWaitForSingleObject(ObjectToSignal, WaitObject, Alertable, Timeout)`:
-  - Atomic signal-then-wait; used by `SignalObjectAndWait()` Win32 API
-- [ ] `NtCreateMutant(MutantHandle, DesiredAccess, ObjectAttributes, InitialOwner)`: Ob-wrapped mutex
-- [ ] `NtOpenMutant(MutantHandle, DesiredAccess, ObjectAttributes)`: open by name
-- [ ] `NtReleaseMutant(MutantHandle, PreviousCount)`: release mutex; return `STATUS_MUTANT_NOT_OWNED` if caller does not own it
-- [ ] `NtQueryMutant(MutantHandle, MutantBasicInformation, Buffer, Length)`: get owner + count
-- [ ] `NtCreateSemaphore(SemaphoreHandle, DesiredAccess, ObjectAttributes, InitialCount, MaximumCount)`
-- [ ] `NtOpenSemaphore(SemaphoreHandle, DesiredAccess, ObjectAttributes)`: open by name
-- [ ] `NtReleaseSemaphore(SemaphoreHandle, ReleaseCount, PreviousCount)`
-- [ ] `NtQuerySemaphore(SemaphoreHandle, SemaphoreBasicInformation, Buffer, Length)`: get count + max
-- [ ] `NtCreateKeyedEvent(KeyedEventHandle, DesiredAccess, ObjectAttributes, Flags)`:
-  - Lightweight futex-style primitive; used internally by NTDLL for SRW locks and condition variables
-- [ ] `NtOpenKeyedEvent(...)`: open by name
-- [ ] `NtWaitForKeyedEvent(KeyedEventHandle, KeyValue, Alertable, Timeout)`: wait on a specific key
-- [ ] `NtReleaseKeyedEvent(KeyedEventHandle, KeyValue, Alertable, Timeout)`: release a specific key
+- [x] `NtCreateEvent(0x0070)`: wraps NtCreateEvent in ob_event.c; SSDT handler parses OBJECT_ATTRIBUTES for named events
+- [x] `NtOpenEvent(0x0071)`: ObLookupObjectByName + ObpAllocateHandle
+- [x] `NtSetEvent(0x0072)`: event_set, returns PreviousState
+- [x] `NtResetEvent(0x0073)`: event_reset, returns PreviousState
+- [x] `NtPulseEvent(0x0074)`: set + immediate reset (wakes waiting threads)
+- [x] `NtQueryEvent(0x0075)`: returns EVENT_BASIC_INFORMATION (EventType + EventState)
+- [x] `NtWaitForSingleObject(0x0006)`: upgraded from §5 -- dispatches to event/mutex/semaphore/process wait based on object type, supports NT timeout (100-ns relative)
+- [x] `NtWaitForMultipleObjects(0x0007)`: WaitAll (sequential), WaitAny (polling yield loop), 64 handle max, returns STATUS_WAIT_0+index
+- [x] `NtSignalAndWaitForSingleObject(0x0008)`: atomic signal-then-wait; signal dispatches to event/mutex/semaphore
+- [x] `NtCreateMutant(0x0076)`: wraps NtCreateMutex in ob_mutex.c; InitialOwner support
+- [x] `NtOpenMutant(0x0077)`: ObLookupObjectByName for ObpMutexType
+- [x] `NtReleaseMutant(0x0078)`: ownership check (STATUS_MUTANT_NOT_OWNED), mutex_unlock
+- [x] `NtQueryMutant(0x0079)`: returns MUTANT_BASIC_INFORMATION (CurrentCount, OwnedByCaller, AbandonedState)
+- [x] `NtCreateSemaphore(0x007A)`: wraps NtCreateSemaphore in ob_semaphore.c; validates initial <= max
+- [x] `NtOpenSemaphore(0x007B)`: ObLookupObjectByName for ObpSemaphoreType
+- [x] `NtReleaseSemaphore(0x007C)`: checks max count, sem_signal N times
+- [x] `NtQuerySemaphore(0x007D)`: returns SEMAPHORE_BASIC_INFORMATION
+- [x] `NtCreateKeyedEvent(0x0084)`: stub STATUS_NOT_IMPLEMENTED (deferred to TODO-07)
+- [x] `NtOpenKeyedEvent(0x0085)`: stub
+- [x] `NtWaitForKeyedEvent(0x0086)`: stub
+- [x] `NtReleaseKeyedEvent(0x0087)`: stub
+- [x] New file: `include/kernel/nt/nt_sync.h` with wait constants, info structs
+- [x] New file: `src/kernel/nt/nt_sync.c` with 21 SSDT handlers
+- [x] Added STATUS_WAIT_0, STATUS_ABANDONED to ntstatus.h
+- [x] 2 unit tests: SSDT registration (6 handler checks), sync constant verification (7 checks)
 - [ ] Commit: `"kernel: nt -- sync objects, NtWaitForMultipleObjects, keyed events"`
 
 **Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`. Keyed event wait/release pair succeeds between two threads.
@@ -1431,9 +1428,9 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | I/O completion ports       | ✅ NtCreateIoCompletion     | ✅ epoll/io_uring          | ⬜ §13                      |
 | 💎 | Process/thread create API  | ✅ NtCreate{Process,Thread} | ✅ clone/execve            | ✅ §7 23 handlers wired     |
 | 💎 | Thread context get/set     | ✅ NtGet/SetContextThread   | ✅ ptrace GETREGS          | 🔄 §7 stubs (needs TODO-10) |
-| 💎 | Named sync objects         | ✅ NtCreate{Event,Mutant}   | ✅ POSIX sem + futex       | ⬜ §8                       |
-| 💎 | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent    | ⬜ §8                       |
-| 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | ⬜ §8                       |
+| 💎 | Named sync objects         | ✅ NtCreate{Event,Mutant}   | ✅ POSIX sem + futex       | ✅ §8 Event+Mutant+Semaphore |
+| 💎 | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent    | ✅ §8 WaitAll+WaitAny 64 max |
+| 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | 🔄 §8 stubs (TODO-07)       |
 | 💎 | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap    | ⬜ §9                       |
 | 💎 | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv        | ⬜ §9                       |
 | 💎 | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc         | ✅ §5 NtQuerySystemInfo 2 classes |

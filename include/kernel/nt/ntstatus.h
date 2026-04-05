@@ -30,6 +30,8 @@ typedef int32_t NTSTATUS;
 /* ---- Success / informational --------------------------------------------- */
 
 #define STATUS_SUCCESS                      ((NTSTATUS)0x00000000)
+#define STATUS_WAIT_0                       ((NTSTATUS)0x00000000)  /* wait satisfied (= SUCCESS) */
+#define STATUS_ABANDONED                    ((NTSTATUS)0x00000080)  /* mutex abandoned by owning thread */
 #define STATUS_PENDING                      ((NTSTATUS)0x00000103)  /* async I/O not yet complete */
 #define STATUS_ALERTED                      ((NTSTATUS)0x00000101)  /* thread alerted during wait */
 #define STATUS_TIMEOUT                      ((NTSTATUS)0x00000102)  /* wait timed out (not error) */
