@@ -283,12 +283,13 @@ static void test_etw_trace_event(void)
     TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtQueryTrace returns STATUS_SUCCESS");
     TEST_ASSERT_EQ(info.events_written, 1, "1 event written after NtTraceEvent");
 
-    /* Stop + flush */
+    /* Stop releases the session (clears magic, frees buffer) */
     s = ssdt_dispatch(SSDT_NtStopTrace, handle, 0, 0, 0, 0, 0);
     TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtStopTrace succeeds");
 
+    /* Flush after stop returns INVALID_HANDLE -- session was released */
     s = ssdt_dispatch(SSDT_NtFlushTrace, handle, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtFlushTrace drains buffer");
+    TEST_ASSERT_EQ(s, STATUS_INVALID_HANDLE, "NtFlushTrace after stop returns INVALID_HANDLE");
 }
 
 /* ---- ETW: NtTraceEvent on non-running session returns error ---- */
