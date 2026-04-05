@@ -26,7 +26,7 @@ const char *klog_dir = KLOG_DIR_FALLBACK;  /* default until resolved */
 static char klog_serial_dir[48];           /* klog_dir + "Serial\\" */
 int         klog_using_blackbox;           /* 1 if X:\Logs\, 0 if C:\ fallback */
 
-static void klog_resolve_dir(void)
+void klog_resolve_dir(void)
 {
     int i;
     if (vfs_is_mounted('X')) {

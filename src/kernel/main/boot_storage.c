@@ -512,6 +512,7 @@ void boot_phase2(void)
     }
 
     /* --- klog disk enable: Phase 2 VFS-backed logging --- */
+    klog_resolve_dir();  /* always resolve X:\ vs C:\ -- even on TCG */
     if (!platform_is_tcg())
         klog_disk_enable();
     boot_splash_tick();

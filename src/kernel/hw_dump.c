@@ -308,8 +308,13 @@ void hw_dump_write_file(void)
         }
     }
 
-    /* Write file */
-    f = vfs_open(path, VFS_O_WRITE | VFS_O_CREATE);
+    /* Create file via parent dir to avoid FAT32 dir cache re-walk bug */
+    {
+        struct vfs_node *dir = vfs_open(diag_dir, VFS_O_READ);
+        if (dir && dir->ops && dir->ops->create)
+            dir->ops->create(dir, "hwdump.txt", VFS_FILE);
+    }
+    f = vfs_open(path, VFS_O_WRITE);
     if (f) {
         vfs_write(f, 0, pos, (const uint8_t *)buf);
         vfs_close(f);

@@ -85,6 +85,7 @@ void klog_disk_enable(void);           /* Phase 2: VFS-backed disk logging */
 uint32_t klog_get_dropped(const char *subsystem);
 
 /* ---- Unified disk logging (klog_disk.c) ---- */
+void klog_resolve_dir(void);           /* Resolve log dir: X:\ or C:\ fallback */
 void klog_disk_init(void);             /* Allocate buffer, scan for log number */
 void klog_disk_flush(void);            /* Write ring to C: + buffer to X: */
 void klog_disk_set_live(int on);       /* Enable/disable per-entry live mode */

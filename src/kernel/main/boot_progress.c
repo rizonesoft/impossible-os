@@ -255,7 +255,13 @@ void boot_timeline_dump_json(void)
             for (tj = 0; fn[tj]; tj++) tl_path[tp++] = fn[tj];
         }
         tl_path[tp] = '\0';
-        f = vfs_open(tl_path, VFS_O_WRITE | VFS_O_CREATE);
+        /* Create file via parent dir to avoid FAT32 dir cache re-walk bug */
+        {
+            struct vfs_node *dir = vfs_open(tl_dir, VFS_O_READ);
+            if (dir && dir->ops && dir->ops->create)
+                dir->ops->create(dir, "boot-timeline.json", VFS_FILE);
+        }
+        f = vfs_open(tl_path, VFS_O_WRITE);
     }
     if (f) {
         vfs_write(f, 0, pos, buf);

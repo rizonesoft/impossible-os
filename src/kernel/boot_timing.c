@@ -202,8 +202,12 @@ void boot_timing_write_report(void)
         for (bj = 0; fn[bj]; bj++) bp_path[bp++] = fn[bj];
         bp_path[bp] = '\0';
     }
-    struct vfs_node *file = vfs_open(bp_path,
-        VFS_O_WRITE | VFS_O_CREATE);
+    /* Open parent directory and create file directly (avoids FAT32 dir
+     * cache invalidation bug in vfs_open VFS_O_CREATE re-walk path). */
+    struct vfs_node *dir = vfs_open(bp_dir, VFS_O_READ);
+    if (dir && dir->ops && dir->ops->create)
+        dir->ops->create(dir, "boot-profile.log", VFS_FILE);
+    struct vfs_node *file = vfs_open(bp_path, VFS_O_WRITE);
     if (!file) {
         klog(LOG_WARN, "BOOT", "boot-profile.log: cannot open for write");
         return;
@@ -260,8 +264,13 @@ void boot_postcode_write_log(void)
       for (j = 0; fn[j]; j++) path[pi++] = fn[j]; }
     path[pi] = '\0';
 
-    struct vfs_node *f = vfs_open(path,
-        VFS_O_WRITE | VFS_O_CREATE);
+    /* Create file via parent dir to avoid FAT32 dir cache re-walk bug */
+    {
+        struct vfs_node *dir = vfs_open(diag_dir, VFS_O_READ);
+        if (dir && dir->ops && dir->ops->create)
+            dir->ops->create(dir, "postcode.log", VFS_FILE);
+    }
+    struct vfs_node *f = vfs_open(path, VFS_O_WRITE);
     if (!f) return;
 
     char line[80];

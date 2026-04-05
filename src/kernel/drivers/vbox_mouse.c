@@ -22,6 +22,7 @@
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/cpuid_platform.h"
 #include "kernel/idt.h"
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
@@ -199,10 +200,18 @@ int vbox_mouse_init(void)
     abs_x = 0;
     abs_y = 0;
 
+    /* Quick CPUID pre-check: skip expensive PCI scan on non-VirtualBox */
+    if (platform_get() != PLATFORM_VIRTUALBOX) {
+        klog(LOG_DEBUG, "vbox",
+             "Not VirtualBox (platform=%s) -- skipping PCI scan",
+             platform_name());
+        return -1;
+    }
+
     /* Find VBox Guest PCI device (vendor 0x80EE, device 0xCAFE) */
     pci = pci_find_device(VBOX_VENDOR_ID, VBOX_DEVICE_ID);
     if (!pci.found) {
-        klog(LOG_DEBUG, "vbox", "VBoxGuest PCI device not found (not VirtualBox)");
+        klog(LOG_DEBUG, "vbox", "VBoxGuest PCI device not found");
         return -1;
     }
 
