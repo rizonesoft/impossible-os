@@ -28,6 +28,7 @@ Both systems enforce the same project conventions but through their own tool-nat
    - Difficulty is never a reason to lower standards or normalize hacks.
 5. Keep repo-owned guidance canonical.
    - Local MCP state, dashboard settings, cloud features, and machine-local config stay downstream of tracked repo truth.
+   - When equivalent skill content exists in multiple assistant folders, `.claude/skills/` is the source of truth and downstream copies should be resynced from it unless the repo explicitly documents a deliberate divergence.
 6. Report what changed, what remains deferred, and any surfaces that still need follow-up.
 
 ## Guardrails

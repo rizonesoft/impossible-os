@@ -30,12 +30,10 @@ description: Run a Codex adversarial review against all implemented sections of 
 5. **Collect and present findings** verbatim from Codex output.
 6. **Classify each finding:**
    - **Fix now** -- correctness bug, race condition, use-after-free, data loss risk
-   - **Add to TODO** -- design-level issue that needs its own section (e.g., missing synchronization)
    - **Accepted risk** -- documented limitation with explicit justification (e.g., "ATA is void/legacy")
-7. **Update the TODO file:**
-   - Add a `## Codex Adversarial Review` section at the end (before Verification) with findings and status
-   - For "Add to TODO" items: create new numbered sections with the finding details
-   - For "Accepted risk" items: add a `> [!NOTE]` callout in the relevant section
+7. **Present findings in the conversation only -- do NOT write them into the TODO file.**
+   - Display each finding with severity, one-line summary, file reference, and classification.
+   - The fix skill (`/codex-fix-review`) is responsible for writing the final compact summary table into the TODO after resolution. The review skill never modifies the TODO.
 
 ## Focus Prompt Template
 

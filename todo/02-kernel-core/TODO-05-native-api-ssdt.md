@@ -213,35 +213,35 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 **0x0000–0x000F: Core Object and Handle Operations**
 
-| Index  | Function                         | §   | Owner                | Done |
-|--------|----------------------------------|-----|----------------------|------|
-| 0x0000 | NtClose                          | §5  | T05 (§5 SSDT wrapper)| [x]  |
-| 0x0001 | NtDuplicateObject                | §6  | T05 (ob.c exists)    | [ ]  |
-| 0x0002 | NtQueryObject                    | §6  | T05 (ob.c exists)    | [ ]  |
-| 0x0003 | NtMakeTemporaryObject            | §16 | T05                  | [ ]  |
-| 0x0004 | NtMakePermanentObject            | §16 | T05                  | [ ]  |
-| 0x0005 | NtSetInformationObject           | §16 | T05                  | [ ]  |
-| 0x0006 | NtWaitForSingleObject            | §5  | T05 (§5 migration)   | [x]  |
-| 0x0007 | NtWaitForMultipleObjects         | §8  | T05                  | [ ]  |
-| 0x0008 | NtSignalAndWaitForSingleObject   | §8  | T05                  | [ ]  |
-| 0x0009 | NtCompareObjects                 | §16 | T05                  | [ ]  |
+| Index  | Function                         | §   | Owner                 | Done |
+|--------|----------------------------------|-----|-----------------------|------|
+| 0x0000 | NtClose                          | §5  | T05 (§5 SSDT wrapper) | [x]  |
+| 0x0001 | NtDuplicateObject                | §6  | T05 (ob.c exists)     | [ ]  |
+| 0x0002 | NtQueryObject                    | §6  | T05 (ob.c exists)     | [ ]  |
+| 0x0003 | NtMakeTemporaryObject            | §16 | T05                   | [ ]  |
+| 0x0004 | NtMakePermanentObject            | §16 | T05                   | [ ]  |
+| 0x0005 | NtSetInformationObject           | §16 | T05                   | [ ]  |
+| 0x0006 | NtWaitForSingleObject            | §5  | T05 (§5 migration)    | [x]  |
+| 0x0007 | NtWaitForMultipleObjects         | §8  | T05                   | [ ]  |
+| 0x0008 | NtSignalAndWaitForSingleObject   | §8  | T05                   | [ ]  |
+| 0x0009 | NtCompareObjects                 | §16 | T05                   | [ ]  |
 
 **0x0010–0x002F: File I/O**
 
 | Index  | Function                         | §   | Owner                     | Done |
 |--------|----------------------------------|-----|---------------------------|------|
-| 0x0010 | NtCreateFile                     | §6  | T05 (§6 implemented)       | [x]  |
-| 0x0011 | NtOpenFile                       | §6  | T05 (§6 implemented)       | [x]  |
-| 0x0012 | NtReadFile                       | §5  | T05 (§5 migration)         | [x]  |
-| 0x0013 | NtWriteFile                      | §5  | T05 (§5 migration)         | [x]  |
+| 0x0010 | NtCreateFile                     | §6  | T05 (§6 implemented)      | [x]  |
+| 0x0011 | NtOpenFile                       | §6  | T05 (§6 implemented)      | [x]  |
+| 0x0012 | NtReadFile                       | §5  | T05 (§5 migration)        | [x]  |
+| 0x0013 | NtWriteFile                      | §5  | T05 (§5 migration)        | [x]  |
 | 0x0014 | NtDeleteFile                     | §13 | T05                       | [ ]  |
 | 0x0015 | NtQueryInformationFile           | §13 | T05                       | [ ]  |
 | 0x0016 | NtSetInformationFile             | §13 | T05                       | [ ]  |
-| 0x0017 | NtQueryDirectoryFile             | §5  | T05 (§5 migration)         | [x]  |
+| 0x0017 | NtQueryDirectoryFile             | §5  | T05 (§5 migration)        | [x]  |
 | 0x0018 | NtFlushBuffersFile               | §13 | T05                       | [ ]  |
 | 0x0019 | NtDeviceIoControlFile            | §13 | T05 (dispatch to drivers) | [ ]  |
 | 0x001A | NtFsControlFile                  | §13 | T05                       | [ ]  |
-| 0x001B | NtCreateNamedPipeFile            | §5  | T05 (§5 migration)         | [x]  |
+| 0x001B | NtCreateNamedPipeFile            | §5  | T05 (§5 migration)        | [x]  |
 | 0x001C | NtCreateMailslotFile             | §13 | T08-mem §3 (MSFS)         | [ ]  |
 | 0x001D | NtLockFile                       | §13 | T05                       | [ ]  |
 | 0x001E | NtUnlockFile                     | §13 | T05                       | [ ]  |
@@ -273,16 +273,16 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0039 | NtTerminateThread                | §7  | T05 (§7 implemented)   | [x]  |
 | 0x003A | NtResumeThread                   | §7  | T05 (§7 implemented)   | [x]  |
 | 0x003B | NtSuspendThread                  | §7  | T05 (§7 implemented)   | [x]  |
-| 0x003C | NtGetContextThread               | §7  | T10 §4 (CONTEXT stub)  | [x]  |
-| 0x003D | NtSetContextThread               | §7  | T10 §4 (CONTEXT stub)  | [x]  |
+| 0x003C | NtGetContextThread               | §7  | T10 §4 (CONTEXT stub)  | [ ]  |
+| 0x003D | NtSetContextThread               | §7  | T10 §4 (CONTEXT stub)  | [ ]  |
 | 0x003E | NtQueryInformationThread         | §7  | T05 (§7 implemented)   | [x]  |
 | 0x003F | NtSetInformationThread           | §7  | T05 (§7 implemented)   | [x]  |
 | 0x0040 | NtAlertThread                    | §7  | T05 (§7 implemented)   | [x]  |
 | 0x0041 | NtAlertResumeThread              | §7  | T05 (§7 implemented)   | [x]  |
-| 0x0042 | NtImpersonateThread              | §7  | T11 (SRM stub)         | [x]  |
-| 0x0043 | NtQueueApcThread                 | §7  | T06 §11 (APC stub)     | [x]  |
+| 0x0042 | NtImpersonateThread              | §7  | T11 (SRM stub)         | [ ]  |
+| 0x0043 | NtQueueApcThread                 | §7  | T06 §11 (APC stub)     | [ ]  |
 | 0x0044 | NtYieldExecution                 | §5  | T05 (§5 migration)     | [x]  |
-| 0x0045 | NtCreateUserProcess              | §7  | T09 §4 (stub)          | [x]  |
+| 0x0045 | NtCreateUserProcess              | §7  | T09 §4 (stub)          | [ ]  |
 | 0x0046 | NtTestAlert                      | §7  | T05 (§7 implemented)   | [x]  |
 | 0x0047 | NtDelayExecution                 | §7  | T05 (§7 implemented)   | [x]  |
 
@@ -405,37 +405,37 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 **0x00D0–0x00EF: System Information and Control**
 
-| Index  | Function                             | §   | Owner                  | Done |
-|--------|--------------------------------------|-----|------------------------|------|
-| 0x00D0 | NtQuerySystemInformation             | §5  | T05 (§5 migration)     | [x]  |
-| 0x00D1 | NtSetSystemInformation               | §10 | T05                    | [ ]  |
-| 0x00D2 | NtQuerySystemEnvironmentValue        | §22 | T14 §5 (env vars)      | [ ]  |
-| 0x00D3 | NtSetSystemEnvironmentValue          | §22 | T14 §5                 | [ ]  |
-| 0x00D4 | NtQuerySystemEnvironmentValueEx      | §22 | T14 §5                 | [ ]  |
-| 0x00D5 | NtSetSystemEnvironmentValueEx        | §22 | T14 §5                 | [ ]  |
-| 0x00D6 | NtEnumerateSystemEnvironmentValuesEx | §22 | T14 §5                 | [ ]  |
-| 0x00D7 | NtShutdownSystem                     | §5  | T05 (§5 migration)     | [x]  |
-| 0x00D8 | NtDisplayString                      | §22 | T05                    | [ ]  |
-| 0x00D9 | NtRaiseHardError                     | §22 | T05                    | [ ]  |
-| 0x00DA | NtQueryDefaultLocale                 | §22 | T05                    | [ ]  |
-| 0x00DB | NtSetDefaultLocale                   | §22 | T05                    | [ ]  |
-| 0x00DC | NtQueryDefaultUILanguage             | §22 | T05                    | [ ]  |
-| 0x00DD | NtSetDefaultUILanguage               | §22 | T05                    | [ ]  |
-| 0x00DE | NtQueryInstallUILanguage             | §22 | T05                    | [ ]  |
-| 0x00DF | NtAddAtom                            | §22 | T05                    | [ ]  |
-| 0x00E0 | NtFindAtom                           | §22 | T05                    | [ ]  |
-| 0x00E1 | NtDeleteAtom                         | §22 | T05                    | [ ]  |
-| 0x00E2 | NtQueryInformationAtom               | §22 | T05                    | [ ]  |
+| Index  | Function                             | §   | Owner                   | Done |
+|--------|--------------------------------------|-----|-------------------------|------|
+| 0x00D0 | NtQuerySystemInformation             | §5  | T05 (§5 migration)      | [x]  |
+| 0x00D1 | NtSetSystemInformation               | §10 | T05                     | [ ]  |
+| 0x00D2 | NtQuerySystemEnvironmentValue        | §22 | T14 §5 (uefi_runtime.c) | [x]  |
+| 0x00D3 | NtSetSystemEnvironmentValue          | §22 | T14 §5 (uefi_runtime.c) | [x]  |
+| 0x00D4 | NtQuerySystemEnvironmentValueEx      | §22 | T14 §5 (uefi_runtime.c) | [x]  |
+| 0x00D5 | NtSetSystemEnvironmentValueEx        | §22 | T14 §5 (uefi_runtime.c) | [x]  |
+| 0x00D6 | NtEnumerateSystemEnvironmentValuesEx | §22 | T14 §5                  | [ ]  |
+| 0x00D7 | NtShutdownSystem                     | §5  | T05 (§5 migration)      | [x]  |
+| 0x00D8 | NtDisplayString                      | §22 | T05                     | [ ]  |
+| 0x00D9 | NtRaiseHardError                     | §22 | T05                     | [ ]  |
+| 0x00DA | NtQueryDefaultLocale                 | §22 | T05                     | [ ]  |
+| 0x00DB | NtSetDefaultLocale                   | §22 | T05                     | [ ]  |
+| 0x00DC | NtQueryDefaultUILanguage             | §22 | T05                     | [ ]  |
+| 0x00DD | NtSetDefaultUILanguage               | §22 | T05                     | [ ]  |
+| 0x00DE | NtQueryInstallUILanguage             | §22 | T05                     | [ ]  |
+| 0x00DF | NtAddAtom                            | §22 | T05                     | [ ]  |
+| 0x00E0 | NtFindAtom                           | §22 | T05                     | [ ]  |
+| 0x00E1 | NtDeleteAtom                         | §22 | T05                     | [ ]  |
+| 0x00E2 | NtQueryInformationAtom               | §22 | T05                     | [ ]  |
 
-**0x00F0–0x00FF: Time and Timer (→ XREF TODO-07 §8,§9)**
+**0x00F0–0x00FF: Time and Timer (→ XREF TODO-07 §8,§9)** -- **5/5 DONE** (wall_clock.c, timer_resolution.c)
 
-| Index  | Function                         | §   | Owner                | Done |
-|--------|----------------------------------|-----|----------------------|------|
-| 0x00F0 | NtQuerySystemTime                | §18 | T07 §9               | [ ]  |
-| 0x00F1 | NtSetSystemTime                  | §18 | T07 §9               | [ ]  |
-| 0x00F2 | NtQueryPerformanceCounter        | §18 | T07 §9               | [ ]  |
-| 0x00F3 | NtQueryTimerResolution           | §18 | T07 §8               | [ ]  |
-| 0x00F4 | NtSetTimerResolution             | §18 | T07 §8               | [ ]  |
+| Index  | Function                         | §   | Owner                       | Done |
+|--------|----------------------------------|-----|-----------------------------|------|
+| 0x00F0 | NtQuerySystemTime                | §18 | T07 §9 (wall_clock.c)       | [x]  |
+| 0x00F1 | NtSetSystemTime                  | §18 | T07 §9 (wall_clock.c)       | [x]  |
+| 0x00F2 | NtQueryPerformanceCounter        | §18 | T07 §9 (wall_clock.c)       | [x]  |
+| 0x00F3 | NtQueryTimerResolution           | §18 | T07 §8 (timer_resolution.c) | [x]  |
+| 0x00F4 | NtSetTimerResolution             | §18 | T07 §8 (timer_resolution.c) | [x]  |
 
 **0x0100–0x011F: ALPC and LPC Ports (→ XREF TODO-12 §8)**
 
@@ -581,13 +581,13 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                    | Done |
 |--------|----------------------------------|-----|--------------------------|------|
-| 0x01D0 | NtTraceEvent                     | §22 | T02 §7 (etw.c)          | [x]  |
-| 0x01D1 | NtTraceControl                   | §22 | T02 §7 (etw.c)          | [x]  |
-| 0x01D2 | NtCreateTrace                    | §22 | T02 §7 (etw.c)          | [x]  |
-| 0x01D3 | NtQueryTrace                     | §22 | T02 §7 (etw.c)          | [x]  |
-| 0x01D4 | NtUpdateTrace                    | §22 | T02 §7 (etw.c)          | [x]  |
-| 0x01D5 | NtStopTrace                      | §22 | T02 §7 (etw.c)          | [x]  |
-| 0x01D6 | NtFlushTrace                     | §22 | T02 §7 (etw.c)          | [x]  |
+| 0x01D0 | NtTraceEvent                     | §22 | T02 §7 (etw.c)           | [x]  |
+| 0x01D1 | NtTraceControl                   | §22 | T02 §7 (etw.c)           | [x]  |
+| 0x01D2 | NtCreateTrace                    | §22 | T02 §7 (etw.c)           | [x]  |
+| 0x01D3 | NtQueryTrace                     | §22 | T02 §7 (etw.c)           | [x]  |
+| 0x01D4 | NtUpdateTrace                    | §22 | T02 §7 (etw.c)           | [x]  |
+| 0x01D5 | NtStopTrace                      | §22 | T02 §7 (etw.c)           | [x]  |
+| 0x01D6 | NtFlushTrace                     | §22 | T02 §7 (etw.c)           | [x]  |
 
 **0x01E0–0x01EF: WNF (Windows Notification Facility)**
 
@@ -853,7 +853,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 > **Total: 470 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 >
-> **Implementation progress: 7/470 wired** (1.5%) -- ETW range complete. Run `/audit-ssdt` to refresh.
+> **Implementation progress: 47/470 wired** (10.0%) -- ETW and Time/Timer ranges complete. Run `/audit-ssdt` to refresh.
 
 **Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.
 
@@ -864,7 +864,7 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 - [x] Add `NtReadFile(HANDLE, PIOSB, buf, len)` wrapping `SYS_READ` logic → SSDT 0x0012
 - [x] Add `NtTerminateProcess(HANDLE, NTSTATUS)` replacing `SYS_EXIT` → SSDT 0x0033
 - [x] Add `NtYieldExecution()` replacing `SYS_YIELD` → SSDT 0x0044; returns `STATUS_SUCCESS`
-- [ ] Add `NtCreateProcess`/`NtCreateThread` wrapping fork/exec paths → SSDT 0x0030/0x0036 (§7)
+- [x] Add `NtCreateProcess`/`NtCreateThread` wrapping task/thread create paths → SSDT 0x0030/0x0036 (§7)
 - [x] Add `NtWaitForSingleObject(HANDLE, timeout)` replacing `SYS_WAITPID` → SSDT 0x0006
 - [x] Add `NtQueryDirectoryFile` wrapping `SYS_READDIR` → SSDT 0x0017
 - [x] Add `NtQuerySystemInformation(SystemProcessInformation)` wrapping `SYS_GETPROCS` → SSDT 0x00D0
@@ -934,7 +934,7 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] New file: `include/kernel/nt/nt_process.h` with THREAD_BASIC_INFORMATION, PROCESS_BASIC_INFORMATION, info class constants
 - [x] New file: `src/kernel/nt/nt_process.c` with 23 SSDT handlers
 - [x] 2 unit tests: SSDT registration (7 handler checks), info class constants (7 value checks)
-- [ ] Commit: `"kernel: nt -- NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
+- [x] Commit: `"kernel: nt -- NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
 
 **Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread` returns valid RIP for a suspended thread. `NtDelayExecution` sleeps for the correct interval.
 

@@ -3,7 +3,7 @@
 > **Goal:** Implement the Process Environment Block, Thread Environment Block, and the complete x86-64 user-mode ABI handoff so that `ntdll.dll` and all Win32 DLLs can initialise and user programs run correctly. Without this, no Win32 binary can call `GetLastError`, locate loaded modules, parse command-line arguments, or access TLS. This is the first item every Win32 user-mode DLL depends on, and blocks everything downstream in the Win32 subsystem.
 
 > [!IMPORTANT]
-> **Current state:** Core PEB/TEB ABI (§1–§10) is complete and verified: TEB and PEB at correct Windows x64 offsets, swapgs on INT 0x80, KERNEL_GS_BASE per-task, PEB/TEB allocation, initial user stack frame, Ldr module list, 64 static TLS slots, and Ob namespace exposure. Remaining: §11 KUSER_SHARED_DATA, §12 TLS expansion slots, §13 extended auxiliary vector.
+> **Current state:** Core PEB/TEB ABI (§1–§11) is complete and verified: TEB and PEB at correct Windows x64 offsets, swapgs on INT 0x80, KERNEL_GS_BASE per-task, PEB/TEB allocation, initial user stack frame, Ldr module list, 64 static TLS slots, Ob namespace exposure, and KUSER_SHARED_DATA. Remaining: §12 TLS expansion slots and §13 extended auxiliary vector.
 
 ## Inputs
 
@@ -29,8 +29,8 @@
 - `task_exec` pushes a complete Win32-compatible initial stack frame (argc, argv, envp plus RTL_USER_PROCESS_PARAMETERS) before `iretq` to ring 3.
 - Win32's `GetLastError` / `SetLastError`, `NtCurrentTeb()`, `NtCurrentPeb()` macros work.
 - `KUSER_SHARED_DATA` at `0x7FFE0000` provides system time, tick count, build number, processor features, and QPC frequency -- user-mode reads without syscall.
-- TLS supports 1088 slots (64 static + 1024 expansion) matching the Windows contract.
-- ELF auxiliary vector includes AT_RANDOM, AT_PHDR, AT_PHNUM, AT_BASE, and AT_SECURE for full Linux ABI compatibility and stack canary seeding.
+- TLS currently supports the first 64 static slots; §12 extends this to the full Windows contract of 1088 slots (64 static + 1024 expansion).
+- ELF auxiliary vector currently includes the minimal startup entries; §13 extends it with AT_RANDOM, AT_PHDR, AT_PHNUM, AT_BASE, and AT_SECURE for full Linux ABI compatibility and stack canary seeding.
 
 ## Implementation Order
 
@@ -75,6 +75,8 @@ Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macro
 - [x] Annotate each field with its Windows offset as a comment -- 11 `_Static_assert` offset checks
 - [x] Commit: `"kernel: peb -- TEB struct with correct Windows x64 offsets"`
 
+**Test checkpoint:** Build-time `_Static_assert` checks for all listed TEB offsets pass; `test_peb_teb` offset assertions for TEB layout pass at boot. No ABI offset drift in serial/unit-test output. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
 ## 2. PEB Struct and RTL_USER_PROCESS_PARAMETERS
 Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk it without any patching.
 
@@ -86,6 +88,8 @@ Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk 
 - [x] Add `LARGE_INTEGER`, `LIST_ENTRY` Win64 primitive types
 - [x] Commit: `"kernel: peb -- PEB and RTL_USER_PROCESS_PARAMETERS structs"`
 
+**Test checkpoint:** Build-time `_Static_assert` checks for key PEB and RTL_USER_PROCESS_PARAMETERS offsets pass; unit tests confirm `ImageBaseAddress`, `Ldr`, `ProcessParameters`, and version fields are at expected offsets. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
 ## 3. swapgs on INT 0x80 Entry and Exit
 Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) holds the TEB address. `swapgs` exchanges the two MSRs -- must fire on every ring-3→ring-0 transition and be reversed on every ring-0→ring-3 return.
 
@@ -95,6 +99,8 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 - [x] Regression comment block with symmetry requirement added at both swapgs sites
 - [x] Verify with QEMU: ring-3 cmd.exe runs, 95 tests pass, desktop stable -- GS correct (WHPX, 2026-04-02)
 - [x] Commit: `"kernel: abi -- swapgs on INT 0x80 ring-3 entry and exit"`
+
+**Test checkpoint:** Ring-3 user program executes syscalls repeatedly without GS corruption; ISR entry/exit preserves kernel per-CPU GS in ring 0 and TEB GS in ring 3. No interrupt-path regressions or triple faults. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ## 4. KERNEL_GS_BASE Written at task_exec and Fork
 `IA32_KERNEL_GS_BASE` (MSR 0xC0000102) must hold the TEB address before the first ring-3 instruction runs. `swapgs` (§3) exchanges GS_BASE ↔ KERNEL_GS_BASE, so after `swapgs` in the ISR entry the kernel sees per-CPU GS and user-mode sees TEB via GS.
@@ -106,6 +112,8 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 - [x] `task_init`: explicitly zeroes `kernel_gs_base` for all task slots
 - [x] Context switch (`schedule_now` + `schedule`): save/restore via `msr_read`/`msr_write` on task switch
 - [x] Commit: `"kernel: abi -- write KERNEL_GS_BASE at task_exec and fork"`
+
+**Test checkpoint:** `task_exec`/`task_fork` initialize/copy `kernel_gs_base` correctly; context switches preserve per-task `IA32_KERNEL_GS_BASE`; post-syscall return still resolves TEB via GS. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ## 5. PEB Allocation and Population at task_exec
 Allocate the PEB in the user address space and fill it before the first instruction runs.
@@ -119,6 +127,8 @@ Allocate the PEB in the user address space and fill it before the first instruct
 - [x] `tasks[pid].peb` and `tasks[pid].teb` fields added to `struct task`
 - [x] Commit: `"kernel: peb -- PEB allocation and population at exec"`
 
+**Test checkpoint:** On `task_exec`, PEB and process-parameter pages map at expected user VAs, fields are non-NULL and consistent (`ImageBaseAddress`, `ProcessParameters`, OS version/build, processor count), and UTF-16 command-line/environment blocks decode correctly. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
 ## 6. TEB Allocation and Population at Thread Create
 One TEB per thread. Allocated in the user address space near the thread stack.
 
@@ -130,6 +140,8 @@ One TEB per thread. Allocated in the user address space near the thread stack.
 - [x] `tasks[pid].teb` stored, `kernel_gs_base` set to TEB address for swapgs
 - [x] Commit: `"kernel: peb -- TEB allocation and population at thread create"`
 
+**Test checkpoint:** TEB is mapped per thread at expected VA, `NtTib.Self` is valid, stack bounds and ClientId are correct, `ProcessEnvironmentBlock` points at the process PEB, and `LastErrorValue` initializes to 0. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
 ## 7. Initial User Stack Frame
 The user stack must have a valid calling frame waiting for the first instruction. Win32 convention: `ntdll!_LdrpInitialize` reads `PEB->ProcessParameters`; it does not expect argc/argv on the stack itself. However, the ELF ABI (for ELF-based binaries in the compatibility path) needs the Linux-style stack layout.
 
@@ -139,6 +151,8 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [x] Replaced all-zero stack top with Linux x86-64 ABI layout
 - [x] Confirmed: cmd.exe _start→main()→printf works with new stack (WHPX build 1963, 2026-04-02)
 - [x] Commit: `"kernel: abi -- initial user stack frame with argv, envp, auxv"`
+
+**Test checkpoint:** User entry starts with valid argc/argv/envp/auxv layout and 16-byte stack alignment; hello/cmd user binaries run without stack faults; PE handoff keeps RCX=PEB contract. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ## 8. PEB Ldr (Module List) Basic Population
 `ntdll!LdrInitializeThunk` walks `PEB->Ldr->InLoadOrderModuleList` to find already-loaded modules. Even a stub Ldr with just the main module prevents ntdll from faulting on an empty list.
@@ -151,6 +165,8 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [ ] Full module list (LoadLibrary/FreeLibrary) -- see TODO-08 §6 (module list registration)
 - [x] Commit: `"kernel: peb -- minimal PEB Ldr with main module entry"`
 
+**Test checkpoint:** `PEB->Ldr` is non-NULL at process start and the main image appears in all three loader lists with stable links; ntdll loader walk does not fault on initial module enumeration. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
 ## 9. TLS Slot Allocation (64 Static Slots)
 TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(thread)` and `TlsAlloc`. A minimal allocator is needed for Win32 DLLs that use TLS before the full heap is available.
 
@@ -161,8 +177,10 @@ TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(th
 - [x] Slots 0–63 at gs:[0x1480 + index*8]; index ≥ 64 returns -1/0 (expansion stub)
 - [x] Commit: `"kernel: peb -- TLS slot allocation (64 static slots)"`
 
+**Test checkpoint:** `tls_alloc` returns unique indices 0–63 then fails/defers expansion path; `tls_set_value`/`tls_get_value` round-trip values; `tls_free` clears slot and allows reuse. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
 ## 10. PEB / TEB Exposed in Ob Namespace
-Make the PEB and TEB for any process queryable by name through the Object Manager namespace. Uses `ObInsertObject` and `NtOpenDirectoryObject`/`NtQueryDirectoryObject` from the completed OB layer (see [TODO-03-object-manager.md](../../TODO-03-object-manager.md)). Enables debuggers and introspection tools without kernel patching -- not possible on Windows or Linux without a private API.
+Make the PEB and TEB for any process queryable by name through the Object Manager namespace. Uses `ObInsertObject` and `NtOpenDirectoryObject`/`NtQueryDirectoryObject` from the completed OB layer (see [TODO-03-object-manager.md](./TODO-03-object-manager.md)). Enables debuggers and introspection tools without kernel patching -- not possible on Windows or Linux without a private API.
 
 - [x] PEB inserted as `\KernelObjects\Process<PID>\Peb` via `ObInsertObject`
 - [x] TEB inserted as `\KernelObjects\Process<PID>\Teb` via `ObInsertObject`
@@ -170,6 +188,8 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 - [x] User-mode can enumerate via `NtOpenDirectoryObject` + `NtQueryDirectoryObject`
 - [x] ObpPebType and ObpTebType registered as built-in OB types (body_size=4096)
 - [x] Commit: `"kernel: peb -- PEB and TEB registered in Ob namespace"`
+
+**Test checkpoint:** `\KernelObjects\Process<PID>\Peb` and `\KernelObjects\Process<PID>\Teb` resolve through Ob namespace queries from user mode and kernel mode; object typing/size matches expected PEB/TEB body layout. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
@@ -192,7 +212,7 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
 - [x] Wired into Phase 2 boot after wall_clock_init() and timezone_init()
 - [x] Commit: `"kernel: abi -- KUSER_SHARED_DATA shared page at 0x7FFE0000"`
 
-**Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox; bare metal follow-up (no hardware interaction, low risk).
+**Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
@@ -209,7 +229,7 @@ Windows supports 1088 TLS slots per thread: 64 static slots in `TEB.TlsSlots[64]
 - [ ] `TLS_MINIMUM_AVAILABLE = 64`, `TLS_EXPANSION_SLOTS = 1024`, `TLS_MAXIMUM_AVAILABLE = 1088` constants
 - [ ] Commit: `"kernel: abi -- TLS expansion slots (1024 dynamic slots, indices 64–1087)"`
 
-**Test checkpoint:** Allocate 65 TLS slots -- first 64 from static, 65th triggers expansion array allocation. Read/write slot 64 and slot 1087 -- values round-trip correctly. Free slot 65 -- re-alloc returns index 65 (reuse). `POST16(0xDF10)` on entry, `POST16(0xDF11)` expansion alloc, `POST16(0xDF12)` slot 1087 test, `POST16(0xDF13)` cleanup. Test on: QEMU WHPX + TCG, VirtualBox; bare metal follow-up (no hardware interaction, low risk).
+**Test checkpoint:** Allocate 65 TLS slots -- first 64 from static, 65th triggers expansion array allocation. Read/write slot 64 and slot 1087 -- values round-trip correctly. Free slot 65 -- re-alloc returns index 65 (reuse). `POST16(0xDF10)` on entry, `POST16(0xDF11)` expansion alloc, `POST16(0xDF12)` slot 1087 test, `POST16(0xDF13)` cleanup. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
@@ -239,13 +259,13 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 - [ ] Extend `elf_load_result` struct to carry `phdr_vaddr` and `phnum` if not already present
 - [ ] Commit: `"kernel: abi -- extended auxiliary vector with AT_RANDOM, AT_PHDR, AT_HWCAP"`
 
-**Test checkpoint:** Serial log shows `ELF auxv: AT_RANDOM=0x<stack_addr> AT_PHDR=0x<phdr> AT_PHNUM=<n>`. User-mode test reads 16 bytes at AT_RANDOM -- all-zero is a failure (must be random). Stack canary `__stack_chk_guard` is non-zero when linked with `-fstack-protector`. `POST16(0xDF20)` on entry, `POST16(0xDF21)` random bytes pushed, `POST16(0xDF22)` auxv complete, `POST16(0xDF23)` user-mode verification. Test on: QEMU WHPX + TCG, VirtualBox; bare metal follow-up (no hardware interaction, low risk).
+**Test checkpoint:** Serial log shows `ELF auxv: AT_RANDOM=0x<stack_addr> AT_PHDR=0x<phdr> AT_PHNUM=<n>`. User-mode test reads 16 bytes at AT_RANDOM -- all-zero is a failure (must be random). Stack canary `__stack_chk_guard` is non-zero when linked with `-fstack-protector`. `POST16(0xDF20)` on entry, `POST16(0xDF21)` random bytes pushed, `POST16(0xDF22)` auxv complete, `POST16(0xDF23)` user-mode verification. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature                     | 🪟 Win11                   | 🐧 Linux                | 🚀 Impossible OS        |
+| ⭐ | Feature                     | Win11                      | Linux                   | Impossible OS           |
 |----|-----------------------------|----------------------------|--------------------------|--------------------------|
 | 💎 | Per-process env block       | ✅ PEB at gs:[0x60]       | ❌ argv/envp on stack    | ✅ §2+§5 PEB allocated  |
 | 💎 | Per-thread block (TEB)      | ✅ TEB at gs:[0x30]       | ⚠️ glibc pthread TLS     | ✅ §1+§6 TEB allocated  |
@@ -265,11 +285,11 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 
 > **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets -- ntdll and Win32 DLLs can initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace, enabling any user-mode tool to introspect any process without a private API or kernel debugger.
-> **§11–§13** close the remaining parity gaps: KUSER_SHARED_DATA eliminates syscall overhead for time queries (Win11 + Linux vDSO both have this); TLS expansion supports modern DLL-heavy Win32 apps; extended auxv enables secure ELF binaries with randomized stack canaries.
+> **§12–§13** close the remaining parity gaps: TLS expansion supports modern DLL-heavy Win32 apps; extended auxv enables secure ELF binaries with randomized stack canaries.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_peb_teb()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
+> Wire into `test_runner_init()` via `test_register_peb_teb()` in [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [x] Create `src/kernel/test/test_peb_teb.c` -- 5 suites, 18 assertions:

@@ -18,6 +18,7 @@ alwaysApply: false
 
 - When code, conventions, build flow, API names, paths, or tooling assumptions change, update the affected tracked guidance in the same task.
 - Primary sync targets are `.cursor/rules/`, `.cursor/skills/`, and any docs or TODOs that would otherwise become stale.
+- When equivalent AI skill content exists in multiple assistant folders, treat `.claude/skills/` as the tracked source of truth and refresh downstream copies from it unless the repo explicitly documents a deliberate divergence.
 - Common triggers include allocator pattern changes, boot-sequence changes, renamed APIs, path or naming shifts, workflow changes, and build or MCP policy changes.
 - Do not leave a known contradiction between code and tracked guidance for "later" if the current task already proved the doc is stale.
 - Keep rules concise and enforceable. Put long human-facing context in docs instead of copying it into every rule.

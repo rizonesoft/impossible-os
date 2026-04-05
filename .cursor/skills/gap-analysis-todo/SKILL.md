@@ -91,7 +91,8 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
 
 13. **Update the OS Comparison table.**
     - Add rows for each new feature discovered during research.
-    - Use the compact format: `⭐ | Feature | Win11 | Linux | Impossible OS`
+    - Use a compact 5-column format with icon labels.
+    - Header format: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`
     - Keep cells short: status emoji + max 5 words.
     - Add the summary paragraph after the table noting competitive position.
 

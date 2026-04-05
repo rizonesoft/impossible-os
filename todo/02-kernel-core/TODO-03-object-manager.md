@@ -287,7 +287,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [x] Handle event tracing: `ObpAllocateHandle` and `ObpFreeHandle` emit `klog(LOG_DEBUG, "ob", "HANDLE CREATE/FREE PID=%u H=0x%x ...")` when `g_ob_handle_trace` is set
 - [x] `g_ob_handle_trace` flag: set from `boot.conf` `ob_handle_trace=1`; wired in Phase 2 after OB init
 - [x] 7 test assertions: enable tracing, alloc gets trace info, tagged ref/deref, trace log entries, disable tracing
-- [ ] Commit: `"kernel: ob -- tagged reference tracing and handle leak detection"`
+- [x] Commit: `"kernel: ob -- tagged reference tracing and handle leak detection"`
 
 **Test checkpoint:** Enable tracing for `ObpEventType`. Create event, ref with tag `"Lk01"`, ref with tag `"Lk02"`, deref with tag `"Lk01"`, deref (untagged). On final deref (refcount 0), `ob_dump_trace` reports tag `"Lk02"` has 1 ref / 0 deref = over-reference by 1. `ob_handle_trace=1`: every `ObpAllocateHandle` / `ObpFreeHandle` emits a klog entry with PID, handle value, object pointer, and type name. Verify on QEMU WHPX + TCG. `POST16(0xD930)`–`POST16(0xD933)`.
 

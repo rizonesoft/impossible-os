@@ -36,7 +36,8 @@ description: Create lean project TODO files under todo/, choose the correct doma
    - Section headings should be clean: `## 1. Section Title` -- no tags, no annotations.
 7. Add an OS Comparison table (compact format).
    - Every TODO must include an `## OS Comparison` section before Verification.
-   - Columns: `⭐ | Feature | Win11 | Linux | Impossible OS`
+   - Columns should stay compact and use icon labels for operating systems.
+   - Header format: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`
    - Keep cells short: status emoji + max 5 words per cell. No full sentences.
    - Mark each row `💎` (parity) or `⭐` (exclusive/superior).
    - Show current Impossible OS state: ✅ Done, ⚠️ Partial, ⬜ Planned, ❌ Not applicable.

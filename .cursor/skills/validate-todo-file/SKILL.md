@@ -35,7 +35,8 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - Check required sections, numbering, checklist shape, references, and exit criteria.
    - Use `Implementation Order`, not legacy phase-table rules.
    - **Compact the OS Comparison table:**
-     - Header columns: `⭐ | Feature | Win11 | Linux | Impossible OS`
+     - Keep a compact 5-column header and use icon labels for operating systems.
+     - Header format: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`
      - Keep cells short: status emoji + max 5 words per cell. No full sentences.
      - Pad columns so pipe characters align vertically within the table.
      - If the table is wider than ~100 characters per row, shorten cell text further.

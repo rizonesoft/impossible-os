@@ -88,6 +88,8 @@ Stop and ask before: security-sensitive changes, destructive operations, ABI cha
 
 When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, `.cursor/rules/`, `.cursor/skills/`, and affected TODO files in the same task.
 
+For AI skill content duplicated across assistants, `.claude/skills/` is the tracked source of truth. Cursor and Codex copies are downstream mirrors and should be refreshed from the Claude version unless a repo change explicitly defines an intentional divergence.
+
 ## Toolchain
 
 - Compiler: `clang-19 --target=x86_64-elf`

@@ -233,8 +233,8 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 ## OS Comparison
 
-| ⭐ | Feature               | 🪟 Win11               | 🐧 Linux                 | 🚀 Impossible OS               |
-|----|-----------------------|---------------------|-----------------------|-----------------------------|
+| ⭐ | Feature               | 🪟 Win11            | 🐧 Linux             | 🚀 Impossible OS           |
+|----|-----------------------|----------------------|-----------------------|----------------------------|
 | 💎 | Unified kernel log    | ✅ Event Log        | ✅ journald/syslog   | ✅ klog ring buffer        |
 | 💎 | Log levels            | ✅ 5 levels         | ✅ 8 POSIX levels    | ✅ 5 levels                |
 | 💎 | Serial debug output   | ⚠️ Needs WinDbg     | ✅ earlyprintk       | ✅ All entries to serial   |
@@ -252,7 +252,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 | 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §8 NVRAM + reserved RAM |
 | 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ✅ §9 -- cpu/pid/tid       |
 | ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §10 -- HMAC-chain       |
-| ⭐ | Rotated log compress  | ❌ Not built-in     | ❌ Not built-in      | ⬜ Planned (LZ4, T20 §3)  |
+| ⭐ | Rotated log compress  | ❌ Not built-in     | ❌ Not built-in      | ⬜ Planned (LZ4, T20 §3)   |
 
 > After §1-§9, Impossible OS matches or exceeds Windows and Linux on all core logging features.
 > §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges. §7 wires 7 ETW syscalls. §9 closes the per-entry context parity gap.
