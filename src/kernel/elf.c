@@ -30,8 +30,9 @@ static void elf_memzero(uint8_t *dst, uint64_t n)
 /* Validate an ELF64 header */
 static int elf_validate(const struct elf64_header *hdr, uint64_t size)
 {
-    /* Check magic */
-    if (*(uint32_t *)hdr->e_ident != ELF_MAGIC) {
+    /* Check magic (byte-by-byte to avoid unaligned type-pun) */
+    if (hdr->e_ident[0] != 0x7F || hdr->e_ident[1] != 'E' ||
+        hdr->e_ident[2] != 'L'  || hdr->e_ident[3] != 'F') {
         klog(LOG_DEBUG, "elf", "Bad magic");
         return 0;
     }
@@ -103,8 +104,9 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
             return result;
         }
 
-        /* Validate segment stays within user address range */
+        /* Validate segment stays within user address range (overflow-safe) */
         if (phdr->p_vaddr < USER_ELF_BASE ||
+            phdr->p_memsz > USER_ELF_SIZE ||
             phdr->p_vaddr + phdr->p_memsz > USER_ELF_END) {
             klog(LOG_ERROR, "elf",
                  "Segment %u outside user range: 0x%x-0x%x (allowed 0x%x-0x%x)",

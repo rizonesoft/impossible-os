@@ -1,6 +1,6 @@
 ---
 name: implement-todo-section
-description: Execute one bounded TODO section, resolve XREF dependencies, use the supported build and debug workflow, and update the section state when code or test evidence changes it. Use when implementing a specific TODO section or a clearly scoped subset of a TODO.
+description: Execute one bounded TODO section, resolve XREF dependencies, run embedded adversarial review/fix/re-review, run embedded section verification, and update the section state when code or test evidence changes it.
 ---
 
 # Implement TODO Section
@@ -56,27 +56,63 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
    - Add or update test assertions in the relevant `test_*.c` file for the functionality just implemented.
    - If tests already exist but skip (e.g., "not yet allocated"), update them to verify the new state.
    - Run `bash scripts/build.sh` to confirm tests compile.
-11. Run section-scoped adversarial review and fix loop.
-   - Use `$codex-adversarial-review-section` for the implemented section.
-   - Fix findings, then re-review until no unresolved High/Critical findings remain (max 3 rounds).
-12. Run targeted section verification.
-   - Use `$verify-todo-section` on the implemented section after fixes.
-   - Reconcile any status drift from fixes before commit.
-13. **Commit and push IMMEDIATELY after the section is complete and the build passes.**
+11. Run embedded adversarial review for this section (required).
+   - Scope review to this section (`§N`) and changed files/symbols only.
+   - Challenge section claims explicitly:
+     - Concurrency/SMP safety
+     - Error-path handling and rollback behavior
+     - Wiring/registration correctness (SSDT/dispatch/hooks where applicable)
+     - Boundary and ABI assumptions
+   - Produce findings by severity: `Critical`, `High`, `Medium`, `Low`.
+12. Run fix -> build/test -> re-review loop (max 3 rounds).
+   - Fix all `Critical` and `High` findings.
+   - Fix `Medium` unless explicitly accepted with a concrete technical reason.
+   - Rebuild after each fix round:
+     - `bash scripts/build.sh`
+     - confirm `tail -1 build/build.log` is `=== BUILD OK ===`
+   - Re-review the same section focusing on previous findings and changed files.
+   - If unresolved `Critical`/`High` remain after round 3:
+     - do not mark section complete,
+     - keep `[/]` or `[ ]`,
+     - add explicit follow-up checklist items with ownership and `→ XREF` where needed.
+13. Run embedded targeted section verification (required).
+   - Verify the section end-to-end against code/build/runtime evidence before final TODO status updates.
+   - Classify each checklist item conservatively:
+     - `[x]` only when implemented + wired + functional normal path,
+     - never `[x]` for stubs/placeholders/normal-path `STATUS_NOT_IMPLEMENTED`.
+   - For SSDT claims, verify service number/index ↔ function ↔ registration/dispatch ↔ table row consistency.
+   - If blocked/incomplete work remains, keep `[ ]` or `[/]` and add missing prerequisite/ownership items in prerequisite-first order with owner scope and `→ XREF`.
+   - Re-check cross-TODO synchronization and auto-closure gates (`ID`/`SATISFIES` + full acceptance coverage).
+14. **Commit and push IMMEDIATELY after the section is complete and the build passes.**
    - **CRITICAL: Never batch multiple sections or features into one commit.** Each completed implementation gets its own commit+push before starting the next task. This keeps COUNT.md current, git history granular, and rollback possible.
    - Use the section's `Commit:` line as the commit message.
    - Stage all changed source files, headers, the updated TODO file, and any test changes together.
    - Always push to `origin/main` immediately after a successful commit.
    - After a successful push, mark the section's `- [ ] Commit: "..."` checklist item `[x]`.
 
+## HARD GATE: Steps 11-13 are MANDATORY before step 14
+
+> **You MUST NOT `git commit` or `git push` until steps 11, 12, and 13 have all been completed for this section.**
+>
+> This is not optional. This is not skippable for "simple" changes. This is not deferrable to "after the commit". Every section implementation goes through adversarial review + fix loop + verification BEFORE the commit. No exceptions.
+>
+> If you find yourself about to run `git add` and you have not yet:
+> - (11) Run adversarial review and produced findings with severity labels
+> - (12) Fixed all Critical/High findings with build evidence
+> - (13) Verified each checklist item against code evidence
+>
+> then **STOP and go back to step 11**. The commit can wait 5 minutes. Shipping unreviewed code cannot be undone.
+>
+> **Pattern to watch for:** You finish coding, the build passes, and you think "this is straightforward, I'll just commit." That thought is the signal to stop and run steps 11-13. The straightforward changes are exactly the ones where review catches the bug you didn't think about.
+
 ## Guardrails
 
 - **Commit after each implementation.** Do not accumulate multiple implementations before committing. The post-commit hook updates COUNT.md and the user expects incremental progress.
+- **Steps 11-13 are blocking prerequisites for step 14.** Do not commit without adversarial review + fix loop + verification. This guardrail exists because it was violated -- the pattern of "build passes, skip review, commit" must be broken.
 - Do not mark checklist items `[x]` from intent, partial progress, or stubs; require implementation + wiring evidence first.
 - For SSDT sections, do not edit checklist/table status until service number ↔ function ↔ registration ↔ master-table consistency is verified.
 - If prerequisite work is missing, keep items open/partial and add explicit prerequisite ownership items before dependents.
 - Do not auto-close referenced TODO items from plain `→ XREF` text alone; require `ID`/`SATISFIES` mapping plus full acceptance-criteria proof.
-- Do not skip section adversarial review and targeted section verification before commit.
 - Do not create new TODO files here.
 - Do not turn this into a broad file-wide roadmap cleanup pass.
 - Do not silently widen scope when requirements, repo state, or verification evidence conflict.
