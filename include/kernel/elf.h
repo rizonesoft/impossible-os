@@ -18,7 +18,8 @@
 #define ELFDATA2LSB     1           /* little-endian */
 
 /* ELF type */
-#define ET_EXEC         2           /* executable */
+#define ET_EXEC         2           /* executable (fixed address) */
+#define ET_DYN          3           /* shared / PIE (position-independent) */
 
 /* ELF machine */
 #define EM_X86_64       62

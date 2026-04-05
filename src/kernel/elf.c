@@ -9,6 +9,7 @@
 #include "kernel/klog.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/user_range.h"
 
 /* Simple memcpy for loading segments */
 static void elf_memcpy(uint8_t *dst, const uint8_t *src, uint64_t n)
@@ -47,8 +48,8 @@ static int elf_validate(const struct elf64_header *hdr, uint64_t size)
         return 0;
     }
 
-    /* Must be executable */
-    if (hdr->e_type != ET_EXEC) {
+    /* Must be executable (ET_EXEC) or PIE (ET_DYN) */
+    if (hdr->e_type != ET_EXEC && hdr->e_type != ET_DYN) {
         klog(LOG_DEBUG, "elf", "Not executable (type %u)", (uint64_t)hdr->e_type);
         return 0;
     }
@@ -74,6 +75,7 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     const struct elf64_header *hdr;
     const struct elf64_phdr *phdr;
     uint16_t i;
+    uint32_t seg_count = 0;
     uint64_t load_base = (uint64_t)-1;
     uint64_t load_end = 0;
 
@@ -98,6 +100,17 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
         /* Validate segment fits in file */
         if (phdr->p_offset + phdr->p_filesz > size) {
             klog(LOG_DEBUG, "elf", "Segment %u exceeds file size", (uint64_t)i);
+            return result;
+        }
+
+        /* Validate segment stays within user address range */
+        if (phdr->p_vaddr < USER_ELF_BASE ||
+            phdr->p_vaddr + phdr->p_memsz > USER_ELF_END) {
+            klog(LOG_ERROR, "elf",
+                 "Segment %u outside user range: 0x%x-0x%x (allowed 0x%x-0x%x)",
+                 (uint64_t)i, phdr->p_vaddr,
+                 phdr->p_vaddr + phdr->p_memsz,
+                 (uint64_t)USER_ELF_BASE, (uint64_t)USER_ELF_END);
             return result;
         }
 
@@ -126,8 +139,12 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
          * Since we use identity mapping, vaddr == paddr. */
         pmm_mark_region_used((uintptr_t)phdr->p_vaddr, phdr->p_memsz);
 
-        klog(LOG_DEBUG, "elf", "Loaded segment: vaddr=%p filesz=%u memsz=%u",
-               phdr->p_vaddr, phdr->p_filesz, phdr->p_memsz);
+        seg_count++;
+        klog(LOG_DEBUG, "elf", "Loaded segment %u: vaddr=0x%x filesz=%u memsz=%u flags=%s%s%s",
+             (uint64_t)seg_count, phdr->p_vaddr, phdr->p_filesz, phdr->p_memsz,
+             (phdr->p_flags & PF_R) ? "R" : "-",
+             (phdr->p_flags & PF_W) ? "W" : "-",
+             (phdr->p_flags & PF_X) ? "X" : "-");
     }
 
     if (load_end == 0) {
@@ -140,8 +157,9 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     result.load_end = load_end;
     result.success = 1;
 
-    klog(LOG_DEBUG, "elf", "Entry point: %p (loaded %p - %p)",
-           result.entry, result.load_base, result.load_end);
+    klog(LOG_INFO, "elf", "Loaded %u PT_LOAD segments at 0x%x-0x%x, entry=0x%x%s",
+         (uint64_t)seg_count, result.load_base, result.load_end, result.entry,
+         (hdr->e_type == ET_DYN) ? " (PIE)" : "");
 
     return result;
 }
