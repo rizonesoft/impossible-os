@@ -114,7 +114,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `pic_disable_or_init()` -- disable if IOAPIC took over; init if PIC is the only controller
 - [x] `ahci_setup_interrupts()` -- MSI routing only; BOOT_DEGRADED if fails; BOOT_REQUIRE(SUBSYS_LAPIC)
 - [x] `timer_hal_init()` -- select LAPIC or PIT backend, calibrate; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
-- [ ] `dpc_init()` -- moved to [TODO-06 §4](./TODO-06-irql-model-dpcs.md) (DPC object type and per-CPU queue)
+- [x] `dpc_init()` -- implemented in [TODO-06 §4](./TODO-06-irql-model-dpcs.md); wired in Phase 3 boot_desktop.c
 - [x] `rtc_init()` -- BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_IDT)
 - [x] `keyboard_init()` + `mouse_init()` -- BOOT_DEGRADED if unavailable
 - [x] `smbios_init()` -- POST code 0x40; BOOT_DEGRADED if unavailable; move here from Phase 0
@@ -308,7 +308,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 ## OS Comparison
 
-| ⭐ | Feature              | 🪟 Win11               | 🐧 Linux                 | 🚀 Impossible OS             |
+| ⭐ | Feature              | 🪟 Win11           | 🐧 Linux              | 🚀 Impossible OS         |
 |----|----------------------|---------------------|-----------------------|---------------------------|
 | 💎 | Formal phase model   | ✅ Phase 0/1       | ✅ initcall levels    | ✅ §2–§5 4 phases        |
 | 💎 | Interrupts-off phase | ✅ Phase 0         | ✅ early start_kernel | ✅ §2 boot_phase0        |
