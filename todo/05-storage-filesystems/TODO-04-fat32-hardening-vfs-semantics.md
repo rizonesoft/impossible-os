@@ -15,7 +15,7 @@
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §5` -- `umount` shell calls the VFS unmount path; §5 (fsck) must be callable as `chkdsk D: /fat32`
 - → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` -- Win32 `CreateFile` flags `FILE_SHARE_*` and `FILE_FLAG_DELETE_ON_CLOSE` map directly to §8 and §9
 - → XREF: `01-boot-platform/TODO-17-blackbox-service-partition.md` §12 -- BlackBox FAT32 dirty-bit check depends on §1; fsck-on-mount depends on §6
-- → XREF: `02-kernel-core/TODO-07-time-filetime-management.md` §1,§6,§11,§13 -- FILETIME type, wall clock, timezone bias, and filesystem timestamp encoding; §5 of this TODO is interim until TODO-07 §13 replaces it
+- -> XREF: `02-kernel-core/TODO-07-time-filetime-management.md` §1,§6,§11,§13 -- FILETIME type, wall clock, timezone bias, and filesystem timestamp encoding; §5 timestamps now use `KeQuerySystemTime()` + `filetime_to_dos_datetime()` (completed by TODO-07 §13)
 
 ## Outcome
 
@@ -23,7 +23,8 @@
 - FSInfo `FreeCount` always accurate; full FAT scan fallback on `0xFFFFFFFF`.
 - FAT2 compared and repaired on mount; both FATs written on every cluster alloc/free.
 - `fat32_create_file_vol()` and `fat32_create_dir_vol()` write correct LFN slot chains before the 8.3 entry.
-- All create/write/read ops update correct timestamps in FAT32 encoding from kernel FILETIME.
+- All create/write/read ops update correct timestamps in FAT32 encoding from kernel FILETIME (`KeQuerySystemTime()` + `filetime_to_dos_datetime()` with timezone bias).
+- FAT32 `finddir` directory cache tracks `dir_cached_cluster` -- re-reads when traversing nested directories (fixes walk_path for paths like `X:\Crash\WER`).
 - `fat32_fsck()` detects cross-linked chains and lost clusters; `chkdsk D: /fat32` shell command works.
 - `vfs_open()` resolves case-insensitively on all filesystems.
 - `CreateFile` with conflicting share-mode returns `STATUS_SHARING_VIOLATION`.
@@ -42,7 +43,7 @@
 | 💎  |   2   | §2 FSInfo mount-time fallback -- signature check, `0xFFFFFFFF` full-scan fallback     | §1 (init fails fast on bad BPB before FSInfo read)       |  [x]   |
 | 💎  |   3   | §3 Dual-FAT compare and repair -- mount compare, log mismatch, FAT2 repair            | §1, §2 (valid volume before FAT compare)                 |  [x]   |
 | 💎  |   4   | §4 LFN write -- slot chain before 8.3 SFN, UTF-16LE, checksum, LFN delete             | §3 (FAT write path stable)                               |  [x]   |
-| 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4, T07 §1,§6,§11,§13                                    |  [/]   |
+| 💎  |   5   | §5 FAT32 timestamps -- FILETIME encode, `LastAccessDate` on read, `WrtTime` on write  | §4, T07 §1,§6,§11,§13                                    |  [x]   |
 | 💎  |   6   | §6 FAT32 fsck -- BPB check, FAT1/2 compare, cross-linked chains, lost clusters        | §3 + §4 + §5 (stable FAT and directory state)            |  [x]   |
 | ⭐  |   7   | §7 VFS case-insensitive path resolution -- uppercase fold in `vfs_open()`             | None (pure VFS layer change)                             |  [x]   |
 | 💎  |   8   | §8 VFS share-mode enforcement -- per-handle `share_mode`, `STATUS_SHARING_VIOLATION`  | §7 (handle lookup uses case-folded path)                 |  [x]   |
@@ -318,7 +319,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 | 💎 | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
 | 💎 | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
 | 💎 | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries         | ✅ §4 -- full LFN R/W         |
-| 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ⚠️ §5 -- interim, needs T07   |
+| 💎 | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ✅ §5 -- FILETIME + tz bias   |
 | 💎 | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
 | 💎 | Case-insensitive paths | ✅ per-driver fold        | ✅ per-mount nocase        | ✅ §7 -- per-driver fold      |
 | 💎 | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
