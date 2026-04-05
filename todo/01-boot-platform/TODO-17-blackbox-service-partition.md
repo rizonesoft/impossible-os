@@ -277,7 +277,7 @@ Update cross-references across affected TODOs.
 - [x] All tests skip gracefully if BlackBox partition not present
 - [x] `fat32_get_label()` public API added for volume label access
 - [x] Registered in `test_runner_init()`: `test_register_blackbox()`
-- [ ] Commit: `"test: add BlackBox partition tests"`
+- [x] Commit: `"test: add BlackBox partition tests"`
 
 ---
 
@@ -285,19 +285,19 @@ Update cross-references across affected TODOs.
 
 | ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS                    |
 |----|----------------------------|-----------------------------|----------------------------|--------------------------------------|
-| 💎 | Separate log partition     | ✅ Recovery + WinRE        | ⚠️ /var/log on root        | ⚠️ §1 done -- 3-part GPT layout     |
-| 💎 | Cross-platform readable    | ✅ NTFS (with drivers)     | ✅ ext4 (with drivers)     | ⬜ S1 -- FAT32 universal            |
-| 💎 | Crash dump isolation       | ✅ C:\Windows\MEMORY.DMP   | ✅ /var/crash              | ⬜ S7 -- X:\Crash\                  |
-| ⭐ | Per-boot log files         | ❌ Not built-in            | ❌ Not built-in            | ⬜ S6 -- X:\Boot\YYMMDDN.LOG        |
-| ⭐ | Boot timeline JSON         | ❌ Not built-in            | ❌ Not built-in            | ⬜ S6 -- X:\Boot\YYMMDDN.json       |
-| 💎 | Auto-mount on host         | ✅ Windows assigns letter  | ✅ udisks2 auto-mount      | ⬜ S1 -- Basic Data GUID            |
+| 💎 | Separate log partition     | ✅ Recovery + WinRE        | ⚠️ /var/log on root        | ✅ §1 -- 3-part GPT + X:\           |
+| 💎 | Cross-platform readable    | ✅ NTFS (with drivers)     | ✅ ext4 (with drivers)     | ✅ §1 -- FAT32 universal            |
+| 💎 | Crash dump isolation       | ✅ C:\Windows\MEMORY.DMP   | ✅ /var/crash              | ✅ §7 -- X:\Crash\                  |
+| ⭐ | Per-boot log files         | ❌ Not built-in            | ❌ Not built-in            | ✅ §6 -- X:\Boot\ + X:\Perf\        |
+| ⭐ | Boot timeline JSON         | ❌ Not built-in            | ❌ Not built-in            | ✅ §6 -- X:\Boot\timeline.json      |
+| 💎 | Auto-mount on host         | ✅ Windows assigns letter  | ✅ udisks2 auto-mount      | ✅ §1 -- Basic Data GUID            |
 | 💎 | Volume label               | ✅ NTFS volume label       | ✅ e2label / fatlabel      | ✅ §11 -- BPB label parsed          |
 | 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ✅ §3 -- GPT name match X:\         |
-| 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ⬜ S4 -- organized Logs/Boot/Crash/ |
-| 💎 | Log space management       | ✅ CBS.log 20 MB cap       | ✅ logrotate + journald    | ⬜ S10 -- aging + quota + cleanup   |
+| 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ✅ §4+§8 -- Logs/Boot/Crash/Diag    |
+| 💎 | Log space management       | ✅ CBS.log 20 MB cap       | ✅ logrotate + journald    | ✅ §10 -- aging + quota + cleanup   |
 | 💎 | Dirty-bit / fsck on mount  | ✅ chkdsk on dirty FAT32   | ✅ fsck.fat on mount       | ✅ §12 -- dirty+fsck on mount       |
-| ⭐ | Cross-platform WER staging | ⚠️ WER on NTFS only        | ⚠️ apport on ext4 only     | ⬜ S13 -- FAT32 WER JSON reports    |
-| 💎 | A/B + diagnostic coexist   | ❌ Recovery only           | ⚠️ A/B without diag part   | ⬜ S14 -- 4-partition layout        |
+| ⭐ | Cross-platform WER staging | ⚠️ WER on NTFS only        | ⚠️ apport on ext4 only     | ✅ §13 -- FAT32 WER JSON reports    |
+| 💎 | A/B + diagnostic coexist   | ❌ Recovery only           | ⚠️ A/B without diag part   | ✅ §14 -- 4-partition --ab layout   |
 
 > After S1-S9, Impossible OS has a dedicated diagnostic partition more organized than both Windows (scattered C:\Windows files) and Linux (everything in /var/log). FAT32 universality means any OS can read the flight recorder.
 > S10-S12 add production-grade space management and partition health -- matching Win11 chkdsk and Linux logrotate.
