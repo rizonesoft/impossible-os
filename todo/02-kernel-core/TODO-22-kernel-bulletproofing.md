@@ -343,7 +343,7 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 
 ## OS Comparison
 
-| ⭐ | Feature                     | Win11                  | Linux                    | Impossible OS                     |
+| ⭐ | Feature                     | 🪟 Win11                  | 🐧 Linux                    | 🚀 Impossible OS                     |
 |----|-----------------------------|------------------------|--------------------------|-----------------------------------|
 | ⭐ | Compile-time struct asserts | ❌ Not systematic      | ⚠️ BUILD_BUG_ON sparse  | ✅ §1-§14 all subsystems         |
 | ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ✅ §1-§14 every init             |

@@ -661,7 +661,7 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 
 ## OS Comparison
 
-| ⭐ | Feature                       | Win11                | Linux                       | Impossible OS       |
+| ⭐ | Feature                       | 🪟 Win11                | 🐧 Linux                       | 🚀 Impossible OS       |
 |----|-------------------------------|----------------------|-----------------------------|---------------------|
 | 💎 | Connection-oriented ports     | ✅ ALPC              | ⚠️ SOCK_SEQPACKET           | ⬜ §2–§3            |
 | 💎 | Sync send+wait+reply          | ✅ Full              | ⚠️ No typed reply           | ⬜ §4               |

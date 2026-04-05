@@ -42,11 +42,11 @@
 
 | ⭐  | Order | Deliverable                                | Depends On | Status |
 | --- | :---: | ------------------------------------------ | ---------- | :----: |
-| 💎  |   1   | Boot init infrastructure                   | --          |  [x]   |
-| 💎  |   2   | Phase 0 -- critical init                    | §1         |  [x]   |
-| 💎  |   3   | Phase 1 -- platform services                | §2         |  [/]   |
-| 💎  |   4   | Phase 2 -- system services                  | §3         |  [/]   |
-| 💎  |   5   | Phase 3 -- user platform                    | §4         |  [x]   |
+| 💎  |   1   | Boot init infrastructure                   | --         |  [x]   |
+| 💎  |   2   | Phase 0 -- critical init                   | §1         |  [x]   |
+| 💎  |   3   | Phase 1 -- platform services               | §2         |  [/]   |
+| 💎  |   4   | Phase 2 -- system services                 | §3         |  [/]   |
+| 💎  |   5   | Phase 3 -- user platform                   | §4         |  [x]   |
 | 💎  |   6   | Dependency gates                           | §1–§5      |  [x]   |
 | 💎  |   7   | Failure policy                             | §6         |  [x]   |
 | 💎  |   8   | Code cleanup                               | §2–§5      |  [/]   |
@@ -308,7 +308,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 ## OS Comparison
 
-| ⭐ | Feature              | Win11               | Linux                 | Impossible OS             |
+| ⭐ | Feature              | 🪟 Win11               | 🐧 Linux                 | 🚀 Impossible OS             |
 |----|----------------------|---------------------|-----------------------|---------------------------|
 | 💎 | Formal phase model   | ✅ Phase 0/1       | ✅ initcall levels    | ✅ §2–§5 4 phases        |
 | 💎 | Interrupts-off phase | ✅ Phase 0         | ✅ early start_kernel | ✅ §2 boot_phase0        |

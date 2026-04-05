@@ -323,7 +323,7 @@ Windows shows "37% complete" during crash dump collection. When TODO-16 implemen
 
 ## OS Comparison
 
-| ⭐ | Feature                | Win11 (2025)            | Linux (6.12+)            | Impossible OS               |
+| ⭐ | Feature                | 🪟 Win11 (2025)            | 🐧 Linux (6.12+)            | 🚀 Impossible OS               |
 |----|------------------------|-------------------------|--------------------------|------------------------------|
 | 💎 | GUI panic screen       | ✅ Black screen (2025)  | ✅ DRM panic (6.10+)    | ⬜ §1-§2 TTF + layout       |
 | 💎 | Stop code display      | ✅ Name + hex           | ✅ Panic string          | ✅ Already done              |

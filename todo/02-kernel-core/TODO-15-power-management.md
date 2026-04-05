@@ -909,7 +909,7 @@ Register all power management NtXxx entry points in the SSDT so user-mode code c
 
 ## OS Comparison
 
-| ⭐ | Feature                                 | Win11                              | Linux                              | Impossible OS                    |
+| ⭐ | Feature                                 | 🪟 Win11                              | 🐧 Linux                              | 🚀 Impossible OS                    |
 |----|----------------------------------------|-----------------------------------|-----------------------------------|--------------------------------|
 | 💎 | S5 shutdown via ACPI PM1a              | ✅ Full                           | ✅ Full                           | ✅ Done -- `acpi_shutdown()`    |
 | 💎 | S1 CPU halt / idle                     | ✅ Full                           | ✅ Full (`cpuidle`)               | ⬜ §2                          |

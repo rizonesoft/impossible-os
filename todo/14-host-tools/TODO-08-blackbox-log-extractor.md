@@ -171,7 +171,7 @@ Helper scripts so Claude Code can invoke the tool after QEMU runs.
 
 ## OS Comparison
 
-| S  | Feature                    | Win11                      | Linux                     | Impossible OS                     |
+| S  | Feature                    | 🪟 Win11                      | 🐧 Linux                     | 🚀 Impossible OS                     |
 |----|----------------------------|----------------------------|---------------------------|-----------------------------------|
 | 💎 | Host log viewer            | ✅ Event Viewer (GUI)      | ✅ journalctl             | ⬜ S4-S5 -- blackbox cat/events   |
 | 💎 | Log extraction from image  | ⚠️ Mount + copy            | ✅ mount -o loop          | ⬜ S3 -- blackbox extract         |

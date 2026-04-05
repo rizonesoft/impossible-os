@@ -317,7 +317,7 @@ Central cleanup point for all per-process resources when a process terminates. W
 
 ## OS Comparison
 
-| ⭐ | Feature                       | Win11                       | Linux                        | Impossible OS                 |
+| ⭐ | Feature                       | 🪟 Win11                       | 🐧 Linux                        | 🚀 Impossible OS                 |
 |----|-------------------------------|-----------------------------|------------------------------|-------------------------------|
 | 💎 | Per-process CWD               | ✅ SetCurrentDirectory      | ✅ chdir / getcwd            | ⬜ §1                        |
 | 💎 | STD handle pre-wiring         | ✅ CreateProcess inherit     | ✅ fd 0/1/2 via fork         | ⬜ §2                        |

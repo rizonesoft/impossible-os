@@ -715,7 +715,7 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 
 ## OS Comparison
 
-| ⭐ | Feature                     | Win11         | Linux            | Impossible OS    |
+| ⭐ | Feature                     | 🪟 Win11         | 🐧 Linux            | 🚀 Impossible OS    |
 |----|-----------------------------|---------------|------------------|------------------|
 | 💎 | Token-based identity        | ✅ Full       | ⚠️ UID/GID only  | ⬜ §4            |
 | 💎 | DACL access check           | ✅ Full       | ⚠️ POSIX perms   | ⬜ §5            |

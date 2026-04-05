@@ -253,7 +253,7 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 
 ## OS Comparison
 
-| ⭐ | Feature                        | Win11                          | Linux                          | Impossible OS                 |
+| ⭐ | Feature                        | 🪟 Win11                          | 🐧 Linux                          | 🚀 Impossible OS                 |
 |----|--------------------------------|--------------------------------|--------------------------------|-------------------------------|
 | 💎 | IRQL / preemption levels       | ✅ KIRQL (PASSIVE→HIGH)        | ✅ preempt/softirq/hardirq     | ✅ §1–§3 done                 |
 | 💎 | DPC bottom-half queue          | ✅ KDPC at DISPATCH_LEVEL      | ✅ softirq/tasklet/NAPI        | ⬜ §4–§6                      |

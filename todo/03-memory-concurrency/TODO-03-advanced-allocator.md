@@ -369,7 +369,7 @@ Surface live allocator state through VFS for diagnostics.
 
 ## OS Comparison
 
-| ⭐ | Feature                        | Win11                          | Linux                        | Impossible OS                              |
+| ⭐ | Feature                        | 🪟 Win11                          | 🐧 Linux                        | 🚀 Impossible OS                              |
 |----|--------------------------------|--------------------------------|------------------------------|--------------------------------------------|
 | 💎 | Growable kernel heap           | ✅ Segment Heap auto-grows     | ✅ SLUB backed by buddy      | ⬜ §1 -- 256 KB segments, 16 MiB max       |
 | 💎 | Memory pressure notifications  | ✅ Memory resource events      | ✅ Shrinker + OOM notifier   | ⬜ §2 -- 4-level, 1 Hz poll                 |

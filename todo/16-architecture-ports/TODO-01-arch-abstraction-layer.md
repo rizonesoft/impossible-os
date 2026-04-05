@@ -128,7 +128,7 @@ Full regression test across all platforms.
 
 ## OS Comparison
 
-| ⭐ | Feature                  | Win11                    | Linux                    | Impossible OS                 |
+| ⭐ | Feature                  | 🪟 Win11                    | 🐧 Linux                    | 🚀 Impossible OS                 |
 |----|--------------------------|--------------------------|--------------------------|-------------------------------|
 | 💎 | Multi-arch source tree   | ✅ HAL + arch/ dirs      | ✅ arch/ per architecture | ⬜ §1-§2 -- hal.h + arch/     |
 | 💎 | Build-time arch select   | ✅ Build config           | ✅ `ARCH=` make variable  | ⬜ §3 -- `ARCH=` in Makefile  |

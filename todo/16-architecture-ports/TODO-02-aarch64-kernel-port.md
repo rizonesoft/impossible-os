@@ -162,7 +162,7 @@ Save/restore SIMD state on context switch.
 
 ## OS Comparison
 
-| ⭐ | Feature                    | Win11                    | Linux                        | Impossible OS                 |
+| ⭐ | Feature                    | 🪟 Win11                    | 🐧 Linux                        | 🚀 Impossible OS                 |
 |----|----------------------------|--------------------------|------------------------------|-------------------------------|
 | 💎 | ARM64 kernel port          | ✅ Windows on ARM         | ✅ arch/arm64/                | ⬜ §1-§8 -- full AArch64 port |
 | 💎 | GICv3 support              | ✅ HAL abstraction        | ✅ irqchip/gic-v3             | ⬜ §3 -- GICv3 driver         |

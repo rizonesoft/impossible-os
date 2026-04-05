@@ -647,7 +647,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 ## OS Comparison
 
 
-| ⭐ | Feature                              | Win11                          | Linux                             | Impossible OS                   |
+| ⭐ | Feature                              | 🪟 Win11                          | 🐧 Linux                             | 🚀 Impossible OS                   |
 |----|--------------------------------------|--------------------------------|-----------------------------------|---------------------------------|
 | 💎 | Hierarchical typed key/value store   | ✅ Full                        | ⚠️ dconf (GNOME), ini files       | ✅ Done -- `reg_key_t` tree      |
 | 💎 | Win32 `RegXxx` API                   | ✅ Native                      | ❌ N/A                            | ✅ Done -- complete native API   |
