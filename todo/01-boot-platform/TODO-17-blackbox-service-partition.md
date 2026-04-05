@@ -305,12 +305,12 @@ Update cross-references across affected TODOs.
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` -> `=== BUILD OK ===` with 3-partition disk
-- [ ] QEMU WHPX: serial shows `"BlackBox partition mounted as X:\"` and `"klog: writing to X:\Logs\..."`
+- [x] `bash scripts/build.sh clean` -> `=== BUILD OK ===` with 3-partition disk (verified 2026-04-05)
+- [x] QEMU WHPX: serial shows `"BlackBox partition mounted as X:\"` and `"klog: writing to X:\Logs\Serial_26040501.log"` (verified 2026-04-05, 3 boot runs)
 - [ ] QEMU TCG: same as WHPX
 - [ ] VirtualBox: boot completes, X:\ accessible
 - [ ] Bare metal: BlackBox partition visible in Windows Disk Management with drive letter
-- [ ] Host Linux: `mount -o loop,offset=<N> build/system-disk.img /mnt` shows FAT32 with Logs/Boot/Crash/Perf/Diag/Tools
+- [x] Host Linux: `mdir -i build/system-disk.img@@68157440 ::/` shows FAT32 with Logs/Boot/Crash/Perf/Diag/Tools + Crash/WER + Logs/Serial (verified 2026-04-05)
 - [ ] Crash test: `crash_test=1` -> next boot recovery log appears in `X:\Crash\`
 - [ ] No-BlackBox fallback: remove BlackBox partition from disk -> logs go to `C:\` with warning
 - [ ] Commit: `"kernel: BlackBox service partition verified -- 3-partition GPT, X:\\ mount, log migration"`

@@ -1,8 +1,9 @@
 {
-  "timestamp": "2026-04-04T22:46:08Z",
-  "total_suites": 121,
-  "total_assertions": 386,
+  "timestamp": "2026-04-05T01:18:20Z",
+  "total_suites": 132,
+  "total_assertions": 395,
   "files": [
+    {"file": "test_blackbox.c", "suites": 11, "assertions": 9},
     {"file": "test_boot_init.c", "suites": 16, "assertions": 41},
     {"file": "test_bulletproof.c", "suites": 7, "assertions": 39},
     {"file": "test_heap.c", "suites": 4, "assertions": 9},

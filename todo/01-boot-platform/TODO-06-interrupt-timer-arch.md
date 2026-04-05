@@ -23,7 +23,7 @@
 - → XREF: `TODO-07-boot-diagnostics.md §8` -- runtime vital signs strip (developer overlay)
 - → XREF: `TODO-08-visual-post-display.md` -- proportional stage bar / VPD (stage colors, timing on screen; supersedes former TODO-07 debug color bar)
 - → XREF: `TODO-04-cpu-boot-sequencing.md §3` -- hypervisor detection runs in Phase 0 before §6 UTS probe; `boot_info.hv_flags` set there must be read by `timer_hal_init()` to select the correct clock source
-- → XREF: `02-kernel-core/TODO-15-power-management.md` -- Intel HWP / AMD CPPC frequency changes require LAPIC timer recalibration (§7 `lapic_calibrate()`); no dedicated HWP/CPPC section in TODO-15 yet -- add when frequency scaling is scoped there
+- → XREF: `02-kernel-core/TODO-15-power-management.md §15` -- Intel HWP / AMD CPPC frequency scaling governor framework; frequency changes require LAPIC timer recalibration (§7 `lapic_calibrate()`)
 - → XREF: `04-drivers-hardware/INDEX.md` -- all device drivers call `irq_request(gsi, handler, name, flags)` (§5); this API replaces hardcoded IRQ-to-vector assignments throughout that domain
 - → XREF: `TODO-05-bare-metal-hardening.md §5` -- hardware interrupt crash on bare metal (LAPIC timer and PIT both crash; software INT works). Root cause investigation tracked there, not here.
 

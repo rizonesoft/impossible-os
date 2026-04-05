@@ -22,18 +22,23 @@
 - → XREF: `TODO-04-peb-teb-user-abi.md §7` -- initial stack frame pushes `argc`/`argv[]`/`envp[]`; requires `task->argv` and `task->environ` to be populated first
 - → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT slots for `NtSetEnvironmentVariable` and `NtQueryEnvironmentVariable`
 - → XREF: `TODO-09-process-model-extensions.md §1` -- `NtCreateProcess` must deep-copy `task->environ` and `task->argv` from parent to child
-- → XREF: `TODO-13-registry-completion.md §1` -- system defaults read from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` and `HKCU\Environment`
+- → XREF: `TODO-11-security-reference-monitor.md §4` -- `ACCESS_TOKEN` for `CreateEnvironmentBlock` hToken parameter and env sanitization for elevated processes (§13, §16)
+- → XREF: `TODO-13-registry-completion.md §1` -- system defaults read from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` and `HKCU\Environment`; App Paths keys (§17)
 
 ---
 
 ## Outcome
 
-- `struct task` carries `char **environ` (UTF-8 key=value array) and `char **argv` (argument array); both are deep-copied on spawn.
-- `env_get`, `env_set`, `env_unset`, `env_expand` are available kernel-wide.
+- `struct task` carries `char **environ` (UTF-8 key=value array, sorted alphabetically) and `char **argv` (argument array); both are deep-copied on spawn.
+- `env_get`, `env_set`, `env_unset`, `env_expand` are available kernel-wide; `env_set` maintains sorted order.
 - System defaults (`PATH`, `SYSTEMROOT`, `TEMP`, `USERNAME`, `COMPUTERNAME`, `USERPROFILE`) are populated from Registry at boot.
-- `NtSetEnvironmentVariable` and `NtQueryEnvironmentVariable` let user-mode processes read and write their own env block.
+- `NtSetEnvironmentVariable` and `NtQueryEnvironmentVariable` let user-mode processes read and write their own env block; input validation enforces name/value size limits.
 - `GetEnvironmentVariableW/A`, `SetEnvironmentVariableW/A`, `ExpandEnvironmentStringsW/A`, `GetCommandLineW`, `GetEnvironmentStrings` are usable Win32 API functions.
-- Shell PATH lookup, `SET` / `ECHO` commands, and `%VAR%` argument expansion all work.
+- `SearchPathW/A`, `CommandLineToArgvW`, `CreateEnvironmentBlock`, `DestroyEnvironmentBlock`, `ExpandEnvironmentStringsForUser` provide full Win32 parity.
+- Shell PATH lookup respects `PATHEXT` extension search order; `SET` / `ECHO` commands, and `%VAR%` argument expansion all work.
+- Hidden drive-letter variables (`=C:`, `=D:`) track per-drive current directories; propagated correctly through `CreateProcess`.
+- Environment variables are sanitized for elevated/restricted-token processes to prevent privilege escalation.
+- App Paths registry-based executable lookup provides a `PATH`-free alternative for installed applications.
 - `.profile` is sourced on shell startup; users can persist env changes across reboots.
 
 ---
@@ -51,6 +56,14 @@
 | 💎  |   7   | Shell integration (PATH lookup, SET, ECHO)          | 3, 4                |  [ ]   |
 | 💎  |   8   | `.profile` startup script                           | 7                   |  [ ]   |
 | ⭐  |   9   | Environment change notifications & `sysdm.cpl` tab  | 6, 8                |  [ ]   |
+| 💎  |  10   | Environment block sorting & size limits             | 1                   |  [ ]   |
+| 💎  |  11   | PATHEXT variable & extension search order           | 7                   |  [ ]   |
+| 💎  |  12   | Hidden drive-letter variables (`=C:`, `=D:`)        | 1, 10               |  [ ]   |
+| 💎  |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock    | 2, 10, 12, D02T11§4 |  [ ]   |
+| 💎  |  14   | SearchPathW / SearchPathA Win32 API                 | 7, 6                |  [ ]   |
+| 💎  |  15   | CommandLineToArgvW Win32 API                        | 4, 6                |  [ ]   |
+| 💎  |  16   | Environment variable security & sanitization        | 1, D02T11§4         |  [ ]   |
+| ⭐  |  17   | App Paths registry-based executable lookup          | 7, TODO-13 §1       |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -363,6 +376,193 @@
 
 ---
 
+## 10. Environment Block Sorting & Size Limits `[Sonnet]`
+
+### 10.1 Sorted environment block
+
+- [ ] Windows requires all strings in the environment block to be **sorted alphabetically by name** (case-insensitive, Unicode order, locale-independent); `CreateProcess` and `GetEnvironmentStrings` both depend on this invariant
+- [ ] `env_set` must maintain sorted order: on insert, binary-search the `environ[]` array for the correct position and shift entries to keep alphabetical order; on replace, check whether the new name changes sort position
+- [ ] `env_build_block(task, out_buf, max_len, is_unicode)` -- build a contiguous env block suitable for `CreateProcess` `lpEnvironment`:
+  - Each entry: `name=value\0` (or UTF-16 equivalent)
+  - Block terminated by extra `\0` (ANSI) or `\0\0` (Unicode / 4 zero bytes)
+  - Entries must be in sorted order
+  - Return total block size in bytes; return `STATUS_BUFFER_TOO_SMALL` if `max_len` exceeded
+- [ ] `env_parse_block(task, block, len, is_unicode)` -- parse a contiguous env block (from `lpEnvironment`) into the `task->environ[]` array; validate: no name contains `=` (except hidden `=X:` drive vars), no empty names, sorted order
+
+### 10.2 Size limits and validation
+
+- [ ] Maximum single variable value length: 32,767 characters; `env_set` returns `STATUS_NAME_TOO_LONG` if exceeded
+- [ ] Maximum variable name length: 256 characters (practical Windows limit); reject names > 256 chars
+- [ ] Variable name validation: name must not contain `=` (the separator); names starting with `=` are reserved for hidden drive-letter variables (§12); reject all other `=`-prefixed names
+- [ ] No technical limit on environment block size (Windows Vista+); however, enforce a sanity cap of 1 MiB per process to prevent DoS; log warning at 256 KiB
+- [ ] `REG_EXPAND_SZ` values from Registry: expand `%VAR%` references at read time using `env_expand` before storing; raw unexpanded values are never stored in `task->environ[]`
+
+### 10.3 Commit
+
+- [ ] Commit: `"kernel/env: sorted environment block, size limits, name validation"`
+
+---
+
+## 11. PATHEXT Variable & Extension Search Order `[Sonnet]`
+
+### 11.1 PATHEXT support
+
+- [ ] Add `PATHEXT` to system default variables (§2): default value `".EXE;.CMD;.BAT"` (subset of Windows default `.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC` -- only the extensions Impossible OS can execute)
+- [ ] Modify `shell_find_command` (§7) to use `PATHEXT`:
+  1. If `name` has an explicit extension: try as-is, no PATHEXT iteration
+  2. If `name` has no extension: retrieve `PATHEXT` via `env_get(current_task, "PATHEXT")`
+  3. Split `PATHEXT` on `;` into extension list
+  4. For each PATH directory, try `dir\name{ext}` for each extension in PATHEXT order
+  5. First hit wins; this makes extension priority configurable by the user
+- [ ] Current search order (before PATHEXT): tries only `.exe` -- too restrictive
+- [ ] `PATHEXT` with empty value: fall back to `.EXE` only (Windows behavior)
+
+### 11.2 Commit
+
+- [ ] Commit: `"kernel/env: PATHEXT extension search order for PATH-based command lookup"`
+
+---
+
+## 12. Hidden Drive-Letter Variables (`=C:`, `=D:`) `[Sonnet]`
+
+### 12.1 Per-drive current directory tracking
+
+- [ ] Windows tracks the current directory for each drive letter via hidden environment variables named `=C:`, `=D:`, etc. (the name starts with `=`); these are **not** visible in `SET` output or user-facing enumerations but are present in the environment block
+- [ ] `env_set_drive_cwd(task, drive_letter, path)` -- set `=X:` where X is the uppercase drive letter; value is the full path (e.g. `=C:` → `C:\Users\Default`)
+- [ ] `env_get_drive_cwd(task, drive_letter)` -- return the current directory for the given drive, or `X:\` root if not set
+- [ ] When `SetCurrentDirectory` changes drives, also call `env_set_drive_cwd` to update the hidden variable
+- [ ] On process creation: if `lpEnvironment` is NULL (inherit parent), the hidden drive vars are copied automatically; if `lpEnvironment` is non-NULL (custom block), the caller must include them manually (this is the Windows contract -- `CreateProcess` does not inject them)
+
+### 12.2 Sort order for hidden variables
+
+- [ ] Hidden `=X:` variables sort before regular variables because `=` (0x3D) sorts before any letter (A=0x41); they appear at the front of the environment block
+- [ ] `env_build_block` (§10.1) must include hidden drive vars in the sorted output
+
+### 12.3 Commit
+
+- [ ] Commit: `"kernel/env: hidden =X: drive-letter current directory variables"`
+
+---
+
+## 13. CreateEnvironmentBlock / DestroyEnvironmentBlock `[Sonnet]`
+
+### 13.1 CreateEnvironmentBlock
+
+- [ ] `CreateEnvironmentBlock(LPVOID *lpEnvironment, HANDLE hToken, BOOL bInherit)` -- Win32 API from `userenv.dll`:
+  - If `hToken == NULL`: build an environment block containing **system variables only** (from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment`)
+  - If `hToken != NULL`: merge system variables + user variables from `HKCU\Environment` for the user identified by the token; token must have `TOKEN_QUERY` and `TOKEN_DUPLICATE` access
+  - If `bInherit == TRUE`: start with the calling process's environment, then overlay system and user variables from the Registry
+  - If `bInherit == FALSE`: build a fresh block from Registry only (no inheritance)
+  - Output: a contiguous UTF-16 sorted environment block (double-NUL terminated), allocated with `LocalAlloc`; caller must free with `DestroyEnvironmentBlock`
+- [ ] `DestroyEnvironmentBlock(LPVOID lpEnvironment)` → `LocalFree(lpEnvironment)`
+- [ ] `ExpandEnvironmentStringsForUserW(HANDLE hToken, LPCWSTR lpSrc, LPWSTR lpDst, DWORD dwSize)` -- expand `%VAR%` using the environment of the user identified by `hToken`:
+  - Build a temporary env block via `CreateEnvironmentBlock(NULL, hToken, FALSE)`
+  - Parse the block, match `%VAR%` references against it
+  - Token requires `TOKEN_QUERY`, `TOKEN_DUPLICATE`, and `TOKEN_IMPERSONATE`
+  - If `hToken == NULL`, expand using system variables only
+- [ ] These APIs are used by services (e.g. Task Scheduler, logon service) that launch processes on behalf of other users
+
+### 13.2 Commit
+
+- [ ] Commit: `"kernel/env: CreateEnvironmentBlock, DestroyEnvironmentBlock, ExpandEnvironmentStringsForUser"`
+
+---
+
+## 14. SearchPathW / SearchPathA Win32 API `[Sonnet]`
+
+### 14.1 SearchPath function
+
+- [ ] `SearchPathW(lpPath, lpFileName, lpExtension, nBufferLength, lpBuffer, lpFilePart)` -- Win32 API from `kernel32.dll`:
+  - If `lpPath == NULL`: search order is (1) the directory from which the application loaded, (2) the current directory, (3) the system directory (`GetSystemDirectory`), (4) the Windows directory (`GetWindowsDirectory`), (5) directories listed in `PATH`
+  - If `lpPath != NULL`: search only the directories in `lpPath` (semicolon-delimited)
+  - `lpExtension`: extension to append if `lpFileName` has none; first character must be `.` (e.g. `".exe"`); if `lpFileName` already has an extension, this parameter is ignored
+  - `lpFilePart`: receives pointer to the file-name component in the returned path
+  - Return: length of the path found (in characters, not including NUL); 0 if not found (`GetLastError` returns `ERROR_FILE_NOT_FOUND`)
+  - Security note: Windows provides `SetSearchPathMode` to control whether the current directory is searched before or after system directories; default is before (risky for DLL hijacking)
+- [ ] `SearchPathA` -- ANSI wrapper; converts to UTF-16, calls `SearchPathW`, converts result back
+- [ ] `NeedCurrentDirectoryForExePathW(ExeName)` -- returns `TRUE` if the current directory should be included in the search path for the given executable; returns `FALSE` if `NoDefaultCurrentDirectoryInExePath` environment variable is set (security hardening)
+
+### 14.2 Commit
+
+- [ ] Commit: `"kernel/env: SearchPathW/A Win32 API, NeedCurrentDirectoryForExePathW"`
+
+---
+
+## 15. CommandLineToArgvW Win32 API `[Sonnet]`
+
+### 15.1 CommandLineToArgvW function
+
+- [ ] `CommandLineToArgvW(LPCWSTR lpCmdLine, int *pNumArgs)` -- Win32 API from `shell32.dll`:
+  - Parses a Unicode command-line string into an argv-style array of pointers
+  - Backslash/quote escaping rules (must match Windows exactly):
+    - 2n backslashes + `"` → n backslashes + begin/end quote (toggle "in quotes" mode)
+    - (2n+1) backslashes + `"` → n backslashes + literal `"` (no toggle)
+    - n backslashes not followed by `"` → n backslashes verbatim
+  - Outside quotes: whitespace (space/tab) terminates the current argument
+  - Inside quotes: whitespace is part of the argument
+  - `argv[0]` has special parsing: if it starts with `"`, everything up to the closing `"` is argv[0]; otherwise, everything up to the first whitespace
+  - Return: pointer to `LPWSTR *` array, with `*pNumArgs` set to the count; the array and all strings are allocated as a single `LocalAlloc` block; caller must `LocalFree` the returned pointer
+- [ ] Edge case: empty string input → `*pNumArgs = 1`, `argv[0] = ""` (Windows behavior)
+- [ ] Edge case: `NULL` input → return `NULL` (Windows behavior)
+
+### 15.2 Commit
+
+- [ ] Commit: `"kernel/env: CommandLineToArgvW Win32 API (shell32)"`
+
+---
+
+## 16. Environment Variable Security & Sanitization `[Opus]`
+
+### 16.1 Sensitive variable filtering for elevated processes
+
+- [ ] When a process runs with elevated privileges (e.g. admin token from UAC elevation, or a service), sanitize the inherited environment by stripping variables that could enable privilege escalation:
+  - Strip `LD_PRELOAD`, `LD_LIBRARY_PATH` (Linux compat layer only -- XREF `TODO-10-exception-dispatch-seh.md`)
+  - Strip any variable whose name starts with `_IMPOSSIBLE_DEBUG_` in non-debug builds (prevent debug knobs from being inherited into privileged processes)
+- [ ] `env_sanitize_for_elevation(task)` -- called by `NtCreateProcess` when the child process has a higher integrity level than the parent:
+  - Walk `task->environ[]`; remove blocklisted variables
+  - Log removed variables to security audit log at `LOG_NOTICE` level
+- [ ] Parallel to Linux `secure_getenv()` / glibc `AT_SECURE`: if `task->token` has setuid-equivalent elevation, `env_get` for blocklisted names returns `NULL` even if the variable is present
+
+### 16.2 Input validation for user-mode env syscalls
+
+- [ ] `NtSetEnvironmentVariable` must validate:
+  - Name does not contain `=` (except hidden `=X:` drive vars)
+  - Name is not empty (zero-length)
+  - Name length ≤ 256 characters
+  - Value length ≤ 32,767 characters
+  - Total environment block size after insertion ≤ 1 MiB
+  - Return `STATUS_INVALID_PARAMETER` for invalid names, `STATUS_NAME_TOO_LONG` for oversized values, `STATUS_QUOTA_EXCEEDED` for block overflow
+- [ ] `NtQueryEnvironmentVariable` must validate:
+  - Output buffer is properly `ProbeForWrite`-validated before any kernel data is written
+  - Name string is `ProbeForRead`-validated before dereferencing
+  - Return `STATUS_BUFFER_TOO_SMALL` with required length if buffer is insufficient (do not truncate silently)
+
+### 16.3 Commit
+
+- [ ] Commit: `"kernel/env: security sanitization for elevated processes, input validation"`
+
+---
+
+## 17. App Paths Registry-Based Executable Lookup `[Sonnet]`
+
+### 17.1 App Paths registry key
+
+- [ ] Windows provides an alternative to the `PATH` variable: the `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\` registry key, where each subkey is named after an executable (e.g. `notepad.exe`) and the default value is the full path
+- [ ] `app_paths_lookup(name, out_path, max)` -- check `App Paths\{name}` subkey:
+  1. Open `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}` (if name has no extension, append `.exe`)
+  2. Read default value → full executable path
+  3. Read `Path` value (optional) → additional directory to add to the process's PATH at launch time
+  4. Return the full path or `NULL` if not found
+- [ ] Integration: `shell_find_command` (§7) checks App Paths **after** the standard PATH search fails; this matches Windows `ShellExecute` behavior where App Paths is a fallback
+- [ ] Per-user App Paths: also check `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}` (HKCU takes precedence over HKLM)
+- [ ] `app_paths_register(name, full_path, additional_path)` -- API for installers to register executables without modifying PATH (→ XREF `10-services-security/TODO-03-updates-packages.md`)
+
+### 17.2 Commit
+
+- [ ] Commit: `"kernel/env: App Paths registry-based executable lookup"`
+
+---
+
 ## OS Comparison
 
 
@@ -383,11 +583,23 @@
 | 💎 | Persistent env var writer               | ✅ `setx.exe` built-in                 | ⚠️ Manual `.bashrc` edit           | ⬜ §9 -- .3                        |
 | ⭐ | System Properties Environment tab       | ✅ `sysdm.cpl` → Environment Variables | ❌ Not available (GNOME Settings)  | ⬜ §9 -- .2                        |
 | ⭐ | `SET /A` arithmetic expansion           | ✅ cmd.exe only                        | ✅ `$((expr))` bash                | ⬜ §7 -- .3                        |
-| ⭐ | `source` / `.` command                  | ❌ Not in cmd.exe (PowerShell only)    | ✅ POSIX `.`                       | ⬜ §8 -- .3 🚀                     |
+| ⭐ | `source` / `.` command                  | ❌ Not in cmd.exe (PowerShell only)    | ✅ POSIX `.`                       | ⬜ §8 -- .3                        |
+| 💎 | Sorted environment block                | ✅ Case-insensitive Unicode sort       | ❌ Unsorted (arbitrary order)      | ⬜ §10                            |
+| 💎 | Env block size limits & validation      | ✅ 32,767 chars/var; no `=` in names   | ⚠️ `ARG_MAX` page limit           | ⬜ §10                            |
+| 💎 | `PATHEXT` extension search order        | ✅ `.COM;.EXE;.BAT;.CMD;...`          | ❌ No extension concept            | ⬜ §11                            |
+| 💎 | Hidden drive `=C:` variables            | ✅ Per-drive CWD tracking             | ❌ Single CWD per process          | ⬜ §12                            |
+| 💎 | `CreateEnvironmentBlock`                | ✅ `userenv.dll` token-based           | ❌ No equivalent                   | ⬜ §13                            |
+| 💎 | `ExpandEnvironmentStringsForUser`       | ✅ Expand for different user token     | ❌ No equivalent                   | ⬜ §13                            |
+| 💎 | `SearchPathW` Win32 API                 | ✅ kernel32 formal API                 | ⚠️ `execvp` (libc, not syscall)    | ⬜ §14                            |
+| 💎 | `CommandLineToArgvW` Win32 API          | ✅ shell32 formal API                  | ❌ No equivalent (wordexp)         | ⬜ §15                            |
+| 💎 | Env sanitization for elevated procs     | ✅ Restricted token strips vars        | ✅ `AT_SECURE` / `secure_getenv`   | ⬜ §16                            |
+| ⭐ | App Paths registry executable lookup    | ✅ `HKLM\...\App Paths`               | ❌ No equivalent                   | ⬜ §17                            |
 
-After §1–8, Impossible OS reaches full Windows 11 and Linux parity for every environment variable feature: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` /
-`ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.
-The `source` / `.` command (§8.3) is a genuine differentiator over Windows cmd.exe. The `SET /A` arithmetic expansion and `setx` persistent setter are standard Windows features that are also included for full shell parity.
+After §1--9, Impossible OS reaches base Windows 11 and Linux parity for core environment variable features: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` / `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.
+
+§10--17 close the remaining competitive gaps: sorted environment blocks (a hard Windows contract), `PATHEXT` extension search order, hidden drive-letter CWD variables, `CreateEnvironmentBlock` for service-launched processes, `SearchPathW` / `CommandLineToArgvW` formal Win32 APIs, security sanitization for elevated processes (matching both Windows restricted tokens and Linux `AT_SECURE`), and App Paths registry-based executable discovery (an Impossible OS differentiator that avoids `PATH` pollution).
+
+The `source` / `.` command (§8.3) remains a genuine differentiator over Windows cmd.exe.
 
 ---
 
@@ -405,6 +617,13 @@ The `source` / `.` command (§8.3) is a genuine differentiator over Windows cmd.
   - Child inherits parent env: set var, fork, child reads same var
   - `PATH` search: `SearchPath(NULL, "hello.exe")` finds binary in `C:\Impossible\System32\`
   - Case insensitivity: `%path%` and `%PATH%` resolve to same value
+  - Sorted order: after setting `ZZZ=1`, `AAA=2`, `MMM=3`, `GetEnvironmentStrings()` returns block in alphabetical order (AAA before MMM before ZZZ)
+  - Name validation: `env_set(t, "BAD=NAME", "val")` returns error; `env_set(t, "", "val")` returns error
+  - Size limit: `env_set` with 33,000-char value returns `STATUS_NAME_TOO_LONG`
+  - Hidden drive var: `env_set_drive_cwd(t, 'C', "C:\\Users")` → `env_get(t, "=C:")` returns `"C:\\Users"`; hidden var sorts before `AAA` in block output
+  - `PATHEXT` search: set `PATHEXT=.CMD;.EXE`; place `test.cmd` and `test.exe` in PATH dir; `shell_find_command("test")` returns `.cmd` variant first
+  - `CommandLineToArgvW`: `"foo \"bar baz\" qux"` → 3 args: `foo`, `bar baz`, `qux`; `"a\\\\\"b"` → `a\\"b` (2n+1 rule)
+  - Security: elevated task with `env_sanitize_for_elevation` strips `LD_PRELOAD` from environ
 - [ ] Register in `test_runner_init()`: `test_register_env()`
 - [ ] Commit: `"test: add environment variables test suite"`
 
@@ -421,4 +640,12 @@ The `source` / `.` command (§8.3) is a genuine differentiator over Windows cmd.
 - [ ] **GetEnvironmentVariableW**: `GetEnvironmentVariableW(L"SYSTEMROOT", buf, MAX_PATH)` → `L"C:\\Impossible"`.
 - [ ] **.profile**: create `C:\Users\Default\.profile` with `SET TEST_VAR=from_profile`; restart shell; run `ECHO %TEST_VAR%` → `"from_profile"`.
 - [ ] **Remaining limits**: `ExpandEnvironmentStringsW` with deeply nested `%A%%B%%C%` (> 4 levels) must return the partially expanded string rather than hanging; `WM_SETTINGCHANGE` broadcast requires the window manager to be running (§9.1) -- skip in headless QEMU test.
+- [ ] **Sorted block**: `GetEnvironmentStrings()` output is alphabetically sorted; insert `ZZZ` then `AAA` -- `AAA` must appear before `ZZZ` in the block.
+- [ ] **PATHEXT**: set `PATHEXT=.CMD;.EXE`; create both `test.cmd` and `test.exe` in `C:\Impossible\Bin\`; type `test` in shell; `test.cmd` must be selected (`.CMD` first in PATHEXT).
+- [ ] **Hidden drive vars**: after `SetCurrentDirectory("D:\\Docs")`, `GetEnvironmentStrings()` block contains `=D:=D:\Docs` before any letter-named variable.
+- [ ] **CreateEnvironmentBlock**: call with a user token; returned block includes both `HKLM` system vars and `HKCU` user vars; block is sorted; `DestroyEnvironmentBlock` frees without leak.
+- [ ] **SearchPathW**: `SearchPathW(NULL, L"notepad", L".exe", ...)` → finds `C:\Impossible\System32\notepad.exe`; `SearchPathW(NULL, L"nonexistent", L".exe", ...)` → returns 0, `GetLastError() == ERROR_FILE_NOT_FOUND`.
+- [ ] **CommandLineToArgvW**: `CommandLineToArgvW(L"a.exe \"hello world\" test", &argc)` → `argc==3`, `argv[0]=="a.exe"`, `argv[1]=="hello world"`, `argv[2]=="test"`.
+- [ ] **Security sanitization**: create elevated child process; parent sets `LD_PRELOAD=/evil.so`; child's `env_get("LD_PRELOAD")` returns `NULL` (stripped by `env_sanitize_for_elevation`).
+- [ ] **App Paths**: register `myapp.exe` in `HKLM\...\App Paths\myapp.exe` pointing to `C:\Programs\MyApp\myapp.exe`; type `myapp` in shell (not in PATH); App Paths fallback finds and launches it.
 - [ ] Commit: `"kernel/env: environment variables, argv, Win32 GetEnvironmentVariable, PATH lookup, .profile"`

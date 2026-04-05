@@ -190,7 +190,7 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
   - `SystemCall` = 0 (SYSCALL mode)
 - [x] `kusd_update_time()`: ISR-driven, writes InterruptTime, SystemTime, TimeZoneBias, TickCount via triple-write protocol. Wired into LAPIC + PIT timer ISRs (→ XREF TODO-07 §12)
 - [x] Wired into Phase 2 boot after wall_clock_init() and timezone_init()
-- [ ] Commit: `"kernel: abi -- KUSER_SHARED_DATA shared page at 0x7FFE0000"`
+- [x] Commit: `"kernel: abi -- KUSER_SHARED_DATA shared page at 0x7FFE0000"`
 
 **Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox; bare metal follow-up (no hardware interaction, low risk).
 
