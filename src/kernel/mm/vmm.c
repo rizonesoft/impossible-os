@@ -261,7 +261,16 @@ int vmm_protect_range(uintptr_t addr, uint64_t size, uint64_t new_flags)
 {
     uintptr_t end;
     addr &= ~((uintptr_t)0xFFF);
+    /* Overflow-safe end computation */
+    if (size > 0x7FFFFFFFFFFF || addr + size < addr)
+        return -1;  /* reject overflow */
     end = (addr + size + 0xFFF) & ~((uintptr_t)0xFFF);
+    if (end < addr)
+        return -1;  /* wrapped */
+    /* NOTE: No SMP TLB shootdown or page-table lock. Currently safe because
+     * vmm_protect_range is only called during single-threaded ELF load.
+     * When called from multi-CPU context, add IPI-based TLB shootdown
+     * and per-address-space locking. */
     while (addr < end) {
         if (vmm_protect(addr, new_flags) != 0)
             return -1;

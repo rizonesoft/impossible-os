@@ -203,8 +203,11 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
 
             case PT_GNU_PROPERTY:
                 /* Parse GNU property notes for CET flags.
-                 * Use byte reads to avoid unaligned type-pun UB. */
-                if (phdr->p_filesz >= 16 && phdr->p_offset + phdr->p_filesz <= size) {
+                 * Use byte reads to avoid unaligned type-pun UB.
+                 * Overflow-safe bounds: subtraction-based checks. */
+                if (phdr->p_filesz >= 16 &&
+                    phdr->p_offset <= size &&
+                    phdr->p_filesz <= size - phdr->p_offset) {
                     const uint8_t *note = data + phdr->p_offset;
                     uint64_t off = 0;
                     while (off + 12 <= phdr->p_filesz) {
@@ -223,7 +226,8 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
                         uint32_t name_aligned = (namesz + 7) & ~(uint32_t)7;
                         uint32_t desc_off = 12 + name_aligned;
 
-                        if (off + desc_off + descsz > phdr->p_filesz)
+                        if (desc_off > phdr->p_filesz - off ||
+                            descsz > phdr->p_filesz - off - desc_off)
                             break;
 
                         /* NT_GNU_PROPERTY_TYPE_0: scan property entries */
