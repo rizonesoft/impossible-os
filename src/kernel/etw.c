@@ -369,9 +369,18 @@ NTSTATUS NtStopTrace(uint64_t trace_handle, uint64_t instance_name,
          (uint64_t)sess->handle,
          (uint64_t)sess->events_written,
          (uint64_t)sess->events_dropped);
-    sess->state = ETW_STATE_IDLE;
 
-    spin_unlock_irqrestore(&s_etw_lock, irq_flags);
+    /* Release session: free buffer and clear magic so slot can be reused.
+     * This makes the 8-session limit concurrent, not lifetime-per-boot. */
+    {
+        uint8_t *buf = sess->buffer;
+        sess->buffer = (uint8_t *)0;
+        sess->magic  = 0;
+        sess->state  = ETW_STATE_IDLE;
+        spin_unlock_irqrestore(&s_etw_lock, irq_flags);
+        if (buf)
+            kfree(buf);
+    }
     return STATUS_SUCCESS;
 }
 

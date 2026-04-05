@@ -15,7 +15,7 @@
 - ~~`src/kernel/log.c`~~ -- legacy serial-only logger (removed, superseded by klog)
 - [`todo/02-kernel-core/TODO-01-kernel-init-sequencing.md`](./TODO-01-kernel-init-sequencing.md)
 - → XREF: `TODO-20-kernel-libraries.md §6` -- cJSON DOM parser; §6 was implemented with manual JSON formatting in `klog_disk.c` (cJSON not needed for serialization, may be used by Event Viewer for parsing)
-- → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- UDP send path required by §7 (remote syslog); `src/kernel/net/udp.c` already exists but syslog send API is not yet wired
+- → XREF: `07-networking/TODO-11-syslog-forwarding.md` -- remote syslog forwarding (moved from this TODO); depends on UDP send path in `07-networking/TODO-01`
 - → XREF: `01-boot-platform/TODO-11-usb-boot-hardening.md` -- USB boot hardening (klog_disk_flush bounded loop, deferred flush mode); both TODOs modify klog_disk.c
 - → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §8 of this TODO wires them into the SSDT
 - → XREF: `TODO-16-crash-dump-generation.md §2,§7` -- crash dump raw-partition sink bypasses VFS; §8 of this TODO captures ring buffer to reserved physical memory on panic (complementary -- TODO-16 captures binary state, §8 captures text log)
@@ -146,7 +146,7 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 - [x] `events.jsonl` created at first flush; file size tracked for rotation
 - [x] §4 log rotation applied to `events.jsonl` via `rotate_log_file()`
 - [x] `"dropped"` field included from §5 rate limiter via `klog_get_dropped()` public API
-- [/] Event viewer reads `events.jsonl` for colour-coded filtering -- see [13-tools-accessories/TODO-02](../13-tools-accessories/TODO-02-event-viewer.md)
+- [ ] Event viewer reads `events.jsonl` for colour-coded filtering -- → XREF: [13-tools-accessories/TODO-02](../13-tools-accessories/TODO-02-event-viewer.md)
 - [x] Commit: `"kernel: structured JSON log events"`
 
 ## 7. ETW Tracing Syscalls Wired to SSDT
@@ -252,6 +252,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 | 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §8 NVRAM + reserved RAM |
 | 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ✅ §9 -- cpu/pid/tid       |
 | ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §10 -- HMAC-chain       |
+| ⭐ | Rotated log compress  | ❌ Not built-in     | ❌ Not built-in      | ⬜ Planned (LZ4, T20 §3)  |
 
 > After §1-§9, Impossible OS matches or exceeds Windows and Linux on all core logging features.
 > §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges. §7 wires 7 ETW syscalls. §9 closes the per-entry context parity gap.
@@ -283,6 +284,24 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [ ] Log integrity verification tests (§10): blocked on Monocypher (TODO-20 §5) -- `klog_verify_chain()` not yet implemented
 - [x] Commit: `"test: add crash-persist, context metadata tests to klog suite (TODO-02 §8-§9)"`
 
+## Codex Adversarial Review
+
+> Reviewed 2026-04-05 by Codex (o3). Scope: §1-§9 implemented code.
+> **Round 1:** 6 findings (1 critical, 3 high, 2 medium). All fixed.
+> **Round 2:** 2 new findings. 1 fixed (cursor-advance-on-failure), 1 accepted (ring snapshot).
+> **Final verdict: resolved.** Build clean.
+
+| # | Severity | Finding | Status |
+|---|----------|---------|--------|
+| 1 | critical | `klog()` ring buffer not SMP-safe | **Fixed** -- added `s_klog_lock` irqsave spinlock |
+| 2 | high | Flush stops after ring saturates at 1000 | **Fixed** -- monotonic `klog_ring_seq` replaces capped `ring_count` |
+| 3 | high | Per-subsystem logs re-append entire ring | **Fixed** -- subsystem routing uses same seq cursor as kernel.log |
+| 4 | high | JSON output not safely escaped | **Fixed** -- inline escape for `\ " \n \r \t` + control chars |
+| 5 | medium | Crash recovery fails when only X: mounted | **Fixed** -- gate on `X: \|\| C:` |
+| 6 | medium | ETW sessions never released after stop | **Fixed** -- `NtStopTrace` clears magic + kfree(buffer) |
+| 7 | high | Flush cursor advances on write failure | **Fixed** -- cursor gated on successful VFS write |
+| 8 | medium | Ring flush reads live entries without lock | **Accepted** -- inherent ring buffer behavior; locking during disk I/O would block all logging |
+
 ## Verification
 
 - [x] `bash scripts/build.sh clean` → `=== BUILD OK ===` -- PASS: build 1939 booted successfully (WHPX, 2026-04-02)
@@ -294,6 +313,6 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [x] `klog_set_level("mm", LOG_WARN)` silences mm DEBUG entries in serial -- PASS: unit test `Klog: level drop` passed at 8.510s, confirms LOG_DEBUG dropped after set_level(mm, LOG_WARN) (WHPX, 2026-04-02)
 - [ ] Rotation: `kernel.log.1` appears when `kernel.log` exceeds MaxSize -- (not verifiable from serial log, requires filesystem inspection after multiple boots)
 - [ ] `events.jsonl` parseable by `jq` -- one JSON object per line -- (not verifiable from serial log, requires filesystem inspection)
-- [ ] Syslog: entries appear on test syslog server (UDP 514) when configured -- (not verifiable from serial log, requires syslog server setup)
+- _Syslog verification moved to `07-networking/TODO-11-syslog-forwarding.md`_
 - [ ] Bare metal: log files written correctly to IXFS on SATA/NVMe -- (manual: requires physical hardware)
 - [ ] Commit: `"kernel: system-logging verified -- splitting, rotation, JSON events, syslog"`

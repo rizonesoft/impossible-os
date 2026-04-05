@@ -104,8 +104,8 @@ static const char *dispatch_filename(const char *subsystem)
 
 /* ---- State ---- */
 
-/* IXFS (C:) flush tracking */
-static uint32_t ixfs_flush_index;
+/* IXFS (C:) flush tracking -- monotonic sequence cursor */
+static uint64_t ixfs_flush_seq;
 static int      ixfs_inited;
 
 /* FAT32 (X:) buffer + live mode */
@@ -126,8 +126,8 @@ static uint32_t  rot_max_rotated = 3;                  /* keep .1, .2, .3 */
 /* Per-file size tracking for O(1) rotation check */
 static uint32_t  kernel_log_size;  /* tracked across flushes */
 
-/* JSON Lines event log state */
-static uint32_t  jsonl_flush_index;  /* ring entries already flushed */
+/* JSON Lines event log state -- monotonic sequence cursor */
+static uint64_t  jsonl_flush_seq;    /* ring entries already flushed */
 static uint32_t  jsonl_file_size;    /* tracked for rotation */
 static int       jsonl_inited;
 
@@ -637,7 +637,7 @@ void klog_disk_flush(void)
             ensure_log_dirs();
             load_rotation_config();
             ixfs_inited = 1;
-            ixfs_flush_index = 0;
+            ixfs_flush_seq = 0;
 
             /* Create kernel.log via klog_dir path */
             {
@@ -660,8 +660,19 @@ void klog_disk_flush(void)
         uint8_t *batch = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(batch_pages);
         uint32_t batch_size = batch ? batch_pages * 4096 : 0;
 
+        /* Snapshot seq and ring state -- seq-based flush cursor avoids
+         * stalling after the ring saturates at KLOG_RING_SIZE entries. */
+        uint64_t cur_seq = klog_get_seq();
         ring = klog_get_ring(&ring_count, &ring_head);
-        if (ring && ring_count > 0 && ixfs_flush_index < ring_count) {
+
+        /* Number of unflushed entries (capped to ring capacity) */
+        uint64_t unflushed = cur_seq - ixfs_flush_seq;
+        if (unflushed > KLOG_RING_SIZE)
+            unflushed = KLOG_RING_SIZE;  /* oldest entries overwritten */
+
+        if (ring && unflushed > 0) {
+            uint64_t start_seq = cur_seq - unflushed;
+            int flush_ok = 0;  /* only advance cursor on successful write */
             {
                 char kpath[64];
                 int kp = 0, kj;
@@ -675,15 +686,17 @@ void klog_disk_flush(void)
                     uint32_t batch_pos = 0;
                     uint32_t write_offset = (uint32_t)logfile->size;
 
-                    for (i = ixfs_flush_index; i < ring_count; i++) {
-                        uint32_t idx;
-                        if (ring_count < KLOG_RING_SIZE) {
-                            idx = i;
-                        } else {
-                            idx = (ring_head +
-                                   (i - (ring_count - KLOG_RING_SIZE)))
-                                  % KLOG_RING_SIZE;
-                        }
+                    /* Iterate from oldest unflushed to newest.
+                     * Ring slot for sequence s is: s % KLOG_RING_SIZE.
+                     *
+                     * Note: entries are read without holding s_klog_lock.
+                     * Concurrent writers may overwrite the oldest slots
+                     * during iteration. This is inherent ring buffer
+                     * behavior -- a 1000-entry ring is lossy under extreme
+                     * load. The alternative (locking during disk I/O) would
+                     * block all klog() callers. */
+                    for (uint64_t s = start_seq; s < cur_seq; s++) {
+                        uint32_t idx = (uint32_t)(s % KLOG_RING_SIZE);
 
                         char line[256];
                         int pos = format_entry(&ring[idx], line, 256);
@@ -707,18 +720,17 @@ void klog_disk_flush(void)
                     if (batch_pos > 0) {
                         vfs_write(logfile, write_offset, batch_pos, batch);
                     }
-
+                    flush_ok = 1;
                 }
 
-                ixfs_flush_index = ring_count;
                 kernel_log_size = (uint32_t)logfile->size;
                 vfs_close(logfile);
             }
 
             /* ---- Per-subsystem log routing (batched) ---- */
-            /* Reuse the batch buffer to write per-subsystem files in one
-             * vfs_write() each, avoiding per-entry AHCI DMA overhead. */
-            if (batch) {
+            /* Uses the same seq range as kernel.log -- each entry is
+             * routed exactly once to its subsystem file. */
+            if (batch && flush_ok) {
                 uint32_t si;
                 for (si = 0; si < SUBSYS_LOG_COUNT; si++) {
                     char spath[64];
@@ -736,34 +748,23 @@ void klog_disk_flush(void)
                     sf = vfs_open(spath, VFS_O_WRITE);
                     if (!sf) continue;
 
-                    /* Batch matching entries into buffer */
-                    {
-                        uint32_t sfl_start = (ring_count > KLOG_RING_SIZE)
-                            ? ring_count - KLOG_RING_SIZE : 0;
+                    /* Batch matching entries using same seq range */
+                    for (uint64_t s = start_seq; s < cur_seq; s++) {
+                        uint32_t idx = (uint32_t)(s % KLOG_RING_SIZE);
+                        const char *df, *a, *b;
 
-                        for (i = sfl_start; i < ring_count; i++) {
-                            uint32_t idx;
-                            const char *df, *a, *b;
+                        df = dispatch_filename(ring[idx].subsystem);
+                        a = df; b = fname;
+                        while (*a && *a == *b) { a++; b++; }
+                        if (*a != '\0' || *b != '\0')
+                            continue;
 
-                            if (ring_count < KLOG_RING_SIZE)
-                                idx = i;
-                            else
-                                idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
-                                      % KLOG_RING_SIZE;
-
-                            df = dispatch_filename(ring[idx].subsystem);
-                            a = df; b = fname;
-                            while (*a && *a == *b) { a++; b++; }
-                            if (*a != '\0' || *b != '\0')
-                                continue;
-
-                            {
-                                char line[256];
-                                int pos = format_entry(&ring[idx], line, 256);
-                                if (bp + (uint32_t)pos < batch_size) {
-                                    for (k = 0; k < pos; k++)
-                                        batch[bp++] = (uint8_t)line[k];
-                                }
+                        {
+                            char line[256];
+                            int pos = format_entry(&ring[idx], line, 256);
+                            if (bp + (uint32_t)pos < batch_size) {
+                                for (k = 0; k < pos; k++)
+                                    batch[bp++] = (uint8_t)line[k];
                             }
                         }
                     }
@@ -773,9 +774,11 @@ void klog_disk_flush(void)
                         vfs_write(sf, (uint32_t)sf->size, bp, batch);
                     vfs_close(sf);
                 }
-
-                /* Free batch buffer after all subsystem files are written */
             }
+
+            /* Only advance cursor after successful persistence */
+            if (flush_ok)
+                ixfs_flush_seq = cur_seq;
         }
 
         /* Free batch buffer after both kernel.log and subsystem files */
@@ -801,7 +804,7 @@ void klog_disk_flush(void)
             struct vfs_node *f = vfs_open(jsonl_path,
                                           VFS_O_WRITE | VFS_O_CREATE);
             if (f) { jsonl_file_size = (uint32_t)f->size; vfs_close(f); }
-            jsonl_flush_index = 0;
+            jsonl_flush_seq = 0;
             jsonl_inited = 1;
         }
 
@@ -809,67 +812,106 @@ void klog_disk_flush(void)
         jsonl_file_size = rotate_log_file(
             klog_dir, "events.jsonl", jsonl_file_size);
 
-        ring = klog_get_ring(&ring_count, &ring_head);
-        if (ring && ring_count > 0 && jsonl_flush_index < ring_count) {
-            /* Batch JSON lines into a 32 KB buffer */
-            uint32_t jp = 4;  /* pages */
-            uint8_t *jbuf = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(jp);
-            if (jbuf) {
-                uint32_t jsize = jp * 4096;
-                uint32_t jpos = 0;
-                static const char *lvl_names[] = {
-                    "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
-                };
+        /* Seq-based JSON flush -- same pattern as kernel.log */
+        {
+            uint64_t jcur_seq = klog_get_seq();
+            ring = klog_get_ring(&ring_count, &ring_head);
+            uint64_t junflushed = jcur_seq - jsonl_flush_seq;
+            if (junflushed > KLOG_RING_SIZE)
+                junflushed = KLOG_RING_SIZE;
 
-                for (i = jsonl_flush_index; i < ring_count; i++) {
-                    uint32_t idx;
-                    char line[320];
-                    int len;
-                    const klog_entry_t *e;
-                    const char *lvl;
+            if (ring && junflushed > 0) {
+                /* Batch JSON lines into a 32 KB buffer */
+                uint32_t jpages = 4;
+                uint8_t *jbuf = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(jpages);
+                if (jbuf) {
+                    uint32_t jsize = jpages * 4096;
+                    uint32_t jpos = 0;
+                    static const char *lvl_names[] = {
+                        "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
+                    };
+                    uint64_t jstart = jcur_seq - junflushed;
 
-                    if (ring_count < KLOG_RING_SIZE)
-                        idx = i;
-                    else
-                        idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
-                              % KLOG_RING_SIZE;
-                    e = &ring[idx];
-                    lvl = ((uint32_t)e->level < 5) ? lvl_names[e->level] : "?";
+                    for (uint64_t s = jstart; s < jcur_seq; s++) {
+                        uint32_t idx = (uint32_t)(s % KLOG_RING_SIZE);
+                        const klog_entry_t *e = &ring[idx];
+                        const char *lvl = ((uint32_t)e->level < 5)
+                            ? lvl_names[e->level] : "?";
 
-                    len = snprintf(line, sizeof(line),
-                        "{\"ts\":%u,\"lvl\":\"%s\",\"sub\":\"%s\","
-                        "\"cpu\":%u,\"pid\":%u,\"tid\":%u,"
-                        "\"msg\":\"%s\",\"dropped\":%u}\n",
-                        (unsigned)e->timestamp * 10,  /* ticks -> ms */
-                        lvl,
-                        e->subsystem ? e->subsystem : "",
-                        (unsigned)e->cpu_id,
-                        (unsigned)e->pid,
-                        (unsigned)e->tid,
-                        e->message,
-                        (unsigned)klog_get_dropped(e->subsystem));
+                        /* JSON-escape subsystem and message strings.
+                         * Escapes: \ -> \\, " -> \", control chars < 0x20 dropped. */
+                        char esc_sub[48], esc_msg[300];
+                        {
+                            const char *src = e->subsystem ? e->subsystem : "";
+                            uint32_t ep = 0, emax = sizeof(esc_sub) - 1;
+                            while (*src && ep < emax) {
+                                if (*src == '"' || *src == '\\') {
+                                    if (ep + 1 < emax) { esc_sub[ep++] = '\\'; esc_sub[ep++] = *src; }
+                                } else if ((uint8_t)*src >= 0x20) {
+                                    esc_sub[ep++] = *src;
+                                }
+                                src++;
+                            }
+                            esc_sub[ep] = '\0';
+                        }
+                        {
+                            const char *src = e->message;
+                            uint32_t ep = 0, emax = sizeof(esc_msg) - 1;
+                            while (*src && ep < emax) {
+                                if (*src == '"' || *src == '\\') {
+                                    if (ep + 1 < emax) { esc_msg[ep++] = '\\'; esc_msg[ep++] = *src; }
+                                } else if (*src == '\n') {
+                                    if (ep + 1 < emax) { esc_msg[ep++] = '\\'; esc_msg[ep++] = 'n'; }
+                                } else if (*src == '\r') {
+                                    if (ep + 1 < emax) { esc_msg[ep++] = '\\'; esc_msg[ep++] = 'r'; }
+                                } else if (*src == '\t') {
+                                    if (ep + 1 < emax) { esc_msg[ep++] = '\\'; esc_msg[ep++] = 't'; }
+                                } else if ((uint8_t)*src >= 0x20) {
+                                    esc_msg[ep++] = *src;
+                                }
+                                src++;
+                            }
+                            esc_msg[ep] = '\0';
+                        }
 
-                    if (len > 0 && jpos + (uint32_t)len < jsize) {
-                        uint32_t k;
-                        for (k = 0; k < (uint32_t)len; k++)
-                            jbuf[jpos++] = (uint8_t)line[k];
+                        char line[512];
+                        int len = snprintf(line, sizeof(line),
+                            "{\"ts\":%u,\"lvl\":\"%s\",\"sub\":\"%s\","
+                            "\"cpu\":%u,\"pid\":%u,\"tid\":%u,"
+                            "\"msg\":\"%s\",\"dropped\":%u}\n",
+                            (unsigned)e->timestamp * 10,
+                            lvl, esc_sub,
+                            (unsigned)e->cpu_id,
+                            (unsigned)e->pid,
+                            (unsigned)e->tid,
+                            esc_msg,
+                            (unsigned)klog_get_dropped(e->subsystem));
+
+                        if (len > 0 && jpos + (uint32_t)len < jsize) {
+                            uint32_t k;
+                            for (k = 0; k < (uint32_t)len; k++)
+                                jbuf[jpos++] = (uint8_t)line[k];
+                        }
                     }
-                }
 
-                if (jpos > 0) {
-                    struct vfs_node *jf = vfs_open(jsonl_path, VFS_O_WRITE);
-                    if (jf) {
-                        vfs_write(jf, (uint32_t)jf->size, jpos, jbuf);
-                        jsonl_file_size = (uint32_t)jf->size;
-                        vfs_close(jf);
+                    if (jpos > 0) {
+                        struct vfs_node *jf = vfs_open(jsonl_path, VFS_O_WRITE);
+                        if (jf) {
+                            vfs_write(jf, (uint32_t)jf->size, jpos, jbuf);
+                            jsonl_file_size = (uint32_t)jf->size;
+                            vfs_close(jf);
+                            /* Only advance cursor after successful write */
+                            jsonl_flush_seq = jcur_seq;
+                        }
+                    } else {
+                        /* No entries to write (all filtered/truncated) -- safe to advance */
+                        jsonl_flush_seq = jcur_seq;
                     }
-                }
-
-                jsonl_flush_index = ring_count;
-                {
-                    uint32_t pg;
-                    for (pg = 0; pg < jp; pg++)
-                        pmm_free_frame((uintptr_t)jbuf + pg * 4096);
+                    {
+                        uint32_t pg;
+                        for (pg = 0; pg < jpages; pg++)
+                            pmm_free_frame((uintptr_t)jbuf + pg * 4096);
+                    }
                 }
             }
         }

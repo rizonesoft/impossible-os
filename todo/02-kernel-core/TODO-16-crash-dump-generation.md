@@ -24,7 +24,7 @@
 - `src/kernel/mm/pmm.c` -- `pmm_used_page_count()`, `pmm_for_each_used_page()` needed for Full dump page walk
 - → XREF: `TODO-02-system-logging.md §2` -- structured crash event written to per-subsystem crash log at panic time; `dmpanalyze.exe` (§9) reads these log entries too
 - → XREF: `TODO-02-system-logging.md §6` -- structured JSON crash event (§6) should include bugcheck code, params, and RIP in `events.jsonl` at panic time; note: the raw-partition dump workspace (§7) must not use physical page `0x80000` -- choose a different address or probe PMM for a contiguous free region (this constraint is a local §7 design note, not defined in TODO-02 §6)
-- → XREF: `TODO-02-system-logging.md §9` -- crash-persistent ring buffer capture to reserved physical memory; complementary to binary dump -- §9 captures text log, this TODO captures CPU/memory state
+- → XREF: `TODO-02-system-logging.md §8` -- crash-persistent ring buffer capture to reserved physical memory; complementary to binary dump -- §8 captures text log, this TODO captures CPU/memory state
 - → XREF: `TODO-08-binary-system.md §6` -- `exec_register_module()` populates the global `LOADED_MODULE` crash registry; §3 of this TODO consumes it for the ModuleList stream
 - → XREF: `TODO-10-exception-dispatch-seh.md §1` -- `EXCEPTION_RECORD` and `CONTEXT` types defined there; §4 of this TODO embeds them verbatim in the MDMP Exception stream
 - → XREF: `TODO-15-power-management.md §4` -- S4 hibernate partition GPT GUID reused as the raw dump partition backing store (§7); both share the same raw-write path

@@ -34,7 +34,7 @@
 - → XREF: `TODO-17-kernel-security-hardening.md §9` -- `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
 - → XREF: `TODO-11-security-reference-monitor.md §4` -- token/SID hashing uses Blake2b from Monocypher (§5)
 - → XREF: `TODO-13-registry-completion.md §4` -- registry hive WAJ uses CRC32C; separate from Monocypher but benefits from a consistent hash dispatch layer (§5)
-- → XREF: `TODO-02-system-logging.md §11` -- HMAC-Blake2b chain for tamper-evident `events.jsonl`; requires Monocypher Blake2b + kernel CSPRNG (§5)
+- → XREF: `TODO-02-system-logging.md §10` -- HMAC-Blake2b chain for tamper-evident `events.jsonl`; requires Monocypher Blake2b + kernel CSPRNG (§5)
 - → XREF: `06-networking/TODO-03-http-tls.md §5` -- Mbed TLS Kernel Port in networking depends on this §7 freestanding port being complete first
 
 ---

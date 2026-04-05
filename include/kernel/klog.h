@@ -52,10 +52,12 @@ typedef struct {
 } klog_entry_t;
 
 /* Get pointer to ring buffer and current count.
- * Returns pointer to static array of KLOG_RING_SIZE entries. */
+ * Returns pointer to static array of KLOG_RING_SIZE entries.
+ * out_seq: monotonic sequence number (total entries ever written). */
 #define KLOG_RING_SIZE 1000
 
 const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head);
+uint64_t klog_get_seq(void);
 
 /* Set minimum level that appears on the framebuffer.
  * Default: LOG_INFO (i.e., DEBUG is serial-only).

@@ -38,7 +38,7 @@
 
 | ⭐  | Order | Deliverable                                                   | Depends On     | Status |
 | --- | :---: | ------------------------------------------------------------- | -------------- | :----: |
-| 💎  |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure                  | --              |  [x]   |
+| 💎  |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure                  | --             |  [x]   |
 | 💎  |   2   | Reference counting and object lifetime                        | §1             |  [x]   |
 | 💎  |   3   | Per-process handle table                                      | §2             |  [x]   |
 | 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [x]   |
@@ -50,7 +50,7 @@
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [x]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [x]   |
 | 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [ ]   |
-| 💎  |  13   | Object callbacks -- handle operation filtering                 | §3, §9         |  [ ]   |
+| 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9         |  [ ]   |
 | 💎  |  14   | Per-process handle quota                                      | §3             |  [ ]   |
 | ⭐  |  15   | Handle tracing and leak detection                             | §2, §12        |  [ ]   |
 
@@ -197,7 +197,6 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
   - Enumerates entries in an `OBJECT_DIRECTORY`
   - Each entry: name string + type name string (OBJECT_DIRECTORY_INFORMATION)
 - [x] Syscalls: SYS_OPENDIROBJ (42), SYS_QUERYDIROBJ (43) -- user-mode can walk `\` and enumerate all named objects
-- [ ] User-mode `ObBrowse.exe` -- see [13-tools-accessories/TODO-01](../13-tools-accessories/TODO-01-obbrowse-namespace-browser.md)
 - [x] Commit: `"kernel: ob -- NtOpenDirectoryObject and NtQueryDirectoryObject (public API)"`
 
 ## 12. Per-Type Object and Handle Statistics

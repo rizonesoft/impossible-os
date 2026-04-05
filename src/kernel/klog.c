@@ -14,6 +14,7 @@
 #include "kernel/timer.h"
 #include "kernel/smp.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/spinlock.h"
 #include "kernel/boot_init.h"
 
 
@@ -60,6 +61,11 @@ static uint32_t         s_rate_count;
 static klog_entry_t klog_ring[KLOG_RING_SIZE];
 static uint32_t     klog_ring_head = 0;
 static uint32_t     klog_ring_count = 0;
+static uint64_t     klog_ring_seq = 0;   /* monotonic sequence -- never wraps */
+
+/* SMP lock: protects ring head/count/seq and rate-limit slot mutations.
+ * Uses irqsave because klog() can be called from interrupt context. */
+static DEFINE_SPINLOCK(s_klog_lock);
 
 /* ---- Output helpers ---- */
 
@@ -234,6 +240,7 @@ void klog_early_init(void)
      * This function exists to formalize the Phase 0 init contract. */
     klog_ring_head  = 0;
     klog_ring_count = 0;
+    klog_ring_seq   = 0;
 }
 
 void klog_disk_enable(void)
@@ -476,8 +483,8 @@ void klog_crash_write_to_disk(void)
     if (s_recovered_count == 0)
         return;
 
-    if (!vfs_is_mounted('C')) {
-        klog(LOG_WARN, "CRASH", "Cannot write crash_recovery.log -- C: not mounted");
+    if (!vfs_is_mounted('X') && !vfs_is_mounted('C')) {
+        klog(LOG_WARN, "CRASH", "Cannot write crash_recovery.log -- no writable volume");
         return;
     }
 
@@ -745,68 +752,94 @@ const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head)
     return klog_ring;
 }
 
+uint64_t klog_get_seq(void)
+{
+    return klog_ring_seq;
+}
+
 void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 {
     va_list ap;
-    klog_entry_t *e;
+    klog_entry_t snapshot;   /* local copy for output outside the lock */
+    uint64_t irq_flags;
+    int rate_dropped = 0;
+    int first_drop = 0;
 
-    /* Per-subsystem verbosity filter: drop entries below threshold */
+    /* Per-subsystem verbosity filter: drop entries below threshold.
+     * Read-only check on s_overrides -- safe without lock (overrides are
+     * append-only and only modified during single-threaded boot or with
+     * explicit klog_set_level calls). */
     if (level < subsys_min_level(subsystem))
         return;
 
+    /* ---- Lock: protect ring buffer + rate-limit mutations ---- */
+    spin_lock_irqsave(&s_klog_lock, &irq_flags);
+
     /* Per-subsystem rate limit: drop if over budget this window */
     if (!rate_check(subsystem)) {
-        /* Emit a summary when first drop in this window */
         klog_rate_slot_t *sl = rate_slot(subsystem);
-        if (sl && sl->dropped == 1) {
-            /* Use LOG_WARN so it's visible; temporarily bypass rate check
-             * by marking the summary message with a NULL subsystem */
+        if (sl && sl->dropped == 1)
+            first_drop = 1;
+        rate_dropped = 1;
+    }
+
+    if (rate_dropped) {
+        spin_unlock_irqrestore(&s_klog_lock, irq_flags);
+        if (first_drop) {
+            /* Emit summary outside lock -- NULL subsystem bypasses rate check */
             klog(LOG_WARN, (const char *)0,
                  "[%s] rate limit active (>%u msgs/sec)",
                  subsystem ? subsystem : "???",
-                 sl->max_rate ? sl->max_rate : KLOG_RATE_DEFAULT);
+                 KLOG_RATE_DEFAULT);
         }
         return;
     }
 
     /* ---- Store formatted message in ring buffer ---- */
-    e = &klog_ring[klog_ring_head];
-    e->level     = level;
-    e->subsystem = subsystem;
-    e->timestamp = (uint32_t)system_get_ticks();
-
-    /* Per-entry context: CPU, PID, TID */
     {
-        struct per_cpu_data *cpu = smp_this_cpu();
-        e->cpu_id = cpu ? cpu->cpu_id : 0;
-    }
-    if (kernel_subsystem_ready(SUBSYS_SCHED)) {
-        struct task *t = task_current();
-        if (t) {
-            e->pid = t->pid;
-            e->tid = 0;  /* thread index -- single-thread per task for now */
+        klog_entry_t *e = &klog_ring[klog_ring_head];
+        e->level     = level;
+        e->subsystem = subsystem;
+        e->timestamp = (uint32_t)system_get_ticks();
+
+        /* Per-entry context: CPU, PID, TID */
+        {
+            struct per_cpu_data *cpu = smp_this_cpu();
+            e->cpu_id = cpu ? cpu->cpu_id : 0;
+        }
+        if (kernel_subsystem_ready(SUBSYS_SCHED)) {
+            struct task *t = task_current();
+            if (t) {
+                e->pid = t->pid;
+                e->tid = 0;
+            } else {
+                e->pid = 0;
+                e->tid = 0;
+            }
         } else {
             e->pid = 0;
             e->tid = 0;
         }
-    } else {
-        e->pid = 0;
-        e->tid = 0;
+
+        va_start(ap, fmt);
+        vformat_buf(e->message, sizeof(e->message), fmt, ap);
+        va_end(ap);
+
+        /* Snapshot for output outside the lock */
+        snapshot = *e;
+
+        klog_ring_head = (klog_ring_head + 1) % KLOG_RING_SIZE;
+        if (klog_ring_count < KLOG_RING_SIZE)
+            klog_ring_count++;
+        klog_ring_seq++;
     }
 
-    va_start(ap, fmt);
-    vformat_buf(e->message, sizeof(e->message), fmt, ap);
-    va_end(ap);
-
-    klog_ring_head = (klog_ring_head + 1) % KLOG_RING_SIZE;
-    if (klog_ring_count < KLOG_RING_SIZE)
-        klog_ring_count++;
+    spin_unlock_irqrestore(&s_klog_lock, irq_flags);
 
     /* ---- Build complete serial line in a stack buffer, then write atomically ----
      *
-     * Formatting into a buffer first and calling serial_write() ONCE is critical:
-     * serial_write() holds the spinlock for the entire string, preventing any
-     * IRQ handler from injecting characters between ours. */
+     * Uses snapshot (local copy) so we don't hold the ring lock during I/O.
+     * serial_write() holds its own spinlock for the entire string. */
     {
         /* Line format: "[  X.XXX] [LEVEL] subsystem: message\n"
          * Max size: 11 (ts) + 7 (level) + 16 (subsys+": ") + 128 (msg) + 2 = 164 */
@@ -817,7 +850,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         #define LS(s) do { const char *_p = (s); while (*_p && pos < sizeof(line)-1) line[pos++] = *_p++; } while(0)
 
         /* Timestamp: [  X.XXX] */
-        uint64_t ms  = system_get_ticks() * 10;
+        uint64_t ms  = (uint64_t)snapshot.timestamp * 10;
         uint32_t sec = (uint32_t)(ms / 1000);
         uint32_t fms = (uint32_t)(ms % 1000);
 
@@ -838,11 +871,11 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         LP(']'); LP(' ');
 
         /* CPU tag: [cpu:N] after timestamp on SMP (skip during single-CPU early boot) */
-        if (e->cpu_id > 0 || kernel_subsystem_ready(SUBSYS_SMP)) {
+        if (snapshot.cpu_id > 0 || kernel_subsystem_ready(SUBSYS_SMP)) {
             LP('['); LP('c'); LP('p'); LP('u'); LP(':');
-            if (e->cpu_id >= 10)
-                LP('0' + (char)((e->cpu_id / 10) % 10));
-            LP('0' + (char)(e->cpu_id % 10));
+            if (snapshot.cpu_id >= 10)
+                LP('0' + (char)((snapshot.cpu_id / 10) % 10));
+            LP('0' + (char)(snapshot.cpu_id % 10));
             LP(']'); LP(' ');
         }
 
@@ -866,12 +899,12 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
             if (is_test) {
                 LS(ANSI_CYAN);
                 if (subsystem[0]) { LS(subsystem); LS(": "); }
-                LS(e->message);
+                LS(snapshot.message);
                 LS(ANSI_RESET);
             } else {
                 if (level_full_line[level]) LS(level_ansi[level]);
                 if (subsystem && subsystem[0]) { LS(subsystem); LS(": "); }
-                LS(e->message);
+                LS(snapshot.message);
                 if (level_full_line[level]) LS(ANSI_RESET);
             }
         }
@@ -881,7 +914,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         #undef LP
         #undef LS
 
-        serial_write(line);  /* atomic: spinlock held for entire line */
+        serial_write(line);
     }
 
     /* ---- Output to framebuffer if level >= screen threshold ---- */
@@ -900,15 +933,13 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
             fb_str(subsystem);
             fb_str(": ");
         }
-        fb_str(e->message);
+        fb_str(snapshot.message);
         fb_putchar('\n');
     }
 
     /* ---- Live debug log: write to X:\BOOT_NNN.LOG immediately ---- */
     if (klog_disk_live_active()) {
-        klog_entry_t *last = &klog_ring[(klog_ring_head == 0
-            ? KLOG_RING_SIZE - 1 : klog_ring_head - 1)];
-        klog_disk_append(last);
+        klog_disk_append(&snapshot);
         klog_disk_flush();
     }
 
