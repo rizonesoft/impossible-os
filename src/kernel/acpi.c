@@ -20,6 +20,7 @@
 
 #include "kernel/acpi.h"
 #include "kernel/boot_info.h"
+#include "kernel/idt.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/fs/fat32.h"
@@ -524,6 +525,88 @@ uint16_t acpi_get_slp_typa(uint8_t state)
     case 5: return slp_typa;
     default: return ACPI_SLP_TYPE_INVALID;
     }
+}
+
+/* ---- ACPI fixed event enable + SCI ISR ---------------------------------- */
+
+static uint16_t s_pm1a_sts_port;   /* PM1a_EVT status register */
+static uint16_t s_pm1a_en_port;    /* PM1a_EVT enable register */
+
+void acpi_enable_fixed_events(void)
+{
+    uint16_t en;
+
+    if (!fadt_ptr || !fadt_ptr->pm1a_event_block) {
+        klog(LOG_WARN, "acpi", "No PM1a event block -- fixed events unavailable");
+        return;
+    }
+
+    /* PM1a_STS is at pm1a_event_block, PM1a_EN is at pm1a_event_block + half */
+    s_pm1a_sts_port = (uint16_t)fadt_ptr->pm1a_event_block;
+    s_pm1a_en_port  = (uint16_t)(fadt_ptr->pm1a_event_block
+                                 + fadt_ptr->pm1_event_length / 2);
+
+    /* Clear any pending status bits first */
+    outw_acpi(s_pm1a_sts_port, 0xFFFF);
+
+    /* Enable power button (bit 8) and sleep button (bit 9) events */
+    en = inw_acpi(s_pm1a_en_port);
+    en |= (1u << 8) | (1u << 9);  /* PWRBTN_EN | SLPBTN_EN */
+    outw_acpi(s_pm1a_en_port, en);
+
+    klog(LOG_INFO, "acpi", "Fixed events: PWRBTN_EN + SLPBTN_EN on PM1a 0x%x/0x%x",
+         (uint64_t)s_pm1a_sts_port, (uint64_t)s_pm1a_en_port);
+}
+
+/* SCI interrupt handler -- dispatches ACPI fixed events */
+static uint64_t acpi_sci_handler(struct interrupt_frame *frame)
+{
+    uint16_t sts;
+
+    if (!s_pm1a_sts_port) goto eoi;
+
+    sts = inw_acpi(s_pm1a_sts_port);
+
+    if (sts & (1u << 8)) {
+        /* Power button pressed */
+        outw_acpi(s_pm1a_sts_port, (1u << 8));  /* clear PWRBTN_STS */
+        klog(LOG_INFO, "acpi", "Power button pressed (SCI)");
+        /* TODO: dispatch to power button handler (§7) */
+    }
+
+    if (sts & (1u << 9)) {
+        /* Sleep button pressed */
+        outw_acpi(s_pm1a_sts_port, (1u << 9));  /* clear SLPBTN_STS */
+        klog(LOG_INFO, "acpi", "Sleep button pressed (SCI)");
+    }
+
+    if (sts & (1u << 15)) {
+        /* WAK_STS -- system just woke from sleep */
+        outw_acpi(s_pm1a_sts_port, (1u << 15));  /* clear WAK_STS */
+        klog(LOG_INFO, "acpi", "Wake event detected (WAK_STS)");
+    }
+
+eoi:
+    {
+        extern void lapic_eoi(void);
+        lapic_eoi();
+    }
+    return (uint64_t)frame;
+}
+
+void acpi_register_sci(void)
+{
+    uint8_t sci_vec;
+
+    if (!fadt_ptr) return;
+
+    /* SCI interrupt number from FADT */
+    sci_vec = (uint8_t)(32 + fadt_ptr->sci_interrupt);
+
+    idt_register_handler(sci_vec, acpi_sci_handler);
+
+    klog(LOG_INFO, "acpi", "SCI handler registered (IRQ %u, vec %u)",
+         (uint64_t)fadt_ptr->sci_interrupt, (uint64_t)sci_vec);
 }
 
 /* ---- Generic sleep state entry ------------------------------------------ */

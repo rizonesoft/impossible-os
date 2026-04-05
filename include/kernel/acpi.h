@@ -188,6 +188,14 @@ int  acpi_init(void);
  * Call after acpi_init() (Phase 1) has located the DSDT. */
 void acpi_power_init(void);
 
+/* Enable ACPI fixed events (power button, sleep button).
+ * Call after acpi_power_init(). */
+void acpi_enable_fixed_events(void);
+
+/* Register SCI (System Control Interrupt) handler for ACPI events.
+ * Call after IDT and IOAPIC are ready. */
+void acpi_register_sci(void);
+
 /* Enter a sleep state (S1-S5). Disables interrupts, writes PM1a/PM1b_CNT.
  * For S1: returns 0 on wake. For S3/S4: does not return (resume via wakeup
  * vector, not yet implemented). For S5: does not return (power off).

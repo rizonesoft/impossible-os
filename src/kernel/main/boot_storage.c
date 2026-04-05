@@ -636,10 +636,14 @@ void boot_phase2(void)
         kusd_init();
     }
 
-    /* --- ACPI power init: S-state discovery (S1/S3/S4) --- */
+    /* --- ACPI power init: S-state discovery + SCI handler --- */
     {
         extern void acpi_power_init(void);
+        extern void acpi_enable_fixed_events(void);
+        extern void acpi_register_sci(void);
         acpi_power_init();
+        acpi_enable_fixed_events();
+        acpi_register_sci();
     }
 
     klog(LOG_DEBUG, "", "");

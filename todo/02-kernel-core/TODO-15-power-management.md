@@ -122,11 +122,10 @@
 
 ### 1.3 ACPI fixed events
 
-- [ ] Enable the relevant PM1 fixed-event enable bits in `acpi_init()`:
-  - `PWRBTN_EN (bit 8)` in PM1a_EN -- power button press
-  - `SLPBTN_EN (bit 9)` in PM1a_EN -- sleep button press
-  - `WAK_STS (bit 15)` in PM1a_STS -- clear wake status on resume
-- [ ] `acpi_pm1_isr()` -- handle SCI interrupt (ACPI System Control Interrupt, typically IRQ 9); read PM1a_STS; dispatch to `acpi_power_button_event()` or `acpi_sleep_button_event()` (§7)
+- [x] `acpi_enable_fixed_events()`: enables PWRBTN_EN (bit 8) + SLPBTN_EN (bit 9) in PM1a_EN; clears pending status
+- [x] `acpi_register_sci()`: registers SCI ISR on vector 32+sci_interrupt (typically IRQ 9 = vec 41)
+- [x] `acpi_sci_handler()`: reads PM1a_STS, dispatches PWRBTN_STS/SLPBTN_STS/WAK_STS, clears status bits, EOI
+- [x] Wired into Phase 2 boot after `acpi_power_init()`
 
 ### 1.4 Commit
 
