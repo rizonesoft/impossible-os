@@ -263,6 +263,12 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 
     /* ---- Default: CPU exceptions (0-31) -- panic ---- */
     if (vec < 32) {
+        /* Write WER crash report for user-mode faults */
+        {
+            extern void wer_write_crash_report(struct interrupt_frame *frame,
+                                                uint32_t exception);
+            wer_write_crash_report(frame, vec);
+        }
         panic_screen(frame, frame->err_code, exception_names[vec],
                      "idt.c", 0);
         /* panic_screen never returns */

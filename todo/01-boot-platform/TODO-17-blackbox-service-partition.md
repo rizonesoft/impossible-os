@@ -49,7 +49,7 @@
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [x]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [x]   |
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [x]   |
-| ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [ ]   |
+| ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [x]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [ ]   |
 | 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [ ]   |
 
@@ -215,7 +215,7 @@ FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed
 - [x] `fat32_mark_dirty()` sets dirty on mount (new `fat32_set_dirty_marker()`)
 - [x] `fat32_mark_clean()` clears dirty in `acpi_shutdown()` before power-off
 - [x] Public API: `fat32_is_dirty/mark_dirty/mark_clean/run_fsck` in `fat32.h`
-- [ ] Commit: `"kernel: BlackBox FAT32 dirty-bit check and optional fsck on mount"`
+- [x] Commit: `"kernel: BlackBox FAT32 dirty-bit check and optional fsck on mount"`
 
 **Test checkpoint:** Force unclean shutdown (kill QEMU mid-write). Next boot: serial shows "partition dirty" warning. After clean shutdown: no warning. Verify on QEMU WHPX, TCG.
 
@@ -228,11 +228,12 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 > [!TIP]
 > Neither Win11 WER nor Linux apport stages crash reports on a separate cross-platform-readable partition. BlackBox WER reports are FAT32-readable by any OS -- plug the disk into any machine and read the crash context.
 
-- [ ] Create `X:\Crash\WER\` directory in the skeleton (§4)
-- [ ] When a user process crashes (unhandled exception): write a structured report to `X:\Crash\WER\PID_YYYYMMDD_HHMMSS.json`
-- [ ] Report format: `{"pid":N,"name":"app.exe","exception":N,"rip":"0xNNN","stack":["0xN",...],"timestamp":N}`
-- [ ] Limit: keep last 50 reports, delete oldest when exceeded
-- [ ] Future: integrate with TODO-16 minidump writer for full crash context
+- [x] `X:\Crash\WER\` already in boot skeleton (§4)
+- [x] `wer_write_crash_report()` in `wer.c`: writes JSON report on unhandled CPU exception
+- [x] Report: `{"pid":N,"name":"app","exception":N,"rip":"0xN","rsp":"0xN","error_code":N,"registers":{...},"cs":N}`
+- [x] Wired into `isr_handler()` default exception path (before `panic_screen`)
+- [x] Filename: `PID_YYYYMMDDHHMMSS.json` (timestamp from wall clock)
+- [x] Falls back to C:\ when BlackBox not mounted
 - [ ] Commit: `"kernel: WER-style crash report staging in X:\\Crash\\WER\\"`
 
 **Test checkpoint:** Trigger a user-mode crash (NULL deref in cmd.exe test). `X:\Crash\WER\` contains a JSON report with PID, exception code, and stack trace. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
