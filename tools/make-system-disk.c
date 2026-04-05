@@ -123,6 +123,7 @@ int main(int argc, char *argv[])
     uint64_t disk_size = 512ULL * 1024 * 1024;  /* 512 MiB default */
     uint64_t efi_size = 64ULL * 1024 * 1024;    /* 64 MiB EFI partition */
     uint64_t bb_size = 128ULL * 1024 * 1024;     /* 128 MiB BlackBox partition */
+    int ab_mode = 0;                             /* A/B dual-slot boot */
     uint8_t *disk;
     uint8_t *mbr, *hdr, *entries;
     uint32_t entry_crc, hdr_crc;
@@ -130,6 +131,7 @@ int main(int argc, char *argv[])
     uint64_t efi_start, efi_end;
     uint64_t bb_start, bb_end;
     uint64_t ixfs_start, ixfs_end;
+    uint64_t ixfs_b_start, ixfs_b_end;  /* Slot B (A/B mode only) */
     FILE *fp;
     int i;
 
@@ -141,16 +143,24 @@ int main(int argc, char *argv[])
             disk_size = parse_size(argv[++i]);
         else if (strcmp(argv[i], "--efi-size") == 0 && i + 1 < argc)
             efi_size = parse_size(argv[++i]);
+        else if (strcmp(argv[i], "--ab") == 0)
+            ab_mode = 1;
         else if (strcmp(argv[i], "-h") == 0 ||
                  strcmp(argv[i], "--help") == 0) {
-            printf("Usage: make-system-disk -o FILE [-s SIZE] [--efi-size SIZE]\n\n"
+            printf("Usage: make-system-disk -o FILE [-s SIZE] [--efi-size SIZE] [--ab]\n\n"
                    "  -o FILE        Output image (required)\n"
                    "  -s SIZE        Total disk size (default: 512M)\n"
                    "  --efi-size SZ  EFI partition size (default: 64M)\n"
-                   "\nCreates a GPT disk with 3 partitions:\n"
+                   "  --ab           A/B dual-slot layout (4 partitions)\n"
+                   "\nDefault layout (3 partitions):\n"
                    "  Partition 1: EFI System (FAT32, 64 MiB)\n"
                    "  Partition 2: BlackBox (FAT32, 128 MiB) -- logs, crash dumps, diagnostics\n"
-                   "  Partition 3: IXFS (System) fills remaining space\n");
+                   "  Partition 3: IXFS (System) fills remaining space\n"
+                   "\nA/B layout (4 partitions):\n"
+                   "  Partition 1: EFI System (FAT32, 64 MiB)\n"
+                   "  Partition 2: BlackBox (FAT32, 128 MiB)\n"
+                   "  Partition 3: IXFS Slot A (half remaining space)\n"
+                   "  Partition 4: IXFS Slot B (half remaining space)\n");
             return 0;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -192,20 +202,40 @@ int main(int argc, char *argv[])
     bb_end = bb_start + (bb_size / SECTOR_SIZE) - 1;
     /* IXFS: 1 MiB-aligned after BlackBox */
     ixfs_start = ((bb_end + 1 + 2047) / 2048) * 2048;
-    ixfs_end = total_sectors - 34 - 1;
+    ixfs_b_start = 0;
+    ixfs_b_end = 0;
 
-    printf("make-system-disk: %s -- %llu MiB\n", output,
-           (unsigned long long)(disk_size / (1024 * 1024)));
+    if (ab_mode) {
+        /* A/B: split remaining space evenly between Slot A and Slot B */
+        uint64_t remaining = total_sectors - 34 - ixfs_start;
+        uint64_t half = (remaining / 2 / 2048) * 2048;  /* 1 MiB aligned */
+        ixfs_end = ixfs_start + half - 1;
+        ixfs_b_start = ((ixfs_end + 1 + 2047) / 2048) * 2048;
+        ixfs_b_end = total_sectors - 34 - 1;
+    } else {
+        ixfs_end = total_sectors - 34 - 1;
+    }
+
+    printf("make-system-disk: %s -- %llu MiB (%s)\n", output,
+           (unsigned long long)(disk_size / (1024 * 1024)),
+           ab_mode ? "A/B dual-slot" : "standard");
     printf("  Part 1 (EFI):      LBA %llu - %llu (%llu MiB)\n",
            (unsigned long long)efi_start, (unsigned long long)efi_end,
            (unsigned long long)(efi_size / (1024 * 1024)));
     printf("  Part 2 (BlackBox): LBA %llu - %llu (%llu MiB)\n",
            (unsigned long long)bb_start, (unsigned long long)bb_end,
            (unsigned long long)(bb_size / (1024 * 1024)));
-    printf("  Part 3 (IXFS):     LBA %llu - %llu (%llu MiB)\n",
+    printf("  Part 3 (IXFS%s):  LBA %llu - %llu (%llu MiB)\n",
+           ab_mode ? " A" : "",
            (unsigned long long)ixfs_start, (unsigned long long)ixfs_end,
            (unsigned long long)((ixfs_end - ixfs_start + 1) * SECTOR_SIZE /
                                 (1024 * 1024)));
+    if (ab_mode) {
+        printf("  Part 4 (IXFS B):  LBA %llu - %llu (%llu MiB)\n",
+               (unsigned long long)ixfs_b_start, (unsigned long long)ixfs_b_end,
+               (unsigned long long)((ixfs_b_end - ixfs_b_start + 1) * SECTOR_SIZE /
+                                    (1024 * 1024)));
+    }
 
     /* Allocate disk image */
     disk = calloc(1, (size_t)disk_size);
@@ -240,11 +270,20 @@ int main(int argc, char *argv[])
         0x99, 0xC7,
         bb_start, bb_end, "BlackBox");
 
-    /* Entry 2: IXFS System Partition */
+    /* Entry 2: IXFS System Partition (Slot A in A/B mode) */
     write_partition_entry(entries + 2 * GPT_ENTRY_SIZE,
         0xDA000000, 0x0000, 0x4978, 0x46, 0x53, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x01,
-        ixfs_start, ixfs_end, "Impossible OS");
+        ixfs_start, ixfs_end,
+        ab_mode ? "Impossible OS A" : "Impossible OS");
+
+    /* Entry 3: IXFS Slot B (A/B mode only) */
+    if (ab_mode) {
+        write_partition_entry(entries + 3 * GPT_ENTRY_SIZE,
+            0xDA000000, 0x0000, 0x4978, 0x46, 0x53, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x02,
+            ixfs_b_start, ixfs_b_end, "Impossible OS B");
+    }
 
     /* Compute CRC32 of the partition entry array */
     entry_crc = crc32(entries, GPT_ENTRY_ARRAY_BYTES);
@@ -333,7 +372,8 @@ int main(int argc, char *argv[])
     fclose(fp);
     free(disk);
 
-    printf("make-system-disk: created %s (%llu MiB GPT: EFI + BlackBox + IXFS)\n",
-           output, (unsigned long long)(disk_size / (1024 * 1024)));
+    printf("make-system-disk: created %s (%llu MiB GPT: EFI + BlackBox + IXFS%s)\n",
+           output, (unsigned long long)(disk_size / (1024 * 1024)),
+           ab_mode ? " A/B" : "");
     return 0;
 }

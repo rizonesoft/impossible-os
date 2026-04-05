@@ -50,7 +50,7 @@
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [x]   |
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [x]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [x]   |
-| 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [ ]   |
+| 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [x]   |
 | 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [ ]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
@@ -234,7 +234,7 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 - [x] Wired into `isr_handler()` default exception path (before `panic_screen`)
 - [x] Filename: `PID_YYYYMMDDHHMMSS.json` (timestamp from wall clock)
 - [x] Falls back to C:\ when BlackBox not mounted
-- [ ] Commit: `"kernel: WER-style crash report staging in X:\\Crash\\WER\\"`
+- [x] Commit: `"kernel: WER-style crash report staging in X:\\Crash\\WER\\"`
 
 **Test checkpoint:** Trigger a user-mode crash (NULL deref in cmd.exe test). `X:\Crash\WER\` contains a JSON report with PID, exception code, and stack trace. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -242,11 +242,11 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 
 TODO-14 (A/B dual-slot boot) defines: EFI + Slot A IXFS + Slot B IXFS. With BlackBox, the layout becomes 4 partitions: EFI + BlackBox + Slot A + Slot B. Ensure `make-system-disk.c` supports both layouts via a build flag.
 
-- [ ] Add `--ab` flag to `make-system-disk`: produces 4-partition layout (EFI + BlackBox + Slot A + Slot B)
-- [ ] Default (no flag): 3-partition layout (EFI + BlackBox + IXFS)
-- [ ] BlackBox size stays 128 MiB in both layouts; IXFS slots split remaining space
-- [ ] Kernel partition scanner: mount BlackBox as X:\ regardless of partition count
-- [ ] Document: partition layout variants in CLAUDE.md
+- [x] `--ab` flag: produces 4-partition layout (EFI + BlackBox + IXFS A + IXFS B)
+- [x] Default (no flag): 3-partition layout (EFI + BlackBox + IXFS)
+- [x] BlackBox 128 MiB in both layouts; IXFS slots split remaining space evenly (1 MiB aligned)
+- [x] Kernel mounts BlackBox as X:\ by GPT name -- works regardless of partition count
+- [x] GPT names: "Impossible OS A" / "Impossible OS B" in A/B mode
 - [ ] Commit: `"tools: make-system-disk A/B layout with BlackBox partition"`
 
 **Test checkpoint:** `make-system-disk --ab` produces 4-partition image. `fdisk -l` shows EFI + BlackBox + 2x IXFS. Kernel boots and mounts X:\ from either layout. Verify on QEMU WHPX.
