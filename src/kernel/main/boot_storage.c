@@ -73,7 +73,9 @@ static boot_result_t deferred_input_init(void)
 
 static boot_result_t async_ata_init(void)
 {
-    ata_init();  /* void -- no failure detection; BOOT_DEGRADED if absent */
+    /* ata_init() is void -- legacy PIO driver; absence is not failure
+     * (modern systems use AHCI/NVMe). Always BOOT_OK. */
+    ata_init();
     return BOOT_OK;
 }
 

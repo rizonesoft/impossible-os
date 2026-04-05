@@ -262,41 +262,51 @@ int KeRemoveQueueDpc(KDPC *dpc)
 
 static void dpc_thread_fn(void)
 {
-    struct per_cpu_data *cpu = smp_this_cpu();
-    uint32_t cpu_id = cpu ? cpu->cpu_id : 0;
+    extern void yield(void);
+    extern uint32_t smp_cpu_count(void);
 
-    klog(LOG_DEBUG, "dpc", "threaded DPC thread started on CPU %u",
-         (uint64_t)cpu_id);
+    klog(LOG_DEBUG, "dpc", "threaded DPC worker started (drains all CPUs)");
 
     for (;;) {
-        /* Wait for work */
-        while (!__atomic_load_n(&threaded_pending[cpu_id], __ATOMIC_ACQUIRE)) {
-            extern void yield(void);
+        /* Check all CPUs for pending threaded DPCs */
+        uint32_t any_work = 0;
+        uint32_t ncpus = smp_cpu_count();
+        uint32_t ci;
+
+        for (ci = 0; ci < ncpus && ci < MAX_CPUS; ci++) {
+            if (!__atomic_load_n(&threaded_pending[ci], __ATOMIC_ACQUIRE))
+                continue;
+
+            any_work = 1;
+
+            /* Drain threaded DPC list for this CPU at PASSIVE_LEVEL */
+            while (threaded_head[ci]) {
+                KDPC *dpc = threaded_head[ci];
+                threaded_head[ci] = dpc->next;
+                dpc->next = (KDPC *)0;
+
+                if (dpc->routine)
+                    dpc->routine(dpc, dpc->deferred_ctx,
+                                 dpc->system_arg1, dpc->system_arg2);
+            }
+
+            __atomic_store_n(&threaded_pending[ci], 0, __ATOMIC_RELEASE);
+        }
+
+        if (!any_work)
             yield();
-        }
-
-        /* Drain threaded DPC list at PASSIVE_LEVEL */
-        while (threaded_head[cpu_id]) {
-            KDPC *dpc = threaded_head[cpu_id];
-            threaded_head[cpu_id] = dpc->next;
-            dpc->next = (KDPC *)0;
-
-            if (dpc->routine)
-                dpc->routine(dpc, dpc->deferred_ctx,
-                             dpc->system_arg1, dpc->system_arg2);
-        }
-
-        __atomic_store_n(&threaded_pending[cpu_id], 0, __ATOMIC_RELEASE);
     }
 }
 
 void dpc_start_threads(void)
 {
-    /* Create one DPC worker thread per online CPU.
-     * For now, only create on BSP -- AP threads require cross-CPU task create. */
+    /* Single worker thread drains threaded DPC queues for ALL CPUs.
+     * Safe because threaded DPCs run at PASSIVE_LEVEL (no CPU affinity
+     * requirement). If per-CPU workers are needed later, use IPI to
+     * create tasks on each AP. */
     extern int task_create(void (*entry)(void), const char *name);
     task_create(dpc_thread_fn, "dpc_thread");
-    klog(LOG_INFO, "dpc", "Threaded DPC worker started (BSP)");
+    klog(LOG_INFO, "dpc", "Threaded DPC worker started (all-CPU drain)");
 }
 
 /* ---- Core drain logic (shared by KiDispatchDpc and dpc_drain_current_cpu) */
