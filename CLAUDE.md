@@ -111,6 +111,8 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/run-verification` | Verify a TODO against a serial log (pasted or file), mark PASS/FAIL, detect regressions |
 | `/complete-todo` | Convert a completed TODO into polished docs, update indexes, handle XREFs |
 | `/validate-doc` | Fact-check a doc against the codebase, check for charts/tables/OS Comparison |
+| `/codex-review-todo` | Codex adversarial review of all implemented sections in a TODO |
+| `/codex-fix-review` | Fix Codex findings, re-review until resolved (max 3 iterations) |
 
 ## Repository Layout
 
