@@ -375,6 +375,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@# Step 2b: Format BlackBox partition as FAT32
 	mkfs.fat -F 32 -n "BLACKBOX" --offset $$(( $(BB_OFFSET) / 512 )) $@
 	mmd -i $@@@$(BB_OFFSET) ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
+	mmd -i $@@@$(BB_OFFSET) ::Crash/WER ::Logs/Serial
 	@# Step 3: Format IXFS partition and populate with system files
 	@mkdir -p $(BUILD_DIR)/sysroot/Impossible/System/Logs/Serial
 	@cp $(BUILD_DIR)/kernel.sym $(BUILD_DIR)/sysroot/Impossible/System/kernel.sym

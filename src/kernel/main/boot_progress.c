@@ -255,7 +255,8 @@ void boot_timeline_dump_json(void)
             for (tj = 0; fn[tj]; tj++) tl_path[tp++] = fn[tj];
         }
         tl_path[tp] = '\0';
-        f = vfs_open(tl_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+        vfs_create(tl_path, VFS_FILE);  /* ensure file exists */
+        f = vfs_open(tl_path, VFS_O_WRITE);
     }
     if (f) {
         vfs_write(f, 0, pos, buf);

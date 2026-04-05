@@ -235,8 +235,10 @@ void boot_phase2(void)
 
         if (bb_vol) {
             uint64_t free_bytes = fat32_get_free_bytes(bb_vol);
-            uint64_t total_bytes = 128ULL * 1024 * 1024;  /* 128 MiB partition */
-            uint32_t pct = (uint32_t)((free_bytes * 100) / total_bytes);
+            uint64_t total_bytes = fat32_get_total_bytes(bb_vol);
+            uint32_t pct = total_bytes > 0
+                         ? (uint32_t)((free_bytes * 100) / total_bytes) : 0;
+            if (pct > 100) pct = 100;  /* clamp: FSInfo can over-report */
 
             klog(LOG_INFO, "boot", "BlackBox: %u MiB free (%u%%)",
                  (uint32_t)(free_bytes / (1024 * 1024)), (uint64_t)pct);

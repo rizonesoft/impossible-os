@@ -64,6 +64,9 @@ struct vfs_node *fat32_get_root(struct fat32_volume *vol);
  * Returns cached FSInfo free count * cluster size. */
 uint64_t fat32_get_free_bytes(struct fat32_volume *vol);
 
+/* Get total partition size in bytes. */
+uint64_t fat32_get_total_bytes(struct fat32_volume *vol);
+
 /* Get volume from a VFS root node (reverse of fat32_get_root).
  * Returns NULL if node is not a FAT32 root. */
 struct fat32_volume *fat32_volume_from_root(struct vfs_node *root);

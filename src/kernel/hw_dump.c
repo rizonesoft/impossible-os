@@ -309,7 +309,8 @@ void hw_dump_write_file(void)
     }
 
     /* Write file */
-    f = vfs_open(path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    vfs_create(path, VFS_FILE);  /* ensure file exists */
+    f = vfs_open(path, VFS_O_WRITE);
     if (f) {
         vfs_write(f, 0, pos, (const uint8_t *)buf);
         vfs_close(f);

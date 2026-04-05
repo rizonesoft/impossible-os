@@ -884,6 +884,12 @@ uint64_t fat32_get_free_bytes(struct fat32_volume *vol)
     return (uint64_t)free_cl * vol->bpb.sectors_per_cluster * 512;
 }
 
+uint64_t fat32_get_total_bytes(struct fat32_volume *vol)
+{
+    if (!vol) return 0;
+    return (uint64_t)vol->bpb.total_sectors * 512;
+}
+
 struct fat32_volume *fat32_volume_from_root(struct vfs_node *root)
 {
     if (!root || !root->fs_data)
