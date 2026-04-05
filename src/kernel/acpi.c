@@ -617,7 +617,7 @@ int acpi_enter_sleep_state(uint8_t state)
     uint16_t val;
 
     if (typa == ACPI_SLP_TYPE_INVALID) {
-        klog(LOG_ERROR, "acpi", "S%u not supported by firmware", (uint64_t)state);
+        klog(LOG_DEBUG, "acpi", "S%u not supported by firmware", (uint64_t)state);
         return -1;
     }
 
