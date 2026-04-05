@@ -12,6 +12,8 @@
 #include "kernel/test/test.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_timing.h"
+#include "kernel/exec.h"
+#include "kernel/errno.h"
 
 /* ---- boot_result_t values ---- */
 
@@ -210,6 +212,33 @@ static void test_async_ipi_vector(void)
                 "ASYNC_INIT != TLB_SHOOTDOWN (0xFE)");
 }
 
+/* ---- Exec dispatcher tests (TODO-08 §1) ---- */
+
+static void test_exec_bad_magic(void)
+{
+    int err = 0;
+    uint8_t bad_data[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0 };
+    uint64_t entry = exec_load(bad_data, sizeof(bad_data), &err);
+    TEST_ASSERT_EQ(entry, 0, "exec_load rejects unknown magic");
+    TEST_ASSERT_EQ(err, ENOEXEC, "exec_load sets ENOEXEC for bad magic");
+}
+
+static void test_exec_null_data(void)
+{
+    int err = 0;
+    uint64_t entry = exec_load((const uint8_t *)0, 0, &err);
+    TEST_ASSERT_EQ(entry, 0, "exec_load rejects NULL data");
+    TEST_ASSERT_EQ(err, ENOEXEC, "exec_load sets ENOEXEC for NULL");
+}
+
+static void test_exec_errno(void)
+{
+    TEST_ASSERT_EQ(ENOEXEC, 8, "ENOEXEC == 8");
+    TEST_ASSERT_EQ(ENOENT,  2, "ENOENT == 2");
+    TEST_ASSERT_EQ(ENOMEM, 12, "ENOMEM == 12");
+    TEST_ASSERT_EQ(EINVAL, 22, "EINVAL == 22");
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_init(void)
@@ -230,6 +259,11 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: bootperf POST codes", test_bootperf_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: async POST codes", test_async_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: async IPI vector", test_async_ipi_vector, TEST_CAT_BOOT);
+
+    /* Exec dispatcher tests (TODO-08 §1) */
+    test_suite_register_cat("Exec: bad magic", test_exec_bad_magic, TEST_CAT_BOOT);
+    test_suite_register_cat("Exec: null data", test_exec_null_data, TEST_CAT_BOOT);
+    test_suite_register_cat("Exec: errno constants", test_exec_errno, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

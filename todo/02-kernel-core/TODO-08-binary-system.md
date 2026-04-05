@@ -3,12 +3,12 @@
 > **Goal:** Build the multi-format executable loader that every user-mode program depends on. Three formats must work: ELF (existing basic loader upgraded), PE32+ (Windows-compatible, imports wired to Win32 API), and EIF (Impossible OS native -- 64-byte header, syscall-ID import table, <10 µs load time). A single `exec_load()` dispatcher auto-detects format by magic bytes and routes to the correct loader. ASLR and EIF code signing close out the security story.
 
 > [!IMPORTANT]
-> **Current state:** A basic ELF loader exists in `src/kernel/elf.c` (143 lines). It loads `PT_LOAD` segments via identity mapping and is called directly from `task.c`. No format dispatcher, no PE32+ support, no EIF format, no proper VMM-backed user-space mapping.
+> **Current state:** A basic ELF loader exists in `src/kernel/elf.c`. It loads `PT_LOAD` segments via identity mapping and is called directly from `task_exec()` in `src/kernel/sched/task.c`. No format dispatcher, no PE32+ support, no EIF format, no proper VMM-backed user-space mapping.
 
 ## Inputs
 
 - [`src/kernel/elf.c`](../../src/kernel/elf.c), [`include/kernel/elf.h`](../../include/kernel/elf.h) -- existing basic ELF loader
-- [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) -- direct `elf_load()` call site (line 635) to be replaced
+- [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) -- direct `elf_load()` call site in `task_exec()` (currently around line 1141) to be replaced
 - [`user/user.ld`](../../user/user.ld) -- user-mode linker script (base `0x800000`)
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) -- `vmm_map_page()` for page mapping; `vmm_map_pages()` (multi-page wrapper) must be added in §2
 - [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) -- `vfs_read()` for file I/O in loaders
@@ -28,7 +28,9 @@
 - ELF loader uses VMM-backed user pages with correct R/W/X permissions; supports PIE; honours `PT_GNU_STACK` (NX stack), `PT_GNU_RELRO` (read-only GOT after relocation), and `PT_GNU_PROPERTY` (CET/IBT feature flags).
 - EIF format is specified in `docs/specs/eif-format.md`; kernel loads EIF in <10 µs.
 - PE32+ parser loads sections, resolves imports, processes TLS directory, and registers `.pdata` unwind tables.
+- PE32+ import compatibility covers API-set contract DLL names and delay-load/bound-import metadata for modern Win11 binaries.
 - Every loaded module (ELF, PE32+, EIF) is registered in the `LDR_DATA_TABLE_ENTRY` module list and the `LOADED_MODULE` crash dump registry.
+- ELF `PT_TLS` templates are loaded and cloned per thread so Linux-compat ELF binaries using `__thread` work correctly.
 - PE Load Config Directory is parsed for CFG bitmap and CET shadow stack flags; enforcement deferred to TODO-17.
 - Script/shebang (`#!`) files are auto-detected and dispatched to the named interpreter.
 - `tools/elf2eif` converts standard ELF64 output to EIF -- no custom compiler needed.
@@ -50,23 +52,25 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On              | Status |
 | --- | :---: | ---------------------------------------------- | ----------------------- | :----: |
-| 💎  |   1   | `exec_load()` multi-format dispatcher          | VMM, VFS, sched         |  [ ]   |
-| 💎  |   2   | Enhanced ELF loader (VMM-backed, PIE)          | 1                       |  [ ]   |
-| 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | 2                       |  [ ]   |
+| 💎  |   1   | `exec_load()` multi-format dispatcher          | VMM, VFS, sched         |  [x]   |
+| 💎  |   2   | Enhanced ELF loader (VMM-backed, PIE)          | §1                      |  [ ]   |
+| 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | §2                      |  [ ]   |
 | ⭐  |   4   | EIF format specification                       | --                      |  [ ]   |
-| ⭐  |   5   | EIF kernel loader                              | 1, 4                    |  [ ]   |
-| 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | 1, TODO-04 §8           |  [ ]   |
-| 💎  |   7   | PE32+ header parser                            | 1                       |  [ ]   |
-| 💎  |   8   | PE32+ section loader + `.pdata` registration   | 7                       |  [ ]   |
-| 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | 8, TODO-05 §5           |  [ ]   |
-| 💎  |  10   | PE32+ base relocation                          | 8                       |  [ ]   |
-| 💎  |  11   | PE32+ TLS directory processing                 | 8, TODO-04 §9           |  [ ]   |
-| 💎  |  12   | PE32+ Load Config and CFG bitmap               | 8                       |  [ ]   |
-| ⭐  |  13   | `elf2eif` host-side converter                  | 4                       |  [ ]   |
-| 💎  |  14   | ELF dynamic linker (shared libraries)          | 2                       |  [ ]   |
-| 💎  |  15   | ASLR for all three formats                     | 2, 5, 8                 |  [ ]   |
-| ⭐  |  16   | Script/shebang interpreter support             | 1                       |  [ ]   |
-| ⭐  |  17   | EIF code signing                               | 5                       |  [ ]   |
+| ⭐  |   5   | EIF kernel loader                              | §1, §4                  |  [ ]   |
+| 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [ ]   |
+| 💎  |   7   | PE32+ header parser                            | §1                      |  [ ]   |
+| 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7                      |  [ ]   |
+| 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-05 §5          |  [ ]   |
+| 💎  |  10   | PE32+ base relocation                          | §8                      |  [ ]   |
+| 💎  |  11   | PE32+ TLS directory processing                 | §8, TODO-04 §9          |  [ ]   |
+| 💎  |  12   | PE32+ Load Config and CFG bitmap               | §8                      |  [ ]   |
+| ⭐  |  13   | `elf2eif` host-side converter                  | §4                      |  [ ]   |
+| 💎  |  14   | ELF dynamic linker (shared libraries)          | §2                      |  [ ]   |
+| 💎  |  15   | ASLR for all three formats                     | §2, §5, §8              |  [ ]   |
+| ⭐  |  16   | Script/shebang interpreter support             | §1                      |  [ ]   |
+| ⭐  |  17   | EIF code signing                               | §5                      |  [ ]   |
+| 💎  |  18   | ELF `PT_TLS` template loading                  | §2                      |  [ ]   |
+| 💎  |  19   | PE API-set + delay-load/bound import support  | §9                       |  [ ]   |
 
 > 💎 = parity -- Windows NT (PE32+) and Linux (ELF) both provide these capabilities.
 > ⭐ = exclusive -- triple-format support, EIF native format, syscall-ID imports, shebang dispatch, and mandatory code signing are Impossible OS only.
@@ -74,25 +78,23 @@
 ---
 
 ## 1. `exec_load()` Multi-Format Dispatcher
-Replace the direct `elf_load()` call in `task.c:635` with a generic dispatcher.
+Replace the direct `elf_load()` call in `task_exec()` (`src/kernel/sched/task.c`) with a generic dispatcher.
 
 > [!WARNING]
 > **Missing prerequisites:** `ENOEXEC` / `ENOENT` error constants are not defined anywhere in headers. Define them in `include/kernel/errno.h` (create if needed) or as enum values in `exec.h`. The existing codebase uses negative integer error codes -- pick a convention and document it.
 
-- [ ] Create `src/kernel/exec.c` + `include/kernel/exec.h`
-- [ ] Define `exec_format_t` -- `{ magic[4], magic_len, name, loader_fn }`
-- [ ] Implement `exec_load(const char *path, process_t *proc)`:
-  - Read first 4 bytes via VFS; match registered format handlers
-  - Unknown magic → `ENOEXEC`; missing file → `ENOENT`
-  - Allocate user-space page tables via VMM before calling format loader
-  - Set up user-mode stack (top of user address range), push argc/argv
-  - Set Ring 3 return context: RIP = entry, RSP = user stack, CS/SS = user segments
-- [ ] `exec_register_format(exec_format_t *)` -- register formats at boot
-- [ ] Register ELF format in `kernel_main()` init; PE32+ and EIF at their respective init points
-- [ ] Replace the direct `elf_load()` call in `task.c:635` with `exec_load()`
+- [x] Create `src/kernel/exec.c` + `include/kernel/exec.h` -- dispatcher with `exec_load()`, `exec_load_path()`, `exec_register_format()`, `exec_init()`
+- [x] Define `ENOEXEC` / `ENOENT` error contract in `include/kernel/errno.h` (new file, 20 POSIX error constants)
+- [ ] Define `process_t` alias -- deferred to §2 (current API uses raw buffer, not process_t)
+- [x] Define `exec_format_t` -- `{ magic[4], magic_len, name, loader_fn }` in exec.h; up to 8 formats
+- [x] Implement `exec_load(data, size, *err)` -- matches magic bytes against registered formats, dispatches to loader, returns entry point; unknown magic -> ENOEXEC; also `exec_load_path(path, *err)` reads via VFS with ENOENT support
+- [x] `exec_register_format(exec_format_t *)` -- register formats at boot (max 8)
+- [x] Register ELF format in `exec_init()` called from `boot_desktop.c` Phase 3; PE32+/EIF registration points ready
+- [x] Replace the direct `elf_load()` call in `task_exec()` (`task.c` line 1141) with `exec_load(data, size, &err)` -- task_exec now uses multi-format dispatcher; user stack/PML4/context setup unchanged
+- [x] 3 unit tests: bad magic (ENOEXEC), null data (ENOEXEC), errno constant values (4 checks)
 - [ ] Commit: `"kernel: exec -- multi-format exec dispatcher"`
 
-**Test checkpoint:** Serial log shows `"exec: registered format ELF (\x7fELF)"`. `exec_load("nonexistent")` returns `ENOENT` (or negative error code if `ENOENT` not yet defined -- define in §1). `exec_load` on a file with magic `0xDEADBEEF` returns error. `POST16(0xD801)` on entry, `POST16(0xD802)` after format table init. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Serial log shows `"exec: registered format ELF (\x7fELF)"`. `exec_load("nonexistent")` returns `ENOENT` (or negative error code if `ENOENT` not yet defined -- define in §1). `exec_load` on a file with magic `0xDEADBEEF` returns error. `POST16(0xD801)` on entry, `POST16(0xD802)` after format table init. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 2. Enhanced ELF Loader
 Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and PIE support.
@@ -102,6 +104,7 @@ Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and P
 > Also: `process_t` is not a type -- use `process_object` from `include/kernel/ob/ob_process.h`, or `typedef process_object process_t` in `exec.h`.
 
 - [ ] Refactor `elf_load()` → `elf_exec(path, proc)` registered with the dispatcher
+- [ ] Add `vmm_map_pages()` helper in `src/kernel/mm/vmm.c` + `include/kernel/mm/vmm.h` for multi-page per-process user mappings
 - [ ] Read entire ELF file into a kernel buffer via VFS; validate ELF64 header
 - [ ] For each `PT_LOAD` segment:
   - Allocate user pages via `vmm_map_pages(proc->pml4, vaddr, ...)`
@@ -113,7 +116,7 @@ Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and P
 - [ ] Free kernel buffer after all segments are loaded
 - [ ] Commit: `"kernel: elf -- enhanced ELF loader with VMM mapping and PIE"`
 
-**Test checkpoint:** Serial log shows `"elf: loaded <N> PT_LOAD segments at 0x<user_addr>"`. Entry point is within user address range (not identity-mapped kernel address). BSS region reads as all zeros. `POST16(0xD803)` on entry, `POST16(0xD804)` after all segments mapped. Test on: QEMU WHPX + TCG; VirtualBox.
+**Test checkpoint:** Serial log shows `"elf: loaded <N> PT_LOAD segments at 0x<user_addr>"`. Entry point is within user address range (not identity-mapped kernel address). BSS region reads as all zeros. `POST16(0xD803)` on entry, `POST16(0xD804)` after all segments mapped. Test on: QEMU WHPX + TCG; VirtualBox; bare metal.
 
 ## 3. ELF Security Segments (GNU_STACK, RELRO, GNU_PROPERTY)
 
@@ -123,12 +126,13 @@ Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and P
 Modern ELF binaries carry security metadata in dedicated program headers. `PT_GNU_STACK` controls whether the stack is executable (NX enforcement). `PT_GNU_RELRO` marks the GOT and relocation data as read-only after relocation completes, blocking GOT-overwrite attacks. `PT_GNU_PROPERTY` carries CET IBT/SHSTK feature flags that the kernel must check before enabling hardware enforcement. All three are standard on Linux; without them, ELF binaries run with weaker security than they were compiled for.
 
 - [ ] Parse `PT_GNU_STACK` (type `0x6474e551`): if `p_flags` lacks `PF_X`, ensure the user stack pages are mapped without execute permission; if `PF_X` is present, log a warning and allow (legacy compat)
+- [ ] Implement `vmm_protect(proc->pml4, addr, size, flags)` in `src/kernel/mm/vmm.c` + `include/kernel/mm/vmm.h` (PTE permission update + `invlpg`)
 - [ ] Parse `PT_GNU_RELRO` (type `0x6474e552`): after all relocations in §14, call `vmm_protect(proc->pml4, relro_start, relro_size, VMM_READ)` to make the RELRO range read-only
 - [ ] Parse `PT_GNU_PROPERTY` (type `0x6474e553`): extract `GNU_PROPERTY_X86_FEATURE_1_AND` -- check for `IBT` (bit 0) and `SHSTK` (bit 1) flags; store in process metadata for TODO-17 CET enforcement
 - [ ] If `PT_GNU_STACK` is absent, default to NX stack (safe default, matching Linux 6.x behavior)
 - [ ] Commit: `"kernel: elf -- PT_GNU_STACK NX enforcement, PT_GNU_RELRO, PT_GNU_PROPERTY CET flags"`
 
-**Test checkpoint:** Serial log shows `"elf: NX stack enforced"` for binaries without `PF_X` in `PT_GNU_STACK`. Serial log shows `"elf: RELRO range 0x<start>-0x<end> locked"` after relocation. `POST16(0xD805)` on entry, `POST16(0xD806)` after RELRO applied. Test on: QEMU WHPX + TCG. Note: `vmm_protect()` does not exist yet -- implement as direct PTE write + `invlpg` until `03-memory-concurrency/TODO-01` lands.
+**Test checkpoint:** Serial log shows `"elf: NX stack enforced"` for binaries without `PF_X` in `PT_GNU_STACK`. Serial log shows `"elf: RELRO range 0x<start>-0x<end> locked"` after relocation. `POST16(0xD805)` on entry, `POST16(0xD806)` after RELRO applied. Test on: QEMU WHPX + TCG; bare metal. Note: `vmm_protect()` does not exist yet -- implement as direct PTE write + `invlpg` until `03-memory-concurrency/TODO-01` lands.
 
 ## 4. EIF Format Specification
 Design the Executable Impossible Format -- minimal parsing, native OS metadata, syscall-ID imports.
@@ -156,7 +160,7 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
 - [ ] Performance target: < 10 µs for a typical 64 KB binary
 - [ ] Commit: `"kernel: eif -- EIF loader"`
 
-**Test checkpoint:** Serial log shows `"eif: loaded in <N> µs"` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. `POST16(0xD807)` on entry, `POST16(0xD808)` after segments mapped. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Serial log shows `"eif: loaded in <N> µs"` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. `POST16(0xD807)` on entry, `POST16(0xD808)` after segments mapped. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 6. Module List Registration (LDR_DATA_TABLE_ENTRY)
 
@@ -169,7 +173,7 @@ Every loaded executable and shared library must be registered in the per-process
 - [ ] `exec_find_module_by_pc(uint64_t rip)` -- binary search module list by address range; returns module for stack traces and `.pdata` lookup
 - [ ] Commit: `"kernel: exec -- module list registration for Ldr, crash dump, and debugger"`
 
-**Test checkpoint:** After loading a binary, `exec_find_module_by_pc(entry_va)` returns non-NULL with correct `name` and `base_address`. Serial log shows `"exec: registered module '<name>' at 0x<base> (size=<N>)"`. `POST16(0xD809)` on entry, `POST16(0xD80A)` after module inserted. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** After loading a binary, `exec_find_module_by_pc(entry_va)` returns non-NULL with correct `name` and `base_address`. Serial log shows `"exec: registered module '<name>' at 0x<base> (size=<N>)"`. `POST16(0xD809)` on entry, `POST16(0xD80A)` after module inserted. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 7. PE32+ Header Parser
 
@@ -180,7 +184,7 @@ Every loaded executable and shared library must be registered in the per-process
   - Reject 32-bit PE (Magic == `0x10B`) with `ENOEXEC`
 - [ ] Commit: `"kernel: pe -- PE32+ header parser"`
 
-**Test checkpoint:** `pe_validate()` returns success for a valid PE32+ header (Machine `0x8664`, Magic `0x20B`). Returns error for 32-bit PE (`0x10B`). Returns error for truncated file. `POST16(0xD80B)` on entry. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `pe_validate()` returns success for a valid PE32+ header (Machine `0x8664`, Magic `0x20B`). Returns error for 32-bit PE (`0x10B`). Returns error for truncated file. `POST16(0xD80B)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 8. PE32+ Section Loader + `.pdata` Registration
 
@@ -193,14 +197,14 @@ Every loaded executable and shared library must be registered in the per-process
 - [ ] Register loaded module via `exec_register_module()` (§6) with base, size, entry, and `.pdata` info
 - [ ] Commit: `"kernel: pe -- PE32+ section loader with .pdata registration"`
 
-**Test checkpoint:** Serial log shows `"pe: mapped <N> sections, .pdata at 0x<addr> (<M> entries)"`. Section permissions match `Characteristics`. BSS-only sections are zero-filled. `POST16(0xD80C)` on entry, `POST16(0xD80D)` after `.pdata` registered. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Serial log shows `"pe: mapped <N> sections, .pdata at 0x<addr> (<M> entries)"`. Section permissions match `Characteristics`. BSS-only sections are zero-filled. `POST16(0xD80C)` on entry, `POST16(0xD80D)` after `.pdata` registered. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 9. PE32+ Import Table Resolver (Win32 Dispatch)
 
 This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`, `ReadFile`, and `WriteFile` call in a PE binary flows through here.
 
 > [!IMPORTANT]
-> **Soft dependency on TODO-05 §5** (Nt/Zw naming + syscall migration, currently `[ ]`). §9 is NOT fully blocked -- implement the import resolution machinery and export table structure now. Use stub thunks that return `STATUS_NOT_IMPLEMENTED` for unmigrated SSDT entries. Real SSDT indices can be wired later when TODO-05 §5 lands. This allows PE binaries to load and run; calls to unimplemented APIs return clean errors instead of crashing.
+> **Soft dependency on TODO-05 §5** (Nt/Zw naming + syscall migration, now marked `[x]`). §9 is still not fully blocked by remaining API coverage: implement the import-resolution machinery and export-table structure now. Keep stub thunks that return `STATUS_NOT_IMPLEMENTED` for unmigrated SSDT entries so PE binaries load and run while missing APIs fail cleanly instead of crashing.
 
 - [ ] Parse Import Directory Table (DataDirectory entry 1):
   - Walk `IMAGE_IMPORT_DESCRIPTOR` array; get DLL name string and INT/IAT entry pairs
@@ -212,7 +216,7 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 - [ ] Export table lookup: sorted array + binary search or FNV hash table
 - [ ] Commit: `"kernel: pe -- PE32+ import table resolver"`
 
-**Test checkpoint:** Serial log shows `"pe: resolved <N> imports from <DLL>"` for each DLL. `kernel32.dll!ExitProcess` resolves to a valid SSDT thunk. Unknown DLL produces warning log, not crash. `POST16(0xD80E)` on entry, `POST16(0xD80F)` after IAT patched. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Serial log shows `"pe: resolved <N> imports from <DLL>"` for each DLL. `kernel32.dll!ExitProcess` resolves to a valid SSDT thunk. Unknown DLL produces warning log, not crash. `POST16(0xD80E)` on entry, `POST16(0xD80F)` after IAT patched. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 10. PE32+ Base Relocation
 
@@ -223,7 +227,7 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 - [ ] Apply delta to all type-10 entries after section loading
 - [ ] Commit: `"kernel: pe -- PE32+ base relocation"`
 
-**Test checkpoint:** Serial log shows `"pe: relocated <N> entries, delta=0x<delta>"`. A PE loaded at non-preferred base calls a function pointer without crash. `POST16(0xD810)` on entry, `POST16(0xD811)` after relocations applied. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Serial log shows `"pe: relocated <N> entries, delta=0x<delta>"`. A PE loaded at non-preferred base calls a function pointer without crash. `POST16(0xD810)` on entry, `POST16(0xD811)` after relocations applied. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 11. PE32+ TLS Directory Processing
 
@@ -236,7 +240,7 @@ PE binaries using `__declspec(thread)` or C11 `_Thread_local` store TLS template
 - [ ] On thread creation: allocate fresh TLS block from template; call callbacks with `DLL_THREAD_ATTACH`
 - [ ] Commit: `"kernel: pe -- TLS directory processing and callbacks"`
 
-**Test checkpoint:** Serial log shows `"pe: TLS index=<N>, raw data <size> bytes, <M> callbacks"`. TLS callback log: `"pe: TLS callback DLL_PROCESS_ATTACH at 0x<addr>"`. Thread-local variable read returns initialized value. `POST16(0xD812)` on entry, `POST16(0xD813)` after callbacks invoked. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Serial log shows `"pe: TLS index=<N>, raw data <size> bytes, <M> callbacks"`. TLS callback log: `"pe: TLS callback DLL_PROCESS_ATTACH at 0x<addr>"`. Thread-local variable read returns initialized value. `POST16(0xD812)` on entry, `POST16(0xD813)` after callbacks invoked. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 12. PE32+ Load Config and CFG Bitmap
 
@@ -252,13 +256,14 @@ Modern PE binaries carry an `IMAGE_LOAD_CONFIG_DIRECTORY64` (DataDirectory entry
 - [ ] If Load Config is absent or has zero size: treat as legacy binary (no CFG, no CET) -- log warning
 - [ ] Commit: `"kernel: pe -- Load Config directory, CFG bitmap, CET metadata"`
 
-**Test checkpoint:** Serial log shows `"pe: CFG bitmap: <N> valid targets"` for CFG-instrumented PE. Shows `"pe: security cookie initialized"`. Legacy PE without Load Config shows `"pe: no Load Config -- legacy binary"`. `POST16(0xD814)` on entry, `POST16(0xD815)` after CFG bitmap populated. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Serial log shows `"pe: CFG bitmap: <N> valid targets"` for CFG-instrumented PE. Shows `"pe: security cookie initialized"`. Legacy PE without Load Config shows `"pe: no Load Config -- legacy binary"`. `POST16(0xD814)` on entry, `POST16(0xD815)` after CFG bitmap populated. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 13. `elf2eif` Host-Side Converter
 
 Standard developer workflow: `clang-19 → ld.lld → elf2eif` -- no custom compiler required.
 
 - [ ] Create `tools/elf2eif.c` (compiled with host `gcc`)
+- [ ] Add `tools/syscall_map.h` (or generated header) mapping Win32 symbol names to SSDT service numbers sourced from `include/kernel/nt/service_numbers.h`
 - [ ] Read input ELF64; validate headers; extract `PT_LOAD` segments → EIF `eif_segment_t` entries
 - [ ] Generate import table:
   - Scan ELF `.dynsym` or custom `.eif_imports` section for Win32 API symbols
@@ -286,7 +291,7 @@ Shared library support for the Linux compatibility layer and future ELF apps.
 - [ ] Register each loaded `.so` via `exec_register_module()` (§6)
 - [ ] Commit: `"kernel: elf -- dynamic linker and shared library loading"`
 
-**Test checkpoint:** Serial log shows `"elf: loaded shared library '<name>.so' at 0x<addr>"` for each `DT_NEEDED`. PLT stub call resolves on first invocation (lazy binding). `PT_GNU_RELRO` applied after relocations -- GOT write attempt faults. `POST16(0xD816)` on entry, `POST16(0xD817)` after all `.so` loaded. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Serial log shows `"elf: loaded shared library '<name>.so' at 0x<addr>"` for each `DT_NEEDED`. PLT stub call resolves on first invocation (lazy binding). `PT_GNU_RELRO` applied after relocations -- GOT write attempt faults. `POST16(0xD816)` on entry, `POST16(0xD817)` after all `.so` loaded. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 15. ASLR -- Address Space Layout Randomization
 
@@ -314,7 +319,7 @@ Auto-detect `#!` (shebang) lines in text files and dispatch to the named interpr
 - [ ] Handle edge cases: missing interpreter → `ENOENT`; empty shebang → `ENOEXEC`; shebang longer than 256 bytes → truncate with warning
 - [ ] Commit: `"kernel: exec -- shebang (#!) interpreter support"`
 
-**Test checkpoint:** Script with `#!/C:\Impossible\System\shell.exe` dispatches to shell -- serial log shows `"exec: shebang -> /C:\Impossible\System\shell.exe"`. Circular shebang rejected with error. Missing interpreter → error. `POST16(0xD81A)` on entry, `POST16(0xD81B)` after interpreter resolved. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Script with `#!/C:\Impossible\System\shell.exe` dispatches to shell -- serial log shows `"exec: shebang -> /C:\Impossible\System\shell.exe"`. Circular shebang rejected with error. Missing interpreter → error. `POST16(0xD81A)` on entry, `POST16(0xD81B)` after interpreter resolved. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 17. EIF Code Signing
 
@@ -330,7 +335,33 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 - [ ] Create `tools/eifsign.c` -- host-side signing tool
 - [ ] Commit: `"kernel: eif -- EIF code signing"`
 
-**Test checkpoint:** EIF with valid signature loads successfully -- serial log shows `"eif: signature verified"`. EIF with `SIGNED` flag but missing/invalid signature rejected -- serial log shows `"eif: signature verification FAILED"`. Unsigned EIF (no `SIGNED` flag) loads but with reduced capabilities logged. `POST16(0xD81C)` on entry, `POST16(0xD81D)` after signature check. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** EIF with valid signature loads successfully -- serial log shows `"eif: signature verified"`. EIF with `SIGNED` flag but missing/invalid signature rejected -- serial log shows `"eif: signature verification FAILED"`. Unsigned EIF (no `SIGNED` flag) loads but with reduced capabilities logged. `POST16(0xD81C)` on entry, `POST16(0xD81D)` after signature check. Test on: QEMU WHPX + TCG; bare metal.
+
+## 18. ELF `PT_TLS` Template Loading
+
+Linux ELF binaries using `__thread` rely on `PT_TLS` template mapping and per-thread TLS block initialization. Without this, thread-local variables in ELF user-mode binaries are incorrect or crash on access.
+
+- [ ] In `include/kernel/elf.h`: add `PT_TLS` support constants and `elf_tls_template_t` metadata in `elf_load_result` (template start/filesz/memsz/align)
+- [ ] In `src/kernel/elf.c` (`elf_exec`/`elf_load` path): parse `PT_TLS`, capture template metadata, and map initial TLS image for the main thread
+- [ ] In thread creation path (`src/kernel/sched/task.c`): allocate a fresh TLS block for each new thread from the captured `PT_TLS` template; copy initialized bytes then zero-fill tail
+- [ ] Wire TLS setup into exec/thread startup sequence before user entry so ELF code sees valid TLS at first instruction
+- [ ] Add unit tests in `src/kernel/test/test_exec.c`: static `__thread` variable init value, per-thread isolation, and zero-filled TLS tail behavior
+- [ ] Commit: `"kernel: elf -- PT_TLS template loading and per-thread TLS setup"`
+
+**Test checkpoint:** ELF binary with `__thread int g_tls = 7;` reads `7` in the main thread and independent values in two spawned threads. Serial log shows `"elf: PT_TLS template filesz=<N> memsz=<M>"`. `POST16(0xD81E)` on entry, `POST16(0xD81F)` after first TLS block init. Test on: QEMU WHPX + TCG; bare metal.
+
+## 19. PE API-Set + Delay-Load/Bound Import Support
+
+Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract DLLs and may use delay-load import tables. The loader must resolve these correctly for broad Win11 binary compatibility.
+
+- [ ] In `include/kernel/pe.h` + `src/kernel/pe.c`: add API-set namespace structs/parsing helpers and delay-load directory structs (`IMAGE_DELAYLOAD_DESCRIPTOR`, delay IAT/BIAT metadata)
+- [ ] In PE import resolver path: detect API-set contract DLL names and map them to concrete host DLLs before export lookup (`api-ms-win-*`, `ext-ms-*`)
+- [ ] Parse Delay-Load Import Directory (DataDirectory 13): resolve thunks on first call path and support delay-unload/delay-bound metadata
+- [ ] Parse Bound Import metadata (DataDirectory 11): validate timestamps; on mismatch/failure, fall back to normal import resolution instead of crashing
+- [ ] Add unit tests in `src/kernel/test/test_exec.c`: API-set contract name resolution, delay-load first-call patching, and bound-import mismatch fallback path
+- [ ] Commit: `"kernel: pe -- API-set contract resolution and delay-load/bound imports"`
+
+**Test checkpoint:** A PE importing `api-ms-win-core-processthreads-l1-1-0.dll!ExitProcess` resolves through the API-set map to a concrete export and executes. A sample delay-load import resolves on first call and logs `"pe: delay import resolved <dll>!<name>"`. Bound-import timestamp mismatch logs fallback and continues. `POST16(0xD820)` on entry, `POST16(0xD821)` after delay-IAT patching. Test on: QEMU WHPX + TCG; bare metal.
 
 ---
 
@@ -349,7 +380,9 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 | 💎 | Module list                  | ✅ PEB->Ldr              | ✅ link_map               | ⬜ §6                        |
 | 💎 | PE .pdata unwind             | ✅ Kernel + ntdll        | ❌ N/A                   | ⬜ §8                        |
 | 💎 | PE TLS + callbacks           | ✅ Full support          | ❌ N/A (ELF PT_TLS)      | ⬜ §11                       |
+| 💎 | Native TLS templates         | ✅ PE TLS               | ✅ PT_TLS               | ⬜ §11 + §18                |
 | 💎 | PE Load Config / CFG         | ✅ CFG mandatory         | ❌ N/A                   | ⬜ §12                       |
+| 💎 | Contract import mapping      | ✅ API-set              | ⚠️ SONAME aliases       | ⬜ §19                       |
 | ⭐ | Triple format support        | ❌ PE32+ only            | ❌ ELF only              | ⬜ §1–§10 all three          |
 | ⭐ | < 10 µs load time            | ❌ ~50 µs                | ❌ ~30 µs                | ⬜ §5 EIF instant            |
 | ⭐ | Syscall-ID imports           | ❌ String-based          | ❌ String-based          | ⬜ §4–§5 integer-only        |
@@ -360,6 +393,8 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 > **After §1–§6:** Impossible OS has a triple-format dispatcher, module list infrastructure, and the world's fastest native loader (EIF).
 > **After §7–§12:** Full kernel-level PE32+ loading with TLS, CFG, and .pdata unwind tables -- run Windows-compiled executables natively without a compatibility layer.
 > **§3** brings ELF security to Linux parity: NX stack, RELRO, and CET property flags.
+> **§18** closes Linux parity for ELF thread-local storage (`PT_TLS`) in multi-threaded user binaries.
+> **§19** closes modern Win11 import compatibility by handling API-set contract DLL names and delay-load/bound import metadata.
 > **§16** unifies shebang dispatch into `exec_load()` -- no separate kernel module needed.
 > **§17** makes EIF code signing mandatory, not optional -- stronger integrity guarantees than Windows Authenticode.
 
@@ -385,8 +420,11 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
   - PE32+ base relocation: `IMAGE_REL_BASED_DIR64` applies correct delta to 64-bit value
   - PE32+ import resolver: known `kernel32.dll!ExitProcess` maps to `NtTerminateProcess` SSDT index
   - PE32+ import resolver: unknown DLL name returns stub (not crash)
+  - PE API-set contract import (`api-ms-win-*`) resolves to concrete host DLL before export lookup (§19)
+  - PE delay-load import thunk patches correctly on first call; bound-import mismatch falls back safely (§19)
   - PE32+ TLS: `IMAGE_TLS_DIRECTORY64` parsed; TLS index written; initial TLS data copied (§11)
   - PE32+ Load Config: `IMAGE_LOAD_CONFIG_DIRECTORY64` parsed; CFG bitmap populated for CFG-instrumented PE (§12)
+  - ELF `PT_TLS`: template copied for main thread; per-thread TLS blocks are isolated (§18)
   - Module registration: `exec_register_module()` creates entry with correct base/size/name (§6)
   - Module lookup: `exec_find_module_by_pc(entry_va)` finds the registered module
   - EIF header validation: correct magic + arch + version accepted; wrong magic rejected
@@ -410,6 +448,9 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 - [ ] PE32+ `.pdata` registered: `RtlLookupFunctionEntry(entry_va)` returns non-NULL `RUNTIME_FUNCTION`
 - [ ] PE32+ TLS: thread-local variable access succeeds; TLS callback logged before `main()`
 - [ ] PE32+ Load Config: CFG bitmap populated; serial log shows `"pe: CFG bitmap: <N> valid targets"`
+- [ ] PE API-set contract import (`api-ms-win-*` / `ext-ms-*`) resolves to concrete DLL and target export
+- [ ] PE delay-load import thunk resolves on first call; bound-import timestamp mismatch falls back to normal import path
+- [ ] ELF with `PT_TLS`: main-thread TLS template initialized and two threads observe isolated `__thread` values
 - [ ] Module list: `exec_find_module_by_pc(entry_va)` returns correct module for both ELF and PE
 - [ ] PIE ELF loaded at two different addresses in two processes; no virtual address collision
 - [ ] EIF with `SIGNED` flag: reject with `ENOEXEC` if signature is missing or invalid

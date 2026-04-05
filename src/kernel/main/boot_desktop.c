@@ -141,6 +141,10 @@ void boot_phase3(void)
     }
 
     /* --- Exec loader (ELF/PE format handlers) --- */
+    {
+        extern void exec_init(void);
+        exec_init();
+    }
     kernel_subsystem_set_ready(SUBSYS_EXEC, true);
     boot_progress(3, "EXEC", 0x0062);
 

@@ -19,7 +19,7 @@
 #include "kernel/mm/user_range.h"
 #include "kernel/cpuid.h"
 #include "kernel/klog.h"
-#include "kernel/elf.h"
+#include "kernel/exec.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ob/handle_table.h"
 #include "kernel/ob/ob_process.h"
@@ -1132,15 +1132,16 @@ static TEB *teb_alloc_for_task(uint32_t pid, uint32_t tid,
 
 int task_exec(const uint8_t *data, uint64_t size)
 {
-    struct elf_load_result elf;
+    uint64_t entry;
+    int exec_err = 0;
     uint64_t *sp;
     uint32_t pid = current_task;
     uint8_t *new_kstack;
 
-    /* Load the ELF binary */
-    elf = elf_load(data, size);
-    if (!elf.success) {
-        klog(LOG_DEBUG, "sched", "Failed to load ELF");
+    /* Load the binary via multi-format dispatcher (ELF, PE32+, EIF) */
+    entry = exec_load(data, size, &exec_err);
+    if (entry == 0) {
+        klog(LOG_DEBUG, "sched", "exec_load failed (err=%d)", (uint64_t)exec_err);
         return -1;
     }
 
@@ -1233,7 +1234,7 @@ int task_exec(const uint8_t *data, uint64_t size)
         #define AT_ENTRY  9
         #define AT_PAGESZ 6
         ustk -= 6;  /* 3 pairs × 2 qwords */
-        ustk[0] = AT_ENTRY;  ustk[1] = elf.entry;
+        ustk[0] = AT_ENTRY;  ustk[1] = entry;
         ustk[2] = AT_PAGESZ; ustk[3] = 4096;
         ustk[4] = AT_NULL;   ustk[5] = 0;
 
@@ -1283,7 +1284,7 @@ int task_exec(const uint8_t *data, uint64_t size)
         sp[14] = 0;                                /* rax */
         sp[15] = 0;                                /* int_no */
         sp[16] = 0;                                /* err_code */
-        sp[17] = elf.entry;                        /* rip = ELF entry */
+        sp[17] = entry;                        /* rip = ELF entry */
         sp[18] = GDT_USER_CODE | 3;                /* cs = user code */
         sp[19] = 0x202;                            /* rflags: IF set */
         sp[20] = user_rsp;                         /* rsp = user stack */
@@ -1299,7 +1300,7 @@ int task_exec(const uint8_t *data, uint64_t size)
 
     /* Allocate PEB in user address space */
     tasks[pid].peb = (void *)peb_alloc_for_task(
-        pid, elf.entry, tasks[pid].name);
+        pid, entry, tasks[pid].name);
 
     /* Allocate TEB for the initial thread (TID 0) */
     {
@@ -1360,7 +1361,7 @@ int task_exec(const uint8_t *data, uint64_t size)
     }
 
     klog(LOG_DEBUG, "sched", "PID %u -> entry %p",
-           (uint64_t)pid, elf.entry);
+           (uint64_t)pid, entry);
 
     return 0;
 }
