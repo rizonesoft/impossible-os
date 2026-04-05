@@ -77,6 +77,8 @@ struct thread {
     uint32_t    parent_task;    /* index into tasks[] (owning task) */
     int32_t     exit_status;    /* exit status (set on THREAD_DEAD) */
     int32_t     join_tid;       /* thread we're waiting on (-1 = none) */
+    /* --- Suspend / resume --- */
+    uint32_t    suspend_count;  /* >0 = suspended (NtSuspendThread/NtResumeThread) */
     /* --- Priority (for priority-aware scheduler and PI) --- */
     uint32_t    priority;       /* current effective priority (may be boosted) */
     uint32_t    base_priority;  /* original priority before any boost */

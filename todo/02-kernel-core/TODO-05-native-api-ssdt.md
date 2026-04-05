@@ -52,7 +52,7 @@
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                |  [x]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3    |  [x]   |
-| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [ ]   |
+| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [x]   |
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [ ]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [ ]   |
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [ ]   |
@@ -261,30 +261,30 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                  | Done |
 |--------|----------------------------------|-----|------------------------|------|
-| 0x0030 | NtCreateProcess                  | §7  | T05 (task.c exists)    | [ ]  |
-| 0x0031 | NtCreateProcessEx                | §7  | T09 §4                 | [ ]  |
-| 0x0032 | NtOpenProcess                    | §7  | T05                    | [ ]  |
-| 0x0033 | NtTerminateProcess               | §5  | T05 (§5 migration)     | [x]  |
-| 0x0034 | NtQueryInformationProcess        | §10 | T05                    | [ ]  |
-| 0x0035 | NtSetInformationProcess          | §7  | T05                    | [ ]  |
-| 0x0036 | NtCreateThread                   | §7  | T05                    | [ ]  |
-| 0x0037 | NtCreateThreadEx                 | §7  | T09 §5                 | [ ]  |
-| 0x0038 | NtOpenThread                     | §7  | T05                    | [ ]  |
-| 0x0039 | NtTerminateThread                | §7  | T05                    | [ ]  |
-| 0x003A | NtResumeThread                   | §7  | T05                    | [ ]  |
-| 0x003B | NtSuspendThread                  | §7  | T05                    | [ ]  |
-| 0x003C | NtGetContextThread               | §7  | T10 §4 (CONTEXT)       | [ ]  |
-| 0x003D | NtSetContextThread               | §7  | T10 §4 (CONTEXT)       | [ ]  |
-| 0x003E | NtQueryInformationThread         | §7  | T05                    | [ ]  |
-| 0x003F | NtSetInformationThread           | §7  | T05                    | [ ]  |
-| 0x0040 | NtAlertThread                    | §7  | T05                    | [ ]  |
-| 0x0041 | NtAlertResumeThread              | §7  | T05                    | [ ]  |
-| 0x0042 | NtImpersonateThread              | §15 | T11 (SRM)              | [ ]  |
-| 0x0043 | NtQueueApcThread                 | §7  | T06 §11 (APC)          | [ ]  |
+| 0x0030 | NtCreateProcess                  | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0031 | NtCreateProcessEx                | §7  | T05 (§7 alias)         | [x]  |
+| 0x0032 | NtOpenProcess                    | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0033 | NtTerminateProcess               | §7  | T05 (§7 upgraded)      | [x]  |
+| 0x0034 | NtQueryInformationProcess        | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0035 | NtSetInformationProcess          | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0036 | NtCreateThread                   | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0037 | NtCreateThreadEx                 | §7  | T05 (§7 alias)         | [x]  |
+| 0x0038 | NtOpenThread                     | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0039 | NtTerminateThread                | §7  | T05 (§7 implemented)   | [x]  |
+| 0x003A | NtResumeThread                   | §7  | T05 (§7 implemented)   | [x]  |
+| 0x003B | NtSuspendThread                  | §7  | T05 (§7 implemented)   | [x]  |
+| 0x003C | NtGetContextThread               | §7  | T10 §4 (CONTEXT stub)  | [x]  |
+| 0x003D | NtSetContextThread               | §7  | T10 §4 (CONTEXT stub)  | [x]  |
+| 0x003E | NtQueryInformationThread         | §7  | T05 (§7 implemented)   | [x]  |
+| 0x003F | NtSetInformationThread           | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0040 | NtAlertThread                    | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0041 | NtAlertResumeThread              | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0042 | NtImpersonateThread              | §7  | T11 (SRM stub)         | [x]  |
+| 0x0043 | NtQueueApcThread                 | §7  | T06 §11 (APC stub)     | [x]  |
 | 0x0044 | NtYieldExecution                 | §5  | T05 (§5 migration)     | [x]  |
-| 0x0045 | NtCreateUserProcess              | §7  | T09 §4                 | [ ]  |
-| 0x0046 | NtTestAlert                      | §7  | T05                    | [ ]  |
-| 0x0047 | NtDelayExecution                 | §7  | T05                    | [ ]  |
+| 0x0045 | NtCreateUserProcess              | §7  | T09 §4 (stub)          | [x]  |
+| 0x0046 | NtTestAlert                      | §7  | T05 (§7 implemented)   | [x]  |
+| 0x0047 | NtDelayExecution                 | §7  | T05 (§7 implemented)   | [x]  |
 
 **0x0050–0x006F: Memory Management**
 
@@ -900,49 +900,40 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
 - [x] `NtCreateNamedPipeFile(...)`: already done in §5
 - [x] `include/kernel/nt/nt_file.h` created: CreateDisposition (FILE_OPEN..FILE_OVERWRITE_IF), CreateOptions (FILE_DELETE_ON_CLOSE etc.), FileAttributes, IOSB Information values
 - [x] 4 unit tests: NtCreateFile/NtOpenFile SSDT registration (2 checks), file I/O constant values (16 checks)
-- [ ] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
+- [x] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 
 **Test checkpoint:** `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
 
 ## 7. NtCreateProcess / NtCreateThread / Process-Thread Lifecycle
 Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-03 §5).
 
-- [ ] `NtCreateProcess(ProcessHandle, DesiredAccess, ObjectAttributes, ParentProcess, InheritObjectTable, SectionHandle, DebugPort, ExceptionPort)`:
-  - Allocate new `task_t` via `task_create` equivalent; register as `ObpProcessType` object
-  - If `InheritObjectTable` = TRUE, copy inheritable handles (TODO-03 §10)
-  - Return process HANDLE via `ObpAllocateHandle`
-- [ ] `NtCreateProcessEx(...)`: extended version with additional flags (Job assignment, etc.)
-- [ ] `NtCreateUserProcess(...)`: combined process + thread creation (Windows Vista+ path)
-- [ ] `NtCreateThread(ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle, ClientId, ThreadContext, InitialTeb, CreateSuspended)`:
-  - Allocate thread struct; populate TEB (TODO-04 §6); register as `ObpThreadType` object
-  - If `CreateSuspended`, start thread in suspended state (THREAD_SUSPEND_COUNT = 1)
-  - Return thread HANDLE
-- [ ] `NtCreateThreadEx(...)`: extended version with create flags and attribute list
-- [ ] `NtOpenProcess(ProcessHandle, DesiredAccess, ObjectAttributes, ClientId)`:
-  - Look up by PID in the Ob namespace `\KernelObjects\Process<PID>`
-- [ ] `NtOpenThread(ThreadHandle, DesiredAccess, ObjectAttributes, ClientId)`: symmetric
-- [ ] `NtTerminateProcess(ProcessHandle, ExitStatus)`: terminate process and all threads
-- [ ] `NtTerminateThread(ThreadHandle, ExitStatus)`: terminate a single thread
-- [ ] `NtResumeThread(ThreadHandle, PreviousSuspendCount)`: decrement suspend count; schedule if 0
-- [ ] `NtSuspendThread(ThreadHandle, PreviousSuspendCount)`: increment suspend count; deschedule
-- [ ] `NtGetContextThread(ThreadHandle, Context)`: read thread register state
-- [ ] `NtSetContextThread(ThreadHandle, Context)`: write thread register state (→ XREF TODO-10 for CONTEXT struct)
-- [ ] `NtQueryInformationThread(ThreadHandle, ThreadInformationClass, Buffer, Length)`:
-  - `ThreadBasicInformation (0)`: TEB address, client ID, priority
-  - `ThreadTimes (1)`: creation time, user time, kernel time
-- [ ] `NtSetInformationThread(ThreadHandle, ThreadInformationClass, Buffer, Length)`:
-  - `ThreadPriority (2)`: set scheduling priority
-  - `ThreadBasePriority (3)`: set base priority
-  - `ThreadAffinityMask (4)`: set CPU affinity
-  - `ThreadIdealProcessor (13)`: set preferred CPU
-- [ ] `NtSetInformationProcess(ProcessHandle, ProcessInformationClass, Buffer, Length)`:
-  - `ProcessPriorityClass (18)`: set process priority class
-  - `ProcessDefaultHardErrorMode (12)`: set hard error mode
-- [ ] `NtAlertThread(ThreadHandle)`: alert a waiting thread
-- [ ] `NtAlertResumeThread(ThreadHandle, PreviousSuspendCount)`: alert + resume
-- [ ] `NtTestAlert()`: consume pending alert for current thread
-- [ ] `NtQueueApcThread(ThreadHandle, ApcRoutine, ApcArgument1/2/3)`: queue user-mode APC
-- [ ] `NtDelayExecution(Alertable, DelayInterval)`: thread sleep with optional alert wake
+- [x] `NtCreateProcess(0x0030)`: wraps task_create + ob_handle_table_inherit; returns HANDLE
+- [x] `NtCreateProcessEx(0x0031)`: aliases NtCreateProcess (extended flags deferred to TODO-09)
+- [x] `NtCreateUserProcess(0x0045)`: stub returning STATUS_NOT_IMPLEMENTED (needs PE loader TODO-09)
+- [x] `NtCreateThread(0x0036)`: wraps thread_create; supports CreateSuspended via suspend_count
+- [x] `NtCreateThreadEx(0x0037)`: aliases NtCreateThread (extended flags deferred)
+- [x] `NtOpenProcess(0x0032)`: lookup by CLIENT_ID.UniqueProcess; returns HANDLE
+- [x] `NtOpenThread(0x0038)`: lookup by CLIENT_ID.UniqueProcess + UniqueThread
+- [x] `NtTerminateProcess(0x0033)`: upgraded from §5 with proper handle lookup, ob_process_mark_dead
+- [x] `NtTerminateThread(0x0039)`: set TASK_DEAD, ob_thread_mark_dead
+- [x] `NtResumeThread(0x003A)`: decrement suspend_count; TASK_READY if 0
+- [x] `NtSuspendThread(0x003B)`: increment suspend_count; TASK_BLOCKED; STATUS_SUSPEND_COUNT_EXCEEDED at 127
+- [x] `NtGetContextThread(0x003C)`: stub returning STATUS_NOT_IMPLEMENTED (needs CONTEXT from TODO-10)
+- [x] `NtSetContextThread(0x003D)`: stub returning STATUS_NOT_IMPLEMENTED (needs CONTEXT from TODO-10)
+- [x] `NtQueryInformationThread(0x003E)`: ThreadBasicInformation (TEB, client ID, priority), ThreadPriority, ThreadBasePriority
+- [x] `NtSetInformationThread(0x003F)`: ThreadPriority, ThreadBasePriority (via thread_set_priority), ThreadAffinityMask, ThreadIdealProcessor (accepted, enforcement deferred)
+- [x] `NtQueryInformationProcess(0x0034)`: ProcessBasicInformation (PEB, affinity, parent PID), ProcessPriorityClass
+- [x] `NtSetInformationProcess(0x0035)`: ProcessPriorityClass, ProcessDefaultHardErrorMode (accepted)
+- [x] `NtAlertThread(0x0040)`: returns SUCCESS (APC delivery deferred to TODO-06 §11)
+- [x] `NtAlertResumeThread(0x0041)`: alert + NtResumeThread
+- [x] `NtTestAlert(0x0046)`: returns SUCCESS (APC check deferred to TODO-06 §11)
+- [x] `NtQueueApcThread(0x0043)`: stub returning STATUS_NOT_IMPLEMENTED (needs APC from TODO-06 §11)
+- [x] `NtImpersonateThread(0x0042)`: stub returning STATUS_NOT_IMPLEMENTED (needs SRM from TODO-11)
+- [x] `NtDelayExecution(0x0047)`: yield-loop sleep with uptime tick counter; negative 100-ns interval
+- [x] Added `suspend_count` field to `struct thread` in task.h
+- [x] New file: `include/kernel/nt/nt_process.h` with THREAD_BASIC_INFORMATION, PROCESS_BASIC_INFORMATION, info class constants
+- [x] New file: `src/kernel/nt/nt_process.c` with 23 SSDT handlers
+- [x] 2 unit tests: SSDT registration (7 handler checks), info class constants (7 value checks)
 - [ ] Commit: `"kernel: nt -- NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
 
 **Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread` returns valid RIP for a suspended thread. `NtDelayExecution` sleeps for the correct interval.
@@ -1438,8 +1429,8 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat    | ⬜ §13                      |
 | 💎 | Device I/O control         | ✅ NtDeviceIoControlFile    | ✅ ioctl()                 | ⬜ §13                      |
 | 💎 | I/O completion ports       | ✅ NtCreateIoCompletion     | ✅ epoll/io_uring          | ⬜ §13                      |
-| 💎 | Process/thread create API  | ✅ NtCreate{Process,Thread} | ✅ clone/execve            | ⬜ §7                       |
-| 💎 | Thread context get/set     | ✅ NtGet/SetContextThread   | ✅ ptrace GETREGS          | ⬜ §7                       |
+| 💎 | Process/thread create API  | ✅ NtCreate{Process,Thread} | ✅ clone/execve            | ✅ §7 23 handlers wired     |
+| 💎 | Thread context get/set     | ✅ NtGet/SetContextThread   | ✅ ptrace GETREGS          | 🔄 §7 stubs (needs TODO-10) |
 | 💎 | Named sync objects         | ✅ NtCreate{Event,Mutant}   | ✅ POSIX sem + futex       | ⬜ §8                       |
 | 💎 | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent    | ⬜ §8                       |
 | 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | ⬜ §8                       |

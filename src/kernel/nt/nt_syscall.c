@@ -409,44 +409,7 @@ read_bad_handle:
     return STATUS_SUCCESS;
 }
 
-/* ---- NtTerminateProcess -------------------------------------------------
- * SSDT 0x0033 -- wraps SYS_EXIT and SYS_KILL logic.
- * a1 = HANDLE (CURRENT_PROCESS or target PID), a2 = NTSTATUS exit code.
- * ----------------------------------------------------------------------- */
-static NTSTATUS NtTerminateProcess(uint64_t a1, uint64_t a2, uint64_t a3,
-                                   uint64_t a4, uint64_t a5, uint64_t a6)
-{
-    HANDLE handle = (HANDLE)(int32_t)a1;
-    NTSTATUS exit_code = (NTSTATUS)(int32_t)a2;
-
-    (void)a3; (void)a4; (void)a5; (void)a6;
-
-    if (handle == CURRENT_PROCESS || handle == 0) {
-        /* Terminate self */
-        task_exit(exit_code);
-        /* task_exit does not return */
-        return STATUS_SUCCESS;
-    }
-
-    /* Terminate another process by PID (handle is PID for now) */
-    {
-        uint32_t pid = (uint32_t)(uint64_t)handle;
-        struct task *t;
-
-        if (pid == 0 || pid >= task_count())
-            return STATUS_INVALID_HANDLE;
-
-        t = task_get_by_pid(pid);
-        if (!t || t->state == TASK_DEAD)
-            return STATUS_INVALID_HANDLE;
-
-        t->state = TASK_DEAD;
-        t->exit_status = (int32_t)exit_code;
-        klog(LOG_DEBUG, "nt", "NtTerminateProcess: PID %u terminated (0x%x)",
-             (uint64_t)pid, (uint64_t)(uint32_t)exit_code);
-        return STATUS_SUCCESS;
-    }
-}
+/* NtTerminateProcess moved to nt_process.c (§7) */
 
 /* ---- NtYieldExecution ---------------------------------------------------
  * SSDT 0x0044 -- wraps SYS_YIELD.
@@ -748,8 +711,7 @@ void nt_syscall_register_ssdt(void)
     ssdt_register(SSDT_NtClose,                 (SSDT_HANDLER)Nt_Close);
     ssdt_register(SSDT_NtWaitForSingleObject,   (SSDT_HANDLER)NtWaitForSingleObject);
 
-    /* Process and thread */
-    ssdt_register(SSDT_NtTerminateProcess,      (SSDT_HANDLER)NtTerminateProcess);
+    /* Process and thread (NtTerminateProcess moved to nt_process.c §7) */
     ssdt_register(SSDT_NtYieldExecution,        (SSDT_HANDLER)NtYieldExecution);
 
     /* System information */

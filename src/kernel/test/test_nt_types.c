@@ -26,6 +26,7 @@
 #include "kernel/mm/user_range.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/nt/nt_file.h"
+#include "kernel/nt/nt_process.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -526,6 +527,70 @@ static void test_nt_file_constants(void)
     TEST_ASSERT_EQ(SSDT_NtOpenFile,   0x0011, "SSDT_NtOpenFile == 0x0011");
 }
 
+/* ---- NT process/thread lifecycle (§7) tests ---- */
+
+static void test_nt_process_ssdt_registered(void)
+{
+    NTSTATUS s;
+
+    /* NtCreateProcess (0x0030) with NULL out -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtCreateProcess, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtCreateProcess SSDT registered (NULL out)");
+
+    /* NtOpenProcess (0x0032) with NULL args -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtOpenProcess, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtOpenProcess SSDT registered (NULL args)");
+
+    /* NtCreateThread (0x0036) with NULL out -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtCreateThread, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtCreateThread SSDT registered (NULL out)");
+
+    /* NtDelayExecution (0x0047) with NULL interval -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtDelayExecution, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtDelayExecution SSDT registered (NULL interval)");
+
+    /* NtGetContextThread (0x003C) -- stub returns NOT_IMPLEMENTED */
+    s = ssdt_dispatch(SSDT_NtGetContextThread, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
+                   "NtGetContextThread stub (needs TODO-10)");
+
+    /* NtQueueApcThread (0x0043) -- stub returns NOT_IMPLEMENTED */
+    s = ssdt_dispatch(SSDT_NtQueueApcThread, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
+                   "NtQueueApcThread stub (needs TODO-06)");
+
+    /* NtTerminateProcess (0x0033) with PID 0 / CURRENT_PROCESS
+     * can't test without killing ourselves, so test with invalid handle */
+    s = ssdt_dispatch(SSDT_NtTerminateProcess, 999, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_HANDLE,
+                   "NtTerminateProcess SSDT registered (bad handle)");
+}
+
+static void test_nt_thread_info_classes(void)
+{
+    /* Verify info class constants match Windows NT convention */
+    TEST_ASSERT_EQ(ThreadBasicInformation, 0, "ThreadBasicInformation == 0");
+    TEST_ASSERT_EQ(ThreadTimes,            1, "ThreadTimes == 1");
+    TEST_ASSERT_EQ(ThreadPriority,         2, "ThreadPriority == 2");
+    TEST_ASSERT_EQ(ThreadBasePriority,     3, "ThreadBasePriority == 3");
+    TEST_ASSERT_EQ(ThreadAffinityMask,     4, "ThreadAffinityMask == 4");
+    TEST_ASSERT_EQ(ProcessBasicInformation, 0, "ProcessBasicInformation == 0");
+    TEST_ASSERT_EQ(ProcessPriorityClass,   18, "ProcessPriorityClass == 18");
+
+    /* NtQueryInformationThread with invalid class -- INVALID_INFO_CLASS */
+    {
+        NTSTATUS s = ssdt_dispatch(SSDT_NtQueryInformationThread,
+                                   CURRENT_THREAD, 0xFF, 0, 0, 0, 0);
+        /* NULL buffer returns INVALID_PARAMETER before class check */
+        TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                    "NtQueryInformationThread is registered");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -563,6 +628,10 @@ void test_register_nt_types(void)
     /* NT file I/O tests (§6) */
     test_suite_register_cat("NT: NtCreateFile/NtOpenFile SSDT", test_nt_create_file_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: file I/O constants", test_nt_file_constants, TEST_CAT_ABI);
+
+    /* NT process/thread lifecycle tests (§7) */
+    test_suite_register_cat("NT: process/thread SSDT registered", test_nt_process_ssdt_registered, TEST_CAT_ABI);
+    test_suite_register_cat("NT: thread info classes", test_nt_thread_info_classes, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
