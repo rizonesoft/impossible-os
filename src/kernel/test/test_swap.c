@@ -19,7 +19,10 @@ static void test_swap_roundtrip(void)
         return;
     }
 
-    uintptr_t test_virt = 0x800000;
+    /* Use a safe test address outside the user ELF range (0x800000-0x900000)
+     * and kernel heap.  0x40000000 (1 GiB) is in the identity-mapped region
+     * and not used by anything. */
+    uintptr_t test_virt = 0x40000000;
     vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW);
 
     uint8_t *page = (uint8_t *)test_virt;
