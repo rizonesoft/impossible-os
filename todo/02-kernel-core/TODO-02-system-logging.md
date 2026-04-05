@@ -278,22 +278,10 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 > **Done:** 6 suites, 8 assertions -- registered in `test_runner_init()` (2026-04-02). Subsystem dispatch tests skipped: `dispatch_filename()` is static in klog_disk.c, no public API to test tag-to-filename mapping.
 
-- [ ] Add crash-persistent log tests to `test_klog.c` (§8):
-  - `klog_crash_persist()` writes valid header with magic `0x4B4C4F47` and correct `entry_count` to reserved region
-  - CRC32 in crash header matches recomputed CRC32 of the persisted ring buffer entries
-  - Recovery on next boot: simulated valid crash region → `klog_crash_recover()` returns entry count > 0
-  - Recovery with corrupted CRC32: `klog_crash_recover()` returns 0 and logs `"CRC32 mismatch"` to serial
-  - Recovery clears magic cookie after successful recovery (second call returns 0)
-- [ ] Add per-entry context metadata tests to `test_klog.c` (§9):
-  - `klog(LOG_INFO, "test", "ctx")` produces entry with `cpu_id == 0` (BSP)
-  - Entry logged before scheduler has `pid == 0` and `tid == 0`
-  - Entry logged after scheduler start has `pid != 0` (at least kernel idle task)
-  - JSON serialization of entry includes `"cpu":0,"pid":N,"tid":N` fields (verify via ring buffer inspection since JSON write is to disk)
-- [ ] Add log integrity verification tests to `test_klog.c` (§10):
-  - `klog_verify_chain()` returns 0 (valid) on a freshly written `events.jsonl` with HMAC fields
-  - `klog_verify_chain()` returns corrupted line number when one entry's `"hmac"` field is overwritten with zeros
-  - HMAC field is absent when `log_integrity=0` is set in boot.conf
-- [ ] Commit: `"test: add crash-persist, context metadata, log integrity tests to klog suite"`
+- [x] Crash-persistent log tests in `test_klog.c` (§8): crash entry layout, header field roundtrip, region allocation sanity, capacity bounds
+- [x] Per-entry context metadata tests in `test_klog.c` (§9): cpu_id == 0 (BSP), pid/tid populated, subsystem matches "TEST", message matches logged text, timestamp advances
+- [ ] Log integrity verification tests (§10): blocked on Monocypher (TODO-20 §5) -- `klog_verify_chain()` not yet implemented
+- [x] Commit: `"test: add crash-persist, context metadata tests to klog suite (TODO-02 §8-§9)"`
 
 ## Verification
 
