@@ -55,6 +55,9 @@
 | 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [ ]   |
 | ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [ ]   |
 | ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [ ]   |
+| 💎  |  15   | Threaded DPC list synchronization                  | §8          |  [ ]   |
+| 💎  |  16   | KeFlushQueuedDpcs threaded DPC completion           | §8, §15     |  [ ]   |
+| 💎  |  17   | Per-CPU threaded DPC worker affinity                | §8, §15     |  [ ]   |
 
 > 💎 = parity -- core IRQL, DPC, and APC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq/signal split.
 > ⭐ = exclusive -- Impossible OS adds explicit diagnostics and fairness controls as first-class kernel guarantees.
@@ -248,6 +251,48 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 - [ ] Commit: `"kernel: sched -- add DPC/APC budget fairness and watchdog"`
 
 **Test checkpoint:** DPC callback sleeping for 200us triggers `DPC_WATCHDOG_VIOLATION` warning in serial log (threshold 100us). DPC queue depth > 64 for > 5 ticks triggers depth warning. `HighImportance` DPC runs before `LowImportance` during budget-limited drain. APC starvation watchdog fires when kernel APC queue depth > threshold on test thread. Tuning constants in `include/kernel/sched/dpc_config.h`.
+
+---
+
+## 15. Threaded DPC List Synchronization
+
+> [!WARNING]
+> **Codex adversarial review finding (high).** `drain_queue()` in ISR context prepends threaded DPCs onto `threaded_head[cpu_id]` while the worker thread concurrently reads and rewrites the same pointer. The list is plain shared state with no lock -- a race can lose queued DPCs or corrupt the list under SMP load.
+
+- [ ] Replace raw `threaded_head[cpu_id]` manipulation with `atomic_exchange`: ISR producer atomically swaps head to NULL, worker drains the snapshot
+- [ ] Alternative: protect `threaded_head[]` with per-CPU spinlock (same as `queue_locks[]`)
+- [ ] Verify: stress test with concurrent threaded DPC insertions from multiple ISRs on different CPUs
+- [ ] Commit: `"kernel: fix threaded DPC list race -- atomic handoff between ISR and worker"`
+
+**Test checkpoint:** Run with 2+ CPUs, fire threaded DPCs from both LAPIC and PIT ISRs simultaneously. No lost callbacks, no list corruption. Serial log shows all threaded DPC completions.
+
+**Regression risk:** Changing the handoff pattern affects every threaded DPC consumer. Rollback: revert to single-CPU threaded DPC model (BSP-only).
+
+## 16. KeFlushQueuedDpcs Threaded DPC Completion
+
+> [!WARNING]
+> **Codex adversarial review finding (high).** `KeFlushQueuedDpcs()` only waits for normal DPC queue drain -- it does not wait for `threaded_head[]` or in-flight threaded DPC callbacks. A driver teardown calling `KeFlushQueuedDpcs()` can free state while a threaded DPC is still executing, causing use-after-free.
+
+- [ ] Extend `KeFlushQueuedDpcs()` to also spin-wait on `threaded_pending[cpu_id] == 0` for all CPUs
+- [ ] Add an `in_flight_threaded` counter per CPU: incremented before threaded DPC callback, decremented after; flush waits for zero
+- [ ] Alternatively: add `KeFlushQueuedDpcsEx(FLUSH_THREADED)` for callers that need threaded DPC quiesce
+- [ ] Commit: `"kernel: KeFlushQueuedDpcs waits for threaded DPC completion"`
+
+**Test checkpoint:** Queue a threaded DPC, call `KeFlushQueuedDpcs()` from another thread, verify flush blocks until callback completes. Free the DPC object after flush -- no crash.
+
+## 17. Per-CPU Threaded DPC Worker Affinity
+
+> [!NOTE]
+> **Codex adversarial review finding (medium).** The current single worker thread drains all CPUs' threaded queues from whichever CPU the scheduler assigns it. Threaded DPCs targeted at a specific CPU may execute on the wrong core, breaking callbacks that rely on `smp_this_cpu()` or per-CPU device state.
+
+- [ ] Option A: Create one worker thread per online CPU with CPU affinity (`task_set_affinity(pid, cpu_mask)`)
+- [ ] Option B: Document that threaded DPCs have no CPU affinity guarantee (PASSIVE_LEVEL, any-CPU execution) and forbid per-CPU assumptions in threaded DPC callbacks
+- [ ] Option C: Route all threaded DPCs to a global queue (not per-CPU) with a pool of N worker threads
+- [ ] Evaluate: Windows NT threaded DPCs run on the target CPU's thread -- Option A is the correct parity choice
+- [ ] Prerequisite: `task_set_affinity()` does not exist yet (-> XREF: `TODO-09-process-model-extensions.md`)
+- [ ] Commit: `"kernel: per-CPU threaded DPC workers with affinity"`
+
+**Test checkpoint:** Queue threaded DPC targeting CPU 1. Verify callback's `smp_this_cpu()->cpu_id == 1`. Verify BSP-targeted threaded DPC runs on CPU 0.
 
 ---
 
