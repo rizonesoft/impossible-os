@@ -7,6 +7,7 @@
 
 #include "kernel/ob/handle_table.h"
 #include "kernel/ob/ob.h"
+#include "kernel/ob/ob_callback.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
@@ -102,10 +103,18 @@ HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
     if (!table->entries || !object)
         return INVALID_HANDLE_VALUE;
 
+    /* Object callbacks (S13): pre-callbacks can strip access bits or deny.
+     * Runs before the security check so callbacks filter first. */
+    hdr = OB_HEADER_FROM_BODY(object);
+    if (hdr->type) {
+        if (ob_invoke_pre_callbacks(OB_OPERATION_HANDLE_CREATE,
+                                    object, hdr->type, &access) != 0)
+            return INVALID_HANDLE_VALUE;  /* callback denied */
+    }
+
     /* Security check hook: if the object has an SD and the type provides
      * an on_open callback, call it to validate access.  Full SeAccessCheck
-     * enforcement is wired in TODO-11 §5; this is the structural hook. */
-    hdr = OB_HEADER_FROM_BODY(object);
+     * enforcement is wired in TODO-11 S5; this is the structural hook. */
     if (hdr->security && hdr->type && hdr->type->on_open) {
         if (hdr->type->on_open(object, access) != 0)
             return INVALID_HANDLE_VALUE;  /* access denied */
@@ -141,6 +150,11 @@ found:
         if ((uint32_t)cur > mtype->peak_handles)
             mtype->peak_handles = (uint32_t)cur;
     }
+
+    /* Object callbacks (S13): post-callbacks with granted access */
+    if (hdr->type)
+        ob_invoke_post_callbacks(OB_OPERATION_HANDLE_CREATE,
+                                 object, hdr->type, access);
 
     return (HANDLE)(i * 4);
 }

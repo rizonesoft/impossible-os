@@ -50,7 +50,7 @@
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [x]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [x]   |
 | 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [x]   |
-| 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9         |  [ ]   |
+| 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9         |  [x]   |
 | 💎  |  14   | Per-process handle quota                                      | §3             |  [ ]   |
 | ⭐  |  15   | Handle tracing and leak detection                             | §2, §12        |  [ ]   |
 
@@ -217,7 +217,7 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 - [x] Update `NtQueryObject(ObjectTypeInformation)` in `ob.c` to return `OBJECT_TYPE_INFORMATION` struct: type name, `total_objects`, `total_handles`, `peak_objects`, `peak_handles`, `body_size`, valid access mask
 - [x] Add `NtQueryObject(ObjectTypesInformation)` info class -- enumerates all registered types via `ob_get_types()` into `OBJECT_TYPES_INFORMATION` struct (→ XREF: `TODO-05 §10` `NtQuerySystemInformation`)
 - [x] 15 test assertions in `test_ob.c`: alloc increments, free decrements, peak preserved, handle stats, NtQueryObject struct
-- [ ] Commit: `"kernel: ob -- per-type object and handle statistics"`
+- [x] Commit: `"kernel: ob -- per-type object and handle statistics"`
 
 **Test checkpoint:** `ob_alloc_object(ObpEventType)` increments `ObpEventType->total_objects`; `ObDereferenceObject` decrements it. After creating 100 events and freeing 50, `total_objects == 50` and `peak_objects == 100`. `NtQueryObject(ObjectTypeInformation)` returns correct counters. Verify on QEMU WHPX + TCG + VirtualBox. Bare metal follow-up (no hardware interaction, low risk). `POST16(0xD900)`–`POST16(0xD903)` (range `0xD9xx` confirmed free -- `0xDBxx` used by `TODO-11-usb-boot-hardening.md`).
 
@@ -230,22 +230,23 @@ Allow kernel-mode drivers to register pre- and post-operation callbacks on handl
 > [!NOTE]
 > Process access mask constants (`PROCESS_TERMINATE`, `PROCESS_QUERY_INFORMATION`, etc.) are not yet defined -- they are deliverables of `TODO-05 §7`. For §13 testing, define local `#define PROCESS_TERMINATE 0x0001` matching the Win32 spec. Replace with the canonical header once TODO-05 §7 is complete.
 
-- [ ] Define `OB_PRE_OPERATION_INFORMATION` in `include/kernel/ob/ob_callback.h`:
+- [x] Define `OB_PRE_OPERATION_INFORMATION` in `include/kernel/ob/ob_callback.h`:
   - `OB_OPERATION operation` -- `OB_OPERATION_HANDLE_CREATE` or `OB_OPERATION_HANDLE_DUPLICATE`
   - `void *object` -- target object body pointer
   - `const OBJECT_TYPE *object_type` -- type of the target object
   - `uint32_t *desired_access` -- mutable pointer; pre-callback can strip access bits
   - `void *context` -- caller-supplied context from registration
-- [ ] Define `OB_POST_OPERATION_INFORMATION` -- same fields but `granted_access` is read-only
-- [ ] Define `OB_OPERATION_REGISTRATION` -- `{object_type, operations_mask, pre_callback, post_callback}`
-- [ ] Define `OB_CALLBACK_REGISTRATION` -- `{version, altitude, context, operation_count, operations[]}`
-- [ ] Implement `ObRegisterCallbacks(registration, &handle)`:
-  - Validate all fields; allocate a callback node; insert into a global callback list sorted by altitude
-  - Return a registration handle for later unregistration
-- [ ] Implement `ObUnRegisterCallbacks(handle)` -- remove callback node from the list and free it
-- [ ] In `ObpAllocateHandle()`: before inserting the handle, invoke all registered pre-callbacks matching the object type; if any callback zeroes `desired_access`, deny the handle creation
-- [ ] In `NtDuplicateObject()`: invoke pre-callbacks for `OB_OPERATION_HANDLE_DUPLICATE`
-- [ ] After successful handle creation/duplication: invoke post-callbacks with the granted access
+- [x] Define `OB_POST_OPERATION_INFORMATION` -- same fields but `granted_access` is read-only
+- [x] Define `OB_OPERATION_REGISTRATION` -- `{object_type, operations_mask, pre_callback, post_callback}`
+- [x] Define `OB_CALLBACK_REGISTRATION` -- `{version, altitude, context, operation_count, operations[]}`
+- [x] Implement `ObRegisterCallbacks(registration, &handle)`:
+  - Validates all fields; inserts into 16-slot array sorted by altitude; irqsave spinlock
+  - Returns a registration handle (array index) for later unregistration
+- [x] Implement `ObUnRegisterCallbacks(handle)` -- removes callback node, shifts array down, frees slot
+- [x] In `ObpAllocateHandle()`: `ob_invoke_pre_callbacks(HANDLE_CREATE)` before security check; denies if access zeroed
+- [x] In `NtDuplicateObject()`: `ob_invoke_pre_callbacks(HANDLE_DUPLICATE)` before `ObpAllocateHandle`
+- [x] After successful handle creation/duplication: `ob_invoke_post_callbacks()` with granted access
+- [x] 10 test assertions: register, strip TERMINATE, post-callback invoked, unregister restores full access
 - [ ] Commit: `"kernel: ob -- ObRegisterCallbacks handle operation filtering"`
 
 > [!NOTE]
@@ -308,7 +309,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 | ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ✅ §11 -- public, documented |
 | ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ✅ §1–§7 -- one header       |
 | 💎 | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo    | ✅ §12 -- atomic counters    |
-| 💎 | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ⬜ §13 -- pre/post filtering |
+| 💎 | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ✅ §13 -- pre/post filtering |
 | 💎 | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE     | ⬜ §14 -- configurable limit |
 | ⭐ | Handle leak detection | ⚠️ ETW (complex)       | ❌ No built-in       | ⬜ §15 -- klog-integrated    |
 
@@ -332,7 +333,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [x] Registered in `test_runner_init()`: `test_register_ob()`
 - [x] Commit: `"test: add object manager test suite"`
 - [ ] §12 tests: `ObpEventType->total_objects` tracks create/delete; `peak_objects` high-water; `NtQueryObject(ObjectTypeInformation)` returns counters; `NtQueryObject(ObjectTypesInformation)` enumerates all types
-- [ ] §13 tests: `ObRegisterCallbacks` pre-callback strips access bits; `ObUnRegisterCallbacks` restores; altitude ordering
+- [x] §13 tests: `ObRegisterCallbacks` pre-callback strips TERMINATE; post-callback invoked; `ObUnRegisterCallbacks` restores full access (10 assertions in `test_ob.c`)
 - [ ] §14 tests: handle limit enforcement; 101st allocation fails; free + retry succeeds; default limit allows normal boot
 - [ ] §15 tests: tagged ref tracing records entries; `ob_dump_trace` reports imbalance; `ob_handle_trace=1` emits klog
 

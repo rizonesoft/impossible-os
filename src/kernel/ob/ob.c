@@ -5,6 +5,7 @@
  * ============================================================================ */
 
 #include "kernel/ob/ob.h"
+#include "kernel/ob/ob_callback.h"
 #include "kernel/ob/ob_ns.h"
 #include "kernel/ob/ob_file.h"
 #include "kernel/ob/ob_process.h"
@@ -251,11 +252,31 @@ int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
     access = (options & DUPLICATE_SAME_ACCESS)
            ? entry->granted_access : desired_access;
 
+    /* Object callbacks (S13): pre-callbacks for HANDLE_DUPLICATE.
+     * Callbacks may strip access bits; if zeroed, deny the duplicate. */
+    {
+        OBJECT_HEADER *dup_hdr = OB_HEADER_FROM_BODY(entry->object);
+        if (dup_hdr->type) {
+            if (ob_invoke_pre_callbacks(OB_OPERATION_HANDLE_DUPLICATE,
+                                        entry->object, dup_hdr->type,
+                                        &access) != 0)
+                return -1;
+        }
+    }
+
     new_h = ObpAllocateHandle(dst_ht, entry->object, access, attrs);
     if (new_h == INVALID_HANDLE_VALUE)
         return -1;
 
     *dst_handle = new_h;
+
+    /* Object callbacks (S13): post-callbacks for HANDLE_DUPLICATE */
+    {
+        OBJECT_HEADER *dup_hdr = OB_HEADER_FROM_BODY(entry->object);
+        if (dup_hdr->type)
+            ob_invoke_post_callbacks(OB_OPERATION_HANDLE_DUPLICATE,
+                                     entry->object, dup_hdr->type, access);
+    }
 
     if (options & DUPLICATE_CLOSE_SOURCE)
         ObpFreeHandle(src_ht, src_handle);

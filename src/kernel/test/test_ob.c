@@ -13,6 +13,7 @@
 #include "kernel/atomic.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_type.h"
+#include "kernel/ob/ob_callback.h"
 #include "kernel/ob/ob_ns.h"
 #include "kernel/ob/handle_table.h"
 
@@ -250,6 +251,98 @@ static void test_ob_type_stats(void)
     ObDereferenceObject(o2);
 }
 
+/* ---- Object callbacks -- handle operation filtering (S13) ---- */
+
+/* Local test constant matching Win32 spec (TODO-05 S7 will define canonical) */
+#define TEST_PROCESS_TERMINATE  0x0001
+
+static void test_pre_strip_terminate(OB_PRE_OPERATION_INFORMATION *info)
+{
+    /* Strip PROCESS_TERMINATE from desired_access */
+    *info->desired_access &= ~TEST_PROCESS_TERMINATE;
+}
+
+static volatile uint32_t g_post_cb_called = 0;
+static volatile uint32_t g_post_cb_granted = 0;
+
+static void test_post_record(OB_POST_OPERATION_INFORMATION *info)
+{
+    g_post_cb_called++;
+    g_post_cb_granted = info->granted_access;
+}
+
+static void test_ob_callbacks(void)
+{
+    /* Create a type for callback testing */
+    static const OBJECT_TYPE cb_tmpl = {
+        .name      = "CbTest",
+        .body_size = 16,
+        .on_close  = (void *)0,
+        .on_delete = (void *)0,
+        .on_open   = (void *)0,
+        .on_parse  = (void *)0,
+    };
+    const OBJECT_TYPE *ctype = ob_create_type(&cb_tmpl);
+    TEST_ASSERT(ctype != (void *)0, "ob_create_type for callback test");
+
+    /* Register a pre-callback that strips PROCESS_TERMINATE */
+    OB_CALLBACK_REGISTRATION reg;
+    reg.version = OB_CALLBACK_VERSION;
+    reg.operation_count = 1;
+    reg.altitude = 100;
+    reg.context = (void *)0;
+    reg.operations[0].object_type  = ctype;
+    reg.operations[0].operations   = (uint32_t)OB_OPERATION_HANDLE_CREATE;
+    reg.operations[0].pre_callback = test_pre_strip_terminate;
+    reg.operations[0].post_callback = test_post_record;
+
+    OB_CALLBACK_HANDLE cbh = OB_INVALID_CALLBACK_HANDLE;
+    int rc = ObRegisterCallbacks(&reg, &cbh);
+    TEST_ASSERT(rc == 0, "ObRegisterCallbacks succeeds");
+    TEST_ASSERT(cbh != OB_INVALID_CALLBACK_HANDLE, "callback handle is valid");
+
+    /* Allocate an object and create a handle with PROCESS_TERMINATE set */
+    void *obj = ob_alloc_object(ctype);
+    TEST_ASSERT(obj != (void *)0, "alloc object for callback test");
+
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+    g_post_cb_called = 0;
+    g_post_cb_granted = 0;
+
+    uint32_t requested = 0x1F0FFF;  /* includes PROCESS_TERMINATE bit */
+    HANDLE h = ObpAllocateHandle(&ht, obj, requested, 0);
+    TEST_ASSERT(h >= 0, "handle allocated with callback active");
+
+    /* Verify pre-callback stripped TERMINATE -- check granted_access in handle table */
+    HANDLE_TABLE_ENTRY *entry = ObpLookupHandle(&ht, h);
+    TEST_ASSERT(entry != (void *)0, "handle lookup succeeds");
+    TEST_ASSERT((entry->granted_access & TEST_PROCESS_TERMINATE) == 0,
+                "pre-callback stripped PROCESS_TERMINATE from granted access");
+
+    /* Verify post-callback was invoked */
+    TEST_ASSERT_EQ(g_post_cb_called, 1, "post-callback invoked once");
+    TEST_ASSERT((g_post_cb_granted & TEST_PROCESS_TERMINATE) == 0,
+                "post-callback sees stripped access");
+
+    /* Unregister and verify full access is restored */
+    ObUnRegisterCallbacks(cbh);
+
+    g_post_cb_called = 0;
+    HANDLE h2 = ObpAllocateHandle(&ht, obj, requested, 0);
+    TEST_ASSERT(h2 >= 0, "handle allocated after unregister");
+    entry = ObpLookupHandle(&ht, h2);
+    TEST_ASSERT((entry->granted_access & TEST_PROCESS_TERMINATE) != 0,
+                "full access restored after unregister -- TERMINATE present");
+    TEST_ASSERT_EQ(g_post_cb_called, 0,
+                   "post-callback NOT invoked after unregister");
+
+    /* Cleanup */
+    ObpFreeHandle(&ht, h);
+    ObpFreeHandle(&ht, h2);
+    ObDereferenceObject(obj);
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -262,6 +355,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: handle inherit", test_ob_handle_inherit, TEST_CAT_OB);
     test_suite_register_cat("OB: query directory", test_ob_query_directory, TEST_CAT_OB);
     test_suite_register_cat("OB: type stats", test_ob_type_stats, TEST_CAT_OB);
+    test_suite_register_cat("OB: callbacks", test_ob_callbacks, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */
