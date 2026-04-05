@@ -636,6 +636,12 @@ void boot_phase2(void)
         kusd_init();
     }
 
+    /* --- ACPI power init: S-state discovery (S1/S3/S4) --- */
+    {
+        extern void acpi_power_init(void);
+        acpi_power_init();
+    }
+
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE2] complete -- VFS, registry, SMP, network ready");
 

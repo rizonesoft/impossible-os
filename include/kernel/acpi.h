@@ -184,6 +184,16 @@ struct cpu_info {
  * Returns 0 on success, -1 if ACPI tables not found. */
 int  acpi_init(void);
 
+/* Phase 2: parse \_S1_, \_S3_, \_S4_ sleep objects from DSDT.
+ * Call after acpi_init() (Phase 1) has located the DSDT. */
+void acpi_power_init(void);
+
+/* Returns 1 if sleep state N (1, 3, 4, or 5) is supported by the firmware. */
+int acpi_sleep_supported(uint8_t state);
+
+/* Get the SLP_TYPa value for a sleep state. Returns 0xFFFF if not supported. */
+uint16_t acpi_get_slp_typa(uint8_t state);
+
 /* Power off the machine via ACPI S5 sleep state.
  * Falls back to QEMU-specific port if FADT is unavailable.
  * Does not return on success. */

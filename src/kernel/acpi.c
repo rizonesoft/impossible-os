@@ -56,6 +56,13 @@ static const struct acpi_fadt *fadt_ptr = (const struct acpi_fadt *)0;
 static uint16_t pm1a_cnt_port = 0;
 static uint16_t slp_typa = 0;       /* S5 sleep type value */
 static uint8_t  acpi_ready = 0;
+
+/* Sleep type values for S1-S4 (parsed from DSDT \_Sx_ objects) */
+#define ACPI_SLP_TYPE_INVALID 0xFFFF
+static uint16_t slp_typa_s1 = ACPI_SLP_TYPE_INVALID;
+static uint16_t slp_typa_s3 = ACPI_SLP_TYPE_INVALID;
+static uint16_t slp_typa_s4 = ACPI_SLP_TYPE_INVALID;
+static const struct acpi_sdt_header *s_dsdt_hdr;  /* cached for acpi_power_init */
 static uint8_t  pcat_compat = 1;    /* MADT bit 0: 1=legacy PIC present, 0=APIC-only */
 
 /* ---- SMP discovery state ---- */
@@ -155,30 +162,29 @@ static const struct acpi_sdt_header *find_acpi_table(
     return find_table_rsdt(rsdt, sig);
 }
 
-/* Parse \_S5 object from the DSDT to extract SLP_TYPa.
+/* Parse \_Sx_ object from the DSDT to extract SLP_TYPa.
  *
- * The \_S5 object in the DSDT AML bytecode contains the sleep type values.
- * We search for the byte pattern:  '_' 'S' '5' '_' followed by a package
- * encoding.  This is a simplified parser that works on QEMU, Bochs, and
- * most real BIOS implementations.
+ * The \_Sx_ object in the DSDT AML bytecode contains the sleep type values.
+ * We search for the byte pattern:  '_' 'S' <digit> '_' followed by a package
+ * encoding. Works on QEMU, Bochs, VirtualBox, and most real firmware.
  *
- * AML encoding of \_S5:
- *   NameOp (0x08) + '_S5_' + PackageOp (0x12) + PkgLength + NumElements
+ * AML encoding of \_Sx_:
+ *   NameOp (0x08) + '_Sx_' + PackageOp (0x12) + PkgLength + NumElements
  *   + BytePrefix (0x0A) + SLP_TYPa + ...
+ *
+ * Returns SLP_TYPa value, or ACPI_SLP_TYPE_INVALID if not found.
  */
-static uint16_t parse_s5_from_dsdt(const struct acpi_sdt_header *dsdt)
+static uint16_t parse_sleep_type(const struct acpi_sdt_header *dsdt,
+                                  char state_digit)
 {
     const uint8_t *data = (const uint8_t *)dsdt;
     uint32_t length = dsdt->length;
     uint32_t i;
 
     for (i = sizeof(struct acpi_sdt_header); i + 4 < length; i++) {
-        /* Look for "_S5_" */
         if (data[i] == '_' && data[i + 1] == 'S' &&
-            data[i + 2] == '5' && data[i + 3] == '_') {
+            data[i + 2] == (uint8_t)state_digit && data[i + 3] == '_') {
 
-            /* Verify it's preceded by a NameOp (0x08) or is part of a scope */
-            /* Skip to the package data after "_S5_" */
             i += 4;
 
             /* Expect PackageOp (0x12) */
@@ -198,24 +204,28 @@ static uint16_t parse_s5_from_dsdt(const struct acpi_sdt_header *dsdt)
                 continue;
             i++;
 
-            /* Now we should be at the first element: SLP_TYPa */
+            /* First element: SLP_TYPa */
             if (i >= length)
                 continue;
 
             if (data[i] == 0x0A) {
-                /* BytePrefix -- next byte is the value */
                 i++;
                 if (i >= length) continue;
                 return (uint16_t)data[i];
             } else {
-                /* Direct byte value (some BIOSes omit the prefix) */
                 return (uint16_t)data[i];
             }
         }
     }
 
-    /* Default: QEMU uses SLP_TYPa = 0 for S5 */
-    return 0;
+    return ACPI_SLP_TYPE_INVALID;
+}
+
+/* Legacy wrapper for S5 -- returns 0 as default (QEMU compatible) */
+static uint16_t parse_s5_from_dsdt(const struct acpi_sdt_header *dsdt)
+{
+    uint16_t val = parse_sleep_type(dsdt, '5');
+    return (val == ACPI_SLP_TYPE_INVALID) ? 0 : val;
 }
 
 /* ---- MADT parsing ---- */
@@ -425,6 +435,7 @@ int acpi_init(void)
 
     /* Parse DSDT for \_S5 sleep type */
     dsdt_hdr = (const struct acpi_sdt_header *)(uintptr_t)fadt->dsdt;
+    s_dsdt_hdr = dsdt_hdr;  /* cache for acpi_power_init() */
     if (dsdt_hdr && sig_match(dsdt_hdr->signature, "DSDT")) {
         slp_typa = parse_s5_from_dsdt(dsdt_hdr);
     }
@@ -468,6 +479,51 @@ int acpi_init(void)
     }
 
     return 0;
+}
+
+/* ---- Power init (Phase 2) -- S-state discovery -------------------------- */
+
+void acpi_power_init(void)
+{
+    if (!s_dsdt_hdr || !sig_match(s_dsdt_hdr->signature, "DSDT")) {
+        klog(LOG_WARN, "acpi", "ACPI power: no DSDT -- S1/S3/S4 unavailable");
+        return;
+    }
+
+    slp_typa_s1 = parse_sleep_type(s_dsdt_hdr, '1');
+    slp_typa_s3 = parse_sleep_type(s_dsdt_hdr, '3');
+    slp_typa_s4 = parse_sleep_type(s_dsdt_hdr, '4');
+
+    klog(LOG_INFO, "acpi", "Sleep states: S1=%s S3=%s S4=%s S5=yes",
+         slp_typa_s1 != ACPI_SLP_TYPE_INVALID ? "yes" : "no",
+         slp_typa_s3 != ACPI_SLP_TYPE_INVALID ? "yes" : "no",
+         slp_typa_s4 != ACPI_SLP_TYPE_INVALID ? "yes" : "no");
+
+    if (slp_typa_s3 != ACPI_SLP_TYPE_INVALID)
+        klog(LOG_INFO, "acpi", "S3 suspend-to-RAM: SLP_TYPa=%u",
+             (uint64_t)slp_typa_s3);
+}
+
+int acpi_sleep_supported(uint8_t state)
+{
+    switch (state) {
+    case 1: return slp_typa_s1 != ACPI_SLP_TYPE_INVALID;
+    case 3: return slp_typa_s3 != ACPI_SLP_TYPE_INVALID;
+    case 4: return slp_typa_s4 != ACPI_SLP_TYPE_INVALID;
+    case 5: return 1;  /* S5 always supported (shutdown) */
+    default: return 0;
+    }
+}
+
+uint16_t acpi_get_slp_typa(uint8_t state)
+{
+    switch (state) {
+    case 1: return slp_typa_s1;
+    case 3: return slp_typa_s3;
+    case 4: return slp_typa_s4;
+    case 5: return slp_typa;
+    default: return ACPI_SLP_TYPE_INVALID;
+    }
 }
 
 void acpi_shutdown(void)

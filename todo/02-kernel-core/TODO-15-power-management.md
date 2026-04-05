@@ -104,16 +104,12 @@
 
 ### 1.1 Sleep type values for S1–S4
 
-- [ ] Consolidate ACPI init: split into `acpi_platform_init()` (Phase 1: MADT/FADT parsing, existing) and `acpi_power_init()` (Phase 2: S-state discovery, new) -- moved from TODO-01 §8
-- [ ] Extend `src/kernel/acpi.c` to parse `\_S1_`, `\_S3_`, and `\_S4_` AML objects using the same pattern as the existing `\_S5_` parser:
-  ```c
-  static uint16_t slp_typa_s1 = ACPI_SLP_TYPE_INVALID;
-  static uint16_t slp_typa_s3 = ACPI_SLP_TYPE_INVALID;
-  static uint16_t slp_typa_s4 = ACPI_SLP_TYPE_INVALID;
-  #define ACPI_SLP_TYPE_INVALID 0xFFFF
-  ```
-- [ ] `acpi_parse_sleep_objects()` -- scan DSDT bytecode for `"_S1_"`, `"_S3_"`, `"_S4_"` name operations; extract `SLP_TYPa`/`SLP_TYPb` byte values from the Package; called from `acpi_init()` after DSDT is located
-- [ ] `acpi_sleep_supported(n)` -- returns `true` if `slp_typa_sN != ACPI_SLP_TYPE_INVALID`; used by the power manager to populate the list of available sleep states
+- [x] `acpi_power_init()` added (Phase 2): parses `\_S1_`, `\_S3_`, `\_S4_` from DSDT using generalized `parse_sleep_type()` (refactored from `parse_s5_from_dsdt`)
+- [x] `slp_typa_s1/s3/s4` with `ACPI_SLP_TYPE_INVALID = 0xFFFF` sentinel
+- [x] `acpi_sleep_supported(n)` -- returns 1 if sleep state N has a valid SLP_TYPa
+- [x] `acpi_get_slp_typa(n)` -- returns the SLP_TYPa value for sleep state N
+- [x] Wired into Phase 2 boot (`boot_storage.c`) after time subsystem init
+- [x] Serial log: `"Sleep states: S1=yes/no S3=yes/no S4=yes/no S5=yes"`
 
 ### 1.2 PM1 sleep entry
 
