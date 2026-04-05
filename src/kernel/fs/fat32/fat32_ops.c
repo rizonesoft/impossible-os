@@ -861,3 +861,21 @@ struct vfs_node *fat32_get_root(struct fat32_volume *vol)
         return (struct vfs_node *)0;
     return &vol->root_file.node;
 }
+
+uint64_t fat32_get_free_bytes(struct fat32_volume *vol)
+{
+    if (!vol)
+        return 0;
+    uint32_t free_cl = vol->fsinfo_free_count;
+    if (free_cl == 0xFFFFFFFF)  /* FSINFO_UNKNOWN */
+        free_cl = fat32_count_free_clusters(vol);
+    return (uint64_t)free_cl * vol->bpb.sectors_per_cluster * 512;
+}
+
+struct fat32_volume *fat32_volume_from_root(struct vfs_node *root)
+{
+    if (!root || !root->fs_data)
+        return (struct fat32_volume *)0;
+    struct fat32_file *ff = (struct fat32_file *)root->fs_data;
+    return ff->volume;
+}

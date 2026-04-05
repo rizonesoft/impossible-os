@@ -16,6 +16,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/mmap.h"
 #include "kernel/fs/vfs.h"
+#include "kernel/fs/fat32.h"
 #include "kernel/fs/partition.h"
 #include "kernel/smp.h"
 #include "kernel/boot_splash.h"
@@ -222,6 +223,123 @@ void boot_phase2(void)
                 if (vfs_create(bb_dirs[d], VFS_DIRECTORY) == 0)
                     klog(LOG_INFO, "boot", "BlackBox: created %s",
                          bb_dirs[d]);
+            }
+        }
+    }
+
+    /* --- BlackBox disk space management --- */
+    if (vfs_is_mounted('X')) {
+        struct vfs_node *x_root = vfs_get_drive_root('X');
+        struct fat32_volume *bb_vol = x_root ?
+            fat32_volume_from_root(x_root) : (struct fat32_volume *)0;
+
+        if (bb_vol) {
+            uint64_t free_bytes = fat32_get_free_bytes(bb_vol);
+            uint64_t total_bytes = 128ULL * 1024 * 1024;  /* 128 MiB partition */
+            uint32_t pct = (uint32_t)((free_bytes * 100) / total_bytes);
+
+            klog(LOG_INFO, "boot", "BlackBox: %u MiB free (%u%%)",
+                 (uint32_t)(free_bytes / (1024 * 1024)), (uint64_t)pct);
+
+            /* Cleanup if < 10% free */
+            if (pct < 10) {
+                uint32_t deleted = 0;
+                uint32_t max_sessions = 10;  /* TODO: registry HKLM\SYSTEM\BlackBox\MaxBootSessions */
+                struct vfs_node *boot_dir;
+
+                /* Delete oldest files in Boot\ beyond max_sessions */
+                boot_dir = vfs_open("X:\\Boot", VFS_O_READ);
+                if (boot_dir) {
+                    uint32_t file_count = 0;
+                    struct vfs_dirent *de;
+                    uint32_t idx = 0;
+
+                    /* Count files */
+                    while ((de = vfs_readdir(boot_dir, idx++)) != 0)
+                        if (de->type == VFS_FILE) file_count++;
+
+                    /* Delete oldest if over limit */
+                    if (file_count > max_sessions) {
+                        idx = 0;
+                        while ((de = vfs_readdir(boot_dir, idx)) != 0
+                               && file_count > max_sessions) {
+                            if (de->type == VFS_FILE) {
+                                char path[64];
+                                int p = 0, j;
+                                const char *pfx = "X:\\Boot\\";
+                                for (j = 0; pfx[j]; j++) path[p++] = pfx[j];
+                                for (j = 0; de->name[j] && p < 60; j++)
+                                    path[p++] = de->name[j];
+                                path[p] = '\0';
+                                if (vfs_unlink(path) == 0) {
+                                    deleted++;
+                                    file_count--;
+                                    continue;  /* re-read same index */
+                                }
+                            }
+                            idx++;
+                        }
+                    }
+                    vfs_close(boot_dir);
+                }
+
+                /* Delete rotated logs (.1, .2, .3) in Logs\ */
+                {
+                    struct vfs_node *logs_dir = vfs_open("X:\\Logs", VFS_O_READ);
+                    if (logs_dir) {
+                        uint32_t idx2 = 0;
+                        struct vfs_dirent *de2;
+                        while ((de2 = vfs_readdir(logs_dir, idx2)) != 0) {
+                            /* Match *.N pattern (rotated files) */
+                            int len = 0;
+                            while (de2->name[len]) len++;
+                            if (len >= 2 && de2->name[len-2] == '.'
+                                && de2->name[len-1] >= '1'
+                                && de2->name[len-1] <= '9') {
+                                char path[64];
+                                int p = 0, j;
+                                const char *pfx = "X:\\Logs\\";
+                                for (j = 0; pfx[j]; j++) path[p++] = pfx[j];
+                                for (j = 0; de2->name[j] && p < 60; j++)
+                                    path[p++] = de2->name[j];
+                                path[p] = '\0';
+                                if (vfs_unlink(path) == 0) {
+                                    deleted++;
+                                    continue;
+                                }
+                            }
+                            idx2++;
+                        }
+                        vfs_close(logs_dir);
+                    }
+                }
+
+                if (deleted > 0) {
+                    uint64_t new_free = fat32_get_free_bytes(bb_vol);
+                    uint64_t freed = new_free - free_bytes;
+                    klog(LOG_WARN, "boot",
+                         "BlackBox: cleanup freed %u KiB (%u files removed)",
+                         (uint64_t)(freed / 1024), (uint64_t)deleted);
+                }
+
+                /* If still critically low, fall back to C:\ */
+                {
+                    uint64_t recheck = fat32_get_free_bytes(bb_vol);
+                    uint32_t min_free_mib = 16;  /* TODO: registry HKLM\SYSTEM\BlackBox\MinFreeMiB */
+                    if (recheck < (uint64_t)min_free_mib * 1024 * 1024) {
+                        klog(LOG_ERROR, "boot",
+                             "BlackBox: critically low (%u MiB free, min %u) "
+                             "-- falling back to C:\\ for this session",
+                             (uint32_t)(recheck / (1024*1024)),
+                             (uint64_t)min_free_mib);
+                        /* Force klog to C:\ by marking X:\ unavailable
+                         * for log resolution */
+                        extern int klog_using_blackbox;
+                        extern const char *klog_dir;
+                        klog_using_blackbox = 0;
+                        klog_dir = KLOG_DIR_FALLBACK;
+                    }
+                }
             }
         }
     }

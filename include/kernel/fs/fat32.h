@@ -60,6 +60,14 @@ struct vfs_fs_driver *fat32_get_driver(void);
 /* Get the root VFS node for a specific volume */
 struct vfs_node *fat32_get_root(struct fat32_volume *vol);
 
+/* Get free space in bytes for a volume.
+ * Returns cached FSInfo free count * cluster size. */
+uint64_t fat32_get_free_bytes(struct fat32_volume *vol);
+
+/* Get volume from a VFS root node (reverse of fat32_get_root).
+ * Returns NULL if node is not a FAT32 root. */
+struct fat32_volume *fat32_volume_from_root(struct vfs_node *root);
+
 /* ---- Write operations ---- */
 
 /* Create an empty file in the given directory cluster.

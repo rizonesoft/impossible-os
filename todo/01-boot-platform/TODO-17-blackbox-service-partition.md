@@ -46,7 +46,7 @@
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [x]   |
 | 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [x]   |
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [x]   |
-| 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [ ]   |
+| 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [x]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [ ]   |
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [ ]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [ ]   |
@@ -176,7 +176,7 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [x] Uses `BB_OFFSET=68157440` (LBA 133120 * 512) matching Makefile
 - [x] Extracts Logs/, Logs/Serial/, Boot/, Crash/, Perf/, Diag/, Tools/ to `build/blackbox-extract/`
 - [x] Documents Linux mount: `sudo mount -o loop,offset=68157440,ro build/system-disk.img /mnt/blackbox`
-- [ ] Commit: `"tools: SDK reads BlackBox partition from disk images"`
+- [x] Commit: `"tools: SDK reads BlackBox partition from disk images"`
 
 **Test checkpoint:** `bash scripts/tools/read-blackbox.sh build/system-disk.img` extracts logs to a local directory. `mount` on Linux at the correct offset shows FAT32 with the directory structure.
 
@@ -184,13 +184,12 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 
 128 MiB is generous but finite. Without space management, logs eventually fill the partition and writes fail silently. Windows limits CBS.log to ~20 MB with rotation; Linux logrotate enforces per-file and total quotas. BlackBox needs the same discipline.
 
-- [ ] Add `fat32_get_free_clusters(vol)` to `fat32_core.c` -- scan FAT table, count entries == 0 (free); cache result in `vol->free_clusters`
-- [ ] At `klog_disk_enable()` time, check BlackBox free space via `fat32_get_free_clusters(vol)`
-- [ ] If free space < 10% of partition size: run cleanup before first flush
-- [ ] Cleanup policy: delete oldest files in `Boot\` (keep last 10 boot sessions), then oldest rotated logs in `Logs\` (`.1`, `.2`, `.3`)
-- [ ] Registry-configurable: `HKLM\SYSTEM\BlackBox\MaxBootSessions` (default: 10), `HKLM\SYSTEM\BlackBox\MinFreeMiB` (default: 16)
-- [ ] Log when cleanup runs: `klog(LOG_WARN, "boot", "BlackBox: cleanup freed %u KiB (%u files removed)")`
-- [ ] If cleanup cannot free enough space: log `LOG_ERROR` and fall back to C:\ for this boot session
+- [x] `fat32_get_free_bytes(vol)` / `fat32_volume_from_root(root)` added to `fat32.h` / `fat32_ops.c`
+- [x] After BlackBox mount: logs free space (`"BlackBox: N MiB free (N%)"`)
+- [x] If free < 10%: cleanup runs -- deletes oldest Boot\ files beyond 10 sessions, then rotated `.N` logs in Logs\
+- [x] MaxBootSessions = 10, MinFreeMiB = 16 (hardcoded defaults, TODO: wire to registry)
+- [x] Cleanup log: `"BlackBox: cleanup freed N KiB (N files removed)"`
+- [x] If critically low after cleanup: falls back to C:\ with LOG_ERROR
 - [ ] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
 
 **Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG, VirtualBox.
