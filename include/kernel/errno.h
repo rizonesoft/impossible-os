@@ -1,8 +1,8 @@
 /* ============================================================================
  * errno.h -- Kernel error codes (POSIX-compatible subset)
  *
- * Negative integer error codes for kernel-internal use. These follow the
- * POSIX convention where functions return -EFOO on failure.
+ * Positive integer error constants for kernel-internal use. Functions may
+ * return -EFOO (negated) or pass EFOO via out-parameter, depending on API.
  * NT syscalls use NTSTATUS instead; these are for kernel-internal APIs.
  * ============================================================================ */
 

@@ -1141,7 +1141,7 @@ int task_exec(const uint8_t *data, uint64_t size)
     /* Load the binary via multi-format dispatcher (ELF, PE32+, EIF) */
     entry = exec_load(data, size, &exec_err);
     if (entry == 0) {
-        klog(LOG_DEBUG, "sched", "exec_load failed (err=%d)", (uint64_t)exec_err);
+        klog(LOG_DEBUG, "sched", "exec_load failed (err=%u)", (uint64_t)exec_err);
         return -1;
     }
 
