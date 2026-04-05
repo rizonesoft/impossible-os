@@ -26,12 +26,16 @@ typedef struct security_descriptor SECURITY_DESCRIPTOR;
 
 /* --- OBJECT_HEADER ------------------------------------------------------- */
 
+/* Forward declaration for trace info (§15) */
+struct ob_trace_info;
+
 typedef struct object_header {
     atomic_t             ref_count;     /* atomic reference count (SMP-safe) */
     uint32_t             handle_count;  /* number of open handles */
     const OBJECT_TYPE   *type;          /* type descriptor */
     const char          *name;          /* namespace name (NULL if unnamed) */
     SECURITY_DESCRIPTOR *security;      /* NULL until §8 */
+    struct ob_trace_info *trace;        /* NULL unless type tracing enabled (§15) */
     uint32_t             flags;         /* OB_FLAG_* */
     uint32_t             _pad;          /* align body to 8 bytes */
 } OBJECT_HEADER;

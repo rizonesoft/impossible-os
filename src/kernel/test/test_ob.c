@@ -14,6 +14,7 @@
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_type.h"
 #include "kernel/ob/ob_callback.h"
+#include "kernel/ob/ob_trace.h"
 #include "kernel/ob/ob_ns.h"
 #include "kernel/ob/handle_table.h"
 
@@ -343,6 +344,56 @@ static void test_ob_callbacks(void)
     ObDereferenceObject(obj);
 }
 
+/* ---- Tagged reference tracing (S15) ---- */
+
+/* Pack 4-char tag into uint32_t: big-endian so dump shows readable chars */
+#define TAG4(a,b,c,d) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(c)<<8)|(uint32_t)(d))
+
+static void test_ob_trace(void)
+{
+    /* Create a type with tracing enabled */
+    static const OBJECT_TYPE trace_tmpl = {
+        .name      = "TraceTest",
+        .body_size = 16,
+        .on_close  = (void *)0,
+        .on_delete = (void *)0,
+        .on_open   = (void *)0,
+        .on_parse  = (void *)0,
+    };
+    const OBJECT_TYPE *ttype = ob_create_type(&trace_tmpl);
+    TEST_ASSERT(ttype != (void *)0, "ob_create_type for trace test");
+
+    ob_enable_type_tracing(ttype);
+    TEST_ASSERT_EQ(ob_type_tracing_enabled(ttype), 1,
+                   "type tracing enabled");
+
+    /* Allocate -- should get trace info */
+    void *obj = ob_alloc_object(ttype);
+    TEST_ASSERT(obj != (void *)0, "alloc object with tracing");
+    OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(obj);
+    TEST_ASSERT(hdr->trace != (void *)0, "trace info allocated");
+
+    /* Ref with tag, deref with tag */
+    ObReferenceObjectWithTag(obj, TAG4('T','s','0','1'));
+    TEST_ASSERT_EQ(atomic_read(&hdr->ref_count), 2,
+                   "ref_count == 2 after tagged ref");
+
+    ObDereferenceObjectWithTag(obj, TAG4('T','s','0','1'));
+    TEST_ASSERT_EQ(atomic_read(&hdr->ref_count), 1,
+                   "ref_count == 1 after tagged deref");
+
+    /* Trace log should have entries */
+    TEST_ASSERT(hdr->trace->count >= 2, "trace log has >= 2 entries");
+
+    /* Disable tracing */
+    ob_disable_type_tracing(ttype);
+    TEST_ASSERT_EQ(ob_type_tracing_enabled(ttype), 0,
+                   "type tracing disabled");
+
+    /* Final deref frees the object (and trace log) */
+    ObDereferenceObject(obj);
+}
+
 /* ---- Per-process handle quota (S14) ---- */
 
 static void test_ob_handle_quota(void)
@@ -413,6 +464,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: type stats", test_ob_type_stats, TEST_CAT_OB);
     test_suite_register_cat("OB: callbacks", test_ob_callbacks, TEST_CAT_OB);
     test_suite_register_cat("OB: handle quota", test_ob_handle_quota, TEST_CAT_OB);
+    test_suite_register_cat("OB: trace", test_ob_trace, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */

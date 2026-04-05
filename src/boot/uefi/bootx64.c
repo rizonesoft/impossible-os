@@ -70,7 +70,8 @@ struct boot_config {
     UINT8   deferred;          /* 1 = defer non-critical inits (default), 0 = all in-phase */
     UINT8   async_init;        /* 1 = parallel subsystem init on APs, 0 = sequential (default) */
     UINT8   crash_test;        /* 1 = trigger deliberate BSOD after desktop init */
-    UINT8   _reserved[15];     /* future fields -- zero-filled by defaults */
+    UINT8   ob_handle_trace;   /* 1 = log every handle alloc/free to klog */
+    UINT8   _reserved[14];     /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
@@ -805,6 +806,9 @@ static void parse_conf_kv(struct boot_config *cfg,
     }
     else if (ascii_streq(key, "crash_test")) {
         cfg->crash_test = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "ob_handle_trace")) {
+        cfg->ob_handle_trace = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "boot_mode")) {
         if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;

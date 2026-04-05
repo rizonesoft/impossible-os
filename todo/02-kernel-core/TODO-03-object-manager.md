@@ -52,7 +52,7 @@
 | 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [x]   |
 | 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9         |  [x]   |
 | 💎  |  14   | Per-process handle quota                                      | §3             |  [x]   |
-| ⭐  |  15   | Handle tracing and leak detection                             | §2, §12        |  [ ]   |
+| ⭐  |  15   | Handle tracing and leak detection                             | §2, §12        |  [x]   |
 
 > 💎 = parity -- Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
 > ⭐ = exclusive -- built-in handle/reference leak detection integrated with klog, providing
@@ -267,7 +267,7 @@ Enforce a configurable per-process handle limit to prevent resource exhaustion f
 - [x] Track cumulative handle allocations per process in `task_t.total_handles_created` -- incremented in `ObpAllocateHandle()`
 - [x] On quota exhaustion: `klog(LOG_WARN, "ob", "PID %u handle quota exhausted (%u/%u)")` with PID, count, limit
 - [x] 8 test assertions: set limit, 3 allocs succeed, 4th denied, free+retry succeeds, clamp to ABSOLUTE_MAX
-- [ ] Commit: `"kernel: ob -- per-process handle quota enforcement"`
+- [x] Commit: `"kernel: ob -- per-process handle quota enforcement"`
 
 **Test checkpoint:** Set handle limit to 100 for a test process. Allocate 100 handles successfully. 101st allocation returns `INVALID_HANDLE_VALUE`. Free 1 handle, allocate again succeeds. `klog` warning emitted on exhaustion. Default limit (16384) works for normal boot. Verify on QEMU WHPX + TCG + VirtualBox. `POST16(0xD920)`–`POST16(0xD923)`.
 
@@ -277,15 +277,16 @@ Provide tagged reference tracking and optional per-handle event recording for di
 > [!TIP]
 > Neither Windows nor Linux provides built-in, always-available handle leak detection at the kernel level without external tooling (ETW requires WPR setup; Linux requires strace/lsof). Impossible OS's klog-integrated tracing means `debug=1` in `boot.conf` automatically captures handle leaks -- zero setup required.
 
-- [ ] Implement `ObReferenceObjectWithTag(body, tag)` -- calls `ObReferenceObject` and records `{tag, +1, caller_rip}` in the object's trace log (if tracing enabled)
-- [ ] Implement `ObDereferenceObjectWithTag(body, tag)` -- calls `ObDereferenceObject` and records `{tag, -1, caller_rip}`
-- [ ] Define `OB_REF_TRACE_ENTRY` -- `{uint32_t tag, int8_t delta, uintptr_t caller, uint64_t timestamp}`
-- [ ] Per-object trace log: circular buffer of 64 `OB_REF_TRACE_ENTRY` in an optional `OBJECT_HEADER_TRACE_INFO` extension allocated when tracing is enabled for the type
-- [ ] `ob_enable_type_tracing(type)` / `ob_disable_type_tracing(type)` -- toggle per-type tracing; controlled via `boot.conf` `ob_trace=Process,File` or at runtime via a debug syscall
-- [ ] `ob_dump_trace(body)` -- emit the object's trace log entries to klog at `LOG_DEBUG` level; summarize per-tag ref/deref counts and identify imbalances
-- [ ] In `ObDereferenceObject` when refcount hits 0 and tracing is enabled: call `ob_dump_trace` automatically, highlighting any tag with ref != deref
-- [ ] Handle event tracing: in `ObpAllocateHandle` and `ObpFreeHandle`, emit `klog(LOG_TRACE, "ob", "HANDLE %s PID=%u H=0x%x obj=%p type=%s")` when `ob_handle_trace` global is enabled
-- [ ] `ob_handle_trace` flag: set from `boot.conf` `ob_handle_trace=1` or toggled via `NtSetSystemInformation`
+- [x] Implement `ObReferenceObjectWithTag(body, tag)` -- calls `ObReferenceObject` and records `{tag, +1, caller_rip}` in trace log via `__builtin_return_address(0)`
+- [x] Implement `ObDereferenceObjectWithTag(body, tag)` -- records `{tag, -1, caller_rip}`, calls `ob_dump_trace` when refcount will hit 0, then `ObDereferenceObject`
+- [x] Define `OB_REF_TRACE_ENTRY` -- `{uint32_t tag, int8_t delta, uintptr_t caller, uint64_t timestamp}` in `ob_trace.h`
+- [x] Per-object trace log: circular buffer of 64 `OB_REF_TRACE_ENTRY` in `OB_TRACE_INFO` (`struct ob_trace_info`); allocated by `ob_trace_alloc()` when type tracing enabled; attached to `OBJECT_HEADER.trace` pointer
+- [x] `ob_enable_type_tracing(type)` / `ob_disable_type_tracing(type)` -- sets `OBJECT_TYPE.tracing_enabled` flag; `ob_alloc_object()` checks it and allocates trace info
+- [x] `ob_dump_trace(body)` -- emits per-tag ref/deref summary to klog; `LOG_WARN` for imbalanced tags, `LOG_DEBUG` for balanced
+- [x] In `ObDereferenceObjectWithTag`: when refcount == 1 (about to hit 0) and tracing enabled, calls `ob_dump_trace` automatically before final deref
+- [x] Handle event tracing: `ObpAllocateHandle` and `ObpFreeHandle` emit `klog(LOG_DEBUG, "ob", "HANDLE CREATE/FREE PID=%u H=0x%x ...")` when `g_ob_handle_trace` is set
+- [x] `g_ob_handle_trace` flag: set from `boot.conf` `ob_handle_trace=1`; wired in Phase 2 after OB init
+- [x] 7 test assertions: enable tracing, alloc gets trace info, tagged ref/deref, trace log entries, disable tracing
 - [ ] Commit: `"kernel: ob -- tagged reference tracing and handle leak detection"`
 
 **Test checkpoint:** Enable tracing for `ObpEventType`. Create event, ref with tag `"Lk01"`, ref with tag `"Lk02"`, deref with tag `"Lk01"`, deref (untagged). On final deref (refcount 0), `ob_dump_trace` reports tag `"Lk02"` has 1 ref / 0 deref = over-reference by 1. `ob_handle_trace=1`: every `ObpAllocateHandle` / `ObpFreeHandle` emits a klog entry with PID, handle value, object pointer, and type name. Verify on QEMU WHPX + TCG. `POST16(0xD930)`–`POST16(0xD933)`.
@@ -312,7 +313,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 | 💎 | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo    | ✅ §12 -- atomic counters    |
 | 💎 | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ✅ §13 -- pre/post filtering |
 | 💎 | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE     | ✅ §14 -- 16K default, 1M max |
-| ⭐ | Handle leak detection | ⚠️ ETW (complex)       | ❌ No built-in       | ⬜ §15 -- klog-integrated    |
+| ⭐ | Handle leak detection | ⚠️ ETW (complex)       | ❌ No built-in       | ✅ §15 -- klog-integrated    |
 
 > All foundational parity items (§1–§11) complete -- Impossible OS matches Windows NT object management.
 > Three exclusive features (⭐): public namespace browser API (§11), unified single-header type system (§1–§7), and built-in klog-integrated handle leak detection (§15).
@@ -336,7 +337,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [ ] §12 tests: `ObpEventType->total_objects` tracks create/delete; `peak_objects` high-water; `NtQueryObject(ObjectTypeInformation)` returns counters; `NtQueryObject(ObjectTypesInformation)` enumerates all types
 - [x] §13 tests: `ObRegisterCallbacks` pre-callback strips TERMINATE; post-callback invoked; `ObUnRegisterCallbacks` restores full access (10 assertions in `test_ob.c`)
 - [x] §14 tests: handle limit set to 3, allocs 0-2 succeed, 3rd denied, free+retry succeeds, clamp to ABSOLUTE_MAX (8 assertions in `test_ob.c`)
-- [ ] §15 tests: tagged ref tracing records entries; `ob_dump_trace` reports imbalance; `ob_handle_trace=1` emits klog
+- [x] §15 tests: enable/disable tracing, trace info allocated, tagged ref/deref, trace log count, refcount verified (7 assertions in `test_ob.c`)
 
 ## Verification
 

@@ -593,6 +593,13 @@ void boot_phase2(void)
     POST16(POST16_OB_OK);
     boot_progress(2, "OB", POST16_OB_OK);
 
+    /* Wire OB handle event tracing from boot.conf (S15) */
+    {
+        extern int g_ob_handle_trace;
+        if (g_boot_info.config.ob_handle_trace)
+            g_ob_handle_trace = 1;
+    }
+
     /* --- Registry: requires VFS --- */
     if (!kernel_subsystem_ready(SUBSYS_VFS)) {
         boot_recovery_info_t ri = { SUBSYS_REGISTRY, POST16_REGISTRY_OK, BOOT_FATAL, 2 };

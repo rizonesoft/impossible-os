@@ -204,10 +204,12 @@ struct boot_config {
     uint8_t  async_init;       /* 1 = parallel subsystem init on APs, 0 = sequential (default) */
     /* Crash test */
     uint8_t  crash_test;       /* 1 = trigger deliberate BSOD after desktop init */
+    /* Object Manager tracing (S15) */
+    uint8_t  ob_handle_trace;  /* 1 = log every handle alloc/free to klog */
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[15];
+    uint8_t  _reserved[14];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

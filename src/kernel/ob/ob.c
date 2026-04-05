@@ -6,6 +6,7 @@
 
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_callback.h"
+#include "kernel/ob/ob_trace.h"
 #include "kernel/ob/ob_ns.h"
 #include "kernel/ob/ob_file.h"
 #include "kernel/ob/ob_process.h"
@@ -122,6 +123,12 @@ void *ob_alloc_object(const OBJECT_TYPE *type)
         }
     }
 
+    /* Per-type tracing (S15): allocate trace log if type tracing is enabled */
+    if (type->tracing_enabled) {
+        extern OB_TRACE_INFO *ob_trace_alloc(void);
+        hdr->trace = ob_trace_alloc();
+    }
+
     /* Per-type statistics: increment live object count */
     {
         OBJECT_TYPE *mtype = (OBJECT_TYPE *)type;
@@ -149,6 +156,12 @@ static void ob_free_object(OBJECT_HEADER *hdr)
     if (hdr->type) {
         OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
         atomic_dec(&mtype->total_objects);
+    }
+
+    /* Free trace log if allocated (S15) */
+    if (hdr->trace) {
+        kfree(hdr->trace);
+        hdr->trace = (void *)0;
     }
 
     if (hdr->flags & OB_FLAG_PMM_ALLOC) {

@@ -32,4 +32,8 @@ typedef struct object_type {
     atomic_t    total_handles;   /* current open handles to objects of this type */
     uint32_t    peak_objects;    /* high-water mark for total_objects */
     uint32_t    peak_handles;    /* high-water mark for total_handles */
+
+    /* Per-type tracing (§15) */
+    uint8_t     tracing_enabled; /* 1 = allocate OB_TRACE_INFO for new objects */
+    uint8_t     _trace_pad[3];
 } OBJECT_TYPE;

@@ -8,6 +8,7 @@
 #include "kernel/ob/handle_table.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_callback.h"
+#include "kernel/ob/ob_trace.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
@@ -167,6 +168,15 @@ found:
         ob_invoke_post_callbacks(OB_OPERATION_HANDLE_CREATE,
                                  object, hdr->type, access);
 
+    /* Handle event tracing (S15) */
+    if (g_ob_handle_trace) {
+        struct task *cur = task_current();
+        klog(LOG_DEBUG, "ob", "HANDLE CREATE PID=%u H=0x%x obj=%p type=%s",
+             cur ? (uint64_t)cur->pid : 0,
+             (uint64_t)(i * 4), object,
+             hdr->type && hdr->type->name ? hdr->type->name : "?");
+    }
+
     /* Per-process cumulative handle counter (S14 diagnostics) */
     {
         struct task *cur = task_current();
@@ -202,6 +212,15 @@ int ObpFreeHandle(HANDLE_TABLE *table, HANDLE handle)
 
     body = entry->object;
     hdr = OB_HEADER_FROM_BODY(body);
+
+    /* Handle event tracing (S15) */
+    if (g_ob_handle_trace) {
+        struct task *cur = task_current();
+        klog(LOG_DEBUG, "ob", "HANDLE FREE PID=%u H=0x%x obj=%p type=%s",
+             cur ? (uint64_t)cur->pid : 0,
+             (uint64_t)handle, body,
+             hdr->type && hdr->type->name ? hdr->type->name : "?");
+    }
 
     /* Clear the slot first */
     entry->object = NULL;
