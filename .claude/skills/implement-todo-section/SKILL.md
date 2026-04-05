@@ -57,14 +57,11 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run em
    - Add or update test assertions in the relevant `test_*.c` file for the functionality just implemented.
    - If tests already exist but skip (e.g., "not yet allocated"), update them to verify the new state.
    - Run `bash scripts/build.sh` to confirm tests compile.
-11. Run embedded adversarial review for this section (required).
-   - Scope review to this section (`§N`) and changed files/symbols only.
-   - Challenge section claims explicitly:
-     - Concurrency/SMP safety
-     - Error-path handling and rollback behavior
-     - Wiring/registration correctness (SSDT/dispatch/hooks where applicable)
-     - Boundary and ABI assumptions
-   - Produce findings by severity: `Critical`, `High`, `Medium`, `Low`.
+11. Run adversarial review via Codex (required).
+   - **Dispatch to the Codex rescue subagent** (`Agent` tool with `subagent_type: "codex:codex-rescue"`), NOT self-review. Self-review has implementation bias; the Codex agent reads the code fresh and catches things you rationalized away. Proven: §1 Codex found 2 Critical issues (SMP race, TOCTOU) that self-review missed.
+   - Follow the `codex-adversarial-review-section` skill workflow: scope to this section's changed files, list adversarial angles, request severity-labeled findings.
+   - The review challenges: concurrency/SMP safety, error-path handling, wiring correctness, boundary/ABI assumptions.
+   - Produces findings by severity: `Critical`, `High`, `Medium`, `Low`.
 12. Run fix -> build/test -> re-review loop (max 3 rounds).
    - Fix all `Critical` and `High` findings.
    - Fix `Medium` unless explicitly accepted with a concrete technical reason.
@@ -76,7 +73,8 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run em
      - do not mark section complete,
      - keep `[/]` or `[ ]`,
      - add explicit follow-up checklist items with ownership and `→ XREF` where needed.
-13. Run embedded targeted section verification (required).
+13. Run section verification via `verify-todo-section` skill (required).
+   - **Use the `verify-todo-section` skill, not manual checklist review.** The skill enforces evidence collection methodology and catches stale/optimistic status claims.
    - Verify the section end-to-end against code/build/runtime evidence before final TODO status updates.
    - Classify each checklist item conservatively:
      - `[x]` only when implemented + wired + functional normal path,
@@ -98,9 +96,9 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run em
 > This is not optional. This is not skippable for "simple" changes. This is not deferrable to "after the commit". Every section implementation goes through adversarial review + fix loop + verification BEFORE the commit. No exceptions.
 >
 > If you find yourself about to run `git add` and you have not yet:
-> - (11) Run adversarial review and produced findings with severity labels
+> - (11) Invoked the `codex-adversarial-review-section` skill (NOT self-review) and received findings with severity labels
 > - (12) Fixed all Critical/High findings with build evidence
-> - (13) Verified each checklist item against code evidence
+> - (13) Invoked the `verify-todo-section` skill (NOT manual checklist scan) and reconciled status
 >
 > then **STOP and go back to step 11**. The commit can wait 5 minutes. Shipping unreviewed code cannot be undone.
 >
