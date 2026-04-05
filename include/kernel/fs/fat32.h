@@ -68,6 +68,9 @@ uint64_t fat32_get_free_bytes(struct fat32_volume *vol);
  * Returns NULL if node is not a FAT32 root. */
 struct fat32_volume *fat32_volume_from_root(struct vfs_node *root);
 
+/* Get the volume label (up to 11 chars, space-trimmed, NUL-terminated). */
+const char *fat32_get_label(struct fat32_volume *vol);
+
 /* Returns 1 if volume was not cleanly unmounted. */
 int fat32_is_dirty(struct fat32_volume *vol);
 

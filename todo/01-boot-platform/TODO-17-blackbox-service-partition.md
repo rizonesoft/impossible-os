@@ -263,7 +263,7 @@ Update cross-references across affected TODOs.
 - [x] `TODO-04-release-qa.md` (domain 15): crash dump collection path updated
 - [x] `TODO-17` current state block: updated from 2-partition to 3-partition
 - [x] CLAUDE.md: no stale references (does not mention partition layout)
-- [ ] Commit: `"docs: update XREFs for BlackBox partition migration"`
+- [x] Commit: `"docs: update XREFs for BlackBox partition migration"`
 
 **Test checkpoint:** All referenced TODO files have correct XREFs. No stale `C:\Impossible\System\Logs\` references remain in active TODO files.
 
@@ -273,19 +273,10 @@ Update cross-references across affected TODOs.
 
 > Wire into `test_runner_init()` via `test_register_blackbox()` (XREF: `00-infrastructure/TODO-03-kernel-test-framework.md`).
 
-- [ ] Create `src/kernel/test/test_blackbox.c` with:
-  - `X:\` is mounted (vfs_stat returns success) -- or skip if no BlackBox partition
-  - `X:\Logs\` directory exists and is openable
-  - `X:\Boot\` directory exists
-  - `X:\Crash\` directory exists
-  - `X:\Crash\WER\` directory exists
-  - `X:\Perf\` directory exists
-  - `X:\Diag\` directory exists
-  - `X:\Tools\` directory exists
-  - `KLOG_DIR` starts with `"X:\\Logs\\"` (or `"C:\\"` fallback)
-  - FAT32 volume label is "BLACKBOX" (read from BPB)
-  - BlackBox free space > 0 (partition is not full)
-- [ ] Register in `test_runner_init()`: `test_register_blackbox()`
+- [x] `test_blackbox.c`: 11 tests -- X:\ mounted, 7 directories exist, klog_dir resolved, volume label BLACKBOX, free space > 0
+- [x] All tests skip gracefully if BlackBox partition not present
+- [x] `fat32_get_label()` public API added for volume label access
+- [x] Registered in `test_runner_init()`: `test_register_blackbox()`
 - [ ] Commit: `"test: add BlackBox partition tests"`
 
 ---

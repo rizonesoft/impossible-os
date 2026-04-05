@@ -892,6 +892,12 @@ struct fat32_volume *fat32_volume_from_root(struct vfs_node *root)
     return ff->volume;
 }
 
+const char *fat32_get_label(struct fat32_volume *vol)
+{
+    if (!vol) return "";
+    return vol->label;
+}
+
 int fat32_is_dirty(struct fat32_volume *vol)
 {
     return vol ? vol->volume_dirty : 0;
