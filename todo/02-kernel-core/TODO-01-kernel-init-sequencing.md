@@ -310,7 +310,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 | ⭐ | Feature              | 🪟 Win11           | 🐧 Linux              | 🚀 Impossible OS         |
 |----|----------------------|---------------------|-----------------------|---------------------------|
-| 💎 | Formal phase model   | ✅ Phase 0/1       | ✅ initcall levels    | ✅ §2--§5 4 phases        |
+| 💎 | Formal phase model   | ✅ Phase 0/1       | ✅ initcall levels    | ✅ §2--§5 4 phases       |
 | 💎 | Interrupts-off phase | ✅ Phase 0         | ✅ early start_kernel | ✅ §2 boot_phase0        |
 | 💎 | Dependency ordering  | ✅ Boot load groups| ✅ initcall deps      | ✅ §6 gates done         |
 | 💎 | Typed init results   | ✅ NTSTATUS        | ✅ initcall_t         | ⚠️ §1 boot_result_t      |
@@ -355,6 +355,22 @@ Allow independent subsystems within a phase to initialize concurrently on differ
   - Bootperf POST codes non-zero, unique, no overlap with deferred range
 
 > **Done:** 16 suites, 38 assertions -- registered in `test_runner_init()` (2026-04-03). Added 2 async init tests for §13.
+
+## Codex Adversarial Review
+
+> Reviewed 2026-04-05 by Codex (o3). Scope: §1-§7, §9-§13.
+> **Round 1:** 4 findings (1 critical, 3 high). All addressed.
+> **Round 2:** 2 findings. 1 fixed (GSI mask), 1 accepted (deferred fault isolation).
+> **Final verdict: resolved.** Build clean.
+
+| # | Severity | Finding | Status |
+|---|----------|---------|--------|
+| 1 | critical | `s_subsys_names[]` missing SUBSYS_OB -- OOB read in panic diagnostic path | **Fixed** -- added "OB" entry + `_Static_assert` in both tables |
+| 2 | high | `boot_recovery_show()` return value ignored -- menu is cosmetic | **Fixed** -- all call sites branch on RECOVERY_POWEROFF -> `acpi_shutdown()` |
+| 3 | high | Deferred init not fault-isolated -- optional driver panic aborts Phase 3 | **Fixed** -- runs on dedicated kernel thread via `thread_create()` |
+| 4 | high | Recovery keyboard polling races active PS/2 IRQ handler | **Fixed** -- `kbd_poll_begin()`: cli + mask routed GSI + drain |
+| 5 | high | Recovery masks raw IRQ1 instead of ACPI-remapped GSI | **Fixed** -- uses `ioapic_isa_to_gsi(1)` for correct GSI |
+| 6 | high | Deferred thread doesn't truly contain kernel faults | **Accepted** -- per-thread exception containment requires TODO-10 SEH; thread decouples scheduling, full isolation deferred |
 
 ## Verification
 

@@ -43,8 +43,27 @@ static char scancode_to_ascii(uint8_t sc)
     }
 }
 
+/* Disable keyboard IRQ so the normal keyboard driver doesn't race us
+ * for scancodes on port 0x60. We disable interrupts entirely first,
+ * then mask IRQ1 via IOAPIC if available. */
+static void kbd_poll_begin(void)
+{
+    __asm__ volatile ("cli");
+    if (kernel_subsystem_ready(SUBSYS_IOAPIC)) {
+        extern void ioapic_mask_irq(uint8_t irq);
+        extern uint32_t ioapic_isa_to_gsi(uint8_t isa_irq);
+        /* Mask the routed keyboard GSI, not raw IRQ1 -- ACPI may
+         * have an interrupt source override remapping ISA IRQ1. */
+        uint32_t gsi = ioapic_isa_to_gsi(1);
+        ioapic_mask_irq((uint8_t)gsi);
+    }
+    /* Drain any pending scancodes */
+    while (inb(0x64) & 0x01)
+        (void)inb(0x60);
+}
+
 /* Poll PS/2 keyboard for a single keypress. Blocks until a key is pressed.
- * Works without interrupts -- reads port 0x64 status + 0x60 data directly. */
+ * Caller must have called kbd_poll_begin() first. */
 static char kbd_poll_char(void)
 {
     for (;;) {
@@ -175,11 +194,13 @@ static void draw_hex16(volatile uint32_t *fb, uint32_t pitch,
 
 static const char *subsys_name(kernel_subsys_t s)
 {
-    static const char *names[] = {
+    static const char *names[SUBSYS_COUNT] = {
         "SERIAL","PMM","VMM","HEAP","KLOG","GDT","IDT","ACPI",
         "LAPIC","IOAPIC","TIMER","RTC","FB","VFS","REGISTRY",
-        "SCHED","IPC","SMP","EXEC","DESKTOP"
+        "SCHED","IPC","SMP","EXEC","DESKTOP","OB"
     };
+    _Static_assert(sizeof(names) / sizeof(names[0]) == SUBSYS_COUNT,
+                   "recovery subsys names must match SUBSYS_COUNT");
     if ((uint32_t)s < SUBSYS_COUNT) return names[s];
     return "UNKNOWN";
 }
@@ -266,6 +287,9 @@ boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info)
 
     /* Swap to front buffer */
     fb_swap();
+
+    /* Disable keyboard IRQ and drain pending scancodes before polling */
+    kbd_poll_begin();
 
     /* Poll keyboard for user choice */
     for (;;) {

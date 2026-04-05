@@ -23,6 +23,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
 #include "kernel/boot_recovery.h"
+#include "kernel/acpi.h"
 #include "registry.h"
 #include "kernel/symtab.h"
 #include "kernel/cpuid_platform.h"
@@ -213,7 +214,8 @@ void boot_phase2(void)
     if (!kernel_subsystem_ready(SUBSYS_HEAP)) {
         boot_recovery_info_t ri = { SUBSYS_VFS, POST16_VFS_OK, BOOT_FATAL, 2 };
         kernel_subsystem_dump();
-        boot_recovery_show(&ri);
+        boot_recovery_action_t act = boot_recovery_show(&ri);
+        if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
         boot_halt("HEAP not ready -- cannot init VFS");
     }
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
@@ -583,7 +585,8 @@ void boot_phase2(void)
         if (r == BOOT_FATAL) {
             boot_recovery_info_t ri = { SUBSYS_OB, POST16_OB_OK, BOOT_FATAL, 2 };
             kernel_subsystem_dump();
-            boot_recovery_show(&ri);
+            boot_recovery_action_t act = boot_recovery_show(&ri);
+            if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
             boot_halt("Object Manager init failed");
         }
     }
@@ -594,7 +597,8 @@ void boot_phase2(void)
     if (!kernel_subsystem_ready(SUBSYS_VFS)) {
         boot_recovery_info_t ri = { SUBSYS_REGISTRY, POST16_REGISTRY_OK, BOOT_FATAL, 2 };
         kernel_subsystem_dump();
-        boot_recovery_show(&ri);
+        boot_recovery_action_t act = boot_recovery_show(&ri);
+        if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
         boot_halt("VFS not ready -- cannot init registry");
     }
     klog(LOG_DEBUG, "", "");

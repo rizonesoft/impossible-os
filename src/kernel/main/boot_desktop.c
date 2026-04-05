@@ -27,6 +27,7 @@
 #include "kernel/boot_progress.h"
 #include "kernel/boot_halt.h"
 #include "kernel/boot_recovery.h"
+#include "kernel/acpi.h"
 #include "kernel/boot_info.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
@@ -50,7 +51,8 @@ void boot_phase3(void)
         !kernel_subsystem_ready(SUBSYS_TIMER)) {
         boot_recovery_info_t ri = { SUBSYS_SCHED, POST16_SCHED_OK, BOOT_FATAL, 3 };
         kernel_subsystem_dump();
-        boot_recovery_show(&ri);
+        boot_recovery_action_t act = boot_recovery_show(&ri);
+        if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
         boot_halt("HEAP or TIMER not ready -- cannot init scheduler");
     }
     /* --- DPC subsystem: per-CPU queues for deferred ISR work --- */
@@ -192,8 +194,13 @@ void boot_phase3(void)
     boot_progress(3, "DESKTOP_READY", POST16_DESKTOP_OK);
     kernel_subsystem_set_ready(SUBSYS_DESKTOP, true);
 
-    /* Run deferred non-critical inits now that the desktop is visible */
-    boot_run_deferred();
+    /* Run deferred non-critical inits on a separate kernel thread so a
+     * fault in an optional driver (NIC, VBox mouse) doesn't block the
+     * compositor from starting. The thread is fire-and-forget. */
+    {
+        extern int thread_create(void (*)(void *), void *, uint32_t);
+        thread_create((void (*)(void *))boot_run_deferred, (void *)0, 8192);
+    }
 
     /* NVRAM write: Phase 3 complete -- boot succeeded.
      * Must be here, not later -- on bare metal the compositor may crash

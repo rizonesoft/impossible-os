@@ -42,7 +42,11 @@ static const char *const s_subsys_names[SUBSYS_COUNT] = {
     "SMP",      /* 17 */
     "EXEC",     /* 18 */
     "DESKTOP",  /* 19 */
+    "OB",       /* 20 */
 };
+
+_Static_assert(sizeof(s_subsys_names) / sizeof(s_subsys_names[0]) == SUBSYS_COUNT,
+               "s_subsys_names must have exactly SUBSYS_COUNT entries");
 
 bool kernel_subsystem_ready(kernel_subsys_t subsys)
 {
@@ -116,6 +120,9 @@ void boot_run_deferred(void)
     for (i = 0; i < g_deferred_count; i++) {
         const char *name = g_deferred[i].name ? g_deferred[i].name : "?";
         uint64_t t0 = system_get_ticks();
+
+        /* Runs on a dedicated kernel thread -- a fault here kills only
+         * this thread, not the compositor or the main boot path. */
         boot_result_t r = g_deferred[i].fn();
         uint64_t elapsed_ms = (system_get_ticks() - t0) * 10;
 
@@ -123,8 +130,8 @@ void boot_run_deferred(void)
             klog(LOG_INFO, "boot", "[DEFERRED] %s +%ums", name,
                  (uint32_t)elapsed_ms);
         } else {
-            klog(LOG_WARN, "boot", "[DEFERRED] %s FAILED +%ums", name,
-                 (uint32_t)elapsed_ms);
+            klog(LOG_WARN, "boot", "[DEFERRED] %s FAILED +%ums (non-fatal)",
+                 name, (uint32_t)elapsed_ms);
         }
     }
 
