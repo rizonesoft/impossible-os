@@ -114,11 +114,11 @@ Capture a `panic_evidence` struct at fault time, survive across soft reboot via 
 - [ ] Define `struct panic_evidence`: `uint32_t magic` (`0xDEADBEEF`), last 16 `boot_stage_history[]` entries, last 8 klog ring entries, last POST code byte, `uint64_t cr0/cr3/cr4` at fault, `uint32_t irq_mask`, `uint32_t pmm_free_pages`, `uint64_t fault_rip`, `char message[256]`
 - [ ] `panic_collect_evidence(rip, msg)`: copy data into `struct panic_evidence` at physical `0x80000`; called at the very start of `kernel_panic()` before any screen output or VFS access
 - [ ] Reserve physical page `0x80000` in `pmm_init()`: mark as `PMEM_RESERVED` so it is never handed out as a free page
-- [ ] In boot Phase 0 (`boot_hw_init`): check `*(uint32_t*)0x80000 == 0xDEADBEEF`; if so, copy evidence to kernel heap buffer, clear the magic, log `[PANIC] Previous crash evidence found`; after VFS is up, write to `C:\Impossible\System\CrashDumps\last-panic.txt`
+- [ ] In boot Phase 0 (`boot_hw_init`): check `*(uint32_t*)0x80000 == 0xDEADBEEF`; if so, copy evidence to kernel heap buffer, clear the magic, log `[PANIC] Previous crash evidence found`; after VFS is up, write to `X:\Crash\last-panic.txt` (BlackBox) or `C:\Impossible\System\Logs\` (fallback) -- -> XREF: TODO-17 §7
 - [ ] After VFS write: show "System shut down unexpectedly" toast at desktop-ready (set `g_boot_info.had_panic = 1` flag; desktop init reads it)
 - [ ] Commit: `"kernel: panic forensic evidence -- cross-boot PMM page + last-panic.txt"`
 
-**Test checkpoint:** QEMU: force `kernel_panic("test")` → reboot → serial shows `[PANIC] Previous crash evidence found` → `C:\Impossible\System\CrashDumps\last-panic.txt` contains fault RIP + POST code. Bare metal: same flow, verify evidence survives warm reboot.
+**Test checkpoint:** QEMU: force `kernel_panic("test")` -> reboot -> serial shows `[PANIC] Previous crash evidence found` -> `X:\Crash\last-panic.txt` contains fault RIP + POST code. Bare metal: same flow, verify evidence survives warm reboot.
 
 ## 6. Panic QR Code *(deferred -- depends on §5)*
 Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD corner.
@@ -203,7 +203,7 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 - [ ] POST code visible in top-right corner during QEMU boot; disappears when desktop loads
 - [ ] `AliveBlink=1` in `boot.conf` → 4×4 green square blinks in top-left corner during boot and desktop
 - [ ] Force `kernel_panic("test")` from shell → BSOD shows QR code in bottom-right corner
-- [ ] Force panic twice → second boot finds `last-panic.txt` in `C:\Impossible\System\CrashDumps\`
+- [ ] Force panic twice -> second boot finds `last-panic.txt` in `X:\Crash\` (-> XREF: TODO-17 §7)
 - [ ] `VitalSigns=1` → bottom strip shows CPU/RAM/IRQ/uptime/FPS, updates every 500 ms
 - [ ] `spinner_create(SPINNER_MEDIUM, 0x0078D4)` in test harness → spinner renders in compositor frame
 - [ ] Commit: `"kernel: boot-diagnostics verified -- POST codes, panic forensics, QR code, vital signs, multi-instance spinner"`

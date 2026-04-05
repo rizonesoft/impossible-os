@@ -151,9 +151,9 @@ On next boot after crash (dump file present in `CrashDumps\`): `notify_send()` p
 **Files:** `src/apps/crashview/crashview.c` (new)
 
 > [!NOTE]
-> → XREF: `02-kernel-core/TODO-16` -- crash dump generation (raw `.dmp` format, registers + stack + PMM stats + serial buffer); §6 here only adds the on-boot trigger + viewer UI. **On-boot check** (in kernel init, before desktop starts): `vfs_readdir("C:\\Impossible\\System\\CrashDumps\\")` → if any `.dmp` newer than `HKLM\SYSTEM\LastBoot`: `notify_send("Unexpected Shutdown", "A crash report is available. [View] [Dismiss]", ICON_CRASH, NOTIFY_PERSISTENT)`. **[View] opens crash viewer**: window 700×520 px; `CTRL_TABSTRIP` tabs: Summary / Registers / Stack Trace / Drivers / Memory. Summary: crash reason (exception type + address) + timestamp + OS version + uptime at crash. Registers: `RAX`–`R15`, `RIP`, `RFLAGS`, `CR0/CR2/CR3` in two-column hex table. Stack Trace: 40-line disassembly stub or raw hex + symbol hints from driver load addresses. Drivers: loaded driver list at time of crash. Memory: PMM total/free/used at crash. [Export]: `dialog_file_save("*.txt")` → write formatted text. On [Dismiss]: move `.dmp` to `CrashDumps\Archived\` (keep for 30 days).
+> -> XREF: `02-kernel-core/TODO-16` -- crash dump generation (raw `.dmp` format, registers + stack + PMM stats + serial buffer); §6 here only adds the on-boot trigger + viewer UI. **On-boot check** (in kernel init, before desktop starts): `vfs_readdir("X:\\Crash\\")` (BlackBox, -> XREF: TODO-17 §7) -> if any `.dmp` newer than `HKLM\SYSTEM\LastBoot`: `notify_send("Unexpected Shutdown", ...)`. **[View] opens crash viewer**: window 700x520 px; `CTRL_TABSTRIP` tabs: Summary / Registers / Stack Trace / Drivers / Memory. On [Dismiss]: move `.dmp` to `X:\Crash\Archived\` (keep for 30 days).
 
-- [ ] On-boot check: `vfs_readdir("C:\\Impossible\\System\\CrashDumps\\")` → find unread `.dmp` files
+- [ ] On-boot check: `vfs_readdir("X:\\Crash\\")` -> find unread `.dmp` files (-> XREF: TODO-17 §7)
 - [ ] "Unread" detection: `.dmp` mtime > `HKLM\SYSTEM\LastBoot` value; update `LastBoot` on each clean boot
 - [ ] `notify_send("Unexpected Shutdown", ..., NOTIFY_PERSISTENT)` with [View] + [Dismiss] action buttons
 - [ ] `crashview_open(const char *dmp_path)` -- `wm_create_window()`; `CTRL_TABSTRIP` 5 tabs
@@ -233,7 +233,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 > - **Recycle Bin** (`C:\Recycle\*`): `trash_size()` (TODO-04)
 > - **Old restore points** (keep 3 newest): `restore_list()` → sum sizes of entries beyond 3
 > - **Cached update packages** (`C:\Temp\*.ipkg`): `vfs_readdir()` filter by `.ipkg`
-> - **Crash dumps** (`C:\Impossible\System\CrashDumps\Archived\*`): sum sizes
+> - **Crash dumps** (`X:\Crash\Archived\*`): sum sizes (-> XREF: TODO-17 §7)
 > - **App logs** (`X:\Logs\events.*.log`): sum rotated log files (not current)
 > Total space at bottom: "Total: {N} MB will be freed". [Clean up system files] button: for each checked category → delete files; show `CTRL_PROGRESSBAR` during deletion; refresh sizes. **Weekly task**: `sched_task_add("disk_cleanup", disk_cleanup_auto, 7*86400, 1)` -- runs silently, clears Temp + Archived CrashDumps + old logs (> 7 days); `kevent_log(LOG_INFO, "cleanup", "Auto disk cleanup: freed %llu KB")`.
 

@@ -28,7 +28,7 @@
 
 ## Inputs
 
-- `02-kernel-core/TODO-16-crash-dump-generation.md` (→ XREF) -- `C:\Impossible\System\CrashDumps\`; minidump format; §8 crash triage
+- `02-kernel-core/TODO-16-crash-dump-generation.md` (-> XREF) -- `X:\Crash\` (BlackBox, -> XREF: TODO-17 §7); minidump format; §8 crash triage
 - `03-memory-concurrency/TODO-09-concurrency-diagnostics.md` (→ XREF) -- `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §8 QA build profile
 - `01-boot-platform/TODO-04-cpu-boot-sequencing.md §3` (→ XREF) -- `HV_TSC_ENLIGHTENMENT` detection; `boot_info.hv_flags`; §3 Hyper-V boot dependency
 - `01-boot-platform/TODO-07-boot-diagnostics.md` (→ XREF) -- `[READY]` serial marker; `boot_stage_history[]`; §1 §2 serial output parsing
@@ -293,7 +293,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   - Enable heap canaries (→ XREF `TODO-09 §3`): already gated on `KASAN=1`
   - QA build does NOT go into releases -- it is strictly for the pre-release soak run
 - [ ] **Crash dump triage procedure**:
-  1. Collect all `C:\Impossible\System\CrashDumps\*.dmp` generated during QA testing
+  1. Collect all `X:\Crash\*.dmp` generated during QA testing (BlackBox partition)
   2. For each dump: load in `debugger.exe`; identify panic PC + call stack; classify as: `KNOWN` (already has a tracking issue), `FIXED` (issue closed), `NEW` (create GitHub Issue with `label:P0` + attach dump)
   3. All `NEW` panics block stable promotion; must be fixed + verified before §7 checklist can be completed
 - [ ] **Kernel assertions** (add after each resolved crash):

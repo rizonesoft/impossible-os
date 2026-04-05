@@ -299,21 +299,15 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 ## 12. Migrate Logging from X:\ to C:\ + Remove Log Partition
 
-> **Note:** TODO-17 restores a dedicated service partition ("BlackBox") mounted as X:\. The removal described here was a transitional step; X:\ returns as a FAT32 partition for logs, crash dumps, and diagnostics.
+> **Note:** This section's migration to C:\ was a transitional step. TODO-17 (BlackBox Service Partition) restored X:\ as a 128 MiB FAT32 partition for all logs, crash dumps, and diagnostics. The runtime `klog_dir` global now resolves to `X:\Logs\` (BlackBox) with C:\ fallback.
 
-Remove the dedicated FAT32 logging partition (`X:\`) -- a development hack from when IXFS didn't support writes. All boot logs, crash dumps, and diagnostics write to `C:\Impossible\System\Logs\` on the main IXFS partition. The FAT32 partition is repurposed as EFI System Partition recovery storage.
+- [x] Runtime `klog_dir` global in `klog.h` -- resolves to `X:\Logs\` (BlackBox) or `C:\Impossible\System\Logs\` (fallback)
+- [x] All log paths built from `klog_dir` at runtime (superseded compile-time `KLOG_DIR` macro)
+- [x] BlackBox partition (X:\) mounted by GPT name "BlackBox" in partition.c
+- [x] 3-partition GPT: EFI + BlackBox + IXFS (was briefly 2-partition, now 3)
+- [x] -> XREF: `TODO-17-blackbox-service-partition.md` §5 -- full klog migration to X:\
 
-**Files:** `src/kernel/klog.c`, `src/kernel/main/boot_storage.c`, `src/kernel/boot_timing.c`, `scripts/build.sh` (disk image layout)
-
-- [x] `KLOG_DIR` constant in `klog.h` -- all log paths use one central definition
-- [x] klog_disk.c: date-based logs write to `C:\Impossible\System\Logs\` (was `X:\`)
-- [x] boot-profile.log and boot-timeline.json already used `C:\` -- now use `KLOG_DIR` macro
-- [x] Removed `X:\` special mount from partition.c -- FAT32 partitions get normal drive letters
-- [x] Debug flag check moved from `X:\DEBUG` to `C:\DEBUG`
-- [x] Removed FAT32 log partition from disk image (2 partitions: EFI + IXFS, IXFS gets +16 MiB)
-- [x] Commit: `"boot: migrate logging from X:\\ to C:\\Impossible\\System\\Logs\\"`
-
-**Test checkpoint:** QEMU: boot log written to `X:\Boot\26032801.LOG`. No `X:\` mount in serial log. Bare metal: same path, IXFS write works. Disk image has 2 partitions (ESP + IXFS) instead of 3.
+**Test checkpoint:** Serial log shows `"klog: writing to X:\Logs\Serial\..."`. All subsystem logs, boot timeline, crash reports on X:\.
 
 ## 13. CPU Feature Minimum Requirements and Verification
 
@@ -482,7 +476,7 @@ Full acceptance pass. All sections complete.
   - Per-process PML4: `vmm_create_user_pml4()` returns non-NULL; `vmm_destroy_user_pml4()` frees without crash
   - `vmm_set_user_page()` on a valid PML4+virt succeeds (User bit is set in PTE)
   - CPU verification: `cpu_verify_hardening()` does not crash; logs NX/SMEP/SMAP status
-  - `KLOG_DIR` macro expands to `"C:\\Impossible\\System\\Logs\\"` (logging path on main FS)
+  - `klog_dir` runtime global resolves to `"X:\\Logs\\"` (BlackBox) or `"C:\\Impossible\\System\\Logs\\"` (fallback)
 - [ ] Add to `scripts/test-smoke.sh`:
   - Grep serial for `IAPC_BOOT_ARCH:` (FADT flags parsed)
   - Grep serial for `IST stacks:` (IST allocated)

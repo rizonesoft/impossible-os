@@ -3,15 +3,15 @@
 > **Goal:** Add a 128 MiB FAT32 "BlackBox" partition to the GPT disk layout, mounted as `X:\`. All kernel logs, crash dumps, boot timelines, diagnostic snapshots, and portable tools live here -- separate from the IXFS system volume. FAT32 gives crash resilience (survives IXFS corruption), cross-platform readability (Windows/Linux/macOS mount it natively), and clean separation of OS files from diagnostic data.
 
 > [!IMPORTANT]
-> **Current state:** 2-partition GPT (64 MiB EFI + ~444 MiB IXFS). All logs on `C:\Impossible\System\Logs\` (IXFS). Old `X:\` FAT32 log partition was removed when IXFS write support landed. This TODO restores a service partition with a proper name, structure, and expanded scope.
+> **Current state:** 3-partition GPT (64 MiB EFI + 128 MiB BlackBox FAT32 + ~316 MiB IXFS). All logs, crash reports, boot timelines, and diagnostics write to `X:\` (BlackBox). Falls back to `C:\Impossible\System\Logs\` if BlackBox is absent. A/B dual-slot layout supported via `--ab` flag (4 partitions).
 
 ## Inputs
 
-- [`tools/make-system-disk.c`](../../tools/make-system-disk.c) -- GPT disk image builder (2-partition layout)
+- [`tools/make-system-disk.c`](../../tools/make-system-disk.c) -- GPT disk image builder (3-partition default, 4-partition A/B)
 - [`scripts/build.sh`](../../scripts/build.sh) -- build pipeline, disk formatting
-- [`src/kernel/fs/partition.c`](../../src/kernel/fs/partition.c) -- GPT partition discovery, drive letter assignment
+- [`src/kernel/fs/partition.c`](../../src/kernel/fs/partition.c) -- GPT partition discovery, BlackBox X:\ mount by name
 - [`src/kernel/klog_disk.c`](../../src/kernel/klog_disk.c) -- log file creation and flush paths
-- [`include/kernel/klog.h`](../../include/kernel/klog.h) -- `KLOG_DIR` macro (currently `C:\Impossible\System\Logs\`)
+- [`include/kernel/klog.h`](../../include/kernel/klog.h) -- runtime `klog_dir` global (resolved to `X:\Logs\` or C:\ fallback)
 - -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` §4 -- FAT32 LFN write (prerequisite for lowercase filenames)
 - -> XREF: `01-boot-platform/TODO-03-boot-device-discovery.md` -- partition GUID validation
 - -> XREF: `02-kernel-core/TODO-02-system-logging.md` -- klog output paths, log rotation policy
@@ -51,7 +51,7 @@
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T04 §6        |  [x]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [x]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [x]   |
-| 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [ ]   |
+| 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [x]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
 > S = scope -- internal project hygiene.
@@ -247,7 +247,7 @@ TODO-14 (A/B dual-slot boot) defines: EFI + Slot A IXFS + Slot B IXFS. With Blac
 - [x] BlackBox 128 MiB in both layouts; IXFS slots split remaining space evenly (1 MiB aligned)
 - [x] Kernel mounts BlackBox as X:\ by GPT name -- works regardless of partition count
 - [x] GPT names: "Impossible OS A" / "Impossible OS B" in A/B mode
-- [ ] Commit: `"tools: make-system-disk A/B layout with BlackBox partition"`
+- [x] Commit: `"tools: make-system-disk A/B layout with BlackBox partition"`
 
 **Test checkpoint:** `make-system-disk --ab` produces 4-partition image. `fdisk -l` shows EFI + BlackBox + 2x IXFS. Kernel boots and mounts X:\ from either layout. Verify on QEMU WHPX.
 
@@ -255,11 +255,14 @@ TODO-14 (A/B dual-slot boot) defines: EFI + Slot A IXFS + Slot B IXFS. With Blac
 
 Update cross-references across affected TODOs.
 
-- [ ] Update `TODO-02-system-logging.md`: change `KLOG_DIR` references, add XREF to this TODO
-- [ ] Update `TODO-03-boot-device-discovery.md`: note 3-partition layout
-- [ ] Update `TODO-16-crash-dump-generation.md`: crash dump target is now `X:\Crash\`
-- [ ] Update `CLAUDE.md` if partition layout is mentioned
-- [ ] Update domain `INDEX.md` files as needed
+- [x] `TODO-02-system-logging.md`: XREF to TODO-17 already present (line 23)
+- [x] `TODO-05-bare-metal-hardening.md`: updated log path refs from C:\ to X:\, KLOG_DIR -> klog_dir
+- [x] `TODO-07-boot-diagnostics.md`: crash dump paths updated to `X:\Crash\`
+- [x] `TODO-16-crash-dump-generation.md`: all `C:\Impossible\System\CrashDumps\` -> `X:\Crash\`
+- [x] `TODO-04-restore-recovery.md` (domain 10): crash dump paths updated to `X:\Crash\`
+- [x] `TODO-04-release-qa.md` (domain 15): crash dump collection path updated
+- [x] `TODO-17` current state block: updated from 2-partition to 3-partition
+- [x] CLAUDE.md: no stale references (does not mention partition layout)
 - [ ] Commit: `"docs: update XREFs for BlackBox partition migration"`
 
 **Test checkpoint:** All referenced TODO files have correct XREFs. No stale `C:\Impossible\System\Logs\` references remain in active TODO files.

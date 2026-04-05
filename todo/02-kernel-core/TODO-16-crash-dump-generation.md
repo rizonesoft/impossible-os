@@ -41,7 +41,7 @@
     + directly referenced memory pages; typically < 4 MiB.
   - **Kernel dump** (default): all kernel-mapped pages; typically 32–256 MiB.
   - **Full dump** (opt-in): all used physical pages, LZ4-compressed.
-- At next boot, the dump is moved from the raw partition to `C:\Impossible\System\CrashDumps\*.dmp` before the desktop starts.
+- At next boot, the dump is moved from the raw partition to `X:\Crash\*.dmp` before the desktop starts.
 - `dmpanalyze.exe` opens any `.dmp` and produces a `!analyze -v` style report; WinDbg can open the same `.dmp` file directly.
 
 ---
@@ -420,7 +420,7 @@
 - [ ] In kernel init Phase 2 (→ XREF `TODO-01-kernel-init-sequencing.md §4`), after VFS mounts but before the desktop starts: call `dump_recovery_check()`:
   1. `dump_sink_probe()` -- open dump partition
   2. Read sector 0; check `DUMP_PARTITION_HEADER.DumpPresent == 1`
-  3. If present: read `DumpSize` bytes; write to `C:\Impossible\System\CrashDumps\{timestamp}.dmp` (create directory if absent; timestamp from `DumpPartitionHeader` or system RTC if unavailable)
+  3. If present: read `DumpSize` bytes; write to `X:\Crash\{timestamp}.dmp` (create directory if absent; timestamp from `DumpPartitionHeader` or system RTC if unavailable)
   4. Also write a companion `.txt` file with the text dump (same content as the current `crashdump.log` -- keep the existing text path as a supplementary artifact)
   5. Call `dump_sink_clear()` -- zero the `DumpPresent` flag
   6. Set Registry `HKLM\SYSTEM\LastCrashDump` = the `.dmp` path and `HKLM\SYSTEM\CrashPending = 1`
@@ -436,7 +436,7 @@
 
 ### 8.3 CrashDumps archive management
 
-- [ ] Keep at most 5 `.dmp` files in `C:\Impossible\System\CrashDumps\`; oldest is deleted when the 6th would be created
+- [ ] Keep at most 5 `.dmp` files in `X:\Crash\`; oldest is deleted when the 6th would be created
 - [ ] `HKLM\SYSTEM\CrashDumps\MaxFiles` (REG_DWORD, default 5) controls the limit
 - [ ] `HKLM\SYSTEM\CrashDumps\LastDump` (REG_SZ) = path to most recent `.dmp`; updated on each recovery pass
 
@@ -554,7 +554,7 @@ After §1–8, Impossible OS reaches full Windows 11 crash-dump parity: WinDbg-c
 - [ ] **STOP code**: trigger `KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH, 1, 2, 3, 4)` from a shell command; BSOD screen shows `STOP: 0x000000E2 (0x1, 0x2, 0x3, 0x4)`; Registry `HKLM\SYSTEM\LastBugCheck\Code` == `0xE2`.
 - [ ] **XSAVE**: verify `g_panic_xsave_buf` is non-zero after a panic (FPU was in use); confirm `CONTEXT.MxCsr` is non-default.
 - [ ] **Module list**: `modules_find_by_address(kernel_entry)` returns the `kernel.exe` `LOADED_MODULE`; `modules_find_by_address(0)` returns NULL.
-- [ ] **Minidump validity**: trigger a test panic; recover `.dmp` from `C:\Impossible\System\CrashDumps\`; open with `dmpanalyze.exe` -- output must include STOP code, faulting function name, and at least 3 stack frames.
+- [ ] **Minidump validity**: trigger a test panic; recover `.dmp` from `X:\Crash\`; open with `dmpanalyze.exe` -- output must include STOP code, faulting function name, and at least 3 stack frames.
 - [ ] **WinDbg round-trip**: copy the `.dmp` to a Windows machine; open in WinDbg 10+; `!analyze -v` must complete without errors (symbol names optional -- raw addresses are sufficient for format validation).
 - [ ] **VFS-bypass**: deliberately trigger a panic after VFS unmount; verify the dump partition header shows `DumpPresent = 1` at sector 0.
 - [ ] **Full dump CRC**: write a full dump; `dmpanalyze.exe` reads and validates `MINIDUMP_HEADER.Checksum` CRC32C -- must match.
