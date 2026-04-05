@@ -367,7 +367,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 |---|----------|---------|--------|
 | 1 | critical | `s_subsys_names[]` missing SUBSYS_OB -- OOB read in panic diagnostic path | **Fixed** -- added "OB" entry + `_Static_assert` in both tables |
 | 2 | high | `boot_recovery_show()` return value ignored -- menu is cosmetic | **Fixed** -- all call sites branch on RECOVERY_POWEROFF -> `acpi_shutdown()` |
-| 3 | high | Deferred init not fault-isolated -- optional driver panic aborts Phase 3 | **Fixed** -- runs on dedicated kernel thread via `thread_create()` |
+| 3 | high | Deferred init not fault-isolated -- optional driver panic aborts Phase 3 | **Reverted** -- thread starved deferred inits (broke mouse); inline call restored; isolation deferred to TODO-10 SEH |
 | 4 | high | Recovery keyboard polling races active PS/2 IRQ handler | **Fixed** -- `kbd_poll_begin()`: cli + mask routed GSI + drain |
 | 5 | high | Recovery masks raw IRQ1 instead of ACPI-remapped GSI | **Fixed** -- uses `ioapic_isa_to_gsi(1)` for correct GSI |
 | 6 | high | Deferred thread doesn't truly contain kernel faults | **Accepted** -- per-thread exception containment requires TODO-10 SEH; thread decouples scheduling, full isolation deferred |

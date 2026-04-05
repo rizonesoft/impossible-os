@@ -194,13 +194,10 @@ void boot_phase3(void)
     boot_progress(3, "DESKTOP_READY", POST16_DESKTOP_OK);
     kernel_subsystem_set_ready(SUBSYS_DESKTOP, true);
 
-    /* Run deferred non-critical inits on a separate kernel thread so a
-     * fault in an optional driver (NIC, VBox mouse) doesn't block the
-     * compositor from starting. The thread is fire-and-forget. */
-    {
-        extern int thread_create(void (*)(void *), void *, uint32_t);
-        thread_create((void (*)(void *))boot_run_deferred, (void *)0, 8192);
-    }
+    /* Run deferred non-critical inits inline. These include VirtIO/VBox
+     * mouse drivers needed for absolute cursor positioning. Running on a
+     * thread caused them to never execute (thread starved by compositor). */
+    boot_run_deferred();
 
     /* NVRAM write: Phase 3 complete -- boot succeeded.
      * Must be here, not later -- on bare metal the compositor may crash
