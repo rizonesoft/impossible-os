@@ -451,9 +451,9 @@ static void test_nt_syscall_ssdt_registered(void)
     TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
                    "NtMapViewOfSection SSDT registered (NULL base)");
 
-    /* NtQuerySystemInformation with invalid class -- INVALID_INFO_CLASS */
+    /* NtQuerySystemInformation with invalid class -- NOT_IMPLEMENTED (§10) */
     s = ssdt_dispatch(SSDT_NtQuerySystemInformation, 0xFF, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_INVALID_INFO_CLASS,
+    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
                    "NtQuerySystemInformation SSDT registered (bad class)");
 
     /* NtQueryDirectoryFile with NULL buffer -- INVALID_PARAMETER */
@@ -790,7 +790,8 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: type sizes", test_nt_type_sizes, TEST_CAT_ABI);
     test_suite_register_cat("NT: OBJECT_ATTRIBUTES size", test_object_attributes_size, TEST_CAT_ABI);
     test_suite_register_cat("NT: GDT SYSRET order", test_gdt_sysret_order, TEST_CAT_ABI);
-    test_suite_register_cat("NT: SSDT unimplemented stub", test_ssdt_unimplemented_returns_not_implemented, TEST_CAT_ABI);
+    test_suite_register_cat("NT: SSDT unimp stub",
+        test_ssdt_unimplemented_returns_not_implemented, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT invalid table", test_ssdt_invalid_table_returns_error, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT main count", test_ssdt_main_count, TEST_CAT_ABI);
     test_suite_register_cat("NT: SSDT register+dispatch", test_ssdt_register_and_dispatch, TEST_CAT_ABI);
