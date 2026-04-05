@@ -13,8 +13,9 @@
 #define PMM_FRAME_SIZE  4096     /* 4 KiB page frame */
 
 /* Initialize the PMM from the boot memory map.
- * Returns 0 (BOOT_OK) on success, 2 (BOOT_FATAL) if no usable memory. */
-int pmm_init(void);
+ * Returns BOOT_OK on success, BOOT_FATAL if no usable memory. */
+#include "kernel/boot_init.h"
+boot_result_t pmm_init(void);
 
 /* Allocate a single 4 KiB physical frame. Returns physical address, or 0 on failure */
 uintptr_t pmm_alloc_frame(void);

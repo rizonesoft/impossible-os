@@ -10,8 +10,9 @@
 #include "kernel/types.h"
 
 /* Initialize the kernel heap (call after VMM is ready).
- * Returns 0 (BOOT_OK) on success, 2 (BOOT_FATAL) on failure. */
-int heap_init(void);
+ * Returns BOOT_OK on success, BOOT_FATAL on failure. */
+#include "kernel/boot_init.h"
+boot_result_t heap_init(void);
 
 /* Allocate 'size' bytes of kernel memory. Returns NULL on failure */
 void *kmalloc(size_t size);

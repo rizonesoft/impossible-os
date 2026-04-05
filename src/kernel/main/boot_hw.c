@@ -161,7 +161,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     /* --- Physical memory manager: BOOT_FATAL if fails --- */
     POST16(POST16_PMM);
-    if (pmm_init() != 0)
+    if (pmm_init() != BOOT_OK)
         boot_halt("PMM init failed -- no usable physical memory");
     POST16(POST16_PMM_OK);
     kernel_subsystem_set_ready(SUBSYS_PMM, true);
@@ -171,7 +171,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     if (!kernel_subsystem_ready(SUBSYS_PMM))
         boot_halt("PMM not ready -- cannot init VMM");
     POST16(POST16_VMM);
-    if (vmm_init() != 0)
+    if (vmm_init() != BOOT_OK)
         boot_halt("VMM init failed -- cannot set up page tables");
     POST16(POST16_VMM_OK);
     kernel_subsystem_set_ready(SUBSYS_VMM, true);
@@ -203,7 +203,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     if (!kernel_subsystem_ready(SUBSYS_VMM))
         boot_halt("VMM not ready -- cannot init heap");
     POST16(POST16_HEAP);
-    if (heap_init() != 0)
+    if (heap_init() != BOOT_OK)
         boot_halt("Heap init failed -- cannot allocate kernel heap");
     POST16(POST16_HEAP_OK);
     kernel_subsystem_set_ready(SUBSYS_HEAP, true);

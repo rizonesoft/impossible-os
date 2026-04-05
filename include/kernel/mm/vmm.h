@@ -31,8 +31,9 @@
 #define VMM_PAGE_SIZE  4096
 
 /* Initialize the VMM (takes over the boot page tables, registers page fault handler).
- * Returns 0 (BOOT_OK) on success, 2 (BOOT_FATAL) on failure. */
-int vmm_init(void);
+ * Returns BOOT_OK on success, BOOT_FATAL on failure. */
+#include "kernel/boot_init.h"
+boot_result_t vmm_init(void);
 
 /* Map a single 4 KiB page: virtual address → physical address with flags */
 int vmm_map_page(uintptr_t virt, uintptr_t phys, uint64_t flags);

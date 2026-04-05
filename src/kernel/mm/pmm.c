@@ -80,7 +80,7 @@ static void pmm_mark_region_free(uintptr_t base, uint64_t length)
     }
 }
 
-int pmm_init(void)
+boot_result_t pmm_init(void)
 {
     uint64_t highest_addr = 0;
     uint32_t i;
@@ -226,7 +226,7 @@ int pmm_init(void)
            total_frames - used_frames,
            total_frames);
 
-    return (total_frames > 0 && total_frames > used_frames) ? 0 : 2;
+    return (total_frames > 0 && total_frames > used_frames) ? BOOT_OK : BOOT_FATAL;
 }
 
 uintptr_t pmm_alloc_frame(void)

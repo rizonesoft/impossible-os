@@ -73,25 +73,37 @@ static boot_result_t deferred_input_init(void)
 
 static boot_result_t async_ata_init(void)
 {
-    ata_init();
+    ata_init();  /* void -- no failure detection; BOOT_DEGRADED if absent */
     return BOOT_OK;
 }
 
 static boot_result_t async_ahci_init(void)
 {
-    ahci_init();
+    int rc = ahci_init();
+    if (rc != 0) {
+        klog(LOG_WARN, "boot", "AHCI init failed (rc=%d)", (uint64_t)rc);
+        return BOOT_DEGRADED;
+    }
     return BOOT_OK;
 }
 
 static boot_result_t async_nvme_init(void)
 {
-    nvme_init();
+    int rc = nvme_init();
+    if (rc != 0) {
+        klog(LOG_WARN, "boot", "NVMe init failed (rc=%d)", (uint64_t)rc);
+        return BOOT_DEGRADED;
+    }
     return BOOT_OK;
 }
 
 static boot_result_t async_virtio_blk_init(void)
 {
-    virtio_blk_init();
+    int rc = virtio_blk_init();
+    if (rc != 0) {
+        klog(LOG_WARN, "boot", "VirtIO-blk init failed (rc=%d)", (uint64_t)rc);
+        return BOOT_DEGRADED;
+    }
     return BOOT_OK;
 }
 
