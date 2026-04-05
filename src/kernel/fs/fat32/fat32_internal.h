@@ -110,6 +110,7 @@ struct fat32_volume {
     struct fat32_file   root_file;
     struct fat32_file   dir_files[FAT32_MAX_DIR_ENTRIES];
     uint32_t            dir_file_count;
+    uint32_t            dir_cached_cluster;  /* cluster whose entries are in dir_files[] */
     struct vfs_dirent   dirent;
     uint8_t             sector_buf[512];
     /* Sector cache */

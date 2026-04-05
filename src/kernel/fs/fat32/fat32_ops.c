@@ -353,8 +353,11 @@ static struct vfs_dirent *fat32_readdir(struct vfs_node *node, uint32_t index)
     dir_cluster = (f && f->first_cluster >= 2)
                 ? f->first_cluster : vol->bpb.root_cluster;
 
-    if (vol->dir_file_count == 0)
+    if (vol->dir_file_count == 0 || vol->dir_cached_cluster != dir_cluster) {
+        vol->dir_file_count = 0;
         fat32_read_dir(vol, dir_cluster);
+        vol->dir_cached_cluster = dir_cluster;
+    }
 
     if (index >= vol->dir_file_count)
         return (struct vfs_dirent *)0;
@@ -380,8 +383,12 @@ static struct vfs_node *fat32_finddir(struct vfs_node *node, const char *name)
     dir_cluster = (f && f->first_cluster >= 2)
                 ? f->first_cluster : vol->bpb.root_cluster;
 
-    if (vol->dir_file_count == 0)
+    /* Re-read if cache is empty or holds a different directory */
+    if (vol->dir_file_count == 0 || vol->dir_cached_cluster != dir_cluster) {
+        vol->dir_file_count = 0;
         fat32_read_dir(vol, dir_cluster);
+        vol->dir_cached_cluster = dir_cluster;
+    }
 
     for (i = 0; i < vol->dir_file_count; i++) {
         if (fat32_strcasecmp(vol->dir_files[i].node.name, name)) {
