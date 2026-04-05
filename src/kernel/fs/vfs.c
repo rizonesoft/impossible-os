@@ -397,8 +397,16 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
 
     /* Walk the path to find the node */
     node = walk_path(mounts[idx].root, rest);
-    if (!node)
-        return (struct vfs_node *)0;
+    if (!node) {
+        /* VFS_O_CREATE: create the file if it doesn't exist, then re-walk */
+        if (flags & VFS_O_CREATE) {
+            if (vfs_create(path, VFS_FILE) != 0)
+                return (struct vfs_node *)0;
+            node = walk_path(mounts[idx].root, rest);
+        }
+        if (!node)
+            return (struct vfs_node *)0;
+    }
 
     /* Oplock break (§14): break existing oplock before share-mode check */
     if (node->type & VFS_FILE)

@@ -202,8 +202,8 @@ void boot_timing_write_report(void)
         for (bj = 0; fn[bj]; bj++) bp_path[bp++] = fn[bj];
         bp_path[bp] = '\0';
     }
-    vfs_create(bp_path, VFS_FILE);  /* ensure file exists */
-    struct vfs_node *file = vfs_open(bp_path, VFS_O_WRITE);
+    struct vfs_node *file = vfs_open(bp_path,
+        VFS_O_WRITE | VFS_O_CREATE);
     if (!file) {
         klog(LOG_WARN, "BOOT", "boot-profile.log: cannot open for write");
         return;
@@ -260,8 +260,8 @@ void boot_postcode_write_log(void)
       for (j = 0; fn[j]; j++) path[pi++] = fn[j]; }
     path[pi] = '\0';
 
-    vfs_create(path, VFS_FILE);  /* ensure file exists */
-    struct vfs_node *f = vfs_open(path, VFS_O_WRITE);
+    struct vfs_node *f = vfs_open(path,
+        VFS_O_WRITE | VFS_O_CREATE);
     if (!f) return;
 
     char line[80];
