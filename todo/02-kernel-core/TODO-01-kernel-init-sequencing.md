@@ -44,14 +44,14 @@
 | --- | :---: | ------------------------------------------ | ---------- | :----: |
 | 💎  |   1   | Boot init infrastructure                   | --         |  [x]   |
 | 💎  |   2   | Phase 0 -- critical init                   | §1         |  [x]   |
-| 💎  |   3   | Phase 1 -- platform services               | §2         |  [x]   |
-| 💎  |   4   | Phase 2 -- system services                 | §3         |  [x]   |
-| 💎  |   5   | Phase 3 -- user platform                   | §4         |  [x]   |
-| 💎  |   6   | Dependency gates                           | §1--§5      |  [x]   |
-| 💎  |   7   | Failure policy                             | §6         |  [x]   |
-| 💎  |   8   | Code cleanup                               | §2--§5      |  [/]   |
+| 💎  |   3   | Phase 1 -- platform services               | §2         |  [/]   |
+| 💎  |   4   | Phase 2 -- system services                 | §3         |  [/]   |
+| 💎  |   5   | Phase 3 -- user platform                   | §4         |  [/]   |
+| 💎  |   6   | Dependency gates                           | §1--§5     |  [x]   |
+| 💎  |   7   | Failure policy                             | §6         |  [/]   |
+| 💎  |   8   | Code cleanup                               | §2--§5     |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [x]   |
-| ⭐  |  10   | POST code + UEFI variable log              | §1         |  [x]   |
+| ⭐  |  10   | POST code + UEFI variable log              | §1         |  [/]   |
 | 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [x]   |
 | ⭐  |  12   | Boot performance regression detection      | §10        |  [/]   |
 | ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [/]   |
@@ -64,8 +64,8 @@ New header and source file providing the result type, readiness oracle, and prog
 
 **Files:** `include/kernel/boot_init.h`, `src/kernel/main/boot_init.c`
 
-- [x] Define `boot_result_t`: `BOOT_OK = 0`, `BOOT_DEGRADED = 1`, `BOOT_FATAL = 2`
-- [x] Define `kernel_subsys_t` enum -- one entry per subsystem that others can depend on: `SUBSYS_SERIAL`, `SUBSYS_PMM`, `SUBSYS_VMM`, `SUBSYS_HEAP`, `SUBSYS_KLOG`, `SUBSYS_GDT`, `SUBSYS_IDT`, `SUBSYS_ACPI`, `SUBSYS_LAPIC`, `SUBSYS_IOAPIC`, `SUBSYS_TIMER`, `SUBSYS_RTC`, `SUBSYS_FB`, `SUBSYS_VFS`, `SUBSYS_REGISTRY`, `SUBSYS_SCHED`, `SUBSYS_IPC`, `SUBSYS_SMP`, `SUBSYS_EXEC`, `SUBSYS_DESKTOP`, `SUBSYS_COUNT`
+- [x] Define `boot_result_t`: `BOOT_OK = 0`, `BOOT_DEGRADED = 1`, `BOOT_FATAL = 2`, `BOOT_DEFERRED = 3`
+- [x] Define `kernel_subsys_t` enum -- one entry per subsystem that others can depend on: `SUBSYS_SERIAL`, `SUBSYS_PMM`, `SUBSYS_VMM`, `SUBSYS_HEAP`, `SUBSYS_KLOG`, `SUBSYS_GDT`, `SUBSYS_IDT`, `SUBSYS_ACPI`, `SUBSYS_LAPIC`, `SUBSYS_IOAPIC`, `SUBSYS_TIMER`, `SUBSYS_RTC`, `SUBSYS_FB`, `SUBSYS_VFS`, `SUBSYS_REGISTRY`, `SUBSYS_SCHED`, `SUBSYS_IPC`, `SUBSYS_SMP`, `SUBSYS_EXEC`, `SUBSYS_DESKTOP`, `SUBSYS_OB`, `SUBSYS_COUNT`
 - [x] Implement static `bool g_subsys_ready[SUBSYS_COUNT]` table in `boot_init.c`
 - [x] Implement `bool kernel_subsystem_ready(kernel_subsys_t subsys)`
 - [x] Implement `void kernel_subsystem_set_ready(kernel_subsys_t subsys, bool ok)`
@@ -92,9 +92,9 @@ Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or 
 - [x] `pmm_init()` -- physical memory manager; BOOT_FATAL if fails; POST code 0x20
 - [x] `vmm_init()` -- virtual memory manager; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_PMM)
 - [x] `heap_init()` -- kernel heap; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_VMM)
-- [x] `klog_init()` -- in-memory ring buffer only (no disk yet); BOOT_REQUIRE(SUBSYS_HEAP)
+- [x] `klog_early_init()` -- in-memory ring buffer only (no disk yet); BOOT_REQUIRE(SUBSYS_HEAP)
 - [x] `cpuid_init()` -- probe CPU features; BOOT_DEGRADED on very old CPU
-- [x] `simd_enable()` -- enable AVX2 or fall back to SSE2; BOOT_DEGRADED on no AVX2
+- [x] `simd_enable_avx()` -- enable AVX2 or fall back to SSE2; BOOT_DEGRADED on no AVX2
 - [x] `boot_config_parse()` -- read `boot.conf` settings into `g_boot_info.config`; BOOT_DEGRADED on missing file (use defaults)
 - [x] Remove driver includes (`ata.h`, `virtio_blk.h`, `ahci.h`) from this file -- they belong in Phase 2
 - [x] Remove SMBIOS, ESRT, UEFI conformance, GOP mode log from Phase 0 -- move to Phase 1
@@ -111,17 +111,18 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `acpi_init()` -- MADT + FADT parsing only (CPU count, LAPIC base, IOAPIC base, PM1a port); BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
 - [x] `lapic_init()` -- BOOT_FATAL on APIC-only platforms, BOOT_DEGRADED if PIC fallback available; BOOT_REQUIRE(SUBSYS_ACPI)
 - [x] `ioapic_init()` -- BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_LAPIC)
-- [x] `pic_disable_or_init()` -- disable if IOAPIC took over; init if PIC is the only controller
-- [x] `ahci_setup_interrupts()` -- MSI routing only; BOOT_DEGRADED if fails; BOOT_REQUIRE(SUBSYS_LAPIC)
+- [x] `pic_disable()`/`pic_init()` policy -- disable if IOAPIC took over; init if PIC is the only controller
+- [x] Move `ahci_setup_interrupts()` out of Phase 1; call it in Phase 2 after storage driver init and PCI discovery
 - [x] `timer_hal_init()` -- select LAPIC or PIT backend, calibrate; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
-- [x] `dpc_init()` -- implemented in [TODO-06 §4](./TODO-06-irql-model-dpcs.md); wired in Phase 3 boot_desktop.c
+- [x] DPC bootstrap split: `dpc_init_queues()` in Phase 1 before `sti`, and `dpc_init()`/`dpc_start_threads()` in Phase 3 after scheduler start (→ XREF: [TODO-06 §4](./TODO-06-irql-model-dpcs.md))
 - [x] `rtc_init()` -- BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_IDT)
 - [x] `keyboard_init()` + `mouse_init()` -- BOOT_DEGRADED if unavailable
 - [x] `smbios_init()` -- POST code 0x40; BOOT_DEGRADED if unavailable; move here from Phase 0
 - [x] `esrt_init()` + `mat_init()` + `uefi_conformance_init()` + `uefi_capsule_init()` + `uefi_crypto_agility_init()` -- BOOT_DEGRADED; move here from Phase 0
 - [x] `secureboot_keys_init()` -- BOOT_DEGRADED; move here from Phase 0
 - [x] `fb_init()` + `boot_splash_init()` -- BOOT_DEGRADED; display is optional for kernel correctness
-- [x] `boot_timing_report()` -- log TSC + FPDT data after timer is calibrated
+- [x] `boot_timing_init()` + boot timing report log path after timer calibration
+- [ ] Wire `except_init()` in Phase 1 after IDT/IRQ setup (→ XREF: [TODO-10-exception-dispatch-seh.md §1](./TODO-10-exception-dispatch-seh.md))
 - [x] `__asm__ volatile ("sti")` -- enable interrupts only after all of the above
 - [x] `boot_splash_start_animation()` -- after STI so LAPIC timer can drive the spinner
 - [x] Remove `#include "kernel/fs/vfs.h"` and `#include "kernel/fs/partition.h"` from this file
@@ -136,40 +137,49 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 **File:** `src/kernel/main/boot_storage.c` (restructured as `boot_phase2`)
 
 - [x] `pci_scan()` -- enumerate PCI/PCIe bus; BOOT_DEGRADED if no devices found; moved from Phase 1
-- [x] `object_manager_init()` -- `ob_init()` in boot_storage.c:335; 11 built-in types, 6 root directories; BOOT_FATAL with recovery screen; BOOT_REQUIRE(SUBSYS_HEAP)
+- [x] Object Manager gate in Phase 2 uses `ob_init()` (11 built-in types, 6 root directories) with recovery-screen + `boot_halt()` fatal path
 - [x] `xhci_init()` -- USB host controller; BOOT_DEGRADED; moved from Phase 1
 - [x] `ata_init()` + `virtio_blk_init()` + `ahci_init()` -- storage drivers; BOOT_DEGRADED if all fail; moved from Phase 0
 - [x] `blkdev_register_all()` -- register block devices into the blkdev layer
-- [x] `vfs_init()` -- BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_HEAP)
-- [x] `partition_scan_all()` + `partition_mount_filesystems()` -- BOOT_FATAL if no root partition mounts
-- [x] `klog_disk_enable()` -- open `X:\Logs\kernel.log`; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
-- [x] `registry_init()` -- BOOT_FATAL if fails after VFS is up; BOOT_REQUIRE(SUBSYS_VFS)
+- [x] `vfs_init()` runs in Phase 2 after HEAP prerequisite checks and readiness gating
+- [x] `partition_scan_all()` + `partition_mount_filesystems()` wired in Phase 2 before registry and symbol-table init
+- [x] `ahci_setup_interrupts()` is called in Phase 2 after storage driver init
+- [x] `klog_disk_enable()` is wired in Phase 2 after VFS mount path (degraded behavior is handled inside logging path)
+- [/] `registry_init()` is wired after `SUBSYS_VFS`, but typed BOOT_FATAL propagation is still missing because `registry_init()` is `void` today
 - [x] `symtab_init()` -- load symbol table from disk; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
 - [x] `mmap_init()` -- user-mode memory map subsystem; BOOT_REQUIRE(SUBSYS_VMM)
+- [x] Time service bootstrap in Phase 2: `mono_clock_init()` + `wall_clock_init()` + `timezone_init()` + `kusd_init()` (→ XREF: [TODO-07 §5](./TODO-07-time-filetime-management.md))
 - [x] `rtl8139_init()` + `net_init()` -- NIC + network stack; BOOT_DEGRADED; moved from Phase 1
 - [x] `virtio_input_init()` + `vbox_mouse_init()` -- BOOT_DEGRADED; moved from Phase 1
 - [x] `dhcp_discover()` -- fire-and-forget; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS) for lease file
 - [x] `hw_dump()` -- log full hardware summary after all drivers init
-- [x] `smp_start_aps()` -- bringup APs; BOOT_DEGRADED if any AP fails; BOOT_REQUIRE(SUBSYS_HEAP) + BOOT_REQUIRE(SUBSYS_REGISTRY); moved from Phase 1
+- [x] `smp_init()` AP bringup is executed in Phase 2 (moved from Phase 1) and marks `SUBSYS_SMP` ready
 - [x] `acpi_power_init()` in Phase 2: parses S1/S3/S4 sleep objects from DSDT (implemented in [TODO-15 §1](./TODO-15-power-management.md))
 - [x] Remove `HV_BAR` macro from `boot_storage.c` if present -- already removed in prior commit
 - [x] Add `boot_progress(2, "step-name", postcode)` at each step
+- [ ] Enforce typed fatal/degraded decisions from Phase 2 init return values (current gap: several Phase 2 init APIs are still `void` and have no boot_result_t propagation):
+  - `vfs_init()` return-path ownership → [05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
+  - `registry_init()` return-path ownership → [TODO-13-registry-completion.md §1](./TODO-13-registry-completion.md)
+  - `partition_mount_filesystems()` root-mount success/failure must be validated explicitly before continuing to registry
 
 ## 5. Phase 3 -- User Platform
 Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before this phase; failures here fall back to a text console, not BSOD.
 
 **File:** `src/kernel/main/boot_desktop.c` (restructured as `boot_phase3`)
 
-- [x] `sched_init()` -- start preemptive scheduler; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_HEAP) + BOOT_REQUIRE(SUBSYS_TIMER)
-- [x] `ipc_init()` -- init pipe, shmem, and signal subsystems; BOOT_REQUIRE(SUBSYS_SCHED)
-- [x] `exec_loader_init()` -- register ELF/PE32+/EIF format handlers; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
-- [x] `boot_tests_run()` -- **only** if `g_boot_info.config.debug == 1`; skip entirely in release
-- [x] `boot_splash_complete()` -- dismiss splash screen; requires SUBSYS_FB
-- [x] `font_init()` + `icon_init()` + `cursor_init()` -- load assets from VFS; BOOT_DEGRADED
+- [x] `task_init()` starts preemptive scheduler; BOOT_FATAL prerequisite path checks `SUBSYS_HEAP` + `SUBSYS_TIMER`
+- [x] Phase 3 currently marks `SUBSYS_IPC` ready (implicit IPC bootstrap; no dedicated `ipc_init()` symbol wired here)
+- [ ] Add explicit `ipc_init()` boot hook with `boot_result_t` error propagation before setting `SUBSYS_IPC` ready (→ XREF: [TODO-12-alpc-message-ports.md §1](./TODO-12-alpc-message-ports.md))
+- [x] Phase 3 currently marks `SUBSYS_EXEC` ready (no dedicated `exec_loader_init()` bootstrap symbol wired here)
+- [ ] Wire explicit exec-loader bootstrap before setting `SUBSYS_EXEC` ready (→ XREF: [TODO-08-binary-system.md §1](./TODO-08-binary-system.md))
+- [x] `boot_tests_run()` executes only when `debug=1` or `test=1`; release path skips tests
+- [x] `boot_splash_finish()` dismisses splash once desktop is ready
+- [x] `ttf_mgr_init()` + `icon_store_init()` + `cursor_init()` load desktop assets
 - [x] `desktop_init()` -- window manager + compositor init; BOOT_DEGRADED; fallback to serial console if fails
 - [x] `compositor_run()` -- event loop (never returns under normal operation)
-- [x] On any BOOT_FATAL in Phase 3: do NOT BSOD -- log via `klog(FATAL)` and halt after compositor returns
+- [/] Phase 3 fatal-path behavior currently uses `boot_halt()` on prerequisite guards (no BSOD path in this codepath); policy wording needs alignment
 - [x] Add `boot_progress(3, "step-name", postcode)` at each step
+- [ ] Move syscall/SSDT fast-path bootstrap (`ssdt_init`, `syscall_init_fast`, `syscall_init`) to Phase 1 OR document/accept Phase 3 ownership and update [TODO-05-native-api-ssdt.md](./TODO-05-native-api-ssdt.md) XREF contract
 
 ## 6. Dependency Gates
 - [x] Add dependency guards in phase orchestrators for all critical chains (inline checks + `boot_halt()` + `kernel_subsystem_dump()`)
@@ -196,6 +206,10 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] Ensure `panic()` full BSOD path triggers only after FB is ready (end of Phase 1) -- guards on `kernel_subsystem_ready(SUBSYS_FB)`
 - [x] Add `kernel_subsystem_dump()` call inside `boot_halt()` and `panic()` -- done in §6
 - [x] Define and document which BOOT_FATAL events trigger auto-restart vs permanent halt based on `boot.conf` restart policy -- documented in boot_halt.c
+- [ ] Align failure-policy matrix with implemented code paths:
+  - Phase 1 BOOT_FATAL currently routes to `boot_halt()` (serial-first halt), not BSOD
+  - Phase 2 fatal guards currently show recovery UI and then halt via `boot_halt()`
+  - Update table text or implement the documented BSOD transitions
 
 ## 8. Code Cleanup
 These are bugs and structural violations that must be fixed as part of this TODO:
@@ -209,12 +223,13 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [x] Move `ata_init()`, `virtio_blk_init()`, `ahci_init()` out of `boot_hw.c` into `boot_storage.c`
 - [x] Move SMBIOS, ESRT, UEFI conformance, capsule, crypto agility, GOP log out of `boot_hw.c` into `boot_interrupts.c`
 - [x] Simplify `main.c` to exactly: `boot_phase0()` → `boot_phase1()` → `boot_phase2()` → `boot_phase3()` → halt
-- [x] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1` check
+- [x] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1 || g_boot_info.config.test == 1`
 - [ ] Update init functions to return `boot_result_t` -- distributed to per-subsystem TODOs:
-  - ~~`task_init()`~~ -- done (returns `boot_result_t`)
-  - `pipe_init()` → [TODO-12 §1](./TODO-12-alpc-message-ports.md)
-  - `pmm/vmm/heap_init()` → [03-memory/TODO-01 §1](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
-  - `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
+  - [x] `task_init()` -- done (returns `boot_result_t`)
+  - [ ] `pipe_init()` → [TODO-12 §1](./TODO-12-alpc-message-ports.md)
+  - [ ] `pmm/vmm/heap_init()` → [03-memory/TODO-01 §1](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
+  - [ ] `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
+  - [ ] `registry_init()` → [TODO-13 §1](./TODO-13-registry-completion.md)
 
 ## 9. Degraded-Boot Recovery Screen
 In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally. Renders directly to the GOP framebuffer -- no compositor, no window manager required. Displays which subsystem failed, its POST code, and a simple recovery menu (retry / boot to serial console / power off).
@@ -235,13 +250,14 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 **Files:** `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`, `src/kernel/uefi_runtime.c`
 
 - [x] Define UEFI variable name: `ImpossiblePOST` in namespace GUID `{494D504F-5354-4F53-504F-535447554944}`
-- [x] Implement `boot_post_write(uint8_t code)` -- calls `uefi_set_variable()` with NV+BS+RT attributes; no-ops if runtime unavailable or `postcode=0` in boot.conf
-- [x] Call `boot_post_write(postcode)` at each `boot_progress()` call site in phases 0--3 (integrated into boot_progress itself)
-- [x] On successful boot completion, write final code `0xFF` (`POSTCODE_BOOT_OK`) in boot_phase3()
-- [x] On `boot_halt()` / `panic()`, write `0xFE` (`POSTCODE_BOOT_FAILED`) before halting
-- [x] Implement `boot_post_read()` -- reads last stored value; returns -1 if unavailable
+- [/] Implement 16-bit POST persistence helpers: `boot_post_write16()`, `boot_post_nvram_write16()` (runtime-availability handling is wired; `postcode=0` NVRAM gating still needs explicit handling)
+- [x] `boot_progress()` path writes POST via `boot_post_write16(postcode)` for phase progress tracking
+- [x] On successful boot completion, write final 16-bit code `0xFF00` (`POST16_BOOT_OK`) in `boot_phase3()`
+- [x] On `boot_halt()` / `panic()`, write final 16-bit failure code `0xFFFE` (`POST16_BOOT_FAILED`) before halting
+- [x] Implement `boot_post_read16()` -- reads last stored value; returns -1 if unavailable
 - [x] Log prior POST code to serial at Phase 0 start: `[POST] Last boot code: 0xNN` with status interpretation
 - [x] Add `boot_progress(10, "post-code-log", 0x11)` call after `uefi_runtime_init()` in Phase 0
+- [ ] Add explicit `boot_post_nvram_write16()` gating for `boot.conf postcode=0` (currently only on-screen POST display is gated)
 
 ## 11. Deferred Init for Non-Critical Subsystems
 Move non-critical subsystem init out of the blocking boot path so the desktop appears faster. Win11 defers non-critical services until after Explorer starts; Linux has `deferred_initcall()` for post-boot init.
@@ -283,7 +299,7 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 **Test checkpoint:** Boot twice → second boot serial log shows `[PERF]` comparison lines. Inject a `sleep_ms(1000)` in a subsystem init → second boot shows `[PERF] WARNING` for that subsystem. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. On bare metal, verify NVRAM read/write works with real UEFI firmware.
 
 > [!NOTE]
-> UEFI NVRAM has limited write endurance (~100K cycles). `ImpossibleBootPerf` is written once per boot (end of Phase 3). Combined with `ImpossiblePOST` (2 writes/boot), total is 3 NVRAM writes per boot -- acceptable for flash endurance.
+> UEFI NVRAM has limited write endurance (~100K cycles). Current successful-boot path writes `ImpossiblePOST` 5 times (`POST16_SERIAL`, `POST16_SIMD_OK`, `POST16_TIMER_OK`, `POST16_REGISTRY_OK`, `POST16_BOOT_OK`) plus `ImpossibleBootPerf` once, for 6 writes/boot. This should be reduced or explicitly budgeted.
 
 ## 13. Async Subsystem Init (SMP Parallel)
 Allow independent subsystems within a phase to initialize concurrently on different CPUs. Win11 uses parallel DLL loading (1--16 worker threads). Linux has `async_schedule()` for device probing. Impossible OS can parallelize Phase 2, where many subsystems (storage, NIC, USB) have no mutual dependencies.
@@ -318,7 +334,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 | 💎 | Degraded boot        | ✅ Safe mode       | ✅ Emergency shell    | ✅ §7 BOOT_DEGRADED      |
 | 💎 | Boot serial log      | ✅ DebugPrint/ETW  | ✅ early_printk       | ✅ §2 [PHASE0] markers   |
 | 💎 | Boot config gating   | ✅ Registry        | ✅ cmdline            | ✅ §2 boot.conf          |
-| 💎 | Tests separated      | ✅ Separate env    | ✅ initcall_debug     | ✅ §5 debug=1 gate       |
+| 💎 | Tests separated      | ✅ Separate env    | ✅ initcall_debug     | ✅ §5 debug/test gate    |
 | ⭐ | Recovery UI at boot  | ❌ Separate WinRE  | ❌ Text-only shell    | ✅ §9 graphical recovery |
 | ⭐ | POST to UEFI NVRAM   | ❌ Firmware-only   | ❌ Not implemented    | ✅ §10 ImpossiblePOST    |
 | ⭐ | Readiness oracle API | ⚠️ Private internal| ⚠️ system_state only  | ✅ §1 public API         |
@@ -381,7 +397,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 - [x] Serial log contains no `HV_BAR` or raw pixel-write output -- PASS: neither string found in WHPX serial log (2026-04-02)
 - [x] Serial log shows `kernel_subsystem_dump()` output before any halt -- PASS: code verified -- `boot_halt()` calls `kernel_subsystem_dump()` at boot_halt.c:263 before any framebuffer writes (2026-04-01)
 - [x] Forcing PMM failure causes `boot_halt()` on serial -- no framebuffer writes attempted -- PASS: code verified -- boot_hw.c:146 checks `SUBSYS_PMM` ready, calls `boot_halt()` which writes serial first, only touches fb if `fb_available` (2026-04-01)
-- [x] Forcing VFS failure causes degraded-boot screen -- kernel stays up, no BSOD -- PASS: code verified -- boot_storage.c:100-103 calls `boot_recovery_show()` then `boot_halt()`, recovery screen is non-fatal display (2026-04-01)
+- [/] Forcing VFS failure shows degraded-boot screen and then halts via `boot_halt()` (current behavior) -- verify whether "continue degraded boot" or "halt after recovery UI" is intended policy
 - [x] `boot_tests_run()` does not appear in serial log when `debug=0` -- PASS: booted with debug=0, grep found 0 boot test references (2026-04-01)
 - [x] `boot_tests_run()` does appear in serial log when `debug=1` -- PASS: `--- Boot Tests ---` at 7.700s, `=== 50 tests passed, 0 failed ===` at 8.440s (WHPX, 2026-04-02)
 - [ ] Bare metal: all phases complete, POST codes visible on VPD -- (manual: requires physical hardware)

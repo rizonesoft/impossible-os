@@ -995,21 +995,21 @@ Virtual memory management entry points -- covers the full NT virtual memory API 
 ## 10. NtQuerySystemInformation / NtQueryInformationProcess
 Provides OS version, process list, performance counters, and detailed process info to ntdll and user-mode tools.
 
-- [ ] `NtQuerySystemInformation(SystemInformationClass, SystemInformation, Length, ReturnLength)`:
-  - `SystemBasicInformation (0)`: number of processors, page size, min/max user address, allocation granularity
-  - `SystemPerformanceInformation (2)`: available pages, commit total, commit limit (from PMM stats)
-  - `SystemTimeOfDayInformation (3)`: boot time, current time, time zone bias
-  - `SystemProcessInformation (5)`: linked list of `SYSTEM_PROCESS_INFORMATION` -- PID, name, thread count, handle count, memory usage
-  - `SystemProcessorInformation (1)`: processor architecture, level, revision
-  - `SystemModuleInformation (11)`: loaded kernel modules
-  - `SystemHandleInformation (16)`: system-wide handle table dump
-  - `SystemObjectInformation (17)`: object type statistics
-  - `SystemInterruptInformation (23)`: per-CPU interrupt counts
-  - `SystemExceptionInformation (33)`: exception statistics
-  - `SystemRegistryQuotaInformation (37)`: registry size limits
-  - `SystemProcessorPerformanceInformation (8)`: per-CPU idle/kernel/user times
-  - `SystemBootPerformanceInformation (custom)`: read `ImpossibleBootPerf` NVRAM data -- enables `bootperf` shell command (→ XREF: `TODO-01-kernel-init-sequencing.md §12`)
-  - Unimplemented classes return `STATUS_NOT_IMPLEMENTED`
+- [x] `NtQuerySystemInformation(SystemInformationClass, SystemInformation, Length, ReturnLength)`:
+  - [x] `SystemBasicInformation (0)`: page size, CPU count, min/max user address, allocation granularity
+  - [x] `SystemProcessorInformation (1)`: AMD64 architecture, level, max CPUs
+  - [x] `SystemPerformanceInformation (2)`: PMM free/used/total pages
+  - [x] `SystemTimeOfDayInformation (3)`: uptime seconds (from §5)
+  - [x] `SystemProcessInformation (5)`: PID, state, name list (from §5)
+  - [ ] `SystemProcessorPerformanceInformation (8)`: deferred (per-CPU time accounting not yet implemented)
+  - [ ] `SystemModuleInformation (11)`: deferred (module loader not yet implemented)
+  - [ ] `SystemHandleInformation (16)`: deferred (system-wide handle dump not yet implemented)
+  - [ ] `SystemObjectInformation (17)`: deferred (OB type statistics aggregation)
+  - [ ] `SystemInterruptInformation (23)`: deferred (per-CPU interrupt counters)
+  - [ ] `SystemExceptionInformation (33)`: deferred (exception stats not tracked)
+  - [ ] `SystemRegistryQuotaInformation (37)`: deferred (registry not quota-limited yet)
+  - [ ] `SystemBootPerformanceInformation (custom)`: deferred (→ XREF: `TODO-01-kernel-init-sequencing.md §12`)
+  - [x] Unimplemented classes return `STATUS_NOT_IMPLEMENTED` via default case
 - [x] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED (requires SeSystemtimePrivilege from TODO-11)
 - [x] `NtQueryInformationProcess` extended with 7 new info classes:
   - `ProcessBasicInformation (0)`: PEB, PID, parent PID, affinity (done in §7)
@@ -1021,9 +1021,21 @@ Provides OS version, process list, performance counters, and detailed process in
   - `ProcessWow64Information (26)`: 0 (native 64-bit)
   - `ProcessImageFileName (27)`: task name string
 - [x] 2 unit tests: SystemInfo classes (5 checks incl. PageSize==4096), ProcessInfo classes (4 checks incl. DebugPort==0)
-- [ ] Commit: `"kernel: nt -- NtQuerySystemInformation and NtQueryInformationProcess"`
+- [x] Commit: `"kernel: nt -- NtQuerySystemInformation and NtQueryInformationProcess"`
 
 **Test checkpoint:** `NtQuerySystemInformation(SystemBasicInformation)` returns correct page size (4096) and processor count. `NtQueryInformationProcess(ProcessBasicInformation)` returns valid PEB address (0x7FFDE000). `SystemProcessInformation` enumerates all running processes.
+
+### Deferred Class Completion Checklist
+
+- [ ] `SystemProcessorPerformanceInformation (8)`: add real CPU time accounting first (scheduler tick attribution), then expose per-CPU idle/kernel/user times via `NtQuerySystemInformation`. The accounting groundwork is still pending in `todo/02-kernel-core/TODO-09-process-model-extensions.md` (line 188).
+- [ ] `SystemModuleInformation (11)`: implement module registry/loader list (`exec_register_module`, lookup/enumeration), then serialize that list in `NtQuerySystemInformation`. Module list work is still planned in `todo/02-kernel-core/TODO-08-binary-system.md` (line 165).
+- [ ] `SystemHandleInformation (16)`: add a safe system-wide handle table snapshot across all processes (PID + handle + access + object/type), then expose it through class 16. Current implementation has per-process tables only.
+- [ ] `SystemObjectInformation (17)`: wire `NtQuerySystemInformation` to OB type stats aggregation. Most raw stats already exist in `src/kernel/ob/ob.c` (line 363), but class 17 marshalling is not implemented.
+- [ ] `SystemInterruptInformation (23)`: add per-CPU interrupt counters and return them. You currently have per-vector global IRQ counts in `src/kernel/irq.c` (line 23), but no per-CPU increment path is wired.
+- [ ] `SystemExceptionInformation (33)`: add exception counters in the IDT exception path, then expose those totals. Exception handling exists, but exception stats tracking does not.
+- [ ] `SystemRegistryQuotaInformation (37)`: implement registry quota accounting/enforcement (limit, used, peak) in registry write paths, then query output. Current registry code has no quota model.
+- [ ] `SystemBootPerformanceInformation (custom)`: boot perf NVRAM read/write is already present in `src/kernel/boot_timing.c` (line 333), but you still need a kernel accessor/API and a class serializer in `NtQuerySystemInformation` for user-mode consumption.
+- [ ] For all deferred classes: add ABI structs + buffer-size handling + unit tests in `src/kernel/test/test_nt_types.c`, then update TODO-05 §10 checklist states.
 
 ## 11. Extended Error Information (IOSB + LastError)
 NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async I/O) and `TEB->LastErrorValue` (Win32 `GetLastError`). Both must be populated correctly.

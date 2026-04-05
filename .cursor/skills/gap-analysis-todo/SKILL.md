@@ -64,10 +64,49 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
      - **CONFLICT** -- both claim to implement the same thing. Resolve: pick one owner, add scope boundary note.
      - **FOUNDATION** -- the other TODO provides infrastructure this one consumes. Add dependency XREF.
    - Check for stale sections in overlapping TODOs -- if a section was made obsolete by recent work, add a supersession note.
+   - **Patch both sides in the same run (required):** for every SUPERSEDES/COMPLEMENT/CONFLICT/FOUNDATION decision, update the referenced TODO section too:
+     - Add reciprocal `→ XREF:` links.
+     - Add mirrored unchecked prerequisite/ownership items where needed.
+     - If a referenced section/order row is marked complete but depends on unresolved required work, downgrade status there as well.
+     - Keep edits limited to TODO files directly referenced by the finding.
+   - Normalize dependency metadata when possible:
+     - Add stable source item `ID:` tags.
+     - Add target `SATISFIES:` links to those IDs for closure propagation.
+     - Do not treat plain prose XREF text as sufficient for automatic completion propagation.
+
+10. **Code-truth completion audit (required, full-file).**
+   - Scan EVERY checklist item in the target TODO (`[x]` and `[ ]`) against the live codebase.
+   - Never trust checkbox state alone; validate by evidence (symbols, call sites, wiring/registration paths, normal-path behavior).
+   - Treat a claim as complete only when implemented and wired. Stubs/placeholders/`STATUS_NOT_IMPLEMENTED` normal paths are not complete.
+   - If a section is marked complete but has gaps, add missing unchecked items in that same section in prerequisite-first logical order.
+   - **Strict evidence gate (non-optional):** every status change or newly added TODO item must cite proof in `path:line + symbol + reason` form.
+   - Required evidence classes for completion claims:
+     1. **Implementation evidence:** concrete symbol/body exists in non-test code.
+     2. **Wiring evidence:** registration/dispatch/call path reaches the implementation.
+     3. **Behavior evidence:** normal path is not stub/placeholder/`STATUS_NOT_IMPLEMENTED`.
+   - If any evidence class is missing or ambiguous, keep/revert to `[ ]` and add a concrete follow-up unchecked item.
+   - **Dependency-aware auto-closure gate (required):**
+     1. Auto-close referenced target items only when explicit `ID` -> `SATISFIES` mapping exists.
+     2. Require full target acceptance-criteria coverage by source evidence before `[x]` propagation.
+     3. If partially satisfied, use `[/]` or `[ ]` and insert ordered missing items with ownership/XREF.
+     4. Never auto-close from inferred relationship alone.
+   - Every newly added missing item must include ownership and references:
+     - owner file/function and/or owning TODO section
+     - `→ XREF: TODO-XX §N` for external dependencies
+     - placement before dependent tasks so execution order is valid
+   - **Deterministic insertion order algorithm (when adding missing unchecked items):**
+     1. Prerequisite type/struct/constants
+     2. Core implementation
+     3. Wiring/registration/dispatcher
+     4. Error-path and privilege/validation checks
+     5. Tests and verification hooks
+     6. Commit/checkpoint item
+   - Preserve existing style/layout while editing: keep table structure/icons/headers and edit only required status/content cells.
+   - Include factual evidence in the report for each mismatch (path + symbol + why).
 
 ### Phase 4 -- Add Missing Sections
 
-10. **Draft new sections for each significant gap.**
+11. **Draft new sections for each significant gap.**
     - For each parity gap (💎): create a full section with:
       - Section heading: `## N. Feature Name`
       - One-line intro paragraph explaining what this feature does and why it matters.
@@ -77,41 +116,50 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
     - For each competitive edge (⭐): same format, but add a `> [!TIP]` callout explaining why this is superior to Win11/Linux.
     - For Win11-only or Linux-only features: create sections only if they're important for compatibility or user experience. Otherwise note them as deferred with a reason.
 
-11. **Renumber all sections.**
+12. **Renumber all sections.**
     - After inserting new sections, renumber ALL `## N. Title` headings sequentially from 1.
     - Group sections logically: foundational → parity → competitive edge.
     - Update all internal `§N` references in prose, callouts, and checklist items to match new numbers.
 
-12. **Update the Implementation Order table.**
+13. **Update the Implementation Order table.**
     - Add rows for every new section.
     - Mark each new row `💎` (parity) or `⭐` (exclusive).
     - Set `Depends On` correctly -- new sections should depend on existing foundation sections where applicable.
     - Keep existing section dependencies correct after renumbering.
     - Renumber all Order values sequentially.
+    - **Status consistency rule:** if a section has unresolved required checklist items or newly discovered prerequisite gaps, its Implementation Order status cannot stay `[x]`; downgrade to `[/]` (or `[ ]` when appropriate).
 
-13. **Update the OS Comparison table.**
+14. **Update the OS Comparison table.**
     - Add rows for each new feature discovered during research.
     - Use a compact 5-column format with icon labels.
     - Header format: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`
     - Keep cells short: status emoji + max 5 words.
     - Add the summary paragraph after the table noting competitive position.
 
-14. **Update the Outcome section.**
+15. **Update the Outcome section.**
     - Add bullet points for any new major deliverables introduced by the new sections.
     - Keep the Outcome section concise -- one bullet per major capability, not per section.
 
-15. **Update the Inputs section.**
+16. **Update the Inputs section.**
     - If new sections reference source files not listed in Inputs, add them.
     - If new sections create dependencies on other TODOs, add `→ XREF:` lines.
+    - For missing items added into existing sections, add/verify ownership and prerequisite XREF entries as well.
+    - For each new external dependency, patch bidirectional awareness immediately: add the missing back-reference and mirrored unchecked item to the target TODO section in the same run.
 
 ### Phase 5 -- Report
 
-16. **Output a gap analysis report to the user.**
-    - List every gap found, with its classification (parity/edge/deferred/N-A).
-    - List every new section added, with section number and one-line summary.
-    - List every cross-TODO overlap found, with relationship type and action taken.
-    - List features explicitly deferred, with reasons.
-    - Include the final section count and assertion count delta.
+17. **Output a gap analysis report to the user.**
+    - Use this fixed schema (always):
+      1. **Implemented but not marked** (with evidence)
+      2. **Marked but not implemented/wired** (with evidence)
+      3. **Missing prerequisites inserted** (ordered list + ownership + XREF)
+      4. **Cross-TODO ownership decisions** (SUPERSEDES/COMPLEMENT/CONFLICT/FOUNDATION)
+      5. **Parity/edge gaps** (fact vs inference labeled)
+      6. **Edits summary** (sections touched, status downgrades, section/order deltas)
+      7. **Cross-file patches applied** (target file, section, inserted/downgraded items, reason)
+      8. **Auto-closure decisions** (source ID, target ID, closure result, proof or missing criteria)
+    - Every finding line must include a confidence tag: `confirmed` or `inferred`.
+    - Include the final section count and checklist delta.
 
 ## Research Quality Standards
 
@@ -125,8 +173,17 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
 
 - Do NOT implement kernel code -- this skill creates TODO sections, not source files.
 - Do NOT delete existing sections -- only add new ones and renumber.
-- Do NOT mark existing checklist items as done.
+- Do NOT mark existing checklist items as done without strict proof from code-truth evidence.
+- You may downgrade stale `[x]` to `[ ]` and add missing unchecked items when evidence shows incompleteness.
+- Apply the same strict-proof gate to referenced TODO files before any `[x]` status change.
+- For cross-file dependency findings, update directly referenced target TODO sections in the same run; do not leave them as report-only follow-ups unless blocked.
+- Never auto-close referenced TODO items without explicit `ID`/`SATISFIES` mapping and full target-criteria proof.
+- If mapping metadata is absent, add linkage metadata and conservative follow-up checklist items instead of propagating `[x]`.
 - Do NOT remove features from the TODO -- only add missing ones.
 - If a feature is out of scope for this TODO, note it as `→ XREF:` to the appropriate TODO or as explicitly deferred with a reason.
 - Keep new sections lean and actionable. No multi-paragraph prose blocks -- use checklist items with concrete deliverables.
 - When research is ambiguous (e.g., Windows internal feature with no public docs), note the uncertainty rather than guessing.
+- Always scan the codebase for completion claims; TODO text is never source-of-truth by itself.
+- Do not change visual formatting conventions (icons/table headers/callout style) unless the user explicitly asks for format changes.
+- Do not leave a section marked complete when newly found prerequisite gaps remain unresolved.
+- If confidence is below strict-proof threshold, choose conservative output: keep unchecked and add a concrete follow-up item with owner/XREF.

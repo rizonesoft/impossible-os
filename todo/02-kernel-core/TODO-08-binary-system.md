@@ -53,7 +53,7 @@
 | 💎  |   1   | `exec_load()` multi-format dispatcher          | VMM, VFS, sched         |  [ ]   |
 | 💎  |   2   | Enhanced ELF loader (VMM-backed, PIE)          | 1                       |  [ ]   |
 | 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | 2                       |  [ ]   |
-| ⭐  |   4   | EIF format specification                       | --                       |  [ ]   |
+| ⭐  |   4   | EIF format specification                       | --                      |  [ ]   |
 | ⭐  |   5   | EIF kernel loader                              | 1, 4                    |  [ ]   |
 | 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | 1, TODO-04 §8           |  [ ]   |
 | 💎  |   7   | PE32+ header parser                            | 1                       |  [ ]   |

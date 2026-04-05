@@ -10,6 +10,7 @@ description: Run a Codex adversarial review against all implemented sections of 
 - A TODO file has completed sections (`[x]`) that need adversarial review against the actual code.
 - The user wants to verify that implemented sections are production-quality, not just "builds and boots."
 - After a batch of implementations, before marking a TODO as fully complete.
+- For single-section scope, prefer `$codex-adversarial-review-section`.
 
 ## Workflow
 

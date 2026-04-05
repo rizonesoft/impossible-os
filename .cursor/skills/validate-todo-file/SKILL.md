@@ -1,9 +1,22 @@
 ---
 name: validate-todo-file
-description: Validate a TODO file for structural completeness, Implementation Order accuracy, XREF continuity, cross-TODO scope overlap, Inputs path existence, and gap-free execution coverage without doing code-completion audits. Use when reviewing a TODO after creation or major edits, or before implementation begins.
+description: Validate a TODO file for structural completeness, Implementation Order accuracy, XREF continuity, cross-TODO scope overlap, Inputs path existence, and code-truth completion accuracy. Use when reviewing a TODO after creation, major edits, or during implementation tracking.
 ---
 
 # Validate TODO File
+
+## Run Modes
+
+- **Default: full validation.** Run every workflow step, including code-truth checks, completion-state corrections, and prerequisite insertion.
+- **Fast validation (only if explicitly requested):** run structure/XREF/ordering checks only. In fast mode, do not change `[x]/[ ]` states.
+
+## Output Contract
+
+- Return findings grouped by severity in this order: `Critical`, `High`, `Medium`, `Low`.
+- For each finding, include: issue, impact, concrete evidence (`path:line` + symbol when possible), confidence tag (`confirmed` or `inferred`), and whether it was auto-fixed or is follow-up work.
+- Include a `Cross-file sync` block listing every referenced TODO file edited, section(s) touched, and exact status/item changes.
+- Include an `Auto-closure decisions` block listing each propagated completion with source item ID, target item ID, proof summary, and disposition (`closed`, `partial`, `not closed`).
+- If no findings exist, state that explicitly and still report what was validated.
 
 ## Workflow
 
@@ -37,6 +50,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - **Compact the OS Comparison table:**
      - Keep a compact 5-column header and use icon labels for operating systems.
      - Header format: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`
+     - Preserve existing icon headers/table structure; edit only status/content cells required by evidence.
      - Keep cells short: status emoji + max 5 words per cell. No full sentences.
      - Pad columns so pipe characters align vertically within the table.
      - If the table is wider than ~100 characters per row, shorten cell text further.
@@ -61,6 +75,16 @@ description: Validate a TODO file for structural completeness, Implementation Or
      3. If this TODO creates something that unblocks work in another TODO, the deliverable section must explicitly say "after this, re-enable X in TODO-YY §M" -- not just a vague XREF.
      4. If this TODO defers an item, the item must say WHERE it's deferred to (specific TODO + section) or WHY it's deferred (with a condition for when to revisit). Never just "deferred."
    - **Internal §N cross-reference check:** For every `§N` reference in prose, checklist items, and callouts within each section, verify that `N` refers to the correct section in THIS file. A section cannot reference itself as if it were a different section (e.g., §1 saying "this unblocks §1" is a bug). Cross-check each §N against the `## N.` headings and the Implementation Order table to ensure the reference makes semantic sense -- the referenced section should actually deliver what the prose claims.
+   - **Referenced-file synchronization (required):** when a finding involves external `→ XREF` targets, patch the referenced TODO section(s) in the same run:
+     1. Add missing reciprocal back-references.
+     2. Add missing unchecked prerequisite/ownership items in logical order with `→ XREF` back to this TODO section.
+     3. If a referenced section or its Implementation Order row is marked complete but evidence shows unresolved required work, downgrade status consistently.
+     4. Limit edits to directly referenced TODO files/sections tied to the finding.
+   - **Dependency auto-closure protocol (required for cross-TODO completion propagation):**
+     1. Require explicit source/target mapping metadata (`ID:` on source item and `SATISFIES:` target item IDs).
+     2. Auto-close target `[ ] -> [x]` only when proof shows full coverage of target acceptance criteria.
+     3. If coverage is partial, set/keep `[/]` (or `[ ]`) and insert missing unchecked sub-items with owner/XREF.
+     4. Never infer auto-closure from plain `→ XREF` text alone.
    - Fix stale planning text, broken links, and roadmap inconsistencies.
 9. **Self-contained execution check (critical).**
    - The TODO must be executable from §1 to the last section WITHOUT being blocked by unimplemented sections in other TODOs.
@@ -76,6 +100,25 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - For each function, type, or API referenced in checklist items (e.g., `vmm_map_mmio()`, `BOOT_TRY()`, `POST16()`), use Grep to check if it exists in the codebase.
     - If it doesn't exist AND is not created by a prior section in this TODO: flag it as a missing prerequisite.
     - If it IS created by a prior section: verify the section order puts the creator before the consumer.
+    - **Completion-truth scan (required):** audit EVERY checklist item in the file (`[x]` and `[ ]`) against the current codebase, not just the active section.
+    - For `[x]` items, require strict proof before allowing checked state:
+      1. Implementation exists in non-test code.
+      2. Wiring/registration path exists (e.g., SSDT/service table/dispatcher/hooks where applicable).
+      3. Normal path is functional (not just stub symbol, not `STATUS_NOT_IMPLEMENTED`, not placeholder return).
+    - Hard fail patterns for `[x]`: function names ending in `_stub`, "stub" placeholder implementations, or normal-path `STATUS_NOT_IMPLEMENTED`/equivalent placeholders.
+    - **SSDT consistency check (when SSDT claims are present):** verify service number ↔ function symbol ↔ registration/dispatch table entry ↔ TODO table/checklist row are all consistent before changing completion state.
+    - For `[ ]` items that are already fully implemented and wired, mark them as candidates for `[x]` with proof references.
+    - If evidence shows a section is incomplete (even when section/table row is marked complete), add missing unchecked checklist items in that same section in logical prerequisite-first order.
+    - If required unchecked items remain after auditing a section, propagate status: that section and its `Implementation Order` row cannot remain complete.
+    - Apply the same strict proof gate to status changes in referenced TODO files; never mark referenced work complete without implementation + wiring + functional-path proof.
+    - For propagated cross-TODO closure, require both:
+      - explicit mapping (`ID`/`SATISFIES`) and
+      - complete target-criteria coverage by evidence.
+    - If either condition fails, do not close the target item; leave partial/open with concrete missing work.
+    - Every newly added missing item must include ownership and reference:
+      - Owner scope (`src/...` file/function and/or owning TODO section).
+      - `→ XREF: TODO-XX...` when dependency is external.
+      - Placement before dependent tasks so execution order remains correct.
 11. **Platform coverage check (bare metal first).**
     - **Bare metal is the acceptance criteria.** "Verified on QEMU" is necessary but NOT sufficient. Every section that touches hardware must include bare-metal verification.
     - Every TODO that touches hardware, interrupts, page tables, timers, or drivers MUST list which platforms each section has been verified on.
@@ -129,13 +172,23 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - **Test case quality check:** Each sub-bullet must test one specific behavior with a concrete expected outcome. Flag any test that lacks an expected value (e.g., "call `foo()`" without stating what it should return or what state it should produce).
     - If the TODO file is missing this section entirely, flag it and draft a skeleton `## Unit Tests` section with test cases derived from the TODO's deliverables.
 17. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
+    - Use this only for deep dive escalation; baseline completion-truth validation is mandatory in this skill.
 
 ## Guardrails
 
 - Do not implement code.
-- Do not mark TODO work done based on code inspection alone.
-- Do not turn this into a formatting-only cleanup pass; structural clarity is the goal.
+- Do not turn this into a formatting-only cleanup pass; structural clarity plus code-truth accuracy is the goal.
 - Inputs path checks are existence-only -- do not read or analyse the referenced source files.
+- Always verify checklist claims against the codebase; never trust checkbox state alone.
+- Mark `[x]` only with strict proof (implemented + wired + functional normal path).
+- If proof is missing, revert to `[ ]` or rewrite as explicit deferred/stub status with references.
+- Even in sections already marked complete, add missing unchecked prerequisite/ownership items when gaps are found.
+- When dependency findings involve external XREF targets, update those referenced TODO sections in the same pass.
+- Never mark `[x]` in referenced TODO files without strict proof; prefer conservative `[ ]` follow-up items with ownership/XREF.
+- Never auto-close referenced TODO items without explicit `ID`/`SATISFIES` mapping and full acceptance-criteria proof.
+- If mapping metadata is missing, add conservative linkage/checklist follow-ups instead of propagating `[x]`.
+- Preserve document/table formatting (including OS header icons); do not reformat unrelated content.
+- Keep edits idempotent: running validation again on already-correct content should produce no further changes.
 
 ## Additional Resources
 

@@ -295,25 +295,25 @@ Provide tagged reference tracking and optional per-handle event recording for di
 
 ## OS Comparison
 
-| ⭐ | Feature               | 🪟 Win11               | 🐧 Linux             | 🚀 Impossible OS            |
-|----|-----------------------|-------------------------|----------------------|------------------------------|
-| 💎 | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref    | ✅ §1                       |
-| 💎 | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type         | ✅ §1                       |
-| 💎 | Auto-delete on 0 ref  | ✅ ObDereferenceObject | ✅ kref_put          | ✅ §2                       |
-| 💎 | Per-process handles   | ✅ HANDLE_TABLE        | ✅ fd table          | ✅ §3                       |
-| 💎 | Named namespace       | ✅ \BaseNamedObjects   | ✅ /proc, /sys       | ✅ §4                       |
-| 💎 | File objects          | ✅ FILE_OBJECT         | ✅ struct file       | ✅ §5                       |
-| 💎 | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct       | ✅ §5                       |
-| 💎 | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem   | ✅ §6                       |
-| 💎 | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap    | ✅ §7                       |
-| 💎 | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs  | ✅ §8                       |
-| 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ✅ §9, §10                  |
-| ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ✅ §11 -- public, documented |
-| ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ✅ §1–§7 -- one header       |
-| 💎 | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo    | ✅ §12 -- atomic counters    |
-| 💎 | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ✅ §13 -- pre/post filtering |
+| ⭐ | Feature               | 🪟 Win11               | 🐧 Linux             | 🚀 Impossible OS              |
+|----|-----------------------|-------------------------|----------------------|--------------------------------|
+| 💎 | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref    | ✅ §1                         |
+| 💎 | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type         | ✅ §1                         |
+| 💎 | Auto-delete on 0 ref  | ✅ ObDereferenceObject | ✅ kref_put          | ✅ §2                         |
+| 💎 | Per-process handles   | ✅ HANDLE_TABLE        | ✅ fd table          | ✅ §3                         |
+| 💎 | Named namespace       | ✅ \BaseNamedObjects   | ✅ /proc, /sys       | ✅ §4                         |
+| 💎 | File objects          | ✅ FILE_OBJECT         | ✅ struct file       | ✅ §5                         |
+| 💎 | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct       | ✅ §5                         |
+| 💎 | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem   | ✅ §6                         |
+| 💎 | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap    | ✅ §7                         |
+| 💎 | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs  | ✅ §8                         |
+| 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ✅ §9, §10                    |
+| ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ✅ §11 -- public, documented  |
+| ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ✅ §1–§7 -- one header        |
+| 💎 | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo    | ✅ §12 -- atomic counters     |
+| 💎 | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ✅ §13 -- pre/post filtering  |
 | 💎 | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE     | ✅ §14 -- 16K default, 1M max |
-| ⭐ | Handle leak detection | ⚠️ ETW (complex)       | ❌ No built-in       | ✅ §15 -- klog-integrated    |
+| ⭐ | Handle leak detection | ⚠️ ETW (complex)       | ❌ No built-in       | ✅ §15 -- klog-integrated     |
 
 > All foundational parity items (§1–§11) complete -- Impossible OS matches Windows NT object management.
 > Three exclusive features (⭐): public namespace browser API (§11), unified single-header type system (§1–§7), and built-in klog-integrated handle leak detection (§15).

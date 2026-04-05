@@ -41,10 +41,10 @@
 | --- | :---: | ---------------------------------------------------- | ----------------------------- | :----: |
 | 💎  |   1   | Working directory (`cwd` field + Nt/VFS wiring)      | VFS                           |  [ ]   |
 | 💎  |   2   | Standard handle pre-wiring at process creation       | TODO-03 §3                    |  [ ]   |
-| 💎  |   3   | User-mode program break (brk/sbrk Linux compat)     | VMM, TODO-08 §1               |  [ ]   |
+| 💎  |   3   | User-mode program break (brk/sbrk Linux compat)      | VMM, TODO-08 §1               |  [ ]   |
 | 💎  |   4   | Process priority class (Win32 `SetPriorityClass`)    | sched (exists)                |  [ ]   |
 | 💎  |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)     | 4                             |  [ ]   |
-| 💎  |   6   | Process capabilities and privilege bitmask           | --                             |  [ ]   |
+| 💎  |   6   | Process capabilities and privilege bitmask           | --                            |  [ ]   |
 | ⭐  |   7   | Capability inheritance and drop-only policy          | 6                             |  [ ]   |
 | 💎  |   8   | Process accounting fields (times, I/O, VM counters)  | 1                             |  [ ]   |
 | 💎  |   9   | Per-process resource limits (rlimits)                | 3, 6                          |  [ ]   |
@@ -52,7 +52,7 @@
 | 💎  |  11   | Per-process mitigation policy                        | 6, TODO-17 §1                 |  [ ]   |
 | ⭐  |  12   | Pledge/unveil-style process restriction              | 6, 7                          |  [ ]   |
 | 💎  |  13   | Job Object syscalls wired to SSDT                    | 6, TODO-05 §4                 |  [ ]   |
-| 💎  |  14   | Process exit cleanup -- release all per-process resources | §8, §9                    |  [ ]   |
+| 💎  |  14   | Process exit cleanup -- release all per-process resources | §8, §9                   |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -72,6 +72,15 @@
 - [ ] Register both in SSDT (→ XREF TODO-05 §4)
 - [ ] Win32 wrappers: `SetCurrentDirectory` → `NtSetCurrentDirectory`; `GetCurrentDirectory` → `NtQueryCurrentDirectory`
 - [ ] Commit: `"kernel: task -- working directory field and Nt API wiring"`
+
+> [!NOTE]
+> **Current-tree prerequisites and ownership:**
+> - [ ] `struct task` still has no `cwd`; this requires edits in `include/kernel/sched/task.h` plus `task_init()`/`task_create()`/`task_fork()`/`task_exec()` paths in `src/kernel/sched/task.c`.
+> - [ ] VFS currently expects drive-letter absolute paths (`X:\\...`) at parse/open boundaries in `src/kernel/fs/vfs.c`; relative path support needs resolver logic in this section before path consumers can pass relative strings.
+> - [ ] `NtSetCurrentDirectory` / `NtQueryCurrentDirectory` are not wired in SSDT registration yet; add service numbers and table registration as part of this section and `TODO-05-native-api-ssdt.md §4`.
+> - [ ] `MAX_PATH` is not a kernel-wide constant today; use or define a constant aligned with `VFS_MAX_PATH` to avoid path-size drift.
+> - [ ] PEB process-parameter `CurrentDirectory` is currently hardcoded to `C:\\`; keep `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` synchronized with `task->cwd` (→ XREF `TODO-04-peb-teb-user-abi.md §5`).
+> - [ ] Win32 wrappers are separate user-mode/API-surface work: `GetCurrentDirectoryW`/`SetCurrentDirectoryW` in `todo/05-storage-filesystems/TODO-05-win32-file-io-api.md §6`, and A-suffixed API exports in `todo/10-services-security/TODO-08-win32-api-surface.md §2`.
 
 **Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns `"C:\\Impossible"`. `NtSetCurrentDirectory` on non-existent path returns error (CWD unchanged). Relative path `"System\\Logs"` resolves to `"C:\\System\\Logs"` when CWD is `"C:\\"`. `task_fork()` child inherits parent CWD. `POST16(0xD010)` on entry, `POST16(0xD011)` after VFS resolver wired. Range `0xD01x` confirmed free. Test on: QEMU WHPX + TCG.
 

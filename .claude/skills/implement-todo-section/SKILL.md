@@ -11,6 +11,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 2. Resolve dependencies first.
    - Follow every `→ XREF:` line that affects the scoped section.
    - Stop and ask if a prerequisite is incomplete or the scope conflicts with current reality.
+   - If part of the section is implementable and part is blocked, implement only the currently unblocked subset and keep blocked checklist items open (`[ ]` or `[/]`) with explicit blocker notes.
 3. Explore the codebase before editing.
    - Use Grep/Glob tools for symbol search, call-graph tracing, and cross-file discovery.
    - Read relevant source files to understand the integration surface.
@@ -32,6 +33,15 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 7. Update the TODO section before finishing.
    - Correct stale checklist state, notes, and verification wording when evidence contradicts the current text.
    - Keep TODO edits scoped to the section you actually executed.
+   - **Done proof gate for checklist updates:** only change `[ ]` -> `[x]` when the item is both functionally implemented and wired in the real call path. Do not mark done for `*_stub` handlers or normal-path `STATUS_NOT_IMPLEMENTED` placeholders.
+   - For SSDT-related claims, verify **service number/index ↔ Nt function ↔ `ssdt_register()` entry ↔ SSDT Master Table row** consistency before changing TODO text.
+   - If an item cannot be completed yet due to missing prerequisites, do not force completion; leave it open and add missing unchecked prerequisite/ownership items in logical order, with concrete owner scope (`src/...`/symbol) and `→ XREF` where external.
+   - **Cross-TODO sync rule:** when this section references or satisfies external TODO requirements, update directly referenced TODO section(s) in the same run so dependency/status text remains consistent on both sides.
+   - **Cross-TODO auto-closure rule:** propagate `[ ]` -> `[x]` in referenced TODOs only when both are true:
+     1. explicit mapping metadata exists (`ID:` on source item and `SATISFIES:` target item ID), and
+     2. evidence proves full target acceptance-criteria coverage.
+     If either condition fails, keep target items open/partial and add concrete missing work.
+   - Preserve existing document formatting while editing: keep table headers, icons, section headers, and column structure intact; only update evidence-backed status/content cells.
 8. Update the Implementation Order table.
    - Find the row(s) whose `Deliverable` maps to the section you just implemented.
    - Change the `Status` cell to `[x]` (fully done) or `[/]` (in progress) to match the evidence.
@@ -40,12 +50,19 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
    - Find the row(s) whose `Feature` maps to what the section delivers.
    - Replace placeholder text in the `🚀 Impossible OS` cell with a concrete description and section reference.
    - If a row was `⬜ Planned` and is now fully working, change `⬜` to `✅`; if partial, use `🔄`.
+   - Preserve the OS Comparison table format exactly (including header icons and column order); edit only the relevant status and content cells.
 10. Wire up unit tests for the section's deliverables.
    - If the TODO has a `## Unit Tests` section, check if the new code is testable.
    - Add or update test assertions in the relevant `test_*.c` file for the functionality just implemented.
    - If tests already exist but skip (e.g., "not yet allocated"), update them to verify the new state.
    - Run `bash scripts/build.sh` to confirm tests compile.
-11. **Commit and push IMMEDIATELY after the section is complete and the build passes.**
+11. Run section-scoped adversarial review and fix loop.
+   - Use `$codex-adversarial-review-section` for the implemented section.
+   - Fix findings, then re-review until no unresolved High/Critical findings remain (max 3 rounds).
+12. Run targeted section verification.
+   - Use `$verify-todo-section` on the implemented section after fixes.
+   - Reconcile any status drift from fixes before commit.
+13. **Commit and push IMMEDIATELY after the section is complete and the build passes.**
    - **CRITICAL: Never batch multiple sections or features into one commit.** Each completed implementation gets its own commit+push before starting the next task. This keeps COUNT.md current, git history granular, and rollback possible.
    - Use the section's `Commit:` line as the commit message.
    - Stage all changed source files, headers, the updated TODO file, and any test changes together.
@@ -55,6 +72,11 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 ## Guardrails
 
 - **Commit after each implementation.** Do not accumulate multiple implementations before committing. The post-commit hook updates COUNT.md and the user expects incremental progress.
+- Do not mark checklist items `[x]` from intent, partial progress, or stubs; require implementation + wiring evidence first.
+- For SSDT sections, do not edit checklist/table status until service number ↔ function ↔ registration ↔ master-table consistency is verified.
+- If prerequisite work is missing, keep items open/partial and add explicit prerequisite ownership items before dependents.
+- Do not auto-close referenced TODO items from plain `→ XREF` text alone; require `ID`/`SATISFIES` mapping plus full acceptance-criteria proof.
+- Do not skip section adversarial review and targeted section verification before commit.
 - Do not create new TODO files here.
 - Do not turn this into a broad file-wide roadmap cleanup pass.
 - Do not silently widen scope when requirements, repo state, or verification evidence conflict.
