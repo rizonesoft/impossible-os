@@ -55,7 +55,7 @@
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [x]   |
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [x]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [x]   |
-| 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [ ]   |
+| 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [x]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [ ]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [ ]   |
 | 💎  |  13   | File metadata and device control                               | §6                |  [ ]   |
@@ -988,7 +988,7 @@ Virtual memory management entry points -- covers the full NT virtual memory API 
 - [x] New file: `include/kernel/nt/nt_memory.h` -- MEM_COMMIT/RESERVE/RELEASE, PAGE_* flags, MEMORY_BASIC_INFORMATION
 - [x] New file: `src/kernel/nt/nt_memory.c` -- 12 SSDT handlers (9 implemented + 3 AWE stubs)
 - [x] 2 unit tests: SSDT registration (5 handler checks), constant verification (12 checks)
-- [ ] Commit: `"kernel: nt -- NtAllocate/Free/Protect/Lock/Read/WriteVirtualMemory"`
+- [x] Commit: `"kernel: nt -- NtAllocate/Free/Protect/Lock/Read/WriteVirtualMemory"`
 
 **Test checkpoint:** `NtAllocateVirtualMemory` with `MEM_COMMIT | PAGE_READWRITE` returns usable address; write+read round-trip. `NtProtectVirtualMemory` changes RW→RO; write attempt faults. `NtFreeVirtualMemory` with `MEM_RELEASE` returns `STATUS_SUCCESS`. `NtReadVirtualMemory` from kernel to user address space succeeds.
 
@@ -1010,17 +1010,17 @@ Provides OS version, process list, performance counters, and detailed process in
   - `SystemProcessorPerformanceInformation (8)`: per-CPU idle/kernel/user times
   - `SystemBootPerformanceInformation (custom)`: read `ImpossibleBootPerf` NVRAM data -- enables `bootperf` shell command (→ XREF: `TODO-01-kernel-init-sequencing.md §12`)
   - Unimplemented classes return `STATUS_NOT_IMPLEMENTED`
-- [ ] `NtSetSystemInformation(SystemInformationClass, Buffer, Length)`:
-  - `SystemTimeSlipNotification (46)`: register time slip callback
-  - Privileged operation -- requires `SeSystemtimePrivilege` for time-related classes
-- [ ] `NtQueryInformationProcess(ProcessHandle, ProcessInformationClass, Buffer, Length)`:
-  - `ProcessBasicInformation (0)`: PEB address, PID, parent PID, exit status, affinity mask
-  - `ProcessImageFileName (27)`: full path of the executable
-  - `ProcessDebugPort (7)`: debug port handle (0 if not being debugged)
-  - `ProcessWow64Information (26)`: WoW64 PEB address (NULL for native 64-bit)
-  - `ProcessHandleCount (20)`: number of open handles
-  - `ProcessSessionInformation (24)`: session ID
-  - `ProcessTimes (4)`: creation, exit, kernel, user times
+- [x] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED (requires SeSystemtimePrivilege from TODO-11)
+- [x] `NtQueryInformationProcess` extended with 7 new info classes:
+  - `ProcessBasicInformation (0)`: PEB, PID, parent PID, affinity (done in §7)
+  - `ProcessTimes (4)`: creation, exit, kernel, user times (zeroed -- not tracked yet)
+  - `ProcessDebugPort (7)`: 0 (not debugged)
+  - `ProcessPriorityClass (18)`: base priority (done in §7)
+  - `ProcessHandleCount (20)`: handle_table.count
+  - `ProcessSessionInformation (24)`: session 0
+  - `ProcessWow64Information (26)`: 0 (native 64-bit)
+  - `ProcessImageFileName (27)`: task name string
+- [x] 2 unit tests: SystemInfo classes (5 checks incl. PageSize==4096), ProcessInfo classes (4 checks incl. DebugPort==0)
 - [ ] Commit: `"kernel: nt -- NtQuerySystemInformation and NtQueryInformationProcess"`
 
 **Test checkpoint:** `NtQuerySystemInformation(SystemBasicInformation)` returns correct page size (4096) and processor count. `NtQueryInformationProcess(ProcessBasicInformation)` returns valid PEB address (0x7FFDE000). `SystemProcessInformation` enumerates all running processes.

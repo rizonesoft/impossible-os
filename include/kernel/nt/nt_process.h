@@ -24,8 +24,14 @@ void nt_process_register_ssdt(void);
 
 /* ---- Process information classes ---------------------------------------- */
 #define ProcessBasicInformation     0
+#define ProcessTimes                4
+#define ProcessDebugPort            7
 #define ProcessDefaultHardErrorMode 12
 #define ProcessPriorityClass        18
+#define ProcessHandleCount          20
+#define ProcessSessionInformation   24
+#define ProcessWow64Information     26
+#define ProcessImageFileName        27
 
 /* ---- Thread basic information output ------------------------------------ */
 typedef struct {

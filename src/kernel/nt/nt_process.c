@@ -456,12 +456,76 @@ static NTSTATUS NtQueryInformationProcess_handler(uint64_t a1, uint64_t a2,
             *ret_length = (uint32_t)sizeof(PROCESS_BASIC_INFORMATION);
         return STATUS_SUCCESS;
     }
+    case ProcessTimes: {
+        /* KERNEL_USER_TIMES: creation, exit, kernel, user times */
+        struct {
+            uint64_t CreateTime;
+            uint64_t ExitTime;
+            uint64_t KernelTime;
+            uint64_t UserTime;
+        } *times = buffer;
+        if (length < 32)
+            return STATUS_BUFFER_TOO_SMALL;
+        times->CreateTime = 0;  /* not tracked yet */
+        times->ExitTime = 0;
+        times->KernelTime = 0;
+        times->UserTime = 0;
+        if (ret_length) *ret_length = 32;
+        return STATUS_SUCCESS;
+    }
+    case ProcessDebugPort: {
+        uint64_t *port = (uint64_t *)buffer;
+        if (length < sizeof(uint64_t))
+            return STATUS_BUFFER_TOO_SMALL;
+        *port = 0;  /* not being debugged */
+        if (ret_length) *ret_length = sizeof(uint64_t);
+        return STATUS_SUCCESS;
+    }
     case ProcessPriorityClass: {
         uint32_t *pclass = (uint32_t *)buffer;
         if (length < sizeof(uint32_t))
             return STATUS_BUFFER_TOO_SMALL;
         *pclass = t->threads[0].base_priority;
         if (ret_length) *ret_length = sizeof(uint32_t);
+        return STATUS_SUCCESS;
+    }
+    case ProcessHandleCount: {
+        uint32_t *hcount = (uint32_t *)buffer;
+        if (length < sizeof(uint32_t))
+            return STATUS_BUFFER_TOO_SMALL;
+        *hcount = t->handle_table.count;
+        if (ret_length) *ret_length = sizeof(uint32_t);
+        return STATUS_SUCCESS;
+    }
+    case ProcessSessionInformation: {
+        uint32_t *session = (uint32_t *)buffer;
+        if (length < sizeof(uint32_t))
+            return STATUS_BUFFER_TOO_SMALL;
+        *session = 0;  /* session 0 (console) */
+        if (ret_length) *ret_length = sizeof(uint32_t);
+        return STATUS_SUCCESS;
+    }
+    case ProcessWow64Information: {
+        uint64_t *wow64_peb = (uint64_t *)buffer;
+        if (length < sizeof(uint64_t))
+            return STATUS_BUFFER_TOO_SMALL;
+        *wow64_peb = 0;  /* native 64-bit, no WoW64 */
+        if (ret_length) *ret_length = sizeof(uint64_t);
+        return STATUS_SUCCESS;
+    }
+    case ProcessImageFileName: {
+        /* Return process name as a simple string */
+        char *out = (char *)buffer;
+        uint32_t i;
+        if (!t->name) {
+            if (length >= 1) out[0] = '\0';
+            if (ret_length) *ret_length = 1;
+            return STATUS_SUCCESS;
+        }
+        for (i = 0; i < length - 1 && t->name[i]; i++)
+            out[i] = t->name[i];
+        out[i] = '\0';
+        if (ret_length) *ret_length = i + 1;
         return STATUS_SUCCESS;
     }
     default:

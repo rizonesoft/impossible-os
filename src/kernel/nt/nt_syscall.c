@@ -27,6 +27,9 @@
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_file.h"
 #include "kernel/ob/ob_section.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/smp.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/serial.h"
 #include "desktop/terminal.h"
@@ -471,12 +474,22 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
     return STATUS_SUCCESS;
 }
 
-/* ---- SystemProcessInformation class ID for NtQuerySystemInformation ---- */
-#define SystemProcessInformation        5
-#define SystemTimeOfDayInformation      3
+/* ---- SystemInformationClass constants ----------------------------------- */
+#define SystemBasicInformation              0
+#define SystemProcessorInformation          1
+#define SystemPerformanceInformation        2
+#define SystemTimeOfDayInformation          3
+#define SystemProcessInformation            5
+#define SystemProcessorPerformanceInfo      8
+#define SystemModuleInformation             11
+#define SystemHandleInformation             16
+#define SystemObjectInformation             17
+#define SystemInterruptInformation          23
+#define SystemExceptionInformation          33
+#define SystemRegistryQuotaInformation      37
 
 /* ---- NtQuerySystemInformation -------------------------------------------
- * SSDT 0x00D0 -- wraps SYS_GETPROCS and SYS_UPTIME.
+ * SSDT 0x00D0 -- system-wide information queries.
  * a1 = info class, a2 = buffer, a3 = buffer size,
  * a4 = return length pointer.
  * ----------------------------------------------------------------------- */
@@ -491,15 +504,101 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
     (void)a5; (void)a6;
 
     switch (info_class) {
+    case SystemBasicInformation: {
+        /* SYSTEM_BASIC_INFORMATION: page size, processor count, address limits */
+        struct {
+            uint32_t Reserved;
+            uint32_t TimerResolution;
+            uint32_t PageSize;
+            uint32_t NumberOfPhysicalPages;
+            uint32_t LowestPhysicalPageNumber;
+            uint32_t HighestPhysicalPageNumber;
+            uint32_t AllocationGranularity;
+            uint64_t MinimumUserModeAddress;
+            uint64_t MaximumUserModeAddress;
+            uint64_t ActiveProcessorsAffinityMask;
+            uint8_t  NumberOfProcessors;
+            uint8_t  _pad[7];
+        } *info = buffer;
+
+        if (!buffer || buf_size < 64)
+            return STATUS_BUFFER_TOO_SMALL;
+
+        info->Reserved = 0;
+        info->TimerResolution = 10000;  /* 10ms default */
+        info->PageSize = VMM_PAGE_SIZE;
+        info->NumberOfPhysicalPages = (uint32_t)pmm_get_total_frames();
+        info->LowestPhysicalPageNumber = 1;
+        info->HighestPhysicalPageNumber = info->NumberOfPhysicalPages;
+        info->AllocationGranularity = 0x10000;  /* 64 KB */
+        info->MinimumUserModeAddress = 0x10000;
+        info->MaximumUserModeAddress = 0x7FFFFFFEFFFF;
+        info->ActiveProcessorsAffinityMask = ((uint64_t)1 << smp_cpu_count()) - 1;
+        info->NumberOfProcessors = (uint8_t)smp_cpu_count();
+        {
+            int pi;
+            for (pi = 0; pi < 7; pi++) info->_pad[pi] = 0;
+        }
+        if (return_length) *return_length = 64;
+        return STATUS_SUCCESS;
+    }
+    case SystemProcessorInformation: {
+        /* SYSTEM_PROCESSOR_INFORMATION: architecture and level */
+        struct {
+            uint16_t ProcessorArchitecture;
+            uint16_t ProcessorLevel;
+            uint16_t ProcessorRevision;
+            uint16_t MaximumProcessors;
+            uint32_t ProcessorFeatureBits;
+        } *info = buffer;
+
+        if (!buffer || buf_size < 12)
+            return STATUS_BUFFER_TOO_SMALL;
+
+        info->ProcessorArchitecture = 9;  /* AMD64 */
+        info->ProcessorLevel = 6;
+        info->ProcessorRevision = 0;
+        info->MaximumProcessors = (uint16_t)smp_cpu_count();
+        info->ProcessorFeatureBits = 0;
+        if (return_length) *return_length = 12;
+        return STATUS_SUCCESS;
+    }
+    case SystemPerformanceInformation: {
+        /* SYSTEM_PERFORMANCE_INFORMATION: memory stats */
+        struct {
+            uint64_t AvailablePages;
+            uint64_t CommittedPages;
+            uint64_t CommitLimit;
+        } *info = buffer;
+
+        if (!buffer || buf_size < 24)
+            return STATUS_BUFFER_TOO_SMALL;
+
+        info->AvailablePages = pmm_get_free_frames();
+        info->CommittedPages = pmm_get_used_frames();
+        info->CommitLimit = pmm_get_total_frames();
+        if (return_length) *return_length = 24;
+        return STATUS_SUCCESS;
+    }
+    case SystemTimeOfDayInformation: {
+        /* Return uptime in seconds */
+        uint64_t *out = (uint64_t *)buffer;
+        if (!buffer || buf_size < sizeof(uint64_t))
+            return STATUS_BUFFER_TOO_SMALL;
+        *out = uptime();
+        if (return_length)
+            *return_length = (uint32_t)sizeof(uint64_t);
+        return STATUS_SUCCESS;
+    }
     case SystemProcessInformation: {
-        /* Process info structure -- matches user/include/syscall.h */
+        /* Process list with PID, state, name */
         struct {
             uint32_t pid;
             uint32_t state;
             char     name[32];
         } *out = buffer;
         uint32_t count = task_count();
-        uint32_t max = buf_size / 40;  /* sizeof(proc_info) = 40 */
+        uint32_t max = buf_size / 40;
         uint32_t i, j;
 
         if (!buffer)
@@ -531,19 +630,20 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
         }
         return STATUS_SUCCESS;
     }
-    case SystemTimeOfDayInformation: {
-        /* Return uptime in seconds in the buffer */
-        uint64_t *out = (uint64_t *)buffer;
-        if (!buffer || buf_size < sizeof(uint64_t))
-            return STATUS_BUFFER_TOO_SMALL;
-        *out = uptime();
-        if (return_length)
-            *return_length = (uint32_t)sizeof(uint64_t);
-        return STATUS_SUCCESS;
-    }
     default:
-        return STATUS_INVALID_INFO_CLASS;
+        return STATUS_NOT_IMPLEMENTED;
     }
+}
+
+/* ---- NtSetSystemInformation (0x00D1) ------------------------------------
+ * a1 = SystemInformationClass, a2 = buffer, a3 = length.
+ * ----------------------------------------------------------------------- */
+static NTSTATUS NtSetSystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
+                                       uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    /* Privileged operation -- requires SeSystemtimePrivilege (TODO-11) */
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 /* ---- Shutdown action codes for NtShutdownSystem ------------------------ */
@@ -695,8 +795,9 @@ void nt_syscall_register_ssdt(void)
     /* Process and thread (NtTerminateProcess moved to nt_process.c §7) */
     ssdt_register(SSDT_NtYieldExecution,        (SSDT_HANDLER)NtYieldExecution);
 
-    /* System information */
+    /* System information (§10) */
     ssdt_register(SSDT_NtQuerySystemInformation, (SSDT_HANDLER)NtQuerySystemInformation);
+    ssdt_register(SSDT_NtSetSystemInformation,   (SSDT_HANDLER)NtSetSystemInformation);
 
     /* Shutdown */
     ssdt_register(SSDT_NtShutdownSystem,        (SSDT_HANDLER)NtShutdownSystem);

@@ -692,6 +692,93 @@ static void test_nt_vm_constants(void)
                    "MEMORY_BASIC_INFORMATION size == 48");
 }
 
+/* ---- NT system/process information (§10) tests ---- */
+
+static void test_nt_sysinfo_classes(void)
+{
+    NTSTATUS s;
+    uint8_t buf[128];
+    uint32_t ret_len = 0;
+
+    /* SystemBasicInformation: should return page size and CPU count */
+    s = ssdt_dispatch(SSDT_NtQuerySystemInformation,
+                      0 /* SystemBasicInformation */,
+                      (uint64_t)buf, 128, (uint64_t)&ret_len, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "SystemBasicInformation returns SUCCESS");
+    /* Page size at offset 8 */
+    {
+        uint32_t *page_size = (uint32_t *)(buf + 8);
+        TEST_ASSERT_EQ(*page_size, 4096,
+                       "SystemBasicInformation.PageSize == 4096");
+    }
+
+    /* SystemPerformanceInformation */
+    s = ssdt_dispatch(SSDT_NtQuerySystemInformation,
+                      2 /* SystemPerformanceInformation */,
+                      (uint64_t)buf, 128, (uint64_t)&ret_len, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "SystemPerformanceInformation returns SUCCESS");
+
+    /* SystemProcessorInformation */
+    s = ssdt_dispatch(SSDT_NtQuerySystemInformation,
+                      1 /* SystemProcessorInformation */,
+                      (uint64_t)buf, 128, (uint64_t)&ret_len, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "SystemProcessorInformation returns SUCCESS");
+
+    /* NtSetSystemInformation -- stub returns NOT_IMPLEMENTED */
+    s = ssdt_dispatch(SSDT_NtSetSystemInformation, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
+                   "NtSetSystemInformation stub");
+
+    /* Unknown class returns NOT_IMPLEMENTED */
+    s = ssdt_dispatch(SSDT_NtQuerySystemInformation,
+                      999, (uint64_t)buf, 128, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
+                   "Unknown SystemInformationClass returns NOT_IMPLEMENTED");
+}
+
+static void test_nt_procinfo_classes(void)
+{
+    NTSTATUS s;
+    uint8_t buf[128];
+    uint32_t ret_len = 0;
+
+    /* ProcessHandleCount for current process */
+    s = ssdt_dispatch(SSDT_NtQueryInformationProcess,
+                      CURRENT_PROCESS, ProcessHandleCount,
+                      (uint64_t)buf, 4, (uint64_t)&ret_len, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ProcessHandleCount returns SUCCESS");
+
+    /* ProcessDebugPort -- should be 0 (not debugged) */
+    s = ssdt_dispatch(SSDT_NtQueryInformationProcess,
+                      CURRENT_PROCESS, ProcessDebugPort,
+                      (uint64_t)buf, 8, (uint64_t)&ret_len, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ProcessDebugPort returns SUCCESS");
+    {
+        uint64_t *port = (uint64_t *)buf;
+        TEST_ASSERT_EQ(*port, 0,
+                       "ProcessDebugPort == 0 (not debugged)");
+    }
+
+    /* ProcessWow64Information -- 0 for native 64-bit */
+    s = ssdt_dispatch(SSDT_NtQueryInformationProcess,
+                      CURRENT_PROCESS, ProcessWow64Information,
+                      (uint64_t)buf, 8, (uint64_t)&ret_len, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ProcessWow64Information returns SUCCESS");
+
+    /* ProcessSessionInformation -- session 0 */
+    s = ssdt_dispatch(SSDT_NtQueryInformationProcess,
+                      CURRENT_PROCESS, ProcessSessionInformation,
+                      (uint64_t)buf, 4, (uint64_t)&ret_len, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ProcessSessionInformation returns SUCCESS");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -741,6 +828,10 @@ void test_register_nt_types(void)
     /* NT virtual memory tests (§9) */
     test_suite_register_cat("NT: VM SSDT registered", test_nt_vm_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: VM constants", test_nt_vm_constants, TEST_CAT_ABI);
+
+    /* NT system information tests (§10) */
+    test_suite_register_cat("NT: NtQuerySystemInfo classes", test_nt_sysinfo_classes, TEST_CAT_ABI);
+    test_suite_register_cat("NT: NtQueryProcessInfo classes", test_nt_procinfo_classes, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
