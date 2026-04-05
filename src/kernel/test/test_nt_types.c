@@ -25,6 +25,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/user_range.h"
 #include "kernel/sched/syscall.h"
+#include "kernel/nt/nt_file.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -487,6 +488,44 @@ static void test_nt_syscall_ssdt_alias_values(void)
                    "SYS_NT_CLOSE == SSDT_NtClose");
 }
 
+/* ---- NT file I/O (§6) -- NtCreateFile / NtOpenFile SSDT tests ---- */
+
+static void test_nt_create_file_ssdt_registered(void)
+{
+    NTSTATUS s;
+
+    /* NtCreateFile (0x0010) with NULL out_handle -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtCreateFile, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtCreateFile SSDT registered (NULL out_handle)");
+
+    /* NtOpenFile (0x0011) with NULL out_handle -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtOpenFile, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtOpenFile SSDT registered (NULL out_handle)");
+}
+
+static void test_nt_file_constants(void)
+{
+    /* CreateDisposition values match Windows NT convention */
+    TEST_ASSERT_EQ(FILE_SUPERSEDE,    0, "FILE_SUPERSEDE == 0");
+    TEST_ASSERT_EQ(FILE_OPEN,         1, "FILE_OPEN == 1");
+    TEST_ASSERT_EQ(FILE_CREATE,       2, "FILE_CREATE == 2");
+    TEST_ASSERT_EQ(FILE_OPEN_IF,      3, "FILE_OPEN_IF == 3");
+    TEST_ASSERT_EQ(FILE_OVERWRITE,    4, "FILE_OVERWRITE == 4");
+    TEST_ASSERT_EQ(FILE_OVERWRITE_IF, 5, "FILE_OVERWRITE_IF == 5");
+
+    /* IoStatusBlock Information values */
+    TEST_ASSERT_EQ(FILE_SUPERSEDED,     0, "FILE_SUPERSEDED == 0");
+    TEST_ASSERT_EQ(FILE_OPENED,         1, "FILE_OPENED == 1");
+    TEST_ASSERT_EQ(FILE_CREATED,        2, "FILE_CREATED == 2");
+    TEST_ASSERT_EQ(FILE_OVERWRITTEN,    3, "FILE_OVERWRITTEN == 3");
+
+    /* SSDT indices for NtCreateFile/NtOpenFile */
+    TEST_ASSERT_EQ(SSDT_NtCreateFile, 0x0010, "SSDT_NtCreateFile == 0x0010");
+    TEST_ASSERT_EQ(SSDT_NtOpenFile,   0x0011, "SSDT_NtOpenFile == 0x0011");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -520,6 +559,10 @@ void test_register_nt_types(void)
     /* NT syscall migration tests */
     test_suite_register_cat("NT: syscall SSDT registered", test_nt_syscall_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: SYS_NT_* alias values", test_nt_syscall_ssdt_alias_values, TEST_CAT_ABI);
+
+    /* NT file I/O tests (§6) */
+    test_suite_register_cat("NT: NtCreateFile/NtOpenFile SSDT", test_nt_create_file_ssdt_registered, TEST_CAT_ABI);
+    test_suite_register_cat("NT: file I/O constants", test_nt_file_constants, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

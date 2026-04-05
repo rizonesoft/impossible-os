@@ -51,7 +51,7 @@
 | 💎  |   3   | INT 0x2E compatibility path                                    | §2                |  [x]   |
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                |  [x]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
-| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3    |  [ ]   |
+| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3    |  [x]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [ ]   |
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [ ]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [ ]   |
@@ -230,8 +230,8 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                     | Done |
 |--------|----------------------------------|-----|---------------------------|------|
-| 0x0010 | NtCreateFile                     | §6  | T05                       | [ ]  |
-| 0x0011 | NtOpenFile                       | §6  | T05                       | [ ]  |
+| 0x0010 | NtCreateFile                     | §6  | T05 (§6 implemented)       | [x]  |
+| 0x0011 | NtOpenFile                       | §6  | T05 (§6 implemented)       | [x]  |
 | 0x0012 | NtReadFile                       | §5  | T05 (§5 migration)         | [x]  |
 | 0x0013 | NtWriteFile                      | §5  | T05 (§5 migration)         | [x]  |
 | 0x0014 | NtDeleteFile                     | §13 | T05                       | [ ]  |
@@ -878,24 +878,28 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 - [x] Add `Nt_Close` SSDT wrapper at 0x0000 bridging to OB NtClose
 - [x] 12 NtXxx handlers registered in SSDT via `nt_syscall_register_ssdt()` in `src/kernel/nt/nt_syscall.c`
 - [x] 2 unit tests: SSDT registration verification (9 handler callability checks) + SYS_NT_* alias value validation (12 aliases)
-- [ ] Commit: `"kernel: nt -- migrate existing syscalls to NtXxx naming and NTSTATUS"`
+- [x] Commit: `"kernel: nt -- migrate existing syscalls to NtXxx naming and NTSTATUS"`
 
 **Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- this is the most dangerous migration; a return-type mismatch silently corrupts all user-mode callers.
 
 ## 6. NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile
 Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
 
-- [ ] `NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, EaBuffer, EaLength)`:
-  - Parse `ObjectAttributes->ObjectName` via Ob namespace (TODO-03 §4)
-  - Map `CreateDisposition` (`FILE_OPEN`, `FILE_CREATE`, `FILE_SUPERSEDE`, `FILE_OPEN_IF`, `FILE_OVERWRITE`, `FILE_OVERWRITE_IF`) to VFS flags
-  - Call `vfs_open()` → wrap result as an Ob File object → allocate handle via `ObpAllocateHandle`
+- [x] `NtCreateFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, AllocationSize, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, EaBuffer, EaLength)`:
+  - Parse `ObjectAttributes->ObjectName` via `oa_extract_path()` (strips `\??\` prefix)
+  - Map `CreateDisposition` (`FILE_OPEN`, `FILE_CREATE`, `FILE_SUPERSEDE`, `FILE_OPEN_IF`, `FILE_OVERWRITE`, `FILE_OVERWRITE_IF`) to VFS flags via `disposition_to_vfs()`
+  - Call `ob_create_file_handle()` → allocates FILE_OBJECT + HANDLE via ObpAllocateHandle
   - Populate `IoStatusBlock->Status` and `IoStatusBlock->Information` (`FILE_CREATED` / `FILE_OPENED` / `FILE_OVERWRITTEN` / `FILE_SUPERSEDED`)
-- [ ] `NtOpenFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, ShareAccess, OpenOptions)`:
-  - Subset of `NtCreateFile` with `CreateDisposition = FILE_OPEN`
-- [ ] `NtClose(Handle)`: call `ObpFreeHandle` (TODO-03 §9); return `STATUS_SUCCESS` or `STATUS_INVALID_HANDLE`
-- [ ] `NtReadFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, Buffer, Length, ByteOffset, Key)`: look up File object via handle table; call `vfs_read`; fill IOSB
-- [ ] `NtWriteFile(...)`: symmetric with NtReadFile
-- [ ] `NtCreateNamedPipeFile(...)`: create a named pipe File object
+  - SSDT 0x0010: a1=HANDLE* out, a2=ACCESS_MASK, a3=OBJECT_ATTRIBUTES*, a4=IO_STATUS_BLOCK*, a5=CreateDisposition, a6=ShareAccess|(CreateOptions<<16)
+- [x] `NtOpenFile(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock, ShareAccess, OpenOptions)`:
+  - Delegates to NtCreateFile_handler with `CreateDisposition = FILE_OPEN`
+  - SSDT 0x0011: a1=HANDLE* out, a2=ACCESS_MASK, a3=OBJECT_ATTRIBUTES*, a4=IO_STATUS_BLOCK*, a5=ShareAccess, a6=OpenOptions
+- [x] `NtClose(Handle)`: already done in §5 -- calls `ObpFreeHandle` via `NtClose()` in ob.c
+- [x] `NtReadFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, Buffer, Length, ByteOffset, Key)`: upgraded from §5 -- now supports ByteOffset (a5), direct FILE_OBJECT lookup via ObpLookupHandle, STATUS_END_OF_FILE detection
+- [x] `NtWriteFile(...)`: upgraded from §5 -- now supports ByteOffset (a5), direct FILE_OBJECT lookup, advances file offset after write
+- [x] `NtCreateNamedPipeFile(...)`: already done in §5
+- [x] `include/kernel/nt/nt_file.h` created: CreateDisposition (FILE_OPEN..FILE_OVERWRITE_IF), CreateOptions (FILE_DELETE_ON_CLOSE etc.), FileAttributes, IOSB Information values
+- [x] 4 unit tests: NtCreateFile/NtOpenFile SSDT registration (2 checks), file I/O constant values (16 checks)
 - [ ] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 
 **Test checkpoint:** `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.

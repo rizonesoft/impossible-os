@@ -5,7 +5,8 @@
  * NTSTATUS returns and SSDT_HANDLER signatures. Each function is registered
  * at the SSDT index defined in service_numbers.h.
  *
- * This is the §5 migration: existing logic, new names and return types.
+ * §5: existing SYS_* wrappers with NtXxx naming and NTSTATUS returns.
+ * §6: proper NtCreateFile/NtOpenFile/NtReadFile/NtWriteFile/NtClose via OB.
  * The INT 0x80 handler continues to work for backward compatibility.
  * ============================================================================ */
 
@@ -13,6 +14,7 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nt_types.h"
+#include "kernel/nt/nt_file.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/sched/task.h"
@@ -29,11 +31,183 @@
 #include "kernel/drivers/serial.h"
 #include "desktop/terminal.h"
 
+/* ---- Helper: extract path from OBJECT_ATTRIBUTES ----------------------- */
+static const char *oa_extract_path(OBJECT_ATTRIBUTES *oa)
+{
+    if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer)
+        return (const char *)0;
+    /* Strip \??\ prefix if present (NT device namespace → drive letter) */
+    {
+        const char *p = (const char *)oa->ObjectName->Buffer;
+        if (p[0] == '\\' && p[1] == '?' && p[2] == '?' && p[3] == '\\')
+            return p + 4;
+        return p;
+    }
+}
+
+/* ---- Helper: map CreateDisposition to VFS flags ------------------------ */
+static uint32_t disposition_to_vfs(uint32_t disp, uint32_t access,
+                                   uint32_t options)
+{
+    uint32_t vfs = 0;
+
+    if (access & GENERIC_READ)  vfs |= VFS_O_READ;
+    if (access & GENERIC_WRITE) vfs |= VFS_O_WRITE;
+    /* If neither generic flag set, default to read */
+    if (!(vfs & (VFS_O_READ | VFS_O_WRITE)))
+        vfs |= VFS_O_READ;
+
+    switch (disp) {
+    case FILE_OPEN:         /* must exist */
+        break;
+    case FILE_CREATE:       /* must NOT exist -- create */
+        vfs |= VFS_O_CREATE;
+        break;
+    case FILE_OPEN_IF:      /* open or create */
+        vfs |= VFS_O_CREATE;
+        break;
+    case FILE_SUPERSEDE:    /* replace or create */
+        vfs |= VFS_O_CREATE | VFS_O_TRUNC;
+        break;
+    case FILE_OVERWRITE:    /* must exist, truncate */
+        vfs |= VFS_O_TRUNC;
+        break;
+    case FILE_OVERWRITE_IF: /* truncate or create */
+        vfs |= VFS_O_CREATE | VFS_O_TRUNC;
+        break;
+    }
+
+    if (options & FILE_DELETE_ON_CLOSE)
+        vfs |= VFS_O_DELETE_ON_CLOSE;
+
+    return vfs;
+}
+
+/* ---- NtCreateFile -------------------------------------------------------
+ * SSDT 0x0010 -- full NT file creation/open.
+ * a1 = HANDLE* FileHandle (out), a2 = ACCESS_MASK DesiredAccess,
+ * a3 = OBJECT_ATTRIBUTES*, a4 = IO_STATUS_BLOCK*,
+ * a5 = CreateDisposition, a6 = ShareAccess | (CreateOptions << 16).
+ * ----------------------------------------------------------------------- */
+static NTSTATUS NtCreateFile_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                     uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    HANDLE *out_handle = (HANDLE *)a1;
+    ACCESS_MASK access = (ACCESS_MASK)a2;
+    OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a3;
+    IO_STATUS_BLOCK *iosb = (IO_STATUS_BLOCK *)a4;
+    uint32_t disposition = (uint32_t)a5;
+    uint32_t share_access = (uint32_t)(a6 & 0xFFFF);
+    uint32_t options = (uint32_t)(a6 >> 16);
+    const char *path;
+    uint32_t vfs_flags;
+    int existed;
+    HANDLE h;
+
+    (void)share_access;  /* future: pass to vfs_open share mode bits */
+
+    if (!out_handle)
+        return STATUS_INVALID_PARAMETER;
+    if (!oa || !oa->ObjectName)
+        return STATUS_INVALID_PARAMETER;
+
+    path = oa_extract_path(oa);
+    if (!path)
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+
+    /* Check if file exists before open (for IOSB Information) */
+    {
+        struct vfs_node *probe = vfs_open(path, VFS_O_READ);
+        existed = (probe != (struct vfs_node *)0);
+        if (probe)
+            vfs_close(probe);
+    }
+
+    /* FILE_CREATE requires file not to exist */
+    if (disposition == FILE_CREATE && existed) {
+        if (iosb) {
+            iosb->Status = STATUS_OBJECT_NAME_COLLISION;
+            iosb->Information = FILE_EXISTS;
+        }
+        return STATUS_OBJECT_NAME_COLLISION;
+    }
+
+    /* FILE_OPEN and FILE_OVERWRITE require file to exist */
+    if ((disposition == FILE_OPEN || disposition == FILE_OVERWRITE) && !existed) {
+        if (iosb) {
+            iosb->Status = STATUS_OBJECT_NAME_NOT_FOUND;
+            iosb->Information = FILE_DOES_NOT_EXIST;
+        }
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    }
+
+    vfs_flags = disposition_to_vfs(disposition, access, options);
+
+    /* Use ob_create_file_handle for the open+wrap+handle allocation */
+    h = ob_create_file_handle(path, vfs_flags);
+    if (h == INVALID_HANDLE_VALUE) {
+        if (iosb) {
+            iosb->Status = STATUS_UNSUCCESSFUL;
+            iosb->Information = 0;
+        }
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    *out_handle = h;
+
+    /* Populate IOSB Information */
+    if (iosb) {
+        iosb->Status = STATUS_SUCCESS;
+        switch (disposition) {
+        case FILE_SUPERSEDE:
+            iosb->Information = existed ? FILE_SUPERSEDED : FILE_CREATED;
+            break;
+        case FILE_OPEN:
+            iosb->Information = FILE_OPENED;
+            break;
+        case FILE_CREATE:
+            iosb->Information = FILE_CREATED;
+            break;
+        case FILE_OPEN_IF:
+            iosb->Information = existed ? FILE_OPENED : FILE_CREATED;
+            break;
+        case FILE_OVERWRITE:
+            iosb->Information = FILE_OVERWRITTEN;
+            break;
+        case FILE_OVERWRITE_IF:
+            iosb->Information = existed ? FILE_OVERWRITTEN : FILE_CREATED;
+            break;
+        default:
+            iosb->Information = FILE_OPENED;
+            break;
+        }
+    }
+
+    return STATUS_SUCCESS;
+}
+
+/* ---- NtOpenFile ---------------------------------------------------------
+ * SSDT 0x0011 -- subset of NtCreateFile with FILE_OPEN disposition.
+ * a1 = HANDLE* FileHandle (out), a2 = ACCESS_MASK DesiredAccess,
+ * a3 = OBJECT_ATTRIBUTES*, a4 = IO_STATUS_BLOCK*,
+ * a5 = ShareAccess, a6 = OpenOptions.
+ * ----------------------------------------------------------------------- */
+static NTSTATUS NtOpenFile_handler(uint64_t a1, uint64_t a2, uint64_t a3,
+                                   uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    /* Pack share_access and options for NtCreateFile: a5=FILE_OPEN,
+     * a6 = share | (options << 16) */
+    uint32_t share = (uint32_t)a5;
+    uint32_t opts = (uint32_t)a6;
+    return NtCreateFile_handler(a1, a2, a3, a4,
+                                FILE_OPEN,
+                                (uint64_t)share | ((uint64_t)opts << 16));
+}
+
 /* ---- NtWriteFile --------------------------------------------------------
- * SSDT 0x0013 -- wraps SYS_WRITE logic.
- * a1 = HANDLE (fd), a2 = IO_STATUS_BLOCK* (may be NULL for legacy),
- * a3 = buffer, a4 = length.
- * Returns NTSTATUS. Bytes written stored in IOSB.Information if provided.
+ * SSDT 0x0013 -- file/pipe/stdout write.
+ * a1 = HANDLE, a2 = IO_STATUS_BLOCK*, a3 = buffer, a4 = length,
+ * a5 = uint64_t* ByteOffset (NULL = use current offset).
  * ----------------------------------------------------------------------- */
 static NTSTATUS NtWriteFile(uint64_t a1, uint64_t a2, uint64_t a3,
                             uint64_t a4, uint64_t a5, uint64_t a6)
@@ -42,9 +216,10 @@ static NTSTATUS NtWriteFile(uint64_t a1, uint64_t a2, uint64_t a3,
     IO_STATUS_BLOCK *iosb = (IO_STATUS_BLOCK *)a2;
     const char *buf = (const char *)a3;
     uint64_t len = a4;
+    uint64_t *byte_offset = (uint64_t *)a5;
     uint64_t i;
 
-    (void)a5; (void)a6;
+    (void)a6;
 
     if (!buf || len == 0) {
         if (iosb) {
@@ -56,20 +231,53 @@ static NTSTATUS NtWriteFile(uint64_t a1, uint64_t a2, uint64_t a3,
 
     /* Handle-based file/pipe write */
     if (fd != (HANDLE)STDOUT_FD) {
-        int64_t written = ob_file_write(&task_current()->handle_table,
-                                        fd, buf, (uint32_t)len);
-        if (written < 0) {
-            if (iosb) {
-                iosb->Status = STATUS_INVALID_HANDLE;
-                iosb->Information = 0;
+        HANDLE_TABLE_ENTRY *entry = ObpLookupHandle(
+            &task_current()->handle_table, fd);
+        if (!entry || !entry->object)
+            goto write_bad_handle;
+
+        {
+            OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(entry->object);
+            FILE_OBJECT *fo = (FILE_OBJECT *)entry->object;
+
+            if (hdr->type != ObpFileType)
+                goto write_bad_handle;
+
+            /* ByteOffset override */
+            if (byte_offset)
+                fo->offset = *byte_offset;
+
+            if (fo->pipe_id >= 0) {
+                int64_t written = pipe_write(fo->pipe_id, buf, (uint32_t)len);
+                if (written < 0)
+                    goto write_bad_handle;
+                if (iosb) {
+                    iosb->Status = STATUS_SUCCESS;
+                    iosb->Information = (uint64_t)written;
+                }
+                return STATUS_SUCCESS;
             }
-            return STATUS_INVALID_HANDLE;
+
+            if (fo->vfs_node) {
+                int64_t written = vfs_write(fo->vfs_node,
+                    (uint32_t)fo->offset, (uint32_t)len,
+                    (const uint8_t *)buf);
+                if (written < 0)
+                    goto write_bad_handle;
+                fo->offset += (uint64_t)written;
+                if (iosb) {
+                    iosb->Status = STATUS_SUCCESS;
+                    iosb->Information = (uint64_t)written;
+                }
+                return STATUS_SUCCESS;
+            }
         }
+write_bad_handle:
         if (iosb) {
-            iosb->Status = STATUS_SUCCESS;
-            iosb->Information = (uint64_t)written;
+            iosb->Status = STATUS_INVALID_HANDLE;
+            iosb->Information = 0;
         }
-        return STATUS_SUCCESS;
+        return STATUS_INVALID_HANDLE;
     }
 
     /* stdout: echo to serial + terminal */
@@ -89,8 +297,9 @@ static NTSTATUS NtWriteFile(uint64_t a1, uint64_t a2, uint64_t a3,
 }
 
 /* ---- NtReadFile ---------------------------------------------------------
- * SSDT 0x0012 -- wraps SYS_READ logic.
- * a1 = HANDLE (fd), a2 = IO_STATUS_BLOCK*, a3 = buffer, a4 = length.
+ * SSDT 0x0012 -- file/pipe/stdin read.
+ * a1 = HANDLE, a2 = IO_STATUS_BLOCK*, a3 = buffer, a4 = length,
+ * a5 = uint64_t* ByteOffset (NULL = use current offset).
  * ----------------------------------------------------------------------- */
 static NTSTATUS NtReadFile(uint64_t a1, uint64_t a2, uint64_t a3,
                            uint64_t a4, uint64_t a5, uint64_t a6)
@@ -99,10 +308,11 @@ static NTSTATUS NtReadFile(uint64_t a1, uint64_t a2, uint64_t a3,
     IO_STATUS_BLOCK *iosb = (IO_STATUS_BLOCK *)a2;
     char *dst = (char *)a3;
     uint64_t len = a4;
+    uint64_t *byte_offset = (uint64_t *)a5;
     uint64_t i;
     char c;
 
-    (void)a5; (void)a6;
+    (void)a6;
 
     if (!dst || len == 0) {
         if (iosb) {
@@ -114,20 +324,54 @@ static NTSTATUS NtReadFile(uint64_t a1, uint64_t a2, uint64_t a3,
 
     /* Handle-based file/pipe read */
     if (fd != (HANDLE)STDIN_FD) {
-        int64_t bytes = ob_file_read(&task_current()->handle_table,
-                                     fd, dst, (uint32_t)len);
-        if (bytes < 0) {
-            if (iosb) {
-                iosb->Status = STATUS_INVALID_HANDLE;
-                iosb->Information = 0;
+        HANDLE_TABLE_ENTRY *entry = ObpLookupHandle(
+            &task_current()->handle_table, fd);
+        if (!entry || !entry->object)
+            goto read_bad_handle;
+
+        {
+            OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(entry->object);
+            FILE_OBJECT *fo = (FILE_OBJECT *)entry->object;
+
+            if (hdr->type != ObpFileType)
+                goto read_bad_handle;
+
+            /* ByteOffset override */
+            if (byte_offset)
+                fo->offset = *byte_offset;
+
+            if (fo->pipe_id >= 0) {
+                int64_t bytes = pipe_read(fo->pipe_id, dst, (uint32_t)len);
+                if (bytes < 0)
+                    goto read_bad_handle;
+                if (iosb) {
+                    iosb->Status = STATUS_SUCCESS;
+                    iosb->Information = (uint64_t)bytes;
+                }
+                return STATUS_SUCCESS;
             }
-            return STATUS_INVALID_HANDLE;
+
+            if (fo->vfs_node) {
+                int64_t bytes = vfs_read(fo->vfs_node,
+                    (uint32_t)fo->offset, (uint32_t)len,
+                    (uint8_t *)dst);
+                if (bytes < 0)
+                    goto read_bad_handle;
+                fo->offset += (uint64_t)bytes;
+                if (iosb) {
+                    iosb->Status = (bytes == 0) ? STATUS_END_OF_FILE
+                                                : STATUS_SUCCESS;
+                    iosb->Information = (uint64_t)bytes;
+                }
+                return (bytes == 0) ? STATUS_END_OF_FILE : STATUS_SUCCESS;
+            }
         }
+read_bad_handle:
         if (iosb) {
-            iosb->Status = STATUS_SUCCESS;
-            iosb->Information = (uint64_t)bytes;
+            iosb->Status = STATUS_INVALID_HANDLE;
+            iosb->Information = 0;
         }
-        return STATUS_SUCCESS;
+        return STATUS_INVALID_HANDLE;
     }
 
     /* stdin: blocking read from keyboard/serial/terminal */
@@ -492,7 +736,9 @@ static NTSTATUS Nt_Close(uint64_t a1, uint64_t a2, uint64_t a3,
 
 void nt_syscall_register_ssdt(void)
 {
-    /* File I/O */
+    /* File I/O (§6) */
+    ssdt_register(SSDT_NtCreateFile,            (SSDT_HANDLER)NtCreateFile_handler);
+    ssdt_register(SSDT_NtOpenFile,              (SSDT_HANDLER)NtOpenFile_handler);
     ssdt_register(SSDT_NtReadFile,              (SSDT_HANDLER)NtReadFile);
     ssdt_register(SSDT_NtWriteFile,             (SSDT_HANDLER)NtWriteFile);
     ssdt_register(SSDT_NtQueryDirectoryFile,    (SSDT_HANDLER)NtQueryDirectoryFile);
@@ -516,5 +762,5 @@ void nt_syscall_register_ssdt(void)
     ssdt_register(SSDT_NtCreateSection,         (SSDT_HANDLER)NtCreateSection);
     ssdt_register(SSDT_NtMapViewOfSection,      (SSDT_HANDLER)NtMapViewOfSection);
 
-    klog(LOG_INFO, "nt", "NT syscall migration: 12 NtXxx handlers registered in SSDT");
+    klog(LOG_INFO, "nt", "NT syscall: 14 NtXxx handlers registered (12 migrated + NtCreateFile + NtOpenFile)");
 }
