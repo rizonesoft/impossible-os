@@ -134,6 +134,14 @@ found:
     hdr = OB_HEADER_FROM_BODY(object);
     hdr->handle_count++;
 
+    /* Per-type handle statistics */
+    if (hdr->type) {
+        OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
+        int32_t cur = atomic_fetch_add(&mtype->total_handles, 1) + 1;
+        if ((uint32_t)cur > mtype->peak_handles)
+            mtype->peak_handles = (uint32_t)cur;
+    }
+
     return (HANDLE)(i * 4);
 }
 
@@ -174,6 +182,12 @@ int ObpFreeHandle(HANDLE_TABLE *table, HANDLE handle)
         hdr->handle_count--;
     if (hdr->handle_count == 0 && hdr->type->on_close)
         hdr->type->on_close(body, 0);
+
+    /* Per-type handle statistics */
+    if (hdr->type) {
+        OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
+        atomic_dec(&mtype->total_handles);
+    }
 
     /* Drop the reference taken by ObpAllocateHandle */
     ObDereferenceObject(body);

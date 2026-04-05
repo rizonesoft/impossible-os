@@ -174,6 +174,82 @@ static void test_ob_query_directory(void)
     ObpFreeHandle(&ht, dir_h);
 }
 
+/* ---- Per-type object and handle statistics (§12) ---- */
+
+static void test_ob_type_stats(void)
+{
+    /* Register a fresh type for isolated stats testing */
+    static const OBJECT_TYPE stats_tmpl = {
+        .name      = "StatsTest",
+        .body_size = 32,
+        .on_close  = (void *)0,
+        .on_delete = (void *)0,
+        .on_open   = (void *)0,
+        .on_parse  = (void *)0,
+    };
+    const OBJECT_TYPE *stype = ob_create_type(&stats_tmpl);
+    TEST_ASSERT(stype != (void *)0, "ob_create_type for stats test");
+
+    /* Baseline: 0 objects, 0 handles */
+    TEST_ASSERT_EQ(atomic_read(&stype->total_objects), 0,
+                   "initial total_objects == 0");
+    TEST_ASSERT_EQ(atomic_read(&stype->total_handles), 0,
+                   "initial total_handles == 0");
+
+    /* Allocate 3 objects */
+    void *o1 = ob_alloc_object(stype);
+    void *o2 = ob_alloc_object(stype);
+    void *o3 = ob_alloc_object(stype);
+    TEST_ASSERT(o1 && o2 && o3, "3 objects allocated");
+    TEST_ASSERT_EQ(atomic_read(&stype->total_objects), 3,
+                   "total_objects == 3 after 3 allocs");
+    TEST_ASSERT_EQ(stype->peak_objects, 3,
+                   "peak_objects == 3");
+
+    /* Free 1 object */
+    ObDereferenceObject(o3);
+    TEST_ASSERT_EQ(atomic_read(&stype->total_objects), 2,
+                   "total_objects == 2 after 1 free");
+    TEST_ASSERT_EQ(stype->peak_objects, 3,
+                   "peak_objects still 3 after free");
+
+    /* Allocate handle and check handle stats */
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+    HANDLE h1 = ObpAllocateHandle(&ht, o1, 0x1F0FFF, 0);
+    TEST_ASSERT(h1 >= 0, "handle allocated");
+    TEST_ASSERT_EQ(atomic_read(&stype->total_handles), 1,
+                   "total_handles == 1 after 1 handle alloc");
+    TEST_ASSERT_EQ(stype->peak_handles, 1,
+                   "peak_handles == 1");
+
+    HANDLE h2 = ObpAllocateHandle(&ht, o2, 0x1F0FFF, 0);
+    TEST_ASSERT_EQ(atomic_read(&stype->total_handles), 2,
+                   "total_handles == 2 after 2 handle allocs");
+
+    /* Free 1 handle */
+    ObpFreeHandle(&ht, h1);
+    TEST_ASSERT_EQ(atomic_read(&stype->total_handles), 1,
+                   "total_handles == 1 after 1 handle free");
+    TEST_ASSERT_EQ(stype->peak_handles, 2,
+                   "peak_handles still 2 after handle free");
+
+    /* NtQueryObject ObjectTypeInformation */
+    OBJECT_TYPE_INFORMATION ti;
+    uint32_t rlen = 0;
+    int rc = NtQueryObject(&ht, h2, ObjectTypeInformation,
+                           &ti, sizeof(ti), &rlen);
+    TEST_ASSERT(rc == 0, "NtQueryObject(ObjectTypeInformation) succeeds");
+    TEST_ASSERT_EQ(rlen, sizeof(OBJECT_TYPE_INFORMATION),
+                   "return length matches struct size");
+    TEST_ASSERT_EQ(ti.body_size, 32, "body_size == 32");
+
+    /* Cleanup */
+    ObpFreeHandle(&ht, h2);
+    ObDereferenceObject(o1);
+    ObDereferenceObject(o2);
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
@@ -185,6 +261,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: duplicate handle", test_ob_duplicate_handle, TEST_CAT_OB);
     test_suite_register_cat("OB: handle inherit", test_ob_handle_inherit, TEST_CAT_OB);
     test_suite_register_cat("OB: query directory", test_ob_query_directory, TEST_CAT_OB);
+    test_suite_register_cat("OB: type stats", test_ob_type_stats, TEST_CAT_OB);
 }
 
 #endif /* KERNEL_TESTS */

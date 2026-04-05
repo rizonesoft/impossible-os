@@ -66,6 +66,12 @@ const OBJECT_TYPE *ob_create_type(const OBJECT_TYPE *tmpl)
     return slot;
 }
 
+const OBJECT_TYPE *ob_get_types(uint32_t *out_count)
+{
+    if (out_count) *out_count = g_ob_type_count;
+    return g_ob_types;
+}
+
 /* --- ob_alloc_object ----------------------------------------------------- */
 
 void *ob_alloc_object(const OBJECT_TYPE *type)
@@ -115,6 +121,14 @@ void *ob_alloc_object(const OBJECT_TYPE *type)
         }
     }
 
+    /* Per-type statistics: increment live object count */
+    {
+        OBJECT_TYPE *mtype = (OBJECT_TYPE *)type;
+        int32_t cur = atomic_fetch_add(&mtype->total_objects, 1) + 1;
+        if ((uint32_t)cur > mtype->peak_objects)
+            mtype->peak_objects = (uint32_t)cur;
+    }
+
     return OB_BODY_FROM_HEADER(hdr);
 }
 
@@ -130,6 +144,12 @@ void ObReferenceObject(void *body)
 
 static void ob_free_object(OBJECT_HEADER *hdr)
 {
+    /* Per-type statistics: decrement live object count */
+    if (hdr->type) {
+        OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
+        atomic_dec(&mtype->total_objects);
+    }
+
     if (hdr->flags & OB_FLAG_PMM_ALLOC) {
         size_t total = sizeof(OBJECT_HEADER) + hdr->type->body_size;
         uint64_t frames = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
@@ -283,12 +303,54 @@ int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
     }
 
     case ObjectTypeInformation: {
-        /* Return: type name string */
-        const char *tname = hdr->type && hdr->type->name ? hdr->type->name : "";
-        uint32_t len = (uint32_t)strlen(tname) + 1;
-        if (return_length) *return_length = len;
-        if (size < len) return -1;
-        memcpy(buffer, tname, len);
+        /* Return: full OBJECT_TYPE_INFORMATION struct with statistics */
+        uint32_t needed = sizeof(OBJECT_TYPE_INFORMATION);
+        if (return_length) *return_length = needed;
+        if (size < needed) return -1;
+        OBJECT_TYPE_INFORMATION *ti = (OBJECT_TYPE_INFORMATION *)buffer;
+        memset(ti, 0, sizeof(*ti));
+        if (hdr->type) {
+            const char *tname = hdr->type->name ? hdr->type->name : "";
+            uint32_t nlen = 0;
+            while (tname[nlen] && nlen < sizeof(ti->type_name) - 1) {
+                ti->type_name[nlen] = tname[nlen]; nlen++;
+            }
+            ti->type_name[nlen] = '\0';
+            ti->total_objects = (uint32_t)atomic_read(&hdr->type->total_objects);
+            ti->total_handles = (uint32_t)atomic_read(&hdr->type->total_handles);
+            ti->peak_objects  = hdr->type->peak_objects;
+            ti->peak_handles  = hdr->type->peak_handles;
+            ti->body_size     = (uint32_t)hdr->type->body_size;
+            ti->valid_access  = 0;  /* reserved */
+        }
+        return 0;
+    }
+
+    case ObjectTypesInformation: {
+        /* Enumerate all registered types (no handle needed -- ignore entry) */
+        uint32_t type_count = 0;
+        const OBJECT_TYPE *types = ob_get_types(&type_count);
+        uint32_t needed = sizeof(uint32_t) + type_count * sizeof(OBJECT_TYPE_INFORMATION);
+        if (return_length) *return_length = needed;
+        if (size < needed) return -1;
+        OBJECT_TYPES_INFORMATION *oti = (OBJECT_TYPES_INFORMATION *)buffer;
+        oti->number_of_types = type_count;
+        for (uint32_t t = 0; t < type_count; t++) {
+            OBJECT_TYPE_INFORMATION *ti = &oti->types[t];
+            memset(ti, 0, sizeof(*ti));
+            const char *tname = types[t].name ? types[t].name : "";
+            uint32_t nlen = 0;
+            while (tname[nlen] && nlen < sizeof(ti->type_name) - 1) {
+                ti->type_name[nlen] = tname[nlen]; nlen++;
+            }
+            ti->type_name[nlen] = '\0';
+            ti->total_objects = (uint32_t)atomic_read(&types[t].total_objects);
+            ti->total_handles = (uint32_t)atomic_read(&types[t].total_handles);
+            ti->peak_objects  = types[t].peak_objects;
+            ti->peak_handles  = types[t].peak_handles;
+            ti->body_size     = (uint32_t)types[t].body_size;
+            ti->valid_access  = 0;
+        }
         return 0;
     }
 

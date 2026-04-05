@@ -74,6 +74,9 @@ extern const OBJECT_TYPE *ObpTebType;
  */
 const OBJECT_TYPE *ob_create_type(const OBJECT_TYPE *tmpl);
 
+/* Get registered type table (read-only) and count. */
+const OBJECT_TYPE *ob_get_types(uint32_t *out_count);
+
 /*
  * ob_alloc_object -- allocate header + body as a single block
  *
@@ -134,10 +137,28 @@ SECURITY_DESCRIPTOR *ObGetSecurityDescriptor(void *body);
 
 /* Object information classes for NtQueryObject */
 typedef enum {
-    ObjectBasicInformation = 0,
-    ObjectNameInformation  = 1,
-    ObjectTypeInformation  = 2,
+    ObjectBasicInformation  = 0,
+    ObjectNameInformation   = 1,
+    ObjectTypeInformation   = 2,
+    ObjectTypesInformation  = 3,  /* enumerate all registered types */
 } OBJECT_INFORMATION_CLASS;
+
+/* Returned by NtQueryObject(ObjectTypeInformation) -- per-type statistics */
+typedef struct {
+    char        type_name[32];    /* null-terminated type name */
+    uint32_t    total_objects;    /* current live objects of this type */
+    uint32_t    total_handles;    /* current open handles */
+    uint32_t    peak_objects;     /* high-water mark */
+    uint32_t    peak_handles;     /* high-water mark */
+    uint32_t    body_size;        /* sizeof object body */
+    uint32_t    valid_access;     /* reserved (0 for now) */
+} OBJECT_TYPE_INFORMATION;
+
+/* Returned by NtQueryObject(ObjectTypesInformation) */
+typedef struct {
+    uint32_t                number_of_types;
+    OBJECT_TYPE_INFORMATION types[OB_MAX_TYPES];
+} OBJECT_TYPES_INFORMATION;
 
 /* NtClose -- close a handle in the current process */
 int NtClose(HANDLE_TABLE *ht, HANDLE handle);

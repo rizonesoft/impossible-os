@@ -49,7 +49,7 @@
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T11 §4     |  [x]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [x]   |
 | ⭐  |  11   | Unified kernel–user namespace browser API                     | §4             |  [x]   |
-| 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [ ]   |
+| 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [x]   |
 | 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9         |  [ ]   |
 | 💎  |  14   | Per-process handle quota                                      | §3             |  [ ]   |
 | ⭐  |  15   | Handle tracing and leak detection                             | §2, §12        |  [ ]   |
@@ -205,17 +205,18 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 > [!WARNING]
 > Modifies `ob_alloc_object()`, `ob_free_object()`, `ObpAllocateHandle()`, and `ObpFreeHandle()` -- all core Ob paths used by every kernel subsystem. Test incrementally: add counters to `ob_alloc_object` first, verify boot still works, then proceed to handle-side counters. Rollback: revert counter increments if boot regresses.
 
-- [ ] Add atomic counters to `OBJECT_TYPE` in `include/kernel/ob/ob_type.h`:
+- [x] Add atomic counters to `OBJECT_TYPE` in `include/kernel/ob/ob_type.h`:
   - `atomic_t total_objects` -- current live objects of this type
   - `atomic_t total_handles` -- current open handles to objects of this type
   - `uint32_t peak_objects` -- high-water mark for `total_objects`
   - `uint32_t peak_handles` -- high-water mark for `total_handles`
-- [ ] In `ob_alloc_object()`: increment `type->total_objects`; update `peak_objects` if new value exceeds it
-- [ ] In `ob_free_object()`: decrement `type->total_objects`
-- [ ] In `ObpAllocateHandle()`: increment `type->total_handles`; update `peak_handles`
-- [ ] In `ObpFreeHandle()`: decrement `type->total_handles`
-- [ ] Update `NtQueryObject(ObjectTypeInformation)` in `ob.c` to return a struct containing: type name, `total_objects`, `total_handles`, `peak_objects`, `peak_handles`, `body_size`, valid access mask
-- [ ] Add `NtQueryObject(ObjectTypesInformation)` info class -- enumerate all registered types and their statistics (used by system diagnostic tools and → XREF: `TODO-05 §10` `NtQuerySystemInformation`)
+- [x] In `ob_alloc_object()`: increment `type->total_objects`; update `peak_objects` if new value exceeds it
+- [x] In `ob_free_object()`: decrement `type->total_objects`
+- [x] In `ObpAllocateHandle()`: increment `type->total_handles`; update `peak_handles`
+- [x] In `ObpFreeHandle()`: decrement `type->total_handles`
+- [x] Update `NtQueryObject(ObjectTypeInformation)` in `ob.c` to return `OBJECT_TYPE_INFORMATION` struct: type name, `total_objects`, `total_handles`, `peak_objects`, `peak_handles`, `body_size`, valid access mask
+- [x] Add `NtQueryObject(ObjectTypesInformation)` info class -- enumerates all registered types via `ob_get_types()` into `OBJECT_TYPES_INFORMATION` struct (→ XREF: `TODO-05 §10` `NtQuerySystemInformation`)
+- [x] 15 test assertions in `test_ob.c`: alloc increments, free decrements, peak preserved, handle stats, NtQueryObject struct
 - [ ] Commit: `"kernel: ob -- per-type object and handle statistics"`
 
 **Test checkpoint:** `ob_alloc_object(ObpEventType)` increments `ObpEventType->total_objects`; `ObDereferenceObject` decrements it. After creating 100 events and freeing 50, `total_objects == 50` and `peak_objects == 100`. `NtQueryObject(ObjectTypeInformation)` returns correct counters. Verify on QEMU WHPX + TCG + VirtualBox. Bare metal follow-up (no hardware interaction, low risk). `POST16(0xD900)`–`POST16(0xD903)` (range `0xD9xx` confirmed free -- `0xDBxx` used by `TODO-11-usb-boot-hardening.md`).
@@ -306,7 +307,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 | 💎 | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC     | ✅ §9, §10                  |
 | ⭐ | Public namespace API  | ❌ Internal only       | ❌ No equivalent     | ✅ §11 -- public, documented |
 | ⭐ | Unified type system   | ⚠️ Partial ObXxx       | ❌ Split fd/kobject  | ✅ §1–§7 -- one header       |
-| 💎 | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo    | ⬜ §12 -- atomic counters    |
+| 💎 | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo    | ✅ §12 -- atomic counters    |
 | 💎 | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ⬜ §13 -- pre/post filtering |
 | 💎 | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE     | ⬜ §14 -- configurable limit |
 | ⭐ | Handle leak detection | ⚠️ ETW (complex)       | ❌ No built-in       | ⬜ §15 -- klog-integrated    |
