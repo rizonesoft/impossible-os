@@ -28,6 +28,7 @@
 #include "kernel/nt/nt_file.h"
 #include "kernel/nt/nt_process.h"
 #include "kernel/nt/nt_sync.h"
+#include "kernel/nt/nt_memory.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -640,6 +641,57 @@ static void test_nt_sync_constants(void)
     TEST_ASSERT_EQ(STATUS_ABANDONED,   0x80, "STATUS_ABANDONED == 0x80");
 }
 
+/* ---- NT virtual memory (§9) tests ---- */
+
+static void test_nt_vm_ssdt_registered(void)
+{
+    NTSTATUS s;
+
+    /* NtAllocateVirtualMemory (0x0050) with NULL args -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtAllocateVirtualMemory, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtAllocateVirtualMemory SSDT registered (NULL args)");
+
+    /* NtQueryVirtualMemory (0x0053) with bad class -- INVALID_INFO_CLASS */
+    s = ssdt_dispatch(SSDT_NtQueryVirtualMemory, 0, 0, 0xFF, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_INFO_CLASS,
+                   "NtQueryVirtualMemory SSDT registered (bad class)");
+
+    /* NtReadVirtualMemory (0x0057) with NULL buffer -- INVALID_PARAMETER */
+    s = ssdt_dispatch(SSDT_NtReadVirtualMemory, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
+                   "NtReadVirtualMemory SSDT registered (NULL buf)");
+
+    /* AWE stub (0x0059) -- NOT_IMPLEMENTED */
+    s = ssdt_dispatch(SSDT_NtAllocateUserPhysicalPages, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_NOT_IMPLEMENTED,
+                   "NtAllocateUserPhysicalPages AWE stub");
+
+    /* NtLockVirtualMemory (0x0054) -- always SUCCESS (no swap) */
+    s = ssdt_dispatch(SSDT_NtLockVirtualMemory, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "NtLockVirtualMemory SSDT registered (no-op)");
+}
+
+static void test_nt_vm_constants(void)
+{
+    TEST_ASSERT_EQ(MEM_COMMIT,    0x1000, "MEM_COMMIT == 0x1000");
+    TEST_ASSERT_EQ(MEM_RESERVE,   0x2000, "MEM_RESERVE == 0x2000");
+    TEST_ASSERT_EQ(MEM_RELEASE,   0x8000, "MEM_RELEASE == 0x8000");
+    TEST_ASSERT_EQ(MEM_DECOMMIT,  0x4000, "MEM_DECOMMIT == 0x4000");
+    TEST_ASSERT_EQ(PAGE_NOACCESS,       0x01, "PAGE_NOACCESS == 0x01");
+    TEST_ASSERT_EQ(PAGE_READONLY,       0x02, "PAGE_READONLY == 0x02");
+    TEST_ASSERT_EQ(PAGE_READWRITE,      0x04, "PAGE_READWRITE == 0x04");
+    TEST_ASSERT_EQ(PAGE_EXECUTE,        0x10, "PAGE_EXECUTE == 0x10");
+    TEST_ASSERT_EQ(PAGE_EXECUTE_READ,   0x20, "PAGE_EXECUTE_READ == 0x20");
+    TEST_ASSERT_EQ(PAGE_EXECUTE_READWRITE, 0x40, "PAGE_EXECUTE_READWRITE == 0x40");
+    TEST_ASSERT_EQ(PAGE_GUARD,          0x100, "PAGE_GUARD == 0x100");
+
+    /* MEMORY_BASIC_INFORMATION size */
+    TEST_ASSERT_EQ(sizeof(MEMORY_BASIC_INFORMATION), 48,
+                   "MEMORY_BASIC_INFORMATION size == 48");
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -685,6 +737,10 @@ void test_register_nt_types(void)
     /* NT sync objects tests (§8) */
     test_suite_register_cat("NT: sync SSDT registered", test_nt_sync_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: sync constants", test_nt_sync_constants, TEST_CAT_ABI);
+
+    /* NT virtual memory tests (§9) */
+    test_suite_register_cat("NT: VM SSDT registered", test_nt_vm_ssdt_registered, TEST_CAT_ABI);
+    test_suite_register_cat("NT: VM constants", test_nt_vm_constants, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

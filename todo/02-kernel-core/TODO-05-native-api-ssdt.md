@@ -54,7 +54,7 @@
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3    |  [x]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [x]   |
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [x]   |
-| 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [ ]   |
+| 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [x]   |
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [ ]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [ ]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [ ]   |
@@ -290,18 +290,18 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 | Index  | Function                         | §   | Owner                   | Done |
 |--------|----------------------------------|-----|-------------------------|------|
-| 0x0050 | NtAllocateVirtualMemory          | §9  | T05 (pmm exists)        | [ ]  |
-| 0x0051 | NtFreeVirtualMemory              | §9  | T05                     | [ ]  |
-| 0x0052 | NtProtectVirtualMemory           | §9  | T01-mem §1 (VMM prot)   | [ ]  |
-| 0x0053 | NtQueryVirtualMemory             | §9  | T05                     | [ ]  |
-| 0x0054 | NtLockVirtualMemory              | §9  | T04-mem §4 (adv VM)     | [ ]  |
-| 0x0055 | NtUnlockVirtualMemory            | §9  | T04-mem §4              | [ ]  |
-| 0x0056 | NtFlushVirtualMemory             | §9  | T05                     | [ ]  |
-| 0x0057 | NtReadVirtualMemory              | §9  | T05                     | [ ]  |
-| 0x0058 | NtWriteVirtualMemory             | §9  | T05                     | [ ]  |
-| 0x0059 | NtAllocateUserPhysicalPages      | §9  | T04-mem §4 (AWE)        | [ ]  |
-| 0x005A | NtFreeUserPhysicalPages          | §9  | T04-mem §4              | [ ]  |
-| 0x005B | NtMapUserPhysicalPages           | §9  | T04-mem §4              | [ ]  |
+| 0x0050 | NtAllocateVirtualMemory          | §9  | T05 (§9 implemented)    | [x]  |
+| 0x0051 | NtFreeVirtualMemory              | §9  | T05 (§9 implemented)    | [x]  |
+| 0x0052 | NtProtectVirtualMemory           | §9  | T05 (§9 implemented)    | [x]  |
+| 0x0053 | NtQueryVirtualMemory             | §9  | T05 (§9 implemented)    | [x]  |
+| 0x0054 | NtLockVirtualMemory              | §9  | T05 (§9 no-op)          | [x]  |
+| 0x0055 | NtUnlockVirtualMemory            | §9  | T05 (§9 no-op)          | [x]  |
+| 0x0056 | NtFlushVirtualMemory             | §9  | T05 (§9 no-op)          | [x]  |
+| 0x0057 | NtReadVirtualMemory              | §9  | T05 (§9 implemented)    | [x]  |
+| 0x0058 | NtWriteVirtualMemory             | §9  | T05 (§9 implemented)    | [x]  |
+| 0x0059 | NtAllocateUserPhysicalPages      | §9  | T04-mem §4 (AWE stub)   | [x]  |
+| 0x005A | NtFreeUserPhysicalPages          | §9  | T04-mem §4 (AWE stub)   | [x]  |
+| 0x005B | NtMapUserPhysicalPages           | §9  | T04-mem §4 (AWE stub)   | [x]  |
 | 0x005C | NtCreateSection                  | §5  | T05 (§5 migration)      | [x]  |
 | 0x005D | NtOpenSection                    | §17 | T05                     | [ ]  |
 | 0x005E | NtMapViewOfSection               | §5  | T05 (§5 migration)      | [x]  |
@@ -966,35 +966,28 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-03 §6). I
 - [x] New file: `src/kernel/nt/nt_sync.c` with 21 SSDT handlers
 - [x] Added STATUS_WAIT_0, STATUS_ABANDONED to ntstatus.h
 - [x] 2 unit tests: SSDT registration (6 handler checks), sync constant verification (7 checks)
-- [ ] Commit: `"kernel: nt -- sync objects, NtWaitForMultipleObjects, keyed events"`
+- [x] Commit: `"kernel: nt -- sync objects, NtWaitForMultipleObjects, keyed events"`
 
 **Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`. Keyed event wait/release pair succeeds between two threads.
 
 ## 9. Virtual Memory (Alloc, Free, Protect, Lock, Cross-Process)
 Virtual memory management entry points -- covers the full NT virtual memory API surface.
 
-- [ ] `NtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect)`:
-  - `AllocationType`: `MEM_COMMIT = 0x1000`, `MEM_RESERVE = 0x2000`, `MEM_RESET = 0x80000`
-  - `Protect`: `PAGE_NOACCESS = 0x01`, `PAGE_READONLY = 0x02`, `PAGE_READWRITE = 0x04`, `PAGE_EXECUTE = 0x10`, `PAGE_EXECUTE_READ = 0x20`, `PAGE_EXECUTE_READWRITE = 0x40`, `PAGE_GUARD = 0x100`
-  - Route to VMM page allocator; return allocated address in `*BaseAddress`
-- [ ] `NtFreeVirtualMemory(ProcessHandle, BaseAddress, RegionSize, FreeType)`:
-  - `FreeType`: `MEM_RELEASE = 0x8000`, `MEM_DECOMMIT = 0x4000`
-- [ ] `NtProtectVirtualMemory(ProcessHandle, BaseAddress, RegionSize, NewProtect, OldProtect)`:
-  - Change page protection flags on committed pages; updates PTE bits
-  - Critical for: JIT compilation (RW→RX), DEP enforcement, shadow stacks
-- [ ] `NtQueryVirtualMemory(ProcessHandle, BaseAddress, MemoryInformationClass, Buffer, Length)`:
-  - `MemoryBasicInformation (0)`: base, allocation base, protect flags, state, type, region size
-  - `MemoryWorkingSetExInformation (4)`: working set pages with share/lock info
-- [ ] `NtLockVirtualMemory(ProcessHandle, BaseAddress, RegionSize, MapType)`: pin pages in physical memory (prevent page-out)
-- [ ] `NtUnlockVirtualMemory(ProcessHandle, BaseAddress, RegionSize, MapType)`: unpin pages
-- [ ] `NtFlushVirtualMemory(ProcessHandle, BaseAddress, RegionSize, IoStatus)`: flush dirty pages to backing store
-- [ ] `NtReadVirtualMemory(ProcessHandle, BaseAddress, Buffer, BufferSize, NumberOfBytesRead)`:
-  - Read from another process's address space (debugger, tool support)
-- [ ] `NtWriteVirtualMemory(ProcessHandle, BaseAddress, Buffer, BufferSize, NumberOfBytesWritten)`:
-  - Write to another process's address space (code injection, debugger breakpoints)
-- [ ] `NtAllocateUserPhysicalPages(ProcessHandle, NumberOfPages, UserPfnArray)`: AWE-style allocation
-- [ ] `NtFreeUserPhysicalPages(ProcessHandle, NumberOfPages, UserPfnArray)`: AWE free
-- [ ] `NtMapUserPhysicalPages(VirtualAddress, NumberOfPages, UserPfnArray)`: AWE map
+- [x] `NtAllocateVirtualMemory(0x0050)`: PMM contiguous allocation + VMM page mapping; PAGE_* to VMM flag conversion; zero-fills committed pages
+- [x] `NtFreeVirtualMemory(0x0051)`: vmm_unmap_page + pmm_free_frame for each page in range
+- [x] `NtProtectVirtualMemory(0x0052)`: re-maps pages with new VMM flags; returns OldProtect
+- [x] `NtQueryVirtualMemory(0x0053)`: MemoryBasicInformation -- base, state (committed/free), protect, type
+- [x] `NtLockVirtualMemory(0x0054)`: no-op STATUS_SUCCESS (no swap yet -- all pages pinned)
+- [x] `NtUnlockVirtualMemory(0x0055)`: no-op STATUS_SUCCESS
+- [x] `NtFlushVirtualMemory(0x0056)`: no-op STATUS_SUCCESS (no backing store yet)
+- [x] `NtReadVirtualMemory(0x0057)`: identity-mapped memcpy from source address; cross-process via CR3 deferred
+- [x] `NtWriteVirtualMemory(0x0058)`: identity-mapped memcpy to target address
+- [x] `NtAllocateUserPhysicalPages(0x0059)`: AWE stub STATUS_NOT_IMPLEMENTED
+- [x] `NtFreeUserPhysicalPages(0x005A)`: AWE stub
+- [x] `NtMapUserPhysicalPages(0x005B)`: AWE stub
+- [x] New file: `include/kernel/nt/nt_memory.h` -- MEM_COMMIT/RESERVE/RELEASE, PAGE_* flags, MEMORY_BASIC_INFORMATION
+- [x] New file: `src/kernel/nt/nt_memory.c` -- 12 SSDT handlers (9 implemented + 3 AWE stubs)
+- [x] 2 unit tests: SSDT registration (5 handler checks), constant verification (12 checks)
 - [ ] Commit: `"kernel: nt -- NtAllocate/Free/Protect/Lock/Read/WriteVirtualMemory"`
 
 **Test checkpoint:** `NtAllocateVirtualMemory` with `MEM_COMMIT | PAGE_READWRITE` returns usable address; write+read round-trip. `NtProtectVirtualMemory` changes RW→RO; write attempt faults. `NtFreeVirtualMemory` with `MEM_RELEASE` returns `STATUS_SUCCESS`. `NtReadVirtualMemory` from kernel to user address space succeeds.
@@ -1431,8 +1424,8 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | Named sync objects         | ✅ NtCreate{Event,Mutant}   | ✅ POSIX sem + futex       | ✅ §8 Event+Mutant+Semaphore |
 | 💎 | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent    | ✅ §8 WaitAll+WaitAny 64 max |
 | 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | 🔄 §8 stubs (TODO-07)       |
-| 💎 | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap    | ⬜ §9                       |
-| 💎 | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv        | ⬜ §9                       |
+| 💎 | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap    | ✅ §9 Alloc+Free+Protect+Query |
+| 💎 | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv        | ✅ §9 Read+Write (identity) |
 | 💎 | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc         | ✅ §5 NtQuerySystemInfo 2 classes |
 | 💎 | LastError per-thread       | ✅ TEB→LastErrorValue       | ✅ errno via TLS           | ⬜ §11 + TODO-04 §6         |
 | 💎 | Registry syscalls          | ✅ NtCreate/Open/QueryKey   | ❌ No equivalent           | ⬜ §14 + TODO-13            |
