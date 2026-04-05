@@ -25,7 +25,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 
 ## Active TODOs
 
-- [TODO-01 -- UEFI Bootloader Hardening & Secure Boot](TODO-01-uefi-hardening-secureboot.md) -- Secure Boot shim, UEFI runtime, GOP resolution, SMBIOS, boot menu, capsule update, W^X
+- [TODO-01 -- UEFI Bootloader Hardening & Secure Boot](TODO-01-uefi-hardening-secureboot.md) -- ✅ Core complete: UEFI runtime, variables, GOP, SMBIOS core, Secure Boot shim, boot UX, serial log
 - [TODO-02 -- Bootloader Error Recovery & ELF Hardening](TODO-02-bootloader-error-recovery.md) -- Eliminate silent failures: ELF bounds checking, ExitBootServices retry, fallback kernel search, boot failure error screen
 - [TODO-03 -- Boot Device Discovery & Fallback Chain](TODO-03-boot-device-discovery.md) -- Boot device identification via LoadedImage, multi-device fallback, device type detection, UEFI boot variables, partition GUID validation, removable media, Registry population, disk health check
 - [TODO-04 -- CPU Boot Sequencing & AP Hardening](TODO-04-cpu-boot-sequencing.md) -- Phase 0 activation order (EFER->CR4 before VMM), hypervisor detection before UTS, AP hardening replication, AP feature consistency validation, CR4 bit pinning, MTRR/PAT AP sync, CPU register audit trail
@@ -41,7 +41,8 @@ This domain covers the path from firmware entry through kernel handoff and early
 - [TODO-14 -- A/B Dual-Slot Boot & Automatic Rollback](TODO-14-ab-boot-rollback.md) -- Never unbootable: dual root partitions, failure counting, automatic rollback
 - [TODO-15 -- Recovery Partition & Self-Repair](TODO-15-recovery-partition.md) -- Recovery environment: filesystem repair, kernel restore, NVRAM reconstruction
 - [TODO-16 -- Boot Watchdog & Hang Detection](TODO-16-boot-watchdog.md) -- LAPIC NMI + ACPI TCO watchdog: detect hung boot, auto-reboot, integrate with A/B rollback
-- [TODO-17 -- BlackBox Service Partition](TODO-17-blackbox-service-partition.md) -- 128 MiB FAT32 "BlackBox" partition (X:\) for logs, crash dumps, diagnostics, tools; 3-partition GPT layout
+- [TODO-17 -- BlackBox Service Partition](TODO-17-blackbox-service-partition.md) -- ✅ Complete: 128 MiB FAT32 "BlackBox" partition (X:\) for logs, crash dumps, diagnostics, tools
+- [TODO-18 -- UEFI Advanced Features](TODO-18-uefi-advanced.md) -- Deferred: multi-OS boot menu, capsule updates, W^X, multi-GPU GOP, extended SB, SMBIOS ext, DBX sync
 
 ## Completed / Doc-converted
 

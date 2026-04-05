@@ -1,0 +1,185 @@
+# TODO-18 -- UEFI Advanced Features
+
+> **Goal:** Advanced UEFI boot features beyond the core boot path: multi-OS boot menu, UEFI capsule firmware updates, W^X memory enforcement on UEFI runtime regions, multi-GPU GOP enumeration, extended Secure Boot state variables with enforcement policy, extended SMBIOS type parsing, and DBX revocation list synchronization. These are production polish features -- the OS boots and runs correctly without them.
+
+> [!NOTE]
+> Split from TODO-01 (UEFI Hardening & Secure Boot). TODO-01 covers the completed core (§1-§7, §11): UEFI runtime, variables, GOP, SMBIOS core types, Secure Boot detection, shim chain-loading, boot UX, serial log standardization. This TODO covers the deferred advanced features.
+
+## Inputs
+
+- [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) -- UEFI bootloader
+- [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) -- boot info struct
+- [`include/kernel/uefi_runtime.h`](../../include/kernel/uefi_runtime.h) -- UEFI runtime wrappers
+- [`include/kernel/smbios.h`](../../include/kernel/smbios.h) -- SMBIOS parser
+- -> XREF: `TODO-01-uefi-hardening-secureboot.md` -- completed core (§1-§7, §11); this TODO extends it
+- -> XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md §8` -- multi-head display consumes `boot_info.gop_handles[]` from §4
+- -> XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` -- kernel lockdown triggered by §5 enforcement policy
+- -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md` -- chassis type from §6 distinguishes desktop vs laptop
+- -> XREF: `18-future-research/TODO-04-secureboot-tpm.md §3` -- PK/KEK/db key hierarchy builds on §5 and §7
+
+## Outcome
+
+- Multi-OS boot menu with countdown timer for dual-boot hardware.
+- UEFI capsule delivery path for firmware updates via ESRT.
+- W^X enforcement on UEFI runtime memory regions.
+- Multi-GPU GOP enumeration with ConOut-path primary selection.
+- Extended Secure Boot state (SetupMode, AuditMode, DeployedMode) exposed to kernel and registry.
+- SMBIOS Type 2/3/16/19 parsed into registry for Device Manager and System Properties.
+- DBX revocation list freshness check with proactive stale warning.
+
+## Implementation Order
+
+| ⭐  | Order | Deliverable                              | Depends On          | Status |
+| --- | :---: | ---------------------------------------- | ------------------- | :----: |
+| ⭐  |   1   | Multi-OS detection and boot menu         | T01 §1              |  [ ]   |
+| 💎  |   2   | UEFI capsule update and ESRT             | T01 §2              |  [ ]   |
+| 💎  |   3   | UEFI memory attributes (W^X)            | T01 §1, T17 §1      |  [ ]   |
+| 💎  |   4   | Multi-GPU GOP enumeration                | T01 §3              |  [ ]   |
+| 💎  |   5   | Secure Boot extended state + enforcement | T01 §5              |  [ ]   |
+| 💎  |   6   | SMBIOS extended type parsing             | T01 §4              |  [ ]   |
+| 💎  |   7   | DBX revocation list sync                 | T01 §2, §5          |  [ ]   |
+
+---
+
+## 1. Multi-OS Detection and Boot Menu
+
+Detect other OS partitions from GPT and show a countdown boot menu when the user has multiple OSes installed.
+
+**Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
+
+- [ ] After GPT partition scan: check each partition type GUID for Linux, Windows, and other EFI system partitions
+- [ ] If any non-Impossible-OS partition found: store up to 8 `boot_menu_entry_t` in `boot_info.boot_entries[]`
+- [ ] Render text-mode boot menu on framebuffer with countdown timer (`boot.conf` key `BootMenuTimeout=3`)
+- [ ] Input: PS/2 keyboard polling; number key or arrow key + Enter selects; ESC or no input boots Impossible OS
+- [ ] For non-Impossible entries: chainload via `LoadImage` + `StartImage` for EFI boot paths
+- [ ] Commit: `"boot: multi-OS GPT detection and countdown text-mode boot menu"`
+
+**Test checkpoint:** QEMU with two GPT partitions: boot menu appears with 2 entries, countdown from 3, auto-selects Impossible OS. Bare metal dual-boot: detects Windows/Linux, chainload works.
+
+## 2. UEFI Capsule Update and ESRT
+
+Parse the ESRT firmware resource table and implement the UEFI capsule delivery path for firmware updates.
+
+**Files:** `src/kernel/uefi_capsule.c` (new), `include/kernel/uefi_capsule.h` (new)
+
+- [ ] `esrt_init()`: locate `EFI_SYSTEM_RESOURCE_TABLE` in UEFI config tables; walk entries; extract firmware type, GUID, current/last-attempt version, status
+- [ ] Write to Registry: `HKLM\HARDWARE\Firmware\{GUID}\FwType`, `FwVersion`, `LastAttemptVersion`, `LastAttemptStatus`
+- [ ] `capsule_update_request(path)`: read capsule, write to ESP `\EFI\UpdateCapsule\`, set `OsIndications` bit 0, reboot
+- [ ] `capsule_check_result()`: read `OsIndicationsSupported` and `CapsuleReportGuid` at boot
+- [ ] Commit: `"kernel: ESRT firmware table parse + UEFI capsule update delivery"`
+
+**Test checkpoint:** QEMU: `[ESRT] N firmware entries found`. Registry `HKLM\HARDWARE\Firmware\{GUID}\FwVersion` populated.
+
+## 3. UEFI Memory Attributes (W^X)
+
+Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEMORY_ATTRIBUTES_TABLE`.
+
+**Files:** `src/kernel/uefi_runtime.c`, `src/kernel/mm/vmm.c`
+
+- [ ] Locate `EFI_MEMORY_ATTRIBUTES_TABLE` in UEFI config tables
+- [ ] Walk entries: for RW pages, set NX bit via `vmm_set_nx(virt, size)`; for RT code regions, set RO via `vmm_set_ro(virt, size)`
+- [ ] Prerequisite: implement `vmm_set_nx()` and `vmm_set_ro()` in vmm.c (do not exist yet)
+- [ ] Graceful degradation: if table absent, log warning and continue
+- [ ] Commit: `"kernel: UEFI runtime W^X enforcement via EFI_MEMORY_ATTRIBUTES_TABLE"`
+
+**Regression risk:** Modifies page table permissions on UEFI runtime regions. Rollback: skip enforcement (BOOT_DEGRADED path).
+
+**Test checkpoint:** Serial shows `[UEFI] W^X enforced on N runtime memory regions`. `uefi_get_time()` still works after enforcement.
+
+## 4. Multi-GPU GOP Handle Enumeration
+
+Enumerate all GOP handles via `LocateHandleBuffer` and select the active display using ConOut device path.
+
+**Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
+
+> [!NOTE]
+> -> XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md §8` -- kernel multi-head `display_register_head()` will consume `boot_info.gop_handles[]`.
+
+- [ ] Add `boot_gop_handle_t` struct and `gop_handles[4]` array to `boot_info.h`
+- [ ] Replace `LocateProtocol` with `LocateHandleBuffer` in `init_gop()`
+- [ ] Primary selection: compare each handle's device path against `ConOut` device path; fallback to largest resolution
+- [ ] Call `gop_negotiate_mode()` only on the selected primary handle; `boot_info.fb` unchanged
+- [ ] Commit: `"boot: enumerate all GOP handles -- LocateHandleBuffer, ConOut-path primary selection"`
+
+**Test checkpoint:** QEMU (single GPU): `[BOOT] GOP: 1 handle(s)`, unchanged. Bare metal iGPU+dGPU: `[BOOT] GOP: 2 handle(s)`.
+
+## 5. Secure Boot Extended State and Enforcement Policy
+
+Read additional UEFI Secure Boot variables and provide an enforcement policy toggle.
+
+**Files:** `src/kernel/uefi_runtime.c`, `include/kernel/uefi_runtime.h`, `include/kernel/boot_info.h`
+
+- [ ] Read `SetupMode`, `AuditMode`, `DeployedMode` UEFI variables; store in `boot_info`; write to `HKLM\SYSTEM\SecureBoot\`
+- [ ] `boot.conf` key `SecureBootEnforce=0`: when 1, trigger kernel lockdown (-> XREF: TODO-17 kernel security hardening)
+- [ ] Serial log: `[SecureBoot] SetupMode=%u AuditMode=%u DeployedMode=%u Enforce=%u`
+- [ ] Commit: `"kernel: Secure Boot extended state variables + SecureBootEnforce policy"`
+
+**Test checkpoint:** QEMU Setup Mode: `SetupMode=1`. Enrolled PK: `SetupMode=0`. `SecureBootEnforce=1`: `g_system_state.secure_boot_enforced == 1`.
+
+## 6. SMBIOS Extended Type Parsing
+
+Parse SMBIOS Type 2 (Baseboard), Type 3 (Chassis), Type 16 (Memory Array), Type 19 (Memory Mapped Address).
+
+**Files:** `src/kernel/smbios.c`, `include/kernel/smbios.h`
+
+- [ ] Type 2: manufacturer, product, version, serial, asset tag -> `HKLM\HARDWARE\Baseboard\*`
+- [ ] Type 3: manufacturer, type code, serial, asset tag -> `HKLM\HARDWARE\Chassis\*`; `smbios_get_chassis_type()` for desktop vs laptop distinction
+- [ ] Type 16: location, use, max capacity, device count -> `HKLM\HARDWARE\MemoryArray\*`
+- [ ] Type 19: start/end address -> `HKLM\HARDWARE\MemoryArray\StartAddr`, `EndAddr`
+- [ ] Commit: `"kernel: SMBIOS Type 2/3/16/19 extended parsing -> Registry HARDWARE hives"`
+
+**Test checkpoint:** QEMU: `HKLM\HARDWARE\Baseboard\Manufacturer` non-empty. Bare metal laptop: `Chassis\Type` = 9 (Laptop).
+
+## 7. DBX Revocation List Sync
+
+Synchronize the UEFI dbx with the latest revocation list shipped with OS updates.
+
+**Files:** `src/kernel/secureboot_dbx.c` (new)
+
+> [!TIP]
+> **Competitive edge:** Neither Win11 nor Linux proactively validates dbx freshness from within the OS. Impossible OS can log a boot warning when dbx is stale and offer one-click update.
+
+- [ ] `secureboot_dbx_init()`: read `dbx` variable, parse `EFI_SIGNATURE_LIST`, count entries
+- [ ] Ship `resources/secureboot/dbx-latest.bin` with each release; compare installed vs shipped
+- [ ] If stale: log warning, set `HKLM\SYSTEM\SecureBoot\DbxStale = 1`
+- [ ] `secureboot_dbx_apply(path)`: write signed dbx update via `uefi_var_set` with `APPEND_WRITE`
+- [ ] Commit: `"kernel: DBX revocation list freshness check and update path"`
+
+**Test checkpoint:** QEMU with OVMF: `secureboot_dbx_init()` reads dbx (may be empty). After apply: entry count updated.
+
+---
+
+## OS Comparison
+
+| ⭐ | Feature                   | 🪟 Win11                   | 🐧 Linux                  | 🚀 Impossible OS              |
+|----|---------------------------|-----------------------------|----------------------------|--------------------------------|
+| ⭐ | In-bootloader OS menu     | ❌ Separate BCD/bootmgr    | ❌ GRUB is separate        | ⬜ §1 -- integrated countdown |
+| 💎 | UEFI capsule update       | ✅ WU UEFI capsules        | ✅ fwupd                   | ⬜ §2                         |
+| 💎 | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES   | ⬜ §3                         |
+| 💎 | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer      | ⬜ §4                         |
+| 💎 | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars    | ⬜ §5                         |
+| 💎 | Secure Boot enforcement   | ✅ HVCI lockdown           | ✅ kernel lockdown mode    | ⬜ §5                         |
+| 💎 | SMBIOS extended types     | ✅ WMI BaseBoard/Enclosure | ✅ /sys/firmware/dmi full  | ⬜ §6                         |
+| 💎 | DBX revocation sync       | ✅ WU silent dbx push      | ✅ fwupd/dbxtool           | ⬜ §7                         |
+| ⭐ | Proactive dbx stale alert | ❌ Silent WU push only     | ❌ Requires manual fwupdmgr| ⬜ §7 -- boot warning         |
+
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_uefi_advanced()`.
+
+- [ ] Create `src/kernel/test/test_uefi_advanced.c` with:
+  - §5: `HKLM\SYSTEM\SecureBoot\SetupMode` exists and is 0 or 1
+  - §6: `HKLM\HARDWARE\Chassis\Type` is valid (1-36) on real hardware
+  - §6: `HKLM\HARDWARE\MemoryArray\MaxCapacityMB` > 0 on real hardware
+  - §7: `secureboot_dbx_init()` does not crash when dbx variable is empty
+- [ ] Register in `test_runner_init()`: `test_register_uefi_advanced()`
+- [ ] Commit: `"test: add uefi_advanced test suite"`
+
+## Verification
+
+- [ ] Boot menu appears when two GPT partitions present; countdown works; default boots without input
+- [ ] `[UEFI] W^X enforced on N UEFI memory regions` in serial log (N > 0 on OVMF)
+- [ ] `[SecureBoot] SetupMode=N AuditMode=N DeployedMode=N Enforce=N` in serial log
+- [ ] `[SMBIOS] Baseboard: ... Chassis: ... MemArray: ...` in serial log
+- [ ] `[SecureBoot] dbx: N entries` in serial log
+- [ ] Commit: `"boot: uefi-advanced verified"`
