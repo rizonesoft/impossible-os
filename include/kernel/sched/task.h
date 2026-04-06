@@ -123,6 +123,10 @@ struct task {
     void *peb;                           /* PEB * in user address space (NULL for kernel tasks) */
     void *teb;                           /* TEB * in user address space (NULL for kernel tasks) */
     uint64_t tls_bitmap;                 /* per-process TLS bitmap: bit N = slot N allocated */
+    uint64_t tls_expansion_bitmap[16];   /* 1024 expansion slots (indices 64-1087) */
+    uint8_t  tls_expansion_allocated;    /* 1 if expansion array has been demand-allocated */
+    uintptr_t tls_expansion_phys;        /* physical base of expansion pages (for free) */
+    uintptr_t tls_expansion_virt;        /* virtual base of expansion pages (for unmap) */
 };
 
 /* Task entry function type */
@@ -222,16 +226,24 @@ int thread_boost_priority(uint32_t task_pid, uint32_t thread_id, uint32_t new_pr
  * Called from mutex_unlock() to undo PI boosts. */
 void thread_restore_priority(uint32_t task_pid, uint32_t thread_id);
 
-/* --- TLS slot allocation (64 static slots) --- */
+/* --- TLS slot allocation (64 static + 1024 expansion) --- */
 
-/* Allocate a TLS slot. Returns slot index (0–63) or -1 if all full. */
+#define TLS_MINIMUM_AVAILABLE   64      /* static slots in TEB.TlsSlots[] */
+#define TLS_EXPANSION_SLOTS     1024    /* expansion slots via TEB.TlsExpansionSlots */
+#define TLS_MAXIMUM_AVAILABLE   1088    /* TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS */
+#define TLS_EXPANSION_BITMAP_WORDS 16   /* 1024 / 64 = 16 uint64_t words */
+
+/* Allocate a TLS slot. Returns slot index (0-1087) or -1 if all full.
+ * Indices 0-63: static (TEB.TlsSlots). 64-1087: expansion (TEB.TlsExpansionSlots).
+ * Expansion array demand-allocated on first index >= 64. */
 int tls_alloc(uint32_t pid);
 
-/* Free a TLS slot. Zeroes the slot in all threads. Returns 0 or -1. */
+/* Free a TLS slot. Zeroes the slot in the thread's TEB. Returns 0 or -1. */
 int tls_free(uint32_t pid, uint32_t index);
 
 /* Get/Set TLS value for the current thread (kernel-side helper).
- * User-mode code reads/writes gs:[0x1480 + index*8] directly. */
+ * User-mode code reads/writes gs:[0x1480 + index*8] directly for 0-63,
+ * or via TEB.TlsExpansionSlots[index - 64] for 64-1087. */
 uint64_t tls_get_value(uint32_t pid, uint32_t index);
 void tls_set_value(uint32_t pid, uint32_t index, uint64_t value);
 

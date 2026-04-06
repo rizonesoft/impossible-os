@@ -264,6 +264,12 @@ typedef enum {
 #define POST16_MODULE_REGISTRY  0xDE44  /* kernel module self-registration */
 #define POST16_MDMP_FORMAT      0xDE46  /* MDMP binary format structs init */
 
+/* TLS Expansion Slots (0xDF10-0xDF13) */
+#define POST16_TLS_EXPAND       0xDF10  /* TLS expansion entry */
+#define POST16_TLS_EXPAND_ALLOC 0xDF11  /* expansion array demand-allocated */
+#define POST16_TLS_EXPAND_TEST  0xDF12  /* expansion slot 1087 test */
+#define POST16_TLS_EXPAND_CLEAN 0xDF13  /* expansion cleanup */
+
 /* Crash-Persistent Log (0xDE00-0xDE03) */
 #define POST16_CRASHLOG         0xDE00  /* crash persist entry */
 #define POST16_CRASHLOG_ALLOC   0xDE01  /* region reserved */

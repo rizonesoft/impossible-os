@@ -47,7 +47,7 @@
 | 💎  |   9   | TLS slot allocation (64 static slots)           | §6         |  [x]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6     |  [x]   |
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5         |  [x]   |
-| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9         |  [ ]   |
+| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9         |  [x]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7         |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
@@ -162,7 +162,7 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [x] Main executable inserted in all 3 lists (InLoadOrder, InMemoryOrder, InInitializationOrder) as circular linked list
 - [x] `LDR_DATA_TABLE_ENTRY`: DllBase, EntryPoint, SizeOfImage, FullDllName + BaseDllName as UNICODE_STRING
 - [x] `PEB->Ldr` wired to the allocated `PEB_LDR_DATA`
-- [ ] Full module list (LoadLibrary/FreeLibrary) -- see TODO-08 §6 (module list registration)
+- [ ] Full dynamic module list (LoadLibrary/FreeLibrary add/remove Ldr entries at runtime) -- → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §3` (LdrLoadDll PE DLL loader)
 - [x] Commit: `"kernel: peb -- minimal PEB Ldr with main module entry"`
 
 **Test checkpoint:** `PEB->Ldr` is non-NULL at process start and the main image appears in all three loader lists with stable links; ntdll loader walk does not fault on initial module enumeration. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
@@ -219,17 +219,18 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
 ## 12. TLS Expansion Slots (1024 Dynamic Slots)
 Windows supports 1088 TLS slots per thread: 64 static slots in `TEB.TlsSlots[64]` (§9) plus 1024 expansion slots via `TEB.TlsExpansionSlots`. When `TlsAlloc()` exhausts the static 64, ntdll allocates the expansion array on demand. Without expansion support, any Win32 DLL that calls `TlsAlloc` more than 64 times across all loaded modules will fail -- common in large applications with many DLL dependencies.
 
-- [ ] Add `tls_expansion_bitmap` field (`uint64_t[16]` = 1024 bits) to `struct task` for process-wide slot tracking
-- [ ] `tls_alloc(pid)`: modify to check expansion bitmap after static bitmap exhausted; return indices 64–1087 from expansion
-- [ ] `tls_free(pid, index)`: for index ≥ 64, clear expansion bitmap bit and zero the expansion slot
-- [ ] `tls_get_value(pid, index)` / `tls_set_value(pid, index, value)`: for index ≥ 64, access via `TEB.TlsExpansionSlots[index - 64]`
-- [ ] Demand-allocate the expansion array: on first `tls_alloc` past index 63, allocate 2 pages (8 KB = 1024 × 8 bytes) via `pmm_alloc_contiguous(2)` + `vmm_map_page()` (8 KB exceeds the 4 KB `kmalloc` limit), zero-fill, wire `TEB.TlsExpansionSlots` pointer
-- [ ] On thread create: if process has expansion slots allocated, allocate and zero a per-thread expansion array for the new thread
-- [ ] On thread/process exit: free expansion slot memory
-- [ ] `TLS_MINIMUM_AVAILABLE = 64`, `TLS_EXPANSION_SLOTS = 1024`, `TLS_MAXIMUM_AVAILABLE = 1088` constants
-- [ ] Commit: `"kernel: abi -- TLS expansion slots (1024 dynamic slots, indices 64–1087)"`
+- [x] Add `tls_expansion_bitmap[16]` field (1024 bits) to `struct task` plus `tls_expansion_allocated`, `tls_expansion_phys`, `tls_expansion_virt` for tracking and cleanup
+- [x] `tls_alloc(pid)`: scans static bitmap first, then expansion bitmap; returns indices 0-1087; protected by `tls_lock` spinlock
+- [x] `tls_free(pid, index)`: handles both static (0-63) and expansion (64-1087) ranges; zeros the slot in TEB; under `tls_lock`
+- [x] `tls_get_value(pid, index)` / `tls_set_value(pid, index, value)`: dispatch to `TEB.TlsSlots[index]` or `TEB.TlsExpansionSlots[index-64]`; under `tls_lock`
+- [x] Demand-allocate expansion array via `pmm_alloc_contiguous(2)` + `vmm_map_page()` at `0x7FFD0000`; two-phase commit: PMM alloc outside spinlock, mapping/zero-fill/commit under spinlock; race-loser frees its frames via `pmm_free_frame()`
+- [/] On thread create: per-thread expansion arrays -- deferred. Current OS has single TEB per process (threads share it via PEB.TEB pointer). Per-thread expansion will land when threads get separate TEB pages (future thread runtime work)
+- [x] On task cleanup: `task_cleanup()` unmaps expansion pages via `vmm_unmap_page(virt, 1)` and clears `TEB.TlsExpansionSlots` under `tls_lock` to prevent races
+- [x] `TLS_MINIMUM_AVAILABLE = 64`, `TLS_EXPANSION_SLOTS = 1024`, `TLS_MAXIMUM_AVAILABLE = 1088`, `TLS_EXPANSION_BITMAP_WORDS = 16` constants in `task.h`
+- [x] 6 unit tests in `test_peb_teb.c` (TLS constants, static alloc/free, expansion alloc, expansion reuse, expansion boundary 1088 slots, POST codes)
+- [ ] Commit: `"kernel: abi -- TLS expansion slots (1024 dynamic slots, indices 64-1087)"`
 
-**Test checkpoint:** Allocate 65 TLS slots -- first 64 from static, 65th triggers expansion array allocation. Read/write slot 64 and slot 1087 -- values round-trip correctly. Free slot 65 -- re-alloc returns index 65 (reuse). `POST16(0xDF10)` on entry, `POST16(0xDF11)` expansion alloc, `POST16(0xDF12)` slot 1087 test, `POST16(0xDF13)` cleanup. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+**Test checkpoint:** Allocate 65 TLS slots -- first 64 from static, 65th triggers expansion array allocation. Read/write slot 64 and the highest expansion slot -- values round-trip correctly. Free slot 65 -- re-alloc returns index 65 (reuse). All 1088 slots can be allocated; 1089th `tls_alloc` returns -1. `POST16(0xDF10)` on entry, `POST16(0xDF11)` expansion alloc, `POST16(0xDF12)` boundary test, `POST16(0xDF13)` cleanup. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 

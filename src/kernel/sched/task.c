@@ -32,6 +32,7 @@
 #include "kernel/acpi.h"
 #include "kernel/timer.h"
 #include "kernel/vectors.h"
+#include "kernel/sched/spinlock.h"
 
 /* Use VECTOR_YIELD from vectors.h (single source of truth) */
 #define YIELD_INT_VECTOR VECTOR_YIELD
@@ -41,6 +42,9 @@ static struct task tasks[TASK_MAX];
 static uint32_t num_tasks = 0;
 static uint32_t current_task = 0;
 static uint32_t current_thread = 0;  /* thread index within current task */
+
+/* TLS allocation spinlock (definition below in TLS section) */
+static spinlock_t tls_lock;
 
 /* --- Preemptive scheduler state --- */
 static volatile uint32_t sched_enabled = 0;
@@ -247,6 +251,14 @@ boot_result_t task_init(void)
         tasks[i].cr3 = 0;
         tasks[i].kernel_gs_base = 0;
         tasks[i].tls_bitmap = 0;
+        tasks[i].tls_expansion_allocated = 0;
+        tasks[i].tls_expansion_phys = 0;
+        tasks[i].tls_expansion_virt = 0;
+        {
+            uint32_t w;
+            for (w = 0; w < TLS_EXPANSION_BITMAP_WORDS; w++)
+                tasks[i].tls_expansion_bitmap[w] = 0;
+        }
         tasks[i].xsave_area = (void *)0;
         tasks[i].fpu_used = 0;
         tasks[i].handle_table.entries  = NULL;
@@ -1517,6 +1529,37 @@ void task_cleanup(uint32_t pid)
         tasks[pid].user_stack_base = (uint8_t *)0;
     }
 
+    /* Free TLS expansion pages and reset state under tls_lock.
+     * Holding the lock during unmap prevents another CPU from re-allocating
+     * the same VA between our state-clear and our unmap. The unmap is fast
+     * (PTE writes + frame free) so the lock hold time is acceptable.
+     * task_cleanup only runs after the task has reached TASK_DEAD, so no
+     * legitimate concurrent allocator should exist for this pid -- the lock
+     * is defense in depth. */
+    {
+        uint64_t flags;
+        spin_lock_irqsave(&tls_lock, &flags);
+        if (tasks[pid].tls_expansion_allocated) {
+            uintptr_t free_virt = tasks[pid].tls_expansion_virt;
+            if (tasks[pid].teb)
+                ((TEB *)tasks[pid].teb)->TlsExpansionSlots = (void *)0;
+            tasks[pid].tls_expansion_allocated = 0;
+            tasks[pid].tls_expansion_phys = 0;
+            tasks[pid].tls_expansion_virt = 0;
+            vmm_unmap_page(free_virt, 1);
+            vmm_unmap_page(free_virt + 4096, 1);
+        }
+        tasks[pid].tls_bitmap = 0;
+        {
+            uint32_t w;
+            for (w = 0; w < TLS_EXPANSION_BITMAP_WORDS; w++)
+                tasks[pid].tls_expansion_bitmap[w] = 0;
+        }
+        spin_unlock_irqrestore(&tls_lock, flags);
+    }
+
+    POST16(POST16_TLS_EXPAND_CLEAN);
+
     tasks[pid].kernel_rsp = 0;
     tasks[pid].rsp = 0;
 }
@@ -1548,53 +1591,214 @@ static void thread_wrapper(void)
     thread_exit(0);
 }
 
-/* ---- TLS slot allocation (64 static slots) ------------------------------ */
+/* ---- TLS slot allocation (64 static + 1024 expansion) ------------------- */
+
+/*
+ * TLS expansion array VA: 2 pages (8 KiB = 1024 x 8 bytes) per task.
+ * Placed below the TEB region: 0x7FFD0000 (well below TEB at 0x7FFDB000).
+ * Per-thread expansion arrays will use tid*0x2000 offset when threads get
+ * separate TEBs; currently single TEB per process.
+ */
+#define TLS_EXPANSION_VA_BASE  0x7FFD0000ULL
+#define TLS_EXPANSION_PAGES    2  /* 8 KiB = 1024 slots x 8 bytes */
+
+/* tls_lock defined at top of file with other static state */
+
+/* Demand-allocate the expansion array for a task's TEB.
+ *
+ * Two-phase: slow PMM frame allocation OUTSIDE the spinlock, then under the
+ * spinlock either commit (we won the race) or free our frames and return
+ * success (someone else won; their array is usable). The mapping + zero-fill
+ * runs UNDER the lock so a race-loser can never touch the winner's PTEs.
+ *
+ * Returns 0 on success, -1 on failure. */
+static int tls_expansion_demand_alloc(uint32_t pid)
+{
+    uintptr_t exp_virt = TLS_EXPANSION_VA_BASE;
+    uintptr_t exp_phys;
+    uint64_t flags;
+    TEB *teb;
+
+    if (!tasks[pid].teb) return -1;
+
+    /* Slow PMM allocation outside the spinlock. */
+    exp_phys = pmm_alloc_contiguous(TLS_EXPANSION_PAGES);
+    if (!exp_phys) return -1;
+
+    /* Lock-held commit: if we lost the race, free our frames and return.
+     * Otherwise install PTEs, zero-fill (~few us), and commit. */
+    spin_lock_irqsave(&tls_lock, &flags);
+    if (tasks[pid].tls_expansion_allocated) {
+        spin_unlock_irqrestore(&tls_lock, flags);
+        pmm_free_frame(exp_phys);
+        pmm_free_frame(exp_phys + 4096);
+        return 0;
+    }
+
+    /* We won. Install mappings and zero-fill under the lock. */
+    vmm_map_page(exp_virt, exp_phys, VMM_USER_RW);
+    vmm_map_page(exp_virt + 4096, exp_phys + 4096, VMM_USER_RW);
+    {
+        uint8_t *p = (uint8_t *)exp_virt;
+        uint32_t i;
+        for (i = 0; i < TLS_EXPANSION_PAGES * 4096; i++)
+            p[i] = 0;
+    }
+
+    teb = (TEB *)tasks[pid].teb;
+    if (teb)
+        teb->TlsExpansionSlots = (void *)exp_virt;
+    tasks[pid].tls_expansion_allocated = 1;
+    tasks[pid].tls_expansion_phys = exp_phys;
+    tasks[pid].tls_expansion_virt = exp_virt;
+    spin_unlock_irqrestore(&tls_lock, flags);
+
+    POST16(POST16_TLS_EXPAND_ALLOC);
+    return 0;
+}
 
 int tls_alloc(uint32_t pid)
 {
-    uint64_t bm;
-    uint32_t i;
+    uint64_t bm, flags;
+    uint32_t i, w;
+    int result = -1;
+    int need_expansion_alloc = 0;
 
     if (pid >= num_tasks) return -1;
-    bm = tasks[pid].tls_bitmap;
 
-    /* Find first free bit (0 = free) */
-    for (i = 0; i < 64; i++) {
+    POST16(POST16_TLS_EXPAND);
+
+retry:
+    spin_lock_irqsave(&tls_lock, &flags);
+
+    /* Try static slots first (0-63) */
+    bm = tasks[pid].tls_bitmap;
+    for (i = 0; i < TLS_MINIMUM_AVAILABLE; i++) {
         if (!(bm & (1ULL << i))) {
             tasks[pid].tls_bitmap |= (1ULL << i);
-            return (int)i;
+            result = (int)i;
+            goto out;
         }
     }
-    return -1;  /* all 64 slots occupied */
+
+    /* Static exhausted -- try expansion slots (64-1087) */
+    for (w = 0; w < TLS_EXPANSION_BITMAP_WORDS; w++) {
+        bm = tasks[pid].tls_expansion_bitmap[w];
+        for (i = 0; i < 64; i++) {
+            if (!(bm & (1ULL << i))) {
+                if (!tasks[pid].tls_expansion_allocated) {
+                    /* Must do slow allocation outside the lock. Drop lock,
+                     * allocate, then retry the whole scan (state may have
+                     * changed while we were unlocked). */
+                    need_expansion_alloc = 1;
+                    goto out;
+                }
+                tasks[pid].tls_expansion_bitmap[w] |= (1ULL << i);
+                result = (int)(TLS_MINIMUM_AVAILABLE + w * 64 + i);
+                goto out;
+            }
+        }
+    }
+
+out:
+    spin_unlock_irqrestore(&tls_lock, flags);
+
+    if (need_expansion_alloc) {
+        need_expansion_alloc = 0;
+        if (tls_expansion_demand_alloc(pid) < 0)
+            return -1;
+        goto retry;
+    }
+    return result;
 }
 
 int tls_free(uint32_t pid, uint32_t index)
 {
-    if (pid >= num_tasks || index >= 64) return -1;
-    if (!(tasks[pid].tls_bitmap & (1ULL << index))) return -1; /* not allocated */
+    uint64_t flags;
+    int result = -1;
 
-    tasks[pid].tls_bitmap &= ~(1ULL << index);
+    if (pid >= num_tasks || index >= TLS_MAXIMUM_AVAILABLE) return -1;
 
-    /* Zero the slot in the main thread's TEB */
-    if (tasks[pid].teb) {
-        TEB *teb = (TEB *)tasks[pid].teb;
-        teb->TlsSlots[index] = 0;
+    spin_lock_irqsave(&tls_lock, &flags);
+
+    if (index < TLS_MINIMUM_AVAILABLE) {
+        /* Static slot */
+        if (!(tasks[pid].tls_bitmap & (1ULL << index)))
+            goto out;
+        tasks[pid].tls_bitmap &= ~(1ULL << index);
+        if (tasks[pid].teb) {
+            TEB *teb = (TEB *)tasks[pid].teb;
+            teb->TlsSlots[index] = 0;
+        }
+    } else {
+        /* Expansion slot */
+        uint32_t exp_index = index - TLS_MINIMUM_AVAILABLE;
+        uint32_t word = exp_index / 64;
+        uint32_t bit = exp_index % 64;
+        if (!(tasks[pid].tls_expansion_bitmap[word] & (1ULL << bit)))
+            goto out;
+        tasks[pid].tls_expansion_bitmap[word] &= ~(1ULL << bit);
+        if (tasks[pid].teb) {
+            TEB *teb = (TEB *)tasks[pid].teb;
+            if (teb->TlsExpansionSlots) {
+                uint64_t *slots = (uint64_t *)teb->TlsExpansionSlots;
+                slots[exp_index] = 0;
+            }
+        }
     }
-    return 0;
+    result = 0;
+
+out:
+    spin_unlock_irqrestore(&tls_lock, flags);
+    return result;
 }
 
 uint64_t tls_get_value(uint32_t pid, uint32_t index)
 {
-    if (pid >= num_tasks || index >= 64 || !tasks[pid].teb)
+    uint64_t flags, result = 0;
+
+    if (pid >= num_tasks || index >= TLS_MAXIMUM_AVAILABLE || !tasks[pid].teb)
         return 0;
-    return ((TEB *)tasks[pid].teb)->TlsSlots[index];
+
+    spin_lock_irqsave(&tls_lock, &flags);
+
+    if (index < TLS_MINIMUM_AVAILABLE) {
+        result = ((TEB *)tasks[pid].teb)->TlsSlots[index];
+    } else {
+        TEB *teb = (TEB *)tasks[pid].teb;
+        if (teb->TlsExpansionSlots)
+            result = ((uint64_t *)teb->TlsExpansionSlots)[index - TLS_MINIMUM_AVAILABLE];
+    }
+
+    spin_unlock_irqrestore(&tls_lock, flags);
+    return result;
 }
 
 void tls_set_value(uint32_t pid, uint32_t index, uint64_t value)
 {
-    if (pid >= num_tasks || index >= 64 || !tasks[pid].teb)
+    uint64_t flags;
+    TEB *teb;
+
+    if (pid >= num_tasks || index >= TLS_MAXIMUM_AVAILABLE || !tasks[pid].teb)
         return;
-    ((TEB *)tasks[pid].teb)->TlsSlots[index] = value;
+
+    /* Demand-allocate outside the lock for expansion writes. */
+    if (index >= TLS_MINIMUM_AVAILABLE && !tasks[pid].tls_expansion_allocated) {
+        if (tls_expansion_demand_alloc(pid) < 0)
+            return;
+    }
+
+    spin_lock_irqsave(&tls_lock, &flags);
+
+    if (index < TLS_MINIMUM_AVAILABLE) {
+        ((TEB *)tasks[pid].teb)->TlsSlots[index] = value;
+    } else {
+        teb = (TEB *)tasks[pid].teb;
+        if (teb->TlsExpansionSlots)
+            ((uint64_t *)teb->TlsExpansionSlots)[index - TLS_MINIMUM_AVAILABLE] = value;
+    }
+
+    spin_unlock_irqrestore(&tls_lock, flags);
 }
 
 int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)

@@ -118,6 +118,166 @@ static void test_rtlpp_content(void)
                 "RTLPP.Environment is non-NULL");
 }
 
+/* ---- TLS expansion slots (S12) ---- */
+
+#include "kernel/sched/task.h"
+
+static void test_tls_constants(void)
+{
+    TEST_ASSERT_EQ(TLS_MINIMUM_AVAILABLE, 64,
+                   "TLS_MINIMUM_AVAILABLE == 64");
+    TEST_ASSERT_EQ(TLS_EXPANSION_SLOTS, 1024,
+                   "TLS_EXPANSION_SLOTS == 1024");
+    TEST_ASSERT_EQ(TLS_MAXIMUM_AVAILABLE, 1088,
+                   "TLS_MAXIMUM_AVAILABLE == 1088");
+    TEST_ASSERT_EQ(TLS_EXPANSION_BITMAP_WORDS, 16,
+                   "TLS_EXPANSION_BITMAP_WORDS == 16");
+}
+
+static void test_tls_static_alloc_free(void)
+{
+    /* Allocate a static slot and verify it's in range 0-63 */
+    uint32_t pid = task_current()->pid;
+    int slot = tls_alloc(pid);
+    TEST_ASSERT(slot >= 0 && slot < 64,
+                "tls_alloc returns static slot (0-63)");
+    if (slot >= 0) {
+        /* Set and get value */
+        tls_set_value(pid, (uint32_t)slot, 0xDEADBEEF12345678);
+        uint64_t val = tls_get_value(pid, (uint32_t)slot);
+        TEST_ASSERT_EQ(val, 0xDEADBEEF12345678,
+                       "TLS static slot round-trips value");
+        /* Free the slot */
+        int ret = tls_free(pid, (uint32_t)slot);
+        TEST_ASSERT_EQ(ret, 0, "tls_free succeeds for static slot");
+    }
+}
+
+static void test_tls_expansion_alloc(void)
+{
+    uint32_t pid = task_current()->pid;
+    int slots[65];
+    uint32_t i;
+
+    /* Allocate 65 slots -- first 64 static, 65th triggers expansion */
+    for (i = 0; i < 65; i++) {
+        slots[i] = tls_alloc(pid);
+        if (slots[i] < 0) break;
+    }
+
+    TEST_ASSERT(slots[64] >= 64,
+                "65th tls_alloc returns expansion slot (>= 64)");
+
+    /* Write/read the expansion slot */
+    if (slots[64] >= 64) {
+        tls_set_value(pid, (uint32_t)slots[64], 0xCAFEBABECAFEBABE);
+        uint64_t val = tls_get_value(pid, (uint32_t)slots[64]);
+        TEST_ASSERT_EQ(val, 0xCAFEBABECAFEBABE,
+                       "TLS expansion slot round-trips value");
+    }
+
+    /* Free all slots */
+    for (i = 0; i < 65; i++) {
+        if (slots[i] >= 0)
+            tls_free(pid, (uint32_t)slots[i]);
+    }
+}
+
+static void test_tls_expansion_reuse(void)
+{
+    uint32_t pid = task_current()->pid;
+    int slots[65];
+    uint32_t i;
+
+    /* Allocate 65 to get into expansion */
+    for (i = 0; i < 65; i++) {
+        slots[i] = tls_alloc(pid);
+        if (slots[i] < 0) break;
+    }
+
+    /* Free the expansion slot */
+    if (slots[64] >= 64) {
+        int freed_idx = slots[64];
+        tls_free(pid, (uint32_t)freed_idx);
+
+        /* Re-alloc should return the same index (reuse) */
+        int realloc_idx = tls_alloc(pid);
+        TEST_ASSERT_EQ(realloc_idx, freed_idx,
+                       "tls_alloc reuses freed expansion slot");
+        if (realloc_idx >= 0)
+            tls_free(pid, (uint32_t)realloc_idx);
+    }
+
+    /* Cleanup */
+    for (i = 0; i < 64; i++) {
+        if (slots[i] >= 0)
+            tls_free(pid, (uint32_t)slots[i]);
+    }
+}
+
+/* Static to avoid 4 KB+ stack allocation */
+static int s_tls_boundary_slots[TLS_MAXIMUM_AVAILABLE];
+
+static void test_tls_expansion_boundary(void)
+{
+    /* Allocate all 1088 slots to reach the last expansion slot.
+     * This exercises the full range and validates boundary semantics. */
+    uint32_t pid = task_current()->pid;
+    int *slots = s_tls_boundary_slots;
+    uint32_t i;
+    int last_slot = -1;
+    int alloc_count = 0;
+
+    for (i = 0; i < TLS_MAXIMUM_AVAILABLE; i++) {
+        slots[i] = tls_alloc(pid);
+        if (slots[i] < 0) break;
+        alloc_count++;
+        if (slots[i] > last_slot) last_slot = slots[i];
+    }
+
+    /* Last allocated slot must be in the expansion range (>= 64) */
+    TEST_ASSERT(last_slot >= (int)TLS_MINIMUM_AVAILABLE,
+                "last allocated slot is in expansion range");
+
+    /* Round-trip a value through the highest slot */
+    if (last_slot >= 0) {
+        tls_set_value(pid, (uint32_t)last_slot, 0x1087108710871087ULL);
+        uint64_t val = tls_get_value(pid, (uint32_t)last_slot);
+        TEST_ASSERT_EQ(val, 0x1087108710871087ULL,
+                       "TLS high expansion slot round-trips value");
+    }
+
+    POST16(POST16_TLS_EXPAND_TEST);
+
+    /* Index 1088 should be rejected (out of range) */
+    uint64_t bad = tls_get_value(pid, TLS_MAXIMUM_AVAILABLE);
+    TEST_ASSERT_EQ(bad, 0,
+                   "tls_get_value(1088) returns 0 (out of range)");
+
+    /* Asking for one more slot should fail (all 1088 occupied) */
+    int overflow = tls_alloc(pid);
+    TEST_ASSERT_EQ(overflow, -1,
+                   "tls_alloc returns -1 when all slots occupied");
+
+    /* Free all slots and verify each free succeeds */
+    for (i = 0; i < (uint32_t)alloc_count; i++) {
+        int ret = tls_free(pid, (uint32_t)slots[i]);
+        TEST_ASSERT_EQ(ret, 0, "tls_free succeeds for allocated slot");
+    }
+}
+
+static void test_tls_expansion_post_codes(void)
+{
+    TEST_ASSERT_EQ(POST16_TLS_EXPAND, 0xDF10,
+                   "POST16_TLS_EXPAND == 0xDF10");
+    TEST_ASSERT_EQ(POST16_TLS_EXPAND_ALLOC, 0xDF11,
+                   "POST16_TLS_EXPAND_ALLOC == 0xDF11");
+    TEST_ASSERT_EQ(POST16_TLS_EXPAND_TEST, 0xDF12,
+                   "POST16_TLS_EXPAND_TEST == 0xDF12");
+    TEST_ASSERT_EQ(POST16_TLS_EXPAND_CLEAN, 0xDF13,
+                   "POST16_TLS_EXPAND_CLEAN == 0xDF13");
+}
+
 /* ---- Registration ---- */
 
 void test_register_peb_teb(void)
@@ -127,6 +287,19 @@ void test_register_peb_teb(void)
     test_suite_register_cat("PEB/TEB: OS version", test_peb_os_version, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: populated", test_peb_populated, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: RTLPP content", test_rtlpp_content, TEST_CAT_ABI);
+    /* S12: TLS expansion slots */
+    test_suite_register_cat("PEB/TEB: TLS constants",
+                            test_tls_constants, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: TLS static alloc/free",
+                            test_tls_static_alloc_free, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: TLS expansion alloc",
+                            test_tls_expansion_alloc, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: TLS expansion reuse",
+                            test_tls_expansion_reuse, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: TLS expansion boundary",
+                            test_tls_expansion_boundary, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: TLS POST codes",
+                            test_tls_expansion_post_codes, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
