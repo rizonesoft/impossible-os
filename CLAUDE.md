@@ -87,9 +87,7 @@ Stop and ask before: security-sensitive changes, destructive operations, ABI cha
 
 ## Doc Sync
 
-When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, `.cursor/rules/`, `.cursor/skills/`, and affected TODO files in the same task.
-
-For AI skill content duplicated across assistants, `.claude/skills/` is the tracked source of truth. Cursor and Codex copies are downstream mirrors and should be refreshed from the Claude version unless a repo change explicitly defines an intentional divergence.
+When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, and affected TODO files in the same task. Each AI tool system (`.claude/`, `.cursor/`) is independent -- create skills directly for each tool, not synced from a shared layer.
 
 ## Toolchain
 
@@ -110,7 +108,6 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/validate-todo-file` | Validate a TODO for structural gaps |
 | `/verify-todo-section` | Verify a TODO section against code evidence |
 | `/improve-implementation-order` | Audit and fix an Implementation Order table |
-| `/sync-ai-system` | Sync AI guidance across Cursor and Claude Code |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
 | `/run-verification` | Verify a TODO against a serial log (pasted or file), mark PASS/FAIL, detect regressions |
 | `/complete-todo` | Convert a completed TODO into polished docs, update indexes, handle XREFs |
