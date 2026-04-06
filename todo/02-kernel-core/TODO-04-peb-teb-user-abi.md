@@ -228,7 +228,7 @@ Windows supports 1088 TLS slots per thread: 64 static slots in `TEB.TlsSlots[64]
 - [x] On task cleanup: `task_cleanup()` unmaps expansion pages via `vmm_unmap_page(virt, 1)` and clears `TEB.TlsExpansionSlots` under `tls_lock` to prevent races
 - [x] `TLS_MINIMUM_AVAILABLE = 64`, `TLS_EXPANSION_SLOTS = 1024`, `TLS_MAXIMUM_AVAILABLE = 1088`, `TLS_EXPANSION_BITMAP_WORDS = 16` constants in `task.h`
 - [x] 6 unit tests in `test_peb_teb.c` (TLS constants, static alloc/free, expansion alloc, expansion reuse, expansion boundary 1088 slots, POST codes)
-- [ ] Commit: `"kernel: abi -- TLS expansion slots (1024 dynamic slots, indices 64-1087)"`
+- [x] Commit: `"kernel: abi -- TLS expansion slots (1024 dynamic slots, indices 64-1087)"`
 
 **Test checkpoint:** Allocate 65 TLS slots -- first 64 from static, 65th triggers expansion array allocation. Read/write slot 64 and the highest expansion slot -- values round-trip correctly. Free slot 65 -- re-alloc returns index 65 (reuse). All 1088 slots can be allocated; 1089th `tls_alloc` returns -1. `POST16(0xDF10)` on entry, `POST16(0xDF11)` expansion alloc, `POST16(0xDF12)` boundary test, `POST16(0xDF13)` cleanup. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 

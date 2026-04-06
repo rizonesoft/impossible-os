@@ -132,7 +132,7 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 - [x] `MINIDUMP_SYSTEM_INFO` (56 bytes): `ProcessorArchitecture` (AMD64=9), `ProcessorLevel/Revision`, `NumberOfProcessors/ProductType`, `MajorVersion=10`, `MinorVersion=0`, `BuildNumber`, `PlatformId` (2), `CSDVersionRva`, `SuiteMask`, `CPU_INFORMATION` union (24 bytes, X86CpuInfo + OtherCpuInfo)
 - [x] `IMPOSSIBLE_OS_INFO` (436 bytes, custom stream): `Magic` (0x10DEAD00), `KernelBuild`, `BugCheckCode`, `BugCheckParams[4]`, `BugCheckName[64]`, `PanicTimestamp`, `PhysicalMemoryKiB`, `CpuCount`, `CpuBrandString[48]`, `KernelPath[256]`
 - [x] 15 unit tests in `test_crashdump.c` S4: struct sizes, field offsets (MINIDUMP_HEADER, EXCEPTION_STREAM, MODULE, THREAD), all stream type constants, MINIDUMP_TYPE flag values, signature, version, POST16 code
-- [ ] Commit: `"kernel/crashdump: MDMP header, directory, all stream type structs, ImpossibleOSInfo"`
+- [x] Commit: `"kernel/crashdump: MDMP header, directory, all stream type structs, ImpossibleOSInfo"`
 
 **Test checkpoint:** `sizeof(MINIDUMP_HEADER)` == 32 bytes. `MINIDUMP_DIRECTORY` == 12 bytes. `MINIDUMP_MODULE` == 108 bytes (pack(4)). `MDMP_SIGNATURE == 0x504D444D`. `ImpossibleOSInfoStream` type == 0x8001. Static asserts on all 12 struct sizes + 5 MINIDUMP_TYPE flags + signature/stream ID. `POST16(0xDE46)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
