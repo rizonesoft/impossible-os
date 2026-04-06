@@ -15,10 +15,10 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **C sources** (`.c`) | 237 | 112927 |
-| **Headers** (`.h`) | 181 | 35512 |
+| **C sources** (`.c`) | 237 | 112947 |
+| **Headers** (`.h`) | 181 | 35514 |
 | **Assembly** (`.asm`) | 8 | 939 |
-| **Subtotal** | **426** | **149378** |
+| **Subtotal** | **426** | **149400** |
 
 ## SDK Tools
 
@@ -43,7 +43,7 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **All project code** | **503** | **157321** |
+| **All project code** | **503** | **157343** |
 
 > Vendored code excluded: ~13785 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 
@@ -58,15 +58,15 @@
 
 | | Linux | Windows | Impossible OS |
 |---|---:|---:|---:|
-| **Lines of code** | ~28,000,000 | ~50,000,000 | 157,321 |
+| **Lines of code** | ~28,000,000 | ~50,000,000 | 157,343 |
 | **Developers** | ~1,000 active | ~5,000 peak | 1 |
 | **Time span** | 33 years | 40 years | 1 month(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 157,321
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 157,343
 > lines of kernel code would take **191 developers** working for **1 month(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-04-06 12:22 · commit `1eece273`*
+*Last updated: 2026-04-06 12:27 · commit `0e81dc8e`*

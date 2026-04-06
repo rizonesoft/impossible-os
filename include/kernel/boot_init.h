@@ -336,13 +336,15 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
  * BOOT_STEP(subsys, fn) -- call an init function and record its result
  *
  * fn must have signature: boot_result_t fn(void)
- * Sets the subsystem ready if fn returns BOOT_OK or BOOT_DEGRADED.
+ * Sets the subsystem ready ONLY for BOOT_OK or BOOT_DEGRADED.
+ * BOOT_DEFERRED and BOOT_FATAL leave the subsystem NOT ready.
  * Does NOT call boot_progress -- the caller is responsible for that.
  */
 #define BOOT_STEP(subsys, fn) \
     do { \
         boot_result_t _boot_step_r = (fn)(); \
-        kernel_subsystem_set_ready((subsys), _boot_step_r != BOOT_FATAL); \
+        kernel_subsystem_set_ready((subsys), \
+            _boot_step_r == BOOT_OK || _boot_step_r == BOOT_DEGRADED); \
     } while (0)
 
 /*

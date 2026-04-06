@@ -17,9 +17,13 @@
 #include "kernel/uefi_runtime.h"
 #include "kernel/boot_info.h"
 
-/* ---- Subsystem readiness table ------------------------------------------ */
+/* ---- Subsystem readiness table ------------------------------------------
+ * SMP-safe: uses atomic load/store with acquire/release semantics.
+ * Cross-CPU publication is required because async AP boot work
+ * (boot_async_group) can set readiness on one CPU while another
+ * CPU checks BOOT_REQUIRE. */
 
-static bool g_subsys_ready[SUBSYS_COUNT];
+static uint8_t g_subsys_ready[SUBSYS_COUNT];
 
 static const char *const s_subsys_names[SUBSYS_COUNT] = {
     "SERIAL",   /* 0  */
@@ -51,13 +55,13 @@ _Static_assert(sizeof(s_subsys_names) / sizeof(s_subsys_names[0]) == SUBSYS_COUN
 bool kernel_subsystem_ready(kernel_subsys_t subsys)
 {
     if ((uint32_t)subsys >= SUBSYS_COUNT) return false;
-    return g_subsys_ready[subsys];
+    return __atomic_load_n(&g_subsys_ready[subsys], __ATOMIC_ACQUIRE) != 0;
 }
 
 void kernel_subsystem_set_ready(kernel_subsys_t subsys, bool ok)
 {
     if ((uint32_t)subsys >= SUBSYS_COUNT) return;
-    g_subsys_ready[subsys] = ok;
+    __atomic_store_n(&g_subsys_ready[subsys], ok ? 1 : 0, __ATOMIC_RELEASE);
 }
 
 void kernel_subsystem_dump(void)
@@ -65,7 +69,7 @@ void kernel_subsystem_dump(void)
     klog(LOG_INFO, "BOOT", "--- Subsystem readiness ---");
     for (uint32_t i = 0; i < SUBSYS_COUNT; i++) {
         klog(LOG_INFO, "BOOT", "  [%s] %s",
-             g_subsys_ready[i] ? "OK  " : "FAIL",
+             __atomic_load_n(&g_subsys_ready[i], __ATOMIC_ACQUIRE) ? "OK  " : "FAIL",
              s_subsys_names[i]);
     }
 }
@@ -92,6 +96,11 @@ static uint32_t         g_deferred_count;
 
 int boot_defer(const char *name, boot_result_t (*fn)(void))
 {
+    if (!fn) {
+        klog(LOG_ERROR, "boot", "deferred init: NULL function for '%s'",
+             name ? name : "?");
+        return -1;
+    }
     if (g_deferred_count >= BOOT_DEFERRED_MAX) {
         klog(LOG_ERROR, "boot", "deferred init full (%u/%u) -- cannot defer %s",
              g_deferred_count, (uint32_t)BOOT_DEFERRED_MAX, name ? name : "?");

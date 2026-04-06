@@ -51,6 +51,16 @@ static void test_subsys_out_of_range(void)
 {
     TEST_ASSERT(kernel_subsystem_ready(SUBSYS_COUNT) == false,
                 "ready(SUBSYS_COUNT) returns false (out of range)");
+    /* set_ready on out-of-range index should be a no-op (not crash) */
+    kernel_subsystem_set_ready(SUBSYS_COUNT, true);
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_COUNT) == false,
+                "set_ready(SUBSYS_COUNT) is a no-op");
+}
+
+static void test_boot_defer_null_fn(void)
+{
+    int ret = boot_defer("null-test", (boot_result_t (*)(void))0);
+    TEST_ASSERT_EQ(ret, -1, "boot_defer rejects NULL function pointer");
 }
 
 /* ---- BOOT_REQUIRE macro ----
@@ -222,6 +232,7 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: REQUIRE passes", test_boot_require_passes_when_ready, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: progress null", test_boot_progress_null_step, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: POST codes", test_post_codes_nonzero_and_unique, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: defer NULL fn", test_boot_defer_null_fn, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: BOOT_DEFERRED value", test_boot_deferred_value, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: defer register", test_boot_defer_register, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: deferred POST codes", test_deferred_post_codes, TEST_CAT_BOOT);
