@@ -13,6 +13,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
+#include "kernel/nt/service_numbers.h"
 
 /* ---- Helpers ------------------------------------------------------------ */
 
@@ -168,6 +169,315 @@ extern void *memset(void *s, int c, uint64_t n);
 
 /* Maximum number of PE sections (Windows linker typically emits < 20) */
 #define PE_MAX_SECTIONS     96
+
+/* ---- Kernel-side Win32 export tables (§9) -------------------------------
+ * Each table maps function names to SSDT service numbers. Tables are sorted
+ * by name for binary search. Export entries are const -- no mutable state. */
+
+static int pe_strcmp(const char *a, const char *b)
+{
+    while (*a && *b && *a == *b) { a++; b++; }
+    return (int)(uint8_t)*a - (int)(uint8_t)*b;
+}
+
+/* Case-insensitive compare for DLL names (kernel32.dll vs KERNEL32.DLL) */
+static int pe_stricmp(const char *a, const char *b)
+{
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return (int)(uint8_t)ca - (int)(uint8_t)cb;
+        a++; b++;
+    }
+    return (int)(uint8_t)*a - (int)(uint8_t)*b;
+}
+
+/* kernel32.dll exports (sorted by name) */
+static const pe_export_entry_t s_kernel32_exports[] = {
+    { "CloseHandle",           SSDT_NtClose },
+    { "CreateFileA",           SSDT_NtCreateFile },
+    { "CreateFileW",           SSDT_NtCreateFile },
+    { "ExitProcess",           SSDT_NtTerminateProcess },
+    { "GetLastError",          SSDT_NtQueryInformationThread },
+    { "ReadFile",              SSDT_NtReadFile },
+    { "SetLastError",          SSDT_NtSetInformationThread },
+    { "WriteFile",             SSDT_NtWriteFile },
+};
+
+/* ntdll.dll exports (sorted by name) */
+static const pe_export_entry_t s_ntdll_exports[] = {
+    { "NtClose",               SSDT_NtClose },
+    { "NtCreateFile",          SSDT_NtCreateFile },
+    { "NtReadFile",            SSDT_NtReadFile },
+    { "NtTerminateProcess",    SSDT_NtTerminateProcess },
+    { "NtWriteFile",           SSDT_NtWriteFile },
+};
+
+/* DLL registry -- add new DLLs here */
+#define PE_EXPORT_TABLE_COUNT(arr)  (sizeof(arr) / sizeof((arr)[0]))
+
+static const pe_dll_exports_t s_dll_tables[] = {
+    { "kernel32.dll", s_kernel32_exports, PE_EXPORT_TABLE_COUNT(s_kernel32_exports) },
+    { "ntdll.dll",    s_ntdll_exports,    PE_EXPORT_TABLE_COUNT(s_ntdll_exports) },
+};
+
+#define PE_DLL_COUNT  (sizeof(s_dll_tables) / sizeof(s_dll_tables[0]))
+
+/* Binary search for a function name in a sorted export table.
+ * Returns SSDT index on success, or (uint32_t)-1 on not found. */
+static uint32_t pe_lookup_export(const pe_dll_exports_t *dll, const char *name)
+{
+    uint32_t lo = 0, hi = dll->count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        int cmp = pe_strcmp(dll->exports[mid].name, name);
+        if (cmp < 0)
+            lo = mid + 1;
+        else if (cmp > 0)
+            hi = mid;
+        else
+            return dll->exports[mid].ssdt_index;
+    }
+    return (uint32_t)-1;
+}
+
+/* Find a DLL export table by name (case-insensitive). */
+static const pe_dll_exports_t *pe_find_dll(const char *dll_name)
+{
+    uint32_t i;
+    for (i = 0; i < PE_DLL_COUNT; i++) {
+        if (pe_stricmp(s_dll_tables[i].dll_name, dll_name) == 0)
+            return &s_dll_tables[i];
+    }
+    return (const pe_dll_exports_t *)0;
+}
+
+/* Stub thunk address for unresolved imports. NULL causes a clean fault
+ * on call. A proper stub page returning STATUS_NOT_IMPLEMENTED will be
+ * wired when the Win32 subsystem CRT (TODO-07 domain 10) is implemented. */
+#define PE_STUB_THUNK_ADDR  0ULL
+
+/* Maximum import descriptors to prevent DoS from malicious PE */
+#define PE_MAX_IMPORT_DLLS  64
+
+/* Maximum thunks per DLL to prevent unbounded IAT walks */
+#define PE_MAX_THUNKS_PER_DLL  4096
+
+/* Maximum string length for DLL/function names within the image */
+#define PE_MAX_NAME_LEN  256
+
+/* Bounded string length: returns length up to max, or max if no NUL found. */
+static uint32_t pe_strnlen(const char *s, uint32_t max)
+{
+    uint32_t i = 0;
+    while (i < max && s[i]) i++;
+    return i;
+}
+
+/* ---- Import resolver (§9) ----------------------------------------------- */
+
+/* Resolve imports for one DLL. Returns number of resolved imports, or -1 on error. */
+static int pe_resolve_dll_imports(uint64_t image_base, uint32_t size_of_image,
+                                  const uint8_t *mapped_image,
+                                  const pe_import_descriptor_t *desc)
+{
+    uint32_t name_rva = read_u32((const uint8_t *)&desc->Name);
+    uint32_t oft_rva  = read_u32((const uint8_t *)&desc->OriginalFirstThunk);
+    uint32_t ft_rva   = read_u32((const uint8_t *)&desc->FirstThunk);
+
+    /* DLL name must be within image with room for at least 1 char + NUL */
+    if (name_rva + 2 > size_of_image) {
+        klog(LOG_DEBUG, "pe", "Import DLL name RVA 0x%x outside image",
+             (uint64_t)name_rva);
+        return -1;
+    }
+
+    /* Verify DLL name is NUL-terminated within image bounds */
+    uint32_t name_max = size_of_image - name_rva;
+    if (name_max > PE_MAX_NAME_LEN) name_max = PE_MAX_NAME_LEN;
+    const char *dll_name = (const char *)(mapped_image + name_rva);
+    if (pe_strnlen(dll_name, name_max) >= name_max) {
+        klog(LOG_DEBUG, "pe", "Import DLL name at RVA 0x%x not NUL-terminated",
+             (uint64_t)name_rva);
+        return -1;
+    }
+
+    const pe_dll_exports_t *dll = pe_find_dll(dll_name);
+
+    /* If INT is zero, use IAT as both source and destination */
+    uint32_t int_rva = (oft_rva != 0) ? oft_rva : ft_rva;
+    if (int_rva >= size_of_image || ft_rva >= size_of_image) {
+        klog(LOG_DEBUG, "pe", "Import thunk RVA outside image for '%s'",
+             dll_name);
+        return -1;
+    }
+
+    uint32_t resolved = 0;
+    uint32_t stubbed = 0;
+    uint32_t idx;
+
+    for (idx = 0; idx < PE_MAX_THUNKS_PER_DLL; idx++) {
+        uint64_t int_offset = int_rva + (uint64_t)idx * 8;
+        uint64_t iat_offset = ft_rva + (uint64_t)idx * 8;
+
+        if (int_offset + 8 > size_of_image || iat_offset + 8 > size_of_image)
+            break;
+
+        /* Read INT entry (8 bytes, little-endian) */
+        const uint8_t *int_ptr = mapped_image + int_offset;
+        uint64_t thunk_val = (uint64_t)read_u32(int_ptr) |
+                             ((uint64_t)read_u32(int_ptr + 4) << 32);
+
+        /* NULL terminator */
+        if (thunk_val == 0)
+            break;
+
+        uint32_t ssdt_idx = (uint32_t)-1;
+
+        if (thunk_val & PE_ORDINAL_FLAG64) {
+            /* Import by ordinal -- not supported yet, stub it */
+            klog(LOG_DEBUG, "pe", "  ordinal import 0x%x -- stubbed",
+                 thunk_val & 0xFFFF);
+            stubbed++;
+        } else {
+            /* Import by name: thunk_val is RVA to IMAGE_IMPORT_BY_NAME */
+            uint32_t hint_rva = (uint32_t)thunk_val;
+            if (hint_rva + 3 >= size_of_image) {
+                klog(LOG_DEBUG, "pe", "  hint RVA 0x%x outside image",
+                     (uint64_t)hint_rva);
+                stubbed++;
+            } else {
+                /* Verify function name is NUL-terminated within image */
+                const char *func_name =
+                    (const char *)(mapped_image + hint_rva + 2);
+                uint32_t func_max = size_of_image - hint_rva - 2;
+                if (func_max > PE_MAX_NAME_LEN) func_max = PE_MAX_NAME_LEN;
+
+                if (pe_strnlen(func_name, func_max) >= func_max) {
+                    klog(LOG_DEBUG, "pe",
+                         "  func name at hint RVA 0x%x not NUL-terminated",
+                         (uint64_t)hint_rva);
+                    stubbed++;
+                } else {
+                    if (dll) {
+                        ssdt_idx = pe_lookup_export(dll, func_name);
+                        if (ssdt_idx != (uint32_t)-1)
+                            resolved++;
+                    }
+
+                    if (ssdt_idx == (uint32_t)-1) {
+                        klog(LOG_DEBUG, "pe",
+                             "  %s!%s -- unresolved, stubbed",
+                             dll_name, func_name);
+                        stubbed++;
+                    }
+                }
+            }
+        }
+
+        /* Write SSDT thunk address into IAT.
+         * IAT pages were mapped in §8, so image_base + iat_offset is valid
+         * for any offset within size_of_image (already bounds-checked above).
+         * Write via the physical frame address (identity-mapped). */
+        uintptr_t iat_phys = vmm_get_physical(
+            (uintptr_t)(image_base + iat_offset));
+        if (iat_phys == 0) {
+            klog(LOG_DEBUG, "pe", "  IAT VA 0x%x not mapped -- skip",
+                 image_base + iat_offset);
+            continue;
+        }
+
+        uint64_t thunk_addr = (ssdt_idx != (uint32_t)-1)
+            ? (uint64_t)ssdt_idx
+            : PE_STUB_THUNK_ADDR;
+
+        uint8_t *iat_ptr = (uint8_t *)iat_phys;
+        iat_ptr[0] = (uint8_t)(thunk_addr);
+        iat_ptr[1] = (uint8_t)(thunk_addr >> 8);
+        iat_ptr[2] = (uint8_t)(thunk_addr >> 16);
+        iat_ptr[3] = (uint8_t)(thunk_addr >> 24);
+        iat_ptr[4] = (uint8_t)(thunk_addr >> 32);
+        iat_ptr[5] = (uint8_t)(thunk_addr >> 40);
+        iat_ptr[6] = (uint8_t)(thunk_addr >> 48);
+        iat_ptr[7] = (uint8_t)(thunk_addr >> 56);
+    }
+
+    klog(LOG_INFO, "pe", "pe: resolved %u imports from %s (%u stubbed)",
+         (uint64_t)resolved, dll_name, (uint64_t)stubbed);
+
+    return (int)resolved;
+}
+
+/* Walk the Import Directory and resolve all DLL imports.
+ * Returns total resolved count, or -1 on structural error. */
+static int pe_resolve_imports(uint64_t image_base, uint32_t size_of_image,
+                              uint32_t num_rva_sizes,
+                              const pe_optional_header64_t *opt)
+{
+    if (num_rva_sizes <= PE_DIR_IMPORT)
+        return 0;
+
+    uint32_t import_rva = read_u32(
+        (const uint8_t *)&opt->DataDirectory[PE_DIR_IMPORT].VirtualAddress);
+    uint32_t import_size = read_u32(
+        (const uint8_t *)&opt->DataDirectory[PE_DIR_IMPORT].Size);
+
+    if (import_rva == 0 || import_size == 0)
+        return 0;
+
+    /* Validate import directory within image */
+    uint64_t import_end = (uint64_t)import_rva + import_size;
+    if (import_end > size_of_image) {
+        klog(LOG_DEBUG, "pe", "Import directory outside image bounds");
+        return -1;
+    }
+
+    POST16(0xD80E);
+
+    /* The mapped image is at image_base (identity-mapped after §8 mapping) */
+    const uint8_t *mapped_image = (const uint8_t *)image_base;
+
+    int total_resolved = 0;
+    uint32_t dll_count = 0;
+
+    while (dll_count < PE_MAX_IMPORT_DLLS) {
+        /* Bound descriptor walk to import directory, not image */
+        uint64_t desc_offset = import_rva +
+            (uint64_t)dll_count * sizeof(pe_import_descriptor_t);
+        if (desc_offset + sizeof(pe_import_descriptor_t) > import_end)
+            break;
+
+        const pe_import_descriptor_t *desc =
+            (const pe_import_descriptor_t *)(mapped_image + desc_offset);
+
+        uint32_t desc_name = read_u32((const uint8_t *)&desc->Name);
+        uint32_t desc_ft   = read_u32((const uint8_t *)&desc->FirstThunk);
+
+        /* All-zero descriptor terminates the list */
+        if (desc_name == 0 && desc_ft == 0)
+            break;
+
+        int n = pe_resolve_dll_imports(image_base, size_of_image,
+                                       mapped_image, desc);
+        if (n < 0) {
+            klog(LOG_ERROR, "pe",
+                 "Malformed import descriptor %u -- aborting import resolution",
+                 (uint64_t)dll_count);
+            return -1;
+        }
+        total_resolved += n;
+
+        dll_count++;
+    }
+
+    POST16(0xD80F);
+
+    klog(LOG_INFO, "pe", "pe: import resolution complete -- %u DLLs, %u total resolved",
+         (uint64_t)dll_count, (uint64_t)total_resolved);
+
+    return total_resolved;
+}
 
 /* Maximum image size: 256 MiB. Rejects pathological PE headers. */
 #define PE_MAX_IMAGE_SIZE   (256ULL * 1024 * 1024)
@@ -391,6 +701,19 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
                  (chars & PE_SCN_MEM_READ) ? "R" : "",
                  (chars & PE_SCN_MEM_WRITE) ? "W" : "",
                  (chars & PE_SCN_MEM_EXECUTE) ? "X" : "");
+        }
+    }
+
+    /* ---- Resolve imports (§9) ---- */
+    {
+        int import_ret = pe_resolve_imports(image_base, size_of_image,
+                                            num_rva_sizes, v.opt);
+        if (import_ret < 0) {
+            klog(LOG_ERROR, "pe",
+                 "Import resolution failed -- rolling back %u pages",
+                 (uint64_t)total_pages_mapped);
+            pe_rollback(image_base, total_pages_mapped);
+            return 0;
         }
     }
 

@@ -179,6 +179,42 @@ _Static_assert(__builtin_offsetof(pe_section_header_t, VirtualAddress) == 0x0C,
 _Static_assert(__builtin_offsetof(pe_section_header_t, Characteristics) == 0x24,
     "pe_section_header_t.Characteristics at offset 0x24");
 
+/* ---- Import structures (§9) --------------------------------------------- */
+
+/* IMAGE_IMPORT_DESCRIPTOR -- one per imported DLL */
+typedef struct pe_import_descriptor {
+    uint32_t    OriginalFirstThunk;  /* 0x00: RVA of Import Name Table (INT) */
+    uint32_t    TimeDateStamp;       /* 0x04 */
+    uint32_t    ForwarderChain;      /* 0x08 */
+    uint32_t    Name;                /* 0x0C: RVA of DLL name string */
+    uint32_t    FirstThunk;          /* 0x10: RVA of Import Address Table (IAT) */
+} pe_import_descriptor_t;
+
+_Static_assert(sizeof(pe_import_descriptor_t) == 20,
+    "pe_import_descriptor_t must be 20 bytes");
+
+/* IMAGE_IMPORT_BY_NAME -- hint + function name string */
+typedef struct pe_import_by_name {
+    uint16_t    Hint;                /* 0x00: export ordinal hint */
+    char        Name[1];             /* 0x02: NUL-terminated function name */
+} pe_import_by_name_t;
+
+/* IMAGE_THUNK_DATA64 -- one entry in INT or IAT */
+#define PE_ORDINAL_FLAG64   (1ULL << 63)
+
+/* Kernel-side export table entry: maps function name -> SSDT index */
+typedef struct pe_export_entry {
+    const char *name;               /* function name (e.g., "ExitProcess") */
+    uint32_t    ssdt_index;         /* SSDT service number */
+} pe_export_entry_t;
+
+/* Kernel-side DLL export table: DLL name + sorted export array */
+typedef struct pe_dll_exports {
+    const char              *dll_name;  /* e.g., "kernel32.dll" */
+    const pe_export_entry_t *exports;   /* sorted by name for binary search */
+    uint32_t                 count;     /* number of entries */
+} pe_dll_exports_t;
+
 /* ---- PE validation result ----------------------------------------------- */
 
 typedef struct pe_validate_result {

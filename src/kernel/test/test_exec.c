@@ -292,6 +292,14 @@ static void test_pe_load_rejects_low_imagebase(void)
     TEST_ASSERT_EQ(entry, 0, "pe_load rejects low ImageBase");
 }
 
+/* ---- PE32+ import resolver tests (TODO-08 §9) ---- */
+
+static void test_pe_import_struct_sizes(void)
+{
+    TEST_ASSERT_EQ(sizeof(pe_import_descriptor_t), 20, "pe_import_descriptor_t == 20 bytes");
+    TEST_ASSERT_EQ(sizeof(pe_export_entry_t), 16, "pe_export_entry_t == 16 bytes");
+}
+
 /* ---- EIF loader tests (TODO-08 §5) ---- */
 
 static void test_eif_bad_magic(void)
@@ -355,6 +363,9 @@ void test_register_exec(void)
     test_suite_register_cat("PE: load maps+returns entry", test_pe_load_maps_and_returns_entry, TEST_CAT_EXEC);
     test_suite_register_cat("PE: load registers module", test_pe_load_registers_module, TEST_CAT_EXEC);
     test_suite_register_cat("PE: load rejects low ImageBase", test_pe_load_rejects_low_imagebase, TEST_CAT_EXEC);
+
+    /* PE32+ import resolver tests (TODO-08 §9) */
+    test_suite_register_cat("PE: import struct sizes", test_pe_import_struct_sizes, TEST_CAT_EXEC);
 
     /* EIF loader tests (TODO-08 §5) */
     test_suite_register_cat("EIF: bad magic", test_eif_bad_magic, TEST_CAT_EXEC);

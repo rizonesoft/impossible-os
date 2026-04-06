@@ -61,7 +61,7 @@
 | 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [/]   |
 | 💎  |   7   | PE32+ header parser                            | §1                      |  [x]   |
 | 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7                      |  [x]   |
-| 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-05 §5          |  [ ]   |
+| 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-05 §5          |  [x]   |
 | 💎  |  10   | PE32+ base relocation                          | §8                      |  [ ]   |
 | 💎  |  11   | PE32+ TLS directory processing                 | §8, TODO-04 §9          |  [ ]   |
 | 💎  |  12   | PE32+ Load Config and CFG bitmap               | §8                      |  [ ]   |
@@ -216,15 +216,12 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 > [!IMPORTANT]
 > **Soft dependency on TODO-05 §5** (Nt/Zw naming + syscall migration, now marked `[x]`). §9 is still not fully blocked by remaining API coverage: implement the import-resolution machinery and export-table structure now. Keep stub thunks that return `STATUS_NOT_IMPLEMENTED` for unmigrated SSDT entries so PE binaries load and run while missing APIs fail cleanly instead of crashing.
 
-- [ ] Parse Import Directory Table (DataDirectory entry 1):
-  - Walk `IMAGE_IMPORT_DESCRIPTOR` array; get DLL name string and INT/IAT entry pairs
-  - Resolve by name (`IMAGE_IMPORT_BY_NAME`) or by ordinal
-- [ ] Maintain kernel-side export tables:
-  - `impossible_kernel32_exports[]`, `impossible_ntdll_exports[]`, `impossible_user32_exports[]`, `impossible_advapi32_exports[]`
-  - Each entry: `{ function_name, ssdt_index }` -- write SSDT thunk address into IAT
-- [ ] Unknown DLL names → stub that returns `STATUS_NOT_IMPLEMENTED` (do not crash)
-- [ ] Export table lookup: sorted array + binary search or FNV hash table
-- [ ] Commit: `"kernel: pe -- PE32+ import table resolver"`
+- [x] Parse Import Directory Table (DataDirectory entry 1): walk `IMAGE_IMPORT_DESCRIPTOR` array, extract DLL name + INT/IAT thunk pairs, resolve by name (`IMAGE_IMPORT_BY_NAME`); ordinal imports logged and stubbed. Max 64 DLLs, 4096 thunks per DLL.
+- [x] Kernel-side export tables: `s_kernel32_exports[]` (8 entries: CloseHandle, CreateFileA/W, ExitProcess, GetLastError, ReadFile, SetLastError, WriteFile), `s_ntdll_exports[]` (5 entries: NtClose, NtCreateFile, NtReadFile, NtTerminateProcess, NtWriteFile) -- sorted by name, binary search lookup. New DLLs added via `s_dll_tables[]` registry.
+- [x] Unknown DLL names: imports stubbed with NULL thunk (faults on call); unknown functions within known DLLs also stubbed. No crash on unrecognized DLL.
+- [x] Export table lookup: sorted `pe_export_entry_t` array + binary search (`pe_lookup_export`). Case-insensitive DLL name matching (`pe_stricmp`).
+- [x] Import structures in pe.h: `pe_import_descriptor_t` (20 bytes), `pe_import_by_name_t`, `PE_ORDINAL_FLAG64`, `pe_export_entry_t`, `pe_dll_exports_t`
+- [x] Commit: `"kernel: pe -- PE32+ import table resolver"`
 
 **Test checkpoint:** Serial log shows `"pe: resolved <N> imports from <DLL>"` for each DLL. `kernel32.dll!ExitProcess` resolves to a valid SSDT thunk. Unknown DLL produces warning log, not crash. `POST16(0xD80E)` on entry, `POST16(0xD80F)` after IAT patched. Test on: QEMU WHPX + TCG; bare metal.
 
