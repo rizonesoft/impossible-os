@@ -140,9 +140,13 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
             return 0;
         }
 
-        /* Validate segment stays within user address range (overflow-safe) */
+        /* Validate segment stays within user address range (overflow-safe)
+         * and does not overlap the dispatch table region */
         if (vaddr < USER_ELF_BASE ||
-            seg->mem_size > USER_ELF_END - vaddr) {
+            seg->mem_size > USER_ELF_END - vaddr ||
+            (vaddr + seg->mem_size > EIF_DISPATCH_TABLE_ADDR &&
+             vaddr < EIF_DISPATCH_TABLE_ADDR +
+                     EIF_DISPATCH_TABLE_MAX * sizeof(eif_dispatch_entry_t))) {
             klog(LOG_ERROR, "eif", "Segment %u outside user range: 0x%x",
                  (uint64_t)i, vaddr);
             return 0;
@@ -173,16 +177,24 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
         return 0;
     }
 
-    /* ---- Validate imports (no dispatch -- side-effect free) ---- */
-    for (i = 0; i < hdr->import_count; i++) {
-        const eif_import_t *imp = (const eif_import_t *)
-            (data + hdr->import_offset + (uint64_t)i * sizeof(eif_import_t));
+    /* ---- Validate imports first (no writes until all pass) ---- */
+    if (hdr->import_count > 0) {
+        if (hdr->import_count > EIF_DISPATCH_TABLE_MAX) {
+            klog(LOG_ERROR, "eif", "Too many imports: %u (max %u)",
+                 (uint64_t)hdr->import_count,
+                 (uint64_t)EIF_DISPATCH_TABLE_MAX);
+            return 0;
+        }
 
-        /* Validate syscall_id is within main SSDT range.
-         * Do NOT call ssdt_dispatch to probe -- that would execute the
-         * handler with zero args and could have side effects. */
-        if (imp->syscall_id > 0x03FF) {
-            if (!(imp->flags & EIF_IMP_OPTIONAL)) {
+        /* Pass 1: validate all imports before touching dispatch table */
+        for (i = 0; i < hdr->import_count; i++) {
+            const eif_import_t *imp = (const eif_import_t *)
+                (data + hdr->import_offset +
+                 (uint64_t)i * sizeof(eif_import_t));
+
+            int in_range = (imp->syscall_id <= SSDT_INDEX_MASK);
+
+            if (!in_range && !(imp->flags & EIF_IMP_OPTIONAL)) {
                 klog(LOG_ERROR, "eif",
                      "Required import SSDT 0x%x out of range",
                      (uint64_t)imp->syscall_id);
@@ -190,9 +202,43 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
             }
         }
 
-        /* NOTE: Per-process dispatch table writing deferred until
-         * user-space dispatch table infrastructure exists.
-         * EIF binaries use SYSCALL with RAX = syscall_id via SSDT. */
+        /* Pass 2: all imports valid -- write dispatch table atomically.
+         * Identity-mapped: kernel writes directly to user-space address.
+         * NOTE: This is SMP-safe because task_exec() runs in the calling
+         * task's context and no other CPU accesses this task's user range
+         * during exec. True per-process isolation requires per-process
+         * physical pages (future VMM prerequisite). */
+        {
+            eif_dispatch_entry_t *table =
+                (eif_dispatch_entry_t *)EIF_DISPATCH_TABLE_ADDR;
+            uint32_t available_count = 0;
+
+            eif_memzero((uint8_t *)table,
+                        hdr->import_count * sizeof(eif_dispatch_entry_t));
+
+            for (i = 0; i < hdr->import_count; i++) {
+                const eif_import_t *imp = (const eif_import_t *)
+                    (data + hdr->import_offset +
+                     (uint64_t)i * sizeof(eif_import_t));
+
+                int in_range = (imp->syscall_id <= SSDT_INDEX_MASK);
+
+                table[i].syscall_id = imp->syscall_id;
+                table[i].available = in_range ? 1 : 0;
+
+                if (in_range)
+                    available_count++;
+            }
+
+            pmm_mark_region_used(EIF_DISPATCH_TABLE_ADDR,
+                hdr->import_count * sizeof(eif_dispatch_entry_t));
+
+            klog(LOG_DEBUG, "eif",
+                 "Dispatch table: %u/%u imports at 0x%x",
+                 (uint64_t)available_count,
+                 (uint64_t)hdr->import_count,
+                 (uint64_t)EIF_DISPATCH_TABLE_ADDR);
+        }
     }
 
     /* ---- Validate entry point is within user range ---- */

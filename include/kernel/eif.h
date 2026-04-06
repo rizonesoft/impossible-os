@@ -77,6 +77,25 @@ typedef struct eif_import {
 _Static_assert(sizeof(eif_import_t) == 8,
     "eif_import_t must be exactly 8 bytes");
 
+/* ---- Per-process dispatch table ----------------------------------------- */
+
+/* Fixed user-space address for the EIF import dispatch table.
+ * Sits between ELF code (~0x815000) and user stack (0x8FC000).
+ * Each entry is 8 bytes: { syscall_id (4), status (4) }.
+ * Status: 1 = available (registered in SSDT), 0 = unavailable.
+ * User code reads this table to check import availability before SYSCALL.
+ * Maximum 1024 entries = 8 KB. */
+#define EIF_DISPATCH_TABLE_ADDR  0x8F0000UL
+#define EIF_DISPATCH_TABLE_MAX   1024
+
+typedef struct eif_dispatch_entry {
+    uint32_t syscall_id;       /* SSDT service number */
+    uint32_t available;        /* 1 = registered, 0 = not available */
+} eif_dispatch_entry_t;
+
+_Static_assert(sizeof(eif_dispatch_entry_t) == 8,
+    "eif_dispatch_entry_t must be 8 bytes");
+
 /* ---- Loader API --------------------------------------------------------- */
 
 /* Load an EIF binary from a raw buffer.

@@ -56,7 +56,7 @@
 | 💎  |   2   | Enhanced ELF loader (VMM-backed, PIE)          | §1                      |  [/]   |
 | 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | §2                      |  [/]   |
 | ⭐  |   4   | EIF format specification                       | --                      |  [x]   |
-| ⭐  |   5   | EIF kernel loader                              | §1, §4                  |  [/]   |
+| ⭐  |   5   | EIF kernel loader                              | §1, §4                  |  [x]   |
 | 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [ ]   |
 | 💎  |   7   | PE32+ header parser                            | §1                      |  [ ]   |
 | 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7                      |  [ ]   |
@@ -161,12 +161,12 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
   - [x] Read 64-byte header; validate magic (`EIF!`), arch (x86_64), version (1), bounds checks on segment/import tables
   - [x] Load segments: copy file data to vaddr (identity-mapped), zero BSS, validate user range, reserve PMM pages, per-segment R/W/X logging
   - [x] Validate imports: range-check each syscall_id (0x0000-0x03FF); reject required out-of-range imports (side-effect free -- no dispatch)
-  - [ ] Write per-process dispatch table at user-space address -- blocked: needs user-space dispatch table infrastructure
+  - [x] Write per-process dispatch table at user-space address 0x8F0000 -- `eif_dispatch_entry_t` array with `{syscall_id, available}` pairs; two-pass validation (validate all imports first, then write atomically); segment overlap protection; max 1024 entries
   - [x] If `SIGNED` flag set but no verification: reject with warning (verification deferred to §17)
   - [x] Return `load_base + entry_point`
 - [x] Performance measurement: uptime_ns() delta logged in microseconds
 - [x] Registered as "EIF" format in `exec_init()` with magic `{'E','I','F','!'}`
-- [ ] Commit: `"kernel: eif -- EIF loader"`
+- [x] Commit: `"kernel: eif -- EIF loader"`
 
 **Test checkpoint:** Serial log shows `"eif: loaded in <N> µs"` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. `POST16(0xD807)` on entry, `POST16(0xD808)` after segments mapped. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -393,7 +393,7 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 | 💎 | Contract import mapping      | ✅ API-set              | ⚠️ SONAME aliases       | ⬜ §19                       |
 | ⭐ | Triple format support        | ❌ PE32+ only            | ❌ ELF only              | ⬜ §1–§10 all three          |
 | ⭐ | < 10 us load time            | ❌ ~50 us                | ❌ ~30 us                | 🔄 §5 uptime_ns measured     |
-| ⭐ | Syscall-ID imports           | ❌ String-based          | ❌ String-based          | ⬜ §4–§5 integer-only        |
+| ⭐ | Syscall-ID imports           | ❌ String-based          | ❌ String-based          | ✅ §5 dispatch table at 0x8F0000 |
 | ⭐ | Standard toolchain → native  | ❌ Needs PE linker       | ⚠️ ELF only              | ⬜ §13 elf2eif               |
 | ⭐ | Shebang dispatch             | ❌ File extension        | ⚠️ Separate module       | ⬜ §16 unified               |
 | ⭐ | Mandatory code signing       | ⚠️ Optional Authenticode | ❌ None built-in         | ⬜ §17 mandatory EIF         |
