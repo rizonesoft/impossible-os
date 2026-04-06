@@ -7,9 +7,12 @@
  * ============================================================================ */
 
 #include "kernel/pe.h"
+#include "kernel/exec.h"
 #include "kernel/errno.h"
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
 
 /* ---- Helpers ------------------------------------------------------------ */
 
@@ -154,6 +157,70 @@ pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
     return r;
 }
 
+/* ---- Helpers for identity-mapped copy ----------------------------------- */
+
+extern void *memcpy(void *dst, const void *src, uint64_t n);
+extern void *memset(void *s, int c, uint64_t n);
+
+/* Minimum ImageBase to prevent loading over kernel memory.
+ * PE64 default is 0x140000000. Anything below 16 MiB is suspicious. */
+#define PE_MIN_IMAGE_BASE   0x1000000ULL
+
+/* Maximum number of PE sections (Windows linker typically emits < 20) */
+#define PE_MAX_SECTIONS     96
+
+/* Maximum image size: 256 MiB. Rejects pathological PE headers. */
+#define PE_MAX_IMAGE_SIZE   (256ULL * 1024 * 1024)
+
+/* ---- Rollback tracking -------------------------------------------------- */
+
+/* Track mapped pages for rollback on failure. Stores VAs so we can
+ * unmap + free frames on error. Static limit: SizeOfImage / 4K pages,
+ * capped by PE_MAX_IMAGE_SIZE / 4K = 65536 pages max. We track the
+ * image base and page count for a range-based unmap instead. */
+static void pe_rollback(uint64_t image_base, uint32_t pages_mapped)
+{
+    uint32_t i;
+    for (i = 0; i < pages_mapped; i++) {
+        uintptr_t va = (uintptr_t)(image_base + (uint64_t)i * VMM_PAGE_SIZE);
+        vmm_unmap_page(va, 1);  /* free_frame = 1: return frame to PMM */
+    }
+}
+
+/* ---- Section loader (§8) ------------------------------------------------
+ *
+ * SMP note: PMM and VMM do not currently have spinlocks. This is a
+ * pre-existing system-wide limitation (ELF loader has the same issue).
+ * PE section loading is called from task_exec, which is serial per-process.
+ * PMM/VMM SMP safety is tracked in TODO-22 (kernel bulletproofing). */
+
+/* Map one page: allocate frame, zero, copy data, map at VA.
+ * Increments *total_pages on success. Returns 0 or -1. */
+static int pe_map_one_page(uint64_t va, const uint8_t *data,
+                           uint32_t data_offset, uint32_t copy_len,
+                           uint64_t flags, uint32_t *total_pages)
+{
+    uintptr_t frame = pmm_alloc_frame();
+    if (!frame) {
+        klog(LOG_ERROR, "pe", "Failed to allocate frame for VA 0x%x", va);
+        return -1;
+    }
+
+    memset((void *)frame, 0, VMM_PAGE_SIZE);
+    if (copy_len > 0 && data)
+        memcpy((void *)frame, data + data_offset, copy_len);
+
+    if (vmm_map_page((uintptr_t)va, frame, flags) != 0) {
+        klog(LOG_ERROR, "pe", "Failed to map page at VA 0x%x", va);
+        /* Frame leaked here -- pmm_free_frame not yet implemented.
+         * When it is, free the frame. For now, log the loss. */
+        return -1;
+    }
+
+    (*total_pages)++;
+    return 0;
+}
+
 /* ---- Loader entry point (exec dispatcher) ------------------------------- */
 
 uint64_t pe_load(const uint8_t *data, uint64_t size)
@@ -166,13 +233,230 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
         return 0;
     }
 
-    /* §7 scope: validation and format recognition only.
-     * Section loading, import resolution, and actual execution are §8/§9.
-     * Return 0 (failure) until the section loader is implemented --
-     * returning a fake entry point would cause task_exec to jump to
-     * unmapped memory. The PE format is registered so exec_load()
-     * recognizes MZ magic and logs the correct format name. */
-    klog(LOG_WARN, "pe",
-         "PE32+ validated but section loader not yet implemented (§8)");
-    return 0;
+    uint64_t image_base = v.opt->ImageBase;
+    uint32_t size_of_image = read_u32(
+        (const uint8_t *)&v.opt->SizeOfImage);
+    uint32_t size_of_headers = read_u32(
+        (const uint8_t *)&v.opt->SizeOfHeaders);
+    uint32_t entry_rva = read_u32(
+        (const uint8_t *)&v.opt->AddressOfEntryPoint);
+    uint32_t num_rva_sizes = read_u32(
+        (const uint8_t *)&v.opt->NumberOfRvaAndSizes);
+    uint32_t total_pages_mapped = 0;
+
+    /* ---- Pre-flight validation ---- */
+
+    if (image_base < PE_MIN_IMAGE_BASE) {
+        klog(LOG_ERROR, "pe",
+             "ImageBase 0x%x below minimum 0x%x -- rejected",
+             image_base, (uint64_t)PE_MIN_IMAGE_BASE);
+        return 0;
+    }
+
+    uint64_t image_end = image_base + size_of_image;
+    if (image_end < image_base) {
+        klog(LOG_ERROR, "pe", "ImageBase + SizeOfImage overflow");
+        return 0;
+    }
+
+    if (size_of_image > PE_MAX_IMAGE_SIZE) {
+        klog(LOG_ERROR, "pe", "SizeOfImage %u exceeds maximum %u",
+             (uint64_t)size_of_image, (uint64_t)PE_MAX_IMAGE_SIZE);
+        return 0;
+    }
+
+    if (size_of_headers > size_of_image) {
+        klog(LOG_ERROR, "pe", "SizeOfHeaders %u > SizeOfImage %u",
+             (uint64_t)size_of_headers, (uint64_t)size_of_image);
+        return 0;
+    }
+
+    if (entry_rva >= size_of_image) {
+        klog(LOG_ERROR, "pe",
+             "Entry RVA 0x%x outside SizeOfImage 0x%x",
+             (uint64_t)entry_rva, (uint64_t)size_of_image);
+        return 0;
+    }
+
+    if (v.num_sections > PE_MAX_SECTIONS) {
+        klog(LOG_ERROR, "pe", "Too many sections: %u (max %u)",
+             (uint64_t)v.num_sections, (uint64_t)PE_MAX_SECTIONS);
+        return 0;
+    }
+
+    /* Validate each section fits within SizeOfImage */
+    {
+        uint16_t s;
+        for (s = 0; s < v.num_sections; s++) {
+            uint32_t sec_rva = read_u32(
+                (const uint8_t *)&v.sections[s].VirtualAddress);
+            uint32_t sec_vsize = read_u32(
+                (const uint8_t *)&v.sections[s].VirtualSize);
+            uint64_t sec_end = (uint64_t)sec_rva + sec_vsize;
+
+            if (sec_end < sec_rva || sec_end > size_of_image) {
+                klog(LOG_ERROR, "pe",
+                     "Section %u RVA 0x%x + VSize 0x%x exceeds SizeOfImage 0x%x",
+                     (uint64_t)s, (uint64_t)sec_rva,
+                     (uint64_t)sec_vsize, (uint64_t)size_of_image);
+                return 0;
+            }
+        }
+    }
+
+    uint64_t entry_va = image_base + entry_rva;
+
+    POST16(0xD80C);
+
+    /* ---- Map PE headers at ImageBase ---- */
+    {
+        uint32_t hdr_pages = (size_of_headers + VMM_PAGE_SIZE - 1) /
+                             VMM_PAGE_SIZE;
+        uint32_t p;
+        for (p = 0; p < hdr_pages; p++) {
+            uint32_t offset = p * VMM_PAGE_SIZE;
+            uint32_t copy_len = VMM_PAGE_SIZE;
+            if (offset + copy_len > size_of_headers)
+                copy_len = size_of_headers - offset;
+            if (offset + copy_len > size)
+                copy_len = (offset < size) ? (uint32_t)(size - offset) : 0;
+
+            if (pe_map_one_page(image_base + offset, data, offset, copy_len,
+                                VMM_FLAG_PRESENT | VMM_FLAG_USER,
+                                &total_pages_mapped) != 0) {
+                pe_rollback(image_base, total_pages_mapped);
+                return 0;
+            }
+        }
+    }
+
+    /* ---- Map sections ---- */
+    {
+        uint16_t s;
+        for (s = 0; s < v.num_sections; s++) {
+            uint32_t sec_rva = read_u32(
+                (const uint8_t *)&v.sections[s].VirtualAddress);
+            uint32_t sec_vsize = read_u32(
+                (const uint8_t *)&v.sections[s].VirtualSize);
+            uint32_t raw_sz = read_u32(
+                (const uint8_t *)&v.sections[s].SizeOfRawData);
+            uint32_t raw_ptr = read_u32(
+                (const uint8_t *)&v.sections[s].PointerToRawData);
+            uint32_t chars = read_u32(
+                (const uint8_t *)&v.sections[s].Characteristics);
+
+            if (sec_vsize == 0)
+                continue;
+
+            uint32_t num_pages = (sec_vsize + VMM_PAGE_SIZE - 1) /
+                                 VMM_PAGE_SIZE;
+
+            /* Page flags from Characteristics */
+            uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
+            if (chars & PE_SCN_MEM_WRITE)
+                flags |= VMM_FLAG_WRITABLE;
+            if (!(chars & PE_SCN_MEM_EXECUTE))
+                flags |= VMM_FLAG_NX;
+
+            uint32_t p;
+            for (p = 0; p < num_pages; p++) {
+                uint32_t page_off = p * VMM_PAGE_SIZE;
+                uint32_t copy_len = 0;
+
+                if (page_off < raw_sz && raw_ptr + page_off < size) {
+                    copy_len = VMM_PAGE_SIZE;
+                    if (page_off + copy_len > raw_sz)
+                        copy_len = raw_sz - page_off;
+                    if (raw_ptr + page_off + copy_len > size)
+                        copy_len = (uint32_t)(size - raw_ptr - page_off);
+                }
+
+                if (pe_map_one_page(image_base + sec_rva + page_off,
+                                    data, raw_ptr + page_off, copy_len,
+                                    flags, &total_pages_mapped) != 0) {
+                    pe_rollback(image_base, total_pages_mapped);
+                    return 0;
+                }
+            }
+
+            /* Log section */
+            char name[PE_SECTION_NAME_SIZE + 1];
+            uint32_t ni;
+            for (ni = 0; ni < PE_SECTION_NAME_SIZE; ni++)
+                name[ni] = v.sections[s].Name[ni];
+            name[PE_SECTION_NAME_SIZE] = 0;
+
+            klog(LOG_DEBUG, "pe", "Mapped section '%s' at 0x%x (%s%s%s)",
+                 name, image_base + sec_rva,
+                 (chars & PE_SCN_MEM_READ) ? "R" : "",
+                 (chars & PE_SCN_MEM_WRITE) ? "W" : "",
+                 (chars & PE_SCN_MEM_EXECUTE) ? "X" : "");
+        }
+    }
+
+    /* ---- Parse .pdata ---- */
+    uint64_t pdata_base = 0;
+    uint64_t pdata_size_val = 0;
+
+    if (num_rva_sizes > PE_DIR_EXCEPTION) {
+        uint32_t pdata_rva = read_u32(
+            (const uint8_t *)&v.opt->DataDirectory[PE_DIR_EXCEPTION].VirtualAddress);
+        uint32_t pdata_sz = read_u32(
+            (const uint8_t *)&v.opt->DataDirectory[PE_DIR_EXCEPTION].Size);
+
+        /* Validate .pdata range within image */
+        if (pdata_rva != 0 && pdata_sz != 0) {
+            uint64_t pdata_end = (uint64_t)pdata_rva + pdata_sz;
+            if (pdata_end > pdata_rva && pdata_end <= size_of_image) {
+                pdata_base = image_base + pdata_rva;
+                pdata_size_val = pdata_sz;
+                klog(LOG_INFO, "pe",
+                     "pe: mapped %u sections, .pdata at 0x%x (%u entries)",
+                     (uint64_t)v.num_sections, pdata_base,
+                     pdata_sz / 12);
+            } else {
+                klog(LOG_WARN, "pe",
+                     ".pdata RVA 0x%x + size 0x%x outside image -- ignored",
+                     (uint64_t)pdata_rva, (uint64_t)pdata_sz);
+            }
+        }
+    }
+
+    if (pdata_base == 0) {
+        klog(LOG_INFO, "pe", "pe: mapped %u sections, no .pdata",
+             (uint64_t)v.num_sections);
+    }
+
+    /* ---- Register module (§6) ---- */
+    {
+        loaded_module_t mod;
+        uint8_t *mp = (uint8_t *)&mod;
+        uint32_t mi;
+        for (mi = 0; mi < sizeof(mod); mi++) mp[mi] = 0;
+
+        mod.base_address = image_base;
+        mod.size_of_image = size_of_image;
+        mod.entry_point = entry_va;
+        mod.pdata_base = pdata_base;
+        mod.pdata_size = pdata_size_val;
+        mod.format = EXEC_FMT_PE;
+
+        int reg_ret = exec_register_module((process_t *)0, &mod);
+        if (reg_ret != 0) {
+            klog(LOG_ERROR, "pe",
+                 "Module registration failed -- rolling back %u pages",
+                 (uint64_t)total_pages_mapped);
+            pe_rollback(image_base, total_pages_mapped);
+            return 0;
+        }
+    }
+
+    POST16(0xD80D);
+
+    klog(LOG_INFO, "pe",
+         "PE32+ loaded at 0x%x, entry 0x%x, %u sections, %u pages",
+         image_base, entry_va,
+         (uint64_t)v.num_sections, (uint64_t)total_pages_mapped);
+
+    return entry_va;
 }

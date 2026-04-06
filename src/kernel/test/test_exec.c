@@ -153,19 +153,32 @@ static uint32_t build_minimal_pe32plus(uint8_t *buf)
     buf[0x94] = 0xF0; buf[0x95] = 0x00;  /* SizeOfOptionalHeader = 240 */
 
     /* Optional header at 0x98: Magic=0x20B, AddressOfEntryPoint=0x1000,
-     * ImageBase=0x140000000 */
+     * ImageBase=0x140000000, SizeOfImage=0x2000, SizeOfHeaders=0x200,
+     * NumberOfRvaAndSizes=16 */
     buf[0x98] = 0x0B; buf[0x99] = 0x02;  /* Magic = PE32+ */
     buf[0xA8] = 0x00; buf[0xA9] = 0x10;  /* AddressOfEntryPoint = 0x1000 */
     buf[0xB0] = 0x00; buf[0xB1] = 0x00;
     buf[0xB2] = 0x00; buf[0xB3] = 0x40;
     buf[0xB4] = 0x01; buf[0xB5] = 0x00;  /* ImageBase = 0x140000000 */
+    /* SizeOfImage at Optional Header offset 0x38 = file offset 0x98+0x38=0xD0 */
+    buf[0xD0] = 0x00; buf[0xD1] = 0x20;  /* SizeOfImage = 0x2000 */
+    /* SizeOfHeaders at Optional Header offset 0x3C = file offset 0xD4 */
+    buf[0xD4] = 0x00; buf[0xD5] = 0x02;  /* SizeOfHeaders = 0x200 */
+    /* NumberOfRvaAndSizes at Optional Header offset 0x6C = file offset 0x98+0x6C=0x104 */
+    buf[0x104] = 0x10;  /* NumberOfRvaAndSizes = 16 */
 
     /* Section header at 0x98 + 240 = 0x188 (fits in 512 bytes) */
-    /* .text section: VirtualSize=0x100, VirtualAddress=0x1000 */
+    /* .text section: VirtualSize=0x100, VirtualAddress=0x1000,
+     * SizeOfRawData=0x100, PointerToRawData=0x200,
+     * Characteristics=0x60000020 (CODE | EXECUTE | READ) */
     buf[0x188] = '.'; buf[0x189] = 't'; buf[0x18A] = 'e';
     buf[0x18B] = 'x'; buf[0x18C] = 't';
     buf[0x190] = 0x00; buf[0x191] = 0x01;  /* VirtualSize = 0x100 */
     buf[0x194] = 0x00; buf[0x195] = 0x10;  /* VirtualAddress = 0x1000 */
+    buf[0x198] = 0x00; buf[0x199] = 0x01;  /* SizeOfRawData = 0x100 */
+    buf[0x19C] = 0x00; buf[0x19D] = 0x02;  /* PointerToRawData = 0x200 */
+    buf[0x1AC] = 0x20; buf[0x1AD] = 0x00;
+    buf[0x1AE] = 0x00; buf[0x1AF] = 0x60;  /* Characteristics = 0x60000020 */
 
     return 512;
 }
@@ -240,6 +253,45 @@ static void test_pe_validate_null(void)
     TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects NULL data");
 }
 
+/* ---- PE32+ section loader tests (TODO-08 §8) ---- */
+
+static void test_pe_load_maps_and_returns_entry(void)
+{
+    uint8_t buf[1024];
+    uint32_t i;
+    for (i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    build_minimal_pe32plus(buf);
+
+    /* pe_load should validate, map sections, and return entry VA */
+    uint64_t entry = pe_load(buf, sizeof(buf));
+    /* Entry = ImageBase(0x140000000) + AddressOfEntryPoint(0x1000) */
+    TEST_ASSERT_EQ(entry, 0x140001000ULL, "pe_load returns correct entry VA");
+}
+
+static void test_pe_load_registers_module(void)
+{
+    /* After pe_load, exec_find_module_by_pc should find the module */
+    loaded_module_t mod;
+    int ret = exec_find_module_by_pc(0x140001000ULL, &mod);
+    TEST_ASSERT_EQ(ret, 0, "pe_load registered module in crash registry");
+    TEST_ASSERT_EQ(mod.base_address, 0x140000000ULL, "PE module base correct");
+    TEST_ASSERT_EQ(mod.format, (uint64_t)EXEC_FMT_PE, "PE module format correct");
+}
+
+static void test_pe_load_rejects_low_imagebase(void)
+{
+    uint8_t buf[512];
+    build_minimal_pe32plus(buf);
+
+    /* Set ImageBase to 0x1000 (below PE_MIN_IMAGE_BASE) */
+    buf[0xB0] = 0x00; buf[0xB1] = 0x10;
+    buf[0xB2] = 0x00; buf[0xB3] = 0x00;
+    buf[0xB4] = 0x00; buf[0xB5] = 0x00;
+
+    uint64_t entry = pe_load(buf, sizeof(buf));
+    TEST_ASSERT_EQ(entry, 0, "pe_load rejects low ImageBase");
+}
+
 /* ---- EIF loader tests (TODO-08 §5) ---- */
 
 static void test_eif_bad_magic(void)
@@ -298,6 +350,11 @@ void test_register_exec(void)
     test_suite_register_cat("PE: validate rejects truncated", test_pe_validate_truncated, TEST_CAT_EXEC);
     test_suite_register_cat("PE: validate rejects bad magic", test_pe_validate_bad_magic, TEST_CAT_EXEC);
     test_suite_register_cat("PE: validate rejects NULL", test_pe_validate_null, TEST_CAT_EXEC);
+
+    /* PE32+ section loader tests (TODO-08 §8) */
+    test_suite_register_cat("PE: load maps+returns entry", test_pe_load_maps_and_returns_entry, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: load registers module", test_pe_load_registers_module, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: load rejects low ImageBase", test_pe_load_rejects_low_imagebase, TEST_CAT_EXEC);
 
     /* EIF loader tests (TODO-08 §5) */
     test_suite_register_cat("EIF: bad magic", test_eif_bad_magic, TEST_CAT_EXEC);

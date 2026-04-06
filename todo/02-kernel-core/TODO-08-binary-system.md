@@ -59,7 +59,7 @@
 | ⭐  |   5   | EIF kernel loader                              | §1, §4                  |  [x]   |
 | 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [/]   |
 | 💎  |   7   | PE32+ header parser                            | §1                      |  [x]   |
-| 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7                      |  [ ]   |
+| 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7                      |  [x]   |
 | 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-05 §5          |  [ ]   |
 | 💎  |  10   | PE32+ base relocation                          | §8                      |  [ ]   |
 | 💎  |  11   | PE32+ TLS directory processing                 | §8, TODO-04 §9          |  [ ]   |
@@ -198,14 +198,13 @@ Every loaded executable and shared library must be registered in the per-process
 
 ## 8. PE32+ Section Loader + `.pdata` Registration
 
-- [ ] Parse section headers; for each section:
-  - Allocate user pages at `ImageBase + VirtualAddress`
-  - Copy `SizeOfRawData` bytes from `PointerToRawData`; zero-fill `VirtualSize - SizeOfRawData`
-  - Set permissions from `Characteristics`: `IMAGE_SCN_MEM_EXECUTE` / `IMAGE_SCN_MEM_WRITE` / `IMAGE_SCN_MEM_READ`
-- [ ] Map PE headers (`SizeOfHeaders`) at ImageBase for runtime introspection
-- [ ] Parse DataDirectory entry 3 (`IMAGE_DIRECTORY_ENTRY_EXCEPTION`): locate `.pdata` section containing `RUNTIME_FUNCTION` entries; register `{ pdata_base, pdata_size, image_base }` with the module list (§6) so `RtlLookupFunctionEntry` (→ XREF TODO-10 §6) can find unwind data
-- [ ] Register loaded module via `exec_register_module()` (§6) with base, size, entry, and `.pdata` info
-- [ ] Commit: `"kernel: pe -- PE32+ section loader with .pdata registration"`
+- [x] Parse section headers; for each section: allocate physical frames via `pmm_alloc_frame()`, map at `ImageBase + VirtualAddress` via `vmm_map_page()`, copy `SizeOfRawData` bytes via identity map, zero-fill remainder. Permissions from Characteristics: `MEM_WRITE` -> `VMM_FLAG_WRITABLE`, `!MEM_EXECUTE` -> `VMM_FLAG_NX`. ImageBase validated >= 0x1000000, overflow checked.
+- [x] Map PE headers (`SizeOfHeaders`) at ImageBase for runtime introspection -- allocated pages, copied via identity map, mapped read-only with User bit
+- [x] Parse DataDirectory entry 3 (`IMAGE_DIRECTORY_ENTRY_EXCEPTION`): extract `.pdata` RVA and size, compute VA as `ImageBase + pdata_rva`, register with module list (§6). `RtlLookupFunctionEntry` (→ XREF TODO-10 §6) can find unwind data via `exec_find_module_by_pc()`.
+- [x] Register loaded module via `exec_register_module()` (§6) with base, size, entry, and `.pdata` info -- PE loader calls this directly (task_exec detects via module list, no duplicate registration)
+- [x] task_exec made format-agnostic: uses `exec_find_module_by_pc(entry)` to determine user page range instead of hardcoding ELF range. Works for PE, ELF, and EIF.
+- [x] 3 unit tests: pe_load returns correct entry VA, module registered with correct base/format, rejects low ImageBase
+- [x] Commit: `"kernel: pe -- PE32+ section loader with .pdata registration"`
 
 **Test checkpoint:** Serial log shows `"pe: mapped <N> sections, .pdata at 0x<addr> (<M> entries)"`. Section permissions match `Characteristics`. BSS-only sections are zero-filled. `POST16(0xD80C)` on entry, `POST16(0xD80D)` after `.pdata` registered. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -381,14 +380,14 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 |----|-----------------------------|--------------------------|--------------------------|------------------------------|
 | 💎 | Native binary format        | ✅ PE32+                 | ✅ ELF                   | 🔄 §4 spec + §5 loader done  |
 | 💎 | ELF loading                 | ⚠️ WSL only              | ✅ Native                | ⚠️ §2 basic loader           |
-| 💎 | PE32+ loading               | ✅ Native                | ⚠️ Wine only             | 🔄 §7 parser done; §8-§10 pending |
+| 💎 | PE32+ loading               | ✅ Native                | ⚠️ Wine only             | 🔄 §7-§8 done; §9-§10 pending |
 | 💎 | Dynamic linking             | ✅ DLL loading           | ✅ ld.so                 | ⬜ §14                       |
 | 💎 | ASLR                        | ✅ Mandatory             | ✅ PIE + kernel           | ⬜ §15                       |
 | 💎 | NX stack                    | ✅ DEP default           | ✅ PT_GNU_STACK           | ⬜ §3                        |
 | 💎 | RELRO (read-only GOT)       | ⚠️ N/A (PE IAT)         | ✅ PT_GNU_RELRO           | ⬜ §3                        |
 | 💎 | CET/IBT binary flags        | ✅ Load Config           | ✅ GNU_PROPERTY           | ⬜ §3 ELF, §12 PE           |
 | 💎 | Module list                  | ✅ PEB->Ldr              | ✅ link_map               | 🔄 §6 registry + Ldr done    |
-| 💎 | PE .pdata unwind             | ✅ Kernel + ntdll        | ❌ N/A                   | ⬜ §8                        |
+| 💎 | PE .pdata unwind             | ✅ Kernel + ntdll        | ❌ N/A                   | 🔄 §8 .pdata registered      |
 | 💎 | PE TLS + callbacks           | ✅ Full support          | ❌ N/A (ELF PT_TLS)      | ⬜ §11                       |
 | 💎 | Native TLS templates         | ✅ PE TLS               | ✅ PT_TLS               | ⬜ §11 + §18                |
 | 💎 | PE Load Config / CFG         | ✅ CFG mandatory         | ❌ N/A                   | ⬜ §12                       |

@@ -1145,41 +1145,43 @@ int task_exec(const uint8_t *data, uint64_t size)
         return -1;
     }
 
-    /* Register loaded module in the global crash registry and PEB->Ldr (§6).
-     * Uses the identity-mapped user ELF range as the module base/size.
-     * The format field is best-effort: detect from magic bytes in data. */
+    /* Register module if the loader didn't already (PE registers in pe_load).
+     * For ELF/EIF, register with the identity-mapped user ELF range. */
     {
-        loaded_module_t mod;
-        uint8_t *mp = (uint8_t *)&mod;
-        uint32_t mi;
-        for (mi = 0; mi < sizeof(mod); mi++) mp[mi] = 0;
+        loaded_module_t probe;
+        int already_registered = (exec_find_module_by_pc(entry, &probe) == 0);
 
-        mod.base_address = USER_ELF_BASE;
-        mod.size_of_image = USER_ELF_END - USER_ELF_BASE;
-        mod.entry_point = entry;
+        if (!already_registered) {
+            loaded_module_t mod;
+            uint8_t *mp = (uint8_t *)&mod;
+            uint32_t mi;
+            for (mi = 0; mi < sizeof(mod); mi++) mp[mi] = 0;
 
-        /* Detect format from magic */
-        if (size >= 4 && data[0] == 0x7F && data[1] == 'E' &&
-            data[2] == 'L' && data[3] == 'F')
-            mod.format = EXEC_FMT_ELF;
-        else if (size >= 4 && data[0] == 'E' && data[1] == 'I' &&
-                 data[2] == 'F' && data[3] == '!')
-            mod.format = EXEC_FMT_EIF;
-        else if (size >= 2 && data[0] == 'M' && data[1] == 'Z')
-            mod.format = EXEC_FMT_PE;
+            mod.base_address = USER_ELF_BASE;
+            mod.size_of_image = USER_ELF_END - USER_ELF_BASE;
+            mod.entry_point = entry;
 
-        /* Name from task name */
-        {
-            const char *n = tasks[pid].name ? tasks[pid].name : "a.out";
-            uint32_t ni = 0;
-            while (n[ni] && ni < EXEC_MODULE_NAME_MAX - 1) {
-                mod.name[ni] = n[ni];
-                ni++;
+            /* Detect format from magic */
+            if (size >= 4 && data[0] == 0x7F && data[1] == 'E' &&
+                data[2] == 'L' && data[3] == 'F')
+                mod.format = EXEC_FMT_ELF;
+            else if (size >= 4 && data[0] == 'E' && data[1] == 'I' &&
+                     data[2] == 'F' && data[3] == '!')
+                mod.format = EXEC_FMT_EIF;
+
+            /* Name from task name */
+            {
+                const char *n = tasks[pid].name ? tasks[pid].name : "a.out";
+                uint32_t ni = 0;
+                while (n[ni] && ni < EXEC_MODULE_NAME_MAX - 1) {
+                    mod.name[ni] = n[ni];
+                    ni++;
+                }
+                mod.name[ni] = 0;
             }
-            mod.name[ni] = 0;
-        }
 
-        exec_register_module((process_t *)0, &mod);
+            exec_register_module((process_t *)0, &mod);
+        }
     }
 
     /* Allocate a FRESH kernel stack with guard page - we cannot reuse the
@@ -1207,8 +1209,9 @@ int task_exec(const uint8_t *data, uint64_t size)
     }
     tasks[pid].user_stack_base = (uint8_t *)(USER_ELF_END - USER_STACK_SIZE);
 
-    /* Recreate per-process PML4: mark ELF pages + user stack as User.
-     * vmm_create_user_pml4 splits PD[USER_PD_INDEX] into 4 KiB pages. */
+    /* Recreate per-process PML4: mark loaded image pages as User.
+     * Uses the module list to determine the image range (format-agnostic).
+     * vmm_set_user_page auto-splits 2 MiB huge pages on demand. */
     {
         uintptr_t user_cr3 = vmm_create_user_pml4();
         if (user_cr3) {
@@ -1216,9 +1219,24 @@ int task_exec(const uint8_t *data, uint64_t size)
             /* Destroy old PML4 if present */
             if (tasks[pid].cr3)
                 vmm_destroy_user_pml4(tasks[pid].cr3);
-            /* Mark ELF pages as User */
-            for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
-                vmm_set_user_page(user_cr3, addr);
+
+            /* Look up module to get the image range */
+            loaded_module_t img_mod;
+            if (exec_find_module_by_pc(entry, &img_mod) == 0) {
+                /* Mark all image pages as User */
+                uintptr_t img_base = (uintptr_t)img_mod.base_address;
+                uintptr_t img_end = img_base + (uintptr_t)img_mod.size_of_image;
+                for (addr = img_base; addr < img_end; addr += 4096)
+                    vmm_set_user_page(user_cr3, addr);
+            } else {
+                /* Fallback: mark ELF range as User (should not happen) */
+                klog(LOG_WARN, "sched",
+                     "task_exec: no module found for entry 0x%x, using ELF range",
+                     entry);
+                for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
+                    vmm_set_user_page(user_cr3, addr);
+            }
+
             tasks[pid].cr3 = user_cr3;
         } else {
             klog(LOG_WARN, "sched", "task_exec: PML4 creation failed for PID %u",
