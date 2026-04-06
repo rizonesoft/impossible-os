@@ -112,7 +112,7 @@ Wire the existing `exec_register_module()` / `exec_find_module_by_pc()` infrastr
 - [x] In `boot_phase1()` after bugcheck_init: call `exec_register_module()` for the kernel itself -- `base_address = __kernel_start` (1 MiB), `size_of_image = __kernel_end - __kernel_start`, `entry_point = kernel_main`, `name = "kernel.exe"`, `full_path = "C:\Impossible\System32\kernel.exe"`, `format = EXEC_FMT_PE`; `__kernel_start` added to linker script
 - [x] Verified ELF/PE/EIF loaders: PE loader calls `exec_register_module()` in `pe.c:767`; ELF path calls in `task.c:1183`; EIF tracked in TODO-23 §4 (not yet wired)
 - [x] Added `exec_iterate_modules(out, max)` (irqsave locked snapshot copy) and `exec_iterate_modules_lockless(out, max)` (NMI-safe, no lock) in `exec.c`/`exec.h` for crash dump ModuleList stream writer (§4)
-- [ ] Commit: `"kernel/crashdump: wire exec module registry into crash dump pipeline"`
+- [x] Commit: `"kernel/crashdump: wire exec module registry into crash dump pipeline"`
 
 **Test checkpoint:** 6 test assertions in `test_crashdump.c`: kernel module registered (count >= 1), find by PC (kernel_main resolves to "kernel.exe"), base/size match linker symbols, iterate snapshot, lockless iterate, POST code uniqueness. `POST16(0xDE44)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
