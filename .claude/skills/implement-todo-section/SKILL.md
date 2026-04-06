@@ -15,7 +15,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 ## Workflow
 
-1. **Read the section** -- full text, notes, test checkpoint, warning boxes.
+1. **Read the section** -- full text, notes, test checkpoint, warning boxes. If the section has > 10 checklist items, flag it: suggest splitting into two sections before implementing. A 15-item section is two sections pretending to be one.
 2. **Resolve dependencies** -- follow every `-> XREF:` line. Stop and ask if a prerequisite is incomplete or scope conflicts with reality. If part is implementable and part is blocked, implement only the unblocked subset; keep blocked items `[ ]` or `[/]` with explicit blocker notes.
 3. **Explore the codebase** -- Grep/Glob for symbols, call-graph tracing, cross-file discovery. Read relevant source files to understand the integration surface.
 4. **Codex design review** (for complex/high-risk sections) -- if the section touches SMP-sensitive code, boot-path, page tables, interrupt handling, or security-critical logic, dispatch a design review via the Codex plugin BEFORE writing code. Follow the `codex-design-review` skill: send the plan + integration surface + constraints, evaluate for blockers/warnings. Skip for straightforward sections (simple struct definitions, single-function additions, test-only work).
@@ -36,20 +36,20 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    - The expected test category (e.g. `TEST_CAT_EXEC`)
    - Which specific assertions are required for this section
    
-   Create the test file / registration function if it doesn't exist yet. Do NOT piggy-back tests onto an unrelated test file just because it's convenient. Then add/update assertions and confirm build passes.
+   Create the test file / registration function if it doesn't exist yet. Do NOT piggy-back tests onto an unrelated test file just because it's convenient. If the subsystem doesn't fit existing `TEST_CAT_*` categories, create a new one (enum in `test.h`, names/labels in `test_runner.c`, `make test-*` target in Makefile). Then add/update assertions and confirm build passes.
 9. **Codex test coverage analysis** -- after wiring tests, dispatch a test coverage gap analysis to catch missing assertions before the adversarial review finds them. Follow the `codex-test-coverage` skill: list public functions, existing tests, and ask Codex to find untested error paths, boundaries, and negative cases. Add any missing tests found. Skip for trivial sections (< 3 test assertions).
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<test coverage prompt>"
     ```
 10. **Update TODO section** -- mark items with evidence:
     - **Done proof gate:** `[x]` only when implemented + wired + functional on normal path. Never `[x]` for stubs or `STATUS_NOT_IMPLEMENTED` placeholders.
-    - SSDT claims: verify service number <-> function <-> `ssdt_register()` <-> master table row consistency.
+    - SSDT claims: verify service number <-> function <-> `ssdt_register()` <-> master table row consistency. If SSDT handlers were implemented, update `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c` for any Win32 wrapper names.
     - Blocked items: keep `[ ]` or `[/]`, add missing prerequisite/ownership items with owner scope and `-> XREF`.
     - **Deferred-item resolution:** scan earlier sections in the SAME TODO for items marked "deferred to section N" where N is this section. If the work was done, mark them `[x]`. Deferred items are promises.
     - **Cross-TODO sync:** when this section references or satisfies external TODO requirements, update those TODOs in the same run.
     - Preserve existing formatting (table headers, icons, column structure).
 11. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
-12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`.
+12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. If new research was done during implementation, update the `<!-- Sources: ... -->` comment after the table.
 13. **Codex adversarial review** (MANDATORY) -- run via the Codex plugin, NOT self-review. Self-review has implementation bias; Codex reads code fresh and catches things you rationalized away. Proven: section 1 Codex found 2 Critical issues (SMP race, TOCTOU) that self-review missed. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles, request severity-labeled findings. Command:
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
@@ -76,6 +76,8 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Implementation Order rows that need status updates.
     - Cross-TODO dependency notes that are now satisfied.
     - Any checklist items in other sections affected by this implementation.
+    - **PE export table sync:** if this section implemented new public APIs callable from user-mode, verify they're in `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c`.
+    - **SSDT audit trigger:** if this section implemented or modified SSDT handlers, recommend running `/audit-ssdt` after commit to verify master table consistency.
 19. **Commit and push** -- only after steps 13-18 are ALL complete.
     - Use the section's `Commit:` line as the commit message.
     - Stage all changed source files, headers, the updated TODO file(s), and test changes together.
