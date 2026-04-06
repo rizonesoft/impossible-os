@@ -72,6 +72,6 @@
 - Fix broken paths, stale wording, missing overlap notes, and outdated scope statements as you find them.
 - Fix XREF section numbers that are off by one or that point at renamed sections.
 - Keep wide tables compact enough to stay readable in wrapped editors; move verbose detail into bullets or notes.
-- Use `verify-todo-section` only for deep-dive escalation; baseline completion-truth checks are required here.
+- Use embedded section verification only for deep-dive escalation; baseline completion-truth checks are required here.
 - Keep cross-file edits limited to directly referenced TODO sections tied to the finding.
 - Keep changes idempotent; a second validation pass on clean content should produce no additional edits.

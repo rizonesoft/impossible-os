@@ -170,7 +170,7 @@ Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When
 ## OS Comparison
 
 | ⭐ | Feature                    | 🪟 Win11                | 🐧 Linux               | 🚀 Impossible OS              |
-|----|----------------------------|------------------------|------------------------|--------------------------------|
+|----|----------------------------|------------------------|------------------------|----------------------------------|
 | 💎 | Segment permissions        | ✅ PE section chars    | ✅ ELF p_flags         | ⬜ Planned -- §2               |
 | 💎 | ASLR                       | ✅ Mandatory           | ✅ PIE + kernel        | ⬜ Planned -- §8               |
 | 💎 | Code signing enforcement   | ✅ Authenticode/WHCP   | ✅ IMA/EVM             | ⬜ T08 §17                     |

@@ -52,10 +52,10 @@
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                |  [x]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-03 §3    |  [x]   |
-| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [x]   |
-| 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [x]   |
-| 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [x]   |
-| 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [x]   |
+| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-03 §5    |  [/]   |
+| 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [/]   |
+| 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [/]   |
+| 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [/]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [ ]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [ ]   |
 | 💎  |  13   | File metadata and device control                               | §6                |  [ ]   |
@@ -299,9 +299,9 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0056 | NtFlushVirtualMemory             | §9  | T05 (§9 no-op)          | [x]  |
 | 0x0057 | NtReadVirtualMemory              | §9  | T05 (§9 implemented)    | [x]  |
 | 0x0058 | NtWriteVirtualMemory             | §9  | T05 (§9 implemented)    | [x]  |
-| 0x0059 | NtAllocateUserPhysicalPages      | §9  | T04-mem §4 (AWE stub)   | [x]  |
-| 0x005A | NtFreeUserPhysicalPages          | §9  | T04-mem §4 (AWE stub)   | [x]  |
-| 0x005B | NtMapUserPhysicalPages           | §9  | T04-mem §4 (AWE stub)   | [x]  |
+| 0x0059 | NtAllocateUserPhysicalPages      | §9  | T04-mem §4 (AWE stub)   | [ ]  |
+| 0x005A | NtFreeUserPhysicalPages          | §9  | T04-mem §4 (AWE stub)   | [ ]  |
+| 0x005B | NtMapUserPhysicalPages           | §9  | T04-mem §4 (AWE stub)   | [ ]  |
 | 0x005C | NtCreateSection                  | §5  | T05 (§5 migration)      | [x]  |
 | 0x005D | NtOpenSection                    | §17 | T05                     | [ ]  |
 | 0x005E | NtMapViewOfSection               | §5  | T05 (§5 migration)      | [x]  |
@@ -334,10 +334,10 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 | 0x0081 | NtCancelTimer                    | §18 | T05 §18                  | [ ]  |
 | 0x0082 | NtQueryTimer                     | §18 | T05 §18                  | [ ]  |
 | 0x0083 | NtSetTimerEx                     | §18 | T05 §18                  | [ ]  |
-| 0x0084 | NtCreateKeyedEvent               | §8  | T07-mem §4 (stub)        | [x]  |
-| 0x0085 | NtOpenKeyedEvent                 | §8  | T07-mem §4 (stub)        | [x]  |
-| 0x0086 | NtWaitForKeyedEvent              | §8  | T07-mem §4 (stub)        | [x]  |
-| 0x0087 | NtReleaseKeyedEvent              | §8  | T07-mem §4 (stub)        | [x]  |
+| 0x0084 | NtCreateKeyedEvent               | §8  | T07-mem §4 (stub)        | [ ]  |
+| 0x0085 | NtOpenKeyedEvent                 | §8  | T07-mem §4 (stub)        | [ ]  |
+| 0x0086 | NtWaitForKeyedEvent              | §8  | T07-mem §4 (stub)        | [ ]  |
+| 0x0087 | NtReleaseKeyedEvent              | §8  | T07-mem §4 (stub)        | [ ]  |
 | 0x0088 | NtCreateIoCompletion             | §13 | T08-mem §4 (IOCP)        | [ ]  |
 | 0x0089 | NtSetIoCompletion                | §13 | T08-mem §4               | [ ]  |
 | 0x008A | NtRemoveIoCompletion             | §13 | T08-mem §4               | [ ]  |
@@ -853,7 +853,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 > **Total: 470 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 >
-> **Implementation progress: 47/470 wired** (10.0%) -- ETW and Time/Timer ranges complete. Run `/audit-ssdt` to refresh.
+> **Implementation progress: 47/470 registered** (10.0%, includes deferred stubs) -- ETW and Time/Timer ranges complete. Run `/audit-ssdt` to refresh.
 
 **Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.
 
@@ -909,7 +909,7 @@ Process and thread creation, suspension, termination, and thread context access 
 
 - [x] `NtCreateProcess(0x0030)`: wraps task_create + ob_handle_table_inherit; returns HANDLE
 - [x] `NtCreateProcessEx(0x0031)`: aliases NtCreateProcess (extended flags deferred to TODO-09)
-- [x] `NtCreateUserProcess(0x0045)`: stub returning STATUS_NOT_IMPLEMENTED (needs PE loader TODO-09)
+- [ ] `NtCreateUserProcess(0x0045)`: stub returning STATUS_NOT_IMPLEMENTED (needs PE loader TODO-09)
 - [x] `NtCreateThread(0x0036)`: wraps thread_create; supports CreateSuspended via suspend_count
 - [x] `NtCreateThreadEx(0x0037)`: aliases NtCreateThread (extended flags deferred)
 - [x] `NtOpenProcess(0x0032)`: lookup by CLIENT_ID.UniqueProcess; returns HANDLE
@@ -918,8 +918,8 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] `NtTerminateThread(0x0039)`: set TASK_DEAD, ob_thread_mark_dead
 - [x] `NtResumeThread(0x003A)`: decrement suspend_count; TASK_READY if 0
 - [x] `NtSuspendThread(0x003B)`: increment suspend_count; TASK_BLOCKED; STATUS_SUSPEND_COUNT_EXCEEDED at 127
-- [x] `NtGetContextThread(0x003C)`: stub returning STATUS_NOT_IMPLEMENTED (needs CONTEXT from TODO-10)
-- [x] `NtSetContextThread(0x003D)`: stub returning STATUS_NOT_IMPLEMENTED (needs CONTEXT from TODO-10)
+- [ ] `NtGetContextThread(0x003C)`: stub returning STATUS_NOT_IMPLEMENTED (needs CONTEXT from TODO-10)
+- [ ] `NtSetContextThread(0x003D)`: stub returning STATUS_NOT_IMPLEMENTED (needs CONTEXT from TODO-10)
 - [x] `NtQueryInformationThread(0x003E)`: ThreadBasicInformation (TEB, client ID, priority), ThreadPriority, ThreadBasePriority
 - [x] `NtSetInformationThread(0x003F)`: ThreadPriority, ThreadBasePriority (via thread_set_priority), ThreadAffinityMask, ThreadIdealProcessor (accepted, enforcement deferred)
 - [x] `NtQueryInformationProcess(0x0034)`: ProcessBasicInformation (PEB, affinity, parent PID), ProcessPriorityClass
@@ -927,8 +927,8 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] `NtAlertThread(0x0040)`: returns SUCCESS (APC delivery deferred to TODO-06 §11)
 - [x] `NtAlertResumeThread(0x0041)`: alert + NtResumeThread
 - [x] `NtTestAlert(0x0046)`: returns SUCCESS (APC check deferred to TODO-06 §11)
-- [x] `NtQueueApcThread(0x0043)`: stub returning STATUS_NOT_IMPLEMENTED (needs APC from TODO-06 §11)
-- [x] `NtImpersonateThread(0x0042)`: stub returning STATUS_NOT_IMPLEMENTED (needs SRM from TODO-11)
+- [ ] `NtQueueApcThread(0x0043)`: stub returning STATUS_NOT_IMPLEMENTED (needs APC from TODO-06 §11)
+- [ ] `NtImpersonateThread(0x0042)`: stub returning STATUS_NOT_IMPLEMENTED (needs SRM from TODO-11)
 - [x] `NtDelayExecution(0x0047)`: yield-loop sleep with uptime tick counter; negative 100-ns interval
 - [x] Added `suspend_count` field to `struct thread` in task.h
 - [x] New file: `include/kernel/nt/nt_process.h` with THREAD_BASIC_INFORMATION, PROCESS_BASIC_INFORMATION, info class constants
@@ -936,7 +936,7 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] 2 unit tests: SSDT registration (7 handler checks), info class constants (7 value checks)
 - [x] Commit: `"kernel: nt -- NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
 
-**Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread` returns valid RIP for a suspended thread. `NtDelayExecution` sleeps for the correct interval.
+**Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread`/`NtSetContextThread` currently return `STATUS_NOT_IMPLEMENTED` until TODO-10 provides `CONTEXT`. `NtDelayExecution` sleeps for the correct interval.
 
 ## 8. Synchronisation Objects + NtWaitForMultipleObjects
 Synchronisation objects through Ob-managed named types (→ XREF TODO-03 §6). Includes multi-wait and keyed event support.
@@ -958,17 +958,17 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-03 §6). I
 - [x] `NtOpenSemaphore(0x007B)`: ObLookupObjectByName for ObpSemaphoreType
 - [x] `NtReleaseSemaphore(0x007C)`: checks max count, sem_signal N times
 - [x] `NtQuerySemaphore(0x007D)`: returns SEMAPHORE_BASIC_INFORMATION
-- [x] `NtCreateKeyedEvent(0x0084)`: stub STATUS_NOT_IMPLEMENTED (deferred to TODO-07)
-- [x] `NtOpenKeyedEvent(0x0085)`: stub
-- [x] `NtWaitForKeyedEvent(0x0086)`: stub
-- [x] `NtReleaseKeyedEvent(0x0087)`: stub
+- [ ] `NtCreateKeyedEvent(0x0084)`: stub STATUS_NOT_IMPLEMENTED (deferred to TODO-07)
+- [ ] `NtOpenKeyedEvent(0x0085)`: stub
+- [ ] `NtWaitForKeyedEvent(0x0086)`: stub
+- [ ] `NtReleaseKeyedEvent(0x0087)`: stub
 - [x] New file: `include/kernel/nt/nt_sync.h` with wait constants, info structs
 - [x] New file: `src/kernel/nt/nt_sync.c` with 21 SSDT handlers
 - [x] Added STATUS_WAIT_0, STATUS_ABANDONED to ntstatus.h
 - [x] 2 unit tests: SSDT registration (6 handler checks), sync constant verification (7 checks)
 - [x] Commit: `"kernel: nt -- sync objects, NtWaitForMultipleObjects, keyed events"`
 
-**Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`. Keyed event wait/release pair succeeds between two threads.
+**Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`. Keyed event APIs (0x0084-0x0087) currently return `STATUS_NOT_IMPLEMENTED` pending TODO-07.
 
 ## 9. Virtual Memory (Alloc, Free, Protect, Lock, Cross-Process)
 Virtual memory management entry points -- covers the full NT virtual memory API surface.
@@ -982,20 +982,20 @@ Virtual memory management entry points -- covers the full NT virtual memory API 
 - [x] `NtFlushVirtualMemory(0x0056)`: no-op STATUS_SUCCESS (no backing store yet)
 - [x] `NtReadVirtualMemory(0x0057)`: identity-mapped memcpy from source address; cross-process via CR3 deferred
 - [x] `NtWriteVirtualMemory(0x0058)`: identity-mapped memcpy to target address
-- [x] `NtAllocateUserPhysicalPages(0x0059)`: AWE stub STATUS_NOT_IMPLEMENTED
-- [x] `NtFreeUserPhysicalPages(0x005A)`: AWE stub
-- [x] `NtMapUserPhysicalPages(0x005B)`: AWE stub
+- [ ] `NtAllocateUserPhysicalPages(0x0059)`: AWE stub STATUS_NOT_IMPLEMENTED
+- [ ] `NtFreeUserPhysicalPages(0x005A)`: AWE stub
+- [ ] `NtMapUserPhysicalPages(0x005B)`: AWE stub
 - [x] New file: `include/kernel/nt/nt_memory.h` -- MEM_COMMIT/RESERVE/RELEASE, PAGE_* flags, MEMORY_BASIC_INFORMATION
 - [x] New file: `src/kernel/nt/nt_memory.c` -- 12 SSDT handlers (9 implemented + 3 AWE stubs)
 - [x] 2 unit tests: SSDT registration (5 handler checks), constant verification (12 checks)
 - [x] Commit: `"kernel: nt -- NtAllocate/Free/Protect/Lock/Read/WriteVirtualMemory"`
 
-**Test checkpoint:** `NtAllocateVirtualMemory` with `MEM_COMMIT | PAGE_READWRITE` returns usable address; write+read round-trip. `NtProtectVirtualMemory` changes RW→RO; write attempt faults. `NtFreeVirtualMemory` with `MEM_RELEASE` returns `STATUS_SUCCESS`. `NtReadVirtualMemory` from kernel to user address space succeeds.
+**Test checkpoint:** `NtAllocateVirtualMemory` with `MEM_COMMIT | PAGE_READWRITE` returns usable address; write+read round-trip. `NtProtectVirtualMemory` changes RW→RO; write attempt faults. `NtFreeVirtualMemory` with `MEM_RELEASE` returns `STATUS_SUCCESS`. `NtReadVirtualMemory` from kernel to user address space succeeds. AWE APIs (0x0059-0x005B) currently return `STATUS_NOT_IMPLEMENTED`.
 
 ## 10. NtQuerySystemInformation / NtQueryInformationProcess
 Provides OS version, process list, performance counters, and detailed process info to ntdll and user-mode tools.
 
-- [x] `NtQuerySystemInformation(SystemInformationClass, SystemInformation, Length, ReturnLength)`:
+- [/] `NtQuerySystemInformation(SystemInformationClass, SystemInformation, Length, ReturnLength)`:
   - [x] `SystemBasicInformation (0)`: page size, CPU count, min/max user address, allocation granularity
   - [x] `SystemProcessorInformation (1)`: AMD64 architecture, level, max CPUs
   - [x] `SystemPerformanceInformation (2)`: PMM free/used/total pages
@@ -1010,7 +1010,7 @@ Provides OS version, process list, performance counters, and detailed process in
   - [ ] `SystemRegistryQuotaInformation (37)`: deferred (registry not quota-limited yet)
   - [ ] `SystemBootPerformanceInformation (custom)`: deferred (→ XREF: `TODO-01-kernel-init-sequencing.md §12`)
   - [x] Unimplemented classes return `STATUS_NOT_IMPLEMENTED` via default case
-- [x] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED (requires SeSystemtimePrivilege from TODO-11)
+- [ ] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED (requires SeSystemtimePrivilege from TODO-11)
 - [x] `NtQueryInformationProcess` extended with 7 new info classes:
   - `ProcessBasicInformation (0)`: PEB, PID, parent PID, affinity (done in §7)
   - `ProcessTimes (4)`: creation, exit, kernel, user times (zeroed -- not tracked yet)
@@ -1211,11 +1211,11 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [ ] `NtCancelTimer(TimerHandle, CurrentState)` → SSDT 0x0081
 - [ ] `NtQueryTimer(TimerHandle, TimerInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0082
 - [ ] `NtSetTimerEx(TimerHandle, TimerSetInformationClass, Buffer, Length)` → SSDT 0x0083
-- [ ] `NtQuerySystemTime(SystemTime)` → SSDT 0x00F0 (→ XREF TODO-07 §9)
-- [ ] `NtSetSystemTime(SystemTime, PreviousTime)` → SSDT 0x00F1 (→ XREF TODO-07 §9)
-- [ ] `NtQueryPerformanceCounter(PerformanceCounter, PerformanceFrequency)` → SSDT 0x00F2 (→ XREF TODO-07 §9)
-- [ ] `NtQueryTimerResolution(MaximumTime, MinimumTime, CurrentTime)` → SSDT 0x00F3 (→ XREF TODO-07 §8)
-- [ ] `NtSetTimerResolution(DesiredTime, SetResolution, ActualTime)` → SSDT 0x00F4 (→ XREF TODO-07 §8)
+- [x] `NtQuerySystemTime(SystemTime)` → SSDT 0x00F0 (→ XREF TODO-07 §9)
+- [x] `NtSetSystemTime(SystemTime, PreviousTime)` → SSDT 0x00F1 (→ XREF TODO-07 §9)
+- [x] `NtQueryPerformanceCounter(PerformanceCounter, PerformanceFrequency)` → SSDT 0x00F2 (→ XREF TODO-07 §9)
+- [x] `NtQueryTimerResolution(MaximumTime, MinimumTime, CurrentTime)` → SSDT 0x00F3 (→ XREF TODO-07 §8)
+- [x] `NtSetTimerResolution(DesiredTime, SetResolution, ActualTime)` → SSDT 0x00F4 (→ XREF TODO-07 §8)
 - [ ] Commit: `"kernel: nt -- timer control and time query syscalls"`
 
 **Test checkpoint:** `NtCreateTimer` + `NtSetTimer` with relative 100ms due time fires. `NtCancelTimer` cancels before fire returns `STATUS_SUCCESS`. `NtQueryPerformanceCounter` returns monotonically increasing value. `NtQueryTimerResolution` reports correct LAPIC timer resolution.
@@ -1264,7 +1264,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 ## 20. Exception and Debug Syscalls
 
 > [!NOTE]
-> Exception dispatch implemented in TODO-10-exception-dispatch-seh.md §5. Debug infrastructure in TODO-18-kernel-debugger-kd-protocol.md. This section reserves SSDT indices and defines the NT-compatible signatures.
+> Exception dispatch implemented in TODO-10-exception-dispatch-seh.md §5. Debug infrastructure in TODO-18-kernel-debugger-kd-protocol.md §13. This section reserves SSDT indices and defines the NT-compatible signatures.
 
 - [ ] `NtRaiseException(ExceptionRecord, ContextRecord, FirstChance)` → SSDT 0x0130 (→ XREF TODO-10 §5):
   - Delivers exception to the structured exception handler chain
@@ -1320,8 +1320,8 @@ Catch-all for global atom table, locale management, environment variables, and d
 - [ ] `NtQueryDefaultUILanguage(DefaultUILanguageId)` → SSDT 0x00DC
 - [ ] `NtSetDefaultUILanguage(DefaultUILanguageId)` → SSDT 0x00DD
 - [ ] `NtQueryInstallUILanguage(InstallUILanguageId)` → SSDT 0x00DE
-- [ ] `NtQuerySystemEnvironmentValue(VariableName, VariableValue, ValueLength, ReturnLength)` → SSDT 0x00D2: UEFI runtime variable access
-- [ ] `NtSetSystemEnvironmentValue(VariableName, VariableValue)` → SSDT 0x00D3
+- [x] `NtQuerySystemEnvironmentValue(VariableName, VariableValue, ValueLength, ReturnLength)` → SSDT 0x00D2: UEFI runtime variable access
+- [x] `NtSetSystemEnvironmentValue(VariableName, VariableValue)` → SSDT 0x00D3
 - [ ] `NtDisplayString(String)` → SSDT 0x00D8: blue-screen-style text output during boot
 - [ ] `NtRaiseHardError(ErrorStatus, NumberOfParameters, UnicodeStringParameterMask, Parameters, ValidResponseOptions, Response)` → SSDT 0x00D9: system-modal error dialog
 - [ ] Commit: `"kernel: nt -- atom table, locale, environment, misc syscalls"`
@@ -1438,7 +1438,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | 🔄 §8 stubs (TODO-07)       |
 | 💎 | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap    | ✅ §9 Alloc+Free+Protect+Query |
 | 💎 | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv        | ✅ §9 Read+Write (identity) |
-| 💎 | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc         | ✅ §5 NtQuerySystemInfo 2 classes |
+| 💎 | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc         | 🔄 §10 5 classes + defaults |
 | 💎 | LastError per-thread       | ✅ TEB→LastErrorValue       | ✅ errno via TLS           | ⬜ §11 + TODO-04 §6         |
 | 💎 | Registry syscalls          | ✅ NtCreate/Open/QueryKey   | ❌ No equivalent           | ⬜ §14 + TODO-13            |
 | 💎 | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC  | ⬜ §15 + TODO-11            |
@@ -1456,7 +1456,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | Kernel→user callbacks      | ✅ KeUserModeCallback       | ⚠️ Signals only            | ⬜ §25                      |
 | ⭐ | SSDT integrity protection  | ⚠️ PatchGuard (periodic)    | ❌ No protection           | ⬜ §26 -- HW write-protect   |
 
-> **After §1–§22:** Impossible OS has complete NT native API coverage -- 470 syscall endpoints across file I/O, process/thread, memory, sync, registry, security, sections, timers, ALPC, debug, power, namespace, atoms, and system info. Real `ntdll.dll` stubs can call into the kernel.
+> **Target after §1–§22 completion:** Impossible OS reaches complete NT native API coverage across 470 syscall endpoints. Current state is partial; many domain and deferred sections remain open.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract -- Windows keeps it internal/undocumented and Linux has no equivalent.
 > **§23** provides first-class syscall auditing -- no ETW complexity, no BPF programs, just a kernel callback with near-zero idle overhead.
 > **§24** closes the per-process syscall filtering parity gap -- both Win11 and Linux restrict per-process syscall access; Impossible OS uses a fast bitmap with optional BPF programs.

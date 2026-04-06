@@ -10,7 +10,7 @@ description: Fix all findings from a Codex adversarial review, then re-run the r
 - A Codex adversarial review has returned findings that need fixing.
 - The user says "fix the Codex findings" or "resolve the review issues."
 - After `/codex-review-todo` produces a needs-attention verdict.
-- For section-only scope, prefer `$codex-adversarial-review-section` (includes fix + re-review loop).
+- For section-only scope, prefer `implement-todo-section` (includes embedded adversarial fix + re-review + section verification loop).
 
 ## Workflow
 

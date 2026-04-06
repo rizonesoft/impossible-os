@@ -1,6 +1,6 @@
 ---
 name: implement-todo-section
-description: Execute one bounded TODO section, resolve XREF dependencies, use the supported build and debug workflow, and update the section state when code or test evidence changes it. Use when implementing a specific TODO section or a clearly scoped subset of a TODO.
+description: Execute one bounded TODO section, resolve XREF dependencies, run embedded adversarial review/fix/re-review, run embedded section verification, and update the section state when code or test evidence changes it.
 ---
 
 # Implement TODO Section
@@ -50,13 +50,34 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
    - If a row was `⬜ Planned` and is now fully working, change `⬜` to `✅`; if partial, use `🔄`.
    - Preserve the OS Comparison table format exactly (including header icons and column order); edit only the relevant status/content cells.
    - Do not change the Windows or Linux cells.
-10. Run section-scoped adversarial review and fix loop.
-   - Use `$codex-adversarial-review-section` for the implemented section.
-   - Fix findings and re-review up to 3 rounds until no unresolved High/Critical findings remain.
-11. Run targeted section verification.
-   - Use `$verify-todo-section` on the implemented section after fixes.
-   - Reconcile any status drift before commit.
-12. Commit and push after the section is complete and the build passes.
+10. Run embedded adversarial review for this section (required).
+   - Scope review to this section (`§N`) and changed files/symbols only.
+   - Challenge section claims explicitly:
+     - Concurrency/SMP safety
+     - Error-path handling and rollback behavior
+     - Wiring/registration correctness (SSDT/dispatch/hooks where applicable)
+     - Boundary and ABI assumptions
+   - Produce findings by severity: `Critical`, `High`, `Medium`, `Low`.
+11. Run fix -> build/test -> re-review loop (max 3 rounds).
+   - Fix all `Critical` and `High` findings.
+   - Fix `Medium` unless explicitly accepted with a concrete technical reason.
+   - Rebuild after each fix round:
+     - `bash scripts/build.sh`
+     - confirm `tail -1 build/build.log` is `=== BUILD OK ===`
+   - Re-review the same section focusing on previous findings and changed files.
+   - If unresolved `Critical`/`High` remain after round 3:
+     - do not mark section complete,
+     - keep `[/]` or `[ ]`,
+     - add explicit follow-up checklist items with ownership and `→ XREF` where needed.
+12. Run embedded targeted section verification (required).
+   - Verify the section end-to-end against code/build/runtime evidence before final TODO status updates.
+   - Classify each checklist item conservatively:
+     - `[x]` only when implemented + wired + functional normal path,
+     - never `[x]` for stubs/placeholders/normal-path `STATUS_NOT_IMPLEMENTED`.
+   - For SSDT claims, verify service number/index ↔ function ↔ registration/dispatch ↔ table row consistency.
+   - If blocked/incomplete work remains, keep `[ ]` or `[/]` and add missing prerequisite/ownership items in prerequisite-first order with owner scope and `→ XREF`.
+   - Re-check cross-TODO synchronization and auto-closure gates (`ID`/`SATISFIES` + full acceptance coverage).
+13. Commit and push after the section is complete and the build passes.
    - Use the section's `Commit:` line as the commit message.
    - Stage all changed source files, headers, and the updated TODO file together.
    - Account for repo `.githooks/` if installed (pre-commit lint must pass).
@@ -70,7 +91,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, use th
 - For SSDT sections, do not edit checklist/table status until service number ↔ function ↔ registration ↔ master-table consistency is verified.
 - If prerequisite work is missing, keep items open/partial and add explicit prerequisite ownership items before dependents.
 - Do not auto-close referenced TODO items from plain `→ XREF` text alone; require `ID`/`SATISFIES` mapping plus full acceptance-criteria proof.
-- Do not skip section adversarial review and targeted section verification before commit.
+- Do not skip embedded adversarial review, fix loop, and embedded section verification before commit.
 - Do not create new TODO files here.
 - Do not turn this into a broad file-wide roadmap cleanup pass.
 - Do not silently widen scope when requirements, repo state, or verification evidence conflict.

@@ -234,7 +234,7 @@
   - **Blake2b** -- `crypto_blake2b()` cryptographic hash; 256 or 512-bit output
   - **Argon2id** -- `crypto_argon2()` memory-hard password hash; used by login auth (→ XREF `TODO-11-security-reference-monitor.md §4`)
   - **X25519** -- `crypto_x25519()` Diffie-Hellman key exchange
-  - **Ed25519** -- `crypto_eddsa_sign()` / `crypto_eddsa_check()` signatures; used for EIF code signing (→ XREF `TODO-08-binary-system.md §12`)
+  - **Ed25519** -- `crypto_eddsa_sign()` / `crypto_eddsa_check()` signatures; used for EIF code signing (→ XREF `TODO-08-binary-system.md §17`)
 
 ### 5.2 Kernel CSPRNG
 

@@ -59,10 +59,10 @@ Every TODO must include an `## OS Comparison` section. Use this format:
 ```markdown
 ## OS Comparison
 
-| ⭐ | Feature           | 🪟 Win11          | 🐧 Linux          | 🚀 Impossible OS             |
-|----|-------------------|--------------------|--------------------|-------------------------------|
-| 💎 | Core feature      | ✅ Full support    | ✅ Full support    | ⬜ Planned -- §1              |
-| ⭐ | Exclusive feature | ❌ Not available   | ❌ Not available   | ⬜ Planned -- world-first     |
+| ⭐ | Feature           | 🪟 Win11          | 🐧 Linux            | 🚀 Impossible OS            |
+|----|-------------------|--------------------|---------------------|------------------------------|
+| 💎 | Core feature      | ✅ Full support    | ✅ Full support    | ⬜ Planned -- §1            |
+| ⭐ | Exclusive feature | ❌ Not available   | ❌ Not available   | ⬜ Planned -- world-first   |
 ```
 
 - `💎` rows = parity features; Impossible OS must reach the same level as Windows and Linux.

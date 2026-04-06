@@ -41,7 +41,7 @@ Use `&` to join tightly-coupled deps that must both be satisfied at the same cal
    - Replace full paths with `DNN TNN §N` compact form.
    - Same-domain refs → `TNN §N`.
 5. **Check status column accuracy.**
-   - Do not change status without code evidence -- flag inconsistencies for `/verify-todo-section`.
+   - Do not change status without code evidence -- flag inconsistencies for embedded section verification in `implement-todo-section`.
 6. **Rewrite the table** with corrected order, compact notation, and aligned columns.
 
 ## Table Format
@@ -57,6 +57,6 @@ Use `&` to join tightly-coupled deps that must both be satisfied at the same cal
 ## Guardrails
 
 - Do not change the content or scope of deliverables -- only order, notation, and formatting.
-- Do not mark rows complete based on code inspection; flag for `/verify-todo-section` instead.
+- Do not mark rows complete based on code inspection; flag for embedded section verification in `implement-todo-section` instead.
 - Do not reorder rows if doing so would change the meaning of the plan.
 - If a dep chain is circular, flag it explicitly rather than silently reordering.
