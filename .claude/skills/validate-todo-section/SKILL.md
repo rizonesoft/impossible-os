@@ -17,20 +17,25 @@ description: Validate whether a TODO section marked done or in progress matches 
    - Build: `bash scripts/build.sh` -- check `tail -1 build/build.log` for `=== BUILD OK ===`.
    - Runtime: `bash scripts/build.sh run` for headless QEMU + serial output.
    - Crash debug: `llvm-addr2line-19 -e build/kernel.exe -f <RIP>`.
-4. Classify each item conservatively.
+4. **Section plan quality check** (from `superpowers:writing-plans`):
+   - Does the section have a `- [ ] Commit:` line? Flag if missing.
+   - Does the section have a `**Test checkpoint:**` block with concrete pass/fail criteria? Flag if missing or vague.
+   - Do checklist items reference specific functions/types/files, or are they vague ("implement X")? Flag vague items.
+   - Are symbols referenced in the checklist defined in Inputs or created by a prior section? Flag orphaned references.
+5. Classify each item conservatively.
    - Update `[x]`, `[/]`, `[ ]`, and mismatch wording based on actual evidence.
    - Fix stale names, paths, notes, or verification wording when the implementation differs from the old text.
    - Apply strict done proof gate: mark `[x]` only when implemented, wired, and functional on normal path.
    - Do not mark done for `*_stub` handlers or normal-path `STATUS_NOT_IMPLEMENTED` placeholders.
    - For SSDT claims, verify service number/index ↔ Nt function ↔ registration/dispatch entry ↔ SSDT table row consistency.
    - If blocked/incomplete work remains, keep `[ ]` or `[/]` and add missing unchecked prerequisite/ownership items in prerequisite-first order with owner scope and `→ XREF`.
-5. Verify and apply cross-TODO synchronization when section dependencies are involved.
+6. Verify and apply cross-TODO synchronization when section dependencies are involved.
    - For directly referenced TODO sections affected by this status change, patch reciprocal dependency/status notes in the same run.
    - Auto-close referenced TODO checklist items only when both conditions are true:
      1. explicit mapping exists (`ID:` source and `SATISFIES:` target ID), and
      2. evidence proves full target acceptance-criteria coverage.
    - If either condition fails, keep target items open/partial and add concrete missing work.
-6. Record what was checked, what passed, what failed, and why the section state changed.
+7. Record what was checked, what passed, what failed, and why the section state changed.
 
 ## Guardrails
 

@@ -45,6 +45,11 @@ description: Validate a TODO file for structural completeness, Implementation Or
 6. Validate the current lean TODO structure.
    - Check required sections, numbering, checklist shape, references, and exit criteria.
    - Use `Implementation Order`, not legacy phase-table rules.
+   - **Plan quality check** (from `superpowers:writing-plans`):
+     - Does the Inputs section list every source file the TODO will touch? Flag missing files.
+     - Does each section explain WHY this approach was chosen when alternatives exist? Flag sections with complex trade-offs but no rationale.
+     - Is each `## N.` section a clear milestone with a commit checkpoint? Flag sections missing `- [ ] Commit:`.
+     - Can someone follow §1 through §N without guessing? Flag ambiguous checklist items that reference symbols not defined in Inputs or prior sections.
    - **Flat section numbering only:** Sections must use `## 1. Title`, `## 2. Title`, `## 3. Title` -- sequential integers. Sub-section numbering (`### 1.1`, `### 1.2`, `## 2.1`) is NOT allowed. If found, flatten into top-level sections and renumber sequentially. Update all `§N` references, Implementation Order rows, and OS Comparison cells to match the new numbers.
    - **`Depends On` column must use `§` prefix:** All section references in the `Depends On` column must use `§N` notation (e.g., `§1, §3`), not bare numbers (e.g., `1, 3`). Fix any bare numbers by adding the `§` prefix.
    - **Compact the OS Comparison table:**
