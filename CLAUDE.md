@@ -113,8 +113,14 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/complete-todo` | Convert a completed TODO into polished docs, update indexes, handle XREFs |
 | `/validate-doc` | Fact-check a doc against the codebase, check for charts/tables/OS Comparison |
 | `/todo-pipeline` | 3-stage TODO prep: validate -> gap analysis -> validate (before implementation) |
+| `/codex-design-review` | Codex pre-implementation design review -- catches plan flaws before coding |
 | `/codex-review-todo` | Codex adversarial review of all implemented sections in a TODO |
 | `/codex-fix-review` | Fix Codex findings, re-review until resolved (max 3 iterations) |
+| `/codex-test-coverage` | Codex test coverage gap analysis -- finds untested paths and missing assertions |
+| `/codex-impact-analysis` | Codex dependency impact analysis -- what breaks if you change X? |
+| `/codex-consistency-audit` | Codex cross-file consistency audit -- struct offsets, constants, API contracts |
+| `/codex-dead-code` | Codex dead code scanner -- unused functions, defines, types, declarations |
+| `/codex-perf-review` | Codex performance hot-path review -- ISR paths, lock times, O(n^2), allocations |
 
 ## Repository Layout
 
