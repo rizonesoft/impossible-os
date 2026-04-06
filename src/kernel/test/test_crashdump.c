@@ -294,6 +294,174 @@ static void test_module_registry_post_code(void)
                 "MODULE_REGISTRY POST != FPU_CAPTURE POST");
 }
 
+/* ---- MDMP binary format structs (S4) ---- */
+
+#include "kernel/crashdump.h"
+
+static void test_mdmp_header_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_HEADER), 32,
+                   "MINIDUMP_HEADER is 32 bytes");
+}
+
+static void test_mdmp_directory_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_DIRECTORY), 12,
+                   "MINIDUMP_DIRECTORY is 12 bytes");
+}
+
+static void test_mdmp_header_offsets(void)
+{
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_HEADER, Signature), 0x00,
+                   "MINIDUMP_HEADER.Signature at 0x00");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_HEADER, Version), 0x04,
+                   "MINIDUMP_HEADER.Version at 0x04");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_HEADER, NumberOfStreams), 0x08,
+                   "MINIDUMP_HEADER.NumberOfStreams at 0x08");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_HEADER, StreamDirectoryRva), 0x0C,
+                   "MINIDUMP_HEADER.StreamDirectoryRva at 0x0C");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_HEADER, CheckSum), 0x10,
+                   "MINIDUMP_HEADER.CheckSum at 0x10");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_HEADER, TimeDateStamp), 0x14,
+                   "MINIDUMP_HEADER.TimeDateStamp at 0x14");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_HEADER, Flags), 0x18,
+                   "MINIDUMP_HEADER.Flags at 0x18");
+}
+
+static void test_mdmp_signature(void)
+{
+    TEST_ASSERT_EQ(MDMP_SIGNATURE, 0x504D444D,
+                   "MDMP_SIGNATURE == 0x504D444D ('MDMP')");
+}
+
+static void test_mdmp_version(void)
+{
+    TEST_ASSERT_EQ(MDMP_VERSION, 0x0000A793,
+                   "MDMP_VERSION == 0xA793 (42899)");
+}
+
+static void test_mdmp_stream_types(void)
+{
+    TEST_ASSERT_EQ(ThreadListStream, 3, "ThreadListStream == 3");
+    TEST_ASSERT_EQ(ModuleListStream, 4, "ModuleListStream == 4");
+    TEST_ASSERT_EQ(MemoryListStream, 5, "MemoryListStream == 5");
+    TEST_ASSERT_EQ(ExceptionStream, 6, "ExceptionStream == 6");
+    TEST_ASSERT_EQ(SystemInfoStream, 7, "SystemInfoStream == 7");
+    TEST_ASSERT_EQ(Memory64ListStream, 9, "Memory64ListStream == 9");
+    TEST_ASSERT_EQ(ImpossibleOSInfoStream, 0x8001,
+                   "ImpossibleOSInfoStream == 0x8001");
+}
+
+static void test_mdmp_exception_stream_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_EXCEPTION), 152,
+                   "MINIDUMP_EXCEPTION is 152 bytes");
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_EXCEPTION_STREAM), 168,
+                   "MINIDUMP_EXCEPTION_STREAM is 168 bytes");
+    /* Key offsets for WinDbg parsing */
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_EXCEPTION_STREAM, ThreadId), 0,
+                   "ExceptionStream.ThreadId at 0");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_EXCEPTION_STREAM, ExceptionRecord), 8,
+                   "ExceptionStream.ExceptionRecord at 8");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_EXCEPTION_STREAM, ThreadContext), 160,
+                   "ExceptionStream.ThreadContext at 160");
+}
+
+static void test_mdmp_module_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(VS_FIXEDFILEINFO), 52,
+                   "VS_FIXEDFILEINFO is 52 bytes");
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_MODULE), 108,
+                   "MINIDUMP_MODULE is 108 bytes");
+    /* Key offsets */
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_MODULE, BaseOfImage), 0,
+                   "Module.BaseOfImage at 0");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_MODULE, SizeOfImage), 8,
+                   "Module.SizeOfImage at 8");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_MODULE, ModuleNameRva), 20,
+                   "Module.ModuleNameRva at 20");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_MODULE, CheckSum), 12,
+                   "Module.CheckSum at 12");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_MODULE, TimeDateStamp), 16,
+                   "Module.TimeDateStamp at 16");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_MODULE, VersionInfo), 24,
+                   "Module.VersionInfo at 24");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_MODULE, CvRecord), 76,
+                   "Module.CvRecord at 76");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_MODULE, Reserved0), 92,
+                   "Module.Reserved0 at 92");
+}
+
+static void test_mdmp_thread_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_THREAD), 48,
+                   "MINIDUMP_THREAD is 48 bytes");
+    /* Key offsets */
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_THREAD, Teb), 16,
+                   "Thread.Teb at 16");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_THREAD, Stack), 24,
+                   "Thread.Stack at 24");
+    TEST_ASSERT_EQ(__builtin_offsetof(MINIDUMP_THREAD, ThreadContext), 40,
+                   "Thread.ThreadContext at 40");
+}
+
+static void test_mdmp_memory_descriptor_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_LOCATION_DESCRIPTOR), 8,
+                   "MINIDUMP_LOCATION_DESCRIPTOR is 8 bytes");
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_MEMORY_DESCRIPTOR), 16,
+                   "MINIDUMP_MEMORY_DESCRIPTOR is 16 bytes");
+}
+
+static void test_mdmp_system_info_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(CPU_INFORMATION), 24,
+                   "CPU_INFORMATION is 24 bytes");
+    TEST_ASSERT_EQ(sizeof(MINIDUMP_SYSTEM_INFO), 56,
+                   "MINIDUMP_SYSTEM_INFO is 56 bytes");
+}
+
+static void test_impossible_os_info(void)
+{
+    TEST_ASSERT_EQ(sizeof(IMPOSSIBLE_OS_INFO), 436,
+                   "IMPOSSIBLE_OS_INFO is 436 bytes");
+    TEST_ASSERT_EQ(IMPOSSIBLE_OS_INFO_MAGIC, 0x10DEAD00,
+                   "IMPOSSIBLE_OS_INFO_MAGIC == 0x10DEAD00");
+}
+
+static void test_mdmp_format_post_code(void)
+{
+    TEST_ASSERT_EQ(POST16_MDMP_FORMAT, 0xDE46,
+                   "POST16_MDMP_FORMAT == 0xDE46");
+    TEST_ASSERT(POST16_MDMP_FORMAT != POST16_BUGCHECK,
+                "MDMP_FORMAT POST != BUGCHECK POST");
+    TEST_ASSERT(POST16_MDMP_FORMAT != POST16_FPU_CAPTURE,
+                "MDMP_FORMAT POST != FPU_CAPTURE POST");
+    TEST_ASSERT(POST16_MDMP_FORMAT != POST16_MODULE_REGISTRY,
+                "MDMP_FORMAT POST != MODULE_REGISTRY POST");
+}
+
+static void test_mdmp_type_flags(void)
+{
+    TEST_ASSERT_EQ(MiniDumpNormal, 0x00000000, "MiniDumpNormal == 0");
+    TEST_ASSERT_EQ(MiniDumpWithFullMemory, 0x00000002,
+                   "MiniDumpWithFullMemory == 0x02");
+    TEST_ASSERT_EQ(MiniDumpFilterMemory, 0x00000008,
+                   "MiniDumpFilterMemory == 0x08");
+    TEST_ASSERT_EQ(MiniDumpWithCodeSegs, 0x00002000,
+                   "MiniDumpWithCodeSegs == 0x2000");
+    TEST_ASSERT_EQ(MiniDumpWithoutOptionalData, 0x00000400,
+                   "MiniDumpWithoutOptionalData == 0x400");
+}
+
+static void test_mdmp_processor_arch(void)
+{
+    TEST_ASSERT_EQ(PROCESSOR_ARCHITECTURE_AMD64, 9,
+                   "PROCESSOR_ARCHITECTURE_AMD64 == 9");
+    TEST_ASSERT_EQ(VER_PLATFORM_WIN32_NT, 2,
+                   "VER_PLATFORM_WIN32_NT == 2");
+}
+
 /* ---- Registration ---- */
 
 void test_register_crashdump(void)
@@ -340,6 +508,37 @@ void test_register_crashdump(void)
                             test_iterate_modules_lockless, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: module registry POST code",
                             test_module_registry_post_code, TEST_CAT_BOOT);
+    /* S4: MDMP binary format structs */
+    test_suite_register_cat("Crash: MDMP header size",
+                            test_mdmp_header_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: MDMP header offsets",
+                            test_mdmp_header_offsets, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: MDMP directory size",
+                            test_mdmp_directory_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: MDMP signature",
+                            test_mdmp_signature, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: MDMP version",
+                            test_mdmp_version, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: MDMP stream types",
+                            test_mdmp_stream_types, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: exception stream size",
+                            test_mdmp_exception_stream_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: module struct size",
+                            test_mdmp_module_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: thread struct size",
+                            test_mdmp_thread_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: memory descriptor size",
+                            test_mdmp_memory_descriptor_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: system info size",
+                            test_mdmp_system_info_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: ImpossibleOSInfo",
+                            test_impossible_os_info, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: MDMP format POST code",
+                            test_mdmp_format_post_code, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: MINIDUMP_TYPE flags",
+                            test_mdmp_type_flags, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: processor arch constants",
+                            test_mdmp_processor_arch, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

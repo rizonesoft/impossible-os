@@ -57,7 +57,7 @@
 | 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                | --                  |  [x]   |
 | 💎  |   2   | FPU/XMM/XSAVE state capture                   | §1                  |  [x]   |
 | 💎  |   3   | Module registry (wire `exec_register_module`)  | T08 §6              |  [x]   |
-| 💎  |   4   | MDMP binary format: header, directory, streams | §1, §2, §3, T10 §1 |  [ ]   |
+| 💎  |   4   | MDMP binary format: header, directory, streams | §1, §2, §3, T10 §1 |  [x]   |
 | 💎  |   5   | Minidump writer (crashing thread + memory)     | §4                  |  [ ]   |
 | 💎  |   6   | Kernel dump & full dump variants               | §5                  |  [ ]   |
 | 💎  |   7   | Raw-partition dump sink (VFS bypass)            | §5, T15 §4         |  [ ]   |
@@ -122,97 +122,19 @@ Wire the existing `exec_register_module()` / `exec_find_module_by_pc()` infrastr
 
 Define the WinDbg-compatible MDMP binary format structures for writing crash dump files.
 
-- [ ] Define in `include/kernel/crashdump.h`:
-  ```c
-  #define MDMP_SIGNATURE  0x504D444D  /* "MDMP" */
-  #define MDMP_VERSION    0x0000A793  /* matching Windows minidump version */
-
-  typedef struct {
-      uint32_t Signature;        /* MDMP_SIGNATURE */
-      uint32_t Version;          /* MDMP_VERSION | (impl_version << 16) */
-      uint32_t NumberOfStreams;
-      uint32_t StreamDirectoryRva; /* byte offset to directory array */
-      uint32_t Checksum;         /* CRC32 of entire dump file, 0=optional */
-      uint32_t TimeDateStamp;    /* Unix timestamp */
-      uint64_t Flags;            /* MINIDUMP_TYPE flags */
-  } MINIDUMP_HEADER;
-
-  /* Flags */
-  #define MiniDumpNormal            0x00000000
-  #define MiniDumpWithFullMemory    0x00000002
-  #define MiniDumpFilterMemory      0x00000008
-  #define MiniDumpWithCodeSegs      0x00000020
-  #define MiniDumpWithoutOptionalData 0x00000400
-  ```
-- [ ] `MINIDUMP_DIRECTORY` entry (8 bytes each):
-  ```c
-  typedef struct {
-      uint32_t StreamType; /* stream type code */
-      uint32_t DataSize;   /* byte length of stream data */
-      uint32_t Rva;        /* byte offset from file start */
-  } MINIDUMP_DIRECTORY;
-  ```
-
-- [ ] Stream type constants:
-  ```c
-  #define ThreadListStream          3
-  #define ModuleListStream          4
-  #define MemoryListStream          5
-  #define ExceptionStream           6
-  #define SystemInfoStream          7
-  #define ThreadExListStream        8
-  #define Memory64ListStream        9
-  #define UnloadedModuleListStream 14
-  #define MiscInfoStream           15
-  /* Impossible OS extension stream */
-  #define ImpossibleOSInfoStream   0x8001
-  ```
-
-- [ ] `MINIDUMP_EXCEPTION_STREAM`:
-  ```c
-  typedef struct {
-      uint32_t ThreadId;
-      uint32_t __Alignment;
-      struct {
-          uint32_t ExceptionCode;     /* = bugcheck code */
-          uint32_t ExceptionFlags;
-          uint64_t ExceptionRecord;   /* VA of chained record, 0 if none */
-          uint64_t ExceptionAddress;  /* = crashing RIP */
-          uint32_t NumberParameters;  /* = 4 */
-          uint32_t __Unused;
-          uint64_t ExceptionInformation[15]; /* bugcheck params p1–p4 */
-      } ExceptionRecord;
-      struct { uint32_t DataSize; uint32_t Rva; } ThreadContext; /* → CONTEXT */
-  } MINIDUMP_EXCEPTION_STREAM;
-  ```
-- [ ] `MINIDUMP_MODULE` per loaded module (72 bytes):
-  - `BaseOfImage`, `SizeOfImage`, `CheckSum`, `TimeDateStamp`, `ModuleNameRva` (RVA → null-terminated UTF-16 name string), `VersionInfo`, `CvRecord`, `MiscRecord`
-- [ ] `MINIDUMP_THREAD`:
-  - `ThreadId`, `SuspendCount`, `PriorityClass`, `Priority`, `Teb` (TEB VA), `Stack` (`{StartOfMemoryRange, DataSize, Rva}`), `ThreadContext` (`{DataSize, Rva}`)
-- [ ] `MINIDUMP_MEMORY_DESCRIPTOR`:
-  - `StartOfMemoryRange` (physical/virtual base), `Memory` (size + RVA)
-- [ ] `MINIDUMP_SYSTEM_INFO`:
-  - `ProcessorArchitecture=PROCESSOR_ARCHITECTURE_AMD64 (9)`, `ProcessorLevel`, `ProcessorRevision`, `NumberOfProcessors`, `MajorVersion=10` (Win10 compat), `MinorVersion=0`, `BuildNumber=IMPOSSIBLE_OS_BUILD`, `PlatformId=VER_PLATFORM_WIN32_NT (2)`, `CSDVersionRva` (OS name string RVA)
-
-- [ ] Custom stream appended after standard streams:
-  ```c
-  typedef struct {
-      uint32_t Magic;              /* 0xI0DEAD00 */
-      uint32_t KernelBuild;        /* build number */
-      uint64_t BugCheckCode;
-      uint64_t BugCheckParams[4];
-      char     BugCheckName[64];   /* e.g. "PAGE_FAULT_IN_NONPAGED_AREA" */
-      uint64_t PanicTimestamp;     /* TSC + wall clock */
-      uint64_t PhysicalMemoryKiB;
-      uint32_t CpuCount;
-      char     CpuBrandString[48]; /* from CPUID 0x80000002–0x80000004 */
-      char     KernelPath[256];
-  } IMPOSSIBLE_OS_INFO;
-  ```
-
+- [x] Define in `include/kernel/crashdump.h`: `MINIDUMP_HEADER` (32 bytes), `MDMP_SIGNATURE` (0x504D444D), `MDMP_VERSION` (0xA793), `MINIDUMP_TYPE` flags (`MiniDumpNormal`, `MiniDumpWithFullMemory`, `MiniDumpFilterMemory`, `MiniDumpWithCodeSegs` = 0x2000, `MiniDumpWithoutOptionalData`); all pack(4) matching Windows SDK `pshpack4.h`
+- [x] `MINIDUMP_DIRECTORY` (12 bytes): `StreamType`, `DataSize`, `Rva`; `MINIDUMP_LOCATION_DESCRIPTOR` (8 bytes): `DataSize`, `Rva`
+- [x] Stream type constants: `ThreadListStream` (3) through `MiscInfoStream` (15), plus `ImpossibleOSInfoStream` (0x8001, vendor range 0x8000+)
+- [x] `MINIDUMP_EXCEPTION` (152 bytes) and `MINIDUMP_EXCEPTION_STREAM` (168 bytes): separate `MINIDUMP_EXCEPTION` type matching Windows layout, `ExceptionInformation[15]` for bugcheck params
+- [x] `MINIDUMP_MODULE` (108 bytes, pack(4)): `BaseOfImage`, `SizeOfImage`, `CheckSum`, `TimeDateStamp`, `ModuleNameRva` (RVA -> `MINIDUMP_STRING`), `VS_FIXEDFILEINFO` (52 bytes), `CvRecord`, `MiscRecord`, `Reserved0/1`
+- [x] `MINIDUMP_THREAD` (48 bytes): `ThreadId`, `SuspendCount`, `PriorityClass`, `Priority`, `Teb`, `Stack` (`MINIDUMP_MEMORY_DESCRIPTOR`), `ThreadContext`
+- [x] `MINIDUMP_MEMORY_DESCRIPTOR` (16 bytes): `StartOfMemoryRange`, `Memory` (`MINIDUMP_LOCATION_DESCRIPTOR`)
+- [x] `MINIDUMP_SYSTEM_INFO` (56 bytes): `ProcessorArchitecture` (AMD64=9), `ProcessorLevel/Revision`, `NumberOfProcessors/ProductType`, `MajorVersion=10`, `MinorVersion=0`, `BuildNumber`, `PlatformId` (2), `CSDVersionRva`, `SuiteMask`, `CPU_INFORMATION` union (24 bytes, X86CpuInfo + OtherCpuInfo)
+- [x] `IMPOSSIBLE_OS_INFO` (436 bytes, custom stream): `Magic` (0x10DEAD00), `KernelBuild`, `BugCheckCode`, `BugCheckParams[4]`, `BugCheckName[64]`, `PanicTimestamp`, `PhysicalMemoryKiB`, `CpuCount`, `CpuBrandString[48]`, `KernelPath[256]`
+- [x] 15 unit tests in `test_crashdump.c` S4: struct sizes, field offsets (MINIDUMP_HEADER, EXCEPTION_STREAM, MODULE, THREAD), all stream type constants, MINIDUMP_TYPE flag values, signature, version, POST16 code
 - [ ] Commit: `"kernel/crashdump: MDMP header, directory, all stream type structs, ImpossibleOSInfo"`
 
-**Test checkpoint:** `sizeof(MINIDUMP_HEADER)` == 28 bytes. `MINIDUMP_DIRECTORY` == 12 bytes. `MDMP_SIGNATURE == 0x504D444D`. `ImpossibleOSInfoStream` type == 0x8001. Static asserts on all struct sizes. `POST16(0xDE46)` on entry. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** `sizeof(MINIDUMP_HEADER)` == 32 bytes. `MINIDUMP_DIRECTORY` == 12 bytes. `MINIDUMP_MODULE` == 108 bytes (pack(4)). `MDMP_SIGNATURE == 0x504D444D`. `ImpossibleOSInfoStream` type == 0x8001. Static asserts on all 12 struct sizes + 5 MINIDUMP_TYPE flags + signature/stream ID. `POST16(0xDE46)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
 ---
 
