@@ -37,6 +37,7 @@ typedef enum {
     TEST_CAT_BOOT,      // Boot & Logging
     TEST_CAT_ABI,       // ABI Compatibility (registry, PEB/TEB)
     TEST_CAT_STORAGE,   // Storage Drivers
+    TEST_CAT_EXEC,      // Binary System (exec, EIF, PE, modules)
     TEST_CAT_COUNT,
     TEST_CAT_ALL = 0xFF, // Runs under any filter
 } test_category_t;
@@ -78,7 +79,7 @@ Always use `test_suite_register_cat()` with the appropriate category.
 > - **Write test assertions first** from the TODO's test case list BEFORE reading the implementation deeply. This ensures tests reflect the spec, not the code.
 > - **Run the tests and watch them fail** -- confirms the assertions are actually checking something. A test that passes before implementation is wired is a useless test.
 > - **Then read the implementation** to verify the tests match real behavior. Adjust only if the spec (TODO) is wrong, not because the code does something different.
-> - If writing a test reveals a bug in the code under test, **fix the bug** -- this is expected TDD behavior.
+> - If writing a test reveals a bug in the code under test, **fix the bug** using `kernel-code-quality` gates and `superpowers:systematic-debugging` discipline. A test-revealed SMP race needs proper diagnosis, not a quick patch.
 
 ## Workflow
 
@@ -216,13 +217,28 @@ The test file is auto-discovered by the Makefile (`find ... -name '*.c'`), so **
 ```bash
 bash scripts/test.sh                        # all categories
 bash scripts/test.sh SUITE=<category>       # just the new category
+make test-<category>                        # verify the make target works too
 ```
 
-### 7. Fix any bugs found during test development
+Verify the category filter shows ONLY the expected tests, not all tests. If `make test-<category>` doesn't exist, add it to the Makefile.
 
-If writing a test reveals a bug, fix the bug in the code under test. This is expected.
+If tests fail, use `/diagnose-serial-log` on the test output to classify and fix failures systematically rather than guessing at the cause.
 
-### 8. Mark the TODO section complete
+### 7. Codex test coverage analysis
+
+After wiring tests, dispatch a test coverage gap analysis to catch missing assertions. Apply `superpowers:receiving-code-review` discipline -- verify Codex suggestions technically before adding them.
+
+```bash
+node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<test coverage prompt>"
+```
+
+Focus: untested error paths, missing boundary tests, missing negative tests. Add any valid missing tests found. Skip for trivial test suites (< 3 assertions).
+
+### 8. Fix any bugs found during test development
+
+If writing a test reveals a bug, fix the bug in the code under test using `kernel-code-quality` gates. For non-trivial bugs (SMP races, memory corruption, boot-order issues), apply `superpowers:systematic-debugging` -- diagnose root cause properly, don't quick-patch.
+
+### 9. Mark the TODO section complete
 
 Update the TODO file's `## Unit Tests` section:
 - Mark all `[ ]` checkboxes as `[x]`
@@ -233,7 +249,7 @@ Update the TODO file's `## Unit Tests` section:
 
 If the TODO has an **Implementation Order table** with a row for unit tests, update its Status to `[x]`.
 
-### 9. Commit
+### 10. Commit
 
 Use the commit message from the `Commit:` line in the Unit Tests section. Stage:
 - The new test file (`src/kernel/test/test_<name>.c`)
@@ -252,13 +268,18 @@ If the existing categories don't fit, add a new one:
 
 ## Guardrails
 
-- Only implement tests listed in the `## Unit Tests` section -- do not invent additional tests
+- Only implement tests listed in the `## Unit Tests` section -- do not invent additional tests (Codex coverage analysis in step 7 may suggest additions, but apply `receiving-code-review` discipline)
 - Do not modify the code under test unless a bug is found during testing
 - Do not change other TODO sections
 - Do not skip assertions listed in the TODO -- implement all of them
 - If an assertion cannot be tested (e.g., requires hardware), note it in the TODO and mark it `[x]` with `(skipped: reason)`
+- If the TODO lists 30+ test cases, consider splitting into multiple test files grouped by sub-feature rather than one giant file
+- **Test isolation:** some subsystems (e.g., module registry `s_modules[]`, SSDT dispatch table) have no reset/cleanup mechanism. Tests that modify global state may affect later tests. Document this limitation in a comment and use unique values (e.g., unique base addresses) to avoid collisions with prior tests.
+- If tests add POST16 codes, verify they don't conflict with existing codes in `boot_init.h`
 
 ## Existing Test Files (Reference)
+
+> **Keep this table current** when adding new test files. Run `ls src/kernel/test/test_*.c` to verify.
 
 | File | Category | What it tests |
 |------|----------|---------------|
@@ -268,12 +289,18 @@ If the existing categories don't fit, add a new one:
 | `test_swap.c` | `TEST_CAT_MM` | Swap space management |
 | `test_mmap.c` | `TEST_CAT_MM` | Memory-mapped regions |
 | `test_vfs.c` | `TEST_CAT_FS` | VFS create/read/write/delete |
+| `test_ixfs.c` | `TEST_CAT_FS` | IXFS filesystem operations |
 | `test_sched.c` | `TEST_CAT_SCHED` | Scheduler task management |
 | `test_registry.c` | `TEST_CAT_ABI` | Win32 registry operations |
+| `test_peb_teb.c` | `TEST_CAT_ABI` | PEB/TEB ABI compatibility |
+| `test_nt_types.c` | `TEST_CAT_ABI` | NT type sizes, SSDT constants |
 | `test_boot_init.c` | `TEST_CAT_BOOT` | Boot init macros, state |
 | `test_klog.c` | `TEST_CAT_BOOT` | Kernel logging subsystem |
 | `test_ob.c` | `TEST_CAT_OB` | Object Manager (handles, refs, namespace) |
 | `test_security.c` | `TEST_CAT_SECURITY` | Security subsystem |
-| `test_peb_teb.c` | `TEST_CAT_ABI` | PEB/TEB ABI compatibility |
 | `test_ipc.c` | `TEST_CAT_IPC` | IPC mechanisms |
 | `test_storage.c` | `TEST_CAT_STORAGE` | Storage driver operations |
+| `test_blackbox.c` | `TEST_CAT_STORAGE` | BlackBox partition logging |
+| `test_acpi_power.c` | `TEST_CAT_STORAGE` | ACPI power management |
+| `test_bulletproof.c` | `TEST_CAT_ABI` | Kernel bulletproofing invariants |
+| `test_exec.c` | `TEST_CAT_EXEC` | Binary system (exec, EIF, PE, modules) |
