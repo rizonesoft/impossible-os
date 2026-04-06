@@ -97,7 +97,7 @@ static uint32_t         g_deferred_count;
 int boot_defer(const char *name, boot_result_t (*fn)(void))
 {
     if (!fn) {
-        klog(LOG_ERROR, "boot", "deferred init: NULL function for '%s'",
+        klog(LOG_DEBUG, "boot", "deferred init: NULL function for '%s'",
              name ? name : "?");
         return -1;
     }

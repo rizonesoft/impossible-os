@@ -557,7 +557,7 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
     /* ---- Pre-flight validation ---- */
 
     if (image_base < PE_MIN_IMAGE_BASE) {
-        klog(LOG_ERROR, "pe",
+        klog(LOG_DEBUG, "pe",
              "ImageBase 0x%x below minimum 0x%x -- rejected",
              image_base, (uint64_t)PE_MIN_IMAGE_BASE);
         return 0;
