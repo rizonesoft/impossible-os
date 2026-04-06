@@ -125,30 +125,61 @@ Produce a structured report:
 | PE exports -> unregistered SSDT | N |
 ```
 
-### 9. Update the master tables
+### 9. Functional completeness check (not just wired)
 
-For each mismatch found in step 8:
-- Edit the Done column: `[ ]` -> `[x]` or `[x]` -> `[ ]`
+For each handler that passes the "registered + not stub" check, verify it is **functionally complete**, not just partially implemented:
+
+- **Read the handler body.** Does it handle the documented parameters and code paths? A `NtCreateFile` that only handles `FILE_OPEN` but not `FILE_CREATE` is incomplete.
+- **Check return paths.** Does the normal path return a meaningful `NTSTATUS`? Are error paths handled (not just `return STATUS_NOT_IMPLEMENTED` for edge cases)?
+- **Check documented behavior.** Cross-reference against the TODO-05 checklist description for that handler. If the checklist says "implement X, Y, Z" and only X is done, the handler is `[/]` not `[x]`.
+- **Classify:** `COMPLETE` (all documented behavior), `PARTIAL` (some paths work, others return NOT_IMPLEMENTED), `STUB` (registered but no real logic).
+- Only `COMPLETE` handlers get `[x]`. `PARTIAL` gets `[/]` with a note listing what's missing. `STUB` gets `[ ]`.
+
+### 10. Cross-reference and loose-end check
+
+For each handler marked COMPLETE, verify the full chain:
+
+- **Cross-TODO consumers:** Grep all TODO files for references to this `NtXxx` function. Are the consumers' checklist items updated? (e.g., if `NtCreateFile` is done, does TODO-08 §9's PE import table list it as resolved?)
+- **PE export table sync:** Is the function listed in `s_kernel32_exports[]` or `s_ntdll_exports[]` in `pe.c`? If a Win32 wrapper exists (e.g., `CreateFileW` -> `NtCreateFile`), it should be in the export table.
+- **EIF dispatch table:** If the SSDT index is used by EIF binaries, verify the dispatch table maps it correctly.
+- **Unit test coverage:** Does `test_nt_types.c` or another test file assert on this handler? Flag handlers with zero test coverage.
+- **Documentation sync:** Is the handler mentioned in the TODO-05 master table Owner column with the correct file reference?
+
+Flag any broken chain links as loose ends in the report. These are NOT blockers for `[x]` on the handler itself, but they are action items that need follow-up.
+
+Add a new report section:
+```
+### Loose ends (cross-reference gaps)
+| Function | Issue | Action |
+|----------|-------|--------|
+| NtCreateFile | Not in s_kernel32_exports[] | Add CreateFileW mapping |
+| NtWriteFile | No unit test | Add to test_nt_types.c |
+```
+
+### 11. Update the master tables
+
+For each mismatch found in steps 8-10:
+- Edit the Done column: `[ ]` -> `[x]` (COMPLETE only), `[x]` -> `[/]` (PARTIAL), or `[x]` -> `[ ]` (STUB/missing)
 - Update the Owner column to reference the implementing source file and TODO section (e.g., `T02 §7 (etw.c)`)
 - If a range header has all entries `[x]`, add `-- **N/N DONE** (file.c, T02 §N)` to the header
 
-### 10. Update TODO-05 checklist items (outside master table)
+### 12. Update TODO-05 checklist items (outside master table)
 
-For mismatches from step 8:
+For mismatches from steps 8-10:
 - Update checkbox state to match reality.
 - Rewrite stale wording when needed (for example, checked "stub" bullets that are now real implementations).
 - Preserve index references and section links while updating status text.
 - If a section lacks prerequisite/ownership clarity, add explicit unchecked checklist items with owners/XREFs in dependency order.
 - Even if a section has many `[x]` items, insert newly discovered missing `[ ]` items where they logically belong.
 
-### 11. Update the progress summary
+### 13. Update the progress summary
 
 At the bottom of the master table, update the implementation progress line:
 ```
 > **Implementation progress: N/470 wired** (X.X%) -- [list of complete ranges]. Run `/audit-ssdt` to refresh.
 ```
 
-### 12. Commit
+### 14. Commit
 
 If changes were made, commit with:
 ```
@@ -161,14 +192,19 @@ docs: audit SSDT master table -- N/470 wired (X.X%)
 - Do NOT change service number definitions in `service_numbers.h` -- this skill only audits the Done column.
 - Do NOT implement missing handlers -- just flag them. Use `/implement-ssdt-range` for that.
 - The `ssdt_stub_not_implemented` default handler is NOT a real implementation.
-- `Done=[x]` requires BOTH: wired via `ssdt_register()` and functionally implemented. Do not mark stubs (e.g., `*_stub`) or handlers that just return `STATUS_NOT_IMPLEMENTED`.
-- Same strict rule for checklist items: only mark complete when both implemented and wired.
+- **3-tier classification** (from step 9):
+  - `[x]` = COMPLETE: registered + all documented code paths implemented + error handling + not just STATUS_NOT_IMPLEMENTED stubs on edge cases.
+  - `[/]` = PARTIAL: registered + some paths work but others return STATUS_NOT_IMPLEMENTED or are missing. Note what's missing.
+  - `[ ]` = STUB/MISSING: not registered, or registered but handler is a stub/placeholder.
+- Same strict rule for checklist items: only `[x]` for COMPLETE handlers.
 - Always validate against live codebase evidence; TODO checkbox state is never source-of-truth.
 - If evidence is incomplete/ambiguous, keep or revert to `[ ]` and add explicit missing prerequisite/ownership items.
-- Before changing any checklist item to `[x]`, verify all of the following:
+- Before changing any checklist item to `[x]`, verify ALL of the following:
   1. Correct SSDT registration exists for the listed service/index.
   2. Handler symbol resolves to real code (not a stub symbol name and not a thin placeholder).
   3. Handler does not simply return `STATUS_NOT_IMPLEMENTED` in the normal path.
-  4. (When an index is listed) registration index matches the checklist claim.
+  4. Handler covers all documented parameters and code paths (not just the happy path).
+  5. (When an index is listed) registration index matches the checklist claim.
+  6. Cross-TODO consumers are aware of the implementation (loose-end check from step 10).
 - Shadow SSDT entries (0x1000+) are in a separate table and TODO file.
 - Owner references use compact notation: `T02 §7 (file.c)` -- not `TODO-02 Section 7`.
