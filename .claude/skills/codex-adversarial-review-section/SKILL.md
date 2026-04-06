@@ -8,15 +8,19 @@ description: Run adversarial code review for one implemented TODO section, fix f
 ## Workflow
 
 1. Scope the review to one implemented section (`§N`) and its changed files/symbols.
-2. Extract section claims that must be challenged.
-   - Concurrency/SMP safety
-   - Error-path handling and rollback behavior
-   - Wiring/registration correctness (SSDT/dispatch/hooks when applicable)
-   - Boundary and ABI assumptions
+2. Extract ALL adversarial angles to challenge. The review MUST be full-spectrum, not limited to one category (e.g., security-only). Every dispatch must cover ALL of:
+   - **Concurrency/SMP safety** -- new shared mutable state, lock ordering, atomics
+   - **Error-path handling and rollback** -- partial state on failure, resource leaks, cleanup
+   - **Wiring/registration correctness** -- SSDT/dispatch/hooks, format registration, magic matching
+   - **Boundary and ABI assumptions** -- integer overflow, unaligned access, struct packing
+   - **Functional correctness** -- does the code do what the spec says? Entry points, return values, edge cases
+   - **Code quality** -- dead code, unused variables, missing const, style
+   - **Performance** -- unnecessary work in hot paths, O(n^2) patterns
+   This was learned the hard way: a security-only review of §5 missed entry-point range validation (F-06) and dead code (F-08) which required a supplemental full-spectrum review.
 3. Dispatch adversarial review to the Codex rescue subagent.
    - Use `Agent` tool with `subagent_type: "codex:codex-rescue"`.
    - Provide the exact file paths and line ranges to review.
-   - List the specific adversarial angles to challenge.
+   - List ALL adversarial angles from step 2 in the prompt -- do not omit any.
    - Request findings by severity: `Critical`, `High`, `Medium`, `Low`.
 4. Fix findings in priority order.
    - Always fix `Critical` and `High`.
