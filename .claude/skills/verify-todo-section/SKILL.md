@@ -59,6 +59,8 @@ description: Verify an already-implemented TODO section through the full quality
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf review prompt>"
     ```
 
+11. **SSDT audit** (auto-triggered for SSDT sections) -- if the section's checklist items reference `ssdt_register()`, SSDT service numbers, `NtXxx` functions, or the TODO is TODO-05/TODO-12, invoke the `audit-ssdt` skill. This verifies service number <-> function <-> registration <-> master table row consistency. Fix any mismatches found. Skip for sections with no SSDT involvement.
+
 ### Phase 5 -- Validate and Reconcile
 
 11. **Build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
