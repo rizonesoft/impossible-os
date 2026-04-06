@@ -58,7 +58,7 @@
 | ⭐  |   4   | EIF format specification                       | --                      |  [x]   |
 | ⭐  |   5   | EIF kernel loader                              | §1, §4                  |  [x]   |
 | 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [/]   |
-| 💎  |   7   | PE32+ header parser                            | §1                      |  [ ]   |
+| 💎  |   7   | PE32+ header parser                            | §1                      |  [x]   |
 | 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7                      |  [ ]   |
 | 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-05 §5          |  [ ]   |
 | 💎  |  10   | PE32+ base relocation                          | §8                      |  [ ]   |
@@ -185,11 +185,13 @@ Every loaded executable and shared library must be registered in the per-process
 
 ## 7. PE32+ Header Parser
 
-- [ ] Create `src/kernel/pe.c` + `include/kernel/pe.h`
-- [ ] Define PE structures: `pe_dos_header_t` (MZ magic, `e_lfanew`), PE signature `0x00004550`, `pe_coff_header_t` (Machine = `0x8664`, NumberOfSections), `pe_optional_header64_t` (Magic = `0x20B`, AddressOfEntryPoint, ImageBase, SizeOfImage, SizeOfHeaders, DataDirectory), `pe_section_header_t`
-- [ ] Implement `pe_validate(data, size)`:
-  - Check MZ magic at offset 0; PE signature at `e_lfanew`; Machine == `0x8664`; Optional Header Magic == `0x20B`
-  - Reject 32-bit PE (Magic == `0x10B`) with `ENOEXEC`
+- [x] Create `src/kernel/pe.c` + `include/kernel/pe.h` -- PE32+ structures with static asserts at exact Windows offsets, unaligned-safe read helpers, registered as `PE32+` format in exec dispatcher (MZ 2-byte magic)
+- [x] Define PE structures: `pe_dos_header_t` (64 bytes), `pe_coff_header_t` (20 bytes), `pe_optional_header64_t` (240 bytes, 16 DataDirectory entries), `pe_section_header_t` (40 bytes) -- all with offset/size static asserts
+- [x] Implement `pe_validate(data, size)` returning `pe_validate_result_t` with zero-copy pointers into data buffer:
+  - Check MZ magic at offset 0; e_lfanew bounds; PE signature at e_lfanew; Machine == `0x8664`; Optional Header Magic == `0x20B`; SizeOfOptionalHeader >= 240; section headers within bounds
+  - Reject 32-bit PE (Magic == `0x10B`) with `ENOEXEC`; reject i386 Machine with `ENOEXEC`
+- [x] `pe_load()` registered in exec dispatcher -- validates and returns entry VA (section loading deferred to §8)
+- [x] 7 unit tests in `test_exec.c`: struct sizes, constants, valid PE32+, 32-bit rejection, truncated, bad magic, NULL
 - [ ] Commit: `"kernel: pe -- PE32+ header parser"`
 
 **Test checkpoint:** `pe_validate()` returns success for a valid PE32+ header (Machine `0x8664`, Magic `0x20B`). Returns error for 32-bit PE (`0x10B`). Returns error for truncated file. `POST16(0xD80B)` on entry. Test on: QEMU WHPX + TCG; bare metal.
@@ -379,7 +381,7 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 |----|-----------------------------|--------------------------|--------------------------|------------------------------|
 | 💎 | Native binary format        | ✅ PE32+                 | ✅ ELF                   | 🔄 §4 spec + §5 loader done  |
 | 💎 | ELF loading                 | ⚠️ WSL only              | ✅ Native                | ⚠️ §2 basic loader           |
-| 💎 | PE32+ loading               | ✅ Native                | ⚠️ Wine only             | ⬜ §7–§10 kernel-level       |
+| 💎 | PE32+ loading               | ✅ Native                | ⚠️ Wine only             | 🔄 §7 parser done; §8-§10 pending |
 | 💎 | Dynamic linking             | ✅ DLL loading           | ✅ ld.so                 | ⬜ §14                       |
 | 💎 | ASLR                        | ✅ Mandatory             | ✅ PIE + kernel           | ⬜ §15                       |
 | 💎 | NX stack                    | ✅ DEP default           | ✅ PT_GNU_STACK           | ⬜ §3                        |

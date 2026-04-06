@@ -11,6 +11,7 @@
 #include "kernel/test/test.h"
 #include "kernel/exec.h"
 #include "kernel/eif.h"
+#include "kernel/pe.h"
 #include "kernel/errno.h"
 
 /* ---- Exec dispatcher tests (TODO-08 §1) ---- */
@@ -129,6 +130,116 @@ static void test_module_count(void)
     TEST_ASSERT_NEQ((uint64_t)count, 0, "module count > 0 after registration");
 }
 
+/* ---- PE32+ parser tests (TODO-08 §7) ---- */
+
+/* Helper: build a minimal valid PE32+ header in a buffer.
+ * Returns the total size written. Buffer must be >= 512 bytes. */
+static uint32_t build_minimal_pe32plus(uint8_t *buf)
+{
+    uint32_t i;
+    for (i = 0; i < 512; i++) buf[i] = 0;
+
+    /* DOS header: MZ magic + e_lfanew at 0x3C pointing to offset 0x80 */
+    buf[0] = 'M'; buf[1] = 'Z';
+    buf[0x3C] = 0x80; /* e_lfanew = 0x80 */
+
+    /* PE signature at 0x80 */
+    buf[0x80] = 'P'; buf[0x81] = 'E'; buf[0x82] = 0; buf[0x83] = 0;
+
+    /* COFF header at 0x84: Machine=0x8664, NumberOfSections=1,
+     * SizeOfOptionalHeader=240 */
+    buf[0x84] = 0x64; buf[0x85] = 0x86;  /* Machine = AMD64 */
+    buf[0x86] = 0x01; buf[0x87] = 0x00;  /* NumberOfSections = 1 */
+    buf[0x94] = 0xF0; buf[0x95] = 0x00;  /* SizeOfOptionalHeader = 240 */
+
+    /* Optional header at 0x98: Magic=0x20B, AddressOfEntryPoint=0x1000,
+     * ImageBase=0x140000000 */
+    buf[0x98] = 0x0B; buf[0x99] = 0x02;  /* Magic = PE32+ */
+    buf[0xA8] = 0x00; buf[0xA9] = 0x10;  /* AddressOfEntryPoint = 0x1000 */
+    buf[0xB0] = 0x00; buf[0xB1] = 0x00;
+    buf[0xB2] = 0x00; buf[0xB3] = 0x40;
+    buf[0xB4] = 0x01; buf[0xB5] = 0x00;  /* ImageBase = 0x140000000 */
+
+    /* Section header at 0x98 + 240 = 0x188 (fits in 512 bytes) */
+    /* .text section: VirtualSize=0x100, VirtualAddress=0x1000 */
+    buf[0x188] = '.'; buf[0x189] = 't'; buf[0x18A] = 'e';
+    buf[0x18B] = 'x'; buf[0x18C] = 't';
+    buf[0x190] = 0x00; buf[0x191] = 0x01;  /* VirtualSize = 0x100 */
+    buf[0x194] = 0x00; buf[0x195] = 0x10;  /* VirtualAddress = 0x1000 */
+
+    return 512;
+}
+
+static void test_pe_struct_sizes(void)
+{
+    TEST_ASSERT_EQ(sizeof(pe_dos_header_t), 64, "pe_dos_header_t == 64 bytes");
+    TEST_ASSERT_EQ(sizeof(pe_coff_header_t), 20, "pe_coff_header_t == 20 bytes");
+    TEST_ASSERT_EQ(sizeof(pe_optional_header64_t), 240, "pe_optional_header64_t == 240 bytes");
+    TEST_ASSERT_EQ(sizeof(pe_section_header_t), 40, "pe_section_header_t == 40 bytes");
+    TEST_ASSERT_EQ(sizeof(pe_data_directory_t), 8, "pe_data_directory_t == 8 bytes");
+}
+
+static void test_pe_constants(void)
+{
+    TEST_ASSERT_EQ(PE_DOS_MAGIC, 0x5A4D, "PE_DOS_MAGIC == 0x5A4D");
+    TEST_ASSERT_EQ(PE_SIGNATURE, 0x00004550, "PE_SIGNATURE == 0x00004550");
+    TEST_ASSERT_EQ(PE_MACHINE_AMD64, 0x8664, "PE_MACHINE_AMD64 == 0x8664");
+    TEST_ASSERT_EQ(PE_OPT_MAGIC_PE32PLUS, 0x20B, "PE_OPT_MAGIC_PE32PLUS == 0x20B");
+    TEST_ASSERT_EQ(PE_OPT_MAGIC_PE32, 0x10B, "PE_OPT_MAGIC_PE32 == 0x10B");
+}
+
+static void test_pe_validate_valid(void)
+{
+    uint8_t buf[512];
+    build_minimal_pe32plus(buf);
+
+    pe_validate_result_t r = pe_validate(buf, sizeof(buf));
+    TEST_ASSERT_EQ(r.ok, 1, "pe_validate accepts valid PE32+");
+    TEST_ASSERT_EQ(r.err, 0, "pe_validate sets err=0 on success");
+    TEST_ASSERT_EQ(r.num_sections, 1, "pe_validate sees 1 section");
+}
+
+static void test_pe_validate_32bit(void)
+{
+    uint8_t buf[512];
+    build_minimal_pe32plus(buf);
+
+    /* Change Optional Header Magic from 0x20B to 0x10B (PE32) */
+    buf[0x98] = 0x0B; buf[0x99] = 0x01;
+
+    pe_validate_result_t r = pe_validate(buf, sizeof(buf));
+    TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects 32-bit PE");
+    TEST_ASSERT_EQ(r.err, ENOEXEC, "pe_validate sets ENOEXEC for 32-bit PE");
+}
+
+static void test_pe_validate_truncated(void)
+{
+    uint8_t buf[32];
+    uint32_t i;
+    for (i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    buf[0] = 'M'; buf[1] = 'Z';
+
+    pe_validate_result_t r = pe_validate(buf, sizeof(buf));
+    TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects truncated PE");
+}
+
+static void test_pe_validate_bad_magic(void)
+{
+    uint8_t buf[64];
+    uint32_t i;
+    for (i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    buf[0] = 0xDE; buf[1] = 0xAD;
+
+    pe_validate_result_t r = pe_validate(buf, sizeof(buf));
+    TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects non-MZ magic");
+}
+
+static void test_pe_validate_null(void)
+{
+    pe_validate_result_t r = pe_validate((const uint8_t *)0, 0);
+    TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects NULL data");
+}
+
 /* ---- EIF loader tests (TODO-08 §5) ---- */
 
 static void test_eif_bad_magic(void)
@@ -178,6 +289,15 @@ void test_register_exec(void)
     test_suite_register_cat("Exec: module register invalid", test_module_register_invalid, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: module find NULL out", test_module_find_null_out, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: module count", test_module_count, TEST_CAT_EXEC);
+
+    /* PE32+ parser tests (TODO-08 §7) */
+    test_suite_register_cat("PE: struct sizes", test_pe_struct_sizes, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: constants", test_pe_constants, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: validate valid PE32+", test_pe_validate_valid, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: validate rejects 32-bit", test_pe_validate_32bit, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: validate rejects truncated", test_pe_validate_truncated, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: validate rejects bad magic", test_pe_validate_bad_magic, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: validate rejects NULL", test_pe_validate_null, TEST_CAT_EXEC);
 
     /* EIF loader tests (TODO-08 §5) */
     test_suite_register_cat("EIF: bad magic", test_eif_bad_magic, TEST_CAT_EXEC);

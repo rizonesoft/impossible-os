@@ -9,6 +9,7 @@
 #include "kernel/errno.h"
 #include "kernel/elf.h"
 #include "kernel/eif.h"
+#include "kernel/pe.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
@@ -64,15 +65,30 @@ void exec_init(void)
         .loader    = eif_load,
     };
 
+    /* Register built-in PE32+ format */
+    static const exec_format_t pe_fmt = {
+        .magic     = { 'M', 'Z' },
+        .magic_len = 2,
+        .name      = "PE32+",
+        .loader    = pe_load,
+    };
+
     s_format_count = 0;
     exec_register_format(&elf_fmt);
     exec_register_format(&eif_fmt);
+    exec_register_format(&pe_fmt);
 
     klog(LOG_INFO, "exec", "Exec subsystem initialized (%u format(s))",
          (uint64_t)s_format_count);
 }
 
-/* ---- Registration ------------------------------------------------------- */
+/* ---- Registration -------------------------------------------------------
+ * Format registration is init-only: called from exec_init() during
+ * single-threaded Phase 3 boot. match_format() uses acquire-load on
+ * s_format_count; registration uses release-store after fully writing
+ * the slot. This is safe because no concurrent exec_load() can run
+ * until after exec_init() completes and the scheduler starts.
+ * Do NOT call exec_register_format() after boot. */
 
 int exec_register_format(const exec_format_t *fmt)
 {
@@ -84,7 +100,9 @@ int exec_register_format(const exec_format_t *fmt)
         return -1;
 
     s_formats[s_format_count] = *fmt;
-    s_format_count++;
+    /* Release-store: ensures the fully-written slot is visible to any
+     * concurrent acquire-load reader in match_format(). */
+    __atomic_store_n(&s_format_count, s_format_count + 1, __ATOMIC_RELEASE);
 
     klog(LOG_INFO, "exec", "Registered format: %s (magic %u bytes)",
          fmt->name, (uint64_t)fmt->magic_len);
