@@ -194,6 +194,7 @@ extern void test_register_ixfs(void);
 extern void test_register_bulletproof(void);
 extern void test_register_blackbox(void);
 extern void test_register_acpi_power(void);
+extern void test_register_exec(void);
 
 void test_runner_init(void)
 {
@@ -219,6 +220,7 @@ void test_runner_init(void)
     /* Boot */
     test_register_boot_init();
     test_register_klog();
+    test_register_exec();
 
     /* OB */
     test_register_ob();
