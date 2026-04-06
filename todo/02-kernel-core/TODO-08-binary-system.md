@@ -57,7 +57,7 @@
 | 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | §2                      |  [/]   |
 | ⭐  |   4   | EIF format specification                       | --                      |  [x]   |
 | ⭐  |   5   | EIF kernel loader                              | §1, §4                  |  [x]   |
-| 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [ ]   |
+| 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [/]   |
 | 💎  |   7   | PE32+ header parser                            | §1                      |  [ ]   |
 | 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7                      |  [ ]   |
 | 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-05 §5          |  [ ]   |
@@ -174,12 +174,12 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
 
 Every loaded executable and shared library must be registered in the per-process module list so that the debugger (TODO-18), crash dump generator (TODO-16), SEH unwind logic (TODO-10), and `PEB->Ldr` module walks all work. Win11 maintains three linked lists (`InLoadOrder`, `InMemoryOrder`, `InInitializationOrder`) in `PEB_LDR_DATA`. Linux maintains `struct link_map` for `dl_iterate_phdr()`. Impossible OS must populate both for dual-format compat.
 
-- [ ] Define `loaded_module_t` in `include/kernel/exec.h`: `{ base_address, size_of_image, entry_point, full_path, name, format (ELF/PE/EIF), pdata_base, pdata_size }`
-- [ ] `exec_register_module(process_t *proc, loaded_module_t *mod)` -- inserts into per-process module list and global `LOADED_MODULE` crash registry (→ XREF TODO-16 §3)
-- [ ] For PE32+ modules: insert `LDR_DATA_TABLE_ENTRY` into `PEB->Ldr` lists (→ XREF TODO-04 §8)
-- [ ] For ELF modules: insert into a process-local `link_map` chain for `dl_iterate_phdr()` compat
-- [ ] `exec_find_module_by_pc(uint64_t rip)` -- binary search module list by address range; returns module for stack traces and `.pdata` lookup
-- [ ] Commit: `"kernel: exec -- module list registration for Ldr, crash dump, and debugger"`
+- [x] Define `loaded_module_t` in `include/kernel/exec.h`: `{ base_address, size_of_image, entry_point, full_path, name, format (ELF/PE/EIF), pdata_base, pdata_size }` -- 368 bytes, static assert, spinlock-protected global registry (max 64), sorted by base_address
+- [x] `exec_register_module(process_t *proc, loaded_module_t *mod)` -- inserts into per-process module list and global `LOADED_MODULE` crash registry (→ XREF TODO-16 §3) -- SMP-safe via irqsave spinlock, sorted insertion, duplicate detection
+- [x] For PE32+ modules: insert `LDR_DATA_TABLE_ENTRY` into `PEB->Ldr` lists (→ XREF TODO-04 §8) -- allocates entry + UTF-16 strings, inserts into all 3 circular lists (InLoadOrder, InMemoryOrder, InInitializationOrder)
+- [/] For ELF modules: insert into a process-local `link_map` chain for `dl_iterate_phdr()` compat -- registered in global crash registry; per-process link_map deferred to dynamic linker (§14) when process-private address spaces exist
+- [x] `exec_find_module_by_pc(uint64_t rip)` -- binary search module list by address range; returns module for stack traces and `.pdata` lookup -- O(log n) binary search, ISR-safe (irqsave spinlock)
+- [x] Commit: `"kernel: exec -- module list registration for Ldr, crash dump, and debugger"`
 
 **Test checkpoint:** After loading a binary, `exec_find_module_by_pc(entry_va)` returns non-NULL with correct `name` and `base_address`. Serial log shows `"exec: registered module '<name>' at 0x<base> (size=<N>)"`. `POST16(0xD809)` on entry, `POST16(0xD80A)` after module inserted. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -385,7 +385,7 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 | 💎 | NX stack                    | ✅ DEP default           | ✅ PT_GNU_STACK           | ⬜ §3                        |
 | 💎 | RELRO (read-only GOT)       | ⚠️ N/A (PE IAT)         | ✅ PT_GNU_RELRO           | ⬜ §3                        |
 | 💎 | CET/IBT binary flags        | ✅ Load Config           | ✅ GNU_PROPERTY           | ⬜ §3 ELF, §12 PE           |
-| 💎 | Module list                  | ✅ PEB->Ldr              | ✅ link_map               | ⬜ §6                        |
+| 💎 | Module list                  | ✅ PEB->Ldr              | ✅ link_map               | 🔄 §6 registry + Ldr done    |
 | 💎 | PE .pdata unwind             | ✅ Kernel + ntdll        | ❌ N/A                   | ⬜ §8                        |
 | 💎 | PE TLS + callbacks           | ✅ Full support          | ❌ N/A (ELF PT_TLS)      | ⬜ §11                       |
 | 💎 | Native TLS templates         | ✅ PE TLS               | ✅ PT_TLS               | ⬜ §11 + §18                |

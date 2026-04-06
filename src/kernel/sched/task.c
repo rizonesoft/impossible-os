@@ -1145,6 +1145,43 @@ int task_exec(const uint8_t *data, uint64_t size)
         return -1;
     }
 
+    /* Register loaded module in the global crash registry and PEB->Ldr (§6).
+     * Uses the identity-mapped user ELF range as the module base/size.
+     * The format field is best-effort: detect from magic bytes in data. */
+    {
+        loaded_module_t mod;
+        uint8_t *mp = (uint8_t *)&mod;
+        uint32_t mi;
+        for (mi = 0; mi < sizeof(mod); mi++) mp[mi] = 0;
+
+        mod.base_address = USER_ELF_BASE;
+        mod.size_of_image = USER_ELF_END - USER_ELF_BASE;
+        mod.entry_point = entry;
+
+        /* Detect format from magic */
+        if (size >= 4 && data[0] == 0x7F && data[1] == 'E' &&
+            data[2] == 'L' && data[3] == 'F')
+            mod.format = EXEC_FMT_ELF;
+        else if (size >= 4 && data[0] == 'E' && data[1] == 'I' &&
+                 data[2] == 'F' && data[3] == '!')
+            mod.format = EXEC_FMT_EIF;
+        else if (size >= 2 && data[0] == 'M' && data[1] == 'Z')
+            mod.format = EXEC_FMT_PE;
+
+        /* Name from task name */
+        {
+            const char *n = tasks[pid].name ? tasks[pid].name : "a.out";
+            uint32_t ni = 0;
+            while (n[ni] && ni < EXEC_MODULE_NAME_MAX - 1) {
+                mod.name[ni] = n[ni];
+                ni++;
+            }
+            mod.name[ni] = 0;
+        }
+
+        exec_register_module((process_t *)0, &mod);
+    }
+
     /* Allocate a FRESH kernel stack with guard page - we cannot reuse the
      * current one because the calling function (exec_loader_func) is still on it. */
     {

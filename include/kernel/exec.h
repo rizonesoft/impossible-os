@@ -35,6 +35,39 @@ typedef struct exec_format {
     exec_loader_fn  loader;                 /* format-specific loader */
 } exec_format_t;
 
+/* ---- Module list (§6) --------------------------------------------------- */
+
+/* Binary format identifiers */
+#define EXEC_FMT_ELF  0
+#define EXEC_FMT_PE   1
+#define EXEC_FMT_EIF  2
+
+/* Maximum modules tracked globally (crash dump, debugger, stack traces) */
+#define EXEC_MAX_MODULES  64
+
+/* Module name / path size limits (including NUL terminator) */
+#define EXEC_MODULE_NAME_MAX  64
+#define EXEC_MODULE_PATH_MAX  256
+
+/* Per-module registration entry.
+ * Populated by exec_register_module() for every loaded binary.
+ * Consumed by: crash dump (TODO-16 §3), SEH unwind (TODO-10 §6),
+ * debugger (TODO-18), and PEB->Ldr module walks. */
+typedef struct loaded_module {
+    uint64_t    base_address;                   /* load VA */
+    uint64_t    size_of_image;                  /* total mapped size */
+    uint64_t    entry_point;                    /* entry function VA */
+    uint64_t    pdata_base;                     /* .pdata section VA (0 if none) */
+    uint64_t    pdata_size;                     /* .pdata section size in bytes */
+    char        full_path[EXEC_MODULE_PATH_MAX]; /* e.g. "C:\Programs\hello.exe" */
+    char        name[EXEC_MODULE_NAME_MAX];      /* base name, e.g. "hello.exe" */
+    uint32_t    format;                          /* EXEC_FMT_ELF / PE / EIF */
+    uint32_t    _pad;                            /* align to 8 bytes */
+} loaded_module_t;
+
+_Static_assert(sizeof(loaded_module_t) == 368,
+    "loaded_module_t size -- update serializers if changed");
+
 /* ---- Public API --------------------------------------------------------- */
 
 /* Initialize the exec subsystem. Called once during Phase 3 boot. */
@@ -54,3 +87,24 @@ uint64_t exec_load(const uint8_t *data, uint64_t size, int *err);
  * Returns entry point address on success, 0 on failure.
  * Sets *err to ENOENT (not found), ENOEXEC, or ENOMEM. */
 uint64_t exec_load_path(const char *path, int *err);
+
+/* ---- Module registration (§6) ------------------------------------------- */
+
+/* Register a loaded module in the global crash registry and the per-process
+ * PEB->Ldr module list (for PE32+ modules).
+ * 'proc' may be NULL for kernel-mode modules (crash registry only).
+ * Returns 0 on success, -1 if the global registry is full. */
+int exec_register_module(process_t *proc, const loaded_module_t *mod);
+
+/* Find a registered module by instruction pointer (binary search by address
+ * range). Copies the matching module into 'out' (caller-provided buffer).
+ * Returns 0 on success, -1 if no module contains the given RIP.
+ * Used for stack traces, .pdata lookup, and crash dump module identification.
+ * Thread-safe: copy is performed under irqsave spinlock, so the returned
+ * data is a stable snapshot even if the registry is concurrently modified.
+ * NOT safe from NMI context (spinlock may be held by interrupted CPU).
+ * NMI crash dump path should use a lockless fallback or bounded trylock. */
+int exec_find_module_by_pc(uint64_t rip, loaded_module_t *out);
+
+/* Return the current number of registered modules (for diagnostics). */
+uint32_t exec_module_count(void);
