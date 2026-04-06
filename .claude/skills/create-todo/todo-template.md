@@ -7,11 +7,15 @@ Use this as the default starting point for a new leaf TODO.
 
 > **Goal:** One short paragraph describing the current state, the change to make, and the end state.
 
+> [!IMPORTANT]
+> **Current state:** Describe what exists NOW -- which files, functions, and infrastructure are already in place. What works. What doesn't. Without this, the implementer has to grep the codebase to understand the starting point.
+
 ## Inputs
 
 - [`src/kernel/relevant.c`](../../src/kernel/relevant.c) -- existing implementation
 - [`include/kernel/relevant.h`](../../include/kernel/relevant.h) -- public API
-- -> XREF: `TODO-XX-dependency.md §N` -- description of dependency
+- -> XREF: `TODO-XX-dependency.md §N` -- structural dependency (must exist before this TODO)
+- -> XREF: `TODO-YY-related.md §M` -- related work (complement, not blocker)
 
 ## Outcome
 
@@ -46,11 +50,14 @@ One-line intro explaining what this section does and why it matters.
 
 One-line intro explaining what this section does and why it matters.
 
+> [!NOTE]
+> **Resolved:** Brief note about a design question that was answered or a prerequisite that is now available.
+
 - [ ] Implement `relevant_process()` with full error handling
 - [ ] Register in dispatcher / SSDT / hook table as needed
 - [ ] Commit: `"kernel: relevant -- parity feature"`
 
-**Test checkpoint:** `relevant_process(valid_input)` returns expected result. `relevant_process(NULL)` returns error without crash. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** `relevant_process(valid_input)` returns expected result. `relevant_process(NULL)` returns error without crash. Serial log shows `"relevant: processed <N> items"`. Test on: QEMU WHPX + TCG; bare metal.
 
 ## 3. Exclusive Differentiator
 
@@ -58,6 +65,9 @@ One-line intro explaining what this section does and why it matters.
 
 > [!TIP]
 > Neither Win11 nor Linux implements this -- Impossible OS is first.
+
+> [!WARNING]
+> **SMP safety:** This section introduces shared mutable state (`g_relevant_table`). Must use spinlock or atomics. See `kernel-code-quality` Gate 2.
 
 - [ ] Implement exclusive feature with concrete deliverable
 - [ ] Commit: `"kernel: relevant -- exclusive feature"`
@@ -79,10 +89,12 @@ One-line intro explaining what this section does and why it matters.
 > **After §1-§2:** Impossible OS matches Windows 11 and Linux for core functionality.
 > **After §3:** Impossible OS surpasses both with exclusive feature.
 
+<!-- Sources: https://learn.microsoft.com/..., https://docs.kernel.org/... -->
+
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_relevant()` -- register in `src/kernel/test/test_runner.c`.
-> Tests run with `debug=1` or `test=1` in boot.conf.
+> Tests run with `debug=1` or `test=1` in boot.conf. Use `TEST_CAT_<CATEGORY>`.
 
 - [ ] Create `src/kernel/test/test_relevant.c` with:
   - `relevant_init()` returns success on first call
@@ -96,9 +108,10 @@ One-line intro explaining what this section does and why it matters.
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===`
-- [ ] Serial log shows initialization messages for all sections
-- [ ] Unit tests pass: `make test-relevant` (or appropriate category)
-- [ ] POST16 codes appear in correct order on serial output
+- [ ] `relevant_init()` logs `"relevant: initialized (N items)"` on serial
+- [ ] `relevant_process(valid_input)` returns 0 (success)
+- [ ] POST16 codes 0xD801/0xD802 appear in correct order on serial
+- [ ] Unit tests pass: `make test-relevant` shows all PASS
 - [ ] Verify on: QEMU WHPX (2 CPUs), QEMU TCG, VirtualBox, bare metal
 - [ ] Commit: `"kernel: relevant -- complete"`
 ```
@@ -108,9 +121,13 @@ One-line intro explaining what this section does and why it matters.
 - Default to a leaf TODO.
 - Add child-TODO sections only when the topic truly needs multiple files or shared verification.
 - Use flat numbered sections (`## 1. Title`) -- not sub-sections (`### 1.1 Title`).
-- Every section needs: checklist items, Commit line, Test checkpoint.
+- Every section needs: checklist items (max 8-10), Commit line, Test checkpoint.
 - `Depends On` column always uses `§N` notation, never bare numbers.
-- The OS Comparison table is **mandatory** -- populate from actual Win11/Linux research.
+- The `> [!IMPORTANT] Current state:` callout after Goal is mandatory -- it's the implementer's starting context.
+- The OS Comparison table is **mandatory** -- populate from actual Win11/Linux research, add `<!-- Sources -->` comment.
 - The Unit Tests section is **mandatory** -- derive test cases from implementation deliverables.
 - Keep tables compact. The `💎`/`⭐` column must always be present in both tables.
 - Use ✅ = done, ⚠️ = partial, ⬜ = planned, ❌ = not available/not applicable.
+- Use callouts: `> [!NOTE]` resolved, `> [!WARNING]` risks, `> [!IMPORTANT]` blockers, `> [!TIP]` advantages.
+- **XREFs in Inputs** = structural deps (must exist before this TODO). **XREFs in sections** = implementation-time cross-refs.
+- If a new `TEST_CAT_*` is needed, note it in the Unit Tests section.
