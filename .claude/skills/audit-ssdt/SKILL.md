@@ -134,6 +134,7 @@ For each handler that passes the "registered + not stub" check, verify it is **f
 - **Check documented behavior.** Cross-reference against the TODO-05 checklist description for that handler. If the checklist says "implement X, Y, Z" and only X is done, the handler is `[/]` not `[x]`.
 - **Classify:** `COMPLETE` (all documented behavior), `PARTIAL` (some paths work, others return NOT_IMPLEMENTED), `STUB` (registered but no real logic).
 - Only `COMPLETE` handlers get `[x]`. `PARTIAL` gets `[/]` with a note listing what's missing. `STUB` gets `[ ]`.
+- **Downgrade rule:** If a master table entry or checklist item is currently `[x]` but the handler is PARTIAL or STUB, **unconditionally revert to `[/]` or `[ ]`**. A previous `[x]` does not grandfather a handler -- every audit re-evaluates from scratch against current code. No exceptions.
 
 ### 10. Cross-reference and loose-end check
 
