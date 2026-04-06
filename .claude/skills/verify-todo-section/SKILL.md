@@ -44,23 +44,38 @@ description: Verify an already-implemented TODO section through the full quality
     - **Checklist item-by-item:** walk every `- [x]` item. For each: is it STILL implemented, wired, and functional? Could upstream changes have broken it?
     - **Test checkpoint verification:** does the test checkpoint's expected serial output / POST codes / behavior still hold?
 
-### Phase 4 -- Validate and Reconcile (same as implement steps 16-18)
+### Phase 4 -- Codex Deep Analysis
 
-8. **Build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
-9. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims.
-10. **Tie up loose ends** -- scan for:
+8. **Codex consistency audit** -- dispatch to Codex plugin. Verify that struct offsets, constants, API contracts, and registration tables match between the section's header, implementation, test, and assembly files. Follow the `codex-consistency-audit` skill. Fix any mismatches found.
+    ```bash
+    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
+    ```
+9. **Codex dead code scan** -- dispatch to Codex plugin. Find unreachable functions, unused `#define`s, orphaned types, and stale declarations in the section's source files. Follow the `codex-dead-code` skill. Remove safe-to-remove items, rebuild.
+    ```bash
+    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<dead code prompt>"
+    ```
+10. **Codex performance review** (for hot-path sections) -- if the section touches ISR paths, scheduler, compositor, spinlock-protected regions, or per-tick code, dispatch a performance review. Follow the `codex-perf-review` skill. Fix critical/high findings. Skip for non-hot-path sections (struct definitions, metadata parsers, test-only code).
+    ```bash
+    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf review prompt>"
+    ```
+
+### Phase 5 -- Validate and Reconcile
+
+11. **Build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
+12. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims.
+13. **Tie up loose ends** -- scan for:
     - Deferred items pointing to this section that weren't resolved.
     - Stale warning boxes that should be updated.
     - Cross-TODO dependency notes that are now satisfied or broken.
     - Implementation Order / OS Comparison rows that need status updates.
-11. **Report findings** to the user:
+14. **Report findings** to the user:
     - **PASS** -- section is verified, all items confirmed, no issues found.
-    - **PASS with fixes** -- section verified after fixing N issues found by Codex/self-review.
+    - **PASS with fixes** -- section verified after fixing N issues found by Codex reviews.
     - **FAIL** -- section has unresolved Critical/High issues. List what needs work.
 
-### Phase 5 -- Commit (only if fixes were made)
+### Phase 6 -- Commit (only if fixes were made)
 
-12. **Commit and push** -- only if steps 4-6 produced code fixes or test additions. Use message: `"fix: verify §N -- <summary of fixes>"`. If no changes were made, skip this step.
+15. **Commit and push** -- only if any phase produced code fixes, test additions, or dead code removal. Use message: `"fix: verify §N -- <summary of fixes>"`. If no changes were made, skip this step.
 
 ## What This Skill Does NOT Do
 
