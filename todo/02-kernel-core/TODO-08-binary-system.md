@@ -21,6 +21,7 @@
 - → XREF: `10-services-security/TODO-07-win32-pe-loader.md` -- scope overlap: TODO-10/07 covers Win32 subsystem-level PE execution (SYSCALL/SYSRET setup, Win32 ABI, user CRT); this TODO covers the kernel-level binary format infrastructure (loaders, format dispatcher, ASLR). PE header structs and loader core are authoritative HERE; Win32 subsystem wiring is authoritative THERE.
 - → XREF: `12-user-platform-sdk/INDEX.md` -- EIF spec doc lives there; `elf2eif` tool and SDK integration wire back to §13
 - → XREF: `TODO-09-process-model-extensions.md §3` -- `exec_load()` (§1) must set `task->program_break` to end of BSS so brk/sbrk (TODO-09 §3) can extend from the correct address
+- → XREF: `TODO-23-eif-full-implementation.md` -- completes EIF beyond §5 basic loader: segment permissions, ASLR, API version gating, metadata parsing, LZ4 decompression, module registration, import stubs. §13 (elf2eif) and §17 (code signing) remain here.
 
 ## Outcome
 
