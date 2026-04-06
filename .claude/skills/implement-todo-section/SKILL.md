@@ -18,7 +18,13 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    - API surface: Win32 native. Windows-style canonical paths (`C:\Impossible\System32\`).
    - **POST16 codes** for boot-path/hardware code: `POST16(0xDDNN)` format, check `boot_init.h` and grep for conflicts before assigning.
 6. **Build** -- `bash scripts/build.sh`, confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.
-7. **Wire unit tests** -- add/update assertions in relevant `test_*.c`, confirm build passes.
+7. **Wire unit tests** -- before writing any test code, read the TODO file's **Unit Tests** section (if one exists) to find:
+   - The expected test file name (e.g. `test_exec.c`)
+   - The expected registration function (e.g. `test_register_exec()`)
+   - The expected test category (e.g. `TEST_CAT_EXEC`)
+   - Which specific assertions are required for this section
+   
+   Create the test file / registration function if it doesn't exist yet. Do NOT piggy-back tests onto an unrelated test file just because it's convenient. Then add/update assertions and confirm build passes.
 8. **Update TODO section** -- mark items with evidence:
    - **Done proof gate:** `[x]` only when implemented + wired + functional on normal path. Never `[x]` for stubs or `STATUS_NOT_IMPLEMENTED` placeholders.
    - SSDT claims: verify service number <-> function <-> `ssdt_register()` <-> master table row consistency.
@@ -39,7 +45,8 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Bugs: edge cases, off-by-one, null pointer paths?
     - Performance: unnecessary allocations, O(n^2) where O(n) suffices?
     - Industry standards: no hacks, no patches, no workarounds, no TODO/FIXME in new code.
-    - Completeness: is everything implemented that CAN be implemented? No deferred items that should have been done now?
+    - **Checklist item-by-item:** walk every `- [ ]` item in the section. For each one: is it implemented and wired (`[x]`), explicitly deferred with justification (`[/]`), or blocked with notes (`[ ]` + blocker)? If any item was silently skipped, go back and address it now.
+    - Deferred items: are there items from earlier sections that were "deferred to this section"? If so, were they resolved?
 14. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`. This catches anything broken by the fix loop or self-review changes.
 15. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims. Re-checks cross-TODO synchronization.
 16. **Tie up loose ends** (MANDATORY) -- scan the ENTIRE TODO file and any XREF'd TODO files for:
