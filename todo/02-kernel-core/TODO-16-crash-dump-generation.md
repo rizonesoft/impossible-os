@@ -28,6 +28,10 @@
 - → XREF: `TODO-08-binary-system.md §6` -- `exec_register_module()` populates the global `LOADED_MODULE` crash registry; §3 of this TODO consumes it for the ModuleList stream
 - → XREF: `TODO-10-exception-dispatch-seh.md §1` -- `EXCEPTION_RECORD` and `CONTEXT` types defined there; §4 of this TODO embeds them verbatim in the MDMP Exception stream
 - → XREF: `TODO-15-power-management.md §4` -- S4 hibernate partition GPT GUID reused as the raw dump partition backing store (§7); both share the same raw-write path
+- → XREF: `TODO-02-system-logging.md §8` -- pstore/ramoops equivalent (persistent RAM crash log). COMPLEMENT: §8 captures text log across reboots, this TODO captures binary CPU/memory state to disk. No overlap -- both are needed.
+
+> [!NOTE]
+> **Deferred: Live kernel dump (non-crashing).** Windows LiveKd / Sysinternals captures a dump of the running kernel without crashing. This is an advanced diagnostic feature that could be added as a future §10 after the crash dump pipeline is complete.
 
 ---
 
@@ -74,7 +78,9 @@ Define Windows-compatible STOP code taxonomy and the `KeBugCheckEx` entry point 
 - [ ] `KeBugCheckEx(code, p1, p2, p3, p4)` in `src/kernel/panic.c` -- stores params in static `g_last_bugcheck`, updates BSOD stop code line, triggers dump pipeline (§5)
 - [ ] Update `PANIC(msg)` and `PANIC_IF(cond, msg)` macros to call `KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH, ...)` internally
 - [ ] Registry persistence: write `HKLM\SYSTEM\LastBugCheck\{Code, Param1-4, Timestamp}` early in crash path (-> XREF TODO-13 §4)
-- [ ] Commit: `"kernel/panic: KeBugCheckEx, STOP code table, bugcheck Registry persistence"`
+- [ ] NMI-triggered crash: wire NMI handler to call `KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH, ...)` -- enables crash dump on hung systems via NMI button or debugger NMI injection
+- [ ] Keyboard-triggered crash: if `HKLM\SYSTEM\CrashControl\CrashOnCtrlScroll` == 1, Ctrl+ScrollLock×2 triggers `KeBugCheckEx` -- Windows-compatible diagnostic shortcut for bare-metal hang debugging
+- [ ] Commit: `"kernel/panic: KeBugCheckEx, STOP code table, NMI/keyboard crash triggers"`
 
 **Test checkpoint:** `KeBugCheckEx(0xE2, 1, 2, 3, 4)` stores correct values in `g_last_bugcheck`. `bugcheck_name(0x50)` returns `"PAGE_FAULT_IN_NONPAGED_AREA"`. BSOD screen shows hex STOP code. `POST16(0xDE40)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -260,7 +266,8 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   - `MemoryListStream` uses `Memory64ListStream` format (64-bit base/size pairs + a single bulk RVA for all page data) instead of per-range RVAs
   - Walk PMM used-page list; include all `PAGE_CLASS_KERNEL` pages
   - On a typical system this is 32–256 MiB; apply per-page LZ4 block compression: each 4 KiB page is compressed to a `{compressed_size (u16), data[compressed_size]}` record; uncompressed pages (compression ratio < 1) are stored raw with `compressed_size = 0x8000 | 4096`
-- [ ] `crashdump_type` Registry value: `0`=minidump (default), `1`=kernel dump, `2`=full dump; read in `panic_screen()` to select the writer
+- [ ] Active Memory Dump variant: like kernel dump but excludes free page lists, standby page cache, and file-backed pages -- produces a smaller dump that still contains all diagnostic-relevant pages. `MINIDUMP_HEADER.Flags |= MiniDumpFilterMemory`
+- [ ] `crashdump_type` Registry value: `0`=minidump (default), `1`=kernel dump, `2`=full dump, `3`=active dump; read in `panic_screen()` to select the writer
 
 - [ ] `crashdump_write_full_dump(frame, ctx)`:
   - Walk all physical pages reported in `boot_info.memory_map` as `MEMORY_TYPE_USABLE` and `MEMORY_TYPE_KERNEL`
@@ -401,7 +408,12 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 | 💎 | LZ4 dump compression                      | ⚠️ Xpress only (no LZ4)          | ✅ `makedumpfile` LZO/snappy       | ⬜ §6 -- (LZ4)             |
 | ⭐ | Custom `ImpossibleOSInfoStream` in MDMP   | ❌ No vendor extension           | ❌ No equivalent                   | ⬜ §4 -- .4 🚀             |
 | ⭐ | `dmpanalyze /compare` crash deduplication | ❌ Needs WER portal              | ❌ Not available                   | ⬜ §9 -- .4 🚀             |
-| ⭐ | Built-in `dmpanalyze.exe` on-device       | ❌ Requires WinDbg install       | ❌ Requires `crash` tool install   | ⬜ §9 -- 🚀                |
+| 💎 | Active memory dump (excludes caches)      | ✅ Win10+ active dump            | ❌ No equivalent                   | ⬜ §6                     |
+| 💎 | NMI-triggered crash dump                  | ✅ NMI button                    | ✅ sysrq-c                         | ⬜ §1                     |
+| ⭐ | Keyboard crash trigger (Ctrl+ScrollLock)  | ✅ Registry-enabled              | ❌ Not available                   | ⬜ §1 🚀                  |
+| ⭐ | Built-in `dmpanalyze.exe` on-device       | ❌ Requires WinDbg install       | ❌ Requires `crash` tool install   | ⬜ §9 🚀                  |
+
+<!-- Sources: https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/varieties-of-kernel-mode-dump-files, https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/active-memory-dump, https://learn.microsoft.com/en-us/windows/win32/api/minidumpapiset/ne-minidumpapiset-minidump_stream_type, https://docs.kernel.org/6.15/admin-guide/kdump/kdump.html, https://docs.kernel.org/admin-guide/ramoops.html, https://hexhive.epfl.ch/publications/files/21CCS.pdf -->
 
 After §1–8, Impossible OS reaches full Windows 11 crash-dump parity: WinDbg-compatible binary MDMP files, VFS-bypass raw-partition sink, post-boot recovery dialog, and archive rotation. Linux's ELF coredump format is not WinDbg-compatible and requires external `makedumpfile`/`crash` tooling. The built-in `dmpanalyze.exe` (§9), the custom `ImpossibleOSInfoStream` with OS-specific metadata, and the `/compare` deduplication command are exclusive features that make post-mortem crash analysis practical without requiring an external debugger.
 
