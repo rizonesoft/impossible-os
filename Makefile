@@ -108,7 +108,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build assets kernel userland uefi-boot system-disk
@@ -448,6 +448,8 @@ test-abi: all
 	@bash scripts/test.sh SUITE=abi
 test-storage: all
 	@bash scripts/test.sh SUITE=storage
+test-exec: all
+	@bash scripts/test.sh SUITE=exec
 
 ## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
 ## test-usb-img: Create a 64 MiB FAT32 test USB disk image

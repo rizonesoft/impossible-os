@@ -167,23 +167,23 @@ static void test_eif_constants(void)
 void test_register_exec(void)
 {
     /* Exec dispatcher tests (TODO-08 §1) */
-    test_suite_register_cat("Exec: bad magic", test_exec_bad_magic, TEST_CAT_BOOT);
-    test_suite_register_cat("Exec: null data", test_exec_null_data, TEST_CAT_BOOT);
-    test_suite_register_cat("Exec: errno constants", test_exec_errno, TEST_CAT_BOOT);
+    test_suite_register_cat("Exec: bad magic", test_exec_bad_magic, TEST_CAT_EXEC);
+    test_suite_register_cat("Exec: null data", test_exec_null_data, TEST_CAT_EXEC);
+    test_suite_register_cat("Exec: errno constants", test_exec_errno, TEST_CAT_EXEC);
 
     /* Module registration tests (TODO-08 §6) */
-    test_suite_register_cat("Exec: module struct size", test_module_struct_size, TEST_CAT_BOOT);
-    test_suite_register_cat("Exec: module register+find", test_module_register_and_find, TEST_CAT_BOOT);
-    test_suite_register_cat("Exec: module register NULL", test_module_register_null, TEST_CAT_BOOT);
-    test_suite_register_cat("Exec: module register invalid", test_module_register_invalid, TEST_CAT_BOOT);
-    test_suite_register_cat("Exec: module find NULL out", test_module_find_null_out, TEST_CAT_BOOT);
-    test_suite_register_cat("Exec: module count", test_module_count, TEST_CAT_BOOT);
+    test_suite_register_cat("Exec: module struct size", test_module_struct_size, TEST_CAT_EXEC);
+    test_suite_register_cat("Exec: module register+find", test_module_register_and_find, TEST_CAT_EXEC);
+    test_suite_register_cat("Exec: module register NULL", test_module_register_null, TEST_CAT_EXEC);
+    test_suite_register_cat("Exec: module register invalid", test_module_register_invalid, TEST_CAT_EXEC);
+    test_suite_register_cat("Exec: module find NULL out", test_module_find_null_out, TEST_CAT_EXEC);
+    test_suite_register_cat("Exec: module count", test_module_count, TEST_CAT_EXEC);
 
     /* EIF loader tests (TODO-08 §5) */
-    test_suite_register_cat("EIF: bad magic", test_eif_bad_magic, TEST_CAT_BOOT);
-    test_suite_register_cat("EIF: too small", test_eif_too_small, TEST_CAT_BOOT);
-    test_suite_register_cat("EIF: struct sizes", test_eif_struct_sizes, TEST_CAT_BOOT);
-    test_suite_register_cat("EIF: constants", test_eif_constants, TEST_CAT_BOOT);
+    test_suite_register_cat("EIF: bad magic", test_eif_bad_magic, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: too small", test_eif_too_small, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: struct sizes", test_eif_struct_sizes, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: constants", test_eif_constants, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

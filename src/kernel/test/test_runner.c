@@ -26,6 +26,7 @@ static const char *cat_names[] = {
     [TEST_CAT_BOOT]     = "boot",
     [TEST_CAT_ABI]      = "abi",
     [TEST_CAT_STORAGE]  = "storage",
+    [TEST_CAT_EXEC]     = "exec",
 };
 
 static const char *cat_labels[] = {
@@ -38,6 +39,7 @@ static const char *cat_labels[] = {
     [TEST_CAT_BOOT]     = "Boot & Logging",
     [TEST_CAT_ABI]      = "ABI Compatibility",
     [TEST_CAT_STORAGE]  = "Storage Drivers",
+    [TEST_CAT_EXEC]     = "Binary System",
 };
 
 /* ---- Global test state ---- */
@@ -220,6 +222,8 @@ void test_runner_init(void)
     /* Boot */
     test_register_boot_init();
     test_register_klog();
+
+    /* Exec / Binary System */
     test_register_exec();
 
     /* OB */
