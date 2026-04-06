@@ -55,7 +55,7 @@
 | 💎  |   1   | `exec_load()` multi-format dispatcher          | VMM, VFS, sched         |  [x]   |
 | 💎  |   2   | Enhanced ELF loader (VMM-backed, PIE)          | §1                      |  [/]   |
 | 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | §2                      |  [/]   |
-| ⭐  |   4   | EIF format specification                       | --                      |  [ ]   |
+| ⭐  |   4   | EIF format specification                       | --                      |  [x]   |
 | ⭐  |   5   | EIF kernel loader                              | §1, §4                  |  [ ]   |
 | 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-04 §8          |  [ ]   |
 | 💎  |   7   | PE32+ header parser                            | §1                      |  [ ]   |
@@ -135,20 +135,21 @@ Modern ELF binaries carry security metadata in dedicated program headers. `PT_GN
 - [x] Extended `elf_load_result` with `nx_stack`, `has_relro`, `cet_ibt`, `cet_shstk`, `relro_start`, `relro_size` fields
 - [x] Added `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_PROPERTY`, `PT_INTERP`, `ET_DYN`, CET property constants to elf.h
 - [x] Adversarial review: F01 High (unaligned note reads) fixed with byte shifts; F02 Medium (kernel PML4 only) accepted; F03 Low (fragile initializer) fixed with explicit zero + default
-- [ ] Commit: `"kernel: elf -- PT_GNU_STACK NX enforcement, PT_GNU_RELRO, PT_GNU_PROPERTY CET flags"`
+- [x] Commit: `"kernel: elf -- PT_GNU_STACK NX enforcement, PT_GNU_RELRO, PT_GNU_PROPERTY CET flags"`
 
 **Test checkpoint:** Serial log shows `"elf: NX stack enforced"` or `"elf: No PT_GNU_STACK -- defaulting to NX stack"`. RELRO range logged when present. CET flags parsed and logged.
 
 ## 4. EIF Format Specification
 Design the Executable Impossible Format -- minimal parsing, native OS metadata, syscall-ID imports.
 
-- [ ] Write `docs/specs/eif-format.md` defining `eif_header_t` (64 bytes):
-  - `0x00` magic `"EIF!"` · `0x04` version · `0x06` arch (`1` = x86_64) · `0x08` flags (`GUI=1 | CONSOLE=2 | DRIVER=4 | SIGNED=8`)
-  - `0x0C` api_version · `0x10` entry_point · `0x18` load_base · `0x20` segment_count · `0x24` import_count
-  - `0x28` segment_offset · `0x2C` import_offset · `0x30` signature_offset · `0x38` metadata_offset
-- [ ] Define `eif_segment_t` (32 bytes): `vaddr`, `file_offset`, `file_size`, `mem_size`, `flags (R=1|W=2|X=4)`, reserved
-- [ ] Define `eif_import_t` (8 bytes): `syscall_id` (Impossible OS SSDT number), `flags` (`0` = required, `1` = optional)
-  - Import resolution is integer-only -- no string lookup at load time
+- [x] Write `docs/specs/eif-format.md` -- complete spec with design goals, comparison table, file layout, byte-offset tables
+- [x] Define `eif_header_t` (64 bytes): magic `"EIF!"` (0x45494621), version, arch (x86_64/AArch64), flags (GUI/CONSOLE/DRIVER/SIGNED/COMPRESSED/DEBUG), api_version, entry_point, load_base, segment/import counts and offsets, signature/metadata offsets. Static assert on size.
+- [x] Define `eif_segment_t` (32 bytes): vaddr, file_offset, file_size, mem_size, flags (READ/WRITE/EXEC), reserved. Static assert on size.
+- [x] Define `eif_import_t` (8 bytes): syscall_id (SSDT service number), flags (OPTIONAL bit). Static assert on size. Import resolution is integer-only -- no string lookup.
+- [x] Signature format spec: Ed25519 or RSA-2048-SHA256, covers `[0, signature_offset)`, verification flow documented
+- [x] Metadata section spec: key-value pairs (name, version, author, icon, min_os)
+- [x] C struct definitions with `__attribute__((packed))` and `_Static_assert` provided for `include/kernel/eif.h`
+- [x] elf2eif conversion flow documented (section 13 prereq)
 - [ ] Commit: `"docs: EIF format specification"`
 
 **Test checkpoint:** `docs/specs/eif-format.md` exists and contains `eif_header_t`, `eif_segment_t`, `eif_import_t` definitions with byte offsets. Header totals 64 bytes. No runtime test -- spec document only.
