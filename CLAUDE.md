@@ -106,7 +106,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/implement-ssdt-range` | Implement + wire a range of SSDT entries, mark Done [x] |
 | `/create-todo` | Create a new TODO file |
 | `/validate-todo-file` | Validate a TODO for structural gaps |
-| `/verify-todo-section` | Verify a TODO section against code evidence |
+| `/verify-todo-section` | Verify implemented section -- full Codex pipeline without implementing |
 | `/improve-implementation-order` | Audit and fix an Implementation Order table |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
 | `/run-verification` | Verify a TODO against a serial log (pasted or file), mark PASS/FAIL, detect regressions |
