@@ -5,11 +5,13 @@ description: Implement the Unit Tests section of a TODO file -- create the test 
 
 # Implement Unit Tests
 
-## When to Use
+## Use This Skill When
 
-- A TODO file has a `## Unit Tests` section with `[ ]` checkboxes
-- The code under test already exists and builds
-- The user asks to "implement the unit tests" or "add tests for" a TODO
+- A TODO file has a `## Unit Tests` section with `[ ]` checkboxes ready to implement.
+- The code under test already exists and builds successfully.
+- The user asks to "implement the unit tests" or "add tests for" a TODO.
+- The `/implement-todo-section` pipeline reaches Stage 4 (test creation).
+- Do NOT use for test gap analysis -- use `/codex-test-coverage` instead.
 
 ## Test Framework Reference
 

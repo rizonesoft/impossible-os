@@ -5,6 +5,14 @@ description: Run adversarial code review for one implemented TODO section, fix f
 
 # Codex Adversarial Review -- Section Loop
 
+## Use This Skill When
+
+- You just finished implementing a TODO section and need adversarial review before committing.
+- The `/implement-todo-section` pipeline reaches Stage 6 (it invokes this skill).
+- The user asks "review this section" or "find bugs in §N."
+- You want to stress-test a bounded set of changed files for a single section's work.
+- Do NOT use for full-TODO review -- use `/codex-review-todo` instead.
+
 ## Workflow
 
 1. Scope the review to one implemented section (`§N`) and its changed files/symbols.

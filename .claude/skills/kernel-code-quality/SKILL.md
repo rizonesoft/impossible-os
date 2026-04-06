@@ -7,6 +7,13 @@ description: Automatic code quality checklist for writing kernel C code. Enforce
 
 > This skill auto-loads when writing kernel code. It is a pre-flight checklist, not a post-hoc review. Apply these rules WHILE writing code so it comes out correct the first time.
 
+## Use This Skill When
+
+- Writing or modifying any `.c`, `.h`, or `.asm` file under `src/` or `include/`.
+- This skill auto-loads -- you do not need to invoke it manually.
+- It applies during `/implement-todo-section`, `/implement-ssdt-range`, and any direct code editing.
+- Does NOT apply to documentation-only changes, TODO edits, or script changes.
+
 ## When This Applies
 
 Every time you create or modify a file under `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, or `src/shell/`. Does NOT apply to documentation-only changes, TODO edits, or script changes.
@@ -33,7 +40,10 @@ Before writing any kernel code, mentally walk through these gates. Each gate is 
   - Atomic: `__atomic_fetch_add()` / `__atomic_load_n()` for simple counters.
   - Per-CPU: access via `smp_this_cpu()->field` for data that is CPU-local.
 - [ ] **Interrupt-safe?** If the code runs in an ISR or is called from both thread and ISR context, use `irqsave` spinlock variants. Never use plain spinlocks in interrupt context -- deadlock.
+- [ ] **Lock hold time.** Never hold a spinlock during disk I/O, serial output, or any operation that blocks or takes milliseconds. Pattern: lock -> snapshot data into local variable -> unlock -> use snapshot for I/O. Lesson: klog ring buffer lock must not be held during serial_write().
 - [ ] **No assumptions about CPU count.** Code must work on 1 CPU (VBox single-core) and 64 CPUs (future bare metal). Use `smp_cpu_count()`, never hardcode.
+
+<!-- Updated 2026-04-06: added lock hold time rule after Codex found klog ring written without lock, fix required snapshot pattern -->
 
 ### Gate 3: 5-Layer Defense for Invariants
 
@@ -93,9 +103,18 @@ static void test_my_invariant(void) {
 - CLAUDE.md "Bare Metal Gotchas" or "Safety Gates" entry if it's a hard-won lesson
 - `/* WARNING: Assembly code depends on this -- do NOT reorder */` comments
 
+**Parallel array/table sync:** When an enum grows (e.g., `SUBSYS_OB` added to `kernel_subsys_t`), every parallel array indexed by that enum must also grow. Enforce with:
+```c
+_Static_assert(sizeof(s_names) / sizeof(s_names[0]) == ENUM_COUNT,
+    "name table must match enum count");
+```
+Lesson: `s_subsys_names[]` missed `SUBSYS_OB`, causing OOB read in `kernel_subsystem_dump()` during panic.
+
 **When to apply all 5 layers:** New struct referenced by assembly, new cross-file ABI contract, new boot-critical init sequence, new security-critical invariant.
 
 **When 1-2 layers suffice:** Internal-only constants, non-critical helper structs, cosmetic changes.
+
+<!-- Updated 2026-04-06: added parallel array sync rule after Codex found s_subsys_names missing SUBSYS_OB -->
 
 ### Gate 4: Boot-Path Code
 
@@ -104,6 +123,10 @@ static void test_my_invariant(void) {
 - [ ] **POST16 diagnostic codes.** Every init function in the boot path gets `POST16()` entry/exit codes. Use the `0xD000-0xDFFF` debug range for development. Format: `POST16(0xDDNN)` where `DD` = section number, `NN` = step. Check `include/kernel/boot_init.h` for existing codes before assigning new ones.
 - [ ] **klog on entry and exit.** `klog(LOG_INFO, "subsys", "Thing initialized: %u items", count)` so serial output shows progress.
 - [ ] **Fail with message, not silence.** Use `boot_halt("what went wrong")` for unrecoverable failures. Use `klog(LOG_WARN, ...)` + degrade for non-critical failures. Never return silently from an init function that failed.
+- [ ] **No thread_create for boot-path work.** `compositor_run()` is an infinite event loop that starves kernel threads created before it. All init between `desktop_init()` and `compositor_run()` must run inline. See CLAUDE.md "No thread_create for deferred init."
+- [ ] **Panic-path code: no locks, no alloc.** Code called from `panic_screen()`, `boot_halt()`, or fault handlers must not acquire spinlocks (the faulting context may hold them -- deadlock). Must not call `kmalloc()` (heap may be corrupt). Must not assume interrupts are enabled. Use only serial_write() and direct physical memory access.
+
+<!-- Updated 2026-04-06: added thread_create ban and panic-path rules after deferred init regression and Codex findings -->
 
 ### Gate 5: Error Handling
 
@@ -115,6 +138,9 @@ static void test_my_invariant(void) {
   - `LOG_INFO` -- normal operation milestones
   - `LOG_DEBUG` -- verbose tracing (stripped in release)
 - [ ] **No silent failure.** If a function can fail, it must either return an error code or log the failure. `return;` after a failed check without logging = bug.
+- [ ] **Escape structured output.** When writing JSON, config, or any structured format, escape special characters (`\` `"` `\n` `\r` `\t`, control chars < 0x20) in user-controlled or variable strings. Never `snprintf` raw strings into JSON templates. Lesson: `events.jsonl` had unescaped message fields that broke `jq` parsing.
+
+<!-- Updated 2026-04-06: added serialization escaping rule after Codex found unescaped JSON in events.jsonl -->
 
 ### Gate 6: Bare Metal Correctness
 
@@ -129,7 +155,7 @@ static void test_my_invariant(void) {
 
 <!-- Updated 2026-04-04: added framebuffer 5-rule checklist after WC remap implementation -->
 
-### Gate 10: Architecture Neutrality
+### Gate 7: Architecture Neutrality
 
 > Impossible OS targets ARM64 in addition to x86-64 (domain 16). Code outside `arch/` must compile for both. When the HAL exists, use it. Until then, don't make things worse.
 
@@ -142,21 +168,21 @@ static void test_my_invariant(void) {
 
 <!-- Updated 2026-04-03: added Gate 10 for ARM64 port preparation -->
 
-### Gate 7: Unit Tests
+### Gate 8: Unit Tests
 
 - [ ] **New public function?** Add at least one test assertion in the appropriate `test_*.c` file.
 - [ ] **New invariant?** Add `TEST_ASSERT_EQ` for the expected value (Layer 3 of the 5-layer defense).
 - [ ] **Register with category.** Use `test_suite_register_cat("name", fn, TEST_CAT_XX)` where XX matches the subsystem: `MM`, `FS`, `SCHED`, `OB`, `SECURITY`, `IPC`, `BOOT`, `ABI`, `STORAGE`.
 - [ ] **Concrete assertions.** Every test must have an expected value. No `"verify it works"` -- specify what "works" means numerically.
 
-### Gate 8: Documentation Sync
+### Gate 9: Documentation Sync
 
 - [ ] **New bare-metal lesson?** Add to CLAUDE.md "Bare Metal Gotchas" section.
 - [ ] **New safety invariant?** Add to CLAUDE.md "Safety Gates" section.
 - [ ] **Changed a convention?** Update CLAUDE.md, `.claude/skills/`, and affected TODO files in the same commit.
 - [ ] **New struct with assembly offsets?** Add an offset table comment above the struct definition.
 
-### Gate 9: Production Quality -- No Patches, No Workarounds
+### Gate 10: Production Quality -- No Patches, No Workarounds
 
 > Every line of code ships as if it is the final version. There is no "fix it later" pass. Impossible OS is built to rival Windows and Linux -- that standard applies to every commit, not just milestone releases.
 
@@ -180,10 +206,7 @@ After writing code, before committing:
 1. **Build check:** `bash scripts/build.sh` -- must show `=== BUILD OK ===`
 2. **Static assert check:** If you added `_Static_assert`, temporarily break the invariant and verify the build fails with the expected message. Revert.
 3. **Test check:** If you added tests, verify they're registered and would run with `test=1`.
-4. **Grep for hazards:**
-   - `grep -r 'malloc(' src/kernel/` -- should find zero stdlib malloc calls
-   - `grep -r '<stdint.h>\|<string.h>\|<stdlib.h>' src/kernel/` -- should find zero
-   - New `static` mutable variables without a lock comment -- SMP hazard
+4. **SMP hazard scan:** Any new `static` mutable variable without a spinlock, atomic, or per-CPU comment is an SMP bug. The pre-commit linter catches stdlib includes.
 
 ## Self-Update Protocol
 
@@ -205,8 +228,13 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | Situation | Action |
 |-----------|--------|
 | New global mutable variable | Add spinlock or make atomic or per-CPU |
+| Spinlock around I/O or blocking op | Don't -- snapshot under lock, release, then I/O |
 | New struct used by assembly | 5-layer defense (static assert + runtime + test + canary + doc) |
+| Enum grows (new entry added) | Update ALL parallel arrays; add `_Static_assert(count == ENUM)` |
 | New init function in boot path | POST16 entry/exit + klog + error handling |
+| Moving boot-path work to a thread | Don't -- compositor starves threads; run inline |
+| Code called from panic/fault handler | No spinlocks, no kmalloc, no interrupt assumptions |
+| Writing JSON or structured output | Escape `\ " \n \r \t` and control chars in strings |
 | New MMIO access (device regs) | `vmm_map_mmio_uc()` with UC attributes |
 | Framebuffer VRAM access | `vmm_map_mmio_wc()` with Write-Combining |
 | Allocation > 4 KB | `pmm_alloc_contiguous()`, not `kmalloc()` |

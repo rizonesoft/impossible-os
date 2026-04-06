@@ -5,6 +5,15 @@ description: Validate whether a TODO section marked done or in progress matches 
 
 # Validate TODO Section
 
+## Use This Skill When
+
+- A section was just implemented and you need to verify checklist items match actual code before committing.
+- The `/implement-todo-section` pipeline reaches Stage 7 (it invokes this skill).
+- Reconciling stale checklist state -- items marked `[x]` that may no longer be accurate after refactoring.
+- The user asks "is §N correct?" or "validate this section."
+- Do NOT use for full-file validation -- use `/validate-todo-file` instead.
+- Do NOT use for deep quality audit -- use `/verify-todo-section` instead (which runs Codex + tests + this).
+
 ## Workflow
 
 1. Read the exact section, its notes, and any linked verification context.

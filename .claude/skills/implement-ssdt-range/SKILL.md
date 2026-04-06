@@ -5,6 +5,13 @@ description: Implement and wire a range of SSDT entries (main or shadow table). 
 
 # Implement SSDT Range
 
+## Use This Skill When
+
+- The user pastes or references an SSDT range block (e.g., "implement 0x1020-0x1027 GDI Text").
+- Batch-implementing a group of `NtXxx`/`NtGdi`/`NtUser` syscall stubs from TODO-05 or TODO-12.
+- The user asks to "wire up SSDT entries" or "implement the next SSDT block."
+- Do NOT use for single ad-hoc `NtXxx` functions -- just implement inline.
+
 ## Input
 
 The user provides an SSDT range block -- either pasted from TODO-05 (main SSDT, 0x0000+) or TODO-12 (shadow SSDT, 0x1000+). The block contains:

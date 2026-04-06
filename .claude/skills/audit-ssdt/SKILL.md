@@ -5,6 +5,14 @@ description: Audit SSDT status against actual codebase implementations. Finds al
 
 # Audit SSDT
 
+## Use This Skill When
+
+- After implementing one or more SSDT handlers (`NtXxx` functions) and calling `ssdt_register()`.
+- Periodically to catch drift between TODO-05/TODO-12 master tables and actual code.
+- The `/verify-todo-section` pipeline auto-triggers this for SSDT-related sections.
+- The user asks "which SSDT entries are wired?" or "audit the SSDT table."
+- Before starting a new SSDT range implementation to get a clean baseline.
+
 Reconcile SSDT status in TODO docs against the actual codebase. This includes:
 - Master tables in TODO-05 (main, 0x0000+) and TODO-12 (shadow, 0x1000+)
 - SSDT-related checklist items in the rest of TODO-05 (sections below the master table)
