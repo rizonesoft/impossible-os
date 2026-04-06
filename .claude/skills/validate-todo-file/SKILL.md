@@ -45,6 +45,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
 6. Validate the current lean TODO structure.
    - Check required sections, numbering, checklist shape, references, and exit criteria.
    - Use `Implementation Order`, not legacy phase-table rules.
+   - **Flat section numbering only:** Sections must use `## 1. Title`, `## 2. Title`, `## 3. Title` -- sequential integers. Sub-section numbering (`### 1.1`, `### 1.2`, `## 2.1`) is NOT allowed. If found, flatten into top-level sections and renumber sequentially. Update all `§N` references, Implementation Order rows, and OS Comparison cells to match the new numbers.
    - **`Depends On` column must use `§` prefix:** All section references in the `Depends On` column must use `§N` notation (e.g., `§1, §3`), not bare numbers (e.g., `1, 3`). Fix any bare numbers by adding the `§` prefix.
    - **Compact the OS Comparison table:**
      - Keep a compact 5-column header and use icon labels for operating systems.
@@ -170,8 +171,9 @@ description: Validate a TODO file for structural completeness, Implementation Or
       - A `- [ ] Commit: "test: add <feature> test suite"` checklist item.
     - **Test case quality check:** Each sub-bullet must test one specific behavior with a concrete expected outcome. Flag any test that lacks an expected value (e.g., "call `foo()`" without stating what it should return or what state it should produce).
     - If the TODO file is missing this section entirely, flag it and draft a skeleton `## Unit Tests` section with test cases derived from the TODO's deliverables.
-17. If the problem is code-truth or completion-state accuracy, hand off to `/verify-todo-section` instead.
-   - Use this only for deep dive escalation; baseline completion-truth validation is mandatory in this skill.
+17. If the problem is a deep section-level code-truth/completion-state dispute, run an embedded section verification pass inline.
+   - Use the same strict evidence gates as the implement workflow (implementation + wiring + functional normal path).
+   - Baseline completion-truth validation remains mandatory in this skill.
 
 ## Guardrails
 
