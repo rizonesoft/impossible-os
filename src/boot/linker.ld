@@ -12,6 +12,7 @@ SECTIONS
 {
     /* GRUB loads the kernel at 1 MiB */
     . = 1M;
+    __kernel_start = .;
 
     /* Multiboot2 header must come first (GRUB scans for it) */
     .multiboot2 ALIGN(8) :

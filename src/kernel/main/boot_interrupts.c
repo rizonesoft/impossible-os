@@ -50,6 +50,7 @@
 #include "kernel/smbios.h"
 #include "kernel/boot_timing.h"
 #include "kernel/smp.h"
+#include "kernel/exec.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 1 ------------------------------------------------------------ */
@@ -82,6 +83,47 @@ void boot_phase1(void)
     {
         extern void bugcheck_init(void);
         bugcheck_init();
+    }
+
+    /* --- Register kernel as first module in crash registry (TODO-16 S3) ---
+     * Uses static array (no heap), spinlock safe after IDT. Must be early
+     * so any crash during boot includes the kernel in the module list. */
+    {
+        extern void kernel_main(uint64_t, uint64_t);
+        extern char __kernel_start[];
+        extern char __kernel_end[];
+        loaded_module_t kmod;
+        uint8_t *p = (uint8_t *)&kmod;
+        uint32_t ki;
+        for (ki = 0; ki < sizeof(kmod); ki++)
+            p[ki] = 0;
+        kmod.base_address  = (uint64_t)(uintptr_t)__kernel_start;
+        kmod.size_of_image = (uint64_t)(uintptr_t)__kernel_end -
+                             (uint64_t)(uintptr_t)__kernel_start;
+        kmod.entry_point   = (uint64_t)(uintptr_t)kernel_main;
+        kmod.format        = EXEC_FMT_PE;  /* kernel presented as PE to WinDbg */
+        /* name + full_path */
+        {
+            const char *n = "kernel.exe";
+            const char *fp = "C:\\Impossible\\System32\\kernel.exe";
+            uint32_t ni = 0;
+            while (n[ni] && ni < EXEC_MODULE_NAME_MAX - 1) {
+                kmod.name[ni] = n[ni]; ni++;
+            }
+            kmod.name[ni] = '\0';
+            ni = 0;
+            while (fp[ni] && ni < EXEC_MODULE_PATH_MAX - 1) {
+                kmod.full_path[ni] = fp[ni]; ni++;
+            }
+            kmod.full_path[ni] = '\0';
+        }
+        POST16(POST16_MODULE_REGISTRY);
+        if (exec_register_module((process_t *)0, &kmod) != 0) {
+            klog(LOG_ERROR, "boot",
+                 "FATAL: kernel module self-registration failed -- "
+                 "crash dumps will lack kernel symbolization");
+            boot_halt("exec_register_module(kernel.exe) failed");
+        }
     }
 
     /* --- ACPI: requires IDT --- */

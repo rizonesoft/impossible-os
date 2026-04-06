@@ -106,5 +106,24 @@ int exec_register_module(process_t *proc, const loaded_module_t *mod);
  * NMI crash dump path should use a lockless fallback or bounded trylock. */
 int exec_find_module_by_pc(uint64_t rip, loaded_module_t *out);
 
+/* Snapshot-copy all registered modules into caller-provided buffer.
+ * 'out' must point to an array of at least 'max_count' loaded_module_t.
+ * Returns the number of modules copied (capped at max_count).
+ * Uses irqsave spinlock -- NOT NMI-safe. For NMI crash dump context,
+ * use exec_iterate_modules_lockless() which reads without locking
+ * (may see a torn entry if the registry was being modified at crash time,
+ * but that is acceptable for crash diagnostics). */
+uint32_t exec_iterate_modules(loaded_module_t *out, uint32_t max_count);
+
+/* Lockless variant for crash dump / NMI context.
+ * Same interface as exec_iterate_modules() but skips the spinlock.
+ * ONLY safe when called from a panic path where ALL other CPUs have
+ * been halted via IPI FREEZE (see §5 crash dump writer). If called
+ * while another CPU is still running exec_register_module(), the copy
+ * may contain torn entries. The caller MUST ensure global CPU freeze
+ * before invoking this. */
+uint32_t exec_iterate_modules_lockless(loaded_module_t *out,
+                                        uint32_t max_count);
+
 /* Return the current number of registered modules (for diagnostics). */
 uint32_t exec_module_count(void);

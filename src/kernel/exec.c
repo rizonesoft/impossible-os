@@ -490,6 +490,45 @@ int exec_find_module_by_pc(uint64_t rip, loaded_module_t *out)
     return found;
 }
 
+uint32_t exec_iterate_modules(loaded_module_t *out, uint32_t max_count)
+{
+    uint64_t flags;
+    uint32_t count, i;
+
+    if (!out || max_count == 0)
+        return 0;
+
+    spin_lock_irqsave(&s_module_lock, &flags);
+
+    count = s_module_count;
+    if (count > max_count)
+        count = max_count;
+
+    for (i = 0; i < count; i++)
+        out[i] = s_modules[i];
+
+    spin_unlock_irqrestore(&s_module_lock, flags);
+    return count;
+}
+
+uint32_t exec_iterate_modules_lockless(loaded_module_t *out,
+                                        uint32_t max_count)
+{
+    uint32_t count, i;
+
+    if (!out || max_count == 0)
+        return 0;
+
+    count = __atomic_load_n(&s_module_count, __ATOMIC_ACQUIRE);
+    if (count > max_count)
+        count = max_count;
+
+    for (i = 0; i < count; i++)
+        out[i] = s_modules[i];
+
+    return count;
+}
+
 uint32_t exec_module_count(void)
 {
     return __atomic_load_n(&s_module_count, __ATOMIC_ACQUIRE);

@@ -14,6 +14,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/panic.h"
 #include "kernel/idt.h"
+#include "kernel/exec.h"
 
 /* ---- Bugcheck name resolution ---- */
 
@@ -224,6 +225,75 @@ static void test_fpu_capture_post_code(void)
                 "FPU POST != CRASHLOG POST");
 }
 
+/* ---- Module registry for crash dumps (S3) ---- */
+
+static void test_kernel_module_registered(void)
+{
+    /* kernel.exe should be the first registered module after boot */
+    TEST_ASSERT(exec_module_count() >= 1,
+                "At least 1 module registered (kernel.exe)");
+}
+
+static void test_kernel_module_find_by_pc(void)
+{
+    /* kernel_main is inside the kernel image -- find it by PC */
+    extern void kernel_main(uint64_t magic, uint64_t mbi);
+    loaded_module_t mod;
+    int ret = exec_find_module_by_pc((uint64_t)(uintptr_t)kernel_main, &mod);
+    TEST_ASSERT_EQ(ret, 0, "exec_find_module_by_pc finds kernel_main");
+    TEST_ASSERT(mod.name[0] == 'k' && mod.name[1] == 'e' &&
+                mod.name[2] == 'r' && mod.name[3] == 'n',
+                "Module name starts with 'kern'");
+}
+
+static void test_kernel_module_base_and_size(void)
+{
+    extern char __kernel_start[];
+    extern char __kernel_end[];
+    loaded_module_t mod;
+    int ret = exec_find_module_by_pc((uint64_t)(uintptr_t)__kernel_start, &mod);
+    TEST_ASSERT_EQ(ret, 0, "kernel module found at __kernel_start");
+    TEST_ASSERT_EQ(mod.base_address, (uint64_t)(uintptr_t)__kernel_start,
+                   "kernel base == __kernel_start");
+    uint64_t expected_size = (uint64_t)(uintptr_t)__kernel_end -
+                             (uint64_t)(uintptr_t)__kernel_start;
+    TEST_ASSERT_EQ(mod.size_of_image, expected_size,
+                   "kernel size == __kernel_end - __kernel_start");
+}
+
+static void test_iterate_modules_snapshot(void)
+{
+    loaded_module_t buf[4];
+    uint32_t count = exec_iterate_modules(buf, 4);
+    TEST_ASSERT(count >= 1, "exec_iterate_modules returns >= 1");
+    /* First module should be kernel (lowest base address) */
+    TEST_ASSERT(buf[0].name[0] == 'k',
+                "First iterated module is kernel.exe");
+}
+
+static void test_iterate_modules_lockless(void)
+{
+    loaded_module_t buf[4];
+    uint32_t count = exec_iterate_modules_lockless(buf, 4);
+    TEST_ASSERT(count >= 1, "lockless iterate returns >= 1");
+    TEST_ASSERT(count <= 4, "lockless count capped at max_count");
+    /* Verify first entry is internally consistent */
+    TEST_ASSERT(buf[0].base_address != 0,
+                "lockless first entry has valid base");
+    TEST_ASSERT(buf[0].size_of_image != 0,
+                "lockless first entry has valid size");
+}
+
+static void test_module_registry_post_code(void)
+{
+    TEST_ASSERT_EQ(POST16_MODULE_REGISTRY, 0xDE44,
+                   "POST16_MODULE_REGISTRY == 0xDE44");
+    TEST_ASSERT(POST16_MODULE_REGISTRY != POST16_BUGCHECK,
+                "MODULE_REGISTRY POST != BUGCHECK POST");
+    TEST_ASSERT(POST16_MODULE_REGISTRY != POST16_FPU_CAPTURE,
+                "MODULE_REGISTRY POST != FPU_CAPTURE POST");
+}
+
 /* ---- Registration ---- */
 
 void test_register_crashdump(void)
@@ -257,6 +327,19 @@ void test_register_crashdump(void)
                             test_xsave_buffer_alignment, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: FPU capture POST code",
                             test_fpu_capture_post_code, TEST_CAT_BOOT);
+    /* S3: Module registry for crash dumps */
+    test_suite_register_cat("Crash: kernel module registered",
+                            test_kernel_module_registered, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: kernel module find by PC",
+                            test_kernel_module_find_by_pc, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: kernel module base/size",
+                            test_kernel_module_base_and_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: iterate modules snapshot",
+                            test_iterate_modules_snapshot, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: iterate modules lockless",
+                            test_iterate_modules_lockless, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: module registry POST code",
+                            test_module_registry_post_code, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -56,7 +56,7 @@
 | --- | :---: | ---------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                | --                  |  [x]   |
 | 💎  |   2   | FPU/XMM/XSAVE state capture                   | §1                  |  [x]   |
-| 💎  |   3   | Module registry (wire `exec_register_module`)  | T08 §6              |  [ ]   |
+| 💎  |   3   | Module registry (wire `exec_register_module`)  | T08 §6              |  [x]   |
 | 💎  |   4   | MDMP binary format: header, directory, streams | §1, §2, §3, T10 §1 |  [ ]   |
 | 💎  |   5   | Minidump writer (crashing thread + memory)     | §4                  |  [ ]   |
 | 💎  |   6   | Kernel dump & full dump variants               | §5                  |  [ ]   |
@@ -109,12 +109,12 @@ Capture the crashing thread's FPU/XMM/YMM state and build a Windows-compatible `
 
 Wire the existing `exec_register_module()` / `exec_find_module_by_pc()` infrastructure (TODO-08 §6) into the crash dump pipeline so the ModuleList stream can enumerate all loaded binaries.
 
-- [ ] In `kernel_main()` Phase 1: call `exec_register_module()` for the kernel itself -- `base_address = KERNEL_IMAGE_BASE`, `size_of_image` from `__kernel_end - __kernel_start` linker symbols, `name = "kernel.exe"`
-- [ ] Verify ELF/PE/EIF loaders already call `exec_register_module()` (done in TODO-08 §6/§8) -- no new code needed, just verify the chain
-- [ ] In the crash dump ModuleList stream writer (§4): iterate `exec_module_count()` entries via `exec_find_module_by_pc()` or a new `exec_iterate_modules()` helper to enumerate all registered modules
+- [x] In `boot_phase1()` after bugcheck_init: call `exec_register_module()` for the kernel itself -- `base_address = __kernel_start` (1 MiB), `size_of_image = __kernel_end - __kernel_start`, `entry_point = kernel_main`, `name = "kernel.exe"`, `full_path = "C:\Impossible\System32\kernel.exe"`, `format = EXEC_FMT_PE`; `__kernel_start` added to linker script
+- [x] Verified ELF/PE/EIF loaders: PE loader calls `exec_register_module()` in `pe.c:767`; ELF path calls in `task.c:1183`; EIF tracked in TODO-23 §4 (not yet wired)
+- [x] Added `exec_iterate_modules(out, max)` (irqsave locked snapshot copy) and `exec_iterate_modules_lockless(out, max)` (NMI-safe, no lock) in `exec.c`/`exec.h` for crash dump ModuleList stream writer (§4)
 - [ ] Commit: `"kernel/crashdump: wire exec module registry into crash dump pipeline"`
 
-**Test checkpoint:** After boot, `exec_find_module_by_pc(kernel_entry)` returns `"kernel.exe"` with correct base. After loading cmd.exe, module count >= 2. `POST16(0xDE44)` on entry. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** 6 test assertions in `test_crashdump.c`: kernel module registered (count >= 1), find by PC (kernel_main resolves to "kernel.exe"), base/size match linker symbols, iterate snapshot, lockless iterate, POST code uniqueness. `POST16(0xDE44)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
 ---
 
