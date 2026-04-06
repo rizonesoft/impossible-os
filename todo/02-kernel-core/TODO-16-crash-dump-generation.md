@@ -94,7 +94,7 @@ Capture the crashing thread's FPU/XMM/YMM state and build a Windows-compatible `
 - [x] `panic_capture_fpu_state()` -- called from `panic_screen()` after async isolation, gated behind atomic `panic_try_claim_owner()`; clears CR0.TS/EM, checks CR4.OSXSAVE at runtime, uses `xsave64` with `xcr0_active` mask or `fxsave64` fallback; `POST16(0xDE42)` on entry
 - [x] Define `CONTEXT` struct in `include/kernel/panic.h` at Windows x64 layout: 1232 bytes, `ContextFlags`, `MxCsr`, segment registers, debug registers, all GPRs, `Rip`, 512-byte `FltSave` (`XMM_SAVE_AREA32`), `M128A VectorRegister[26]` for YMM high halves, LBR fields; static assert on size; forward-declared in `nt_types.h`
 - [x] `panic_build_context(frame, ctx)` -- populates `CONTEXT` from `interrupt_frame` + `g_panic_xsave_buf`; reads live DS/ES/FS/GS and debug registers; copies FXSAVE region into `FltSave`, MXCSR into top-level `MxCsr`, AVX YMM high halves into `VectorRegister[0..15]`; sets `ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT`
-- [ ] Commit: `"kernel/panic: XSAVE FPU capture, CONTEXT record population"`
+- [x] Commit: `"kernel/panic: XSAVE FPU capture, CONTEXT record population"`
 
 **Test checkpoint:** After panic, `g_panic_xsave_buf` is non-zero (FPU was in use). `CONTEXT.MxCsr` is non-default. `CONTEXT.Rip` matches `interrupt_frame.rip`. `POST16(0xDE42)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
