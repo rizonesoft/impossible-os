@@ -109,6 +109,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/verify-todo-section` | Verify implemented section -- full Codex pipeline without implementing |
 | `/improve-implementation-order` | Audit and fix an Implementation Order table |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
+| `/diagnose-serial-log` | Parse serial log, classify WARN/FAIL/crash, trace to source, fix real bugs |
 | `/run-verification` | Verify a TODO against a serial log (pasted or file), mark PASS/FAIL, detect regressions |
 | `/complete-todo` | Convert a completed TODO into polished docs, update indexes, handle XREFs |
 | `/validate-doc` | Fact-check a doc against the codebase, check for charts/tables/OS Comparison |
