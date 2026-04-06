@@ -9,13 +9,18 @@ description: Run adversarial code review for one implemented TODO section, fix f
 
 1. Scope the review to one implemented section (`§N`) and its changed files/symbols.
 2. Extract ALL adversarial angles to challenge. The review MUST be full-spectrum, not limited to one category (e.g., security-only). Every dispatch must cover ALL of:
-   - **Concurrency/SMP safety** -- new shared mutable state, lock ordering, atomics
-   - **Error-path handling and rollback** -- partial state on failure, resource leaks, cleanup
-   - **Wiring/registration correctness** -- SSDT/dispatch/hooks, format registration, magic matching
-   - **Boundary and ABI assumptions** -- integer overflow, unaligned access, struct packing
-   - **Functional correctness** -- does the code do what the spec says? Entry points, return values, edge cases
-   - **Code quality** -- dead code, unused variables, missing const, style
-   - **Performance** -- unnecessary work in hot paths, O(n^2) patterns
+   - **Concurrency/SMP safety** -- new shared mutable state, lock ordering, atomics, per-CPU data races
+   - **Race conditions** -- TOCTOU between check and use, concurrent access to shared data without locks, interrupt-context vs thread-context conflicts
+   - **Error-path handling and rollback** -- partial state on failure, resource leaks, cleanup, what happens when allocation fails mid-operation
+   - **Regressions** -- did the change break any existing functionality? Callers of modified functions, struct layout changes affecting other files, removed/renamed symbols
+   - **Wiring/registration correctness** -- SSDT/dispatch/hooks, format registration, magic matching, init ordering
+   - **Boundary and ABI assumptions** -- integer overflow, unaligned access, struct packing, type-pun UB, sign extension
+   - **Memory safety** -- buffer overflows, use-after-free, double-free, null pointer dereference, uninitialized reads, kernel vs user pointer confusion
+   - **Functional correctness** -- does the code do what the spec says? Entry points, return values, edge cases, off-by-one errors
+   - **Security** -- can crafted input (malicious binary, bad syscall args) corrupt kernel state, escalate privilege, or cause denial of service?
+   - **Code quality** -- dead code, unused variables, missing const, style, magic numbers without defines
+   - **Performance** -- unnecessary allocations, O(n^2) where O(n) suffices, byte-by-byte where bulk ops exist, hot-path bloat
+   - **Bare metal correctness** -- MMIO caching attributes, TLB flush scope (local vs IPI shootdown), CPUID-gated instructions, identity mapping assumptions
    This was learned the hard way: a security-only review of §5 missed entry-point range validation (F-06) and dead code (F-08) which required a supplemental full-spectrum review.
 3. Dispatch adversarial review to the Codex rescue subagent.
    - Use `Agent` tool with `subagent_type: "codex:codex-rescue"`.
