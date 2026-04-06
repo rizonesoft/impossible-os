@@ -13,6 +13,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/boot_timing.h"
 #include "kernel/exec.h"
+#include "kernel/eif.h"
 #include "kernel/errno.h"
 
 /* ---- boot_result_t values ---- */
@@ -239,6 +240,39 @@ static void test_exec_errno(void)
     TEST_ASSERT_EQ(EINVAL, 22, "EINVAL == 22");
 }
 
+/* ---- EIF loader tests (TODO-08 §5) ---- */
+
+static void test_eif_bad_magic(void)
+{
+    uint8_t bad[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0,0,0,0,0,0,0,0,0,0,0,0,
+                      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 };
+    uint64_t entry = eif_load(bad, sizeof(bad));
+    TEST_ASSERT_EQ(entry, 0, "eif_load rejects bad magic");
+}
+
+static void test_eif_too_small(void)
+{
+    uint8_t small[] = { 'E', 'I', 'F', '!' };
+    uint64_t entry = eif_load(small, sizeof(small));
+    TEST_ASSERT_EQ(entry, 0, "eif_load rejects data smaller than header");
+}
+
+static void test_eif_struct_sizes(void)
+{
+    TEST_ASSERT_EQ(sizeof(eif_header_t), 64, "eif_header_t == 64 bytes");
+    TEST_ASSERT_EQ(sizeof(eif_segment_t), 32, "eif_segment_t == 32 bytes");
+    TEST_ASSERT_EQ(sizeof(eif_import_t), 8, "eif_import_t == 8 bytes");
+}
+
+static void test_eif_constants(void)
+{
+    TEST_ASSERT_EQ(EIF_MAGIC, 0x45494621, "EIF_MAGIC == 0x45494621");
+    TEST_ASSERT_EQ(EIF_VERSION, 1, "EIF_VERSION == 1");
+    TEST_ASSERT_EQ(EIF_ARCH_X86_64, 1, "EIF_ARCH_X86_64 == 1");
+    TEST_ASSERT_EQ(EIF_FLAG_SIGNED, 8, "EIF_FLAG_SIGNED == 8");
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_init(void)
@@ -264,6 +298,12 @@ void test_register_boot_init(void)
     test_suite_register_cat("Exec: bad magic", test_exec_bad_magic, TEST_CAT_BOOT);
     test_suite_register_cat("Exec: null data", test_exec_null_data, TEST_CAT_BOOT);
     test_suite_register_cat("Exec: errno constants", test_exec_errno, TEST_CAT_BOOT);
+
+    /* EIF loader tests (TODO-08 §5) */
+    test_suite_register_cat("EIF: bad magic", test_eif_bad_magic, TEST_CAT_BOOT);
+    test_suite_register_cat("EIF: too small", test_eif_too_small, TEST_CAT_BOOT);
+    test_suite_register_cat("EIF: struct sizes", test_eif_struct_sizes, TEST_CAT_BOOT);
+    test_suite_register_cat("EIF: constants", test_eif_constants, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

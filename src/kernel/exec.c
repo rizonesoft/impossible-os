@@ -8,6 +8,7 @@
 #include "kernel/exec.h"
 #include "kernel/errno.h"
 #include "kernel/elf.h"
+#include "kernel/eif.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
@@ -40,8 +41,17 @@ void exec_init(void)
         .loader    = elf_exec_wrapper,
     };
 
+    /* Register built-in EIF format */
+    static const exec_format_t eif_fmt = {
+        .magic     = { 'E', 'I', 'F', '!' },
+        .magic_len = 4,
+        .name      = "EIF",
+        .loader    = eif_load,
+    };
+
     s_format_count = 0;
     exec_register_format(&elf_fmt);
+    exec_register_format(&eif_fmt);
 
     /* Memory barrier: all writes to s_formats visible before s_init_done */
     __atomic_store_n(&s_init_done, 1, __ATOMIC_RELEASE);
