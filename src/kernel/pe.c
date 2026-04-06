@@ -82,7 +82,7 @@ pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
     uint16_t machine = read_u16((const uint8_t *)&coff->Machine);
     if (machine != PE_MACHINE_AMD64) {
         if (machine == PE_MACHINE_I386) {
-            klog(LOG_WARN, "pe", "32-bit PE (i386) rejected -- PE32+ only");
+            klog(LOG_DEBUG, "pe", "32-bit PE (i386) rejected -- PE32+ only");
         } else {
             klog(LOG_WARN, "pe", "Unsupported Machine: 0x%x",
                  (uint64_t)machine);
@@ -115,7 +115,7 @@ pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
     uint16_t magic = read_u16((const uint8_t *)&opt->Magic);
 
     if (magic == PE_OPT_MAGIC_PE32) {
-        klog(LOG_WARN, "pe",
+        klog(LOG_DEBUG, "pe",
              "32-bit Optional Header (0x10B) rejected -- PE32+ only");
         return r;
     }

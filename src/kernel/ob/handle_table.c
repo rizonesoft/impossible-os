@@ -126,7 +126,7 @@ HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
     /* Per-process handle quota (S14): deny if at limit */
     if (table->handle_limit > 0 && table->count >= table->handle_limit) {
         struct task *cur = task_current();
-        klog(LOG_WARN, "ob", "PID %u handle quota exhausted (%u/%u)",
+        klog(LOG_DEBUG, "ob", "PID %u handle quota exhausted (%u/%u)",
              cur ? (uint64_t)cur->pid : 0,
              (uint64_t)table->count, (uint64_t)table->handle_limit);
         return INVALID_HANDLE_VALUE;

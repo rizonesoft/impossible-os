@@ -151,7 +151,7 @@ uint64_t exec_load(const uint8_t *data, uint64_t size, int *err)
         /* Build magic for log without unaligned type-pun */
         uint32_t m = (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
                      ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
-        klog(LOG_WARN, "exec", "Unknown binary format (magic: 0x%x)",
+        klog(LOG_DEBUG, "exec", "Unknown binary format (magic: 0x%x)",
              (uint64_t)m);
         if (err) *err = ENOEXEC;
         return 0;
@@ -293,12 +293,12 @@ int exec_register_module(process_t *proc, const loaded_module_t *mod)
     POST16(0xD809);
 
     if (!mod) {
-        klog(LOG_ERROR, "exec", "exec_register_module: NULL module");
+        klog(LOG_DEBUG, "exec", "exec_register_module: NULL module");
         return -1;
     }
 
     if (mod->base_address == 0 || mod->size_of_image == 0) {
-        klog(LOG_ERROR, "exec", "exec_register_module: invalid base/size");
+        klog(LOG_DEBUG, "exec", "exec_register_module: invalid base/size");
         return -1;
     }
 
