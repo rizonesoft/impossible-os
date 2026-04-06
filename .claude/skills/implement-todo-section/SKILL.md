@@ -5,6 +5,14 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 # Implement TODO Section
 
+## Execution Discipline
+
+> The TODO section IS the plan. Apply `superpowers:executing-plans` principles:
+> - **Follow the plan, don't improvise.** The checklist items define scope. Do not widen.
+> - **Review checkpoints are mandatory.** Steps 13-18 are review checkpoints -- never skip them.
+> - **If the plan is wrong, update the plan first.** If reality conflicts with the checklist, update the TODO section text before implementing a different approach.
+> - **One section = one commit.** Each section is a milestone with a clean commit boundary.
+
 ## Workflow
 
 1. **Read the section** -- full text, notes, test checkpoint, warning boxes.
@@ -46,7 +54,12 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
     ```
-14. **Fix loop** (max 3 rounds) -- fix all Critical and High findings. Fix Medium unless explicitly accepted with a concrete technical reason. Rebuild after each fix round. Re-review via Codex focusing on previous findings and changed files. If unresolved Critical/High remain after round 3: do not mark section complete, keep `[/]` or `[ ]`, add follow-up items.
+14. **Fix loop** (max 3 rounds) -- apply `superpowers:receiving-code-review` discipline: do NOT blindly implement every Codex finding. For each finding:
+    - **Verify technically first.** Read the code Codex flagged. Is the finding correct? Codex can be wrong -- it doesn't have full runtime context.
+    - **If the finding is valid:** fix the root cause, not the surface symptom. Rebuild.
+    - **If the finding is wrong or misleading:** reject with a concrete technical reason (not "I disagree" -- explain WHY it's wrong with code evidence).
+    - **If the finding is correct but out of scope:** accept with justification and note it as a follow-up item.
+    - Fix all valid Critical and High. Fix valid Medium unless explicitly accepted. Re-review via Codex focusing on previous findings and changed files. If unresolved Critical/High remain after round 3: do not mark section complete, keep `[/]` or `[ ]`, add follow-up items.
 15. **Final self-review** (MANDATORY) -- this catches what Codex misses at the integration level:
     - Regressions: did any existing functionality break?
     - Race conditions: any new shared mutable state without synchronization?

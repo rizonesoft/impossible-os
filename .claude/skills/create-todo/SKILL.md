@@ -11,6 +11,15 @@ description: Create lean project TODO files under todo/, choose the correct doma
 - A feature, subsystem, or spec needs a tracked execution roadmap.
 - A stale draft needs to be rewritten into the current lean TODO format.
 
+## Plan Quality Principles
+
+> A TODO file IS an implementation plan. Apply these principles from `superpowers:writing-plans`:
+> - **Identify critical files** -- list every source file the plan will touch in Inputs.
+> - **Consider architectural trade-offs** -- document why this approach was chosen over alternatives.
+> - **Define clear milestones** -- each `## N.` section is a milestone with a commit checkpoint.
+> - **Sequence dependencies correctly** -- the Implementation Order table IS the dependency graph.
+> - **Make it executable** -- someone (human or AI) should be able to follow §1 through §N without guessing.
+
 ## Workflow
 
 1. **Find the canonical home.**

@@ -72,6 +72,14 @@ void test_suite_register(const char *name, test_fn_t fn);
 
 Always use `test_suite_register_cat()` with the appropriate category.
 
+## TDD Principles
+
+> Apply `superpowers:test-driven-development` where possible:
+> - **Write test assertions first** from the TODO's test case list BEFORE reading the implementation deeply. This ensures tests reflect the spec, not the code.
+> - **Run the tests and watch them fail** -- confirms the assertions are actually checking something. A test that passes before implementation is wired is a useless test.
+> - **Then read the implementation** to verify the tests match real behavior. Adjust only if the spec (TODO) is wrong, not because the code does something different.
+> - If writing a test reveals a bug in the code under test, **fix the bug** -- this is expected TDD behavior.
+
 ## Workflow
 
 ### 1. Read the Unit Tests section

@@ -31,7 +31,7 @@ description: Verify an already-implemented TODO section through the full quality
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
     ```
-6. **Fix loop** (max 3 rounds) -- fix all Critical and High findings. Fix Medium unless explicitly accepted. Rebuild after each fix. Re-review via Codex focusing on previous findings.
+6. **Fix loop** (max 3 rounds) -- apply `superpowers:receiving-code-review` discipline: do NOT blindly fix every Codex finding. For each finding, verify it technically first -- Codex can be wrong. If valid, fix root cause. If wrong, reject with code evidence. If valid but out of scope, accept with justification. Rebuild after each fix. Re-review via Codex focusing on previous findings.
 
 ### Phase 3 -- Self-Review (same as implement step 15)
 

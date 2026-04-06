@@ -12,6 +12,14 @@ description: Analyze a serial log for real bugs -- parse WARN/FAIL/crash lines, 
 - After a test run shows failures that need root-cause analysis.
 - The user asks "what's wrong with this log?" or "fix these errors."
 
+## Debugging Discipline
+
+> Apply `superpowers:systematic-debugging` principles:
+> - **Observe before theorizing.** Read the FULL log, not just the first error. Later errors often explain earlier ones.
+> - **One variable at a time.** Fix one issue, rebuild, re-run. Don't batch-fix 5 things and hope.
+> - **Verify the fix eliminates the symptom.** Don't just verify the code looks right -- verify the log line is gone.
+> - **Check your assumptions.** "This can't be the problem" is usually wrong. Use `llvm-addr2line-19`, read the code, check the data.
+
 ## Workflow
 
 ### Phase 1 -- Parse and Classify
