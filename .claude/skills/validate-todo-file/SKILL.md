@@ -32,6 +32,8 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - **Callout blocks** (`> [!NOTE]`, `> [!IMPORTANT]`, etc.): no blank lines inside a single callout.
    - **Tables**: no blank lines between rows.
    - **Preserve** blank lines between: section headings and content, distinct list groups, `---` separators, and code block fences.
+   - **Remove orphaned bold labels:** Lines matching `**Some Title**` on their own (not `**Test checkpoint:**` or `**Regression risk:**`) are remnants of flattened sub-sections. Delete them -- the content they labeled is already in the checklist items below.
+   - **Collapse excessive blank lines:** Max 1 consecutive blank line anywhere in the file. Runs of 2+ blank lines are visual noise.
 3. **Remove model tags from section headings.**
    - Strip `` `[Opus]` `` and `` `[Sonnet]` `` postfixes from all `## N. Title` headings.
    - These tags are legacy -- model selection is handled by the harness, not the TODO.
