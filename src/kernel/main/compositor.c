@@ -149,11 +149,14 @@ void compositor_run(void)
             cursor_restore();
             wm_composite();
 
-            /* On the very first frame: unlock compositor and restore
-             * klog screen output. */
+            /* On the very first frame: unlock compositor so it can
+             * flip the back-buffer to VRAM. Do NOT re-enable klog screen
+             * output -- the compositor owns the framebuffer now. klog
+             * messages go to serial only; only LOG_FATAL (panic) should
+             * ever render over the desktop. The boot_splash_finish()
+             * already set screen_min_level to LOG_FATAL. */
             if (first_frame) {
                 fb_unlock_compositor();
-                klog_set_screen_level(LOG_INFO);
             }
 
             /* Determine cursor shape from context */
