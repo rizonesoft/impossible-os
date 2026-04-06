@@ -120,6 +120,12 @@ static void keyboard_irq_callback(uint8_t vector, void *ctx)
     /* Read the scan code from the keyboard data port */
     scancode = inb(KB_DATA_PORT);
 
+    /* Ctrl+ScrollLock crash trigger (TODO-16 S1) */
+    {
+        extern void bugcheck_keyboard_check(uint8_t sc, int ctrl);
+        bugcheck_keyboard_check(scancode, ctrl_held);
+    }
+
     /* Handle 0xE0 prefix (extended scan codes for arrow keys etc.) */
     if (scancode == 0xE0) {
         e0_prefix = 1;

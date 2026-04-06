@@ -16,6 +16,7 @@
  * ============================================================================ */
 
 #include "kernel/panic.h"
+#include "kernel/bugcheck.h"
 #include "kernel/idt.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/klog.h"
@@ -77,6 +78,169 @@ static const char *panic_exception_names[32] = {
     "SECURITY_EXCEPTION",            /* 30 */
     "RESERVED",                      /* 31 */
 };
+
+/* --- Bugcheck (S1 -- TODO-16) ------------------------------------------- */
+
+static BUGCHECK_INFO g_last_bugcheck;
+
+/* STOP code name lookup table */
+static const struct { BUGCHECK_CODE code; const char *name; } s_bugcheck_names[] = {
+    { 0x0A,       "IRQL_NOT_LESS_OR_EQUAL" },
+    { 0x1E,       "KMODE_EXCEPTION_NOT_HANDLED" },
+    { 0x50,       "PAGE_FAULT_IN_NONPAGED_AREA" },
+    { 0x3B,       "SYSTEM_SERVICE_EXCEPTION" },
+    { 0x77,       "KERNEL_STACK_INPAGE_ERROR" },
+    { 0x7A,       "KERNEL_DATA_INPAGE_ERROR" },
+    { 0x139,      "KERNEL_SECURITY_CHECK_FAILURE" },
+    { 0xEF,       "CRITICAL_PROCESS_DIED" },
+    { 0xC5,       "DRIVER_CORRUPTED_EXPOOL" },
+    { 0xD1,       "DRIVER_IRQL_NOT_LESS_OR_EQUAL" },
+    { 0xE2,       "MANUALLY_INITIATED_CRASH" },
+    { 0xE0000001, "IOS_BOOT_INIT_FAILED" },
+    { 0xE0000002, "IOS_HEAP_CORRUPTION" },
+    { 0xE0000003, "IOS_GUARD_PAGE_VIOLATION" },
+    { 0xE0000004, "IOS_INVARIANT_VIOLATION" },
+};
+
+const char *bugcheck_name(BUGCHECK_CODE code)
+{
+    for (uint32_t i = 0; i < sizeof(s_bugcheck_names) / sizeof(s_bugcheck_names[0]); i++) {
+        if (s_bugcheck_names[i].code == code)
+            return s_bugcheck_names[i].name;
+    }
+    return "UNKNOWN";
+}
+
+const BUGCHECK_INFO *bugcheck_get_last(void)
+{
+    return &g_last_bugcheck;
+}
+
+void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
+                  uint64_t p3, uint64_t p4)
+{
+    extern uint64_t system_get_ticks(void);
+
+    POST16(0xDE40);
+
+    /* Store bugcheck params for dump pipeline and BSOD display */
+    g_last_bugcheck.code      = code;
+    g_last_bugcheck.param1    = p1;
+    g_last_bugcheck.param2    = p2;
+    g_last_bugcheck.param3    = p3;
+    g_last_bugcheck.param4    = p4;
+    g_last_bugcheck.timestamp = system_get_ticks();
+
+    /* Write last bugcheck to registry for cross-boot persistence.
+     * This is best-effort -- registry may not be available during
+     * early boot crashes. No lock -- we're about to halt. */
+    if (kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        HKEY hk = (HKEY)0;
+        uint32_t disp = 0;
+        if (RegCreateKeyEx((HKEY)(uintptr_t)0x80000002,  /* HKLM */
+                           "SYSTEM\\LastBugCheck", 0, (void *)0, 0, 0,
+                           (void *)0, &hk, &disp) == 0 && hk) {
+            RegSetValueEx(hk, "Code", 0, 4,  /* REG_DWORD */
+                          (const uint8_t *)&code, sizeof(code));
+            uint32_t p1_32 = (uint32_t)p1, p2_32 = (uint32_t)p2;
+            uint32_t p3_32 = (uint32_t)p3, p4_32 = (uint32_t)p4;
+            RegSetValueEx(hk, "Param1", 0, 4, (const uint8_t *)&p1_32, 4);
+            RegSetValueEx(hk, "Param2", 0, 4, (const uint8_t *)&p2_32, 4);
+            RegSetValueEx(hk, "Param3", 0, 4, (const uint8_t *)&p3_32, 4);
+            RegSetValueEx(hk, "Param4", 0, 4, (const uint8_t *)&p4_32, 4);
+            RegCloseKey(hk);
+        }
+    }
+
+    /* Build description string for panic_screen */
+    static char desc[128];
+    {
+        const char *name = bugcheck_name(code);
+        uint32_t pos = 0;
+        const char *p = "STOP 0x";
+        while (*p && pos < 120) desc[pos++] = *p++;
+        /* hex code */
+        {
+            const char hex[] = "0123456789ABCDEF";
+            int started = 0;
+            for (int shift = 28; shift >= 0; shift -= 4) {
+                uint32_t nib = (code >> shift) & 0xF;
+                if (nib || started || shift == 0) {
+                    desc[pos++] = hex[nib];
+                    started = 1;
+                }
+            }
+        }
+        p = " (";
+        while (*p && pos < 120) desc[pos++] = *p++;
+        while (*name && pos < 120) desc[pos++] = *name++;
+        desc[pos++] = ')';
+        desc[pos] = '\0';
+    }
+
+    /* Route to panic_screen -- it handles BSOD rendering, klog crash persist,
+     * subsystem dump, POST code, and halt/restart. */
+    panic_screen((void *)0, (uint64_t)code, desc, __FILE__, __LINE__);
+
+    /* panic_screen should never return, but just in case */
+    for (;;) __asm__ volatile("cli; hlt");
+}
+
+/* --- NMI-triggered crash (S1) ------------------------------------------- */
+
+static uint64_t nmi_crash_handler(struct interrupt_frame *frame)
+{
+    (void)frame;
+    KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH,
+                 0, 0, 0, 0);
+    /* KeBugCheckEx never returns */
+    return 0;
+}
+
+/* --- Keyboard-triggered crash: Ctrl+ScrollLock x2 (S1) ------------------ */
+
+static volatile uint32_t s_ctrl_scroll_count;
+static volatile uint64_t s_ctrl_scroll_last_tick;
+
+void bugcheck_keyboard_check(uint8_t scancode, int ctrl_held)
+{
+    /* ScrollLock make code = 0x46. Must be pressed while Ctrl is held. */
+    if (scancode != 0x46 || !ctrl_held)
+        return;
+
+    extern uint64_t system_get_ticks(void);
+    uint64_t now = system_get_ticks();
+
+    /* Reset if > 2 seconds since last Ctrl+ScrollLock */
+    if (now - s_ctrl_scroll_last_tick > 200)
+        s_ctrl_scroll_count = 0;
+
+    s_ctrl_scroll_last_tick = now;
+    s_ctrl_scroll_count++;
+
+    if (s_ctrl_scroll_count >= 2) {
+        /* Check registry: CrashOnCtrlScroll must be enabled */
+        uint32_t enabled = 0, vtype = 0, vsize = sizeof(enabled);
+        long rc = RegReadKeyValue((HKEY)(uintptr_t)0x80000002,
+                                  "SYSTEM\\CrashControl",
+                                  "CrashOnCtrlScroll", &vtype,
+                                  (uint8_t *)&enabled, &vsize);
+        if (rc == 0 && vtype == 4 && enabled) {
+            KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH,
+                         0, 0, 0, 0);
+        }
+        s_ctrl_scroll_count = 0;
+    }
+}
+
+/* --- bugcheck_init -- wire NMI handler ---------------------------------- */
+
+void bugcheck_init(void)
+{
+    extern void idt_register_handler(uint8_t n,
+        uint64_t (*handler)(struct interrupt_frame *));
+    idt_register_handler(2, nmi_crash_handler);
+}
 
 /* --- Helpers --- */
 

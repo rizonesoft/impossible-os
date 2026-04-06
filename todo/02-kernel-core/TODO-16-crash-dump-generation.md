@@ -54,7 +54,7 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On          | Status |
 | --- | :---: | ---------------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                | --                  |  [ ]   |
+| 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                | --                  |  [x]   |
 | 💎  |   2   | FPU/XMM/XSAVE state capture                   | §1                  |  [ ]   |
 | 💎  |   3   | Module registry (wire `exec_register_module`)  | T08 §6              |  [ ]   |
 | 💎  |   4   | MDMP binary format: header, directory, streams | §1, §2, §3, T10 §1 |  [ ]   |
@@ -73,13 +73,14 @@
 
 Define Windows-compatible STOP code taxonomy and the `KeBugCheckEx` entry point that every kernel panic flows through.
 
-- [ ] Define `BUGCHECK_CODE` typedef and STOP code constants in `include/kernel/bugcheck.h` -- Windows-compatible codes (0x0A, 0x1E, 0x50, 0x3B, 0x77, 0x7A, 0x139, 0xEF, 0xC5, 0xD1, 0xE2) plus Impossible OS exclusive codes (0xE0000001--0xE0000004)
-- [ ] `const char *bugcheck_name(BUGCHECK_CODE code)` -- returns human-readable string for BSOD and dump analysis
-- [ ] `KeBugCheckEx(code, p1, p2, p3, p4)` in `src/kernel/panic.c` -- stores params in static `g_last_bugcheck`, updates BSOD stop code line, triggers dump pipeline (§5)
-- [ ] Update `PANIC(msg)` and `PANIC_IF(cond, msg)` macros to call `KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH, ...)` internally
-- [ ] Registry persistence: write `HKLM\SYSTEM\LastBugCheck\{Code, Param1-4, Timestamp}` early in crash path (-> XREF TODO-13 §4)
-- [ ] NMI-triggered crash: wire NMI handler to call `KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH, ...)` -- enables crash dump on hung systems via NMI button or debugger NMI injection
-- [ ] Keyboard-triggered crash: if `HKLM\SYSTEM\CrashControl\CrashOnCtrlScroll` == 1, Ctrl+ScrollLock×2 triggers `KeBugCheckEx` -- Windows-compatible diagnostic shortcut for bare-metal hang debugging
+- [x] Define `BUGCHECK_CODE` typedef and STOP code constants in `include/kernel/bugcheck.h` -- 11 Windows-compatible codes (0x0A, 0x1E, 0x50, 0x3B, 0x77, 0x7A, 0x139, 0xEF, 0xC5, 0xD1, 0xE2) plus 4 Impossible OS exclusive codes (0xE0000001--0xE0000004)
+- [x] `const char *bugcheck_name(BUGCHECK_CODE code)` -- lookup table in `panic.c`, 15 entries, returns `"UNKNOWN"` for unrecognized codes
+- [x] `KeBugCheckEx(code, p1, p2, p3, p4)` in `src/kernel/panic.c` -- stores params in `g_last_bugcheck`, builds STOP description string, routes to `panic_screen()`, `POST16(0xDE40)` on entry
+- [x] Update `KPANIC(msg)` macro to call `KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH, ...)` internally; `KPANIC_FRAME` unchanged (frame-aware)
+- [x] Registry persistence: writes `HKLM\SYSTEM\LastBugCheck\{Code, Param1-4}` via `RegCreateKeyEx`/`RegSetValueEx`, gated on `SUBSYS_REGISTRY` ready
+- [x] NMI-triggered crash: `nmi_crash_handler` registered on vector 2 via `idt_register_handler` in `bugcheck_init()`, called from Phase 1 after IDT setup
+- [x] Keyboard-triggered crash: `bugcheck_keyboard_check()` called from keyboard IRQ handler on every scancode; Ctrl+ScrollLock x2 within 2s triggers `KeBugCheckEx` if `HKLM\SYSTEM\CrashControl\CrashOnCtrlScroll` == 1
+- [x] 6 test assertions in `test_crashdump.c`: name resolution (known, unknown, exclusive), info struct, constants, POST codes
 - [ ] Commit: `"kernel/panic: KeBugCheckEx, STOP code table, NMI/keyboard crash triggers"`
 
 **Test checkpoint:** `KeBugCheckEx(0xE2, 1, 2, 3, 4)` stores correct values in `g_last_bugcheck`. `bugcheck_name(0x50)` returns `"PAGE_FAULT_IN_NONPAGED_AREA"`. BSOD screen shows hex STOP code. `POST16(0xDE40)` on entry. Test on: QEMU WHPX + TCG; bare metal.
@@ -395,7 +396,7 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 | ⭐ | Feature                                   | 🪟 Win11                            | 🐧 Linux                              | 🚀 Impossible OS             |
 |----|-------------------------------------------|----------------------------------|------------------------------------|---------------------------|
 | 💎 | Text crash log on panic                   | ✅ Event Viewer                  | ✅ `dmesg` / `journalctl`          | ✅ Done -- `crashdump.log` |
-| 💎 | Windows STOP code taxonomy                | ✅ Full (`0xXXXXXXXX`)           | ❌ Kernel OOPS (different)         | ⬜ §1                     |
+| 💎 | Windows STOP code taxonomy                | ✅ Full (`0xXXXXXXXX`)           | ❌ Kernel OOPS (different)         | ✅ §1 KeBugCheckEx        |
 | 💎 | FPU/XMM/XSAVE state in dump               | ✅ Full CONTEXT record           | ✅ `PTRACE_GETFPREGS` in coredump  | ⬜ §2                     |
 | 💎 | Loaded module list                        | ✅ Full (`lm` in WinDbg)         | ✅ `/proc/modules`, `kcore`        | ⬜ §3                     |
 | 💎 | Binary MDMP minidump format               | ✅ Full WER/WinDbg compatible    | ⚠️ ELF coredump (different format) | ⬜ §4–§5                  |

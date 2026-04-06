@@ -78,6 +78,12 @@ void boot_phase1(void)
     kernel_subsystem_set_ready(SUBSYS_IDT, true);
     boot_progress(1, "IDT", POST16_IDT_OK);
 
+    /* --- Bugcheck: wire NMI crash handler after IDT (TODO-16 S1) --- */
+    {
+        extern void bugcheck_init(void);
+        bugcheck_init();
+    }
+
     /* --- ACPI: requires IDT --- */
     if (g_boot_info.acpi_available) {
         klog(LOG_INFO, "acpi", "RSDP v%u at %p",

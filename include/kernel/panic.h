@@ -28,11 +28,16 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
                   const char *description, const char *file, uint32_t line);
 
 /* Convenience macro that captures file/line automatically.
+ * Routes through KeBugCheckEx for uniform bugcheck handling.
  * Usage: KPANIC("something terrible happened"); */
 #define KPANIC(msg) \
-    panic_screen((void *)0, 0, (msg), __FILE__, __LINE__)
+    do { \
+        extern void KeBugCheckEx(uint32_t, uint64_t, uint64_t, uint64_t, uint64_t); \
+        KeBugCheckEx(0xE2, 0, 0, 0, 0); /* MANUALLY_INITIATED_CRASH */ \
+    } while (0)
 
 /* Panic with an interrupt frame (called from exception handlers).
+ * Still uses panic_screen directly for frame-aware BSOD rendering.
  * Usage: KPANIC_FRAME(frame, "page fault in kernel"); */
 #define KPANIC_FRAME(frame, msg) \
     panic_screen((frame), (frame)->err_code, (msg), __FILE__, __LINE__)
