@@ -22,11 +22,15 @@ description: Run adversarial code review for one implemented TODO section, fix f
    - **Performance** -- unnecessary allocations, O(n^2) where O(n) suffices, byte-by-byte where bulk ops exist, hot-path bloat
    - **Bare metal correctness** -- MMIO caching attributes, TLB flush scope (local vs IPI shootdown), CPUID-gated instructions, identity mapping assumptions
    This was learned the hard way: a security-only review of §5 missed entry-point range validation (F-06) and dead code (F-08) which required a supplemental full-spectrum review.
-3. Dispatch adversarial review to the Codex rescue subagent.
-   - Use `Agent` tool with `subagent_type: "codex:codex-rescue"`.
-   - Provide the exact file paths and line ranges to review.
+3. Dispatch adversarial review via the Codex plugin.
+   - Command:
+     ```bash
+     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+     ```
+   - Include the exact file paths and line ranges in the focus prompt.
    - List ALL adversarial angles from step 2 in the prompt -- do not omit any.
    - Request findings by severity: `Critical`, `High`, `Medium`, `Low`.
+   - Run in background for large reviews (> 3 files).
 4. Fix findings in priority order.
    - Always fix `Critical` and `High`.
    - Fix `Medium` unless explicitly accepted with a concrete technical reason.
@@ -46,4 +50,4 @@ description: Run adversarial code review for one implemented TODO section, fix f
 - Do not weaken assertions/tests to silence findings.
 - Fix root causes, not surface symptoms.
 - Keep scope section-targeted; do not widen into full-file roadmap cleanup.
-- Always use Codex rescue subagent for the review -- self-review has implementation bias and misses things that a fresh reader catches (proven: §1 Codex found 2 Critical issues self-review missed).
+- Always use the Codex plugin for the review -- self-review has implementation bias and misses things that a fresh reader catches (proven: §1 Codex found 2 Critical issues self-review missed).

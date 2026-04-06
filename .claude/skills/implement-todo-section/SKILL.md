@@ -18,17 +18,20 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    - API surface: Win32 native. Windows-style canonical paths (`C:\Impossible\System32\`).
    - **POST16 codes** for boot-path/hardware code: `POST16(0xDDNN)` format, check `boot_init.h` and grep for conflicts before assigning.
 6. **Build** -- `bash scripts/build.sh`, confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.
-7. **Update TODO section** -- mark items with evidence:
+7. **Wire unit tests** -- add/update assertions in relevant `test_*.c`, confirm build passes.
+8. **Update TODO section** -- mark items with evidence:
    - **Done proof gate:** `[x]` only when implemented + wired + functional on normal path. Never `[x]` for stubs or `STATUS_NOT_IMPLEMENTED` placeholders.
    - SSDT claims: verify service number <-> function <-> `ssdt_register()` <-> master table row consistency.
    - Blocked items: keep `[ ]` or `[/]`, add missing prerequisite/ownership items with owner scope and `-> XREF`.
    - **Deferred-item resolution:** scan earlier sections in the SAME TODO for items marked "deferred to section N" where N is this section. If the work was done, mark them `[x]`. Deferred items are promises.
    - **Cross-TODO sync:** when this section references or satisfies external TODO requirements, update those TODOs in the same run.
    - Preserve existing formatting (table headers, icons, column structure).
-8. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
-9. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`.
-10. **Wire unit tests** -- add/update assertions in relevant `test_*.c`, confirm build passes.
-11. **Codex adversarial review** (MANDATORY) -- dispatch to the Codex rescue subagent (`Agent` tool with `subagent_type: "codex:codex-rescue"`). NOT self-review. Self-review has implementation bias; the Codex agent reads code fresh and catches things you rationalized away. Proven: section 1 Codex found 2 Critical issues (SMP race, TOCTOU) that self-review missed. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles, request severity-labeled findings.
+9. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
+10. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`.
+11. **Codex adversarial review** (MANDATORY) -- run via the Codex plugin, NOT self-review. Self-review has implementation bias; Codex reads code fresh and catches things you rationalized away. Proven: section 1 Codex found 2 Critical issues (SMP race, TOCTOU) that self-review missed. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles, request severity-labeled findings. Command:
+    ```bash
+    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+    ```
 12. **Fix loop** (max 3 rounds) -- fix all Critical and High findings. Fix Medium unless explicitly accepted with a concrete technical reason. Rebuild after each fix round. Re-review via Codex focusing on previous findings and changed files. If unresolved Critical/High remain after round 3: do not mark section complete, keep `[/]` or `[ ]`, add follow-up items.
 13. **Final self-review** (MANDATORY) -- this catches what Codex misses at the integration level:
     - Regressions: did any existing functionality break?
@@ -40,7 +43,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 14. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`. This catches anything broken by the fix loop or self-review changes.
 15. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims. Re-checks cross-TODO synchronization.
 16. **Tie up loose ends** (MANDATORY) -- scan the ENTIRE TODO file and any XREF'd TODO files for:
-    - Deferred items pointing to this section that weren't resolved in step 7.
+    - Deferred items pointing to this section that weren't resolved in step 8.
     - Stale warning boxes that should be updated to NOTE (resolved).
     - Implementation Order rows that need status updates.
     - Cross-TODO dependency notes that are now satisfied.
