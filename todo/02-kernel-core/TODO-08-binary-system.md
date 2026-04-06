@@ -185,11 +185,13 @@ Every loaded executable and shared library must be registered in the per-process
 
 ## 7. PE32+ Header Parser
 
-- [ ] Create `src/kernel/pe.c` + `include/kernel/pe.h`
-- [ ] Define PE structures: `pe_dos_header_t` (MZ magic, `e_lfanew`), PE signature `0x00004550`, `pe_coff_header_t` (Machine = `0x8664`, NumberOfSections), `pe_optional_header64_t` (Magic = `0x20B`, AddressOfEntryPoint, ImageBase, SizeOfImage, SizeOfHeaders, DataDirectory), `pe_section_header_t`
-- [ ] Implement `pe_validate(data, size)`:
-  - Check MZ magic at offset 0; PE signature at `e_lfanew`; Machine == `0x8664`; Optional Header Magic == `0x20B`
-  - Reject 32-bit PE (Magic == `0x10B`) with `ENOEXEC`
+- [x] Create `src/kernel/pe.c` + `include/kernel/pe.h` -- PE32+ structures with static asserts at exact Windows offsets, unaligned-safe read helpers, registered as `PE32+` format in exec dispatcher (MZ 2-byte magic)
+- [x] Define PE structures: `pe_dos_header_t` (64 bytes), `pe_coff_header_t` (20 bytes), `pe_optional_header64_t` (240 bytes, 16 DataDirectory entries), `pe_section_header_t` (40 bytes) -- all with offset/size static asserts
+- [x] Implement `pe_validate(data, size)` returning `pe_validate_result_t` with zero-copy pointers into data buffer:
+  - Check MZ magic at offset 0; e_lfanew bounds; PE signature at e_lfanew; Machine == `0x8664`; Optional Header Magic == `0x20B`; SizeOfOptionalHeader >= 240; section headers within bounds
+  - Reject 32-bit PE (Magic == `0x10B`) with `ENOEXEC`; reject i386 Machine with `ENOEXEC`
+- [x] `pe_load()` registered in exec dispatcher -- validates and returns 0 until section loader (§8) is implemented
+- [x] 7 unit tests in `test_exec.c`: struct sizes, constants, valid PE32+, 32-bit rejection, truncated, bad magic, NULL
 - [x] Commit: `"kernel: pe -- PE32+ header parser"`
 
 **Test checkpoint:** `pe_validate()` returns success for a valid PE32+ header (Machine `0x8664`, Magic `0x20B`). Returns error for 32-bit PE (`0x10B`). Returns error for truncated file. `POST16(0xD80B)` on entry. Test on: QEMU WHPX + TCG; bare metal.
