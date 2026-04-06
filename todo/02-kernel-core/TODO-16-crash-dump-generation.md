@@ -55,7 +55,7 @@
 | ⭐  | Order | Deliverable                                    | Depends On          | Status |
 | --- | :---: | ---------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                | --                  |  [x]   |
-| 💎  |   2   | FPU/XMM/XSAVE state capture                   | §1                  |  [ ]   |
+| 💎  |   2   | FPU/XMM/XSAVE state capture                   | §1                  |  [x]   |
 | 💎  |   3   | Module registry (wire `exec_register_module`)  | T08 §6              |  [ ]   |
 | 💎  |   4   | MDMP binary format: header, directory, streams | §1, §2, §3, T10 §1 |  [ ]   |
 | 💎  |   5   | Minidump writer (crashing thread + memory)     | §4                  |  [ ]   |
@@ -81,7 +81,7 @@ Define Windows-compatible STOP code taxonomy and the `KeBugCheckEx` entry point 
 - [x] NMI-triggered crash: `nmi_crash_handler` registered on vector 2 via `idt_register_handler` in `bugcheck_init()`, called from Phase 1 after IDT setup
 - [x] Keyboard-triggered crash: `bugcheck_keyboard_check()` called from keyboard IRQ handler on every scancode; Ctrl+ScrollLock x2 within 2s triggers `KeBugCheckEx` if `HKLM\SYSTEM\CrashControl\CrashOnCtrlScroll` == 1
 - [x] 6 test assertions in `test_crashdump.c`: name resolution (known, unknown, exclusive), info struct, constants, POST codes
-- [ ] Commit: `"kernel/panic: KeBugCheckEx, STOP code table, NMI/keyboard crash triggers"`
+- [x] Commit: `"kernel/panic: KeBugCheckEx, STOP code table, NMI/keyboard crash triggers"`
 
 **Test checkpoint:** `KeBugCheckEx(0xE2, 1, 2, 3, 4)` stores correct values in `g_last_bugcheck`. `bugcheck_name(0x50)` returns `"PAGE_FAULT_IN_NONPAGED_AREA"`. BSOD screen shows hex STOP code. `POST16(0xDE40)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -90,10 +90,10 @@ Define Windows-compatible STOP code taxonomy and the `KeBugCheckEx` entry point 
 ## 2. FPU/XMM/XSAVE State Capture
 Capture the crashing thread's FPU/XMM/YMM state and build a Windows-compatible `CONTEXT` record for inclusion in the MDMP.
 
-- [ ] Allocate static 4 KiB XSAVE scratch buffer in `panic.c`: `static uint8_t g_panic_xsave_buf[4096] __attribute__((aligned(64)));`
-- [ ] `panic_capture_fpu_state()` -- called at top of `panic_screen()`: use `xsave64` if XSAVE CPUID bit set, fall back to `fxsave64` otherwise
-- [ ] Define `CONTEXT` struct in `include/kernel/panic.h` at Windows x64 layout: `ContextFlags`, `MxCsr`, segment registers, debug registers, all GPRs, `Rip`, 512-byte `FltSave`, YMM high halves, LBR fields
-- [ ] `panic_build_context(frame, ctx)` -- populate `CONTEXT` from `interrupt_frame` + `g_panic_xsave_buf`; set `ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT`
+- [x] Allocate static 4 KiB XSAVE scratch buffer in `panic.c`: `uint8_t g_panic_xsave_buf[4096] __attribute__((aligned(64)));` -- exported for test access
+- [x] `panic_capture_fpu_state()` -- called from `panic_screen()` after async isolation, gated behind atomic `panic_try_claim_owner()`; clears CR0.TS/EM, checks CR4.OSXSAVE at runtime, uses `xsave64` with `xcr0_active` mask or `fxsave64` fallback; `POST16(0xDE42)` on entry
+- [x] Define `CONTEXT` struct in `include/kernel/panic.h` at Windows x64 layout: 1232 bytes, `ContextFlags`, `MxCsr`, segment registers, debug registers, all GPRs, `Rip`, 512-byte `FltSave` (`XMM_SAVE_AREA32`), `M128A VectorRegister[26]` for YMM high halves, LBR fields; static assert on size; forward-declared in `nt_types.h`
+- [x] `panic_build_context(frame, ctx)` -- populates `CONTEXT` from `interrupt_frame` + `g_panic_xsave_buf`; reads live DS/ES/FS/GS and debug registers; copies FXSAVE region into `FltSave`, MXCSR into top-level `MxCsr`, AVX YMM high halves into `VectorRegister[0..15]`; sets `ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT`
 - [ ] Commit: `"kernel/panic: XSAVE FPU capture, CONTEXT record population"`
 
 **Test checkpoint:** After panic, `g_panic_xsave_buf` is non-zero (FPU was in use). `CONTEXT.MxCsr` is non-default. `CONTEXT.Rip` matches `interrupt_frame.rip`. `POST16(0xDE42)` on entry. Test on: QEMU WHPX + TCG; bare metal.
@@ -397,7 +397,7 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 |----|-------------------------------------------|----------------------------------|------------------------------------|---------------------------|
 | 💎 | Text crash log on panic                   | ✅ Event Viewer                  | ✅ `dmesg` / `journalctl`          | ✅ Done -- `crashdump.log` |
 | 💎 | Windows STOP code taxonomy                | ✅ Full (`0xXXXXXXXX`)           | ❌ Kernel OOPS (different)         | ✅ §1 KeBugCheckEx        |
-| 💎 | FPU/XMM/XSAVE state in dump               | ✅ Full CONTEXT record           | ✅ `PTRACE_GETFPREGS` in coredump  | ⬜ §2                     |
+| 💎 | FPU/XMM/XSAVE state in dump               | ✅ Full CONTEXT record           | ✅ `PTRACE_GETFPREGS` in coredump  | ✅ §2 XSAVE+CONTEXT 1232B |
 | 💎 | Loaded module list                        | ✅ Full (`lm` in WinDbg)         | ✅ `/proc/modules`, `kcore`        | ⬜ §3                     |
 | 💎 | Binary MDMP minidump format               | ✅ Full WER/WinDbg compatible    | ⚠️ ELF coredump (different format) | ⬜ §4–§5                  |
 | 💎 | Kernel dump                               | ✅ `%SystemRoot%\MEMORY.DMP`     | ✅ `makedumpfile -d 31`            | ⬜ §6                     |

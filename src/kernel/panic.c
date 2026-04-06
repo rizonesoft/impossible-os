@@ -18,6 +18,7 @@
 #include "kernel/panic.h"
 #include "kernel/bugcheck.h"
 #include "kernel/idt.h"
+#include "kernel/cpuid.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
@@ -240,6 +241,187 @@ void bugcheck_init(void)
     extern void idt_register_handler(uint8_t n,
         uint64_t (*handler)(struct interrupt_frame *));
     idt_register_handler(2, nmi_crash_handler);
+}
+
+/* --- FPU/XSAVE state capture (S2 -- TODO-16) ------------------------------ */
+
+/* 4 KiB XSAVE scratch buffer -- 64-byte aligned for XSAVE requirements.
+ * Static allocation so it's available even if the heap is corrupt. */
+uint8_t g_panic_xsave_buf[4096] __attribute__((aligned(64)));
+
+/* Global CONTEXT record populated during panic for the MDMP pipeline. */
+CONTEXT g_panic_context;
+
+/* Atomic panic owner -- first CPU to claim wins; others skip capture.
+ * 0xFFFFFFFF = unclaimed. Set via atomic CAS in panic_capture_fpu_state(). */
+static volatile uint32_t s_panic_owner = 0xFFFFFFFF;
+
+/* Returns 1 if this CPU is the panic owner (should build context), 0 if not.
+ * Re-entrant: if this CPU already owns the panic, returns 1 again so nested
+ * faults on the owner CPU don't self-park and deadlock crash handling. */
+static int panic_try_claim_owner(void)
+{
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    uint32_t my_id = pcpu ? pcpu->cpu_id : 0;
+
+    /* Try to claim ownership. __sync_val_compare_and_swap returns the old value:
+     * - 0xFFFFFFFF: CAS succeeded, we are the new owner
+     * - my_id:      CAS failed but we already own it (re-entry)
+     * - other:      another CPU owns it */
+    uint32_t prev = __sync_val_compare_and_swap(&s_panic_owner, 0xFFFFFFFF, my_id);
+    return (prev == 0xFFFFFFFF || prev == my_id);
+}
+
+void panic_capture_fpu_state(void)
+{
+    POST16(POST16_FPU_CAPTURE);
+
+    /* Zero the buffer so we can detect whether anything was saved */
+    for (uint32_t i = 0; i < sizeof(g_panic_xsave_buf); i++)
+        g_panic_xsave_buf[i] = 0;
+
+    /* Clear CR0.TS and CR0.EM to prevent #NM during FXSAVE/XSAVE.
+     * Lazy FPU scheduling sets CR0.TS; panic path must bypass it. */
+    {
+        uint64_t cr0;
+        __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+        cr0 &= ~((1ULL << 3) | (1ULL << 2));  /* clear TS (bit 3) and EM (bit 2) */
+        __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0) : "memory");
+    }
+
+    /* Runtime check: XSAVE requires both CPUID support AND CR4.OSXSAVE
+     * actually set on this CPU. cpu_has() checks CPUID; verify CR4 too. */
+    {
+        int xsave_safe = 0;
+        if (cpu_has(CPU_FEATURE_XSAVE)) {
+            uint64_t cr4;
+            __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
+            if (cr4 & (1ULL << 18))  /* CR4.OSXSAVE (bit 18) */
+                xsave_safe = 1;
+        }
+
+        if (xsave_safe) {
+            /* XSAVE: save only the state components actually enabled in XCR0.
+             * Using the active mask (not all-ones) avoids #GP on unsupported
+             * components. This matches the scheduler's save/restore paths. */
+            extern struct cpu_features g_cpu;
+            uint32_t lo = (uint32_t)(g_cpu.xcr0_active);
+            uint32_t hi = (uint32_t)(g_cpu.xcr0_active >> 32);
+            __asm__ volatile (
+                "xsave64 (%0)"
+                :
+                : "r"(g_panic_xsave_buf), "a"(lo), "d"(hi)
+                : "memory"
+            );
+        } else {
+            /* FXSAVE fallback -- always available on x86-64. */
+            __asm__ volatile (
+                "fxsave64 (%0)"
+                :
+                : "r"(g_panic_xsave_buf)
+                : "memory"
+            );
+        }
+    }
+}
+
+void panic_build_context(struct interrupt_frame *frame, CONTEXT *ctx)
+{
+    /* Zero the entire CONTEXT first */
+    {
+        uint8_t *p = (uint8_t *)ctx;
+        for (uint32_t i = 0; i < sizeof(CONTEXT); i++)
+            p[i] = 0;
+    }
+
+    ctx->ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT;
+
+    if (frame) {
+        /* --- Control registers (CONTEXT_CONTROL) --- */
+        ctx->Rip    = frame->rip;
+        ctx->SegCs  = (uint16_t)frame->cs;
+        ctx->SegSs  = (uint16_t)frame->ss;
+        ctx->Rsp    = frame->rsp;
+        ctx->EFlags = (uint32_t)frame->rflags;
+        ctx->Rbp    = frame->rbp;
+
+        /* --- Integer registers (CONTEXT_INTEGER) --- */
+        ctx->Rax = frame->rax;
+        ctx->Rcx = frame->rcx;
+        ctx->Rdx = frame->rdx;
+        ctx->Rbx = frame->rbx;
+        ctx->Rsi = frame->rsi;
+        ctx->Rdi = frame->rdi;
+        ctx->R8  = frame->r8;
+        ctx->R9  = frame->r9;
+        ctx->R10 = frame->r10;
+        ctx->R11 = frame->r11;
+        ctx->R12 = frame->r12;
+        ctx->R13 = frame->r13;
+        ctx->R14 = frame->r14;
+        ctx->R15 = frame->r15;
+    }
+
+    /* --- Segment registers --- */
+    /* DS/ES/FS/GS aren't in interrupt_frame; read them live.
+     * In a panic context these are still valid. */
+    {
+        uint16_t ds, es, fs, gs;
+        __asm__ volatile ("mov %%ds, %0" : "=r"(ds));
+        __asm__ volatile ("mov %%es, %0" : "=r"(es));
+        __asm__ volatile ("mov %%fs, %0" : "=r"(fs));
+        __asm__ volatile ("mov %%gs, %0" : "=r"(gs));
+        ctx->SegDs = ds;
+        ctx->SegEs = es;
+        ctx->SegFs = fs;
+        ctx->SegGs = gs;
+    }
+
+    /* --- Debug registers --- */
+    {
+        uint64_t dr0, dr1, dr2, dr3, dr6, dr7;
+        __asm__ volatile ("mov %%dr0, %0" : "=r"(dr0));
+        __asm__ volatile ("mov %%dr1, %0" : "=r"(dr1));
+        __asm__ volatile ("mov %%dr2, %0" : "=r"(dr2));
+        __asm__ volatile ("mov %%dr3, %0" : "=r"(dr3));
+        __asm__ volatile ("mov %%dr6, %0" : "=r"(dr6));
+        __asm__ volatile ("mov %%dr7, %0" : "=r"(dr7));
+        ctx->Dr0 = dr0;
+        ctx->Dr1 = dr1;
+        ctx->Dr2 = dr2;
+        ctx->Dr3 = dr3;
+        ctx->Dr6 = dr6;
+        ctx->Dr7 = dr7;
+    }
+
+    /* --- Floating point state (CONTEXT_FLOATING_POINT) --- */
+    /* Copy the FXSAVE region (first 512 bytes of XSAVE area) into FltSave */
+    {
+        const uint8_t *src = g_panic_xsave_buf;
+        uint8_t *dst = (uint8_t *)&ctx->FltSave;
+        for (uint32_t i = 0; i < 512; i++)
+            dst[i] = src[i];
+    }
+
+    /* Copy MXCSR from the FXSAVE area into the top-level CONTEXT.MxCsr */
+    {
+        uint32_t mxcsr;
+        const uint8_t *p = &g_panic_xsave_buf[24]; /* MXCSR at FXSAVE offset 24 */
+        mxcsr = (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+                ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+        ctx->MxCsr = mxcsr;
+    }
+
+    /* --- YMM high halves (AVX state) --- */
+    if (cpu_has(CPU_FEATURE_XSAVE) && cpu_has(CPU_FEATURE_AVX)) {
+        /* XSAVE header is at offset 512 (64 bytes).
+         * AVX (component 2) YMM high halves start at offset 576.
+         * 16 registers x 16 bytes = 256 bytes -> VectorRegister[0..15]. */
+        const uint8_t *ymm_hi = &g_panic_xsave_buf[576];
+        uint8_t *vr = (uint8_t *)ctx->VectorRegister;
+        for (uint32_t i = 0; i < 256; i++)
+            vr[i] = ymm_hi[i];
+    }
 }
 
 /* --- Helpers --- */
@@ -512,6 +694,19 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
             /* Park this AP permanently -- BSP will handle the failure */
             for (;;) __asm__ volatile("hlt");
         }
+    }
+
+    /* Atomic panic ownership: only the first CPU to panic captures FPU state
+     * and builds the CONTEXT record. Secondary CPUs that panic simultaneously
+     * park immediately to avoid clobbering the owner's crash data.
+     * Placed after async isolation so APs doing async work park even earlier. */
+    if (panic_try_claim_owner()) {
+        panic_capture_fpu_state();
+        panic_build_context(frame, &g_panic_context);
+    } else {
+        /* Secondary panic CPU -- park without touching global crash state.
+         * The owner CPU will handle BSOD rendering and dump writing. */
+        for (;;) __asm__ volatile("hlt");
     }
 
     /* Mark current VPD stage as failed (red) before BSOD overwrites screen */

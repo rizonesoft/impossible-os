@@ -258,7 +258,11 @@ typedef enum {
 /* IPI vector for async boot init work dispatch */
 #define IPI_VECTOR_ASYNC_INIT   0xFC
 
-/* Crash-Persistent Log (0xDE00–0xDE03) */
+/* Crash Dump Generation (0xDE40-0xDE4F) */
+#define POST16_BUGCHECK         0xDE40  /* KeBugCheckEx entry */
+#define POST16_FPU_CAPTURE      0xDE42  /* FPU/XSAVE state capture */
+
+/* Crash-Persistent Log (0xDE00-0xDE03) */
 #define POST16_CRASHLOG         0xDE00  /* crash persist entry */
 #define POST16_CRASHLOG_ALLOC   0xDE01  /* region reserved */
 #define POST16_CRASHLOG_CHECK   0xDE02  /* recovery check */

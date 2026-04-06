@@ -95,7 +95,11 @@ typedef struct {
 } while (0)
 
 /* ---- CONTEXT forward declaration ----------------------------------------- */
-/* Full definition in TODO-10 (Exception Dispatch & SEH).
+/* Full definition in include/kernel/panic.h (crash dump use).
+ * Will move to except.h when TODO-10 (Exception Dispatch & SEH) lands.
  * Forward-declared here so function signatures can use CONTEXT*. */
 struct _CONTEXT;
+#ifndef _CONTEXT_TYPEDEF_DEFINED
+#define _CONTEXT_TYPEDEF_DEFINED
 typedef struct _CONTEXT CONTEXT;
+#endif

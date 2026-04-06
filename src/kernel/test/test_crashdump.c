@@ -12,6 +12,8 @@
 #include "kernel/test/test.h"
 #include "kernel/bugcheck.h"
 #include "kernel/boot_init.h"
+#include "kernel/panic.h"
+#include "kernel/idt.h"
 
 /* ---- Bugcheck name resolution ---- */
 
@@ -74,6 +76,154 @@ static void test_bugcheck_post_codes(void)
                 "KeBugCheckEx POST != KLOG_CTX POST");
 }
 
+/* ---- CONTEXT struct layout (S2) ---- */
+
+static void test_context_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(CONTEXT), 1232,
+                   "CONTEXT is 1232 bytes (Windows x64)");
+}
+
+static void test_context_offsets(void)
+{
+    /* Key offsets that WinDbg depends on */
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, ContextFlags), 0x030,
+                   "ContextFlags at offset 0x030");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, MxCsr), 0x034,
+                   "MxCsr at offset 0x034");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, SegCs), 0x038,
+                   "SegCs at offset 0x038");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, EFlags), 0x044,
+                   "EFlags at offset 0x044");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, Dr0), 0x048,
+                   "Dr0 at offset 0x048");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, Rax), 0x078,
+                   "Rax at offset 0x078");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, Rip), 0x0F8,
+                   "Rip at offset 0x0F8");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, FltSave), 0x100,
+                   "FltSave at offset 0x100");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, VectorRegister), 0x300,
+                   "VectorRegister at offset 0x300");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, VectorControl), 0x4A0,
+                   "VectorControl at offset 0x4A0");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, DebugControl), 0x4A8,
+                   "DebugControl at offset 0x4A8");
+    TEST_ASSERT_EQ(__builtin_offsetof(CONTEXT, LastExceptionFromRip), 0x4C8,
+                   "LastExceptionFromRip at offset 0x4C8");
+}
+
+static void test_xmm_save_area_size(void)
+{
+    TEST_ASSERT_EQ(sizeof(XMM_SAVE_AREA32), 512,
+                   "XMM_SAVE_AREA32 is 512 bytes");
+}
+
+static void test_context_flags(void)
+{
+    TEST_ASSERT_EQ(CONTEXT_AMD64, 0x00100000, "CONTEXT_AMD64 flag");
+    TEST_ASSERT_EQ(CONTEXT_CONTROL, 0x00100001, "CONTEXT_CONTROL flag");
+    TEST_ASSERT_EQ(CONTEXT_INTEGER, 0x00100002, "CONTEXT_INTEGER flag");
+    TEST_ASSERT_EQ(CONTEXT_FLOATING_POINT, 0x00100008,
+                   "CONTEXT_FLOATING_POINT flag");
+    TEST_ASSERT_EQ(CONTEXT_FULL, 0x0010000B, "CONTEXT_FULL flag");
+}
+
+/* ---- panic_build_context (S2) ---- */
+
+static void test_build_context_from_frame(void)
+{
+    /* Construct a synthetic interrupt_frame */
+    struct interrupt_frame frame;
+    uint8_t *fp = (uint8_t *)&frame;
+    for (uint32_t i = 0; i < sizeof(frame); i++)
+        fp[i] = 0;
+
+    frame.rip    = 0xFFFF800000123456;
+    frame.rsp    = 0xFFFF800001234000;
+    frame.rax    = 0xAAAAAAAAAAAAAAAA;
+    frame.rbx    = 0xBBBBBBBBBBBBBBBB;
+    frame.rcx    = 0xCCCCCCCCCCCCCCCC;
+    frame.rflags = 0x0000000000000246;
+    frame.cs     = 0x08;
+    frame.ss     = 0x10;
+    frame.rbp    = 0xFFFF800001233FF0;
+    frame.r8     = 0x0808080808080808;
+    frame.r15    = 0x1515151515151515;
+
+    /* Seed XSAVE buffer with a known MXCSR value at offset 24 */
+    for (uint32_t i = 0; i < sizeof(g_panic_xsave_buf); i++)
+        g_panic_xsave_buf[i] = 0;
+    /* MXCSR default = 0x1F80; set to 0x1FA0 (non-default) */
+    g_panic_xsave_buf[24] = 0xA0;
+    g_panic_xsave_buf[25] = 0x1F;
+    g_panic_xsave_buf[26] = 0x00;
+    g_panic_xsave_buf[27] = 0x00;
+
+    CONTEXT ctx;
+    panic_build_context(&frame, &ctx);
+
+    TEST_ASSERT_EQ(ctx.Rip, 0xFFFF800000123456,
+                   "CONTEXT.Rip matches frame.rip");
+    TEST_ASSERT_EQ(ctx.Rsp, 0xFFFF800001234000,
+                   "CONTEXT.Rsp matches frame.rsp");
+    TEST_ASSERT_EQ(ctx.Rax, 0xAAAAAAAAAAAAAAAA,
+                   "CONTEXT.Rax matches frame.rax");
+    TEST_ASSERT_EQ(ctx.Rbx, 0xBBBBBBBBBBBBBBBB,
+                   "CONTEXT.Rbx matches frame.rbx");
+    TEST_ASSERT_EQ(ctx.Rcx, 0xCCCCCCCCCCCCCCCC,
+                   "CONTEXT.Rcx matches frame.rcx");
+    TEST_ASSERT_EQ(ctx.R8,  0x0808080808080808,
+                   "CONTEXT.R8 matches frame.r8");
+    TEST_ASSERT_EQ(ctx.R15, 0x1515151515151515,
+                   "CONTEXT.R15 matches frame.r15");
+    TEST_ASSERT_EQ(ctx.EFlags, 0x00000246,
+                   "CONTEXT.EFlags matches frame.rflags");
+    TEST_ASSERT_EQ(ctx.SegCs, 0x08,
+                   "CONTEXT.SegCs matches frame.cs");
+    TEST_ASSERT_EQ(ctx.SegSs, 0x10,
+                   "CONTEXT.SegSs matches frame.ss");
+    TEST_ASSERT_EQ(ctx.MxCsr, 0x1FA0,
+                   "CONTEXT.MxCsr copied from XSAVE buf");
+    TEST_ASSERT(ctx.ContextFlags & CONTEXT_CONTROL,
+                "ContextFlags includes CONTEXT_CONTROL");
+    TEST_ASSERT(ctx.ContextFlags & CONTEXT_INTEGER,
+                "ContextFlags includes CONTEXT_INTEGER");
+    TEST_ASSERT(ctx.ContextFlags & CONTEXT_FLOATING_POINT,
+                "ContextFlags includes CONTEXT_FLOATING_POINT");
+}
+
+static void test_build_context_null_frame(void)
+{
+    CONTEXT ctx;
+    panic_build_context((void *)0, &ctx);
+
+    /* With NULL frame, GPRs and RIP should be zero */
+    TEST_ASSERT_EQ(ctx.Rip, 0, "NULL frame -> CONTEXT.Rip == 0");
+    TEST_ASSERT_EQ(ctx.Rax, 0, "NULL frame -> CONTEXT.Rax == 0");
+    /* ContextFlags should still be set */
+    TEST_ASSERT(ctx.ContextFlags & CONTEXT_CONTROL,
+                "NULL frame still sets CONTEXT_CONTROL");
+}
+
+static void test_xsave_buffer_alignment(void)
+{
+    uint64_t addr = (uint64_t)(uintptr_t)g_panic_xsave_buf;
+    TEST_ASSERT_EQ(addr & 63, 0,
+                   "g_panic_xsave_buf is 64-byte aligned");
+}
+
+static void test_fpu_capture_post_code(void)
+{
+    /* POST16_FPU_CAPTURE must be 0xDE42 and unique */
+    TEST_ASSERT_EQ(POST16_FPU_CAPTURE, 0xDE42,
+                   "POST16_FPU_CAPTURE == 0xDE42");
+    TEST_ASSERT(POST16_FPU_CAPTURE != POST16_BUGCHECK,
+                "FPU POST != Bugcheck POST");
+    TEST_ASSERT(POST16_FPU_CAPTURE != POST16_CRASHLOG,
+                "FPU POST != CRASHLOG POST");
+}
+
 /* ---- Registration ---- */
 
 void test_register_crashdump(void)
@@ -90,6 +240,23 @@ void test_register_crashdump(void)
                             test_bugcheck_constants, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: POST codes",
                             test_bugcheck_post_codes, TEST_CAT_BOOT);
+    /* S2: CONTEXT layout */
+    test_suite_register_cat("Crash: CONTEXT size",
+                            test_context_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: CONTEXT offsets",
+                            test_context_offsets, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: XMM_SAVE_AREA32 size",
+                            test_xmm_save_area_size, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: CONTEXT flags",
+                            test_context_flags, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: build_context from frame",
+                            test_build_context_from_frame, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: build_context null frame",
+                            test_build_context_null_frame, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: XSAVE buf alignment",
+                            test_xsave_buffer_alignment, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: FPU capture POST code",
+                            test_fpu_capture_post_code, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */
