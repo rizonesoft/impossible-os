@@ -78,8 +78,6 @@ Define Windows-compatible STOP code taxonomy and the `KeBugCheckEx` entry point 
 
 **Test checkpoint:** `KeBugCheckEx(0xE2, 1, 2, 3, 4)` stores correct values in `g_last_bugcheck`. `bugcheck_name(0x50)` returns `"PAGE_FAULT_IN_NONPAGED_AREA"`. BSOD screen shows hex STOP code. `POST16(0xDE40)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
-
-
 ---
 
 ## 2. FPU/XMM/XSAVE State Capture
@@ -93,11 +91,7 @@ Capture the crashing thread's FPU/XMM/YMM state and build a Windows-compatible `
 
 **Test checkpoint:** After panic, `g_panic_xsave_buf` is non-zero (FPU was in use). `CONTEXT.MxCsr` is non-default. `CONTEXT.Rip` matches `interrupt_frame.rip`. `POST16(0xDE42)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
-
-
 **Regression risk:** `xsave64` causes #UD on CPUs without XSAVE (including TCG default). MUST check CPUID first. If broken, revert to `fxsave64` fallback.
-
-
 
 ---
 
@@ -114,8 +108,6 @@ Wire the existing `exec_register_module()` / `exec_find_module_by_pc()` infrastr
 - [ ] Commit: `"kernel/crashdump: wire exec module registry into crash dump pipeline"`
 
 **Test checkpoint:** After boot, `exec_find_module_by_pc(kernel_entry)` returns `"kernel.exe"` with correct base. After loading cmd.exe, module count >= 2. `POST16(0xDE44)` on entry. Test on: QEMU WHPX + TCG; bare metal.
-
-
 
 ---
 
@@ -154,12 +146,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   } MINIDUMP_DIRECTORY;
   ```
 
-
-**Stream type codes**
-
-
-
-
 - [ ] Stream type constants:
   ```c
   #define ThreadListStream          3
@@ -174,12 +160,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   /* Impossible OS extension stream */
   #define ImpossibleOSInfoStream   0x8001
   ```
-
-
-**Stream data structures**
-
-
-
 
 - [ ] `MINIDUMP_EXCEPTION_STREAM`:
   ```c
@@ -207,12 +187,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 - [ ] `MINIDUMP_SYSTEM_INFO`:
   - `ProcessorArchitecture=PROCESSOR_ARCHITECTURE_AMD64 (9)`, `ProcessorLevel`, `ProcessorRevision`, `NumberOfProcessors`, `MajorVersion=10` (Win10 compat), `MinorVersion=0`, `BuildNumber=IMPOSSIBLE_OS_BUILD`, `PlatformId=VER_PLATFORM_WIN32_NT (2)`, `CSDVersionRva` (OS name string RVA)
 
-
-**ImpossibleOSInfoStream (exclusive)**
-
-
-
-
 - [ ] Custom stream appended after standard streams:
   ```c
   typedef struct {
@@ -229,12 +203,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   } IMPOSSIBLE_OS_INFO;
   ```
 
-
-**Commit**
-
-
-
-
 - [ ] Commit: `"kernel/crashdump: MDMP header, directory, all stream type structs, ImpossibleOSInfo"`
 
 **Test checkpoint:** `sizeof(MINIDUMP_HEADER)` == 28 bytes. `MINIDUMP_DIRECTORY` == 12 bytes. `MDMP_SIGNATURE == 0x504D444D`. `ImpossibleOSInfoStream` type == 0x8001. Static asserts on all struct sizes. `POST16(0xDE46)` on entry. Test on: QEMU WHPX + TCG; bare metal.
@@ -242,11 +210,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 ---
 
 ## 5. Minidump Writer
-
-**Dump layout plan**
-
-
-
 
 - [ ] Minidump memory layout (fixed region order, offsets computed at write time):
   ```
@@ -265,22 +228,10 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   [...]    OS CSD string
   ```
 
-
-**Memory range selection for minidump**
-
-
-
-
 - [ ] Crashing thread's kernel stack: 8 pages (32 KiB) around `RSP`
 - [ ] User-space stack (if crash was in user context): 16 pages around user RSP from `interrupt_frame.rsp`
 - [ ] Code page at `RIP`: 1 page
 - [ ] Any memory addresses appearing as arguments in the top 8 stack frames (heuristic: values in `[0x1000, KERNEL_BASE)` for user, or `[KERNEL_BASE, KERNEL_END)` for kernel) -- include the page they point to
-
-
-**Minidump write engine**
-
-
-
 
 - [ ] `crashdump_write_minidump(frame, ctx)`:
   1. Allocate two contiguous scratch pages (`pmm_alloc_contiguous(2)`) as the write buffer; the dump writer fills these pages and flushes via the raw sink (§7)
@@ -290,12 +241,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   5. Compute CRC32C of the entire dump; write into `MINIDUMP_HEADER.Checksum`
   6. Call `dump_sink_write(buf, total_size)` (§7) to flush to disk
 
-
-**Commit**
-
-
-
-
 - [ ] Commit: `"kernel/crashdump: minidump writer, stream serialisation, CRC32C, memory page selection"`
 
 **Test checkpoint:** `crashdump_write_minidump()` produces non-empty buffer with MDMP signature at offset 0. ExceptionStream contains bugcheck code. ModuleList contains kernel.exe. MemoryList includes stack pages. CRC32C validates. `POST16(0xDE48)` on entry. Test on: QEMU WHPX + TCG; bare metal.
@@ -304,22 +249,11 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 
 ## 6. Kernel Dump & Full Dump Variants
 
-**Memory classification**
-
-
-
-
 - [ ] `dump_classify_page(pa)` → `PAGE_CLASS`:
   - `PAGE_CLASS_KERNEL`: physical page mapped in the kernel's address range (upper half, `va ≥ 0xFFFF800000000000`)
   - `PAGE_CLASS_USER`: mapped in user space (`va < 0x0000800000000000`)
   - `PAGE_CLASS_HARDWARE`: MMIO / framebuffer / LAPIC ranges -- skip in kernel dump, include description in `ImpossibleOSInfoStream`
   - `PAGE_CLASS_FREE`: not in PMM used list -- skip always
-
-
-**Kernel dump**
-
-
-
 
 - [ ] `crashdump_write_kernel_dump(frame, ctx)`:
   - Same MDMP structure as minidump but `Flags |= MiniDumpWithCodeSegs`
@@ -328,24 +262,12 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   - On a typical system this is 32–256 MiB; apply per-page LZ4 block compression: each 4 KiB page is compressed to a `{compressed_size (u16), data[compressed_size]}` record; uncompressed pages (compression ratio < 1) are stored raw with `compressed_size = 0x8000 | 4096`
 - [ ] `crashdump_type` Registry value: `0`=minidump (default), `1`=kernel dump, `2`=full dump; read in `panic_screen()` to select the writer
 
-
-**Full dump**
-
-
-
-
 - [ ] `crashdump_write_full_dump(frame, ctx)`:
   - Walk all physical pages reported in `boot_info.memory_map` as `MEMORY_TYPE_USABLE` and `MEMORY_TYPE_KERNEL`
   - LZ4-compress each 64-page (256 KiB) chunk; write compressed chunk prefixed with `{orig_size_u32, comp_size_u32}`
   - On a 4 GiB machine: uncompressed ~4 GiB; after LZ4 typically 1–2 GiB
   - `MINIDUMP_HEADER.Flags |= MiniDumpWithFullMemory`
   - Raw-partition dump sink (§7) must be large enough; warn at boot time if dump partition < total RAM; fall back to kernel dump if too small
-
-
-**Commit**
-
-
-
 
 - [ ] Commit: `"kernel/crashdump: kernel dump variant, full dump with LZ4 compression, dump-type selector"`
 
@@ -355,31 +277,14 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 
 ## 7. Raw-Partition Dump Sink (VFS Bypass)
 
-**Dump partition**
-
-
-
-
 - [ ] Dedicated GPT partition identified by type GUID `{IMPOSSIBLE-DUMP-GUID}` -- the same raw-block mechanism used by S4 hibernate (→ XREF `TODO-15-power-management.md §4`); if that GUID is present the partition doubles as the dump sink; if absent, fall back to the VFS text path
 - [ ] At kernel init (Phase 1 -- before VFS): call `dump_sink_probe()` -- scan GPT via `blkdev_open_by_gpt_type(DUMP_GUID)`; cache the raw block device handle in a static `g_dump_blkdev`; this works before any filesystem driver is mounted
-
-
-**Write state machine**
-
-
-
 
 - [ ] `dump_sink_write(buf, size)` -- streaming write engine:
   - Maintains a 512-byte sector-aligned write position `g_dump_offset`
   - Pads the buffer to the next 512-byte boundary with zeros
   - Issues synchronous DMA writes via `blkdev_write_raw(g_dump_blkdev, g_dump_offset, buf, aligned_size)` -- must not use IRQs or wait queues (panic context); busy-poll DMA completion status register directly
   - If `g_dump_blkdev` is NULL (no dump partition): fall back to the existing VFS text-dump path from `panic.c`
-
-
-**Dump partition header at sector 0**
-
-
-
 
 - [ ] `DUMP_PARTITION_HEADER` at physical sector 0 of the dump partition:
   ```c
@@ -394,12 +299,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 - [ ] After writing the full dump body, `dump_sink_finalize()` writes the header to sector 0 with `DumpPresent = 1`
 - [ ] `dump_sink_clear()` -- sets `DumpPresent = 0` after the dump has been safely moved to the filesystem (called by §8)
 
-
-**Commit**
-
-
-
-
 - [ ] Commit: `"kernel/crashdump: raw partition sink, VFS-bypass DMA write, dump partition header"`
 
 **Test checkpoint:** `dump_sink_probe()` finds dump partition by GPT GUID. `dump_sink_write()` writes to raw partition without VFS. `DUMP_PARTITION_HEADER.DumpPresent` == 1 after write. `dump_sink_clear()` sets `DumpPresent` == 0. `POST16(0xDE4C)` on entry. Test on: QEMU WHPX + TCG; bare metal.
@@ -407,11 +306,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 ---
 
 ## 8. Post-Boot Crash Recovery & CrashDumps Archive
-
-**Kernel init check for pending dump**
-
-
-
 
 - [ ] In kernel init Phase 2 (→ XREF `TODO-01-kernel-init-sequencing.md §4`), after VFS mounts but before the desktop starts: call `dump_recovery_check()`:
   1. `dump_sink_probe()` -- open dump partition
@@ -421,11 +315,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   5. Call `dump_sink_clear()` -- zero the `DumpPresent` flag
   6. Set Registry `HKLM\SYSTEM\LastCrashDump` = the `.dmp` path and `HKLM\SYSTEM\CrashPending = 1`
 
-
-**"System shut down unexpectedly" dialog**
-
-
-
 - [ ] On desktop startup: check `HKLM\SYSTEM\CrashPending == 1`; if true:
   - Display a dialog: `"Impossible OS shut down unexpectedly.\n\nCrash dump saved to {path}.\n\n[View Report]  [Submit Report]  [Close]"`
   - `[View Report]`: launch `dmpanalyze.exe {path}` (§9)
@@ -433,21 +322,9 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   - `[Close]`: dismiss; set `HKLM\SYSTEM\CrashPending = 0`
 - [ ] Dialog does not block shell startup; shown as a non-intrusive banner in the system tray notification area
 
-
-**CrashDumps archive management**
-
-
-
-
 - [ ] Keep at most 5 `.dmp` files in `X:\Crash\`; oldest is deleted when the 6th would be created
 - [ ] `HKLM\SYSTEM\CrashDumps\MaxFiles` (REG_DWORD, default 5) controls the limit
 - [ ] `HKLM\SYSTEM\CrashDumps\LastDump` (REG_SZ) = path to most recent `.dmp`; updated on each recovery pass
-
-
-**Commit**
-
-
-
 
 - [ ] Commit: `"kernel/crashdump: post-boot dump recovery, CrashDumps archive, unexpected-shutdown dialog"`
 
@@ -457,20 +334,10 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 
 ## 9. `dmpanalyze.exe` Crash Analyzer
 
-**MDMP parser**
-
-
-
-
 - [ ] `src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app:
   - Open `.dmp` file; validate `MINIDUMP_HEADER.Signature == MDMP_SIGNATURE`
   - Parse `MINIDUMP_DIRECTORY` to locate all streams by `StreamType`
   - Extract `ExceptionStream`, `ModuleListStream`, `ThreadListStream`, `SystemInfoStream`, and `ImpossibleOSInfoStream`
-
-
-**`!analyze -v` equivalent output**
-
-
 
 - [ ] `dmpanalyze.exe <path.dmp>` produces a text report to stdout:
   ```
@@ -501,31 +368,14 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   ```
 - [ ] Stack trace: read thread stack pages from the dump's `MemoryListStream`; simulate the RBP chain walk the same way `panic.c` does; look up each frame in `ModuleListStream` + the embedded `symtab` (load `kernel.sym` if it exists on disk, or read symbol names from `ImpossibleOSInfoStream`)
 
-
-**WinDbg compatibility**
-
-
-
-
 - [ ] The `.dmp` file produced by the dump writer (§5) uses the standard MDMP format (`MDMP` magic, standard stream types, standard CONTEXT layout)
   -- a Windows developer can open it directly in WinDbg 10+ and run `!analyze -v`; module names and addresses from `ModuleListStream` appear in the module list; the `CONTEXT` record allows stack unwinding via PDB symbols if available
 - [ ] Note: WinDbg needs matching PDB symbols for deep analysis; for kernel-only debugging, the MDMP alone is sufficient for `!analyze -v`
-
-
-**`dmpanalyze /compare` ⭐**
-
-
 
 - [ ] `dmpanalyze /compare <dump1.dmp> <dump2.dmp>` -- diff two crash dumps:
   - Compare bugcheck code, faulting module, top-5 stack frames
   - Output: `SAME_STOP_CODE`, `SAME_FAULTING_MODULE`, `LIKELY_SAME_BUG` / `DIFFERENT_CRASH` classification
   - Useful for identifying duplicate crashes in a fleet of machines
-
-
-**Commit**
-
-
-
 
 - [ ] Commit: `"apps/dmpanalyze: MDMP parser, !analyze output, WinDbg-compatible dump, /compare"`
 
@@ -534,7 +384,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 ---
 
 ## OS Comparison
-
 
 | ⭐ | Feature                                   | 🪟 Win11                            | 🐧 Linux                              | 🚀 Impossible OS             |
 |----|-------------------------------------------|----------------------------------|------------------------------------|---------------------------|
