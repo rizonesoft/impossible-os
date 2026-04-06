@@ -195,13 +195,30 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
          * EIF binaries use SYSCALL with RAX = syscall_id via SSDT. */
     }
 
+    /* ---- Validate entry point is within user range ---- */
+    {
+        uint64_t entry_va = hdr->load_base + hdr->entry_point;
+        /* Overflow check */
+        if (hdr->entry_point > USER_ELF_END ||
+            hdr->load_base > USER_ELF_END - hdr->entry_point) {
+            klog(LOG_ERROR, "eif", "Entry point overflow");
+            return 0;
+        }
+        if (entry_va < USER_ELF_BASE || entry_va >= USER_ELF_END) {
+            klog(LOG_ERROR, "eif", "Entry point 0x%x outside user range", entry_va);
+            return 0;
+        }
+    }
+
     /* ---- Performance measurement ---- */
     end_ns = uptime_ns();
     load_us = (end_ns - start_ns) / 1000;  /* ns -> us */
 
-    klog(LOG_DEBUG, "eif", "Loaded %u segments, %u imports in %u us, entry=0x%x",
-         (uint64_t)seg_loaded, (uint64_t)hdr->import_count,
-         load_us, hdr->load_base + hdr->entry_point);
-
-    return hdr->load_base + hdr->entry_point;
+    {
+        uint64_t entry_va = hdr->load_base + hdr->entry_point;
+        klog(LOG_DEBUG, "eif", "Loaded %u segments, %u imports in %u us, entry=0x%x",
+             (uint64_t)seg_loaded, (uint64_t)hdr->import_count,
+             load_us, entry_va);
+        return entry_va;
+    }
 }

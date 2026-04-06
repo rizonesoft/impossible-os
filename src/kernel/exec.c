@@ -17,7 +17,6 @@
 
 static exec_format_t s_formats[EXEC_MAX_FORMATS];
 static uint32_t      s_format_count;
-static uint32_t      s_init_done;  /* 1 after exec_init(); read-only barrier */
 
 /* ---- ELF loader wrapper ------------------------------------------------- */
 
@@ -52,9 +51,6 @@ void exec_init(void)
     s_format_count = 0;
     exec_register_format(&elf_fmt);
     exec_register_format(&eif_fmt);
-
-    /* Memory barrier: all writes to s_formats visible before s_init_done */
-    __atomic_store_n(&s_init_done, 1, __ATOMIC_RELEASE);
 
     klog(LOG_INFO, "exec", "Exec subsystem initialized (%u format(s))",
          (uint64_t)s_format_count);
