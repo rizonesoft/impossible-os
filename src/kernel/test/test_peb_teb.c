@@ -314,14 +314,6 @@ static void test_auxv_constants(void)
     TEST_ASSERT_EQ(AT_HWCAP2, 26,  "AT_HWCAP2 == 26");
 }
 
-static void test_auxv_post_codes(void)
-{
-    TEST_ASSERT_EQ(POST16_AUXV_ENTRY,  0xDF20, "POST16_AUXV_ENTRY == 0xDF20");
-    TEST_ASSERT_EQ(POST16_AUXV_RAND,   0xDF21, "POST16_AUXV_RAND == 0xDF21");
-    TEST_ASSERT_EQ(POST16_AUXV_DONE,   0xDF22, "POST16_AUXV_DONE == 0xDF22");
-    TEST_ASSERT_EQ(POST16_AUXV_VERIFY, 0xDF23, "POST16_AUXV_VERIFY == 0xDF23");
-}
-
 static void test_rdrand_bytes_smoke(void)
 {
     if (!cpu_has(CPU_FEATURE_RDRAND)) {
@@ -727,8 +719,6 @@ void test_register_peb_teb(void)
     /* S13: Extended ELF auxv */
     test_suite_register_cat("PEB/TEB: auxv constants",
                             test_auxv_constants, TEST_CAT_ABI);
-    test_suite_register_cat("PEB/TEB: auxv POST codes",
-                            test_auxv_post_codes, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: rdrand_bytes smoke",
                             test_rdrand_bytes_smoke, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: rdrand_bytes boundaries",

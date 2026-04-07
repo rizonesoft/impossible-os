@@ -1293,8 +1293,6 @@ int task_exec(const uint8_t *data, uint64_t size)
         uint32_t hwcap = 0;
         int is_elf = 0;
 
-        POST16(POST16_AUXV_ENTRY);
-
         /* Count name length */
         { const char *p = name; while (*p++) name_len++; }
 
@@ -1355,7 +1353,6 @@ int task_exec(const uint8_t *data, uint64_t size)
             }
         }
         at_random_addr = (uint64_t)ustk;
-        POST16(POST16_AUXV_RAND);
 
         /* §13: detect ELF and extract program-header metadata for the auxv.
          * Non-ELF formats (PE/EIF) leave phdr_vaddr/phnum/phent at 0 -- the
@@ -1440,7 +1437,6 @@ int task_exec(const uint8_t *data, uint64_t size)
         /* Ensure 16-byte alignment */
         user_rsp = (uint64_t)ustk & ~0xFULL;
 
-        POST16(POST16_AUXV_DONE);
         klog(LOG_INFO, "sched",
              "ELF auxv: AT_RANDOM=0x%x AT_PHDR=0x%x AT_PHNUM=%u AT_HWCAP=0x%x "
              "(%u pairs, %s)",
