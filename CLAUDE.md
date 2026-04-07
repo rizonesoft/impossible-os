@@ -119,6 +119,20 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/codex-dead-code` | Codex dead code scanner -- unused functions, defines, types, declarations |
 | `/codex-perf-review` | Codex performance hot-path review -- ISR paths, lock times, O(n^2), allocations |
 
+## Mandatory Skill Triggers
+
+These are non-negotiable. Auto-loading by description is unreliable -- the rules below apply regardless of whether the skill description "felt relevant." Hooks in `.claude/settings.json` enforce the first two by injecting reminders into the conversation.
+
+| Trigger | Skill | Why |
+|---|---|---|
+| Edit/Write on `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, `src/shell/` (`.c`/`.h`/`.asm`/`.S`) | `kernel-code-quality` | Walk all 10 gates BEFORE writing. SMP race, leak, wrong assertion -- all caused by writing code first. |
+| Codex `adversarial-review` invocation completed | `superpowers:receiving-code-review` | Codex is a reviewer, not an authority. Verify each finding against cited code, classify Fix/Reject/Accept with evidence. No blind implementation, no performative agreement. |
+| Implementing a TODO section | `implement-todo-section` | Steps 13-18 (Codex review, fix loop, self-review, build, validate, tie up loose ends) are MANDATORY before commit. No exceptions for "simple" sections. |
+| Test file in `src/kernel/test/` | `implement-unit-tests` | Wire to `test_runner.c`, correct `TEST_CAT_*`, concrete `TEST_ASSERT_*` with expected values. |
+| Codex skill returns findings | `superpowers:receiving-code-review` | Same rule -- every codex-* skill is upstream of receiving-code-review. |
+
+If a skill is listed above, "I forgot" is not a valid excuse. The hooks will remind you; act on the reminder.
+
 ## Repository Layout
 
 ```
