@@ -1,9 +1,19 @@
 ---
 name: verify-todo-section
-description: Verify an already-implemented TODO section through the full quality pipeline without implementing anything new. Runs Codex adversarial review, test coverage analysis, self-review checklist walk, section validation, and loose-end scan. Use to audit completed work, re-verify after upstream changes, or confirm a section is truly done before marking a TODO complete.
+description: Verify an already-implemented TODO section through the full quality pipeline without implementing anything new. Mirrors implement-todo-section 1:1 with implementation steps replaced by evidence-based verification. Runs Codex adversarial review, test coverage analysis, self-review checklist walk, section validation, and loose-end scan. Use to audit completed work, re-verify after upstream changes, or confirm a section is truly done before marking a TODO complete.
 ---
 
 # Verify TODO Section
+
+> **MIRRORED with `implement-todo-section`.** Step numbering, phase boundaries, and the HARD GATE are kept identical between the two skills. Step N here corresponds to step N there. Only the per-step CONTENT differs: implement-mode WRITES code; verify-mode AUDITS existing code with grep/read evidence. See the "Mirror with implement-todo-section" section at the bottom for the sync rules.
+
+## Execution Discipline
+
+> The TODO section IS the contract being verified. Apply `superpowers:executing-plans` principles in audit form:
+> - **Follow the plan, don't improvise.** The checklist items define what to verify. Do not widen.
+> - **Review checkpoints are mandatory.** Steps 13-18 are review checkpoints -- never skip them. The whole point of verify is the pipeline.
+> - **If the TODO is wrong, downgrade conservatively.** Verify-mode never marks new items `[x]`; it only DOWNGRADES `[x]` -> `[/]` or `[ ]` when evidence shows regression.
+> - **One section = one (optional) commit.** If verification produces fixes, commit them under the section's scope. If clean, no commit.
 
 ## Use This Skill When
 
@@ -11,85 +21,153 @@ description: Verify an already-implemented TODO section through the full quality
 - Upstream code changed (refactor, dependency update) and you need to re-verify a section.
 - The user asks "is this section really done?" or "verify §N for me."
 - Auditing a section implemented in a previous session.
+- Before graduating a TODO file from active to documentation.
 
 ## Workflow
 
-### Phase 1 -- Understand What Was Implemented
+1. **Read the section** -- full text, notes, test checkpoint, warning boxes, every `-> XREF:` line. Inventory all `[x]` items (the claims to verify) and any `[ ]`/`[/]` items (NOT in scope -- this skill does not implement them). If the section has > 10 checklist items, expect a longer verification pass.
+2. **Resolve dependencies** -- verify every `-> XREF:` target is still valid and still `[x]` in the target TODO file. If a dependency regressed, that's a verification failure for THIS section (the section depends on something that's no longer true) -- flag it for the report.
+3. **Explore the codebase** -- Grep/Glob for every symbol, function, type, and constant referenced in the section's checklist items. Read the source files. Build a mental model of "this checklist claim is satisfied by file:line through file:line". This is your evidence map for step 6.
+4. **Codex design review** -- NOT applicable in verify mode. The code already exists; design-time review happens at implement time only. If the implementation is structurally broken, the adversarial review at step 13 will catch it. SKIP this step in verify -- it is intentionally a no-op so the step numbering stays aligned with implement-todo-section.
+5. **Spot-check `kernel-code-quality` gates against existing code** -- walk the gates AGAINST the implementation rather than against a plan. For each gate, audit the section's source files: SMP safety (any new shared mutable state without sync?), 5-layer defense (cross-file invariants protected by `_Static_assert` + runtime check + test + canary + doc?), memory rules (`kmalloc <= 4 KB`, NULL checks on every allocation?), bare-metal correctness (MMIO via `vmm_map_mmio_uc/wc`, GS_BASE set, no `clac`/`stac` without SMAP CPUID, no LAPIC TPR writes in ISR), boot-path POST16 hygiene (only on Phase 0/1/2 functions, never on scheduler/exec/syscall code), error handling (every allocation NULL-checked, no silent failures), Gate 10 production quality (no TODO/FIXME/HACK in shipped code).
+6. **VERIFY each checklist item** -- this is the verify-mode replacement for implement-mode "Implement". Walk every `- [x]` item in the section and prove it via Grep/Read evidence. State each proof as "claim → file:line → snippet shows X".
+   - **Done proof gate (verify mode):** if the evidence does NOT show implemented + wired + functional on normal path, the item must be conservatively downgraded from `[x]` to `[/]` (regression) or `[ ]` (never implemented). When in doubt, downgrade.
+   - **Stale TODO patterns:** if a checklist item demands `POST16(...)` codes for non-boot-path code (scheduler/exec/syscall/auxv work) or "test POST16 constant equals 0xDDNN" tautologies, treat the item as obsolete. Document the removal in the verification report and remove the stale checklist line in step 10. Do not satisfy obsolete patterns.
+   - **NEVER mark a `[ ]` item as `[x]` in verify-mode.** New work belongs in `implement-todo-section`. If verification reveals an unimplemented item that should have been `[x]`, flag it -- do not silently complete it.
+7. **Build** -- `bash scripts/build.sh`, confirm `tail -1 build/build.log` shows `=== BUILD OK ===`. If the existing code doesn't even build, verification has already failed; report and stop.
+8. **Verify unit tests exist and are wired** -- read the TODO file's **Unit Tests** section to find:
+   - The expected test file name (e.g. `test_exec.c`)
+   - The expected registration function (e.g. `test_register_exec()`)
+   - The expected test category (e.g. `TEST_CAT_EXEC`)
+   - The assertion count or specific assertions claimed for this section
 
-1. **Read the section** -- full text, checklist items, test checkpoint, warning boxes, `-> XREF:` lines.
-2. **Resolve dependencies** -- verify every `-> XREF:` target is still valid and still `[x]`. If a dependency regressed, flag it.
-3. **Explore the implementation** -- Grep/Glob for every symbol, function, and type referenced in the checklist items. Read the source files. Understand what was actually built vs what the checklist claims.
-
-### Phase 2 -- Codex Reviews (same as implement steps 9, 13-14)
-
-4. **Codex test coverage analysis** -- dispatch to Codex plugin. List every public function from the section and every existing test assertion. Ask Codex to find untested error paths, boundaries, and negative cases. If gaps found, add missing tests (this is the ONE implementation action allowed).
+   Confirm the test file exists, the registration function exists in `test_runner.c`, and the `TEST_CAT_*` matches. If the section claims "9 suites" but only 5 are registered, that's a verification failure -- downgrade. **Do NOT piggy-back missing tests onto an unrelated test file.**
+   - **No tautological constant tests.** If existing tests include `TEST_ASSERT_EQ(SOME_CONSTANT, literal)` patterns, flag them for removal as part of the verify cleanup. The compiler enforces `#define` values; the boot-time uniqueness check is the real protection.
+   - **One implementation action allowed:** if Codex (step 9) finds a missing assertion for an existing function and the gap is routine, ADD the missing test as part of verify. Anything bigger (new test file, new TEST_CAT, new test runner wiring) is out of scope -- flag and stop.
+9. **Codex test coverage analysis** -- dispatch to Codex via the `codex-test-coverage` skill. List public functions, existing tests, and ask Codex to find untested error paths, boundaries, negative cases. Apply `superpowers:receiving-code-review` discipline: verify each gap is real and reachable before adding a test. Add tests for verified gaps; reject false positives with code evidence.
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<test coverage prompt>"
     ```
-5. **Codex adversarial review** (MANDATORY) -- dispatch to Codex plugin. Scope to the section's changed files/symbols. Full-spectrum: SMP, race conditions, error paths, regressions, boundaries, memory safety, security, functional correctness, performance, bare metal. Request findings by severity.
+    Skip for trivial sections (< 3 test assertions claimed).
+10. **Reconcile TODO section** -- walk every checklist item one more time after step 6 evidence + step 9 Codex findings. Make ONLY conservative status edits:
+    - `[x]` may become `[/]` or `[ ]` if evidence shows regression.
+    - `[ ]` items stay `[ ]` -- never marked done in verify-mode.
+    - Stale-pattern items (POST16-in-non-boot, tautological constant tests) are REMOVED from the checklist with a note in the verify report.
+    - SSDT claims: verify service number <-> function <-> `ssdt_register()` <-> master table row consistency. Downgrade the SSDT row only if the chain is broken.
+    - **Cross-TODO sync:** if the section's claims affect external TODO file checklists, reconcile those reciprocally (downgrade only -- never mark new items `[x]` in another file from verify).
+    - **Deferred-item resolution check:** scan earlier sections in the SAME TODO for items marked "deferred to §N" where N is this section. If §N didn't actually do the deferred work, the deferral is broken -- flag for the report and downgrade the deferring item if appropriate.
+    - Preserve formatting (table headers, icons, column structure).
+11. **Verify Implementation Order table row** -- the IO row for this section must match the section state after step 10. If §N has any `[/]` or `[ ]` items, the IO row cannot stay `[x]`; downgrade conservatively. Never upgrade an IO row in verify-mode.
+12. **Verify OS Comparison table row** -- the row for this section must match the section state. If a feature was claimed Done but evidence shows Partial, downgrade. Update the `<!-- Sources: ... -->` comment only if the row changed.
+13. **Codex adversarial review** (MANDATORY) -- run via the Codex plugin, NOT self-review. Self-review has implementation/verification bias; Codex reads code fresh and catches things you rationalized away. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles (concurrency, races, error paths, regressions, wiring, ABI, memory safety, functional correctness, security, code quality, performance, bare metal), request severity-labeled findings.
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
     ```
-6. **Fix loop** (max 3 rounds) -- apply `superpowers:receiving-code-review` discipline: do NOT blindly fix every Codex finding. For each finding, verify it technically first -- Codex can be wrong. If valid, fix root cause. If wrong, reject with code evidence. If valid but out of scope, accept with justification. Rebuild after each fix. Re-review via Codex focusing on previous findings.
-
-### Phase 3 -- Self-Review (same as implement step 15)
-
-7. **Final self-review** (MANDATORY):
+14. **Fix loop** (1 round mandatory; up to 3 if needed) -- apply `superpowers:receiving-code-review` discipline: do NOT blindly fix every Codex finding. For each finding:
+    - **Verify technically first.** Read the code Codex flagged. Is the finding correct? Codex can be wrong -- it lacks runtime context.
+    - **If the finding is valid:** fix the root cause, not the surface symptom. Rebuild.
+    - **If the finding is wrong or misleading:** reject with concrete technical reason and code evidence (caller already holds lock X at file:line, path is single-threaded by construction because Y, etc.).
+    - **If the finding is correct but out of scope:** accept with justification and add a follow-up TODO checklist item with `→ XREF`.
+    - Fix all valid Critical and High. Fix valid Medium unless explicitly accepted.
+    - **Re-review via Codex is REQUIRED only when fixes are STRUCTURAL** (function signature changes, control-flow rewrites, new locking, lifecycle changes). For SURGICAL fixes (single-line bug, contract clarification, small logic correction, comment fix), self-verification is sufficient: re-read the cited code and confirm the fix matches what Codex flagged, then proceed to step 15.
+    - If unresolved Critical/High remain after round 3: do not call the section verified, downgrade affected items to `[/]` or `[ ]`, add follow-up items with `→ XREF`.
+15. **Final self-review** (MANDATORY) -- this catches what Codex misses at the integration level:
     - Regressions: did any existing functionality break since this was implemented?
     - Race conditions: any shared mutable state without synchronization?
     - Bugs: edge cases, off-by-one, null pointer paths?
     - Performance: unnecessary allocations, O(n^2) where O(n) suffices?
-    - Industry standards: no hacks, no patches, no workarounds, no TODO/FIXME.
-    - **Checklist item-by-item:** walk every `- [x]` item. For each: is it STILL implemented, wired, and functional? Could upstream changes have broken it?
-    - **Test checkpoint verification:** does the test checkpoint's expected serial output / POST codes / behavior still hold?
-
-### Phase 4 -- Codex Deep Analysis
-
-8. **Codex consistency audit** -- dispatch to Codex plugin. Verify that struct offsets, constants, API contracts, and registration tables match between the section's header, implementation, test, and assembly files. Follow the `codex-consistency-audit` skill. Fix any mismatches found.
-    ```bash
-    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<consistency prompt>"
-    ```
-9. **Codex dead code scan** -- dispatch to Codex plugin. Find unreachable functions, unused `#define`s, orphaned types, and stale declarations in the section's source files. Follow the `codex-dead-code` skill. Remove safe-to-remove items, rebuild.
-    ```bash
-    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<dead code prompt>"
-    ```
-10. **Codex performance review** (for hot-path sections) -- if the section touches ISR paths, scheduler, compositor, spinlock-protected regions, or per-tick code, dispatch a performance review. Follow the `codex-perf-review` skill. Fix critical/high findings. Skip for non-hot-path sections (struct definitions, metadata parsers, test-only code).
-    ```bash
-    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf review prompt>"
-    ```
-
-11. **SSDT audit** (auto-triggered for SSDT sections) -- if the section's checklist items reference `ssdt_register()`, SSDT service numbers, `NtXxx` functions, or the TODO is TODO-05/TODO-12, invoke the `audit-ssdt` skill. This verifies service number <-> function <-> registration <-> master table row consistency. Fix any mismatches found. Skip for sections with no SSDT involvement.
-
-### Phase 5 -- Validate and Reconcile
-
-11. **Build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
-12. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims.
-13. **Tie up loose ends** -- scan for:
+    - Industry standards: no hacks, no patches, no workarounds, no TODO/FIXME in shipped code.
+    - **Checklist item-by-item:** walk every `- [x]` and `- [/]` item one final time. For each one: is it STILL implemented and wired today? Could upstream changes have broken it? If yes, downgrade.
+    - **Test checkpoint verification:** does the test checkpoint's expected serial output / klog line / behavior still hold against the current code?
+16. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`. Catches anything broken by the fix loop or self-review changes.
+17. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims that survived steps 6 + 10. Re-checks cross-TODO synchronization.
+18. **Tie up loose ends** (MANDATORY) -- scan the ENTIRE TODO file and any XREF'd TODO files for:
     - Deferred items pointing to this section that weren't resolved.
-    - Stale warning boxes that should be updated.
+    - Stale warning boxes that should be updated to NOTE (resolved).
+    - Implementation Order rows that need status reconciliation.
     - Cross-TODO dependency notes that are now satisfied or broken.
-    - Implementation Order / OS Comparison rows that need status updates.
-14. **Report findings** to the user:
-    - **PASS** -- section is verified, all items confirmed, no issues found.
-    - **PASS with fixes** -- section verified after fixing N issues found by Codex reviews.
-    - **FAIL** -- section has unresolved Critical/High issues. List what needs work.
+    - Any checklist items in other sections affected by this section's reality.
+    - **PE export table sync:** if this section provides public APIs callable from user-mode, verify they are in `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c`.
+    - **SSDT audit trigger:** if this section involves SSDT handlers, invoke `audit-ssdt` skill to verify master table consistency. (Verify mode runs the audit; implement mode only recommends it.)
+    - **Verify-mode deep-analysis pass** (extra in verify; not in implement because the code is fresh there):
+      - `codex-consistency-audit` -- struct offsets, constants, API contracts across header/implementation/test/asm files.
+      - `codex-dead-code` -- unreachable functions, unused defines, orphaned types after the section has had time to drift.
+      - `codex-perf-review` -- only for hot-path sections (ISR paths, scheduler, compositor, spinlock-protected regions, per-tick code). Skip for non-hot-path sections.
+19. **Commit and push** -- only if any phase produced fixes, test additions, or status downgrades.
+    - **If no changes were made:** report PASS / PASS-with-fixes / FAIL to the user. Skip git entirely.
+    - **If changes were made:** commit message format `"verify: <TODO file> §N -- <summary of fixes/downgrades>"`. Stage all changed source files, test changes, and TODO updates together. Push to `origin/main` immediately after successful commit.
+    - Do NOT mark the section's `Commit:` checklist item `[x]` -- that line belongs to the implement-time commit and stays as it was.
 
-### Phase 6 -- Commit (only if fixes were made)
+## HARD GATE: Steps 13-18 are MANDATORY before step 19
 
-15. **Commit and push** -- only if any phase produced code fixes, test additions, or dead code removal. Use message: `"fix: verify §N -- <summary of fixes>"`. If no changes were made, skip this step.
+> **You MUST NOT `git commit` or `git push` until steps 13 through 18 have all been completed.**
+>
+> This is not optional. This is not skippable for "the code already exists." The code exists, but the verification IS the pipeline. Steps 13-18 are how you prove the section is still right today.
+>
+> If you find yourself about to run `git add` and you have not yet:
+> - (13) Dispatched Codex adversarial review and received severity-labeled findings
+> - (14) Fixed all Critical/High findings with build evidence (or rejected with code evidence)
+> - (15) Done final self-review for regressions, races, bugs, completeness
+> - (16) Confirmed 2nd final build passes
+> - (17) Invoked `validate-todo-section` skill and reconciled status
+> - (18) Scanned for and tied up loose ends in current and XREF'd TODO files (including the verify-mode deep-analysis pass)
+>
+> then **STOP and go back to step 13**.
+>
+> **Pattern to watch for:** "It's just a verify, the code didn't change, let me skip the review." That thought is the signal to STOP. Verifications skip Codex adversarial review at exactly the moment regressions slip through.
+
+## Mirror with implement-todo-section
+
+This skill is the VERIFY half of a mirrored pair with `implement-todo-section`. Step numbering, phase boundaries, and the HARD GATE are kept identical between the two files so improvements ported into either skill can be ported back to the other.
+
+**Sync rules:**
+- Step N here ↔ step N in `implement-todo-section/SKILL.md`. Adding a step in one file requires adding the matching step in the other at the same position.
+- The HARD GATE always cites steps 13-18 in BOTH files. If the gate moves, it moves in both.
+- The Execution Discipline block at the top is the same shape (4 bullets) in both files.
+- The Guardrails section is the same shape in both, with verify-mode adding the conservative-downgrade rule.
+
+**Per-step content rules** (this is what differs between the two files):
+
+| Step | implement-mode | verify-mode |
+|---|---|---|
+| 1 | Read the section as a plan to execute | Read the section as a contract to audit |
+| 2 | Resolve XREFs to know what's available | Verify XREFs are still satisfied |
+| 3 | Explore codebase to plan changes | Explore codebase to map evidence |
+| 4 | Codex design review BEFORE writing | SKIP -- code exists; intentional no-op to keep numbering aligned |
+| 5 | Walk kernel-code-quality gates BEFORE writing | Spot-check kernel-code-quality gates AGAINST existing code |
+| 6 | **WRITE code** (the implementation) | **VERIFY each `[x]` claim with grep/read evidence** (the audit) |
+| 7 | Build -- catches what you wrote | Build -- catches what's already broken |
+| 8 | Wire NEW unit tests | AUDIT existing test wiring; add only routine gap fills |
+| 9 | Codex test coverage of new tests | Codex test coverage of existing tests |
+| 10 | Mark `[x]` as items complete | DOWNGRADE `[x]` to `[/]`/`[ ]` only on regression evidence |
+| 11 | Update IO row to `[x]`/`[/]` | Reconcile IO row downward only |
+| 12 | Update OS Comparison row | Reconcile OS Comparison row downward only |
+| 13-17 | Codex review, fix loop, self-review, build, validate | **SAME** -- the review pipeline is identical |
+| 18 | Tie up loose ends | Tie up loose ends + run deep-analysis Codex skills (extra) |
+| 19 | Commit the implementation | Commit only if fixes were made |
+
+**When you edit one file, edit the other.** A hook fires on edits to either `SKILL.md` reminding you. The mirror is enforced by convention + hook, not by content equality.
 
 ## What This Skill Does NOT Do
 
-- Does NOT implement new checklist items. If a checklist item is `[ ]`, it stays `[ ]`.
-- Does NOT create new source files (except test additions from step 4).
-- Does NOT modify the section's checklist text (except fixing stale `[x]` -> `[ ]` if evidence shows regression).
-- Does NOT run the design review (step 4 of implement) -- the code already exists.
-- Does NOT run kernel-code-quality gates -- the code already exists.
+- Does NOT implement new checklist items. Items marked `[ ]` stay `[ ]`.
+- Does NOT create new source files (except routine gap-fill tests in step 8).
+- Does NOT mark new items `[x]`. Verify only DOWNGRADES on regression evidence.
+- Does NOT skip steps 13-18. The verification pipeline IS what makes verify trustworthy.
+- Does NOT modify the `Commit:` checklist line -- that belongs to the implement-time commit.
 
 ## Guardrails
 
-- Do not implement missing features. If something is unimplemented, flag it and keep `[ ]`.
+- **Conservative downgrade only.** Never widen scope to "fix while you're in there."
+- **Steps 13-18 are blocking prerequisites for step 19.** Same as implement-mode: this gate exists because review-skip is the failure mode.
 - Do not weaken tests to make findings go away.
-- The Codex adversarial review (step 5) is MANDATORY. No exceptions for "simple" sections.
-- If the section was never implemented (all `[ ]`), this skill is wrong -- use `/implement-todo-section` instead.
-- Commit only if actual code/test changes were made during verification.
+- Do not mark new items `[x]` from verify-mode evidence. New work goes through `implement-todo-section`.
+- For SSDT sections, verify service number <-> function <-> registration <-> master table consistency before downgrading or accepting any status.
+- Commit only if actual fixes/test additions/status downgrades occurred. A clean PASS produces no commit.
+- If the section was never implemented (all `[ ]`), this skill is wrong -- use `implement-todo-section` instead.
+- Do not turn this into a broad file-wide cleanup pass.
+- Apply `superpowers:receiving-code-review` discipline to every Codex finding -- verify before fixing, reject false positives with evidence.
+
+## Additional Resources
+
+- [build-evidence.md](../implement-todo-section/build-evidence.md) -- shared with implement-todo-section (single source of truth)

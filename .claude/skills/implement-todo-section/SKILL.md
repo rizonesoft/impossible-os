@@ -5,6 +5,8 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 # Implement TODO Section
 
+> **MIRRORED with `verify-todo-section`.** Step numbering, phase boundaries, and the HARD GATE are kept identical between the two skills. Step N here corresponds to step N there. Only the per-step CONTENT differs: implement-mode WRITES code; verify-mode AUDITS existing code with grep/read evidence. See the "Mirror with verify-todo-section" section at the bottom for the sync rules.
+
 ## Execution Discipline
 
 > The TODO section IS the plan. Apply `superpowers:executing-plans` principles:
@@ -106,6 +108,38 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 >
 > **Pattern to watch for:** "Build passes, looks straightforward, I'll just commit." That thought is the signal to STOP. The straightforward changes are exactly the ones where review catches the bug you didn't think about.
 
+## Mirror with verify-todo-section
+
+This skill is the IMPLEMENT half of a mirrored pair with `verify-todo-section`. Step numbering, phase boundaries, and the HARD GATE are kept identical between the two files so improvements ported into either skill can be ported back to the other.
+
+**Sync rules:**
+- Step N here ↔ step N in `verify-todo-section/SKILL.md`. Adding a step in one file requires adding the matching step in the other at the same position.
+- The HARD GATE always cites steps 13-18 in BOTH files. If the gate moves, it moves in both.
+- The Execution Discipline block at the top is the same shape (4 bullets) in both files.
+- The Guardrails section is the same shape in both, with verify-mode adding the conservative-downgrade rule.
+
+**Per-step content rules** (this is what differs between the two files):
+
+| Step | implement-mode | verify-mode |
+|---|---|---|
+| 1 | Read the section as a plan to execute | Read the section as a contract to audit |
+| 2 | Resolve XREFs to know what's available | Verify XREFs are still satisfied |
+| 3 | Explore codebase to plan changes | Explore codebase to map evidence |
+| 4 | Codex design review BEFORE writing | SKIP -- code exists; intentional no-op to keep numbering aligned |
+| 5 | Walk kernel-code-quality gates BEFORE writing | Spot-check kernel-code-quality gates AGAINST existing code |
+| 6 | **WRITE code** (the implementation) | **VERIFY each `[x]` claim with grep/read evidence** (the audit) |
+| 7 | Build -- catches what you wrote | Build -- catches what's already broken |
+| 8 | Wire NEW unit tests | AUDIT existing test wiring; add only routine gap fills |
+| 9 | Codex test coverage of new tests | Codex test coverage of existing tests |
+| 10 | Mark `[x]` as items complete | DOWNGRADE `[x]` to `[/]`/`[ ]` only on regression evidence |
+| 11 | Update IO row to `[x]`/`[/]` | Reconcile IO row downward only |
+| 12 | Update OS Comparison row | Reconcile OS Comparison row downward only |
+| 13-17 | Codex review, fix loop, self-review, build, validate | **SAME** -- the review pipeline is identical |
+| 18 | Tie up loose ends | Tie up loose ends + run deep-analysis Codex skills (extra) |
+| 19 | Commit the implementation | Commit only if fixes were made |
+
+**When you edit one file, edit the other.** A hook fires on edits to either `SKILL.md` reminding you. The mirror is enforced by convention + hook, not by content equality.
+
 ## Guardrails
 
 - **Commit after each section.** Never batch multiple sections into one commit.
@@ -120,4 +154,4 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 ## Additional Resources
 
-- [build-evidence.md](build-evidence.md)
+- [build-evidence.md](build-evidence.md) -- shared with verify-todo-section (single source of truth)

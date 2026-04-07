@@ -73,6 +73,11 @@
             "type": "command",
             "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\npath = d.get('tool_input', {}).get('file_path', '')\nif not path or '.claude/skills/' not in path or not path.endswith('.md'):\n    sys.exit(0)\nmsg = ('[CLAUDE.md sync REMINDER] Edited a skill file at ' + path + '. '\n       'If this was a NEW skill (new directory under .claude/skills/) or a renamed skill, '\n       'update the Skills table in CLAUDE.md in the same commit. '\n       'For content/behavior changes to an existing skill that kept its name, no CLAUDE.md update needed.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\npath = d.get('tool_input', {}).get('file_path', '')\nif not path:\n    sys.exit(0)\np = path.replace('\\\\\\\\', '/')\nif 'implement-todo-section/SKILL.md' in p:\n    other = '.claude/skills/verify-todo-section/SKILL.md'\n    edited = 'implement-todo-section'\nelif 'verify-todo-section/SKILL.md' in p:\n    other = '.claude/skills/implement-todo-section/SKILL.md'\n    edited = 'verify-todo-section'\nelse:\n    sys.exit(0)\nmsg = ('[MIRROR SYNC REQUIRED] Edited ' + edited + '/SKILL.md. This skill is one half of a mirrored pair with the other -- step numbering 1-19, phase boundaries, and the HARD GATE (steps 13-18) MUST stay aligned across BOTH files. '\n       'Before committing, open ' + other + ' and apply the equivalent change at the matching step number. '\n       'Implement-mode WRITES code; verify-mode AUDITS existing code with grep/read evidence. '\n       'See the Mirror section at the bottom of either SKILL.md for the per-step content rules. '\n       'A mismatched mirror is the failure mode this hook prevents.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "timeout": 5
           }
         ]
       }
