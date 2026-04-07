@@ -174,6 +174,19 @@ Lesson: `s_subsys_names[]` missed `SUBSYS_OB`, causing OOB read in `kernel_subsy
 - [ ] **New invariant?** Add `TEST_ASSERT_EQ` for the expected value (Layer 3 of the 5-layer defense).
 - [ ] **Register with category.** Use `test_suite_register_cat("name", fn, TEST_CAT_XX)` where XX matches the subsystem: `MM`, `FS`, `SCHED`, `OB`, `SECURITY`, `IPC`, `BOOT`, `ABI`, `STORAGE`.
 - [ ] **Concrete assertions.** Every test must have an expected value. No `"verify it works"` -- specify what "works" means numerically.
+- [ ] **NEVER call live boot infrastructure from a test.** WSL has no working QEMU -- runtime regressions in tests are not caught until the user boots on native Windows or bare metal. **3 incidents to date.** Forbidden function calls in `src/kernel/test/test_*.c`:
+  - `boot_progress(`, `boot_post_write16(`, `boot_post_nvram_write16(`, `post_display16(` -- live VPD/framebuffer/I/O port/NVRAM
+  - `vpd_stage_begin(`, `vpd_stage_done(`, `vpd_stage_fail(`, `vpd_init(` -- VPD state machine
+  - `boot_splash_*(` -- splash screen state
+  - `boot_halt(`, `panic(`, `KeBugCheckEx(` -- halts the running kernel
+  - Any subsystem `_init(` (`pmm_init`, `vmm_init`, `heap_init`, `serial_init`, `acpi_init`, `lapic_init`, `ioapic_init`, `timer_hal_init`, `gdt_init`, `idt_init`, `klog_early_init`, `klog_disk_enable`, etc.) -- re-initializes a live subsystem
+  - **Allowed instead:** pure constant checks, save/restore wrappers around `kernel_subsystem_set_ready`/`_ready` on a specific slot, direct calls to PURE data helpers (`boot_timing_record_step()` is OK -- it just appends to an in-memory buffer; `boot_progress()` is NOT because it ALSO updates VPD/framebuffer), BOOT_REQUIRE/BOOT_STEP via wrapper functions, read-only oracle queries
+  - **If Codex test-coverage recommends testing a forbidden function**, REJECT with code evidence -- Codex doesn't know WSL constraints. Test the underlying pure helper, or accept the gap with a `**Note:**` in the TODO's Unit Tests section
+  - **Opt-out:** add `/* TEST-SIDE-EFFECT-ALLOWED: <reason> */` in the test function for legitimate panic/fault recovery testing in a controlled context. The hook honors this sentinel
+  - The `feedback_test_no_live_boot_calls` memory documents the recurring pattern in detail
+
+<!-- Updated 2026-04-07: added test side-effect ban after 3rd recurring incident (test_boot_progress_records_step froze WHPX boot). Tests must use pure helpers, never live boot infrastructure. -->
+
 
 ### Gate 9: Documentation Sync
 
@@ -242,6 +255,7 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | Any allocation | Check for NULL return |
 | Cross-file constant | `_Static_assert` in every file that uses it |
 | New public function | At least one unit test assertion |
+| Test code that touches boot infrastructure | DON'T -- pure helper or save/restore wrapper only; never `boot_progress`, `vpd_*`, `_init`, `panic`, `boot_halt` |
 | Bare-metal crash lesson | Add to CLAUDE.md Bare Metal Gotchas |
 | Unicode in strings/comments | Replace with ASCII `--` |
 | Tempted to write TODO/FIXME | Walk the scope-gap protocol -- Branches A/B/C/D |

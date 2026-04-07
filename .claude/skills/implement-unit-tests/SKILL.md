@@ -157,6 +157,26 @@ void test_register_<name>(void)
 - The registration function `test_register_<name>()` is NOT static -- it's `extern`'d from `test_runner.c`
 - Max 64 suites total across all test files (`TEST_MAX_SUITES`)
 
+> **CRITICAL -- NO LIVE BOOT INFRASTRUCTURE CALLS.** A pre-commit hook BLOCKS edits to test files containing the function calls below. WSL has no working QEMU; runtime regressions in tests are not caught until the user boots on native Windows or bare metal. **3 incidents to date** -- the latest froze WHPX boot when `test_boot_progress_records_step` called `boot_progress("VERIFY_TEST", 0xCAFE)`.
+>
+> **Forbidden in `src/kernel/test/test_*.c`:**
+> - `boot_progress(`, `boot_post_write16(`, `boot_post_nvram_write16(`, `post_display16(` -- live VPD/framebuffer/I/O port/NVRAM
+> - `vpd_stage_begin(`, `vpd_stage_done(`, `vpd_stage_fail(`, `vpd_init(` -- VPD state machine
+> - `boot_splash_init(`, `boot_splash_status(`, `boot_splash_finish(`, `boot_splash_start_animation(`
+> - `boot_halt(`, `panic(`, `KeBugCheckEx(`
+> - Any subsystem `_init(` (`pmm_init`, `vmm_init`, `heap_init`, `serial_init`, `klog_early_init`, `klog_disk_enable`, `acpi_init`, `lapic_init`, `ioapic_init`, `timer_hal_init`, `gdt_init`, `idt_init`)
+>
+> **Allowed alternatives:**
+> - Pure constant checks (`TEST_ASSERT_EQ(SUBSYS_OB, 20, ...)`)
+> - Save/restore wrappers around `kernel_subsystem_set_ready/_ready` on a specific slot (`SUBSYS_PMM` is fine -- existing tests use it)
+> - Direct calls to PURE data helpers -- `boot_timing_record_step()` is OK because it just appends to an in-memory buffer; `boot_progress()` is NOT because it ALSO updates VPD/framebuffer/serial
+> - BOOT_REQUIRE/BOOT_STEP via wrapper functions returning the expected `boot_result_t`
+> - Read-only oracle queries (`kernel_subsystem_ready()`, `boot_timing_get_steps()`)
+>
+> **If Codex test-coverage in step 7 recommends testing a forbidden function, REJECT** with code evidence (`receiving-code-review` discipline). Codex doesn't know about the WSL constraint. Test the underlying pure helper, or accept the gap with a `**Note:**` line in the TODO's Unit Tests section explaining why no test exists.
+>
+> **Opt-out for legitimate cases** (panic recovery testing in a controlled context, hardware fault simulation): add `/* TEST-SIDE-EFFECT-ALLOWED: <one-line reason> */` in the test function body. The hook honors this sentinel.
+
 ### 4. Register in the test runner
 
 Edit `src/kernel/test/test_runner.c`:
