@@ -310,11 +310,11 @@ Central cleanup point for all per-process resources when a process terminates. W
 - [ ] In `task_exit()` (or a new `process_cleanup(struct task *t)` called from it):
   - Release timer resolution requests held by this PID (-> XREF: TODO-07 §8 `KeSetTimerResolution`)
   - Close all open handles in the process handle table (-> XREF: TODO-03 §3 OB handle table)
-  - Release all byte-range locks held by this process (-> XREF: TODO-04 §10 `vfs_lock_file`)
-  - Release all share-mode handle entries for open files (-> XREF: TODO-04 §8 `vfs_open_handle_t`)
-  - Trigger delete-on-close for files marked by this process (-> XREF: TODO-04 §9)
-  - Release any oplock held by this process (-> XREF: TODO-04 §14)
-  - Free per-process memory: PEB, TEB, user stack, address space (-> XREF: TODO-04-peb-teb §5)
+  - Release all byte-range locks held by this process (-> XREF: 05-storage-filesystems/TODO-04 §10 `vfs_lock_file`)
+  - Release all share-mode handle entries for open files (-> XREF: 05-storage-filesystems/TODO-04 §8 `vfs_open_handle_t`)
+  - Trigger delete-on-close for files marked by this process (-> XREF: 05-storage-filesystems/TODO-04 §9)
+  - Release any oplock held by this process (-> XREF: 05-storage-filesystems/TODO-04 §14)
+  - Free per-process memory: PEB, TEB, user stack, address space (-> XREF: 02-kernel-core/TODO-04 §5)
   - Release per-process resource limits and accounting (-> XREF: §8, §9 of this TODO)
   - Remove from job object if assigned (-> XREF: §13)
 - [ ] Log: `klog(LOG_DEBUG, "task", "PID %u exit cleanup: %u handles, %u locks released", ...)`

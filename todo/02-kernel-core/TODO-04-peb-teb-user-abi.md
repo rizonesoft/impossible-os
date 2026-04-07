@@ -49,6 +49,7 @@
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5         |  [x]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9         |  [x]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7         |  [ ]   |
+| 💎  |  14   | Per-thread TEB allocation at thread_create()    | §6, §12    |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -224,7 +225,7 @@ Windows supports 1088 TLS slots per thread: 64 static slots in `TEB.TlsSlots[64]
 - [x] `tls_free(pid, index)`: handles both static (0-63) and expansion (64-1087) ranges; zeros the slot in TEB; under `tls_lock`
 - [x] `tls_get_value(pid, index)` / `tls_set_value(pid, index, value)`: dispatch to `TEB.TlsSlots[index]` or `TEB.TlsExpansionSlots[index-64]`; under `tls_lock`
 - [x] Demand-allocate expansion array via `pmm_alloc_contiguous(2)` + `vmm_map_page()` at `0x7FFD0000`; two-phase commit: PMM alloc outside spinlock, mapping/zero-fill/commit under spinlock; race-loser frees its frames via `pmm_free_frame()`
-- [/] On thread create: per-thread expansion arrays -- deferred. Current OS has single TEB per process (threads share it via PEB.TEB pointer). Per-thread expansion will land when threads get separate TEB pages (future thread runtime work)
+- [/] On thread create: per-thread expansion arrays -- deferred to §14 (Per-thread TEB allocation). Current OS has single TEB per process; threads share it. When §14 lands, mark this `[x]`.
 - [x] On task cleanup: `task_cleanup()` unmaps expansion pages via `vmm_unmap_page(virt, 1)` and clears `TEB.TlsExpansionSlots` under `tls_lock` to prevent races
 - [x] `TLS_MINIMUM_AVAILABLE = 64`, `TLS_EXPANSION_SLOTS = 1024`, `TLS_MAXIMUM_AVAILABLE = 1088`, `TLS_EXPANSION_BITMAP_WORDS = 16` constants in `task.h`
 - [x] 6 unit tests in `test_peb_teb.c` (TLS constants, static alloc/free, expansion alloc, expansion reuse, expansion boundary 1088 slots, POST codes)
@@ -261,6 +262,29 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 - [ ] Commit: `"kernel: abi -- extended auxiliary vector with AT_RANDOM, AT_PHDR, AT_HWCAP"`
 
 **Test checkpoint:** Serial log shows `ELF auxv: AT_RANDOM=0x<stack_addr> AT_PHDR=0x<phdr> AT_PHNUM=<n>`. User-mode test reads 16 bytes at AT_RANDOM -- all-zero is a failure (must be random). Stack canary `__stack_chk_guard` is non-zero when linked with `-fstack-protector`. `POST16(0xDF20)` on entry, `POST16(0xDF21)` random bytes pushed, `POST16(0xDF22)` auxv complete, `POST16(0xDF23)` user-mode verification. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+## 14. Per-thread TEB Allocation at thread_create()
+Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), which violates the Win32 contract that each thread has its own TEB at `gs:[0]`. This blocks per-thread TLS expansion arrays (§12 deferred item), per-thread `LastErrorValue`, per-thread stack bounds in `NtTib.StackBase/StackLimit`, and correct `NtCurrentTeb()` semantics on multithreaded processes. `NtCreateThread` (TODO-05 §7) creates a `struct thread` with its own kernel stack but no TEB.
+
+> [!IMPORTANT]
+> **Architectural impact:** This section changes the GS base swap path. Every interrupt entry/exit and every context switch must load the TEB pointer for the *current thread*, not the *current task*. The `tasks[pid].kernel_gs_base` field becomes a per-thread field in `struct thread`, and `swapgs` consumers in `idt_asm.S` / `syscall_entry.S` must read from the new location.
+
+- [ ] Add `void *teb` field to `struct thread` in `include/kernel/sched/task.h`
+- [ ] Add `uint64_t kernel_gs_base` field to `struct thread` (move from `struct task`); keep a `kernel_gs_base` pointer in `struct task` that aliases `task->threads[0].kernel_gs_base` for backward compat or remove the task-level field after all callers update
+- [ ] Place per-thread TEBs at distinct user VAs: extend the existing `TEB_USER_BASE - tid * 0x1000` formula in `teb_alloc_for_task()` so each thread gets its own page (the formula already accepts `tid`, but `task_exec()` only ever passes 0)
+- [ ] In `thread_create()` (`src/kernel/sched/task.c`): if the parent task has a TEB (i.e. is a user task), call `teb_alloc_for_task(pid, new_tid, user_stack_base, user_stack_size, tasks[pid].peb)` and store the result in `t->threads[new_tid].teb`; for kernel threads (parent task has no TEB), leave `teb = NULL`
+- [ ] Set per-thread `kernel_gs_base = (uint64_t)(uintptr_t)thread->teb` so `swapgs` lands on the correct TEB
+- [ ] Update the context-switch path (`switch_to_thread()` or equivalent) to write `IA32_KERNEL_GS_BASE` MSR with the incoming thread's `kernel_gs_base` value, not the task-level value
+- [ ] Update `NtCurrentTeb()` semantics: `gs:[0x30]` (NtTib.Self) must point at the current thread's TEB after swapgs, which falls out automatically once the MSR write is per-thread
+- [ ] Update `NtCreateThread` (→ XREF: `TODO-05-native-api-ssdt.md §7`) to verify the new thread has a non-NULL TEB before returning success, and to expose `THREAD_BASIC_INFORMATION.TebBaseAddress` from the per-thread field instead of the task-level one
+- [ ] On thread exit: `vmm_unmap_page(thread->teb, 1)` to free the TEB page (mirror task_cleanup pattern)
+- [ ] On thread exit: free per-thread TLS expansion array if allocated (calls into `tls_expansion_free_for_thread()` or equivalent in §12 helpers)
+- [ ] Wire `tls_expansion_demand_alloc()` (§12) to use the *current thread's* TEB instead of `tasks[pid].teb`; add a `tid` parameter or read from `thread_current()`
+- [ ] After §14 lands: revisit §12 deferred item and mark it `[x]`. The TLS expansion VA base formula in `task.c` (currently fixed at `0x7FFD0000`) should also be extended to `TLS_EXPANSION_VA_BASE - tid * (TLS_EXPANSION_PAGES * 4096)` for per-thread expansion arrays
+- [ ] Update test_peb_teb.c TLS tests to spawn a thread via `thread_create()`, verify each thread has a unique TEB VA, verify `NtCurrentTeb()` from each thread returns the right pointer, and verify TLS values set in one thread are NOT visible from another
+- [ ] Commit: `"kernel: peb -- per-thread TEB allocation at thread_create()"`
+
+**Test checkpoint:** Spawning two threads in the same process produces two distinct TEB VAs (`thread_a->teb != thread_b->teb`). `NtCurrentTeb()` from each thread returns its own TEB. Setting `LastErrorValue` in thread A does not affect thread B. Allocating a TLS slot in thread A and writing to it does not affect the same slot index in thread B (per-thread isolation). Context switch correctly swaps `IA32_KERNEL_GS_BASE` MSR. `POST16(0xDF30)` on `thread_create` entry, `POST16(0xDF31)` after TEB allocated, `POST16(0xDF32)` on context-switch swap. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
