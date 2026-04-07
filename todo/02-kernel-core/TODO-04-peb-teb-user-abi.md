@@ -3,7 +3,7 @@
 > **Goal:** Implement the Process Environment Block, Thread Environment Block, and the complete x86-64 user-mode ABI handoff so that `ntdll.dll` and all Win32 DLLs can initialise and user programs run correctly. Without this, no Win32 binary can call `GetLastError`, locate loaded modules, parse command-line arguments, or access TLS. This is the first item every Win32 user-mode DLL depends on, and blocks everything downstream in the Win32 subsystem.
 
 > [!IMPORTANT]
-> **Current state:** Core PEB/TEB ABI (§1–§11) is complete and verified: TEB and PEB at correct Windows x64 offsets, swapgs on INT 0x80, KERNEL_GS_BASE per-task, PEB/TEB allocation, initial user stack frame, Ldr module list, 64 static TLS slots, Ob namespace exposure, and KUSER_SHARED_DATA. Remaining: §12 TLS expansion slots and §13 extended auxiliary vector.
+> **Current state:** Core PEB/TEB ABI (§1 -- §13) is complete and verified: TEB and PEB at correct Windows x64 offsets, swapgs on INT 0x80, KERNEL_GS_BASE per-task, PEB/TEB allocation, initial user stack frame, Ldr module list, 64 static TLS slots, Ob namespace exposure, KUSER_SHARED_DATA, TLS expansion (1024 slots), and extended ELF auxv (AT_RANDOM/AT_PHDR/AT_HWCAP). Remaining: §15 user-mode thread bootstrap (split `thread_create` into kthread/uthread) and §14 per-thread TEB allocation (blocked on §15).
 
 ## Inputs
 
@@ -49,7 +49,8 @@
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5         |  [x]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9         |  [x]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7         |  [x]   |
-| 💎  |  14   | Per-thread TEB allocation at thread_create()    | §6, §12    |  [ ]   |
+| 💎  |  14   | Per-thread TEB allocation at uthread_create()   | §6, §12, §15 |  [ ] |
+| 💎  |  15   | User-mode thread bootstrap (uthread_create)     | §6         |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -268,25 +269,61 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 ## 14. Per-thread TEB Allocation at thread_create()
 Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), which violates the Win32 contract that each thread has its own TEB at `gs:[0]`. This blocks per-thread TLS expansion arrays (§12 deferred item), per-thread `LastErrorValue`, per-thread stack bounds in `NtTib.StackBase/StackLimit`, and correct `NtCurrentTeb()` semantics on multithreaded processes. `NtCreateThread` (TODO-05 §7) creates a `struct thread` with its own kernel stack but no TEB.
 
+> [!NOTE]
+> **Scope-gap deferral (Branch B -> §15):** Codex design review (2026-04-07) found that today's `thread_create()` builds ring-0 iret frames -- it produces kernel threads, not user threads. Bolting per-thread TEBs onto kernel threads is incoherent (a kernel thread never `swapgs`'s into a user TEB). §15 (User-Mode Thread Bootstrap) is the prerequisite that splits `thread_create` into `kthread_create` + `uthread_create`. Once §15 ships, §14 has a real foundation. All §14 items below are blocked on §15. Additionally, the runtime TEB unmap path is constrained by the lack of SMP TLB shootdown (-> XREF: [03-memory-concurrency/TODO-06-smp-phase2.md §2](../03-memory-concurrency/TODO-06-smp-phase2.md)); until shootdown lands, per-thread TEB pages are reclaimed at `task_cleanup()` (process death), accepting a bounded leak of `THREAD_MAX * 4 KiB = 64 KiB` per multithreaded process between thread death and process exit.
+
 > [!IMPORTANT]
-> **Architectural impact:** This section changes the GS base swap path. Every interrupt entry/exit and every context switch must load the TEB pointer for the *current thread*, not the *current task*. The `tasks[pid].kernel_gs_base` field becomes a per-thread field in `struct thread`, and `swapgs` consumers in `idt_asm.S` / `syscall_entry.S` must read from the new location.
+> **Architectural impact:** This section changes the GS base swap path. After §15 lands, every context switch between threads in the same process must reload `IA32_KERNEL_GS_BASE` MSR with the incoming thread's TEB. The schedule() condition changes from `prev_task != next_task` to `prev_task != next_task || prev_thread != next_thread`. Hardware `swapgs` in `isr_stubs.asm` and `syscall_entry.asm` does NOT need to change -- it operates on whatever value the C scheduler wrote into the MSR.
+
+**Files (when unblocked):** `include/kernel/sched/task.h`, `src/kernel/sched/task.c`, `src/kernel/nt/nt_process.c`, `src/kernel/test/test_peb_teb.c`
+
+**Prerequisites:** §15 (uthread_create), and ideally `03-memory-concurrency/TODO-06 §2` (TLB shootdown) for runtime unmap; without §06 §2, cleanup is deferred to `task_cleanup()`.
 
 - [ ] Add `void *teb` field to `struct thread` in `include/kernel/sched/task.h`
-- [ ] Add `uint64_t kernel_gs_base` field to `struct thread` (move from `struct task`); keep a `kernel_gs_base` pointer in `struct task` that aliases `task->threads[0].kernel_gs_base` for backward compat or remove the task-level field after all callers update
-- [ ] Place per-thread TEBs at distinct user VAs: extend the existing `TEB_USER_BASE - tid * 0x1000` formula in `teb_alloc_for_task()` so each thread gets its own page (the formula already accepts `tid`, but `task_exec()` only ever passes 0)
-- [ ] In `thread_create()` (`src/kernel/sched/task.c`): if the parent task has a TEB (i.e. is a user task), call `teb_alloc_for_task(pid, new_tid, user_stack_base, user_stack_size, tasks[pid].peb)` and store the result in `t->threads[new_tid].teb`; for kernel threads (parent task has no TEB), leave `teb = NULL`
-- [ ] Set per-thread `kernel_gs_base = (uint64_t)(uintptr_t)thread->teb` so `swapgs` lands on the correct TEB
-- [ ] Update the context-switch path (`switch_to_thread()` or equivalent) to write `IA32_KERNEL_GS_BASE` MSR with the incoming thread's `kernel_gs_base` value, not the task-level value
-- [ ] Update `NtCurrentTeb()` semantics: `gs:[0x30]` (NtTib.Self) must point at the current thread's TEB after swapgs, which falls out automatically once the MSR write is per-thread
-- [ ] Update `NtCreateThread` (→ XREF: `TODO-05-native-api-ssdt.md §7`) to verify the new thread has a non-NULL TEB before returning success, and to expose `THREAD_BASIC_INFORMATION.TebBaseAddress` from the per-thread field instead of the task-level one
-- [ ] On thread exit: `vmm_unmap_page(thread->teb, 1)` to free the TEB page (mirror task_cleanup pattern)
-- [ ] On thread exit: free per-thread TLS expansion array if allocated (calls into `tls_expansion_free_for_thread()` or equivalent in §12 helpers)
-- [ ] Wire `tls_expansion_demand_alloc()` (§12) to use the *current thread's* TEB instead of `tasks[pid].teb`; add a `tid` parameter or read from `thread_current()`
-- [ ] After §14 lands: revisit §12 deferred item and mark it `[x]`. The TLS expansion VA base formula in `task.c` (currently fixed at `0x7FFD0000`) should also be extended to `TLS_EXPANSION_VA_BASE - tid * (TLS_EXPANSION_PAGES * 4096)` for per-thread expansion arrays
-- [ ] Update test_peb_teb.c TLS tests to spawn a thread via `thread_create()`, verify each thread has a unique TEB VA, verify `NtCurrentTeb()` from each thread returns the right pointer, and verify TLS values set in one thread are NOT visible from another
-- [ ] Commit: `"kernel: peb -- per-thread TEB allocation at thread_create()"`
+- [ ] Add `uint64_t kernel_gs_base` field to `struct thread`. Keep `tasks[pid].kernel_gs_base` and `tasks[pid].teb` as a mirror of `threads[0]` -- they remain in lockstep so single-thread fast-paths and TLS code (which still indexes by pid) work unchanged.
+- [ ] Place per-thread TEBs at distinct user VAs via the existing `TEB_USER_BASE - tid * 0x1000` formula in `teb_alloc_for_task()` (formula already accepts `tid`; today only `task_exec()` calls it with 0). After §15, `uthread_create()` calls it with the new tid.
+- [ ] In `uthread_create()` (added by §15): after building the ring-3 frame, call `teb_alloc_for_task(pid, new_tid, ustack_base, USER_STACK_SIZE, parent->peb)` and store result in `t->threads[new_tid].teb`. Set `t->threads[new_tid].kernel_gs_base = (uint64_t)(uintptr_t)t->threads[new_tid].teb`. NULL TEB allocation -> roll back the user stack and return -1.
+- [ ] Update `schedule()` and `schedule_now()` (`src/kernel/sched/task.c:773-777` and `:635-641`): change KERNEL_GS_BASE swap condition from `prev_task != next_task` to `prev_task != next_task || prev_thread != next_thread`. Read from `tasks[next_task].threads[next_thread].kernel_gs_base`. NULL guard: if the new value is 0 (kernel thread), do NOT write the MSR -- preserve the previous value to avoid clobbering with 0.
+- [ ] `NtCurrentTeb()` semantics: `gs:[0x30]` (NtTib.Self) must point at the current thread's TEB after swapgs. This falls out automatically once the MSR write is per-thread; no source change needed beyond the schedule() update.
+- [ ] Update `NtCreateThread_handler` in `nt_process.c`: after the §15-introduced `uthread_create()` returns, verify the new thread has a non-NULL TEB. Return STATUS_NO_MEMORY if NULL. Also update `NtQueryInformationThread_handler` (`nt_process.c:349`) to read `thr->teb` (per-thread) with fallback to `owner->teb` for kernel threads / legacy callers.
+- [ ] On thread exit: per-thread TEB and user stack are reclaimed at `task_cleanup()` (deferred from `thread_join()` because runtime `vmm_unmap_page()` lacks SMP TLB shootdown -- see NOTE above and -> XREF [03-memory-concurrency/TODO-06 §2](../03-memory-concurrency/TODO-06-smp-phase2.md)). `task_cleanup()` walks all threads and calls `vmm_unmap_page(thread->teb, 1)` for each non-NULL TEB. Safe because task is `TASK_DEAD` -- no concurrent access.
+- [ ] §12 TLS expansion remains task-scoped after §14. Static TLS slots (`TEB.TlsSlots[64]`) become per-thread automatically because they live inside the per-thread TEB struct, but expansion slots (`TEB.TlsExpansionSlots`) still point at one task-shared expansion array. Full per-thread TLS expansion is deferred to a future TODO. Document this limitation in a NOTE callout in §12 when §14 lands.
+- [ ] Update `test_peb_teb.c`: do NOT call `uthread_create()` from kernel test context (would be rejected -- no PEB in PID 0). Instead add (a) `_Static_assert` that `struct thread` has `teb` and `kernel_gs_base` fields, (b) smoke test that `task_current()->threads[0].teb == NULL` in kernel context, (c) the per-thread TEB VA stride formula matches `TEB_USER_BASE - tid * 0x1000` (compile-time check on the formula). Live per-thread isolation testing requires a multi-threaded user binary, which is out of scope until a user-mode pthread shim exists.
+- [ ] Commit: `"kernel: peb -- per-thread TEB allocation at uthread_create() (depends on §15)"`
 
-**Test checkpoint:** Spawning two threads in the same process produces two distinct TEB VAs (`thread_a->teb != thread_b->teb`). `NtCurrentTeb()` from each thread returns its own TEB. Setting `LastErrorValue` in thread A does not affect thread B. Allocating a TLS slot in thread A and writing to it does not affect the same slot index in thread B (per-thread isolation). Context switch correctly swaps `IA32_KERNEL_GS_BASE` MSR. `POST16(0xDF30)` on `thread_create` entry, `POST16(0xDF31)` after TEB allocated, `POST16(0xDF32)` on context-switch swap. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+**Test checkpoint:** Spawning two threads in the same process produces two distinct TEB VAs (`thread_a->teb != thread_b->teb`). `NtCurrentTeb()` from each thread returns its own TEB. Setting `LastErrorValue` in thread A does not affect thread B. Allocating a TLS slot in thread A and writing to it does not affect the same slot index in thread B (per-thread isolation). Context switch correctly swaps `IA32_KERNEL_GS_BASE` MSR. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+## 15. User-Mode Thread Bootstrap (uthread_create)
+The current `thread_create()` in `src/kernel/sched/task.c:1924` builds a ring-0 interrupt frame: `CS = GDT_KERNEL_CODE`, `SS = GDT_KERNEL_DATA`, `RIP = thread_wrapper`, `RSP = kmalloc'd kernel stack`. Every secondary thread runs in ring 0 on a kernel stack. `NtCreateThread` (TODO-05 §7) calls this function directly, so today's "user-mode multithreading" is actually kernel threads pretending to be user threads. Per-thread TEB (§14) cannot be implemented coherently on this foundation: a kernel thread that owns a user-space TEB pointer can never `swapgs` into it because it never returns to ring 3.
+
+> [!IMPORTANT]
+> **Discovered during §14 design review (2026-04-07).** Codex flagged that retrofitting per-thread TEBs onto `thread_create()` is architecturally wrong because the function builds kernel-mode iret frames. §15 is the prerequisite that splits thread creation into kernel and user variants so §14 has a real foundation. The first user task's main thread (created via `task_exec()`) already builds a ring-3 iret frame correctly -- that path is the reference for `uthread_create()`.
+
+**Files:** `src/kernel/sched/task.c`, `include/kernel/sched/task.h`, `src/kernel/nt/nt_process.c`
+
+- [ ] Rename the existing `thread_create()` to `kthread_create()` -- preserves all current behavior (ring-0 frame, kernel stack, `thread_wrapper` entry). Update all in-tree callers (`boot_*`, kernel worker threads, dpc_thread, etc.) to use the new name. NO behavior change for kernel threads.
+- [ ] Add `int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)` in `task.c`:
+  - Reject if current task has no PEB (kernel task) -- return -1
+  - Reject if `t->num_threads >= THREAD_MAX`
+  - Allocate per-thread KERNEL stack (8 KiB + guard page) via `pmm_alloc_contiguous(stack_pages + 1)` + `vmm_install_guard_page()` -- mirror `task_exec()` pattern
+  - Allocate per-thread USER stack (16 KiB) in the parent's per-process PML4: `pmm_alloc_contiguous(USER_STACK_SIZE / 4096)`, then `vmm_set_user_page(t->cr3, ustack_va)` for each page. Use a per-thread VA: `USER_STACK_BASE - tid * USER_STACK_SIZE` (need a new constant; placed below the main thread's stack)
+  - Build a ring-3 interrupt frame on the KERNEL stack: `CS = GDT_USER_CODE | 3`, `SS = GDT_USER_DATA | 3`, `RFLAGS = 0x202` (IF set), `RSP = top of user stack`, `RIP = entry function pointer`. Initial frame layout matches the `task_exec()` post-load frame.
+  - Initialize `struct thread`: id, state=THREAD_READY, rsp=top of frame, parent_task, priority, NO TEB yet (§14 wires TEB)
+  - Register with Object Manager via `ob_thread_create()`
+  - Return tid
+- [ ] Define `USER_THREAD_STACK_BASE` constant in `task.h` -- a user-space VA distinct from the main thread's user stack. The main user stack lives at `USER_ELF_END - USER_STACK_SIZE` (per `task_exec()`); `USER_THREAD_STACK_BASE` should be lower (toward `USER_ELF_BASE`) and stride by `USER_STACK_SIZE` per tid. Document the layout in `task.h`.
+- [ ] Add a static assert that the user thread stack range doesn't overlap with the main user stack, the user ELF range, or the TEB page region (`TEB_USER_BASE - THREAD_MAX * 0x1000`).
+- [ ] Update `NtCreateThread_handler` in `nt_process.c`:
+  - If parent task has a PEB (`task_current()->peb != NULL`), call `uthread_create(entry, arg, USER_STACK_SIZE)`
+  - Otherwise call `kthread_create(entry, arg, THREAD_STACK_SIZE)` (current behavior preserved for any kernel test code)
+  - Return STATUS_NO_MEMORY if creation fails
+- [ ] Add `kthread_create` and `uthread_create` declarations to `include/kernel/sched/task.h`. The legacy `thread_create()` symbol may be kept as a thin wrapper that dispatches based on `task_current()->peb` for back-compat with existing test code, OR removed entirely after all callers migrate -- decide during implementation, document in commit message.
+- [ ] On thread exit (`thread_exit()` -> `thread_join()`): the user stack pages allocated in this section are reclaimed at `task_cleanup()` time, NOT at `thread_join()`. Reason: runtime `vmm_unmap_page()` lacks SMP TLB shootdown (-> XREF: `03-memory-concurrency/TODO-06-smp-phase2.md §2`). Until shootdown lands, deferred reclamation via `task_cleanup` is the safe path. Bounded leak: max `THREAD_MAX * USER_STACK_SIZE = 16 * 16 KiB = 256 KiB` of user stack per process between thread death and process exit. The kernel stack (heap memory) IS freed by `thread_join()` via `kfree()` because it lives in the kernel heap, not in mapped pages.
+- [ ] `task_cleanup()` walks all threads in the dying task and reclaims each thread's user stack pages via `vmm_unmap_page()`. Safe because the task is `TASK_DEAD`, no other CPU runs it.
+- [ ] Unit tests in `test_peb_teb.c`: do NOT call `uthread_create()` from kernel test context (the test runs in PID 0 with no PEB; `uthread_create()` would reject). Instead test (a) struct layout, (b) `kthread_create()` from kernel test context still works (smoke), (c) the `USER_THREAD_STACK_BASE` constant is below `USER_ELF_END - USER_STACK_SIZE`. Per-thread isolation is validated indirectly via §14's runtime tests once that section ships.
+- [ ] Commit: `"kernel: peb -- user-mode thread bootstrap (kthread_create + uthread_create split)"`
+
+**Test checkpoint:** Boot completes normally. `cmd.exe` (single-threaded user task) starts unchanged because `task_exec()` builds its own ring-3 frame. A user binary calling `NtCreateThread` (none in tree today) would receive a real ring-3 thread on a user stack -- verifiable when a multi-threaded test binary lands. `kthread_create` calls from kernel boot code work unchanged (DPC worker, work queue, etc.). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
