@@ -120,7 +120,7 @@ Lesson: `s_subsys_names[]` missed `SUBSYS_OB`, causing OOB read in `kernel_subsy
 
 > Code that runs before `sti` (interrupts enabled) is the most dangerous -- errors cause silent triple faults with no diagnostic output.
 
-- [ ] **POST16 diagnostic codes.** Every init function in the boot path gets `POST16()` entry/exit codes. Use the `0xD000-0xDFFF` debug range for development. Format: `POST16(0xDDNN)` where `DD` = section number, `NN` = step. Check `include/kernel/boot_init.h` for existing codes before assigning new ones.
+- [ ] **POST16 diagnostic codes -- BOOT-PATH ONLY.** Every init function called from `boot_phase0/1/2.c` (before `boot_phase3()` returns) gets `POST16()` entry/exit codes. Use the `0xD000-0xDFFF` debug range for development. Format: `POST16(0xDDNN)` where `DD` = section number, `NN` = step. Check `include/kernel/boot_init.h` for existing codes before assigning new ones. **Do NOT add POST16 to scheduler, syscall handlers, exec, ELF loading, file I/O, IPC, network, or any code that runs after Phase 3** -- klog is fully functional there and a single `klog(LOG_INFO, ...)` line is more useful than POST16. POST16 was designed for pre-`sti` triple-fault diagnostics where klog isn't yet running; using it post-boot is cargo-culted noise.
 - [ ] **klog on entry and exit.** `klog(LOG_INFO, "subsys", "Thing initialized: %u items", count)` so serial output shows progress.
 - [ ] **Fail with message, not silence.** Use `boot_halt("what went wrong")` for unrecoverable failures. Use `klog(LOG_WARN, ...)` + degrade for non-critical failures. Never return silently from an init function that failed.
 - [ ] **No thread_create for boot-path work.** `compositor_run()` is an infinite event loop that starves kernel threads created before it. All init between `desktop_init()` and `compositor_run()` must run inline. See CLAUDE.md "No thread_create for deferred init."
@@ -231,7 +231,8 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | Spinlock around I/O or blocking op | Don't -- snapshot under lock, release, then I/O |
 | New struct used by assembly | 5-layer defense (static assert + runtime + test + canary + doc) |
 | Enum grows (new entry added) | Update ALL parallel arrays; add `_Static_assert(count == ENUM)` |
-| New init function in boot path | POST16 entry/exit + klog + error handling |
+| New init function in BOOT path (Phase 0/1/2) | POST16 entry/exit + klog + error handling |
+| New non-boot function (sched/exec/syscall/io) | klog only -- NO POST16 |
 | Moving boot-path work to a thread | Don't -- compositor starves threads; run inline |
 | Code called from panic/fault handler | No spinlocks, no kmalloc, no interrupt assumptions |
 | Writing JSON or structured output | Escape `\ " \n \r \t` and control chars in strings |

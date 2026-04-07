@@ -119,9 +119,10 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
       - Section heading: `## N. Feature Name`
       - One-line intro paragraph explaining what this feature does and why it matters.
       - Checklist items (`- [ ]`) with concrete deliverables (max 8-10 per section). Each item must reference specific functions, types, or APIs. No vague "implement X" items.
-      - `**Test checkpoint:**` block with concrete pass/fail criteria, POST16 codes, and platforms.
+      - `**Test checkpoint:**` block with concrete pass/fail criteria and platforms (QEMU WHPX + TCG; bare metal). Mention POST16 codes ONLY if the section is boot-path (Phase 0/1/2); for post-boot sections use a `klog(LOG_INFO, ...)` line as the observable instead.
       - Commit message item.
-      - For boot-path/interrupt/page-table sections: `**Regression risk:**` note and `POST16(0xDDNN)` codes (check `boot_init.h` for conflicts).
+      - For BOOT-PATH sections (Phase 0/1/2 init, hardware bring-up, page tables, GDT/IDT, APIC, ACPI, SMP AP startup): `**Regression risk:**` note and `POST16(0xDDNN)` codes (check `boot_init.h` for conflicts).
+      - For POST-BOOT sections (scheduler, syscall, exec, file I/O, IPC, network, runtime drivers): NO POST16. klog is fully working at this point. POST16 was designed for pre-`sti` triple-fault diagnostics; using it post-boot is cargo-culted noise.
       - For high-risk sections: `> [!WARNING]` callout noting SMP safety or bare-metal concerns.
     - For each competitive edge (⭐): same format, but add a `> [!TIP]` callout explaining why this is superior to Win11/Linux.
     - For Win11-only or Linux-only features: create sections only if they're important for compatibility or user experience. Otherwise note them as deferred with a reason.
@@ -150,7 +151,7 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
 18. **Update the Unit Tests section.**
     - Add test cases for new sections' deliverables.
     - Check if a new `TEST_CAT_*` category is needed for the new functionality. If so, note it.
-    - Reserve POST16 debug codes for new boot-path sections (check `boot_init.h` for conflicts).
+    - Reserve POST16 debug codes ONLY for new boot-path sections (check `boot_init.h` for conflicts). Do not generate "test POST16 constant equals 0xDDNN" cases -- those are tautological (the compiler enforces the literal, the boot-time uniqueness check is the real protection).
 
 19. **Update the Outcome section.**
     - Add bullet points for any new major deliverables introduced by the new sections.

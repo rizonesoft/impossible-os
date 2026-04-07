@@ -57,10 +57,13 @@ description: Create lean project TODO files under todo/, choose the correct doma
    - Every section MUST include:
      - Concrete checklist items (`- [ ]`) referencing specific functions, types, or files.
      - A `- [ ] Commit: "scope: short description"` line as the last checklist item.
-     - A `**Test checkpoint:**` block with concrete pass/fail criteria: exact serial strings, POST16 codes, expected behavior, and platforms (QEMU WHPX + TCG; bare metal).
-   - For sections touching boot-path, interrupts, page tables, GDT/TSS, or timers:
+     - A `**Test checkpoint:**` block with concrete pass/fail criteria: exact serial strings, expected behavior, and platforms (QEMU WHPX + TCG; bare metal). Mention POST16 codes ONLY if the section is boot-path (Phase 0/1/2). For non-boot sections, use a `klog(LOG_INFO, ...)` line as the observable instead.
+   - For sections touching BOOT-PATH code (Phase 0/1/2 init, hardware bring-up, page tables, GDT/IDT, APIC, ACPI, SMP AP startup):
      - Add `POST16(0xDDNN)` entry/exit codes. Check `boot_init.h` for conflicts before assigning.
      - Add a `**Regression risk:**` note identifying what could break and rollback strategy.
+   - For sections touching POST-BOOT code (scheduler, syscall handlers, exec/loader, file I/O, IPC, network, drivers used at runtime):
+     - Do NOT add POST16 codes. klog is fully working at this point and a single `klog(LOG_INFO, ...)` line per major step is more useful.
+     - Tests for the behavior, not for "POST16 constant equals 0xDDNN" (tautological -- the compiler enforces the literal).
    - **Cross-reference with `kernel-code-quality` gates:** If the TODO touches kernel code (`src/kernel/`, `include/kernel/`), write sections with the quality gates in mind. Note SMP safety requirements in section prose where shared mutable state is introduced. Note bare-metal gotchas where MMIO or CPUID-gated instructions are involved.
    - **Use callouts** for important context:
      - `> [!NOTE]` for resolved issues or clarifications
@@ -109,7 +112,7 @@ description: Create lean project TODO files under todo/, choose the correct doma
 12. **Add the Verification section.**
     - Concrete platform-specific verification items, not vague "build and test."
     - Include: `bash scripts/build.sh clean` -> `=== BUILD OK ===`.
-    - Include runtime verification with **specific observable outcomes**: exact serial log strings to grep for, specific function calls that should return specific values, specific POST16 code sequences.
+    - Include runtime verification with **specific observable outcomes**: exact serial log strings to grep for, specific function calls that should return specific values. POST16 code sequences ONLY for boot-path sections (Phase 0/1/2); for post-boot code, use klog grep targets instead.
     - Include platform list: QEMU WHPX (2 CPUs), QEMU TCG, VirtualBox, bare metal.
     - For hardware-touching TODOs: "Verify on bare metal -- VM behavior differs."
 

@@ -28,7 +28,8 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    - No `malloc()`/`printf()` -- use `kmalloc()` (<=4 KB), `pmm_alloc_contiguous()` (larger), `printk()`.
    - Assembly: NASM x86-64 only. UEFI-era, Long Mode, APIC -- no BIOS/VGA/PIC.
    - API surface: Win32 native. Windows-style canonical paths (`C:\Impossible\System32\`).
-   - **POST16 codes** for boot-path/hardware code: `POST16(0xDDNN)` format, check `boot_init.h` and grep for conflicts before assigning.
+   - **POST16 codes are for BOOT-PATH code ONLY.** POST16 was designed for pre-`sti` triple-fault diagnostics where klog isn't yet running. Use POST16 only when the code might trip a triple fault before klog is initialized: Phase 0/1/2 boot, hardware init (CPUID, GDT, IDT, page tables, APIC, ACPI, SMP AP startup), or any function called from `boot_init.c` before `boot_phase3()` returns. Do NOT add POST16 to scheduler, syscall handlers, file I/O, ELF loading, exec, network, or any code that runs after Phase 3 completes -- a single `klog(LOG_INFO, ...)` line is more useful there. If `boot_init.h` defines a POST16 constant, check `boot_phase0/1/2.c` for the call site before assuming new code needs one.
+   - **Stale TODO patterns:** if the section's checklist explicitly demands `POST16(...)` codes for non-boot-path code (e.g., scheduler/exec/syscall/auxv work), treat that as a stale guideline from before this rule was added. SKIP the POST16 work AND remove the stale checklist item from the TODO -- do not satisfy obsolete patterns. The same applies to "test POST16 constants are 0xDDNN" items: those are tautological (the compiler enforces #define values; the real protection is the boot-time uniqueness check). Document the removal in the commit message.
 7. **Build** -- `bash scripts/build.sh`, confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.
 8. **Wire unit tests** -- before writing any test code, read the TODO file's **Unit Tests** section (if one exists) to find:
    - The expected test file name (e.g. `test_exec.c`)
@@ -37,6 +38,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    - Which specific assertions are required for this section
    
    Create the test file / registration function if it doesn't exist yet. Do NOT piggy-back tests onto an unrelated test file just because it's convenient. If the subsystem doesn't fit existing `TEST_CAT_*` categories, create a new one (enum in `test.h`, names/labels in `test_runner.c`, `make test-*` target in Makefile). Then add/update assertions and confirm build passes.
+   - **No tautological constant tests.** A test like `TEST_ASSERT_EQ(POST16_FOO, 0xDF20, "POST16_FOO == 0xDF20")` only verifies that you typed `0xDF20` in the `#define` -- the compiler already enforces that. The real protection is the boot-time uniqueness check that scans `boot_init.h` for duplicate codes. Same goes for `TEST_ASSERT_EQ(SOME_DEFINE, expected_value)` where the assertion just echoes the literal: skip it. Tests should exercise behavior, not re-state literals.
 9. **Codex test coverage analysis** -- after wiring tests, dispatch a test coverage gap analysis to catch missing assertions before the adversarial review finds them. Follow the `codex-test-coverage` skill: list public functions, existing tests, and ask Codex to find untested error paths, boundaries, and negative cases. Add any missing tests found. Skip for trivial sections (< 3 test assertions).
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<test coverage prompt>"
@@ -54,12 +56,14 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
     ```
-14. **Fix loop** (max 3 rounds) -- apply `superpowers:receiving-code-review` discipline: do NOT blindly implement every Codex finding. For each finding:
+14. **Fix loop** (1 round mandatory; up to 3 if needed) -- apply `superpowers:receiving-code-review` discipline: do NOT blindly implement every Codex finding. For each finding:
     - **Verify technically first.** Read the code Codex flagged. Is the finding correct? Codex can be wrong -- it doesn't have full runtime context.
     - **If the finding is valid:** fix the root cause, not the surface symptom. Rebuild.
     - **If the finding is wrong or misleading:** reject with a concrete technical reason (not "I disagree" -- explain WHY it's wrong with code evidence).
     - **If the finding is correct but out of scope:** accept with justification and note it as a follow-up item.
-    - Fix all valid Critical and High. Fix valid Medium unless explicitly accepted. Re-review via Codex focusing on previous findings and changed files. If unresolved Critical/High remain after round 3: do not mark section complete, keep `[/]` or `[ ]`, add follow-up items.
+    - Fix all valid Critical and High. Fix valid Medium unless explicitly accepted.
+    - **Re-review via Codex is REQUIRED only when fixes are STRUCTURAL** (function signature changes, control-flow rewrites, new locking, lifecycle changes, refactors that ripple to multiple files). For SURGICAL fixes (single-line bug, contract clarification, small logic correction, comment fix, regression test only), self-verification is sufficient: re-read the cited code and confirm the fix matches what Codex flagged, then proceed to step 15. The self-verify path saves 1-3 minutes per round and avoids re-review noise on trivial corrections.
+    - If unresolved Critical/High remain after round 3: do not mark section complete, keep `[/]` or `[ ]`, add follow-up items with `→ XREF`.
 15. **Final self-review** (MANDATORY) -- this catches what Codex misses at the integration level:
     - Regressions: did any existing functionality break?
     - Race conditions: any new shared mutable state without synchronization?

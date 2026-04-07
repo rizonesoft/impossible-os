@@ -18,8 +18,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\npath = d.get('tool_input', {}).get('file_path', '')\nif not path:\n    sys.exit(0)\nkernel_dirs = ('src/kernel/', 'include/kernel/', 'src/boot/', 'src/desktop/', 'src/shell/')\nif not any(k in path for k in kernel_dirs):\n    sys.exit(0)\nif not path.endswith(('.c', '.h', '.asm', '.S')):\n    sys.exit(0)\nmsg = ('[kernel-code-quality REQUIRED] About to edit kernel code at ' + path + '. '\n       'Walk the kernel-code-quality skill gates BEFORE writing -- SMP safety (spinlock/atomic/per-CPU for shared mutable state), '\n       '5-layer defense for cross-file invariants, memory rules (kmalloc <= 4 KB, NULL checks on every allocation), '\n       'bare-metal correctness (MMIO via vmm_map_mmio_uc/wc, GS_BASE set, no clac/stac without SMAP CPUID, '\n       'no LAPIC TPR writes in ISR), POST16 codes for boot-path init, complete error paths, '\n       'and Gate 10 production quality (no TODO/FIXME/HACK, no magic numbers, no emulator workarounds).')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\npath = d.get('tool_input', {}).get('file_path', '')\nif not path:\n    sys.exit(0)\nkernel_dirs = ('src/kernel/', 'include/kernel/', 'src/boot/', 'src/desktop/', 'src/shell/')\nif not any(k in path for k in kernel_dirs):\n    sys.exit(0)\nif not path.endswith(('.c', '.h', '.asm', '.S')):\n    sys.exit(0)\nmsg = ('[kernel-code-quality REQUIRED] About to edit kernel code at ' + path + '. '\n       'Walk the kernel-code-quality skill gates BEFORE writing -- SMP safety (spinlock/atomic/per-CPU for shared mutable state), '\n       '5-layer defense for cross-file invariants, memory rules (kmalloc <= 4 KB, NULL checks on every allocation), '\n       'bare-metal correctness (MMIO via vmm_map_mmio_uc/wc, GS_BASE set, no clac/stac without SMAP CPUID, '\n       'no LAPIC TPR writes in ISR), POST16 codes for boot-path init ONLY (not scheduler/exec/syscall), complete error paths, '\n       'and Gate 10 production quality (no TODO/FIXME/HACK, no magic numbers, no emulator workarounds).')\nprint(json.dumps({'systemMessage': msg}))\n\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\nti = d.get('tool_input', {})\ntn = d.get('tool_name', '')\ntexts = []\nif tn == 'Write':\n    texts.append(ti.get('content', ''))\nelif tn == 'Edit':\n    texts.append(ti.get('new_string', ''))\nelif tn == 'MultiEdit':\n    for e in ti.get('edits', []) or []:\n        texts.append(e.get('new_string', ''))\nEM = chr(0x2014); EN = chr(0x2013)\nbad = []\nfor t in texts:\n    if EM in t: bad.append('em dash (U+2014)')\n    if EN in t: bad.append('en dash (U+2013)')\nif not bad:\n    sys.exit(0)\nsys.stderr.write('Unicode dash detected in tool input: ' + ', '.join(sorted(set(bad))) + '. Impossible OS uses ASCII -- only (CLAUDE.md No Unicode Dashes). Replace with two ASCII hyphens. Serial output goes to Windows terminals that garble multi-byte UTF-8.')\nsys.exit(2)\n\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys, subprocess\nd = json.load(sys.stdin)\ncmd = d.get('tool_input', {}).get('command', '')\nif not cmd.startswith('git commit'):\n    sys.exit(0)\ntry:\n    out = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True, timeout=5, stderr=subprocess.DEVNULL)\nexcept Exception:\n    sys.exit(0)\nfiles = [f.strip() for f in out.split('\\n') if f.strip()]\nsrc_exts = ('.c', '.h', '.asm', '.S')\nhas_src = any(any(f.endswith(e) for e in src_exts) for f in files)\nhas_todo = any(f.startswith('todo/') and f.endswith('.md') for f in files)\nif not (has_src and has_todo):\n    sys.exit(0)\nmsg = ('[section-commit GATE -- implement-todo-section steps 13-18 must have run] '\n       'Staged files include source code AND a TODO file. This looks like an '\n       'implement-todo-section commit. Confirm before proceeding: '\n       '13 Codex adversarial review dispatched + findings classified Fix/Reject/Accept; '\n       '14 Critical/High fixed (or rejected with code evidence); '\n       '15 Self-review walked all checklist items; '\n       '16 2nd final build passed; '\n       '17 validate-todo-section invoked; '\n       '18 loose-end scan complete. '\n       'If any step was skipped, abort the commit and complete the pipeline first. '\n       'Pattern to watch for: build passes, looks straightforward, just commit -- '\n       'that thought is the signal to STOP.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "timeout": 10
           }
         ]
       }
@@ -37,6 +52,26 @@
           {
             "type": "command",
             "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\ncmd = d.get('tool_input', {}).get('command', '')\nif 'codex-companion.mjs' not in cmd or 'adversarial-review' not in cmd:\n    sys.exit(0)\nmsg = ('[codex review complete -- receiving-code-review REQUIRED] Apply superpowers:receiving-code-review discipline NOW. '\n       'For each finding: (1) read the cited code at the file:line first, do NOT trust the summary; '\n       '(2) classify as Fix / Reject / Accept with concrete evidence -- Codex reads code without runtime context and CAN be wrong; '\n       '(3) reject false positives with code evidence (caller already holds lock X at file:line, path is single-threaded by construction because Y, buffer is static-asserted larger than the access, etc.); '\n       '(4) YAGNI check -- if Codex demands implementing an unused feature, grep for callers and remove the dead code instead; '\n       '(5) NO performative agreement -- never write great catch or you are absolutely right; just state the fix or the rejection.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\npath = d.get('tool_input', {}).get('file_path', '')\nif not path or not path.endswith('.md'):\n    sys.exit(0)\nparts = path.replace('\\\\\\\\', '/').split('/')\nif 'todo' not in parts:\n    sys.exit(0)\nmsg = ('[validate-todo-file REMINDER] Edited a TODO file at ' + path + '. '\n       'If this was a structural edit (new section added/removed, Implementation Order row changed, '\n       'XREF added/removed, OS Comparison row changed, new checklist item with prerequisites), '\n       'invoke validate-todo-file to check structural integrity before committing. '\n       'For pure checklist [x] toggles, prose tweaks, or notes-only updates, no validation needed.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys, os\nd = json.load(sys.stdin)\npath = d.get('tool_input', {}).get('file_path', '')\nif not path or 'src/kernel/test/' not in path or not path.endswith('.c'):\n    sys.exit(0)\nbase = os.path.basename(path)\nif not base.startswith('test_'):\n    sys.exit(0)\nif base in ('test_runner.c', 'test_main.c'):\n    sys.exit(0)\nmsg = ('[test wiring REMINDER] Edited ' + path + '. Verify before next build: '\n       '(1) every new test function is registered via test_suite_register_cat() in the corresponding test_register_*() function; '\n       '(2) the test_register_*() function is called from test_runner_init() in test_runner.c; '\n       '(3) the TEST_CAT_* category matches the subsystem (mm/fs/sched/ob/security/ipc/boot/abi/storage/exec); '\n       '(4) every assertion has a concrete expected value, not vague verify-it-works phrasing; '\n       '(5) NO tautological constant tests like TEST_ASSERT_EQ(POST16_FOO, 0xDF20) -- the compiler enforces #define values, the real protection is the boot-time uniqueness check. '\n       'Tests written but not registered are silent failures.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\npath = d.get('tool_input', {}).get('file_path', '')\nif not path or '.claude/skills/' not in path or not path.endswith('.md'):\n    sys.exit(0)\nmsg = ('[CLAUDE.md sync REMINDER] Edited a skill file at ' + path + '. '\n       'If this was a NEW skill (new directory under .claude/skills/) or a renamed skill, '\n       'update the Skills table in CLAUDE.md in the same commit. '\n       'For content/behavior changes to an existing skill that kept its name, no CLAUDE.md update needed.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
             "timeout": 5
           }
         ]
