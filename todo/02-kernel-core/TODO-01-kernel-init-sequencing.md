@@ -73,7 +73,7 @@ New header and source file providing the result type, readiness oracle, and prog
 - [x] Define POST code constants for every major init step (`POSTCODE_PMM_INIT = 0x20`, etc.)
 - [x] Implement `void boot_progress(uint8_t phase, const char *step, uint16_t postcode)` -- writes `[PHASEn] step` to serial and records timestamp in `boot_timing.c`
 - [x] Define `BOOT_REQUIRE(subsys)` macro -- if `!kernel_subsystem_ready(subsys)`, logs the missing prerequisite and returns `BOOT_FATAL`
-- [x] Define `BOOT_STEP(subsys, fn)` macro -- calls `fn()`, sets readiness from result, calls `boot_progress()`
+- [x] Define `BOOT_STEP(subsys, fn)` macro -- calls `fn()`, marks subsystem ready iff result is `BOOT_OK` or `BOOT_DEGRADED` (caller invokes `boot_progress()` separately)
 - [x] Expose `boot_phase0()`, `boot_phase1()`, `boot_phase2()`, `boot_phase3()` in `main_internal.h`
 
 ## 2. Phase 0 -- Critical Init (Interrupts Disabled)
@@ -370,7 +370,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
   - `BOOT_PERF_MAGIC == 0x50455246` ("PERF")
   - Bootperf POST codes non-zero, unique, no overlap with deferred range
 
-> **Done:** 16 suites, 38 assertions -- registered in `test_runner_init()` (2026-04-03). Added 2 async init tests for §13.
+> **Done:** 22 suites registered in `test_runner_init()` (2026-04-03; +5 §1 gap-fill suites added 2026-04-07 by verify-mode -- enum layout, BOOT_STEP mapping, boot_progress recording, dump smoke, POSTCODE constants).
 
 ## Codex Adversarial Review
 

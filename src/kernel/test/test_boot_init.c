@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_timing.h"
+#include "kernel/klog.h"
 
 /* ---- boot_result_t values ---- */
 
@@ -127,6 +128,136 @@ static void test_post_codes_nonzero_and_unique(void)
     TEST_ASSERT(POST16_BOOT_OK != POST16_BOOT_FAILED, "BOOT_OK != BOOT_FAILED");
 }
 
+/* ---- §1 ABI: kernel_subsys_t enum layout ----
+ *
+ * Pin numeric values that other code uses by index (g_subsys_ready[],
+ * crash-dump readers, recovery decoders).  Reordering would silently
+ * desync those consumers.
+ */
+static void test_subsys_enum_layout(void)
+{
+    TEST_ASSERT_EQ(SUBSYS_SERIAL, 0, "SUBSYS_SERIAL == 0 (first slot)");
+    TEST_ASSERT_EQ(SUBSYS_PMM,    1, "SUBSYS_PMM == 1");
+    TEST_ASSERT_EQ(SUBSYS_OB,    20, "SUBSYS_OB == 20 (last named slot)");
+    TEST_ASSERT_EQ(SUBSYS_COUNT, 21, "SUBSYS_COUNT == 21 (sentinel)");
+}
+
+/* ---- §1 BOOT_STEP readiness mapping ----
+ *
+ * BOOT_STEP must mark a subsystem ready ONLY for BOOT_OK or BOOT_DEGRADED.
+ * BOOT_FATAL and BOOT_DEFERRED must leave the subsystem NOT ready so
+ * BOOT_REQUIRE downstream catches the failure.
+ */
+static boot_result_t bs_return_ok(void)       { return BOOT_OK; }
+static boot_result_t bs_return_degraded(void) { return BOOT_DEGRADED; }
+static boot_result_t bs_return_fatal(void)    { return BOOT_FATAL; }
+static boot_result_t bs_return_deferred(void) { return BOOT_DEFERRED; }
+
+static void test_boot_step_readiness_mapping(void)
+{
+    bool saved = kernel_subsystem_ready(SUBSYS_PMM);
+
+    kernel_subsystem_set_ready(SUBSYS_PMM, false);
+    BOOT_STEP(SUBSYS_PMM, bs_return_ok);
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_PMM) == true,
+                "BOOT_STEP marks ready on BOOT_OK");
+
+    kernel_subsystem_set_ready(SUBSYS_PMM, false);
+    BOOT_STEP(SUBSYS_PMM, bs_return_degraded);
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_PMM) == true,
+                "BOOT_STEP marks ready on BOOT_DEGRADED");
+
+    kernel_subsystem_set_ready(SUBSYS_PMM, true);
+    BOOT_STEP(SUBSYS_PMM, bs_return_fatal);
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_PMM) == false,
+                "BOOT_STEP clears ready on BOOT_FATAL");
+
+    kernel_subsystem_set_ready(SUBSYS_PMM, true);
+    BOOT_STEP(SUBSYS_PMM, bs_return_deferred);
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_PMM) == false,
+                "BOOT_STEP clears ready on BOOT_DEFERRED");
+
+    kernel_subsystem_set_ready(SUBSYS_PMM, saved);
+}
+
+/* ---- §1 boot_progress() happy-path side effects ----
+ *
+ * boot_progress(non-NULL) must record exactly one timing step with the
+ * supplied phase/postcode/step pointer.  boot_progress(NULL) must NOT
+ * record a timing step (it's used by tests for null safety only).
+ */
+static void test_boot_progress_records_step(void)
+{
+    const boot_timing_step_t *steps = (const boot_timing_step_t *)0;
+    uint32_t before = boot_timing_get_steps(&steps);
+
+    /* If the boot timing ring is already at BOOT_TIMING_MAX_STEPS=64 the test
+     * cannot validate recording semantics -- record_step would early-return.
+     * Fail loudly so the buffer can be enlarged or boot_progress calls trimmed,
+     * rather than silently passing and masking a real recording regression. */
+    TEST_ASSERT(before < 64,
+                "boot_timing ring saturated before test ran -- raise "
+                "BOOT_TIMING_MAX_STEPS or trim boot_progress calls");
+
+    boot_progress(0, "VERIFY_TEST", 0xCAFE);
+
+    uint32_t after = boot_timing_get_steps(&steps);
+    TEST_ASSERT_EQ(after, before + 1,
+                   "boot_progress(non-NULL) records exactly one step");
+
+    /* Verify the recorded fields match what we passed in */
+    TEST_ASSERT_EQ((int)steps[after - 1].phase, 0,
+                   "recorded step phase matches");
+    TEST_ASSERT_EQ((int)steps[after - 1].postcode, 0xCAFE,
+                   "recorded step postcode matches");
+    TEST_ASSERT(steps[after - 1].step != (const char *)0 &&
+                steps[after - 1].step[0] == 'V',
+                "recorded step pointer matches (starts with V)");
+
+    /* NULL step must NOT advance the recorder (existing behavior) */
+    uint32_t mid = boot_timing_get_steps(&steps);
+    boot_progress(0, (const char *)0, 0xBEEF);
+    uint32_t after_null = boot_timing_get_steps(&steps);
+    TEST_ASSERT_EQ(after_null, mid,
+                   "boot_progress(NULL) does NOT record a step");
+}
+
+/* ---- §1 kernel_subsystem_dump() smoke test ----
+ *
+ * Dump must run to completion and emit at least one klog entry.
+ * Stricter equality (== SUBSYS_COUNT + 1) is fragile under rate limiting,
+ * so we assert "advanced by at least 1" -- enough to catch a no-op regression.
+ */
+static void test_kernel_subsystem_dump_emits(void)
+{
+    uint64_t seq_before = klog_get_seq();
+    kernel_subsystem_dump();
+    uint64_t seq_after = klog_get_seq();
+    TEST_ASSERT(seq_after > seq_before,
+                "kernel_subsystem_dump emits at least one klog entry");
+}
+
+/* ---- §1 POSTCODE_* (8-bit phase) constants ----
+ *
+ * Pin sentinel values used by serial diagnostics and verify the
+ * Phase 0/Phase 1 starting points are non-overlapping.
+ */
+static void test_postcode_phase_constants(void)
+{
+    TEST_ASSERT_EQ(POSTCODE_BOOT_OK,     0xFF, "POSTCODE_BOOT_OK == 0xFF");
+    TEST_ASSERT_EQ(POSTCODE_BOOT_FAILED, 0xFE, "POSTCODE_BOOT_FAILED == 0xFE");
+    TEST_ASSERT(POSTCODE_PMM_INIT  != POSTCODE_VMM_INIT,
+                "POSTCODE_PMM_INIT != POSTCODE_VMM_INIT");
+    TEST_ASSERT(POSTCODE_GDT_INIT  != POSTCODE_IDT_INIT,
+                "POSTCODE_GDT_INIT != POSTCODE_IDT_INIT");
+    TEST_ASSERT(POSTCODE_VFS_INIT  != POSTCODE_REGISTRY_INIT,
+                "POSTCODE_VFS_INIT != POSTCODE_REGISTRY_INIT");
+    TEST_ASSERT(POSTCODE_SERIAL_INIT < POSTCODE_GDT_INIT,
+                "Phase 0 POSTCODE range below Phase 1");
+    TEST_ASSERT(POSTCODE_GDT_INIT    < POSTCODE_PCI_INIT,
+                "Phase 1 POSTCODE range below Phase 2");
+}
+
 /* ---- BOOT_DEFERRED value ---- */
 
 static void test_boot_deferred_value(void)
@@ -232,6 +363,11 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: REQUIRE passes", test_boot_require_passes_when_ready, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: progress null", test_boot_progress_null_step, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: POST codes", test_post_codes_nonzero_and_unique, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: subsys enum layout", test_subsys_enum_layout, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: BOOT_STEP mapping", test_boot_step_readiness_mapping, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: progress records step", test_boot_progress_records_step, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: dump emits entries", test_kernel_subsystem_dump_emits, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: POSTCODE phase constants", test_postcode_phase_constants, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: defer NULL fn", test_boot_defer_null_fn, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: BOOT_DEFERRED value", test_boot_deferred_value, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: defer register", test_boot_defer_register, TEST_CAT_BOOT);
