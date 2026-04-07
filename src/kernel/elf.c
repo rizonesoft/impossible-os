@@ -27,6 +27,86 @@ static void elf_memzero(uint8_t *dst, uint64_t n)
         dst[i] = 0;
 }
 
+/* Compute AT_PHDR/AT_PHENT/AT_PHNUM auxv metadata for an ELF image.
+ *
+ * Walks the program headers once. Sets *phdr_vaddr to PT_PHDR->p_vaddr if a
+ * PT_PHDR entry exists; otherwise derives it from the PT_LOAD that contains
+ * the file offset 'e_phoff'. Sets *phnum and *phent from the ELF header.
+ *
+ * Returns 1 on success, 0 on failure (no PT_LOAD covers e_phoff -- a malformed
+ * or stripped ELF). On failure, output values are zeroed.
+ *
+ * This function is the SINGLE SOURCE OF TRUTH for auxv phdr derivation -- both
+ * elf_load() (full segment-copying loader) and elf_extract_phdr_info() (cheap
+ * metadata-only walker called from task_exec) call into this helper, so the
+ * two paths cannot disagree about what AT_PHDR points at. The exec dispatcher
+ * (exec.c) intentionally only carries the entry point through its loader
+ * callback, per the §13 design choice to keep the dispatcher contract additive
+ * (PE/EIF would otherwise need a metadata-fill no-op). */
+static int elf_compute_phdr_info(const struct elf64_header *hdr,
+                                  const uint8_t *data,
+                                  uint64_t *out_phdr_vaddr,
+                                  uint16_t *out_phnum,
+                                  uint16_t *out_phent)
+{
+    const struct elf64_phdr *phdr;
+    uint16_t i;
+    uint64_t phdr_vaddr = 0;
+    int found_load_for_phoff = 0;
+
+    *out_phdr_vaddr = 0;
+    *out_phnum = 0;
+    *out_phent = 0;
+
+    /* Two-pass walk: first pass finds PT_PHDR and stores its vaddr.
+     * Second pass falls back to PT_LOAD covering e_phoff if PT_PHDR was
+     * absent OR had a zero vaddr (a rare malformed ELF where PT_PHDR is
+     * present but useless). */
+    for (i = 0; i < hdr->e_phnum; i++) {
+        phdr = (const struct elf64_phdr *)(data + hdr->e_phoff +
+                                            (uint64_t)i * hdr->e_phentsize);
+        if (phdr->p_type == PT_PHDR) {
+            phdr_vaddr = phdr->p_vaddr;
+            /* If vaddr is non-zero, PT_PHDR is authoritative -- we still
+             * could break here, but it's cheap to keep scanning in case
+             * a later PT_PHDR somehow has a different value (shouldn't
+             * happen in a well-formed ELF, but loop is bounded by e_phnum). */
+        }
+    }
+
+    /* Fallback pass: only if PT_PHDR was absent or had vaddr=0, derive
+     * the program-header virtual address from the PT_LOAD that contains
+     * the file offset of the program header table. */
+    if (phdr_vaddr == 0) {
+        for (i = 0; i < hdr->e_phnum; i++) {
+            phdr = (const struct elf64_phdr *)(data + hdr->e_phoff +
+                                                (uint64_t)i * hdr->e_phentsize);
+            if (phdr->p_type != PT_LOAD)
+                continue;
+            /* Does this PT_LOAD cover e_phoff? Use subtraction-based bounds
+             * to avoid overflow. */
+            if (hdr->e_phoff < phdr->p_offset)
+                continue;
+            if (hdr->e_phoff - phdr->p_offset >= phdr->p_filesz)
+                continue;
+            phdr_vaddr = phdr->p_vaddr + (hdr->e_phoff - phdr->p_offset);
+            found_load_for_phoff = 1;
+            break;
+        }
+    }
+
+    if (phdr_vaddr == 0 && !found_load_for_phoff) {
+        /* Stripped ELF with no PT_PHDR and no PT_LOAD covering the program
+         * header table -- the dynamic linker can't use AT_PHDR at all. */
+        return 0;
+    }
+
+    *out_phdr_vaddr = phdr_vaddr;
+    *out_phnum = hdr->e_phnum;
+    *out_phent = hdr->e_phentsize;
+    return 1;
+}
+
 /* Validate an ELF64 header */
 static int elf_validate(const struct elf64_header *hdr, uint64_t size)
 {
@@ -166,6 +246,17 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     result.load_end = load_end;
     result.success = 1;
 
+    /* §13: derive auxv phdr metadata from the parsed program headers.
+     * Failure here is non-fatal -- the binary still runs, but AT_PHDR will
+     * be 0 in the auxv (dynamic linker can't use it). */
+    if (!elf_compute_phdr_info(hdr, data,
+                                &result.phdr_vaddr,
+                                &result.phnum,
+                                &result.phent)) {
+        klog(LOG_DEBUG, "elf",
+             "Could not derive AT_PHDR (no PT_PHDR, no PT_LOAD covers e_phoff)");
+    }
+
     /* --- Second pass: parse GNU security segments --- */
     {
         int found_gnu_stack = 0;
@@ -274,4 +365,49 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
          (hdr->e_type == ET_DYN) ? " (PIE)" : "");
 
     return result;
+}
+
+/* §13: cheap metadata-only walker for the ELF program header table.
+ *
+ * Used by task_exec() after exec_load() has already loaded the binary via
+ * the format dispatcher. The dispatcher contract only carries 'entry' back,
+ * so this helper re-parses the header bytes to derive AT_PHDR/PHENT/PHNUM
+ * for the auxv. The actual program-header walk is shared with elf_load()
+ * via elf_compute_phdr_info() -- single source of truth.
+ *
+ * This is a constant-time validation pass; it does NOT copy segments or
+ * touch any user-mode memory. Safe to call from task_exec context. */
+int elf_extract_phdr_info(const uint8_t *data, uint64_t size,
+                          uint64_t *phdr_vaddr, uint16_t *phnum,
+                          uint16_t *phent)
+{
+    const struct elf64_header *hdr;
+
+    /* Validate output pointers FIRST -- if any out-pointer is NULL we
+     * cannot honor the "outputs zeroed on failure" contract, so reject
+     * the call without touching anything. */
+    if (!phdr_vaddr || !phnum || !phent)
+        return 0;
+
+    /* Per the header contract: clear out-pointers BEFORE any failure path
+     * so callers that ignore the return value never observe stale values.
+     * This must happen even when 'data' is NULL or 'size' is too small --
+     * the only path that skips clearing is the NULL-out-pointer case
+     * above (where there is nothing to clear). */
+    *phdr_vaddr = 0;
+    *phnum = 0;
+    *phent = 0;
+
+    if (!data)
+        return 0;
+
+    if (size < sizeof(struct elf64_header))
+        return 0;
+
+    hdr = (const struct elf64_header *)data;
+
+    if (!elf_validate(hdr, size))
+        return 0;
+
+    return elf_compute_phdr_info(hdr, data, phdr_vaddr, phnum, phent);
 }

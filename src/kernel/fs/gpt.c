@@ -464,43 +464,11 @@ int guid_from_string(const char *str, struct gpt_guid *g)
 
 /* ---- GUID v4 Generation (random) ---- */
 
-/* ARCH: x86-64 specific -- uses RDRAND instruction and cpuid.h.
- * When the kernel CSPRNG lands (TODO-20 §6), replace rdrand_fill()
- * with kernel_random_bytes() and remove this arch dependency.
+/* RDRAND is provided by include/kernel/random.h (shared with kusd_time.c
+ * and task.c auxv setup). When the kernel CSPRNG lands (TODO-20 §6), replace
+ * rdrand_bytes() calls with kernel_random_bytes() at all sites.
  * -> XREF: 16-architecture-ports/TODO-01 §1 -- HAL random source */
-#include "kernel/cpuid.h"
-
-/* Try RDRAND to fill 'n' bytes. Returns 1 on success, 0 if unavailable. */
-static int rdrand_fill(uint8_t *buf, int n)
-{
-    int i;
-    if (!cpu_has(CPU_FEATURE_RDRAND))
-        return 0;
-
-    for (i = 0; i < n; i += 8) {
-        uint64_t val;
-        int ok, retries = 10;
-        do {
-            __asm__ volatile(
-                "rdrand %0\n\t"
-                "setc   %1\n\t"
-                : "=r"(val), "=qm"(ok)
-            );
-        } while (!ok && --retries > 0);
-
-        if (!ok) return 0;
-
-        /* Copy available bytes */
-        {
-            int j;
-            int remain = n - i;
-            if (remain > 8) remain = 8;
-            for (j = 0; j < remain; j++)
-                buf[i + j] = (uint8_t)(val >> (j * 8));
-        }
-    }
-    return 1;
-}
+#include "kernel/random.h"
 
 /* XorShift64 PRNG fallback seeded from TSC */
 static uint64_t prng_state;
@@ -542,7 +510,7 @@ struct gpt_guid guid_generate(void)
     uint8_t raw[16];
 
     /* Fill 16 bytes with random data */
-    if (!rdrand_fill(raw, 16))
+    if (!rdrand_bytes(raw, 16))
         prng_fill(raw, 16);
 
     /* Set version 4 (random): bits 48–51 = 0100 */

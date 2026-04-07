@@ -15,6 +15,7 @@
 #include "kernel/time/timezone.h"
 #include "kernel/nt/filetime.h"
 #include "kernel/cpuid.h"
+#include "kernel/random.h"
 #include "kernel/smp.h"
 #include "kernel/klog.h"
 #include "build_info.h"
@@ -24,23 +25,23 @@
 volatile KUSER_SHARED_DATA *g_kusd;
 static int s_kusd_ready;
 
-/* ---- RDRAND helper ------------------------------------------------------- */
+/* ---- RDRAND helper -------------------------------------------------------
+ * Wraps the shared rdrand_bytes() helper to deliver a single uint32_t for
+ * the KUSER_SHARED_DATA Cookie field. Falls back to a TSC-derived value if
+ * RDRAND is unavailable (TCG, very old CPUs). The Cookie is not security-
+ * critical -- it is a cheap per-boot identifier exposed to user-mode at
+ * 0x7FFE0330. */
 
 static uint32_t kusd_rdrand32(void)
 {
-    uint32_t val = 0;
-    if (cpu_has(CPU_FEATURE_RDRAND)) {
-        int ok = 0;
-        __asm__ volatile (
-            "rdrand %0\n\t"
-            "setc   %1\n\t"
-            : "=r"(val), "=qm"(ok)
-            :
-            : "cc"
-        );
-        if (ok) return val;
+    uint8_t buf[4];
+    if (rdrand_bytes(buf, 4)) {
+        return (uint32_t)buf[0]
+             | ((uint32_t)buf[1] << 8)
+             | ((uint32_t)buf[2] << 16)
+             | ((uint32_t)buf[3] << 24);
     }
-    /* Fallback: TSC-based */
+    /* Fallback: TSC-derived */
     {
         uint32_t lo, hi;
         __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));

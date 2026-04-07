@@ -127,6 +127,10 @@ struct task {
     uint8_t  tls_expansion_allocated;    /* 1 if expansion array has been demand-allocated */
     uintptr_t tls_expansion_phys;        /* physical base of expansion pages (for free) */
     uintptr_t tls_expansion_virt;        /* virtual base of expansion pages (for unmap) */
+    /* --- ELF auxv (§13) --- */
+    void    *user_auxv;                  /* user-space VA of first AT_TYPE qword (0 if none) */
+    uint32_t user_auxv_pairs;            /* number of (type, value) pairs including AT_NULL */
+    uint32_t _auxv_pad;
 };
 
 /* Task entry function type */

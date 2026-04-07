@@ -270,6 +270,12 @@ typedef enum {
 #define POST16_TLS_EXPAND_TEST  0xDF12  /* expansion slot 1087 test */
 #define POST16_TLS_EXPAND_CLEAN 0xDF13  /* expansion cleanup */
 
+/* Extended Auxiliary Vector (0xDF20-0xDF23) -- TODO-04 §13 */
+#define POST16_AUXV_ENTRY       0xDF20  /* task_exec auxv build entry */
+#define POST16_AUXV_RAND        0xDF21  /* AT_RANDOM 16 bytes pushed */
+#define POST16_AUXV_DONE        0xDF22  /* auxv block fully emitted */
+#define POST16_AUXV_VERIFY      0xDF23  /* user-mode verification reached */
+
 /* Crash-Persistent Log (0xDE00-0xDE03) */
 #define POST16_CRASHLOG         0xDE00  /* crash persist entry */
 #define POST16_CRASHLOG_ALLOC   0xDE01  /* region reserved */

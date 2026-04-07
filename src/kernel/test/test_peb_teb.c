@@ -15,6 +15,10 @@
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
 #include "kernel/acpi.h"
+#include "kernel/elf.h"
+#include "kernel/random.h"
+#include "kernel/boot_init.h"
+#include "kernel/cpuid.h"
 
 /* ---- Compile-time offset checks (TEB) ---- */
 
@@ -285,6 +289,419 @@ static void test_tls_expansion_post_codes(void)
                    "POST16_TLS_EXPAND_CLEAN == 0xDF13");
 }
 
+/* ---- Extended Auxiliary Vector (S13) ---- */
+
+static void test_auxv_constants(void)
+{
+    /* Linux ELF auxv ABI -- these values are a hard contract with glibc/musl.
+     * If any of these change, dynamically linked binaries will misinterpret
+     * the auxv block on the initial user stack. */
+    TEST_ASSERT_EQ(AT_NULL,    0,  "AT_NULL == 0");
+    TEST_ASSERT_EQ(AT_PHDR,    3,  "AT_PHDR == 3");
+    TEST_ASSERT_EQ(AT_PHENT,   4,  "AT_PHENT == 4");
+    TEST_ASSERT_EQ(AT_PHNUM,   5,  "AT_PHNUM == 5");
+    TEST_ASSERT_EQ(AT_PAGESZ,  6,  "AT_PAGESZ == 6");
+    TEST_ASSERT_EQ(AT_BASE,    7,  "AT_BASE == 7");
+    TEST_ASSERT_EQ(AT_FLAGS,   8,  "AT_FLAGS == 8");
+    TEST_ASSERT_EQ(AT_ENTRY,   9,  "AT_ENTRY == 9");
+    TEST_ASSERT_EQ(AT_UID,    11,  "AT_UID == 11");
+    TEST_ASSERT_EQ(AT_EUID,   12,  "AT_EUID == 12");
+    TEST_ASSERT_EQ(AT_GID,    13,  "AT_GID == 13");
+    TEST_ASSERT_EQ(AT_EGID,   14,  "AT_EGID == 14");
+    TEST_ASSERT_EQ(AT_HWCAP,  16,  "AT_HWCAP == 16");
+    TEST_ASSERT_EQ(AT_SECURE, 23,  "AT_SECURE == 23");
+    TEST_ASSERT_EQ(AT_RANDOM, 25,  "AT_RANDOM == 25");
+    TEST_ASSERT_EQ(AT_HWCAP2, 26,  "AT_HWCAP2 == 26");
+}
+
+static void test_auxv_post_codes(void)
+{
+    TEST_ASSERT_EQ(POST16_AUXV_ENTRY,  0xDF20, "POST16_AUXV_ENTRY == 0xDF20");
+    TEST_ASSERT_EQ(POST16_AUXV_RAND,   0xDF21, "POST16_AUXV_RAND == 0xDF21");
+    TEST_ASSERT_EQ(POST16_AUXV_DONE,   0xDF22, "POST16_AUXV_DONE == 0xDF22");
+    TEST_ASSERT_EQ(POST16_AUXV_VERIFY, 0xDF23, "POST16_AUXV_VERIFY == 0xDF23");
+}
+
+static void test_rdrand_bytes_smoke(void)
+{
+    if (!cpu_has(CPU_FEATURE_RDRAND)) {
+        TEST_SKIP("RDRAND unavailable on this CPU");
+        return;
+    }
+
+    uint8_t buf[32];
+    uint32_t i;
+    for (i = 0; i < 32; i++) buf[i] = 0;
+
+    int ok = rdrand_bytes(buf, 32);
+    TEST_ASSERT_EQ(ok, 1, "rdrand_bytes(32) succeeds when RDRAND present");
+
+    /* At least one byte must be non-zero -- the chance of 32 zero bytes
+     * from RDRAND is 2^-256, well below any test flake threshold. */
+    int any_nonzero = 0;
+    for (i = 0; i < 32; i++) {
+        if (buf[i] != 0) { any_nonzero = 1; break; }
+    }
+    TEST_ASSERT_EQ(any_nonzero, 1, "rdrand_bytes output has at least one non-zero byte");
+
+    /* NULL buf and zero size both return 0 (parameter validation) */
+    TEST_ASSERT_EQ(rdrand_bytes((uint8_t *)0, 16), 0, "rdrand_bytes(NULL, 16) returns 0");
+    TEST_ASSERT_EQ(rdrand_bytes(buf, 0), 0, "rdrand_bytes(buf, 0) returns 0");
+}
+
+/* Boundary coverage for the n%8 partial-chunk path. The chunk loop in
+ * rdrand_bytes iterates in 8-byte strides; lengths 1, 8, 15, 16, 64
+ * exercise the partial-trailing branch and full-chunk-only branches. */
+static void test_rdrand_bytes_boundaries(void)
+{
+    if (!cpu_has(CPU_FEATURE_RDRAND)) {
+        TEST_SKIP("RDRAND unavailable on this CPU");
+        return;
+    }
+
+    /* For each length, fill from a known sentinel and verify:
+     *   1. rdrand_bytes returns 1
+     *   2. all 'n' bytes were touched (collectively non-sentinel; with high
+     *      probability at least one byte differs from the sentinel value)
+     *   3. bytes BEYOND 'n' are unchanged (no over-write)
+     * For n=1 and n=8 the "all touched" check is statistical -- one byte
+     * has a 1/256 chance of equaling the sentinel by chance, so we re-roll
+     * once if needed to keep flake rate < 2^-16. */
+    const uint32_t lens[] = { 1, 8, 15, 16, 64 };
+    const uint32_t num_lens = sizeof(lens) / sizeof(lens[0]);
+    const uint8_t sentinel = 0xA5;
+    uint8_t buf[80];
+    uint32_t li;
+
+    for (li = 0; li < num_lens; li++) {
+        uint32_t n = lens[li];
+        uint32_t i;
+
+        for (i = 0; i < sizeof(buf); i++) buf[i] = sentinel;
+
+        int ok = rdrand_bytes(buf, n);
+        TEST_ASSERT_EQ(ok, 1, "rdrand_bytes(n) returns 1");
+
+        /* Bytes beyond n must still be sentinel (no over-write) */
+        for (i = n; i < sizeof(buf); i++) {
+            TEST_ASSERT_EQ(buf[i], sentinel,
+                           "rdrand_bytes did not write past length");
+        }
+
+        /* For n >= 2 there's effectively zero chance all bytes equal
+         * sentinel by random chance -- assert at least one differs.
+         * For n == 1 we accept the rare 1/256 collision and just check
+         * the function returned ok (already done above). */
+        if (n >= 2) {
+            int differs = 0;
+            for (i = 0; i < n; i++) {
+                if (buf[i] != sentinel) { differs = 1; break; }
+            }
+            TEST_ASSERT_EQ(differs, 1,
+                           "rdrand_bytes touched the buffer (random != sentinel)");
+        }
+    }
+}
+
+/* Build a minimal valid ELF64 header + program-header table into 'buf'.
+ * 'buf' must be at least 256 bytes. After filling, callers may patch the
+ * program-header entries to test PT_PHDR vs PT_LOAD vs no-coverage paths. */
+static void test_elf_build_minimal(uint8_t *buf)
+{
+    struct elf64_header *hdr = (struct elf64_header *)buf;
+    uint32_t i;
+    for (i = 0; i < 256; i++) buf[i] = 0;
+
+    hdr->e_ident[0] = 0x7F;
+    hdr->e_ident[1] = 'E';
+    hdr->e_ident[2] = 'L';
+    hdr->e_ident[3] = 'F';
+    hdr->e_ident[4] = 2;  /* ELFCLASS64 */
+    hdr->e_ident[5] = 1;  /* ELFDATA2LSB */
+    hdr->e_type     = 2;  /* ET_EXEC */
+    hdr->e_machine  = 62; /* EM_X86_64 */
+    hdr->e_version  = 1;
+    hdr->e_entry    = 0x800100;
+    hdr->e_phoff    = sizeof(struct elf64_header);  /* program headers right after ELF header */
+    hdr->e_phentsize = sizeof(struct elf64_phdr);
+    hdr->e_phnum    = 2;
+    hdr->e_ehsize   = sizeof(struct elf64_header);
+}
+
+static void test_elf_extract_phdr_info_pt_phdr(void)
+{
+    /* Case 1: PT_PHDR present -- should set phdr_vaddr = phdr[0].p_vaddr */
+    uint8_t buf[256];
+    test_elf_build_minimal(buf);
+
+    struct elf64_phdr *ph = (struct elf64_phdr *)(buf + sizeof(struct elf64_header));
+    /* phdr[0] = PT_PHDR pointing at the program-header table itself */
+    ph[0].p_type   = PT_PHDR;
+    ph[0].p_flags  = PF_R;
+    ph[0].p_offset = sizeof(struct elf64_header);
+    ph[0].p_vaddr  = 0x800040;
+    ph[0].p_paddr  = 0x800040;
+    ph[0].p_filesz = 2 * sizeof(struct elf64_phdr);
+    ph[0].p_memsz  = 2 * sizeof(struct elf64_phdr);
+    ph[0].p_align  = 8;
+
+    /* phdr[1] = PT_LOAD that doesn't matter for this test */
+    ph[1].p_type   = PT_LOAD;
+    ph[1].p_flags  = PF_R | PF_X;
+    ph[1].p_offset = 0;
+    ph[1].p_vaddr  = 0x800000;
+    ph[1].p_filesz = 0x100;
+    ph[1].p_memsz  = 0x100;
+    ph[1].p_align  = 0x1000;
+
+    uint64_t phdr_vaddr = 0;
+    uint16_t phnum = 0, phent = 0;
+    int ret = elf_extract_phdr_info(buf, 256, &phdr_vaddr, &phnum, &phent);
+    TEST_ASSERT_EQ(ret, 1, "elf_extract_phdr_info(PT_PHDR ELF) returns 1");
+    TEST_ASSERT_EQ(phdr_vaddr, 0x800040,
+                   "PT_PHDR path: phdr_vaddr from PT_PHDR.p_vaddr");
+    TEST_ASSERT_EQ(phnum, 2, "PT_PHDR path: phnum == 2");
+    TEST_ASSERT_EQ(phent, sizeof(struct elf64_phdr),
+                   "PT_PHDR path: phent == sizeof(elf64_phdr)");
+}
+
+static void test_elf_extract_phdr_info_pt_load_fallback(void)
+{
+    /* Case 2: no PT_PHDR, but PT_LOAD covers e_phoff -- fallback derives
+     * phdr_vaddr = pt_load.p_vaddr + (e_phoff - pt_load.p_offset). */
+    uint8_t buf[256];
+    test_elf_build_minimal(buf);
+
+    struct elf64_phdr *ph = (struct elf64_phdr *)(buf + sizeof(struct elf64_header));
+    /* phdr[0] = PT_LOAD covering [0, 0x1000) which includes e_phoff (64) */
+    ph[0].p_type   = PT_LOAD;
+    ph[0].p_flags  = PF_R | PF_X;
+    ph[0].p_offset = 0;
+    ph[0].p_vaddr  = 0x800000;
+    ph[0].p_filesz = 0x1000;
+    ph[0].p_memsz  = 0x1000;
+    ph[0].p_align  = 0x1000;
+
+    /* phdr[1] = PT_NULL (ignored) */
+    ph[1].p_type = PT_NULL;
+
+    uint64_t phdr_vaddr = 0;
+    uint16_t phnum = 0, phent = 0;
+    int ret = elf_extract_phdr_info(buf, 256, &phdr_vaddr, &phnum, &phent);
+    TEST_ASSERT_EQ(ret, 1, "elf_extract_phdr_info(PT_LOAD fallback) returns 1");
+    /* Expected: 0x800000 + (64 - 0) = 0x800040 */
+    TEST_ASSERT_EQ(phdr_vaddr, 0x800040,
+                   "PT_LOAD fallback: phdr_vaddr derived from PT_LOAD + e_phoff");
+    TEST_ASSERT_EQ(phnum, 2, "PT_LOAD fallback: phnum == 2");
+    TEST_ASSERT_EQ(phent, sizeof(struct elf64_phdr),
+                   "PT_LOAD fallback: phent == sizeof(elf64_phdr)");
+}
+
+static void test_elf_extract_phdr_info_pt_phdr_zero_fallback(void)
+{
+    /* Regression test for the bug where PT_PHDR with vaddr=0 disabled the
+     * PT_LOAD fallback. After the fix, when PT_PHDR is present but has
+     * vaddr=0, we should fall back to deriving phdr_vaddr from PT_LOAD. */
+    uint8_t buf[256];
+    test_elf_build_minimal(buf);
+
+    struct elf64_phdr *ph = (struct elf64_phdr *)(buf + sizeof(struct elf64_header));
+    /* phdr[0] = PT_PHDR with vaddr = 0 (malformed/stripped) */
+    ph[0].p_type   = PT_PHDR;
+    ph[0].p_flags  = PF_R;
+    ph[0].p_offset = sizeof(struct elf64_header);
+    ph[0].p_vaddr  = 0;
+    ph[0].p_paddr  = 0;
+    ph[0].p_filesz = 2 * sizeof(struct elf64_phdr);
+    ph[0].p_memsz  = 2 * sizeof(struct elf64_phdr);
+    ph[0].p_align  = 8;
+
+    /* phdr[1] = PT_LOAD that DOES cover e_phoff -- should be the fallback */
+    ph[1].p_type   = PT_LOAD;
+    ph[1].p_flags  = PF_R | PF_X;
+    ph[1].p_offset = 0;
+    ph[1].p_vaddr  = 0x800000;
+    ph[1].p_filesz = 0x1000;
+    ph[1].p_memsz  = 0x1000;
+    ph[1].p_align  = 0x1000;
+
+    uint64_t phdr_vaddr = 0;
+    uint16_t phnum = 0, phent = 0;
+    int ret = elf_extract_phdr_info(buf, 256, &phdr_vaddr, &phnum, &phent);
+    TEST_ASSERT_EQ(ret, 1, "elf_extract_phdr_info(PT_PHDR vaddr=0 + PT_LOAD) returns 1");
+    /* Expected: 0x800000 + (64 - 0) = 0x800040 -- fallback derived */
+    TEST_ASSERT_EQ(phdr_vaddr, 0x800040,
+                   "PT_PHDR vaddr=0 falls back to PT_LOAD derivation");
+    TEST_ASSERT_EQ(phnum, 2, "phnum still set");
+    TEST_ASSERT_EQ(phent, sizeof(struct elf64_phdr), "phent still set");
+}
+
+static void test_elf_extract_phdr_info_no_coverage(void)
+{
+    /* Case 3: no PT_PHDR and no PT_LOAD covers e_phoff -- impl returns 0
+     * and zeros all outputs. */
+    uint8_t buf[256];
+    test_elf_build_minimal(buf);
+
+    struct elf64_phdr *ph = (struct elf64_phdr *)(buf + sizeof(struct elf64_header));
+    /* phdr[0] = PT_LOAD covering [0x10000, 0x11000) which does NOT include e_phoff (64) */
+    ph[0].p_type   = PT_LOAD;
+    ph[0].p_flags  = PF_R | PF_X;
+    ph[0].p_offset = 0x10000;
+    ph[0].p_vaddr  = 0x900000;
+    ph[0].p_filesz = 0x1000;
+    ph[0].p_memsz  = 0x1000;
+    ph[0].p_align  = 0x1000;
+
+    ph[1].p_type = PT_NULL;
+
+    uint64_t phdr_vaddr = 0xDEAD;
+    uint16_t phnum = 0xBEEF, phent = 0xCAFE;
+    int ret = elf_extract_phdr_info(buf, 256, &phdr_vaddr, &phnum, &phent);
+    TEST_ASSERT_EQ(ret, 0, "elf_extract_phdr_info(no coverage) returns 0");
+    TEST_ASSERT_EQ(phdr_vaddr, 0, "no-coverage path zeros phdr_vaddr");
+    TEST_ASSERT_EQ(phnum, 0, "no-coverage path zeros phnum");
+    TEST_ASSERT_EQ(phent, 0, "no-coverage path zeros phent");
+}
+
+static void test_elf_extract_phdr_info_invalid(void)
+{
+    uint64_t phdr_vaddr;
+    uint16_t phnum, phent;
+    int ret;
+
+    /* NULL data: contract says outputs must be cleared to 0 even when data
+     * is NULL, as long as the out-pointers themselves are valid. */
+    phdr_vaddr = 0xDEAD; phnum = 0xBEEF; phent = 0xCAFE;
+    ret = elf_extract_phdr_info((const uint8_t *)0, 64,
+                                 &phdr_vaddr, &phnum, &phent);
+    TEST_ASSERT_EQ(ret, 0, "elf_extract_phdr_info(NULL data) returns 0");
+    TEST_ASSERT_EQ(phdr_vaddr, 0, "NULL-data path zeros phdr_vaddr");
+    TEST_ASSERT_EQ(phnum, 0, "NULL-data path zeros phnum");
+    TEST_ASSERT_EQ(phent, 0, "NULL-data path zeros phent");
+
+    /* Garbage bytes (no ELF magic) */
+    uint8_t garbage[64];
+    uint32_t i;
+    for (i = 0; i < 64; i++) garbage[i] = (uint8_t)i;
+    phdr_vaddr = 0xDEAD; phnum = 0xBEEF; phent = 0xCAFE;
+    ret = elf_extract_phdr_info(garbage, 64, &phdr_vaddr, &phnum, &phent);
+    TEST_ASSERT_EQ(ret, 0, "elf_extract_phdr_info(garbage) returns 0");
+    TEST_ASSERT_EQ(phdr_vaddr, 0, "garbage path zeros phdr_vaddr");
+    TEST_ASSERT_EQ(phnum, 0, "garbage path zeros phnum");
+    TEST_ASSERT_EQ(phent, 0, "garbage path zeros phent");
+
+    /* Too small (< sizeof elf64_header) */
+    phdr_vaddr = 0xDEAD; phnum = 0xBEEF; phent = 0xCAFE;
+    ret = elf_extract_phdr_info(garbage, 8, &phdr_vaddr, &phnum, &phent);
+    TEST_ASSERT_EQ(ret, 0, "elf_extract_phdr_info(too small) returns 0");
+    TEST_ASSERT_EQ(phdr_vaddr, 0, "too-small path zeros phdr_vaddr");
+
+    /* NULL out parameter -- the only case where outputs are NOT cleared */
+    ret = elf_extract_phdr_info(garbage, 64, (uint64_t *)0, &phnum, &phent);
+    TEST_ASSERT_EQ(ret, 0, "elf_extract_phdr_info(NULL out) returns 0");
+}
+
+static void test_user_auxv_populated(void)
+{
+    /* Walk PID 2's user auxv (cmd.exe, exec'd at boot). The auxv address
+     * is stashed in tasks[2].user_auxv by task_exec().
+     *
+     * Skip ONLY when PID 2 is structurally not a user task (no PEB, no
+     * user stack) -- e.g., the slot is unused or holds a kernel thread.
+     * If PID 2 IS a user task (has a PEB) but user_auxv is NULL, that's
+     * a §13 regression and we MUST fail rather than silently skip. */
+    struct task *t = task_get_by_pid(2);
+    if (!t) {
+        TEST_SKIP("PID 2 does not exist (early boot or pre-exec)");
+        return;
+    }
+    if (!t->peb || !t->user_stack_base) {
+        TEST_SKIP("PID 2 is not a user task (no PEB / no user stack)");
+        return;
+    }
+    /* PID 2 is a user task -- user_auxv MUST be populated by task_exec.
+     * NULL here means task_exec built the user stack but failed to record
+     * the auxv pointer, which is exactly the §13 failure mode this test
+     * exists to catch. */
+    TEST_ASSERT(t->user_auxv != (void *)0,
+                "PID 2 user task has user_auxv recorded by task_exec");
+    TEST_ASSERT(t->user_auxv_pairs > 0,
+                "PID 2 user_auxv_pairs > 0");
+    if (!t->user_auxv || t->user_auxv_pairs == 0) {
+        /* Bail out before dereferencing if the asserts above failed --
+         * test framework continues running other tests. */
+        return;
+    }
+
+    TEST_ASSERT(t->user_auxv_pairs >= 5, "auxv has at least a few pairs");
+    TEST_ASSERT(t->user_auxv_pairs <= 32, "auxv pair count within sane bound");
+
+    uint64_t *auxv = (uint64_t *)t->user_auxv;
+    int seen_null = 0;
+    int seen_random = 0;
+    int seen_pagesz = 0;
+    int seen_entry = 0;
+    int seen_hwcap = 0;
+    uint64_t at_random_addr = 0;
+    uint64_t at_hwcap_val = 0;
+    uint32_t i;
+
+    /* Walk pairs until AT_NULL or pair-count limit. The terminator MUST
+     * be encountered before user_auxv_pairs runs out -- if not, the auxv
+     * block is malformed. */
+    for (i = 0; i < t->user_auxv_pairs; i++) {
+        uint64_t type = auxv[i * 2];
+        uint64_t val  = auxv[i * 2 + 1];
+        if (type == AT_NULL) {
+            seen_null = 1;
+            break;
+        }
+        if (type == AT_RANDOM) { seen_random = 1; at_random_addr = val; }
+        if (type == AT_PAGESZ) { seen_pagesz = 1;
+            TEST_ASSERT_EQ(val, 4096, "AT_PAGESZ value is 4096"); }
+        if (type == AT_ENTRY)  { seen_entry  = 1;
+            TEST_ASSERT(val != 0, "AT_ENTRY non-zero"); }
+        if (type == AT_HWCAP)  { seen_hwcap  = 1; at_hwcap_val = val; }
+    }
+
+    TEST_ASSERT_EQ(seen_null, 1, "AT_NULL terminator present in auxv");
+    TEST_ASSERT_EQ(seen_random, 1, "AT_RANDOM present in auxv");
+    TEST_ASSERT_EQ(seen_pagesz, 1, "AT_PAGESZ present in auxv");
+    TEST_ASSERT_EQ(seen_entry,  1, "AT_ENTRY present in auxv");
+    TEST_ASSERT_EQ(seen_hwcap,  1, "AT_HWCAP present in auxv");
+
+    /* AT_HWCAP comes from raw CPUID 1 EDX. On any CPU running Long Mode,
+     * at least the FPU bit (bit 0) must be set, so the value is non-zero.
+     * Also verify it equals the live CPUID 1 EDX -- if task_exec ever
+     * computed it from a different leaf or applied bit transformations,
+     * this catches the regression. */
+    TEST_ASSERT(at_hwcap_val != 0, "AT_HWCAP non-zero (FPU bit always set in long mode)");
+    {
+        uint32_t eax, ebx, ecx, edx;
+        cpuid_raw(1, 0, &eax, &ebx, &ecx, &edx);
+        TEST_ASSERT_EQ(at_hwcap_val, edx,
+                       "AT_HWCAP equals raw CPUID leaf 1 EDX");
+    }
+
+    /* Read 16 bytes at AT_RANDOM and assert at least one is non-zero.
+     * The address must be in the user stack range. The test runs in
+     * kernel context with the shared identity-mapped address space so
+     * the user-mode address is directly readable. */
+    TEST_ASSERT(at_random_addr != 0, "AT_RANDOM address non-zero");
+
+    if (at_random_addr != 0) {
+        const uint8_t *rand_bytes = (const uint8_t *)at_random_addr;
+        int any_nonzero = 0;
+        uint32_t j;
+        for (j = 0; j < 16; j++) {
+            if (rand_bytes[j] != 0) { any_nonzero = 1; break; }
+        }
+        TEST_ASSERT_EQ(any_nonzero, 1,
+                       "AT_RANDOM points to at least one non-zero byte");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_peb_teb(void)
@@ -307,6 +724,27 @@ void test_register_peb_teb(void)
                             test_tls_expansion_boundary, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: TLS POST codes",
                             test_tls_expansion_post_codes, TEST_CAT_ABI);
+    /* S13: Extended ELF auxv */
+    test_suite_register_cat("PEB/TEB: auxv constants",
+                            test_auxv_constants, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: auxv POST codes",
+                            test_auxv_post_codes, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: rdrand_bytes smoke",
+                            test_rdrand_bytes_smoke, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: rdrand_bytes boundaries",
+                            test_rdrand_bytes_boundaries, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: elf_extract PT_PHDR",
+                            test_elf_extract_phdr_info_pt_phdr, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: elf_extract PT_LOAD fallback",
+                            test_elf_extract_phdr_info_pt_load_fallback, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: elf_extract PT_PHDR vaddr=0 fallback",
+                            test_elf_extract_phdr_info_pt_phdr_zero_fallback, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: elf_extract no coverage",
+                            test_elf_extract_phdr_info_no_coverage, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: elf_extract_phdr_info invalid",
+                            test_elf_extract_phdr_info_invalid, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: user auxv populated (PID 2)",
+                            test_user_auxv_populated, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

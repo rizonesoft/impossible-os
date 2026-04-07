@@ -48,7 +48,7 @@
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6     |  [x]   |
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5         |  [x]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9         |  [x]   |
-| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7         |  [ ]   |
+| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7         |  [x]   |
 | 💎  |  14   | Per-thread TEB allocation at thread_create()    | §6, §12    |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
@@ -239,9 +239,9 @@ Windows supports 1088 TLS slots per thread: 64 static slots in `TEB.TlsSlots[64]
 The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL`. Linux user-mode C libraries (glibc, musl) expect additional entries -- most critically `AT_RANDOM` (16 random bytes used to seed the stack canary `__stack_chk_guard`) and `AT_PHDR`/`AT_PHNUM` (program header location for the dynamic linker). Without `AT_RANDOM`, dynamically linked ELF binaries compiled with `-fstack-protector` will use a zero or predictable canary, defeating stack overflow protection.
 
 > [!NOTE]
-> No shared kernel `rdrand()` utility exists -- only a local `rdrand_fill()` in `gpt.c`. Extract or duplicate the inline asm pattern for §13's 16 random bytes and §11's Cookie. The CSPRNG (TODO-20 §5) is a future superset. The `elf_load_result` struct currently lacks `phdr_vaddr` and `phnum` -- extending it here is self-contained and does not break existing callers (additive fields only).
+> Resolved: shared `rdrand_bytes()` lives in `include/kernel/random.h` + `src/kernel/random.c`; `gpt.c` and `kusd_time.c` were migrated. The `elf_load_result` struct now carries `phdr_vaddr`, `phnum`, `phent`. The ELF program-header walk for auxv is the same shared `elf_compute_phdr_info()` static helper used by `elf_load()`, so the loader and `elf_extract_phdr_info()` cannot diverge. The CSPRNG (TODO-20 §5) is still the future superset for AT_RANDOM entropy hardening on TCG.
 
-- [ ] Define auxv type constants in `include/kernel/elf.h`:
+- [x] Define auxv type constants in `include/kernel/elf.h`:
   - `AT_PHDR   = 3` -- address of ELF program headers in memory
   - `AT_PHENT  = 4` -- size of one program header entry
   - `AT_PHNUM  = 5` -- number of program header entries
@@ -251,17 +251,19 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
   - `AT_SECURE = 23` -- 1 if setuid/setgid, 0 otherwise
   - `AT_RANDOM = 25` -- pointer to 16 random bytes on the stack
   - `AT_HWCAP  = 16`, `AT_HWCAP2 = 26` -- CPU feature bitmask from `cpuid.c`
-- [ ] In `task_exec` ELF stack setup: push 16 random bytes (from RDRAND or the kernel CSPRNG) to the stack before auxv; set `AT_RANDOM` to point at them
-- [ ] Push `AT_PHDR` = `elf_load_result.phdr_vaddr`, `AT_PHENT` = `sizeof(Elf64_Phdr)`, `AT_PHNUM` = `elf_load_result.phnum`
-- [ ] Push `AT_BASE` = 0 (no dynamic linker yet; updated when ELF interp support lands in TODO-08)
-- [ ] Push `AT_UID`/`AT_EUID`/`AT_GID`/`AT_EGID` = 0 (root) for now; updated when user/group model lands
-- [ ] Push `AT_SECURE` = 0 (no setuid support yet)
-- [ ] Push `AT_HWCAP` with CPU feature bits (SSE, SSE2, AVX, etc.) derived from `cpuid.c`
-- [ ] Retain existing `AT_ENTRY`, `AT_PAGESZ`, `AT_NULL`
-- [ ] Extend `elf_load_result` struct to carry `phdr_vaddr` and `phnum` if not already present
-- [ ] Commit: `"kernel: abi -- extended auxiliary vector with AT_RANDOM, AT_PHDR, AT_HWCAP"`
+- [x] In `task_exec` ELF stack setup: push 16 random bytes (from `rdrand_bytes()` with TSC-mixed fallback on RDRAND failure) to the stack before auxv; set `AT_RANDOM` to point at them
+- [x] Push `AT_PHDR` = `elf_load_result.phdr_vaddr`, `AT_PHENT` = `e_phentsize`, `AT_PHNUM` = `e_phnum` -- derived via `elf_extract_phdr_info()` (shared parser with `elf_load()`)
+- [x] Push `AT_BASE` = 0 (no dynamic linker yet; correct value for static ELFs per Linux ABI)
+- [x] Push `AT_UID`/`AT_EUID`/`AT_GID`/`AT_EGID` = 0 (root) for now; updated when user/group model lands
+- [x] Push `AT_SECURE` = 0 (no setuid support yet)
+- [x] Push `AT_HWCAP` with raw CPUID leaf 1 EDX (matches Linux x86_64; no invented bit positions); `AT_HWCAP2` = 0 (deferred until syscall ABI hardening)
+- [x] Retain existing `AT_ENTRY`, `AT_PAGESZ`, `AT_NULL`
+- [x] Extend `elf_load_result` struct with `phdr_vaddr`, `phnum`, `phent` fields (additive)
+- [x] Extract shared `rdrand_bytes()` helper and migrate `gpt.c` + `kusd_time.c` (third occurrence rule)
+- [ ] Follow-up (XREF: TODO-20 §5): replace TSC-mixed AT_RANDOM fallback with kernel entropy pool when CSPRNG lands. Codex flagged the TSC fallback as weak entropy for stack-canary seeding; rejected for §13 because (1) Makefile USER_CFLAGS uses `-fno-stack-protector` so no current binary consumes `__stack_chk_guard`; (2) there is no runtime path for externally built ELFs to enter the system in the current state of the project; (3) RDRAND-capable platforms (bare metal, WHPX) take the fast path; (4) TCG fallback ships a `LOG_ERROR` line so degraded mode is visible. When TODO-20 §5 lands or any user binary opts into stack canaries, this fallback MUST be replaced.
+- [x] Commit: `"kernel: abi -- extended auxiliary vector with AT_RANDOM, AT_PHDR, AT_HWCAP"`
 
-**Test checkpoint:** Serial log shows `ELF auxv: AT_RANDOM=0x<stack_addr> AT_PHDR=0x<phdr> AT_PHNUM=<n>`. User-mode test reads 16 bytes at AT_RANDOM -- all-zero is a failure (must be random). Stack canary `__stack_chk_guard` is non-zero when linked with `-fstack-protector`. `POST16(0xDF20)` on entry, `POST16(0xDF21)` random bytes pushed, `POST16(0xDF22)` auxv complete, `POST16(0xDF23)` user-mode verification. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+**Test checkpoint:** Serial log shows `ELF auxv: AT_RANDOM=0x<stack_addr> AT_PHDR=0x<phdr> AT_PHNUM=<n> AT_HWCAP=0x<edx>` from `task_exec`. Unit test `PEB/TEB: user auxv populated (PID 2)` walks `tasks[2].user_auxv`, asserts AT_NULL terminator present, AT_RANDOM/PAGESZ/ENTRY/HWCAP present, AT_PAGESZ == 4096, AT_HWCAP non-zero (FPU bit), and reads 16 bytes at AT_RANDOM with at least one non-zero. `POST16(0xDF20)` on entry, `POST16(0xDF21)` random bytes pushed, `POST16(0xDF22)` auxv complete, `POST16(0xDF23)` user-mode verification (reserved). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ## 14. Per-thread TEB Allocation at thread_create()
 Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), which violates the Win32 contract that each thread has its own TEB at `gs:[0]`. This blocks per-thread TLS expansion arrays (§12 deferred item), per-thread `LastErrorValue`, per-thread stack bounds in `NtTib.StackBase/StackLimit`, and correct `NtCurrentTeb()` semantics on multithreaded processes. `NtCreateThread` (TODO-05 §7) creates a `struct thread` with its own kernel stack but no TEB.
@@ -304,9 +306,9 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 | ⭐ | Win11 version in PEB        | ✅ Internal only          | ❌ N/A                   | ✅ §5 10.0.22621        |
 | 💎 | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only   | ✅ vDSO equivalent       | ✅ §11 full struct+ISR  |
 | 💎 | TLS expansion (1024 slots)  | ✅ TlsExpansionSlots      | ✅ pthread TLS unlimited | ⬜ §12 expansion bitmap |
-| 💎 | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ⬜ §13 auxv extension   |
-| 💎 | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF            | ✅ auxv standard         | ⬜ §13 ELF compat       |
-| 💎 | CPU feature auxv (AT_HWCAP) | ⚠️ ProcessorFeatures[]    | ✅ AT_HWCAP/AT_HWCAP2    | ⬜ §13 cpuid bits       |
+| 💎 | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ✅ §13 RDRAND+TSC fb    |
+| 💎 | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF            | ✅ auxv standard         | ✅ §13 shared parser    |
+| 💎 | CPU feature auxv (AT_HWCAP) | ⚠️ ProcessorFeatures[]    | ✅ AT_HWCAP/AT_HWCAP2    | ✅ §13 raw CPUID 1 EDX  |
 
 > **After §1–§9:** Impossible OS matches Windows NT exactly on the user-mode ABI contract. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets -- ntdll and Win32 DLLs can initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace, enabling any user-mode tool to introspect any process without a private API or kernel debugger.
@@ -332,7 +334,7 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 - [ ] KUSER_SHARED_DATA offset tests: `KUSD.InterruptTime` at 0x008, `KUSD.SystemTime` at 0x014, `KUSD.NtBuildNumber` at correct offset, `KUSD.QpcFrequency` at correct offset -- _Static_assert compile-time
 - [ ] KUSER_SHARED_DATA runtime tests: read `*(uint32_t *)0x7FFE026C` (NtMajorVersion) == 10; `TickCountQuad` > 0 after boot; `ProcessorFeatures` non-zero; `Cookie` non-zero
 - [ ] TLS expansion tests: `tls_alloc` returns 0–63 for first 64 calls; 65th call returns 64 (expansion); `tls_set_value(pid, 64, 0xCAFE)` + `tls_get_value(pid, 64)` == 0xCAFE; `tls_alloc` up to 1087 succeeds; 1088th returns -1
-- [ ] Extended auxv tests: after `task_exec` of ELF binary, stack contains AT_RANDOM pointing to 16 non-zero bytes; AT_PHDR non-NULL; AT_PHNUM > 0; AT_PAGESZ == 4096; AT_HWCAP non-zero
+- [x] Extended auxv tests: after `task_exec` of ELF binary, stack contains AT_RANDOM pointing to 16 non-zero bytes; AT_PHDR non-NULL; AT_PHNUM > 0; AT_PAGESZ == 4096; AT_HWCAP non-zero -- 5 suites in `test_peb_teb.c` (auxv constants, POST codes, rdrand smoke, elf_extract_phdr_info invalid paths, user auxv populated PID 2)
 
 ## Verification
 

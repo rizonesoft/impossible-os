@@ -33,6 +33,9 @@
 #include "kernel/timer.h"
 #include "kernel/vectors.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/elf.h"
+#include "kernel/random.h"
+#include "kernel/boot_init.h"
 
 /* Use VECTOR_YIELD from vectors.h (single source of truth) */
 #define YIELD_INT_VECTOR VECTOR_YIELD
@@ -1259,21 +1262,23 @@ int task_exec(const uint8_t *data, uint64_t size)
     /* ---- Build Linux x86-64 initial user stack frame ----
      *
      * Layout (growing downward from user stack top):
-     *   [rsp+0]   argc        (uint64_t)
-     *   [rsp+8]   argv[0]     (pointer to program name string)
-     *   [rsp+16]  NULL        (argv terminator)
-     *   [rsp+24]  NULL        (envp terminator -- no env on stack)
-     *   [rsp+32]  AT_ENTRY    auxv[0].type
-     *   [rsp+40]  entry       auxv[0].value
-     *   [rsp+48]  AT_PAGESZ   auxv[1].type
-     *   [rsp+56]  4096        auxv[1].value
-     *   [rsp+64]  AT_NULL     auxv[2].type (terminator)
-     *   [rsp+72]  0           auxv[2].value
-     *   [rsp+80+] "cmd.exe\0" (program name string data)
+     *   [top]      "cmd.exe\0"     program name string data
+     *   [top-16]   16 random bytes for AT_RANDOM (stack canary seed)
+     *   [...]      auxv pairs (AT_PHDR/PHENT/PHNUM/BASE/FLAGS/UID/EUID/GID/EGID/
+     *              SECURE/RANDOM/HWCAP/HWCAP2/PAGESZ/ENTRY/NULL)
+     *   [rsp+24]   NULL (envp terminator -- no env on stack)
+     *   [rsp+16]   NULL (argv[1] terminator)
+     *   [rsp+8]    argv[0] (pointer to program name string)
+     *   [rsp+0]    argc (= 1)
      *
      * RSP must be 16-byte aligned BEFORE _start is entered.
-     * _start sees argc at [rsp]. Current crt0 ignores argc/argv
-     * but this layout is ready for a future crt0 that parses them.
+     * _start sees argc at [rsp]. Current crt0 ignores argc/argv but this
+     * layout is ready for a future crt0 (or glibc/musl) that parses them.
+     *
+     * §13: extended auxv carries AT_RANDOM (16-byte stack canary seed),
+     * AT_PHDR/PHENT/PHNUM (program headers for dynamic linker),
+     * AT_BASE (=0, no interpreter), AT_UID/EUID/GID/EGID (=0), AT_SECURE
+     * (=0), AT_HWCAP (raw CPUID 1 EDX), AT_HWCAP2 (=0).
      */
     {
         uint64_t *ustk = (uint64_t *)((uint64_t)(
@@ -1281,6 +1286,14 @@ int task_exec(const uint8_t *data, uint64_t size)
         const char *name = tasks[pid].name ? tasks[pid].name : "a.out";
         uint32_t name_len = 0;
         uint64_t user_rsp;
+        uint64_t at_random_addr = 0;
+        uint64_t phdr_vaddr = 0;
+        uint16_t phnum = 0;
+        uint16_t phent = 0;
+        uint32_t hwcap = 0;
+        int is_elf = 0;
+
+        POST16(POST16_AUXV_ENTRY);
 
         /* Count name length */
         { const char *p = name; while (*p++) name_len++; }
@@ -1296,14 +1309,117 @@ int task_exec(const uint8_t *data, uint64_t size)
         }
         uint64_t argv0_addr = (uint64_t)ustk;
 
-        /* auxv (3 entries: AT_ENTRY, AT_PAGESZ, AT_NULL) */
-        #define AT_NULL   0
-        #define AT_ENTRY  9
-        #define AT_PAGESZ 6
-        ustk -= 6;  /* 3 pairs × 2 qwords */
-        ustk[0] = AT_ENTRY;  ustk[1] = entry;
-        ustk[2] = AT_PAGESZ; ustk[3] = 4096;
-        ustk[4] = AT_NULL;   ustk[5] = 0;
+        /* §13: push 16 random bytes for AT_RANDOM. glibc/musl read exactly
+         * 16 bytes from the address pushed in AT_RANDOM as the seed for
+         * __stack_chk_guard. Without this, dynamically linked binaries
+         * compiled with -fstack-protector use a zero or constant canary,
+         * defeating stack overflow protection. */
+        ustk -= 2;  /* 2 qwords = 16 bytes */
+        {
+            uint8_t *rand_buf = (uint8_t *)ustk;
+            if (!rdrand_bytes(rand_buf, 16)) {
+                /* Fallback: TSC-mixed bytes. NOT cryptographically strong.
+                 *
+                 * Why this is acceptable for now:
+                 *   1. Impossible OS user binaries are compiled with
+                 *      -fno-stack-protector (see Makefile USER_CFLAGS), so
+                 *      glibc's __stack_chk_guard is NOT consumed by any
+                 *      current user binary. AT_RANDOM is informational only
+                 *      until libc with stack canaries lands.
+                 *   2. Hardware (RDRAND-capable) takes the fast path above.
+                 *      The fallback only fires on TCG and very old VMs.
+                 *   3. The LOG_WARN below makes degraded entropy observable.
+                 *
+                 * Once user binaries link against a libc compiled with
+                 * -fstack-protector (planned with TODO-08 dynamic loader),
+                 * this fallback MUST be replaced with a proper kernel
+                 * entropy source. The follow-up item is tracked in TODO-04
+                 * §13 (XREF: TODO-20 §5 -- kernel CSPRNG). */
+                uint32_t lo1, hi1, lo2, hi2;
+                __asm__ volatile ("rdtsc" : "=a"(lo1), "=d"(hi1));
+                /* Tiny delay to decorrelate the second sample */
+                __asm__ volatile ("pause; pause; pause; pause" ::: "memory");
+                __asm__ volatile ("rdtsc" : "=a"(lo2), "=d"(hi2));
+                uint64_t mix = ((uint64_t)hi1 << 32 | lo1)
+                             ^ (((uint64_t)hi2 << 32 | lo2) * 0x9E3779B97F4A7C15ULL)
+                             ^ ((uint64_t)pid * 0xBF58476D1CE4E5B9ULL);
+                uint32_t i;
+                for (i = 0; i < 8; i++) rand_buf[i] = (uint8_t)(mix >> (i * 8));
+                mix ^= mix << 13; mix ^= mix >> 7; mix ^= mix << 17;
+                for (i = 0; i < 8; i++) rand_buf[8 + i] = (uint8_t)(mix >> (i * 8));
+                klog(LOG_ERROR, "sched",
+                     "task_exec: RDRAND unavailable, using TSC fallback for "
+                     "AT_RANDOM (DEGRADED ENTROPY -- not exploitable today "
+                     "because user binaries are -fno-stack-protector; "
+                     "TODO-20 §5 will replace this with a kernel CSPRNG)");
+            }
+        }
+        at_random_addr = (uint64_t)ustk;
+        POST16(POST16_AUXV_RAND);
+
+        /* §13: detect ELF and extract program-header metadata for the auxv.
+         * Non-ELF formats (PE/EIF) leave phdr_vaddr/phnum/phent at 0 -- the
+         * AT_PHDR/PHENT/PHNUM entries are still emitted but with zero values
+         * (the loader ignores zero AT_PHDR per Linux ABI). */
+        if (size >= 4 && data[0] == 0x7F && data[1] == 'E' &&
+            data[2] == 'L' && data[3] == 'F') {
+            is_elf = 1;
+            (void)elf_extract_phdr_info(data, size,
+                                         &phdr_vaddr, &phnum, &phent);
+        }
+
+        /* §13: build AT_HWCAP from raw CPUID leaf 1 EDX. This matches what
+         * Linux x86_64 does -- it passes EDX through directly without
+         * inventing bit positions. AT_HWCAP2 is set to 0 because the leaf 7
+         * mapping has more divergence risk and glibc/musl on x86_64 read
+         * CPUID directly for the SIMD bits used by IFUNC dispatch. */
+        {
+            uint32_t eax, ebx, ecx, edx;
+            cpuid_raw(1, 0, &eax, &ebx, &ecx, &edx);
+            hwcap = edx;
+        }
+
+        /* §13: emit auxv pairs into a local array, then bulk-copy onto the
+         * stack. Pair count is computed at emission time -- no hard-coded
+         * stack subtraction count to drift out of sync (Codex F4). */
+        uint64_t auxv[64];  /* 32 pairs max; we use 16 */
+        uint32_t naux = 0;
+        #define AUXV_EMIT(t, v) do { \
+                auxv[naux*2]   = (uint64_t)(t); \
+                auxv[naux*2+1] = (uint64_t)(v); \
+                naux++; \
+            } while (0)
+
+        AUXV_EMIT(AT_PHDR,   phdr_vaddr);
+        AUXV_EMIT(AT_PHENT,  phent);
+        AUXV_EMIT(AT_PHNUM,  phnum);
+        AUXV_EMIT(AT_PAGESZ, 4096);
+        AUXV_EMIT(AT_BASE,   0);          /* no dynamic linker (static ELF) */
+        AUXV_EMIT(AT_FLAGS,  0);
+        AUXV_EMIT(AT_ENTRY,  entry);
+        AUXV_EMIT(AT_UID,    0);          /* root until user model lands */
+        AUXV_EMIT(AT_EUID,   0);
+        AUXV_EMIT(AT_GID,    0);
+        AUXV_EMIT(AT_EGID,   0);
+        AUXV_EMIT(AT_SECURE, 0);          /* no setuid */
+        AUXV_EMIT(AT_RANDOM, at_random_addr);
+        AUXV_EMIT(AT_HWCAP,  hwcap);
+        AUXV_EMIT(AT_HWCAP2, 0);
+        AUXV_EMIT(AT_NULL,   0);          /* terminator (must be last) */
+
+        #undef AUXV_EMIT
+
+        /* Bulk-copy auxv block onto stack. Each pair = 2 qwords. */
+        ustk -= naux * 2;
+        {
+            uint32_t i;
+            for (i = 0; i < naux * 2; i++)
+                ustk[i] = auxv[i];
+        }
+
+        /* Stash auxv pointer in task struct for unit tests to walk */
+        tasks[pid].user_auxv = (void *)ustk;
+        tasks[pid].user_auxv_pairs = naux;
 
         /* envp NULL terminator */
         ustk--;
@@ -1323,6 +1439,14 @@ int task_exec(const uint8_t *data, uint64_t size)
 
         /* Ensure 16-byte alignment */
         user_rsp = (uint64_t)ustk & ~0xFULL;
+
+        POST16(POST16_AUXV_DONE);
+        klog(LOG_INFO, "sched",
+             "ELF auxv: AT_RANDOM=0x%x AT_PHDR=0x%x AT_PHNUM=%u AT_HWCAP=0x%x "
+             "(%u pairs, %s)",
+             at_random_addr, phdr_vaddr, (uint64_t)phnum,
+             (uint64_t)hwcap, (uint64_t)naux,
+             is_elf ? "ELF" : "non-ELF");
 
         /* Build kernel interrupt frame */
         sp = (uint64_t *)(new_kstack + TASK_STACK_SIZE);
