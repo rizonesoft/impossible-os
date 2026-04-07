@@ -24,21 +24,19 @@ description: Codex-driven dead code scanner. Finds unreachable functions, unused
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<dead code prompt>"
    ```
 
-3. **Evaluate findings by category:**
-   - **Unreachable functions** -- `static` functions with zero callers in the same file
-   - **Unused `#define`** -- constants defined but never referenced
-   - **Orphaned types** -- `typedef struct` with no variables, parameters, or casts using it
-   - **Stale declarations** -- function declared in `.h` but never defined or called
-   - **Commented-out code** -- `#if 0` blocks, `/* disabled */` sections
-   - **Unused parameters** -- function parameters that are never read
-   - **Stale `extern`** -- `extern` declaration for a symbol that no longer exists
-
-4. **Classify each finding:**
-   - **Safe to remove** -- no callers, no assembly references, no external linkage
+3. **Evaluate findings with `superpowers:receiving-code-review` discipline** -- this skill has the highest false-positive risk. Removing live code based on a wrong "dead" verdict is a regression. For every finding, before treating it as dead:
+   - **Grep yourself.** Run a project-wide Grep for the symbol name. Codex can miss callers reached via function pointers, macros, and assembly.
+   - **Check `.asm` files explicitly.** A function called from assembly looks dead from C alone. Always grep `*.asm` for the symbol before removing.
+   - **Check TODO files.** A symbol referenced by an unimplemented TODO section is *planned*, not dead.
+   - **Check external linkage.** Symbols exported via the SSDT, syscall table, dispatch table, or driver registration are reachable through indirect paths Codex won't trace.
+   - **YAGNI inversion.** Codex's "dead code" finding is actually the *opposite* of the typical YAGNI case -- it's saying "no caller exists, so remove it." Confirm there's truly no caller before agreeing.
+4. **Classify each verified finding:**
+   - **Safe to remove** -- verified no callers, no assembly references, no external linkage, no TODO references
    - **Verify first** -- might be called via function pointer, assembly, or macro expansion
+   - **Reject** -- finding is wrong; symbol IS used at file:line (provide evidence)
    - **Keep (planned)** -- referenced by an unimplemented TODO section (note the XREF)
 
-5. **Remove safe-to-remove items** and rebuild.
+5. **Remove safe-to-remove items only** and rebuild after each batch -- if the build breaks, the "dead" symbol wasn't actually dead. Revert and reclassify.
 
 ## Prompt Template
 
@@ -68,3 +66,4 @@ Mark as "safe to remove" or "verify first" based on whether it could be reached 
 - Never remove symbols referenced by TODO checklist items (they're planned, not dead).
 - Rebuild after every removal to confirm nothing broke.
 - If unsure whether something is dead, leave it and note it as "verify first."
+- Apply `superpowers:receiving-code-review` discipline aggressively here -- this skill has the highest false-positive risk of any codex-* skill. Codex's "dead code" verdict is a hypothesis, not a fact. Verify with project-wide Grep (including `.asm`, TODO files, registration tables) before removing anything.

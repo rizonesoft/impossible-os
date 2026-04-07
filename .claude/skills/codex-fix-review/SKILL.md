@@ -14,48 +14,57 @@ description: Fix all findings from a Codex adversarial review, then re-run the r
 
 ## Workflow
 
-### Phase 1 -- Triage Findings
+### Phase 1 -- Triage Findings (apply `superpowers:receiving-code-review` discipline)
+
+> Codex is an external reviewer, not an authority. Verify before implementing. Push back when wrong. No performative agreement -- never write "great catch" or "you're absolutely right." Just state the fix or the reasoned rejection.
 
 1. **Read the Codex review output.** List every finding with severity.
-2. **Classify each finding:**
-   - **Fix now** -- correctness bugs, race conditions, missing error handling, architecture issues solvable with a small refactor.
-   - **Accepted** -- not a bug, or inherent design trade-off. Document why.
-3. **Create a task list** with one item per finding.
+2. **For each finding, verify technically against the actual code first** -- before classifying:
+   - Read the file at the cited line numbers. Does the code actually do what Codex claims?
+   - Codex reads code without runtime context. It will sometimes flag "missing lock" when the caller already holds it, "race" on a path that runs only on the BSP during boot phase 0, or "buffer overflow" on a buffer that's static-asserted larger than the access.
+   - **YAGNI check:** if Codex suggests "implement properly" for a feature, grep for callers. If unused, the answer is to remove the dead code, not expand it.
+3. **Classify each verified finding:**
+   - **Fix now** -- correctness bug, race condition, missing error handling, architecture issue solvable with a small refactor. The finding is *verified valid*.
+   - **Reject** -- the finding is wrong or misleading. Document the technical reason with code evidence (caller already holds lock X at file:line, path is single-threaded by construction because Y, etc.). Not "I disagree" -- explain WHY.
+   - **Accepted** -- the finding is valid but out of scope or an inherent design trade-off. Document why and add a follow-up TODO checklist item with `→ XREF` if applicable.
+4. **Create a task list** with one item per "fix now" finding.
 
 ### Phase 2 -- Fix
 
-4. **For each "fix now" finding:**
+5. **For each "fix now" finding:**
    - Read the relevant source file at the cited line numbers.
    - Understand the root cause (not just the symptom).
    - Apply the fix following the `kernel-code-quality` skill gates.
    - Build: `bash scripts/build.sh` -- must show `=== BUILD OK ===`.
-5. **For each "accepted" finding:**
-   - No code or file changes needed. The summary table (Phase 4) records the justification.
-6. **Commit all fixes** with a message referencing the review:
+6. **For each "rejected" finding:**
+   - No code change. Record the rejection reason in the Phase 4 summary table.
+7. **For each "accepted" finding:**
+   - No code change. The summary table (Phase 4) records the justification and any follow-up XREF.
+8. **Commit all fixes** with a message referencing the review:
    ```
    fix: address Codex adversarial review findings -- [summary]
    ```
 
 ### Phase 3 -- Re-Review
 
-8. **Push the commit.**
-9. **Re-run the Codex adversarial review** with a focused prompt:
-   ```
-   Verify the following findings are resolved:
-   1. [finding 1 summary]
-   2. [finding 2 summary]
-   3. [finding 3 summary]
-   Focus on: [list of modified files]
-   ```
-10. **Evaluate the re-review output:**
+9. **Push the commit.**
+10. **Re-run the Codex adversarial review** with a focused prompt:
+    ```
+    Verify the following findings are resolved:
+    1. [finding 1 summary]
+    2. [finding 2 summary]
+    3. [finding 3 summary]
+    Focus on: [list of modified files]
+    ```
+11. **Evaluate the re-review output (apply receiving-code-review discipline again on any new findings):**
     - If verdict is `all-clear` or only has "accepted" items: **done**.
-    - If new findings appear: go back to Phase 1 with the new findings.
-    - If original findings are "still live": the fix was incomplete -- go back to Phase 2.
+    - If new findings appear: go back to Phase 1 with the new findings -- verify each before fixing.
+    - If original findings are "still live": the fix was incomplete -- go back to Phase 2. But also ask: did Codex re-flag a finding I already rejected? If so, re-verify; if I'm still right, the rejection stands and I document the disagreement, not the fix.
 
 ### Phase 4 -- Close
 
-11. **Maximum 3 iterations.** If findings persist after 3 rounds, classify remaining as accepted with justification.
-12. **Add a `## Codex Adversarial Review` section** to the TODO (before Verification) with a compact summary table:
+12. **Maximum 3 iterations.** If findings persist after 3 rounds, classify remaining as accepted with justification.
+13. **Add a `## Codex Adversarial Review` section** to the TODO (before Verification) with a compact summary table:
     ```markdown
     ## Codex Adversarial Review
 
@@ -68,9 +77,10 @@ description: Fix all findings from a Codex adversarial review, then re-run the r
     |---|----------|---------|--------|
     | 1 | critical | One-line summary | **Fixed** -- what was done |
     | 2 | medium | One-line summary | **Accepted** -- why |
+    | 3 | high | One-line summary | **Rejected** -- code evidence |
     ```
     This table is the permanent record. The verbose per-finding details from the review phase are replaced -- they served their purpose during triage.
-13. **Final commit** with the resolved review status.
+14. **Final commit** with the resolved review status.
 
 ## Review Command
 
@@ -92,3 +102,4 @@ Run in background for reviews touching > 3 files:
 - **Present Codex output verbatim.** Do not reinterpret or soften findings.
 - **Each iteration must make progress.** If a re-review returns the exact same finding with the exact same code, the fix didn't work -- investigate why before retrying.
 - **Verify fixes don't break functionality.** Moving code to a thread, reordering init, or adding locks can break timing-dependent subsystems. Check CLAUDE.md "Bare Metal Gotchas" before applying structural fixes to boot-path code.
+- **Apply `superpowers:receiving-code-review` discipline throughout.** Codex is an external reviewer, not an authority. Verify each finding against the actual code before fixing. Reject wrong findings with concrete code evidence, not "I disagree." Never write performative agreement like "great catch" or "you're absolutely right" -- just state the fix or the rejection.

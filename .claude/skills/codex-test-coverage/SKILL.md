@@ -28,7 +28,12 @@ description: Codex-driven test coverage gap analysis. Given a source file or sub
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<coverage prompt>"
    ```
 
-4. **Evaluate findings by category:**
+4. **Evaluate findings with `superpowers:receiving-code-review` discipline** -- Codex's gap list is suggestions, not orders. For each gap before adding a test:
+   - **Verify the gap is real.** Read the existing test file at the cited section. Is the path actually untested, or did Codex miss an indirect assertion (e.g., a higher-level test that exercises the path)?
+   - **Verify the path is reachable.** Check the source file. If the "untested error path" is unreachable (e.g., `if (size > SIZE_MAX)` on a `size_t`), don't add a test for dead code -- delete the dead branch instead.
+   - **YAGNI check.** If Codex demands tests for hypothetical inputs that no caller produces (e.g., NULL on a function whose only callers always pass an Object Manager handle), the test would assert behavior that doesn't matter. Reject with reasoning.
+   - **No performative agreement.** Reject wrong gaps with code evidence; add real ones without commentary.
+5. **Classify each verified gap:**
    - **Untested public functions** -- public API without any test assertion
    - **Missing boundary tests** -- off-by-one, exact limits, overflow, zero-length
    - **Untested error paths** -- allocation failure, NULL input, invalid args, overflow
@@ -36,9 +41,9 @@ description: Codex-driven test coverage gap analysis. Given a source file or sub
    - **Missing concurrency tests** -- if the code has spinlocks or atomics, are there concurrent-access tests?
    - **Missing integration tests** -- function works in isolation but not wired into the real call path
 
-5. **Add missing tests** to the test file based on findings.
+6. **Add tests for verified gaps only** to the test file.
 
-6. **Rebuild** and confirm `=== BUILD OK ===`.
+7. **Rebuild** and confirm `=== BUILD OK ===`.
 
 ## Prompt Template
 
@@ -70,3 +75,4 @@ For each gap, suggest a concrete test: function call + expected result.
 - Every suggested test must have a concrete expected value -- no "verify it works."
 - Register new tests in the correct `test_register_*()` function and `TEST_CAT_*` category.
 - This skill analyzes coverage, not correctness. Use `codex-adversarial-review-section` for correctness review.
+- Apply `superpowers:receiving-code-review` discipline -- verify each gap is real and reachable before adding a test. Don't add tests for dead code, unreachable branches, or hypothetical inputs that no caller produces.

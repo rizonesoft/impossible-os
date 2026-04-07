@@ -24,23 +24,19 @@ description: Codex-driven performance hot-path review. Focused analysis of ISR p
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf review prompt>"
    ```
 
-3. **Evaluate findings by category:**
-   - **Allocation in hot path** -- `kmalloc`/`pmm_alloc_frame` called from ISR or per-tick code. Pre-allocate instead.
-   - **O(n^2) or worse** -- nested loops over the same data, linear scan where binary search or hash suffices
-   - **Lock contention** -- spinlock held across I/O, allocation, or klog. Minimize critical section.
-   - **Byte-at-a-time operations** -- `memcpy` or string copy one byte at a time where bulk `rep movsb` or word-size copy exists
-   - **Unnecessary TLB flush** -- `vmm_flush_tlb_all()` where a single-page `invlpg` suffices
-   - **Cache-hostile patterns** -- struct fields accessed together but split across cache lines; array-of-structs where struct-of-arrays is better
-   - **Redundant computation** -- same value computed multiple times in a loop; hoist out of loop
-   - **klog in hot path** -- `LOG_DEBUG` calls in per-tick or per-interrupt code. Even when filtered, the format-string evaluation still runs.
-
-4. **Classify severity:**
-   - **Critical** -- causes measurable latency on every interrupt/tick (> 1 us per invocation)
-   - **High** -- causes latency on common operations (allocation, exec, file open)
+3. **Evaluate findings with `superpowers:receiving-code-review` discipline** -- perf optimizations are the easiest place to add complexity for no measurable benefit. For each finding:
+   - **Verify the path is actually hot.** Read the function. Is it really called from an ISR/per-tick path, or only from init/error paths? Codex flags allocations in functions that "look hot" but may run once at boot.
+   - **Verify the cost.** Is the allocation/lock/copy actually expensive enough to matter? A `kmalloc` call in a path that runs at 10 Hz is not a problem.
+   - **Don't sacrifice correctness or clarity for micro-optimization.** A spinlock that's held "too long" but is also the only correct way to serialize the operation should stay. A linear scan over a 16-element array should not be replaced with a hash table.
+   - **Reject "could be faster" without "is measurably slow."** Codex reviews structure, not measurements. Without a profile or serial-timing observation showing the path is actually slow, do not refactor.
+4. **Classify severity for verified findings:**
+   - **Critical** -- verified to cause measurable latency on every interrupt/tick (> 1 us per invocation)
+   - **High** -- verified to cause latency on common operations (allocation, exec, file open)
    - **Medium** -- causes latency on uncommon paths (error handling, edge cases)
-   - **Low** -- micro-optimization with no measurable impact
+   - **Low** -- micro-optimization with no measurable impact -- reject these
+   - **Reject** -- finding is on a cold path, or cost is not actually high; document why with code/observation evidence
 
-5. **Fix critical/high findings.** Accept medium/low with justification.
+5. **Fix critical/high findings only.** Accept medium with justification. Reject low and false-positives.
 
 ## Prompt Template
 
@@ -69,3 +65,4 @@ For each finding: file:line, what it does, why it's slow, suggested fix, estimat
 - Do not sacrifice correctness for performance. A fast race condition is worse than a slow lock.
 - Do not add complexity for micro-optimizations. If the improvement is < 1 us and the code is clearer as-is, skip it.
 - Focus on algorithmic improvements (O(n) -> O(log n)) over micro-optimizations (instruction scheduling).
+- Apply `superpowers:receiving-code-review` discipline -- Codex flags structural perf risks, not measured slowness. Verify each finding is on an actually-hot path with actually-measurable cost before refactoring. "Could be faster" without "is measurably slow" is a reject.

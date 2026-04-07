@@ -39,9 +39,14 @@ description: Run adversarial code review for one implemented TODO section, fix f
    - List ALL adversarial angles from step 2 in the prompt -- do not omit any.
    - Request findings by severity: `Critical`, `High`, `Medium`, `Low`.
    - Run in background for large reviews (> 3 files).
-4. Fix findings in priority order.
-   - Always fix `Critical` and `High`.
-   - Fix `Medium` unless explicitly accepted with a concrete technical reason.
+4. Triage findings with `superpowers:receiving-code-review` discipline -- do NOT blindly implement every Codex finding. For each finding:
+   - **Verify technically first.** Read the code Codex flagged at the cited lines. Is the finding correct? Codex reads code without runtime context and can be wrong about things like "this lock is missing" when the caller already holds it, or "this is a race" when the path is single-threaded by construction.
+   - **If the finding is valid:** fix the root cause, not the surface symptom. Rebuild.
+   - **If the finding is wrong or misleading:** reject with a concrete technical reason (not "I disagree" -- explain WHY it's wrong with code evidence: caller already holds lock X, path runs only in BSP boot phase 0, etc.).
+   - **If the finding is correct but out of scope:** accept with justification and add a follow-up TODO checklist item with `→ XREF` where applicable.
+   - **YAGNI check:** if Codex suggests "implement properly" for an unused code path, grep for callers first. If unused, consider removing instead of expanding.
+   - **No performative agreement.** Never write "Great catch" or "You're absolutely right" -- just state the fix or the rejection with reasoning.
+   - Apply this priority order to *valid* findings: always fix `Critical` and `High`. Fix `Medium` unless explicitly accepted with a concrete technical reason.
 5. Rebuild and run relevant tests after fixes.
    - `bash scripts/build.sh` and confirm `=== BUILD OK ===`.
    - Run targeted runtime/test evidence needed by the section.
@@ -59,3 +64,4 @@ description: Run adversarial code review for one implemented TODO section, fix f
 - Fix root causes, not surface symptoms.
 - Keep scope section-targeted; do not widen into full-file roadmap cleanup.
 - Always use the Codex plugin for the review -- self-review has implementation bias and misses things that a fresh reader catches (proven: §1 Codex found 2 Critical issues self-review missed).
+- Apply `superpowers:receiving-code-review` discipline when acting on findings -- Codex is an external reviewer, not an authority. Verify, push back when wrong, fix root causes when right.

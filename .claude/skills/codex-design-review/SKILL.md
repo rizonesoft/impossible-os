@@ -25,12 +25,18 @@ description: Pre-implementation design review via Codex. Before writing code for
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
    ```
    Frame as design review, not code review -- Codex should analyze the PLAN, not existing code.
-5. **Evaluate findings:**
-   - **Blocker** -- the plan has a fundamental flaw that would require redesign after implementation. Fix the TODO section before implementing.
-   - **Warning** -- the plan is viable but has edge cases or risks to handle during implementation. Note them for the implementer.
+5. **Evaluate findings with `superpowers:receiving-code-review` discipline** -- Codex is reviewing the *plan*, but it's still an external reviewer that can be wrong. For each finding:
+   - **Verify against the codebase.** Read the integration surface files. Does Codex's claim match what the existing code actually does? A "this will conflict with X" finding is only valid if X actually behaves the way Codex claims.
+   - **Check assumptions.** Codex may assume general-OS conventions (e.g., "you need a wait queue here") that don't apply to this freestanding kernel (e.g., we use polled completion in init paths).
+   - **YAGNI check.** If Codex suggests adding configurability, error paths, or "production-ready" features the section's spec doesn't require, push back.
+   - **No performative agreement.** Reject wrong findings with concrete code evidence ("the integration surface in `vmm.c:512` already handles this case"). Don't soften your rejection.
+6. **Classify each verified finding:**
+   - **Blocker** -- the plan has a verified fundamental flaw that would require redesign after implementation. Fix the TODO section before implementing.
+   - **Warning** -- the plan is viable but has verified edge cases or risks to handle during implementation. Note them for the implementer.
+   - **Reject** -- finding is wrong or misapplied to this codebase. Document the technical reason.
    - **Clear** -- no significant issues found. Proceed to implementation.
-6. **Update the TODO section** if blockers or warnings were found:
-   - Add missing checklist items for edge cases Codex identified
+7. **Update the TODO section** if blockers or warnings were found:
+   - Add missing checklist items for edge cases Codex identified (verified ones only)
    - Add `> [!WARNING]` callouts for risks
    - Adjust the approach if Codex found a fundamental flaw
 
@@ -64,3 +70,4 @@ Questions:
 - This is a PLAN review, not a code review. Do not dispatch if the code is already written -- use `codex-adversarial-review-section` instead.
 - Do not implement code in this skill. Only modify the TODO section text.
 - If Codex returns "all clear," proceed with implementation. Do not re-review endlessly.
+- Apply `superpowers:receiving-code-review` discipline -- Codex's design feedback is suggestions to evaluate, not orders. Verify findings against the actual integration surface before adopting them.
