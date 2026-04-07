@@ -10,6 +10,7 @@ description: Create lean project TODO files under todo/, choose the correct doma
 - The user wants a new TODO file under `todo/`.
 - A feature, subsystem, or spec needs a tracked execution roadmap.
 - A stale draft needs to be rewritten into the current lean TODO format.
+- A scope gap discovered during `implement-todo-section` (or `verify-todo-section`) step 6 needs a new TODO file because the gap spans multiple subsystems and no existing TODO covers it (scope-gap protocol Branch C). See [../implement-todo-section/scope-gap-protocol.md](../implement-todo-section/scope-gap-protocol.md). Before creating a new file, the scope-gap protocol requires a dedup sweep across all existing TODOs -- if any TODO already covers the scope, use Branch D (add to existing TODO) instead of creating a new one.
 
 ## Plan Quality Principles
 
@@ -21,6 +22,15 @@ description: Create lean project TODO files under todo/, choose the correct doma
 > - **Make it executable** -- someone (human or AI) should be able to follow §1 through §N without guessing.
 
 ## Workflow
+
+### Scope-Gap Mode (invoked from scope-gap protocol Branch C)
+
+When `create-todo` is invoked from the scope-gap protocol, the workflow is the same numbered steps below, with these overrides:
+
+- **Dedup-check-first is MANDATORY.** Before ANY research or drafting, run `Grep` across `todo/*/` for the gap's keywords, function names, feature names, and OS Comparison row text (~30 seconds). If a strong match is found, STOP -- switch the invoker to Branch D of the scope-gap protocol and do NOT create a new file. The dedup check is the whole reason scope-gap mode exists as a named branch. See A.5.1 in [../implement-todo-section/scope-gap-protocol.md](../implement-todo-section/scope-gap-protocol.md).
+- **Inputs block seeded from originating section.** Copy the originating TODO's section files into the new TODO's Inputs block as a starting point.
+- **Bidirectional XREF is automatic.** The new TODO gets a `-> XREF: <originating TODO> §N` link in its Inputs. The originating section ALREADY has its `Follow-up (Branch C -> XREF: ...)` line (added by the implement-mode Branch C step 4). Verify both sides before closing out the invocation.
+- **Domain INDEX.md note.** The new TODO's INDEX.md row must include `(created from scope-gap in <originating TODO> §N)` so the paper trail is visible at the domain level.
 
 1. **Find the canonical home.**
    - Read `todo/TODO-00-INDEX.md`, the target domain `INDEX.md`, and adjacent TODOs.
@@ -126,6 +136,7 @@ description: Create lean project TODO files under todo/, choose the correct doma
 ## Guardrails
 
 - Do not implement code or reconcile checkbox truth against the codebase.
+- In scope-gap mode, ALWAYS run the dedup sweep before drafting. A new TODO created over an existing one is a documentation bug that is expensive to unwind -- Branch D exists specifically to prevent it.
 - Do not add giant mutable prompt blocks, formatting-only cleanup steps, or MCP-memory instructions.
 - Keep tables compact and split wide planning content into bullets or short subsections.
 

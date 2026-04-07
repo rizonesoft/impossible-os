@@ -33,6 +33,7 @@ description: Verify an already-implemented TODO section through the full quality
 6. **VERIFY each checklist item** -- this is the verify-mode replacement for implement-mode "Implement". Walk every `- [x]` item in the section and prove it via Grep/Read evidence. State each proof as "claim → file:line → snippet shows X".
    - **Done proof gate (verify mode):** if the evidence does NOT show implemented + wired + functional on normal path, the item must be conservatively downgraded from `[x]` to `[/]` (regression) or `[ ]` (never implemented). When in doubt, downgrade.
    - **Stale TODO patterns:** if a checklist item demands `POST16(...)` codes for non-boot-path code (scheduler/exec/syscall/auxv work) or "test POST16 constant equals 0xDDNN" tautologies, treat the item as obsolete. Document the removal in the verification report and remove the stale checklist line in step 10. Do not satisfy obsolete patterns.
+   - **Scope-gap audit (MANDATORY).** Grep the section's source files for undocumented gap markers: `TODO`, `FIXME`, `HACK`, `XXX`, `for now`, `placeholder`, `STUB(`, `STATUS_NOT_IMPLEMENTED`, `kernel_unimplemented`, `E_NOTIMPL`. For each hit, cross-check the section's TODO text: was the gap disclosed in a NOTE callout or `Follow-up (Branch ...)` line during the original implement run? If YES, it is a known-deferred item -- record it in the verify report. If NO, the original implement run violated the scope-gap protocol: this is a verification failure. Verify-mode then either (a) FIXES the gap inline IF it meets Branch A criteria (under 1000 lines, routine, same subsystem) AND adds the NOTE callout retroactively (this is the ONE implementation action verify-mode is allowed in step 6, identical in spirit to step 8's routine test gap-fill allowance); or (b) FLAGS the gap, downgrades affected items from `[x]` to `[/]`, and produces a list of follow-up items for the user to triage via implement-mode on a later run. Never (c) silently re-stub the workaround. See [scope-gap-protocol.md](../implement-todo-section/scope-gap-protocol.md).
    - **NEVER mark a `[ ]` item as `[x]` in verify-mode.** New work belongs in `implement-todo-section`. If verification reveals an unimplemented item that should have been `[x]`, flag it -- do not silently complete it.
 7. **Build** -- `bash scripts/build.sh`, confirm `tail -1 build/build.log` shows `=== BUILD OK ===`. If the existing code doesn't even build, verification has already failed; report and stop.
 8. **Verify unit tests exist and are wired** -- read the TODO file's **Unit Tests** section to find:
@@ -135,7 +136,7 @@ This skill is the VERIFY half of a mirrored pair with `implement-todo-section`. 
 | 3 | Explore codebase to plan changes | Explore codebase to map evidence |
 | 4 | Codex design review BEFORE writing | SKIP -- code exists; intentional no-op to keep numbering aligned |
 | 5 | Walk kernel-code-quality gates BEFORE writing | Spot-check kernel-code-quality gates AGAINST existing code |
-| 6 | **WRITE code** (the implementation) | **VERIFY each `[x]` claim with grep/read evidence** (the audit) |
+| 6 | **WRITE code** + walk scope-gap protocol on detection (Branches A/B/C/D) | **VERIFY each `[x]` claim** + scope-gap audit (flag undocumented workarounds) |
 | 7 | Build -- catches what you wrote | Build -- catches what's already broken |
 | 8 | Wire NEW unit tests | AUDIT existing test wiring; add only routine gap fills |
 | 9 | Codex test coverage of new tests | Codex test coverage of existing tests |
@@ -158,7 +159,7 @@ This skill is the VERIFY half of a mirrored pair with `implement-todo-section`. 
 
 ## Guardrails
 
-- **Conservative downgrade only.** Never widen scope to "fix while you're in there."
+- **Conservative downgrade only.** Never widen scope to "fix while you're in there." Exception: the scope-gap audit in step 6 and the routine test gap-fill in step 8 are the TWO places verify-mode is allowed to touch new code, and both require the same size/subsystem constraints as Branch A of the scope-gap protocol. Anything beyond that -- flag and stop.
 - **Steps 13-18 are blocking prerequisites for step 19.** Same as implement-mode: this gate exists because review-skip is the failure mode.
 - Do not weaken tests to make findings go away.
 - Do not mark new items `[x]` from verify-mode evidence. New work goes through `implement-todo-section`.
@@ -171,3 +172,4 @@ This skill is the VERIFY half of a mirrored pair with `implement-todo-section`. 
 ## Additional Resources
 
 - [build-evidence.md](../implement-todo-section/build-evidence.md) -- shared with implement-todo-section (single source of truth)
+- [scope-gap-protocol.md](../implement-todo-section/scope-gap-protocol.md) -- shared with implement-todo-section (Branches A/B/C/D decision tree for scope gaps)

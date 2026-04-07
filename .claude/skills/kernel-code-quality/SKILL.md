@@ -186,7 +186,7 @@ Lesson: `s_subsys_names[]` missed `SUBSYS_OB`, causing OOB read in `kernel_subsy
 
 > Every line of code ships as if it is the final version. There is no "fix it later" pass. Impossible OS is built to rival Windows and Linux -- that standard applies to every commit, not just milestone releases.
 
-- [ ] **No TODO/FIXME/HACK in new code.** If something needs work, do the work now or don't write it. A `// TODO: handle error` comment is a shipped bug. Either handle the error or don't merge.
+- [ ] **No TODO/FIXME/HACK in new code.** If something needs work, do the work now or don't write it. A `// TODO: handle error` comment is a shipped bug. Either handle the error or don't merge. If the missing work is a genuine scope gap (the section doesn't cover it and no other TODO does either), that is EXACTLY the case the scope-gap protocol in `implement-todo-section` step 6 resolves -- walk Branches A/B/C/D in [scope-gap-protocol.md](../implement-todo-section/scope-gap-protocol.md) to put the paper trail in the TODO file, not in a source comment.
 - [ ] **No hardcoded magic numbers.** Every constant gets a `#define` with a descriptive name in a header. Inline `0x8E00` or `470` in source code is a maintenance trap -- use `AP_DATA_BASE` or `SSDT_MAIN_COUNT`.
 - [ ] **No copy-paste code.** If you write the same pattern three times, extract it. But don't extract prematurely for one use -- wait for the third occurrence.
 - [ ] **No emulator workarounds.** Code must be correct per the hardware specification. If QEMU does something wrong, that's QEMU's bug -- never add `if (running_on_qemu)` branching. The only platform-specific code allowed is `hv_supports_*()` checks where hardware genuinely differs.
@@ -244,7 +244,7 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | New public function | At least one unit test assertion |
 | Bare-metal crash lesson | Add to CLAUDE.md Bare Metal Gotchas |
 | Unicode in strings/comments | Replace with ASCII `--` |
-| Tempted to write TODO/FIXME | Do the work now or don't write the code |
+| Tempted to write TODO/FIXME | Walk the scope-gap protocol -- Branches A/B/C/D |
 | Magic number in source | Extract to `#define` in a header |
 | Test failing | Fix the code, never skip the test |
 | Emulator-specific behavior | Write to the hardware spec, not the emulator |
