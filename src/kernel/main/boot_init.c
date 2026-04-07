@@ -418,9 +418,8 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode)
     /* Don't pollute perf data with NULL-step test calls */
     if (step)
         boot_timing_record_step(phase, safe_step, postcode);
-    /* boot_post_write16() already calls post_display16() internally --
-     * a second call here would render the same glyph twice per step. */
     boot_post_write16(postcode);
+    post_display16(postcode);
 
     /* VPD Tier 1: show named stage with status indicator */
     {

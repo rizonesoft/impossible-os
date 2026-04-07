@@ -370,7 +370,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
   - `BOOT_PERF_MAGIC == 0x50455246` ("PERF")
   - Bootperf POST codes non-zero, unique, no overlap with deferred range
 
-> **Done:** 22 suites registered in `test_runner_init()` (2026-04-03; +5 §1 gap-fill suites added 2026-04-07 by verify-mode -- enum layout, BOOT_STEP mapping, boot_progress recording, dump smoke, POSTCODE constants).
+> **Done:** 21 suites registered in `test_runner_init()` (2026-04-03; +4 §1 gap-fill suites added 2026-04-07 by verify-mode -- enum layout, BOOT_STEP mapping, dump smoke, POSTCODE constants). A 5th gap-fill (boot_progress recording) was attempted but reverted -- calling boot_progress() from a unit test froze boot on QEMU WHPX after BOOT_STEP test on the user's i5-11600K box. Tests must NEVER call boot_progress() -- it has live VPD/framebuffer/serial side effects that cannot be validated in WSL.
 
 ## Codex Adversarial Review
 

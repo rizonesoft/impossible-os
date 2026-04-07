@@ -180,48 +180,6 @@ static void test_boot_step_readiness_mapping(void)
     kernel_subsystem_set_ready(SUBSYS_PMM, saved);
 }
 
-/* ---- §1 boot_progress() happy-path side effects ----
- *
- * boot_progress(non-NULL) must record exactly one timing step with the
- * supplied phase/postcode/step pointer.  boot_progress(NULL) must NOT
- * record a timing step (it's used by tests for null safety only).
- */
-static void test_boot_progress_records_step(void)
-{
-    const boot_timing_step_t *steps = (const boot_timing_step_t *)0;
-    uint32_t before = boot_timing_get_steps(&steps);
-
-    /* If the boot timing ring is already at BOOT_TIMING_MAX_STEPS=64 the test
-     * cannot validate recording semantics -- record_step would early-return.
-     * Fail loudly so the buffer can be enlarged or boot_progress calls trimmed,
-     * rather than silently passing and masking a real recording regression. */
-    TEST_ASSERT(before < 64,
-                "boot_timing ring saturated before test ran -- raise "
-                "BOOT_TIMING_MAX_STEPS or trim boot_progress calls");
-
-    boot_progress(0, "VERIFY_TEST", 0xCAFE);
-
-    uint32_t after = boot_timing_get_steps(&steps);
-    TEST_ASSERT_EQ(after, before + 1,
-                   "boot_progress(non-NULL) records exactly one step");
-
-    /* Verify the recorded fields match what we passed in */
-    TEST_ASSERT_EQ((int)steps[after - 1].phase, 0,
-                   "recorded step phase matches");
-    TEST_ASSERT_EQ((int)steps[after - 1].postcode, 0xCAFE,
-                   "recorded step postcode matches");
-    TEST_ASSERT(steps[after - 1].step != (const char *)0 &&
-                steps[after - 1].step[0] == 'V',
-                "recorded step pointer matches (starts with V)");
-
-    /* NULL step must NOT advance the recorder (existing behavior) */
-    uint32_t mid = boot_timing_get_steps(&steps);
-    boot_progress(0, (const char *)0, 0xBEEF);
-    uint32_t after_null = boot_timing_get_steps(&steps);
-    TEST_ASSERT_EQ(after_null, mid,
-                   "boot_progress(NULL) does NOT record a step");
-}
-
 /* ---- §1 kernel_subsystem_dump() smoke test ----
  *
  * Dump must run to completion and emit at least one klog entry.
@@ -365,7 +323,6 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: POST codes", test_post_codes_nonzero_and_unique, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: subsys enum layout", test_subsys_enum_layout, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: BOOT_STEP mapping", test_boot_step_readiness_mapping, TEST_CAT_BOOT);
-    test_suite_register_cat("Boot init: progress records step", test_boot_progress_records_step, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: dump emits entries", test_kernel_subsystem_dump_emits, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: POSTCODE phase constants", test_postcode_phase_constants, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: defer NULL fn", test_boot_defer_null_fn, TEST_CAT_BOOT);
