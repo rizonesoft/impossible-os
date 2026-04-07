@@ -19,7 +19,7 @@
 - → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §4` -- per-CPU data pointer (`gs` base, `swapgs`) and AP spin-loop address; §3 and §4 read `this_cpu()` from the structure set up here
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md` -- IPI delivery at `DISPATCH_LEVEL`; TLB shootdown in §2 and RCU IPIs in §6 must not lower IRQL during handler
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` -- `vmm_unmap` and `mprotect` call `tlb_shootdown()` from §2 after every PTE change on a shared address space
-- → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §14` -- per-thread TEB unmap on `thread_join()` is consumer of §2; until `tlb_shootdown()` lands, §14 defers TEB reclamation to `task_cleanup()` and accepts a bounded leak (16 * 4 KiB per multithreaded process). Implementing §2 here unblocks §14's runtime reclamation path.
+- → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §15` -- per-thread TEB unmap on `thread_join()` is consumer of §2; until `tlb_shootdown()` lands, §15 defers TEB reclamation to `task_cleanup()` and accepts a bounded leak (16 * 4 KiB per multithreaded process). Implementing §2 here unblocks §15's runtime reclamation path.
 
 ## Outcome
 
