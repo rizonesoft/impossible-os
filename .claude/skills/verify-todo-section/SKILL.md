@@ -10,7 +10,6 @@ description: Verify an already-implemented TODO section through the full quality
 - A section is marked `[x]` and you want to confirm it's truly complete.
 - Upstream code changed (refactor, dependency update) and you need to re-verify a section.
 - The user asks "is this section really done?" or "verify §N for me."
-- Before running `/complete-todo` to graduate a TODO to documentation.
 - Auditing a section implemented in a previous session.
 
 ## Workflow
