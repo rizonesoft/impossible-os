@@ -199,6 +199,10 @@ Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP
 > [!NOTE]
 > -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` -- VMM uses `vmm_map_mmio_uc()` which relies on PAT index 3 being UC. If an AP's PAT MSR maps index 3 to WB, MMIO accessed on that AP is cached and hardware registers read stale values.
 
+> [!IMPORTANT]
+> **PAT constant decode bug found during TODO-01 §2 verify (2026-04-08):** `boot_hw.c:270` writes `0x0007040600010406` intending "entry 1: WT(04)→WC(01)" per the comment. Decoding bits [23:16] (PA2): 0x07 → 0x01. The actual change is at PA2, not PA1. Meanwhile `vmm_map_mmio_wc()` uses `VMM_FLAG_WRITETHROUGH` only (PWT=1, PCD=0, PAT bit=0) which selects PAT index 1 = still 0x04 (WT). **Net effect: framebuffer is mapped WT, not WC -- silent perf regression on every CPU.** Fix the constant to `0x0007040600070106` (or similar -- ensure PA1 = 0x01 = WC) BEFORE wiring AP sync, otherwise APs will faithfully synchronize the wrong layout.
+
+- [ ] **Fix the PAT constant decode bug in `boot_hw.c:270` first** -- correct value should set PA1 (bits 15:8) to 0x01 (WC), not PA2. Verify by computing expected hex and decoding before/after with byte-level comments. Add a unit test that asserts `(g_bsp_pat_msr >> 8) & 0xFF == 0x01` to catch future regressions.
 - [ ] Read BSP PAT MSR value in Phase 0 after `cpuid_init()`; store in `g_bsp_pat_msr` global (or in `cpu_data[0].pat_msr`)
 - [ ] In `ap_cpu_harden()` (§4): after EFER/CR4 replication, write `wrmsr(IA32_PAT, g_bsp_pat_msr)` to synchronize AP PAT to BSP. **Rollback:** If PAT write crashes AP, skip the wrmsr and log `[WARN] AP%u PAT sync skipped` -- AP will use firmware-default PAT which is usually identical to BSP anyway
 - [ ] Read back AP PAT and verify match: `rdmsr(IA32_PAT) == g_bsp_pat_msr`; log `[AP%u] PAT synced: 0x%lx` on success, panic on mismatch (hardware fault)
