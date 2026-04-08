@@ -54,6 +54,7 @@
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [ ]   |
 | ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [ ]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [ ]   |
+| 💎  |  15   | boot_info ABI handoff validation (header magic) | --         |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -331,6 +332,42 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 
 ---
 
+## 15. boot_info ABI Handoff Validation
+
+The kernel currently dereferences the `mbi` parameter passed by the bootloader as `(struct boot_info *)mbi` and byte-copies `sizeof(struct boot_info)` from it without validating that the pointer is valid, the structure is the expected size, or the layout matches the kernel's compile-time view (`include/kernel/boot_info.h`). The post-hoc cmdline ASCII check at `src/kernel/main/boot_hw.c:79-91` catches gross struct shifts but happens AFTER the byte-copy -- a wild pointer or version mismatch crashes Phase 0 before fault recovery exists.
+
+> [!IMPORTANT]
+> **Found during TODO-01 §2 Phase 0 verify (2026-04-08, Codex round 1, commit b402cf21).** The handoff is internal (we wrote both sides), but every time the bootloader or kernel changes `struct boot_info` without coordination -- adding a field, reordering, changing alignment -- the silent-corruption window grows. The fix is an ABI contract: a header at offset 0 with magic, version, and size, validated by the kernel BEFORE the byte-copy.
+
+- [ ] Add a `boot_info_header` struct at offset 0 of `struct boot_info` containing:
+  - `uint32_t magic` -- e.g. `0x49504F53` ("IPOS"). Define in `include/kernel/boot_info.h` as `BOOT_INFO_MAGIC`.
+  - `uint16_t version` -- ABI version number, bumped on every breaking layout change. Define `BOOT_INFO_VERSION` in the header.
+  - `uint16_t size` -- `sizeof(struct boot_info)` baked in by the bootloader at compile time. Kernel compares to its own `sizeof(struct boot_info)`.
+- [ ] Bootloader (`src/boot/uefi/`) populates the header before `ExitBootServices`. Add `boot_info.header.magic = BOOT_INFO_MAGIC; boot_info.header.version = BOOT_INFO_VERSION; boot_info.header.size = sizeof(struct boot_info);`.
+- [ ] Kernel `boot_phase0()` validates BEFORE the byte-copy:
+  1. `mbi != 0`
+  2. `mbi` is in conventional/loader memory range (not 0x10000 padding, not below 1 MiB)
+  3. `((struct boot_info_header *)mbi)->magic == BOOT_INFO_MAGIC`
+  4. `((struct boot_info_header *)mbi)->version == BOOT_INFO_VERSION` (or in a backwards-compatible range)
+  5. `((struct boot_info_header *)mbi)->size == sizeof(struct boot_info)` (kernel's view)
+  - On any failure: `boot_halt("boot_info handoff validation failed: <reason>")` with the bad value in the error message.
+- [ ] Add `_Static_assert(__builtin_offsetof(struct boot_info, header) == 0, ...)` to `include/kernel/boot_info.h`.
+- [ ] Add `_Static_assert(sizeof(struct boot_info_header) == 8, ...)` so the header layout is pinned.
+- [ ] Move the existing post-hoc `cmdline` ASCII sanity check (boot_hw.c:79-91) to be redundant-but-cheap second-line defense (keep it; remove the comment about "struct shifted").
+- [ ] Update `boot_hw.c:62-67` to use the validated header and only then copy `header.size` bytes (not `sizeof(struct boot_info)` -- use the bootloader-baked value, which the kernel just verified matches its own).
+- [ ] Add a regression test in `src/kernel/test/test_boot_info.c` (new file or piggyback on existing `test_boot_init.c`) that constructs a synthetic `struct boot_info` in a heap buffer with known-good and known-bad headers, calls a new pure helper `boot_info_validate(const void *p, size_t kernel_struct_size)` that returns `boot_result_t`, and asserts: OK on valid, FATAL on bad magic, FATAL on version mismatch, FATAL on size mismatch, FATAL on NULL. The actual `boot_phase0()` validation calls this helper -- pure data check, no live boot infrastructure (test side-effect ban compliant).
+- [ ] Update `boot_info.h` doc comments to record the ABI contract.
+- [ ] Bootloader and kernel must be rebuilt together when bumping `BOOT_INFO_VERSION` -- document in `CLAUDE.md` "Bare Metal Gotchas" or a new "ABI contract" section.
+- [ ] Commit: `"boot: validate boot_info ABI handoff (magic + version + size header)"`
+
+**Test checkpoint:** Boot normally on QEMU WHPX, TCG, VirtualBox, bare metal -- all 4 platforms reach Phase 0 with validation passing (no regression). Manually corrupt the bootloader's `boot_info.header.magic` -- kernel halts with `boot_info handoff validation failed: bad magic 0xXXXXXXXX (expected 0x49504F53)` on the serial log. Manually bump `BOOT_INFO_VERSION` in the kernel header without rebuilding the bootloader -- kernel halts with version mismatch. Unit tests for `boot_info_validate()` pass with the synthetic-buffer pattern.
+
+**Regression risk:** MEDIUM -- the bootloader and kernel must be rebuilt in lockstep. The first `BOOT_INFO_VERSION` bump after this lands will catch any stale UEFI binary on disk. Mitigate by building both from the same `scripts/build.sh` invocation (already the case).
+
+→ XREF: [`02-kernel-core/TODO-01-kernel-init-sequencing.md §2`](../02-kernel-core/TODO-01-kernel-init-sequencing.md) -- the verify follow-up that surfaced this.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                    | 🪟 Win11                      | 🐧 Linux                     | 🚀 Impossible OS              |
@@ -349,6 +386,7 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 | ⭐ | Human-readable error screen | ❌ Generic UEFI error     | ⚠️ GRUB rescue text       | ⬜ §9 🚀                   |
 | ⭐ | NVRAM error persistence    | ⚠️ BootStatusPolicy (opaque) | ❌ No persistence       | ⬜ §13 🚀                  |
 | ⭐ | Error screen QR code       | ❌ No QR at UEFI stage    | ❌ No QR at GRUB stage    | ⬜ §14 🚀                  |
+| 💎 | Bootloader handoff ABI     | ✅ winload BCD signature  | ✅ Multiboot2 magic+size  | ⬜ §15 magic+ver+size      |
 
 > **After parity items:** Impossible OS matches Windows and Linux on all bootloader error handling: ELF validation, ExitBootServices retry, kernel search fallback, ACPI SPCR serial detection, UEFI watchdog management, and memory map validation. The exclusive items push beyond: the human-readable error screen with QR code is actionable for non-technical users (scan to get step-by-step recovery), and NVRAM-persisted error codes give cross-boot diagnostics that neither Windows (opaque BootStatusPolicy) nor Linux (no bootloader error persistence) provides.
 
