@@ -43,7 +43,7 @@
 | ⭐  | Order | Deliverable                                | Depends On | Status |
 | --- | :---: | ------------------------------------------ | ---------- | :----: |
 | 💎  |   1   | Boot init infrastructure                   | --         |  [x]   |
-| 💎  |   2   | Phase 0 -- critical init                   | §1         |  [x]   |
+| 💎  |   2   | Phase 0 -- critical init                   | §1         |  [/]   |
 | 💎  |   3   | Phase 1 -- platform services               | §2         |  [/]   |
 | 💎  |   4   | Phase 2 -- system services                 | §3         |  [/]   |
 | 💎  |   5   | Phase 3 -- user platform                   | §4         |  [/]   |
@@ -84,22 +84,32 @@ Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or 
 - [x] `serial_init()` -- absolute first call; no dependencies; POST code 0x10
 - [x] `boot_info_parse(magic, mbi)` -- parse UEFI or Multiboot2 info; halt on unknown magic
 - [x] `uefi_runtime_init()` -- `SetVirtualAddressMap` + runtime props; BOOT_DEGRADED if unavailable
-- [x] `uefi_vars_init()` -- NVRAM variable enumeration; BOOT_DEGRADED if unavailable
-- [x] `uefi_time_init()` -- seed wall clock from UEFI RTC; BOOT_DEGRADED if unavailable
-- [x] `uefi_secureboot_init()` -- detect Secure Boot state; BOOT_DEGRADED if unavailable
-- [x] `tpm_init()` -- parse measured boot event log; BOOT_DEGRADED if no TPM
-- [x] `tpm_integrity_init()` -- PCR golden value check; BOOT_DEGRADED on mismatch
+- [/] `uefi_vars_init()` -- NVRAM variable enumeration; BOOT_DEGRADED if unavailable. Function returns `boot_result_t` and degrades correctly via its own internal `uefi_vars_available` flag, but the return value is **discarded** in `boot_phase0()` (boot_hw.c:147) and the degraded state is not exposed through the readiness oracle. Functionally OK; oracle visibility gap. Verify 2026-04-08.
+- [/] `uefi_time_init()` -- seed wall clock from UEFI RTC; BOOT_DEGRADED if unavailable. Same gap: return value discarded (boot_hw.c:148); internal flag handles degraded state.
+- [/] `uefi_secureboot_init()` -- detect Secure Boot state; BOOT_DEGRADED if unavailable. Same gap: return value discarded (boot_hw.c:153); internal flag handles degraded state.
+- [/] `tpm_init()` -- parse measured boot event log; BOOT_DEGRADED if no TPM. Same gap: return value discarded (boot_hw.c:158); internal `tpm.c` state handles degraded path. `tpm.c:59` declares `boot_result_t tpm_init(void)`.
+- [/] `tpm_integrity_init()` -- PCR golden value check; BOOT_DEGRADED on mismatch. Same gap: return value discarded (boot_hw.c:159); internal state handles degraded path. `tpm.c:243` declares `boot_result_t tpm_integrity_init(void)`.
 - [x] `pmm_init()` -- physical memory manager; BOOT_FATAL if fails; POST code 0x20
 - [x] `vmm_init()` -- virtual memory manager; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_PMM)
 - [x] `heap_init()` -- kernel heap; BOOT_FATAL if fails; BOOT_REQUIRE(SUBSYS_VMM)
 - [x] `klog_early_init()` -- in-memory ring buffer only (no disk yet); BOOT_REQUIRE(SUBSYS_HEAP)
 - [x] `cpuid_init()` -- probe CPU features; BOOT_DEGRADED on very old CPU
 - [x] `simd_enable_avx()` -- enable AVX2 or fall back to SSE2; BOOT_DEGRADED on no AVX2
-- [x] `boot_config_parse()` -- read `boot.conf` settings into `g_boot_info.config`; BOOT_DEGRADED on missing file (use defaults)
+- [/] `boot_config_parse()` -- boot.conf is parsed by the **UEFI bootloader** (not the kernel) and delivered in `g_boot_info.config`; kernel consumes + logs the values and falls back to defaults via the `config_found` flag. The literal `boot_config_parse()` symbol does not exist in the kernel -- only the bootloader-side parser does. Behavior is satisfied; checklist text is misleading.
 - [x] Remove driver includes (`ata.h`, `virtio_blk.h`, `ahci.h`) from this file -- they belong in Phase 2
 - [x] Remove SMBIOS, ESRT, UEFI conformance, GOP mode log from Phase 0 -- move to Phase 1
 - [x] Remove all `HV_BAR` macro definitions and usages (12 sites in `boot_hw.c`) -- already removed in prior commit
 - [x] Replace every `HV_BAR` site with `boot_progress(0, "step-name", postcode)` -- already done in prior commit
+
+> [!NOTE]
+> **Implementation drift (verify 2026-04-08):** `boot_phase0()` performs five steps that were added after this checklist was written and are not enumerated above: (1) `smp_early_bsp_init()` first thing -- sets GS_BASE before any interrupt fires, (2) `cpu_harden()` -- enables NX before page tables are touched, (3) `vmm_apply_nx_policy()` -- applies NX to page tables, (4) PAT MSR reprogramming with readback verify -- intent is WC framebuffer mapping (see follow-up below for actual behavior), (5) `cpu_harden_post_pagetable()` + `cpu_verify_hardening()` -- intended to enable SMEP/SMAP, but `hv_supports_cr4_smep_smap()` currently returns 0 globally (CLAUDE.md "No SMEP/SMAP until per-process page tables"), so this is a documented architectural no-op until per-process PML4 is implemented. Plus the LAPIC UC mapping smoke test (validates `vmm_map_mmio_uc()`) and `boot_perf_read_prev()` + `vpd_init()` calls.
+
+**Verify follow-ups (Codex 2026-04-08, out of §2 scope -- defer to owning subsystem):**
+- [ ] **PAT MSR constant + AP propagation bug** -- `boot_hw.c:270` writes `0x0007040600010406`. Decoding bits [23:16] (PA2): 0x07 → 0x01. The comment says "entry 1: WT(04)→WC(01)" but the actual change is at PA2, not PA1. Meanwhile `vmm_map_mmio_wc()` uses `VMM_FLAG_WRITETHROUGH` only (PWT=1, PCD=0, PAT bit=0) which selects PAT index 1 = still 0x04 (WT). **Net effect: framebuffer is mapped WT, not WC -- silent perf regression.** Compounding bug: `ap_entry()` (smp.c:110) does NOT mirror the PAT MSR write, so APs have default PAT (PA2 = UC-) while BSP has PA2 = WC -- cross-CPU cache-type skew if any AP touches a `vmm_map_mmio_wc()` page (e.g., async storage drivers under `async_init=1`). Owner: [03-memory-concurrency/TODO-01-vmm-memory-protection.md](../03-memory-concurrency/TODO-01-vmm-memory-protection.md) or new follow-up in TODO-04 (vmm advanced).
+- [ ] **UEFI handoff pointer validation** -- `boot_hw.c:62-67` byte-copies `sizeof(struct boot_info)` from `(struct boot_info *)mbi` with no header magic, version, or size validation. The post-hoc cmdline ASCII check at lines 79-91 catches struct shifts but not wild pointers. The handoff is internal (we wrote the bootloader), but a corrupt pointer crashes Phase 0 before fault-recovery exists. Fix requires an ABI contract: add `magic`/`version`/`size` header at offset 0 of `struct boot_info`, validate before copying. Owner: bootloader handoff redesign (Branch B/C scope, not §2 verify).
+- [ ] **Phase 0 BOOT_DEGRADED propagation** -- items 4-8 above were downgraded to `[/]` because `uefi_vars_init`, `uefi_time_init`, `uefi_secureboot_init`, `tpm_init`, `tpm_integrity_init` all return `boot_result_t` but `boot_phase0()` discards the value. Wire the return values into `kernel_subsystem_set_ready()` for new SUBSYS_UEFI_VARS / SUBSYS_UEFI_TIME / SUBSYS_SECUREBOOT / SUBSYS_TPM slots, then this section returns to all `[x]`. Owner: §2 itself, future implement-todo-section pass.
+
+**Codex finding REJECTED (verify 2026-04-08):** Codex flagged `cpu_verify_hardening()` as advisory (logs WARN instead of halting on SMEP/SMAP missing). This matches the documented architectural state -- SMEP/SMAP enablement is gated on `hv_supports_cr4_smep_smap()` which always returns 0 until per-process page tables exist. The verify routine is correctly informational. The proper fix is per-process PML4 (covered by other TODOs), not Phase 0 hardening enforcement.
 
 ## 3. Phase 1 -- Platform Services (Interrupts Enabled at End)
 Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display. BOOT_FATAL halts; BOOT_DEGRADED logs and continues. Interrupts enabled with `sti` only after LAPIC/timer are ready.
