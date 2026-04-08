@@ -231,19 +231,22 @@ void boot_phase3(void)
     /* Write hardware inventory to X:\Diag\hwdump.txt */
     hw_dump_write_file();
 
-    /* Report degraded subsystems */
+    /* Report degraded subsystems.  Names come from kernel_subsystem_name() --
+     * single source of truth in boot_init.c.  Loop bound is SUBSYS_COUNT,
+     * not a hard-coded constant, so new SUBSYS_* slots are reported
+     * automatically. (Drift caught by Codex 2026-04-08: this used to have
+     * a 20-entry copy of the names table and an `i < 20` cap, silently
+     * dropping SUBSYS_OB and any slot added after it.) */
     if (g_boot_info.degraded_mask) {
-        static const char *subsys_names[] = {
-            "Serial","PMM","VMM","Heap","Klog","GDT","IDT","ACPI",
-            "LAPIC","IOAPIC","Timer","RTC","FB","VFS","Registry",
-            "Sched","IPC","SMP","Exec","Desktop"
-        };
         uint32_t mask = g_boot_info.degraded_mask;
         uint32_t i;
         klog(LOG_WARN, "boot", "Degraded subsystems:");
-        for (i = 0; i < 20 && mask; i++) {
-            if (mask & (1u << i))
-                klog(LOG_WARN, "boot", "  - %s", subsys_names[i]);
+        for (i = 0; i < SUBSYS_COUNT && mask; i++) {
+            if (mask & (1u << i)) {
+                klog(LOG_WARN, "boot", "  - %s",
+                     kernel_subsystem_name((kernel_subsys_t)i));
+                mask &= ~(1u << i);
+            }
         }
     }
 

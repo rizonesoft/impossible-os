@@ -26,27 +26,31 @@
 static uint8_t g_subsys_ready[SUBSYS_COUNT];
 
 static const char *const s_subsys_names[SUBSYS_COUNT] = {
-    "SERIAL",   /* 0  */
-    "PMM",      /* 1  */
-    "VMM",      /* 2  */
-    "HEAP",     /* 3  */
-    "KLOG",     /* 4  */
-    "GDT",      /* 5  */
-    "IDT",      /* 6  */
-    "ACPI",     /* 7  */
-    "LAPIC",    /* 8  */
-    "IOAPIC",   /* 9  */
-    "TIMER",    /* 10 */
-    "RTC",      /* 11 */
-    "FB",       /* 12 */
-    "VFS",      /* 13 */
-    "REGISTRY", /* 14 */
-    "SCHED",    /* 15 */
-    "IPC",      /* 16 */
-    "SMP",      /* 17 */
-    "EXEC",     /* 18 */
-    "DESKTOP",  /* 19 */
-    "OB",       /* 20 */
+    "SERIAL",     /* 0  */
+    "PMM",        /* 1  */
+    "VMM",        /* 2  */
+    "HEAP",       /* 3  */
+    "KLOG",       /* 4  */
+    "GDT",        /* 5  */
+    "IDT",        /* 6  */
+    "ACPI",       /* 7  */
+    "LAPIC",      /* 8  */
+    "IOAPIC",     /* 9  */
+    "TIMER",      /* 10 */
+    "RTC",        /* 11 */
+    "FB",         /* 12 */
+    "VFS",        /* 13 */
+    "REGISTRY",   /* 14 */
+    "SCHED",      /* 15 */
+    "IPC",        /* 16 */
+    "SMP",        /* 17 */
+    "EXEC",       /* 18 */
+    "DESKTOP",    /* 19 */
+    "OB",         /* 20 */
+    "UEFI_VARS",  /* 21 */
+    "UEFI_TIME",  /* 22 */
+    "SECUREBOOT", /* 23 */
+    "TPM",        /* 24 */
 };
 
 _Static_assert(sizeof(s_subsys_names) / sizeof(s_subsys_names[0]) == SUBSYS_COUNT,
@@ -72,6 +76,25 @@ void kernel_subsystem_dump(void)
              __atomic_load_n(&g_subsys_ready[i], __ATOMIC_ACQUIRE) ? "OK  " : "FAIL",
              s_subsys_names[i]);
     }
+}
+
+const char *kernel_subsystem_name(kernel_subsys_t subsys)
+{
+    if ((uint32_t)subsys >= SUBSYS_COUNT) return "UNKNOWN";
+    return s_subsys_names[subsys];
+}
+
+bool kernel_subsystem_apply_result(kernel_subsys_t subsys, boot_result_t r)
+{
+    if ((uint32_t)subsys >= SUBSYS_COUNT) return false;
+
+    bool ready = (r == BOOT_OK) || (r == BOOT_DEGRADED);
+    kernel_subsystem_set_ready(subsys, ready);
+
+    if (r != BOOT_OK)
+        g_boot_info.degraded_mask |= (1u << (uint32_t)subsys);
+
+    return ready;
 }
 
 /* ---- BOOT_REQUIRE helper ------------------------------------------------- */

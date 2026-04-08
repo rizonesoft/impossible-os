@@ -142,21 +142,58 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         vpd_init();
     }
 
-    /* --- UEFI variable services (NVRAM enumeration) --- */
+    /* --- UEFI variable services (NVRAM enumeration) ---
+     * Both readiness oracle channels are updated in lockstep via
+     * kernel_subsystem_apply_result(): set_ready (gates BOOT_REQUIRE)
+     * and degraded_mask (feeds the desktop summary). */
     POST16(POST16_UEFI_VARS);
-    uefi_vars_init();
-    uefi_time_init();
+    {
+        boot_result_t r_vars = uefi_vars_init();
+        if (!kernel_subsystem_apply_result(SUBSYS_UEFI_VARS, r_vars))
+            klog(LOG_WARN, "UEFI", "Variable services unavailable (r=%d)", (uint64_t)r_vars);
+        else if (r_vars == BOOT_DEGRADED)
+            klog(LOG_WARN, "UEFI", "Variable services degraded");
+
+        boot_result_t r_time = uefi_time_init();
+        if (!kernel_subsystem_apply_result(SUBSYS_UEFI_TIME, r_time))
+            klog(LOG_WARN, "UEFI", "RTC wall-clock seed unavailable (r=%d)", (uint64_t)r_time);
+        else if (r_time == BOOT_DEGRADED)
+            klog(LOG_WARN, "UEFI", "RTC wall-clock seed degraded");
+    }
     POST16(POST16_UEFI_VARS_OK);
 
     /* --- Secure Boot state detection --- */
     POST16(POST16_SECUREBOOT);
-    uefi_secureboot_init();
+    {
+        boot_result_t r_sb = uefi_secureboot_init();
+        if (!kernel_subsystem_apply_result(SUBSYS_SECUREBOOT, r_sb))
+            klog(LOG_WARN, "UEFI", "Secure Boot detection unavailable (r=%d)", (uint64_t)r_sb);
+        else if (r_sb == BOOT_DEGRADED)
+            klog(LOG_WARN, "UEFI", "Secure Boot detection degraded");
+    }
     POST16(POST16_SECUREBOOT_OK);
 
-    /* --- TPM measured boot (parse event log) --- */
+    /* --- TPM measured boot (parse event log) ---
+     * tpm_init() establishes presence; tpm_integrity_init() runs PCR
+     * checks. The TPM subsystem is "ready" iff BOTH return OK/DEGRADED.
+     * Use the worst result (FATAL > DEGRADED > OK) when applying. */
     POST16(POST16_TPM);
-    tpm_init();
-    tpm_integrity_init();
+    {
+        boot_result_t r_tpm = tpm_init();
+        boot_result_t r_int = BOOT_OK;
+        if (r_tpm == BOOT_OK || r_tpm == BOOT_DEGRADED)
+            r_int = tpm_integrity_init();
+        /* tpm_init/tpm_integrity_init only return OK/DEGRADED/FATAL
+         * (never DEFERRED). For these, numeric enum order matches severity
+         * (FATAL=2 > DEGRADED=1 > OK=0), so max() picks the worst. */
+        boot_result_t worst = (r_tpm > r_int) ? r_tpm : r_int;
+        if (!kernel_subsystem_apply_result(SUBSYS_TPM, worst))
+            klog(LOG_WARN, "TPM", "Measured boot unavailable (init=%d integrity=%d)",
+                 (uint64_t)r_tpm, (uint64_t)r_int);
+        else if (worst == BOOT_DEGRADED)
+            klog(LOG_WARN, "TPM", "Measured boot degraded (init=%d integrity=%d)",
+                 (uint64_t)r_tpm, (uint64_t)r_int);
+    }
     POST16(POST16_TPM_OK);
 
     /* --- Physical memory manager: BOOT_FATAL if fails --- */

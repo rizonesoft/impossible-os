@@ -190,20 +190,16 @@ static void draw_hex16(volatile uint32_t *fb, uint32_t pitch,
     draw_string(fb, pitch, scr_w, scr_h, x, y, buf, color);
 }
 
-/* ---- Subsystem name lookup ---------------------------------------------- */
-
-static const char *subsys_name(kernel_subsys_t s)
-{
-    static const char *names[SUBSYS_COUNT] = {
-        "SERIAL","PMM","VMM","HEAP","KLOG","GDT","IDT","ACPI",
-        "LAPIC","IOAPIC","TIMER","RTC","FB","VFS","REGISTRY",
-        "SCHED","IPC","SMP","EXEC","DESKTOP","OB"
-    };
-    _Static_assert(sizeof(names) / sizeof(names[0]) == SUBSYS_COUNT,
-                   "recovery subsys names must match SUBSYS_COUNT");
-    if ((uint32_t)s < SUBSYS_COUNT) return names[s];
-    return "UNKNOWN";
-}
+/* ---- Subsystem name lookup ----------------------------------------------
+ *
+ * Single source of truth: kernel_subsystem_name() in boot_init.c.
+ * Previously this file maintained a duplicate names[] table that drifted
+ * out of sync when SUBSYS_COUNT grew (caught by Codex 2026-04-08 during
+ * the §2 Phase 0 propagation fix -- C zero-fills missing initializers,
+ * so the static_assert on size was satisfied while the new slots quietly
+ * returned NULL pointers that would crash draw_string() at recovery
+ * time). The duplicate table is gone; both call sites now read from one
+ * canonical table in boot_init.c. */
 
 /* ---- Recovery screen ---------------------------------------------------- */
 
@@ -219,7 +215,7 @@ boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info)
     serial_write("\n[RECOVERY] Boot failure in Phase ");
     serial_putchar('0' + (info->phase & 0x0F));
     serial_write(": ");
-    serial_write(subsys_name(info->subsystem));
+    serial_write(kernel_subsystem_name(info->subsystem));
     serial_write("\n");
 
     /* If framebuffer is not ready, fall through to boot_halt() */
@@ -263,7 +259,7 @@ boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info)
     y += FONT_H;
 
     draw_string(fb, pitch, w, h, 40, y, "Subsystem: ", 0x00C0C0C0);
-    draw_string(fb, pitch, w, h, 40 + FONT_W * 11, y, subsys_name(info->subsystem), 0x00FF8080);
+    draw_string(fb, pitch, w, h, 40 + FONT_W * 11, y, kernel_subsystem_name(info->subsystem), 0x00FF8080);
     y += FONT_H;
 
     draw_string(fb, pitch, w, h, 40, y, "POST code: ", 0x00C0C0C0);

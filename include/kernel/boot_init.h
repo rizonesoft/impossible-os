@@ -56,7 +56,11 @@ typedef enum {
     SUBSYS_EXEC     = 18,
     SUBSYS_DESKTOP  = 19,
     SUBSYS_OB       = 20,
-    SUBSYS_COUNT    = 21,  /* sentinel -- keep last */
+    SUBSYS_UEFI_VARS = 21,  /* UEFI variable services (NVRAM enumeration) */
+    SUBSYS_UEFI_TIME = 22,  /* UEFI RTC wall-clock seed */
+    SUBSYS_SECUREBOOT = 23, /* Secure Boot state detection */
+    SUBSYS_TPM      = 24,   /* TPM event log + PCR integrity */
+    SUBSYS_COUNT    = 25,  /* sentinel -- keep last */
 } kernel_subsys_t;
 
 /* --- POST code constants --------------------------------------------------
@@ -320,6 +324,23 @@ void kernel_subsystem_set_ready(kernel_subsys_t subsys, bool ok);
 /* Dump all subsystem states to klog(LOG_INFO).
  * Call before any halt so the serial log captures full state. */
 void kernel_subsystem_dump(void);
+
+/* Return a pointer to the canonical name of a subsystem (e.g. "PMM").
+ * Returns "UNKNOWN" if subsys is out of range. Single source of truth --
+ * recovery screen, klog dumps, and crash reporters all share this table. */
+const char *kernel_subsystem_name(kernel_subsys_t subsys);
+
+/* Apply a boot_result_t to BOTH readiness oracle channels in lockstep:
+ *   - kernel_subsystem_set_ready(subsys, result == BOOT_OK || BOOT_DEGRADED)
+ *   - g_boot_info.degraded_mask |= (1u << subsys) for any non-OK result
+ * Returns true if the subsystem ended up READY (OK or DEGRADED).
+ *
+ * Use for non-fatal Phase 0/1/2 init wrappers where the function returns
+ * a boot_result_t and the caller does NOT halt on failure. The two
+ * channels gate downstream BOOT_REQUIRE checks (channel 1) and feed the
+ * end-of-boot degraded summary in boot_desktop.c (channel 2).  They MUST
+ * agree -- this helper guarantees they do. */
+bool kernel_subsystem_apply_result(kernel_subsys_t subsys, boot_result_t r);
 
 /* --- Boot progress tracker ----------------------------------------------- */
 

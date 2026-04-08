@@ -11,6 +11,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_info.h"
 #include "kernel/boot_timing.h"
 #include "kernel/klog.h"
 
@@ -136,10 +137,14 @@ static void test_post_codes_nonzero_and_unique(void)
  */
 static void test_subsys_enum_layout(void)
 {
-    TEST_ASSERT_EQ(SUBSYS_SERIAL, 0, "SUBSYS_SERIAL == 0 (first slot)");
-    TEST_ASSERT_EQ(SUBSYS_PMM,    1, "SUBSYS_PMM == 1");
-    TEST_ASSERT_EQ(SUBSYS_OB,    20, "SUBSYS_OB == 20 (last named slot)");
-    TEST_ASSERT_EQ(SUBSYS_COUNT, 21, "SUBSYS_COUNT == 21 (sentinel)");
+    TEST_ASSERT_EQ(SUBSYS_SERIAL,     0, "SUBSYS_SERIAL == 0 (first slot)");
+    TEST_ASSERT_EQ(SUBSYS_PMM,        1, "SUBSYS_PMM == 1");
+    TEST_ASSERT_EQ(SUBSYS_OB,        20, "SUBSYS_OB == 20");
+    TEST_ASSERT_EQ(SUBSYS_UEFI_VARS, 21, "SUBSYS_UEFI_VARS == 21 (Phase 0 propagation)");
+    TEST_ASSERT_EQ(SUBSYS_UEFI_TIME, 22, "SUBSYS_UEFI_TIME == 22");
+    TEST_ASSERT_EQ(SUBSYS_SECUREBOOT,23, "SUBSYS_SECUREBOOT == 23");
+    TEST_ASSERT_EQ(SUBSYS_TPM,       24, "SUBSYS_TPM == 24 (last named slot)");
+    TEST_ASSERT_EQ(SUBSYS_COUNT,     25, "SUBSYS_COUNT == 25 (sentinel)");
 }
 
 /* ---- §1 BOOT_STEP readiness mapping ----
@@ -309,6 +314,131 @@ static void test_async_ipi_vector(void)
                 "ASYNC_INIT != TLB_SHOOTDOWN (0xFE)");
 }
 
+/* ---- §2 kernel_subsystem_apply_result() helper ----
+ *
+ * The Phase 0 propagation fix factors the boot_result_t -> {ready,
+ * degraded_mask} mapping into kernel_subsystem_apply_result() so that
+ * unit tests can exercise the dual-channel logic WITHOUT calling any
+ * forbidden boot infrastructure (uefi_vars_init/tpm_init/etc.).
+ *
+ * Both channels MUST agree:
+ *   BOOT_OK       -> ready=true,  mask bit unchanged (cleared by save)
+ *   BOOT_DEGRADED -> ready=true,  mask bit SET
+ *   BOOT_FATAL    -> ready=false, mask bit SET
+ *   BOOT_DEFERRED -> ready=false, mask bit SET (any non-OK)
+ *
+ * The test uses SUBSYS_TPM (slot 24) as a stand-in -- save/restore both
+ * the readiness bit and the mask bit, exercise all 4 result codes,
+ * restore on exit. No live boot infrastructure is touched.
+ */
+static void test_subsys_apply_result_dual_channel(void)
+{
+    extern struct boot_info g_boot_info;
+
+    bool saved_ready = kernel_subsystem_ready(SUBSYS_TPM);
+    uint32_t saved_mask_bit = g_boot_info.degraded_mask & (1u << SUBSYS_TPM);
+
+    /* BOOT_OK: ready=true, mask bit cleared (we pre-clear and re-test) */
+    g_boot_info.degraded_mask &= ~(1u << SUBSYS_TPM);
+    bool r1 = kernel_subsystem_apply_result(SUBSYS_TPM, BOOT_OK);
+    TEST_ASSERT(r1 == true, "apply(BOOT_OK) returns ready=true");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_TPM) == true,
+                "apply(BOOT_OK) sets oracle ready");
+    TEST_ASSERT((g_boot_info.degraded_mask & (1u << SUBSYS_TPM)) == 0,
+                "apply(BOOT_OK) leaves degraded_mask bit clear");
+
+    /* BOOT_DEGRADED: ready=true, mask bit SET */
+    g_boot_info.degraded_mask &= ~(1u << SUBSYS_TPM);
+    bool r2 = kernel_subsystem_apply_result(SUBSYS_TPM, BOOT_DEGRADED);
+    TEST_ASSERT(r2 == true, "apply(BOOT_DEGRADED) returns ready=true");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_TPM) == true,
+                "apply(BOOT_DEGRADED) sets oracle ready");
+    TEST_ASSERT((g_boot_info.degraded_mask & (1u << SUBSYS_TPM)) != 0,
+                "apply(BOOT_DEGRADED) sets degraded_mask bit");
+
+    /* BOOT_FATAL: ready=false, mask bit SET */
+    g_boot_info.degraded_mask &= ~(1u << SUBSYS_TPM);
+    bool r3 = kernel_subsystem_apply_result(SUBSYS_TPM, BOOT_FATAL);
+    TEST_ASSERT(r3 == false, "apply(BOOT_FATAL) returns ready=false");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_TPM) == false,
+                "apply(BOOT_FATAL) clears oracle ready");
+    TEST_ASSERT((g_boot_info.degraded_mask & (1u << SUBSYS_TPM)) != 0,
+                "apply(BOOT_FATAL) sets degraded_mask bit");
+
+    /* BOOT_DEFERRED: ready=false, mask bit SET (treated as 'not OK') */
+    g_boot_info.degraded_mask &= ~(1u << SUBSYS_TPM);
+    bool r4 = kernel_subsystem_apply_result(SUBSYS_TPM, BOOT_DEFERRED);
+    TEST_ASSERT(r4 == false, "apply(BOOT_DEFERRED) returns ready=false");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_TPM) == false,
+                "apply(BOOT_DEFERRED) clears oracle ready");
+    TEST_ASSERT((g_boot_info.degraded_mask & (1u << SUBSYS_TPM)) != 0,
+                "apply(BOOT_DEFERRED) sets degraded_mask bit");
+
+    /* Out-of-range subsys: returns false, no state change */
+    g_boot_info.degraded_mask &= ~(1u << SUBSYS_TPM);
+    kernel_subsystem_set_ready(SUBSYS_TPM, false);
+    bool r5 = kernel_subsystem_apply_result((kernel_subsys_t)SUBSYS_COUNT, BOOT_OK);
+    TEST_ASSERT(r5 == false, "apply(SUBSYS_COUNT, OK) returns false (out of range)");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_TPM) == false,
+                "apply(out_of_range) does not affect other slots");
+
+    /* Restore */
+    kernel_subsystem_set_ready(SUBSYS_TPM, saved_ready);
+    g_boot_info.degraded_mask =
+        (g_boot_info.degraded_mask & ~(1u << SUBSYS_TPM)) | saved_mask_bit;
+}
+
+/* ---- §2 Phase 0 propagation slots ----
+ *
+ * Verify that the four new Phase 0 readiness slots (UEFI_VARS, UEFI_TIME,
+ * SECUREBOOT, TPM) integrate with the readiness oracle the same way every
+ * other slot does -- save/restore wrapper around set_ready/ready, no live
+ * boot infrastructure calls. The actual init functions (uefi_vars_init,
+ * tpm_init, etc.) are forbidden in tests per CLAUDE.md "Test Code -- No
+ * Live Boot Infrastructure Calls" -- this test only validates the oracle
+ * round-trip on the new slot indices.
+ */
+static void test_subsys_phase0_propagation_slots(void)
+{
+    bool saved_vars = kernel_subsystem_ready(SUBSYS_UEFI_VARS);
+    bool saved_time = kernel_subsystem_ready(SUBSYS_UEFI_TIME);
+    bool saved_sb   = kernel_subsystem_ready(SUBSYS_SECUREBOOT);
+    bool saved_tpm  = kernel_subsystem_ready(SUBSYS_TPM);
+
+    kernel_subsystem_set_ready(SUBSYS_UEFI_VARS,  true);
+    kernel_subsystem_set_ready(SUBSYS_UEFI_TIME,  true);
+    kernel_subsystem_set_ready(SUBSYS_SECUREBOOT, true);
+    kernel_subsystem_set_ready(SUBSYS_TPM,        true);
+
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_UEFI_VARS) == true,
+                "UEFI_VARS slot round-trip true");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_UEFI_TIME) == true,
+                "UEFI_TIME slot round-trip true");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_SECUREBOOT) == true,
+                "SECUREBOOT slot round-trip true");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_TPM) == true,
+                "TPM slot round-trip true");
+
+    kernel_subsystem_set_ready(SUBSYS_UEFI_VARS,  false);
+    kernel_subsystem_set_ready(SUBSYS_UEFI_TIME,  false);
+    kernel_subsystem_set_ready(SUBSYS_SECUREBOOT, false);
+    kernel_subsystem_set_ready(SUBSYS_TPM,        false);
+
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_UEFI_VARS) == false,
+                "UEFI_VARS slot round-trip false");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_UEFI_TIME) == false,
+                "UEFI_TIME slot round-trip false");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_SECUREBOOT) == false,
+                "SECUREBOOT slot round-trip false");
+    TEST_ASSERT(kernel_subsystem_ready(SUBSYS_TPM) == false,
+                "TPM slot round-trip false");
+
+    kernel_subsystem_set_ready(SUBSYS_UEFI_VARS,  saved_vars);
+    kernel_subsystem_set_ready(SUBSYS_UEFI_TIME,  saved_time);
+    kernel_subsystem_set_ready(SUBSYS_SECUREBOOT, saved_sb);
+    kernel_subsystem_set_ready(SUBSYS_TPM,        saved_tpm);
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_init(void)
@@ -334,6 +464,8 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: bootperf POST codes", test_bootperf_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: async POST codes", test_async_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: async IPI vector", test_async_ipi_vector, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: Phase 0 propagation slots", test_subsys_phase0_propagation_slots, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: apply_result dual channel", test_subsys_apply_result_dual_channel, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */
