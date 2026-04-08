@@ -91,6 +91,7 @@ description: Verify an already-implemented TODO section through the full quality
     - Any checklist items in other sections affected by this section's reality.
     - **PE export table sync:** if this section provides public APIs callable from user-mode, verify they are in `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c`.
     - **SSDT audit trigger:** if this section involves SSDT handlers, invoke `audit-ssdt` skill to verify master table consistency. (Verify mode runs the audit; implement mode only recommends it.)
+    - **Filed-in-owner check:** any follow-up `[ ]` item that names an owner (e.g., "tracked in TODO-XX §N", "owner: TODO-YY") must ALSO be filed as a checklist item in that owner section with reciprocal `→ XREF`. A note here alone is a dead-end paper trail -- file it in the owner now, before commit.
     - **Verify-mode deep-analysis pass** (extra in verify; not in implement because the code is fresh there):
       - `codex-consistency-audit` -- struct offsets, constants, API contracts across header/implementation/test/asm files.
       - `codex-dead-code` -- unreachable functions, unused defines, orphaned types after the section has had time to drift.
