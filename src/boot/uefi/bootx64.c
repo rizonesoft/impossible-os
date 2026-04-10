@@ -625,20 +625,23 @@ static void boot_fatal(const char *title, const char *detail)
         efi_print(u"  2. Verify \\boot\\kernel.exe exists\r\n");
         efi_print(u"  3. Press any key to reboot or power off\r\n\r\n");
 
-        /* Wait for keypress */
+        /* Wait for keypress with timeout (10 seconds at ~1ms per iteration).
+         * Prevents infinite spin on headless servers with no keyboard. */
         if (gST->ConIn) {
             EFI_INPUT_KEY key;
-            /* Wait for keypress (poll -- WaitForEvent requires typed pointer) */
-            while (gST->ConIn->ReadKeyStroke(gST->ConIn, &key) != 0)
+            UINT32 timeout = 10000000;  /* ~10s at firmware poll speed */
+            while (gST->ConIn->ReadKeyStroke(gST->ConIn, &key) != 0 && --timeout)
                 ;
-            /* Attempt cold reboot */
-            if (gST->RuntimeServices)
-                gST->RuntimeServices->ResetSystem(
-                    0 /* EfiResetCold */, 0, 0, (VOID *)0);
         }
     }
 
-    /* 3. Fallback: halt forever */
+    /* 3. Attempt cold reboot via RuntimeServices (works even after EBS failure
+     * since ResetSystem is a runtime service, not a boot service). */
+    if (gST && gST->RuntimeServices)
+        gST->RuntimeServices->ResetSystem(
+            0 /* EfiResetCold */, 0, 0, (VOID *)0);
+
+    /* 4. Fallback: halt forever */
     for (;;) __asm__ volatile("hlt");
 }
 
