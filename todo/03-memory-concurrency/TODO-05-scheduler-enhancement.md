@@ -45,7 +45,7 @@
 | ⭐  |   8   | §7 Scheduler stats + `/sys/sched` VFS file           | §1–§5 (meaningful data)             |  [ ]   |
 | 💎  |   9   | §9 CPU frequency scaling hook + P-state governors    | §7 (load measurement), ACPI         |  [ ]   |
 | 💎  |  10   | Worker Factory syscalls wired to SSDT                | §1, TODO-05 §4                      |  [ ]   |
-| 💎  |  11   | Per-thread kernel stack + TSS.rsp0 switching         | --                                   |  [/]   |
+| 💎  |  11   | Per-thread kernel stack + TSS.rsp0 switching         | --                                   |  [x]   |
 
 > 💎 = parity -- Windows and Linux both implement priority queues, aging, CFS-equivalent, RT classes, affinity, tick calibration, and cpufreq; Impossible OS must match.
 > ⭐ = exclusive -- `SCHED_DEADLINE` with GRUB bandwidth reclaim and the unified `/sys/sched` all-threads snapshot are differentiators over the base Windows NT scheduler.
@@ -232,7 +232,7 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 - [x] `task_cleanup()` walks secondary threads (tid 1+) and calls `thread_free_stacks()` for each. Thread 0 uses the task-level `kfree` path (unchanged).
 - [x] `thread_join()` refactored to use `thread_free_stacks()` helper. Handles both PMM-allocated (`kernel_stack_pages > 0`) and kmalloc'd (`stack_base != NULL`) stacks correctly.
 - [x] Unit test in `test_sched.c`: `test_per_thread_kernel_rsp_mirror` -- verifies PID 0 and PID 1 `threads[0].kernel_rsp == tasks[pid].kernel_rsp` mirror invariant. Pure read-only oracle check.
-- [ ] Commit: `"sched: per-thread kernel_rsp + TSS.rsp0 switching on intra-task thread switch"`
+- [x] Commit: `"sched: per-thread kernel_rsp + TSS.rsp0 switching on intra-task thread switch"` (3bf99ed0)
 
 **Test checkpoint:** Boot completes normally (single-threaded tasks unchanged). DPC worker, work queue, cmd.exe all still function. The scheduler log shows `[sched] rsp0 updated` on task switches. No kernel stack corruption on interrupt entry. Test on: QEMU WHPX (2 CPUs), TCG, VirtualBox, bare metal.
 
