@@ -215,7 +215,7 @@ If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes.
 - [x] If all fail: `"[FAIL] Cannot allocate kernel buffer (tried 32/16/8 MiB)"` + return EFI_LOAD_ERROR
 - [x] Kernel file size validated by §1 ELF bounds checks (32 MiB cap + per-segment validation)
 - [x] Buffer overlap checks: boot_info (0x10000-0x11000) and framebuffer (addr + pitch*height)
-- [ ] Commit: `"boot: kernel allocation fallback -- 32-16-8 MiB with overlap check"`
+- [x] Commit: `"boot: kernel allocation fallback -- 32-16-8 MiB with overlap check"` (c5cd3704)
 
 **Test checkpoint:** Normal boot works (kernel is ~1.5 MiB, fits in any allocation). Serial shows `"Kernel buffer: 32 MiB allocated"`.
 
