@@ -9,6 +9,7 @@
 
 - `src/kernel/net/tcp.c`, `src/kernel/net/socket.c` -- `dns_resolve()`, `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()` from TODO-01/02; keep-alive pool wraps these
 - `include/kernel/mm/heap.h` -- `kmalloc()`/`kfree()` for Mbed TLS memory redirects
+- -> XREF: `02-kernel-core/TODO-20-kernel-libraries.md` section 7 -- canonical freestanding Mbed TLS + CSPRNG; this file section 5 consumes that port (no re-vendor of upstream Mbed sources here)
 - `include/kernel/sched/syscall.h` -- syscall table reference; no new syscall numbers needed (HTTP/TLS is kernel-library only for now; user-mode calls go through socket syscalls)
 - `src/kernel/fs/vfs.c` -- `vfs_open()`/`vfs_read()` to load `C:\Impossible\System\Certs\ca-bundle.crt` at runtime
 - `resources/certs/ca-bundle.crt` (to be added) -- Mozilla CA bundle (MPL-2.0, ~130 root CAs); installed to `C:\Impossible\System\Certs\ca-bundle.crt` on disk image

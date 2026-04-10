@@ -1,4 +1,4 @@
-# TODO-07 -- Desktop & UI Test Framework
+# TODO-02 -- Desktop & UI Test Framework
 
 > **Goal:** Automated testing for the graphical desktop: window creation, compositor rendering, input event processing, widget controls, terminal output, and visual regression detection. UI bugs are the hardest to catch because they require eyes -- this framework replaces eyes with framebuffer snapshots and pixel-level comparison. A window that renders wrong, a button that doesn't respond, or a terminal that drops characters gets caught automatically.
 
@@ -16,7 +16,7 @@
 - `src/kernel/main/compositor.c` -- render loop, framebuffer compositing
 - `src/kernel/drivers/framebuffer.c` -- framebuffer access, page flip
 - → XREF: `TODO-03-kernel-test-framework.md §2` -- `make test` target (local headless QEMU, no CI QEMU)
-- → XREF: `TODO-02-usermode-test-framework.md §2` -- test launcher mechanism
+- → XREF: `TODO-01-usermode-test-framework.md §2` -- test launcher mechanism
 
 ---
 

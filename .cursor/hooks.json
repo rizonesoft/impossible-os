@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeReadFile": [
+      {
+        "command": "hooks/todo-read-reminder.py"
+      }
+    ]
+  }
+}

@@ -126,6 +126,8 @@ When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, and 
 
 Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges them relevant based on the `description` field. Each skill is self-contained.
 
+Cursor mirrors for TODO prep live under `.cursor/skills/` (for example `validate-todo-file`, `validate-todo-section`, `gap-analysis-todo`) with `.cursor/rules/todo-validate-gap-workflows.mdc`, `.cursor/rules/todo-workflows-always-pointer.mdc`, and `.cursor/hooks.json` (beforeReadFile reminder for `todo/**/TODO-*.md` only). Hooks may not run in every agent session; `@`-reference the skill or rule when automations do not fire. Confirm hook delivery in Cursor **Output → Hooks** if needed.
+
 | Skill | Description |
 |---|---|
 | `/implement-todo-section` | Implement one TODO section end-to-end |
@@ -171,6 +173,6 @@ src/
 include/            All headers (mirrors src/)
 resources/          Fonts, icons, wallpapers
 todo/               Development roadmap (14 domains, 86 TODO files)
-.cursor/            Cursor AI system (rules + skills) -- independent
+.cursor/            Cursor AI system (rules + skills + hooks) -- independent
 .claude/            Claude Code AI system (skills) -- independent
 ```

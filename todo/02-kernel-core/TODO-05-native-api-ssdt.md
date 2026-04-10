@@ -28,6 +28,8 @@
 - → XREF: `08-graphics-ui/TODO-12-win32k-shadow-ssdt.md §8` -- Win32k user-mode callback dispatch via §25 KeUserModeCallback; shadow SSDT stub registered in §4
 - → XREF: `TODO-06-irql-model-dpcs.md §11,§12` -- KAPC object type and APC delivery mechanism; NtQueueApcThread (SSDT 0x0043) and NtQueueApcThreadEx (SSDT 0x0380) consume KeInitializeApc/KeInsertQueueApc
 - → XREF: `TODO-09-process-model-extensions.md §4,§5,§8,§10,§11,§13` -- §4 priority class, §5 scheduling policy, §8 accounting fields, §10 CPU affinity, §11 mitigation policy all flow through `NtSetInformationProcess`/`NtQueryInformationProcess` (§10 of this TODO); §13 wires Job Object SSDT entries 0x0160–0x0167; §12 pledge check integrates into the SSDT dispatcher alongside §24 syscall filter
+- → XREF: `TODO-22-kernel-bulletproofing.md` §7 -- SSDT_MAIN_COUNT / last-index static asserts keep this TODO's syscall table in sync with `service_numbers.h`
+- → XREF: `TODO-23-eif-full-implementation.md` §4-§7 -- EIF API version and import dispatch (including optional stubs) depend on SSDT layout and bounds enforced in this TODO
 
 ## Outcome
 

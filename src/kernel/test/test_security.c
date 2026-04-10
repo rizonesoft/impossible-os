@@ -4,7 +4,7 @@
  * Tests SID comparison/formatting, ACL creation, token creation with
  * privilege verification.
  *
- * XREF: 00-infrastructure/TODO-03 §3
+ * XREF: 00-infrastructure/TODO-02 §3
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

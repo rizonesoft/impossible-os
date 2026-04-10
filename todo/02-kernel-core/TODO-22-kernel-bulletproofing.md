@@ -1,8 +1,6 @@
 # TODO-22 -- Kernel Bulletproofing
 
-> **Goal:** Apply 5-layer defense-in-depth (static assert, runtime verify, unit test, canary, documentation) to every critical invariant in the kernel. Make it impossible for code changes to silently break cross-file dependencies, struct layouts, assembly offsets, ABI contracts, or memory layout constraints. The GDT SYSRET ordering protection (5 layers, implemented 2026-04-03) is the reference implementation; this TODO extends the same pattern to all 24 identified fragile subsystems.
->
-> When complete, Impossible OS is the most self-verifying kernel in existence -- every critical invariant is checked at compile time, boot time, and test time. Silent corruption is architecturally impossible.
+> **Goal:** Apply 5-layer defense-in-depth (static assert, runtime verify, unit test, canary, documentation) to every critical invariant in the kernel. Make it impossible for code changes to silently break cross-file dependencies, struct layouts, assembly offsets, ABI contracts, or memory layout constraints. The GDT SYSRET ordering protection (5 layers, implemented 2026-04-03) is the reference implementation; this TODO extends the same pattern to all 24 identified fragile subsystems. When complete, Impossible OS is the most self-verifying kernel in existence -- every critical invariant is checked at compile time, boot time, and test time. Silent corruption is architecturally impossible.
 
 > [!IMPORTANT]
 > **Reference implementation:** GDT SYSRET ordering (gdt.h + gdt.c + syscall_fast.c + test_nt_types.c + CLAUDE.md) already has all 5 layers. Use it as a template for every section below.
@@ -25,8 +23,8 @@
 - `src/kernel/mm/pmm.c` -- pmm_mark_region_used for user range
 - `include/kernel/nt/service_numbers.h` -- SSDT_MAIN_COUNT = 470
 - -> XREF: `TODO-05-native-api-ssdt.md §1-§4` -- NTSTATUS, SSDT, GDT all depend on these invariants
-- -> XREF: `TODO-04-peb-teb-user-abi.md` -- PEB/TEB offsets are Windows ABI contracts
-- -> XREF: `TODO-17-kernel-security-hardening.md` -- guard pages, NX policy depend on memory layout
+- -> XREF: `TODO-04-peb-teb-user-abi.md` §1--§3 -- PEB/TEB offsets are Windows ABI contracts (bulletproofing extends pattern to those structs when implemented)
+- -> XREF: `TODO-17-kernel-security-hardening.md` §1,§4--§6 -- NX/SMEP/SMAP and guard pages must stay consistent with §10 here
 
 ---
 
@@ -43,7 +41,7 @@
 
 ## Implementation Order
 
-| Star | Order | Deliverable                                       | Depends On | Status |
+| ⭐ | Order | Deliverable                                       | Depends On | Status |
 | --- | :---: | -------------------------------------------------- | ---------- | :----: |
 | ⭐  |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [x]  |
 | ⭐  |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [x]  |
@@ -65,6 +63,23 @@
 
 ---
 
+## OS Comparison
+
+| ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
+| --- | --- | --- | --- | --- |
+| ⭐ | Compile struct asserts | ❌ sparse | ⚠️ BUILD_BUG_ON | ✅ §1--§15 |
+| ⭐ | Boot invariant verify | ❌ hidden | ⚠️ BUG_ON | ✅ §1--§15 |
+| ⭐ | Asm offset asserts | ❌ manual | ⚠️ asm-offsets | ✅ §1 §4 §5 |
+| ⭐ | Guard pages wide | ✅ stacks | ✅ VMAP_STACK | ✅ §10 all sites |
+| ⭐ | ABI size lock-in | ❌ opaque | ⚠️ sparse | ✅ §2 §5 §11 §12 |
+| ⭐ | IDT vector uniqueness | ❌ manual | ❌ manual | ✅ §6 vectors.h |
+| ⭐ | swapgs sanity check | ❌ none | ❌ none | ✅ §9 gs:0 self |
+| ⭐ | Stuck scheduler flags | ❌ none | ❌ none | ✅ §14 exec_pending |
+
+> **All exclusive.** Linux uses sparse BUILD_BUG_ON and asm-offsets.c; Windows has no public compile-time invariant system like this.
+
+---
+
 ## 1. per_cpu_data Assembly Offsets
 
 Assembly code (syscall_entry.asm, ap_trampoline.asm) reads `gs:0`, `gs:24`, `gs:32` as hardcoded offsets into `struct per_cpu_data`. If anyone adds a field before `syscall_rsp0`, the assembly reads the wrong data -- silent corruption or triple fault.
@@ -77,9 +92,10 @@ Assembly code (syscall_entry.asm, ap_trampoline.asm) reads `gs:0`, `gs:24`, `gs:
 - [x] Runtime: `smp_early_bsp_init()` writes a known value to `self`, reads it back via `mov %%gs:0, %0` inline asm, verifies match
 - [x] Unit test: verify all 6 offsets (self, cpu_id, lapic_id, rsp0, syscall_rsp0, user_rsp_scratch) in test_nt_types.c
 - [x] Documentation: add offset table comment in smp.h with `/* Assembly depends on these offsets -- do NOT reorder */`
-- [x] Commit: `"bulletproof: per_cpu_data assembly offsets -- static assert + runtime verify"`
 
-**Test checkpoint:** Build with field inserted before `syscall_rsp0` -> static assert fires at compile time. Runtime verify logs `gs:0 self-pointer OK` at boot. Unit test passes on QEMU WHPX, TCG, VBox.
+**Test checkpoint:** Build with field inserted before `syscall_rsp0` -> static assert fires at compile time. Runtime verify logs `gs:0 self-pointer OK` at boot. `bash scripts/test.sh SUITE=abi` includes per_cpu gs: offset asserts PASS. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: per_cpu_data assembly offsets -- static assert + runtime verify"`
 
 ---
 
@@ -95,9 +111,10 @@ The UEFI bootloader (bootx64.c) and kernel (boot_info.h) each define `struct boo
 - [x] Unit test: `test_boot_config_layout()` verifies sizeof, cmdline offset, config_found offset, and config_found == 1
 - [x] Canary: cmdline ASCII check doubles as canary -- non-printable bytes mean struct shifted
 - [x] Documentation: field offset table comment (30 lines) in boot_info.h with byte positions for all fields
-- [x] Commit: `"bulletproof: boot_config struct layout -- offset 32 + 512-byte size asserts"`
 
-**Test checkpoint:** Add a field without shrinking _reserved -> static assert fires. `sizeof(boot_config) != 512` -> compile error.
+**Test checkpoint:** Add a field without shrinking _reserved -> static assert fires. `sizeof(boot_config) != 512` -> compile error. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: boot_config struct layout -- offset 32 + 512-byte size asserts"`
 
 ---
 
@@ -113,9 +130,10 @@ Three files must agree on the user-mode ELF load range: `user.ld` (linker base),
 - [x] Unit test: `test_user_elf_range()` verifies all constants match expected values + single PD entry check
 - [x] Canary: guard page at USER_ELF_END -- PT entry cleared (not-present), catches both user and kernel overflow
 - [x] Documentation: CLAUDE.md gotcha updated to reference user_range.h as single source of truth
-- [x] Commit: `"bulletproof: user ELF range -- shared constant + guard page + 3-file sync"`
 
-**Test checkpoint:** Change USER_ELF_BASE in one file but not others -> static assert fires. Guard page at 0x900000 triggers #PF if user code writes past range.
+**Test checkpoint:** Change USER_ELF_BASE in one file but not others -> static assert fires. Guard page at 0x900000 triggers #PF if user code writes past range. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: user ELF range -- shared constant + guard page + 3-file sync"`
 
 ---
 
@@ -130,9 +148,10 @@ The AP trampoline assembly reads data from fixed offsets at physical 0x8E00. `sm
 - [x] Canary: 0xDEADC0DE at AP_OFF_CANARY (0x38), written before SIPI, verified after data write
 - [x] Unit test: `test_ap_trampoline_offsets()` -- 8 assertions covering all offsets + DATA_BASE derivation
 - [x] Documentation: 18-line offset table in smp.h with assembly cross-references (which instruction uses each field)
-- [x] Commit: `"bulletproof: AP trampoline data area -- offset asserts + readback verify"`
 
-**Test checkpoint:** Change AP_OFF_STACK in smp.h but not asm -> static assert catches at compile time. Readback mismatch at boot -> FATAL halt with "AP trampoline data corruption" message.
+**Test checkpoint:** Change AP_OFF_STACK in smp.h but not asm -> static assert catches at compile time. Readback mismatch at boot -> FATAL halt with "AP trampoline data corruption" message. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: AP trampoline data area -- offset asserts + readback verify"`
 
 ---
 
@@ -147,12 +166,13 @@ The AP trampoline assembly reads data from fixed offsets at physical 0x8E00. `sm
 - [x] Unit test: `test_interrupt_frame_layout()` -- 9 assertions covering sizeof, GPR endpoints, iretq frame order, int_no/err_code
 - [x] No unused padding in struct (packed, all 22 fields x 8 bytes = 176); canary N/A
 - [x] Documentation: 30-line frame layout diagram in idt.h with offset, size, field, pushed-by, and pop-order columns
-- [x] Commit: `"bulletproof: interrupt frame layout -- size + offset asserts"`
 
 > [!WARNING]
 > **Regression risk:** If interrupt frame layout changes, every ISR, every context switch, and every ring transition breaks. This is the single most critical struct in the entire kernel.
 
-**Test checkpoint:** Resize struct interrupt_frame -> static assert fires. Reorder fields -> offset asserts fire. Runtime: every interrupt verifies cs selector is valid.
+**Test checkpoint:** Resize struct interrupt_frame -> static assert fires. Reorder fields -> offset asserts fire. Runtime: every interrupt verifies cs selector is valid. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: interrupt frame layout -- size + offset asserts"`
 
 ---
 
@@ -167,9 +187,10 @@ Multiple subsystems claim IDT vectors: INT 0x80 (syscall), INT 0x81 (yield), INT
 - [x] Runtime: `idt_register_handler()` logs WARN on double-registration (non-NULL overwrite)
 - [x] Unit test: `test_vector_uniqueness()` -- 10 assertions verifying values + pairwise uniqueness
 - [x] Documentation: vector allocation table in vectors.h header (range/purpose/owner columns)
-- [x] Commit: `"bulletproof: IDT vector collision detection -- vectors.h + uniqueness asserts"`
 
-**Test checkpoint:** Define two vectors with same value -> static assert fires. Register handler on occupied vector -> FATAL log + handler not overwritten.
+**Test checkpoint:** Define two vectors with same value -> static assert fires. Register handler on occupied vector -> FATAL log + handler not overwritten. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: IDT vector collision detection -- vectors.h + uniqueness asserts"`
 
 ---
 
@@ -183,9 +204,10 @@ Multiple subsystems claim IDT vectors: INT 0x80 (syscall), INT 0x81 (yield), INT
 - [x] Runtime: `ssdt_init()` logs count + last index in serial output
 - [x] Unit test: 5 assertions -- count==470, last==0x03D7, last < MAX, table pointer valid, table->count matches
 - [x] Documentation: 20-line "next available indices per range" table in service_numbers.h + add/update instructions
-- [x] Commit: `"bulletproof: SSDT service count -- last index assert + range table"`
 
-**Test checkpoint:** Add a service number without updating count -> static assert fires.
+**Test checkpoint:** Add a service number without updating count -> static assert fires. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: SSDT service count -- last index assert + range table"`
 
 ---
 
@@ -200,9 +222,10 @@ XSAVE requires 64-byte alignment. FXSAVE requires 16-byte alignment. `task_alloc
 - [x] Unit test: `test_xsave_alignment()` -- PMM frame 64-byte, 16-byte, and page alignment verified
 - [x] Documentation: 10-line alignment requirement comment in task.c with SDM references
 - [x] Defined `XSAVE_ALIGN` (64) and `FXSAVE_SIZE` (512) constants replacing magic numbers
-- [x] Commit: `"bulletproof: XSAVE area alignment -- runtime assert + alignment constants"`
 
-**Test checkpoint:** Allocate xsave area with kmalloc (unaligned) -> runtime assert fires immediately.
+**Test checkpoint:** Allocate xsave area with kmalloc (unaligned) -> runtime assert fires immediately. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: XSAVE area alignment -- runtime assert + alignment constants"`
 
 ---
 
@@ -217,12 +240,13 @@ Every `swapgs` on ring-3 entry MUST have a matching `swapgs` on ring-3 exit. A m
 - [x] Unit test: `test_gs_self_pointer()` -- 3 assertions: non-NULL, self-pointer match, cpu_id reasonable
 - [x] Documentation: symmetry requirement comment already in isr_stubs.asm (lines 40-43)
 - [x] Depth counter deferred -- gs:0 self-pointer check is stronger (catches the actual symptom, not proxy)
-- [x] Commit: `"bulletproof: ISR swapgs symmetry -- GS self-pointer verify in isr_handler"`
 
 > [!WARNING]
 > **Regression risk:** Adding a new exception handler or modifying the ISR common stub can break swapgs symmetry. Symptoms are invisible until a per-CPU data access returns garbage.
 
-**Test checkpoint:** Artificially skip exit swapgs -> canary fires (depth != 0). Normal operation -> depth always 0 after interrupt.
+**Test checkpoint:** Boot with interrupts: no `[FATAL]` from GS self-pointer check in `isr_handler()`. Unit test `test_gs_self_pointer()` PASS. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: ISR swapgs symmetry -- GS self-pointer verify in isr_handler"`
 
 ---
 
@@ -243,9 +267,10 @@ Protect critical memory boundaries with unmapped guard pages that trigger #PF on
 - [x] `vmm_set_user_page()` auto-splits huge pages on demand: if PD entry is 2 MiB, allocates a PT frame and splits it into 4 KiB PTEs. Also propagates User bit at PML4/PDPT/PD levels. Works for ANY address, not just the pre-split ELF range. Forward-compatible with Win32 PE loading and VirtualAlloc at arbitrary addresses.
 - [x] Unit test: `test_vmm_split_huge_page()` (split + idempotent + identity preserved) and `test_vmm_guard_page_install()` (not-present + adjacent page intact) in `test_vmm.c`.
 - [x] Documentation: guard page map in CLAUDE.md Safety Gates section
-- [x] Commit: `"bulletproof: memory layout guard pages -- stack, heap, user range"` (split across multiple commits: guard pages, auto-split, PT leak fix)
 
-**Test checkpoint:** Stack overflow -> hits guard page -> panic_screen shows "GUARD: kernel task stack overflow" with fault address. Guard page at heap end catches heap overrun. IST guard catches exception handler stack overflow.
+**Test checkpoint:** Stack overflow -> hits guard page -> panic_screen shows "GUARD: kernel task stack overflow" with fault address. Guard page at heap end catches heap overrun. IST guard catches exception handler stack overflow. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: memory layout guard pages -- stack, heap, user range"` (split across multiple commits: guard pages, auto-split, PT leak fix)
 
 ---
 
@@ -261,9 +286,10 @@ IXFS superblock magic (0x49584653) and struct layout must match between `mkfs-ix
 - [x] Runtime: `ixfs_format.c` already verifies magic (rejects on mismatch), version (v1 read-only, v2 OK, other rejected), and CRC32C checksum (warns on mismatch) on mount
 - [x] Unit test: `test_ixfs.c` with 5 suites: superblock size (512), magic (0x49584653), field offsets (6 offsets), version (2), inode size (128 bytes, 32 per block). Registered in test_runner as TEST_CAT_FS
 - [x] Documentation: 30-line superblock layout diagram in ixfs.h with offset/size/field/notes columns
-- [x] Commit: `"bulletproof: IXFS superblock -- size assert + magic verify"`
 
-**Test checkpoint:** Change IXFS_MAGIC in one place -> static assert fires. Mount volume with wrong magic -> ixfs_init() returns error, not corruption.
+**Test checkpoint:** Change IXFS_MAGIC in one place -> static assert fires. Mount volume with wrong magic -> ixfs_init() returns error, not corruption. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: IXFS superblock -- size assert + magic verify"`
 
 ---
 
@@ -281,9 +307,10 @@ Windows security structs have exact binary layouts for ABI compatibility. If siz
 - [x] Unit test: `test_acl_3ace_walk` -- 3 ACEs (2 allowed + 1 denied), walk all 3, verify types, OOB returns error
 - [x] Unit test: `test_security_struct_sizes` -- runtime verification of all sizes (ACL=8, ACE_HEADER=4, ACCESS_ALLOWED_ACE=12, SID=8)
 - [x] Documentation: Windows ABI compatibility comments in sid.h and acl.h
-- [x] Commit: `"bulletproof: security structs -- SID/ACL/ACE size asserts + ABI unit tests"`
 
-**Test checkpoint:** Resize ACL struct -> static assert fires. Create SID with wrong SubAuthorityCount -> runtime check catches.
+**Test checkpoint:** Resize ACL struct -> static assert fires. Create SID with wrong SubAuthorityCount -> runtime check catches. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: security structs -- SID/ACL/ACE size asserts + ABI unit tests"`
 
 ---
 
@@ -300,9 +327,10 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 - [x] Unit test: `test_vfs_drive_constants` -- VFS_MAX_DRIVES==26, Z valid, '[' rejected, '@' rejected
 - [x] Unit test: `test_mbr_gpt_constants` -- MBR offset 446, sig 510, entry 16, 4 partitions, GPT LBA 1, GPT entry 128
 - [x] Documentation: MBR layout table in mbr.h, GPT constants documented in gpt.h
-- [x] Commit: `"bulletproof: VFS + partition offsets -- range checks + industry-standard asserts"`
 
-**Test checkpoint:** Change VFS_MAX_DRIVES -> static assert fires. Out-of-range drive letter -> runtime rejection.
+**Test checkpoint:** Change VFS_MAX_DRIVES -> static assert fires. Out-of-range drive letter -> runtime rejection. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: VFS + partition offsets -- range checks + industry-standard asserts"`
 
 ---
 
@@ -317,9 +345,10 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 - [x] Canary: `exec_pending_tick` field added to `struct task`; both schedule paths clear it to 0 on switch-in
 - [x] Unit test: `test_exec_pending_state` -- PID 0 exec_pending==0 and exec_pending_tick==0 (never exec'd)
 - [x] Documentation: state machine diagram comment in task.h at `exec_pending` field
-- [x] Commit: `"bulletproof: exec_pending state machine -- age tracking + stuck detection"`
 
-**Test checkpoint:** exec_pending stuck for >10 ticks -> WARN log. Normal exec -> cleared after first context switch.
+**Test checkpoint:** exec_pending stuck for >10 ticks -> WARN log. Normal exec -> cleared after first context switch. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [x] Commit: `"bulletproof: exec_pending state machine -- age tracking + stuck detection"`
 
 ---
 
@@ -335,26 +364,10 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 - [x] **Rule 4: Mode changes -- structurally enforced.** GOP protocol pointer not stored after `ExitBootServices()`. `gop_negotiate_mode()` runs during bootloader init. Post-ExitBS code has no access to GOP -- violation is a compile error, not a runtime bug.
 - [x] **Rule 5: Back-buffer -- guarded by pointer comparison.** All direct `hw_addr` writes gated by `if (back_buf != hw_addr)`. When back buffer is allocated, drawing goes to `back_buf`; only `fb_swap()`/`fb_swap_rect()` copy to VRAM.
 - [x] Documentation: rules in CLAUDE.md memory + coding skill Gate 6 + TODO-22 §15
+
+**Test checkpoint:** Serial log shows `PAT: 0x0007040600070406 -> 0x0007040600010406 (entry 1 = WC)` and `Framebuffer WC-mapped: phys ... -> VA ...`. Change pixel_format to 2 (BitMask) -> fb_init() rejects with FATAL. Change pitch to odd value -> FATAL. PAT MSR write trapped -> boot_halt. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [x] Commit: `"bulletproof: framebuffer 5-rule guardrails -- pixel fmt, pitch, PAT verify, WC remap"`
-
-**Test checkpoint:** Serial log shows `PAT: 0x0007040600070406 -> 0x0007040600010406 (entry 1 = WC)` and `Framebuffer WC-mapped: phys ... -> VA ...`. Change pixel_format to 2 (BitMask) -> fb_init() rejects with FATAL. Change pitch to odd value -> FATAL. PAT MSR write trapped -> boot_halt.
-
----
-
-## OS Comparison
-
-| ⭐ | Feature                     | 🪟 Win11               | 🐧 Linux                | 🚀 Impossible OS                 |
-|----|-----------------------------|------------------------|--------------------------|-----------------------------------|
-| ⭐ | Compile-time struct asserts | ❌ Not systematic      | ⚠️ BUILD_BUG_ON sparse  | ✅ §1-§14 all subsystems         |
-| ⭐ | Boot-time invariant verify  | ❌ Not exposed         | ⚠️ BUG_ON at init       | ✅ §1-§14 every init             |
-| ⭐ | Assembly offset asserts     | ❌ Manual sync         | ⚠️ asm-offsets.c        | ✅ §1,§4,§5 static assert        |
-| ⭐ | Guard pages everywhere      | ✅ Stack guard pages   | ✅ VMAP_STACK guard     | ✅ §10 stack + heap + IST + AP   |
-| ⭐ | ABI struct size asserts     | ❌ Undocumented        | ⚠️ Sparse checks        | ✅ §2,§5,§11,§12 all ABIs        |
-| ⭐ | Vector collision detection  | ❌ Manual              | ❌ Manual               | ✅ §6 compile-time unique        |
-| ⭐ | swapgs symmetry canary      | ❌ Not verified        | ❌ Not verified         | ✅ §9 depth counter              |
-| ⭐ | Stuck flag detection        | ❌ Not tracked         | ❌ Not tracked          | ✅ §14 exec_pending age          |
-
-> **All exclusive.** No other OS systematically applies 5-layer defense to every critical kernel invariant. Linux has sparse `BUILD_BUG_ON` checks and `asm-offsets.c` for assembly offset generation, but nothing approaching comprehensive coverage. Windows has no public compile-time invariant system.
 
 ---
 
@@ -376,6 +389,9 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
   - ACL size == 8, ACE_HEADER size == 4
   - VFS_MAX_DRIVES == 26
 - [x] Register in `test_runner_init()`: `test_register_bulletproof()`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=abi` -- all `BP:` suites PASS; `tail -1 build/build.log` is `=== BUILD OK ===`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [x] Commit: `"test: kernel bulletproofing -- invariant assertion suite"`
 
 > **Done:** 7 suites, ~35 assertions -- registered in `test_runner_init()` (2026-04-04)
@@ -390,3 +406,13 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 - [ ] `run-abi-tests.bat` -> GDT + frame + struct assertions in ABI category
 - [ ] Verify on QEMU WHPX, TCG, VirtualBox -- no regressions from guard pages
 - [ ] Bare metal: verify guard pages work on real hardware
+
+**Test runner:** `scripts\debug\run-abi-tests.bat` (SUITE=abi)
+
+---
+
+## History
+
+| Date | Action | Summary |
+| --- | --- | --- |
+| 2026-04-10 | validate | validate-todo-file: merged Goal; Impl table Star to emoji column; OS Comparison moved after Impl + compacted; sections 1--15 checkpoint then Commit + four platforms; section 9 checkpoint matches gs:0 verify; Unit Tests checkpoint; Verification test runner; INDEX TODO-23 line cleaned; XREF backrefs added to TODO-04, TODO-05, TODO-17; Inputs XREFs tightened with section numbers. |

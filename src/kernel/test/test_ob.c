@@ -4,7 +4,7 @@
  * Tests object allocation, reference counting, handle table, namespace
  * lookup, handle duplication, inheritance, and directory enumeration.
  *
- * XREF: 00-infrastructure/TODO-03 §3
+ * XREF: 00-infrastructure/TODO-02 §3
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS

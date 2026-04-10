@@ -17,7 +17,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 ## Workflow
 
-1. **Read the section** -- full text, notes, test checkpoint, warning boxes. If the section has > 10 checklist items, flag it: suggest splitting into two sections before implementing. A 15-item section is two sections pretending to be one.
+1. **Read the section** -- full text, notes, test checkpoint, warning boxes. If the section has > 10 checklist items, flag it: suggest splitting into **two top-level `##` sections** (new section numbers) before implementing. Never split with `N.M` sublabels (`17.1`, `### 17.2`, `**17.3 Foo**`) -- that pattern is forbidden; see `validate-todo-file`. A 15-item section is two sections pretending to be one.
 2. **Resolve dependencies** -- follow every `-> XREF:` line. Stop and ask if a prerequisite is incomplete or scope conflicts with reality. If part is implementable and part is blocked, implement only the unblocked subset; keep blocked items `[ ]` or `[/]` with explicit blocker notes.
 3. **Explore the codebase** -- Grep/Glob for symbols, call-graph tracing, cross-file discovery. Read relevant source files to understand the integration surface.
 4. **Codex design review** (for complex/high-risk sections) -- if the section touches SMP-sensitive code, boot-path, page tables, interrupt handling, or security-critical logic, dispatch a design review via the Codex plugin BEFORE writing code. Follow the `codex-design-review` skill: send the plan + integration surface + constraints, evaluate for blockers/warnings. Skip for straightforward sections (simple struct definitions, single-function additions, test-only work).
@@ -54,6 +54,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **Deferred-item resolution:** scan earlier sections in the SAME TODO for items marked "deferred to section N" where N is this section. If the work was done, mark them `[x]`. Deferred items are promises.
     - **Cross-TODO sync:** when this section references or satisfies external TODO requirements, update those TODOs in the same run.
     - Preserve existing formatting (table headers, icons, column structure).
+    - **No N.M subnumbering:** never add `### N.M`, `**N.M ...**`, or extra heading levels that carve one `## N.` into sub-chapters. Keep **one continuous** `- [ ]` list under each `## N.`; put grouping in bullet wording. Need more structure -- add a new `##` section with the next number, not `17.1`/`17.2`.
 11. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
 12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. If new research was done during implementation, update the `<!-- Sources: ... -->` comment after the table.
 13. **Codex adversarial review** (MANDATORY) -- run via the Codex plugin, NOT self-review. Self-review has implementation bias; Codex reads code fresh and catches things you rationalized away. Proven: section 1 Codex found 2 Critical issues (SMP race, TOCTOU) that self-review missed. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles, request severity-labeled findings. Command:
@@ -79,6 +80,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 16. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`. This catches anything broken by the fix loop or self-review changes.
 17. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims. Re-checks cross-TODO synchronization.
 18. **Tie up loose ends** (MANDATORY) -- scan the ENTIRE TODO file and any XREF'd TODO files for:
+    - **N.M structure drift:** if any `## N.` uses forbidden `### N.M` or `**N.M ...**`, merge to one checklist per section per `validate-todo-file`.
     - Deferred items pointing to this section that weren't resolved in step 10.
     - Stale warning boxes that should be updated to NOTE (resolved).
     - Implementation Order rows that need status updates.
@@ -153,6 +155,7 @@ This skill is the IMPLEMENT half of a mirrored pair with `verify-todo-section`. 
 - Do not auto-close referenced TODO items without `ID`/`SATISFIES` mapping plus full acceptance proof.
 - Do not create new TODO files here.
 - Do not turn this into a broad file-wide cleanup pass.
+- Never introduce N.M subnumbering in TODO markdown (`17.1`, `### 3.2`, bold `**4.1**` pseudo-headings). Full-file rule: `validate-todo-file`.
 - Do not silently widen scope when requirements conflict with reality. If the section is missing work the user-visible behavior requires, invoke the scope-gap protocol (step 6) -- never patch with a `// TODO` comment or a `STATUS_NOT_IMPLEMENTED` stub.
 
 ## Additional Resources

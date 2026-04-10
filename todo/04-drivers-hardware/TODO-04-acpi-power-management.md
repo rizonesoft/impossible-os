@@ -7,6 +7,7 @@
 
 ## Inputs
 
+- -> XREF: `02-kernel-core/TODO-15-power-management.md` -- pre-ACPICA S1/S3/S4, EC, battery, power button, and thermal-zone checklist path until §1 here completes; merge plan in TODO-15 scope box
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c), [`include/kernel/acpi.h`](../../include/kernel/acpi.h)
 - ACPICA source (Apache-2.0): `src/kernel/acpica/` -- to be imported in §1
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) -- hibernate detection in §8 requires a bootloader-side hiberfil.sys check

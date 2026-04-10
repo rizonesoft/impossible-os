@@ -13,6 +13,7 @@
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) -- `vmm_map_page` (singular) for program-break page allocation; call in a loop for multi-page `brk` extensions
 - → XREF: `TODO-03-object-manager.md §3` -- `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
 - → XREF: `TODO-04-peb-teb-user-abi.md §5` -- `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
+- → XREF: `TODO-14-environment-variables.md` (section 1) -- kernel environ and argv pointers on `struct task`; `env_copy()` when `NtCreateProcess` clones parent to child (see `TODO-05-native-api-ssdt.md` section 7)
 - → XREF: `TODO-05-native-api-ssdt.md §9` -- `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
 - → XREF: `TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x0160–0x0167 reserved for Job Object syscalls
 - → XREF: `TODO-07-time-filetime-management.md §6` -- `KeDelayExecutionThread` is the sleep implementation; `NtDelayExecution` syscall wiring belongs there

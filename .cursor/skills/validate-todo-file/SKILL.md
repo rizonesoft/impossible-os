@@ -1,17 +1,51 @@
 ---
 name: validate-todo-file
-description: Validate a TODO file for structural completeness, Implementation Order accuracy, XREF continuity, cross-TODO scope overlap, Inputs path existence, parity gaps, and test coverage. Use when reviewing a TODO after creation, major edits, or during implementation tracking.
+description: Validates a TODO file for structural completeness, Implementation Order accuracy, XREF continuity, cross-TODO scope overlap, Inputs path existence, parity gaps, and test coverage. Use when reviewing a TODO after creation, major edits, or during implementation tracking. In Cursor, read this file from .cursor/skills/validate-todo-file/SKILL.md and execute every numbered step; do not skip step 7 (parity) or History (step 15).
 ---
 
-# Validate TODO File
+# Validate TODO File (Cursor)
+
+## Cursor: mandatory coverage
+
+- **Load this skill** from `.cursor/skills/validate-todo-file/SKILL.md` when the task matches the description.
+- **Copy the checklist below into the chat** at the start of a validate run; in your final message, state **done/skipped + reason** for each line (no silent skips).
+- **Related rule:** `.cursor/rules/todo-validate-gap-workflows.mdc` when `todo/**/*.md` is in scope.
+- **Single-section code truth:** use `.cursor/skills/validate-todo-section/SKILL.md` or `.claude/skills/verify-todo-section/SKILL.md` (full verify pipeline stays in Claude Code) -- not this file.
+
+## Cursor reliability
+
+- **Rules:** The detailed rule uses `globs: todo/**/*.md` and may not attach if no matching file is in context. The always-on pointer is `.cursor/rules/todo-workflows-always-pointer.mdc`. When starting a validate task, `@`-mention this skill or `.cursor/rules/todo-validate-gap-workflows.mdc` if the agent might miss context.
+- **Hooks:** `beforeReadFile` runs only for `todo/**/TODO-*.md` reads and requires Hooks enabled in Cursor. If no reminder appears, still execute every workflow step here.
+- **Verify pipeline:** Full Codex verify without implementing remains `.claude/skills/verify-todo-section/SKILL.md`.
+
+## Progress checklist (copy for every run)
+
+```text
+validate-todo-file -- all steps (no skips):
+- [ ] 1  Full file read
+- [ ] 2  Formatting cleanup (rg continuation lines, lists, callouts, tables, blank lines)
+- [ ] 3  Remove model tags from ## headings ([Opus]/[Sonnet])
+- [ ] 4  Inputs path existence (Glob per path)
+- [ ] 5  Domain overlap + duplicate XREF scan
+- [ ] 6  Lean structure (flat ## N. only; **no N.M** sublabels; one `- [ ]` list per section; Depends On §; Commit; OS table compact)
+- [ ] 7  Win11/Linux parity + competitive edge scan (report explicitly)
+- [ ] 8  XREF + loose ends + internal §N check; patch external TODOs same run
+- [ ] 9  Self-contained execution (Depends On with section numbers, blockers flagged)
+- [ ] 10 Prerequisite code audit (Grep APIs)
+- [ ] 11 Platform coverage (hardware sections)
+- [ ] 12 Test enforcement (checkpoints, Unit Tests section)
+- [ ] 13 Test runner bat line + create bat if missing
+- [ ] 14 Stale completion -> validate-todo-section / verify-todo-section skill
+- [ ] 15 History table row (Action=validate)
+```
 
 ## Use This Skill When
 
 - A TODO file was just created or significantly edited and needs structural validation.
-- The `/todo-pipeline` invokes this as stages 1 and 3 (before and after gap analysis).
+- The todo-pipeline invokes this as stages 1 and 3 (before and after gap analysis).
 - The user asks "validate TODO-XX" or "check this TODO file" (not a specific section).
 - Before starting implementation on a TODO to ensure it's structurally sound.
-- Do NOT use for single-section validation -- use `/validate-todo-section` instead.
+- Do NOT use for single-section validation -- use `.cursor/skills/validate-todo-section/SKILL.md` or `.claude/skills/verify-todo-section/SKILL.md` instead.
 
 ## Workflow
 
@@ -34,10 +68,10 @@ description: Validate a TODO file for structural completeness, Implementation Or
    - Scan for duplicate XREFs where two TODOs both *implement* the same section.
 6. Validate the lean TODO structure.
    - Check required sections, numbering, checklist shape, references, and exit criteria.
-   - **Flat section numbering only:** `## 1.`, `## 2.`, `## 3.` -- the only numbered headings are top-level `## N. Title`. **Never** use sub-numbered section labels inside a section:
-     - Forbidden: `### N.M` (e.g. `### 17.1`), bold pseudo-headings like `**17.1 Foo**` / `**1.2 Bar**`, or any `N.M` split that breaks the checklist into sub-chapters.
-     - Required: under each `## N.` use **one continuous** `- [ ]` checklist (nested bullets under a single `- [ ]` line are OK for detail). Optional blocks only: a one-line intro, optional callouts (`> [!NOTE]` / WARNING / TIP), then all `- [ ]` work items with `- [ ] Commit:` as the **last** checklist line, then `**Test checkpoint:**` (plus its lines) as the **final** block in the section so acceptance criteria close the section. If you need grouping, fold the words into the bullet text (e.g. "App Paths: open HKLM key...") -- do not add `17.1` / `17.2` labels.
-     - If validation finds `### N.M` or `**N.M ...**`, **remove** those headings and merge into a single list; never "fix" by renaming to bold `**N.M**`.
+   - **Flat section numbering only:** `## 1.`, `## 2.`, `## 3.` -- the only numbered headings are top-level `## N. Title`. **Never** use sub-numbered labels inside a section:
+     - Forbidden: `### N.M` (e.g. `### 17.1`), bold `**17.1 Foo**` / `**1.3 Commit**`, or any `N.M` checklist grouping.
+     - Required: under each `## N.` use **one continuous** `- [ ]` list (nested bullets under one `- [ ]` are OK). Allowed extras: short intro, optional callouts (`> [!NOTE]` / WARNING / TIP), then all `- [ ]` items with `- [ ] Commit:` as the **last** checklist line, then `**Test checkpoint:**` closes the section. Put grouping in bullet wording, not in `N.M` headings.
+     - If you find `### N.M` or `**N.M ...**`, remove and merge into a single list -- do not replace `###` with `**N.M**`.
    - **`Depends On` column must use `§` prefix:** `§1, §3` not bare `1, 3`.
    - **Every section needs a `- [ ] Commit:` item.** Flag sections missing one.
    - **Compact the OS Comparison table:** Header: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`. Cells: emoji + max 5 words. ~100 char rows max.
@@ -78,7 +112,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Determine the `TEST_CAT_*` category from the Unit Tests section (e.g., `TEST_CAT_MM` -> `mm`, `TEST_CAT_SCHED` -> `sched`).
     - Check if `scripts/debug/run-<suite>-tests.bat` exists on disk. If it does NOT exist, create it following the pattern in existing bat files (one-liner calling `run-qemu.ps1 -Accel whpx -TestOnly -TestSuite <suite>`).
     - Add the line to the Verification section if missing.
-14. If section completion state seems wrong, defer to `/validate-todo-section` for deep code-truth verification.
+14. If section completion state seems wrong, defer to `.cursor/skills/validate-todo-section/SKILL.md` or `.claude/skills/verify-todo-section/SKILL.md` for deep code-truth verification.
 15. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this validation run:
     ```
     | Date | Action | Summary |

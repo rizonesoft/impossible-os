@@ -20,6 +20,7 @@
 - → XREF: `TODO-17-kernel-security-hardening.md §9` -- §13 AT_RANDOM provides user-mode stack canary seed bytes; shares RDRAND path
 - → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §4` -- §12 kernel TLS expansion allocator consumed by user-mode TlsAlloc/TlsFree wrappers
 - → XREF: `TODO-09-process-model-extensions.md §1` -- §1 adds `cwd[MAX_PATH]` to `struct task`; `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` in the PEB should be populated from `task->cwd` at `task_exec()` time
+- → XREF: `TODO-22-kernel-bulletproofing.md` §1,§3,§5,§9 -- same 5-layer invariant pattern for gs:/frame/swapgs contracts that PEB/TEB and syscall paths rely on
 
 ## Outcome
 
@@ -34,23 +35,23 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                     | Depends On   | Status |
-| --- | :---: | ----------------------------------------------- | ------------ | :----: |
-| 💎  |   1   | TEB struct and GS self-pointer                  | --           |  [x]   |
-| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --           |  [x]   |
-| 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1           |  [x]   |
-| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3       |  [x]   |
-| 💎  |   5   | PEB allocation and population at task_exec      | §2, §4       |  [x]   |
-| 💎  |   6   | TEB allocation and population at thread create  | §1, §4       |  [x]   |
-| 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6       |  [x]   |
-| 💎  |   8   | PEB Ldr (module list) basic population          | §5           |  [x]   |
-| 💎  |   9   | TLS slot allocation (64 static slots)           | §6           |  [x]   |
-| ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6       |  [x]   |
-| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5           |  [x]   |
-| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9           |  [x]   |
-| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7           |  [x]   |
+| ⭐  | Order | Deliverable                                     | Depends On         | Status |
+| --- | :---: | ----------------------------------------------- | ------------------ | :----: |
+| 💎  |   1   | TEB struct and GS self-pointer                  | --                 |  [x]   |
+| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --                 |  [x]   |
+| 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1                 |  [x]   |
+| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3             |  [x]   |
+| 💎  |   5   | PEB allocation and population at task_exec      | §2, §4             |  [x]   |
+| 💎  |   6   | TEB allocation and population at thread create  | §1, §4             |  [x]   |
+| 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6             |  [x]   |
+| 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [x]   |
+| 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [x]   |
+| ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [x]   |
+| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [x]   |
+| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [x]   |
+| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [x]   |
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T05§11 |  [x]   |
-| 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14 |  [x]   |
+| 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [x]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.

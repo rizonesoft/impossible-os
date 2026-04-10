@@ -13,15 +13,15 @@
 - [`docs/specs/eif-format.md`](../../docs/specs/eif-format.md) -- normative EIF specification
 - [`src/kernel/exec.c`](../../src/kernel/exec.c) -- exec dispatcher, module registration API
 - [`include/kernel/exec.h`](../../include/kernel/exec.h) -- `loaded_module_t`, `exec_register_module()`
-- [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) -- `vmm_map_page()`, `vmm_protect()`
+- [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) -- `vmm_map_page()`, `vmm_protect_range()`
 - [`src/kernel/mm/pmm.c`](../../src/kernel/mm/pmm.c) -- `pmm_alloc_frame()`
 - -> XREF: `TODO-08-binary-system.md §5` -- basic EIF loader (FOUNDATION, complete)
 - -> XREF: `TODO-08-binary-system.md §13` -- elf2eif converter (COMPLEMENT, not started)
 - -> XREF: `TODO-08-binary-system.md §17` -- EIF code signing (COMPLEMENT, not started)
 - -> XREF: `TODO-08-binary-system.md §15` -- ASLR for all formats (COMPLEMENT, not started)
 - -> XREF: `TODO-08-binary-system.md §6` -- module list registration (FOUNDATION, complete)
-- -> XREF: `TODO-20-kernel-libraries.md` -- LZ4 decompressor (FOUNDATION, needed for §6)
-- -> XREF: `TODO-05-native-api-ssdt.md` -- SSDT service table (FOUNDATION, partial)
+- -> XREF: `TODO-20-kernel-libraries.md` §3 -- LZ4 block decompressor (FOUNDATION for §6; until [x] here, §6 stays blocked)
+- -> XREF: `TODO-05-native-api-ssdt.md` §4 -- SSDT service table (FOUNDATION, partial)
 
 ## Outcome
 
@@ -41,16 +41,35 @@
 | --- | :---: | ---------------------------------------------- | ----------------------- | :----: |
 | ⭐  |   1   | Range overlap validation (normative rule 2)    | --                      |  [ ]   |
 | 💎  |   2   | Segment permission enforcement (R/W/X PTE)     | §1                      |  [ ]   |
-| ⭐  |   3   | Module registration for EIF                    | T08 §6                  |  [ ]   |
+| ⭐  |   3   | Module registration for EIF                    | TODO-08 §6              |  [ ]   |
 | ⭐  |   4   | API version gating                             | §1                      |  [ ]   |
 | ⭐  |   5   | Metadata section parser                        | §1                      |  [ ]   |
-| ⭐  |   6   | LZ4 compressed segments                        | §2, T20                 |  [ ]   |
+| ⭐  |   6   | LZ4 compressed segments                        | §2, TODO-20 §3          |  [ ]   |
 | ⭐  |   7   | Optional import stubs                          | §3                      |  [ ]   |
-| ⭐  |   8   | EIF ASLR (load_base=0 randomization)           | §2, T08 §15             |  [ ]   |
+| ⭐  |   8   | EIF ASLR (load_base=0 randomization)           | §2, TODO-08 §15         |  [ ]   |
 | ⭐  |   9   | Per-process dispatch table isolation            | §3                      |  [ ]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
 > ⭐ = exclusive -- Impossible OS native format superiority.
+
+---
+
+## OS Comparison
+
+| ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
+| --- | --- | --- | --- | --- |
+| 💎 | Segment RWX pages | ✅ PE chars | ✅ ELF p_flags | ⬜ §2 |
+| 💎 | ASLR | ✅ Yes | ✅ PIE | ⬜ §8 |
+| 💎 | Code signing | ✅ Auth | ✅ IMA | ⬜ TODO-08 §17 |
+| ⭐ | Fast load path | ❌ slow IAT | ❌ slow PLT | ✅ TODO-08 §5 |
+| ⭐ | Integer SSDT imports | ❌ strings | ❌ strings | ✅ TODO-08 §5 |
+| ⭐ | API version gate | ⚠️ subsystem | ❌ none | ⬜ §4 |
+| ⭐ | Built-in metadata | ⚠️ RT_VERSION | ⚠️ .note | ⬜ §5 |
+| ⭐ | LZ4 segments | ❌ none | ❌ none | ⬜ §6 |
+| ⭐ | Overlap checks | ⚠️ partial | ⚠️ partial | ⬜ §1 |
+| ⭐ | Optional import stub | ❌ crash | ❌ NULL | ⬜ §7 |
+
+> **Parity gaps:** rows with 💎 and ⬜ are covered by §1-§9 or TODO-08 §17. **After §1-§3:** permissions + overlap + module list. **After §4-§5:** API gate + metadata. **After §6-§9:** LZ4 + stubs + ASLR + per-process dispatch.
 
 ---
 
@@ -62,9 +81,12 @@ The spec mandates `segment_offset < import_offset < signature_offset < metadata_
 - [ ] Verify no segment data range overlaps another segment's data range
 - [ ] Verify segment data ranges don't overlap the segment table, import table, signature, or metadata
 - [ ] Reject files violating any overlap constraint with `ENOEXEC` and descriptive log message
+
+**Test checkpoint:** An EIF with overlapping segment data ranges is rejected with `"eif: range overlap"` in serial log. An EIF with import_offset < segment_table_end is rejected. Valid EIF with correct ordering still loads. `POST16(0xDE20)` on entry, `POST16(0xDE21)` after validation. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"kernel: eif -- normative range overlap validation"`
 
-**Test checkpoint:** An EIF with overlapping segment data ranges is rejected with `"eif: range overlap"` in serial log. An EIF with import_offset < segment_table_end is rejected. Valid EIF with correct ordering still loads. `POST16(0xDE20)` on entry, `POST16(0xDE21)` after validation. Test on: QEMU WHPX + TCG; bare metal.
+---
 
 ## 2. Segment Permission Enforcement (R/W/X via PTE)
 
@@ -75,11 +97,14 @@ The current loader copies segment data but does not set page permissions. All pa
 - [ ] For `EIF_SEG_READ | EIF_SEG_WRITE` (data/BSS): `vmm_protect_range(vaddr, mem_size, VMM_USER_RW | VMM_FLAG_NX)`
 - [ ] For `EIF_SEG_READ | EIF_SEG_EXEC` (text): `vmm_protect_range(vaddr, mem_size, VMM_USER_RO)` (executable, not writable)
 - [ ] Reject segments with `EIF_SEG_WRITE | EIF_SEG_EXEC` (W+X) -- security policy: no writable+executable pages
-- [ ] Commit: `"kernel: eif -- segment permission enforcement via PTE flags"`
-
-**Test checkpoint:** EIF `.text` segment is executable but not writable. EIF `.data` segment is writable but not executable. Attempt to execute from `.data` causes #PF. Attempt to write to `.text` causes #PF. Serial log shows `"eif: segment 0: R-X"`, `"eif: segment 1: RW-"`. `POST16(0xDE22)` on entry, `POST16(0xDE23)` after permissions set. Test on: QEMU WHPX + TCG; bare metal.
 
 **Regression risk:** Changing page permissions after segment copy may break if segments span 2 MiB page boundaries that aren't split yet. `vmm_protect_range` handles splitting, but verify on bare metal. If broken, revert permission changes and keep segments RW until per-process VMM is complete.
+
+**Test checkpoint:** EIF `.text` segment is executable but not writable. EIF `.data` segment is writable but not executable. Attempt to execute from `.data` causes #PF. Attempt to write to `.text` causes #PF. Serial log shows `"eif: segment 0: R-X"`, `"eif: segment 1: RW-"`. `POST16(0xDE22)` on entry, `POST16(0xDE23)` after permissions set. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+- [ ] Commit: `"kernel: eif -- segment permission enforcement via PTE flags"`
+
+---
 
 ## 3. Module Registration for EIF
 
@@ -88,9 +113,12 @@ Every loaded binary must be registered in the crash registry and module list (TO
 - [ ] After successful segment load, build a `loaded_module_t` with: `base_address = load_base` (or first segment vaddr), `size_of_image` = span from lowest to highest segment, `entry_point = load_base + entry_point`, `format = EXEC_FMT_EIF`, `name` from metadata `"name"` key (if parsed) or task name
 - [ ] Call `exec_register_module(NULL, &mod)` from `eif_load()`
 - [ ] Remove the EIF-specific module registration in `task_exec()` (it currently registers all formats with the ELF range -- EIF should register itself with its actual load range)
+
+**Test checkpoint:** After loading an EIF, `exec_find_module_by_pc(entry_va)` returns the EIF module with correct base and `EXEC_FMT_EIF`. Serial log shows `"exec: registered module '<name>' at 0x<base>"`. `POST16(0xDE24)` on entry, `POST16(0xDE25)` after registration. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"kernel: eif -- module registration via exec_register_module"`
 
-**Test checkpoint:** After loading an EIF, `exec_find_module_by_pc(entry_va)` returns the EIF module with correct base and `EXEC_FMT_EIF`. Serial log shows `"exec: registered module '<name>' at 0x<base>"`. `POST16(0xDE24)` on entry, `POST16(0xDE25)` after registration. Test on: QEMU WHPX + TCG; bare metal.
+---
 
 ## 4. API Version Gating
 
@@ -99,9 +127,12 @@ The `api_version` field in the EIF header specifies the minimum OS API version r
 - [ ] Define `EIF_CURRENT_API_VERSION` in `eif.h` (start at 1)
 - [ ] In `eif_validate()`: if `hdr->api_version > EIF_CURRENT_API_VERSION`, reject with `"eif: binary requires API version %u, OS provides %u"`
 - [ ] Log accepted API version at DEBUG level
+
+**Test checkpoint:** EIF with `api_version=1` loads successfully. EIF with `api_version=99` is rejected with `"eif: binary requires API version 99, OS provides 1"` in serial log. `POST16(0xDE26)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"kernel: eif -- API version gating"`
 
-**Test checkpoint:** EIF with `api_version=1` loads successfully. EIF with `api_version=99` is rejected with `"eif: binary requires API version 99, OS provides 1"` in serial log. `POST16(0xDE26)` on entry. Test on: QEMU WHPX + TCG; bare metal.
+---
 
 ## 5. Metadata Section Parser
 
@@ -112,22 +143,28 @@ The spec defines a key-value metadata section (name, version, author, icon, min_
 - [ ] Bounds-check every key_len and val_len against remaining file size
 - [ ] Log parsed metadata: `"eif: name='%s' version='%s' author='%s'"`
 - [ ] Store metadata in `loaded_module_t.name` field for crash registry visibility
+
+**Test checkpoint:** EIF with metadata section shows `"eif: name='hello' version='1.0'"` in serial log. EIF with truncated metadata (key_len points past EOF) is rejected. EIF without metadata (`metadata_offset=0`) loads normally. `POST16(0xDE28)` on entry, `POST16(0xDE29)` after parse. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"kernel: eif -- metadata section parser"`
 
-**Test checkpoint:** EIF with metadata section shows `"eif: name='hello' version='1.0'"` in serial log. EIF with truncated metadata (key_len points past EOF) is rejected. EIF without metadata (`metadata_offset=0`) loads normally. `POST16(0xDE28)` on entry, `POST16(0xDE29)` after parse. Test on: QEMU WHPX + TCG; bare metal.
+---
 
 ## 6. LZ4 Compressed Segments
 
 The spec reserves `EIF_FLAG_COMPRESSED` for LZ4-compressed segment data. This enables smaller binaries on disk with transparent decompression at load time.
 
-- [ ] Depends on: LZ4 decompressor in kernel (-> XREF TODO-20)
+- [ ] Depends on: LZ4 decompressor in kernel (-> XREF: `TODO-20-kernel-libraries.md` §3)
 - [ ] If `EIF_FLAG_COMPRESSED` is set: for each segment, `file_size` is the compressed size; `mem_size` is the uncompressed size
 - [ ] Allocate a temporary kernel buffer (`kmalloc(file_size)`), copy compressed data, decompress into target vaddr, free temp buffer
 - [ ] Validate decompressed size matches `mem_size`; reject on mismatch
 - [ ] If LZ4 library not available: reject compressed EIF with `"eif: LZ4 decompression not available"`
+
+**Test checkpoint:** An EIF with `COMPRESSED` flag and LZ4-compressed `.text` segment loads and executes correctly. Decompressed size matches `mem_size`. Serial log shows `"eif: decompressed segment 0: %u -> %u bytes"`. Corrupt compressed data is rejected. `POST16(0xDE2A)` on entry, `POST16(0xDE2B)` after decompress. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"kernel: eif -- LZ4 compressed segment loading"`
 
-**Test checkpoint:** An EIF with `COMPRESSED` flag and LZ4-compressed `.text` segment loads and executes correctly. Decompressed size matches `mem_size`. Serial log shows `"eif: decompressed segment 0: %u -> %u bytes"`. Corrupt compressed data is rejected. `POST16(0xDE2A)` on entry, `POST16(0xDE2B)` after decompress. Test on: QEMU WHPX + TCG; bare metal.
+---
 
 ## 7. Optional Import Stubs
 
@@ -136,22 +173,28 @@ Spec normative rule 5: skipped optional imports MUST have their dispatch table e
 - [ ] In the dispatch table write pass: for optional imports where `available=0`, set the dispatch entry to point to a kernel-provided stub function that returns `STATUS_NOT_IMPLEMENTED` (0xC0000002)
 - [ ] The stub address should be a well-known kernel page mapped read-only into user space
 - [ ] User code calling an unavailable optional import gets a clean `STATUS_NOT_IMPLEMENTED` return instead of a crash
+
+**Test checkpoint:** An EIF importing an unregistered optional SSDT entry gets `STATUS_NOT_IMPLEMENTED` (0xC0000002) return value, not a crash. Serial log shows `"eif: optional import 0x%x stubbed"`. `POST16(0xDE2C)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"kernel: eif -- optional import stub generation"`
 
-**Test checkpoint:** An EIF importing an unregistered optional SSDT entry gets `STATUS_NOT_IMPLEMENTED` (0xC0000002) return value, not a crash. Serial log shows `"eif: optional import 0x%x stubbed"`. `POST16(0xDE2C)` on entry. Test on: QEMU WHPX + TCG; bare metal.
+---
 
 ## 8. EIF ASLR (load_base=0 Randomization)
 
 When `load_base=0`, the EIF binary is position-independent and should be loaded at a randomized address for security. This integrates with the broader ASLR work in TODO-08 §15.
 
-- [ ] If `load_base == 0`: generate a random base address using the kernel CSPRNG (-> XREF TODO-20 Monocypher/RDRAND)
+- [ ] If `load_base == 0`: generate a random base address using the kernel CSPRNG (-> XREF: `TODO-20-kernel-libraries.md` §5 Monocypher/RDRAND)
 - [ ] Random base must be page-aligned, within the user address range, and not overlapping existing mappings
 - [ ] Update all segment vaddr calculations to use the randomized base
 - [ ] Update dispatch table base address calculation
 - [ ] Log the randomized base: `"eif: ASLR base=0x%x"`
+
+**Test checkpoint:** Two consecutive loads of the same PIC EIF binary (`load_base=0`) produce different base addresses. Serial log shows different `"eif: ASLR base=0x%x"` values. Non-PIC EIF (`load_base!=0`) loads at its preferred address. `POST16(0xDE2E)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"kernel: eif -- ASLR for position-independent binaries"`
 
-**Test checkpoint:** Two consecutive loads of the same PIC EIF binary (`load_base=0`) produce different base addresses. Serial log shows different `"eif: ASLR base=0x%x"` values. Non-PIC EIF (`load_base!=0`) loads at its preferred address. `POST16(0xDE2E)` on entry. Test on: QEMU WHPX + TCG; bare metal.
+---
 
 ## 9. Per-Process Dispatch Table Isolation
 
@@ -161,31 +204,12 @@ Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When
 - [ ] Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4 (not kernel PML4)
 - [ ] Write dispatch entries into the per-process pages
 - [ ] Set pages as User + Read-Only (dispatch table should not be writable by user code)
+
+**Test checkpoint:** Two EIF processes with different imports see different dispatch table contents at 0x8F0000. Writing to the dispatch table from user mode causes #PF. Serial log shows `"eif: dispatch table mapped at 0x8F0000 (per-process)"`. `POST16(0xDE30)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"kernel: eif -- per-process dispatch table isolation"`
 
-**Test checkpoint:** Two EIF processes with different imports see different dispatch table contents at 0x8F0000. Writing to the dispatch table from user mode causes #PF. Serial log shows `"eif: dispatch table mapped at 0x8F0000 (per-process)"`. `POST16(0xDE30)` on entry. Test on: QEMU WHPX + TCG; bare metal.
-
 ---
-
-## OS Comparison
-
-| ⭐ | Feature                    | 🪟 Win11                | 🐧 Linux               | 🚀 Impossible OS              |
-|----|----------------------------|------------------------|------------------------|----------------------------------|
-| 💎 | Segment permissions        | ✅ PE section chars    | ✅ ELF p_flags         | ⬜ Planned -- §2               |
-| 💎 | ASLR                       | ✅ Mandatory           | ✅ PIE + kernel        | ⬜ Planned -- §8               |
-| 💎 | Code signing enforcement   | ✅ Authenticode/WHCP   | ✅ IMA/EVM             | ⬜ T08 §17                     |
-| ⭐ | < 10 us load time          | ❌ ~100 us (PE IAT)    | ❌ ~50 us (ELF PLT)    | ✅ §5 done (uptime_ns)         |
-| ⭐ | Integer-only imports       | ❌ String-based IAT    | ❌ String-based PLT    | ✅ §5 done (SSDT dispatch)     |
-| ⭐ | API version gating         | ⚠️ Subsystem version   | ❌ No ABI version      | ⬜ Planned -- §4               |
-| ⭐ | Built-in metadata          | ⚠️ RT_VERSION resource | ⚠️ .note sections      | ⬜ Planned -- §5               |
-| ⭐ | LZ4 compressed segments    | ❌ Not supported       | ❌ Not supported       | ⬜ Planned -- §6               |
-| ⭐ | Mandatory overlap checks   | ⚠️ Partial bounds      | ⚠️ Partial bounds      | ⬜ Planned -- §1               |
-| ⭐ | Optional import stubs      | ❌ DLL not found crash | ❌ dlopen NULL crash   | ⬜ Planned -- §7               |
-
-> **After §1-§3:** EIF has proper security (permissions + range validation) and crash-dump visibility.
-> **After §4-§5:** EIF binaries carry structured metadata and version-gate against the OS API level.
-> **After §6:** EIF binaries can be smaller on disk than ELF or PE with transparent LZ4 decompression.
-> **After §7-§9:** EIF is fully production-ready with ASLR, import stubs, and per-process isolation.
 
 ## Unit Tests
 
@@ -203,6 +227,9 @@ Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When
   - Module registration: after `eif_load`, `exec_find_module_by_pc(entry)` finds module with `EXEC_FMT_EIF`
 - [ ] Move existing EIF tests from `test_exec.c` into `test_eif.c` for consolidation
 - [ ] Register in `test_runner_init()`: `test_register_eif()`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=exec` -- all `test_eif_*` cases PASS; `tail -1 build/build.log` is `=== BUILD OK ===`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
 - [ ] Commit: `"test: add EIF full implementation test suite"`
 
 ## Verification
@@ -216,4 +243,13 @@ Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When
 - [ ] Optional import returns `STATUS_NOT_IMPLEMENTED`, not crash
 - [ ] All POST16 codes appear in correct order on serial output
 - [ ] Verify on: QEMU WHPX (2 CPUs), QEMU TCG, VirtualBox, bare metal
-- [ ] Commit: `"kernel: eif -- full implementation complete"`
+
+**Test runner:** `scripts\debug\run-exec-tests.bat` (SUITE=exec)
+
+---
+
+## History
+
+| Date | Action | Summary |
+| --- | --- | --- |
+| 2026-04-10 | validate | validate-todo-file: Depends On TODO-08/TODO-20 section refs; Inputs TODO-20 §3 + TODO-05 §4 + vmm_protect_range; §1-§9 checkpoint then Commit + four platforms; §2 regression before checkpoint; OS Comparison moved after Impl + compacted (fixed local § vs TODO-08 §5); Unit Tests checkpoint; Verification test runner; removed Verification Commit line; §6/§8 XREF pointers; `---` before each `## N`. |

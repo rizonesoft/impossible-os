@@ -59,6 +59,7 @@ description: Verify an already-implemented TODO section through the full quality
     - **Cross-TODO sync:** if the section's claims affect external TODO file checklists, reconcile those reciprocally (downgrade only -- never mark new items `[x]` in another file from verify).
     - **Deferred-item resolution check:** scan earlier sections in the SAME TODO for items marked "deferred to §N" where N is this section. If §N didn't actually do the deferred work, the deferral is broken -- flag for the report and downgrade the deferring item if appropriate.
     - Preserve formatting (table headers, icons, column structure).
+    - **No N.M subnumbering:** when editing the TODO, never add `### N.M`, `**N.M ...**`, or split one `## N.` into labeled sub-chapters. If you touch structure, merge into **one continuous** `- [ ]` list per `## N.` (same rule as `validate-todo-file`); do not "fix" `###` by renaming to `**N.M**`.
 11. **Verify Implementation Order table row** -- the IO row for this section must match the section state after step 10. If §N has any `[/]` or `[ ]` items, the IO row cannot stay `[x]`; downgrade conservatively. Never upgrade an IO row in verify-mode.
 12. **Verify OS Comparison table row** -- the row for this section must match the section state. If a feature was claimed Done but evidence shows Partial, downgrade. Update the `<!-- Sources: ... -->` comment only if the row changed.
 13. **Codex adversarial review** (MANDATORY) -- run via the Codex plugin, NOT self-review. Self-review has implementation/verification bias; Codex reads code fresh and catches things you rationalized away. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles (concurrency, races, error paths, regressions, wiring, ABI, memory safety, functional correctness, security, code quality, performance, bare metal), request severity-labeled findings.
@@ -92,6 +93,7 @@ description: Verify an already-implemented TODO section through the full quality
     - **PE export table sync:** if this section provides public APIs callable from user-mode, verify they are in `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c`.
     - **SSDT audit trigger:** if this section involves SSDT handlers, invoke `audit-ssdt` skill to verify master table consistency. (Verify mode runs the audit; implement mode only recommends it.)
     - **Filed-in-owner check:** any follow-up `[ ]` item that names an owner (e.g., "tracked in TODO-XX §N", "owner: TODO-YY") must ALSO be filed as a checklist item in that owner section with reciprocal `→ XREF`. If the owner section doesn't exist yet, find or create one via scope-gap protocol Branch C/D before filing. A note here alone is a dead-end paper trail.
+    - **N.M structure drift:** if the file uses `### N.M` or bold `**N.M ...**` under any `## N.`, flag for cleanup per `validate-todo-file` (single checklist stream per section).
     - **Verify-mode deep-analysis pass** (extra in verify; not in implement because the code is fresh there):
       - `codex-consistency-audit` -- struct offsets, constants, API contracts across header/implementation/test/asm files.
       - `codex-dead-code` -- unreachable functions, unused defines, orphaned types after the section has had time to drift.
@@ -169,6 +171,7 @@ This skill is the VERIFY half of a mirrored pair with `implement-todo-section`. 
 - Commit only if actual fixes/test additions/status downgrades occurred. A clean PASS produces no commit.
 - If the section was never implemented (all `[ ]`), this skill is wrong -- use `implement-todo-section` instead.
 - Do not turn this into a broad file-wide cleanup pass.
+- Never introduce N.M subnumbering in TODO edits (`17.1`, `### 3.2`, `**4.1**` headings). Same invariant as `validate-todo-file`.
 - Apply `superpowers:receiving-code-review` discipline to every Codex finding -- verify before fixing, reject false positives with evidence.
 
 ## Additional Resources

@@ -11,7 +11,7 @@
 #include "kernel/test/test.h"
 #include "kernel/acpi.h"
 
-/* ---- S-state discovery (§1.1) ---- */
+/* ---- S-state discovery (TODO-15 §1) ---- */
 
 static void test_acpi_s5_always_supported(void)
 {
@@ -57,7 +57,7 @@ static void test_acpi_sleep_states_consistent(void)
     TEST_ASSERT(1, "sleep state / SLP_TYPa consistency verified");
 }
 
-/* ---- Sleep entry API (§1.2) ---- */
+/* ---- Sleep entry API (TODO-15 §1) ---- */
 
 static void test_acpi_enter_unsupported_fails(void)
 {
