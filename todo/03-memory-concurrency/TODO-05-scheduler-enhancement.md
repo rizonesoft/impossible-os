@@ -7,8 +7,8 @@
 
 ## Inputs
 
-- [`src/kernel/sched/sched.c`](../../src/kernel/sched/sched.c)
-- [`include/kernel/sched/sched.h`](../../include/kernel/sched/sched.h)
+- `src/kernel/sched/sched.c` (planned -- created by §1)
+- `include/kernel/sched/sched.h` (planned -- created by §1)
 - [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c)
 - [`include/kernel/sched/task.h`](../../include/kernel/sched/task.h)
 - [`src/kernel/drivers/lapic.c`](../../src/kernel/drivers/lapic.c)
@@ -17,7 +17,7 @@
 - → XREF: `02-kernel-core/TODO-06-irql-model-dpcs.md` -- scheduler tick ISR runs at `DISPATCH_LEVEL`; RT scheduling interacts with DPC queuing and IRQL transitions
 - → XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` -- `uptime_ns()` used for CFS vruntime accounting in §3 and for EDF deadline tracking in §5
 - → XREF: `04-drivers-hardware` domain -- ACPI `_PSS` P-state table needed for §9 CPU frequency scaling governors
-- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x0180–0x0186 reserved for Worker Factory (kernel thread pool) syscalls; §10 wires them
+- → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md §4` -- SSDT indices 0x0180--0x0186 reserved for Worker Factory (kernel thread pool) syscalls; §10 wires them
 - → XREF: `02-kernel-core/TODO-09-process-model-extensions.md §5,§10` -- scope overlap: TODO-09 §5 defines the process-level `sched_policy` field and `NtSetInformationProcess(ProcessSchedulingPolicy)` API; TODO-09 §10 defines `SetProcessAffinityMask`. Scheduler loop changes for RT classes (§4) and thread-level affinity (§6) are authoritative HERE.
 
 ## Outcome
@@ -52,7 +52,7 @@
 
 ---
 
-## 1. 40-Level Priority Queues + O(1) Bitmap Dequeue `[Opus]`
+## 1. 40-Level Priority Queues + O(1) Bitmap Dequeue
 
 Replace the single round-robin run-queue with 40 per-priority FIFO rings. A 64-bit bitmap marks which levels are non-empty; `bsf` (bit-scan forward) finds the highest-priority non-empty level in one instruction -- strictly O(1) regardless of thread count.
 
@@ -70,7 +70,7 @@ Replace the single round-robin run-queue with 40 per-priority FIFO rings. A 64-b
 - [ ] Boot log: `[SCHED] priority queues active: 40 levels, O(1) bitmap dispatch`
 - [ ] Commit: `"sched: 40-level priority queues with O(1) bitmap dequeue"`
 
-## 2. Dynamic Priority Aging `[Sonnet]`
+## 2. Dynamic Priority Aging
 
 Guarantee every thread eventually runs by boosting the effective priority of READY threads that have been waiting too long -- an exponential moving average (`sleep_avg`) raises the effective priority toward 0 while the thread starves, and resets when it runs.
 
@@ -83,7 +83,7 @@ Guarantee every thread eventually runs by boosting the effective priority of REA
 - [ ] Configurable via Registry `HKLM\SYSTEM\Scheduler\AgingThresholdTicks`
 - [ ] Commit: `"sched: dynamic priority aging -- starvation prevention via ticks_waiting boost"`
 
-## 3. CFS vruntime + `prio_to_weight` Table `[Opus]`
+## 3. CFS vruntime + `prio_to_weight` Table
 
 Completely Fair Scheduler: within each priority level threads share CPU in proportion to their weight. Each thread tracks `vruntime` (nanoseconds of CPU time, normalised by weight); the scheduler always dispatches the thread with the lowest `vruntime`. High-weight (high-priority) threads accumulate `vruntime` more slowly and therefore get more CPU.
 
@@ -103,7 +103,7 @@ Completely Fair Scheduler: within each priority level threads share CPU in propo
 - [ ] Boot log: `[SCHED] CFS vruntime active; target_latency=%u µs`
 - [ ] Commit: `"sched: CFS vruntime fair scheduling -- prio_to_weight table, min_vruntime"`
 
-## 4. `SCHED_FIFO` / `SCHED_RR` Real-Time Classes `[Opus]`
+## 4. `SCHED_FIFO` / `SCHED_RR` Real-Time Classes
 
 Two POSIX real-time scheduling classes that always preempt any `SCHED_NORMAL` thread: `SCHED_FIFO` runs until it blocks or yields (no time slice); `SCHED_RR` round-robins with a 10 ms hard slice within the same RT priority level.
 
@@ -121,7 +121,7 @@ Two POSIX real-time scheduling classes that always preempt any `SCHED_NORMAL` th
 - [ ] Kernel watchdog thread: spawn at `SCHED_FIFO`, `rt_priority = 99` before any user thread
 - [ ] Commit: `"sched: SCHED_FIFO / SCHED_RR real-time classes, CAP_SCHED_RT enforcement"`
 
-## 5. `SCHED_DEADLINE` EDF Scheduling `[Opus]`
+## 5. `SCHED_DEADLINE` EDF Scheduling
 
 Earliest-Deadline-First scheduling for hard real-time tasks: each thread declares a `(runtime, deadline, period)` triple; the scheduler always dispatches the thread whose deadline is nearest. Admission control at 90% utilisation prevents over-subscription; GRUB bandwidth reclaim returns unused runtime to other deadline threads.
 
@@ -139,7 +139,7 @@ Earliest-Deadline-First scheduling for hard real-time tasks: each thread declare
 - [ ] `thread_set_sched(tid, SCHED_DEADLINE, &sched_attr)` -- `sched_attr` contains runtime/deadline/period; admission check runs before activation
 - [ ] Commit: `"sched: SCHED_DEADLINE EDF scheduling -- admission control, GRUB bandwidth reclaim"`
 
-## 6. CPU Affinity `[Sonnet]`
+## 6. CPU Affinity
 
 Pin threads to specific CPUs by setting an `affinity_mask` bitmask on the task; the scheduler only enqueues the thread on a run queue whose CPU bit is set in the mask.
 
@@ -152,7 +152,7 @@ Pin threads to specific CPUs by setting an `affinity_mask` bitmask on the task; 
 - [ ] Win32 `SetThreadAffinityMask(thread, mask)` → `NtSetInformationThread(ThreadAffinityMask)`
 - [ ] Commit: `"sched: CPU affinity -- affinity_mask in task_t, NtSetInformationThread wiring"`
 
-## 7. Scheduler Stats + `/sys/sched` VFS File `[Sonnet]`
+## 7. Scheduler Stats + `/sys/sched` VFS File
 
 Expose per-thread scheduler metrics as a readable VFS file -- class, priority, vruntime, CPU time, voluntary and involuntary context-switch counts -- queryable by the `sched` shell command and Task Manager without a dedicated syscall.
 
@@ -165,7 +165,7 @@ Expose per-thread scheduler metrics as a readable VFS file -- class, priority, v
 - [ ] Wire CPU-time column to Task Manager thread view
 - [ ] Commit: `"sched: /sys/sched VFS file + sched shell command, per-thread stats"`
 
-## 8. Scheduler Tick Calibration `[Opus]`
+## 8. Scheduler Tick Calibration
 
 Replace the hardcoded LAPIC ICR with a measured RDTSC + HPET calibration that produces accurate nanosecond tick intervals on any hardware. Fall back to the Hyper-V synthetic timer on Gen 2 VMs where HPET is absent.
 
@@ -182,7 +182,7 @@ Replace the hardcoded LAPIC ICR with a measured RDTSC + HPET calibration that pr
 - [ ] Boot log: `[SCHED] tick calibrated: ICR=%u, tick=%u ns` or `[SCHED] tick: Hyper-V synthetic timer`
 - [ ] Commit: `"sched: tick calibration -- RDTSC+HPET measurement, Hyper-V synthetic timer fallback"`
 
-## 9. CPU Frequency Scaling Hook `[Opus]`
+## 9. CPU Frequency Scaling Hook
 
 Define a `cpufreq_governor_t` vtable and wire two built-in governors -- `performance` (always max P-state) and `powersave` (scale down on idle) -- to the scheduler's per-CPU load measurement. The ACPI P-state transition is deferred to the drivers domain; this section owns the scheduler-side load tracking and governor policy.
 
@@ -210,7 +210,7 @@ The Worker Factory is the kernel-side thread pool (backs `TpAllocPool` / `Create
 - [ ] `NtQueryInformationWorkerFactory(FactoryHandle, InfoClass, Buffer, Length, RetLen)` → SSDT 0x0184
 - [ ] `NtSetInformationWorkerFactory(FactoryHandle, InfoClass, Buffer, Length)` → SSDT 0x0185
 - [ ] `NtWaitForWorkViaWorkerFactory(FactoryHandle, MiniPacket, ...)` → SSDT 0x0186: block until work item available
-- [ ] Commit: `"sched: wire Worker Factory syscalls to SSDT (0x0180–0x0186)"`
+- [ ] Commit: `"sched: wire Worker Factory syscalls to SSDT (0x0180--0x0186)"`
 
 **Test checkpoint:** `NtCreateWorkerFactory` tied to I/O completion port creates pool. `NtWaitForWorkViaWorkerFactory` blocks; posting to IOCP wakes a worker. `NtShutdownWorkerFactory` drains all threads.
 
@@ -241,19 +241,35 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 ## OS Comparison
 
 
-| ⭐ | Feature                                       | 🪟 Win11                                                 | 🐧 Linux                                                    | 🚀 Impossible OS                                              |
-|----|-----------------------------------------------|-------------------------------------------------------|----------------------------------------------------------|------------------------------------------------------------|
-| 💎 | Priority queues -- O(1) dequeue                | ✅ 32 priority levels; O(1) per-priority              | ✅ 40 nice levels; O(1) via                              | ⬜ §1 -- 40 levels, 64-bit `bsf` bitmap                     |
-| 💎 | Starvation prevention / priority aging        | ✅ Priority boost heuristic (UI threads)              | ✅ Dynamic priority decay (`sched_prio_to_weight`)       | ⬜ §2 -- `ticks_waiting` EMA aging, Registry-tunable        |
-| 💎 | CFS vruntime fair CPU sharing                 | ❌ Fixed-priority only; no vruntime concept           | ✅ CFS -- `prio_to_weight`, `min_vruntime`, red-black     | ⬜ §3 -- CFS within priority levels +                       |
-| 💎 | `SCHED_FIFO` / `SCHED_RR` real-time classes   | ✅ `REALTIME_PRIORITY_CLASS`; no explicit FIFO/RR API | ✅ `SCHED_FIFO` / `SCHED_RR` (POSIX)                     | ⬜ §4 -- `SCHED_FIFO` / `SCHED_RR` with `CAP_SCHED_RT`      |
-| ⭐ | `SCHED_DEADLINE` EDF + GRUB bandwidth reclaim | ❌ No EDF or deadline scheduling                      | ✅ `SCHED_DEADLINE` (3.14+); CBS + GRUB                  | ⬜ §5 -- admission control at 90%, GRUB                     |
-| 💎 | CPU affinity                                  | ✅ `SetThreadAffinityMask` Win32 API                  | ✅ `sched_setaffinity(2)` / `pthread_setaffinity_np`     | ⬜ §6 -- `affinity_mask` in task, `NtSetInformationThread`  |
-| ⭐ | Unified `/sys/sched` all-threads snapshot     | ❌ ETW only; not human-readable without               | ❌ Per-process `/proc/<pid>/sched`; no single-file view  | ⬜ §7 -- one file, all threads, `sched`                     |
-| 💎 | Scheduler tick calibration                    | ✅ HPET/TSC calibration in HAL at                     | ✅ `calibrate_delay()` + TSC-deadline LAPIC mode         | ⬜ §8 -- RDTSC+HPET measurement, Hyper-V synthetic fallback |
-| 💎 | CPU frequency scaling governor                | ✅ Windows power plans; `PPM` in                      | ✅ `cpufreq` governors (`ondemand`, `performance`, etc.) | ⬜ §9 -- `cpufreq_governor_t` vtable, ACPI P-state hook     |
+| ⭐ | Feature                  | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS          |
+|----|--------------------------|-----------------------|------------------------|---------------------------|
+| 💎 | O(1) priority queues     | ✅ 32 levels          | ✅ 40 nice levels      | ⬜ §1 40-level bsf        |
+| 💎 | Starvation prevention    | ✅ priority boost     | ✅ priority decay       | ⬜ §2 ticks_waiting aging |
+| 💎 | CFS fair CPU share       | ❌ fixed-priority     | ✅ CFS vruntime         | ⬜ §3 CFS per-level      |
+| 💎 | RT FIFO/RR classes       | ✅ REALTIME_CLASS     | ✅ SCHED_FIFO/RR       | ⬜ §4 FIFO+RR+CAP        |
+| ⭐ | EDF deadline sched       | ❌ none               | ✅ SCHED_DEADLINE      | ⬜ §5 EDF+GRUB            |
+| 💎 | CPU affinity             | ✅ SetAffinityMask   | ✅ sched_setaffinity   | ⬜ §6 affinity_mask       |
+| ⭐ | All-thread sched view    | ❌ ETW only           | ❌ per-process /proc   | ⬜ §7 /sys/sched          |
+| 💎 | Tick calibration         | ✅ HAL HPET/TSC      | ✅ calibrate_delay     | ⬜ §8 RDTSC+HPET          |
+| 💎 | CPU freq scaling         | ✅ power plans        | ✅ cpufreq governors   | ⬜ §9 governor vtable     |
+| 💎 | Per-thread kernel stack  | ✅ per-KTHREAD        | ✅ per-task_struct      | ⬜ §11 TSS.rsp0 switch   |
 
-> **After parity items:** Impossible OS matches Windows and Linux on priority queues, aging, RT classes, affinity, tick calibration, and cpufreq. `SCHED_DEADLINE` adds a hard real-time scheduling class Windows lacks entirely. The unified `/sys/sched` snapshot gives operator-visible scheduler state without ETW tracing infrastructure or per-process `/proc` walking.
+> Parity: matches Win11+Linux on priority queues, aging, RT classes, affinity, tick calibration, cpufreq, per-thread kernel stacks. EDF deadline scheduling and unified /sys/sched thread snapshot are exclusive.
+
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_sched()` (see `src/kernel/test/test_runner.c`).
+> Tests run with `debug=1` or `test=1` in boot.conf under `TEST_CAT_SCHED`.
+
+- [ ] §1: `rq_enqueue` + `rq_dequeue` returns highest-priority thread
+- [ ] §1: bitmap `bsf` selects correct level after enqueue/dequeue
+- [ ] §2: `effective_priority` decrements after `AGING_THRESHOLD` ticks
+- [ ] §3: `vruntime` increments proportional to inverse weight
+- [ ] §4: RT thread preempts SCHED_NORMAL at any priority
+- [ ] §5: admission rejects when utilization > 90%
+- [ ] §11: `threads[0].kernel_rsp != 0` after `task_init()`
+
+> **Note:** Most scheduler tests require multi-thread runtime behavior (preemption, timing, context switch) which cannot be validated in WSL. Test checkpoints in each section define serial-log criteria for QEMU/bare metal.
 
 ## Verification
 
@@ -267,3 +283,9 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 - [ ] `sched` shell command prints table with all boot threads; CPU-time increments with each call
 - [ ] Tick calibration: serial log shows `[SCHED] tick calibrated: ICR=N, tick=1000000 ns` (≈1 ms)
 - [ ] Commit: `"sched: enhanced scheduler -- priority, aging, CFS, RT, EDF, affinity, tick cal, cpufreq"`
+
+## History
+
+| Date | Action | Summary |
+|------|--------|---------|
+| 2026-04-10 | validate | 11 sections checked; stripped 9 model tags, fixed 2 broken input anchors (planned files), fixed en-dash, compacted OS Comparison table (added §10/§11 rows), added Unit Tests skeleton, added §11 row to OS Comparison |
