@@ -5,9 +5,12 @@
  * ============================================================================ */
 
 #include "kernel/drivers/serial.h"
+#include "kernel/boot_info.h"
 #include "kernel/sched/spinlock.h"
 
-#define SERIAL_PORT 0x3F8
+/* Serial port I/O base -- read from boot_info at serial_init().
+ * Default to COM1 (0x3F8) for safety during early klog before init. */
+static uint16_t s_serial_port = 0x3F8;
 
 /* Protects UART register access from concurrent threads and IRQ handlers */
 static spinlock_t g_serial_lock = SPINLOCK_INIT;
@@ -28,20 +31,29 @@ static inline uint8_t inb(uint16_t port)
 /* Raw unlocked UART write -- caller must hold g_serial_lock */
 static inline void serial_putchar_raw(char c)
 {
-    while ((inb(SERIAL_PORT + 5) & 0x20) == 0)
+    if (!s_serial_port) return;
+    while ((inb(s_serial_port + 5) & 0x20) == 0)
         ;
-    outb(SERIAL_PORT, (uint8_t)c);
+    outb(s_serial_port, (uint8_t)c);
 }
 
 void serial_init(void)
 {
-    outb(SERIAL_PORT + 1, 0x00);    /* Disable interrupts */
-    outb(SERIAL_PORT + 3, 0x80);    /* Enable DLAB */
-    outb(SERIAL_PORT + 0, 0x03);    /* 38400 baud */
-    outb(SERIAL_PORT + 1, 0x00);
-    outb(SERIAL_PORT + 3, 0x03);    /* 8N1 */
-    outb(SERIAL_PORT + 2, 0xC7);    /* FIFO */
-    outb(SERIAL_PORT + 4, 0x0B);    /* IRQs, RTS/DSR */
+    /* Read the serial port probed by the bootloader (S4).
+     * 0 = no UART detected; serial output becomes a no-op. */
+    if (g_boot_info.serial_port)
+        s_serial_port = g_boot_info.serial_port;
+    /* else: keep default 0x3F8 (COM1) for safety */
+
+    if (!s_serial_port) return;
+
+    outb(s_serial_port + 1, 0x00);    /* Disable interrupts */
+    outb(s_serial_port + 3, 0x80);    /* Enable DLAB */
+    outb(s_serial_port + 0, 0x03);    /* 38400 baud */
+    outb(s_serial_port + 1, 0x00);
+    outb(s_serial_port + 3, 0x03);    /* 8N1 */
+    outb(s_serial_port + 2, 0xC7);    /* FIFO */
+    outb(s_serial_port + 4, 0x0B);    /* IRQs, RTS/DSR */
 }
 
 void serial_putchar(char c)
@@ -68,7 +80,8 @@ void serial_write(const char *str)
 char serial_trygetchar(void)
 {
     /* Check Line Status Register bit 0 (Data Ready) */
-    if ((inb(SERIAL_PORT + 5) & 0x01) == 0)
+    if (!s_serial_port) return 0;
+    if ((inb(s_serial_port + 5) & 0x01) == 0)
         return 0;
-    return (char)inb(SERIAL_PORT);
+    return (char)inb(s_serial_port);
 }

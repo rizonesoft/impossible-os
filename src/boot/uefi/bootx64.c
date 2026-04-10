@@ -255,6 +255,17 @@ struct boot_info {
         UINT64 kernel_jump;
         UINT64 tsc_freq;
     } timing;
+
+    /* Serial port (probed by bootloader; 0 = no UART detected) */
+    UINT16 serial_port;
+    UINT16 _serial_pad;
+
+    /* Kernel-populated fields (set after boot) */
+    UINT8   secure_boot_enabled;
+    UINT8   _kp_pad[3];
+    UINT32  degraded_mask;
+    UINT32  hv_flags;
+    char    hv_vendor[16];
 };
 
 /* Inline rdtsc for boot timing */
@@ -403,6 +414,10 @@ static void boot_log_append(const char *s)
  * UEFI video console doesn't work (e.g. Hyper-V Gen 2).
  * The 16550 UART is emulated by all major hypervisors. */
 #define SERIAL_COM1 0x3F8
+#define SERIAL_COM2 0x2F8
+
+/* Active serial port (0 = none detected). Set by serial_early_probe(). */
+static UINT16 s_serial_port;
 
 static inline void outb_early(UINT16 port, UINT8 val)
 {
@@ -454,23 +469,49 @@ static UINT8 bl_pci_read8(UINT8 bus, UINT8 dev, UINT8 func, UINT8 off)
     return (UINT8)(inl_early(0xCFC) >> ((off & 3) * 8));
 }
 
+/* Probe a 16550 UART at the given I/O base address.
+ * Write 0xAE to the scratch register (base+7), read back.
+ * If it matches, the UART is present. */
+static int serial_probe_port(UINT16 base)
+{
+    outb_early(base + 7, 0xAE);
+    return (inb_early(base + 7) == 0xAE) ? 1 : 0;
+}
+
+/* Initialize the UART at s_serial_port. */
+static void serial_init_port(UINT16 base)
+{
+    outb_early(base + 1, 0x00);  /* Disable interrupts */
+    outb_early(base + 3, 0x80);  /* Enable DLAB */
+    outb_early(base + 0, 0x03);  /* 38400 baud (divisor=3) */
+    outb_early(base + 1, 0x00);
+    outb_early(base + 3, 0x03);  /* 8N1 */
+    outb_early(base + 2, 0xC7);  /* Enable FIFO */
+    outb_early(base + 4, 0x0B);  /* IRQs, RTS/DSR */
+}
+
+/* Probe COM1, then COM2. Initialize whichever is found first.
+ * Sets s_serial_port to the active port (0 if neither present). */
 static void serial_early_init(void)
 {
-    outb_early(SERIAL_COM1 + 1, 0x00);  /* Disable interrupts */
-    outb_early(SERIAL_COM1 + 3, 0x80);  /* Enable DLAB */
-    outb_early(SERIAL_COM1 + 0, 0x03);  /* 38400 baud (divisor=3) */
-    outb_early(SERIAL_COM1 + 1, 0x00);
-    outb_early(SERIAL_COM1 + 3, 0x03);  /* 8N1 */
-    outb_early(SERIAL_COM1 + 2, 0xC7);  /* Enable FIFO */
-    outb_early(SERIAL_COM1 + 4, 0x0B);  /* IRQs, RTS/DSR */
+    if (serial_probe_port(SERIAL_COM1)) {
+        s_serial_port = SERIAL_COM1;
+    } else if (serial_probe_port(SERIAL_COM2)) {
+        s_serial_port = SERIAL_COM2;
+    } else {
+        s_serial_port = 0;
+        return;  /* No UART -- serial output will be silent */
+    }
+    serial_init_port(s_serial_port);
 }
 
 static void serial_early_putchar(char c)
 {
     UINT32 timeout = 100000;
-    while (!(inb_early(SERIAL_COM1 + 5) & 0x20) && --timeout)
+    if (!s_serial_port) return;  /* No UART available */
+    while (!(inb_early(s_serial_port + 5) & 0x20) && --timeout)
         ;
-    outb_early(SERIAL_COM1, (UINT8)c);
+    outb_early(s_serial_port, (UINT8)c);
 }
 
 static void serial_early_print(const char *s)
@@ -2426,6 +2467,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Point boot_info to a known physical address */
     g_boot_info_ptr = (struct boot_info *)BOOT_INFO_PHYS_ADDR;
     efi_memset(g_boot_info_ptr, 0, sizeof(struct boot_info));
+
+    /* Record which serial port the bootloader probed (S4) */
+    g_boot_info_ptr->serial_port = s_serial_port;
 
     /* Record bootloader entry time */
     g_boot_info_ptr->timing.bl_entry = boot_rdtsc();

@@ -52,7 +52,7 @@
 | 💎  |   1   | ELF bounds checking                            | --         |  [x]   |
 | 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [x]   |
 | 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [x]   |
-| 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [ ]   |
+| 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [x]   |
 | 💎  |   5   | GOP timeout and graceful degradation           | --         |  [ ]   |
 | 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [ ]   |
 | 💎  |   7   | boot.conf validation and version field         | --         |  [ ]   |
@@ -137,11 +137,11 @@ Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializ
 > [!NOTE]
 > **Regression risk:** LOW -- additive probe before existing init. If probe gives false negative, serial is just silent.
 
-- [ ] Before `serial_early_init()`: write 0xAE to scratch register (0x3F8+7), read back -- if mismatch, COM1 absent
-- [ ] If COM1 absent: try COM2 at 0x2F8 with same probe
-- [ ] If both absent: set `serial_available = 0`, skip all serial output (no-op functions)
-- [ ] Log selected port to boot_info: `boot_info.serial_port = 0x3F8 / 0x2F8 / 0`
-- [ ] Kernel serial init reads `boot_info.serial_port` instead of hardcoding COM1
+- [x] Before `serial_early_init()`: `serial_probe_port()` writes 0xAE to scratch register (base+7), reads back -- if mismatch, port absent
+- [x] If COM1 absent: try COM2 at 0x2F8 with same probe via `serial_probe_port(SERIAL_COM2)`
+- [x] If both absent: `s_serial_port = 0`, `serial_early_putchar` returns immediately (no-op)
+- [x] Selected port stored in `boot_info.serial_port` (0x3F8 / 0x2F8 / 0) -- `UINT16` field added to both bootloader and kernel `struct boot_info`
+- [x] Kernel `serial_init()` reads `g_boot_info.serial_port` to set `s_serial_port` (dynamic). `serial_putchar_raw`, `serial_trygetchar` all use the dynamic port. Default 0x3F8 for early klog before serial_init.
 - [ ] Commit: `"boot: probe serial port before init -- COM1/COM2 fallback"`
 
 **Test checkpoint:** On QEMU (always has COM1), serial output works as before. On VirtualBox with serial disabled, bootloader skips serial silently. Verify no I/O port side effects on bare metal.
@@ -397,7 +397,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds         | ✅ §1 phdr+seg+overlap+32M cap  |
 | 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ✅ §2 N=4 bounded + map refresh |
 | 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ✅ §3 3-path search + DeviceHdl |
-| 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ⬜ §4 SPCR auto-detect          |
+| 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ✅ §4 COM1/COM2 probe+boot_info |
 | 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ⬜ §5 text mode if GOP fails    |
 | 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ⬜ §6 mmap buffer growth        |
 | 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ⬜ §7 structured parse errors   |

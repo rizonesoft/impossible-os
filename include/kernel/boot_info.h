@@ -398,6 +398,10 @@ struct boot_info {
         uint64_t tsc_freq;                /* TSC frequency in Hz (0 = unknown) */
     } timing;
 
+    /* Serial port (probed by bootloader; 0 = no UART detected) */
+    uint16_t serial_port;           /* I/O base: 0x3F8 (COM1), 0x2F8 (COM2), or 0 */
+    uint16_t _serial_pad;
+
     /* Kernel-populated fields (set after boot; never written by the bootloader) */
     uint8_t  secure_boot_enabled;   /* 1 if Secure Boot is active (uefi_secureboot_init) */
     uint8_t  _kp_pad[3];            /* alignment */
