@@ -34,23 +34,23 @@
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                     | Depends On | Status |
-| --- | :---: | ----------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | TEB struct and GS self-pointer                  | --         |  [x]   |
-| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --         |  [x]   |
-| 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1         |  [x]   |
-| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3     |  [x]   |
-| 💎  |   5   | PEB allocation and population at task_exec      | §2, §4     |  [x]   |
-| 💎  |   6   | TEB allocation and population at thread create  | §1, §4     |  [x]   |
-| 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6     |  [x]   |
-| 💎  |   8   | PEB Ldr (module list) basic population          | §5         |  [x]   |
-| 💎  |   9   | TLS slot allocation (64 static slots)           | §6         |  [x]   |
-| ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6     |  [x]   |
-| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5         |  [x]   |
-| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9         |  [x]   |
-| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7         |  [x]   |
-| 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6         |  [ ]   |
-| 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14 |  [ ] |
+| ⭐  | Order | Deliverable                                     | Depends On   | Status |
+| --- | :---: | ----------------------------------------------- | ------------ | :----: |
+| 💎  |   1   | TEB struct and GS self-pointer                  | --           |  [x]   |
+| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --           |  [x]   |
+| 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1           |  [x]   |
+| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3       |  [x]   |
+| 💎  |   5   | PEB allocation and population at task_exec      | §2, §4       |  [x]   |
+| 💎  |   6   | TEB allocation and population at thread create  | §1, §4       |  [x]   |
+| 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6       |  [x]   |
+| 💎  |   8   | PEB Ldr (module list) basic population          | §5           |  [x]   |
+| 💎  |   9   | TLS slot allocation (64 static slots)           | §6           |  [x]   |
+| ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6       |  [x]   |
+| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5           |  [x]   |
+| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9           |  [x]   |
+| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7           |  [x]   |
+| 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T05§11 |  [ ]   |
+| 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14 |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -272,6 +272,13 @@ The current `thread_create()` in `src/kernel/sched/task.c:1924` builds a ring-0 
 > [!IMPORTANT]
 > **Discovered during the per-thread TEB (§15) design review (2026-04-07).** Codex flagged that retrofitting per-thread TEBs onto `thread_create()` is architecturally wrong because the function builds kernel-mode iret frames. §14 is the prerequisite that splits thread creation into kernel and user variants so §15 has a real foundation. The first user task's main thread (created via `task_exec()`) already builds a ring-3 iret frame correctly -- that path is the reference for `uthread_create()`.
 
+> [!WARNING]
+> **BLOCKED on two external prerequisites (Codex design review 2026-04-10):**
+> 1. **`vmm_map_user_page(cr3, va, phys)`** -- map a PMM-allocated frame at an arbitrary user VA in a per-process PML4. Current `vmm_set_user_page()` only sets the User bit on identity-mapped pages, so user thread stacks would silently alias the wrong physical memory. → XREF: [`03-memory-concurrency/TODO-01-vmm-memory-protection.md §12`](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
+> 2. **Per-thread `kernel_rsp` + TSS.rsp0 switching** -- `struct thread` needs its own `kernel_rsp`, and the scheduler must update `tss_set_kernel_stack()` on intra-task thread switches. Currently rsp0 is per-task, so ring-3 threads sharing a task all enter ring 0 on the same kernel stack. → XREF: [`03-memory-concurrency/TODO-05-scheduler-enhancement.md §11`](../03-memory-concurrency/TODO-05-scheduler-enhancement.md)
+>
+> Implement §12 and §11 above BEFORE returning to §14. The `kthread_create()` rename (first checklist item) can proceed independently.
+
 **Files:** `src/kernel/sched/task.c`, `include/kernel/sched/task.h`, `src/kernel/nt/nt_process.c`
 
 - [ ] Rename the existing `thread_create()` to `kthread_create()` -- preserves all current behavior (ring-0 frame, kernel stack, `thread_wrapper` entry). Update all in-tree callers (`boot_*`, kernel worker threads, dpc_thread, etc.) to use the new name. NO behavior change for kernel threads.
@@ -330,7 +337,7 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 ## OS Comparison
 
 | ⭐ | Feature                     | 🪟 Win11                  | 🐧 Linux                 | 🚀 Impossible OS              |
-|----|-----------------------------|---------------------------|--------------------------|-------------------------------|
+|----|-----------------------------|----------------------------|--------------------------|--------------------------------|
 | 💎 | Per-process env block       | ✅ PEB at gs:[0x60]       | ❌ argv/envp on stack    | ✅ §2+§5 PEB allocated        |
 | 💎 | Per-thread block (TEB)      | ✅ TEB at gs:[0x30]       | ⚠️ glibc pthread TLS     | ⚠️ §1+§6 task-level (-> §15)  |
 | 💎 | swapgs kernel entry/exit    | ✅ KiSystemCall64         | ✅ entry.S swapgs        | ✅ §3+§4 swapgs+MSR           |

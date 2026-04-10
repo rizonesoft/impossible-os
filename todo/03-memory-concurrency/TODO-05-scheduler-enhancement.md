@@ -45,6 +45,7 @@
 | ⭐  |   8   | §7 Scheduler stats + `/sys/sched` VFS file           | §1–§5 (meaningful data)             |  [ ]   |
 | 💎  |   9   | §9 CPU frequency scaling hook + P-state governors    | §7 (load measurement), ACPI         |  [ ]   |
 | 💎  |  10   | Worker Factory syscalls wired to SSDT                | §1, TODO-05 §4                      |  [ ]   |
+| 💎  |  11   | Per-thread kernel stack + TSS.rsp0 switching         | --                                   |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement priority queues, aging, CFS-equivalent, RT classes, affinity, tick calibration, and cpufreq; Impossible OS must match.
 > ⭐ = exclusive -- `SCHED_DEADLINE` with GRUB bandwidth reclaim and the unified `/sys/sched` all-threads snapshot are differentiators over the base Windows NT scheduler.
@@ -212,6 +213,28 @@ The Worker Factory is the kernel-side thread pool (backs `TpAllocPool` / `Create
 - [ ] Commit: `"sched: wire Worker Factory syscalls to SSDT (0x0180–0x0186)"`
 
 **Test checkpoint:** `NtCreateWorkerFactory` tied to I/O completion port creates pool. `NtWaitForWorkViaWorkerFactory` blocks; posting to IOCP wakes a worker. `NtShutdownWorkerFactory` drains all threads.
+
+---
+
+## 11. Per-Thread Kernel Stack + TSS.rsp0 Switching
+
+The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per-thread. `tss_set_kernel_stack()` and `smp_this_cpu()->syscall_rsp0` are updated only on task switches. When multiple ring-3 threads share a task, they all enter ring 0 on the same kernel stack -- a second interrupt or syscall while the first thread's kernel frame is live would corrupt it.
+
+> [!IMPORTANT]
+> **Prerequisite for TODO-04 §14 (uthread_create).** Discovered during Codex design review 2026-04-10: `uthread_create()` allocates a per-thread kernel stack, but the scheduler never tells the TSS about it. Intra-task thread switches leave `rsp0` pointing at the previous thread's (or main thread's) kernel stack, so ring-3 → ring-0 transitions land on the wrong stack.
+
+→ XREF: [`02-kernel-core/TODO-04-peb-teb-user-abi.md §14`](../02-kernel-core/TODO-04-peb-teb-user-abi.md) -- consumer (uthread_create per-thread kernel stack)
+
+- [ ] Add `uint64_t kernel_rsp` to `struct thread` in `include/kernel/sched/task.h` -- top of this thread's kernel stack (for TSS rsp0). Initialize to 0 for kernel threads (they don't need rsp0 switching).
+- [ ] Add `uint8_t *kernel_stack_base` and `uint32_t kernel_stack_pages` to `struct thread` -- ownership metadata for PMM-allocated kernel stacks (distinct from the `stack_base` field used by `kmalloc`'d kernel-thread stacks). Enables correct deallocation at `thread_join()`.
+- [ ] In `schedule()` (task.c context-switch path): after selecting the next thread, update `tss_set_kernel_stack(next_thread->kernel_rsp)` and `smp_this_cpu()->syscall_rsp0 = next_thread->kernel_rsp` regardless of whether the task changed. Skip only if `next_thread->kernel_rsp == 0` (kernel thread, no rsp0 needed).
+- [ ] `task_create()` initializes `threads[0].kernel_rsp = tasks[pid].kernel_rsp` so existing single-threaded tasks work unchanged.
+- [ ] `task_exec()` initializes `threads[0].kernel_rsp` from the allocated kernel stack.
+- [ ] `thread_join()`: free PMM-allocated kernel stacks via `pmm_free_frame()` per page (using `kernel_stack_base` + `kernel_stack_pages`), not `kfree()`. Keep `kfree(stack_base)` path for `kmalloc`'d kernel-thread stacks (check `kernel_stack_pages > 0` to distinguish).
+- [ ] Unit test: after `task_init()`, verify `threads[0].kernel_rsp != 0` for PID 0. Verify it matches `tasks[0].kernel_rsp`. (Pure read-only oracle check, no live boot calls.)
+- [ ] Commit: `"sched: per-thread kernel_rsp + TSS.rsp0 switching on intra-task thread switch"`
+
+**Test checkpoint:** Boot completes normally (single-threaded tasks unchanged). DPC worker, work queue, cmd.exe all still function. The scheduler log shows `[sched] rsp0 updated` on task switches. No kernel stack corruption on interrupt entry. Test on: QEMU WHPX (2 CPUs), TCG, VirtualBox, bare metal.
 
 ---
 

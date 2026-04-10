@@ -48,6 +48,7 @@
 | 💎  |   9   | Heap canaries + double-free detection                     | --                             |  [ ]   |
 | 💎  |  10   | Kernel memory leak detector                               | §9                            |  [ ]   |
 | 💎  |  11   | MMIO mapping with UC attributes + HPET validation         | --                             |  [ ]   |
+| 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`)       | --                             |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement these memory management features; Impossible OS must match.
 > ⭐ = exclusive -- build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.
@@ -221,6 +222,35 @@ Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mapping
 - [ ] Audit all `volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)phys_addr` patterns in drivers -- each is a candidate for `vmm_map_mmio()`.
 - [ ] Boot log: `[VMM] MMIO: mapped 0x%lx (%u bytes) as UC at 0x%lx`
 - [ ] Commit: `"mm: vmm_map_mmio / MmMapIoSpace -- UC MMIO mappings + HPET validation"`
+
+---
+
+## 12. Per-Process User Page Mapping (`vmm_map_user_page`)
+
+Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a chosen user-mode virtual address. The current `vmm_set_user_page()` only sets the User bit on an existing identity-mapped page -- it cannot map a DIFFERENT physical frame at a given VA. This blocks `uthread_create()` (per-thread user stacks) and future `VirtualAlloc(MEM_COMMIT)` which both need to place specific physical pages at process-chosen VAs.
+
+> [!IMPORTANT]
+> **Prerequisite for TODO-04 §14 (uthread_create).** Discovered during Codex design review 2026-04-10: `pmm_alloc_contiguous()` returns a physical frame, but there is no VMM API to install that frame at an arbitrary user VA in a per-process PML4. Without this, user thread stacks would silently alias the identity-mapped physical page at the target VA, corrupting arbitrary memory.
+
+→ XREF: [`02-kernel-core/TODO-04-peb-teb-user-abi.md §14`](../02-kernel-core/TODO-04-peb-teb-user-abi.md) -- consumer (uthread_create per-thread user stack mapping)
+
+- [ ] Implement `int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)` in `src/kernel/mm/vmm.c`:
+  - Walk the 4-level page table rooted at `cr3` (not the kernel PML4 -- the process PML4)
+  - Create intermediate tables (PDPT, PD, PT) as needed via `pmm_alloc_frame()`, zero-fill, set Present+Writable+User on each level
+  - Install the final PTE: `phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER | VMM_FLAG_NX`
+  - If a huge page (2 MiB) is encountered at the PD level, split it first via `vmm_split_huge_page()` before inserting the 4 KiB PTE
+  - Return 0 on success, -1 on allocation failure
+  - `invlpg` the target VA after PTE installation (local CPU only -- no SMP shootdown per TODO-06 §2 constraint)
+- [ ] Implement `void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)`:
+  - Walk the process PML4, clear the PTE, free the physical frame via `pmm_free_frame()`
+  - `invlpg` the target VA
+  - Do NOT free intermediate page tables (they may hold other mappings)
+- [ ] Add declaration to `include/kernel/mm/vmm.h`
+- [ ] Zero-fill the physical frame BEFORE mapping it as User -- prevent kernel data leaking to user mode. Use a temporary kernel mapping or the identity map (the frame IS identity-mapped before the user PTE is installed)
+- [ ] Unit test: allocate a frame via `pmm_alloc_frame()`, map it at a test VA via `vmm_map_user_page(kernel_pml4, test_va, frame)`, write a pattern through the identity map, read back through `test_va`, assert match. Unmap and verify the frame is freed. (No live boot calls -- uses kernel PML4 as the test target, which is safe in single-threaded test context.)
+- [ ] Commit: `"mm: vmm_map_user_page -- map arbitrary phys frame into per-process PML4 at user VA"`
+
+**Test checkpoint:** Unit test passes (pattern write through identity map, read through mapped user VA). `task_exec()` path still works (it uses `vmm_set_user_page()` for the ELF range, which is unchanged). Boot completes normally on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ---
 
