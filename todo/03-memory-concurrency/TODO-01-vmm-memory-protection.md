@@ -32,6 +32,10 @@
 - Tail canaries on every `kmalloc` block are validated at `kfree`; double-free writes a poison pattern that panics on re-free.
 - Debug builds accumulate an allocation table keyed by caller PC; `memleak` shell command dumps live un-freed entries.
 - `meminfo` shell command and `mm_stats_t` surface PMM totals, free pages, and largest contiguous block.
+- User stacks auto-grow on guard page fault up to a per-thread reserve limit; overflow past the limit delivers `EXCEPTION_STACK_OVERFLOW`.
+- `NtLockVirtualMemory` / `mlock` pins committed pages in RAM with a per-process quota.
+- Commit charge is tracked system-wide and enforced at allocation time -- allocations that would exceed physical RAM + swap are rejected deterministically (no OOM killer).
+- Per-process memory counters (RSS, peak, faults) are surfaced via `GetProcessMemoryInfo` and `meminfo`.
 
 ## Implementation Order
 
@@ -49,6 +53,10 @@
 | 💎  |  10   | Kernel memory leak detector                               | §9                            |  [ ]   |
 | 💎  |  11   | MMIO mapping with UC attributes + HPET validation         | --                             |  [ ]   |
 | 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`)       | --                             |  [x]   |
+| 💎  |  13   | Auto-growing user stacks                                  | §1                             |  [ ]   |
+| 💎  |  14   | NtLockVirtualMemory / mlock -- pin pages in RAM           | §3                             |  [ ]   |
+| 💎  |  15   | Commit charge tracking + enforcement                      | §3                             |  [ ]   |
+| 💎  |  16   | Process memory counters (`GetProcessMemoryInfo`)          | §8                             |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement these memory management features; Impossible OS must match.
 > ⭐ = exclusive -- build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.
@@ -245,13 +253,77 @@ Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a 
 
 ---
 
+## 13. Auto-Growing User Stacks
+
+When a thread's stack guard page is hit, expand the stack instead of killing the thread. Windows grows stacks automatically up to the PE header's `SizeOfStackReserve` (default 1 MiB reserve, 4 KiB initial commit). Linux uses `RLIMIT_STACK` (default 8 MiB) and grows on fault. Currently Impossible OS allocates a fixed 16 KiB user stack -- any overflow past the guard page is fatal.
+
+- [ ] In the page fault handler: if faulting address is the guard page below a user stack, allocate a new frame via `vmm_map_user_page()`, install it below the current stack, move the guard page down by one page
+- [ ] Track per-thread stack limit (`stack_reserve`) and current committed extent in `struct thread`
+- [ ] Reject growth past `stack_reserve` -- deliver `EXCEPTION_STACK_OVERFLOW`
+- [ ] Default `stack_reserve = 64 KiB` (configurable per-thread via `NtCreateThread` parameter)
+- [ ] klog on each growth: `[sched] PID %u TID %u stack grown to %u KiB`
+- [ ] Commit: `"mm: auto-growing user stacks -- expand on guard page fault"`
+
+**Test checkpoint:** User binary with deep recursion grows stack beyond 16 KiB without crashing. Growth stops at `stack_reserve` and delivers `EXCEPTION_STACK_OVERFLOW`. klog shows growth events. Verify on QEMU WHPX, TCG, VBox, bare metal.
+
+---
+
+## 14. NtLockVirtualMemory / mlock -- Pin Pages in RAM
+
+Pin committed pages so they cannot be paged out. Required for DMA buffers, crypto key storage, and real-time tasks. Windows provides `VirtualLock` / `NtLockVirtualMemory`; Linux provides `mlock(2)`.
+
+- [ ] Implement `vmm_lock_pages(virt, size)` -- mark pages non-evictable in the VMM region tracker
+- [ ] Implement `vmm_unlock_pages(virt, size)` -- allow eviction again
+- [ ] Wire `NtLockVirtualMemory(handle, &base, &size, MAP_PROCESS)` via SSDT
+- [ ] Wire `NtUnlockVirtualMemory(handle, &base, &size, MAP_PROCESS)` via SSDT
+- [ ] Per-process lock limit (default 256 KiB) -- return `STATUS_WORKING_SET_QUOTA` if exceeded
+- [ ] Commit: `"mm: NtLockVirtualMemory / mlock -- pin pages in RAM"`
+
+**Test checkpoint:** Lock a page, verify it survives a working-set trim (once swap exists). Without swap: verify the lock metadata is tracked and the syscall returns STATUS_SUCCESS. Verify on QEMU WHPX, TCG, VBox, bare metal.
+
+---
+
+## 15. Commit Charge Tracking + Enforcement
+
+Track system-wide committed virtual memory (sum of all MEM_COMMIT pages across all processes) against the commit limit (physical RAM + pagefile size). Prevents silent overcommit that would cause OOM crashes. Windows enforces this via the commit charge; Linux uses `vm.overcommit_memory` (default: heuristic overcommit, no hard limit).
+
+> [!TIP]
+> **Competitive edge:** Unlike Linux (which overcommits by default and relies on the OOM killer), Impossible OS tracks commit charge from day one and rejects allocations that would exceed the limit. This provides deterministic failure at allocation time rather than random process death under pressure.
+
+- [ ] Add `g_commit_charge` (atomic uint64) and `g_commit_limit` (physical RAM + swap size) in `vmm.c`
+- [ ] In `vmm_alloc_region(MEM_COMMIT)`: `atomic_add(&g_commit_charge, pages)`. If result exceeds `g_commit_limit`, undo and return `STATUS_COMMITMENT_LIMIT`
+- [ ] In `vmm_free_region()`: `atomic_sub(&g_commit_charge, pages)`
+- [ ] Expose via `NtQuerySystemInformation(SystemPerformanceInformation)` -- `CommittedPages`, `CommitLimit`
+- [ ] Surface in `meminfo` shell command: `Commit: X / Y MiB (Z%)`
+- [ ] Commit: `"mm: commit charge tracking -- deterministic alloc rejection at commit limit"`
+
+**Test checkpoint:** Allocate until commit limit reached -- next `VirtualAlloc(MEM_COMMIT)` returns NULL / `STATUS_COMMITMENT_LIMIT`. `meminfo` shows commit charge increasing with allocations. Verify on QEMU WHPX, TCG, VBox, bare metal.
+
+---
+
+## 16. Process Memory Counters (`GetProcessMemoryInfo`)
+
+Expose per-process memory statistics: working set size, peak working set, page fault count, private bytes. Required for Task Manager, performance monitoring, and process diagnostics. Windows provides `GetProcessMemoryInfo` / `NtQueryInformationProcess(ProcessVmCounters)`; Linux provides `/proc/PID/status` (VmRSS, VmPeak, etc.).
+
+- [ ] Add counters to `struct task`: `page_fault_count`, `working_set_pages`, `peak_working_set_pages`, `private_pages`
+- [ ] Increment `page_fault_count` in the page fault handler
+- [ ] Update `working_set_pages` on commit/decommit; track `peak_working_set_pages` as max
+- [ ] Wire `NtQueryInformationProcess(ProcessVmCounters)` -- return `VM_COUNTERS` struct
+- [ ] Wire `GetProcessMemoryInfo()` Win32 wrapper (psapi.h style)
+- [ ] Surface in `meminfo` shell command per-process: `PID N: RSS X KiB, Peak Y KiB, Faults Z`
+- [ ] Commit: `"mm: process memory counters -- GetProcessMemoryInfo + VM_COUNTERS"`
+
+**Test checkpoint:** After booting, `meminfo` shows per-process RSS and fault counts. Page fault count increases on demand-paged access. Peak working set is >= current. Verify on QEMU WHPX, TCG, VBox, bare metal.
+
+---
+
 ## OS Comparison
 
 
-| ⭐ | Feature                  | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS          |
-|----|--------------------------|-----------------------|------------------------|---------------------------|
+| ⭐ | Feature                  | 🪟 Win11              | 🐧 Linux               | 🚀 Impossible OS          |
+|----|--------------------------|------------------------|------------------------|----------------------------|
 | 💎 | Page protection + guard  | ✅ VirtualProtect     | ✅ mprotect(2)         | ⬜ §1 vmm_protect         |
-| 💎 | W^X enforcement          | ⚠️ DEP; RWX allowed   | ✅ NX enforced          | ⬜ §2 hard reject         |
+| 💎 | W^X enforcement          | ⚠️ DEP; RWX allowed   | ✅ NX enforced         | ⬜ §2 hard reject         |
 | 💎 | Demand paging            | ✅ RESERVE/COMMIT     | ✅ overcommit+zero     | ⬜ §3 region states       |
 | 💎 | Query virtual memory     | ✅ VirtualQuery       | ✅ /proc/maps          | ⬜ §4 NtQueryVirtualMem   |
 | 💎 | VirtualAlloc API         | ✅ native Win32       | ✅ mmap/munmap         | ⬜ §5 Win32 shim          |
@@ -261,8 +333,14 @@ Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a 
 | 💎 | Memory leak detector     | ✅ Driver Verifier    | ✅ kmemleak            | ⬜ §10 memleak cmd        |
 | 💎 | UC MMIO mapping          | ✅ MmMapIoSpace       | ✅ ioremap_uc          | ⬜ §11 vmm_map_mmio       |
 | 💎 | Per-process page map     | ✅ ZwMapViewOfSection | ✅ do_mmap PTE walk    | ✅ §12 done               |
+| 💎 | Auto-growing stacks      | ✅ PE StackReserve    | ✅ RLIMIT_STACK        | ⬜ §13 guard page expand  |
+| 💎 | Pin pages (mlock)        | ✅ VirtualLock        | ✅ mlock(2)            | ⬜ §14 NtLockVirtualMem   |
+| ⭐ | Commit charge tracking   | ✅ hard commit limit  | ⚠️ overcommit default  | ⬜ §15 deterministic      |
+| 💎 | Process memory counters  | ✅ GetProcessMemInfo  | ✅ /proc/PID/status    | ⬜ §16 VM_COUNTERS        |
 
-> Parity: matches Win11+Linux on page protection, demand paging, VirtualAlloc, query, PMM stats, heap safety, leak detection, MMIO. W^X is stronger than Windows (hard reject RWX). Build-time allocator lint is exclusive.
+> Parity: matches Win11+Linux on page protection, demand paging, VirtualAlloc, query, PMM stats, heap safety, leak detection, MMIO, auto-growing stacks, page pinning, process counters. W^X is stronger than Windows (hard reject RWX). Build-time allocator lint and deterministic commit charge tracking (vs Linux overcommit) are exclusive.
+
+<!-- Sources: https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc, https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect, https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants, https://learn.microsoft.com/en-us/windows/win32/memory/creating-guard-pages, https://docs.kernel.org/admin-guide/mm/concepts.html, https://docs.kernel.org/core-api/memory-allocation.html, https://docs.kernel.org/admin-guide/mm/userfaultfd.html, https://lwn.net/Articles/1011366/, https://man7.org/linux/man-pages/man2/mprotect.2.html, https://docs.kernel.org/dev-tools/kfence.html, https://docs.kernel.org/dev-tools/kasan.html, https://docs.kernel.org/userspace-api/mseal.html, https://man7.org/linux/man-pages/man2/memfd_secret.2.html, https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md, https://whiteknightlabs.com/2025/03/24/understanding-windows-kernel-pool-memory/ -->
 
 ## Unit Tests
 
@@ -274,6 +352,8 @@ Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a 
 - [ ] §2: W^X reject on PROT_WRITE|PROT_EXEC
 - [ ] §9: heap canary overflow detection at kfree
 - [ ] §9: double-free detection at kfree
+- [ ] §15: commit charge atomic increment/decrement round-trip
+- [ ] §16: `page_fault_count` increments on access to demand-paged region
 
 > **Note:** Most §1-§11 tests require runtime page fault verification which cannot run in WSL (no QEMU). The test checkpoint blocks in each section define the serial-log verification criteria for native Windows / bare metal testing.
 
