@@ -48,7 +48,7 @@
 | 💎  |   9   | Heap canaries + double-free detection                     | --                             |  [ ]   |
 | 💎  |  10   | Kernel memory leak detector                               | §9                            |  [ ]   |
 | 💎  |  11   | MMIO mapping with UC attributes + HPET validation         | --                             |  [ ]   |
-| 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`)       | --                             |  [/]   |
+| 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`)       | --                             |  [x]   |
 
 > 💎 = parity -- Windows and Linux both implement these memory management features; Impossible OS must match.
 > ⭐ = exclusive -- build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.
@@ -239,7 +239,7 @@ Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a 
 - [x] Add declarations to `include/kernel/mm/vmm.h`
 - [x] Zero-fill the physical frame BEFORE mapping via `zero_page(phys)` (identity-mapped, so phys == kernel VA). Prevents kernel data leaking to user mode.
 - [x] Unit test in `test_vmm.c`: `test_vmm_map_user_page_roundtrip` -- allocates frame, maps at 0x200000000 via kernel PML4, writes pattern through identity map, reads back through mapped VA, asserts match + vmm_get_physical resolve, unmaps, verifies PTE cleared. 5 assertions, no live boot calls.
-- [ ] Commit: `"mm: vmm_map_user_page -- map arbitrary phys frame into per-process PML4 at user VA"`
+- [x] Commit: `"mm: vmm_map_user_page -- map arbitrary phys frame into per-process PML4 at user VA"` (ce91b05a)
 
 **Test checkpoint:** Unit test passes (pattern write through identity map, read through mapped user VA). `task_exec()` path still works (it uses `vmm_set_user_page()` for the ELF range, which is unchanged). Boot completes normally on QEMU WHPX, TCG, VirtualBox, bare metal.
 
