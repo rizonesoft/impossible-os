@@ -283,8 +283,6 @@ void boot_phase1(void)
     kernel_subsystem_set_ready(SUBSYS_TIMER, true);
     boot_progress(1, "TIMER", POST16_TIMER_OK);
 
-    smp_early_bsp_init();
-
     /* DPC queues must be ready before sti -- ISRs may queue DPCs immediately */
     {
         extern void dpc_init_queues(void);
