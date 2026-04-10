@@ -556,7 +556,13 @@ static void efi_print(CHAR16 *str);
 /* ---- Boot fatal error screen (S9) ----------------------------------------
  * Replaces all `for (;;) hlt;` loops with a visible error display.
  * Uses UEFI console (ConOut) for text and ConIn for keypress wait.
- * Falls back to HLT if console is unavailable. */
+ * Falls back to HLT if console is unavailable.
+ *
+ * After ExitBootServices has been attempted, Boot Services (including ConOut)
+ * may be in an undefined state. Set g_ebs_in_progress = 1 before the EBS
+ * loop to force serial-only output for EBS-path failures. */
+static int g_ebs_in_progress;
+
 static void boot_fatal(const char *title, const char *detail)
 {
     /* 1. Log to serial */
@@ -569,8 +575,10 @@ static void boot_fatal(const char *title, const char *detail)
         serial_early_print("\n");
     }
 
-    /* 2. Display on UEFI console if available */
-    if (gST && gST->ConOut) {
+    /* 2. Display on UEFI console if available and Boot Services are intact.
+     * Skip ConOut if we're inside the EBS retry loop -- Boot Services
+     * may be in an undefined state after a failed ExitBootServices. */
+    if (gST && gST->ConOut && !g_ebs_in_progress) {
         EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *con = gST->ConOut;
 
         /* White text on blue background (BSOD style) */
@@ -2795,6 +2803,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     post_code16(POST16_BL_EXIT_BS);
     serial_early_print("[BOOT] ExitBootServices...\n");
     g_boot_info_ptr->timing.exit_bs = boot_rdtsc();
+    g_ebs_in_progress = 1;  /* Disable ConOut in boot_fatal from here */
     {
         int ebs_attempt;
         EFI_STATUS ebs_status;
