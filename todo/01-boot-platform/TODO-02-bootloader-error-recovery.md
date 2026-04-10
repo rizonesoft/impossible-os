@@ -20,6 +20,7 @@
 - -> XREF: `TODO-01-uefi-hardening-secureboot.md §9` -- shared max `ExitBootServices` attempt count with §2 here (single N in both TODOs before coding)
 - -> XREF: `TODO-05-bare-metal-hardening.md §7` -- resilient boot with graceful degradation
 - -> XREF: `TODO-03-boot-device-discovery.md §1` -- boot device identification (uses filesystem protocol correctly)
+- -> XREF: `TODO-03-boot-device-discovery.md §5,§11` -- fallback when no kernel on any volume, and critical health-check path, invoke `boot_fatal` / error screen (this file §9)
 - -> XREF: `TODO-07-boot-diagnostics.md §5` -- panic forensic evidence struct; §13 here provides the bootloader-stage error codes that §5 persists across reboots
 - -> XREF: `TODO-07-boot-diagnostics.md §6` -- panic QR code; §14 here implements the UEFI-stage QR code before kernel handoff
 - -> XREF: `TODO-16-boot-watchdog.md §1` -- kernel-stage software watchdog; §11 here covers the UEFI-stage watchdog before ExitBootServices
@@ -50,7 +51,7 @@
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | ELF bounds checking                            | --         |  [x]   |
 | 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [x]   |
-| 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [ ]   |
+| 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [x]   |
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [ ]   |
 | 💎  |   5   | GOP timeout and graceful degradation           | --         |  [ ]   |
 | 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [ ]   |
@@ -118,11 +119,11 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 > [!NOTE]
 > **Regression risk:** LOW -- additive search paths. Default path unchanged.
 
-- [ ] Try paths in order: `\boot\kernel.exe` -> `\kernel.exe` -> `\EFI\ImpossibleOS\kernel.exe`
-- [ ] Log each attempt: `"[BOOT] Trying %s..."` with path
-- [ ] On success: `"[BOOT] Kernel found at %s"` and continue
-- [ ] On all paths failing: `"[FAIL] Kernel not found. Searched: \boot\kernel.exe, \kernel.exe, \EFI\ImpossibleOS\kernel.exe"` then render error screen (§9)
-- [ ] Use `LoadedImage->DeviceHandle` to get the boot device's filesystem (not `LocateProtocol` which returns an arbitrary filesystem)
+- [x] Try paths in order: `\boot\kernel.exe` -> `\kernel.exe` -> `\EFI\ImpossibleOS\kernel.exe`
+- [x] Log each attempt: `"[BOOT] Trying <path>..."` with path name
+- [x] On success: `"[BOOT] Kernel found at <path>"` and continue
+- [x] On all paths failing: `"[FAIL] Kernel not found. Searched: ..."` with all 3 paths. Only continues search on EFI_NOT_FOUND; device/FS errors stop immediately with specific error. Closes root_dir on failure.
+- [x] Use `LoadedImage->DeviceHandle` via `HandleProtocol` to get the boot device's filesystem; falls back to `LocateProtocol` if LoadedImage unavailable.
 - [ ] Commit: `"boot: fallback kernel search -- 3 paths before failure"`
 
 **Test checkpoint:** Rename `\boot\kernel.exe` to `\kernel.exe` on EFI partition. Boot must succeed with serial showing `"Trying \boot\kernel.exe... not found"` then `"Kernel found at \kernel.exe"`. Verify on QEMU TCG. Confirm default path works on all 4 platforms.
@@ -395,7 +396,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | -- | --------------- | --------------------------------- | ------------------------------- | -------------------------------- |
 | 💎 | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds         | ✅ §1 phdr+seg+overlap+32M cap  |
 | 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ✅ §2 N=4 bounded + map refresh |
-| 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ⬜ §3 backup kernel path        |
+| 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ✅ §3 3-path search + DeviceHdl |
 | 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ⬜ §4 SPCR auto-detect          |
 | 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ⬜ §5 text mode if GOP fails    |
 | 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ⬜ §6 mmap buffer growth        |
@@ -478,3 +479,4 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 2026-04-10 | validate | validate-todo-file: ASCII `->` XREFs; Inputs links + TODO-18 §4 + kernel-init §2; §1-§15 regression notes moved before checklists; §5 stale TODO-01 §12 fixed to TODO-18 §4; OS table compact; Unit Tests + Verification checkpoints + boot test runner; History added. |
 | 2026-04-10 | gap-analysis | gap-analysis-todo: Code-truth IMPORTANT; §15 split -> §15+§16 + Impl row 16; EBS N aligned XREF TODO-01 §9; OS TODO-15 row + Sources; Inputs TODO-15; Unit/Verify §16; TODO-15 + kernel-init + TODO-01 patches; 6 searches + MS Learn fetch. |
 | 2026-04-10 | validate | validate-todo-file: continuation rg clean; Inputs + `boot_hw.c` + TODO-01 §9 Inputs XREF; §2 policy bullet de-staled (shared N); OS `TODO-15` cell; 16 `##` sections Commit+Test-last OK; `run-boot-tests.bat` present; external XREF section anchors spot-checked. |
+| 2026-04-10 | validate | Inputs: `-> XREF` `TODO-03-boot-device-discovery.md §5,§11` for error-screen handoff from fallback / health-check (paired with TODO-03 validate pass). |

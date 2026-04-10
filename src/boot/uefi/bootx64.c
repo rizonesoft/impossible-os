@@ -956,7 +956,9 @@ static void parse_boot_conf(void)
 static EFI_STATUS load_kernel(UINT64 *entry_point)
 {
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
+    EFI_LOADED_IMAGE_PROTOCOL *loaded_image;
     EFI_FILE_PROTOCOL *root_dir, *kernel_file;
     EFI_STATUS status;
     UINT8 *file_buf;
@@ -965,29 +967,76 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     Elf64_Phdr *phdr;
     UINT16 i;
 
-    /* Locate file system protocol */
-    status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+    /* Use LoadedImage->DeviceHandle to get the boot device's filesystem
+     * (not LocateProtocol which returns an arbitrary filesystem). */
+    status = gBS->HandleProtocol(gImageHandle, &li_guid,
+                                  (VOID **)&loaded_image);
+    if (!EFI_ERROR(status) && loaded_image && loaded_image->DeviceHandle) {
+        status = gBS->HandleProtocol(loaded_image->DeviceHandle,
+                                      &fs_guid, (VOID **)&fs);
+    } else {
+        /* Fallback: locate any filesystem protocol */
+        status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+    }
     if (EFI_ERROR(status)) {
-        efi_print(u"[FAIL] File system protocol not found\r\n");
+        serial_early_print("[FAIL] File system protocol not found\n");
         return status;
     }
 
     /* Open root directory */
     status = fs->OpenVolume(fs, &root_dir);
     if (EFI_ERROR(status)) {
-        efi_print(u"[FAIL] Cannot open root volume\r\n");
+        serial_early_print("[FAIL] Cannot open root volume\n");
         return status;
     }
 
-    /* Open kernel file */
-    status = root_dir->Open(
-        root_dir, &kernel_file,
-        u"\\boot\\kernel.exe",
-        EFI_FILE_MODE_READ, 0
-    );
-    if (EFI_ERROR(status)) {
-        efi_print(u"[FAIL] Cannot open \\boot\\kernel.exe\r\n");
-        return status;
+    /* Fallback kernel search: try paths in order (S3) */
+    {
+        static const CHAR16 *kernel_paths[] = {
+            u"\\boot\\kernel.exe",
+            u"\\kernel.exe",
+            u"\\EFI\\ImpossibleOS\\kernel.exe",
+        };
+        static const char *kernel_path_names[] = {
+            "\\boot\\kernel.exe",
+            "\\kernel.exe",
+            "\\EFI\\ImpossibleOS\\kernel.exe",
+        };
+        int found = 0;
+        UINT16 pi;
+        for (pi = 0; pi < 3; pi++) {
+            serial_early_print("[BOOT] Trying ");
+            serial_early_print(kernel_path_names[pi]);
+            serial_early_print("...\n");
+            status = root_dir->Open(root_dir, &kernel_file,
+                                     (CHAR16 *)kernel_paths[pi],
+                                     EFI_FILE_MODE_READ, 0);
+            if (!EFI_ERROR(status)) {
+                serial_early_print("[BOOT] Kernel found at ");
+                serial_early_print(kernel_path_names[pi]);
+                serial_early_print("\n");
+                found = 1;
+                break;
+            }
+            /* Only continue searching on EFI_NOT_FOUND; any other error
+             * (EFI_DEVICE_ERROR, EFI_VOLUME_CORRUPTED, etc.) is a hard
+             * failure -- report and stop. */
+            if (status != EFI_NOT_FOUND) {
+                serial_early_print("[FAIL] Error opening ");
+                serial_early_print(kernel_path_names[pi]);
+                serial_early_print(" (device/FS error)\n");
+                root_dir->Close(root_dir);
+                return status;
+            }
+        }
+        if (!found) {
+            serial_early_print(
+                "[FAIL] Kernel not found. Searched: "
+                "\\boot\\kernel.exe, \\kernel.exe, "
+                "\\EFI\\ImpossibleOS\\kernel.exe\n");
+            root_dir->Close(root_dir);
+            return EFI_NOT_FOUND;
+        }
     }
 
     /* Read entire file into memory */
