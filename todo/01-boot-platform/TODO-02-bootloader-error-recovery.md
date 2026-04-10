@@ -48,7 +48,7 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | ELF bounds checking                            | --         |  [ ]   |
+| 💎  |   1   | ELF bounds checking                            | --         |  [x]   |
 | 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [ ]   |
 | 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [ ]   |
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [ ]   |
@@ -77,14 +77,14 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 > [!NOTE]
 > **Regression risk:** LOW -- additive validation. Existing valid kernels pass all checks. If a check false-positives, remove it specifically.
 
-- [ ] Validate `e_phoff` is within file bounds: `e_phoff + e_phnum * sizeof(Elf64_Phdr) <= file_size`
-- [ ] Validate each `PT_LOAD` segment: `p_offset + p_filesz <= file_size`
-- [ ] Validate `p_memsz >= p_filesz` (ELF spec requirement)
-- [ ] Reject segments that overlap boot_info region (0x10000--0x11000)
-- [ ] Reject segments that overlap framebuffer base address
-- [ ] Cap total kernel size at 32 MiB -- reject with clear error if exceeded
-- [ ] Log each loaded segment: `"[BOOT] ELF segment %u: vaddr=0x%llx filesz=%u memsz=%u"` (already done, verify)
-- [ ] On any validation failure: `"[FAIL] Kernel ELF corrupt: <reason>"` with specific error
+- [x] Validate `e_phoff` is within file bounds: `e_phoff + e_phnum * sizeof(Elf64_Phdr) <= file_size`
+- [x] Validate each `PT_LOAD` segment: `p_offset + p_filesz <= file_size`
+- [x] Validate `p_memsz >= p_filesz` (ELF spec requirement)
+- [x] Reject segments that overlap boot_info region (0x10000--0x11000): checks `seg_start < 0x11000 && seg_end > BOOT_INFO_PHYS_ADDR`
+- [x] Reject segments that overlap framebuffer base address: checks against `g_boot_info_ptr->fb.addr` + pitch*height when fb is initialized
+- [x] Cap total kernel size at 32 MiB (`ELF_MAX_KERNEL_SIZE`): reject with clear error if exceeded
+- [x] Log each loaded segment: `"[BOOT] ELF segment N: paddr=0xHHHH filesz=N memsz=N"` via serial_early_print per segment
+- [x] On any validation failure: `"[FAIL] Kernel ELF corrupt: <reason>"` with specific error text for each check
 - [ ] Commit: `"boot: harden ELF parser -- bounds check all headers and segments"`
 
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
@@ -393,7 +393,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 
 | ⭐ | Feature         | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
 | -- | --------------- | --------------------------------- | ------------------------------- | -------------------------------- |
-| 💎 | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds         | ⬜ §1 ELF segment validation    |
+| 💎 | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds         | ✅ §1 phdr+seg+overlap+32M cap  |
 | 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ⬜ §2 (N=4 locked in TODO-01§9) |
 | 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ⬜ §3 backup kernel path        |
 | 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ⬜ §4 SPCR auto-detect          |

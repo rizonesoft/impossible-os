@@ -1021,28 +1021,123 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     ehdr = (Elf64_Ehdr *)file_buf;
     if (ehdr->e_magic != ELF_MAGIC || ehdr->e_class != 2 ||
         ehdr->e_machine != 0x3E) {
-        efi_print(u"[FAIL] Invalid ELF64 kernel\r\n");
+        serial_early_print("[FAIL] Kernel ELF corrupt: invalid magic/class/machine\n");
         return EFI_LOAD_ERROR;
     }
 
-    /* Load PT_LOAD segments */
+    /* --- ELF bounds validation (S1 hardening) --- */
+
+    /* Cap total kernel size at 32 MiB */
+#define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
+    if (file_size > ELF_MAX_KERNEL_SIZE) {
+        serial_early_print("[FAIL] Kernel ELF corrupt: file exceeds 32 MiB limit\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    /* Validate program header table is within file bounds.
+     * Use subtraction-based check to prevent integer wraparound. */
+    if (ehdr->e_phoff > file_size) {
+        serial_early_print("[FAIL] Kernel ELF corrupt: phdr offset past EOF\n");
+        return EFI_LOAD_ERROR;
+    }
+    if (ehdr->e_phnum > (file_size - ehdr->e_phoff) / sizeof(Elf64_Phdr)) {
+        serial_early_print("[FAIL] Kernel ELF corrupt: phdr table past EOF\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    /* Load PT_LOAD segments with per-segment validation */
     phdr = (Elf64_Phdr *)(file_buf + ehdr->e_phoff);
     for (i = 0; i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type != PT_LOAD)
             continue;
 
+        /* Validate segment file data is within file bounds.
+         * Subtraction-based: p_offset must fit, then filesz must fit in remainder. */
+        if (phdr[i].p_offset > file_size ||
+            phdr[i].p_filesz > file_size - phdr[i].p_offset) {
+            serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
+            serial_early_print_uint(i);
+            serial_early_print(" data past EOF\n");
+            return EFI_LOAD_ERROR;
+        }
+
+        /* Validate memsz >= filesz (ELF spec requirement) */
+        if (phdr[i].p_memsz < phdr[i].p_filesz) {
+            serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
+            serial_early_print_uint(i);
+            serial_early_print(" memsz < filesz\n");
+            return EFI_LOAD_ERROR;
+        }
+
+        /* Reject segments with address wraparound */
+        if (phdr[i].p_memsz > 0xFFFFFFFFFFFFFFFFULL - phdr[i].p_paddr) {
+            serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
+            serial_early_print_uint(i);
+            serial_early_print(" address wraparound\n");
+            return EFI_LOAD_ERROR;
+        }
+
+        /* Reject segments that overlap boot_info region (0x10000-0x11000) */
+        {
+            UINT64 seg_start = phdr[i].p_paddr;
+            UINT64 seg_end   = seg_start + phdr[i].p_memsz;
+            if (seg_start < 0x11000 && seg_end > BOOT_INFO_PHYS_ADDR) {
+                serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
+                serial_early_print_uint(i);
+                serial_early_print(" overlaps boot_info region\n");
+                return EFI_LOAD_ERROR;
+            }
+        }
+
+        /* Reject segments that overlap framebuffer */
+        if (g_boot_info_ptr->fb.addr != 0 &&
+            g_boot_info_ptr->fb.height != 0 &&
+            g_boot_info_ptr->fb.pitch != 0) {
+            UINT64 seg_start = phdr[i].p_paddr;
+            UINT64 seg_end   = seg_start + phdr[i].p_memsz;
+            UINT64 fb_start  = g_boot_info_ptr->fb.addr;
+            UINT64 fb_size   = (UINT64)g_boot_info_ptr->fb.pitch *
+                               g_boot_info_ptr->fb.height;
+            UINT64 fb_end    = fb_start + fb_size;
+            /* Guard against fb overflow (pitch*height) */
+            if (fb_size / g_boot_info_ptr->fb.pitch ==
+                g_boot_info_ptr->fb.height &&
+                fb_end >= fb_start) {
+                if (seg_start < fb_end && seg_end > fb_start) {
+                    serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
+                    serial_early_print_uint(i);
+                    serial_early_print(" overlaps framebuffer\n");
+                    return EFI_LOAD_ERROR;
+                }
+            }
+        }
+
+        /* Log loaded segment */
+        serial_early_print("[BOOT] ELF segment ");
+        serial_early_print_uint(i);
+        serial_early_print(": paddr=0x");
+        serial_early_print_hex16((UINT16)(phdr[i].p_paddr >> 16));
+        serial_early_print_hex16((UINT16)(phdr[i].p_paddr));
+        serial_early_print(" filesz=");
+        serial_early_print_uint((UINT32)phdr[i].p_filesz);
+        serial_early_print(" memsz=");
+        serial_early_print_uint((UINT32)phdr[i].p_memsz);
+        serial_early_print("\n");
+
         /* Copy segment to its physical address */
-        UINT8 *dst = (UINT8 *)(UINTN)phdr[i].p_paddr;
-        UINT8 *src = file_buf + phdr[i].p_offset;
-        UINTN copy_size = (UINTN)phdr[i].p_filesz;
-        UINTN mem_size = (UINTN)phdr[i].p_memsz;
+        {
+            UINT8 *dst = (UINT8 *)(UINTN)phdr[i].p_paddr;
+            UINT8 *src = file_buf + phdr[i].p_offset;
+            UINTN copy_size = (UINTN)phdr[i].p_filesz;
+            UINTN mem_size = (UINTN)phdr[i].p_memsz;
 
-        /* Copy file data */
-        efi_memcpy(dst, src, copy_size);
+            /* Copy file data */
+            efi_memcpy(dst, src, copy_size);
 
-        /* Zero BSS portion (memsz > filesz) */
-        if (mem_size > copy_size)
-            efi_memset(dst + copy_size, 0, mem_size - copy_size);
+            /* Zero BSS portion (memsz > filesz) */
+            if (mem_size > copy_size)
+                efi_memset(dst + copy_size, 0, mem_size - copy_size);
+        }
     }
 
     /* Find kernel_main symbol in the ELF symbol table.
