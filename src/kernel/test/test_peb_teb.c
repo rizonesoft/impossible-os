@@ -694,6 +694,42 @@ static void test_user_auxv_populated(void)
     }
 }
 
+/* ---- §14 uthread_create / kthread_create ---- */
+
+/* kthread_create should work from kernel test context (PID 0) */
+static volatile int g_kthread_test_ran = 0;
+static void kthread_test_entry(void *arg)
+{
+    (void)arg;
+    g_kthread_test_ran = 1;
+}
+
+static void test_kthread_create_smoke(void)
+{
+    g_kthread_test_ran = 0;
+    int tid = kthread_create(kthread_test_entry, (void *)0, 0);
+    TEST_ASSERT(tid >= 0, "kthread_create returns valid TID");
+}
+
+/* USER_THREAD_STACK_BASE is below main user stack */
+static void test_uthread_stack_layout(void)
+{
+    TEST_ASSERT(USER_THREAD_STACK_BASE < 0x8FC000ULL,
+                "USER_THREAD_STACK_BASE below main user stack");
+    TEST_ASSERT(USER_THREAD_STACK_LOWEST > 0x1000000ULL,
+                "USER_THREAD_STACK_LOWEST above kernel region");
+    TEST_ASSERT(USER_THREAD_STACK_BASE < 0x7FFCB000ULL,
+                "USER_THREAD_STACK_BASE below TEB region");
+}
+
+/* uthread_create should reject kernel tasks (no PEB in PID 0) */
+static void test_uthread_rejects_kernel_task(void)
+{
+    int tid = uthread_create(kthread_test_entry, (void *)0, 0);
+    TEST_ASSERT(tid == -1,
+                "uthread_create rejects kernel task (no PEB)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_peb_teb(void)
@@ -735,6 +771,13 @@ void test_register_peb_teb(void)
                             test_elf_extract_phdr_info_invalid, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: user auxv populated (PID 2)",
                             test_user_auxv_populated, TEST_CAT_ABI);
+    /* S14: uthread_create / kthread_create */
+    test_suite_register_cat("PEB/TEB: kthread_create smoke",
+                            test_kthread_create_smoke, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: uthread stack layout",
+                            test_uthread_stack_layout, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: uthread rejects kernel",
+                            test_uthread_rejects_kernel_task, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

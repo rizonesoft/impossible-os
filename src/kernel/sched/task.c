@@ -280,6 +280,8 @@ boot_result_t task_init(void)
             tasks[i].threads[j].kernel_rsp = 0;
             tasks[i].threads[j].kernel_stack_base = (uint8_t *)0;
             tasks[i].threads[j].kernel_stack_pages = 0;
+            tasks[i].threads[j].user_stack_va = 0;
+            tasks[i].threads[j].user_stack_pages = 0;
         }
     }
 
@@ -1169,6 +1171,16 @@ int task_exec(const uint8_t *data, uint64_t size)
     uint32_t pid = current_task;
     uint8_t *new_kstack;
 
+    /* Exec must be called from the main thread (tid 0).  A secondary user
+     * thread calling exec would leave stale threads[N].kernel_rsp in the
+     * scheduler, causing TSS.rsp0 corruption on switch-in. */
+    if (current_thread != 0) {
+        klog(LOG_ERROR, "sched",
+             "task_exec: rejected from thread %u (must be thread 0)",
+             (uint64_t)current_thread);
+        return -1;
+    }
+
     /* Load the binary via multi-format dispatcher (ELF, PE32+, EIF) */
     entry = exec_load(data, size, &exec_err);
     if (entry == 0) {
@@ -1663,11 +1675,25 @@ void task_cleanup(uint32_t pid)
     }
     tasks[pid].threads[0].kernel_rsp = 0;
 
-    /* Free per-thread kernel stacks for secondary threads (PMM-allocated) */
+    /* Free per-thread kernel + user stacks for secondary threads */
     {
         uint32_t ti;
-        for (ti = 1; ti < tasks[pid].num_threads; ti++)
+        for (ti = 1; ti < tasks[pid].num_threads; ti++) {
             thread_free_stacks(&tasks[pid].threads[ti]);
+            /* Reclaim per-thread user stack pages (deferred from thread_join
+             * because vmm_unmap_page lacks SMP TLB shootdown). Safe here
+             * because the task is TASK_DEAD -- no other CPU runs it. */
+            if (tasks[pid].threads[ti].user_stack_pages > 0 &&
+                tasks[pid].threads[ti].user_stack_va && tasks[pid].cr3) {
+                uint32_t p;
+                for (p = 0; p < tasks[pid].threads[ti].user_stack_pages; p++)
+                    vmm_unmap_user_page(tasks[pid].cr3,
+                        tasks[pid].threads[ti].user_stack_va +
+                        (uintptr_t)p * 4096);
+                tasks[pid].threads[ti].user_stack_va = 0;
+                tasks[pid].threads[ti].user_stack_pages = 0;
+            }
+        }
     }
 
     /* Free user stack */
@@ -1718,7 +1744,7 @@ void task_cleanup(uint32_t pid)
  * Each thread has its own stack. The scheduler treats threads as
  * additional runnable entities within a task.
  *
- * thread_create() adds a new schedulable thread to the current task.
+ * kthread_create() adds a new kernel-mode schedulable thread to the current task.
  * The scheduler gives time slices to ALL threads across ALL tasks.
  * ============================================================================ */
 
@@ -1948,7 +1974,7 @@ void tls_set_value(uint32_t pid, uint32_t index, uint64_t value)
     spin_unlock_irqrestore(&tls_lock, flags);
 }
 
-int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
+int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
 {
     uint32_t task_idx = current_task;
     struct task *t = &tasks[task_idx];
@@ -2022,6 +2048,8 @@ int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].kernel_rsp = 0;  /* kernel thread -- no rsp0 switching */
     t->threads[tid].kernel_stack_base = (uint8_t *)0;
     t->threads[tid].kernel_stack_pages = 0;
+    t->threads[tid].user_stack_va = 0;
+    t->threads[tid].user_stack_pages = 0;
     t->num_threads++;
 
     /* Register thread with Object Manager */
@@ -2032,6 +2060,199 @@ int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
            t->name ? t->name : "?");
 
     return (int)tid;
+}
+
+/* ============================================================================
+ * uthread_create() -- create a user-mode thread in the current task.
+ *
+ * Builds a ring-3 iret frame with its own kernel stack (PMM, 8 KiB + guard)
+ * and user stack (PMM + vmm_map_user_page, 16 KiB per thread).
+ * Requires the parent task to have a PEB (rejects kernel tasks).
+ * ============================================================================ */
+
+/* Free a contiguous PMM allocation (N pages starting at phys) */
+static void pmm_free_pages(uintptr_t phys, uint32_t count)
+{
+    uint32_t i;
+    for (i = 0; i < count; i++)
+        pmm_free_frame(phys + (uintptr_t)i * 4096);
+}
+
+int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
+{
+    uint32_t task_idx = current_task;
+    struct task *t = &tasks[task_idx];
+    uint32_t tid;
+    uint64_t *sp;
+    uint32_t kstack_pages = 3;  /* 8 KiB stack + 1 guard page = 3 pages */
+    uint32_t ustack_pages;
+    uintptr_t kstack_phys, ustack_phys;
+    uint8_t *kstack;
+    uintptr_t ustack_va;
+    uint32_t i;
+
+    /* Reject kernel tasks (no PEB) */
+    if (!t->peb) {
+        klog(LOG_ERROR, "sched",
+             "uthread_create: PID %u has no PEB (kernel task)",
+             (uint64_t)t->pid);
+        return -1;
+    }
+
+    if (t->num_threads >= THREAD_MAX) {
+        klog(LOG_ERROR, "sched",
+             "uthread_create: max threads reached (PID %u)",
+             (uint64_t)t->pid);
+        return -1;
+    }
+
+    if (user_stack_size < USER_STACK_SIZE)
+        user_stack_size = USER_STACK_SIZE;
+    /* Round up to page multiple */
+    user_stack_size = (user_stack_size + 4095) & ~(uint32_t)4095;
+    ustack_pages = user_stack_size / 4096;
+
+    /* Allocate per-thread KERNEL stack (PMM: 8 KiB + guard page) */
+    kstack_phys = pmm_alloc_contiguous(kstack_pages);
+    if (!kstack_phys) {
+        klog(LOG_ERROR, "sched",
+             "uthread_create: cannot allocate kernel stack");
+        return -1;
+    }
+    kstack = (uint8_t *)kstack_phys;
+
+    /* Guard page at bottom of kernel stack */
+    vmm_install_guard_page(kstack_phys, "uthread kernel stack");
+
+    /* Allocate per-thread USER stack (PMM: 16 KiB) */
+    ustack_phys = pmm_alloc_contiguous(ustack_pages);
+    if (!ustack_phys) {
+        klog(LOG_ERROR, "sched",
+             "uthread_create: cannot allocate user stack");
+        pmm_free_pages(kstack_phys, kstack_pages);
+        return -1;
+    }
+
+    tid = t->num_threads;
+
+    /* User stack VA: stride downward by user_stack_size per tid */
+    ustack_va = USER_THREAD_STACK_BASE -
+                (uintptr_t)tid * (uintptr_t)user_stack_size;
+
+    /* Map user stack pages into the parent's per-process PML4 */
+    if (!t->cr3) {
+        klog(LOG_ERROR, "sched",
+             "uthread_create: PID %u has no per-process PML4",
+             (uint64_t)t->pid);
+        pmm_free_pages(kstack_phys, kstack_pages);
+        pmm_free_pages(ustack_phys, ustack_pages);
+        return -1;
+    }
+    for (i = 0; i < ustack_pages; i++) {
+        uintptr_t page_va = ustack_va + (uintptr_t)i * 4096;
+        uintptr_t page_phys = ustack_phys + (uintptr_t)i * 4096;
+        if (vmm_map_user_page(t->cr3, page_va, page_phys) != 0) {
+            klog(LOG_ERROR, "sched",
+                 "uthread_create: vmm_map_user_page failed at 0x%lx",
+                 (uint64_t)page_va);
+            /* Unmap already-mapped pages (vmm_unmap_user_page frees
+             * each frame internally).  Only free the UNMAPPED tail
+             * via pmm_free_frame to avoid double-free. */
+            {
+                uint32_t j;
+                for (j = 0; j < i; j++)
+                    vmm_unmap_user_page(t->cr3,
+                        ustack_va + (uintptr_t)j * 4096);
+                /* Free the unmapped tail frames (i..ustack_pages-1) */
+                for (j = i; j < ustack_pages; j++)
+                    pmm_free_frame(ustack_phys + (uintptr_t)j * 4096);
+            }
+            pmm_free_pages(kstack_phys, kstack_pages);
+            return -1;
+        }
+    }
+
+    /* Build ring-3 iret frame on the KERNEL stack.
+     * Same 22-qword layout as task_exec() and task_create_user().
+     * CS = GDT_USER_CODE | 3, SS = GDT_USER_DATA | 3, RFLAGS = 0x202. */
+    {
+        /* Usable kernel stack: skip guard page (page 0), use pages 1-2 */
+        uint8_t *kstack_top = kstack + kstack_pages * 4096;
+        sp = (uint64_t *)kstack_top;
+        sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
+    }
+
+    {
+        uint64_t user_rsp = (ustack_va + user_stack_size) & ~0xFULL;
+
+        sp -= 22;
+        sp[0]  = 0;                                /* r15 */
+        sp[1]  = 0;                                /* r14 */
+        sp[2]  = (uint64_t)arg;                    /* r13 = argument */
+        sp[3]  = (uint64_t)entry;                  /* r12 = entry (unused by iret but preserved) */
+        sp[4]  = 0;                                /* r11 */
+        sp[5]  = 0;                                /* r10 */
+        sp[6]  = 0;                                /* r9 */
+        sp[7]  = 0;                                /* r8 */
+        sp[8]  = 0;                                /* rbp */
+        sp[9]  = (uint64_t)arg;                    /* rdi = first arg (SysV ABI) */
+        sp[10] = 0;                                /* rsi */
+        sp[11] = 0;                                /* rdx */
+        sp[12] = 0;                                /* rcx */
+        sp[13] = 0;                                /* rbx */
+        sp[14] = 0;                                /* rax */
+        sp[15] = 0;                                /* int_no */
+        sp[16] = 0;                                /* err_code */
+        sp[17] = (uint64_t)entry;                  /* rip = user entry */
+        sp[18] = GDT_USER_CODE | 3;                /* cs = ring 3 code */
+        sp[19] = 0x202;                            /* rflags: IF set */
+        sp[20] = user_rsp;                         /* rsp = user stack top */
+        sp[21] = GDT_USER_DATA | 3;                /* ss = ring 3 data */
+    }
+
+    /* Initialize thread control block */
+    t->threads[tid].id = tid;
+    t->threads[tid].state = THREAD_READY;
+    t->threads[tid].rsp = (uint64_t)sp;
+    t->threads[tid].stack_base = (uint8_t *)0; /* not kmalloc'd */
+    t->threads[tid].stack_size = 0;
+    t->threads[tid].parent_task = task_idx;
+    t->threads[tid].exit_status = 0;
+    t->threads[tid].join_tid = -1;
+    t->threads[tid].priority      = THREAD_PRIO_NORMAL;
+    t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
+
+    /* Per-thread kernel stack ownership (for thread_free_stacks) */
+    t->threads[tid].kernel_rsp = (uint64_t)(kstack + kstack_pages * 4096);
+    t->threads[tid].kernel_stack_base = kstack;
+    t->threads[tid].kernel_stack_pages = kstack_pages;
+
+    /* Per-thread user stack ownership (for task_cleanup reclamation) */
+    t->threads[tid].user_stack_va = ustack_va;
+    t->threads[tid].user_stack_pages = ustack_pages;
+
+    t->num_threads++;
+
+    /* Register thread with Object Manager */
+    ob_thread_create(&t->threads[tid], t->pid);
+
+    klog(LOG_INFO, "sched",
+         "uthread %u created in PID %u: kstack=0x%lx ustack=0x%lx-0x%lx",
+         (uint64_t)tid, (uint64_t)t->pid,
+         (uint64_t)(uintptr_t)kstack,
+         (uint64_t)ustack_va,
+         (uint64_t)(ustack_va + user_stack_size));
+
+    return (int)tid;
+}
+
+/* Legacy wrapper -- dispatches to uthread_create if task has PEB, else kthread_create */
+int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
+{
+    struct task *t = &tasks[current_task];
+    if (t->peb)
+        return uthread_create(entry, arg, stack_size ? stack_size : USER_STACK_SIZE);
+    return kthread_create(entry, arg, stack_size);
 }
 
 void thread_exit(int32_t status)

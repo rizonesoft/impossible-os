@@ -42,6 +42,31 @@
 #define USER_STACK_SIZE  16384       /* 16 KiB per user task stack */
 #define SCHED_QUANTUM    5           /* ticks per time slice (50ms at 100Hz) */
 
+/* Per-thread user stack layout for secondary threads (created by uthread_create).
+ * The MAIN thread's user stack is at USER_ELF_END - USER_STACK_SIZE (0x8FC000).
+ * Secondary thread stacks are placed below the TEB region, striding downward
+ * by USER_STACK_SIZE per tid:
+ *   0x7FFCB000 = lowest TEB (tid 15)
+ *   0x7FFCA000 = USER_THREAD_STACK_BASE (just below TEB region)
+ *   tid 1: [0x7FFC6000 .. 0x7FFCA000)  (16 KiB)
+ *   tid 2: [0x7FFC2000 .. 0x7FFC6000)
+ *   ...
+ *   tid 15: [0x7FF8E000 .. 0x7FF92000) */
+#define USER_THREAD_STACK_BASE  0x7FFCA000ULL
+
+/* Lowest user thread stack VA: USER_THREAD_STACK_BASE - THREAD_MAX * USER_STACK_SIZE.
+ * Must not overlap with: USER_ELF range (0x800000-0x900000), main user stack
+ * (0x8FC000-0x900000), or TEB region (0x7FFCB000-0x7FFDB000). */
+#define USER_THREAD_STACK_LOWEST \
+    (USER_THREAD_STACK_BASE - (uint64_t)THREAD_MAX * USER_STACK_SIZE)
+
+_Static_assert(USER_THREAD_STACK_BASE < 0x7FFCB000ULL,
+    "USER_THREAD_STACK_BASE must be below TEB region (0x7FFCB000)");
+_Static_assert(USER_THREAD_STACK_LOWEST < USER_THREAD_STACK_BASE,
+    "USER_THREAD_STACK_LOWEST must be below BASE (not wrapped)");
+_Static_assert(USER_THREAD_STACK_LOWEST > 0x1000000ULL,
+    "USER_THREAD_STACK_LOWEST must be well above kernel region");
+
 /* Thread priority range.
  * Higher value = higher priority.  Default = THREAD_PRIO_NORMAL.
  * The scheduler always picks the highest-priority READY thread.
@@ -86,7 +111,10 @@ struct thread {
     uint64_t    kernel_rsp;     /* top of this thread's kernel stack; 0 = kernel thread (no rsp0 switch) */
     uint8_t    *kernel_stack_base;  /* PMM-allocated base (for pmm_free_frame at join); NULL for kmalloc'd stacks */
     uint32_t    kernel_stack_pages; /* number of PMM pages; 0 = stack is kmalloc'd (use kfree on stack_base) */
-    uint32_t    _kstack_pad;    /* alignment padding */
+    /* --- Per-thread user stack (for ring-3 threads created by uthread_create) --- */
+    uintptr_t   user_stack_va;  /* user-space VA of this thread's stack; 0 = kernel thread */
+    uint32_t    user_stack_pages; /* number of PMM pages mapped for user stack; 0 = none */
+    uint32_t    _ustack_pad;    /* alignment padding */
 };
 
 /* Task Control Block */
@@ -201,9 +229,22 @@ void task_cleanup(uint32_t pid);
 
 /* --- Thread API --- */
 
-/* Create a new thread within the current task.
+/* Create a new kernel-mode thread within the current task.
+ * Builds a ring-0 interrupt frame (CS=GDT_KERNEL_CODE, SS=GDT_KERNEL_DATA).
  * Returns thread ID (>= 1) or -1 on failure.
  * Thread shares PID and address space with parent task. */
+int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size);
+
+/* Create a new user-mode thread within the current task.
+ * Builds a ring-3 interrupt frame (CS=GDT_USER_CODE|3, SS=GDT_USER_DATA|3).
+ * Allocates per-thread kernel stack (PMM, 8 KiB + guard) and user stack
+ * (PMM + vmm_map_user_page, USER_STACK_SIZE) in the parent's per-process PML4.
+ * Requires the parent task to have a PEB (user task); rejects kernel tasks.
+ * Returns thread ID (>= 1) or -1 on failure. */
+int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size);
+
+/* Legacy wrapper -- dispatches to uthread_create if task has PEB, else kthread_create.
+ * Kept for back-compat with existing test code. */
 int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size);
 
 /* Exit the current thread with a status code.

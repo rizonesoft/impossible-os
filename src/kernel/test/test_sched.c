@@ -22,7 +22,7 @@ static void test_thread_entry(void *arg)
 static void test_sched_create_thread(void)
 {
     g_thread_ran = 0;
-    int tid = thread_create(test_thread_entry, NULL, 0);
+    int tid = kthread_create(test_thread_entry, NULL, 0);
     TEST_ASSERT(tid >= 0, "thread_create returns valid TID");
 }
 

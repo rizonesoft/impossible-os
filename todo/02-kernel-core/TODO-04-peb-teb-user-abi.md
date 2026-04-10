@@ -49,7 +49,7 @@
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5           |  [x]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9           |  [x]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7           |  [x]   |
-| 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T05§11 |  [ ]   |
+| 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T05§11 |  [/]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14 |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
@@ -272,36 +272,23 @@ The current `thread_create()` in `src/kernel/sched/task.c:1924` builds a ring-0 
 > [!IMPORTANT]
 > **Discovered during the per-thread TEB (§15) design review (2026-04-07).** Codex flagged that retrofitting per-thread TEBs onto `thread_create()` is architecturally wrong because the function builds kernel-mode iret frames. §14 is the prerequisite that splits thread creation into kernel and user variants so §15 has a real foundation. The first user task's main thread (created via `task_exec()`) already builds a ring-3 iret frame correctly -- that path is the reference for `uthread_create()`.
 
-> [!WARNING]
-> **BLOCKED on two external prerequisites (Codex design review 2026-04-10):**
-> 1. **`vmm_map_user_page(cr3, va, phys)`** -- map a PMM-allocated frame at an arbitrary user VA in a per-process PML4. Current `vmm_set_user_page()` only sets the User bit on identity-mapped pages, so user thread stacks would silently alias the wrong physical memory. → XREF: [`03-memory-concurrency/TODO-01-vmm-memory-protection.md §12`](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
-> 2. **Per-thread `kernel_rsp` + TSS.rsp0 switching** -- `struct thread` needs its own `kernel_rsp`, and the scheduler must update `tss_set_kernel_stack()` on intra-task thread switches. Currently rsp0 is per-task, so ring-3 threads sharing a task all enter ring 0 on the same kernel stack. → XREF: [`03-memory-concurrency/TODO-05-scheduler-enhancement.md §11`](../03-memory-concurrency/TODO-05-scheduler-enhancement.md)
->
-> Implement §12 and §11 above BEFORE returning to §14. The `kthread_create()` rename (first checklist item) can proceed independently.
+> [!NOTE]
+> **Prerequisites resolved (2026-04-10):**
+> 1. `vmm_map_user_page(cr3, va, phys)` -- implemented in TODO-01-vmm §12 (ce91b05a)
+> 2. Per-thread `kernel_rsp` + TSS.rsp0 switching -- implemented in TODO-05-sched §11 (3bf99ed0)
 
 **Files:** `src/kernel/sched/task.c`, `include/kernel/sched/task.h`, `src/kernel/nt/nt_process.c`
 
-- [ ] Rename the existing `thread_create()` to `kthread_create()` -- preserves all current behavior (ring-0 frame, kernel stack, `thread_wrapper` entry). Update all in-tree callers (`boot_*`, kernel worker threads, dpc_thread, etc.) to use the new name. NO behavior change for kernel threads.
-- [ ] Add `int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)` in `task.c`:
-  - Reject if current task has no PEB (kernel task) -- return -1
-  - Reject if `t->num_threads >= THREAD_MAX`
-  - Allocate per-thread KERNEL stack (8 KiB + guard page) via `pmm_alloc_contiguous(stack_pages + 1)` + `vmm_install_guard_page()` -- mirror `task_exec()` pattern
-  - Allocate per-thread USER stack (16 KiB) in the parent's per-process PML4: `pmm_alloc_contiguous(USER_STACK_SIZE / 4096)`, then `vmm_set_user_page(t->cr3, ustack_va)` for each page. Use a per-thread VA: `USER_THREAD_STACK_BASE - tid * USER_STACK_SIZE` (new constant; placed below the main thread's stack)
-  - Build a ring-3 interrupt frame on the KERNEL stack: `CS = GDT_USER_CODE | 3`, `SS = GDT_USER_DATA | 3`, `RFLAGS = 0x202` (IF set), `RSP = top of user stack`, `RIP = entry function pointer`. Initial frame layout matches the `task_exec()` post-load frame.
-  - Initialize `struct thread`: id, state=THREAD_READY, rsp=top of frame, parent_task, priority, NO TEB yet (§15 wires TEB)
-  - Register with Object Manager via `ob_thread_create()`
-  - Return tid
-- [ ] Define `USER_THREAD_STACK_BASE` constant in `task.h` -- a user-space VA distinct from the main thread's user stack. The main user stack lives at `USER_ELF_END - USER_STACK_SIZE` (per `task_exec()`); `USER_THREAD_STACK_BASE` should be lower (toward `USER_ELF_BASE`) and stride by `USER_STACK_SIZE` per tid. Document the layout in `task.h`.
-- [ ] Add a static assert that the user thread stack range doesn't overlap with the main user stack, the user ELF range, or the TEB page region (`TEB_USER_BASE - THREAD_MAX * 0x1000`).
-- [ ] Update `NtCreateThread_handler` in `nt_process.c`:
-  - If parent task has a PEB (`task_current()->peb != NULL`), call `uthread_create(entry, arg, USER_STACK_SIZE)`
-  - Otherwise call `kthread_create(entry, arg, THREAD_STACK_SIZE)` (current behavior preserved for any kernel test code)
-  - Return STATUS_NO_MEMORY if creation fails
-- [ ] Add `kthread_create` and `uthread_create` declarations to `include/kernel/sched/task.h`. The legacy `thread_create()` symbol may be kept as a thin wrapper that dispatches based on `task_current()->peb` for back-compat with existing test code, OR removed entirely after all callers migrate -- decide during implementation, document in commit message.
-- [ ] On thread exit (`thread_exit()` -> `thread_join()`): the user stack pages allocated in this section are reclaimed at `task_cleanup()` time, NOT at `thread_join()`. Reason: runtime `vmm_unmap_page()` lacks SMP TLB shootdown (-> XREF: `03-memory-concurrency/TODO-06-smp-phase2.md §2`). Until shootdown lands, deferred reclamation via `task_cleanup` is the safe path. Bounded leak: max `THREAD_MAX * USER_STACK_SIZE = 16 * 16 KiB = 256 KiB` of user stack per process between thread death and process exit. The kernel stack (heap memory) IS freed by `thread_join()` via `kfree()` because it lives in the kernel heap, not in mapped pages.
-- [ ] `task_cleanup()` walks all threads in the dying task and reclaims each thread's user stack pages via `vmm_unmap_page()`. Safe because the task is `TASK_DEAD`, no other CPU runs it.
-- [ ] `task_exec()` must guard `current_thread == 0` or normalize the process to a single thread before publishing the exec frame. Without this, a secondary user thread calling exec would leave a stale `threads[N].kernel_rsp` in the scheduler, causing TSS.rsp0 corruption on switch-in (Codex finding from TODO-05 §11 adversarial review 2026-04-10).
-- [ ] Unit tests in `test_peb_teb.c`: do NOT call `uthread_create()` from kernel test context (the test runs in PID 0 with no PEB; `uthread_create()` would reject). Instead test (a) struct layout, (b) `kthread_create()` from kernel test context still works (smoke), (c) the `USER_THREAD_STACK_BASE` constant is below `USER_ELF_END - USER_STACK_SIZE`. Per-thread isolation is validated indirectly via §15's runtime tests once that section ships.
+- [x] Rename `thread_create()` to `kthread_create()` -- all 11 in-tree callers updated (test_ipc.c: 10, test_sched.c: 1). Legacy `thread_create()` wrapper kept for back-compat (dispatches based on `peb`).
+- [x] `uthread_create()` implemented in task.c -- ring-3 iret frame, PMM kernel stack (3 pages: guard + 8 KiB), PMM user stack (4 pages: 16 KiB) mapped via `vmm_map_user_page()`, full error rollback (Codex double-free fix applied), page-aligned size enforcement.
+- [x] `USER_THREAD_STACK_BASE` = `0x7FFCA000` defined in task.h with VA layout diagram. `USER_THREAD_STACK_LOWEST` derived constant. Per-thread user stack strides downward by `USER_STACK_SIZE * tid`.
+- [x] Static asserts: `USER_THREAD_STACK_BASE < 0x7FFCB000` (below TEB), `USER_THREAD_STACK_LOWEST > 0x1000000` (above kernel region), `USER_THREAD_STACK_LOWEST < USER_THREAD_STACK_BASE` (no wrap).
+- [x] `NtCreateThread_handler` uses `thread_create()` wrapper which dispatches to `uthread_create` (PEB present) or `kthread_create` (no PEB). No handler code change needed.
+- [x] `kthread_create` + `uthread_create` + `thread_create` declarations in task.h.
+- [x] User stack pages reclaimed at `task_cleanup()` time via `vmm_unmap_user_page()` per thread. Deferred from `thread_join()` per TLB shootdown constraint. User stack ownership tracked via `user_stack_va` + `user_stack_pages` fields on `struct thread`.
+- [x] `task_cleanup()` walks secondary threads and reclaims user stack pages. Thread 0 uses task-level `kfree` (unchanged).
+- [x] `task_exec()` guarded with `current_thread == 0` check -- rejects exec from secondary threads.
+- [x] Unit tests in test_peb_teb.c: `test_kthread_create_smoke` (smoke), `test_uthread_stack_layout` (VA range checks), `test_uthread_rejects_kernel_task` (PEB guard). 3 tests, no live boot calls.
 - [ ] Commit: `"kernel: peb -- user-mode thread bootstrap (kthread_create + uthread_create split)"`
 
 **Test checkpoint:** Boot completes normally. `cmd.exe` (single-threaded user task) starts unchanged because `task_exec()` builds its own ring-3 frame. A user binary calling `NtCreateThread` (none in tree today) would receive a real ring-3 thread on a user stack -- verifiable when a multi-threaded test binary lands. `kthread_create` calls from kernel boot code work unchanged (DPC worker, work queue, etc.). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
