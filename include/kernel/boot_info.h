@@ -206,10 +206,12 @@ struct boot_config {
     uint8_t  crash_test;       /* 1 = trigger deliberate BSOD after desktop init */
     /* Object Manager tracing (S15) */
     uint8_t  ob_handle_trace;  /* 1 = log every handle alloc/free to klog */
+    /* Config version (S7) -- future boot.conf changes can key on this */
+    uint8_t  config_version;   /* 0 = unversioned (legacy), 1+ = versioned */
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[14];
+    uint8_t  _reserved[13];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

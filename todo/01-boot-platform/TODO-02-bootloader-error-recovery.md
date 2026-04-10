@@ -55,7 +55,7 @@
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [x]   |
 | 💎  |   5   | GOP timeout and graceful degradation           | --         |  [x]   |
 | 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [x]   |
-| 💎  |   7   | boot.conf validation and version field         | --         |  [ ]   |
+| 💎  |   7   | boot.conf validation and version field         | --         |  [x]   |
 | 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [ ]   |
 | ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [ ]   |
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [ ]   |
@@ -191,12 +191,11 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 > [!NOTE]
 > **Regression risk:** LOW -- validation is additive. Valid configs produce no new warnings.
 
-- [ ] Check file size: if > 4096 bytes, log `"[WARN] boot.conf too large (%u bytes), truncating"` and cap read
-- [ ] After parsing each key=value: check key against whitelist of known keys
-- [ ] Unknown keys: `"[WARN] boot.conf: unknown key '%s' (ignored)"` -- don't silently drop
-- [ ] Add `config_version=1` field -- future boot.conf changes can key on version number
-- [ ] Validate numeric values: `splash_timeout` must be 0--60; `debug` must be 0 or 1; etc.
-- [ ] Out-of-range values: `"[WARN] boot.conf: %s=%s out of range, using default %u"` and clamp
+- [x] Buffer increased to 4096 bytes; if file fills buffer, logs `"[WARN] boot.conf too large (N bytes), truncating"`
+- [x] After parsing each key=value: unknown keys produce `"[WARN] boot.conf: unknown key 'X' (ignored)"`
+- [x] Known-key whitelist: all existing keys + new `config_version` key
+- [x] `config_version` field added to `boot_config` struct (1 byte from `_reserved[]`). `config_version=1` in boot.conf sets it.
+- [x] Range validation: `debug`/`verbose`/`test` clamped to 0-1, `splash_timeout` clamped to 0-60 (default 3). Out-of-range logs `"[WARN] boot.conf: X out of range, using N"`
 - [ ] Commit: `"boot: validate boot.conf -- warn on unknown keys and out-of-range values"`
 
 **Test checkpoint:** Add `bogus_key=42` to boot.conf. Serial must show `"unknown key 'bogus_key'"`. Set `splash_timeout=999` -- serial must show `"out of range, using default 3"`.
@@ -400,7 +399,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ✅ §4 COM1/COM2 probe+boot_info |
 | 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ✅ §5 headless + SetMode fallbk |
 | 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ✅ §6 512 cap + truncate warn   |
-| 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ⬜ §7 structured parse errors   |
+| 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ✅ §7 key whitelist + range chk |
 | 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ⬜ §8 graduated alloc strategy  |
 | 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ⬜ §10 SPCR table parse         |
 | 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ⬜ §11 watchdog re-arm/disable  |

@@ -71,7 +71,8 @@ struct boot_config {
     UINT8   async_init;        /* 1 = parallel subsystem init on APs, 0 = sequential (default) */
     UINT8   crash_test;        /* 1 = trigger deliberate BSOD after desktop init */
     UINT8   ob_handle_trace;   /* 1 = log every handle alloc/free to klog */
-    UINT8   _reserved[14];     /* future fields -- zero-filled by defaults */
+    UINT8   config_version;    /* 0 = legacy, 1+ = versioned (S7) */
+    UINT8   _reserved[13];     /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
@@ -903,7 +904,37 @@ static void parse_conf_kv(struct boot_config *cfg,
             g_conf_res_height = (*xp) ? ascii_atoi(xp + 1) : 0;
         }
     }
-    /* Unknown keys are silently ignored -- forward compatibility */
+    else if (ascii_streq(key, "config_version")) {
+        cfg->config_version = (UINT8)ascii_atoi(val);
+    }
+    else {
+        /* Unknown key -- warn but don't fail (forward compatibility) */
+        serial_early_print("[WARN] boot.conf: unknown key '");
+        serial_early_print(key);
+        serial_early_print("' (ignored)\n");
+        return;
+    }
+
+    /* --- Range validation (S7) --- */
+    /* debug/verbose/serial_debug: must be 0 or 1 */
+    if (ascii_streq(key, "debug") && cfg->debug > 1) {
+        serial_early_print("[WARN] boot.conf: debug out of range, using 1\n");
+        cfg->debug = 1;
+    }
+    if (ascii_streq(key, "verbose") && cfg->verbose > 1) {
+        serial_early_print("[WARN] boot.conf: verbose out of range, using 1\n");
+        cfg->verbose = 1;
+    }
+    /* splash_timeout: 0-60 seconds */
+    if (ascii_streq(key, "splash_timeout") && cfg->splash_timeout > 60) {
+        serial_early_print("[WARN] boot.conf: splash_timeout out of range, using 3\n");
+        cfg->splash_timeout = 3;
+    }
+    /* test: 0 or 1 */
+    if (ascii_streq(key, "test") && cfg->test > 1) {
+        serial_early_print("[WARN] boot.conf: test out of range, using 1\n");
+        cfg->test = 1;
+    }
 }
 
 /* Read and parse \EFI\ImpossibleOS\boot.conf */
@@ -945,8 +976,8 @@ static void parse_boot_conf(void)
         return;
     }
 
-    /* Read entire file (boot.conf can exceed 1 KB with comments) */
-    char buf[2048];
+    /* Read entire file (cap at 4096 bytes -- S7 validation) */
+    char buf[4096];
     UINTN buf_size = sizeof(buf) - 1;
     status = conf_file->Read(conf_file, &buf_size, buf);
     conf_file->Close(conf_file);
@@ -956,6 +987,14 @@ static void parse_boot_conf(void)
         serial_early_print("[BOOT] boot.conf read error - using defaults\n");
         return;
     }
+
+    /* Warn if file was larger than buffer (truncated) */
+    if (buf_size >= sizeof(buf) - 1) {
+        serial_early_print("[WARN] boot.conf too large (");
+        serial_early_print_uint((UINT32)buf_size);
+        serial_early_print(" bytes), truncating\n");
+    }
+
     buf[buf_size] = '\0';
 
     serial_early_print("[BOOT] boot.conf loaded\n");
