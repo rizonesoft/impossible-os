@@ -1081,7 +1081,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] `NtCreateIoCompletion` (SSDT 0x0088) / `NtSetIoCompletion` (SSDT 0x0089) / `NtRemoveIoCompletion` (SSDT 0x008A): 16-port pool, 64-entry ring buffer per port, post/dequeue round-trip functional.
 - [x] `NtCreateMailslotFile` (SSDT 0x001C): registered, returns STATUS_INVALID_DEVICE_REQUEST (one-way IPC deferred).
 - [x] `NtReadFileScatter` (SSDT 0x0024) / `NtWriteFileGather` (SSDT 0x0025): registered, returns STATUS_INVALID_DEVICE_REQUEST (requires page-aligned buffer segments).
-- [ ] Commit: `"kernel: nt -- file metadata, device control, I/O completion ports"`
+- [x] Commit: `"kernel: nt -- file metadata, device control, I/O completion ports"` (928051e4)
 
 **Test checkpoint:** `NtQueryInformationFile(FileBasicInformation)` returns valid timestamps. `NtSetInformationFile(FileDispositionInformation)` marks file for delete; file removed after close. `NtDeviceIoControlFile` reaches driver dispatch. I/O completion port post + dequeue round-trip succeeds.
 
