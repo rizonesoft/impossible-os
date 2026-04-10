@@ -48,7 +48,7 @@
 | 💎  |   9   | Heap canaries + double-free detection                     | --                             |  [ ]   |
 | 💎  |  10   | Kernel memory leak detector                               | §9                            |  [ ]   |
 | 💎  |  11   | MMIO mapping with UC attributes + HPET validation         | --                             |  [ ]   |
-| 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`)       | --                             |  [ ]   |
+| 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`)       | --                             |  [/]   |
 
 > 💎 = parity -- Windows and Linux both implement these memory management features; Impossible OS must match.
 > ⭐ = exclusive -- build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.
@@ -234,20 +234,11 @@ Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a 
 
 → XREF: [`02-kernel-core/TODO-04-peb-teb-user-abi.md §14`](../02-kernel-core/TODO-04-peb-teb-user-abi.md) -- consumer (uthread_create per-thread user stack mapping)
 
-- [ ] Implement `int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)` in `src/kernel/mm/vmm.c`:
-  - Walk the 4-level page table rooted at `cr3` (not the kernel PML4 -- the process PML4)
-  - Create intermediate tables (PDPT, PD, PT) as needed via `pmm_alloc_frame()`, zero-fill, set Present+Writable+User on each level
-  - Install the final PTE: `phys | VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER | VMM_FLAG_NX`
-  - If a huge page (2 MiB) is encountered at the PD level, split it first via `vmm_split_huge_page()` before inserting the 4 KiB PTE
-  - Return 0 on success, -1 on allocation failure
-  - `invlpg` the target VA after PTE installation (local CPU only -- no SMP shootdown per TODO-06 §2 constraint)
-- [ ] Implement `void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)`:
-  - Walk the process PML4, clear the PTE, free the physical frame via `pmm_free_frame()`
-  - `invlpg` the target VA
-  - Do NOT free intermediate page tables (they may hold other mappings)
-- [ ] Add declaration to `include/kernel/mm/vmm.h`
-- [ ] Zero-fill the physical frame BEFORE mapping it as User -- prevent kernel data leaking to user mode. Use a temporary kernel mapping or the identity map (the frame IS identity-mapped before the user PTE is installed)
-- [ ] Unit test: allocate a frame via `pmm_alloc_frame()`, map it at a test VA via `vmm_map_user_page(kernel_pml4, test_va, frame)`, write a pattern through the identity map, read back through `test_va`, assert match. Unmap and verify the frame is freed. (No live boot calls -- uses kernel PML4 as the test target, which is safe in single-threaded test context.)
+- [x] Implement `int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)` in `src/kernel/mm/vmm.c` -- walks per-process PML4, creates intermediate tables with User+Writable flags, auto-splits 2 MiB huge pages, installs final PTE with Present+Writable+User+NX, invlpg after. Returns 0/-1.
+- [x] Implement `void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)` -- walks PML4, extracts frame from PTE, clears PTE, pmm_free_frame(), invlpg. Does not free intermediate tables.
+- [x] Add declarations to `include/kernel/mm/vmm.h`
+- [x] Zero-fill the physical frame BEFORE mapping via `zero_page(phys)` (identity-mapped, so phys == kernel VA). Prevents kernel data leaking to user mode.
+- [x] Unit test in `test_vmm.c`: `test_vmm_map_user_page_roundtrip` -- allocates frame, maps at 0x200000000 via kernel PML4, writes pattern through identity map, reads back through mapped VA, asserts match + vmm_get_physical resolve, unmaps, verifies PTE cleared. 5 assertions, no live boot calls.
 - [ ] Commit: `"mm: vmm_map_user_page -- map arbitrary phys frame into per-process PML4 at user VA"`
 
 **Test checkpoint:** Unit test passes (pattern write through identity map, read through mapped user VA). `task_exec()` path still works (it uses `vmm_set_user_page()` for the ELF range, which is unchanged). Boot completes normally on QEMU WHPX, TCG, VirtualBox, bare metal.

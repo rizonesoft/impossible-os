@@ -108,12 +108,57 @@ static void test_vmm_guard_page_install(void)
     TEST_ASSERT(phys2 == base + 4096, "page after guard still mapped");
 }
 
+/* --- vmm_map_user_page round-trip test ---
+ *
+ * Allocate a PMM frame, map it at a test VA via vmm_map_user_page using
+ * the kernel PML4 (safe in single-threaded test context), write a pattern
+ * through the identity map (phys == VA), read back through the mapped VA,
+ * assert match.  Unmap and verify the PTE is cleared.
+ *
+ * No live boot infrastructure calls.  Uses pmm_alloc_frame / pmm_free_frame
+ * which are pure allocator operations (not in the forbidden list).
+ */
+static void test_vmm_map_user_page_roundtrip(void)
+{
+    uintptr_t cr3 = vmm_get_kernel_cr3();
+    uintptr_t test_va = 0x200000000ULL;  /* 8 GiB -- unmapped region */
+    uintptr_t frame = pmm_alloc_frame();
+
+    TEST_ASSERT(frame != 0, "pmm_alloc_frame returns non-zero");
+
+    /* vmm_map_user_page zero-fills the frame internally */
+    int rc = vmm_map_user_page(cr3, test_va, frame);
+    TEST_ASSERT(rc == 0, "vmm_map_user_page succeeds");
+
+    /* Write a pattern through the identity map (phys == kernel VA) */
+    volatile uint64_t *id_ptr = (volatile uint64_t *)frame;
+    *id_ptr = 0xDEADBEEF12345678ULL;
+
+    /* Read back through the mapped user VA */
+    volatile uint64_t *user_ptr = (volatile uint64_t *)test_va;
+    TEST_ASSERT_EQ(*user_ptr, 0xDEADBEEF12345678ULL,
+                   "user VA reads pattern written via identity map");
+
+    /* Verify the mapping resolves to our frame */
+    uintptr_t resolved = vmm_get_physical(test_va);
+    TEST_ASSERT_EQ(resolved, frame,
+                   "vmm_get_physical returns the mapped frame");
+
+    /* Unmap and verify PTE is cleared */
+    vmm_unmap_user_page(cr3, test_va);
+    uintptr_t after = vmm_get_physical(test_va);
+    TEST_ASSERT_EQ(after, 0,
+                   "vmm_get_physical returns 0 after unmap");
+}
+
 void test_register_vmm(void)
 {
     test_suite_register_cat("VMM: map/read/unmap", test_vmm_map_roundtrip, TEST_CAT_MM);
     test_suite_register_cat("VMM: mmio_wc map/write", test_vmm_map_mmio_wc, TEST_CAT_MM);
     test_suite_register_cat("VMM: split huge page", test_vmm_split_huge_page, TEST_CAT_MM);
     test_suite_register_cat("VMM: guard page install", test_vmm_guard_page_install, TEST_CAT_MM);
+    test_suite_register_cat("VMM: map_user_page roundtrip",
+                            test_vmm_map_user_page_roundtrip, TEST_CAT_MM);
 }
 
 #endif /* KERNEL_TESTS */

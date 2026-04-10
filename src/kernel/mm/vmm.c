@@ -510,6 +510,144 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
     pt[pti] |= VMM_FLAG_USER;
 }
 
+/* --- Per-process user page mapping ----------------------------------------
+ *
+ * vmm_map_user_page:  map a PMM-allocated physical frame at an arbitrary
+ *                     user VA in a per-process PML4.
+ * vmm_unmap_user_page: reverse -- clear PTE, free frame.
+ *
+ * Unlike vmm_set_user_page (which only ORs the User bit on an existing
+ * identity-mapped page), these functions install a DIFFERENT physical frame
+ * at a chosen VA.  Required by uthread_create (per-thread user stacks)
+ * and future VirtualAlloc(MEM_COMMIT).
+ *
+ * XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §12
+ * XREF: 02-kernel-core/TODO-04-peb-teb-user-abi.md §14 (consumer)
+ */
+
+int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys)
+{
+    pte_t *pml4, *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi, pti;
+    uint64_t user_rw = VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER;
+
+    virt &= ~((uintptr_t)0xFFF);
+    phys &= ~((uintptr_t)0xFFF);
+
+    pml4  = (pte_t *)cr3;
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+    pti   = pt_index(virt);
+
+    /* Zero-fill the frame BEFORE mapping -- prevent kernel data leaking
+     * to user mode.  The frame is identity-mapped so (uint8_t *)phys is
+     * a valid kernel pointer. */
+    zero_page(phys);
+
+    /* --- Walk / create PML4 -> PDPT --- */
+    if (pml4[pml4i] & VMM_FLAG_PRESENT) {
+        pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
+        pml4[pml4i] |= VMM_FLAG_USER;  /* ensure User at PML4 level */
+    } else {
+        uintptr_t f = pmm_alloc_frame();
+        if (!f) return -1;
+        zero_page(f);
+        pml4[pml4i] = f | user_rw;
+        pdpt = (pte_t *)f;
+    }
+
+    /* --- Walk / create PDPT -> PD --- */
+    if (pdpt[pdpti] & VMM_FLAG_PRESENT) {
+        pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
+        pdpt[pdpti] |= VMM_FLAG_USER;
+    } else {
+        uintptr_t f = pmm_alloc_frame();
+        if (!f) return -1;
+        zero_page(f);
+        pdpt[pdpti] = f | user_rw;
+        pd = (pte_t *)f;
+    }
+
+    /* --- Walk / create PD -> PT (handle huge page split) --- */
+    if (pd[pdi] & VMM_FLAG_PRESENT) {
+        if (pd[pdi] & VMM_FLAG_HUGE) {
+            /* Split 2 MiB huge page into 512 x 4 KiB PTEs */
+            uintptr_t huge_phys = pd[pdi] & PTE_ADDR_MASK;
+            uint64_t  old_flags = pd[pdi] & ~(PTE_ADDR_MASK | VMM_FLAG_HUGE);
+            uintptr_t pt_frame  = pmm_alloc_frame();
+            uint32_t  j;
+            if (!pt_frame) return -1;
+            pt = (pte_t *)pt_frame;
+            for (j = 0; j < PT_ENTRIES; j++)
+                pt[j] = (huge_phys + (uintptr_t)j * VMM_PAGE_SIZE) | old_flags;
+            pd[pdi] = pt_frame | user_rw;
+        } else {
+            pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
+            pd[pdi] |= VMM_FLAG_USER;
+        }
+    } else {
+        uintptr_t f = pmm_alloc_frame();
+        if (!f) return -1;
+        zero_page(f);
+        pd[pdi] = f | user_rw;
+        pt = (pte_t *)f;
+    }
+
+    /* --- Install final PTE --- */
+    if (pt[pti] & VMM_FLAG_PRESENT) {
+        klog(LOG_ERROR, "mm",
+             "vmm_map_user_page: VA 0x%lx already mapped (PTE=0x%lx)",
+             (uint64_t)virt, (uint64_t)pt[pti]);
+        return -1;  /* caller must unmap first */
+    }
+    {
+        uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER;
+        if (cpu_has(CPU_FEATURE_NX))
+            flags |= VMM_FLAG_NX;
+        pt[pti] = phys | flags;
+    }
+
+    vmm_flush_tlb(virt);
+    return 0;
+}
+
+void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)
+{
+    pte_t *pml4, *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi, pti;
+    uintptr_t frame;
+
+    virt &= ~((uintptr_t)0xFFF);
+
+    pml4  = (pte_t *)cr3;
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+    pti   = pt_index(virt);
+
+    /* Walk without creating -- if any level is absent, nothing to unmap */
+    if (!(pml4[pml4i] & VMM_FLAG_PRESENT)) return;
+    pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
+
+    if (!(pdpt[pdpti] & VMM_FLAG_PRESENT)) return;
+    pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
+
+    if (!(pd[pdi] & VMM_FLAG_PRESENT)) return;
+    if (pd[pdi] & VMM_FLAG_HUGE) return;  /* don't unmap inside a huge page */
+    pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
+
+    if (!(pt[pti] & VMM_FLAG_PRESENT)) return;
+
+    /* Extract frame, clear PTE, free frame */
+    frame = pt[pti] & PTE_ADDR_MASK;
+    pt[pti] = 0;
+    vmm_flush_tlb(virt);
+
+    if (frame)
+        pmm_free_frame(frame);
+}
+
 void vmm_destroy_user_pml4(uintptr_t pml4_phys)
 {
     pte_t *pml4, *pdpt, *pd;

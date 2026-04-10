@@ -61,6 +61,17 @@ uintptr_t vmm_create_user_pml4(void);
  * at all 4 levels (PML4, PDPT, PD, PT).  Works for ANY address. */
 void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt);
 
+/* Map a PMM-allocated physical frame at an arbitrary user VA in a per-process
+ * PML4.  Creates intermediate tables as needed with User+Writable flags.
+ * Zero-fills the frame before mapping to prevent kernel data leaking.
+ * Auto-splits 2 MiB huge pages at the PD level.
+ * Returns 0 on success, -1 on allocation failure. */
+int vmm_map_user_page(uintptr_t cr3, uintptr_t virt, uintptr_t phys);
+
+/* Unmap a user page from a per-process PML4.  Clears the PTE, frees the
+ * physical frame via pmm_free_frame().  Does NOT free intermediate tables. */
+void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt);
+
 /* Free a per-process PML4 and all intermediate tables (not physical data pages). */
 void vmm_destroy_user_pml4(uintptr_t pml4_phys);
 
