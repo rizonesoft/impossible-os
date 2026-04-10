@@ -200,20 +200,20 @@ Win11 and major Linux distros surface firmware trust inventory (db/dbx counts), 
 
 ## OS Comparison
 
-| ⭐   | Feature               | 🪟 Win11        | 🐧 Linux     | 🚀 Impossible OS |
-| --- | --------------------- | ----------------- | ------------ | ----------------- |
-| 💎   | UEFI runtime post-EBS | ✅ Full RT      | ✅ efi_call  | ✅ §1 SVAM       |
-| 💎   | UEFI variables        | ✅ Firmware API | ✅ efivarfs  | ✅ §2 get/set    |
-| 💎   | GOP resolution        | ✅ Boot mgr     | ✅ EFIFB     | ✅ §3 auto       |
-| 💎   | SMBIOS core           | ✅ WMI BIOS     | ✅ sysfs DMI | ✅ §4 types      |
-| 💎   | Secure Boot shim      | ✅ MS shim      | ✅ rhboot    | ✅ §6 MOK        |
-| 💎   | Secure Boot state     | ✅ Registry     | ✅ efivar    | ✅ §5 NVRAM      |
-| ⭐   | Boot timeline         | ❌ ETW WPA      | ❌ systemd   | ✅ §7 JSON log   |
-| 💎   | Atomic serial         | ✅ KdPrint      | ✅ printk    | ✅ §8 klog       |
-| 💎   | SBAT shim ops         | ✅ program      | ✅ distros   | ⬜ §9 doc        |
-| 💎   | DB/dbx counts UX      | ✅ msinfo       | ✅ mokutil   | ⬜ §9 reg        |
-| 💎   | EBS retry hardening   | ✅ firmware     | ✅ patches   | ⬜ §9 loop       |
-| 💎   | Capsule install UX    | ✅ Win stack    | ✅ fwupd     | ⬜ TODO-18 §2    |
+| ⭐   | Feature               | 🪟 Win11                      | 🐧 Linux                    | 🚀 Impossible OS               |
+| --- | --------------------- | ------------------------------- | ---------------------------- | -------------------------------- |
+| 💎   | UEFI runtime post-EBS | ✅ Full RT via hal.dll          | ✅ efi_call wrapper          | ✅ §1 SVAM + 6 RT services      |
+| 💎   | UEFI variables        | ✅ NtQuery/SetSystemEnvValue   | ✅ efivarfs mount            | ✅ §2 get/set/enum + SSDT wired |
+| 💎   | GOP resolution        | ✅ Boot mgr + BCD              | ✅ EFIFB + simplefb          | ✅ §3 auto-select best mode     |
+| 💎   | SMBIOS core           | ✅ WMI Win32_BIOS class        | ✅ sysfs /sys/class/dmi      | ✅ §4 types 0-4 + registry      |
+| 💎   | Secure Boot shim      | ✅ MS-signed shim + MOK        | ✅ rhboot/shim + MokManager  | ✅ §6 MOK chain + sbsign        |
+| 💎   | Secure Boot state     | ✅ Registry + msinfo32         | ✅ efivar + mokutil --sb     | ✅ §5 NVRAM + registry State    |
+| ⭐   | Boot timeline         | ❌ ETW WPA (heavyweight)       | ❌ systemd-analyze (userland)| ✅ §7 per-step JSON + NVRAM     |
+| 💎   | Atomic serial         | ✅ KdPrint spinlock             | ✅ printk logbuf             | ✅ §8 klog ring + serial        |
+| 💎   | SBAT shim ops         | ✅ MS Secure Boot program      | ✅ distro shim refresh       | ✅ §9 SBAT checklist doc        |
+| 💎   | DB/dbx inventory      | ✅ msinfo32 SB details         | ✅ mokutil --db              | ✅ §9 registry Db/Dbx counts    |
+| 💎   | EBS retry hardening   | ✅ bootmgr bounded retry       | ✅ efi-stub retry patch      | ✅ §9 4-attempt bounded loop    |
+| 💎   | Capsule install UX    | ✅ Windows Update stack        | ✅ fwupd + LVFS              | ⬜ TODO-18 §2 (query-only)      |
 
 > **Parity:** 💎 rows match Win11+Linux baseline. **⭐** JSON boot profile is extra vs ETW and userland boot charts. Capsule **apply** path and W^X on RT pages stay in [TODO-18](TODO-18-uefi-advanced.md); kernel already runs read-only `esrt_init()` / `uefi_capsule_init()` / `uefi_crypto_agility_init()` during Phase 1 bring-up.
 
