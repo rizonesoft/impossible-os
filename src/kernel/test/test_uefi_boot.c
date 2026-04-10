@@ -187,6 +187,45 @@ static void test_secureboot_db_registry_mirror(void)
     RegCloseKey(hKey);
 }
 
+/* ---- Serial Detection (S10: SPCR Auto-Detection) ---- */
+
+static void test_serial_source_valid(void)
+{
+    /* serial_source must be 0 (none), 1 (SPCR), or 2 (I/O probe) */
+    TEST_ASSERT(g_boot_info.serial_source <= 2,
+                "serial_source is 0, 1, or 2");
+}
+
+static void test_serial_source_matches_port(void)
+{
+    /* If serial_port is set, serial_source must be non-zero */
+    if (g_boot_info.serial_port != 0) {
+        TEST_ASSERT(g_boot_info.serial_source > 0,
+                    "serial_source > 0 when serial_port is set");
+    }
+}
+
+static void test_serial_baud_valid(void)
+{
+    /* If serial_source is non-zero, baud must be a standard rate or 0 */
+    if (g_boot_info.serial_source > 0) {
+        uint32_t baud = g_boot_info.serial_baud;
+        TEST_ASSERT(baud == 9600 || baud == 19200 || baud == 38400 ||
+                    baud == 57600 || baud == 115200 || baud == 0,
+                    "serial_baud is a standard rate (or 0 for default)");
+    }
+}
+
+static void test_serial_port_standard(void)
+{
+    /* If serial_port is set, it should be COM1 or COM2 */
+    if (g_boot_info.serial_port != 0) {
+        TEST_ASSERT(g_boot_info.serial_port == 0x3F8 ||
+                    g_boot_info.serial_port == 0x2F8,
+                    "serial_port is COM1 (0x3F8) or COM2 (0x2F8)");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_uefi_boot(void)
@@ -209,6 +248,14 @@ void test_register_uefi_boot(void)
                             test_registry_bios_vendor, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: SecureBoot DB mirror",
                             test_secureboot_db_registry_mirror, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: serial_source valid",
+                            test_serial_source_valid, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: serial_source matches port",
+                            test_serial_source_matches_port, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: serial_baud valid",
+                            test_serial_baud_valid, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: serial_port standard",
+                            test_serial_port_standard, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

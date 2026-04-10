@@ -261,7 +261,9 @@ struct boot_info {
 
     /* Serial port (probed by bootloader; 0 = no UART detected) */
     UINT16 serial_port;
-    UINT16 _serial_pad;
+    UINT8  serial_source;         /* 0=none, 1=SPCR, 2=I/O-probe */
+    UINT8  _serial_pad;
+    UINT32 serial_baud;           /* baud rate from SPCR (0 = use default 38400) */
 
     /* Kernel-populated fields (set after boot) */
     UINT8   secure_boot_enabled;
@@ -419,8 +421,14 @@ static void boot_log_append(const char *s)
 #define SERIAL_COM1 0x3F8
 #define SERIAL_COM2 0x2F8
 
-/* Active serial port (0 = none detected). Set by serial_early_probe(). */
+/* Active serial port (0 = none detected). Set by serial_early_init(). */
 static UINT16 s_serial_port;
+static UINT8  s_serial_source;   /* 0=none, 1=SPCR, 2=I/O-probe */
+static UINT32 s_serial_baud;     /* detected baud rate */
+
+/* SPCR diagnostic info (for logging after serial is up) */
+static UINT8  s_spcr_skipped;   /* 1 if SPCR found but unusable (MMIO/non-standard) */
+static UINT64 s_spcr_skip_addr; /* the address that caused the skip */
 
 static inline void outb_early(UINT16 port, UINT8 val)
 {
@@ -481,22 +489,210 @@ static int serial_probe_port(UINT16 base)
     return (inb_early(base + 7) == 0xAE) ? 1 : 0;
 }
 
-/* Initialize the UART at s_serial_port. */
-static void serial_init_port(UINT16 base)
+/* Initialize a 16550 UART with a specific baud rate.
+ * If baud == 0, preserve the firmware-configured divisor (SPCR baud code 0). */
+static void serial_init_port_baud(UINT16 base, UINT32 baud)
 {
     outb_early(base + 1, 0x00);  /* Disable interrupts */
-    outb_early(base + 3, 0x80);  /* Enable DLAB */
-    outb_early(base + 0, 0x03);  /* 38400 baud (divisor=3) */
-    outb_early(base + 1, 0x00);
-    outb_early(base + 3, 0x03);  /* 8N1 */
+    if (baud > 0) {
+        UINT16 divisor = (UINT16)(115200 / baud);
+        if (divisor == 0) divisor = 1;
+        outb_early(base + 3, 0x80);  /* Enable DLAB */
+        outb_early(base + 0, (UINT8)(divisor & 0xFF));
+        outb_early(base + 1, (UINT8)((divisor >> 8) & 0xFF));
+    }
+    outb_early(base + 3, 0x03);  /* 8N1 (also clears DLAB) */
     outb_early(base + 2, 0xC7);  /* Enable FIFO */
     outb_early(base + 4, 0x0B);  /* IRQs, RTS/DSR */
 }
 
-/* Probe COM1, then COM2. Initialize whichever is found first.
- * Sets s_serial_port to the active port (0 if neither present). */
+/* Initialize the UART at s_serial_port (default 38400 baud). */
+static void serial_init_port(UINT16 base)
+{
+    serial_init_port_baud(base, 38400);
+}
+
+/* ---- ACPI SPCR Serial Port Auto-Detection (TODO-02 S10) ---- */
+
+/* Minimal ACPI RSDP for locating RSDT/XSDT */
+typedef struct {
+    UINT8  signature[8];    /* "RSD PTR " */
+    UINT8  checksum;
+    UINT8  oem_id[6];
+    UINT8  revision;        /* 0=ACPI 1.0, 2=ACPI 2.0+ */
+    UINT32 rsdt_addr;
+    UINT32 length;
+    UINT64 xsdt_addr;
+    UINT8  ext_checksum;
+    UINT8  reserved[3];
+} __attribute__((packed)) BL_ACPI_RSDP;
+
+/* Minimal ACPI SDT header for table scanning */
+typedef struct {
+    UINT8  signature[4];
+    UINT32 length;
+} __attribute__((packed)) BL_ACPI_SDT_HDR;
+
+/* ACPI SPCR table (Serial Port Console Redirection) */
+typedef struct {
+    UINT8  signature[4];       /* 0:  "SPCR" */
+    UINT32 length;             /* 4:  table length */
+    UINT8  revision;           /* 8 */
+    UINT8  checksum;           /* 9 */
+    UINT8  oem_id[6];          /* 10 */
+    UINT8  oem_table_id[8];    /* 16 */
+    UINT32 oem_revision;       /* 24 */
+    UINT32 creator_id;         /* 28 */
+    UINT32 creator_revision;   /* 32 */
+    UINT8  interface_type;     /* 36: 0=16550 compatible */
+    UINT8  reserved1[3];       /* 37 */
+    /* Generic Address Structure (offset 40) */
+    UINT8  base_addr_space;    /* 40: 0=memory, 1=I/O */
+    UINT8  base_bit_width;     /* 41 */
+    UINT8  base_bit_offset;    /* 42 */
+    UINT8  base_access_size;   /* 43 */
+    UINT64 base_address;       /* 44 */
+    UINT8  interrupt_type;     /* 52 */
+    UINT8  irq;                /* 53 */
+    UINT32 gsiv;               /* 54 */
+    UINT8  baud_rate;          /* 58: encoded (3=9600,4=19200,6=57600,7=115200) */
+    UINT8  parity;             /* 59 */
+    UINT8  stop_bits;          /* 60 */
+    UINT8  flow_control;       /* 61 */
+    UINT8  terminal_type;      /* 62 */
+    UINT8  language;           /* 63 */
+} __attribute__((packed)) BL_ACPI_SPCR;
+
+/* Decode SPCR baud_rate field to actual baud rate */
+static UINT32 spcr_decode_baud(UINT8 code)
+{
+    switch (code) {
+    case 3:  return 9600;
+    case 4:  return 19200;
+    case 6:  return 57600;
+    case 7:  return 115200;
+    default: return 0;  /* 0 = as-is / unknown */
+    }
+}
+
+/* Search ACPI tables for SPCR and extract serial port info.
+ * Requires gST to be set (called from serial_early_init).
+ * Returns 1 if SPCR provided a usable I/O port, 0 otherwise. */
+static int serial_spcr_probe(void)
+{
+    UINTN i;
+    EFI_GUID acpi20_guid = EFI_ACPI_20_TABLE_GUID;
+    EFI_GUID acpi10_guid = EFI_ACPI_TABLE_GUID;
+    BL_ACPI_RSDP *rsdp = (BL_ACPI_RSDP *)0;
+
+    if (!gST || gST->NumberOfTableEntries == 0)
+        return 0;
+
+    /* Step 1: Find ACPI RSDP in UEFI config tables */
+    for (i = 0; i < gST->NumberOfTableEntries; i++) {
+        EFI_CONFIGURATION_TABLE *entry = &gST->ConfigurationTable[i];
+        if (guid_equal(&entry->VendorGuid, &acpi20_guid)) {
+            rsdp = (BL_ACPI_RSDP *)entry->VendorTable;
+            break;
+        }
+        if (guid_equal(&entry->VendorGuid, &acpi10_guid) && !rsdp)
+            rsdp = (BL_ACPI_RSDP *)entry->VendorTable;
+    }
+    if (!rsdp)
+        return 0;
+
+    /* Validate RSDP signature */
+    if (rsdp->signature[0] != 'R' || rsdp->signature[1] != 'S' ||
+        rsdp->signature[2] != 'D' || rsdp->signature[3] != ' ' ||
+        rsdp->signature[4] != 'P' || rsdp->signature[5] != 'T' ||
+        rsdp->signature[6] != 'R' || rsdp->signature[7] != ' ')
+        return 0;
+
+    /* Step 2: Get RSDT or XSDT address from RSDP */
+    UINT64 sdt_addr = 0;
+    int use_xsdt = 0;
+    if (rsdp->revision >= 2 && rsdp->xsdt_addr) {
+        sdt_addr = rsdp->xsdt_addr;
+        use_xsdt = 1;
+    } else if (rsdp->rsdt_addr) {
+        sdt_addr = rsdp->rsdt_addr;
+    }
+    if (!sdt_addr)
+        return 0;
+
+    /* Step 3: Scan SDT entries for SPCR signature */
+    BL_ACPI_SDT_HDR *sdt = (BL_ACPI_SDT_HDR *)(UINTN)sdt_addr;
+    UINT32 entry_size = use_xsdt ? 8 : 4;
+    UINT32 hdr_size = 36;  /* standard ACPI SDT header size */
+    if (sdt->length < hdr_size || sdt->length > 0x100000)
+        return 0;  /* reject implausible lengths (< header or > 1 MiB) */
+    UINT32 num_entries = (sdt->length - hdr_size) / entry_size;
+    UINT8 *entries = (UINT8 *)sdt + hdr_size;
+
+    for (i = 0; i < num_entries; i++) {
+        UINT64 table_addr;
+        if (use_xsdt)
+            table_addr = *(UINT64 *)(entries + i * 8);
+        else
+            table_addr = *(UINT32 *)(entries + i * 4);
+        if (!table_addr)
+            continue;
+
+        BL_ACPI_SDT_HDR *hdr = (BL_ACPI_SDT_HDR *)(UINTN)table_addr;
+
+        /* Match "SPCR" signature */
+        if (hdr->signature[0] != 'S' || hdr->signature[1] != 'P' ||
+            hdr->signature[2] != 'C' || hdr->signature[3] != 'R')
+            continue;
+
+        BL_ACPI_SPCR *spcr = (BL_ACPI_SPCR *)(UINTN)table_addr;
+
+        /* Minimum table length to read the fields we need */
+        if (spcr->length < 60)
+            return 0;
+
+        /* Must be I/O space (address_space == 1), not MMIO */
+        if (spcr->base_addr_space != 1) {
+            s_spcr_skipped = 1;
+            s_spcr_skip_addr = spcr->base_address;
+            return 0;
+        }
+
+        /* Must be a standard COM port (COM1 or COM2) */
+        UINT16 port = (UINT16)spcr->base_address;
+        if (port != SERIAL_COM1 && port != SERIAL_COM2) {
+            s_spcr_skipped = 1;
+            s_spcr_skip_addr = spcr->base_address;
+            return 0;
+        }
+
+        /* Verify UART actually exists at this address */
+        if (!serial_probe_port(port))
+            return 0;
+
+        /* SPCR is valid -- use it */
+        s_serial_port = port;
+        s_serial_baud = spcr_decode_baud(spcr->baud_rate);
+        /* baud == 0 means firmware preconfigured the port (SPCR code 0);
+         * serial_init_port_baud() preserves the existing divisor when 0 */
+        s_serial_source = 1;  /* SPCR */
+        return 1;
+    }
+
+    return 0;
+}
+
+/* Try ACPI SPCR first, then probe COM1/COM2 via I/O.
+ * Sets s_serial_port, s_serial_baud, s_serial_source. */
 static void serial_early_init(void)
 {
+    /* Try ACPI SPCR -- preferred detection method */
+    if (serial_spcr_probe()) {
+        serial_init_port_baud(s_serial_port, s_serial_baud);
+        return;
+    }
+
+    /* Fallback: scratch-register I/O probe (S4) */
     if (serial_probe_port(SERIAL_COM1)) {
         s_serial_port = SERIAL_COM1;
     } else if (serial_probe_port(SERIAL_COM2)) {
@@ -505,6 +701,8 @@ static void serial_early_init(void)
         s_serial_port = 0;
         return;  /* No UART -- serial output will be silent */
     }
+    s_serial_source = 2;  /* I/O probe */
+    s_serial_baud = 38400;
     serial_init_port(s_serial_port);
 }
 
@@ -2661,6 +2859,24 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Initialize early serial for diagnostics (before anything else) */
     serial_early_init();
     boot_log_init();
+
+    /* Log serial detection method (S10: SPCR auto-detection) */
+    if (s_serial_source == 1) {
+        serial_early_print("[BOOT] Serial: SPCR detected port=0x");
+        serial_early_print_hex16(s_serial_port);
+        serial_early_print(" baud=");
+        serial_early_print_uint(s_serial_baud);
+        serial_early_print("\n");
+    } else if (s_spcr_skipped) {
+        serial_early_print("[BOOT] SPCR: non-standard port at 0x");
+        serial_early_print_hex16((UINT16)(s_spcr_skip_addr >> 16));
+        serial_early_print_hex16((UINT16)s_spcr_skip_addr);
+        serial_early_print(", skipping\n");
+        serial_early_print("[BOOT] Serial: SPCR absent, falling back to I/O probe\n");
+    } else if (s_serial_port) {
+        serial_early_print("[BOOT] Serial: SPCR absent, falling back to I/O probe\n");
+    }
+
     post_code16(POST16_BL_ENTRY);
     serial_early_print("[BOOT] efi_main entered\n");
 
@@ -2671,8 +2887,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     g_boot_info_ptr = (struct boot_info *)BOOT_INFO_PHYS_ADDR;
     efi_memset(g_boot_info_ptr, 0, sizeof(struct boot_info));
 
-    /* Record which serial port the bootloader probed (S4) */
+    /* Record serial port detection results (S4/S10) */
     g_boot_info_ptr->serial_port = s_serial_port;
+    g_boot_info_ptr->serial_baud = s_serial_baud;
+    g_boot_info_ptr->serial_source = s_serial_source;
 
     /* Record bootloader entry time */
     g_boot_info_ptr->timing.bl_entry = boot_rdtsc();

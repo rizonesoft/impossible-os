@@ -39,7 +39,9 @@ static inline void serial_putchar_raw(char c)
 
 void serial_init(void)
 {
-    /* Read the serial port probed by the bootloader (S4).
+    uint16_t divisor;
+
+    /* Read the serial port probed by the bootloader (S4/S10).
      * 0 = no UART detected; serial output becomes a no-op. */
     if (g_boot_info.serial_port)
         s_serial_port = g_boot_info.serial_port;
@@ -48,10 +50,28 @@ void serial_init(void)
     if (!s_serial_port) return;
 
     outb(s_serial_port + 1, 0x00);    /* Disable interrupts */
-    outb(s_serial_port + 3, 0x80);    /* Enable DLAB */
-    outb(s_serial_port + 0, 0x03);    /* 38400 baud */
-    outb(s_serial_port + 1, 0x00);
-    outb(s_serial_port + 3, 0x03);    /* 8N1 */
+
+    /* Honor SPCR baud rate if available.
+     * 0 = firmware-configured (SPCR baud code 0), preserve existing divisor.
+     * Only accept known standard rates; anything else keeps existing divisor. */
+    {
+        uint32_t baud = g_boot_info.serial_baud;
+        if (baud == 9600 || baud == 19200 || baud == 38400 ||
+            baud == 57600 || baud == 115200) {
+            divisor = (uint16_t)(115200 / baud);
+        } else if (baud == 0) {
+            divisor = 0;  /* preserve firmware-configured divisor */
+        } else {
+            divisor = 3;  /* unknown rate -- fall back to 38400 */
+        }
+    }
+
+    if (divisor > 0) {
+        outb(s_serial_port + 3, 0x80);    /* Enable DLAB */
+        outb(s_serial_port + 0, (uint8_t)(divisor & 0xFF));
+        outb(s_serial_port + 1, (uint8_t)((divisor >> 8) & 0xFF));
+    }
+    outb(s_serial_port + 3, 0x03);    /* 8N1 (also clears DLAB) */
     outb(s_serial_port + 2, 0xC7);    /* FIFO */
     outb(s_serial_port + 4, 0x0B);    /* IRQs, RTS/DSR */
 }

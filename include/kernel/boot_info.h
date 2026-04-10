@@ -404,7 +404,9 @@ struct boot_info {
 
     /* Serial port (probed by bootloader; 0 = no UART detected) */
     uint16_t serial_port;           /* I/O base: 0x3F8 (COM1), 0x2F8 (COM2), or 0 */
-    uint16_t _serial_pad;
+    uint8_t  serial_source;         /* 0=none, 1=SPCR, 2=I/O-probe */
+    uint8_t  _serial_pad;
+    uint32_t serial_baud;           /* baud rate from SPCR (0 = use default 38400) */
 
     /* Kernel-populated fields (set after boot; never written by the bootloader) */
     uint8_t  secure_boot_enabled;   /* 1 if Secure Boot is active (uefi_secureboot_init) */
