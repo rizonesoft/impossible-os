@@ -142,7 +142,7 @@ Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializ
 - [x] If both absent: `s_serial_port = 0`, `serial_early_putchar` returns immediately (no-op)
 - [x] Selected port stored in `boot_info.serial_port` (0x3F8 / 0x2F8 / 0) -- `UINT16` field added to both bootloader and kernel `struct boot_info`
 - [x] Kernel `serial_init()` reads `g_boot_info.serial_port` to set `s_serial_port` (dynamic). `serial_putchar_raw`, `serial_trygetchar` all use the dynamic port. Default 0x3F8 for early klog before serial_init.
-- [ ] Commit: `"boot: probe serial port before init -- COM1/COM2 fallback"`
+- [x] Commit: `"boot: probe serial port before init -- COM1/COM2 fallback"` (d785ce92)
 
 **Test checkpoint:** On QEMU (always has COM1), serial output works as before. On VirtualBox with serial disabled, bootloader skips serial silently. Verify no I/O port side effects on bare metal.
 
