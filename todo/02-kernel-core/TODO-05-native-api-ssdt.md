@@ -72,7 +72,7 @@
 | 💎  |  24   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [ ]   |
 | 💎  |  25   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-04 §5    |  [ ]   |
 | ⭐  |  26   | SSDT integrity protection (hardware write-protect)             | §4                |  [ ]   |
-| 💎  |  27   | Extended directory enumeration classes                         | §6, §13           |  [ ]   |
+| 💎  |  27   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -1069,7 +1069,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] `NtQueryInformationFile` (SSDT 0x0015): FileBasicInformation (4), FileStandardInformation (5), FileNameInformation (9), FilePositionInformation (14), FileNetworkOpenInformation (34). Uses VFS stat + FILE_OBJECT offset. FileAllInformation (18) deferred (compound query).
 - [x] `NtSetInformationFile` (SSDT 0x0016): FileBasicInformation (set times/attrs), FileDispositionInformation (delete-on-close), FileRenameInformation (UTF-16 rename), FilePositionInformation (seek), FileEndOfFileInformation (truncate), FileAllocationInformation (pre-allocate).
 - [x] `NtDeleteFile` (SSDT 0x0014): delete by path via OBJECT_ATTRIBUTES -> vfs_unlink.
-- [/] `NtQueryDirectoryFile`: extended info classes (FileDirectoryInformation, FileBothDirectoryInformation, FileIdBothDirectoryInformation) deferred to §27 -- basic enumeration already wired in §6; these classes need per-entry metadata structs beyond current VFS dirent.
+- [x] `NtQueryDirectoryFile`: extended info classes (FileDirectoryInformation, FileBothDirectoryInformation, FileIdBothDirectoryInformation) implemented in §27 with per-entry vfs_stat metadata, 8-byte-aligned packing, ReturnSingleEntry/RestartScan, and FILE_OBJECT cursor state.
 - [x] `NtDeviceIoControlFile` (SSDT 0x0019): registered, returns STATUS_INVALID_DEVICE_REQUEST until IRP framework (driver model prerequisite). METHOD_* constants defined.
 - [x] `NtFsControlFile` (SSDT 0x001A): registered, returns STATUS_INVALID_DEVICE_REQUEST (requires FS-specific control codes).
 - [x] `NtFlushBuffersFile` (SSDT 0x0018): calls VFS flush op on the file's vfs_node.
@@ -1404,14 +1404,14 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 
 **Prerequisites:** §6 (NtQueryDirectoryFile basic), §13 (FILE_BASIC_INFORMATION / FILE_STANDARD_INFORMATION structs)
 
-- [ ] Define `FILE_DIRECTORY_INFORMATION` struct (FileInformationClass 1): NextEntryOffset, FileIndex, CreationTime, LastAccessTime, LastWriteTime, ChangeTime, EndOfFile, AllocationSize, FileAttributes, FileNameLength, FileName[1]
-- [ ] Define `FILE_BOTH_DIR_INFORMATION` struct (FileInformationClass 3): same as above + ShortNameLength + ShortName[12] (8.3 alias)
-- [ ] Define `FILE_ID_BOTH_DIR_INFORMATION` struct (FileInformationClass 37): same as FileBothDir + FileId (uint64_t)
-- [ ] Extend NtQueryDirectoryFile handler to dispatch on FileInformationClass: class 1 -> FILE_DIRECTORY_INFORMATION, class 3 -> FILE_BOTH_DIR_INFORMATION, class 37 -> FILE_ID_BOTH_DIR_INFORMATION
-- [ ] Per-entry metadata: for each dirent, call `vfs_stat()` on the entry (or use a new `vfs_readdir_stat()` that returns dirent + stat in one call to avoid N+1 lookups on large directories)
-- [ ] Pack entries sequentially in the output buffer with 8-byte aligned NextEntryOffset; last entry has NextEntryOffset = 0
-- [ ] Handle ReturnSingleEntry flag: if set, return only one entry per call (cursor via IoStatusBlock.Information or handle context)
-- [ ] Handle RestartScan flag: if set, reset enumeration to the first entry
+- [x] Define `FILE_DIRECTORY_INFORMATION` struct (FileInformationClass 1) in `nt_file.h`: NextEntryOffset, FileIndex, CreationTime, LastAccessTime, LastWriteTime, ChangeTime, EndOfFile, AllocationSize, FileAttributes, FileNameLength, FileName[1]. Fixed-size macro `FILE_DIR_INFO_FIXED_SIZE`.
+- [x] Define `FILE_BOTH_DIR_INFORMATION` struct (FileInformationClass 3) in `nt_file.h`: adds ShortNameLength + ShortName[12] (8.3 alias, uppercase truncated). Fixed-size macro `FILE_BOTH_DIR_INFO_FIXED_SIZE`.
+- [x] Define `FILE_ID_BOTH_DIR_INFORMATION` struct (FileInformationClass 37) in `nt_file.h`: adds FileId (uint64_t from vfs_dirent.inode). Fixed-size macro `FILE_ID_BOTH_DIR_INFO_FIXED_SIZE`.
+- [x] Extended NtQueryDirectoryFile handler dispatches on FileInformationClass: class 0 = legacy ASCII (S6 compat), class 1 = FILE_DIRECTORY_INFORMATION, class 3 = FILE_BOTH_DIR_INFORMATION, class 37 = FILE_ID_BOTH_DIR_INFORMATION. Invalid class returns STATUS_INVALID_INFO_CLASS.
+- [x] Per-entry metadata via `vfs_finddir(dir, name)` -> `child->ops->stat(child, &st)` for each entry. Falls back to `child->size` if no stat op.
+- [x] Entries packed sequentially in output buffer with 8-byte aligned NextEntryOffset. Last entry has NextEntryOffset = 0. Stops when buffer is full.
+- [x] ReturnSingleEntry flag (a6 bit 0): returns exactly 1 entry per call. Enumeration cursor stored in `FILE_OBJECT.dir_enum_index`.
+- [x] RestartScan flag (a6 bit 1): resets `FILE_OBJECT.dir_enum_index` to 0 before enumeration.
 - [ ] Commit: `"kernel: nt -- extended directory enumeration (FileDirectoryInfo, FileBothDir, FileIdBothDir)"`
 
 **Test checkpoint:** `NtQueryDirectoryFile(FileBothDirectoryInformation)` on `C:\` returns entries with valid timestamps and sizes. Entry names match VFS readdir output. 8.3 ShortName is populated (uppercase truncated). ReturnSingleEntry returns exactly 1 entry per call. RestartScan re-reads from the beginning.

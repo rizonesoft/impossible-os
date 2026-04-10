@@ -429,47 +429,259 @@ static NTSTATUS NtYieldExecution(uint64_t a1, uint64_t a2, uint64_t a3,
 /* NtWaitForSingleObject moved to nt_sync.c (§8) -- now handles all object types */
 
 /* ---- NtQueryDirectoryFile -----------------------------------------------
- * SSDT 0x0017 -- wraps SYS_READDIR.
- * a1 = HANDLE (directory; ignored, uses C:\ root for now),
- * a2 = IO_STATUS_BLOCK*, a3 = buffer, a4 = buffer size,
- * a5 = info class (ignored), a6 = index.
+ * SSDT 0x0017.
+ * a1 = HANDLE (directory), a2 = IO_STATUS_BLOCK*,
+ * a3 = buffer, a4 = buffer size,
+ * a5 = FileInformationClass, a6 = flags (bit 0 = ReturnSingleEntry, bit 1 = RestartScan).
+ *
+ * Supported info classes:
+ *   0 (legacy): filename-only ASCII (original S6 behavior)
+ *   1: FILE_DIRECTORY_INFORMATION
+ *   3: FILE_BOTH_DIR_INFORMATION
+ *  37: FILE_ID_BOTH_DIR_INFORMATION
  * ----------------------------------------------------------------------- */
+
+/* Convert VFS seconds-since-boot to FILETIME */
+static FILETIME dirq_vfs_to_filetime(uint32_t secs)
+{
+    FILETIME base = 133800288000000000ULL;  /* 2026-01-01 in FILETIME */
+    return base + (uint64_t)secs * FILETIME_TICKS_PER_SECOND;
+}
+
+/* Generate 8.3 short name from a long name (uppercase, truncated) */
+static uint32_t dirq_make_short_name(const char *name, uint16_t *out)
+{
+    uint32_t i, len = 0;
+    for (i = 0; i < 12 && name[i]; i++) {
+        char c = name[i];
+        if (c >= 'a' && c <= 'z')
+            c -= 32;
+        out[i] = (uint16_t)(uint8_t)c;
+        len++;
+    }
+    return len * 2;  /* byte count */
+}
+
 static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
                                      uint64_t a4, uint64_t a5, uint64_t a6)
 {
+    HANDLE fh = (HANDLE)(int32_t)a1;
     IO_STATUS_BLOCK *iosb = (IO_STATUS_BLOCK *)a2;
-    char *buf = (char *)a3;
+    uint8_t *buf = (uint8_t *)a3;
     uint64_t buf_size = a4;
-    uint32_t index = (uint32_t)a6;
-    struct vfs_node *root;
-    struct vfs_dirent *entry;
-    uint64_t i;
-
-    (void)a1; (void)a5;
+    uint32_t info_class = (uint32_t)a5;
+    uint32_t flags = (uint32_t)a6;
+    uint32_t return_single = flags & 1;
+    uint32_t restart_scan = (flags >> 1) & 1;
+    struct vfs_node *dir_node;
+    FILE_OBJECT *fo;
+    uint64_t offset = 0;
+    uint32_t entries_written = 0;
+    uint8_t *prev_entry = (uint8_t *)0;
 
     if (!buf || buf_size == 0)
         return STATUS_INVALID_PARAMETER;
 
-    root = vfs_get_drive_root('C');
-    if (!root)
-        return STATUS_OBJECT_PATH_NOT_FOUND;
-
-    entry = vfs_readdir(root, index);
-    if (!entry) {
-        if (iosb) {
-            iosb->Status = STATUS_NO_MORE_FILES;
-            iosb->Information = 0;
+    /* Resolve directory handle -> FILE_OBJECT -> vfs_node */
+    fo = (FILE_OBJECT *)0;
+    if (fh != 0 && fh != (HANDLE)-1) {
+        HANDLE_TABLE_ENTRY *entry = ObpLookupHandle(
+            &task_current()->handle_table, fh);
+        if (entry && entry->object) {
+            OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(entry->object);
+            if (hdr->type == ObpFileType)
+                fo = (FILE_OBJECT *)entry->object;
         }
+    }
+
+    if (fo && fo->vfs_node) {
+        dir_node = fo->vfs_node;
+    } else {
+        /* Fallback: C:\ root (legacy compat) */
+        dir_node = vfs_get_drive_root('C');
+        if (!dir_node)
+            return STATUS_OBJECT_PATH_NOT_FOUND;
+    }
+
+    /* Handle RestartScan */
+    if (restart_scan && fo)
+        fo->dir_enum_index = 0;
+
+    /* Get starting index */
+    {
+        uint32_t start_index = fo ? fo->dir_enum_index : 0;
+
+        /* Legacy info class 0: filename-only ASCII (original S6 behavior) */
+        if (info_class == 0) {
+            struct vfs_dirent *de = vfs_readdir(dir_node, start_index);
+            if (!de) {
+                if (iosb) { iosb->Status = STATUS_NO_MORE_FILES; iosb->Information = 0; }
+                return STATUS_NO_MORE_FILES;
+            }
+            {
+                uint64_t i;
+                for (i = 0; i < buf_size - 1 && de->name[i]; i++)
+                    buf[i] = (uint8_t)de->name[i];
+                buf[i] = '\0';
+                if (fo) fo->dir_enum_index = start_index + 1;
+                if (iosb) { iosb->Status = STATUS_SUCCESS; iosb->Information = i; }
+            }
+            return STATUS_SUCCESS;
+        }
+
+        /* Extended info classes: pack entries into the output buffer */
+        while (1) {
+            struct vfs_dirent *de = vfs_readdir(dir_node, start_index);
+            struct vfs_stat st;
+            struct vfs_node *child;
+            uint32_t name_bytes, entry_size, aligned_size;
+            uint32_t name_len, j;
+
+            if (!de)
+                break;
+
+            /* Get per-entry metadata via finddir + stat */
+            st.size = 0; st.type = de->type; st.ctime = 0; st.mtime = 0; st.atime = 0; st.blocks = 0;
+            child = vfs_finddir(dir_node, de->name);
+            if (child && child->ops && child->ops->stat)
+                child->ops->stat(child, &st);
+            else if (child)
+                st.size = child->size;
+
+            /* Compute filename length in bytes (UTF-16) */
+            for (name_len = 0; name_len < 255 && de->name[name_len]; name_len++)
+                ;
+            name_bytes = name_len * 2;
+
+            /* Compute entry size based on info class */
+            switch (info_class) {
+            case FileDirectoryInformation:
+                entry_size = FILE_DIR_INFO_FIXED_SIZE + name_bytes;
+                break;
+            case FileBothDirectoryInformation:
+                entry_size = FILE_BOTH_DIR_INFO_FIXED_SIZE + name_bytes;
+                break;
+            case FileIdBothDirectoryInformation:
+                entry_size = FILE_ID_BOTH_DIR_INFO_FIXED_SIZE + name_bytes;
+                break;
+            default:
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
+            /* 8-byte align */
+            aligned_size = (entry_size + 7) & ~(uint32_t)7;
+
+            /* Check buffer space (must fit the full aligned extent) */
+            if (offset + aligned_size > buf_size)
+                break;
+
+            /* Fill the entry */
+            {
+                uint8_t *dst = buf + offset;
+                FILETIME ct = dirq_vfs_to_filetime(st.ctime);
+                FILETIME at = dirq_vfs_to_filetime(st.atime);
+                FILETIME wt = dirq_vfs_to_filetime(st.mtime);
+                uint64_t eof = st.size;
+                uint64_t alloc = (eof + 4095) & ~(uint64_t)4095;
+                uint32_t attrs = (st.type == VFS_DIRECTORY)
+                    ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+
+                /* Zero the entry region */
+                {
+                    uint32_t z;
+                    uint32_t clear = aligned_size;
+                    if (offset + clear > buf_size) clear = (uint32_t)(buf_size - offset);
+                    for (z = 0; z < clear; z++)
+                        dst[z] = 0;
+                }
+
+                if (info_class == FileDirectoryInformation) {
+                    FILE_DIRECTORY_INFORMATION *di = (FILE_DIRECTORY_INFORMATION *)dst;
+                    di->NextEntryOffset = 0;  /* updated below if more entries */
+                    di->FileIndex = start_index;
+                    di->CreationTime = ct;
+                    di->LastAccessTime = at;
+                    di->LastWriteTime = wt;
+                    di->ChangeTime = wt;
+                    di->EndOfFile = eof;
+                    di->AllocationSize = alloc;
+                    di->FileAttributes = attrs;
+                    di->FileNameLength = name_bytes;
+                    for (j = 0; j < name_len; j++)
+                        di->FileName[j] = (uint16_t)(uint8_t)de->name[j];
+                } else if (info_class == FileBothDirectoryInformation) {
+                    FILE_BOTH_DIR_INFORMATION *bi = (FILE_BOTH_DIR_INFORMATION *)dst;
+                    bi->NextEntryOffset = 0;
+                    bi->FileIndex = start_index;
+                    bi->CreationTime = ct;
+                    bi->LastAccessTime = at;
+                    bi->LastWriteTime = wt;
+                    bi->ChangeTime = wt;
+                    bi->EndOfFile = eof;
+                    bi->AllocationSize = alloc;
+                    bi->FileAttributes = attrs;
+                    bi->FileNameLength = name_bytes;
+                    bi->EaSize = 0;
+                    bi->ShortNameLength = (uint8_t)dirq_make_short_name(de->name, bi->ShortName);
+                    for (j = 0; j < name_len; j++)
+                        bi->FileName[j] = (uint16_t)(uint8_t)de->name[j];
+                } else {
+                    FILE_ID_BOTH_DIR_INFORMATION *ii = (FILE_ID_BOTH_DIR_INFORMATION *)dst;
+                    ii->NextEntryOffset = 0;
+                    ii->FileIndex = start_index;
+                    ii->CreationTime = ct;
+                    ii->LastAccessTime = at;
+                    ii->LastWriteTime = wt;
+                    ii->ChangeTime = wt;
+                    ii->EndOfFile = eof;
+                    ii->AllocationSize = alloc;
+                    ii->FileAttributes = attrs;
+                    ii->FileNameLength = name_bytes;
+                    ii->EaSize = 0;
+                    ii->ShortNameLength = (uint8_t)dirq_make_short_name(de->name, ii->ShortName);
+                    ii->FileId = (uint64_t)de->inode;
+                    for (j = 0; j < name_len; j++)
+                        ii->FileName[j] = (uint16_t)(uint8_t)de->name[j];
+                }
+
+                /* Link previous entry's NextEntryOffset */
+                if (prev_entry) {
+                    uint32_t *prev_neo = (uint32_t *)prev_entry;
+                    *prev_neo = (uint32_t)(dst - prev_entry);
+                }
+
+                prev_entry = dst;
+                offset += aligned_size;
+                entries_written++;
+                start_index++;
+            }
+
+            if (return_single)
+                break;
+        }
+
+        /* Update cursor */
+        if (fo)
+            fo->dir_enum_index = start_index;
+    }
+
+    if (entries_written == 0) {
+        /* Distinguish: buffer too small vs. directory exhausted.
+         * Check if there's a next entry at the current cursor. */
+        uint32_t check_idx = fo ? fo->dir_enum_index : 0;
+        struct vfs_dirent *check = vfs_readdir(dir_node, check_idx);
+        if (check) {
+            /* Entry exists but didn't fit -> buffer too small */
+            if (iosb) { iosb->Status = STATUS_BUFFER_OVERFLOW; iosb->Information = 0; }
+            return STATUS_BUFFER_OVERFLOW;
+        }
+        if (iosb) { iosb->Status = STATUS_NO_MORE_FILES; iosb->Information = 0; }
         return STATUS_NO_MORE_FILES;
     }
 
-    for (i = 0; i < buf_size - 1 && entry->name[i]; i++)
-        buf[i] = entry->name[i];
-    buf[i] = '\0';
-
     if (iosb) {
         iosb->Status = STATUS_SUCCESS;
-        iosb->Information = i;
+        iosb->Information = offset;
     }
     return STATUS_SUCCESS;
 }

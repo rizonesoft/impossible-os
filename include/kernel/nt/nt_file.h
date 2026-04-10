@@ -60,6 +60,12 @@
 #define FileEndOfFileInformation         20
 #define FileNetworkOpenInformation       34
 
+/* ---- Directory enumeration info classes (NtQueryDirectoryFile) ---------- */
+
+#define FileDirectoryInformation          1
+#define FileBothDirectoryInformation      3
+#define FileIdBothDirectoryInformation   37
+
 /* ---- File information structures ---------------------------------------- */
 
 #include "kernel/nt/filetime.h"
@@ -121,6 +127,72 @@ typedef struct {
     uint32_t FileAttributes;
     uint32_t _pad;
 } FILE_NETWORK_OPEN_INFORMATION;
+
+/* ---- Directory enumeration structures ---------------------------------- */
+
+/* Variable-length: FileName extends past the struct.
+ * NextEntryOffset = 0 for the last entry in the buffer.
+ * All entries are 8-byte aligned via NextEntryOffset padding. */
+
+typedef struct {
+    uint32_t NextEntryOffset;
+    uint32_t FileIndex;
+    FILETIME CreationTime;
+    FILETIME LastAccessTime;
+    FILETIME LastWriteTime;
+    FILETIME ChangeTime;
+    uint64_t EndOfFile;
+    uint64_t AllocationSize;
+    uint32_t FileAttributes;
+    uint32_t FileNameLength;   /* bytes, not chars */
+    uint16_t FileName[1];      /* variable length UTF-16LE */
+} FILE_DIRECTORY_INFORMATION;
+
+typedef struct {
+    uint32_t NextEntryOffset;
+    uint32_t FileIndex;
+    FILETIME CreationTime;
+    FILETIME LastAccessTime;
+    FILETIME LastWriteTime;
+    FILETIME ChangeTime;
+    uint64_t EndOfFile;
+    uint64_t AllocationSize;
+    uint32_t FileAttributes;
+    uint32_t FileNameLength;   /* bytes */
+    uint32_t EaSize;           /* 0 -- no extended attributes */
+    uint8_t  ShortNameLength;  /* bytes */
+    uint8_t  _pad;
+    uint16_t ShortName[12];    /* 8.3 alias, UTF-16LE */
+    uint16_t FileName[1];      /* variable length */
+} FILE_BOTH_DIR_INFORMATION;
+
+typedef struct {
+    uint32_t NextEntryOffset;
+    uint32_t FileIndex;
+    FILETIME CreationTime;
+    FILETIME LastAccessTime;
+    FILETIME LastWriteTime;
+    FILETIME ChangeTime;
+    uint64_t EndOfFile;
+    uint64_t AllocationSize;
+    uint32_t FileAttributes;
+    uint32_t FileNameLength;   /* bytes */
+    uint32_t EaSize;
+    uint8_t  ShortNameLength;
+    uint8_t  _pad;
+    uint16_t ShortName[12];
+    uint16_t _pad2;
+    uint64_t FileId;           /* unique file identifier */
+    uint16_t FileName[1];      /* variable length */
+} FILE_ID_BOTH_DIR_INFORMATION;
+
+/* Fixed-size portion (before FileName[]) for each struct */
+#define FILE_DIR_INFO_FIXED_SIZE \
+    (sizeof(FILE_DIRECTORY_INFORMATION) - sizeof(uint16_t))
+#define FILE_BOTH_DIR_INFO_FIXED_SIZE \
+    (sizeof(FILE_BOTH_DIR_INFORMATION) - sizeof(uint16_t))
+#define FILE_ID_BOTH_DIR_INFO_FIXED_SIZE \
+    (sizeof(FILE_ID_BOTH_DIR_INFORMATION) - sizeof(uint16_t))
 
 /* ---- FS_INFORMATION_CLASS (NtQueryVolumeInformationFile) ---------------- */
 

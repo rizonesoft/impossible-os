@@ -21,6 +21,8 @@ typedef struct file_object {
     uint64_t         offset;     /* current file position */
     int32_t          pipe_id;    /* pipe index (-1 if not a pipe) */
     int32_t          pipe_end;   /* PIPE_READ (0) or PIPE_WRITE (1) */
+    uint32_t         dir_enum_index;  /* directory enumeration cursor (S27) */
+    uint32_t         _dir_pad;
 } FILE_OBJECT;
 
 /* --- API ----------------------------------------------------------------- */

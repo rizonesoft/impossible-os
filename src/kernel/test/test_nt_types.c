@@ -780,6 +780,55 @@ static void test_nt_procinfo_classes(void)
                    "ProcessSessionInformation returns SUCCESS");
 }
 
+/* ---- S27: Extended directory enumeration ---- */
+
+/* FILE_DIRECTORY_INFORMATION struct should have expected fixed size */
+static void test_dir_info_struct_sizes(void)
+{
+    /* Verify the fixed-size portion (before variable FileName) */
+    TEST_ASSERT(FILE_DIR_INFO_FIXED_SIZE >= 64,
+                "FILE_DIR_INFO_FIXED_SIZE includes all metadata fields");
+    TEST_ASSERT(FILE_BOTH_DIR_INFO_FIXED_SIZE > FILE_DIR_INFO_FIXED_SIZE,
+                "FILE_BOTH_DIR_INFO adds ShortName to DIR_INFO");
+    TEST_ASSERT(FILE_ID_BOTH_DIR_INFO_FIXED_SIZE > FILE_BOTH_DIR_INFO_FIXED_SIZE,
+                "FILE_ID_BOTH_DIR_INFO adds FileId to BOTH_DIR_INFO");
+}
+
+/* NtQueryDirectoryFile with class 1 should return entries with metadata */
+static void test_dir_enum_extended_dispatch(void)
+{
+    NTSTATUS s;
+    uint8_t buf[512];
+
+    /* Class 1 (FileDirectoryInformation) -- should reach handler */
+    s = ssdt_dispatch(SSDT_NtQueryDirectoryFile,
+                      0, 0, (uint64_t)buf, 512,
+                      FileDirectoryInformation, 0);
+    /* Should succeed or NO_MORE_FILES (depends on C:\ contents) */
+    TEST_ASSERT(s == STATUS_SUCCESS || s == STATUS_NO_MORE_FILES,
+                "FileDirectoryInformation dispatches without error");
+
+    /* Class 3 (FileBothDirectoryInformation) */
+    s = ssdt_dispatch(SSDT_NtQueryDirectoryFile,
+                      0, 0, (uint64_t)buf, 512,
+                      FileBothDirectoryInformation, 0);
+    TEST_ASSERT(s == STATUS_SUCCESS || s == STATUS_NO_MORE_FILES,
+                "FileBothDirectoryInformation dispatches");
+
+    /* Class 37 (FileIdBothDirectoryInformation) */
+    s = ssdt_dispatch(SSDT_NtQueryDirectoryFile,
+                      0, 0, (uint64_t)buf, 512,
+                      FileIdBothDirectoryInformation, 0);
+    TEST_ASSERT(s == STATUS_SUCCESS || s == STATUS_NO_MORE_FILES,
+                "FileIdBothDirectoryInformation dispatches");
+
+    /* Invalid class */
+    s = ssdt_dispatch(SSDT_NtQueryDirectoryFile,
+                      0, 0, (uint64_t)buf, 512, 99, 0);
+    TEST_ASSERT_EQ(s, STATUS_INVALID_INFO_CLASS,
+                   "invalid dir info class returns STATUS_INVALID_INFO_CLASS");
+}
+
 /* ---- S13: File metadata SSDT registration ---- */
 
 static void test_nt_file_metadata_ssdt_registered(void)
@@ -1039,6 +1088,12 @@ void test_register_nt_types(void)
     /* NT system information tests (§10) */
     test_suite_register_cat("NT: NtQuerySystemInfo classes", test_nt_sysinfo_classes, TEST_CAT_ABI);
     test_suite_register_cat("NT: NtQueryProcessInfo classes", test_nt_procinfo_classes, TEST_CAT_ABI);
+
+    /* Extended directory enumeration S27 */
+    test_suite_register_cat("NT: dir info struct sizes",
+                            test_dir_info_struct_sizes, TEST_CAT_ABI);
+    test_suite_register_cat("NT: dir enum extended dispatch",
+                            test_dir_enum_extended_dispatch, TEST_CAT_ABI);
 
     /* File metadata S13 */
     test_suite_register_cat("NT: file metadata SSDT registered",
