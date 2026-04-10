@@ -124,7 +124,7 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 - [x] On success: `"[BOOT] Kernel found at <path>"` and continue
 - [x] On all paths failing: `"[FAIL] Kernel not found. Searched: ..."` with all 3 paths. Only continues search on EFI_NOT_FOUND; device/FS errors stop immediately with specific error. Closes root_dir on failure.
 - [x] Use `LoadedImage->DeviceHandle` via `HandleProtocol` to get the boot device's filesystem; falls back to `LocateProtocol` if LoadedImage unavailable.
-- [ ] Commit: `"boot: fallback kernel search -- 3 paths before failure"`
+- [x] Commit: `"boot: fallback kernel search -- 3 paths before failure"` (f514594b)
 
 **Test checkpoint:** Rename `\boot\kernel.exe` to `\kernel.exe` on EFI partition. Boot must succeed with serial showing `"Trying \boot\kernel.exe... not found"` then `"Kernel found at \kernel.exe"`. Verify on QEMU TCG. Confirm default path works on all 4 platforms.
 
