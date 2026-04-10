@@ -711,11 +711,13 @@ static void test_kthread_create_smoke(void)
     TEST_ASSERT(tid >= 0, "kthread_create returns valid TID");
 }
 
-/* USER_THREAD_STACK_BASE is below main user stack */
+/* USER_THREAD_STACK_BASE does not overlap main user stack or TEB region */
 static void test_uthread_stack_layout(void)
 {
-    TEST_ASSERT(USER_THREAD_STACK_BASE < 0x8FC000ULL,
-                "USER_THREAD_STACK_BASE below main user stack");
+    /* Secondary thread stacks live ABOVE the main user stack (0x8FC000)
+     * but BELOW the TEB region (0x7FFCB000).  Verify non-overlap. */
+    TEST_ASSERT(USER_THREAD_STACK_LOWEST > 0x900000ULL,
+                "USER_THREAD_STACK_LOWEST above USER_ELF_END");
     TEST_ASSERT(USER_THREAD_STACK_LOWEST > 0x1000000ULL,
                 "USER_THREAD_STACK_LOWEST above kernel region");
     TEST_ASSERT(USER_THREAD_STACK_BASE < 0x7FFCB000ULL,
@@ -728,6 +730,53 @@ static void test_uthread_rejects_kernel_task(void)
     int tid = uthread_create(kthread_test_entry, (void *)0, 0);
     TEST_ASSERT(tid == -1,
                 "uthread_create rejects kernel task (no PEB)");
+}
+
+/* ---- §15 Per-thread TEB fields ---- */
+
+/* struct thread must have per-thread teb and kernel_gs_base fields */
+_Static_assert(sizeof(((struct thread *)0)->teb) == sizeof(void *),
+    "struct thread must have a teb field (pointer-sized)");
+_Static_assert(sizeof(((struct thread *)0)->kernel_gs_base) == sizeof(uint64_t),
+    "struct thread must have a kernel_gs_base field (uint64_t)");
+
+/* In kernel context (PID 0), threads[0].teb should be NULL */
+static void test_per_thread_teb_kernel_null(void)
+{
+    struct task *t0 = task_get_by_pid(0);
+    if (!t0) {
+        TEST_SKIP("task_get_by_pid(0) returned NULL");
+        return;
+    }
+    TEST_ASSERT(t0->threads[0].teb == (void *)0,
+                "PID 0 threads[0].teb is NULL (kernel task)");
+    TEST_ASSERT_EQ(t0->threads[0].kernel_gs_base, 0,
+                   "PID 0 threads[0].kernel_gs_base is 0");
+}
+
+/* TEB VA stride: TEB_USER_BASE - tid * 0x1000 must produce distinct VAs */
+static void test_per_thread_teb_va_stride(void)
+{
+    /* TEB_USER_BASE is defined in task.c as 0x7FFDB000. Verify the formula
+     * produces non-overlapping, non-zero addresses for tids 0..THREAD_MAX-1. */
+    uint64_t base = 0x7FFDB000ULL;
+    uint32_t tid;
+    for (tid = 0; tid < THREAD_MAX; tid++) {
+        uint64_t va = base - (uint64_t)tid * 0x1000;
+        TEST_ASSERT(va > 0x1000000ULL,
+                    "TEB VA for tid is above kernel region");
+        if (tid > 0) {
+            uint64_t prev = base - (uint64_t)(tid - 1) * 0x1000;
+            TEST_ASSERT(va != prev,
+                        "TEB VAs for adjacent tids are distinct");
+        }
+    }
+    /* Lowest TEB (tid=THREAD_MAX-1) must not overlap user thread stack base */
+    {
+        uint64_t lowest_teb = base - (uint64_t)(THREAD_MAX - 1) * 0x1000;
+        TEST_ASSERT(lowest_teb > USER_THREAD_STACK_BASE,
+                    "Lowest TEB VA above USER_THREAD_STACK_BASE");
+    }
 }
 
 /* ---- Registration ---- */
@@ -778,6 +827,11 @@ void test_register_peb_teb(void)
                             test_uthread_stack_layout, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: uthread rejects kernel",
                             test_uthread_rejects_kernel_task, TEST_CAT_ABI);
+    /* S15: Per-thread TEB */
+    test_suite_register_cat("PEB/TEB: per-thread teb kernel NULL",
+                            test_per_thread_teb_kernel_null, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: per-thread TEB VA stride",
+                            test_per_thread_teb_va_stride, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

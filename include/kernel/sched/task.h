@@ -115,6 +115,9 @@ struct thread {
     uintptr_t   user_stack_va;  /* user-space VA of this thread's stack; 0 = kernel thread */
     uint32_t    user_stack_pages; /* number of PMM pages mapped for user stack; 0 = none */
     uint32_t    _ustack_pad;    /* alignment padding */
+    /* --- Per-thread TEB (for ring-3 threads; Win32 requires one TEB per thread) --- */
+    void       *teb;            /* TEB * in user address space; NULL for kernel threads */
+    uint64_t    kernel_gs_base; /* MSR 0xC0000102 value for this thread's TEB; 0 for kernel threads */
 };
 
 /* Task Control Block */

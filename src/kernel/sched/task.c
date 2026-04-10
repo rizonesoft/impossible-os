@@ -304,6 +304,8 @@ boot_result_t task_init(void)
     tasks[0].threads[0].join_tid = -1;
     tasks[0].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[0].threads[0].base_priority = THREAD_PRIO_NORMAL;
+    tasks[0].threads[0].teb = (void *)0;
+    tasks[0].threads[0].kernel_gs_base = 0;
     tasks[0].num_threads = 1;
 
     /* Initialize signal state for PID 0 */
@@ -424,6 +426,8 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].join_tid = -1;
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
+    tasks[pid].threads[0].teb = (void *)0;
+    tasks[pid].threads[0].kernel_gs_base = 0;
     tasks[pid].num_threads = 1;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
@@ -545,6 +549,8 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].join_tid = -1;
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
+    tasks[pid].threads[0].teb = (void *)0;
+    tasks[pid].threads[0].kernel_gs_base = 0;
     tasks[pid].num_threads = 1;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
@@ -644,12 +650,17 @@ uint64_t schedule_now(struct interrupt_frame *frame)
             __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
     }
 
-    /* KERNEL_GS_BASE switch: save prev task's TEB, load next task's TEB.
+    /* KERNEL_GS_BASE switch: save prev thread's TEB, load next thread's TEB.
      * swapgs in the ISR stub handles ring transition; this handles
-     * switching between different user-mode tasks with different TEBs. */
-    if (prev_task != next_task) {
-        tasks[prev_task].kernel_gs_base = msr_read(MSR_IA32_KERNEL_GS_BASE);
-        msr_write(MSR_IA32_KERNEL_GS_BASE, tasks[next_task].kernel_gs_base);
+     * switching between threads with different TEBs (same or different task). */
+    if (prev_task != next_task || prev_thread != next_thread) {
+        uint64_t new_gs = tasks[next_task].threads[next_thread].kernel_gs_base;
+        tasks[prev_task].threads[prev_thread].kernel_gs_base =
+            msr_read(MSR_IA32_KERNEL_GS_BASE);
+        /* NULL guard: kernel threads have kernel_gs_base == 0; writing 0
+         * would clobber the MSR for no benefit (no swapgs on ring-0 return). */
+        if (new_gs)
+            msr_write(MSR_IA32_KERNEL_GS_BASE, new_gs);
     }
 
     /* Return the correct RSP: thread stack if secondary thread, task stack otherwise */
@@ -787,10 +798,13 @@ uint64_t schedule(struct interrupt_frame *frame)
             __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
     }
 
-    /* KERNEL_GS_BASE switch: save prev task's TEB, load next task's TEB */
-    if (prev_task != next_task) {
-        tasks[prev_task].kernel_gs_base = msr_read(MSR_IA32_KERNEL_GS_BASE);
-        msr_write(MSR_IA32_KERNEL_GS_BASE, tasks[next_task].kernel_gs_base);
+    /* KERNEL_GS_BASE switch: save prev thread's TEB, load next thread's TEB */
+    if (prev_task != next_task || prev_thread != next_thread) {
+        uint64_t new_gs = tasks[next_task].threads[next_thread].kernel_gs_base;
+        tasks[prev_task].threads[prev_thread].kernel_gs_base =
+            msr_read(MSR_IA32_KERNEL_GS_BASE);
+        if (new_gs)
+            msr_write(MSR_IA32_KERNEL_GS_BASE, new_gs);
     }
 
     /* Return the correct RSP */
@@ -912,6 +926,10 @@ int task_fork(struct interrupt_frame *frame)
     /* Copy parent's KERNEL_GS_BASE (TEB address) -- §6 will allocate
      * a new TEB for the child and update this field. */
     tasks[child_pid].kernel_gs_base = tasks[parent_pid_val].kernel_gs_base;
+    /* Mirror into threads[0] for per-thread GS swap */
+    tasks[child_pid].threads[0].teb = tasks[parent_pid_val].threads[0].teb;
+    tasks[child_pid].threads[0].kernel_gs_base =
+        tasks[parent_pid_val].threads[0].kernel_gs_base;
     num_tasks++;
 
     /* Register forked process and main thread with Object Manager */
@@ -1524,9 +1542,12 @@ int task_exec(const uint8_t *data, uint64_t size)
         TEB *teb = teb_alloc_for_task(pid, 0, ustack, USER_STACK_SIZE,
                                        tasks[pid].peb);
         tasks[pid].teb = (void *)teb;
-        /* Wire GS: swapgs in ISR exchanges GS_BASE ↔ KERNEL_GS_BASE.
+        /* Wire GS: swapgs in ISR exchanges GS_BASE <-> KERNEL_GS_BASE.
          * After swapgs on ring-3 return, user-mode GS points to TEB. */
         tasks[pid].kernel_gs_base = teb ? (uint64_t)(uintptr_t)teb : 0;
+        /* Mirror into threads[0] so per-thread GS swap reads from thread */
+        tasks[pid].threads[0].teb = (void *)teb;
+        tasks[pid].threads[0].kernel_gs_base = tasks[pid].kernel_gs_base;
     }
 
     if (tasks[pid].peb) {
@@ -1675,7 +1696,7 @@ void task_cleanup(uint32_t pid)
     }
     tasks[pid].threads[0].kernel_rsp = 0;
 
-    /* Free per-thread kernel + user stacks for secondary threads */
+    /* Free per-thread kernel + user stacks + TEBs for secondary threads */
     {
         uint32_t ti;
         for (ti = 1; ti < tasks[pid].num_threads; ti++) {
@@ -1692,6 +1713,14 @@ void task_cleanup(uint32_t pid)
                         (uintptr_t)p * 4096);
                 tasks[pid].threads[ti].user_stack_va = 0;
                 tasks[pid].threads[ti].user_stack_pages = 0;
+            }
+            /* Reclaim per-thread TEB page (deferred from thread_join for
+             * same TLB shootdown reason as user stacks). */
+            if (tasks[pid].threads[ti].teb && tasks[pid].cr3) {
+                vmm_unmap_user_page(tasks[pid].cr3,
+                    (uintptr_t)tasks[pid].threads[ti].teb);
+                tasks[pid].threads[ti].teb = (void *)0;
+                tasks[pid].threads[ti].kernel_gs_base = 0;
             }
         }
     }
@@ -2050,6 +2079,8 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].kernel_stack_pages = 0;
     t->threads[tid].user_stack_va = 0;
     t->threads[tid].user_stack_pages = 0;
+    t->threads[tid].teb = (void *)0;          /* kernel thread -- no TEB */
+    t->threads[tid].kernel_gs_base = 0;
     t->num_threads++;
 
     /* Register thread with Object Manager */
@@ -2172,6 +2203,30 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
         }
     }
 
+    /* Allocate per-thread TEB at a distinct user VA */
+    {
+        TEB *thread_teb = teb_alloc_for_task(task_idx, tid,
+                                              ustack_va, user_stack_size,
+                                              t->peb);
+        if (!thread_teb) {
+            klog(LOG_ERROR, "sched",
+                 "uthread_create: TEB alloc failed for PID %u TID %u",
+                 (uint64_t)t->pid, (uint64_t)tid);
+            /* Roll back user stack pages */
+            {
+                uint32_t j;
+                for (j = 0; j < ustack_pages; j++)
+                    vmm_unmap_user_page(t->cr3,
+                        ustack_va + (uintptr_t)j * 4096);
+            }
+            pmm_free_pages(kstack_phys, kstack_pages);
+            return -1;
+        }
+        t->threads[tid].teb = (void *)thread_teb;
+        t->threads[tid].kernel_gs_base =
+            (uint64_t)(uintptr_t)thread_teb;
+    }
+
     /* Build ring-3 iret frame on the KERNEL stack.
      * Same 22-qword layout as task_exec() and task_create_user().
      * CS = GDT_USER_CODE | 3, SS = GDT_USER_DATA | 3, RFLAGS = 0x202. */
@@ -2237,11 +2292,12 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     ob_thread_create(&t->threads[tid], t->pid);
 
     klog(LOG_INFO, "sched",
-         "uthread %u created in PID %u: kstack=0x%lx ustack=0x%lx-0x%lx",
+         "uthread %u created in PID %u: kstack=0x%lx ustack=0x%lx-0x%lx teb=%p",
          (uint64_t)tid, (uint64_t)t->pid,
          (uint64_t)(uintptr_t)kstack,
          (uint64_t)ustack_va,
-         (uint64_t)(ustack_va + user_stack_size));
+         (uint64_t)(ustack_va + user_stack_size),
+         (uint64_t)(uintptr_t)t->threads[tid].teb);
 
     return (int)tid;
 }

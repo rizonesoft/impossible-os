@@ -155,10 +155,19 @@ static NTSTATUS NtCreateThread_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (tid < 0)
         return STATUS_NO_MEMORY;
 
-    /* Handle CreateSuspended */
-    if (create_suspended) {
+    /* Verify user thread got a TEB (uthread_create allocates one; if it
+     * failed, uthread_create already returned -1, but guard defensively). */
+    {
         struct task *cur = task_current();
-        if ((uint32_t)tid < cur->num_threads) {
+        if (cur->peb && (uint32_t)tid < cur->num_threads &&
+            !cur->threads[tid].teb) {
+            klog(LOG_ERROR, "nt",
+                 "NtCreateThread: TID %u has no TEB", (uint64_t)tid);
+            return STATUS_NO_MEMORY;
+        }
+
+        /* Handle CreateSuspended */
+        if (create_suspended && (uint32_t)tid < cur->num_threads) {
             cur->threads[tid].suspend_count = 1;
             cur->threads[tid].state = TASK_BLOCKED;
         }
@@ -346,7 +355,8 @@ static NTSTATUS NtQueryInformationThread_handler(uint64_t a1, uint64_t a2,
         if (length < sizeof(THREAD_BASIC_INFORMATION))
             return STATUS_BUFFER_TOO_SMALL;
         info->ExitStatus = thr->exit_status;
-        info->TebBaseAddress = owner ? owner->teb : (void *)0;
+        info->TebBaseAddress = thr->teb ? thr->teb :
+                                (owner ? owner->teb : (void *)0);
         info->UniqueProcessId = owner ? owner->pid : 0;
         info->_pad0 = 0;
         info->UniqueThreadId = thr->id;
