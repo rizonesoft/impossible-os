@@ -458,13 +458,17 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
 {
     extern NTSTATUS ssdt_dispatch(uint32_t, uint64_t, uint64_t,
                                   uint64_t, uint64_t, uint64_t, uint64_t);
-    NTSTATUS result = ssdt_dispatch(
+    extern void ssdt_set_previous_mode(uint32_t);
+    NTSTATUS result;
+    ssdt_set_previous_mode(1);  /* UserMode -- INT 0x2E always from ring 3 */
+    result = ssdt_dispatch(
         (uint32_t)frame->rax,   /* service number */
         frame->r10,             /* arg1 (Windows: R10 = original RCX) */
         frame->rdx,             /* arg2 */
         frame->r8,              /* arg3 */
         frame->r9,              /* arg4 */
         0, 0);                  /* arg5, arg6 (from user stack, future) */
+    ssdt_set_previous_mode(0);  /* restore KernelMode */
     frame->rax = (uint64_t)result;
     return (uint64_t)frame;
 }

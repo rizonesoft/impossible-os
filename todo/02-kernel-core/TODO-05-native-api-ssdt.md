@@ -57,7 +57,7 @@
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [/]   |
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [/]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [ ]   |
-| ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [ ]   |
+| ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [x]   |
 | 💎  |  13   | File metadata and device control                               | §6                |  [ ]   |
 | 💎  |  14   | Registry syscalls                                              | §5, TODO-13 §4    |  [ ]   |
 | 💎  |  15   | Token and access control syscalls                              | §5, TODO-11 §4    |  [ ]   |
@@ -908,6 +908,7 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-03).
 Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-03 §5).
 
 - [x] `NtCreateProcess(0x0030)`: wraps task_create + ob_handle_table_inherit; returns HANDLE
+- [ ] When `TODO-14-environment-variables.md §1` lands: deep-copy parent `task->environ` and `task->argv` into the child via `env_copy()` / argv helpers (→ XREF `TODO-14-environment-variables.md §1`)
 - [x] `NtCreateProcessEx(0x0031)`: aliases NtCreateProcess (extended flags deferred to TODO-09)
 - [ ] `NtCreateUserProcess(0x0045)`: stub returning STATUS_NOT_IMPLEMENTED (needs PE loader TODO-09)
 - [x] `NtCreateThread(0x0036)`: wraps thread_create; supports CreateSuspended via suspend_count
@@ -1052,11 +1053,11 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 
 `ZwXxx` names are identical to `NtXxx` in user mode. In kernel mode (`CPL=0`), `ZwXxx` calls bypass the user-mode probe and use kernel-mode access rights directly. This is the convention all of Windows' own drivers and executive components use.
 
-- [ ] Add a `ZwXxx` header `include/kernel/nt/zw.h` that declares each `ZwXxx` as an alias for the same SSDT entry point
-- [ ] In the SSDT dispatcher: if caller is CPL=0, skip user-buffer probe and pointer validation; if CPL=3, validate all user-space buffer pointers before use (probe for read/write)
-- [ ] Add `ProbeForRead(Address, Length, Alignment)` and `ProbeForWrite(Address, Length, Alignment)` helper functions -- verify address range is user-mode accessible
-- [ ] Add a `ASSERT_KERNEL_CALLER()` macro that fires `STATUS_PRIVILEGE_NOT_HELD` if a kernel-only API is called from user mode
-- [ ] Document the convention: kernel components call `Zw` variants; user-mode calls `Nt` variants; both resolve to the same implementation, differentiated only by CPL check
+- [x] Add a `ZwXxx` header `include/kernel/nt/zw.h` that declares each `ZwXxx` as a static inline calling `ssdt_dispatch()` directly (15 aliases: ZwClose, ZwCreateFile, ZwOpenFile, ZwReadFile, ZwWriteFile, ZwQueryInformationFile, ZwQueryDirectoryFile, ZwCreateEvent, ZwCreateMutant, ZwCreateSemaphore, ZwQuerySystemInformation, ZwYieldExecution, ZwDuplicateObject, ZwQueryObject, ZwWaitForSingleObject)
+- [x] Previous-mode tracking via `ssdt_set_previous_mode()`/`ssdt_previous_mode()`: syscall entry paths (SYSCALL + INT 0x2E) set UserMode before dispatch, restore KernelMode after. ZwXxx callers leave mode at KernelMode. Handlers use `ProbeForReadIfUser()`/`ProbeForWriteIfUser()` convenience wrappers.
+- [x] Add `ProbeForRead(Address, Length, Alignment)` and `ProbeForWrite(Address, Length, Alignment)` in `ssdt.c`: validate NULL, overflow, range below `MM_USER_PROBE_ADDRESS` (0x7FFF0000), alignment (power of 2). Returns `STATUS_ACCESS_VIOLATION` or `STATUS_DATATYPE_MISALIGNMENT`.
+- [x] Add `ASSERT_KERNEL_CALLER()` macro in `zw.h`: returns `STATUS_PRIVILEGE_NOT_HELD` if previous mode is UserMode.
+- [x] Convention documented in `zw.h` header comment: kernel calls Zw (no probe), user calls Nt via SYSCALL (probed). Both resolve to the same SSDT handler.
 - [ ] Commit: `"kernel: nt -- ZwXxx kernel-mode alias layer with CPL probe bypass"`
 
 **Test checkpoint:** `ZwClose` from CPL=0 succeeds without user-buffer probe. CPL=3 call with kernel-space pointer returns `STATUS_ACCESS_VIOLATION`. `ASSERT_KERNEL_CALLER()` fires `STATUS_PRIVILEGE_NOT_HELD` from ring 3.
@@ -1449,7 +1450,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §20 + TODO-18            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | 🔄 §5 NtShutdownSystem wired |
 | 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ⬜ §22                      |
-| ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ⬜ §12 -- explicit, public   |
+| ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ✅ §12 zw.h + ProbeFor*      |
 | ⭐ | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API    | ⬜ §4+§12 -- numbered+public |
 | ⭐ | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex    | ⬜ §23 -- first-class API    |
 | 💎 | Per-process syscall filter | ✅ SystemCallDisablePolicy  | ✅ seccomp-bpf + Landlock  | ⬜ §24 -- bitmap + BPF       |

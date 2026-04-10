@@ -12,6 +12,7 @@
 #include "kernel/klog.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/ssdt.h"
+#include "kernel/nt/zw.h"
 
 /* Assembly entry point defined in syscall_entry.asm */
 extern void syscall_entry(void);
@@ -104,11 +105,16 @@ void syscall_init_fast(void)
          (uint64_t)(uintptr_t)syscall_entry, star);
 }
 
-/* C dispatcher called from syscall_entry.asm */
+/* C dispatcher called from syscall_entry.asm.
+ * Always called from ring 3 (SYSCALL instruction), so previous mode = UserMode. */
 NTSTATUS syscall_dispatch_fast(uint64_t number,
                                uint64_t a1, uint64_t a2,
                                uint64_t a3, uint64_t a4,
                                uint64_t a5)
 {
-    return ssdt_dispatch((uint32_t)number, a1, a2, a3, a4, a5, 0);
+    NTSTATUS result;
+    ssdt_set_previous_mode(SSDT_USER_MODE);
+    result = ssdt_dispatch((uint32_t)number, a1, a2, a3, a4, a5, 0);
+    ssdt_set_previous_mode(SSDT_KERNEL_MODE);
+    return result;
 }

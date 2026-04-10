@@ -13,7 +13,66 @@
 
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
+#include "kernel/nt/zw.h"
 #include "kernel/klog.h"
+
+/* ---- Previous-mode tracking ---------------------------------------------- */
+
+/* Previous mode: 0 = KernelMode, 1 = UserMode.
+ * Set by the syscall entry path before calling ssdt_dispatch.
+ * ZwXxx wrappers save/restore this around their dispatch call.
+ *
+ * SMP limitation: this is a single global. Safe while APs are parked
+ * in hlt. When SMP scheduling is enabled, move to per-CPU or per-thread
+ * state (-> XREF: 03-memory-concurrency/TODO-06-smp-phase2.md). */
+static uint32_t s_previous_mode;
+
+void ssdt_set_previous_mode(uint32_t mode)
+{
+    s_previous_mode = mode;
+}
+
+uint32_t ssdt_previous_mode(void)
+{
+    return s_previous_mode;
+}
+
+/* ---- User-buffer probing ------------------------------------------------- */
+
+NTSTATUS ProbeForRead(const void *Address, uint64_t Length, uint32_t Alignment)
+{
+    uintptr_t addr = (uintptr_t)Address;
+    uintptr_t end;
+
+    if (!Address)
+        return STATUS_ACCESS_VIOLATION;
+
+    if (Length == 0)
+        return STATUS_SUCCESS;
+
+    /* Alignment check (Alignment must be power of 2) */
+    if (Alignment > 1 && (addr & (Alignment - 1)))
+        return STATUS_DATATYPE_MISALIGNMENT;
+
+    /* Overflow check */
+    end = addr + Length;
+    if (end < addr)
+        return STATUS_ACCESS_VIOLATION;
+
+    /* Range check: entire buffer must be below MM_USER_PROBE_ADDRESS */
+    if (end > MM_USER_PROBE_ADDRESS)
+        return STATUS_ACCESS_VIOLATION;
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS ProbeForWrite(void *Address, uint64_t Length, uint32_t Alignment)
+{
+    /* Same validation as ProbeForRead -- the address range check is
+     * identical. On real Windows the write probe also touches each page
+     * to trigger CoW; we don't have CoW yet so the range check suffices. */
+    return ProbeForRead(Address, Length, Alignment);
+}
 
 /* ---- Static tables ------------------------------------------------------- */
 

@@ -47,6 +47,7 @@ typedef int32_t NTSTATUS;
 #define STATUS_NOT_IMPLEMENTED              ((NTSTATUS)0xC0000002)  /* syscall not yet implemented */
 #define STATUS_INVALID_INFO_CLASS           ((NTSTATUS)0xC0000003)  /* unknown information class */
 #define STATUS_ACCESS_VIOLATION             ((NTSTATUS)0xC0000005)  /* user-buffer probe failed */
+#define STATUS_DATATYPE_MISALIGNMENT       ((NTSTATUS)0x80000002)  /* buffer not aligned */
 #define STATUS_INVALID_HANDLE               ((NTSTATUS)0xC0000008)  /* handle not in table or wrong type */
 #define STATUS_INVALID_PARAMETER            ((NTSTATUS)0xC000000D)  /* bad argument value */
 #define STATUS_NO_MEMORY                    ((NTSTATUS)0xC0000017)  /* allocation failed */

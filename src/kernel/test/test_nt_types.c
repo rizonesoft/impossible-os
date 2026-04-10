@@ -29,6 +29,7 @@
 #include "kernel/nt/nt_process.h"
 #include "kernel/nt/nt_sync.h"
 #include "kernel/nt/nt_memory.h"
+#include "kernel/nt/zw.h"
 
 /* ---- NTSTATUS severity macros ---- */
 
@@ -779,6 +780,102 @@ static void test_nt_procinfo_classes(void)
                    "ProcessSessionInformation returns SUCCESS");
 }
 
+/* ---- S12: ZwXxx alias layer ---- */
+
+/* ZwClose dispatches to NtClose handler in kernel mode (previous mode = 0) */
+static void test_zw_close_kernel_dispatch(void)
+{
+    /* Previous mode should be KernelMode when called from kernel test */
+    TEST_ASSERT_EQ(ssdt_previous_mode(), SSDT_KERNEL_MODE,
+                   "previous mode is KernelMode in test context");
+    /* ZwClose with an invalid handle should return STATUS_INVALID_HANDLE,
+     * proving it reached the NtClose handler (not STATUS_NOT_IMPLEMENTED). */
+    NTSTATUS s = ZwClose(0xDEAD);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "ZwClose dispatches to registered handler");
+}
+
+/* ProbeForRead: valid user-range pointer should succeed */
+static void test_probe_for_read_user_range(void)
+{
+    NTSTATUS s = ProbeForRead((const void *)0x800000, 0x100, 1);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ProbeForRead accepts user-range pointer");
+    /* Zero length always succeeds */
+    s = ProbeForRead((const void *)0x800000, 0, 1);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ProbeForRead zero length succeeds");
+}
+
+/* ProbeForRead: kernel-space pointer should fail */
+static void test_probe_for_read_kernel_ptr(void)
+{
+    /* Address above MM_USER_PROBE_ADDRESS */
+    NTSTATUS s = ProbeForRead((const void *)0x80000000ULL, 0x10, 1);
+    TEST_ASSERT_EQ(s, STATUS_ACCESS_VIOLATION,
+                   "ProbeForRead rejects kernel pointer");
+    /* NULL pointer */
+    s = ProbeForRead((const void *)0, 0x10, 1);
+    TEST_ASSERT_EQ(s, STATUS_ACCESS_VIOLATION,
+                   "ProbeForRead rejects NULL");
+    /* Overflow: address near max + large length */
+    s = ProbeForRead((const void *)0x7FFE0000ULL, 0x100000, 1);
+    TEST_ASSERT_EQ(s, STATUS_ACCESS_VIOLATION,
+                   "ProbeForRead rejects overflow");
+}
+
+/* ProbeForRead: alignment check */
+static void test_probe_for_read_alignment(void)
+{
+    /* Misaligned address with alignment=4 */
+    NTSTATUS s = ProbeForRead((const void *)0x800001, 4, 4);
+    TEST_ASSERT_EQ(s, STATUS_DATATYPE_MISALIGNMENT,
+                   "ProbeForRead rejects misaligned pointer");
+    /* Aligned address with alignment=4 */
+    s = ProbeForRead((const void *)0x800004, 4, 4);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ProbeForRead accepts aligned pointer");
+}
+
+/* ASSERT_KERNEL_CALLER: in kernel mode (test context) should not fire */
+static void test_assert_kernel_caller(void)
+{
+    /* We can't directly test the macro returning a status since it
+     * uses 'return'. Test the underlying condition instead. */
+    TEST_ASSERT_EQ(ssdt_previous_mode(), SSDT_KERNEL_MODE,
+                   "ASSERT_KERNEL_CALLER would pass (kernel mode)");
+    /* Set to user mode, check, restore */
+    ssdt_set_previous_mode(SSDT_USER_MODE);
+    TEST_ASSERT_EQ(ssdt_previous_mode(), SSDT_USER_MODE,
+                   "previous mode set to UserMode");
+    ssdt_set_previous_mode(SSDT_KERNEL_MODE);
+    TEST_ASSERT_EQ(ssdt_previous_mode(), SSDT_KERNEL_MODE,
+                   "previous mode restored to KernelMode");
+}
+
+/* Default previous mode should be KernelMode (0) */
+static void test_previous_mode_default(void)
+{
+    TEST_ASSERT_EQ(ssdt_previous_mode(), SSDT_KERNEL_MODE,
+                   "default previous mode is KernelMode");
+}
+
+/* ZwClose called from within a UserMode context should still see KernelMode */
+static void test_zw_nested_in_usermode(void)
+{
+    /* Simulate being inside a user syscall dispatch */
+    ssdt_set_previous_mode(SSDT_USER_MODE);
+    /* ZwClose uses zw_dispatch which saves/restores previous mode */
+    NTSTATUS s = ZwClose(0xDEAD);
+    /* After ZwClose returns, previous mode should be restored to UserMode */
+    TEST_ASSERT_EQ(ssdt_previous_mode(), SSDT_USER_MODE,
+                   "Zw restores previous mode after nested dispatch");
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "ZwClose reached handler even in nested UserMode context");
+    /* Restore */
+    ssdt_set_previous_mode(SSDT_KERNEL_MODE);
+}
+
 /* ---- Registration ---- */
 
 void test_register_nt_types(void)
@@ -833,6 +930,22 @@ void test_register_nt_types(void)
     /* NT system information tests (§10) */
     test_suite_register_cat("NT: NtQuerySystemInfo classes", test_nt_sysinfo_classes, TEST_CAT_ABI);
     test_suite_register_cat("NT: NtQueryProcessInfo classes", test_nt_procinfo_classes, TEST_CAT_ABI);
+
+    /* ZwXxx alias layer tests (§12) */
+    test_suite_register_cat("NT: ZwClose kernel dispatch",
+                            test_zw_close_kernel_dispatch, TEST_CAT_ABI);
+    test_suite_register_cat("NT: ProbeForRead user range",
+                            test_probe_for_read_user_range, TEST_CAT_ABI);
+    test_suite_register_cat("NT: ProbeForRead kernel ptr rejected",
+                            test_probe_for_read_kernel_ptr, TEST_CAT_ABI);
+    test_suite_register_cat("NT: ProbeForRead alignment",
+                            test_probe_for_read_alignment, TEST_CAT_ABI);
+    test_suite_register_cat("NT: ASSERT_KERNEL_CALLER macro",
+                            test_assert_kernel_caller, TEST_CAT_ABI);
+    test_suite_register_cat("NT: previous mode default kernel",
+                            test_previous_mode_default, TEST_CAT_ABI);
+    test_suite_register_cat("NT: Zw nested in UserMode restores",
+                            test_zw_nested_in_usermode, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
