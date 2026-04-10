@@ -90,6 +90,8 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
 
 **Test checkpoint:** `uefi_var_get(L"SecureBoot", ...)` returns success or not-found without crash; test GUID roundtrip via `uefi_var_set_u32` / `uefi_var_get_u32` survives reboot when NVRAM allows. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-04-11 -- Codex review found u32 size validation bug (fixed), SSDT pointer probing + privilege gaps accepted out-of-scope (tracked in TODO-17). 2 unit tests wired, build passes.
+
 ---
 
 ## 3. GOP Resolution Auto-Detection

@@ -52,8 +52,14 @@ NTSTATUS uefi_var_set(const uint16_t *name, const efi_guid_t *guid,
 NTSTATUS uefi_var_get_u32(const uint16_t *name, const efi_guid_t *guid,
                           uint32_t *out)
 {
-    size_t sz = sizeof(uint32_t);
-    return uefi_var_get(name, guid, out, &sz);
+    uint32_t tmp = 0;
+    size_t sz = sizeof(tmp);
+    NTSTATUS s = uefi_var_get(name, guid, &tmp, &sz);
+    if (s == STATUS_SUCCESS && sz != sizeof(uint32_t))
+        return STATUS_BUFFER_TOO_SMALL;
+    if (s == STATUS_SUCCESS)
+        *out = tmp;
+    return s;
 }
 
 NTSTATUS uefi_var_set_u32(const uint16_t *name, const efi_guid_t *guid,
