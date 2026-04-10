@@ -71,6 +71,11 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Each test case must be a specific assertion (function + expected value). Flag vague "test that X works" items.
     - If the Unit Tests section is missing entirely, flag it and draft a skeleton.
 13. If section completion state seems wrong, defer to `/validate-todo-section` for deep code-truth verification.
+14. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this validation run:
+    ```
+    | Date | Action | Summary |
+    ```
+    Action = `validate`. Summary = one-line (sections checked, fixes applied, flags raised). Keep rows chronological, never delete old entries.
 
 ## Guardrails
 

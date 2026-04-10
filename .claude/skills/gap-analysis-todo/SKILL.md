@@ -182,6 +182,12 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
     - Every finding line must include a confidence tag: `confirmed` or `inferred`.
     - Include the final section count and checklist delta.
 
+22. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this gap analysis run:
+    ```
+    | Date | Action | Summary |
+    ```
+    Action = `gap-analysis`. Summary = one-line (searches run, sections added, gaps found, deferred count). Keep rows chronological, never delete old entries.
+
 ## Research Quality Standards
 
 - **Minimum 6 web searches** per analysis (3 Win11 + 3 Linux). More for complex domains.

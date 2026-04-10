@@ -374,3 +374,10 @@ Expose per-process memory statistics: working set size, peak working set, page f
 - [ ] Bare-metal boot: HPET calibration succeeds via UC mapping (no MCE); LAPIC timer runs at correct frequency
 - [ ] HPET quirk table: known-broken HPET vendor IDs are skipped with a log message
 - [ ] Commit: `"mm: VMM memory protection, W^X, demand paging, allocator safety tier"`
+
+## History
+
+| Date | Action | Summary |
+|------|--------|---------|
+| 2026-04-10 | validate | 12 sections checked; stripped 11 model tags, fixed broken .cursor anchor + UEFI §10 XREF, added Unit Tests skeleton, added §12 OS Comparison row |
+| 2026-04-10 | gap-analysis | 7 web searches, 15+ sources; added §13-§16 (auto-grow stacks, mlock, commit charge, process counters); 4 new IO/OS rows; 8 features deferred to other TODOs; no conflicts |
