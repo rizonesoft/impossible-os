@@ -56,7 +56,7 @@
 | 💎  |   5   | GOP timeout and graceful degradation           | --         |  [x]   |
 | 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [x]   |
 | 💎  |   7   | boot.conf validation and version field         | --         |  [x]   |
-| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [ ]   |
+| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [x]   |
 | ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [ ]   |
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [ ]   |
 | 💎  |  11   | UEFI watchdog timer management                 | --         |  [ ]   |
@@ -209,12 +209,12 @@ If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes.
 > [!NOTE]
 > **Regression risk:** LOW -- tries larger first, same result as current behavior (which allocates 16 MiB).
 
-- [ ] Try `AllocatePages(32 MiB)` first
-- [ ] If fails: try 16 MiB, then 8 MiB
-- [ ] Log actual allocation: `"[BOOT] Kernel buffer: %u MiB allocated"`
-- [ ] If all fail: `"[FAIL] Cannot allocate kernel buffer (tried 32/16/8 MiB)"` then error screen (§9)
-- [ ] After loading kernel: verify actual kernel file size fits in allocated buffer
-- [ ] Verify allocated buffer doesn't overlap boot_info (0x10000) or framebuffer region
+- [x] Try `AllocatePages(32 MiB)` first via graduated fallback array
+- [x] If fails: try 16 MiB, then 8 MiB (3-element loop)
+- [x] Log actual allocation: `"[BOOT] Kernel buffer: N MiB allocated"`
+- [x] If all fail: `"[FAIL] Cannot allocate kernel buffer (tried 32/16/8 MiB)"` + return EFI_LOAD_ERROR
+- [x] Kernel file size validated by §1 ELF bounds checks (32 MiB cap + per-segment validation)
+- [x] Buffer overlap checks: boot_info (0x10000-0x11000) and framebuffer (addr + pitch*height)
 - [ ] Commit: `"boot: kernel allocation fallback -- 32-16-8 MiB with overlap check"`
 
 **Test checkpoint:** Normal boot works (kernel is ~1.5 MiB, fits in any allocation). Serial shows `"Kernel buffer: 32 MiB allocated"`.
@@ -400,7 +400,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ✅ §5 headless + SetMode fallbk |
 | 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ✅ §6 512 cap + truncate warn   |
 | 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ✅ §7 key whitelist + range chk |
-| 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ⬜ §8 graduated alloc strategy  |
+| 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ✅ §8 32/16/8 MiB + overlap chk |
 | 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ⬜ §10 SPCR table parse         |
 | 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ⬜ §11 watchdog re-arm/disable  |
 | 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ⬜ §12 mmap descriptor verify   |

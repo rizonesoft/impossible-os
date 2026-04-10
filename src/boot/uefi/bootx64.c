@@ -1147,22 +1147,51 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         }
     }
 
-    /* Read entire file into memory */
-    /* First read: get file size by reading a large chunk */
+    /* Read entire file into memory.
+     * Graduated allocation fallback (S8): try 32 -> 16 -> 8 MiB. */
     file_size = 0;
-
-    /* Allocate generous buffer for kernel (16 MiB should be plenty) */
     {
-        UINTN pages = (16 * 1024 * 1024) / EFI_PAGE_SIZE;
-        EFI_PHYSICAL_ADDRESS buf_addr;
-        status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
-                                     pages, &buf_addr);
-        if (EFI_ERROR(status)) {
-            efi_print(u"[FAIL] Cannot allocate memory for kernel\r\n");
-            return status;
+        static const UINTN alloc_sizes[] = {
+            32 * 1024 * 1024,
+            16 * 1024 * 1024,
+             8 * 1024 * 1024,
+        };
+        EFI_PHYSICAL_ADDRESS buf_addr = 0;
+        UINTN alloc_size = 0;
+        int ai;
+        for (ai = 0; ai < 3; ai++) {
+            UINTN pages = alloc_sizes[ai] / EFI_PAGE_SIZE;
+            status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+                                         pages, &buf_addr);
+            if (!EFI_ERROR(status)) {
+                alloc_size = alloc_sizes[ai];
+                serial_early_print("[BOOT] Kernel buffer: ");
+                serial_early_print_uint((UINT32)(alloc_size / (1024 * 1024)));
+                serial_early_print(" MiB allocated\n");
+                break;
+            }
+        }
+        if (alloc_size == 0) {
+            serial_early_print("[FAIL] Cannot allocate kernel buffer (tried 32/16/8 MiB)\n");
+            return EFI_LOAD_ERROR;
         }
         file_buf = (UINT8 *)(UINTN)buf_addr;
-        file_size = 16 * 1024 * 1024;
+        file_size = alloc_size;
+
+        /* Verify buffer doesn't overlap boot_info (0x10000-0x11000) */
+        if (buf_addr < 0x11000 && buf_addr + alloc_size > BOOT_INFO_PHYS_ADDR) {
+            serial_early_print("[FAIL] Kernel buffer overlaps boot_info region\n");
+            return EFI_LOAD_ERROR;
+        }
+        /* Verify buffer doesn't overlap framebuffer */
+        if (g_boot_info_ptr->fb.addr != 0) {
+            UINT64 fb_end = g_boot_info_ptr->fb.addr +
+                (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
+            if (buf_addr < fb_end && buf_addr + alloc_size > g_boot_info_ptr->fb.addr) {
+                serial_early_print("[FAIL] Kernel buffer overlaps framebuffer\n");
+                return EFI_LOAD_ERROR;
+            }
+        }
     }
 
     status = kernel_file->Read(kernel_file, &file_size, file_buf);
