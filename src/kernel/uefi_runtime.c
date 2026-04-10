@@ -716,10 +716,22 @@ void uefi_secureboot_populate_registry(void)
     HKEY hKey;
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\SecureBoot", 0,
                        NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+        const struct secureboot_db_info *dbi = secureboot_get_db_info();
         RegSetDword(hKey, "State", (uint32_t)s_sb_enabled);
+        /* Mirror db/dbx inventory from secureboot_keys_init() (S9) */
+        if (dbi) {
+            RegSetDword(hKey, "DbEntries",  dbi->db_entries);
+            RegSetDword(hKey, "DbxEntries", dbi->dbx_entries);
+            RegSetDword(hKey, "DbSha256",   dbi->db_sha256_count);
+            RegSetDword(hKey, "DbxSha256",  dbi->dbx_sha256_count);
+            RegSetDword(hKey, "DbX509",     dbi->db_x509_count);
+        }
         RegCloseKey(hKey);
-        klog(LOG_DEBUG, "SecureBoot", "HKLM\\SYSTEM\\SecureBoot\\State=%u written",
-             (uint64_t)s_sb_enabled);
+        klog(LOG_DEBUG, "SecureBoot",
+             "HKLM\\SYSTEM\\SecureBoot: State=%u Db=%u Dbx=%u",
+             (uint64_t)s_sb_enabled,
+             dbi ? (uint64_t)dbi->db_entries : 0,
+             dbi ? (uint64_t)dbi->dbx_entries : 0);
     }
 }
 

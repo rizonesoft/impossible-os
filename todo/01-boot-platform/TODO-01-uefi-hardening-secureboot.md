@@ -4,9 +4,13 @@
 
 > [!IMPORTANT]
 > **Secure Boot strategy:** Use the rhboot/shim chain-loading approach. MOK key pair (`MOK.key`) is generated locally and MUST NEVER be committed to the repo. Long-term goal: submit shim to Microsoft shim-review to eliminate the MOK enrollment popup for end users.
+>
+> **Current state (code-truth 2026-04-10):** `uefi_runtime_init()` / `call_set_virtual_address_map()`, `uefi_var_*`, `gop_negotiate_mode()`, SMBIOS registry population, `uefi_secureboot_init()`, shim signing (`scripts/sign-efi.sh`), `secureboot_keys_init()` + `tpm_init()` wiring, `uefi_crypto_agility_init()`, `uefi_capsule_init()` (query-only), and `esrt_init()` exist in `src/kernel/uefi_runtime.c`, `src/kernel/tpm.c`, `src/kernel/main/boot_hw.c`, `src/kernel/main/boot_interrupts.c`, `src/boot/uefi/bootx64.c`. `src/kernel/test/test_uefi_boot.c` and `test_register_uefi_boot()` are **not** merged; **Verification** final Commit stays open until Unit Tests land.
 
 > [!NOTE]
-> Advanced UEFI features (multi-OS boot menu, capsule updates, W^X enforcement, multi-GPU GOP, extended Secure Boot state, SMBIOS extended types, DBX revocation sync) are in [TODO-18-uefi-advanced.md](TODO-18-uefi-advanced.md).
+> Advanced UEFI features (multi-OS boot menu, capsule **delivery** / signed UpdateCapsule path, W^X enforcement on RT pages, multi-GPU GOP, extended Secure Boot policy modes, SMBIOS extended types, DBX freshness automation) are owned by [TODO-18-uefi-advanced.md](TODO-18-uefi-advanced.md). §9 here is ops-parity backlog only.
+
+---
 
 ## Inputs
 
@@ -16,11 +20,16 @@
 - [`include/kernel/smbios.h`](../../include/kernel/smbios.h)
 - [`include/kernel/boot_splash.h`](../../include/kernel/boot_splash.h)
 - [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c)
-- -> XREF: `TODO-07-boot-diagnostics.md` -- `boot_progress()` API consumed by §7
-- -> XREF: `TODO-06-interrupt-timer-arch.md` -- timer calibration affects boot profiling in §7
+- [`src/kernel/uefi_runtime.c`](../../src/kernel/uefi_runtime.c)
+- [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md)
+- -> XREF: `TODO-07-boot-diagnostics.md §2` -- `boot_progress()` named-stage API consumed by this file §7
+- -> XREF: `TODO-06-interrupt-timer-arch.md §7` -- LAPIC timer calibration feeds boot timing used in §7
+- -> XREF: `TODO-06-interrupt-timer-arch.md §9` -- boot time visualization JSON export referenced from this file §7
 - -> XREF: `02-kernel-core/TODO-07-time-filetime-management.md §5` -- `UEFI GetTime` -> FILETIME seeding
-- -> XREF: `02-kernel-core/TODO-13-registry-completion.md` -- `HKLM\HARDWARE\*` and `HKLM\SYSTEM\SecureBoot` storage
+- -> XREF: `02-kernel-core/TODO-13-registry-completion.md §4` -- `HKLM\HARDWARE\*` and `HKLM\SYSTEM\SecureBoot` storage via registry syscalls
 - -> XREF: `TODO-18-uefi-advanced.md` -- deferred advanced features (multi-OS menu, capsule, W^X, multi-GPU, extended SB, SMBIOS ext, DBX)
+
+---
 
 ## Outcome
 
@@ -31,6 +40,9 @@
 - `boot_info.secure_boot_enabled` set correctly; kernel verifies state.
 - `BOOTX64.EFI` signed with MOK key; `.gitignore` entry for `MOK.key`.
 - Serial log unified format with atomic line writes.
+- SBAT / revocation ops checklist documented; Secure Boot DB counts visible in-registry; `ExitBootServices()` bounded retry with visible status codes on picky firmware.
+
+---
 
 ## Implementation Order
 
@@ -44,6 +56,7 @@
 | 💎  |   6   | Secure Boot shim chain-loading           | §5              |  [x]   |
 | 💎  |   7   | Boot UX polish                           | §3, §5, T07 §2  |  [x]   |
 | ⭐  |   8   | Serial log standardization               | --              |  [x]   |
+| 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5          |  [x]   |
 
 ---
 
@@ -58,6 +71,10 @@ Before `ExitBootServices()`, save UEFI runtime function pointers into `boot_info
 - [x] `BOOT_DEGRADED` path: `s_available = 0`; callers guard with `uefi_rt_available()`
 - [x] Commit: `"boot: preserve UEFI runtime service pointers across ExitBootServices"`
 
+**Test checkpoint:** Serial shows `[UEFI] SetVirtualAddressMap OK` and per-service OK or UNAVAILABLE lines; kernel does not fault when calling preserved RT entry points after EBS. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## 2. UEFI Variable Services
 
 Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
@@ -69,6 +86,10 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
 - [x] Win32 API wired: `NtQuerySystemEnvironmentValue[Ex]` (0x00D2-0x00D4) and `NtSetSystemEnvironmentValue[Ex]` (0x00D3-0x00D5) registered in SSDT, mapped to `uefi_get_variable` / `uefi_set_variable`
 - [x] Commit: `"kernel: UEFI variable get/set wrappers"`
 
+**Test checkpoint:** `uefi_var_get(L"SecureBoot", ...)` returns success or not-found without crash; test GUID roundtrip via `uefi_var_set_u32` / `uefi_var_get_u32` survives reboot when NVRAM allows. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## 3. GOP Resolution Auto-Detection
 
 Negotiate the best framebuffer resolution before `ExitBootServices()`.
@@ -77,6 +98,10 @@ Negotiate the best framebuffer resolution before `ExitBootServices()`.
 - [x] HiDPI flag: `boot_info.hidpi = 1` when width >= 2560
 - [x] `gop->SetMode(best_mode)` with fallback to current mode
 - [x] Commit: `"boot: GOP resolution auto-detection with HiDPI flag and boot.conf override"`
+
+**Test checkpoint:** Serial shows `[Boot] GOP: {W}x{H} 32bpp (mode N)` with W/H > 0; `boot_info.hidpi` is 1 when width >= 2560 else 0. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 4. SMBIOS Table Parsing
 
@@ -88,8 +113,14 @@ Walk SMBIOS 3.x structures and populate Registry hardware keys.
 - [x] Type 4 (Processor): socket, family, speed, cores, threads -> `HKLM\HARDWARE\CPU\*`
 - [x] Type 17 (Memory): size, speed, type, manufacturer -> `HKLM\HARDWARE\Memory\*`
 - [x] `smbios_get_system_uuid()`
-- [ ] Expose via System Properties dialog (-> XREF: `09-desktop-shell/TODO-11-control-panel.md`)
 - [x] Commit: `"kernel: SMBIOS 3.x table parse -> Registry HARDWARE hives"`
+
+> [!NOTE]
+> System Properties UI for SMBIOS fields is **not** boot-loader code. Track in XREF `09-desktop-shell/TODO-11-control-panel.md` when that TODO is ready.
+
+**Test checkpoint:** Registry keys under `HKLM\HARDWARE\BIOS\*`, `HKLM\HARDWARE\System\*`, `HKLM\HARDWARE\CPU\*`, and `HKLM\HARDWARE\Memory\*` are populated after boot; `smbios_get_system_uuid()` returns non-zero UUID on real hardware. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 5. Secure Boot State Detection
 
@@ -97,9 +128,15 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel.
 
 - [x] `uefi_secureboot_init()`: read `SecureBoot` variable, set `boot_info.secure_boot_enabled`
 - [x] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1
-- [ ] Kernel signature verification (-> XREF: TODO-11 Security Reference Monitor, deferred until Code Integrity section added)
 - [x] Padlock icon in system tray when Secure Boot active
 - [x] Commit: `"kernel: Secure Boot state detection, registry key"`
+
+> [!NOTE]
+> Kernel **code signature verification** for loaded images is owned by `02-kernel-core/TODO-17-kernel-security-hardening.md §12` (Enclave and code signing) and cross-notes in `02-kernel-core/TODO-11-security-reference-monitor.md`, not this bootloader TODO.
+
+**Test checkpoint:** `boot_info.secure_boot_enabled` matches UEFI `SecureBoot` variable; registry `HKLM\SYSTEM\SecureBoot\State` is 0 or 1 accordingly; padlock tray icon matches state when shell is running. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 6. Secure Boot Shim Chain-Loading
 
@@ -112,54 +149,79 @@ Set up MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build.
 - [x] Shim validates `grubx64.efi` via embedded `MOK.cer`; MokManager for first-boot enrollment
 - [x] Commit: `"boot: Secure Boot shim chain-loading, MOK key signing pipeline"`
 
+**Test checkpoint:** With `MOK.key` present, signed `BOOTX64.EFI` builds; without keys, signing is skipped silently; first boot can complete MOK enrollment path on real firmware. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## 7. Boot UX Polish
 
 Structured boot profiling and pre-framebuffer error recovery screen.
 
 - [x] Boot profiling: `boot_progress()` at every major event; `boot_timing_write_report()` writes to `X:\Perf\boot-profile.log`
-- [x] JSON boot-timeline export (-> XREF: TODO-06 §9)
+- [x] JSON boot-timeline export (-> XREF: `TODO-06-interrupt-timer-arch.md §9`)
 - [x] Pre-framebuffer error screen: `boot_halt(reason)` with inline 8x8 bitmap font
 - [x] `boot_splash_status()` integration: live stage text below spinner
 - [x] Commit: `"boot: boot-stage instrumentation, pre-framebuffer error recovery screen"`
+
+**Test checkpoint:** `boot_progress()` stages appear in order on serial and optional `X:\Perf\boot-profile.log`; `boot_halt()` shows pre-framebuffer error text when forced; JSON timeline export matches `TODO-06-interrupt-timer-arch.md §9` contract. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 8. Serial Log Standardization and Race Fix
 
 Unified log format and atomic serial writes.
 
-### 8.1 Unified log format
-
-- [x] `klog.h` defines five levels: `LOG_DEBUG`->`[INFO]`, `LOG_INFO`->`[ OK ]`, `LOG_WARN`->`[WARN]`, `LOG_ERROR`->`[FAIL]`, `LOG_FATAL`->`[CRIT]`
-- [x] All callers migrated from `printk()` to `klog()`
-- [x] Deprecated `log.h` + `log.c` deleted
+- [x] **Unified format:** `klog.h` defines five levels: `LOG_DEBUG`->`[INFO]`, `LOG_INFO`->`[ OK ]`, `LOG_WARN`->`[WARN]`, `LOG_ERROR`->`[FAIL]`, `LOG_FATAL`->`[CRIT]`; all callers migrated from `printk()` to `klog()`; deprecated `log.h` + `log.c` deleted
+- [x] **Line race fix:** `serial_putchar_raw()` static helper (no lock); `serial_write()` holds spinlock for entire string; `klog()` builds full line in `char line[256]`, calls `serial_write()` atomically
 - [x] Commit: `"kernel: Serial Output Phase 1 -- unified klog format"`
-
-### 8.2 Serial line-mangling race fix
-
-- [x] `serial_putchar_raw()` static helper (no lock)
-- [x] `serial_write()` holds spinlock for entire string
-- [x] `klog()` builds full line in `char line[256]`, calls `serial_write()` atomically
 - [x] Commit: `"kernel: fix serial line mangling by making klog write atomically"`
+
+**Test checkpoint:** Under concurrent IRQ logging, serial shows no interleaved partial lines; tags `[ OK ]`, `[WARN]`, `[FAIL]` appear as documented. Stress: rapid `klog()` from timer tick + main thread. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 9. SBAT Ops, Secure Boot DB Registry Mirror, and ExitBootServices Retry
+
+Win11 and major Linux distros surface firmware trust inventory (db/dbx counts), track SBAT-driven shim revocations, and retry `ExitBootServices()` when the memory map changes. Kernel already parses db/dbx via `secureboot_keys_init()` and logs counts (`src/kernel/uefi_runtime.c`); bootloader already performs **one** remap+retry around `gBS->ExitBootServices` (`src/boot/uefi/bootx64.c`). This section closes the remaining **ops parity** gaps without taking ownership of `UpdateCapsule` write paths (-> XREF: `TODO-18-uefi-advanced.md §2`).
+
+> [!WARNING]
+> **Regression risk:** Bootloader `ExitBootServices` retry must stay strictly bounded (no spin on broken firmware). Registry DWORD writes must run after `SYSTEM\SecureBoot` exists and must not clobber `State`.
+
+- [x] Extend `docs/guides/secure-boot-keys.md` with SBAT bump / shim refresh checklist: 5-step process covering advisory monitoring (rhboot/shim + Microsoft + UEFI Forum), rebuild/resign workflow, `.sbat` CSV generation bump, key hygiene, and post-refresh testing.
+- [x] Bootloader `src/boot/uefi/bootx64.c`: bounded `ExitBootServices()` retry loop (EBS_MAX_ATTEMPTS=4, locked per TODO-02 S2 agreement). Each retry logs to serial, re-fetches memory map via `get_memory_map()`, refills memory+runtime maps, then retries EBS. Fatal halt after all attempts exhausted.
+- [x] After `secureboot_keys_init()`, mirror `secureboot_get_db_info()` fields under `HKLM\SYSTEM\SecureBoot\` as DWORD values (`DbEntries`, `DbxEntries`, `DbSha256`, `DbxSha256`, `DbX509`) via `RegSetDword()` in `uefi_secureboot_populate_registry()`. Writes after `State` in the same `RegCreateKeyEx` scope -- does not clobber `State`.
+- [x] -> XREF: `02-kernel-core/TODO-13-registry-completion.md §4` -- confirmed: `uefi_secureboot_populate_registry()` is called from `registry_populate_defaults()` after `SYSTEM\SecureBoot` key exists. DB writes use the same open key handle as `State` -- no ordering regression.
+- [x] -> XREF: `TODO-18-uefi-advanced.md §2` -- capsule install + ESRT-driven UX remains advanced scope (query-only init already in `uefi_capsule_init()` / `esrt_init()`). Acknowledged, no action needed.
+- [ ] Commit: `"boot: SBAT ops doc, Secure Boot DB counts in registry, EBS retry"`
+
+**Test checkpoint:** Serial shows `[BOOT] ExitBootServices OK` after deliberate map churn (QEMU OVMF multi-disk attach); when db/dbx exist, `klog` / registry reflects non-zero counts consistent with `secureboot_get_db_info()`; SBAT section present in `docs/guides/secure-boot-keys.md`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature               | 🪟 Win11                   | 🐧 Linux                  | 🚀 Impossible OS              |
-|----|-----------------------|-----------------------------|----------------------------|--------------------------------|
-| 💎 | UEFI runtime post-EBS | ✅ Full RT preserved       | ✅ efi_call wrappers       | ✅ §1 -- SVAM + RT pointers   |
-| 💎 | UEFI variable access  | ✅ GetFirmwareEnvVar       | ✅ efivarfs + efivar       | ✅ §2 -- get/set/enumerate    |
-| 💎 | GOP resolution        | ✅ Boot manager negotiates | ✅ GRUB gfxmode + EFIFB    | ✅ §3 -- auto + HiDPI         |
-| 💎 | SMBIOS core inventory | ✅ WMI Win32_BIOS          | ✅ /sys/firmware/dmi       | ✅ §4 -- Type 0/1/4/17        |
-| 💎 | Secure Boot shim      | ✅ MS-signed shim + WHQL   | ✅ rhboot shim (distro)    | ✅ §6 -- shimx64 + MOK        |
-| 💎 | Secure Boot state     | ✅ Registry + WinVerify    | ✅ efivarfs SecureBoot     | ✅ §5 -- NVRAM + registry     |
-| ⭐ | Boot profile timeline | ❌ ETW binary (WPA)        | ❌ systemd-analyze         | ✅ §7 -- boot-profile.log     |
-| 💎 | Atomic serial log     | ✅ KdPrint serialized      | ✅ printk cont flag        | ✅ §8 -- spinlock per line    |
+| ⭐   | Feature               | 🪟 Win11        | 🐧 Linux     | 🚀 Impossible OS |
+| --- | --------------------- | ----------------- | ------------ | ----------------- |
+| 💎   | UEFI runtime post-EBS | ✅ Full RT      | ✅ efi_call  | ✅ §1 SVAM       |
+| 💎   | UEFI variables        | ✅ Firmware API | ✅ efivarfs  | ✅ §2 get/set    |
+| 💎   | GOP resolution        | ✅ Boot mgr     | ✅ EFIFB     | ✅ §3 auto       |
+| 💎   | SMBIOS core           | ✅ WMI BIOS     | ✅ sysfs DMI | ✅ §4 types      |
+| 💎   | Secure Boot shim      | ✅ MS shim      | ✅ rhboot    | ✅ §6 MOK        |
+| 💎   | Secure Boot state     | ✅ Registry     | ✅ efivar    | ✅ §5 NVRAM      |
+| ⭐   | Boot timeline         | ❌ ETW WPA      | ❌ systemd   | ✅ §7 JSON log   |
+| 💎   | Atomic serial         | ✅ KdPrint      | ✅ printk    | ✅ §8 klog       |
+| 💎   | SBAT shim ops         | ✅ program      | ✅ distros   | ⬜ §9 doc        |
+| 💎   | DB/dbx counts UX      | ✅ msinfo       | ✅ mokutil   | ⬜ §9 reg        |
+| 💎   | EBS retry hardening   | ✅ firmware     | ✅ patches   | ⬜ §9 loop       |
+| 💎   | Capsule install UX    | ✅ Win stack    | ✅ fwupd     | ⬜ TODO-18 §2    |
 
-> All core UEFI boot features at parity with Win11 and Linux. Boot profile timeline is a competitive edge -- human-readable JSON vs binary ETW or post-boot systemd-analyze. Advanced features (multi-GPU, extended SB, capsule, W^X, SMBIOS extended, DBX) deferred to [TODO-18](TODO-18-uefi-advanced.md).
+> **Parity:** 💎 rows match Win11+Linux baseline. **⭐** JSON boot profile is extra vs ETW and userland boot charts. Capsule **apply** path and W^X on RT pages stay in [TODO-18](TODO-18-uefi-advanced.md); kernel already runs read-only `esrt_init()` / `uefi_capsule_init()` / `uefi_crypto_agility_init()` during Phase 1 bring-up.
+
+---
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_uefi_boot()`.
+> Wire into `test_runner_init()` via `test_register_uefi_boot()`. Tests must follow CLAUDE.md kernel test rules (no `boot_progress`, `panic`, live `serial_init`, etc.).
 
 - [ ] Create `src/kernel/test/test_uefi_boot.c` with:
   - `uefi_rt_available()` returns 1 (runtime services preserved)
@@ -170,8 +232,13 @@ Unified log format and atomic serial writes.
   - `smbios_get_system_uuid()` returns non-zero UUID on real hardware
   - `boot_info.secure_boot_enabled` matches UEFI `SecureBoot` variable
   - `HKLM\HARDWARE\BIOS\BIOSVendor` is non-empty string
+  - After §9 ships: `HKLM\SYSTEM\SecureBoot\DbEntries` DWORD matches `secureboot_get_db_info()->db_entries` when firmware exposes `db`
 - [ ] Register in `test_runner_init()`: `test_register_uefi_boot()`
 - [ ] Commit: `"test: add uefi_boot test suite"`
+
+**Test checkpoint:** `SUITE=boot` run shows new `test_uefi_boot` cases PASS; no forbidden boot/VPD calls from test body. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## Verification
 
@@ -182,3 +249,17 @@ Unified log format and atomic serial writes.
 - [x] Signed build present when MOK keys exist; skipped silently when absent
 - [x] No interleaved serial lines under concurrent IRQ logging
 - [ ] Commit: `"boot: uefi-hardening core verified"`
+
+**Test checkpoint:** Repeat Verification bullets on a clean build after Unit Tests land; serial matches expected markers above on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
+
+**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+
+---
+
+## History
+
+| Date | Action | Summary |
+| --- | --- | --- |
+| 2026-04-10 | validate | validate-todo-file: Inputs `---` + XREF section refs (TODO-07 §2, TODO-06 §7/§9, TODO-13 §4); Impl T07 fixed; removed `### 8.1/8.2`; §1-§8 Commit+Test checkpoint+platforms; §4/§5 deferred items as NOTE; OS table compact; Unit Tests NOTE+checkpoint; Verification runner+checkpoint; History added. |
+| 2026-04-10 | gap-analysis | gap-analysis-todo: Current state merged into IMPORTANT; new §9 (SBAT doc, EBS retry, DB registry) + Impl Order row 9 `[ ]`; OS rows + Sources; Unit Tests §9 hook; cross-TODO XREF repairs in TODO-03/17/18/02-memory-security/09-desktop; code-truth note for existing `secureboot_keys_init`/`tpm_init`/capsule query init. |
+| 2026-04-10 | validate | validate-todo-file: continuation-line rg clean; Inputs + `uefi_runtime.c` + `secure-boot-keys.md`; §9 registry path fix + `[!WARNING]` regression callout; OS capsule row + parity note; XREF §2/§4/§5/§7/§9 verified; `run-boot-tests.bat` present; optional note: OS row 206 Linux cell may deserve `systemd-analyze` nuance. |

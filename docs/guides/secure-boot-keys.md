@@ -103,6 +103,40 @@ scripts\machines\run-vbox.bat        # VirtualBox
 
 ---
 
+## SBAT Bump and Shim Refresh Checklist
+
+SBAT (Secure Boot Advanced Targeting) allows firmware and OS vendors to revoke
+specific versions of boot components without revoking the entire signing
+certificate. When a shim or GRUB vulnerability is disclosed:
+
+1. **Watch for advisories:**
+   - [rhboot/shim releases](https://github.com/rhboot/shim/releases) -- new shim versions bump the SBAT generation
+   - [Microsoft Secure Boot program notices](https://uefi.org/revocationlistfile) -- dbx updates that revoke old shim hashes
+   - UEFI Forum revocation list updates (published quarterly)
+
+2. **When a new shim version is released:**
+   - Update `shim/` submodule to the new tag
+   - Rebuild: `make -C shim` (produces `shimx64.efi`)
+   - Re-sign with MOK: `sbsign --key keys/MOK.key --cert keys/MOK.cer --output shimx64.efi.signed shimx64.efi`
+   - Verify: `sbverify --cert keys/MOK.cer shimx64.efi.signed`
+   - Update `.sbat` CSV section in shimx64.efi if the SBAT generation changed
+
+3. **SBAT generation in our bootloader:**
+   - The `.sbat` section in `bootx64.efi` declares our generation number
+   - If Microsoft revokes a generation, all bootloaders at or below that number are blocked
+   - Bump the generation in `src/boot/uefi/sbat.csv` when rebuilding after a revocation
+
+4. **Never commit private keys:**
+   - `keys/MOK.key` is in `.gitignore` -- verify before every push
+   - Distribute `MOK.cer` (public) only; `MOK.key` stays on the build machine
+
+5. **Testing after a shim refresh:**
+   - Enroll the new MOK on test hardware (MokManager)
+   - Verify boot with Secure Boot enabled on QEMU (OVMF + enrolled db) and bare metal
+   - Check serial log for `[BOOT] ExitBootServices OK` (EBS retry covers map changes from dbx updates)
+
+---
+
 ## Submitting to Microsoft shim-review (long-term)
 
 Once a release candidate is tagged, submit to [rhboot/shim-review](https://github.com/rhboot/shim-review).

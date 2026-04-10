@@ -2405,21 +2405,35 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
     serial_early_print("[BOOT] runtime services preserved\n");
 
-    /* Step 6: ExitBootServices */
+    /* Step 6: ExitBootServices -- bounded retry loop.
+     * The UEFI spec allows the memory map to change between GetMemoryMap
+     * and ExitBootServices (timer tick, firmware event). Retry with a
+     * fresh map up to EBS_MAX_ATTEMPTS times (typical UEFI practice: 3-5).
+     * Locked at 4 per TODO-02-bootloader-error-recovery.md S2 agreement. */
+#define EBS_MAX_ATTEMPTS 4
     post_code16(POST16_BL_EXIT_BS);
     serial_early_print("[BOOT] ExitBootServices...\n");
     g_boot_info_ptr->timing.exit_bs = boot_rdtsc();
-    status = gBS->ExitBootServices(gImageHandle, map_key);
-    if (EFI_ERROR(status)) {
-        status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
-                                &desc_version);
-        if (!EFI_ERROR(status)) {
+    {
+        int ebs_attempt;
+        EFI_STATUS ebs_status;
+        for (ebs_attempt = 0; ebs_attempt < EBS_MAX_ATTEMPTS; ebs_attempt++) {
+            ebs_status = gBS->ExitBootServices(gImageHandle, map_key);
+            if (!EFI_ERROR(ebs_status))
+                break;
+            serial_early_print("[BOOT] ExitBootServices retry\n");
+            /* Re-fetch memory map for next attempt */
+            status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
+                                    &desc_version);
+            if (EFI_ERROR(status)) {
+                serial_early_print("[CRIT] GetMemoryMap failed on retry\n");
+                for (;;) __asm__ volatile("hlt");
+            }
             fill_memory_map(mmap, map_size, desc_size);
             fill_runtime_map(mmap, map_size, desc_size);
-            status = gBS->ExitBootServices(gImageHandle, map_key);
         }
-        if (EFI_ERROR(status)) {
-            serial_early_print("[CRIT] ExitBootServices failed\n");
+        if (EFI_ERROR(ebs_status)) {
+            serial_early_print("[CRIT] ExitBootServices failed after retries\n");
             for (;;) __asm__ volatile("hlt");
         }
     }
