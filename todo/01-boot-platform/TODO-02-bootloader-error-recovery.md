@@ -235,7 +235,7 @@ Replace all `for (;;) hlt;` loops with a visible error screen rendered using the
 - [x] Replaced 4 `for (;;) hlt;` error paths with `boot_fatal()`: kernel load, GetMemoryMap, EBS retry GetMemoryMap, EBS final failure
 - [x] Log error to serial before displaying screen: `"[CRIT] BOOT FATAL: <title>"` + detail
 - [x] Added `EFI_SIMPLE_TEXT_INPUT_PROTOCOL` + `EFI_INPUT_KEY` + console color defines to `efi.h`; typed `ConIn` and `SetAttribute`
-- [ ] Commit: `"boot: visible error screen on fatal failures -- no more silent halts"`
+- [x] Commit: `"boot: visible error screen on fatal failures -- no more silent halts"` (f734faf3)
 
 **Test checkpoint:** Delete `\boot\kernel.exe` from boot disk. Boot must show error screen with `"Kernel not found"` message and recovery instructions -- not a black screen. Verify on QEMU WHPX, TCG, and VBox. Verify on bare metal -- confirm ConIn keypress works on real keyboard.
 
