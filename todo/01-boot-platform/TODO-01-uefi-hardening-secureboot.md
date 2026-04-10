@@ -105,6 +105,8 @@ Negotiate the best framebuffer resolution before `ExitBootServices()`.
 
 **Test checkpoint:** Serial shows `[Boot] GOP: {W}x{H} 32bpp (mode N)` with W/H > 0; `boot_info.hidpi` is 1 when width >= 2560 else 0. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-04-11 -- Codex found FrameBufferBase==0 crash path after mode 0 retry (fixed: headless fallback). Auto 1080p cap is intentional VBox safety (documented in code). 2 unit tests wired, build passes.
+
 ---
 
 ## 4. SMBIOS Table Parsing

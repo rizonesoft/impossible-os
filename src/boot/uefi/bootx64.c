@@ -1031,6 +1031,18 @@ static EFI_STATUS init_gop(void)
         gop->SetMode(gop, 0);
     }
 
+    /* If framebuffer is STILL null after all retries, go headless */
+    if (gop->Mode->FrameBufferBase == 0) {
+        serial_early_print("[BOOT] GOP: no usable framebuffer -- headless mode\n");
+        gFramebuffer = (UINT32 *)0;
+        gFbWidth = 0;
+        gFbHeight = 0;
+        gFbPitch = 0;
+        g_boot_info_ptr->fb_available = 0;
+        g_boot_info_ptr->hidpi = 0;
+        return EFI_SUCCESS;
+    }
+
     /* Store framebuffer info and zero VRAM */
     gFramebuffer = (UINT32 *)(UINTN)gop->Mode->FrameBufferBase;
     gFbWidth  = gop->Mode->Info->HorizontalResolution;
