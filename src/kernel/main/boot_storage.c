@@ -33,6 +33,7 @@
 #include "kernel/drivers/rtl8139.h"
 #include "kernel/net/net.h"
 #include "kernel/drivers/virtio_input.h"
+#include "kernel/drivers/mouse.h"
 #include "kernel/drivers/vbox_mouse.h"
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
@@ -64,6 +65,11 @@ static boot_result_t deferred_net_init(void)
 static boot_result_t deferred_input_init(void)
 {
     POST16(POST16_DEFERRED_INPUT);
+    /* PS/2 mouse init moved from Phase 1 to deferred: the PS/2 BAT
+     * (Basic Assurance Test) takes 300ms-2s on real hardware, which
+     * froze the splash spinner. Running it here means the splash
+     * is already animating when the wait happens. */
+    mouse_init();
     virtio_input_init();
     vbox_mouse_init();
     POST16(POST16_DEFERRED_INPUT_OK);

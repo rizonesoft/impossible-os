@@ -305,9 +305,10 @@ void boot_phase1(void)
     keyboard_init();
     POST16(POST16_KBD_OK);
     boot_progress(1, "KEYBOARD", POST16_KBD_OK);
-    boot_splash_status("Detecting PS/2 mouse...");
+    /* PS/2 mouse init deferred to boot_run_deferred() -- the PS/2 BAT
+     * self-test takes 300ms-2s on real hardware, freezing the splash
+     * spinner. Mouse init now runs after the desktop is live. */
     POST16(POST16_MOUSE);
-    mouse_init();
     POST16(POST16_MOUSE_OK);
     boot_progress(1, "MOUSE", POST16_MOUSE_OK);
 
