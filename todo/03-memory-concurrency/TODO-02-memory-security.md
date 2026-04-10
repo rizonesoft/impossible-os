@@ -131,7 +131,7 @@ Confirm `EFER.NXE` is set and audit every kernel and user data mapping to ensure
 - [ ] Confirm `EFER.NXE` read-back after Phase 0: `rdmsr(IA32_EFER) & EFER_NXE` → assert set; `PANIC` if clear (CPU does not support NX)
 - [ ] Audit `vmm_map_pages()` and all direct PTE-write paths: data mappings (stack, heap, `MEM_COMMIT` anonymous, mmap data) must always set the NX bit; only `.text` / exec regions must have NX clear
 - [ ] Kernel BSS, heap, and stack pages: confirm NX bit set in the identity-map and the kernel virtual range
-- [ ] UEFI runtime data pages: confirm NX set after `call_set_virtual_address_map()` (→ XREF `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §10`)
+- [ ] UEFI runtime data pages: confirm NX set after `call_set_virtual_address_map()` (-> XREF `01-boot-platform/TODO-18-uefi-advanced.md §3` -- W^X on UEFI RT regions; TODO-01 has no §10)
 - [ ] Boot log: `[NX] EFER.NXE confirmed; all data mappings carry NX`
 - [ ] Commit: `"mm: NX/DEP audit -- confirm EFER.NXE, NX on all data pages"`
 

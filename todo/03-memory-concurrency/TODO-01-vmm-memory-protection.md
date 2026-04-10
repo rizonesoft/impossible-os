@@ -19,7 +19,7 @@
 - → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §8` -- PAT MSR AP synchronization; vmm_map_mmio_uc() cache policy depends on consistent PAT MSR across all CPUs
 - → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` -- TEB and stack bounds required for §1 guard page placement
 - → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` -- syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
-- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md` -- UEFI W^X (firmware runtime pages); §3 policy applies there too (stale §10 reference removed -- file has §1-§8 only)
+- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §1` -- UEFI runtime handoff; firmware runtime page W^X policy is `01-boot-platform/TODO-18-uefi-advanced.md §3` (TODO-01 §1-§9)
 
 ## Outcome
 
@@ -339,8 +339,6 @@ Expose per-process memory statistics: working set size, peak working set, page f
 | 💎 | Process memory counters  | ✅ GetProcessMemInfo  | ✅ /proc/PID/status    | ⬜ §16 VM_COUNTERS        |
 
 > Parity: matches Win11+Linux on page protection, demand paging, VirtualAlloc, query, PMM stats, heap safety, leak detection, MMIO, auto-growing stacks, page pinning, process counters. W^X is stronger than Windows (hard reject RWX). Build-time allocator lint and deterministic commit charge tracking (vs Linux overcommit) are exclusive.
-
-<!-- Sources: https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc, https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect, https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants, https://learn.microsoft.com/en-us/windows/win32/memory/creating-guard-pages, https://docs.kernel.org/admin-guide/mm/concepts.html, https://docs.kernel.org/core-api/memory-allocation.html, https://docs.kernel.org/admin-guide/mm/userfaultfd.html, https://lwn.net/Articles/1011366/, https://man7.org/linux/man-pages/man2/mprotect.2.html, https://docs.kernel.org/dev-tools/kfence.html, https://docs.kernel.org/dev-tools/kasan.html, https://docs.kernel.org/userspace-api/mseal.html, https://man7.org/linux/man-pages/man2/memfd_secret.2.html, https://github.com/nccgroup/exploit_mitigations/blob/main/windows_mitigations.md, https://whiteknightlabs.com/2025/03/24/understanding-windows-kernel-pool-memory/ -->
 
 ## Unit Tests
 

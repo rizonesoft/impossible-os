@@ -25,7 +25,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 
 ## Active TODOs
 
-- [TODO-01 -- UEFI Bootloader Hardening & Secure Boot](TODO-01-uefi-hardening-secureboot.md) -- ✅ Core complete: UEFI runtime, variables, GOP, SMBIOS core, Secure Boot shim, boot UX, serial log
+- [TODO-01 -- UEFI Bootloader Hardening & Secure Boot](TODO-01-uefi-hardening-secureboot.md) -- ✅ §1-§8 shipped in tree; §9 ops backlog + `test_uefi_boot` suite still open; advanced UEFI in [TODO-18](TODO-18-uefi-advanced.md)
 - [TODO-02 -- Bootloader Error Recovery & ELF Hardening](TODO-02-bootloader-error-recovery.md) -- Eliminate silent failures: ELF bounds checking, ExitBootServices retry, fallback kernel search, boot failure error screen
 - [TODO-03 -- Boot Device Discovery & Fallback Chain](TODO-03-boot-device-discovery.md) -- Boot device identification via LoadedImage, multi-device fallback, device type detection, UEFI boot variables, partition GUID validation, removable media, Registry population, disk health check
 - [TODO-04 -- CPU Boot Sequencing & AP Hardening](TODO-04-cpu-boot-sequencing.md) -- Phase 0 activation order (EFER->CR4 before VMM), hypervisor detection before UTS, AP hardening replication, AP feature consistency validation, CR4 bit pinning, MTRR/PAT AP sync, CPU register audit trail

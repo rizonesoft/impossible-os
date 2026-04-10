@@ -528,8 +528,6 @@ After §1--9, Impossible OS reaches base Windows 11 and Linux parity for core en
 
 The `source` / `.` command (section 8 above) remains a differentiator over Windows cmd.exe.
 
-<!-- Sources: https://learn.microsoft.com/en-us/windows/win32/api/processenv/nf-processenv-getenvironmentvariablew , https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-createenvironmentblock , https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-commandlinetoargvw , https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/setx , https://man7.org/linux/man-pages/man2/execve.2.html , https://man7.org/linux/man-pages/man3/getenv.3.html -->
-
 ---
 
 ## Unit Tests

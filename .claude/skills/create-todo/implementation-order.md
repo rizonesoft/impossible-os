@@ -68,7 +68,7 @@ Every TODO must include an `## OS Comparison` section. Use this format:
 - `💎` rows = parity features; Impossible OS must reach the same level as Windows and Linux.
 - `⭐` rows = exclusive features; Impossible OS goes further than either competitor.
 - Status cells: ✅ = done/shipping, ⚠️ = partial/limited, ❌ = not available, ⬜ = planned (link the section).
-- Keep cells short: status emoji + max 5 words. Rows under ~100 chars.
+- Keep cells short: status emoji + max 5 words. Soft target **~150 characters per table row** (about **50% wider** than the old ~100 guidance). If a row is still too long, shorten cell wording -- do not strip spaces that align columns. Pad all rows (separator uses `-` per column width, min 3).
 - **Populate from actual research** (web searches for Win11/Linux features), not guesswork.
 - Add a short paragraph after the table summarizing the competitive position at each milestone.
 

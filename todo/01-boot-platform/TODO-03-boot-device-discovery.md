@@ -12,8 +12,9 @@
 - `src/boot/uefi/bootx64.c` -- `load_kernel()` and `parse_boot_conf()` filesystem access
 - `src/boot/uefi/efi.h` -- UEFI protocol definitions (EFI_LOADED_IMAGE_PROTOCOL, EFI_DEVICE_PATH_PROTOCOL, EFI_BLOCK_IO_PROTOCOL)
 - `include/kernel/boot_info.h` -- boot_info struct (needs boot device info)
-- → XREF: `TODO-01-uefi-hardening-secureboot.md §2` -- UEFI variable services (uefi_var_get/set wraps runtime GetVariable; §6 here reads boot variables pre-ExitBootServices, §9 uses Registry)
-- → XREF: `TODO-01-uefi-hardening-secureboot.md §8` -- multi-OS detection and boot menu
+- -> XREF: `TODO-01-uefi-hardening-secureboot.md §2` -- UEFI variable services (`uefi_var_get` / `uefi_var_set`); this file reads BootOrder/BootCurrent pre-ExitBootServices
+- -> XREF: `TODO-01-uefi-hardening-secureboot.md §4` -- SMBIOS/registry hardware hive population (boot provenance complements device discovery)
+- -> XREF: `TODO-18-uefi-advanced.md §1` -- multi-OS detection and boot menu (not TODO-01 §8 -- that is serial klog)
 - → XREF: `TODO-02-bootloader-error-recovery.md §3` -- fallback kernel search paths
 - → XREF: `TODO-10-xhci-usb-boot.md §5` -- USB device handover
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- vfs_probe consumes boot device info for C: assignment
@@ -237,18 +238,18 @@ Read basic health indicators from the boot device before loading the kernel. Nei
 
 ## OS Comparison
 
-| ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                    | 🚀 Impossible OS             |
-|----|----------------------------|-------------------------|--------------------------|---------------------------|
-| 💎 | Boot device identification | ✅ BCD + device path    | ✅ GRUB search command   | ⬜ §1--§2                  |
-| 💎 | Multi-device fallback      | ✅ BCD boot order       | ✅ GRUB menu entries     | ⬜ §5                     |
-| 💎 | Boot device type in kernel | ✅ Registry boot info   | ✅ /proc/cmdline root=   | ⬜ §3--§4                  |
-| 💎 | Boot variable reading      | ✅ BCD reads BootOrder  | ✅ efibootmgr/efivarfs   | ⬜ §6                     |
-| 💎 | BootNext one-shot boot     | ✅ SetFirmwareEnvVar    | ✅ efibootmgr -n         | ⬜ §6                     |
-| 💎 | Partition GUID validation  | ✅ BCD disk signature   | ✅ root=PARTUUID=        | ⬜ §7                     |
-| 💎 | Removable media detection  | ✅ DriveType removable  | ✅ sysfs removable flag  | ⬜ §8                     |
-| 💎 | Boot device Registry       | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi | ⬜ §9                     |
-| ⭐ | Full device enumeration log| ❌ Hidden in Event Log  | ❌ Not logged            | ⬜ §10 🚀                 |
-| ⭐ | Pre-boot disk health check | ❌ Post-boot SMART only | ❌ Post-boot smartd only | ⬜ §11 🚀                 |
+| ⭐   | Feature                     | 🪟 Win11                      | 🐧 Linux                 | 🚀 Impossible OS |
+| --- | --------------------------- | ---------------------------- | ----------------------- | --------------- |
+| 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ⬜ §1--§2        |
+| 💎   | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ⬜ §5            |
+| 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ⬜ §3--§4        |
+| 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ⬜ §6            |
+| 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ⬜ §6            |
+| 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ⬜ §7            |
+| 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ⬜ §8            |
+| 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ⬜ §9            |
+| ⭐   | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ⬜ §10 🚀         |
+| ⭐   | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ⬜ §11 🚀         |
 
 > **After parity items:** Impossible OS matches Windows and Linux on all boot device discovery fundamentals: device identification via LoadedImage, UEFI boot variable reading, partition GUID validation, removable media detection, and Registry population. The exclusive items push beyond: comprehensive serial logging of the full device enumeration (neither competitor exposes this), and a pre-boot disk health check at the UEFI stage that gives users early warning of failing hardware before the kernel even loads.
 

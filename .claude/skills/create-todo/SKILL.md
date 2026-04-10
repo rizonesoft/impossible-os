@@ -42,7 +42,7 @@ When `create-todo` is invoked from the scope-gap protocol, the workflow is the s
    - Use `git log` to discover recent work that may already cover planned scope.
    - **Win11/Linux competitive research:** Run at least 6 web searches (3 Win11, 3 Linux) to build a feature inventory for the OS Comparison table. Queries: `"Windows 11 <topic> internals"`, `"Linux kernel <topic>"`, `"modern OS <topic> best practices"`. Follow at least 2 links with WebFetch for detailed feature descriptions.
    - Build a feature inventory: for each feature, record Win11 status, Linux status, and whether it's parity (both have it) or competitive edge (neither does it well).
-   - **Save research sources.** Record URLs for key findings. Add a `<!-- Sources: ... -->` HTML comment at the bottom of the OS Comparison table so the data is verifiable later.
+   - **Save research sources** for your own traceability only: list URLs in the **gap-analysis or create-todo chat report** (or commit message notes). **Do not** paste URL lists into the TODO as `<!-- Sources: ... -->` HTML comments -- they clutter diffs and duplicate long lines across files.
 
 3. **Cross-TODO overlap scan.**
    - Use Grep to search ALL domain folders for keywords from the planned section titles and deliverables.
@@ -101,12 +101,12 @@ When `create-todo` is invoked from the scope-gap protocol, the workflow is the s
 10. **Add the OS Comparison table (mandatory).**
     - Place before Unit Tests / Verification sections.
     - Header: `| ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |`
-    - Keep cells short: status emoji + max 5 words per cell. Rows under ~100 chars.
+    - Keep cells short: status emoji + max 5 words per cell. Prefer table rows under **~150 chars** (about **50% wider** than the old ~100 target) by tightening **words**, not by removing padding spaces. **Pad every column** so pipes line up in the raw markdown; separator row uses `-` per column (min 3) matching those widths (same rule as `validate-todo-file`).
     - Mark each row `💎` (parity) or `⭐` (exclusive/superior).
     - Status: ✅ Done, ⚠️ Partial, ⬜ Planned (with `§N` reference), ❌ Not applicable.
     - Populate from research in step 2, not guesswork.
     - Add a summary paragraph after the table noting competitive position at each milestone.
-    - Add `<!-- Sources: URL1, URL2 -->` comment after the summary for research traceability.
+    - **Do not** add `<!-- Sources: ... -->` HTML comments after the table.
 
 11. **Add the Unit Tests section (mandatory).**
     - Place after the last numbered implementation section, before Verification.

@@ -391,24 +391,24 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 
 ## OS Comparison
 
-| ⭐   | Feature         | 🪟 Win11                        | 🐧 Linux                       | 🚀 Impossible OS               |
-| --- | --------------- | -------------------------------- | ------------------------------- | -------------------------------- |
-| 💎   | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds        | ⬜ §1 ELF segment validation    |
-| 💎   | EBS retry       | ✅ bootmgr bounded retry loop   | ✅ efi-stub retry on map stale | ⬜ §2 (N=4 locked in TODO-01§9) |
-| 💎   | Kernel fallback | ✅ BCD alternate paths + WinRE  | ✅ GRUB rescue + fallback.cfg  | ⬜ §3 backup kernel path        |
-| 💎   | Serial detect   | ✅ ACPI SPCR + EMS headless     | ✅ earlycon=uart,io,0x3f8      | ⬜ §4 SPCR auto-detect          |
-| 💎   | GOP degrade     | ✅ Fallback to basic display    | ✅ efifb + simpledrm fallback  | ⬜ §5 text mode if GOP fails    |
-| 💎   | Mmap overflow   | ✅ Dynamic buffer reallocation  | ✅ Grow buf + retry loop       | ⬜ §6 mmap buffer growth        |
-| 💎   | boot.conf parse | ✅ BCD registry schema + edit   | ✅ grub.cfg + grub-mkconfig    | ⬜ §7 structured parse errors   |
-| 💎   | Alloc fallback  | ✅ Graduated pool sizes         | ✅ Dynamic retry allocation    | ⬜ §8 graduated alloc strategy  |
-| 💎   | SPCR serial     | ✅ EMS Emergency Management     | ✅ earlycon SPCR auto-detect   | ⬜ §10 SPCR table parse         |
-| 💎   | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer  | ✅ efi_stub disables watchdog  | ⬜ §11 watchdog re-arm/disable  |
-| 💎   | Mmap validate   | ✅ Descriptor version + size    | ✅ efi_stub sanity checks      | ⬜ §12 mmap descriptor verify   |
-| ⭐   | Error screen    | ❌ Generic BSOD (no boot ctx)   | ⚠️ GRUB text menu (no graphics)| ⬜ §9 GOP error splash + serial |
-| ⭐   | NVRAM errors    | ⚠️ Opaque status codes          | ❌ No persistent boot errors   | ⬜ §13 NVRAM error log persist  |
-| ⭐   | Boot QR         | ❌ No UEFI-phase QR codes       | ❌ No GRUB QR support          | ⬜ §14 QR code error link       |
-| 💎   | Handoff ABI     | ✅ BCD signature + protocol     | ✅ Multiboot2 / Linux boot     | ⬜ §15-§16 versioned handoff    |
-| 💎   | Offline repair  | ✅ Windows Recovery Environment | ✅ rescue/live ISO image       | ⬜ TODO-15 recovery partition   |
+| ⭐ | Feature         | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
+| -- | --------------- | --------------------------------- | ------------------------------- | -------------------------------- |
+| 💎 | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds         | ⬜ §1 ELF segment validation    |
+| 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ⬜ §2 (N=4 locked in TODO-01§9) |
+| 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ⬜ §3 backup kernel path        |
+| 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ⬜ §4 SPCR auto-detect          |
+| 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ⬜ §5 text mode if GOP fails    |
+| 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ⬜ §6 mmap buffer growth        |
+| 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ⬜ §7 structured parse errors   |
+| 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ⬜ §8 graduated alloc strategy  |
+| 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ⬜ §10 SPCR table parse         |
+| 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ⬜ §11 watchdog re-arm/disable  |
+| 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ⬜ §12 mmap descriptor verify   |
+| ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ⬜ §9 GOP error splash + serial |
+| ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ⬜ §13 NVRAM error log persist  |
+| ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ⬜ §14 QR code error link       |
+| 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ⬜ §15-§16 versioned handoff    |
+| 💎 | Offline repair  | ✅ Windows Recovery Environment  | ✅ rescue/live ISO image        | ⬜ TODO-15 recovery partition   |
 
 > **Parity:** 💎 rows track Win11 + Linux bootloader hardening. **⭐** rows are pre-kernel UX beyond typical UEFI/GRUB rescue. Capsule apply stays `TODO-18 §2`; multi-GOP enumeration stays `TODO-18 §4` with §5 here as timeout wrapper only. Full recovery partition / WinRE-class repair is `TODO-15-recovery-partition.md`, not duplicated here.
 

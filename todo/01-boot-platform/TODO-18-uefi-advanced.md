@@ -3,7 +3,7 @@
 > **Goal:** Advanced UEFI boot features beyond the core boot path: multi-OS boot menu, UEFI capsule firmware updates, W^X memory enforcement on UEFI runtime regions, multi-GPU GOP enumeration, extended Secure Boot state variables with enforcement policy, extended SMBIOS type parsing, and DBX revocation list synchronization. These are production polish features -- the OS boots and runs correctly without them.
 
 > [!NOTE]
-> Split from TODO-01 (UEFI Hardening & Secure Boot). TODO-01 covers the completed core (§1-§7, §11): UEFI runtime, variables, GOP, SMBIOS core types, Secure Boot detection, shim chain-loading, boot UX, serial log standardization. This TODO covers the deferred advanced features.
+> Split from TODO-01 (UEFI Hardening & Secure Boot). TODO-01 covers §1-§8 (runtime, variables, GOP, SMBIOS, Secure Boot state, shim, boot UX polish, serial klog) plus open §9 ops backlog (SBAT doc, DB registry mirror, EBS retry). This TODO covers deferred advanced features (multi-OS menu, capsule apply, W^X on RT pages, multi-GPU GOP, extended SB policy, SMBIOS extended types, DBX automation).
 
 ## Inputs
 
@@ -11,7 +11,9 @@
 - [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) -- boot info struct
 - [`include/kernel/uefi_runtime.h`](../../include/kernel/uefi_runtime.h) -- UEFI runtime wrappers
 - [`include/kernel/smbios.h`](../../include/kernel/smbios.h) -- SMBIOS parser
-- -> XREF: `TODO-01-uefi-hardening-secureboot.md` -- completed core (§1-§7, §11); this TODO extends it
+- -> XREF: `TODO-01-uefi-hardening-secureboot.md` -- core §1-§8 + §9 ops parity backlog; this TODO extends it
+- -> XREF: `TODO-01-uefi-hardening-secureboot.md §9` -- SBAT/DB registry/EBS retry must not duplicate capsule write path owned here §2
+- -> XREF: `TODO-02-bootloader-error-recovery.md §5` -- GOP timeout and headless fallback wrap enumeration from this file §4
 - -> XREF: `04-drivers-hardware/TODO-08-gpu-display-drivers.md §8` -- multi-head display consumes `boot_info.gop_handles[]` from §4
 - -> XREF: `02-kernel-core/TODO-17-kernel-security-hardening.md` -- kernel lockdown triggered by §5 enforcement policy
 - -> XREF: `04-drivers-hardware/TODO-04-acpi-power-management.md` -- chassis type from §6 distinguishes desktop vs laptop

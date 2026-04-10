@@ -40,7 +40,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
      - If validation finds `### N.M` or `**N.M ...**`, **remove** those headings and merge into a single list; never "fix" by renaming to bold `**N.M**`.
    - **`Depends On` column must use `§` prefix:** `§1, §3` not bare `1, 3`.
    - **Every section needs a `- [ ] Commit:` item.** Flag sections missing one.
-   - **Compact the OS Comparison table:** Header: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`. Cells: emoji + max 5 words. ~100 char rows max.
+   - **OS Comparison table (content + layout):** Required five-column header: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`. Keep each cell to **status emoji or glyph + at most five words**. **Preserve source column alignment:** do not delete trailing spaces inside cells or shrink columns to shorten lines. If you change any cell, re-pad **every row** in that table (including the separator row) so pipes line up in the raw markdown -- separator cells must be `-` repeated to each column width (minimum 3 hyphens per column). A soft **~150 character** line limit per table row applies to **wording inside cells** only (about **50% wider** than the old ~100 guidance -- padded tables are allowed to use that headroom). Meet it by shortening labels or splitting notes, never by stripping padding. **Do not add** `<!-- Sources: ... -->` URL dumps; **delete** any legacy line matching that pattern if found (URLs belong in the gap-analysis chat report or PR text, not tracked TODOs).
 7. **Win11/Linux parity and competitive edge scan (do not skip).**
    - **Parity gaps:** For each feature where Win11 AND Linux show ✅ but Impossible OS shows ⬜ or is missing: flag it. Verify it's covered by a section, another TODO (add XREF), or note as deferred with reason.
    - **Competitive edges:** Research what Win11 and Linux do poorly in this domain. For each opportunity, add a row marked ⭐ with ⬜ Planned and suggest a concrete section scope.
@@ -91,5 +91,5 @@ description: Validate a TODO file for structural completeness, Implementation Or
 - Do not implement code.
 - Do not turn this into a formatting-only cleanup pass; structural clarity is the goal.
 - Inputs path checks are existence-only -- do not read the referenced source files.
-- Preserve unrelated formatting; but the OS Comparison table MUST be compacted per step 6 every time -- this is NOT "reformatting", it is enforcing the project standard (~100 char rows, emoji + max 5 words per cell).
+- **OS Comparison:** enforce the step 6 **content** rules (header shape, short cells). **Never** leave the table ragged in source (pipes misaligned) and **never** strip inter-column padding to satisfy line length. Re-pad the full table when any cell changes. Idempotent runs should not re-touch an already aligned table for "compaction" alone.
 - Keep edits idempotent: running validation again on already-correct content should produce no further changes.

@@ -89,8 +89,6 @@ One-line intro explaining what this section does and why it matters.
 > **After §1-§2:** Impossible OS matches Windows 11 and Linux for core functionality.
 > **After §3:** Impossible OS surpasses both with exclusive feature.
 
-<!-- Sources: https://learn.microsoft.com/..., https://docs.kernel.org/... -->
-
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_relevant()` -- register in `src/kernel/test/test_runner.c`.
@@ -124,9 +122,9 @@ One-line intro explaining what this section does and why it matters.
 - Every section needs: checklist items (max 8-10), Commit line, Test checkpoint.
 - `Depends On` column always uses `§N` notation, never bare numbers.
 - The `> [!IMPORTANT] Current state:` callout after Goal is mandatory -- it's the implementer's starting context.
-- The OS Comparison table is **mandatory** -- populate from actual Win11/Linux research, add `<!-- Sources -->` comment.
+- The OS Comparison table is **mandatory** -- populate from actual Win11/Linux research. **Do not** add `<!-- Sources: ... -->` URL comment blocks in the file.
 - The Unit Tests section is **mandatory** -- derive test cases from implementation deliverables.
-- Keep tables compact. The `💎`/`⭐` column must always be present in both tables.
+- Keep OS Comparison cells short; pad columns so pipes align in source. The `💎`/`⭐` column must always be present in both tables.
 - Use ✅ = done, ⚠️ = partial, ⬜ = planned, ❌ = not available/not applicable.
 - Use callouts: `> [!NOTE]` resolved, `> [!WARNING]` risks, `> [!IMPORTANT]` blockers, `> [!TIP]` advantages.
 - **XREFs in Inputs** = structural deps (must exist before this TODO). **XREFs in sections** = implementation-time cross-refs.

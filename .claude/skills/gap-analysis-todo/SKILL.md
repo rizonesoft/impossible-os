@@ -29,7 +29,7 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
    - Run at least 3 targeted searches. Follow promising results with WebFetch to read documentation pages, blog posts, and Microsoft Learn articles.
    - Build a feature inventory: list every distinct feature, API, behavior, or capability that Win11 provides in this domain.
    - Note implementation details that affect how Impossible OS should implement the same feature.
-   - **Save URLs** for key findings -- these go into the `<!-- Sources -->` comment later.
+   - **Save URLs** for key findings -- cite them in the final **report to the user** (schema item 21), not in the TODO file.
 
 7. **Research Linux features in this domain.**
    - Use WebSearch with queries like: `"Linux kernel <topic>"`, `"Linux <topic> subsystem"`, `"Linux <topic> implementation"`, `"Linux <topic> features 2025 2026"`.
@@ -143,11 +143,12 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
 
 17. **Update the OS Comparison table.**
     - Add rows for each new feature discovered during research.
-    - Use a compact 5-column format with icon labels.
+    - Use the standard five-column layout with icon labels.
     - Header format: `⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS`
     - Keep cells short: status emoji + max 5 words.
+    - **Source alignment:** pad columns so pipes line up in the raw file; separator row uses `-` per column (min 3) matching column widths. If you edit one row, re-pad the entire table. Do not strip trailing spaces to shorten lines.
     - Add the summary paragraph after the table noting competitive position.
-    - **Add `<!-- Sources: URL1, URL2, ... -->` comment** after the summary with research URLs from steps 6-8.
+    - **Do not** add `<!-- Sources: ... -->` HTML comments to the TODO. Put research URLs in the **gap-analysis report to the user** (report schema item 21), not in tracked markdown.
 
 18. **Update the Unit Tests section.**
     - Add test cases for new sections' deliverables.
@@ -193,7 +194,7 @@ description: Deep gap analysis of a TODO file against all overlapping TODOs -- f
 
 - **Minimum 6 web searches** per analysis (3 Win11 + 3 Linux). More for complex domains.
 - **Follow at least 2 links** with WebFetch to get detailed feature descriptions, not just search summaries.
-- **Save source URLs** -- add `<!-- Sources: ... -->` to the OS Comparison table.
+- **Save source URLs** for the written report (schema item 21) -- not as `<!-- Sources: ... -->` in the TODO file.
 - **Distinguish fact from inference.** If a feature's existence is inferred from documentation rather than confirmed, note it as "likely" rather than "confirmed."
 - **Current information only.** Search for 2025/2026 content to avoid citing deprecated features. Windows 11 24H2+ and Linux 6.x+ are the comparison baseline.
 

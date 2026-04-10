@@ -56,7 +56,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Preserve existing formatting (table headers, icons, column structure).
     - **No N.M subnumbering:** never add `### N.M`, `**N.M ...**`, or extra heading levels that carve one `## N.` into sub-chapters. Keep **one continuous** `- [ ]` list under each `## N.`; put grouping in bullet wording. Need more structure -- add a new `##` section with the next number, not `17.1`/`17.2`.
 11. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
-12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. If new research was done during implementation, update the `<!-- Sources: ... -->` comment after the table.
+12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. **Do not** add or extend `<!-- Sources: ... -->` URL comment blocks; cite new research in the PR or chat only.
 13. **Codex adversarial review** (MANDATORY) -- run via the Codex plugin, NOT self-review. Self-review has implementation bias; Codex reads code fresh and catches things you rationalized away. Proven: section 1 Codex found 2 Critical issues (SMP race, TOCTOU) that self-review missed. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles, request severity-labeled findings. Command:
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"

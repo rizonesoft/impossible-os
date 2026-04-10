@@ -22,7 +22,7 @@
 - → XREF: `08-desktop-shell/TODO-03-service-manager.md §1` -- user account stub there is superseded by §1/§3 here; TODO-03 §1 is a forward reference to this TODO
 - → XREF: `07-graphics-ui/TODO-07-desktop-shell-features.md §1` -- wallpaper engine provides `wallpaper_set()` called in §6 after successful login
 - → XREF: `07-graphics-ui/TODO-02-animation-engine.md` -- `anim_mgr_add()` used in §6 shake animation and §5/§7 fade transitions
-- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md` -- Secure Boot chain ends at kernel entry; §11 CSPRNG is a separate runtime entropy source
+- -> XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §6` -- Secure Boot shim chain ends at kernel entry; CSPRNG / runtime entropy is separate (see this file and kernel crypto TODOs, not a TODO-01 section)
 - → XREF: `02-kernel-core/TODO-11-security-reference-monitor.md §9` -- full NT `NtFilterToken` + linked-token UAC kernel machinery; when TODO-11 §9 is implemented, §11 `privilege_request()` consent dialog should signal `NtRequestTokenElevation` rather than using `SYS_PRIVILEGE_REQUEST=59` directly
 
 ## Outcome

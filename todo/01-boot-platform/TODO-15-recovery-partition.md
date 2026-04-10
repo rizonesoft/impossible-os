@@ -13,7 +13,8 @@
 - `scripts/build.sh` -- disk image creation (needs recovery partition)
 - → XREF: `TODO-14-ab-boot-rollback.md §4` -- both slots failed → enter recovery
 - → XREF: `TODO-02-bootloader-error-recovery.md §9` -- boot failure error screen
-- → XREF: `TODO-01-uefi-hardening-secureboot.md §8` -- multi-OS detection
+- -> XREF: `TODO-02-bootloader-error-recovery.md` -- pre-kernel hardening (ELF, EBS, mmap, watchdog) surfaces failures before recovery shell
+- → XREF: `TODO-18-uefi-advanced.md §1` -- multi-OS boot menu (TODO-01 §8 is serial klog)
 
 ---
 

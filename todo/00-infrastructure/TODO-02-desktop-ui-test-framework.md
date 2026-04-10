@@ -15,8 +15,9 @@
 - `src/desktop/desktop.c` -- desktop surface, taskbar, wallpaper
 - `src/kernel/main/compositor.c` -- render loop, framebuffer compositing
 - `src/kernel/drivers/framebuffer.c` -- framebuffer access, page flip
-- → XREF: `TODO-03-kernel-test-framework.md §2` -- `make test` target (local headless QEMU, no CI QEMU)
-- → XREF: `TODO-01-usermode-test-framework.md §2` -- test launcher mechanism
+- `CLAUDE.md` -- `bash scripts/test.sh` / `make test` wiring (local headless QEMU; no CI QEMU in Actions)
+- → XREF: `TODO-01-usermode-test-framework.md §2` -- kernel launcher runs `test_*.exe` sequence
+- → XREF: `TODO-01-usermode-test-framework.md §11` -- shared skip/TAP/env matrix policy for automated UI runs
 
 ---
 

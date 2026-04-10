@@ -334,8 +334,6 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 
 After §1--§8, Impossible OS reaches Windows-style crash-dump parity for STOP codes, CONTEXT, module list, and MDMP on-disk layout; §5--§9 add writers, raw sink, recovery UI, and `dmpanalyze.exe`. Linux stays on ELF coredump; Impossible OS adds `ImpossibleOSInfoStream` and on-device `/compare`.
 
-<!-- Sources: https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/varieties-of-kernel-mode-dump-files, https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/active-memory-dump, https://learn.microsoft.com/en-us/windows/win32/api/minidumpapiset/ne-minidumpapiset-minidump_stream_type, https://docs.kernel.org/admin-guide/kdump/kdump.html, https://docs.kernel.org/admin-guide/ramoops.html -->
-
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_crashdump()` (see `src/kernel/test/test_runner.c` and `include/kernel/test/test.h`; same pattern as `TODO-04-peb-teb-user-abi.md` Unit Tests).
