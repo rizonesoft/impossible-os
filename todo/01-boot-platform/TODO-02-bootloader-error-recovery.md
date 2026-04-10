@@ -160,7 +160,7 @@ GOP operations can hang on broken firmware. This section adds error recovery aro
 - [x] If `SetMode()` fails: log mode index, try mode 0 as fallback, then fall through to firmware default
 - [x] If no GOP available at all: `fb.addr = 0`, `fb_available = 0`, return EFI_SUCCESS (headless boot continues)
 - [x] Log: `"[BOOT] GOP: 1 handle found"` or `"[BOOT] GOP: none found, headless boot"`. SetMode failure logged with mode index.
-- [ ] Commit: `"boot: GOP timeout and graceful degradation -- headless fallback"`
+- [x] Commit: `"boot: GOP timeout and graceful degradation -- headless fallback"` (18cc8d84)
 
 **Test checkpoint:** Boot on QEMU (single GOP) -- works as before. Serial shows `"GOP: 1 handles found"` (or `"headless boot"` if GOP absent). If available, test on multi-GPU VirtualBox config. Verify on bare metal -- firmware GOP behavior differs from emulated.
 
