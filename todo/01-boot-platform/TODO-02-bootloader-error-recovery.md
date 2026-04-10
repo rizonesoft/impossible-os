@@ -49,7 +49,7 @@
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | ELF bounds checking                            | --         |  [x]   |
-| 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [ ]   |
+| 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [x]   |
 | 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [ ]   |
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [ ]   |
 | 💎  |   5   | GOP timeout and graceful degradation           | --         |  [ ]   |
@@ -98,14 +98,14 @@ UEFI spec (Section 7.4.6) explicitly allows the memory map to change between Get
 > [!NOTE]
 > **Regression risk:** MEDIUM -- touches the most critical boot transition. If retry logic corrupts map_key, boot fails. Rollback: revert to 1-retry.
 
-- [ ] -> XREF: `TODO-01-uefi-hardening-secureboot.md §9` -- lock a single integer N for max `ExitBootServices` attempts in both TODOs (typical range 3-5 per UEFI practice) before implementing either section.
-- [ ] Replace current 1-retry with a bounded loop (max N attempts per agreed XREF)
-- [ ] Each attempt: `GetMemoryMap()` -> fresh `map_key` -> `ExitBootServices(map_key)`
-- [ ] Log each attempt: `"[BOOT] ExitBootServices attempt %u/N..."` with N from the shared policy above
-- [ ] On success: `"[BOOT] ExitBootServices OK (attempt %u)"`
-- [ ] On final failure: `"[CRIT] ExitBootServices failed after N attempts (status=0x%x)"` then render error screen (§9)
-- [ ] Re-populate boot_info memory map and runtime map on each retry (map may have changed)
-- [ ] Commit: `"boot: ExitBootServices retry loop per agreed UEFI policy"`
+- [x] -> XREF: `TODO-01-uefi-hardening-secureboot.md §9` -- N=4 locked (EBS_MAX_ATTEMPTS=4, commit 3c552022)
+- [x] Bounded retry loop: `for (ebs_attempt = 0; ebs_attempt < EBS_MAX_ATTEMPTS; ebs_attempt++)` in `bootx64.c`
+- [x] Each attempt: `get_memory_map()` -> fresh `map_key` -> `ExitBootServices(map_key)` with separate `ebs_status` tracking
+- [x] Retry logging: `"[BOOT] ExitBootServices retry\n"` per failed attempt
+- [x] On success: `"[BOOT] ExitBootServices OK\n"`
+- [x] On final failure: `"[CRIT] ExitBootServices failed after retries\n"` + HLT forever
+- [x] Re-populate `fill_memory_map()` + `fill_runtime_map()` on each retry after fresh `get_memory_map()`
+- [x] Commit: implemented in TODO-01 §9 commit 3c552022 (shared EBS retry + Secure Boot DB registry mirror)
 
 **Test checkpoint:** Difficult to test directly (requires firmware that changes map between calls). Verify normal boot still succeeds on all 4 platforms. Serial output should show the first `ExitBootServices attempt` log line using the agreed `N` from TODO-01 §9.
 
@@ -394,7 +394,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | ⭐ | Feature         | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
 | -- | --------------- | --------------------------------- | ------------------------------- | -------------------------------- |
 | 💎 | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds         | ✅ §1 phdr+seg+overlap+32M cap  |
-| 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ⬜ §2 (N=4 locked in TODO-01§9) |
+| 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ✅ §2 N=4 bounded + map refresh |
 | 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ⬜ §3 backup kernel path        |
 | 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ⬜ §4 SPCR auto-detect          |
 | 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ⬜ §5 text mode if GOP fails    |
