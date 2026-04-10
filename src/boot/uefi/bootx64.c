@@ -550,6 +550,89 @@ static void serial_early_print_hex16(UINT16 val)
     serial_early_putchar(hex[ val        & 0xF]);
 }
 
+/* Forward declaration */
+static void efi_print(CHAR16 *str);
+
+/* ---- Boot fatal error screen (S9) ----------------------------------------
+ * Replaces all `for (;;) hlt;` loops with a visible error display.
+ * Uses UEFI console (ConOut) for text and ConIn for keypress wait.
+ * Falls back to HLT if console is unavailable. */
+static void boot_fatal(const char *title, const char *detail)
+{
+    /* 1. Log to serial */
+    serial_early_print("[CRIT] BOOT FATAL: ");
+    serial_early_print(title);
+    serial_early_print("\n");
+    if (detail) {
+        serial_early_print("[CRIT]   ");
+        serial_early_print(detail);
+        serial_early_print("\n");
+    }
+
+    /* 2. Display on UEFI console if available */
+    if (gST && gST->ConOut) {
+        EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *con = gST->ConOut;
+
+        /* White text on blue background (BSOD style) */
+        if (con->SetAttribute)
+            con->SetAttribute(con, EFI_WHITE | EFI_BACKGROUND_BLUE);
+        if (con->ClearScreen)
+            con->ClearScreen(con);
+
+        efi_print(u"\r\n  Impossible OS -- Boot Error\r\n\r\n");
+
+        /* Title */
+        efi_print(u"  ERROR: ");
+        {
+            CHAR16 wide[128];
+            UINTN wi = 0;
+            while (title[wi] && wi < 126) {
+                wide[wi] = (CHAR16)(UINT8)title[wi];
+                wi++;
+            }
+            wide[wi] = 0;
+            efi_print(wide);
+        }
+        efi_print(u"\r\n");
+
+        /* Detail */
+        if (detail) {
+            efi_print(u"  ");
+            {
+                CHAR16 wide[256];
+                UINTN wi = 0;
+                while (detail[wi] && wi < 254) {
+                    wide[wi] = (CHAR16)(UINT8)detail[wi];
+                    wi++;
+                }
+                wide[wi] = 0;
+                efi_print(wide);
+            }
+            efi_print(u"\r\n");
+        }
+
+        /* Recovery steps */
+        efi_print(u"\r\n  Recovery:\r\n");
+        efi_print(u"  1. Check boot media is inserted\r\n");
+        efi_print(u"  2. Verify \\boot\\kernel.exe exists\r\n");
+        efi_print(u"  3. Press any key to reboot or power off\r\n\r\n");
+
+        /* Wait for keypress */
+        if (gST->ConIn) {
+            EFI_INPUT_KEY key;
+            /* Wait for keypress (poll -- WaitForEvent requires typed pointer) */
+            while (gST->ConIn->ReadKeyStroke(gST->ConIn, &key) != 0)
+                ;
+            /* Attempt cold reboot */
+            if (gST->RuntimeServices)
+                gST->RuntimeServices->ResetSystem(
+                    0 /* EfiResetCold */, 0, 0, (VOID *)0);
+        }
+    }
+
+    /* 3. Fallback: halt forever */
+    for (;;) __asm__ volatile("hlt");
+}
 
 /* --- Helper: print to UEFI console (for debug, before ExitBootServices) --- */
 static void efi_print(CHAR16 *str)
@@ -2619,9 +2702,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     status = load_kernel(&kernel_entry);
     g_boot_info_ptr->timing.kernel_load_end = boot_rdtsc();
     if (EFI_ERROR(status)) {
-        serial_early_print("[FAIL] load_kernel\n");
-        efi_print(u"[FAIL] Kernel load failed\r\n");
-        for (;;) __asm__ volatile("hlt");
+        boot_fatal("Kernel load failed",
+                   "The kernel ELF could not be loaded from boot media.");
     }
     serial_early_print("[BOOT] load_kernel OK\n");
     post_code16(POST16_BL_KERNEL_LOAD);
@@ -2669,9 +2751,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
                             &desc_version);
     if (EFI_ERROR(status)) {
-        serial_early_print("[FAIL] get_memory_map\n");
-        efi_print(u"[FAIL] GetMemoryMap failed\r\n");
-        for (;;) __asm__ volatile("hlt");
+        boot_fatal("GetMemoryMap failed",
+                   "UEFI firmware could not provide a memory map.");
     }
 
     fill_memory_map(mmap, map_size, desc_size);
@@ -2726,15 +2807,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
                                     &desc_version);
             if (EFI_ERROR(status)) {
-                serial_early_print("[CRIT] GetMemoryMap failed on retry\n");
-                for (;;) __asm__ volatile("hlt");
+                boot_fatal("GetMemoryMap failed on EBS retry",
+                           "Memory map refresh failed during ExitBootServices retry.");
             }
             fill_memory_map(mmap, map_size, desc_size);
             fill_runtime_map(mmap, map_size, desc_size);
         }
         if (EFI_ERROR(ebs_status)) {
-            serial_early_print("[CRIT] ExitBootServices failed after retries\n");
-            for (;;) __asm__ volatile("hlt");
+            boot_fatal("ExitBootServices failed",
+                       "UEFI ExitBootServices failed after 4 retry attempts.");
         }
     }
     serial_early_print("[BOOT] ExitBootServices OK\n");

@@ -57,7 +57,7 @@
 | 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [x]   |
 | 💎  |   7   | boot.conf validation and version field         | --         |  [x]   |
 | 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [x]   |
-| ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [ ]   |
+| ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [x]   |
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [ ]   |
 | 💎  |  11   | UEFI watchdog timer management                 | --         |  [ ]   |
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [ ]   |
@@ -228,13 +228,13 @@ Replace all `for (;;) hlt;` loops with a visible error screen rendered using the
 > [!NOTE]
 > **Regression risk:** LOW -- replaces existing HLT loops. If error screen rendering crashes, falls back to HLT (same as before, no worse).
 
-- [ ] Create `boot_fatal(const CHAR16 *title, const CHAR16 *detail)` function
-- [ ] Renders on UEFI console: red text with error code, description, and recovery steps
-- [ ] Recovery steps: `"1. Check boot media is inserted"`, `"2. Verify \boot\kernel.exe exists"`, `"3. Press any key to reboot or power off"`
-- [ ] If GOP is available: render a minimal error screen (white text on blue background, similar to BSOD)
-- [ ] Wait for keypress before halting (using UEFI `ConIn->ReadKeyStroke` if available)
-- [ ] Replace all 4 `for (;;) hlt;` instances with `boot_fatal()` calls
-- [ ] Log error to serial before displaying screen
+- [x] Create `boot_fatal(const char *title, const char *detail)` function (ASCII args, internally converts to UCS-2)
+- [x] Renders on UEFI console: white text on blue background (BSOD style) via `ConOut->SetAttribute` + `ClearScreen`
+- [x] Recovery steps: "1. Check boot media is inserted", "2. Verify \\boot\\kernel.exe exists", "3. Press any key to reboot or power off"
+- [x] Wait for keypress via `ConIn->ReadKeyStroke` polling loop; then attempts `ResetSystem(EfiResetCold)` before HLT fallback
+- [x] Replaced 4 `for (;;) hlt;` error paths with `boot_fatal()`: kernel load, GetMemoryMap, EBS retry GetMemoryMap, EBS final failure
+- [x] Log error to serial before displaying screen: `"[CRIT] BOOT FATAL: <title>"` + detail
+- [x] Added `EFI_SIMPLE_TEXT_INPUT_PROTOCOL` + `EFI_INPUT_KEY` + console color defines to `efi.h`; typed `ConIn` and `SetAttribute`
 - [ ] Commit: `"boot: visible error screen on fatal failures -- no more silent halts"`
 
 **Test checkpoint:** Delete `\boot\kernel.exe` from boot disk. Boot must show error screen with `"Kernel not found"` message and recovery instructions -- not a black screen. Verify on QEMU WHPX, TCG, and VBox. Verify on bare metal -- confirm ConIn keypress works on real keyboard.
@@ -404,7 +404,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ⬜ §10 SPCR table parse         |
 | 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ⬜ §11 watchdog re-arm/disable  |
 | 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ⬜ §12 mmap descriptor verify   |
-| ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ⬜ §9 GOP error splash + serial |
+| ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot |
 | ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ⬜ §13 NVRAM error log persist  |
 | ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ⬜ §14 QR code error link       |
 | 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ⬜ §15-§16 versioned handoff    |

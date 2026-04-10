@@ -188,12 +188,33 @@ typedef struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
     VOID                   *TestString;
     VOID                   *QueryMode;
     VOID                   *SetMode;
-    VOID                   *SetAttribute;
+    EFI_STATUS (EFIAPI *SetAttribute)(struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This, UINTN Attribute);
     EFI_TEXT_CLEAR_SCREEN    ClearScreen;
     VOID                   *SetCursorPosition;
     VOID                   *EnableCursor;
     VOID                   *Mode;
 } EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
+
+/* Console text colors */
+#define EFI_WHITE       0x0F
+#define EFI_LIGHTGRAY   0x07
+#define EFI_LIGHTRED    0x0C
+#define EFI_YELLOW      0x0E
+#define EFI_BLUE        0x01
+#define EFI_BACKGROUND_BLUE  0x10
+#define EFI_BACKGROUND_RED   0x40
+
+/* --- Simple Text Input Protocol (ConIn) --- */
+typedef struct {
+    UINT16 ScanCode;
+    CHAR16 UnicodeChar;
+} EFI_INPUT_KEY;
+
+typedef struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL {
+    EFI_STATUS (EFIAPI *Reset)(struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This, BOOLEAN ExtendedVerification);
+    EFI_STATUS (EFIAPI *ReadKeyStroke)(struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This, EFI_INPUT_KEY *Key);
+    VOID *WaitForKey;
+} EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
 
 /* --- Configuration Table --- */
 typedef struct {
@@ -488,7 +509,7 @@ typedef struct {
     CHAR16                         *FirmwareVendor;
     UINT32                          FirmwareRevision;
     EFI_HANDLE                      ConsoleInHandle;
-    VOID                           *ConIn;
+    EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *ConIn;
     EFI_HANDLE                      ConsoleOutHandle;
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut;
     EFI_HANDLE                      StandardErrorHandle;
