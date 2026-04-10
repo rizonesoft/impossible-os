@@ -77,5 +77,5 @@ description: Validate a TODO file for structural completeness, Implementation Or
 - Do not implement code.
 - Do not turn this into a formatting-only cleanup pass; structural clarity is the goal.
 - Inputs path checks are existence-only -- do not read the referenced source files.
-- Preserve document/table formatting (including OS header icons); do not reformat unrelated content.
+- Preserve unrelated formatting; but the OS Comparison table MUST be compacted per step 6 every time -- this is NOT "reformatting", it is enforcing the project standard (~100 char rows, emoji + max 5 words per cell).
 - Keep edits idempotent: running validation again on already-correct content should produce no further changes.
