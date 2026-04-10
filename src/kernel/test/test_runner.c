@@ -186,6 +186,7 @@ extern void test_register_sched(void);
 extern void test_register_registry(void);
 extern void test_register_boot_init(void);
 extern void test_register_klog(void);
+extern void test_register_uefi_boot(void);
 extern void test_register_ob(void);
 extern void test_register_security(void);
 extern void test_register_peb_teb(void);
@@ -223,6 +224,7 @@ void test_runner_init(void)
     /* Boot */
     test_register_boot_init();
     test_register_klog();
+    test_register_uefi_boot();
 
     /* Exec / Binary System */
     test_register_exec();

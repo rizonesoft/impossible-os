@@ -223,18 +223,11 @@ Win11 and major Linux distros surface firmware trust inventory (db/dbx counts), 
 
 > Wire into `test_runner_init()` via `test_register_uefi_boot()`. Tests must follow CLAUDE.md kernel test rules (no `boot_progress`, `panic`, live `serial_init`, etc.).
 
-- [ ] Create `src/kernel/test/test_uefi_boot.c` with:
-  - `uefi_rt_available()` returns 1 (runtime services preserved)
-  - `uefi_var_get()` for `L"SecureBoot"` returns STATUS_SUCCESS or STATUS_NOT_FOUND (never crashes)
-  - `uefi_var_get_u32()` / `uefi_var_set_u32()` roundtrip: write test GUID variable, read back, values match
-  - `boot_info.fb.width > 0` and `boot_info.fb.height > 0` (GOP negotiated)
-  - `boot_info.hidpi == 1` when `boot_info.fb.width >= 2560`, else 0
-  - `smbios_get_system_uuid()` returns non-zero UUID on real hardware
-  - `boot_info.secure_boot_enabled` matches UEFI `SecureBoot` variable
-  - `HKLM\HARDWARE\BIOS\BIOSVendor` is non-empty string
-  - After §9 ships: `HKLM\SYSTEM\SecureBoot\DbEntries` DWORD matches `secureboot_get_db_info()->db_entries` when firmware exposes `db`
-- [ ] Register in `test_runner_init()`: `test_register_uefi_boot()`
+- [x] Create `src/kernel/test/test_uefi_boot.c` with 9 suites: RT available, var_get SecureBoot, var_u32 roundtrip (Impossible OS vendor GUID), framebuffer width/height, HiDPI consistency, SMBIOS UUID, Secure Boot state consistency, registry BIOS vendor, SecureBoot DB mirror (DbEntries/DbxEntries match secureboot_get_db_info)
+- [x] Register in `test_runner_init()`: `test_register_uefi_boot()` under Boot category
 - [ ] Commit: `"test: add uefi_boot test suite"`
+
+> **Done:** 9 suites, 13 assertions -- registered in `test_runner_init()` (2026-04-10)
 
 **Test checkpoint:** `SUITE=boot` run shows new `test_uefi_boot` cases PASS; no forbidden boot/VPD calls from test body. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -248,7 +241,6 @@ Win11 and major Linux distros surface firmware trust inventory (db/dbx counts), 
 - [x] SMBIOS data appears in Registry under `HKLM\HARDWARE\BIOS\*` and `HKLM\HARDWARE\System\*`
 - [x] Signed build present when MOK keys exist; skipped silently when absent
 - [x] No interleaved serial lines under concurrent IRQ logging
-- [ ] Commit: `"boot: uefi-hardening core verified"`
 
 **Test checkpoint:** Repeat Verification bullets on a clean build after Unit Tests land; serial matches expected markers above on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
 
