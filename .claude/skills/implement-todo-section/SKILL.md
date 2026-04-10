@@ -86,7 +86,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Any checklist items in other sections affected by this implementation.
     - **PE export table sync:** if this section implemented new public APIs callable from user-mode, verify they're in `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c`.
     - **SSDT audit trigger:** if this section implemented or modified SSDT handlers, recommend running `/audit-ssdt` after commit to verify master table consistency.
-    - **Filed-in-owner check:** any follow-up `[ ]` item that names an owner (e.g., "tracked in TODO-XX §N", "owner: TODO-YY") must ALSO be filed as a checklist item in that owner section with reciprocal `→ XREF`. A note here alone is a dead-end paper trail -- file it in the owner now, before commit.
+    - **Filed-in-owner check:** any follow-up `[ ]` item that names an owner (e.g., "tracked in TODO-XX §N", "owner: TODO-YY") must ALSO be filed as a checklist item in that owner section with reciprocal `→ XREF`. If the owner section doesn't exist yet, find or create one via scope-gap protocol Branch C/D before filing. A note here alone is a dead-end paper trail.
 19. **Commit and push** -- only after steps 13-18 are ALL complete.
     - Use the section's `Commit:` line as the commit message.
     - Stage all changed source files, headers, the updated TODO file(s), and test changes together.
