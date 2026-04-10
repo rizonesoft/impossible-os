@@ -82,6 +82,11 @@ struct thread {
     /* --- Priority (for priority-aware scheduler and PI) --- */
     uint32_t    priority;       /* current effective priority (may be boosted) */
     uint32_t    base_priority;  /* original priority before any boost */
+    /* --- Per-thread kernel stack (for TSS.rsp0 on ring-3 threads) --- */
+    uint64_t    kernel_rsp;     /* top of this thread's kernel stack; 0 = kernel thread (no rsp0 switch) */
+    uint8_t    *kernel_stack_base;  /* PMM-allocated base (for pmm_free_frame at join); NULL for kmalloc'd stacks */
+    uint32_t    kernel_stack_pages; /* number of PMM pages; 0 = stack is kmalloc'd (use kfree on stack_base) */
+    uint32_t    _kstack_pad;    /* alignment padding */
 };
 
 /* Task Control Block */

@@ -45,7 +45,7 @@
 | ⭐  |   8   | §7 Scheduler stats + `/sys/sched` VFS file           | §1–§5 (meaningful data)             |  [ ]   |
 | 💎  |   9   | §9 CPU frequency scaling hook + P-state governors    | §7 (load measurement), ACPI         |  [ ]   |
 | 💎  |  10   | Worker Factory syscalls wired to SSDT                | §1, TODO-05 §4                      |  [ ]   |
-| 💎  |  11   | Per-thread kernel stack + TSS.rsp0 switching         | --                                   |  [ ]   |
+| 💎  |  11   | Per-thread kernel stack + TSS.rsp0 switching         | --                                   |  [/]   |
 
 > 💎 = parity -- Windows and Linux both implement priority queues, aging, CFS-equivalent, RT classes, affinity, tick calibration, and cpufreq; Impossible OS must match.
 > ⭐ = exclusive -- `SCHED_DEADLINE` with GRUB bandwidth reclaim and the unified `/sys/sched` all-threads snapshot are differentiators over the base Windows NT scheduler.
@@ -225,13 +225,13 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 
 → XREF: [`02-kernel-core/TODO-04-peb-teb-user-abi.md §14`](../02-kernel-core/TODO-04-peb-teb-user-abi.md) -- consumer (uthread_create per-thread kernel stack)
 
-- [ ] Add `uint64_t kernel_rsp` to `struct thread` in `include/kernel/sched/task.h` -- top of this thread's kernel stack (for TSS rsp0). Initialize to 0 for kernel threads (they don't need rsp0 switching).
-- [ ] Add `uint8_t *kernel_stack_base` and `uint32_t kernel_stack_pages` to `struct thread` -- ownership metadata for PMM-allocated kernel stacks (distinct from the `stack_base` field used by `kmalloc`'d kernel-thread stacks). Enables correct deallocation at `thread_join()`.
-- [ ] In `schedule()` (task.c context-switch path): after selecting the next thread, update `tss_set_kernel_stack(next_thread->kernel_rsp)` and `smp_this_cpu()->syscall_rsp0 = next_thread->kernel_rsp` regardless of whether the task changed. Skip only if `next_thread->kernel_rsp == 0` (kernel thread, no rsp0 needed).
-- [ ] `task_create()` initializes `threads[0].kernel_rsp = tasks[pid].kernel_rsp` so existing single-threaded tasks work unchanged.
-- [ ] `task_exec()` initializes `threads[0].kernel_rsp` from the allocated kernel stack.
-- [ ] `thread_join()`: free PMM-allocated kernel stacks via `pmm_free_frame()` per page (using `kernel_stack_base` + `kernel_stack_pages`), not `kfree()`. Keep `kfree(stack_base)` path for `kmalloc`'d kernel-thread stacks (check `kernel_stack_pages > 0` to distinguish).
-- [ ] Unit test: after `task_init()`, verify `threads[0].kernel_rsp != 0` for PID 0. Verify it matches `tasks[0].kernel_rsp`. (Pure read-only oracle check, no live boot calls.)
+- [x] Add `uint64_t kernel_rsp` to `struct thread` in `include/kernel/sched/task.h` -- top of this thread's kernel stack (for TSS rsp0). Initialize to 0 for kernel threads. Also added `kernel_stack_base`, `kernel_stack_pages`, `_kstack_pad`.
+- [x] Add `uint8_t *kernel_stack_base` and `uint32_t kernel_stack_pages` to `struct thread` -- ownership metadata for PMM-allocated kernel stacks. Enables correct deallocation at `thread_join()` via `thread_free_stacks()` helper.
+- [x] In `schedule()` and `schedule_now()`: changed from `tasks[next_task].kernel_rsp` to `tasks[next_task].threads[next_thread].kernel_rsp`. Reads per-thread, not per-task. Skip if 0 (kernel thread).
+- [x] ALL 4 task-creation paths mirror `kernel_rsp` into `threads[0]`: `task_create()`, `task_create_user()`, `task_fork()`, `task_exec()`. Codex design review caught `task_create_user` and `task_fork` which were missing from the original checklist.
+- [x] `task_cleanup()` walks secondary threads (tid 1+) and calls `thread_free_stacks()` for each. Thread 0 uses the task-level `kfree` path (unchanged).
+- [x] `thread_join()` refactored to use `thread_free_stacks()` helper. Handles both PMM-allocated (`kernel_stack_pages > 0`) and kmalloc'd (`stack_base != NULL`) stacks correctly.
+- [x] Unit test in `test_sched.c`: `test_per_thread_kernel_rsp_mirror` -- verifies PID 0 and PID 1 `threads[0].kernel_rsp == tasks[pid].kernel_rsp` mirror invariant. Pure read-only oracle check.
 - [ ] Commit: `"sched: per-thread kernel_rsp + TSS.rsp0 switching on intra-task thread switch"`
 
 **Test checkpoint:** Boot completes normally (single-threaded tasks unchanged). DPC worker, work queue, cmd.exe all still function. The scheduler log shows `[sched] rsp0 updated` on task switches. No kernel stack corruption on interrupt entry. Test on: QEMU WHPX (2 CPUs), TCG, VirtualBox, bare metal.
@@ -241,18 +241,18 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 ## OS Comparison
 
 
-| ⭐ | Feature                  | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS          |
-|----|--------------------------|-----------------------|------------------------|---------------------------|
+| ⭐ | Feature                  | 🪟 Win11              | 🐧 Linux               | 🚀 Impossible OS          |
+|----|--------------------------|------------------------|------------------------|----------------------------|
 | 💎 | O(1) priority queues     | ✅ 32 levels          | ✅ 40 nice levels      | ⬜ §1 40-level bsf        |
-| 💎 | Starvation prevention    | ✅ priority boost     | ✅ priority decay       | ⬜ §2 ticks_waiting aging |
-| 💎 | CFS fair CPU share       | ❌ fixed-priority     | ✅ CFS vruntime         | ⬜ §3 CFS per-level      |
-| 💎 | RT FIFO/RR classes       | ✅ REALTIME_CLASS     | ✅ SCHED_FIFO/RR       | ⬜ §4 FIFO+RR+CAP        |
+| 💎 | Starvation prevention    | ✅ priority boost     | ✅ priority decay      | ⬜ §2 ticks_waiting aging |
+| 💎 | CFS fair CPU share       | ❌ fixed-priority     | ✅ CFS vruntime        | ⬜ §3 CFS per-level       |
+| 💎 | RT FIFO/RR classes       | ✅ REALTIME_CLASS     | ✅ SCHED_FIFO/RR       | ⬜ §4 FIFO+RR+CAP         |
 | ⭐ | EDF deadline sched       | ❌ none               | ✅ SCHED_DEADLINE      | ⬜ §5 EDF+GRUB            |
-| 💎 | CPU affinity             | ✅ SetAffinityMask   | ✅ sched_setaffinity   | ⬜ §6 affinity_mask       |
+| 💎 | CPU affinity             | ✅ SetAffinityMask    | ✅ sched_setaffinity   | ⬜ §6 affinity_mask       |
 | ⭐ | All-thread sched view    | ❌ ETW only           | ❌ per-process /proc   | ⬜ §7 /sys/sched          |
-| 💎 | Tick calibration         | ✅ HAL HPET/TSC      | ✅ calibrate_delay     | ⬜ §8 RDTSC+HPET          |
+| 💎 | Tick calibration         | ✅ HAL HPET/TSC       | ✅ calibrate_delay     | ⬜ §8 RDTSC+HPET          |
 | 💎 | CPU freq scaling         | ✅ power plans        | ✅ cpufreq governors   | ⬜ §9 governor vtable     |
-| 💎 | Per-thread kernel stack  | ✅ per-KTHREAD        | ✅ per-task_struct      | ⬜ §11 TSS.rsp0 switch   |
+| 💎 | Per-thread kernel stack  | ✅ per-KTHREAD        | ✅ per-task_struct     | ✅ §11 per-thread rsp0    |
 
 > Parity: matches Win11+Linux on priority queues, aging, RT classes, affinity, tick calibration, cpufreq, per-thread kernel stacks. EDF deadline scheduling and unified /sys/sched thread snapshot are exclusive.
 

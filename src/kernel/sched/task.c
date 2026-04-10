@@ -277,6 +277,9 @@ boot_result_t task_init(void)
             tasks[i].threads[j].parent_task = 0;
             tasks[i].threads[j].exit_status = 0;
             tasks[i].threads[j].join_tid = -1;
+            tasks[i].threads[j].kernel_rsp = 0;
+            tasks[i].threads[j].kernel_stack_base = (uint8_t *)0;
+            tasks[i].threads[j].kernel_stack_pages = 0;
         }
     }
 
@@ -401,6 +404,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].rsp = (uint64_t)sp;
     tasks[pid].stack_base = stack;
     tasks[pid].kernel_rsp = (uint64_t)(stack + TASK_STACK_SIZE);
+    tasks[pid].threads[0].kernel_rsp = tasks[pid].kernel_rsp;
     tasks[pid].user_stack_base = (uint8_t *)0;  /* kernel task */
     tasks[pid].name = name;
     tasks[pid].parent_pid = current_task;
@@ -502,6 +506,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].rsp = (uint64_t)sp;
     tasks[pid].stack_base = kstack;
     tasks[pid].kernel_rsp = (uint64_t)(kstack + TASK_STACK_SIZE);
+    tasks[pid].threads[0].kernel_rsp = tasks[pid].kernel_rsp;
     tasks[pid].user_stack_base = ustack;
     tasks[pid].name = name;
     tasks[pid].parent_pid = current_task;
@@ -615,10 +620,15 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     current_thread = next_thread;
     sched_ticks = 0;
 
-    /* Update TSS rsp0 + per-CPU syscall_rsp0 for the correct kernel stack */
-    if (tasks[next_task].kernel_rsp) {
-        tss_set_kernel_stack(tasks[next_task].kernel_rsp);
-        smp_this_cpu()->syscall_rsp0 = tasks[next_task].kernel_rsp;
+    /* Update TSS rsp0 + per-CPU syscall_rsp0 for the incoming thread's
+     * kernel stack.  Per-thread, not per-task, so each thread in a
+     * multi-threaded process gets its own ring-0 entry stack. */
+    {
+        uint64_t next_krsp = tasks[next_task].threads[next_thread].kernel_rsp;
+        if (next_krsp) {
+            tss_set_kernel_stack(next_krsp);
+            smp_this_cpu()->syscall_rsp0 = next_krsp;
+        }
     }
 
     /* CR3 switch: load per-process page tables if different from current */
@@ -753,10 +763,15 @@ uint64_t schedule(struct interrupt_frame *frame)
     current_task = next_task;
     current_thread = next_thread;
 
-    /* Update TSS rsp0 + per-CPU syscall_rsp0 for the correct kernel stack */
-    if (tasks[next_task].kernel_rsp) {
-        tss_set_kernel_stack(tasks[next_task].kernel_rsp);
-        smp_this_cpu()->syscall_rsp0 = tasks[next_task].kernel_rsp;
+    /* Update TSS rsp0 + per-CPU syscall_rsp0 for the incoming thread's
+     * kernel stack.  Per-thread, not per-task, so each thread in a
+     * multi-threaded process gets its own ring-0 entry stack. */
+    {
+        uint64_t next_krsp = tasks[next_task].threads[next_thread].kernel_rsp;
+        if (next_krsp) {
+            tss_set_kernel_stack(next_krsp);
+            smp_this_cpu()->syscall_rsp0 = next_krsp;
+        }
     }
 
     /* CR3 switch: load per-process page tables if different from current */
@@ -884,6 +899,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].rsp = (uint64_t)sp;
     tasks[child_pid].stack_base = kstack;
     tasks[child_pid].kernel_rsp = (uint64_t)(kstack + TASK_STACK_SIZE);
+    tasks[child_pid].threads[0].kernel_rsp = tasks[child_pid].kernel_rsp;
     tasks[child_pid].user_stack_base = ustack;
     tasks[child_pid].name = tasks[parent_pid_val].name;
     tasks[child_pid].parent_pid = parent_pid_val;
@@ -1482,6 +1498,7 @@ int task_exec(const uint8_t *data, uint64_t size)
     tasks[pid].rsp = (uint64_t)sp;
     tasks[pid].stack_base = new_kstack;
     tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
+    tasks[pid].threads[0].kernel_rsp = tasks[pid].kernel_rsp;
     tasks[pid].exec_pending = 1;  /* prevent scheduler from overwriting this frame */
     tasks[pid].exec_pending_tick = uptime();  /* for stuck detection */
 
@@ -1626,6 +1643,8 @@ int32_t task_waitpid(uint32_t child_pid)
     }
 }
 
+static void thread_free_stacks(struct thread *thr);  /* defined below thread_join */
+
 void task_cleanup(uint32_t pid)
 {
     if (pid >= num_tasks || pid == 0)
@@ -1637,10 +1656,18 @@ void task_cleanup(uint32_t pid)
     /* Close all handles and free handle table */
     ob_handle_table_destroy(&tasks[pid].handle_table);
 
-    /* Free kernel stack */
+    /* Free kernel stack (task-level, thread 0) */
     if (tasks[pid].stack_base) {
         kfree(tasks[pid].stack_base);
         tasks[pid].stack_base = (uint8_t *)0;
+    }
+    tasks[pid].threads[0].kernel_rsp = 0;
+
+    /* Free per-thread kernel stacks for secondary threads (PMM-allocated) */
+    {
+        uint32_t ti;
+        for (ti = 1; ti < tasks[pid].num_threads; ti++)
+            thread_free_stacks(&tasks[pid].threads[ti]);
     }
 
     /* Free user stack */
@@ -1992,6 +2019,9 @@ int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].join_tid = -1;
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
+    t->threads[tid].kernel_rsp = 0;  /* kernel thread -- no rsp0 switching */
+    t->threads[tid].kernel_stack_base = (uint8_t *)0;
+    t->threads[tid].kernel_stack_pages = 0;
     t->num_threads++;
 
     /* Register thread with Object Manager */
@@ -2041,6 +2071,28 @@ void thread_exit(int32_t status)
         yield();
 }
 
+/* Free a dead thread's kernel stack.  If kernel_stack_pages > 0 the stack
+ * was PMM-allocated (future uthread path); free each page individually.
+ * Otherwise, the thread's stack_base was kmalloc'd -- use kfree. */
+static void thread_free_stacks(struct thread *thr)
+{
+    /* PMM-allocated kernel stack (per-thread, for user threads) */
+    if (thr->kernel_stack_pages > 0 && thr->kernel_stack_base) {
+        uint32_t i;
+        for (i = 0; i < thr->kernel_stack_pages; i++)
+            pmm_free_frame((uintptr_t)thr->kernel_stack_base +
+                           (uintptr_t)i * 4096);
+        thr->kernel_stack_base = (uint8_t *)0;
+        thr->kernel_stack_pages = 0;
+    }
+    /* kmalloc'd kernel stack (kernel threads via thread_create/kthread_create) */
+    if (thr->stack_base) {
+        kfree(thr->stack_base);
+        thr->stack_base = (uint8_t *)0;
+    }
+    thr->kernel_rsp = 0;
+}
+
 int32_t thread_join(uint32_t thread_id)
 {
     struct task *t = &tasks[current_task];
@@ -2055,13 +2107,7 @@ int32_t thread_join(uint32_t thread_id)
     /* If target thread is already dead, return immediately */
     if (t->threads[thread_id].state == THREAD_DEAD) {
         int32_t status = t->threads[thread_id].exit_status;
-
-        /* Free the thread's stack */
-        if (t->threads[thread_id].stack_base) {
-            kfree(t->threads[thread_id].stack_base);
-            t->threads[thread_id].stack_base = (uint8_t *)0;
-        }
-
+        thread_free_stacks(&t->threads[thread_id]);
         return status;
     }
 
@@ -2075,13 +2121,7 @@ int32_t thread_join(uint32_t thread_id)
     /* When we wake up, target thread has exited */
     {
         int32_t status = t->threads[thread_id].exit_status;
-
-        /* Free the thread's stack */
-        if (t->threads[thread_id].stack_base) {
-            kfree(t->threads[thread_id].stack_base);
-            t->threads[thread_id].stack_base = (uint8_t *)0;
-        }
-
+        thread_free_stacks(&t->threads[thread_id]);
         return status;
     }
 }
