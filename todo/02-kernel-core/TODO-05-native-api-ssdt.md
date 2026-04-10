@@ -1045,7 +1045,7 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [x] On every `NTSTATUS` return from a syscall: if `NT_ERROR(status)`, write the Win32 error translation into `TEB->LastErrorValue` (at `gs:[0x68]`) via `RtlNtStatusToDosError`. Wired in both SYSCALL (`syscall_fast.c`) and INT 0x2E (`syscall.c`) return paths.
 - [x] `RtlNtStatusToDosError` 12-entry table in `ssdt.c`: SUCCESS->0, ACCESS_DENIED->5, NO_MEMORY->8, INVALID_HANDLE->6, NAME_NOT_FOUND->2, NOT_IMPLEMENTED->50, INVALID_PARAMETER->87, BUFFER_TOO_SMALL->122, ACCESS_VIOLATION->998, PRIVILEGE_NOT_HELD->1314, UNSUCCESSFUL->1, NAME_COLLISION->183. Unknown->317.
 - [x] Kernel writes `TEB->LastErrorValue` only in the syscall return path; user-mode `SetLastError` writes `gs:[0x68]` directly without a syscall.
-- [ ] Commit: `"kernel: nt -- IOSB and TEB LastErrorValue propagation"`
+- [x] Commit: `"kernel: nt -- IOSB and TEB LastErrorValue propagation"` (607eb38b)
 
 **Test checkpoint:** After a failing `NtOpenFile` (non-existent path), `gs:[0x68]` == Win32 error code (2 = FILE_NOT_FOUND). After `NtReadFile`, IOSB `Status == STATUS_SUCCESS`, `Information == bytes_read`.
 
