@@ -107,7 +107,7 @@ jobs:
         with:
           name: system-disk
           path: build/system-disk.img
-          retention-days: 14
+          retention-days: 3
           if-no-files-found: error
 
       - name: Upload build log
@@ -116,4 +116,4 @@ jobs:
         with:
           name: build-log
           path: build/build.log
-          retention-days: 7
+          retention-days: 1
