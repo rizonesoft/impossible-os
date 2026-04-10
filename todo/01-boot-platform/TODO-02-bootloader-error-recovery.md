@@ -196,7 +196,7 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 - [x] Known-key whitelist: all existing keys + new `config_version` key
 - [x] `config_version` field added to `boot_config` struct (1 byte from `_reserved[]`). `config_version=1` in boot.conf sets it.
 - [x] Range validation: `debug`/`verbose`/`test` clamped to 0-1, `splash_timeout` clamped to 0-60 (default 3). Out-of-range logs `"[WARN] boot.conf: X out of range, using N"`
-- [ ] Commit: `"boot: validate boot.conf -- warn on unknown keys and out-of-range values"`
+- [x] Commit: `"boot: validate boot.conf -- warn on unknown keys and out-of-range values"` (83b2ccb8)
 
 **Test checkpoint:** Add `bogus_key=42` to boot.conf. Serial must show `"unknown key 'bogus_key'"`. Set `splash_timeout=999` -- serial must show `"out of range, using default 3"`.
 
