@@ -85,7 +85,7 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 - [x] Cap total kernel size at 32 MiB (`ELF_MAX_KERNEL_SIZE`): reject with clear error if exceeded
 - [x] Log each loaded segment: `"[BOOT] ELF segment N: paddr=0xHHHH filesz=N memsz=N"` via serial_early_print per segment
 - [x] On any validation failure: `"[FAIL] Kernel ELF corrupt: <reason>"` with specific error text for each check
-- [ ] Commit: `"boot: harden ELF parser -- bounds check all headers and segments"`
+- [x] Commit: `"boot: harden ELF parser -- bounds check all headers and segments"` (3c888540)
 
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
 
