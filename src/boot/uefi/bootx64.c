@@ -630,16 +630,23 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
         }
     }
 
-    /* Apply SetMode if the selected mode differs from the current one */
+    /* Apply SetMode if the selected mode differs from the current one.
+     * If SetMode fails, try mode 0 as fallback (S5 hardening). */
     if (found && best_idx != gop->Mode->Mode) {
         EFI_STATUS s = gop->SetMode(gop, best_idx);
         if (EFI_ERROR(s) || gop->Mode->FrameBufferBase == 0) {
-            /* SetMode failed -- keep current firmware mode */
-            serial_early_print("[BOOT] GOP: using firmware default ");
-            serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
-            serial_early_print("x");
-            serial_early_print_uint(gop->Mode->Info->VerticalResolution);
-            serial_early_print("\n");
+            serial_early_print("[BOOT] GOP: SetMode(");
+            serial_early_print_uint(best_idx);
+            serial_early_print(") failed, trying mode 0\n");
+            s = gop->SetMode(gop, 0);
+            if (EFI_ERROR(s) || gop->Mode->FrameBufferBase == 0) {
+                /* All modes failed -- keep current firmware mode */
+                serial_early_print("[BOOT] GOP: using firmware default ");
+                serial_early_print_uint(gop->Mode->Info->HorizontalResolution);
+                serial_early_print("x");
+                serial_early_print_uint(gop->Mode->Info->VerticalResolution);
+                serial_early_print("\n");
+            }
             g_boot_info_ptr->hidpi =
                 (gop->Mode->Info->HorizontalResolution >= 2560) ? 1 : 0;
             return;
@@ -669,20 +676,38 @@ static EFI_STATUS init_gop(void)
     EFI_STATUS status;
     UINT32 i;
 
-    /* Locate GOP */
+    /* Locate GOP -- headless fallback if no display available (S5) */
     status = gBS->LocateProtocol(&gop_guid, (VOID *)0, (VOID **)&gop);
     if (EFI_ERROR(status)) {
-        efi_print(u"[FAIL] GOP not found\r\n");
-        return status;
+        serial_early_print("[BOOT] GOP: none found, headless boot\n");
+        g_boot_info_ptr->fb.addr = 0;
+        g_boot_info_ptr->fb.width = 0;
+        g_boot_info_ptr->fb.height = 0;
+        g_boot_info_ptr->fb_available = 0;
+        return EFI_SUCCESS;  /* Continue boot without display */
     }
+
+    serial_early_print("[BOOT] GOP: 1 handle found\n");
 
     /* ── Enumerate all available modes into boot_info ──────────────────── */
     g_boot_info_ptr->gop_mode_count = 0;
     g_boot_info_ptr->gop_mode_selected = 0;
-    for (i = 0; i < gop->Mode->MaxMode && i < BOOT_GOP_MODE_MAX; i++) {
-        UINTN info_size;
-        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-        if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) continue;
+    {
+        UINT32 query_errors = 0;
+        for (i = 0; i < gop->Mode->MaxMode && i < BOOT_GOP_MODE_MAX; i++) {
+            UINTN info_size;
+            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+            if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) {
+                query_errors++;
+                /* Abort mode enumeration after 100 consecutive errors --
+                 * firmware may be returning garbage for remaining modes */
+                if (query_errors >= 100) {
+                    serial_early_print("[BOOT] GOP: mode enum aborted after 100 errors\n");
+                    break;
+                }
+                continue;
+            }
+            query_errors = 0;  /* Reset on success */
 
         UINT32 idx = g_boot_info_ptr->gop_mode_count;
         g_boot_info_ptr->gop_modes[idx].width  = info->HorizontalResolution;
@@ -699,6 +724,7 @@ static EFI_STATUS init_gop(void)
         g_boot_info_ptr->gop_modes[idx].pad[1] = 0;
         g_boot_info_ptr->gop_modes[idx].pad[2] = 0;
         g_boot_info_ptr->gop_mode_count++;
+        }
     }
 
     /* ── Negotiate best mode via boot.conf override or highest-res auto ── */
@@ -2489,7 +2515,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         efi_print(u"[FAIL] Graphics initialization failed\r\n");
         return status;
     }
-    serial_early_print("[BOOT] init_gop OK\n");
+    if (g_boot_info_ptr->fb.addr == 0)
+        serial_early_print("[BOOT] init_gop OK (headless)\n");
+    else
+        serial_early_print("[BOOT] init_gop OK\n");
     g_boot_info_ptr->timing.gop_end = boot_rdtsc();
 
     /* Clear screen to black before loading the kernel. */

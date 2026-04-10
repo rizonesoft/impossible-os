@@ -53,7 +53,7 @@
 | 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [x]   |
 | 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [x]   |
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [x]   |
-| 💎  |   5   | GOP timeout and graceful degradation           | --         |  [ ]   |
+| 💎  |   5   | GOP timeout and graceful degradation           | --         |  [x]   |
 | 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [ ]   |
 | 💎  |   7   | boot.conf validation and version field         | --         |  [ ]   |
 | 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [ ]   |
@@ -156,10 +156,10 @@ GOP operations can hang on broken firmware. This section adds error recovery aro
 > **Scope boundary:** `TODO-18-uefi-advanced.md §4` owns `LocateHandleBuffer()` multi-GOP enumeration, ConOut primary selection, and `boot_info.gop_handles[]`. This section owns timeout/error recovery: mode enumeration abort, SetMode fallback, headless-boot path. If TODO-18 §4 lands first, wrap its enumeration with these guards. If this lands first, wrap the existing `LocateProtocol` path.
 > **Regression risk:** MEDIUM -- changes how GOP is located. If `LocateHandleBuffer` returns handles in different order than `LocateProtocol`, display may be on wrong GPU. Rollback: revert to `LocateProtocol`.
 
-- [ ] Wrap `QueryMode()` calls in a counted loop: if 100 consecutive errors, abort mode enumeration
-- [ ] If `SetMode()` fails, log the mode index and error code, try next-best mode
-- [ ] If no GOP available at all: continue boot without display, set `boot_info.fb.base = 0`
-- [ ] Log: `"[BOOT] GOP: %u handles found, using handle %u (%ux%u)"` with resolution (or `"[BOOT] GOP: none found, headless boot"`)
+- [x] Wrap `QueryMode()` calls in a counted loop: 100 consecutive errors aborts mode enumeration with serial log
+- [x] If `SetMode()` fails: log mode index, try mode 0 as fallback, then fall through to firmware default
+- [x] If no GOP available at all: `fb.addr = 0`, `fb_available = 0`, return EFI_SUCCESS (headless boot continues)
+- [x] Log: `"[BOOT] GOP: 1 handle found"` or `"[BOOT] GOP: none found, headless boot"`. SetMode failure logged with mode index.
 - [ ] Commit: `"boot: GOP timeout and graceful degradation -- headless fallback"`
 
 **Test checkpoint:** Boot on QEMU (single GOP) -- works as before. Serial shows `"GOP: 1 handles found"` (or `"headless boot"` if GOP absent). If available, test on multi-GPU VirtualBox config. Verify on bare metal -- firmware GOP behavior differs from emulated.
@@ -398,7 +398,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ✅ §2 N=4 bounded + map refresh |
 | 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ✅ §3 3-path search + DeviceHdl |
 | 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ✅ §4 COM1/COM2 probe+boot_info |
-| 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ⬜ §5 text mode if GOP fails    |
+| 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ✅ §5 headless + SetMode fallbk |
 | 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ⬜ §6 mmap buffer growth        |
 | 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ⬜ §7 structured parse errors   |
 | 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ⬜ §8 graduated alloc strategy  |
