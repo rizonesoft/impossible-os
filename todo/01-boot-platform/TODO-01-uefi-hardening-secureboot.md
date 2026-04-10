@@ -225,7 +225,7 @@ Win11 and major Linux distros surface firmware trust inventory (db/dbx counts), 
 
 - [x] Create `src/kernel/test/test_uefi_boot.c` with 9 suites: RT available, var_get SecureBoot, var_u32 roundtrip (Impossible OS vendor GUID), framebuffer width/height, HiDPI consistency, SMBIOS UUID, Secure Boot state consistency, registry BIOS vendor, SecureBoot DB mirror (DbEntries/DbxEntries match secureboot_get_db_info)
 - [x] Register in `test_runner_init()`: `test_register_uefi_boot()` under Boot category
-- [ ] Commit: `"test: add uefi_boot test suite"`
+- [x] Commit: `"test: add uefi_boot test suite"` (07ce1ac3)
 
 > **Done:** 9 suites, 13 assertions -- registered in `test_runner_init()` (2026-04-10)
 
