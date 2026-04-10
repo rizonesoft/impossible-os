@@ -104,25 +104,25 @@ static uint32_t s_supported;                 /* EFI_RT_SUPPORTED_* bitmask */
 /* ---- Internal helpers ---- */
 
 /* Build virtual address map with identity mapping (virt = phys) and call
- * SetVirtualAddressMap().  Can only be called ONCE -- irreversible. */
-static void call_set_virtual_address_map(void)
+ * SetVirtualAddressMap().  Can only be called ONCE -- irreversible.
+ * Returns 0 on success, -1 on failure. */
+static int call_set_virtual_address_map(void)
 {
     uint32_t count = g_boot_info.rt_mmap_count;
-    uint32_t desc_size = g_boot_info.uefi_mmap_desc_size;
     uint32_t desc_version = g_boot_info.uefi_mmap_desc_version;
 
     if (count == 0) {
         klog(LOG_WARN, "UEFI", "No runtime memory regions -- skipping SVAM");
-        return;
+        return 0;  /* not a failure -- firmware may have no RT regions */
     }
 
-    /* Use the UEFI descriptor size.  If it's smaller than our struct, fall
-     * back to our struct size (shouldn't happen on spec-compliant firmware). */
-    if (desc_size < sizeof(struct efi_memory_descriptor))
-        desc_size = (uint32_t)sizeof(struct efi_memory_descriptor);
+    /* We build the virtual map ourselves, so the descriptor stride matches
+     * our struct size.  The firmware's desc_size may be larger (extended
+     * fields), but we don't include those -- use our own stride. */
+    uint32_t desc_size = (uint32_t)sizeof(struct efi_memory_descriptor);
 
     /* Build the virtual map in a stack-local array.
-     * 64 entries × 40 bytes = 2560 bytes -- fits on the kernel stack. */
+     * 64 entries x 40 bytes = 2560 bytes -- fits on the kernel stack. */
     struct efi_memory_descriptor vmap[BOOT_RT_MMAP_MAX];
 
     uint32_t i;
@@ -146,11 +146,11 @@ static void call_set_virtual_address_map(void)
     if (status != UEFI_SUCCESS) {
         klog(LOG_ERROR, "UEFI", "SetVirtualAddressMap FAILED: 0x%llx",
              (unsigned long long)status);
-        s_available = 0;
-        return;
+        return -1;
     }
 
     klog(LOG_INFO, "UEFI", "SetVirtualAddressMap OK");
+    return 0;
 }
 
 /* Read EFI_RT_PROPERTIES_TABLE from config table to determine which
@@ -203,7 +203,10 @@ boot_result_t uefi_runtime_init(void)
     if (g_boot_info.uefi_runtime.svam_called) {
         klog(LOG_INFO, "UEFI", "SetVirtualAddressMap already called by loader");
     } else {
-        call_set_virtual_address_map();
+        if (call_set_virtual_address_map() != 0) {
+            klog(LOG_ERROR, "UEFI", "Runtime services: UNAVAILABLE (SVAM failed)");
+            return BOOT_DEGRADED;
+        }
     }
 
     /* Validate critical function pointers */

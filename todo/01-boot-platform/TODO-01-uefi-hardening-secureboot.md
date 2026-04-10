@@ -73,6 +73,8 @@ Before `ExitBootServices()`, save UEFI runtime function pointers into `boot_info
 
 **Test checkpoint:** Serial shows `[UEFI] SetVirtualAddressMap OK` and per-service OK or UNAVAILABLE lines; kernel does not fault when calling preserved RT entry points after EBS. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-04-11 -- Codex adversarial review found 2 valid issues (SVAM failure not propagated, descriptor stride mismatch on extended firmware), both fixed. 1 unit test wired (`test_uefi_rt_available`), build passes.
+
 ---
 
 ## 2. UEFI Variable Services
