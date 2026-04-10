@@ -4,21 +4,28 @@
 
 > [!IMPORTANT]
 > **Current state:** Audit identified: ELF parser with zero bounds checking (can write to any address), ExitBootServices with only 1 retry (spec allows many), kernel missing = silent HLT, serial assumes COM1 exists, first filesystem protocol used blindly (wrong disk on multi-boot), memory map capped at 256 entries with silent truncation, GOP operations with no timeout, boot.conf missing = silent defaults. Every one of these has caused real boot failures on hardware.
+>
+> **Code-truth (2026-04-10):** `src/boot/uefi/bootx64.c` `load_kernel()` (from ~956) checks ELF magic/class/machine only; still indexes `ehdr->e_phoff` / `phdr[i]` without file-bounds or overlap checks; opens only `\\boot\\kernel.exe`; allocates 16 MiB only (no 32/8 fallback); `BOOT_MMAP_MAX_ENTRIES` is 256 (`#define` ~21); `ExitBootServices` has one remap+retry (~2412-2419); `SetWatchdogTimer(0,...)` disables firmware watchdog (~2280) without re-arm. `include/kernel/boot_info.h` has no `BOOT_INFO_MAGIC` / `boot_info_header` yet (`confirmed` via grep).
 
 ---
 
 ## Inputs
 
-- `src/boot/uefi/bootx64.c` -- UEFI bootloader (2384 lines, 15+ fragility points)
-- `src/boot/entry.asm` -- 32-to-64-bit mode transition
-- `include/kernel/boot_info.h` -- boot data structures (boot_info at 0x10000)
-- `src/kernel/acpi.c` -- ACPI table parsing (SPCR table lookup for §10)
-- → XREF: `TODO-01-uefi-hardening-secureboot.md §7` -- boot UX polish
-- → XREF: `TODO-05-bare-metal-hardening.md §7` -- resilient boot with graceful degradation
-- → XREF: `TODO-03-boot-device-discovery.md §1` -- boot device identification (uses filesystem protocol correctly)
-- → XREF: `TODO-07-boot-diagnostics.md §5` -- panic forensic evidence struct; §13 here provides the bootloader-stage error codes that §5 persists across reboots
-- → XREF: `TODO-07-boot-diagnostics.md §6` -- panic QR code; §14 here implements the UEFI-stage QR code before kernel handoff
-- → XREF: `TODO-16-boot-watchdog.md §1` -- kernel-stage software watchdog; §11 here covers the UEFI-stage watchdog before ExitBootServices
+- [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) -- UEFI bootloader (2384 lines, 15+ fragility points)
+- [`src/boot/entry.asm`](../../src/boot/entry.asm) -- 32-to-64-bit mode transition
+- [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) -- boot data structures (boot_info at 0x10000)
+- [`src/kernel/main/boot_hw.c`](../../src/kernel/main/boot_hw.c) -- Phase 0 `boot_info` memcpy path (§16)
+- [`src/kernel/acpi.c`](../../src/kernel/acpi.c) -- ACPI table parsing (SPCR table lookup for §10)
+- -> XREF: `TODO-01-uefi-hardening-secureboot.md §7` -- boot UX polish
+- -> XREF: `TODO-01-uefi-hardening-secureboot.md §9` -- shared max `ExitBootServices` attempt count with §2 here (single N in both TODOs before coding)
+- -> XREF: `TODO-05-bare-metal-hardening.md §7` -- resilient boot with graceful degradation
+- -> XREF: `TODO-03-boot-device-discovery.md §1` -- boot device identification (uses filesystem protocol correctly)
+- -> XREF: `TODO-07-boot-diagnostics.md §5` -- panic forensic evidence struct; §13 here provides the bootloader-stage error codes that §5 persists across reboots
+- -> XREF: `TODO-07-boot-diagnostics.md §6` -- panic QR code; §14 here implements the UEFI-stage QR code before kernel handoff
+- -> XREF: `TODO-16-boot-watchdog.md §1` -- kernel-stage software watchdog; §11 here covers the UEFI-stage watchdog before ExitBootServices
+- -> XREF: [`02-kernel-core/TODO-01-kernel-init-sequencing.md §2`](../02-kernel-core/TODO-01-kernel-init-sequencing.md) -- boot_info ABI verify follow-up (context for §15-§16)
+- -> XREF: `TODO-18-uefi-advanced.md §4` -- multi-GOP enumeration owner; §5 here wraps timeout and headless fallback only
+- -> XREF: `TODO-15-recovery-partition.md` -- WinRE-style offline ESP repair and recovery shell (out of scope here; pre-kernel error UX only in this TODO)
 
 ---
 
@@ -26,13 +33,14 @@
 
 - Every EFI call in `bootx64.c` has error handling with human-readable diagnostics on both serial and screen.
 - ELF parser validates all header fields, segment offsets, and memory ranges before copying.
-- ExitBootServices retries up to 5 times per UEFI specification.
+- ExitBootServices uses a bounded multi-retry loop per UEFI spec and the shared policy with `TODO-01-uefi-hardening-secureboot.md §9`.
 - Missing kernel triggers fallback search across 3 paths before giving up.
 - Serial port is probed before use; ACPI SPCR table consulted first, then I/O probe with COM1/COM2 fallback.
 - Memory map overflow detected and logged (cap raised to 512 entries); descriptors validated for consistency.
 - UEFI watchdog timer re-armed after disabling default to catch bootloader hangs.
 - Fatal errors render a visible error screen with error code, recovery instructions, and QR code.
 - Boot error codes persisted in UEFI NVRAM for next-boot diagnostics.
+- Offline recovery partition chains after unrecoverable boot failures (-> XREF: `TODO-15-recovery-partition.md`).
 
 ---
 
@@ -40,21 +48,22 @@
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | ELF bounds checking                            | --          |  [ ]   |
-| 💎  |   2   | ExitBootServices retry loop (5 attempts)       | --          |  [ ]   |
-| 💎  |   3   | Fallback kernel search (3 paths)               | --          |  [ ]   |
-| 💎  |   4   | Serial port probe and COM2 fallback            | --          |  [ ]   |
-| 💎  |   5   | GOP timeout and graceful degradation           | --          |  [ ]   |
-| 💎  |   6   | Memory map overflow detection (512 entries)    | --          |  [ ]   |
-| 💎  |   7   | boot.conf validation and version field         | --          |  [ ]   |
-| 💎  |   8   | Kernel load allocation fallback (32--16--8 MiB) | --          |  [ ]   |
-| ⭐  |   9   | Boot failure error screen                      | §1--§8     |  [ ]   |
+| 💎  |   1   | ELF bounds checking                            | --         |  [ ]   |
+| 💎  |   2   | ExitBootServices retry loop (bounded)          | --         |  [ ]   |
+| 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [ ]   |
+| 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [ ]   |
+| 💎  |   5   | GOP timeout and graceful degradation           | --         |  [ ]   |
+| 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [ ]   |
+| 💎  |   7   | boot.conf validation and version field         | --         |  [ ]   |
+| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [ ]   |
+| ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [ ]   |
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [ ]   |
-| 💎  |  11   | UEFI watchdog timer management                 | --          |  [ ]   |
+| 💎  |  11   | UEFI watchdog timer management                 | --         |  [ ]   |
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [ ]   |
 | ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [ ]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [ ]   |
-| 💎  |  15   | boot_info ABI handoff validation (header magic) | --         |  [ ]   |
+| 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [ ]   |
+| 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -64,6 +73,9 @@
 ## 1. ELF Bounds Checking
 
 Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted binaries.
+
+> [!NOTE]
+> **Regression risk:** LOW -- additive validation. Existing valid kernels pass all checks. If a check false-positives, remove it specifically.
 
 - [ ] Validate `e_phoff` is within file bounds: `e_phoff + e_phnum * sizeof(Elf64_Phdr) <= file_size`
 - [ ] Validate each `PT_LOAD` segment: `p_offset + p_filesz <= file_size`
@@ -77,25 +89,25 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
 
-**Regression risk:** LOW -- additive validation. Existing valid kernels pass all checks. If a check false-positives, remove it specifically.
-
 ---
 
 ## 2. ExitBootServices Retry Loop
 
 UEFI spec (Section 7.4.6) explicitly allows the memory map to change between GetMemoryMap and ExitBootServices. Real hardware with background events (thermal, EC) can cause repeated map_key mismatches.
 
-- [ ] Replace current 1-retry with a loop of up to 5 attempts
-- [ ] Each attempt: `GetMemoryMap()` → fresh `map_key` → `ExitBootServices(map_key)`
-- [ ] Log each attempt: `"[BOOT] ExitBootServices attempt %u/5..."`
+> [!NOTE]
+> **Regression risk:** MEDIUM -- touches the most critical boot transition. If retry logic corrupts map_key, boot fails. Rollback: revert to 1-retry.
+
+- [ ] -> XREF: `TODO-01-uefi-hardening-secureboot.md §9` -- lock a single integer N for max `ExitBootServices` attempts in both TODOs (typical range 3-5 per UEFI practice) before implementing either section.
+- [ ] Replace current 1-retry with a bounded loop (max N attempts per agreed XREF)
+- [ ] Each attempt: `GetMemoryMap()` -> fresh `map_key` -> `ExitBootServices(map_key)`
+- [ ] Log each attempt: `"[BOOT] ExitBootServices attempt %u/N..."` with N from the shared policy above
 - [ ] On success: `"[BOOT] ExitBootServices OK (attempt %u)"`
-- [ ] On final failure: `"[CRIT] ExitBootServices failed after 5 attempts (status=0x%x)"` then render error screen (§9)
+- [ ] On final failure: `"[CRIT] ExitBootServices failed after N attempts (status=0x%x)"` then render error screen (§9)
 - [ ] Re-populate boot_info memory map and runtime map on each retry (map may have changed)
-- [ ] Commit: `"boot: ExitBootServices retry loop -- 5 attempts per UEFI spec"`
+- [ ] Commit: `"boot: ExitBootServices retry loop per agreed UEFI policy"`
 
-**Test checkpoint:** Difficult to test directly (requires firmware that changes map between calls). Verify normal boot still succeeds on all 4 platforms. Serial output should show `"attempt 1/5"`.
-
-**Regression risk:** MEDIUM -- touches the most critical boot transition. If retry logic corrupts map_key, boot fails. Rollback: revert to 1-retry.
+**Test checkpoint:** Difficult to test directly (requires firmware that changes map between calls). Verify normal boot still succeeds on all 4 platforms. Serial output should show the first `ExitBootServices attempt` log line using the agreed `N` from TODO-01 §9.
 
 ---
 
@@ -103,7 +115,10 @@ UEFI spec (Section 7.4.6) explicitly allows the memory map to change between Get
 
 If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 
-- [ ] Try paths in order: `\boot\kernel.exe` → `\kernel.exe` → `\EFI\ImpossibleOS\kernel.exe`
+> [!NOTE]
+> **Regression risk:** LOW -- additive search paths. Default path unchanged.
+
+- [ ] Try paths in order: `\boot\kernel.exe` -> `\kernel.exe` -> `\EFI\ImpossibleOS\kernel.exe`
 - [ ] Log each attempt: `"[BOOT] Trying %s..."` with path
 - [ ] On success: `"[BOOT] Kernel found at %s"` and continue
 - [ ] On all paths failing: `"[FAIL] Kernel not found. Searched: \boot\kernel.exe, \kernel.exe, \EFI\ImpossibleOS\kernel.exe"` then render error screen (§9)
@@ -112,13 +127,14 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 
 **Test checkpoint:** Rename `\boot\kernel.exe` to `\kernel.exe` on EFI partition. Boot must succeed with serial showing `"Trying \boot\kernel.exe... not found"` then `"Kernel found at \kernel.exe"`. Verify on QEMU TCG. Confirm default path works on all 4 platforms.
 
-**Regression risk:** LOW -- additive search paths. Default path unchanged.
-
 ---
 
 ## 4. Serial Port Probe and COM2 Fallback
 
 Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializing it can write to unrelated I/O ports.
+
+> [!NOTE]
+> **Regression risk:** LOW -- additive probe before existing init. If probe gives false negative, serial is just silent.
 
 - [ ] Before `serial_early_init()`: write 0xAE to scratch register (0x3F8+7), read back -- if mismatch, COM1 absent
 - [ ] If COM1 absent: try COM2 at 0x2F8 with same probe
@@ -129,16 +145,15 @@ Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializ
 
 **Test checkpoint:** On QEMU (always has COM1), serial output works as before. On VirtualBox with serial disabled, bootloader skips serial silently. Verify no I/O port side effects on bare metal.
 
-**Regression risk:** LOW -- additive probe before existing init. If probe gives false negative, serial is just silent.
-
 ---
 
 ## 5. GOP Timeout and Graceful Degradation
 
-GOP operations can hang on broken firmware. This section adds error recovery around GOP operations -- timeouts, fallback modes, and headless boot. Multi-GPU handle enumeration and primary display selection are owned by TODO-01 §12; this section adds the defensive wrappers around whatever GOP path is used.
+GOP operations can hang on broken firmware. This section adds error recovery around GOP operations -- timeouts, fallback modes, and headless boot. Multi-GPU handle enumeration and primary display selection are owned by `TODO-18-uefi-advanced.md §4`; TODO-01 §3 owns single-GOP negotiation. This section adds defensive wrappers around whichever GOP path is active.
 
 > [!NOTE]
-> **Scope boundary:** TODO-01 §12 owns `LocateHandleBuffer()` GOP enumeration, ConOut primary selection, and `boot_info.gop_handles[]`. This section owns timeout/error recovery: mode enumeration abort, SetMode fallback, headless-boot path. If TODO-01 §12 lands first, wrap its enumeration with these guards. If this lands first, wrap the existing `LocateProtocol` path.
+> **Scope boundary:** `TODO-18-uefi-advanced.md §4` owns `LocateHandleBuffer()` multi-GOP enumeration, ConOut primary selection, and `boot_info.gop_handles[]`. This section owns timeout/error recovery: mode enumeration abort, SetMode fallback, headless-boot path. If TODO-18 §4 lands first, wrap its enumeration with these guards. If this lands first, wrap the existing `LocateProtocol` path.
+> **Regression risk:** MEDIUM -- changes how GOP is located. If `LocateHandleBuffer` returns handles in different order than `LocateProtocol`, display may be on wrong GPU. Rollback: revert to `LocateProtocol`.
 
 - [ ] Wrap `QueryMode()` calls in a counted loop: if 100 consecutive errors, abort mode enumeration
 - [ ] If `SetMode()` fails, log the mode index and error code, try next-best mode
@@ -148,13 +163,14 @@ GOP operations can hang on broken firmware. This section adds error recovery aro
 
 **Test checkpoint:** Boot on QEMU (single GOP) -- works as before. Serial shows `"GOP: 1 handles found"` (or `"headless boot"` if GOP absent). If available, test on multi-GPU VirtualBox config. Verify on bare metal -- firmware GOP behavior differs from emulated.
 
-**Regression risk:** MEDIUM -- changes how GOP is located. If `LocateHandleBuffer` returns handles in different order than `LocateProtocol`, display may be on wrong GPU. Rollback: revert to `LocateProtocol`.
-
 ---
 
 ## 6. Memory Map Overflow Detection
 
 If firmware reports more memory regions than `BOOT_MMAP_MAX_ENTRIES` (currently 256), the array silently truncates.
+
+> [!NOTE]
+> **Regression risk:** LOW -- increases array size (adds ~4 KiB to boot_info). Verify boot_info doesn't overflow its 4 KiB page at 0x10000.
 
 - [ ] Increase `BOOT_MMAP_MAX_ENTRIES` from 256 to 512 in `boot_info.h`
 - [ ] Before filling mmap array: compare descriptor count against max
@@ -165,13 +181,14 @@ If firmware reports more memory regions than `BOOT_MMAP_MAX_ENTRIES` (currently 
 
 **Test checkpoint:** Normal boot (typically ~130 entries) works as before on all 4 platforms. Add a `mmap_truncated` field to boot_info and verify kernel reads it. Verify on bare metal -- real firmware often has more entries than QEMU.
 
-**Regression risk:** LOW -- increases array size (adds ~4 KiB to boot_info). Verify boot_info doesn't overflow its 4 KiB page at 0x10000.
-
 ---
 
 ## 7. boot.conf Validation
 
 Malformed boot.conf should produce warnings, not silent misbehavior.
+
+> [!NOTE]
+> **Regression risk:** LOW -- validation is additive. Valid configs produce no new warnings.
 
 - [ ] Check file size: if > 4096 bytes, log `"[WARN] boot.conf too large (%u bytes), truncating"` and cap read
 - [ ] After parsing each key=value: check key against whitelist of known keys
@@ -183,13 +200,14 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 
 **Test checkpoint:** Add `bogus_key=42` to boot.conf. Serial must show `"unknown key 'bogus_key'"`. Set `splash_timeout=999` -- serial must show `"out of range, using default 3"`.
 
-**Regression risk:** LOW -- validation is additive. Valid configs produce no new warnings.
-
 ---
 
 ## 8. Kernel Load Memory Allocation Fallback
 
 If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes.
+
+> [!NOTE]
+> **Regression risk:** LOW -- tries larger first, same result as current behavior (which allocates 16 MiB).
 
 - [ ] Try `AllocatePages(32 MiB)` first
 - [ ] If fails: try 16 MiB, then 8 MiB
@@ -197,17 +215,18 @@ If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes.
 - [ ] If all fail: `"[FAIL] Cannot allocate kernel buffer (tried 32/16/8 MiB)"` then error screen (§9)
 - [ ] After loading kernel: verify actual kernel file size fits in allocated buffer
 - [ ] Verify allocated buffer doesn't overlap boot_info (0x10000) or framebuffer region
-- [ ] Commit: `"boot: kernel allocation fallback -- 32→16→8 MiB with overlap check"`
+- [ ] Commit: `"boot: kernel allocation fallback -- 32-16-8 MiB with overlap check"`
 
 **Test checkpoint:** Normal boot works (kernel is ~1.5 MiB, fits in any allocation). Serial shows `"Kernel buffer: 32 MiB allocated"`.
-
-**Regression risk:** LOW -- tries larger first, same result as current behavior (which allocates 16 MiB).
 
 ---
 
 ## 9. Boot Failure Error Screen
 
 Replace all `for (;;) hlt;` loops with a visible error screen rendered using the UEFI console output protocol (still available pre-ExitBootServices) or the GOP framebuffer (if available).
+
+> [!NOTE]
+> **Regression risk:** LOW -- replaces existing HLT loops. If error screen rendering crashes, falls back to HLT (same as before, no worse).
 
 - [ ] Create `boot_fatal(const CHAR16 *title, const CHAR16 *detail)` function
 - [ ] Renders on UEFI console: red text with error code, description, and recovery steps
@@ -220,13 +239,14 @@ Replace all `for (;;) hlt;` loops with a visible error screen rendered using the
 
 **Test checkpoint:** Delete `\boot\kernel.exe` from boot disk. Boot must show error screen with `"Kernel not found"` message and recovery instructions -- not a black screen. Verify on QEMU WHPX, TCG, and VBox. Verify on bare metal -- confirm ConIn keypress works on real keyboard.
 
-**Regression risk:** LOW -- replaces existing HLT loops. If error screen rendering crashes, falls back to HLT (same as before, no worse).
-
 ---
 
 ## 10. ACPI SPCR Serial Port Auto-Detection
 
 Modern firmware provides the ACPI Serial Port Console Redirection Table (SPCR) specifying the exact serial port address, baud rate, and terminal type. Windows and Linux both consult SPCR before falling back to I/O probing. §4's scratch-register probe is necessary as a fallback, but SPCR should be the primary detection method.
+
+> [!NOTE]
+> **Regression risk:** LOW -- SPCR lookup is read-only; if table is absent or unparseable, falls through to existing §4 I/O probe unchanged.
 
 - [ ] Before §4 I/O probe: search ACPI config tables (via `gST->ConfigurationTable`) for SPCR signature `"SPCR"`
 - [ ] If SPCR found: extract `BaseAddress.Address` for port I/O base, `BaudRate` field, `FlowControl`, `TerminalType`
@@ -239,13 +259,14 @@ Modern firmware provides the ACPI Serial Port Console Redirection Table (SPCR) s
 
 **Test checkpoint:** On QEMU with `-device isa-debug-exit` (SPCR absent), fallback I/O probe activates and serial works as before. On QEMU OVMF with SPCR table present, serial log shows `"SPCR detected"`. Verify on bare metal -- real firmware may provide SPCR with non-standard baud rates; kernel must honor the SPCR baud.
 
-**Regression risk:** LOW -- SPCR lookup is read-only; if table is absent or unparseable, falls through to existing §4 I/O probe unchanged.
-
 ---
 
 ## 11. UEFI Watchdog Timer Management
 
 The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootloader disables it immediately (`SetWatchdogTimer(0, ...)`). If the bootloader hangs (e.g., GOP negotiation on broken firmware, USB enumeration), there's no timeout -- infinite HLT. Re-arming the watchdog after disabling the default provides a safety net.
+
+> [!NOTE]
+> **Regression risk:** LOW -- if watchdog fires unexpectedly, system reboots (recoverable via A/B rollback). Worst case is premature reboot on very slow firmware; extend timeout to 120s if seen.
 
 - [ ] After initial `SetWatchdogTimer(0, ...)`: re-arm with a 60-second timeout: `gBS->SetWatchdogTimer(60, 0x424F4F54, 0, NULL)` (code = "BOOT")
 - [ ] Before `ExitBootServices()`: disable the watchdog (`SetWatchdogTimer(0, ...)`) -- no longer needed post-EBS
@@ -256,13 +277,14 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 
 **Test checkpoint:** Normal boot completes in < 10s; watchdog is disarmed before ExitBootServices. Serial shows `"Watchdog: armed"` and `"Watchdog: disarmed"`. No unexpected reboots on all 4 platforms. Verify on bare metal -- real firmware watchdog behavior may differ from emulated; some firmware ignores the watchdog code parameter.
 
-**Regression risk:** LOW -- if watchdog fires unexpectedly, system reboots (recoverable via A/B rollback). Worst case is premature reboot on very slow firmware; extend timeout to 120s if seen.
-
 ---
 
 ## 12. Memory Map Descriptor Validation
 
 §6 handles memory map overflow. This section validates individual descriptors for consistency -- overlapping physical ranges, invalid memory types, and zero-length regions that can cause PMM corruption.
+
+> [!NOTE]
+> **Regression risk:** LOW -- validation is read-only. Invalid entries are stripped, not rejected. Quirky firmware boots with warnings rather than failure.
 
 - [ ] After `GetMemoryMap()`: iterate all descriptors and check:
   - `PhysicalStart` is page-aligned (4 KiB boundary)
@@ -276,8 +298,6 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 
 **Test checkpoint:** Normal boot on QEMU produces no warnings (OVMF generates clean maps). Add a synthetic zero-length descriptor injection test if feasible. Serial log shows descriptor count and any warnings. Verify on bare metal -- real firmware is the primary target for memory map quirks; log any warnings for firmware bug reporting.
 
-**Regression risk:** LOW -- validation is read-only. Invalid entries are stripped, not rejected. Quirky firmware boots with warnings rather than failure.
-
 ---
 
 ## 13. Boot Error Code Registry & NVRAM Persistence
@@ -286,6 +306,7 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 
 > [!TIP]
 > **Competitive advantage:** Neither Windows nor Linux persists structured bootloader error codes in NVRAM. The next boot can display "Last boot failed: 0x0003 -- Kernel not found at \boot\kernel.exe" before trying again. Combined with TODO-14 A/B rollback and TODO-07 §5 panic forensics, this gives a complete cross-boot diagnostic chain.
+> **Regression risk:** LOW -- NVRAM writes are non-destructive (single variable). If NVRAM is full or read-only, write silently fails and boot continues.
 
 - [ ] Define `enum boot_error_code` in `efi.h` or a new `boot_errors.h`:
   - `BOOT_OK = 0x0000`
@@ -307,8 +328,6 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 
 **Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x0003"`. Verify NVRAM variable is cleared on successful boot.
 
-**Regression risk:** LOW -- NVRAM writes are non-destructive (single variable). If NVRAM is full or read-only, write silently fails and boot continues.
-
 ---
 
 ## 14. Error Screen QR Code
@@ -317,6 +336,7 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 
 > [!TIP]
 > **Competitive advantage:** A QR code on the pre-kernel error screen is actionable for non-technical users. Instead of "call support", they scan and get a page explaining exactly what error code 0x0003 means and how to fix it. ChromeOS has this for recovery; neither Win11 nor Linux has it at the UEFI bootloader stage.
+> **Regression risk:** LOW -- QR rendering is additive to §9 error screen. If QR encoder has a bug, error screen still shows text error message.
 
 - [ ] Implement minimal QR code encoder in bootloader (QR Version 2, 25x25 modules, alphanumeric mode -- fits `https://impossible.os/err/0003` in ~200 bytes of code)
 - [ ] `boot_fatal()` renders QR code in bottom-right corner of the GOP error screen (if GOP available)
@@ -328,67 +348,69 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 
 **Test checkpoint:** Trigger boot failure (delete kernel). Error screen shows QR code in bottom-right. Scan with phone -- URL resolves (or shows the encoded URL). Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
 
-**Regression risk:** LOW -- QR rendering is additive to §9 error screen. If QR encoder has a bug, error screen still shows text error message.
+---
+
+## 15. boot_info ABI Header and Bootloader Populate
+
+Place a fixed-size header at offset 0 of `struct boot_info` and have the UEFI bootloader fill magic, version, and size before `ExitBootServices()` so the kernel can validate before any `memcpy`.
+
+> [!NOTE]
+> **Regression risk:** MEDIUM -- any `struct boot_info` layout change must bump `BOOT_INFO_VERSION` and rebuild bootloader + kernel together.
+
+- [ ] Add `struct boot_info_header` at offset 0: `uint32_t magic` (`BOOT_INFO_MAGIC` e.g. `0x49504F53` "IPOS"), `uint16_t version` (`BOOT_INFO_VERSION`), `uint16_t size` (bootloader writes `sizeof(struct boot_info)` at compile time) in `include/kernel/boot_info.h`.
+- [ ] Bootloader `src/boot/uefi/bootx64.c`: assign `boot_info.header.magic`, `.version`, `.size = sizeof(struct boot_info)` before handing off to the kernel path that jumps to `kernel_main`.
+- [ ] `_Static_assert(__builtin_offsetof(struct boot_info, header) == 0, ...)` in `boot_info.h`.
+- [ ] `_Static_assert(sizeof(struct boot_info_header) == 8, ...)` to pin header layout.
+- [ ] Extend `boot_info.h` comments with the ABI and version bump rules.
+- [ ] Add a short `CLAUDE.md` note under Bare Metal Gotchas or a new ABI subsection: never ship mismatched `BOOTX64.EFI` vs `kernel.exe` after a `BOOT_INFO_VERSION` bump.
+- [ ] Commit: `"boot: boot_info ABI header fields and bootloader populate"`
+
+**Test checkpoint:** Clean build boots on QEMU WHPX, QEMU TCG, VirtualBox, bare metal; header fields visible in memory at the handoff pointer before kernel entry (debugger or serial hex dump).
 
 ---
 
-## 15. boot_info ABI Handoff Validation
+## 16. boot_info Kernel Validation, boot_hw Path, and Unit Tests
 
-The kernel currently dereferences the `mbi` parameter passed by the bootloader as `(struct boot_info *)mbi` and byte-copies `sizeof(struct boot_info)` from it without validating that the pointer is valid, the structure is the expected size, or the layout matches the kernel's compile-time view (`include/kernel/boot_info.h`). The post-hoc cmdline ASCII check at `src/kernel/main/boot_hw.c:79-91` catches gross struct shifts but happens AFTER the byte-copy -- a wild pointer or version mismatch crashes Phase 0 before fault recovery exists.
+The kernel must reject invalid `mbi` before copying `struct boot_info`. The post-hoc cmdline ASCII check at `src/kernel/main/boot_hw.c:79-91` stays as a second-line defense after the validated copy.
 
 > [!IMPORTANT]
-> **Found during TODO-01 §2 Phase 0 verify (2026-04-08, Codex round 1, commit b402cf21).** The handoff is internal (we wrote both sides), but every time the bootloader or kernel changes `struct boot_info` without coordination -- adding a field, reordering, changing alignment -- the silent-corruption window grows. The fix is an ABI contract: a header at offset 0 with magic, version, and size, validated by the kernel BEFORE the byte-copy.
+> **Found during TODO-01 Phase 0 verify (2026-04-08, Codex round 1, commit b402cf21).** Uncoordinated edits to `struct boot_info` widen the silent-corruption window until this lands.
+> **Regression risk:** MEDIUM -- stale `BOOTX64.EFI` after a version bump halts early; mitigate by always using `bash scripts/build.sh` for paired images.
 
-- [ ] Add a `boot_info_header` struct at offset 0 of `struct boot_info` containing:
-  - `uint32_t magic` -- e.g. `0x49504F53` ("IPOS"). Define in `include/kernel/boot_info.h` as `BOOT_INFO_MAGIC`.
-  - `uint16_t version` -- ABI version number, bumped on every breaking layout change. Define `BOOT_INFO_VERSION` in the header.
-  - `uint16_t size` -- `sizeof(struct boot_info)` baked in by the bootloader at compile time. Kernel compares to its own `sizeof(struct boot_info)`.
-- [ ] Bootloader (`src/boot/uefi/`) populates the header before `ExitBootServices`. Add `boot_info.header.magic = BOOT_INFO_MAGIC; boot_info.header.version = BOOT_INFO_VERSION; boot_info.header.size = sizeof(struct boot_info);`.
-- [ ] Kernel `boot_phase0()` validates BEFORE the byte-copy:
-  1. `mbi != 0`
-  2. `mbi` is in conventional/loader memory range (not 0x10000 padding, not below 1 MiB)
-  3. `((struct boot_info_header *)mbi)->magic == BOOT_INFO_MAGIC`
-  4. `((struct boot_info_header *)mbi)->version == BOOT_INFO_VERSION` (or in a backwards-compatible range)
-  5. `((struct boot_info_header *)mbi)->size == sizeof(struct boot_info)` (kernel's view)
-  - On any failure: `boot_halt("boot_info handoff validation failed: <reason>")` with the bad value in the error message.
-- [ ] Add `_Static_assert(__builtin_offsetof(struct boot_info, header) == 0, ...)` to `include/kernel/boot_info.h`.
-- [ ] Add `_Static_assert(sizeof(struct boot_info_header) == 8, ...)` so the header layout is pinned.
-- [ ] Move the existing post-hoc `cmdline` ASCII sanity check (boot_hw.c:79-91) to be redundant-but-cheap second-line defense (keep it; remove the comment about "struct shifted").
-- [ ] Update `boot_hw.c:62-67` to use the validated header and only then copy `header.size` bytes (not `sizeof(struct boot_info)` -- use the bootloader-baked value, which the kernel just verified matches its own).
-- [ ] Add a regression test in `src/kernel/test/test_boot_info.c` (new file or piggyback on existing `test_boot_init.c`) that constructs a synthetic `struct boot_info` in a heap buffer with known-good and known-bad headers, calls a new pure helper `boot_info_validate(const void *p, size_t kernel_struct_size)` that returns `boot_result_t`, and asserts: OK on valid, FATAL on bad magic, FATAL on version mismatch, FATAL on size mismatch, FATAL on NULL. The actual `boot_phase0()` validation calls this helper -- pure data check, no live boot infrastructure (test side-effect ban compliant).
-- [ ] Update `boot_info.h` doc comments to record the ABI contract.
-- [ ] Bootloader and kernel must be rebuilt together when bumping `BOOT_INFO_VERSION` -- document in `CLAUDE.md` "Bare Metal Gotchas" or a new "ABI contract" section.
-- [ ] Commit: `"boot: validate boot_info ABI handoff (magic + version + size header)"`
+- [ ] Implement `boot_result_t boot_info_validate(const void *p, size_t kernel_struct_size)` in kernel code (pure logic): reject NULL; require `magic == BOOT_INFO_MAGIC`; `version` in the supported set; `size == kernel_struct_size`; pointer in conventional/loader memory (not below 1 MiB, not overlapping known reserved holes per project map).
+- [ ] `boot_phase0()` (or first safe callsite before `memcpy`): call `boot_info_validate(mbi, sizeof(struct boot_info))`; on failure call `boot_halt("boot_info handoff validation failed: ...")` including observed bad values.
+- [ ] Update `src/kernel/main/boot_hw.c` (~62-67) to copy only `header.size` bytes after validation succeeds and matches `sizeof(struct boot_info)`.
+- [ ] Keep and relocate the `cmdline` ASCII sanity check (`boot_hw.c:79-91`) to run after the validated copy; remove stale "struct shifted" wording if any.
+- [ ] Add `src/kernel/test/test_boot_info.c` (or extend `test_boot_init.c`) with synthetic buffers: OK path, NULL, bad magic, version mismatch, size mismatch (no forbidden boot/VPD calls per CLAUDE.md).
+- [ ] Wire tests in `test_runner_init()` under `SUITE=boot` when the file lands.
+- [ ] Commit: `"boot: kernel boot_info_validate before Phase 0 memcpy"`
 
-**Test checkpoint:** Boot normally on QEMU WHPX, TCG, VirtualBox, bare metal -- all 4 platforms reach Phase 0 with validation passing (no regression). Manually corrupt the bootloader's `boot_info.header.magic` -- kernel halts with `boot_info handoff validation failed: bad magic 0xXXXXXXXX (expected 0x49504F53)` on the serial log. Manually bump `BOOT_INFO_VERSION` in the kernel header without rebuilding the bootloader -- kernel halts with version mismatch. Unit tests for `boot_info_validate()` pass with the synthetic-buffer pattern.
-
-**Regression risk:** MEDIUM -- the bootloader and kernel must be rebuilt in lockstep. The first `BOOT_INFO_VERSION` bump after this lands will catch any stale UEFI binary on disk. Mitigate by building both from the same `scripts/build.sh` invocation (already the case).
-
-→ XREF: [`02-kernel-core/TODO-01-kernel-init-sequencing.md §2`](../02-kernel-core/TODO-01-kernel-init-sequencing.md) -- the verify follow-up that surfaced this.
+**Test checkpoint:** Normal boot on QEMU WHPX, QEMU TCG, VirtualBox, bare metal reaches Phase 0 with validation passing. Corrupt `header.magic` in the bootloader build -- serial shows `boot_info handoff validation failed` with expected vs actual. Intentional `BOOT_INFO_VERSION` mismatch across images -- early halt with version text. Unit tests for `boot_info_validate()` PASS.
 
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature                    | 🪟 Win11                      | 🐧 Linux                     | 🚀 Impossible OS              |
-|----|----------------------------|----------------------------|---------------------------|----------------------------|
-| 💎 | ELF/PE bounds checking     | ✅ winload validates PE    | ✅ GRUB validates ELF     | ⬜ §1                      |
-| 💎 | ExitBootServices retry     | ✅ Multiple retries        | ✅ efi_stub retries       | ⬜ §2                      |
-| 💎 | Kernel fallback paths      | ✅ BCD store + recovery    | ✅ GRUB menu + rescue     | ⬜ §3                      |
-| 💎 | Serial port detection      | ✅ ACPI-enumerated         | ✅ earlycon probe         | ⬜ §4                      |
-| 💎 | GOP graceful degradation  | ✅ Fallback driver         | ✅ efifb fallback         | ⬜ §5                      |
-| 💎 | Memory map overflow        | ✅ Dynamic allocation      | ✅ Growable buffer        | ⬜ §6                      |
-| 💎 | Config validation          | ✅ BCD schema enforced     | ✅ grub.cfg syntax check  | ⬜ §7                      |
-| 💎 | Allocation fallback        | ✅ Variable kernel sizes   | ✅ Dynamic loading        | ⬜ §8                      |
-| 💎 | ACPI SPCR serial config    | ✅ EMS via SPCR            | ✅ earlycon=SPCR          | ⬜ §10                     |
-| 💎 | UEFI watchdog management   | ✅ Re-arms during boot     | ✅ efi_stub manages       | ⬜ §11                     |
-| 💎 | Memory map validation      | ✅ Validates descriptors   | ✅ efi_stub checks        | ⬜ §12                     |
-| ⭐ | Human-readable error screen | ❌ Generic UEFI error     | ⚠️ GRUB rescue text       | ⬜ §9 🚀                   |
-| ⭐ | NVRAM error persistence    | ⚠️ BootStatusPolicy (opaque) | ❌ No persistence       | ⬜ §13 🚀                  |
-| ⭐ | Error screen QR code       | ❌ No QR at UEFI stage    | ❌ No QR at GRUB stage    | ⬜ §14 🚀                  |
-| 💎 | Bootloader handoff ABI     | ✅ winload BCD signature  | ✅ Multiboot2 magic+size  | ⬜ §15 magic+ver+size      |
+| ⭐   | Feature         | 🪟 Win11                        | 🐧 Linux                       | 🚀 Impossible OS               |
+| --- | --------------- | -------------------------------- | ------------------------------- | -------------------------------- |
+| 💎   | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds        | ⬜ §1 ELF segment validation    |
+| 💎   | EBS retry       | ✅ bootmgr bounded retry loop   | ✅ efi-stub retry on map stale | ⬜ §2 (N=4 locked in TODO-01§9) |
+| 💎   | Kernel fallback | ✅ BCD alternate paths + WinRE  | ✅ GRUB rescue + fallback.cfg  | ⬜ §3 backup kernel path        |
+| 💎   | Serial detect   | ✅ ACPI SPCR + EMS headless     | ✅ earlycon=uart,io,0x3f8      | ⬜ §4 SPCR auto-detect          |
+| 💎   | GOP degrade     | ✅ Fallback to basic display    | ✅ efifb + simpledrm fallback  | ⬜ §5 text mode if GOP fails    |
+| 💎   | Mmap overflow   | ✅ Dynamic buffer reallocation  | ✅ Grow buf + retry loop       | ⬜ §6 mmap buffer growth        |
+| 💎   | boot.conf parse | ✅ BCD registry schema + edit   | ✅ grub.cfg + grub-mkconfig    | ⬜ §7 structured parse errors   |
+| 💎   | Alloc fallback  | ✅ Graduated pool sizes         | ✅ Dynamic retry allocation    | ⬜ §8 graduated alloc strategy  |
+| 💎   | SPCR serial     | ✅ EMS Emergency Management     | ✅ earlycon SPCR auto-detect   | ⬜ §10 SPCR table parse         |
+| 💎   | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer  | ✅ efi_stub disables watchdog  | ⬜ §11 watchdog re-arm/disable  |
+| 💎   | Mmap validate   | ✅ Descriptor version + size    | ✅ efi_stub sanity checks      | ⬜ §12 mmap descriptor verify   |
+| ⭐   | Error screen    | ❌ Generic BSOD (no boot ctx)   | ⚠️ GRUB text menu (no graphics)| ⬜ §9 GOP error splash + serial |
+| ⭐   | NVRAM errors    | ⚠️ Opaque status codes          | ❌ No persistent boot errors   | ⬜ §13 NVRAM error log persist  |
+| ⭐   | Boot QR         | ❌ No UEFI-phase QR codes       | ❌ No GRUB QR support          | ⬜ §14 QR code error link       |
+| 💎   | Handoff ABI     | ✅ BCD signature + protocol     | ✅ Multiboot2 / Linux boot     | ⬜ §15-§16 versioned handoff    |
+| 💎   | Offline repair  | ✅ Windows Recovery Environment | ✅ rescue/live ISO image       | ⬜ TODO-15 recovery partition   |
 
-> **After parity items:** Impossible OS matches Windows and Linux on all bootloader error handling: ELF validation, ExitBootServices retry, kernel search fallback, ACPI SPCR serial detection, UEFI watchdog management, and memory map validation. The exclusive items push beyond: the human-readable error screen with QR code is actionable for non-technical users (scan to get step-by-step recovery), and NVRAM-persisted error codes give cross-boot diagnostics that neither Windows (opaque BootStatusPolicy) nor Linux (no bootloader error persistence) provides.
+> **Parity:** 💎 rows track Win11 + Linux bootloader hardening. **⭐** rows are pre-kernel UX beyond typical UEFI/GRUB rescue. Capsule apply stays `TODO-18 §2`; multi-GOP enumeration stays `TODO-18 §4` with §5 here as timeout wrapper only. Full recovery partition / WinRE-class repair is `TODO-15-recovery-partition.md`, not duplicated here.
 
 ---
 
@@ -399,7 +421,7 @@ The kernel currently dereferences the `mbi` parameter passed by the bootloader a
 
 - [ ] Add smoke test patterns to `scripts/test-smoke.sh`:
   - Serial line `"[BOOT] ELF segment"` present (§1 -- ELF loader logs each segment)
-  - Serial line `"ExitBootServices attempt 1/"` present (§2 -- retry loop logs attempt)
+  - Serial line matching `ExitBootServices attempt 1/` (or agreed prefix from §2 / TODO-01 §9) present on normal boot
   - Serial line `"[BOOT] Kernel found at"` present (§3 -- fallback search logs selected path)
   - Absence of `"[FAIL] Kernel ELF corrupt"` on normal boot (§1 -- no corruption)
   - Absence of `"[CRIT] ExitBootServices failed"` on normal boot (§2 -- exit succeeds)
@@ -421,7 +443,12 @@ The kernel currently dereferences the `mbi` parameter passed by the bootloader a
   - Restore kernel, reboot same QEMU instance (NVRAM persists)
   - Assert serial contains `"Previous boot failed: code="` (§13 -- NVRAM error read on next boot)
   - Assert serial contains `"Previous boot failed: code=0x0000"` does NOT appear (cleared only after successful boot)
+  - `boot_info_validate()` unit tests from §16 run under `SUITE=boot` and PASS
 - [ ] Commit: `"test: add bootloader error recovery smoke tests"`
+
+**Test checkpoint:** `scripts/test-smoke.sh` (or successor harness) passes new patterns on a normal `bash scripts/build.sh run` boot log; `test-boot-*.sh` scripts exit 0 when run from repo root on CI or dev host with QEMU available.
+
+---
 
 ## Verification
 
@@ -435,4 +462,19 @@ The kernel currently dereferences the `mbi` parameter passed by the bootloader a
 - [ ] §12: Serial log shows no `"[WARN] Memory map entry"` warnings on QEMU OVMF (clean firmware). If warnings appear on real hardware, log them for firmware bug reporting.
 - [ ] §13: After boot failure, next boot serial shows `"Previous boot failed: code=0x"`. After successful boot, NVRAM variable reads `BOOT_OK`.
 - [ ] §14: Boot failure error screen includes QR code in bottom-right. QR scans to `https://impossible.os/err/XXXX` with correct error code.
+- [ ] §15-§16: `boot_info` header populated by bootloader; kernel rejects tampered magic or version skew before Phase 0 copy.
 - [ ] Commit: `"boot: bootloader error recovery complete -- zero silent failures"`
+
+**Test checkpoint:** Every Verification bullet passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; serial shows no unexpected `[WARN]` / `[CRIT]` on clean boot after all sections land.
+
+**Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
+
+---
+
+## History
+
+| Date | Action | Summary |
+| --- | --- | --- |
+| 2026-04-10 | validate | validate-todo-file: ASCII `->` XREFs; Inputs links + TODO-18 §4 + kernel-init §2; §1-§15 regression notes moved before checklists; §5 stale TODO-01 §12 fixed to TODO-18 §4; OS table compact; Unit Tests + Verification checkpoints + boot test runner; History added. |
+| 2026-04-10 | gap-analysis | gap-analysis-todo: Code-truth IMPORTANT; §15 split -> §15+§16 + Impl row 16; EBS N aligned XREF TODO-01 §9; OS TODO-15 row + Sources; Inputs TODO-15; Unit/Verify §16; TODO-15 + kernel-init + TODO-01 patches; 6 searches + MS Learn fetch. |
+| 2026-04-10 | validate | validate-todo-file: continuation rg clean; Inputs + `boot_hw.c` + TODO-01 §9 Inputs XREF; §2 policy bullet de-staled (shared N); OS `TODO-15` cell; 16 `##` sections Commit+Test-last OK; `run-boot-tests.bat` present; external XREF section anchors spot-checked. |
