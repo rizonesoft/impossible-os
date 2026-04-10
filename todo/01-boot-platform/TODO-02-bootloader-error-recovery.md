@@ -54,7 +54,7 @@
 | 💎  |   3   | Fallback kernel search (3 paths)               | --         |  [x]   |
 | 💎  |   4   | Serial port probe and COM2 fallback            | --         |  [x]   |
 | 💎  |   5   | GOP timeout and graceful degradation           | --         |  [x]   |
-| 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [ ]   |
+| 💎  |   6   | Memory map overflow detection (512 entries)    | --         |  [x]   |
 | 💎  |   7   | boot.conf validation and version field         | --         |  [ ]   |
 | 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [ ]   |
 | ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [ ]   |
@@ -173,11 +173,11 @@ If firmware reports more memory regions than `BOOT_MMAP_MAX_ENTRIES` (currently 
 > [!NOTE]
 > **Regression risk:** LOW -- increases array size (adds ~4 KiB to boot_info). Verify boot_info doesn't overflow its 4 KiB page at 0x10000.
 
-- [ ] Increase `BOOT_MMAP_MAX_ENTRIES` from 256 to 512 in `boot_info.h`
-- [ ] Before filling mmap array: compare descriptor count against max
-- [ ] If exceeded: `"[WARN] Memory map has %u entries, truncating to %u"` on serial
-- [ ] Set `boot_info.mmap_truncated = 1` flag so kernel knows the map is incomplete
-- [ ] Kernel PMM should warn if `mmap_truncated` is set
+- [x] Increase `BOOT_MMAP_MAX_ENTRIES` from 256 to 512 in both `boot_info.h` and bootloader struct
+- [x] Before filling mmap array: compare `total_descs` against `BOOT_MMAP_MAX_ENTRIES`
+- [x] If exceeded: `"[WARN] Memory map has N entries, truncating to 512"` on serial
+- [x] Set `boot_info.mmap_truncated = 1` flag (new `uint8_t` field in both kernel and bootloader structs)
+- [x] Kernel PMM warns at init if `g_boot_info.mmap_truncated` is set: `"PMM: memory map truncated by bootloader"`
 - [ ] Commit: `"boot: detect memory map overflow -- increase cap to 512, warn on truncation"`
 
 **Test checkpoint:** Normal boot (typically ~130 entries) works as before on all 4 platforms. Add a `mmap_truncated` field to boot_info and verify kernel reads it. Verify on bare metal -- real firmware often has more entries than QEMU.
@@ -399,7 +399,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ✅ §3 3-path search + DeviceHdl |
 | 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ✅ §4 COM1/COM2 probe+boot_info |
 | 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ✅ §5 headless + SetMode fallbk |
-| 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ⬜ §6 mmap buffer growth        |
+| 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ✅ §6 512 cap + truncate warn   |
 | 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ⬜ §7 structured parse errors   |
 | 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ⬜ §8 graduated alloc strategy  |
 | 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ⬜ §10 SPCR table parse         |

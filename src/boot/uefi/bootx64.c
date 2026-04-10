@@ -18,7 +18,7 @@
 #include "efi.h"
 
 /* --- Boot info structure (must match kernel/boot_info.h exactly) --- */
-#define BOOT_MMAP_MAX_ENTRIES 256
+#define BOOT_MMAP_MAX_ENTRIES 512
 
 struct boot_mmap_entry {
     UINT64 base_addr;
@@ -192,6 +192,8 @@ struct boot_usb_controller {
 struct boot_info {
     struct boot_mmap_entry  mmap[BOOT_MMAP_MAX_ENTRIES];
     UINT32  mmap_count;
+    UINT8   mmap_truncated;
+    UINT8   _mmap_pad[3];
     UINT32  mem_lower_kb;
     UINT32  mem_upper_kb;
     struct boot_framebuffer fb;
@@ -1368,6 +1370,19 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
     UINTN offset;
     UINT32 idx = 0;
     UINT64 total_mem = 0;
+    UINT32 total_descs = (UINT32)(map_size / desc_size);
+
+    /* Detect overflow before filling (S6) */
+    if (total_descs > BOOT_MMAP_MAX_ENTRIES) {
+        serial_early_print("[WARN] Memory map has ");
+        serial_early_print_uint(total_descs);
+        serial_early_print(" entries, truncating to ");
+        serial_early_print_uint(BOOT_MMAP_MAX_ENTRIES);
+        serial_early_print("\n");
+        g_boot_info_ptr->mmap_truncated = 1;
+    } else {
+        g_boot_info_ptr->mmap_truncated = 0;
+    }
 
     for (offset = 0; offset < map_size && idx < BOOT_MMAP_MAX_ENTRIES;
          offset += desc_size) {

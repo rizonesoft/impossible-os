@@ -9,7 +9,7 @@
 /* Maximum number of memory map entries we store.
  * Real hardware (especially laptops with NVRAM, MMIO, etc.) can have 100+
  * descriptors.  256 is generous and still fits comfortably at 0x10000. */
-#define BOOT_MMAP_MAX_ENTRIES 256
+#define BOOT_MMAP_MAX_ENTRIES 512
 
 /* UEFI memory type constants (matches EFI_MEMORY_TYPE enum 0–14).
  * Defined here so kernel code can reference them without UEFI headers. */
@@ -315,6 +315,8 @@ struct boot_info {
     /* Memory map */
     struct boot_mmap_entry mmap[BOOT_MMAP_MAX_ENTRIES];
     uint32_t mmap_count;
+    uint8_t  mmap_truncated;    /* 1 if firmware had more entries than BOOT_MMAP_MAX_ENTRIES */
+    uint8_t  _mmap_pad[3];
 
     /* Basic memory (from tag type 4) */
     uint32_t mem_lower_kb;  /* conventional memory in KiB */
