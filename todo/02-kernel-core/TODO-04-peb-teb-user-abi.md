@@ -316,7 +316,7 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 - [x] On thread exit: per-thread TEB reclaimed at `task_cleanup()` via `vmm_unmap_user_page(cr3, teb)` for each secondary thread. Deferred from `thread_join()` because runtime unmap lacks SMP TLB shootdown (-> XREF [03-memory-concurrency/TODO-06 §2](../03-memory-concurrency/TODO-06-smp-phase2.md)).
 - [x] §12 TLS expansion remains task-scoped after §15. Static TLS slots (`TEB.TlsSlots[64]`) become per-thread automatically because they live inside the per-thread TEB struct, but expansion slots (`TEB.TlsExpansionSlots`) still point at one task-shared expansion array. Full per-thread TLS expansion is deferred to a future TODO.
 - [x] Update `test_peb_teb.c`: `_Static_assert` for `teb` and `kernel_gs_base` fields, smoke test `threads[0].teb == NULL` in kernel context, per-thread TEB VA stride formula check across THREAD_MAX tids.
-- [ ] Commit: `"kernel: peb -- per-thread TEB allocation at uthread_create()"`
+- [x] Commit: `"kernel: peb -- per-thread TEB allocation at uthread_create()"` (65cf3586)
 
 **Test checkpoint:** Spawning two threads in the same process produces two distinct TEB VAs (`thread_a->teb != thread_b->teb`). `NtCurrentTeb()` from each thread returns its own TEB. Setting `LastErrorValue` in thread A does not affect thread B. Allocating a TLS slot in thread A and writing to it does not affect the same slot index in thread B (per-thread isolation). Context switch correctly swaps `IA32_KERNEL_GS_BASE` MSR. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
