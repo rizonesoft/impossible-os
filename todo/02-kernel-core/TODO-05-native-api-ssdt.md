@@ -1412,7 +1412,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [x] Entries packed sequentially in output buffer with 8-byte aligned NextEntryOffset. Last entry has NextEntryOffset = 0. Stops when buffer is full.
 - [x] ReturnSingleEntry flag (a6 bit 0): returns exactly 1 entry per call. Enumeration cursor stored in `FILE_OBJECT.dir_enum_index`.
 - [x] RestartScan flag (a6 bit 1): resets `FILE_OBJECT.dir_enum_index` to 0 before enumeration.
-- [ ] Commit: `"kernel: nt -- extended directory enumeration (FileDirectoryInfo, FileBothDir, FileIdBothDir)"`
+- [x] Commit: `"kernel: nt -- extended directory enumeration (FileDirectoryInfo, FileBothDir, FileIdBothDir)"` (7338e0a4)
 
 **Test checkpoint:** `NtQueryDirectoryFile(FileBothDirectoryInformation)` on `C:\` returns entries with valid timestamps and sizes. Entry names match VFS readdir output. 8.3 ShortName is populated (uppercase truncated). ReturnSingleEntry returns exactly 1 entry per call. RestartScan re-reads from the beginning.
 
