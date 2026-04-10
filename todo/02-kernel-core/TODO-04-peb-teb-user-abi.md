@@ -49,7 +49,7 @@
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5           |  [x]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9           |  [x]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7           |  [x]   |
-| 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T05§11 |  [/]   |
+| 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T05§11 |  [x]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14 |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
@@ -289,7 +289,7 @@ The current `thread_create()` in `src/kernel/sched/task.c:1924` builds a ring-0 
 - [x] `task_cleanup()` walks secondary threads and reclaims user stack pages. Thread 0 uses task-level `kfree` (unchanged).
 - [x] `task_exec()` guarded with `current_thread == 0` check -- rejects exec from secondary threads.
 - [x] Unit tests in test_peb_teb.c: `test_kthread_create_smoke` (smoke), `test_uthread_stack_layout` (VA range checks), `test_uthread_rejects_kernel_task` (PEB guard). 3 tests, no live boot calls.
-- [ ] Commit: `"kernel: peb -- user-mode thread bootstrap (kthread_create + uthread_create split)"`
+- [x] Commit: `"kernel: peb -- user-mode thread bootstrap (kthread_create + uthread_create split)"` (638a0899)
 
 **Test checkpoint:** Boot completes normally. `cmd.exe` (single-threaded user task) starts unchanged because `task_exec()` builds its own ring-3 frame. A user binary calling `NtCreateThread` (none in tree today) would receive a real ring-3 thread on a user stack -- verifiable when a multi-threaded test binary lands. `kthread_create` calls from kernel boot code work unchanged (DPC worker, work queue, etc.). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
