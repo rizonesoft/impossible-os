@@ -188,7 +188,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] `ttf_mgr_init()` + `icon_store_init()` + `cursor_init()` load desktop assets
 - [x] `desktop_init()` -- window manager + compositor init; BOOT_DEGRADED; fallback to serial console if fails
 - [x] `compositor_run()` -- event loop (never returns under normal operation)
-- [/] Phase 3 fatal-path behavior currently uses `boot_halt()` on prerequisite guards (no BSOD path in this codepath); policy wording needs alignment
+- [x] Phase 3 fatal-path behavior uses recovery screen + `boot_halt()` on prerequisite guards (same pattern as Phase 2); §7 failure policy table updated to match (2026-04-10)
 - [x] Add `boot_progress(3, "step-name", postcode)` at each step
 - [ ] Move syscall/SSDT fast-path bootstrap (`ssdt_init`, `syscall_init_fast`, `syscall_init`) to Phase 1 OR document/accept Phase 3 ownership and update [TODO-05-native-api-ssdt.md](./TODO-05-native-api-ssdt.md) XREF contract
 
@@ -206,21 +206,19 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 | Phase | Failure       | Action                                  |
 | ----- | ------------- | --------------------------------------- |
 | 0     | Any           | `boot_halt()` -- serial message + halt  |
-| 1     | BOOT_FATAL    | BSOD + halt (FB available by end of P1) |
+| 1     | BOOT_FATAL    | `boot_halt()` (FB may not be ready yet)  |
 | 1     | BOOT_DEGRADED | `klog(WARN)` + mark not ready, continue |
-| 2     | BOOT_FATAL    | BSOD; degraded-boot screen if VFS up    |
+| 2     | BOOT_FATAL    | Recovery screen + `boot_halt()` (FB up) |
 | 2     | BOOT_DEGRADED | `klog(WARN)` + continue                 |
-| 3     | Any           | `klog(ERROR)` + serial console fallback |
+| 3     | BOOT_FATAL    | Recovery screen + `boot_halt()` (same as Phase 2) |
+| 3     | BOOT_DEGRADED | `klog(WARN)` + continue to desktop      |
 
 - [x] Implement `boot_halt(const char *reason)` -- serial-only emergency stop for Phase 0 (already existed)
 - [x] Ensure `panic()` works correctly when called before `fb_init()` (serial-only path) -- added SUBSYS_FB guard, falls back to serial+halt
 - [x] Ensure `panic()` full BSOD path triggers only after FB is ready (end of Phase 1) -- guards on `kernel_subsystem_ready(SUBSYS_FB)`
 - [x] Add `kernel_subsystem_dump()` call inside `boot_halt()` and `panic()` -- done in §6
 - [x] Define and document which BOOT_FATAL events trigger auto-restart vs permanent halt based on `boot.conf` restart policy -- documented in boot_halt.c
-- [ ] Align failure-policy matrix with implemented code paths:
-  - Phase 1 BOOT_FATAL currently routes to `boot_halt()` (serial-first halt), not BSOD
-  - Phase 2 fatal guards currently show recovery UI and then halt via `boot_halt()`
-  - Update table text or implement the documented BSOD transitions
+- [x] Align failure-policy matrix with implemented code paths -- updated §7 table to match actual behavior: Phase 1 uses `boot_halt()` (FB may not be ready), Phase 2 uses recovery screen + `boot_halt()`, Phase 3 uses recovery screen + `boot_halt()` (same as Phase 2). Updated 2026-04-10.
 
 ## 8. Code Cleanup
 These are bugs and structural violations that must be fixed as part of this TODO:
