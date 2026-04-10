@@ -13,6 +13,8 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/zw.h"
+#include "kernel/sched/task.h"
+#include "kernel/ob/teb.h"
 
 /* Assembly entry point defined in syscall_entry.asm */
 extern void syscall_entry(void);
@@ -106,7 +108,8 @@ void syscall_init_fast(void)
 }
 
 /* C dispatcher called from syscall_entry.asm.
- * Always called from ring 3 (SYSCALL instruction), so previous mode = UserMode. */
+ * Always called from ring 3 (SYSCALL instruction), so previous mode = UserMode.
+ * On error, propagates Win32 error code to TEB->LastErrorValue (gs:[0x68]). */
 NTSTATUS syscall_dispatch_fast(uint64_t number,
                                uint64_t a1, uint64_t a2,
                                uint64_t a3, uint64_t a4,
@@ -116,5 +119,17 @@ NTSTATUS syscall_dispatch_fast(uint64_t number,
     ssdt_set_previous_mode(SSDT_USER_MODE);
     result = ssdt_dispatch((uint32_t)number, a1, a2, a3, a4, a5, 0);
     ssdt_set_previous_mode(SSDT_KERNEL_MODE);
+
+    /* Propagate Win32 error code to TEB->LastErrorValue on failure.
+     * Only write when the caller is user mode (which it always is here)
+     * and the current thread has a TEB (user task, not kernel). */
+    if (NT_ERROR(result)) {
+        struct thread *thr = thread_current();
+        if (thr && thr->teb) {
+            TEB *teb = (TEB *)thr->teb;
+            teb->LastErrorValue = RtlNtStatusToDosError(result);
+        }
+    }
+
     return result;
 }

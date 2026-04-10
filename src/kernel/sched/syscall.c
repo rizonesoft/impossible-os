@@ -26,6 +26,7 @@
 #include "kernel/ob/ob_file.h"
 #include "kernel/ob/ob_section.h"
 #include "kernel/ob/ob.h"
+#include "kernel/ob/teb.h"
 #include "desktop/terminal.h"
 
 /* --- Port I/O helper --- */
@@ -459,6 +460,8 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
     extern NTSTATUS ssdt_dispatch(uint32_t, uint64_t, uint64_t,
                                   uint64_t, uint64_t, uint64_t, uint64_t);
     extern void ssdt_set_previous_mode(uint32_t);
+    extern uint32_t RtlNtStatusToDosError(NTSTATUS);
+    extern struct thread *thread_current(void);
     NTSTATUS result;
     ssdt_set_previous_mode(1);  /* UserMode -- INT 0x2E always from ring 3 */
     result = ssdt_dispatch(
@@ -469,6 +472,14 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
         frame->r9,              /* arg4 */
         0, 0);                  /* arg5, arg6 (from user stack, future) */
     ssdt_set_previous_mode(0);  /* restore KernelMode */
+    /* Propagate Win32 error code to TEB->LastErrorValue on failure */
+    if (NT_ERROR(result)) {
+        struct thread *thr = thread_current();
+        if (thr && thr->teb) {
+            TEB *teb = (TEB *)thr->teb;
+            teb->LastErrorValue = RtlNtStatusToDosError(result);
+        }
+    }
     frame->rax = (uint64_t)result;
     return (uint64_t)frame;
 }

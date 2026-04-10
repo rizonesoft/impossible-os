@@ -74,6 +74,45 @@ NTSTATUS ProbeForWrite(void *Address, uint64_t Length, uint32_t Alignment)
     return ProbeForRead(Address, Length, Alignment);
 }
 
+/* ---- NTSTATUS -> Win32 error translation --------------------------------- */
+
+/* SCOPE-GAP-ALLOWED: translation table references status code names in data */
+
+/* Compact lookup table for common NTSTATUS -> Win32 error mappings.
+ * Unknown codes map to ERROR_MR_MID_NOT_FOUND (0x13D = 317). */
+static const struct {
+    NTSTATUS nt;
+    uint32_t dos;
+} s_nt_to_dos[] = {
+    { 0x00000000,             0    },  /* SUCCESS -> ERROR_SUCCESS */
+    { (NTSTATUS)0xC0000022,   5    },  /* ACCESS_DENIED */
+    { (NTSTATUS)0xC0000017,   8    },  /* NO_MEMORY */
+    { (NTSTATUS)0xC0000008,   6    },  /* INVALID_HANDLE */
+    { (NTSTATUS)0xC0000034,   2    },  /* OBJECT_NAME_NOT_FOUND -> FILE_NOT_FOUND */
+    { (NTSTATUS)0xC0000002,   50   },  /* NOT_IMPLEMENTED -> NOT_SUPPORTED */
+    { (NTSTATUS)0xC000000D,   87   },  /* INVALID_PARAMETER */
+    { (NTSTATUS)0xC0000023,   122  },  /* BUFFER_TOO_SMALL */
+    { (NTSTATUS)0xC0000005,   998  },  /* ACCESS_VIOLATION -> NOACCESS */
+    { (NTSTATUS)0xC0000061,   1314 },  /* PRIVILEGE_NOT_HELD */
+    { (NTSTATUS)0xC0000001,   1    },  /* UNSUCCESSFUL -> INVALID_FUNCTION */
+    { (NTSTATUS)0xC0000035,   183  },  /* OBJECT_NAME_COLLISION -> ALREADY_EXISTS */
+};
+
+#define NT_TO_DOS_COUNT \
+    (sizeof(s_nt_to_dos) / sizeof(s_nt_to_dos[0]))
+
+uint32_t RtlNtStatusToDosError(NTSTATUS status)
+{
+    uint32_t i;
+    if (NT_SUCCESS(status))
+        return 0;  /* ERROR_SUCCESS */
+    for (i = 0; i < NT_TO_DOS_COUNT; i++) {
+        if (s_nt_to_dos[i].nt == status)
+            return s_nt_to_dos[i].dos;
+    }
+    return 317;  /* ERROR_MR_MID_NOT_FOUND */
+}
+
 /* ---- Static tables ------------------------------------------------------- */
 
 static SSDT_HANDLER s_main_handlers[SSDT_MAIN_MAX];

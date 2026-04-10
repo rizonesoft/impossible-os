@@ -56,7 +56,7 @@
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-03 §6    |  [/]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [/]   |
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [/]   |
-| ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [ ]   |
+| ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [x]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [x]   |
 | 💎  |  13   | File metadata and device control                               | §6                |  [ ]   |
 | 💎  |  14   | Registry syscalls                                              | §5, TODO-13 §4    |  [ ]   |
@@ -1041,10 +1041,10 @@ Provides OS version, process list, performance counters, and detailed process in
 ## 11. Extended Error Information (IOSB + LastError)
 NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async I/O) and `TEB->LastErrorValue` (Win32 `GetLastError`). Both must be populated correctly.
 
-- [ ] All file I/O `NtXxx` functions write final `NTSTATUS` into `IoStatusBlock->Status` and byte count / disposition into `IoStatusBlock->Information`
-- [ ] On every `NTSTATUS` return from a syscall: if `NT_ERROR(status)`, also write the Win32 error translation into `TEB->LastErrorValue` (at `gs:[0x68]`) using a compact `RtlNtStatusToDosError` table for common codes
-- [ ] `RtlNtStatusToDosError` minimal table: `STATUS_ACCESS_DENIED→5`, `STATUS_NO_MEMORY→8`, `STATUS_INVALID_HANDLE→6`, `STATUS_OBJECT_NAME_NOT_FOUND→2`, `STATUS_NOT_IMPLEMENTED→50`, `STATUS_INVALID_PARAMETER→87`, `STATUS_BUFFER_TOO_SMALL→122`, `STATUS_ACCESS_VIOLATION→998`, `STATUS_PRIVILEGE_NOT_HELD→1314`
-- [ ] This is the only place `TEB->LastErrorValue` is written by kernel code -- usermode `SetLastError` writes it directly via GS offset without a syscall
+- [x] All file I/O `NtXxx` functions write final `NTSTATUS` into `IoStatusBlock->Status` and byte count / disposition into `IoStatusBlock->Information` (already implemented in §6: NtCreateFile, NtOpenFile, NtReadFile, NtWriteFile, NtQueryDirectoryFile all populate IOSB)
+- [x] On every `NTSTATUS` return from a syscall: if `NT_ERROR(status)`, write the Win32 error translation into `TEB->LastErrorValue` (at `gs:[0x68]`) via `RtlNtStatusToDosError`. Wired in both SYSCALL (`syscall_fast.c`) and INT 0x2E (`syscall.c`) return paths.
+- [x] `RtlNtStatusToDosError` 12-entry table in `ssdt.c`: SUCCESS->0, ACCESS_DENIED->5, NO_MEMORY->8, INVALID_HANDLE->6, NAME_NOT_FOUND->2, NOT_IMPLEMENTED->50, INVALID_PARAMETER->87, BUFFER_TOO_SMALL->122, ACCESS_VIOLATION->998, PRIVILEGE_NOT_HELD->1314, UNSUCCESSFUL->1, NAME_COLLISION->183. Unknown->317.
+- [x] Kernel writes `TEB->LastErrorValue` only in the syscall return path; user-mode `SetLastError` writes `gs:[0x68]` directly without a syscall.
 - [ ] Commit: `"kernel: nt -- IOSB and TEB LastErrorValue propagation"`
 
 **Test checkpoint:** After a failing `NtOpenFile` (non-existent path), `gs:[0x68]` == Win32 error code (2 = FILE_NOT_FOUND). After `NtReadFile`, IOSB `Status == STATUS_SUCCESS`, `Information == bytes_read`.

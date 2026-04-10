@@ -22,6 +22,15 @@ typedef int32_t NTSTATUS;
 
 /* ---- Severity macros ----------------------------------------------------- */
 
+/* ---- Status translation -------------------------------------------------- */
+
+/* Translate an NTSTATUS to a Win32 error code (GetLastError value).
+ * Returns 0 (ERROR_SUCCESS) for success statuses, or the mapped Win32
+ * error for known codes, or 0x13D (ERROR_MR_MID_NOT_FOUND) for unknown. */
+uint32_t RtlNtStatusToDosError(NTSTATUS status);
+
+/* ---- Severity macros ----------------------------------------------------- */
+
 #define NT_SUCCESS(s)       (((NTSTATUS)(s)) >= 0)
 #define NT_INFORMATION(s)   ((((uint32_t)(s)) >> 30) == 1)
 #define NT_WARNING(s)       ((((uint32_t)(s)) >> 30) == 2)

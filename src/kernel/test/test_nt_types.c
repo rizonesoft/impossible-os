@@ -780,6 +780,43 @@ static void test_nt_procinfo_classes(void)
                    "ProcessSessionInformation returns SUCCESS");
 }
 
+/* ---- S11: IOSB + LastError ---- */
+
+/* RtlNtStatusToDosError: success -> 0 */
+static void test_rtl_status_to_dos_success(void)
+{
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_SUCCESS), 0,
+                   "SUCCESS -> ERROR_SUCCESS (0)");
+}
+
+/* RtlNtStatusToDosError: known error mappings */
+static void test_rtl_status_to_dos_known(void)
+{
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_ACCESS_DENIED), 5,
+                   "ACCESS_DENIED -> 5");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_NO_MEMORY), 8,
+                   "NO_MEMORY -> 8");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_INVALID_HANDLE), 6,
+                   "INVALID_HANDLE -> 6");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_OBJECT_NAME_NOT_FOUND), 2,
+                   "OBJECT_NAME_NOT_FOUND -> 2 (FILE_NOT_FOUND)");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_INVALID_PARAMETER), 87,
+                   "INVALID_PARAMETER -> 87");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_BUFFER_TOO_SMALL), 122,
+                   "BUFFER_TOO_SMALL -> 122");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_ACCESS_VIOLATION), 998,
+                   "ACCESS_VIOLATION -> 998");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_PRIVILEGE_NOT_HELD), 1314,
+                   "PRIVILEGE_NOT_HELD -> 1314");
+}
+
+/* RtlNtStatusToDosError: unknown -> ERROR_MR_MID_NOT_FOUND (317) */
+static void test_rtl_status_to_dos_unknown(void)
+{
+    TEST_ASSERT_EQ(RtlNtStatusToDosError((NTSTATUS)0xC00000FF), 317,
+                   "unknown NTSTATUS -> 317 (MR_MID_NOT_FOUND)");
+}
+
 /* ---- S12: ZwXxx alias layer ---- */
 
 /* ZwClose dispatches to NtClose handler in kernel mode (previous mode = 0) */
@@ -930,6 +967,14 @@ void test_register_nt_types(void)
     /* NT system information tests (§10) */
     test_suite_register_cat("NT: NtQuerySystemInfo classes", test_nt_sysinfo_classes, TEST_CAT_ABI);
     test_suite_register_cat("NT: NtQueryProcessInfo classes", test_nt_procinfo_classes, TEST_CAT_ABI);
+
+    /* IOSB + LastError tests (§11) */
+    test_suite_register_cat("NT: RtlNtStatusToDosError success",
+                            test_rtl_status_to_dos_success, TEST_CAT_ABI);
+    test_suite_register_cat("NT: RtlNtStatusToDosError known",
+                            test_rtl_status_to_dos_known, TEST_CAT_ABI);
+    test_suite_register_cat("NT: RtlNtStatusToDosError unknown",
+                            test_rtl_status_to_dos_unknown, TEST_CAT_ABI);
 
     /* ZwXxx alias layer tests (§12) */
     test_suite_register_cat("NT: ZwClose kernel dispatch",
