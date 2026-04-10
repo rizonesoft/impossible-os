@@ -83,7 +83,9 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 
 #define STATUS_INVALID_DEVICE_REQUEST       ((NTSTATUS)0xC0000010)  /* IRP to wrong device type */
 #define STATUS_END_OF_FILE                  ((NTSTATUS)0xC0000011)  /* read past end of file */
+#define STATUS_LOCK_NOT_GRANTED             ((NTSTATUS)0xC0000055)  /* byte-range lock denied */
 #define STATUS_FILE_LOCK_CONFLICT           ((NTSTATUS)0xC0000054)  /* overlapping byte-range lock */
+#define STATUS_INSUFFICIENT_RESOURCES       ((NTSTATUS)0xC000009A)  /* pool/resource exhausted */
 #define STATUS_DELETE_PENDING               ((NTSTATUS)0xC0000056)  /* file marked for deletion */
 #define STATUS_RANGE_NOT_LOCKED             ((NTSTATUS)0xC000007E)  /* unlock on non-locked range */
 #define STATUS_FILE_IS_A_DIRECTORY          ((NTSTATUS)0xC00000BA)  /* file op on a directory */

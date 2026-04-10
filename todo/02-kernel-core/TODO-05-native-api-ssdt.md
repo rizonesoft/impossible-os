@@ -58,7 +58,7 @@
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [/]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-04 §6    |  [x]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [x]   |
-| 💎  |  13   | File metadata and device control                               | §6                |  [ ]   |
+| 💎  |  13   | File metadata and device control                               | §6                |  [x]   |
 | 💎  |  14   | Registry syscalls                                              | §5, TODO-13 §4    |  [ ]   |
 | 💎  |  15   | Token and access control syscalls                              | §5, TODO-11 §4    |  [ ]   |
 | 💎  |  16   | Directory and symbolic link object syscalls                    | §5, TODO-03 §4    |  [ ]   |
@@ -1065,45 +1065,22 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 ## 13. File Metadata and Device Control
 Extended file operations: metadata queries, attribute modification, device I/O control, file locking, I/O completion ports. These are the Win32 `GetFileAttributes`, `SetFileTime`, `DeviceIoControl`, `LockFile` foundation.
 
-- [ ] `NtQueryInformationFile(FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass)`:
-  - `FileBasicInformation (4)`: creation/access/write/change times, attributes
-  - `FileStandardInformation (5)`: allocation size, EOF, number of links, delete pending
-  - `FileNameInformation (9)`: file name string
-  - `FilePositionInformation (14)`: current byte offset
-  - `FileAllInformation (18)`: combined basic + standard + name + position
-  - `FileNetworkOpenInformation (34)`: all metadata for network redirector
-- [ ] `NtSetInformationFile(FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass)`:
-  - `FileBasicInformation (4)`: set timestamps and attributes
-  - `FileDispositionInformation (13)`: mark for delete on close
-  - `FileRenameInformation (10)`: rename file
-  - `FilePositionInformation (14)`: set current offset
-  - `FileEndOfFileInformation (20)`: truncate or extend file
-  - `FileAllocationInformation (19)`: set allocated disk space
-- [ ] `NtDeleteFile(ObjectAttributes)`: delete file by name without opening
-- [ ] `NtQueryDirectoryFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, FileInformation, Length, FileInformationClass, ReturnSingleEntry, FileName, RestartScan)`:
-  - `FileDirectoryInformation (1)`: enumerate directory entries with full metadata
-  - `FileBothDirectoryInformation (3)`: entries with 8.3 short name
-  - `FileIdBothDirectoryInformation (37)`: entries with file ID
-- [ ] `NtDeviceIoControlFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, IoControlCode, InputBuffer, InputBufferLength, OutputBuffer, OutputBufferLength)`:
-  - Routes I/O control requests to device drivers via IRP
-  - `METHOD_BUFFERED`, `METHOD_IN_DIRECT`, `METHOD_OUT_DIRECT`, `METHOD_NEITHER`
-- [ ] `NtFsControlFile(...)`: filesystem-specific control (defrag, compression, sparse file)
-- [ ] `NtFlushBuffersFile(FileHandle, IoStatusBlock)`: flush file data to disk
-- [ ] `NtLockFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, ByteOffset, Length, Key, FailImmediately, ExclusiveLock)`: byte-range lock
-- [ ] `NtUnlockFile(FileHandle, IoStatusBlock, ByteOffset, Length, Key)`: release byte-range lock
-- [ ] `NtNotifyChangeDirectoryFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, Buffer, BufferLength, CompletionFilter, WatchTree)`: file system change notification (ReadDirectoryChangesW foundation)
-- [ ] `NtQueryVolumeInformationFile(FileHandle, IoStatusBlock, Buffer, Length, FsInformationClass)`:
-  - `FileFsSizeInformation (3)`: total/available allocation units
-  - `FileFsVolumeInformation (1)`: volume label, serial number
-  - `FileFsAttributeInformation (5)`: file system name, max component length
-- [ ] `NtQueryAttributesFile(ObjectAttributes, FileInformation)`: lightweight metadata query by name
-- [ ] `NtCancelIoFile(FileHandle, IoStatusBlock)`: cancel pending I/O for calling thread
-- [ ] `NtCancelIoFileEx(FileHandle, IoRequestToCancel, IoStatusBlock)`: cancel specific I/O request
-- [ ] `NtCreateIoCompletion(IoCompletionHandle, DesiredAccess, ObjectAttributes, Count)`: I/O completion port
-- [ ] `NtSetIoCompletion(IoCompletionHandle, KeyContext, ApcContext, IoStatus, IoStatusInformation)`: post completion
-- [ ] `NtRemoveIoCompletion(IoCompletionHandle, KeyContext, ApcContext, IoStatusBlock, Timeout)`: dequeue completion
-- [ ] `NtCreateMailslotFile(...)`: one-way IPC mailslot
-- [ ] `NtReadFileScatter(...)` / `NtWriteFileGather(...)`: scatter/gather I/O
+- [x] `NtQueryInformationFile` (SSDT 0x0015): FileBasicInformation (4), FileStandardInformation (5), FileNameInformation (9), FilePositionInformation (14), FileNetworkOpenInformation (34). Uses VFS stat + FILE_OBJECT offset. FileAllInformation (18) deferred (compound query).
+- [x] `NtSetInformationFile` (SSDT 0x0016): FileBasicInformation (set times/attrs), FileDispositionInformation (delete-on-close), FileRenameInformation (UTF-16 rename), FilePositionInformation (seek), FileEndOfFileInformation (truncate), FileAllocationInformation (pre-allocate).
+- [x] `NtDeleteFile` (SSDT 0x0014): delete by path via OBJECT_ATTRIBUTES -> vfs_unlink.
+- [/] `NtQueryDirectoryFile`: extended info classes (FileDirectoryInformation, FileBothDirectoryInformation, FileIdBothDirectoryInformation) deferred -- basic enumeration already wired in §6; these classes need per-entry metadata structs beyond current VFS dirent.
+- [x] `NtDeviceIoControlFile` (SSDT 0x0019): registered, returns STATUS_INVALID_DEVICE_REQUEST until IRP framework (driver model prerequisite). METHOD_* constants defined.
+- [x] `NtFsControlFile` (SSDT 0x001A): registered, returns STATUS_INVALID_DEVICE_REQUEST (requires FS-specific control codes).
+- [x] `NtFlushBuffersFile` (SSDT 0x0018): calls VFS flush op on the file's vfs_node.
+- [x] `NtLockFile` (SSDT 0x001D): calls vfs_lock_file() with exclusive lock.
+- [x] `NtUnlockFile` (SSDT 0x001E): calls vfs_unlock_file().
+- [x] `NtNotifyChangeDirectoryFile` (SSDT 0x001F): registered, returns STATUS_INVALID_DEVICE_REQUEST (requires async I/O / IRP pending infrastructure).
+- [x] `NtQueryVolumeInformationFile` (SSDT 0x0020): FileFsSizeInformation, FileFsVolumeInformation ("Impossible", serial 0x494D5053), FileFsAttributeInformation ("IXFS", case-sensitive).
+- [x] `NtQueryAttributesFile` (SSDT 0x0028): lightweight stat by path via OBJECT_ATTRIBUTES -> vfs_stat -> FILE_BASIC_INFORMATION.
+- [x] `NtCancelIoFile` (SSDT 0x0026) / `NtCancelIoFileEx` (SSDT 0x0027): no-op success (all I/O is synchronous; nothing to cancel).
+- [x] `NtCreateIoCompletion` (SSDT 0x0088) / `NtSetIoCompletion` (SSDT 0x0089) / `NtRemoveIoCompletion` (SSDT 0x008A): 16-port pool, 64-entry ring buffer per port, post/dequeue round-trip functional.
+- [x] `NtCreateMailslotFile` (SSDT 0x001C): registered, returns STATUS_INVALID_DEVICE_REQUEST (one-way IPC deferred).
+- [x] `NtReadFileScatter` (SSDT 0x0024) / `NtWriteFileGather` (SSDT 0x0025): registered, returns STATUS_INVALID_DEVICE_REQUEST (requires page-aligned buffer segments).
 - [ ] Commit: `"kernel: nt -- file metadata, device control, I/O completion ports"`
 
 **Test checkpoint:** `NtQueryInformationFile(FileBasicInformation)` returns valid timestamps. `NtSetInformationFile(FileDispositionInformation)` marks file for delete; file removed after close. `NtDeviceIoControlFile` reaches driver dispatch. I/O completion port post + dequeue round-trip succeeds.

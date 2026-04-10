@@ -780,6 +780,78 @@ static void test_nt_procinfo_classes(void)
                    "ProcessSessionInformation returns SUCCESS");
 }
 
+/* ---- S13: File metadata SSDT registration ---- */
+
+static void test_nt_file_metadata_ssdt_registered(void)
+{
+    NTSTATUS s;
+    /* NtQueryInformationFile with bad handle */
+    s = ssdt_dispatch(SSDT_NtQueryInformationFile,
+                      0xDEAD, 0, 0, 0, FileBasicInformation, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "NtQueryInformationFile registered");
+
+    /* NtSetInformationFile with bad handle */
+    s = ssdt_dispatch(SSDT_NtSetInformationFile,
+                      0xDEAD, 0, 0, 0, FileBasicInformation, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "NtSetInformationFile registered");
+
+    /* NtFlushBuffersFile with bad handle */
+    s = ssdt_dispatch(SSDT_NtFlushBuffersFile, 0xDEAD, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "NtFlushBuffersFile registered");
+
+    /* NtDeleteFile with NULL OBJECT_ATTRIBUTES */
+    s = ssdt_dispatch(SSDT_NtDeleteFile, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "NtDeleteFile registered");
+
+    /* NtQueryVolumeInformationFile with bad handle */
+    s = ssdt_dispatch(SSDT_NtQueryVolumeInformationFile,
+                      0xDEAD, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "NtQueryVolumeInformationFile registered");
+}
+
+static void test_nt_iocp_roundtrip(void)
+{
+    HANDLE iocp = 0;
+    NTSTATUS s;
+    uint64_t key_out = 0, apc_out = 0;
+    IO_STATUS_BLOCK iosb;
+
+    /* Create */
+    s = ssdt_dispatch(SSDT_NtCreateIoCompletion,
+                      (uint64_t)&iocp, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtCreateIoCompletion succeeds");
+    TEST_ASSERT(iocp != 0, "IOCP handle is non-zero");
+
+    /* Post */
+    s = ssdt_dispatch(SSDT_NtSetIoCompletion,
+                      (uint64_t)iocp, 42, 99, STATUS_SUCCESS, 1024, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtSetIoCompletion succeeds");
+
+    /* Dequeue */
+    s = ssdt_dispatch(SSDT_NtRemoveIoCompletion,
+                      (uint64_t)iocp,
+                      (uint64_t)&key_out, (uint64_t)&apc_out,
+                      (uint64_t)&iosb, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtRemoveIoCompletion succeeds");
+    TEST_ASSERT_EQ(key_out, 42, "IOCP key matches");
+    TEST_ASSERT_EQ(apc_out, 99, "IOCP apc context matches");
+    TEST_ASSERT_EQ(iosb.Status, STATUS_SUCCESS, "IOCP status matches");
+    TEST_ASSERT_EQ(iosb.Information, 1024, "IOCP information matches");
+
+    /* Empty dequeue returns TIMEOUT */
+    s = ssdt_dispatch(SSDT_NtRemoveIoCompletion,
+                      (uint64_t)iocp,
+                      (uint64_t)&key_out, (uint64_t)&apc_out,
+                      (uint64_t)&iosb, 0, 0);
+    TEST_ASSERT_EQ(s, STATUS_TIMEOUT,
+                   "NtRemoveIoCompletion empty returns TIMEOUT");
+}
+
 /* ---- S11: IOSB + LastError ---- */
 
 /* RtlNtStatusToDosError: success -> 0 */
@@ -967,6 +1039,12 @@ void test_register_nt_types(void)
     /* NT system information tests (§10) */
     test_suite_register_cat("NT: NtQuerySystemInfo classes", test_nt_sysinfo_classes, TEST_CAT_ABI);
     test_suite_register_cat("NT: NtQueryProcessInfo classes", test_nt_procinfo_classes, TEST_CAT_ABI);
+
+    /* File metadata S13 */
+    test_suite_register_cat("NT: file metadata SSDT registered",
+                            test_nt_file_metadata_ssdt_registered, TEST_CAT_ABI);
+    test_suite_register_cat("NT: IOCP create/post/dequeue roundtrip",
+                            test_nt_iocp_roundtrip, TEST_CAT_ABI);
 
     /* IOSB + LastError tests (§11) */
     test_suite_register_cat("NT: RtlNtStatusToDosError success",

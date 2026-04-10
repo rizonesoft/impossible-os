@@ -806,5 +806,8 @@ void nt_syscall_register_ssdt(void)
     ssdt_register(SSDT_NtCreateSection,         (SSDT_HANDLER)NtCreateSection);
     ssdt_register(SSDT_NtMapViewOfSection,      (SSDT_HANDLER)NtMapViewOfSection);
 
-    klog(LOG_INFO, "nt", "NT syscall: 14 NtXxx handlers registered (12 migrated + NtCreateFile + NtOpenFile)");
+    /* File metadata, device control, I/O completion (S13) */
+    nt_file_register_ssdt();
+
+    klog(LOG_INFO, "nt", "NT syscall: 33 NtXxx handlers registered");
 }
