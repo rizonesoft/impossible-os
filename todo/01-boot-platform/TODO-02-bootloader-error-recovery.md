@@ -178,7 +178,7 @@ If firmware reports more memory regions than `BOOT_MMAP_MAX_ENTRIES` (currently 
 - [x] If exceeded: `"[WARN] Memory map has N entries, truncating to 512"` on serial
 - [x] Set `boot_info.mmap_truncated = 1` flag (new `uint8_t` field in both kernel and bootloader structs)
 - [x] Kernel PMM warns at init if `g_boot_info.mmap_truncated` is set: `"PMM: memory map truncated by bootloader"`
-- [ ] Commit: `"boot: detect memory map overflow -- increase cap to 512, warn on truncation"`
+- [x] Commit: `"boot: detect memory map overflow -- increase cap to 512, warn on truncation"` (21766b72)
 
 **Test checkpoint:** Normal boot (typically ~130 entries) works as before on all 4 platforms. Add a `mmap_truncated` field to boot_info and verify kernel reads it. Verify on bare metal -- real firmware often has more entries than QEMU.
 
