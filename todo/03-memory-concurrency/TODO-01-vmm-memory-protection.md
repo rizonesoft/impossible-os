@@ -3,7 +3,7 @@
 > **Goal:** PMM, VMM, heap, swap, and mmap are complete. This TODO hardens and extends the memory model: Win32-compatible `mprotect` / `VirtualAlloc` / `VirtualFree`, demand paging (reserve vs. commit), W^X enforcement, `NtQueryVirtualMemory`, and a full allocator safety tier -- build-time lint, canaries, leak detector, and PMM statistics.
 
 > [!IMPORTANT]
-> **Memory rule:** `kmalloc` is for small kernel structs ≤ 4 KB only. Use `pmm_alloc_contiguous()` for every buffer that can exceed 4 KB (fonts, images, file data, DMA regions, network reassembly). Violating this crashes the 2 MiB heap silently. See [`freestanding-kernel-code.mdc`](../../.cursor/rules/freestanding-kernel-code.mdc).
+> **Memory rule:** `kmalloc` is for small kernel structs ≤ 4 KB only. Use `pmm_alloc_contiguous()` for every buffer that can exceed 4 KB (fonts, images, file data, DMA regions, network reassembly). Violating this crashes the 2 MiB heap silently. See CLAUDE.md "Freestanding Kernel -- No stdlib".
 
 ## Inputs
 
@@ -19,7 +19,7 @@
 - → XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §8` -- PAT MSR AP synchronization; vmm_map_mmio_uc() cache policy depends on consistent PAT MSR across all CPUs
 - → XREF: `02-kernel-core/TODO-04-peb-teb-user-abi.md §6` -- TEB and stack bounds required for §1 guard page placement
 - → XREF: `02-kernel-core/TODO-05-native-api-ssdt.md` -- syscall wiring for `NtProtectVirtualMemory`, `NtAllocateVirtualMemory`, `NtQueryVirtualMemory`, and the `VirtualAlloc` family
-- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md §10` -- UEFI W^X (firmware runtime pages); §3 policy applies there too
+- → XREF: `01-boot-platform/TODO-01-uefi-hardening-secureboot.md` -- UEFI W^X (firmware runtime pages); §3 policy applies there too (stale §10 reference removed -- file has §1-§8 only)
 
 ## Outcome
 
@@ -55,7 +55,7 @@
 
 ---
 
-## 1. `mprotect` / `NtProtectVirtualMemory` `[Opus]`
+## 1. `mprotect` / `NtProtectVirtualMemory`
 
 Change page permissions on an existing mapping -- essential for W^X policy, JIT compilers, and stack guards. The VMM updates PTE R/W and NX bits for the specified range without remapping pages.
 
@@ -74,7 +74,7 @@ Change page permissions on an existing mapping -- essential for W^X policy, JIT 
 - [ ] Update `pmm_init()`, `vmm_init()`, `heap_init()` to return `boot_result_t` instead of `void` -- moved from TODO-01 §8
 - [ ] Commit: `"mm: mprotect / NtProtectVirtualMemory + stack guard pages"`
 
-## 2. W^X Enforcement `[Opus]`
+## 2. W^X Enforcement
 
 Disallow write-and-execute simultaneously on any mapping. Enforced in the VMM so no user-mode or kernel path can bypass it -- a hard kernel-level security invariant.
 
@@ -86,7 +86,7 @@ Disallow write-and-execute simultaneously on any mapping. Enforced in the VMM so
 - [ ] Serial log at VMM init: `[VMM] W^X policy: active`
 - [ ] Commit: `"mm: W^X enforcement -- hard reject write+exec on any mapping"`
 
-## 3. Demand Paging -- MEM_RESERVE / MEM_COMMIT `[Opus]`
+## 3. Demand Paging -- MEM_RESERVE / MEM_COMMIT
 
 Reserve virtual address space without backing frames; commit pages on-demand with zero-fill on first access -- the core of the Win32 `VirtualAlloc` model and a prerequisite for large address space consumers.
 
@@ -105,7 +105,7 @@ Reserve virtual address space without backing frames; commit pages on-demand wit
 - [ ] **Per-process PML4 spinlock:** when multi-threaded process creation or `VirtualAlloc` from user threads calls `vmm_set_user_page()` concurrently on the same PML4, add a per-process lock to serialize PD splitting and User bit propagation. Currently safe because PML4 manipulation is task-local and single-threaded (documented in vmm.c)
 - [ ] Commit: `"mm: demand paging -- MEM_RESERVE / MEM_COMMIT / NtAllocateVirtualMemory"`
 
-## 4. `NtQueryVirtualMemory` `[Sonnet]`
+## 4. `NtQueryVirtualMemory`
 
 Expose the VMM region state to user-mode so Win32 apps can walk their own address space and query protection, commit state, and type for any virtual address range.
 
@@ -117,7 +117,7 @@ Expose the VMM region state to user-mode so Win32 apps can walk their own addres
 - [ ] Support Win32 range-walk: successive calls with `base = prev.BaseAddress + prev.RegionSize` must cover the full user address space without gaps
 - [ ] Commit: `"mm: NtQueryVirtualMemory -- MEMORY_BASIC_INFORMATION"`
 
-## 5. `VirtualAlloc` / `VirtualFree` / `VirtualProtect` Win32 Wrappers `[Sonnet]`
+## 5. `VirtualAlloc` / `VirtualFree` / `VirtualProtect` Win32 Wrappers
 
 Thin Win32 shim layer over the NT memory API so user-mode code can use the standard Windows memory management interface directly.
 
@@ -134,7 +134,7 @@ Thin Win32 shim layer over the NT memory API so user-mode code can use the stand
 - [ ] Reject `PAGE_EXECUTE_READWRITE` at this layer before reaching the NT path (W^X policy enforcement in Win32 API surface)
 - [ ] Commit: `"mm: VirtualAlloc / VirtualFree / VirtualProtect / VirtualQuery Win32 wrappers"`
 
-## 6. kmalloc Size Audit `[Sonnet]`
+## 6. kmalloc Size Audit
 
 Audit all `kmalloc` calls across the kernel and migrate any allocation that can exceed 4 KB at runtime to `pmm_alloc_contiguous()`. Annotate all remaining legitimate small-struct calls so the build-time lint (§7) can whitelist them.
 
@@ -149,7 +149,7 @@ Audit all `kmalloc` calls across the kernel and migrate any allocation that can 
 - [ ] Add `/* kmalloc OK: <reason> */` comment to every remaining legitimate call-site (e.g., `/* kmalloc OK: task_t is ~256 B */`)
 - [ ] Commit: `"mm: kmalloc size audit -- migrate oversized allocations to pmm_alloc_contiguous"`
 
-## 7. Build-Time kmalloc Lint `[Sonnet]`
+## 7. Build-Time kmalloc Lint
 
 Fail the build on any `kmalloc` call that lacks a `/* kmalloc OK: */` whitelist annotation, preventing future regressions from ever reaching the repo.
 
@@ -160,7 +160,7 @@ Fail the build on any `kmalloc` call that lacks a `/* kmalloc OK: */` whitelist 
 - [ ] Verify: add a bare `kmalloc` call → build fails with clear message; add `/* kmalloc OK: test */` → build passes
 - [ ] Commit: `"build: kmalloc lint -- build fails on unannotated kmalloc call"`
 
-## 8. PMM Statistics `[Sonnet]`
+## 8. PMM Statistics
 
 Surface physical memory utilization so `meminfo`, Task Manager, and diagnostics tools can report total/free/used without digging through WinDbg or `/proc`.
 
@@ -173,7 +173,7 @@ Surface physical memory utilization so `meminfo`, Task Manager, and diagnostics 
 - [ ] Verify boot serial log already shows `[PMM] X MiB free of Y MiB`; align format with `mm_stats_t` output
 - [ ] Commit: `"mm: PMM statistics -- mm_stats_t + meminfo shell command"`
 
-## 9. Heap Canaries + Double-Free Detection `[Sonnet]`
+## 9. Heap Canaries + Double-Free Detection
 
 Catch heap buffer overruns at `kfree` time and detect double-free without any instrumentation overhead in release builds.
 
@@ -184,7 +184,7 @@ Catch heap buffer overruns at `kfree` time and detect double-free without any in
 - [ ] Canary storage is transparent to callers (heap allocates `size + sizeof(canary)` internally)
 - [ ] Commit: `"mm: heap tail canaries + double-free detection"`
 
-## 10. Kernel Memory Leak Detector `[Sonnet]`
+## 10. Kernel Memory Leak Detector
 
 Debug-mode allocation tracker with zero overhead in release builds -- enabled by a boot param or compile flag so developers can catch leaks without a full debug recompile.
 
@@ -198,7 +198,7 @@ Debug-mode allocation tracker with zero overhead in release builds -- enabled by
 - [ ] Boot param `kmalloc_debug=1` enables tracking at runtime without recompile (→ XREF `TODO-02-boot-diagnostics.md §1` -- boot param API)
 - [ ] Commit: `"mm: kmalloc leak detector (debug build) + kmalloc_stats"`
 
-## 11. MMIO Mapping with UC Attributes + HPET Validation `[Opus]`
+## 11. MMIO Mapping with UC Attributes + HPET Validation
 
 Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mappings for device MMIO regions. The boot identity map uses write-back (WB) caching on all 2 MiB pages -- directly accessing MMIO through WB pages causes stale reads, data corruption, or machine check exceptions (MCE) on real hardware. Every MMIO access in the kernel (HPET, ECAM, NVMe BARs, future GPU BARs) must go through this function.
 
@@ -260,8 +260,22 @@ Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a 
 | 💎 | Heap canaries + double-free detection       | ✅ Debug heap (user-mode); kernel via                  | ✅ SLUB debug allocator (`CONFIG_SLUB_DEBUG`)   | ⬜ §9 -- tail canary on every `kmalloc`             |
 | 💎 | Kernel memory leak detector                 | ✅ Driver Verifier LEAK tracking                       | ✅ `kmemleak` kernel debug option               | ⬜ §10 -- allocation table, `memleak` shell command |
 | 💎 | UC MMIO mapping                             | ✅ `MmMapIoSpace` with cache type                      | ✅ `ioremap()` / `ioremap_uc()` for device      | ⬜ §11 -- `vmm_map_mmio()` + HPET quirk table       |
+| 💎 | Per-process user page mapping               | ✅ `ZwMapViewOfSection` + PTE insert                   | ✅ `mmap` + `do_mmap_pgoff` PTE walk             | ✅ §12 `vmm_map_user_page` done                     |
 
 > **After parity items:** Impossible OS matches Windows and Linux on VirtualProtect/mprotect, demand paging, VirtualAlloc, NtQueryVirtualMemory, PMM stats, heap canaries, and leak detection. The W^X enforcement is stronger than Windows -- `PAGE_EXECUTE_READWRITE` is a hard kernel reject with no bypass path. The build-time kmalloc lint enforces correct allocator discipline at compile time rather than catching violations at runtime.
+
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_vmm()` (see `src/kernel/test/test_runner.c`).
+> Tests run with `debug=1` or `test=1` in boot.conf under `TEST_CAT_MM`.
+
+- [x] §12: `test_vmm_map_user_page_roundtrip` -- PMM frame alloc, map at 0x200000000, identity-map write, mapped-VA read-back, vmm_get_physical resolve, unmap verify. 5 assertions. (ce91b05a)
+- [ ] §1: `vmm_protect()` changes page permissions; access fault on PROT_NONE page
+- [ ] §2: W^X reject on PROT_WRITE|PROT_EXEC
+- [ ] §9: heap canary overflow detection at kfree
+- [ ] §9: double-free detection at kfree
+
+> **Note:** Most §1-§11 tests require runtime page fault verification which cannot run in WSL (no QEMU). The test checkpoint blocks in each section define the serial-log verification criteria for native Windows / bare metal testing.
 
 ## Verification
 
