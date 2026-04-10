@@ -445,11 +445,11 @@ int exec_register_module(process_t *proc, const loaded_module_t *mod)
     /* ---- ELF link_map chain (Linux compat) ----
      * For ELF modules, insert into per-process link_map for dl_iterate_phdr().
      * Currently tracked in global crash registry only; per-process link_map
-     * chain deferred to dynamic linker (§14) when process-private address
+     * chain deferred to dynamic linker (S14) when process-private address
      * spaces exist. */
     if (mod->format == EXEC_FMT_ELF) {
         klog(LOG_DEBUG, "exec",
-             "ELF module '%s' registered (link_map deferred to dynamic linker §14)",
+             "ELF module '%s' registered (link_map deferred to dynamic linker S14)",
              mod->name);
     }
 
