@@ -248,21 +248,21 @@ Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a 
 ## OS Comparison
 
 
-| ⭐ | Feature                                     | 🪟 Win11                                                  | 🐧 Linux                                           | 🚀 Impossible OS                                      |
-|----|---------------------------------------------|--------------------------------------------------------|-------------------------------------------------|----------------------------------------------------|
-| 💎 | `VirtualProtect` / `mprotect` + guard pages | ✅ `VirtualProtect`; guard page per thread             | ✅ `mprotect(2)`; guard via `sigaltstack` +     | ⬜ §1 -- `vmm_protect()` + PROT_NONE page per       |
-| 💎 | W^X enforcement on all mappings             | ⚠️ DEP (NX) enforced; `PAGE_EXECUTE_READWRITE` allowed | ✅ NX enforced; `READ_IMPLIES_EXEC` deprecated  | ⬜ §2 -- hard reject at PTE update,                 |
-| 💎 | MEM_RESERVE / MEM_COMMIT demand paging      | ✅ Core Win32 contract; `VirtualAlloc(MEM_RESERVE)`    | ✅ Overcommit + anonymous zero-fill on          | ⬜ §3 -- VMM region states + zero-fill              |
-| 💎 | `NtQueryVirtualMemory` / `/proc/maps`       | ✅ `VirtualQuery` → `MEMORY_BASIC_INFORMATION`         | ✅ `/proc/self/maps` text dump of VMAs          | ⬜ §4 -- `NtQueryVirtualMemory` structured query    |
-| 💎 | `VirtualAlloc` / `VirtualFree` Win32 API    | ✅ Native Win32 memory management surface              | ✅ `mmap(2)` / `munmap(2)` POSIX equivalent     | ⬜ §5 -- Win32 shim → `NtAllocateVirtualMemory`     |
-| ⭐ | Build-time allocator lint                   | ❌ Driver Verifier is runtime only                     | ❌ `sparse`/`smatch` external; no build-fail on | ⬜ §7 -- build fails on unannotated `kmalloc`       |
-| 💎 | PMM / physical memory statistics            | ✅ `!poolused` (WinDbg), Task Manager                  | ✅ `/proc/meminfo`, `free(1)`                   | ⬜ §8 -- `mm_stats_t` + `meminfo` shell command     |
-| 💎 | Heap canaries + double-free detection       | ✅ Debug heap (user-mode); kernel via                  | ✅ SLUB debug allocator (`CONFIG_SLUB_DEBUG`)   | ⬜ §9 -- tail canary on every `kmalloc`             |
-| 💎 | Kernel memory leak detector                 | ✅ Driver Verifier LEAK tracking                       | ✅ `kmemleak` kernel debug option               | ⬜ §10 -- allocation table, `memleak` shell command |
-| 💎 | UC MMIO mapping                             | ✅ `MmMapIoSpace` with cache type                      | ✅ `ioremap()` / `ioremap_uc()` for device      | ⬜ §11 -- `vmm_map_mmio()` + HPET quirk table       |
-| 💎 | Per-process user page mapping               | ✅ `ZwMapViewOfSection` + PTE insert                   | ✅ `mmap` + `do_mmap_pgoff` PTE walk             | ✅ §12 `vmm_map_user_page` done                     |
+| ⭐ | Feature                  | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS          |
+|----|--------------------------|-----------------------|------------------------|---------------------------|
+| 💎 | Page protection + guard  | ✅ VirtualProtect     | ✅ mprotect(2)         | ⬜ §1 vmm_protect         |
+| 💎 | W^X enforcement          | ⚠️ DEP; RWX allowed   | ✅ NX enforced          | ⬜ §2 hard reject         |
+| 💎 | Demand paging            | ✅ RESERVE/COMMIT     | ✅ overcommit+zero     | ⬜ §3 region states       |
+| 💎 | Query virtual memory     | ✅ VirtualQuery       | ✅ /proc/maps          | ⬜ §4 NtQueryVirtualMem   |
+| 💎 | VirtualAlloc API         | ✅ native Win32       | ✅ mmap/munmap         | ⬜ §5 Win32 shim          |
+| ⭐ | Build-time alloc lint    | ❌ runtime only       | ❌ external tools      | ⬜ §7 build-fail lint     |
+| 💎 | PMM statistics           | ✅ Task Manager       | ✅ /proc/meminfo       | ⬜ §8 mm_stats_t          |
+| 💎 | Heap canaries            | ✅ debug heap         | ✅ SLUB debug          | ⬜ §9 tail canary         |
+| 💎 | Memory leak detector     | ✅ Driver Verifier    | ✅ kmemleak            | ⬜ §10 memleak cmd        |
+| 💎 | UC MMIO mapping          | ✅ MmMapIoSpace       | ✅ ioremap_uc          | ⬜ §11 vmm_map_mmio       |
+| 💎 | Per-process page map     | ✅ ZwMapViewOfSection | ✅ do_mmap PTE walk    | ✅ §12 done               |
 
-> **After parity items:** Impossible OS matches Windows and Linux on VirtualProtect/mprotect, demand paging, VirtualAlloc, NtQueryVirtualMemory, PMM stats, heap canaries, and leak detection. The W^X enforcement is stronger than Windows -- `PAGE_EXECUTE_READWRITE` is a hard kernel reject with no bypass path. The build-time kmalloc lint enforces correct allocator discipline at compile time rather than catching violations at runtime.
+> Parity: matches Win11+Linux on page protection, demand paging, VirtualAlloc, query, PMM stats, heap safety, leak detection, MMIO. W^X is stronger than Windows (hard reject RWX). Build-time allocator lint is exclusive.
 
 ## Unit Tests
 
