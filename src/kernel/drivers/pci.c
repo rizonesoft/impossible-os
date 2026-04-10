@@ -137,6 +137,11 @@ void pci_scan(void)
     klog(LOG_DEBUG, "pci", "Scanning buses...");
 
     for (bus = 0; bus < 255; bus++) {
+        /* Fast skip: if device 0 on this bus is absent, the entire bus is
+         * empty. Saves ~65K I/O port reads on bare metal (1-2 seconds). */
+        if (pci_read16(bus, 0, 0, PCI_VENDOR_ID) == 0xFFFF)
+            continue;
+
         for (dev = 0; dev < PCI_MAX_DEV; dev++) {
             for (func = 0; func < PCI_MAX_FUNC; func++) {
                 vendor = pci_read16(bus, dev, func, PCI_VENDOR_ID);
@@ -176,6 +181,8 @@ struct pci_device pci_find_device(uint16_t vendor_id, uint16_t device_id)
     result.found = 0;
 
     for (bus = 0; bus < 255; bus++) {
+        if (pci_read16(bus, 0, 0, PCI_VENDOR_ID) == 0xFFFF)
+            continue;
         for (dev = 0; dev < PCI_MAX_DEV; dev++) {
             for (func = 0; func < PCI_MAX_FUNC; func++) {
                 v = pci_read16(bus, dev, func, PCI_VENDOR_ID);
