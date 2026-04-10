@@ -70,8 +70,13 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Every TODO file MUST have a `## Unit Tests` section wired into `test_runner_init()`.
     - Each test case must be a specific assertion (function + expected value). Flag vague "test that X works" items.
     - If the Unit Tests section is missing entirely, flag it and draft a skeleton.
-13. If section completion state seems wrong, defer to `/validate-todo-section` for deep code-truth verification.
-14. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this validation run:
+13. **Test runner bat file.**
+    - At the bottom of the `## Verification` section, ensure there is a line: `**Test runner:** `scripts\debug\run-<suite>-tests.bat` (SUITE=<cat>)`.
+    - Determine the `TEST_CAT_*` category from the Unit Tests section (e.g., `TEST_CAT_MM` -> `mm`, `TEST_CAT_SCHED` -> `sched`).
+    - Check if `scripts/debug/run-<suite>-tests.bat` exists on disk. If it does NOT exist, create it following the pattern in existing bat files (one-liner calling `run-qemu.ps1 -Accel whpx -TestOnly -TestSuite <suite>`).
+    - Add the line to the Verification section if missing.
+14. If section completion state seems wrong, defer to `/validate-todo-section` for deep code-truth verification.
+15. **Update the History table** at the bottom of the TODO file (after Verification). If no `## History` section exists, create one. Append a row for this validation run:
     ```
     | Date | Action | Summary |
     ```

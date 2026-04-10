@@ -284,6 +284,8 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 - [ ] Tick calibration: serial log shows `[SCHED] tick calibrated: ICR=N, tick=1000000 ns` (≈1 ms)
 - [ ] Commit: `"sched: enhanced scheduler -- priority, aging, CFS, RT, EDF, affinity, tick cal, cpufreq"`
 
+**Test runner:** `scripts\debug\run-sched-tests.bat` (SUITE=sched)
+
 ## History
 
 | Date | Action | Summary |
