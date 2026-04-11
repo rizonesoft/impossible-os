@@ -65,6 +65,7 @@
 | ⭐  |  14   | Error screen QR code                           | §9         |  [ ]   |
 | 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [ ]   |
 | 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [ ]   |
+| 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -327,8 +328,8 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 
 **Test checkpoint:** Normal boot on QEMU produces no warnings (OVMF generates clean maps). Add a synthetic zero-length descriptor injection test if feasible. Serial log shows descriptor count and any warnings. Verify on bare metal -- real firmware is the primary target for memory map quirks; log any warnings for firmware bug reporting.
 
-> **Verified:** 2026-04-11 -- all 4 items confirmed. 6 validation checks (overflow, wrap, zero, align, type, overlap) + desc_size geometry guard at caller. Codex found NumberOfPages overflow (fixed) and desc_size=0 path (fixed with boot_fatal at caller level). Accepted: overlap normalization (needs sort infrastructure, current skip+warn matches TODO spec).
-> **Quality reviewed:** 2026-04-11 -- boot-code-quality 10/10 gates passed. Codex quality found desc_size geometry + map_size remainder (fixed: boot_fatal guard before both fill functions). EfiMaxMemoryType off-by-one fixed (>= not >). Accepted: overlap priority normalization (-> future TODO for map sorting).
+> **Verified:** 2026-04-11 -- all 4 items confirmed. 6 validation checks (overflow, wrap, zero, align, type, overlap) + desc_size geometry guard at caller. Codex found NumberOfPages overflow (fixed) and desc_size=0 path (fixed with boot_fatal at caller level). Accepted: overlap normalization (-> XREF: 01-boot-platform/TODO-02 §17).
+> **Quality reviewed:** 2026-04-11 -- boot-code-quality 10/10 gates passed. Codex quality found desc_size geometry + map_size remainder (fixed: boot_fatal guard before both fill functions). EfiMaxMemoryType off-by-one fixed (>= not >). Accepted: overlap priority normalization (-> XREF: 01-boot-platform/TODO-02 §17).
 
 ---
 
@@ -414,6 +415,22 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 
 ---
 
+## 17. Memory Map Overlap Normalization
+
+> Found during §12 quality review (2026-04-11). The current overlap check in `fill_memory_map()` skips overlapping descriptors with a `[WARN]` log. Real firmware (particularly with ACPI reclaim regions) can produce legitimate overlaps that should be resolved by priority, not skipped. This section adds sort + carve logic to normalize the map before the kernel PMM consumes it.
+
+- [ ] Sort memory map descriptors by base address before overlap detection (insertion sort is fine for <= 512 entries)
+- [ ] On overlap: resolve by UEFI memory type priority (Reserved > ACPI NVS > ACPI Reclaim > Runtime > Conventional) -- higher-priority type wins the contested range
+- [ ] Carve contested ranges: split the lower-priority descriptor around the higher-priority one (may increase descriptor count by 1 per overlap)
+- [ ] Guard against exceeding `BOOT_MMAP_MAX_ENTRIES` during carving -- if the carve would overflow, fall back to current skip+warn behavior
+- [ ] Update `fill_memory_map()` to call sort + normalize before copying to `boot_info`
+- [ ] Log normalized overlaps: `"[BOOT] mmap: overlap resolved at 0xNNNN -- type N wins over type M"`
+- [ ] Commit: `"boot: memory map sort + overlap normalization by type priority"`
+
+**Test checkpoint:** Normal boot produces no overlap warnings on clean firmware. Inject a synthetic overlap in QEMU (if feasible via firmware customization) and verify the sort + carve produces a clean, non-overlapping map. Kernel PMM `total_frames` and `used_frames` are consistent with the normalized map.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature         | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
@@ -432,6 +449,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot |
 | ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ✅ §13 13 codes + NVRAM persist |
 | ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ⬜ §14 QR code error link       |
+| 💎 | Mmap normalize  | ✅ Hal.dll coalesces overlaps    | ✅ efi_fake_memmap + sanitize   | ⬜ §17 sort + carve by priority |
 | 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ⬜ §15-§16 versioned handoff    |
 | 💎 | Offline repair  | ✅ Windows Recovery Environment  | ✅ rescue/live ISO image        | ⬜ TODO-15 recovery partition   |
 
