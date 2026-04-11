@@ -908,6 +908,11 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
                 if (level_full_line[level]) LS(ANSI_RESET);
             }
         }
+        /* Ensure line always ends with newline + NUL, even if truncated */
+        if (pos >= sizeof(line) - 2) {
+            pos = sizeof(line) - 2;
+            line[pos - 1] = '~';  /* truncation marker */
+        }
         LP('\n');
         line[pos] = '\0';
 

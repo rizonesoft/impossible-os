@@ -199,6 +199,8 @@ Unified log format and atomic serial writes.
 
 **Test checkpoint:** Under concurrent IRQ logging, serial shows no interleaved partial lines; tags `[ OK ]`, `[WARN]`, `[FAIL]` appear as documented. Stress: rapid `klog()` from timer tick + main thread. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-04-11 -- Codex found truncation without marker (fixed: `~` appended on overflow). printk bypass and ring flush race accepted by design (emergency path + lockless producer). Accepted: printk emergency bypass (intentional), ring flush lockless design (same trade-off as Linux printk).
+
 ---
 
 ## 9. SBAT Ops, Secure Boot DB Registry Mirror, and ExitBootServices Retry
