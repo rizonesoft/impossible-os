@@ -2576,18 +2576,36 @@ static void mmap_normalize(struct boot_mmap_entry *arr, UINT32 *count,
 }
 
 /* When the UEFI descriptor count exceeds BOOT_MMAP_MAX_ENTRIES, preserve
- * high-priority descriptors by evicting the lowest-priority already-
- * accepted entry to make room for the incoming higher-priority one.
+ * high-priority descriptors by evicting a lower-priority already-
+ * accepted entry to make room for the incoming one.
+ *
+ * Eviction policy (Codex S17 post-implementation review rounds 1 and
+ * 2, 2026-04-12): cap handling in Phase 1 cannot use the sweep-line
+ * carver to preserve non-overlapping fragments -- normalization runs
+ * on the already-pruned set.  To avoid pathologically discarding a
+ * large RAM block for a small non-overlapping high-priority entry,
+ * or a small OVERLAPPING entry that only contests a tiny slice of a
+ * large RAM block, rank every lower-priority candidate by the amount
+ * of memory that would be lost if it were evicted whole:
+ *
+ *   loss = victim.length - overlap_length(victim, incoming)
+ *
+ * Pick the minimum loss.  Ties break to the first-seen candidate
+ * (deterministic).  A fully contained victim yields loss == 0 and is
+ * always preferred.  If no lower-priority candidate exists, drop the
+ * incoming rather than clobber a peer or higher-priority entry.
+ *
  * Returns 1 if the incoming descriptor should be inserted at `out_idx`,
  * 0 if the incoming descriptor should be skipped.  Updates *count on
  * successful eviction. */
 static int mmap_evict_for_incoming(struct boot_mmap_entry *arr, UINT32 *count,
                                     UINT32 cap, int incoming_prio,
+                                    UINT64 incoming_start, UINT64 incoming_end,
                                     UINT32 *out_idx)
 {
     UINT32 j;
-    UINT32 lowest_idx = 0;
-    int lowest_pri = 999;
+    int best_idx = -1;
+    UINT64 best_loss = 0;
 
     if (*count < cap) {
         *out_idx = *count;
@@ -2595,14 +2613,35 @@ static int mmap_evict_for_incoming(struct boot_mmap_entry *arr, UINT32 *count,
     }
 
     for (j = 0; j < *count; j++) {
+        UINT64 e_start, e_end, ov_start, ov_end, ov_len, loss;
         int p = mmap_type_priority(arr[j].uefi_memory_type);
-        if (p < lowest_pri) { lowest_pri = p; lowest_idx = j; }
+        if (p >= incoming_prio) continue;  /* not evictable */
+
+        e_start = arr[j].base_addr;
+        e_end   = e_start + arr[j].length;
+
+        /* Compute intersection of [incoming_start, incoming_end) and
+         * [e_start, e_end), clamped to zero if disjoint. */
+        ov_start = (incoming_start > e_start) ? incoming_start : e_start;
+        ov_end   = (incoming_end   < e_end)   ? incoming_end   : e_end;
+        ov_len   = (ov_start < ov_end) ? (ov_end - ov_start) : 0;
+
+        /* Memory lost if this victim is evicted whole (non-contested
+         * portion of the victim). */
+        loss = arr[j].length - ov_len;
+
+        if (best_idx < 0 || loss < best_loss) {
+            best_idx  = (int)j;
+            best_loss = loss;
+        }
     }
 
-    if (incoming_prio <= lowest_pri) return 0;  /* not worth evicting */
+    if (best_idx < 0)
+        return 0;  /* no evictable victim -- drop incoming */
 
-    mmap_remove_at(arr, count, lowest_idx);
+    mmap_remove_at(arr, count, (UINT32)best_idx);
     g_boot_info_ptr->mmap_quirks = 1;
+    serial_early_print("[WARN] mmap: cap reached -- evicted lower-priority entry (min-loss)\n");
     *out_idx = *count;
     return 1;
 }
@@ -2697,15 +2736,26 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
             continue;
         }
 
-        /* Priority-aware cap handling: at capacity, evict the lowest-
-         * priority existing entry to make room for a higher-priority
-         * incoming one.  At or below cap, append at idx. */
-        incoming_prio = mmap_type_priority(desc->Type);
-        if (!mmap_evict_for_incoming(g_boot_info_ptr->mmap, &idx,
-                                      BOOT_MMAP_MAX_ENTRIES,
-                                      incoming_prio, &dest_idx)) {
-            g_boot_info_ptr->mmap_quirks = 1;
-            continue;  /* cap full and incoming is too low-priority */
+        /* Priority-aware cap handling: at capacity, evict a lower-
+         * priority existing entry to make room for the incoming one.
+         * Eviction prefers an overlapping victim and falls back to the
+         * smallest lower-priority entry so a small Reserved descriptor
+         * cannot pathologically discard a large Conventional RAM
+         * region that does not overlap it.  At or below cap, append
+         * at idx. */
+        {
+            UINT64 desc_len = desc->NumberOfPages * EFI_PAGE_SIZE;
+            UINT64 desc_start = desc->PhysicalStart;
+            UINT64 desc_end = desc_start + desc_len;
+            incoming_prio = mmap_type_priority(desc->Type);
+            if (!mmap_evict_for_incoming(g_boot_info_ptr->mmap, &idx,
+                                          BOOT_MMAP_MAX_ENTRIES,
+                                          incoming_prio,
+                                          desc_start, desc_end,
+                                          &dest_idx)) {
+                g_boot_info_ptr->mmap_quirks = 1;
+                continue;  /* no evictable victim -- drop incoming */
+            }
         }
 
         g_boot_info_ptr->mmap[dest_idx].base_addr = desc->PhysicalStart;
