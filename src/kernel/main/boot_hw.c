@@ -21,6 +21,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/version.h"
 #include "kernel/uefi_runtime.h"
+#include "kernel/uefi_vars.h"
 #include "kernel/tpm.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
@@ -167,6 +168,17 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
             klog(LOG_WARN, "UEFI", "RTC wall-clock seed degraded");
     }
     POST16(POST16_UEFI_VARS_OK);
+
+    /* S13: Clear previous boot error in NVRAM now that the kernel is alive
+     * and variable services are initialized.  Clearing HERE (not in the
+     * bootloader) ensures that a crash between ExitBootServices and kernel
+     * Phase 0 preserves the error evidence for next-boot diagnostics. */
+    if (g_boot_info.last_boot_error != 0) {
+        static const uint16_t var_name[] = { 'B','o','o','t','E','r','r','o','r', 0 };
+        efi_guid_t guid = IMPOSSIBLE_OS_VENDOR_GUID_INIT;
+        uint32_t zero = 0;
+        uefi_var_set(var_name, &guid, &zero, sizeof(zero), UEFI_VAR_NV_BOOT_RUNTIME);
+    }
 
     /* --- Secure Boot state detection --- */
     POST16(POST16_SECUREBOOT);

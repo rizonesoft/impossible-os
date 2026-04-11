@@ -3339,12 +3339,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
     serial_early_print("[BOOT] ExitBootServices OK\n");
 
-    /* S13: Clear previous boot error in NVRAM now that ExitBootServices
-     * succeeded.  SetVariable is a Runtime Service and survives EBS per
-     * UEFI Spec section 8.2.  Clearing HERE (not before EBS) ensures a
-     * crash between EBS and kernel entry preserves the error evidence. */
-    nvram_write_boot_error(BOOT_ERR_OK);
-
     /* === NO MORE UEFI Boot Services CALLS FROM HERE === */
 
     /* Step 7: Set up page tables */

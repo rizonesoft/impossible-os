@@ -342,13 +342,16 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 
 - [x] Define `BOOT_ERR_*` codes as `#define` constants in `efi.h` (13 codes: 0x0000-0x000C covering §1-§12 failure modes)
 - [x] On fatal error: `boot_fatal()` writes error code to UEFI NVRAM variable `BootError` (Impossible OS vendor GUID, non-volatile + boot-service-access + runtime-access) via `nvram_write_boot_error()` helper
-- [x] On successful boot: write `BOOT_ERR_OK` (0) to clear previous error -- done before ExitBootServices for maximum firmware compatibility
+- [x] On successful boot: kernel clears `BootError` NVRAM variable in `boot_phase0()` after `uefi_vars_init()` succeeds -- clearing in the kernel (not bootloader) ensures a crash between EBS and Phase 0 preserves the error evidence
 - [x] At boot entry: `nvram_read_boot_error()` reads NVRAM -- if non-zero, logs `"[BOOT] Previous boot failed: code=0x%04x"` on serial
 - [x] Pass `boot_info.last_boot_error` to kernel -- field added to both bootloader struct (bootx64.c) and kernel header (boot_info.h) after `serial_baud`; kernel logs `"Previous boot failed: code=0x%04X"` via klog in `boot_hw.c`
 - [x] `boot_fatal()` includes the error code in on-screen display: `"Error code: 0xNNNN"` line on BSOD screen, plus hex code in serial log
-- [ ] Commit: `"boot: structured error codes with NVRAM persistence -- cross-boot diagnostics"`
+- [x] Commit: `"boot: structured error codes with NVRAM persistence -- cross-boot diagnostics"` (373a29db)
 
 **Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x0003"`. Verify NVRAM variable is cleared on successful boot.
+
+> **Verified:** 2026-04-11 -- Codex adversarial clean. Evidence: 13 BOOT_ERR_* codes (efi.h:56-68), nvram_write/read helpers (bootx64.c:794-825), boot_fatal NVRAM persist + hex display, boot_info.last_boot_error ABI-synced, kernel klog (boot_hw.c:94-97). Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- moved NVRAM clear from bootloader post-EBS to kernel after uefi_vars_init() per Codex finding (crash between EBS and kernel entry now preserves error evidence). 8 unused BOOT_ERR_* codes are future registry entries by design. Accepted: none.
 
 ---
 
