@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Impossible OS -- Page not found</title>
+    <meta name="robots" content="noindex, follow">
+</head>
+<body>
+    <script>
+        (function () {
+            const match = window.location.pathname.match(/^(.*)\/err\/([0-9a-fA-F]{4})\/?$/);
+            if (match) {
+                const prefix = match[1] || '';
+                const code = match[2].toLowerCase();
+                window.location.replace(prefix + '/err/?code=' + code);
+                return;
+            }
+
+            document.body.innerHTML = '<p style="font-family: sans-serif; padding: 24px;">Page not found. Go back to <a href="/">Impossible OS</a>.</p>';
+        }());
+    </script>
+</body>
+</html>
