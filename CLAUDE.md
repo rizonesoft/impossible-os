@@ -134,7 +134,8 @@ Cursor mirrors for TODO prep live under `.cursor/skills/` (for example `validate
 | `/implement-ssdt-range` | Implement + wire a range of SSDT entries, mark Done [x] |
 | `/create-todo` | Create a new TODO file |
 | `/validate-todo-file` | Validate a TODO for structural gaps |
-| `/verify-todo-section` | Verify implemented section -- full Codex pipeline without implementing |
+| `/verify-todo-section` | Verify implemented section -- compliance audit (is it done?) |
+| `/quality-review-section` | Deep quality review -- standards, optimization, Win11/Linux parity (is it done RIGHT?) |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
 | `/diagnose-serial-log` | Parse serial log, classify WARN/FAIL/crash, trace to source, fix real bugs |
 | `/todo-pipeline` | 3-stage TODO prep: validate -> gap analysis -> validate (before implementation) |
@@ -146,6 +147,10 @@ Cursor mirrors for TODO prep live under `.cursor/skills/` (for example `validate
 | `/codex-consistency-audit` | Codex cross-file consistency audit -- struct offsets, constants, API contracts |
 | `/codex-dead-code` | Codex dead code scanner -- unused functions, defines, types, declarations |
 | `/codex-perf-review` | Codex performance hot-path review -- ISR paths, lock times, O(n^2), allocations |
+| `/boot-code-quality` | Pre-flight checklist for UEFI boot code -- EBS boundary, table safety, fallbacks |
+| `/desktop-code-quality` | Pre-flight checklist for desktop compositor code (placeholder) |
+| `/shell-code-quality` | Pre-flight checklist for command shell code (placeholder) |
+| `/userland-code-quality` | Pre-flight checklist for user-mode applications (placeholder) |
 
 ## Mandatory Skill Triggers
 
@@ -153,7 +158,11 @@ These are non-negotiable. Auto-loading by description is unreliable -- the rules
 
 | Trigger | Skill | Why |
 |---|---|---|
-| Edit/Write on `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, `src/shell/` (`.c`/`.h`/`.asm`/`.S`) | `kernel-code-quality` | Walk all 10 gates BEFORE writing. SMP race, leak, wrong assertion -- all caused by writing code first. |
+| Edit/Write on `src/boot/` (`.c`/`.h`/`.asm`/`.S`) | `boot-code-quality` | UEFI error handling, EBS boundary, table safety, framebuffer guards, fallback chains. |
+| Edit/Write on `src/kernel/`, `include/kernel/` (`.c`/`.h`/`.asm`/`.S`) | `kernel-code-quality` | SMP safety, memory rules, bare-metal correctness, POST16 boot-path only. |
+| Edit/Write on `src/desktop/` (`.c`/`.h`) | `desktop-code-quality` | WC mapping, compositor loop, pixel format, back-buffer pattern. |
+| Edit/Write on `src/shell/` (`.c`/`.h`) | `shell-code-quality` | Win32 console API, Windows path conventions. |
+| Edit/Write on `user/`, `src/apps/` (`.c`/`.h`) | `userland-code-quality` | User libc, syscall interface, no kernel headers. |
 | Codex `adversarial-review` invocation completed | `superpowers:receiving-code-review` | Codex is a reviewer, not an authority. Verify each finding against cited code, classify Fix/Reject/Accept with evidence. No blind implementation, no performative agreement. |
 | Implementing a TODO section | `implement-todo-section` | Steps 13-18 (Codex review, fix loop, self-review, build, validate, tie up loose ends) are MANDATORY before commit. No exceptions for "simple" sections. |
 | Test file in `src/kernel/test/` | `implement-unit-tests` | Wire to `test_runner.c`, correct `TEST_CAT_*`, concrete `TEST_ASSERT_*` with expected values. |

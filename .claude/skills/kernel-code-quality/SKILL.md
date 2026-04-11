@@ -9,14 +9,19 @@ description: Automatic code quality checklist for writing kernel C code. Enforce
 
 ## Use This Skill When
 
-- Writing or modifying any `.c`, `.h`, or `.asm` file under `src/` or `include/`.
-- This skill auto-loads -- you do not need to invoke it manually.
+- Writing or modifying any `.c`, `.h`, or `.asm` file under `src/kernel/` or `include/kernel/`.
+- This skill auto-loads via the domain routing hook -- you do not need to invoke it manually.
 - It applies during `/implement-todo-section`, `/implement-ssdt-range`, and any direct code editing.
-- Does NOT apply to documentation-only changes, TODO edits, or script changes.
+- Does NOT apply to boot code (`src/boot/`), desktop (`src/desktop/`), shell (`src/shell/`), or user-mode (`user/`, `src/apps/`) -- each has its own quality skill.
 
 ## When This Applies
 
-Every time you create or modify a file under `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, or `src/shell/`. Does NOT apply to documentation-only changes, TODO edits, or script changes.
+Every time you create or modify a file under `src/kernel/` or `include/kernel/`. Does NOT apply to:
+- `src/boot/` -- use `boot-code-quality` instead
+- `src/desktop/` -- use `desktop-code-quality` instead
+- `src/shell/` -- use `shell-code-quality` instead
+- `user/`, `src/apps/` -- use `userland-code-quality` instead
+- Documentation-only changes, TODO edits, or script changes
 
 ## Pre-Write Checklist
 

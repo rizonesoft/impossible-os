@@ -24,7 +24,13 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     ```bash
     node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<design review prompt>"
     ```
-5. **Run `kernel-code-quality` skill** -- walk the gates BEFORE writing code. If touching `src/kernel/`, `include/kernel/`, `src/boot/`, `src/desktop/`, or `src/shell/`: the skill applies. Do not skip. Past incidents: SMP race, memory leak, wrong test assertion -- all caused by writing code before checking quality gates.
+5. **Run the domain-appropriate code quality skill** -- walk the gates BEFORE writing code. The hook auto-selects based on path:
+   - `src/boot/` -> `boot-code-quality` (UEFI error handling, EBS boundary, table safety, fallbacks)
+   - `src/kernel/`, `include/kernel/` -> `kernel-code-quality` (SMP safety, memory rules, bare-metal)
+   - `src/desktop/` -> `desktop-code-quality` (WC mapping, compositor loop, pixel format)
+   - `src/shell/` -> `shell-code-quality` (Win32 console API, path conventions)
+   - `user/`, `src/apps/` -> `userland-code-quality` (syscall interface, no kernel headers)
+   Do not skip. Past incidents: SMP race, memory leak, wrong test assertion, FrameBufferBase crash -- all caused by writing code before checking quality gates.
 6. **Implement** -- bounded scope only.
    - Freestanding kernel: `#include "kernel/types.h"` -- no `<stdint.h>`, `<string.h>`.
    - No `malloc()`/`printf()` -- use `kmalloc()` (<=4 KB), `pmm_alloc_contiguous()` (larger), `printk()`.

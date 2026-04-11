@@ -28,7 +28,11 @@ description: Verify an already-implemented TODO section through the full quality
 
 3. **Explore the codebase** -- Grep/Glob for every symbol, function, type, and constant referenced in the section's checklist items. Read the source files. Build an evidence map: "this checklist claim is satisfied by file:line through file:line".
 
-4. **Spot-check `kernel-code-quality` gates** -- walk the gates AGAINST the existing implementation: SMP safety, memory rules, bare-metal correctness, boot-path POST16 hygiene, error handling, Gate 10 production quality (no TODO/FIXME/HACK).
+4. **Spot-check the domain-appropriate code quality gates** -- the hook auto-selects based on path:
+   - `src/boot/` -> `boot-code-quality` (UEFI error handling, EBS boundary, table safety, fallbacks)
+   - `src/kernel/`, `include/kernel/` -> `kernel-code-quality` (SMP safety, memory rules, bare-metal)
+   - `src/desktop/` -> `desktop-code-quality` | `src/shell/` -> `shell-code-quality` | `user/` -> `userland-code-quality`
+   Walk the relevant gates AGAINST the existing implementation, not a plan.
 
 5. **VERIFY each checklist item** -- walk every `- [x]` item and prove it via Grep/Read evidence. State each proof as "claim -> file:line -> snippet shows X".
    - **Done proof gate:** if evidence does NOT show implemented + wired + functional, downgrade from `[x]` to `[/]` (regression) or `[ ]` (never implemented). When in doubt, downgrade.
