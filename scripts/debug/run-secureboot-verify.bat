@@ -1,6 +1,9 @@
 @echo off
 :: run-secureboot-verify.bat -- Boot with UEFI Secure Boot firmware
 ::
+:: Uses TCG acceleration (not WHPX) because WHPX cannot emulate pflash
+:: MMIO required by secboot OVMF's SMM paths (QEMU bugs #513, #934).
+::
 :: Two modes:
 ::   Mode 1 (default): Setup Mode -- SB firmware, no keys enrolled.
 ::     SecureBoot=0, SetupMode=1. Tests SB detection + registry writes.
@@ -11,16 +14,16 @@
 ::     After enrollment: SecureBoot=1, SetupMode=0, PK=enrolled.
 ::
 :: Usage:
-::   run-secureboot-verify.bat           -- Setup Mode (default)
-::   set ENROLL=1 && run-secureboot-verify.bat  -- Enrolled Mode
+::   run-secureboot-verify.bat                       -- Setup Mode
+::   set ENROLL=1 && run-secureboot-verify.bat       -- Enrolled Mode
 ::
 :: Prerequisites:
-::   - QEMU + WHPX (native Windows)
+::   - QEMU installed (TCG, no WHPX needed)
 ::   - ovmf package in WSL (apt install ovmf)
 ::   - bash scripts/build.sh
 
 echo ============================================================
-echo  Impossible OS -- Secure Boot Verification
+echo  Impossible OS -- Secure Boot Verification (TCG)
 echo ============================================================
 echo.
 
@@ -62,7 +65,7 @@ if "%ENROLL%"=="1" (
     set SB_VARS_TEMP=%TEMP%\OVMF_VARS_4M.secboot.setup.fd
 )
 
-:: Copy NVRAM -- enrolled mode preserves across runs, setup mode resets each time
+:: Enrolled mode preserves NVRAM across runs; setup mode resets each time
 if "%ENROLL%"=="1" (
     if not exist "%SB_VARS_TEMP%" copy /Y "%SB_VARS_SRC%" "%SB_VARS_TEMP%" >nul
 ) else (
@@ -71,20 +74,23 @@ if "%ENROLL%"=="1" (
 
 echo [SB] Firmware: %SB_CODE%
 echo [SB] NVRAM:    %SB_VARS_TEMP%
+echo [SB] Accel:    TCG (WHPX incompatible with secboot pflash)
 echo.
 
 :: Find QEMU
 set QEMU=C:\Program Files\qemu\qemu-system-x86_64.exe
 if not exist "%QEMU%" set QEMU=qemu-system-x86_64.exe
 
-echo [SB] Launching QEMU with Secure Boot firmware...
+echo [SB] Launching QEMU with Secure Boot firmware (q35 + SMM + TCG)...
 echo.
 
 "%QEMU%" ^
-    -accel whpx ^
-    -cpu host ^
+    -accel tcg ^
+    -machine q35,smm=on ^
+    -global ICH9-LPC.disable_s3=1 ^
+    -cpu qemu64 ^
     -smp 2 ^
-    -m 256 ^
+    -m 512 ^
     -drive if=pflash,format=raw,readonly=on,file="%SB_CODE%" ^
     -drive if=pflash,format=raw,file="%SB_VARS_TEMP%" ^
     -drive format=raw,file="%DISK%" ^
