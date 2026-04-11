@@ -1,59 +1,66 @@
 ---
 name: review-todo-section
-description: Post-implementation review pipeline. Runs verify (evidence mapping + test checkpoint, skips adversarial Codex since implementation already ran it) then quality review (MANDATORY Codex perf/consistency/dead-code). Use after implement-todo-section commits, or standalone for already-implemented sections.
+description: Full review of a TODO section -- adversarial Codex, dead code, consistency, performance, domain code quality, feature completeness. Runs after implementation or standalone. No steps skipped.
 ---
 
 # Review TODO Section
 
-> Post-implementation review. The implementation skill already ran a Codex adversarial review (step 13). This skill focuses on what implementation missed: evidence mapping, test checkpoint verification, and a MANDATORY quality-phase Codex covering perf/consistency/dead-code.
+> Every review runs the FULL checklist. No skipping. No "already reviewed" exemptions. No "conditional" logic. If a section needs reviewing, it gets the complete pipeline.
 
 ## Pipeline
 
-### Phase 1: Verify (evidence mapping -- no adversarial Codex)
+### Phase 1: Evidence + Verify
 
-1. **Evidence map** -- for each `[x]` item, prove via Grep/Read: "claim -> file:line -> snippet". Downgrade to `[/]` or `[ ]` on regression.
-2. **Domain quality gates** -- spot-check boot-code-quality / kernel-code-quality / etc. against the implementation.
-3. **Scope-gap audit** -- grep for `TODO`, `FIXME`, `HACK`, `STATUS_NOT_IMPLEMENTED`. Cross-check against TODO text.
-4. **Test checkpoint verification** -- read the section's Test checkpoint paragraph. For each expected serial/klog line, grep the source to confirm the message exists and the code path is reachable. Flag any checkpoint claims that don't match the code.
-5. **Build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
-6. **Codex adversarial review (CONDITIONAL)** -- check if the section already has a `> **Verified:**` stamp from a prior run OR was just committed by `/implement-todo-section` in this session:
-   - **If NO prior stamp AND NOT called from implement step 20:** this is a standalone review of old code. Run MANDATORY Codex adversarial review with all prescribed angles (integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds). Apply `superpowers:receiving-code-review` to every finding.
-   - **If called from implement step 20 OR section already has a Verified stamp:** skip adversarial Codex (implementation already ran one). The quality-phase Codex in Phase 2 asks DIFFERENT questions.
-7. **Reconcile tables** -- checklist items, IO row, OS Comparison row. Add Verified stamp if all items survived.
+1. **Evidence map** -- for each `[x]` item, prove via Grep/Read: "claim -> file:line". Downgrade on regression.
+2. **Scope-gap audit** -- grep for `TODO`, `FIXME`, `HACK`, `STATUS_NOT_IMPLEMENTED`. Standalone stubs: implement. Infrastructure stubs: Accept with XREF.
+3. **Test checkpoint verification** -- read the Test checkpoint paragraph. Grep source for each expected serial/klog message.
+4. **Build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
 
-### Phase 2: Quality Review (MANDATORY Codex)
+### Phase 2: Adversarial Review
 
-8. **Industry standards research** -- spec compliance for the section's domain.
-9. **Win11/Linux parity** -- concrete function/file references.
-10. **Codex comprehensive review** (MANDATORY -- NO EXCEPTIONS) -- single dispatch covering performance, consistency, AND dead code. If Codex says "no diff", provide file content. Apply `superpowers:receiving-code-review` to EVERY finding.
+5. **MANDATORY Codex adversarial review** -- dispatch to Codex. No exceptions.
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<comprehensive prompt>"
+   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt>"
    ```
-   **CRITICAL -- Performance (mandatory):** allocations in hot paths, O(n^2), lock hold times, byte-at-a-time ops.
-   **CRITICAL -- Consistency (mandatory):** struct layout matches, constants in one place, API contract violations, error code mapping.
+   **Mandatory angles:** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data.
+   Apply `superpowers:receiving-code-review` to EVERY finding.
+6. **Fix adversarial findings** -- fix all valid Critical/High/Medium. Rebuild.
+
+### Phase 3: Quality Audit
+
+7. **Domain code quality gates** -- INVOKE the domain-appropriate skill and walk its gates against the code:
+   - `src/boot/` -> read and walk `boot-code-quality` (all 10 gates)
+   - `src/kernel/` -> read and walk `kernel-code-quality` (all 10 gates)
+   - `src/desktop/` -> `desktop-code-quality` | `src/shell/` -> `shell-code-quality` | `user/` -> `userland-code-quality`
+   Record any gate failures as findings.
+
+8. **MANDATORY Codex quality review** -- single dispatch covering dead code + consistency + performance. No exceptions.
+   ```bash
+   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt>"
+   ```
    **CRITICAL -- Dead code (mandatory):** unreachable functions, unused defines, orphaned types, stale declarations.
-11. **Feature completeness audit** -- grep for `STATUS_NOT_IMPLEMENTED` stubs, partial implementations, dead API promises. Standalone stubs: implement. Infrastructure stubs: Accept with XREF.
-12. **Self-review** -- regressions, races, edge cases, resource leaks. Walk every fix before applying.
-13. **Fix loop** -- fix all valid findings. Build after each batch.
-14. **Stamps** -- Verified stamp (from Phase 1) + Quality reviewed stamp (from Phase 2). No blank line between.
+   **CRITICAL -- Consistency (mandatory):** struct layout matches, constants in one place, API contracts, error code mapping.
+   **CRITICAL -- Performance (mandatory):** allocations in hot paths, O(n^2), lock hold times, byte-at-a-time ops.
+   Apply `superpowers:receiving-code-review` to EVERY finding.
 
-### Phase 3: Commit
+9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references.
 
-15. **Commit and push** -- single commit with both stamps + any fixes.
-    - If only stamps: `"review: <TODO> §N -- verified + quality reviewed clean"`
-    - If fixes: `"review: <TODO> §N -- <summary>"`
+10. **Feature completeness** -- grep for `STATUS_NOT_IMPLEMENTED`, partial implementations, dead API promises.
 
-## Adversarial Codex Decision Logic (step 6)
+11. **Self-review** -- regressions, races, edge cases, resource leaks.
 
-| Context | Has Verified stamp? | Adversarial Codex? |
-|---------|--------------------|--------------------|
-| Called from implement step 20 | No (just implemented) | **SKIP** -- implement step 13 already ran it |
-| Called standalone, first review | No | **RUN** -- no prior adversarial review exists |
-| Called standalone, re-review | Yes | **SKIP** -- prior review already covered adversarial angles |
+12. **Fix ALL findings** from steps 7-11. Priority: spec violations > incomplete stubs > dead code > quality gate failures > consistency > parity > perf. Rebuild after each batch.
+
+### Phase 4: Stamp + Commit
+
+13. **Reconcile tables** -- IO row, OS Comparison row.
+14. **Stamps** -- Verified + Quality reviewed. No blank line between. Domain-qualified XREFs in Accepted field.
+15. **Commit and push** -- `"review: <TODO> §N -- <summary>"`
 
 ## Rules
 
-- Quality-phase Codex (step 9) is MANDATORY. No exceptions.
+- **TWO Codex dispatches per review.** Step 5 (adversarial) and step 8 (quality). Both mandatory.
+- **Domain code quality skill walked explicitly** in step 7. Not just the hook -- read the skill and check every gate.
 - `superpowers:receiving-code-review` on every Codex finding.
 - All stamps use domain-qualified XREFs.
 - No blank line between stamps.
