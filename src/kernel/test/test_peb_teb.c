@@ -270,10 +270,21 @@ static void test_tls_expansion_boundary(void)
     TEST_ASSERT_EQ(overflow, -1,
                    "tls_alloc returns -1 when all slots occupied");
 
-    /* Free all slots and verify each free succeeds */
-    for (i = 0; i < (uint32_t)alloc_count; i++) {
-        int ret = tls_free(pid, (uint32_t)slots[i]);
-        TEST_ASSERT_EQ(ret, 0, "tls_free succeeds for allocated slot");
+    /* Free all slots and verify every free succeeds.  Aggregate into a
+     * single TEST_ASSERT so the serial log does not emit ~65 duplicate
+     * PASS lines when the inner loop runs. */
+    {
+        int all_freed = 1;
+        int first_fail_idx = -1;
+        for (i = 0; i < (uint32_t)alloc_count; i++) {
+            if (tls_free(pid, (uint32_t)slots[i]) != 0) {
+                all_freed = 0;
+                first_fail_idx = (int)i;
+                break;
+            }
+        }
+        (void)first_fail_idx;  /* only used in a debugger; keeps the loop exit simple */
+        TEST_ASSERT_EQ(all_freed, 1, "tls_free succeeds for all allocated slots");
     }
 }
 
@@ -374,9 +385,20 @@ static void test_rdrand_bytes_boundaries(void)
         int ok = rdrand_bytes(buf, n);
         TEST_ASSERT_EQ(ok, 1, "rdrand_bytes(n) returns 1");
 
-        /* Bytes beyond n must still be sentinel (no over-write) */
-        for (i = n; i < sizeof(buf); i++) {
-            TEST_ASSERT_EQ(buf[i], sentinel,
+        /* Bytes beyond n must still be sentinel (no over-write).
+         * Aggregate into a single TEST_ASSERT: with five outer lengths
+         * the inner loop would otherwise emit up to 296 duplicate PASS
+         * lines per test invocation, drowning out the rest of the
+         * serial log. */
+        {
+            int no_overwrite = 1;
+            for (i = n; i < sizeof(buf); i++) {
+                if (buf[i] != sentinel) {
+                    no_overwrite = 0;
+                    break;
+                }
+            }
+            TEST_ASSERT_EQ(no_overwrite, 1,
                            "rdrand_bytes did not write past length");
         }
 

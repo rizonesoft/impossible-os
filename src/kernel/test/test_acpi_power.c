@@ -46,15 +46,19 @@ static void test_acpi_invalid_state_slp_typa(void)
 
 static void test_acpi_sleep_states_consistent(void)
 {
-    /* If a state is supported, its SLP_TYPa must be valid */
+    /* Every supported sleep state must expose a valid SLP_TYPa.  Walk
+     * S1..S5 under a single aggregated assertion so the serial log
+     * emits one PASS line instead of up to five near-duplicates. */
     uint8_t s;
+    int all_valid = 1;
     for (s = 1; s <= 5; s++) {
-        if (acpi_sleep_supported(s)) {
-            TEST_ASSERT(acpi_get_slp_typa(s) != 0xFFFF,
-                        "supported state has valid SLP_TYPa");
+        if (acpi_sleep_supported(s) && acpi_get_slp_typa(s) == 0xFFFF) {
+            all_valid = 0;
+            break;
         }
     }
-    TEST_ASSERT(1, "sleep state / SLP_TYPa consistency verified");
+    TEST_ASSERT_EQ(all_valid, 1,
+                   "every supported sleep state has a valid SLP_TYPa");
 }
 
 /* ---- Sleep entry API (TODO-15 §1) ---- */

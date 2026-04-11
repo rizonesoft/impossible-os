@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-04-11T21:27:06Z",
+  "timestamp": "2026-04-11T21:44:23Z",
   "total_suites": 300,
-  "total_assertions": 970,
+  "total_assertions": 971,
   "files": [
-    {"file": "test_acpi_power.c", "suites": 7, "assertions": 11},
+    {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_blackbox.c", "suites": 11, "assertions": 9},
     {"file": "test_boot_info.c", "suites": 22, "assertions": 22},
     {"file": "test_boot_init.c", "suites": 23, "assertions": 85},
@@ -17,7 +17,7 @@
     {"file": "test_mmap.c", "suites": 1, "assertions": 2},
     {"file": "test_nt_types.c", "suites": 49, "assertions": 231},
     {"file": "test_ob.c", "suites": 11, "assertions": 69},
-    {"file": "test_peb_teb.c", "suites": 25, "assertions": 119},
+    {"file": "test_peb_teb.c", "suites": 25, "assertions": 121},
     {"file": "test_pmm.c", "suites": 2, "assertions": 5},
     {"file": "test_registry.c", "suites": 2, "assertions": 8},
     {"file": "test_sched.c", "suites": 3, "assertions": 6},
