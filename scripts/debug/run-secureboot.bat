@@ -40,6 +40,10 @@ if not exist "%DISK%" (
 :: Seed NVRAM on first run only (preserves MOK enrollment across reboots)
 if not exist "%SB_VARS%" copy /Y "%SB_VARS_SRC%" "%SB_VARS%" >nul
 
+:: Disable HiDPI scaling -- QEMU SDL renders at native pixels
+set SDL_VIDEO_HIGHDPI_DISABLED=1
+set QT_SCALE_FACTOR=1
+
 set QEMU=C:\Program Files\qemu\qemu-system-x86_64.exe
 if not exist "%QEMU%" set QEMU=qemu-system-x86_64.exe
 
