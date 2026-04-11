@@ -1541,6 +1541,19 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
 
     /* --- ELF bounds validation (S1 hardening) --- */
 
+    /* Validate e_phentsize matches expected Elf64_Phdr size.
+     * A mismatch means phdr indexing reads wrong offsets -- reject. */
+    if (ehdr->e_phentsize != sizeof(Elf64_Phdr)) {
+        serial_early_print("[FAIL] Kernel ELF corrupt: e_phentsize mismatch\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    /* Cap e_phnum to prevent huge loop on corrupt ELF (matches Linux ELF_MAX_SEGMENTS spirit) */
+    if (ehdr->e_phnum > 64) {
+        serial_early_print("[FAIL] Kernel ELF corrupt: too many program headers\n");
+        return EFI_LOAD_ERROR;
+    }
+
     /* Cap total kernel size at 32 MiB */
 #define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
     if (file_size > ELF_MAX_KERNEL_SIZE) {

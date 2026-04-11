@@ -91,6 +91,7 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
 
 > **Verified:** 2026-04-11 -- all 8 checks confirmed with line evidence. Subtraction-based overflow prevention correct. Framebuffer overlap uses pitch*height with overflow guard. Overlapping PT_LOAD segments accepted (valid ELF feature, matches Linux/GRUB). Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- 1 spec violation fixed (e_phentsize != sizeof(Elf64_Phdr) rejection), 1 best practice (e_phnum capped at 64). Accepted: p_align not checked (identity-mapped, not needed for direct physical copy).
 
 ---
 
