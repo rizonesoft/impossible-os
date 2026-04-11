@@ -197,6 +197,8 @@ If firmware reports more memory regions than `BOOT_MMAP_MAX_ENTRIES` (currently 
 
 **Test checkpoint:** Normal boot (typically ~130 entries) works as before on all 4 platforms. Add a `mmap_truncated` field to boot_info and verify kernel reads it. Verify on bare metal -- real firmware often has more entries than QEMU.
 
+> **Verified:** 2026-04-11 -- all 5 items confirmed. BOOT_MMAP_MAX_ENTRIES=512 in both structs, total_descs comparison, truncation warning, mmap_truncated flag, PMM warns on boot. Loop guard prevents overrun. Accepted: none.
+
 ---
 
 ## 7. boot.conf Validation
