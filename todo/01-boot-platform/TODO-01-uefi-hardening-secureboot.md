@@ -184,6 +184,7 @@ Structured boot profiling and pre-framebuffer error recovery screen.
 **Test checkpoint:** `boot_progress()` stages appear in order on serial and optional `X:\Perf\boot-profile.log`; `boot_halt()` shows pre-framebuffer error text when forced; JSON timeline export matches `TODO-06-interrupt-timer-arch.md §9` contract. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Verified:** 2026-04-11 -- Codex found 3 issues: JSON buffer overflow on long step names (fixed: clamped pos + escaped quotes), profile report stack overflow (fixed: bounded step name copy), forbidden boot_progress call in test (fixed: replaced with pure boot_timing_record_step). Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- no findings. JSON timeline format exceeds Win11 ETW (binary, requires WPA) and Linux systemd-analyze (text only). Pre-fb error screen, boot_post_write16 I/O safety, and splash integration all industry-compliant. Accepted: none.
 
 ---
 
