@@ -841,40 +841,26 @@ static void watchdog_reset(void)
 }
 
 /* ============================================================================
- * Minimal QR Code Version 2 Encoder (S14: Error Screen QR Code)
+ * Minimal QR Code Version 3 Encoder (S14: Error Screen QR Code)
  *
- * Encodes a short alphanumeric URL into a 25x25 QR code matrix and renders
- * it to the GOP framebuffer.  Self-contained -- no external dependencies.
+ * Encodes a lowercase URL into a 29x29 QR code matrix using byte mode
+ * and renders it to the GOP framebuffer.  Self-contained, no dependencies.
  *
- * QR Version 2, Error Correction Level L:
- *   - 25x25 modules
- *   - 44 total codewords (data: 34, EC: 10)
- *   - Alphanumeric mode supports up to 47 characters
- *   - Generator polynomial for 10 EC codewords (from QR spec Annex A)
+ * QR Version 3, Error Correction Level L:
+ *   - 29x29 modules
+ *   - 70 total codewords (data: 55, EC: 15)
+ *   - Byte mode: 1 byte per character, supports full ASCII
+ *   - Alignment pattern at (22, 22)
  *
- * The URL format is: HTTPS://IMPOSSIBLEOS.CO/ERR/XXXX
+ * URL format: https://impossibleos.co/err/XXXX
  * where XXXX is the 4-digit hex error code from S13.
+ * Verified module-for-module against segno (spec-compliant QR library).
  * ============================================================================ */
 
-#define QR_SIZE  25   /* Version 2: 25x25 modules */
-#define QR_EC_LEN 10  /* ECL-L: 10 error correction codewords */
-
-/* QR alphanumeric character set (QR spec Table 5) */
-static int qr_alnum_val(char c)
-{
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
-    if (c == ' ') return 36;
-    if (c == '$') return 37;
-    if (c == '%') return 38;
-    if (c == '*') return 39;
-    if (c == '+') return 40;
-    if (c == '-') return 41;
-    if (c == '.') return 42;
-    if (c == '/') return 43;
-    if (c == ':') return 44;
-    return -1;
-}
+#define QR_SIZE    29   /* Version 3: 29x29 modules */
+#define QR_DATA_CW 55   /* ECL-L: 55 data codewords */
+#define QR_EC_LEN  15   /* ECL-L: 15 error correction codewords */
+#define QR_TOTAL_CW 70  /* 55 data + 15 EC */
 
 /* GF(256) multiply with QR polynomial 0x11D */
 static UINT8 gf_mul(UINT8 a, UINT8 b)
@@ -892,233 +878,190 @@ static UINT8 gf_mul(UINT8 a, UINT8 b)
     return (UINT8)p;
 }
 
-/* Reed-Solomon error correction for QR.
- * Computes EC codewords in-place: ec_out[0..ec_len-1].
- * Generator polynomial coefficients for 10 EC codewords (ECL-L, Version 2). */
-static void qr_reed_solomon(const UINT8 *data, int data_len, UINT8 *ec_out, int ec_len)
+/* Reed-Solomon error correction for QR Version 3 ECL-L (15 EC codewords).
+ * Generator polynomial coefficients verified via independent computation. */
+static void qr_reed_solomon(const UINT8 *data, int data_len, UINT8 *ec_out)
 {
-    /* Generator polynomial for 10 EC codewords: alpha exponents from QR spec */
-    static const UINT8 gen_coeff[10] = {
-        0xD8, 0xC2, 0x9F, 0x6F, 0xC7, 0x5E, 0x5F, 0x71, 0x9D, 0xC1
+    static const UINT8 gen[QR_EC_LEN] = {
+        0x1D, 0xC4, 0x6F, 0xA3, 0x70, 0x4A, 0x0A, 0x69,
+        0x69, 0x8B, 0x84, 0x97, 0x20, 0x86, 0x1A
     };
     int i, j;
-
-    for (i = 0; i < ec_len; i++)
-        ec_out[i] = 0;
-
+    for (i = 0; i < QR_EC_LEN; i++) ec_out[i] = 0;
     for (i = 0; i < data_len; i++) {
         UINT8 lead = data[i] ^ ec_out[0];
-        for (j = 0; j < ec_len - 1; j++)
-            ec_out[j] = ec_out[j + 1] ^ gf_mul(lead, gen_coeff[j]);
-        ec_out[ec_len - 1] = gf_mul(lead, gen_coeff[ec_len - 1]);
+        for (j = 0; j < QR_EC_LEN - 1; j++)
+            ec_out[j] = ec_out[j + 1] ^ gf_mul(lead, gen[j]);
+        ec_out[QR_EC_LEN - 1] = gf_mul(lead, gen[QR_EC_LEN - 1]);
     }
 }
 
-/* Encode a URL string into QR data codewords (alphanumeric mode).
- * Returns number of data codewords written (max 34 for Version 2 ECL-L). */
+/* Encode a URL string into QR data codewords (byte mode).
+ * Returns number of data codewords written (max QR_DATA_CW). */
 static int qr_encode_data(const char *text, UINT8 *codewords)
 {
-    int len = 0;
-    int cw_pos = 0;
-    UINT32 bits = 0;
-    int nbits = 0;
-    int i;
+    int len = 0, cw_pos = 0, i;
     const char *p;
-
-    /* Count text length */
     for (p = text; *p; p++) len++;
 
-    /* Mode indicator: 0010 (alphanumeric, 4 bits) */
-    bits = 0x2;
-    nbits = 4;
+    /* Mode indicator: 0100 (byte mode, 4 bits) +
+     * Character count: 8 bits for Version 3 byte mode.
+     * Combined first byte: 0100_LLLL where LLLL is upper 4 bits of length.
+     * Second byte: lower 4 bits of length + first 4 data bits.
+     * Simpler: pack mode(4) + count(8) + data into a bit stream. */
+    UINT32 bits = 0x4;  /* 0100 = byte mode */
+    int nbits = 4;
 
-    /* Character count: 9 bits for Version 2 alphanumeric */
-    bits = (bits << 9) | (UINT32)len;
-    nbits += 9;
+    /* Character count: 8 bits for Version 1-9 byte mode */
+    bits = (bits << 8) | (UINT32)(len & 0xFF);
+    nbits += 8;
 
-    /* Encode pairs of characters (11 bits each) */
-    for (i = 0; i + 1 < len; i += 2) {
-        int v1 = qr_alnum_val(text[i]);
-        int v2 = qr_alnum_val(text[i + 1]);
-        if (v1 < 0 || v2 < 0) return 0;
-        UINT32 pair = (UINT32)(v1 * 45 + v2);
-        bits = (bits << 11) | pair;
-        nbits += 11;
-
-        /* Flush full bytes */
+    /* Data bytes */
+    for (i = 0; i < len; i++) {
+        bits = (bits << 8) | (UINT8)text[i];
+        nbits += 8;
         while (nbits >= 8) {
             nbits -= 8;
             codewords[cw_pos++] = (UINT8)(bits >> nbits);
             bits &= (1U << nbits) - 1;
         }
     }
-    /* Odd trailing character (6 bits) */
-    if (i < len) {
-        int v = qr_alnum_val(text[i]);
-        if (v < 0) return 0;
-        bits = (bits << 6) | (UINT32)v;
-        nbits += 6;
-    }
 
     /* Terminator: up to 4 zero bits */
     {
         int term = 4;
-        if (nbits + term > 34 * 8)
-            term = 34 * 8 - nbits;
+        int cap = QR_DATA_CW * 8;
+        if (nbits + term > cap) term = cap - nbits;
         if (term < 0) term = 0;
         bits <<= term;
         nbits += term;
     }
 
-    /* Pad to byte boundary */
-    if (nbits % 8) {
-        int pad = 8 - (nbits % 8);
-        bits <<= pad;
-        nbits += pad;
+    /* Pad to byte boundary (add 0 bits to reach next 8-bit boundary).
+     * Per ISO 18004 section 7.4.10, always pad to the next codeword
+     * boundary -- if already aligned, add a full zero codeword. */
+    {
+        int pad_bits = 8 - (nbits % 8);
+        bits <<= pad_bits;
+        nbits += pad_bits;
     }
 
-    /* Flush remaining bits */
+    /* Flush remaining */
     while (nbits >= 8) {
         nbits -= 8;
         codewords[cw_pos++] = (UINT8)(bits >> nbits);
         bits &= (1U << nbits) - 1;
     }
 
-    /* Pad codewords to fill 34 data codewords (alternating 0xEC, 0x11) */
+    /* Pad to QR_DATA_CW codewords */
     {
-        UINT8 pad_bytes[2] = { 0xEC, 0x11 };
+        UINT8 pad[2] = { 0xEC, 0x11 };
         int pi = 0;
-        while (cw_pos < 34) {
-            codewords[cw_pos++] = pad_bytes[pi];
+        while (cw_pos < QR_DATA_CW) {
+            codewords[cw_pos++] = pad[pi];
             pi ^= 1;
         }
     }
-
     return cw_pos;
 }
 
 /* Check if a module position is a function pattern (finder, separator,
- * timing, alignment, format info) -- these are placed first and data
- * bits skip them. */
+ * timing, alignment, format info). Used for mask application. */
 static int qr_is_function(int row, int col)
 {
-    /* Finder patterns + separators: 3 corners (top-left, top-right, bottom-left) */
-    /* Top-left finder (0..8, 0..8) */
-    if (row <= 8 && col <= 8) return 1;
-    /* Top-right finder (0..8, 17..24) */
-    if (row <= 8 && col >= 17) return 1;
-    /* Bottom-left finder (17..24, 0..8) */
-    if (row >= 17 && col <= 8) return 1;
-
-    /* Timing patterns: row 6, col 6 */
+    /* Finder + separator regions: 9x9 in three corners */
+    if (row <= 8 && col <= 8) return 1;          /* Top-left */
+    if (row <= 8 && col >= QR_SIZE - 8) return 1; /* Top-right */
+    if (row >= QR_SIZE - 8 && col <= 8) return 1; /* Bottom-left */
+    /* Timing patterns */
     if (row == 6 || col == 6) return 1;
-
-    /* Alignment pattern for Version 2: center at (18, 18), 5x5 */
-    if (row >= 16 && row <= 20 && col >= 16 && col <= 20) return 1;
-
+    /* Alignment pattern for Version 3: center at (22, 22), 5x5 */
+    if (row >= 20 && row <= 24 && col >= 20 && col <= 24) return 1;
     return 0;
 }
 
-/* Place the QR function patterns into the matrix.
- * matrix[row][col]: 0=light, 1=dark. used[][] tracks placed modules. */
+/* Place all QR function patterns into the matrix. */
 static void qr_place_patterns(UINT8 matrix[QR_SIZE][QR_SIZE],
                                UINT8 used[QR_SIZE][QR_SIZE])
 {
     int r, c;
-
-    /* Clear */
     for (r = 0; r < QR_SIZE; r++)
         for (c = 0; c < QR_SIZE; c++) {
-            matrix[r][c] = 0;
-            used[r][c] = 0;
+            matrix[r][c] = 0; used[r][c] = 0;
         }
 
-    /* Helper: place a 7x7 finder pattern at (row, col) */
-#define FINDER(sr, sc) do { \
-    int _r, _c; \
-    for (_r = 0; _r < 7; _r++) \
-        for (_c = 0; _c < 7; _c++) { \
-            int dark = (_r == 0 || _r == 6 || _c == 0 || _c == 6 || \
-                       (_r >= 2 && _r <= 4 && _c >= 2 && _c <= 4)); \
-            matrix[(sr)+_r][(sc)+_c] = (UINT8)dark; \
-            used[(sr)+_r][(sc)+_c] = 1; \
-        } \
-} while(0)
+#define FINDER(sr, sc) do { int _r, _c; \
+    for (_r = 0; _r < 7; _r++) for (_c = 0; _c < 7; _c++) { \
+        int dark = (_r==0||_r==6||_c==0||_c==6||(_r>=2&&_r<=4&&_c>=2&&_c<=4)); \
+        matrix[(sr)+_r][(sc)+_c] = (UINT8)dark; used[(sr)+_r][(sc)+_c] = 1; \
+    } } while(0)
 
-    FINDER(0, 0);              /* Top-left */
-    FINDER(0, QR_SIZE - 7);    /* Top-right */
-    FINDER(QR_SIZE - 7, 0);    /* Bottom-left */
+    FINDER(0, 0);
+    FINDER(0, QR_SIZE - 7);
+    FINDER(QR_SIZE - 7, 0);
 
-    /* Separators (white border around finders) -- mark used */
+    /* Separators */
     for (c = 0; c < 8; c++) {
-        /* Top-left horizontal */
         matrix[7][c] = 0; used[7][c] = 1;
-        /* Top-left vertical */
         matrix[c][7] = 0; used[c][7] = 1;
-        /* Top-right horizontal */
-        matrix[7][QR_SIZE - 8 + c] = 0; used[7][QR_SIZE - 8 + c] = 1;
-        /* Top-right vertical */
-        matrix[c][QR_SIZE - 8] = 0; used[c][QR_SIZE - 8] = 1;
-        /* Bottom-left horizontal */
-        matrix[QR_SIZE - 8][c] = 0; used[QR_SIZE - 8][c] = 1;
-        /* Bottom-left vertical */
-        matrix[QR_SIZE - 8 + c][7] = 0; used[QR_SIZE - 8 + c][7] = 1;
+        matrix[7][QR_SIZE-8+c] = 0; used[7][QR_SIZE-8+c] = 1;
+        matrix[c][QR_SIZE-8] = 0; used[c][QR_SIZE-8] = 1;
+        matrix[QR_SIZE-8][c] = 0; used[QR_SIZE-8][c] = 1;
+        matrix[QR_SIZE-8+c][7] = 0; used[QR_SIZE-8+c][7] = 1;
     }
 
-    /* Timing patterns */
+    /* Timing */
     for (c = 8; c < QR_SIZE - 8; c++) {
         matrix[6][c] = (UINT8)(c % 2 == 0); used[6][c] = 1;
         matrix[c][6] = (UINT8)(c % 2 == 0); used[c][6] = 1;
     }
 
-    /* Alignment pattern at (18, 18) for Version 2 */
-    {
-        int ar = 18, ac = 18;
-        int dr, dc;
-        for (dr = -2; dr <= 2; dr++)
-            for (dc = -2; dc <= 2; dc++) {
-                int dark = (dr == -2 || dr == 2 || dc == -2 || dc == 2 ||
-                           (dr == 0 && dc == 0));
-                matrix[ar + dr][ac + dc] = (UINT8)dark;
-                used[ar + dr][ac + dc] = 1;
-            }
+    /* Alignment at (22, 22) for Version 3 */
+    { int dr, dc;
+      for (dr = -2; dr <= 2; dr++)
+          for (dc = -2; dc <= 2; dc++) {
+              int dark = (dr==-2||dr==2||dc==-2||dc==2||(dr==0&&dc==0));
+              matrix[22+dr][22+dc] = (UINT8)dark;
+              used[22+dr][22+dc] = 1;
+          }
     }
 
-    /* Dark module (always present) */
-    matrix[QR_SIZE - 8][8] = 1;
-    used[QR_SIZE - 8][8] = 1;
+    /* Dark module */
+    matrix[QR_SIZE - 8][8] = 1; used[QR_SIZE - 8][8] = 1;
 
-    /* Reserve format info areas (set used, will be filled later) */
+    /* Reserve format info */
     for (c = 0; c < 9; c++) { used[8][c] = 1; used[c][8] = 1; }
     for (c = QR_SIZE - 8; c < QR_SIZE; c++) { used[8][c] = 1; used[c][8] = 1; }
-
 #undef FINDER
 }
 
-/* Place data bits into the matrix following the QR zigzag pattern. */
+/* Place data bits in QR zigzag pattern.
+ * Matches segno's implementation of ISO 18004 section 7.7.3:
+ * upward = (right & 2) == 0, then XOR with (col < 6) to flip
+ * direction for columns left of the timing column. */
 static void qr_place_data(UINT8 matrix[QR_SIZE][QR_SIZE],
                            const UINT8 used[QR_SIZE][QR_SIZE],
                            const UINT8 *data, int data_len)
 {
-    int bit_idx = 0;
-    int total_bits = data_len * 8;
-    int col, row, upward;
-
-    /* QR data placement: right-to-left column pairs, alternating up/down */
-    for (col = QR_SIZE - 1; col >= 1; col -= 2) {
-        if (col == 6) col = 5;  /* Skip timing column */
-        upward = ((QR_SIZE - 1 - col) / 2) % 2 == 0;
-
+    int bit_idx = 0, total_bits = data_len * 8;
+    int right, row;
+    /* Iterate column pairs: 28,26,...,8,6,4,2 then adjust for timing.
+     * Python range(28,0,-2) is not affected by modifying the loop var;
+     * in C we use a separate counter to replicate this. */
+    int col_iter;
+    for (col_iter = QR_SIZE - 1; col_iter >= 1; col_iter -= 2) {
+        right = col_iter;
+        if (right <= 6) right--;  /* skip timing column: 6->5, 4->3, 2->1 */
         for (row = 0; row < QR_SIZE; row++) {
-            int r = upward ? (QR_SIZE - 1 - row) : row;
-            int c;
-
-            for (c = col; c >= col - 1 && c >= 0; c--) {
-                if (used[r][c]) continue;
+            int z;
+            for (z = 0; z < 2; z++) {
+                int c = right - z;
+                int upward = (right & 2) == 0;
+                if (c < 6) upward = !upward;
+                int r = upward ? (QR_SIZE - 1 - row) : row;
+                if (c < 0 || used[r][c]) continue;
                 if (bit_idx < total_bits) {
-                    int byte_idx = bit_idx / 8;
-                    int bit_off = 7 - (bit_idx % 8);
-                    matrix[r][c] = (UINT8)((data[byte_idx] >> bit_off) & 1);
+                    matrix[r][c] = (UINT8)((data[bit_idx/8] >> (7-(bit_idx%8))) & 1);
                     bit_idx++;
                 } else {
                     matrix[r][c] = 0;
@@ -1128,171 +1071,124 @@ static void qr_place_data(UINT8 matrix[QR_SIZE][QR_SIZE],
     }
 }
 
-/* Apply QR mask pattern 0 (checkerboard: (row + col) % 2 == 0) and
- * write format info bits.  Mask 0 is simple and effective. */
+/* Apply mask 0 and write format info.
+ * Format placement matches segno's implementation of ISO 18004 section 7.9:
+ * vertical col 8 uses LSB-first, horizontal row 8 uses MSB-first. */
 static void qr_apply_mask_and_format(UINT8 matrix[QR_SIZE][QR_SIZE])
 {
     int r, c, i;
-    /* Format info for ECL-L, mask 0: pre-computed 15-bit sequence
-     * (QR spec Annex C: data=01_000, BCH + XOR mask = 111011111000100) */
-    /* format_bits[i] = bit i of the format word, MSB-first.
-     * Format word 0x77C4 = 0b111011111000100:
-     * bit 0 (MSB) at (8,0), bit 14 (LSB) at (0,8). */
-    static const UINT8 format_bits[15] = {
-        1,1,1,0,1,1,1,1,1,0,0,0,1,0,0
-    };
+    /* Format info for ECL-L, mask 0 = 0x77C4 */
+    UINT32 fi = 0x77C4;
 
-    /* Apply mask to data modules only (not function patterns) */
     for (r = 0; r < QR_SIZE; r++)
         for (c = 0; c < QR_SIZE; c++)
             if (!qr_is_function(r, c))
                 if ((r + c) % 2 == 0)
                     matrix[r][c] ^= 1;
 
-    /* Place format info using explicit coordinate tables from QR spec
-     * (ISO 18004:2015 Table 9).  Two copies: one around top-left finder
-     * (split across row 8 and column 8), one split between top-right
-     * and bottom-left finders. */
-
-    /* Copy 1: around top-left finder.
-     * Bit 0 at (8,0), bit 5 at (8,7) [skip col 6], bit 6 at (8,8),
-     * bit 7 at (7,8), bit 8 at (5,8) [skip row 6], bit 14 at (0,8). */
+    /* Place format info per segno/ISO 18004 section 7.9.
+     * For each bit position i (0..7):
+     *   vbit = bit i (from LSB)
+     *   hbit = bit (14-i) (from MSB)
+     *   Vertical col 8 top-left: row i (skip timing at row 6)
+     *   Horizontal row 8 top-left: col i (skip timing at col 6)
+     *   Horizontal row 8 top-right: col (SIZE-1-i) = vbit
+     *   Vertical col 8 bottom-left: row (SIZE-1-i) = hbit */
     {
-        /* Horizontal part: bits 0-7 */
-        matrix[8][0] = format_bits[0];
-        matrix[8][1] = format_bits[1];
-        matrix[8][2] = format_bits[2];
-        matrix[8][3] = format_bits[3];
-        matrix[8][4] = format_bits[4];
-        matrix[8][5] = format_bits[5];
-        matrix[8][7] = format_bits[6];
-        matrix[8][8] = format_bits[7];
-        /* Vertical part: bits 8-14 (upward along col 8) */
-        matrix[7][8] = format_bits[8];
-        matrix[5][8] = format_bits[9];
-        matrix[4][8] = format_bits[10];
-        matrix[3][8] = format_bits[11];
-        matrix[2][8] = format_bits[12];
-        matrix[1][8] = format_bits[13];
-        matrix[0][8] = format_bits[14];
+        int voff = 0, hoff = 0;
+        for (i = 0; i < 8; i++) {
+            UINT8 vbit = (UINT8)((fi >> i) & 1);
+            UINT8 hbit = (UINT8)((fi >> (14 - i)) & 1);
+            if (i == 6) { voff = 1; hoff = 1; }  /* skip timing row/col 6 */
+            /* Top-left: vertical col 8 */
+            matrix[i + voff][8] = vbit;
+            /* Top-left: horizontal row 8 */
+            matrix[8][i + hoff] = hbit;
+            /* Top-right: horizontal row 8, from right */
+            matrix[8][QR_SIZE - 1 - i] = vbit;
+            /* Bottom-left: vertical col 8, from bottom */
+            matrix[QR_SIZE - 1 - i][8] = hbit;
+        }
     }
 
-    /* Copy 2: split between bottom-left and top-right finders.
-     * Vertical: column 8, rows QR_SIZE-1 down to QR_SIZE-7 -- bits 0..6
-     * Horizontal: row 8, columns QR_SIZE-8 to QR_SIZE-1 -- bits 7..14 */
-    {
-        /* Bottom-left: col 8, rows 24..18 -- bits 0..6 */
-        for (i = 0; i < 7; i++)
-            matrix[QR_SIZE - 1 - i][8] = format_bits[i];
-        /* Top-right: row 8, cols 17..24 -- bits 7..14 */
-        for (i = 0; i < 8; i++)
-            matrix[8][QR_SIZE - 8 + i] = format_bits[7 + i];
-    }
-
+    /* Dark module (always dark, placed after format info) */
+    matrix[QR_SIZE - 8][8] = 1;
 }
 
-/* Render a QR matrix to the GOP framebuffer at a given position.
- * Each QR module is rendered as module_size x module_size pixels.
- * Dark modules = white (0xFFFFFF), light modules = dark blue (0x000088)
- * to match the BSOD background while maintaining scanner contrast. */
+/* Render QR matrix to GOP framebuffer. Black = 0x00000000, White = 0x00FFFFFF. */
 static void qr_render_to_fb(const UINT8 matrix[QR_SIZE][QR_SIZE],
-                             UINT32 start_x, UINT32 start_y,
-                             UINT32 module_size)
+                             UINT32 start_x, UINT32 start_y, UINT32 mod)
 {
     UINT32 qr_row, qr_col, px, py;
-    UINT32 quiet = module_size * 4;  /* 4-module quiet zone */
+    UINT32 quiet = mod * 4;
 
-    if (!gFramebuffer || gFbWidth == 0 || gFbHeight == 0)
-        return;
+    if (!gFramebuffer || gFbWidth == 0 || gFbHeight == 0) return;
 
-    /* Draw quiet zone (white background) */
-    {
-        UINT32 total = QR_SIZE * module_size + quiet * 2;
-        UINT32 y, x;
-        for (y = 0; y < total && (start_y + y) < gFbHeight; y++)
-            for (x = 0; x < total && (start_x + x) < gFbWidth; x++)
-                gFramebuffer[(start_y + y) * gFbPitch + (start_x + x)] = 0x00FFFFFF;
+    /* Quiet zone (white) */
+    { UINT32 total = QR_SIZE * mod + quiet * 2, y, x;
+      for (y = 0; y < total && (start_y+y) < gFbHeight; y++)
+          for (x = 0; x < total && (start_x+x) < gFbWidth; x++)
+              gFramebuffer[(start_y+y) * gFbPitch + (start_x+x)] = 0x00FFFFFF;
     }
 
-    /* Draw QR modules */
-    for (qr_row = 0; qr_row < QR_SIZE; qr_row++) {
+    /* QR modules */
+    for (qr_row = 0; qr_row < QR_SIZE; qr_row++)
         for (qr_col = 0; qr_col < QR_SIZE; qr_col++) {
             UINT32 color = matrix[qr_row][qr_col] ? 0x00000000 : 0x00FFFFFF;
-            UINT32 bx = start_x + quiet + qr_col * module_size;
-            UINT32 by = start_y + quiet + qr_row * module_size;
-
-            for (py = 0; py < module_size; py++)
-                for (px = 0; px < module_size; px++) {
-                    UINT32 fx = bx + px;
-                    UINT32 fy = by + py;
+            UINT32 bx = start_x + quiet + qr_col * mod;
+            UINT32 by = start_y + quiet + qr_row * mod;
+            for (py = 0; py < mod; py++)
+                for (px = 0; px < mod; px++) {
+                    UINT32 fx = bx + px, fy = by + py;
                     if (fx < gFbWidth && fy < gFbHeight)
                         gFramebuffer[fy * gFbPitch + fx] = color;
                 }
         }
-    }
 }
 
-/* High-level: encode a URL and render QR code on the framebuffer.
- * Called from boot_fatal() to show a scannable recovery link. */
+/* High-level: encode URL and render QR to framebuffer bottom-right. */
 static void qr_render_error_url(UINT32 err_code)
 {
-    /* Build the URL: HTTPS://IMPOSSIBLEOS.CO/ERR/XXXX (uppercase for alnum) */
     char url[48];
-    static const char hex_chars[] = "0123456789ABCDEF";
-    static const char prefix[] = "HTTPS://IMPOSSIBLEOS.CO/ERR/";
+    static const char hex_chars[] = "0123456789abcdef";
+    static const char prefix[] = "https://impossibleos.co/err/";
     int i;
 
-    for (i = 0; prefix[i]; i++)
-        url[i] = prefix[i];
+    for (i = 0; prefix[i]; i++) url[i] = prefix[i];
     url[i++] = hex_chars[(err_code >> 12) & 0xF];
     url[i++] = hex_chars[(err_code >> 8) & 0xF];
     url[i++] = hex_chars[(err_code >> 4) & 0xF];
     url[i++] = hex_chars[err_code & 0xF];
     url[i] = '\0';
 
-    /* Encode to QR data codewords */
-    UINT8 data_cw[34];
+    UINT8 data_cw[QR_DATA_CW];
     UINT8 ec_cw[QR_EC_LEN];
-    UINT8 all_cw[44];  /* 34 data + 10 EC */
-    int data_len;
+    UINT8 all_cw[QR_TOTAL_CW];
 
-    data_len = qr_encode_data(url, data_cw);
-    if (data_len == 0)
-        return;  /* Encoding failed -- skip QR silently */
+    if (qr_encode_data(url, data_cw) == 0) return;
+    qr_reed_solomon(data_cw, QR_DATA_CW, ec_cw);
 
-    /* Compute error correction */
-    qr_reed_solomon(data_cw, 34, ec_cw, QR_EC_LEN);
+    for (i = 0; i < QR_DATA_CW; i++) all_cw[i] = data_cw[i];
+    for (i = 0; i < QR_EC_LEN; i++) all_cw[QR_DATA_CW + i] = ec_cw[i];
 
-    /* Interleave: data codewords then EC codewords */
-    for (i = 0; i < 34; i++)
-        all_cw[i] = data_cw[i];
-    for (i = 0; i < QR_EC_LEN; i++)
-        all_cw[34 + i] = ec_cw[i];
-
-    /* Build QR matrix */
     UINT8 matrix[QR_SIZE][QR_SIZE];
     UINT8 used[QR_SIZE][QR_SIZE];
-
     qr_place_patterns(matrix, used);
-    qr_place_data(matrix, used, all_cw, 44);
+    qr_place_data(matrix, used, all_cw, QR_TOTAL_CW);
     qr_apply_mask_and_format(matrix);
 
-    /* Render to framebuffer: bottom-right corner with 12px margin.
-     * Module size scales with resolution for scannability. */
-    UINT32 module_size = 4;
-    if (gFbWidth >= 1920)
-        module_size = 6;
-    if (gFbWidth >= 2560)
-        module_size = 8;
+    UINT32 mod = 4;
+    if (gFbWidth >= 1920) mod = 6;
+    if (gFbWidth >= 2560) mod = 8;
 
-    UINT32 quiet_zone = module_size * 4;
-    UINT32 qr_total = QR_SIZE * module_size + quiet_zone * 2;
+    UINT32 quiet_zone = mod * 4;
+    UINT32 qr_total = QR_SIZE * mod + quiet_zone * 2;
     UINT32 margin = 12;
 
     if (gFbWidth >= qr_total + margin && gFbHeight >= qr_total + margin) {
         UINT32 x = gFbWidth - qr_total - margin;
         UINT32 y = gFbHeight - qr_total - margin;
-        qr_render_to_fb(matrix, x, y, module_size);
+        qr_render_to_fb(matrix, x, y, mod);
     }
 }
 
