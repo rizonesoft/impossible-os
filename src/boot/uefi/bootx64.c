@@ -2937,8 +2937,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     post_code16(POST16_BL_ENTRY);
     serial_early_print("[BOOT] efi_main entered\n");
 
-    /* Disable watchdog timer (UEFI default: 5 min timeout) */
-    gBS->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+    /* Re-arm watchdog timer as boot hang safety net (S11).
+     * UEFI default is 5 minutes -- too long for debugging.
+     * Arm with 60s timeout; disarm before ExitBootServices.
+     * Code 0x424F4F54 = "BOOT" in ASCII for firmware logs. */
+    {
+        EFI_STATUS wd_s = gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);
+        if (!EFI_ERROR(wd_s))
+            serial_early_print("[BOOT] Watchdog: armed (60s)\n");
+        else
+            serial_early_print("[BOOT] Watchdog: arm failed (unsupported?)\n");
+    }
 
     /* Point boot_info to a known physical address */
     g_boot_info_ptr = (struct boot_info *)BOOT_INFO_PHYS_ADDR;
@@ -2959,6 +2968,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 1: Initialize graphics (uses g_conf_res_width/height from boot.conf) */
     post_code16(POST16_BL_GOP);
+    gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);  /* reset watchdog */
     serial_early_print("[BOOT] init_gop...\n");
     g_boot_info_ptr->timing.gop_start = boot_rdtsc();
     status = init_gop();
@@ -2983,6 +2993,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Load kernel ELF */
     post_code16(POST16_BL_KERNEL_OPEN);
+    gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);  /* reset watchdog */
     serial_early_print("[BOOT] load_kernel...\n");
     g_boot_info_ptr->timing.kernel_load_start = boot_rdtsc();
     status = load_kernel(&kernel_entry);
@@ -3015,6 +3026,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 4e: Discover USB devices via UEFI firmware (TODO-07 §5 Phase A) */
     post_code16(POST16_BL_USB_DISC);
+    gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);  /* reset watchdog */
     serial_early_print("[BOOT] discover_usb_devices...\n");
     discover_usb_devices();
     post_code16(POST16_BL_USB_DISC_OK);
@@ -3078,6 +3090,22 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * fresh map up to EBS_MAX_ATTEMPTS times (typical UEFI practice: 3-5).
      * Locked at 4 per TODO-02-bootloader-error-recovery.md S2 agreement. */
 #define EBS_MAX_ATTEMPTS 4
+    /* Disarm watchdog before ExitBootServices -- no longer needed (S11) */
+    {
+        EFI_STATUS wd_dis = gBS->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+        if (!EFI_ERROR(wd_dis)) {
+            serial_early_print("[BOOT] Watchdog: disarmed\n");
+        } else {
+            serial_early_print("[WARN] Watchdog: disarm FAILED -- 60s timer may still be active\n");
+            /* Retry once */
+            wd_dis = gBS->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
+            if (!EFI_ERROR(wd_dis))
+                serial_early_print("[BOOT] Watchdog: disarmed on retry\n");
+            else
+                serial_early_print("[WARN] Watchdog: disarm retry FAILED -- proceeding with caution\n");
+        }
+    }
+
     post_code16(POST16_BL_EXIT_BS);
     serial_early_print("[BOOT] ExitBootServices...\n");
     g_boot_info_ptr->timing.exit_bs = boot_rdtsc();

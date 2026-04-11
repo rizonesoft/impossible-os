@@ -59,7 +59,7 @@
 | 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)  | --         |  [x]   |
 | ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [x]   |
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [x]   |
-| 💎  |  11   | UEFI watchdog timer management                 | --         |  [ ]   |
+| 💎  |  11   | UEFI watchdog timer management                 | --         |  [x]   |
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [ ]   |
 | ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [ ]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [ ]   |
@@ -298,12 +298,12 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 > [!NOTE]
 > **Regression risk:** LOW -- if watchdog fires unexpectedly, system reboots (recoverable via A/B rollback). Worst case is premature reboot on very slow firmware; extend timeout to 120s if seen.
 
-- [ ] After initial `SetWatchdogTimer(0, ...)`: re-arm with a 60-second timeout: `gBS->SetWatchdogTimer(60, 0x424F4F54, 0, NULL)` (code = "BOOT")
-- [ ] Before `ExitBootServices()`: disable the watchdog (`SetWatchdogTimer(0, ...)`) -- no longer needed post-EBS
-- [ ] If any pre-EBS operation takes > 30s (GOP, USB discovery, kernel load), reset the timer: `gBS->SetWatchdogTimer(60, ...)` to extend the window
-- [ ] Log: `"[BOOT] Watchdog: armed (60s)"` at entry, `"[BOOT] Watchdog: disarmed"` before ExitBootServices
-- [ ] On watchdog timeout: firmware resets the system automatically (UEFI spec behavior) -- combined with TODO-14 A/B rollback, this prevents infinite boot loops
-- [ ] Commit: `"boot: re-arm UEFI watchdog timer as boot hang safety net"`
+- [x] After initial `SetWatchdogTimer(0, ...)`: re-arm with a 60-second timeout: `gBS->SetWatchdogTimer(60, 0x424F4F54, 0, NULL)` (code = "BOOT") -- with EFI_STATUS check and log on failure
+- [x] Before `ExitBootServices()`: disable the watchdog (`SetWatchdogTimer(0, ...)`) -- disarmed with serial log
+- [x] If any pre-EBS operation takes > 30s (GOP, USB discovery, kernel load), reset the timer: `gBS->SetWatchdogTimer(60, ...)` -- resets at init_gop, load_kernel, discover_usb_devices
+- [x] Log: `"[BOOT] Watchdog: armed (60s)"` at entry, `"[BOOT] Watchdog: disarmed"` before ExitBootServices
+- [x] On watchdog timeout: firmware resets the system automatically (UEFI spec behavior) -- no code needed, firmware handles it
+- [x] Commit: `"boot: re-arm UEFI watchdog timer as boot hang safety net"`
 
 **Test checkpoint:** Normal boot completes in < 10s; watchdog is disarmed before ExitBootServices. Serial shows `"Watchdog: armed"` and `"Watchdog: disarmed"`. No unexpected reboots on all 4 platforms. Verify on bare metal -- real firmware watchdog behavior may differ from emulated; some firmware ignores the watchdog code parameter.
 
@@ -432,7 +432,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ✅ §7 key whitelist + range chk |
 | 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ✅ §8 32/16/8 MiB + overlap chk |
 | 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ✅ §10 RSDP->XSDT->SPCR parse  |
-| 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ⬜ §11 watchdog re-arm/disable  |
+| 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ✅ §11 60s arm + disarm pre-EBS |
 | 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ⬜ §12 mmap descriptor verify   |
 | ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot |
 | ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ⬜ §13 NVRAM error log persist  |
