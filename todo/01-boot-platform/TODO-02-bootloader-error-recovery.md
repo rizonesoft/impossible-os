@@ -66,6 +66,7 @@
 | 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [ ]   |
 | 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [ ]   |
 | 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [ ]   |
+| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)  | §9, §14    |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -435,6 +436,29 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 
 ---
 
+## 18. Graphical Error Screen (ChromeOS/Win11-Style)
+
+The current error screen uses UEFI text console (`ConOut`) with white-on-blue text. ChromeOS shows a clean graphical recovery screen with a large icon, minimal text, and a QR code. Windows 11 BSOD uses a sad face `:(` with a stop code and QR. This section replaces the text-only error screen with a pixel-rendered graphical screen drawn directly to the GOP framebuffer.
+
+> [!TIP]
+> **Competitive advantage:** ChromeOS and Windows both render graphical error screens, but only at the OS level -- their UEFI-stage errors are plain text or invisible. Rendering a polished graphical error screen at the UEFI bootloader stage (before the OS loads) puts Impossible OS ahead of both competitors for pre-kernel diagnostics.
+> **Regression risk:** LOW -- the text error screen via ConOut remains as fallback when GOP is unavailable. The graphical screen is additive.
+
+- [ ] Render error screen directly to GOP framebuffer (solid blue background fill, no dependency on ConOut/Boot Services)
+- [ ] Large sad face icon or warning triangle rendered as pixel art (16x16 or 32x32 bitmap scaled to 64x64+)
+- [ ] Error title in large font: "Impossible OS could not start" (render using the existing boot splash font or a minimal embedded bitmap font)
+- [ ] Error code prominently displayed: "Error 0x0003 -- Kernel not found"
+- [ ] Human-readable description below the code: explain what went wrong and what the user can do (2-3 lines max)
+- [ ] QR code in bottom-right (already implemented in §14)
+- [ ] URL text below QR: "Scan for help: impossibleos.co/err/0003"
+- [ ] If GOP unavailable: fall back to current ConOut text screen (§9 behavior preserved)
+- [ ] ConOut text output still emitted in parallel for serial capture and headless servers
+- [ ] Commit: `"boot: graphical error screen -- ChromeOS-style recovery UX"`
+
+**Test checkpoint:** Trigger `error_screen_test=1`. Error screen renders a clean graphical layout with icon, error text, description, QR code, and URL. ConOut text still appears on serial. Headless mode (no GOP) shows text-only fallback. Compare visually against ChromeOS recovery and Windows 11 BSOD for polish level.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature         | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
@@ -452,7 +476,8 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ✅ §12 align+pages+type+overlap |
 | ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot |
 | ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ✅ §13 13 codes + NVRAM persist |
-| ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ✅ §14 QR V2 + scaled modules   |
+| ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ✅ §14 QR V3 byte mode + scan   |
+| ⭐ | Graphical error | ✅ :( BSOD (OS-level only)       | ❌ GRUB text menu only          | ⬜ §18 ChromeOS-style pixel UX  |
 | 💎 | Mmap normalize  | ✅ Hal.dll coalesces overlaps    | ✅ efi_fake_memmap + sanitize   | ⬜ §17 sort + carve by priority |
 | 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ⬜ §15-§16 versioned handoff    |
 | 💎 | Offline repair  | ✅ Windows Recovery Environment  | ✅ rescue/live ISO image        | ⬜ TODO-15 recovery partition   |
