@@ -136,6 +136,7 @@ Cursor mirrors for TODO prep live under `.cursor/skills/` (for example `validate
 | `/validate-todo-file` | Validate a TODO for structural gaps |
 | `/verify-todo-section` | Verify implemented section -- compliance audit (is it done?) |
 | `/quality-review-section` | Deep quality review -- standards, optimization, Win11/Linux parity (is it done RIGHT?) |
+| `/review-pipeline` | Full verify + quality in one pass -- MANDATORY Codex at both stages, no shortcuts |
 | `/implement-unit-tests` | Implement a TODO's Unit Tests section end-to-end |
 | `/diagnose-serial-log` | Parse serial log, classify WARN/FAIL/crash, trace to source, fix real bugs |
 | `/todo-pipeline` | 3-stage TODO prep: validate -> gap analysis -> validate (before implementation) |
