@@ -319,7 +319,8 @@ struct boot_info {
     struct boot_mmap_entry mmap[BOOT_MMAP_MAX_ENTRIES];
     uint32_t mmap_count;
     uint8_t  mmap_truncated;    /* 1 if firmware had more entries than BOOT_MMAP_MAX_ENTRIES */
-    uint8_t  _mmap_pad[3];
+    uint8_t  mmap_quirks;       /* 1 if any descriptors had validation warnings (S12) */
+    uint8_t  _mmap_pad[2];
 
     /* Basic memory (from tag type 4) */
     uint32_t mem_lower_kb;  /* conventional memory in KiB */

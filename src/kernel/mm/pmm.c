@@ -94,6 +94,11 @@ boot_result_t pmm_init(void)
              (uint64_t)g_boot_info.mmap_count,
              (uint64_t)BOOT_MMAP_MAX_ENTRIES);
 
+    /* Warn if bootloader found quirky descriptors (S12) */
+    if (g_boot_info.mmap_quirks)
+        klog(LOG_WARN, "mm",
+             "PMM: memory map had quirky descriptors (stripped by bootloader)");
+
     /* Step 1: Find the highest usable physical address.
      *
      * Only consider memory types that represent actual RAM (conventional,

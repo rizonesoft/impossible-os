@@ -195,7 +195,8 @@ struct boot_info {
     struct boot_mmap_entry  mmap[BOOT_MMAP_MAX_ENTRIES];
     UINT32  mmap_count;
     UINT8   mmap_truncated;
-    UINT8   _mmap_pad[3];
+    UINT8   mmap_quirks;       /* 1 if any descriptors had validation warnings (S12) */
+    UINT8   _mmap_pad[2];
     UINT32  mem_lower_kb;
     UINT32  mem_upper_kb;
     struct boot_framebuffer fb;
@@ -1813,10 +1814,90 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
         g_boot_info_ptr->mmap_truncated = 0;
     }
 
+    g_boot_info_ptr->mmap_quirks = 0;
+
     for (offset = 0; offset < map_size && idx < BOOT_MMAP_MAX_ENTRIES;
          offset += desc_size) {
         EFI_MEMORY_DESCRIPTOR *desc =
             (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap + offset);
+        UINT32 entry_num = (UINT32)(offset / desc_size);
+
+        /* ---- Descriptor validation (S12) ---- */
+
+        /* Range overflow: NumberOfPages * PAGE_SIZE or PhysicalStart + length wraps */
+        {
+            UINT64 max_pages = 0xFFFFFFFFFFFFFULL;  /* UINT64_MAX / 4096 */
+            if (desc->NumberOfPages > max_pages) {
+                serial_early_print("[WARN] Memory map entry ");
+                serial_early_print_uint(entry_num);
+                serial_early_print(": NumberOfPages overflow -- skipping\n");
+                g_boot_info_ptr->mmap_quirks = 1;
+                continue;
+            }
+            UINT64 len = desc->NumberOfPages * EFI_PAGE_SIZE;
+            if (desc->PhysicalStart > 0xFFFFFFFFFFFFFFFFULL - len) {
+                serial_early_print("[WARN] Memory map entry ");
+                serial_early_print_uint(entry_num);
+                serial_early_print(": address range wraps -- skipping\n");
+                g_boot_info_ptr->mmap_quirks = 1;
+                continue;
+            }
+        }
+
+        /* Zero-length descriptors are invalid -- skip */
+        if (desc->NumberOfPages == 0) {
+            serial_early_print("[WARN] Memory map entry ");
+            serial_early_print_uint(entry_num);
+            serial_early_print(": zero pages -- skipping\n");
+            g_boot_info_ptr->mmap_quirks = 1;
+            continue;
+        }
+
+        /* PhysicalStart must be page-aligned (4 KiB) */
+        if (desc->PhysicalStart & 0xFFF) {
+            serial_early_print("[WARN] Memory map entry ");
+            serial_early_print_uint(entry_num);
+            serial_early_print(": unaligned PhysicalStart -- skipping\n");
+            g_boot_info_ptr->mmap_quirks = 1;
+            continue;
+        }
+
+        /* Type must be a valid EFI_MEMORY_TYPE (0-14; EfiMaxMemoryType=15 is sentinel) */
+        if (desc->Type >= EfiMaxMemoryType) {
+            serial_early_print("[WARN] Memory map entry ");
+            serial_early_print_uint(entry_num);
+            serial_early_print(": invalid type 0x");
+            serial_early_print_hex16((UINT16)desc->Type);
+            serial_early_print(" -- skipping\n");
+            g_boot_info_ptr->mmap_quirks = 1;
+            continue;
+        }
+
+        /* Overlap detection: check against all previously accepted entries.
+         * O(n^2) but n is typically ~130, runs once at boot -- acceptable. */
+        {
+            UINT64 new_start = desc->PhysicalStart;
+            UINT64 new_end   = new_start + desc->NumberOfPages * EFI_PAGE_SIZE;
+            int overlap = 0;
+            UINT32 j;
+            for (j = 0; j < idx; j++) {
+                UINT64 prev_start = g_boot_info_ptr->mmap[j].base_addr;
+                UINT64 prev_end   = prev_start + g_boot_info_ptr->mmap[j].length;
+                if (new_start < prev_end && new_end > prev_start) {
+                    serial_early_print("[WARN] Memory map entry ");
+                    serial_early_print_uint(entry_num);
+                    serial_early_print(": overlaps entry ");
+                    serial_early_print_uint(j);
+                    serial_early_print(" -- skipping\n");
+                    g_boot_info_ptr->mmap_quirks = 1;
+                    overlap = 1;
+                    break;
+                }
+            }
+            if (overlap) continue;
+        }
+
+        /* ---- Descriptor accepted ---- */
 
         g_boot_info_ptr->mmap[idx].base_addr = desc->PhysicalStart;
         g_boot_info_ptr->mmap[idx].length =

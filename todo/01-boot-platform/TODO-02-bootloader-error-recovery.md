@@ -60,7 +60,7 @@
 | ⭐  |   9   | Boot failure error screen                      | §1-§8      |  [x]   |
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [x]   |
 | 💎  |  11   | UEFI watchdog timer management                 | --         |  [x]   |
-| 💎  |  12   | Memory map descriptor validation               | §6         |  [ ]   |
+| 💎  |  12   | Memory map descriptor validation               | §6         |  [x]   |
 | ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [ ]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [ ]   |
 | 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [ ]   |
@@ -319,15 +319,11 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 > [!NOTE]
 > **Regression risk:** LOW -- validation is read-only. Invalid entries are stripped, not rejected. Quirky firmware boots with warnings rather than failure.
 
-- [ ] After `GetMemoryMap()`: iterate all descriptors and check:
-  - `PhysicalStart` is page-aligned (4 KiB boundary)
-  - `NumberOfPages > 0` (zero-length descriptors are invalid)
-  - `Type` is a valid `EFI_MEMORY_TYPE` enum value (0--15 per UEFI 2.10)
-  - No two descriptors' physical ranges overlap: sort by `PhysicalStart`, check `[start, start + pages*4096)` intervals
-- [ ] On invalid descriptor: `"[WARN] Memory map entry %u: %s"` with specific reason (e.g., `"zero pages"`, `"invalid type 0x%x"`, `"overlaps entry %u"`)
-- [ ] Do NOT reject the map -- firmware quirks are common. Log warnings, strip invalid entries from boot_info copy
-- [ ] Set `boot_info.mmap_quirks` flag if any warnings fired -- kernel PMM can be extra cautious
-- [ ] Commit: `"boot: validate memory map descriptors -- detect overlaps, zero-length, invalid types"`
+- [x] After `GetMemoryMap()`: iterate all descriptors and check: `PhysicalStart` page-aligned, `NumberOfPages > 0`, `Type <= EfiMaxMemoryType`, no overlapping physical ranges (O(n^2) scan, n~130, runs once) -- all in `fill_memory_map()` validation pass
+- [x] On invalid descriptor: `"[WARN] Memory map entry N: <reason> -- skipping"` with specific reason (zero pages, unaligned, invalid type, overlaps)
+- [x] Do NOT reject the map -- log warnings, skip (continue) invalid entries so they're stripped from boot_info copy
+- [x] Set `boot_info.mmap_quirks = 1` if any warnings fired -- kernel PMM logs `"memory map had quirky descriptors"`
+- [x] Commit: `"boot: validate memory map descriptors -- detect overlaps, zero-length, invalid types"`
 
 **Test checkpoint:** Normal boot on QEMU produces no warnings (OVMF generates clean maps). Add a synthetic zero-length descriptor injection test if feasible. Serial log shows descriptor count and any warnings. Verify on bare metal -- real firmware is the primary target for memory map quirks; log any warnings for firmware bug reporting.
 
@@ -436,7 +432,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ✅ §8 32/16/8 MiB + overlap chk |
 | 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ✅ §10 RSDP->XSDT->SPCR parse  |
 | 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ✅ §11 60s arm + disarm pre-EBS |
-| 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ⬜ §12 mmap descriptor verify   |
+| 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ✅ §12 align+pages+type+overlap |
 | ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot |
 | ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ⬜ §13 NVRAM error log persist  |
 | ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ⬜ §14 QR code error link       |
