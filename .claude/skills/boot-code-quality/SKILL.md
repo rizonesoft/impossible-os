@@ -64,19 +64,27 @@ Before writing any boot code, walk through these gates. Each gate is pass/fail.
 - [ ] **`boot_log_init()` before any `serial_early_print()`.** The boot log buffer captures serial output for ESP write; init it first.
 - [ ] **Post-EBS serial is one-way.** After ExitBootServices, serial output still works (direct I/O port), but no UEFI console. `efi_print()` / `gST->ConOut` are dead.
 
-### Gate 8: ExitBootServices Boundary
+### Gate 8: Kernel Serial Handoff Safety
+
+> **Incident 2026-04-11:** A Codex quality review suggested changing `serial_init()` to unconditionally assign `s_serial_port = g_boot_info.serial_port` instead of keeping the COM1 default when 0. This killed ALL kernel serial output because early klog runs before `serial_init()` using the static default `0x3F8`. The fix was blindly applied without verifying the pre-serial_init window. Lesson: boot_info fields may not be populated yet when early kernel code runs.
+
+- [ ] **Kernel `s_serial_port` default (0x3F8) must survive until `serial_init()`.** Early klog writes to serial BEFORE `serial_init()` runs. The static default `0x3F8` is the only working port during this window. `serial_init()` reads `g_boot_info.serial_port` and overrides -- but only if non-zero.
+- [ ] **Never set `s_serial_port = 0` from boot_info.** If bootloader reports `serial_port = 0` (no UART found), the kernel keeps the COM1 default for the pre-init window. `serial_init()` returns early if port is 0, making subsequent serial calls no-ops -- but early output still works.
+- [ ] **Test after any serial.c change:** does early kernel boot still produce serial output? If `[PHASE0] SERIAL` doesn't appear, you broke the handoff.
+
+### Gate 9: ExitBootServices Boundary
 
 - [ ] **No `gBS->*` calls after ExitBootServices.** Boot Services are gone. Any call through `gBS` after EBS crashes.
 - [ ] **No `gST->ConOut` after EBS attempted.** Even if EBS fails, ConOut may be in an undefined state. The `g_ebs_in_progress` flag gates this in `boot_fatal()`.
 - [ ] **`gST->RuntimeServices` survives EBS** -- but only the function pointers, not the protocol handles. The kernel calls SVAM to remap.
 
-### Gate 9: POST16 Coverage
+### Gate 10: POST16 Coverage
 
 - [ ] **Every boot phase step gets entry/exit POST codes.** POST16 is the ONLY diagnostic when serial isn't yet running (triple fault before `serial_early_init`).
 - [ ] **POST16 codes are unique.** Check `boot_init.h` for collisions. The boot-time uniqueness scan catches duplicates.
 - [ ] **Bootloader POST codes use 0xBxxx range.** Kernel Phase 0 uses 0x0xxx, Phase 1 uses 0x1xxx. Bootloader uses 0xBxxx to avoid collision.
 
-### Gate 10: Fallback Chains
+### Gate 11: Fallback Chains
 
 - [ ] **Every hardware probe has a graceful fallback.** GOP: mode 0 fallback, then headless. Serial: SPCR, then COM1, then COM2, then silent. USB: skip if no protocol. ACPI: warn and continue.
 - [ ] **Never `for (;;) hlt;` without an error message.** Use `boot_fatal()` which shows an error screen + serial message + optional keypress + HLT.
