@@ -884,9 +884,24 @@ static void efi_print_hex(UINT64 val)
  *        The boot splash and desktop use this flag to scale UI by 2×.
  * ============================================================================ */
 
+/* Map GOP pixel format to boot_info encoding: 0=RGBX, 1=BGRX, 2=BitMask */
+static UINT8 gop_pixel_format_code(EFI_GRAPHICS_PIXEL_FORMAT fmt)
+{
+    if (fmt == PixelRedGreenBlueReserved) return 0;
+    if (fmt == PixelBlueGreenRedReserved) return 1;
+    return 2;
+}
+
 /* Score and select the best 32bpp GOP mode, call SetMode, set hidpi flag. */
 static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
 {
+    /* Guard: validate Mode and Info pointers before any dereference */
+    if (!gop->Mode || !gop->Mode->Info) {
+        serial_early_print("[BOOT] GOP: Mode/Info NULL -- attempting SetMode(0)\n");
+        gop->SetMode(gop, 0);
+        if (!gop->Mode || !gop->Mode->Info) return;
+    }
+
     UINT32  best_idx = gop->Mode->Mode;
     UINT32  best_w   = gop->Mode->Info->HorizontalResolution;
     UINT32  best_h   = gop->Mode->Info->VerticalResolution;
@@ -898,10 +913,12 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
         if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) continue;
 
-        /* Only consider 32bpp modes */
+        /* Only consider 32bpp modes with valid pitch */
         if (info->PixelFormat != PixelBlueGreenRedReserved &&
             info->PixelFormat != PixelRedGreenBlueReserved)
             continue;
+        if (info->PixelsPerScanLine < info->HorizontalResolution)
+            continue;  /* corrupt pitch */
 
         UINT32 w = info->HorizontalResolution;
         UINT32 h = info->VerticalResolution;
@@ -1010,12 +1027,8 @@ static EFI_STATUS init_gop(void)
         g_boot_info_ptr->gop_modes[idx].height = info->VerticalResolution;
         g_boot_info_ptr->gop_modes[idx].pixels_per_scanline =
             info->PixelsPerScanLine;
-        if (info->PixelFormat == PixelRedGreenBlueReserved)
-            g_boot_info_ptr->gop_modes[idx].pixel_format = 0;  /* RGBX */
-        else if (info->PixelFormat == PixelBlueGreenRedReserved)
-            g_boot_info_ptr->gop_modes[idx].pixel_format = 1;  /* BGRX */
-        else
-            g_boot_info_ptr->gop_modes[idx].pixel_format = 2;  /* BitMask */
+        g_boot_info_ptr->gop_modes[idx].pixel_format =
+            gop_pixel_format_code(info->PixelFormat);
         g_boot_info_ptr->gop_modes[idx].pad[0] = 0;
         g_boot_info_ptr->gop_modes[idx].pad[1] = 0;
         g_boot_info_ptr->gop_modes[idx].pad[2] = 0;
@@ -1028,8 +1041,10 @@ static EFI_STATUS init_gop(void)
 
     /* ── Safety: if firmware framebuffer is still unusable, try mode 0 ── */
     if (gop->Mode->FrameBufferBase == 0) {
-        efi_print(u"[GOP] FrameBufferBase=0 after negotiate -- SetMode(0)\r\n");
-        gop->SetMode(gop, 0);
+        serial_early_print("[BOOT] GOP: FrameBufferBase=0 after negotiate -- trying mode 0\n");
+        EFI_STATUS mode0_s = gop->SetMode(gop, 0);
+        if (EFI_ERROR(mode0_s))
+            serial_early_print("[BOOT] GOP: SetMode(0) failed in recovery\n");
     }
 
     /* If framebuffer is STILL null after all retries, go headless */
@@ -1044,13 +1059,25 @@ static EFI_STATUS init_gop(void)
         return EFI_SUCCESS;
     }
 
-    /* Store framebuffer info and zero VRAM */
+    /* Validate framebuffer size against mode dimensions before touching VRAM */
     gFramebuffer = (UINT32 *)(UINTN)gop->Mode->FrameBufferBase;
     gFbWidth  = gop->Mode->Info->HorizontalResolution;
     gFbHeight = gop->Mode->Info->VerticalResolution;
     gFbPitch  = gop->Mode->Info->PixelsPerScanLine;
 
     {
+        UINTN required_bytes = (UINTN)gFbHeight * (UINTN)gFbPitch * 4;
+        UINTN fb_size = gop->Mode->FrameBufferSize;
+        if (gFbPitch < gFbWidth || required_bytes == 0 ||
+            (fb_size > 0 && required_bytes > fb_size)) {
+            serial_early_print("[BOOT] GOP: framebuffer size mismatch -- headless\n");
+            gFramebuffer = (UINT32 *)0;
+            gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
+            g_boot_info_ptr->fb_available = 0;
+            g_boot_info_ptr->hidpi = 0;
+            return EFI_SUCCESS;
+        }
+        /* Clear VRAM -- bounded by validated byte count */
         UINTN sz = (UINTN)gFbHeight * (UINTN)gFbPitch;
         UINTN j;
         for (j = 0; j < sz; j++)
@@ -1058,17 +1085,13 @@ static EFI_STATUS init_gop(void)
     }
 
     g_boot_info_ptr->fb.addr   = (UINT64)gop->Mode->FrameBufferBase;
-    g_boot_info_ptr->fb.pitch  = gop->Mode->Info->PixelsPerScanLine * 4;
+    g_boot_info_ptr->fb.pitch  = gFbPitch * 4;
     g_boot_info_ptr->fb.width  = gFbWidth;
     g_boot_info_ptr->fb.height = gFbHeight;
     g_boot_info_ptr->fb.bpp    = 32;
     g_boot_info_ptr->fb.type   = 1;
-    if (gop->Mode->Info->PixelFormat == PixelRedGreenBlueReserved)
-        g_boot_info_ptr->fb.pixel_format = 0;  /* RGBX */
-    else if (gop->Mode->Info->PixelFormat == PixelBlueGreenRedReserved)
-        g_boot_info_ptr->fb.pixel_format = 1;  /* BGRX */
-    else
-        g_boot_info_ptr->fb.pixel_format = 2;  /* BitMask */
+    g_boot_info_ptr->fb.pixel_format =
+        gop_pixel_format_code(gop->Mode->Info->PixelFormat);
     g_boot_info_ptr->fb.pad0 = 0;
     g_boot_info_ptr->gop_mode_selected = gop->Mode->Mode;
     g_boot_info_ptr->fb_available = 1;
