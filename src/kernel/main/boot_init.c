@@ -110,7 +110,14 @@ void _boot_require_failed(const char *subsys_name)
      * Early Phase 0/1 callers hit BOOT_REQUIRE before klog_early_init(),
      * so fall back to direct serial in that window. */
     if (kernel_subsystem_ready(SUBSYS_KLOG)) {
-        klog(LOG_ERROR, "boot", "REQUIRE failed: %s not ready", subsys_name);
+        /* LOG_WARN (not LOG_ERROR) because BOOT_REQUIRE is a non-fatal
+         * prerequisite check per its header contract: the caller
+         * receives BOOT_FATAL and decides whether to halt, degrade, or
+         * retry.  The red [FAIL] badge (LOG_ERROR) is visually
+         * indistinguishable from a real test failure in the test
+         * runner output; [WARN] correctly conveys "check failed,
+         * caller will handle it". */
+        klog(LOG_WARN, "boot", "REQUIRE failed: %s not ready", subsys_name);
         return;
     }
     serial_write("[BOOT] REQUIRE failed: ");
