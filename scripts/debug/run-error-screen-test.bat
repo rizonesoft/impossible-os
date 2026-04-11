@@ -10,21 +10,21 @@
 ::   - 10-second timeout then cold reboot (QEMU exits due to -no-reboot)
 ::
 :: The NVRAM variable "BootError" is written with 0x0003.
-:: Run this script a SECOND time to verify the next boot shows:
+:: Run with --nvram-test to verify the next boot shows:
 ::   "[BOOT] Previous boot failed: code=0x0003" on serial
 ::
 :: Prerequisites:
 ::   - QEMU installed on Windows
 ::   - bash scripts/build.sh (builds system-disk.img)
-::
-:: Variants: change BREAK_MODE to test different error codes:
-::   kernel  -- remove kernel.exe (0x0003, default)
-::   mmap    -- (future) corrupt memory map
-::   elf     -- (future) truncate kernel to test ELF validation
 
 setlocal enabledelayedexpansion
 
-set BUILD=%~dp0..\..\build
+:: Avoid UNC path errors when launched from WSL filesystem
+cd /d %TEMP%
+
+:: Resolve paths relative to script location
+set SCRIPTDIR=%~dp0
+set BUILD=%SCRIPTDIR%..\..\build
 set DISK_SRC=%BUILD%\system-disk.img
 set DISK_TMP=%TEMP%\impossible-error-test.img
 set NVRAM=%TEMP%\OVMF_VARS_error_test.fd
@@ -43,8 +43,10 @@ if "%1"=="--nvram-test" (
     echo [INFO] If previous run triggered an error, serial should show:
     echo [INFO]   "[BOOT] Previous boot failed: code=0x0003"
     set BREAK_MODE=none
+    goto :check_deps
 )
 
+:check_deps
 if not exist "%DISK_SRC%" (
     echo [ERROR] System disk not found at %DISK_SRC%
     echo [ERROR] Run in WSL: bash scripts/build.sh
@@ -68,9 +70,9 @@ if not exist "%OVMF_VARS_SRC%" (
 )
 if not exist "%NVRAM%" copy /Y "%OVMF_VARS_SRC%" "%NVRAM%" >nul
 
-:: Prepare disk image
+:: Prepare disk image based on break mode
 if "%BREAK_MODE%"=="none" (
-    echo [INFO] Using original disk image (kernel intact)
+    echo [INFO] Using original disk image -- kernel intact
     set DISK=%DISK_SRC%
     goto :boot
 )
@@ -78,36 +80,36 @@ if "%BREAK_MODE%"=="none" (
 echo [INFO] Creating temporary disk image...
 copy /Y "%DISK_SRC%" "%DISK_TMP%" >nul
 
-if "%BREAK_MODE%"=="kernel" (
-    echo [INFO] Removing kernel from ESP to trigger BOOT_ERR_KERNEL_NOT_FOUND...
-    :: Use WSL to mount the ESP partition and delete the kernel
-    :: The ESP starts at sector 2048 (offset 1048576) in the GPT image
-    wsl.exe bash -c "TMPDIR=$(mktemp -d) && sudo mount -o loop,offset=1048576 '%DISK_TMP%' \"$TMPDIR\" 2>/dev/null && sudo rm -f \"$TMPDIR/boot/kernel.exe\" && sudo umount \"$TMPDIR\" && rmdir \"$TMPDIR\" && echo '[OK] Kernel removed from ESP'"
+echo [INFO] Removing kernel from ESP to trigger BOOT_ERR_KERNEL_NOT_FOUND...
+:: Convert Windows temp path to WSL path for mount command
+for %%F in ("%DISK_TMP%") do set DISK_WIN=%%~fF
+:: Use wslpath to convert, or construct manually
+wsl.exe bash -c "IMG=$(wslpath '%DISK_WIN%') && TMPDIR=$(mktemp -d) && sudo mount -o loop,offset=1048576 \"$IMG\" \"$TMPDIR\" 2>/dev/null && sudo rm -f \"$TMPDIR/boot/kernel.exe\" && sudo umount \"$TMPDIR\" && rmdir \"$TMPDIR\" && echo '[OK] Kernel removed from ESP'"
+if errorlevel 1 (
+    echo [WARN] WSL mount failed -- trying mtools fallback...
+    wsl.exe bash -c "IMG=$(wslpath '%DISK_WIN%') && mdel -i \"$IMG@@1048576\" ::/boot/kernel.exe 2>/dev/null && echo '[OK] Kernel removed via mtools'"
     if errorlevel 1 (
-        echo [WARN] WSL mount failed -- trying mtools fallback...
-        wsl.exe bash -c "mdir -i '%DISK_TMP%@@1048576' ::/boot/ 2>/dev/null && mdel -i '%DISK_TMP%@@1048576' ::/boot/kernel.exe 2>/dev/null && echo '[OK] Kernel removed via mtools'"
-        if errorlevel 1 (
-            echo [ERROR] Could not remove kernel from disk image.
-            echo [ERROR] Manual test: copy system-disk.img, mount ESP, delete boot\kernel.exe
-            pause & exit /b 1
-        )
+        echo [ERROR] Could not remove kernel from disk image.
+        echo [ERROR] Manual test: copy system-disk.img, mount ESP, delete boot\kernel.exe
+        pause & exit /b 1
     )
-    set DISK=%DISK_TMP%
 )
+set DISK=%DISK_TMP%
 
 :boot
 echo.
 echo ========================================
 echo  Impossible OS -- Error Screen Test
 echo ========================================
-if "%BREAK_MODE%"=="kernel" (
-    echo  Mode: kernel removed (expect BSOD + QR)
-    echo  Error code: 0x0003
-    echo  QR URL: https://impossibleos.co/err/0003
-) else (
-    echo  Mode: normal boot (NVRAM persistence check)
-    echo  Expect serial: "Previous boot failed: code=0x0003"
-)
+if "%BREAK_MODE%"=="kernel" goto :banner_kernel
+echo  Mode: normal boot (NVRAM persistence check)
+echo  Expect serial: "Previous boot failed: code=0x0003"
+goto :banner_done
+:banner_kernel
+echo  Mode: kernel removed (expect BSOD + QR)
+echo  Error code: 0x0003
+echo  QR URL: https://impossibleos.co/err/0003
+:banner_done
 echo ========================================
 echo.
 
@@ -117,8 +119,9 @@ reg add "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers
 set QEMU=C:\Program Files\qemu\qemu-system-x86_64.exe
 if not exist "%QEMU%" set QEMU=qemu-system-x86_64.exe
 
+:: Try WHPX first, fall back to TCG (matches run-qemu.ps1 auto mode)
 "%QEMU%" ^
-    -accel whpx,kernel-irqchip=off ^
+    -accel whpx -accel tcg ^
     -cpu Haswell,+invtsc ^
     -smp 2 ^
     -m 512 ^
