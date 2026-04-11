@@ -66,6 +66,7 @@ typedef UINTN               EFI_TPL;
 #define BOOT_ERR_MMAP_GETMAP_FAIL   0x000A  /* GetMemoryMap call failed */
 #define BOOT_ERR_WATCHDOG_TIMEOUT   0x000B  /* S11: watchdog timeout */
 #define BOOT_ERR_EBS_MMAP_FAIL      0x000C  /* GetMemoryMap failed in EBS retry */
+#define BOOT_ERR_BOOT_INFO_RESERVED 0x000D  /* S16: boot_info range already owned by firmware */
 
 /* --- GUID --- */
 typedef struct {

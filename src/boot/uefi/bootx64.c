@@ -3553,6 +3553,32 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
 
+    /* S16: Reserve the full boot_info range with UEFI before any raw
+     * write, so later AllocatePages(AllocateAnyPages, ...) calls in
+     * load_kernel, allocate_xhci_dma, and scratchpad setup cannot hand
+     * back a page overlapping [BOOT_INFO_PHYS_ADDR, +sizeof(struct
+     * boot_info)).  Without this, firmware was free to reuse the tail
+     * pages of the handoff buffer, silently clobbering config/timing/
+     * USB state while the header at offset 0 stayed intact -- the
+     * kernel's post-handoff validator would still pass.  Halt early if
+     * the range is already in use: the old silent-corruption path is
+     * strictly worse than a visible boot_fatal. */
+    {
+        EFI_PHYSICAL_ADDRESS bi_addr = (EFI_PHYSICAL_ADDRESS)BOOT_INFO_PHYS_ADDR;
+        UINTN bi_pages = (sizeof(struct boot_info) + 4095) / 4096;
+        EFI_STATUS rs = gBS->AllocatePages(AllocateAddress, EfiLoaderData,
+                                           bi_pages, &bi_addr);
+        if (EFI_ERROR(rs)) {
+            serial_early_print("[FAIL] boot_info reservation at 0x");
+            serial_early_print_hex16((UINT16)(BOOT_INFO_PHYS_ADDR >> 16));
+            serial_early_print_hex16((UINT16)BOOT_INFO_PHYS_ADDR);
+            serial_early_print(" failed -- range already in use by firmware\n");
+            boot_fatal(BOOT_ERR_BOOT_INFO_RESERVED,
+                       "boot_info range already in use",
+                       "Firmware owns the boot_info physical range.");
+        }
+    }
+
     /* S13: Read previous boot error from NVRAM before zeroing boot_info.
      * RuntimeServices->GetVariable is available before ExitBootServices. */
     {
@@ -3563,7 +3589,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             serial_early_print("\n");
         }
 
-        /* Point boot_info to a known physical address */
+        /* Point boot_info to the reserved physical address */
         g_boot_info_ptr = (struct boot_info *)BOOT_INFO_PHYS_ADDR;
         efi_memset(g_boot_info_ptr, 0, sizeof(struct boot_info));
 
