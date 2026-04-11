@@ -644,10 +644,12 @@ boot_result_t uefi_time_init(void)
  * Reads UEFI NVRAM variables to determine Secure Boot state.
  * ============================================================================ */
 
-static int s_sb_enabled;    /* SecureBoot variable = 1 */
-static int s_sb_setup_mode; /* SetupMode variable = 1 */
-static int s_sb_pk_present; /* PK variable exists with data */
-static int s_sb_kek_present;/* KEK variable exists with data */
+static int s_sb_enabled;      /* SecureBoot variable = 1 */
+static int s_sb_setup_mode;   /* SetupMode variable = 1 */
+static int s_sb_deployed_mode;/* DeployedMode variable = 1 (UEFI 2.5+) */
+static int s_sb_audit_mode;   /* AuditMode variable = 1 (UEFI 2.5+) */
+static int s_sb_pk_present;   /* PK variable exists with data */
+static int s_sb_kek_present;  /* KEK variable exists with data */
 
 /* Helper: read a single-byte UEFI global variable. Returns the byte, or -1. */
 static int read_global_byte(const uint16_t *name)
@@ -687,6 +689,8 @@ boot_result_t uefi_secureboot_init(void)
 {
     s_sb_enabled = 0;
     s_sb_setup_mode = 0;
+    s_sb_deployed_mode = 0;
+    s_sb_audit_mode = 0;
     s_sb_pk_present = 0;
     s_sb_kek_present = 0;
 
@@ -710,6 +714,22 @@ boot_result_t uefi_secureboot_init(void)
     int sm_val = read_global_byte(sm_name);
     if (sm_val >= 0)
         s_sb_setup_mode = (sm_val == 1) ? 1 : 0;
+
+    /* Read DeployedMode variable (UEFI 2.5+: 0=not deployed, 1=deployed) */
+    static const uint16_t dm_name[] = {
+        'D','e','p','l','o','y','e','d','M','o','d','e', 0
+    };
+    int dm_val = read_global_byte(dm_name);
+    if (dm_val >= 0)
+        s_sb_deployed_mode = (dm_val == 1) ? 1 : 0;
+
+    /* Read AuditMode variable (UEFI 2.5+: 0=off, 1=audit) */
+    static const uint16_t am_name[] = {
+        'A','u','d','i','t','M','o','d','e', 0
+    };
+    int am_val = read_global_byte(am_name);
+    if (am_val >= 0)
+        s_sb_audit_mode = (am_val == 1) ? 1 : 0;
 
     /* Check PK existence */
     static const uint16_t pk_name[] = { 'P','K', 0 };
@@ -754,8 +774,10 @@ void uefi_secureboot_populate_registry(void)
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\SecureBoot", 0,
                        NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
         const struct secureboot_db_info *dbi = secureboot_get_db_info();
-        RegSetDword(hKey, "State",     (uint32_t)s_sb_enabled);
-        RegSetDword(hKey, "SetupMode", (uint32_t)s_sb_setup_mode);
+        RegSetDword(hKey, "State",        (uint32_t)s_sb_enabled);
+        RegSetDword(hKey, "SetupMode",   (uint32_t)s_sb_setup_mode);
+        RegSetDword(hKey, "DeployedMode",(uint32_t)s_sb_deployed_mode);
+        RegSetDword(hKey, "AuditMode",   (uint32_t)s_sb_audit_mode);
         RegSetDword(hKey, "PKEnrolled",  (uint32_t)s_sb_pk_present);
         RegSetDword(hKey, "KEKEnrolled", (uint32_t)s_sb_kek_present);
         /* Mirror db/dbx inventory from secureboot_keys_init() (S9) */
