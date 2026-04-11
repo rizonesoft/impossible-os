@@ -1134,8 +1134,11 @@ static void qr_apply_mask_and_format(UINT8 matrix[QR_SIZE][QR_SIZE])
     int r, c, i;
     /* Format info for ECL-L, mask 0: pre-computed 15-bit sequence
      * (QR spec Annex C: data=01_000, BCH + XOR mask = 111011111000100) */
+    /* format_bits[i] = bit i of the format word, LSB-first.
+     * Format word 0x77C4 = 0b111011111000100:
+     * bit 0 (LSB) = 0, bit 1 = 0, bit 2 = 1, ..., bit 14 (MSB) = 1 */
     static const UINT8 format_bits[15] = {
-        1,1,1,0,1,1,1,1,1,0,0,0,1,0,0
+        0,0,1,0,0,0,1,1,1,1,1,0,1,1,1
     };
 
     /* Apply mask to data modules only (not function patterns) */

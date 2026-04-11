@@ -370,9 +370,12 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 - [x] QR module size: 4px at 1280x720, 6px at 1920x1080, 8px at 2560+ -- with 4-module white quiet zone
 - [x] If GOP unavailable (gFramebuffer NULL or size 0): QR rendering silently skipped, text error screen still shows
 - [x] Standalone encoder (TODO-07 §6 not yet implemented) -- when §6 lands, the kernel-side encoder can be factored from this implementation
-- [ ] Commit: `"boot: QR code on boot error screen -- scan for recovery instructions"`
+- [x] Commit: `"boot: QR code on boot error screen -- scan for recovery instructions"` (7e588e7e)
 
 **Test checkpoint:** Trigger boot failure (delete kernel). Error screen shows QR code in bottom-right. Scan with phone -- URL resolves (or shows the encoded URL). Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
+
+> **Verified:** 2026-04-11 -- Codex adversarial found RS coefficients wrong + format placement wrong (both fixed). Post-fix Codex clean. Evidence: 10 QR functions (bootx64.c:862-1291), boot_fatal integration at 2 sites, URL prefix at line 1238, module scaling 4/6/8px, framebuffer NULL guard at line 1201. Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- Codex found format bits MSB/LSB reversed (fixed: now LSB-first {0,0,1,0,0,0,1,1,1,1,1,0,1,1,1} = 0x77C4). RS gen_coeff, alignment (18,18), Version 2-L counts (34 data, 10 EC) all confirmed correct. No dead code, no consistency issues. Accepted: none.
 
 ---
 
