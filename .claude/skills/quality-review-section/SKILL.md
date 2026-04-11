@@ -39,11 +39,11 @@ description: Deep quality review of an implemented TODO section -- industry stan
    - Are there mistakes they made that we should avoid?
    - Document concrete differences, not vague comparisons.
 
-4. **Codex performance + consistency review** -- dispatch TWO Codex reviews in sequence:
+4. **Codex performance + consistency review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. If Codex responds with "no diff available", re-dispatch with actual file content pasted into the prompt (read 100-200 relevant lines). A shallow response requires re-prompting with specific angles. This step CANNOT be replaced with self-review or "already covered by verify".
 
-   **4a. Performance review** (codex-perf-review approach):
+   **Dispatch command:**
    ```bash
-   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf prompt>"
+   node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<perf + consistency prompt with specific angles>"
    ```
    Focus areas:
    - Allocations in hot paths (ISR, per-tick, per-syscall)

@@ -73,9 +73,9 @@ description: Verify an already-implemented TODO section through the full quality
 
 > **You MUST NOT `git commit` or `git push` until steps 8 through 12 have all been completed.**
 
-8. **Codex adversarial review** (MANDATORY) -- run via the Codex plugin, NOT self-review. Follow `codex-adversarial-review-section` skill: scope to section's files, list adversarial angles (concurrency, races, error paths, ABI, memory safety, security, performance, bare metal), request severity-labeled findings.
+8. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. Self-review is NOT a substitute. If Codex responds with "no diff available" or "cannot review", re-dispatch with the actual file content pasted into the prompt (read the file, include 100-200 relevant lines). A shallow Codex response ("looks fine") requires re-prompting with specific adversarial angles. Always include these angles: integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on firmware data.
     ```bash
-    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt with specific adversarial angles>"
     ```
 
 9. **Fix loop** (1 round mandatory; up to 3 if needed) -- apply `superpowers:receiving-code-review` discipline:
@@ -84,7 +84,7 @@ description: Verify an already-implemented TODO section through the full quality
     - **Wrong/misleading:** reject with concrete code evidence.
     - **Correct but out of scope:** accept with justification, add follow-up `-> XREF`. Record in stamp's `Accepted:` field.
     - Fix all valid Critical and High. Fix valid Medium unless explicitly accepted.
-    - **Re-review via Codex only for STRUCTURAL fixes.** Surgical fixes: self-verify and proceed.
+    - **Re-review via Codex if fixes are STRUCTURAL** (function signatures, control-flow, new locking). Surgical fixes (single-line, contract clarification) may proceed after self-verification, but the initial Codex dispatch in step 8 is NEVER skippable.
     - Unresolved Critical/High after round 3: do not stamp, downgrade affected items.
 
 10. **Final self-review** (MANDATORY):
