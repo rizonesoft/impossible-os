@@ -369,6 +369,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 		cp $$SHIM $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
 		cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/grubx64.efi; \
 		cp $$MM $(BUILD_DIR)/efi_staging/EFI/BOOT/mmx64.efi; \
+		cp $$MM $(BUILD_DIR)/efi_staging/mmx64.efi; \
 		if [ -f "$(MOK_CRT)" ]; then \
 			cp $(MOK_CRT) $(BUILD_DIR)/efi_staging/MOK.cer; \
 			echo "[DISK] MOK.cer copied to ESP root (for MokManager enrollment)"; \
