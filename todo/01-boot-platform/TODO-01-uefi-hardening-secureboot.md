@@ -242,6 +242,7 @@ UEFI firmware SetVariable can take 10-100ms+ for flash erase/write cycles. The c
 **Test checkpoint:** Serial shows normal RT calls with no latency warnings on QEMU (fast emulated flash). On bare metal with real NVRAM, SetVariable calls should complete without stalling other CPUs. Verify `uefi_reset()` works from panic context (NMI handler test). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Verified:** 2026-04-11 -- Codex found critical mutex_lock CAS race (fixed: atomic_cmpxchg instead of atomic_set). Emergency ResetSystem trade-off documented (trylock failure -> unlocked call, reboot attempt > hang). All 5 items verified. Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- no findings. Matches Windows FAST_MUTEX and Linux efi_runtime_lock semaphore. Priority inheritance, emergency trylock, LAPIC masking all at parity. TSC latency monitoring exceeds both (neither Win11 nor Linux log slow RT calls inline). Accepted: none.
 
 ---
 
