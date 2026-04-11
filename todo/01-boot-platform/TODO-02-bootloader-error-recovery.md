@@ -156,6 +156,7 @@ Modern hardware (laptops, tablets) may not have COM1 at 0x3F8. Blindly initializ
 **Test checkpoint:** On QEMU (always has COM1), serial output works as before. On VirtualBox with serial disabled, bootloader skips serial silently. Verify no I/O port side effects on bare metal.
 
 > **Verified:** 2026-04-11 -- all 5 items confirmed. Scratch register probe (0xAE write/readback), COM1->COM2->0 fallback chain, boot_info.serial_port stored, kernel serial_init reads it. SPCR (§10) wraps this probe with ACPI table lookup as primary. Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- no findings. Scratch register probe matches Linux serial8250_config_port (same 0xAE test value). SPCR (§10) elevates this to ACPI-first detection, matching Windows EMS and Linux earlycon SPCR. COM3/COM4 not probed (extremely rare, SPCR covers non-standard). Accepted: none.
 
 ---
 
