@@ -64,26 +64,31 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **No N.M subnumbering:** never add `### N.M`, `**N.M ...**`, or extra heading levels that carve one `## N.` into sub-chapters. Keep **one continuous** `- [ ]` list under each `## N.`; put grouping in bullet wording. Need more structure -- add a new `##` section with the next number, not `17.1`/`17.2`.
 11. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
 12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. **Do not** add or extend `<!-- Sources: ... -->` URL comment blocks; cite new research in the PR or chat only.
-13. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. Self-review is NOT a substitute. If Codex responds with "no diff available", re-dispatch with actual file content pasted into the prompt (read 100-200 relevant lines). A shallow response requires re-prompting with specific adversarial angles. Always include: integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data.
+13. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. If Codex responds with "no diff available", re-dispatch with actual file content (read 100-200 relevant lines). A shallow response requires re-prompting.
     ```bash
-    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt with specific adversarial angles>"
+    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt with ALL mandatory angles>"
     ```
-14. **Fix loop** (1 round mandatory; up to 3 if needed) -- apply `superpowers:receiving-code-review` discipline: do NOT blindly implement every Codex finding. For each finding:
-    - **Verify technically first.** Read the code Codex flagged. Is the finding correct? Codex can be wrong -- it doesn't have full runtime context.
-    - **If the finding is valid:** fix the root cause, not the surface symptom. Rebuild.
-    - **If the finding is wrong or misleading:** reject with a concrete technical reason (not "I disagree" -- explain WHY it's wrong with code evidence).
-    - **If the finding is correct but out of scope:** accept with justification and note it as a follow-up item.
-    - Fix all valid Critical and High. Fix valid Medium unless explicitly accepted.
-    - **Re-review via Codex is REQUIRED only when fixes are STRUCTURAL** (function signature changes, control-flow rewrites, new locking, lifecycle changes, refactors that ripple to multiple files). For SURGICAL fixes (single-line bug, contract clarification, small logic correction, comment fix, regression test only), self-verification is sufficient: re-read the cited code and confirm the fix matches what Codex flagged, then proceed to step 15. The self-verify path saves 1-3 minutes per round and avoids re-review noise on trivial corrections.
-    - If unresolved Critical/High remain after round 3: do not mark section complete, keep `[/]` or `[ ]`, add follow-up items with `→ XREF`.
-15. **Final self-review** (MANDATORY) -- this catches what Codex misses at the integration level:
+    **Mandatory angles (include ALL):** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data.
+
+    After Codex responds, apply `superpowers:receiving-code-review` to EVERY finding:
+    - **Verify technically first.** Read the cited code. Is it correct?
+    - **Valid:** fix root cause, rebuild.
+    - **Wrong/misleading:** reject with concrete code evidence.
+    - **Out of scope:** accept with domain-qualified XREF.
+14. **Self-review BEFORE fixing** -- catches what Codex misses at the integration level:
     - Regressions: did any existing functionality break?
     - Race conditions: any new shared mutable state without synchronization?
-    - Bugs: edge cases, off-by-one, null pointer paths?
-    - Performance: unnecessary allocations, O(n^2) where O(n) suffices?
-    - Industry standards: no hacks, no patches, no workarounds, no TODO/FIXME in new code.
-    - **Checklist item-by-item:** walk every `- [ ]` item in the section. For each one: is it implemented and wired (`[x]`), explicitly deferred with justification (`[/]`), or blocked with notes (`[ ]` + blocker)? If any item was silently skipped, go back and address it now.
-    - Deferred items: are there items from earlier sections that were "deferred to this section"? If so, were they resolved?
+    - Edge cases: off-by-one, null pointer paths, boundary values?
+    - Resource leaks on error paths?
+    - Industry standards: no hacks, no TODO/FIXME in new code.
+    - **Checklist item-by-item:** is each item `[x]`, `[/]`, or `[ ]` with explicit justification?
+    - Deferred items from earlier sections resolved?
+15. **Fix loop** (1 round mandatory; up to 3 if needed):
+    - Fix all valid Critical and High from BOTH Codex (step 13) and self-review (step 14).
+    - Fix valid Medium unless explicitly accepted.
+    - Rebuild after fixes.
+    - Re-dispatch Codex if fixes are STRUCTURAL. Surgical fixes: self-verify and proceed.
+    - Unresolved Critical/High after round 3: do not mark section complete.
 16. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`. This catches anything broken by the fix loop or self-review changes.
 17. **Validate section** (MANDATORY) -- invoke `validate-todo-section` skill. Evidence-based checklist classification. Catches stale/optimistic status claims. Re-checks cross-TODO synchronization.
 18. **Tie up loose ends** (MANDATORY) -- scan the ENTIRE TODO file and any XREF'd TODO files for:

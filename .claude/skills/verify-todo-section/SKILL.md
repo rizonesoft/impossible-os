@@ -73,24 +73,39 @@ description: Verify an already-implemented TODO section through the full quality
 
 > **You MUST NOT `git commit` or `git push` until steps 8 through 12 have all been completed.**
 
-8. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. Self-review is NOT a substitute. If Codex responds with "no diff available" or "cannot review", re-dispatch with the actual file content pasted into the prompt (read the file, include 100-200 relevant lines). A shallow Codex response ("looks fine") requires re-prompting with specific adversarial angles. Always include these angles: integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on firmware data.
+8. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. Self-review is NOT a substitute. If Codex responds with "no diff available", re-dispatch with actual file content (read 100-200 relevant lines). A shallow response requires re-prompting with specific angles.
     ```bash
-    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt with specific adversarial angles>"
+    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt with ALL mandatory angles below>"
     ```
+    **Mandatory adversarial angles (include ALL in every prompt):**
+    - Integer overflow / underflow in arithmetic
+    - Buffer overread / overwrite on untrusted input
+    - Missing NULL checks before dereference
+    - SMP race conditions on shared mutable state
+    - Error paths that leak resources (handles, memory, locks)
+    - ABI mismatch between bootloader and kernel structs
+    - Missing bounds checks on firmware-provided data
 
-9. **Fix loop** (1 round mandatory; up to 3 if needed) -- apply `superpowers:receiving-code-review` discipline:
-    - **Verify technically first.** Read the code Codex flagged. Is it correct?
-    - **Valid finding:** fix root cause, rebuild.
+    After Codex responds, apply `superpowers:receiving-code-review` to EVERY finding:
+    - **Verify technically first.** Read the cited code. Is it correct?
+    - **Valid:** fix root cause, rebuild.
     - **Wrong/misleading:** reject with concrete code evidence.
-    - **Correct but out of scope:** accept with justification, add follow-up `-> XREF`. Record in stamp's `Accepted:` field.
-    - Fix all valid Critical and High. Fix valid Medium unless explicitly accepted.
-    - **Re-review via Codex if fixes are STRUCTURAL** (function signatures, control-flow, new locking). Surgical fixes (single-line, contract clarification) may proceed after self-verification, but the initial Codex dispatch in step 8 is NEVER skippable.
-    - Unresolved Critical/High after round 3: do not stamp, downgrade affected items.
+    - **Out of scope:** accept with domain-qualified XREF. Record in stamp's `Accepted:` field.
 
-10. **Final self-review** (MANDATORY):
-    - Regressions, race conditions, edge-case bugs, performance issues
+9. **Self-review BEFORE fixing** -- walk the section's source files looking for what Codex missed:
+    - Regressions from recent changes in other sections
+    - Race conditions that only manifest under specific scheduling
+    - Edge cases at boundary values (0, 1, MAX, overflow)
+    - Resource leaks on error paths
     - Checklist item-by-item: is each `[x]` STILL true today?
     - Test checkpoint: does the expected serial/klog output still match the code?
+
+10. **Fix loop** (1 round mandatory; up to 3 if needed):
+    - Fix all valid Critical and High from BOTH Codex (step 8) and self-review (step 9).
+    - Fix valid Medium unless explicitly accepted.
+    - Rebuild after fixes.
+    - Re-dispatch Codex if fixes are STRUCTURAL. Surgical fixes: self-verify and proceed.
+    - Unresolved Critical/High after round 3: do not stamp, downgrade affected items.
 
 11. **2nd final build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
 
