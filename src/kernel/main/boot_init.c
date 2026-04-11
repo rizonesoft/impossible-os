@@ -101,7 +101,18 @@ bool kernel_subsystem_apply_result(kernel_subsys_t subsys, boot_result_t r)
 
 void _boot_require_failed(const char *subsys_name)
 {
-    /* Write directly to serial -- klog may not be fully initialised yet. */
+    /* If klog is already up, emit a framed LOG_ERROR line so the failure
+     * blends into the rest of the boot log (this matters most when unit
+     * tests deliberately trigger BOOT_REQUIRE failures from Phase 3 --
+     * otherwise a raw serial write drops into the middle of the test
+     * runner output looking like unrelated noise).
+     *
+     * Early Phase 0/1 callers hit BOOT_REQUIRE before klog_early_init(),
+     * so fall back to direct serial in that window. */
+    if (kernel_subsystem_ready(SUBSYS_KLOG)) {
+        klog(LOG_ERROR, "boot", "REQUIRE failed: %s not ready", subsys_name);
+        return;
+    }
     serial_write("[BOOT] REQUIRE failed: ");
     serial_write(subsys_name);
     serial_write(" not ready\n");

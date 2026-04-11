@@ -79,8 +79,10 @@ static void test_boot_require_fails_when_not_ready(void)
 {
     bool saved = kernel_subsystem_ready(SUBSYS_PMM);
 
-    /* Note: BOOT_REQUIRE writes "[BOOT] REQUIRE failed: SUBSYS_PMM not ready"
-     * directly to serial -- this is expected test output, not a real failure. */
+    /* Note: BOOT_REQUIRE calls _boot_require_failed() which emits one
+     * "[ERR] boot: REQUIRE failed: PMM not ready" klog line when klog
+     * is up (Phase 3 in the test runner).  This is expected test
+     * output, not a real failure. */
     kernel_subsystem_set_ready(SUBSYS_PMM, false);
     boot_result_t r = require_pmm_wrapper();
     TEST_ASSERT(r == BOOT_FATAL,
