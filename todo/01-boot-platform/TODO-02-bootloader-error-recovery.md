@@ -218,6 +218,8 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 
 **Test checkpoint:** Add `bogus_key=42` to boot.conf. Serial must show `"unknown key 'bogus_key'"`. Set `splash_timeout=999` -- serial must show `"out of range, using default 3"`.
 
+> **Verified:** 2026-04-11 -- all 5 items confirmed. 4096-byte buffer with truncation warning, unknown key logging, config_version field, range validation for debug/verbose/test/splash_timeout. Accepted: none.
+
 ---
 
 ## 8. Kernel Load Memory Allocation Fallback
@@ -236,6 +238,8 @@ If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes.
 - [x] Commit: `"boot: kernel allocation fallback -- 32-16-8 MiB with overlap check"` (c5cd3704)
 
 **Test checkpoint:** Normal boot works (kernel is ~1.5 MiB, fits in any allocation). Serial shows `"Kernel buffer: 32 MiB allocated"`.
+
+> **Verified:** 2026-04-11 -- all 6 items confirmed. Graduated alloc_sizes[] array (32/16/8 MiB), 3-element fallback loop, failure message on exhaustion, overlap checks for boot_info + framebuffer regions. Accepted: none.
 
 ---
 
@@ -256,6 +260,8 @@ Replace all `for (;;) hlt;` loops with a visible error screen rendered using the
 - [x] Commit: `"boot: visible error screen on fatal failures -- no more silent halts"` (f734faf3)
 
 **Test checkpoint:** Delete `\boot\kernel.exe` from boot disk. Boot must show error screen with `"Kernel not found"` message and recovery instructions -- not a black screen. Verify on QEMU WHPX, TCG, and VBox. Verify on bare metal -- confirm ConIn keypress works on real keyboard.
+
+> **Verified:** 2026-04-11 -- all 7 items confirmed. boot_fatal() with serial CRIT log + console blue/white BSOD + recovery instructions + ConIn keypress + ResetSystem fallback. 4 HLT loops replaced. g_ebs_in_progress gates ConOut after EBS attempted. Accepted: none.
 
 ---
 
