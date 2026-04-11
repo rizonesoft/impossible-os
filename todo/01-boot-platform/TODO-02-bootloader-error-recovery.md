@@ -114,6 +114,7 @@ UEFI spec (Section 7.4.6) explicitly allows the memory map to change between Get
 **Test checkpoint:** Difficult to test directly (requires firmware that changes map between calls). Verify normal boot still succeeds on all 4 platforms. Serial output should show the first `ExitBootServices attempt` log line using the agreed `N` from TODO-01 §9.
 
 > **Verified:** 2026-04-11 -- all 7 items confirmed. EBS_MAX_ATTEMPTS=4, bounded loop with fresh map_key per retry, fill_memory_map + fill_runtime_map on each retry, boot_fatal on exhaustion. Shared implementation with 01-boot-platform/TODO-01 §9. Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- no findings. Matches UEFI Spec §7.4.6 exactly. Linux efi-stub uses 8 retries; our 4 is conservative but sufficient (spec requires "retry with fresh map", not a count). ConOut guard via g_ebs_in_progress exceeds Linux/GRUB (neither disables console before EBS). Accepted: none.
 
 ---
 
