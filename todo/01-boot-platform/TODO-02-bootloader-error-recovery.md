@@ -286,6 +286,9 @@ Modern firmware provides the ACPI Serial Port Console Redirection Table (SPCR) s
 
 **Test checkpoint:** On QEMU with `-device isa-debug-exit` (SPCR absent), fallback I/O probe activates and serial works as before. On QEMU OVMF with SPCR table present, serial log shows `"SPCR detected"`. Verify on bare metal -- real firmware may provide SPCR with non-standard baud rates; kernel must honor the SPCR baud.
 
+> **Verified:** 2026-04-11 -- all 7 items confirmed. Codex found unknown baud code treated as preserve-divisor (fixed: non-zero unknown codes now default 38400). Accepted: XSDT/RSDT child pointer validation (corrupt ACPI = unbootable system, SEH needed for recovery).
+> **Quality reviewed:** 2026-04-11 -- 2 fixes: SPCR Interface Type check (ACPI spec Table 5-49, type 0/1 = 16550), kernel serial_init honors no-UART (serial_port=0 now authoritative instead of defaulting to COM1). Accepted: MMIO UART support (I/O-only for now, matches current hardware scope).
+
 ---
 
 ## 11. UEFI Watchdog Timer Management

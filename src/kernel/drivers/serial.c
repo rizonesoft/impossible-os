@@ -42,10 +42,10 @@ void serial_init(void)
     uint16_t divisor;
 
     /* Read the serial port probed by the bootloader (S4/S10).
-     * 0 = no UART detected; serial output becomes a no-op. */
-    if (g_boot_info.serial_port)
-        s_serial_port = g_boot_info.serial_port;
-    /* else: keep default 0x3F8 (COM1) for safety */
+     * 0 = no UART detected; serial output becomes a no-op.
+     * Honor the bootloader result unconditionally -- it already probed
+     * SPCR + COM1 + COM2.  Do not default to COM1 after boot handoff. */
+    s_serial_port = g_boot_info.serial_port;
 
     if (!s_serial_port) return;
 

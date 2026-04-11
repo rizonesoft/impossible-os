@@ -564,15 +564,18 @@ typedef struct {
     UINT8  language;           /* 63 */
 } __attribute__((packed)) BL_ACPI_SPCR;
 
-/* Decode SPCR baud_rate field to actual baud rate */
+/* Decode SPCR baud_rate field to actual baud rate.
+ * ACPI spec: 0=as-is (firmware-configured), 3-7=specific rates.
+ * Unknown non-zero codes fall back to 38400 (not 0/preserve). */
 static UINT32 spcr_decode_baud(UINT8 code)
 {
     switch (code) {
+    case 0:  return 0;     /* as-is: firmware preconfigured the UART */
     case 3:  return 9600;
     case 4:  return 19200;
     case 6:  return 57600;
     case 7:  return 115200;
-    default: return 0;  /* 0 = as-is / unknown */
+    default: return 38400; /* unknown code -- fall back to safe default */
     }
 }
 
@@ -651,6 +654,10 @@ static int serial_spcr_probe(void)
         /* Minimum table length to read the fields we need */
         if (spcr->length < 60)
             return 0;
+
+        /* Interface type must be 16550-compatible (ACPI spec Table 5-49) */
+        if (spcr->interface_type != 0 && spcr->interface_type != 1)
+            return 0;  /* not 16550 -- skip (PL011, ARM SBSA, etc.) */
 
         /* Must be I/O space (address_space == 1), not MMIO */
         if (spcr->base_addr_space != 1) {
