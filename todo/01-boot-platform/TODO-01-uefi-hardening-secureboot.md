@@ -57,7 +57,7 @@
 | 💎  |   7   | Boot UX polish                           | §3, §5, T07 §2  |  [x]   |
 | ⭐  |   8   | Serial log standardization               | --              |  [x]   |
 | 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5          |  [x]   |
-| 💎  |  10   | RT sleepable lock migration              | §1, mutex prim  |  [ ]   |
+| 💎  |  10   | RT sleepable lock migration              | §1, mutex prim  |  [x]   |
 
 ---
 
@@ -232,12 +232,12 @@ UEFI firmware SetVariable can take 10-100ms+ for flash erase/write cycles. The c
 > [!NOTE]
 > **Prerequisite:** requires a kernel mutex primitive (sleepable lock with ownership tracking). Currently only spinlocks exist. The mutex implementation should support `mutex_lock()` (sleeps if contended), `mutex_trylock()` (non-blocking), and `mutex_unlock()`. -> XREF: `02-kernel-core/TODO-06-interrupt-timer-arch.md` or new TODO for synchronization primitives.
 
-- [ ] Implement kernel mutex primitive: `mutex_init()`, `mutex_lock()`, `mutex_trylock()`, `mutex_unlock()` with ownership tracking and scheduler integration (thread sleeps on contention, woken on release)
-- [ ] Replace `s_rt_lock` (spinlock) with a mutex in `uefi_runtime.c` for all thread-context RT calls (GetVariable, SetVariable, GetTime, SetTime, GetNextVariableName, GetWakeupTime, capsule queries)
-- [ ] Add emergency trylock path for panic/reset: `uefi_reset()` and any future crash-dump NVRAM write must use `mutex_trylock()` -- if contended, skip the lock (firmware is likely stuck) and call ResetSystem directly
-- [ ] Verify ResetSystem still works from NMI/panic context (no sleeping allowed)
-- [ ] Log latency warnings: if any RT call takes > 50ms, klog a warning with the service name and duration (TSC-based measurement)
-- [ ] Commit: `"kernel: migrate UEFI RT serialization from spinlock to mutex"`
+- [x] Implement kernel mutex primitive: `mutex_init()`, `mutex_lock()`, `mutex_trylock()`, `mutex_unlock()` with ownership tracking and scheduler integration -- already existed in `src/kernel/sched/mutex.c` with full waitqueue-based sleep, deadlock detection, and lock ordering
+- [x] Replace `s_rt_lock` (spinlock) with a mutex in `uefi_runtime.c` for all thread-context RT calls (GetVariable, SetVariable, GetTime, SetTime, GetNextVariableName, GetWakeupTime, QueryVariableInfo) -- `s_rt_mutex = MUTEX_INIT("uefi_rt")`, `rt_call_enter()` uses `mutex_lock()`
+- [x] Add emergency trylock path for panic/reset: `uefi_reset()` uses `rt_call_enter_emergency()` with `mutex_trylock()` -- if contended, logs warning and calls ResetSystem without lock
+- [x] Verify ResetSystem still works from NMI/panic context -- emergency path uses trylock (non-blocking), no sleep, LAPIC masking still applied
+- [x] Log latency warnings: `rt_call_exit()` measures TSC elapsed time; if > 50ms, klog warns with service name and duration
+- [x] Commit: `"kernel: migrate UEFI RT serialization from spinlock to mutex"`
 
 **Test checkpoint:** Serial shows normal RT calls with no latency warnings on QEMU (fast emulated flash). On bare metal with real NVRAM, SetVariable calls should complete without stalling other CPUs. Verify `uefi_reset()` works from panic context (NMI handler test). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 

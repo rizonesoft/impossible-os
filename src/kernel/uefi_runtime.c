@@ -20,6 +20,7 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/mutex.h"
 #include "kernel/system_state.h"
 #include "kernel/fs/gpt.h"
 #include "registry.h"
@@ -102,7 +103,7 @@ struct efi_runtime_services {
 
 /* ---- Module state ---- */
 static struct efi_runtime_services *s_rt;    /* pointer to firmware RT table */
-static spinlock_t s_rt_lock = SPINLOCK_INIT;       /* serialize all RT calls */
+static mutex_t s_rt_mutex = MUTEX_INIT("uefi_rt");  /* serialize RT calls (sleepable) */
 static int s_available;                      /* 1 = RT services usable */
 static uint32_t s_supported;                 /* EFI_RT_SUPPORTED_* bitmask */
 
@@ -183,7 +184,7 @@ static void read_rt_properties(void)
 
 boot_result_t uefi_runtime_init(void)
 {
-    (void)s_rt_lock;  /* initialized statically via SPINLOCK_INIT */
+    (void)s_rt_mutex;  /* initialized statically via MUTEX_INIT */
     s_available = 0;
     s_supported = 0;
 
@@ -309,35 +310,84 @@ uint32_t uefi_rt_supported(void)
  * UEFI Variable Services (§1.2)
  *
  * GetVariable, SetVariable, GetNextVariableName wrappers.
- * All calls are serialized via s_rt_lock (firmware is not reentrant).
+ * All calls are serialized via s_rt_mutex (firmware is not reentrant).
  * LAPIC timer masked during all calls -- firmware SMI may enable interrupts.
  * ============================================================================ */
 
 /* ---- Centralized RT call entry/exit ----
  * Mask LAPIC timer during ALL UEFI runtime calls -- firmware may enable
  * interrupts internally via SMI, causing timer to fire into wrong context.
- * Acquire the RT spinlock to serialize (firmware is not reentrant). */
+ * Acquire the RT mutex to serialize (firmware is not reentrant).
+ * Sleepable: threads yield on contention instead of spinning with IRQs off.
+ * Emergency path (panic/reset): uses trylock to avoid blocking. */
+
+/* TSC read for latency measurement */
+static inline uint64_t rt_rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/* Latency warning threshold: 50ms at ~3 GHz = 150M cycles.
+ * Use boot_info.timing.tsc_freq for accurate conversion. */
+#define RT_LATENCY_WARN_MS 50
 
 struct rt_call_state {
     uint32_t saved_lvt;
+    uint64_t tsc_start;
 };
 
 static void rt_call_enter(struct rt_call_state *state)
 {
     state->saved_lvt = 0;
+    mutex_lock(&s_rt_mutex);
     if (lapic_available() && kernel_subsystem_ready(SUBSYS_TIMER)) {
         uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
         lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);
         state->saved_lvt = lvt;
     }
-    spin_lock(&s_rt_lock);
+    state->tsc_start = rt_rdtsc();
 }
 
-static void rt_call_exit(struct rt_call_state *state)
+static void rt_call_exit(struct rt_call_state *state, const char *svc_name)
 {
-    spin_unlock(&s_rt_lock);
+    uint64_t elapsed = rt_rdtsc() - state->tsc_start;
     if (state->saved_lvt)
         lapic_write(LAPIC_REG_LVT_TIMER, state->saved_lvt);
+    mutex_unlock(&s_rt_mutex);
+
+    /* Log latency warning if RT call took > 50ms */
+    uint64_t freq = g_boot_info.timing.tsc_freq;
+    if (freq > 0) {
+        uint64_t ms = (elapsed * 1000) / freq;
+        if (ms >= RT_LATENCY_WARN_MS) {
+            klog(LOG_WARN, "UEFI", "RT %s took %u ms (threshold %u ms)",
+                 svc_name, (uint32_t)ms, (uint32_t)RT_LATENCY_WARN_MS);
+        }
+    }
+}
+
+/* Emergency RT call for panic/reset -- trylock, no sleep, no latency log */
+static int rt_call_enter_emergency(struct rt_call_state *state)
+{
+    state->saved_lvt = 0;
+    state->tsc_start = 0;
+    if (!mutex_trylock(&s_rt_mutex))
+        return 0;  /* contended -- caller proceeds without lock */
+    if (lapic_available() && kernel_subsystem_ready(SUBSYS_TIMER)) {
+        uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
+        lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);
+        state->saved_lvt = lvt;
+    }
+    return 1;
+}
+
+static void rt_call_exit_emergency(struct rt_call_state *state)
+{
+    if (state->saved_lvt)
+        lapic_write(LAPIC_REG_LVT_TIMER, state->saved_lvt);
+    mutex_unlock(&s_rt_mutex);
 }
 
 uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
@@ -353,7 +403,7 @@ uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
     rt_call_enter(&rcs);
     efi_status_t status = s_rt->get_variable(
         (uint16_t *)name, (void *)guid, attributes, data_size, data);
-    rt_call_exit(&rcs);
+    rt_call_exit(&rcs, "GetVariable");
 
     return status;
 }
@@ -371,7 +421,7 @@ uint64_t uefi_set_variable(const struct boot_uefi_guid *guid,
     rt_call_enter(&rcs);
     efi_status_t status = s_rt->set_variable(
         (uint16_t *)name, (void *)guid, attributes, data_size, (void *)data);
-    rt_call_exit(&rcs);
+    rt_call_exit(&rcs, "SetVariable");
 
     return status;
 }
@@ -390,7 +440,7 @@ uint64_t uefi_query_variable_info(uint32_t attributes,
     rt_call_enter(&rcs);
     efi_status_t status = s_rt->query_variable_info(
         attributes, max_storage, remaining, max_var_size);
-    rt_call_exit(&rcs);
+    rt_call_exit(&rcs, "QueryVariableInfo");
 
     return status;
 }
@@ -413,7 +463,7 @@ uint64_t uefi_get_next_variable_name(uint64_t *name_size, uint16_t *name,
     struct rt_call_state rcs;
     rt_call_enter(&rcs);
     efi_status_t status = s_rt->get_next_variable_name(name_size, name, guid);
-    rt_call_exit(&rcs);
+    rt_call_exit(&rcs, "GetNextVariableName");
 
     return status;
 }
@@ -517,10 +567,16 @@ void uefi_reset(uint32_t reset_type)
     if (s_available && s_rt &&
         (s_supported & EFI_RT_SUPPORTED_RESET_SYSTEM)) {
         struct rt_call_state rcs;
-        rt_call_enter(&rcs);
+        /* Emergency path: trylock to avoid sleeping in panic context.
+         * If contended, another CPU is in firmware -- calling ResetSystem
+         * concurrently risks firmware corruption, but the alternative is
+         * hanging with no reset. A reboot attempt is better than certain hang. */
+        int got_lock = rt_call_enter_emergency(&rcs);
+        if (!got_lock)
+            klog(LOG_WARN, "UEFI", "ResetSystem: mutex contended, proceeding without lock");
         /* ResetSystem() does NOT return on success */
         s_rt->reset_system(reset_type, UEFI_SUCCESS, 0, (void *)0);
-        rt_call_exit(&rcs);
+        if (got_lock) rt_call_exit_emergency(&rcs);
         /* If we get here, it failed */
         klog(LOG_ERROR, "UEFI", "ResetSystem() returned -- falling back");
     }
@@ -549,7 +605,7 @@ uint64_t uefi_get_time(struct efi_time *time,
 
     rt_call_enter(&rcs);
     efi_status_t status = s_rt->get_time(time, caps);
-    rt_call_exit(&rcs);
+    rt_call_exit(&rcs, "GetTime");
 
     return status;
 }
@@ -562,7 +618,7 @@ uint64_t uefi_set_time(const struct efi_time *time)
 
     rt_call_enter(&rcs);
     efi_status_t status = s_rt->set_time((void *)time);
-    rt_call_exit(&rcs);
+    rt_call_exit(&rcs, "SetTime");
 
     return status;
 }
@@ -577,7 +633,7 @@ uint64_t uefi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
 
     rt_call_enter(&rcs);
     efi_status_t status = s_rt->get_wakeup_time(enabled, pending, time);
-    rt_call_exit(&rcs);
+    rt_call_exit(&rcs, "GetWakeupTime");
 
     return status;
 }

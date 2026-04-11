@@ -69,8 +69,8 @@ void mutex_lock(mutex_t *m)
         /* Continue anyway -- it's a warning, not a hard stop */
     }
 
-    /* --- Spin-then-sleep acquisition with priority inheritance --- */
-    while (atomic_read(&m->locked)) {
+    /* --- CAS-then-sleep acquisition with priority inheritance --- */
+    while (atomic_cmpxchg(&m->locked, 0, 1) != 0) {
         /* Add ourselves to the wait queue */
         if (m->num_waiters < MUTEX_MAX_WAITERS) {
             m->waiter_tasks[m->num_waiters]   = my_task;
@@ -110,8 +110,7 @@ void mutex_lock(mutex_t *m)
         my_thread = cur_thread ? cur_thread->id : 0;
     }
 
-    /* Acquire the lock */
-    atomic_set(&m->locked, 1);
+    /* Lock acquired via CAS above -- set ownership */
     m->owner_task   = my_task;
     m->owner_thread = my_thread;
 
