@@ -52,7 +52,7 @@
 | 💎  |   2   | UEFI variable services                   | §1              |  [x]   |
 | 💎  |   3   | GOP resolution auto-detection            | §1              |  [x]   |
 | 💎  |   4   | SMBIOS table parsing                     | §1              |  [x]   |
-| 💎  |   5   | Secure Boot state detection              | §2              |  [x]   |
+| 💎  |   5   | Secure Boot state detection              | §2              |  [/]   |
 | 💎  |   6   | Secure Boot shim chain-loading           | §5              |  [x]   |
 | 💎  |   7   | Boot UX polish                           | §3, §5, T07 §2  |  [x]   |
 | ⭐  |   8   | Serial log standardization               | --              |  [x]   |
@@ -141,7 +141,7 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel.
 
 - [x] `uefi_secureboot_init()`: read `SecureBoot` variable, set `boot_info.secure_boot_enabled`
 - [x] Write `HKLM\SYSTEM\SecureBoot\State` = 0 or 1
-- [x] Padlock icon in system tray when Secure Boot active
+- [/] Padlock icon in system tray when Secure Boot active -- `g_system_state.secure_boot` flag published; rendering not implemented (-> XREF: 09-desktop-shell/TODO-11-control-panel.md or system tray TODO when ready)
 - [x] Commit: `"kernel: Secure Boot state detection, registry key"`
 
 > [!NOTE]
