@@ -160,11 +160,21 @@ static void parse_type4(const struct smbios_header *hdr)
     /* Max speed at offset 0x14 (uint16_t LE) */
     cpu->max_speed_mhz = (uint16_t)(d[0x14] | ((uint16_t)d[0x15] << 8));
 
-    /* Core / thread counts (SMBIOS 2.5+) */
-    if (hdr->length >= 0x24)
-        cpu->core_count   = (uint16_t)d[0x23];
-    if (hdr->length >= 0x26)
-        cpu->thread_count = (uint16_t)d[0x25];
+    /* Core / thread counts -- prefer 2-byte fields (SMBIOS 3.0+)
+     * Core Count 2 at offset 0x2A (2 bytes), Thread Count 2 at 0x2E (2 bytes)
+     * over 1-byte fields (SMBIOS 2.5+ at 0x23/0x25) for >255 core CPUs */
+    if (hdr->length >= 0x30) {
+        uint16_t cc2 = (uint16_t)(d[0x2A] | ((uint16_t)d[0x2B] << 8));
+        uint16_t tc2 = (uint16_t)(d[0x2E] | ((uint16_t)d[0x2F] << 8));
+        /* Use 2-byte fields if present and non-zero */
+        cpu->core_count   = (cc2 > 0) ? cc2 : (uint16_t)d[0x23];
+        cpu->thread_count = (tc2 > 0) ? tc2 : (uint16_t)d[0x25];
+    } else {
+        if (hdr->length >= 0x24)
+            cpu->core_count   = (uint16_t)d[0x23];
+        if (hdr->length >= 0x26)
+            cpu->thread_count = (uint16_t)d[0x25];
+    }
 
     cpu->valid = 1;
     s_info.cpu_count++;
@@ -206,8 +216,15 @@ static void parse_type17(const struct smbios_header *hdr)
     s_info.ram_total_mb += size_mb;
     s_info.ram_dimm_count++;
 
-    if (hdr->length >= 0x17 && s_info.ram_speed_mhz == 0)
-        s_info.ram_speed_mhz = (uint16_t)(d[0x15] | ((uint16_t)d[0x16] << 8));
+    /* Aggregate speed: prefer configured (0x20) over max (0x15) */
+    if (s_info.ram_speed_mhz == 0) {
+        if (hdr->length >= 0x22) {
+            uint16_t cfg = (uint16_t)(d[0x20] | ((uint16_t)d[0x21] << 8));
+            if (cfg > 0) s_info.ram_speed_mhz = cfg;
+        }
+        if (s_info.ram_speed_mhz == 0 && hdr->length >= 0x17)
+            s_info.ram_speed_mhz = (uint16_t)(d[0x15] | ((uint16_t)d[0x16] << 8));
+    }
     if (s_info.ram_type == 0)
         s_info.ram_type = d[0x12];
 
@@ -217,8 +234,15 @@ static void parse_type17(const struct smbios_header *hdr)
 
     dimm->size_mb   = size_mb;
     dimm->mem_type  = d[0x12];
-    if (hdr->length >= 0x17)
+    /* Prefer configured speed (actual clock, offset 0x20, SMBIOS 2.7+)
+     * over max speed (rated, offset 0x15) */
+    if (hdr->length >= 0x22) {
+        uint16_t cfg = (uint16_t)(d[0x20] | ((uint16_t)d[0x21] << 8));
+        dimm->speed_mhz = (cfg > 0) ? cfg :
+            (uint16_t)(d[0x15] | ((uint16_t)d[0x16] << 8));
+    } else if (hdr->length >= 0x17) {
         dimm->speed_mhz = (uint16_t)(d[0x15] | ((uint16_t)d[0x16] << 8));
+    }
 
     /* String fields: device locator (d[0x10]), bank locator (d[0x11]),
      * manufacturer (d[0x17]), part number (d[0x1A]) -- SMBIOS 2.3+ */
@@ -288,6 +312,16 @@ static const char *mem_type_name(uint8_t type)
     }
 }
 
+/* Validate entry point checksum (SMBIOS spec §6.1: sum of all bytes == 0) */
+static int smbios_checksum_valid(const uint8_t *data, uint32_t len)
+{
+    uint8_t sum = 0;
+    uint32_t i;
+    for (i = 0; i < len; i++)
+        sum += data[i];
+    return (sum == 0);
+}
+
 void smbios_init(void)
 {
     uint32_t i;
@@ -304,6 +338,24 @@ void smbios_init(void)
         const struct smbios3_entry *ep =
             (const struct smbios3_entry *)ep_addr;
 
+        /* Validate anchor string "_SM3_" */
+        if (ep->anchor[0] != '_' || ep->anchor[1] != 'S' ||
+            ep->anchor[2] != 'M' || ep->anchor[3] != '3' ||
+            ep->anchor[4] != '_') {
+            klog(LOG_WARN, "SMBIOS", "3.x anchor mismatch -- skipping");
+            ep_addr = 0;  /* fall through to 2.x */
+        }
+        /* Validate entry point checksum */
+        else if (!smbios_checksum_valid((const uint8_t *)ep, ep->length)) {
+            klog(LOG_WARN, "SMBIOS", "3.x entry point checksum invalid");
+            ep_addr = 0;
+        }
+    }
+
+    if (ep_addr != 0) {
+        const struct smbios3_entry *ep =
+            (const struct smbios3_entry *)ep_addr;
+
         s_info.smbios_major = ep->major_version;
         s_info.smbios_minor = ep->minor_version;
 
@@ -314,6 +366,23 @@ void smbios_init(void)
         /* Fallback: SMBIOS 2.x */
         struct boot_uefi_guid guid2 = UEFI_GUID_SMBIOS;
         ep_addr = uefi_find_config_table(&guid2);
+
+        if (ep_addr != 0) {
+            const struct smbios2_entry *ep =
+                (const struct smbios2_entry *)ep_addr;
+
+            /* Validate anchor string "_SM_" */
+            if (ep->anchor[0] != '_' || ep->anchor[1] != 'S' ||
+                ep->anchor[2] != 'M' || ep->anchor[3] != '_') {
+                klog(LOG_WARN, "SMBIOS", "2.x anchor mismatch -- skipping");
+                ep_addr = 0;
+            }
+            /* Validate entry point checksum */
+            else if (!smbios_checksum_valid((const uint8_t *)ep, ep->length)) {
+                klog(LOG_WARN, "SMBIOS", "2.x entry point checksum invalid");
+                ep_addr = 0;
+            }
+        }
 
         if (ep_addr != 0) {
             const struct smbios2_entry *ep =
