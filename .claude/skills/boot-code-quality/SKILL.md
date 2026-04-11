@@ -86,12 +86,15 @@ Before writing any boot code, walk through these gates. Each gate is pass/fail.
 
 ### Gate 11: QR Code Correctness
 
-> **Incident 2026-04-11:** The QR encoder had three bugs that each made the code unscannable: (1) RS generator coefficients were wrong -- Codex caught this. (2) Codex then said format bits should be LSB-first -- this was WRONG and made it unscannable on real hardware. Verified against segno (spec-compliant QR library): format bits must be MSB-first. (3) Pixel colors 0xFF000000 = blue in BGRX, not black. Lesson: Codex can be wrong about spec details. Always verify QR changes against a known-good library before shipping.
+> **Incident 2026-04-11:** The QR encoder had 6 bugs across two iterations, each making it unscannable. Codex caught 1 of 6 (RS coefficients). Codex was actively wrong about 1 (said format bits should be LSB-first). The remaining 4 were found via real-hardware testing + segno comparison. Lesson: QR encoding has many interacting spec details that AI reviewers cannot reliably verify. Always diff against a reference library.
 
-- [ ] **Format info is MSB-first.** QR spec "bit 0" at position (8,0) means the MSB of the 15-bit format word, not the LSB. Format word 0x77C4 for ECL-L mask 0 is written as `{1,1,1,0,1,1,1,1,1,0,0,0,1,0,0}`.
-- [ ] **Verify against segno or equivalent.** Any change to the QR encoder must produce a matrix that matches a spec-compliant QR library module-for-module. Phone-scan the output.
-- [ ] **Pixel colors: 0x00000000 = black, 0x00FFFFFF = white.** GOP framebuffers use BGRX format. `0xFF000000` is blue, not black. Dark QR modules must be `0x00000000`.
-- [ ] **RS coefficients: {0xD8, 0xC2, 0x9F, 0x6F, 0xC7, 0x5E, 0x5F, 0x71, 0x9D, 0xC1}.** For 10 EC codewords over GF(256) with primitive polynomial 0x11D. Verify via independent computation if changed.
+- [ ] **Verify against segno.** Any change to the QR encoder MUST produce a matrix with 0 differences against `segno.make(url, version=3, error='L', mask=0, boost_error=False)`. Phone-scan the output. This is non-negotiable -- the spec has too many subtleties for manual verification.
+- [ ] **Pixel colors: 0x00000000 = black, 0x00FFFFFF = white.** GOP framebuffers use BGRX format. `0xFF000000` is blue, not black.
+- [ ] **Format info placement uses segno's algorithm.** Vertical col 8 gets bits LSB-first (bit 0 at row 0), horizontal row 8 gets bits MSB-first (bit 14 at col 0). Copy 2: row 8 right edge gets LSB-first, col 8 bottom edge gets MSB-first. Do NOT change this without verifying against segno.
+- [ ] **Zigzag column loop: use separate iterator.** `for (col_iter = SIZE-1; col_iter >= 1; col_iter -= 2) { right = col_iter; if (right <= 6) right--; }` -- modifying `right` inside the loop must NOT affect the iteration counter. A Python `for range()` loop ignores modifications to the loop variable; C does not.
+- [ ] **Zigzag direction: `(right & 2) == 0`, then XOR with `(col < 6)`.** Columns left of the timing column (col 6) flip direction. This is per ISO 18004 section 7.7.3 and segno's implementation.
+- [ ] **Byte padding: always pad to next codeword boundary.** After terminator, add `8 - (nbits % 8)` zero bits even when already byte-aligned (adds a full 0x00 codeword). This matches segno's behavior and produces correct padding before the 0xEC/0x11 alternation.
+- [ ] **RS coefficients for V3 ECL-L (15 EC codewords): `{0x1D, 0xC4, 0x6F, 0xA3, 0x70, 0x4A, 0x0A, 0x69, 0x69, 0x8B, 0x84, 0x97, 0x20, 0x86, 0x1A}`.** Verify via independent computation if changed.
 
 ### Gate 12: Fallback Chains
 

@@ -364,18 +364,19 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 > **Competitive advantage:** A QR code on the pre-kernel error screen is actionable for non-technical users. Instead of "call support", they scan and get a page explaining exactly what error code 0x0003 means and how to fix it. ChromeOS has this for recovery; neither Win11 nor Linux has it at the UEFI bootloader stage.
 > **Regression risk:** LOW -- QR rendering is additive to §9 error screen. If QR encoder has a bug, error screen still shows text error message.
 
-- [x] Implement minimal QR code encoder in bootloader: QR Version 2 (25x25 modules), alphanumeric mode, ECL-L, Reed-Solomon EC (10 codewords), mask pattern 0 -- ~350 lines self-contained in `bootx64.c`
+- [x] Implement QR code encoder in bootloader: QR Version 3 (29x29 modules), byte mode, ECL-L, Reed-Solomon EC (15 codewords), mask pattern 0 -- self-contained in `bootx64.c`, verified 0-diff against segno (spec-compliant library)
 - [x] `boot_fatal()` renders QR code in bottom-right corner of the GOP framebuffer (direct pixel write, works even during EBS retry); if ConOut unavailable but framebuffer available, renders QR-only
-- [x] QR payload: `HTTPS://IMPOSSIBLEOS.CO/ERR/XXXX` where `XXXX` is the hex error code from §13
+- [x] QR payload: `https://impossibleos.co/err/XXXX` where `XXXX` is the hex error code from §13 (lowercase URL via byte mode)
 - [x] QR module size: 4px at 1280x720, 6px at 1920x1080, 8px at 2560+ -- with 4-module white quiet zone
 - [x] If GOP unavailable (gFramebuffer NULL or size 0): QR rendering silently skipped, text error screen still shows
 - [x] Standalone encoder (TODO-07 §6 not yet implemented) -- when §6 lands, the kernel-side encoder can be factored from this implementation
+- [x] `error_screen_test=1` boot.conf key triggers `boot_fatal()` before kernel load for QR/BSOD testing (halts instead of rebooting so screen stays visible)
 - [x] Commit: `"boot: QR code on boot error screen -- scan for recovery instructions"` (7e588e7e)
 
-**Test checkpoint:** Trigger boot failure (delete kernel). Error screen shows QR code in bottom-right. Scan with phone -- URL resolves (or shows the encoded URL). Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
+**Test checkpoint:** Run `scripts/debug/run-error-screen-test.bat` (sets `error_screen_test=1`). Error screen shows QR code in bottom-right. Scan with phone -- URL `https://impossibleos.co/err/0003` appears. Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
 
-> **Verified:** 2026-04-11 -- Codex adversarial found RS coefficients wrong + format placement wrong (both fixed). Post-fix Codex clean. Evidence: 10 QR functions (bootx64.c:862-1291), boot_fatal integration at 2 sites, URL prefix at line 1238, module scaling 4/6/8px, framebuffer NULL guard at line 1201. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- Codex adversarial found RS coefficients wrong (fixed). Codex quality review then said format bits should be LSB-first -- this was wrong; real-hardware testing showed QR was unscannable. Verified against segno (spec-compliant library): format bits must be MSB-first {1,1,1,0,1,1,1,1,1,0,0,0,1,0,0}. Also fixed pixel colors (0xFF000000 = blue in BGRX, not black). Accepted: none.
+> **Verified:** 2026-04-11 -- Codex adversarial found RS coefficients wrong + format placement wrong (both fixed). Post-fix Codex clean. Real-hardware testing found 3 additional bugs: (1) pixel colors 0xFF000000=blue in BGRX, (2) format bits MSB/LSB reversed (Codex was wrong about this), (3) V2 alphanumeric uppercase URL -- switched to V3 byte mode for lowercase. Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- Switched to QR V3 byte mode after user feedback. Three V3 bugs fixed: zigzag loop skipped column pairs after timing column, zigzag direction formula wrong for cols < 6, byte padding added zero codeword when already aligned. All verified against segno: 0 differences. Accepted: none.
 
 ---
 
