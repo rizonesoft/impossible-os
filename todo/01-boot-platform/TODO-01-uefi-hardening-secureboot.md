@@ -219,6 +219,9 @@ Win11 and major Linux distros surface firmware trust inventory (db/dbx counts), 
 
 **Test checkpoint:** Serial shows `[BOOT] ExitBootServices OK` after deliberate map churn (QEMU OVMF multi-disk attach); when db/dbx exist, `klog` / registry reflects non-zero counts consistent with `secureboot_get_db_info()`; SBAT section present in `docs/guides/secure-boot-keys.md`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-04-11 -- all items verified: SBAT docs (5 refs in secure-boot-keys.md), EBS retry (EBS_MAX_ATTEMPTS=4), db/dbx registry mirror (uefi_secureboot_populate_registry writes 5 DWORD values after State), XREF to 02-kernel-core/TODO-13 confirmed, XREF to 01-boot-platform/TODO-18 acknowledged. Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- no additional findings. Registry writes already enhanced in §5 quality review (SetupMode, DeployedMode, AuditMode added). EBS retry bounded and logged. SBAT documentation complete. Accepted: none.
+
 ---
 
 ## 10. UEFI Runtime Services Sleepable Lock Migration
