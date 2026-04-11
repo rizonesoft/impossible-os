@@ -89,6 +89,10 @@ Bare metal is the target platform. VMs (QEMU, VBox) are convenience tools for fa
 
 When writing hardware-touching code, ask: "does this work without a hypervisor?" Emulated hardware (Bochs VGA, forgiving LAPIC, trapped MMIO) hides bugs that crash on real CPUs.
 
+## boot_info ABI
+
+`struct boot_info` at 0x10000 is the handoff contract between BOOTX64.EFI and kernel.exe. An 8-byte header at offset 0 contains magic (`0x49504F53` "IPOS"), version, and size. The kernel validates these before memcpy. **Never ship mismatched BOOTX64.EFI and kernel.exe after a `BOOT_INFO_VERSION` bump** -- the kernel will halt with "boot_info: version mismatch". Always rebuild both with `bash scripts/build.sh`. Bump `BOOT_INFO_VERSION` in both `include/kernel/boot_info.h` and `src/boot/uefi/bootx64.c` when adding/removing/reordering fields (not needed for new fields in `_reserved` regions).
+
 ## Bare Metal Gotchas
 
 These are hard-won lessons from real hardware debugging. Violating any of these will crash on bare metal while appearing to work fine in VMs.

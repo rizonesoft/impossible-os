@@ -29,6 +29,27 @@
 #define UEFI_MMAP_PAL_CODE             13   /* EfiPalCode */
 #define UEFI_MMAP_PERSISTENT           14   /* EfiPersistentMemory */
 
+/* ---- boot_info ABI header (S15) ----
+ * Fixed at offset 0 of struct boot_info. The bootloader fills magic, version,
+ * and size before kernel handoff. The kernel validates these before memcpy
+ * to detect stale BOOTX64.EFI / kernel.exe mismatches.
+ *
+ * ABI rules:
+ *   - Never reorder fields in boot_info_header.
+ *   - Bump BOOT_INFO_VERSION when adding/removing/reordering fields in
+ *     struct boot_info (not for adding fields to _reserved regions).
+ *   - Always rebuild BOOTX64.EFI and kernel.exe together after a bump.
+ *   - Bootloader writes sizeof(struct boot_info) into header.size at
+ *     compile time -- a size mismatch means the structs diverged. */
+#define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
+#define BOOT_INFO_VERSION  1           /* bump on struct layout changes */
+
+struct boot_info_header {
+    uint32_t magic;     /* must be BOOT_INFO_MAGIC */
+    uint16_t version;   /* BOOT_INFO_VERSION */
+    uint16_t size;      /* sizeof(struct boot_info) as seen by the bootloader */
+};
+
 /* A single memory region from the bootloader */
 struct boot_mmap_entry {
     uint64_t base_addr;
@@ -317,6 +338,9 @@ struct boot_usb_controller {
 
 /* All boot info collected from UEFI bootloader */
 struct boot_info {
+    /* ABI header -- must be at offset 0 (S15) */
+    struct boot_info_header header;
+
     /* Memory map */
     struct boot_mmap_entry mmap[BOOT_MMAP_MAX_ENTRIES];
     uint32_t mmap_count;
@@ -422,6 +446,12 @@ struct boot_info {
     uint32_t hv_flags;              /* hypervisor feature flags (HV_FLAG_*) */
     char     hv_vendor[16];         /* hypervisor vendor string (null-terminated) */
 };
+
+/* Compile-time enforcement of ABI header layout (S15) */
+_Static_assert(__builtin_offsetof(struct boot_info, header) == 0,
+    "boot_info_header must be at offset 0 -- ABI contract");
+_Static_assert(sizeof(struct boot_info_header) == 8,
+    "boot_info_header must be exactly 8 bytes -- ABI contract");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

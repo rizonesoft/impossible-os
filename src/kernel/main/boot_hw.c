@@ -66,7 +66,22 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         const uint8_t *s = (const uint8_t *)src;
         for (i = 0; i < sizeof(struct boot_info); i++)
             d[i] = s[i];
-        klog(LOG_INFO, "UEFI", "Boot info received from Impossible OS bootloader");
+
+        /* S15: Validate ABI header before using boot_info */
+        if (g_boot_info.header.magic != BOOT_INFO_MAGIC) {
+            boot_halt("boot_info: bad magic (stale BOOTX64.EFI?)");
+        }
+        if (g_boot_info.header.version != BOOT_INFO_VERSION) {
+            boot_halt("boot_info: version mismatch (rebuild bootloader + kernel)");
+        }
+        if (g_boot_info.header.size != (uint16_t)sizeof(struct boot_info)) {
+            boot_halt("boot_info: size mismatch (struct layout diverged)");
+        }
+        klog(LOG_INFO, "UEFI",
+             "Boot info v%d, size=%u, magic=0x%08X",
+             (uint64_t)g_boot_info.header.version,
+             (uint64_t)g_boot_info.header.size,
+             (uint64_t)g_boot_info.header.magic);
     } else if (magic == MULTIBOOT2_BOOTLOADER_MAGIC) {
         multiboot2_parse((uintptr_t)mbi);
     } else {

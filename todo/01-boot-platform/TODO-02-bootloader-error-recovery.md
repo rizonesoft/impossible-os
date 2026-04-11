@@ -63,7 +63,7 @@
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [x]   |
 | ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [x]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [x]   |
-| 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [ ]   |
+| 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [x]   |
 | 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [ ]   |
 | 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [ ]   |
 | ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)  | §9, §14    |  [ ]   |
@@ -388,12 +388,13 @@ Place a fixed-size header at offset 0 of `struct boot_info` and have the UEFI bo
 > [!NOTE]
 > **Regression risk:** MEDIUM -- any `struct boot_info` layout change must bump `BOOT_INFO_VERSION` and rebuild bootloader + kernel together.
 
-- [ ] Add `struct boot_info_header` at offset 0: `uint32_t magic` (`BOOT_INFO_MAGIC` e.g. `0x49504F53` "IPOS"), `uint16_t version` (`BOOT_INFO_VERSION`), `uint16_t size` (bootloader writes `sizeof(struct boot_info)` at compile time) in `include/kernel/boot_info.h`.
-- [ ] Bootloader `src/boot/uefi/bootx64.c`: assign `boot_info.header.magic`, `.version`, `.size = sizeof(struct boot_info)` before handing off to the kernel path that jumps to `kernel_main`.
-- [ ] `_Static_assert(__builtin_offsetof(struct boot_info, header) == 0, ...)` in `boot_info.h`.
-- [ ] `_Static_assert(sizeof(struct boot_info_header) == 8, ...)` to pin header layout.
-- [ ] Extend `boot_info.h` comments with the ABI and version bump rules.
-- [ ] Add a short `CLAUDE.md` note under Bare Metal Gotchas or a new ABI subsection: never ship mismatched `BOOTX64.EFI` vs `kernel.exe` after a `BOOT_INFO_VERSION` bump.
+- [x] Add `struct boot_info_header` at offset 0: `uint32_t magic` (BOOT_INFO_MAGIC=0x49504F53 "IPOS"), `uint16_t version` (BOOT_INFO_VERSION=1), `uint16_t size` -- defined in both `include/kernel/boot_info.h` and `src/boot/uefi/bootx64.c` (ABI sync)
+- [x] Bootloader populates `header.magic`, `.version`, `.size = sizeof(struct boot_info)` as the last step before `jump_to_kernel()` -- after all other fields are set
+- [x] `_Static_assert(offsetof(boot_info, header) == 0)` in `boot_info.h` -- enforces offset 0
+- [x] `_Static_assert(sizeof(boot_info_header) == 8)` in `boot_info.h` -- pins header layout
+- [x] `boot_info.h` comments document ABI rules: bump version on layout changes, rebuild both images together, `_reserved` fields don't require bumps
+- [x] `CLAUDE.md` new "boot_info ABI" section: documents magic, version mismatch halt, rebuild rule
+- [x] Kernel `boot_hw.c` validates magic + version after memcpy, halts on mismatch with clear error message; logs header version, size, and kernel-side sizeof for diagnostics
 - [ ] Commit: `"boot: boot_info ABI header fields and bootloader populate"`
 
 **Test checkpoint:** Clean build boots on QEMU WHPX, QEMU TCG, VirtualBox, bare metal; header fields visible in memory at the handoff pointer before kernel entry (debugger or serial hex dump).
@@ -479,7 +480,7 @@ The current error screen uses UEFI text console (`ConOut`) with white-on-blue te
 | ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ✅ §14 QR V3 byte mode + scan   |
 | ⭐ | Graphical error | ✅ :( BSOD (OS-level only)       | ❌ GRUB text menu only          | ⬜ §18 ChromeOS-style pixel UX  |
 | 💎 | Mmap normalize  | ✅ Hal.dll coalesces overlaps    | ✅ efi_fake_memmap + sanitize   | ⬜ §17 sort + carve by priority |
-| 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ⬜ §15-§16 versioned handoff    |
+| 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ✅ §15 magic+ver+size + halt    |
 | 💎 | Offline repair  | ✅ Windows Recovery Environment  | ✅ rescue/live ISO image        | ⬜ TODO-15 recovery partition   |
 
 > **Parity:** 💎 rows track Win11 + Linux bootloader hardening. **⭐** rows are pre-kernel UX beyond typical UEFI/GRUB rescue. Capsule apply stays `TODO-18 §2`; multi-GOP enumeration stays `TODO-18 §4` with §5 here as timeout wrapper only. Full recovery partition / WinRE-class repair is `TODO-15-recovery-partition.md`, not duplicated here.

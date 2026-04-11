@@ -192,7 +192,18 @@ struct boot_usb_controller {
     UINT32  alloc_fail_page;
 };
 
+/* ABI header (S15) -- must match kernel/boot_info.h */
+#define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
+#define BOOT_INFO_VERSION  1
+
+struct boot_info_header {
+    UINT32 magic;
+    UINT16 version;
+    UINT16 size;
+};
+
 struct boot_info {
+    struct boot_info_header header;   /* must be at offset 0 */
     struct boot_mmap_entry  mmap[BOOT_MMAP_MAX_ENTRIES];
     UINT32  mmap_count;
     UINT8   mmap_truncated;
@@ -278,6 +289,14 @@ struct boot_info {
     UINT32  hv_flags;
     char    hv_vendor[16];
 };
+
+/* ABI compile-time guards (S15) -- catch bootloader/kernel struct drift at build */
+_Static_assert(__builtin_offsetof(struct boot_info, header) == 0,
+    "boot_info_header must be at offset 0");
+_Static_assert(sizeof(struct boot_info_header) == 8,
+    "boot_info_header must be 8 bytes");
+_Static_assert(sizeof(struct boot_info) <= 65535,
+    "boot_info too large for uint16_t size field");
 
 /* Inline rdtsc for boot timing */
 static inline UINT64 boot_rdtsc(void)
@@ -3723,6 +3742,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     post_code16(POST16_BL_PAGE_TABLES);
     serial_early_print("[BOOT] setup_page_tables...\n");
     setup_page_tables();
+
+    /* S15: Populate ABI header as the final step before kernel handoff.
+     * Written last so any late modifications to boot_info don't overwrite it. */
+    g_boot_info_ptr->header.magic   = BOOT_INFO_MAGIC;
+    g_boot_info_ptr->header.version = BOOT_INFO_VERSION;
+    g_boot_info_ptr->header.size    = (UINT16)sizeof(struct boot_info);
 
     /* Step 8: Jump to kernel! */
     post_code16(POST16_BL_KERNEL_JUMP);
