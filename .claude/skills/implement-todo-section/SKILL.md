@@ -9,10 +9,14 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 ## Execution Discipline
 
-> The TODO section IS the plan. Apply `superpowers:executing-plans` principles:
+> **NO CODE SHIPS WITHOUT BEING EXAMINED FROM EVERY ANGLE.**
+>
+> You cut corners: skipping Codex, self-reviewing instead of dispatching, accepting "clean" without walking quality gates, skipping the post-implementation review pipeline. Your judgment about which steps to skip has been wrong. Follow every step mechanically.
+>
 > - **Follow the plan, don't improvise.** The checklist items define scope. Do not widen.
-> - **Review checkpoints are mandatory.** Steps 13-18 are review checkpoints -- never skip them.
-> - **If the plan is wrong, update the plan first.** If reality conflicts with the checklist, update the TODO section text before implementing a different approach.
+> - **Every Codex dispatch is mandatory.** Step 13 adversarial + step 20 review pipeline. No exceptions.
+> - **Every finding gets fixed.** Not noted. Not accepted unless it truly needs missing infrastructure.
+> - **Domain code quality gates get walked explicitly.** Not just the hook reminder.
 > - **One section = one commit.** Each section is a milestone with a clean commit boundary.
 
 ## Workflow

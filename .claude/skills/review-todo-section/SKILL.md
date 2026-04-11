@@ -5,7 +5,11 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
 # Review TODO Section
 
-> Every review runs the FULL checklist. No skipping. No "already reviewed" exemptions. No "conditional" logic. If a section needs reviewing, it gets the complete pipeline.
+> **NO CODE SHIPS WITHOUT BEING EXAMINED FROM EVERY ANGLE.**
+>
+> You have been observed cutting corners: skipping Codex dispatches, self-reviewing instead of dispatching, accepting "clean" without running quality gates, folding separate concerns into a single shallow pass. This skill exists because your judgment about which steps to skip has been wrong repeatedly.
+>
+> Every step runs. Every time. Mechanically. No judgment calls about skipping.
 
 ## Pipeline
 
