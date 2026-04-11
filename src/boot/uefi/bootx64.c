@@ -1211,13 +1211,13 @@ static void qr_render_to_fb(const UINT8 matrix[QR_SIZE][QR_SIZE],
         UINT32 y, x;
         for (y = 0; y < total && (start_y + y) < gFbHeight; y++)
             for (x = 0; x < total && (start_x + x) < gFbWidth; x++)
-                gFramebuffer[(start_y + y) * gFbPitch + (start_x + x)] = 0xFFFFFFFF;
+                gFramebuffer[(start_y + y) * gFbPitch + (start_x + x)] = 0x00FFFFFF;
     }
 
     /* Draw QR modules */
     for (qr_row = 0; qr_row < QR_SIZE; qr_row++) {
         for (qr_col = 0; qr_col < QR_SIZE; qr_col++) {
-            UINT32 color = matrix[qr_row][qr_col] ? 0xFF000000 : 0xFFFFFFFF;
+            UINT32 color = matrix[qr_row][qr_col] ? 0x00000000 : 0x00FFFFFF;
             UINT32 bx = start_x + quiet + qr_col * module_size;
             UINT32 by = start_y + quiet + qr_row * module_size;
 
