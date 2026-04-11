@@ -375,7 +375,7 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 **Test checkpoint:** Trigger boot failure (delete kernel). Error screen shows QR code in bottom-right. Scan with phone -- URL resolves (or shows the encoded URL). Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
 
 > **Verified:** 2026-04-11 -- Codex adversarial found RS coefficients wrong + format placement wrong (both fixed). Post-fix Codex clean. Evidence: 10 QR functions (bootx64.c:862-1291), boot_fatal integration at 2 sites, URL prefix at line 1238, module scaling 4/6/8px, framebuffer NULL guard at line 1201. Accepted: none.
-> **Quality reviewed:** 2026-04-11 -- Codex found format bits MSB/LSB reversed (fixed: now LSB-first {0,0,1,0,0,0,1,1,1,1,1,0,1,1,1} = 0x77C4). RS gen_coeff, alignment (18,18), Version 2-L counts (34 data, 10 EC) all confirmed correct. No dead code, no consistency issues. Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- Codex adversarial found RS coefficients wrong (fixed). Codex quality review then said format bits should be LSB-first -- this was wrong; real-hardware testing showed QR was unscannable. Verified against segno (spec-compliant library): format bits must be MSB-first {1,1,1,0,1,1,1,1,1,0,0,0,1,0,0}. Also fixed pixel colors (0xFF000000 = blue in BGRX, not black). Accepted: none.
 
 ---
 

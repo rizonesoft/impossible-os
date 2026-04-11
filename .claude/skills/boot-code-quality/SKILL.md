@@ -84,7 +84,16 @@ Before writing any boot code, walk through these gates. Each gate is pass/fail.
 - [ ] **POST16 codes are unique.** Check `boot_init.h` for collisions. The boot-time uniqueness scan catches duplicates.
 - [ ] **Bootloader POST codes use 0xBxxx range.** Kernel Phase 0 uses 0x0xxx, Phase 1 uses 0x1xxx. Bootloader uses 0xBxxx to avoid collision.
 
-### Gate 11: Fallback Chains
+### Gate 11: QR Code Correctness
+
+> **Incident 2026-04-11:** The QR encoder had three bugs that each made the code unscannable: (1) RS generator coefficients were wrong -- Codex caught this. (2) Codex then said format bits should be LSB-first -- this was WRONG and made it unscannable on real hardware. Verified against segno (spec-compliant QR library): format bits must be MSB-first. (3) Pixel colors 0xFF000000 = blue in BGRX, not black. Lesson: Codex can be wrong about spec details. Always verify QR changes against a known-good library before shipping.
+
+- [ ] **Format info is MSB-first.** QR spec "bit 0" at position (8,0) means the MSB of the 15-bit format word, not the LSB. Format word 0x77C4 for ECL-L mask 0 is written as `{1,1,1,0,1,1,1,1,1,0,0,0,1,0,0}`.
+- [ ] **Verify against segno or equivalent.** Any change to the QR encoder must produce a matrix that matches a spec-compliant QR library module-for-module. Phone-scan the output.
+- [ ] **Pixel colors: 0x00000000 = black, 0x00FFFFFF = white.** GOP framebuffers use BGRX format. `0xFF000000` is blue, not black. Dark QR modules must be `0x00000000`.
+- [ ] **RS coefficients: {0xD8, 0xC2, 0x9F, 0x6F, 0xC7, 0x5E, 0x5F, 0x71, 0x9D, 0xC1}.** For 10 EC codewords over GF(256) with primitive polynomial 0x11D. Verify via independent computation if changed.
+
+### Gate 12: Fallback Chains
 
 - [ ] **Every hardware probe has a graceful fallback.** GOP: mode 0 fallback, then headless. Serial: SPCR, then COM1, then COM2, then silent. USB: skip if no protocol. ACPI: warn and continue.
 - [ ] **Never `for (;;) hlt;` without an error message.** Use `boot_fatal()` which shows an error screen + serial message + optional keypress + HLT.
