@@ -43,9 +43,12 @@ void serial_init(void)
 
     /* Read the serial port probed by the bootloader (S4/S10).
      * 0 = no UART detected; serial output becomes a no-op.
-     * Honor the bootloader result unconditionally -- it already probed
-     * SPCR + COM1 + COM2.  Do not default to COM1 after boot handoff. */
-    s_serial_port = g_boot_info.serial_port;
+     * Non-zero overrides the COM1 default used for early klog before
+     * serial_init runs.  Keep COM1 default if bootloader reports 0 --
+     * early serial output needs a working port during the window between
+     * kernel entry and serial_init(). */
+    if (g_boot_info.serial_port)
+        s_serial_port = g_boot_info.serial_port;
 
     if (!s_serial_port) return;
 
