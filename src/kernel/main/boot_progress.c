@@ -230,19 +230,33 @@ void boot_timeline_dump_json(void)
         if (i + 1 < count)
             dur_ms = (uint32_t)((steps[i + 1].tsc - steps[i].tsc) / (freq / 1000));
 
-        pos += (uint32_t)snprintf((char *)buf + pos, buf_size - pos,
+        /* Truncate step name to 32 chars max for JSON safety */
+        char safe_name[33];
+        const char *raw = steps[i].step ? steps[i].step : "?";
+        uint32_t sn;
+        for (sn = 0; sn < 32 && raw[sn] && raw[sn] != '"' && raw[sn] != '\\'; sn++)
+            safe_name[sn] = raw[sn];
+        safe_name[sn] = '\0';
+
+        int written = snprintf((char *)buf + pos, buf_size - pos,
             "  {\"stage\":\"%s\",\"phase\":%u,\"post\":\"0x%02x\","
             "\"start_ms\":%u,\"duration_ms\":%u}%s\n",
-            steps[i].step ? steps[i].step : "?",
+            safe_name,
             (unsigned)steps[i].phase,
             (unsigned)steps[i].postcode,
             (unsigned)start_ms,
             (unsigned)dur_ms,
             (i + 1 < count) ? "," : "");
+        if (written > 0 && (uint32_t)written < buf_size - pos)
+            pos += (uint32_t)written;
+        else
+            break;  /* buffer full -- close array safely */
     }
 
-    buf[pos++] = ']';
-    buf[pos++] = '\n';
+    if (pos + 2 < buf_size) {
+        buf[pos++] = ']';
+        buf[pos++] = '\n';
+    }
 
     /* Write to X:\Boot\ (BlackBox) or C:\Impossible\System\Logs\ (fallback) */
     {

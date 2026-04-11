@@ -181,12 +181,6 @@ static uint32_t u16_to_hex4(char *buf, uint16_t val)
     return 4;
 }
 
-static uint32_t str_copy(char *dst, const char *src)
-{
-    uint32_t n = 0;
-    while (src[n]) { dst[n] = src[n]; n++; }
-    return n;
-}
 
 void boot_timing_write_report(void)
 {
@@ -238,7 +232,15 @@ void boot_timing_write_report(void)
         line[pos++] = '0'; line[pos++] = 'x';
         pos += u16_to_hex4(line + pos, s_steps[i].postcode);
         line[pos++] = ' ';
-        pos += str_copy(line + pos, s_steps[i].step);
+        /* Bound step name to remaining buffer space (leave room for newline) */
+        {
+            const char *sn = s_steps[i].step;
+            uint32_t max = (pos + 2 < sizeof(line)) ? (uint32_t)(sizeof(line) - pos - 2) : 0;
+            uint32_t j;
+            for (j = 0; j < max && sn[j]; j++)
+                line[pos + j] = sn[j];
+            pos += j;
+        }
         line[pos++] = '\n';
 
         vfs_write(file, offset, pos, (const uint8_t *)line);
