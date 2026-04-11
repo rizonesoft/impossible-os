@@ -65,7 +65,7 @@
 | ⭐  |  14   | Error screen QR code                           | §9         |  [x]   |
 | 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [x]   |
 | 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [x]   |
-| 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [ ]   |
+| 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [x]   |
 | ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)  | §9, §14    |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
@@ -433,17 +433,18 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. Validati
 
 ## 17. Memory Map Overlap Normalization
 
-> Found during §12 quality review (2026-04-11). The current overlap check in `fill_memory_map()` skips overlapping descriptors with a `[WARN]` log. Real firmware (particularly with ACPI reclaim regions) can produce legitimate overlaps that should be resolved by priority, not skipped. This section adds sort + carve logic to normalize the map before the kernel PMM consumes it.
+> Found during §12 quality review (2026-04-11). The current overlap check in `fill_memory_map()` skipped overlapping descriptors with a `[WARN]` log. Real firmware (particularly with ACPI reclaim regions) can produce legitimate overlaps that should be resolved by priority, not skipped. This section replaces the skip-on-overlap path with sweep-line normalization that carves contested ranges by UEFI memory type priority before the kernel PMM consumes the map.
 
-- [ ] Sort memory map descriptors by base address before overlap detection (insertion sort is fine for <= 512 entries)
-- [ ] On overlap: resolve by UEFI memory type priority (Reserved > ACPI NVS > ACPI Reclaim > Runtime > Conventional) -- higher-priority type wins the contested range
-- [ ] Carve contested ranges: split the lower-priority descriptor around the higher-priority one (may increase descriptor count by 1 per overlap)
-- [ ] Guard against exceeding `BOOT_MMAP_MAX_ENTRIES` during carving -- if the carve would overflow, fall back to current skip+warn behavior
-- [ ] Update `fill_memory_map()` to call sort + normalize before copying to `boot_info`
-- [ ] Log normalized overlaps: `"[BOOT] mmap: overlap resolved at 0xNNNN -- type N wins over type M"`
-- [ ] Commit: `"boot: memory map sort + overlap normalization by type priority"`
+- [x] Memory map descriptors sorted via endpoint-event sort (insertion sort, handles the sorted/nearly-sorted firmware case in ~O(n) and the worst case in O(n^2) for n <= 512).
+- [x] Priority table at `src/boot/uefi/bootx64.c:mmap_type_priority()`: Reserved / MMIO / MMIOPort / PalCode / Unusable / Unknown = 100, Runtime Code/Data = 95 (promoted above ACPI Reclaim per Codex design finding -- runtime memory must survive ExitBootServices), ACPI NVS = 85, ACPI Reclaim = 80, Persistent = 70, BootServices / LoaderCode / LoaderData = 50, Conventional = 40.
+- [x] Carve via sweep-line algorithm, not iterative pair resolution. Codex round 1 proved that an iterative pair-resolve-with-restart loop could exceed a 2*n+16 pass bound on pathological staggered maps (1291 passes for n=512), leaving the published map with residual overlaps. The sweep-line pass emits one winner-priority range per inter-event interval and is deterministic O(n^2) with no bounded-iteration guard. See `mmap_normalize()` and helpers at [bootx64.c](src/boot/uefi/bootx64.c).
+- [x] Guard against exceeding `BOOT_MMAP_MAX_ENTRIES` via two independent gates: (a) during Phase 1 fill, `mmap_evict_for_incoming()` evicts the lowest-priority already-accepted entry when a higher-priority incoming descriptor would otherwise be truncated; (b) during sweep-line emit, `mmap_emit_segment()` drops any segment that would exceed the cap and sets `mmap_quirks = 1`.
+- [x] `fill_memory_map()` rewritten into three phases: (1) validate raw UEFI descriptors and copy into `boot_info->mmap` with priority-aware cap handling, (2) `mmap_normalize()` sweep-line pass, (3) recompute `total_mem` from the NORMALIZED map (required because carving can shrink Conventional/BootServices/Loader ranges that were counted at pre-normalize length).
+- [x] Normalized overlaps logged as `"[BOOT] mmap: overlap resolved at 0xXXXXXXXXXXXXXXXX -- type N wins over type M"` via `mmap_log_resolved()`. Logged only at boundaries where the active set contains more than one descriptor AND the loser type differs from the winner type (so adjacent same-type coalescing does not spam the log).
+- [x] Stable tiebreak on equal-priority overlaps (Codex round 2 finding): `mmap_active_find_winner()` prefers the lower original `s_mmap_work` index when priorities tie, so the winner is deterministic regardless of unrelated active-set swap-remove churn.
+- [x] Commit: `"boot: memory map sort + overlap normalization by type priority"`
 
-**Test checkpoint:** Normal boot produces no overlap warnings on clean firmware. Inject a synthetic overlap in QEMU (if feasible via firmware customization) and verify the sort + carve produces a clean, non-overlapping map. Kernel PMM `total_frames` and `used_frames` are consistent with the normalized map.
+**Test checkpoint:** Normal boot produces no `[BOOT] mmap: overlap resolved` lines on clean OVMF / QEMU firmware. `mem_upper_kb` in `boot_info` remains within <= 1% of the pre-§17 value on clean maps. Kernel PMM `total_frames` and `used_frames` are consistent with the normalized map. Adversarial synthetic overlap injection is out of scope here (no clean QEMU hook); smoke-test coverage is added to the Unit Tests section below.
 
 ---
 
@@ -482,10 +483,10 @@ The current error screen uses UEFI text console (`ConOut`) with white-on-blue te
 | 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ✅ §6 512 cap + truncate warn   |
 | 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ✅ §7 key whitelist + range chk |
 | 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ✅ §8 32/16/8 MiB + overlap chk |
-| 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ✅ §10 RSDP->XSDT->SPCR parse  |
+| 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ✅ §10 RSDP->XSDT->SPCR parse   |
 | 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ✅ §11 60s arm + disarm pre-EBS |
 | 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ✅ §12 align+pages+type+overlap |
-| ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot |
+| ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot  |
 | ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ✅ §13 13 codes + NVRAM persist |
 | ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ✅ §14 QR V3 byte mode + scan   |
 | ⭐ | Graphical error | ✅ :( BSOD (OS-level only)       | ❌ GRUB text menu only          | ⬜ §18 ChromeOS-style pixel UX  |
@@ -511,6 +512,8 @@ The current error screen uses UEFI text console (`ConOut`) with white-on-blue te
   - Serial line `"[BOOT] Serial:"` present with either `"SPCR detected"` or `"SPCR absent"` (§10 -- SPCR probed)
   - Serial line `"[BOOT] Watchdog: armed"` present (§11 -- watchdog re-armed at entry)
   - Serial line `"[BOOT] Watchdog: disarmed"` present (§11 -- watchdog disarmed before ExitBootServices)
+  - Absence of `"[BOOT] mmap: overlap resolved"` on a clean firmware boot (§17 -- OVMF / QEMU should not produce overlapping descriptors)
+  - Absence of `"[WARN] mmap: carve at cap"` and `"[WARN] Memory map entry ... overlaps entry"` on any platform (§17 -- old skip-on-overlap path is removed; cap fallback is rare)
 - [ ] Create `scripts/test-boot-elf-corrupt.sh`:
   - Build disk image, truncate `\boot\kernel.exe` to 512 bytes
   - Boot QEMU headless, capture serial

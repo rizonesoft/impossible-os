@@ -2292,12 +2292,329 @@ static UINT32 uefi_to_mb2_memtype(UINT32 efi_type)
     }
 }
 
+/* ============================================================================
+ * S17: Memory map normalization -- sort by base address, then carve
+ * overlapping descriptors by UEFI memory type priority.
+ *
+ * Real firmware occasionally emits overlapping descriptors (particularly
+ * ACPI Reclaim regions straddling BootServices buffers) that must be
+ * resolved, not skipped, before the kernel PMM consumes the map.  The
+ * normalization pass runs after fill_memory_map() accepts raw entries
+ * and before mmap_count is published to boot_info.
+ *
+ * Priority order (higher wins the contested range):
+ *   100 -- Reserved, MMIO, MMIOPort, PalCode, Unusable, Unknown (can't reclaim)
+ *    95 -- RuntimeServicesCode/Data (survives ExitBootServices)
+ *    85 -- ACPI NVS (firmware data that must not be overwritten)
+ *    80 -- ACPI Reclaim (copied by kernel, then reclaimable later)
+ *    70 -- Persistent (NVDIMM)
+ *    50 -- BootServicesCode/Data, LoaderCode/Data (reclaimable post-EBS)
+ *    40 -- Conventional (lowest priority, freely reclaimable)
+ *
+ * Runtime is promoted ABOVE ACPI Reclaim because runtime code/data must
+ * remain reserved for the firmware even after the kernel copies the
+ * ACPI tables out of an overlapping reclaim range.
+ * ============================================================================ */
+
+static int mmap_type_priority(UINT32 uefi_type)
+{
+    switch (uefi_type) {
+    case EfiReservedMemoryType:
+    case EfiMemoryMappedIO:
+    case EfiMemoryMappedIOPortSpace:
+    case EfiPalCode:
+    case EfiUnusableMemory:
+        return 100;
+    case EfiRuntimeServicesCode:
+    case EfiRuntimeServicesData:
+        return 95;
+    case EfiACPIMemoryNVS:
+        return 85;
+    case EfiACPIReclaimMemory:
+        return 80;
+    case EfiPersistentMemory:
+        return 70;
+    case EfiBootServicesCode:
+    case EfiBootServicesData:
+    case EfiLoaderCode:
+    case EfiLoaderData:
+        return 50;
+    case EfiConventionalMemory:
+        return 40;
+    default:
+        return 100;  /* conservative: treat unknown as reserved */
+    }
+}
+
+/* Shift arr[i+1..count) left by one, decrementing count.  Used to remove
+ * the entry at index i. */
+static void mmap_remove_at(struct boot_mmap_entry *arr, UINT32 *count, UINT32 i)
+{
+    UINT32 k;
+    if (i >= *count) return;
+    for (k = i; k + 1 < *count; k++) arr[k] = arr[k + 1];
+    (*count)--;
+}
+
+/* Log the canonical overlap-resolved line. */
+static void mmap_log_resolved(UINT64 at, UINT32 winner_type, UINT32 loser_type)
+{
+    serial_early_print("[BOOT] mmap: overlap resolved at 0x");
+    serial_early_print_hex16((UINT16)(at >> 48));
+    serial_early_print_hex16((UINT16)(at >> 32));
+    serial_early_print_hex16((UINT16)(at >> 16));
+    serial_early_print_hex16((UINT16)at);
+    serial_early_print(" -- type ");
+    serial_early_print_uint(winner_type);
+    serial_early_print(" wins over type ");
+    serial_early_print_uint(loser_type);
+    serial_early_print("\n");
+}
+
+/* --- Sweep-line normalization (S17) ---------------------------------
+ *
+ * Codex adversarial round 1 flagged that an iterative pair-resolver
+ * with an ad-hoc pass guard could exit before the map stabilized on
+ * pathological inputs.  A provably correct O(n^2) sweep-line pass
+ * replaces it:
+ *
+ *   1. Copy input into a work buffer, build 2n endpoint events.
+ *   2. Sort events by (addr, end-before-start) so touching ranges do
+ *      not create zero-width spurious intervals.
+ *   3. Walk events linearly.  Between consecutive events the active
+ *      set is fixed; emit one range taking the highest-priority active
+ *      descriptor, coalescing with the previous output if adjacent,
+ *      same type, and same attribute.
+ *
+ * Storage: MMAP_NORMALIZE_MAX = BOOT_MMAP_MAX_ENTRIES.  Event, work,
+ * and active-set buffers live in BSS (~34 KiB) so the bootloader
+ * stack stays shallow.
+ * -------------------------------------------------------------------- */
+
+#define MMAP_NORMALIZE_MAX  BOOT_MMAP_MAX_ENTRIES
+
+struct mmap_event {
+    UINT64 addr;
+    UINT32 desc_idx;
+    UINT8  is_start;   /* 1 = descriptor start, 0 = descriptor end */
+    UINT8  _pad[3];
+};
+
+static struct mmap_event        s_mmap_events[2 * MMAP_NORMALIZE_MAX];
+static struct boot_mmap_entry   s_mmap_work[MMAP_NORMALIZE_MAX];
+static UINT32                   s_mmap_active[MMAP_NORMALIZE_MAX];
+
+static void mmap_event_sort(struct mmap_event *ev, UINT32 count)
+{
+    /* Insertion sort: nearly-sorted firmware maps run in ~O(n).
+     * Tiebreak end-before-start at equal addr so adjacent ranges
+     * [A.end == B.start] close A before opening B. */
+    UINT32 i, j;
+    for (i = 1; i < count; i++) {
+        struct mmap_event key = ev[i];
+        j = i;
+        while (j > 0) {
+            if (ev[j - 1].addr > key.addr ||
+                (ev[j - 1].addr == key.addr &&
+                 ev[j - 1].is_start > key.is_start)) {
+                ev[j] = ev[j - 1];
+                j--;
+            } else {
+                break;
+            }
+        }
+        ev[j] = key;
+    }
+}
+
+static UINT32 mmap_active_find_winner(UINT32 active_count)
+{
+    /* Stable tiebreak: when two active descriptors share the same
+     * priority, pick the one with the lower original index into
+     * s_mmap_work.  Original indices never change, so the winner is
+     * independent of the active-set removal order.  Without this
+     * tiebreak, mmap_active_remove's swap-remove could shift a
+     * different same-priority descriptor to the front and flip the
+     * winner based on unrelated event ordering. */
+    UINT32 best = s_mmap_active[0];
+    int best_pri = mmap_type_priority(s_mmap_work[best].uefi_memory_type);
+    UINT32 k;
+    for (k = 1; k < active_count; k++) {
+        UINT32 idx = s_mmap_active[k];
+        int pri = mmap_type_priority(s_mmap_work[idx].uefi_memory_type);
+        if (pri > best_pri || (pri == best_pri && idx < best)) {
+            best = idx;
+            best_pri = pri;
+        }
+    }
+    return best;
+}
+
+/* Swap-remove desc_idx from the active set.  Returns new count. */
+static UINT32 mmap_active_remove(UINT32 active_count, UINT32 desc_idx)
+{
+    UINT32 k;
+    for (k = 0; k < active_count; k++) {
+        if (s_mmap_active[k] == desc_idx) {
+            s_mmap_active[k] = s_mmap_active[active_count - 1];
+            return active_count - 1;
+        }
+    }
+    return active_count;
+}
+
+/* Find the first active descriptor that is not `winner_idx` and return
+ * its UEFI memory type -- used only for the overlap-resolved log line. */
+static UINT32 mmap_active_first_loser_type(UINT32 active_count, UINT32 winner_idx)
+{
+    UINT32 k;
+    for (k = 0; k < active_count; k++) {
+        UINT32 idx = s_mmap_active[k];
+        if (idx != winner_idx) return s_mmap_work[idx].uefi_memory_type;
+    }
+    return 0;
+}
+
+/* Append or coalesce one output segment.  Returns 0 if the segment
+ * was dropped due to the array cap (caller sets mmap_quirks). */
+static int mmap_emit_segment(struct boot_mmap_entry *arr, UINT32 *out_count,
+                              UINT32 max_entries, UINT64 seg_start,
+                              UINT64 seg_end, UINT32 win_type,
+                              UINT32 win_simple, UINT64 win_attr)
+{
+    if (*out_count > 0) {
+        struct boot_mmap_entry *last = &arr[*out_count - 1];
+        if (last->base_addr + last->length == seg_start &&
+            last->uefi_memory_type == win_type &&
+            last->attribute == win_attr) {
+            last->length += (seg_end - seg_start);
+            return 1;
+        }
+    }
+    if (*out_count >= max_entries) return 0;
+    arr[*out_count].base_addr        = seg_start;
+    arr[*out_count].length           = seg_end - seg_start;
+    arr[*out_count].type             = win_simple;
+    arr[*out_count].uefi_memory_type = win_type;
+    arr[*out_count].attribute        = win_attr;
+    (*out_count)++;
+    return 1;
+}
+
+static void mmap_normalize(struct boot_mmap_entry *arr, UINT32 *count,
+                            UINT32 max_entries)
+{
+    UINT32 n = *count;
+    UINT32 ev_count = 0;
+    UINT32 active_count = 0;
+    UINT32 out_count = 0;
+    UINT32 i;
+    UINT64 prev_addr = 0;
+    int prev_valid = 0;
+
+    if (n < 2) return;
+    if (n > MMAP_NORMALIZE_MAX) n = MMAP_NORMALIZE_MAX;
+
+    /* Snapshot validated input into the work buffer.  The active-set
+     * indices reference s_mmap_work, not arr, so we can freely
+     * overwrite arr as we emit output. */
+    for (i = 0; i < n; i++) s_mmap_work[i] = arr[i];
+
+    for (i = 0; i < n; i++) {
+        if (s_mmap_work[i].length == 0) continue;
+        s_mmap_events[ev_count].addr     = s_mmap_work[i].base_addr;
+        s_mmap_events[ev_count].desc_idx = i;
+        s_mmap_events[ev_count].is_start = 1;
+        ev_count++;
+        s_mmap_events[ev_count].addr     =
+            s_mmap_work[i].base_addr + s_mmap_work[i].length;
+        s_mmap_events[ev_count].desc_idx = i;
+        s_mmap_events[ev_count].is_start = 0;
+        ev_count++;
+    }
+
+    if (ev_count < 2) { *count = 0; return; }
+
+    mmap_event_sort(s_mmap_events, ev_count);
+
+    for (i = 0; i < ev_count; i++) {
+        UINT64 curr_addr = s_mmap_events[i].addr;
+
+        if (prev_valid && curr_addr > prev_addr && active_count > 0) {
+            UINT32 winner = mmap_active_find_winner(active_count);
+            UINT32 win_type   = s_mmap_work[winner].uefi_memory_type;
+            UINT32 win_simple = s_mmap_work[winner].type;
+            UINT64 win_attr   = s_mmap_work[winner].attribute;
+
+            if (active_count > 1) {
+                UINT32 loser_type =
+                    mmap_active_first_loser_type(active_count, winner);
+                if (loser_type != win_type)
+                    mmap_log_resolved(prev_addr, win_type, loser_type);
+            }
+
+            if (!mmap_emit_segment(arr, &out_count, max_entries,
+                                    prev_addr, curr_addr, win_type,
+                                    win_simple, win_attr)) {
+                g_boot_info_ptr->mmap_quirks = 1;
+            }
+        }
+
+        if (s_mmap_events[i].is_start) {
+            if (active_count < MMAP_NORMALIZE_MAX)
+                s_mmap_active[active_count++] = s_mmap_events[i].desc_idx;
+        } else {
+            active_count = mmap_active_remove(active_count,
+                                               s_mmap_events[i].desc_idx);
+        }
+
+        prev_addr = curr_addr;
+        prev_valid = 1;
+    }
+
+    *count = out_count;
+}
+
+/* When the UEFI descriptor count exceeds BOOT_MMAP_MAX_ENTRIES, preserve
+ * high-priority descriptors by evicting the lowest-priority already-
+ * accepted entry to make room for the incoming higher-priority one.
+ * Returns 1 if the incoming descriptor should be inserted at `out_idx`,
+ * 0 if the incoming descriptor should be skipped.  Updates *count on
+ * successful eviction. */
+static int mmap_evict_for_incoming(struct boot_mmap_entry *arr, UINT32 *count,
+                                    UINT32 cap, int incoming_prio,
+                                    UINT32 *out_idx)
+{
+    UINT32 j;
+    UINT32 lowest_idx = 0;
+    int lowest_pri = 999;
+
+    if (*count < cap) {
+        *out_idx = *count;
+        return 1;
+    }
+
+    for (j = 0; j < *count; j++) {
+        int p = mmap_type_priority(arr[j].uefi_memory_type);
+        if (p < lowest_pri) { lowest_pri = p; lowest_idx = j; }
+    }
+
+    if (incoming_prio <= lowest_pri) return 0;  /* not worth evicting */
+
+    mmap_remove_at(arr, count, lowest_idx);
+    g_boot_info_ptr->mmap_quirks = 1;
+    *out_idx = *count;
+    return 1;
+}
+
 static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
                              UINTN map_size, UINTN desc_size)
 {
     UINTN offset;
     UINT32 idx = 0;
     UINT64 total_mem = 0;
+    UINT32 total_descs;
+
     /* Guard against malformed descriptor geometry (S12) */
     if (desc_size == 0 || desc_size < sizeof(EFI_MEMORY_DESCRIPTOR)) {
         serial_early_print("[FAIL] Memory map: invalid descriptor size\n");
@@ -2305,15 +2622,14 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
         return;
     }
 
-    UINT32 total_descs = (UINT32)(map_size / desc_size);
+    total_descs = (UINT32)(map_size / desc_size);
 
-    /* Detect overflow before filling (S6) */
     if (total_descs > BOOT_MMAP_MAX_ENTRIES) {
         serial_early_print("[WARN] Memory map has ");
         serial_early_print_uint(total_descs);
-        serial_early_print(" entries, truncating to ");
+        serial_early_print(" entries, capped at ");
         serial_early_print_uint(BOOT_MMAP_MAX_ENTRIES);
-        serial_early_print("\n");
+        serial_early_print(" (priority eviction active)\n");
         g_boot_info_ptr->mmap_truncated = 1;
     } else {
         g_boot_info_ptr->mmap_truncated = 0;
@@ -2321,15 +2637,21 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
 
     g_boot_info_ptr->mmap_quirks = 0;
 
-    for (offset = 0; offset < map_size && idx < BOOT_MMAP_MAX_ENTRIES;
-         offset += desc_size) {
+    /* Phase 1: validate and copy raw descriptors into boot_info->mmap.
+     * Overlap resolution is deferred to mmap_normalize() below so the
+     * fill loop does not silently drop ACPI Reclaim / BootServices
+     * overlaps that firmware can legitimately emit.  If the UEFI map
+     * overflows BOOT_MMAP_MAX_ENTRIES, evict the lowest-priority
+     * already-accepted entry to keep higher-priority ranges. */
+    for (offset = 0; offset < map_size; offset += desc_size) {
         EFI_MEMORY_DESCRIPTOR *desc =
             (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap + offset);
         UINT32 entry_num = (UINT32)(offset / desc_size);
+        UINT32 dest_idx;
+        int incoming_prio;
 
         /* ---- Descriptor validation (S12) ---- */
 
-        /* Range overflow: NumberOfPages * PAGE_SIZE or PhysicalStart + length wraps */
         {
             UINT64 max_pages = 0xFFFFFFFFFFFFFULL;  /* UINT64_MAX / 4096 */
             if (desc->NumberOfPages > max_pages) {
@@ -2349,7 +2671,6 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
             }
         }
 
-        /* Zero-length descriptors are invalid -- skip */
         if (desc->NumberOfPages == 0) {
             serial_early_print("[WARN] Memory map entry ");
             serial_early_print_uint(entry_num);
@@ -2358,7 +2679,6 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
             continue;
         }
 
-        /* PhysicalStart must be page-aligned (4 KiB) */
         if (desc->PhysicalStart & 0xFFF) {
             serial_early_print("[WARN] Memory map entry ");
             serial_early_print_uint(entry_num);
@@ -2367,7 +2687,6 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
             continue;
         }
 
-        /* Type must be a valid EFI_MEMORY_TYPE (0-14; EfiMaxMemoryType=15 is sentinel) */
         if (desc->Type >= EfiMaxMemoryType) {
             serial_early_print("[WARN] Memory map entry ");
             serial_early_print_uint(entry_num);
@@ -2378,60 +2697,59 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
             continue;
         }
 
-        /* Overlap detection: check against all previously accepted entries.
-         * O(n^2) but n is typically ~130, runs once at boot -- acceptable. */
-        {
-            UINT64 new_start = desc->PhysicalStart;
-            UINT64 new_end   = new_start + desc->NumberOfPages * EFI_PAGE_SIZE;
-            int overlap = 0;
-            UINT32 j;
-            for (j = 0; j < idx; j++) {
-                UINT64 prev_start = g_boot_info_ptr->mmap[j].base_addr;
-                UINT64 prev_end   = prev_start + g_boot_info_ptr->mmap[j].length;
-                if (new_start < prev_end && new_end > prev_start) {
-                    serial_early_print("[WARN] Memory map entry ");
-                    serial_early_print_uint(entry_num);
-                    serial_early_print(": overlaps entry ");
-                    serial_early_print_uint(j);
-                    serial_early_print(" -- skipping\n");
-                    g_boot_info_ptr->mmap_quirks = 1;
-                    overlap = 1;
-                    break;
-                }
-            }
-            if (overlap) continue;
+        /* Priority-aware cap handling: at capacity, evict the lowest-
+         * priority existing entry to make room for a higher-priority
+         * incoming one.  At or below cap, append at idx. */
+        incoming_prio = mmap_type_priority(desc->Type);
+        if (!mmap_evict_for_incoming(g_boot_info_ptr->mmap, &idx,
+                                      BOOT_MMAP_MAX_ENTRIES,
+                                      incoming_prio, &dest_idx)) {
+            g_boot_info_ptr->mmap_quirks = 1;
+            continue;  /* cap full and incoming is too low-priority */
         }
 
-        /* ---- Descriptor accepted ---- */
-
-        g_boot_info_ptr->mmap[idx].base_addr = desc->PhysicalStart;
-        g_boot_info_ptr->mmap[idx].length =
+        g_boot_info_ptr->mmap[dest_idx].base_addr = desc->PhysicalStart;
+        g_boot_info_ptr->mmap[dest_idx].length =
             desc->NumberOfPages * EFI_PAGE_SIZE;
-        g_boot_info_ptr->mmap[idx].type =
+        g_boot_info_ptr->mmap[dest_idx].type =
             uefi_to_mb2_memtype(desc->Type);
-        g_boot_info_ptr->mmap[idx].uefi_memory_type = desc->Type;
-        g_boot_info_ptr->mmap[idx].attribute = desc->Attribute;
-
-        /* Count all usable RAM (conventional + reclaimable boot/loader memory) */
-        switch (desc->Type) {
-        case EfiConventionalMemory:
-        case EfiBootServicesCode:
-        case EfiBootServicesData:
-        case EfiLoaderCode:
-        case EfiLoaderData:
-            total_mem += desc->NumberOfPages * EFI_PAGE_SIZE;
-            break;
-        default:
-            break;
-        }
-
+        g_boot_info_ptr->mmap[dest_idx].uefi_memory_type = desc->Type;
+        g_boot_info_ptr->mmap[dest_idx].attribute = desc->Attribute;
         idx++;
+    }
+
+    /* Phase 2: sort by base address and resolve overlaps by priority. */
+    mmap_normalize(g_boot_info_ptr->mmap, &idx, BOOT_MMAP_MAX_ENTRIES);
+
+    /* Phase 3: recompute total_mem from the NORMALIZED map so
+     * mem_upper_kb reflects any carving.  A Conventional range that
+     * was shrunk or split by higher-priority overlays must not be
+     * counted at its pre-normalize length. */
+    {
+        UINT32 k;
+        for (k = 0; k < idx; k++) {
+            switch (g_boot_info_ptr->mmap[k].uefi_memory_type) {
+            case EfiConventionalMemory:
+            case EfiBootServicesCode:
+            case EfiBootServicesData:
+            case EfiLoaderCode:
+            case EfiLoaderData:
+                total_mem += g_boot_info_ptr->mmap[k].length;
+                break;
+            default:
+                break;
+            }
+        }
     }
 
     g_boot_info_ptr->mmap_count = idx;
     g_boot_info_ptr->mem_lower_kb = 640;   /* conventional: 640 KiB */
-    g_boot_info_ptr->mem_upper_kb =
-        (UINT32)((total_mem / 1024) - 1024);
+    if (total_mem >= (1024ULL * 1024ULL)) {
+        g_boot_info_ptr->mem_upper_kb =
+            (UINT32)((total_mem / 1024ULL) - 1024ULL);
+    } else {
+        g_boot_info_ptr->mem_upper_kb = 0;
+    }
 }
 
 /* ============================================================================
