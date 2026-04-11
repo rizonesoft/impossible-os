@@ -102,16 +102,20 @@ jobs:
           echo "✅ system-disk.img: $(( SIZE / 1024 / 1024 )) MiB"
 
       # ── Upload build artifact ───────────────────────────────────────────────
+      # continue-on-error: artifact upload is best-effort -- don't fail the
+      # build if GitHub storage quota is temporarily exhausted.
       - name: Upload disk image
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: system-disk
           path: build/system-disk.img
-          retention-days: 3
+          retention-days: 1
           if-no-files-found: error
 
       - name: Upload build log
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: build-log
