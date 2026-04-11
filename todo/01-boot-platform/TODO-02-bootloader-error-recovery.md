@@ -177,6 +177,7 @@ GOP operations can hang on broken firmware. This section adds error recovery aro
 **Test checkpoint:** Boot on QEMU (single GOP) -- works as before. Serial shows `"GOP: 1 handles found"` (or `"headless boot"` if GOP absent). If available, test on multi-GPU VirtualBox config. Verify on bare metal -- firmware GOP behavior differs from emulated.
 
 > **Verified:** 2026-04-11 -- all 4 items confirmed. QueryMode 100-error abort, SetMode->mode0->firmware fallback, headless boot on no GOP, logging at each stage. Additional hardening from 01-boot-platform/TODO-01 §3 quality review (FrameBufferSize bounds, Mode NULL guard, pitch validation). Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- no additional findings. Shared code with 01-boot-platform/TODO-01 §3 which received full quality review (FrameBufferSize bounds, Mode/Info NULL guard, pitch validation, gop_pixel_format_code dedup). Defensive wrappers match UEFI best practice for GOP error recovery. Accepted: none.
 
 ---
 
