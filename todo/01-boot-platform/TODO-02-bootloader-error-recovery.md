@@ -176,6 +176,8 @@ GOP operations can hang on broken firmware. This section adds error recovery aro
 
 **Test checkpoint:** Boot on QEMU (single GOP) -- works as before. Serial shows `"GOP: 1 handles found"` (or `"headless boot"` if GOP absent). If available, test on multi-GPU VirtualBox config. Verify on bare metal -- firmware GOP behavior differs from emulated.
 
+> **Verified:** 2026-04-11 -- all 4 items confirmed. QueryMode 100-error abort, SetMode->mode0->firmware fallback, headless boot on no GOP, logging at each stage. Additional hardening from 01-boot-platform/TODO-01 §3 quality review (FrameBufferSize bounds, Mode NULL guard, pitch validation). Accepted: none.
+
 ---
 
 ## 6. Memory Map Overflow Detection
