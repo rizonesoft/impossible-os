@@ -1725,6 +1725,82 @@ static int bsod_can_render_graphical(void)
            gFbPixelFormat != 2;  /* skip BitMask format */
 }
 
+/* Hold the fatal error screen on-screen long enough for a human to
+ * read it and scan the QR code before boot_fatal() calls ResetSystem.
+ *
+ * Pre-EBS path: uses gBS->Stall() for accurate 10-second wall-clock
+ * dwell with 50 ms keypress polling for early exit.
+ *
+ * Post-EBS path: Boot Services are gone, so use a TSC spin loop.
+ * 2 x 10^10 TSC ticks gives ~20 seconds on a 1 GHz CPU and ~4 seconds
+ * on a 5 GHz CPU.  Without TSC frequency calibration at this early
+ * stage we cannot hit exact seconds, but any dwell is vastly better
+ * than the previous "counter decrement with no time base" which
+ * finished in milliseconds when ReadKeyStroke returned quickly.
+ * Codex S18 post-impl review finding, 2026-04-12. */
+static void boot_fatal_dwell(void)
+{
+    const UINT64 dwell_ms = 10000;
+
+    if (!g_ebs_in_progress && gBS && gBS->Stall) {
+        /* Pre-EBS path: gBS->Stall for accurate wall clock.  Flush
+         * any stale buffered keystrokes from firmware menus or
+         * keyboard init before polling (Codex quality finding: a
+         * leftover key event would skip dwell immediately). */
+        UINT64 elapsed_ms = 0;
+        if (gST && gST->ConIn && gST->ConIn->Reset)
+            gST->ConIn->Reset(gST->ConIn, 0);
+        while (elapsed_ms < dwell_ms) {
+            if (gST && gST->ConIn) {
+                EFI_INPUT_KEY key;
+                EFI_STATUS rs = gST->ConIn->ReadKeyStroke(gST->ConIn, &key);
+                if (!EFI_ERROR(rs)) return;  /* keypress -- bail */
+            }
+            gBS->Stall(50000);  /* 50 ms per poll */
+            elapsed_ms += 50;
+        }
+        return;
+    }
+
+    /* Post-EBS: RuntimeServices->GetTime for accurate wall clock.
+     * GetTime survives ExitBootServices (it's a runtime service).
+     * EFI_TIME layout: Year(2)+Month(1)+Day(1)+Hour(1)+Minute(1)+Second(1)+...
+     * Our efi.h declares GetTime as (VOID*, VOID*), so we use a raw
+     * byte buffer and read Hour/Minute/Second at offsets 4/5/6. */
+    if (gST && gST->RuntimeServices && gST->RuntimeServices->GetTime) {
+        UINT8 tbuf0[20], tbuf[20];
+        EFI_STATUS gs = gST->RuntimeServices->GetTime(tbuf0, (void *)0);
+        if (!EFI_ERROR(gs)) {
+            UINT64 s0 = (UINT64)tbuf0[4] * 3600 + tbuf0[5] * 60 + tbuf0[6];
+            for (;;) {
+                UINT64 sn;
+                __asm__ volatile("pause");
+                gs = gST->RuntimeServices->GetTime(tbuf, (void *)0);
+                if (EFI_ERROR(gs)) break;
+                sn = (UINT64)tbuf[4] * 3600 + tbuf[5] * 60 + tbuf[6];
+                if (sn < s0) break;  /* midnight rollover -- bail */
+                if (sn >= s0 + 10) return;
+            }
+        }
+    }
+
+    /* Last-resort TSC fallback if GetTime failed or runtime services
+     * are unavailable.  20 * 10^9 TSC ticks is ~4-20 seconds depending
+     * on CPU frequency -- coarse but better than zero dwell. */
+    {
+        UINT64 start, now;
+        UINT32 lo, hi;
+        __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        start = ((UINT64)hi << 32) | lo;
+        for (;;) {
+            __asm__ volatile("pause");
+            __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+            now = ((UINT64)hi << 32) | lo;
+            if (now - start >= 20000000000ULL) return;
+        }
+    }
+}
+
 static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
 {
     /* 0. Persist error code in NVRAM for next-boot diagnostics (S13) */
@@ -1818,15 +1894,6 @@ static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
             /* Low-res or BitMask: only the QR still works reliably. */
             qr_render_error_url(err_code);
         }
-
-        /* Wait for keypress with timeout (10 seconds at ~1ms per iteration).
-         * Prevents infinite spin on headless servers with no keyboard. */
-        if (gST->ConIn) {
-            EFI_INPUT_KEY key;
-            UINT32 timeout = 10000000;  /* ~10s at firmware poll speed */
-            while (gST->ConIn->ReadKeyStroke(gST->ConIn, &key) != 0 && --timeout)
-                ;
-        }
     } else if (bsod_can_render_graphical()) {
         /* EBS in progress or no ConOut -- ConOut is not safe, but direct
          * framebuffer writes are.  Render the full graphical BSOD; the
@@ -1838,6 +1905,15 @@ static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
          * render correctly on every format. */
         qr_render_error_url(err_code);
     }
+
+    /* S18: unified dwell.  Hold the fatal screen visible for the user
+     * before ResetSystem in all branches (pre-EBS, post-EBS, graphical
+     * or QR-only, with or without ConIn).  Uses gBS->Stall pre-EBS and
+     * a TSC spin post-EBS so the dwell is time-based, not iteration-
+     * based.  Replaces a pre-existing counter-decrement loop that
+     * could finish in milliseconds when ReadKeyStroke returned
+     * EFI_NOT_READY quickly -- Codex post-impl review round 1. */
+    boot_fatal_dwell();
 
     /* 3. If error_screen_test, skip reboot so the screen stays visible. */
     if (g_boot_info_ptr && g_boot_info_ptr->config.error_screen_test) {
