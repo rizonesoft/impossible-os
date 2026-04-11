@@ -1,69 +1,83 @@
 @echo off
-:: run-secureboot-verify.bat -- Boot with UEFI Secure Boot ENABLED
+:: run-secureboot-verify.bat -- Boot with UEFI Secure Boot firmware
 ::
-:: Uses OVMF Secure Boot firmware (OVMF_CODE_4M.ms.fd) with pre-enrolled
-:: Microsoft keys. The MOK enrollment path allows our shim to chain-load.
+:: Two modes:
+::   Mode 1 (default): Setup Mode -- SB firmware, no keys enrolled.
+::     SecureBoot=0, SetupMode=1. Tests SB detection + registry writes.
+::     Our BOOTX64.EFI boots directly (no shim needed in Setup Mode).
 ::
-:: What this verifies:
-::   - Serial: [UEFI] Secure Boot: ENABLED (User Mode)
-::   - Serial: [UEFI] Secure Boot keys: PK=enrolled, KEK=enrolled
-::   - Serial: HKLM\SYSTEM\SecureBoot: State=1
-::   - Boot tests: test_uefi_var_get_secureboot, test_secureboot_state,
-::                 test_secureboot_db_mirror
+::   Mode 2 (ENROLL=1): Enrolled Mode -- MS keys + our MOK.
+::     Uses shim chain-load. First run shows MokManager for enrollment.
+::     After enrollment: SecureBoot=1, SetupMode=0, PK=enrolled.
 ::
-:: First run: MOK enrollment popup will appear (MokManager). Enroll the
-:: MOK certificate to allow our signed BOOTX64.EFI to boot.
+:: Usage:
+::   run-secureboot-verify.bat           -- Setup Mode (default)
+::   set ENROLL=1 && run-secureboot-verify.bat  -- Enrolled Mode
 ::
 :: Prerequisites:
-::   - QEMU with WHPX acceleration (native Windows)
-::   - ovmf package installed in WSL (apt install ovmf)
-::   - Signed EFI: bash scripts/build.sh (with keys/MOK.key present)
+::   - QEMU + WHPX (native Windows)
+::   - ovmf package in WSL (apt install ovmf)
+::   - bash scripts/build.sh
 
 echo ============================================================
-echo  Impossible OS -- Secure Boot Verification (SB ENABLED)
+echo  Impossible OS -- Secure Boot Verification
 echo ============================================================
 echo.
 
-:: Copy Secure Boot OVMF firmware from WSL if not present
 set BUILD=%~dp0..\..\build
 set SB_CODE=%BUILD%\OVMF_CODE_4M.secboot.fd
-set SB_VARS=%BUILD%\OVMF_VARS_4M.ms.fd
-set SB_VARS_TEMP=%TEMP%\OVMF_VARS_4M.secboot.fd
+set DISK=%BUILD%\system-disk.img
 
+:: Copy Secure Boot OVMF firmware from WSL if not present
 if not exist "%SB_CODE%" (
     echo [SB] Copying Secure Boot OVMF firmware from WSL...
     wsl.exe bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.secboot.fd ~/impossible-os/build/"
+    wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/"
     wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd ~/impossible-os/build/"
 )
 
 if not exist "%SB_CODE%" (
-    echo [ERROR] Secure Boot OVMF not found. Install: sudo apt install ovmf
+    echo [ERROR] Secure Boot OVMF not found. Install in WSL: sudo apt install ovmf
     pause
     exit /b 1
 )
 
-:: Fresh NVRAM copy each run (clean SB state -- forces MOK re-enrollment)
-:: Remove the 'copy' line below to persist MOK enrollment across runs.
-copy /Y "%SB_VARS%" "%SB_VARS_TEMP%" >nul
+if not exist "%DISK%" (
+    echo [ERROR] System disk not found: %DISK%
+    echo         Run in WSL: bash scripts/build.sh
+    pause
+    exit /b 1
+)
 
-echo [SB] Using Secure Boot firmware: %SB_CODE%
-echo [SB] NVRAM (fresh copy):         %SB_VARS_TEMP%
+:: Select NVRAM based on ENROLL flag
+if "%ENROLL%"=="1" (
+    echo [SB] Mode: Enrolled -- MS keys + shim chain-load
+    echo [SB] First run will show MokManager for MOK enrollment.
+    set SB_VARS_SRC=%BUILD%\OVMF_VARS_4M.ms.fd
+    set SB_VARS_TEMP=%TEMP%\OVMF_VARS_4M.secboot.enrolled.fd
+) else (
+    echo [SB] Mode: Setup -- SB firmware, no keys enrolled
+    echo [SB] SecureBoot=0, SetupMode=1 -- direct boot, no shim needed
+    set SB_VARS_SRC=%BUILD%\OVMF_VARS_4M.fd
+    set SB_VARS_TEMP=%TEMP%\OVMF_VARS_4M.secboot.setup.fd
+)
+
+:: Copy NVRAM -- enrolled mode preserves across runs, setup mode resets each time
+if "%ENROLL%"=="1" (
+    if not exist "%SB_VARS_TEMP%" copy /Y "%SB_VARS_SRC%" "%SB_VARS_TEMP%" >nul
+) else (
+    copy /Y "%SB_VARS_SRC%" "%SB_VARS_TEMP%" >nul
+)
+
+echo [SB] Firmware: %SB_CODE%
+echo [SB] NVRAM:    %SB_VARS_TEMP%
 echo.
 
 :: Find QEMU
 set QEMU=C:\Program Files\qemu\qemu-system-x86_64.exe
 if not exist "%QEMU%" set QEMU=qemu-system-x86_64.exe
 
-:: Find system disk
-set DISK=%BUILD%\system-disk.img
-if not exist "%DISK%" (
-    echo [ERROR] System disk not found: %DISK%
-    echo         Run: bash scripts/build.sh
-    pause
-    exit /b 1
-)
-
-echo [SB] Launching QEMU with Secure Boot...
+echo [SB] Launching QEMU with Secure Boot firmware...
 echo.
 
 "%QEMU%" ^
@@ -81,11 +95,16 @@ echo.
 
 echo.
 echo ============================================================
-echo  Secure Boot verification complete. Check serial output for:
-echo    [UEFI] Secure Boot: ENABLED (User Mode)
-echo    [UEFI] Secure Boot keys: PK=enrolled, KEK=enrolled
-echo    HKLM\SYSTEM\SecureBoot: State=1
-echo    DeployedMode=1, SetupMode=0
+echo  Check serial output for:
+if "%ENROLL%"=="1" (
+    echo    [UEFI] Secure Boot: ENABLED ^(User Mode^)
+    echo    [UEFI] Secure Boot keys: PK=enrolled, KEK=enrolled
+    echo    HKLM\SYSTEM\SecureBoot: State=1
+) else (
+    echo    [UEFI] Secure Boot: DISABLED ^(Setup Mode^)
+    echo    [UEFI] Secure Boot keys: PK=absent, KEK=absent
+    echo    HKLM\SYSTEM\SecureBoot: State=0, SetupMode=1
+)
 echo ============================================================
 echo.
 pause
