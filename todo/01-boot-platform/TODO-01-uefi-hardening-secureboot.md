@@ -75,8 +75,7 @@ Before `ExitBootServices()`, save UEFI runtime function pointers into `boot_info
 **Test checkpoint:** Serial shows `[UEFI] SetVirtualAddressMap OK` and per-service OK or UNAVAILABLE lines; kernel does not fault when calling preserved RT entry points after EBS. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Verified:** 2026-04-11 -- Codex adversarial review found 2 valid issues (SVAM failure not propagated, descriptor stride mismatch on extended firmware), both fixed. 1 unit test wired (`test_uefi_rt_available`), build passes.
-
-> **Quality reviewed:** 2026-04-11 -- 1 spec violation fixed (SVAM attribute preservation), 2 best practices applied (centralized RT timer masking, table signature+CRC32 validation). Accepted: spinlock->mutex migration (-> §10).
+> **Quality reviewed:** 2026-04-11 -- 1 spec violation fixed (SVAM attribute preservation), 2 best practices applied (centralized RT timer masking, table signature+CRC32 validation). Accepted: spinlock->mutex migration (-> 01-boot-platform/TODO-01 §10).
 
 ---
 
@@ -93,9 +92,8 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
 
 **Test checkpoint:** `uefi_var_get(L"SecureBoot", ...)` returns success or not-found without crash; test GUID roundtrip via `uefi_var_set_u32` / `uefi_var_get_u32` survives reboot when NVRAM allows. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Verified:** 2026-04-11 -- Codex review found u32 size validation bug (fixed), SSDT pointer probing + privilege gaps accepted out-of-scope (tracked in TODO-17). 2 unit tests wired, build passes.
-
-> **Quality reviewed:** 2026-04-11 -- 2 spec violations fixed (expanded efi_to_ntstatus to 9 codes + unified duplicate, enumerate BUFFER_TOO_SMALL handling), 2 best practices (attrs output on uefi_var_get, unified mapper), 1 dead code removed (uefi_enumerate_variables -> callback), 1 parity gap closed (QueryVariableInfo exposed). Accepted: duplicate GUID in uefi_runtime.h (circular include prevents consolidation), parameter order inconsistency (Win32 vs UEFI convention, renaming would break all callers), SSDT probing/privilege (-> TODO-17), spinlock migration (-> §10).
+> **Verified:** 2026-04-11 -- Codex review found u32 size validation bug (fixed), SSDT pointer probing + privilege gaps accepted out-of-scope (tracked in 02-kernel-core/TODO-17). 2 unit tests wired, build passes.
+> **Quality reviewed:** 2026-04-11 -- 2 spec violations fixed (expanded efi_to_ntstatus to 9 codes + unified duplicate, enumerate BUFFER_TOO_SMALL handling), 2 best practices (attrs output on uefi_var_get, unified mapper), 1 dead code removed (uefi_enumerate_variables -> callback), 1 parity gap closed (QueryVariableInfo exposed). Accepted: duplicate GUID (circular include), parameter order (Win32 vs UEFI convention), SSDT probing/privilege (-> 02-kernel-core/TODO-17), spinlock migration (-> 01-boot-platform/TODO-01 §10).
 
 ---
 

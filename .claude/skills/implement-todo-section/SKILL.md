@@ -5,7 +5,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 # Implement TODO Section
 
-> **MIRRORED with `verify-todo-section`.** Step numbering, phase boundaries, and the HARD GATE are kept identical between the two skills. Step N here corresponds to step N there. Only the per-step CONTENT differs: implement-mode WRITES code; verify-mode AUDITS existing code with grep/read evidence. See the "Mirror with verify-todo-section" section at the bottom for the sync rules.
+> `verify-todo-section` has its own streamlined workflow (13 steps). The two skills share principles (HARD GATE, Codex review, scope-gap protocol, guardrails) but NOT step numbers. Editing this file does not require editing verify.
 
 ## Execution Discipline
 
@@ -32,6 +32,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    - API surface: Win32 native. Windows-style canonical paths (`C:\Impossible\System32\`).
    - **POST16 codes are for BOOT-PATH code ONLY.** POST16 was designed for pre-`sti` triple-fault diagnostics where klog isn't yet running. Use POST16 only when the code might trip a triple fault before klog is initialized: Phase 0/1/2 boot, hardware init (CPUID, GDT, IDT, page tables, APIC, ACPI, SMP AP startup), or any function called from `boot_init.c` before `boot_phase3()` returns. Do NOT add POST16 to scheduler, syscall handlers, file I/O, ELF loading, exec, network, or any code that runs after Phase 3 completes -- a single `klog(LOG_INFO, ...)` line is more useful there. If `boot_init.h` defines a POST16 constant, check `boot_phase0/1/2.c` for the call site before assuming new code needs one.
    - **Scope-gap protocol (MANDATORY).** If while writing code you find yourself about to add a `// TODO`/`// FIXME`/`// HACK`/`// for now`/`// placeholder` comment, a `STATUS_NOT_IMPLEMENTED` return, a stub function body, or a conditional that narrows supported input below what the section's user-visible behavior promises -- STOP. You have hit a scope gap. Walk the decision tree in [scope-gap-protocol.md](scope-gap-protocol.md): Branch A (inline expansion under 1000 lines with `[x]` checklist item + NOTE callout), Branch B (new section in same TODO), Branch C (new TODO via `/create-todo` after dedup sweep), or Branch D (add to existing TODO found during dedup). Gate 10 of `kernel-code-quality` forbids the TODO comment; the scope-gap protocol is how you resolve the gap without breaking Gate 10. Report the branch you took in chat for clear cases; ASK the user which branch if sizing is borderline (900-1100 lines, unclear subsystem boundary).
+   - **STATUS_NOT_IMPLEMENTED completion-first policy.** The aim is to write complete code so features do not get lost behind stubs. If a function would return `STATUS_NOT_IMPLEMENTED`: (1) if it is **standalone** (self-contained, under 1000 lines, no deep dependency chain), implement it fully via Branch A; (2) if it requires **significant new infrastructure**, use Branch B/C/D to create a tracked TODO item with a domain-qualified XREF (e.g., `-> XREF: 02-kernel-core/TODO-17 §N`). Never leave a `STATUS_NOT_IMPLEMENTED` stub without a tracked follow-up.
    - **Stale TODO patterns:** if the section's checklist explicitly demands `POST16(...)` codes for non-boot-path code (e.g., scheduler/exec/syscall/auxv work), treat that as a stale guideline from before this rule was added. SKIP the POST16 work AND remove the stale checklist item from the TODO -- do not satisfy obsolete patterns. The same applies to "test POST16 constants are 0xDDNN" items: those are tautological (the compiler enforces #define values; the real protection is the boot-time uniqueness check). Document the removal in the commit message.
 7. **Build** -- `bash scripts/build.sh`, confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.
 8. **Wire unit tests** -- before writing any test code, read the TODO file's **Unit Tests** section (if one exists) to find:
@@ -113,37 +114,9 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 >
 > **Pattern to watch for:** "Build passes, looks straightforward, I'll just commit." That thought is the signal to STOP. The straightforward changes are exactly the ones where review catches the bug you didn't think about.
 
-## Mirror with verify-todo-section
+## Relationship to verify-todo-section
 
-This skill is the IMPLEMENT half of a mirrored pair with `verify-todo-section`. Step numbering, phase boundaries, and the HARD GATE are kept identical between the two files so improvements ported into either skill can be ported back to the other.
-
-**Sync rules:**
-- Step N here ↔ step N in `verify-todo-section/SKILL.md`. Adding a step in one file requires adding the matching step in the other at the same position.
-- The HARD GATE always cites steps 13-18 in BOTH files. If the gate moves, it moves in both.
-- The Execution Discipline block at the top is the same shape (4 bullets) in both files.
-- The Guardrails section is the same shape in both, with verify-mode adding the conservative-downgrade rule.
-
-**Per-step content rules** (this is what differs between the two files):
-
-| Step | implement-mode | verify-mode |
-|---|---|---|
-| 1 | Read the section as a plan to execute | Read the section as a contract to audit |
-| 2 | Resolve XREFs to know what's available | Verify XREFs are still satisfied |
-| 3 | Explore codebase to plan changes | Explore codebase to map evidence |
-| 4 | Codex design review BEFORE writing | SKIP -- code exists; intentional no-op to keep numbering aligned |
-| 5 | Walk kernel-code-quality gates BEFORE writing | Spot-check kernel-code-quality gates AGAINST existing code |
-| 6 | **WRITE code** (the implementation) | **VERIFY each `[x]` claim with grep/read evidence** (the audit) |
-| 7 | Build -- catches what you wrote | Build -- catches what's already broken |
-| 8 | Wire NEW unit tests | AUDIT existing test wiring; add only routine gap fills |
-| 9 | Codex test coverage of new tests | Codex test coverage of existing tests |
-| 10 | Mark `[x]` as items complete | DOWNGRADE `[x]` to `[/]`/`[ ]` only on regression evidence |
-| 11 | Update IO row to `[x]`/`[/]` | Reconcile IO row downward only |
-| 12 | Update OS Comparison row | Reconcile OS Comparison row downward only |
-| 13-17 | Codex review, fix loop, self-review, build, validate | **SAME** -- the review pipeline is identical |
-| 18 | Tie up loose ends | Tie up loose ends + run deep-analysis Codex skills (extra) |
-| 19 | Commit the implementation | Commit only if fixes were made |
-
-**When you edit one file, edit the other.** A hook fires on edits to either `SKILL.md` reminding you. The mirror is enforced by convention + hook, not by content equality.
+`verify-todo-section` has its own streamlined 13-step workflow optimized for auditing existing code. The two skills share principles (HARD GATE, Codex review, scope-gap protocol, guardrails) and resources ([scope-gap-protocol.md](scope-gap-protocol.md), [build-evidence.md](build-evidence.md)) but NOT step numbers. Editing this file does not require editing verify, and vice versa.
 
 ## Guardrails
 

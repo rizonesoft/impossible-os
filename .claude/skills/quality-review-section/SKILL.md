@@ -83,6 +83,7 @@ description: Deep quality review of an implemented TODO section -- industry stan
 
 6. **Fix loop** -- fix ALL non-Accept findings. Apply in priority order:
    - Spec violations first (bugs)
+   - `STATUS_NOT_IMPLEMENTED` stubs: if the function is **standalone** (self-contained, no deep dependency chain), IMPLEMENT it fully -- features should not get lost behind stubs. If it requires **significant new infrastructure**, Accept with a domain-qualified XREF and advise creating a new TODO section (Branch B) or TODO file (Branch C).
    - Best practices and simplifications (low-risk improvements)
    - Dead code removal
    - Parity gaps (new functionality)
@@ -106,15 +107,18 @@ description: Deep quality review of an implemented TODO section -- industry stan
    - [accept] <finding> -- <why>
    ```
 
-9. **Quality stamp** -- add or update after the section's verified stamp:
+9. **Quality stamp** -- add or update IMMEDIATELY after the Verified stamp (no blank line between stamps):
    ```
-   > **Quality reviewed:** YYYY-MM-DD -- <summary of fixes>. Accepted: <deferred items or "none">.
+   > **Quality reviewed:** YYYY-MM-DD -- <summary of fixes>. Accepted: <deferred items with domain-qualified XREFs, or "none">.
    ```
    If no fixes were needed (clean review):
    ```
    > **Quality reviewed:** YYYY-MM-DD -- no findings. Industry standards compliant.
    ```
-   If re-reviewing, REPLACE the existing `> **Quality reviewed:**` line.
+   Rules:
+   - If re-reviewing, REPLACE the existing `> **Quality reviewed:**` line
+   - **No blank line** between Verified and Quality reviewed stamps
+   - All TODO cross-references in Accepted field MUST include domain prefix (e.g., `02-kernel-core/TODO-17`, not just `TODO-17`)
 
 10. **Commit and push**
     - Commit message: `"quality: <TODO file> §N -- <summary of fixes>"`
