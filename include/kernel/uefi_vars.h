@@ -64,15 +64,11 @@ typedef struct boot_uefi_guid efi_guid_t;
  * buf:   output buffer (may be NULL to query required size).
  * size:  in/out -- caller sets to buffer capacity; firmware sets to actual
  *        data size.  Updated even on STATUS_BUFFER_TOO_SMALL.
+ * attrs: optional out -- receives EFI_VARIABLE_* attribute flags (may be NULL).
  *
- * Returns:
- *   STATUS_SUCCESS           -- data copied into buf, *size updated.
- *   STATUS_NOT_FOUND         -- variable does not exist.
- *   STATUS_BUFFER_TOO_SMALL  -- buf too small; *size holds required bytes.
- *   STATUS_NOT_IMPLEMENTED   -- runtime services unavailable.
- *   STATUS_UNSUCCESSFUL      -- firmware error. */
+ * Returns NTSTATUS via efi_status_to_ntstatus(). */
 NTSTATUS uefi_var_get(const uint16_t *name, const efi_guid_t *guid,
-                      void *buf, size_t *size);
+                      void *buf, size_t *size, uint32_t *attrs);
 
 /* Set (or delete) a UEFI variable.
  * size == 0 and buf == NULL deletes the variable.

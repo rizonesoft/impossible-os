@@ -95,6 +95,8 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
 
 > **Verified:** 2026-04-11 -- Codex review found u32 size validation bug (fixed), SSDT pointer probing + privilege gaps accepted out-of-scope (tracked in TODO-17). 2 unit tests wired, build passes.
 
+> **Quality reviewed:** 2026-04-11 -- 2 spec violations fixed (expanded efi_to_ntstatus to 9 codes + unified duplicate, enumerate BUFFER_TOO_SMALL handling), 2 best practices (attrs output on uefi_var_get, unified mapper), 1 dead code removed (uefi_enumerate_variables -> callback), 1 parity gap closed (QueryVariableInfo exposed). Accepted: duplicate GUID in uefi_runtime.h (circular include prevents consolidation), parameter order inconsistency (Win32 vs UEFI convention, renaming would break all callers), SSDT probing/privilege (-> TODO-17), spinlock migration (-> §10).
+
 ---
 
 ## 3. GOP Resolution Auto-Detection

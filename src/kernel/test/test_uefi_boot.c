@@ -36,7 +36,7 @@ static void test_uefi_var_get_secureboot(void)
     efi_guid_t global = EFI_GLOBAL_VARIABLE_GUID_INIT;
     uint8_t val = 0;
     size_t sz = sizeof(val);
-    NTSTATUS s = uefi_var_get(sb_name, &global, &val, &sz);
+    NTSTATUS s = uefi_var_get(sb_name, &global, &val, &sz, (uint32_t *)0);
     /* Must return SUCCESS (variable exists) or NOT_FOUND (no SB on this platform) */
     TEST_ASSERT(s == STATUS_SUCCESS || s == STATUS_NOT_FOUND,
                 "uefi_var_get(SecureBoot) returns SUCCESS or NOT_FOUND");

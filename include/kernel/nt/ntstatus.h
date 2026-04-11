@@ -128,3 +128,5 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 
 #define STATUS_NOT_SUPPORTED                ((NTSTATUS)0xC00000BB)  /* feature not supported */
 #define STATUS_DEVICE_NOT_READY             ((NTSTATUS)0xC00000A3)  /* device not initialized */
+#define STATUS_MEDIA_WRITE_PROTECTED        ((NTSTATUS)0xC00000A2)  /* media is write-protected */
+#define STATUS_IO_DEVICE_ERROR              ((NTSTATUS)0xC0000185)  /* I/O device error */

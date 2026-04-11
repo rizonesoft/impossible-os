@@ -64,11 +64,31 @@ int uefi_rt_available(void);
 uint32_t uefi_rt_supported(void);
 
 /* ---- EFI status codes (extended) ---- */
-#define UEFI_NOT_FOUND          (14ULL | (1ULL << 63))
-#define UEFI_BUFFER_TOO_SMALL   (5ULL | (1ULL << 63))
-#define UEFI_OUT_OF_RESOURCES   (9ULL | (1ULL << 63))
-#define UEFI_DEVICE_ERROR       (7ULL | (1ULL << 63))
-#define UEFI_SECURITY_VIOLATION (26ULL | (1ULL << 63))
+#define UEFI_NOT_FOUND            (14ULL | (1ULL << 63))
+#define UEFI_BUFFER_TOO_SMALL     (5ULL  | (1ULL << 63))
+#define UEFI_INVALID_PARAMETER    (2ULL  | (1ULL << 63))
+#define UEFI_OUT_OF_RESOURCES     (9ULL  | (1ULL << 63))
+#define UEFI_DEVICE_ERROR         (7ULL  | (1ULL << 63))
+#define UEFI_WRITE_PROTECTED      (8ULL  | (1ULL << 63))
+#define UEFI_SECURITY_VIOLATION   (26ULL | (1ULL << 63))
+
+/* ---- Shared EFI -> NTSTATUS mapper (single source of truth) ---- */
+#include "kernel/nt/ntstatus.h"
+
+/* SCOPE-GAP-ALLOWED: STATUS_NOT_IMPLEMENTED is a legitimate NTSTATUS mapping for EFI_UNSUPPORTED */
+static inline NTSTATUS efi_status_to_ntstatus(uint64_t s)
+{
+    if (s == UEFI_SUCCESS)            return STATUS_SUCCESS;
+    if (s == UEFI_NOT_FOUND)          return STATUS_NOT_FOUND;
+    if (s == UEFI_BUFFER_TOO_SMALL)   return STATUS_BUFFER_TOO_SMALL;
+    if (s == UEFI_UNSUPPORTED)        return STATUS_NOT_IMPLEMENTED;
+    if (s == UEFI_INVALID_PARAMETER)  return STATUS_INVALID_PARAMETER;
+    if (s == UEFI_DEVICE_ERROR)       return STATUS_IO_DEVICE_ERROR;
+    if (s == UEFI_WRITE_PROTECTED)    return STATUS_MEDIA_WRITE_PROTECTED;
+    if (s == UEFI_SECURITY_VIOLATION) return STATUS_ACCESS_DENIED;
+    if (s == UEFI_OUT_OF_RESOURCES)   return STATUS_INSUFFICIENT_RESOURCES;
+    return STATUS_UNSUCCESSFUL;
+}
 
 /* ---- UEFI Variable Attributes ---- */
 #define EFI_VARIABLE_NON_VOLATILE                          0x00000001
@@ -103,10 +123,6 @@ uint64_t uefi_set_variable(const struct boot_uefi_guid *guid,
                            uint64_t data_size,
                            const void *data);
 
-/* Enumerate all variables (for logging/debugging).
- * Returns the total number of variables found. */
-uint32_t uefi_enumerate_variables(void);
-
 /* Advance the variable enumeration cursor by one step.
  * On the first call: name[0] must be 0 and *guid must be all-zero.
  * name_size: on entry = buffer byte capacity; on exit = actual name bytes.
@@ -115,6 +131,16 @@ uint32_t uefi_enumerate_variables(void);
  *         updated name_size), UEFI_UNSUPPORTED if service unavailable. */
 uint64_t uefi_get_next_variable_name(uint64_t *name_size, uint16_t *name,
                                      struct boot_uefi_guid *guid);
+
+/* Query NVRAM capacity for variables with the given attributes.
+ * max_storage: maximum storage in bytes for this attribute set.
+ * remaining: remaining storage in bytes.
+ * max_var_size: maximum size of a single variable.
+ * Returns EFI status code. */
+uint64_t uefi_query_variable_info(uint32_t attributes,
+                                  uint64_t *max_storage,
+                                  uint64_t *remaining,
+                                  uint64_t *max_var_size);
 
 /* Initialize variable services -- enumerate + log summary.
  * Must be called after uefi_runtime_init().

@@ -10,6 +10,7 @@
  * ============================================================================ */
 
 #include "kernel/uefi_runtime.h"
+#include "kernel/uefi_vars.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 #include "kernel/uefi_config.h"
@@ -375,40 +376,31 @@ uint64_t uefi_set_variable(const struct boot_uefi_guid *guid,
     return status;
 }
 
-uint32_t uefi_enumerate_variables(void)
+uint64_t uefi_query_variable_info(uint32_t attributes,
+                                  uint64_t *max_storage,
+                                  uint64_t *remaining,
+                                  uint64_t *max_var_size)
 {
-    if (!s_available || !s_rt) return 0;
-    if (!(s_supported & EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME))
-        return 0;
+    struct rt_call_state rcs;
+    if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
+    if (!(s_supported & EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO))
+        return UEFI_UNSUPPORTED;
+    if (!s_rt->query_variable_info) return UEFI_UNSUPPORTED;
 
-    /* Buffer for variable name -- UEFI spec says max 1024 bytes */
-    uint16_t name_buf[512];  /* 512 × 2 = 1024 bytes */
-    struct boot_uefi_guid guid;
-    uint64_t name_size;
-    uint32_t count = 0;
+    rt_call_enter(&rcs);
+    efi_status_t status = s_rt->query_variable_info(
+        attributes, max_storage, remaining, max_var_size);
+    rt_call_exit(&rcs);
 
-    /* Start enumeration: empty name + zero GUID */
-    name_buf[0] = 0;
-    uint32_t i;
-    uint8_t *gp = (uint8_t *)&guid;
-    for (i = 0; i < 16; i++) gp[i] = 0;
+    return status;
+}
 
-    for (;;) {
-        struct rt_call_state rcs;
-        name_size = sizeof(name_buf);
-
-        rt_call_enter(&rcs);
-        efi_status_t status = s_rt->get_next_variable_name(
-            &name_size, name_buf, &guid);
-        rt_call_exit(&rcs);
-
-        if (status != UEFI_SUCCESS)
-            break;
-
-        count++;
-    }
-
-    return count;
+/* Counting callback for uefi_var_enumerate */
+static void count_var_cb(const uint16_t *name, const struct boot_uefi_guid *guid,
+                         void *ctx)
+{
+    (void)name; (void)guid;
+    (*(uint32_t *)ctx)++;
 }
 
 uint64_t uefi_get_next_variable_name(uint64_t *name_size, uint16_t *name,
@@ -434,7 +426,8 @@ boot_result_t uefi_vars_init(void)
     }
 
     /* Enumerate all variables */
-    uint32_t total = uefi_enumerate_variables();
+    uint32_t total = 0;
+    uefi_var_enumerate(count_var_cb, &total);
 
     /* Try to read BootOrder */
     struct boot_uefi_guid global_guid = EFI_GLOBAL_VARIABLE_GUID;
@@ -1175,16 +1168,6 @@ const struct capsule_capability_info *uefi_capsule_info(void)
 
 /* ---- SSDT handlers: NtQuerySystemEnvironmentValueEx / NtSetSystemEnvironmentValueEx ---- */
 
-/* Map EFI status to NTSTATUS */
-static NTSTATUS efi_to_ntstatus(uint64_t efi_status)
-{
-    if (efi_status == UEFI_SUCCESS)   return STATUS_SUCCESS;
-    if (efi_status == UEFI_NOT_FOUND) return STATUS_NOT_FOUND;
-    /* Buffer too small: high bit set, code 5 */
-    if (efi_status == (5ULL | (1ULL << 63))) return STATUS_BUFFER_TOO_SMALL;
-    return STATUS_UNSUCCESSFUL;
-}
-
 /* NtQuerySystemEnvironmentValueEx(Name, VendorGuid, Value, ValueLength, Attributes)
  * SSDT 0x00D4 -- Win32 GetFirmwareEnvironmentVariableExW maps here */
 static NTSTATUS nt_query_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
@@ -1212,7 +1195,7 @@ static NTSTATUS nt_query_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
     if (attrs_ptr)
         *(uint32_t *)attrs_ptr = attrs;
 
-    return efi_to_ntstatus(efi_status);
+    return efi_status_to_ntstatus(efi_status);
 }
 
 /* NtSetSystemEnvironmentValueEx(Name, VendorGuid, Value, ValueLength, Attributes)
@@ -1235,7 +1218,7 @@ static NTSTATUS nt_set_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
     efi_status = uefi_set_variable(guid, name, (uint32_t)attrs,
                                     length, (const void *)value_ptr);
 
-    return efi_to_ntstatus(efi_status);
+    return efi_status_to_ntstatus(efi_status);
 }
 
 /* Legacy non-Ex variants: same but no attributes parameter */

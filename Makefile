@@ -372,8 +372,8 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@cp resources/boot/boot.conf $(BUILD_DIR)/efi_staging/EFI/ImpossibleOS/boot.conf
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
-	@# Step 2b: Format BlackBox partition as FAT32
-	mkfs.fat -F 32 -n "BLACKBOX" --offset $$(( $(BB_OFFSET) / 512 )) $@
+	@# Step 2b: Format BlackBox partition as FAT32 (128M = 131072 x 1024-byte blocks)
+	mkfs.fat -F 32 -n "BLACKBOX" --offset $$(( $(BB_OFFSET) / 512 )) $@ 131072
 	mmd -i $@@@$(BB_OFFSET) ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
 	mmd -i $@@@$(BB_OFFSET) ::Crash/WER ::Logs/Serial
 	@# Step 3: Format IXFS partition and populate with system files
