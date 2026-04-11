@@ -18,7 +18,7 @@
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) -- ACPI table parsing (SPCR table lookup for §10)
 - -> XREF: `TODO-01-uefi-hardening-secureboot.md §7` -- boot UX polish
 - -> XREF: `TODO-01-uefi-hardening-secureboot.md §9` -- shared max `ExitBootServices` attempt count with §2 here (single N in both TODOs before coding)
-- -> XREF: `TODO-05-bare-metal-hardening.md §7` -- resilient boot with graceful degradation
+- → XREF: `TODO-05-bare-metal-hardening.md §7` -- resilient boot with graceful degradation
 - -> XREF: `TODO-03-boot-device-discovery.md §1` -- boot device identification (uses filesystem protocol correctly)
 - -> XREF: `TODO-03-boot-device-discovery.md §5,§11` -- fallback when no kernel on any volume, and critical health-check path, invoke `boot_fatal` / error screen (this file §9)
 - -> XREF: `TODO-07-boot-diagnostics.md §5` -- panic forensic evidence struct; §13 here provides the bootloader-stage error codes that §5 persists across reboots
@@ -89,6 +89,8 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 - [x] Commit: `"boot: harden ELF parser -- bounds check all headers and segments"` (3c888540)
 
 **Test checkpoint:** Build a test kernel with `e_phoff` pointing past EOF. Bootloader must reject with `"Kernel ELF corrupt: phdr offset past EOF"` on serial. Verify on QEMU WHPX and TCG. Normal kernel must pass all checks on all 4 platforms (WHPX, TCG, VBox, bare metal).
+
+> **Verified:** 2026-04-11 -- all 8 checks confirmed with line evidence. Subtraction-based overflow prevention correct. Framebuffer overlap uses pitch*height with overflow guard. Overlapping PT_LOAD segments accepted (valid ELF feature, matches Linux/GRUB). Accepted: none.
 
 ---
 
