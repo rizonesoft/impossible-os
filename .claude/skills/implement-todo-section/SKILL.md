@@ -111,11 +111,10 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 > After the implementation commit, invoke the review pipeline to verify and quality-review the freshly implemented section. This catches issues that implementation-time Codex missed because it reviewed the diff in isolation.
 
-20. **Invoke `/review-pipeline`** on the section just committed. This runs:
-    - `/verify-todo-section` -- evidence-based compliance audit + MANDATORY Codex adversarial review
-    - `/quality-review-section` -- industry standards + Win11/Linux parity + MANDATORY Codex perf/consistency review
-    - Both Codex dispatches are mandatory -- no skipping even though step 13 already ran one.
-    - Fixes from the review pipeline are committed separately (the review pipeline handles its own commit).
+20. **Invoke `/review-todo-section`** on the section just committed. This runs:
+    - Phase 1: evidence mapping + test checkpoint verification (skips adversarial Codex since step 13 already ran it)
+    - Phase 2: quality review with MANDATORY Codex perf/consistency/dead-code dispatch
+    - Fixes from the review are committed separately (the skill handles its own commit).
 
 ## HARD GATE: Steps 13-18 are MANDATORY before step 19
 
