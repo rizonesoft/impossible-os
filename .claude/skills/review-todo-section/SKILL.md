@@ -27,7 +27,11 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<prompt>"
    ```
    **Mandatory angles:** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data.
-   Apply `superpowers:receiving-code-review` to EVERY finding.
+   Apply `superpowers:receiving-code-review` to EVERY finding. **Codex can be wrong** -- it reads code without runtime context. For EACH finding:
+   - **Verify first.** Read the actual code at file:line. Check callers, locks, reachability. Does the finding match reality?
+   - **If valid:** fix root cause, rebuild. No performative agreement -- just fix it.
+   - **If wrong:** reject with code evidence (path unreachable, lock already held, buffer bounded). Do NOT blindly fix a wrong finding.
+   - **If out of scope:** accept with domain-qualified XREF. Must truly need missing infrastructure.
 6. **Fix adversarial findings** -- fix all valid Critical/High/Medium. Rebuild.
 
 ### Phase 3: Quality Audit
@@ -45,7 +49,7 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
    **CRITICAL -- Dead code (mandatory):** unreachable functions, unused defines, orphaned types, stale declarations.
    **CRITICAL -- Consistency (mandatory):** struct layout matches, constants in one place, API contracts, error code mapping.
    **CRITICAL -- Performance (mandatory):** allocations in hot paths, O(n^2), lock hold times, byte-at-a-time ops.
-   Apply `superpowers:receiving-code-review` to EVERY finding.
+   Apply `superpowers:receiving-code-review` to EVERY finding. Same rules as step 5 -- **Codex can be wrong.** Verify each finding at file:line. Reject wrong findings with code evidence. Do not blindly implement. Do not blindly accept.
 
 9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references.
 

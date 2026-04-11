@@ -74,11 +74,11 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     ```
     **Mandatory angles (include ALL):** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data.
 
-    After Codex responds, apply `superpowers:receiving-code-review` to EVERY finding:
-    - **Verify technically first.** Read the cited code. Is it correct?
-    - **Valid:** fix root cause, rebuild.
-    - **Wrong/misleading:** reject with concrete code evidence.
-    - **Out of scope:** accept with domain-qualified XREF.
+    After Codex responds, apply `superpowers:receiving-code-review` to EVERY finding. **Codex can be wrong** -- it reads code without runtime context and makes incorrect inferences. For EACH finding:
+    - **Verify technically first.** Read the actual code at the cited file:line. Does the finding match reality? Check callers, check locks held, check whether the path is reachable.
+    - **If valid:** fix root cause (not surface symptom), rebuild. No performative agreement ("great catch") -- just state the fix.
+    - **If wrong/misleading:** reject with concrete code evidence (caller already holds lock X at file:line, path is unreachable because Y, buffer is bounded by Z). Do NOT blindly implement a fix for a wrong finding.
+    - **If out of scope:** accept with domain-qualified XREF. Must truly need missing infrastructure -- not a lazy deferral.
 14. **Self-review BEFORE fixing** -- catches what Codex misses at the integration level:
     - Regressions: did any existing functionality break?
     - Race conditions: any new shared mutable state without synchronization?
