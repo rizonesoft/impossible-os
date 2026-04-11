@@ -91,6 +91,7 @@ _Static_assert(sizeof(struct boot_config) == 512,
 struct boot_rt_mem_entry {
     UINT64 phys_addr;
     UINT64 num_pages;
+    UINT64 attribute;   /* EFI memory attributes (cache type + EFI_MEMORY_RUNTIME) */
     UINT32 type;
     UINT32 reserved;
 };
@@ -1812,9 +1813,10 @@ static void fill_runtime_map(EFI_MEMORY_DESCRIPTOR *mmap,
 
         if (desc->Type == EfiRuntimeServicesCode ||
             desc->Type == EfiRuntimeServicesData) {
-            g_boot_info_ptr->rt_mmap[idx].phys_addr = desc->PhysicalStart;
-            g_boot_info_ptr->rt_mmap[idx].num_pages = desc->NumberOfPages;
-            g_boot_info_ptr->rt_mmap[idx].type      = desc->Type;
+            g_boot_info_ptr->rt_mmap[idx].phys_addr  = desc->PhysicalStart;
+            g_boot_info_ptr->rt_mmap[idx].num_pages  = desc->NumberOfPages;
+            g_boot_info_ptr->rt_mmap[idx].attribute  = desc->Attribute;
+            g_boot_info_ptr->rt_mmap[idx].type       = desc->Type;
             g_boot_info_ptr->rt_mmap[idx].reserved   = 0;
             idx++;
         }

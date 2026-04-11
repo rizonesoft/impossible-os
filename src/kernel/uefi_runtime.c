@@ -20,7 +20,11 @@
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/system_state.h"
+#include "kernel/fs/gpt.h"
 #include "registry.h"
+
+/* EFI_RUNTIME_SERVICES table signature: "RUNTSERV" (UEFI Spec §4.5) */
+#define EFI_RUNTIME_SERVICES_SIGNATURE 0x56524553544E5552ULL
 
 /* ---- Kernel-side EFI_RUNTIME_SERVICES struct ----
  * Re-declared with kernel types + UEFI_EFIAPI calling convention.
@@ -132,7 +136,7 @@ static int call_set_virtual_address_map(void)
         vmap[i].physical_start  = g_boot_info.rt_mmap[i].phys_addr;
         vmap[i].virtual_start   = g_boot_info.rt_mmap[i].phys_addr; /* identity */
         vmap[i].number_of_pages = g_boot_info.rt_mmap[i].num_pages;
-        vmap[i].attribute       = UEFI_MEMORY_ATTR_RUNTIME;
+        vmap[i].attribute       = g_boot_info.rt_mmap[i].attribute;
     }
 
     uint64_t map_size = (uint64_t)count * desc_size;
@@ -191,6 +195,32 @@ boot_result_t uefi_runtime_init(void)
     if (!s_rt) {
         klog(LOG_ERROR, "UEFI", "Runtime services pointer is NULL");
         return BOOT_DEGRADED;
+    }
+
+    /* Validate RT table signature (UEFI Spec §4.5: "RUNTSERV") */
+    if (s_rt->hdr.signature != EFI_RUNTIME_SERVICES_SIGNATURE) {
+        klog(LOG_ERROR, "UEFI", "RT table signature mismatch: 0x%llx",
+             (unsigned long long)s_rt->hdr.signature);
+        s_rt = (struct efi_runtime_services *)0;
+        return BOOT_DEGRADED;
+    }
+
+    /* Validate CRC32 (zero the field, compute, compare, restore) */
+    {
+        uint32_t saved_crc = s_rt->hdr.crc32;
+        uint32_t hdr_size = s_rt->hdr.header_size;
+        if (hdr_size == 0 || hdr_size > 4096)
+            hdr_size = sizeof(struct efi_table_header);
+        s_rt->hdr.crc32 = 0;
+        uint32_t computed = gpt_crc32(&s_rt->hdr, hdr_size);
+        s_rt->hdr.crc32 = saved_crc;
+        if (computed != saved_crc) {
+            klog(LOG_WARN, "UEFI", "RT table CRC32 mismatch: "
+                 "expected=0x%08x computed=0x%08x (proceeding with caution)",
+                 saved_crc, computed);
+            /* Warn but don't fail -- some firmware has stale CRC after SVAM.
+             * Windows hal.dll also warns-and-continues on CRC mismatch. */
+        }
     }
 
     /* Read supported services mask before SVAM (config table is still valid) */
@@ -282,22 +312,31 @@ uint32_t uefi_rt_supported(void)
  * LAPIC timer masked during all calls -- firmware SMI may enable interrupts.
  * ============================================================================ */
 
-/* Mask LAPIC timer during UEFI runtime calls -- firmware may enable
- * interrupts internally via SMI, causing timer to fire into wrong context. */
-static uint32_t rt_mask_timer(void)
+/* ---- Centralized RT call entry/exit ----
+ * Mask LAPIC timer during ALL UEFI runtime calls -- firmware may enable
+ * interrupts internally via SMI, causing timer to fire into wrong context.
+ * Acquire the RT spinlock to serialize (firmware is not reentrant). */
+
+struct rt_call_state {
+    uint32_t saved_lvt;
+};
+
+static void rt_call_enter(struct rt_call_state *state)
 {
+    state->saved_lvt = 0;
     if (lapic_available() && kernel_subsystem_ready(SUBSYS_TIMER)) {
         uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
         lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);
-        return lvt;
+        state->saved_lvt = lvt;
     }
-    return 0;
+    spin_lock(&s_rt_lock);
 }
 
-static void rt_unmask_timer(uint32_t saved_lvt)
+static void rt_call_exit(struct rt_call_state *state)
 {
-    if (saved_lvt)
-        lapic_write(LAPIC_REG_LVT_TIMER, saved_lvt);
+    spin_unlock(&s_rt_lock);
+    if (state->saved_lvt)
+        lapic_write(LAPIC_REG_LVT_TIMER, state->saved_lvt);
 }
 
 uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
@@ -306,16 +345,14 @@ uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
                            uint64_t *data_size,
                            void *data)
 {
-    uint32_t lvt;
+    struct rt_call_state rcs;
     if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
     if (!(s_supported & EFI_RT_SUPPORTED_GET_VARIABLE)) return UEFI_UNSUPPORTED;
 
-    lvt = rt_mask_timer();
-    spin_lock(&s_rt_lock);
+    rt_call_enter(&rcs);
     efi_status_t status = s_rt->get_variable(
         (uint16_t *)name, (void *)guid, attributes, data_size, data);
-    spin_unlock(&s_rt_lock);
-    rt_unmask_timer(lvt);
+    rt_call_exit(&rcs);
 
     return status;
 }
@@ -326,16 +363,14 @@ uint64_t uefi_set_variable(const struct boot_uefi_guid *guid,
                            uint64_t data_size,
                            const void *data)
 {
-    uint32_t lvt;
+    struct rt_call_state rcs;
     if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
     if (!(s_supported & EFI_RT_SUPPORTED_SET_VARIABLE)) return UEFI_UNSUPPORTED;
 
-    lvt = rt_mask_timer();
-    spin_lock(&s_rt_lock);
+    rt_call_enter(&rcs);
     efi_status_t status = s_rt->set_variable(
         (uint16_t *)name, (void *)guid, attributes, data_size, (void *)data);
-    spin_unlock(&s_rt_lock);
-    rt_unmask_timer(lvt);
+    rt_call_exit(&rcs);
 
     return status;
 }
@@ -359,12 +394,13 @@ uint32_t uefi_enumerate_variables(void)
     for (i = 0; i < 16; i++) gp[i] = 0;
 
     for (;;) {
+        struct rt_call_state rcs;
         name_size = sizeof(name_buf);
 
-        spin_lock(&s_rt_lock);
+        rt_call_enter(&rcs);
         efi_status_t status = s_rt->get_next_variable_name(
             &name_size, name_buf, &guid);
-        spin_unlock(&s_rt_lock);
+        rt_call_exit(&rcs);
 
         if (status != UEFI_SUCCESS)
             break;
@@ -382,9 +418,10 @@ uint64_t uefi_get_next_variable_name(uint64_t *name_size, uint16_t *name,
     if (!(s_supported & EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME))
         return UEFI_UNSUPPORTED;
 
-    spin_lock(&s_rt_lock);
+    struct rt_call_state rcs;
+    rt_call_enter(&rcs);
     efi_status_t status = s_rt->get_next_variable_name(name_size, name, guid);
-    spin_unlock(&s_rt_lock);
+    rt_call_exit(&rcs);
 
     return status;
 }
@@ -486,10 +523,11 @@ void uefi_reset(uint32_t reset_type)
 
     if (s_available && s_rt &&
         (s_supported & EFI_RT_SUPPORTED_RESET_SYSTEM)) {
-        spin_lock(&s_rt_lock);
+        struct rt_call_state rcs;
+        rt_call_enter(&rcs);
         /* ResetSystem() does NOT return on success */
         s_rt->reset_system(reset_type, UEFI_SUCCESS, 0, (void *)0);
-        spin_unlock(&s_rt_lock);
+        rt_call_exit(&rcs);
         /* If we get here, it failed */
         klog(LOG_ERROR, "UEFI", "ResetSystem() returned -- falling back");
     }
@@ -512,24 +550,26 @@ void uefi_reset(uint32_t reset_type)
 uint64_t uefi_get_time(struct efi_time *time,
                        struct efi_time_capabilities *caps)
 {
+    struct rt_call_state rcs;
     if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
     if (!(s_supported & EFI_RT_SUPPORTED_GET_TIME)) return UEFI_UNSUPPORTED;
 
-    spin_lock(&s_rt_lock);
+    rt_call_enter(&rcs);
     efi_status_t status = s_rt->get_time(time, caps);
-    spin_unlock(&s_rt_lock);
+    rt_call_exit(&rcs);
 
     return status;
 }
 
 uint64_t uefi_set_time(const struct efi_time *time)
 {
+    struct rt_call_state rcs;
     if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
     if (!(s_supported & EFI_RT_SUPPORTED_SET_TIME)) return UEFI_UNSUPPORTED;
 
-    spin_lock(&s_rt_lock);
+    rt_call_enter(&rcs);
     efi_status_t status = s_rt->set_time((void *)time);
-    spin_unlock(&s_rt_lock);
+    rt_call_exit(&rcs);
 
     return status;
 }
@@ -537,13 +577,14 @@ uint64_t uefi_set_time(const struct efi_time *time)
 uint64_t uefi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
                               struct efi_time *time)
 {
+    struct rt_call_state rcs;
     if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
     if (!(s_supported & EFI_RT_SUPPORTED_GET_WAKEUP_TIME))
         return UEFI_UNSUPPORTED;
 
-    spin_lock(&s_rt_lock);
+    rt_call_enter(&rcs);
     efi_status_t status = s_rt->get_wakeup_time(enabled, pending, time);
-    spin_unlock(&s_rt_lock);
+    rt_call_exit(&rcs);
 
     return status;
 }

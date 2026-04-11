@@ -93,6 +93,7 @@ struct boot_uefi_config_entry {
 struct boot_rt_mem_entry {
     uint64_t phys_addr;   /* physical start address */
     uint64_t num_pages;   /* number of 4 KiB pages */
+    uint64_t attribute;   /* EFI memory attributes (cache type + EFI_MEMORY_RUNTIME) */
     uint32_t type;        /* EFI_MEMORY_TYPE (UEFI_MMAP_RUNTIME_CODE or _DATA) */
     uint32_t reserved;    /* alignment padding */
 };
