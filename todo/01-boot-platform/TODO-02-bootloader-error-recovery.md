@@ -395,7 +395,7 @@ Place a fixed-size header at offset 0 of `struct boot_info` and have the UEFI bo
 - [x] `boot_info.h` comments document ABI rules: bump version on layout changes, rebuild both images together, `_reserved` fields don't require bumps
 - [x] `CLAUDE.md` new "boot_info ABI" section: documents magic, version mismatch halt, rebuild rule
 - [x] Kernel `boot_hw.c` validates magic + version after memcpy, halts on mismatch with clear error message; logs header version, size, and kernel-side sizeof for diagnostics
-- [ ] Commit: `"boot: boot_info ABI header fields and bootloader populate"`
+- [x] Commit: `"boot: boot_info ABI header fields and bootloader populate"` (375e4764)
 
 **Test checkpoint:** Clean build boots on QEMU WHPX, QEMU TCG, VirtualBox, bare metal; header fields visible in memory at the handoff pointer before kernel entry (debugger or serial hex dump).
 
