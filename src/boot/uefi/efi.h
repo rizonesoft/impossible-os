@@ -47,6 +47,26 @@ typedef UINTN               EFI_TPL;
 
 #define EFI_ERROR(status) ((INTN)(status) < 0)
 
+/* --- Variable attributes (UEFI Spec 2.10 Table 8.2) --- */
+#define EFI_VARIABLE_NON_VOLATILE                  0x00000001
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS            0x00000002
+#define EFI_VARIABLE_RUNTIME_ACCESS                0x00000004
+
+/* --- Boot error codes (S13: NVRAM persistence) --- */
+#define BOOT_ERR_OK                 0x0000
+#define BOOT_ERR_ELF_CORRUPT        0x0001  /* S1: ELF bounds check failure */
+#define BOOT_ERR_EXIT_BS_FAIL       0x0002  /* S2: ExitBootServices exhausted */
+#define BOOT_ERR_KERNEL_NOT_FOUND   0x0003  /* S3: kernel.exe not on any volume */
+#define BOOT_ERR_NO_SERIAL          0x0004  /* S4: no serial port detected */
+#define BOOT_ERR_NO_GOP             0x0005  /* S5: no usable GOP mode */
+#define BOOT_ERR_MMAP_OVERFLOW      0x0006  /* S6: memory map entry overflow */
+#define BOOT_ERR_CONF_INVALID       0x0007  /* S7: boot.conf parse error */
+#define BOOT_ERR_ALLOC_FAIL         0x0008  /* S8: kernel allocation failed */
+#define BOOT_ERR_MMAP_GEOMETRY      0x0009  /* S12: descriptor geometry invalid */
+#define BOOT_ERR_MMAP_GETMAP_FAIL   0x000A  /* GetMemoryMap call failed */
+#define BOOT_ERR_WATCHDOG_TIMEOUT   0x000B  /* S11: watchdog timeout */
+#define BOOT_ERR_EBS_MMAP_FAIL      0x000C  /* GetMemoryMap failed in EBS retry */
+
 /* --- GUID --- */
 typedef struct {
     UINT32  Data1;

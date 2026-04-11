@@ -90,6 +90,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         }
     }
 
+    /* S13: Log previous boot error if one was persisted in NVRAM */
+    if (g_boot_info.last_boot_error != 0)
+        klog(LOG_WARN, "UEFI",
+             "Previous boot failed: code=0x%04X",
+             (uint64_t)g_boot_info.last_boot_error);
+
     /* boot_config_parse: boot.conf is parsed by the UEFI bootloader before
      * kernel entry and delivered in g_boot_info.config.  Log the values. */
     klog(LOG_INFO, "CONF",

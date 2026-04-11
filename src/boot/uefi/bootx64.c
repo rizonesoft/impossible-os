@@ -267,6 +267,9 @@ struct boot_info {
     UINT8  _serial_pad;
     UINT32 serial_baud;           /* baud rate from SPCR (0 = use default 38400) */
 
+    /* NVRAM boot error from previous boot (S13); 0 = last boot OK */
+    UINT32 last_boot_error;
+
     /* Kernel-populated fields (set after boot) */
     UINT8   secure_boot_enabled;
     UINT8   _kp_pad[3];
@@ -356,6 +359,16 @@ static EFI_HANDLE           gImageHandle;
 /* Boot info -- placed at a known physical address (64 KiB) */
 #define BOOT_INFO_PHYS_ADDR  0x10000
 static struct boot_info    *g_boot_info_ptr;
+
+/* Impossible OS vendor GUID: {6F35D3A4-C0E6-4A82-B5D8-7C9D2E4F8A13}
+ * Must match IMPOSSIBLE_OS_VENDOR_GUID_INIT in include/kernel/uefi_vars.h. */
+static EFI_GUID g_impossible_os_guid = {
+    0x6f35d3a4, 0xc0e6, 0x4a82,
+    { 0xb5, 0xd8, 0x7c, 0x9d, 0x2e, 0x4f, 0x8a, 0x13 }
+};
+
+/* NVRAM variable name for boot error persistence (UCS-2) */
+static CHAR16 g_boot_error_var[] = u"BootError";
 
 /* Framebuffer for splash */
 static UINT32 *gFramebuffer;
@@ -771,6 +784,49 @@ static void efi_print(CHAR16 *str);
 static int g_ebs_in_progress;
 static int g_wd_armed;  /* 1 if watchdog was successfully armed (S11) */
 
+/* --- NVRAM boot error persistence (S13) ---
+ * Write/read a UINT32 error code to UEFI NVRAM so the next boot knows
+ * what happened.  Uses RuntimeServices->GetVariable/SetVariable which
+ * are available both before and after ExitBootServices.
+ * On failure (NVRAM full, read-only, no RuntimeServices), silently
+ * continues -- NVRAM persistence is best-effort. */
+
+static void nvram_write_boot_error(UINT32 code)
+{
+    if (!gST || !gST->RuntimeServices)
+        return;
+    EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
+    if (!rt->SetVariable)
+        return;
+    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE |
+                   EFI_VARIABLE_BOOTSERVICE_ACCESS |
+                   EFI_VARIABLE_RUNTIME_ACCESS;
+    EFI_STATUS s = rt->SetVariable(
+        g_boot_error_var, &g_impossible_os_guid,
+        attrs, sizeof(code), &code);
+    if (EFI_ERROR(s)) {
+        serial_early_print("[WARN] NVRAM: write BootError failed\n");
+    }
+}
+
+static UINT32 nvram_read_boot_error(void)
+{
+    if (!gST || !gST->RuntimeServices)
+        return 0;
+    EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
+    if (!rt->GetVariable)
+        return 0;
+    UINT32 code = 0;
+    UINTN size = sizeof(code);
+    UINT32 attrs = 0;
+    EFI_STATUS s = rt->GetVariable(
+        g_boot_error_var, &g_impossible_os_guid,
+        &attrs, &size, &code);
+    if (EFI_ERROR(s) || size != sizeof(code))
+        return 0;
+    return code;
+}
+
 /* Reset the watchdog timer if it was successfully armed.
  * Called before long operations to extend the timeout window. */
 static void watchdog_reset(void)
@@ -783,10 +839,15 @@ static void watchdog_reset(void)
     }
 }
 
-static void boot_fatal(const char *title, const char *detail)
+static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
 {
-    /* 1. Log to serial */
-    serial_early_print("[CRIT] BOOT FATAL: ");
+    /* 0. Persist error code in NVRAM for next-boot diagnostics (S13) */
+    nvram_write_boot_error(err_code);
+
+    /* 1. Log to serial (include hex error code) */
+    serial_early_print("[CRIT] BOOT FATAL (0x");
+    serial_early_print_hex16((UINT16)err_code);
+    serial_early_print("): ");
     serial_early_print(title);
     serial_early_print("\n");
     if (detail) {
@@ -808,6 +869,20 @@ static void boot_fatal(const char *title, const char *detail)
             con->ClearScreen(con);
 
         efi_print(u"\r\n  Impossible OS -- Boot Error\r\n\r\n");
+
+        /* Error code line */
+        efi_print(u"  Error code: 0x");
+        {
+            CHAR16 hex_buf[5];
+            CHAR16 hex_chars[] = u"0123456789ABCDEF";
+            hex_buf[0] = hex_chars[(err_code >> 12) & 0xF];
+            hex_buf[1] = hex_chars[(err_code >> 8) & 0xF];
+            hex_buf[2] = hex_chars[(err_code >> 4) & 0xF];
+            hex_buf[3] = hex_chars[err_code & 0xF];
+            hex_buf[4] = 0;
+            efi_print(hex_buf);
+        }
+        efi_print(u"\r\n");
 
         /* Title */
         efi_print(u"  ERROR: ");
@@ -3055,9 +3130,23 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
 
-    /* Point boot_info to a known physical address */
-    g_boot_info_ptr = (struct boot_info *)BOOT_INFO_PHYS_ADDR;
-    efi_memset(g_boot_info_ptr, 0, sizeof(struct boot_info));
+    /* S13: Read previous boot error from NVRAM before zeroing boot_info.
+     * RuntimeServices->GetVariable is available before ExitBootServices. */
+    {
+        UINT32 prev_error = nvram_read_boot_error();
+        if (prev_error != 0) {
+            serial_early_print("[BOOT] Previous boot failed: code=0x");
+            serial_early_print_hex16((UINT16)prev_error);
+            serial_early_print("\n");
+        }
+
+        /* Point boot_info to a known physical address */
+        g_boot_info_ptr = (struct boot_info *)BOOT_INFO_PHYS_ADDR;
+        efi_memset(g_boot_info_ptr, 0, sizeof(struct boot_info));
+
+        /* Pass previous error to kernel (S13) */
+        g_boot_info_ptr->last_boot_error = prev_error;
+    }
 
     /* Record serial port detection results (S4/S10) */
     g_boot_info_ptr->serial_port = s_serial_port;
@@ -3105,7 +3194,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     status = load_kernel(&kernel_entry);
     g_boot_info_ptr->timing.kernel_load_end = boot_rdtsc();
     if (EFI_ERROR(status)) {
-        boot_fatal("Kernel load failed",
+        boot_fatal(BOOT_ERR_KERNEL_NOT_FOUND, "Kernel load failed",
                    "The kernel ELF could not be loaded from boot media.");
     }
     serial_early_print("[BOOT] load_kernel OK\n");
@@ -3155,14 +3244,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
                             &desc_version);
     if (EFI_ERROR(status)) {
-        boot_fatal("GetMemoryMap failed",
+        boot_fatal(BOOT_ERR_MMAP_GETMAP_FAIL, "GetMemoryMap failed",
                    "UEFI firmware could not provide a memory map.");
     }
 
     /* Validate descriptor geometry before parsing (S12) */
     if (desc_size == 0 || desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
         map_size == 0 || map_size % desc_size != 0) {
-        boot_fatal("Memory map geometry invalid",
+        boot_fatal(BOOT_ERR_MMAP_GEOMETRY, "Memory map geometry invalid",
                    "Descriptor size or map size is malformed.");
     }
 
@@ -3237,20 +3326,26 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
                                     &desc_version);
             if (EFI_ERROR(status)) {
-                boot_fatal("GetMemoryMap failed on EBS retry",
+                boot_fatal(BOOT_ERR_EBS_MMAP_FAIL, "GetMemoryMap failed on EBS retry",
                            "Memory map refresh failed during ExitBootServices retry.");
             }
             fill_memory_map(mmap, map_size, desc_size);
             fill_runtime_map(mmap, map_size, desc_size);
         }
         if (EFI_ERROR(ebs_status)) {
-            boot_fatal("ExitBootServices failed",
+            boot_fatal(BOOT_ERR_EXIT_BS_FAIL, "ExitBootServices failed",
                        "UEFI ExitBootServices failed after 4 retry attempts.");
         }
     }
     serial_early_print("[BOOT] ExitBootServices OK\n");
 
-    /* === NO MORE UEFI CALLS FROM HERE === */
+    /* S13: Clear previous boot error in NVRAM now that ExitBootServices
+     * succeeded.  SetVariable is a Runtime Service and survives EBS per
+     * UEFI Spec section 8.2.  Clearing HERE (not before EBS) ensures a
+     * crash between EBS and kernel entry preserves the error evidence. */
+    nvram_write_boot_error(BOOT_ERR_OK);
+
+    /* === NO MORE UEFI Boot Services CALLS FROM HERE === */
 
     /* Step 7: Set up page tables */
     post_code16(POST16_BL_PAGE_TABLES);

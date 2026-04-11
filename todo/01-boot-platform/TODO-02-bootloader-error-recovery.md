@@ -61,7 +61,7 @@
 | 💎  |  10   | ACPI SPCR serial port auto-detection           | §4         |  [x]   |
 | 💎  |  11   | UEFI watchdog timer management                 | --         |  [x]   |
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [x]   |
-| ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [ ]   |
+| ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [x]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [ ]   |
 | 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [ ]   |
 | 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [ ]   |
@@ -340,22 +340,12 @@ Windows has BootStatusPolicy but error codes are opaque hex values without conte
 > **Competitive advantage:** Neither Windows nor Linux persists structured bootloader error codes in NVRAM. The next boot can display "Last boot failed: 0x0003 -- Kernel not found at \boot\kernel.exe" before trying again. Combined with TODO-14 A/B rollback and TODO-07 §5 panic forensics, this gives a complete cross-boot diagnostic chain.
 > **Regression risk:** LOW -- NVRAM writes are non-destructive (single variable). If NVRAM is full or read-only, write silently fails and boot continues.
 
-- [ ] Define `enum boot_error_code` in `efi.h` or a new `boot_errors.h`:
-  - `BOOT_OK = 0x0000`
-  - `BOOT_ERR_ELF_CORRUPT = 0x0001` (§1)
-  - `BOOT_ERR_EXIT_BS_FAIL = 0x0002` (§2)
-  - `BOOT_ERR_KERNEL_NOT_FOUND = 0x0003` (§3)
-  - `BOOT_ERR_NO_SERIAL = 0x0004` (§4)
-  - `BOOT_ERR_NO_GOP = 0x0005` (§5)
-  - `BOOT_ERR_MMAP_OVERFLOW = 0x0006` (§6)
-  - `BOOT_ERR_CONF_INVALID = 0x0007` (§7)
-  - `BOOT_ERR_ALLOC_FAIL = 0x0008` (§8)
-  - `BOOT_ERR_WATCHDOG_TIMEOUT = 0x000B` (§11)
-- [ ] On fatal error: write `boot_error_code` to UEFI NVRAM variable `ImpossibleOS-BootError` (vendor GUID, non-volatile, boot-service-access + runtime-access)
-- [ ] On successful boot: write `BOOT_OK` to clear previous error
-- [ ] At boot entry: read `ImpossibleOS-BootError` -- if non-zero, log `"[BOOT] Previous boot failed: code=0x%04x"` on serial
-- [ ] Pass `boot_info.last_boot_error` to kernel -- kernel can display toast notification: "Previous boot failed: <description>"
-- [ ] `boot_fatal()` (§9) includes the error code in the on-screen display
+- [x] Define `BOOT_ERR_*` codes as `#define` constants in `efi.h` (13 codes: 0x0000-0x000C covering §1-§12 failure modes)
+- [x] On fatal error: `boot_fatal()` writes error code to UEFI NVRAM variable `BootError` (Impossible OS vendor GUID, non-volatile + boot-service-access + runtime-access) via `nvram_write_boot_error()` helper
+- [x] On successful boot: write `BOOT_ERR_OK` (0) to clear previous error -- done before ExitBootServices for maximum firmware compatibility
+- [x] At boot entry: `nvram_read_boot_error()` reads NVRAM -- if non-zero, logs `"[BOOT] Previous boot failed: code=0x%04x"` on serial
+- [x] Pass `boot_info.last_boot_error` to kernel -- field added to both bootloader struct (bootx64.c) and kernel header (boot_info.h) after `serial_baud`; kernel logs `"Previous boot failed: code=0x%04X"` via klog in `boot_hw.c`
+- [x] `boot_fatal()` includes the error code in on-screen display: `"Error code: 0xNNNN"` line on BSOD screen, plus hex code in serial log
 - [ ] Commit: `"boot: structured error codes with NVRAM persistence -- cross-boot diagnostics"`
 
 **Test checkpoint:** Delete `\boot\kernel.exe`, boot (gets error screen). Reboot normally with kernel restored. Serial shows `"Previous boot failed: code=0x0003"`. Verify NVRAM variable is cleared on successful boot.
@@ -437,7 +427,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ✅ §11 60s arm + disarm pre-EBS |
 | 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ✅ §12 align+pages+type+overlap |
 | ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot |
-| ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ⬜ §13 NVRAM error log persist  |
+| ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ✅ §13 13 codes + NVRAM persist |
 | ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ⬜ §14 QR code error link       |
 | 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ⬜ §15-§16 versioned handoff    |
 | 💎 | Offline repair  | ✅ Windows Recovery Environment  | ✅ rescue/live ISO image        | ⬜ TODO-15 recovery partition   |

@@ -410,6 +410,9 @@ struct boot_info {
     uint8_t  _serial_pad;
     uint32_t serial_baud;           /* baud rate from SPCR (0 = use default 38400) */
 
+    /* NVRAM boot error from previous boot (S13); 0 = last boot OK */
+    uint32_t last_boot_error;
+
     /* Kernel-populated fields (set after boot; never written by the bootloader) */
     uint8_t  secure_boot_enabled;   /* 1 if Secure Boot is active (uefi_secureboot_init) */
     uint8_t  _kp_pad[3];            /* alignment */
