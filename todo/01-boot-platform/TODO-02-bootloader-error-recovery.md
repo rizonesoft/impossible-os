@@ -134,6 +134,8 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 
 **Test checkpoint:** Rename `\boot\kernel.exe` to `\kernel.exe` on EFI partition. Boot must succeed with serial showing `"Trying \boot\kernel.exe... not found"` then `"Kernel found at \kernel.exe"`. Verify on QEMU TCG. Confirm default path works on all 4 platforms.
 
+> **Verified:** 2026-04-11 -- all 5 items confirmed. 3 hardcoded paths, LoadedImage->DeviceHandle + LocateProtocol fallback, EFI_NOT_FOUND continues search / device errors stop immediately, root_dir closed on all failure paths. Accepted: none.
+
 ---
 
 ## 4. Serial Port Probe and COM2 Fallback
