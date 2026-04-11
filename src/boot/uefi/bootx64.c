@@ -1800,6 +1800,13 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
     UINTN offset;
     UINT32 idx = 0;
     UINT64 total_mem = 0;
+    /* Guard against malformed descriptor geometry (S12) */
+    if (desc_size == 0 || desc_size < sizeof(EFI_MEMORY_DESCRIPTOR)) {
+        serial_early_print("[FAIL] Memory map: invalid descriptor size\n");
+        g_boot_info_ptr->mmap_count = 0;
+        return;
+    }
+
     UINT32 total_descs = (UINT32)(map_size / desc_size);
 
     /* Detect overflow before filling (S6) */
@@ -3150,6 +3157,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     if (EFI_ERROR(status)) {
         boot_fatal("GetMemoryMap failed",
                    "UEFI firmware could not provide a memory map.");
+    }
+
+    /* Validate descriptor geometry before parsing (S12) */
+    if (desc_size == 0 || desc_size < sizeof(EFI_MEMORY_DESCRIPTOR) ||
+        map_size == 0 || map_size % desc_size != 0) {
+        boot_fatal("Memory map geometry invalid",
+                   "Descriptor size or map size is malformed.");
     }
 
     fill_memory_map(mmap, map_size, desc_size);

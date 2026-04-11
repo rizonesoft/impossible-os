@@ -327,6 +327,9 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 
 **Test checkpoint:** Normal boot on QEMU produces no warnings (OVMF generates clean maps). Add a synthetic zero-length descriptor injection test if feasible. Serial log shows descriptor count and any warnings. Verify on bare metal -- real firmware is the primary target for memory map quirks; log any warnings for firmware bug reporting.
 
+> **Verified:** 2026-04-11 -- all 4 items confirmed. 6 validation checks (overflow, wrap, zero, align, type, overlap) + desc_size geometry guard at caller. Codex found NumberOfPages overflow (fixed) and desc_size=0 path (fixed with boot_fatal at caller level). Accepted: overlap normalization (needs sort infrastructure, current skip+warn matches TODO spec).
+> **Quality reviewed:** 2026-04-11 -- boot-code-quality 10/10 gates passed. Codex quality found desc_size geometry + map_size remainder (fixed: boot_fatal guard before both fill functions). EfiMaxMemoryType off-by-one fixed (>= not >). Accepted: overlap priority normalization (-> future TODO for map sorting).
+
 ---
 
 ## 13. Boot Error Code Registry & NVRAM Persistence
