@@ -1395,13 +1395,19 @@ static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
         qr_render_error_url(err_code);
     }
 
-    /* 3. Attempt cold reboot via RuntimeServices (works even after EBS failure
+    /* 3. If error_screen_test, skip reboot so the screen stays visible. */
+    if (g_boot_info_ptr && g_boot_info_ptr->config.error_screen_test) {
+        serial_early_print("[BOOT] error_screen_test: halting (screen stays visible)\n");
+        for (;;) __asm__ volatile("hlt");
+    }
+
+    /* 4. Attempt cold reboot via RuntimeServices (works even after EBS failure
      * since ResetSystem is a runtime service, not a boot service). */
     if (gST && gST->RuntimeServices)
         gST->RuntimeServices->ResetSystem(
             0 /* EfiResetCold */, 0, 0, (VOID *)0);
 
-    /* 4. Fallback: halt forever */
+    /* 5. Fallback: halt forever */
     for (;;) __asm__ volatile("hlt");
 }
 
