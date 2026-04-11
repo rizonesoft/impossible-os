@@ -754,7 +754,10 @@ void uefi_secureboot_populate_registry(void)
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\SecureBoot", 0,
                        NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
         const struct secureboot_db_info *dbi = secureboot_get_db_info();
-        RegSetDword(hKey, "State", (uint32_t)s_sb_enabled);
+        RegSetDword(hKey, "State",     (uint32_t)s_sb_enabled);
+        RegSetDword(hKey, "SetupMode", (uint32_t)s_sb_setup_mode);
+        RegSetDword(hKey, "PKEnrolled",  (uint32_t)s_sb_pk_present);
+        RegSetDword(hKey, "KEKEnrolled", (uint32_t)s_sb_kek_present);
         /* Mirror db/dbx inventory from secureboot_keys_init() (S9) */
         if (dbi) {
             RegSetDword(hKey, "DbEntries",  dbi->db_entries);

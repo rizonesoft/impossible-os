@@ -149,6 +149,8 @@ Read the UEFI `SecureBoot` variable and expose the state to the kernel.
 
 **Test checkpoint:** `boot_info.secure_boot_enabled` matches UEFI `SecureBoot` variable; registry `HKLM\SYSTEM\SecureBoot\State` is 0 or 1 accordingly; padlock tray icon matches state when shell is running. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Quality reviewed:** 2026-04-11 -- 2 parity gaps closed (SetupMode + PK/KEK enrollment status written to registry). Accepted: DeployedMode (rare firmware feature, low priority), registry path convention (intentionally simpler than Windows).
+
 ---
 
 ## 6. Secure Boot Shim Chain-Loading
