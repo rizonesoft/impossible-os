@@ -1,17 +1,16 @@
 @echo off
-:: run-error-screen-test.bat -- Test boot error screen with QR code (TODO-02 §9/§13/§14)
+:: run-error-screen-test.bat -- Test boot error screen + NVRAM persistence (TODO-02 §9/§13/§14)
 ::
-:: Creates a temporary disk image with the kernel removed from the ESP,
-:: then boots QEMU. The bootloader should show:
-::   - Blue BSOD-style error screen with "Kernel load failed"
-::   - Error code: 0x0003 (BOOT_ERR_KERNEL_NOT_FOUND)
-::   - QR code in bottom-right linking to https://impossibleos.co/err/0003
-::   - Recovery instructions
-::   - 10-second timeout then cold reboot (QEMU exits due to -no-reboot)
+:: Default: normal boot with NVRAM persistence check.
+:: If a previous boot wrote BootError to NVRAM, serial should show:
+::   "[BOOT] Previous boot failed: code=0xNNNN"
 ::
-:: The NVRAM variable "BootError" is written with 0x0003.
-:: Run with --nvram-test to verify the next boot shows:
-::   "[BOOT] Previous boot failed: code=0x0003" on serial
+:: Uses a separate NVRAM file so BootError state persists across runs
+:: without affecting other test scripts.
+::
+:: Usage:
+::   run-error-screen-test.bat           -- normal boot (check NVRAM previous error)
+::   run-error-screen-test.bat --clean   -- delete temp NVRAM, start fresh
 ::
 :: Prerequisites:
 ::   - QEMU installed on Windows
@@ -25,30 +24,19 @@ cd /d %TEMP%
 :: Resolve paths relative to script location
 set SCRIPTDIR=%~dp0
 set BUILD=%SCRIPTDIR%..\..\build
-set DISK_SRC=%BUILD%\system-disk.img
-set DISK_TMP=%TEMP%\impossible-error-test.img
+set DISK=%BUILD%\system-disk.img
 set NVRAM=%TEMP%\OVMF_VARS_error_test.fd
-set BREAK_MODE=kernel
 
 :: Parse arguments
 if "%1"=="--clean" (
-    echo [INFO] Cleaning up temporary files...
-    if exist "%DISK_TMP%" del "%DISK_TMP%"
+    echo [INFO] Cleaning up temporary NVRAM...
     if exist "%NVRAM%" del "%NVRAM%"
-    echo [INFO] Done. Next run will start fresh.
+    echo [INFO] Done. Next run will start with fresh NVRAM.
     goto :done
 )
-if "%1"=="--nvram-test" (
-    echo [INFO] NVRAM persistence test -- booting with INTACT kernel
-    echo [INFO] If previous run triggered an error, serial should show:
-    echo [INFO]   "[BOOT] Previous boot failed: code=0x0003"
-    set BREAK_MODE=none
-    goto :check_deps
-)
 
-:check_deps
-if not exist "%DISK_SRC%" (
-    echo [ERROR] System disk not found at %DISK_SRC%
+if not exist "%DISK%" (
+    echo [ERROR] System disk not found at %DISK%
     echo [ERROR] Run in WSL: bash scripts/build.sh
     pause & exit /b 1
 )
@@ -63,53 +51,22 @@ if not exist "%OVMF_CODE%" (
     pause & exit /b 1
 )
 
-:: Seed NVRAM on first run (preserves BootError across reboots for NVRAM test)
+:: Seed NVRAM on first run (preserves BootError across reboots)
 set OVMF_VARS_SRC=%BUILD%\OVMF_VARS_4M.fd
 if not exist "%OVMF_VARS_SRC%" (
     wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/ 2>/dev/null || cp /usr/share/qemu/OVMF_VARS.fd ~/impossible-os/build/OVMF_VARS_4M.fd 2>/dev/null"
 )
 if not exist "%NVRAM%" copy /Y "%OVMF_VARS_SRC%" "%NVRAM%" >nul
 
-:: Prepare disk image based on break mode
-if "%BREAK_MODE%"=="none" (
-    echo [INFO] Using original disk image -- kernel intact
-    set DISK=%DISK_SRC%
-    goto :boot
-)
-
-echo [INFO] Creating temporary disk image...
-copy /Y "%DISK_SRC%" "%DISK_TMP%" >nul
-
-echo [INFO] Removing kernel from ESP to trigger BOOT_ERR_KERNEL_NOT_FOUND...
-:: Convert Windows temp path to WSL path for mount command
-for %%F in ("%DISK_TMP%") do set DISK_WIN=%%~fF
-:: Use wslpath to convert, or construct manually
-wsl.exe bash -c "IMG=$(wslpath '%DISK_WIN%') && TMPDIR=$(mktemp -d) && sudo mount -o loop,offset=1048576 \"$IMG\" \"$TMPDIR\" 2>/dev/null && sudo rm -f \"$TMPDIR/boot/kernel.exe\" && sudo umount \"$TMPDIR\" && rmdir \"$TMPDIR\" && echo '[OK] Kernel removed from ESP'"
-if errorlevel 1 (
-    echo [WARN] WSL mount failed -- trying mtools fallback...
-    wsl.exe bash -c "IMG=$(wslpath '%DISK_WIN%') && mdel -i \"$IMG@@1048576\" ::/boot/kernel.exe 2>/dev/null && echo '[OK] Kernel removed via mtools'"
-    if errorlevel 1 (
-        echo [ERROR] Could not remove kernel from disk image.
-        echo [ERROR] Manual test: copy system-disk.img, mount ESP, delete boot\kernel.exe
-        pause & exit /b 1
-    )
-)
-set DISK=%DISK_TMP%
-
-:boot
 echo.
 echo ========================================
 echo  Impossible OS -- Error Screen Test
 echo ========================================
-if "%BREAK_MODE%"=="kernel" goto :banner_kernel
-echo  Mode: normal boot (NVRAM persistence check)
-echo  Expect serial: "Previous boot failed: code=0x0003"
-goto :banner_done
-:banner_kernel
-echo  Mode: kernel removed (expect BSOD + QR)
-echo  Error code: 0x0003
-echo  QR URL: https://impossibleos.co/err/0003
-:banner_done
+echo  Boots with intact kernel and separate
+echo  NVRAM.  Watch serial output for:
+echo    "[BOOT] Previous boot failed: code=0x..."
+echo  NVRAM: %NVRAM%
+echo  --clean to reset NVRAM state
 echo ========================================
 echo.
 
@@ -135,8 +92,7 @@ if not exist "%QEMU%" set QEMU=qemu-system-x86_64.exe
 
 echo.
 echo [INFO] QEMU exited. NVRAM state preserved at %NVRAM%
-echo [INFO] To test NVRAM persistence: run-error-screen-test.bat --nvram-test
-echo [INFO] To clean up: run-error-screen-test.bat --clean
+echo [INFO] To reset: run-error-screen-test.bat --clean
 
 :done
 pause
