@@ -166,6 +166,9 @@ Set up MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build.
 
 **Test checkpoint:** With `MOK.key` present, signed `BOOTX64.EFI` builds; without keys, signing is skipped silently; first boot can complete MOK enrollment path on real firmware. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-04-11 -- all 5 items verified (gitignore, docs, scripts, shim binaries, build integration). Codex found 4 signing/packaging safety issues, all fixed. Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- 4 fixes: atomic signing (temp+verify+mv), shim hash verification (SHA256SUMS), partial shim set error, consistent error handling. Accepted: none.
+
 ---
 
 ## 7. Boot UX Polish

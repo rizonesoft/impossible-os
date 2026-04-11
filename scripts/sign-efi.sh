@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # sign-efi.sh -- Sign BOOTX64.EFI with the MOK private key.
 #
-# This script is a thin CLI wrapper around the 'sign-efi' Makefile target.
-# The build system (scripts/build.sh) calls 'make sign-efi' directly.
-# Use this script for standalone signing or CI pipelines that need an
-# explicit shell entry point.
+# Signs to a temporary file, verifies the signature, then atomically
+# replaces the original. This prevents corruption if sbsign fails mid-write.
 #
 # Usage:
 #   bash scripts/sign-efi.sh
@@ -36,7 +34,14 @@ if [ ! -f "$EFI_BIN" ]; then
     exit 1
 fi
 
+# Sign to temp file, verify, then atomic replace
+TMPFILE="${EFI_BIN}.signing.tmp"
+trap 'rm -f "$TMPFILE"' EXIT
+
 echo "[SIGN] Signing $EFI_BIN with MOK..."
-sbsign --key "$MOK_KEY" --cert "$MOK_CRT" --output "$EFI_BIN" "$EFI_BIN"
-sbverify --cert "$MOK_CRT" "$EFI_BIN" \
-    && echo "[SIGN] Signature verification OK"
+sbsign --key "$MOK_KEY" --cert "$MOK_CRT" --output "$TMPFILE" "$EFI_BIN"
+sbverify --cert "$MOK_CRT" "$TMPFILE" \
+    && echo "[SIGN] Signature verification OK" \
+    || { echo "[SIGN] ERROR: signature verification FAILED"; exit 1; }
+
+mv "$TMPFILE" "$EFI_BIN"

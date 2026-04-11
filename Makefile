@@ -145,12 +145,13 @@ sign-efi: $(UEFI_EFI)
 	@if [ -f "$(MOK_KEY)" ]; then \
 		echo "[SIGN] Signing $(UEFI_EFI) with MOK..."; \
 		sbsign --key $(MOK_KEY) --cert $(MOK_CRT) \
-			--output $(UEFI_EFI) $(UEFI_EFI); \
-		sbverify --cert $(MOK_CRT) $(UEFI_EFI) \
+			--output $(UEFI_EFI).tmp $(UEFI_EFI); \
+		sbverify --cert $(MOK_CRT) $(UEFI_EFI).tmp \
 			&& echo "[SIGN] Signature verified OK" \
-			|| { echo "[SIGN] ERROR: signature verification FAILED"; exit 1; }; \
+			|| { rm -f $(UEFI_EFI).tmp; echo "[SIGN] ERROR: signature verification FAILED"; exit 1; }; \
+		mv $(UEFI_EFI).tmp $(UEFI_EFI); \
 	else \
-		echo "[SIGN] keys/MOK.key not found — skipping signing (dev build)"; \
+		echo "[SIGN] keys/MOK.key not found -- skipping signing (dev build)"; \
 	fi
 
 ## os-logo: Generate shared OS logo header from PNG
@@ -356,15 +357,23 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
 	@mkdir -p $(BUILD_DIR)/efi_staging/boot
 	@# --- EFI chain-load layout ---
-	@# Shim chain-load (Secure Boot path): shim → grubx64.efi → kernel
-	@# Fallback (dev/no-shim builds):      BOOTX64.EFI directly → kernel
-	@if [ -f "$(SHIM_DIR)/shimx64.efi" ]; then \
-		echo "[DISK] Shim found — using Secure Boot chain-load layout"; \
-		cp $(SHIM_DIR)/shimx64.efi $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
-		cp $(UEFI_EFI)             $(BUILD_DIR)/efi_staging/EFI/BOOT/grubx64.efi; \
-		cp $(SHIM_DIR)/mmx64.efi  $(BUILD_DIR)/efi_staging/EFI/BOOT/mmx64.efi; \
+	@# Shim chain-load (Secure Boot path): shim -> grubx64.efi -> kernel
+	@# Fallback (dev/no-shim builds):      BOOTX64.EFI directly -> kernel
+	@SHIM="$(SHIM_DIR)/shimx64.efi"; MM="$(SHIM_DIR)/mmx64.efi"; \
+	if [ -f "$$SHIM" ] && [ -f "$$MM" ]; then \
+		echo "[DISK] Shim found -- using Secure Boot chain-load layout"; \
+		if [ -f "$(SHIM_DIR)/SHA256SUMS" ]; then \
+			(cd $(SHIM_DIR) && sha256sum -c SHA256SUMS) \
+				|| { echo "[ERROR] Shim hash verification FAILED"; exit 1; }; \
+		fi; \
+		cp $$SHIM $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
+		cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/grubx64.efi; \
+		cp $$MM $(BUILD_DIR)/efi_staging/EFI/BOOT/mmx64.efi; \
+	elif [ -f "$$SHIM" ] || [ -f "$$MM" ]; then \
+		echo "[ERROR] Partial shim directory -- need both shimx64.efi and mmx64.efi"; \
+		exit 1; \
 	else \
-		echo "[DISK] No shim — using direct boot (run scripts/secure-boot/build-shim.sh for Secure Boot)"; \
+		echo "[DISK] No shim -- using direct boot (run scripts/secure-boot/build-shim.sh for Secure Boot)"; \
 		cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
 	fi
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
