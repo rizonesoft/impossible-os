@@ -307,6 +307,9 @@ The UEFI firmware starts a 5-minute watchdog timer at boot. The current bootload
 
 **Test checkpoint:** Normal boot completes in < 10s; watchdog is disarmed before ExitBootServices. Serial shows `"Watchdog: armed"` and `"Watchdog: disarmed"`. No unexpected reboots on all 4 platforms. Verify on bare metal -- real firmware watchdog behavior may differ from emulated; some firmware ignores the watchdog code parameter.
 
+> **Verified:** 2026-04-11 -- all 5 items confirmed. 60s arm with status check, 3 resets at long ops, disarm with retry before EBS. Codex found unchecked disarm during implementation (fixed: status check + retry). Accepted: none.
+> **Quality reviewed:** 2026-04-11 -- 1 fix: centralized watchdog_reset() helper with g_wd_armed tracking (Codex found silent reset failures). Matches UEFI Spec §7.5 (WatchdogCode in OS range 0x10000+). Exceeds Win11/Linux/GRUB (none re-arm, all just disable). Accepted: disarm failure continues to kernel (kernel boots <10s, within 60s timeout -- watchdog reset on failure is actually beneficial).
+
 ---
 
 ## 12. Memory Map Descriptor Validation

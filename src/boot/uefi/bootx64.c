@@ -768,6 +768,19 @@ static void efi_print(CHAR16 *str);
  * may be in an undefined state. Set g_ebs_in_progress = 1 before the EBS
  * loop to force serial-only output for EBS-path failures. */
 static int g_ebs_in_progress;
+static int g_wd_armed;  /* 1 if watchdog was successfully armed (S11) */
+
+/* Reset the watchdog timer if it was successfully armed.
+ * Called before long operations to extend the timeout window. */
+static void watchdog_reset(void)
+{
+    if (!g_wd_armed) return;
+    EFI_STATUS s = gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);
+    if (EFI_ERROR(s)) {
+        serial_early_print("[WARN] Watchdog: reset failed\n");
+        g_wd_armed = 0;  /* lost the watchdog -- don't try again */
+    }
+}
 
 static void boot_fatal(const char *title, const char *detail)
 {
@@ -2941,12 +2954,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * UEFI default is 5 minutes -- too long for debugging.
      * Arm with 60s timeout; disarm before ExitBootServices.
      * Code 0x424F4F54 = "BOOT" in ASCII for firmware logs. */
+#define WD_TIMEOUT  60
+#define WD_CODE     0x424F4F54  /* "BOOT" */
+    g_wd_armed = 0;
     {
-        EFI_STATUS wd_s = gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);
-        if (!EFI_ERROR(wd_s))
+        EFI_STATUS wd_s = gBS->SetWatchdogTimer(WD_TIMEOUT, WD_CODE, 0, (CHAR16 *)0);
+        if (!EFI_ERROR(wd_s)) {
             serial_early_print("[BOOT] Watchdog: armed (60s)\n");
-        else
+            g_wd_armed = 1;
+        } else {
             serial_early_print("[BOOT] Watchdog: arm failed (unsupported?)\n");
+        }
     }
 
     /* Point boot_info to a known physical address */
@@ -2968,7 +2986,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 1: Initialize graphics (uses g_conf_res_width/height from boot.conf) */
     post_code16(POST16_BL_GOP);
-    gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);  /* reset watchdog */
+    watchdog_reset();
     serial_early_print("[BOOT] init_gop...\n");
     g_boot_info_ptr->timing.gop_start = boot_rdtsc();
     status = init_gop();
@@ -2993,7 +3011,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Load kernel ELF */
     post_code16(POST16_BL_KERNEL_OPEN);
-    gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);  /* reset watchdog */
+    watchdog_reset();
     serial_early_print("[BOOT] load_kernel...\n");
     g_boot_info_ptr->timing.kernel_load_start = boot_rdtsc();
     status = load_kernel(&kernel_entry);
@@ -3026,7 +3044,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 4e: Discover USB devices via UEFI firmware (TODO-07 §5 Phase A) */
     post_code16(POST16_BL_USB_DISC);
-    gBS->SetWatchdogTimer(60, 0x424F4F54, 0, (CHAR16 *)0);  /* reset watchdog */
+    watchdog_reset();
     serial_early_print("[BOOT] discover_usb_devices...\n");
     discover_usb_devices();
     post_code16(POST16_BL_USB_DISC_OK);
@@ -3091,18 +3109,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * Locked at 4 per TODO-02-bootloader-error-recovery.md S2 agreement. */
 #define EBS_MAX_ATTEMPTS 4
     /* Disarm watchdog before ExitBootServices -- no longer needed (S11) */
-    {
+    if (g_wd_armed) {
         EFI_STATUS wd_dis = gBS->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
         if (!EFI_ERROR(wd_dis)) {
             serial_early_print("[BOOT] Watchdog: disarmed\n");
+            g_wd_armed = 0;
         } else {
             serial_early_print("[WARN] Watchdog: disarm FAILED -- 60s timer may still be active\n");
-            /* Retry once */
             wd_dis = gBS->SetWatchdogTimer(0, 0, 0, (CHAR16 *)0);
-            if (!EFI_ERROR(wd_dis))
+            if (!EFI_ERROR(wd_dis)) {
                 serial_early_print("[BOOT] Watchdog: disarmed on retry\n");
-            else
+                g_wd_armed = 0;
+            } else {
                 serial_early_print("[WARN] Watchdog: disarm retry FAILED -- proceeding with caution\n");
+            }
         }
     }
 
