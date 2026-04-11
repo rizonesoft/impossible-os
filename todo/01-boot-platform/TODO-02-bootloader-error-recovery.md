@@ -64,7 +64,7 @@
 | ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [x]   |
 | ⭐  |  14   | Error screen QR code                           | §9         |  [x]   |
 | 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [x]   |
-| 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [ ]   |
+| 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [x]   |
 | 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [ ]   |
 | ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)  | §9, §14    |  [ ]   |
 
@@ -83,7 +83,7 @@ Harden the kernel ELF parser in `load_kernel()` to reject malformed or corrupted
 - [x] Validate `e_phoff` is within file bounds: `e_phoff + e_phnum * sizeof(Elf64_Phdr) <= file_size`
 - [x] Validate each `PT_LOAD` segment: `p_offset + p_filesz <= file_size`
 - [x] Validate `p_memsz >= p_filesz` (ELF spec requirement)
-- [x] Reject segments that overlap boot_info region (0x10000--0x11000): checks `seg_start < 0x11000 && seg_end > BOOT_INFO_PHYS_ADDR`
+- [x] Reject segments that overlap the FULL boot_info region `[BOOT_INFO_PHYS_ADDR, BOOT_INFO_PHYS_ADDR + sizeof(struct boot_info))`: checks `seg_start < bi_end && seg_end > bi_start` where `bi_end = BOOT_INFO_PHYS_ADDR + sizeof(struct boot_info)` -- was silently capped at the first 4 KiB until §16 quality review (2026-04-11) caught that segments at `0x11000..0x155BF` could clobber the handoff tail
 - [x] Reject segments that overlap framebuffer base address: checks against `g_boot_info_ptr->fb.addr` + pitch*height when fb is initialized
 - [x] Cap total kernel size at 32 MiB (`ELF_MAX_KERNEL_SIZE`): reject with clear error if exceeded
 - [x] Log each loaded segment: `"[BOOT] ELF segment N: paddr=0xHHHH filesz=N memsz=N"` via serial_early_print per segment
@@ -407,22 +407,23 @@ Place a fixed-size header at offset 0 of `struct boot_info` and have the UEFI bo
 
 ## 16. boot_info Kernel Validation, boot_hw Path, and Unit Tests
 
-The kernel must reject invalid `mbi` before copying `struct boot_info`. The post-hoc cmdline ASCII check at `src/kernel/main/boot_hw.c:79-91` stays as a second-line defense after the validated copy.
+The kernel must reject invalid `mbi` before copying `struct boot_info`. Validation splits into an address phase (NULL / alignment / bounds / wraparound) and a header phase (magic / version / size) so the failure-log path can safely dereference the header only after the address phase has confirmed the pointer is in mapped memory. The post-hoc `cmdline` ASCII check at `src/kernel/main/boot_hw.c` stays as a second-line defense after the validated copy.
 
 > [!IMPORTANT]
 > **Found during TODO-01 Phase 0 verify (2026-04-08, Codex round 1, commit b402cf21).** Uncoordinated edits to `struct boot_info` widen the silent-corruption window until this lands.
 > **Regression risk:** MEDIUM -- stale `BOOTX64.EFI` after a version bump halts early; mitigate by always using `bash scripts/build.sh` for paired images.
 
-- [ ] Implement `boot_result_t boot_info_validate(const void *p, size_t kernel_struct_size)` in kernel code (pure logic): reject NULL; require `magic == BOOT_INFO_MAGIC`; `version` in the supported set; `size == kernel_struct_size`; pointer in conventional/loader memory (not below 1 MiB, not overlapping known reserved holes per project map).
-- [ ] `boot_phase0()` (or first safe callsite before `memcpy`): call `boot_info_validate(mbi, sizeof(struct boot_info))`; on failure call `boot_halt("boot_info handoff validation failed: ...")` including observed bad values. Failure must run with `g_boot_info` still zero-initialized so `boot_halt()`'s framebuffer path at `src/kernel/main/boot_halt.c:269-298` does NOT dereference `g_boot_info.fb.addr` from garbage-copied data (Codex §15 quality review finding, 2026-04-11).
-- [ ] Update `src/kernel/main/boot_hw.c` (~62-67) to copy only `header.size` bytes after validation succeeds and matches `sizeof(struct boot_info)`.
-- [ ] Add build-time cross-struct layout fingerprint for mirror `struct boot_info` in kernel vs bootloader -- same-size reorders currently evade detection (Codex §15 quality review finding, 2026-04-11). Options: generate bootloader mirror from the canonical kernel header, or emit per-field offset asserts on both sides for critical count/array fields (`mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`).
-- [ ] Keep and relocate the `cmdline` ASCII sanity check (`boot_hw.c:79-91`) to run after the validated copy; remove stale "struct shifted" wording if any.
-- [ ] Add `src/kernel/test/test_boot_info.c` (or extend `test_boot_init.c`) with synthetic buffers: OK path, NULL, bad magic, version mismatch, size mismatch (no forbidden boot/VPD calls per CLAUDE.md).
-- [ ] Wire tests in `test_runner_init()` under `SUITE=boot` when the file lands.
-- [ ] Commit: `"boot: kernel boot_info_validate before Phase 0 memcpy"`
+- [x] Implement `boot_info_validate_addr(p, size, max_addr)`, `boot_info_validate_header(hdr, kernel_struct_size)`, and combined `boot_info_validate(p, kernel_struct_size)` in `src/kernel/main/boot_info.c` as pure functions. Address phase rejects NULL, addresses below `0x1000` (NULL page / BDA), misaligned pointers, sizes below `sizeof(boot_info_header)` or above `65535`, ranges that wrap or exceed `max_addr`. Header phase rejects bad magic, version mismatch, and size mismatch.
+- [x] `boot_phase0()` calls `boot_info_validate_addr(mbi, sizeof(struct boot_info), BOOT_INFO_EARLY_MAP_END)` first (4 GiB limit = bootloader identity-map bound set in `bootx64.c:setup_page_tables()`), then `boot_info_validate_header()` on the confirmed-safe pointer. Each failure logs observed vs expected via `LOG_ERROR` + `boot_halt()`. `g_boot_info` is still zero-initialized on failure so `boot_halt()`'s framebuffer path at `src/kernel/main/boot_halt.c:269-298` sees `fb_available == 0` and skips the fb dereference -- no risk of writing through garbage-copied `fb.addr`.
+- [x] `src/kernel/main/boot_hw.c` UEFI branch copies `src->header.size` bytes after validation (validator guaranteed it equals `sizeof(struct boot_info)`); the post-copy magic/version/size re-checks from §15 are removed as redundant with pre-copy validation.
+- [x] Cross-struct layout fingerprint: paired `_Static_assert(__builtin_offsetof(struct boot_info, X) == N)` on five critical count fields in BOTH `include/kernel/boot_info.h` and `src/boot/uefi/bootx64.c` -- `mmap_count (16392)`, `gop_mode_count (16948)`, `config_table_count (18280)`, `rt_mmap_count (20352)`, `usb_device_count (21504)`. Same-size field reorders now fail to build on whichever side drifted.
+- [x] Kept the `cmdline` ASCII sanity check after the validated copy in `boot_hw.c`; relocated comment now describes it as defense in depth against post-copy corruption (no more stale "struct shifted" wording). Changed `LOG_FATAL` to `LOG_ERROR` + `boot_halt()` to match the §15 lesson that `klog(LOG_FATAL, ...)` is no-return and would bypass `boot_halt()`.
+- [x] Added `src/kernel/test/test_boot_info.c` with 22 pure tests -- no live boot infrastructure calls. Coverage: address phase NULL / below-floor / misaligned / size-below-header / size-above-uint16 / wraparound / over-max / bound-straddle / valid-handoff / kernel-VA / exact-lower-boundary / exact-upper-boundary / exact-uint16-max; header phase NULL / bad-magic / bad-version / bad-size / valid; combined NULL / bad-magic / valid / misaligned-short-circuit.
+- [x] Wired `test_register_boot_info()` in `src/kernel/test/test_runner.c` under `TEST_CAT_BOOT`.
+- [x] Scope-gap fix (Branch A): §16 quality review caught that `load_kernel()`'s ELF overlap and kernel-buffer overlap guards were hardcoded to the first 4 KiB only (`0x10000--0x11000`), letting segments or allocations at `0x11000..0x155BF` silently clobber the `boot_info` tail and still pass the new post-handoff validator because the header at offset 0 was untouched. Fixed both sites in `src/boot/uefi/bootx64.c` to use `[BOOT_INFO_PHYS_ADDR, BOOT_INFO_PHYS_ADDR + sizeof(struct boot_info))` and updated §1's corresponding checklist item. This defense closes the integrity gap §16 was meant to establish.
+- [x] Commit: `"boot: kernel boot_info_validate before Phase 0 memcpy"`
 
-**Test checkpoint:** Normal boot on QEMU WHPX, QEMU TCG, VirtualBox, bare metal reaches Phase 0 with validation passing. Corrupt `header.magic` in the bootloader build -- serial shows `boot_info handoff validation failed` with expected vs actual. Intentional `BOOT_INFO_VERSION` mismatch across images -- early halt with version text. Unit tests for `boot_info_validate()` PASS.
+**Test checkpoint:** Normal boot on QEMU WHPX, QEMU TCG, VirtualBox, bare metal reaches Phase 0 with validation passing. Corrupt `header.magic` in the bootloader build -- serial shows `boot_info: bad header magic=0x...` with observed vs expected values. Intentional `BOOT_INFO_VERSION` mismatch across images -- early halt with `boot_info: bad header ... version=...`. Unit tests `boot_info: *` run under `SUITE=boot` and PASS.
 
 ---
 

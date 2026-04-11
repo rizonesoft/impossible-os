@@ -61,36 +61,52 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     /* --- Boot info parse: UEFI or Multiboot2 --- */
     if (magic == UEFI_BOOT_MAGIC) {
-        struct boot_info *src = (struct boot_info *)(uintptr_t)mbi;
-        uint8_t *d = (uint8_t *)&g_boot_info;
-        const uint8_t *s = (const uint8_t *)src;
-        for (i = 0; i < sizeof(struct boot_info); i++)
-            d[i] = s[i];
+        const void *mbi_p = (const void *)(uintptr_t)mbi;
 
-        /* S15: Validate ABI header after memcpy (pre-copy validation in S16).
-         * Static assert guarantees sizeof fits uint16_t, so the size compare
-         * is lossless without a cast. */
-        if (g_boot_info.header.magic != BOOT_INFO_MAGIC) {
+        /* S16 phase 1: address validation.  Rejects NULL, misaligned,
+         * out-of-map, and wraparound handoff pointers BEFORE touching
+         * any bytes at *mbi.  g_boot_info is still zero-initialized
+         * here, so if we halt below, boot_halt()'s framebuffer path
+         * checks fb_available == 0 and skips the fb dereference -- no
+         * chance of writing through garbage-copied fb.addr. */
+        if (boot_info_validate_addr(mbi_p, sizeof(struct boot_info),
+                                    BOOT_INFO_EARLY_MAP_END) != BOOT_OK) {
             klog(LOG_ERROR, "UEFI",
-                 "boot_info: bad magic got=0x%08X expected=0x%08X",
-                 (uint64_t)g_boot_info.header.magic,
-                 (uint64_t)BOOT_INFO_MAGIC);
-            boot_halt("boot_info: bad magic (stale BOOTX64.EFI?)");
+                 "boot_info: unsafe mbi pointer 0x%lx (expected 0x1000..0x%lx, 8-byte aligned)",
+                 (uint64_t)mbi,
+                 (uint64_t)(BOOT_INFO_EARLY_MAP_END - sizeof(struct boot_info)));
+            boot_halt("boot_info: unsafe mbi pointer");
         }
-        if (g_boot_info.header.version != BOOT_INFO_VERSION) {
-            klog(LOG_ERROR, "UEFI",
-                 "boot_info: version got=%u expected=%u",
-                 (uint64_t)g_boot_info.header.version,
-                 (uint64_t)BOOT_INFO_VERSION);
-            boot_halt("boot_info: version mismatch (rebuild bootloader + kernel)");
+
+        /* S16 phase 2: header field validation.  Address phase already
+         * confirmed the pointer is dereferenceable, so reading the
+         * observed magic/version/size for the error log is safe. */
+        {
+            const struct boot_info_header *h = (const struct boot_info_header *)mbi_p;
+            if (boot_info_validate_header(h, sizeof(struct boot_info)) != BOOT_OK) {
+                klog(LOG_ERROR, "UEFI",
+                     "boot_info: bad header magic=0x%08X (expected 0x%08X) "
+                     "version=%u (expected %u) size=%u (expected %u)",
+                     (uint64_t)h->magic, (uint64_t)BOOT_INFO_MAGIC,
+                     (uint64_t)h->version, (uint64_t)BOOT_INFO_VERSION,
+                     (uint64_t)h->size, (uint64_t)sizeof(struct boot_info));
+                boot_halt("boot_info: bad header (stale BOOTX64.EFI or layout drift?)");
+            }
         }
-        if ((size_t)g_boot_info.header.size != sizeof(struct boot_info)) {
-            klog(LOG_ERROR, "UEFI",
-                 "boot_info: size got=%u expected=%u",
-                 (uint64_t)g_boot_info.header.size,
-                 (uint64_t)sizeof(struct boot_info));
-            boot_halt("boot_info: size mismatch (struct layout diverged)");
+
+        /* Pre-copy validation passed -- the handoff is safe to copy.
+         * Copy only header.size bytes; the validator guaranteed
+         * header.size == sizeof(struct boot_info), so this is equivalent
+         * to copying sizeof but uses the bootloader's declared length. */
+        {
+            struct boot_info *src = (struct boot_info *)(uintptr_t)mbi;
+            uint8_t *d = (uint8_t *)&g_boot_info;
+            const uint8_t *s = (const uint8_t *)src;
+            uint16_t copy_len = src->header.size;
+            for (i = 0; i < copy_len; i++)
+                d[i] = s[i];
         }
+
         klog(LOG_INFO, "UEFI",
              "Boot info v%d, size=%u, magic=0x%08X",
              (uint64_t)g_boot_info.header.version,
@@ -103,19 +119,20 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     }
     boot_progress(0, "BOOT_INFO", 0x0026);
 
-    /* boot_config sanity check: verify the struct wasn't corrupted in transit.
-     * The bootloader fills boot_config at a fixed layout; if cmdline contains
-     * non-printable garbage in the first 4 bytes, the struct shifted. */
+    /* Defense in depth: verify boot_config.cmdline begins with ASCII.
+     * The bootloader fills boot_config at a fixed layout and the S16
+     * pre-copy validator pins total struct size; this check still
+     * catches subtle internal corruption (e.g. cmdline region partially
+     * clobbered after ExitBootServices) that a size match would miss. */
     {
         const char *cmd = g_boot_info.config.cmdline;
-        int i;
-        for (i = 0; i < 4 && cmd[i] != '\0'; i++) {
-            if (cmd[i] < 0x20 || cmd[i] > 0x7E) {
-                klog(LOG_FATAL, "CONF",
-                     "boot_config.cmdline contains non-ASCII at byte %d "
-                     "(0x%02X) -- struct layout mismatch?",
-                     (uint64_t)i, (uint64_t)(uint8_t)cmd[i]);
-                boot_halt("boot_config struct layout corrupted");
+        int j;
+        for (j = 0; j < 4 && cmd[j] != '\0'; j++) {
+            if (cmd[j] < 0x20 || cmd[j] > 0x7E) {
+                klog(LOG_ERROR, "CONF",
+                     "boot_config.cmdline non-ASCII at byte %d (0x%02X) -- post-copy corruption?",
+                     (uint64_t)j, (uint64_t)(uint8_t)cmd[j]);
+                boot_halt("boot_config.cmdline corrupted after validated copy");
             }
         }
     }

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/boot_init.h"   /* boot_result_t */
 
 /* Maximum number of memory map entries we store.
  * Real hardware (especially laptops with NVRAM, MMIO, etc.) can have 100+
@@ -44,11 +45,53 @@
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
 #define BOOT_INFO_VERSION  1           /* bump on struct layout changes */
 
+/* Upper bound for pre-copy address validation: the UEFI bootloader
+ * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
+ * before jumping to the kernel.  Any handoff pointer above this limit
+ * cannot be safely dereferenced during Phase 0 and must be rejected
+ * before boot_info_validate_header() reads the magic/version/size. */
+#define BOOT_INFO_EARLY_MAP_END  0x100000000ULL
+
 struct boot_info_header {
     uint32_t magic;     /* must be BOOT_INFO_MAGIC */
     uint16_t version;   /* BOOT_INFO_VERSION */
     uint16_t size;      /* sizeof(struct boot_info) as seen by the bootloader */
 };
+
+/* S16: boot_info handoff validators.
+ *
+ * Split into address and header phases so pre-copy failure paths can
+ * decide whether dereferencing the handoff pointer is safe before
+ * logging observed header values.
+ *
+ * boot_info_validate_addr(p, size, max_addr) -- pure, no dereferences.
+ *   Rejects NULL, addresses below 0x1000 (NULL page / BDA), misaligned
+ *   pointers, sizes that cannot hold the header or exceed uint16_t, and
+ *   any [p, p + size) range that wraps around or crosses max_addr.
+ *   Early boot passes BOOT_INFO_EARLY_MAP_END; tests pass (uintptr_t)-1.
+ *
+ * boot_info_validate_header(hdr, kernel_struct_size) -- dereferences
+ *   the header.  Caller MUST have confirmed the pointer is safe via
+ *   boot_info_validate_addr() first.  Rejects bad magic, version not
+ *   equal to BOOT_INFO_VERSION, or size != kernel_struct_size.
+ *
+ * boot_info_validate(p, kernel_struct_size) -- convenience for unit
+ *   tests: runs boot_info_validate_addr() with max = (uintptr_t)-1 then
+ *   boot_info_validate_header().  Production code in boot_phase0()
+ *   calls the two phases separately so it can bound addresses to the
+ *   4 GiB early identity map.
+ *
+ * All three functions return BOOT_OK on success, BOOT_FATAL on rejection.
+ */
+boot_result_t boot_info_validate_addr(const void *p,
+                                      size_t kernel_struct_size,
+                                      uintptr_t max_addr);
+
+boot_result_t boot_info_validate_header(const struct boot_info_header *hdr,
+                                        size_t kernel_struct_size);
+
+boot_result_t boot_info_validate(const void *p,
+                                 size_t kernel_struct_size);
 
 /* A single memory region from the bootloader */
 struct boot_mmap_entry {
@@ -457,6 +500,33 @@ _Static_assert(sizeof(struct boot_info_header) == 8,
  * BOOT_INFO_VERSION. */
 _Static_assert(sizeof(struct boot_info) <= 65535,
     "boot_info too large for uint16_t header.size field -- widen size field or trim struct");
+
+/* S16: Cross-struct layout fingerprint.  The bootloader at
+ * src/boot/uefi/bootx64.c keeps a mirror definition of struct boot_info.
+ * Total-size matching alone cannot catch same-size field reorders that
+ * would otherwise silently diverge the two interpretations.  Both the
+ * kernel header and the bootloader mirror pin the byte offsets of the
+ * five critical count fields below.  A build failure on EITHER side
+ * flags drift; a cross-build mismatch of sizes still triggers the
+ * runtime header.size check.  When adding fields, update BOTH sides
+ * atomically.  If an offset shifts intentionally, update both asserts
+ * in the same commit.  Computed once from the canonical kernel layout:
+ *   mmap_count           = 16392  (after header + 512 mmap entries)
+ *   gop_mode_count       = 16948
+ *   config_table_count   = 18280
+ *   rt_mmap_count        = 20352
+ *   usb_device_count     = 21504
+ */
+_Static_assert(__builtin_offsetof(struct boot_info, mmap_count) == 16392,
+    "boot_info.mmap_count offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, gop_mode_count) == 16948,
+    "boot_info.gop_mode_count offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, config_table_count) == 18280,
+    "boot_info.config_table_count offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, rt_mmap_count) == 20352,
+    "boot_info.rt_mmap_count offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, usb_device_count) == 21504,
+    "boot_info.usb_device_count offset drift -- update kernel + bootloader mirror");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

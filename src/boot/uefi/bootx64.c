@@ -298,6 +298,22 @@ _Static_assert(sizeof(struct boot_info_header) == 8,
 _Static_assert(sizeof(struct boot_info) <= 65535,
     "boot_info too large for uint16_t size field");
 
+/* S16: Cross-struct layout fingerprint -- MUST match include/kernel/boot_info.h.
+ * If the bootloader or kernel reorders a field without the other side doing the
+ * same change, the build fails on whichever side drifted. This catches same-size
+ * reorders that the total-size check alone misses. Keep these in sync with the
+ * kernel header; update BOTH sides atomically when adding or moving fields. */
+_Static_assert(__builtin_offsetof(struct boot_info, mmap_count) == 16392,
+    "boot_info.mmap_count offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, gop_mode_count) == 16948,
+    "boot_info.gop_mode_count offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, config_table_count) == 18280,
+    "boot_info.config_table_count offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, rt_mmap_count) == 20352,
+    "boot_info.rt_mmap_count offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, usb_device_count) == 21504,
+    "boot_info.usb_device_count offset drift -- kernel + bootloader mirror out of sync");
+
 /* Inline rdtsc for boot timing */
 static inline UINT64 boot_rdtsc(void)
 {
@@ -1991,10 +2007,20 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         file_buf = (UINT8 *)(UINTN)buf_addr;
         file_size = alloc_size;
 
-        /* Verify buffer doesn't overlap boot_info (0x10000-0x11000) */
-        if (buf_addr < 0x11000 && buf_addr + alloc_size > BOOT_INFO_PHYS_ADDR) {
-            serial_early_print("[FAIL] Kernel buffer overlaps boot_info region\n");
-            return EFI_LOAD_ERROR;
+        /* Verify buffer doesn't overlap boot_info region.
+         * S16: The protected region is the FULL struct boot_info at
+         * BOOT_INFO_PHYS_ADDR, not just the first 4 KiB.  sizeof(struct
+         * boot_info) is ~22 KiB and the S15 assert caps it at 65535,
+         * so any allocation that intersects [0x10000, 0x10000+sizeof)
+         * would silently clobber the handoff tail. */
+        {
+            UINT64 bi_start = (UINT64)BOOT_INFO_PHYS_ADDR;
+            UINT64 bi_end   = bi_start + (UINT64)sizeof(struct boot_info);
+            if ((UINT64)buf_addr < bi_end &&
+                (UINT64)buf_addr + (UINT64)alloc_size > bi_start) {
+                serial_early_print("[FAIL] Kernel buffer overlaps boot_info region\n");
+                return EFI_LOAD_ERROR;
+            }
         }
         /* Verify buffer doesn't overlap framebuffer */
         if (g_boot_info_ptr->fb.addr != 0) {
@@ -2089,11 +2115,19 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             return EFI_LOAD_ERROR;
         }
 
-        /* Reject segments that overlap boot_info region (0x10000-0x11000) */
+        /* Reject segments that overlap the FULL boot_info region.
+         * S16: Previously guarded only [0x10000, 0x11000) -- but struct
+         * boot_info is ~22 KiB so segments loaded at 0x11000..0x155BF
+         * would silently clobber the tail (config, framebuffer, timing,
+         * etc.) and still pass the post-handoff validator because the
+         * header at offset 0 is untouched.  Use sizeof(struct boot_info)
+         * as the upper bound -- kept <= 65535 by the S15 static assert. */
         {
             UINT64 seg_start = phdr[i].p_paddr;
             UINT64 seg_end   = seg_start + phdr[i].p_memsz;
-            if (seg_start < 0x11000 && seg_end > BOOT_INFO_PHYS_ADDR) {
+            UINT64 bi_start  = (UINT64)BOOT_INFO_PHYS_ADDR;
+            UINT64 bi_end    = bi_start + (UINT64)sizeof(struct boot_info);
+            if (seg_start < bi_end && seg_end > bi_start) {
                 serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
                 serial_early_print_uint(i);
                 serial_early_print(" overlaps boot_info region\n");
