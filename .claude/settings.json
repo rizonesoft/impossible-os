@@ -47,6 +47,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys\nd = json.load(sys.stdin)\nskill = d.get('tool_input', {}).get('skill', '')\nif skill not in ('implement-todo-section', 'implement-ssdt-range'):\n    sys.exit(0)\nmsg = ('[IMPLEMENT RULES -- NO STEPS MAY BE SKIPPED] '\n       '1. Read section + XREFs. '\n       '2. Explore codebase. '\n       '3. Domain code quality gates BEFORE writing. '\n       '4. Implement (scope-gap protocol, no stubs). '\n       '5. Build. '\n       '6. Wire tests. '\n       '7. Update TODO + IO + OS tables. '\n       '8. MANDATORY Codex adversarial review -- dispatch, not self-review. Apply receiving-code-review. '\n       '9. Self-review BEFORE fixing. '\n       '10. Fix loop (Codex + self-review findings). '\n       '11. 2nd build + loose ends. '\n       '12. Commit. '\n       '13. Invoke /review-todo-section for post-impl quality review. '\n       'EVERY Codex dispatch is mandatory. No exceptions.')\nprint(json.dumps({'systemMessage': msg}))\n\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
