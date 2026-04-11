@@ -371,8 +371,8 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 		cp $$MM $(BUILD_DIR)/efi_staging/EFI/BOOT/mmx64.efi; \
 		cp $$MM $(BUILD_DIR)/efi_staging/mmx64.efi; \
 		if [ -f "$(MOK_CRT)" ]; then \
-			cp $(MOK_CRT) $(BUILD_DIR)/efi_staging/MOK.cer; \
-			echo "[DISK] MOK.cer copied to ESP root (for MokManager enrollment)"; \
+			openssl x509 -in $(MOK_CRT) -outform DER -out $(BUILD_DIR)/efi_staging/MOK.cer; \
+			echo "[DISK] MOK.cer (DER) copied to ESP root (for MokManager enrollment)"; \
 		fi; \
 	elif [ -f "$$SHIM" ] || [ -f "$$MM" ]; then \
 		echo "[ERROR] Partial shim directory -- need both shimx64.efi and mmx64.efi"; \
