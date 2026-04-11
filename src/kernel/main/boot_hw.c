@@ -67,14 +67,28 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         for (i = 0; i < sizeof(struct boot_info); i++)
             d[i] = s[i];
 
-        /* S15: Validate ABI header before using boot_info */
+        /* S15: Validate ABI header after memcpy (pre-copy validation in S16).
+         * Static assert guarantees sizeof fits uint16_t, so the size compare
+         * is lossless without a cast. */
         if (g_boot_info.header.magic != BOOT_INFO_MAGIC) {
+            klog(LOG_ERROR, "UEFI",
+                 "boot_info: bad magic got=0x%08X expected=0x%08X",
+                 (uint64_t)g_boot_info.header.magic,
+                 (uint64_t)BOOT_INFO_MAGIC);
             boot_halt("boot_info: bad magic (stale BOOTX64.EFI?)");
         }
         if (g_boot_info.header.version != BOOT_INFO_VERSION) {
+            klog(LOG_ERROR, "UEFI",
+                 "boot_info: version got=%u expected=%u",
+                 (uint64_t)g_boot_info.header.version,
+                 (uint64_t)BOOT_INFO_VERSION);
             boot_halt("boot_info: version mismatch (rebuild bootloader + kernel)");
         }
-        if (g_boot_info.header.size != (uint16_t)sizeof(struct boot_info)) {
+        if ((size_t)g_boot_info.header.size != sizeof(struct boot_info)) {
+            klog(LOG_ERROR, "UEFI",
+                 "boot_info: size got=%u expected=%u",
+                 (uint64_t)g_boot_info.header.size,
+                 (uint64_t)sizeof(struct boot_info));
             boot_halt("boot_info: size mismatch (struct layout diverged)");
         }
         klog(LOG_INFO, "UEFI",

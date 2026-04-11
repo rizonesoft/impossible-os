@@ -452,6 +452,11 @@ _Static_assert(__builtin_offsetof(struct boot_info, header) == 0,
     "boot_info_header must be at offset 0 -- ABI contract");
 _Static_assert(sizeof(struct boot_info_header) == 8,
     "boot_info_header must be exactly 8 bytes -- ABI contract");
+/* header.size is uint16_t; struct must fit so the runtime size check cannot
+ * wrap.  If this fails, widen boot_info_header.size to uint32_t and bump
+ * BOOT_INFO_VERSION. */
+_Static_assert(sizeof(struct boot_info) <= 65535,
+    "boot_info too large for uint16_t header.size field -- widen size field or trim struct");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

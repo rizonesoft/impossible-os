@@ -394,10 +394,14 @@ Place a fixed-size header at offset 0 of `struct boot_info` and have the UEFI bo
 - [x] `_Static_assert(sizeof(boot_info_header) == 8)` in `boot_info.h` -- pins header layout
 - [x] `boot_info.h` comments document ABI rules: bump version on layout changes, rebuild both images together, `_reserved` fields don't require bumps
 - [x] `CLAUDE.md` new "boot_info ABI" section: documents magic, version mismatch halt, rebuild rule
-- [x] Kernel `boot_hw.c` validates magic + version after memcpy, halts on mismatch with clear error message; logs header version, size, and kernel-side sizeof for diagnostics
-- [x] Commit: `"boot: boot_info ABI header fields and bootloader populate"` (375e4764)
+- [x] Kernel `boot_hw.c` validates magic + version + size after memcpy, halts on mismatch; each failure logs `LOG_ERROR` with observed vs expected values before `boot_halt()` so the serial log shows the actual bad field, not just which check failed
+- [x] `_Static_assert(sizeof(struct boot_info) <= 65535)` added kernel-side so the uint16_t `header.size` field cannot silently truncate if the struct grows; comparison uses `(size_t)header.size != sizeof(struct boot_info)` (no cast)
+- [x] Commit: `"boot: boot_info ABI header fields and bootloader populate"` (24d7baa2)
 
 **Test checkpoint:** Clean build boots on QEMU WHPX, QEMU TCG, VirtualBox, bare metal; header fields visible in memory at the handoff pointer before kernel entry (debugger or serial hex dump).
+
+> **Verified:** 2026-04-11 -- all 8 items confirmed with code evidence. Header defined at offset 0 in both `include/kernel/boot_info.h:47` and `src/boot/uefi/bootx64.c:199`. Static asserts for offset/size/<=65535 present on both sides. Bootloader populates at `bootx64.c:3748` as the last step before `jump_to_kernel()`. Kernel validates at `boot_hw.c:70-96` with observed vs expected LOG_ERROR diagnostics before `boot_halt()`. Accepted: pre-memcpy pointer/bounds validation (`boot_info_validate()`) and cross-build layout fingerprinting -> XREF: 01-boot-platform/TODO-02 §16.
+> **Quality reviewed:** 2026-04-11 -- Codex adversarial round 1 flagged LOG_FATAL-before-boot_halt regression (klog LOG_FATAL is no-return); fixed with LOG_ERROR. Round 2 and 3 clean. Dead code + consistency + performance pass -- no findings. Win11 uses BCD signature + Boot Services Protocol GUID; Linux Multiboot2 uses 0x36D76289 + tag format; our magic+version+size + runtime validation is comparable scope. Accepted: 2 HIGH/MED findings accepted as -> XREF: 01-boot-platform/TODO-02 §16 (pre-copy validation, mirror struct drift detection).
 
 ---
 
@@ -410,8 +414,9 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 > **Regression risk:** MEDIUM -- stale `BOOTX64.EFI` after a version bump halts early; mitigate by always using `bash scripts/build.sh` for paired images.
 
 - [ ] Implement `boot_result_t boot_info_validate(const void *p, size_t kernel_struct_size)` in kernel code (pure logic): reject NULL; require `magic == BOOT_INFO_MAGIC`; `version` in the supported set; `size == kernel_struct_size`; pointer in conventional/loader memory (not below 1 MiB, not overlapping known reserved holes per project map).
-- [ ] `boot_phase0()` (or first safe callsite before `memcpy`): call `boot_info_validate(mbi, sizeof(struct boot_info))`; on failure call `boot_halt("boot_info handoff validation failed: ...")` including observed bad values.
+- [ ] `boot_phase0()` (or first safe callsite before `memcpy`): call `boot_info_validate(mbi, sizeof(struct boot_info))`; on failure call `boot_halt("boot_info handoff validation failed: ...")` including observed bad values. Failure must run with `g_boot_info` still zero-initialized so `boot_halt()`'s framebuffer path at `src/kernel/main/boot_halt.c:269-298` does NOT dereference `g_boot_info.fb.addr` from garbage-copied data (Codex §15 quality review finding, 2026-04-11).
 - [ ] Update `src/kernel/main/boot_hw.c` (~62-67) to copy only `header.size` bytes after validation succeeds and matches `sizeof(struct boot_info)`.
+- [ ] Add build-time cross-struct layout fingerprint for mirror `struct boot_info` in kernel vs bootloader -- same-size reorders currently evade detection (Codex §15 quality review finding, 2026-04-11). Options: generate bootloader mirror from the canonical kernel header, or emit per-field offset asserts on both sides for critical count/array fields (`mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`).
 - [ ] Keep and relocate the `cmdline` ASCII sanity check (`boot_hw.c:79-91`) to run after the validated copy; remove stale "struct shifted" wording if any.
 - [ ] Add `src/kernel/test/test_boot_info.c` (or extend `test_boot_init.c`) with synthetic buffers: OK path, NULL, bad magic, version mismatch, size mismatch (no forbidden boot/VPD calls per CLAUDE.md).
 - [ ] Wire tests in `test_runner_init()` under `SUITE=boot` when the file lands.
