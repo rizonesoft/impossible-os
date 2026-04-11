@@ -9,8 +9,9 @@
 :: without affecting other test scripts.
 ::
 :: Usage:
-::   run-error-screen-test.bat           -- normal boot (check NVRAM previous error)
-::   run-error-screen-test.bat --clean   -- delete temp NVRAM, start fresh
+::   run-error-screen-test.bat   -- normal boot, check NVRAM for previous error
+::
+:: Shares NVRAM with run-qemu.ps1 so boot entries are already registered.
 ::
 :: Prerequisites:
 ::   - QEMU installed on Windows
@@ -25,15 +26,9 @@ cd /d %TEMP%
 set SCRIPTDIR=%~dp0
 set BUILD=%SCRIPTDIR%..\..\build
 set DISK=%BUILD%\system-disk.img
-set NVRAM=%TEMP%\OVMF_VARS_error_test.fd
-
-:: Parse arguments
-if "%1"=="--clean" (
-    echo [INFO] Cleaning up temporary NVRAM...
-    if exist "%NVRAM%" del "%NVRAM%"
-    echo [INFO] Done. Next run will start with fresh NVRAM.
-    goto :done
-)
+:: Use the SAME NVRAM as run-qemu.ps1 so boot entries are already registered
+:: and BootError persistence can be tested across normal and error boots.
+set NVRAM=%TEMP%\OVMF_VARS_4M.fd
 
 if not exist "%DISK%" (
     echo [ERROR] System disk not found at %DISK%
@@ -51,12 +46,12 @@ if not exist "%OVMF_CODE%" (
     pause & exit /b 1
 )
 
-:: Seed NVRAM on first run (preserves BootError across reboots)
-set OVMF_VARS_SRC=%BUILD%\OVMF_VARS_4M.fd
-if not exist "%OVMF_VARS_SRC%" (
-    wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/ 2>/dev/null || cp /usr/share/qemu/OVMF_VARS.fd ~/impossible-os/build/OVMF_VARS_4M.fd 2>/dev/null"
+:: NVRAM must already exist from a prior run-qemu.ps1 boot
+if not exist "%NVRAM%" (
+    echo [ERROR] NVRAM file not found at %NVRAM%
+    echo [ERROR] Run a normal boot first via run-qemu.ps1 to seed NVRAM.
+    pause & exit /b 1
 )
-if not exist "%NVRAM%" copy /Y "%OVMF_VARS_SRC%" "%NVRAM%" >nul
 
 echo.
 echo ========================================
@@ -65,8 +60,7 @@ echo ========================================
 echo  Boots with intact kernel and separate
 echo  NVRAM.  Watch serial output for:
 echo    "[BOOT] Previous boot failed: code=0x..."
-echo  NVRAM: %NVRAM%
-echo  --clean to reset NVRAM state
+echo  NVRAM: %NVRAM% (shared with run-qemu.ps1)
 echo ========================================
 echo.
 
@@ -91,8 +85,6 @@ if not exist "%QEMU%" set QEMU=qemu-system-x86_64.exe
     -device isa-debug-exit,iobase=0x501,iosize=2
 
 echo.
-echo [INFO] QEMU exited. NVRAM state preserved at %NVRAM%
-echo [INFO] To reset: run-error-screen-test.bat --clean
+echo [INFO] QEMU exited. NVRAM shared at %NVRAM%
 
-:done
 pause
