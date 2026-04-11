@@ -126,6 +126,8 @@ Walk SMBIOS 3.x structures and populate Registry hardware keys.
 
 **Test checkpoint:** Registry keys under `HKLM\HARDWARE\BIOS\*`, `HKLM\HARDWARE\System\*`, `HKLM\HARDWARE\CPU\*`, and `HKLM\HARDWARE\Memory\*` are populated after boot; `smbios_get_system_uuid()` returns non-zero UUID on real hardware. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-04-11 -- Codex found 3 parser safety issues: bounded string scan (smbios_get_string overread), walker truncation check (hdr->length > remaining), Type 17 0x7FFF sentinel without extended field. All fixed. Accepted: none.
+
 ---
 
 ## 5. Secure Boot State Detection

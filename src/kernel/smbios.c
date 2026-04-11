@@ -55,10 +55,15 @@ struct smbios_header {
 
 static struct smbios_system_info s_info;
 
+/* Table end pointer -- set by walk_structures, bounds all string scans.
+ * Safe as file-scope static: SMBIOS init runs once, single-threaded. */
+static const uint8_t *s_table_end;
+
 /* ---- String helper ---- */
 
 /* SMBIOS strings follow the structure data as a double-NUL-terminated list.
- * String index 1 = first string, 2 = second, etc.  Index 0 = no string. */
+ * String index 1 = first string, 2 = second, etc.  Index 0 = no string.
+ * Scan is bounded by s_table_end to prevent overread on malformed tables. */
 static const char *smbios_get_string(const struct smbios_header *hdr,
                                      uint8_t index)
 {
@@ -66,16 +71,18 @@ static const char *smbios_get_string(const struct smbios_header *hdr,
 
     /* Strings start at hdr + hdr->length */
     const char *p = (const char *)hdr + hdr->length;
+    const char *limit = (const char *)s_table_end;
     uint8_t cur = 1;
 
     while (cur < index) {
         /* Skip to end of current string */
-        while (*p != '\0') p++;
+        while (p < limit && *p != '\0') p++;
+        if (p >= limit) return "";
         p++;  /* skip the NUL */
-        if (*p == '\0') return "";  /* hit double-NUL = end of strings */
+        if (p >= limit || *p == '\0') return "";  /* hit end or double-NUL */
         cur++;
     }
-    return p;
+    return (p < limit) ? p : "";
 }
 
 /* Safe string copy with truncation */
@@ -182,18 +189,17 @@ static void parse_type17(const struct smbios_header *hdr)
     if (raw_size == 0 || raw_size == 0xFFFF) return;  /* Not installed or unknown */
 
     uint32_t size_mb;
-    if (raw_size & 0x8000) {
+    if (raw_size == 0x7FFF) {
+        /* SMBIOS 2.7+ sentinel: use extended size at offset 0x1C */
+        if (hdr->length < 0x20) return;  /* Extended field not present -- skip */
+        size_mb = (uint32_t)(d[0x1C] | ((uint32_t)d[0x1D] << 8) |
+                  ((uint32_t)d[0x1E] << 16) | ((uint32_t)d[0x1F] << 24));
+        if (size_mb == 0) return;  /* Invalid extended size */
+    } else if (raw_size & 0x8000) {
         /* Size in KB */
         size_mb = (uint32_t)(raw_size & 0x7FFF) / 1024;
     } else {
         size_mb = (uint32_t)raw_size;
-    }
-
-    /* SMBIOS 2.7+: if size == 0x7FFF, use extended size at offset 0x1C */
-    if (raw_size == 0x7FFF && hdr->length >= 0x20) {
-        uint32_t ext = (uint32_t)(d[0x1C] | ((uint32_t)d[0x1D] << 8) |
-                       ((uint32_t)d[0x1E] << 16) | ((uint32_t)d[0x1F] << 24));
-        size_mb = ext;  /* Extended size is always in MB */
     }
 
     /* Aggregate totals (legacy callers) */
@@ -238,11 +244,15 @@ static void walk_structures(uintptr_t table_addr, uint32_t max_len)
     const uint8_t *p = (const uint8_t *)table_addr;
     const uint8_t *end = p + max_len;
 
+    /* Set file-scope end pointer for bounded string extraction */
+    s_table_end = end;
+
     while (p + 4 <= end) {
         const struct smbios_header *hdr = (const struct smbios_header *)p;
 
         if (hdr->type == 127) break;  /* End of table */
         if (hdr->length < 4) break;   /* Corrupt */
+        if (hdr->length > (uint32_t)(end - p)) break;  /* Truncated */
 
         /* Parse known types */
         switch (hdr->type) {
