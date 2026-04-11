@@ -64,9 +64,9 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **No N.M subnumbering:** never add `### N.M`, `**N.M ...**`, or extra heading levels that carve one `## N.` into sub-chapters. Keep **one continuous** `- [ ]` list under each `## N.`; put grouping in bullet wording. Need more structure -- add a new `##` section with the next number, not `17.1`/`17.2`.
 11. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
 12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. **Do not** add or extend `<!-- Sources: ... -->` URL comment blocks; cite new research in the PR or chat only.
-13. **Codex adversarial review** (MANDATORY) -- run via the Codex plugin, NOT self-review. Self-review has implementation bias; Codex reads code fresh and catches things you rationalized away. Proven: section 1 Codex found 2 Critical issues (SMP race, TOCTOU) that self-review missed. Follow the `codex-adversarial-review-section` skill workflow: scope to changed files, list adversarial angles, request severity-labeled findings. Command:
+13. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. Self-review is NOT a substitute. If Codex responds with "no diff available", re-dispatch with actual file content pasted into the prompt (read 100-200 relevant lines). A shallow response requires re-prompting with specific adversarial angles. Always include: integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data.
     ```bash
-    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt>"
+    node "/home/derickpayne/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "<focus prompt with specific adversarial angles>"
     ```
 14. **Fix loop** (1 round mandatory; up to 3 if needed) -- apply `superpowers:receiving-code-review` discipline: do NOT blindly implement every Codex finding. For each finding:
     - **Verify technically first.** Read the code Codex flagged. Is the finding correct? Codex can be wrong -- it doesn't have full runtime context.
@@ -101,6 +101,16 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Stage all changed source files, headers, the updated TODO file(s), and test changes together.
     - Push to `origin/main` immediately after successful commit.
     - Mark the section's `- [ ] Commit: "..."` item `[x]`.
+
+## Phase 2: Post-Implementation Review
+
+> After the implementation commit, invoke the review pipeline to verify and quality-review the freshly implemented section. This catches issues that implementation-time Codex missed because it reviewed the diff in isolation.
+
+20. **Invoke `/review-pipeline`** on the section just committed. This runs:
+    - `/verify-todo-section` -- evidence-based compliance audit + MANDATORY Codex adversarial review
+    - `/quality-review-section` -- industry standards + Win11/Linux parity + MANDATORY Codex perf/consistency review
+    - Both Codex dispatches are mandatory -- no skipping even though step 13 already ran one.
+    - Fixes from the review pipeline are committed separately (the review pipeline handles its own commit).
 
 ## HARD GATE: Steps 13-18 are MANDATORY before step 19
 
