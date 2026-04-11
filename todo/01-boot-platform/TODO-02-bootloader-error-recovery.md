@@ -62,7 +62,7 @@
 | 💎  |  11   | UEFI watchdog timer management                 | --         |  [x]   |
 | 💎  |  12   | Memory map descriptor validation               | §6         |  [x]   |
 | ⭐  |  13   | Boot error code registry & NVRAM persistence   | §9         |  [x]   |
-| ⭐  |  14   | Error screen QR code                           | §9         |  [ ]   |
+| ⭐  |  14   | Error screen QR code                           | §9         |  [x]   |
 | 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [ ]   |
 | 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [ ]   |
 | 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [ ]   |
@@ -364,12 +364,12 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 > **Competitive advantage:** A QR code on the pre-kernel error screen is actionable for non-technical users. Instead of "call support", they scan and get a page explaining exactly what error code 0x0003 means and how to fix it. ChromeOS has this for recovery; neither Win11 nor Linux has it at the UEFI bootloader stage.
 > **Regression risk:** LOW -- QR rendering is additive to §9 error screen. If QR encoder has a bug, error screen still shows text error message.
 
-- [ ] Implement minimal QR code encoder in bootloader (QR Version 2, 25x25 modules, alphanumeric mode -- fits `https://impossible.os/err/0003` in ~200 bytes of code)
-- [ ] `boot_fatal()` renders QR code in bottom-right corner of the GOP error screen (if GOP available)
-- [ ] QR payload: `https://impossible.os/err/XXXX` where `XXXX` is the hex error code from §13
-- [ ] QR module size: 4x4 pixels minimum for scannability on 1280x720 resolution
-- [ ] If GOP unavailable: skip QR code (console-only error screen has no pixel rendering)
-- [ ] Reuse QR logic from TODO-07 §6 panic QR code if already implemented; otherwise implement standalone minimal encoder
+- [x] Implement minimal QR code encoder in bootloader: QR Version 2 (25x25 modules), alphanumeric mode, ECL-L, Reed-Solomon EC (10 codewords), mask pattern 0 -- ~350 lines self-contained in `bootx64.c`
+- [x] `boot_fatal()` renders QR code in bottom-right corner of the GOP framebuffer (direct pixel write, works even during EBS retry); if ConOut unavailable but framebuffer available, renders QR-only
+- [x] QR payload: `HTTPS://IMPOSSIBLEOS.CO/ERR/XXXX` where `XXXX` is the hex error code from §13
+- [x] QR module size: 4px at 1280x720, 6px at 1920x1080, 8px at 2560+ -- with 4-module white quiet zone
+- [x] If GOP unavailable (gFramebuffer NULL or size 0): QR rendering silently skipped, text error screen still shows
+- [x] Standalone encoder (TODO-07 §6 not yet implemented) -- when §6 lands, the kernel-side encoder can be factored from this implementation
 - [ ] Commit: `"boot: QR code on boot error screen -- scan for recovery instructions"`
 
 **Test checkpoint:** Trigger boot failure (delete kernel). Error screen shows QR code in bottom-right. Scan with phone -- URL resolves (or shows the encoded URL). Verify QR is scannable at 1280x720 and 1920x1080 resolutions.
@@ -448,7 +448,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 | 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ✅ §12 align+pages+type+overlap |
 | ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot |
 | ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ✅ §13 13 codes + NVRAM persist |
-| ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ⬜ §14 QR code error link       |
+| ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ✅ §14 QR V2 + scaled modules   |
 | 💎 | Mmap normalize  | ✅ Hal.dll coalesces overlaps    | ✅ efi_fake_memmap + sanitize   | ⬜ §17 sort + carve by priority |
 | 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ⬜ §15-§16 versioned handoff    |
 | 💎 | Offline repair  | ✅ Windows Recovery Environment  | ✅ rescue/live ISO image        | ⬜ TODO-15 recovery partition   |
@@ -504,7 +504,7 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. The post
 - [ ] §11: Serial log shows `"Watchdog: armed"` after efi_main entry and `"Watchdog: disarmed"` before ExitBootServices. No unexpected reboots on any platform.
 - [ ] §12: Serial log shows no `"[WARN] Memory map entry"` warnings on QEMU OVMF (clean firmware). If warnings appear on real hardware, log them for firmware bug reporting.
 - [ ] §13: After boot failure, next boot serial shows `"Previous boot failed: code=0x"`. After successful boot, NVRAM variable reads `BOOT_OK`.
-- [ ] §14: Boot failure error screen includes QR code in bottom-right. QR scans to `https://impossible.os/err/XXXX` with correct error code.
+- [ ] §14: Boot failure error screen includes QR code in bottom-right. QR scans to `https://impossibleos.co/err/XXXX` with correct error code.
 - [ ] §15-§16: `boot_info` header populated by bootloader; kernel rejects tampered magic or version skew before Phase 0 copy.
 - [ ] Commit: `"boot: bootloader error recovery complete -- zero silent failures"`
 
