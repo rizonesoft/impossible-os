@@ -410,7 +410,8 @@ static CHAR16 g_boot_error_var[] = u"BootError";
 static UINT32 *gFramebuffer;
 static UINT32  gFbWidth;
 static UINT32  gFbHeight;
-static UINT32  gFbPitch;  /* in pixels */
+static UINT32  gFbPitch;       /* in pixels */
+static UINT8   gFbPixelFormat; /* 0=RGBX, 1=BGRX, 2=BitMask -- see gop_pixel_format_code() */
 
 /* Requested resolution from boot.conf Resolution=WxH (0 = auto). */
 static UINT32  g_conf_res_width  = 0;
@@ -1227,6 +1228,503 @@ static void qr_render_error_url(UINT32 err_code)
     }
 }
 
+/* ============================================================================
+ * S18: Graphical Error Screen (ChromeOS/Win11-style BSOD)
+ *
+ * Renders a pixel-accurate blue-screen layout directly to the GOP
+ * framebuffer.  Falls back silently when the framebuffer is headless,
+ * too small, or uses a BitMask pixel format that we cannot pack.
+ * The ConOut text path in boot_fatal() stays unchanged as the fallback
+ * when graphical rendering is not possible (pre-EBS only; post-EBS
+ * ConOut is disabled by the g_ebs_in_progress guard).
+ *
+ * Components:
+ *   1. fb_pack_rgb(r,g,b)         -- format-aware pixel packing
+ *   2. bsod_font[128][8]          -- 8x8 bitmap font (ported from boot_halt.c)
+ *   3. bsod_blit_char / string    -- per-glyph blit with clip
+ *   4. bsod_blit_string_scaled()  -- pixel-doubled title/headline text
+ *   5. bsod_sad_face[16]          -- 16x16 sad face pixel art
+ *   6. bsod_blit_sad_face()       -- scale 4x to 64x64
+ *   7. bsod_fill_rect()           -- solid color rect
+ *   8. bsod_render_graphical()    -- full layout: fill + icon + text + QR
+ * ============================================================================ */
+
+/* Pack (R, G, B) into a 32-bit GOP pixel using the active pixel format.
+ * Returns 0 on BitMask format (caller should skip colored rendering). */
+static UINT32 fb_pack_rgb(UINT8 r, UINT8 g, UINT8 b)
+{
+    if (gFbPixelFormat == 0) {
+        /* RGBX: byte 0 = R, byte 1 = G, byte 2 = B */
+        return ((UINT32)r) | ((UINT32)g << 8) | ((UINT32)b << 16);
+    }
+    if (gFbPixelFormat == 1) {
+        /* BGRX: byte 0 = B, byte 1 = G, byte 2 = R */
+        return ((UINT32)b) | ((UINT32)g << 8) | ((UINT32)r << 16);
+    }
+    /* BitMask or unknown: safe fallback to black (0x00000000 is
+     * palindromic and renders as black on every format). */
+    return 0x00000000;
+}
+
+/* ---- Inline 8x8 bitmap font (ported from src/kernel/main/boot_halt.c)
+ * Each entry: 8 rows, 1 byte per row, MSB = leftmost pixel.  Characters
+ * 0x00-0x1F and 0x7F are solid blocks (used for any control / garbage).
+ * ASCII printable 0x20-0x7E carefully drawn.  Shared verbatim with the
+ * kernel halt screen font so boot and panic screens read the same. */
+#define BSOD_FONT_W 8
+#define BSOD_FONT_H 8
+
+static const UINT8 bsod_font[128][8] = {
+    [0x00] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x01] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x02] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x03] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x04] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x05] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x06] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x07] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x08] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x09] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x0A] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x0B] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x0C] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x0D] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x0E] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x0F] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x10] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x11] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x12] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x13] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x14] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x15] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x16] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x17] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x18] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x19] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x1A] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x1B] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x1C] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x1D] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x1E] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    [0x1F] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+
+    [0x20] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},  /* SPACE */
+    [0x21] = {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00},  /* ! */
+    [0x22] = {0x66,0x66,0x24,0x00,0x00,0x00,0x00,0x00},  /* " */
+    [0x23] = {0x36,0x36,0x7F,0x36,0x7F,0x36,0x36,0x00},  /* # */
+    [0x24] = {0x0C,0x3E,0x03,0x1E,0x30,0x1F,0x0C,0x00},  /* $ */
+    [0x25] = {0x00,0x63,0x33,0x18,0x0C,0x66,0x63,0x00},  /* % */
+    [0x26] = {0x1C,0x36,0x1C,0x6E,0x3B,0x33,0x6E,0x00},  /* & */
+    [0x27] = {0x06,0x06,0x03,0x00,0x00,0x00,0x00,0x00},  /* ' */
+    [0x28] = {0x18,0x0C,0x06,0x06,0x06,0x0C,0x18,0x00},  /* ( */
+    [0x29] = {0x06,0x0C,0x18,0x18,0x18,0x0C,0x06,0x00},  /* ) */
+    [0x2A] = {0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00},  /* * */
+    [0x2B] = {0x00,0x0C,0x0C,0x3F,0x0C,0x0C,0x00,0x00},  /* + */
+    [0x2C] = {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C,0x06},  /* , */
+    [0x2D] = {0x00,0x00,0x00,0x3F,0x00,0x00,0x00,0x00},  /* - */
+    [0x2E] = {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C,0x00},  /* . */
+    [0x2F] = {0x60,0x30,0x18,0x0C,0x06,0x03,0x01,0x00},  /* / */
+
+    [0x30] = {0x3E,0x63,0x73,0x7B,0x6F,0x67,0x3E,0x00},
+    [0x31] = {0x0C,0x0E,0x0C,0x0C,0x0C,0x0C,0x3F,0x00},
+    [0x32] = {0x1E,0x33,0x30,0x1C,0x06,0x33,0x3F,0x00},
+    [0x33] = {0x1E,0x33,0x30,0x1C,0x30,0x33,0x1E,0x00},
+    [0x34] = {0x38,0x3C,0x36,0x33,0x7F,0x30,0x78,0x00},
+    [0x35] = {0x3F,0x03,0x1F,0x30,0x30,0x33,0x1E,0x00},
+    [0x36] = {0x1C,0x06,0x03,0x1F,0x33,0x33,0x1E,0x00},
+    [0x37] = {0x3F,0x33,0x30,0x18,0x0C,0x0C,0x0C,0x00},
+    [0x38] = {0x1E,0x33,0x33,0x1E,0x33,0x33,0x1E,0x00},
+    [0x39] = {0x1E,0x33,0x33,0x3E,0x30,0x18,0x0E,0x00},
+
+    [0x3A] = {0x00,0x0C,0x0C,0x00,0x00,0x0C,0x0C,0x00},  /* : */
+    [0x3B] = {0x00,0x0C,0x0C,0x00,0x00,0x0C,0x0C,0x06},  /* ; */
+    [0x3C] = {0x18,0x0C,0x06,0x03,0x06,0x0C,0x18,0x00},  /* < */
+    [0x3D] = {0x00,0x00,0x3F,0x00,0x3F,0x00,0x00,0x00},  /* = */
+    [0x3E] = {0x06,0x0C,0x18,0x30,0x18,0x0C,0x06,0x00},  /* > */
+    [0x3F] = {0x1E,0x33,0x30,0x18,0x0C,0x00,0x0C,0x00},  /* ? */
+    [0x40] = {0x3E,0x63,0x7B,0x7B,0x7B,0x03,0x1E,0x00},  /* @ */
+
+    [0x41] = {0x0C,0x1E,0x33,0x33,0x3F,0x33,0x33,0x00},
+    [0x42] = {0x3F,0x66,0x66,0x3E,0x66,0x66,0x3F,0x00},
+    [0x43] = {0x3C,0x66,0x03,0x03,0x03,0x66,0x3C,0x00},
+    [0x44] = {0x1F,0x36,0x66,0x66,0x66,0x36,0x1F,0x00},
+    [0x45] = {0x7F,0x46,0x16,0x1E,0x16,0x46,0x7F,0x00},
+    [0x46] = {0x7F,0x46,0x16,0x1E,0x16,0x06,0x0F,0x00},
+    [0x47] = {0x3C,0x66,0x03,0x03,0x73,0x66,0x7C,0x00},
+    [0x48] = {0x33,0x33,0x33,0x3F,0x33,0x33,0x33,0x00},
+    [0x49] = {0x1E,0x0C,0x0C,0x0C,0x0C,0x0C,0x1E,0x00},
+    [0x4A] = {0x78,0x30,0x30,0x30,0x33,0x33,0x1E,0x00},
+    [0x4B] = {0x67,0x66,0x36,0x1E,0x36,0x66,0x67,0x00},
+    [0x4C] = {0x0F,0x06,0x06,0x06,0x46,0x66,0x7F,0x00},
+    [0x4D] = {0x63,0x77,0x7F,0x7F,0x6B,0x63,0x63,0x00},
+    [0x4E] = {0x63,0x67,0x6F,0x7B,0x73,0x63,0x63,0x00},
+    [0x4F] = {0x1C,0x36,0x63,0x63,0x63,0x36,0x1C,0x00},
+    [0x50] = {0x3F,0x66,0x66,0x3E,0x06,0x06,0x0F,0x00},
+    [0x51] = {0x1E,0x33,0x33,0x33,0x3B,0x1E,0x38,0x00},
+    [0x52] = {0x3F,0x66,0x66,0x3E,0x36,0x66,0x67,0x00},
+    [0x53] = {0x1E,0x33,0x07,0x0E,0x38,0x33,0x1E,0x00},
+    [0x54] = {0x3F,0x2D,0x0C,0x0C,0x0C,0x0C,0x1E,0x00},
+    [0x55] = {0x33,0x33,0x33,0x33,0x33,0x33,0x3F,0x00},
+    [0x56] = {0x33,0x33,0x33,0x33,0x33,0x1E,0x0C,0x00},
+    [0x57] = {0x63,0x63,0x63,0x6B,0x7F,0x77,0x63,0x00},
+    [0x58] = {0x63,0x63,0x36,0x1C,0x1C,0x36,0x63,0x00},
+    [0x59] = {0x33,0x33,0x33,0x1E,0x0C,0x0C,0x1E,0x00},
+    [0x5A] = {0x7F,0x63,0x31,0x18,0x4C,0x66,0x7F,0x00},
+
+    [0x5B] = {0x1E,0x06,0x06,0x06,0x06,0x06,0x1E,0x00},
+    [0x5C] = {0x03,0x06,0x0C,0x18,0x30,0x60,0x40,0x00},
+    [0x5D] = {0x1E,0x18,0x18,0x18,0x18,0x18,0x1E,0x00},
+    [0x5E] = {0x08,0x1C,0x36,0x63,0x00,0x00,0x00,0x00},
+    [0x5F] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF},
+    [0x60] = {0x0C,0x0C,0x18,0x00,0x00,0x00,0x00,0x00},
+
+    [0x61] = {0x00,0x00,0x1E,0x30,0x3E,0x33,0x6E,0x00},
+    [0x62] = {0x07,0x06,0x06,0x3E,0x66,0x66,0x3B,0x00},
+    [0x63] = {0x00,0x00,0x1E,0x33,0x03,0x33,0x1E,0x00},
+    [0x64] = {0x38,0x30,0x30,0x3E,0x33,0x33,0x6E,0x00},
+    [0x65] = {0x00,0x00,0x1E,0x33,0x3F,0x03,0x1E,0x00},
+    [0x66] = {0x1C,0x36,0x06,0x0F,0x06,0x06,0x0F,0x00},
+    [0x67] = {0x00,0x00,0x6E,0x33,0x33,0x3E,0x30,0x1F},
+    [0x68] = {0x07,0x06,0x36,0x6E,0x66,0x66,0x67,0x00},
+    [0x69] = {0x0C,0x00,0x0E,0x0C,0x0C,0x0C,0x1E,0x00},
+    [0x6A] = {0x30,0x00,0x30,0x30,0x30,0x33,0x33,0x1E},
+    [0x6B] = {0x07,0x06,0x66,0x36,0x1E,0x36,0x67,0x00},
+    [0x6C] = {0x0E,0x0C,0x0C,0x0C,0x0C,0x0C,0x1E,0x00},
+    [0x6D] = {0x00,0x00,0x33,0x7F,0x7F,0x6B,0x63,0x00},
+    [0x6E] = {0x00,0x00,0x1F,0x33,0x33,0x33,0x33,0x00},
+    [0x6F] = {0x00,0x00,0x1E,0x33,0x33,0x33,0x1E,0x00},
+    [0x70] = {0x00,0x00,0x3B,0x66,0x66,0x3E,0x06,0x0F},
+    [0x71] = {0x00,0x00,0x6E,0x33,0x33,0x3E,0x30,0x78},
+    [0x72] = {0x00,0x00,0x3B,0x6E,0x66,0x06,0x0F,0x00},
+    [0x73] = {0x00,0x00,0x3E,0x03,0x1E,0x30,0x1F,0x00},
+    [0x74] = {0x08,0x0C,0x3E,0x0C,0x0C,0x2C,0x18,0x00},
+    [0x75] = {0x00,0x00,0x33,0x33,0x33,0x33,0x6E,0x00},
+    [0x76] = {0x00,0x00,0x33,0x33,0x33,0x1E,0x0C,0x00},
+    [0x77] = {0x00,0x00,0x63,0x6B,0x7F,0x7F,0x36,0x00},
+    [0x78] = {0x00,0x00,0x63,0x36,0x1C,0x36,0x63,0x00},
+    [0x79] = {0x00,0x00,0x33,0x33,0x33,0x3E,0x30,0x1F},
+    [0x7A] = {0x00,0x00,0x3F,0x19,0x0C,0x26,0x3F,0x00},
+
+    [0x7B] = {0x38,0x0C,0x0C,0x07,0x0C,0x0C,0x38,0x00},
+    [0x7C] = {0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x00},
+    [0x7D] = {0x07,0x0C,0x0C,0x38,0x0C,0x0C,0x07,0x00},
+    [0x7E] = {0x6E,0x3B,0x00,0x00,0x00,0x00,0x00,0x00},
+    [0x7F] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+};
+
+/* Draw a single character at (px, py) at scale factor `scale`.
+ * Each source pixel becomes a scale x scale block on the framebuffer. */
+static void bsod_blit_char(UINT32 px, UINT32 py, unsigned char ch,
+                            UINT32 color, UINT32 scale)
+{
+    const UINT8 *glyph = bsod_font[ch & 0x7F];
+    UINT32 row, col, sy, sx;
+    for (row = 0; row < BSOD_FONT_H; row++) {
+        UINT8 bits = glyph[row];
+        for (col = 0; col < BSOD_FONT_W; col++) {
+            if ((bits & (0x80u >> col)) == 0) continue;
+            for (sy = 0; sy < scale; sy++) {
+                UINT32 y = py + row * scale + sy;
+                if (y >= gFbHeight) break;
+                for (sx = 0; sx < scale; sx++) {
+                    UINT32 x = px + col * scale + sx;
+                    if (x >= gFbWidth) break;
+                    gFramebuffer[y * gFbPitch + x] = color;
+                }
+            }
+        }
+    }
+}
+
+/* Draw a null-terminated string at (px, py) at scale factor `scale`.
+ * Advances by (BSOD_FONT_W + 1) * scale per character.  Clips silently
+ * at the right/bottom edge. */
+static void bsod_blit_string(UINT32 px, UINT32 py, const char *str,
+                              UINT32 color, UINT32 scale)
+{
+    UINT32 cx = px;
+    UINT32 advance = (BSOD_FONT_W + 1) * scale;
+    while (*str) {
+        if (cx + BSOD_FONT_W * scale > gFbWidth) break;
+        bsod_blit_char(cx, py, (unsigned char)*str, color, scale);
+        cx += advance;
+        str++;
+    }
+}
+
+/* Compute the pixel width of a string at a given scale.  Used for
+ * centered horizontal placement of the title. */
+static UINT32 bsod_string_width(const char *str, UINT32 scale)
+{
+    UINT32 n = 0;
+    while (str[n]) n++;
+    if (n == 0) return 0;
+    /* n glyphs, (n-1) inter-char gaps of 1 source pixel each. */
+    return (n * BSOD_FONT_W + (n - 1)) * scale;
+}
+
+/* 16x16 sad face: head outline, two eyes, down-curved mouth.  Each row
+ * is 16 bits, MSB = leftmost pixel.  White-on-background. */
+static const UINT16 bsod_sad_face[16] = {
+    0x07E0,  /*     ######      */
+    0x1FF8,  /*   ##########    */
+    0x3FFC,  /*  ############   */
+    0x7FFE,  /* ##############  */
+    0x7E7E,  /* ######  ######  */
+    0xFC3F,  /* ######    ##### */
+    0xFC3F,  /* ######    ##### */
+    0xFFFF,  /* ################ */
+    0xFFFF,  /* ################ */
+    0xF81F,  /* #####      #####*/
+    0xF01F,  /* ####       #####*/
+    0xFFFF,  /* ################ */
+    0x7FFE,  /* ##############  */
+    0x3FFC,  /*  ############   */
+    0x1FF8,  /*   ##########    */
+    0x07E0,  /*     ######      */
+};
+
+/* Render the 16x16 sad face bitmap at (px, py) scaled by `scale`. */
+static void bsod_blit_sad_face(UINT32 px, UINT32 py, UINT32 color, UINT32 scale)
+{
+    UINT32 row, col, sy, sx;
+    for (row = 0; row < 16; row++) {
+        UINT16 bits = bsod_sad_face[row];
+        for (col = 0; col < 16; col++) {
+            if ((bits & (0x8000u >> col)) == 0) continue;
+            for (sy = 0; sy < scale; sy++) {
+                UINT32 y = py + row * scale + sy;
+                if (y >= gFbHeight) break;
+                for (sx = 0; sx < scale; sx++) {
+                    UINT32 x = px + col * scale + sx;
+                    if (x >= gFbWidth) break;
+                    gFramebuffer[y * gFbPitch + x] = color;
+                }
+            }
+        }
+    }
+}
+
+/* Fill [x0, x0+w) x [y0, y0+h) with `color`. */
+static void bsod_fill_rect(UINT32 x0, UINT32 y0, UINT32 w, UINT32 h, UINT32 color)
+{
+    UINT32 y, x;
+    for (y = 0; y < h; y++) {
+        UINT32 fy = y0 + y;
+        if (fy >= gFbHeight) break;
+        for (x = 0; x < w; x++) {
+            UINT32 fx = x0 + x;
+            if (fx >= gFbWidth) break;
+            gFramebuffer[fy * gFbPitch + fx] = color;
+        }
+    }
+}
+
+/* Word-wrap `text` into lines of at most `max_chars` characters,
+ * rendering each line at (px, py + i * line_height).  Breaks at space
+ * boundaries; single words longer than max_chars are hard-cut.  Stops
+ * at `max_lines` or end-of-string. */
+static void bsod_blit_wrapped(UINT32 px, UINT32 py, const char *text,
+                               UINT32 color, UINT32 max_chars, UINT32 max_lines)
+{
+    UINT32 line = 0;
+    UINT32 start = 0;
+    UINT32 i = 0;
+    UINT32 line_h = (BSOD_FONT_H + 2) * 1;  /* scale 1 */
+    char buf[96];
+    UINT32 n;
+
+    if (!text) return;
+    if (max_chars >= sizeof(buf)) max_chars = sizeof(buf) - 1;
+
+    while (text[i] && line < max_lines) {
+        /* Count chars up to next break opportunity within max_chars */
+        UINT32 end = start;
+        UINT32 last_space = 0;
+        UINT32 have_space = 0;
+        while (text[end] && (end - start) < max_chars) {
+            if (text[end] == ' ') { last_space = end; have_space = 1; }
+            end++;
+        }
+        /* If we stopped mid-word and a space exists earlier, break there */
+        if (text[end] != 0 && have_space) end = last_space;
+        n = end - start;
+        for (UINT32 k = 0; k < n; k++) buf[k] = text[start + k];
+        buf[n] = '\0';
+        bsod_blit_string(px, py + line * line_h, buf, color, 1);
+        line++;
+        start = end;
+        while (text[start] == ' ') start++;  /* skip leading spaces */
+        i = start;
+    }
+}
+
+/* Full graphical BSOD layout.  Caller MUST have verified:
+ *   - gFramebuffer != NULL
+ *   - gFbWidth >= 800 && gFbHeight >= 600
+ *   - gFbPixelFormat != 2 (RGBX or BGRX)
+ * Fills the entire screen and renders every overlay.  Does NOT wait
+ * for a keypress -- caller handles that. */
+static void bsod_render_graphical(UINT32 err_code, const char *title,
+                                    const char *detail)
+{
+    UINT32 blue   = fb_pack_rgb(0x20, 0x67, 0xB2);  /* Windows 10 BSOD blue */
+    UINT32 white  = fb_pack_rgb(0xFF, 0xFF, 0xFF);
+    UINT32 ltblue = fb_pack_rgb(0xB2, 0xD8, 0xFF);  /* light blue for hints */
+    UINT32 dim    = fb_pack_rgb(0xA0, 0xC0, 0xE0);  /* soft blue for detail */
+    UINT32 i;
+    char err_buf[32];
+    const char hex[] = "0123456789ABCDEF";
+
+    /* 1. Fill entire framebuffer with blue. */
+    bsod_fill_rect(0, 0, gFbWidth, gFbHeight, blue);
+
+    /* 2. Sad face icon at (fb_w/2 - 32, 60), 16x16 scaled 4x = 64x64. */
+    bsod_blit_sad_face(gFbWidth / 2 - 32, 60, white, 4);
+
+    /* 3. Title at scale 3 (24 pixels tall), centered horizontally. */
+    {
+        const char *t = "Impossible OS could not start";
+        UINT32 w = bsod_string_width(t, 3);
+        UINT32 x = (gFbWidth > w) ? (gFbWidth - w) / 2 : 8;
+        bsod_blit_string(x, 150, t, white, 3);
+    }
+
+    /* 4. Error code + title line at scale 2 (16 pixels tall). */
+    {
+        i = 0;
+        err_buf[i++] = 'E'; err_buf[i++] = 'r'; err_buf[i++] = 'r';
+        err_buf[i++] = 'o'; err_buf[i++] = 'r'; err_buf[i++] = ' ';
+        err_buf[i++] = '0'; err_buf[i++] = 'x';
+        err_buf[i++] = hex[(err_code >> 12) & 0xF];
+        err_buf[i++] = hex[(err_code >>  8) & 0xF];
+        err_buf[i++] = hex[(err_code >>  4) & 0xF];
+        err_buf[i++] = hex[(err_code >>  0) & 0xF];
+        err_buf[i++] = ':';
+        err_buf[i++] = ' ';
+        err_buf[i] = '\0';
+        UINT32 w1 = bsod_string_width(err_buf, 2);
+        bsod_blit_string(80, 230, err_buf, ltblue, 2);
+        if (title) {
+            bsod_blit_string(80 + w1, 230, title, white, 2);
+        }
+    }
+
+    /* 5. Detail text wrapped into lines of up to ~80 chars at scale 1. */
+    if (detail) {
+        bsod_blit_wrapped(80, 280, detail, dim, 80, 3);
+    }
+
+    /* 6. Recovery hint lines at scale 1. */
+    bsod_blit_string(80, 320, "What to try:", white, 1);
+    bsod_blit_string(100, 336,
+                      "- Check boot media is inserted", ltblue, 1);
+    bsod_blit_string(100, 350,
+                      "- Verify \\boot\\kernel.exe exists", ltblue, 1);
+    bsod_blit_string(100, 364,
+                      "- Scan the QR code for recovery help", ltblue, 1);
+    bsod_blit_string(100, 378,
+                      "- Press any key to reboot", ltblue, 1);
+
+    /* 7. QR code + URL caption, bottom-right.
+     *
+     * The existing qr_render_error_url() (S14) places the QR with a
+     * fixed 12-pixel bottom margin, which leaves no room for a caption
+     * line below.  For the graphical BSOD we inline the QR encoding
+     * here and position the QR higher so the URL text fits in the
+     * reserved bottom strip.  qr_render_to_fb is called directly. */
+    {
+        char url[48];
+        static const char prefix[] = "impossibleos.co/err/";
+        int k;
+        UINT8 data_cw[QR_DATA_CW];
+        UINT8 ec_cw[QR_EC_LEN];
+        UINT8 all_cw[QR_TOTAL_CW];
+        UINT8 matrix[QR_SIZE][QR_SIZE];
+        UINT8 used[QR_SIZE][QR_SIZE];
+        UINT32 mod;
+        UINT32 quiet_zone;
+        UINT32 qr_total;
+        UINT32 side_margin = 12;
+        UINT32 caption_reserve;
+        UINT32 url_w;
+        UINT32 qr_x, qr_y;
+        UINT32 url_x, url_y;
+
+        for (k = 0; prefix[k]; k++) url[k] = prefix[k];
+        url[k++] = hex[(err_code >> 12) & 0xF];
+        url[k++] = hex[(err_code >>  8) & 0xF];
+        url[k++] = hex[(err_code >>  4) & 0xF];
+        url[k++] = hex[(err_code >>  0) & 0xF];
+        url[k] = '\0';
+
+        /* Match the mod-size selection from qr_render_error_url so the
+         * QR has the same visual scale across renderers. */
+        mod = 4;
+        if (gFbWidth >= 1920) mod = 6;
+        if (gFbWidth >= 2560) mod = 8;
+        quiet_zone = mod * 4;
+        qr_total = (UINT32)(QR_SIZE * mod + quiet_zone * 2);
+
+        /* Reserve space below the QR for one line of caption text at
+         * scale 1 plus a small gap. */
+        caption_reserve = BSOD_FONT_H + 6;
+
+        if (gFbWidth >= qr_total + side_margin &&
+            gFbHeight >= qr_total + side_margin + caption_reserve) {
+
+            if (qr_encode_data(url, data_cw) != 0) {
+                qr_reed_solomon(data_cw, QR_DATA_CW, ec_cw);
+                for (k = 0; k < QR_DATA_CW; k++) all_cw[k] = data_cw[k];
+                for (k = 0; k < QR_EC_LEN; k++)
+                    all_cw[QR_DATA_CW + k] = ec_cw[k];
+                qr_place_patterns(matrix, used);
+                qr_place_data(matrix, used, all_cw, QR_TOTAL_CW);
+                qr_apply_mask_and_format(matrix);
+
+                qr_x = gFbWidth  - qr_total - side_margin;
+                qr_y = gFbHeight - qr_total - side_margin - caption_reserve;
+                qr_render_to_fb(matrix, qr_x, qr_y, mod);
+
+                url_w = bsod_string_width(url, 1);
+                /* Horizontal placement:
+                 *   - If URL fits under the QR module area, center under it.
+                 *   - Otherwise (common on 1280x720 where qr_total=148px
+                 *     and url_w ~= 216px), right-align the URL so it
+                 *     ends at gFbWidth - side_margin and does not get
+                 *     clipped by the right edge.
+                 *   - If even that would push the left edge past
+                 *     side_margin (extremely narrow screens), skip. */
+                if (qr_total >= url_w) {
+                    url_x = qr_x + (qr_total - url_w) / 2;
+                } else if (gFbWidth >= url_w + 2 * side_margin) {
+                    url_x = gFbWidth - side_margin - url_w;
+                } else {
+                    url_x = side_margin;
+                    if (url_x + url_w > gFbWidth) {
+                        /* Screen too narrow for full URL even edge-to-edge. */
+                        url_x = gFbWidth;  /* Sentinel: skip below. */
+                    }
+                }
+                url_y = qr_y + qr_total + 4;
+                if (url_x + url_w <= gFbWidth &&
+                    url_y + BSOD_FONT_H <= gFbHeight) {
+                    bsod_blit_string(url_x, url_y, url, ltblue, 1);
+                }
+            }
+        }
+    }
+}
+
+/* Gate predicate: is the framebuffer usable for the graphical BSOD? */
+static int bsod_can_render_graphical(void)
+{
+    return gFramebuffer != (UINT32 *)0 &&
+           gFbWidth  >= 800 &&
+           gFbHeight >= 600 &&
+           gFbPixelFormat != 2;  /* skip BitMask format */
+}
+
 static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
 {
     /* 0. Persist error code in NVRAM for next-boot diagnostics (S13) */
@@ -1309,8 +1807,17 @@ static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
         efi_print(u"  3. Scan QR code for recovery help\r\n");
         efi_print(u"  4. Press any key to reboot or power off\r\n\r\n");
 
-        /* S14: Render QR code on framebuffer (direct pixel write, no EFI call) */
-        qr_render_error_url(err_code);
+        /* S18: Render full graphical BSOD when the framebuffer is
+         * usable.  Covers the blue background, sad face icon, title,
+         * error code, description, QR, and URL.  Fallback when the
+         * framebuffer is headless / too small / BitMask format: the
+         * ConOut text above is the only on-screen signal. */
+        if (bsod_can_render_graphical()) {
+            bsod_render_graphical(err_code, title, detail);
+        } else if (gFramebuffer && gFbWidth > 0 && gFbHeight > 0) {
+            /* Low-res or BitMask: only the QR still works reliably. */
+            qr_render_error_url(err_code);
+        }
 
         /* Wait for keypress with timeout (10 seconds at ~1ms per iteration).
          * Prevents infinite spin on headless servers with no keyboard. */
@@ -1320,9 +1827,15 @@ static void boot_fatal(UINT32 err_code, const char *title, const char *detail)
             while (gST->ConIn->ReadKeyStroke(gST->ConIn, &key) != 0 && --timeout)
                 ;
         }
+    } else if (bsod_can_render_graphical()) {
+        /* EBS in progress or no ConOut -- ConOut is not safe, but direct
+         * framebuffer writes are.  Render the full graphical BSOD; the
+         * serial log above still has the critical details. */
+        bsod_render_graphical(err_code, title, detail);
     } else if (gFramebuffer && gFbWidth > 0 && gFbHeight > 0) {
-        /* EBS in progress or no ConOut -- still render QR to framebuffer
-         * since direct pixel writes work without Boot Services */
+        /* Post-EBS with unusable framebuffer format -- only the QR
+         * renderer works because it uses palindromic B/W pixels that
+         * render correctly on every format. */
         qr_render_error_url(err_code);
     }
 
@@ -1552,6 +2065,7 @@ static EFI_STATUS init_gop(void)
         gFbWidth = 0;
         gFbHeight = 0;
         gFbPitch = 0;
+        gFbPixelFormat = 2;
         g_boot_info_ptr->fb_available = 0;
         g_boot_info_ptr->hidpi = 0;
         return EFI_SUCCESS;
@@ -1562,6 +2076,7 @@ static EFI_STATUS init_gop(void)
     gFbWidth  = gop->Mode->Info->HorizontalResolution;
     gFbHeight = gop->Mode->Info->VerticalResolution;
     gFbPitch  = gop->Mode->Info->PixelsPerScanLine;
+    gFbPixelFormat = gop_pixel_format_code(gop->Mode->Info->PixelFormat);
 
     {
         UINTN required_bytes = (UINTN)gFbHeight * (UINTN)gFbPitch * 4;
@@ -1571,6 +2086,7 @@ static EFI_STATUS init_gop(void)
             serial_early_print("[BOOT] GOP: framebuffer size mismatch -- headless\n");
             gFramebuffer = (UINT32 *)0;
             gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
+            gFbPixelFormat = 2;
             g_boot_info_ptr->fb_available = 0;
             g_boot_info_ptr->hidpi = 0;
             return EFI_SUCCESS;

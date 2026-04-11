@@ -66,7 +66,7 @@
 | 💎  |  15   | boot_info ABI header + bootloader populate     | --         |  [x]   |
 | 💎  |  16   | boot_info kernel validate + unit tests         | §15        |  [x]   |
 | 💎  |  17   | Memory map overlap normalization (sort+carve)  | §12        |  [x]   |
-| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)  | §9, §14    |  [ ]   |
+| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)  | §9, §14    |  [x]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -453,22 +453,23 @@ The kernel must reject invalid `mbi` before copying `struct boot_info`. Validati
 
 ## 18. Graphical Error Screen (ChromeOS/Win11-Style)
 
-The current error screen uses UEFI text console (`ConOut`) with white-on-blue text. ChromeOS shows a clean graphical recovery screen with a large icon, minimal text, and a QR code. Windows 11 BSOD uses a sad face `:(` with a stop code and QR. This section replaces the text-only error screen with a pixel-rendered graphical screen drawn directly to the GOP framebuffer.
+The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue text plus a QR code rendered directly to the framebuffer. §18 adds a full pixel-rendered graphical BSOD drawn to the GOP framebuffer: solid blue fill, large sad face icon, title text, error code, description, QR code, and URL text -- all independent of Boot Services. The ConOut text path remains the fallback when the framebuffer is headless, too small, or uses a BitMask pixel format.
 
 > [!TIP]
 > **Competitive advantage:** ChromeOS and Windows both render graphical error screens, but only at the OS level -- their UEFI-stage errors are plain text or invisible. Rendering a polished graphical error screen at the UEFI bootloader stage (before the OS loads) puts Impossible OS ahead of both competitors for pre-kernel diagnostics.
 > **Regression risk:** LOW -- the text error screen via ConOut remains as fallback when GOP is unavailable. The graphical screen is additive.
 
-- [ ] Render error screen directly to GOP framebuffer (solid blue background fill, no dependency on ConOut/Boot Services)
-- [ ] Large sad face icon or warning triangle rendered as pixel art (16x16 or 32x32 bitmap scaled to 64x64+)
-- [ ] Error title in large font: "Impossible OS could not start" (render using the existing boot splash font or a minimal embedded bitmap font)
-- [ ] Error code prominently displayed: "Error 0x0003 -- Kernel not found"
-- [ ] Human-readable description below the code: explain what went wrong and what the user can do (2-3 lines max)
-- [ ] QR code in bottom-right (already implemented in §14)
-- [ ] URL text below QR: "Scan for help: impossibleos.co/err/0003"
-- [ ] If GOP unavailable: fall back to current ConOut text screen (§9 behavior preserved)
-- [ ] ConOut text output still emitted in parallel for serial capture and headless servers
-- [ ] Commit: `"boot: graphical error screen -- ChromeOS-style recovery UX"`
+- [x] `bsod_render_graphical()` fills the entire GOP framebuffer with Windows 10 BSOD blue (`fb_pack_rgb(0x20, 0x67, 0xB2)`) via `bsod_fill_rect()`, then layers icon/text/QR/URL directly with `gFramebuffer[y * gFbPitch + x] = color` pixel writes -- no ConOut, no Boot Services. Lives in [src/boot/uefi/bootx64.c](src/boot/uefi/bootx64.c).
+- [x] `bsod_sad_face[16]` is a 16x16 pixel-art face (UINT16 per row, MSB-left) rendered at scale 4 (64x64) via `bsod_blit_sad_face()`. Centered at (fb_w/2 - 32, 60).
+- [x] Title "Impossible OS could not start" rendered at scale 3 (24px tall) centered via `bsod_string_width()` + `bsod_blit_string()`. Uses an inline 8x8 bitmap font (`bsod_font[128][8]`) ported verbatim from `src/kernel/main/boot_halt.c` so the kernel halt screen and bootloader BSOD share the same typeface.
+- [x] Error code line "Error 0xXXXX: <title>" rendered at scale 2 (16px tall), left-aligned at (80, 230). Hex nibbles computed inline from `err_code` via an `hex[]` table.
+- [x] Description text rendered via `bsod_blit_wrapped()` with word-wrap at space boundaries (max 80 chars per line, up to 3 lines). Followed by static recovery hint lines at scale 1: "What to try:", "- Check boot media is inserted", "- Verify \boot\kernel.exe exists", "- Scan the QR code for recovery help", "- Press any key to reboot".
+- [x] QR code in bottom-right: §18 inlines the S14 encoder (`qr_encode_data` + `qr_reed_solomon` + `qr_place_patterns` + `qr_place_data` + `qr_apply_mask_and_format` + `qr_render_to_fb`) so the QR position can reserve vertical space (`caption_reserve = BSOD_FONT_H + 6`) below it for the URL caption. This is a deliberate departure from calling `qr_render_error_url()` (which uses the old fixed 12-pixel bottom margin suitable for the QR-only path).
+- [x] URL text "impossibleos.co/err/XXXX" rendered at scale 1 directly below the QR. Horizontal placement uses three branches: center under QR if it fits, else right-align so caption ends at `gFbWidth - side_margin`, else skip for absurdly narrow screens. Final fit guard: `url_x + url_w <= gFbWidth && url_y + BSOD_FONT_H <= gFbHeight`. Codex rounds 2 and 3 caught and fixed an unreachable-URL bug and a 1280x720 right-edge clip before this item landed.
+- [x] `bsod_can_render_graphical()` predicate gates the graphical path: `gFramebuffer != NULL && gFbWidth >= 800 && gFbHeight >= 600 && gFbPixelFormat != 2` (2 = BitMask). On fail, the existing ConOut text screen from §9 is preserved unchanged. The ConOut + graphical paths are mutually additive when both work; graphical-only post-EBS because `g_ebs_in_progress` disables ConOut after a failed ExitBootServices.
+- [x] ConOut text output stays in parallel whenever `!g_ebs_in_progress`: serial capture, headless servers, and firmware console users still see the full text diagnostic. Pre-EBS path emits ConOut FIRST, then calls `bsod_render_graphical()`; post-EBS path skips ConOut (per existing invariant) and emits graphical + serial only.
+- [x] `fb_pack_rgb(r, g, b)` helper packs RGB into the correct 32-bit GOP pixel based on `gFbPixelFormat` (new global): RGBX swaps bytes one way, BGRX the other, BitMask returns 0 (fallback to black). Added alongside the pixel format detection in `init_gop()` so the graphical BSOD renders the same colors on both firmware conventions.
+- [x] Commit: `"boot: graphical error screen -- ChromeOS-style recovery UX"`
 
 **Test checkpoint:** Trigger `error_screen_test=1`. Error screen renders a clean graphical layout with icon, error text, description, QR code, and URL. ConOut text still appears on serial. Headless mode (no GOP) shows text-only fallback. Compare visually against ChromeOS recovery and Windows 11 BSOD for polish level.
 
@@ -476,26 +477,26 @@ The current error screen uses UEFI text console (`ConOut`) with white-on-blue te
 
 ## OS Comparison
 
-| ⭐ | Feature         | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                |
-| -- | --------------- | --------------------------------- | ------------------------------- | -------------------------------- |
-| 💎 | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds         | ✅ §1 phdr+seg+overlap+32M cap  |
-| 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ✅ §2 N=4 bounded + map refresh |
-| 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ✅ §3 3-path search + DeviceHdl |
-| 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ✅ §4 COM1/COM2 probe+boot_info |
-| 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ✅ §5 headless + SetMode fallbk |
-| 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ✅ §6 512 cap + truncate warn   |
-| 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ✅ §7 key whitelist + range chk |
-| 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ✅ §8 32/16/8 MiB + overlap chk |
-| 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ✅ §10 RSDP->XSDT->SPCR parse   |
-| 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ✅ §11 60s arm + disarm pre-EBS |
-| 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ✅ §12 align+pages+type+overlap |
-| ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot  |
-| ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ✅ §13 13 codes + NVRAM persist |
-| ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ✅ §14 QR V3 byte mode + scan   |
-| ⭐ | Graphical error | ✅ :( BSOD (OS-level only)       | ❌ GRUB text menu only          | ⬜ §18 ChromeOS-style pixel UX  |
+| ⭐ | Feature         | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                 |
+| -- | --------------- | --------------------------------- | ------------------------------- | --------------------------------- |
+| 💎 | ELF bounds      | ✅ PE header + SizeOfImage check | ✅ GRUB ELF phdr bounds         | ✅ §1 phdr+seg+overlap+32M cap   |
+| 💎 | EBS retry       | ✅ bootmgr bounded retry loop    | ✅ efi-stub retry on map stale  | ✅ §2 N=4 bounded + map refresh  |
+| 💎 | Kernel fallback | ✅ BCD alternate paths + WinRE   | ✅ GRUB rescue + fallback.cfg   | ✅ §3 3-path search + DeviceHdl  |
+| 💎 | Serial detect   | ✅ ACPI SPCR + EMS headless      | ✅ earlycon=uart,io,0x3f8       | ✅ §4 COM1/COM2 probe+boot_info  |
+| 💎 | GOP degrade     | ✅ Fallback to basic display     | ✅ efifb + simpledrm fallback   | ✅ §5 headless + SetMode fallbk  |
+| 💎 | Mmap overflow   | ✅ Dynamic buffer reallocation   | ✅ Grow buf + retry loop        | ✅ §6 512 cap + truncate warn    |
+| 💎 | boot.conf parse | ✅ BCD registry schema + edit    | ✅ grub.cfg + grub-mkconfig     | ✅ §7 key whitelist + range chk  |
+| 💎 | Alloc fallback  | ✅ Graduated pool sizes          | ✅ Dynamic retry allocation     | ✅ §8 32/16/8 MiB + overlap chk  |
+| 💎 | SPCR serial     | ✅ EMS Emergency Management      | ✅ earlycon SPCR auto-detect    | ✅ §10 RSDP->XSDT->SPCR parse    |
+| 💎 | UEFI watchdog   | ✅ Re-arm via SetWatchdogTimer   | ✅ efi_stub disables watchdog   | ✅ §11 60s arm + disarm pre-EBS  |
+| 💎 | Mmap validate   | ✅ Descriptor version + size     | ✅ efi_stub sanity checks       | ✅ §12 align+pages+type+overlap  |
+| ⭐ | Error screen    | ❌ Generic BSOD (no boot ctx)    | ⚠️ GRUB text menu (no graphics) | ✅ §9 blue BSOD + key + reboot   |
+| ⭐ | NVRAM errors    | ⚠️ Opaque status codes           | ❌ No persistent boot errors    | ✅ §13 13 codes + NVRAM persist  |
+| ⭐ | Boot QR         | ❌ No UEFI-phase QR codes        | ❌ No GRUB QR support           | ✅ §14 QR V3 byte mode + scan    |
+| ⭐ | Graphical error | ✅ :( BSOD (OS-level only)       | ❌ GRUB text menu only          | ✅ §18 pre-OS pixel BSOD + icon  |
 | 💎 | Mmap normalize  | ✅ Hal.dll coalesces overlaps    | ✅ efi_fake_memmap + sanitize   | ✅ §17 sweep-line carve+min-loss |
-| 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ✅ §15 magic+ver+size + halt    |
-| 💎 | Offline repair  | ✅ Windows Recovery Environment  | ✅ rescue/live ISO image        | ⬜ TODO-15 recovery partition   |
+| 💎 | Handoff ABI     | ✅ BCD signature + protocol      | ✅ Multiboot2 / Linux boot      | ✅ §15 magic+ver+size + halt     |
+| 💎 | Offline repair  | ✅ Windows Recovery Environment  | ✅ rescue/live ISO image        | ⬜ TODO-15 recovery partition    |
 
 > **Parity:** 💎 rows track Win11 + Linux bootloader hardening. **⭐** rows are pre-kernel UX beyond typical UEFI/GRUB rescue. Capsule apply stays `TODO-18 §2`; multi-GOP enumeration stays `TODO-18 §4` with §5 here as timeout wrapper only. Full recovery partition / WinRE-class repair is `TODO-15-recovery-partition.md`, not duplicated here.
 
