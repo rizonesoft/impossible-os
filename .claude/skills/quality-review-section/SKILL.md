@@ -58,14 +58,19 @@ description: Deep quality review of an implemented TODO section -- industry stan
    - **Wrong/misleading:** reject with concrete code evidence.
    - **Out of scope:** accept with domain-qualified XREF.
 
-5. **Self-review BEFORE fixing** -- walk the section's source files one more time looking for what BOTH your spec research AND Codex may have missed:
+5. **Feature completeness + stub audit** (MANDATORY) -- grep the section's source files for incomplete features:
+   - **`STATUS_NOT_IMPLEMENTED` stubs:** if the function is standalone (self-contained, under 1000 lines), IMPLEMENT it fully. Features must not get lost behind stubs. If it requires significant new infrastructure, Accept with a domain-qualified XREF.
+   - **Scope-gap markers:** `TODO`, `FIXME`, `HACK`, `XXX`, `for now`, `placeholder`, `STUB(`. Cross-check against TODO text -- undisclosed gaps are findings.
+   - **Partial implementations:** functions that return early on edge cases without handling them. Error paths that silently succeed. Switch statements with missing cases.
+   - **Dead API promises:** functions declared in headers but not implemented, or implemented but never called.
+
+7. **Self-review BEFORE fixing** -- walk the section's source files looking for what spec research, Codex, AND the stub audit missed:
    - Regressions from recent changes in other sections
    - Race conditions that only manifest under specific scheduling
    - Edge cases at boundary values (0, 1, MAX, overflow)
    - Resource leaks on error paths (handles, memory, locks not released)
-   - Industry conventions: are we doing something no other OS does? If so, is it intentional or an oversight?
 
-6. **Classify all findings** (from steps 2, 3, 4, and 5):
+8. **Classify all findings** (from steps 2, 3, 4, 5, and 7):
 
    | Label | Meaning | Action |
    |-------|---------|--------|
@@ -75,23 +80,21 @@ description: Deep quality review of an implemented TODO section -- industry stan
    | **Simplification** | Same behavior with less code | Fix |
    | **Parity gap** | Win11/Linux does this better | Fix if feasible; Accept with XREF if large |
    | **Dead code** | Unreachable or unused | Remove |
+   | **Incomplete** | STATUS_NOT_IMPLEMENTED stub or partial implementation | Implement if standalone; Accept with XREF if needs infrastructure |
    | **Accept** | Wrong, irrelevant, or needs missing infrastructure | Document why with code evidence |
 
-7. **Fix loop** -- fix ALL non-Accept findings. Priority: spec violations > dead code > best practices > simplifications > parity gaps > optimizations. Build after each batch.
+9. **Fix loop** -- fix ALL non-Accept findings. Priority: spec violations > incomplete stubs > dead code > best practices > simplifications > parity gaps > optimizations. Build after each batch.
 
-8. **Post-fix self-review** -- after all fixes applied:
-   - Walk every fix: does it introduce regressions, new races, or new complexity?
-   - Confirm no TODO/FIXME/HACK introduced by fixes
-   - Final build: `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
+10. **Post-fix self-review** -- walk every fix for regressions, confirm no TODO/FIXME/HACK introduced. Final build.
 
-9. **Report** -- summarize what was fixed vs accepted.
+11. **Report** -- summarize what was fixed vs accepted.
 
-10. **Quality stamp** -- add IMMEDIATELY after the Verified stamp (no blank line):
+12. **Quality stamp** -- add IMMEDIATELY after the Verified stamp (no blank line):
     ```
     > **Quality reviewed:** YYYY-MM-DD -- <summary>. Accepted: <items with domain-qualified XREFs, or "none">.
     ```
 
-11. **Commit and push** -- `"quality: <TODO> §N -- <summary>"`
+13. **Commit and push** -- `"quality: <TODO> §N -- <summary>"`
 
 ## Guardrails
 
