@@ -72,7 +72,8 @@ struct boot_config {
     UINT8   crash_test;        /* 1 = trigger deliberate BSOD after desktop init */
     UINT8   ob_handle_trace;   /* 1 = log every handle alloc/free to klog */
     UINT8   config_version;    /* 0 = legacy, 1+ = versioned (S7) */
-    UINT8   _reserved[13];     /* future fields -- zero-filled by defaults */
+    UINT8   error_screen_test; /* 1 = call boot_fatal() before kernel load (S14) */
+    UINT8   _reserved[12];     /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     UINT8   _pad[223];         /* pad to 512 bytes total (sector-aligned) */
@@ -1764,6 +1765,9 @@ static void parse_conf_kv(struct boot_config *cfg,
     }
     else if (ascii_streq(key, "crash_test")) {
         cfg->crash_test = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "error_screen_test")) {
+        cfg->error_screen_test = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "ob_handle_trace")) {
         cfg->ob_handle_trace = (UINT8)ascii_atoi(val);
@@ -3648,6 +3652,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         for (row = 0; row < gFbHeight; row++)
             for (col = 0; col < gFbWidth; col++)
                 gFramebuffer[row * gFbPitch + col] = 0x00000000;
+    }
+
+    /* S14: error_screen_test=1 in boot.conf triggers boot_fatal for QR/BSOD testing.
+     * GOP is initialized, framebuffer is ready for QR code rendering. */
+    if (g_boot_info_ptr->config.error_screen_test) {
+        serial_early_print("[BOOT] error_screen_test=1 -- triggering boot_fatal\n");
+        boot_fatal(BOOT_ERR_KERNEL_NOT_FOUND, "Error screen test",
+                   "Deliberate boot failure triggered by error_screen_test=1 in boot.conf.");
     }
 
     /* Load kernel ELF */

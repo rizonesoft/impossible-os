@@ -30,7 +30,8 @@ Param(
     [string]$TestSuite = '',  # category filter: mm, fs, ob, security, ipc, sched, boot, abi, storage
     [switch]$Quiet,       # suppress PASS lines, show FAIL + summary only
     [string]$ExtraArgs = '',  # additional QEMU arguments (e.g., "-machine pc,i8042=on")
-    [switch]$CrashTest    # boot with crash_test=1 (deliberate BSOD after desktop)
+    [switch]$CrashTest,   # boot with crash_test=1 (deliberate BSOD after desktop)
+    [switch]$ErrorScreenTest  # boot with error_screen_test=1 (trigger boot_fatal for QR/BSOD)
 )
 
 $ErrorActionPreference = "Stop"
@@ -145,6 +146,7 @@ if ($TestOnly -or $TestSuite) { $PatchArgs += @('test', '1') }
 if ($TestSuite) { $PatchArgs += @('test_suite', $TestSuite) }
 if ($Quiet)     { $PatchArgs += @('test_quiet', '1') }
 if ($CrashTest) { $PatchArgs += @('crash_test', '1') }
+if ($ErrorScreenTest) { $PatchArgs += @('error_screen_test', '1') }
 
 if ($PatchArgs.Count -gt 0) {
     $PatchStr = $PatchArgs -join ' '

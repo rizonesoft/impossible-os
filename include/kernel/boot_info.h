@@ -209,10 +209,12 @@ struct boot_config {
     uint8_t  ob_handle_trace;  /* 1 = log every handle alloc/free to klog */
     /* Config version (S7) -- future boot.conf changes can key on this */
     uint8_t  config_version;   /* 0 = unversioned (legacy), 1+ = versioned */
+    /* Error screen test (S14) -- trigger boot_fatal from bootloader for QR/BSOD testing */
+    uint8_t  error_screen_test; /* 1 = call boot_fatal() before kernel load */
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[13];
+    uint8_t  _reserved[12];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
