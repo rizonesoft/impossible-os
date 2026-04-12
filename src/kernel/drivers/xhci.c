@@ -17,6 +17,7 @@
 #include "kernel/irq.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
+#include "kernel/spinner.h"
 
 /* ---- Static state -------------------------------------------------------- */
 
@@ -108,7 +109,9 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
             /* Set HC OS Owned Semaphore (bit 24) */
             xhci_write32(hc->mmio_base, xecp_off, cap | (1 << 24));
 
-            /* Wait up to 1s for BIOS Owned Semaphore (bit 16) to clear */
+            /* Wait up to 1s for BIOS Owned Semaphore (bit 16) to clear.
+             * Advance the boot spinner every ~100ms so the UI stays alive
+             * during the potentially slow BIOS handoff. */
             uint32_t timeout = 1000;
             while (timeout > 0) {
                 cap = xhci_read32(hc->mmio_base, xecp_off);
@@ -119,6 +122,8 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
                     return;
                 }
                 xhci_delay_us(1000);  /* 1ms */
+                if ((timeout % 100) == 0)
+                    spinner_advance();
                 timeout--;
             }
 
