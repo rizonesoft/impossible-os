@@ -1491,7 +1491,7 @@ static void bsod_fill_rect(UINT32 x0, UINT32 y0, UINT32 w, UINT32 h, UINT32 colo
 static void bsod_render_graphical(UINT32 err_code, const char *title,
                                     const char *detail)
 {
-    UINT32 blue   = fb_pack_rgb(0x20, 0x67, 0xB2);  /* Windows 10 BSOD blue */
+    UINT32 blue   = fb_pack_rgb(0x0A, 0x0A, 0x0A);  /* near-black background */
     UINT32 i;
     char err_buf[32];
     const char hex[] = "0123456789ABCDEF";
@@ -1504,18 +1504,18 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
      *    Blends white foreground onto the blue background. */
     bsod_blit_icon_aa(gFbWidth / 2 - BSOD_ICON_W / 2, 30,
                        0xFF, 0xFF, 0xFF,   /* fg: white */
-                       0x20, 0x67, 0xB2);  /* bg: BSOD blue */
+                       0x0A, 0x0A, 0x0A);  /* bg: near-black */
 
     /* Shorthand macros for the three AA font sizes.  bg = BSOD blue. */
 #define AA_TITLE(px, py, str, r, g, b) \
     bsod_aa_string((px), (py), (str), bsod_aa_TITLE, bsod_aa_TITLE_data, \
-                    BSOD_AA_TITLE_ASCENT, (r), (g), (b), 0x20, 0x67, 0xB2)
+                    BSOD_AA_TITLE_ASCENT, (r), (g), (b), 0x0A, 0x0A, 0x0A)
 #define AA_SUB(px, py, str, r, g, b) \
     bsod_aa_string((px), (py), (str), bsod_aa_SUB, bsod_aa_SUB_data, \
-                    BSOD_AA_SUB_ASCENT, (r), (g), (b), 0x20, 0x67, 0xB2)
+                    BSOD_AA_SUB_ASCENT, (r), (g), (b), 0x0A, 0x0A, 0x0A)
 #define AA_BODY(px, py, str, r, g, b) \
     bsod_aa_string((px), (py), (str), bsod_aa_BODY, bsod_aa_BODY_data, \
-                    BSOD_AA_BODY_ASCENT, (r), (g), (b), 0x20, 0x67, 0xB2)
+                    BSOD_AA_BODY_ASCENT, (r), (g), (b), 0x0A, 0x0A, 0x0A)
 
     /* 3. Title (36px Selawik Semibold), centered horizontally.
      *    Positioned 20px below the icon bottom (icon at y=30, h=100). */
@@ -1556,7 +1556,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
                          BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H,
                          gFbWidth - 160, 3,
                          0xA0, 0xC0, 0xE0,   /* dim blue-white */
-                         0x20, 0x67, 0xB2);
+                         0x0A, 0x0A, 0x0A);
     }
 
     /* 6. Recovery hint lines (16px body font). */
@@ -1651,7 +1651,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
                                     bsod_aa_BODY, bsod_aa_BODY_data,
                                     BSOD_AA_BODY_ASCENT,
                                     0xB2, 0xD8, 0xFF,
-                                    0x20, 0x67, 0xB2);
+                                    0x0A, 0x0A, 0x0A);
                 }
             }
         }
