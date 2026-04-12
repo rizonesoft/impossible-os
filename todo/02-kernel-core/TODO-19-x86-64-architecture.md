@@ -17,15 +17,15 @@
 
 ## Inputs
 
-- `src/kernel/gfx/gfx_simd.c`: `simd_enable_avx()`, blit helpers; AVX2 memops land in §2
+- `src/kernel/gfx/gfx_simd.c`: `simd_enable_avx()`, blit helpers; AVX2 memops land in §2, AVX-512 in §3
 - `include/kernel/cpuid.h`: `xsave_size`, `xsave_size_max`, `xcr0_supported` fields already populated from leaf 0x0D
 - `src/kernel/sched/task.c`: `struct task` holds `xsave_area` / `fpu_used` (§1)
-- `src/kernel/smp/smp.c`: per-CPU bring-up; MSR access via `msr.c` (§3)
+- `src/kernel/smp/smp.c`: per-CPU bring-up; MSR access via `msr.c` (§4)
 - `src/kernel/mm/vmm.c`: `vmm_map_page`; extend for 1 GiB PS bit and PAT bits
-- `src/kernel/idt.c`: IDT init; FRED replaces/supplements this (§6)
-- -> XREF: `TODO-06-irql-model-dpcs.md §3`: per-CPU IRQL; FRED event levels map to IRQL (§6)
-- -> XREF: `TODO-07-time-filetime-management.md §3`: per-CPU TSC read path (`rdtsc_ns`); §9 here programmes `IA32_TSC_AUX` for `RDTSCP` CPU id in ECX
-- -> XREF: `TODO-15-power-management.md §9`: Driver Power Callbacks & Resume Ordering; CPU topology (§7) feeds the scheduler policy deferred to `03-memory-concurrency`
+- `src/kernel/idt.c`: IDT init; FRED replaces/supplements this (§7)
+- -> XREF: `TODO-06-irql-model-dpcs.md §3`: per-CPU IRQL; FRED event levels map to IRQL (§7)
+- -> XREF: `TODO-07-time-filetime-management.md §3`: per-CPU TSC read path (`rdtsc_ns`); §10 here programmes `IA32_TSC_AUX` for `RDTSCP` CPU id in ECX
+- -> XREF: `TODO-15-power-management.md §9`: Driver Power Callbacks & Resume Ordering; CPU topology (§8) feeds the scheduler policy deferred to `03-memory-concurrency`
 - -> XREF: `TODO-17-kernel-security-hardening.md` (§1 through §7): NX, SMEP/SMAP, KPTI, PCID, IBRS, CET are already scoped there; this TODO does not touch those
 - -> XREF: `01-boot-platform/TODO-04-cpu-boot-sequencing.md §1, §3, §5`: CPUID detection call site (§1), hypervisor pre-detection (§3), XSAVE/PCID Phase 1 activation window (§5) consume features defined here
 
@@ -53,18 +53,19 @@
 | ⭐  | Order | Deliverable                                         | Depends On           | Status |
 | --- | :---: | --------------------------------------------------- | -------------------- | :----: |
 | 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)    | (none)               |  [x]   |
-| 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                     | §1                   |  [ ]   |
-| 💎  |   3   | MSR management infrastructure (`msr.c`)             | (none)               |  [/]   |
-| 💎  |   4   | UMIP + PKU protection keys                          | §3                   |  [ ]   |
-| 💎  |   5   | 1 GiB huge pages + Write-Combining PAT              | §3                   |  [ ]   |
-| 💎  |   6   | FRED event delivery + LKGS                          | §3, T06 §3           |  [ ]   |
-| 💎  |   7   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [ ]   |
-| 💎  |   8   | Performance monitoring counters (Intel + AMD)       | §3                   |  [ ]   |
-| 💎  |   9   | OSVW errata + RDTSCP processor ID setup             | §3, T07 §3           |  [ ]   |
-| 💎  |  10   | AMD IBS profiling (stretch)                         | §3                   |  [ ]   |
-| 💎  |  11   | Virtualization detection (AMD-V + Intel VT-x)       | §3                   |  [x]   |
-| ⭐  |  12   | Boot self-benchmark + auto-tune                     | §1, §2, §7           |  [ ]   |
-| 💎  |  13   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]   |
+| 💎  |   2   | AVX/AVX2 kernel memops + framebuffer blit           | §1                   |  [ ]   |
+| 💎  |   3   | AVX-512 opt-in + future silicon detection           | §2                   |  [ ]   |
+| 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [/]   |
+| 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [ ]   |
+| 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [ ]   |
+| 💎  |   7   | FRED event delivery + LKGS                          | §4, T06 §3           |  [ ]   |
+| 💎  |   8   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [ ]   |
+| 💎  |   9   | Performance monitoring counters (Intel + AMD)       | §4                   |  [ ]   |
+| 💎  |  10   | OSVW errata + RDTSCP processor ID setup             | §4, T07 §3           |  [ ]   |
+| 💎  |  11   | AMD IBS profiling (stretch)                         | §4                   |  [ ]   |
+| 💎  |  12   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]   |
+| ⭐  |  13   | Boot self-benchmark + auto-tune                     | §1, §2, §8           |  [ ]   |
+| 💎  |  14   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -100,7 +101,7 @@
 
 ---
 
-## 2. AVX / AVX2 + AVX-512 Kernel Paths
+## 2. AVX/AVX2 Kernel Memops + Framebuffer Blit
 
 - [ ] `cpu_configure_xcr0()` (§1) enables `XCR0[2]` (AVX YMM halves); this is the gate; `simd_avx2_ok` flag already exists in `gfx_simd.c`
 - [ ] Add `-mavx2` to a per-file `CFLAGS_simd.c` (not all kernel files) and implement in `src/kernel/mm/memops.c`:
@@ -109,22 +110,27 @@
 - [ ] `vzeroupper` at the end of every AVX kernel function to prevent AVX->SSE transition penalties in subsequent SSE code
 - [ ] `memcpy` / `memset` dispatch: `if (cpu_has(CPU_FEATURE_AVX2))` -> AVX2 path; else `if (cpu_has(CPU_FEATURE_SSE2))` -> existing SSE path
 - [ ] Framebuffer blit: update `fb_blit_avx()` from `gfx_simd.c` to use YMM registers (8 pixels/iteration, already scaffolded but verify it uses XSAVE-safe approach after §1)
+- [ ] Commit: `"kernel/simd: AVX/AVX2 memcpy/memset/blit dispatch with vzeroupper"`
+
+**Test checkpoint:** On AVX2-class CPU, `memcpy_avx` / `memset_avx` byte-match scalar reference on 64 KiB; `vzeroupper` emitted at function end; dispatch falls back to SSE2 on TCG. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 3. AVX-512 Opt-In + Future Silicon Detection
 
 - [ ] Enable `XCR0` bits 5-7 if `cpu_has(CPU_FEATURE_AVX512F)` and a frequency-throttle check passes: read `IA32_MPERF`/`IA32_APERF` ratio before and after a 10 us AVX-512 burst; if ratio drops > 5%, disable AVX-512 (core throttling detected; common on consumer CPUs)
 - [ ] Update XSAVE area allocation to use `xsave_size_max` (includes ZMM)
 - [ ] `memcpy_avx512` and `fb_blit_avx512` (16 pixels/iteration) with `zmovdqu64` and `evmovdqu64`; gated by `simd_avx512_ok` flag
 - [ ] `vzeroupper` still needed when mixing 512-bit and 128/256-bit code
-
 - [ ] If `cpu_has(CPU_FEATURE_AVX10)`: log `[SIMD] AVX10 v%u detected; not yet enabled`; placeholder for future enablement when compilers fully support `-mavx10.N`
 - [ ] If `CPUID.(7,1):EDX[21]` (APX): log detected; future work to set `XCR0[19]` (reuses MPX area) and compile with `-mapx`
+- [ ] Commit: `"kernel/simd: AVX-512 opt-in with throttle guard, AVX10/APX detection stubs"`
 
-- [ ] Commit: `"kernel/simd: AVX/AVX2 memcpy/memset/blit paths, AVX-512 opt-in with throttle guard"`
-
-**Test checkpoint:** On AVX2-class CPU, `memcpy_avx` / `memset_avx` byte-match scalar reference on 64 KiB; `vzeroupper` emitted at function end; AVX-512 path disables when MPERF/APERF ratio drops >5% after micro-burst. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** AVX-512 path disables when MPERF/APERF ratio drops >5% after micro-burst; AVX10/APX stubs log and continue without enabling. Test on: QEMU WHPX (has AVX-512 on Rocket Lake+), bare metal.
 
 ---
 
-## 3. MSR Management Infrastructure
+## 4. MSR Management Infrastructure
 
 - [x] Create `src/kernel/msr.c` and `include/kernel/msr.h`: centralised `rdmsr`/`wrmsr` with inline functions:
   ```c
@@ -168,14 +174,14 @@
 
 ---
 
-## 4. UMIP + PKU Protection Keys
+## 5. UMIP + PKU Protection Keys
 
 - [ ] `cpu_enable_umip()`: `if (cpu_has(CPU_FEATURE_UMIP)) cpu_set_cr4_bit(CR4_UMIP)` where `CR4_UMIP = (1ULL << 11)`; called in Phase 1 on BSP and each AP
 - [ ] Effect: user-space `SGDT`, `SIDT`, `SLDT`, `SMSW`, `STR` raise `#GP` instead of revealing GDT/IDT base addresses; eliminates a trivial kernel address leak
 - [ ] Verify: user-mode test `SGDT [ptr]` after `cpu_enable_umip()` must fault with `#GP` (error code = 0)
 
 - [ ] Enable: `if (cpu_has(CPU_FEATURE_PKU)) cpu_set_cr4_bit(CR4_PKE)` where `CR4_PKE = (1ULL << 22)`
-- [ ] Add PKRU to XCR0 (bit 9) in `cpu_configure_xcr0()` (§1); ensures per-thread `PKRU` state is saved/restored automatically
+- [ ] Add PKRU to XCR0 (bit 9) in `cpu_configure_xcr0()` (from §1); ensures per-thread `PKRU` state is saved/restored automatically
 - [ ] Kernel API in `src/kernel/security/pku.c`:
   ```c
   int      pku_alloc_key(void);                /* returns key 1-15; 0 = default */
@@ -194,7 +200,7 @@
 
 ---
 
-## 5. 1 GiB Huge Pages + Write-Combining PAT
+## 6. 1 GiB Huge Pages + Write-Combining PAT
 
 - [ ] Check `cpu_has(CPU_FEATURE_PAGE1GB)` before use
 - [ ] VMM extension: in `vmm_map_range(va, pa, size, flags)`, if size >= 1 GiB and both `va` and `pa` are 1 GiB-aligned and `CPU_FEATURE_PAGE1GB`: use PDPTE with `PS = 1` (bit 7) instead of a PD -> PT chain
@@ -217,7 +223,7 @@
 
 ---
 
-## 6. FRED Event Delivery + LKGS
+## 7. FRED Event Delivery + LKGS
 
 - [ ] Check `cpu_has(CPU_FEATURE_FRED)` (CPUID leaf 7, ECX=1, EAX bit 17)
 - [ ] FRED delivers all events (interrupts, exceptions, `SYSCALL`) to a single kernel entry point with the event type and vector in registers; eliminates IDT corruption edge-cases and provides native NMI nesting
@@ -247,7 +253,7 @@
 
 ---
 
-## 7. CPU Topology: Zen Chiplets + Intel Hybrid
+## 8. CPU Topology: Zen Chiplets + Intel Hybrid
 
 - [ ] Create `src/kernel/topology.c` and `include/kernel/topology.h`:
   ```c
@@ -286,7 +292,7 @@
 
 ---
 
-## 8. Performance Monitoring Counters: Intel + AMD
+## 9. Performance Monitoring Counters: Intel + AMD
 
 - [ ] Check CPUID leaf `0x0A`: PMU version (EAX[7:0]), counter count (EAX[15:8]), counter width (EAX[23:16])
 - [ ] `pmc_intel_start(slot, event_select, unit_mask)`:
@@ -318,7 +324,7 @@
 
 ---
 
-## 9. OSVW Errata + RDTSCP Processor ID Setup
+## 10. OSVW Errata + RDTSCP Processor ID Setup
 
 - [ ] If `cpu_has(CPU_FEATURE_OSVW)`:
   - `msr_read(MSR_AMD_OSVW_ID_LEN)` -> number of errata tracked
@@ -343,7 +349,7 @@
 
 ---
 
-## 10. AMD IBS Profiling (Stretch)
+## 11. AMD IBS Profiling (Stretch)
 
 - [ ] Check `cpu_has(CPU_FEATURE_IBS)` (from §1)
 - [ ] **IBS Fetch Sampling:** samples random instruction fetch ops:
@@ -362,7 +368,7 @@
 
 ---
 
-## 11. Virtualization Detection (AMD-V + Intel VT-x)
+## 12. Virtualization Detection (AMD-V + Intel VT-x)
 
 - [x] AMD SVM / Intel VMX capability reporting: AMD SVM: CPUID 0x8000000A parsed; revision, NPT, ASIDs logged
 - [x] Intel VT-x: `CPU_FEATURE_VMX` added (CPUID.1:ECX[5]); `IA32_FEATURE_CONTROL` MSR read for lock + enable status
@@ -373,7 +379,7 @@
 
 ---
 
-## 12. Boot Self-Benchmark + Auto-Tune
+## 13. Boot Self-Benchmark + Auto-Tune
 
 - [ ] Define in `include/kernel/hw_profile.h`:
   ```c
@@ -413,7 +419,7 @@
 
 ---
 
-## 13. Future Silicon Extensions
+## 14. Future Silicon Extensions
 
 - [ ] Stub: if `CPUID.(7,0):EDX[5]` set: log `[cpu] UINTR present; not yet enabled`; structure definitions in `include/kernel/uintr.h` (UPID, UITT); full implementation deferred until UINTR reaches mainstream silicon
 - [ ] Stub: if `CPUID.(7,0):ECX[16]` set: log `[vmm] LA57 (57-bit VA) detected; 4-level paging active`; enabling at runtime requires a full VMM rewrite; relevant for server SKUs with > 256 TiB virtual address space
@@ -431,27 +437,27 @@
 | 💎   | AMD ext CPUID        | ✅ HAL leaves   | ✅ amd.c         | ✅ §1            |
 | 💎   | XSAVE per thread     | ✅ Full         | ✅ fpu__*        | ✅ §1 Done       |
 | 💎   | AVX memops in kernel | ✅ Yes          | ✅ kfpu          | ⚠️ §2 GFX only  |
-| 💎   | AVX-512 + throttle   | ✅ Yes          | ✅ power aware   | ⬜ §2            |
-| 💎   | Central safe MSR     | ✅ HAL          | ✅ rdmsr_safe    | ✅ §3            |
-| 💎   | UMIP                 | ✅ On           | ✅ 4.15+         | ⬜ §4            |
-| 💎   | PKU / pkeys          | ✅ OS use       | ✅ pkey_*        | ⬜ §4 Win32 API  |
+| 💎   | AVX-512 + throttle   | ✅ Yes          | ✅ power aware   | ⬜ §3            |
+| 💎   | Central safe MSR     | ✅ HAL          | ✅ rdmsr_safe    | ✅ §4            |
+| 💎   | UMIP                 | ✅ On           | ✅ 4.15+         | ⬜ §5            |
+| 💎   | PKU / pkeys          | ✅ OS use       | ✅ pkey_*        | ⬜ §5 Win32 API  |
 | 💎   | PKS (supervisor)     | ⚠️ niche       | ✅ mm since 5.13 | ⬜ defer T17     |
-| 💎   | FB WC PAT            | ✅ GPU path     | ✅ ioremap_wc    | ⬜ §5 UC today   |
-| 💎   | 1 GiB huge pages     | ✅ Large page   | ✅ hugetlb 1G    | ⬜ §5            |
-| 💎   | FRED events          | 🔜 roadmap      | ✅ 6.9+          | ⬜ §6            |
-| 💎   | LKGS fast GS         | 🔜 roadmap      | ✅ 6.4+          | ⬜ §6            |
-| 💎   | Zen CCD NUMA         | ✅ Ke node      | ✅ amd topo      | ⬜ §7            |
-| 💎   | Intel P/E hybrid     | ✅ Director     | ✅ HFI           | ⬜ §7            |
-| 💎   | PMU / PMC            | ✅ ETW WPA      | ✅ perf          | ⬜ §8            |
-| 💎   | OSVW errata          | ✅ HAL          | ✅ amd.c         | ⬜ §9            |
-| 💎   | RDTSCP TSC_AUX       | ✅ QPC path     | ✅ SMP init      | ⬜ §9            |
-| 💎   | AMD IBS sample       | ⚠️ vendor tool | ✅ perf IBS      | ⬜ §10 stretch   |
-| 💎   | SVM VT-x detect      | ✅ HAL          | ✅ kvm caps      | ✅ §11           |
-| ⭐   | Boot hw self tune    | ❌ static       | ❌ static        | ⬜ §12           |
-| ⭐   | PKU Win32 wrapper    | ❌ none         | ⚠️ raw syscalls | ⬜ §4            |
-| ⭐   | Per-core freq UI     | ❌ simple       | ⚠️ turbostat    | ⬜ §8 + shell    |
+| 💎   | FB WC PAT            | ✅ GPU path     | ✅ ioremap_wc    | ⬜ §6 UC today   |
+| 💎   | 1 GiB huge pages     | ✅ Large page   | ✅ hugetlb 1G    | ⬜ §6            |
+| 💎   | FRED events          | 🔜 roadmap      | ✅ 6.9+          | ⬜ §7            |
+| 💎   | LKGS fast GS         | 🔜 roadmap      | ✅ 6.4+          | ⬜ §7            |
+| 💎   | Zen CCD NUMA         | ✅ Ke node      | ✅ amd topo      | ⬜ §8            |
+| 💎   | Intel P/E hybrid     | ✅ Director     | ✅ HFI           | ⬜ §8            |
+| 💎   | PMU / PMC            | ✅ ETW WPA      | ✅ perf          | ⬜ §9            |
+| 💎   | OSVW errata          | ✅ HAL          | ✅ amd.c         | ⬜ §10           |
+| 💎   | RDTSCP TSC_AUX       | ✅ QPC path     | ✅ SMP init      | ⬜ §10           |
+| 💎   | AMD IBS sample       | ⚠️ vendor tool | ✅ perf IBS      | ⬜ §11 stretch   |
+| 💎   | SVM VT-x detect      | ✅ HAL          | ✅ kvm caps      | ✅ §12           |
+| ⭐   | Boot hw self tune    | ❌ static       | ❌ static        | ⬜ §13           |
+| ⭐   | PKU Win32 wrapper    | ❌ none         | ⚠️ raw syscalls | ⬜ §5            |
+| ⭐   | Per-core freq UI     | ❌ simple       | ⚠️ turbostat    | ⬜ §9 + shell    |
 
-After §1 through §11 done and §2 through §10 plus §12 through §13 planned, parity with Win11/Linux 6.x on this stack; §12 boot benchmark is the differentiator. `SetThreadMemoryZone` (§4) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-17` until kernel mappings allow it without breaking SMEP/SMAP rollout.
+After §1 through §12 done and §2 through §11 plus §13 through §14 planned, parity with Win11/Linux 6.x on this stack; §13 boot benchmark is the differentiator. `SetThreadMemoryZone` (§5) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-17` until kernel mappings allow it without breaking SMEP/SMAP rollout.
 
 ---
 
