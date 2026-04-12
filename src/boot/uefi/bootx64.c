@@ -194,7 +194,7 @@ struct boot_usb_controller {
 
 /* ABI header (S15) -- must match kernel/boot_info.h */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
-#define BOOT_INFO_VERSION  1
+#define BOOT_INFO_VERSION  2  /* §3: added boot_device_type + boot_device_path */
 
 struct boot_info_header {
     UINT32 magic;
@@ -281,6 +281,11 @@ struct boot_info {
 
     /* NVRAM boot error from previous boot (S13); 0 = last boot OK */
     UINT32 last_boot_error;
+
+    /* Boot device info (§3) */
+    UINT8   boot_device_type;       /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network */
+    UINT8   _boot_dev_pad[3];
+    char    boot_device_path[128];  /* UEFI device path text */
 
     /* Kernel-populated fields (set after boot) */
     UINT8   secure_boot_enabled;
@@ -4572,6 +4577,40 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                "using LocateProtocol fallback\n");
             /* No POST16_BL_BOOT_DEV_OK -- last POST stays at 0xB090
              * so a POST card shows the lookup did not succeed. */
+        }
+    }
+
+    /* §3: Populate boot device path from DevicePathToText protocol.
+     * Type stays 0 (unknown) until §4 parses the device path nodes. */
+    g_boot_info_ptr->boot_device_type = 0;
+    g_boot_info_ptr->boot_device_path[0] = '\0';
+    if (g_boot_device_handle) {
+        EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+        EFI_GUID dptt_guid = EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID;
+        EFI_DEVICE_PATH_PROTOCOL *dp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+        EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *dptt = (EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *)0;
+        EFI_STATUS dp_s;
+
+        dp_s = gBS->HandleProtocol(g_boot_device_handle, &dp_guid, (VOID **)&dp);
+        if (!EFI_ERROR(dp_s) && dp) {
+            dp_s = gBS->LocateProtocol(&dptt_guid, (VOID *)0, (VOID **)&dptt);
+            if (!EFI_ERROR(dp_s) && dptt) {
+                CHAR16 *text = dptt->ConvertDevicePathToText(dp, 0, 0);
+                if (text) {
+                    /* Convert UCS-2 to ASCII into boot_device_path (cap 127+NUL) */
+                    UINTN j;
+                    for (j = 0; j < 127 && text[j]; j++)
+                        g_boot_info_ptr->boot_device_path[j] = (char)(text[j] & 0x7F);
+                    g_boot_info_ptr->boot_device_path[j] = '\0';
+                    gBS->FreePool(text);
+
+                    serial_early_print("[BOOT] Boot device path: ");
+                    serial_early_print(g_boot_info_ptr->boot_device_path);
+                    serial_early_print("\n");
+                }
+            } else {
+                serial_early_print("[BOOT] DevicePathToText not available\n");
+            }
         }
     }
 

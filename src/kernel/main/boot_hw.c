@@ -143,6 +143,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
              "Previous boot failed: code=0x%04X",
              (uint64_t)g_boot_info.last_boot_error);
 
+    /* §3: Log boot device info from boot_info */
+    if (g_boot_info.boot_device_path[0] != '\0')
+        klog(LOG_INFO, "UEFI", "Booted from: %s (type=%u)",
+             g_boot_info.boot_device_path,
+             (uint64_t)g_boot_info.boot_device_type);
+
     /* boot_config_parse: boot.conf is parsed by the UEFI bootloader before
      * kernel entry and delivered in g_boot_info.config.  Log the values. */
     klog(LOG_INFO, "CONF",

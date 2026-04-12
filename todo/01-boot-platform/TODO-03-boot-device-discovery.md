@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§2 done -- `efi_main()` resolves `LoadedImage->DeviceHandle` into `g_boot_device_handle` global. Both `parse_boot_conf()` and `load_kernel()` use the global with SimpleFS fallback to LocateProtocol. POST16 0xB090-0xB093 cover both steps. **Not implemented:** `boot_info` has no `boot_device_*` / UEFI boot-variable / partition-GUID fields yet (§3-§8). **Not implemented:** multi-volume fallback chain (§5), Boot#### decode (§12), Registry §9 population, §10 enumeration log, §11 health check.
+> **Current state (code-truth 2026-04-12):** §1-§3 done -- `g_boot_device_handle` global, scoped filesystem access, `boot_device_type` (0=unknown, §4 next) and `boot_device_path[128]` in boot_info via `DevicePathToText`. BOOT_INFO_VERSION bumped to 2. **Not implemented:** device type classification (§4), fallback chain (§5), boot variables (§6), partition GUID (§7), removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
 
 ---
 
@@ -42,7 +42,7 @@
 | --- | :---: | -------------------------------------------------- | -------------- | :----: |
 | 💎  |   1   | Boot device identification via LoadedImage         | --             |  [x]   |
 | 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [x]   |
-| 💎  |   3   | Boot device info in boot_info struct               | §1             |  [ ]   |
+| 💎  |   3   | Boot device info in boot_info struct               | §1             |  [/]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [ ]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [ ]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [ ]   |
@@ -104,10 +104,10 @@ Replace `LocateProtocol(SIMPLE_FILE_SYSTEM)` with `HandleProtocol(DeviceHandle, 
 
 Pass boot device information to the kernel so it knows which device it booted from.
 
-- [ ] Add to `boot_info`: `uint8_t boot_device_type` (0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network)
-- [ ] Add to `boot_info`: `uint8_t boot_device_path[128]` -- UEFI device path as text string
-- [ ] Populate from `DevicePathToText()` UEFI protocol (if available)
-- [ ] Kernel logs: `"[BOOT] Booted from: %s (type=%u)"` during boot_info parsing
+- [x] Add to `boot_info`: `uint8_t boot_device_type` (0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network) -- `boot_info.h:486`, `bootx64.c:286`; type set to 0 (unknown) by default, §4 will classify
+- [x] Add to `boot_info`: `uint8_t boot_device_path[128]` -- `boot_info.h:488`, `bootx64.c:288`; UCS-2 to ASCII conversion with 127-char cap
+- [x] Populate from `DevicePathToText()` UEFI protocol (if available) -- `bootx64.c` efi_main §3 block; `EFI_DEVICE_PATH_TO_TEXT_PROTOCOL` + `EFI_DEVICE_PATH_PROTOCOL` added to `efi.h`
+- [x] Kernel logs: `"[BOOT] Booted from: %s (type=%u)"` during boot_info parsing -- `boot_hw.c` after last_boot_error check
 - [ ] Commit: `"boot: pass boot device type and path in boot_info"`
 
 **Test checkpoint:** Kernel serial output shows `"Booted from: PciRoot(0x0)/Pci(0x2,0x0)/Sata(0x0,0xFFFF,0x0)"` or similar. Path format varies by firmware. Verify on bare metal -- real firmware produces longer device paths than QEMU.
@@ -272,7 +272,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | --- | --------------------------- | ---------------------------- | ----------------------- | --------------- |
 | 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done |
 | 💎   | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ⬜ §5            |
-| 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ⬜ §3--§4        |
+| 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | 🔨 §3 done, §4 next |
 | 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ⬜ §6            |
 | 💎   | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ⬜ §12           |
 | 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ⬜ §6            |

@@ -757,4 +757,43 @@ typedef struct EFI_BLOCK_IO_PROTOCOL {
     EFI_BLOCK_FLUSH         FlushBlocks;
 } EFI_BLOCK_IO_PROTOCOL;
 
+/* --- Device Path Protocol (§3: boot device path) --- */
+
+typedef struct {
+    UINT8  Type;
+    UINT8  SubType;
+    UINT8  Length[2];   /* little-endian 16-bit length */
+} EFI_DEVICE_PATH_PROTOCOL;
+
+/* --- Device Path To Text Protocol (§3: human-readable device path) --- */
+
+#define EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID \
+    { 0x8b843e20, 0x8132, 0x4852, \
+      { 0x90, 0xcc, 0x55, 0x1a, 0x4e, 0x4a, 0x7f, 0x1c } }
+
+typedef CHAR16 * (EFIAPI *EFI_DEVICE_PATH_TO_TEXT_NODE)(
+    const EFI_DEVICE_PATH_PROTOCOL *DeviceNode,
+    BOOLEAN DisplayOnly, BOOLEAN AllowShortcuts);
+
+typedef CHAR16 * (EFIAPI *EFI_DEVICE_PATH_TO_TEXT_PATH)(
+    const EFI_DEVICE_PATH_PROTOCOL *DevicePath,
+    BOOLEAN DisplayOnly, BOOLEAN AllowShortcuts);
+
+typedef struct {
+    EFI_DEVICE_PATH_TO_TEXT_NODE  ConvertDeviceNodeToText;
+    EFI_DEVICE_PATH_TO_TEXT_PATH ConvertDevicePathToText;
+} EFI_DEVICE_PATH_TO_TEXT_PROTOCOL;
+
+/* --- Device Path Utilities Protocol (optional -- for device path from handle) --- */
+
+#define EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID \
+    { 0x0379BE4E, 0xD706, 0x437D, \
+      { 0xB0, 0x37, 0xED, 0xB8, 0x2F, 0xB7, 0x72, 0xA4 } }
+
+/* --- Device Path From Handle (HandleProtocol with this GUID) --- */
+
+#define EFI_DEVICE_PATH_PROTOCOL_GUID \
+    { 0x09576E91, 0x6D3F, 0x11D2, \
+      { 0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B } }
+
 #endif /* UEFI_EFI_H */

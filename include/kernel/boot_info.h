@@ -43,7 +43,7 @@
  *   - Bootloader writes sizeof(struct boot_info) into header.size at
  *     compile time -- a size mismatch means the structs diverged. */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
-#define BOOT_INFO_VERSION  1           /* bump on struct layout changes */
+#define BOOT_INFO_VERSION  2           /* §3: added boot_device_type + boot_device_path */
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
@@ -481,6 +481,11 @@ struct boot_info {
 
     /* NVRAM boot error from previous boot (S13); 0 = last boot OK */
     uint32_t last_boot_error;
+
+    /* Boot device info (§3: populated by bootloader from LoadedImage) */
+    uint8_t  boot_device_type;      /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network */
+    uint8_t  _boot_dev_pad[3];      /* alignment */
+    char     boot_device_path[128]; /* UEFI device path text (DevicePathToText) */
 
     /* Kernel-populated fields (set after boot; never written by the bootloader) */
     uint8_t  secure_boot_enabled;   /* 1 if Secure Boot is active (uefi_secureboot_init) */
