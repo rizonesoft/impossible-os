@@ -95,8 +95,8 @@
 
 > **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86) -- 10 suites, 0 failures expected. S1 tests: xcr0_active non-zero, xsave_size_max >= 512, xcr0 x87+SSE bits, CR4.OSXSAVE set.
 
-> **Verified:** 2026-04-12 -- all 13 items confirmed. `cpu_configure_xcr0()` at `cpuid.c:321`. `xsave_area`+`fpu_used` in `task.h:147-148`. `task_alloc_xsave` at `task.c:188`. schedule XSAVE/XRSTOR at `task.c:776-810`. #NM handler at `task.c:154`. xsaveopt detection at `task.c:782`. Codex adversarial: 3 critical/high findings FIXED -- (1) CLTS moved before XRSTOR in schedule (was after, causing #NM inside scheduler); (2) #NM handler now loads clean FPU state after first allocation (was leaving stale registers = cross-task data leak); (3) yield/schedule_now path now has FPU save+restore (was dropping SIMD state on cooperative switch). Accepted: none.
-> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. G2: FPU save/restore runs with IRQs disabled in schedule context. G11: XSAVE/XRSTOR alignment (page-aligned from PMM). Intel SDM Vol. 1 Ch. 13 XSAVE compliant. Parity: matches Windows/Linux lazy FPU + XSAVEOPT. Accepted: none.
+> **Verified:** 2026-04-13 -- all 13 items confirmed. Codex adversarial found 3 bugs; fix introduced a 4th (XSAVE also faults on CR0.TS=1, not just XRSTOR). All 4 FIXED: (1) CLTS before XRSTOR in schedule; (2) CLTS before XSAVE in both schedule() and schedule_now() (missed in first fix -- froze system at desktop init on WHPX); (3) #NM handler loads clean FPU state after first allocation; (4) yield/schedule_now has FPU save+restore. Intel SDM Vol. 1 Section 13.4: TS bit causes #NM on ALL x87/MMX/SSE/AVX instructions including XSAVE/FXSAVE. Accepted: none.
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. G2: FPU save/restore with CLTS in both preemptive and cooperative paths. G11: CR0.TS semantics per Intel SDM (affects save AND restore, not just restore). Parity: matches Windows/Linux lazy FPU. Accepted: none.
 
 ---
 
