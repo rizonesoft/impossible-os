@@ -114,6 +114,9 @@
 
 **Test runner:** `scripts\debug\run-x86-tests.bat` (SUITE=x86, 16 suites expected, 0 failures)
 
+> **Verified:** 2026-04-13 -- all 6 items confirmed. `memcpy_avx`/`memset_avx` at `memops.c:29,56` (vmovdqu/vpbroadcastb loops with vzeroupper). SSE2 fallbacks at `memops.c:85,118`. Dispatch via `simd_avx2_ok` at `memops.c:148,157`. `fb_blit_avx`/`fb_fill_avx` at `gfx_simd.c:546,570`. Framebuffer dispatch at `framebuffer.c:164,177`. Makefile `AVX2_CFLAGS` at line 813. 6 tests under TEST_CAT_X86. Codex adversarial: fb_blit bounds overflow fixed (overflow-safe clamping); test gates changed from raw CPUID to `simd_avx2_ok`; fill broadcast hoisted into internal asm loops. Accepted: AP XCR0 not configured (pre-existing, all SIMD callers on BSP; XREF TODO-04 S4 AP hardening); memops dispatch infrastructure-only until kernel_fpu_begin/end protocol exists.
+> **Quality reviewed:** 2026-04-13 -- kernel-code-quality 11 gates walked. Intel SDM Vol. 1 Section 14.3 AVX/SSE transition compliant (vzeroupper on all 4 AVX functions). Clobber lists correct (ymm for -mavx2 file, xmm for -msse2 file). fb_blit bounds hardened against uint32_t overflow. Fill loops broadcast once per call (hoisted from per-iteration). Parity: matches Linux arch/x86/lib/memcpy_64.S AVX dispatch + Windows NT RtlCopyMemory SIMD paths. Accepted: none.
+
 ---
 
 ## 3. AVX-512 Opt-In + Future Silicon Detection

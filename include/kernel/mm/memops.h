@@ -18,7 +18,7 @@
 
 #include "kernel/types.h"
 
-/* ---- AVX2 implementations (require CPU_FEATURE_AVX2) ---- */
+/* ---- AVX2 implementations (require simd_avx2_ok, i.e., XCR0 bit 2) ---- */
 
 void *memcpy_avx(void *dst, const void *src, size_t n);
 void *memset_avx(void *dst, int val, size_t n);

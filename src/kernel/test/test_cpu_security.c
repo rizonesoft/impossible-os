@@ -16,6 +16,7 @@
 #include "kernel/smp.h"
 #include "kernel/msr.h"
 #include "kernel/mm/memops.h"
+#include "gfx_simd.h"
 
 /* ---- S1: NX Bit ---- */
 
@@ -132,8 +133,8 @@ static void test_cr4_osxsave(void)
 
 static void test_memcpy_avx_correctness(void)
 {
-    if (!cpu_has(CPU_FEATURE_AVX2)) {
-        TEST_SKIP("CPU does not support AVX2");
+    if (!simd_avx2_ok) {
+        TEST_SKIP("AVX2 not enabled (XCR0 bit 2 not set)");
         return;
     }
 
@@ -163,8 +164,8 @@ static void test_memcpy_avx_correctness(void)
 
 static void test_memcpy_avx_tail(void)
 {
-    if (!cpu_has(CPU_FEATURE_AVX2)) {
-        TEST_SKIP("CPU does not support AVX2");
+    if (!simd_avx2_ok) {
+        TEST_SKIP("AVX2 not enabled (XCR0 bit 2 not set)");
         return;
     }
 
@@ -195,8 +196,8 @@ static void test_memcpy_avx_tail(void)
 
 static void test_memset_avx_correctness(void)
 {
-    if (!cpu_has(CPU_FEATURE_AVX2)) {
-        TEST_SKIP("CPU does not support AVX2");
+    if (!simd_avx2_ok) {
+        TEST_SKIP("AVX2 not enabled (XCR0 bit 2 not set)");
         return;
     }
 
@@ -220,8 +221,8 @@ static void test_memset_avx_correctness(void)
 
 static void test_memset_avx_tail(void)
 {
-    if (!cpu_has(CPU_FEATURE_AVX2)) {
-        TEST_SKIP("CPU does not support AVX2");
+    if (!simd_avx2_ok) {
+        TEST_SKIP("AVX2 not enabled (XCR0 bit 2 not set)");
         return;
     }
 

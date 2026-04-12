@@ -525,9 +525,17 @@ void fb_blit(uint32_t dst_x, uint32_t dst_y,
     if (!fb_ready || !src)
         return;
 
-    /* Clamp to screen bounds */
-    copy_w = (dst_x + w > fb_width)  ? fb_width  - dst_x : w;
-    copy_h = (dst_y + h > fb_height) ? fb_height - dst_y : h;
+    /* Reject out-of-range origin before unsigned subtraction */
+    if (dst_x >= fb_width || dst_y >= fb_height)
+        return;
+
+    /* Overflow-safe clamp: compute remaining space without addition */
+    {
+        uint32_t max_w = fb_width  - dst_x;
+        uint32_t max_h = fb_height - dst_y;
+        copy_w = (w > max_w) ? max_w : w;
+        copy_h = (h > max_h) ? max_h : h;
+    }
 
     for (row = 0; row < copy_h; row++) {
         mem_cpy32(back_buf + (dst_y + row) * fb_stride + dst_x,

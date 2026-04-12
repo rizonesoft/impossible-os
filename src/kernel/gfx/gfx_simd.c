@@ -569,25 +569,32 @@ void fb_blit_avx(uint32_t *dst, const uint32_t *src, uint32_t count)
 
 void fb_fill_avx(uint32_t *dst, uint32_t val, uint32_t count)
 {
-    uint32_t i = 0;
-    uint32_t aligned = count & ~7u;
+    uint32_t blocks = count >> 3;  /* number of 8-pixel (32-byte) blocks */
 
-    /* Broadcast and store in single asm block to keep register lifetime
-     * visible to the compiler (vpbroadcastd + vmovdqu in one block). */
-    for (; i < aligned; i += 8) {
+    if (blocks > 0) {
+        /* Broadcast once, store in internal asm loop. Single block keeps
+         * the YMM register lifetime fully visible to the compiler. */
+        uint32_t *p = dst;
         __asm__ volatile (
             "vmovd       %[v], %%xmm0\n\t"
             "vpbroadcastd %%xmm0, %%ymm0\n\t"
-            "vmovdqu     %%ymm0, (%[d])\n\t"
-            :
-            : [v] "r"(val), [d] "r"(dst + i)
-            : "memory", "xmm0"
+            "1:\n\t"
+            "vmovdqu     %%ymm0, (%[p])\n\t"
+            "add         $32, %[p]\n\t"
+            "dec         %[cnt]\n\t"
+            "jnz         1b\n\t"
+            : [p] "+r"(p), [cnt] "+r"(blocks)
+            : [v] "r"(val)
+            : "memory", "xmm0", "cc"
         );
     }
 
     /* Scalar tail: 0-7 remaining pixels */
-    for (; i < count; i++)
-        dst[i] = val;
+    {
+        uint32_t i = count & ~7u;
+        for (; i < count; i++)
+            dst[i] = val;
+    }
 
     __asm__ volatile ("vzeroupper" ::: "memory");
 }

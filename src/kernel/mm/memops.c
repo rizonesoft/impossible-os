@@ -56,25 +56,32 @@ void *memcpy_avx(void *dst, const void *src, size_t n)
 void *memset_avx(void *dst, int val, size_t n)
 {
     uint8_t *d = (uint8_t *)dst;
-    size_t i = 0;
-    size_t bulk = n & ~(size_t)31;
+    size_t bulk = n >> 5;  /* number of 32-byte blocks */
 
-    /* Broadcast byte value to YMM0 and store in single asm blocks
-     * to keep register lifetime visible to the compiler. */
-    for (; i < bulk; i += 32) {
+    if (bulk > 0) {
+        /* Broadcast once, store in internal asm loop. Single block keeps
+         * the YMM register lifetime fully visible to the compiler. */
+        uint8_t *p = d;
         __asm__ volatile (
-            "vmovd   %[v], %%xmm0\n\t"
+            "vmovd       %[v], %%xmm0\n\t"
             "vpbroadcastb %%xmm0, %%ymm0\n\t"
-            "vmovdqu %%ymm0, (%[d])\n\t"
-            :
-            : [v] "r"((uint32_t)(uint8_t)val), [d] "r"(d + i)
-            : "memory", "ymm0"
+            "1:\n\t"
+            "vmovdqu     %%ymm0, (%[p])\n\t"
+            "add         $32, %[p]\n\t"
+            "dec         %[cnt]\n\t"
+            "jnz         1b\n\t"
+            : [p] "+r"(p), [cnt] "+r"(bulk)
+            : [v] "r"((uint32_t)(uint8_t)val)
+            : "memory", "ymm0", "cc"
         );
     }
 
     /* Scalar tail: 0-31 remaining bytes */
-    for (; i < n; i++)
-        d[i] = (uint8_t)val;
+    {
+        size_t i = n & ~(size_t)31;
+        for (; i < n; i++)
+            d[i] = (uint8_t)val;
+    }
 
     __asm__ volatile ("vzeroupper" ::: "memory");
     return dst;
@@ -112,8 +119,7 @@ void *memset_sse2(void *dst, int val, size_t n)
 {
     uint8_t *d = (uint8_t *)dst;
     uint8_t byte = (uint8_t)val;
-    size_t i = 0;
-    size_t bulk = n & ~(size_t)15;
+    size_t bulk = n >> 4;  /* number of 16-byte blocks */
 
     /* Build 32-bit value with byte repeated 4 times */
     uint32_t fill = (uint32_t)byte
@@ -121,22 +127,29 @@ void *memset_sse2(void *dst, int val, size_t n)
                   | ((uint32_t)byte << 16)
                   | ((uint32_t)byte << 24);
 
-    /* Broadcast and store in single asm block to keep register lifetime
-     * visible to the compiler. */
-    for (; i < bulk; i += 16) {
+    if (bulk > 0) {
+        /* Broadcast once, store in internal asm loop. */
+        uint8_t *p = d;
         __asm__ volatile (
             "movd    %[v], %%xmm0\n\t"
             "pshufd  $0, %%xmm0, %%xmm0\n\t"
-            "movdqu  %%xmm0, (%[d])\n\t"
-            :
-            : [v] "r"(fill), [d] "r"(d + i)
-            : "memory", "xmm0"
+            "1:\n\t"
+            "movdqu  %%xmm0, (%[p])\n\t"
+            "add     $16, %[p]\n\t"
+            "dec     %[cnt]\n\t"
+            "jnz     1b\n\t"
+            : [p] "+r"(p), [cnt] "+r"(bulk)
+            : [v] "r"(fill)
+            : "memory", "xmm0", "cc"
         );
     }
 
     /* Scalar tail: 0-15 remaining bytes */
-    for (; i < n; i++)
-        d[i] = byte;
+    {
+        size_t i = n & ~(size_t)15;
+        for (; i < n; i++)
+            d[i] = byte;
+    }
 
     return dst;
 }
