@@ -48,7 +48,7 @@
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [x]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [x]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [x]   |
-| 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [/]   |
+| 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [x]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [ ]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [ ]   |
 | 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [ ]   |
@@ -226,9 +226,12 @@ Populate `HKLM\SYSTEM\Boot\Device\` Registry keys with boot device information s
 - [x] Write `HKLM\SYSTEM\Boot\Device\BootCurrent` (REG_DWORD): from `g_boot_info.uefi_boot_current`
 - [x] Write `HKLM\SYSTEM\Boot\Device\BootNext` (REG_DWORD): from `g_boot_info.uefi_boot_next` (0xFFFF if not set)
 - [x] Log: `"Boot device Registry populated: %s type=%u removable=%u"` via klog
-- [ ] Commit: `"boot: populate HKLM\SYSTEM\Boot\Device\ Registry with boot provenance"`
+- [x] Commit: `"boot: populate HKLM\SYSTEM\Boot\Device\ Registry with boot provenance"` (8522c805)
 
 **Test checkpoint:** After boot, Registry query for `HKLM\SYSTEM\Boot\Device\Type` returns 1 (SATA) on QEMU default. `Path` is non-empty. `PartitionGUID` is formatted as `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`. Shell `reg query HKLM\SYSTEM\Boot\Device` (when shell reg command exists) shows all keys. Verify on bare metal -- all values should reflect real hardware.
+
+> **Verified:** 2026-04-12 -- all 10 items confirmed. `boot_device_populate_registry()` at `boot_hw.c:426`, called from `registry.c:1722` after registry_init(). 8 values: Type, Path, PartitionGUID (GPT/MBR/empty), PartitionStyle, Removable, BootCurrent, BootNext. RegCreateKeyEx failure returns early. GUID mixed-endian matches §7. Codex adversarial: unchecked RegSet returns rejected (matches smbios pattern, pool has capacity). Accepted: test_boot_device.c registry assertion (Unit Tests section scope).
+> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. No dead code. GUID byte order consistent with §7 bootloader. 8 RegSet calls O(1) each. Parity: matches Windows HKLM\\Enum + Linux /sys/firmware/efi. Accepted: none.
 
 ---
 
