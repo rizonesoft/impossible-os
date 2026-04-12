@@ -42,7 +42,7 @@
 | --- | :---: | -------------------------------------------------- | -------------- | :----: |
 | 💎  |   1   | Boot device identification via LoadedImage         | --             |  [x]   |
 | 💎  |   2   | Filesystem access scoped to boot device            | §1             |  [x]   |
-| 💎  |   3   | Boot device info in boot_info struct               | §1             |  [/]   |
+| 💎  |   3   | Boot device info in boot_info struct               | §1             |  [x]   |
 | 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net)     | §3             |  [ ]   |
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [ ]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [ ]   |
@@ -108,9 +108,12 @@ Pass boot device information to the kernel so it knows which device it booted fr
 - [x] Add to `boot_info`: `uint8_t boot_device_path[128]` -- `boot_info.h:488`, `bootx64.c:288`; UCS-2 to ASCII conversion with 127-char cap
 - [x] Populate from `DevicePathToText()` UEFI protocol (if available) -- `bootx64.c` efi_main §3 block; `EFI_DEVICE_PATH_TO_TEXT_PROTOCOL` + `EFI_DEVICE_PATH_PROTOCOL` added to `efi.h`
 - [x] Kernel logs: `"[BOOT] Booted from: %s (type=%u)"` during boot_info parsing -- `boot_hw.c` after last_boot_error check
-- [ ] Commit: `"boot: pass boot device type and path in boot_info"`
+- [x] Commit: `"boot: pass boot device type and path in boot_info"` (6c3e723f)
 
 **Test checkpoint:** Kernel serial output shows `"Booted from: PciRoot(0x0)/Pci(0x2,0x0)/Sata(0x0,0xFFFF,0x0)"` or similar. Path format varies by firmware. Verify on bare metal -- real firmware produces longer device paths than QEMU.
+
+> **Verified:** 2026-04-12 -- all 5 items confirmed. `boot_device_type` (uint8_t) + `boot_device_path[128]` added to both boot_info structs atomically. BOOT_INFO_VERSION bumped to 2 in both `boot_info.h:46` and `bootx64.c:197`. DevicePathToText chain: HandleProtocol(DevicePath) -> LocateProtocol(DevicePathToText) -> ConvertDevicePathToText -> UCS-2 to ASCII (127-cap) -> FreePool. Kernel klog "Booted from: %s (type=%u)" in `boot_hw.c:148`. Offset asserts unaffected (new fields after pinned fields). Codex adversarial: approved, no findings. Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality 12 gates walked (all applicable pass). Codex quality: approved. Struct mirrors confirmed identical. `EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID` unused but forward-reserved for §4. No dead code. Parity: matches Windows BCD device path extraction + Linux PARTUUID. Accepted: none.
 
 ---
 
