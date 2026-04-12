@@ -1520,7 +1520,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
     /* 3. Title (36px Selawik Semibold), centered horizontally.
      *    Positioned 20px below the icon bottom (icon at y=30, h=100). */
     {
-        const char *t = "Impossible OS could not start";
+        const char *t = "Well, this is awkward...";
         UINT32 w = bsod_aa_string_width(t, bsod_aa_TITLE);
         UINT32 x = (gFbWidth > w) ? (gFbWidth - w) / 2 : 8;
         AA_TITLE(x, 150, t, 0xFF, 0xFF, 0xFF);
