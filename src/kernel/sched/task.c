@@ -613,9 +613,11 @@ uint64_t schedule_now(struct interrupt_frame *frame)
         return (uint64_t)frame;
 
     /* FPU/SIMD save for cooperative context switch (yield path).
-     * Without this, live SIMD register state is lost on yield(). */
+     * Without this, live SIMD register state is lost on yield().
+     * Must CLTS first -- CR0.TS may be set, and XSAVE/FXSAVE fault on TS=1. */
     if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
         int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
+        __asm__ volatile ("clts");
         if (have_xsave) {
             uint64_t xcr0 = g_cpu.xcr0_active;
             uint32_t lo = (uint32_t)xcr0, hi = (uint32_t)(xcr0 >> 32);
@@ -778,6 +780,8 @@ uint64_t schedule(struct interrupt_frame *frame)
     int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
 
     if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
+        /* CLTS before save -- CR0.TS may be set and XSAVE/FXSAVE fault on TS=1 */
+        __asm__ volatile ("clts");
         if (have_xsave) {
             uint64_t xcr0 = g_cpu.xcr0_active;
             uint32_t lo = (uint32_t)xcr0;
