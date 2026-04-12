@@ -47,7 +47,7 @@
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [x]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [x]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [x]   |
-| 💎  |   8   | Removable media detection                          | §1, §4         |  [/]   |
+| 💎  |   8   | Removable media detection                          | §1, §4         |  [x]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [ ]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [ ]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [ ]   |
@@ -204,9 +204,12 @@ Determine whether the boot device is removable (USB stick, external drive) or fi
 - [x] Read `BlockIo->Media->MediaPresent` (BOOLEAN): converted to 0/1, default 1 (assume present if BlockIO unavailable)
 - [x] Store in `boot_info.boot_device_removable` and `boot_info.boot_media_present` -- carved from `_part_pad[3]` (same struct size), BOOT_INFO_VERSION bumped to 5
 - [x] If removable: `"[BOOT] Boot device is removable -- write-caching will be disabled by default"`, else `"[BOOT] Boot device is fixed"`. If !MediaPresent: `"[WARN] Boot media not present"`
-- [ ] Commit: `"boot: detect removable media via EFI_BLOCK_IO_PROTOCOL"`
+- [x] Commit: `"boot: detect removable media via EFI_BLOCK_IO_PROTOCOL"` (e4bd76be)
 
 **Test checkpoint:** USB boot on QEMU (`-device usb-storage`): `boot_device_removable == 1`. SATA boot: `boot_device_removable == 0`. Both: `boot_media_present == 1`. Verify on bare metal USB stick.
+
+> **Verified:** 2026-04-12 -- all 6 items confirmed. HandleProtocol(BlockIO) with NULL checks on bio and bio->Media at `bootx64.c:4835-4847`. BOOLEAN->0/1 via ternary. USB default removable when BlockIO unavailable. Fields carved from _part_pad (same struct size). BOOT_INFO_VERSION=5 both sides. Codex adversarial: approved, no findings. Codex quality: approved.
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. G13 spec compliance: UEFI BOOLEAN handled per spec (non-zero=TRUE). No dead _part_pad references. O(1) single HandleProtocol call. Parity: matches Windows DriveType + Linux sysfs removable. Accepted: none.
 
 ---
 
