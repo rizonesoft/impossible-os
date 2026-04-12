@@ -1463,44 +1463,131 @@ static UINT32 bsod_string_width(const char *str, UINT32 scale)
     return (n * BSOD_FONT_W + (n - 1)) * scale;
 }
 
-/* 16x16 sad face: head outline, two eyes, down-curved mouth.  Each row
- * is 16 bits, MSB = leftmost pixel.  White-on-background. */
-static const UINT16 bsod_sad_face[16] = {
-    0x07E0,  /*     ######      */
-    0x1FF8,  /*   ##########    */
-    0x3FFC,  /*  ############   */
-    0x7FFE,  /* ##############  */
-    0x7E7E,  /* ######  ######  */
-    0xFC3F,  /* ######    ##### */
-    0xFC3F,  /* ######    ##### */
-    0xFFFF,  /* ################ */
-    0xFFFF,  /* ################ */
-    0xF81F,  /* #####      #####*/
-    0xF01F,  /* ####       #####*/
-    0xFFFF,  /* ################ */
-    0x7FFE,  /* ##############  */
-    0x3FFC,  /*  ############   */
-    0x1FF8,  /*   ##########    */
-    0x07E0,  /*     ######      */
+/* Sad face icon from resources/bsod.png, native 100x100 pixels.
+ * 4 x UINT32 per row, LSB-first (bit 0 = leftmost pixel, matching
+ * bsod_font convention).  Render with (1u << bit) for bit = 0..31
+ * within each 32-bit word. */
+#define BSOD_ICON_W 100
+#define BSOD_ICON_H 100
+
+static const UINT32 bsod_icon[100][4] = {
+    {0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0x00000000, 0x00FFE000, 0x00000000, 0x00000000},
+    {0x00000000, 0x1FFFFF80, 0x00000000, 0x00000000},
+    {0x00000000, 0xFFFFFFF0, 0x00000001, 0x00000000},
+    {0x00000000, 0xFFFFFFFE, 0x00000007, 0x00000000},
+    {0x80000000, 0xFE0007FF, 0x0000001F, 0x00000000},
+    {0xE0000000, 0xC000003F, 0x000000FF, 0x00000000},
+    {0xF8000000, 0x0000000F, 0x000001FE, 0x00000000},
+    {0xFE000000, 0x00000001, 0x000007F8, 0x00000000},
+    {0x7F000000, 0x00000000, 0x00000FE0, 0x00000000},
+    {0x1FC00000, 0x00000000, 0x00003F80, 0x00000000},
+    {0x07E00000, 0x00000000, 0x00007E00, 0x00000000},
+    {0x03F00000, 0x00000000, 0x0000FC00, 0x00000000},
+    {0x01F80000, 0x00000000, 0x0001F800, 0x00000000},
+    {0x007C0000, 0x00000000, 0x0003E000, 0x00000000},
+    {0x003E0000, 0x00000000, 0x0007C000, 0x00000000},
+    {0x001F0000, 0x00000000, 0x000F8000, 0x00000000},
+    {0x000F8000, 0x00000000, 0x001F0000, 0x00000000},
+    {0x0007C000, 0x00000000, 0x003E0000, 0x00000000},
+    {0x0003E000, 0x00000000, 0x007C0000, 0x00000000},
+    {0x0001E000, 0x00000000, 0x00780000, 0x00000000},
+    {0x0001F000, 0x00000000, 0x00F80000, 0x00000000},
+    {0x0000F800, 0x00000000, 0x01F00000, 0x00000000},
+    {0xE0007800, 0x00000007, 0x01E0007E, 0x00000000},
+    {0xFC003C00, 0xC000003F, 0x03C003FF, 0x00000000},
+    {0xFF003E00, 0xF00000FF, 0x07C00FFF, 0x00000000},
+    {0xFFC01E00, 0xFC0003FF, 0x07803FFF, 0x00000000},
+    {0x0FE01E00, 0xFE0007F0, 0x07807F00, 0x00000000},
+    {0x03F00F00, 0x3F000FC0, 0x0F00FC00, 0x00000000},
+    {0x00F00F00, 0x0F000F00, 0x0F00F000, 0x00000000},
+    {0x00600780, 0x06000600, 0x1E006000, 0x00000000},
+    {0x00000780, 0x00000000, 0x1E000000, 0x00000000},
+    {0x000003C0, 0x00000000, 0x1C000000, 0x00000000},
+    {0x000003C0, 0x00000000, 0x3C000000, 0x00000000},
+    {0x000003C0, 0x00000000, 0x3C000000, 0x00000000},
+    {0x060001C0, 0x00000000, 0x3C000000, 0x00000000},
+    {0x0F8001E0, 0x00000000, 0x78000000, 0x00000000},
+    {0x0FE001E0, 0x00000000, 0x78000000, 0x00000000},
+    {0x0FF801E0, 0x00000000, 0x78000000, 0x00000000},
+    {0x07FC01E0, 0x00000000, 0x78000000, 0x00000000},
+    {0x07FE00E0, 0x00000000, 0x70000000, 0x00000000},
+    {0x07BF00F0, 0x003FC000, 0xF0000000, 0x00000000},
+    {0x078F80F0, 0x03FFFC00, 0xF0000000, 0x00000000},
+    {0x078780F0, 0x0FFFFF00, 0xF0000000, 0x00000000},
+    {0x0387C0F0, 0x3FFFFFC0, 0xF0000000, 0x00000000},
+    {0x0383C0F0, 0xFF801FF0, 0xF0000000, 0x00000000},
+    {0x03C1E0F0, 0xFC0003F8, 0xF0000001, 0x00000000},
+    {0x03C1E0F0, 0xF00000FC, 0xF0000003, 0x00000000},
+    {0x03C0E0F0, 0xC000003E, 0xF0000007, 0x00000000},
+    {0x03C0F0F0, 0x8000001F, 0xF006000F, 0x00000000},
+    {0x83C0F0F0, 0x0000000F, 0xF03F001F, 0x00000000},
+    {0x83C0F0F0, 0x00000007, 0xF0FF001E, 0x00000000},
+    {0xC3C0F0F0, 0x00000007, 0xF1FF003E, 0x00000000},
+    {0xC3C0F0E0, 0x00000003, 0x73FE003C, 0x00000000},
+    {0xE1E1E1E0, 0x00000001, 0x7FFE0078, 0x00000000},
+    {0xE1FFE1E0, 0x00000001, 0x7F9E0078, 0x00000000},
+    {0xF0FFC1E0, 0x00000000, 0x7F1E00F0, 0x00000000},
+    {0xF07F81E0, 0x00000000, 0x7E1E00F0, 0x00000000},
+    {0xF01E01C0, 0x00000000, 0x7C1E00F0, 0x00000000},
+    {0x780003C0, 0x00000000, 0x781C01E0, 0x00000000},
+    {0x780003C0, 0x00000000, 0xF01C01E0, 0x00000000},
+    {0x780003C0, 0x03FFFC00, 0xF03C01E0, 0x00000000},
+    {0x78000780, 0xFFFFFFFE, 0xE03C01E7, 0x00000001},
+    {0xFC000780, 0xFFFFFFFF, 0xE03C03FF, 0x00000001},
+    {0xFC000F00, 0xFFFFFFFF, 0xC03C03FF, 0x00000001},
+    {0xFC000F00, 0xE000007F, 0xC03C03FF, 0x00000003},
+    {0x78001E00, 0x00000000, 0xC03C01E0, 0x00000003},
+    {0x00001E00, 0x00000000, 0xC03C0000, 0x00000003},
+    {0x00003E00, 0x00000000, 0xC03C0000, 0x00000003},
+    {0x00003C00, 0x00000000, 0xC03C0000, 0x00000003},
+    {0x00007800, 0x00000000, 0xC03C0000, 0x00000003},
+    {0x0000F800, 0x00000000, 0xE0780000, 0x00000001},
+    {0x0001F000, 0x00000000, 0xF0F80000, 0x00000001},
+    {0x0001E000, 0x00000000, 0xFFF80000, 0x00000000},
+    {0x0003E000, 0x00000000, 0xFFFC0000, 0x00000000},
+    {0x0007C000, 0x00000000, 0x3FFE0000, 0x00000000},
+    {0x000F8000, 0x00000000, 0x0F1F0000, 0x00000000},
+    {0x001F0000, 0x00000000, 0x000F8000, 0x00000000},
+    {0x003E0000, 0x00000000, 0x0007C000, 0x00000000},
+    {0x007C0000, 0x00000000, 0x0003E000, 0x00000000},
+    {0x01F80000, 0x00000000, 0x0001F800, 0x00000000},
+    {0x03F00000, 0x00000000, 0x0000FC00, 0x00000000},
+    {0x07E00000, 0x00000000, 0x00007E00, 0x00000000},
+    {0x1FC00000, 0x00000000, 0x00003F80, 0x00000000},
+    {0x7F000000, 0x00000000, 0x00000FE0, 0x00000000},
+    {0xFE000000, 0x00000001, 0x000007F8, 0x00000000},
+    {0xF8000000, 0x00000007, 0x000001FE, 0x00000000},
+    {0xF0000000, 0xE000007F, 0x0000007F, 0x00000000},
+    {0x80000000, 0xFE0007FF, 0x0000001F, 0x00000000},
+    {0x00000000, 0xFFFFFFFE, 0x00000007, 0x00000000},
+    {0x00000000, 0xFFFFFFF0, 0x00000000, 0x00000000},
+    {0x00000000, 0x1FFFFF80, 0x00000000, 0x00000000},
+    {0x00000000, 0x00FFF000, 0x00000000, 0x00000000},
+    {0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0x00000000, 0x00000000, 0x00000000, 0x00000000},
 };
 
-/* Render the 16x16 sad face bitmap at (px, py) scaled by `scale`. */
-static void bsod_blit_sad_face(UINT32 px, UINT32 py, UINT32 color, UINT32 scale)
+/* Render the 100x100 icon at (px, py), no scaling.  Uses the same
+ * LSB-first (1u << bit) convention as bsod_blit_char. */
+static void bsod_blit_icon(UINT32 px, UINT32 py, UINT32 color)
 {
-    UINT32 row, col, sy, sx;
-    for (row = 0; row < 16; row++) {
-        UINT16 bits = bsod_sad_face[row];
-        for (col = 0; col < 16; col++) {
-            if ((bits & (0x8000u >> col)) == 0) continue;
-            for (sy = 0; sy < scale; sy++) {
-                UINT32 y = py + row * scale + sy;
-                if (y >= gFbHeight) break;
-                for (sx = 0; sx < scale; sx++) {
-                    UINT32 x = px + col * scale + sx;
-                    if (x >= gFbWidth) break;
-                    gFramebuffer[y * gFbPitch + x] = color;
-                }
-            }
+    UINT32 row, col;
+    for (row = 0; row < BSOD_ICON_H; row++) {
+        UINT32 y = py + row;
+        if (y >= gFbHeight) break;
+        for (col = 0; col < BSOD_ICON_W; col++) {
+            UINT32 wi = col >> 5;   /* col / 32 */
+            UINT32 bi = col & 31u;  /* col % 32 */
+            if ((bsod_icon[row][wi] & (1u << bi)) == 0) continue;
+            UINT32 x = px + col;
+            if (x >= gFbWidth) break;
+            gFramebuffer[y * gFbPitch + x] = color;
         }
     }
 }
@@ -1579,8 +1666,9 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
     /* 1. Fill entire framebuffer with blue. */
     bsod_fill_rect(0, 0, gFbWidth, gFbHeight, blue);
 
-    /* 2. Sad face icon at (fb_w/2 - 32, 60), 16x16 scaled 4x = 64x64. */
-    bsod_blit_sad_face(gFbWidth / 2 - 32, 60, white, 4);
+    /* 2. Sad face icon centered horizontally, 100x100 native pixels
+     *    from resources/bsod.png (embedded as bsod_icon[100][4]). */
+    bsod_blit_icon(gFbWidth / 2 - BSOD_ICON_W / 2, 30, white);
 
     /* 3. Title at scale 3 (24 pixels tall), centered horizontally. */
     {
