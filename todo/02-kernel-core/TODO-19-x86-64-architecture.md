@@ -78,23 +78,23 @@
   2. Reads `g_cpu.xcr0_supported`, builds mask: bits 0-2 (x87+SSE+AVX), bits 5-7 (AVX-512 if AVX512F), bit 9 (PKRU if supported)
   3. Writes filtered mask via `XSETBV ecx=0`
   4. Stores in `g_cpu.xcr0_active`; `simd_enable_avx()` now just checks `xcr0_active`
-
 - [x] Added `xsave_area` (void*, 64-byte-aligned) and `fpu_used` (uint8_t) to `struct task`
 - [x] `task_alloc_xsave(t)`: allocates from PMM (>4KB) or heap (<=4KB), size from `g_cpu.xsave_size_max` rounded to 64, zeroed, XSTATE_BV header bit 0 set
 - [x] Lazy allocation: `xsave_area` starts NULL, allocated on first FPU use via `task_alloc_xsave()`
-
 - [x] Lazy FPU: `schedule()` saves/restores via XSAVE/XRSTOR; sets CR0.TS for deferred allocation
 - [x] `#NM` handler (vector 7): clears CR0.TS, allocates page-aligned XSAVE area on first FPU use
 - [x] Context switch: XSAVE prev if fpu_used, XRSTOR next if fpu_used, else set CR0.TS
 - [x] When `CPU_FEATURE_XSAVE` is false, `schedule()` uses `fxsave`/`fxrstor` on the same `xsave_area` buffer (`src/kernel/sched/task.c` lazy FPU block); keeps QEMU TCG and minimal-CPU paths working
 - [x] Fix: `task_alloc_xsave()` always uses `pmm_alloc_contiguous()` for page-aligned (4096-byte) allocation; satisfies XSAVE 64-byte requirement
 - [x] XSAVEOPT: detected via CPUID 0x0D sub-leaf 1 EAX[0]; scheduler uses `xsaveopt` instead of `xsave` when available (~30% faster context switch)
-
 - [x] Removed manual `simd_save/restore_state()` from icon_store.c; lazy FPU handles it
 - [x] Removed all ~30 manual `simd_save/restore_state()` + `fxsave_area_t` from `gfx_text.c`; lazy FPU handles it
 - [x] Commit: `"kernel/simd: remove manual FXSAVE from icon_store, lazy FPU handles it"`
 
 **Test checkpoint:** Two tasks with distinct YMM patterns survive `schedule()` round-trip without corruption when `fpu_used` is set; never-FPU task keeps `xsave_area == NULL` and no XSAVE on switch. Serial boot unchanged vs pre-§1 baseline. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Verified:** 2026-04-12 -- all 13 items confirmed. `cpu_configure_xcr0()` at `cpuid.c:321`. `xsave_area`+`fpu_used` in `task.h:147-148`. `task_alloc_xsave` at `task.c:188`. schedule XSAVE/XRSTOR at `task.c:776-810`. #NM handler at `task.c:154`. xsaveopt detection at `task.c:782`. Codex adversarial: 3 critical/high findings FIXED -- (1) CLTS moved before XRSTOR in schedule (was after, causing #NM inside scheduler); (2) #NM handler now loads clean FPU state after first allocation (was leaving stale registers = cross-task data leak); (3) yield/schedule_now path now has FPU save+restore (was dropping SIMD state on cooperative switch). Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. G2: FPU save/restore runs with IRQs disabled in schedule context. G11: XSAVE/XRSTOR alignment (page-aligned from PMM). Intel SDM Vol. 1 Ch. 13 XSAVE compliant. Parity: matches Windows/Linux lazy FPU + XSAVEOPT. Accepted: none.
 
 ---
 

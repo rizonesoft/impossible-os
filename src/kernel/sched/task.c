@@ -18,6 +18,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/user_range.h"
 #include "kernel/cpuid.h"
+extern struct cpu_features g_cpu;  /* for xcr0_active in FPU save/restore */
 #include "kernel/klog.h"
 #include "kernel/exec.h"
 #include "kernel/ipc/signal.h"
@@ -160,9 +161,24 @@ static uint64_t nm_handler(struct interrupt_frame *frame)
 
     t = &tasks[current_task];
     if (!t->fpu_used) {
-        /* First FPU use -- allocate page-aligned XSAVE area */
+        /* First FPU use -- allocate page-aligned XSAVE area and load
+         * clean FPU state. Without the load, the hardware registers
+         * still contain the previous task's SIMD/FP data (cross-task
+         * data leakage). FNINIT resets x87; the zeroed xsave_area
+         * already has XSTATE_BV bit 0 set for valid x87 state. */
         task_alloc_xsave(t);
         t->fpu_used = 1;
+
+        /* Load clean state into hardware */
+        if (cpu_has(CPU_FEATURE_XSAVE)) {
+            uint64_t xcr0 = g_cpu.xcr0_active;
+            __asm__ volatile ("xrstor %0" : :
+                "m"(*(uint8_t *)t->xsave_area),
+                "a"((uint32_t)xcr0), "d"((uint32_t)(xcr0 >> 32)) : "memory");
+        } else {
+            __asm__ volatile ("fxrstor %0" : :
+                "m"(*(uint8_t *)t->xsave_area) : "memory");
+        }
     }
 
     return (uint64_t)frame;
@@ -596,6 +612,24 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     if (next_task == prev_task && next_thread == prev_thread)
         return (uint64_t)frame;
 
+    /* FPU/SIMD save for cooperative context switch (yield path).
+     * Without this, live SIMD register state is lost on yield(). */
+    if (tasks[prev_task].fpu_used && tasks[prev_task].xsave_area) {
+        int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
+        if (have_xsave) {
+            uint64_t xcr0 = g_cpu.xcr0_active;
+            uint32_t lo = (uint32_t)xcr0, hi = (uint32_t)(xcr0 >> 32);
+            if (cpu_has(CPU_FEATURE_XSAVEOPT))
+                __asm__ volatile ("xsaveopt %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
+                                  : "a"(lo), "d"(hi) : "memory");
+            else
+                __asm__ volatile ("xsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area)
+                                  : "a"(lo), "d"(hi) : "memory");
+        } else {
+            __asm__ volatile ("fxsave %0" : "=m"(*(uint8_t *)tasks[prev_task].xsave_area) : : "memory");
+        }
+    }
+
     /* Save current task/thread's interrupt frame pointer
      * (skip if exec_pending -- don't overwrite the exec'd frame) */
     if (!tasks[prev_task].exec_pending) {
@@ -661,6 +695,25 @@ uint64_t schedule_now(struct interrupt_frame *frame)
          * would clobber the MSR for no benefit (no swapgs on ring-0 return). */
         if (new_gs)
             msr_write(MSR_IA32_KERNEL_GS_BASE, new_gs);
+    }
+
+    /* FPU/SIMD restore for cooperative context switch (yield path). */
+    if (tasks[next_task].fpu_used && tasks[next_task].xsave_area) {
+        int have_xsave = cpu_has(CPU_FEATURE_XSAVE);
+        __asm__ volatile ("clts");
+        if (have_xsave) {
+            uint64_t xcr0 = g_cpu.xcr0_active;
+            uint32_t lo = (uint32_t)xcr0, hi = (uint32_t)(xcr0 >> 32);
+            __asm__ volatile ("xrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area),
+                              "a"(lo), "d"(hi) : "memory");
+        } else {
+            __asm__ volatile ("fxrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area) : "memory");
+        }
+    } else {
+        uint64_t cr0;
+        __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+        cr0 |= (1UL << 3);
+        __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
     }
 
     /* Return the correct RSP: thread stack if secondary thread, task stack otherwise */
@@ -741,6 +794,9 @@ uint64_t schedule(struct interrupt_frame *frame)
     }
 
     if (tasks[next_task].fpu_used && tasks[next_task].xsave_area) {
+        /* Must clear CR0.TS BEFORE xrstor/fxrstor -- otherwise the
+         * restore instruction itself triggers #NM inside the scheduler. */
+        __asm__ volatile ("clts");
         if (have_xsave) {
             uint64_t xcr0 = g_cpu.xcr0_active;
             uint32_t lo = (uint32_t)xcr0;
@@ -750,7 +806,6 @@ uint64_t schedule(struct interrupt_frame *frame)
         } else {
             __asm__ volatile ("fxrstor %0" : : "m"(*(uint8_t *)tasks[next_task].xsave_area) : "memory");
         }
-        __asm__ volatile ("clts");
     } else {
         uint64_t cr0;
         __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
