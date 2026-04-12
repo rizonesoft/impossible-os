@@ -4968,6 +4968,111 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     serial_early_print(" (one-shot override)\n");
                 }
             }
+
+            /* S12: Decode Boot#### EFI_LOAD_OPTION for the current boot entry.
+             * Format variable name as Boot0000..BootFFFF from BootCurrent. */
+            if (g_boot_info_ptr->uefi_boot_current != 0xFFFF) {
+                static const char hex[] = "0123456789abcdef";
+                UINT16 bc = g_boot_info_ptr->uefi_boot_current;
+                CHAR16 var_name[] = u"Boot0000";
+                /* Fill in the 4 hex digits (UCS-2) */
+                var_name[4] = (CHAR16)hex[(bc >> 12) & 0xF];
+                var_name[5] = (CHAR16)hex[(bc >> 8) & 0xF];
+                var_name[6] = (CHAR16)hex[(bc >> 4) & 0xF];
+                var_name[7] = (CHAR16)hex[bc & 0xF];
+
+                UINT8 lo_buf[2048];
+                UINTN lo_sz = sizeof(lo_buf);
+                EFI_STATUS lo_s = rt->GetVariable(
+                    var_name, &global_guid, &attrs, &lo_sz, lo_buf);
+
+                if (lo_s == EFI_BUFFER_TOO_SMALL) {
+                    serial_early_print("[BOOT] Boot#### entry too large ("
+                                       "skipping decode)\n");
+                } else if (!EFI_ERROR(lo_s) && lo_sz > 6) {
+                    /* EFI_LOAD_OPTION layout:
+                     * [0..3]  Attributes   (UINT32)
+                     * [4..5]  FilePathListLength (UINT16)
+                     * [6..]   Description  (NUL-terminated CHAR16)
+                     * [after NUL] FilePathList (FilePathListLength bytes) */
+                    UINT16 fp_len = (UINT16)(lo_buf[4] | ((UINT16)lo_buf[5] << 8));
+                    const CHAR16 *desc = (const CHAR16 *)&lo_buf[6];
+                    UINTN max_desc_bytes = lo_sz - 6;
+
+                    /* Print description as ASCII (truncate at 80 chars) */
+                    serial_early_print("[BOOT] Boot");
+                    serial_early_print_hex16(bc);
+                    serial_early_print(": ");
+                    {
+                        UINTN di;
+                        for (di = 0; di < 80 && (di * 2 + 1) < max_desc_bytes; di++) {
+                            if (desc[di] == 0) break;
+                            serial_early_putchar((char)(desc[di] & 0x7F));
+                        }
+                    }
+                    serial_early_print("\n");
+
+                    /* Find end of Description to locate FilePathList */
+                    {
+                        UINTN di;
+                        const UINT8 *fp_start = (const UINT8 *)0;
+                        for (di = 0; (di * 2 + 1) < max_desc_bytes; di++) {
+                            if (desc[di] == 0) {
+                                fp_start = (const UINT8 *)&desc[di + 1];
+                                break;
+                            }
+                        }
+
+                        /* Convert FilePathList to text via DevicePathToText.
+                         * First validate: walk nodes within fp_len to confirm
+                         * a valid END_ENTIRE node exists (per Gate 13: spec
+                         * compliance -- ConvertDevicePathToText doesn't take
+                         * a length and would read past the buffer otherwise). */
+                        if (fp_start && fp_len >= 4 &&
+                            (UINTN)(fp_start - lo_buf) + fp_len <= lo_sz) {
+                            int dp_valid = 0;
+                            {
+                                const UINT8 *vn = fp_start;
+                                UINTN vw = 0;
+                                while (vw + 4 <= fp_len) {
+                                    UINT16 vl = (UINT16)(vn[2] | ((UINT16)vn[3] << 8));
+                                    if (vl < 4 || vw + vl > fp_len) break;
+                                    if (vn[0] == EFI_DP_TYPE_END &&
+                                        vn[1] == EFI_DP_SUBTYPE_END_ENTIRE) {
+                                        dp_valid = 1;
+                                        break;
+                                    }
+                                    vn += vl;
+                                    vw += vl;
+                                }
+                            }
+
+                            if (dp_valid) {
+                                EFI_GUID dptt_s12 = EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID;
+                                EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *dptt12 =
+                                    (EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *)0;
+                                gBS->LocateProtocol(&dptt_s12, (VOID *)0,
+                                                     (VOID **)&dptt12);
+                                if (dptt12) {
+                                    CHAR16 *fp_txt = dptt12->ConvertDevicePathToText(
+                                        (EFI_DEVICE_PATH_PROTOCOL *)fp_start, 0, 0);
+                                    if (fp_txt) {
+                                        serial_early_print("[BOOT]   Path: ");
+                                        UINTN fi;
+                                        for (fi = 0; fi < 120 && fp_txt[fi]; fi++)
+                                            serial_early_putchar((char)(fp_txt[fi] & 0x7F));
+                                        if (fp_txt[fi])
+                                            serial_early_print("...");
+                                        serial_early_print("\n");
+                                        gBS->FreePool(fp_txt);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                /* EFI_NOT_FOUND is silent (some VMs have minimal NVRAM) */
+            }
         }
     }
 

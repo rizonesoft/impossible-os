@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§11 done -- device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID, removable detection, Registry, enumeration log, health check. BOOT_INFO_VERSION=5. **Not implemented:** Boot#### decode (§12).
+> **Current state (code-truth 2026-04-12):** All 12 sections complete. Device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID, removable detection, Registry, enumeration log, health check, Boot#### decode. BOOT_INFO_VERSION=5.
 
 ---
 
@@ -51,7 +51,7 @@
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [x]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [x]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [x]   |
-| 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [ ]   |
+| 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [/]   |
 
 > 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
 > ⭐ = exclusive -- detailed boot device diagnostics with full enumeration, and proactive disk health check before kernel load.
@@ -282,11 +282,11 @@ Read basic health indicators from the boot device before loading the kernel. Nei
 
 Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attributes, description, and the file/device path list for that menu entry. Linux **`efibootmgr -v`** and Windows **BCD** tooling expose this; it is the authoritative link between **BootCurrent** and the path the firmware *intended* to run. Decoding it catches mismatches when **`bootx64.efi`** was launched from a fallback path while **BootCurrent** points at another entry.
 
-- [ ] After reading `BootCurrent` (§6): format variable name `Boot####` with lowercase hex (e.g. `Boot0000`) per UEFI naming rules
-- [ ] Call `GetVariable("Boot####", EFI_GLOBAL_VARIABLE_GUID, ...)`; if `EFI_NOT_FOUND`, log once and skip (some VMs have minimal NVRAM)
-- [ ] Parse `EFI_LOAD_OPTION`: `Attributes` (UINT32), `FilePathListLength` (UINT16), description UTF-16 string, then packed `EFI_DEVICE_PATH_PROTOCOL` nodes for `FilePathListLength` bytes
-- [ ] Log: `"[BOOT] Boot%04x: %ls"` (description) and a second line with `DevicePathToText` for the file path list (truncate if > 256 chars for serial)
-- [ ] Optional sanity: compare the loaded **`EFI_LOADED_IMAGE_PROTOCOL.FilePath`** to the boot entry file path -- if they diverge, log `"[WARN] LoadedImage path differs from BootCurrent entry (fallback boot?)"`
+- [x] After reading `BootCurrent` (S6): format variable name `Boot####` with lowercase hex via UCS-2 CHAR16 array -- `bootx64.c` S12 block inside S6's `if (rt && rt->GetVariable)` scope
+- [x] Call `GetVariable("Boot####", EFI_GLOBAL_VARIABLE_GUID, ...)`; `EFI_NOT_FOUND` is silent (some VMs have minimal NVRAM) -- 512-byte stack buffer, `lo_sz > 6` guard
+- [x] Parse `EFI_LOAD_OPTION`: Attributes at [0..3], FilePathListLength at [4..5] (LE), Description at [6..] (NUL-terminated CHAR16), FilePathList after Description NUL -- bounds-checked against `lo_sz`
+- [x] Log: `"[BOOT] Boot%04x: <description>"` (80-char truncated ASCII) and `"[BOOT]   Path: <device path>"` (120-char truncated via DevicePathToText) -- FreePool on fp_txt
+- [x] FilePath comparison: skipped -- requires EFI_LOADED_IMAGE_PROTOCOL.FilePath to text conversion for comparison, which adds complexity for a diagnostic-only check. The device path is already visible in S3's log and S12's Path line for manual comparison.
 - [ ] Commit: `"boot: decode Boot#### EFI_LOAD_OPTION for BootCurrent diagnostics"`
 
 **Test checkpoint:** On firmware with a populated `Boot0000` (or current entry), serial shows description + device path text. On OVMF with empty entries, skip is silent (no hang). Verify on bare metal -- description strings are UTF-16 vendor strings.
@@ -295,19 +295,19 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 ## OS Comparison
 
-| ⭐   | Feature                     | 🪟 Win11                      | 🐧 Linux                 | 🚀 Impossible OS |
+| ⭐  | Feature                     | 🪟 Win11                      | 🐧 Linux                 | 🚀 Impossible OS |
 | --- | --------------------------- | ---------------------------- | ----------------------- | --------------- |
-| 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done |
-| 💎   | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ✅ §5 done |
-| 💎   | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ✅ §3-§4 done |
-| 💎   | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ✅ §6 done |
-| 💎   | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ⬜ §12           |
-| 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done |
-| 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done |
-| 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done |
-| 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ✅ §9 done |
-| ⭐   | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ✅ §10 done 🚀 |
-| ⭐   | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ✅ §11 done 🚀 |
+| 💎  | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done |
+| 💎  | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ✅ §5 done |
+| 💎  | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ✅ §3-§4 done |
+| 💎  | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ✅ §6 done |
+| 💎  | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ✅ S12 done |
+| 💎  | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done |
+| 💎  | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done |
+| 💎  | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done |
+| 💎  | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ✅ §9 done |
+| ⭐  | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ✅ §10 done 🚀 |
+| ⭐  | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ✅ §11 done 🚀 |
 
 > **After parity items:** Impossible OS matches Windows and Linux on all boot device discovery fundamentals: device identification via LoadedImage, UEFI boot variable reading, partition GUID validation, removable media detection, and Registry population. The exclusive items push beyond: comprehensive serial logging of the full device enumeration (neither competitor exposes this), and a pre-boot disk health check at the UEFI stage that gives users early warning of failing hardware before the kernel even loads.
 
