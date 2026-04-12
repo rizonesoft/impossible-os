@@ -1531,8 +1531,8 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
      *    36px title >> 22px subtitle >> 16px body. */
     {
         i = 0;
-        err_buf[i++] = 'e'; err_buf[i++] = 'r'; err_buf[i++] = 'r';
-        err_buf[i++] = 'o'; err_buf[i++] = 'r'; err_buf[i++] = ' ';
+        err_buf[i++] = 'C'; err_buf[i++] = 'o'; err_buf[i++] = 'd';
+        err_buf[i++] = 'e'; err_buf[i++] = ' ';
         err_buf[i++] = '0'; err_buf[i++] = 'x';
         err_buf[i++] = hex[(err_code >> 12) & 0xF];
         err_buf[i++] = hex[(err_code >>  8) & 0xF];
