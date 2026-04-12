@@ -4697,9 +4697,37 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 serial_early_print("[BOOT] DevicePathToText not available\n");
             }
 
-            /* §4+§7: Walk device path nodes to classify boot device type
-             * (Messaging subtypes) and extract partition GUID (Media/HardDrive).
-             * Both extractions share the same bounded walk. */
+            /* §4: Classify device type from the TEXT path string.
+             * The raw device path from HandleProtocol on a partition handle
+             * starts at the HD() node -- it doesn't include parent Messaging
+             * nodes (Sata/NVMe/USB). But DevicePathToText returns the full
+             * path including parents. Parse the text for known substrings. */
+            if (g_boot_info_ptr->boot_device_path[0] != '\0' &&
+                g_boot_info_ptr->boot_device_type == 0) {
+                const char *p = g_boot_info_ptr->boot_device_path;
+                UINTN pi;
+                for (pi = 0; p[pi]; pi++) {
+                    if (p[pi] == 'S' && p[pi+1] == 'a' && p[pi+2] == 't' &&
+                        p[pi+3] == 'a' && p[pi+4] == '(') {
+                        g_boot_info_ptr->boot_device_type = 1; break;
+                    }
+                    if (p[pi] == 'N' && p[pi+1] == 'V' && p[pi+2] == 'M' &&
+                        p[pi+3] == 'e' && p[pi+4] == '(') {
+                        g_boot_info_ptr->boot_device_type = 2; break;
+                    }
+                    if (p[pi] == 'U' && p[pi+1] == 'S' && p[pi+2] == 'B' &&
+                        p[pi+3] == '(') {
+                        g_boot_info_ptr->boot_device_type = 3; break;
+                    }
+                    if (p[pi] == 'I' && p[pi+1] == 'P' && p[pi+2] == 'v' &&
+                        (p[pi+3] == '4' || p[pi+3] == '6') && p[pi+4] == '(') {
+                        g_boot_info_ptr->boot_device_type = 4; break;
+                    }
+                }
+            }
+
+            /* §7: Walk raw device path nodes to extract partition GUID.
+             * The HD() node IS present in the partition handle's device path. */
             g_boot_info_ptr->boot_partition_style = 0;
             {
                 const EFI_DEVICE_PATH_PROTOCOL *node = dp;
@@ -4715,28 +4743,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                ((UINT16)node->Length[1] << 8);
                     if (node_len < 4) break;
                     if (walked + node_len > DP_MAX_WALK) break;
-
-                    /* §4: Messaging subtypes -> device type */
-                    if (node->Type == EFI_DP_TYPE_MESSAGING &&
-                        g_boot_info_ptr->boot_device_type == 0) {
-                        switch (node->SubType) {
-                        case EFI_DP_MSG_SATA:
-                            g_boot_info_ptr->boot_device_type = 1;
-                            break;
-                        case EFI_DP_MSG_NVME:
-                            g_boot_info_ptr->boot_device_type = 2;
-                            break;
-                        case EFI_DP_MSG_USB:
-                            g_boot_info_ptr->boot_device_type = 3;
-                            break;
-                        case EFI_DP_MSG_IPV4:
-                        case EFI_DP_MSG_IPV6:
-                            g_boot_info_ptr->boot_device_type = 4;
-                            break;
-                        default:
-                            break;
-                        }
-                    }
 
                     /* §7: Media/HardDrive -> partition GUID + style.
                      * UEFI spec Table 10-58: HardDrive DP node is 42 bytes.
