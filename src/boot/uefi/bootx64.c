@@ -194,7 +194,7 @@ struct boot_usb_controller {
 
 /* ABI header (S15) -- must match kernel/boot_info.h */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" */
-#define BOOT_INFO_VERSION  4  /* §7: added boot partition GUID + style */
+#define BOOT_INFO_VERSION  5  /* §8: removable media detection fields */
 
 struct boot_info_header {
     UINT32 magic;
@@ -298,7 +298,11 @@ struct boot_info {
     /* Boot partition info (§7) */
     UINT8   boot_partition_guid[16];
     UINT8   boot_partition_style;     /* 0=unknown, 1=MBR, 2=GPT */
-    UINT8   _part_pad[3];
+
+    /* Removable media info (§8) */
+    UINT8   boot_device_removable;   /* 0=fixed, 1=removable */
+    UINT8   boot_media_present;      /* 0=no, 1=yes */
+    UINT8   _rem_pad;
 
     /* Kernel-populated fields (set after boot) */
     UINT8   secure_boot_enabled;
@@ -4818,6 +4822,41 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             }
         }
     }
+
+    /* §8: Removable media detection via EFI_BLOCK_IO_PROTOCOL.Media.
+     * Query the boot device handle for BlockIO and read Media fields.
+     * If BlockIO is unavailable, infer from device type: USB defaults
+     * to removable (safe for write-caching policy). */
+    g_boot_info_ptr->boot_media_present = 1; /* assume present (booted from it) */
+    g_boot_info_ptr->boot_device_removable =
+        (g_boot_info_ptr->boot_device_type == 3) ? 1 : 0; /* USB defaults removable */
+    if (g_boot_device_handle) {
+        EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+        EFI_BLOCK_IO_PROTOCOL *bio = (EFI_BLOCK_IO_PROTOCOL *)0;
+        EFI_STATUS bio_s;
+
+        bio_s = gBS->HandleProtocol(g_boot_device_handle, &bio_guid,
+                                     (VOID **)&bio);
+        if (!EFI_ERROR(bio_s) && bio && bio->Media) {
+            g_boot_info_ptr->boot_device_removable =
+                bio->Media->RemovableMedia ? 1 : 0;
+            g_boot_info_ptr->boot_media_present =
+                bio->Media->MediaPresent ? 1 : 0;
+        } else {
+            serial_early_print("[WARN] BlockIO not available on boot device"
+                               " -- using type-based default\n");
+        }
+    }
+
+    if (g_boot_info_ptr->boot_device_removable)
+        serial_early_print("[BOOT] Boot device is removable "
+                           "-- write-caching will be disabled by default\n");
+    else
+        serial_early_print("[BOOT] Boot device is fixed\n");
+
+    if (!g_boot_info_ptr->boot_media_present)
+        serial_early_print("[WARN] Boot media not present "
+                           "(reported by firmware)\n");
 
     /* §6: Read UEFI boot variables (BootCurrent, BootOrder, BootNext).
      * RuntimeServices->GetVariable is available before ExitBootServices. */

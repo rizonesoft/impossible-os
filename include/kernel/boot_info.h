@@ -43,7 +43,7 @@
  *   - Bootloader writes sizeof(struct boot_info) into header.size at
  *     compile time -- a size mismatch means the structs diverged. */
 #define BOOT_INFO_MAGIC    0x49504F53  /* "IPOS" (Impossible OS) */
-#define BOOT_INFO_VERSION  4           /* §7: added boot partition GUID + style */
+#define BOOT_INFO_VERSION  5           /* §8: removable media detection fields */
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
@@ -498,7 +498,11 @@ struct boot_info {
     /* Boot partition info (§7: extracted from device path HardDrive node) */
     uint8_t  boot_partition_guid[16]; /* raw GUID bytes (GPT) or 4-byte MBR sig in [0..3] */
     uint8_t  boot_partition_style;    /* 0=unknown, 1=MBR, 2=GPT */
-    uint8_t  _part_pad[3];           /* alignment */
+
+    /* Removable media info (§8: from EFI_BLOCK_IO_PROTOCOL.Media) */
+    uint8_t  boot_device_removable;  /* 0=fixed, 1=removable (USB/SD/external) */
+    uint8_t  boot_media_present;     /* 0=no media, 1=media inserted */
+    uint8_t  _rem_pad;               /* alignment */
 
     /* Kernel-populated fields (set after boot; never written by the bootloader) */
     uint8_t  secure_boot_enabled;   /* 1 if Secure Boot is active (uefi_secureboot_init) */

@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§7 done -- device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID. BOOT_INFO_VERSION=4. **Not implemented:** removable detection (§8), Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
+> **Current state (code-truth 2026-04-12):** §1-§8 done -- device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID, removable media detection. BOOT_INFO_VERSION=5. **Not implemented:** Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
 
 ---
 
@@ -47,7 +47,7 @@
 | 💎  |   5   | Device fallback chain (priority-based)             | §2, §4         |  [x]   |
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [x]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [x]   |
-| 💎  |   8   | Removable media detection                          | §1, §4         |  [ ]   |
+| 💎  |   8   | Removable media detection                          | §1, §4         |  [/]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [ ]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [ ]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [ ]   |
@@ -199,11 +199,11 @@ Extract the GPT partition GUID from the boot device's media device path node. Th
 
 Determine whether the boot device is removable (USB stick, external drive) or fixed (internal SATA/NVMe). Windows uses `DriveType` (removable/fixed) to adjust write-caching policy; Linux checks `/sys/block/sdX/removable`. Knowing removability at boot time lets the kernel apply safe cache defaults and warn about ejection.
 
-- [ ] After obtaining boot `DeviceHandle` from §1: query `EFI_BLOCK_IO_PROTOCOL` on the handle via `HandleProtocol()`
-- [ ] Read `BlockIo->Media->RemovableMedia` (BOOLEAN): TRUE for USB sticks, external drives, SD cards
-- [ ] Read `BlockIo->Media->MediaPresent` (BOOLEAN): TRUE if media is currently inserted (relevant for card readers)
-- [ ] Store in `boot_info.boot_device_removable` (0=fixed, 1=removable) and `boot_info.boot_media_present` (0/1)
-- [ ] If removable: log `"[BOOT] Boot device is removable -- write-caching will be disabled by default"`
+- [x] After obtaining boot `DeviceHandle` from §1: query `EFI_BLOCK_IO_PROTOCOL` on the handle via `HandleProtocol()` -- `bootx64.c` efi_main §8 block, NULL checks on bio and bio->Media
+- [x] Read `BlockIo->Media->RemovableMedia` (BOOLEAN): converted to 0/1 via ternary
+- [x] Read `BlockIo->Media->MediaPresent` (BOOLEAN): converted to 0/1, default 1 (assume present if BlockIO unavailable)
+- [x] Store in `boot_info.boot_device_removable` and `boot_info.boot_media_present` -- carved from `_part_pad[3]` (same struct size), BOOT_INFO_VERSION bumped to 5
+- [x] If removable: `"[BOOT] Boot device is removable -- write-caching will be disabled by default"`, else `"[BOOT] Boot device is fixed"`. If !MediaPresent: `"[WARN] Boot media not present"`
 - [ ] Commit: `"boot: detect removable media via EFI_BLOCK_IO_PROTOCOL"`
 
 **Test checkpoint:** USB boot on QEMU (`-device usb-storage`): `boot_device_removable == 1`. SATA boot: `boot_device_removable == 0`. Both: `boot_media_present == 1`. Verify on bare metal USB stick.
@@ -292,7 +292,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | 💎   | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ⬜ §12           |
 | 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done |
 | 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done |
-| 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ⬜ §8            |
+| 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done |
 | 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ⬜ §9            |
 | ⭐   | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ⬜ §10 🚀         |
 | ⭐   | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ⬜ §11 🚀         |
