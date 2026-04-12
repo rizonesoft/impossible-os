@@ -4929,6 +4929,122 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
 
+    /* §10: Boot device enumeration log -- enumerate all filesystems and
+     * log device path, type, kernel presence, removable status for each.
+     * This ties together §1-§8 data into a single diagnostic block. */
+    {
+        EFI_GUID fs_enum_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+        EFI_GUID dp_enum_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+        EFI_GUID dptt_enum_guid = EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID;
+        EFI_GUID bio_enum_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+        EFI_HANDLE *enum_handles = (EFI_HANDLE *)0;
+        UINTN enum_count = 0;
+        EFI_STATUS enum_s;
+        EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *enum_dptt = (EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *)0;
+
+        gBS->LocateProtocol(&dptt_enum_guid, (VOID *)0, (VOID **)&enum_dptt);
+
+        enum_s = gBS->LocateHandleBuffer(ByProtocol, &fs_enum_guid,
+                                          (VOID *)0, &enum_count, &enum_handles);
+        if (!EFI_ERROR(enum_s) && enum_handles && enum_count > 0) {
+            serial_early_print("[BOOT] --- Device Enumeration ---\n");
+            UINTN ei;
+            for (ei = 0; ei < enum_count; ei++) {
+                int is_boot = (enum_handles[ei] == g_boot_device_handle);
+                int has_kernel = 0;
+                int removable = -1;  /* -1=unknown, 0=fixed, 1=removable */
+
+                /* Check kernel presence */
+                {
+                    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *efs;
+                    EFI_FILE_PROTOCOL *eroot;
+                    EFI_FILE_PROTOCOL *efile;
+                    EFI_STATUS es = gBS->HandleProtocol(enum_handles[ei],
+                                        &fs_enum_guid, (VOID **)&efs);
+                    if (!EFI_ERROR(es)) {
+                        es = efs->OpenVolume(efs, &eroot);
+                        if (!EFI_ERROR(es)) {
+                            es = eroot->Open(eroot, &efile,
+                                              u"\\boot\\kernel.exe",
+                                              EFI_FILE_MODE_READ, 0);
+                            if (!EFI_ERROR(es)) {
+                                has_kernel = 1;
+                                efile->Close(efile);
+                            }
+                            eroot->Close(eroot);
+                        }
+                    }
+                }
+
+                /* Check removable */
+                {
+                    EFI_BLOCK_IO_PROTOCOL *ebio;
+                    EFI_STATUS es = gBS->HandleProtocol(enum_handles[ei],
+                                        &bio_enum_guid, (VOID **)&ebio);
+                    if (!EFI_ERROR(es) && ebio && ebio->Media)
+                        removable = ebio->Media->RemovableMedia ? 1 : 0;
+                }
+
+                /* Get device path text */
+                {
+                    EFI_DEVICE_PATH_PROTOCOL *edp;
+                    EFI_STATUS es = gBS->HandleProtocol(enum_handles[ei],
+                                        &dp_enum_guid, (VOID **)&edp);
+
+                    serial_early_print("[BOOT]  [");
+                    serial_early_print_hex16((UINT16)ei);
+                    serial_early_print("] ");
+                    if (is_boot) serial_early_print("*BOOT* ");
+
+                    if (!EFI_ERROR(es) && edp && enum_dptt) {
+                        CHAR16 *etxt = enum_dptt->ConvertDevicePathToText(edp, 0, 0);
+                        if (etxt) {
+                            /* Print as ASCII (truncate at 80 chars for readability) */
+                            UINTN ej;
+                            for (ej = 0; ej < 80 && etxt[ej]; ej++)
+                                serial_early_putchar((char)(etxt[ej] & 0x7F));
+                            if (etxt[ej]) serial_early_print("...");
+                            gBS->FreePool(etxt);
+                        } else {
+                            serial_early_print("(no path text)");
+                        }
+                    } else {
+                        serial_early_print("(no device path)");
+                    }
+
+                    serial_early_print(has_kernel ? " [kernel]" : "");
+                    serial_early_print(removable == 1 ? " [removable]"
+                                     : removable == 0 ? " [fixed]"
+                                     : " [removable=?]");
+                    serial_early_print("\n");
+                }
+            }
+
+            /* Summary line */
+            serial_early_print("[BOOT] Device summary: ");
+            {
+                char nb[20];  /* max digits for UINTN */
+                UINTN v = enum_count;
+                int n = 0;
+                if (v == 0) nb[n++] = '0';
+                else { while (v > 0 && n < 20) { nb[n++] = '0' + (char)(v % 10); v /= 10; } }
+                while (n > 0) serial_early_putchar(nb[--n]);
+            }
+            serial_early_print(" devices found, boot=");
+            {
+                static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};
+                UINT8 t = g_boot_info_ptr->boot_device_type;
+                serial_early_print(t <= 4 ? tn[t] : "?");
+            }
+            serial_early_print(g_boot_info_ptr->boot_device_removable
+                               ? " (removable)" : " (fixed)");
+            serial_early_print("\n");
+            serial_early_print("[BOOT] --- End Enumeration ---\n");
+
+            gBS->FreePool(enum_handles);
+        }
+    }
+
     /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();
     parse_boot_conf();

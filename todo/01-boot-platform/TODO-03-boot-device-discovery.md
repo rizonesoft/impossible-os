@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§9 done -- device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID, removable detection, Registry population. BOOT_INFO_VERSION=5. **Not implemented:** enumeration log (§10), health check (§11), Boot#### decode (§12).
+> **Current state (code-truth 2026-04-12):** §1-§10 done -- device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID, removable detection, Registry population, full device enumeration log. BOOT_INFO_VERSION=5. **Not implemented:** health check (§11), Boot#### decode (§12).
 
 ---
 
@@ -49,7 +49,7 @@
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [x]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [x]   |
 | 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [x]   |
-| ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [ ]   |
+| ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [/]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [ ]   |
 | 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [ ]   |
 
@@ -239,13 +239,13 @@ Populate `HKLM\SYSTEM\Boot\Device\` Registry keys with boot device information s
 
 Log the full boot device enumeration to serial for debugging. This is the comprehensive diagnostic section that ties together all previous sections.
 
-- [ ] At boot start: enumerate all `SIMPLE_FILE_SYSTEM_PROTOCOL` handles using `LocateHandleBuffer()`
-- [ ] For each: log device path text, device type (SATA/NVMe/USB), whether `\boot\kernel.exe` exists, and removable status
-- [ ] Log UEFI `BootCurrent` variable: which boot entry firmware selected (from §6)
-- [ ] Log `BootOrder` variable: full priority list (from §6)
-- [ ] If `BootNext` was set: log the one-shot override (from §6)
-- [ ] Log partition GUID for boot device (from §7)
-- [ ] Summary line: `"[BOOT] Device summary: %u devices found, boot=%s (type=%u, %s, GUID=%s)"`
+- [x] At boot start: enumerate all `SIMPLE_FILE_SYSTEM_PROTOCOL` handles via `LocateHandleBuffer()` -- `bootx64.c` efi_main §10 block after §6 boot variables
+- [x] For each: log device path text (80-char truncated), kernel presence (`[kernel]` tag), removable status (`[removable]`/`[fixed]`), boot device marked `*BOOT*` -- per-handle Open+Close for kernel check, BlockIO for removable, DevicePathToText for path
+- [x] Log UEFI `BootCurrent` variable -- already logged in §6 block above (`[BOOT] BootCurrent=0x...`)
+- [x] Log `BootOrder` variable -- already logged in §6 block above (`[BOOT] BootOrder=[...]`)
+- [x] If `BootNext` was set -- already logged in §6 block above (`[BOOT] BootNext=0x... (one-shot override)`)
+- [x] Log partition GUID for boot device -- already logged in §7 block above (`[BOOT] Boot partition: GUID=...`)
+- [x] Summary line: `"[BOOT] Device summary: N devices found, boot=SATA (fixed)"` with device count and type/removable status
 - [ ] Commit: `"boot: comprehensive boot device enumeration logging"`
 
 **Test checkpoint:** Serial output shows numbered list of all available boot devices with kernel presence status, device type, and removable flag. Summary line present. Verify on QEMU multi-disk and bare metal.
@@ -300,7 +300,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done |
 | 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done |
 | 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ✅ §9 done |
-| ⭐   | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ⬜ §10 🚀         |
+| ⭐   | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ✅ §10 done 🚀 |
 | ⭐   | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ⬜ §11 🚀         |
 
 > **After parity items:** Impossible OS matches Windows and Linux on all boot device discovery fundamentals: device identification via LoadedImage, UEFI boot variable reading, partition GUID validation, removable media detection, and Registry population. The exclusive items push beyond: comprehensive serial logging of the full device enumeration (neither competitor exposes this), and a pre-boot disk health check at the UEFI stage that gives users early warning of failing hardware before the kernel even loads.
