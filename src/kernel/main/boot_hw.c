@@ -12,6 +12,7 @@
 #include "kernel/cpuid.h"
 #include "kernel/multiboot2.h"
 #include "kernel/boot_info.h"
+#include "registry.h"
 #include "gfx_simd.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/klog.h"
@@ -415,4 +416,87 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 void boot_hw_init(uint64_t magic, uint64_t mbi)
 {
     boot_phase0(magic, mbi);
+}
+
+/* ---- §9: Boot device Registry population --------------------------------
+ * Called from registry_populate_defaults() in Phase 2 after registry_init().
+ * Populates HKLM\SYSTEM\Boot\Device\ with boot provenance fields from
+ * g_boot_info (set by bootloader pre-ExitBootServices). */
+
+void boot_device_populate_registry(void)
+{
+    HKEY hKey = (HKEY)0;
+    uint32_t disp = 0;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Boot\\Device", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) != ERROR_SUCCESS) {
+        klog(LOG_WARN, "boot", "Failed to create HKLM\\SYSTEM\\Boot\\Device key");
+        return;
+    }
+
+    RegSetDword(hKey, "Type", (uint32_t)g_boot_info.boot_device_type);
+    RegSetString(hKey, "Path", g_boot_info.boot_device_path);
+    RegSetDword(hKey, "PartitionStyle", (uint32_t)g_boot_info.boot_partition_style);
+    RegSetDword(hKey, "Removable", (uint32_t)g_boot_info.boot_device_removable);
+    RegSetDword(hKey, "BootCurrent", (uint32_t)g_boot_info.uefi_boot_current);
+    RegSetDword(hKey, "BootNext",
+                g_boot_info.uefi_boot_next_valid
+                    ? (uint32_t)g_boot_info.uefi_boot_next : 0xFFFF);
+
+    /* Format partition GUID as string for REG_SZ */
+    if (g_boot_info.boot_partition_style == 2) {
+        const uint8_t *g = g_boot_info.boot_partition_guid;
+        static const char hex[] = "0123456789ABCDEF";
+        char guid_str[37]; /* XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX + NUL */
+        int p = 0;
+        /* Data1 (4 bytes LE) */
+        guid_str[p++] = hex[g[3] >> 4]; guid_str[p++] = hex[g[3] & 0xF];
+        guid_str[p++] = hex[g[2] >> 4]; guid_str[p++] = hex[g[2] & 0xF];
+        guid_str[p++] = hex[g[1] >> 4]; guid_str[p++] = hex[g[1] & 0xF];
+        guid_str[p++] = hex[g[0] >> 4]; guid_str[p++] = hex[g[0] & 0xF];
+        guid_str[p++] = '-';
+        /* Data2 (2 bytes LE) */
+        guid_str[p++] = hex[g[5] >> 4]; guid_str[p++] = hex[g[5] & 0xF];
+        guid_str[p++] = hex[g[4] >> 4]; guid_str[p++] = hex[g[4] & 0xF];
+        guid_str[p++] = '-';
+        /* Data3 (2 bytes LE) */
+        guid_str[p++] = hex[g[7] >> 4]; guid_str[p++] = hex[g[7] & 0xF];
+        guid_str[p++] = hex[g[6] >> 4]; guid_str[p++] = hex[g[6] & 0xF];
+        guid_str[p++] = '-';
+        /* Data4 (8 bytes, big-endian) */
+        guid_str[p++] = hex[g[8] >> 4]; guid_str[p++] = hex[g[8] & 0xF];
+        guid_str[p++] = hex[g[9] >> 4]; guid_str[p++] = hex[g[9] & 0xF];
+        guid_str[p++] = '-';
+        int i;
+        for (i = 10; i < 16; i++) {
+            guid_str[p++] = hex[g[i] >> 4];
+            guid_str[p++] = hex[g[i] & 0xF];
+        }
+        guid_str[p] = '\0';
+        RegSetString(hKey, "PartitionGUID", guid_str);
+    } else if (g_boot_info.boot_partition_style == 1) {
+        /* MBR: 4-byte signature as hex */
+        const uint8_t *g = g_boot_info.boot_partition_guid;
+        static const char hex[] = "0123456789ABCDEF";
+        char sig_str[9];
+        sig_str[0] = hex[g[3] >> 4]; sig_str[1] = hex[g[3] & 0xF];
+        sig_str[2] = hex[g[2] >> 4]; sig_str[3] = hex[g[2] & 0xF];
+        sig_str[4] = hex[g[1] >> 4]; sig_str[5] = hex[g[1] & 0xF];
+        sig_str[6] = hex[g[0] >> 4]; sig_str[7] = hex[g[0] & 0xF];
+        sig_str[8] = '\0';
+        RegSetString(hKey, "PartitionGUID", sig_str);
+    } else {
+        /* Unknown partition style -- write empty string so the key
+         * always has all expected values (no silent omission). */
+        RegSetString(hKey, "PartitionGUID", "");
+    }
+
+    RegCloseKey(hKey);
+
+    klog(LOG_INFO, "boot",
+         "Boot device Registry populated: %s type=%u removable=%u",
+         g_boot_info.boot_device_path,
+         (uint64_t)g_boot_info.boot_device_type,
+         (uint64_t)g_boot_info.boot_device_removable);
 }

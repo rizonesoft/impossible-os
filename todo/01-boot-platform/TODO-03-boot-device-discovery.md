@@ -3,7 +3,7 @@
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across SATA, NVMe, USB, and network devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any hardware configuration and exposes complete boot provenance to the kernel.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** §1-§8 done -- device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID, removable media detection. BOOT_INFO_VERSION=5. **Not implemented:** Registry (§9), enumeration log (§10), health check (§11), Boot#### decode (§12).
+> **Current state (code-truth 2026-04-12):** §1-§9 done -- device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID, removable detection, Registry population. BOOT_INFO_VERSION=5. **Not implemented:** enumeration log (§10), health check (§11), Boot#### decode (§12).
 
 ---
 
@@ -48,7 +48,7 @@
 | 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next)| §1             |  [x]   |
 | 💎  |   7   | Partition GUID extraction and validation           | §1             |  [x]   |
 | 💎  |   8   | Removable media detection                          | §1, §4         |  [x]   |
-| 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [ ]   |
+| 💎  |   9   | Boot device Registry population                    | §3, §4, §7, §8 |  [/]   |
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [ ]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [ ]   |
 | 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [ ]   |
@@ -217,15 +217,15 @@ Determine whether the boot device is removable (USB stick, external drive) or fi
 
 Populate `HKLM\SYSTEM\Boot\Device\` Registry keys with boot device information so user-mode applications and diagnostics tools can query how the system booted. Windows populates `HKLM\SYSTEM\CurrentControlSet\Enum\` with boot device details; Linux exposes boot device info via `/sys/firmware/efi/`. This gives Impossible OS a central, queryable boot provenance record.
 
-- [ ] After `registry_init()` completes in Phase 2 (`boot_storage.c`): call `boot_device_registry_init()` from `boot_storage.c` (not `boot_hw.c` -- Registry is unavailable in Phase 0)
-- [ ] Write `HKLM\SYSTEM\Boot\Device\Type` (REG_DWORD): boot_device_type (1=SATA, 2=NVMe, 3=USB, 4=network)
-- [ ] Write `HKLM\SYSTEM\Boot\Device\Path` (REG_SZ): boot_device_path text from boot_info
-- [ ] Write `HKLM\SYSTEM\Boot\Device\PartitionGUID` (REG_SZ): formatted GUID string from boot_info
-- [ ] Write `HKLM\SYSTEM\Boot\Device\PartitionStyle` (REG_DWORD): 1=MBR, 2=GPT
-- [ ] Write `HKLM\SYSTEM\Boot\Device\Removable` (REG_DWORD): 0 or 1
-- [ ] Write `HKLM\SYSTEM\Boot\Device\BootCurrent` (REG_DWORD): UEFI BootCurrent value
-- [ ] Write `HKLM\SYSTEM\Boot\Device\BootNext` (REG_DWORD): UEFI BootNext value (0xFFFF if not set)
-- [ ] Log: `"[BOOT] Boot device Registry populated: %s type=%u removable=%u"` with path and type
+- [x] After `registry_init()` completes in Phase 2: `boot_device_populate_registry()` called from `registry_populate_defaults()` in `registry.c:1720` (not boot_hw.c -- Registry unavailable in Phase 0)
+- [x] Write `HKLM\SYSTEM\Boot\Device\Type` (REG_DWORD): via `RegSetDword(hKey, "Type", ...)` in `boot_hw.c`
+- [x] Write `HKLM\SYSTEM\Boot\Device\Path` (REG_SZ): via `RegSetString(hKey, "Path", ...)` from `g_boot_info.boot_device_path`
+- [x] Write `HKLM\SYSTEM\Boot\Device\PartitionGUID` (REG_SZ): GUID formatted as `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` in UEFI mixed-endian; MBR as 8-char hex
+- [x] Write `HKLM\SYSTEM\Boot\Device\PartitionStyle` (REG_DWORD): 1=MBR, 2=GPT
+- [x] Write `HKLM\SYSTEM\Boot\Device\Removable` (REG_DWORD): 0 or 1
+- [x] Write `HKLM\SYSTEM\Boot\Device\BootCurrent` (REG_DWORD): from `g_boot_info.uefi_boot_current`
+- [x] Write `HKLM\SYSTEM\Boot\Device\BootNext` (REG_DWORD): from `g_boot_info.uefi_boot_next` (0xFFFF if not set)
+- [x] Log: `"Boot device Registry populated: %s type=%u removable=%u"` via klog
 - [ ] Commit: `"boot: populate HKLM\SYSTEM\Boot\Device\ Registry with boot provenance"`
 
 **Test checkpoint:** After boot, Registry query for `HKLM\SYSTEM\Boot\Device\Type` returns 1 (SATA) on QEMU default. `Path` is non-empty. `PartitionGUID` is formatted as `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`. Shell `reg query HKLM\SYSTEM\Boot\Device` (when shell reg command exists) shows all keys. Verify on bare metal -- all values should reflect real hardware.
@@ -296,7 +296,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done |
 | 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done |
 | 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done |
-| 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ⬜ §9            |
+| 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ✅ §9 done |
 | ⭐   | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ⬜ §10 🚀         |
 | ⭐   | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ⬜ §11 🚀         |
 

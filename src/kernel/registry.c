@@ -19,6 +19,7 @@
 #include "registry.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
+#include "kernel/boot_info.h"
 #include "kernel/smbios.h"
 #include "kernel/uefi_runtime.h"
 
@@ -1716,6 +1717,9 @@ void registry_populate_defaults(void)
 
     /* Populate Secure Boot state key (HKLM\SYSTEM\SecureBoot\State) */
     uefi_secureboot_populate_registry();
+
+    /* §9: Populate boot device provenance (HKLM\SYSTEM\Boot\Device\*) */
+    boot_device_populate_registry();
 }
 
 /* ============================================================================

@@ -554,3 +554,7 @@ _Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_current) == 22056,
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;
+
+/* §9: Populate HKLM\SYSTEM\Boot\Device\ from g_boot_info.
+ * Called from registry_populate_defaults() after registry_init(). */
+void boot_device_populate_registry(void);
