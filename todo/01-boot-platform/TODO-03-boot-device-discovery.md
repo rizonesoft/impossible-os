@@ -323,26 +323,10 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 > Kernel-side boot_info fields can be validated via kernel unit tests.
 > Test registration: `src/kernel/test/test_runner.c`, `include/kernel/test/test.h`
 
-- [ ] Add smoke test patterns to `scripts/test-smoke.sh`:
-  - Serial line `"[BOOT] Boot device: handle="` present (§1 -- LoadedImage identification)
-  - Serial line `"[BOOT] Using boot device filesystem"` present (§2 -- scoped filesystem access)
-  - Serial line `"[BOOT] Booted from:"` present (§3 -- device path in boot_info)
-  - Serial line `"[BOOT] BootCurrent="` present (§6 -- UEFI boot variables read)
-  - Serial line `"[BOOT] Boot"` with 4-digit hex and description present (§12 -- `EFI_LOAD_OPTION` decode) when firmware exposes `Boot####`
-  - Serial line `"[BOOT] Boot partition:"` present (§7 -- partition GUID extracted)
-  - Serial line `"[BOOT] Boot disk:"` present (§11 -- health check ran)
-- [ ] Create `src/kernel/test/test_boot_device.c` with:
-  - `boot_info.boot_device_type` is a valid enum value (0--4, not out of range)
-  - `boot_info.boot_device_path` is non-empty (at least 1 character)
-  - `boot_info.boot_device_type != 0` (UNKNOWN) when booted from a real device (QEMU always has SATA)
-  - `boot_info.boot_partition_style == 2` (GPT) on QEMU (§7)
-  - `boot_info.boot_partition_guid` is non-zero (§7)
-  - `boot_info.boot_device_removable == 0` on SATA boot (§8)
-  - `boot_info.boot_media_present == 1` (§8)
-  - `boot_info.uefi_boot_order_count <= 16` (§6 -- array bounds)
-  - Registry key `HKLM\SYSTEM\Boot\Device\Type` exists and matches `boot_info.boot_device_type` (§9)
-- [ ] Register in `test_runner_init()`: `test_register_boot_device()`
-- [ ] Commit: `"test: add boot device discovery smoke and unit tests"`
+- [x] Smoke test patterns: skipped per feedback -- don't add patterns to test-smoke.sh (breaks Windows QEMU tests)
+- [x] Create `src/kernel/test/test_boot_device.c` with 9 test suites: type valid (0--4), path non-empty, type known (not UNKNOWN on QEMU), partition style GPT, partition GUID non-zero, SATA not removable (with SKIP for non-SATA), media present, boot order count bounded, Registry Type matches boot_info
+- [x] Register in `test_runner_init()`: `test_register_boot_device()` under `/* Boot */` category at `test_runner.c:231`
+- [ ] Commit: `"test: add boot device discovery unit tests"`
 
 **Test checkpoint:** `scripts/test-smoke.sh` matches all listed `[BOOT]` serial patterns on a reference QEMU boot; `bash scripts/test.sh SUITE=boot` (or `make test-boot`) passes after `test_register_boot_device()` and `test_boot_device.c` land. Tests avoid CLAUDE.md forbidden boot-path side effects in kernel tests.
 
