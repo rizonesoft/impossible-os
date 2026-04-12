@@ -292,31 +292,124 @@ function getRegistryHref() {
     return document.body.dataset.registryHref || './';
 }
 
+function renderChrome() {
+    const navContainer = document.querySelector('nav .container');
+    const footerContainer = document.querySelector('footer .container');
+    const homeHref = getHomeHref();
+    const registryHref = getRegistryHref();
+
+    if (navContainer) {
+        navContainer.innerHTML = `
+            <a href="${escapeHtml(homeHref)}" class="nav-brand">
+                <img src="${escapeHtml(homeHref)}logo.svg" alt="Impossible OS Logo" width="36" height="36">
+                Impossible OS
+            </a>
+            <ul class="nav-links">
+                <li><a href="${escapeHtml(homeHref)}">Home</a></li>
+                <li><a href="${escapeHtml(registryHref)}">Boot Codes</a></li>
+                <li data-github><a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">GitHub</a></li>
+                <li><a href="https://www.paypal.com/donate/?hosted_button_id=7UGGCSDUZJPFE" class="nav-cta" target="_blank" rel="noopener">Support</a></li>
+            </ul>
+        `;
+    }
+
+    if (footerContainer) {
+        footerContainer.innerHTML = `
+            <div class="footer-links">
+                <a href="${escapeHtml(registryHref)}">Boot Codes</a>
+                <a href="${escapeHtml(homeHref)}">Home</a>
+                <a href="https://github.com/rizonesoft/impossible-os/releases" target="_blank" rel="noopener" data-github>Releases</a>
+                <a href="https://rizonesoft.com" target="_blank" rel="noopener">Rizonesoft</a>
+                <a href="https://www.paypal.com/donate/?hosted_button_id=7UGGCSDUZJPFE" target="_blank" rel="noopener">Donate</a>
+            </div>
+            <p>&copy; 2026 <a href="https://rizonesoft.com" target="_blank" rel="noopener">Rizonesoft</a>. Impossible OS is licensed under <a href="https://opensource.org/licenses/GPL-3.0" target="_blank" rel="noopener">GPL-3.0</a>.</p>
+        `;
+    }
+
+    fetch('https://api.github.com/repos/rizonesoft/impossible-os', { method: 'HEAD' })
+        .then((res) => {
+            if (!res.ok) {
+                document.querySelectorAll('[data-github]').forEach((el) => {
+                    el.style.display = 'none';
+                });
+            }
+        })
+        .catch(() => {
+            document.querySelectorAll('[data-github]').forEach((el) => {
+                el.style.display = 'none';
+            });
+        });
+}
+
+function buildSpecs(items) {
+    return `
+        <section>
+            <div class="container">
+                <div class="specs">
+                    ${items.map((item) => `
+                        <div class="spec">
+                            <div class="spec-value">${escapeHtml(item.value)}</div>
+                            <div class="spec-label">${escapeHtml(item.label)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </section>
+    `;
+}
+
 function buildOverview() {
     const homeHref = getHomeHref();
     const entries = Object.entries(BOOT_ERROR_PAGES).sort(([a], [b]) => a.localeCompare(b));
     return `
-        <section class="hero-card">
-            <span class="eyebrow"><span class="dot"></span> Boot recovery</span>
-            <div class="overview-copy">
+        <section class="hero hero-compact">
+            <div class="container">
+                <div class="hero-badge"><span class="dot"></span> Boot recovery</div>
                 <h1><span class="gradient-text">Impossible OS</span><br>Boot error recovery</h1>
-                <p>These pages back the bootloader QR codes and structured boot error registry. Scan a code on the boot failure screen or open any route under <code>/err/XXXX</code> to get the matching recovery steps.</p>
-                <p>If you are debugging a real machine, keep the exact error code, the on-screen title, and the last serial lines together. The bootloader registry is intentionally narrow so the code maps to a small set of likely recovery actions.</p>
-            </div>
-            <div class="hero-actions">
-                <a class="btn btn-primary" href="${escapeHtml(homeHref)}">Project homepage</a>
-                <a class="btn btn-secondary" href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">Source code</a>
+                <p class="hero-sub">These pages back the bootloader QR codes and structured error registry. Scan the error screen or open any route under <code>/err/XXXX</code> for the matching recovery guidance.</p>
+                <div class="hero-actions">
+                    <a class="btn btn-primary" href="${escapeHtml(homeHref)}">Project homepage</a>
+                    <a class="btn btn-secondary" href="https://impossibleos.co/err/0003/">View example code</a>
+                </div>
             </div>
         </section>
-        <section class="registry-grid">
-            ${entries.map(([code, entry]) => `
-                <a class="registry-link" href="./${code}/">
-                    <span class="registry-code">0x${formatCode(code)}</span>
-                    <h3>${escapeHtml(entry.title)}</h3>
-                    <p>${escapeHtml(entry.summary)}</p>
-                    <div class="registry-symbol">${escapeHtml(entry.symbol)}</div>
-                </a>
-            `).join('')}
+        ${buildSpecs([
+            { value: String(entries.length), label: 'Published boot codes' },
+            { value: 'QR', label: 'Recovery screen route format' },
+            { value: 'UEFI', label: 'Boot-stage diagnostics' }
+        ])}
+        <section id="registry">
+            <div class="container">
+                <div class="section-header">
+                    <span class="section-tag">Registry</span>
+                    <h2>Every boot code in one place</h2>
+                    <p>Use the exact four-digit hex code from the on-screen error to land on the right recovery path. The list below mirrors the current bootloader registry.</p>
+                </div>
+                <div class="code-list">
+                    ${entries.map(([code, entry]) => `
+                        <a class="code-row" href="./${code}/">
+                            <span class="code-row-code">0x${formatCode(code)}</span>
+                            <span>
+                                <span class="code-row-title">${escapeHtml(entry.title)}</span>
+                                <span class="code-row-summary">${escapeHtml(entry.summary)}</span>
+                            </span>
+                            <span class="code-row-symbol">${escapeHtml(entry.symbol)}</span>
+                        </a>
+                    `).join('')}
+                </div>
+            </div>
+        </section>
+        <section class="cta-section">
+            <div class="container">
+                <div class="cta-box">
+                    <h2>Need deeper debugging?</h2>
+                    <p>Keep the exact error code, the on-screen title, and the last serial lines together. That combination maps directly back to the bootloader failure site.</p>
+                    <div class="cta-buttons">
+                        <a href="${escapeHtml(homeHref)}" class="btn btn-secondary">Back to homepage</a>
+                        <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-primary" target="_blank" rel="noopener">Project source</a>
+                    </div>
+                </div>
+            </div>
         </section>
     `;
 }
@@ -325,57 +418,76 @@ function buildErrorPage(code, entry) {
     const homeHref = getHomeHref();
     const registryHref = getRegistryHref();
     return `
-        <section class="hero-shell">
-            <section class="hero-card">
-                <span class="eyebrow"><span class="dot"></span> Boot recovery code</span>
+        <section class="hero hero-compact">
+            <div class="container">
+                <div class="hero-badge"><span class="dot"></span> Boot recovery code</div>
                 <h1><span class="gradient-text">Error 0x${formatCode(code)}</span><br>${escapeHtml(entry.title)}</h1>
-                <p class="hero-summary">${escapeHtml(entry.summary)}</p>
-                <div class="code-banner">
+                <p class="hero-sub">${escapeHtml(entry.summary)}</p>
+                <div class="hero-code">
                     <span>0x${formatCode(code)}</span>
-                    <span>-</span>
                     <span>${escapeHtml(entry.symbol)}</span>
                 </div>
                 <div class="hero-actions">
                     <a class="btn btn-primary" href="${escapeHtml(registryHref)}">All boot codes</a>
                     <a class="btn btn-secondary" href="${escapeHtml(homeHref)}">Project homepage</a>
                 </div>
-            </section>
-
-            <section class="meta-grid">
-                <article class="meta-card">
-                    <span class="label">Boot stage</span>
-                    <strong>${escapeHtml(entry.stage)}</strong>
-                </article>
-                <article class="meta-card">
-                    <span class="label">Registry source</span>
-                    <strong>${escapeHtml(entry.section)}</strong>
-                </article>
-                <article class="meta-card">
-                    <span class="label">What to look for</span>
-                    <strong>${escapeHtml(entry.screen)}</strong>
-                </article>
-            </section>
-
-            <section class="panel-grid">
-                <article class="panel">
-                    <h2>What to check first</h2>
-                    <ul>
-                        ${entry.checks.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
-                    </ul>
-                    <div class="panel-callout">
-                        <p><strong>Tip:</strong> Keep the exact code <code>0x${formatCode(code)}</code> with any serial log or photo you share. The code is the fastest path back to the matching failure site in the bootloader.</p>
+            </div>
+        </section>
+        ${buildSpecs([
+            { value: `0x${formatCode(code)}`, label: 'Error code' },
+            { value: entry.stage, label: 'Boot stage' },
+            { value: entry.section, label: 'Registry source' }
+        ])}
+        <section>
+            <div class="container">
+                <div class="section-header">
+                    <span class="section-tag">Triage</span>
+                    <h2>Start with the obvious signals</h2>
+                    <p>${escapeHtml(entry.screen)}</p>
+                </div>
+                <div class="detail-grid">
+                    <div class="detail-item">
+                        <strong>Boot stage</strong>
+                        <span>${escapeHtml(entry.stage)}</span>
                     </div>
-                </article>
-                <article class="panel">
-                    <h2>Recovery steps</h2>
-                    <ol>
-                        ${entry.recovery.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
-                    </ol>
-                    <div class="panel-callout">
-                        <p><strong>Still stuck?</strong> Report the hardware model, firmware version, storage layout, and whether the same image boots in a VM or on another machine.</p>
+                    <div class="detail-item">
+                        <strong>Registry source</strong>
+                        <span>${escapeHtml(entry.section)}</span>
                     </div>
-                </article>
-            </section>
+                    <div class="detail-item">
+                        <strong>Primary clue</strong>
+                        <span>${escapeHtml(entry.screen)}</span>
+                    </div>
+                </div>
+                <div class="content-grid">
+                    <article class="content-card">
+                        <h3>What to check first</h3>
+                        <ul>
+                            ${entry.checks.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+                        </ul>
+                        <p class="content-note"><strong>Tip:</strong> Keep the exact code <code>0x${formatCode(code)}</code> with any photo or serial log you share. It is the fastest route back to the matching failure site.</p>
+                    </article>
+                    <article class="content-card">
+                        <h3>Recovery steps</h3>
+                        <ol>
+                            ${entry.recovery.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+                        </ol>
+                        <p class="content-note"><strong>Still stuck?</strong> Report the hardware model, firmware version, storage layout, and whether the same image boots in a VM or on another machine.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+        <section class="cta-section">
+            <div class="container">
+                <div class="cta-box">
+                    <h2>Keep the code with the evidence</h2>
+                    <p>Bootloader failures are intentionally grouped into narrow, human-readable codes. Sharing the code, screen title, and last serial lines together makes diagnosis much faster than sharing any one of them alone.</p>
+                    <div class="cta-buttons">
+                        <a href="${escapeHtml(registryHref)}" class="btn btn-secondary">Browse all codes</a>
+                        <a href="${escapeHtml(homeHref)}" class="btn btn-primary">Return to homepage</a>
+                    </div>
+                </div>
+            </div>
         </section>
     `;
 }
@@ -385,39 +497,45 @@ function buildUnknownPage(code) {
     const registryHref = getRegistryHref();
     const label = code ? `0x${formatCode(code)}` : 'unknown';
     return `
-        <section class="hero-shell">
-            <section class="hero-card">
-                <span class="eyebrow"><span class="dot"></span> Boot recovery</span>
+        <section class="hero hero-compact">
+            <div class="container">
+                <div class="hero-badge"><span class="dot"></span> Boot recovery</div>
                 <h1><span class="gradient-text">Unknown code</span><br>${escapeHtml(label)}</h1>
-                <p class="hero-summary">This code is not currently listed in the published bootloader registry. It may be from a newer build, a typo in the URL, or a future error code that has not been documented here yet.</p>
+                <p class="hero-sub">This code is not currently listed in the published bootloader registry. It may be from a newer build, a mistyped URL, or a route that has not been documented yet.</p>
                 <div class="hero-actions">
                     <a class="btn btn-primary" href="${escapeHtml(registryHref)}">Browse known codes</a>
                     <a class="btn btn-secondary" href="${escapeHtml(homeHref)}">Project homepage</a>
                 </div>
-            </section>
-            <section class="panel-grid">
-                <article class="panel">
-                    <h2>What to do now</h2>
-                    <ol>
-                        <li>Double-check the scanned or typed URL for the exact four-digit hex code.</li>
-                        <li>Capture the full on-screen title and the last serial lines if they are available.</li>
-                        <li>Report the code together with the boot media build you are using.</li>
-                    </ol>
-                </article>
-                <article class="panel">
-                    <h2>Why this can happen</h2>
-                    <ul>
-                        <li>The bootloader registry gained a new code before the site was updated.</li>
-                        <li>The QR code or copied URL was mistyped.</li>
-                        <li>The route hit the fallback handler for a missing static page.</li>
-                    </ul>
-                </article>
-            </section>
+            </div>
+        </section>
+        <section>
+            <div class="container">
+                <div class="content-grid">
+                    <article class="content-card">
+                        <h3>What to do now</h3>
+                        <ol>
+                            <li>Double-check the scanned or typed URL for the exact four-digit hex code.</li>
+                            <li>Capture the full on-screen title and the last serial lines if they are available.</li>
+                            <li>Report the code together with the boot media build you are using.</li>
+                        </ol>
+                    </article>
+                    <article class="content-card">
+                        <h3>Why this can happen</h3>
+                        <ul>
+                            <li>The bootloader registry gained a new code before the site was updated.</li>
+                            <li>The QR code or copied URL was mistyped.</li>
+                            <li>The route hit the fallback handler for a missing static page.</li>
+                        </ul>
+                    </article>
+                </div>
+            </div>
         </section>
     `;
 }
 
 function render() {
+    renderChrome();
+
     const app = document.getElementById('app');
     if (!app) {
         return;
