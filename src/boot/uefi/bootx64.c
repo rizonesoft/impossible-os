@@ -1330,6 +1330,11 @@ static void bsod_aa_char(UINT32 px, UINT32 py,
     }
 }
 
+/* Extra letter spacing added to each glyph advance for readability.
+ * Selawik's default metrics are tight for a BSOD context viewed from
+ * a distance; +1px gives the text room to breathe. */
+#define BSOD_AA_TRACKING  1
+
 /* Render an antialiased string using the given font atlas. */
 static void bsod_aa_string(UINT32 px, UINT32 py, const char *str,
                              const struct bsod_aa_glyph *glyphs,
@@ -1345,22 +1350,25 @@ static void bsod_aa_string(UINT32 px, UINT32 py, const char *str,
         if (cx + g->advance > gFbWidth) break;
         bsod_aa_char(cx, py, g, data, ascent,
                       fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
-        cx += g->advance;
+        cx += g->advance + BSOD_AA_TRACKING;
         str++;
     }
 }
 
-/* Compute the pixel width of an AA string. */
+/* Compute the pixel width of an AA string (includes tracking). */
 static UINT32 bsod_aa_string_width(const char *str,
                                      const struct bsod_aa_glyph *glyphs)
 {
     UINT32 w = 0;
+    UINT32 n = 0;
     while (*str) {
         unsigned char ch = (unsigned char)*str;
         if (ch < 0x20 || ch > 0x7E) ch = '?';
         w += glyphs[ch - 0x20].advance;
+        n++;
         str++;
     }
+    if (n > 0) w += (n - 1) * BSOD_AA_TRACKING;
     return w;
 }
 
@@ -1388,7 +1396,7 @@ static void bsod_aa_wrapped(UINT32 px, UINT32 py, const char *text,
         while (text[end] && cur_w < max_px) {
             unsigned char ch = (unsigned char)text[end];
             if (ch < 0x20 || ch > 0x7E) ch = '?';
-            cur_w += glyphs[ch - 0x20].advance;
+            cur_w += glyphs[ch - 0x20].advance + BSOD_AA_TRACKING;
             if (text[end] == ' ') { last_space = end; have_space = 1; }
             end++;
         }
@@ -1516,7 +1524,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
     /* 4. Error code + title (28px for code, 16px for detail title). */
     {
         i = 0;
-        err_buf[i++] = 'E'; err_buf[i++] = 'r'; err_buf[i++] = 'r';
+        err_buf[i++] = 'e'; err_buf[i++] = 'r'; err_buf[i++] = 'r';
         err_buf[i++] = 'o'; err_buf[i++] = 'r'; err_buf[i++] = ' ';
         err_buf[i++] = '0'; err_buf[i++] = 'x';
         err_buf[i++] = hex[(err_code >> 12) & 0xF];
@@ -1594,9 +1602,11 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         quiet_zone = mod * 4;
         qr_total = (UINT32)(QR_SIZE * mod + quiet_zone * 2);
 
-        /* Reserve space below the QR for one line of caption text at
-         * scale 1 plus a small gap. */
-        caption_reserve = BSOD_FONT_H + 6;
+        /* Reserve space ABOVE the QR for the URL caption (industry
+         * standard -- ChromeOS and Windows place the recovery text
+         * above or beside the QR, not below where it gets clipped
+         * by the screen edge on most resolutions). */
+        caption_reserve = BSOD_AA_BODY_LINE_H + 6;
 
         if (gFbWidth >= qr_total + side_margin &&
             gFbHeight >= qr_total + side_margin + caption_reserve) {
@@ -1610,33 +1620,27 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
                 qr_place_data(matrix, used, all_cw, QR_TOTAL_CW);
                 qr_apply_mask_and_format(matrix);
 
+                /* QR sits at bottom-right; caption goes above it. */
                 qr_x = gFbWidth  - qr_total - side_margin;
-                qr_y = gFbHeight - qr_total - side_margin - caption_reserve;
+                qr_y = gFbHeight - qr_total - side_margin;
                 qr_render_to_fb(matrix, qr_x, qr_y, mod);
 
+                /* URL caption ABOVE the QR code, centered under the
+                 * QR module area or right-aligned if wider. */
                 url_w = bsod_aa_string_width(url, bsod_aa_BODY);
-                /* Horizontal placement:
-                 *   - If URL fits under the QR module area, center under it.
-                 *   - Otherwise (common on 1280x720 where qr_total=148px
-                 *     and url_w ~= 216px), right-align the URL so it
-                 *     ends at gFbWidth - side_margin and does not get
-                 *     clipped by the right edge.
-                 *   - If even that would push the left edge past
-                 *     side_margin (extremely narrow screens), skip. */
                 if (qr_total >= url_w) {
                     url_x = qr_x + (qr_total - url_w) / 2;
                 } else if (gFbWidth >= url_w + 2 * side_margin) {
                     url_x = gFbWidth - side_margin - url_w;
                 } else {
                     url_x = side_margin;
-                    if (url_x + url_w > gFbWidth) {
-                        /* Screen too narrow for full URL even edge-to-edge. */
-                        url_x = gFbWidth;  /* Sentinel: skip below. */
-                    }
+                    if (url_x + url_w > gFbWidth)
+                        url_x = gFbWidth;  /* sentinel: skip */
                 }
-                url_y = qr_y + qr_total + 4;
-                if (url_x + url_w <= gFbWidth &&
-                    url_y + BSOD_FONT_H <= gFbHeight) {
+                url_y = (qr_y >= caption_reserve)
+                    ? qr_y - caption_reserve
+                    : 0;
+                if (url_x + url_w <= gFbWidth && url_y + BSOD_AA_BODY_LINE_H <= qr_y) {
                     bsod_aa_string(url_x, url_y, url,
                                     bsod_aa_BODY, bsod_aa_BODY_data,
                                     BSOD_AA_BODY_ASCENT,
