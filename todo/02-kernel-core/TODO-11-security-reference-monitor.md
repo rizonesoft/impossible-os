@@ -739,7 +739,7 @@ After §1–§13, Impossible OS reaches full Windows 11 security architecture pa
 > - **SACL audit event generation**: deferred to `10-services-security`; infrastructure (SYSTEM_AUDIT_ACE type) is defined in §3
 > - **Protected Process Light (PPL)**: deferred to `TODO-03 §13` (ObRegisterCallbacks) + process model; PS_PROTECTION field and signer levels are process-model concerns, not SRM
 > - **Claims-based access control / Conditional ACEs**: advanced Dynamic Access Control feature; deferred until core SRM is complete; add as a future TODO when conditional ACE evaluation is needed
-> - **Code signing verification (srm_verify_kernel_signature)**: noted in `TODO-01-uefi-hardening §5`; belongs to `TODO-17 §12` (Enclave and code signing) not SRM
+> - **Code signing verification (srm_verify_kernel_signature)**: noted in `TODO-01-uefi-hardening §5`; belongs to `TODO-17 §15` (Enclave and code signing) not SRM
 
 ---
 

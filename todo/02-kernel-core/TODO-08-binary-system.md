@@ -131,7 +131,7 @@ Modern ELF binaries carry security metadata in dedicated program headers. `PT_GN
 - [x] Parse `PT_GNU_RELRO` (type `0x6474E552`): record `relro_start`/`relro_size` in `elf_load_result`
   - [ ] Enforce RELRO via `vmm_protect_range(relro_start, relro_size, VMM_KERNEL_RO)` -- blocked: must be called after §14 relocations complete
 - [x] Parse `PT_GNU_PROPERTY` (type `0x6474E553`): full ELF note parsing with byte reads (no type-pun UB); extracts `GNU_PROPERTY_X86_FEATURE_1_AND` IBT/SHSTK flags into `result.cet_ibt`/`result.cet_shstk`
-  - [ ] CET enforcement -- deferred to TODO-17 §6,§7
+  - [ ] CET enforcement -- deferred to TODO-17 §9,§10
 - [x] If `PT_GNU_STACK` is absent, default to NX stack (`result.nx_stack = 1`, log "No PT_GNU_STACK -- defaulting to NX stack")
 - [x] Extended `elf_load_result` with `nx_stack`, `has_relro`, `cet_ibt`, `cet_shstk`, `relro_start`, `relro_size` fields
 - [x] Added `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_PROPERTY`, `PT_INTERP`, `ET_DYN`, CET property constants to elf.h

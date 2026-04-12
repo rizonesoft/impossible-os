@@ -12,6 +12,7 @@
 > - NUMA-aware page allocator -> `03-memory-concurrency`
 > - Hybrid P/E-core scheduler policy -> `03-memory-concurrency`
 > - CPU feature explorer GUI + chiplet visualizer -> `08-desktop-shell`
+> - PKS (Protection Keys for Supervisor, `PKRS` MSR): Linux mm uses it for selective kernel writeability; overlaps PTE key bits with PKU. Defer design and enablement to `TODO-17` until kernel direct-map and SMEP/SMAP page attributes match `CLAUDE.md` policy (user PKU stays §4 here)
 
 ---
 
@@ -54,7 +55,7 @@
 | --- | :---: | --------------------------------------------------- | -------------------- | :----: |
 | 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy)    | (none)               |  [x]   |
 | 💎  |   2   | AVX/AVX2 + AVX-512 kernel paths                     | §1                   |  [ ]   |
-| 💎  |   3   | MSR management infrastructure (`msr.c`)           | (none)               |  [x]   |
+| 💎  |   3   | MSR management infrastructure (`msr.c`)           | (none)               |  [/]   |
 | 💎  |   4   | UMIP + PKU protection keys                          | §3                   |  [ ]   |
 | 💎  |   5   | 1 GiB huge pages + Write-Combining PAT            | §3                   |  [ ]   |
 | 💎  |   6   | FRED event delivery + LKGS                        | §3, T06 §3           |  [ ]   |
@@ -83,6 +84,7 @@
 | 💎   | Central safe MSR     | ✅ HAL          | ✅ rdmsr_safe    | ✅ §3            |
 | 💎   | UMIP                 | ✅ On           | ✅ 4.15+         | ⬜ §4            |
 | 💎   | PKU / pkeys          | ✅ OS use       | ✅ pkey_*        | ⬜ §4 Win32 API  |
+| 💎   | PKS (supervisor)     | ⚠️ niche       | ✅ mm since 5.13 | ⬜ defer T17     |
 | 💎   | FB WC PAT            | ✅ GPU path     | ✅ ioremap_wc    | ⬜ §5 UC today   |
 | 💎   | 1 GiB huge pages     | ✅ Large page   | ✅ hugetlb 1G    | ⬜ §5            |
 | 💎   | FRED events          | 🔜 roadmap      | ✅ 6.9+          | ⬜ §6            |
@@ -98,7 +100,7 @@
 | ⭐   | PKU Win32 wrapper    | ❌ none         | ⚠️ raw syscalls | ⬜ §4            |
 | ⭐   | Per-core freq UI     | ❌ simple       | ⚠️ turbostat    | ⬜ §8 + shell    |
 
-After §1 through §11 done and §2 through §10 plus §12 through §13 planned, parity with Win11/Linux 6.x on this stack; §12 boot benchmark is the differentiator. `SetThreadMemoryZone` (§4) is a planned Win32-style PKU surface.
+After §1 through §11 done and §2 through §10 plus §12 through §13 planned, parity with Win11/Linux 6.x on this stack; §12 boot benchmark is the differentiator. `SetThreadMemoryZone` (§4) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-17` until kernel mappings allow it without breaking SMEP/SMAP rollout.
 
 ---
 
@@ -117,6 +119,7 @@ After §1 through §11 done and §2 through §10 plus §12 through §13 planned,
 - [x] Lazy FPU: `schedule()` saves/restores via XSAVE/XRSTOR; sets CR0.TS for deferred allocation
 - [x] `#NM` handler (vector 7): clears CR0.TS, allocates page-aligned XSAVE area on first FPU use
 - [x] Context switch: XSAVE prev if fpu_used, XRSTOR next if fpu_used, else set CR0.TS
+- [x] When `CPU_FEATURE_XSAVE` is false, `schedule()` uses `fxsave`/`fxrstor` on the same `xsave_area` buffer (`src/kernel/sched/task.c` lazy FPU block); keeps QEMU TCG and minimal-CPU paths working
 - [x] Fix: `task_alloc_xsave()` always uses `pmm_alloc_contiguous()` for page-aligned (4096-byte) allocation; satisfies XSAVE 64-byte requirement
 - [x] XSAVEOPT: detected via CPUID 0x0D sub-leaf 1 EAX[0]; scheduler uses `xsaveopt` instead of `xsave` when available (~30% faster context switch)
 
@@ -185,7 +188,8 @@ After §1 through §11 done and §2 through §10 plus §12 through §13 planned,
   #define MSR_AMD_PERF_CTR0      0xC0010201
   ```
 - [x] `msr_try_read()`: temporarily installs #GP handler, attempts rdmsr, skips instruction on fault; returns -1 if unsupported
-- [x] Migrated all inline `rdmsr`/`wrmsr` in `smp.c` (3 sites) and `lapic.c` (2 sites) to `msr_read()`/`msr_write()`; zero inline asm MSR access remaining in kernel
+- [x] Migrated all inline `rdmsr`/`wrmsr` in `smp.c` (3 sites) and `lapic.c` (2 sites) to `msr_read()`/`msr_write()`
+- [ ] `cpu_verify_hardening()` in `cpu_security.c` still uses raw `rdmsr` for EFER readback (`src/kernel/cpu_security.c` around the NX verify block); refactor to `msr_read(MSR_IA32_EFER)` so C-side hot paths consistently use `msr.h` (AP trampoline and pre-`msr.c` boot asm may keep raw insns) (-> XREF: `TODO-17-kernel-security-hardening.md` IMPORTANT: same file owns `cpu_verify_hardening` sequencing)
 - [x] Commit: `"kernel/msr: centralised MSR read/write infrastructure, #GP-safe msr_try_read"`
 
 **Test checkpoint:** `msr_read(MSR_IA32_EFER)` stable across calls; `msr_try_read(0xFFFFFFFF, &scratch) == -1` without panic; boot completes with MSR layer linked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -390,9 +394,9 @@ After §1 through §11 done and §2 through §10 plus §12 through §13 planned,
 
 AMD SVM / Intel VMX capability reporting
 
-- [x] AMD SVM: CPUID 0x8000000A parsed -- revision, NPT, ASIDs logged
+- [x] AMD SVM: CPUID 0x8000000A parsed; revision, NPT, ASIDs logged
 - [x] Intel VT-x: `CPU_FEATURE_VMX` added (CPUID.1:ECX[5]); `IA32_FEATURE_CONTROL` MSR read for lock + enable status
-- [x] Exposed via `cpu_has(CPU_FEATURE_SVM)` / `cpu_has(CPU_FEATURE_VMX)` -- detection only
+- [x] Exposed via `cpu_has(CPU_FEATURE_SVM)` / `cpu_has(CPU_FEATURE_VMX)` (detection only)
 
 - [x] Commit: `"kernel/cpu: AMD SVM + Intel VT-x capability detection and logging"`
 
@@ -424,9 +428,8 @@ AMD SVM / Intel VMX capability reporting
 - [ ] Run during Phase 2 init (after SMP, before GUI) if `HwProfile` is stale or absent; total runtime <= 2 seconds:
   - **Memory bandwidth**: `VMOVDQA` 256 MiB sequential write; measure MB/s from TSC delta
   - **Memory latency**: 4 MiB pointer-chase array (stride = cache-line); measure ns/access
-  - **Cache sizes**: stride binary search -- L1 to L2 to L3 inflection at typical ~32 KiB / ~512 KiB / ~8 MiB; log `l1/l2/l3_size_kb`
-  - **SIMD throughput**: timed SSE2 / AVX / AVX-512 alpha-blend loop over
-    4 MiB framebuffer; record Gpix/s per ISA level
+  - **Cache sizes**: stride binary search; L1 to L2 to L3 inflection at typical ~32 KiB / ~512 KiB / ~8 MiB; log `l1/l2/l3_size_kb`
+  - **SIMD throughput**: timed SSE2 / AVX / AVX-512 alpha-blend loop over 4 MiB framebuffer; record Gpix/s per ISA level
   - **Context switch**: 1000 yield-pairs between two kernel tasks; `rdtsc` around each switch; average ns per switch
 - [ ] Write `hw_profile_t` to Registry
 
@@ -443,10 +446,8 @@ AMD SVM / Intel VMX capability reporting
 
 ## 13. Future Silicon Extensions
 
-- [ ] Stub: if `CPUID.(7,0):EDX[5]` set: log `[cpu] UINTR present -- not yet enabled`; structure definitions in `include/kernel/uintr.h` (UPID, UITT); full implementation deferred until UINTR reaches mainstream silicon
-
-- [ ] Stub: if `CPUID.(7,0):ECX[16]` set: log `[vmm] LA57 (57-bit VA) detected -- 4-level paging active`; enabling at runtime requires a full VMM rewrite; relevant for server SKUs with > 256 TiB virtual address space
-
+- [ ] Stub: if `CPUID.(7,0):EDX[5]` set: log `[cpu] UINTR present; not yet enabled`; structure definitions in `include/kernel/uintr.h` (UPID, UITT); full implementation deferred until UINTR reaches mainstream silicon
+- [ ] Stub: if `CPUID.(7,0):ECX[16]` set: log `[vmm] LA57 (57-bit VA) detected; 4-level paging active`; enabling at runtime requires a full VMM rewrite; relevant for server SKUs with > 256 TiB virtual address space
 - [ ] Commit: `"kernel/cpu: UINTR/LA57 detection stubs, future silicon log entries"`
 
 **Test checkpoint:** When CPU advertises UINTR or LA57, serial shows one-line stub log and kernel continues without enabling new modes. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -473,22 +474,26 @@ AMD SVM / Intel VMX capability reporting
 - [ ] Add `extern void test_register_x86(void);` in `test_runner.c`, call `test_register_x86()` from `test_runner_init()`
 - [ ] Commit: `"test: add x86-64 architecture test suite"`
 
+**Test checkpoint:** With `SUITE=boot` and `test=1` (or `debug=1`) in `boot.conf`, serial shows new `test_x86` cases as PASS; `msr_read(MSR_IA32_EFER)` test reports NXE set; `g_cpu.xsave_size` (or `xsave_size_max`) > 0 when XSAVE is enabled; `cpu_has(CPU_FEATURE_PAGE1GB)` matches CPUID-derived expectation on the host.
+
 ---
 
 ## Verification
 
-- [ ] **XSAVE round-trip**: load YMM0--15 with known values; context switch to another task; switch back; verify YMM values intact via `XRSTOR` + read.
+- [ ] **XSAVE round-trip**: load YMM0 through YMM15 with known values; context switch to another task; switch back; verify YMM values intact via `XRSTOR` + read.
 - [ ] **Lazy FPU**: create a task that never uses FP; verify its `xsave_area` is NULL and no `XSAVE` is issued on context switch.
 - [ ] **AVX memcpy**: `memcpy_avx(dst, src, 1 MiB)`; compare byte-for-byte with reference; measure throughput > 2x SSE2 baseline on AVX2 hardware.
 - [ ] **WC framebuffer**: compare `fb_swap()` TSC duration before and after PAT WC mapping; expect >= 5x reduction on a 1080p framebuffer.
 - [ ] **UMIP**: user-mode `SGDT [ptr]` after `cpu_enable_umip()` must receive `SIGSEGV` / `#GP`; kernel `SGDT` still works.
-- [ ] **PKU**: allocate key 3; set `PKU_ACCESS_DISABLE`; try reading a page tagged with key 3 -- must raise `#PF` with PKU violation bit set in error code.
+- [ ] **PKU**: allocate key 3; set `PKU_ACCESS_DISABLE`; try reading a page tagged with key 3; must raise `#PF` with PKU violation bit set in error code.
 - [ ] **RDTSCP**: after `topology_init()` + TSC\_AUX setup, `RDTSCP` on each CPU returns its correct logical CPU ID in ECX.
 - [ ] **PMC IPC**: `pmc_ipc()` on a tight integer loop returns IPC > 1.0.
 - [ ] **Boot benchmark**: on first boot, `HKLM\SYSTEM\HwProfile\MemBandwidthMbS` is non-zero; `simd_avx2_ok` reflects the benchmark result.
 - [ ] **Remaining limits**: FRED requires hardware support (Intel Granite Rapids or later); test in QEMU with `-cpu Cooperlake,fred=on`; APX/UINTR deferred until compiler support (`-mapx`) is stable; LA57 requires bootloader + VMM rewrite before enabling.
 - [ ] **Platforms:** repeat critical checks on QEMU WHPX, QEMU TCG, VirtualBox, bare metal (FRED/IBS/UMIP availability differs).
 - [ ] Commit: `"kernel/x86: XSAVE/XRSTOR, AVX/AVX-512, MSR layer, UMIP/PKU, WC PAT, FRED/LKGS, topology, PMC, OSVW, IBS, VT-x/SVM, boot self-benchmark"`
+
+**Test checkpoint:** Manual or staged boot on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal: each Verification bullet above observed (serial log, registry key, or measured ratio) with no regression on the non-FRED fallback path; FRED checks skipped or gated when `CPU_FEATURE_FRED` is absent.
 
 **Test runner:** `scripts\debug\run-boot-tests.bat` (SUITE=boot)
 
@@ -498,5 +503,7 @@ AMD SVM / Intel VMX capability reporting
 
 | Date | Action | Summary |
 | --- | --- | --- |
-| 2026-04-10 | validate | Removed ### N.M, stripped model tags, ASCII punctuation sweep, fixed IMPORTANT + Inputs, moved/compact OS Comparison, `TODO-06`/`TODO-07` Depends On, per-section **Test checkpoint** + four platforms, Unit Tests -> `TEST_CAT_BOOT` + `msr_read` + `g_cpu.xsave_size`, Verification + `run-boot-tests.bat`. **Parity:** Win11+Linux-strong rows map to §2--§12 except WinDbg-adjacent items (N/A here). **Flag:** §6 FRED/LKGS needs recent silicon or explicit QEMU CPU flags. |
+| 2026-04-10 | validate | Removed ### N.M, stripped model tags, ASCII punctuation sweep, fixed IMPORTANT + Inputs, moved/compact OS Comparison, `TODO-06`/`TODO-07` Depends On, per-section **Test checkpoint** + four platforms, Unit Tests -> `TEST_CAT_BOOT` + `msr_read` + `g_cpu.xsave_size`, Verification + `run-boot-tests.bat`. **Parity:** Win11+Linux-strong rows map to §2 through §12 except WinDbg-adjacent items (N/A here). **Flag:** §6 FRED/LKGS needs recent silicon or explicit QEMU CPU flags. |
 | 2026-04-12 | gap-analysis | Reciprocal sync from `TODO-17` gap analysis: scope bullet now records live NX + `vmm_apply_nx_policy()`, partial SMEP/SMAP (`hv_supports_cr4_smep_smap()` forces skip), and missing IDT `clac` until SMAP is real. |
+| 2026-04-12 | validate | §9 through §13: Commit before **Test checkpoint**; replaced spaced hyphen pairs used as sentence glue; §12 SIMD bullet joined; Unit Tests + Verification **Test checkpoint** blocks; History wording fix for §2 through §12. **Parity gaps (Win11+Linux strong, Impossible not done):** §2 AVX-512 throttle, §4 UMIP+PKU, §5 WC+1G, §6 FRED+LKGS, §7 topology, §8 PMC, §9 OSVW+TSC_AUX, §10 IBS, §12 boot tune. **Blocked / external:** T06 §3 (FRED vs IRQL), T07 §2 (RDTSCP consumer), T13 §4 (HwProfile registry), D03 memory + D08 shell deferrals per Inputs. |
+| 2026-04-12 | gap-analysis | Web: Win UMIP/Linux PKU docs, Linux FRED merge 6.9 (LWN), kernel.org protection-keys, perf-amd-ibs. Code-truth: §3 MSR bullet narrowed; new follow-up for `cpu_security.c` raw `rdmsr`; §1 documents FXSAVE fallback in `task.c`; PKS row + scope defer to T17; reciprocal note in T17 IMPORTANT. **Parity gaps unchanged** except explicit PKS tracking. **Flags:** §1 item count >10 (mostly done); §5 PAT+FB touches MTRR/MMIO gotchas from `CLAUDE.md`. |

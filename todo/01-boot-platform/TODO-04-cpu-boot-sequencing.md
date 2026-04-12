@@ -148,7 +148,7 @@ The UTS probe in `TODO-06-interrupt-timer-arch.md` §6 selects HPET vs PIT vs LA
 
 ---
 
-## 5. Phase 1 XSAVE & PCID Activation Window *(deferred -- blocked by TODO-17 §4 + TODO-19 §1; XSAVE already enabled via `simd_enable_avx()` in Phase 0)*
+## 5. Phase 1 XSAVE & PCID Activation Window *(deferred -- blocked by TODO-17 §7 + TODO-19 §1; XSAVE already enabled via `simd_enable_avx()` in Phase 0)*
 **Prompt:** XSAVE and PCID require VMM to be ready first -- XSAVE because per-thread XSAVE areas are allocated in TEB pages managed by VMM, and PCID because `CR4.PCIDE` changes how CR3 is loaded (PCID bits 11:0) and must be set only after the page table base is established. Slot these activations into Phase 1: (1) after `vmm_init()`: call `cpu_xsave_enable()` -- sets `CR4.OSXSAVE`, calls `XSETBV(XCR0, X87|SSE|AVX)`, stores `xsave_area_size` in a global; (2) after process table is initialised: call `cpu_pcid_enable()` -- sets `CR4.PCIDE`, validates INVPCID is available; PCID 0 reserved for kernel; emit `POSTCODE_XSAVE_ENABLED` and `POSTCODE_PCID_ENABLED`. Both functions are no-ops if the CPU does not support the feature.
 
 > [!IMPORTANT]
