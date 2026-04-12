@@ -259,6 +259,9 @@ When updating, add a comment at the bottom of the relevant Gate section:
 | New init function in BOOT path (Phase 0/1/2) | POST16 entry/exit + klog + error handling |
 | New non-boot function (sched/exec/syscall/io) | klog only -- NO POST16 |
 | Moving boot-path work to a thread | Don't -- compositor starves threads; run inline |
+| Allocating XSAVE/FXSAVE buffer | Zero + set MXCSR at offset 24 to 0x1F80 (all SIMD exceptions masked); zeroed MXCSR causes #XM on first SSE instruction |
+| XSAVE/XRSTOR/FXSAVE/FXRSTOR | CLTS first -- ALL FPU instructions fault #NM when CR0.TS=1, not just XRSTOR |
+| FPU save/restore in scheduler | Must be in BOTH preemptive schedule() AND cooperative schedule_now() paths |
 | Code called from panic/fault handler | No spinlocks, no kmalloc, no interrupt assumptions |
 | Writing JSON or structured output | Escape `\ " \n \r \t` and control chars in strings |
 | New MMIO access (device regs) | `vmm_map_mmio_uc()` with UC attributes |
