@@ -4929,10 +4929,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
     }
 
-    /* §10: Boot device enumeration log -- enumerate all filesystems and
-     * log device path, type, kernel presence, removable status for each.
-     * This ties together §1-§8 data into a single diagnostic block. */
-    {
+    /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
+    g_boot_info_ptr->timing.conf_start = boot_rdtsc();
+    parse_boot_conf();
+    g_boot_info_ptr->timing.conf_end = boot_rdtsc();
+
+    /* §10: Boot device enumeration log -- gated behind verbose=1 in boot.conf
+     * to avoid per-handle Open/Close overhead on firmware with many devices.
+     * Runs after parse_boot_conf so the flag is available. */
+    if (g_boot_info_ptr->config.verbose) {
         EFI_GUID fs_enum_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
         EFI_GUID dp_enum_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
         EFI_GUID dptt_enum_guid = EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID;
@@ -4947,12 +4952,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         enum_s = gBS->LocateHandleBuffer(ByProtocol, &fs_enum_guid,
                                           (VOID *)0, &enum_count, &enum_handles);
         if (!EFI_ERROR(enum_s) && enum_handles && enum_count > 0) {
-            serial_early_print("[BOOT] --- Device Enumeration ---\n");
+            serial_early_print("[BOOT] --- Device Enumeration (verbose=1) ---\n");
             UINTN ei;
             for (ei = 0; ei < enum_count; ei++) {
                 int is_boot = (enum_handles[ei] == g_boot_device_handle);
                 int has_kernel = 0;
-                int removable = -1;  /* -1=unknown, 0=fixed, 1=removable */
+                int removable = -1;
 
                 /* Check kernel presence */
                 {
@@ -4985,7 +4990,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                         removable = ebio->Media->RemovableMedia ? 1 : 0;
                 }
 
-                /* Get device path text */
+                /* Log device path + tags */
                 {
                     EFI_DEVICE_PATH_PROTOCOL *edp;
                     EFI_STATUS es = gBS->HandleProtocol(enum_handles[ei],
@@ -4999,7 +5004,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     if (!EFI_ERROR(es) && edp && enum_dptt) {
                         CHAR16 *etxt = enum_dptt->ConvertDevicePathToText(edp, 0, 0);
                         if (etxt) {
-                            /* Print as ASCII (truncate at 80 chars for readability) */
                             UINTN ej;
                             for (ej = 0; ej < 80 && etxt[ej]; ej++)
                                 serial_early_putchar((char)(etxt[ej] & 0x7F));
@@ -5023,7 +5027,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             /* Summary line */
             serial_early_print("[BOOT] Device summary: ");
             {
-                char nb[20];  /* max digits for UINTN */
+                char nb[20];
                 UINTN v = enum_count;
                 int n = 0;
                 if (v == 0) nb[n++] = '0';
@@ -5044,11 +5048,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             gBS->FreePool(enum_handles);
         }
     }
-
-    /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
-    g_boot_info_ptr->timing.conf_start = boot_rdtsc();
-    parse_boot_conf();
-    g_boot_info_ptr->timing.conf_end = boot_rdtsc();
 
     /* Step 1: Initialize graphics (uses g_conf_res_width/height from boot.conf) */
     post_code16(POST16_BL_GOP);
