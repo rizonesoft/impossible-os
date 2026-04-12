@@ -118,6 +118,10 @@ struct per_cpu_data {
 
     /* TSC offset for per-CPU correction (TODO-07 §3) */
     int64_t           tsc_offset;       /* added to RDTSC on this core to match BSP */
+
+    /* KPTI CR3 pair (TODO-17 §3) -- updated on context switch */
+    uint64_t          kernel_cr3;       /* full kernel PML4 (all mappings) */
+    uint64_t          user_cr3;         /* sparse user PML4 (user + trampoline only) */
 };
 
 /* Compile-time enforcement of assembly-referenced struct offsets */
@@ -127,6 +131,10 @@ _Static_assert(__builtin_offsetof(struct per_cpu_data, syscall_rsp0) == 24,
     "gs:24 must be syscall_rsp0 -- syscall_entry.asm depends on this");
 _Static_assert(__builtin_offsetof(struct per_cpu_data, user_rsp_scratch) == 32,
     "gs:32 must be user_rsp_scratch -- syscall_entry.asm depends on this");
+_Static_assert(__builtin_offsetof(struct per_cpu_data, kernel_cr3) == 104,
+    "gs:104 must be kernel_cr3 -- KPTI trampoline depends on this");
+_Static_assert(__builtin_offsetof(struct per_cpu_data, user_cr3) == 112,
+    "gs:112 must be user_cr3 -- KPTI trampoline depends on this");
 
 /* ---- API ---- */
 

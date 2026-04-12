@@ -395,6 +395,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     cpu_harden_post_pagetable();
     cpu_verify_hardening();
 
+    /* --- KPTI trampoline infrastructure (S3) --- */
+    {
+        extern void kpti_init(void);
+        kpti_init();
+    }
+
     /* --- SIMD: enable AVX2 or fall back to SSE2 --- */
     POST16(POST16_SIMD);
     simd_enable_avx();

@@ -71,6 +71,16 @@ void smp_early_bsp_init(void)
     cpu_data[0].current_task  = (void *)0;
     cpu_data[0].irq_count     = 0;
     cpu_data[0].preempt_count = 0;
+
+    /* KPTI §3: Initialize CR3 pair. kernel_cr3 = current boot PML4.
+     * user_cr3 = kernel_cr3 (no isolation until §6 allocates sparse PML4). */
+    {
+        uint64_t cr3_val;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3_val));
+        cpu_data[0].kernel_cr3 = cr3_val;
+        cpu_data[0].user_cr3   = cr3_val; /* no isolation yet */
+    }
+
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
 
     /* Runtime verify: read gs:0 back via inline asm and confirm it
@@ -114,6 +124,16 @@ void ap_entry(uint32_t cpu_index)
     /* Set up GS base to point to this CPU's per_cpu_data */
     pcpu = &cpu_data[cpu_index];
     pcpu->self = pcpu;  /* self-pointer for gs:0 access */
+
+    /* KPTI §3: AP gets same kernel CR3 as BSP (shared boot PML4).
+     * user_cr3 = kernel_cr3 until §6 allocates per-process PML4. */
+    {
+        uint64_t cr3_val;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3_val));
+        pcpu->kernel_cr3 = cr3_val;
+        pcpu->user_cr3   = cr3_val;
+    }
+
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)pcpu);
 
     /* CPU security hardening on this AP (NX, SMEP, SMAP).

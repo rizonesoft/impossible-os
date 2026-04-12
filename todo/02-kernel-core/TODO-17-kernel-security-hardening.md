@@ -53,7 +53,7 @@
 | --- | :---: | --------------------------------------------------- | ----------------------------- | :----: |
 | 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings  | (none)                        |  [x]   |
 | 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers    | §1                            |  [/]   |
-| 💎  |   3   | KPTI trampoline page + per-CPU CR3 fields           | §1, T04 §3                    |  [ ]   |
+| 💎  |   3   | KPTI trampoline page + per-CPU CR3 fields           | §1, T04 §3                    |  [/]   |
 | 💎  |   4   | KPTI SYSCALL CR3 swap                               | §3                            |  [ ]   |
 | 💎  |   5   | KPTI IDT CR3 swap (all 256 vectors)                 | §3, §4                        |  [ ]   |
 | 💎  |   6   | KPTI user_cr3 allocation + context switch           | §3, §4, §5                    |  [ ]   |
@@ -107,9 +107,6 @@
 
 **Test checkpoint:** When `hv_supports_cr4_smep_smap()` returns non-zero after kernel PTE U/S is fixed: `CR4.SMEP` and `CR4.SMAP` read back set on KVM/VBox/bare metal; WHPX may still skip per hypervisor policy. Until then, expect klog "SMEP: skipped" / "SMAP: skipped". `copy_from_user`/`copy_to_user` succeed on valid user buffers. After `clac` returns to `isr_common_stub`, entry path leaves AC cleared for SMAP-on configs. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
-> **Verified:** 2026-04-12 -- 6 of 10 items `[x]`, 1 `[/]` (CR4 blocked on kernel PTE User bit), 3 `[ ]` deferred (copy_from_user migration -> T05, ProbeForRead -> T10, clac in ISR -> blocked on SMAP). Log messages fixed: SMEP/SMAP skip now says "kernel PTE User bit -- needs KPTI" instead of misleading "EPT enforced". Verification path distinguishes Hyper-V EPT (real enforcement) from PTE blocker. Codex adversarial: copy_from_user range validation + fault recovery deferred to T10 SEH (no callers yet). Accepted: copy_from_user dead code until T05 wiring (-> XREF T05 + T10).
-> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. CR4 per-core (no SMP race). Intel SDM compliant. copy_from_user/copy_to_user confirmed dead (no callers). CR4_SMEP/CR4_SMAP local definitions consistent with codebase. Accepted: none.
-
 ---
 
 ## 3. KPTI Trampoline Page + Per-CPU CR3 Fields
@@ -119,10 +116,10 @@ Design and allocate the shared trampoline infrastructure that all KPTI ring tran
 > [!IMPORTANT]
 > **Design constraint (Codex design review 2026-04-12):** LSTAR points to `syscall_entry` in kernel text. If kernel text is removed from user_cr3, SYSCALL faults before executing a single instruction. Similarly, IDT delivery pushes the exception frame onto TSS RSP0/IST stacks -- those must be mapped in user_cr3. The trampoline page is the foundation for all subsequent KPTI sections.
 
-- [ ] Allocate a single 4 KiB trampoline page at a fixed kernel VA (e.g. `KPTI_TRAMPOLINE_VA = 0xFFFFFFFFFFFFF000` -- last page of VA space) via `pmm_alloc_frame()` + `vmm_map_page()` with Present + Executable (no NX)
-- [ ] Write minimal assembly into the trampoline page: SYSCALL entry stub (SWAPGS + CR3 swap + JMP to real `syscall_entry`), interrupt entry stub (CR3 swap + JMP to `isr_common_stub`), and SYSRET/IRET return stubs (CR3 swap back to user_cr3)
-- [ ] Add `kernel_cr3` and `user_cr3` fields to `struct per_cpu_data` in `smp.h` with `_Static_assert` offset checks; initialize `kernel_cr3` to the boot PML4 on BSP and each AP
-- [ ] Identify all pages that must be in user_cr3: trampoline page, per-CPU RSP0 stack page(s), IST stack pages (DF/NMI/MCE), GDT/TSS page, per-CPU data page -- document the list
+- [x] Allocate trampoline page via `pmm_alloc_frame()` in `kpti_init()` (`src/kernel/kpti.c`); `KPTI_TRAMPOLINE_VA = 0xFFFFFFFFFFFFF000` defined in `include/kernel/kpti.h`; identity-mapped and zeroed before stub copy
+- [x] Assembly stubs in `src/kernel/kpti_trampoline.asm`: 4 stubs at offsets 0x000/0x080/0x100/0x180 (SYSCALL entry/return, ISR entry/return). JMP targets are placeholder addresses patched by S4/S5.
+- [x] `kernel_cr3` (gs:104) and `user_cr3` (gs:112) added to `struct per_cpu_data` in `smp.h` with `_Static_assert` offset checks. BSP init in `smp_early_bsp_init()`, AP init in `ap_entry()`, both from current CR3. user_cr3 = kernel_cr3 until S6.
+- [x] User_cr3 required pages documented in `kpti.h`: trampoline, RSP0 stacks, IST stacks (DF/NMI/MCE), GDT/TSS, per-CPU data -- all supervisor-only.
 - [ ] Commit: `"kernel/security: KPTI trampoline page + per-CPU CR3 fields"`
 
 **Test checkpoint:** Trampoline page allocated and mapped at fixed VA. Per-CPU `kernel_cr3`/`user_cr3` fields exist with correct offsets. Trampoline assembly compiles. Boot does NOT use user_cr3 yet -- this is infrastructure only.
@@ -519,3 +516,4 @@ After §1 through §10, parity with Win11/Linux mitigations for NX through stack
 | 2026-04-12 | validate | Impl Order `Depends On`: T04/T05/T16 shorthand, row 1 `(none)`; §1/§2 final `Commit:` lines; Inputs and body: colon/semicolon rewrites (no `--` sentence glue per CLAUDE); XREF bullets colon after path; OS row `T16`; after-table range wording; Unit Tests + Verification **Test checkpoint** blocks; `run-boot-tests.bat` line semicolon. **Flags:** §3+ blocked on T04 §3, T05 §2, T16 §1 until those sections land; `test_register_cpu_security` not wired yet (per Unit Tests). |
 | 2026-04-12 | gap-analysis | Win11/Linux web inventory + kernel.org Spectre doc fetch; code-truth audit. Rewrote IMPORTANT callout + Goal; Impl row 2 `[/]`; §2 demotions (CR4 SMEP/SMAP, `clac`); OS table SMEP row `⏳ §2 partial`; §5 BHI/swapgs checklist; Inputs XREF T19 §4; mirrored note in `TODO-19` scope block. |
 | 2026-04-12 | validate | Outcome SMEP/SMAP bullet aligned with gated CR4; §4 PCID hook text fixed (no fictitious `cpu_enable_smep_smap()`); §2 blank between list items removed; `copy_from_user` migration defer now cites **T05**; `alloca`/null pointer typos; `---` before Unit Tests; §5 test checkpoint mentions BHI/swapgs; IMPORTANT **T19** shorthand. **Flags:** parity rows still ⬜ for §3+; external deps T04 §3, T05 §2, T16 §1; `test_register_cpu_security` unwired. |
+| 2026-04-12 | gap-analysis | Reciprocal from **T19** gap pass: IMPORTANT adds PKS defer (supervisor keys vs user PKU in T19 §4); T19 §3 lists `cpu_verify_hardening` raw `rdmsr` cleanup with XREF here. |
