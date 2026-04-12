@@ -55,20 +55,34 @@ description: Full review of a TODO section -- adversarial Codex, dead code, cons
 
 10. **Feature completeness** -- grep for `STATUS_NOT_IMPLEMENTED`, partial implementations, dead API promises.
 
-11. **Self-review** -- regressions, races, edge cases, resource leaks.
+11. **Test coverage check (CRITICAL)** -- verify unit tests exist for this section:
+    - Grep for the section's functions/features in `src/kernel/test/test_*.c`. If no test file covers the section's code, flag as a finding.
+    - Check that the correct `TEST_CAT_*` category is used (not piggy-backed onto an unrelated category).
+    - Verify a `scripts/debug/run-<category>-tests.bat` file exists for the test category.
+    - If tests are missing: either add them during this review (for simple read-only checks) or flag with `**Test gap:** <description> -- needs test_<name>.c` in the stamp.
+    - If no kernel-side testable surface exists (pure UEFI bootloader code), verify the TODO section has a `**Note:** No kernel test surface -- validation via serial log on WHPX.` note.
 
-12. **Fix ALL findings** from steps 7-11. Priority: spec violations > incomplete stubs > dead code > quality gate failures > consistency > parity > perf. Rebuild after each batch.
+    > **Incident 2026-04-12:** TODO-03 §1-§12 and TODO-17 §1-§3 all shipped without unit tests. The TODO-19 §1 review then found 3 critical FPU bugs that tests would have caught. Tests are not optional -- they catch real bugs.
+
+12. **Self-review** -- regressions, races, edge cases, resource leaks.
+
+13. **Fix ALL findings** from steps 7-12. Priority: spec violations > incomplete stubs > missing tests > dead code > quality gate failures > consistency > parity > perf. Rebuild after each batch.
 
 ### Phase 4: Stamp + Commit
 
-13. **Reconcile tables** -- IO row, OS Comparison row.
-14. **Stamps** -- Verified + Quality reviewed. No blank line between. Domain-qualified XREFs in Accepted field.
-15. **Commit and push** -- `"review: <TODO> §N -- <summary>"`
+14. **Reconcile tables** -- IO row, OS Comparison row.
+15. **Stamps** -- Verified + Quality reviewed. No blank line between. Domain-qualified XREFs in Accepted field. Include test runner info:
+    ```
+    > **Test runner:** `scripts\debug\run-<category>-tests.bat` (SUITE=<cat>), N suites, 0 failures expected
+    ```
+16. **Commit and push** -- `"review: <TODO> §N -- <summary>"`
 
 ## Rules
 
 - **TWO Codex dispatches per review.** Step 5 (adversarial) and step 8 (quality). Both mandatory.
 - **Domain code quality skill walked explicitly** in step 7. Not just the hook -- read the skill and check every gate.
+- **Test coverage verified** in step 11. Missing tests are a finding, not acceptable.
 - `superpowers:receiving-code-review` on every Codex finding.
 - All stamps use domain-qualified XREFs.
+- All stamps include test runner bat file and expected results.
 - No blank line between stamps.
