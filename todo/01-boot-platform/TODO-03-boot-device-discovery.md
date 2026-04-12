@@ -75,6 +75,9 @@ Use UEFI `EFI_LOADED_IMAGE_PROTOCOL` to find which device the bootloader was loa
 
 **Test checkpoint:** Serial output shows `"Boot device: handle=0x..."` on all platforms (QEMU WHPX, TCG, VirtualBox, bare metal). Handle is non-zero. Verify on bare metal -- firmware LoadedImage behavior may differ from emulated.
 
+> **Verified:** 2026-04-12 -- all 6 items confirmed. `g_boot_device_handle` global set in `efi_main()` before `parse_boot_conf()`; `load_kernel()` uses global with LocateProtocol fallback when device handle lacks SimpleFS; POST16 0xB090/0xB091 in `boot_init.h` + `bootx64.c`; smoke test pattern `"Boot device:"` matches both success and fallback. Codex adversarial: `parse_boot_conf` LocateProtocol gap deferred to §2 (explicit scope). Accepted: none.
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality 12 gates walked (all applicable pass). Codex quality: POST16 naming mismatch rejected (established `BL_*`/kernel convention, bootloader cannot include kernel headers per Gate 1). Dead code: old `load_kernel` local LoadedImage variables (`li_guid`, `loaded_image`) fully removed. Parity: matches Windows BCD DeviceHandle extraction + GRUB search. Accepted: none.
+
 ---
 
 ## 2. Filesystem Access Scoped to Boot Device
